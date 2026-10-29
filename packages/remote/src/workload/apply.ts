@@ -461,7 +461,7 @@ function admitModelHostBudget(
   firstHostedModel: ModelHostManifest["spec"]["hostedModels"][number],
   budget: number,
 ): { ok: false; error: string } | null {
-  const workloadsDir = opts.workloadsDir ?? defaultWorkloadsDir();
+  const workloadsDir = opts.workloadsDir ?? defaultWorkloadsDir(opts.env);
   const livingManifests = listAnyWorkloadsForAdmission(workloadsDir, resolved)
     .filter((m) => m.metadata.name !== manifest.metadata.name)
     .filter((m) => m.spec.node === manifest.spec.node)
@@ -489,6 +489,7 @@ function admitModelHostBudget(
       },
     },
     forceAdmit: false,
+    supportsForceAdmit: false,
   });
   if (!admit.ok) {
     return { ok: false, error: admit.reason };
@@ -928,7 +929,7 @@ function checkPortCollision(
 ): ApplyResult | null {
   const desired = manifest.spec.endpoint;
   if (desired?.port === undefined) return null;
-  const workloadsDir = opts?.workloadsDir ?? defaultWorkloadsDir();
+  const workloadsDir = opts?.workloadsDir ?? defaultWorkloadsDir(opts?.env);
   const resolveIdent = opts?.resolveNodeIdentity;
   const desiredIdentity = resolveIdent?.(manifest.spec.node) ?? null;
   const sameNode = (otherNode: string): boolean => {
@@ -1090,50 +1091,143 @@ function isMissingManifestError(err: unknown): boolean {
  * the store (DF-01A). A verified ModelHost is started by the ModelHost
  * apply path and an unreadable manifest could be either kind — neither may
  * be credited as freed capacity or stopped by this path, so the apply is
- * refused before any teardown. A genuinely missing manifest is the legacy
+ * refused before any teardown. Ambiguous identities are refused with the
+ * same precedence: more than one stored manifest claiming the target name,
+ * or a canonical `<target>.yaml` whose metadata.name disagrees with the
+ * target, means the freed capacity cannot be attributed to one victim.
+ * Ownership is verified too — a target whose spec.node is not verifiably
+ * the incoming manifest's node is refused, since the credit would apply
+ * to a different node's budget. A genuinely missing manifest is the legacy
  * already-gone victim (e.g. a stale evict annotation surviving its
  * victim's delete): it is a no-op skip — nothing is resident to stop, and
  * since it is absent from the store it grants no capacity credit either.
  */
 function authorizeEvictTargets(
-  evictTargets: readonly string[],
+  ctx: ConvergeServerContext,
   workloadsDir: string,
-  now: string,
 ): { ok: true; verified: Set<string> } | { ok: false; result: ApplyResult } {
+  const { manifest, opts, evictTargets, now } = ctx;
   const verified = new Set<string>();
+  const claimCounts = new Map<string, number>();
+  for (const m of listAnyWorkloadsForAdmission(workloadsDir, resolveEnv(opts?.env))) {
+    claimCounts.set(m.metadata.name, (claimCounts.get(m.metadata.name) ?? 0) + 1);
+  }
+  const sameNode = nodeIdentityMatcher(opts, manifest.spec.node);
   for (const target of evictTargets) {
-    let kind: string;
-    try {
-      kind = loadWorkloadByNameAny(target, workloadsDir).kind;
-    } catch (err) {
-      if (isMissingManifestError(err)) continue;
-      const message = err instanceof Error ? err.message : String(err);
-      return {
-        ok: false,
-        result: evictRefusalResult(
-          target,
-          `it could not be read to confirm its kind (${message})`,
-          now,
-        ),
-      };
-    }
-    if (kind !== "ModelRun") {
-      return {
-        ok: false,
-        result: evictRefusalResult(
-          target,
-          `it is a ${kind}, which this path cannot stop or account for`,
-          now,
-        ),
-      };
-    }
-    verified.add(target);
+    const check = checkEvictTarget(
+      ctx,
+      target,
+      workloadsDir,
+      claimCounts.get(target) ?? 0,
+      sameNode,
+    );
+    if (check.status === "refused") return { ok: false, result: check.result };
+    if (check.status === "verified") verified.add(target);
   }
   return { ok: true, verified };
 }
 
-function evictRefusalResult(target: string, why: string, now: string): ApplyResult {
+function checkEvictTarget(
+  ctx: ConvergeServerContext,
+  target: string,
+  workloadsDir: string,
+  claimCount: number,
+  sameNode: (other: string) => boolean,
+): { status: "verified" } | { status: "skip" } | { status: "refused"; result: ApplyResult } {
+  const { manifest } = ctx;
+  if (claimCount > 1) {
+    return {
+      status: "refused",
+      result: evictRefusalResult(
+        ctx,
+        target,
+        "more than one stored manifest claims this name, so the freed capacity cannot be attributed to a single victim",
+        "EvictAmbiguousIdentity",
+      ),
+    };
+  }
+  let loaded: ModelRun | ModelHostManifest;
+  try {
+    loaded = loadWorkloadByNameAny(target, workloadsDir);
+  } catch (err) {
+    if (isMissingManifestError(err)) return { status: "skip" };
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      status: "refused",
+      result: evictRefusalResult(
+        ctx,
+        target,
+        `it could not be read to confirm its kind (${message})`,
+        "EvictKindUnsupported",
+      ),
+    };
+  }
+  if (loaded.metadata.name !== target) {
+    return {
+      status: "refused",
+      result: evictRefusalResult(
+        ctx,
+        target,
+        `the canonical '${target}.yaml' manifest declares metadata.name '${loaded.metadata.name}'`,
+        "EvictAmbiguousIdentity",
+      ),
+    };
+  }
+  if (loaded.kind !== "ModelRun") {
+    return {
+      status: "refused",
+      result: evictRefusalResult(
+        ctx,
+        target,
+        `it is a ${loaded.kind}, which this path cannot stop or account for`,
+        "EvictKindUnsupported",
+      ),
+    };
+  }
+  if (!sameNode(loaded.spec.node)) {
+    return {
+      status: "refused",
+      result: evictRefusalResult(
+        ctx,
+        target,
+        `it is owned by node '${loaded.spec.node}', which is not verifiably the incoming manifest's node '${manifest.spec.node}'`,
+        "EvictNodeUnverified",
+      ),
+    };
+  }
+  return { status: "verified" };
+}
+
+function evictRefusalResult(
+  ctx: ConvergeServerContext,
+  target: string,
+  why: string,
+  reason: string,
+): ApplyResult {
+  const { now, status } = ctx;
   const error = `refusing to evict '${target}': ${why}; no eviction, stop, or start was attempted`;
+  if (ctx.matches) {
+    return {
+      action: "unchanged",
+      error,
+      statusSection: {
+        phase: "Running",
+        serverPid: status.pid,
+        endpoint: status.endpoint,
+        lastTransitionTime: now,
+        conditions: [
+          { type: "Applied", status: "True", reason: "unchanged", lastTransitionTime: now },
+          {
+            type: "EvictRefused",
+            status: "False",
+            reason,
+            message: error,
+            lastTransitionTime: now,
+          },
+        ],
+      },
+    };
+  }
   return {
     action: "pending",
     error,
@@ -1146,7 +1240,7 @@ function evictRefusalResult(target: string, why: string, now: string): ApplyResu
         {
           type: "Applied",
           status: "False",
-          reason: "EvictKindUnsupported",
+          reason,
           message: error,
           lastTransitionTime: now,
         },
@@ -1223,13 +1317,13 @@ async function admitServerBudget(ctx: ConvergeServerContext): Promise<
     }
 > {
   const { manifest, opts, evictTargets, now } = ctx;
-  const workloadsDir = opts?.workloadsDir ?? defaultWorkloadsDir();
-  const eviction = authorizeEvictTargets(evictTargets, workloadsDir, now);
+  const workloadsDir = opts?.workloadsDir ?? defaultWorkloadsDir(opts?.env);
+  const eviction = authorizeEvictTargets(ctx, workloadsDir);
   if (!eviction.ok) return { ok: false, result: eviction.result };
   const listManifests: (dir?: string) => ModelRun[] =
     opts?.listManifests ??
     ((dir?: string): ModelRun[] =>
-      listAnyWorkloadsForAdmission(dir ?? defaultWorkloadsDir(), resolveEnv(opts?.env)));
+      listAnyWorkloadsForAdmission(dir ?? workloadsDir, resolveEnv(opts?.env)));
   const sameNode = nodeIdentityMatcher(opts, manifest.spec.node);
   const living = listManifests(opts?.workloadsDir).filter(
     (m) =>
@@ -1364,14 +1458,23 @@ function refuseHostBindBeforeTeardown(ctx: ConvergeServerContext): ApplyResult |
  * apply of an already-matching running server keeps Running with its pid
  * and carries an attributable BudgetRefused condition — healthy work is
  * not mislabeled because accounting can't currently prove the budget.
- * Anything else (a start, a restart, an eviction request) fails closed.
+ * A matching workload that also requested eviction is still a no-op for
+ * the running server, so the same preservation applies, but the refused
+ * eviction request is reported as an error on the preserved result.
+ * Anything that would actually tear work down (a start, a restart) fails
+ * closed.
  */
 function admissionRejection(
   ctx: ConvergeServerContext,
   admission: Extract<Awaited<ReturnType<typeof admitServerBudget>>, { ok: false }>,
 ): ApplyResult {
-  if (ctx.matches && ctx.evictTargets.length === 0 && admission.adm) {
-    return preservedRunningWithBudgetRefusal(ctx, admission.adm);
+  if (ctx.matches && admission.adm) {
+    const preserved = preservedRunningWithBudgetRefusal(ctx, admission.adm);
+    if (ctx.evictTargets.length === 0) return preserved;
+    return {
+      ...preserved,
+      error: `requested eviction of '${ctx.evictTargets.join("', '")}' was refused: ${admission.adm.reason}; no eviction, stop, or start was attempted`,
+    };
   }
   return admission.result;
 }

@@ -22,6 +22,10 @@ export interface AdmissionInput {
   livingManifests: ModelRun[];
   incoming: ModelRun;
   forceAdmit: boolean;
+  /** False when the caller has no way to honor the llamactl.io/force-admit
+   *  annotation (e.g. the ModelHost apply path), so refusal guidance must
+   *  not prescribe it. Defaults to true. */
+  supportsForceAdmit?: boolean;
   /** Alias-aware node equality; defaults to name equality. */
   sameNode?: (otherNode: string) => boolean;
 }
@@ -93,24 +97,35 @@ function formatAdmissionBreakdown(
   incoming: ReservationBreakdownItem,
   living: ReservationBreakdownItem[],
   reservedAfter: number,
+  supportsForceAdmit: boolean,
 ): string {
   const livingDesc =
     living.length > 0
       ? living.map((i) => `'${i.name}' ${i.expectedMemoryGiB.toFixed(1)} GiB`).join(", ")
       : "(none)";
+  const levers = supportsForceAdmit
+    ? `the llamactl.io/force-admit annotation (set by apply --force) is the explicit legacy override that admits past this budget; free capacity with --evict <name> or raise the node budget (NodeRun spec.budget.memoryGiB, default 75% of total RAM)`
+    : `free capacity by removing or disabling other workloads on this node, or raise the node budget (NodeRun spec.budget.memoryGiB, default 75% of total RAM)`;
   return [
     `node '${nodeName}' would reserve ${reservedAfter.toFixed(1)} GiB after adding '${incoming.name}' (${incoming.expectedMemoryGiB.toFixed(1)} GiB) to existing: ${livingDesc}`,
     `Budget is ${budget.toFixed(1)} GiB`,
-    `the llamactl.io/force-admit annotation (set by apply --force) is the explicit legacy override that admits past this budget; free capacity with --evict <name> or raise the node budget (NodeRun spec.budget.memoryGiB, default 75% of total RAM)`,
+    levers,
   ].join(". ");
 }
 
-function formatInvalidReservationReason(nodeName: string, invalid: AdmissionReservation[]): string {
+function formatInvalidReservationReason(
+  nodeName: string,
+  invalid: AdmissionReservation[],
+  supportsForceAdmit: boolean,
+): string {
   const names = invalid.map((i) => `'${i.name}' (${String(i.expectedMemoryGiB)})`).join(", ");
+  const forceNote = supportsForceAdmit
+    ? ` The llamactl.io/force-admit annotation overrides a finite budget, it does not launder an invalid quantity`
+    : "";
   return [
     `node '${nodeName}' has invalid reservation quantities: ${names}`,
     `expectedMemoryGiB must be a finite non-negative number; refusing to sum NaN or infinities into the accounting`,
-    `Correct spec.resources.expectedMemoryGiB in the named manifests. The llamactl.io/force-admit annotation overrides a finite budget, it does not launder an invalid quantity`,
+    `Correct spec.resources.expectedMemoryGiB in the named manifests.${forceNote}`,
   ].join(". ");
 }
 
@@ -118,15 +133,33 @@ function formatUnknownBudgetReason(
   nodeName: string,
   incoming: ReservationBreakdownItem,
   reservedAfter: number,
+  supportsForceAdmit: boolean,
 ): string {
-  return [
+  const parts = [
     `node '${nodeName}' memory budget is unknown; refusing to charge '${incoming.name}' (${incoming.expectedMemoryGiB.toFixed(1)} GiB) against it (declared reservations after this workload: ${reservedAfter.toFixed(1)} GiB)`,
     `Declare a budget with NodeRun spec.budget.memoryGiB, or make the target node's reported memory reachable (llamactl node test ${nodeName})`,
-    `The llamactl.io/force-admit annotation is the explicit escape hatch`,
-  ].join(". ");
+  ];
+  if (supportsForceAdmit) {
+    parts.push(`The llamactl.io/force-admit annotation is the explicit escape hatch`);
+  }
+  return parts.join(". ");
 }
 
 export function computeNodeBudget(input: AdmissionInput): AdmissionResult {
+  const supportsForceAdmit = input.supportsForceAdmit ?? true;
+  const sameNode = input.sameNode ?? ((other: string): boolean => other === input.nodeName);
+  // Raw quantities go to core validation unfiltered: a NaN or negative
+  // living reservation must surface as a structured refusal, not be
+  // silently dropped by the display-side positive filter.
+  const rawLiving: AdmissionReservation[] = [];
+  for (const m of input.livingManifests) {
+    if (!sameNode(m.spec.node)) continue;
+    if (!m.spec.enabled) continue;
+    rawLiving.push({
+      name: m.metadata.name,
+      expectedMemoryGiB: m.spec.resources?.expectedMemoryGiB ?? 0,
+    });
+  }
   const livingItems = reservedForNodeBreakdown(
     input.livingManifests,
     input.nodeName,
@@ -136,7 +169,7 @@ export function computeNodeBudget(input: AdmissionInput): AdmissionResult {
   const incomingItem = { name: input.incoming.metadata.name, expectedMemoryGiB: incomingMemory };
   const decision = admitAgainstFiniteBudget({
     budgetGiB: input.nodeBudgetGiB,
-    living: livingItems satisfies AdmissionReservation[],
+    living: rawLiving,
     incoming: incomingItem,
     forceAdmit: input.forceAdmit,
   });
@@ -148,7 +181,7 @@ export function computeNodeBudget(input: AdmissionInput): AdmissionResult {
       ok: false,
       kind: "invalid-reservation",
       invalid: decision.invalid,
-      reason: formatInvalidReservationReason(input.nodeName, decision.invalid),
+      reason: formatInvalidReservationReason(input.nodeName, decision.invalid, supportsForceAdmit),
     };
   }
   if (decision.kind === "unknown-budget") {
@@ -156,7 +189,12 @@ export function computeNodeBudget(input: AdmissionInput): AdmissionResult {
       ok: false,
       kind: "unknown-budget",
       reservedAfter: decision.reservedAfterGiB,
-      reason: formatUnknownBudgetReason(input.nodeName, incomingItem, decision.reservedAfterGiB),
+      reason: formatUnknownBudgetReason(
+        input.nodeName,
+        incomingItem,
+        decision.reservedAfterGiB,
+        supportsForceAdmit,
+      ),
     };
   }
   return {
@@ -170,6 +208,7 @@ export function computeNodeBudget(input: AdmissionInput): AdmissionResult {
       incomingItem,
       livingItems,
       decision.reservedAfterGiB,
+      supportsForceAdmit,
     ),
     breakdown: decision.contributors,
   };
