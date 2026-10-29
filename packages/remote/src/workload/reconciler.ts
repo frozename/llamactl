@@ -308,12 +308,17 @@ async function reconcileModelRun(
   return errors;
 }
 
+type HostReconcileDecision = "sweep-disabled" | "converged" | "never-stopped" | "apply";
+
 /**
  * Decide what one ModelHost reconcile pass should do:
  *
  *   sweep-disabled — host is disabled and not Running; clear any
  *                    stale sidecar and report unchanged.
  *   converged      — Running with a matching specHash; nothing to do.
+ *   never-stopped  — enabled, restartPolicy Never, not Running, and remote
+ *                    or with a local launch record (#332); report
+ *                    unchanged and do not start it.
  *   apply          — anything else; run applyOneModelHost.
  *
  * Idempotent reconcile with spec-drift detection. For local
@@ -326,11 +331,17 @@ function classifyHostReconcile(
   spec: ModelHostManifest["spec"],
   localState: ReturnType<typeof readModelHostState>,
   current: { state: string; specHash?: string },
-): "sweep-disabled" | "converged" | "apply" {
+): HostReconcileDecision {
   if (!spec.enabled && current.state !== "Running") return "sweep-disabled";
   const desiredHash = computeModelHostSpecHash(specForHash(spec));
   const observedHash = spec.node === LOCAL_NODE_ID ? localState?.specHash : current.specHash;
   if (current.state === "Running" && observedHash === desiredHash) return "converged";
+  // #332: restartPolicy Never leaves a down engine down. A local host with no
+  // launch record was never started here (an `apply -f` hand-off), so it starts.
+  const neverLaunched = spec.node === LOCAL_NODE_ID && localState === null;
+  if (spec.restartPolicy === "Never" && current.state !== "Running" && !neverLaunched) {
+    return "never-stopped";
+  }
   return "apply";
 }
 
@@ -428,6 +439,24 @@ function sweepDisabledHost(
 }
 
 /**
+ * Report a ModelHost pass that runs no apply. #332: a never-stopped host is
+ * reported unchanged with no error and no foundDead flag (so the controller
+ * logs no restart that never happens), and no conditions are written for it.
+ */
+function settleHostWithoutApply(
+  decision: Exclude<HostReconcileDecision, "apply">,
+  spec: ModelHostManifest["spec"],
+  name: string,
+  reports: ReconcileNodeReport[],
+): number {
+  if (decision === "sweep-disabled") return sweepDisabledHost(spec, name, reports);
+  if (decision === "converged") {
+    recordHostOutcome(spec, name, { kind: "ok", recovered: "Recovered" });
+  }
+  return pushHostReport(reports, spec, name, "unchanged", {});
+}
+
+/**
  * Reconcile one ModelHost manifest. A host labeled llamactl.io/managed-by
  * belongs to another controller: report skipped-external and touch nothing
  * else — no client, no status query, no start/stop, no sidecar sweep, no
@@ -509,11 +538,7 @@ async function reconcileUnmanagedModelHost(
     const localState =
       spec.node === LOCAL_NODE_ID ? readModelHostState({ name }, resolveEnv(process.env)) : null;
     const decision = classifyHostReconcile(spec, localState, current);
-    if (decision === "sweep-disabled") return sweepDisabledHost(spec, name, reports);
-    if (decision === "converged") {
-      recordHostOutcome(spec, name, { kind: "ok", recovered: "Recovered" });
-      return pushHostReport(reports, spec, name, "unchanged", {});
-    }
+    if (decision !== "apply") return settleHostWithoutApply(decision, spec, name, reports);
     const wasRunning = current.state === "Running";
     const foundDead = !wasRunning && localState !== null;
     const result = await applyOneModelHost(
