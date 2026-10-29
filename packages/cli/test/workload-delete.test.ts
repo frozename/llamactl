@@ -166,3 +166,85 @@ test("delete workload keeps manifest and runtime state when the remote refuses t
   expect(readFileSync(join(runtimeDir, "modelhost.state"), "utf8")).toContain("running");
   expect(readFileSync(join(runtimeDir, "modelhost.pid"), "utf8")).toContain("1234");
 });
+
+// #221: resolves "settled" when `work` settles first, or "stalled" after `limitMs`. The bound only
+// turns a hang into an assertion failure; with the 1 ms deadline the work settles far sooner.
+async function settledWithin(
+  work: Promise<unknown>,
+  limitMs: number,
+): Promise<"settled" | "stalled"> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const stall = new Promise<"stalled">((resolve): void => {
+    timer = setTimeout((): void => {
+      resolve("stalled");
+    }, limitMs);
+  });
+  try {
+    return await Promise.race([work.then((): "settled" => "settled"), stall]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+interface HungServerReply {
+  state: "up";
+  rel: string;
+  pid: number;
+}
+
+test("delete workload: a ModelRun whose node never answers the status query is removed with a warning (#221)", async () => {
+  const manifestPath = join(process.env["LLAMACTL_WORKLOADS_DIR"]!, "z13-run.yaml");
+  writeFileSync(
+    manifestPath,
+    [
+      "apiVersion: llamactl/v1",
+      "kind: ModelRun",
+      "metadata:",
+      "  name: z13-run",
+      "spec:",
+      "  node: z13",
+      "  target:",
+      "    kind: rel",
+      "    value: models/demo.gguf",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  // The status query stays pending until release(), like a node that suspended mid-call.
+  let release = (): void => undefined;
+  const hung = new Promise<void>((resolve): void => {
+    release = (): void => {
+      resolve();
+    };
+  });
+  let stopCalls = 0;
+  __setWorkloadTestSeams({
+    getNodeClientByName: (): NodeClient =>
+      ({
+        serverStatus: {
+          query: (): Promise<HungServerReply> =>
+            hung.then((): HungServerReply => ({ state: "up", rel: "models/demo.gguf", pid: 99 })),
+        },
+        serverStop: {
+          mutate: (): Promise<{ stopped: boolean }> => {
+            stopCalls++;
+            return Promise.resolve({ stopped: true });
+          },
+        },
+      }) as unknown as NodeClient,
+    nodeQueryTimeoutMs: 1,
+  });
+
+  const pending = withCapturedIo(() => runDelete(["workload", "z13-run"]));
+  const outcome = await settledWithin(pending, 2_000);
+  release();
+  const { result: code, stdout, stderr } = await pending;
+
+  expect(outcome).toBe("settled");
+  expect(code).toBe(0);
+  expect(stopCalls).toBe(0);
+  expect(stderr).toBe("warning: failed to reach node z13: node 'z13' did not answer within 1 ms\n");
+  expect(stdout).toBe("deleted modelrun/z13-run\n");
+  expect(() => readFileSync(manifestPath, "utf8")).toThrow();
+});
