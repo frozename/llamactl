@@ -4,6 +4,11 @@
 // NOT a model-load grant and NOT a calibrated envelope — calibration keys,
 // swap deltas, remote OS collectors and all consumers are deferred. No IO, no
 // Date.now, no platform probing: timestamps and readings are injected.
+//
+// Core accepts already-validated typed observations here. Untyped transport
+// decoding, auth and provenance validation belong to the remote observer /
+// consumer slice; the `source` string is attribution metadata, not a
+// credential, so no source-prefix allowlist or trusted flag exists in core.
 
 export type MemoryReadStatus = "ok" | "unavailable" | "denied" | "unsupported";
 
@@ -41,11 +46,19 @@ export type HostHeadroom =
 export interface HostHeadroomOptions {
   nowMs: number;
   maxAgeMs: number;
+  // Configured host reserve policy, not an observed or committed workload
+  // reservation: derivation acquires nothing. 12GiB reserve against 8GiB
+  // available is a valid input that floors usableBytes to zero, not an error.
   reserveBytes: number;
 }
 
 type Refusal = "invalid-input" | "unknown-source" | "stale-source";
 
+// Precedence policy when several host readings fail at once:
+// invalid-input > unknown-source > stale-source. A malformed reading outranks
+// a missing one, which outranks a lapsed one, so the operator sees the
+// fixable cause first. This ranking is the contract, not field order; the
+// dual-refusal tests in memory-envelope.test.ts pin both directions.
 const REFUSAL_RANK: Record<Refusal, number> = {
   "invalid-input": 0,
   "unknown-source": 1,
@@ -63,19 +76,15 @@ function inspectReading(reading: MemoryReading, nowMs: number, maxAgeMs: number)
   const observedAtMs = reading.observedAtMs;
   if (observedAtMs === null) return { refusal: "unknown-source" };
   if (!Number.isFinite(observedAtMs)) return { refusal: "invalid-input" };
+  if (observedAtMs < 0) return { refusal: "invalid-input" };
   const age = nowMs - observedAtMs;
   if (age < 0) return { refusal: "invalid-input" };
   if (age > maxAgeMs) return { refusal: "stale-source" };
   return { bytes };
 }
 
-function pickWorstRefusal(a: ReadingVerdict, b: ReadingVerdict): Refusal | null {
-  const ar = "refusal" in a ? a.refusal : null;
-  const br = "refusal" in b ? b.refusal : null;
-  if (ar !== null && br !== null) {
-    return REFUSAL_RANK[ar] <= REFUSAL_RANK[br] ? ar : br;
-  }
-  return ar ?? br;
+function worseRefusal(a: Refusal, b: Refusal): Refusal {
+  return REFUSAL_RANK[a] <= REFUSAL_RANK[b] ? a : b;
 }
 
 export function deriveHostHeadroom(
@@ -85,6 +94,7 @@ export function deriveHostHeadroom(
   const { nowMs, maxAgeMs, reserveBytes } = options;
   const numericOptionsValid =
     Number.isFinite(nowMs) &&
+    nowMs >= 0 &&
     Number.isFinite(maxAgeMs) &&
     maxAgeMs >= 0 &&
     Number.isFinite(reserveBytes) &&
@@ -93,11 +103,13 @@ export function deriveHostHeadroom(
 
   const physical = inspectReading(observation.physical, nowMs, maxAgeMs);
   const available = inspectReading(observation.available, nowMs, maxAgeMs);
-  if (!("bytes" in physical) || !("bytes" in available)) {
-    return {
-      known: false,
-      reason: pickWorstRefusal(physical, available) ?? "unknown-source",
-    };
+  if (!("bytes" in physical)) {
+    const reason =
+      "bytes" in available ? physical.refusal : worseRefusal(physical.refusal, available.refusal);
+    return { known: false, reason };
+  }
+  if (!("bytes" in available)) {
+    return { known: false, reason: available.refusal };
   }
   const { bytes: physicalBytes } = physical;
   const { bytes: availableBytes } = available;

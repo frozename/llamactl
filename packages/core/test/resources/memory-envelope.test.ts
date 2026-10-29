@@ -2,10 +2,15 @@ import { describe, expect, test } from "bun:test";
 
 import {
   deriveHostHeadroom,
+  type HostHeadroom,
   type HostHeadroomOptions,
   type HostMemoryObservation,
   type MemoryReading,
 } from "../../src/resources/memory.js";
+
+type MemoryModule = {
+  deriveHostHeadroom: (obs: HostMemoryObservation, opts: HostHeadroomOptions) => HostHeadroom;
+};
 
 const GiB = 1024 * 1024 * 1024;
 const NOW = 1_000_000_000_000;
@@ -309,5 +314,202 @@ describe("deriveHostHeadroom", () => {
   test("boundary age exactly at maxAgeMs is known", () => {
     const obs = observation({ available: hostReading(8 * GiB, 60_000) });
     expect(deriveHostHeadroom(obs, options()).known).toBe(true);
+  });
+});
+
+describe("deriveHostHeadroom absolute clock domain", () => {
+  test("negative nowMs with negative observedAtMs is invalid-input, not a small positive age", () => {
+    const obs = observation({
+      physical: { ...hostReading(16 * GiB), observedAtMs: -500 },
+      available: { ...hostReading(8 * GiB), observedAtMs: -500 },
+    });
+    expect(deriveHostHeadroom(obs, options({ nowMs: -100 }))).toEqual({
+      known: false,
+      reason: "invalid-input",
+    });
+  });
+
+  test("negative observedAtMs with a close nonnegative nowMs is invalid-input", () => {
+    const obs = observation({
+      physical: { ...hostReading(16 * GiB), observedAtMs: -500 },
+      available: { ...hostReading(8 * GiB), observedAtMs: -500 },
+    });
+    expect(deriveHostHeadroom(obs, options({ nowMs: 100 }))).toEqual({
+      known: false,
+      reason: "invalid-input",
+    });
+  });
+
+  test("zero timestamps are valid absolute times", () => {
+    const obs = observation({
+      physical: { ...hostReading(16 * GiB), observedAtMs: 0 },
+      available: { ...hostReading(8 * GiB), observedAtMs: 0 },
+    });
+    const result = deriveHostHeadroom(obs, options({ nowMs: 0 }));
+    expect(result.known).toBe(true);
+  });
+});
+
+describe("deriveHostHeadroom refusal precedence", () => {
+  test("physical stale plus available NaN is invalid-input, not stale-source", () => {
+    const obs = observation({
+      physical: hostReading(16 * GiB, 120_000),
+      available: hostReading(Number.NaN),
+    });
+    expect(deriveHostHeadroom(obs, options())).toEqual({
+      known: false,
+      reason: "invalid-input",
+    });
+  });
+
+  test("physical NaN plus available stale is invalid-input, not stale-source", () => {
+    const obs = observation({
+      physical: hostReading(Number.NaN),
+      available: hostReading(8 * GiB, 120_000),
+    });
+    expect(deriveHostHeadroom(obs, options())).toEqual({
+      known: false,
+      reason: "invalid-input",
+    });
+  });
+
+  test("physical unknown plus available stale is unknown-source, not stale-source", () => {
+    const obs = observation({
+      physical: reading({ source: "host" }),
+      available: hostReading(8 * GiB, 120_000),
+    });
+    expect(deriveHostHeadroom(obs, options())).toEqual({
+      known: false,
+      reason: "unknown-source",
+    });
+  });
+
+  test("physical stale plus available unknown is unknown-source, not stale-source", () => {
+    const obs = observation({
+      physical: hostReading(16 * GiB, 120_000),
+      available: reading({ source: "host" }),
+    });
+    expect(deriveHostHeadroom(obs, options())).toEqual({
+      known: false,
+      reason: "unknown-source",
+    });
+  });
+
+  test("physical invalid plus available unknown is invalid-input, not unknown-source", () => {
+    const obs = observation({
+      physical: hostReading(-1),
+      available: reading({ source: "host" }),
+    });
+    expect(deriveHostHeadroom(obs, options())).toEqual({
+      known: false,
+      reason: "invalid-input",
+    });
+  });
+
+  test("physical unknown plus available invalid is invalid-input, not unknown-source", () => {
+    const obs = observation({
+      physical: reading({ source: "host" }),
+      available: hostReading(-1),
+    });
+    expect(deriveHostHeadroom(obs, options())).toEqual({
+      known: false,
+      reason: "invalid-input",
+    });
+  });
+
+  test("whitespace-only source is unknown-source", () => {
+    const obs = observation({
+      available: { ...hostReading(8 * GiB), source: "   " },
+    });
+    expect(deriveHostHeadroom(obs, options())).toEqual({
+      known: false,
+      reason: "unknown-source",
+    });
+  });
+});
+
+describe("deriveHostHeadroom option boundaries", () => {
+  test("NaN maxAgeMs is invalid-input", () => {
+    expect(deriveHostHeadroom(observation(), options({ maxAgeMs: Number.NaN }))).toEqual({
+      known: false,
+      reason: "invalid-input",
+    });
+  });
+
+  test("Infinity maxAgeMs is invalid-input, not a never-stale window", () => {
+    expect(
+      deriveHostHeadroom(observation(), options({ maxAgeMs: Number.POSITIVE_INFINITY })),
+    ).toEqual({ known: false, reason: "invalid-input" });
+  });
+
+  test("Infinity reserveBytes is invalid-input", () => {
+    expect(
+      deriveHostHeadroom(observation(), options({ reserveBytes: Number.POSITIVE_INFINITY })),
+    ).toEqual({ known: false, reason: "invalid-input" });
+  });
+
+  test("available equal to physical is known; must-not-exceed allows equality", () => {
+    const obs = observation({ available: hostReading(16 * GiB) });
+    const result = deriveHostHeadroom(obs, options({ reserveBytes: 2 * GiB }));
+    expect(result).toEqual({
+      known: true,
+      usableBytes: 14 * GiB,
+      physicalBytes: 16 * GiB,
+      availableBytes: 16 * GiB,
+      reservedBytes: 2 * GiB,
+    });
+  });
+});
+
+describe("deriveHostHeadroom non-contributing auxiliaries", () => {
+  test("populated swapUsed 6GiB plus footprint 3GiB do not change the 6GiB baseline", () => {
+    const obs = observation({
+      swapUsed: hostReading(6 * GiB),
+      footprint: hostReading(3 * GiB),
+    });
+    expect(deriveHostHeadroom(obs, options())).toEqual({
+      known: true,
+      usableBytes: 6 * GiB,
+      physicalBytes: 16 * GiB,
+      availableBytes: 8 * GiB,
+      reservedBytes: 2 * GiB,
+    });
+  });
+
+  test("malformed auxiliary readings stay distinct and never flip headroom to refusal", () => {
+    const obs = observation({
+      swapUsed: { ...hostReading(6 * GiB), bytes: Number.NaN },
+      footprint: { ...hostReading(3 * GiB), bytes: -1 },
+      device: { ...hostReading(4 * GiB), source: "", scope: "unknown" },
+    });
+    expect(deriveHostHeadroom(obs, options()).known).toBe(true);
+  });
+});
+
+describe("memory module public surface", () => {
+  // Variable specifiers + structural casts: any static self-name import trips
+  // TS2209 (export map root ambiguity) under this package tsconfig. Bun
+  // resolves the published specifiers at runtime, which is the contract
+  // pinned here.
+  const subpath = "@llamactl/core/resources/memory";
+  const rootSpecifier = "@llamactl/core";
+
+  test("resources/memory subpath export derives the known fixture", async () => {
+    const memoryModule = (await import(subpath)) as MemoryModule;
+    expect(typeof memoryModule.deriveHostHeadroom).toBe("function");
+    expect(memoryModule.deriveHostHeadroom(observation(), options())).toEqual({
+      known: true,
+      usableBytes: 6 * GiB,
+      physicalBytes: 16 * GiB,
+      availableBytes: 8 * GiB,
+      reservedBytes: 2 * GiB,
+    });
+  });
+
+  test("root export exposes resourcesMemory with deriveHostHeadroom available", async () => {
+    const coreRoot = (await import(rootSpecifier)) as {
+      resourcesMemory?: { deriveHostHeadroom?: unknown };
+    };
+    expect(typeof coreRoot.resourcesMemory?.deriveHostHeadroom).toBe("function");
   });
 });
