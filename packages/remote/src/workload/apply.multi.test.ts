@@ -185,6 +185,7 @@ test("parallel apply does not stop other workloads on the node", async () => {
       undefined,
       {
         workloadsDir,
+        getNodeBudgetGiB: () => 32,
       },
     );
     expect(state.has("a")).toBe(true);
@@ -205,6 +206,7 @@ test("running server with port-only endpoint manifest is unchanged", async () =>
   try {
     const result = await applyOne(manifest, () => makeClient(state), undefined, undefined, {
       workloadsDir,
+      getNodeBudgetGiB: () => 32,
     });
     expect(result.action).toBe("unchanged");
   } finally {
@@ -228,7 +230,7 @@ test("running server with alias target resolved to live rel is unchanged", async
       }),
       undefined,
       undefined,
-      { workloadsDir },
+      { workloadsDir, getNodeBudgetGiB: () => 32 },
     );
     expect(result.action).toBe("unchanged");
   } finally {
@@ -248,6 +250,7 @@ test("genuinely changed rel/host/port still triggers restart", async () => {
   try {
     const result = await applyOne(manifest, () => makeClient(state), undefined, undefined, {
       workloadsDir,
+      getNodeBudgetGiB: () => 32,
     });
     expect(result.action).toBe("restarted");
   } finally {
@@ -262,7 +265,7 @@ test("evict annotation stops named workload before starting incoming", async () 
     () => makeClient(state),
     undefined,
     undefined,
-    { listManifests: () => [mkManifest("a")] },
+    { listManifests: () => [mkManifest("a")], getNodeBudgetGiB: () => 32 },
   );
   expect(state.has("a")).toBe(false);
   expect(state.has("b")).toBe(true);
@@ -359,11 +362,17 @@ test("concurrent applies on the same node serialize through the mutex", async ()
     rpcServerStop: { mutate: () => Promise.resolve({ stopped: true }) },
     rpcServerDoctor: { query: () => Promise.resolve({ ok: true, path: "", llamaCppBin: "" }) },
   });
-  const mfA = mkManifest("a", { port: 8181 });
-  const mfB = mkManifest("b", { port: 8090 });
+  const mfA = mkManifest("a", { port: 8181, node: "same" });
+  const mfB = mkManifest("b", { port: 8090, node: "same" });
   await Promise.all([
-    applyOne(mfA, slowClient, undefined, undefined, { listManifests: () => [] }),
-    applyOne(mfB, slowClient, undefined, undefined, { listManifests: () => [] }),
+    applyOne(mfA, slowClient, undefined, undefined, {
+      listManifests: () => [],
+      getNodeBudgetGiB: () => 32,
+    }),
+    applyOne(mfB, slowClient, undefined, undefined, {
+      listManifests: () => [],
+      getNodeBudgetGiB: () => 32,
+    }),
   ]);
   expect(callOrder[0]?.startsWith("start:")).toBe(true);
   expect(callOrder[1]).toBe(callOrder[0]!.replace("start:", "done:"));
