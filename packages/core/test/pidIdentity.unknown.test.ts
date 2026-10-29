@@ -31,6 +31,17 @@ const alive = (p: number): boolean => {
   }
 };
 
+// Bounded condition poll: waits on an observable instead of a fixed sleep.
+const waitFor = async (cond: () => boolean, timeoutMs: number): Promise<void> => {
+  const deadline = Date.now() + timeoutMs;
+  while (!cond()) {
+    if (Date.now() > deadline) {
+      throw new Error(`condition not met within ${String(timeoutMs)} ms`);
+    }
+    await new Promise((r) => setTimeout(r, 20));
+  }
+};
+
 describe("unknown identity is fail-closed at every caller", () => {
   let temp: ReturnType<typeof makeTempRuntime>;
   let resolved: ResolvedEnv;
@@ -253,16 +264,33 @@ describe("unknown identity is fail-closed at every caller", () => {
     const modelPath = join(modelDir, "model.gguf");
     writeFileSync(modelPath, "");
     const marker = join(temp.devStorage, "launches.log");
+    const gate = join(temp.devStorage, "launch.gate");
     const binary = join(temp.devStorage, "fake-llama-server");
-    writeFileSync(binary, `#!/bin/sh\necho $$ >> '${marker}'\nexec /bin/sleep 30\n`, {
-      mode: 0o755,
+    // The fake appends its pid to the marker only after the test creates the gate file, so the
+    // marker is always written after startServer resolves, as on a loaded machine (#350).
+    writeFileSync(
+      binary,
+      `#!/bin/sh\ni=0\nwhile [ ! -e '${gate}' ] && [ "$i" -lt 400 ]; do sleep 0.05; i=$((i + 1)); done\necho $$ >> '${marker}'\nexec /bin/sleep 30\n`,
+      { mode: 0o755 },
+    );
+    // Hold the endpoint port for the whole test so no other listener can claim it, and never
+    // answer: the pre-flight conflict check reads its timeout as a free port and the readiness
+    // probe reads its timeout as not ready yet (#350).
+    const held: ((res: Response) => void)[] = [];
+    const portServer = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: (): Promise<Response> =>
+        new Promise<Response>((resolve) => {
+          held.push(resolve);
+        }),
     });
-    const portServer = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response() });
     const port = portServer.port!;
-    await portServer.stop(true);
     const pidPath = join(temp.runtimeDir, "workloads", KEY.name, "llama-server.pid");
     const launches = (): number[] =>
       existsSync(marker) ? readFileSync(marker, "utf8").trim().split("\n").map(Number) : [];
+    const recordedPids = (): number[] =>
+      existsSync(pidPath) ? [Number(readFileSync(pidPath, "utf8").trim())] : [];
     try {
       const res = await startServer({
         key: KEY,
@@ -275,17 +303,19 @@ describe("unknown identity is fail-closed at every caller", () => {
         skipTuned: true,
         identity: { processCommand: () => "/bin/sleep 60" },
       });
-      expect(launches()).toHaveLength(1);
-      const firstPid = launches()[0]!;
       expect(res.ok).toBe(false);
       expect(res.retried).toBe(true);
       expect(res.error).toContain("pid identity unknown");
       expect(res.error).toContain(pidPath);
-      await new Promise((r) => setTimeout(r, 300));
+      // startServer writes the pid file itself right after the spawn, so reading it needs no wait.
+      const firstPid = Number(readFileSync(pidPath, "utf8").trim());
       expect(alive(firstPid)).toBe(true);
-      expect(readFileSync(pidPath, "utf8").trim()).toBe(String(firstPid));
+      expect(launches()).toEqual([]);
+      writeFileSync(gate, "");
+      await waitFor(() => launches().length >= 1, 5_000);
+      expect(launches()).toEqual([firstPid]);
     } finally {
-      for (const launched of launches()) {
+      for (const launched of new Set([...launches(), ...recordedPids()])) {
         try {
           process.kill(-launched, "SIGKILL");
         } catch {
@@ -297,6 +327,10 @@ describe("unknown identity is fail-closed at every caller", () => {
           // The child may already be gone.
         }
       }
+      for (const resolve of held) {
+        resolve(new Response(null, { status: 503 }));
+      }
+      await portServer.stop(true);
     }
   }, 15_000);
 
