@@ -751,6 +751,28 @@ describe("reconcileOnce", () => {
       }
     }
 
+    // Launch record of a killed engine; specHash null writes a record without the field.
+    function seedLaunchRecord(
+      dir: string,
+      manifest: ModelHostManifest,
+      specHash: string | null,
+    ): void {
+      writeModelHostState(
+        {
+          kind: "ModelHost",
+          engine: manifest.spec.engine,
+          pid: 1234,
+          host: manifest.spec.endpoint.host,
+          port: manifest.spec.endpoint.port,
+          modelAliases: [manifest.spec.hostedModels[0]!.rel],
+          startedAt: new Date().toISOString(),
+          ...(specHash !== null ? { specHash } : {}),
+        },
+        { name: manifest.metadata.name },
+        resolveEnv({ LOCAL_AI_RUNTIME_DIR: dir }),
+      );
+    }
+
     test("does not restart an enabled local Never host whose engine died", async () => {
       await inRuntimeDir("llamactl-reconciler-never-local-", async (dir) => {
         const manifest = hostOn("local", "Never");
@@ -832,6 +854,69 @@ describe("reconcileOnce", () => {
         expect(result.errors).toBe(0);
         expect(result.reports).toEqual([
           { kind: "ModelHost", name: "host-a", node: "gpu1", action: "restarted" },
+        ]);
+      });
+    });
+
+    test("starts a local Never host whose spec changed while it was down", async () => {
+      await inRuntimeDir("llamactl-reconciler-never-edited-", async (dir) => {
+        const launched = hostOn("local", "Never");
+        // The killed engine's launch record carries the hash of the spec it ran with.
+        seedLaunchRecord(dir, launched, computeModelHostSpecHash(specForHash(launched.spec)));
+        // The manifest was edited while the engine was down.
+        saveModelHost({ ...launched, spec: { ...launched.spec, timeoutSeconds: 120 } }, dir);
+        const starts = { count: 0 };
+        const result = await reconcileOnce({
+          workloadsDir: dir,
+          getClient: () => countingClient("Stopped", starts),
+        });
+        expect(starts.count).toBe(1);
+        expect(result.errors).toBe(0);
+        expect(result.reports).toEqual([
+          { kind: "ModelHost", name: "host-a", node: "local", action: "started", foundDead: true },
+        ]);
+        const runtime = resolveEnv({ LOCAL_AI_RUNTIME_DIR: dir });
+        expect(readModelHostRuntimeStatus({ name: "host-a" }, runtime)).toMatchObject({
+          restarts: 1,
+          lastRestartReason: "EngineExited",
+        });
+      });
+    });
+
+    test("does not restart a local Never host whose launch record has no specHash", async () => {
+      await inRuntimeDir("llamactl-reconciler-never-nohash-", async (dir) => {
+        const manifest = hostOn("local", "Never");
+        saveModelHost(manifest, dir);
+        // A record written before specHash existed proves no spec change.
+        seedLaunchRecord(dir, manifest, null);
+        const starts = { count: 0 };
+        const result = await reconcileOnce({
+          workloadsDir: dir,
+          getClient: () => countingClient("Stopped", starts),
+        });
+        expect(starts.count).toBe(0);
+        expect(result.errors).toBe(0);
+        expect(result.reports).toEqual([
+          { kind: "ModelHost", name: "host-a", node: "local", action: "unchanged" },
+        ]);
+      });
+    });
+
+    test("does not restart a stopped remote Never host that reports another specHash", async () => {
+      await inRuntimeDir("llamactl-reconciler-never-remote-hash-", async (dir) => {
+        saveModelHost(hostOn("gpu1", "Never"), dir);
+        const starts = { count: 0 };
+        const client: WorkloadClient = {
+          ...countingClient("Stopped", starts),
+          modelHostStatus: {
+            query: () => Promise.resolve({ state: "Stopped", specHash: "remote-other" }),
+          },
+        };
+        const result = await reconcileOnce({ workloadsDir: dir, getClient: () => client });
+        expect(starts.count).toBe(0);
+        expect(result.errors).toBe(0);
+        expect(result.reports).toEqual([
+          { kind: "ModelHost", name: "host-a", node: "gpu1", action: "unchanged" },
         ]);
       });
     });
