@@ -87,3 +87,45 @@ test("admitAgainstFiniteBudget forceAdmit bypasses over-budget and unknown-budge
   expect(unknown.ok).toBe(true);
   if (unknown.ok) expect(unknown.budgetGiB).toBe(null);
 });
+
+test("admitAgainstFiniteBudget refuses invalid incoming quantities instead of treating them as zero", () => {
+  for (const quantity of [Number.NaN, Number.POSITIVE_INFINITY, -4]) {
+    const out = admitAgainstFiniteBudget({ ...base, incoming: r("run-b", quantity) });
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.kind).toBe("invalid-reservation");
+  }
+});
+
+test("admitAgainstFiniteBudget refuses invalid living quantities and names the offenders", () => {
+  const out = admitAgainstFiniteBudget({
+    budgetGiB: 24,
+    living: [r("host-nan", Number.NaN), r("host-neg", -2), r("host-ok", 8)],
+    incoming: r("run-b", 8),
+    forceAdmit: false,
+  });
+  expect(out.ok).toBe(false);
+  if (!out.ok && out.kind === "invalid-reservation") {
+    expect(out.invalid.map((i) => i.name)).toEqual(["host-nan", "host-neg"]);
+  }
+});
+
+test("forceAdmit does not launder invalid reservation quantities", () => {
+  const out = admitAgainstFiniteBudget({
+    ...base,
+    incoming: r("run-b", Number.NaN),
+    forceAdmit: true,
+  });
+  expect(out.ok).toBe(false);
+  if (!out.ok) expect(out.kind).toBe("invalid-reservation");
+});
+
+test("a valid zero-declared reservation stays admissible and is never flagged invalid", () => {
+  const out = admitAgainstFiniteBudget({
+    budgetGiB: 24,
+    living: [r("host-a", 0)],
+    incoming: r("run-b", 0),
+    forceAdmit: false,
+  });
+  expect(out.ok).toBe(true);
+  if (out.ok) expect(out.reservedAfterGiB).toBe(0);
+});

@@ -7,10 +7,11 @@ import { join } from "node:path";
 import type { ModelHostManifest } from "./modelhost-schema.js";
 import type { ModelRun } from "./schema.js";
 
+import { envForTemp, makeTempRuntime } from "../../../core/test/helpers.js";
 import { mkdirSync, mkdtempSync, rmSync, truncateSync, writeFileSync } from "../safe-fs.js";
 import { applyOne, applyOneModelHost, type WorkloadClient } from "./apply.js";
 import { saveModelHost } from "./modelhost-store.js";
-import { saveWorkload } from "./store.js";
+import { loadWorkloadByNameAny, saveWorkload } from "./store.js";
 
 type WorkloadState = { up: boolean; rel: string; args: string[] };
 type WorkloadStateMap = Map<string, WorkloadState>;
@@ -72,6 +73,34 @@ function makeClient(state: WorkloadStateMap): WorkloadClient {
     rpcServerDoctor: { query: () => Promise.resolve({ ok: true, path: "", llamaCppBin: "" }) },
   };
 }
+
+function makeRecordingClient(state: WorkloadStateMap): {
+  client: WorkloadClient;
+  stops: string[];
+  starts: string[];
+} {
+  const stops: string[] = [];
+  const starts: string[] = [];
+  const base = makeClient(state);
+  const client: WorkloadClient = {
+    ...base,
+    serverStop: {
+      mutate: (input): Promise<unknown> => {
+        stops.push(input.workload);
+        return base.serverStop.mutate(input);
+      },
+    },
+    serverStart: {
+      subscribe: (input, callbacks): UnsubscribableLike => {
+        starts.push(input.workload);
+        return base.serverStart.subscribe(input, callbacks);
+      },
+    },
+  };
+  return { client, stops, starts };
+}
+
+type UnsubscribableLike = ReturnType<WorkloadClient["serverStart"]["subscribe"]>;
 
 const mkManifest = (
   name: string,
@@ -260,16 +289,127 @@ test("genuinely changed rel/host/port still triggers restart", async () => {
 
 test("evict annotation stops named workload before starting incoming", async () => {
   const state = new Map([["a", { up: true, rel: "a.gguf", args: [] }]]);
-  const result = await applyOne(
-    mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090 }),
-    () => makeClient(state),
-    undefined,
-    undefined,
-    { listManifests: () => [mkManifest("a")], getNodeBudgetGiB: () => 32 },
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-evict-"));
+  saveWorkload(mkManifest("a"), workloadsDir);
+  try {
+    const result = await applyOne(
+      mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090 }),
+      () => makeClient(state),
+      undefined,
+      undefined,
+      { workloadsDir, getNodeBudgetGiB: () => 32 },
+    );
+    expect(state.has("a")).toBe(false);
+    expect(state.has("b")).toBe(true);
+    expect(result.action).toBe("started");
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("DF-01A: evict naming a stored ModelHost is refused before any stop or start", async () => {
+  const temp = makeTempRuntime();
+  const env = envForTemp(temp);
+  const workloadsDir = join(temp.devStorage, "workloads");
+  saveModelHost(
+    mkModelHostManifest("resident-host", { resources: { expectedMemoryGiB: 24 } }),
+    workloadsDir,
   );
-  expect(state.has("a")).toBe(false);
-  expect(state.has("b")).toBe(true);
-  expect(result.action).toBe("started");
+  const state: WorkloadStateMap = new Map();
+  const { client, stops, starts } = makeRecordingClient(state);
+  try {
+    const result = await applyOne(
+      mkManifest("incoming-run", { ram: 8, annotations: { "llamactl.io/evict": "resident-host" } }),
+      () => client,
+      undefined,
+      undefined,
+      { env, workloadsDir, getNodeBudgetGiB: () => 24 },
+    );
+    expect(result.action).toBe("pending");
+    expect(result.statusSection.phase).toBe("Failed");
+    expect(result.statusSection.conditions[0]?.reason).toBe("EvictKindUnsupported");
+    expect(stops).toEqual([]);
+    expect(starts).toEqual([]);
+    expect(loadWorkloadByNameAny("resident-host", workloadsDir).kind).toBe("ModelHost");
+  } finally {
+    temp.cleanup();
+  }
+});
+
+test("DF-01A: evict naming an unparseable manifest is refused without freeing capacity", async () => {
+  const temp = makeTempRuntime();
+  const env = envForTemp(temp);
+  const workloadsDir = join(temp.devStorage, "workloads");
+  mkdirSync(workloadsDir, { recursive: true });
+  writeFileSync(join(workloadsDir, "ghost-host.yaml"), "kind: ModelHost\nspec: [unterminated\n");
+  const state: WorkloadStateMap = new Map();
+  const { client, stops, starts } = makeRecordingClient(state);
+  try {
+    const result = await applyOne(
+      mkManifest("incoming-run", { ram: 8, annotations: { "llamactl.io/evict": "ghost-host" } }),
+      () => client,
+      undefined,
+      undefined,
+      { env, workloadsDir, getNodeBudgetGiB: () => 24 },
+    );
+    expect(result.action).toBe("pending");
+    expect(result.statusSection.conditions[0]?.reason).toBe("EvictKindUnsupported");
+    expect(stops).toEqual([]);
+    expect(starts).toEqual([]);
+  } finally {
+    temp.cleanup();
+  }
+});
+
+test("DF-01A: evict naming a missing manifest is a legacy skip that still proceeds", async () => {
+  const temp = makeTempRuntime();
+  const env = envForTemp(temp);
+  const workloadsDir = join(temp.devStorage, "workloads");
+  const state: WorkloadStateMap = new Map();
+  const { client, stops, starts } = makeRecordingClient(state);
+  try {
+    const result = await applyOne(
+      mkManifest("incoming-run", { ram: 8, annotations: { "llamactl.io/evict": "ghost-run" } }),
+      () => client,
+      undefined,
+      undefined,
+      { env, workloadsDir, getNodeBudgetGiB: () => 24 },
+    );
+    expect(result.action).toBe("started");
+    expect(stops).toEqual([]);
+    expect(starts).toEqual(["incoming-run"]);
+  } finally {
+    temp.cleanup();
+  }
+});
+
+test("DF-01A: a missing evict victim listed as living grants no capacity credit", async () => {
+  const temp = makeTempRuntime();
+  const env = envForTemp(temp);
+  const workloadsDir = join(temp.devStorage, "workloads");
+  const state: WorkloadStateMap = new Map();
+  const { client, stops, starts } = makeRecordingClient(state);
+  try {
+    const result = await applyOne(
+      mkManifest("incoming-run", { ram: 8, annotations: { "llamactl.io/evict": "ghost-run" } }),
+      () => client,
+      undefined,
+      undefined,
+      {
+        env,
+        workloadsDir,
+        listManifests: () => [mkManifest("ghost-run", { ram: 24 })],
+        getNodeBudgetGiB: () => 24,
+      },
+    );
+    expect(result.action).toBe("pending");
+    expect(result.statusSection.conditions[0]?.reason).toBe("BudgetExceeded");
+    expect(result.error).toContain("ghost-run");
+    expect(stops).toEqual([]);
+    expect(starts).toEqual([]);
+  } finally {
+    temp.cleanup();
+  }
 });
 
 test("rejected admission does NOT evict its targets (destructive eviction guard)", async () => {
@@ -284,14 +424,17 @@ test("rejected admission does NOT evict its targets (destructive eviction guard)
     ["a", { up: true, rel: "a.gguf", args: [] }],
     ["c", { up: true, rel: "c.gguf", args: [] }],
   ]);
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-evict-guard-"));
+  saveWorkload(mkManifest("a", { ram: 8 }), workloadsDir);
+  saveWorkload(mkManifest("c", { ram: 8 }), workloadsDir);
   const result = await applyOne(
     mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090, ram: 8 }),
     () => makeClient(state),
     undefined,
     undefined,
     {
+      workloadsDir,
       getNodeBudgetGiB: () => 10,
-      listManifests: () => [mkManifest("a", { ram: 8 }), mkManifest("c", { ram: 8 })],
     },
   );
   expect(result.action).toBe("pending");
@@ -300,31 +443,46 @@ test("rejected admission does NOT evict its targets (destructive eviction guard)
   // evict anything.
   expect(state.has("a")).toBe(true);
   expect(state.has("b")).toBe(false);
+  rmSync(workloadsDir, { recursive: true, force: true });
 });
 
 test("budget overflow returns pending with BudgetExceeded unless force-admit", async () => {
   const state = new Map([["a", { up: true, rel: "a.gguf", args: [] }]]);
-  const result = await applyOne(
-    mkManifest("b", { port: 8090, ram: 8 }),
-    () => makeClient(state),
-    undefined,
-    undefined,
-    { getNodeBudgetGiB: () => 10, listManifests: () => [mkManifest("a", { ram: 8 })] },
-  );
-  expect(result.action).toBe("pending");
-  expect(result.statusSection.conditions[0]?.reason).toBe("BudgetExceeded");
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-budget-overflow-"));
+  try {
+    const result = await applyOne(
+      mkManifest("b", { port: 8090, ram: 8 }),
+      () => makeClient(state),
+      undefined,
+      undefined,
+      {
+        workloadsDir,
+        getNodeBudgetGiB: () => 10,
+        listManifests: () => [mkManifest("a", { ram: 8 })],
+      },
+    );
+    expect(result.action).toBe("pending");
+    expect(result.statusSection.conditions[0]?.reason).toBe("BudgetExceeded");
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
 });
 
 test("force-admit annotation bypasses the budget check", async () => {
   const state: WorkloadStateMap = new Map();
-  const result = await applyOne(
-    mkManifest("b", { annotations: { "llamactl.io/force-admit": "true" }, ram: 30, port: 8090 }),
-    () => makeClient(state),
-    undefined,
-    undefined,
-    { getNodeBudgetGiB: () => 1, listManifests: () => [] },
-  );
-  expect(result.action).toBe("started");
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-force-admit-"));
+  try {
+    const result = await applyOne(
+      mkManifest("b", { annotations: { "llamactl.io/force-admit": "true" }, ram: 30, port: 8090 }),
+      () => makeClient(state),
+      undefined,
+      undefined,
+      { workloadsDir, getNodeBudgetGiB: () => 1, listManifests: () => [] },
+    );
+    expect(result.action).toBe("started");
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
 });
 
 test("concurrent applies on the same node serialize through the mutex", async () => {
@@ -364,16 +522,23 @@ test("concurrent applies on the same node serialize through the mutex", async ()
   });
   const mfA = mkManifest("a", { port: 8181, node: "same" });
   const mfB = mkManifest("b", { port: 8090, node: "same" });
-  await Promise.all([
-    applyOne(mfA, slowClient, undefined, undefined, {
-      listManifests: () => [],
-      getNodeBudgetGiB: () => 32,
-    }),
-    applyOne(mfB, slowClient, undefined, undefined, {
-      listManifests: () => [],
-      getNodeBudgetGiB: () => 32,
-    }),
-  ]);
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-concurrent-apply-"));
+  try {
+    await Promise.all([
+      applyOne(mfA, slowClient, undefined, undefined, {
+        workloadsDir,
+        listManifests: () => [],
+        getNodeBudgetGiB: () => 32,
+      }),
+      applyOne(mfB, slowClient, undefined, undefined, {
+        workloadsDir,
+        listManifests: () => [],
+        getNodeBudgetGiB: () => 32,
+      }),
+    ]);
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
   expect(callOrder[0]?.startsWith("start:")).toBe(true);
   expect(callOrder[1]).toBe(callOrder[0]!.replace("start:", "done:"));
 });
@@ -537,46 +702,175 @@ test("DF-01: ModelRun admission uses a finite local budget without a supplied re
 
 test("DF-01: ModelRun admission counts living workloads on an alias of the same physical node", async () => {
   const state: WorkloadStateMap = new Map();
-  const result = await applyOne(
-    mkManifest("b", { port: 8090, ram: 8, node: "mac-mini" }),
-    () => makeClient(state),
-    undefined,
-    undefined,
-    {
-      getNodeBudgetGiB: () => 10,
-      listManifests: () => [mkManifest("a", { ram: 8, node: "mac-mini.local" })],
-      resolveNodeIdentity: (n) => (n === "mac-mini" || n === "mac-mini.local" ? "mac-mini" : null),
-    },
-  );
-  expect(result.action).toBe("pending");
-  expect(result.statusSection.conditions[0]?.reason).toBe("BudgetExceeded");
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-df01-alias-"));
+  try {
+    const result = await applyOne(
+      mkManifest("b", { port: 8090, ram: 8, node: "mac-mini" }),
+      () => makeClient(state),
+      undefined,
+      undefined,
+      {
+        workloadsDir,
+        getNodeBudgetGiB: () => 10,
+        listManifests: () => [mkManifest("a", { ram: 8, node: "mac-mini.local" })],
+        resolveNodeIdentity: (n) =>
+          n === "mac-mini" || n === "mac-mini.local" ? "mac-mini" : null,
+      },
+    );
+    expect(result.action).toBe("pending");
+    expect(result.statusSection.conditions[0]?.reason).toBe("BudgetExceeded");
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
 });
 
 test("DF-01: an unverifiable remote budget refuses instead of admitting unlimited", async () => {
   const state: WorkloadStateMap = new Map();
-  const result = await applyOne(
-    mkManifest("b", { port: 8090, ram: 8, node: "mac-mini" }),
-    () => makeClient(state),
-    undefined,
-    undefined,
-    { listManifests: () => [] },
-  );
-  expect(result.action).toBe("pending");
-  expect(result.statusSection.conditions[0]?.reason).toBe("BudgetUnknown");
-  expect(result.error).toContain("budget is unknown");
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-df01-unknown-"));
+  try {
+    const result = await applyOne(
+      mkManifest("b", { port: 8090, ram: 8, node: "mac-mini" }),
+      () => makeClient(state),
+      undefined,
+      undefined,
+      { workloadsDir, listManifests: () => [] },
+    );
+    expect(result.action).toBe("pending");
+    expect(result.statusSection.conditions[0]?.reason).toBe("BudgetUnknown");
+    expect(result.error).toContain("budget is unknown");
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
 });
 
 test("DF-01: a zero-declared workload passes admission even with an unknown budget", async () => {
   const state: WorkloadStateMap = new Map();
-  const result = await applyOne(
-    mkManifest("b", { port: 8090, ram: 0, node: "mac-mini" }),
-    () => makeClient(state),
-    undefined,
-    undefined,
-    { listManifests: () => [] },
-  );
-  expect(result.action).toBe("started");
-  const reserved = result.statusSection.conditions.find((c) => c.type === "BudgetReserved");
-  expect(reserved?.message).toContain("unknown");
-  expect(reserved?.message).not.toContain("unbounded");
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-df01-zero-"));
+  try {
+    const result = await applyOne(
+      mkManifest("b", { port: 8090, ram: 0, node: "mac-mini" }),
+      () => makeClient(state),
+      undefined,
+      undefined,
+      { workloadsDir, listManifests: () => [] },
+    );
+    expect(result.action).toBe("started");
+    const reserved = result.statusSection.conditions.find((c) => c.type === "BudgetReserved");
+    expect(reserved?.message).toContain("unknown");
+    expect(reserved?.message).not.toContain("unbounded");
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("DF-01A: zero-declared incoming still refuses when a living reservation exists and the budget is unknown", async () => {
+  const state: WorkloadStateMap = new Map();
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-df01a-zero-living-"));
+  try {
+    const result = await applyOne(
+      mkManifest("b", { port: 8090, ram: 0, node: "mac-mini" }),
+      () => makeClient(state),
+      undefined,
+      undefined,
+      {
+        workloadsDir,
+        listManifests: () => [mkManifest("a", { ram: 8, node: "mac-mini" })],
+      },
+    );
+    expect(result.action).toBe("pending");
+    expect(result.statusSection.conditions[0]?.reason).toBe("BudgetUnknown");
+    expect(state.has("b")).toBe(false);
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("DF-01A: ModelRun admission charges a heuristic-sized ModelHost through the forwarded apply env", async () => {
+  const temp = makeTempRuntime();
+  const env = envForTemp(temp);
+  const workloadsDir = join(temp.devStorage, "workloads");
+  const rel = "mlx-community/df01a-host-model";
+  seedModelDir(temp.modelsDir, rel, 1024 ** 3);
+  saveModelHost(mkModelHostManifest("host-no-declared", { hostedModels: [{ rel }] }), workloadsDir);
+  const state: WorkloadStateMap = new Map();
+  const { client, starts } = makeRecordingClient(state);
+  try {
+    const result = await applyOne(
+      mkManifest("incoming-run", { ram: 8 }),
+      () => client,
+      undefined,
+      undefined,
+      { env, workloadsDir, getNodeBudgetGiB: () => 9 },
+    );
+    expect(result.action).toBe("pending");
+    expect(result.statusSection.conditions[0]?.reason).toBe("BudgetExceeded");
+    expect(result.error).toContain("host-no-declared");
+    expect(starts).toEqual([]);
+  } finally {
+    temp.cleanup();
+  }
+});
+
+test("DF-01A: no-op apply of a matching running server keeps Running with its pid on an unknown budget", async () => {
+  const temp = makeTempRuntime();
+  const env = envForTemp(temp);
+  const workloadsDir = join(temp.devStorage, "workloads");
+  const state: WorkloadStateMap = new Map([["b", { up: true, rel: "b.gguf", args: [] }]]);
+  const { client, stops, starts } = makeRecordingClient(state);
+  try {
+    const result = await applyOne(
+      mkManifest("b", { ram: 8, node: "mac-mini" }),
+      () => client,
+      undefined,
+      undefined,
+      { env, workloadsDir, listManifests: () => [] },
+    );
+    expect(result.action).toBe("unchanged");
+    expect(result.statusSection.phase).toBe("Running");
+    expect(result.statusSection.serverPid).toBe(1);
+    expect(result.statusSection.endpoint).toBe("http://127.0.0.1:8181");
+    expect(result.error).toBeUndefined();
+    expect(result.statusSection.conditions[0]?.reason).toBe("unchanged");
+    const refusal = result.statusSection.conditions.find((c) => c.type === "BudgetRefused");
+    expect(refusal?.reason).toBe("BudgetUnknown");
+    expect(refusal?.message).toContain("budget is unknown");
+    expect(stops).toEqual([]);
+    expect(starts).toEqual([]);
+  } finally {
+    temp.cleanup();
+  }
+});
+
+test("DF-01A: no-op apply of a matching running server keeps Running on an over-budget accounting", async () => {
+  const temp = makeTempRuntime();
+  const env = envForTemp(temp);
+  const workloadsDir = join(temp.devStorage, "workloads");
+  const state: WorkloadStateMap = new Map([["b", { up: true, rel: "b.gguf", args: [] }]]);
+  const { client, stops, starts } = makeRecordingClient(state);
+  try {
+    const result = await applyOne(
+      mkManifest("b", { ram: 8, node: "mac-mini" }),
+      () => client,
+      undefined,
+      undefined,
+      {
+        env,
+        workloadsDir,
+        listManifests: () => [mkManifest("a", { ram: 8, node: "mac-mini" })],
+        getNodeBudgetGiB: () => 10,
+      },
+    );
+    expect(result.action).toBe("unchanged");
+    expect(result.statusSection.phase).toBe("Running");
+    expect(result.statusSection.serverPid).toBe(1);
+    expect(result.statusSection.endpoint).toBe("http://127.0.0.1:8181");
+    expect(result.error).toBeUndefined();
+    const refusal = result.statusSection.conditions.find((c) => c.type === "BudgetRefused");
+    expect(refusal?.reason).toBe("BudgetExceeded");
+    expect(stops).toEqual([]);
+    expect(starts).toEqual([]);
+    expect(state.has("b")).toBe(true);
+  } finally {
+    temp.cleanup();
+  }
 });

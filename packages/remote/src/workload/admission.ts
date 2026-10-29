@@ -35,6 +35,12 @@ export type AdmissionResult =
   | { ok: true; reservedAfter: number; budget: number | null }
   | {
       ok: false;
+      kind: "invalid-reservation";
+      invalid: AdmissionReservation[];
+      reason: string;
+    }
+  | {
+      ok: false;
       kind: "unknown-budget";
       reservedAfter: number;
       reason: string;
@@ -95,7 +101,16 @@ function formatAdmissionBreakdown(
   return [
     `node '${nodeName}' would reserve ${reservedAfter.toFixed(1)} GiB after adding '${incoming.name}' (${incoming.expectedMemoryGiB.toFixed(1)} GiB) to existing: ${livingDesc}`,
     `Budget is ${budget.toFixed(1)} GiB`,
-    `--force does not bypass the budget; free capacity with --evict <name> or raise the node budget (NodeRun spec.budget.memoryGiB, default 75% of total RAM)`,
+    `the llamactl.io/force-admit annotation (set by apply --force) is the explicit legacy override that admits past this budget; free capacity with --evict <name> or raise the node budget (NodeRun spec.budget.memoryGiB, default 75% of total RAM)`,
+  ].join(". ");
+}
+
+function formatInvalidReservationReason(nodeName: string, invalid: AdmissionReservation[]): string {
+  const names = invalid.map((i) => `'${i.name}' (${String(i.expectedMemoryGiB)})`).join(", ");
+  return [
+    `node '${nodeName}' has invalid reservation quantities: ${names}`,
+    `expectedMemoryGiB must be a finite non-negative number; refusing to sum NaN or infinities into the accounting`,
+    `Correct spec.resources.expectedMemoryGiB in the named manifests. The llamactl.io/force-admit annotation overrides a finite budget, it does not launder an invalid quantity`,
   ].join(". ");
 }
 
@@ -127,6 +142,14 @@ export function computeNodeBudget(input: AdmissionInput): AdmissionResult {
   });
   if (decision.ok) {
     return { ok: true, reservedAfter: decision.reservedAfterGiB, budget: decision.budgetGiB };
+  }
+  if (decision.kind === "invalid-reservation") {
+    return {
+      ok: false,
+      kind: "invalid-reservation",
+      invalid: decision.invalid,
+      reason: formatInvalidReservationReason(input.nodeName, decision.invalid),
+    };
   }
   if (decision.kind === "unknown-budget") {
     return {

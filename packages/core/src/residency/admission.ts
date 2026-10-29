@@ -31,6 +31,7 @@ export function sumReservationGiB(reservations: readonly AdmissionReservation[])
 
 export type FiniteBudgetAdmission =
   | { ok: true; reservedAfterGiB: number; budgetGiB: number | null }
+  | { ok: false; kind: "invalid-reservation"; invalid: AdmissionReservation[] }
   | { ok: false; kind: "unknown-budget"; reservedAfterGiB: number }
   | {
       ok: false;
@@ -48,8 +49,17 @@ export interface FiniteBudgetAdmissionInput {
   forceAdmit: boolean;
 }
 
+function isInvalidReservationQuantity(value: number): boolean {
+  return !Number.isFinite(value) || value < 0;
+}
+
 export function admitAgainstFiniteBudget(input: FiniteBudgetAdmissionInput): FiniteBudgetAdmission {
-  const contributors = [...input.living, input.incoming].filter((r) => r.expectedMemoryGiB > 0);
+  const all = [...input.living, input.incoming];
+  const invalid = all.filter((r) => isInvalidReservationQuantity(r.expectedMemoryGiB));
+  if (invalid.length > 0) {
+    return { ok: false, kind: "invalid-reservation", invalid };
+  }
+  const contributors = all.filter((r) => r.expectedMemoryGiB > 0);
   const reservedAfterGiB = sumReservationGiB(contributors);
   if (input.forceAdmit) {
     return {

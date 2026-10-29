@@ -118,7 +118,7 @@ test("admission returns over-budget when sum exceeds budget without force", () =
   };
   const r = computeNodeBudget(input);
   expect(r.ok).toBe(false);
-  if (!r.ok) expect(r.reservedAfter).toBe(24);
+  if (!r.ok && r.kind === "over-budget") expect(r.reservedAfter).toBe(24);
 });
 
 test("admission over-budget reason attributes each contributor and names the levers", () => {
@@ -138,7 +138,24 @@ test("admission over-budget reason attributes each contributor and names the lev
     expect(r.reason).toContain("would reserve 24.0 GiB");
     expect(r.reason).toMatch(/--evict/);
     expect(r.reason).toContain("spec.budget.memoryGiB");
-    expect(r.reason).toContain("does not bypass the budget");
+    expect(r.reason).toContain("llamactl.io/force-admit");
+    expect(r.reason).not.toContain("does not bypass");
+  }
+});
+
+test("computeNodeBudget maps an invalid incoming reservation to a structured refusal", () => {
+  const input: AdmissionInput = {
+    nodeName: "local",
+    nodeBudgetGiB: 20,
+    livingManifests: [mkManifest("a", { expectedMemoryGiB: 16 })],
+    incoming: mkManifest("b", { expectedMemoryGiB: Number.NaN }),
+    forceAdmit: false,
+  };
+  const r = computeNodeBudget(input);
+  expect(r.ok).toBe(false);
+  if (!r.ok) {
+    expect(r.kind).toBe("invalid-reservation");
+    expect(r.reason).toContain("'b'");
   }
 });
 
