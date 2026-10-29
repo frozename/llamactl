@@ -66,6 +66,9 @@ A ModelHost on another node reports what that node's agent says
 (modelHostStatus): Running, Stopped, unknown when the node cannot
 confirm the recorded pid, or Unreachable when the node does not answer.
 
+A ModelHost on this node with no runtime state file reads Stopped,
+the same verdict describe workload reports.
+
 Each node query (serverStatus for a ModelRun, modelHostStatus for a
 ModelHost) has a 10 s deadline: a node that does not answer within
 10 s reads Unreachable, and the other rows are not held up.
@@ -700,7 +703,9 @@ type ModelHostLive = {
 async function inspectLocalModelHost(manifest: ModelHostManifest): Promise<ModelHostLive> {
   const state = readModelHostState({ name: manifest.metadata.name });
   const endpoint = state ? formatEndpoint(state.host, state.port) : null;
-  let phase: ModelHostLive["phase"] = "unknown";
+  // #307: no state file on this node reads Stopped, the verdict describe gets
+  // from statusModelHost. Every branch below overwrites it when a state file exists.
+  let phase: ModelHostLive["phase"] = "Stopped";
   let statePid: number | null = null;
   let listenerPid: number | null = null;
   if (state) {

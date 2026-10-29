@@ -353,7 +353,7 @@ test("text: one note line per externally managed host, table columns unchanged",
   expect(code).toBe(0);
   expect(lines[0]).toMatch(/^NAME +NODE +KIND +PHASE +REL$/);
   expect(lines.find((l) => l.startsWith("seat-a"))).toMatch(
-    /^seat-a +local +modelhost +unknown +mlx-community\/Qwen3-8B-MLX-4bit$/,
+    /^seat-a +local +modelhost +Stopped +mlx-community\/Qwen3-8B-MLX-4bit$/,
   );
   const notes = lines.filter((l) => l.startsWith("note: "));
   expect(notes).toEqual([
@@ -372,6 +372,7 @@ test("help: GET_USAGE describes managedBy", async () => {
   expect(stdout).toContain("'note:'");
   expect(stdout).toContain("modelHostStatus");
   expect(stdout).toContain("10 s deadline");
+  expect(stdout).toContain("no runtime state file reads Stopped");
 });
 
 test("json: remote ModelHost reads Running and pid from the node client", async () => {
@@ -439,10 +440,25 @@ test("json: a local ModelHost never asks the node client", async () => {
 
   expect(code).toBe(0);
   const row = parseRows(stdout).find((r) => r.name === "seat-l");
-  expect(row?.phase).toBe("unknown");
+  expect(row?.phase).toBe("Stopped");
   expect(row?.endpoint).toBeNull();
   expect(row?.statePid).toBeNull();
   expect(calls).toEqual([]);
+});
+
+test("json: a local ModelHost with no state file reads Stopped (#307)", async () => {
+  writeHost({ name: "dflash-local", host: "127.0.0.1", port: 8115 });
+
+  const { result: code, stdout } = await withCapturedIo(() => runGet(["workloads", "--json"]));
+
+  expect(code).toBe(0);
+  const row = parseRows(stdout).find((r) => r.name === "dflash-local");
+  expect(row?.node).toBe("local");
+  expect(row?.kind).toBe("modelhost");
+  expect(row?.phase).toBe("Stopped");
+  expect(row?.endpoint).toBeNull();
+  expect(row?.statePid).toBeNull();
+  expect(row?.listenerPid).toBeNull();
 });
 
 test("text: a remote Running ModelHost shows Running in the table", async () => {
