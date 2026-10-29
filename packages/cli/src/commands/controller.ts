@@ -225,6 +225,21 @@ export interface OomWatchState {
   pendingKills: number;
 }
 
+/** OOM kills that cannot be matched to one engine: fewer kills than engines found dead. */
+export interface AmbiguousOomKills {
+  kills: number;
+  hosts: string[];
+}
+
+/** One pass of the OOM watch: the state to carry forward and what to report. */
+export interface OomWatchStep {
+  nextState: OomWatchState;
+  oomKilled: string[];
+  unattributedKills: number;
+  /** #196: set when fewer kills than dead engines leave every kill unmatched; null otherwise. */
+  ambiguousKills: AmbiguousOomKills | null;
+}
+
 /**
  * Attribute a rise of the controller cgroup's oom_kill counter to the local
  * ModelHost engines found dead in the same pass. The kernel counts a kill
@@ -232,14 +247,16 @@ export interface OomWatchState {
  * engine the pass found dead; a kill that lands after a host's status check
  * is counted first, so an unmatched rise is held for one more pass and then
  * reported as unattributed. A new cgroup path or a lower counter (the cgroup
- * was recreated) re-baselines without attributing anything.
+ * was recreated) re-baselines without attributing anything. When fewer kills
+ * are counted than engines were found dead, no kill can be matched to one
+ * engine: they are reported once as ambiguous and recorded on none (#196).
  */
 export function advanceOomWatch(
   state: OomWatchState,
   sample: CgroupOomSample | null,
   deadHosts: readonly string[],
-): { nextState: OomWatchState; oomKilled: string[]; unattributedKills: number } {
-  const quiet = { oomKilled: [], unattributedKills: 0 };
+): OomWatchStep {
+  const quiet = { oomKilled: [], unattributedKills: 0, ambiguousKills: null };
   if (sample === null) return { nextState: state, ...quiet };
   const { last } = state;
   const reset = { last: sample, pendingKills: 0 };
@@ -249,10 +266,28 @@ export function advanceOomWatch(
   const rise = sample.oomKill - last.oomKill;
   const pending = state.pendingKills + rise;
   if (pending === 0) return { nextState: reset, ...quiet };
-  if (deadHosts.length > 0) {
-    return { nextState: reset, oomKilled: [...deadHosts], unattributedKills: 0 };
+  if (deadHosts.length > pending) {
+    // #196: fewer kills than engines found dead, so no kill can be matched to
+    // one engine. Report them once, record none, and count them as accounted
+    // for so the persisted baseline advances.
+    return {
+      nextState: reset,
+      oomKilled: [],
+      unattributedKills: 0,
+      ambiguousKills: { kills: pending, hosts: [...deadHosts] },
+    };
   }
-  if (rise === 0) return { nextState: reset, oomKilled: [], unattributedKills: pending };
+  if (deadHosts.length > 0) {
+    return {
+      nextState: reset,
+      oomKilled: [...deadHosts],
+      unattributedKills: 0,
+      ambiguousKills: null,
+    };
+  }
+  if (rise === 0) {
+    return { nextState: reset, oomKilled: [], unattributedKills: pending, ambiguousKills: null };
+  }
   // #196: kills held from the previous pass have waited their one pass, so
   // report them now and hold only this pass's rise. Re-holding them with the
   // new rise would never report them while the counter keeps climbing.
@@ -260,6 +295,7 @@ export function advanceOomWatch(
     nextState: { last: sample, pendingKills: rise },
     oomKilled: [],
     unattributedKills: state.pendingKills,
+    ambiguousKills: null,
   };
 }
 
@@ -284,10 +320,28 @@ export function newlyDeadHosts(
     .map((r) => r.name);
 }
 
+/** #196: one line for kills counted while several engines were found dead. */
+function ambiguousKillsLine(
+  ts: string,
+  counter: string,
+  sample: CgroupOomSample | null,
+  ambiguous: AmbiguousOomKills,
+): ControllerLogLine {
+  const engines = `${String(ambiguous.hosts.length)} engines found dead (${ambiguous.hosts.join(", ")})`;
+  return {
+    stream: "stderr",
+    text: `${ts} WARN controller cgroup ${sample?.cgroup ?? "?"}: ${String(ambiguous.kills)} OOM kill(s) (oom_kill ${counter}) among ${engines}; not attributed to one engine`,
+  };
+}
+
 export function deadHostLines(
   reports: readonly ReportForLog[],
   deadHosts: readonly string[],
-  watch: { oomKilled: readonly string[]; unattributedKills: number },
+  watch: {
+    oomKilled: readonly string[];
+    unattributedKills: number;
+    ambiguousKills: AmbiguousOomKills | null;
+  },
   sample: CgroupOomSample | null,
   nowMs: number,
 ): ControllerLogLine[] {
@@ -311,6 +365,9 @@ export function deadHostLines(
       stream: "stderr",
       text: `${ts} WARN controller cgroup ${sample?.cgroup ?? "?"}: ${String(watch.unattributedKills)} OOM kill(s) (oom_kill ${counter}) not matched to a ModelHost engine`,
     });
+  }
+  if (watch.ambiguousKills !== null) {
+    lines.push(ambiguousKillsLine(ts, counter, sample, watch.ambiguousKills));
   }
   return lines;
 }
