@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
 
 import type { ModelRun } from "../src/workload/schema.js";
 
-import { mkdtempSync, writeFileSync } from "../src/safe-fs.js";
+import { envForTemp, makeTempRuntime } from "../../core/test/helpers.js";
+import { mkdirSync, writeFileSync } from "../src/safe-fs.js";
 import { applyOne, type WorkloadClient } from "../src/workload/apply.js";
 import { parseWorkload } from "../src/workload/store.js";
 
@@ -177,8 +177,22 @@ function manifest(): ModelRun {
   };
 }
 
-function tempWorkloadsDir(): string {
-  return mkdtempSync(join(tmpdir(), "llamactl-workloads-"));
+// Each applyOne needs its own scoped store + env so a seeded ambient
+// store (isolation harness) or a developer's real $DEV_STORAGE can
+// never satisfy the port preflight, budget listing, or evict lookup.
+function scopedStore(): {
+  opts: { env: NodeJS.ProcessEnv; workloadsDir: string };
+  cleanup: () => void;
+} {
+  const temp = makeTempRuntime();
+  const workloadsDir = join(temp.devStorage, "workloads");
+  mkdirSync(workloadsDir, { recursive: true });
+  return {
+    opts: { env: envForTemp(temp), workloadsDir },
+    cleanup: (): void => {
+      temp.cleanup();
+    },
+  };
 }
 
 function writeManifest(dir: string, workload: ModelRun): void {
@@ -201,7 +215,13 @@ describe("applyOne preflight — worker rpcServerDoctor", () => {
       llamaCppBin: "/fake/bin",
     };
     const getClient = (node: string): WorkloadClient => makeMockClient(node, okDoctor, trace);
-    const result = await applyOne(manifest(), getClient);
+    const store = scopedStore();
+    let result: Awaited<ReturnType<typeof applyOne>>;
+    try {
+      result = await applyOne(manifest(), getClient, undefined, undefined, store.opts);
+    } finally {
+      store.cleanup();
+    }
     expect(result.error).toBeUndefined();
     expect(result.action).toBe("started");
     expect(result.statusSection.phase).toBe("Running");
@@ -248,7 +268,13 @@ describe("applyOne preflight — worker rpcServerDoctor", () => {
       );
     };
     const events: { type: string; message: string }[] = [];
-    const result = await applyOne(manifest(), getClient, (e) => events.push(e));
+    const store = scopedStore();
+    let result: Awaited<ReturnType<typeof applyOne>>;
+    try {
+      result = await applyOne(manifest(), getClient, (e) => events.push(e), undefined, store.opts);
+    } finally {
+      store.cleanup();
+    }
     expect(result.error).toBeDefined();
     expect(result.statusSection.phase).toBe("Failed");
     // Composed error names the failing node and includes both the
@@ -297,7 +323,13 @@ describe("applyOne preflight — worker rpcServerDoctor", () => {
             },
         trace,
       );
-    const result = await applyOne(manifest(), getClient);
+    const store = scopedStore();
+    let result: Awaited<ReturnType<typeof applyOne>>;
+    try {
+      result = await applyOne(manifest(), getClient, undefined, undefined, store.opts);
+    } finally {
+      store.cleanup();
+    }
     expect(result.error).toContain("2 worker node(s)");
     expect(result.error).toContain("worker1");
     expect(result.error).toContain("worker2");
@@ -321,7 +353,13 @@ describe("applyOne preflight — worker rpcServerDoctor", () => {
     };
     const getClient = (node: string): WorkloadClient =>
       makeMockClient(node, { ok: true, path: "/x", llamaCppBin: "/y" }, trace);
-    const result = await applyOne(m, getClient);
+    const store = scopedStore();
+    let result: Awaited<ReturnType<typeof applyOne>>;
+    try {
+      result = await applyOne(m, getClient, undefined, undefined, store.opts);
+    } finally {
+      store.cleanup();
+    }
     expect(result.error).toBeUndefined();
     expect(result.action).toBe("started");
     expect(trace.rpcServerDoctorCalls).toEqual([]);
@@ -445,14 +483,21 @@ describe("applyOne preflight — worker rpcServerDoctor", () => {
         endpoint: { host: "127.0.0.1", port: 8181 },
       },
     };
-    const result = await applyOne(m, getClient);
+    const store = scopedStore();
+    let result: Awaited<ReturnType<typeof applyOne>>;
+    try {
+      result = await applyOne(m, getClient, undefined, undefined, store.opts);
+    } finally {
+      store.cleanup();
+    }
     expect(result.action).toBe("restarted");
     expect(trace.serverStopCalls).toEqual(["coordinator"]);
     expect(trace.serverStartCalls).toEqual(["coordinator"]);
   });
 
   test("port collision — same node, same port → rejected with PortCollision", async () => {
-    const dir = tempWorkloadsDir();
+    const store = scopedStore();
+    const dir = store.opts.workloadsDir;
     const current: ModelRun = {
       ...manifest(),
       spec: {
@@ -478,13 +523,18 @@ describe("applyOne preflight — worker rpcServerDoctor", () => {
       serverStartCalls: [],
       serverStopCalls: [],
     };
-    const result = await applyOne(
-      current,
-      (node) => makeMockClient(node, { ok: true, path: "/x", llamaCppBin: "/y" }, trace),
-      undefined,
-      undefined,
-      { workloadsDir: dir },
-    );
+    let result: Awaited<ReturnType<typeof applyOne>>;
+    try {
+      result = await applyOne(
+        current,
+        (node) => makeMockClient(node, { ok: true, path: "/x", llamaCppBin: "/y" }, trace),
+        undefined,
+        undefined,
+        store.opts,
+      );
+    } finally {
+      store.cleanup();
+    }
     expect(result.action).toBe("pending");
     expect(result.error).toContain(
       "port collision: other already claims 127.0.0.1:8181 on node coordinator",
@@ -495,7 +545,8 @@ describe("applyOne preflight — worker rpcServerDoctor", () => {
   });
 
   test("same name re-apply allowed", async () => {
-    const dir = tempWorkloadsDir();
+    const store = scopedStore();
+    const dir = store.opts.workloadsDir;
     const current: ModelRun = {
       ...manifest(),
       spec: {
@@ -512,19 +563,25 @@ describe("applyOne preflight — worker rpcServerDoctor", () => {
       serverStartCalls: [],
       serverStopCalls: [],
     };
-    const result = await applyOne(
-      current,
-      (node) => makeMockClient(node, { ok: true, path: "/x", llamaCppBin: "/y" }, trace),
-      undefined,
-      undefined,
-      { workloadsDir: dir },
-    );
+    let result: Awaited<ReturnType<typeof applyOne>>;
+    try {
+      result = await applyOne(
+        current,
+        (node) => makeMockClient(node, { ok: true, path: "/x", llamaCppBin: "/y" }, trace),
+        undefined,
+        undefined,
+        store.opts,
+      );
+    } finally {
+      store.cleanup();
+    }
     expect(result.error).toBeUndefined();
     expect(result.action).toBe("started");
   });
 
   test("different ports — same node → both succeed", async () => {
-    const dir = tempWorkloadsDir();
+    const store = scopedStore();
+    const dir = store.opts.workloadsDir;
     const current: ModelRun = {
       ...manifest(),
       spec: {
@@ -548,19 +605,25 @@ describe("applyOne preflight — worker rpcServerDoctor", () => {
       serverStartCalls: [],
       serverStopCalls: [],
     };
-    const result = await applyOne(
-      current,
-      (node) => makeMockClient(node, { ok: true, path: "/x", llamaCppBin: "/y" }, trace),
-      undefined,
-      undefined,
-      { workloadsDir: dir },
-    );
+    let result: Awaited<ReturnType<typeof applyOne>>;
+    try {
+      result = await applyOne(
+        current,
+        (node) => makeMockClient(node, { ok: true, path: "/x", llamaCppBin: "/y" }, trace),
+        undefined,
+        undefined,
+        store.opts,
+      );
+    } finally {
+      store.cleanup();
+    }
     expect(result.error).toBeUndefined();
     expect(result.action).toBe("started");
   });
 
   test("unset port — current manifest has no endpoint.port → skip check", async () => {
-    const dir = tempWorkloadsDir();
+    const store = scopedStore();
+    const dir = store.opts.workloadsDir;
     const current = parseWorkload(
       stringifyYaml({
         ...manifest(),
@@ -586,19 +649,25 @@ describe("applyOne preflight — worker rpcServerDoctor", () => {
       serverStartCalls: [],
       serverStopCalls: [],
     };
-    const result = await applyOne(
-      current,
-      (node) => makeMockClient(node, { ok: true, path: "/x", llamaCppBin: "/y" }, trace),
-      undefined,
-      undefined,
-      { workloadsDir: dir },
-    );
+    let result: Awaited<ReturnType<typeof applyOne>>;
+    try {
+      result = await applyOne(
+        current,
+        (node) => makeMockClient(node, { ok: true, path: "/x", llamaCppBin: "/y" }, trace),
+        undefined,
+        undefined,
+        store.opts,
+      );
+    } finally {
+      store.cleanup();
+    }
     expect(result.error).toBeUndefined();
     expect(result.action).toBe("started");
   });
 
   test("::1 localhost collides with 127.0.0.1", async () => {
-    const dir = tempWorkloadsDir();
+    const store = scopedStore();
+    const dir = store.opts.workloadsDir;
     const current: ModelRun = {
       ...manifest(),
       spec: {
@@ -622,19 +691,25 @@ describe("applyOne preflight — worker rpcServerDoctor", () => {
       serverStartCalls: [],
       serverStopCalls: [],
     };
-    const result = await applyOne(
-      current,
-      (node) => makeMockClient(node, { ok: true, path: "/x", llamaCppBin: "/y" }, trace),
-      undefined,
-      undefined,
-      { workloadsDir: dir },
-    );
+    let result: Awaited<ReturnType<typeof applyOne>>;
+    try {
+      result = await applyOne(
+        current,
+        (node) => makeMockClient(node, { ok: true, path: "/x", llamaCppBin: "/y" }, trace),
+        undefined,
+        undefined,
+        store.opts,
+      );
+    } finally {
+      store.cleanup();
+    }
     expect(result.error).toContain("port collision");
     expect(result.statusSection.conditions[0]).toMatchObject({ reason: "PortCollision" });
   });
 
   test("failed PortCollision candidate is ignored on subsequent preflight", async () => {
-    const dir = tempWorkloadsDir();
+    const store = scopedStore();
+    const dir = store.opts.workloadsDir;
     const current: ModelRun = {
       ...manifest(),
       spec: {
@@ -674,19 +749,25 @@ describe("applyOne preflight — worker rpcServerDoctor", () => {
       serverStartCalls: [],
       serverStopCalls: [],
     };
-    const result = await applyOne(
-      current,
-      (node) => makeMockClient(node, { ok: true, path: "/x", llamaCppBin: "/y" }, trace),
-      undefined,
-      undefined,
-      { workloadsDir: dir },
-    );
+    let result: Awaited<ReturnType<typeof applyOne>>;
+    try {
+      result = await applyOne(
+        current,
+        (node) => makeMockClient(node, { ok: true, path: "/x", llamaCppBin: "/y" }, trace),
+        undefined,
+        undefined,
+        store.opts,
+      );
+    } finally {
+      store.cleanup();
+    }
     expect(result.error).toBeUndefined();
     expect(result.action).toBe("started");
   });
 
   test("different nodes — same port → both succeed", async () => {
-    const dir = tempWorkloadsDir();
+    const store = scopedStore();
+    const dir = store.opts.workloadsDir;
     const current: ModelRun = {
       ...manifest(),
       spec: {
@@ -711,19 +792,25 @@ describe("applyOne preflight — worker rpcServerDoctor", () => {
       serverStartCalls: [],
       serverStopCalls: [],
     };
-    const result = await applyOne(
-      current,
-      (node) => makeMockClient(node, { ok: true, path: "/x", llamaCppBin: "/y" }, trace),
-      undefined,
-      undefined,
-      { workloadsDir: dir },
-    );
+    let result: Awaited<ReturnType<typeof applyOne>>;
+    try {
+      result = await applyOne(
+        current,
+        (node) => makeMockClient(node, { ok: true, path: "/x", llamaCppBin: "/y" }, trace),
+        undefined,
+        undefined,
+        store.opts,
+      );
+    } finally {
+      store.cleanup();
+    }
     expect(result.error).toBeUndefined();
     expect(result.action).toBe("started");
   });
 
   test("0.0.0.0 wildcard host collides with 127.0.0.1", async () => {
-    const dir = tempWorkloadsDir();
+    const store = scopedStore();
+    const dir = store.opts.workloadsDir;
     const current: ModelRun = {
       ...manifest(),
       spec: {
@@ -747,13 +834,18 @@ describe("applyOne preflight — worker rpcServerDoctor", () => {
       serverStartCalls: [],
       serverStopCalls: [],
     };
-    const result = await applyOne(
-      current,
-      (node) => makeMockClient(node, { ok: true, path: "/x", llamaCppBin: "/y" }, trace),
-      undefined,
-      undefined,
-      { workloadsDir: dir },
-    );
+    let result: Awaited<ReturnType<typeof applyOne>>;
+    try {
+      result = await applyOne(
+        current,
+        (node) => makeMockClient(node, { ok: true, path: "/x", llamaCppBin: "/y" }, trace),
+        undefined,
+        undefined,
+        store.opts,
+      );
+    } finally {
+      store.cleanup();
+    }
     expect(result.error).toContain(
       "port collision: other already claims 0.0.0.0:8181 on node coordinator",
     );

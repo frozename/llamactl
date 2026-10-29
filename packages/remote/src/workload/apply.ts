@@ -44,7 +44,12 @@ import {
 } from "./modelhost-schema.js";
 import { withNodeLock } from "./node-mutex.js";
 import { ModelRunSchema } from "./schema.js";
-import { defaultWorkloadsDir, listAnyWorkloadsForAdmission, listWorkloads } from "./store.js";
+import {
+  defaultWorkloadsDir,
+  listAnyWorkloadsForAdmission,
+  listWorkloads,
+  loadWorkloadByNameAny,
+} from "./store.js";
 
 /**
  * Structural subset of `NodeClient` that `applyOne` actually touches.
@@ -149,8 +154,9 @@ export interface WorkloadClient {
   resolveTarget?: {
     query(input: string): Promise<string | null>;
   };
-  /** Node-reported facts; memBytes sizes remote ModelHost admission budgets.
-   *  Served by every real client through the router's nodeFacts procedure. */
+  /** Node-reported facts; memBytes sizes remote ModelRun/ModelHost
+   *  admission budgets when no explicit budget resolves. Served by every
+   *  real client through the router's nodeFacts procedure. */
   nodeFacts?: {
     query(): Promise<{ memBytes: number | null }>;
   };
@@ -455,7 +461,7 @@ function admitModelHostBudget(
   firstHostedModel: ModelHostManifest["spec"]["hostedModels"][number],
   budget: number,
 ): { ok: false; error: string } | null {
-  const workloadsDir = opts.workloadsDir ?? defaultWorkloadsDir();
+  const workloadsDir = opts.workloadsDir ?? defaultWorkloadsDir(opts.env);
   const livingManifests = listAnyWorkloadsForAdmission(workloadsDir, resolved)
     .filter((m) => m.metadata.name !== manifest.metadata.name)
     .filter((m) => m.spec.node === manifest.spec.node)
@@ -483,6 +489,7 @@ function admitModelHostBudget(
       },
     },
     forceAdmit: false,
+    supportsForceAdmit: false,
   });
   if (!admit.ok) {
     return { ok: false, error: admit.reason };
@@ -836,6 +843,10 @@ async function stopWorkers(
 
 interface ApplyOneOpts {
   workloadsDir?: string;
+  /** Env used to resolve the runtime layout when projecting ModelHosts
+   *  into the admission accounting — same forwarding contract the
+   *  ModelHost apply path already honors. */
+  env?: NodeJS.ProcessEnv;
   /**
    * Map a manifest's `spec.node` name to a stable identity (typically
    * the node's endpoint URL) so the port-collision preflight can
@@ -846,7 +857,7 @@ interface ApplyOneOpts {
    * doesn't accidentally relax the check.
    */
   resolveNodeIdentity?: (nodeName: string) => string | null;
-  listManifests?: () => ModelRun[];
+  listManifests?: (dir?: string) => ModelRun[];
   /** May be async so a caller can size a remote node from its reported memory. */
   getNodeBudgetGiB?: (nodeName: string) => number | undefined | Promise<number | undefined>;
 }
@@ -918,7 +929,7 @@ function checkPortCollision(
 ): ApplyResult | null {
   const desired = manifest.spec.endpoint;
   if (desired?.port === undefined) return null;
-  const workloadsDir = opts?.workloadsDir ?? defaultWorkloadsDir();
+  const workloadsDir = opts?.workloadsDir ?? defaultWorkloadsDir(opts?.env);
   const resolveIdent = opts?.resolveNodeIdentity;
   const desiredIdentity = resolveIdent?.(manifest.spec.node) ?? null;
   const sameNode = (otherNode: string): boolean => {
@@ -1017,22 +1028,319 @@ interface ConvergeServerContext {
   evictTargets: string[];
 }
 
-async function admitServerBudget(
+/** Map a node name to a stable physical identity when a resolver is
+ *  supplied, so admission counts aliases of the same node consistently
+ *  with the port-collision preflight. Falls back to name equality. */
+function nodeIdentityMatcher(
+  opts: ApplyOneOpts | undefined,
+  nodeName: string,
+): (otherNode: string) => boolean {
+  const resolveIdent = opts?.resolveNodeIdentity;
+  const desiredIdentity = resolveIdent?.(nodeName) ?? null;
+  return (otherNode: string): boolean => {
+    if (otherNode === nodeName) return true;
+    if (!resolveIdent || !desiredIdentity) return false;
+    const otherIdentity = resolveIdent(otherNode);
+    return otherIdentity !== null && otherIdentity === desiredIdentity;
+  };
+}
+
+/**
+ * Resolve the finite admission budget for a ModelRun target (DF-01).
+ * An explicit budget (NodeRun spec.budget.memoryGiB via the caller's
+ * resolver) wins. Otherwise a local target uses local physical capacity
+ * and a remote target uses its verified nodeFacts memory. Returns null
+ * when neither is available — callers must refuse rather than substitute
+ * Infinity or the controller's own RAM for a remote target.
+ */
+async function resolveAdmissionBudgetGiB(
+  nodeName: string,
+  client: WorkloadClient,
+  getNodeBudgetGiB: ApplyOneOpts["getNodeBudgetGiB"],
+  hasDeclaredReservations: boolean,
+): Promise<number | null> {
+  const explicit = await getNodeBudgetGiB?.(nodeName);
+  if (explicit !== undefined) return explicit;
+  if (nodeName === LOCAL_NODE_ID) return defaultNodeBudgetGiB();
+  if (!hasDeclaredReservations) return null;
+  if (!client.nodeFacts) return null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const timeout = new Promise<null>((resolve) => {
+      timer = setTimeout(() => {
+        resolve(null);
+      }, NODE_FACTS_TIMEOUT_MS);
+    });
+    const facts = await Promise.race([client.nodeFacts.query().catch(() => null), timeout]);
+    const memBytes = facts?.memBytes;
+    if (typeof memBytes === "number" && Number.isFinite(memBytes) && memBytes > 0) {
+      return defaultNodeBudgetGiB(undefined, memBytes);
+    }
+    return null;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+function isMissingManifestError(err: unknown): boolean {
+  return err instanceof Error && err.message.startsWith("workload manifest not found");
+}
+
+/**
+ * An evict target frees capacity only when it is a *verified* ModelRun in
+ * the store (DF-01A). A verified ModelHost is started by the ModelHost
+ * apply path and an unreadable manifest could be either kind — neither may
+ * be credited as freed capacity or stopped by this path, so the apply is
+ * refused before any teardown. Ambiguous identities are refused with the
+ * same precedence: more than one stored manifest claiming the target name,
+ * or a canonical `<target>.yaml` whose metadata.name disagrees with the
+ * target, means the freed capacity cannot be attributed to one victim.
+ * Ownership is verified too — a target whose spec.node is not verifiably
+ * the incoming manifest's node is refused, since the credit would apply
+ * to a different node's budget. A genuinely missing manifest is the legacy
+ * already-gone victim (e.g. a stale evict annotation surviving its
+ * victim's delete): it is a no-op skip — nothing is resident to stop, and
+ * since it is absent from the store it grants no capacity credit either.
+ */
+function authorizeEvictTargets(
   ctx: ConvergeServerContext,
-): Promise<
-  { ok: true; adm: Extract<AdmissionResult, { ok: true }> } | { ok: false; result: ApplyResult }
+  workloadsDir: string,
+): { ok: true; verified: Set<string> } | { ok: false; result: ApplyResult } {
+  const { manifest, opts, evictTargets, now } = ctx;
+  const verified = new Set<string>();
+  const claimCounts = new Map<string, number>();
+  for (const m of listAnyWorkloadsForAdmission(workloadsDir, resolveEnv(opts?.env))) {
+    claimCounts.set(m.metadata.name, (claimCounts.get(m.metadata.name) ?? 0) + 1);
+  }
+  const sameNode = nodeIdentityMatcher(opts, manifest.spec.node);
+  for (const target of evictTargets) {
+    const check = checkEvictTarget(
+      ctx,
+      target,
+      workloadsDir,
+      claimCounts.get(target) ?? 0,
+      sameNode,
+    );
+    if (check.status === "refused") return { ok: false, result: check.result };
+    if (check.status === "verified") verified.add(target);
+  }
+  return { ok: true, verified };
+}
+
+function checkEvictTarget(
+  ctx: ConvergeServerContext,
+  target: string,
+  workloadsDir: string,
+  claimCount: number,
+  sameNode: (other: string) => boolean,
+): { status: "verified" } | { status: "skip" } | { status: "refused"; result: ApplyResult } {
+  const { manifest } = ctx;
+  if (claimCount > 1) {
+    return {
+      status: "refused",
+      result: evictRefusalResult(
+        ctx,
+        target,
+        "more than one stored manifest claims this name, so the freed capacity cannot be attributed to a single victim",
+        "EvictAmbiguousIdentity",
+      ),
+    };
+  }
+  let loaded: ModelRun | ModelHostManifest;
+  try {
+    loaded = loadWorkloadByNameAny(target, workloadsDir);
+  } catch (err) {
+    if (isMissingManifestError(err)) return { status: "skip" };
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      status: "refused",
+      result: evictRefusalResult(
+        ctx,
+        target,
+        `it could not be read to confirm its kind (${message})`,
+        "EvictKindUnsupported",
+      ),
+    };
+  }
+  if (loaded.metadata.name !== target) {
+    return {
+      status: "refused",
+      result: evictRefusalResult(
+        ctx,
+        target,
+        `the canonical '${target}.yaml' manifest declares metadata.name '${loaded.metadata.name}'`,
+        "EvictAmbiguousIdentity",
+      ),
+    };
+  }
+  if (loaded.kind !== "ModelRun") {
+    return {
+      status: "refused",
+      result: evictRefusalResult(
+        ctx,
+        target,
+        `it is a ${loaded.kind}, which this path cannot stop or account for`,
+        "EvictKindUnsupported",
+      ),
+    };
+  }
+  if (!sameNode(loaded.spec.node)) {
+    return {
+      status: "refused",
+      result: evictRefusalResult(
+        ctx,
+        target,
+        `it is owned by node '${loaded.spec.node}', which is not verifiably the incoming manifest's node '${manifest.spec.node}'`,
+        "EvictNodeUnverified",
+      ),
+    };
+  }
+  return { status: "verified" };
+}
+
+function evictRefusalResult(
+  ctx: ConvergeServerContext,
+  target: string,
+  why: string,
+  reason: string,
+): ApplyResult {
+  const { now, status } = ctx;
+  const error = `refusing to evict '${target}': ${why}; no eviction, stop, or start was attempted`;
+  if (ctx.matches) {
+    return {
+      action: "unchanged",
+      error,
+      statusSection: {
+        phase: "Running",
+        serverPid: status.pid,
+        endpoint: status.endpoint,
+        lastTransitionTime: now,
+        conditions: [
+          { type: "Applied", status: "True", reason: "unchanged", lastTransitionTime: now },
+          {
+            type: "EvictRefused",
+            status: "False",
+            reason,
+            message: error,
+            lastTransitionTime: now,
+          },
+        ],
+      },
+    };
+  }
+  return {
+    action: "pending",
+    error,
+    statusSection: {
+      phase: "Failed",
+      serverPid: null,
+      endpoint: null,
+      lastTransitionTime: now,
+      conditions: [
+        {
+          type: "Applied",
+          status: "False",
+          reason,
+          message: error,
+          lastTransitionTime: now,
+        },
+      ],
+    },
+  };
+}
+
+function admissionConditionReason(
+  kind: "unknown-budget" | "over-budget" | "invalid-reservation",
+): string {
+  if (kind === "unknown-budget") return "BudgetUnknown";
+  if (kind === "invalid-reservation") return "ReservationInvalid";
+  return "BudgetExceeded";
+}
+
+function admissionFailureResult(
+  adm: Extract<AdmissionResult, { ok: false }>,
+  now: string,
+): ApplyResult {
+  return {
+    action: "pending",
+    error: adm.reason,
+    statusSection: {
+      phase: "Failed",
+      serverPid: null,
+      endpoint: null,
+      lastTransitionTime: now,
+      conditions: [
+        {
+          type: "Applied",
+          status: "False",
+          reason: admissionConditionReason(adm.kind),
+          message: adm.reason,
+          lastTransitionTime: now,
+        },
+      ],
+    },
+  };
+}
+
+function preservedRunningWithBudgetRefusal(
+  ctx: ConvergeServerContext,
+  adm: Extract<AdmissionResult, { ok: false }>,
+): ApplyResult {
+  const { now, status } = ctx;
+  return {
+    action: "unchanged",
+    statusSection: {
+      phase: "Running",
+      serverPid: status.pid,
+      endpoint: status.endpoint,
+      lastTransitionTime: now,
+      conditions: [
+        { type: "Applied", status: "True", reason: "unchanged", lastTransitionTime: now },
+        {
+          type: "BudgetRefused",
+          status: "False",
+          reason: admissionConditionReason(adm.kind),
+          message: adm.reason,
+          lastTransitionTime: now,
+        },
+      ],
+    },
+  };
+}
+
+async function admitServerBudget(ctx: ConvergeServerContext): Promise<
+  | { ok: true; adm: Extract<AdmissionResult, { ok: true }> }
+  | {
+      ok: false;
+      adm?: Extract<AdmissionResult, { ok: false }>;
+      result: ApplyResult;
+    }
 > {
   const { manifest, opts, evictTargets, now } = ctx;
-  const listManifests =
-    opts?.listManifests ?? ((): ModelRun[] => listWorkloads(opts?.workloadsDir));
-  const living = listManifests().filter(
+  const workloadsDir = opts?.workloadsDir ?? defaultWorkloadsDir(opts?.env);
+  const eviction = authorizeEvictTargets(ctx, workloadsDir);
+  if (!eviction.ok) return { ok: false, result: eviction.result };
+  const listManifests: (dir?: string) => ModelRun[] =
+    opts?.listManifests ??
+    ((dir?: string): ModelRun[] =>
+      listAnyWorkloadsForAdmission(dir ?? workloadsDir, resolveEnv(opts?.env)));
+  const sameNode = nodeIdentityMatcher(opts, manifest.spec.node);
+  const living = listManifests(opts?.workloadsDir).filter(
     (m) =>
       m.metadata.name !== manifest.metadata.name &&
-      m.spec.node === manifest.spec.node &&
+      sameNode(m.spec.node) &&
       m.spec.enabled &&
-      !evictTargets.includes(m.metadata.name),
+      !eviction.verified.has(m.metadata.name),
   );
-  const budget = (await opts?.getNodeBudgetGiB?.(manifest.spec.node)) ?? Number.POSITIVE_INFINITY;
+  const incomingMemory = manifest.spec.resources?.expectedMemoryGiB ?? 0;
+  const hasDeclaredReservations =
+    incomingMemory > 0 || living.some((m) => (m.spec.resources?.expectedMemoryGiB ?? 0) > 0);
+  const budget = await resolveAdmissionBudgetGiB(
+    manifest.spec.node,
+    ctx.client,
+    opts?.getNodeBudgetGiB,
+    hasDeclaredReservations,
+  );
   const forceAdmit = manifest.metadata.annotations["llamactl.io/force-admit"] === "true";
   const adm = computeNodeBudget({
     nodeName: manifest.spec.node,
@@ -1040,30 +1348,10 @@ async function admitServerBudget(
     livingManifests: living,
     incoming: manifest,
     forceAdmit,
+    sameNode,
   });
   if (!adm.ok) {
-    return {
-      ok: false,
-      result: {
-        action: "pending",
-        error: adm.reason,
-        statusSection: {
-          phase: "Failed",
-          serverPid: null,
-          endpoint: null,
-          lastTransitionTime: now,
-          conditions: [
-            {
-              type: "Applied",
-              status: "False",
-              reason: "BudgetExceeded",
-              message: adm.reason,
-              lastTransitionTime: now,
-            },
-          ],
-        },
-      },
-    };
+    return { ok: false, adm, result: admissionFailureResult(adm, now) };
   }
   return { ok: true, adm };
 }
@@ -1165,11 +1453,37 @@ function refuseHostBindBeforeTeardown(ctx: ConvergeServerContext): ApplyResult |
   return refusal === null ? null : failedApplyResult("unchanged", refusal, ctx.now);
 }
 
+/**
+ * Decide what a failed admission means for the caller (DF-01A). A no-op
+ * apply of an already-matching running server keeps Running with its pid
+ * and carries an attributable BudgetRefused condition — healthy work is
+ * not mislabeled because accounting can't currently prove the budget.
+ * A matching workload that also requested eviction is still a no-op for
+ * the running server, so the same preservation applies, but the refused
+ * eviction request is reported as an error on the preserved result.
+ * Anything that would actually tear work down (a start, a restart) fails
+ * closed.
+ */
+function admissionRejection(
+  ctx: ConvergeServerContext,
+  admission: Extract<Awaited<ReturnType<typeof admitServerBudget>>, { ok: false }>,
+): ApplyResult {
+  if (ctx.matches && admission.adm) {
+    const preserved = preservedRunningWithBudgetRefusal(ctx, admission.adm);
+    if (ctx.evictTargets.length === 0) return preserved;
+    return {
+      ...preserved,
+      error: `requested eviction of '${ctx.evictTargets.join("', '")}' was refused: ${admission.adm.reason}; no eviction, stop, or start was attempted`,
+    };
+  }
+  return admission.result;
+}
+
 async function convergeServerUnderLock(ctx: ConvergeServerContext): Promise<ApplyResult> {
   const { manifest, client, getClient, onEvent, now, status, matches, desiredArgs, evictTargets } =
     ctx;
   const admission = await admitServerBudget(ctx);
-  if (!admission.ok) return admission.result;
+  if (!admission.ok) return admissionRejection(ctx, admission);
   const adm = admission.adm;
 
   const bindRefusal = refuseHostBindBeforeTeardown(ctx);
@@ -1251,7 +1565,7 @@ async function convergeServerUnderLock(ctx: ConvergeServerContext): Promise<Appl
         {
           type: "BudgetReserved",
           status: "True",
-          message: `node reserves ${adm.reservedAfter.toFixed(1)} / ${adm.budget === Infinity ? "unbounded" : adm.budget.toFixed(1)} GiB`,
+          message: `node reserves ${adm.reservedAfter.toFixed(1)} / ${adm.budget === null ? "unknown" : adm.budget.toFixed(1)} GiB`,
           lastTransitionTime: now,
         },
       ],
@@ -1375,6 +1689,7 @@ async function applyModelRunManifest(opts: ApplyManifestOptions): Promise<ApplyM
   }
   const result = await applyOne(manifest, opts.getClient, opts.onEvent, undefined, {
     ...omitUndefined({ workloadsDir: opts.workloadsDir }),
+    ...omitUndefined({ env: opts.env }),
     ...omitUndefined({ getNodeBudgetGiB: opts.getNodeBudgetGiB }),
     ...(opts.resolveNodeIdentity !== undefined
       ? { resolveNodeIdentity: opts.resolveNodeIdentity }

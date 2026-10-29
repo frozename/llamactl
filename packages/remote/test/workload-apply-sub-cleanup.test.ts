@@ -1,8 +1,28 @@
 import { describe, expect, test } from "bun:test";
+import { join } from "node:path";
 
 import type { ModelRun } from "../src/workload/schema.js";
 
+import { envForTemp, makeTempRuntime } from "../../core/test/helpers.js";
 import { applyOne, type WorkloadClient } from "../src/workload/apply.js";
+
+// Each applyOne needs its own scoped store + env: the evict lookup, the
+// port preflight, and the budget listing all fall back to
+// defaultWorkloadsDir(env) when opts.workloadsDir is absent, so a shared
+// ambient store (seeded by the isolation harness) would bleed into these
+// fixtures.
+function scopedStore(): {
+  opts: { env: NodeJS.ProcessEnv; workloadsDir: string };
+  cleanup: () => void;
+} {
+  const temp = makeTempRuntime();
+  return {
+    opts: { env: envForTemp(temp), workloadsDir: join(temp.devStorage, "workloads") },
+    cleanup: (): void => {
+      temp.cleanup();
+    },
+  };
+}
 
 function baseManifest(): ModelRun {
   return {
@@ -150,11 +170,14 @@ describe("D1 — startWorkers subscription cleanup", () => {
 
     // After D1 fix (hoist sub + try/finally + .catch), applyOne returns a Failed result
     // instead of throwing, and unsubscribe is called via finally.
+    const store = scopedStore();
     let result: Awaited<ReturnType<typeof applyOne>> | undefined;
     try {
-      result = await applyOne(manifestWithWorkers(), getClient);
+      result = await applyOne(manifestWithWorkers(), getClient, undefined, undefined, store.opts);
     } catch {
       // Before fix: applyOne throws due to uncaught promise rejection in startWorkers
+    } finally {
+      store.cleanup();
     }
 
     if (result !== undefined) {
@@ -190,10 +213,13 @@ describe("D2 — startCoordinator subscription cleanup", () => {
     // startCoordinator throws on rejection (no .catch added); applyOne propagates it.
     // After D2 fix (hoist sub + try/finally), the finally block runs and calls unsubscribe
     // before the exception propagates.
+    const store = scopedStore();
     try {
-      await applyOne(baseManifest(), getClient);
+      await applyOne(baseManifest(), getClient, undefined, undefined, store.opts);
     } catch {
       // expected — startCoordinator rejects; applyOne throws
+    } finally {
+      store.cleanup();
     }
 
     expect(unsubCalled).toBe(true);
@@ -238,7 +264,13 @@ describe("D3 — convergeServerUnderLock partial-worker cleanup", () => {
       return client;
     };
 
-    const result = await applyOne(manifestWithWorkers(), getClient);
+    const store = scopedStore();
+    let result: Awaited<ReturnType<typeof applyOne>>;
+    try {
+      result = await applyOne(manifestWithWorkers(), getClient, undefined, undefined, store.opts);
+    } finally {
+      store.cleanup();
+    }
     expect(result.statusSection.phase).toBe("Failed");
     expect(result.error).toContain("worker1");
 
@@ -354,13 +386,16 @@ describe("host-bind refusal", () => {
     },
   ])("refuses $label before evicting, stopping or starting anything", async ({ manifest }) => {
     const trace = newTrace();
-    const result = await applyOne(
-      manifest,
-      (node) => tracedClient(node, trace),
-      undefined,
-      undefined,
-      { listManifests: () => [] },
-    );
+    const store = scopedStore();
+    let result: Awaited<ReturnType<typeof applyOne>>;
+    try {
+      result = await applyOne(manifest, (node) => tracedClient(node, trace), undefined, undefined, {
+        ...store.opts,
+        listManifests: () => [],
+      });
+    } finally {
+      store.cleanup();
+    }
     expect(result.statusSection.phase).toBe("Failed");
     expect(result.error).toContain("refusing to bind llama-server to 0.0.0.0");
     expect(trace.serverStopCalls).toEqual([]);
@@ -393,9 +428,16 @@ describe("host-bind refusal", () => {
       ...baseManifest(),
       spec: { ...baseManifest().spec, endpoint: { host: "0.0.0.0", port: 65533 } },
     };
-    const result = await applyOne(manifest, () => live, undefined, undefined, {
-      listManifests: () => [],
-    });
+    const store = scopedStore();
+    let result: Awaited<ReturnType<typeof applyOne>>;
+    try {
+      result = await applyOne(manifest, () => live, undefined, undefined, {
+        ...store.opts,
+        listManifests: () => [],
+      });
+    } finally {
+      store.cleanup();
+    }
     expect(result.error).toBeUndefined();
     expect(result.action).toBe("unchanged");
     expect(result.statusSection.phase).toBe("Running");
@@ -406,13 +448,19 @@ describe("host-bind refusal", () => {
 
   test("lets a non-loopback endpoint host through with allowExternalBind", async () => {
     const trace = newTrace();
-    const result = await applyOne(
-      evictingManifest({ allowExternalBind: true, endpoint: { host: "0.0.0.0" } }),
-      (node) => tracedClient(node, trace),
-      undefined,
-      undefined,
-      { listManifests: () => [] },
-    );
+    const store = scopedStore();
+    let result: Awaited<ReturnType<typeof applyOne>>;
+    try {
+      result = await applyOne(
+        evictingManifest({ allowExternalBind: true, endpoint: { host: "0.0.0.0" } }),
+        (node) => tracedClient(node, trace),
+        undefined,
+        undefined,
+        { ...store.opts, listManifests: () => [] },
+      );
+    } finally {
+      store.cleanup();
+    }
     expect(result.error).toBeUndefined();
     expect(result.statusSection.phase).toBe("Running");
     expect(trace.serverStartCalls).toEqual(["test-run"]);
@@ -422,13 +470,19 @@ describe("host-bind refusal", () => {
     const trace = newTrace();
     const refusal =
       "refusing to bind llama-server to 0.0.0.0 without `allowExternalBind: true` in the workload spec";
-    const result = await applyOne(
-      manifestWithWorkers(),
-      (node) => tracedClient(node, trace, refusal),
-      undefined,
-      undefined,
-      { listManifests: () => [] },
-    );
+    const store = scopedStore();
+    let result: Awaited<ReturnType<typeof applyOne>>;
+    try {
+      result = await applyOne(
+        manifestWithWorkers(),
+        (node) => tracedClient(node, trace, refusal),
+        undefined,
+        undefined,
+        { ...store.opts, listManifests: () => [] },
+      );
+    } finally {
+      store.cleanup();
+    }
     expect(result.statusSection.phase).toBe("Failed");
     expect(result.error).toBe(refusal);
     expect(trace.serverStartCalls).toEqual(["test-run"]);
