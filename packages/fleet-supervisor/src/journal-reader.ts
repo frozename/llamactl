@@ -9,10 +9,13 @@ class JournalLine {
   private bytes = 0;
   private oversized = false;
 
+  constructor(private readonly onOversize?: () => void) {}
+
   consume(segment: Buffer, complete: boolean): string | null {
     if (!this.oversized && this.bytes + segment.length > MAX_JOURNAL_LINE_BYTES) {
       this.oversized = true;
       this.parts = [];
+      this.onOversize?.();
     }
     if (this.oversized) {
       if (complete) this.reset();
@@ -39,13 +42,13 @@ class JournalLine {
   }
 }
 
-/** Scans the initial file extent; lines above 8 MiB before LF (including CR) are ignored. */
-export function* readJournalLines(path: string): Generator<string> {
+/** Scans the initial file extent; oversized lines are skipped unless onOversize throws. */
+export function* readJournalLines(path: string, onOversize?: () => void): Generator<string> {
   const fd = openSync(path, "r");
   try {
     const size = fstatSync(fd).size;
     const buffer = Buffer.allocUnsafe(READ_BYTES);
-    const line = new JournalLine();
+    const line = new JournalLine(onOversize);
     for (let offset = 0; offset < size; ) {
       const bytes = readSync(fd, buffer, 0, Math.min(READ_BYTES, size - offset), offset);
       if (bytes === 0) break;
