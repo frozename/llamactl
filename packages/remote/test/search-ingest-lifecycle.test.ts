@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -23,13 +23,16 @@ test("no RAG destination leaves session ingestion inactive", async () => {
     }),
   );
   const create = Object.getOwnPropertyDescriptor(sessionEventBus, "create")?.value as unknown;
+  const subscribeAll = spyOn(sessionEventBus, "subscribeAll");
   try {
     await startSearchIngest();
+    expect(subscribeAll).not.toHaveBeenCalled();
     expect(Object.getOwnPropertyDescriptor(sessionEventBus, "create")?.value).toBe(create);
     sessionEventBus.create("no-rag");
     expect(sessionEventBus.listenerCount("no-rag")).toBe(0);
   } finally {
     stopSearchIngest();
+    subscribeAll.mockRestore();
     sessionEventBus.close("no-rag");
     if (previous === undefined) delete process.env["LLAMACTL_CONFIG"];
     else process.env["LLAMACTL_CONFIG"] = previous;
