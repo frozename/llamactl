@@ -105,7 +105,11 @@ async function readPeerSnapshotDirectWithTimeout(
   }, timeoutMs);
   try {
     const res = await pinnedFetch(target, { method: "GET", headers, signal: controller.signal });
-    if (!res.ok) return null; // 204 (no journal entry and no local routes) or error
+    if (!res.ok) {
+      // Discarding the response leaves Bun transferring its body after this tick.
+      controller.abort();
+      return null;
+    }
     return (await Promise.race([
       res.json(),
       new Promise<never>((_, reject) => {
