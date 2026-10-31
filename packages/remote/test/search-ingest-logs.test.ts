@@ -75,4 +75,136 @@ describe("logs ingest", () => {
     expect(seen).toHaveLength(1);
     expect(seen[0]).toBe("partial-line-complete");
   });
+
+  test("bounds initial and appended backlogs to the configured tail window", async () => {
+    const path = join(tmp, "bounded.log");
+    writeFileSync(path, "old".repeat(100) + "\nkeep one\nkeep two\n");
+    const seen: string[] = [];
+    const stop = startLogsIngest({
+      files: [{ label: "bounded", path }],
+      windowBytes: 32,
+      pollMs: 10,
+      sink: async (records) => {
+        await Promise.resolve();
+        seen.push(...records.map((r) => r.content));
+      },
+    });
+    try {
+      await Bun.sleep(30);
+      expect(seen).toEqual(["keep one", "keep two"]);
+      appendFileSync(path, "discard".repeat(100) + "\nappended\n");
+      await Bun.sleep(30);
+      expect(seen).toEqual(["keep one", "keep two", "appended"]);
+    } finally {
+      stop();
+    }
+  });
+
+  test("default window bounds a multi-megabyte startup backlog", async () => {
+    const path = join(tmp, "default-window.log");
+    writeFileSync(path, ("x".repeat(1023) + "\n").repeat(2048));
+    const seen: string[] = [];
+    const stop = startLogsIngest({
+      files: [{ label: "default", path }],
+      sink: async (records) => {
+        await Promise.resolve();
+        seen.push(...records.map((r) => r.content));
+      },
+    });
+    try {
+      await Bun.sleep(10);
+      expect(seen.length).toBeGreaterThan(0);
+      expect(seen.reduce((bytes, text) => bytes + Buffer.byteLength(text), 0)).toBeLessThanOrEqual(
+        1024 * 1024,
+      );
+      expect(seen.every((text) => text === "x".repeat(1023))).toBe(true);
+    } finally {
+      stop();
+    }
+  });
+
+  test("bounds unterminated lines across multiple reads without emitting fragments", async () => {
+    const path = join(tmp, "long-line.log");
+    writeFileSync(path, "x".repeat(20));
+    const seen: string[] = [];
+    const stop = startLogsIngest({
+      files: [{ label: "long", path }],
+      windowBytes: 32,
+      pollMs: 10,
+      sink: async (records) => {
+        await Promise.resolve();
+        seen.push(...records.map((r) => r.content));
+      },
+    });
+    try {
+      await Bun.sleep(30);
+      appendFileSync(path, "x".repeat(20));
+      await Bun.sleep(30);
+      appendFileSync(path, "\nvalid\n");
+      await Bun.sleep(30);
+      expect(seen).toEqual(["valid"]);
+    } finally {
+      stop();
+    }
+  });
+
+  test("does not overlap a blocked sink or replay its batch", async () => {
+    const path = join(tmp, "slow.log");
+    writeFileSync(path, "first\n");
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const seen: string[] = [];
+    const stop = startLogsIngest({
+      files: [{ label: "slow", path }],
+      pollMs: 5,
+      sink: async (records) => {
+        await Promise.resolve();
+        seen.push(...records.map((r) => r.content));
+        await blocked;
+      },
+    });
+    try {
+      await Bun.sleep(30);
+      expect(seen).toEqual(["first"]);
+      appendFileSync(path, "second\n");
+      await Bun.sleep(30);
+      expect(seen).toEqual(["first"]);
+      release();
+      await Bun.sleep(30);
+      expect(seen).toEqual(["first", "second"]);
+    } finally {
+      stop();
+      release();
+    }
+  });
+
+  test("stop during a pending sink prevents reading the next file", async () => {
+    const first = join(tmp, "first.log"),
+      second = join(tmp, "second.log");
+    writeFileSync(first, "first\n");
+    writeFileSync(second, "second\n");
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const seen: string[] = [];
+    const stop = startLogsIngest({
+      files: [
+        { label: "first", path: first },
+        { label: "second", path: second },
+      ],
+      pollMs: 5,
+      sink: async (records) => {
+        await Promise.resolve();
+        seen.push(...records.map((r) => r.content));
+        await blocked;
+      },
+    });
+    stop();
+    release();
+    await Bun.sleep(30);
+    expect(seen).toEqual(["first"]);
+  });
 });
