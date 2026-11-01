@@ -1995,14 +1995,42 @@ function abortUpstreamOnBodyCancel(upstream: Response, upstreamAbort: AbortContr
   });
 }
 
+const DEFAULT_UPSTREAM_TIMEOUT_MS = 15 * 60 * 1000;
+
+/**
+ * Whole-request budget for the proxied upstream fetch, applied as an
+ * AbortSignal composed into `init.signal` in forward(). Bun's HTTP
+ * client hardcodes its own ~5-minute socket idle ceiling
+ * (socket.setTimeoutMinutes(5) in src/http.zig) that cuts cold
+ * long-context prefills which legitimately run longer, so the proxy
+ * also passes `timeout: false` to lift that implicit ceiling and lets
+ * this signal be the only bound. Override with
+ * LLAMACTL_UPSTREAM_TIMEOUT_MS (milliseconds; non-positive or
+ * unparseable values fall back to the 15-minute default).
+ */
+export function upstreamTimeoutMs(): number {
+  const raw = process.env["LLAMACTL_UPSTREAM_TIMEOUT_MS"];
+  if (!raw) return DEFAULT_UPSTREAM_TIMEOUT_MS;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_UPSTREAM_TIMEOUT_MS;
+  return parsed;
+}
+
 async function forward(context: ProxyContext): Promise<Response> {
   if (context.route?.isPeer && requestBodyContainsOmlxRequestHandle(context.bodyText)) {
     return Response.json({ error: "cross-node slot ops not supported" }, { status: 400 });
   }
 
-  const init: RequestInit & { headers: Headers; tls?: { ca: string } } = {
+  const init: RequestInit & { headers: Headers; tls?: { ca: string }; timeout?: boolean } = {
     ...context.init,
     headers: new Headers(context.init.headers ?? {}),
+    // Bun's HTTP client arms every fetch socket with a ~5-minute idle
+    // ceiling (socket.setTimeoutMinutes(5) in src/http.zig), and no
+    // positive RequestInit timeout value adjusts it — `timeout: false`
+    // is the only lever that lifts it. Without this, a slow upstream
+    // dies mid-request with "The operation timed out" before the
+    // explicit AbortSignal below ever gets to run.
+    timeout: false,
   };
   if (context.route?.isPeer && context.route.token) {
     init.headers.set("authorization", `Bearer ${context.route.token}`);
@@ -2013,11 +2041,16 @@ async function forward(context: ProxyContext): Promise<Response> {
   // disconnect promptly cancels upstream inference and releases warm-hit lease
   // + registry reservation via the finally in proxyOpenAI. Compose with any
   // pre-existing signal already staged on init (e.g. a timeout) rather than
-  // stomping on it. The per-request controller is aborted when the client
-  // cancels the response body (#316).
+  // stomping on it, and with the configured upstream budget. The per-request
+  // controller is aborted when the client cancels the response body (#316).
   const upstreamAbort = new AbortController();
   init.signal =
-    composeAbortSignals(context.req.signal, context.init.signal, upstreamAbort.signal) ?? null;
+    composeAbortSignals(
+      context.req.signal,
+      context.init.signal,
+      upstreamAbort.signal,
+      AbortSignal.timeout(upstreamTimeoutMs()),
+    ) ?? null;
 
   let upstream: Response;
   try {

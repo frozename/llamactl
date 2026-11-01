@@ -160,6 +160,31 @@ the `all` target.
   `*ReloadFailed`, upstream absent → Pending with an actionable
   reason. See handler JSDoc for the wire contract.
 
+## Internal proxy upstream timeouts
+
+`forward()` in `packages/core/src/openaiProxy.ts` bounds the proxied
+upstream fetch with `LLAMACTL_UPSTREAM_TIMEOUT_MS` (default
+`900000` = 15 min, sized above long cold prefills). Two Bun-level
+traps shaped this:
+
+- Bun's `fetch` arms every socket with an implicit ~5-minute idle
+  ceiling (`socket.setTimeoutMinutes(5)` in `src/http.zig`) that
+  rejects with `TimeoutError: "The operation timed out"`. Positive
+  `timeout`/deadline RequestInit values do nothing on this Bun
+  version — `timeout: false` is the only lever that lifts it, which
+  is why `forward()` sets it and lets the explicit AbortSignal be the
+  sole bound.
+- `Bun.serve`'s `idleTimeout` (max 255s) reaps only requests that
+  carry no body — a POST whose JSON body was read keeps its socket.
+  Because GET passthroughs and quiet streams are still reaped, the
+  agent calls `server.timeout(req, upstream+60s)` for proxied `/v1/*`
+  routes in `packages/remote/src/server/serve.ts` instead of raising
+  the global limit.
+
+An idleTimeout reap surfaces client-side as `ECONNRESET`; the fetch
+socket ceiling surfaces as `TimeoutError: "The operation timed
+out"` — the message tells you which side fired.
+
 ## Model selection preferences (bench + workload picks)
 
 When picking a model variant for a bench cell, a workload manifest,
