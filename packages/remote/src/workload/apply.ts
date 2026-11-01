@@ -1309,7 +1309,7 @@ function preservedRunningWithBudgetRefusal(
 }
 
 async function admitServerBudget(ctx: ConvergeServerContext): Promise<
-  | { ok: true; adm: Extract<AdmissionResult, { ok: true }> }
+  | { ok: true; adm: Extract<AdmissionResult, { ok: true }>; verified: Set<string> }
   | {
       ok: false;
       adm?: Extract<AdmissionResult, { ok: false }>;
@@ -1320,6 +1320,7 @@ async function admitServerBudget(ctx: ConvergeServerContext): Promise<
   const workloadsDir = opts?.workloadsDir ?? defaultWorkloadsDir(opts?.env);
   const eviction = authorizeEvictTargets(ctx, workloadsDir);
   if (!eviction.ok) return { ok: false, result: eviction.result };
+  const verified = eviction.verified;
   const listManifests: (dir?: string) => ModelRun[] =
     opts?.listManifests ??
     ((dir?: string): ModelRun[] =>
@@ -1353,7 +1354,7 @@ async function admitServerBudget(ctx: ConvergeServerContext): Promise<
   if (!adm.ok) {
     return { ok: false, adm, result: admissionFailureResult(adm, now) };
   }
-  return { ok: true, adm };
+  return { ok: true, adm, verified };
 }
 
 function failedApplyResult(action: ApplyAction, error: string, when: string): ApplyResult {
@@ -1485,6 +1486,7 @@ async function convergeServerUnderLock(ctx: ConvergeServerContext): Promise<Appl
   const admission = await admitServerBudget(ctx);
   if (!admission.ok) return admissionRejection(ctx, admission);
   const adm = admission.adm;
+  const verified = admission.verified;
 
   const bindRefusal = refuseHostBindBeforeTeardown(ctx);
   if (bindRefusal !== null) return bindRefusal;
@@ -1495,7 +1497,8 @@ async function convergeServerUnderLock(ctx: ConvergeServerContext): Promise<Appl
   // servers to make room for a server that never starts. The budget
   // computation already excludes evictTargets from `living`, so an
   // admitted workload has accounted for the freed capacity here.
-  await stopEvictTargets(manifest, client, evictTargets, onEvent);
+  const verifiedTargets = evictTargets.filter((t) => verified.has(t));
+  await stopEvictTargets(manifest, client, verifiedTargets, onEvent);
 
   if (matches) {
     onEvent?.({

@@ -390,6 +390,34 @@ test("DF-01A: evict naming a missing manifest is a legacy skip that still procee
   }
 });
 
+test("DF-01A: runtime-up ghost-run with no canonical manifest must remain up", async () => {
+  const temp = makeTempRuntime();
+  const env = envForTemp(temp);
+  const workloadsDir = join(temp.devStorage, "workloads");
+  const state: WorkloadStateMap = new Map();
+  state.set("ghost-run", { up: true, rel: "ghost.gguf", args: [] });
+  const { client, stops, starts } = makeRecordingClient(state);
+  try {
+    const result = await applyOne(
+      mkManifest("incoming-run", { ram: 8, annotations: { "llamactl.io/evict": "ghost-run" } }),
+      () => client,
+      undefined,
+      undefined,
+      {
+        env,
+        workloadsDir,
+        getNodeBudgetGiB: () => 24,
+      },
+    );
+    expect(state.get("ghost-run")?.up).toBe(true);
+    expect(result.action).toBe("started");
+    expect(stops).toEqual([]);
+    expect(starts).toEqual(["incoming-run"]);
+  } finally {
+    temp.cleanup();
+  }
+});
+
 test("DF-01A: a missing evict victim listed as living grants no capacity credit", async () => {
   const temp = makeTempRuntime();
   const env = envForTemp(temp);
