@@ -13,6 +13,7 @@ export * as inferenceContracts from "./inference/contracts.js";
 export * as inferenceRpc from "./inference/rpc-schema.js";
 export * as keepAlive from "./keepAlive.js";
 export * as lmstudio from "./lmstudio.js";
+export * as managedAdmission from "./residency/managed-admission.js";
 export * as mmproj from "./mmproj.js";
 export * as nodeFacts from "./nodeFacts.js";
 export * as openaiProxy from "./openaiProxy.js";
