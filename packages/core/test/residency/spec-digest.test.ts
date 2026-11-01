@@ -39,8 +39,8 @@ describe("computeModelRunSpecDigest", () => {
 
   test("undefined-valued properties are ignored", () => {
     const withUndef = structuredClone(baseManifest) as Record<string, unknown>;
-    withUndef.extras = undefined;
-    (withUndef.spec as Record<string, unknown>).timeout = undefined;
+    withUndef["extras"] = undefined;
+    (withUndef["spec"] as Record<string, unknown>)["timeout"] = undefined;
     expect(computeModelRunSpecDigest(withUndef, [])).toBe(
       computeModelRunSpecDigest(baseManifest, []),
     );

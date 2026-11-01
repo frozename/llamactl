@@ -10,14 +10,14 @@
 export type ProcessObservation = {
   pid: number;
   alive: boolean;
-  startTimeMs?: number;
-  executable?: string;
+  startTimeMs?: number | undefined;
+  executable?: string | undefined;
 };
 
 export type GenerationRecord = {
   pid: number;
-  startTimeMs?: number;
-  executable?: string;
+  startTimeMs?: number | undefined;
+  executable?: string | undefined;
 };
 
 export type GenerationVerdict =
@@ -56,11 +56,20 @@ export function judgeGeneration(input: {
 }): GenerationVerdict {
   // Deep-clone inputs to guarantee no mutation
   const recorded = input.recorded
-    ? { pid: input.recorded.pid, startTimeMs: input.recorded.startTimeMs, executable: input.recorded.executable }
+    ? {
+        pid: input.recorded.pid,
+        startTimeMs: input.recorded.startTimeMs,
+        executable: input.recorded.executable,
+      }
     : undefined;
   const pidFilePid = input.pidFilePid;
   const observation = input.observation
-    ? { pid: input.observation.pid, alive: input.observation.alive, startTimeMs: input.observation.startTimeMs, executable: input.observation.executable }
+    ? {
+        pid: input.observation.pid,
+        alive: input.observation.alive,
+        startTimeMs: input.observation.startTimeMs,
+        executable: input.observation.executable,
+      }
     : undefined;
 
   // Rule 1: No recorded generation → uncertain
@@ -82,7 +91,10 @@ export function judgeGeneration(input: {
   return { kind: "uncertain", reason: "no-observation-for-recorded-pid" };
 }
 
-function judgeSamePid(recorded: GenerationRecord, observation: ProcessObservation): GenerationVerdict {
+function judgeSamePid(
+  recorded: GenerationRecord,
+  observation: ProcessObservation,
+): GenerationVerdict {
   if (isAlive(observation)) {
     // Rule 3: Same pid, alive — check startTimeMs and executable
     if (identityMatches(recorded, observation)) {

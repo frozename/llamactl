@@ -14,7 +14,14 @@ const claim = (
   state: ManagedAdmissionClaim["state"],
   allocationGiB: number | undefined,
   kind?: ManagedAdmissionClaim["kind"],
-): ManagedAdmissionClaim => ({ claimId, runtimeKey, specDigest, state, allocationGiB, kind });
+): ManagedAdmissionClaim => ({
+  claimId,
+  runtimeKey,
+  specDigest,
+  state,
+  allocationGiB,
+  ...(kind === undefined ? {} : { kind }),
+});
 
 const input = (
   overrides: Partial<Omit<ManagedAdmissionInput, "incoming">> & {
