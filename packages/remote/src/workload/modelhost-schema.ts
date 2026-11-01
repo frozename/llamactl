@@ -71,7 +71,7 @@ export const ModelHostSpecSchema = z
     // Engine selection. The registry in packages/core/src/engines/ holds
     // the canonical list; this enum mirrors it. New engines land here when
     // their adapter is wired into ENGINES.
-    engine: z.enum(["llamacpp", "omlx", "strata"]),
+    engine: z.enum(["llamacpp", "omlx", "strata", "kapitsa"]),
     node: z.string().min(1),
     enabled: z.boolean().default(true),
     binary: z.string().min(1),
@@ -98,7 +98,19 @@ export const ModelHostSpecSchema = z
     // actually means "can serve". Absent means today's /v1/models behaviour.
     readiness: ModelHostReadinessSchema.optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((spec, ctx) => {
+    if (spec.engine !== "kapitsa") return;
+    for (const name of ["KAPITSA_HOME", "KAPITSA_NO_AUTO_UPDATE"]) {
+      if (spec.env?.[name] !== undefined) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["env", name],
+          message: `${name} is owned by the Kapitsa adapter`,
+        });
+      }
+    }
+  });
 
 export const ModelHostManifestSchema = z
   .object({
