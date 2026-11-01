@@ -118,7 +118,7 @@ test("admission returns over-budget when sum exceeds budget without force", () =
   };
   const r = computeNodeBudget(input);
   expect(r.ok).toBe(false);
-  if (!r.ok) expect(r.reservedAfter).toBe(24);
+  if (!r.ok && r.kind === "over-budget") expect(r.reservedAfter).toBe(24);
 });
 
 test("admission over-budget reason attributes each contributor and names the levers", () => {
@@ -138,8 +138,155 @@ test("admission over-budget reason attributes each contributor and names the lev
     expect(r.reason).toContain("would reserve 24.0 GiB");
     expect(r.reason).toMatch(/--evict/);
     expect(r.reason).toContain("spec.budget.memoryGiB");
-    expect(r.reason).toContain("does not bypass the budget");
+    expect(r.reason).toContain("llamactl.io/force-admit");
+    expect(r.reason).not.toContain("does not bypass");
   }
+});
+
+test("computeNodeBudget maps an invalid incoming reservation to a structured refusal", () => {
+  const input: AdmissionInput = {
+    nodeName: "local",
+    nodeBudgetGiB: 20,
+    livingManifests: [mkManifest("a", { expectedMemoryGiB: 16 })],
+    incoming: mkManifest("b", { expectedMemoryGiB: Number.NaN }),
+    forceAdmit: false,
+  };
+  const r = computeNodeBudget(input);
+  expect(r.ok).toBe(false);
+  if (!r.ok) {
+    expect(r.kind).toBe("invalid-reservation");
+    expect(r.reason).toContain("'b'");
+  }
+});
+
+test("over-budget reason omits force-admit guidance when the caller cannot honor it", () => {
+  const input: AdmissionInput = {
+    nodeName: "local",
+    nodeBudgetGiB: 20,
+    livingManifests: [mkManifest("a", { expectedMemoryGiB: 16 })],
+    incoming: mkManifest("b", { expectedMemoryGiB: 8 }),
+    forceAdmit: false,
+    supportsForceAdmit: false,
+  };
+  const r = computeNodeBudget(input);
+  expect(r.ok).toBe(false);
+  if (!r.ok) {
+    expect(r.reason).toContain("Budget is 20.0 GiB");
+    expect(r.reason).not.toContain("force-admit");
+  }
+});
+
+test("unknown-budget reason omits force-admit guidance when the caller cannot honor it", () => {
+  const input: AdmissionInput = {
+    nodeName: "local",
+    nodeBudgetGiB: null,
+    livingManifests: [],
+    incoming: mkManifest("b", { expectedMemoryGiB: 8 }),
+    forceAdmit: false,
+    supportsForceAdmit: false,
+  };
+  const r = computeNodeBudget(input);
+  expect(r.ok).toBe(false);
+  if (!r.ok) {
+    expect(r.reason).toContain("budget is unknown");
+    expect(r.reason).not.toContain("force-admit");
+  }
+});
+
+test("invalid-reservation reason omits force-admit guidance when the caller cannot honor it", () => {
+  const input: AdmissionInput = {
+    nodeName: "local",
+    nodeBudgetGiB: 20,
+    livingManifests: [mkManifest("a", { expectedMemoryGiB: Number.NaN })],
+    incoming: mkManifest("b", { expectedMemoryGiB: 8 }),
+    forceAdmit: false,
+    supportsForceAdmit: false,
+  };
+  const r = computeNodeBudget(input);
+  expect(r.ok).toBe(false);
+  if (!r.ok) {
+    expect(r.kind).toBe("invalid-reservation");
+    expect(r.reason).toContain("'a'");
+    expect(r.reason).not.toContain("force-admit");
+  }
+});
+
+test("computeNodeBudget maps a NaN living reservation to a structured refusal naming the offender", () => {
+  const input: AdmissionInput = {
+    nodeName: "local",
+    nodeBudgetGiB: 20,
+    livingManifests: [mkManifest("a", { expectedMemoryGiB: Number.NaN })],
+    incoming: mkManifest("b", { expectedMemoryGiB: 8 }),
+    forceAdmit: false,
+  };
+  const r = computeNodeBudget(input);
+  expect(r.ok).toBe(false);
+  if (!r.ok) {
+    expect(r.kind).toBe("invalid-reservation");
+    expect(r.reason).toContain("'a'");
+  }
+});
+
+test("computeNodeBudget maps a negative living reservation to a structured refusal", () => {
+  const input: AdmissionInput = {
+    nodeName: "local",
+    nodeBudgetGiB: 20,
+    livingManifests: [mkManifest("a", { expectedMemoryGiB: -4 })],
+    incoming: mkManifest("b", { expectedMemoryGiB: 8 }),
+    forceAdmit: false,
+  };
+  const r = computeNodeBudget(input);
+  expect(r.ok).toBe(false);
+  if (!r.ok) {
+    expect(r.kind).toBe("invalid-reservation");
+    expect(r.reason).toContain("'a'");
+  }
+});
+
+test("computeNodeBudget maps a negative-infinity living reservation to a structured refusal", () => {
+  const input: AdmissionInput = {
+    nodeName: "local",
+    nodeBudgetGiB: 20,
+    livingManifests: [mkManifest("a", { expectedMemoryGiB: Number.NEGATIVE_INFINITY })],
+    incoming: mkManifest("b", { expectedMemoryGiB: 8 }),
+    forceAdmit: false,
+  };
+  const r = computeNodeBudget(input);
+  expect(r.ok).toBe(false);
+  if (!r.ok) {
+    expect(r.kind).toBe("invalid-reservation");
+    expect(r.reason).toContain("'a'");
+  }
+});
+
+test("computeNodeBudget force-admit cannot launder an invalid living reservation", () => {
+  const input: AdmissionInput = {
+    nodeName: "local",
+    nodeBudgetGiB: 20,
+    livingManifests: [mkManifest("a", { expectedMemoryGiB: Number.NaN })],
+    incoming: mkManifest("b", { expectedMemoryGiB: 8 }),
+    forceAdmit: true,
+  };
+  const r = computeNodeBudget(input);
+  expect(r.ok).toBe(false);
+  if (!r.ok) {
+    expect(r.kind).toBe("invalid-reservation");
+    expect(r.reason).toContain("'a'");
+    expect(r.reason).toContain("does not launder");
+  }
+});
+
+test("computeNodeBudget treats a zero and an absent living reservation as valid non-contributors", () => {
+  const input: AdmissionInput = {
+    nodeName: "local",
+    nodeBudgetGiB: 20,
+    livingManifests: [mkManifest("a", { expectedMemoryGiB: 0 }), mkManifest("legacy")],
+    incoming: mkManifest("b", { expectedMemoryGiB: 8 }),
+    forceAdmit: false,
+  };
+  const r = computeNodeBudget(input);
+  expect(r.ok).toBe(true);
+  if (r.ok) expect(r.reservedAfter).toBe(8);
 });
 
 test("over-budget with disabled ModelHosts only counts the genuinely living contributor", () => {
@@ -159,7 +306,8 @@ test("over-budget with disabled ModelHosts only counts the genuinely living cont
   };
   const r = computeNodeBudget(input);
   expect(r.ok).toBe(false);
-  if (!r.ok) {
+  if (!r.ok) expect(r.kind).toBe("over-budget");
+  if (!r.ok && r.kind === "over-budget") {
     expect(r.reservedAfter).toBe(22);
     expect(r.reason).toContain("'mlx-host-local' 12.0 GiB");
     expect(r.reason).toContain("'new-workload' (10.0 GiB)");
