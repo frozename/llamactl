@@ -23,6 +23,7 @@ export * as pull from "./pull.js";
 export * as quant from "./quant.js";
 export * as recommendations from "./recommendations.js";
 export * as residencyAdmission from "./residency/admission.js";
+export * as generationEvidence from "./residency/generation-evidence.js";
 export * as managedAdmission from "./residency/managed-admission.js";
 export * as specDigest from "./residency/spec-digest.js";
 export * as resourcesMemory from "./resources/memory.js";
