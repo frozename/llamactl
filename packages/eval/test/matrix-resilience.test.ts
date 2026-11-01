@@ -158,39 +158,87 @@ describe("runMatrix resilience", () => {
 });
 
 describe("ensureModelServing spawn error", () => {
-  test("spawn 'error' event rejects promise fast without hanging", async () => {
+  test("spawn error rejects fast without health calls after failure settles", async () => {
     const dir = mkdtempSync(join(tmpdir(), "llamactl-spawn-err-"));
     const notExecPath = join(dir, "not-executable");
-    // Write a file without the execute bit — existsSync returns true but spawn
-    // fails with EACCES, which emits an 'error' event on the ChildProcess.
-    writeFileSync(notExecPath, "#!/bin/sh\necho hi\n");
-
+    writeFileSync(notExecPath, "#!/bin/sh\necho hi\n", { mode: 0o600 });
     const origFetch = globalThis.fetch;
-    // Health check always fails so ensureModelServing tries to spawn.
-    globalThis.fetch = (() => Promise.reject(new Error("ECONNREFUSED"))) as unknown as typeof fetch;
+    const callsAfterFailure: string[] = [];
+    let failureSettled = false;
+    globalThis.fetch = Object.assign((input: Request | string | URL): Promise<Response> => {
+      if (failureSettled) {
+        callsAfterFailure.push(input instanceof Request ? input.url : input.toString());
+      }
+      return Promise.reject(new Error("ECONNREFUSED"));
+    }, origFetch);
 
     const start = Date.now();
     try {
-      await ensureModelServing({
-        name: "spawn-error-test",
-        gguf_path: "/tmp/none.gguf",
-        quant: "Q4",
-        family: "test",
-        size_params: "1b",
-        host: "127.0.0.1",
-        port: 65503,
-        managed: true,
-        binary: notExecPath,
-        start_args: [],
-        extra_args: [],
-      });
-      throw new Error("expected ensureModelServing to reject");
-    } catch (err) {
-      const elapsed = Date.now() - start;
-      expect(err).toBeInstanceOf(Error);
-      // Pre-fix: the 'error' event had no listener — it escaped as an uncaught
-      // exception or the 120 s health timeout fired. Post-fix: fast rejection.
-      expect(elapsed).toBeLessThan(5000);
+      let failure: unknown;
+      try {
+        await ensureModelServing({
+          ...makeModel("spawn-error-test", 65503),
+          managed: true,
+          binary: notExecPath,
+          start_args: [],
+        });
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(Error);
+      expect((failure as Error).message).toContain("failed to spawn spawn-error-test");
+      expect(Date.now() - start).toBeLessThan(5000);
+      failureSettled = true;
+      // Cross the existing one-second poll interval after the caller has its failure.
+      await Bun.sleep(1250);
+      expect(callsAfterFailure).toEqual([]);
+    } finally {
+      globalThis.fetch = origFetch;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("spawn error aborts and settles an in-flight health check before rejecting", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "llamactl-spawn-pending-"));
+    const notExecPath = join(dir, "not-executable");
+    writeFileSync(notExecPath, "#!/bin/sh\necho hi\n", { mode: 0o600 });
+    const origFetch = globalThis.fetch;
+    let calls = 0;
+    let aborted = false;
+    let settled = false;
+    globalThis.fetch = Object.assign(
+      (_input: Request | string | URL, init?: RequestInit): Promise<Response> => {
+        if (++calls === 1) return Promise.reject(new Error("ECONNREFUSED"));
+        return new Promise<Response>((_resolve, reject) => {
+          const abort = (): void => {
+            aborted = true;
+            reject(new Error("health request aborted"));
+          };
+          if (init?.signal?.aborted) abort();
+          else init?.signal?.addEventListener("abort", abort, { once: true });
+        }).finally(() => {
+          settled = true;
+        });
+      },
+      origFetch,
+    );
+    try {
+      let failure: unknown;
+      try {
+        await ensureModelServing({
+          ...makeModel("spawn-error-pending", 65503),
+          managed: true,
+          binary: notExecPath,
+          start_args: [],
+        });
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(Error);
+      expect((failure as Error).message).toContain("failed to spawn spawn-error-pending");
+      expect(calls).toBe(2);
+      expect(aborted).toBe(true);
+      expect(settled).toBe(true);
     } finally {
       globalThis.fetch = origFetch;
       rmSync(dir, { recursive: true, force: true });

@@ -4,6 +4,7 @@ import { ENGINES } from "@llamactl/core/engines";
 import { resolveProfile } from "@llamactl/core/profile";
 import { type ChildProcess, spawn } from "node:child_process";
 import { basename } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 
 import type { ModelSpec } from "./types.js";
 
@@ -82,19 +83,25 @@ function installExitHook(): void {
   });
 }
 
-async function pingHealth(host: string, port: number, timeoutMs = 2000): Promise<boolean> {
+async function pingHealth(
+  host: string,
+  port: number,
+  timeoutMs = 2000,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => {
-      controller.abort();
-    }, timeoutMs);
     const resp = await fetch(`http://${host}:${String(port)}/health`, {
-      signal: controller.signal,
+      signal: signal ? AbortSignal.any([controller.signal, signal]) : controller.signal,
     });
-    clearTimeout(timer);
     return resp.ok;
   } catch {
     return false;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -103,12 +110,13 @@ export async function probeInference(
   port: number,
   timeoutMs: number,
   modelId = "local",
+  signal?: AbortSignal,
 ): Promise<boolean> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => {
-      controller.abort();
-    }, timeoutMs);
     const resp = await fetch(`http://${host}:${String(port)}/v1/chat/completions`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -118,9 +126,8 @@ export async function probeInference(
         max_tokens: 4,
         temperature: 0,
       }),
-      signal: controller.signal,
+      signal: signal ? AbortSignal.any([controller.signal, signal]) : controller.signal,
     });
-    clearTimeout(timer);
     if (!resp.ok) return false;
     const body = (await resp.json()) as {
       choices?: { message?: { content?: unknown; reasoning_content?: unknown } }[];
@@ -132,6 +139,8 @@ export async function probeInference(
     return typeof msg?.content === "string" || typeof msg?.reasoning_content === "string";
   } catch {
     return false;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -218,17 +227,19 @@ export async function ensureModelServing(model: ModelSpec): Promise<BootResult> 
   }
   proc.stdout.resume();
   proc.stderr.on("data", pushStderr);
-  const healthBoot = waitForHealthyBoot(model, proc, stderrTail);
-  // Prevent spawnErrorP's secondary rejection from becoming unhandled when
-  // spawnErrorP wins the race and healthBoot later rejects.
-  // eslint-disable-next-line @typescript-eslint/no-empty-function
-  healthBoot.catch(() => {});
+  const bootController = new AbortController();
+  const healthBoot = waitForHealthyBoot(model, proc, stderrTail, bootController.signal);
   const spawnErrorP = new Promise<never>((_, reject) => {
     proc.on("error", (err) => {
       reject(new Error(`failed to spawn ${model.name}: ${err.message}`));
     });
   });
-  return await Promise.race([healthBoot, spawnErrorP]);
+  try {
+    return await Promise.race([healthBoot, spawnErrorP]);
+  } finally {
+    bootController.abort();
+    await healthBoot.catch(() => undefined);
+  }
 }
 
 /** /v1 boot-probe for a server that just passed /health; tears the
@@ -237,6 +248,7 @@ async function probeBootedServer(
   model: ModelSpec,
   proc: ChildProcess,
   stderrTail: string[],
+  signal?: AbortSignal,
 ): Promise<void> {
   // dflash variants hit a 3-30 GB draft model sync from HF on first
   // load. 30s isn't always enough on slow links; give them 180s.
@@ -246,7 +258,9 @@ async function probeBootedServer(
     model.port,
     probeTimeoutMs,
     model.request_model_id ?? "local",
+    signal,
   );
+  signal?.throwIfAborted();
   if (!ok) {
     signalOwnedProcessGroup(proc, "SIGTERM");
     throw new Error(
@@ -259,9 +273,11 @@ export async function waitForHealthyBoot(
   model: ModelSpec,
   proc: ChildProcess,
   stderrTail: string[],
+  signal?: AbortSignal,
 ): Promise<BootResult> {
   const deadline = Date.now() + HEALTH_TIMEOUT_MS;
   while (Date.now() < deadline) {
+    signal?.throwIfAborted();
     if (hasExited(proc)) {
       const signalCode = (proc as { signalCode?: NodeJS.Signals | null }).signalCode;
       const how =
@@ -270,14 +286,17 @@ export async function waitForHealthyBoot(
         `llama-server for ${model.name} exited before /health came up (${how})\n--- stderr tail ---\n${stderrTail.join("\n")}`,
       );
     }
-    if (await pingHealth(model.host, model.port)) {
-      await probeBootedServer(model, proc, stderrTail);
+    const healthy = await pingHealth(model.host, model.port, 2000, signal);
+    signal?.throwIfAborted();
+    if (healthy) {
+      await probeBootedServer(model, proc, stderrTail, signal);
       installExitHook();
       ownedProcs.add(proc);
       return { owned: true, proc };
     }
-    await new Promise((r) => setTimeout(r, HEALTH_POLL_INTERVAL_MS));
+    await sleep(HEALTH_POLL_INTERVAL_MS, undefined, { signal });
   }
+  signal?.throwIfAborted();
   signalOwnedProcessGroup(proc, "SIGTERM");
   throw new Error(
     `llama-server for ${model.name} health timeout after ${String(HEALTH_TIMEOUT_MS)}ms\n--- stderr tail ---\n${stderrTail.join("\n")}`,
