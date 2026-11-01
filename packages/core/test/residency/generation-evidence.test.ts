@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import { judgeGeneration } from "../../src/residency/generation-evidence.js";
 
 test("no recorded generation → uncertain with reason 'no-recorded-generation'", () => {

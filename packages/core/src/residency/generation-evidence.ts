@@ -26,6 +26,29 @@ export type GenerationVerdict =
   | { kind: "different-generation"; reason: string }
   | { kind: "uncertain"; reason: string };
 
+function identityMatches(recorded: GenerationRecord, observation: ProcessObservation): boolean {
+  return (
+    (recorded.startTimeMs !== undefined &&
+      observation.startTimeMs !== undefined &&
+      recorded.startTimeMs === observation.startTimeMs) ||
+    (recorded.executable !== undefined &&
+      observation.executable !== undefined &&
+      recorded.executable === observation.executable)
+  );
+}
+
+function hasIdentifyingInfo(observation: ProcessObservation): boolean {
+  return observation.startTimeMs !== undefined || observation.executable !== undefined;
+}
+
+function isAlive(observation: ProcessObservation): boolean {
+  return observation.alive;
+}
+
+function pidMatches(recorded: GenerationRecord, observation: ProcessObservation): boolean {
+  return observation.pid === recorded.pid;
+}
+
 export function judgeGeneration(input: {
   recorded: GenerationRecord | undefined;
   pidFilePid: number | undefined;
@@ -51,46 +74,27 @@ export function judgeGeneration(input: {
   }
 
   // Observation is for the recorded pid
-  if (observation.pid === recorded.pid) {
-    if (observation.alive) {
-      // Rule 3: Same pid, alive — check startTimeMs and executable
-      if (
-        (recorded.startTimeMs !== undefined &&
-          observation.startTimeMs !== undefined &&
-          recorded.startTimeMs !== observation.startTimeMs) ||
-        (recorded.executable !== undefined &&
-          observation.executable !== undefined &&
-          recorded.executable !== observation.executable)
-      ) {
-        return { kind: "different-generation", reason: "pid-reused" };
-      }
-      return { kind: "same-generation" };
-    }
-    // Same pid but not alive
-    // Rule 4: Not alive, but has identifying info → verified-absent
-    if (observation.startTimeMs !== undefined || observation.executable !== undefined) {
-      return { kind: "verified-absent" };
-    }
-    // Not alive, no identifying info → uncertain
-    return { kind: "uncertain", reason: "unidentified-absence" };
+  if (pidMatches(recorded, observation)) {
+    return judgeSamePid(recorded, observation);
   }
 
   // Observation is for a DIFFERENT pid than recorded
-  if (observation.alive) {
-    // The recorded pid process is not being observed alive.
-    // But the observation is for a different pid, so we cannot
-    // positively identify that the recorded process is absent
-    // based on this observation alone (unless the observation
-    // has identifying info matching the recorded process — but
-    // the pid differs, so it can't be the same process).
-    // If we have a startTimeMs or executable on the observation
-    // that matches the recorded generation, that would be
-    // impossible since the pid differs — so this is uncertain.
-    return { kind: "uncertain", reason: "no-observation-for-recorded-pid" };
-  }
-
-  // Observation is alive but for a different (dead) pid
-  // The recorded process might still be alive under its own pid
-  // (no observation for it), or might have died. Uncertain.
   return { kind: "uncertain", reason: "no-observation-for-recorded-pid" };
+}
+
+function judgeSamePid(recorded: GenerationRecord, observation: ProcessObservation): GenerationVerdict {
+  if (isAlive(observation)) {
+    // Rule 3: Same pid, alive — check startTimeMs and executable
+    if (identityMatches(recorded, observation)) {
+      return { kind: "same-generation" };
+    }
+    return { kind: "different-generation", reason: "pid-reused" };
+  }
+  // Same pid but not alive
+  // Rule 4: Not alive, but has identifying info → verified-absent
+  if (hasIdentifyingInfo(observation)) {
+    return { kind: "verified-absent" };
+  }
+  // Not alive, no identifying info → uncertain
+  return { kind: "uncertain", reason: "unidentified-absence" };
 }
