@@ -4,11 +4,16 @@
  * unverifiable budget, an unmeasurable incoming allocation, or a claim that
  * cannot be counted all refuse rather than guess. Pending, resident and
  * uncertain claims all charge against the budget; a duplicate request for
- * the same runtimeKey+specDigest joins the existing claim instead of
+ * the same runtimeKey+specDigest+kind joins the existing claim instead of
  * double-charging, and an uncertain claim is never joined or re-promoted.
+ * A ModelRun and a ModelHost sharing one runtimeKey conflict regardless of
+ * kind — they share one runtime directory. More than 128 claims refuse
+ * before any budget arithmetic.
  */
 
 export type ManagedClaimState = "pending" | "resident" | "uncertain";
+
+export type ManagedWorkloadKind = "ModelRun" | "ModelHost";
 
 export interface ManagedAdmissionClaim {
   claimId: string;
@@ -16,6 +21,7 @@ export interface ManagedAdmissionClaim {
   specDigest: string;
   state: ManagedClaimState;
   allocationGiB: number | undefined;
+  kind?: ManagedWorkloadKind;
 }
 
 export interface ManagedAdmissionInput {
@@ -26,11 +32,13 @@ export interface ManagedAdmissionInput {
     runtimeKey: string;
     specDigest: string;
     allocationGiB: number | undefined;
+    kind?: ManagedWorkloadKind;
   };
 }
 
 export type ManagedAdmissionRefuseReason =
   | "BudgetUnknown"
+  | "ClaimLimit"
   | "AllocationUnknown"
   | "BudgetExceeded"
   | "WorkloadBusy";
@@ -47,6 +55,8 @@ export type ManagedAdmissionDecision =
   | { kind: "already-resident"; claimId: string }
   | { kind: "refuse"; reason: ManagedAdmissionRefuseReason; detail: string };
 
+const maxClaims = 128;
+
 const minString = (min: string, id: string): string => (id < min ? id : min);
 
 function isKnownGiB(value: number | undefined): value is number {
@@ -62,6 +72,14 @@ export function evaluateManagedAdmission(input: ManagedAdmissionInput): ManagedA
     };
   }
   const budgetGiB = input.budgetGiB;
+
+  if (input.claims.length > maxClaims) {
+    return {
+      kind: "refuse",
+      reason: "ClaimLimit",
+      detail: `${String(input.claims.length)} claims exceed the cap of ${String(maxClaims)}`,
+    };
+  }
 
   if (!isKnownGiB(input.incoming.allocationGiB)) {
     return {
@@ -86,7 +104,12 @@ export function evaluateManagedAdmission(input: ManagedAdmissionInput): ManagedA
 
   const sameKey = input.claims.filter((c) => c.runtimeKey === input.incoming.runtimeKey);
   const busy = sameKey
-    .filter((c) => c.specDigest !== input.incoming.specDigest || c.state === "uncertain")
+    .filter(
+      (c) =>
+        c.specDigest !== input.incoming.specDigest ||
+        c.kind !== input.incoming.kind ||
+        c.state === "uncertain",
+    )
     .map((c) => c.claimId)
     .sort();
   if (busy.length > 0) {
@@ -105,13 +128,13 @@ export function evaluateManagedAdmission(input: ManagedAdmissionInput): ManagedA
     return { kind: "join-pending", claimId: sameKey.map((c) => c.claimId).reduce(minString) };
   }
 
-  const committedGiB =
-    input.claims.reduce((sum, c) => sum + (c.allocationGiB ?? 0), 0) + chargedGiB;
+  const claimsCommittedGiB = input.claims.reduce((sum, c) => sum + (c.allocationGiB ?? 0), 0);
+  const committedGiB = claimsCommittedGiB + chargedGiB;
   if (committedGiB > budgetGiB) {
     return {
       kind: "refuse",
       reason: "BudgetExceeded",
-      detail: `committed ${String(committedGiB)} GiB exceeds budget ${String(budgetGiB)} GiB`,
+      detail: `committed ${String(claimsCommittedGiB)} GiB plus incoming ${String(chargedGiB)} GiB exceeds budget ${String(budgetGiB)} GiB`,
     };
   }
   return { kind: "admit", chargedGiB, budgetGiB, committedGiB };

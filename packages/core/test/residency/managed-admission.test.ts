@@ -13,7 +13,8 @@ const claim = (
   specDigest: string,
   state: ManagedAdmissionClaim["state"],
   allocationGiB: number | undefined,
-): ManagedAdmissionClaim => ({ claimId, runtimeKey, specDigest, state, allocationGiB });
+  kind?: ManagedAdmissionClaim["kind"],
+): ManagedAdmissionClaim => ({ claimId, runtimeKey, specDigest, state, allocationGiB, kind });
 
 const input = (
   overrides: Partial<Omit<ManagedAdmissionInput, "incoming">> & {
@@ -217,6 +218,116 @@ test("join-pending picks a stable claimId across orderings", () => {
       claimId: "c-alpha",
     });
   }
+});
+
+test("plan-v3 table: resident 16 + pending 8 fully commits a 24 GiB budget against any incoming", () => {
+  const claims = [
+    claim("c-resident", "a@1", "sha256:a", "resident", 16),
+    claim("c-pending", "b@2", "sha256:b", "pending", 8),
+  ];
+  const eight = evaluateManagedAdmission(
+    input({
+      budgetGiB: 24,
+      claims,
+      incoming: { runtimeKey: "c@3", specDigest: "sha256:c", allocationGiB: 8 },
+    }),
+  );
+  expectRefuse(eight, "BudgetExceeded", "committed 24");
+
+  const tiny = evaluateManagedAdmission(
+    input({
+      budgetGiB: 24,
+      claims,
+      incoming: { runtimeKey: "c@3", specDigest: "sha256:c", allocationGiB: 0.5 },
+    }),
+  );
+  expectRefuse(tiny, "BudgetExceeded", "committed 24");
+
+  const equal = evaluateManagedAdmission(
+    input({
+      claims,
+      incoming: { runtimeKey: "c@3", specDigest: "sha256:c", allocationGiB: 8 },
+    }),
+  );
+  expect(equal).toEqual({ kind: "admit", chargedGiB: 8, budgetGiB: 32, committedGiB: 32 });
+});
+
+test("uncertain claims are charged: uncertain 20 + incoming 8 exceeds a 24 GiB budget", () => {
+  const out = evaluateManagedAdmission(
+    input({
+      budgetGiB: 24,
+      claims: [claim("c-uncertain", "a@1", "sha256:a", "uncertain", 20)],
+      incoming: { runtimeKey: "b@2", specDigest: "sha256:b", allocationGiB: 8 },
+    }),
+  );
+  expectRefuse(out, "BudgetExceeded", "committed 20");
+});
+
+const manyClaims = (count: number, allocationGiB = 0.1): ManagedAdmissionClaim[] =>
+  Array.from({ length: count }, (_, i) =>
+    claim(`c${String(i)}`, `k@${String(i)}`, `sha256:${String(i)}`, "resident", allocationGiB),
+  );
+
+const offKeyIncoming = { runtimeKey: "z@9", specDigest: "sha256:z", allocationGiB: 8 };
+
+test("refuses ClaimLimit when claims exceed 128, before any budget arithmetic", () => {
+  const claims = manyClaims(129);
+  claims[128] = claim("c-uncounted", "k@128", "sha256:128", "resident", undefined);
+  const out = evaluateManagedAdmission(input({ budgetGiB: 24, claims, incoming: offKeyIncoming }));
+  expectRefuse(out, "ClaimLimit", "129");
+});
+
+test("exactly 128 claims are allowed through to the budget arithmetic", () => {
+  const out = evaluateManagedAdmission(
+    input({ claims: manyClaims(128), incoming: offKeyIncoming }),
+  );
+  expect(out.kind).toBe("admit");
+});
+
+test("cross-kind collision: ModelRun vs ModelHost on one runtimeKey is WorkloadBusy", () => {
+  const sameDigest = evaluateManagedAdmission(
+    input({
+      claims: [claim("c-host", "llama.cpp@abc123", "sha256:spec-a", "resident", 8, "ModelHost")],
+      incoming: { kind: "ModelRun" },
+    }),
+  );
+  expectRefuse(sameDigest, "WorkloadBusy");
+
+  const differentDigest = evaluateManagedAdmission(
+    input({
+      claims: [claim("c-host", "llama.cpp@abc123", "sha256:other", "pending", 4, "ModelHost")],
+      incoming: { kind: "ModelRun" },
+    }),
+  );
+  expectRefuse(differentDigest, "WorkloadBusy");
+});
+
+test("matching kind on the same key+digest still joins or reports resident", () => {
+  const joined = evaluateManagedAdmission(
+    input({
+      claims: [claim("c-run", "llama.cpp@abc123", "sha256:spec-a", "pending", 8, "ModelRun")],
+      incoming: { kind: "ModelRun" },
+    }),
+  );
+  expect(joined).toEqual({ kind: "join-pending", claimId: "c-run" });
+
+  const resident = evaluateManagedAdmission(
+    input({
+      claims: [claim("c-run", "llama.cpp@abc123", "sha256:spec-a", "resident", 8, "ModelRun")],
+      incoming: { kind: "ModelRun" },
+    }),
+  );
+  expect(resident).toEqual({ kind: "already-resident", claimId: "c-run" });
+});
+
+test("the admission surface has no force flag", () => {
+  type Incoming = ManagedAdmissionInput["incoming"];
+  // @ts-expect-error ManagedAdmissionInput has no force property
+  const top: ManagedAdmissionInput = { ...input(), force: true };
+  // @ts-expect-error the incoming descriptor has no force property
+  const nested: Incoming = { ...input().incoming, force: true };
+  expect(top.claims.length).toBe(0);
+  expect(nested.runtimeKey).toBe("llama.cpp@abc123");
 });
 
 test("does not mutate the input", () => {
