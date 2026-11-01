@@ -9,12 +9,10 @@ import { startSessionsIngest } from "./sessions.js";
 
 let stopFns: (() => void)[] = [];
 
-function makeSink(collection: "sessions" | "logs"): (records: IngestRecord[]) => Promise<void> {
-  const nodeName = resolveDefaultRagNode();
-  if (!nodeName)
-    return async () => {
-      /* no-op when no RAG node */
-    };
+function makeSink(
+  nodeName: string,
+  collection: "sessions" | "logs",
+): (records: IngestRecord[]) => Promise<void> {
   return async (records) => {
     const { node, cfg } = resolveRagNode(nodeName);
     const adapter = await createRagAdapter(node, { config: cfg });
@@ -34,8 +32,10 @@ function makeSink(collection: "sessions" | "logs"): (records: IngestRecord[]) =>
 }
 
 export function startSearchIngest(): Promise<void> {
-  const sessionsSink = makeSink("sessions");
-  const logsSink = makeSink("logs");
+  const nodeName = resolveDefaultRagNode();
+  if (!nodeName) return Promise.resolve();
+  const sessionsSink = makeSink(nodeName, "sessions");
+  const logsSink = makeSink(nodeName, "logs");
   stopFns.push(startSessionsIngest({ sink: sessionsSink }));
   stopFns.push(
     startLogsIngest({
