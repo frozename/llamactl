@@ -55,7 +55,8 @@ async function applyModelRunManifest(
   const loadConfig = deps.loadConfig ?? kubecfg.loadConfig;
   const resolveNode = deps.resolveNode ?? kubecfg.resolveNode;
   const getClient = deps.getNodeClientByName ?? getNodeClientByName;
-  (deps.saveWorkload ?? workloadStore.saveWorkload)(manifest);
+  const save = deps.saveWorkload ?? workloadStore.saveWorkload;
+  if (!manifest.spec.enabled) save(manifest);
   const cfg = loadConfig();
   const result = await applyOne(manifest, (n) => getClient(n), undefined, undefined, {
     resolveNodeIdentity: (n) => {
@@ -67,6 +68,7 @@ async function applyModelRunManifest(
     },
     getNodeBudgetGiB: nodeRunBudgetLookup(deps.listNodeRuns),
   });
+  if (manifest.spec.enabled && !result.error) save(manifest);
   return result.error ?? null;
 }
 
@@ -75,13 +77,15 @@ async function applyModelHostManifest(
   deps: SetEnabledDeps,
 ): Promise<string | null> {
   const getClient = deps.getNodeClientByName ?? getNodeClientByName;
-  (deps.saveModelHost ?? saveModelHost)(manifest);
+  const save = deps.saveModelHost ?? saveModelHost;
+  if (!manifest.spec.enabled) save(manifest);
   const outcome = await (deps.applyOneModelHost ?? applyOneModelHost)(
     manifest,
     (n) => getClient(n),
     undefined,
     { getNodeBudgetGiB: nodeRunBudgetLookup(deps.listNodeRuns) },
   );
+  if (manifest.spec.enabled && outcome.ok) save(manifest);
   return outcome.ok ? null : outcome.error;
 }
 

@@ -153,7 +153,7 @@ function writeModelRunManifest(): string {
   return manifestPath;
 }
 
-function stubStartClient(): { startCalls: () => number } {
+function stubStartClient(onStart?: () => void): { startCalls: () => number } {
   let calls = 0;
   __setWorkloadTestSeams({
     getNodeClientByName: () =>
@@ -164,6 +164,7 @@ function stubStartClient(): { startCalls: () => number } {
             cb: { onData: (evt: unknown) => void; onComplete: () => void },
           ) => {
             calls++;
+            onStart?.();
             queueMicrotask(() => {
               cb.onData({ type: "done", result: { ok: true, pid: 3333, state: "Running" } });
               cb.onComplete();
@@ -475,6 +476,7 @@ test("apply refuses a remote ModelHost past its NodeRun budget", async () => {
   expect(code).toBe(1);
   expect(stderr).toContain("Budget is 0.5 GiB");
   expect(startCalls()).toBe(0);
+  expect(existsSync(savedManifestPath())).toBe(false);
 });
 
 test("apply keeps the default budget for a remote ModelHost whose NodeRun sets none", async () => {
@@ -515,4 +517,113 @@ test("apply refuses a remote ModelRun past its NodeRun budget", async () => {
   expect(stderr).toContain("Budget is 0.5 GiB");
   expect(startCalls).toBe(0);
   expect(existsSync(join(process.env["LLAMACTL_WORKLOADS_DIR"]!, "gemma-qa.yaml"))).toBe(false);
+});
+
+test("a budget-refused ModelHost update preserves the previously saved manifest bytes", async () => {
+  writeFileSync(join(tmp, "omlx"), "", "utf8");
+  const previousManifest = [
+    "apiVersion: llamactl/v1",
+    "kind: ModelHost",
+    "metadata:",
+    "  name: mlx-host",
+    "spec:",
+    "  enabled: true",
+    "  node: local",
+    "  engine: omlx",
+    `  binary: ${join(tmp, "omlx")}`,
+    "  resources:",
+    "    expectedMemoryGiB: 2",
+    "  endpoint:",
+    "    host: 127.0.0.1",
+    "    port: 8094",
+    "  hostedModels:",
+    "    - rel: mlx-community/Qwen3-8B-MLX-4bit",
+    "  extraArgs: []",
+    "  timeoutSeconds: 60",
+    "",
+  ].join("\n");
+  writeFileSync(savedManifestPath(), previousManifest, "utf8");
+
+  writeNodeRun(0.5);
+  const manifestPath = writeManifest({ node: "gpu1" });
+  const { startCalls } = stubStartClient();
+
+  const { result: code, stderr } = await withCapturedIo(() => runApply(["-f", manifestPath]));
+
+  expect(code).toBe(1);
+  expect(stderr).toContain("Budget is 0.5 GiB");
+  expect(startCalls()).toBe(0);
+  expect(readFileSync(savedManifestPath(), "utf8")).toBe(previousManifest);
+});
+
+test("a successful in-process enable saves the desired manifest only after apply completes", async () => {
+  writeFileSync(join(tmp, "omlx"), "", "utf8");
+  const manifestPath = writeManifest();
+  let savedDuringStart: boolean | undefined;
+  const { startCalls } = stubStartClient(() => {
+    savedDuringStart = existsSync(savedManifestPath());
+  });
+
+  const { result: code } = await withCapturedIo(() => runApply(["-f", manifestPath]));
+
+  expect(code).toBe(0);
+  expect(startCalls()).toBe(1);
+  expect(savedDuringStart).toBe(false);
+  const saved = readFileSync(savedManifestPath(), "utf8");
+  expect(saved).toContain("name: mlx-host");
+  expect(saved).toContain("enabled: true");
+});
+
+test("a refused modelHostStop keeps the disabled intent saved", async () => {
+  writeFileSync(join(tmp, "omlx"), "", "utf8");
+  const manifestPath = writeManifest({ enabled: false });
+  let savedDuringStop: string | undefined;
+  __setWorkloadTestSeams({
+    getNodeClientByName: () =>
+      ({
+        modelHostStop: {
+          mutate: () => {
+            savedDuringStop = existsSync(savedManifestPath())
+              ? readFileSync(savedManifestPath(), "utf8")
+              : undefined;
+            return Promise.resolve({ ok: false, error: "stop refused by agent" });
+          },
+        },
+      }) as unknown as NodeClient,
+  });
+
+  const { result: code, stderr } = await withCapturedIo(() => runApply(["-f", manifestPath]));
+
+  expect(code).toBe(1);
+  expect(stderr).toContain("stop refused by agent");
+  expect(savedDuringStop).toBeDefined();
+  expect(savedDuringStop).toContain("enabled: false");
+  expect(readFileSync(savedManifestPath(), "utf8")).toContain("enabled: false");
+});
+
+test("a thrown modelHostStop keeps the disabled intent saved", async () => {
+  writeFileSync(join(tmp, "omlx"), "", "utf8");
+  const manifestPath = writeManifest({ enabled: false });
+  let savedDuringStop: string | undefined;
+  __setWorkloadTestSeams({
+    getNodeClientByName: () =>
+      ({
+        modelHostStop: {
+          mutate: () => {
+            savedDuringStop = existsSync(savedManifestPath())
+              ? readFileSync(savedManifestPath(), "utf8")
+              : undefined;
+            throw new Error("stop exploded");
+          },
+        },
+      }) as unknown as NodeClient,
+  });
+
+  const { result: code, stderr } = await withCapturedIo(() => runApply(["-f", manifestPath]));
+
+  expect(code).toBe(1);
+  expect(stderr).toContain("stop exploded");
+  expect(savedDuringStop).toBeDefined();
+  expect(savedDuringStop).toContain("enabled: false");
+  expect(readFileSync(savedManifestPath(), "utf8")).toContain("enabled: false");
 });
