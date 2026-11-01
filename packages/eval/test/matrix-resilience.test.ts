@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,10 +10,29 @@ import {
   listCellRows,
   type ModelSpec,
   runMatrix,
+  waitForHealthyBoot,
   type WorkloadEval,
 } from "../src/index.js";
 import { memoryEfficacyBinaryWorkload } from "../src/index.js";
 import { mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitUntil(pred: () => boolean, timeoutMs: number, stepMs = 50): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (pred()) return true;
+    await new Promise((r) => setTimeout(r, stepMs));
+  }
+  return pred();
+}
 
 function makeModel(name: string, port = 8080): ModelSpec {
   return {
@@ -244,4 +264,60 @@ describe("ensureModelServing spawn error", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+});
+
+describe("waitForHealthyBoot caller abort", () => {
+  // The boot-probe abort point sits between spawn and ownedProcs.add, so a
+  // caller abort that only rethrows leaves the detached server running without
+  // ever becoming teardown-able.
+  test("aborted caller signal SIGTERMs the spawned process group and rejects with the abort reason", async () => {
+    const proc = spawn("/bin/sleep", ["600"], { stdio: "pipe", detached: true });
+    const pid = proc.pid;
+    expect(pid).toBeDefined();
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = ((input: Request | string | URL, init?: RequestInit) => {
+      const url = input instanceof Request ? input.url : input.toString();
+      if (url.endsWith("/health")) return Promise.resolve(new Response("ok", { status: 200 }));
+      if (url.endsWith("/v1/chat/completions")) {
+        return new Promise<Response>((_resolve, reject) => {
+          const abort = (): void => {
+            reject(new Error("boot-probe aborted"));
+          };
+          if (init?.signal?.aborted) abort();
+          else init?.signal?.addEventListener("abort", abort, { once: true });
+        });
+      }
+      return Promise.reject(new Error(`unexpected fetch ${url}`));
+    }) as unknown as typeof fetch;
+    try {
+      const controller = new AbortController();
+      const boot = waitForHealthyBoot(
+        { name: "abort-test", host: "127.0.0.1", port: 65503 } as unknown as ModelSpec,
+        proc,
+        [],
+        controller.signal,
+      );
+      // Let /health pass so the boot is parked inside the never-ready /v1 probe.
+      await Bun.sleep(100);
+      const abortReason = new Error("operator aborted boot");
+      controller.abort(abortReason);
+      let failure: unknown;
+      try {
+        await boot;
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBe(abortReason);
+      expect(await waitUntil(() => !isAlive(pid!), 4000)).toBe(true);
+    } finally {
+      globalThis.fetch = origFetch;
+      if (pid !== undefined) {
+        try {
+          process.kill(-pid, "SIGKILL");
+        } catch {
+          // Safety-net cleanup is best effort after assertions fail.
+        }
+      }
+    }
+  }, 15_000);
 });

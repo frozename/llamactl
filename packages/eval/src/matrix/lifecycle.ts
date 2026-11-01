@@ -260,6 +260,10 @@ async function probeBootedServer(
     model.request_model_id ?? "local",
     signal,
   );
+  // A caller abort must not orphan a spawned-but-not-yet-owned detached server.
+  if (signal?.aborted && proc.pid !== undefined && !ownedProcs.has(proc)) {
+    signalOwnedProcessGroup(proc, "SIGTERM");
+  }
   signal?.throwIfAborted();
   if (!ok) {
     signalOwnedProcessGroup(proc, "SIGTERM");
@@ -295,6 +299,11 @@ export async function waitForHealthyBoot(
       return { owned: true, proc };
     }
     await sleep(HEALTH_POLL_INTERVAL_MS, undefined, { signal });
+  }
+  // Same invariant as the boot-probe abort: signal before rethrowing so an
+  // aborted health-timeout never leaves the detached server running.
+  if (signal?.aborted && proc.pid !== undefined && !ownedProcs.has(proc)) {
+    signalOwnedProcessGroup(proc, "SIGTERM");
   }
   signal?.throwIfAborted();
   signalOwnedProcessGroup(proc, "SIGTERM");
