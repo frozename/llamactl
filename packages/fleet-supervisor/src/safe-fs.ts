@@ -26,6 +26,7 @@ export const {
   createReadStream,
   createWriteStream,
   existsSync,
+  fstatSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,

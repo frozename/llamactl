@@ -4,6 +4,7 @@ import type { JournalEvent } from "./journal-schema.js";
 
 const channels = new Map<string, EventEmitter>();
 const openChannels = new Set<string>();
+const globalEvents = new EventEmitter();
 
 function ensure(sessionId: string): EventEmitter {
   let e = channels.get(sessionId);
@@ -28,12 +29,19 @@ export const sessionEventBus = {
     const e = channels.get(sessionId);
     if (!e) return;
     e.emit("event", event);
+    globalEvents.emit("event", sessionId, event);
   },
   subscribe(sessionId: string, listener: (event: JournalEvent) => void): () => void {
     const e = ensure(sessionId);
     e.on("event", listener);
     return () => {
       e.off("event", listener);
+    };
+  },
+  subscribeAll(listener: (sessionId: string, event: JournalEvent) => void): () => void {
+    globalEvents.on("event", listener);
+    return () => {
+      globalEvents.off("event", listener);
     };
   },
   close(sessionId: string): void {
