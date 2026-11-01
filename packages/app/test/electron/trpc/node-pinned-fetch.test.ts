@@ -88,28 +88,62 @@ describe("undici forwarded TLS identity", () => {
     }
   }
 
+  const tlsFailureCodes = new Set([
+    "ERR_TLS_CERT_ALTNAME_INVALID",
+    "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+    "DEPTH_ZERO_SELF_SIGNED_CERT",
+    "SELF_SIGNED_CERT_IN_CHAIN",
+  ]);
+
+  function codesInCauseChain(error: unknown): string[] {
+    const codes: string[] = [];
+    let current = error as { code?: unknown; cause?: unknown } | undefined;
+    while (current) {
+      if (typeof current.code === "string") codes.push(current.code);
+      current = current.cause as { code?: unknown; cause?: unknown } | undefined;
+    }
+    return codes;
+  }
+
+  async function rejectWithTlsFailure(candidate: ClusterNode): Promise<string[]> {
+    const original = globalThis.fetch;
+    globalThis.fetch = undici.fetch as unknown as typeof fetch;
+    try {
+      const response = await makeNodePinnedFetch(candidate)(candidate.endpoint);
+      await response.body?.cancel();
+      return [];
+    } catch (error) {
+      return codesInCauseChain(error);
+    } finally {
+      globalThis.fetch = original;
+    }
+  }
+
   test("verifies the configured identity through undici", async () => {
     expect(await read(node)).toBe("verified");
   });
   test("rejects a different certificate name before sending credentials", async () => {
     const before = requests;
-    expect(await read({ ...node, tlsServerName: "wrong.example.test" })).toBeNull();
+    const codes = await rejectWithTlsFailure({ ...node, tlsServerName: "wrong.example.test" });
+    expect(codes.some((code) => tlsFailureCodes.has(code))).toBe(true);
     expect(requests).toBe(before);
   });
   test("rejects a different CA before sending credentials", async () => {
     const before = requests;
-    expect(
-      await read({
-        ...node,
-        certificate: otherCertificate,
-        certificateFingerprint: otherFingerprint,
-      }),
-    ).toBeNull();
+    const codes = await rejectWithTlsFailure({
+      ...node,
+      certificate: otherCertificate,
+      certificateFingerprint: otherFingerprint,
+    });
+    expect(codes.some((code) => tlsFailureCodes.has(code))).toBe(true);
     expect(requests).toBe(before);
   });
   test("retains endpoint identity checks without an override", async () => {
+    const before = requests;
     const { tlsServerName: _, ...without } = node;
-    expect(await read(without)).toBeNull();
+    const codes = await rejectWithTlsFailure(without);
+    expect(codes.some((code) => tlsFailureCodes.has(code))).toBe(true);
+    expect(requests).toBe(before);
   });
   test("rejects a wrong fingerprint before connecting", () => {
     const before = requests;
