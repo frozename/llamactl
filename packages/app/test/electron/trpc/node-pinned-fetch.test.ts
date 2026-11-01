@@ -9,7 +9,7 @@ import * as undici from "undici/index.js";
 import { generateSelfSignedCert } from "../../../../remote/src/server/tls.js";
 
 // Bun exposes an Agent stub for the bare specifier; exercise Electron's installed implementation.
-mock.module("undici", () => undici);
+await mock.module("undici", () => undici);
 const { makeNodePinnedFetch } = await import("../../../electron/trpc/node-pinned-fetch.js");
 
 describe("makeNodePinnedFetch", () => {
