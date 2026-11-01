@@ -3,7 +3,7 @@ import { basename, isAbsolute, join, resolve, sep } from "node:path";
 import type { EngineAdapter, EngineBootEnv } from "./types.js";
 
 import { resolveEnv } from "../env.js";
-import { existsSync, statSync } from "../safe-fs.js";
+import { existsSync, mkdirSync, statSync } from "../safe-fs.js";
 import { ensureWorkloadRuntimeDir } from "../workloadRuntime.js";
 import { gracefulShutdown, pollUntilModelIds } from "./lifecycle.js";
 
@@ -67,7 +67,10 @@ export const kapitsaEngine: EngineAdapter = {
     return { ok: true };
   },
 
-  prepareLaunch() {
+  prepareLaunch(_spec, env) {
+    // The launcher only exports KAPITSA_HOME; the adapter owns creating it.
+    // Kapitsa writes state and caches here during boot, so keep it private.
+    mkdirSync(runtimeHome(env), { recursive: true, mode: 0o700 });
     return Promise.resolve();
   },
 

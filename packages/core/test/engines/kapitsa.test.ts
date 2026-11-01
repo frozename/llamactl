@@ -8,7 +8,7 @@ import type { EngineAdapter, EngineName, ModelHostSpecForEngine } from "../../sr
 import { ENGINES } from "../../src/engines/index.js";
 import { readModelHostState, writeModelHostState } from "../../src/engines/state.js";
 import { resolveEnv } from "../../src/env.js";
-import { mkdirSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
+import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "../../src/safe-fs.js";
 
 const dir = mkdtempSync(join(tmpdir(), "kapitsa-engine-"));
 const binary = join(dir, "kapitsa");
@@ -103,6 +103,18 @@ describe("Kapitsa ModelHost adapter", () => {
       KAPITSA_NO_AUTO_UPDATE: "1",
       KAPITSA_HOME: "/runtime/workloads/experimental-kapitsa/.kapitsa",
     });
+  });
+
+  test("prepareLaunch creates a private KAPITSA_HOME under the workload runtime dir", async () => {
+    const runtime = join(dir, "kapitsa-home");
+    const home = join(runtime, "workloads", "experimental-kapitsa", ".kapitsa");
+    const env = { LLAMACTL_RUNTIME_DIR: runtime, workloadName: "experimental-kapitsa" };
+    expect(existsSync(home)).toBe(false);
+    await engine().prepareLaunch?.(spec, env);
+    expect(statSync(home).isDirectory()).toBe(true);
+    expect(statSync(home).mode & 0o777).toBe(0o700);
+    const boot = engine().buildBootCommand(spec, { ...env, LLAMACTL_MODELS_DIR: modelsDir });
+    expect(boot.envOverrides?.["KAPITSA_HOME"]).toBe(home);
   });
 
   test("requires a model root and rejects traversal", () => {

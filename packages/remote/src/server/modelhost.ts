@@ -606,7 +606,12 @@ async function launchModelHost(
     ...omitUndefined({
       LLAMACTL_MODELS_DIR: env["LLAMACTL_MODELS_DIR"],
       LLAMA_CPP_MODELS: env["LLAMA_CPP_MODELS"],
-      LLAMACTL_RUNTIME_DIR: resolved.LOCAL_AI_RUNTIME_DIR,
+      // Kapitsa keeps KAPITSA_HOME beside the workload's pid/state/boot log,
+      // so its boot env always sees the resolved launch root. Other engines
+      // keep the raw pass-through: an operator-set LLAMACTL_RUNTIME_DIR still
+      // redirects their per-workload dirs (e.g. oMLX's .omlx).
+      LLAMACTL_RUNTIME_DIR:
+        spec.engine === "kapitsa" ? resolved.LOCAL_AI_RUNTIME_DIR : env["LLAMACTL_RUNTIME_DIR"],
     }),
     workloadName: opts.key.name,
     machineProfile: resolved.LLAMA_CPP_MACHINE_PROFILE,

@@ -3,6 +3,8 @@ import { type spawn as nodeSpawn, spawn as spawnImpostor } from "node:child_proc
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { EngineBootEnv } from "../../../core/src/engines/types.js";
+
 import {
   recordModelHostOomKill,
   recordModelHostReconcileError,
@@ -450,6 +452,49 @@ describe("server/modelhost", () => {
       expect(bootLogAtSpawn).toEqual([true]);
       expect(existsSync(bootLogPath)).toBe(true);
     } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("an operator-set LLAMACTL_RUNTIME_DIR reaches a non-kapitsa engine's boot env unchanged", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-rtenv-"));
+    const { workloadsDir, runtimeDir } = makeManifest(tmp);
+    const operatorRuntimeDir = join(tmp, "operator-runtime");
+    const engine = ENGINES.omlx;
+    const originalBuildBootCommand = engine.buildBootCommand.bind(engine);
+    const bootEnvs: EngineBootEnv[] = [];
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
+    try {
+      engine.buildBootCommand = mock(
+        (
+          spec: Parameters<typeof engine.buildBootCommand>[0],
+          env: Parameters<typeof engine.buildBootCommand>[1],
+        ) => {
+          bootEnvs.push(env);
+          return originalBuildBootCommand(spec, env);
+        },
+      );
+      const result = await startModelHost({
+        key: { name: "mlx-host-server" },
+        workloadsDir,
+        runtimeDir,
+        env: { ...modelHostEnv(tmp), LLAMACTL_RUNTIME_DIR: operatorRuntimeDir },
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
+      });
+
+      expect(result.ok).toBe(true);
+      // #372: the resolved launch root must not overwrite an operator-set
+      // LLAMACTL_RUNTIME_DIR for engines that honour it — oMLX places its
+      // per-workload .omlx dir underneath it.
+      expect(bootEnvs).toHaveLength(1);
+      expect(bootEnvs[0]?.LLAMACTL_RUNTIME_DIR).toBe(operatorRuntimeDir);
+      const [, args] = spawn.mock.calls[0] as unknown as [string, string[], unknown];
+      expect(args).toContain(
+        join(operatorRuntimeDir, "workloads", "mlx-host-server", ".omlx", "models"),
+      );
+    } finally {
+      engine.buildBootCommand = originalBuildBootCommand;
       rmSync(tmp, { recursive: true, force: true });
     }
   });

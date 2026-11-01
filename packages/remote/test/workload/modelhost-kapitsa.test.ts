@@ -4,7 +4,14 @@ import { expect, mock, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "../../src/safe-fs.js";
 import { startModelHost } from "../../src/server/modelhost.js";
 import { ModelHostManifestSchema, specForEngine } from "../../src/workload/modelhost-schema.js";
 
@@ -71,6 +78,58 @@ test("runtimeDir keeps Kapitsa state and cache under the same launch root", asyn
   } finally {
     if (prior === undefined) delete process.env["LOCAL_AI_RUNTIME_DIR"];
     else process.env["LOCAL_AI_RUNTIME_DIR"] = prior;
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("KAPITSA_HOME exists as a private directory before the Kapitsa process spawns", async () => {
+  const tmp = mkdtempSync(join(tmpdir(), "kapitsa-home-"));
+  const runtimeDir = join(tmp, "runtime");
+  const binary = join(tmp, "kapitsa");
+  mkdirSync(join(tmp, "models", "model"), { recursive: true });
+  writeFileSync(binary, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  const homes: (string | undefined)[] = [];
+  const existsAtSpawn: boolean[] = [];
+  const spawn = mock(
+    (_binary: string, _args: readonly string[], options: { env: NodeJS.ProcessEnv }) => {
+      const home = options.env["KAPITSA_HOME"];
+      homes.push(home);
+      existsAtSpawn.push(home !== undefined && existsSync(home));
+      return { pid: 4321 } as const;
+    },
+  );
+  const env: NodeJS.ProcessEnv = { ...process.env, LLAMACTL_MODELS_DIR: join(tmp, "models") };
+  delete env["LLAMACTL_RUNTIME_DIR"];
+  try {
+    const result = await startModelHost({
+      key: { name: "experimental-kapitsa" },
+      runtimeDir,
+      workloadsDir: join(tmp, "manifests"),
+      env,
+      manifest: {
+        apiVersion: "llamactl/v1",
+        kind: "ModelHost",
+        metadata: { name: "experimental-kapitsa" },
+        spec: {
+          engine: "kapitsa",
+          node: "local",
+          binary,
+          endpoint: { host: "127.0.0.1", port: 18200 },
+          hostedModels: [{ rel: "model" }],
+        },
+      },
+      spawn: spawn as unknown as typeof nodeSpawn,
+      probeReady: () => Promise.resolve({ ready: true, modelIds: ["model"] }),
+    });
+    expect(result.ok).toBe(true);
+    const home = join(runtimeDir, "workloads", "experimental-kapitsa", ".kapitsa");
+    expect(homes).toEqual([home]);
+    // The adapter must create KAPITSA_HOME itself: the launcher only exports
+    // the path, and Kapitsa writes state into it during boot.
+    expect(existsAtSpawn).toEqual([true]);
+    expect(statSync(home).isDirectory()).toBe(true);
+    expect(statSync(home).mode & 0o777).toBe(0o700);
+  } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
 });
