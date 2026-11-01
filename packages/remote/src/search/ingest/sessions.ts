@@ -65,28 +65,17 @@ export function startSessionsIngest(opts: SessionsIngestOpts): () => void {
     }
   };
 
-  const onEvent =
-    (sessionId: string): ((event: JournalEvent) => void) =>
-    (event: JournalEvent) => {
-      const r = recordFor(event, sessionId);
-      if (!r) return;
-      queue.push(r);
-      timer ??= setTimeout(() => void flush(), flushMs);
-    };
-
-  const originalCreate = sessionEventBus.create.bind(sessionEventBus);
-  const subs = new Set<() => void>();
-  sessionEventBus.create = (sessionId: string): void => {
-    originalCreate(sessionId);
-    subs.add(sessionEventBus.subscribe(sessionId, onEvent(sessionId)));
-  };
+  const unsubscribe = sessionEventBus.subscribeAll((sessionId, event) => {
+    const r = recordFor(event, sessionId);
+    if (!r) return;
+    queue.push(r);
+    timer ??= setTimeout(() => void flush(), flushMs);
+  });
 
   return () => {
     if (timer !== null) clearTimeout(timer);
     void flush();
-    for (const off of subs) off();
-    subs.clear();
-    sessionEventBus.create = originalCreate;
+    unsubscribe();
   };
 }
 

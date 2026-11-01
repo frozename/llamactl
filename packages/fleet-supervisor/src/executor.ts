@@ -1,6 +1,7 @@
 import type { FleetExecutionEntry, FleetJournalEntry, FleetProposalEntry } from "./types.js";
 
-import { existsSync, readFileSync } from "./safe-fs.js";
+import { MAX_JOURNAL_LINE_BYTES, readJournalLines } from "./journal-reader.js";
+import { existsSync } from "./safe-fs.js";
 import { actionTier } from "./types.js";
 
 export type { FleetExecutionEntry };
@@ -180,16 +181,21 @@ function makeRetryFailureEntry(
 
 function defaultReadJournal(path: string): FleetJournalEntry[] {
   if (!existsSync(path)) return [];
-  return readFileSync(path, "utf8")
-    .split("\n")
-    .filter(Boolean)
-    .flatMap((line) => {
-      try {
-        return [JSON.parse(line) as FleetJournalEntry];
-      } catch {
-        return [];
-      }
-    });
+  const entries: FleetJournalEntry[] = [];
+  const lines = readJournalLines(path, () => {
+    // Missing execution history can cause a completed action to run again.
+    throw new Error(`Journal line exceeds ${String(MAX_JOURNAL_LINE_BYTES)} bytes`);
+  });
+  for (const line of lines) {
+    let entry: FleetJournalEntry;
+    try {
+      entry = JSON.parse(line) as FleetJournalEntry;
+    } catch {
+      continue;
+    }
+    if (entry.kind === "fleet-proposal" || entry.kind === "fleet-execution") entries.push(entry);
+  }
+  return entries;
 }
 
 export async function runExecutor(opts: ExecutorOptions): Promise<FleetExecutionEntry[]> {

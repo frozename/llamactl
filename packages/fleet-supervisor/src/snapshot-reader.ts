@@ -1,12 +1,12 @@
 import type { FleetSnapshotEntry } from "./types.js";
 
-import { existsSync, readFileSync } from "./safe-fs.js";
+import { readJournalLines } from "./journal-reader.js";
+import { existsSync } from "./safe-fs.js";
 
 export function readLatestFleetSnapshotFromJournal(journalPath: string): FleetSnapshotEntry | null {
   if (!existsSync(journalPath)) return null;
-  const raw = readFileSync(journalPath, "utf8");
   let latest: FleetSnapshotEntry | null = null;
-  for (const line of raw.split("\n")) {
+  for (const line of readJournalLines(journalPath)) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     try {
