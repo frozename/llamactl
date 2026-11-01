@@ -540,6 +540,10 @@ function handoffOrRefuseLocalModelHost(manifest: ModelHostManifest, json: boolea
   return 1;
 }
 
+function preserveDisabledModelHostIntent(manifest: ModelHostManifest): void {
+  if (!manifest.spec.enabled) saveModelHost(manifest);
+}
+
 async function applyModelHostFromRaw(raw: string, json: boolean): Promise<number> {
   let manifest: unknown;
   try {
@@ -574,11 +578,9 @@ async function applyModelHostFromRaw(raw: string, json: boolean): Promise<number
   const handedOff = handoffOrRefuseLocalModelHost(parsedHost, json);
   if (handedOff !== null) return handedOff;
 
-  // Persist the desired-state manifest BEFORE dispatching modelHostStart.
-  // The agent's startModelHost handler loads the manifest by name from
-  // the workloads dir, so the file must exist before the subscription
-  // begins. Validation happens inside saveModelHost via Zod.
-  saveModelHost(parsedHost);
+  // A failed stop must retain disabled intent. Enabled starts receive the
+  // manifest inline and do not need a local pre-save.
+  preserveDisabledModelHostIntent(parsedHost);
 
   try {
     const outcome = await workloadApply.applyManifest({
