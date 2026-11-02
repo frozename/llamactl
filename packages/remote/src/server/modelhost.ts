@@ -93,6 +93,11 @@ export interface StartModelHostResult {
   ok: boolean;
   pid: number | null;
   error?: string;
+  /** The pid of a child that was spawned and then failed or was torn down.
+   *  Admission authorities need it as generation evidence to prove the
+   *  process is gone before releasing memory; `pid` stays null because a
+   *  failure is never a running host. */
+  spawnedPid?: number;
 }
 
 export interface StopModelHostOptions {
@@ -670,9 +675,15 @@ async function launchModelHost(
     opts.onEvent?.({ type: "done", result });
     return result;
   } catch (error) {
+    const spawnedPid = child?.pid;
     await teardownChildSilently(child, engine);
     const message = error instanceof Error ? error.message : "modelhost start failed";
-    const result = { ok: false, pid: null, error: message };
+    const result = {
+      ok: false,
+      pid: null,
+      error: message,
+      ...omitUndefined({ spawnedPid }),
+    };
     opts.onEvent?.({ type: "done", result });
     return result;
   }
