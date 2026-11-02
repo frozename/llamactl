@@ -187,6 +187,8 @@ export interface DeployOutcome {
 
 interface RunState {
   logOffset: number;
+  /** Offset into the controller's stderr file, when it is separate from stdout. */
+  errLogOffset: number;
   startedAtMs: number;
   /** Hosts whose pid changed: the controller restarted them. */
   restartedHosts: Set<string>;
@@ -358,6 +360,10 @@ async function startController(ctx: DeployContext, state: RunState): Promise<Ste
   if (ctx.controllerLog.kind === "file") {
     state.logOffset = ctx.deps.fileSize(ctx.controllerLog.path) ?? 0;
   }
+  const stderrPath = ctx.controller.stderrPath;
+  if (stderrPath !== null && stderrPath !== undefined && stderrPath !== ctx.controller.stdoutPath) {
+    state.errLogOffset = ctx.deps.fileSize(stderrPath) ?? 0;
+  }
   state.startedAtMs = ctx.deps.now();
   const r = await ctx.manager.start(ctx.controller);
   if (r.code === 0 || (await ctx.manager.isActive(ctx.controller))) {
@@ -375,13 +381,23 @@ export interface ControllerReports {
   passSeen: boolean;
   /** Workload name → the actions reported for it since the start line. */
   actions: Map<string, Set<string>>;
+  /** Workload name → its latest WARN report since the start line. */
+  errors: Map<string, { action: string; error: string }>;
 }
 
 const REPORT_RE = /^\[[^\]]+\] (?:modelhost|modelrun)\/([^\s/]+) on [^\s:]+: ([a-z-]+)/;
 
+const WARN_RE =
+  /^\[[^\]]+\] WARN (?:modelhost|modelrun)\/([^\s/]+) on [^\s:]+: ([a-z-]+) error=(.*)$/;
+
 /** What a controller's stdout since its (re)start says about the reconcile passes. */
 export function parseControllerReports(text: string): ControllerReports {
-  const out: ControllerReports = { started: false, passSeen: false, actions: new Map() };
+  const out: ControllerReports = {
+    started: false,
+    passSeen: false,
+    actions: new Map(),
+    errors: new Map(),
+  };
   for (const line of text.split("\n")) {
     if (line.startsWith("controller started pid=")) {
       out.started = true;
@@ -389,6 +405,11 @@ export function parseControllerReports(text: string): ControllerReports {
     }
     if (!out.started || !line.startsWith("[")) continue;
     out.passSeen = true;
+    const warn = WARN_RE.exec(line);
+    if (warn?.[1] !== undefined && warn[2] !== undefined && warn[3] !== undefined) {
+      out.errors.set(warn[1], { action: warn[2], error: warn[3] });
+      continue;
+    }
     const match = REPORT_RE.exec(line);
     if (match?.[1] === undefined || match[2] === undefined) continue;
     const set = out.actions.get(match[1]) ?? new Set<string>();
@@ -417,7 +438,40 @@ async function readControllerOutput(ctx: DeployContext, state: RunState): Promis
   }
   const size = ctx.deps.fileSize(src.path);
   if (size !== null && size < state.logOffset) state.logOffset = 0;
-  return ctx.deps.readFileFrom(src.path, state.logOffset) ?? "";
+  const stdout = ctx.deps.readFileFrom(src.path, state.logOffset) ?? "";
+  const stderrPath = ctx.controller.stderrPath;
+  if (stderrPath === null || stderrPath === undefined || stderrPath === src.path) return stdout;
+  const errSize = ctx.deps.fileSize(stderrPath);
+  if (errSize !== null && errSize < state.errLogOffset) state.errLogOffset = 0;
+  return `${stdout}${ctx.deps.readFileFrom(stderrPath, state.errLogOffset) ?? ""}`;
+}
+
+/**
+ * Expected hosts the controller reported with an error but left untouched, and
+ * whose pid is still the one from before the update: the old agent knows why
+ * they fail and the new one should clear it on its own restart.
+ */
+function erroredButKept(
+  ctx: DeployContext,
+  reports: ControllerReports,
+  missing: readonly string[],
+): { names: string[]; warnings: string[] } {
+  const pids = new Map(ctx.deps.listManagedHosts(ctx.hostsEnv).map((h) => [h.name, h.pid]));
+  const names: string[] = [];
+  const warnings: string[] = [];
+  for (const name of missing) {
+    const errored = reports.errors.get(name);
+    if (errored === undefined) continue;
+    if (errored.action !== "unchanged" && errored.action !== "converged") continue;
+    const snapshot = ctx.snapshot.find((h) => h.name === name);
+    const pid = pids.get(name);
+    if (snapshot === undefined || pid !== snapshot.pid) continue;
+    names.push(name);
+    warnings.push(
+      `${name}: the controller reports it ${errored.action} with error=${errored.error} (pid ${String(pid)} unchanged); treating it as adopted, the agent restart should clear it`,
+    );
+  }
+  return { names, warnings };
 }
 
 /** Compare the managed hosts' pids with the snapshot taken before the update. */
@@ -501,11 +555,24 @@ async function pollControllerOnce(
   if (reports.started && reports.passSeen && missing.length === 0) {
     return adoptionOutcome(ctx, state, reports, []);
   }
+  if (reports.started && reports.passSeen) {
+    const kept = erroredButKept(ctx, reports, missing);
+    if (kept.names.length === missing.length) {
+      return adoptionOutcome(ctx, state, reports, kept.warnings);
+    }
+  }
   if (ctx.deps.now() < deadline) return null;
   const what =
     missing.length > 0 ? `report ${missing.join(", ")} unchanged` : "complete a reconcile pass";
+  const notes = missing.flatMap((name) => {
+    const errored = reports.errors.get(name);
+    return errored === undefined
+      ? []
+      : [`${name}: the controller reports it ${errored.action} with error=${errored.error}`];
+  });
   return fail(
     `the controller did not ${what} within ${String(ctx.timeouts.controllerReportMs / 1000)} s`,
+    notes,
   );
 }
 
@@ -687,7 +754,12 @@ export async function runDeploy(
   steps: readonly DeployStep[],
   ctx: DeployContext,
 ): Promise<DeployOutcome> {
-  const state: RunState = { logOffset: 0, startedAtMs: ctx.deps.now(), restartedHosts: new Set() };
+  const state: RunState = {
+    logOffset: 0,
+    errLogOffset: 0,
+    startedAtMs: ctx.deps.now(),
+    restartedHosts: new Set(),
+  };
   const results: StepResult[] = [];
   let agentRestartAttempted = false;
   for (const step of steps) {

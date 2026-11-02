@@ -227,6 +227,18 @@ describe("launchd", () => {
     });
   });
 
+  test("parseLaunchctlPrint reads the stderr path", () => {
+    const text = [
+      "gui/501/com.llamactl.controller = {",
+      "\tstdout path = /l/out.log",
+      "\tstderr path = /l/err.log",
+      "}",
+    ].join("\n");
+    const p = parseLaunchctlPrint(text);
+    expect(p.stdoutPath).toBe("/l/out.log");
+    expect((p as unknown as { stderrPath?: string | null }).stderrPath).toBe("/l/err.log");
+  });
+
   test("start refuses without a plist to bootstrap from", async () => {
     const exec = (): Promise<ExecResult> => Promise.reject(new Error("must not exec"));
     const r = await launchdManager(exec, 501).start(info({ plistPath: null }));
