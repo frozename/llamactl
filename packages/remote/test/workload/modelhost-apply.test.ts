@@ -268,6 +268,7 @@ describe("applyManifest — kind dispatch", () => {
     try {
       const result = await applyManifest({
         manifest,
+        workloadsDir: join(tmp, "workloads"),
         getClient: () => client,
         spawn: fakeSpawn,
         env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp },
