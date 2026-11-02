@@ -125,8 +125,10 @@ Declarative workloads (Kubernetes-style):
   llamactl get workloads [--json]             List workloads + live phase
   llamactl describe workload <name>           Show manifest + live status
   llamactl delete workload <name>             Stop the server and remove
-      [--keep-running]                        the manifest (or just remove
-                                              with --keep-running).
+      [--keep-running] [--force]              the manifest (or just remove
+                                              with --keep-running; --force
+                                              also removes it when the node
+                                              misses the status deadline).
   llamactl enable <workload>                  Flip spec.enabled=true and
                                               re-apply the manifest.
   llamactl disable <workload>                 Flip spec.enabled=false and

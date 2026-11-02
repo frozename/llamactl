@@ -101,10 +101,11 @@ The budget query has a 10 s deadline: when the node does not answer
 within 10 s, describe node prints the error and exits 1.
 `;
 
-const DELETE_USAGE = `Usage: llamactl delete workload <name> [--keep-running]
+const DELETE_USAGE = `Usage: llamactl delete workload <name> [--keep-running] [--force]
 
 Stop the server on the target node (unless --keep-running is set) and
 remove the manifest file from the workloads directory.
+--force removes the manifest even when the node misses the 10 s status deadline (its server may keep running).
 `;
 
 export interface NodeBudgetView {
@@ -142,10 +143,15 @@ function getWorkloadNodeClient(name: string): NodeClient {
 // packages/remote/src/workload/node-rpc-deadline.ts, which @llamactl/remote does not export.
 const GET_NODE_QUERY_TIMEOUT_MS = 10_000;
 
+// #359: distinguishes a deadline miss (the node may still be running the
+// server) from a real transport failure, so `delete` can preserve the manifest.
+class NodeQueryDeadlineError extends Error {}
+
 // #221: race one node query against a deadline, so a node that never answers
 // (suspended laptop, Wi-Fi drop) cannot stall `get workloads`, `describe workload`,
 // `describe node`, `describe noderun` or the ModelRun status query in `delete`. On timeout
-// this rejects and the caller's catch maps it to Unreachable, an error or a delete warning.
+// this rejects with NodeQueryDeadlineError; the get/describe callers print its message as
+// before, and `delete` preserves the manifest on it unless --force is set.
 // The timer is cleared on every path, so it cannot keep the process alive. Shaped like
 // queryServerStatusWithTimeout in packages/remote/src/router.ts.
 async function withNodeQueryDeadline<T>(node: string, query: () => Promise<T>): Promise<T> {
@@ -153,7 +159,9 @@ async function withNodeQueryDeadline<T>(node: string, query: () => Promise<T>): 
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_resolve, reject): void => {
     timer = setTimeout((): void => {
-      reject(new Error(`node '${node}' did not answer within ${String(timeoutMs)} ms`));
+      reject(
+        new NodeQueryDeadlineError(`node '${node}' did not answer within ${String(timeoutMs)} ms`),
+      );
     }, timeoutMs);
   });
   try {
@@ -1018,10 +1026,14 @@ async function runDescribeNode(name: string, json: boolean): Promise<number> {
   }
 }
 
-function parseDeleteArgs(rest: string[]): { keepRunning: boolean } | { exit: number } {
+function parseDeleteArgs(
+  rest: string[],
+): { keepRunning: boolean; force: boolean } | { exit: number } {
   let keepRunning = false;
+  let force = false;
   for (const arg of rest) {
     if (arg === "--keep-running") keepRunning = true;
+    else if (arg === "--force") force = true;
     else if (arg === "-h" || arg === "--help") {
       process.stdout.write(DELETE_USAGE);
       return { exit: 0 };
@@ -1030,7 +1042,7 @@ function parseDeleteArgs(rest: string[]): { keepRunning: boolean } | { exit: num
       return { exit: 1 };
     }
   }
-  return { keepRunning };
+  return { keepRunning, force };
 }
 
 function deleteNodeRunByName(name: string): number {
@@ -1091,7 +1103,10 @@ async function deleteModelHost(
   return 0;
 }
 
-async function stopModelRunServer(manifest: workloadSchema.ModelRun): Promise<boolean> {
+async function stopModelRunServer(
+  manifest: workloadSchema.ModelRun,
+  force: boolean,
+): Promise<boolean> {
   try {
     const client = getWorkloadNodeClient(manifest.spec.node);
     const status = await withNodeQueryDeadline(manifest.spec.node, () =>
@@ -1120,6 +1135,14 @@ async function stopModelRunServer(manifest: workloadSchema.ModelRun): Promise<bo
       );
     }
   } catch (err) {
+    // #359: a missed deadline means the node might still be running the server,
+    // so without --force the manifest must survive for a retryable delete.
+    if (err instanceof NodeQueryDeadlineError && !force) {
+      process.stderr.write(
+        `delete: node ${manifest.spec.node} did not answer the status query in time (${err.message}); manifest preserved. Retry, or pass --force to delete anyway (its server may keep running).\n`,
+      );
+      return false;
+    }
     process.stderr.write(
       `warning: failed to reach node ${manifest.spec.node}: ${(err as Error).message}\n`,
     );
@@ -1147,9 +1170,10 @@ async function deleteModelRun(
   manifest: workloadSchema.ModelRun,
   name: string,
   keepRunning: boolean,
+  force: boolean,
 ): Promise<number> {
   if (!keepRunning) {
-    if (!(await stopModelRunServer(manifest))) return 1;
+    if (!(await stopModelRunServer(manifest, force))) return 1;
     await stopModelRunWorkers(manifest);
   }
   const ok = workloadStore.deleteWorkload(name);
@@ -1186,7 +1210,7 @@ export async function runDelete(args: string[]): Promise<number> {
   if (manifest.kind === "ModelHost") {
     return await deleteModelHost(manifest, name, parsed.keepRunning);
   }
-  return await deleteModelRun(manifest, name, parsed.keepRunning);
+  return await deleteModelRun(manifest, name, parsed.keepRunning, parsed.force);
 }
 
 // ---- NodeRun handlers --------------------------------------------
