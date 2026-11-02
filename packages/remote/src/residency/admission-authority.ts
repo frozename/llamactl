@@ -9,14 +9,18 @@
  * is injected — tests drive it with fakes, production wires real probes.
  * Nothing here spawns, signals or reaps a process.
  *
- * GenerationRecord / ProcessObservation / GenerationVerdict /
- * JudgeGeneration are local mirrors of the pure judge in
- * packages/core/src/residency/generation-evidence.ts, which lands on
- * branch feat/target-authority-core-policy and is not on this base.
- * Replace these declarations with the core import when that branch
- * merges.
+ * ProcessObservation, GenerationRecord, and GenerationVerdict are
+ * re-exported from packages/core/src/residency/generation-evidence.ts.
+ * judgeGeneration is called directly from that module.
  */
 import type { ManagedWorkloadKind } from "@llamactl/core/residency/managed-admission";
+
+import {
+  type GenerationRecord,
+  type GenerationVerdict,
+  judgeGeneration,
+  type ProcessObservation,
+} from "@llamactl/core/residency/generation-evidence";
 
 import {
   type AdmissionStore,
@@ -27,33 +31,7 @@ import {
   type OwnerIdentity,
 } from "./admission-store.js";
 
-/** What the injected process observer reports for one pid. */
-export type ProcessObservation = {
-  pid: number;
-  alive: boolean;
-  startTimeMs?: number | undefined;
-  executable?: string | undefined;
-};
-
-/** One captured generation of a claim: a pid plus optional identity fields. */
-export type GenerationRecord = {
-  pid: number;
-  startTimeMs?: number | undefined;
-  executable?: string | undefined;
-};
-
-export type GenerationVerdict =
-  | { kind: "same-generation" }
-  | { kind: "verified-absent" }
-  | { kind: "different-generation"; reason: string }
-  | { kind: "uncertain"; reason: string };
-
-/** Signature of core's pure judgeGeneration. */
-export type JudgeGeneration = (input: {
-  recorded: GenerationRecord | undefined;
-  pidFilePid: number | undefined;
-  observation: ProcessObservation | undefined;
-}) => GenerationVerdict;
+export type { GenerationRecord, GenerationVerdict, ProcessObservation };
 
 export interface AdmitRequest {
   runtimeKey: string;
@@ -130,50 +108,10 @@ export interface AdmissionAuthority {
   close(): void;
 }
 
-function identityMatches(
-  recorded: GenerationRecord,
-  observation: ProcessObservation,
-  field: "startTimeMs" | "executable",
-): boolean {
-  return (
-    observation[field] === undefined ||
-    recorded[field] === undefined ||
-    observation[field] === recorded[field]
-  );
-}
-
 function ownerIdentityMatches(a: OwnerIdentity, b: OwnerIdentity): boolean {
   const shared = (field: "startTimeMs" | "executable"): boolean =>
     a[field] === undefined || b[field] === undefined || a[field] === b[field];
   return a.pid === b.pid && shared("startTimeMs") && shared("executable");
-}
-
-function judgeGeneration(
-  recorded: GenerationRecord,
-  observation: ProcessObservation | undefined,
-): GenerationVerdict {
-  if (observation === undefined) {
-    return { kind: "uncertain", reason: "process cannot be identified" };
-  }
-  const startTimeMatches = identityMatches(recorded, observation, "startTimeMs");
-  const executableMatches = identityMatches(recorded, observation, "executable");
-  if (observation.alive) {
-    return startTimeMatches && executableMatches
-      ? { kind: "same-generation" }
-      : {
-          kind: "different-generation",
-          reason: "a live process does not match the recorded identity",
-        };
-  }
-  const carriesIdentity =
-    observation.startTimeMs !== undefined || observation.executable !== undefined;
-  if (carriesIdentity && startTimeMatches && executableMatches) {
-    return { kind: "verified-absent" };
-  }
-  return {
-    kind: "uncertain",
-    reason: "the death cannot be attributed to the recorded generation",
-  };
 }
 
 function stakeOrRecover(
@@ -206,7 +144,11 @@ function resolveOpenOwnership(
   if (ownerIdentityMatches(rec, owner)) {
     return undefined;
   }
-  const verdict = judgeGeneration(rec, observe(rec.pid));
+  const verdict = judgeGeneration({
+    recorded: rec,
+    pidFilePid: rec.pid,
+    observation: observe(rec.pid),
+  });
   if (verdict.kind === "verified-absent") {
     return stakeOrRecover(store, owner, true);
   }
@@ -238,7 +180,11 @@ function releaseClaim(
     return { kind: "retained", claimId, reason: "pid-record-conflict" };
   }
   for (const gen of captured) {
-    const verdict = judgeGeneration(gen, ctx.observe(gen.pid));
+    const verdict = judgeGeneration({
+      recorded: gen,
+      pidFilePid,
+      observation: ctx.observe(gen.pid),
+    });
     if (verdict.kind === "same-generation" || verdict.kind === "different-generation") {
       return { kind: "retained", claimId, reason: "live-generation" };
     }

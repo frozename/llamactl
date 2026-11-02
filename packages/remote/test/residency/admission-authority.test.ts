@@ -6,12 +6,7 @@
  *
  * The pure generation-evidence judge (`judgeGeneration`, verdicts
  * same-generation / verified-absent / different-generation / uncertain)
- * is NOT on this base — it lives in
- * packages/core/src/residency/generation-evidence.ts on branch
- * feat/target-authority-core-policy. The stub under test declares
- * minimal local mirror types (GenerationRecord, ProcessObservation,
- * GenerationVerdict, JudgeGeneration) for the seat to wire the real
- * judge behind when the core branch merges.
+ * is imported from packages/core/src/residency/generation-evidence.ts.
  *
  * Contract notes pinned here:
  * - admit() maps the store's join-pending/already-resident onto
