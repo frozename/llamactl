@@ -119,6 +119,25 @@ async function waitFor(condition: () => boolean, label: string): Promise<void> {
   throw new Error(`timed out waiting for ${label}`);
 }
 
+// Bounded settle for a start that must answer an abort: a start that swallows
+// the signal never resolves, so the sentinel fails the result assertion
+// instead of stalling until the bun test timeout.
+async function settleWithin<T>(promise: Promise<T>): Promise<T | "timed-out"> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<"timed-out">((resolve) => {
+        timer = setTimeout(() => {
+          resolve("timed-out");
+        }, 2000);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 describe("server/modelhost", () => {
   test("persists inline manifest to workloadsDir before start", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-inline-"));
@@ -1931,6 +1950,176 @@ describe("server/modelhost", () => {
       expect(result.ok).toBe(true);
       expect(existsSync(startingPath)).toBe(false);
       expect(readFileSync(join(hostDir, "modelhost.state"), "utf8")).toContain('"pid": 4321');
+    } finally {
+      engine.teardown = originalTeardown;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("aborting the caller's signal during the readiness wait tears down the spawned child", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-abortready-"));
+    const { workloadsDir, runtimeDir } = makeManifest(tmp);
+    const tornDown: number[] = [];
+    const engine = ENGINES.omlx;
+    const originalTeardown = engine.teardown.bind(engine);
+    const gate = readinessGate();
+    let probeCalls = 0;
+    const probeReady = (): Promise<{ ready: boolean; modelIds: string[] }> => {
+      probeCalls += 1;
+      return gate.promise;
+    };
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
+    const events: unknown[] = [];
+    const ac = new AbortController();
+    try {
+      engine.teardown = mock((pid: number) => {
+        tornDown.push(pid);
+        return Promise.resolve();
+      });
+      const startPromise = startModelHost({
+        key: { name: "mlx-host-server" },
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady,
+        signal: ac.signal,
+        onEvent: (event: unknown): void => {
+          events.push(event);
+        },
+      });
+      await waitFor(() => probeCalls >= 1, "start to reach the readiness wait");
+      ac.abort();
+      // The gate is never opened: only the abort can settle this start.
+      const result = await settleWithin(startPromise);
+      expect(result).toEqual({ ok: false, pid: null, error: "modelHostStart aborted" });
+      expect(tornDown).toEqual([4321]);
+      expect(events).toEqual([{ type: "done", result }]);
+      expect(existsSync(join(runtimeDir, "workloads", "mlx-host-server", "modelhost.state"))).toBe(
+        false,
+      );
+    } finally {
+      engine.teardown = originalTeardown;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("an already-aborted signal refuses the start without spawning", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-preaborted-"));
+    const { workloadsDir, runtimeDir } = makeManifest(tmp);
+    const tornDown: number[] = [];
+    const engine = ENGINES.omlx;
+    const originalTeardown = engine.teardown.bind(engine);
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
+    try {
+      engine.teardown = mock((pid: number) => {
+        tornDown.push(pid);
+        return Promise.resolve();
+      });
+      const result = await startModelHost({
+        key: { name: "mlx-host-server" },
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
+        signal: AbortSignal.abort(),
+      });
+      expect(result).toEqual({ ok: false, pid: null, error: "modelHostStart aborted" });
+      expect(spawn).toHaveBeenCalledTimes(0);
+      expect(tornDown).toEqual([]);
+    } finally {
+      engine.teardown = originalTeardown;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("an aborted start releases the in-flight slot", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-abortslot-"));
+    const { workloadsDir, runtimeDir } = makeManifest(tmp);
+    const tornDown: number[] = [];
+    const engine = ENGINES.omlx;
+    const originalTeardown = engine.teardown.bind(engine);
+    const gate = readinessGate();
+    let probeCalls = 0;
+    const gatedProbeReady = (): Promise<{ ready: boolean; modelIds: string[] }> => {
+      probeCalls += 1;
+      return gate.promise;
+    };
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
+    const ac = new AbortController();
+    try {
+      engine.teardown = mock((pid: number) => {
+        tornDown.push(pid);
+        return Promise.resolve();
+      });
+      const common = {
+        key: { name: "mlx-host-server" },
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        spawn: spawn as unknown as typeof nodeSpawn,
+      };
+      const firstPromise = startModelHost({
+        ...common,
+        probeReady: gatedProbeReady,
+        signal: ac.signal,
+      });
+      await waitFor(() => probeCalls >= 1, "first start to reach the readiness wait");
+      ac.abort();
+      const first = await settleWithin(firstPromise);
+      expect(first).toEqual({ ok: false, pid: null, error: "modelHostStart aborted" });
+      expect(tornDown).toEqual([4321]);
+      const retried = await settleWithin(
+        startModelHost({
+          ...common,
+          probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
+        }),
+      );
+      expect(retried).toEqual({ ok: true, pid: 4321 });
+      expect(spawn).toHaveBeenCalledTimes(2);
+    } finally {
+      engine.teardown = originalTeardown;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("aborting a joined caller's signal does not tear down the owner's start", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-joinabort-"));
+    const { workloadsDir, runtimeDir } = makeManifest(tmp);
+    const tornDown: number[] = [];
+    const engine = ENGINES.omlx;
+    const originalTeardown = engine.teardown.bind(engine);
+    const gate = readinessGate();
+    let probeCalls = 0;
+    const probeReady = (): Promise<{ ready: boolean; modelIds: string[] }> => {
+      probeCalls += 1;
+      return gate.promise;
+    };
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
+    const acB = new AbortController();
+    try {
+      engine.teardown = mock((pid: number) => {
+        tornDown.push(pid);
+        return Promise.resolve();
+      });
+      const common = {
+        key: { name: "mlx-host-server" },
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady,
+      };
+      const ownerPromise = startModelHost(common);
+      const joinedPromise = startModelHost({ ...common, signal: acB.signal });
+      await waitFor(() => probeCalls >= 1, "owner start to reach the readiness wait");
+      acB.abort();
+      const joined = await settleWithin(joinedPromise);
+      expect(joined).toEqual({ ok: false, pid: null, error: "modelHostStart aborted" });
+      expect(tornDown).toEqual([]);
+      gate.open();
+      expect(await ownerPromise).toEqual({ ok: true, pid: 4321 });
     } finally {
       engine.teardown = originalTeardown;
       rmSync(tmp, { recursive: true, force: true });
