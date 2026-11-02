@@ -30,9 +30,18 @@
  *   back oldest-first, releaseVerified deletes them with the claim, and a
  *   plain reopen or owner recovery keeps them. A ledger file created
  *   before the generations table existed migrates on open.
+ * - Hardening (#383): a read failure inside snapshot() surfaces as a
+ *   typed AuthorityUnavailableError, never a silently empty ledger; a
+ *   database file whose pages fail integrity check is refused at open,
+ *   not adopted; a stored row whose state is outside the enum is
+ *   corruption, not a pending claim; and claim() refuses a kind outside
+ *   ManagedWorkloadKind rather than persisting it.
  */
+import type { ManagedWorkloadKind } from "@llamactl/core/residency/managed-admission";
+
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -49,7 +58,15 @@ import {
   type RecoverOwnershipResult,
   type ReleaseEvidence,
 } from "../../src/residency/admission-store.js";
-import { mkdtempSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
+import {
+  closeSync,
+  mkdtempSync,
+  openSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+  writeSync,
+} from "../../src/safe-fs.js";
 
 const workerUrl = new URL("./claim-worker.ts", import.meta.url);
 
@@ -70,6 +87,27 @@ const tempDb = (): TempDb => {
       rmSync(dir, { recursive: true, force: true });
     },
   };
+};
+
+// Fixture sanity probe for the page-corruption case: false means the
+// file fails PRAGMA quick_check (by error rows or a thrown read), which
+// is what a hardened open must gate on.
+const quickCheckPasses = (path: string): boolean => {
+  let raw: Database | undefined;
+  try {
+    raw = new Database(path);
+    const rows = raw.query<{ quick_check: string }, []>("PRAGMA quick_check").all();
+    return rows.length === 1 && rows[0]?.quick_check === "ok";
+  } catch {
+    return false;
+  } finally {
+    try {
+      raw?.close();
+    } catch {
+      // The probe is best-effort; a handle that cannot close is still a
+      // failed quick_check signal.
+    }
+  }
 };
 
 // open() itself must not throw for a healthy path; asserting here keeps a
@@ -1014,6 +1052,140 @@ describe("admission-store", () => {
       expect(generationsOf(reopened, "legacy-claim")).toEqual([{ pid: 5400, startTimeMs: 3 }]);
     } finally {
       reopened.close();
+      t.cleanup();
+    }
+  });
+
+  test("a ledger read failure surfaces as AuthorityUnavailableError, not an empty snapshot", () => {
+    const t = tempDb();
+    const store = openStore(t.path);
+    try {
+      const c = store.claim({
+        runtimeKey: "w-snap",
+        specDigest: "d",
+        kind: "ModelRun",
+        allocationGiB: 4,
+        budgetGiB: 24,
+      });
+      if (c.kind !== "admitted") {
+        throw new Error("claim not admitted");
+      }
+      // Break the ledger under the live handle: a second connection drops
+      // the claims table, so the next SELECT fails inside snapshot().
+      const raw = new Database(t.path);
+      try {
+        raw.run("DROP TABLE claims");
+      } finally {
+        raw.close();
+      }
+      // A read that cannot run must not masquerade as an empty ledger —
+      // an empty snapshot charges nothing against the budget.
+      expect(() => store.snapshot()).toThrow(AuthorityUnavailableError);
+    } finally {
+      store.close();
+      t.cleanup();
+    }
+  });
+
+  test("a database file with corrupted pages is refused at open, not adopted", () => {
+    const t = tempDb();
+    const store = openStore(t.path);
+    for (const i of Array.from({ length: 16 }).keys()) {
+      const c = store.claim({
+        runtimeKey: `w-${String(i)}`,
+        specDigest: `d-${String(i)}-${"x".repeat(2048)}`,
+        kind: "ModelRun",
+        allocationGiB: 1,
+        budgetGiB: 10_000,
+      });
+      if (c.kind !== "admitted") {
+        throw new Error("claim not admitted");
+      }
+    }
+    store.close();
+    // Scribble over a run of middle pages — past the schema and
+    // authority_meta pages the open path consults, inside the claims
+    // btree. A header sniff cannot see this; only integrity check can.
+    const pageSize = 4096;
+    const { size } = statSync(t.path);
+    const offset = Math.floor(size / 2 / pageSize) * pageSize;
+    const garbage = randomBytes(Math.min(pageSize * 8, size - offset));
+    const fd = openSync(t.path, "r+");
+    try {
+      writeSync(fd, garbage, 0, garbage.length, offset);
+    } finally {
+      closeSync(fd);
+    }
+    // The file is genuinely corrupt: quick_check must fail on it before
+    // the typed refusal can be demanded.
+    expect(quickCheckPasses(t.path)).toBe(false);
+    let adopted: AdmissionStore | undefined;
+    let threw: unknown;
+    try {
+      adopted = openAdmissionStore({ path: t.path });
+    } catch (e) {
+      threw = e;
+    }
+    try {
+      expect(threw).toBeInstanceOf(AuthorityUnavailableError);
+    } finally {
+      adopted?.close();
+    }
+    t.cleanup();
+  });
+
+  test("claim() refuses a kind outside ManagedWorkloadKind instead of persisting it", () => {
+    const t = tempDb();
+    const store = openStore(t.path);
+    try {
+      // The cast stands in for a boundary where kind arrived unchecked —
+      // a manifest field, a wire payload. The store must refuse before
+      // effects, never write the bogus kind into the ledger.
+      const input = {
+        runtimeKey: "w-bad-kind",
+        specDigest: "d",
+        kind: "Sidecar",
+        allocationGiB: 4,
+        budgetGiB: 24,
+      };
+      const result = store.claim({ ...input, kind: input.kind as ManagedWorkloadKind });
+      expect(result.kind).toBe("refuse");
+      expect(store.snapshot()).toEqual([]);
+    } finally {
+      store.close();
+      t.cleanup();
+    }
+  });
+
+  test("a stored row whose state is an unknown string is corruption, not a pending claim", () => {
+    const t = tempDb();
+    const store = openStore(t.path);
+    try {
+      const c = store.claim({
+        runtimeKey: "w-bad-state",
+        specDigest: "d",
+        kind: "ModelRun",
+        allocationGiB: 4,
+        budgetGiB: 24,
+      });
+      if (c.kind !== "admitted") {
+        throw new Error("claim not admitted");
+      }
+      // Write what the CHECK constraint forbids: a raw connection with
+      // ignore_check_constraints bypasses it, standing in for a row
+      // written by a version that knew more states than this one.
+      const raw = new Database(t.path);
+      try {
+        raw.run("PRAGMA ignore_check_constraints = ON");
+        raw.run("UPDATE claims SET state = 'evicted' WHERE claim_id = ?", [c.claimId]);
+      } finally {
+        raw.close();
+      }
+      // 'evicted' is not pending — the row must be reported as
+      // corruption, not silently mapped onto the default state.
+      expect(() => store.snapshot()).toThrow(AuthorityUnavailableError);
+    } finally {
+      store.close();
       t.cleanup();
     }
   });

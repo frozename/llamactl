@@ -35,7 +35,11 @@
  *   snapshot(), a claim whose generations survived the restart can be
  *   released on verified absence plus a matching pid record, and a
  *   release deletes the claim's generation rows.
+ * - A ledger degraded after open stays a managed surface (#383): the
+ *   store's typed snapshot failure translates into the documented empty
+ *   snapshot and admits keep refusing AuthorityUnavailable.
  */
+import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -50,6 +54,7 @@ import {
 } from "../../src/residency/admission-authority.js";
 import {
   type AdmissionStore,
+  AuthorityUnavailableError,
   openAdmissionStore,
   type OwnerIdentity,
 } from "../../src/residency/admission-store.js";
@@ -800,6 +805,42 @@ describe("admission-authority", () => {
       expect(row(h.authority, claimId)).toBeUndefined();
       // A reopened store shows no generation rows for the released claim.
       expect(peekGenerations(h.storePath, claimId)).toEqual([]);
+    } finally {
+      h.authority.close();
+      h.cleanup();
+    }
+  });
+
+  test("a ledger degraded after open keeps the authority snapshot empty and admits refusing", () => {
+    const h = openAuthority(24);
+    try {
+      mustAdmit(h.authority, request("w-dg", "d", "ModelRun", 4));
+      // A second, already-open store connection observes the same
+      // degradation — opened before the damage so its open-time schema
+      // check cannot recreate what is about to be dropped.
+      const peek = peekStore(h.storePath);
+      const raw = new Database(h.storePath);
+      try {
+        raw.run("DROP TABLE claims");
+      } finally {
+        raw.close();
+      }
+      try {
+        // The store layer fails closed: a ledger read error is a typed
+        // failure, not a silently empty ledger.
+        expect(() => peek.snapshot()).toThrow(AuthorityUnavailableError);
+      } finally {
+        peek.close();
+      }
+      // The authority stays a degraded managed surface: the typed failure
+      // still yields the documented empty snapshot, and admits keep
+      // refusing AuthorityUnavailable rather than crashing.
+      expect(h.authority.snapshot()).toEqual([]);
+      const denied = h.authority.admit(request("w-dg2", "d", "ModelRun", 4));
+      expect(denied.kind).toBe("refuse");
+      if (denied.kind === "refuse") {
+        expect(denied.reason).toBe("AuthorityUnavailable");
+      }
     } finally {
       h.authority.close();
       h.cleanup();
