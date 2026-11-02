@@ -24,6 +24,7 @@ import {
   type ClaimRefuseReason,
   type ClaimRow,
   openAdmissionStore,
+  type OwnerIdentity,
 } from "./admission-store.js";
 
 /** What the injected process observer reports for one pid. */
@@ -174,6 +175,14 @@ function judgeGeneration(
  * still returns an authority — degraded — so callers always speak to the
  * managed surface: every admit refuses AuthorityUnavailable, mutations
  * fail closed, snapshot is empty.
+ *
+ * `owner` is this process's identity, staked on the ledger at open: on a
+ * vacant store it is recorded outright; with a recorded previous owner the
+ * open observes it through opts.observe and judges it by the same strict
+ * identity rule generations use. Verified absent recovers the store
+ * (epoch rotates, orphan pendings sweep to uncertain); the same process
+ * continues as owner with no rotation; a live or unidentifiable other
+ * owner degrades the authority rather than stealing ownership.
  */
 export function openAdmissionAuthority(opts: {
   storePath: string;
@@ -181,6 +190,7 @@ export function openAdmissionAuthority(opts: {
   budgetGiB: () => number | undefined;
   observe: (pid: number) => ProcessObservation | undefined;
   readPidFile: (runtimeKey: string) => number | undefined;
+  owner: OwnerIdentity;
 }): AdmissionAuthority {
   let store: AdmissionStore | null = null;
   try {

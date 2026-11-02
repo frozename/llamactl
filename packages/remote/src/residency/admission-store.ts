@@ -8,10 +8,14 @@
  * occurs inside it. Pending, resident and uncertain rows all charge against
  * the caller-supplied budget.
  *
- * Ownership: every open takes a fresh owner epoch (a persisted counter that
- * only ever increases) and converts every pre-existing pending row to
- * uncertain — a previous owner's in-flight promises cannot survive a reopen.
- * The persisted authorityId never changes for a file.
+ * Ownership: opening another connection never rotates the owner epoch (a
+ * persisted counter that only ever increases) and never sweeps pending
+ * rows. An owning open records its owner only on a vacant ledger — still
+ * with no rotation and no sweep. Only recoverOwnership, invoked after the
+ * caller verifies the previous owner is gone, may rotate the epoch and
+ * convert orphan pending rows to uncertain. A second live owner is refused
+ * rather than stolen from. The persisted authorityId never changes for a
+ * file.
  *
  * Fencing: each row carries an opaque fenceToken bound to
  * (claimId, ownerEpoch, generationVersion). Every successful CAS mutation
@@ -41,6 +45,17 @@ export interface ClaimRow {
 }
 
 export type ClaimRefuseReason = ManagedAdmissionRefuseReason | "AuthorityUnavailable";
+
+/** Process identity recorded in authority_meta as the ledger's owner. */
+export interface OwnerIdentity {
+  pid: number;
+  startTimeMs?: number | undefined;
+  executable?: string | undefined;
+}
+
+export type RecoverOwnershipResult =
+  | { kind: "recovered"; epoch: number }
+  | { kind: "refused"; reason: "OwnerLive" | "OwnerUnknown" };
 
 export type ClaimResult =
   | {
@@ -81,13 +96,24 @@ export interface ReleaseEvidence {
 export interface AdmissionStore {
   /** Persisted id of this ledger. Stable across reopen of the same file. */
   authorityId(): string;
-  /** Owner epoch taken at open. Changes on every reopen. */
+  /** Owner epoch of this connection. Rotates only through recoverOwnership. */
   epoch(): number;
+  /** Owner recorded in the ledger, if any. */
+  recordedOwner(): OwnerIdentity | undefined;
+  /**
+   * Explicit authority recovery — the sole epoch rotation and orphan sweep.
+   * In one BEGIN IMMEDIATE: when no owner is recorded, or when the caller
+   * reports previousOwnerGone, record `owner`, rotate the epoch and convert
+   * every pending row to uncertain with a fresh fence token each; otherwise
+   * refuse without mutating anything. Whether the previous owner is gone is
+   * judged by the caller outside this transaction.
+   */
+  recoverOwnership(owner: OwnerIdentity, previousOwnerGone: boolean): RecoverOwnershipResult;
   /**
    * Atomic check-and-insert of a pending claim. Never throws for a refusal:
    * busy/lock contention, a closed store and invalid input all return
    * {kind:"refuse"} — refused before effects. Pending rows owned by other
-   * epochs are NOT converted here — the open-time sweep is the only orphan
+   * epochs are NOT converted here — the recovery sweep is the only orphan
    * conversion point, so a second live connection can still join them.
    */
   claim(input: ClaimInput): ClaimResult;
@@ -236,6 +262,14 @@ class SqliteAdmissionStore implements AdmissionStore {
 
   epoch(): number {
     return this.#epoch;
+  }
+
+  recordedOwner(): OwnerIdentity | undefined {
+    throw new Error("not implemented");
+  }
+
+  recoverOwnership(_owner: OwnerIdentity, _previousOwnerGone: boolean): RecoverOwnershipResult {
+    throw new Error("not implemented");
   }
 
   claim(input: ClaimInput): ClaimResult {
@@ -415,9 +449,16 @@ function validateAndStampSchema(
   }
 }
 
+/**
+ * Open a ledger connection. A plain open (no `owner`) is non-owning: it
+ * never rotates the epoch and never sweeps pending rows. An owning open
+ * records `owner` only on a vacant ledger — still without rotating or
+ * sweeping; ownership transfer goes through recoverOwnership.
+ */
 export function openAdmissionStore(opts: {
   path: string;
   busyTimeoutMs?: number | undefined;
+  owner?: OwnerIdentity | undefined;
 }): AdmissionStore {
   let db: Database;
   try {

@@ -29,6 +29,12 @@
  *   retain the charge. Uncertain is absorbing — nothing repromotes it.
  * - An unreadable store still opens: the authority is degraded and every
  *   admit refuses AuthorityUnavailable — degraded, never legacy.
+ * - Ownership (plan v3 "Atomic claim and lifecycle contract"): open stakes
+ *   opts.owner on a vacant ledger; with a recorded previous owner it is
+ *   observed through opts.observe and judged by the generation identity
+ *   rule. Verified-absent recovers (epoch rotates, orphan pendings sweep);
+ *   the same process continues as owner with no rotation; a live or
+ *   unidentifiable other owner degrades the authority — never a steal.
  */
 import { describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
@@ -41,6 +47,11 @@ import {
   openAdmissionAuthority,
   type ProcessObservation,
 } from "../../src/residency/admission-authority.js";
+import {
+  type AdmissionStore,
+  openAdmissionStore,
+  type OwnerIdentity,
+} from "../../src/residency/admission-store.js";
 import { mkdtempSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
 
 interface Harness {
@@ -48,32 +59,51 @@ interface Harness {
   observations: Map<number, ProcessObservation>;
   pidFiles: Map<string, number>;
   budget: { value: number | undefined };
+  dir: string;
+  storePath: string;
+  owner: OwnerIdentity;
   cleanup: () => void;
 }
 
+let nextFakeOwnerPid = 9001;
+
 // openAdmissionAuthority must not throw for a healthy store; asserting
 // here keeps a not-implemented or broken open as an assertion failure,
-// not a crash.
-const openAuthority = (budgetGiB: number | undefined = 24): Harness => {
-  const dir = mkdtempSync(join(tmpdir(), "llamactl-admission-authority-"));
-  const observations = new Map<number, ProcessObservation>();
+// not a crash. `opts.dir` reopens an existing harness's directory;
+// `opts.observations` is pre-seeded so the open-time owner check sees it.
+const openAuthority = (
+  budgetGiB: number | undefined = 24,
+  opts?: {
+    dir?: string | undefined;
+    owner?: OwnerIdentity | undefined;
+    observations?: Map<number, ProcessObservation> | undefined;
+  },
+): Harness => {
+  const createdDir = opts?.dir === undefined;
+  const dir = opts?.dir ?? mkdtempSync(join(tmpdir(), "llamactl-admission-authority-"));
+  const observations = opts?.observations ?? new Map<number, ProcessObservation>();
   const pidFiles = new Map<string, number>();
   const budget = { value: budgetGiB };
+  const owner = opts?.owner ?? { pid: nextFakeOwnerPid++ };
+  const storePath = join(dir, "admission.db");
   let authority: AdmissionAuthority | undefined;
   let threw: unknown;
   try {
     authority = openAdmissionAuthority({
-      storePath: join(dir, "admission.db"),
+      storePath,
       runtimeRoot: join(dir, "runtime"),
       budgetGiB: () => budget.value,
       observe: (pid) => observations.get(pid),
       readPidFile: (key) => pidFiles.get(key),
+      owner,
     });
   } catch (e) {
     threw = e;
   }
   if (threw !== undefined || authority === undefined) {
-    rmSync(dir, { recursive: true, force: true });
+    if (createdDir) {
+      rmSync(dir, { recursive: true, force: true });
+    }
   }
   expect(threw).toBeUndefined();
   if (authority === undefined) {
@@ -84,10 +114,55 @@ const openAuthority = (budgetGiB: number | undefined = 24): Harness => {
     observations,
     pidFiles,
     budget,
+    dir,
+    storePath,
+    owner,
     cleanup: (): void => {
       rmSync(dir, { recursive: true, force: true });
     },
   };
+};
+
+// Plain store peeks observe the ledger through a second, non-owning
+// connection; each is wrapped so a not-implemented read is an assertion
+// failure, not a crash.
+const peekStore = (storePath: string): AdmissionStore => {
+  let store: AdmissionStore | undefined;
+  let threw: unknown;
+  try {
+    store = openAdmissionStore({ path: storePath });
+  } catch (e) {
+    threw = e;
+  }
+  expect(threw).toBeUndefined();
+  if (store === undefined) {
+    throw new Error("openAdmissionStore returned no store");
+  }
+  return store;
+};
+
+const peekEpoch = (storePath: string): number => {
+  const store = peekStore(storePath);
+  try {
+    return store.epoch();
+  } finally {
+    store.close();
+  }
+};
+
+const peekOwner = (storePath: string): OwnerIdentity | undefined => {
+  const store = peekStore(storePath);
+  let owner: OwnerIdentity | undefined;
+  let threw: unknown;
+  try {
+    owner = store.recordedOwner();
+  } catch (e) {
+    threw = e;
+  } finally {
+    store.close();
+  }
+  expect(threw).toBeUndefined();
+  return owner;
 };
 
 const request = (
@@ -485,6 +560,7 @@ describe("admission-authority", () => {
           budgetGiB: () => 24,
           observe: () => undefined,
           readPidFile: () => undefined,
+          owner: { pid: 9801 },
         });
       } catch (e) {
         threw = e;
@@ -508,6 +584,128 @@ describe("admission-authority", () => {
       authority.close();
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("the first authority on a fresh store becomes its owner", () => {
+    const owner = { pid: 9101, startTimeMs: 111 };
+    const h = openAuthority(24, { owner });
+    try {
+      const recorded = peekOwner(h.storePath);
+      expect(recorded?.pid).toBe(owner.pid);
+      expect(recorded?.startTimeMs).toBe(owner.startTimeMs);
+      expect(h.authority.admit(request("w-a", "d", "ModelRun", 4)).kind).toBe("admitted");
+    } finally {
+      h.authority.close();
+      h.cleanup();
+    }
+  });
+
+  test("a second authority stays degraded while the recorded owner is observed live — it never steals", () => {
+    const ownerA = { pid: 9201, startTimeMs: 1000 };
+    const h1 = openAuthority(24, { owner: ownerA });
+    const pending = mustAdmit(h1.authority, request("w-a", "d", "ModelRun", 8));
+    // h2's observer sees the recorded owner alive and identity-matching.
+    const observations = new Map<number, ProcessObservation>([
+      [ownerA.pid, { pid: ownerA.pid, alive: true, startTimeMs: ownerA.startTimeMs }],
+    ]);
+    const h2 = openAuthority(24, {
+      dir: h1.dir,
+      owner: { pid: 9202, startTimeMs: 2000 },
+      observations,
+    });
+    try {
+      const denied = h2.authority.admit(request("w-x", "dx", "ModelRun", 4));
+      expect(denied.kind).toBe("refuse");
+      if (denied.kind === "refuse") {
+        expect(denied.reason).toBe("AuthorityUnavailable");
+      }
+      // The live owner is untouched: its pending row stays pending and it
+      // still admits on its own connection.
+      expect(row(h1.authority, pending.claimId)?.state).toBe("pending");
+      expect(h1.authority.admit(request("w-a2", "d2", "ModelHost", 4)).kind).toBe("admitted");
+    } finally {
+      h2.authority.close();
+      h2.cleanup();
+      h1.authority.close();
+      h1.cleanup();
+    }
+  });
+
+  test("a new authority recovers a store whose recorded owner is verified absent", () => {
+    const ownerA = { pid: 9301, startTimeMs: 100 };
+    const h1 = openAuthority(24, { owner: ownerA });
+    const { claimId } = mustAdmit(h1.authority, request("w-p", "d", "ModelRun", 8));
+    h1.authority.close();
+    const epochBefore = peekEpoch(h1.storePath);
+    // Dead, with matching start-time identity: the recorded owner is
+    // verified absent, so the newcomer may recover.
+    const observations = new Map<number, ProcessObservation>([
+      [ownerA.pid, { pid: ownerA.pid, alive: false, startTimeMs: ownerA.startTimeMs }],
+    ]);
+    const h2 = openAuthority(24, {
+      dir: h1.dir,
+      owner: { pid: 9302, startTimeMs: 200 },
+      observations,
+    });
+    try {
+      expect(peekEpoch(h1.storePath)).toBe(epochBefore + 1);
+      expect(peekOwner(h1.storePath)?.pid).toBe(9302);
+      const swept = row(h2.authority, claimId);
+      expect(swept?.state).toBe("uncertain");
+      // The orphan stays charged: 8 GiB against 24 leaves room for 16.
+      const over = h2.authority.admit(request("w-big", "db", "ModelHost", 20));
+      expect(over.kind).toBe("refuse");
+      if (over.kind === "refuse") {
+        expect(over.reason).toBe("BudgetExceeded");
+      }
+      expect(h2.authority.admit(request("w-fit", "df", "ModelRun", 16)).kind).toBe("admitted");
+    } finally {
+      h2.authority.close();
+      h2.cleanup();
+      h1.cleanup();
+    }
+  });
+
+  test("an unidentifiable recorded owner leaves the new authority degraded and the epoch untouched", () => {
+    const ownerA = { pid: 9401, startTimeMs: 50 };
+    const h1 = openAuthority(24, { owner: ownerA });
+    h1.authority.close();
+    const epochBefore = peekEpoch(h1.storePath);
+    // No observation for the recorded pid — it cannot be identified, so
+    // the newcomer degrades rather than stealing on a timeout.
+    const h2 = openAuthority(24, { dir: h1.dir, owner: { pid: 9402 } });
+    try {
+      const denied = h2.authority.admit(request("w-x", "d", "ModelRun", 4));
+      expect(denied.kind).toBe("refuse");
+      if (denied.kind === "refuse") {
+        expect(denied.reason).toBe("AuthorityUnavailable");
+      }
+      expect(peekEpoch(h1.storePath)).toBe(epochBefore);
+      expect(peekOwner(h1.storePath)?.pid).toBe(ownerA.pid);
+    } finally {
+      h2.authority.close();
+      h2.cleanup();
+      h1.cleanup();
+    }
+  });
+
+  test("reopening with the same owner identity stays owner and does not rotate the epoch", () => {
+    const owner = { pid: 9501, startTimeMs: 500 };
+    const h1 = openAuthority(24, { owner });
+    const { claimId } = mustAdmit(h1.authority, request("w-p", "d", "ModelRun", 8));
+    h1.authority.close();
+    const epochBefore = peekEpoch(h1.storePath);
+    const h2 = openAuthority(24, { dir: h1.dir, owner });
+    try {
+      expect(peekEpoch(h1.storePath)).toBe(epochBefore);
+      // Still the owner's own in-flight row: pending, not swept.
+      expect(row(h2.authority, claimId)?.state).toBe("pending");
+      expect(h2.authority.admit(request("w-2", "d2", "ModelHost", 4)).kind).toBe("admitted");
+    } finally {
+      h2.authority.close();
+      h2.cleanup();
+      h1.cleanup();
     }
   });
 });

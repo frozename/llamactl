@@ -18,6 +18,13 @@
  * - fenceToken is a CAS credential bound to (claimId, ownerEpoch,
  *   generationVersion); every successful transition rotates it, so a stale
  *   token is rejected without mutation.
+ * - Ownership (plan v3 "Atomic claim and lifecycle contract"): a plain
+ *   open — with or without an owner — never rotates the epoch and never
+ *   sweeps pending rows; an owning open only stakes a vacant ledger.
+ *   recoverOwnership is the sole epoch rotation and orphan sweep, and it
+ *   runs only when the caller has verified the previous owner gone or the
+ *   ledger has no recorded owner; a recorded owner not proven gone
+ *   refuses OwnerLive/OwnerUnknown and changes nothing.
  */
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
@@ -32,6 +39,8 @@ import {
   type ClaimResult,
   type ClaimRow,
   openAdmissionStore,
+  type OwnerIdentity,
+  type RecoverOwnershipResult,
   type ReleaseEvidence,
 } from "../../src/residency/admission-store.js";
 import { mkdtempSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
@@ -59,11 +68,11 @@ const tempDb = (): TempDb => {
 
 // open() itself must not throw for a healthy path; asserting here keeps a
 // not-implemented or broken open as an assertion failure, not a crash.
-const openStore = (path: string, busyTimeoutMs?: number): AdmissionStore => {
+const openStore = (path: string, busyTimeoutMs?: number, owner?: OwnerIdentity): AdmissionStore => {
   let store: AdmissionStore | undefined;
   let threw: unknown;
   try {
-    store = openAdmissionStore({ path, busyTimeoutMs });
+    store = openAdmissionStore({ path, busyTimeoutMs, owner });
   } catch (e) {
     threw = e;
   }
@@ -72,6 +81,38 @@ const openStore = (path: string, busyTimeoutMs?: number): AdmissionStore => {
     throw new Error("openAdmissionStore returned no store");
   }
   return store;
+};
+
+// Same not-implemented-to-assertion wrapping as openStore.
+const recover = (
+  store: AdmissionStore,
+  owner: OwnerIdentity,
+  previousOwnerGone: boolean,
+): RecoverOwnershipResult => {
+  let result: RecoverOwnershipResult | undefined;
+  let threw: unknown;
+  try {
+    result = store.recoverOwnership(owner, previousOwnerGone);
+  } catch (e) {
+    threw = e;
+  }
+  expect(threw).toBeUndefined();
+  if (result === undefined) {
+    throw new Error("recoverOwnership returned no result");
+  }
+  return result;
+};
+
+const ownerOf = (store: AdmissionStore): OwnerIdentity | undefined => {
+  let result: OwnerIdentity | undefined;
+  let threw: unknown;
+  try {
+    result = store.recordedOwner();
+  } catch (e) {
+    threw = e;
+  }
+  expect(threw).toBeUndefined();
+  return result;
 };
 
 const row = (store: AdmissionStore, claimId: string): ClaimRow | undefined =>
@@ -169,8 +210,8 @@ describe("admission-store", () => {
         w.postMessage(job);
         return workerChannel(w);
       });
-      // Both connections must be live before the write lock is taken;
-      // opening later would trip the reopen sweep on existing rows.
+      // Both connections must be live before the write lock is taken so
+      // the two claim transactions genuinely contend on the same file.
       for (const ch of channels) {
         await ch.recv(10_000);
       }
@@ -282,7 +323,7 @@ describe("admission-store", () => {
     }
   });
 
-  test("reopen converts pending to uncertain, rotates epoch, keeps authorityId", () => {
+  test("a plain reopen keeps the epoch, the authorityId and pending rows pending", () => {
     const t = tempDb();
     const first = openStore(t.path);
     const resident = first.claim({
@@ -303,24 +344,160 @@ describe("admission-store", () => {
       allocationGiB: 4,
       budgetGiB: 24,
     });
-    expect(pending.kind).toBe("admitted");
+    if (pending.kind !== "admitted") {
+      throw new Error("pending claim not admitted");
+    }
     const id1 = first.authorityId();
     const epoch1 = first.epoch();
     first.close();
     const second = openStore(t.path);
     try {
       expect(second.authorityId()).toBe(id1);
-      expect(second.epoch()).not.toBe(epoch1);
+      expect(second.epoch()).toBe(epoch1);
       const rows = second.snapshot();
-      expect(rows.find((r) => r.runtimeKey === "w-pend")?.state).toBe("uncertain");
+      expect(rows.find((r) => r.runtimeKey === "w-pend")?.state).toBe("pending");
       expect(rows.find((r) => r.runtimeKey === "w-res")?.state).toBe("resident");
+      // A still-pending row remains joinable from a third connection.
+      const third = openStore(t.path);
+      try {
+        const joined = third.claim({
+          runtimeKey: "w-pend",
+          specDigest: "d2",
+          kind: "ModelHost",
+          allocationGiB: 4,
+          budgetGiB: 24,
+        });
+        expect(joined.kind).toBe("join-pending");
+        if (joined.kind === "join-pending") {
+          expect(joined.claimId).toBe(pending.claimId);
+        }
+      } finally {
+        third.close();
+      }
     } finally {
       second.close();
       t.cleanup();
     }
   });
 
-  test("uncertain rows remain charged after reopen", () => {
+  test("recoverOwnership on a store with no recorded owner records it, rotates the epoch once and sweeps pending", () => {
+    const t = tempDb();
+    const owner = { pid: 6101, startTimeMs: 5000 };
+    const first = openStore(t.path);
+    const pending = first.claim({
+      runtimeKey: "w-pend",
+      specDigest: "d2",
+      kind: "ModelHost",
+      allocationGiB: 4,
+      budgetGiB: 24,
+    });
+    if (pending.kind !== "admitted") {
+      throw new Error("pending claim not admitted");
+    }
+    const epoch1 = first.epoch();
+    first.close();
+    const store = openStore(t.path);
+    try {
+      expect(store.epoch()).toBe(epoch1);
+      expect(ownerOf(store)).toBeUndefined();
+      expect(row(store, pending.claimId)?.state).toBe("pending");
+      const result = recover(store, owner, false);
+      expect(result.kind).toBe("recovered");
+      if (result.kind === "recovered") {
+        expect(result.epoch).toBe(epoch1 + 1);
+      }
+      expect(store.epoch()).toBe(epoch1 + 1);
+      const recorded = ownerOf(store);
+      expect(recorded?.pid).toBe(owner.pid);
+      expect(recorded?.startTimeMs).toBe(owner.startTimeMs);
+      const swept = row(store, pending.claimId);
+      expect(swept?.state).toBe("uncertain");
+      expect(swept?.fenceToken).not.toBe(pending.fenceToken);
+    } finally {
+      store.close();
+      t.cleanup();
+    }
+  });
+
+  test("recoverOwnership against a recorded owner without previousOwnerGone refuses OwnerLive and changes nothing", () => {
+    const t = tempDb();
+    const ownerA = { pid: 6201, startTimeMs: 100 };
+    const ownerB = { pid: 6202, startTimeMs: 200 };
+    // An owning open stakes the vacant ledger — without rotating or
+    // sweeping: the pending row stays pending under ownerA's epoch.
+    const owning = openStore(t.path, undefined, ownerA);
+    const epoch1 = owning.epoch();
+    const pending = owning.claim({
+      runtimeKey: "w-pend",
+      specDigest: "d2",
+      kind: "ModelHost",
+      allocationGiB: 4,
+      budgetGiB: 24,
+    });
+    if (pending.kind !== "admitted") {
+      throw new Error("pending claim not admitted");
+    }
+    expect(ownerOf(owning)?.pid).toBe(ownerA.pid);
+    expect(row(owning, pending.claimId)?.state).toBe("pending");
+    const second = openStore(t.path);
+    try {
+      expect(second.epoch()).toBe(epoch1);
+      const result = recover(second, ownerB, false);
+      expect(result.kind).toBe("refused");
+      if (result.kind === "refused") {
+        expect(result.reason).toBe("OwnerLive");
+      }
+      expect(second.epoch()).toBe(epoch1);
+      expect(ownerOf(second)?.pid).toBe(ownerA.pid);
+      const still = row(second, pending.claimId);
+      expect(still?.state).toBe("pending");
+      expect(still?.fenceToken).toBe(pending.fenceToken);
+    } finally {
+      second.close();
+      owning.close();
+      t.cleanup();
+    }
+  });
+
+  test("recoverOwnership with previousOwnerGone takes over: records the new owner, rotates the epoch and sweeps", () => {
+    const t = tempDb();
+    const ownerA = { pid: 6301, startTimeMs: 100 };
+    const ownerB = { pid: 6302, startTimeMs: 200 };
+    const owning = openStore(t.path, undefined, ownerA);
+    const epoch1 = owning.epoch();
+    const pending = owning.claim({
+      runtimeKey: "w-pend",
+      specDigest: "d2",
+      kind: "ModelHost",
+      allocationGiB: 4,
+      budgetGiB: 24,
+    });
+    if (pending.kind !== "admitted") {
+      throw new Error("pending claim not admitted");
+    }
+    owning.close();
+    const store = openStore(t.path);
+    try {
+      expect(store.epoch()).toBe(epoch1);
+      expect(ownerOf(store)?.pid).toBe(ownerA.pid);
+      expect(row(store, pending.claimId)?.state).toBe("pending");
+      const result = recover(store, ownerB, true);
+      expect(result.kind).toBe("recovered");
+      if (result.kind === "recovered") {
+        expect(result.epoch).toBe(epoch1 + 1);
+      }
+      expect(store.epoch()).toBe(epoch1 + 1);
+      expect(ownerOf(store)?.pid).toBe(ownerB.pid);
+      const swept = row(store, pending.claimId);
+      expect(swept?.state).toBe("uncertain");
+      expect(swept?.fenceToken).not.toBe(pending.fenceToken);
+    } finally {
+      store.close();
+      t.cleanup();
+    }
+  });
+
+  test("uncertain rows remain charged after recovery", () => {
     const t = tempDb();
     const first = openStore(t.path);
     const orphan = first.claim({
@@ -330,10 +507,16 @@ describe("admission-store", () => {
       allocationGiB: 8,
       budgetGiB: 24,
     });
-    expect(orphan.kind).toBe("admitted");
+    if (orphan.kind !== "admitted") {
+      throw new Error("orphan claim not admitted");
+    }
     first.close();
     const store = openStore(t.path);
     try {
+      // A plain open leaves the orphan pending; recovery converts it.
+      expect(row(store, orphan.claimId)?.state).toBe("pending");
+      expect(recover(store, { pid: 6501 }, true).kind).toBe("recovered");
+      expect(row(store, orphan.claimId)?.state).toBe("uncertain");
       const over = store.claim({
         runtimeKey: "w-2",
         specDigest: "d2",
@@ -476,9 +659,9 @@ describe("admission-store", () => {
     }
   });
 
-  test("reopen gives every swept claim its own fence token", () => {
+  test("recovery gives every swept claim its own fence token", () => {
     const t = tempDb();
-    const store = openStore(t.path);
+    const store = openStore(t.path, undefined, { pid: 6401, startTimeMs: 40 });
     try {
       const w1 = store.claim({
         runtimeKey: "w1",
@@ -509,6 +692,9 @@ describe("admission-store", () => {
       store.close();
       const reopened = openStore(t.path);
       try {
+        // A plain open sweeps nothing — recovery is what converts them.
+        expect(reopened.snapshot().every((r) => r.state === "pending")).toBe(true);
+        recover(reopened, { pid: 6402, startTimeMs: 80 }, true);
         const snap = reopened.snapshot();
         const afterA = snap.find((r) => r.claimId === w1.claimId);
         const afterB = snap.find((r) => r.claimId === w2.claimId);
