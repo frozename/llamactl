@@ -25,7 +25,7 @@ const originalTimeoutEnv = process.env[TIMEOUT_ENV];
 afterEach(() => {
   globalThis.fetch = originalFetch;
   openaiProxy.__resetOpenAIProxyRouteMapCacheForTests();
-  if (originalTimeoutEnv === undefined) delete process.env.LLAMACTL_UPSTREAM_TIMEOUT_MS;
+  if (originalTimeoutEnv === undefined) delete process.env["LLAMACTL_UPSTREAM_TIMEOUT_MS"];
   else process.env[TIMEOUT_ENV] = originalTimeoutEnv;
 });
 
@@ -69,7 +69,7 @@ const SLOW_CHAT_JSON = {
 
 describe("upstreamTimeoutMs", () => {
   test("defaults to 15 minutes, honors the env override, and rejects invalid values", () => {
-    delete process.env.LLAMACTL_UPSTREAM_TIMEOUT_MS;
+    delete process.env["LLAMACTL_UPSTREAM_TIMEOUT_MS"];
     expect(openaiProxy.upstreamTimeoutMs()).toBe(15 * 60 * 1000);
     process.env[TIMEOUT_ENV] = "250";
     expect(openaiProxy.upstreamTimeoutMs()).toBe(250);
