@@ -735,6 +735,26 @@ describe("reconcileOnce", () => {
       };
     }
 
+    function failingStartClient(state: string, starts: { count: number }): WorkloadClient {
+      return {
+        ...makeClient(),
+        modelHostStatus: { query: () => Promise.resolve({ state }) },
+        modelHostStart: {
+          subscribe: (_input, callbacks): { unsubscribe: () => undefined } => {
+            starts.count += 1;
+            queueMicrotask(() => {
+              callbacks.onData({
+                type: "done",
+                result: { ok: false, error: "engine exited before ready" },
+              });
+              callbacks.onComplete();
+            });
+            return { unsubscribe: (): undefined => undefined };
+          },
+        },
+      };
+    }
+
     async function inRuntimeDir(
       prefix: string,
       body: (dir: string) => Promise<void>,
@@ -917,6 +937,87 @@ describe("reconcileOnce", () => {
         expect(result.errors).toBe(0);
         expect(result.reports).toEqual([
           { kind: "ModelHost", name: "host-a", node: "gpu1", action: "unchanged" },
+        ]);
+      });
+    });
+
+    // #358: a first start that fails before readiness is still the Never
+    // host's one attempt — later passes must not retry it.
+    test("starts a fresh local Never host at most once when its first start fails before readiness", async () => {
+      await inRuntimeDir("llamactl-reconciler-never-failed-", async (dir) => {
+        saveModelHost(hostOn("local", "Never"), dir);
+        const starts = { count: 0 };
+        const getClient = (): WorkloadClient => failingStartClient("Stopped", starts);
+
+        const r1 = await reconcileOnce({ workloadsDir: dir, getClient });
+        expect(starts.count).toBe(1);
+        expect(r1.errors).toBe(1);
+        expect(r1.reports).toEqual([
+          {
+            kind: "ModelHost",
+            name: "host-a",
+            node: "local",
+            action: "unchanged",
+            error: "engine exited before ready",
+          },
+        ]);
+
+        const r2 = await reconcileOnce({ workloadsDir: dir, getClient });
+        expect(starts.count).toBe(1);
+        expect(r2.errors).toBe(0);
+        expect(r2.reports).toEqual([
+          { kind: "ModelHost", name: "host-a", node: "local", action: "unchanged" },
+        ]);
+      });
+    });
+
+    test("gives a local Never host one new attempt after its spec is edited following a failed first start", async () => {
+      await inRuntimeDir("llamactl-reconciler-never-failed-edit-", async (dir) => {
+        const manifest = hostOn("local", "Never");
+        saveModelHost(manifest, dir);
+        const starts = { count: 0 };
+        const getClient = (): WorkloadClient => failingStartClient("Stopped", starts);
+
+        await reconcileOnce({ workloadsDir: dir, getClient });
+        expect(starts.count).toBe(1);
+
+        saveModelHost({ ...manifest, spec: { ...manifest.spec, timeoutSeconds: 120 } }, dir);
+        await reconcileOnce({ workloadsDir: dir, getClient });
+        expect(starts.count).toBe(2);
+
+        const r3 = await reconcileOnce({ workloadsDir: dir, getClient });
+        expect(starts.count).toBe(2);
+        expect(r3.errors).toBe(0);
+        expect(r3.reports).toEqual([
+          { kind: "ModelHost", name: "host-a", node: "local", action: "unchanged" },
+        ]);
+      });
+    });
+
+    test("gives a re-enabled local Never host one new attempt after a failed first start", async () => {
+      await inRuntimeDir("llamactl-reconciler-never-failed-reenable-", async (dir) => {
+        const manifest = hostOn("local", "Never");
+        saveModelHost(manifest, dir);
+        const starts = { count: 0 };
+        const getClient = (): WorkloadClient => failingStartClient("Stopped", starts);
+
+        await reconcileOnce({ workloadsDir: dir, getClient });
+        expect(starts.count).toBe(1);
+
+        saveModelHost({ ...manifest, spec: { ...manifest.spec, enabled: false } }, dir);
+        const sweep = await reconcileOnce({ workloadsDir: dir, getClient });
+        expect(starts.count).toBe(1);
+        expect(sweep.errors).toBe(0);
+
+        saveModelHost({ ...manifest, spec: { ...manifest.spec, enabled: true } }, dir);
+        await reconcileOnce({ workloadsDir: dir, getClient });
+        expect(starts.count).toBe(2);
+
+        const r4 = await reconcileOnce({ workloadsDir: dir, getClient });
+        expect(starts.count).toBe(2);
+        expect(r4.errors).toBe(0);
+        expect(r4.reports).toEqual([
+          { kind: "ModelHost", name: "host-a", node: "local", action: "unchanged" },
         ]);
       });
     });

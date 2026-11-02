@@ -133,3 +133,48 @@ export function removeModelHostState(key: WorkloadKey, resolved: ResolvedEnv = r
     }
   }
 }
+
+export function modelhostStartAttemptFile(
+  resolved: ResolvedEnv = resolveEnv(),
+  key: WorkloadKey,
+): string {
+  return join(workloadRuntimeDir(resolved, key), "modelhost.start-attempt");
+}
+
+export function writeModelHostStartAttempt(
+  key: WorkloadKey,
+  specHash: string,
+  resolved: ResolvedEnv = resolveEnv(),
+): void {
+  ensureWorkloadRuntimeDir(resolved, key);
+  writeFileSync(
+    modelhostStartAttemptFile(resolved, key),
+    JSON.stringify({ specHash, attemptedAt: new Date().toISOString() }, null, 2),
+  );
+}
+
+export function readModelHostStartAttempt(
+  key: WorkloadKey,
+  resolved: ResolvedEnv = resolveEnv(),
+): string | null {
+  const path = modelhostStartAttemptFile(resolved, key);
+  if (!existsSync(path)) return null;
+  try {
+    const raw = readFileSync(path, "utf8");
+    const parsed = JSON.parse(raw) as { specHash?: string };
+    return typeof parsed.specHash === "string" ? parsed.specHash : null;
+  } catch {
+    return null;
+  }
+}
+
+export function removeModelHostStartAttempt(
+  key: WorkloadKey,
+  resolved: ResolvedEnv = resolveEnv(),
+): void {
+  try {
+    unlinkSync(modelhostStartAttemptFile(resolved, key));
+  } catch {
+    // Best-effort cleanup; failures are not actionable here.
+  }
+}

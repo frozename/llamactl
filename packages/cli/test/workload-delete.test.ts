@@ -192,7 +192,7 @@ interface HungServerReply {
   pid: number;
 }
 
-test("delete workload: a ModelRun whose node never answers the status query is removed with a warning (#221)", async () => {
+function writeZ13RunManifest(): string {
   const manifestPath = join(process.env["LLAMACTL_WORKLOADS_DIR"]!, "z13-run.yaml");
   writeFileSync(
     manifestPath,
@@ -210,15 +210,19 @@ test("delete workload: a ModelRun whose node never answers the status query is r
     ].join("\n"),
     "utf8",
   );
+  return manifestPath;
+}
 
-  // The status query stays pending until release(), like a node that suspended mid-call.
+// #359: the status query stays pending until release(), like a node that
+// suspended mid-call; serverStop counts calls so a premature stop shows up.
+function hungZ13Node(): { release: () => void; stopCalls: () => number } {
   let release = (): void => undefined;
   const hung = new Promise<void>((resolve): void => {
     release = (): void => {
       resolve();
     };
   });
-  let stopCalls = 0;
+  let stops = 0;
   __setWorkloadTestSeams({
     getNodeClientByName: (): NodeClient =>
       ({
@@ -228,23 +232,82 @@ test("delete workload: a ModelRun whose node never answers the status query is r
         },
         serverStop: {
           mutate: (): Promise<{ stopped: boolean }> => {
-            stopCalls++;
+            stops++;
             return Promise.resolve({ stopped: true });
           },
         },
       }) as unknown as NodeClient,
     nodeQueryTimeoutMs: 1,
   });
+  return {
+    release: (): void => {
+      release();
+    },
+    stopCalls: (): number => stops,
+  };
+}
+
+test("delete workload: a ModelRun status query that misses the deadline keeps the manifest and exits 1 (#359)", async () => {
+  const manifestPath = writeZ13RunManifest();
+  const node = hungZ13Node();
 
   const pending = withCapturedIo(() => runDelete(["workload", "z13-run"]));
   const outcome = await settledWithin(pending, 2_000);
-  release();
+  node.release();
   const { result: code, stdout, stderr } = await pending;
 
+  // A node that may still be running the server is not safe to forget: the
+  // manifest must survive so a later delete can retry the stop.
+  expect(outcome).toBe("settled");
+  expect(code).toBe(1);
+  expect(node.stopCalls()).toBe(0);
+  expect(readFileSync(manifestPath, "utf8")).toContain("z13-run");
+  expect(stderr).toContain("did not answer within 1 ms");
+  expect(stderr).toContain("--force");
+  expect(stderr).not.toContain("warning: failed to reach node");
+  expect(stdout).not.toContain("deleted modelrun/z13-run");
+});
+
+test("delete workload --force: a ModelRun status query that misses the deadline is removed with a warning (#359)", async () => {
+  const manifestPath = writeZ13RunManifest();
+  const node = hungZ13Node();
+
+  const pending = withCapturedIo(() => runDelete(["workload", "z13-run", "--force"]));
+  const outcome = await settledWithin(pending, 2_000);
+  node.release();
+  const { result: code, stdout, stderr } = await pending;
+
+  // --force accepts the risk: warn about the unanswered status query but
+  // drop the manifest anyway.
   expect(outcome).toBe("settled");
   expect(code).toBe(0);
-  expect(stopCalls).toBe(0);
-  expect(stderr).toBe("warning: failed to reach node z13: node 'z13' did not answer within 1 ms\n");
+  expect(node.stopCalls()).toBe(0);
+  expect(stderr).toContain("did not answer within 1 ms");
+  expect(stdout).toContain("deleted modelrun/z13-run");
+  expect(() => readFileSync(manifestPath, "utf8")).toThrow();
+});
+
+test("delete workload: an unreachable ModelRun node (query rejects) is still removed with a warning (#359)", async () => {
+  const manifestPath = writeZ13RunManifest();
+  __setWorkloadTestSeams({
+    getNodeClientByName: (): NodeClient =>
+      ({
+        serverStatus: {
+          query: (): Promise<HungServerReply> => Promise.reject(new Error("ECONNREFUSED")),
+        },
+      }) as unknown as NodeClient,
+  });
+
+  const {
+    result: code,
+    stdout,
+    stderr,
+  } = await withCapturedIo(() => runDelete(["workload", "z13-run"]));
+
+  // A rejected query means the node answered negatively — nothing can be
+  // running there to orphan, so the manifest goes with a plain warning.
+  expect(code).toBe(0);
+  expect(stderr).toBe("warning: failed to reach node z13: ECONNREFUSED\n");
   expect(stdout).toBe("deleted modelrun/z13-run\n");
   expect(() => readFileSync(manifestPath, "utf8")).toThrow();
 });
