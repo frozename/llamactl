@@ -743,6 +743,8 @@ describe("I1: clean install", () => {
     )) {
       BASELINE_ENV.add(`LLAMACTL_UPDATE_${name}`);
     }
+    // #378: internal proxy upstream timeout override for long cold prefills, not the worker RPC.
+    BASELINE_ENV.add("LLAMACTL_UPSTREAM_TIMEOUT_MS");
     const sources = join(import.meta.dir, "..", "..");
     const read = new Map<string, string[]>();
     for (const pkg of readdirSync(sources)) {

@@ -80,6 +80,12 @@ export interface StartAgentOptions {
   bearerTokens?: () => readonly NamedBearerToken[] | undefined;
   noAuth?: boolean;
   tls?: { certPath: string; keyPath: string }; // omit for plain HTTP (test-only)
+  /**
+   * Override Bun.serve's idleTimeout for the whole server. Tests set a
+   * small value to exercise the per-request `server.timeout` bump on
+   * proxied routes without waiting out the production 255s; leave unset.
+   */
+  idleTimeoutSeconds?: number;
   onRequest?: (url: URL) => void;
   /**
    * Labels attached to `llamactl_agent_info`. Defaults to a best-
@@ -365,6 +371,7 @@ async function handleOpenAIRoute(
   address: ClientAddress | null,
   opts: StartAgentOptions,
   gate: NoAuthGate,
+  server: AgentFetchServer,
 ): Promise<Response> {
   const denied = authGateReject(req, url.pathname, address, opts, gate);
   if (denied) return denied;
@@ -379,6 +386,7 @@ async function handleOpenAIRoute(
       status = 200;
       return Response.json(models);
     }
+    server.timeout?.(req, proxiedRouteIdleSeconds());
     const res = await dispatchProxyRequest(req);
     status = res.status;
     if (status === 502) openaiUpstreamErrorsTotal.inc();
@@ -392,6 +400,20 @@ async function handleOpenAIRoute(
 interface AgentFetchServer {
   requestIP?: (req: Request) => ClientAddress | null;
   upgrade(req: Request, opts: { data: unknown }): boolean;
+  timeout?(req: Request, seconds: number): void;
+}
+
+/**
+ * A proxied inference call can legitimately sit silent past
+ * Bun.serve's 255s idle ceiling — a non-streaming reply writes nothing
+ * until the upstream finishes. Re-arming the request's idle budget to
+ * the upstream fetch deadline (+60s so the fetch's own TimeoutError
+ * still wins the race and surfaces as a clean 502 instead of a socket
+ * reset) keeps long cold prefills alive without raising the global
+ * idleTimeout for non-inference routes.
+ */
+function proxiedRouteIdleSeconds(): number {
+  return Math.ceil(openaiProxy.upstreamTimeoutMs() / 1000) + 60;
 }
 
 type AgentFetchHandler = (req: Request, server: AgentFetchServer) => Response | Promise<Response>;
@@ -505,6 +527,7 @@ function handleAuthedApiRoutes(
   clientAddress: ClientAddress | null,
   opts: StartAgentOptions,
   gate: NoAuthGate,
+  server: AgentFetchServer,
 ): Response | Promise<Response> | null {
   // Prometheus scrape endpoint. Bearer-auth'd like everything else;
   // scrapers can set the standard Authorization header.
@@ -520,9 +543,10 @@ function handleAuthedApiRoutes(
   if (req.method === "POST" && url.pathname === "/v1/chat/completions") {
     const denied = authGateReject(req, url.pathname, clientAddress, opts, gate);
     if (denied) return denied;
+    server.timeout?.(req, proxiedRouteIdleSeconds());
     return handleRagChatCompletions(req, {
       appRouter,
-      fallback: (forwarded) => handleOpenAIRoute(forwarded, url, clientAddress, opts, gate),
+      fallback: (forwarded) => handleOpenAIRoute(forwarded, url, clientAddress, opts, gate, server),
     });
   }
   if (req.method === "GET" && url.pathname === "/v1/fleet/snapshot") {
@@ -537,7 +561,7 @@ function handleAuthedApiRoutes(
   // or proxied straight to the local llama-server so external tools
   // can speak plain OpenAI SDK to the agent's URL.
   if (url.pathname.startsWith("/v1/") || url.pathname === "/v1") {
-    return handleOpenAIRoute(req, url, clientAddress, opts, gate);
+    return handleOpenAIRoute(req, url, clientAddress, opts, gate, server);
   }
   return null;
 }
@@ -615,7 +639,7 @@ function createAgentFetchHandler(args: {
     opts.onRequest?.(url);
     const infra = handleInfraRoutes(req, url, server, opts, tunnelServer);
     if (infra) return infra;
-    const api = handleAuthedApiRoutes(req, url, clientAddress, opts, gate);
+    const api = handleAuthedApiRoutes(req, url, clientAddress, opts, gate, server);
     if (api) return api;
     if (!url.pathname.startsWith(endpoint)) {
       return new Response("not found", { status: 404 });
@@ -647,8 +671,16 @@ function startBunServer(args: {
   bindHost: string;
   wsConfig: TunnelServer["websocket"] | null;
   fetchHandler: AgentFetchHandler;
+  idleTimeoutSeconds?: number;
 }): { server: Bun.Server<unknown>; fingerprint: string | null } {
   const { tls, allowPlainHttp, port, bindHost, wsConfig, fetchHandler } = args;
+  // Composite applies (image pulls + pod readiness polling) routinely run
+  // well past Bun.serve's default 10s idle timeout. 255 is Bun.serve's
+  // hard ceiling; past that the caller polls compositeStatus
+  // subscriptions instead of waiting on the apply mutation. Proxied
+  // inference requests re-arm their own budget via server.timeout —
+  // see proxiedRouteIdleSeconds.
+  const idleTimeout = args.idleTimeoutSeconds ?? 255;
   let fingerprint: string | null = null;
   // Bun.serve's option type discriminates on whether `websocket` is
   // present, so we can't share a single literal with `websocket?:`
@@ -666,12 +698,7 @@ function startBunServer(args: {
                 fetch: fetchHandler,
                 websocket: wsConfig,
                 tls: { cert: loaded.certPem, key: loaded.keyPem },
-                // Composite applies (image pulls + pod readiness polling)
-                // routinely run well past Bun.serve's default 10s idle
-                // timeout. 255 is Bun.serve's hard ceiling; past that the
-                // caller polls compositeStatus subscriptions instead of
-                // waiting on the apply mutation.
-                idleTimeout: 255,
+                idleTimeout,
               })
             : Bun.serve({
                 port,
@@ -679,7 +706,7 @@ function startBunServer(args: {
                 reusePort: true,
                 fetch: fetchHandler,
                 tls: { cert: loaded.certPem, key: loaded.keyPem },
-                idleTimeout: 255,
+                idleTimeout,
               });
         })()
       : wsConfig
@@ -689,14 +716,14 @@ function startBunServer(args: {
             reusePort: true,
             fetch: fetchHandler,
             websocket: wsConfig,
-            idleTimeout: 255,
+            idleTimeout,
           })
         : Bun.serve({
             port,
             hostname: bindHost,
             reusePort: true,
             fetch: fetchHandler,
-            idleTimeout: 255,
+            idleTimeout,
           });
   return { server, fingerprint };
 }
@@ -994,6 +1021,9 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     bindHost,
     wsConfig,
     fetchHandler,
+    ...(opts.idleTimeoutSeconds !== undefined
+      ? { idleTimeoutSeconds: opts.idleTimeoutSeconds }
+      : {}),
   });
 
   const scheme = opts.tls && !allowPlainHttp ? "https" : "http";

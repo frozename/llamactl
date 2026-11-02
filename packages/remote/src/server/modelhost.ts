@@ -155,6 +155,7 @@ const ENGINE_BINARY_BASENAMES: Record<EngineName, readonly string[]> = {
   llamacpp: ["llama-server"],
   omlx: ["omlx", "omlx-server"],
   strata: ["strata-server"],
+  kapitsa: ["kapitsa"],
 };
 
 function hostIdentityDeps(engine: EngineName, deps?: PidIdentityDeps): PidIdentityDeps {
@@ -699,10 +700,16 @@ async function launchModelHost(
     ...omitUndefined({
       LLAMACTL_MODELS_DIR: env["LLAMACTL_MODELS_DIR"],
       LLAMA_CPP_MODELS: env["LLAMA_CPP_MODELS"],
-      // Fall back to the resolved runtime dir, never to a bare resolveEnv()
-      // inside the engine: an injected runtimeDir (tests, scoped agents)
-      // must reroot the engine's per-workload boot writes too.
-      LLAMACTL_RUNTIME_DIR: env["LLAMACTL_RUNTIME_DIR"] ?? resolved.LOCAL_AI_RUNTIME_DIR,
+      // Kapitsa keeps KAPITSA_HOME beside the workload's pid/state/boot log,
+      // so its boot env always sees the resolved launch root. Other engines
+      // keep an operator-set LLAMACTL_RUNTIME_DIR (it still redirects e.g.
+      // oMLX's .omlx) and otherwise fall back to the resolved runtime dir,
+      // never to a bare resolveEnv() inside the engine: an injected
+      // runtimeDir (tests, scoped agents) must reroot their boot writes too.
+      LLAMACTL_RUNTIME_DIR:
+        spec.engine === "kapitsa"
+          ? resolved.LOCAL_AI_RUNTIME_DIR
+          : (env["LLAMACTL_RUNTIME_DIR"] ?? resolved.LOCAL_AI_RUNTIME_DIR),
     }),
     workloadName: opts.key.name,
     machineProfile: resolved.LLAMA_CPP_MACHINE_PROFILE,
