@@ -313,6 +313,7 @@ function discoverPeers(): PeerNode[] {
       .filter((node) => isHttpsEndpoint(node.endpoint))
       .map((node) => ({
         id: node.name,
+        ...(node.tlsServerName !== undefined ? { tlsServerName: node.tlsServerName } : {}),
         endpoint: node.endpoint,
         ...(node.certificate !== undefined ? { certificate: node.certificate } : {}),
         ...(node.certificateFingerprint !== undefined

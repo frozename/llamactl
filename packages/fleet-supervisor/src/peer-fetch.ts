@@ -81,11 +81,18 @@ async function requestDirect(peer: AggregatorPeer, timeoutMs: number): Promise<P
   const timer = setTimeout(() => {
     controller.abort();
   }, timeoutMs);
-  const init: RequestInit & { tls?: { ca: string } } = {
+  const init: RequestInit & { tls?: { ca: string; serverName?: string } } = {
     method: "GET",
     signal: controller.signal,
     ...(Object.keys(headers).length ? { headers } : {}),
-    ...(peer.certificate ? { tls: { ca: peer.certificate } } : {}),
+    ...(peer.certificate
+      ? {
+          tls: {
+            ca: peer.certificate,
+            ...(peer.tlsServerName !== undefined ? { serverName: peer.tlsServerName } : {}),
+          },
+        }
+      : {}),
   };
   try {
     const res = await fetch(target.toString(), init);
