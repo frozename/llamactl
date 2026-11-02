@@ -188,3 +188,27 @@ describe("Electron dispatcher router", () => {
     expect(urls.length).toBe(0);
   }, 15_000);
 });
+
+test("dispatcher preserves TLS server identity and invalidates cached clients when it changes", async () => {
+  const c = cluster!;
+  process.env["LLAMACTL_CONFIG"] = c.clusterConfigPath;
+  const { buildDispatcherRouter, __resetClientCacheForTests } =
+    await import("../electron/trpc/dispatcher");
+  __resetClientCacheForTests();
+  const seen: (string | undefined)[] = [];
+  const dispatcher = buildDispatcherRouter((node) => {
+    seen.push(node.tlsServerName);
+    return makePinnedFetch(node);
+  });
+  const caller = dispatcher.createCaller({}) as DispatcherCaller;
+  for (const identity of ["localhost", "127.0.0.1"]) {
+    const cfg = kubecfg.setDefaultNode(kubecfg.loadConfig(c.clusterConfigPath), "remote1");
+    for (const cluster of cfg.clusters) {
+      const node = cluster.nodes.find((n) => n.name === "remote1");
+      if (node) node.tlsServerName = identity;
+    }
+    kubecfg.saveConfig(cfg, c.clusterConfigPath);
+    await caller.env();
+  }
+  expect(seen).toEqual(["localhost", "127.0.0.1"]);
+});

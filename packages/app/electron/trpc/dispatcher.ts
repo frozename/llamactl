@@ -535,6 +535,7 @@ interface DispatchTarget {
     endpoint: string;
     certificate: string | null;
     certificateFingerprint: string | null;
+    tlsServerName?: string;
   };
   token?: string;
 }
@@ -571,6 +572,7 @@ function resolveDispatchTarget(path: string): DispatchTarget {
       endpoint: node.endpoint,
       certificate: node.certificate ?? null,
       certificateFingerprint: node.certificateFingerprint ?? null,
+      ...(node.tlsServerName !== undefined ? { tlsServerName: node.tlsServerName } : {}),
     },
     token,
   };
@@ -602,7 +604,7 @@ function cacheKey(target: DispatchTarget): string {
   // already the cache invalidation signal; 8 chars is enough to
   // disambiguate independent rotations without keeping the secret in
   // an in-memory map key any longer than necessary.
-  return `${target.node.endpoint}|${fp}|${target.token.slice(0, 8)}`;
+  return `${target.node.endpoint}|${fp}|${target.node.tlsServerName ?? ""}|${target.token.slice(0, 8)}`;
 }
 
 function buildRemoteClient(target: DispatchTarget, fetchFactory: PinnedFetchFactory): RemoteClient {
@@ -619,6 +621,7 @@ function buildRemoteClient(target: DispatchTarget, fetchFactory: PinnedFetchFact
         endpoint: target.node.endpoint,
         certificate: target.node.certificate ?? undefined,
         certificateFingerprint: target.node.certificateFingerprint ?? undefined,
+        tlsServerName: target.node.tlsServerName,
       },
       target.token,
       fetchFactory,
@@ -657,6 +660,7 @@ function getPeerClient(node: ClusterNode, user: KubeUser): unknown {
         endpoint: node.endpoint,
         certificate: node.certificate ?? null,
         certificateFingerprint: node.certificateFingerprint ?? null,
+        ...(node.tlsServerName !== undefined ? { tlsServerName: node.tlsServerName } : {}),
       },
       token: kubecfg.resolveToken(user),
     },

@@ -34,7 +34,9 @@ export function makeNodePinnedFetch(node: ClusterNode): PinnedFetch {
   if (!ca && !isLocalEndpoint(node.endpoint)) {
     throw new Error(`node '${node.name}' has no pinned certificate; refusing to connect`);
   }
-  const dispatcher = ca ? new Agent({ connect: { ca } }) : undefined;
+  const dispatcher = ca
+    ? new Agent({ connect: { ca, servername: node.tlsServerName } })
+    : undefined;
 
   return async (input: string | URL | Request, init?: RequestInit) => {
     const extra = dispatcher ? { dispatcher } : {};

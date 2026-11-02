@@ -1,8 +1,16 @@
 import type { ClusterNode } from "@llamactl/remote";
 
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, mock, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import * as undici from "undici/index.js";
 
-import { makeNodePinnedFetch } from "../../../electron/trpc/node-pinned-fetch";
+import { generateSelfSignedCert } from "../../../../remote/src/server/tls.js";
+
+// Bun exposes an Agent stub for the bare specifier; exercise Electron's installed implementation.
+await mock.module("undici", () => undici);
+const { makeNodePinnedFetch } = await import("../../../electron/trpc/node-pinned-fetch.js");
 
 describe("makeNodePinnedFetch", () => {
   test("refuses remote agent nodes without a pinned certificate", () => {
@@ -23,5 +31,125 @@ describe("makeNodePinnedFetch", () => {
     };
 
     expect(() => makeNodePinnedFetch(node)).not.toThrow();
+  });
+});
+
+describe("undici forwarded TLS identity", () => {
+  const directory = mkdtempSync(join(tmpdir(), "app-forward-tls-"));
+  let server: ReturnType<typeof Bun.serve>;
+  let node: ClusterNode;
+  let otherCertificate: string;
+  let otherFingerprint: string;
+  let requests = 0;
+
+  beforeAll(async () => {
+    const cert = await generateSelfSignedCert({
+      dir: directory,
+      commonName: "worker.example.test",
+    });
+    const other = await generateSelfSignedCert({
+      dir: join(directory, "other"),
+      commonName: "worker.example.test",
+    });
+    otherCertificate = other.certPem;
+    otherFingerprint = other.fingerprint;
+    server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: { cert: cert.certPem, key: cert.keyPem },
+      fetch() {
+        requests++;
+        return new Response("verified");
+      },
+    });
+    node = {
+      name: "forwarded",
+      endpoint: `https://127.0.0.1:${String(server.port)}`,
+      certificate: cert.certPem,
+      certificateFingerprint: cert.fingerprint,
+      tlsServerName: "worker.example.test",
+    };
+  });
+  afterAll(async () => {
+    await server.stop(true);
+    rmSync(directory, { recursive: true, force: true });
+  });
+
+  async function read(candidate: ClusterNode): Promise<string | null> {
+    const original = globalThis.fetch;
+    globalThis.fetch = undici.fetch as unknown as typeof fetch;
+    try {
+      return await makeNodePinnedFetch(candidate)(candidate.endpoint).then(
+        (response) => response.text(),
+        () => null,
+      );
+    } finally {
+      globalThis.fetch = original;
+    }
+  }
+
+  const tlsFailureCodes = new Set([
+    "ERR_TLS_CERT_ALTNAME_INVALID",
+    "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+    "DEPTH_ZERO_SELF_SIGNED_CERT",
+    "SELF_SIGNED_CERT_IN_CHAIN",
+  ]);
+
+  function codesInCauseChain(error: unknown): string[] {
+    const codes: string[] = [];
+    let current = error as { code?: unknown; cause?: unknown } | undefined;
+    while (current) {
+      if (typeof current.code === "string") codes.push(current.code);
+      current = current.cause as { code?: unknown; cause?: unknown } | undefined;
+    }
+    return codes;
+  }
+
+  async function rejectWithTlsFailure(candidate: ClusterNode): Promise<string[]> {
+    const original = globalThis.fetch;
+    globalThis.fetch = undici.fetch as unknown as typeof fetch;
+    try {
+      const response = await makeNodePinnedFetch(candidate)(candidate.endpoint);
+      await response.body?.cancel();
+      return [];
+    } catch (error) {
+      return codesInCauseChain(error);
+    } finally {
+      globalThis.fetch = original;
+    }
+  }
+
+  test("verifies the configured identity through undici", async () => {
+    expect(await read(node)).toBe("verified");
+  });
+  test("rejects a different certificate name before sending credentials", async () => {
+    const before = requests;
+    const codes = await rejectWithTlsFailure({ ...node, tlsServerName: "wrong.example.test" });
+    expect(codes.some((code) => tlsFailureCodes.has(code))).toBe(true);
+    expect(requests).toBe(before);
+  });
+  test("rejects a different CA before sending credentials", async () => {
+    const before = requests;
+    const codes = await rejectWithTlsFailure({
+      ...node,
+      certificate: otherCertificate,
+      certificateFingerprint: otherFingerprint,
+    });
+    expect(codes.some((code) => tlsFailureCodes.has(code))).toBe(true);
+    expect(requests).toBe(before);
+  });
+  test("retains endpoint identity checks without an override", async () => {
+    const before = requests;
+    const { tlsServerName: _, ...without } = node;
+    const codes = await rejectWithTlsFailure(without);
+    expect(codes.some((code) => tlsFailureCodes.has(code))).toBe(true);
+    expect(requests).toBe(before);
+  });
+  test("rejects a wrong fingerprint before connecting", () => {
+    const before = requests;
+    expect(() =>
+      makeNodePinnedFetch({ ...node, certificateFingerprint: "sha256:" + "0".repeat(64) }),
+    ).toThrow(/fingerprint mismatch/);
+    expect(requests).toBe(before);
   });
 });

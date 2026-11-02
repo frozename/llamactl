@@ -64,7 +64,7 @@ export function makePinnedFetch(node: ClusterNode): PinnedFetch {
     throw new Error(`node '${node.name}' has no pinned certificate; refusing to connect`);
   }
   return async (input, init) => {
-    const extraInit = ca ? { tls: { ca } } : {};
+    const extraInit = ca ? { tls: { ca, serverName: node.tlsServerName } } : {};
     return await fetch(input, { ...init, ...extraInit });
   };
 }

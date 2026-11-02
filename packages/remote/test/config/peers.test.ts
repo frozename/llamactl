@@ -125,3 +125,13 @@ test("listPeers honors explicit currentNodeName override", () => {
       .sort(),
   ).toEqual(["remote-node"]);
 });
+
+test("listPeers preserves a forwarded node's TLS certificate identity", () => {
+  const cfg = upsertNode(freshConfig(), "home", {
+    name: "forwarded",
+    endpoint: "https://127.0.0.1:18245",
+    tlsServerName: "worker.example.test",
+  });
+  saveConfig(cfg, process.env["LLAMACTL_CONFIG"]);
+  expect(listPeers()[0]).toHaveProperty("tlsServerName", "worker.example.test");
+});
