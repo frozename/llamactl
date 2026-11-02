@@ -43,9 +43,9 @@ const runClaim = (): void => {
       tag: "done",
       result: {
         kind: r.kind,
-        claimId: "claimId" in r ? r.claimId : undefined,
-        reason: r.kind === "refuse" ? r.reason : undefined,
-        committedGiB: r.kind === "admitted" ? r.committedGiB : undefined,
+        ...("claimId" in r ? { claimId: r.claimId } : {}),
+        ...(r.kind === "refuse" ? { reason: r.reason } : {}),
+        ...(r.kind === "admitted" ? { committedGiB: r.committedGiB } : {}),
       },
     } satisfies WorkerReply);
   } catch (e) {
