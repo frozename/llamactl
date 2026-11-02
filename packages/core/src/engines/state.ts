@@ -71,6 +71,77 @@ export function modelhostStateFile(resolved: ResolvedEnv = resolveEnv(), key: Wo
   return join(workloadRuntimeDir(resolved, key), "modelhost.state");
 }
 
+// #317: the state sidecar only exists once the engine is ready, so an agent
+// that dies mid-launch loses every track of the child. The starting record is
+// written at spawn time (pid + identity fields the pid-file convention uses)
+// and removed on readiness or clean teardown; its mtime is the pid-identity
+// anchor for a restarted agent to reap the orphan.
+export interface ModelHostStartingState {
+  kind: "ModelHostStarting";
+  engine: EngineName;
+  pid: number;
+  startedAt: string;
+  specHash?: string;
+}
+
+export function modelhostStartingFile(
+  resolved: ResolvedEnv = resolveEnv(),
+  key: WorkloadKey,
+): string {
+  return join(workloadRuntimeDir(resolved, key), "modelhost.starting");
+}
+
+export function writeModelHostStarting(
+  state: ModelHostStartingState,
+  key: WorkloadKey,
+  resolved: ResolvedEnv = resolveEnv(),
+): void {
+  ensureWorkloadRuntimeDir(resolved, key);
+  writeFileSync(modelhostStartingFile(resolved, key), JSON.stringify(state, null, 2));
+}
+
+function validateModelHostStarting(
+  parsed: Partial<ModelHostStartingState>,
+): ModelHostStartingState | null {
+  if (parsed.kind !== "ModelHostStarting") return null;
+  const { engine, pid, startedAt, specHash } = parsed;
+  if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return null;
+  if (engine !== "llamacpp" && engine !== "omlx" && engine !== "strata") return null;
+  if (typeof startedAt !== "string" || Number.isNaN(Date.parse(startedAt))) return null;
+  return {
+    kind: "ModelHostStarting",
+    engine,
+    pid,
+    startedAt,
+    ...(typeof specHash === "string" ? { specHash } : {}),
+  };
+}
+
+export function readModelHostStarting(
+  key: WorkloadKey,
+  resolved: ResolvedEnv = resolveEnv(),
+): ModelHostStartingState | null {
+  const path = modelhostStartingFile(resolved, key);
+  if (!existsSync(path)) return null;
+  try {
+    const raw = readFileSync(path, "utf8");
+    return validateModelHostStarting(JSON.parse(raw) as Partial<ModelHostStartingState>);
+  } catch {
+    return null;
+  }
+}
+
+export function removeModelHostStarting(
+  key: WorkloadKey,
+  resolved: ResolvedEnv = resolveEnv(),
+): void {
+  try {
+    unlinkSync(modelhostStartingFile(resolved, key));
+  } catch {
+    // Best-effort cleanup; failures are not actionable here.
+  }
+}
+
 export function writeModelHostState(
   state: ModelHostState,
   key: WorkloadKey,
