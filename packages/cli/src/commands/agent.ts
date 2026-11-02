@@ -21,6 +21,7 @@ import {
   formatAgentStatus,
   readCertSans,
 } from "./agent-status.js";
+import { writeTokenFile } from "./agent-token.js";
 import { runHeal } from "./heal.js";
 
 const USAGE = `Usage: llamactl agent <subcommand>
@@ -33,7 +34,7 @@ Subcommands:
       (configPath, nodeName, bindHost, port, fingerprint, blob) so the
       install-agent.sh flow can capture stdout and shell-extract the
       bootstrap blob without jq.
-  rotate-token [--dir=<path>] [--host=<host>] [--json]
+  rotate-token [--dir=<path>] [--host=<host>] [--token-out=<path>] [--json]
       Rotate the bearer token without touching the TLS cert/key. Reads
       agent.yaml, generates a fresh token, updates tokenHash, and emits
       a bootstrap blob containing the new token plus the unchanged cert
@@ -159,6 +160,7 @@ Restart the agent afterwards so it loads the new tokenHash.
 Flags:
 ${DIR_FLAG_HELP}
   --host=<host>    Host recorded in the emitted bootstrap URL (default: 127.0.0.1)
+  --token-out=<path>  Also write the new bearer token to <path> (mode 0600)
   --json           Emit a single-line JSON record instead of the human summary
   -h, --help       Show this help
 `;
@@ -583,6 +585,7 @@ async function runInit(args: string[]): Promise<number> {
 interface RotateTokenFlags {
   dir: string;
   host: string;
+  tokenOut?: string;
   json: boolean;
 }
 
@@ -606,11 +609,31 @@ function parseRotateTokenFlags(args: string[]): RotateTokenFlags | { error: stri
       case "--host":
         flags.host = v;
         break;
+      case "--token-out":
+        if (v === "") return { error: "agent rotate-token: --token-out requires a path" };
+        flags.tokenOut = v;
+        break;
       default:
         return { error: `agent rotate-token: unknown flag ${k}` };
     }
   }
   return flags;
+}
+
+/**
+ * Write the rotated token to --token-out before the new tokenHash is
+ * persisted, so a failed write leaves agent.yaml on the previous token.
+ */
+function writeRotatedTokenOut(out: string, token: string): boolean {
+  try {
+    writeTokenFile(out, token);
+    return true;
+  } catch (err) {
+    process.stderr.write(
+      `agent rotate-token: failed to write token to ${out}: ${(err as Error).message}. Nothing was rotated; agent.yaml still holds the previous tokenHash.\n`,
+    );
+    return false;
+  }
 }
 
 /**
@@ -650,6 +673,9 @@ export async function runRotateToken(args: string[]): Promise<number> {
   }
 
   const token = auth.generateToken();
+
+  if (f.tokenOut !== undefined && !writeRotatedTokenOut(f.tokenOut, token.token)) return 1;
+
   const updated: agentConfigMod.AgentConfig = {
     ...existing,
     tokenHash: token.hash,
@@ -664,6 +690,9 @@ export async function runRotateToken(args: string[]): Promise<number> {
     certificate: certPem,
   });
 
+  const warning =
+    "warning: the previous token no longer authenticates; update every client that holds it (kubeconfig, local consumers; see 'llamactl agent token list')";
+
   if (f.json) {
     process.stderr.write(
       [
@@ -671,6 +700,8 @@ export async function runRotateToken(args: string[]): Promise<number> {
         `cert   ${existing.certPath} (unchanged)`,
         `fp     ${existing.fingerprint} (unchanged)`,
         `bind   ${existing.bindHost}:${String(existing.port)}`,
+        warning,
+        ...(f.tokenOut !== undefined ? [`token  ${f.tokenOut} (0600)`] : []),
       ].join("\n") + "\n",
     );
     const record = {
@@ -680,25 +711,27 @@ export async function runRotateToken(args: string[]): Promise<number> {
       port: existing.port,
       fingerprint: existing.fingerprint,
       blob: bootstrap,
+      ...(f.tokenOut !== undefined ? { tokenOut: f.tokenOut } : {}),
     };
     process.stdout.write(`${JSON.stringify(record)}\n`);
     return 0;
   }
 
-  process.stdout.write(
-    [
-      `rotated tokenHash in ${configPath}`,
-      `cert   ${existing.certPath} (unchanged)`,
-      `fp     ${existing.fingerprint} (unchanged)`,
-      `bind   ${existing.bindHost}:${String(existing.port)}`,
-      ``,
-      `Restart the agent so it loads the new tokenHash, then update the kubeconfig:`,
-      ``,
-      `  pkill -f 'agent serve' && llamactl agent serve &`,
-      `  llamactl node add ${String(existing.nodeName)} --bootstrap ${bootstrap} --force`,
-      ``,
-    ].join("\n"),
-  );
+  const lines = [
+    `rotated tokenHash in ${configPath}`,
+    `cert   ${existing.certPath} (unchanged)`,
+    `fp     ${existing.fingerprint} (unchanged)`,
+    `bind   ${existing.bindHost}:${String(existing.port)}`,
+    warning,
+    ...(f.tokenOut !== undefined ? [`token  ${f.tokenOut} (0600)`] : []),
+    ``,
+    `Restart the agent so it loads the new tokenHash, then update the kubeconfig:`,
+    ``,
+    `  pkill -f 'agent serve' && llamactl agent serve &`,
+    `  llamactl node add ${String(existing.nodeName)} --bootstrap ${bootstrap} --force`,
+    ``,
+  ];
+  process.stdout.write(lines.join("\n"));
   return 0;
 }
 

@@ -78,7 +78,7 @@ function fail(msg: string): 1 {
  * a sibling temp file is created at 0600 and renamed over the target, so
  * the token is never readable at the old mode.
  */
-function writeTokenFile(out: string, token: string): void {
+export function writeTokenFile(out: string, token: string): void {
   const tmp = `${out}.tmp-${String(process.pid)}-${String(Date.now())}`;
   try {
     writeFileSync(tmp, `${token}\n`, { mode: 0o600 });

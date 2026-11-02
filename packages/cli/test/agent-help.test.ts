@@ -57,7 +57,7 @@ describe("agent subcommand --help", () => {
         "default: 7843",
       ],
     ],
-    ["rotate-token", ["--dir=", "--host=", "--json"]],
+    ["rotate-token", ["--dir=", "--host=", "--token-out=", "--json"]],
     ["set-token", ["--dir=", "--hash=", "--token-file="]],
     [
       "rotate-cert",
