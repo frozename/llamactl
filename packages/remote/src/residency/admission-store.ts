@@ -26,6 +26,11 @@
  * appends under the fence check without rotating the token;
  * releaseVerified deletes them with the claim; reopen and recovery keep
  * them.
+ *
+ * Fails closed (#383): a failed ledger read, a stored state or kind
+ * outside the enums, and a file that fails PRAGMA quick_check at open all
+ * surface as AuthorityUnavailableError — never a silently empty snapshot,
+ * a default-mapped state, or an adopted corrupt file.
  */
 import {
   evaluateManagedAdmission,
@@ -50,7 +55,10 @@ export interface ClaimRow {
   fenceToken: string;
 }
 
-export type ClaimRefuseReason = ManagedAdmissionRefuseReason | "AuthorityUnavailable";
+export type ClaimRefuseReason =
+  | ManagedAdmissionRefuseReason
+  | "AuthorityUnavailable"
+  | "InvalidKind";
 
 /** Process identity recorded in authority_meta as the ledger's owner. */
 export interface OwnerIdentity {
@@ -146,7 +154,11 @@ export interface AdmissionStore {
    * generation rows are deleted with it.
    */
   releaseVerified(claimId: string, fenceToken: string, evidence: ReleaseEvidence): boolean;
-  /** Detached copies; mutating them never changes stored state. */
+  /**
+   * Detached copies; mutating them never changes stored state. A failed
+   * read, or a stored state or kind outside the enums, throws
+   * AuthorityUnavailableError — never a silently empty ledger.
+   */
   snapshot(): readonly ClaimRow[];
   /** Detached generation rows for the claim, oldest first; empty when none. */
   generationsOf(claimId: string): readonly GenerationRecord[];
@@ -172,11 +184,29 @@ const errText = (e: unknown): string => (e instanceof Error ? e.message : String
 
 const newFenceToken = (): string => randomBytes(32).toString("hex");
 
-const asKind = (value: string | null): ManagedWorkloadKind | undefined =>
-  value === "ModelRun" || value === "ModelHost" ? value : undefined;
+const isManagedWorkloadKind = (value: unknown): value is ManagedWorkloadKind =>
+  value === "ModelRun" || value === "ModelHost";
 
-const asState = (value: string): ClaimState =>
-  value === "resident" || value === "uncertain" ? value : "pending";
+const asKind = (value: string | null): ManagedWorkloadKind | undefined => {
+  if (value === null) {
+    return undefined;
+  }
+  if (isManagedWorkloadKind(value)) {
+    return value;
+  }
+  throw new AuthorityUnavailableError(
+    `admission ledger corruption: stored kind ${value} is outside ManagedWorkloadKind`,
+  );
+};
+
+const asState = (value: string): ClaimState => {
+  if (value === "pending" || value === "resident" || value === "uncertain") {
+    return value;
+  }
+  throw new AuthorityUnavailableError(
+    `admission ledger corruption: stored state ${value} is outside ClaimState`,
+  );
+};
 
 function toPolicyClaim(record: ClaimRecord): ManagedAdmissionClaim {
   const claim: ManagedAdmissionClaim = {
@@ -436,6 +466,15 @@ class SqliteAdmissionStore implements AdmissionStore {
         detail: "admission store is closed",
       };
     }
+    const kind: unknown = input.kind;
+    if (kind !== undefined && !isManagedWorkloadKind(kind)) {
+      const shown = typeof kind === "string" ? kind : errText(kind);
+      return {
+        kind: "refuse",
+        reason: "InvalidKind",
+        detail: `workload kind ${shown} is outside ManagedWorkloadKind`,
+      };
+    }
     try {
       return this.#runClaimTransaction(db, input);
     } catch (e) {
@@ -556,8 +595,13 @@ class SqliteAdmissionStore implements AdmissionStore {
     }
     try {
       return readClaimRecords(db).map(toClaimRow);
-    } catch {
-      return [];
+    } catch (e) {
+      if (e instanceof AuthorityUnavailableError) {
+        throw e;
+      }
+      throw new AuthorityUnavailableError(`admission ledger read failed: ${errText(e)}`, {
+        cause: e,
+      });
     }
   }
 
@@ -652,6 +696,24 @@ class SqliteAdmissionStore implements AdmissionStore {
 const ADMISSION_APPLICATION_ID = 0x4c4d4144;
 const ADMISSION_SCHEMA_VERSION = 1;
 
+/**
+ * Refuse a file whose pages fail PRAGMA quick_check before the open path
+ * writes anything to it. Malformed pages can throw out of the pragma
+ * itself or surface as error rows; neither may be adopted.
+ */
+function assertQuickCheck(db: Database): void {
+  let rows: { quick_check: string }[];
+  try {
+    rows = db.query<{ quick_check: string }, []>("PRAGMA quick_check").all();
+  } catch (e) {
+    throw new AuthorityUnavailableError(`integrity check failed: ${errText(e)}`, { cause: e });
+  }
+  const verdict = rows.map((r) => r.quick_check).join("; ");
+  if (rows.length !== 1 || rows[0]?.quick_check !== "ok") {
+    throw new AuthorityUnavailableError(`integrity check failed: ${verdict}`);
+  }
+}
+
 function validateAndStampSchema(
   db: Database,
   expectedApplicationId: number,
@@ -704,6 +766,7 @@ export function openAdmissionStore(opts: {
   }
   try {
     db.run(`PRAGMA busy_timeout = ${String(resolveBusyTimeoutMs(opts.busyTimeoutMs))}`);
+    assertQuickCheck(db);
     db.run("PRAGMA journal_mode = WAL");
     db.run("PRAGMA synchronous = FULL");
     db.run("BEGIN IMMEDIATE");

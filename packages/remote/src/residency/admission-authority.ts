@@ -102,7 +102,12 @@ export interface AdmissionAuthority {
    * claim with no captured generation.
    */
   tryRelease(claimId: string): ReleaseAttemptResult;
-  /** Detached rows including captured generations. */
+  /**
+   * Detached rows including captured generations. A ledger degraded
+   * after open — where the store's snapshot throws
+   * AuthorityUnavailableError — surfaces as the documented empty
+   * snapshot; the authority stays degraded, never legacy.
+   */
   snapshot(): readonly AuthorityClaimRow[];
   /** Idempotent; post-close admits refuse AuthorityUnavailable. */
   close(): void;
@@ -112,6 +117,23 @@ function ownerIdentityMatches(a: OwnerIdentity, b: OwnerIdentity): boolean {
   const shared = (field: "startTimeMs" | "executable"): boolean =>
     a[field] === undefined || b[field] === undefined || a[field] === b[field];
   return a.pid === b.pid && shared("startTimeMs") && shared("executable");
+}
+
+/**
+ * Read the ledger rows with the documented degraded fallback: the store
+ * fails closed with AuthorityUnavailableError on a read failure or a
+ * corrupt stored value; the authority translates that into the empty
+ * snapshot rather than crashing.
+ */
+function ledgerRows(store: AdmissionStore): readonly ClaimRow[] {
+  try {
+    return store.snapshot();
+  } catch (e) {
+    if (e instanceof AuthorityUnavailableError) {
+      return [];
+    }
+    throw e;
+  }
 }
 
 function stakeOrRecover(
@@ -206,7 +228,9 @@ function releaseClaim(
  * Open (or degrade) the authority over `storePath`. An unreadable store
  * still returns an authority — degraded — so callers always speak to the
  * managed surface: every admit refuses AuthorityUnavailable, mutations
- * fail closed, snapshot is empty.
+ * fail closed, snapshot is empty. A ledger that degrades after open
+ * (#383) keeps that contract: the store's typed snapshot failure reads
+ * as the empty snapshot and admits keep refusing AuthorityUnavailable.
  *
  * `owner` is this process's identity, staked on the ledger at open: on a
  * vacant store it is recorded outright; with a recorded previous owner the
@@ -238,10 +262,10 @@ export function openAdmissionAuthority(opts: {
 
   const ledger = (): AdmissionStore | null => (degradedDetail === undefined ? store : null);
 
-  const findRow = (claimId: string): ClaimRow | undefined =>
-    ledger()
-      ?.snapshot()
-      .find((r) => r.claimId === claimId);
+  const findRow = (claimId: string): ClaimRow | undefined => {
+    const active = ledger();
+    return active === null ? undefined : ledgerRows(active).find((r) => r.claimId === claimId);
+  };
 
   const releaseCtx: ReleaseContext = {
     ledger,
@@ -318,7 +342,7 @@ export function openAdmissionAuthority(opts: {
       if (active === null) {
         return [];
       }
-      return active.snapshot().map(
+      return ledgerRows(active).map(
         (row): AuthorityClaimRow => ({
           ...row,
           generations: active.generationsOf(row.claimId),
