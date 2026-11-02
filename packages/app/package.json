@@ -29,9 +29,9 @@
     "react": "19.2.5",
     "react-dom": "19.2.5",
     "superjson": "2.2.6",
-    "undici": "7.18.0",
+    "undici": "7.30.1",
     "yaml": "2.8.3",
-    "zod": "4.3.6",
+    "zod": "4.6.6",
     "zustand": "5.0.12"
   },
   "devDependencies": {
@@ -40,12 +40,12 @@
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "5.2.0",
     "bufferutil": "^4.1.0",
-    "electron": "41.2.1",
+    "electron": "41.10.3",
     "electron-builder": "26.8.1",
     "electron-vite": "5.0.0",
     "tailwindcss": "4.2.2",
     "typescript": "5.9.3",
     "utf-8-validate": "^6.0.6",
-    "vite": "7.3.2"
+    "vite": "7.3.5"
   }
 }
