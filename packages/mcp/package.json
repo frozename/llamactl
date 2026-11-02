@@ -20,11 +20,11 @@
     "@llamactl/eval": "workspace:*",
     "@llamactl/fleet-supervisor": "workspace:*",
     "@llamactl/remote": "workspace:*",
-    "@modelcontextprotocol/sdk": "1.29.0",
+    "@modelcontextprotocol/sdk": "1.32.0",
     "@novaproto/contracts": "0.2.0",
     "@novaproto/mcp": "0.2.0",
     "@novaproto/mcp-shared": "0.2.0",
-    "zod": "4.3.6"
+    "zod": "4.6.6"
   },
   "devDependencies": {
     "@types/bun": "1.3.12",
