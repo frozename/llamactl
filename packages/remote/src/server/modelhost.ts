@@ -13,8 +13,12 @@ import {
 import {
   computeModelHostSpecHash,
   modelhostPidFile,
+  modelhostStartingFile,
+  readModelHostStarting,
   readModelHostState,
+  removeModelHostStarting,
   removeModelHostState,
+  writeModelHostStarting,
   writeModelHostState,
 } from "@llamactl/core/engines/state";
 import { resolveEnv } from "@llamactl/core/env";
@@ -93,6 +97,11 @@ export interface StartModelHostResult {
   ok: boolean;
   pid: number | null;
   error?: string;
+  /** The pid of a child that was spawned and then failed or was torn down.
+   *  Admission authorities need it as generation evidence to prove the
+   *  process is gone before releasing memory; `pid` stays null because a
+   *  failure is never a running host. */
+  spawnedPid?: number;
 }
 
 export interface StopModelHostOptions {
@@ -367,6 +376,46 @@ function teardownIdentity(
   };
 }
 
+// #317: a child spawned by a previous agent that died before readiness leaves
+// only its starting record. Verify its identity against the record (the mtime
+// anchor plus the engine argv0), reap it when it is provably ours, and defer
+// the whole start when it is not — spawning over an unverifiable live pid is
+// how #317 got a second engine on one port.
+async function reapStartingOrphan(
+  opts: StartModelHostOptions,
+  resolved: ReturnType<typeof resolveEnv>,
+  engine: (typeof ENGINES)[keyof typeof ENGINES],
+): Promise<StartModelHostResult | null> {
+  const starting = readModelHostStarting(opts.key, resolved);
+  if (!starting) return null;
+  const recordPath = modelhostStartingFile(resolved, opts.key);
+  const identity = hostIdentityDeps(starting.engine, opts.identity);
+  const verdict = verifyPidFile(recordPath, starting.pid, identity);
+  if (verdict === "unknown") {
+    return { ok: false, pid: null, error: "pid identity unknown; deferring restart" };
+  }
+  if (verdict === "alive") {
+    await engine
+      .teardown(starting.pid, teardownIdentity(recordPath, opts.identity, identity.expectCommand))
+      .catch(() => undefined);
+  }
+  removeModelHostStarting(opts.key, resolved);
+  return null;
+}
+
+// The starting record is only ours while it names the pid we spawned; a
+// concurrent lifecycle transition that replaced it must survive our cleanup.
+function clearStartingRecordIfOwned(
+  key: WorkloadKey,
+  resolved: ReturnType<typeof resolveEnv>,
+  pid: number,
+): void {
+  const current = readModelHostStarting(key, resolved);
+  if (current !== null && current.pid === pid) {
+    removeModelHostStarting(key, resolved);
+  }
+}
+
 // Reap a prior live ModelHost for this workload before spawning a new one.
 // Without this, applying over a still-running host leaves the old process
 // holding the endpoint port: the new omlx fails to bind and exits, yet
@@ -381,7 +430,7 @@ async function reapOrAdoptPriorHost(
   engine: (typeof ENGINES)[keyof typeof ENGINES],
 ): Promise<StartModelHostResult | null> {
   const priorState = readModelHostState(opts.key, resolved);
-  if (!priorState) return null;
+  if (!priorState) return await reapStartingOrphan(opts, resolved, engine);
   // The recorded pid is verified against the pid file it was recorded in
   // (written before the sidecar, so its mtime is the right identity anchor)
   // and corroborated by the engine's argv0. A recycled pid is not ours and
@@ -432,8 +481,9 @@ async function reapOrAdoptPriorHost(
       error: `endpoint ${manifest.spec.endpoint.host}:${String(manifest.spec.endpoint.port)} is held by live pid ${String(livePid)} that is not yet adoptable (readiness/model unconfirmed); deferring restart`,
     };
   }
-  // No live listener — the port is free; fall through to a normal spawn.
-  return null;
+  // No live listener — the port is free; fall through to a normal spawn,
+  // after reaping any starting orphan a crashed agent left for this workload.
+  return await reapStartingOrphan(opts, resolved, engine);
 }
 
 /**
@@ -510,6 +560,38 @@ function teardownChildSilently(
   return Promise.resolve();
 }
 
+// #318: the caller's AbortSignal must be able to settle a start while the
+// readiness probe is still polling a full timeout budget. The abandoned probe
+// is not cancelled — the owner turns this sentinel into a failure whose catch
+// tears the spawned child down, so a wedged probe can never record or keep
+// alive a process the caller walked away from. A joined caller only detaches.
+const MODEL_HOST_ABORT_MESSAGE = "modelHostStart aborted";
+const MODEL_HOST_ABORTED = Symbol(MODEL_HOST_ABORT_MESSAGE);
+
+async function raceModelHostAbort<T>(
+  work: Promise<T>,
+  signal: AbortSignal | undefined,
+): Promise<T | typeof MODEL_HOST_ABORTED> {
+  if (!signal) return await work;
+  if (signal.aborted) return MODEL_HOST_ABORTED;
+  return await new Promise<T | typeof MODEL_HOST_ABORTED>((resolve, reject) => {
+    const onAbort = (): void => {
+      resolve(MODEL_HOST_ABORTED);
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    work.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      },
+    );
+  });
+}
+
 /**
  * A pushed inline manifest (e.g. from the central controller's apply) must
  * not erase a managed-by marker already on disk for the same name. A label
@@ -564,10 +646,13 @@ interface InFlightModelHostStart {
 }
 const inFlightModelHostStarts = new Map<string, InFlightModelHostStart>();
 
+// A joined caller's abort only detaches that caller: the owning start keeps
+// running and is torn down solely by the owner's signal.
 async function joinInFlightModelHostStart(
   inFlight: InFlightModelHostStart,
   specHash: string,
   name: string,
+  signal: AbortSignal | undefined,
 ): Promise<StartModelHostResult> {
   if (inFlight.specHash !== specHash) {
     return {
@@ -576,7 +661,11 @@ async function joinInFlightModelHostStart(
       error: `modelHostStart already in progress for ${name} with a different spec`,
     };
   }
-  return await inFlight.promise;
+  const settled = await raceModelHostAbort(inFlight.promise, signal);
+  if (settled === MODEL_HOST_ABORTED) {
+    return { ok: false, pid: null, error: MODEL_HOST_ABORT_MESSAGE };
+  }
+  return settled;
 }
 
 interface ModelHostLaunchContext {
@@ -593,6 +682,11 @@ async function launchModelHost(
   ctx: ModelHostLaunchContext,
 ): Promise<StartModelHostResult> {
   const { env, runtimeEnv, resolved, engine, spec } = ctx;
+  if (opts.signal?.aborted) {
+    const result = { ok: false, pid: null, error: MODEL_HOST_ABORT_MESSAGE };
+    opts.onEvent?.({ type: "done", result });
+    return result;
+  }
   const early = await reapOrAdoptPriorHost(manifest, opts, resolved, engine);
   if (early) {
     opts.onEvent?.({ type: "done", result: early });
@@ -605,7 +699,10 @@ async function launchModelHost(
     ...omitUndefined({
       LLAMACTL_MODELS_DIR: env["LLAMACTL_MODELS_DIR"],
       LLAMA_CPP_MODELS: env["LLAMA_CPP_MODELS"],
-      LLAMACTL_RUNTIME_DIR: env["LLAMACTL_RUNTIME_DIR"],
+      // Fall back to the resolved runtime dir, never to a bare resolveEnv()
+      // inside the engine: an injected runtimeDir (tests, scoped agents)
+      // must reroot the engine's per-workload boot writes too.
+      LLAMACTL_RUNTIME_DIR: env["LLAMACTL_RUNTIME_DIR"] ?? resolved.LOCAL_AI_RUNTIME_DIR,
     }),
     workloadName: opts.key.name,
     machineProfile: resolved.LLAMA_CPP_MACHINE_PROFILE,
@@ -619,6 +716,8 @@ async function launchModelHost(
   );
   spec.extraArgs = extraArgsResolved.args;
   let child: ChildProcess | null = null;
+  let startingPid: number | null = null;
+  const startSpecHash = computeModelHostSpecHash(specForHash(manifest.spec));
   try {
     await engine.prepareLaunch?.(spec, bootEnv);
     const launch = engine.buildBootCommand(spec, bootEnv);
@@ -638,12 +737,37 @@ async function launchModelHost(
     }
     detachChild(child);
 
-    const endpoint = manifest.spec.endpoint;
-    const readiness = await (opts.probeReady ?? engine.probeReady)(
-      endpoint,
-      (opts.timeoutSeconds ?? manifest.spec.timeoutSeconds) * 1000,
-      spec.readiness,
+    // #317: track the child at spawn, before readiness. An agent that dies
+    // during the wait below must leave a record a restarted agent can reap.
+    startingPid = pid;
+    writeModelHostStarting(
+      {
+        kind: "ModelHostStarting",
+        engine: manifest.spec.engine,
+        pid,
+        startedAt: new Date().toISOString(),
+        specHash: startSpecHash,
+      },
+      opts.key,
+      resolved,
     );
+
+    // #318: the readiness wait is where a slow start outlives its caller.
+    // Racing the signal here means an abort lands on the child we just spawned
+    // (torn down by the catch below, starting record included), not after the
+    // probe's full timeout budget.
+    const endpoint = manifest.spec.endpoint;
+    const readiness = await raceModelHostAbort(
+      (opts.probeReady ?? engine.probeReady)(
+        endpoint,
+        (opts.timeoutSeconds ?? manifest.spec.timeoutSeconds) * 1000,
+        spec.readiness,
+      ),
+      opts.signal,
+    );
+    if (readiness === MODEL_HOST_ABORTED) {
+      throw new Error(MODEL_HOST_ABORT_MESSAGE);
+    }
     if (!readiness.ready) {
       throw new Error("modelhost failed readiness probe");
     }
@@ -661,18 +785,26 @@ async function launchModelHost(
         modelAliases,
         startedAt: new Date().toISOString(),
         slotSavePath: extraArgsResolved.slotSavePath,
-        specHash: computeModelHostSpecHash(specForHash(manifest.spec)),
+        specHash: startSpecHash,
       },
       opts.key,
       resolved,
     );
+    clearStartingRecordIfOwned(opts.key, resolved, pid);
     const result = { ok: true, pid };
     opts.onEvent?.({ type: "done", result });
     return result;
   } catch (error) {
+    const spawnedPid = child?.pid;
     await teardownChildSilently(child, engine);
+    if (startingPid !== null) clearStartingRecordIfOwned(opts.key, resolved, startingPid);
     const message = error instanceof Error ? error.message : "modelhost start failed";
-    const result = { ok: false, pid: null, error: message };
+    const result = {
+      ok: false,
+      pid: null,
+      error: message,
+      ...omitUndefined({ spawnedPid }),
+    };
     opts.onEvent?.({ type: "done", result });
     return result;
   }
@@ -723,7 +855,7 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
   const specHash = computeModelHostSpecHash(specForHash(manifest.spec));
   const inFlight = inFlightModelHostStarts.get(startKey);
   if (inFlight) {
-    const joined = await joinInFlightModelHostStart(inFlight, specHash, opts.key.name);
+    const joined = await joinInFlightModelHostStart(inFlight, specHash, opts.key.name, opts.signal);
     opts.onEvent?.({ type: "done", result: joined });
     return joined;
   }
@@ -740,10 +872,41 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
   }
 }
 
+// #317: an engine orphaned by an agent restart during start-up has no state
+// sidecar — the starting record written at spawn is the only track of it.
+// Same identity contract as the sidecar path: alive means ours (teardown +
+// remove the record), unknown means fail-closed (never signalled, record kept
+// for a retry), gone means nothing to signal (remove the stale record).
+async function stopStartingRecord(
+  opts: StopModelHostOptions,
+  resolved: ReturnType<typeof resolveEnv>,
+): Promise<StopModelHostResult> {
+  const starting = readModelHostStarting(opts.key, resolved);
+  if (!starting) return { ok: true, pid: null };
+  const recordPath = modelhostStartingFile(resolved, opts.key);
+  const identity = hostIdentityDeps(starting.engine, opts.identity);
+  const verdict = verifyPidFile(recordPath, starting.pid, identity);
+  if (verdict === "unknown") {
+    return { ok: false, pid: starting.pid, error: "pid identity unknown" };
+  }
+  if (verdict === "alive") {
+    const teardown =
+      opts.teardown ??
+      ((pid: number, _graceSeconds?: number): Promise<void> =>
+        ENGINES[starting.engine].teardown(
+          pid,
+          teardownIdentity(recordPath, opts.identity, identity.expectCommand),
+        ));
+    await teardown(starting.pid, opts.graceSeconds);
+  }
+  removeModelHostStarting(opts.key, resolved);
+  return { ok: true, pid: starting.pid };
+}
+
 export async function stopModelHost(opts: StopModelHostOptions): Promise<StopModelHostResult> {
   const resolved = resolveEnv(withRuntimeDir(toRuntimeEnv(opts.env), opts.runtimeDir));
   const state = readModelHostState(opts.key, resolved);
-  if (!state) return { ok: true, pid: null };
+  if (!state) return await stopStartingRecord(opts, resolved);
   // Teardown signals the whole process group — the worst place to act on a
   // recycled pid — so the recorded pid is verified against its pid file
   // (the identity anchor, written before the sidecar) and corroborated by

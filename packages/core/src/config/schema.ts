@@ -266,6 +266,8 @@ export const ClusterNodeSchema = z
     kind: NodeKindSchema.optional(),
     certificateFingerprint: z.string().optional(),
     certificate: z.string().optional(),
+    /** Certificate identity when the transport endpoint is an SSH forward. */
+    tlsServerName: z.string().min(1).optional(),
     facts: NodeFactsSchema.partial().optional(),
     cloud: CloudBindingSchema.optional(),
     /** Provider-kind only — pointer into a gateway's upstream catalog. */

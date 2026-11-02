@@ -220,9 +220,11 @@ function isPeerClusterRoute(
   return "isPeer" in route;
 }
 
-function peerTlsForRoute(route: RoutedEntry | undefined): { ca: string } | undefined {
+function peerTlsForRoute(
+  route: RoutedEntry | undefined,
+): { ca: string; serverName?: string } | undefined {
   if (!route?.isPeer || !route.certificate) return undefined;
-  return { ca: route.certificate };
+  return { ca: route.certificate, ...omitUndefined({ serverName: route.tlsServerName }) };
 }
 
 function requestedModelFromBody(bodyText: string): string | undefined {
@@ -263,6 +265,7 @@ type RouteEntry = {
   isPeer?: true;
   peerEndpoint?: string;
   certificate?: string;
+  tlsServerName?: string;
   token?: string;
   targetNodeId?: string;
   /** Peer workload's boot token: its runtime-record epoch when llamactl
@@ -397,6 +400,7 @@ function buildRouteMap(resolved: ResolvedEnv): Map<string, RouteEntry> {
           isPeer: true as const,
           peerEndpoint: route.peerEndpoint,
           ...omitUndefined({ certificate: route.certificate }),
+          ...omitUndefined({ tlsServerName: route.tlsServerName }),
           ...omitUndefined({ token: route.token }),
           targetNodeId: route.targetNodeId,
           ...omitUndefined({ revision: route.revision }),
@@ -2021,7 +2025,11 @@ async function forward(context: ProxyContext): Promise<Response> {
     return Response.json({ error: "cross-node slot ops not supported" }, { status: 400 });
   }
 
-  const init: RequestInit & { headers: Headers; tls?: { ca: string }; timeout?: boolean } = {
+  const init: RequestInit & {
+    headers: Headers;
+    tls?: { ca: string; serverName?: string };
+    timeout?: boolean;
+  } = {
     ...context.init,
     headers: new Headers(context.init.headers ?? {}),
     // Bun's HTTP client arms every fetch socket with a ~5-minute idle
@@ -2036,7 +2044,7 @@ async function forward(context: ProxyContext): Promise<Response> {
     init.headers.set("authorization", `Bearer ${context.route.token}`);
   }
   const peerTls = peerTlsForRoute(context.route);
-  if (peerTls) (init as RequestInit & { tls?: { ca: string } }).tls = peerTls;
+  if (peerTls) (init as RequestInit & { tls?: { ca: string; serverName?: string } }).tls = peerTls;
   // Propagate the client's AbortSignal to the upstream fetch so that a client
   // disconnect promptly cancels upstream inference and releases warm-hit lease
   // + registry reservation via the finally in proxyOpenAI. Compose with any

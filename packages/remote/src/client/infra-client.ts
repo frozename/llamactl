@@ -1,7 +1,7 @@
 import type { PeerNode } from "@llamactl/core/config/peers";
 
 import { loadConfig, resolveToken } from "@llamactl/core/config/kubeconfig";
-import { type ClusterNode, LOCAL_NODE_ENDPOINT } from "@llamactl/core/config/schema";
+import { LOCAL_NODE_ENDPOINT } from "@llamactl/core/config/schema";
 import { createTRPCClient, type TRPCClient } from "@trpc/client";
 
 import type { AppRouter } from "../router.js";
@@ -40,6 +40,7 @@ function remoteClient(peer: PeerNode): TRPCClient<AppRouter> {
         name: peer.id,
         endpoint: peer.endpoint,
         certificate: peer.certificate,
+        tlsServerName: peer.tlsServerName,
         certificateFingerprint: peer.fingerprint,
       },
       token ?? "",
@@ -74,8 +75,9 @@ function snapshotFetch(
     name: peer.id,
     endpoint: peer.endpoint,
     certificate: peer.certificate,
-    fingerprint: peer.fingerprint,
-  } as ClusterNode);
+    tlsServerName: peer.tlsServerName,
+    certificateFingerprint: peer.fingerprint,
+  });
   const target = new URL("/v1/fleet/snapshot", peer.endpoint);
   return async () => {
     const res = await pinnedFetch(
