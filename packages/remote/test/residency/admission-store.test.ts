@@ -475,4 +475,132 @@ describe("admission-store", () => {
       t.cleanup();
     }
   });
+
+  test("reopen gives every swept claim its own fence token", () => {
+    const t = tempDb();
+    const store = openStore(t.path);
+    try {
+      const w1 = store.claim({
+        runtimeKey: "w1",
+        specDigest: "d1",
+        kind: "ModelRun",
+        allocationGiB: 4,
+        budgetGiB: 24,
+      });
+      const w2 = store.claim({
+        runtimeKey: "w2",
+        specDigest: "d2",
+        kind: "ModelHost",
+        allocationGiB: 4,
+        budgetGiB: 24,
+      });
+      if (w1.kind !== "admitted" || w2.kind !== "admitted") {
+        throw new Error("claims not admitted");
+      }
+      const rowA = row(store, w1.claimId);
+      const rowB = row(store, w2.claimId);
+      expect(rowA).toBeDefined();
+      expect(rowB).toBeDefined();
+      if (!rowA || !rowB) {
+        throw new Error("rows missing from snapshot");
+      }
+      const preCloseA = rowA.fenceToken;
+      const preCloseB = rowB.fenceToken;
+      store.close();
+      const reopened = openStore(t.path);
+      try {
+        const snap = reopened.snapshot();
+        const afterA = snap.find((r) => r.claimId === w1.claimId);
+        const afterB = snap.find((r) => r.claimId === w2.claimId);
+        expect(afterA).toBeDefined();
+        expect(afterB).toBeDefined();
+        if (!afterA || !afterB) {
+          throw new Error("rows missing after reopen");
+        }
+        expect(afterA.state).toBe("uncertain");
+        expect(afterB.state).toBe("uncertain");
+        expect(afterA.fenceToken).not.toBe(preCloseA);
+        expect(afterB.fenceToken).not.toBe(preCloseB);
+        expect(afterA.fenceToken).not.toBe(afterB.fenceToken);
+        const evidence: ReleaseEvidence = { verification: "runtime-absent" };
+        const crossRelease = reopened.releaseVerified(afterB.claimId, afterA.fenceToken, evidence);
+        expect(crossRelease).toBe(false);
+        const stillThere = reopened.snapshot().find((r) => r.claimId === afterB.claimId);
+        expect(stillThere).toBeDefined();
+        expect(stillThere?.state).toBe("uncertain");
+        const ownRelease = reopened.releaseVerified(afterB.claimId, afterB.fenceToken, evidence);
+        expect(ownRelease).toBe(true);
+        const afterOwnRelease = reopened.snapshot().find((r) => r.claimId === afterB.claimId);
+        expect(afterOwnRelease).toBeUndefined();
+      } finally {
+        reopened.close();
+      }
+    } finally {
+      store.close();
+      t.cleanup();
+    }
+  });
+
+  test("a fresh store stamps application_id and user_version", () => {
+    const t = tempDb();
+    const store = openStore(t.path);
+    store.close();
+    const rawDb = new Database(t.path);
+    try {
+      const application_id =
+        rawDb.query<{ application_id: number }, []>("PRAGMA application_id").get()
+          ?.application_id ?? 0;
+      const user_version =
+        rawDb.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version ?? 0;
+      expect(application_id).toBe(0x4c4d4144);
+      expect(user_version).toBe(1);
+    } finally {
+      rawDb.close();
+      t.cleanup();
+    }
+  });
+
+  test("a foreign sqlite file is refused with AuthorityUnavailableError", () => {
+    const t = tempDb();
+    const rawDb = new Database(t.path);
+    try {
+      rawDb.run("CREATE TABLE other(x)");
+      rawDb.close();
+      expect(() => openAdmissionStore({ path: t.path })).toThrow(AuthorityUnavailableError);
+      const verify = new Database(t.path);
+      try {
+        const row = verify.query<{ application_id: number }, []>("PRAGMA application_id").get();
+        expect(row?.application_id ?? 0).toBe(0);
+        const tables = verify
+          .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type = 'table'")
+          .all();
+        expect(tables.some((t) => t.name === "other")).toBe(true);
+      } finally {
+        verify.close();
+      }
+    } finally {
+      t.cleanup();
+    }
+  });
+
+  test("a newer schema version is refused", () => {
+    const t = tempDb();
+    const store = openStore(t.path);
+    store.close();
+    const rawDb = new Database(t.path);
+    try {
+      rawDb.run("PRAGMA user_version = 2");
+      rawDb.close();
+      expect(() => openAdmissionStore({ path: t.path })).toThrow(AuthorityUnavailableError);
+      const verify = new Database(t.path);
+      try {
+        const row = verify.query<{ user_version: number }, []>("PRAGMA user_version").get();
+        expect(row?.user_version ?? 0).toBe(2);
+      } finally {
+        verify.close();
+      }
+    } finally {
+      t.cleanup();
+    }
+  });
 });

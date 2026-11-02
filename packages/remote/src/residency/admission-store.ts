@@ -381,6 +381,40 @@ class SqliteAdmissionStore implements AdmissionStore {
   }
 }
 
+/** SQLite application_id stamped on every admission store ("LMAD"). */
+const ADMISSION_APPLICATION_ID = 0x4c4d4144;
+const ADMISSION_SCHEMA_VERSION = 1;
+
+function validateAndStampSchema(
+  db: Database,
+  expectedApplicationId: number,
+  expectedSchemaVersion: number,
+): void {
+  const application_id =
+    db.query<{ application_id: number }, []>("PRAGMA application_id").get()?.application_id ?? 0;
+  const user_version =
+    db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version ?? 0;
+  const tableNames = db
+    .query<
+      { name: string },
+      []
+    >("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
+    .all();
+  const knownTables = new Set(["authority_meta", "claims"]);
+  const foreignTables = tableNames.filter((t) => !knownTables.has(t.name));
+  if (application_id === 0) {
+    if (foreignTables.length > 0) {
+      throw new AuthorityUnavailableError("foreign database");
+    }
+    db.run(`PRAGMA application_id = ${String(expectedApplicationId)}`);
+    db.run(`PRAGMA user_version = ${String(expectedSchemaVersion)}`);
+  } else if (application_id !== expectedApplicationId) {
+    throw new AuthorityUnavailableError("foreign database");
+  } else if (user_version > expectedSchemaVersion) {
+    throw new AuthorityUnavailableError(`unsupported schema version ${String(user_version)}`);
+  }
+}
+
 export function openAdmissionStore(opts: {
   path: string;
   busyTimeoutMs?: number | undefined;
@@ -397,16 +431,23 @@ export function openAdmissionStore(opts: {
   try {
     db.run(`PRAGMA busy_timeout = ${String(resolveBusyTimeoutMs(opts.busyTimeoutMs))}`);
     db.run("PRAGMA journal_mode = WAL");
+    db.run("PRAGMA synchronous = FULL");
     db.run("BEGIN IMMEDIATE");
     try {
       ensureSchema(db);
+      validateAndStampSchema(db, ADMISSION_APPLICATION_ID, ADMISSION_SCHEMA_VERSION);
       const { authorityId, epoch } = initAuthority(db);
-      db.run(
-        `UPDATE claims
-            SET state = 'uncertain', fence_token = ?, generation_version = generation_version + 1
-          WHERE state = 'pending'`,
-        [newFenceToken()],
-      );
+      const pendingRows = db
+        .query<{ claim_id: string }, []>("SELECT claim_id FROM claims WHERE state = 'pending'")
+        .all();
+      for (const row of pendingRows) {
+        db.run(
+          `UPDATE claims
+              SET state = 'uncertain', fence_token = ?, generation_version = generation_version + 1
+            WHERE claim_id = ? AND state = 'pending'`,
+          [newFenceToken(), row.claim_id],
+        );
+      }
       db.run("COMMIT");
       return new SqliteAdmissionStore(db, authorityId, epoch);
     } catch (e) {
