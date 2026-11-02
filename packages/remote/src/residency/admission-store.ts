@@ -264,6 +264,15 @@ function ensureSchema(db: Database): void {
     generation_version INTEGER NOT NULL,
     fence_token TEXT NOT NULL
   )`);
+  db.run(`CREATE TABLE IF NOT EXISTS claim_generations (
+    claim_id TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    pid INTEGER NOT NULL,
+    start_time_ms INTEGER,
+    executable TEXT,
+    PRIMARY KEY (claim_id, seq)
+  )`);
+  const knownTables = new Set(["authority_meta", "claims", "claim_generations"]);
 }
 
 function initAuthority(db: Database): { authorityId: string; epoch: number } {
@@ -456,18 +465,88 @@ class SqliteAdmissionStore implements AdmissionStore {
         claimId,
         fenceToken,
       ]);
+      if (result.changes === 1) {
+        db.run("DELETE FROM claim_generations WHERE claim_id = ?", [claimId]);
+      }
       return result.changes === 1;
     } catch {
       return false;
     }
   }
 
-  recordGeneration(_claimId: string, _fenceToken: string, _generation: GenerationRecord): boolean {
-    throw new Error("not implemented");
+  recordGeneration(claimId: string, fenceToken: string, generation: GenerationRecord): boolean {
+    const db = this.#db;
+    if (db === null) {
+      return false;
+    }
+    try {
+      db.run("BEGIN IMMEDIATE");
+      try {
+        const claim = db
+          .prepare("SELECT fence_token, generation_version FROM claims WHERE claim_id = ?")
+          .get(claimId) as { fence_token: string; generation_version: number } | null;
+        if (claim === null) {
+          db.run("ROLLBACK");
+          return false;
+        }
+        if (claim.fence_token !== fenceToken) {
+          db.run("ROLLBACK");
+          return false;
+        }
+        const maxSeq = db
+          .prepare("SELECT MAX(seq) AS max_seq FROM claim_generations WHERE claim_id = ?")
+          .get(claimId) as { max_seq: number | null } | null;
+        const nextSeq = (maxSeq?.max_seq ?? 0) + 1;
+        db.run(
+          "INSERT INTO claim_generations (claim_id, seq, pid, start_time_ms, executable) VALUES (?, ?, ?, ?, ?)",
+          [
+            claimId,
+            nextSeq,
+            generation.pid,
+            generation.startTimeMs ?? null,
+            generation.executable ?? null,
+          ],
+        );
+        db.run("COMMIT");
+        return true;
+      } catch (e) {
+        try {
+          db.run("ROLLBACK");
+        } catch {
+          // Statement errors abort the transaction on their own.
+        }
+        throw e;
+      }
+    } catch {
+      return false;
+    }
   }
 
-  generationsOf(_claimId: string): readonly GenerationRecord[] {
-    throw new Error("not implemented");
+  generationsOf(claimId: string): readonly GenerationRecord[] {
+    const db = this.#db;
+    if (db === null) {
+      return [];
+    }
+    try {
+      const rows = db
+        .prepare<
+          { seq: number; pid: number; start_time_ms: number | null; executable: string | null },
+          [string]
+        >("SELECT seq, pid, start_time_ms, executable FROM claim_generations WHERE claim_id = ? ORDER BY seq")
+        .all(claimId);
+      return rows.map((row) => {
+        const record: GenerationRecord = { pid: row.pid };
+        if (row.start_time_ms === null) {
+          return record;
+        }
+        if (row.executable === null) {
+          return { ...record, startTimeMs: row.start_time_ms };
+        }
+        return { ...record, startTimeMs: row.start_time_ms, executable: row.executable };
+      });
+    } catch {
+      return [];
+    }
   }
 
   snapshot(): readonly ClaimRow[] {
@@ -588,7 +667,7 @@ function validateAndStampSchema(
       []
     >("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
     .all();
-  const knownTables = new Set(["authority_meta", "claims"]);
+  const knownTables = new Set(["authority_meta", "claims", "claim_generations"]);
   const foreignTables = tableNames.filter((t) => !knownTables.has(t.name));
   if (application_id === 0) {
     if (foreignTables.length > 0) {

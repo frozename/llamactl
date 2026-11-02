@@ -216,14 +216,17 @@ function resolveOpenOwnership(
 }
 
 interface ReleaseContext {
-  generations: Map<string, GenerationRecord[]>;
   ledger: () => AdmissionStore | null;
   readPidFile: (runtimeKey: string) => number | undefined;
   observe: (pid: number) => ProcessObservation | undefined;
 }
 
-function releaseClaim(claimId: string, row: ClaimRow, ctx: ReleaseContext): ReleaseAttemptResult {
-  const captured = ctx.generations.get(claimId) ?? [];
+function releaseClaim(
+  claimId: string,
+  row: ClaimRow,
+  captured: readonly GenerationRecord[],
+  ctx: ReleaseContext,
+): ReleaseAttemptResult {
   if (captured.length === 0) {
     return { kind: "retained", claimId, reason: "no-generation" };
   }
@@ -250,7 +253,6 @@ function releaseClaim(claimId: string, row: ClaimRow, ctx: ReleaseContext): Rele
   if (released !== true) {
     return { kind: "retained", claimId, reason: "release-cas-failed" };
   }
-  ctx.generations.delete(claimId);
   return { kind: "released", claimId };
 }
 
@@ -288,10 +290,6 @@ export function openAdmissionAuthority(opts: {
   const degradedDetail =
     store === null ? undefined : resolveOpenOwnership(store, opts.owner, opts.observe);
 
-  // Generations are kept in memory only in this slice: losing them makes
-  // tryRelease retain the charge, which is the fail-safe direction.
-  const generations = new Map<string, GenerationRecord[]>();
-
   const ledger = (): AdmissionStore | null => (degradedDetail === undefined ? store : null);
 
   const findRow = (claimId: string): ClaimRow | undefined =>
@@ -300,7 +298,6 @@ export function openAdmissionAuthority(opts: {
       .find((r) => r.claimId === claimId);
 
   const releaseCtx: ReleaseContext = {
-    generations,
     ledger,
     readPidFile: opts.readPidFile,
     observe: opts.observe,
@@ -338,18 +335,11 @@ export function openAdmissionAuthority(opts: {
     },
 
     recordGeneration(claimId: string, fenceToken: string, generation: GenerationRecord): boolean {
-      const row = findRow(claimId);
-      if (row?.state !== "pending" || row.fenceToken !== fenceToken) {
+      const active = ledger();
+      if (active === null) {
         return false;
       }
-      const copy: GenerationRecord = { ...generation };
-      const captured = generations.get(claimId);
-      if (captured === undefined) {
-        generations.set(claimId, [copy]);
-      } else {
-        captured.push(copy);
-      }
-      return true;
+      return active.recordGeneration(claimId, fenceToken, generation);
     },
 
     completeReady(claimId: string, fenceToken: string): boolean {
@@ -365,7 +355,16 @@ export function openAdmissionAuthority(opts: {
       if (row === undefined) {
         return { kind: "unknown-claim", claimId };
       }
-      return releaseClaim(claimId, row, releaseCtx);
+      const active = ledger();
+      const captured = active?.generationsOf(claimId) ?? [];
+      const result = releaseClaim(claimId, row, captured, releaseCtx);
+      if (result.kind === "released" && active !== null) {
+        active.releaseVerified(claimId, row.fenceToken, {
+          verification: "runtime-absent",
+          observedAt: Date.now(),
+        });
+      }
+      return result;
     },
 
     snapshot(): readonly AuthorityClaimRow[] {
@@ -376,7 +375,7 @@ export function openAdmissionAuthority(opts: {
       return active.snapshot().map(
         (row): AuthorityClaimRow => ({
           ...row,
-          generations: (generations.get(row.claimId) ?? []).map((gen) => ({ ...gen })),
+          generations: active.generationsOf(row.claimId),
         }),
       );
     },
