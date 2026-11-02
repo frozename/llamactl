@@ -59,6 +59,7 @@ export type ClusterRoute =
       isPeer: true;
       peerEndpoint: string;
       certificate?: string;
+      tlsServerName?: string;
       token?: string;
       targetNodeId: string;
       /** Boot token of the peer's workload: its runtime-record epoch when
@@ -72,6 +73,7 @@ export interface ClusterConfigPeer {
   id: string;
   endpoint: string;
   certificate?: string;
+  tlsServerName?: string;
   token?: string;
 }
 
@@ -116,6 +118,7 @@ function appendPeerRoutes(
       isPeer: true,
       peerEndpoint: peer.endpoint,
       ...(peer.certificate !== undefined ? { certificate: peer.certificate } : {}),
+      ...(peer.tlsServerName !== undefined ? { tlsServerName: peer.tlsServerName } : {}),
       ...(peer.token !== undefined ? { token: peer.token } : {}),
       targetNodeId: peer.id,
       revision: workload.revision ?? null,

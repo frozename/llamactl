@@ -362,6 +362,90 @@ describe("server/modelhost", () => {
     }
   });
 
+  test("reports the spawned pid as generation evidence when readiness fails", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-failpid-"));
+    const { workloadsDir, runtimeDir } = makeManifest(tmp);
+    const engine = ENGINES.omlx;
+    const originalTeardown = engine.teardown.bind(engine);
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
+    const events: unknown[] = [];
+    try {
+      engine.teardown = mock((_pid: number) => Promise.resolve());
+      const result = await startModelHost({
+        key: { name: "mlx-host-server" },
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady: () => Promise.resolve({ ready: false, modelIds: [] }),
+        onEvent: (event) => {
+          events.push(event);
+        },
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.pid).toBeNull();
+      expect(result.spawnedPid).toBe(4321);
+      const done = events.find((event) => (event as { type?: string }).type === "done") as
+        | { result?: { ok?: boolean; pid?: number | null; spawnedPid?: number } }
+        | undefined;
+      expect(done?.result?.ok).toBe(false);
+      expect(done?.result?.pid).toBeNull();
+      expect(done?.result?.spawnedPid).toBe(4321);
+    } finally {
+      engine.teardown = originalTeardown;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("omits spawnedPid when the start fails before any spawn", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-nospawn-"));
+    const { workloadsDir, runtimeDir, manifest } = makeManifest(tmp);
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
+    try {
+      const result = await startModelHost({
+        key: { name: "mlx-host-server" },
+        manifest: {
+          ...manifest,
+          spec: { ...manifest.spec, endpoint: { host: "0.0.0.0", port: 8094 } },
+        },
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain("allowExternalBind");
+      expect(spawn).not.toHaveBeenCalled();
+      expect("spawnedPid" in result).toBe(false);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("omits spawnedPid on a successful launch", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-oknopid-"));
+    const { workloadsDir, runtimeDir } = makeManifest(tmp);
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
+    try {
+      const result = await startModelHost({
+        key: { name: "mlx-host-server" },
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
+      });
+
+      expect(result.ok).toBe(true);
+      expect("spawnedPid" in result).toBe(false);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   test("sanitizes the spawned env to the allowlist", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-env-"));
     const { workloadsDir, runtimeDir } = makeManifest(tmp);
@@ -1992,7 +2076,12 @@ describe("server/modelhost", () => {
       ac.abort();
       // The gate is never opened: only the abort can settle this start.
       const result = await settleWithin(startPromise);
-      expect(result).toEqual({ ok: false, pid: null, error: "modelHostStart aborted" });
+      expect(result).toEqual({
+        ok: false,
+        pid: null,
+        spawnedPid: 4321,
+        error: "modelHostStart aborted",
+      });
       expect(tornDown).toEqual([4321]);
       expect(events).toEqual([{ type: "done", result }]);
       expect(existsSync(join(runtimeDir, "workloads", "mlx-host-server", "modelhost.state"))).toBe(
@@ -2068,7 +2157,12 @@ describe("server/modelhost", () => {
       await waitFor(() => probeCalls >= 1, "first start to reach the readiness wait");
       ac.abort();
       const first = await settleWithin(firstPromise);
-      expect(first).toEqual({ ok: false, pid: null, error: "modelHostStart aborted" });
+      expect(first).toEqual({
+        ok: false,
+        pid: null,
+        spawnedPid: 4321,
+        error: "modelHostStart aborted",
+      });
       expect(tornDown).toEqual([4321]);
       const retried = await settleWithin(
         startModelHost({

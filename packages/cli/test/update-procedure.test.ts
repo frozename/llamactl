@@ -149,6 +149,23 @@ describe("controller reports", () => {
     );
     expect(missingAdoptions(r, ["seat"])).toEqual([]);
   });
+
+  test("a WARN unchanged report with an error is recorded as an errored adoption", () => {
+    const r = parseControllerReports(
+      "controller started pid=1\n[2026-11-01T00:00:00.000Z] WARN modelhost/omlx on local: unchanged error=pid identity unknown\n",
+    );
+    expect(r.passSeen).toBe(true);
+    const errors = (r as unknown as { errors?: Map<string, { action: string; error: string }> })
+      .errors;
+    expect(errors?.get("omlx")).toEqual({ action: "unchanged", error: "pid identity unknown" });
+    expect(missingAdoptions(r, ["omlx"])).toEqual(["omlx"]);
+    const r2 = parseControllerReports(
+      "[2026-11-01T00:00:00.000Z] WARN modelhost/omlx on local: unchanged error=pid identity unknown\ncontroller started pid=1\n",
+    );
+    const errors2 = (r2 as unknown as { errors?: Map<string, { action: string; error: string }> })
+      .errors;
+    expect(errors2?.has("omlx") ?? false).toBe(false);
+  });
 });
 
 describe("llamactl update --apply", () => {
@@ -431,6 +448,45 @@ describe("llamactl update --apply", () => {
     const warnings = report.steps.find((s) => s.step === "await-controller")?.warnings ?? [];
     expect(warnings).toContain("seat pid changed 2039339 -> 31337: it was restarted");
     expect(warnings).toContain("the controller (re)started seat");
+  });
+
+  test("a host reported unchanged with a reconcile error but the same pid counts as adopted, with a warning", async () => {
+    const w = makeWorld({
+      onControllerStart: (world) => {
+        world.controllerLog +=
+          "controller started pid=9\n[t] WARN modelhost/seat on local: unchanged error=pid identity unknown\n";
+      },
+    });
+    const { code, report } = await run(w, ["--apply"]);
+    expect(code).toBe(0);
+    expect(report.result).toBe("applied");
+    const step = report.steps.find((s) => s.step === "await-controller");
+    expect(step?.ok).toBe(true);
+    expect(
+      (step?.warnings ?? []).some((x) => x.includes("seat") && x.includes("pid identity unknown")),
+    ).toBe(true);
+    expect(w.events).toContain(`restart ${AGENT_UNIT}`);
+    expect(w.head).toBe(sha(4));
+  });
+
+  test("an errored unchanged report does not count when the host's pid changed", async () => {
+    const w = makeWorld({
+      onControllerStart: (world) => {
+        world.controllerLog +=
+          "controller started pid=9\n[t] WARN modelhost/seat on local: unchanged error=pid identity unknown\n";
+        const seat = world.hosts[0];
+        if (seat !== undefined) seat.pid = 31337;
+      },
+    });
+    const { code, report } = await run(w, ["--apply"]);
+    expect(code).toBe(1);
+    const step = report.steps.at(-1);
+    expect(step).toMatchObject({ step: "await-controller", ok: false });
+    expect(step?.detail).toContain("did not report seat unchanged within 90 s");
+    expect(`${step?.detail ?? ""} ${(step?.warnings ?? []).join(" ")}`).toContain(
+      "pid identity unknown",
+    );
+    expect(w.events.filter((e) => e.startsWith("restart"))).toEqual([]);
   });
 
   test("waits for busy hosts, then restarts the agent anyway", async () => {

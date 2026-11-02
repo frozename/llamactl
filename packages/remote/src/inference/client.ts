@@ -1563,6 +1563,7 @@ function directClientFor(peer: PeerNode, serviceCredential: string): InferenceRp
   return createDirectInferenceRpcClient({
     node: {
       name: peer.id,
+      ...(peer.tlsServerName !== undefined ? { tlsServerName: peer.tlsServerName } : {}),
       endpoint: peer.endpoint,
       ...(peer.certificate !== undefined ? { certificate: peer.certificate } : {}),
       ...(peer.fingerprint !== undefined ? { certificateFingerprint: peer.fingerprint } : {}),
