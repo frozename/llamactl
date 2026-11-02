@@ -4,6 +4,14 @@
  * observation, decide whether the process is the same generation,
  * a different (reused) generation, verified absent, or uncertain.
  *
+ * Identity is judged by shared fields: a field is SHARED when it is
+ * defined on both the record and the observation.  Consistent = at
+ * least one shared field AND every shared field is equal.  For a
+ * same-pid observation: alive && consistent -> same-generation;
+ * alive && !consistent -> { kind: 'different-generation', reason:
+ * 'pid-reused' }; dead && consistent -> verified-absent; dead &&
+ * !consistent -> { kind: 'uncertain', reason: 'unidentified-absence' }.
+ *
  * No I/O — inputs are plain objects, output is a verdict.
  */
 
@@ -27,18 +35,17 @@ export type GenerationVerdict =
   | { kind: "uncertain"; reason: string };
 
 function identityMatches(recorded: GenerationRecord, observation: ProcessObservation): boolean {
-  return (
-    (recorded.startTimeMs !== undefined &&
-      observation.startTimeMs !== undefined &&
-      recorded.startTimeMs === observation.startTimeMs) ||
-    (recorded.executable !== undefined &&
-      observation.executable !== undefined &&
-      recorded.executable === observation.executable)
-  );
-}
-
-function hasIdentifyingInfo(observation: ProcessObservation): boolean {
-  return observation.startTimeMs !== undefined || observation.executable !== undefined;
+  const sharedFields: (keyof Pick<GenerationRecord, "startTimeMs" | "executable">)[] = [];
+  if (recorded.startTimeMs !== undefined && observation.startTimeMs !== undefined) {
+    sharedFields.push("startTimeMs");
+  }
+  if (recorded.executable !== undefined && observation.executable !== undefined) {
+    sharedFields.push("executable");
+  }
+  if (sharedFields.length === 0) {
+    return false;
+  }
+  return sharedFields.every((field) => recorded[field] === observation[field]);
 }
 
 function isAlive(observation: ProcessObservation): boolean {
@@ -96,17 +103,17 @@ function judgeSamePid(
   observation: ProcessObservation,
 ): GenerationVerdict {
   if (isAlive(observation)) {
-    // Rule 3: Same pid, alive — check startTimeMs and executable
+    // Rule 3: Same pid, alive — consistent identity (all shared fields match)
     if (identityMatches(recorded, observation)) {
       return { kind: "same-generation" };
     }
     return { kind: "different-generation", reason: "pid-reused" };
   }
   // Same pid but not alive
-  // Rule 4: Not alive, but has identifying info → verified-absent
-  if (hasIdentifyingInfo(observation)) {
+  // Rule 4: Not alive, consistent identity → verified-absent
+  if (identityMatches(recorded, observation)) {
     return { kind: "verified-absent" };
   }
-  // Not alive, no identifying info → uncertain
+  // Not alive, inconsistent or no shared identity → uncertain
   return { kind: "uncertain", reason: "unidentified-absence" };
 }
