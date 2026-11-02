@@ -560,6 +560,38 @@ function teardownChildSilently(
   return Promise.resolve();
 }
 
+// #318: the caller's AbortSignal must be able to settle a start while the
+// readiness probe is still polling a full timeout budget. The abandoned probe
+// is not cancelled — the owner turns this sentinel into a failure whose catch
+// tears the spawned child down, so a wedged probe can never record or keep
+// alive a process the caller walked away from. A joined caller only detaches.
+const MODEL_HOST_ABORT_MESSAGE = "modelHostStart aborted";
+const MODEL_HOST_ABORTED = Symbol(MODEL_HOST_ABORT_MESSAGE);
+
+async function raceModelHostAbort<T>(
+  work: Promise<T>,
+  signal: AbortSignal | undefined,
+): Promise<T | typeof MODEL_HOST_ABORTED> {
+  if (!signal) return await work;
+  if (signal.aborted) return MODEL_HOST_ABORTED;
+  return await new Promise<T | typeof MODEL_HOST_ABORTED>((resolve, reject) => {
+    const onAbort = (): void => {
+      resolve(MODEL_HOST_ABORTED);
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    work.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      },
+    );
+  });
+}
+
 /**
  * A pushed inline manifest (e.g. from the central controller's apply) must
  * not erase a managed-by marker already on disk for the same name. A label
@@ -614,10 +646,13 @@ interface InFlightModelHostStart {
 }
 const inFlightModelHostStarts = new Map<string, InFlightModelHostStart>();
 
+// A joined caller's abort only detaches that caller: the owning start keeps
+// running and is torn down solely by the owner's signal.
 async function joinInFlightModelHostStart(
   inFlight: InFlightModelHostStart,
   specHash: string,
   name: string,
+  signal: AbortSignal | undefined,
 ): Promise<StartModelHostResult> {
   if (inFlight.specHash !== specHash) {
     return {
@@ -626,7 +661,11 @@ async function joinInFlightModelHostStart(
       error: `modelHostStart already in progress for ${name} with a different spec`,
     };
   }
-  return await inFlight.promise;
+  const settled = await raceModelHostAbort(inFlight.promise, signal);
+  if (settled === MODEL_HOST_ABORTED) {
+    return { ok: false, pid: null, error: MODEL_HOST_ABORT_MESSAGE };
+  }
+  return settled;
 }
 
 interface ModelHostLaunchContext {
@@ -643,6 +682,11 @@ async function launchModelHost(
   ctx: ModelHostLaunchContext,
 ): Promise<StartModelHostResult> {
   const { env, runtimeEnv, resolved, engine, spec } = ctx;
+  if (opts.signal?.aborted) {
+    const result = { ok: false, pid: null, error: MODEL_HOST_ABORT_MESSAGE };
+    opts.onEvent?.({ type: "done", result });
+    return result;
+  }
   const early = await reapOrAdoptPriorHost(manifest, opts, resolved, engine);
   if (early) {
     opts.onEvent?.({ type: "done", result: early });
@@ -708,12 +752,22 @@ async function launchModelHost(
       resolved,
     );
 
+    // #318: the readiness wait is where a slow start outlives its caller.
+    // Racing the signal here means an abort lands on the child we just spawned
+    // (torn down by the catch below, starting record included), not after the
+    // probe's full timeout budget.
     const endpoint = manifest.spec.endpoint;
-    const readiness = await (opts.probeReady ?? engine.probeReady)(
-      endpoint,
-      (opts.timeoutSeconds ?? manifest.spec.timeoutSeconds) * 1000,
-      spec.readiness,
+    const readiness = await raceModelHostAbort(
+      (opts.probeReady ?? engine.probeReady)(
+        endpoint,
+        (opts.timeoutSeconds ?? manifest.spec.timeoutSeconds) * 1000,
+        spec.readiness,
+      ),
+      opts.signal,
     );
+    if (readiness === MODEL_HOST_ABORTED) {
+      throw new Error(MODEL_HOST_ABORT_MESSAGE);
+    }
     if (!readiness.ready) {
       throw new Error("modelhost failed readiness probe");
     }
@@ -801,7 +855,7 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
   const specHash = computeModelHostSpecHash(specForHash(manifest.spec));
   const inFlight = inFlightModelHostStarts.get(startKey);
   if (inFlight) {
-    const joined = await joinInFlightModelHostStart(inFlight, specHash, opts.key.name);
+    const joined = await joinInFlightModelHostStart(inFlight, specHash, opts.key.name, opts.signal);
     opts.onEvent?.({ type: "done", result: joined });
     return joined;
   }
