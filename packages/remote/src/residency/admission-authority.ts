@@ -142,6 +142,12 @@ function identityMatches(
   );
 }
 
+function ownerIdentityMatches(a: OwnerIdentity, b: OwnerIdentity): boolean {
+  const shared = (field: "startTimeMs" | "executable"): boolean =>
+    a[field] === undefined || b[field] === undefined || a[field] === b[field];
+  return a.pid === b.pid && shared("startTimeMs") && shared("executable");
+}
+
 function judgeGeneration(
   recorded: GenerationRecord,
   observation: ProcessObservation | undefined,
@@ -168,6 +174,84 @@ function judgeGeneration(
     kind: "uncertain",
     reason: "the death cannot be attributed to the recorded generation",
   };
+}
+
+function stakeOrRecover(
+  store: AdmissionStore,
+  owner: OwnerIdentity,
+  previousOwnerGone: boolean,
+): string | undefined {
+  const result = store.recoverOwnership(owner, previousOwnerGone);
+  return result.kind === "refused"
+    ? `admission authority is degraded: ownership recovery refused (${result.reason})`
+    : undefined;
+}
+
+/**
+ * Open-time ownership check: stake a vacant ledger, continue through an
+ * identity match, recover a verified-absent owner's ledger, or name the
+ * degradation for a live or unidentifiable one. Returns the refusal
+ * detail when the authority must degrade; undefined when it owns the
+ * ledger.
+ */
+function resolveOpenOwnership(
+  store: AdmissionStore,
+  owner: OwnerIdentity,
+  observe: (pid: number) => ProcessObservation | undefined,
+): string | undefined {
+  const rec = store.recordedOwner();
+  if (rec === undefined) {
+    return stakeOrRecover(store, owner, false);
+  }
+  if (ownerIdentityMatches(rec, owner)) {
+    return undefined;
+  }
+  const verdict = judgeGeneration(rec, observe(rec.pid));
+  if (verdict.kind === "verified-absent") {
+    return stakeOrRecover(store, owner, true);
+  }
+  return verdict.kind === "uncertain"
+    ? `admission authority is degraded: the recorded owner pid ${String(rec.pid)} cannot be identified`
+    : `admission authority is degraded: the recorded owner pid ${String(rec.pid)} is still live`;
+}
+
+interface ReleaseContext {
+  generations: Map<string, GenerationRecord[]>;
+  ledger: () => AdmissionStore | null;
+  readPidFile: (runtimeKey: string) => number | undefined;
+  observe: (pid: number) => ProcessObservation | undefined;
+}
+
+function releaseClaim(claimId: string, row: ClaimRow, ctx: ReleaseContext): ReleaseAttemptResult {
+  const captured = ctx.generations.get(claimId) ?? [];
+  if (captured.length === 0) {
+    return { kind: "retained", claimId, reason: "no-generation" };
+  }
+  const pidFilePid = ctx.readPidFile(row.runtimeKey);
+  if (pidFilePid === undefined) {
+    return { kind: "retained", claimId, reason: "pid-record-missing" };
+  }
+  if (!captured.some((gen) => gen.pid === pidFilePid)) {
+    return { kind: "retained", claimId, reason: "pid-record-conflict" };
+  }
+  for (const gen of captured) {
+    const verdict = judgeGeneration(gen, ctx.observe(gen.pid));
+    if (verdict.kind === "same-generation" || verdict.kind === "different-generation") {
+      return { kind: "retained", claimId, reason: "live-generation" };
+    }
+    if (verdict.kind !== "verified-absent") {
+      return { kind: "retained", claimId, reason: "unidentified-death" };
+    }
+  }
+  const released = ctx.ledger()?.releaseVerified(claimId, row.fenceToken, {
+    verification: "runtime-absent",
+    observedAt: Date.now(),
+  });
+  if (released !== true) {
+    return { kind: "retained", claimId, reason: "release-cas-failed" };
+  }
+  ctx.generations.delete(claimId);
+  return { kind: "released", claimId };
 }
 
 /**
@@ -200,58 +284,42 @@ export function openAdmissionAuthority(opts: {
       throw e;
     }
   }
+
+  const degradedDetail =
+    store === null ? undefined : resolveOpenOwnership(store, opts.owner, opts.observe);
+
   // Generations are kept in memory only in this slice: losing them makes
   // tryRelease retain the charge, which is the fail-safe direction.
   const generations = new Map<string, GenerationRecord[]>();
 
-  const findRow = (claimId: string): ClaimRow | undefined =>
-    store?.snapshot().find((r) => r.claimId === claimId);
+  const ledger = (): AdmissionStore | null => (degradedDetail === undefined ? store : null);
 
-  const releaseClaim = (claimId: string, row: ClaimRow): ReleaseAttemptResult => {
-    const captured = generations.get(claimId) ?? [];
-    if (captured.length === 0) {
-      return { kind: "retained", claimId, reason: "no-generation" };
-    }
-    const pidFilePid = opts.readPidFile(row.runtimeKey);
-    if (pidFilePid === undefined) {
-      return { kind: "retained", claimId, reason: "pid-record-missing" };
-    }
-    if (!captured.some((gen) => gen.pid === pidFilePid)) {
-      return { kind: "retained", claimId, reason: "pid-record-conflict" };
-    }
-    for (const gen of captured) {
-      const verdict = judgeGeneration(gen, opts.observe(gen.pid));
-      if (verdict.kind === "same-generation" || verdict.kind === "different-generation") {
-        return { kind: "retained", claimId, reason: "live-generation" };
-      }
-      if (verdict.kind !== "verified-absent") {
-        return { kind: "retained", claimId, reason: "unidentified-death" };
-      }
-    }
-    const released = store?.releaseVerified(claimId, row.fenceToken, {
-      verification: "runtime-absent",
-      observedAt: Date.now(),
-    });
-    if (released !== true) {
-      return { kind: "retained", claimId, reason: "release-cas-failed" };
-    }
-    generations.delete(claimId);
-    return { kind: "released", claimId };
+  const findRow = (claimId: string): ClaimRow | undefined =>
+    ledger()
+      ?.snapshot()
+      .find((r) => r.claimId === claimId);
+
+  const releaseCtx: ReleaseContext = {
+    generations,
+    ledger,
+    readPidFile: opts.readPidFile,
+    observe: opts.observe,
   };
 
   return {
     admit(request: AdmitRequest): AdmissionOutcome {
-      if (store === null) {
+      const active = ledger();
+      if (active === null) {
         return {
           kind: "refuse",
           reason: "AuthorityUnavailable",
-          detail: "admission authority is degraded or closed",
+          detail: degradedDetail ?? "admission authority is degraded or closed",
         };
       }
       // The budget probe is read on every admit; an unknown budget is
       // handed to the store's policy as NaN — which the policy refuses
       // BudgetUnknown — never substituted with an unlimited figure.
-      const result = store.claim({
+      const result = active.claim({
         runtimeKey: request.runtimeKey,
         specDigest: request.specDigest,
         allocationGiB: request.allocationGiB,
@@ -285,11 +353,11 @@ export function openAdmissionAuthority(opts: {
     },
 
     completeReady(claimId: string, fenceToken: string): boolean {
-      return store?.commitResident(claimId, fenceToken) ?? false;
+      return ledger()?.commitResident(claimId, fenceToken) ?? false;
     },
 
     failUncertain(claimId: string, fenceToken: string, _reason: string): boolean {
-      return store?.markUncertain(claimId, fenceToken) ?? false;
+      return ledger()?.markUncertain(claimId, fenceToken) ?? false;
     },
 
     tryRelease(claimId: string): ReleaseAttemptResult {
@@ -297,14 +365,15 @@ export function openAdmissionAuthority(opts: {
       if (row === undefined) {
         return { kind: "unknown-claim", claimId };
       }
-      return releaseClaim(claimId, row);
+      return releaseClaim(claimId, row, releaseCtx);
     },
 
     snapshot(): readonly AuthorityClaimRow[] {
-      if (store === null) {
+      const active = ledger();
+      if (active === null) {
         return [];
       }
-      return store.snapshot().map(
+      return active.snapshot().map(
         (row): AuthorityClaimRow => ({
           ...row,
           generations: (generations.get(row.claimId) ?? []).map((gen) => ({ ...gen })),

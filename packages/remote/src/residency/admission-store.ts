@@ -208,8 +208,26 @@ function ensureSchema(db: Database): void {
   db.run(`CREATE TABLE IF NOT EXISTS authority_meta (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     authority_id TEXT NOT NULL,
-    epoch INTEGER NOT NULL
+    epoch INTEGER NOT NULL,
+    owner_pid INTEGER,
+    owner_start_time_ms INTEGER,
+    owner_executable TEXT
   )`);
+  const columns = new Set(
+    db
+      .query<{ name: string }, []>("PRAGMA table_info(authority_meta)")
+      .all()
+      .map((c) => c.name),
+  );
+  if (!columns.has("owner_pid")) {
+    db.run("ALTER TABLE authority_meta ADD COLUMN owner_pid INTEGER");
+  }
+  if (!columns.has("owner_start_time_ms")) {
+    db.run("ALTER TABLE authority_meta ADD COLUMN owner_start_time_ms INTEGER");
+  }
+  if (!columns.has("owner_executable")) {
+    db.run("ALTER TABLE authority_meta ADD COLUMN owner_executable TEXT");
+  }
   db.run(`CREATE TABLE IF NOT EXISTS claims (
     claim_id TEXT PRIMARY KEY,
     runtime_key TEXT NOT NULL,
@@ -235,9 +253,45 @@ function initAuthority(db: Database): { authorityId: string; epoch: number } {
     db.run("INSERT INTO authority_meta (id, authority_id, epoch) VALUES (1, ?, 1)", [authorityId]);
     return { authorityId, epoch: 1 };
   }
-  const epoch = existing.epoch + 1;
-  db.run("UPDATE authority_meta SET epoch = ? WHERE id = 1", [epoch]);
-  return { authorityId: existing.authority_id, epoch };
+  return { authorityId: existing.authority_id, epoch: existing.epoch };
+}
+
+interface OwnerRecord {
+  owner_pid: number | null;
+  owner_start_time_ms: number | null;
+  owner_executable: string | null;
+}
+
+function readOwnerRecord(db: Database): OwnerRecord | null {
+  return db
+    .query<OwnerRecord, []>(
+      `SELECT owner_pid, owner_start_time_ms, owner_executable
+         FROM authority_meta WHERE id = 1`,
+    )
+    .get();
+}
+
+function toOwnerIdentity(record: OwnerRecord | null): OwnerIdentity | undefined {
+  const ownerPid = record?.owner_pid ?? null;
+  const startTimeMs = record?.owner_start_time_ms ?? null;
+  const executable = record?.owner_executable ?? null;
+  if (ownerPid === null) {
+    return undefined;
+  }
+  return {
+    pid: ownerPid,
+    ...(startTimeMs === null ? {} : { startTimeMs }),
+    ...(executable === null ? {} : { executable }),
+  };
+}
+
+function stakeOwner(db: Database, owner: OwnerIdentity): void {
+  db.run(
+    `UPDATE authority_meta
+        SET owner_pid = ?, owner_start_time_ms = ?, owner_executable = ?
+      WHERE id = 1 AND owner_pid IS NULL`,
+    [owner.pid, owner.startTimeMs ?? null, owner.executable ?? null],
+  );
 }
 
 const resolveBusyTimeoutMs = (requested: number | undefined): number =>
@@ -248,7 +302,7 @@ const resolveBusyTimeoutMs = (requested: number | undefined): number =>
 class SqliteAdmissionStore implements AdmissionStore {
   #db: Database | null;
   readonly #authorityId: string;
-  readonly #epoch: number;
+  #epoch: number;
 
   constructor(db: Database, authorityId: string, epoch: number) {
     this.#db = db;
@@ -265,11 +319,78 @@ class SqliteAdmissionStore implements AdmissionStore {
   }
 
   recordedOwner(): OwnerIdentity | undefined {
-    throw new Error("not implemented");
+    const db = this.#db;
+    if (db === null) {
+      return undefined;
+    }
+    try {
+      return toOwnerIdentity(readOwnerRecord(db));
+    } catch {
+      return undefined;
+    }
   }
 
-  recoverOwnership(_owner: OwnerIdentity, _previousOwnerGone: boolean): RecoverOwnershipResult {
-    throw new Error("not implemented");
+  recoverOwnership(owner: OwnerIdentity, previousOwnerGone: boolean): RecoverOwnershipResult {
+    const db = this.#db;
+    if (db === null) {
+      return { kind: "refused", reason: "OwnerUnknown" };
+    }
+    try {
+      return this.#runRecoveryTransaction(db, owner, previousOwnerGone);
+    } catch {
+      return { kind: "refused", reason: "OwnerUnknown" };
+    }
+  }
+
+  #runRecoveryTransaction(
+    db: Database,
+    owner: OwnerIdentity,
+    previousOwnerGone: boolean,
+  ): RecoverOwnershipResult {
+    db.run("BEGIN IMMEDIATE");
+    try {
+      const recordedPid = readOwnerRecord(db)?.owner_pid ?? null;
+      if (recordedPid !== null && !previousOwnerGone) {
+        db.run("ROLLBACK");
+        return { kind: "refused", reason: "OwnerLive" };
+      }
+      const epoch = this.#currentEpoch(db) + 1;
+      db.run(
+        `UPDATE authority_meta
+            SET epoch = ?, owner_pid = ?, owner_start_time_ms = ?, owner_executable = ?
+          WHERE id = 1`,
+        [epoch, owner.pid, owner.startTimeMs ?? null, owner.executable ?? null],
+      );
+      const pendingRows = db
+        .query<{ claim_id: string }, []>("SELECT claim_id FROM claims WHERE state = 'pending'")
+        .all();
+      for (const row of pendingRows) {
+        db.run(
+          `UPDATE claims
+              SET state = 'uncertain', fence_token = ?, generation_version = generation_version + 1
+            WHERE claim_id = ? AND state = 'pending'`,
+          [newFenceToken(), row.claim_id],
+        );
+      }
+      db.run("COMMIT");
+      this.#epoch = epoch;
+      return { kind: "recovered", epoch };
+    } catch (e) {
+      try {
+        db.run("ROLLBACK");
+      } catch {
+        // The failed statement already aborted the transaction; a no-op
+        // rollback stays a no-op.
+      }
+      throw e;
+    }
+  }
+
+  #currentEpoch(db: Database): number {
+    return (
+      db.query<{ epoch: number }, []>("SELECT epoch FROM authority_meta WHERE id = 1").get()
+        ?.epoch ?? this.#epoch
+    );
   }
 
   claim(input: ClaimInput): ClaimResult {
@@ -478,16 +599,8 @@ export function openAdmissionStore(opts: {
       ensureSchema(db);
       validateAndStampSchema(db, ADMISSION_APPLICATION_ID, ADMISSION_SCHEMA_VERSION);
       const { authorityId, epoch } = initAuthority(db);
-      const pendingRows = db
-        .query<{ claim_id: string }, []>("SELECT claim_id FROM claims WHERE state = 'pending'")
-        .all();
-      for (const row of pendingRows) {
-        db.run(
-          `UPDATE claims
-              SET state = 'uncertain', fence_token = ?, generation_version = generation_version + 1
-            WHERE claim_id = ? AND state = 'pending'`,
-          [newFenceToken(), row.claim_id],
-        );
+      if (opts.owner !== undefined) {
+        stakeOwner(db, opts.owner);
       }
       db.run("COMMIT");
       return new SqliteAdmissionStore(db, authorityId, epoch);
