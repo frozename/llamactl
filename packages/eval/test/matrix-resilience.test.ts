@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,10 +10,29 @@ import {
   listCellRows,
   type ModelSpec,
   runMatrix,
+  waitForHealthyBoot,
   type WorkloadEval,
 } from "../src/index.js";
 import { memoryEfficacyBinaryWorkload } from "../src/index.js";
 import { mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitUntil(pred: () => boolean, timeoutMs: number, stepMs = 50): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (pred()) return true;
+    await new Promise((r) => setTimeout(r, stepMs));
+  }
+  return pred();
+}
 
 function makeModel(name: string, port = 8080): ModelSpec {
   return {
@@ -158,42 +178,146 @@ describe("runMatrix resilience", () => {
 });
 
 describe("ensureModelServing spawn error", () => {
-  test("spawn 'error' event rejects promise fast without hanging", async () => {
+  test("spawn error rejects fast without health calls after failure settles", async () => {
     const dir = mkdtempSync(join(tmpdir(), "llamactl-spawn-err-"));
     const notExecPath = join(dir, "not-executable");
-    // Write a file without the execute bit — existsSync returns true but spawn
-    // fails with EACCES, which emits an 'error' event on the ChildProcess.
-    writeFileSync(notExecPath, "#!/bin/sh\necho hi\n");
-
+    writeFileSync(notExecPath, "#!/bin/sh\necho hi\n", { mode: 0o600 });
     const origFetch = globalThis.fetch;
-    // Health check always fails so ensureModelServing tries to spawn.
-    globalThis.fetch = (() => Promise.reject(new Error("ECONNREFUSED"))) as unknown as typeof fetch;
+    const callsAfterFailure: string[] = [];
+    let failureSettled = false;
+    globalThis.fetch = Object.assign((input: Request | string | URL): Promise<Response> => {
+      if (failureSettled) {
+        callsAfterFailure.push(input instanceof Request ? input.url : input.toString());
+      }
+      return Promise.reject(new Error("ECONNREFUSED"));
+    }, origFetch);
 
     const start = Date.now();
     try {
-      await ensureModelServing({
-        name: "spawn-error-test",
-        gguf_path: "/tmp/none.gguf",
-        quant: "Q4",
-        family: "test",
-        size_params: "1b",
-        host: "127.0.0.1",
-        port: 65503,
-        managed: true,
-        binary: notExecPath,
-        start_args: [],
-        extra_args: [],
-      });
-      throw new Error("expected ensureModelServing to reject");
-    } catch (err) {
-      const elapsed = Date.now() - start;
-      expect(err).toBeInstanceOf(Error);
-      // Pre-fix: the 'error' event had no listener — it escaped as an uncaught
-      // exception or the 120 s health timeout fired. Post-fix: fast rejection.
-      expect(elapsed).toBeLessThan(5000);
+      let failure: unknown;
+      try {
+        await ensureModelServing({
+          ...makeModel("spawn-error-test", 65503),
+          managed: true,
+          binary: notExecPath,
+          start_args: [],
+        });
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(Error);
+      expect((failure as Error).message).toContain("failed to spawn spawn-error-test");
+      expect(Date.now() - start).toBeLessThan(5000);
+      failureSettled = true;
+      // Cross the existing one-second poll interval after the caller has its failure.
+      await Bun.sleep(1250);
+      expect(callsAfterFailure).toEqual([]);
     } finally {
       globalThis.fetch = origFetch;
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  test("spawn error aborts and settles an in-flight health check before rejecting", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "llamactl-spawn-pending-"));
+    const notExecPath = join(dir, "not-executable");
+    writeFileSync(notExecPath, "#!/bin/sh\necho hi\n", { mode: 0o600 });
+    const origFetch = globalThis.fetch;
+    let calls = 0;
+    let aborted = false;
+    let settled = false;
+    globalThis.fetch = Object.assign(
+      (_input: Request | string | URL, init?: RequestInit): Promise<Response> => {
+        if (++calls === 1) return Promise.reject(new Error("ECONNREFUSED"));
+        return new Promise<Response>((_resolve, reject) => {
+          const abort = (): void => {
+            aborted = true;
+            reject(new Error("health request aborted"));
+          };
+          if (init?.signal?.aborted) abort();
+          else init?.signal?.addEventListener("abort", abort, { once: true });
+        }).finally(() => {
+          settled = true;
+        });
+      },
+      origFetch,
+    );
+    try {
+      let failure: unknown;
+      try {
+        await ensureModelServing({
+          ...makeModel("spawn-error-pending", 65503),
+          managed: true,
+          binary: notExecPath,
+          start_args: [],
+        });
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(Error);
+      expect((failure as Error).message).toContain("failed to spawn spawn-error-pending");
+      expect(calls).toBe(2);
+      expect(aborted).toBe(true);
+      expect(settled).toBe(true);
+    } finally {
+      globalThis.fetch = origFetch;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("waitForHealthyBoot caller abort", () => {
+  // The boot-probe abort point sits between spawn and ownedProcs.add, so a
+  // caller abort that only rethrows leaves the detached server running without
+  // ever becoming teardown-able.
+  test("aborted caller signal SIGTERMs the spawned process group and rejects with the abort reason", async () => {
+    const proc = spawn("/bin/sleep", ["600"], { stdio: "pipe", detached: true });
+    const pid = proc.pid;
+    expect(pid).toBeDefined();
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = ((input: Request | string | URL, init?: RequestInit) => {
+      const url = input instanceof Request ? input.url : input.toString();
+      if (url.endsWith("/health")) return Promise.resolve(new Response("ok", { status: 200 }));
+      if (url.endsWith("/v1/chat/completions")) {
+        return new Promise<Response>((_resolve, reject) => {
+          const abort = (): void => {
+            reject(new Error("boot-probe aborted"));
+          };
+          if (init?.signal?.aborted) abort();
+          else init?.signal?.addEventListener("abort", abort, { once: true });
+        });
+      }
+      return Promise.reject(new Error(`unexpected fetch ${url}`));
+    }) as unknown as typeof fetch;
+    try {
+      const controller = new AbortController();
+      const boot = waitForHealthyBoot(
+        { name: "abort-test", host: "127.0.0.1", port: 65503 } as unknown as ModelSpec,
+        proc,
+        [],
+        controller.signal,
+      );
+      // Let /health pass so the boot is parked inside the never-ready /v1 probe.
+      await Bun.sleep(100);
+      const abortReason = new Error("operator aborted boot");
+      controller.abort(abortReason);
+      let failure: unknown;
+      try {
+        await boot;
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBe(abortReason);
+      expect(await waitUntil(() => !isAlive(pid!), 4000)).toBe(true);
+    } finally {
+      globalThis.fetch = origFetch;
+      if (pid !== undefined) {
+        try {
+          process.kill(-pid, "SIGKILL");
+        } catch {
+          // Safety-net cleanup is best effort after assertions fail.
+        }
+      }
+    }
+  }, 15_000);
 });

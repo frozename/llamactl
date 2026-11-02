@@ -29,6 +29,8 @@ export interface ServiceInfo {
   env: Record<string, string>;
   /** File the service writes stdout to, when it is a file. */
   stdoutPath: string | null;
+  /** launchd: file the service writes stderr to, when it is a file of its own. */
+  stderrPath?: string | null;
   /** systemd: stdout goes to the journal. */
   journal: boolean;
   /** launchd: the plist to bootstrap the job from again after a bootout. */
@@ -80,6 +82,7 @@ function emptyInfo(role: ServiceRole, name: string, explicit: boolean): ServiceI
     killMode: null,
     env: {},
     stdoutPath: null,
+    stderrPath: null,
     journal: false,
     plistPath: null,
   };
@@ -280,6 +283,8 @@ export function systemdManager(
         killMode: nonEmptyOrNull(props["KillMode"]),
         env: unitEnvironment(show.stdout, readFile),
         stdoutPath: out.path === null ? null : expandSpecifiers(out.path, specifiers),
+        // StandardError=inherit: stderr follows the stdout target or the journal.
+        stderrPath: null,
         journal: out.journal,
       };
     },
@@ -315,6 +320,8 @@ export interface LaunchctlPrint {
   pid: number | null;
   argv: string[];
   stdoutPath: string | null;
+  /** Present only when the job prints a separate `stderr path`. */
+  stderrPath?: string | null;
   plistPath: string | null;
   env: Record<string, string>;
 }
@@ -371,6 +378,7 @@ function applyPrintField(out: LaunchctlPrint, line: string): void {
     const n = Number.parseInt(value, 10);
     out.pid = Number.isFinite(n) && n > 0 ? n : null;
   } else if (key === "stdout path") out.stdoutPath = value;
+  else if (key === "stderr path") out.stderrPath = value;
   else if (key === "path") out.plistPath = value;
 }
 
@@ -404,6 +412,7 @@ export function launchdManager(exec: ExecFn, uid: number): ServiceManager {
         argv: p.argv,
         env: p.env,
         stdoutPath: p.stdoutPath,
+        ...(p.stderrPath === undefined ? {} : { stderrPath: p.stderrPath }),
         plistPath: p.plistPath,
       };
     },

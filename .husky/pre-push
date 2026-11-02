@@ -1,1 +1,2 @@
+bun scripts/format-changed.ts
 bun run lint

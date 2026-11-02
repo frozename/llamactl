@@ -1,4 +1,3 @@
-import type { ClusterNode } from "@llamactl/core/config/schema";
 import type { PeerSnapshot } from "@llamactl/core/workloadRuntime";
 
 // Import via '@llamactl/core' (NOT the relative core path) so this resolves to
@@ -95,8 +94,9 @@ async function readPeerSnapshotDirectWithTimeout(
     name: peer.id,
     endpoint: peer.endpoint,
     certificate: peer.certificate,
-    fingerprint: peer.fingerprint,
-  } as ClusterNode);
+    certificateFingerprint: peer.fingerprint,
+    tlsServerName: peer.tlsServerName,
+  });
   // #306: ask agents without a fleet journal for their local routes; older agents ignore the parameter.
   const target = new URL("/v1/fleet/snapshot?include=local-routes", peer.endpoint);
   const controller = new AbortController();

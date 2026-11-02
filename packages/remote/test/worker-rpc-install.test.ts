@@ -21,7 +21,7 @@ import { listPeers } from "@llamactl/core/config/peers";
 import { resolveEnv } from "@llamactl/core/env";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { createHash, createHmac } from "node:crypto";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { z } from "zod";
 
@@ -57,6 +57,23 @@ import { createTunnelClient } from "../src/tunnel/index.js";
 import { type FakeEngine, startFakeEngine } from "./fixtures/inference-rpc-v1/fake-engine.js";
 import { type ControllerClosedGuard, installControllerClosedGuard } from "./helpers.js";
 import { guardDefaultTunnelJournal, useTempTunnelJournal } from "./tunnel-journal-sandbox.js";
+
+/** Formats a baseline-missing variable report, naming the registration point. */
+function formatEnvReport(name: string, files: string[]): string {
+  const base = `${name} is read in ${files.join(", ")}`;
+  return name.startsWith("LLAMACTL_UPDATE_")
+    ? `${base}: add "${name.slice("LLAMACTL_UPDATE_".length)}" to the LLAMACTL_UPDATE_ loop in packages/remote/test/worker-rpc-install.test.ts with a comment naming the issue/PR that introduced it`
+    : `${base}: add "${name.slice("LLAMACTL_".length)}" to BASELINE_ENV in packages/remote/test/worker-rpc-install.test.ts with a comment naming the issue/PR that introduced it`;
+}
+
+/** Reports every read variable missing from the baseline, one line per variable, sorted. */
+function buildEnvReport(read: Map<string, string[]>, baseline: Set<string>): string {
+  return [...read.keys()]
+    .filter((name) => !baseline.has(name))
+    .sort()
+    .map((name) => formatEnvReport(name, [...(read.get(name) ?? [])].sort()))
+    .join("\n");
+}
 
 const WORKER = "worker-i6";
 const GATEWAY = "gateway-i6";
@@ -615,58 +632,78 @@ describe("I1: clean install", () => {
         .map((m) => m[1] ?? "")
         .filter((verb, i, all) => all.indexOf(verb) === i)
         .sort();
-    expect(verbs(CLI_BIN)).toEqual(
-      [
-        "admit",
-        "agent",
-        "apply",
-        "artifacts",
-        "bench",
-        "candidate",
-        "catalog",
-        "composite",
-        "controller",
-        "cost-guardian",
-        "ctx",
-        "delete",
-        "deploy-node",
-        "describe",
-        "disable",
-        "discover",
-        "doctor",
-        "embersynth",
-        "enable",
-        "env",
-        "eval",
-        "expose",
-        "fleet",
-        "get",
-        "heal",
-        "help",
-        "infra",
-        "init",
-        "keep-alive",
-        "lmstudio",
-        "node",
-        "plan",
-        "project",
-        "pull",
-        "rag",
-        "recommendations",
-        "runbook",
-        "server",
-        "sirius",
-        "supervisor",
-        "tunnel",
-        "uninstall",
-        // `llamactl update` (self-update for source installs), not the worker RPC.
-        "update",
-        // `llamactl version` prints the build version, not the worker RPC.
-        "version",
-      ].sort(),
+    const repoRoot = join(import.meta.dir, "..", "..", "..");
+    const verbReport = (
+      actual: string[],
+      expected: string[],
+      file: string,
+      listName: string,
+    ): string => {
+      const added = actual.filter((verb) => !expected.includes(verb));
+      const removed = expected.filter((verb) => !actual.includes(verb));
+      return [
+        ...added.map(
+          (verb) =>
+            `new command "${verb}" in ${file}: add it to ${listName} in packages/remote/test/worker-rpc-install.test.ts with a comment naming the issue/PR that introduced it`,
+        ),
+        ...removed.map(
+          (verb) => `command "${verb}" is no longer handled in ${file}: remove it from ${listName}`,
+        ),
+      ].join("\n");
+    };
+    const CLI_VERBS = [
+      "admit",
+      "agent",
+      "apply",
+      "artifacts",
+      "bench",
+      "candidate",
+      "catalog",
+      "composite",
+      "controller",
+      "cost-guardian",
+      "ctx",
+      "delete",
+      "deploy-node",
+      "describe",
+      "disable",
+      "discover",
+      "doctor",
+      "embersynth",
+      "enable",
+      "env",
+      "eval",
+      "expose",
+      "fleet",
+      "get",
+      "heal",
+      "help",
+      "infra",
+      "init",
+      "keep-alive",
+      "lmstudio",
+      "node",
+      "plan",
+      "project",
+      "pull",
+      "rag",
+      "recommendations",
+      "runbook",
+      "server",
+      "sirius",
+      "supervisor",
+      "tunnel",
+      "uninstall",
+      // `llamactl update` (self-update for source installs), not the worker RPC.
+      "update",
+      // `llamactl version` prints the build version, not the worker RPC.
+      "version",
+    ].sort();
+    expect(verbReport(verbs(CLI_BIN), CLI_VERBS, relative(repoRoot, CLI_BIN), "CLI_VERBS")).toBe(
+      "",
     );
     const agentCommands = join(import.meta.dir, "..", "..", "cli", "src", "commands", "agent.ts");
-    expect(verbs(agentCommands)).toEqual([
+    const AGENT_VERBS = [
       "cli",
       "heal",
       "help",
@@ -685,7 +722,15 @@ describe("I1: clean install", () => {
       // #218: named operator bearer tokens, added after the base release.
       "token",
       "update",
-    ]);
+    ];
+    expect(
+      verbReport(
+        verbs(agentCommands),
+        AGENT_VERBS,
+        relative(repoRoot, agentCommands),
+        "AGENT_VERBS",
+      ),
+    ).toBe("");
     // Every LLAMACTL_* variable the sources read existed at the base release.
     const BASELINE_ENV = new Set(
       "AGENT_DIR AGENT_HOST ARTIFACTS_DIR BENCH_SCHEDULES CLI_JOURNAL_DIR COMPOSITES_DIR CONFIG COST_GUARDIAN_CONFIG COST_JOURNAL DISABLE_MDNS EMBERSYNTH_CONFIG FLEET_DIR FLEET_LEASE_MODE FLEET_MOVE_ENABLED HEALER_JOURNAL HOME INFRA_DIR INFRA_LOGS_DIR INFRA_PACKAGES_DIR INSTALL_DIR INTERNAL_PROXY_URL KV_QUARANTINE_PURGE_HOURS KV_WORKLOAD_BUDGET_MB MCP_AUDIT_DIR MCP_PIPELINES_DIR MEASURED_MEMORY_PATH MODELS_DIR NODES NODE_NAME OPERATOR_PLAN_API_KEY_ENVS OPERATOR_PLAN_HOST_ALLOWLIST OPS_CHAT_AUDIT PLIST_EOF__ PROJECTS_FILE PROJECT_ROUTING_JOURNAL PROVIDERS_FILE RAG_PIPELINES_DIR RESPONSE_CACHE_BUDGET_MB RESPONSE_CACHE_MAX_ENTRY_MB RESPONSE_CACHE_TTL_HOURS RUNTIME_BACKEND RUNTIME_DIR SERVICE_TYPE SIGN_IDENTITY SIRIUS_PROVIDERS TEST_PROFILE TOKEN_ TUNNEL_BEARER TUNNEL_CENTRAL_BEARER TUNNEL_JOURNAL UNIFIED_PROXY UNIT_EOF__ VERSION WORKLOADS_DIR"
@@ -698,8 +743,10 @@ describe("I1: clean install", () => {
     )) {
       BASELINE_ENV.add(`LLAMACTL_UPDATE_${name}`);
     }
+    // #378: internal proxy upstream timeout override for long cold prefills, not the worker RPC.
+    BASELINE_ENV.add("LLAMACTL_UPSTREAM_TIMEOUT_MS");
     const sources = join(import.meta.dir, "..", "..");
-    const read = new Set<string>();
+    const read = new Map<string, string[]>();
     for (const pkg of readdirSync(sources)) {
       const src = join(sources, pkg, "src");
       if (!existsSync(src)) continue;
@@ -709,12 +756,47 @@ describe("I1: clean install", () => {
           return;
         }
         if (!/\.tsx?$/.test(path)) return;
-        for (const m of readFileSync(path, "utf8").matchAll(/LLAMACTL_[A-Z0-9_]+/g)) read.add(m[0]);
+        const rel = relative(repoRoot, path);
+        for (const m of readFileSync(path, "utf8").matchAll(/LLAMACTL_[A-Z0-9_]+/g)) {
+          const files = read.get(m[0]);
+          if (files) {
+            if (!files.includes(rel)) files.push(rel);
+          } else {
+            read.set(m[0], [rel]);
+          }
+        }
       };
       walk(src);
     }
-    expect([...read].filter((name) => !BASELINE_ENV.has(name))).toEqual([]);
+    expect(buildEnvReport(read, BASELINE_ENV)).toBe("");
     expect(read.has("LLAMACTL_PROXY_EXECUTION")).toBe(false);
+  });
+
+  test("a new variable read in one file produces a message naming the variable, that file and BASELINE_ENV, with no digits after the file path", () => {
+    expect(formatEnvReport("LLAMACTL_FOO_BAR", ["packages/remote/src/foo.ts"])).toBe(
+      'LLAMACTL_FOO_BAR is read in packages/remote/src/foo.ts: add "FOO_BAR" to BASELINE_ENV in packages/remote/test/worker-rpc-install.test.ts with a comment naming the issue/PR that introduced it',
+    );
+    expect(formatEnvReport("LLAMACTL_UPDATE_BAZ", ["packages/cli/src/commands/baz.ts"])).toBe(
+      'LLAMACTL_UPDATE_BAZ is read in packages/cli/src/commands/baz.ts: add "BAZ" to the LLAMACTL_UPDATE_ loop in packages/remote/test/worker-rpc-install.test.ts with a comment naming the issue/PR that introduced it',
+    );
+  });
+
+  test("the report is empty when every read variable is in the baseline", () => {
+    const read = new Map([
+      ["LLAMACTL_HOME", ["packages/core/src/env.ts"]],
+      ["LLAMACTL_CONFIG", ["packages/cli/src/a.ts", "packages/core/src/env.ts"]],
+    ]);
+    expect(buildEnvReport(read, new Set(["LLAMACTL_HOME", "LLAMACTL_CONFIG"]))).toBe("");
+  });
+
+  test("an unknown variable read in two files produces one line naming both files, sorted", () => {
+    const read = new Map([
+      ["LLAMACTL_HOME", ["packages/core/src/env.ts"]],
+      ["LLAMACTL_NEW_KNOB", ["packages/remote/src/z.ts", "packages/cli/src/a.ts"]],
+    ]);
+    expect(buildEnvReport(read, new Set(["LLAMACTL_HOME"]))).toBe(
+      'LLAMACTL_NEW_KNOB is read in packages/cli/src/a.ts, packages/remote/src/z.ts: add "NEW_KNOB" to BASELINE_ENV in packages/remote/test/worker-rpc-install.test.ts with a comment naming the issue/PR that introduced it',
+    );
   });
 });
 

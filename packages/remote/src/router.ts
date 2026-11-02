@@ -571,6 +571,7 @@ async function probeNodeFacts(opts: {
   token: string;
   certificate: string | null;
   certificateFingerprint: string | null;
+  tlsServerName?: string;
 }): Promise<nodeFactsMod.NodeFacts> {
   const { fingerprintsEqual, computeFingerprint } = await import("./server/tls.js");
   if (opts.certificate && opts.certificateFingerprint) {
@@ -587,7 +588,7 @@ async function probeNodeFacts(opts: {
     {
       method: "GET",
       headers: { authorization: `Bearer ${opts.token}` },
-      ...(ca ? ({ tls: { ca } } as Record<string, unknown>) : {}),
+      ...(ca ? ({ tls: { ca, serverName: opts.tlsServerName } } as Record<string, unknown>) : {}),
     },
   );
   if (!res.ok) {
@@ -1091,6 +1092,7 @@ export const router = t.router({
         token,
         certificate: node.certificate ?? null,
         certificateFingerprint: node.certificateFingerprint ?? null,
+        ...(node.tlsServerName !== undefined ? { tlsServerName: node.tlsServerName } : {}),
       });
       return { ok: true as const, facts };
     } catch (err) {
