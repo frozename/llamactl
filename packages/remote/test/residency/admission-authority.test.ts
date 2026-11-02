@@ -35,6 +35,11 @@
  *   rule. Verified-absent recovers (epoch rotates, orphan pendings sweep);
  *   the same process continues as owner with no rotation; a live or
  *   unidentifiable other owner degrades the authority — never a steal.
+ * - Generations are persisted in the store keyed by claim_id (#384): a
+ *   close + reopen under the same owner shows the same generations in
+ *   snapshot(), a claim whose generations survived the restart can be
+ *   released on verified absence plus a matching pid record, and a
+ *   release deletes the claim's generation rows.
  */
 import { describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
@@ -44,6 +49,7 @@ import {
   type AdmissionAuthority,
   type AdmitRequest,
   type AuthorityClaimRow,
+  type GenerationRecord,
   openAdmissionAuthority,
   type ProcessObservation,
 } from "../../src/residency/admission-authority.js";
@@ -77,12 +83,13 @@ const openAuthority = (
     dir?: string | undefined;
     owner?: OwnerIdentity | undefined;
     observations?: Map<number, ProcessObservation> | undefined;
+    pidFiles?: Map<string, number> | undefined;
   },
 ): Harness => {
   const createdDir = opts?.dir === undefined;
   const dir = opts?.dir ?? mkdtempSync(join(tmpdir(), "llamactl-admission-authority-"));
   const observations = opts?.observations ?? new Map<number, ProcessObservation>();
-  const pidFiles = new Map<string, number>();
+  const pidFiles = opts?.pidFiles ?? new Map<string, number>();
   const budget = { value: budgetGiB };
   const owner = opts?.owner ?? { pid: nextFakeOwnerPid++ };
   const storePath = join(dir, "admission.db");
@@ -163,6 +170,22 @@ const peekOwner = (storePath: string): OwnerIdentity | undefined => {
   }
   expect(threw).toBeUndefined();
   return owner;
+};
+
+// Same not-implemented-to-assertion wrapping as peekOwner.
+const peekGenerations = (storePath: string, claimId: string): readonly GenerationRecord[] => {
+  const store = peekStore(storePath);
+  let generations: readonly GenerationRecord[] | undefined;
+  let threw: unknown;
+  try {
+    generations = store.generationsOf(claimId);
+  } catch (e) {
+    threw = e;
+  } finally {
+    store.close();
+  }
+  expect(threw).toBeUndefined();
+  return generations ?? [];
 };
 
 const request = (
@@ -706,6 +729,85 @@ describe("admission-authority", () => {
       h2.authority.close();
       h2.cleanup();
       h1.cleanup();
+    }
+  });
+
+  test("recorded generations survive an authority close and reopen under the same owner", () => {
+    const owner = { pid: 9601, startTimeMs: 700 };
+    const h1 = openAuthority(24, { owner });
+    const { claimId, fenceToken } = mustAdmit(h1.authority, request("w-pg", "d", "ModelRun", 8));
+    expect(h1.authority.recordGeneration(claimId, fenceToken, { pid: 5100, startTimeMs: 90 })).toBe(
+      true,
+    );
+    expect(
+      h1.authority.recordGeneration(claimId, fenceToken, {
+        pid: 5101,
+        startTimeMs: 120,
+        executable: "llama-server",
+      }),
+    ).toBe(true);
+    h1.authority.close();
+    const h2 = openAuthority(24, { dir: h1.dir, owner });
+    try {
+      const reopened = row(h2.authority, claimId);
+      expect(reopened?.state).toBe("pending");
+      expect(reopened?.generations).toEqual([
+        { pid: 5100, startTimeMs: 90 },
+        { pid: 5101, startTimeMs: 120, executable: "llama-server" },
+      ]);
+    } finally {
+      h2.authority.close();
+      h2.cleanup();
+      h1.cleanup();
+    }
+  });
+
+  test("a claim with persisted generations releases after reopen on verified absence and a matching pid record", () => {
+    const owner = { pid: 9602, startTimeMs: 300 };
+    const h1 = openAuthority(24, { owner });
+    const { claimId, fenceToken } = mustAdmit(h1.authority, request("w-pr", "d", "ModelRun", 8));
+    expect(h1.authority.recordGeneration(claimId, fenceToken, { pid: 5200, startTimeMs: 40 })).toBe(
+      true,
+    );
+    expect(h1.authority.recordGeneration(claimId, fenceToken, { pid: 5201, startTimeMs: 55 })).toBe(
+      true,
+    );
+    expect(h1.authority.completeReady(claimId, fenceToken)).toBe(true);
+    h1.authority.close();
+    // Every recorded generation is verified absent and the runtime-dir
+    // pid record names one of them — the restart loses no evidence.
+    const observations = new Map<number, ProcessObservation>([
+      [5200, { pid: 5200, alive: false, startTimeMs: 40 }],
+      [5201, { pid: 5201, alive: false, startTimeMs: 55 }],
+    ]);
+    const pidFiles = new Map<string, number>([["w-pr", 5201]]);
+    const h2 = openAuthority(24, { dir: h1.dir, owner, observations, pidFiles });
+    try {
+      expect(h2.authority.tryRelease(claimId).kind).toBe("released");
+      expect(row(h2.authority, claimId)).toBeUndefined();
+    } finally {
+      h2.authority.close();
+      h2.cleanup();
+      h1.cleanup();
+    }
+  });
+
+  test("a verified release deletes the claim's persisted generations", () => {
+    const h = openAuthority(24);
+    try {
+      const { claimId, fenceToken } = mustAdmit(h.authority, request("w-rg", "d", "ModelRun", 8));
+      expect(
+        h.authority.recordGeneration(claimId, fenceToken, { pid: 5300, startTimeMs: 15 }),
+      ).toBe(true);
+      h.observations.set(5300, { pid: 5300, alive: false, startTimeMs: 15 });
+      h.pidFiles.set("w-rg", 5300);
+      expect(h.authority.tryRelease(claimId).kind).toBe("released");
+      expect(row(h.authority, claimId)).toBeUndefined();
+      // A reopened store shows no generation rows for the released claim.
+      expect(peekGenerations(h.storePath, claimId)).toEqual([]);
+    } finally {
+      h.authority.close();
+      h.cleanup();
     }
   });
 });

@@ -25,6 +25,11 @@
  *   runs only when the caller has verified the previous owner gone or the
  *   ledger has no recorded owner; a recorded owner not proven gone
  *   refuses OwnerLive/OwnerUnknown and changes nothing.
+ * - Generations persist keyed by claim_id: recordGeneration appends under
+ *   the fence check without rotating the token, generationsOf reads them
+ *   back oldest-first, releaseVerified deletes them with the claim, and a
+ *   plain reopen or owner recovery keeps them. A ledger file created
+ *   before the generations table existed migrates on open.
  */
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
@@ -38,6 +43,7 @@ import {
   AuthorityUnavailableError,
   type ClaimResult,
   type ClaimRow,
+  type GenerationRecord,
   openAdmissionStore,
   type OwnerIdentity,
   type RecoverOwnershipResult,
@@ -117,6 +123,37 @@ const ownerOf = (store: AdmissionStore): OwnerIdentity | undefined => {
 
 const row = (store: AdmissionStore, claimId: string): ClaimRow | undefined =>
   store.snapshot().find((r) => r.claimId === claimId);
+
+// Same not-implemented-to-assertion wrapping as openStore.
+const recordGen = (
+  store: AdmissionStore,
+  claimId: string,
+  fenceToken: string,
+  generation: GenerationRecord,
+): boolean => {
+  let result: boolean | undefined;
+  let threw: unknown;
+  try {
+    result = store.recordGeneration(claimId, fenceToken, generation);
+  } catch (e) {
+    threw = e;
+  }
+  expect(threw).toBeUndefined();
+  return result === true;
+};
+
+// Same not-implemented-to-assertion wrapping as openStore.
+const generationsOf = (store: AdmissionStore, claimId: string): readonly GenerationRecord[] => {
+  let result: readonly GenerationRecord[] | undefined;
+  let threw: unknown;
+  try {
+    result = store.generationsOf(claimId);
+  } catch (e) {
+    threw = e;
+  }
+  expect(threw).toBeUndefined();
+  return result ?? [];
+};
 
 interface ClaimOutcome {
   tag: string;
@@ -786,6 +823,197 @@ describe("admission-store", () => {
         verify.close();
       }
     } finally {
+      t.cleanup();
+    }
+  });
+
+  test("recordGeneration appends persisted evidence under the fence token without rotating it", () => {
+    const t = tempDb();
+    const store = openStore(t.path);
+    try {
+      const c = store.claim({
+        runtimeKey: "w-gen",
+        specDigest: "d",
+        kind: "ModelRun",
+        allocationGiB: 8,
+        budgetGiB: 24,
+      });
+      if (c.kind !== "admitted") {
+        throw new Error("claim not admitted");
+      }
+      // An unknown claim and a stale token both refuse and write nothing.
+      expect(recordGen(store, "no-such-claim", c.fenceToken, { pid: 5100 })).toBe(false);
+      expect(recordGen(store, c.claimId, "bogus-fence-token", { pid: 5100 })).toBe(false);
+      expect(generationsOf(store, c.claimId)).toEqual([]);
+      expect(recordGen(store, c.claimId, c.fenceToken, { pid: 5100, startTimeMs: 10 })).toBe(true);
+      expect(
+        recordGen(store, c.claimId, c.fenceToken, {
+          pid: 5101,
+          startTimeMs: 20,
+          executable: "llama-server",
+        }),
+      ).toBe(true);
+      expect(generationsOf(store, c.claimId)).toEqual([
+        { pid: 5100, startTimeMs: 10 },
+        { pid: 5101, startTimeMs: 20, executable: "llama-server" },
+      ]);
+      // A stale token after valid appends still writes nothing.
+      expect(recordGen(store, c.claimId, "bogus-fence-token", { pid: 5199 })).toBe(false);
+      expect(generationsOf(store, c.claimId)).toEqual([
+        { pid: 5100, startTimeMs: 10 },
+        { pid: 5101, startTimeMs: 20, executable: "llama-server" },
+      ]);
+      // Recording never rotates the token — it still drives the next CAS.
+      expect(store.commitResident(c.claimId, c.fenceToken)).toBe(true);
+      // The evidence is claim-keyed, not state-keyed: readable once resident.
+      expect(generationsOf(store, c.claimId)).toEqual([
+        { pid: 5100, startTimeMs: 10 },
+        { pid: 5101, startTimeMs: 20, executable: "llama-server" },
+      ]);
+    } finally {
+      store.close();
+      t.cleanup();
+    }
+  });
+
+  test("releaseVerified deletes the claim's generation rows with the claim", () => {
+    const t = tempDb();
+    const store = openStore(t.path);
+    try {
+      const a = store.claim({
+        runtimeKey: "w-ga",
+        specDigest: "d1",
+        kind: "ModelRun",
+        allocationGiB: 8,
+        budgetGiB: 24,
+      });
+      const b = store.claim({
+        runtimeKey: "w-gb",
+        specDigest: "d2",
+        kind: "ModelHost",
+        allocationGiB: 8,
+        budgetGiB: 24,
+      });
+      if (a.kind !== "admitted" || b.kind !== "admitted") {
+        throw new Error("claims not admitted");
+      }
+      expect(recordGen(store, a.claimId, a.fenceToken, { pid: 5200, startTimeMs: 5 })).toBe(true);
+      expect(recordGen(store, b.claimId, b.fenceToken, { pid: 5201, startTimeMs: 6 })).toBe(true);
+      expect(store.releaseVerified(a.claimId, a.fenceToken, evidence)).toBe(true);
+      expect(generationsOf(store, a.claimId)).toEqual([]);
+      // Deletion is scoped to the released claim only.
+      expect(generationsOf(store, b.claimId)).toEqual([{ pid: 5201, startTimeMs: 6 }]);
+      expect(row(store, b.claimId)?.state).toBe("pending");
+    } finally {
+      store.close();
+      t.cleanup();
+    }
+  });
+
+  test("recorded generations survive a plain reopen and an ownership recovery", () => {
+    const t = tempDb();
+    const first = openStore(t.path);
+    const c = first.claim({
+      runtimeKey: "w-gs",
+      specDigest: "d",
+      kind: "ModelRun",
+      allocationGiB: 8,
+      budgetGiB: 24,
+    });
+    if (c.kind !== "admitted") {
+      throw new Error("claim not admitted");
+    }
+    expect(recordGen(first, c.claimId, c.fenceToken, { pid: 5300, startTimeMs: 42 })).toBe(true);
+    first.close();
+    const second = openStore(t.path);
+    try {
+      expect(generationsOf(second, c.claimId)).toEqual([{ pid: 5300, startTimeMs: 42 }]);
+      // No owner is recorded, so recovery proceeds — the orphan pending
+      // row sweeps to uncertain and keeps its captured evidence.
+      expect(recover(second, { pid: 6601, startTimeMs: 9 }, false).kind).toBe("recovered");
+      expect(row(second, c.claimId)?.state).toBe("uncertain");
+      expect(generationsOf(second, c.claimId)).toEqual([{ pid: 5300, startTimeMs: 42 }]);
+    } finally {
+      second.close();
+    }
+    const third = openStore(t.path);
+    try {
+      expect(generationsOf(third, c.claimId)).toEqual([{ pid: 5300, startTimeMs: 42 }]);
+    } finally {
+      third.close();
+      t.cleanup();
+    }
+  });
+
+  test("a ledger created before the generations table still opens and migrates", () => {
+    const t = tempDb();
+    // Recreate the pre-generations schema by hand — opening through
+    // openAdmissionStore on this code path would already migrate, so the
+    // "before" file is written directly.
+    const raw = new Database(t.path);
+    try {
+      raw.run(`CREATE TABLE authority_meta (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        authority_id TEXT NOT NULL,
+        epoch INTEGER NOT NULL,
+        owner_pid INTEGER,
+        owner_start_time_ms INTEGER,
+        owner_executable TEXT
+      )`);
+      raw.run(`CREATE TABLE claims (
+        claim_id TEXT PRIMARY KEY,
+        runtime_key TEXT NOT NULL,
+        spec_digest TEXT NOT NULL,
+        kind TEXT,
+        state TEXT NOT NULL CHECK (state IN ('pending', 'resident', 'uncertain')),
+        allocation_gib REAL NOT NULL,
+        owner_epoch INTEGER NOT NULL,
+        generation_version INTEGER NOT NULL,
+        fence_token TEXT NOT NULL
+      )`);
+      raw.run(
+        "INSERT INTO authority_meta (id, authority_id, epoch) VALUES (1, 'legacy-authority', 1)",
+      );
+      raw.run(`INSERT INTO claims (claim_id, runtime_key, spec_digest, kind, state,
+                                   allocation_gib, owner_epoch, generation_version, fence_token)
+               VALUES ('legacy-claim', 'w-legacy', 'd', 'ModelRun', 'pending',
+                       4, 1, 1, 'legacy-fence')`);
+      raw.run(`PRAGMA application_id = ${String(0x4c4d4144)}`);
+      raw.run("PRAGMA user_version = 1");
+    } finally {
+      raw.close();
+    }
+    const store = openStore(t.path);
+    try {
+      const verify = new Database(t.path);
+      try {
+        const tables = verify
+          .query<{ name: string }, []>(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+          )
+          .all()
+          .map((r) => r.name);
+        expect(tables.some((name) => /generation/i.test(name))).toBe(true);
+      } finally {
+        verify.close();
+      }
+      // The migrated ledger stays fully functional: the pre-existing row
+      // is readable and the new evidence table accepts appends.
+      expect(row(store, "legacy-claim")?.state).toBe("pending");
+      expect(generationsOf(store, "legacy-claim")).toEqual([]);
+      expect(recordGen(store, "legacy-claim", "legacy-fence", { pid: 5400, startTimeMs: 3 })).toBe(
+        true,
+      );
+      expect(generationsOf(store, "legacy-claim")).toEqual([{ pid: 5400, startTimeMs: 3 }]);
+    } finally {
+      store.close();
+    }
+    // Reopening is idempotent — the migration does not repeat or fail.
+    const reopened = openStore(t.path);
+    try {
+      expect(generationsOf(reopened, "legacy-claim")).toEqual([{ pid: 5400, startTimeMs: 3 }]);
+    } finally {
+      reopened.close();
       t.cleanup();
     }
   });

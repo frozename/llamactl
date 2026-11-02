@@ -20,6 +20,12 @@
  * Fencing: each row carries an opaque fenceToken bound to
  * (claimId, ownerEpoch, generationVersion). Every successful CAS mutation
  * rotates it, so a stale or foreign token is rejected without mutation.
+ *
+ * Generations: captured process identities persist keyed by claim_id in
+ * the same transaction family as the claim transitions. recordGeneration
+ * appends under the fence check without rotating the token;
+ * releaseVerified deletes them with the claim; reopen and recovery keep
+ * them.
  */
 import {
   evaluateManagedAdmission,
@@ -48,6 +54,13 @@ export type ClaimRefuseReason = ManagedAdmissionRefuseReason | "AuthorityUnavail
 
 /** Process identity recorded in authority_meta as the ledger's owner. */
 export interface OwnerIdentity {
+  pid: number;
+  startTimeMs?: number | undefined;
+  executable?: string | undefined;
+}
+
+/** One captured generation of a claim: a pid plus optional identity fields. */
+export interface GenerationRecord {
   pid: number;
   startTimeMs?: number | undefined;
   executable?: string | undefined;
@@ -121,10 +134,22 @@ export interface AdmissionStore {
   commitResident(claimId: string, fenceToken: string): boolean;
   /** CAS pending→uncertain. Rotates the row's fenceToken on success. */
   markUncertain(claimId: string, fenceToken: string): boolean;
-  /** CAS delete — the only path that frees a charge. */
+  /**
+   * Append one captured generation to the claim's persisted evidence. The
+   * fence token is validated but NOT rotated — it still drives the
+   * subsequent CAS transitions. An unknown claim or a stale token writes
+   * nothing and returns false.
+   */
+  recordGeneration(claimId: string, fenceToken: string, generation: GenerationRecord): boolean;
+  /**
+   * CAS delete — the only path that frees a charge. The claim's persisted
+   * generation rows are deleted with it.
+   */
   releaseVerified(claimId: string, fenceToken: string, evidence: ReleaseEvidence): boolean;
   /** Detached copies; mutating them never changes stored state. */
   snapshot(): readonly ClaimRow[];
+  /** Detached generation rows for the claim, oldest first; empty when none. */
+  generationsOf(claimId: string): readonly GenerationRecord[];
   /** Idempotent. Calls after close refuse/return false rather than write. */
   close(): void;
 }
@@ -435,6 +460,14 @@ class SqliteAdmissionStore implements AdmissionStore {
     } catch {
       return false;
     }
+  }
+
+  recordGeneration(_claimId: string, _fenceToken: string, _generation: GenerationRecord): boolean {
+    throw new Error("not implemented");
+  }
+
+  generationsOf(_claimId: string): readonly GenerationRecord[] {
+    throw new Error("not implemented");
   }
 
   snapshot(): readonly ClaimRow[] {
