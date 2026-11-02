@@ -119,7 +119,12 @@ test("pidFilePid differs from recorded.pid but recorded pid still alive → unce
 
 test("inputs are not mutated", () => {
   const recorded = { pid: 100, startTimeMs: 1000, executable: "/usr/bin/llama-server" };
-  const observation = { pid: 100, alive: true, startTimeMs: 1000, executable: "/usr/bin/llama-server" };
+  const observation = {
+    pid: 100,
+    alive: true,
+    startTimeMs: 1000,
+    executable: "/usr/bin/llama-server",
+  };
   const originalRecorded = JSON.stringify(recorded);
   const originalObservation = JSON.stringify(observation);
 
