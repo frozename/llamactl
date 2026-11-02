@@ -26,6 +26,7 @@ import {
 import { decodeBootstrap } from "@llamactl/core/config/agent-config";
 import { nonEmpty } from "@llamactl/core/config/env";
 import * as kubecfg from "@llamactl/core/config/kubeconfig";
+import { ENGINES } from "@llamactl/core/engines";
 import { readModelHostState } from "@llamactl/core/engines/state";
 import { probeEndpointOwnership } from "@llamactl/core/probe";
 import {
@@ -96,12 +97,85 @@ import { startModelHost, statusModelHost, stopModelHost } from "./server/modelho
 import { defaultNodeBudgetGiB, estimateModelHostMemoryGiB } from "./workload/admission.js";
 import * as workloadApplyMod from "./workload/apply.js";
 import { CompositeOwnershipSchema } from "./workload/gateway-catalog/schema.js";
-import { type ModelHostManifest, ModelHostManifestSchema } from "./workload/modelhost-schema.js";
+import { liveLockHolder } from "./workload/lock.js";
+import {
+  LOCAL_NODE_ID,
+  modelHostBindRefusal,
+  type ModelHostManifest,
+  ModelHostManifestSchema,
+  specForEngine,
+} from "./workload/modelhost-schema.js";
 import * as modelHostStoreMod from "./workload/modelhost-store.js";
 import * as nodeRunStoreMod from "./workload/noderun-store.js";
 import * as reconcileLoopMod from "./workload/reconcileLoop.js";
 import { type ModelRun, ModelRunSchema, ModelRunSpecSchema } from "./workload/schema.js";
 import * as workloadStoreMod from "./workload/store.js";
+
+// #216: when a local ModelHost is applied through the router and a live
+// controller holds the workloads dir, validate + persist the manifest and
+// return without spawning so the controller's reconciler starts the engine
+// under its own service. Returns null when the in-process path should run
+// unchanged (disabled, remote node, no controller, or same pid).
+type HandoffResult = {
+  action: "handed-off";
+  path: string;
+  controllerPid: number;
+  name: string;
+  node: string;
+  status: {
+    phase: "Pending";
+    serverPid: null;
+    endpoint: null;
+    lastTransitionTime: string;
+    conditions: {
+      type: "Applied";
+      status: "True";
+      reason: "handed-off";
+      lastTransitionTime: string;
+    }[];
+  };
+};
+
+function handoffLocalModelHost(manifest: unknown, workloadsDir: string): HandoffResult | null {
+  const parsed = ModelHostManifestSchema.safeParse(manifest);
+  if (!parsed.success) return null;
+  const m = parsed.data;
+  if (m.spec.node !== LOCAL_NODE_ID || !m.spec.enabled) return null;
+  const pid = liveLockHolder(workloadsDir);
+  if (pid === null || pid === process.pid) return null;
+  const bindRefusal = modelHostBindRefusal(m);
+  if (bindRefusal) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: bindRefusal });
+  }
+  const engine = ENGINES[m.spec.engine];
+  const validation = engine.validateSpec(specForEngine(m.spec));
+  if (!validation.ok) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: validation.error });
+  }
+  const path = modelHostStoreMod.saveModelHost(m, workloadsDir);
+  const now = new Date().toISOString();
+  return {
+    action: "handed-off",
+    path,
+    controllerPid: pid,
+    name: m.metadata.name,
+    node: m.spec.node,
+    status: {
+      phase: "Pending",
+      serverPid: null,
+      endpoint: null,
+      lastTransitionTime: now,
+      conditions: [
+        {
+          type: "Applied",
+          status: "True",
+          reason: "handed-off",
+          lastTransitionTime: now,
+        },
+      ],
+    },
+  };
+}
 
 const mutateConfigLocked = (path: string, fn: (cfg: Config) => Config): Config => {
   return kubecfg.mutateConfig(path, fn);
@@ -1842,7 +1916,16 @@ export const router = t.router({
       // so two concurrent `workloadApply` mutations can't both pass the
       // port-collision preflight and both write. Cross-process callers
       // (`acquireLock`) are coordinated separately by the file lock.
+      //
+      // #216: when a local ModelHost is handed off to a live controller,
+      // the engine would otherwise land in the caller's cgroup (e.g. a
+      // desktop-app terminal scope), outside the controller unit's
+      // OOMScoreAdjust and limits. Validate the spec, persist, and return
+      // without spawning so the controller's reconciler starts it under
+      // its own service on the next pass.
       return await workloadStoreMod.withWorkloadsMutex(workloadsDir, async () => {
+        const handoffResult = handoffLocalModelHost(manifest, workloadsDir);
+        if (handoffResult) return handoffResult;
         const result = await workloadApplyMod.applyManifest({
           manifest,
           getClient: (nodeName) => clientForNode(cfg, nodeName),
