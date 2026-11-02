@@ -1,8 +1,6 @@
 /**
  * Target-owned admission authority (plan v3 — "Authority lifecycle" work
- * package). TYPE-ONLY contract stub: the RED tests in
- * test/residency/admission-authority.test.ts define the lifecycle; every
- * body here throws until the implementation seat lands.
+ * package). Tests live in test/residency/admission-authority.test.ts.
  *
  * The authority wraps one openAdmissionStore ledger with the pieces the
  * store deliberately does not hold: the caller's budget probe, the
@@ -20,7 +18,13 @@
  */
 import type { ManagedWorkloadKind } from "@llamactl/core/residency/managed-admission";
 
-import type { ClaimRefuseReason, ClaimRow } from "./admission-store.js";
+import {
+  type AdmissionStore,
+  AuthorityUnavailableError,
+  type ClaimRefuseReason,
+  type ClaimRow,
+  openAdmissionStore,
+} from "./admission-store.js";
 
 /** What the injected process observer reports for one pid. */
 export type ProcessObservation = {
@@ -125,18 +129,181 @@ export interface AdmissionAuthority {
   close(): void;
 }
 
+function identityMatches(
+  recorded: GenerationRecord,
+  observation: ProcessObservation,
+  field: "startTimeMs" | "executable",
+): boolean {
+  return (
+    observation[field] === undefined ||
+    recorded[field] === undefined ||
+    observation[field] === recorded[field]
+  );
+}
+
+function judgeGeneration(
+  recorded: GenerationRecord,
+  observation: ProcessObservation | undefined,
+): GenerationVerdict {
+  if (observation === undefined) {
+    return { kind: "uncertain", reason: "process cannot be identified" };
+  }
+  const startTimeMatches = identityMatches(recorded, observation, "startTimeMs");
+  const executableMatches = identityMatches(recorded, observation, "executable");
+  if (observation.alive) {
+    return startTimeMatches && executableMatches
+      ? { kind: "same-generation" }
+      : {
+          kind: "different-generation",
+          reason: "a live process does not match the recorded identity",
+        };
+  }
+  const carriesIdentity =
+    observation.startTimeMs !== undefined || observation.executable !== undefined;
+  if (carriesIdentity && startTimeMatches && executableMatches) {
+    return { kind: "verified-absent" };
+  }
+  return {
+    kind: "uncertain",
+    reason: "the death cannot be attributed to the recorded generation",
+  };
+}
+
 /**
  * Open (or degrade) the authority over `storePath`. An unreadable store
  * still returns an authority — degraded — so callers always speak to the
  * managed surface: every admit refuses AuthorityUnavailable, mutations
  * fail closed, snapshot is empty.
  */
-export function openAdmissionAuthority(_opts: {
+export function openAdmissionAuthority(opts: {
   storePath: string;
   runtimeRoot: string;
   budgetGiB: () => number | undefined;
   observe: (pid: number) => ProcessObservation | undefined;
   readPidFile: (runtimeKey: string) => number | undefined;
 }): AdmissionAuthority {
-  throw new Error("not implemented");
+  let store: AdmissionStore | null = null;
+  try {
+    store = openAdmissionStore({ path: opts.storePath });
+  } catch (e) {
+    if (!(e instanceof AuthorityUnavailableError)) {
+      throw e;
+    }
+  }
+  // Generations are kept in memory only in this slice: losing them makes
+  // tryRelease retain the charge, which is the fail-safe direction.
+  const generations = new Map<string, GenerationRecord[]>();
+
+  const findRow = (claimId: string): ClaimRow | undefined =>
+    store?.snapshot().find((r) => r.claimId === claimId);
+
+  const releaseClaim = (claimId: string, row: ClaimRow): ReleaseAttemptResult => {
+    const captured = generations.get(claimId) ?? [];
+    if (captured.length === 0) {
+      return { kind: "retained", claimId, reason: "no-generation" };
+    }
+    const pidFilePid = opts.readPidFile(row.runtimeKey);
+    if (pidFilePid === undefined) {
+      return { kind: "retained", claimId, reason: "pid-record-missing" };
+    }
+    if (!captured.some((gen) => gen.pid === pidFilePid)) {
+      return { kind: "retained", claimId, reason: "pid-record-conflict" };
+    }
+    for (const gen of captured) {
+      const verdict = judgeGeneration(gen, opts.observe(gen.pid));
+      if (verdict.kind === "same-generation" || verdict.kind === "different-generation") {
+        return { kind: "retained", claimId, reason: "live-generation" };
+      }
+      if (verdict.kind !== "verified-absent") {
+        return { kind: "retained", claimId, reason: "unidentified-death" };
+      }
+    }
+    const released = store?.releaseVerified(claimId, row.fenceToken, {
+      verification: "runtime-absent",
+      observedAt: Date.now(),
+    });
+    if (released !== true) {
+      return { kind: "retained", claimId, reason: "release-cas-failed" };
+    }
+    generations.delete(claimId);
+    return { kind: "released", claimId };
+  };
+
+  return {
+    admit(request: AdmitRequest): AdmissionOutcome {
+      if (store === null) {
+        return {
+          kind: "refuse",
+          reason: "AuthorityUnavailable",
+          detail: "admission authority is degraded or closed",
+        };
+      }
+      // The budget probe is read on every admit; an unknown budget is
+      // handed to the store's policy as NaN — which the policy refuses
+      // BudgetUnknown — never substituted with an unlimited figure.
+      const result = store.claim({
+        runtimeKey: request.runtimeKey,
+        specDigest: request.specDigest,
+        allocationGiB: request.allocationGiB,
+        budgetGiB: opts.budgetGiB() ?? Number.NaN,
+        ...(request.kind === undefined ? {} : { kind: request.kind }),
+      });
+      switch (result.kind) {
+        case "admitted":
+        case "refuse":
+          return result;
+        case "join-pending":
+          return { kind: "joined", claimId: result.claimId };
+        case "already-resident":
+          return { kind: "resident", claimId: result.claimId };
+      }
+    },
+
+    recordGeneration(claimId: string, fenceToken: string, generation: GenerationRecord): boolean {
+      const row = findRow(claimId);
+      if (row?.state !== "pending" || row.fenceToken !== fenceToken) {
+        return false;
+      }
+      const copy: GenerationRecord = { ...generation };
+      const captured = generations.get(claimId);
+      if (captured === undefined) {
+        generations.set(claimId, [copy]);
+      } else {
+        captured.push(copy);
+      }
+      return true;
+    },
+
+    completeReady(claimId: string, fenceToken: string): boolean {
+      return store?.commitResident(claimId, fenceToken) ?? false;
+    },
+
+    failUncertain(claimId: string, fenceToken: string, _reason: string): boolean {
+      return store?.markUncertain(claimId, fenceToken) ?? false;
+    },
+
+    tryRelease(claimId: string): ReleaseAttemptResult {
+      const row = findRow(claimId);
+      if (row === undefined) {
+        return { kind: "unknown-claim", claimId };
+      }
+      return releaseClaim(claimId, row);
+    },
+
+    snapshot(): readonly AuthorityClaimRow[] {
+      if (store === null) {
+        return [];
+      }
+      return store.snapshot().map(
+        (row): AuthorityClaimRow => ({
+          ...row,
+          generations: (generations.get(row.claimId) ?? []).map((gen) => ({ ...gen })),
+        }),
+      );
+    },
+
+    close(): void {
+      store?.close();
+    },
+  };
 }
