@@ -6,8 +6,11 @@ import {
 } from "@llamactl/core/engines/conditions";
 import {
   computeModelHostSpecHash,
+  readModelHostStartAttempt,
   readModelHostState,
+  removeModelHostStartAttempt,
   removeModelHostState,
+  writeModelHostStartAttempt,
 } from "@llamactl/core/engines/state";
 import { resolveEnv } from "@llamactl/core/env";
 
@@ -340,19 +343,25 @@ type HostReconcileDecision = "sweep-disabled" | "converged" | "never-stopped" | 
  *                    manifest means the spec changed while the host was
  *                    down, so that host is applied. A record with no
  *                    specHash and every remote host stay down (a Stopped
- *                    remote reports no specHash).
+ *                    remote reports no specHash). A start-attempt marker
+ *                    whose specHash differs from the manifest (or absent)
+ *                    means no attempt has been made for this spec, so the
+ *                    host is applied.
  *   apply          — anything else; run applyOneModelHost.
  *
  * Idempotent reconcile with spec-drift detection. For local
  * workloads, the controller-owned sidecar is the source of truth
  * for observed specHash. For remote workloads, trust the remote
  * modelHostStatus.specHash surfaced by the node dispatcher. Skip
- * restart iff Running and observedHash matches desiredHash.
+ * restart iff Running and observedHash matches desiredHash. A
+ * start-attempt marker grants at most one automatic attempt per
+ * spec hash; editing the spec produces a new hash and a new attempt.
  */
 function classifyHostReconcile(
   spec: ModelHostManifest["spec"],
   localState: ReturnType<typeof readModelHostState>,
   current: { state: string; specHash?: string },
+  startAttemptHash: string | null,
 ): HostReconcileDecision {
   if (!spec.enabled && current.state !== "Running") return "sweep-disabled";
   const desiredHash = computeModelHostSpecHash(specForHash(spec));
@@ -362,7 +371,8 @@ function classifyHostReconcile(
   // launch record was never started here (an `apply -f` hand-off), so it starts.
   // A local host whose recorded specHash differs was edited while down, so it
   // starts too.
-  const neverLaunched = spec.node === LOCAL_NODE_ID && localState === null;
+  const neverLaunched =
+    spec.node === LOCAL_NODE_ID && localState === null && startAttemptHash !== desiredHash;
   const editedWhileDown = localSpecChangedWhileDown(spec, localState, desiredHash);
   if (
     spec.restartPolicy === "Never" &&
@@ -463,6 +473,7 @@ function sweepDisabledHost(
 ): number {
   if (spec.node === LOCAL_NODE_ID) {
     removeModelHostState({ name }, resolveEnv(process.env));
+    removeModelHostStartAttempt({ name }, resolveEnv(process.env));
   }
   recordHostOutcome(spec, name, { kind: "ok", recovered: "Disabled" });
   return pushHostReport(reports, spec, name, "unchanged", {});
@@ -541,6 +552,37 @@ function saveAppliedHost(manifest: ModelHostManifest, name: string, dir: string)
   if (!claimed) saveModelHost(manifest, dir);
 }
 
+/** #358: the spec hash of a local host's last automatic start attempt, if any. */
+function readLocalStartAttempt(spec: ModelHostManifest["spec"], name: string): string | null {
+  if (spec.node !== LOCAL_NODE_ID) return null;
+  return readModelHostStartAttempt({ name }, resolveEnv(process.env));
+}
+
+/**
+ * #358: before starting a local restartPolicy Never host that has no launch
+ * record, record the attempt against its spec hash. The launch record is
+ * written only after readiness, so without this marker a first start that
+ * dies during load would leave the host looking never-launched and every
+ * later pass would start it again. Best-effort: a failed write does not
+ * block the apply.
+ */
+function markNeverHostStartAttempt(
+  spec: ModelHostManifest["spec"],
+  name: string,
+  localState: ReturnType<typeof readModelHostState>,
+): void {
+  if (spec.restartPolicy !== "Never" || spec.node !== LOCAL_NODE_ID || localState !== null) return;
+  try {
+    writeModelHostStartAttempt(
+      { name },
+      computeModelHostSpecHash(specForHash(spec)),
+      resolveEnv(process.env),
+    );
+  } catch {
+    // The marker is a restart guard; the apply proceeds without it.
+  }
+}
+
 async function reconcileUnmanagedModelHost(
   manifest: ModelHostManifest,
   opts: ReconcileOptions,
@@ -567,10 +609,16 @@ async function reconcileUnmanagedModelHost(
     }
     const localState =
       spec.node === LOCAL_NODE_ID ? readModelHostState({ name }, resolveEnv(process.env)) : null;
-    const decision = classifyHostReconcile(spec, localState, current);
+    const decision = classifyHostReconcile(
+      spec,
+      localState,
+      current,
+      readLocalStartAttempt(spec, name),
+    );
     if (decision !== "apply") return settleHostWithoutApply(decision, spec, name, reports);
     const wasRunning = current.state === "Running";
     const foundDead = !wasRunning && localState !== null;
+    markNeverHostStartAttempt(spec, name, localState);
     const result = await applyOneModelHost(
       manifest,
       opts.getClient,
@@ -585,6 +633,7 @@ async function reconcileUnmanagedModelHost(
     );
     const action = wasRunning ? "restarted" : "started";
     if (result.ok && result.kind === "ModelHost") {
+      removeModelHostStartAttempt({ name }, resolveEnv(process.env));
       pushHostReport(reports, spec, name, action, { foundDead });
       saveAppliedHost(result.manifest, name, dir);
       const restart = restartReason(wasRunning, foundDead);
