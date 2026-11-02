@@ -425,7 +425,10 @@ describe("admission-authority", () => {
   });
 
   test("unknown budget refuses BudgetUnknown and never falls back to unlimited", () => {
-    const h = openAuthority(undefined);
+    // Open with a real budget, then make the probe report unknown: passing
+    // undefined to openAuthority would hit its default and admit.
+    const h = openAuthority(24);
+    h.budget.value = undefined;
     try {
       const outcome = h.authority.admit(request("w-x", "d", "ModelRun", 4));
       expect(outcome.kind).toBe("refuse");
