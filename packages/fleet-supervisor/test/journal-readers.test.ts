@@ -315,6 +315,23 @@ describe("readRecentMovesFromJournal", () => {
     expect(readRecentMovesFromJournal(path)).toEqual([]);
   });
 
+  it("ignores fleet-move rows whose ts is a number", () => {
+    dir = mkdtempSync(join(tmpdir(), "fleet-moves-test-"));
+    const path = join(dir, "journal.jsonl");
+
+    writeFileSync(
+      path,
+      JSON.stringify({
+        kind: "fleet-move",
+        workload: "w",
+        ts: 12345,
+      }) + "\n",
+      "utf8",
+    );
+
+    expect(readRecentMovesFromJournal(path)).toEqual([]);
+  });
+
   it("ignores rows whose ts does not parse as a date", () => {
     dir = mkdtempSync(join(tmpdir(), "fleet-moves-test-"));
     const path = join(dir, "journal.jsonl");
