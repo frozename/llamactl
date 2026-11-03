@@ -15,6 +15,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "../safe-fs.js";
+import { readBearerFile } from "./agent-bearer-file.js";
 import {
   collectAgentStatus,
   defaultDescribeService,
@@ -58,17 +59,23 @@ Subcommands:
        the old cert. Restart the agent afterwards so it loads the new
        cert.
    serve [--dir=<path>] [--bind=<host>] [--host=<host>] [--port=<n>] [--no-auth]
-        [--dial-central=<wss-url>] [--central-bearer=<token>] [--tunnel-node-name=<name>]
-        [--tunnel-central=true] [--tunnel-bearer=<token>] [--tunnel-journal=<path>]
-        [--fleet-journal=<path>]
+        [--dial-central=<wss-url>] [--central-bearer=<token> | --central-bearer-file=<abs path>]
+        [--tunnel-node-name=<name>]
+        [--tunnel-central=true] [--tunnel-bearer=<token> | --tunnel-bearer-file=<abs path>]
+        [--tunnel-journal=<path>] [--fleet-journal=<path>]
       Run the node agent (blocks until SIGINT/SIGTERM).
-      With --dial-central + --central-bearer, the agent additionally
-      dials a central's /tunnel endpoint so its tRPC router is
-      reachable through the reverse tunnel. The bearer can also be
-      provided via the LLAMACTL_TUNNEL_BEARER env var.
-      With --tunnel-central=true + --tunnel-bearer, the agent mounts
-      /tunnel (WS upgrade) and /tunnel-relay on itself so NAT'd nodes
-      can dial in. The bearer can also come from
+      With --dial-central + --central-bearer (or --central-bearer-file),
+      the agent additionally dials a central's /tunnel endpoint so its
+      tRPC router is reachable through the reverse tunnel. The bearer
+      can also come from a 0600 file named by
+      LLAMACTL_TUNNEL_BEARER_FILE, or from the LLAMACTL_TUNNEL_BEARER
+      env var. Prefer the file over the env var under launchd/systemd
+      so the token never lands in a unit file or process env.
+      With --tunnel-central=true + --tunnel-bearer (or
+      --tunnel-bearer-file), the agent mounts /tunnel (WS upgrade) and
+      /tunnel-relay on itself so NAT'd nodes can dial in. The bearer
+      can also come from a 0600 file named by
+      LLAMACTL_TUNNEL_CENTRAL_BEARER_FILE, or from
       LLAMACTL_TUNNEL_CENTRAL_BEARER.
       --tunnel-journal overrides the JSONL audit path for tunnel
       events (default ~/.llamactl/tunnel/journal.jsonl, also
@@ -90,12 +97,16 @@ Subcommands:
   install-launchd [--scope=user|system] [--binary=<path> | --from-release=<tag> | --from-source]
                   [--install-path=<path>] [--dir=<path>] [--log-dir=<path>]
                   [--env=KEY=VAL]... [--label=<label>] [--repo=<owner/repo>]
+                  [--dial-central=<url>] [--tunnel-node-name=<name>]
+                  [--central-bearer-file=<abs path>] [--tunnel-bearer-file=<abs path>]
                   [--dry-run] [--force]
       macOS only. Resolve an agent binary (existing path, GitHub release,
       or local bun build --compile), render a launchd plist, write it to
       ~/Library/LaunchAgents (user) or /Library/LaunchDaemons (system),
       and load it via launchctl. --dry-run prints the plist + launchctl
-      plan without touching disk.
+      plan without touching disk. --env rejects secret-looking keys; keep
+      the tunnel bearer in a 0600 file and pass it via
+      --central-bearer-file / --tunnel-bearer-file instead.
   install-systemd [--scope=user|system] [--binary=<path> | --from-release=<tag> | --from-source]
                   [--install-path=<path>] [--dir=<path>] [--bind=<host>] [--port=<n>]
                   [--log-dir=<path>] [--env=KEY=VAL]... [--env-file=<path>]...
@@ -210,12 +221,22 @@ ${DIR_FLAG_HELP}
   --no-auth        Disable bearer auth; only allowed on a loopback bind
   --dial-central=<wss-url>    Dial a central's /tunnel endpoint
   --central-bearer=<token>    Tunnel bearer for --dial-central
-                              (or set LLAMACTL_TUNNEL_BEARER)
+  --central-bearer-file=<abs path>
+                              0600 file holding the dial-side tunnel
+                              bearer (or set LLAMACTL_TUNNEL_BEARER_FILE).
+                              Preferred over LLAMACTL_TUNNEL_BEARER under
+                              launchd/systemd so the token never lands in
+                              a unit file or process env.
   --tunnel-node-name=<name>   Identity in the tunnel hello frame
                               (default: nodeName from agent.yaml)
   --tunnel-central=true       Mount /tunnel and /tunnel-relay so NAT'd nodes can dial in
   --tunnel-bearer=<token>     Bearer for --tunnel-central
-                              (or set LLAMACTL_TUNNEL_CENTRAL_BEARER)
+  --tunnel-bearer-file=<abs path>
+                              0600 file holding the central bearer
+                              (or set LLAMACTL_TUNNEL_CENTRAL_BEARER_FILE).
+                              Preferred over LLAMACTL_TUNNEL_CENTRAL_BEARER
+                              under launchd/systemd so the token never
+                              lands in a unit file or process env.
   --tunnel-journal=<path>     Tunnel audit JSONL (default: ~/.llamactl/tunnel/journal.jsonl,
                               or LLAMACTL_TUNNEL_JOURNAL)
   --fleet-journal=<path>      Fleet journal served at GET /v1/fleet/snapshot
@@ -1089,9 +1110,11 @@ export interface ServeFlags {
   noAuth?: boolean;
   dialCentral?: string;
   centralBearer?: string;
+  centralBearerFile?: string;
   tunnelNodeName?: string;
   tunnelCentral?: boolean;
   tunnelBearer?: string;
+  tunnelBearerFile?: string;
   tunnelJournal?: string;
   fleetJournal?: string;
 }
@@ -1127,6 +1150,9 @@ export function parseServeFlags(args: string[]): ServeFlags | { error: string } 
       case "--central-bearer":
         flags.centralBearer = v;
         break;
+      case "--central-bearer-file":
+        flags.centralBearerFile = v;
+        break;
       case "--tunnel-node-name":
         flags.tunnelNodeName = v;
         break;
@@ -1135,6 +1161,9 @@ export function parseServeFlags(args: string[]): ServeFlags | { error: string } 
         break;
       case "--tunnel-bearer":
         flags.tunnelBearer = v;
+        break;
+      case "--tunnel-bearer-file":
+        flags.tunnelBearerFile = v;
         break;
       case "--tunnel-journal":
         flags.tunnelJournal = v;
@@ -1156,18 +1185,90 @@ interface ServeWiring {
   tunnelCentralBearer: string | undefined;
 }
 
+interface ResolvedBearerSide {
+  bearer: string | undefined;
+}
+
+function bearerFromFilePath(path: string, label: string): ResolvedBearerSide | { error: string } {
+  const read = readBearerFile(path, label);
+  if ("error" in read) return read;
+  return { bearer: read.bearer };
+}
+
+// #289: per-side bearer resolution. Literal flag > explicit --*-bearer-file
+// > (when the side is enabled) a *_FILE env var pointing at a 0600 file >
+// the plain env var, so launchd/systemd units never need to embed the
+// token. The file is only read when it's the winning source.
+function resolveBearerSide(
+  literal: string | undefined,
+  file: string | undefined,
+  literalLabel: string,
+  fileLabel: string,
+  enabled: boolean,
+  envFileVar: string,
+  envVar: string,
+  env: NodeJS.ProcessEnv,
+): ResolvedBearerSide | { error: string } {
+  if (literal !== undefined && file !== undefined) {
+    return {
+      error: `${literalLabel} and ${fileLabel} must not be combined; pick one source for the bearer`,
+    };
+  }
+  if (literal !== undefined) return { bearer: literal };
+  if (file !== undefined) return bearerFromFilePath(file, fileLabel);
+  if (enabled) {
+    const envFile = env[envFileVar];
+    if (envFile !== undefined && envFile !== "") return bearerFromFilePath(envFile, envFileVar);
+  }
+  const plain = env[envVar];
+  return { bearer: plain !== undefined && plain !== "" ? plain : undefined };
+}
+
+export function resolveServeBearers(
+  parsed: ServeFlags,
+  env: NodeJS.ProcessEnv,
+): { dialBearer: string | undefined; tunnelCentralBearer: string | undefined } | { error: string } {
+  const dial = resolveBearerSide(
+    parsed.centralBearer,
+    parsed.centralBearerFile,
+    "--central-bearer",
+    "--central-bearer-file",
+    parsed.dialCentral !== undefined,
+    "LLAMACTL_TUNNEL_BEARER_FILE",
+    "LLAMACTL_TUNNEL_BEARER",
+    env,
+  );
+  if ("error" in dial) return dial;
+  const central = resolveBearerSide(
+    parsed.tunnelBearer,
+    parsed.tunnelBearerFile,
+    "--tunnel-bearer",
+    "--tunnel-bearer-file",
+    parsed.tunnelCentral === true,
+    "LLAMACTL_TUNNEL_CENTRAL_BEARER_FILE",
+    "LLAMACTL_TUNNEL_CENTRAL_BEARER",
+    env,
+  );
+  if ("error" in central) return central;
+  return { dialBearer: dial.bearer, tunnelCentralBearer: central.bearer };
+}
+
 // --dial-central / --central-bearer must travel together. The
-// bearer can also come from LLAMACTL_TUNNEL_BEARER so the CLI line
-// doesn't need to embed secrets. Either both are present (and we
-// wire tunnelDial below) or neither is.
+// bearer can also come from a 0600 file (--central-bearer-file or
+// LLAMACTL_TUNNEL_BEARER_FILE) or LLAMACTL_TUNNEL_BEARER so neither the
+// CLI line nor the unit file needs to embed secrets. Either both are
+// present (and we wire tunnelDial below) or neither is.
 function checkDialFlags(
   parsed: ServeFlags,
   dialUrl: string | undefined,
   dialBearer: string | undefined,
 ): string | null {
-  if (dialUrl || parsed.centralBearer) {
+  if (dialUrl || parsed.centralBearer || parsed.centralBearerFile) {
     if (!dialUrl || !dialBearer) {
-      return "--dial-central and --central-bearer must be provided together (or set LLAMACTL_TUNNEL_BEARER for the bearer)\n";
+      return (
+        "--dial-central and --central-bearer must be provided together (or supply the bearer " +
+        "via --central-bearer-file, LLAMACTL_TUNNEL_BEARER_FILE or LLAMACTL_TUNNEL_BEARER)\n"
+      );
     }
   }
   return null;
@@ -1194,19 +1295,23 @@ function checkTunnelCentral(
 ): string | null {
   if (tunnelCentralOn) {
     if (!tunnelCentralBearer) {
-      return "--tunnel-central=true requires --tunnel-bearer (or set LLAMACTL_TUNNEL_CENTRAL_BEARER)\n";
+      return "--tunnel-central=true requires --tunnel-bearer or --tunnel-bearer-file (or set LLAMACTL_TUNNEL_CENTRAL_BEARER / LLAMACTL_TUNNEL_CENTRAL_BEARER_FILE)\n";
     }
     return null;
   }
-  if (parsed.tunnelBearer) {
-    process.stderr.write("warning: --tunnel-bearer set without --tunnel-central=true; ignoring\n");
+  if (parsed.tunnelBearer !== undefined || parsed.tunnelBearerFile !== undefined) {
+    const label = parsed.tunnelBearer !== undefined ? "--tunnel-bearer" : "--tunnel-bearer-file";
+    process.stderr.write(`warning: ${label} set without --tunnel-central=true; ignoring\n`);
   }
   return null;
 }
 
 function validateServeWiring(parsed: ServeFlags): ServeWiring | { error: string } {
+  const bearers = resolveServeBearers(parsed, process.env);
+  if ("error" in bearers) return { error: `${bearers.error}\n` };
+
   const dialUrl = parsed.dialCentral;
-  const dialBearer = parsed.centralBearer ?? process.env["LLAMACTL_TUNNEL_BEARER"];
+  const dialBearer = bearers.dialBearer;
   const dialErr = checkDialFlags(parsed, dialUrl, dialBearer);
   if (dialErr) return { error: dialErr };
 
@@ -1214,7 +1319,7 @@ function validateServeWiring(parsed: ServeFlags): ServeWiring | { error: string 
   if (noAuthErr) return { error: noAuthErr };
 
   const tunnelCentralOn = parsed.tunnelCentral === true;
-  const tunnelCentralBearer = parsed.tunnelBearer ?? process.env["LLAMACTL_TUNNEL_CENTRAL_BEARER"];
+  const tunnelCentralBearer = bearers.tunnelCentralBearer;
   const tunnelErr = checkTunnelCentral(parsed, tunnelCentralOn, tunnelCentralBearer);
   if (tunnelErr) return { error: tunnelErr };
 
