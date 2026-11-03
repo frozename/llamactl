@@ -745,6 +745,9 @@ describe("I1: clean install", () => {
     }
     // #378: internal proxy upstream timeout override for long cold prefills, not the worker RPC.
     BASELINE_ENV.add("LLAMACTL_UPSTREAM_TIMEOUT_MS");
+    // #289: 0600 bearer-file paths for the tunnel bearers, so launchd/systemd units never embed the token.
+    BASELINE_ENV.add("LLAMACTL_TUNNEL_BEARER_FILE");
+    BASELINE_ENV.add("LLAMACTL_TUNNEL_CENTRAL_BEARER_FILE");
     const sources = join(import.meta.dir, "..", "..");
     const read = new Map<string, string[]>();
     for (const pkg of readdirSync(sources)) {
