@@ -3,7 +3,7 @@ import type { SpawnSyncOptionsWithStringEncoding, SpawnSyncReturns } from "node:
 import { infraArtifactsFetch } from "@llamactl/remote";
 import { spawnSync as nodeSpawnSync } from "node:child_process";
 import { hostname, userInfo } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 
 import { required } from "../../required.js";
 import {
@@ -56,6 +56,22 @@ Flags (all --key=value):
                                default: $HOME/.llamactl-launchd-logs
   --env=KEY=VAL                additional env vars for the plist;
                                repeatable: --env=HF_HOME=/foo --env=DEV_STORAGE=/bar
+                               Secret-looking keys (*_BEARER, *_TOKEN,
+                               *_SECRET, *_KEY) are rejected — use the
+                               --*-bearer-file flags below instead.
+  --dial-central=<url>         wss URL of a central's /tunnel endpoint;
+                               forwarded into ProgramArguments. Requires
+                               --central-bearer-file.
+  --tunnel-node-name=<name>    Identity in the tunnel hello frame.
+                               Requires --dial-central.
+  --central-bearer-file=<abs path>
+                               Absolute path to a 0600 file holding the
+                               dial-side tunnel bearer. The token itself
+                               never enters the plist.
+  --tunnel-bearer-file=<abs path>
+                               Absolute path to a 0600 file holding the
+                               central-side bearer; also adds
+                               --tunnel-central=true to ProgramArguments.
   --label=<label>              service label
                                default: com.llamactl.agent (user)
                                         com.llamactl.agent.daemon (system)
@@ -189,6 +205,10 @@ export interface InstallLaunchdFlags {
   repo: string;
   dryRun: boolean;
   force: boolean;
+  dialCentral?: string;
+  tunnelNodeName?: string;
+  centralBearerFile?: string;
+  tunnelBearerFile?: string;
 }
 
 interface InstallFlagState {
@@ -204,6 +224,10 @@ interface InstallFlagState {
   repo: string;
   dryRun: boolean;
   force: boolean;
+  dialCentral: string | undefined;
+  tunnelNodeName: string | undefined;
+  centralBearerFile: string | undefined;
+  tunnelBearerFile: string | undefined;
 }
 
 function applyScopeFlag(v: string, state: InstallFlagState): { error: string } | null {
@@ -221,6 +245,17 @@ function applyEnvFlag(v: string, state: InstallFlagState): { error: string } | n
   }
   const key = v.slice(0, eq);
   const value = v.slice(eq + 1);
+  // #289: the plist is world-readable and its values show up in
+  // `launchctl print`; secrets belong in a 0600 file referenced by a
+  // --*-bearer-file flag instead. Never echo the value.
+  if (/_(?:BEARER|TOKEN|SECRET|KEY)$/i.test(key)) {
+    return {
+      error:
+        `agent install-launchd: refusing to write secret-looking env key ${key} into the plist; ` +
+        "put the token in a 0600 file and pass --central-bearer-file=<path> " +
+        "(or --tunnel-bearer-file=<path>)",
+    };
+  }
   state.envOverrides[key] = value;
   return null;
 }
@@ -264,9 +299,55 @@ function applyInstallKeyValueFlag(
     case "--repo":
       state.repo = v;
       return null;
+    case "--dial-central":
+      state.dialCentral = v;
+      return null;
+    case "--tunnel-node-name":
+      state.tunnelNodeName = v;
+      return null;
+    case "--central-bearer-file":
+      if (!isAbsolute(v)) {
+        return {
+          error: `agent install-launchd: --central-bearer-file must be an absolute path (got ${v})`,
+        };
+      }
+      state.centralBearerFile = v;
+      return null;
+    case "--tunnel-bearer-file":
+      if (!isAbsolute(v)) {
+        return {
+          error: `agent install-launchd: --tunnel-bearer-file must be an absolute path (got ${v})`,
+        };
+      }
+      state.tunnelBearerFile = v;
+      return null;
     default:
       return { error: `agent install-launchd: unknown flag ${k}` };
   }
+}
+
+// #289: tunnel wiring travels as ProgramArguments, never as secret env.
+// --dial-central needs its bearer file (the plist must stay token-free),
+// and --tunnel-node-name only makes sense on a dialing node.
+function checkTunnelWiringFlags(state: InstallFlagState): { error: string } | null {
+  if (state.dialCentral !== undefined && state.centralBearerFile === undefined) {
+    return {
+      error:
+        "agent install-launchd: --dial-central requires --central-bearer-file=<abs path> " +
+        "(a 0600 file; the plist must not carry the token)",
+    };
+  }
+  if (state.centralBearerFile !== undefined && state.dialCentral === undefined) {
+    return {
+      error: "agent install-launchd: --central-bearer-file requires --dial-central=<wss-url>",
+    };
+  }
+  if (state.tunnelNodeName !== undefined && state.dialCentral === undefined) {
+    return {
+      error: "agent install-launchd: --tunnel-node-name requires --dial-central=<wss-url>",
+    };
+  }
+  return null;
 }
 
 function applyInstallArg(arg: string, state: InstallFlagState): { error: string } | null {
@@ -332,6 +413,10 @@ export function parseInstallLaunchdFlags(argv: string[]): InstallLaunchdFlags | 
     repo: "frozename/llamactl",
     dryRun: false,
     force: false,
+    dialCentral: undefined,
+    tunnelNodeName: undefined,
+    centralBearerFile: undefined,
+    tunnelBearerFile: undefined,
   };
 
   for (const arg of argv) {
@@ -341,6 +426,8 @@ export function parseInstallLaunchdFlags(argv: string[]): InstallLaunchdFlags | 
 
   const source = resolveFlaggedBinarySource(state);
   if ("error" in source) return source;
+  const wiringErr = checkTunnelWiringFlags(state);
+  if (wiringErr !== null) return wiringErr;
 
   return {
     scope: state.scope,
@@ -353,6 +440,12 @@ export function parseInstallLaunchdFlags(argv: string[]): InstallLaunchdFlags | 
     repo: state.repo,
     dryRun: state.dryRun,
     force: state.force,
+    ...(state.dialCentral !== undefined ? { dialCentral: state.dialCentral } : {}),
+    ...(state.tunnelNodeName !== undefined ? { tunnelNodeName: state.tunnelNodeName } : {}),
+    ...(state.centralBearerFile !== undefined
+      ? { centralBearerFile: state.centralBearerFile }
+      : {}),
+    ...(state.tunnelBearerFile !== undefined ? { tunnelBearerFile: state.tunnelBearerFile } : {}),
   };
 }
 
@@ -598,13 +691,14 @@ export interface AssembledPlistArgs {
   scope: "user" | "system";
   user?: string;
   group?: string;
+  extraServeArgs?: string[];
 }
 
 export function assemblePlistOptions(a: AssembledPlistArgs): BuildPlistOptions {
   const common: BuildPlistOptions = {
     label: a.label,
     execPath: a.installPath,
-    args: ["agent", "serve", `--dir=${a.dirArg}`],
+    args: ["agent", "serve", `--dir=${a.dirArg}`, ...(a.extraServeArgs ?? [])],
     logDir: a.logDir,
     env: a.env,
   };
@@ -783,6 +877,17 @@ function buildPlistForInstall(
 ): string {
   const who = currentUserAndGroup(deps);
   const plistEnv = buildPlistEnv(deps.env, parsed.envOverrides);
+  const extraServeArgs: string[] = [];
+  if (parsed.dialCentral !== undefined) extraServeArgs.push(`--dial-central=${parsed.dialCentral}`);
+  if (parsed.tunnelNodeName !== undefined) {
+    extraServeArgs.push(`--tunnel-node-name=${parsed.tunnelNodeName}`);
+  }
+  if (parsed.centralBearerFile !== undefined) {
+    extraServeArgs.push(`--central-bearer-file=${parsed.centralBearerFile}`);
+  }
+  if (parsed.tunnelBearerFile !== undefined) {
+    extraServeArgs.push("--tunnel-central=true", `--tunnel-bearer-file=${parsed.tunnelBearerFile}`);
+  }
   const plistOpts = assemblePlistOptions({
     label: targets.label,
     installPath: installedPath,
@@ -791,6 +896,7 @@ function buildPlistForInstall(
     env: plistEnv,
     scope: parsed.scope,
     ...(parsed.scope === "system" ? { user: who.user, group: who.group } : {}),
+    ...(extraServeArgs.length > 0 ? { extraServeArgs } : {}),
   });
   return parsed.scope === "system" ? buildSystemPlist(plistOpts) : buildUserPlist(plistOpts);
 }
