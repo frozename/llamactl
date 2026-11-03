@@ -116,7 +116,7 @@ afterEach(() => {
 
 describe("bench scheduler loop", () => {
   test("clean completion stamps lastRunAt and clears lastError", async () => {
-    saveSchedules([dueSchedule("clean-1")], schedulePath);
+    saveSchedules([dueSchedule("clean-1", { lastError: "previous failure" })], schedulePath);
     await kickBenchScheduler(autoCompleting().getClient);
 
     const entry = loadSchedules(schedulePath).find((s) => s.id === "clean-1")!;
@@ -231,13 +231,16 @@ describe("bench scheduler loop", () => {
   });
 
   test("only due schedules get their file entry updated", async () => {
-    const kept = notDueSchedule("keep-10");
+    const kept = notDueSchedule("keep-10", {
+      lastRunAt: new Date(Date.now() - 60_000).toISOString(),
+    });
     saveSchedules([dueSchedule("due-10"), kept], schedulePath);
     await kickBenchScheduler(autoCompleting().getClient);
 
     const entries = loadSchedules(schedulePath);
     const due = entries.find((s) => s.id === "due-10")!;
     const unchanged = entries.find((s) => s.id === "keep-10")!;
+    expect(getClientCalls).toBe(1);
     expect(due.lastRunAt).not.toBe("2000-01-01T00:00:00.000Z");
     expect(unchanged.lastRunAt).toBe(kept.lastRunAt);
     expect(unchanged.lastError).toBeNull();
