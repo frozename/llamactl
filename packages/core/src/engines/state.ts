@@ -100,13 +100,17 @@ export function writeModelHostStarting(
   writeFileSync(modelhostStartingFile(resolved, key), JSON.stringify(state, null, 2));
 }
 
+function isModelHostEngine(engine: unknown): engine is EngineName {
+  return engine === "llamacpp" || engine === "omlx" || engine === "strata" || engine === "kapitsa";
+}
+
 function validateModelHostStarting(
   parsed: Partial<ModelHostStartingState>,
 ): ModelHostStartingState | null {
   if (parsed.kind !== "ModelHostStarting") return null;
   const { engine, pid, startedAt, specHash } = parsed;
   if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return null;
-  if (engine !== "llamacpp" && engine !== "omlx" && engine !== "strata") return null;
+  if (!isModelHostEngine(engine)) return null;
   if (typeof startedAt !== "string" || Number.isNaN(Date.parse(startedAt))) return null;
   return {
     kind: "ModelHostStarting",
@@ -165,8 +169,7 @@ function validateModelHostState(parsed: Partial<ModelHostState>): ModelHostState
   if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return null;
   if (typeof host !== "string" || !LOOPBACK_HOSTS.has(host)) return null;
   if (typeof port !== "number" || !Number.isInteger(port) || port < 1 || port > 65535) return null;
-  if (engine !== "llamacpp" && engine !== "omlx" && engine !== "strata" && engine !== "kapitsa")
-    return null;
+  if (!isModelHostEngine(engine)) return null;
   if (typeof startedAt !== "string" || Number.isNaN(Date.parse(startedAt))) return null;
   if (!validModelAliases(modelAliases)) return null;
   return {
