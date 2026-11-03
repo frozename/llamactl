@@ -10,7 +10,7 @@ import { resolveBuildId } from "../src/build.js";
 import { ctxForModel } from "../src/ctx.js";
 import { resolveEnv } from "../src/env.js";
 import { processCommand } from "../src/pidIdentity.js";
-import { mkdirSync, writeFileSync } from "../src/safe-fs.js";
+import { existsSync, mkdirSync, writeFileSync } from "../src/safe-fs.js";
 import {
   readServerPid,
   readServerState,
@@ -43,8 +43,16 @@ import { envForTemp, makeTempRuntime } from "./helpers.js";
 // A call aimed at a pid <= 0 is recorded and never forwarded (kill(0) would signal
 // this runner's own process group), and every spied test asserts there was none.
 // Every seam-free test whose retry stops the argv fake (T7 (i)-(iv), T12a, T12b, T15,
-// T18, T19, T21) waits in each launch's first waiting event until ps shows the exec'd
-// command line, and asserts the retry stop was not refused before counting launches (#291).
+// T18, T19, T21) waits in each launch's first waiting event until the fake's ready
+// marker appears and ps confirms the exec'd command line, and asserts the retry stop
+// was not refused before counting launches (#291).
+// #409 (macOS CI flake): a start that outlives its test must not reach the next test's
+// arrays or a deleted fake binary. Every startServer promise is tracked in inFlight;
+// afterEach flags teardown, kills the launched pids, and waits (bounded) for those
+// starts to settle before restoring the env and cleaning up the temp dir. The event
+// wrappers bind their test's arrays at wrap time and ignore events once teardown
+// started. The argv fake writes "$0.ready.$$" right before `exec -a`, so
+// waitForArgvExec blocks on that marker instead of spinning on ps reads.
 
 const KEY = { name: "mmproj-retry-wl" };
 // T20's second workload, started concurrently with KEY on its own port.
@@ -76,12 +84,16 @@ const PORT_BOUND = `port ${HOST}:${String(PORT)} is already bound`;
 const FOREIGN_LISTENER = "another process is likely bound to this port";
 // What the first pid "is" once the identity seam stops vouching for it.
 const FOREIGN_COMMAND = "/bin/sleep 30";
-const TEST_TIMEOUT_MS = 20_000;
+// #409: two exec waits plus the stopServer grace plus the ps polls must fit on a loaded macOS runner.
+const TEST_TIMEOUT_MS = 30_000;
 // What a refused retry stop reports (server.ts retryWithMmprojSafeFlags).
 const REFUSED_RETRY = "refusing mmproj retry";
 // #291: bound on waiting for the argv fake to reach `exec -a`, and T21's pre-exec sleep:
 // past the first poll's 1 s, with ~3 s left inside the bound for a loaded machine.
 const ARGV_EXEC_DEADLINE_MS = 5000;
+// #409: bound on afterEach waiting for the test's in-flight starts after their pids
+// were SIGKILLed; a settled child surfaces to the poll loop within ~1 s.
+const TEARDOWN_SETTLE_MS = 15_000;
 const SLOW_EXEC_SECONDS = 2;
 
 interface SentSignal {
@@ -169,6 +181,10 @@ describe("startServer mmproj safe-flag retry bookkeeping", () => {
   let spies: { mockRestore: () => void }[];
   /** #291: per launched pid, how many ps reads waitForArgvExec needed before `exec -a` showed. */
   let execPolls: Map<number, number>;
+  /** #409: true once afterEach began; the event wrappers then ignore any further event. */
+  let torndown = false;
+  /** #409: every startServer promise this test started, settled before temp.cleanup(). */
+  let inFlight: Promise<unknown>[] = [];
 
   const identity = {
     processCommand: (pid: number): string | null => {
@@ -228,15 +244,27 @@ describe("startServer mmproj safe-flag retry bookkeeping", () => {
     return captured;
   };
 
-  /** Wrap a test's onEvent so every launch (its pid and exact argv) is recorded first. */
-  const recordingLaunches =
-    (onEvent: (e: ServerEvent) => void) =>
-    (e: ServerEvent): void => {
+  /**
+   * Wrap a test's onEvent so every launch (its pid and exact argv) is recorded first.
+   * #409: binds this test's launches array at wrap time and drops events once teardown
+   * started, so a start that outlived its test cannot write into the next test's array.
+   */
+  const recordingLaunches = (onEvent: (e: ServerEvent) => void) => {
+    const myLaunches = launches;
+    return (e: ServerEvent): void => {
+      if (torndown) return;
       if (e.type === "launch") {
-        launches.push({ pid: e.pid, argv: [e.command, ...e.args].join(" ") });
+        myLaunches.push({ pid: e.pid, argv: [e.command, ...e.args].join(" ") });
       }
       onEvent(e);
     };
+  };
+
+  /** #409: keep the promise reachable from afterEach so teardown can wait for it. */
+  const trackStart = <T>(promise: Promise<T>): Promise<T> => {
+    inFlight.push(promise);
+    return promise;
+  };
 
   /**
    * Start the alias target "current" (resolved to REL) with the test binary and endpoint.
@@ -248,19 +276,21 @@ describe("startServer mmproj safe-flag retry bookkeeping", () => {
     skipTuned = true,
     withIdentity = true,
   ): Promise<StartServerResult> =>
-    startServer({
-      key: KEY,
-      target: "current",
-      resolved,
-      binary,
-      endpoint: { host: HOST, port: PORT },
-      extraArgs,
-      timeoutSeconds: 1,
-      skipTuned,
-      ...(withIdentity ? { identity } : {}),
-      ...(signal === undefined ? {} : { signal }),
-      onEvent: recordingLaunches(onEvent),
-    });
+    trackStart(
+      startServer({
+        key: KEY,
+        target: "current",
+        resolved,
+        binary,
+        endpoint: { host: HOST, port: PORT },
+        extraArgs,
+        timeoutSeconds: 1,
+        skipTuned,
+        ...(withIdentity ? { identity } : {}),
+        ...(signal === undefined ? {} : { signal }),
+        onEvent: recordingLaunches(onEvent),
+      }),
+    );
 
   const expectedState = (pid: number): Omit<ServerState, "startedAt"> => ({
     rel: REL,
@@ -309,6 +339,8 @@ describe("startServer mmproj safe-flag retry bookkeeping", () => {
    * llama-server's does. Its default basename is not llama-server, so a missing
    * sidecar makes a stop refuse; T15 names it llama-server under LLAMA_CPP_BIN.
    * `preExecSleepSeconds` > 0 makes bash sleep that long before `exec -a` (T21).
+   * #409: it writes "$0.ready.$$" (the pid survives `exec`) right before `exec -a`,
+   * the readiness signal waitForArgvExec blocks on instead of spinning on ps reads.
    */
   const useArgvFakeBinary = (
     path = join(temp.devStorage, "argv-fake-llama-server"),
@@ -316,18 +348,25 @@ describe("startServer mmproj safe-flag retry bookkeeping", () => {
   ): void => {
     binary = path;
     const preExec = preExecSleepSeconds > 0 ? `sleep ${String(preExecSleepSeconds)}\n` : "";
-    writeFileSync(binary, `#!/bin/bash\n${preExec}exec -a "$0 $*" /bin/sleep 30\n`, {
-      mode: 0o755,
-    });
+    writeFileSync(
+      binary,
+      `#!/bin/bash\n${preExec}echo > "$0.ready.$$"\nexec -a "$0 $*" /bin/sleep 30\n`,
+      { mode: 0o755 },
+    );
   };
 
   /**
    * #291: until bash reaches `exec -a`, `ps -o command=` shows `/bin/bash <script> ...`, which a
    * seam-free stop reads as an unverifiable identity and refuses. Block, bounded, until the pid's
    * real command line starts with the fake's path. Returns how many ps reads that took.
+   * #409: a failed spawn reports pid 0; wait for nothing then, so no unhandled error
+   * escapes onEvent. Once past the first ps read, block on the fake's ready marker
+   * (written right before `exec -a`) and confirm the exec'd line with ps.
    */
   const waitForArgvExec = (pid: number): number => {
+    if (pid <= 0) return 0;
     const deadline = Date.now() + ARGV_EXEC_DEADLINE_MS;
+    const readyMarker = `${binary}.ready.${String(pid)}`;
     let polls = 0;
     let command: string | null = null;
     while (Date.now() <= deadline) {
@@ -336,23 +375,34 @@ describe("startServer mmproj safe-flag retry bookkeeping", () => {
       if (command !== null && (command === binary || command.startsWith(`${binary} `))) {
         return polls;
       }
-      sleepSync(25);
+      if (existsSync(readyMarker)) {
+        sleepSync(25);
+      } else {
+        while (Date.now() <= deadline && !existsSync(readyMarker)) sleepSync(25);
+      }
     }
     throw new Error(
       `argv fake pid ${String(pid)} did not reach exec -a within ${String(ARGV_EXEC_DEADLINE_MS)} ms; ps -o command= shows: ${command ?? "<no output>"}`,
     );
   };
 
-  /** Wrap a seam-free test's onEvent: each launch's first `waiting` event waits for `exec -a` first. */
-  const waitingForArgvExec =
-    (onEvent: (e: ServerEvent) => void) =>
-    (e: ServerEvent): void => {
-      const pid = launches[launches.length - 1]?.pid;
-      if (e.type === "waiting" && pid !== undefined && !execPolls.has(pid)) {
-        execPolls.set(pid, waitForArgvExec(pid));
+  /**
+   * Wrap a seam-free test's onEvent: each launch's first `waiting` event waits for `exec -a` first.
+   * #409: binds this test's arrays at wrap time, ignores events once teardown started, and
+   * skips the wait for a pid <= 0 (a failed spawn).
+   */
+  const waitingForArgvExec = (onEvent: (e: ServerEvent) => void) => {
+    const myLaunches = launches;
+    const myExecPolls = execPolls;
+    return (e: ServerEvent): void => {
+      if (torndown) return;
+      const pid = myLaunches[myLaunches.length - 1]?.pid;
+      if (e.type === "waiting" && pid !== undefined && pid > 0 && !myExecPolls.has(pid)) {
+        myExecPolls.set(pid, waitForArgvExec(pid));
       }
       onEvent(e);
     };
+  };
 
   /** #291: a refused retry stop fails here, naming the first pid's real command line, before any launch count. */
   const expectRetryStopNotRefused = (error: string | undefined): void => {
@@ -398,13 +448,19 @@ describe("startServer mmproj safe-flag retry bookkeeping", () => {
     };
     commandHook = null;
     execPolls = new Map();
+    torndown = false;
+    inFlight = [];
     spies = [
       spyOn(globalThis, "fetch").mockImplementation(fakeHealth as unknown as typeof fetch),
       spyOn(process, "kill").mockImplementation(fakeKill),
     ];
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    // #409: stop recording before the next test's beforeEach swaps the arrays, and
+    // keep the fake binary on disk until every start of this test has settled. The
+    // SIGKILLs below settle an in-flight start within about one poll interval.
+    torndown = true;
     restoreSpies();
     for (const { pid } of launches) {
       // pid 0 would address our own process group.
@@ -420,6 +476,7 @@ describe("startServer mmproj safe-flag retry bookkeeping", () => {
         // The child may already be gone.
       }
     }
+    await Promise.race([Promise.allSettled(inFlight), sleep(TEARDOWN_SETTLE_MS)]);
     process.env = originalEnv;
     temp.cleanup();
   });
@@ -1090,31 +1147,33 @@ describe("startServer mmproj safe-flag retry bookkeeping", () => {
         state: Omit<ServerState, "startedAt"> | null;
         startedAt: string | null;
       }[] = [];
-      const res = await startServer({
-        key: KEY,
-        target: "current",
-        resolved,
-        extraArgs,
-        timeoutSeconds: 1,
-        skipTuned: true,
-        onEvent: recordingLaunches(
-          waitingForArgvExec((e) => {
-            if (e.type === "timeout") timeoutPids.push(e.pid);
-            if (e.type !== "waiting") return;
-            if (launches.length === 1 && firstStates.length === 0) {
-              firstStates.push(readServerState(KEY, resolved));
-            }
-            if (launches.length === 2 && duringRetryPoll.length === 0) {
-              const state = readServerState(KEY, resolved);
-              duringRetryPoll.push({
-                pid: readServerPid(KEY, resolved),
-                state: withoutStartedAt(state),
-                startedAt: state?.startedAt ?? null,
-              });
-            }
-          }),
-        ),
-      });
+      const res = await trackStart(
+        startServer({
+          key: KEY,
+          target: "current",
+          resolved,
+          extraArgs,
+          timeoutSeconds: 1,
+          skipTuned: true,
+          onEvent: recordingLaunches(
+            waitingForArgvExec((e) => {
+              if (e.type === "timeout") timeoutPids.push(e.pid);
+              if (e.type !== "waiting") return;
+              if (launches.length === 1 && firstStates.length === 0) {
+                firstStates.push(readServerState(KEY, resolved));
+              }
+              if (launches.length === 2 && duringRetryPoll.length === 0) {
+                const state = readServerState(KEY, resolved);
+                duringRetryPoll.push({
+                  pid: readServerPid(KEY, resolved),
+                  state: withoutStartedAt(state),
+                  startedAt: state?.startedAt ?? null,
+                });
+              }
+            }),
+          ),
+        }),
+      );
       expectRetryStopNotRefused(res.error);
       expect(launches).toHaveLength(2);
       const firstPid = launches[0]!.pid;
@@ -1265,18 +1324,20 @@ describe("startServer mmproj safe-flag retry bookkeeping", () => {
       useArgvFakeBinary();
       // The workload binds externally; the endpoint, and so every /health probe, stays on the test host.
       extraArgs = [...extraArgs, "--host", "0.0.0.0"];
-      const settled = await startServer({
-        key: KEY,
-        target: "current",
-        resolved,
-        binary,
-        endpoint: { host: HOST, port: PORT },
-        extraArgs,
-        allowExternalBind: true,
-        timeoutSeconds: 1,
-        skipTuned: true,
-        onEvent: recordingLaunches(waitingForArgvExec(() => undefined)),
-      }).then(
+      const settled = await trackStart(
+        startServer({
+          key: KEY,
+          target: "current",
+          resolved,
+          binary,
+          endpoint: { host: HOST, port: PORT },
+          extraArgs,
+          allowExternalBind: true,
+          timeoutSeconds: 1,
+          skipTuned: true,
+          onEvent: recordingLaunches(waitingForArgvExec(() => undefined)),
+        }),
+      ).then(
         (res) => ({ res, error: null }),
         (error: unknown) => ({ res: null, error: String(error) }),
       );
@@ -1318,27 +1379,29 @@ describe("startServer mmproj safe-flag retry bookkeeping", () => {
       const sentDuringAbort: SentSignal[] = [];
       let abortScheduled = false;
       const startB = (): Promise<StartServerResult> =>
-        startServer({
-          key: KEY_B,
-          target: "current",
-          resolved,
-          binary,
-          endpoint: { host: HOST, port: PORT_B },
-          extraArgs: extraArgsB,
-          timeoutSeconds: 1,
-          skipTuned: true,
-          signal: controllerB.signal,
-          onEvent: recordingLaunches((e) => {
-            if (e.type === "launch") pids.b = e.pid;
-            if (e.type === "waiting" && !abortScheduled) {
-              abortScheduled = true;
-              // Lands in A's first-poll 1 s sleep while B is polling too.
-              setTimeout(() => {
-                sentDuringAbort.push(...abortCapturing(controllerA));
-              }, 50);
-            }
+        trackStart(
+          startServer({
+            key: KEY_B,
+            target: "current",
+            resolved,
+            binary,
+            endpoint: { host: HOST, port: PORT_B },
+            extraArgs: extraArgsB,
+            timeoutSeconds: 1,
+            skipTuned: true,
+            signal: controllerB.signal,
+            onEvent: recordingLaunches((e) => {
+              if (e.type === "launch") pids.b = e.pid;
+              if (e.type === "waiting" && !abortScheduled) {
+                abortScheduled = true;
+                // Lands in A's first-poll 1 s sleep while B is polling too.
+                setTimeout(() => {
+                  sentDuringAbort.push(...abortCapturing(controllerA));
+                }, 50);
+              }
+            }),
           }),
-        });
+        );
       const resA = await start(
         (e) => {
           if (e.type === "launch") pids.a = e.pid;
