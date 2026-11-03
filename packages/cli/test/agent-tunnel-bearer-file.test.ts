@@ -5,6 +5,7 @@
 // and new flag fields through a double cast so this file compiles (and
 // fails by assertion) before the fix lands.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -58,6 +59,36 @@ function augment(env: NodeJS.ProcessEnv, devStorage: string): NodeJS.ProcessEnv 
     ...env,
     LLAMACTL_CONFIG: join(devStorage, "config"),
     LLAMACTL_AGENT_DIR: join(devStorage, "agent"),
+  };
+}
+
+interface OccupiedPort {
+  port: number;
+  release: () => Promise<void>;
+}
+
+// Bun.serve in the spawned agent uses SO_REUSEPORT, which still fails to
+// bind while a plain (non-reuseport) listener holds the port — so a
+// node:net listener makes the post-validation bind fail fast with
+// "already in use" instead of starting a server the test must tear down.
+async function occupyPort(): Promise<OccupiedPort> {
+  const server = createServer();
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  if (address === null || typeof address === "string") {
+    server.close();
+    throw new Error("expected a bound TCP port");
+  }
+  return {
+    port: address.port,
+    release: (): Promise<void> =>
+      new Promise((resolve) => {
+        server.close(() => {
+          resolve();
+        });
+      }),
   };
 }
 
@@ -222,6 +253,142 @@ describe("agent serve bearer-file flags (#289)", () => {
     const err640 = expectErr(resolve(with640, {}));
     expect(err640).toContain(weak);
     expect(err640).toContain("0640");
+  });
+
+  function seedServeAgentDir(env: NodeJS.ProcessEnv): string {
+    const agentDir = mkdtempSync(join(dir, "serve-"));
+    const init = runCli(["agent", "init", `--dir=${agentDir}`, "--json"], env);
+    expect(init.code).toBe(0);
+    return agentDir;
+  }
+
+  test("a valid 0600 --central-bearer-file passes validation and reaches the serve bind", async () => {
+    const temp = makeTempRuntime();
+    const env = augment(temp.env, temp.devStorage);
+    const occupied = await occupyPort();
+    try {
+      const agentDir = seedServeAgentDir(env);
+      const bearer = writeBearer("wire-dial.bearer", "wire-dial-tok\n", 0o600);
+      const r = runCli(
+        [
+          "agent",
+          "serve",
+          `--dir=${agentDir}`,
+          `--port=${String(occupied.port)}`,
+          "--dial-central=wss://127.0.0.1:1/tunnel",
+          `--central-bearer-file=${bearer}`,
+        ],
+        env,
+      );
+      expect(r.stderr).not.toContain("must be provided together");
+      expect(r.stderr).toContain("already in use");
+      expect(r.stderr).not.toContain("wire-dial-tok");
+    } finally {
+      await occupied.release();
+      temp.cleanup();
+    }
+  });
+
+  test("LLAMACTL_TUNNEL_BEARER_FILE passes validation and reaches the serve bind", async () => {
+    const temp = makeTempRuntime();
+    const env = augment(temp.env, temp.devStorage);
+    const occupied = await occupyPort();
+    try {
+      const agentDir = seedServeAgentDir(env);
+      const bearer = writeBearer("env-wire-dial.bearer", "env-wire-tok\n", 0o600);
+      const r = runCli(
+        [
+          "agent",
+          "serve",
+          `--dir=${agentDir}`,
+          `--port=${String(occupied.port)}`,
+          "--dial-central=wss://127.0.0.1:1/tunnel",
+        ],
+        { ...env, LLAMACTL_TUNNEL_BEARER_FILE: bearer },
+      );
+      expect(r.stderr).not.toContain("must be provided together");
+      expect(r.stderr).toContain("already in use");
+      expect(r.stderr).not.toContain("env-wire-tok");
+    } finally {
+      await occupied.release();
+      temp.cleanup();
+    }
+  });
+
+  test("a whitespace-only 0600 --central-bearer-file is refused as empty, not wired as a bearer", () => {
+    const temp = makeTempRuntime();
+    try {
+      const agentDir = seedServeAgentDir(augment(temp.env, temp.devStorage));
+      const bearer = writeBearer("blank-dial.bearer", "   \n", 0o600);
+      const r = runCli(
+        [
+          "agent",
+          "serve",
+          `--dir=${agentDir}`,
+          "--dial-central=wss://127.0.0.1:1/tunnel",
+          `--central-bearer-file=${bearer}`,
+        ],
+        augment(temp.env, temp.devStorage),
+      );
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain(bearer);
+      expect(r.stderr).toContain("empty");
+    } finally {
+      temp.cleanup();
+    }
+  });
+
+  test("a valid 0600 --tunnel-bearer-file passes validation and reaches the serve bind", async () => {
+    const temp = makeTempRuntime();
+    const env = augment(temp.env, temp.devStorage);
+    const occupied = await occupyPort();
+    try {
+      const agentDir = seedServeAgentDir(env);
+      const bearer = writeBearer("wire-central.bearer", "wire-central-tok\n", 0o600);
+      const r = runCli(
+        [
+          "agent",
+          "serve",
+          `--dir=${agentDir}`,
+          `--port=${String(occupied.port)}`,
+          "--tunnel-central=true",
+          `--tunnel-bearer-file=${bearer}`,
+        ],
+        env,
+      );
+      expect(r.stderr).not.toContain("requires --tunnel-bearer");
+      expect(r.stderr).toContain("already in use");
+      expect(r.stderr).not.toContain("wire-central-tok");
+    } finally {
+      await occupied.release();
+      temp.cleanup();
+    }
+  });
+
+  test("LLAMACTL_TUNNEL_CENTRAL_BEARER_FILE passes validation and reaches the serve bind", async () => {
+    const temp = makeTempRuntime();
+    const env = augment(temp.env, temp.devStorage);
+    const occupied = await occupyPort();
+    try {
+      const agentDir = seedServeAgentDir(env);
+      const bearer = writeBearer("env-wire-central.bearer", "env-central-tok\n", 0o600);
+      const r = runCli(
+        [
+          "agent",
+          "serve",
+          `--dir=${agentDir}`,
+          `--port=${String(occupied.port)}`,
+          "--tunnel-central=true",
+        ],
+        { ...env, LLAMACTL_TUNNEL_CENTRAL_BEARER_FILE: bearer },
+      );
+      expect(r.stderr).not.toContain("requires --tunnel-bearer");
+      expect(r.stderr).toContain("already in use");
+      expect(r.stderr).not.toContain("env-central-tok");
+    } finally {
+      await occupied.release();
+      temp.cleanup();
+    }
   });
 
   test("agent serve --central-bearer-file=<0644 file> exits 1 naming path + mode, never the secret", () => {
