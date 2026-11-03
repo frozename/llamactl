@@ -63,7 +63,7 @@ describe("buildJsonClassifierWorkload — fence with no language tag", () => {
   test("```-fence without lang tag parses to memory_ignored", () => {
     const r = scorer(
       helperRow(JSON.stringify({ classification: "memory_ignored", reason: "g" })),
-      '```\n{"classification":"memory_ignored","reason":"r"}\n```',
+      '```\n{"classification":"memory_ignored","reason":"r"}\n```\nnote {x}',
     );
     expect(r.prediction).toBe("memory_ignored");
   });
@@ -226,6 +226,24 @@ describe("buildJsonClassifierWorkload — default normalize with no validLabels"
       JSON.stringify({ label: 42 }),
     ) as ClassifierScore;
     expect(r.prediction).toBe("42");
+  });
+
+  test('scores label=null → "parse_error" (pins raw===null guard)', () => {
+    const wl = buildJsonClassifierWorkload({
+      name: "x",
+      corpus_path: "/unused",
+      labelField: "label",
+    });
+    const r = wl.scorer(
+      {
+        messages: [
+          { role: "user", content: "u" },
+          { role: "assistant", content: JSON.stringify({ label: "gold" }) },
+        ],
+      },
+      JSON.stringify({ label: null }),
+    ) as ClassifierScore;
+    expect(r.prediction).toBe("parse_error");
   });
 });
 
