@@ -1,9 +1,9 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment -- JSON.parse returns any; test fixtures inspect journal lines with explicit type annotations. */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { appendCostJournal } from "../src/journal.js";
+import { appendCostJournal, defaultCostJournalPath } from "../src/journal.js";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 describe("appendCostJournal", () => {
@@ -51,5 +51,25 @@ describe("appendCostJournal", () => {
       process.stderr.write = orig;
     }
     expect(stderrLines.join("")).toContain("cost-guardian");
+  });
+});
+
+describe("defaultCostJournalPath", () => {
+  test("trimmed override beats DEV_STORAGE", () => {
+    expect(
+      defaultCostJournalPath({ LLAMACTL_COST_JOURNAL: " /j/cj.jsonl ", DEV_STORAGE: "/dev" }),
+    ).toBe("/j/cj.jsonl");
+  });
+
+  test("whitespace-only override is ignored in favor of DEV_STORAGE", () => {
+    expect(defaultCostJournalPath({ LLAMACTL_COST_JOURNAL: "  ", DEV_STORAGE: "/dev" })).toBe(
+      join("/dev", "healer", "cost-journal.jsonl"),
+    );
+  });
+
+  test("empty env falls back to homedir", () => {
+    expect(defaultCostJournalPath({})).toBe(
+      join(homedir(), ".llamactl", "healer", "cost-journal.jsonl"),
+    );
   });
 });
