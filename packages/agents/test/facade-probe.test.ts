@@ -177,6 +177,7 @@ describe("probeFleetViaNova envelope edge cases", () => {
           gateways: [
             { name: "g1", baseUrl: "http://g1/v1", ok: true, status: 200 },
             { name: "g2", baseUrl: "http://g2/v1", ok: false, status: 502, error: "bad" },
+            { name: "g3", baseUrl: "http://g3/v1", ok: false, status: 503, error: "timeout" },
           ],
           siriusProviders: [
             { name: "p1", kind: "openai", baseUrl: "http://p1/v1", ok: false, status: 500 },
@@ -185,8 +186,8 @@ describe("probeFleetViaNova envelope edge cases", () => {
         }),
       ),
     );
-    expect(report.probes).toHaveLength(4);
-    expect(report.unhealthy).toBe(2);
+    expect(report.probes).toHaveLength(5);
+    expect(report.unhealthy).toBe(3);
   });
 
   test("report.ts round-trips through ISO parsing", async () => {
