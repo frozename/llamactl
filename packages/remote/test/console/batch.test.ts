@@ -150,6 +150,33 @@ describe("console batch guard", () => {
     expect(res.status).toBe(404);
     expect(await res.json()).toEqual({ error: "procedure_not_exposed" });
     expect(spy.calls).toEqual([]);
+    expect(remote.checkConsoleTrpcPath("nodeList%2Cenv", new Set(["env", "nodeList"]))).toEqual({
+      ok: true,
+      names: ["nodeList", "env"],
+    });
+  });
+
+  test("(R7) GET nodeList%2Cenv?batch=1 → 200, both allowlisted segments run", async () => {
+    const r = api();
+    const spy = makeSpyBackend(spyFixtures());
+    const h = await startConsole(r, {
+      distPath: consoleTestFixture().distPath,
+      backend: spy.router,
+    });
+    const res = await fetch(
+      trpcUrl(h, "nodeList%2Cenv", { batch: true, input: { "0": null, "1": null } }),
+      {
+        headers: apiHeaders(h),
+      },
+    );
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).not.toContain("sentinel");
+    const rows = JSON.parse(text) as { result: { data: unknown } }[];
+    expect(rows).toHaveLength(2);
+    expect(rows[0]?.result.data).toBeDefined();
+    expect(rows[1]?.result.data).toBeDefined();
+    expect(spy.calls.map((c) => c.path)).toEqual(["nodeList", "env"]);
   });
 
   for (const path of ["nodeList,,env", ",env", "env,", "env,env"]) {
