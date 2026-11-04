@@ -41,6 +41,27 @@ export {
 } from "./config/provider-nodes.js";
 export * as siriusProviders from "./config/sirius-providers.js";
 export {
+  buildConsoleRouter,
+  CONSOLE_ALLOWLIST,
+  type ConsoleAllowlistEntry,
+  type ConsoleProcedureType,
+} from "./console/allowlist.js";
+export {
+  checkConsoleHost,
+  checkConsoleSameOrigin,
+  checkConsoleSession,
+  checkConsoleTrpcPath,
+  type ConsoleSession,
+  type ConsoleTrpcPathCheck,
+  newConsoleSession,
+} from "./console/guards.js";
+export { redactDeep } from "./console/redact.js";
+export {
+  type RunningConsoleServer,
+  startConsoleServer,
+  type StartConsoleServerOptions,
+} from "./console/server.js";
+export {
   __resetDispatchClientCacheForTests,
   buildDispatchRouter,
   type BuildDispatchRouterOptions,
