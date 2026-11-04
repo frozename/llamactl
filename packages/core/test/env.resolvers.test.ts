@@ -30,6 +30,16 @@ describe("env.resolveRuntimeDir — precedence", () => {
     ).toBe("/tmp/tp/ai-models/local-ai");
   });
 
+  test("(2b) LLAMACTL_TEST_PROFILE outranks DEV_STORAGE when LOCAL_AI_RUNTIME_DIR is unset", () => {
+    expect(
+      resolveRuntimeDir({
+        DEV_STORAGE: "/tmp/ds",
+        LLAMACTL_TEST_PROFILE: "/tmp/tp",
+        LLAMA_CPP_MACHINE_PROFILE: "macbook-pro-48g",
+      }),
+    ).toBe("/tmp/tp/ai-models/local-ai");
+  });
+
   test("(3) with only DEV_STORAGE=/tmp/ds, result is /tmp/ds/ai-models/local-ai", () => {
     expect(
       resolveRuntimeDir({
@@ -265,10 +275,18 @@ describe("env.resolveEnv — cache + context defaults", () => {
     const resolved2 = resolveEnv({
       DEV_STORAGE: "/tmp/ds",
       LLAMA_CPP_MACHINE_PROFILE: "macbook-pro-48g",
-      LLAMA_CPP_CACHE: "/my/cache",
-      LLAMA_CACHE: "/my/cache",
+      LLAMA_CPP_CACHE: "/a",
+      LLAMA_CACHE: "/b",
     });
-    expect(resolved2.LLAMA_CACHE).toBe("/my/cache");
+    expect(resolved2.LLAMA_CACHE).toBe("/b");
+
+    const resolved3 = resolveEnv({
+      DEV_STORAGE: "/tmp/ds",
+      LLAMA_CPP_MACHINE_PROFILE: "macbook-pro-48g",
+      LLAMA_CPP_CACHE: "/a",
+    });
+    expect(resolved3.LLAMA_CACHE).toBe("/a");
+    expect(resolved3.LLAMA_CPP_CACHE).toBe("/a");
   });
 
   test("(20) LOCAL_AI_CONTEXT_LENGTH defaults to profile gemma ctx, overridable", () => {
