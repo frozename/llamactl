@@ -55,6 +55,12 @@ export {
   type ConsoleTrpcPathCheck,
   newConsoleSession,
 } from "./console/guards.js";
+export {
+  CONSOLE_NODE_SEGMENT,
+  type ConsoleNodeCheck,
+  parseConsoleNodePath,
+  validateConsoleNode,
+} from "./console/node-route.js";
 export { redactDeep } from "./console/redact.js";
 export {
   type RunningConsoleServer,
