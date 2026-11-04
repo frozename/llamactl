@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, setSystemTime, test } from "bun:test";
 
 import {
   __jsonCompletionToSseForTests,
@@ -103,13 +103,13 @@ test("jsonCompletionToSse: defaults missing id and model to chatcmpl-stream and 
 });
 
 test("jsonCompletionToSse: defaults missing created to the current wall-clock second", () => {
-  const before = Math.floor(Date.now() / 1000);
-  const frames = parseFrames(__jsonCompletionToSseForTests({ choices: [] }));
-  const after = Math.floor(Date.now() / 1000);
-  const created = frames[0]?.created;
-  expect(typeof created).toBe("number");
-  expect(created).toBeGreaterThanOrEqual(before);
-  expect(created).toBeLessThanOrEqual(after);
+  setSystemTime(1_700_000_000_500);
+  try {
+    const frames = parseFrames(__jsonCompletionToSseForTests({ choices: [] }));
+    expect(frames[0]?.created).toBe(1_700_000_000);
+  } finally {
+    setSystemTime();
+  }
 });
 
 test("jsonCompletionToSse: delta always carries role, defaulting a missing role to assistant", () => {
