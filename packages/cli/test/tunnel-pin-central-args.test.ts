@@ -152,9 +152,11 @@ describe("tunnel pin-central — precondition errors", () => {
 
   test("no --context uses currentContext which may lack tunnelCentralUrl", async () => {
     // Mutation: default to contexts[0] or the wrong name instead of cfg.currentContext.
+    // currentContext ('default') is deliberately NOT contexts[0]: contexts[0]
+    // ('remote') has a tunnelCentralUrl, so a contexts[0] fallback would dial
+    // instead of refusing with this error.
     seedConfig(
       [
-        { name: "default", cluster: "home", user: "me", defaultNode: "local" },
         {
           name: "remote",
           cluster: "home",
@@ -162,6 +164,7 @@ describe("tunnel pin-central — precondition errors", () => {
           defaultNode: "local",
           tunnelCentralUrl: "https://127.0.0.1:1",
         },
+        { name: "default", cluster: "home", user: "me", defaultNode: "local" },
       ],
       "default",
     );
