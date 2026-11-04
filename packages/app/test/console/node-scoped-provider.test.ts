@@ -8,11 +8,12 @@ import type { ComponentType, ReactNode } from "react";
 
 import { QueryClient, useQueryClient } from "@tanstack/react-query";
 import { afterAll, describe, expect, test } from "bun:test";
-import { createElement } from "react";
+import { act, createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 const PROVIDER_SPEC = "../../src/console/node-scoped-provider.tsx";
 const SCOPE_SPEC = "../../src/console/create-node-scope.ts";
+const TRPC_SPEC = "../../src/lib/trpc";
 
 // The provider imports src/lib/trpc, which builds an IPC UI client at
 // eval time; without the preload bridge global that eval throws before
@@ -48,6 +49,12 @@ interface CreateNodeScopeModule {
     fetch?: FakeFetch;
     EventSource?: unknown;
   }) => NodeScope;
+}
+
+interface TrpcHooksModule {
+  trpc: {
+    useUtils: () => { client: unknown };
+  };
 }
 
 interface UntypedProcedures {
@@ -96,6 +103,93 @@ function makeRecordingFetch(): {
     );
   };
   return { calls, fakeFetch };
+}
+
+// Bun has no DOM, so the mounted-root test below feeds react-dom/client
+// the minimal element/document/window surface it touches while mounting
+// and committing a provider-only tree (no host nodes are ever created,
+// listeners are registered and never dispatched).
+interface ShimEventTargetLike {
+  addEventListener: (_type: string, _listener: unknown, _options?: unknown) => void;
+  removeEventListener: (_type: string, _listener: unknown, _options?: unknown) => void;
+}
+
+interface ShimElementLike extends ShimEventTargetLike {
+  nodeType: number;
+  nodeName: string;
+  tagName: string;
+  ownerDocument: ShimDocumentLike | null;
+  setAttribute: (_name: string, _value: string) => void;
+  style: Record<string, string>;
+}
+
+interface ShimTextLike extends ShimEventTargetLike {
+  nodeType: number;
+  textContent: string;
+  ownerDocument: ShimDocumentLike | null;
+}
+
+interface ShimDocumentLike extends ShimEventTargetLike {
+  nodeType: number;
+  visibilityState: string;
+  defaultView: ShimWindowLike | null;
+  documentElement: ShimElementLike;
+  createElement: (_tagName: string) => ShimElementLike;
+  createTextNode: (_text: string) => ShimTextLike;
+}
+
+interface ShimWindowLike extends ShimEventTargetLike {
+  document: ShimDocumentLike;
+  HTMLIFrameElement: new () => unknown;
+  requestAnimationFrame: (_callback: () => void) => number;
+  cancelAnimationFrame: (_handle: number) => void;
+}
+
+function makeShimTarget(): ShimEventTargetLike {
+  return {
+    addEventListener: (): undefined => undefined,
+    removeEventListener: (): undefined => undefined,
+  };
+}
+
+function makeShimWindow(): ShimWindowLike {
+  const doc: ShimDocumentLike = {
+    ...makeShimTarget(),
+    nodeType: 9,
+    visibilityState: "visible",
+    defaultView: null,
+    documentElement: undefined as unknown as ShimElementLike,
+    createElement: (): ShimElementLike => ({
+      ...makeShimTarget(),
+      nodeType: 1,
+      nodeName: "DIV",
+      tagName: "DIV",
+      ownerDocument: doc,
+      setAttribute: (): undefined => undefined,
+      style: {},
+    }),
+    createTextNode: (text: string): ShimTextLike => ({
+      ...makeShimTarget(),
+      nodeType: 3,
+      textContent: text,
+      ownerDocument: doc,
+    }),
+  };
+  const win: ShimWindowLike = {
+    ...makeShimTarget(),
+    document: doc,
+    HTMLIFrameElement: class ShimIFrame {
+      readonly shim = true;
+    },
+    requestAnimationFrame: (callback: () => void): number =>
+      setTimeout(callback, 16) as unknown as number,
+    cancelAnimationFrame: (handle: number): void => {
+      clearTimeout(handle);
+    },
+  };
+  doc.defaultView = win;
+  doc.documentElement = win.document.createElement("div");
+  return win;
 }
 
 describe("NodeScopedProvider (#410 P3)", () => {
@@ -186,5 +280,78 @@ describe("NodeScopedProvider (#410 P3)", () => {
     expect(captured[0]).toBeInstanceOf(QueryClient);
     expect(captured[1]).toBeInstanceOf(QueryClient);
     expect(captured[0]).not.toBe(captured[1]);
+  });
+
+  test("one mounted provider re-rendered with a new node swaps client, cache and request path", async () => {
+    const providerMod = await importProviderModule();
+    expect(providerMod?.NodeScopedProvider).toBeFunction();
+    const NodeScopedProvider = providerMod!.NodeScopedProvider!;
+    const trpcMod = (await import(TRPC_SPEC).catch(() => null)) as TrpcHooksModule | null;
+    expect(trpcMod?.trpc).toBeDefined();
+    const trpc = trpcMod!.trpc;
+
+    const queryClients: QueryClient[] = [];
+    const trpcClients: unknown[] = [];
+    function Capture(): ReactNode {
+      queryClients.push(useQueryClient());
+      trpcClients.push(trpc.useUtils().client);
+      return null;
+    }
+
+    // The mounted root needs window + document before react-dom/client
+    // is evaluated; the provider creates its scope with the ambient
+    // fetch, so the recording fetch must be installed before mount.
+    const hadWindow = "window" in globalThis;
+    const hadDocument = "document" in globalThis;
+    const previousFetch = globalThis.fetch;
+    const { calls, fakeFetch } = makeRecordingFetch();
+    const shimWindow = makeShimWindow();
+    globalThis.window = shimWindow as unknown as Window & typeof globalThis;
+    globalThis.document = shimWindow.document as unknown as Document;
+    (globalThis as Record<string, unknown>)["IS_REACT_ACT_ENVIRONMENT"] = true;
+    globalThis.fetch = fakeFetch as unknown as typeof globalThis.fetch;
+
+    try {
+      const { createRoot } = await import("react-dom/client");
+      const root = createRoot(shimWindow.document.createElement("div") as unknown as Element);
+
+      await act(() => {
+        root.render(
+          createElement(NodeScopedProvider, { node: "a", baseUrl: "/api" }, createElement(Capture)),
+        );
+        return Promise.resolve();
+      });
+      await act(() => {
+        root.render(
+          createElement(NodeScopedProvider, { node: "b", baseUrl: "/api" }, createElement(Capture)),
+        );
+        return Promise.resolve();
+      });
+
+      expect(queryClients).toHaveLength(2);
+      expect(queryClients[0]).toBeInstanceOf(QueryClient);
+      expect(queryClients[1]).toBeInstanceOf(QueryClient);
+      expect(queryClients[0]).not.toBe(queryClients[1]);
+      expect(trpcClients[0]).toBeDefined();
+      expect(trpcClients[0]).not.toBe(trpcClients[1]);
+
+      await (trpcClients[1] as UntypedProcedures).serverStatus.query({ workload: "w1" }).then(
+        (v) => ({ v }),
+        (e: unknown) => ({ e }),
+      );
+
+      expect(calls.length).toBeGreaterThan(0);
+      expect(calls[calls.length - 1]!.startsWith("/api/n/b/trpc")).toBe(true);
+
+      await act(() => {
+        root.unmount();
+        return Promise.resolve();
+      });
+    } finally {
+      globalThis.fetch = previousFetch;
+      delete (globalThis as Record<string, unknown>)["IS_REACT_ACT_ENVIRONMENT"];
+      if (!hadDocument) delete (globalThis as Record<string, unknown>)["document"];
+      if (!hadWindow) delete (globalThis as Record<string, unknown>)["window"];
+    }
   });
 });
