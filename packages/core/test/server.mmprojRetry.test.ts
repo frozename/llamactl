@@ -176,6 +176,20 @@ const sleep = (ms: number): Promise<void> =>
     setTimeout(resolve, ms);
   });
 
+/** SIGKILL a fake's detached group then the pid itself; either may already be gone. */
+const forceKill = (pid: number): void => {
+  try {
+    realKill(-pid, "SIGKILL");
+  } catch {
+    // The detached group may already be gone.
+  }
+  try {
+    realKill(pid, "SIGKILL");
+  } catch {
+    // The child may already be gone.
+  }
+};
+
 /** Blocking sleep for a wait that must finish inside a synchronous onEvent callback. */
 const sleepSync = (ms: number): void => {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
@@ -522,16 +536,7 @@ describe("startServer mmproj safe-flag retry bookkeeping", () => {
     for (const { pid } of myLaunches) {
       // pid 0 would address our own process group.
       if (pid <= 0 || !isAlive(pid)) continue;
-      try {
-        realKill(-pid, "SIGKILL");
-      } catch {
-        // The detached group may already be gone.
-      }
-      try {
-        realKill(pid, "SIGKILL");
-      } catch {
-        // The child may already be gone.
-      }
+      forceKill(pid);
     }
     const settledInTime = await Promise.race([
       Promise.allSettled(myInFlight).then(() => true),
@@ -543,16 +548,7 @@ describe("startServer mmproj safe-flag retry bookkeeping", () => {
     const reapedLatePids: number[] = [];
     for (const pid of myToken.lateLaunchPids) {
       if (!isAlive(pid)) continue;
-      try {
-        realKill(-pid, "SIGKILL");
-      } catch {
-        // The detached group may already be gone.
-      }
-      try {
-        realKill(pid, "SIGKILL");
-      } catch {
-        // The child may already be gone.
-      }
+      forceKill(pid);
       reapedLatePids.push(pid);
     }
     evidence.push({
@@ -1607,7 +1603,7 @@ describe("startServer mmproj safe-flag retry bookkeeping", () => {
 
   test(
     "T23 failed spawn reports pid 0: the wrappers skip the exec wait and afterEach skips the kill",
-    async () => {
+    () => {
       // A real ENOENT spawn also crashes this runner with an unhandled 'error' event, so
       // feed the wrappers the pid 0 launch event launchBackground emits for one instead.
       const events: ServerEvent[] = [];
