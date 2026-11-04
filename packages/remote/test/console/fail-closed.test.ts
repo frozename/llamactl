@@ -79,9 +79,12 @@ describe("console fail-closed node dispatch", () => {
     const { distPath } = unresolvableFixture();
     const { backend, calls } = failClosedBackend();
     const h = await startConsole(r, { backend, distPath });
-    const res = await fetch(trpcUrl(h, "serverStatus", { input: { workload: "w1" } }), {
-      headers: apiHeaders(h),
-    });
+    const res = await fetch(
+      trpcUrl(h, "serverStatus", { input: { workload: "w1" }, node: "remote1" }),
+      {
+        headers: apiHeaders(h),
+      },
+    );
     expect(res.status).toBe(412);
     expect(await res.text()).toContain("node_credentials_unavailable");
     expect(calls).toEqual([]);
@@ -93,9 +96,12 @@ describe("console fail-closed node dispatch", () => {
     writeFileSync(configPath, "this is not: [valid kubeconfig yaml{{{");
     const { backend, calls } = failClosedBackend();
     const h = await startConsole(r, { backend, distPath });
-    const res = await fetch(trpcUrl(h, "serverStatus", { input: { workload: "w1" } }), {
-      headers: apiHeaders(h),
-    });
+    const res = await fetch(
+      trpcUrl(h, "serverStatus", { input: { workload: "w1" }, node: "remote1" }),
+      {
+        headers: apiHeaders(h),
+      },
+    );
     expect(res.status).toBe(412);
     expect(await res.text()).toContain("kubeconfig_unreadable");
     expect(calls).toEqual([]);
@@ -135,7 +141,9 @@ describe("console fail-closed node dispatch", () => {
       onUnresolvable: "error",
     });
     const h = await startConsole(r, { backend, distPath });
-    const res = await fetch(trpcUrl(h, "nodeList"), { headers: apiHeaders(h) });
+    const res = await fetch(trpcUrl(h, "nodeList", { node: "remote1" }), {
+      headers: apiHeaders(h),
+    });
     expect(res.status).toBe(200);
     expect(calls).toEqual(["nodeList"]);
   });
@@ -144,9 +152,12 @@ describe("console fail-closed node dispatch", () => {
     const r = api();
     const { distPath } = unresolvableFixture();
     const h = await startConsole(r, { distPath });
-    const res = await fetch(trpcUrl(h, "serverStatus", { input: { workload: "w1" } }), {
-      headers: apiHeaders(h),
-    });
+    const res = await fetch(
+      trpcUrl(h, "serverStatus", { input: { workload: "w1" }, node: "remote1" }),
+      {
+        headers: apiHeaders(h),
+      },
+    );
     expect(res.status).toBe(412);
     expect(await res.text()).toContain("node_credentials_unavailable");
   });

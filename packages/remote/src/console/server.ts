@@ -1,6 +1,11 @@
-// Bun-hosted, loopback-only operator console server for #410 P2b.
+// Bun-hosted, loopback-only operator console server for #410 P2b/P3.
 // Guards run in order Host → (api) Sec-Fetch-Site/Origin → session
-// cookie → batch path; static serving folds in the plan's static.ts
+// cookie → node segment → batch path; the API mount is per-request:
+// `/api/n/:node/trpc/*` validates the node against the kubeconfig and
+// binds it into ctx, so concurrent tabs cannot redirect each other and
+// the kubeconfig defaultNode never substitutes for the path node.
+// "Duplicate tab" copying sessionStorage is the client's concern
+// (P3 client slice). Static serving folds in the plan's static.ts
 // (SPA fallback for extensionless paths only). The default backend is
 // fail-closed: an unresolvable dispatch target is a PRECONDITION_FAILED,
 // never a silent fallthrough to the local caller.
@@ -20,6 +25,7 @@ import {
   type ConsoleSession,
   newConsoleSession,
 } from "./guards.js";
+import { parseConsoleNodePath, validateConsoleNode } from "./node-route.js";
 
 export interface StartConsoleServerOptions {
   port: number;
@@ -34,8 +40,6 @@ export interface RunningConsoleServer {
   url: string;
   stop(): Promise<void>;
 }
-
-const API_PREFIX = "/api/trpc";
 
 const CSP =
   "default-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'";
@@ -88,14 +92,19 @@ export function startConsoleServer(opts: StartConsoleServerOptions): Promise<Run
   const handleApi = (req: Request, pathname: string): Response | Promise<Response> => {
     const denied = checkConsoleSameOrigin(req) ?? checkConsoleSession(req, currentSession());
     if (denied !== null) return denied;
-    const path = pathname.slice(API_PREFIX.length + 1);
-    const check = checkConsoleTrpcPath(path, trpcNames);
+    const route = parseConsoleNodePath(pathname);
+    if (route.kind === "none") return jsonError(404, "not_found");
+    if (route.kind === "bad") return jsonError(400, "bad_node");
+    const check = checkConsoleTrpcPath(route.procPath, trpcNames);
     if (!check.ok) return jsonError(check.status, check.error);
+    const validated = validateConsoleNode(route.node);
+    if (!validated.ok) return jsonError(validated.status, validated.error);
+    const node = validated.node;
     return fetchRequestHandler({
-      endpoint: API_PREFIX,
+      endpoint: route.endpoint,
       req,
       router: consoleRouter,
-      createContext: () => ({ node: null }),
+      createContext: () => ({ node }),
     });
   };
 
@@ -141,7 +150,7 @@ export function startConsoleServer(opts: StartConsoleServerOptions): Promise<Run
       const url = new URL(req.url);
       const denied = checkConsoleHost(req, boundPort);
       if (denied !== null) return secure(denied);
-      if (url.pathname === API_PREFIX || url.pathname.startsWith(`${API_PREFIX}/`)) {
+      if (url.pathname === "/api" || url.pathname.startsWith("/api/")) {
         return secure(handleApi(req, url.pathname));
       }
       return secure(serveStatic(url.pathname));
