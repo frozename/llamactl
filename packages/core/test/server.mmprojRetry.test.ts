@@ -10,7 +10,7 @@ import { resolveBuildId } from "../src/build.js";
 import { ctxForModel } from "../src/ctx.js";
 import { resolveEnv } from "../src/env.js";
 import { processCommand } from "../src/pidIdentity.js";
-import { mkdirSync, writeFileSync } from "../src/safe-fs.js";
+import { existsSync, mkdirSync, writeFileSync } from "../src/safe-fs.js";
 import {
   readServerPid,
   readServerState,
@@ -43,8 +43,25 @@ import { envForTemp, makeTempRuntime } from "./helpers.js";
 // A call aimed at a pid <= 0 is recorded and never forwarded (kill(0) would signal
 // this runner's own process group), and every spied test asserts there was none.
 // Every seam-free test whose retry stops the argv fake (T7 (i)-(iv), T12a, T12b, T15,
-// T18, T19, T21) waits in each launch's first waiting event until ps shows the exec'd
-// command line, and asserts the retry stop was not refused before counting launches (#291).
+// T18, T19, T21) waits in each launch's first waiting event until the fake's ready
+// marker appears and ps confirms the exec'd command line, and asserts the retry stop
+// was not refused before counting launches (#291).
+// #409 (macOS CI flake): a start that outlives its test must not reach the next test's
+// arrays or a deleted fake binary. Every startServer promise is tracked in inFlight;
+// afterEach captures this test's state locally, flags its per-test TeardownToken, kills
+// the launched pids, and waits (bounded, with a hook timeout above the bound, since bun
+// times hooks out at 5 s) for those starts to settle before restoring the env and
+// cleaning up the temp dir. The event wrappers bind their test's token, arrays and
+// binary at wrap time and drop events once that token is torn down, so a shared flag
+// reset by the next beforeEach can never re-open a finished test. A launch that spawns
+// after afterEach's SIGKILL loop is recorded in the token and reaped by afterEach, so no
+// child leaks past cleanup. T22 leaves a start in flight for afterEach, T23 feeds the
+// wrappers a failed spawn's pid 0, and T24 audits the evidence afterEach records: the
+// outliving start settled before cleanup, its late retry child was recorded and reaped,
+// the temp dir stayed deleted, and no event landed after teardown. Removing the
+// settle-before-cleanup wait, the token drop, the pid <= 0 guards or the inFlight
+// tracking fails one of these tests. The argv fake writes "$0.ready.$$" right before
+// `exec -a`, so waitForArgvExec blocks on that marker instead of spinning on ps reads.
 
 const KEY = { name: "mmproj-retry-wl" };
 // T20's second workload, started concurrently with KEY on its own port.
@@ -76,12 +93,19 @@ const PORT_BOUND = `port ${HOST}:${String(PORT)} is already bound`;
 const FOREIGN_LISTENER = "another process is likely bound to this port";
 // What the first pid "is" once the identity seam stops vouching for it.
 const FOREIGN_COMMAND = "/bin/sleep 30";
-const TEST_TIMEOUT_MS = 20_000;
+// #409: two exec waits plus the stopServer grace plus the ps polls must fit on a loaded macOS runner.
+const TEST_TIMEOUT_MS = 30_000;
 // What a refused retry stop reports (server.ts retryWithMmprojSafeFlags).
 const REFUSED_RETRY = "refusing mmproj retry";
 // #291: bound on waiting for the argv fake to reach `exec -a`, and T21's pre-exec sleep:
 // past the first poll's 1 s, with ~3 s left inside the bound for a loaded machine.
 const ARGV_EXEC_DEADLINE_MS = 5000;
+// #409: bound on afterEach waiting for the test's in-flight starts after their pids
+// were SIGKILLed; a settled child surfaces to the poll loop within ~1 s.
+const TEARDOWN_SETTLE_MS = 15_000;
+// #409: bun 1.4.3 times hooks out at 5 s, so the teardown hook carries an explicit
+// timeout above TEARDOWN_SETTLE_MS; otherwise a slow settle runs into the next test.
+const TEARDOWN_HOOK_TIMEOUT_MS = TEARDOWN_SETTLE_MS + 10_000;
 const SLOW_EXEC_SECONDS = 2;
 
 interface SentSignal {
@@ -115,6 +139,25 @@ interface KillSpy {
   duringAbort: SentSignal[] | null;
 }
 
+/**
+ * #409: per-test teardown state. The event wrappers bind the token that exists at wrap
+ * time, so late events from a start that outlived its test are dropped even after the
+ * next test's beforeEach installs a fresh token. A launch event that arrives after
+ * afterEach's SIGKILL loop records its pid here for afterEach to reap instead of leaking.
+ */
+interface TeardownToken {
+  torn: boolean;
+  lateLaunchPids: number[];
+}
+
+/** #409: what afterEach recorded about one test's teardown; read by the T24 audit. */
+interface TeardownEvidence {
+  devStorage: string;
+  settledInTime: boolean;
+  lateLaunchPids: number[];
+  reapedLatePids: number[];
+}
+
 // Captured before any spy is installed, so liveness checks and cleanup never
 // go through a test's process.kill spy.
 const realKill = process.kill.bind(process);
@@ -132,6 +175,20 @@ const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+
+/** SIGKILL a fake's detached group then the pid itself; either may already be gone. */
+const forceKill = (pid: number): void => {
+  try {
+    realKill(-pid, "SIGKILL");
+  } catch {
+    // The detached group may already be gone.
+  }
+  try {
+    realKill(pid, "SIGKILL");
+  } catch {
+    // The child may already be gone.
+  }
+};
 
 /** Blocking sleep for a wait that must finish inside a synchronous onEvent callback. */
 const sleepSync = (ms: number): void => {
@@ -169,6 +226,18 @@ describe("startServer mmproj safe-flag retry bookkeeping", () => {
   let spies: { mockRestore: () => void }[];
   /** #291: per launched pid, how many ps reads waitForArgvExec needed before `exec -a` showed. */
   let execPolls: Map<number, number>;
+  /** #409: replaced by beforeEach; afterEach flags it, the wrappers then drop any further event. */
+  let token: TeardownToken;
+  /** #409: every startServer promise this test started, settled before temp.cleanup(). */
+  let inFlight: Promise<unknown>[] = [];
+  /** #409: one entry per test's afterEach; never reset in beforeEach, read by the T24 audit. */
+  const evidence: TeardownEvidence[] = [];
+  /** #409: filled by T22, audited by T24. */
+  const outliving = {
+    devStorage: "",
+    lateEvents: [] as ServerEvent[],
+    promise: null as Promise<StartServerResult> | null,
+  };
 
   const identity = {
     processCommand: (pid: number): string | null => {
@@ -228,15 +297,34 @@ describe("startServer mmproj safe-flag retry bookkeeping", () => {
     return captured;
   };
 
-  /** Wrap a test's onEvent so every launch (its pid and exact argv) is recorded first. */
-  const recordingLaunches =
-    (onEvent: (e: ServerEvent) => void) =>
-    (e: ServerEvent): void => {
+  /**
+   * Wrap a test's onEvent so every launch (its pid and exact argv) is recorded first.
+   * #409: binds this test's token and launches array at wrap time and drops events once
+   * that token is torn down, so a start that outlived its test cannot write into the
+   * next test's array even after its beforeEach installed a fresh token. A launch that
+   * arrives after afterEach's SIGKILL loop records its pid in the token for afterEach
+   * to reap, so a retry spawned mid-settle-wait does not leak past cleanup.
+   */
+  const recordingLaunches = (onEvent: (e: ServerEvent) => void) => {
+    const myToken = token;
+    const myLaunches = launches;
+    return (e: ServerEvent): void => {
+      if (myToken.torn) {
+        if (e.type === "launch" && e.pid > 0) myToken.lateLaunchPids.push(e.pid);
+        return;
+      }
       if (e.type === "launch") {
-        launches.push({ pid: e.pid, argv: [e.command, ...e.args].join(" ") });
+        myLaunches.push({ pid: e.pid, argv: [e.command, ...e.args].join(" ") });
       }
       onEvent(e);
     };
+  };
+
+  /** #409: keep the promise reachable from afterEach so teardown can wait for it. */
+  const trackStart = <T>(promise: Promise<T>): Promise<T> => {
+    inFlight.push(promise);
+    return promise;
+  };
 
   /**
    * Start the alias target "current" (resolved to REL) with the test binary and endpoint.
@@ -248,19 +336,21 @@ describe("startServer mmproj safe-flag retry bookkeeping", () => {
     skipTuned = true,
     withIdentity = true,
   ): Promise<StartServerResult> =>
-    startServer({
-      key: KEY,
-      target: "current",
-      resolved,
-      binary,
-      endpoint: { host: HOST, port: PORT },
-      extraArgs,
-      timeoutSeconds: 1,
-      skipTuned,
-      ...(withIdentity ? { identity } : {}),
-      ...(signal === undefined ? {} : { signal }),
-      onEvent: recordingLaunches(onEvent),
-    });
+    trackStart(
+      startServer({
+        key: KEY,
+        target: "current",
+        resolved,
+        binary,
+        endpoint: { host: HOST, port: PORT },
+        extraArgs,
+        timeoutSeconds: 1,
+        skipTuned,
+        ...(withIdentity ? { identity } : {}),
+        ...(signal === undefined ? {} : { signal }),
+        onEvent: recordingLaunches(onEvent),
+      }),
+    );
 
   const expectedState = (pid: number): Omit<ServerState, "startedAt"> => ({
     rel: REL,
@@ -309,6 +399,8 @@ describe("startServer mmproj safe-flag retry bookkeeping", () => {
    * llama-server's does. Its default basename is not llama-server, so a missing
    * sidecar makes a stop refuse; T15 names it llama-server under LLAMA_CPP_BIN.
    * `preExecSleepSeconds` > 0 makes bash sleep that long before `exec -a` (T21).
+   * #409: it writes "$0.ready.$$" (the pid survives `exec`) right before `exec -a`,
+   * the readiness signal waitForArgvExec blocks on instead of spinning on ps reads.
    */
   const useArgvFakeBinary = (
     path = join(temp.devStorage, "argv-fake-llama-server"),
@@ -316,43 +408,65 @@ describe("startServer mmproj safe-flag retry bookkeeping", () => {
   ): void => {
     binary = path;
     const preExec = preExecSleepSeconds > 0 ? `sleep ${String(preExecSleepSeconds)}\n` : "";
-    writeFileSync(binary, `#!/bin/bash\n${preExec}exec -a "$0 $*" /bin/sleep 30\n`, {
-      mode: 0o755,
-    });
+    writeFileSync(
+      binary,
+      `#!/bin/bash\n${preExec}echo > "$0.ready.$$"\nexec -a "$0 $*" /bin/sleep 30\n`,
+      { mode: 0o755 },
+    );
   };
 
   /**
    * #291: until bash reaches `exec -a`, `ps -o command=` shows `/bin/bash <script> ...`, which a
    * seam-free stop reads as an unverifiable identity and refuses. Block, bounded, until the pid's
    * real command line starts with the fake's path. Returns how many ps reads that took.
+   * #409: a failed spawn reports pid 0; wait for nothing then, so no unhandled error
+   * escapes onEvent. Once past the first ps read, block on the fake's ready marker
+   * (written right before `exec -a`) and confirm the exec'd line with ps. The binary is
+   * passed in, bound by the wrapper at wrap time, so a late call can never read the
+   * next test's reassigned `binary`.
    */
-  const waitForArgvExec = (pid: number): number => {
+  const waitForArgvExec = (argvBinary: string, pid: number): number => {
+    if (pid <= 0) return 0;
     const deadline = Date.now() + ARGV_EXEC_DEADLINE_MS;
+    const readyMarker = `${argvBinary}.ready.${String(pid)}`;
     let polls = 0;
     let command: string | null = null;
     while (Date.now() <= deadline) {
       polls += 1;
       command = processCommand(pid);
-      if (command !== null && (command === binary || command.startsWith(`${binary} `))) {
+      if (command !== null && (command === argvBinary || command.startsWith(`${argvBinary} `))) {
         return polls;
       }
-      sleepSync(25);
+      if (existsSync(readyMarker)) {
+        sleepSync(25);
+      } else {
+        while (Date.now() <= deadline && !existsSync(readyMarker)) sleepSync(25);
+      }
     }
     throw new Error(
       `argv fake pid ${String(pid)} did not reach exec -a within ${String(ARGV_EXEC_DEADLINE_MS)} ms; ps -o command= shows: ${command ?? "<no output>"}`,
     );
   };
 
-  /** Wrap a seam-free test's onEvent: each launch's first `waiting` event waits for `exec -a` first. */
-  const waitingForArgvExec =
-    (onEvent: (e: ServerEvent) => void) =>
-    (e: ServerEvent): void => {
-      const pid = launches[launches.length - 1]?.pid;
-      if (e.type === "waiting" && pid !== undefined && !execPolls.has(pid)) {
-        execPolls.set(pid, waitForArgvExec(pid));
+  /**
+   * Wrap a seam-free test's onEvent: each launch's first `waiting` event waits for `exec -a` first.
+   * #409: binds this test's token, arrays and binary at wrap time, drops events once that
+   * token is torn down, and skips the wait for a pid <= 0 (a failed spawn).
+   */
+  const waitingForArgvExec = (onEvent: (e: ServerEvent) => void) => {
+    const myToken = token;
+    const myBinary = binary;
+    const myLaunches = launches;
+    const myExecPolls = execPolls;
+    return (e: ServerEvent): void => {
+      if (myToken.torn) return;
+      const pid = myLaunches[myLaunches.length - 1]?.pid;
+      if (e.type === "waiting" && pid !== undefined && pid > 0 && !myExecPolls.has(pid)) {
+        myExecPolls.set(pid, waitForArgvExec(myBinary, pid));
       }
       onEvent(e);
     };
+  };
 
   /** #291: a refused retry stop fails here, naming the first pid's real command line, before any launch count. */
   const expectRetryStopNotRefused = (error: string | undefined): void => {
@@ -398,31 +512,56 @@ describe("startServer mmproj safe-flag retry bookkeeping", () => {
     };
     commandHook = null;
     execPolls = new Map();
+    token = { torn: false, lateLaunchPids: [] };
+    inFlight = [];
     spies = [
       spyOn(globalThis, "fetch").mockImplementation(fakeHealth as unknown as typeof fetch),
       spyOn(process, "kill").mockImplementation(fakeKill),
     ];
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    // #409: bind this test's state locally up front, so a slow settle that let a later
+    // beforeEach start can never make the code below restore the next test's env or
+    // delete the next test's temp dir. Stop recording first, and keep the fake binary
+    // on disk until every start of this test has settled. The SIGKILLs below settle an
+    // in-flight start within about one poll interval.
+    const myTemp = temp;
+    const myEnv = originalEnv;
+    const myToken = token;
+    const myLaunches = launches;
+    const myInFlight = inFlight;
+    myToken.torn = true;
     restoreSpies();
-    for (const { pid } of launches) {
+    for (const { pid } of myLaunches) {
       // pid 0 would address our own process group.
       if (pid <= 0 || !isAlive(pid)) continue;
-      try {
-        realKill(-pid, "SIGKILL");
-      } catch {
-        // The detached group may already be gone.
-      }
-      try {
-        realKill(pid, "SIGKILL");
-      } catch {
-        // The child may already be gone.
-      }
+      forceKill(pid);
     }
-    process.env = originalEnv;
-    temp.cleanup();
-  });
+    const settledInTime = await Promise.race([
+      Promise.allSettled(myInFlight).then(() => true),
+      sleep(TEARDOWN_SETTLE_MS).then(() => false),
+    ]);
+    // A start still polling when the loop above ran relaunches its retry after it, past
+    // the loop's reach: recordingLaunches recorded that pid in the token instead of
+    // dropping it, and it is reaped here so no child leaks past cleanup.
+    const reapedLatePids: number[] = [];
+    for (const pid of myToken.lateLaunchPids) {
+      if (!isAlive(pid)) continue;
+      forceKill(pid);
+      reapedLatePids.push(pid);
+    }
+    evidence.push({
+      devStorage: myTemp.devStorage,
+      settledInTime,
+      lateLaunchPids: [...myToken.lateLaunchPids],
+      reapedLatePids,
+    });
+    process.env = myEnv;
+    myTemp.cleanup();
+    // #409: bun 1.4.3 times hooks out at 5 s; without this explicit timeout a settle
+    // slower than that runs into the next test — the race this file exists to prevent.
+  }, TEARDOWN_HOOK_TIMEOUT_MS);
 
   test(
     "T1 retry ready: the sidecar is rewritten for the retry pid and stopServer stops it",
@@ -1090,31 +1229,33 @@ describe("startServer mmproj safe-flag retry bookkeeping", () => {
         state: Omit<ServerState, "startedAt"> | null;
         startedAt: string | null;
       }[] = [];
-      const res = await startServer({
-        key: KEY,
-        target: "current",
-        resolved,
-        extraArgs,
-        timeoutSeconds: 1,
-        skipTuned: true,
-        onEvent: recordingLaunches(
-          waitingForArgvExec((e) => {
-            if (e.type === "timeout") timeoutPids.push(e.pid);
-            if (e.type !== "waiting") return;
-            if (launches.length === 1 && firstStates.length === 0) {
-              firstStates.push(readServerState(KEY, resolved));
-            }
-            if (launches.length === 2 && duringRetryPoll.length === 0) {
-              const state = readServerState(KEY, resolved);
-              duringRetryPoll.push({
-                pid: readServerPid(KEY, resolved),
-                state: withoutStartedAt(state),
-                startedAt: state?.startedAt ?? null,
-              });
-            }
-          }),
-        ),
-      });
+      const res = await trackStart(
+        startServer({
+          key: KEY,
+          target: "current",
+          resolved,
+          extraArgs,
+          timeoutSeconds: 1,
+          skipTuned: true,
+          onEvent: recordingLaunches(
+            waitingForArgvExec((e) => {
+              if (e.type === "timeout") timeoutPids.push(e.pid);
+              if (e.type !== "waiting") return;
+              if (launches.length === 1 && firstStates.length === 0) {
+                firstStates.push(readServerState(KEY, resolved));
+              }
+              if (launches.length === 2 && duringRetryPoll.length === 0) {
+                const state = readServerState(KEY, resolved);
+                duringRetryPoll.push({
+                  pid: readServerPid(KEY, resolved),
+                  state: withoutStartedAt(state),
+                  startedAt: state?.startedAt ?? null,
+                });
+              }
+            }),
+          ),
+        }),
+      );
       expectRetryStopNotRefused(res.error);
       expect(launches).toHaveLength(2);
       const firstPid = launches[0]!.pid;
@@ -1265,18 +1406,20 @@ describe("startServer mmproj safe-flag retry bookkeeping", () => {
       useArgvFakeBinary();
       // The workload binds externally; the endpoint, and so every /health probe, stays on the test host.
       extraArgs = [...extraArgs, "--host", "0.0.0.0"];
-      const settled = await startServer({
-        key: KEY,
-        target: "current",
-        resolved,
-        binary,
-        endpoint: { host: HOST, port: PORT },
-        extraArgs,
-        allowExternalBind: true,
-        timeoutSeconds: 1,
-        skipTuned: true,
-        onEvent: recordingLaunches(waitingForArgvExec(() => undefined)),
-      }).then(
+      const settled = await trackStart(
+        startServer({
+          key: KEY,
+          target: "current",
+          resolved,
+          binary,
+          endpoint: { host: HOST, port: PORT },
+          extraArgs,
+          allowExternalBind: true,
+          timeoutSeconds: 1,
+          skipTuned: true,
+          onEvent: recordingLaunches(waitingForArgvExec(() => undefined)),
+        }),
+      ).then(
         (res) => ({ res, error: null }),
         (error: unknown) => ({ res: null, error: String(error) }),
       );
@@ -1318,27 +1461,29 @@ describe("startServer mmproj safe-flag retry bookkeeping", () => {
       const sentDuringAbort: SentSignal[] = [];
       let abortScheduled = false;
       const startB = (): Promise<StartServerResult> =>
-        startServer({
-          key: KEY_B,
-          target: "current",
-          resolved,
-          binary,
-          endpoint: { host: HOST, port: PORT_B },
-          extraArgs: extraArgsB,
-          timeoutSeconds: 1,
-          skipTuned: true,
-          signal: controllerB.signal,
-          onEvent: recordingLaunches((e) => {
-            if (e.type === "launch") pids.b = e.pid;
-            if (e.type === "waiting" && !abortScheduled) {
-              abortScheduled = true;
-              // Lands in A's first-poll 1 s sleep while B is polling too.
-              setTimeout(() => {
-                sentDuringAbort.push(...abortCapturing(controllerA));
-              }, 50);
-            }
+        trackStart(
+          startServer({
+            key: KEY_B,
+            target: "current",
+            resolved,
+            binary,
+            endpoint: { host: HOST, port: PORT_B },
+            extraArgs: extraArgsB,
+            timeoutSeconds: 1,
+            skipTuned: true,
+            signal: controllerB.signal,
+            onEvent: recordingLaunches((e) => {
+              if (e.type === "launch") pids.b = e.pid;
+              if (e.type === "waiting" && !abortScheduled) {
+                abortScheduled = true;
+                // Lands in A's first-poll 1 s sleep while B is polling too.
+                setTimeout(() => {
+                  sentDuringAbort.push(...abortCapturing(controllerA));
+                }, 50);
+              }
+            }),
           }),
-        });
+        );
       const resA = await start(
         (e) => {
           if (e.type === "launch") pids.a = e.pid;
@@ -1418,6 +1563,99 @@ describe("startServer mmproj safe-flag retry bookkeeping", () => {
       expect(stop).toEqual({ stopped: true, pid: retryPid, killed: false });
       expect(await waitForExit(retryPid)).toBe(true);
       expect(kills.nonPositive).toEqual([]);
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "T22 start outliving its test: the in-flight start is left running when the test returns",
+    async () => {
+      // #409: leave the test while the first poll is still sleeping. afterEach must flag
+      // this test's token, SIGKILL the first pid, wait for the start to settle through
+      // its mmproj retry (whose second launch lands after afterEach's SIGKILL loop and
+      // is recorded in the token), reap it, and only then delete the temp dir. The
+      // wrappers must drop every event that arrives after the token was flagged. T24
+      // audits the evidence afterEach records.
+      useArgvFakeBinary();
+      const controller = new AbortController();
+      const myToken = token;
+      outliving.devStorage = temp.devStorage;
+      outliving.lateEvents = [];
+      let firstWaiting: () => void = () => undefined;
+      const waitingSeen = new Promise<void>((resolve) => {
+        firstWaiting = resolve;
+      });
+      outliving.promise = start(
+        waitingForArgvExec((e) => {
+          if (myToken.torn) outliving.lateEvents.push(e);
+          if (e.type === "waiting" && launches.length >= 1) firstWaiting();
+        }),
+        controller.signal,
+        true,
+        false,
+      );
+      await waitingSeen;
+      expect(launches).toHaveLength(1);
+      // Return here on purpose: the start is still inside its first poll's 1 s sleep.
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "T23 failed spawn reports pid 0: the wrappers skip the exec wait and afterEach skips the kill",
+    () => {
+      // A real ENOENT spawn also crashes this runner with an unhandled 'error' event, so
+      // feed the wrappers the pid 0 launch event launchBackground emits for one instead.
+      const events: ServerEvent[] = [];
+      const emit = recordingLaunches((e) => {
+        events.push(e);
+      });
+      emit({ type: "launch", pid: 0, command: binary, args: [] });
+      expect(launches).toEqual([{ pid: 0, argv: binary }]);
+      // Without the pid <= 0 guard this blocks ARGV_EXEC_DEADLINE_MS on a ready marker
+      // pid 0 never writes, then throws.
+      expect(waitForArgvExec(binary, 0)).toBe(0);
+      const emitWaiting = waitingForArgvExec((e) => {
+        events.push(e);
+      });
+      const startedAt = Date.now();
+      emitWaiting({ type: "waiting", attempt: 0, httpCode: null });
+      // Without the pid > 0 guard in the waiting wrapper this waits the same bound.
+      expect(Date.now() - startedAt).toBeLessThan(1_000);
+      expect(execPolls.size).toBe(0);
+      expect(events.map((e) => e.type)).toEqual(["launch", "waiting"]);
+      // launches now holds pid 0: afterEach's kill loop must skip it, so kill(0) never
+      // signals this runner's own process group.
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "T24 teardown audit: the outliving start settled before cleanup and its late retry child was recorded and reaped",
+    async () => {
+      // Must stay declared after T22: it reads T22's afterEach evidence, left by the
+      // start T22 deliberately did not await.
+      expect(outliving.devStorage).not.toBe("");
+      expect(outliving.promise).not.toBeNull();
+      // With the guards afterEach already settled the start; this race only bounds a
+      // mutant that removed the settle wait, so the late retry's writes have landed
+      // before the checks below run.
+      await Promise.race([outliving.promise!.catch(() => undefined), sleep(TEARDOWN_SETTLE_MS)]);
+      const record = evidence.find((entry) => entry.devStorage === outliving.devStorage);
+      expect(record).toBeDefined();
+      expect(record!.settledInTime).toBe(true);
+      // The retry launched after afterEach's SIGKILL loop: recorded, not dropped, and
+      // every recorded pid was reaped.
+      expect(record!.lateLaunchPids.length).toBeGreaterThanOrEqual(1);
+      expect(record!.reapedLatePids).toEqual(record!.lateLaunchPids);
+      for (const pid of record!.lateLaunchPids) {
+        expect(await waitForExit(pid)).toBe(true);
+      }
+      // Without the settle-before-cleanup wait or the inFlight tracking, the still
+      // settling start recreates its deleted runtime tree below devStorage after cleanup.
+      expect(existsSync(outliving.devStorage)).toBe(false);
+      // The wrappers dropped every event that arrived after T22's token was flagged.
+      expect(outliving.lateEvents).toEqual([]);
     },
     TEST_TIMEOUT_MS,
   );

@@ -40,6 +40,19 @@ export {
   synthesizeProviderNodes,
 } from "./config/provider-nodes.js";
 export * as siriusProviders from "./config/sirius-providers.js";
+export {
+  __resetDispatchClientCacheForTests,
+  buildDispatchRouter,
+  type BuildDispatchRouterOptions,
+  CONTROL_PLANE_ONLY,
+  type DispatchResolutionCode,
+  DispatchResolutionError,
+  type DispatchRouter,
+  type DispatchTarget,
+  getDispatchClient,
+  type OnUnresolvable,
+  resolveDispatchTarget,
+} from "./dispatch/router.js";
 export { createLegacyLocalExecutor } from "./inference/legacy-local-executor.js";
 export * as infraArtifactsFetch from "./infra/artifacts-fetch.js";
 export * as infraInstall from "./infra/install.js";
