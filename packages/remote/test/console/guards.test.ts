@@ -36,7 +36,7 @@ afterEach(async () => {
 });
 
 describe("console same-origin guards", () => {
-  test("(R1) GET /api/trpc/nodeList without the session cookie → 401 invalid_session", async () => {
+  test("(R1) GET /api/n/local/trpc/nodeList without the session cookie → 401 invalid_session", async () => {
     const r = api();
     const spy = makeSpyBackend();
     const h = await startConsole(r, {
@@ -151,7 +151,7 @@ describe("console same-origin guards", () => {
     });
     expect(res.status).toBe(200);
     expect(spy.calls).toHaveLength(1);
-    expect(spy.calls[0]?.ctx).toEqual({ node: null });
+    expect(spy.calls[0]?.ctx).toEqual({ node: "local" });
     expect(JSON.stringify(spy.calls)).not.toContain("Bearer x");
     expect(JSON.stringify(spy.calls)).not.toContain("foo=bar");
   });
