@@ -5,6 +5,7 @@
 // their node into the request URL.
 
 import type { ComponentType, ReactNode } from "react";
+import type { Root } from "react-dom/client";
 
 import { QueryClient, useQueryClient } from "@tanstack/react-query";
 import { afterAll, describe, expect, test } from "bun:test";
@@ -152,7 +153,11 @@ function makeShimTarget(): ShimEventTargetLike {
   };
 }
 
-function makeShimWindow(): ShimWindowLike {
+function makeShimWindow(): {
+  window: ShimWindowLike;
+  clearPendingFrames: () => void;
+} {
+  const frames = new Set<number>();
   const doc: ShimDocumentLike = {
     ...makeShimTarget(),
     nodeType: 9,
@@ -181,15 +186,28 @@ function makeShimWindow(): ShimWindowLike {
     HTMLIFrameElement: class ShimIFrame {
       readonly shim = true;
     },
-    requestAnimationFrame: (callback: () => void): number =>
-      setTimeout(callback, 16) as unknown as number,
+    requestAnimationFrame: (callback: () => void): number => {
+      const handle = setTimeout(() => {
+        frames.delete(handle);
+        callback();
+      }, 16) as unknown as number;
+      frames.add(handle);
+      return handle;
+    },
     cancelAnimationFrame: (handle: number): void => {
+      frames.delete(handle);
       clearTimeout(handle);
     },
   };
   doc.defaultView = win;
   doc.documentElement = win.document.createElement("div");
-  return win;
+  return {
+    window: win,
+    clearPendingFrames: (): void => {
+      for (const handle of frames) clearTimeout(handle);
+      frames.clear();
+    },
+  };
 }
 
 describe("NodeScopedProvider (#410 P3)", () => {
@@ -301,28 +319,34 @@ describe("NodeScopedProvider (#410 P3)", () => {
     // The mounted root needs window + document before react-dom/client
     // is evaluated; the provider creates its scope with the ambient
     // fetch, so the recording fetch must be installed before mount.
-    const hadWindow = "window" in globalThis;
-    const hadDocument = "document" in globalThis;
+    const globals = globalThis as Record<string, unknown>;
+    const hadWindow = "window" in globals;
+    const hadDocument = "document" in globals;
+    const hadActEnvironment = "IS_REACT_ACT_ENVIRONMENT" in globals;
+    const previousWindow = globals["window"];
+    const previousDocument = globals["document"];
+    const previousActEnvironment = globals["IS_REACT_ACT_ENVIRONMENT"];
     const previousFetch = globalThis.fetch;
     const { calls, fakeFetch } = makeRecordingFetch();
-    const shimWindow = makeShimWindow();
-    globalThis.window = shimWindow as unknown as Window & typeof globalThis;
-    globalThis.document = shimWindow.document as unknown as Document;
-    (globalThis as Record<string, unknown>)["IS_REACT_ACT_ENVIRONMENT"] = true;
+    const shim = makeShimWindow();
+    globals["window"] = shim.window;
+    globals["document"] = shim.window.document;
+    globals["IS_REACT_ACT_ENVIRONMENT"] = true;
     globalThis.fetch = fakeFetch as unknown as typeof globalThis.fetch;
 
+    let root: Root | undefined;
     try {
       const { createRoot } = await import("react-dom/client");
-      const root = createRoot(shimWindow.document.createElement("div") as unknown as Element);
+      root = createRoot(shim.window.document.createElement("div") as unknown as Element);
 
       await act(() => {
-        root.render(
+        root?.render(
           createElement(NodeScopedProvider, { node: "a", baseUrl: "/api" }, createElement(Capture)),
         );
         return Promise.resolve();
       });
       await act(() => {
-        root.render(
+        root?.render(
           createElement(NodeScopedProvider, { node: "b", baseUrl: "/api" }, createElement(Capture)),
         );
         return Promise.resolve();
@@ -342,16 +366,33 @@ describe("NodeScopedProvider (#410 P3)", () => {
 
       expect(calls.length).toBeGreaterThan(0);
       expect(calls[calls.length - 1]!.startsWith("/api/n/b/trpc")).toBe(true);
-
-      await act(() => {
-        root.unmount();
-        return Promise.resolve();
-      });
     } finally {
+      // Tear the root down *inside* act while the shim is still
+      // installed: scheduler work left pending after teardown would run
+      // against a missing window ("window is not defined") between
+      // tests and keep handles open past the suite. Flush a macrotask
+      // so effects + the scheduler drain, then kill any rAF timers the
+      // shim scheduled, and only then restore every global it replaced.
+      if (root) {
+        const mountedRoot = root;
+        await act(() => {
+          mountedRoot.unmount();
+          return Promise.resolve();
+        });
+      }
+      await new Promise<void>((resolve) => {
+        setTimeout(() => {
+          resolve();
+        }, 0);
+      });
+      shim.clearPendingFrames();
       globalThis.fetch = previousFetch;
-      delete (globalThis as Record<string, unknown>)["IS_REACT_ACT_ENVIRONMENT"];
-      if (!hadDocument) delete (globalThis as Record<string, unknown>)["document"];
-      if (!hadWindow) delete (globalThis as Record<string, unknown>)["window"];
+      if (hadActEnvironment) globals["IS_REACT_ACT_ENVIRONMENT"] = previousActEnvironment;
+      else delete globals["IS_REACT_ACT_ENVIRONMENT"];
+      if (hadDocument) globals["document"] = previousDocument;
+      else delete globals["document"];
+      if (hadWindow) globals["window"] = previousWindow;
+      else delete globals["window"];
     }
   });
 });
