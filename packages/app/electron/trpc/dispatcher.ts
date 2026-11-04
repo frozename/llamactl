@@ -1,19 +1,18 @@
 import {
+  __resetDispatchClientCacheForTests,
   type AppRouter as BaseAppRouter,
-  router as baseRouter,
-  buildPinnedLinks,
+  buildDispatchRouter,
   type ClusterNode,
+  type DispatchTarget,
+  getDispatchClient,
   config as kubecfg,
-  LOCAL_NODE_ENDPOINT,
   type PinnedFetchFactory,
 } from "@llamactl/remote";
-import { createTRPCClient } from "@trpc/client";
 import { initTRPC, TRPCError } from "@trpc/server";
 import { observable, type Observable } from "@trpc/server/observable";
 import {
   type AnyProcedure,
   type AnyRouter,
-  type CreateRouterOptions,
   getErrorShape,
   type ProcedureCallOptions,
 } from "@trpc/server/unstable-core-do-not-import";
@@ -23,39 +22,17 @@ import { fanOutSurface, listAgentNodes } from "./cross-node-fan-out.js";
 import { makeNodePinnedFetch } from "./node-pinned-fetch.js";
 
 /**
- * Electron main's dispatcher router. Exposes the same wire shape as
- * `@llamactl/remote`'s router but, for every call, reads the current
- * context's `defaultNode` and decides:
- *
- *   - local (endpoint is `inproc://...`) or control-plane allowlist
- *     → fall through to `baseRouter.createCaller({})`
- *   - remote → build a pinned-TLS tRPC client with the Electron-main
- *     fetch (undici Agent + pinned CA) and forward the call
- *
- * The wrapper keeps queries, mutations, and subscriptions routable
- * with identical semantics from the renderer's perspective. Subscription
- * forwarding bridges the remote async-iterable stream back into a local
- * async generator, matching the tRPC v11 subscription contract.
+ * Electron main's dispatcher router. The routing logic itself (local
+ * caller vs pinned-TLS remote client per procedure) lives in
+ * `@llamactl/remote`'s `buildDispatchRouter`; this module is the
+ * Electron adapter that keeps the module-level active-node override,
+ * the UI-only sub-router, the peer-client factory and the
+ * electron-trpc v10 compat shims on top of it.
  */
 
 const t = initTRPC.create();
 
 type KubeUser = Parameters<typeof kubecfg.resolveToken>[0];
-type SubscriptionHandle = { unsubscribe: () => void };
-type LocalCaller = Record<string, (input: unknown) => unknown>;
-type RemoteProcedure = {
-  query: (input: unknown, opts?: { signal?: AbortSignal }) => Promise<unknown>;
-  mutate: (input: unknown, opts?: { signal?: AbortSignal }) => Promise<unknown>;
-  subscribe: (
-    input: unknown,
-    handlers: {
-      onData: (ev: unknown) => void;
-      onError: (err: unknown) => void;
-      onComplete: () => void;
-    },
-  ) => SubscriptionHandle;
-};
-type RemoteClient = Record<string, RemoteProcedure>;
 
 type ProcedureKind = "query" | "mutation" | "subscription";
 type CompatProcedureDef = AnyProcedure["_def"] & {
@@ -90,24 +67,6 @@ function isProcedureCallOptions(
   opts: ProcedureCallOptions<unknown> | V10ProcedureCallOptions,
 ): opts is ProcedureCallOptions<unknown> {
   return typeof opts.getRawInput === "function";
-}
-
-function formatUnknownError(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  if (typeof err === "string") return err;
-  return JSON.stringify(err);
-}
-
-function localProcedure(caller: LocalCaller, path: string): (input: unknown) => unknown {
-  const procedure = caller[path];
-  if (!procedure) throw new Error(`Missing local tRPC procedure: ${path}`);
-  return procedure;
-}
-
-function remoteProcedure(client: RemoteClient, path: string): RemoteProcedure {
-  const procedure = client[path];
-  if (!procedure) throw new Error(`Missing remote tRPC procedure: ${path}`);
-  return procedure;
 }
 
 /**
@@ -154,97 +113,6 @@ function asyncIterableToObservable<T>(iter: AsyncIterable<T>): Observable<T, unk
     };
   });
 }
-
-/**
- * Procedures that MUST always run on the control plane, even when a
- * remote node is selected. These manage kubeconfig state (the list of
- * nodes, the current default) and workload orchestration — both only
- * make sense from the control plane's perspective.
- */
-const CONTROL_PLANE_ONLY = new Set<string>([
-  "nodeList",
-  "nodeAdd",
-  "nodeRemove",
-  "nodeTest",
-  "nodeSetDefault",
-  "nodeOpenAIConfig",
-  "nodeDiscover",
-  "nodeAddCloud",
-  // nodeModels resolves a by-name lookup against the local
-  // kubeconfig + scrapes /v1/models on whatever the node's
-  // endpoint resolves to. Must run on the control plane;
-  // dispatching to a remote active-node makes that remote try to
-  // look up the CALLER's node name in its OWN kubeconfig (which
-  // doesn't have it) and error + leave the chat models dropdown
-  // hanging on isLoading forever.
-  "nodeModels",
-  "chatComplete",
-  "chatStream",
-  "workloadList",
-  "workloadsDir",
-  "workloadDescribe",
-  "workloadApply",
-  "workloadDelete",
-  "workloadValidate",
-  "workloadTemplate",
-  "reconcilerStatus",
-  "reconcilerEvents",
-  "reconcilerStart",
-  "reconcilerStop",
-  "reconcilerKick",
-  "benchScheduleList",
-  "benchScheduleAdd",
-  "benchScheduleRemove",
-  "benchScheduleToggle",
-  "benchSchedulerStatus",
-  "benchSchedulerStart",
-  "benchSchedulerStop",
-  "benchSchedulerKick",
-  // Ops Chat: the audit journal, the session registry, and the
-  // planner's allowlist all live on the control plane's filesystem +
-  // main-process memory. Routing these to a remote would split the
-  // session registry across processes (subscription on main, outcome
-  // ack on remote) and leak audit entries into the wrong log.
-  "operatorPlan",
-  "operatorRunTool",
-  "operatorChatStream",
-  "operatorSubmitStepOutcome",
-  "opsChatTools",
-  "opsChatAuditTail",
-  // Projects live in the control plane's projects.yaml — the
-  // kubeconfig default + every registered route target + every
-  // policy reference is control-plane state. Routing to a remote
-  // agent makes it read its OWN projects.yaml (which doesn't
-  // exist) and its auth layer 401s with a plain-text body that
-  // the renderer's JSON parser chokes on
-  // ("Unexpected token 'u', 'unauthorized' is not valid JSON").
-  "projectApply",
-  "projectList",
-  "projectGet",
-  "projectRemove",
-  "projectIndex",
-  "projectResolveRouting",
-  "projectRoutePreview",
-  "projectRoutingJournal",
-  // Cost guardian's journal + snapshot are aggregated across the
-  // whole fleet's usage records; the read lives on the control
-  // plane's $DEV_STORAGE. Dispatching to a remote turns a 0.5s
-  // local read into a hung tRPC call to an agent that doesn't
-  // implement costSnapshot semantics — hence "loading forever".
-  "costSnapshot",
-  "costGuardianStatus",
-  "costJournalTail",
-  // UI-only procedures added by this module never go over the wire.
-  "uiSetActiveNode",
-  "uiGetActiveNode",
-  // UI-only procedures added alongside the projects-form picker +
-  // git-repo scan. Both touch the main-process filesystem +
-  // Electron dialog; forwarding them to a remote agent would
-  // either error (no electron runtime on agents) or scan the
-  // wrong machine.
-  "uiPickDirectory",
-  "uiScanGitRepos",
-]);
 
 /**
  * Runtime override for the UI's active node. Separate from kubeconfig's
@@ -528,116 +396,13 @@ const uiRouter = t.router({
     }),
 });
 
-interface DispatchTarget {
-  kind: "local" | "remote";
-  node?: {
-    name: string;
-    endpoint: string;
-    certificate: string | null;
-    certificateFingerprint: string | null;
-    tlsServerName?: string;
-  };
-  token?: string;
-}
-
-function resolveDispatchTarget(path: string): DispatchTarget {
-  if (CONTROL_PLANE_ONLY.has(path)) return { kind: "local" };
-  let cfg;
-  try {
-    cfg = kubecfg.loadConfig();
-  } catch {
-    return { kind: "local" };
-  }
-  const ctx = cfg.contexts.find((c) => c.name === cfg.currentContext);
-  if (!ctx) return { kind: "local" };
-  // The renderer's selected node takes precedence over kubeconfig's
-  // default — so switching the UI doesn't also change what `llamactl`
-  // defaults to from the CLI.
-  const nodeName = getActiveNodeOverride() ?? ctx.defaultNode;
-  const cluster = cfg.clusters.find((c) => c.name === ctx.cluster);
-  const node = cluster?.nodes.find((n) => n.name === nodeName);
-  if (!node || node.endpoint === LOCAL_NODE_ENDPOINT) return { kind: "local" };
-  const user = cfg.users.find((u) => u.name === ctx.user);
-  if (!user) return { kind: "local" };
-  let token: string;
-  try {
-    token = kubecfg.resolveToken(user);
-  } catch {
-    return { kind: "local" };
-  }
-  return {
-    kind: "remote",
-    node: {
-      name: node.name,
-      endpoint: node.endpoint,
-      certificate: node.certificate ?? null,
-      certificateFingerprint: node.certificateFingerprint ?? null,
-      ...(node.tlsServerName !== undefined ? { tlsServerName: node.tlsServerName } : {}),
-    },
-    token,
-  };
-}
-
-/**
- * Typed caller over the base router. Hoisted to module scope because
- * `baseRouter` is a module-level constant and the caller has no
- * request-scoped context — creating a fresh caller per procedure call
- * (as we used to) was pure waste. The `as any` cast is erased by the
- * `ProxyClient` type alias so downstream reads are still dynamically
- * dispatched but we don't repeat the cast every hot path.
- */
-const baseCaller = baseRouter.createCaller({}) as unknown as LocalCaller;
-
-/**
- * Pinned remote-client cache, keyed by the (endpoint + fingerprint +
- * token) tuple. A fresh node registration, token rotation, or cert
- * change produces a new key and a cache miss; existing keys reuse
- * the already-built `createTRPCClient` instance, avoiding the
- * linkBuilder + eventsource-ponyfill wiring cost on every query.
- */
-const clientCache = new Map<string, RemoteClient>();
-
-function cacheKey(target: DispatchTarget): string {
-  if (!target.node || !target.token) return "";
-  const fp = target.node.certificateFingerprint ?? "";
-  // Use only the token's first 8 chars in the key — the full token is
-  // already the cache invalidation signal; 8 chars is enough to
-  // disambiguate independent rotations without keeping the secret in
-  // an in-memory map key any longer than necessary.
-  return `${target.node.endpoint}|${fp}|${target.node.tlsServerName ?? ""}|${target.token.slice(0, 8)}`;
-}
-
-function buildRemoteClient(target: DispatchTarget, fetchFactory: PinnedFetchFactory): RemoteClient {
-  if (!target.node || !target.token) {
-    throw new Error("remote target missing node or token");
-  }
-  const key = cacheKey(target);
-  const cached = clientCache.get(key);
-  if (cached) return cached;
-  const client = createTRPCClient({
-    links: buildPinnedLinks(
-      {
-        name: target.node.name,
-        endpoint: target.node.endpoint,
-        certificate: target.node.certificate ?? undefined,
-        certificateFingerprint: target.node.certificateFingerprint ?? undefined,
-        tlsServerName: target.node.tlsServerName,
-      },
-      target.token,
-      fetchFactory,
-    ),
-  }) as unknown as RemoteClient;
-  clientCache.set(key, client);
-  return client;
-}
-
 /**
  * Test-only helper — clears the pinned-client cache so tests that
  * rotate tokens or swap cert fingerprints see fresh state. Paired
  * with `__resetActiveNodeOverrideForTests`.
  */
 export function __resetClientCacheForTests(): void {
-  clientCache.clear();
+  __resetDispatchClientCacheForTests();
 }
 
 type PeerClientFactory = (node: ClusterNode) => unknown;
@@ -652,228 +417,51 @@ export function __resetPeerClientFactoryForTests(): void {
 
 function getPeerClient(node: ClusterNode, user: KubeUser): unknown {
   if (peerClientFactoryOverride) return peerClientFactoryOverride(node);
-  return buildRemoteClient(
-    {
-      kind: "remote",
-      node: {
-        name: node.name,
-        endpoint: node.endpoint,
-        certificate: node.certificate ?? null,
-        certificateFingerprint: node.certificateFingerprint ?? null,
-        ...(node.tlsServerName !== undefined ? { tlsServerName: node.tlsServerName } : {}),
-      },
-      token: kubecfg.resolveToken(user),
+  const target: DispatchTarget = {
+    kind: "remote",
+    node: {
+      name: node.name,
+      endpoint: node.endpoint,
+      certificate: node.certificate ?? null,
+      certificateFingerprint: node.certificateFingerprint ?? null,
+      ...(node.tlsServerName !== undefined ? { tlsServerName: node.tlsServerName } : {}),
     },
-    makeNodePinnedFetch,
-  );
-}
-
-function wrapQueryOrMutation(
-  path: string,
-  type: "query" | "mutation",
-  fetchFactory: PinnedFetchFactory,
-): AnyProcedure {
-  const resolver = ({ input }: { input: unknown }): unknown => {
-    const target = resolveDispatchTarget(path);
-    if (target.kind === "local") {
-      return localProcedure(baseCaller, path)(input);
-    }
-    const client = buildRemoteClient(target, fetchFactory);
-    const procedure = remoteProcedure(client, path);
-    return type === "query" ? procedure.query(input) : procedure.mutate(input);
+    token: kubecfg.resolveToken(user),
   };
-  // Input shape is inferred from the underlying procedure at call
-  // time; we don't re-validate here because the destination (local
-  // caller or remote agent) will re-validate against its own zod
-  // schema. Declaring `.input(z.unknown())` on the wrapper is
-  // load-bearing though: without it, electron-trpc v1.0.0-alpha's
-  // IPC serializer throws "Cannot read properties of undefined
-  // (reading 'serialize')" when the renderer invokes any wrapped
-  // procedure whose base version has a Zod `.input()`. Pinning
-  // `z.unknown()` keeps the transformer-lookup path happy while
-  // preserving our pass-through semantics.
-  const base = t.procedure.input(z.unknown());
-  return (type === "query" ? base.query(resolver) : base.mutation(resolver)) as AnyProcedure;
+  return getDispatchClient(target, makeNodePinnedFetch);
 }
 
 /**
- * Local half of `wrapSubscription`. The base subscription resolver
- * needs a real AbortSignal (`bridgeEventStream` in @llamactl/remote
- * calls `signal.addEventListener('abort', ...)` unconditionally).
- * electron-trpc's v10 `callProcedure` path doesn't forward a signal
- * through `opts`, so we construct our own controller and build a
- * fresh caller bound to it. When the renderer unsubscribes, our
- * outer Observable teardown invokes `iterator.return()` on this
- * generator, which lands in the `finally` and aborts the controller
- * — letting the inner subscription's cleanup fire.
- */
-async function* runLocalSubscription(
-  path: string,
-  input: unknown,
-  clientSignal: AbortSignal | undefined,
-): AsyncGenerator<unknown, void> {
-  const controller = new AbortController();
-  if (clientSignal?.aborted) controller.abort();
-  const onOuterAbort = (): void => {
-    controller.abort();
-  };
-  clientSignal?.addEventListener("abort", onOuterAbort);
-  try {
-    const localCaller = baseRouter.createCaller(
-      {},
-      { signal: controller.signal },
-    ) as unknown as LocalCaller;
-    const iterable = (await localProcedure(localCaller, path)(input)) as AsyncIterable<unknown>;
-    for await (const ev of iterable) {
-      if (controller.signal.aborted) break;
-      yield ev;
-    }
-  } finally {
-    clientSignal?.removeEventListener("abort", onOuterAbort);
-    controller.abort();
-  }
-}
-
-/**
- * Remote half of `wrapSubscription`: bridge the tRPC client's
- * callback subscription into an async generator, honoring client
- * disconnects.
- */
-async function* runRemoteSubscription(
-  client: RemoteClient,
-  path: string,
-  input: unknown,
-  clientSignal: AbortSignal | undefined,
-): AsyncGenerator<unknown, void> {
-  const queue: unknown[] = [];
-  const state = { done: false };
-  let err: unknown = null;
-  let wake: (() => void) | null = null;
-  const drain = (): void => {
-    const w = wake;
-    wake = null;
-    w?.();
-  };
-
-  const sub = remoteProcedure(client, path).subscribe(input, {
-    onData: (ev: unknown) => {
-      queue.push(ev);
-      drain();
-    },
-    onError: (e: unknown) => {
-      err = e;
-      state.done = true;
-      drain();
-    },
-    onComplete: () => {
-      state.done = true;
-      drain();
-    },
-  });
-
-  const onClientAbort = (): void => {
-    try {
-      sub.unsubscribe();
-    } catch {
-      // best effort
-    }
-    state.done = true;
-    drain();
-  };
-  clientSignal?.addEventListener("abort", onClientAbort);
-
-  try {
-    for (;;) {
-      if (queue.length > 0) {
-        const next = queue.shift();
-        yield next;
-        continue;
-      }
-      if (state.done) break;
-      await new Promise<void>((resolve) => {
-        wake = resolve;
-      });
-    }
-    if (err instanceof Error) throw err;
-    if (err) throw new Error(formatUnknownError(err));
-  } finally {
-    clientSignal?.removeEventListener("abort", onClientAbort);
-    try {
-      sub.unsubscribe();
-    } catch {
-      // best effort
-    }
-  }
-}
-
-function wrapSubscription(path: string, fetchFactory: PinnedFetchFactory): AnyProcedure {
-  // Same rationale as `wrapQueryOrMutation` above: electron-trpc's
-  // IPC serializer expects an `.input()` declaration on every wrapped
-  // procedure, even when the wrapper itself does no validation.
-  // Without it the input never crosses the renderer→main bridge on
-  // subscriptions, and the base router's schema downstream sees
-  // `undefined` → `"Invalid input: expected object, received
-  // undefined"`. Pass-through semantics preserved via `z.unknown()`.
-  return t.procedure.input(z.unknown()).subscription(async function* (opts) {
-    const target = resolveDispatchTarget(path);
-    if (target.kind === "local") {
-      yield* runLocalSubscription(path, opts.input, opts.signal);
-      return;
-    }
-    const client = buildRemoteClient(target, fetchFactory);
-    yield* runRemoteSubscription(client, path, opts.input, opts.signal);
-  }) as AnyProcedure;
-}
-
-/**
- * Build the dispatching router by introspecting `baseRouter._def.procedures`
- * and creating a forwarding procedure for each, then merging in the
- * UI-only `uiSetActiveNode` / `uiGetActiveNode` procedures. The
- * renderer imports the inferred return type as its `AppRouter`, so
- * every call — base-forwarded or UI-local — has full tRPC inference.
+ * Build the dispatching router from `@llamactl/remote`'s
+ * `buildDispatchRouter` (which introspects the base router and wraps
+ * every procedure), then merge in the UI-only sub-router and apply the
+ * electron-trpc v10 compat shims. The renderer imports the inferred
+ * return type as its `AppRouter`, so every call — base-forwarded or
+ * UI-local — has full tRPC inference.
  *
  * `fetchFactory` defaults to the undici-backed Node factory; tests
  * running under Bun can inject the Bun-native one (`makePinnedFetch`
  * from `@llamactl/remote`) so the self-signed cert round-trips
  * without needing Node's HTTPS agent.
  */
-/**
- * tRPC v11 exposes the procedure kind on `_def.type`. Older paths
- * used `_def.query`/`_def.mutation`/`_def.subscription` booleans
- * — check both to stay robust across tRPC point releases.
- */
-function procedureKind(def: CompatProcedureDef): ProcedureKind | undefined {
-  // Widen deliberately: at runtime `type` may be absent or carry an
-  // unexpected value on other tRPC releases, despite the v11 typing.
-  const rawType: string | undefined = def.type;
-  if (rawType === "query" || rawType === "mutation" || rawType === "subscription") {
-    return rawType;
-  }
-  if (def.query) return "query";
-  if (def.mutation) return "mutation";
-  if (def.subscription) return "subscription";
-  return undefined;
-}
-
 export function buildDispatcherRouter(
   fetchFactory: PinnedFetchFactory = makeNodePinnedFetch,
 ): BaseAppRouter {
-  const procs: CreateRouterOptions = {};
-  const baseDef = (baseRouter as unknown as RouterWithCompat)._def;
-  const source = baseDef.procedures as Record<string, CompatProcedure>;
-  for (const [name, orig] of Object.entries(source)) {
-    const kind = procedureKind(orig._def);
-    if (kind === "subscription") {
-      procs[name] = wrapSubscription(name, fetchFactory);
-    } else if (kind !== undefined) {
-      procs[name] = wrapQueryOrMutation(name, kind, fetchFactory);
-    }
-  }
-  // Cast the dynamic wrapped router to the base AppRouter type, then
-  // merge with the typed UI router. The resulting type surfaces every
-  // forwarded procedure AND the two UI procedures to the renderer.
-  const wrappedBase = t.router(procs) as unknown as BaseAppRouter;
-  const merged = t.mergeRouters(wrappedBase, uiRouter) as unknown as RouterWithCompat;
+  const wrappedBase = buildDispatchRouter({
+    fetchFactory,
+    nodeFromCtx: () => activeNodeOverride,
+    onUnresolvable: "local",
+  });
+  // Cast the dispatch router to the base AppRouter type, then merge
+  // with the typed UI router. The resulting type surfaces every
+  // forwarded procedure AND the UI procedures to the renderer.
+  // mergeRouters copies the router config from routerList[0], so the
+  // merged router now carries the dispatch router's sse.ping — inert
+  // over IPC.
+  const merged = t.mergeRouters(
+    wrappedBase as unknown as BaseAppRouter,
+    uiRouter,
+  ) as unknown as RouterWithCompat;
   // electron-trpc v1.0.0-alpha.0's main-side `callProcedure` wires
   // procedures in two v10-shaped ways that tRPC v11 no longer supports:
   //
