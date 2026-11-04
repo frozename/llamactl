@@ -7,7 +7,7 @@
 // global here gives every test file the property without per-call casts.
 //
 // The members are optional because tests stub partial bridges (e.g.
-// `onMessage` only); the runtime consumer (`src/lib/ipc-link.ts`)
+// `onMessage` only); the runtime consumer (`src/lib/transport/ipc.ts`)
 // null-checks before use.
 
 declare global {
