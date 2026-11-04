@@ -175,17 +175,20 @@ describe("bench-driven priority", () => {
     expect(gpu1?.optimization?.contextWindow).toBe(4096);
   });
 
-  test.each(["auto", "0"])("non-positive or non-numeric ctx '%s' drops optimization", (ctx) => {
-    const out = generateEmbersynthConfig({
-      cfg: cfgWith(),
-      benchHistory: [row("gpu1", "72", "m.gguf", ctx)],
-      env: {},
-    });
-    const gpu1 = agentNode(out, "agent-gpu1");
-    expect(gpu1?.priority).toBe(1);
-    expect(gpu1?.modelId).toBe("m.gguf");
-    expect(gpu1?.optimization).toBeUndefined();
-  });
+  test.each(["auto", "0", "-5"])(
+    "non-positive or non-numeric ctx '%s' drops optimization",
+    (ctx) => {
+      const out = generateEmbersynthConfig({
+        cfg: cfgWith(),
+        benchHistory: [row("gpu1", "72", "m.gguf", ctx)],
+        env: {},
+      });
+      const gpu1 = agentNode(out, "agent-gpu1");
+      expect(gpu1?.priority).toBe(1);
+      expect(gpu1?.modelId).toBe("m.gguf");
+      expect(gpu1?.optimization).toBeUndefined();
+    },
+  );
 });
 
 describe("agent node projection", () => {
