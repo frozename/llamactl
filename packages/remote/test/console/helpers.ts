@@ -1,8 +1,9 @@
-// Shared fixtures + harness for the #410 P2b console RED tests: a spy
-// tRPC backend that records ctx/input per call, kubeconfig + dist
-// writers under per-test temp dirs, and the bounded HTTP/SSE readers
-// the guard and teardown cases wait on. Env vars touched through
-// `setEnv`, started servers and temp dirs are all restored/removed by
+// Shared fixtures + harness for the #410 console RED tests (P2b + P3):
+// a spy tRPC backend that records ctx/input per call, kubeconfig + dist
+// writers under per-test temp dirs, a recording pinned-fetch factory for
+// remote-node dispatch, and the bounded HTTP/SSE readers the guard and
+// teardown cases wait on. Env vars touched through `setEnv`, started
+// servers and temp dirs are all restored/removed by
 // `cleanupConsoleTest()` from each suite's afterEach — nothing here
 // touches live operator state.
 
@@ -14,6 +15,9 @@ import { join } from "node:path";
 import { stringify } from "yaml";
 import { z } from "zod";
 
+import type { PinnedFetchFactory } from "../../src/client/links.js";
+
+import { __resetDispatchClientCacheForTests } from "../../src/dispatch/router.js";
 import { mkdtempSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
 
 export const INDEX_HTML =
@@ -66,6 +70,7 @@ export function useTempDevStorage(): string {
 
 export async function cleanupConsoleTest(): Promise<void> {
   for (const server of servers.splice(0)) await server.stop().catch(() => undefined);
+  __resetDispatchClientCacheForTests();
   for (const [key, value] of savedEnv) {
     if (value === undefined) Reflect.deleteProperty(process.env, key);
     else process.env[key] = value;
@@ -213,6 +218,61 @@ export function makeSpyBackend(fixtures: Record<string, unknown> = {}): SpyBacke
   return { calls, router, state };
 }
 
+// ---- P3 dispatch doubles -----------------------------------------------------
+
+/**
+ * Recording local-caller factory for buildDispatchRouter. The Proxy
+ * answers every procedure with `{ from: "local" }` while appending the
+ * called name to `calls`, so tests can assert which procedures stayed
+ * on the control plane without standing up a real router.
+ */
+export function makeLocalSpy(): {
+  calls: string[];
+  localCallerFactory: () => Record<string, (input: unknown) => unknown>;
+} {
+  const calls: string[] = [];
+  const localCaller = new Proxy<Record<string, (input: unknown) => unknown>>(
+    {},
+    {
+      get:
+        (_target, prop) =>
+        (input: unknown): Record<string, unknown> => {
+          calls.push(String(prop));
+          void input;
+          return { from: "local" };
+        },
+    },
+  );
+  return { calls, localCallerFactory: () => localCaller };
+}
+
+/**
+ * Recording PinnedFetchFactory for buildDispatchRouter. The returned
+ * fetch ignores TLS pinning entirely and answers every httpBatchLink
+ * request with one `{ from: "remote1" }` result per comma-separated
+ * procedure in the `/trpc/` path — whether the client batched or not,
+ * `calls` ends up with one entry per procedure invoked.
+ */
+export function makeFakeRemote(): {
+  calls: string[];
+  fetchFactory: PinnedFetchFactory;
+} {
+  const calls: string[] = [];
+  const fetchFactory: PinnedFetchFactory = () => (input) => {
+    const raw = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    const pathname = new URL(raw).pathname;
+    const names = pathname.slice(pathname.indexOf("/trpc/") + "/trpc/".length).split(",");
+    calls.push(...names);
+    return Promise.resolve(
+      new Response(JSON.stringify(names.map(() => ({ result: { data: { from: "remote1" } } }))), {
+        headers: { "content-type": "application/json" },
+        status: 200,
+      }),
+    );
+  };
+  return { calls, fetchFactory };
+}
+
 // ---- fixtures ---------------------------------------------------------------
 
 export function ragNodeFixture(): Record<string, unknown> {
@@ -225,6 +285,25 @@ export function ragNodeFixture(): Record<string, unknown> {
       endpoint: `postgres://rag:${SENTINELS.pg}@db.local:5432/rag`,
       provider: "pgvector",
     },
+  };
+}
+
+/** Dispatchable agent node for the P3 routing tests. */
+export function remoteNodeFixture(name = "remote1"): Record<string, unknown> {
+  return {
+    certificateFingerprint: `sha256:${"cd".repeat(32)}`,
+    endpoint: "https://127.0.0.1:19",
+    kind: "agent",
+    name,
+  };
+}
+
+/** Non-dispatchable gateway node — valid kubeconfig shape, never a tRPC target. */
+export function gatewayNodeFixture(name = "gw1"): Record<string, unknown> {
+  return {
+    cloud: { baseUrl: "http://127.0.0.1:11/v1", provider: "openai-compatible" },
+    kind: "gateway",
+    name,
   };
 }
 
@@ -374,14 +453,21 @@ export function parseSessionCookie(res: Response): SessionCookie | null {
 export function trpcUrl(
   handle: { port: number },
   path: string,
-  opts: { input?: unknown; batch?: boolean } = {},
+  opts: { input?: unknown; batch?: boolean; node?: string } = {},
 ): string {
   const params: string[] = [];
   if (opts.batch === true) params.push("batch=1");
   if (opts.input !== undefined)
     params.push(`input=${encodeURIComponent(JSON.stringify(opts.input))}`);
   const qs = params.length > 0 ? `?${params.join("&")}` : "";
-  return `http://127.0.0.1:${String(handle.port)}/api/trpc/${path}${qs}`;
+  // The node segment is interpolated raw on purpose: negative cases
+  // pass pre-encoded values like "lo%2Fcal" verbatim.
+  return `http://127.0.0.1:${String(handle.port)}/api/n/${opts.node ?? "local"}/trpc/${path}${qs}`;
+}
+
+/** Literal request path for cases that must not go through trpcUrl's shape. */
+export function rawUrl(handle: { port: number }, pathAndQuery: string): string {
+  return `http://127.0.0.1:${String(handle.port)}${pathAndQuery}`;
 }
 
 /** Host + Sec-Fetch-Site + session cookie; `extra` wins on conflicts. */
