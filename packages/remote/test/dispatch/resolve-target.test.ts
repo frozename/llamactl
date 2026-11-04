@@ -5,6 +5,7 @@
 // `onUnresolvable` mode instead of always failing open to {kind:"local"},
 // CONTROL_PLANE_ONLY paths stay local in both modes, and
 // `buildDispatchRouter` wires the same resolution into the real router.
+import { TRPCError } from "@trpc/server";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -328,6 +329,12 @@ describe("buildDispatchRouter — 'error' mode", () => {
     } catch (err) {
       caught = err;
     }
+    // tRPC's createCaller re-throws whatever the resolver throws; a raw
+    // Error would surface as INTERNAL_SERVER_ERROR after the default
+    // wrapping. The cause check alone passes either way — the code is what
+    // pins resolveTargetForCall's explicit PRECONDITION_FAILED mapping.
+    expect(caught).toBeInstanceOf(TRPCError);
+    expect((caught as TRPCError).code).toBe("PRECONDITION_FAILED");
     const cause = (caught as { cause?: unknown } | null)?.cause;
     expect(cause).toBeInstanceOf(r.DispatchResolutionError);
     expect((cause as { code?: unknown }).code).toBe("unknown_node");

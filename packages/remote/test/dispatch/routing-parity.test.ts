@@ -98,3 +98,116 @@ describe("dispatch router routing parity", () => {
     expect(urls.some((u) => u.includes("/trpc/serverLogs"))).toBe(true);
   }, 15_000);
 });
+
+async function* fakeLocalLogLines(torn: boolean[]): AsyncGenerator<string> {
+  try {
+    // Async boundary so the fake behaves like a real streamed source.
+    await Promise.resolve();
+    yield "one";
+    yield "two";
+    yield "three";
+  } finally {
+    torn.push(true);
+  }
+}
+
+interface LocalSubHooks {
+  localCalls: string[];
+  signals: (AbortSignal | undefined)[];
+  torn: boolean[];
+  fetchNodes: unknown[];
+}
+
+/**
+ * Build a dispatch-router caller pinned to the kubeconfig's `local` node
+ * (endpoint `inproc://local`, present via freshConfig) with a spy
+ * localCallerFactory and a fetchFactory that records any attempt to build
+ * a pinned remote client — the local subscription branch must never fire
+ * either.
+ */
+function localSubscriptionCaller(r: any, hooks: LocalSubHooks, signal?: AbortSignal): any {
+  r.__resetDispatchClientCacheForTests();
+  urls = [];
+  const router = r.buildDispatchRouter({
+    fetchFactory: (node: remote.ClusterNode): remote.PinnedFetch => {
+      hooks.fetchNodes.push(node.endpoint);
+      const inner = remote.makePinnedFetch(node);
+      return async (input: string | URL | Request, init?: RequestInit): Promise<Response> =>
+        await inner(input, init);
+    },
+    nodeFromCtx: (): string => "local",
+    onUnresolvable: "error",
+    localCallerFactory: (
+      localSignal?: AbortSignal,
+    ): Record<string, (input: unknown) => unknown> => {
+      hooks.signals.push(localSignal);
+      return {
+        serverLogs: (): AsyncIterable<string> => {
+          hooks.localCalls.push("serverLogs");
+          return fakeLocalLogLines(hooks.torn);
+        },
+      };
+    },
+  });
+  return signal === undefined
+    ? router.createCaller({ node: null })
+    : router.createCaller({ node: null }, { signal });
+}
+
+describe("dispatch router local subscription parity", () => {
+  test("serverLogs subscription on a local target runs in-process, never via the remote client", async () => {
+    const r = api();
+    const hooks: LocalSubHooks = { localCalls: [], signals: [], torn: [], fetchNodes: [] };
+    const caller = localSubscriptionCaller(r, hooks);
+    const iterable = (await caller.serverLogs({
+      workload: "test-workload",
+    })) as AsyncIterable<string>;
+    const events: string[] = [];
+    for await (const event of iterable) events.push(event);
+    expect(events).toEqual(["one", "two", "three"]);
+    expect(hooks.localCalls).toEqual(["serverLogs"]);
+    expect(hooks.signals.length).toBe(1);
+    expect(hooks.signals[0]).toBeInstanceOf(AbortSignal);
+    expect(hooks.fetchNodes).toEqual([]);
+    expect(hooks.torn).toEqual([true]);
+  }, 15_000);
+
+  test("returning the local subscription iterator tears down the local generator and aborts the caller signal", async () => {
+    const r = api();
+    const hooks: LocalSubHooks = { localCalls: [], signals: [], torn: [], fetchNodes: [] };
+    const caller = localSubscriptionCaller(r, hooks);
+    const iterable = (await caller.serverLogs({
+      workload: "test-workload",
+    })) as AsyncIterable<string>;
+    const iterator = iterable[Symbol.asyncIterator]();
+    expect(await iterator.next()).toEqual({ done: false, value: "one" });
+    await iterator.return?.(undefined);
+    expect(hooks.torn).toEqual([true]);
+    expect(hooks.signals[0]).toBeInstanceOf(AbortSignal);
+    expect(hooks.signals[0]?.aborted).toBe(true);
+    expect(hooks.fetchNodes).toEqual([]);
+  }, 15_000);
+
+  test("aborting the caller signal stops the local subscription stream", async () => {
+    const r = api();
+    const hooks: LocalSubHooks = { localCalls: [], signals: [], torn: [], fetchNodes: [] };
+    const clientAbort = new AbortController();
+    const caller = localSubscriptionCaller(r, hooks, clientAbort.signal);
+    const iterable = (await caller.serverLogs({
+      workload: "test-workload",
+    })) as AsyncIterable<string>;
+    const iterator = iterable[Symbol.asyncIterator]();
+    expect((await iterator.next()).value).toBe("one");
+    clientAbort.abort();
+    expect(hooks.signals[0]?.aborted).toBe(true);
+    for (;;) {
+      const step = await iterator.next();
+      if (step.done) break;
+      if (step.value === "three") {
+        throw new Error("local subscription kept streaming after the caller aborted");
+      }
+    }
+    expect(hooks.torn).toEqual([true]);
+    expect(hooks.fetchNodes).toEqual([]);
+  }, 15_000);
+});
