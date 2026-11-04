@@ -85,9 +85,14 @@ function transformResponse(
 
 export function ipcLink<TRouter extends AnyRouter>(): TRPCLink<TRouter> {
   return () => {
-    const client = new IPCClient();
+    // Lazy so merely constructing a client (e.g. a web entry importing
+    // this module) doesn't require the preload bridge; it must exist by
+    // the first request instead. Memoised so one onMessage listener is
+    // registered per link initialisation.
+    let client: IPCClient | undefined;
     return ({ op }) => {
       return observable((obs) => {
+        client ??= new IPCClient();
         const teardown = client.request(op, {
           type: op.type,
           next(envelope) {

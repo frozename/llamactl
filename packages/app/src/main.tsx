@@ -1,7 +1,10 @@
+import type { AppRouter } from "@llamactl/remote";
+
 import React from "react";
 import ReactDOM from "react-dom/client";
 
 import { App } from "./App";
+import { ipcLink } from "./lib/transport/ipc";
 import { useTabStore } from "./stores/tab-store";
 import { useThemeStore } from "./stores/theme-store";
 import "./index.css";
@@ -11,7 +14,7 @@ if (!rootNode) throw new Error("Root element missing");
 
 ReactDOM.createRoot(rootNode).render(
   <React.StrictMode>
-    <App />
+    <App links={[ipcLink<AppRouter>()]} />
   </React.StrictMode>,
 );
 
