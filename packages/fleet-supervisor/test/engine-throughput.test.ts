@@ -259,6 +259,54 @@ describe("EngineThroughputRecorder", () => {
     expect(stats?.prefillTokPerSec).toEqual({ median: 589, p10: 589, p90: 589, count: 1 });
   });
 
+  it("counts a drop in predictedTokensTotal alone as a reset while promptTokensTotal rises", () => {
+    const m = load();
+    let t = 0;
+    const rec = new m.EngineThroughputRecorder({ now: (): number => t });
+    rec.record("half", { counters: counters(5000, 1000), busySlots: 1 });
+    t = 5000;
+    rec.record("half", { counters: counters(7945, 1270), busySlots: 1 });
+    t = 10000;
+    rec.record("half", { counters: counters(9000, 40), busySlots: 1 });
+    const stats = rec.get("half");
+    expect(stats?.counterResets).toBe(1);
+    expect(stats?.intervalCount).toBe(1);
+    expect(stats?.decodeTokPerSec).toEqual({ median: 54, p10: 54, p90: 54, count: 1 });
+    expect(stats?.prefillTokPerSec).toEqual({ median: 589, p10: 589, p90: 589, count: 1 });
+  });
+
+  it("counts a drop in predictedTokensTotal alone as a reset when promptTokensTotal is null", () => {
+    const m = load();
+    let t = 0;
+    const rec = new m.EngineThroughputRecorder({ now: (): number => t });
+    rec.record("half", { counters: counters(null, 1000), busySlots: 1 });
+    t = 5000;
+    rec.record("half", { counters: counters(null, 1270), busySlots: 1 });
+    t = 10000;
+    rec.record("half", { counters: counters(null, 40), busySlots: 1 });
+    const stats = rec.get("half");
+    expect(stats?.counterResets).toBe(1);
+    expect(stats?.intervalCount).toBe(1);
+    expect(stats?.decodeTokPerSec).toEqual({ median: 54, p10: 54, p90: 54, count: 1 });
+    expect(stats?.prefillTokPerSec).toBeNull();
+  });
+
+  it("counts a drop in promptTokensTotal alone as a reset while predictedTokensTotal rises", () => {
+    const m = load();
+    let t = 0;
+    const rec = new m.EngineThroughputRecorder({ now: (): number => t });
+    rec.record("half", { counters: counters(5000, 1000), busySlots: 1 });
+    t = 5000;
+    rec.record("half", { counters: counters(7945, 1270), busySlots: 1 });
+    t = 10000;
+    rec.record("half", { counters: counters(100, 1500), busySlots: 1 });
+    const stats = rec.get("half");
+    expect(stats?.counterResets).toBe(1);
+    expect(stats?.intervalCount).toBe(1);
+    expect(stats?.decodeTokPerSec).toEqual({ median: 54, p10: 54, p90: 54, count: 1 });
+    expect(stats?.prefillTokPerSec).toEqual({ median: 589, p10: 589, p90: 589, count: 1 });
+  });
+
   it("does not treat gauge decreases between samples as a counter reset", () => {
     const m = load();
     let t = 0;
