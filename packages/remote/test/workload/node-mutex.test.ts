@@ -141,4 +141,41 @@ describe("withNodeLock", () => {
     expect(result).toBe("second");
     expect(invoked).toBe(true);
   });
+
+  test("a caller arriving after a handoff still waits for the running holder", async () => {
+    let startedB = false;
+    let startedC = false;
+    const gateA = deferred();
+    const gateB = deferred();
+
+    const a = withNodeLock("node-handoff", async () => {
+      await gateA.promise;
+    });
+    const b = withNodeLock("node-handoff", async () => {
+      startedB = true;
+      await gateB.promise;
+    });
+
+    await flush();
+    expect(startedB).toBe(false);
+
+    gateA.resolve();
+    await a;
+    await flush();
+    expect(startedB).toBe(true);
+
+    const c = withNodeLock("node-handoff", () => {
+      startedC = true;
+      return Promise.resolve();
+    });
+
+    await flush();
+    expect(startedC).toBe(false);
+
+    gateB.resolve();
+    await b;
+    await flush();
+    expect(startedC).toBe(true);
+    await c;
+  });
 });
