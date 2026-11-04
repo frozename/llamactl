@@ -24,6 +24,7 @@ import {
   ragNodeFixture,
   rawUrl,
   remoteNodeFixture,
+  SENTINELS,
   setEnv,
   startConsole,
   trpcUrl,
@@ -125,6 +126,42 @@ describe("console tab-scoped node routing", () => {
       expect(JSON.parse(body)).toEqual({ error: c.error });
     }
     expect(spy.calls).toEqual([]);
+    expect(fake.calls).toEqual([]);
+  });
+
+  test("(P3.3b) an inproc://local node with a non-agent kind dispatches locally", async () => {
+    // Kills the mutant that drops the `endpoint === LOCAL_NODE_ENDPOINT`
+    // branch of validateConsoleNode: without it this node 400s
+    // node_not_dispatchable while resolveDispatchTarget would still run
+    // it locally — the validator and the dispatcher must agree.
+    const r = api();
+    const { backend, fake, spy } = routingBackend();
+    const { distPath } = consoleTestFixture({
+      nodes: [
+        {
+          endpoint: "inproc://local",
+          kind: "rag",
+          name: "raglocal",
+          rag: {
+            auth: { tokenEnv: "RAGLOCAL_PASS" },
+            endpoint: `postgres://rag:${SENTINELS.pg}@db.local:5432/rag`,
+            provider: "pgvector",
+          },
+        },
+        gatewayNodeFixture(),
+        ragNodeFixture(),
+        remoteNodeFixture(),
+      ],
+      users: [{ name: "me", token: "tok-routing" }],
+    });
+    const h = await startConsole(r, { backend, distPath });
+    const res = await fetch(
+      trpcUrl(h, "serverStatus", { input: { workload: "w1" }, node: "raglocal" }),
+      { headers: apiHeaders(h) },
+    );
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("local");
+    expect(spy.calls).toEqual(["serverStatus"]);
     expect(fake.calls).toEqual([]);
   });
 
