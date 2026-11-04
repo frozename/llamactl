@@ -23,6 +23,7 @@ interface BuildHttpLinksOptions {
   node: string;
   fetch?: FakeFetch;
   EventSource?: unknown;
+  onInvalidSession?: () => void;
 }
 
 interface HttpTransportModule {
@@ -250,5 +251,142 @@ describe("buildHttpLinks (#410 P3)", () => {
     const mod = await importHttpTransport();
     expect(mod?.CONSOLE_NODE_NAME).toBeInstanceOf(RegExp);
     expect(mod?.isConsoleNodeName).toBeFunction();
+  });
+});
+
+const ERRORS_SPEC = "../../../src/lib/transport/errors.ts";
+
+interface ErrorsModule {
+  classifyTransportError?: (err: unknown) => { kind: string } | undefined;
+}
+
+async function importErrors(): Promise<ErrorsModule | null> {
+  return (await import(ERRORS_SPEC).catch(() => null)) as ErrorsModule | null;
+}
+
+function statusResponse(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+describe("transport error classification hooks (#410 P4)", () => {
+  test("H1: a mutation hitting a network TypeError rejects once, fetches once, classifies network", async () => {
+    const mod = await importHttpTransport();
+    const emod = await importErrors();
+    expect(mod?.buildHttpLinks).toBeFunction();
+
+    const calls: RecordedCall[] = [];
+    const fakeFetch: FakeFetch = (input, init) => {
+      const url = input instanceof Request ? input.url : input instanceof URL ? input.href : input;
+      calls.push({ url, init });
+      return Promise.reject(new TypeError("fetch failed"));
+    };
+    const client = makeClient(mod!.buildHttpLinks!, {
+      baseUrl: "/api",
+      node: "local",
+      fetch: fakeFetch,
+      EventSource: FakeEventSource,
+    });
+
+    let err: unknown;
+    try {
+      await client.serverStop.mutate({ name: "x" });
+    } catch (cause) {
+      err = cause;
+    }
+
+    expect(err).toBeInstanceOf(Error);
+    expect(calls).toHaveLength(1);
+    expect(emod?.classifyTransportError?.(err)?.kind).toBe("network");
+  });
+
+  test("H2: a query answered 401 {error:invalid_session} calls onInvalidSession once and still surfaces the error", async () => {
+    const mod = await importHttpTransport();
+    expect(mod?.buildHttpLinks).toBeFunction();
+
+    const calls: RecordedCall[] = [];
+    const invalid: number[] = [];
+    const fakeFetch: FakeFetch = (input, init) => {
+      const url = input instanceof Request ? input.url : input instanceof URL ? input.href : input;
+      calls.push({ url, init });
+      return Promise.resolve(statusResponse(401, { error: "invalid_session" }));
+    };
+    const client = makeClient(mod!.buildHttpLinks!, {
+      baseUrl: "/api",
+      node: "local",
+      fetch: fakeFetch,
+      EventSource: FakeEventSource,
+      onInvalidSession: () => invalid.push(1),
+    });
+
+    let err: unknown;
+    try {
+      await client.serverStatus.query();
+    } catch (cause) {
+      err = cause;
+    }
+
+    expect(invalid).toHaveLength(1);
+    expect(calls).toHaveLength(1);
+    expect(err).toBeInstanceOf(Error);
+  });
+
+  test("H3: only the console invalid_session code trips the hook — a 401 tRPC UNAUTHORIZED envelope does not", async () => {
+    const mod = await importHttpTransport();
+    const emod = await importErrors();
+    expect(mod?.buildHttpLinks).toBeFunction();
+
+    const invalid: number[] = [];
+    const bodies: { status: number; body: unknown }[] = [
+      { status: 401, body: { error: "invalid_session" } },
+      {
+        status: 401,
+        body: [
+          {
+            error: {
+              message: "unauthorized",
+              code: -32001,
+              data: { code: "UNAUTHORIZED", httpStatus: 401, path: "serverStatus" },
+            },
+          },
+        ],
+      },
+    ];
+    const calls: RecordedCall[] = [];
+    const fakeFetch: FakeFetch = (input, init) => {
+      const url = input instanceof Request ? input.url : input instanceof URL ? input.href : input;
+      calls.push({ url, init });
+      const next = bodies[calls.length - 1]!;
+      return Promise.resolve(statusResponse(next.status, next.body));
+    };
+    const client = makeClient(mod!.buildHttpLinks!, {
+      baseUrl: "/api",
+      node: "local",
+      fetch: fakeFetch,
+      EventSource: FakeEventSource,
+      onInvalidSession: () => invalid.push(1),
+    });
+
+    let err1: unknown;
+    try {
+      await client.serverStatus.query();
+    } catch (cause) {
+      err1 = cause;
+    }
+    expect(err1).toBeInstanceOf(Error);
+    expect(invalid).toHaveLength(1);
+
+    let err2: unknown;
+    try {
+      await client.serverStatus.query();
+    } catch (cause) {
+      err2 = cause;
+    }
+    expect(err2).toBeInstanceOf(Error);
+    expect(invalid).toHaveLength(1);
+    expect(calls).toHaveLength(2);
+    expect(emod?.classifyTransportError?.(err2)?.kind).toBe("procedure");
   });
 });
