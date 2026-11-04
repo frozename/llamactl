@@ -83,8 +83,17 @@ describe("resolveNode", () => {
     expect((caught as Error).message).toMatch(/not found in cluster 'home'/);
   });
 
-  test("leading dot: .openai throws not found", () => {
-    const config = buildConfig([]);
+  test("leading dot: .openai throws not found even with an empty-named cloud parent", () => {
+    // upsertNode does not validate names, so an empty-named cloud-backed
+    // parent exists. resolveVirtualProviderNode must still refuse the
+    // leading dot (dot <= 0 guard) instead of resolving '' as the parent.
+    const config = buildConfig([
+      {
+        name: "",
+        endpoint: "",
+        cloud: { provider: "sirius", baseUrl: "http://localhost:3000/v1" },
+      },
+    ]);
 
     let caught: unknown;
     try {
@@ -93,7 +102,7 @@ describe("resolveNode", () => {
       caught = err;
     }
     expect(caught).toBeInstanceOf(Error);
-    expect((caught as Error).message).toMatch(/not found/);
+    expect((caught as Error).message).toMatch(/not found in cluster 'home'/);
   });
 
   test("unknown parent: nosuch.openai throws not found", () => {
