@@ -116,34 +116,42 @@ interface TickState extends PressureTransitionResult {
   workloadHealth: Map<string, WorkloadHealthState>;
 }
 
-// Shared per-loop holder for the throughput tick: runTick writes the tick's
-// single clock read into `currentTickMs`; the recorder's `now` closure reads it,
-// so every sample in a tick lands on the same instant and windows persist.
+// Shared per-loop holder: the collector's `now` writes the freshly read
+// injected clock into `currentMs` and returns it; the recorder's `now` reads
+// the holder. The collector reads `now` synchronously before each
+// recordCounters, so one reading stamps both `sampledAt` and the recorder
+// sample at that target's read completion (frozename/llamactl#249 review:
+// per-target completion times, not one tick-start instant for all hosts).
 interface EngineThroughputTickState {
-  clock: { currentTickMs: number };
+  now: () => number;
   recorder: EngineThroughputRecorder;
 }
 
-function makeEngineThroughputTickState(): EngineThroughputTickState {
-  const clock = { currentTickMs: 0 };
-  return { clock, recorder: new EngineThroughputRecorder({ now: () => clock.currentTickMs }) };
+function makeEngineThroughputTickState(readNow: () => number): EngineThroughputTickState {
+  const holder = { currentMs: 0 };
+  const now = (): number => {
+    holder.currentMs = readNow();
+    return holder.currentMs;
+  };
+  return { now, recorder: new EngineThroughputRecorder({ now: () => holder.currentMs }) };
 }
 
-// One clock read + collector pass per tick. A collector failure yields [] so
-// the tick omits the field rather than breaking. Conditional spread only —
-// never assign `engineThroughput: undefined` (exactOptionalPropertyTypes).
+// One collector pass per tick, targets read in parallel. A collector failure
+// yields [] so the tick omits the field rather than breaking. Conditional
+// spread only — never assign `engineThroughput: undefined`
+// (exactOptionalPropertyTypes).
 async function runEngineThroughputStep(
   opts: SupervisorLoopOptions,
   workloads: WorkloadSnapshot[],
   throughput: EngineThroughputTickState,
 ): Promise<EngineThroughputSnapshot[]> {
   try {
-    throughput.clock.currentTickMs = (opts.engineThroughputNow ?? Date.now)();
     return await collectEngineThroughput({
       workloads,
       targets: opts.workloads,
       recorder: throughput.recorder,
-      tickMs: throughput.clock.currentTickMs,
+      tickMs: throughput.now(),
+      now: throughput.now,
       ...(opts.fetch !== undefined ? { fetch: opts.fetch } : {}),
       timeoutMs: opts.probeTimeoutMs ?? 5_000,
     });
@@ -256,8 +264,8 @@ async function runTick(
     ),
   );
 
-  // One clock read per tick, written into the shared holder before any
-  // recordCounters so every sample in the tick shares one instant.
+  // Sample every reachable ModelHost in parallel; each sample carries its own
+  // completion-time stamp from the shared clock holder.
   let engineThroughput: EngineThroughputSnapshot[] = [];
   if (throughput !== null) {
     engineThroughput = await runEngineThroughputStep(opts, workloads, throughput);
@@ -393,7 +401,9 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
   const unreachableFallback = makeUnreachableFallback(consecutiveErrors);
 
   // One recorder per loop (option-gated): rate windows persist across ticks.
-  const throughput = opts.recordEngineThroughput ? makeEngineThroughputTickState() : null;
+  const throughput = opts.recordEngineThroughput
+    ? makeEngineThroughputTickState(opts.engineThroughputNow ?? Date.now)
+    : null;
 
   let stopped = false;
   let resolveDone: (() => void) | undefined;

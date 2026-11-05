@@ -98,7 +98,16 @@ export interface CollectEngineThroughputOptions {
   workloads: WorkloadSnapshot[];
   targets: WorkloadTarget[];
   recorder: EngineThroughputRecorder;
+  /** Tick-start timestamp, used only for unreachable targets (no read to time). */
   tickMs: number;
+  /**
+   * Injected clock, read once per target when that target's reads complete.
+   * The caller wires this and the recorder's `now` to the same reading so one
+   * value stamps both `sampledAt` and the recorder sample (frozename/llamactl#249
+   * review: a single tick-start stamp skewed rates whenever a slow read pushed
+   * later hosts past the tick).
+   */
+  now: () => number;
   fetch?: typeof globalThis.fetch;
   timeoutMs?: number;
   allowPublicEndpoints?: boolean;
@@ -148,12 +157,13 @@ async function sampleTarget(
   snapshot: WorkloadSnapshot,
   recorder: EngineThroughputRecorder,
   readOptions: CollectorReadOptions,
-  sampledAt: string,
+  now: () => number,
 ): Promise<EngineThroughputSnapshot> {
   const [metrics, slots] = await Promise.all([
     readEngineMetrics(target.endpoint, readOptions),
     readSlotProgress(target.endpoint, readOptions),
   ]);
+  const atMs = now();
 
   if (metrics.available || slots.available) {
     recorder.recordCounters(target.name, {
@@ -166,7 +176,7 @@ async function sampleTarget(
   return {
     workload: target.name,
     revision: snapshot.revision ?? null,
-    sampledAt,
+    sampledAt: new Date(atMs).toISOString(),
     metrics: availabilityField(metrics),
     slots: availabilityField(slots),
     stats: recorder.get(target.name),
@@ -176,25 +186,25 @@ async function sampleTarget(
 /**
  * One read-only /metrics + /slots sample per reachable ModelHost target, fed
  * into the caller-owned recorder (the loop keeps one recorder so rate windows
- * persist across ticks). Never reads a clock itself — every timestamp derives
- * from `tickMs`.
+ * persist across ticks). Targets are read concurrently so a slow host cannot
+ * delay its siblings, and each sample is stamped by `now()` at the moment that
+ * target's reads complete — `tickMs` only times unreachable targets (a serial
+ * loop stamping every sample at tick start skewed rates, frozename/llamactl#249).
  */
 export async function collectEngineThroughput(
   opts: CollectEngineThroughputOptions,
 ): Promise<EngineThroughputSnapshot[]> {
-  const { workloads, targets, recorder, tickMs } = opts;
-  const sampledAt = new Date(tickMs).toISOString();
+  const { workloads, targets, recorder, tickMs, now } = opts;
   const readOptions = readOptionsFrom(opts);
-  const out: EngineThroughputSnapshot[] = [];
-
-  for (const target of targets) {
-    if (target.kind !== "ModelHost") continue;
-    const snapshot = workloads.find((workload) => workload.name === target.name);
-    if (!snapshot?.reachable) {
-      out.push(unreachableSnapshot(target, snapshot, recorder, sampledAt));
-      continue;
-    }
-    out.push(await sampleTarget(target, snapshot, recorder, readOptions, sampledAt));
-  }
-  return out;
+  const results = await Promise.all(
+    targets.map(async (target): Promise<EngineThroughputSnapshot | null> => {
+      if (target.kind !== "ModelHost") return null;
+      const snapshot = workloads.find((workload) => workload.name === target.name);
+      if (!snapshot?.reachable) {
+        return unreachableSnapshot(target, snapshot, recorder, new Date(tickMs).toISOString());
+      }
+      return await sampleTarget(target, snapshot, recorder, readOptions, now);
+    }),
+  );
+  return results.filter((entry): entry is EngineThroughputSnapshot => entry !== null);
 }
