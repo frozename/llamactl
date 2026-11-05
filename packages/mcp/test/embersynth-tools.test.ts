@@ -124,6 +124,7 @@ describe("llamactl.embersynth.sync", () => {
 
   test("dry-run returns would-be profiles/syntheticModels when config exists", async () => {
     seedConfig();
+    const before = readFileSync(configPath());
     const client = await connected();
     const result = await client.callTool({
       name: "llamactl.embersynth.sync",
@@ -133,9 +134,8 @@ describe("llamactl.embersynth.sync", () => {
     expect(parsed["dryRun"]).toBe(true);
     expect(Array.isArray(parsed["profiles"])).toBe(true);
     expect(Array.isArray(parsed["syntheticModels"])).toBe(true);
-    // Existing file is untouched.
-    const before = readFileSync(configPath(), "utf8");
-    expect(before).toContain("private-first");
+    // Existing file is untouched — byte-identical, not regenerated.
+    expect(readFileSync(configPath())).toStrictEqual(before);
   });
 });
 
@@ -179,6 +179,7 @@ describe("llamactl.embersynth.set-default-profile", () => {
 
   test("dry-run notes not modified when synthetic model maps to a different profile", async () => {
     seedConfig();
+    const before = readFileSync(configPath());
     const client = await connected();
     const result = await client.callTool({
       name: "llamactl.embersynth.set-default-profile",
@@ -190,6 +191,9 @@ describe("llamactl.embersynth.set-default-profile", () => {
     expect(parsed["next"]).toBe("private-first");
     expect(parsed["unchanged"]).toBe(false);
     expect((parsed["note"] as string).toLowerCase()).toContain("not modified");
+    // Dry-run never writes: file byte-identical, fusion-auto still maps to auto.
+    expect(readFileSync(configPath())).toStrictEqual(before);
+    expect(seededConfig().syntheticModels["fusion-auto"]).toBe("auto");
   });
 
   test("dry-run audit captures the call with unchanged + previous + next", async () => {
