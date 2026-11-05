@@ -1,4 +1,5 @@
 import type { ClusterNode, Config, User } from "@llamactl/core/config/schema";
+import type { LocalRoute } from "@llamactl/core/workloadRuntime";
 
 import {
   autotune as autotuneMod,
@@ -88,7 +89,7 @@ import { readJournal } from "./ops-chat/sessions/journal.js";
 import { getSessionSummary, listSessions } from "./ops-chat/sessions/list.js";
 import { createRagAdapter } from "./rag/index.js";
 import { resolveRagNode } from "./rag/resolve.js";
-import { readFleetSnapshot } from "./routes/fleet.js";
+import { readFleetSnapshotOrLocalRoutes } from "./routes/fleet.js";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "./safe-fs.js";
 import { searchLogs } from "./search/logs.js";
 import { resolveDefaultRagNode } from "./search/rag-node.js";
@@ -605,6 +606,8 @@ type CandidateStreamEvent =
 // a transformer through ipcLink, so this keeps the pipeline uncomplicated.
 export interface AgentRouterContext {
   fleetJournalPath?: string;
+  /** #306: route source override for the fleetSnapshot local-routes fallback, like fleetJournalPath. Production leaves it unset. */
+  fleetLocalRoutes?: () => LocalRoute[];
 }
 
 const t = initTRPC.context<AgentRouterContext>().create();
@@ -1112,11 +1115,17 @@ export const router = t.router({
 
   nodeFacts: t.procedure.query(() => nodeFactsMod.collectNodeFacts()),
 
-  fleetSnapshot: t.procedure.query(({ ctx }) =>
-    readFleetSnapshot(
-      ctx.fleetJournalPath !== undefined ? { journalPath: ctx.fleetJournalPath } : {},
+  fleetSnapshot: t.procedure
+    .input(z.object({ include: z.array(z.string()).optional() }).optional())
+    .query(({ ctx, input }) =>
+      readFleetSnapshotOrLocalRoutes(
+        {
+          ...(ctx.fleetJournalPath !== undefined ? { journalPath: ctx.fleetJournalPath } : {}),
+          ...(ctx.fleetLocalRoutes !== undefined ? { localRoutes: ctx.fleetLocalRoutes } : {}),
+        },
+        input?.include?.includes("local-routes") === true,
+      ),
     ),
-  ),
 
   // ---- node management (kubeconfig + reachability) ----------------------
 

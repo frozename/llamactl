@@ -3,6 +3,7 @@ import { readWorkloadEpoch } from "@llamactl/core/kvstore";
 import { listLocalRoutes, type LocalRoute } from "@llamactl/core/workloadRuntime";
 import {
   defaultFleetJournalPath,
+  type FleetSnapshotEntry,
   readLatestFleetSnapshotFromJournal,
 } from "@llamactl/fleet-supervisor";
 
@@ -103,16 +104,24 @@ function localRoutesFallback(opts: FleetSnapshotRouteOptions): LocalRoutesSnapsh
   }
 }
 
+/** #306: journal snapshot when present; else the local-routes fallback if asked for. */
+export function readFleetSnapshotOrLocalRoutes(
+  opts: FleetSnapshotRouteOptions,
+  includeLocalRoutes: boolean,
+): FleetSnapshotEntry | LocalRoutesSnapshot | null {
+  const latest = readFleetSnapshot(opts);
+  if (latest !== null) return latest;
+  // #306: only callers that ask (the internal proxy's peer poller) get the
+  // local-routes fallback; supervisors and the CLI keep seeing 204.
+  if (!includeLocalRoutes) return null;
+  return localRoutesFallback(opts);
+}
+
 export function handleFleetSnapshotRoute(
   req: Request,
   opts: FleetSnapshotRouteOptions = {},
 ): Response {
-  const latest = readFleetSnapshot(opts);
-  if (latest !== null) return Response.json(latest, { status: 200 });
-  // #306: only callers that ask (the internal proxy's peer poller) get the
-  // local-routes fallback; supervisors and the CLI keep seeing 204.
-  if (!wantsLocalRoutes(req)) return new Response(null, { status: 204 });
-  const fallback = localRoutesFallback(opts);
-  if (fallback === null) return new Response(null, { status: 204 });
-  return Response.json(fallback, { status: 200 });
+  const snapshot = readFleetSnapshotOrLocalRoutes(opts, wantsLocalRoutes(req));
+  if (snapshot === null) return new Response(null, { status: 204 });
+  return Response.json(snapshot, { status: 200 });
 }
