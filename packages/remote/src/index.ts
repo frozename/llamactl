@@ -44,7 +44,9 @@ export {
   buildConsoleRouter,
   CONSOLE_ALLOWLIST,
   type ConsoleAllowlistEntry,
+  type ConsoleLookupWorkload,
   type ConsoleProcedureType,
+  serverStopPrecheck,
 } from "./console/allowlist.js";
 export {
   checkConsoleHost,

@@ -1,9 +1,10 @@
-// Shared fixtures + harness for the #410 console RED tests (P2b + P3):
-// a spy tRPC backend that records ctx/input per call, kubeconfig + dist
-// writers under per-test temp dirs, a recording pinned-fetch factory for
-// remote-node dispatch, and the bounded HTTP/SSE readers the guard and
-// teardown cases wait on. Env vars touched through `setEnv`, started
-// servers and temp dirs are all restored/removed by
+// Shared fixtures + harness for the #410 console RED tests (P2b + P3 +
+// P5a): a spy tRPC backend that records ctx/input per call, kubeconfig
+// + dist writers under per-test temp dirs, a recording pinned-fetch
+// factory for remote-node dispatch, a recording lookupWorkload seam for
+// the serverStop precheck, and the bounded HTTP/SSE readers the guard
+// and teardown cases wait on. Env vars touched through `setEnv`,
+// started servers and temp dirs are all restored/removed by
 // `cleanupConsoleTest()` from each suite's afterEach — nothing here
 // touches live operator state.
 
@@ -330,6 +331,48 @@ export function workloadArgsFixture(): string[] {
   return ["--api-key", SENTINELS.arg, `--hf-token=${SENTINELS.hf}`];
 }
 
+/** ModelRun manifest for the P5a stop-precheck lookup seam. */
+export function modelRunFixture(
+  name: string,
+  node: string,
+  workers: Record<string, unknown>[] = [],
+): Record<string, unknown> {
+  return {
+    apiVersion: "llamactl/v1",
+    kind: "ModelRun",
+    metadata: { name },
+    spec: {
+      extraArgs: [],
+      node,
+      target: { kind: "rel", value: "m.gguf" },
+      workers,
+    },
+  };
+}
+
+/** Same shape as modelRunFixture but kind "ModelHost". */
+export function modelHostFixture(name: string, node: string): Record<string, unknown> {
+  return { ...modelRunFixture(name, node), kind: "ModelHost" };
+}
+
+/**
+ * Recording lookupWorkload seam for the P5a serverStop precheck: pushes
+ * every name it is asked for onto `calls` and answers from `map` (null
+ * on a miss), so tests can pin both the consult order and the manifest
+ * the precheck saw.
+ */
+export function makeLookupSpy(map: Record<string, unknown>): {
+  calls: string[];
+  lookup: (name: string) => unknown;
+} {
+  const calls: string[] = [];
+  const lookup = (name: string): unknown => {
+    calls.push(name);
+    return map[name] ?? null;
+  };
+  return { calls, lookup };
+}
+
 /** Sentinel-laden fixture set covering every procedure the spy serves. */
 export function spyFixtures(): Record<string, unknown> {
   return {
@@ -412,12 +455,13 @@ export interface ConsoleStarter {
 
 export async function startConsole(
   r: ConsoleStarter,
-  opts: { distPath: string; backend?: unknown },
+  opts: { distPath: string; backend?: unknown; lookupWorkload?: unknown },
 ): Promise<ConsoleHandle> {
   const server = await r.startConsoleServer({
     port: 0,
     distPath: opts.distPath,
     ...(opts.backend === undefined ? {} : { backend: opts.backend }),
+    ...(opts.lookupWorkload === undefined ? {} : { lookupWorkload: opts.lookupWorkload }),
   });
   servers.push(server);
   const index = await fetch(`${server.url}/`);
