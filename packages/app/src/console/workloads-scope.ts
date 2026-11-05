@@ -39,7 +39,7 @@ export function workloadsForTab<R extends ConsoleWorkloadRow>(
   return { rows: tabRows, others };
 }
 
-type WorkloadLocationResult<R extends ConsoleWorkloadRow> =
+export type WorkloadLocationResult<R extends ConsoleWorkloadRow> =
   | { kind: "here"; row: R }
   | { kind: "elsewhere"; node: string; message: string; href: string }
   | { kind: "missing" };

@@ -40,5 +40,9 @@ export function createSessionStore(): SessionStore {
 export const consoleSessionStore: SessionStore = createSessionStore();
 
 export function useInvalidSession(): boolean {
-  return useSyncExternalStore(consoleSessionStore.subscribe, consoleSessionStore.isInvalid);
+  return useSyncExternalStore(
+    consoleSessionStore.subscribe,
+    consoleSessionStore.isInvalid,
+    consoleSessionStore.isInvalid,
+  );
 }
