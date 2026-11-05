@@ -3,6 +3,7 @@
 // fleet-snapshot. Every case spawns the real CLI against a temp DEV_STORAGE journal
 // so only the user-facing contract is pinned.
 
+import type { PeerNode } from "@llamactl/core/config/peers";
 import type {
   EngineThroughputSnapshot,
   FleetSnapshotEntry,
@@ -14,14 +15,23 @@ import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { runWorkload } from "../src/commands/workload-status.js";
 import { mkdirSync, writeFileSync } from "../src/safe-fs.js";
-import { CLI_ENTRY, makeTempRuntime, parseJsonRecord, requireRecordField } from "./helpers.js";
+import {
+  captureProcessStreams,
+  CLI_ENTRY,
+  makeTempRuntime,
+  parseJsonRecord,
+  requireRecordField,
+} from "./helpers.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CLI_PKG_DIR = join(__dirname, "..");
 
 const WORKLOAD = "w1";
 const NODE = "local";
+const PEER_NODE = "peer1";
+const PEER: PeerNode = { id: PEER_NODE, endpoint: "https://peer.invalid" };
 const SNAP_TS = "2026-11-01T10:00:31.000Z";
 const SAMPLED_AT = "2026-11-01T10:00:30.000Z";
 const FIRST_SAMPLE_AT = "2026-11-01T09:55:00.000Z";
@@ -95,11 +105,12 @@ function throughputEntry(
 function fleetSnapshot(
   ts: string,
   engineThroughput?: EngineThroughputSnapshot[],
+  node: string = NODE,
 ): FleetSnapshotEntry {
   return {
     kind: "fleet-snapshot",
     ts,
-    node: NODE,
+    node,
     node_mem: {
       free_mb: 16384,
       active_mb: 8192,
@@ -357,5 +368,69 @@ describe("workload status --metrics", () => {
 
     expect(res.code).toBe(0);
     expect(res.stdout).toContain("workload status <name> --metrics");
+  });
+});
+
+describe("workload status --metrics multi-source merge", () => {
+  test("a newer peer snapshot for the same node wins over the local snapshot", async () => {
+    const local = fleetSnapshot("2026-11-01T09:00:00.000Z", [throughputEntry(OLDER_STATS)]);
+    const peer = fleetSnapshot(SNAP_TS, [throughputEntry(FULL_STATS)]);
+
+    const { result, stdout } = await captureProcessStreams(() =>
+      runWorkload(["status", WORKLOAD, "--metrics", "--json"], {
+        readLocalSnapshot: () => Promise.resolve(local),
+        readPeers: () => [PEER],
+        fetchPeerSnapshot: () => Promise.resolve(peer),
+      }),
+    );
+
+    expect(result).toBe(0);
+    const parsed = parseJsonRecord(stdout);
+    expect(parsed["node"]).toBe(NODE);
+    expect(parsed["snapshotTs"]).toBe(SNAP_TS);
+    const stats = requireRecordField(parsed, "stats");
+    expect(requireRecordField(stats, "decodeTokPerSec")["median"]).toBe(45.1);
+  });
+
+  test("the newer sampledAt across nodes wins for the same workload", async () => {
+    const local = fleetSnapshot(SNAP_TS, [
+      throughputEntry(FULL_STATS, { sampledAt: "2026-11-01T09:30:00.000Z" }),
+    ]);
+    const peer = fleetSnapshot(
+      "2026-11-01T08:00:00.000Z",
+      [throughputEntry(OLDER_STATS, { sampledAt: "2026-11-01T10:30:00.000Z" })],
+      PEER_NODE,
+    );
+
+    const { result, stdout } = await captureProcessStreams(() =>
+      runWorkload(["status", WORKLOAD, "--metrics", "--json"], {
+        readLocalSnapshot: () => Promise.resolve(local),
+        readPeers: () => [PEER],
+        fetchPeerSnapshot: () => Promise.resolve(peer),
+      }),
+    );
+
+    expect(result).toBe(0);
+    const parsed = parseJsonRecord(stdout);
+    expect(parsed["node"]).toBe(PEER_NODE);
+    expect(parsed["snapshotTs"]).toBe("2026-11-01T08:00:00.000Z");
+    expect(parsed["sampledAt"]).toBe("2026-11-01T10:30:00.000Z");
+    const stats = requireRecordField(parsed, "stats");
+    expect(requireRecordField(stats, "decodeTokPerSec")["median"]).toBe(99);
+  });
+
+  test("a peer whose fetch throws is skipped and the local result still returns", async () => {
+    const { result, stdout, stderr } = await captureProcessStreams(() =>
+      runWorkload(["status", WORKLOAD, "--metrics"], {
+        readLocalSnapshot: () => Promise.resolve(fullStatsSnapshot()),
+        readPeers: () => [PEER],
+        fetchPeerSnapshot: () => Promise.reject(new Error("peer unreachable")),
+      }),
+    );
+
+    expect(result).toBe(0);
+    expect(stdout).toContain("node: local");
+    expect(stdout).toContain("decode tok/s: median 45.1");
+    expect(stderr).not.toContain("peer unreachable");
   });
 });
