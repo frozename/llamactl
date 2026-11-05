@@ -153,7 +153,7 @@ describe("agent /metrics endpoint", () => {
     const res = await pinnedFetch("/v1/chat/completions", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ model: "x", messages: [] }),
+      body: JSON.stringify({ model: "metrics-test/model.gguf", messages: [] }),
     });
     expect(res.status).toBe(200);
     const after = countChatSeries(await scrape());

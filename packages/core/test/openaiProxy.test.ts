@@ -1142,11 +1142,11 @@ test("a routable model overrides the singleton local fallback endpoint", async (
   }
 });
 
-test("an unknown model keeps the legacy local fallback endpoint", async () => {
-  // Compatibility contract at 7443403: an unrecognized `model` falls
-  // through to the singleton llama-server rather than 404ing. Whether a
-  // strict unknown-model error is desirable is a later-slice decision —
-  // this test freezes the current behavior.
+test("an unknown model with routes configured returns model_not_routed naming it", async () => {
+  // #306 operator decision: once the route map is non-empty, a JSON
+  // `model` matching no route — and neither the env default alias nor
+  // the env default model — is an explicit 404, not a silent fallthrough
+  // to the singleton llama-server.
   const t = tempEnv({ LLAMA_CPP_PORT: "17777" });
   try {
     writeLlamaServerWorkload(t.dir, "wl-routed", {
@@ -1161,6 +1161,159 @@ test("an unknown model keeps the legacy local fallback endpoint", async () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           model: "nope/unknown.gguf",
+          messages: [{ role: "user", content: "hi" }],
+        }),
+      }),
+      t.env,
+    );
+
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as {
+      error: {
+        code: string;
+        type: string;
+        message: string;
+        known_models: string[];
+      };
+    };
+    expect(body.error.code).toBe("model_not_routed");
+    expect(body.error.type).toBe("invalid_request_error");
+    expect(body.error.message).toContain("nope/unknown.gguf");
+    expect(body.error.known_models).toEqual(["routed/model.gguf"]);
+    expect(upstream.calls).toHaveLength(0);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("/v1/messages with an unknown model and routes configured returns model_not_routed", async () => {
+  const t = tempEnv({ LLAMA_CPP_PORT: "17777" });
+  try {
+    writeLlamaServerWorkload(t.dir, "wl-routed", {
+      rel: "routed/model.gguf",
+      port: 8142,
+    });
+    const upstream = installConditionalChatUpstream();
+
+    const res = await openaiProxy.proxyOpenAI(
+      anthropicChatRequest({
+        model: "claude-vendor-id",
+        messages: [{ role: "user", content: "hi" }],
+        max_tokens: 8,
+      }),
+      t.env,
+    );
+
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: { code: string; message: string } };
+    expect(body.error.code).toBe("model_not_routed");
+    expect(body.error.message).toContain("claude-vendor-id");
+    expect(upstream.calls).toHaveLength(0);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("the default llama-server alias is still forwarded to the default target when routes exist", async () => {
+  const t = tempEnv({ LLAMA_CPP_PORT: "17777", LLAMA_CPP_SERVER_ALIAS: "default-alias" });
+  try {
+    writeLlamaServerWorkload(t.dir, "wl-routed", {
+      rel: "routed/model.gguf",
+      port: 8142,
+    });
+    const upstream = installConditionalChatUpstream();
+
+    const res = await openaiProxy.proxyOpenAI(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "default-alias",
+          messages: [{ role: "user", content: "hi" }],
+        }),
+      }),
+      t.env,
+    );
+
+    expect(res.status).toBe(200);
+    expect(upstream.calls).toHaveLength(1);
+    expect(upstream.calls[0]!.url).toBe("http://127.0.0.1:17777/v1/chat/completions");
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("the default model id is still forwarded to the default target when routes exist", async () => {
+  const t = tempEnv({
+    LLAMA_CPP_PORT: "17777",
+    LLAMA_CPP_DEFAULT_MODEL: "default/model.gguf",
+  });
+  try {
+    writeLlamaServerWorkload(t.dir, "wl-routed", {
+      rel: "routed/model.gguf",
+      port: 8142,
+    });
+    const upstream = installConditionalChatUpstream();
+
+    const res = await openaiProxy.proxyOpenAI(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "default/model.gguf",
+          messages: [{ role: "user", content: "hi" }],
+        }),
+      }),
+      t.env,
+    );
+
+    expect(res.status).toBe(200);
+    expect(upstream.calls).toHaveLength(1);
+    expect(upstream.calls[0]!.url).toBe("http://127.0.0.1:17777/v1/chat/completions");
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("with no routes configured an unknown model keeps the default-target fallback", async () => {
+  const t = tempEnv({ LLAMA_CPP_PORT: "17777" });
+  try {
+    const upstream = installConditionalChatUpstream();
+
+    const res = await openaiProxy.proxyOpenAI(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "nope/unknown.gguf",
+          messages: [{ role: "user", content: "hi" }],
+        }),
+      }),
+      t.env,
+    );
+
+    expect(res.status).toBe(200);
+    expect(upstream.calls).toHaveLength(1);
+    expect(upstream.calls[0]!.url).toBe("http://127.0.0.1:17777/v1/chat/completions");
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a request with no model field keeps the default-target fallback when routes exist", async () => {
+  const t = tempEnv({ LLAMA_CPP_PORT: "17777" });
+  try {
+    writeLlamaServerWorkload(t.dir, "wl-routed", {
+      rel: "routed/model.gguf",
+      port: 8142,
+    });
+    const upstream = installConditionalChatUpstream();
+
+    const res = await openaiProxy.proxyOpenAI(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
           messages: [{ role: "user", content: "hi" }],
         }),
       }),

@@ -352,17 +352,22 @@ describe("POST /v1/chat/completions via/rag JSON path (P0.1)", () => {
     expect(cloudCalls).toHaveLength(0);
   });
 
-  test("a request without via/rag falls through to the local openaiProxy fallback", async () => {
+  test("a request without via/rag for an unrouted model returns model_not_routed from the local openaiProxy", async () => {
     const res = await chatCompletions({
       model: "no-local-workload",
       messages: [{ role: "user", content: "hi" }],
     });
-    // No local workloads in the hermetic runtime dir and LLAMA_CPP_PORT=1
-    // is closed — the legacy fallback surfaces the 502 upstream envelope.
-    expect(res.status).toBe(502);
-    const body = (await res.json()) as { error: { message: string; type: string } };
-    expect(body.error.type).toBe("llamactl_upstream_error");
-    expect(body.error.message.startsWith("upstream llama-server unreachable:")).toBe(true);
+    // The wl-via-node route written by the via test above is still live
+    // in the shared runtime dir, so the route map is non-empty and the
+    // unrouted "no-local-workload" gets the explicit #306 not-routed
+    // error instead of the LLAMA_CPP_PORT=1 fallback.
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as {
+      error: { code: string; type: string; message: string };
+    };
+    expect(body.error.type).toBe("invalid_request_error");
+    expect(body.error.code).toBe("model_not_routed");
+    expect(body.error.message).toContain("no-local-workload");
     expect(cloudCalls).toHaveLength(0);
   });
 

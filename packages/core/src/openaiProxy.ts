@@ -236,6 +236,38 @@ function requestedModelFromBody(bodyText: string): string | undefined {
   }
 }
 
+/**
+ * Return the set of model IDs that the default llama-server at
+ * LLAMA_CPP_HOST:LLAMA_CPP_PORT serves: the non-empty values of
+ * LLAMA_CPP_SERVER_ALIAS (passed as `--alias` by server.ts launchBackground)
+ * and LLAMA_CPP_DEFAULT_MODEL. See #306.
+ */
+function defaultTargetModelIds(resolved: ResolvedEnv): Set<string> {
+  const ids = new Set<string>();
+  if (resolved.LLAMA_CPP_SERVER_ALIAS) ids.add(resolved.LLAMA_CPP_SERVER_ALIAS);
+  if (resolved.LLAMA_CPP_DEFAULT_MODEL) ids.add(resolved.LLAMA_CPP_DEFAULT_MODEL);
+  return ids;
+}
+
+/**
+ * Build a 404 response for a model that is present in the JSON body but
+ * matches no route entry in the (non-empty) route map.  See #306.
+ */
+function modelNotRoutedResponse(model: string, knownModels: string[]): Response {
+  return Response.json(
+    {
+      error: {
+        message: `model '${model}' is not routed by this proxy; known models: ${knownModels.join(", ") || "(none)"}`,
+        type: "invalid_request_error",
+        code: "model_not_routed",
+        param: "model",
+        known_models: knownModels,
+      },
+    },
+    { status: 404 },
+  );
+}
+
 function routedEndpointForModel(
   model: string,
   pathname: string,
@@ -1862,7 +1894,20 @@ function releaseWarmHitLease(context: ProxyContext): void {
 /**
  * Route a JSON request by its body `model` field. Reads (and size-caps)
  * the body when it hasn't been read yet; leaves the default target in
- * place when the model is absent or unrouted.
+ * place when the model is absent or empty.
+ *
+ * #306: when the body carries a non-empty `model` that matches no route
+ * and the route map is non-empty, the request is answered with an explicit
+ * `model_not_routed` 404 instead of silently falling through to the
+ * default llama-server — unless the model is one of the default target's
+ * own ids (LLAMA_CPP_SERVER_ALIAS / LLAMA_CPP_DEFAULT_MODEL), which keep
+ * the fallthrough.
+ *
+ * Known limitation: when the operator's extraArgs already pass `--alias`
+ * or `-a`, server.ts skips adding `--alias LLAMA_CPP_SERVER_ALIAS`, so the
+ * default server's actual advertised id is not recognised as a
+ * default-target id. Requests for it get `model_not_routed` while routes
+ * exist; set LLAMA_CPP_SERVER_ALIAS or LLAMA_CPP_DEFAULT_MODEL to match.
  */
 async function resolveJsonBodyRoute(context: ProxyContext): Promise<ProxyContext | Response> {
   if (context.bodyText === undefined) {
@@ -1894,6 +1939,11 @@ async function resolveJsonBodyRoute(context: ProxyContext): Promise<ProxyContext
     if (routedTarget) {
       context.target = routedTarget.target;
       context.route = routedTarget;
+      return context;
+    }
+    const routeMap = getRouteMap(context.resolved);
+    if (routeMap.size > 0 && !defaultTargetModelIds(context.resolved).has(model)) {
+      return modelNotRoutedResponse(model, [...routeMap.keys()].sort());
     }
   }
   return context;
