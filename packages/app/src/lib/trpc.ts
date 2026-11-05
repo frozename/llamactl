@@ -1,20 +1,10 @@
-import type { AppRouter } from "@llamactl/remote";
-import type { TRPCLink } from "@trpc/client";
-
 import { createTRPCClient } from "@trpc/client";
-import { createTRPCReact } from "@trpc/react-query";
 
 import type { UIRouter } from "../../electron/trpc/router";
 
 import { ipcLink } from "./transport/ipc";
 
-export const trpc: ReturnType<typeof createTRPCReact<AppRouter>> = createTRPCReact<AppRouter>();
-
-export function createAppClient(
-  links: TRPCLink<AppRouter>[],
-): ReturnType<typeof trpc.createClient> {
-  return trpc.createClient({ links });
-}
+export { createAppClient, trpc } from "./trpc-core";
 
 /**
  * Typed client for the two UI-only procedures (`uiSetActiveNode`,
