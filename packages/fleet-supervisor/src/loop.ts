@@ -2,6 +2,7 @@ import type { MigrationController } from "./migration-controller.js";
 import type { DegradationThresholds, PressureThresholds, WorkloadHealthState } from "./policy.js";
 import type {
   CompletionProbeSnapshot,
+  EngineThroughputSnapshot,
   FleetHeartbeatEntry,
   FleetJournalEntry,
   FleetSlotProgressEntry,
@@ -11,11 +12,14 @@ import type {
 } from "./types.js";
 import type { WorkloadTarget } from "./workload-probe.js";
 
+import { collectEngineThroughput } from "./engine-throughput-collector.js";
+import { EngineThroughputRecorder } from "./engine-throughput.js";
 import { appendFleetJournal, defaultFleetJournalPath } from "./journal.js";
 import { makeLocalRevisionReader } from "./local-revision.js";
 import {
   applyPressureTransition,
   applyWorkloadDegradation,
+  type CompletionProbeState,
   emitPeriodicPressureStatus,
   evaluateMigrationWorkloads,
   makeDedupJournalWriter,
@@ -79,6 +83,15 @@ export interface SupervisorLoopOptions {
    */
   logSlotProgress?: boolean;
   /**
+   * Read-only: sample each reachable ModelHost's `/metrics` + `/slots` per tick
+   * and carry the windowed rates on the fleet-snapshot's `engineThroughput`
+   * field. Drives nothing — observational (frozename/llamactl#249). Direct
+   * llama-server endpoints only; proxied endpoints are a follow-up. Default off.
+   */
+  recordEngineThroughput?: boolean;
+  /** Clock backing the throughput recorder + `sampledAt`. Defaults to Date.now. */
+  engineThroughputNow?: () => number;
+  /**
    * Source-staleness auto-reload. OFF unless `startupRev` is set (the CLI sets it
    * in serve mode only). At each loop boundary — after a tick fully resolves,
    * before the next sleep — if the injected `checkSourceStale` reports the running
@@ -101,6 +114,57 @@ export interface SupervisorLoopHandle {
 interface TickState extends PressureTransitionResult {
   pressureWindow: PressureWindow;
   workloadHealth: Map<string, WorkloadHealthState>;
+}
+
+// Shared per-loop holder for the throughput tick: runTick writes the tick's
+// single clock read into `currentTickMs`; the recorder's `now` closure reads it,
+// so every sample in a tick lands on the same instant and windows persist.
+interface EngineThroughputTickState {
+  clock: { currentTickMs: number };
+  recorder: EngineThroughputRecorder;
+}
+
+function makeEngineThroughputTickState(): EngineThroughputTickState {
+  const clock = { currentTickMs: 0 };
+  return { clock, recorder: new EngineThroughputRecorder({ now: () => clock.currentTickMs }) };
+}
+
+// One clock read + collector pass per tick. A collector failure yields [] so
+// the tick omits the field rather than breaking. Conditional spread only —
+// never assign `engineThroughput: undefined` (exactOptionalPropertyTypes).
+async function runEngineThroughputStep(
+  opts: SupervisorLoopOptions,
+  workloads: WorkloadSnapshot[],
+  throughput: EngineThroughputTickState,
+): Promise<EngineThroughputSnapshot[]> {
+  try {
+    throughput.clock.currentTickMs = (opts.engineThroughputNow ?? Date.now)();
+    return await collectEngineThroughput({
+      workloads,
+      targets: opts.workloads,
+      recorder: throughput.recorder,
+      tickMs: throughput.clock.currentTickMs,
+      ...(opts.fetch !== undefined ? { fetch: opts.fetch } : {}),
+      timeoutMs: opts.probeTimeoutMs ?? 5_000,
+    });
+  } catch {
+    return [];
+  }
+}
+
+function makeCompletionState(): CompletionProbeState {
+  return {
+    consecutiveFailures: new Map<string, number>(),
+    tickCounter: new Map<string, number>(),
+    lastResult: new Map<string, CompletionProbeSnapshot>(),
+    lastSlotProgress: new Map<
+      string,
+      { nPast: number | null; nDecoded: number | null; stallChecks: number; lastAdvanceAt: number }
+    >(),
+    latencySamples: new Map<string, number[]>(),
+    lastRevision: new Map<string, string | null>(),
+    readSlotProgress,
+  };
 }
 
 function asMessage(error: unknown): string {
@@ -182,6 +246,7 @@ async function runTick(
   migrationController: MigrationController | null,
   writeJournalEntry: (entry: FleetJournalEntry) => void,
   tickSeq: number,
+  throughput: EngineThroughputTickState | null,
 ): Promise<void> {
   const ts = new Date().toISOString();
   const node_mem = await (opts.probeNodeMem ?? defaultProbeNodeMem)();
@@ -190,6 +255,13 @@ async function runTick(
       probeWorkloadFn(target).catch(() => unreachableFallback(target)),
     ),
   );
+
+  // One clock read per tick, written into the shared holder before any
+  // recordCounters so every sample in the tick shares one instant.
+  let engineThroughput: EngineThroughputSnapshot[] = [];
+  if (throughput !== null) {
+    engineThroughput = await runEngineThroughputStep(opts, workloads, throughput);
+  }
 
   // Self-published lease intent rides the per-tick snapshot when a term is set.
   // Conditional spread only (exactOptionalPropertyTypes: never `lease: undefined`).
@@ -274,6 +346,7 @@ async function runTick(
     workloads,
     ...(leaseIntent ? { lease: leaseIntent } : {}),
     ...(inFlightMoves.length > 0 ? { inFlightMoves } : {}),
+    ...(engineThroughput.length > 0 ? { engineThroughput } : {}),
   };
   const heartbeat: FleetHeartbeatEntry = { kind: "fleet-heartbeat", ts, node: opts.node };
   writeJournalEntry(snapshot);
@@ -296,18 +369,7 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
   const migrationController = opts.migrationController ?? null;
 
   const consecutiveErrors = new Map<string, number>();
-  const completionState = {
-    consecutiveFailures: new Map<string, number>(),
-    tickCounter: new Map<string, number>(),
-    lastResult: new Map<string, CompletionProbeSnapshot>(),
-    lastSlotProgress: new Map<
-      string,
-      { nPast: number | null; nDecoded: number | null; stallChecks: number; lastAdvanceAt: number }
-    >(),
-    latencySamples: new Map<string, number[]>(),
-    lastRevision: new Map<string, string | null>(),
-    readSlotProgress,
-  };
+  const completionState = makeCompletionState();
   const state: TickState = {
     consecutiveClearTicks: 0,
     enteredHighAt: null,
@@ -329,6 +391,9 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
       readLocalRevision: opts.readLocalRevision ?? makeLocalRevisionReader(),
     });
   const unreachableFallback = makeUnreachableFallback(consecutiveErrors);
+
+  // One recorder per loop (option-gated): rate windows persist across ticks.
+  const throughput = opts.recordEngineThroughput ? makeEngineThroughputTickState() : null;
 
   let stopped = false;
   let resolveDone: (() => void) | undefined;
@@ -395,6 +460,7 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
       migrationController,
       writeJournalEntry,
       (tickSeq += 1),
+      throughput,
     );
 
   const run = async (): Promise<void> => {
