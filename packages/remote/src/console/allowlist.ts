@@ -68,7 +68,12 @@ export async function serverStopPrecheck(
   if (!parsed.success) {
     throw new TRPCError({ code: "BAD_REQUEST", message: "bad_input" });
   }
-  const manifest = lookupWorkload(parsed.data.workload);
+  let manifest: unknown;
+  try {
+    manifest = lookupWorkload(parsed.data.workload);
+  } catch {
+    throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "workload_lookup_failed" });
+  }
   if (manifest === null || manifest === undefined) {
     throw new TRPCError({ code: "NOT_FOUND", message: "workload_not_found" });
   }
