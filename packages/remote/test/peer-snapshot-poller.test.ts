@@ -239,8 +239,103 @@ describe("startPeerSnapshotPoller", () => {
       expect(requestBodyJson(init)).toEqual({
         method: "fleetSnapshot",
         type: "query",
-        input: undefined,
+        input: { include: ["local-routes"] },
       });
+    } finally {
+      rmSync(certDir, { recursive: true, force: true });
+    }
+  });
+
+  test("tunnelPreferred peer maps an agent-local routes snapshot from the relay (#306)", async () => {
+    const certDir = mkdtempSync(join(tmpdir(), "llamactl-peer-poller-relay-local-"));
+    const cert = await generateSelfSignedCert({
+      dir: certDir,
+      commonName: "127.0.0.1",
+      hostnames: ["127.0.0.1"],
+    });
+    globalThis.fetch = ((_input: Request | string | URL, _init?: RequestInit) =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            type: "res",
+            id: "relay-2",
+            result: {
+              kind: "local-routes",
+              ts: "2026-10-27T12:00:00.000Z",
+              workloads: [
+                {
+                  name: "w1",
+                  models: ["alias-a", "alias-b"],
+                  endpoint: "http://127.0.0.1:8080",
+                  reachable: true,
+                  revision: "rev-1",
+                },
+              ],
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      )) as typeof fetch;
+
+    try {
+      const snapshot = await __peerSnapshotInternals.fetchPeerSnapshot(
+        {
+          id: "mac-mini",
+          endpoint: "https://direct-macmini.invalid:7843",
+          tunnelPreferred: true,
+          tunnelCentralUrl: "https://central.local:7843",
+          tunnelCentralCertificate: cert.certPem,
+          tunnelCentralFingerprint: cert.fingerprint,
+          tunnelRelayToken: "local-agent-token",
+          tunnelNodeName: "mac-mini-tunnel",
+        },
+        1234,
+      );
+
+      expect(snapshot).toEqual({
+        workloads: [
+          { modelId: "alias-a", port: 8080, revision: "rev-1" },
+          { modelId: "alias-b", port: 8080, revision: "rev-1" },
+        ],
+        pressure: "NORMAL",
+        fetchedAt: 1234,
+      });
+    } finally {
+      rmSync(certDir, { recursive: true, force: true });
+    }
+  });
+
+  test("older tunnel peer without journal or fallback (result null) contributes nothing", async () => {
+    const certDir = mkdtempSync(join(tmpdir(), "llamactl-peer-poller-relay-null-"));
+    const cert = await generateSelfSignedCert({
+      dir: certDir,
+      commonName: "127.0.0.1",
+      hostnames: ["127.0.0.1"],
+    });
+    globalThis.fetch = ((_input: Request | string | URL, _init?: RequestInit) =>
+      Promise.resolve(
+        new Response(JSON.stringify({ type: "res", id: "relay-2", result: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      )) as typeof fetch;
+
+    try {
+      const snapshot = await __peerSnapshotInternals.fetchPeerSnapshot(
+        {
+          id: "mac-mini",
+          endpoint: "https://direct-macmini.invalid:7843",
+          tunnelPreferred: true,
+          tunnelCentralUrl: "https://central.local:7843",
+          tunnelCentralCertificate: cert.certPem,
+          tunnelCentralFingerprint: cert.fingerprint,
+          tunnelRelayToken: "local-agent-token",
+          tunnelNodeName: "mac-mini-tunnel",
+        },
+        1234,
+      );
+
+      expect(snapshot).toBeNull();
     } finally {
       rmSync(certDir, { recursive: true, force: true });
     }
