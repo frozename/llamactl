@@ -976,6 +976,43 @@ describe("reconcileOnce", () => {
         });
       });
 
+      test("writes no controller history on an unchanged pass after the first converged one", async () => {
+        await withRuntime("llamactl-reconciler-hist-unchanged-", async (dir) => {
+          const manifest = remoteHostManifest();
+          saveModelHost(manifest, dir);
+          let clock = T1;
+          const now = (): Date => clock;
+          const status: HostStatus = {
+            state: "Running",
+            specHash: computeModelHostSpecHash(specForHash(manifest.spec)),
+          };
+          const startOutcome: HostStartOutcome = { ok: true, pid: 4321, state: "Running" };
+          const getClient = remoteGetClient(
+            () => status,
+            () => startOutcome,
+          );
+          const opts = { workloadsDir: dir, getClient, now };
+
+          const first = await reconcileOnce(opts);
+          expect(first.reports).toEqual([
+            { kind: "ModelHost", name: "host-a", node: "gpu1", action: "unchanged" },
+          ]);
+          expect(readHistory(dir)).toMatchObject({
+            updatedAt: T1.toISOString(),
+            lastKnownRunning: true,
+          });
+          const written = fs.readFileSync(historyPath(dir), "utf8");
+
+          clock = T2;
+          const second = await reconcileOnce(opts);
+          expect(second.reports).toEqual([
+            { kind: "ModelHost", name: "host-a", node: "gpu1", action: "unchanged" },
+          ]);
+          expect(fs.readFileSync(historyPath(dir), "utf8")).toBe(written);
+          expect(readHistory(dir).updatedAt).toBe(T1.toISOString());
+        });
+      });
+
       test("writes no controller history for a local host", async () => {
         await withRuntime("llamactl-reconciler-hist-local-", async (dir) => {
           const manifest = makeHostManifest();

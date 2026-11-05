@@ -5,13 +5,17 @@ import { join } from "node:path";
 import type { ResolvedEnv } from "../../src/types.js";
 
 import {
+  controllerHostHistoryPath,
   emptyModelHostRuntimeStatus,
   modelhostConditionsFile,
+  readControllerHostHistory,
   readModelHostRuntimeStatus,
   recordModelHostOomKill,
   recordModelHostReconcileError,
   recordModelHostReconcileRecovered,
   recordModelHostRestart,
+  removeControllerHostHistory,
+  updateControllerHostHistory,
   withOomKill,
   withReconcileError,
   withReconcileRecovered,
@@ -195,5 +199,74 @@ describe("conditions sidecar", () => {
     });
     writeFileSync(file, "{corrupt");
     expect(readModelHostRuntimeStatus(KEY, env)).toBeNull();
+  });
+});
+
+describe("controllerHostHistoryPath (#308)", () => {
+  const BASE = join(tmpdir(), "llamactl-controller-history");
+
+  test("joins node and name under .modelhost-history", () => {
+    expect(controllerHostHistoryPath(BASE, "gpu1", "host-a")).toBe(
+      join(BASE, ".modelhost-history", "gpu1", "host-a.json"),
+    );
+  });
+
+  test("rejects empty, dot and dot-dot segments for both node and name", () => {
+    for (const segment of ["", ".", ".."]) {
+      expect(() => controllerHostHistoryPath(BASE, segment, "host-a")).toThrow(
+        `invalid controller history node: ${JSON.stringify(segment)}`,
+      );
+      expect(() => controllerHostHistoryPath(BASE, "gpu1", segment)).toThrow(
+        `invalid controller history name: ${JSON.stringify(segment)}`,
+      );
+    }
+  });
+
+  test("rejects segments containing a path separator for both node and name", () => {
+    for (const segment of ["gpu/1", "gpu\\1", "hosts/../escape", "hosts..\\escape"]) {
+      expect(() => controllerHostHistoryPath(BASE, segment, "host-a")).toThrow(
+        /invalid controller history node/,
+      );
+      expect(() => controllerHostHistoryPath(BASE, "gpu1", segment)).toThrow(
+        /invalid controller history name/,
+      );
+    }
+  });
+});
+
+describe("removeControllerHostHistory (#308)", () => {
+  let tmp: string;
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "llamactl-ctrl-history-"));
+  });
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  test("deletes the record, and absence plus invalid segments are no-ops", () => {
+    updateControllerHostHistory(tmp, "gpu1", "host-a", new Date(T0), (h) => ({
+      ...h,
+      lastKnownRunning: true,
+    }));
+    expect(readControllerHostHistory(tmp, "gpu1", "host-a")).toMatchObject({
+      node: "gpu1",
+      workload: "host-a",
+      lastKnownRunning: true,
+    });
+    removeControllerHostHistory(tmp, "gpu1", "host-a");
+    expect(readControllerHostHistory(tmp, "gpu1", "host-a")).toBeNull();
+    expect(existsSync(join(tmp, ".modelhost-history", "gpu1", "host-a.json"))).toBe(false);
+    expect(() => {
+      removeControllerHostHistory(tmp, "gpu1", "host-a");
+    }).not.toThrow();
+    expect(() => {
+      removeControllerHostHistory(tmp, "..", "host-a");
+    }).not.toThrow();
+    expect(() => {
+      removeControllerHostHistory(tmp, "gpu1", "");
+    }).not.toThrow();
+    expect(() => {
+      removeControllerHostHistory(tmp, "gpu/../evil", "host-a");
+    }).not.toThrow();
   });
 });

@@ -1,7 +1,10 @@
 import type { ModelHostRuntimeStatus } from "@llamactl/core/engines/conditions";
 
 import { ENGINES } from "@llamactl/core/engines";
-import { readControllerHostHistory } from "@llamactl/core/engines/conditions";
+import {
+  readControllerHostHistory,
+  removeControllerHostHistory,
+} from "@llamactl/core/engines/conditions";
 import { modelhostPidFile, readModelHostState } from "@llamactl/core/engines/state";
 import { resolveEnv } from "@llamactl/core/env";
 import { isRecordedPidAlive } from "@llamactl/core/pidIdentity";
@@ -1193,6 +1196,10 @@ async function deleteModelHost(
     process.stderr.write(`delete: workload '${name}' not found in store\n`);
     return 1;
   }
+  // #308: the controller's mirror of this host's history must go with the
+  // manifest. A stale lastKnownRunning would make the first pass after a
+  // re-apply flag a found-dead EngineExited restart that never happened.
+  removeControllerHostHistory(defaultModelHostDir(), manifest.spec.node, name);
   process.stdout.write(`deleted modelhost/${name}\n`);
   return 0;
 }

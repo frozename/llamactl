@@ -23,14 +23,15 @@
 // the last update time, and whether the engine was running as of that update
 // (lastKnownRunning, the remote analogue of a local launch record for foundDead
 // detection). The directory holds only .json files, so the manifest stores'
-// .yaml listings never pick it up.
+// .yaml listings never pick it up. `llamactl delete workload` removes a
+// deleted host's record with its manifest, so a reused name inherits nothing.
 import { join, resolve, sep } from "node:path";
 
 import type { ResolvedEnv } from "../types.js";
 
 import { resolveEnv } from "../env.js";
 import { atomicWriteFile } from "../fsAtomic.js";
-import { existsSync, readFileSync } from "../safe-fs.js";
+import { existsSync, readFileSync, rmSync } from "../safe-fs.js";
 import { type WorkloadKey, workloadRuntimeDir } from "../workloadRuntime.js";
 
 export const RECONCILE_ERROR_CONDITION = "ReconcileError";
@@ -325,4 +326,25 @@ export function updateControllerHostHistory(
     controllerHostHistoryPath(workloadsDir, node, name),
     `${JSON.stringify({ ...next, updatedAt: now.toISOString() }, null, 2)}\n`,
   );
+}
+
+/**
+ * Drop one workload's controller history (#308): called when the ModelHost is
+ * deleted, so a later re-apply of the same name on the same node starts from a
+ * clean slate instead of inheriting lastKnownRunning and reporting a false
+ * EngineExited restart on the first pass. An invalid segment means the
+ * reconciler could never have written a record, so the removal is a no-op.
+ */
+export function removeControllerHostHistory(
+  workloadsDir: string,
+  node: string,
+  name: string,
+): void {
+  let path: string;
+  try {
+    path = controllerHostHistoryPath(workloadsDir, node, name);
+  } catch {
+    return;
+  }
+  rmSync(path, { force: true });
 }
