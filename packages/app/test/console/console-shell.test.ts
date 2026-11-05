@@ -181,9 +181,9 @@ interface LogsViewProbeProps {
   onSelectWorkload: (name: string) => void;
 }
 
-const logsViewReal = (await import(LOGS_VIEW_SPEC).catch(() => ({}))) as {
-  LogsView?: ComponentType<LogsViewProbeProps>;
-};
+const logsViewReal = {
+  ...((await import(LOGS_VIEW_SPEC).catch(() => ({}))) as object),
+} as { LogsView?: ComponentType<LogsViewProbeProps> };
 
 const mod = (await import(SHELL_SPEC).catch(() => ({}))) as {
   ConsoleShell?: ComponentType;
