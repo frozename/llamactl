@@ -257,7 +257,7 @@ export default tseslint.config(
         {
           patterns: [
             {
-              regex: "(^|/)lib/trpc(\\.tsx?)?$",
+              regex: "(^|/)lib/trpc(-core)?(\\.tsx?)?$",
               importNames: ["trpc", "trpcUIClient"],
               message:
                 "Console code must use the node-scoped hooks from console/node-trpc (useNodeTrpc/useNodeTrpcUtils), never the global trpc instance or the IPC UI client.",

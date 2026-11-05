@@ -8,7 +8,7 @@ import type { AppRouter } from "@llamactl/remote";
 import { QueryClient } from "@tanstack/react-query";
 
 import { buildHttpLinks } from "../lib/transport/http";
-import { createAppClient } from "../lib/trpc";
+import { createAppClient } from "../lib/trpc-core";
 
 export interface CreateNodeScopeOptions {
   node: string;

@@ -73,6 +73,10 @@ const BANNED: { code: string; label: string }[] = [
   { code: 'import * as t from "@/lib/trpc";', label: "a namespace import" },
   { code: 'export { trpc } from "../lib/trpc";', label: "a re-export" },
   { code: 'import { trpcUIClient } from "@/lib/trpc";', label: "the trpcUIClient export" },
+  {
+    code: 'import { trpc } from "../lib/trpc-core";',
+    label: "the transport-neutral trpc-core module",
+  },
 ];
 
 describe("console import guard (#410 P5a-3a)", () => {
@@ -98,6 +102,12 @@ describe("console import guard (#410 P5a-3a)", () => {
 
   test("createAppClient stays clean inside create-node-scope.ts", () => {
     expect(lintAs(SCOPE_FILE, 'import { createAppClient } from "../lib/trpc";')).toHaveLength(0);
+  });
+
+  test("createAppClient stays clean from the transport-neutral trpc-core module", () => {
+    expect(lintAs(SCOPE_FILE, 'import { createAppClient } from "../lib/trpc-core";')).toHaveLength(
+      0,
+    );
   });
 
   test("importing the node-scoped hooks stays clean", () => {

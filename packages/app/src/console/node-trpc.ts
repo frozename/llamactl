@@ -4,11 +4,13 @@
 // src/console so no call site can silently use the global client instead
 // of the node-scoped one installed by NodeScopedProvider; this wrapper is
 // the one file the guard exempts, and it funnels every access through
-// useConsoleNode(). Relative imports only, so bun tests can load it.
+// useConsoleNode(). The proxy comes from lib/trpc-core, not lib/trpc: the
+// console graph must not reach lib/trpc's IPC UI client. Relative imports
+// only, so bun tests can load it.
 
 import * as React from "react";
 
-import { trpc } from "../lib/trpc";
+import { trpc } from "../lib/trpc-core";
 
 export const ConsoleNodeContext = React.createContext<string | null>(null);
 
