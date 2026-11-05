@@ -83,6 +83,13 @@ export function openWorkloadName(
   return location.kind === "here" ? location.row.name : null;
 }
 
+// Card keys must change exactly when a deep-link move toggles a card's
+// route membership: remounting on key change is what makes the drawer
+// follow /workloads/a → /workloads/b without a state-syncing effect.
+export function workloadCardKey(name: string, routeOpen: string | null): string {
+  return `${name}#${routeOpen === name ? "open" : "shut"}`;
+}
+
 export function phaseTone(phase: string): StatusDotTone {
   if (phase === "Running") return "ok";
   if (phase === "Mismatch") return "warn";

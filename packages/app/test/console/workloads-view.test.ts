@@ -8,16 +8,16 @@
 // does not exist at the base commit, so every case fails by assertion —
 // never by import error.
 
-import type { ComponentType, ReactElement, ReactNode } from "react";
+import type { ComponentType, FunctionComponent, ReactElement, ReactNode } from "react";
 
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import { createElement } from "react";
+import { createElement, isValidElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import type { ConsoleRoute } from "../../src/console/router";
 
 import { consoleHref } from "../../src/console/router";
-import { openWorkloadName, phaseTone } from "../../src/console/workloads-scope";
+import { openWorkloadName, phaseTone, workloadCardKey } from "../../src/console/workloads-scope";
 
 const NODE_TRPC_SPEC = "../../src/console/node-trpc.ts";
 const VIEW_SPEC = "../../src/console/views/workloads.tsx";
@@ -152,7 +152,10 @@ void mock.module(NODE_TRPC_SPEC, () => ({
 }));
 
 const mod = (await import(VIEW_SPEC).catch(() => ({}))) as {
-  WorkloadsView?: ComponentType<{ route: ConsoleRoute; onSuccessToast: (text: string) => void }>;
+  WorkloadsView?: FunctionComponent<{
+    route: ConsoleRoute;
+    onSuccessToast: (text: string) => void;
+  }>;
 };
 const providerMod = (await import(PROVIDER_SPEC).catch(() => ({}))) as {
   NodeScopedProvider?: ComponentType<{ node: string; baseUrl?: string; children?: ReactNode }>;
@@ -281,6 +284,31 @@ function rowIds(markup: string): string[] {
   return [...markup.matchAll(/data-testid="console-workload-row-([^"]+)"/g)]
     .map((m) => m[1] ?? "")
     .sort();
+}
+
+// Walks the un-rendered element tree WorkloadsView returns and reports
+// the React key of the ConsoleWorkloadRowCard for a row name, so the
+// popstate remount contract is pinned on the keys themselves rather
+// than on markup (keys never reach renderToStaticMarkup).
+function cardKeyIn(node: unknown, rowName: string): string | null | undefined {
+  if (Array.isArray(node)) {
+    const children: unknown[] = node;
+    for (const child of children) {
+      const key = cardKeyIn(child, rowName);
+      if (key !== undefined) return key;
+    }
+    return undefined;
+  }
+  if (!isValidElement(node)) return undefined;
+  const props = node.props as {
+    row?: { name?: unknown };
+    initiallyOpen?: unknown;
+    children?: unknown;
+  };
+  if (props.row?.name === rowName && typeof props.initiallyOpen === "boolean") {
+    return node.key;
+  }
+  return cardKeyIn(props.children, rowName);
 }
 
 describe("workloads view (#410 P5a-3b)", () => {
@@ -412,6 +440,45 @@ describe("workloads view (#410 P5a-3b)", () => {
     expect(phaseTone("Foreign")).toBe("err");
     expect(phaseTone("Pending")).toBe("idle");
     expect(phaseTone("Unknown")).toBe("idle");
+  });
+
+  test("workloadCardKey changes exactly when a route change toggles that card's membership", () => {
+    expect(workloadCardKey("qwen", "qwen")).toBe(workloadCardKey("qwen", "qwen"));
+    expect(workloadCardKey("qwen", "qwen")).not.toBe(workloadCardKey("qwen", null));
+    expect(workloadCardKey("qwen", "qwen")).not.toBe(workloadCardKey("qwen", "big"));
+    expect(workloadCardKey("qwen", null)).toBe(workloadCardKey("qwen", "big"));
+    expect(workloadCardKey("big", "big")).not.toBe(workloadCardKey("big", "qwen"));
+    expect(workloadCardKey("qwen", "qwen")).not.toBe(workloadCardKey("big", "big"));
+    expect(workloadCardKey("qwen", null)).not.toBe(workloadCardKey("big", null));
+  });
+
+  test("the view keys cards by route membership so a deep-link move remounts exactly those two cards", () => {
+    const WorkloadsView = mod.WorkloadsView;
+    expect(typeof WorkloadsView).toBe("function");
+    if (WorkloadsView === undefined) return;
+
+    const qwenTree = WorkloadsView({
+      route: { view: "workloads", workload: "qwen" },
+      onSuccessToast,
+    });
+    const bigTree = WorkloadsView({
+      route: { view: "workloads", workload: "big" },
+      onSuccessToast,
+    });
+    const plainTree = WorkloadsView({ route: { view: "workloads" }, onSuccessToast });
+
+    // Reverting the view to key={row.name} pins every card's key to a
+    // constant: qwen and big would keep their useState drawer state
+    // across the popstate move, and these assertions fail.
+    expect(cardKeyIn(qwenTree, "qwen")).toBe(workloadCardKey("qwen", "qwen"));
+    expect(cardKeyIn(bigTree, "qwen")).toBe(workloadCardKey("qwen", "big"));
+    expect(cardKeyIn(bigTree, "qwen")).not.toBe(cardKeyIn(qwenTree, "qwen"));
+    expect(cardKeyIn(qwenTree, "big")).toBe(workloadCardKey("big", "qwen"));
+    expect(cardKeyIn(bigTree, "big")).toBe(workloadCardKey("big", "big"));
+    expect(cardKeyIn(plainTree, "qwen")).toBe(workloadCardKey("qwen", null));
+    expect(cardKeyIn(plainTree, "big")).toBe(workloadCardKey("big", null));
+    expect(cardKeyIn(bigTree, "omlx")).toBe(cardKeyIn(qwenTree, "omlx"));
+    expect(cardKeyIn(bigTree, "omlx")).toBe(workloadCardKey("omlx", null));
   });
 
   test("the view touches only the allowed procedures and renders no Delete or Apply actions", () => {

@@ -13,7 +13,7 @@ import type { ComponentType, ReactElement } from "react";
 import type { Plugin, PluginOption, Rollup } from "vite";
 
 import { afterAll, describe, expect, mock, test } from "bun:test";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { StrictMode } from "react";
 
 import { existsSync, readFileSync } from "../../src/safe-fs.js";
@@ -100,8 +100,15 @@ const globalWithDocument = globalThis as {
 };
 const hadDocument = "document" in globalThis;
 const prevDocument = globalWithDocument.document;
+// The entry module body runs exactly once per resolved specifier, so
+// the missing-#root case re-imports it under a cache-busting query and
+// flips this flag to make the same stub report an absent #root.
+let missingRootRequested = false;
 globalWithDocument.document = {
-  getElementById: (id: string): unknown => (id === rootStub.id ? rootStub : null),
+  getElementById: (id: string): unknown => {
+    if (missingRootRequested) return null;
+    return id === rootStub.id ? rootStub : null;
+  },
 };
 
 void (await import("../../src/main.web.tsx"));
@@ -169,6 +176,26 @@ describe("web entry mount (#410 P5a-3b)", () => {
     expect(childOf(mount.element).type).toBe(shellMod.ConsoleShell!);
     expect(typeof shellMod.ConsoleShell).toBe("function");
   });
+
+  test("a document without #root throws 'Root element missing' and mounts nothing", async () => {
+    missingRootRequested = true;
+    let threw = false;
+    let error: unknown;
+    try {
+      // A non-literal specifier keeps tsc from resolving the cache-busting query.
+      const missingRootEntry = "../../src/main.web.tsx?missing-root";
+      await import(missingRootEntry);
+    } catch (caught) {
+      threw = true;
+      error = caught;
+    } finally {
+      missingRootRequested = false;
+    }
+    expect(threw).toBe(true);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("Root element missing");
+    expect(createRootCalls).toHaveLength(1);
+  });
 });
 
 describe("web build config (#410 P5a-3b)", () => {
@@ -176,6 +203,15 @@ describe("web build config (#410 P5a-3b)", () => {
     const input = webBuildInput();
     expect(basename(input)).toBe("index.web.html");
     expect(basename(dirname(input))).toBe("src");
+  });
+
+  test("the build roots at the app src dir and empties its output dir", () => {
+    const root = webConfig.root;
+    expect(typeof root).toBe("string");
+    if (typeof root !== "string") return;
+    expect(isAbsolute(root)).toBe(true);
+    expect(basename(root)).toBe("src");
+    expect(webConfig.build?.emptyOutDir).toBe(true);
   });
 
   test("the rename plugin emits index.web.html as index.html", () => {

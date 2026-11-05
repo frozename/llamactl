@@ -311,6 +311,30 @@ describe("console shell (#410 P5a-3b)", () => {
     expect(fleetMarkup).not.toContain("console-view-workloads");
   });
 
+  test("a /workloads/<name> deep link reaches WorkloadsView and opens exactly that drawer", () => {
+    const ConsoleShell = mod.ConsoleShell;
+    expect(typeof ConsoleShell).toBe("function");
+    setLocation("/workloads/qwen", "");
+    consoleNode = "local";
+    queryResults["workloadList"] = [
+      { name: "qwen", kind: "ModelRun", node: "local", endpoint: null, workerNodes: [] },
+      { name: "big", kind: "ModelRun", node: "local", endpoint: null, workerNodes: [] },
+    ];
+
+    const markup = renderShell();
+    expect(markup).toContain('data-testid="console-view-workloads"');
+    expect(markup).toContain('data-testid="console-workload-row-qwen"');
+    expect(markup).toContain('data-testid="console-workload-row-big"');
+    expect(markup).not.toContain('data-testid="console-placeholder-workloads"');
+
+    const enabled = describeCalls.filter((call) => call.enabled === true);
+    expect(enabled).toHaveLength(1);
+    expect(enabled[0]?.input).toEqual({ name: "qwen" });
+    for (const call of describeCalls) {
+      if (call.enabled !== true) expect(call.enabled).toBe(false);
+    }
+  });
+
   test("the tab-node selector offers only dispatchable nodes, never gateways", () => {
     const ConsoleShell = mod.ConsoleShell;
     expect(typeof ConsoleShell).toBe("function");

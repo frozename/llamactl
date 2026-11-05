@@ -17,7 +17,13 @@ import type { ConsoleWorkloadRow, WorkloadLocationResult } from "../workloads-sc
 import { WorkersPanel } from "../../modules/workloads/workers-panel";
 import { StopServerAction } from "../actions/stop-server";
 import { useConsoleNode, useNodeTrpc } from "../node-trpc";
-import { openWorkloadName, phaseTone, workloadLocation, workloadsForTab } from "../workloads-scope";
+import {
+  openWorkloadName,
+  phaseTone,
+  workloadCardKey,
+  workloadLocation,
+  workloadsForTab,
+} from "../workloads-scope";
 
 type DeepLink = WorkloadLocationResult<ConsoleWorkloadRow>;
 
@@ -186,7 +192,7 @@ export function WorkloadsView({
           // Keyed on route membership so a popstate move from
           // /workloads/a to /workloads/b remounts exactly those two
           // cards: b opens, a closes, without an effect.
-          key={`${row.name}#${routeOpen === row.name ? "open" : "shut"}`}
+          key={workloadCardKey(row.name, routeOpen)}
           row={row}
           initiallyOpen={routeOpen === row.name}
           onSuccessToast={onSuccessToast}
