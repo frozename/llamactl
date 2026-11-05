@@ -239,6 +239,12 @@ afterEach(() => {
 afterAll(() => {
   void mock.module("@/ui", () => uiReal);
   void mock.module(NODE_TRPC_SPEC, () => nodeTrpcReal);
+  // mock.module is process-global and leaks into later files, so the
+  // probe from the workload-picking case is re-registered away here, not
+  // just in that case's finally: the afterAll snapshot restore is the
+  // guarantee that logs-view.test.ts (in any file order) imports the
+  // real LogsView — same pattern as test/chat-stream-ownership.test.ts.
+  void mock.module(LOGS_VIEW_SPEC, () => logsViewReal);
   if (hadElectronTRPC) {
     globalThis.electronTRPC = prevElectronTRPC;
   } else {
@@ -507,7 +513,7 @@ describe("console shell (#410 P5a-3b)", () => {
       } else {
         delete historyHolder.history;
       }
-      void mock.module(LOGS_VIEW_SPEC, () => ({ ...logsViewReal }));
+      void mock.module(LOGS_VIEW_SPEC, () => logsViewReal);
     }
   });
 
