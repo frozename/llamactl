@@ -1,6 +1,10 @@
 // #410 P5a, workloads tab scoping: rows for the current tab, per-node
 // counts for the rest, and deep-link classification (here / elsewhere /
-// missing) without making a network call.
+// missing) without making a network call. The open-drawer selection is
+// pure so a route change (popstate from /workloads/a to /workloads/b)
+// can be pinned without a mounted component.
+
+import type { StatusDotTone } from "@/ui";
 
 import { consoleHref } from "./router";
 
@@ -67,4 +71,21 @@ export function workloadLocation<R extends ConsoleWorkloadRow>(
   }
 
   return { kind: "missing" };
+}
+
+export function openWorkloadName(
+  rows: readonly ConsoleWorkloadRow[],
+  workload: string | undefined,
+  tabNode: string,
+): string | null {
+  if (workload === undefined) return null;
+  const location = workloadLocation(rows, workload, tabNode);
+  return location.kind === "here" ? location.row.name : null;
+}
+
+export function phaseTone(phase: string): StatusDotTone {
+  if (phase === "Running") return "ok";
+  if (phase === "Mismatch") return "warn";
+  if (phase === "Unreachable" || phase === "Foreign") return "err";
+  return "idle";
 }

@@ -8,7 +8,6 @@
 import * as React from "react";
 import * as YAML from "yaml";
 
-import type { StatusDotTone } from "@/ui";
 import { StatusDot } from "@/ui";
 
 import type { WorkerManifest } from "../../modules/workloads/workers-panel";
@@ -18,7 +17,7 @@ import type { ConsoleWorkloadRow, WorkloadLocationResult } from "../workloads-sc
 import { WorkersPanel } from "../../modules/workloads/workers-panel";
 import { StopServerAction } from "../actions/stop-server";
 import { useConsoleNode, useNodeTrpc } from "../node-trpc";
-import { workloadLocation, workloadsForTab } from "../workloads-scope";
+import { openWorkloadName, phaseTone, workloadLocation, workloadsForTab } from "../workloads-scope";
 
 type DeepLink = WorkloadLocationResult<ConsoleWorkloadRow>;
 
@@ -45,13 +44,6 @@ const secondaryStyle: React.CSSProperties = { fontSize: 12, color: "var(--color-
 function phaseOf(row: ConsoleWorkloadRow): string {
   const phase = row["phase"];
   return typeof phase === "string" ? phase : "Unknown";
-}
-
-function phaseTone(phase: string): StatusDotTone {
-  if (phase === "Running") return "ok";
-  if (phase === "Mismatch") return "warn";
-  if (phase === "Unreachable" || phase === "Foreign") return "err";
-  return "idle";
 }
 
 function workersOf(manifest: unknown): WorkerManifest[] {
@@ -183,7 +175,7 @@ export function WorkloadsView({
   const scope = workloadsForTab(rows, tabNode);
   const workload = route.workload;
   const deepLink = workload === undefined ? null : workloadLocation(rows, workload, tabNode);
-  const openName = deepLink !== null && deepLink.kind === "here" ? deepLink.row.name : null;
+  const routeOpen = openWorkloadName(rows, workload, tabNode);
   return (
     <section data-testid="console-view-workloads" style={sectionStyle}>
       {workload !== undefined && deepLink !== null ? (
@@ -191,9 +183,12 @@ export function WorkloadsView({
       ) : null}
       {scope.rows.map((row) => (
         <ConsoleWorkloadRowCard
-          key={row.name}
+          // Keyed on route membership so a popstate move from
+          // /workloads/a to /workloads/b remounts exactly those two
+          // cards: b opens, a closes, without an effect.
+          key={`${row.name}#${routeOpen === row.name ? "open" : "shut"}`}
           row={row}
-          initiallyOpen={openName !== null && row.name === openName}
+          initiallyOpen={routeOpen === row.name}
           onSuccessToast={onSuccessToast}
         />
       ))}

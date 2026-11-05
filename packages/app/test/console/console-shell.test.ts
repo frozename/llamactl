@@ -286,8 +286,17 @@ describe("console shell (#410 P5a-3b)", () => {
 
     setLocation("/workloads", "?node=remote1");
     consoleNode = "remote1";
+    queryResults["workloadList"] = [
+      { name: "qwen", kind: "ModelRun", node: "remote1", endpoint: null, workerNodes: [] },
+      { name: "far", kind: "ModelRun", node: "local", endpoint: null, workerNodes: [] },
+    ];
     const workloadsMarkup = renderShell();
     expect(workloadsMarkup).toContain('data-testid="console-view-workloads"');
+    // Real WorkloadsView content a PlaceholderView cannot render: the
+    // per-row testid and the other-nodes footer, and no placeholder.
+    expect(workloadsMarkup).toContain('data-testid="console-workload-row-qwen"');
+    expect(workloadsMarkup).toContain('data-testid="console-workloads-other-nodes"');
+    expect(workloadsMarkup).not.toContain('data-testid="console-placeholder-workloads"');
 
     const selectHtml = tabNodeSelect(workloadsMarkup);
     expect(selectHtml).not.toBeNull();
@@ -298,7 +307,7 @@ describe("console shell (#410 P5a-3b)", () => {
     setLocation("/", "");
     consoleNode = "local";
     const fleetMarkup = renderShell();
-    expect(fleetMarkup).toContain('data-testid="console-view-fleet"');
+    expect(fleetMarkup).toContain('data-testid="console-placeholder-fleet"');
     expect(fleetMarkup).not.toContain("console-view-workloads");
   });
 
@@ -357,7 +366,7 @@ describe("console shell (#410 P5a-3b)", () => {
     consoleNode = "local";
 
     const markup = renderShell();
-    expect(markup).toContain('data-testid="console-view-fleet"');
+    expect(markup).toContain('data-testid="console-placeholder-fleet"');
     expect(markup).toContain("No console view at /bogus");
   });
 

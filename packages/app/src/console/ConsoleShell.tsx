@@ -35,9 +35,12 @@ function readLocation(): ShellLocation {
   return { pathname, route: parseConsoleRoute(pathname, search) };
 }
 
+// Placeholder testids are console-placeholder-*, never console-view-*:
+// the console-view-* id is emitted only by the real view modules, so a
+// routing regression to a placeholder cannot pass a view-content test.
 function PlaceholderView({ id, label }: { id: ConsoleViewId; label: string }): React.JSX.Element {
   return (
-    <section data-testid={`console-view-${id}`} style={{ padding: 16 }}>
+    <section data-testid={`console-placeholder-${id}`} style={{ padding: 16 }}>
       <h1 style={{ fontSize: 16, margin: 0 }}>{label}</h1>
     </section>
   );

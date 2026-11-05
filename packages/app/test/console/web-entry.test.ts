@@ -3,14 +3,21 @@
 // the workloads view and the stop-server action without touching the
 // Electron renderer entry, the module registry or the retired
 // workloads components; src/index.web.html must mount it on #root and
-// must not carry the Google Fonts links the Electron page ships. At the
-// base commit neither file exists, so every case fails by assertion —
-// never by import error.
+// must not carry the Google Fonts links the Electron page ships. The
+// mount itself is pinned with a stubbed createRoot + document, and the
+// web build is pinned to index.web.html as its input with the rename
+// plugin emitting index.html. Every case fails by assertion — never
+// by import error.
 
-import { describe, expect, test } from "bun:test";
-import { dirname, join, relative, resolve } from "node:path";
+import type { ComponentType, ReactElement } from "react";
+import type { Plugin, PluginOption, Rollup } from "vite";
+
+import { afterAll, describe, expect, mock, test } from "bun:test";
+import { basename, dirname, join, relative, resolve } from "node:path";
+import { StrictMode } from "react";
 
 import { existsSync, readFileSync } from "../../src/safe-fs.js";
+import webConfig from "../../vite.web.config";
 
 const APP_DIR = join(import.meta.dir, "..", "..");
 const SRC_DIR = join(APP_DIR, "src");
@@ -59,6 +66,149 @@ function reachableFrom(entry: string): Set<string> {
   }
   return reached;
 }
+
+const hadElectronTRPC = "electronTRPC" in globalThis;
+const prevElectronTRPC = globalThis.electronTRPC;
+globalThis.electronTRPC ??= {
+  sendMessage: (): undefined => undefined,
+  onMessage: (): undefined => undefined,
+};
+
+const uiReal = { ...(await import("../../src/ui/index")) };
+void mock.module("@/ui", () => uiReal);
+
+interface RootStub {
+  readonly id: string;
+}
+const rootStub: RootStub = { id: "root" };
+interface MountRecord {
+  container: unknown;
+  element: ReactElement;
+}
+const createRootCalls: MountRecord[] = [];
+const reactDomClientReal = { ...(await import("react-dom/client")) };
+void mock.module("react-dom/client", () => ({
+  createRoot: (container: unknown): { render: (element: ReactElement) => void } => ({
+    render: (element: ReactElement): void => {
+      createRootCalls.push({ container, element });
+    },
+  }),
+}));
+
+const globalWithDocument = globalThis as {
+  document?: { getElementById(id: string): unknown } | undefined;
+};
+const hadDocument = "document" in globalThis;
+const prevDocument = globalWithDocument.document;
+globalWithDocument.document = {
+  getElementById: (id: string): unknown => (id === rootStub.id ? rootStub : null),
+};
+
+void (await import("../../src/main.web.tsx"));
+const shellMod = (await import("../../src/console/ConsoleShell.tsx")) as {
+  ConsoleShell?: ComponentType;
+};
+
+afterAll(() => {
+  void mock.module("@/ui", () => uiReal);
+  void mock.module("react-dom/client", () => reactDomClientReal);
+  if (hadDocument) {
+    globalWithDocument.document = prevDocument;
+  } else {
+    delete globalWithDocument.document;
+  }
+  if (hadElectronTRPC) {
+    globalThis.electronTRPC = prevElectronTRPC;
+  } else {
+    delete (globalThis as { electronTRPC?: unknown }).electronTRPC;
+  }
+});
+
+function childOf(element: ReactElement): ReactElement {
+  return (element.props as { children: ReactElement }).children;
+}
+
+function flattenPlugins(option: PluginOption, out: Plugin[]): void {
+  if (!option || typeof option === "boolean") return;
+  if (Array.isArray(option)) {
+    for (const entry of option) flattenPlugins(entry, out);
+    return;
+  }
+  if ("then" in option) return;
+  out.push(option);
+}
+
+function renamePlugin(): Plugin {
+  const plugins: Plugin[] = [];
+  flattenPlugins(webConfig.plugins, plugins);
+  const found = plugins.find((plugin) => plugin.name === "llamactl-rename-web-entry");
+  expect(found).toBeDefined();
+  return found!;
+}
+
+function webBuildInput(): string {
+  const rollupOptions = webConfig.build?.rollupOptions;
+  expect(rollupOptions).toBeDefined();
+  const input = rollupOptions?.input;
+  if (typeof input === "string" || Array.isArray(input) || input === undefined) {
+    throw new Error(`expected a named input object, got ${String(input)}`);
+  }
+  const entry = input["index"];
+  if (typeof entry !== "string") {
+    throw new Error(`rollupOptions.input.index must be a path string, got ${String(entry)}`);
+  }
+  return entry;
+}
+
+describe("web entry mount (#410 P5a-3b)", () => {
+  test("the entry renders ConsoleShell in StrictMode into the #root element", () => {
+    expect(createRootCalls).toHaveLength(1);
+    const mount = createRootCalls[0]!;
+    expect(mount.container).toBe(rootStub);
+    expect(mount.element.type).toBe(StrictMode);
+    expect(childOf(mount.element).type).toBe(shellMod.ConsoleShell!);
+    expect(typeof shellMod.ConsoleShell).toBe("function");
+  });
+});
+
+describe("web build config (#410 P5a-3b)", () => {
+  test("the build takes src/index.web.html as its only input", () => {
+    const input = webBuildInput();
+    expect(basename(input)).toBe("index.web.html");
+    expect(basename(dirname(input))).toBe("src");
+  });
+
+  test("the rename plugin emits index.web.html as index.html", () => {
+    const hook = renamePlugin().generateBundle;
+    expect(typeof hook).toBe("function");
+    if (typeof hook !== "function") return;
+    const bundle: Rollup.OutputBundle = {
+      "index.web.html": {
+        type: "asset",
+        fileName: "index.web.html",
+        name: undefined,
+        names: [],
+        originalFileName: null,
+        originalFileNames: [],
+        needsCodeReference: false,
+        source: '<!doctype html><div id="root"></div>',
+      },
+    };
+    void hook.call({} as Rollup.PluginContext, {} as Rollup.NormalizedOutputOptions, bundle, false);
+    expect(bundle["index.web.html"]).toBeUndefined();
+    expect(bundle["index.html"]).toBeDefined();
+    expect(bundle["index.html"]?.fileName).toBe("index.html");
+  });
+
+  test("the rename plugin is a no-op when the web entry asset is absent", () => {
+    const hook = renamePlugin().generateBundle;
+    expect(typeof hook).toBe("function");
+    if (typeof hook !== "function") return;
+    const bundle: Rollup.OutputBundle = {};
+    void hook.call({} as Rollup.PluginContext, {} as Rollup.NormalizedOutputOptions, bundle, false);
+    expect(Object.keys(bundle)).toHaveLength(0);
+  });
+});
 
 describe("web entry point (#410 P5a-3b)", () => {
   test("src/main.web.tsx exists", () => {

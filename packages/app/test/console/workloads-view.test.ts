@@ -17,6 +17,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { ConsoleRoute } from "../../src/console/router";
 
 import { consoleHref } from "../../src/console/router";
+import { openWorkloadName, phaseTone } from "../../src/console/workloads-scope";
 
 const NODE_TRPC_SPEC = "../../src/console/node-trpc.ts";
 const VIEW_SPEC = "../../src/console/views/workloads.tsx";
@@ -157,7 +158,7 @@ const providerMod = (await import(PROVIDER_SPEC).catch(() => ({}))) as {
   NodeScopedProvider?: ComponentType<{ node: string; baseUrl?: string; children?: ReactNode }>;
 };
 
-interface WorkloadRow {
+type WorkloadRow = {
   name: string;
   kind: "ModelRun" | "ModelHost";
   node: string;
@@ -167,7 +168,7 @@ interface WorkloadRow {
   rel: string;
   workerCount: number;
   status: unknown;
-}
+};
 
 function makeRow(
   name: string,
@@ -393,6 +394,24 @@ describe("workloads view (#410 P5a-3b)", () => {
     for (const call of describeCalls) {
       expect(call.enabled).toBe(false);
     }
+  });
+
+  test("openWorkloadName follows the route so /workloads/a then /workloads/b opens b", () => {
+    expect(openWorkloadName(ROWS, "qwen", "local")).toBe("qwen");
+    expect(openWorkloadName(ROWS, "big", "local")).toBe("big");
+    expect(openWorkloadName(ROWS, undefined, "local")).toBeNull();
+    expect(openWorkloadName(ROWS, "far", "local")).toBeNull();
+    expect(openWorkloadName(ROWS, "ghost", "local")).toBeNull();
+    expect(openWorkloadName(ROWS, "far", "remote1")).toBe("far");
+  });
+
+  test("phaseTone maps each phase bucket to its status tone", () => {
+    expect(phaseTone("Running")).toBe("ok");
+    expect(phaseTone("Mismatch")).toBe("warn");
+    expect(phaseTone("Unreachable")).toBe("err");
+    expect(phaseTone("Foreign")).toBe("err");
+    expect(phaseTone("Pending")).toBe("idle");
+    expect(phaseTone("Unknown")).toBe("idle");
   });
 
   test("the view touches only the allowed procedures and renders no Delete or Apply actions", () => {
