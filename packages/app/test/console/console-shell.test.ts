@@ -176,6 +176,21 @@ const NODE_LIST = {
   ],
 };
 
+const NODE_FACTS = {
+  nodeName: "local",
+  hostname: "local-mbp",
+  platform: "darwin-arm64",
+  os: "darwin",
+  arch: "arm64",
+  memBytes: 34359738368,
+  gpu: { kind: "metal", name: "M4 Pro" },
+  versions: { llamactl: "0.0.0", bun: "1.4.3", llamaCppSrcRev: null },
+  llamaCppBuildId: null,
+  profile: "macbook-pro-48g",
+  startedAt: "2026-11-05T00:00:00.000Z",
+  advertisedEndpoint: "http://127.0.0.1:8080",
+};
+
 beforeEach(() => {
   accessedProcedures.clear();
   describeCalls.length = 0;
@@ -185,7 +200,13 @@ beforeEach(() => {
   renderedButtons.length = 0;
   renderedInputs.length = 0;
   consoleNode = CONSOLE_NODE;
-  queryResults = { nodeList: NODE_LIST, workloadList: [] };
+  queryResults = {
+    nodeList: NODE_LIST,
+    workloadList: [],
+    nodeTest: { ok: true, facts: null },
+    env: {},
+    nodeFacts: NODE_FACTS,
+  };
 });
 
 afterEach(() => {
@@ -307,7 +328,9 @@ describe("console shell (#410 P5a-3b)", () => {
     setLocation("/", "");
     consoleNode = "local";
     const fleetMarkup = renderShell();
-    expect(fleetMarkup).toContain('data-testid="console-placeholder-fleet"');
+    expect(fleetMarkup).toContain('data-testid="console-view-fleet"');
+    expect(fleetMarkup).toContain('data-testid="console-fleet-tab-node"');
+    expect(fleetMarkup).not.toContain("console-placeholder-fleet");
     expect(fleetMarkup).not.toContain("console-view-workloads");
   });
 
@@ -390,8 +413,27 @@ describe("console shell (#410 P5a-3b)", () => {
     consoleNode = "local";
 
     const markup = renderShell();
-    expect(markup).toContain('data-testid="console-placeholder-fleet"');
+    expect(markup).toContain('data-testid="console-view-fleet"');
     expect(markup).toContain("No console view at /bogus");
+  });
+
+  test("/nodes renders the nodes view while /logs keeps its placeholder", () => {
+    const ConsoleShell = mod.ConsoleShell;
+    expect(typeof ConsoleShell).toBe("function");
+
+    setLocation("/nodes", "");
+    consoleNode = "local";
+    const nodesMarkup = renderShell();
+    expect(nodesMarkup).toContain('data-testid="console-view-nodes"');
+    expect(nodesMarkup).toContain('data-testid="console-node-row-local"');
+    expect(nodesMarkup).toContain('data-testid="console-node-row-remote1"');
+    expect(nodesMarkup).toContain('data-testid="console-node-row-gw"');
+    expect(nodesMarkup).not.toContain('data-testid="console-placeholder-nodes"');
+
+    setLocation("/logs", "");
+    const logsMarkup = renderShell();
+    expect(logsMarkup).toContain('data-testid="console-placeholder-logs"');
+    expect(logsMarkup).not.toContain('data-testid="console-view-logs"');
   });
 
   test("useInvalidSession is SSR-safe: markInvalid renders 'invalid' instead of throwing", () => {

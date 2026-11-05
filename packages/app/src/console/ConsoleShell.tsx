@@ -21,6 +21,8 @@ import { NodeScopedProvider } from "./node-scoped-provider";
 import { useNodeTrpc } from "./node-trpc";
 import { consoleHref, parseConsoleRoute } from "./router";
 import { INVALID_SESSION_MESSAGE, useInvalidSession } from "./session-store";
+import { FleetView } from "./views/fleet";
+import { NodesView } from "./views/nodes";
 import { WorkloadsView } from "./views/workloads";
 
 interface ShellLocation {
@@ -57,9 +59,9 @@ function RoutedView({
     case "workloads":
       return <WorkloadsView route={route} onSuccessToast={onSuccessToast} />;
     case "fleet":
-      return <PlaceholderView id="fleet" label="Fleet" />;
+      return <FleetView />;
     case "nodes":
-      return <PlaceholderView id="nodes" label="Nodes" />;
+      return <NodesView />;
     case "logs":
       return <PlaceholderView id="logs" label="Logs" />;
   }
