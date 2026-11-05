@@ -1,3 +1,9 @@
+import {
+  OOM_KILLED_CONDITION,
+  readModelHostRuntimeStatus,
+} from "@llamactl/core/engines/conditions";
+import { resolveEnv } from "@llamactl/core/env";
+import { listWorkloadDirs } from "@llamactl/core/workloadRuntime";
 import { collectDefaultMetrics, Counter, Gauge, Histogram, Registry } from "prom-client";
 
 /**
@@ -53,6 +59,114 @@ export const agentInfo = new Gauge({
   help: "Agent identity metadata. Value is always 1; information lives in labels.",
   labelNames: ["node_name", "version"] as const,
   registers: [registry],
+});
+
+let modelHostMetricsNode: string | null = null;
+
+export function setModelHostMetricsNode(name: string | null): void {
+  modelHostMetricsNode = name;
+}
+
+function modelHostMetricsNodeName(): string {
+  return modelHostMetricsNode ?? process.env["LLAMACTL_NODE_NAME"] ?? "agent";
+}
+
+export interface ModelHostMetricSample {
+  workload: string;
+  restarts: number;
+  oomKills?: number;
+  cgroupOomKill?: number;
+}
+
+export function readModelHostMetricSamples(
+  resolved = resolveEnv(process.env),
+): ModelHostMetricSample[] {
+  let names: string[];
+  try {
+    names = listWorkloadDirs(resolved);
+  } catch {
+    return [];
+  }
+  const samples: ModelHostMetricSample[] = [];
+  for (const name of names) {
+    try {
+      const status = readModelHostRuntimeStatus({ name }, resolved);
+      if (status === null) continue;
+      const oom = status.conditions.find((c) => c.type === OOM_KILLED_CONDITION);
+      samples.push({
+        workload: name,
+        restarts: status.restarts,
+        ...(oom ? { oomKills: oom.count } : {}),
+        ...(typeof oom?.cgroupOomKill === "number" ? { cgroupOomKill: oom.cgroupOomKill } : {}),
+      });
+    } catch {
+      continue;
+    }
+  }
+  return samples;
+}
+
+// registry.metrics() runs every collect() synchronously in one loop,
+// so caching across the microtask boundary gives one sidecar read per
+// scrape. A collect landing in a later tick re-reads, which is still
+// correct — just not free.
+let scrapeSamples: ModelHostMetricSample[] | null = null;
+
+function samplesForScrape(): ModelHostMetricSample[] {
+  if (scrapeSamples === null) {
+    scrapeSamples = readModelHostMetricSamples();
+    queueMicrotask(() => {
+      scrapeSamples = null;
+    });
+  }
+  return scrapeSamples;
+}
+
+new Gauge({
+  name: "llamactl_modelhost_restarts",
+  help: "Restarts of a running ModelHost recorded by the reconciler (engine found dead or spec drift), from modelhost.conditions.json.",
+  labelNames: ["workload", "node"] as const,
+  registers: [registry],
+  collect(): void {
+    this.reset();
+    for (const sample of samplesForScrape()) {
+      this.labels({ workload: sample.workload, node: modelHostMetricsNodeName() }).set(
+        sample.restarts,
+      );
+    }
+  },
+});
+
+new Gauge({
+  name: "llamactl_modelhost_oom_kills",
+  help: "Engine OOM kills attributed to the ModelHost (OOMKilled condition count).",
+  labelNames: ["workload", "node"] as const,
+  registers: [registry],
+  collect(): void {
+    this.reset();
+    for (const sample of samplesForScrape()) {
+      if (sample.oomKills === undefined) continue;
+      this.labels({ workload: sample.workload, node: modelHostMetricsNodeName() }).set(
+        sample.oomKills,
+      );
+    }
+  },
+});
+
+new Gauge({
+  name: "llamactl_modelhost_cgroup_oom_kill",
+  help: "The controller cgroup's oom_kill counter at the ModelHost's latest OOM kill.",
+  labelNames: ["workload", "node"] as const,
+  registers: [registry],
+  collect(): void {
+    this.reset();
+    for (const sample of samplesForScrape()) {
+      if (sample.cgroupOomKill === undefined) continue;
+      this.labels({ workload: sample.workload, node: modelHostMetricsNodeName() }).set(
+        sample.cgroupOomKill,
+      );
+    }
+  },
 });
 
 /** Bin a numeric HTTP status into 2xx/3xx/4xx/5xx for low-cardinality labels. */

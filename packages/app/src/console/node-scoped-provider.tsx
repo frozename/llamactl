@@ -9,8 +9,8 @@ import type { ReactNode } from "react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import * as React from "react";
 
-import { trpc } from "../lib/trpc";
 import { createNodeScope } from "./create-node-scope";
+import { ConsoleNodeContext, NodeTrpcProvider } from "./node-trpc";
 
 export interface NodeScopedProviderProps {
   node: string;
@@ -26,9 +26,11 @@ export function NodeScopedProvider({
   const scope = React.useMemo(() => createNodeScope({ node, baseUrl }), [node, baseUrl]);
   return (
     <React.Fragment key={node}>
-      <trpc.Provider client={scope.client} queryClient={scope.queryClient}>
-        <QueryClientProvider client={scope.queryClient}>{children}</QueryClientProvider>
-      </trpc.Provider>
+      <ConsoleNodeContext.Provider value={node}>
+        <NodeTrpcProvider client={scope.client} queryClient={scope.queryClient}>
+          <QueryClientProvider client={scope.queryClient}>{children}</QueryClientProvider>
+        </NodeTrpcProvider>
+      </ConsoleNodeContext.Provider>
     </React.Fragment>
   );
 }

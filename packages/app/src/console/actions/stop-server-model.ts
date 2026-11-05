@@ -48,6 +48,28 @@ export function stopDialogState(opts: { workload: string; typed: string; submitt
   };
 }
 
+export function stopButtonDisabled(dialogState: { canSubmit: boolean }): boolean {
+  return !dialogState.canSubmit;
+}
+
+export function serverStopCall(workload: string): { workload: string; graceSeconds: number } {
+  return { workload, graceSeconds: STOP_GRACE_SECONDS };
+}
+
+export type StopInvalidateKey = "serverStatus" | "workloadList";
+
+export function afterStopEffects(result: {
+  kind: "success" | "refusal" | "error";
+  text: string;
+  invalidate: boolean;
+}): { toast: string | null; close: boolean; invalidate: StopInvalidateKey[] } {
+  return {
+    toast: result.kind === "success" ? result.text : null,
+    close: result.kind === "success",
+    invalidate: result.invalidate ? ["serverStatus", "workloadList"] : [],
+  };
+}
+
 interface StopControllerInternal {
   view: () => {
     workload: string;
@@ -103,10 +125,7 @@ export function createStopController(opts: {
       submitting = true;
 
       try {
-        const result = await opts.mutate({
-          workload: opts.workload,
-          graceSeconds: STOP_GRACE_SECONDS,
-        });
+        const result = await opts.mutate(serverStopCall(opts.workload));
         return { ok: true, result };
       } catch (error) {
         return { ok: false, error };
