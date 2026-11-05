@@ -1,6 +1,7 @@
 import type { ModelHostRuntimeStatus } from "@llamactl/core/engines/conditions";
 
 import { ENGINES } from "@llamactl/core/engines";
+import { readControllerHostHistory } from "@llamactl/core/engines/conditions";
 import { modelhostPidFile, readModelHostState } from "@llamactl/core/engines/state";
 import { resolveEnv } from "@llamactl/core/env";
 import { isRecordedPidAlive } from "@llamactl/core/pidIdentity";
@@ -29,7 +30,11 @@ import {
   ModelHostManifestSchema,
   specForEngine,
 } from "@llamactl/remote/workload/modelhost-schema";
-import { listModelHosts, saveModelHost } from "@llamactl/remote/workload/modelhost-store";
+import {
+  defaultModelHostDir,
+  listModelHosts,
+  saveModelHost,
+} from "@llamactl/remote/workload/modelhost-store";
 import { resolve as resolvePath } from "node:path";
 import { parse as parseYaml } from "yaml";
 
@@ -123,6 +128,8 @@ interface WorkloadTestSeams {
   getNodeClientByName?: typeof getNodeClientByName;
   /** #221: deadline in ms for each node query in `get workloads`, `describe workload`, `describe node`, `describe noderun` and the ModelRun status query in `delete` (default GET_NODE_QUERY_TIMEOUT_MS). */
   nodeQueryTimeoutMs?: number;
+  /** #308: clock for the history ages printed by `describe workload`. */
+  now?: () => Date;
 }
 
 let workloadTestSeams: WorkloadTestSeams = {};
@@ -914,12 +921,95 @@ export function formatHostRuntime(runtime: ModelHostRuntimeStatus): string {
   return `${lines.join("\n")}\n`;
 }
 
+/** Coarse age of a timestamp, newest-first buckets: s / m / h / d. */
+export function formatAge(ms: number): string {
+  const clamped = ms < 0 ? 0 : ms;
+  const s = Math.floor(clamped / 1000);
+  if (s < 60) return `${String(s)}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${String(m)}m`;
+  const h = Math.floor(m / 60);
+  if (h < 48) return `${String(h)}h`;
+  return `${String(Math.floor(h / 24))}d`;
+}
+
+function newestRuntimeTimestamp(runtime: ModelHostRuntimeStatus | undefined): string | null {
+  if (runtime === undefined) return null;
+  let newest: string | null = null;
+  let newestMs = Number.NEGATIVE_INFINITY;
+  const consider = (ts: string | null | undefined): void => {
+    if (typeof ts !== "string") return;
+    const ms = Date.parse(ts);
+    if (Number.isNaN(ms)) return;
+    if (ms > newestMs) {
+      newestMs = ms;
+      newest = ts;
+    }
+  };
+  consider(runtime.lastRestartAt);
+  for (const c of runtime.conditions) consider(c.lastSeen);
+  return newest;
+}
+
+function runtimeAge(runtime: ModelHostRuntimeStatus | undefined, nowMs: number): string | null {
+  const newest = newestRuntimeTimestamp(runtime);
+  return newest === null ? null : `newest ${newest}, ${formatAge(nowMs - Date.parse(newest))} ago`;
+}
+
+function indentBlock(block: string): string {
+  return block
+    .split("\n")
+    .map((line) => (line === "" ? line : `  ${line}`))
+    .join("\n");
+}
+
+function updatedTail(updatedAt: string, nowMs: number): string {
+  const ms = Date.parse(updatedAt);
+  return Number.isNaN(ms)
+    ? `updated ${updatedAt}`
+    : `updated ${updatedAt}, ${formatAge(nowMs - ms)} ago`;
+}
+
+/** #308: print restart/condition history with its source and age. A remote
+ *  host's controller-side history comes first; the node's own sidecar follows,
+ *  indented and labelled, since this controller did not write it. */
+function writeHostHistory(
+  manifest: ModelHostManifest,
+  runtime: ModelHostRuntimeStatus | undefined,
+  nowMs: number,
+): void {
+  const { node } = manifest.spec;
+  const tail = (): string => runtimeAge(runtime, nowMs) ?? "no entries";
+  if (node === LOCAL_NODE_ID) {
+    if (runtime === undefined) return;
+    process.stdout.write(`Source:     modelhost.conditions.json on local (${tail()})\n`);
+    process.stdout.write(formatHostRuntime(runtime));
+    return;
+  }
+  const history = readControllerHostHistory(defaultModelHostDir(), node, manifest.metadata.name);
+  if (history === null) {
+    process.stdout.write(`Source:     controller history (none recorded)\n`);
+  } else {
+    process.stdout.write(
+      `Source:     controller history (${updatedTail(history.updatedAt, nowMs)})\n`,
+    );
+    process.stdout.write(formatHostRuntime(history));
+  }
+  if (runtime === undefined) return;
+  process.stdout.write(
+    `NodeHistory: modelhost.conditions.json on ${node} (${tail()}; not written by this controller)\n`,
+  );
+  process.stdout.write(indentBlock(formatHostRuntime(runtime)));
+}
+
 async function runDescribeModelHost(manifest: ModelHostManifest, json: boolean): Promise<number> {
+  const { spec } = manifest;
+  const nowMs = (workloadTestSeams.now ?? ((): Date => new Date()))().getTime();
   let liveStatus: unknown = null;
   let runtime: ModelHostRuntimeStatus | undefined;
   try {
-    const client = getWorkloadNodeClient(manifest.spec.node);
-    const status = await withNodeQueryDeadline(manifest.spec.node, () =>
+    const client = getWorkloadNodeClient(spec.node);
+    const status = await withNodeQueryDeadline(spec.node, () =>
       client.modelHostStatus.query({ workload: manifest.metadata.name }),
     );
     liveStatus = status;
@@ -927,11 +1017,15 @@ async function runDescribeModelHost(manifest: ModelHostManifest, json: boolean):
   } catch (err) {
     liveStatus = { error: (err as Error).message };
   }
+  const remote = spec.node !== LOCAL_NODE_ID;
   if (json) {
-    process.stdout.write(`${JSON.stringify({ manifest, liveStatus }, null, 2)}\n`);
+    const controllerHistory = remote
+      ? readControllerHostHistory(defaultModelHostDir(), spec.node, manifest.metadata.name)
+      : null;
+    const payload = remote ? { manifest, liveStatus, controllerHistory } : { manifest, liveStatus };
+    process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
     return 0;
   }
-  const { spec } = manifest;
   const models = spec.hostedModels
     .map((m) => (m.lora_path ? `${m.rel} (lora: ${m.lora_path})` : m.rel))
     .join(", ");
@@ -945,7 +1039,7 @@ async function runDescribeModelHost(manifest: ModelHostManifest, json: boolean):
   process.stdout.write(`Enabled:    ${String(spec.enabled)}\n`);
   process.stdout.write(`ExtraArgs:  ${spec.extraArgs.join(" ") || "(none)"}\n`);
   process.stdout.write(`RestartPolicy: ${spec.restartPolicy}\n`);
-  if (runtime) process.stdout.write(formatHostRuntime(runtime));
+  writeHostHistory(manifest, runtime, nowMs);
   writeLiveStatus(liveStatus);
   return 0;
 }
@@ -1094,6 +1188,9 @@ async function deleteModelHost(
   if (!keepRunning && !(await stopModelHostBeforeDelete(manifest))) {
     return 1;
   }
+  // #308: deleteWorkload also drops the controller's mirror of this host's
+  // history, so a re-apply of the same name starts from a clean slate on
+  // every delete path (CLI, tRPC, MCP).
   const ok = workloadStore.deleteWorkload(name);
   if (!ok) {
     process.stderr.write(`delete: workload '${name}' not found in store\n`);
