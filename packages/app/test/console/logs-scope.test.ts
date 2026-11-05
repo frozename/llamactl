@@ -42,9 +42,16 @@ type LogsEntry = { kind: "line"; text: string } | { kind: "divider" };
 
 interface LogsState {
   entries: LogsEntry[];
+  pendingFreshStart: boolean;
 }
 
-type LogsAction = { type: "event"; event: unknown } | { type: "clear" };
+type LogsAction =
+  | { type: "event"; event: unknown }
+  | { type: "clear" }
+  | { type: "gate-off" }
+  | { type: "stream-start" };
+
+const emptyLogsState = (): LogsState => ({ entries: [], pendingFreshStart: false });
 
 interface LogsScopeModule {
   INITIAL_LOGS_STATE?: LogsState;
@@ -199,16 +206,16 @@ describe("logs scope (#410 P5a-3d)", () => {
     }
   });
 
-  test("INITIAL_LOGS_STATE is an empty entry list", () => {
+  test("INITIAL_LOGS_STATE is an empty entry list with no pending fresh start", () => {
     expect(typeof mod.logsReducer).toBe("function");
 
-    expect(mod.INITIAL_LOGS_STATE).toEqual({ entries: [] });
+    expect(mod.INITIAL_LOGS_STATE).toEqual({ entries: [], pendingFreshStart: false });
   });
 
   test("logsReducer appends line entries and resets to one divider on reconnect", () => {
     expect(typeof mod.logsReducer).toBe("function");
     const reducer = mod.logsReducer!;
-    let state = mod.INITIAL_LOGS_STATE ?? { entries: [] };
+    let state = mod.INITIAL_LOGS_STATE ?? emptyLogsState();
 
     for (const text of ["l1", "l2", "l3"]) {
       state = reducer(state, lineAction(text));
@@ -240,7 +247,7 @@ describe("logs scope (#410 P5a-3d)", () => {
   test("a plain __reconnect__ event behaves the same as RECONNECT_SIGNAL", () => {
     expect(typeof mod.logsReducer).toBe("function");
     const reducer = mod.logsReducer!;
-    let state = mod.INITIAL_LOGS_STATE ?? { entries: [] };
+    let state = mod.INITIAL_LOGS_STATE ?? emptyLogsState();
 
     state = reducer(state, lineAction("only"));
     state = reducer(state, { type: "event", event: { type: "__reconnect__" } });
@@ -250,7 +257,7 @@ describe("logs scope (#410 P5a-3d)", () => {
   test("unknown events return the identical state object and clear empties entries", () => {
     expect(typeof mod.logsReducer).toBe("function");
     const reducer = mod.logsReducer!;
-    let state = mod.INITIAL_LOGS_STATE ?? { entries: [] };
+    let state = mod.INITIAL_LOGS_STATE ?? emptyLogsState();
     state = reducer(state, lineAction("keep"));
 
     expect(reducer(state, { type: "event", event: { type: "noise" } })).toBe(state);
@@ -263,7 +270,7 @@ describe("logs scope (#410 P5a-3d)", () => {
     expect(mod.MAX_LOG_LINES).toBe(2000);
     const reducer = mod.logsReducer!;
     const max = mod.MAX_LOG_LINES!;
-    let state = mod.INITIAL_LOGS_STATE ?? { entries: [] };
+    let state = mod.INITIAL_LOGS_STATE ?? emptyLogsState();
 
     const total = max + 5;
     const texts = Array.from({ length: total }, (_value, index) => `line-${String(index)}`);
@@ -309,11 +316,60 @@ describe("logs scope (#410 P5a-3d)", () => {
   test("logsReducer masks secret material when appending lines", () => {
     expect(typeof mod.logsReducer).toBe("function");
     const reducer = mod.logsReducer!;
-    let state = mod.INITIAL_LOGS_STATE ?? { entries: [] };
+    let state = mod.INITIAL_LOGS_STATE ?? emptyLogsState();
 
     state = reducer(state, lineAction("--api-key sentinel-log"));
     for (const text of entryTexts(state)) {
       expect(text).not.toContain("sentinel-log");
     }
+  });
+
+  test("lines -> gate offline -> gate online + backfill = no duplicates, one divider", () => {
+    expect(typeof mod.logsReducer).toBe("function");
+    const reducer = mod.logsReducer!;
+    let state = mod.INITIAL_LOGS_STATE ?? emptyLogsState();
+
+    for (const text of ["a", "b", "c"]) {
+      state = reducer(state, lineAction(text));
+    }
+    expect(entryTexts(state)).toEqual(["a", "b", "c"]);
+
+    state = reducer(state, { type: "gate-off" });
+    expect(entryTexts(state)).toEqual(["a", "b", "c"]);
+    expect(reducer(state, { type: "gate-off" })).toBe(state);
+
+    state = reducer(state, { type: "stream-start" });
+    expect(state.entries).toEqual([{ kind: "divider" }]);
+
+    for (const text of ["a", "b", "c"]) {
+      state = reducer(state, lineAction(text));
+    }
+    expect(dividerCount(state)).toBe(1);
+    expect(entryTexts(state)).toEqual(["a", "b", "c"]);
+    for (const text of ["a", "b", "c"]) {
+      expect(entryTexts(state).filter((entry) => entry === text)).toHaveLength(1);
+    }
+  });
+
+  test("stream-start with no gate-off period keeps the buffer and adds no divider", () => {
+    expect(typeof mod.logsReducer).toBe("function");
+    const reducer = mod.logsReducer!;
+    let state = mod.INITIAL_LOGS_STATE ?? emptyLogsState();
+
+    state = reducer(state, lineAction("keep"));
+    expect(reducer(state, { type: "stream-start" })).toBe(state);
+    expect(dividerCount(state)).toBe(0);
+  });
+
+  test("clear empties the buffer and drops the pending fresh start", () => {
+    expect(typeof mod.logsReducer).toBe("function");
+    const reducer = mod.logsReducer!;
+    let state = mod.INITIAL_LOGS_STATE ?? emptyLogsState();
+
+    state = reducer(state, lineAction("keep"));
+    state = reducer(state, { type: "gate-off" });
+    state = reducer(state, { type: "clear" });
+    expect(state).toEqual({ entries: [], pendingFreshStart: false });
+    expect(reducer(state, { type: "stream-start" })).toBe(state);
   });
 });

@@ -14,6 +14,8 @@ import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "b
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
+import type { ConsoleRoute } from "../../src/console/router";
+
 import { consoleHref } from "../../src/console/router";
 import {
   consoleSessionStore,
@@ -23,6 +25,7 @@ import {
 
 const NODE_TRPC_SPEC = "../../src/console/node-trpc.ts";
 const SHELL_SPEC = "../../src/console/ConsoleShell.tsx";
+const LOGS_VIEW_SPEC = "../../src/console/views/logs.tsx";
 const CONSOLE_NODE = "local";
 
 const hadElectronTRPC = "electronTRPC" in globalThis;
@@ -172,6 +175,15 @@ void mock.module(NODE_TRPC_SPEC, () => ({
   useNodeTrpc: (): unknown => trpcStub,
   useNodeTrpcUtils: (): unknown => utilsStub,
 }));
+
+interface LogsViewProbeProps {
+  route: ConsoleRoute;
+  onSelectWorkload: (name: string) => void;
+}
+
+const logsViewReal = (await import(LOGS_VIEW_SPEC).catch(() => ({}))) as {
+  LogsView?: ComponentType<LogsViewProbeProps>;
+};
 
 const mod = (await import(SHELL_SPEC).catch(() => ({}))) as {
   ConsoleShell?: ComponentType;
@@ -453,6 +465,50 @@ describe("console shell (#410 P5a-3b)", () => {
     const enabledSubs = logsSubs.filter((call) => call.enabled);
     expect(enabledSubs.length).toBeGreaterThanOrEqual(1);
     expect(enabledSubs[0]?.input).toEqual({ workload: "qwen", lines: 200, follow: true });
+  });
+
+  test("picking a workload in the logs view navigates to the tab node's logs deep link", () => {
+    const ConsoleShell = mod.ConsoleShell;
+    expect(typeof ConsoleShell).toBe("function");
+    setLocation("/logs", "");
+    consoleNode = "local";
+
+    let onSelectWorkload: ((name: string) => void) | undefined;
+    function LogsProbe(props: LogsViewProbeProps): ReactElement {
+      onSelectWorkload = props.onSelectWorkload;
+      return createElement("section", { "data-testid": "console-logs-probe" });
+    }
+    void mock.module(LOGS_VIEW_SPEC, () => ({ LogsView: LogsProbe }));
+
+    interface HistoryStub {
+      pushState: (state: unknown, title: string, url?: string) => void;
+    }
+    const historyHolder = globalThis as { history?: HistoryStub | undefined };
+    const hadHistory = "history" in globalThis;
+    const prevHistory = historyHolder.history;
+    const pushStateCalls: string[] = [];
+    historyHolder.history = {
+      pushState: (_state: unknown, _title: string, url?: string): void => {
+        pushStateCalls.push(url ?? "");
+      },
+    };
+
+    try {
+      const markup = renderShell();
+      expect(markup).toContain('data-testid="console-logs-probe"');
+      expect(typeof onSelectWorkload).toBe("function");
+      onSelectWorkload!("qwen");
+      expect(pushStateCalls).toEqual([
+        consoleHref({ view: "logs", workload: "qwen", node: "local" }),
+      ]);
+    } finally {
+      if (hadHistory && prevHistory !== undefined) {
+        historyHolder.history = prevHistory;
+      } else {
+        delete historyHolder.history;
+      }
+      void mock.module(LOGS_VIEW_SPEC, () => ({ ...logsViewReal }));
+    }
   });
 
   test("no other console view opens the serverLogs stream (regression guard)", () => {

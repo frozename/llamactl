@@ -97,6 +97,7 @@ const logsSubs: { input: unknown; enabled: boolean }[] = [];
 let listScript: unknown[] = [];
 let listError = false;
 let statusData: unknown = { state: "up" };
+let statusError = false;
 let subStatus: string | undefined;
 let feedEvents: unknown[] | undefined;
 let consoleNode = CONSOLE_NODE;
@@ -144,10 +145,10 @@ function procedureStub(procedure: string): Record<string, unknown> {
         return {
           data: statusData,
           error: null,
-          isError: false,
+          isError: statusError,
           isLoading: false,
-          isPending: statusData === undefined,
-          isSuccess: statusData !== undefined,
+          isPending: statusData === undefined && !statusError,
+          isSuccess: statusData !== undefined && !statusError,
         };
       }
       return {
@@ -229,6 +230,7 @@ beforeEach(() => {
   listScript = [LOG_ROWS];
   listError = false;
   statusData = { state: "up" };
+  statusError = false;
   subStatus = undefined;
   feedEvents = undefined;
 });
@@ -494,5 +496,45 @@ describe("logs view (#410 P5a-3d)", () => {
     expect(markup).toContain('data-testid="console-logs-pending"');
     expect(enabledCalls(statusCalls)).toHaveLength(0);
     expect(enabledCalls(logsSubs)).toHaveLength(0);
+  });
+
+  test("a failed serverStatus refetch shows the status-error notice, idles the dot and opens no stream", () => {
+    const LogsView = mod.LogsView;
+    expect(typeof LogsView).toBe("function");
+    statusError = true;
+
+    const markup = renderView({ view: "logs" });
+
+    const gateErrorBlock = testIdBlock(markup, "console-logs-gate-error");
+    expect(gateErrorBlock).not.toBeNull();
+    expect(gateErrorBlock ?? "").toContain("Server status unavailable");
+    expect(markup).not.toContain('data-testid="console-logs-offline"');
+    const connTag = testIdOpenTag(markup, "console-logs-conn");
+    expect(connTag).not.toBeNull();
+    expect(connTag ?? "").toContain('data-state="idle"');
+    expect(enabledCalls(logsSubs)).toHaveLength(0);
+  });
+
+  test("the picker carries a selected empty placeholder only while nothing valid is selected", () => {
+    const LogsView = mod.LogsView;
+    expect(typeof LogsView).toBe("function");
+
+    listScript = [undefined];
+    const pendingSelect = workloadSelect(renderView({ view: "logs" }));
+    expect(pendingSelect).not.toBeNull();
+    const placeholder = optionTags(pendingSelect ?? "").find((tag) => optionValue(tag) === "");
+    expect(placeholder).toBeDefined();
+    expect(optionSelected(placeholder!)).toBe(true);
+
+    listScript = [LOG_ROWS];
+    const missing = workloadSelect(renderView({ view: "logs", workload: "ghost" }));
+    expect(missing).not.toBeNull();
+    const missingPlaceholder = optionTags(missing ?? "").find((tag) => optionValue(tag) === "");
+    expect(missingPlaceholder).toBeDefined();
+    expect(optionSelected(missingPlaceholder!)).toBe(true);
+
+    const selected = workloadSelect(renderView({ view: "logs" }));
+    expectGemmaPicked(selected ?? "");
+    expect(optionTags(selected ?? "").some((tag) => optionValue(tag) === "")).toBe(false);
   });
 });

@@ -86,10 +86,22 @@ function LogsStream({ workload, gate }: { workload: string; gate: LogsGate }): R
   const [follow, setFollow] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const scrollRef = React.useRef<HTMLDivElement | null>(null);
+  // A gate-off period ends with a brand-new subscription that replays
+  // its backfill; the link's own RECONNECT_SIGNAL never fires for it, so
+  // the flap itself has to mark the buffer for a fresh start.
+  const previousGateRef = React.useRef<LogsGate>(gate);
+  React.useEffect(() => {
+    const previous = previousGateRef.current;
+    previousGateRef.current = gate;
+    if (previous === "online" && gate !== "online") {
+      dispatch({ type: "gate-off" });
+    }
+  }, [gate]);
   // skipToken alone pauses the subscription: tRPC's overloads omit
   // `enabled` from the options whenever the input may be skipToken.
   const sub = trpc.serverLogs.useSubscription(gate === "online" ? input : skipToken, {
     onStarted: () => {
+      dispatch({ type: "stream-start" });
       setError(null);
     },
     onData: (event) => {
@@ -141,6 +153,10 @@ function LogsStream({ workload, gate }: { workload: string; gate: LogsGate }): R
       {gate === "offline" ? (
         <div data-testid="console-logs-offline" style={secondaryStyle}>
           Server offline
+        </div>
+      ) : gate === "error" ? (
+        <div data-testid="console-logs-gate-error" style={secondaryStyle}>
+          Server status unavailable
         </div>
       ) : (
         <LogsBuffer state={state} scrollRef={scrollRef} />
@@ -219,9 +235,17 @@ export function LogsView({
         aria-label="Logs workload"
         value={name ?? ""}
         onChange={(event) => {
-          onSelectWorkload(event.target.value);
+          const next = event.target.value;
+          if (next !== "") {
+            onSelectWorkload(next);
+          }
         }}
       >
+        {name === null ? (
+          <option value="" disabled>
+            Select a workload
+          </option>
+        ) : null}
         {optionNames.map((option) => (
           <option key={option} value={option}>
             {option}

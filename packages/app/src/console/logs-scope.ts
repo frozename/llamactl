@@ -29,11 +29,19 @@ export type LogEntry = { kind: "line"; text: string } | { kind: "divider" };
 
 export interface LogsState {
   entries: readonly LogEntry[];
+  // The status gate closed since the last stream start, so the next
+  // onStarted opens a fresh subscription whose backfill would otherwise
+  // replay lines the buffer already holds.
+  pendingFreshStart: boolean;
 }
 
-export const INITIAL_LOGS_STATE: LogsState = { entries: [] };
+export const INITIAL_LOGS_STATE: LogsState = { entries: [], pendingFreshStart: false };
 
-export type LogsAction = { type: "event"; event: unknown } | { type: "clear" };
+export type LogsAction =
+  | { type: "event"; event: unknown }
+  | { type: "clear" }
+  | { type: "gate-off" }
+  | { type: "stream-start" };
 
 // Copied deliberately from packages/remote/src/console/allowlist.ts
 // (LINE_SECRET_FLAG in maskLineSecrets) and redact.ts (BEARER, USERINFO
@@ -143,15 +151,23 @@ function isObject(value: unknown): value is Record<string, unknown> {
 
 export function logsReducer(state: LogsState, action: LogsAction): LogsState {
   if (action.type === "clear") return INITIAL_LOGS_STATE;
+  if (action.type === "gate-off") {
+    return state.pendingFreshStart ? state : { ...state, pendingFreshStart: true };
+  }
+  if (action.type === "stream-start") {
+    if (!state.pendingFreshStart) return state;
+    return { entries: [{ kind: "divider" }], pendingFreshStart: false };
+  }
   const event = action.event;
   if (isReconnectSignal(event)) {
-    return { entries: [{ kind: "divider" }] };
+    return { entries: [{ kind: "divider" }], pendingFreshStart: state.pendingFreshStart };
   }
   if (isObject(event) && event["type"] === "line" && typeof event["line"] === "string") {
     const entries = [...state.entries, { kind: "line" as const, text: maskLogLine(event["line"]) }];
     return {
       entries:
         entries.length > MAX_LOG_LINES ? entries.slice(entries.length - MAX_LOG_LINES) : entries,
+      pendingFreshStart: state.pendingFreshStart,
     };
   }
   return state;
