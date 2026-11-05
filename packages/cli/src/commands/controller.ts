@@ -16,6 +16,7 @@ import {
 } from "@llamactl/remote";
 import {
   externalManagerOf,
+  LOCAL_NODE_ID,
   type ModelHostManifest,
 } from "@llamactl/remote/workload/modelhost-schema";
 import { join } from "node:path";
@@ -310,13 +311,17 @@ export function oomBaselineFor(state: OomWatchState): CgroupOomSample | null {
   return { cgroup: state.last.cgroup, oomKill: state.last.oomKill - state.pendingKills };
 }
 
-/** Local ModelHosts this pass found dead that were not already failing. */
+/** Local ModelHosts this pass found dead that were not already failing. A
+ *  remote host's foundDead (#308) reflects controller history, not an engine
+ *  in this cgroup, so it never counts toward OOM attribution. */
 export function newlyDeadHosts(
   reports: readonly ReportForLog[],
   errorLog: ReconcileErrorLog,
 ): string[] {
   return reports
-    .filter((r) => r.foundDead === true && !errorLog.has(reportLabel(r)))
+    .filter(
+      (r) => r.node === LOCAL_NODE_ID && r.foundDead === true && !errorLog.has(reportLabel(r)),
+    )
     .map((r) => r.name);
 }
 

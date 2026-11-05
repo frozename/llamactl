@@ -19,7 +19,11 @@ import * as fs from "../../src/safe-fs.js";
 import { mkdtempSync, rmSync } from "../../src/safe-fs.js";
 import { type ModelHostManifest, specForHash } from "../../src/workload/modelhost-schema.js";
 import { loadModelHostByName, saveModelHost } from "../../src/workload/modelhost-store.js";
-import { reconcileOnce, type ReconcileResult } from "../../src/workload/reconciler.js";
+import {
+  type ReconcileNodeReport,
+  reconcileOnce,
+  type ReconcileResult,
+} from "../../src/workload/reconciler.js";
 import { saveWorkload } from "../../src/workload/store.js";
 
 function seedRunningSidecar(dir: string, manifest: ReturnType<typeof makeHostManifest>): void {
@@ -702,6 +706,339 @@ describe("reconcileOnce", () => {
             message,
           }),
         ]);
+      });
+    });
+
+    describe("remote ModelHost controller history (#308)", () => {
+      const T1 = new Date("2026-11-05T12:00:00.000Z");
+      const T2 = new Date("2026-11-05T12:05:00.000Z");
+
+      type HostStatus = { state: string; specHash?: string };
+      type HostStartOutcome =
+        | { ok: true; pid: number; state: string }
+        | { ok: false; error: string };
+
+      interface ControllerHistory {
+        conditions?: {
+          count?: number;
+          firstSeen?: string;
+          lastSeen?: string;
+          message?: string;
+          reason?: string;
+          status?: string;
+          type?: string;
+        }[];
+        lastKnownRunning?: boolean;
+        lastRestartAt?: string | null;
+        lastRestartReason?: string | null;
+        node?: string;
+        restarts?: number;
+        updatedAt?: string;
+        workload?: string;
+      }
+
+      function remoteHostManifest(): ModelHostManifest {
+        return {
+          ...makeHostManifest(),
+          spec: { ...makeHostManifest().spec, node: "gpu1" },
+        };
+      }
+
+      function historyPath(dir: string): string {
+        return join(dir, ".modelhost-history", "gpu1", "host-a.json");
+      }
+
+      function readHistory(dir: string): ControllerHistory {
+        const path = historyPath(dir);
+        expect(fs.existsSync(path)).toBe(true);
+        return JSON.parse(fs.readFileSync(path, "utf8")) as ControllerHistory;
+      }
+
+      function remoteGetClient(
+        readStatus: () => HostStatus,
+        readStart: () => HostStartOutcome,
+      ): () => WorkloadClient {
+        return (): WorkloadClient => ({
+          ...makeClient(),
+          modelHostStatus: { query: () => Promise.resolve(readStatus()) },
+          modelHostStart: startStub(readStart),
+        });
+      }
+
+      test("records a remote restart in controller history when the engine is found dead", async () => {
+        await withRuntime("llamactl-reconciler-hist-dead-", async (dir) => {
+          const manifest = remoteHostManifest();
+          saveModelHost(manifest, dir);
+          let clock = T1;
+          const now = (): Date => clock;
+          let status: HostStatus = {
+            state: "Running",
+            specHash: computeModelHostSpecHash(specForHash(manifest.spec)),
+          };
+          const startOutcome: HostStartOutcome = { ok: true, pid: 4321, state: "Running" };
+          const getClient = remoteGetClient(
+            () => status,
+            () => startOutcome,
+          );
+          const opts = { workloadsDir: dir, getClient, now };
+
+          const converged = await reconcileOnce(opts);
+          expect(converged.reports).toEqual([
+            { kind: "ModelHost", name: "host-a", node: "gpu1", action: "unchanged" },
+          ]);
+
+          clock = T2;
+          status = { state: "Stopped" };
+          const restarted = await reconcileOnce(opts);
+          expect(restarted.reports).toEqual([
+            {
+              kind: "ModelHost",
+              name: "host-a",
+              node: "gpu1",
+              action: "started",
+              foundDead: true,
+            },
+          ]);
+
+          expect(readHistory(dir)).toMatchObject({
+            node: "gpu1",
+            workload: "host-a",
+            restarts: 1,
+            lastRestartReason: "EngineExited",
+            lastRestartAt: T2.toISOString(),
+            lastKnownRunning: true,
+            updatedAt: T2.toISOString(),
+          });
+        });
+      });
+
+      test("records a remote spec-drift restart in controller history", async () => {
+        await withRuntime("llamactl-reconciler-hist-drift-", async (dir) => {
+          saveModelHost(remoteHostManifest(), dir);
+          const clock = T1;
+          const now = (): Date => clock;
+          const status: HostStatus = { state: "Running", specHash: "other" };
+          const startOutcome: HostStartOutcome = { ok: true, pid: 4321, state: "Running" };
+          const getClient = remoteGetClient(
+            () => status,
+            () => startOutcome,
+          );
+          const opts = { workloadsDir: dir, getClient, now };
+
+          const result = await reconcileOnce(opts);
+          expect(result.reports).toEqual([
+            { kind: "ModelHost", name: "host-a", node: "gpu1", action: "restarted" },
+          ]);
+          expect(readHistory(dir)).toMatchObject({
+            restarts: 1,
+            lastRestartReason: "SpecChanged",
+            lastRestartAt: T1.toISOString(),
+          });
+        });
+      });
+
+      test("records a remote reconcile-error episode and its recovery in controller history", async () => {
+        await withRuntime("llamactl-reconciler-hist-errors-", async (dir) => {
+          saveModelHost(remoteHostManifest(), dir);
+          let clock = T1;
+          const now = (): Date => clock;
+          const status: HostStatus = { state: "Stopped" };
+          let startOutcome: HostStartOutcome = { ok: false, error: MISMATCH };
+          const getClient = remoteGetClient(
+            () => status,
+            () => startOutcome,
+          );
+          const opts = { workloadsDir: dir, getClient, now };
+          const failedReport: ReconcileNodeReport = {
+            kind: "ModelHost",
+            name: "host-a",
+            node: "gpu1",
+            action: "unchanged",
+            error: MISMATCH,
+          };
+
+          const first = await reconcileOnce(opts);
+          clock = T2;
+          const second = await reconcileOnce(opts);
+          expect(first.reports).toEqual([failedReport]);
+          expect(second.reports).toEqual([failedReport]);
+          expect(readHistory(dir).conditions).toEqual([
+            expect.objectContaining({
+              type: "ReconcileError",
+              status: "True",
+              reason: "ApplyFailed",
+              message: MISMATCH,
+              count: 2,
+              firstSeen: T1.toISOString(),
+              lastSeen: T2.toISOString(),
+            }),
+          ]);
+
+          startOutcome = { ok: true, pid: 4321, state: "Running" };
+          const recovered = await reconcileOnce(opts);
+          expect(recovered.reports).toEqual([
+            { kind: "ModelHost", name: "host-a", node: "gpu1", action: "started" },
+          ]);
+          const history = readHistory(dir);
+          expect(history.conditions?.[0]).toMatchObject({
+            status: "False",
+            reason: "Recovered",
+            count: 2,
+          });
+          expect(history.restarts).toBe(0);
+          expect(history.lastKnownRunning).toBe(true);
+        });
+      });
+
+      test("records a remote NodeUnreachable condition in controller history", async () => {
+        await withRuntime("llamactl-reconciler-hist-unreachable-", async (dir) => {
+          saveModelHost(remoteHostManifest(), dir);
+          const clock = T1;
+          const now = (): Date => clock;
+          const getClient = (): WorkloadClient => ({
+            ...makeClient(),
+            modelHostStatus: {
+              query: (): Promise<never> => new Promise<never>(() => undefined),
+            },
+          });
+          const opts = {
+            workloadsDir: dir,
+            getClient,
+            now,
+            rpcTimeouts: { queryMs: 20, mutateMs: 20 },
+          };
+
+          const result = await reconcileOnce(opts);
+          expect(result.errors).toBe(1);
+          expect(readHistory(dir).conditions?.[0]).toMatchObject({
+            type: "ReconcileError",
+            status: "True",
+            reason: "NodeUnreachable",
+          });
+        });
+      });
+
+      test("records a fresh remote start in controller history without a restart", async () => {
+        await withRuntime("llamactl-reconciler-hist-fresh-", async (dir) => {
+          saveModelHost(remoteHostManifest(), dir);
+          const clock = T1;
+          const now = (): Date => clock;
+          const status: HostStatus = { state: "Stopped" };
+          const startOutcome: HostStartOutcome = { ok: true, pid: 4321, state: "Running" };
+          const getClient = remoteGetClient(
+            () => status,
+            () => startOutcome,
+          );
+          const opts = { workloadsDir: dir, getClient, now };
+
+          const result = await reconcileOnce(opts);
+          expect(result.reports).toEqual([
+            { kind: "ModelHost", name: "host-a", node: "gpu1", action: "started" },
+          ]);
+          expect(readHistory(dir)).toMatchObject({ restarts: 0, lastKnownRunning: true });
+        });
+      });
+
+      test("resets lastKnownRunning when a remote host is disabled", async () => {
+        await withRuntime("llamactl-reconciler-hist-toggle-", async (dir) => {
+          const manifest = remoteHostManifest();
+          saveModelHost(manifest, dir);
+          let clock = T1;
+          const now = (): Date => clock;
+          let status: HostStatus = {
+            state: "Running",
+            specHash: computeModelHostSpecHash(specForHash(manifest.spec)),
+          };
+          const startOutcome: HostStartOutcome = { ok: true, pid: 4321, state: "Running" };
+          const getClient = remoteGetClient(
+            () => status,
+            () => startOutcome,
+          );
+          const opts = { workloadsDir: dir, getClient, now };
+
+          const converged = await reconcileOnce(opts);
+          expect(converged.reports).toEqual([
+            { kind: "ModelHost", name: "host-a", node: "gpu1", action: "unchanged" },
+          ]);
+
+          clock = T2;
+          status = { state: "Stopped" };
+          saveModelHost({ ...manifest, spec: { ...manifest.spec, enabled: false } }, dir);
+          await reconcileOnce(opts);
+          expect(readHistory(dir).lastKnownRunning).toBe(false);
+
+          saveModelHost({ ...manifest, spec: { ...manifest.spec, enabled: true } }, dir);
+          const restarted = await reconcileOnce(opts);
+          expect(restarted.reports).toEqual([
+            { kind: "ModelHost", name: "host-a", node: "gpu1", action: "started" },
+          ]);
+          expect(readHistory(dir).restarts).toBe(0);
+        });
+      });
+
+      test("writes no controller history on an unchanged pass after the first converged one", async () => {
+        await withRuntime("llamactl-reconciler-hist-unchanged-", async (dir) => {
+          const manifest = remoteHostManifest();
+          saveModelHost(manifest, dir);
+          let clock = T1;
+          const now = (): Date => clock;
+          const status: HostStatus = {
+            state: "Running",
+            specHash: computeModelHostSpecHash(specForHash(manifest.spec)),
+          };
+          const startOutcome: HostStartOutcome = { ok: true, pid: 4321, state: "Running" };
+          const getClient = remoteGetClient(
+            () => status,
+            () => startOutcome,
+          );
+          const opts = { workloadsDir: dir, getClient, now };
+
+          const first = await reconcileOnce(opts);
+          expect(first.reports).toEqual([
+            { kind: "ModelHost", name: "host-a", node: "gpu1", action: "unchanged" },
+          ]);
+          expect(readHistory(dir)).toMatchObject({
+            updatedAt: T1.toISOString(),
+            lastKnownRunning: true,
+          });
+          const written = fs.readFileSync(historyPath(dir), "utf8");
+
+          clock = T2;
+          const second = await reconcileOnce(opts);
+          expect(second.reports).toEqual([
+            { kind: "ModelHost", name: "host-a", node: "gpu1", action: "unchanged" },
+          ]);
+          expect(fs.readFileSync(historyPath(dir), "utf8")).toBe(written);
+          expect(readHistory(dir).updatedAt).toBe(T1.toISOString());
+        });
+      });
+
+      test("writes no controller history for a local host", async () => {
+        await withRuntime("llamactl-reconciler-hist-local-", async (dir) => {
+          const manifest = makeHostManifest();
+          saveModelHost(manifest, dir);
+          seedRunningSidecar(dir, manifest);
+          const clock = T1;
+          const now = (): Date => clock;
+          const getClient = (): WorkloadClient => ({
+            ...makeClient(),
+            modelHostStatus: { query: () => Promise.resolve({ state: "Stopped" }) },
+            modelHostStart: startStub(() => ({ ok: true, pid: 4321, state: "Running" })),
+          });
+          const opts = { workloadsDir: dir, getClient, now };
+
+          const result = await reconcileOnce(opts);
+          expect(result.reports).toEqual([
+            {
+              kind: "ModelHost",
+              name: "host-a",
+              node: "local",
+              action: "started",
+              foundDead: true,
+            },
+          ]);
+          expect(fs.existsSync(join(dir, ".modelhost-history"))).toBe(false);
+        });
       });
     });
   });

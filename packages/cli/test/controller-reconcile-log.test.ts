@@ -339,6 +339,15 @@ describe("dead-host lines", () => {
       `[2026-10-21T14:07:00.000Z] WARN controller cgroup ${SERVICE}: 1 OOM kill(s) (oom_kill 2) among 2 engines found dead (strata-qwen38-mtp, strata-b); not attributed to one engine`,
     ]);
   });
+
+  it("does not count a remote host's foundDead toward local dead hosts (#308)", () => {
+    expect(
+      newlyDeadHosts(
+        [{ ...healthy, node: "gpu1", action: "started" as const, foundDead: true }],
+        new Map(),
+      ),
+    ).toEqual([]);
+  });
 });
 
 describe("OOM baseline across a controller restart", () => {
@@ -512,5 +521,34 @@ describe("OOM baseline across a controller restart", () => {
       "[2026-10-21T14:07:00.000Z] WARN modelhost/strata-b on local: engine had exited unexpectedly; restarted",
       `[2026-10-21T14:07:00.000Z] WARN controller cgroup ${SERVICE}: 1 OOM kill(s) (oom_kill 2) among 2 engines found dead (strata-qwen38-mtp, strata-b); not attributed to one engine`,
     ]);
+  });
+
+  it("attributes the kill to the local dead engine when a remote engine is also found dead (#308)", () => {
+    const written: CgroupOomSample[] = [];
+    const recorded: string[] = [];
+    const lines: ControllerLogLine[] = [];
+    const deps: OomObserveDeps = {
+      readSample: () => sample(2),
+      writeBaseline: (_file, s) => {
+        written.push(s);
+      },
+      recordKill: (name) => {
+        recorded.push(name);
+      },
+      writeLines: (out) => {
+        lines.push(...out);
+      },
+    };
+    const localDead = { ...healthy, action: "started" as const, foundDead: true };
+    const next = observeOomKills(
+      "/unused-workloads-dir",
+      { errors: new Map(), oom: { last: sample(1), pendingKills: 0 } },
+      [localDead, { ...localDead, name: "strata-remote", node: "gpu1" }],
+      T0,
+      deps,
+    );
+    expect(next).toEqual({ last: sample(2), pendingKills: 0 });
+    expect(recorded).toEqual(["strata-qwen38-mtp"]);
+    expect(lines.filter((l) => l.text.includes("strata-remote"))).toEqual([]);
   });
 });
