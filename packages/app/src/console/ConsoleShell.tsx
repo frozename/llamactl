@@ -1,9 +1,11 @@
-// #410 P5a-3b, the console shell: four-view nav carrying the tab node,
+// #410 P5a-3d, the console shell: four-view nav carrying the tab node,
 // a dispatchable-node tab selector fed by nodeList from inside the
 // provider, the invalid-session banner, the rejected-node notice, the
-// unknown-path notice and a timer-free toast host. Location is read
-// through the cast pattern from node-scope so SSR stays type-safe; no
-// Electron import reaches this tree.
+// unknown-path notice and a timer-free toast host. All four views are
+// real (fleet, workloads, nodes, logs); a picker in the logs view
+// navigates through the same pushState path as the nav anchors.
+// Location is read through the cast pattern from node-scope so SSR
+// stays type-safe; no Electron import reaches this tree.
 
 import type { MouseEvent } from "react";
 
@@ -11,7 +13,6 @@ import * as React from "react";
 
 import { Button } from "@/ui";
 
-import type { ConsoleViewId } from "./console-manifest";
 import type { ConsoleNodeEntry, ConsoleNodeList } from "./node-scope";
 import type { ConsoleRoute } from "./router";
 
@@ -22,6 +23,7 @@ import { useNodeTrpc } from "./node-trpc";
 import { consoleHref, parseConsoleRoute } from "./router";
 import { INVALID_SESSION_MESSAGE, useInvalidSession } from "./session-store";
 import { FleetView } from "./views/fleet";
+import { LogsView } from "./views/logs";
 import { NodesView } from "./views/nodes";
 import { WorkloadsView } from "./views/workloads";
 
@@ -37,23 +39,16 @@ function readLocation(): ShellLocation {
   return { pathname, route: parseConsoleRoute(pathname, search) };
 }
 
-// Placeholder testids are console-placeholder-*, never console-view-*:
-// the console-view-* id is emitted only by the real view modules, so a
-// routing regression to a placeholder cannot pass a view-content test.
-function PlaceholderView({ id, label }: { id: ConsoleViewId; label: string }): React.JSX.Element {
-  return (
-    <section data-testid={`console-placeholder-${id}`} style={{ padding: 16 }}>
-      <h1 style={{ fontSize: 16, margin: 0 }}>{label}</h1>
-    </section>
-  );
-}
-
 function RoutedView({
   route,
+  tabNode,
   onSuccessToast,
+  navigate,
 }: {
   route: ConsoleRoute;
+  tabNode: string;
   onSuccessToast: (text: string) => void;
+  navigate: (next: ConsoleRoute) => void;
 }): React.JSX.Element {
   switch (route.view) {
     case "workloads":
@@ -63,7 +58,14 @@ function RoutedView({
     case "nodes":
       return <NodesView />;
     case "logs":
-      return <PlaceholderView id="logs" label="Logs" />;
+      return (
+        <LogsView
+          route={route}
+          onSelectWorkload={(name) => {
+            navigate({ view: "logs", workload: name, node: tabNode });
+          }}
+        />
+      );
   }
 }
 
@@ -140,8 +142,7 @@ export function ConsoleShell(): React.JSX.Element {
     };
   }, []);
 
-  function onNavigate(event: MouseEvent<HTMLAnchorElement>, next: ConsoleRoute): void {
-    event.preventDefault();
+  function navigate(next: ConsoleRoute): void {
     const href = consoleHref({
       view: next.view,
       ...(next.workload !== undefined ? { workload: next.workload } : {}),
@@ -150,6 +151,11 @@ export function ConsoleShell(): React.JSX.Element {
     globalThis.history.pushState(null, "", href);
     const [pathname = "/"] = href.split("?");
     setLocation({ pathname, route: next });
+  }
+
+  function onNavigate(event: MouseEvent<HTMLAnchorElement>, next: ConsoleRoute): void {
+    event.preventDefault();
+    navigate(next);
   }
 
   return (
@@ -194,7 +200,12 @@ export function ConsoleShell(): React.JSX.Element {
             </Button>
           </div>
         ) : null}
-        <RoutedView route={location.route} onSuccessToast={setToast} />
+        <RoutedView
+          route={location.route}
+          tabNode={tab.node}
+          onSuccessToast={setToast}
+          navigate={navigate}
+        />
       </NodeScopedProvider>
     </div>
   );

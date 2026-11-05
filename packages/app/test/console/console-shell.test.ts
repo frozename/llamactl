@@ -9,9 +9,12 @@
 
 import type { ComponentType, ReactElement, ReactNode } from "react";
 
+import { skipToken } from "@tanstack/react-query";
 import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+
+import type { ConsoleRoute } from "../../src/console/router";
 
 import { consoleHref } from "../../src/console/router";
 import {
@@ -22,6 +25,7 @@ import {
 
 const NODE_TRPC_SPEC = "../../src/console/node-trpc.ts";
 const SHELL_SPEC = "../../src/console/ConsoleShell.tsx";
+const LOGS_VIEW_SPEC = "../../src/console/views/logs.tsx";
 const CONSOLE_NODE = "local";
 
 const hadElectronTRPC = "electronTRPC" in globalThis;
@@ -87,6 +91,7 @@ const accessedProcedures = new Set<string>();
 const describeCalls: { input: unknown; enabled: unknown }[] = [];
 const statusCalls: unknown[] = [];
 const stopCalls: unknown[] = [];
+const logsSubs: { input: unknown; enabled: boolean }[] = [];
 const invalidatedKeys: string[] = [];
 let queryResults: Record<string, unknown> = {};
 let consoleNode = CONSOLE_NODE;
@@ -126,7 +131,15 @@ function procedureStub(procedure: string): Record<string, unknown> {
     }),
     useQuery: (input?: unknown, options?: { enabled?: boolean }): Record<string, unknown> =>
       queryResult(procedure, input, options?.enabled),
-    useSubscription: (): Record<string, unknown> => ({}),
+    useSubscription: (
+      input?: unknown,
+      options?: { enabled?: boolean },
+    ): Record<string, unknown> => {
+      if (procedure === "serverLogs") {
+        logsSubs.push({ input, enabled: input !== skipToken && options?.enabled !== false });
+      }
+      return {};
+    },
     useSuspenseQuery: (input?: unknown, options?: { enabled?: boolean }): Record<string, unknown> =>
       queryResult(procedure, input, options?.enabled),
   };
@@ -163,6 +176,15 @@ void mock.module(NODE_TRPC_SPEC, () => ({
   useNodeTrpcUtils: (): unknown => utilsStub,
 }));
 
+interface LogsViewProbeProps {
+  route: ConsoleRoute;
+  onSelectWorkload: (name: string) => void;
+}
+
+const logsViewReal = {
+  ...((await import(LOGS_VIEW_SPEC).catch(() => ({}))) as object),
+} as { LogsView?: ComponentType<LogsViewProbeProps> };
+
 const mod = (await import(SHELL_SPEC).catch(() => ({}))) as {
   ConsoleShell?: ComponentType;
 };
@@ -196,6 +218,7 @@ beforeEach(() => {
   describeCalls.length = 0;
   statusCalls.length = 0;
   stopCalls.length = 0;
+  logsSubs.length = 0;
   invalidatedKeys.length = 0;
   renderedButtons.length = 0;
   renderedInputs.length = 0;
@@ -216,6 +239,12 @@ afterEach(() => {
 afterAll(() => {
   void mock.module("@/ui", () => uiReal);
   void mock.module(NODE_TRPC_SPEC, () => nodeTrpcReal);
+  // mock.module is process-global and leaks into later files, so the
+  // probe from the workload-picking case is re-registered away here, not
+  // just in that case's finally: the afterAll snapshot restore is the
+  // guarantee that logs-view.test.ts (in any file order) imports the
+  // real LogsView — same pattern as test/chat-stream-ownership.test.ts.
+  void mock.module(LOGS_VIEW_SPEC, () => logsViewReal);
   if (hadElectronTRPC) {
     globalThis.electronTRPC = prevElectronTRPC;
   } else {
@@ -417,7 +446,7 @@ describe("console shell (#410 P5a-3b)", () => {
     expect(markup).toContain("No console view at /bogus");
   });
 
-  test("/nodes renders the nodes view while /logs keeps its placeholder", () => {
+  test("/nodes renders the nodes view and /logs renders the logs view", () => {
     const ConsoleShell = mod.ConsoleShell;
     expect(typeof ConsoleShell).toBe("function");
 
@@ -430,10 +459,80 @@ describe("console shell (#410 P5a-3b)", () => {
     expect(nodesMarkup).toContain('data-testid="console-node-row-gw"');
     expect(nodesMarkup).not.toContain('data-testid="console-placeholder-nodes"');
 
-    setLocation("/logs", "");
+    setLocation("/logs/qwen", "");
+    queryResults["workloadList"] = [
+      { name: "qwen", kind: "ModelRun", node: "local", endpoint: null, workerNodes: [] },
+    ];
+    queryResults["serverStatus"] = { state: "up" };
+    logsSubs.length = 0;
     const logsMarkup = renderShell();
-    expect(logsMarkup).toContain('data-testid="console-placeholder-logs"');
-    expect(logsMarkup).not.toContain('data-testid="console-view-logs"');
+    expect(logsMarkup).toContain('data-testid="console-view-logs"');
+    expect(logsMarkup).not.toContain('data-testid="console-placeholder-logs"');
+    const enabledSubs = logsSubs.filter((call) => call.enabled);
+    expect(enabledSubs.length).toBeGreaterThanOrEqual(1);
+    expect(enabledSubs[0]?.input).toEqual({ workload: "qwen", lines: 200, follow: true });
+  });
+
+  test("picking a workload in the logs view navigates to the tab node's logs deep link", () => {
+    const ConsoleShell = mod.ConsoleShell;
+    expect(typeof ConsoleShell).toBe("function");
+    setLocation("/logs", "");
+    consoleNode = "local";
+
+    let onSelectWorkload: ((name: string) => void) | undefined;
+    function LogsProbe(props: LogsViewProbeProps): ReactElement {
+      onSelectWorkload = props.onSelectWorkload;
+      return createElement("section", { "data-testid": "console-logs-probe" });
+    }
+    void mock.module(LOGS_VIEW_SPEC, () => ({ LogsView: LogsProbe }));
+
+    interface HistoryStub {
+      pushState: (state: unknown, title: string, url?: string) => void;
+    }
+    const historyHolder = globalThis as { history?: HistoryStub | undefined };
+    const hadHistory = "history" in globalThis;
+    const prevHistory = historyHolder.history;
+    const pushStateCalls: string[] = [];
+    historyHolder.history = {
+      pushState: (_state: unknown, _title: string, url?: string): void => {
+        pushStateCalls.push(url ?? "");
+      },
+    };
+
+    try {
+      const markup = renderShell();
+      expect(markup).toContain('data-testid="console-logs-probe"');
+      expect(typeof onSelectWorkload).toBe("function");
+      onSelectWorkload!("qwen");
+      expect(pushStateCalls).toEqual([
+        consoleHref({ view: "logs", workload: "qwen", node: "local" }),
+      ]);
+    } finally {
+      if (hadHistory && prevHistory !== undefined) {
+        historyHolder.history = prevHistory;
+      } else {
+        delete historyHolder.history;
+      }
+      void mock.module(LOGS_VIEW_SPEC, () => logsViewReal);
+    }
+  });
+
+  test("no other console view opens the serverLogs stream (regression guard)", () => {
+    const ConsoleShell = mod.ConsoleShell;
+    expect(typeof ConsoleShell).toBe("function");
+
+    // Guard only: proves no view besides logs subscribes serverLogs. It
+    // does NOT prove teardown on navigation — that stays with P4 RED 3
+    // and the P5b logs.spec.
+    setLocation("/fleet", "");
+    consoleNode = "local";
+    queryResults["workloadList"] = [
+      { name: "qwen", kind: "ModelRun", node: "local", endpoint: null, workerNodes: [] },
+    ];
+    queryResults["serverStatus"] = { state: "up" };
+    logsSubs.length = 0;
+    renderShell();
+    expect(logsSubs).toHaveLength(0);
   });
 
   test("useInvalidSession is SSR-safe: markInvalid renders 'invalid' instead of throwing", () => {
