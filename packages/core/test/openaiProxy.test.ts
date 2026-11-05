@@ -1186,6 +1186,48 @@ test("an unknown model with routes configured returns model_not_routed naming it
   }
 });
 
+test("model_not_routed reports known_models sorted regardless of route registration order", async () => {
+  // Pins the .sort() in resolveJsonBodyRoute's modelNotRoutedResponse call:
+  // three routes registered z-first, m-second, a-last must be reported in
+  // ascending order, so a .reverse() (or unsorted) list fails here.
+  const t = tempEnv({ LLAMA_CPP_PORT: "17777" });
+  try {
+    writeLlamaServerWorkload(t.dir, "wl-zeta", { rel: "zeta/z-model.gguf", port: 8143 });
+    writeLlamaServerWorkload(t.dir, "wl-mike", { rel: "mike/m-model.gguf", port: 8144 });
+    writeLlamaServerWorkload(t.dir, "wl-alpha", { rel: "alpha/a-model.gguf", port: 8145 });
+    const upstream = installConditionalChatUpstream();
+
+    const res = await openaiProxy.proxyOpenAI(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "nope/unknown.gguf",
+          messages: [{ role: "user", content: "hi" }],
+        }),
+      }),
+      t.env,
+    );
+
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as {
+      error: {
+        code: string;
+        known_models: string[];
+      };
+    };
+    expect(body.error.code).toBe("model_not_routed");
+    expect(body.error.known_models).toEqual([
+      "alpha/a-model.gguf",
+      "mike/m-model.gguf",
+      "zeta/z-model.gguf",
+    ]);
+    expect(upstream.calls).toHaveLength(0);
+  } finally {
+    t.cleanup();
+  }
+});
+
 test("/v1/messages with an unknown model and routes configured returns model_not_routed", async () => {
   const t = tempEnv({ LLAMA_CPP_PORT: "17777" });
   try {

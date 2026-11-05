@@ -64,14 +64,19 @@ function chatCompletions(
   );
 }
 
-function writeLlamaServerWorkload(runtimeRoot: string, workload: string, port: number): void {
+function writeLlamaServerWorkload(
+  runtimeRoot: string,
+  workload: string,
+  port: number,
+  rel = "via-node1/model.gguf",
+): void {
   const dir = join(runtimeRoot, "workloads", workload);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "llama-server.pid"), `${String(process.pid)}\n`);
   writeFileSync(
     join(dir, "llama-server.state"),
     JSON.stringify({
-      rel: "via-node1/model.gguf",
+      rel,
       extraArgs: [],
       host: "127.0.0.1",
       port,
@@ -353,22 +358,30 @@ describe("POST /v1/chat/completions via/rag JSON path (P0.1)", () => {
   });
 
   test("a request without via/rag for an unrouted model returns model_not_routed from the local openaiProxy", async () => {
-    const res = await chatCompletions({
-      model: "no-local-workload",
-      messages: [{ role: "user", content: "hi" }],
-    });
-    // The wl-via-node route written by the via test above is still live
-    // in the shared runtime dir, so the route map is non-empty and the
-    // unrouted "no-local-workload" gets the explicit #306 not-routed
-    // error instead of the LLAMA_CPP_PORT=1 fallback.
-    expect(res.status).toBe(404);
-    const body = (await res.json()) as {
-      error: { code: string; type: string; message: string };
-    };
-    expect(body.error.type).toBe("invalid_request_error");
-    expect(body.error.code).toBe("model_not_routed");
-    expect(body.error.message).toContain("no-local-workload");
-    expect(cloudCalls).toHaveLength(0);
+    const runtimeRoot = process.env["LOCAL_AI_RUNTIME_DIR"];
+    const cloudPort = cloud?.port;
+    if (runtimeRoot === undefined || cloudPort === undefined)
+      throw new Error("test fixture not initialized");
+    // Self-contained route setup: the #306 not-routed path only fires when
+    // the route map is non-empty, so register (and later remove) our own
+    // workload instead of relying on one left behind by an earlier test.
+    writeLlamaServerWorkload(runtimeRoot, "wl-not-routed", cloudPort, "not-routed/model.gguf");
+    try {
+      const res = await chatCompletions({
+        model: "no-local-workload",
+        messages: [{ role: "user", content: "hi" }],
+      });
+      expect(res.status).toBe(404);
+      const body = (await res.json()) as {
+        error: { code: string; type: string; message: string };
+      };
+      expect(body.error.type).toBe("invalid_request_error");
+      expect(body.error.code).toBe("model_not_routed");
+      expect(body.error.message).toContain("no-local-workload");
+      expect(cloudCalls).toHaveLength(0);
+    } finally {
+      rmSync(join(runtimeRoot, "workloads", "wl-not-routed"), { recursive: true, force: true });
+    }
   });
 
   test("POST /v1/chat/completions without a bearer returns the 401 envelope", async () => {
