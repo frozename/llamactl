@@ -419,14 +419,15 @@ describe("unified composition (flag on)", () => {
     expect(calls[1]!.body?.["model"]).toBe("wl-alias");
   });
 
-  test("an unknown model keeps the legacy fallback envelope", async () => {
+  test("an unknown model returns the model_not_routed envelope on both paths", async () => {
     const proxy = createProxy({ env, resolved: () => resolved });
     const body = { model: "no-such-model", messages: [{ role: "user", content: "hi" }] };
     const legacy = await snap(await openaiProxy.proxyOpenAI(chatReq(body), resolved));
     const composed = await snap(await proxy.handleRequest(chatReq(body)));
     expect(composed).toEqual(legacy);
-    expect(composed.status).toBe(502);
-    expect(composed.body).toContain("llamactl_upstream_error");
+    expect(composed.status).toBe(404);
+    expect(composed.body).toContain("model_not_routed");
+    expect(composed.body).toContain("no-such-model");
   });
 });
 

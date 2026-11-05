@@ -277,9 +277,10 @@ describe("serve.ts /v1 dispatch", () => {
   });
 
   test("flag '1' is observable: a narrow-capability advertisement rejects what legacy serves", async () => {
-    // Non-vacuity: the same request returns 502 on the legacy path
-    // (unrouted model, closed llama-server port) but 400 through the
-    // composed gate — a status only the unified seam can produce.
+    // Non-vacuity: the same request returns 404 model_not_routed on
+    // the legacy path (#306: unrouted model, live route map) but 400
+    // through the composed gate — a status only the unified seam can
+    // produce.
     const catalog = routingCatalog.buildRouteCatalog({ routes: [], nodeId: "node1" });
     expect(
       routingCatalog.addCatalogAdvertisement(catalog, narrowCapsAd("blocked-model")).accepted,
@@ -300,7 +301,9 @@ describe("serve.ts /v1 dispatch", () => {
 
     process.env["LLAMACTL_UNIFIED_PROXY"] = "0";
     const legacy = await agentPost("/v1/chat/completions", toolsBody);
-    expect(legacy.status).toBe(502);
+    expect(legacy.status).toBe(404);
+    const legacyBody = (await legacy.json()) as { error: { code: string } };
+    expect(legacyBody.error.code).toBe("model_not_routed");
   });
 });
 
