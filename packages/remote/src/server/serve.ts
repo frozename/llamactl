@@ -58,6 +58,7 @@ import {
   openaiRequestDurationSeconds,
   openaiRequestsTotal,
   openaiUpstreamErrorsTotal,
+  setModelHostMetricsNode,
   statusClass,
 } from "./metrics.js";
 import { startPeerSnapshotPoller } from "./peer-snapshot-poller.js";
@@ -997,13 +998,15 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
 
   startSearchIngest().catch(() => undefined);
   const stopPeerSnapshotPoller = maybeStartPeerSnapshotPoller(opts);
+  const nodeName = opts.nodeName ?? process.env["LLAMACTL_NODE_NAME"] ?? "agent";
   agentInfo.set(
     {
-      node_name: opts.nodeName ?? process.env["LLAMACTL_NODE_NAME"] ?? "agent",
+      node_name: nodeName,
       version: opts.version ?? "0.0.0",
     },
     1,
   );
+  setModelHostMetricsNode(nodeName);
 
   const tunnelServer: TunnelServer | null = maybeCreateTunnelServer(opts);
 
