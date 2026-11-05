@@ -134,6 +134,19 @@ describe("console node-trpc hooks (#410 P5a-3a)", () => {
     expect(() => renderToStaticMarkup(createElement(Capture))).toThrow(/NodeScopedProvider/);
   });
 
+  test("useNodeTrpcUtils throws naming NodeScopedProvider with no provider", async () => {
+    const mod = await importNodeTrpcModule();
+    expect(mod?.useNodeTrpcUtils).toBeFunction();
+    const useNodeTrpcUtils = mod!.useNodeTrpcUtils!;
+
+    function Capture(): ReactNode {
+      useNodeTrpcUtils();
+      return null;
+    }
+
+    expect(() => renderToStaticMarkup(createElement(Capture))).toThrow(/NodeScopedProvider/);
+  });
+
   test("useConsoleNode returns the provider's node on each render", async () => {
     const providerMod = await importProviderModule();
     expect(providerMod?.NodeScopedProvider).toBeFunction();

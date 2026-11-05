@@ -4,7 +4,10 @@
 // that submits serverStop exactly once and classifies the outcome.
 // Hooks come from ../node-trpc so the mutation rides the tab's
 // node-scoped client; onSuccessToast is the seam the P5a-3b shell wires
-// to its toast host.
+// to its toast host. Every decision (availability, button gating, the
+// serverStop payload, the post-result effects) lives in
+// ./stop-server-model so bun test can pin it without the `@/` alias;
+// this component only renders what those functions return.
 
 import * as React from "react";
 
@@ -14,9 +17,11 @@ import type { ConsoleWorkloadRow } from "../workloads-scope";
 
 import { useConsoleNode, useNodeTrpc, useNodeTrpcUtils } from "../node-trpc";
 import {
+  afterStopEffects,
   createStopController,
   STOP_GRACE_SECONDS,
   stopAvailability,
+  stopButtonDisabled,
   stopDialogState,
   stopResultMessage,
 } from "./stop-server-model";
@@ -169,7 +174,7 @@ export function StopServerDialog({
   const titleId = React.useId();
   const labelId = `${titleId}-confirm`;
   const { restartWarning, endpoint } = controller.view();
-  const { canSubmit } = stopDialogState({
+  const dialogState = stopDialogState({
     workload: row.name,
     typed,
     submitting: stopMutation.isPending,
@@ -194,12 +199,14 @@ export function StopServerDialog({
         return;
       }
       const result = stopResultMessage(outcome, row.name);
-      if (result.invalidate) {
-        void utils.serverStatus.invalidate();
-        void utils.workloadList.invalidate();
+      const effects = afterStopEffects(result);
+      for (const key of effects.invalidate) {
+        void utils[key].invalidate();
       }
-      if (result.kind === "success") {
-        onSuccessToast(result.text);
+      if (effects.toast !== null) {
+        onSuccessToast(effects.toast);
+      }
+      if (effects.close) {
         onClose();
         return;
       }
@@ -236,7 +243,12 @@ export function StopServerDialog({
           <Button variant="ghost" size="sm" onClick={onCancel}>
             Cancel
           </Button>
-          <Button variant="destructive" size="sm" disabled={!canSubmit} onClick={onSubmit}>
+          <Button
+            variant="destructive"
+            size="sm"
+            disabled={stopButtonDisabled(dialogState)}
+            onClick={onSubmit}
+          >
             Stop
           </Button>
         </div>
