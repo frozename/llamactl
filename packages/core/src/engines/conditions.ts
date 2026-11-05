@@ -14,7 +14,17 @@
 //   OOMKilled       History, not current state: stays True once recorded.
 //                   count is the number of engine OOM kills attributed to the
 //                   host; lastSeen and cgroupOomKill describe the latest.
-import { join } from "node:path";
+//
+// Controller history (#308): a remote ModelHost's conditions sidecar lives on
+// its own node, out of this controller's reach. To keep restart and condition
+// history for hosts it reconciles remotely, the controller mirrors the same
+// runtime status into its workloads dir under
+// .modelhost-history/<node>/<name>.json, stamped with the node, the workload,
+// the last update time, and whether the engine was running as of that update
+// (lastKnownRunning, the remote analogue of a local launch record for foundDead
+// detection). The directory holds only .json files, so the manifest stores'
+// .yaml listings never pick it up.
+import { join, resolve, sep } from "node:path";
 
 import type { ResolvedEnv } from "../types.js";
 
@@ -161,6 +171,18 @@ function parseRestartReason(raw: unknown): ModelHostRestartReason | null {
   return raw === "EngineExited" || raw === "SpecChanged" ? raw : null;
 }
 
+function parseRuntimeStatus(parsed: Record<string, unknown>): ModelHostRuntimeStatus {
+  const conditions = Array.isArray(parsed["conditions"]) ? parsed["conditions"] : [];
+  const restarts = parsed["restarts"];
+  const lastRestartAt = parsed["lastRestartAt"];
+  return {
+    conditions: conditions.map(parseCondition).filter((c) => c !== null),
+    restarts: typeof restarts === "number" && Number.isSafeInteger(restarts) ? restarts : 0,
+    lastRestartAt: typeof lastRestartAt === "string" ? lastRestartAt : null,
+    lastRestartReason: parseRestartReason(parsed["lastRestartReason"]),
+  };
+}
+
 export function readModelHostRuntimeStatus(
   key: WorkloadKey,
   resolved: ResolvedEnv = resolveEnv(),
@@ -168,16 +190,7 @@ export function readModelHostRuntimeStatus(
   const path = modelhostConditionsFile(resolved, key);
   if (!existsSync(path)) return null;
   try {
-    const parsed = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
-    const conditions = Array.isArray(parsed["conditions"]) ? parsed["conditions"] : [];
-    const restarts = parsed["restarts"];
-    const lastRestartAt = parsed["lastRestartAt"];
-    return {
-      conditions: conditions.map(parseCondition).filter((c) => c !== null),
-      restarts: typeof restarts === "number" && Number.isSafeInteger(restarts) ? restarts : 0,
-      lastRestartAt: typeof lastRestartAt === "string" ? lastRestartAt : null,
-      lastRestartReason: parseRestartReason(parsed["lastRestartReason"]),
-    };
+    return parseRuntimeStatus(JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>);
   } catch {
     return null;
   }
@@ -236,4 +249,80 @@ export function recordModelHostRestart(
   now: Date = new Date(),
 ): void {
   updateModelHostRuntimeStatus(key, resolved, (r) => withRestart(r, reason, now.toISOString()));
+}
+
+export interface ControllerHostHistory extends ModelHostRuntimeStatus {
+  node: string;
+  workload: string;
+  /** ISO time of the last write. */
+  updatedAt: string;
+  /** Whether the engine was known running as of the last update: the remote
+   *  analogue of a local launch record, used to flag a found-dead restart. */
+  lastKnownRunning: boolean;
+}
+
+function assertHistorySegment(value: string, kind: string): void {
+  if (value === "" || value === "." || value === ".." || /[\\/]/.test(value)) {
+    throw new Error(`invalid controller history ${kind}: ${JSON.stringify(value)}`);
+  }
+}
+
+export function controllerHostHistoryPath(
+  workloadsDir: string,
+  node: string,
+  name: string,
+): string {
+  assertHistorySegment(node, "node");
+  assertHistorySegment(name, "name");
+  const base = resolve(workloadsDir, ".modelhost-history");
+  const path = join(base, node, `${name}.json`);
+  if (resolve(path) !== path || !path.startsWith(`${base}${sep}`)) {
+    throw new Error(`controller history path escapes ${base}: ${node}/${name}`);
+  }
+  return path;
+}
+
+export function readControllerHostHistory(
+  workloadsDir: string,
+  node: string,
+  name: string,
+): ControllerHostHistory | null {
+  let path: string;
+  try {
+    path = controllerHostHistoryPath(workloadsDir, node, name);
+  } catch {
+    return null;
+  }
+  if (!existsSync(path)) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+    const updatedAt = typeof parsed["updatedAt"] === "string" ? parsed["updatedAt"] : "";
+    const lastKnownRunning =
+      typeof parsed["lastKnownRunning"] === "boolean" ? parsed["lastKnownRunning"] : false;
+    return { ...parseRuntimeStatus(parsed), node, workload: name, updatedAt, lastKnownRunning };
+  } catch {
+    return null;
+  }
+}
+
+export function updateControllerHostHistory(
+  workloadsDir: string,
+  node: string,
+  name: string,
+  now: Date,
+  update: (record: ControllerHostHistory) => ControllerHostHistory | null,
+): void {
+  const current = readControllerHostHistory(workloadsDir, node, name) ?? {
+    ...emptyModelHostRuntimeStatus(),
+    node,
+    workload: name,
+    updatedAt: now.toISOString(),
+    lastKnownRunning: false,
+  };
+  const next = update(current);
+  if (next === null) return;
+  atomicWriteFile(
+    controllerHostHistoryPath(workloadsDir, node, name),
+    `${JSON.stringify({ ...next, updatedAt: now.toISOString() }, null, 2)}\n`,
+  );
 }

@@ -399,3 +399,129 @@ test("help: DESCRIBE_USAGE documents the describe node deadline (#221)", async (
   expect(result).toBe(0);
   expect(stdout).toContain("describe node prints the error and exits 1");
 });
+
+const Z13_CONTROLLER_HISTORY = {
+  node: "z13",
+  workload: "z13-host",
+  conditions: [],
+  restarts: 1,
+  lastRestartAt: "2026-11-05T11:55:00.000Z",
+  lastRestartReason: "EngineExited",
+  updatedAt: "2026-11-05T11:55:00.000Z",
+  lastKnownRunning: true,
+};
+
+const Z13_NODE_RUNTIME = {
+  conditions: [],
+  restarts: 7,
+  lastRestartAt: "2026-10-21T14:02:30.000Z",
+  lastRestartReason: "EngineExited",
+};
+
+function seedControllerHistory(node: string, name: string, record: unknown): void {
+  const dir = join(process.env["LLAMACTL_WORKLOADS_DIR"]!, ".modelhost-history", node);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${name}.json`), `${JSON.stringify(record, null, 2)}\n`, "utf8");
+}
+
+function seamHostStatusNow(status: unknown): void {
+  const seams = {
+    now: (): Date => new Date("2026-11-05T12:00:00.000Z"),
+    getNodeClientByName: (): NodeClient =>
+      ({
+        modelHostStatus: { query: (): Promise<unknown> => Promise.resolve(status) },
+      }) as unknown as NodeClient,
+  };
+  __setWorkloadTestSeams(seams);
+}
+
+test("describe workload shows controller history and node history for a remote ModelHost (#308)", async () => {
+  writeModelHostOn("z13-host", "z13");
+  seedControllerHistory("z13", "z13-host", Z13_CONTROLLER_HISTORY);
+  seamHostStatusNow({ state: "Running", runtime: Z13_NODE_RUNTIME });
+
+  const { result, stdout } = await withCapturedIo(() => runDescribe(["workload", "z13-host"]));
+
+  expect(result).toBe(0);
+  expect(stdout).toContain(
+    "Source:     controller history (updated 2026-11-05T11:55:00.000Z, 5m ago)\nRestarts:   1 (last 2026-11-05T11:55:00.000Z, EngineExited)\n",
+  );
+  expect(stdout).toContain(
+    "NodeHistory: modelhost.conditions.json on z13 (newest 2026-10-21T14:02:30.000Z, 14d ago; not written by this controller)\n  Restarts:   7 (last 2026-10-21T14:02:30.000Z, EngineExited)\n",
+  );
+  expect(stdout).not.toContain("\nRestarts:   7");
+});
+
+test("describe workload shows no controller history and the node history for a remote ModelHost (#308)", async () => {
+  writeModelHostOn("z13-host", "z13");
+  seamHostStatusNow({ state: "Running", runtime: Z13_NODE_RUNTIME });
+
+  const { result, stdout } = await withCapturedIo(() => runDescribe(["workload", "z13-host"]));
+
+  expect(result).toBe(0);
+  expect(stdout).toContain("Source:     controller history (none recorded)\n");
+  expect(stdout).toContain(
+    "NodeHistory: modelhost.conditions.json on z13 (newest 2026-10-21T14:02:30.000Z, 14d ago; not written by this controller)\n  Restarts:   7 (last 2026-10-21T14:02:30.000Z, EngineExited)\n",
+  );
+  expect(stdout).not.toContain("\nRestarts:   7");
+});
+
+test("describe workload names the local conditions file as the history source (#308)", async () => {
+  writeModelHost();
+  const runtime = {
+    conditions: [
+      {
+        type: "ReconcileError",
+        status: "True",
+        reason: "ApplyFailed",
+        message: "strata run-config --native must be A; got B",
+        firstSeen: "2026-10-21T14:07:00.000Z",
+        lastSeen: "2026-10-21T14:22:00.000Z",
+        lastTransitionTime: "2026-10-21T14:07:00.000Z",
+        count: 90,
+      },
+    ],
+    restarts: 2,
+    lastRestartAt: "2026-10-21T14:02:30.000Z",
+    lastRestartReason: "EngineExited",
+  };
+  seamHostStatusNow({ state: "Stopped", runtime });
+
+  const { result, stdout } = await withCapturedIo(() => runDescribe(["workload", "mlx-host"]));
+
+  expect(result).toBe(0);
+  expect(stdout).toContain(
+    "Source:     modelhost.conditions.json on local (newest 2026-10-21T14:22:00.000Z, 14d ago)\nRestarts:   2 (last 2026-10-21T14:02:30.000Z, EngineExited)\n",
+  );
+  expect(stdout).toContain("Restarts:   2 (last 2026-10-21T14:02:30.000Z, EngineExited)\n");
+  expect(stdout).toContain(
+    "Conditions:\n  ReconcileError=True ApplyFailed x90 first 2026-10-21T14:07:00.000Z last 2026-10-21T14:22:00.000Z\n    strata run-config --native must be A; got B\n",
+  );
+});
+
+test("describe workload --json includes controllerHistory for a remote ModelHost (#308)", async () => {
+  writeModelHostOn("z13-host", "z13");
+  seedControllerHistory("z13", "z13-host", Z13_CONTROLLER_HISTORY);
+  seamHostStatusNow({ state: "Running", runtime: Z13_NODE_RUNTIME });
+
+  const { result, stdout } = await withCapturedIo(() =>
+    runDescribe(["workload", "z13-host", "--json"]),
+  );
+
+  expect(result).toBe(0);
+  const parsed = parseJsonRecord(stdout);
+  expect(parsed["controllerHistory"]).toEqual(Z13_CONTROLLER_HISTORY);
+});
+
+test("describe workload --json omits controllerHistory for a local ModelHost (#308)", async () => {
+  writeModelHost();
+  seamHostStatusNow({ state: "Running", pid: 4242 });
+
+  const { result, stdout } = await withCapturedIo(() =>
+    runDescribe(["workload", "mlx-host", "--json"]),
+  );
+
+  expect(result).toBe(0);
+  const parsed = parseJsonRecord(stdout);
+  expect(Object.keys(parsed).sort()).toEqual(["liveStatus", "manifest"]);
+});
