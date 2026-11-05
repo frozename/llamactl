@@ -1,6 +1,7 @@
 import type { ResolvedEnv } from "@llamactl/core";
 
 import { llamactlHome } from "@llamactl/core/config/env";
+import { removeControllerHostHistory } from "@llamactl/core/engines/conditions";
 import { basename, join, resolve, sep } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
@@ -266,9 +267,28 @@ export function listAnyWorkloadsForAdmission(
   return out.sort((a, b) => a.metadata.name.localeCompare(b.metadata.name));
 }
 
+function modelHostNodeOf(path: string): string | null {
+  try {
+    const parsed = parseYaml(readFileSync(path, "utf8")) as {
+      kind?: unknown;
+      spec?: { node?: unknown };
+    } | null;
+    if (parsed?.kind !== "ModelHost") return null;
+    return typeof parsed.spec?.node === "string" ? parsed.spec.node : null;
+  } catch {
+    return null;
+  }
+}
+
 export function deleteWorkload(name: string, dir: string = defaultWorkloadsDir()): boolean {
   const path = ensureWorkloadPathWithinDir(workloadPath(name, dir), dir);
   if (!existsSync(path)) return false;
+  const node = modelHostNodeOf(path);
   rmSync(path, { force: true });
+  // #308: the controller's mirror of a ModelHost's history must go with the
+  // manifest on every delete path (CLI, tRPC, MCP). A stale lastKnownRunning
+  // would make the first pass after a re-apply of the same name flag a
+  // found-dead EngineExited restart that never happened.
+  if (node !== null) removeControllerHostHistory(dir, node, name);
   return true;
 }

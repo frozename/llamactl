@@ -1,8 +1,14 @@
 import {
+  type ControllerHostHistory,
   type ModelHostRestartReason,
+  readControllerHostHistory,
   recordModelHostReconcileError,
   recordModelHostReconcileRecovered,
   recordModelHostRestart,
+  updateControllerHostHistory,
+  withReconcileError,
+  withReconcileRecovered,
+  withRestart,
 } from "@llamactl/core/engines/conditions";
 import {
   computeModelHostSpecHash,
@@ -60,8 +66,9 @@ export interface ReconcileNodeReport {
   /** Set with action "skipped-external": the manager named in the host's
    *  llamactl.io/managed-by label. */
   managedBy?: string;
-  /** ModelHost on the local node only: a launch record exists but the engine
-   *  was not running, i.e. it exited or was killed since the last pass. */
+  /** Set when the engine was up as of the last pass but not Running now: on
+   *  the local node proof is the launch record; on a remote node it is the
+   *  controller history's lastKnownRunning (#308). */
   foundDead?: boolean;
   /** #221: set only when the row's error is a node RPC deadline timeout or
    *  a per-pass skip after one (NodeRpcTimeoutError / NodeRpcSkippedError).
@@ -87,9 +94,19 @@ export interface ReconcileOptions {
   onEvent?: (e: ApplyEvent & { name: string }) => void;
   /** Optional filter to only reconcile a subset. */
   filter?: (m: ModelRun) => boolean;
+  /** Clock stamping the controller history for remote ModelHosts (#308);
+   *  defaults to new Date(). */
+  now?: () => Date;
   /** Per-call deadlines for node .query / .mutate RPCs; defaults to
    *  DEFAULT_NODE_RPC_QUERY_TIMEOUT_MS / DEFAULT_NODE_RPC_MUTATE_TIMEOUT_MS. */
   rpcTimeouts?: Partial<NodeRpcTimeouts>;
+}
+
+/** Controller-side bookkeeping context for #308: where the ModelHost history
+ *  dir lives and the clock that stamps it. Injected so tests drive time. */
+interface HostRecordContext {
+  dir: string;
+  now: () => Date;
 }
 
 async function queryNodeMemBytes(client: WorkloadClient): Promise<number | null> {
@@ -386,29 +403,63 @@ function classifyHostReconcile(
 }
 
 type HostOutcome =
-  | { kind: "ok"; recovered: string; restart?: ModelHostRestartReason }
+  | {
+      kind: "ok";
+      recovered: string;
+      restart?: ModelHostRestartReason;
+      /** Remote history: whether the engine is known running after this pass.
+       *  Unset on the local path (a launch record carries that signal). */
+      lastKnownRunning?: boolean;
+    }
   | { kind: "error"; reason: string; message: string };
 
+function sameHistory(a: ControllerHostHistory, b: ControllerHostHistory): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
 /**
- * Persist the pass outcome in the local host's conditions sidecar. Only the
- * local node's runtime dir is reachable from here; a remote host's
- * conditions belong to the controller on that node. Bookkeeping failures
- * (disk full, permissions) must never turn a pass into an error.
+ * Persist the pass outcome. For a local host that is the controller-owned
+ * conditions sidecar in the runtime dir; for a remote host the node's own
+ * sidecar is unreachable from here, so the controller keeps its mirror at
+ * .modelhost-history/<node>/<name>.json (#308): the same condition/restart
+ * reducers, plus lastKnownRunning so a later found-dead restart is detectable.
+ * A pass that changes nothing writes nothing, so a steadily healthy remote
+ * host costs no disk. Bookkeeping failures (disk full, permissions) must
+ * never turn a pass into an error.
  */
 function recordHostOutcome(
   spec: ModelHostManifest["spec"],
   name: string,
   outcome: HostOutcome,
+  ctx: HostRecordContext,
 ): void {
-  if (spec.node !== LOCAL_NODE_ID) return;
-  const resolved = resolveEnv(process.env);
+  const iso = ctx.now().toISOString();
   try {
-    if (outcome.kind === "error") {
-      recordModelHostReconcileError({ name }, outcome, resolved);
+    if (spec.node === LOCAL_NODE_ID) {
+      const resolved = resolveEnv(process.env);
+      if (outcome.kind === "error") {
+        recordModelHostReconcileError({ name }, outcome, resolved);
+        return;
+      }
+      if (outcome.restart) recordModelHostRestart({ name }, outcome.restart, resolved);
+      recordModelHostReconcileRecovered({ name }, outcome.recovered, resolved);
       return;
     }
-    if (outcome.restart) recordModelHostRestart({ name }, outcome.restart, resolved);
-    recordModelHostReconcileRecovered({ name }, outcome.recovered, resolved);
+    updateControllerHostHistory(ctx.dir, spec.node, name, ctx.now(), (h) => {
+      let next: ControllerHostHistory;
+      if (outcome.kind === "error") {
+        next = { ...h, ...withReconcileError(h, outcome, iso) };
+      } else {
+        next = { ...h };
+        if (outcome.restart) next = { ...next, ...withRestart(next, outcome.restart, iso) };
+        const recovered = withReconcileRecovered(next, outcome.recovered, iso);
+        if (recovered) next = { ...next, ...recovered };
+        if (outcome.lastKnownRunning !== undefined) {
+          next = { ...next, lastKnownRunning: outcome.lastKnownRunning };
+        }
+      }
+      return sameHistory(h, next) ? null : next;
+    });
   } catch {
     // Conditions are observability; the reconcile result stands without them.
   }
@@ -439,6 +490,7 @@ function pushHostReport(
   name: string,
   action: ReconcileNodeReport["action"],
   extra: HostReportExtra,
+  ctx: HostRecordContext,
 ): number {
   reports.push({
     kind: "ModelHost",
@@ -450,7 +502,7 @@ function pushHostReport(
     ...(extra.reason !== undefined ? { reason: extra.reason } : {}),
   });
   if (extra.error === undefined) return 0;
-  recordHostOutcome(spec, name, { kind: "error", ...extra.error });
+  recordHostOutcome(spec, name, { kind: "error", ...extra.error }, ctx);
   return 1;
 }
 
@@ -470,13 +522,19 @@ function sweepDisabledHost(
   spec: ModelHostManifest["spec"],
   name: string,
   reports: ReconcileNodeReport[],
+  ctx: HostRecordContext,
 ): number {
   if (spec.node === LOCAL_NODE_ID) {
     removeModelHostState({ name }, resolveEnv(process.env));
     removeModelHostStartAttempt({ name }, resolveEnv(process.env));
   }
-  recordHostOutcome(spec, name, { kind: "ok", recovered: "Disabled" });
-  return pushHostReport(reports, spec, name, "unchanged", {});
+  recordHostOutcome(
+    spec,
+    name,
+    { kind: "ok", recovered: "Disabled", lastKnownRunning: false },
+    ctx,
+  );
+  return pushHostReport(reports, spec, name, "unchanged", {}, ctx);
 }
 
 /**
@@ -489,12 +547,18 @@ function settleHostWithoutApply(
   spec: ModelHostManifest["spec"],
   name: string,
   reports: ReconcileNodeReport[],
+  ctx: HostRecordContext,
 ): number {
-  if (decision === "sweep-disabled") return sweepDisabledHost(spec, name, reports);
+  if (decision === "sweep-disabled") return sweepDisabledHost(spec, name, reports, ctx);
   if (decision === "converged") {
-    recordHostOutcome(spec, name, { kind: "ok", recovered: "Recovered" });
+    recordHostOutcome(
+      spec,
+      name,
+      { kind: "ok", recovered: "Recovered", lastKnownRunning: true },
+      ctx,
+    );
   }
-  return pushHostReport(reports, spec, name, "unchanged", {});
+  return pushHostReport(reports, spec, name, "unchanged", {}, ctx);
 }
 
 /**
@@ -592,6 +656,7 @@ async function reconcileUnmanagedModelHost(
 ): Promise<number> {
   const name = manifest.metadata.name;
   const { spec } = manifest;
+  const ctx: HostRecordContext = { dir, now: opts.now ?? ((): Date => new Date()) };
   try {
     const client = opts.getClient(spec.node);
     const current = await client.modelHostStatus.query({ workload: name });
@@ -600,12 +665,19 @@ async function reconcileUnmanagedModelHost(
     // and do not spawn over it. Report the uncertainty so the pass surfaces
     // it instead of looking clean.
     if (current.identityUnknown === true) {
-      return pushHostReport(reports, spec, name, "unchanged", {
-        error: {
-          reason: "PidIdentityUnknown",
-          message: "pid identity unknown; preserving state for a later pass",
+      return pushHostReport(
+        reports,
+        spec,
+        name,
+        "unchanged",
+        {
+          error: {
+            reason: "PidIdentityUnknown",
+            message: "pid identity unknown; preserving state for a later pass",
+          },
         },
-      });
+        ctx,
+      );
     }
     const localState =
       spec.node === LOCAL_NODE_ID ? readModelHostState({ name }, resolveEnv(process.env)) : null;
@@ -615,9 +687,15 @@ async function reconcileUnmanagedModelHost(
       current,
       readLocalStartAttempt(spec, name),
     );
-    if (decision !== "apply") return settleHostWithoutApply(decision, spec, name, reports);
+    if (decision !== "apply") return settleHostWithoutApply(decision, spec, name, reports, ctx);
     const wasRunning = current.state === "Running";
-    const foundDead = !wasRunning && localState !== null;
+    // #308: locally a launch record proves the engine was up; for a remote
+    // host the controller's own history carries that signal instead.
+    const foundDead =
+      !wasRunning &&
+      (spec.node === LOCAL_NODE_ID
+        ? localState !== null
+        : readControllerHostHistory(ctx.dir, spec.node, name)?.lastKnownRunning === true);
     markNeverHostStartAttempt(spec, name, localState);
     const result = await applyOneModelHost(
       manifest,
@@ -634,25 +712,38 @@ async function reconcileUnmanagedModelHost(
     const action = wasRunning ? "restarted" : "started";
     if (result.ok && result.kind === "ModelHost") {
       removeModelHostStartAttempt({ name }, resolveEnv(process.env));
-      pushHostReport(reports, spec, name, action, { foundDead });
+      pushHostReport(reports, spec, name, action, { foundDead }, ctx);
       saveAppliedHost(result.manifest, name, dir);
       const restart = restartReason(wasRunning, foundDead);
-      recordHostOutcome(spec, name, {
-        kind: "ok",
-        recovered: "Recovered",
-        ...(restart !== null ? { restart } : {}),
-      });
+      recordHostOutcome(
+        spec,
+        name,
+        {
+          kind: "ok",
+          recovered: "Recovered",
+          ...(restart !== null ? { restart } : {}),
+          lastKnownRunning: spec.enabled,
+        },
+        ctx,
+      );
       return 0;
     }
     // applyOneModelHost only emits {ok:true, kind:'ModelHost'} or
     // {ok:false, error}; the ModelRun shape can't arrive here, but
     // narrow defensively for TS.
     const errMsg = result.ok ? "unexpected non-ModelHost outcome" : result.error;
-    return pushHostReport(reports, spec, name, "unchanged", {
-      error: { reason: "ApplyFailed", message: errMsg },
-      foundDead,
-    });
+    return pushHostReport(
+      reports,
+      spec,
+      name,
+      "unchanged",
+      {
+        error: { reason: "ApplyFailed", message: errMsg },
+        foundDead,
+      },
+      ctx,
+    );
   } catch (err) {
-    return pushHostReport(reports, spec, name, "unchanged", caughtHostError(err));
+    return pushHostReport(reports, spec, name, "unchanged", caughtHostError(err), ctx);
   }
 }

@@ -18,13 +18,14 @@ const FAKE_LLAMA_PORT = 28941;
 let fakeServer: ReturnType<typeof Bun.serve> | null = null;
 let agent: RunningAgent | null = null;
 let devStorage = "";
+let runtimeDir = "";
 let agentToken = "";
 let caPem = "";
 const originalEnv = { ...process.env };
 
 beforeAll(async () => {
   devStorage = mkdtempSync(join(tmpdir(), "llamactl-metrics-"));
-  const runtimeDir = join(devStorage, "ai-models", "local-ai");
+  runtimeDir = join(devStorage, "ai-models", "local-ai");
   const workloadDir = join(runtimeDir, "workloads", "metrics-test");
   mkdirSync(workloadDir, { recursive: true });
   writeFileSync(join(workloadDir, "llama-server.pid"), String(process.pid));
@@ -153,7 +154,7 @@ describe("agent /metrics endpoint", () => {
     const res = await pinnedFetch("/v1/chat/completions", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ model: "x", messages: [] }),
+      body: JSON.stringify({ model: "metrics-test/model.gguf", messages: [] }),
     });
     expect(res.status).toBe(200);
     const after = countChatSeries(await scrape());
@@ -167,5 +168,64 @@ describe("agent /metrics endpoint", () => {
     const line = text.split("\n").find((l) => l.startsWith("llamactl_llama_server_up"));
     expect(line).toBeTruthy();
     expect(line).toMatch(/llamactl_llama_server_up.*\s1\s*$/);
+  });
+
+  test("modelhost restart + OOM series carry the agent nodeName, not the env fallback", async () => {
+    // The agent was started with nodeName "metrics-test-node" while
+    // LLAMACTL_NODE_NAME is temporarily something else: if
+    // startAgentServer fails to bind the metrics node label, the
+    // series silently fall back to the env value.
+    const envNode = "metrics-env-fallback-node";
+    const savedNodeName = process.env["LLAMACTL_NODE_NAME"];
+    process.env["LLAMACTL_NODE_NAME"] = envNode;
+    const hostDir = join(runtimeDir, "workloads", "metrics-host");
+    mkdirSync(hostDir, { recursive: true });
+    const seen = new Date("2026-11-05T12:00:00.000Z").toISOString();
+    try {
+      writeFileSync(
+        join(hostDir, "modelhost.conditions.json"),
+        `${JSON.stringify(
+          {
+            conditions: [
+              {
+                type: "OOMKilled",
+                status: "True",
+                reason: "CgroupOOMKill",
+                message: "engine was OOM-killed",
+                firstSeen: seen,
+                lastSeen: seen,
+                lastTransitionTime: seen,
+                count: 2,
+              },
+            ],
+            restarts: 3,
+            lastRestartAt: seen,
+            lastRestartReason: "EngineExited",
+          },
+          null,
+          2,
+        )}\n`,
+      );
+
+      const res = await pinnedFetch("/metrics");
+      expect(res.status).toBe(200);
+      const text = await res.text();
+      expect(text).toMatch(
+        /^llamactl_modelhost_restarts\{(?=[^}]*workload="metrics-host")(?=[^}]*node="metrics-test-node")[^}]*\} 3$/m,
+      );
+      expect(text).toMatch(
+        /^llamactl_modelhost_oom_kills\{(?=[^}]*workload="metrics-host")(?=[^}]*node="metrics-test-node")[^}]*\} 2$/m,
+      );
+      expect(text).not.toMatch(
+        /^llamactl_modelhost_(restarts|oom_kills)\{(?=[^}]*workload="metrics-host")[^}]*node="metrics-env-fallback-node"/m,
+      );
+    } finally {
+      if (savedNodeName === undefined) {
+        delete process.env["LLAMACTL_NODE_NAME"];
+      } else {
+        process.env["LLAMACTL_NODE_NAME"] = savedNodeName;
+      }
+      rmSync(hostDir, { recursive: true, force: true });
+    }
   });
 });

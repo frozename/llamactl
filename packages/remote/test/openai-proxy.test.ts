@@ -408,7 +408,7 @@ describe("agent OpenAI proxy", () => {
     expect(bodyB.echoed.hasAuth).toBe(false);
   });
 
-  test("POST /v1/chat/completions falls back to the env endpoint when model is missing or unknown", async () => {
+  test("POST /v1/chat/completions falls back to the env endpoint when model is omitted", async () => {
     const omitted = await pinnedFetch("/v1/chat/completions", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -419,7 +419,9 @@ describe("agent OpenAI proxy", () => {
       echoed: { label: string };
     };
     expect(omittedBody.echoed.label).toBe("env");
+  });
 
+  test("POST /v1/chat/completions returns model_not_routed for an unknown model while workloads are routed", async () => {
     const unknown = await pinnedFetch("/v1/chat/completions", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -428,11 +430,16 @@ describe("agent OpenAI proxy", () => {
         messages: [{ role: "user", content: "hi" }],
       }),
     });
-    expect(unknown.status).toBe(200);
+    expect(unknown.status).toBe(404);
     const unknownBody = (await unknown.json()) as {
-      echoed: { label: string };
+      error: { code: string; message: string; known_models: string[] };
     };
-    expect(unknownBody.echoed.label).toBe("env");
+    expect(unknownBody.error.code).toBe("model_not_routed");
+    expect(unknownBody.error.message).toContain("missing-model.gguf");
+    expect(unknownBody.error.known_models).toContain(
+      "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+    );
+    expect(unknownBody.error.known_models).toContain("qwen3-8b-GGUF/qwen3-8b-Q8_0.gguf");
   });
 
   test("POST /v1/chat/completions forwards the body to the routed llama-server", async () => {
