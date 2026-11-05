@@ -2,10 +2,11 @@
 // Issue frozename/llamactl#410 (plan P2b, §0.12) — the deny-by-default
 // procedure allowlist. Single paths outside the list → 404
 // procedure_not_exposed (R6), the allowlist snapshot pins the 9
-// read-only entries (R6), and tRPC's comma-batching cannot smuggle a
-// non-allowlisted segment through: the guard decodes %2C, splits on
-// every comma, rejects empty/duplicate segments and >16 segments with
-// 400 bad_batch BEFORE checking membership (R7).
+// read-only entries plus the serverStop mutation (R6), and tRPC's
+// comma-batching cannot smuggle a non-allowlisted segment through: the
+// guard decodes %2C, splits on every comma, rejects empty/duplicate
+// segments and >16 segments with 400 bad_batch BEFORE checking
+// membership (R7).
 
 import { afterEach, describe, expect, test } from "bun:test";
 
@@ -38,6 +39,7 @@ const ALLOWED = [
   "workloadDescribe",
   "workloadsDir",
   "serverLogs",
+  "serverStop",
 ];
 
 const HIDDEN: { name: string; method: "GET" | "POST"; input?: unknown }[] = [
@@ -46,7 +48,6 @@ const HIDDEN: { name: string; method: "GET" | "POST"; input?: unknown }[] = [
   { input: { name: "n1" }, method: "GET", name: "nodeOpenAIConfig" },
   { input: {}, method: "POST", name: "reconcilerStart" },
   { method: "GET", name: "uiPickDirectory" },
-  { input: { graceSeconds: 5, workload: "w1" }, method: "POST", name: "serverStop" },
 ];
 
 afterEach(async () => {
@@ -77,7 +78,7 @@ describe("console allowlist", () => {
     });
   }
 
-  test("(R6) CONSOLE_ALLOWLIST is exactly the 9 read-only entries, each with a project fn", () => {
+  test("(R6) CONSOLE_ALLOWLIST is the 9 read-only entries plus serverStop", () => {
     const r = api();
     const allowlist = r.CONSOLE_ALLOWLIST as Record<string, { type?: string; project?: unknown }>;
     const names = Object.keys(allowlist).sort();
@@ -85,7 +86,7 @@ describe("console allowlist", () => {
     const mutations = Object.entries(allowlist)
       .filter(([, entry]) => entry.type === "mutation")
       .map(([name]) => name);
-    expect(mutations).toEqual([]);
+    expect(mutations).toEqual(["serverStop"]);
     const subscriptions = Object.entries(allowlist)
       .filter(([, entry]) => entry.type === "subscription")
       .map(([name]) => name);
@@ -203,7 +204,7 @@ describe("console batch guard", () => {
       distPath: consoleTestFixture().distPath,
       backend: spy.router,
     });
-    const segments = [...ALLOWED, ...ALLOWED.slice(0, 8)].join(",");
+    const segments = [...ALLOWED, ...ALLOWED.slice(0, 7)].join(",");
     expect(segments.split(",")).toHaveLength(17);
     const res = await fetch(trpcUrl(h, segments, { batch: true, input: {} }), {
       headers: apiHeaders(h),
@@ -227,7 +228,6 @@ describe("console batch guard", () => {
       "nodeOpenAIConfig",
       "reconcilerStart",
       "uiPickDirectory",
-      "serverStop",
       "foo1",
       "foo2",
     ].join(",");

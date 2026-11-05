@@ -38,6 +38,7 @@ import { runTunnel } from "./commands/tunnel.js";
 import { runUninstall } from "./commands/uninstall.js";
 import { runUpdate } from "./commands/update/index.js";
 import { runVersion } from "./commands/version.js";
+import { runWorkload } from "./commands/workload-status.js";
 import { runApply, runDelete, runDescribe, runGet } from "./commands/workload.js";
 import { extractGlobalFlags, setGlobals } from "./dispatcher.js";
 
@@ -129,6 +130,9 @@ Declarative workloads (Kubernetes-style):
                                               with --keep-running; --force
                                               also removes it when the node
                                               misses the status deadline).
+  llamactl workload status <name> --metrics   Show journaled engine throughput
+      [--json]                                (decode/prefill tok/s,
+                                              busy slots, deferral)
   llamactl enable <workload>                  Flip spec.enabled=true and
                                               re-apply the manifest.
   llamactl disable <workload>                 Flip spec.enabled=false and
@@ -279,6 +283,8 @@ async function main(argv: string[]): Promise<number> {
       return await runDescribe(rest);
     case "delete":
       return await runDelete(rest);
+    case "workload":
+      return await runWorkload(rest);
     case "enable":
       return await runEnable(rest);
     case "disable":

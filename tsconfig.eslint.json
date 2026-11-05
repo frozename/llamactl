@@ -20,6 +20,7 @@
     "packages/*/test/**/*.tsx",
     "packages/app/electron/**/*.ts",
     "packages/app/electron.vite.config.ts",
+    "packages/app/vite.web.config.ts",
     "scripts/**/*.ts",
     "packages/agents/demos/**/*.ts",
     "tools/**/*.ts",
