@@ -245,5 +245,27 @@ export default tseslint.config(
       "max-lines-per-function": "off",
     },
   },
+  {
+    // #410 P5a-3a: console sources reach the tab's tRPC client only
+    // through console/node-trpc's hooks. Patterns only, no `paths`
+    // entry: eslint 9.39.4 reports twice when both match one specifier.
+    files: ["packages/app/src/console/**/*.{ts,tsx}"],
+    ignores: ["packages/app/src/console/node-trpc.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              regex: "(^|/)lib/trpc(\\.tsx?)?$",
+              importNames: ["trpc", "trpcUIClient"],
+              message:
+                "Console code must use the node-scoped hooks from console/node-trpc (useNodeTrpc/useNodeTrpcUtils), never the global trpc instance or the IPC UI client.",
+            },
+          ],
+        },
+      ],
+    },
+  },
   prettierConfig,
 );
