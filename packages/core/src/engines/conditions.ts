@@ -23,8 +23,9 @@
 // the last update time, and whether the engine was running as of that update
 // (lastKnownRunning, the remote analogue of a local launch record for foundDead
 // detection). The directory holds only .json files, so the manifest stores'
-// .yaml listings never pick it up. `llamactl delete workload` removes a
-// deleted host's record with its manifest, so a reused name inherits nothing.
+// .yaml listings never pick it up. The shared workload store's deleteWorkload
+// removes a deleted ModelHost's record with its manifest on every delete path
+// (CLI, tRPC, MCP), so a reused name inherits nothing.
 import { join, resolve, sep } from "node:path";
 
 import type { ResolvedEnv } from "../types.js";
