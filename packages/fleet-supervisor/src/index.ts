@@ -15,6 +15,7 @@ export * from "./aggregator-db.js";
 export * from "./aggregator.js";
 export * from "./audit-reader.js";
 export * from "./completion-probe.js";
+export * from "./engine-throughput-collector.js";
 export * from "./engine-throughput.js";
 export * from "./executor.js";
 export * from "./infra-rollout.js";

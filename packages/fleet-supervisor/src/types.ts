@@ -1,3 +1,5 @@
+import type { WorkloadThroughputStats } from "./engine-throughput.js";
+
 /**
  * Why a node memory snapshot is unavailable.
  * - `unsupported-platform`: the platform has no memory probe (neither darwin nor linux).
@@ -106,6 +108,16 @@ export interface WorkloadSnapshot {
   expectedMemoryMb?: number;
 }
 
+/** One per-ModelHost engine-throughput sample carried on the fleet snapshot. */
+export interface EngineThroughputSnapshot {
+  workload: string;
+  revision: string | null;
+  sampledAt: string;
+  metrics: { available: boolean; reason?: string };
+  slots: { available: boolean; reason?: string };
+  stats: WorkloadThroughputStats | null;
+}
+
 export interface FleetSnapshotEntry {
   kind: "fleet-snapshot";
   ts: string;
@@ -138,6 +150,15 @@ export interface FleetSnapshotEntry {
     proposalId: string;
     deployedAtMs: number;
   }[];
+  /**
+   * Read-only per-ModelHost engine throughput sampled this tick
+   * (frozename/llamactl#249). The field is optional: loose readers
+   * (snapshot-reader, the remote fleet route, mcp collectLatestSnapshots)
+   * ignore or pass it through. Set only through a conditional spread because of
+   * exactOptionalPropertyTypes — never assign `engineThroughput: undefined`. An
+   * absent workload's rates are null, never 0.
+   */
+  engineThroughput?: EngineThroughputSnapshot[];
 }
 
 export interface FleetHeartbeatEntry {
