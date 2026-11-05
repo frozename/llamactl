@@ -125,7 +125,7 @@ function InputStub(props: StubInputProps): ReactElement {
   return createElement("input", { readOnly: true, value: props.value ?? "" });
 }
 
-void mock.module("@/ui", () => ({ Button: ButtonStub, Input: InputStub }));
+void mock.module("@/ui", () => ({ ...uiReal, Button: ButtonStub, Input: InputStub }));
 void mock.module(NODE_TRPC_SPEC, () => ({
   ...nodeTrpcReal,
   useConsoleNode: (): string => CONSOLE_NODE,
