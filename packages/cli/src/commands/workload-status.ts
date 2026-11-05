@@ -2,19 +2,17 @@
 // supervisor appends to each fleet-snapshot. Reads only journaled data (local
 // journal + peer snapshots) — it never wakes a model or issues inference.
 
-import type {
-  EngineThroughputSnapshot,
-  FleetSnapshotEntry,
-  ThroughputDistribution,
-  WorkloadThroughputStats,
-} from "@llamactl/fleet-supervisor";
+import type { ThroughputDistribution, WorkloadThroughputStats } from "@llamactl/fleet-supervisor";
 
-import { listPeers, type PeerNode } from "@llamactl/core/config/peers";
 import {
-  createPeerFetch,
-  defaultFleetJournalPath,
-  readLatestFleetSnapshotFromJournal,
-} from "@llamactl/fleet-supervisor";
+  findThroughputMatch,
+  gatherSnapshots,
+  NO_SNAPSHOT_REASON,
+  resolveWorkloadStatusDeps,
+  type ThroughputMatch,
+  type WorkloadStatusDeps,
+} from "./workload-snapshots.js";
+import { runTop } from "./workload-top.js";
 
 const USAGE = `Usage: llamactl workload <subcommand>
 
@@ -23,85 +21,11 @@ Subcommands:
                                      by the fleet supervisor (decode/prefill
                                      tok/s, busy slots, deferral). Reads only
                                      the fleet journal — never wakes a model.
+  top [--watch[=<seconds>]] [--json] Live per-ModelHost throughput (decode/
+                                     prefill tok/s, mean busy slots, deferred
+                                     share, counter resets). Reads only the
+                                     fleet journal — never wakes a model.
 `;
-
-const NO_SNAPSHOT_REASON = "no fleet snapshot found (is the fleet supervisor running?)";
-
-interface WorkloadStatusDeps {
-  readLocalSnapshot?: () => Promise<FleetSnapshotEntry | null>;
-  readPeers?: () => PeerNode[];
-  fetchPeerSnapshot?: (peer: PeerNode) => Promise<FleetSnapshotEntry | null>;
-}
-
-interface ResolvedWorkloadStatusDeps {
-  readLocalSnapshot: () => Promise<FleetSnapshotEntry | null>;
-  readPeers: () => PeerNode[];
-  fetchPeerSnapshot: (peer: PeerNode) => Promise<FleetSnapshotEntry | null>;
-}
-
-interface ThroughputMatch {
-  node: string;
-  snapshotTs: string;
-  entry: EngineThroughputSnapshot;
-}
-
-function resolveWorkloadStatusDeps(deps: WorkloadStatusDeps): ResolvedWorkloadStatusDeps {
-  const readLocalSnapshot =
-    deps.readLocalSnapshot ??
-    // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
-    (async (): Promise<FleetSnapshotEntry | null> =>
-      readLatestFleetSnapshotFromJournal(defaultFleetJournalPath()));
-  const readPeers = deps.readPeers ?? listPeers;
-  const fetchPeerSnapshot =
-    deps.fetchPeerSnapshot ??
-    (async (peer: PeerNode): Promise<FleetSnapshotEntry | null> => {
-      const fetcher = createPeerFetch(peer);
-      return await fetcher();
-    });
-  return { readLocalSnapshot, readPeers, fetchPeerSnapshot };
-}
-
-async function gatherSnapshots(deps: ResolvedWorkloadStatusDeps): Promise<FleetSnapshotEntry[]> {
-  const snapshots: FleetSnapshotEntry[] = [];
-  const local = await deps.readLocalSnapshot();
-  if (local !== null) snapshots.push(local);
-  const peerSnapshots = await Promise.all(
-    deps.readPeers().map(async (peer): Promise<FleetSnapshotEntry | null> => {
-      try {
-        return await deps.fetchPeerSnapshot(peer);
-      } catch {
-        return null;
-      }
-    }),
-  );
-  for (const snapshot of peerSnapshots) {
-    if (snapshot !== null) snapshots.push(snapshot);
-  }
-  return snapshots;
-}
-
-function findThroughputMatch(
-  snapshots: readonly FleetSnapshotEntry[],
-  name: string,
-): ThroughputMatch | null {
-  const latestByNode = new Map<string, FleetSnapshotEntry>();
-  for (const snapshot of snapshots) {
-    const seen = latestByNode.get(snapshot.node);
-    if (seen === undefined || snapshot.ts > seen.ts) {
-      latestByNode.set(snapshot.node, snapshot);
-    }
-  }
-  let match: ThroughputMatch | null = null;
-  for (const snapshot of latestByNode.values()) {
-    for (const entry of snapshot.engineThroughput ?? []) {
-      if (entry.workload !== name) continue;
-      if (match === null || entry.sampledAt > match.entry.sampledAt) {
-        match = { node: snapshot.node, snapshotTs: snapshot.ts, entry };
-      }
-    }
-  }
-  return match;
-}
 
 function formatAvailability(status: { available: boolean; reason?: string }): string {
   if (status.available) return "available";
@@ -275,6 +199,9 @@ export async function runWorkload(args: string[], deps: WorkloadStatusDeps = {})
   if (sub === "--help" || sub === "-h") {
     process.stdout.write(USAGE);
     return 0;
+  }
+  if (sub === "top") {
+    return await runTop(rest, deps);
   }
   if (sub !== "status") {
     process.stderr.write(`Unknown workload subcommand: ${sub}\n${USAGE}`);
