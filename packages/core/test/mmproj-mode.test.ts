@@ -28,10 +28,7 @@ afterEach((): void => {
 });
 
 /** Helper: create a model directory and write files into it. */
-function writeModelDir(
-  modelDir: string,
-  files: Record<string, string>,
-): void {
+function writeModelDir(modelDir: string, files: Record<string, string>): void {
   mkdirSync(modelDir, { recursive: true });
   for (const [name, content] of Object.entries(files)) {
     writeFileSync(join(modelDir, name), content);
@@ -105,18 +102,13 @@ describe("findLocalMmprojForRel", () => {
     const modelsRoot = join(rootFor("k"), "models");
     const nestedDir = join(modelsRoot, "org", "Acme-GGUF");
     writeModelDir(nestedDir, { "x.gguf": "dummy", "mmproj-F16.gguf": "dummy" });
-    const result = findLocalMmprojForRel(
-      modelsRoot,
-      "org/Acme-GGUF/x.gguf",
-    );
+    const result = findLocalMmprojForRel(modelsRoot, "org/Acme-GGUF/x.gguf");
     expect(result).toBe(join(modelsRoot, "org", "Acme-GGUF", "mmproj-F16.gguf"));
   });
 
   test("(l) returns null when derived directory does not exist", () => {
     const modelsRoot = join(rootFor("l"), "models");
-    expect(
-      findLocalMmprojForRel(modelsRoot, "org/Acme-GGUF/x.gguf"),
-    ).toBeNull();
+    expect(findLocalMmprojForRel(modelsRoot, "org/Acme-GGUF/x.gguf")).toBeNull();
   });
 });
 
@@ -140,10 +132,7 @@ describe("bench defaultModeForRel local mmproj sibling", () => {
     });
   }
 
-  function writeFiles(
-    rel: string,
-    files: Record<string, string>,
-  ): void {
+  function writeFiles(rel: string, files: Record<string, string>): void {
     const modelDir = join(models, rel.slice(0, rel.lastIndexOf("/")));
     writeModelDir(modelDir, files);
   }
@@ -186,11 +175,16 @@ describe("bench defaultModeForRel local mmproj sibling", () => {
   test("(q) local mmproj sibling overrides non-multimodal catalog class -> vision", () => {
     resolved = buildEnv();
     const general = BUILTIN_CATALOG.find(
-      (e) => e.class !== "multimodal" && e.rel.includes("/") && !e.rel.startsWith("Qwen3.5-27B-GGUF/"),
+      (e) =>
+        e.class !== "multimodal" && e.rel.includes("/") && !e.rel.startsWith("Qwen3.5-27B-GGUF/"),
     );
+    expect(general).toBeDefined();
     if (!general) return;
     const modelName = general.rel.split("/").pop() ?? "model.gguf";
-    const files: Record<string, string> = { [modelName]: "dummy", "mmproj-F16.gguf": "dummy" };
+    const files: Record<string, string> = {
+      [modelName]: "dummy",
+      "mmproj-F16.gguf": "dummy",
+    };
     writeFiles(general.rel, files);
     expect(defaultModeForRel(general.rel, resolved)).toBe("vision");
   });
@@ -198,8 +192,10 @@ describe("bench defaultModeForRel local mmproj sibling", () => {
   test("(q) same general rel, model only, no mmproj -> text", () => {
     resolved = buildEnv();
     const general = BUILTIN_CATALOG.find(
-      (e) => e.class !== "multimodal" && e.rel.includes("/") && !e.rel.startsWith("Qwen3.5-27B-GGUF/"),
+      (e) =>
+        e.class !== "multimodal" && e.rel.includes("/") && !e.rel.startsWith("Qwen3.5-27B-GGUF/"),
     );
+    expect(general).toBeDefined();
     if (!general) return;
     const modelName = general.rel.split("/").pop() ?? "model.gguf";
     const files: Record<string, string> = { [modelName]: "dummy" };
