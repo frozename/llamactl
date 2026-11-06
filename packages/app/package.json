@@ -8,8 +8,10 @@
   "scripts": {
     "dev": "env -u ELECTRON_RUN_AS_NODE electron-vite dev",
     "build": "electron-vite build",
+    "build:web": "vite build -c vite.web.config.ts",
+    "e2e": "playwright test",
     "start": "env -u ELECTRON_RUN_AS_NODE electron-vite preview",
-    "typecheck": "tsc -p tsconfig.main.json --noEmit --tsBuildInfoFile /dev/null && tsc -p tsconfig.node.json --noEmit --tsBuildInfoFile /dev/null && tsc -p tsconfig.web.json --noEmit --tsBuildInfoFile /dev/null",
+    "typecheck": "tsc -p tsconfig.main.json --noEmit --tsBuildInfoFile /dev/null && tsc -p tsconfig.node.json --noEmit --tsBuildInfoFile /dev/null && tsc -p tsconfig.web.json --noEmit --tsBuildInfoFile /dev/null && tsc -p tsconfig.e2e.json --noEmit --tsBuildInfoFile /dev/null",
     "package": "bun run build && electron-builder --config electron-builder.yml",
     "package:mac": "bun run build && electron-builder --config electron-builder.yml --mac",
     "package:mac:arm64": "bun run build && electron-builder --config electron-builder.yml --mac --arm64",
@@ -36,6 +38,7 @@
     "zustand": "5.0.12"
   },
   "devDependencies": {
+    "@playwright/test": "1.59.1",
     "@tailwindcss/vite": "4.2.2",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",

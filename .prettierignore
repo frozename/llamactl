@@ -13,3 +13,8 @@ packages/eval/tools/*.py
 # code-as-data: evaluated as a renderer EXPRESSION by scripts/audit.sh --setup-script; a trailing semicolon breaks it
 tests/ui-audit-setup.js
 .husky/
+# prettier has no parser for ignore files; explicit --check runs must skip them
+.prettierignore
+.gitignore
+packages/app/test-results/**
+packages/app/playwright-report/**

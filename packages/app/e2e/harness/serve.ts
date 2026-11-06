@@ -11,7 +11,7 @@ import { type RunningConsoleServer, startConsoleServer } from "@llamactl/remote"
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
 import {
   createFixtureBackend,
   type FixtureBackend,
@@ -220,9 +220,16 @@ export async function startFixtureConsole(
 }
 
 if (import.meta.main) {
+  const distPath = join(import.meta.dir, "..", "..", "out", "web");
+  if (!existsSync(join(distPath, "index.html"))) {
+    process.stderr.write(
+      `console e2e: ${distPath}/index.html missing; run \`bun run --cwd packages/app build:web\` first\n`,
+    );
+    process.exit(1);
+  }
   const handle = await startFixtureConsole({
     controlPort: seed.E2E_CONTROL_PORT,
-    distPath: join(import.meta.dir, "..", "..", "out", "web"),
+    distPath,
     port: seed.E2E_CONSOLE_PORT,
   });
   process.stdout.write(`console: ${handle.console.url}\ncontrol: ${handle.control.url}\n`);
