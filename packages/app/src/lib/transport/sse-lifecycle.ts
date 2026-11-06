@@ -27,8 +27,14 @@ export const HEALTH_CONFIRM_MS = 2000;
 
 export const RECONNECT_SIGNAL = Object.freeze({ type: "__reconnect__" } as const);
 
+export const RECONNECTING_SIGNAL = Object.freeze({ type: "__reconnecting__" } as const);
+
 export function isReconnectSignal(value: unknown): boolean {
   return value === RECONNECT_SIGNAL || (isObject(value) && value["type"] === RECONNECT_SIGNAL.type);
+}
+
+export function isReconnectingSignal(value: unknown): boolean {
+  return value === RECONNECTING_SIGNAL || (isObject(value) && value["type"] === RECONNECTING_SIGNAL.type);
 }
 
 export type SseLifecycleState = "connecting" | "streaming" | "reconnecting" | "idle" | "error";
@@ -85,6 +91,7 @@ export interface SseLifecycleLinkOptions {
   timers?: LifecycleTimers;
   onInvalidSession?: () => void;
   onStateChange?: (event: SseLifecycleStateChange) => void;
+  resumablePaths?: readonly string[];
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -107,6 +114,7 @@ interface LifecycleDeps {
   timers: LifecycleTimers;
   onInvalidSession: () => void;
   onStateChange: ((event: SseLifecycleStateChange) => void) | undefined;
+  resumablePaths: readonly string[];
 }
 
 interface SourceLike {
@@ -126,6 +134,7 @@ class SseLifecycleRunner {
   private attemptSource: SourceLike | undefined;
   private attemptSourceError: ((event: unknown) => void) | undefined;
   private readonly callerSignal: AbortSignal | undefined;
+  private readonly resumablePaths: readonly string[];
   private readonly callerAbort = (): void => {
     if (this.torn) return;
     this.teardown();
@@ -134,6 +143,7 @@ class SseLifecycleRunner {
 
   constructor(private readonly deps: LifecycleDeps) {
     this.callerSignal = deps.op.signal ?? undefined;
+    this.resumablePaths = deps.resumablePaths;
   }
 
   begin(): () => void {
@@ -323,6 +333,25 @@ class SseLifecycleRunner {
     this.attemptSub = undefined;
     this.attemptAc = undefined;
     this.detachSource();
+    // Resumable paths: schedule a bounded reconnect behind a
+    // RECONNECTING_SIGNAL data frame instead of completing.
+    if (this.resumablePaths.includes(this.deps.op.path)) {
+      if (this.healthHandle !== undefined) {
+        this.deps.timers.clearTimeout(this.healthHandle);
+        this.healthHandle = undefined;
+      }
+      this.deps.observer.next({ result: { type: "data", data: RECONNECTING_SIGNAL } });
+      const delay = BACKOFF_MS[Math.min(this.attempt, BACKOFF_MS.length - 1)] ?? 30000;
+      this.attempt += 1;
+      this.emitState("reconnecting", { delayMs: delay });
+      this.backoffHandle = this.deps.timers.setTimeout(() => {
+        if (this.torn) return;
+        this.backoffHandle = undefined;
+        this.emitState("connecting");
+        this.startAttempt();
+      }, delay);
+      return;
+    }
     this.deps.observer.complete();
     this.teardown();
     // The wrapped complete() must never reach its unsubscribe(): that would
@@ -359,6 +388,7 @@ export function sseLifecycleLink<TRouter extends AnyRouter>(
   const timers = linkOpts.timers ?? defaultTimers;
   const onInvalidSession = linkOpts.onInvalidSession ?? consoleSessionStore.markInvalid;
   const onStateChange = linkOpts.onStateChange;
+  const resumablePaths = linkOpts.resumablePaths ?? [];
 
   return () => {
     return ({ op, next }) => {
@@ -370,6 +400,7 @@ export function sseLifecycleLink<TRouter extends AnyRouter>(
           timers,
           onInvalidSession,
           onStateChange,
+          resumablePaths,
         });
         return runner.begin();
       });

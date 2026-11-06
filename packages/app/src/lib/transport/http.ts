@@ -29,6 +29,8 @@ type HttpBatchFetch = NonNullable<Parameters<typeof httpBatchLink>[0]["fetch"]>;
 
 export const CONSOLE_NODE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,252}$/;
 
+export const CONSOLE_RESUMABLE_SUBSCRIPTIONS = ["serverLogs"] as const;
+
 export function isConsoleNodeName(name: string): boolean {
   return CONSOLE_NODE_NAME.test(name);
 }
@@ -84,6 +86,7 @@ export function buildHttpLinks<TRouter extends AnyRouter>(
         ...(opts.timers ? { timers: opts.timers } : {}),
         ...(opts.onInvalidSession ? { onInvalidSession: opts.onInvalidSession } : {}),
         ...(opts.onStateChange ? { onStateChange: opts.onStateChange } : {}),
+        resumablePaths: CONSOLE_RESUMABLE_SUBSCRIPTIONS,
       }),
       httpSubscriptionLink<AnyRouter, typeof ConsoleEventSource>({
         url,
