@@ -698,7 +698,7 @@ describe("I1: clean install", () => {
       "update",
       // `llamactl version` prints the build version, not the worker RPC.
       "version",
-      // `llamactl workload status --metrics` (PR #249), not the worker RPC.
+      // `llamactl workload status --metrics` and `llamactl workload top` (#249), not the worker RPC.
       "workload",
     ].sort();
     expect(verbReport(verbs(CLI_BIN), CLI_VERBS, relative(repoRoot, CLI_BIN), "CLI_VERBS")).toBe(

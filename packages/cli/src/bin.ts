@@ -133,6 +133,8 @@ Declarative workloads (Kubernetes-style):
   llamactl workload status <name> --metrics   Show journaled engine throughput
       [--json]                                (decode/prefill tok/s,
                                               busy slots, deferral)
+  llamactl workload top [--watch[=<s>]] [--json]  Live per-ModelHost throughput
+                                              (journaled; never wakes a model)
   llamactl enable <workload>                  Flip spec.enabled=true and
                                               re-apply the manifest.
   llamactl disable <workload>                 Flip spec.enabled=false and

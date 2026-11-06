@@ -147,7 +147,8 @@ async function readPeerSnapshotViaTunnel(peer: PeerNode): Promise<RawFleetSnapsh
     centralUrl: peer.tunnelCentralUrl,
     nodeName: peer.tunnelNodeName ?? peer.id,
     method: "fleetSnapshot",
-    input: undefined,
+    // #306: older agents ignore the input and keep returning the journal snapshot or null.
+    input: { include: ["local-routes"] },
     bearer: resolveTunnelRelayToken(peer),
     type: "query",
     ...(peer.tunnelCentralCertificate ? { pinnedCa: peer.tunnelCentralCertificate } : {}),
