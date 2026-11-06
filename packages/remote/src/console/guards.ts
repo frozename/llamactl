@@ -91,9 +91,7 @@ export function checkConsoleTrpcPath(
   if (segments.length > MAX_BATCH_SEGMENTS) {
     return { ok: false, status: 400, error: "bad_batch" };
   }
-  if (new Set(segments).size !== segments.length) {
-    return { ok: false, status: 400, error: "bad_batch" };
-  }
+  // Repeated segments are allowed on purpose (tRPC httpBatchLink fan-out).
   if (allowed !== undefined && segments.some((segment) => !allowed.has(segment))) {
     return { ok: false, status: 404, error: "procedure_not_exposed" };
   }
