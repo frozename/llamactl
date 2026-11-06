@@ -72,7 +72,8 @@ export type ConsoleTrpcPathCheck =
   | { ok: true; names: string[] }
   | { ok: false; status: number; error: "bad_batch" | "procedure_not_exposed" };
 
-const MAX_BATCH_SEGMENTS = 16;
+// The app's CONSOLE_MAX_BATCH_ITEMS (packages/app/src/lib/transport/http.ts) is a literal copy; http-links.test.ts guards drift.
+export const CONSOLE_MAX_BATCH_SEGMENTS = 16;
 
 export function checkConsoleTrpcPath(
   pathname: string,
@@ -88,7 +89,7 @@ export function checkConsoleTrpcPath(
   if (segments.some((segment) => segment === "")) {
     return { ok: false, status: 400, error: "bad_batch" };
   }
-  if (segments.length > MAX_BATCH_SEGMENTS) {
+  if (segments.length > CONSOLE_MAX_BATCH_SEGMENTS) {
     return { ok: false, status: 400, error: "bad_batch" };
   }
   // Repeated segments are allowed on purpose (tRPC httpBatchLink fan-out).

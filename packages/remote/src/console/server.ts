@@ -63,12 +63,7 @@ export type ConsoleRouter = ReturnType<typeof buildConsoleRouter>;
 // segments get a METHOD_NOT_SUPPORTED row and never reach the precheck or
 // the backend. Non-allowlisted names were already rejected by the guard,
 // so only listed identifiers reach the rewritten inner path.
-function remapBatchInput(
-  rawInput: string,
-  names: string[],
-  kept: string[],
-  keptIdx: number[],
-): Record<string, unknown> | null {
+function remapBatchInput(rawInput: string, keptIdx: number[]): Record<string, unknown> | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(rawInput);
@@ -116,7 +111,7 @@ async function handleBatchWithMutation(
   const params = new URLSearchParams(url.searchParams);
   const rawInput = params.get("input");
   if (rawInput !== null && kept.length > 0) {
-    const remapped = remapBatchInput(rawInput, names, kept, keptIdx);
+    const remapped = remapBatchInput(rawInput, keptIdx);
     if (remapped === null) return null;
     params.set("input", JSON.stringify(remapped));
   }
