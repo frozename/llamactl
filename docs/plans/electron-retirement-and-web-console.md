@@ -183,7 +183,7 @@ General rules for every phase:
 **Files**
 
 - `packages/remote/src/console/server.ts`: `startConsoleServer({ port, distPath, hostname: "127.0.0.1", backend?, lookupWorkload? })`. `backend` and `lookupWorkload` are test-only injection seams with no CLI flag. The guards, allowlist, projections and (from P5a) prechecks always wrap whatever backend is used.
-- `packages/remote/src/console/guards.ts`: Host, `Sec-Fetch-Site`, `Origin`, cookie, and the **batch-aware path guard**. The guard takes the pathname after the endpoint prefix, `decodeURIComponent`s it, and splits it on `,`. It rejects an empty segment (leading, trailing or double comma), a duplicate segment or more than 16 segments with `400 bad_batch`. It rejects any segment not in the allowlist with `404 procedure_not_exposed`. All of this happens before tRPC runs, so nothing in a rejected batch executes.
+- `packages/remote/src/console/guards.ts`: Host, `Sec-Fetch-Site`, `Origin`, cookie, and the **batch-aware path guard**. The guard takes the pathname after the endpoint prefix, `decodeURIComponent`s it, and splits it on `,`. It rejects an empty segment (leading, trailing or double comma), or more than 16 segments (`CONSOLE_MAX_BATCH_SEGMENTS`), with `400 bad_batch`, and it checks this before the allowlist. Repeated segments are allowed (tRPC `httpBatchLink` fan-out; the client caps batches with `maxItems=16`). Any segment not in the allowlist gets `404 procedure_not_exposed`. Nothing in a rejected batch executes.
 - `packages/remote/src/console/session.ts`: nonce and cookie. The cookie name is `llamactl_console_<port>`. The server reads only its own name and ignores any other `llamactl_console_*` cookie.
 - `packages/remote/src/console/static.ts`.
 - `packages/remote/src/console/allowlist.ts`: one entry per exposed procedure, `{ type: "query" | "subscription" | "mutation", project: (out) => Projected, precheck?: (ctx, input) => Promise<void> }`. The console router is **built from these entries**: each is a pass-through procedure that calls the inner dispatch router through `createCaller({ node })` and returns `project(result)`, or maps `project` over each yielded item for a subscription. A procedure that is not in the list does not exist in the console router at all.
@@ -210,7 +210,7 @@ General rules for every phase:
    - `POST /api/trpc/workloadList,nodeOpenAIConfig?batch=1` → 404.
    - The same batch with the separator encoded as `%2C` → 404.
    - `nodeList,,env`, `,env` and `env,` → 400 `bad_batch`.
-   - `env,env` → 400 `bad_batch`, as is a batch of 17 allowlisted segments.
+   - A batch of 17 allowlisted segments (repeats included) is 400 `bad_batch`, while `env,env` / repeated allowlisted segments up to 16 are accepted and each runs with its own input.
    - `GET /api/trpc/nodeList,env,workloadList?batch=1` → 200 with three results, each one projected.
 8. An inbound `Authorization: Bearer x` and extra cookies are not visible in procedure ctx or in upstream remote calls.
 9. Redaction with sentinels (§0.11). The fixture sets up:

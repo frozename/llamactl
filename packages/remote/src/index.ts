@@ -53,6 +53,7 @@ export {
   checkConsoleSameOrigin,
   checkConsoleSession,
   checkConsoleTrpcPath,
+  CONSOLE_MAX_BATCH_SEGMENTS,
   type ConsoleSession,
   type ConsoleTrpcPathCheck,
   newConsoleSession,
