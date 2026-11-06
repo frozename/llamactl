@@ -211,6 +211,9 @@ describe("route catalog v1 — replicaGroup is carried", () => {
     });
     expect(Object.keys(bindings[0]!)).toEqual(["publicId", "routeId", "ordinal", "replicaGroup"]);
     expect(Object.keys(bindings[1]!)).toEqual(["publicId", "routeId", "ordinal", "replicaGroup"]);
+
+    const deploymentRouteIds = v1.deployments.map((d) => d.routeId);
+    expect(deploymentRouteIds).toEqual(["route/ext-1", "route/ext-2"]);
   });
 });
 
@@ -233,9 +236,11 @@ describe("route catalog v1 — conflicts pass through, rejected routes get no bi
     ]);
 
     const bindingRouteIds = v1.aliasBindings.map((b) => b.routeId);
+    expect(bindingRouteIds).toEqual(["route/node1/wl-a"]);
     expect(bindingRouteIds).not.toContain("route/ext-1");
 
     const deploymentRouteIds = v1.deployments.map((d) => d.routeId);
+    expect(deploymentRouteIds).toEqual(["route/node1/wl-a"]);
     expect(deploymentRouteIds).not.toContain("route/ext-1");
   });
 });
@@ -259,5 +264,78 @@ describe("route catalog v1 — schema and serialization agreement", () => {
     expect(parsed).toEqual(v1);
 
     expect(serializeRouteCatalog(catalog)).toBe(JSON.stringify(v1));
+
+    expect(Object.keys(v1)).toEqual([
+      "schemaVersion",
+      "catalogVersion",
+      "configRevision",
+      "generatedAt",
+      "expiresAt",
+      "deployments",
+      "aliasBindings",
+      "conflicts",
+    ]);
+    expect(v1.deployments).toEqual([
+      {
+        schemaVersion: 1,
+        routeId: "route/node1/wl-a",
+        deploymentId: "deploy/node1/wl-a",
+        backendId: "backend/node1/wl-a",
+        ownerNodeId: "node1",
+        publicModelIds: ["shared.gguf"],
+        upstreamModelId: "shared.gguf",
+        backendKind: "local-model",
+        transport: "local-http",
+        endpoint: "http://127.0.0.1:8080",
+        providerKind: "llamacpp",
+        capabilities: {
+          operations: ["generate", "embed", "count-tokens"],
+          protocols: ["openai-chat", "openai-responses", "anthropic-messages"],
+          streaming: "sse",
+          modalities: ["text", "image", "audio", "document"],
+          tools: true,
+          structuredOutput: true,
+          tokenCounting: true,
+          cancellation: true,
+          sessions: true,
+        },
+        modelRevision: { status: "unknown" },
+        deploymentEpoch: { status: "known", value: "pid:4242" },
+        adapterRevision: { status: "unknown" },
+        policyRevision: { status: "unknown" },
+        weight: 1,
+        draining: false,
+      },
+      {
+        schemaVersion: 1,
+        routeId: "route/ext-1",
+        deploymentId: "deploy/ext-1",
+        backendId: "backend/ext-1",
+        ownerNodeId: "worker-1",
+        publicModelIds: ["shared.gguf"],
+        upstreamModelId: "hf.co/org/ext-model",
+        backendKind: "cloud-api",
+        transport: "cloud-direct",
+        endpoint: "https://api.example.com/v1",
+        capabilities: {
+          operations: ["generate", "embed", "count-tokens"],
+          protocols: ["openai-chat", "openai-responses", "anthropic-messages"],
+          streaming: "sse",
+          modalities: ["text", "image"],
+          tools: true,
+          structuredOutput: true,
+          tokenCounting: true,
+          cancellation: true,
+          sessions: true,
+        },
+        modelRevision: { status: "known", value: "rev-1" },
+        deploymentEpoch: { status: "known", value: "epoch-1" },
+        adapterRevision: { status: "unknown" },
+        policyRevision: { status: "unknown" },
+        weight: 1,
+        draining: false,
+        priority: 0,
+      },
+    ]);
   });
 });
