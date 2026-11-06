@@ -120,4 +120,10 @@ describe("percentile", () => {
     expect(percentile([1, 2, 3, 4, 5], 50)).toBe(3);
     expect(percentile([1, 2, 3, 4, 5], 25)).toBe(2);
   });
+
+  test("mixed-digit values sort numerically, not lexicographically", () => {
+    expect(percentile([100, 9, 20], 0)).toBe(9);
+    expect(percentile([100, 9, 20], 100)).toBe(100);
+    expect(percentile([3, 100, 20, 9], 50)).toBeCloseTo(14.5, 10);
+  });
 });
