@@ -1,13 +1,12 @@
+import { afterEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { describe, expect, test, beforeEach, afterEach } from "bun:test";
-
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "../src/safe-fs.js";
-import { findLocalMmproj, findLocalMmprojForRel } from "../src/mmproj.js";
 import { defaultModeForRel, machineLabel } from "../src/bench/mode.js";
-import { resolveEnv } from "../src/env.js";
 import { BUILTIN_CATALOG } from "../src/catalog.js";
+import { resolveEnv } from "../src/env.js";
+import { findLocalMmproj, findLocalMmprojForRel } from "../src/mmproj.js";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 const CLEANUP_ROOTS: string[] = [];
 
@@ -119,6 +118,7 @@ describe("bench defaultModeForRel local mmproj sibling", () => {
 
   function buildEnv(): ReturnType<typeof resolveEnv> {
     tmp = mkdtempSync(join(tmpdir(), "llamactl-mmproj-bench-"));
+    CLEANUP_ROOTS.push(tmp);
     models = join(tmp, "models");
     return resolveEnv({
       DEV_STORAGE: tmp,
@@ -189,7 +189,7 @@ describe("bench defaultModeForRel local mmproj sibling", () => {
     expect(defaultModeForRel(general.rel, resolved)).toBe("vision");
   });
 
-  test("(q) same general rel, model only, no mmproj -> text", () => {
+  test("(s) same general rel, model only, no mmproj -> text", () => {
     resolved = buildEnv();
     const general = BUILTIN_CATALOG.find(
       (e) =>
