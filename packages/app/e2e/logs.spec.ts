@@ -13,6 +13,7 @@ import { E2E_SENTINEL_VALUES, E2E_SENTINELS } from "./harness/fixtures/seed";
 import { expect, test } from "./harness/fixtures/test";
 
 const BOOT_MARKER = "e2e boot";
+const WIRE_MARKER = "wire-marker";
 const LOGS_ROUTE = "/logs/wB?node=agent-1";
 const SSE_URL = `/api/n/agent-1/trpc/serverLogs?input=${encodeURIComponent(
   JSON.stringify({ follow: true, lines: 50, workload: "wB" }),
@@ -28,6 +29,13 @@ async function waitForStream(control: ControlClient, open: boolean): Promise<voi
   const settled = async (): Promise<boolean> =>
     (await control.streams("agent-1")).some((entry) => entry.workload === "wB");
   await expect.poll(settled, { timeout: open ? 5_000 : 2_000 }).toBe(open);
+}
+
+async function waitForOpenStreams(control: ControlClient, count: number): Promise<void> {
+  const settled = async (): Promise<boolean> =>
+    (await control.streams("agent-1")).filter((entry) => entry.open && entry.workload === "wB")
+      .length >= count;
+  await expect.poll(settled, { timeout: 5_000 }).toBe(true);
 }
 
 test("the masked boot line streams and a control-emitted line follows it", async ({
@@ -85,14 +93,13 @@ test("Follow pins the bottom while checked and stays parked when not", async ({
 test("the masked projection holds on the wire, not just on screen", async ({ control, page }) => {
   await page.goto(LOGS_ROUTE);
   await waitForStream(control, true);
-  await control.emitLog("agent-1", "wB", `--api-key ${E2E_SENTINELS.log} wire-marker`);
-  const masked = page.getByTestId("console-logs-line").filter({ hasText: "wire-marker" });
-  await expect(masked).toContainText("--api-key [redacted] wire-marker");
-  await expect(masked).not.toContainText(E2E_SENTINELS.log);
   // The auto sentinel guard skips text/event-stream responses, so
   // neither leak nor proof can flow through it here; this second
-  // in-page subscription reads the raw SSE frames and scans them.
-  const wire = await page.evaluate(
+  // in-page subscription reads the raw SSE frames and scans them. It
+  // must be open before the marker line is emitted: emitLog only
+  // fans out to streams that are already registered, so an emit
+  // ordered first would never reach this read.
+  const wirePromise = page.evaluate(
     async (opts: { marker: string; url: string }): Promise<string> => {
       const res = await fetch(opts.url, { headers: { accept: "text/event-stream" } });
       const reader = res.body?.getReader();
@@ -101,7 +108,7 @@ test("the masked projection holds on the wire, not just on screen", async ({ con
       }
       const decoder = new TextDecoder();
       let text = "";
-      const deadline = Date.now() + 5_000;
+      const deadline = Date.now() + 10_000;
       while (!text.includes(opts.marker) && Date.now() < deadline) {
         const frame = await Promise.race([
           reader.read(),
@@ -122,12 +129,24 @@ test("the masked projection holds on the wire, not just on screen", async ({ con
       await reader.cancel();
       return text;
     },
-    { marker: BOOT_MARKER, url: SSE_URL },
+    { marker: WIRE_MARKER, url: SSE_URL },
   );
+  await waitForOpenStreams(control, 2);
+  await control.emitLog("agent-1", "wB", `--api-key ${E2E_SENTINELS.log} ${WIRE_MARKER}`);
+  const masked = page.getByTestId("console-logs-line").filter({ hasText: WIRE_MARKER });
+  await expect(masked).toContainText(`--api-key [redacted] ${WIRE_MARKER}`);
+  await expect(masked).not.toContainText(E2E_SENTINELS.log);
+  const wire = await wirePromise;
   expect(wire).toContain(BOOT_MARKER);
   expect(wire).toContain("[redacted]");
+  expect(wire).toContain(`--api-key [redacted] ${WIRE_MARKER}`);
+  // Case-insensitive on purpose: with the server-side flag masking
+  // gone, redact.ts's BEARER rewrites split the boot sentinel into
+  // "sentinel-Bearer [redacted]" instead of removing it, and a
+  // case-sensitive scan would read that split leak as clean.
+  const wireLower = wire.toLowerCase();
   for (const sentinel of E2E_SENTINEL_VALUES) {
-    expect(wire).not.toContain(sentinel);
+    expect(wireLower).not.toContain(sentinel.toLowerCase());
   }
 });
 
