@@ -5,6 +5,8 @@
 // contract test drive. Loopback binds only; ports 0 mean "pick one"
 // and the chosen ports land back on the returned urls.
 
+import type { Server } from "bun";
+
 import { type RunningConsoleServer, startConsoleServer } from "@llamactl/remote";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,7 +22,7 @@ import * as seed from "./fixtures/seed.js";
 export interface FixtureConsoleHandle {
   backend: FixtureBackend;
   console: { port: number; url: string };
-  control: { port: number; url: string };
+  control: { hostname: string; port: number; url: string };
   stop(): Promise<void>;
 }
 
@@ -183,22 +185,36 @@ export async function startFixtureConsole(
     restoreEnv();
     throw err;
   }
-  const controlServer = Bun.serve({
-    fetch: (req) => handleControl(backend, req, new URL(req.url)),
-    hostname: "127.0.0.1",
-    port: opts.controlPort,
-  });
+  let controlServer: Server<unknown>;
+  try {
+    controlServer = Bun.serve({
+      fetch: (req) => handleControl(backend, req, new URL(req.url)),
+      hostname: "127.0.0.1",
+      port: opts.controlPort,
+    });
+  } catch (err) {
+    await consoleServer.stop().catch(() => undefined);
+    restoreEnv();
+    throw err;
+  }
+  const controlPort = controlServer.port ?? opts.controlPort;
+  // bun-types types Server.hostname as string | undefined (unix
+  // sockets); a TCP bind always reports it.
+  const controlHostname = controlServer.hostname ?? "";
   return {
     backend,
     console: { port: consoleServer.port, url: consoleServer.url },
     control: {
-      port: controlServer.port ?? opts.controlPort,
-      url: `http://127.0.0.1:${String(controlServer.port ?? opts.controlPort)}`,
+      hostname: controlHostname,
+      port: controlPort,
+      url: `http://${controlHostname}:${String(controlPort)}`,
     },
     stop: async (): Promise<void> => {
-      await consoleServer.stop();
-      await controlServer.stop(true);
-      restoreEnv();
+      try {
+        await Promise.allSettled([consoleServer.stop(), controlServer.stop(true)]);
+      } finally {
+        restoreEnv();
+      }
     },
   };
 }

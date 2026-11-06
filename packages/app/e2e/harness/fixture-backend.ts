@@ -7,12 +7,31 @@
 // console server (startConsoleServer) sits in front of this router.
 
 import type { ClusterNode } from "@llamactl/core/config/schema";
+import type { AppRouter } from "@llamactl/remote";
+import type { inferRouterOutputs } from "@trpc/server";
 
 import { resolveNodeKind } from "@llamactl/core/config/schema";
 import { initTRPC, TRPCError } from "@trpc/server";
 import { z } from "zod";
 
 import * as seed from "./fixtures/seed.js";
+
+type RouterOutputs = inferRouterOutputs<AppRouter>;
+
+type WorkloadRow = Extract<RouterOutputs["workloadList"][number], { kind: "ModelRun" }>;
+
+// serverLogs' router output is the subscription's AsyncIterable; the
+// fixture is pinned to the yielded frame, not the wrapper.
+type LogLineFrame = RouterOutputs["serverLogs"] extends AsyncIterable<infer T> ? T : never;
+
+// env is a sentinel subset on purpose: LM_API_TOKEN / OPENAI_API_KEY
+// are not ResolvedEnv fields, so only the ResolvedEnv keys the fixture
+// does carry are pinned against the real output; the sentinels ride in
+// as the intersection the real type cannot express.
+type EnvFixture = Partial<RouterOutputs["env"]> & {
+  LM_API_TOKEN: string;
+  OPENAI_API_KEY: string;
+};
 
 export type ServerStopMode = "not-stopped" | "ok" | "throw";
 
@@ -54,24 +73,14 @@ interface MutableStream {
   workload: string;
 }
 
-interface WorkloadRow {
-  endpoint: string | null;
-  kind: "ModelRun";
-  listenerPid: number | null;
-  name: string;
-  node: string;
-  phase: "Running" | "Stopped";
-  rel: string;
-  statePid: number | null;
-  status: seed.E2EModelRun["status"] | null;
-  workerCount: number;
-  workerNodes: string[];
-}
-
 // Mirrors the fixture kubeconfig nodes (P2b RED 9 sentinels in the
-// cli env + the rag endpoint), shaped as the parsed ClusterNode output
-// the real nodeList procedure returns before its projection.
-const FIXTURE_NODES: readonly ClusterNode[] = [
+// cli env + the rag endpoint). `satisfies` (not an annotation) on
+// purpose: under exactOptionalPropertyTypes the ClusterNode alias
+// spells optionals wider than the router's parsed output, so the
+// literals keep their narrow form and flow into the
+// RouterOutputs["nodeList"]-annotated return, where drift fails
+// typecheck.
+const FIXTURE_NODES = [
   { endpoint: "inproc://local", name: "local" },
   {
     cli: [
@@ -106,7 +115,7 @@ const FIXTURE_NODES: readonly ClusterNode[] = [
       provider: "pgvector",
     },
   },
-];
+] satisfies readonly ClusterNode[];
 
 const t = initTRPC.context<{ node: string | null }>().create();
 
@@ -253,17 +262,17 @@ function buildFixtureRouter(state: FixtureState): FixtureBackend["router"] {
     state.record(procedure, node, input);
   };
   return t.router({
-    env: t.procedure.query(({ ctx }) => {
+    env: t.procedure.query(({ ctx }): EnvFixture => {
       record("env", ctx.node, undefined);
       return seed.E2E_ENV;
     }),
 
-    nodeFacts: t.procedure.query(({ ctx }) => {
+    nodeFacts: t.procedure.query(({ ctx }): RouterOutputs["nodeFacts"] => {
       record("nodeFacts", ctx.node, undefined);
       return seed.E2E_NODE_FACTS;
     }),
 
-    nodeList: t.procedure.query(({ ctx }) => {
+    nodeList: t.procedure.query(({ ctx }): RouterOutputs["nodeList"] => {
       record("nodeList", ctx.node, undefined);
       return {
         cluster: "home",
@@ -273,13 +282,15 @@ function buildFixtureRouter(state: FixtureState): FixtureBackend["router"] {
       };
     }),
 
-    nodeTest: t.procedure.input(nodeTestInput).query(({ ctx, input }) => {
-      record("nodeTest", ctx.node, input);
-      if (!state.reachable(input.name)) {
-        return { error: "e2e node unreachable", ok: false as const };
-      }
-      return { facts: seed.E2E_NODE_FACTS, ok: true as const };
-    }),
+    nodeTest: t.procedure
+      .input(nodeTestInput)
+      .query(({ ctx, input }): RouterOutputs["nodeTest"] => {
+        record("nodeTest", ctx.node, input);
+        if (!state.reachable(input.name)) {
+          return { error: "e2e node unreachable", ok: false as const };
+        }
+        return { facts: seed.E2E_NODE_FACTS, ok: true as const };
+      }),
 
     serverLogs: t.procedure.input(logsInput).subscription(async function* ({ ctx, input, signal }) {
       record("serverLogs", ctx.node, input);
@@ -296,7 +307,7 @@ function buildFixtureRouter(state: FixtureState): FixtureBackend["router"] {
         for (;;) {
           const line = await nextLine(stream, signal);
           if (line === undefined) return;
-          yield { line, type: "line" } satisfies seed.E2ELogLineEvent;
+          yield { line, type: "line" } satisfies LogLineFrame;
         }
       } finally {
         stream.open = false;
@@ -304,37 +315,43 @@ function buildFixtureRouter(state: FixtureState): FixtureBackend["router"] {
       }
     }),
 
-    serverStatus: t.procedure.input(statusInput).query(({ ctx, input }) => {
-      record("serverStatus", ctx.node, input);
-      return statusRow(input.workload);
-    }),
+    serverStatus: t.procedure
+      .input(statusInput)
+      .query(({ ctx, input }): RouterOutputs["serverStatus"] => {
+        record("serverStatus", ctx.node, input);
+        return statusRow(input.workload);
+      }),
 
-    serverStop: t.procedure.input(stopInput).mutation(({ ctx, input }) => {
-      record("serverStop", ctx.node, input);
-      if (state.serverStopMode === "throw") {
-        throw new TRPCError({
-          code: "INTERNAL_SERVER_ERROR",
-          message: "fixture_server_stop_failed",
-        });
-      }
-      const stopped = state.serverStopMode === "ok";
-      return { killed: false, pid: seed.E2E_PID, stopped };
-    }),
+    serverStop: t.procedure
+      .input(stopInput)
+      .mutation(({ ctx, input }): RouterOutputs["serverStop"] => {
+        record("serverStop", ctx.node, input);
+        if (state.serverStopMode === "throw") {
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "fixture_server_stop_failed",
+          });
+        }
+        const stopped = state.serverStopMode === "ok";
+        return { killed: false, pid: seed.E2E_PID, stopped };
+      }),
 
-    workloadDescribe: t.procedure.input(describeInput).query(({ ctx, input }) => {
-      record("workloadDescribe", ctx.node, input);
-      return {
-        liveStatus: seed.E2E_SERVER_STATUS[input.name] ?? null,
-        manifest: manifestOf(input.name),
-      };
-    }),
+    workloadDescribe: t.procedure
+      .input(describeInput)
+      .query(({ ctx, input }): RouterOutputs["workloadDescribe"] => {
+        record("workloadDescribe", ctx.node, input);
+        return {
+          liveStatus: seed.E2E_SERVER_STATUS[input.name] ?? null,
+          manifest: manifestOf(input.name),
+        };
+      }),
 
-    workloadList: t.procedure.query(({ ctx }) => {
+    workloadList: t.procedure.query(({ ctx }): RouterOutputs["workloadList"] => {
       record("workloadList", ctx.node, undefined);
       return Object.values(seed.E2E_MODEL_RUNS).map((manifest) => rowFrom(manifest));
     }),
 
-    workloadsDir: t.procedure.query(({ ctx }) => {
+    workloadsDir: t.procedure.query(({ ctx }): RouterOutputs["workloadsDir"] => {
       record("workloadsDir", ctx.node, undefined);
       return { dir: seed.E2E_WORKLOADS_DIR };
     }),

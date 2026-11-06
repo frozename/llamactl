@@ -18,9 +18,10 @@
 import { CONSOLE_ALLOWLIST } from "@llamactl/remote";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { E2E_KUBECONFIG_YAML } from "../../e2e/harness/fixtures/seed.js";
 import { logsSubscriptionInput } from "../../src/console/logs-scope.js";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
 
@@ -31,45 +32,6 @@ const BACKEND = join(APP_DIR, "e2e", "harness", "fixture-backend.ts");
 const SEED = join(APP_DIR, "e2e", "harness", "fixtures", "seed.ts");
 
 const INDEX_HTML = '<!doctype html><html><body><div id="root">e2e fixture</div></body></html>\n';
-
-// The console mount validates the node segment against the kubeconfig
-// on every request, so the harness needs a fixture fleet on disk:
-// local + two agents dispatchable, a gateway and a rag node listed but
-// not dispatchable. Sentinel values mirror P2b RED 9 — they live in
-// the kubeconfig only so a kubeconfig-derived fixture stays masked.
-const KUBECONFIG_YAML = `apiVersion: llamactl/v1
-kind: Config
-currentContext: default
-contexts:
-  - name: default
-    cluster: home
-    user: me
-    defaultNode: local
-clusters:
-  - name: home
-    nodes:
-      - name: local
-        endpoint: inproc://local
-      - name: agent-1
-        kind: agent
-        endpoint: https://agent-1.fixture:8443
-      - name: agent-off
-        kind: agent
-        endpoint: https://agent-off.fixture:8443
-      - name: gw-1
-        kind: gateway
-        cloud:
-          provider: openai-compatible
-          baseUrl: http://gw-1.fixture:8080/v1
-      - name: ragdb
-        kind: rag
-        rag:
-          provider: pgvector
-          endpoint: postgres://rag:sentinel-pg@db.local:5432/rag
-users:
-  - name: me
-    token: sentinel-kube
-`;
 
 const SENTINEL_VALUES = [
   "sentinel-arg",
@@ -84,7 +46,7 @@ const SENTINEL_VALUES = [
 
 interface FixtureHarness {
   console: { url: string };
-  control: { url: string };
+  control: { hostname: string; url: string };
   stop: () => Promise<void>;
 }
 
@@ -162,7 +124,7 @@ function makeDistDir(): string {
 
 beforeEach(() => {
   const cfgDir = makeTempDir("llamactl-e2e-cfg-");
-  writeFileSync(join(cfgDir, "config"), KUBECONFIG_YAML);
+  writeFileSync(join(cfgDir, "config"), E2E_KUBECONFIG_YAML);
   setEnv("LLAMACTL_CONFIG", join(cfgDir, "config"));
   setEnv("DEV_STORAGE", makeTempDir("llamactl-e2e-dev-"));
 });
@@ -207,6 +169,7 @@ async function startHarness(): Promise<ConsoleHandle> {
   harnesses.push(harness);
   expect(harness.console).toBeDefined();
   expect(harness.control).toBeDefined();
+  expect(harness.control.hostname).toBe("127.0.0.1");
   expect(typeof harness.stop).toBe("function");
   const apiBase = stripTrailingSlash(harness.console.url);
   const controlBase = stripTrailingSlash(harness.control.url);
@@ -399,29 +362,39 @@ interface SseRead {
   transcript: string;
 }
 
-async function readSseFrames(
-  res: Response,
-  until: (frames: readonly string[]) => boolean,
-  deadlineMs: number,
-): Promise<SseRead> {
-  const frames: string[] = [];
+// One reader held across multiple read phases: cancel-on-exit would
+// itself tear the subscription down, so a drop assertion needs a
+// reader that stays open until close() is called explicitly.
+interface SseFrameReader {
+  read(until: (frames: readonly string[]) => boolean, deadlineMs: number): Promise<SseRead>;
+  readToDone(deadlineMs: number): Promise<boolean>;
+  close(): Promise<void>;
+}
+
+function createSseFrameReader(res: Response): SseFrameReader {
   const body = res.body;
-  if (body === null) return { done: true, found: false, frames, transcript: "" };
-  const reader = body.getReader();
+  const reader = body === null ? null : body.getReader();
   const decoder = new TextDecoder();
-  const deadline = Date.now() + deadlineMs;
+  const frames: string[] = [];
   let pending = "";
   let transcript = "";
   let done = false;
-  try {
+
+  const loop = async (
+    until: (frames: readonly string[]) => boolean,
+    deadlineMs: number,
+  ): Promise<SseRead> => {
+    if (reader === null) return { done: true, found: false, frames, transcript };
+    const deadline = Date.now() + deadlineMs;
     for (;;) {
+      if (until(frames)) return { done, found: true, frames, transcript };
       const remaining = deadline - Date.now();
-      if (remaining <= 0) break;
+      if (remaining <= 0 || done) return { done, found: until(frames), frames, transcript };
       const chunk = await raceTimeout(reader.read(), remaining);
-      if (chunk === null) break;
+      if (chunk === null) return { done, found: until(frames), frames, transcript };
       if (chunk.done) {
         done = true;
-        break;
+        return { done, found: until(frames), frames, transcript };
       }
       const text = decoder.decode(chunk.value, { stream: true });
       transcript += text;
@@ -429,32 +402,19 @@ async function readSseFrames(
       const drained = drainFrames(pending);
       pending = drained.rest;
       frames.push(...drained.frames);
-      if (until(frames)) return { done, found: true, frames, transcript };
     }
-    return { done, found: until(frames), frames, transcript };
-  } finally {
-    await reader.cancel().catch(() => undefined);
-    reader.releaseLock();
-  }
-}
+  };
 
-async function sseBodyDone(res: Response, deadlineMs: number): Promise<boolean> {
-  const body = res.body;
-  if (body === null) return true;
-  const reader = body.getReader();
-  const deadline = Date.now() + deadlineMs;
-  try {
-    for (;;) {
-      const remaining = deadline - Date.now();
-      if (remaining <= 0) return false;
-      const chunk = await raceTimeout(reader.read(), remaining);
-      if (chunk === null) return false;
-      if (chunk.done) return true;
-    }
-  } finally {
-    await reader.cancel().catch(() => undefined);
-    reader.releaseLock();
-  }
+  return {
+    close: async (): Promise<void> => {
+      if (reader === null) return;
+      await reader.cancel().catch(() => undefined);
+      reader.releaseLock();
+    },
+    read: loop,
+    readToDone: async (deadlineMs: number): Promise<boolean> =>
+      (await loop(() => false, deadlineMs)).done,
+  };
 }
 
 function expectHarnessModules(): void {
@@ -643,8 +603,8 @@ describe("e2e harness contract (#410 P5b)", () => {
       node: "agent-1",
       workload: "wB",
     });
-    const read = await readSseFrames(
-      sse,
+    const reader = createSseFrameReader(sse);
+    const read = await reader.read(
       (frames) => frames.some((frame) => frame.includes("e2e-mark-7")),
       2000,
     );
@@ -656,12 +616,39 @@ describe("e2e harness contract (#410 P5b)", () => {
       expect(frame).not.toContain("sentinel-log");
       expect(frame).not.toContain("sentinel-bearer");
     }
+    // Reader never cancelled: a still-open control entry here proves
+    // the close below can only come from the drop itself.
+    const streamsBeforeDrop = await controlStreams(h, "agent-1");
+    expect(streamsBeforeDrop.some((entry) => streamIsOpen(entry, "wB"))).toBe(true);
     await postControl(h, "/drop-stream", { node: "agent-1", workload: "wB" });
-    expect(await sseBodyDone(sse, 2000)).toBe(true);
+    expect(await reader.readToDone(2000)).toBe(true);
+    await reader.close();
     const closed = await pollUntil(async () => {
       const streams = await controlStreams(h, "agent-1");
       return !streams.some((entry) => streamIsOpen(entry, "wB"));
     }, 2000);
     expect(closed).toBe(true);
+  }, 30_000);
+
+  test("unsetting LLAMACTL_CONFIG + DEV_STORAGE: temp kubeconfig in, env restored, temp dir gone", async () => {
+    expectHarnessModules();
+    Reflect.deleteProperty(process.env, "LLAMACTL_CONFIG");
+    Reflect.deleteProperty(process.env, "DEV_STORAGE");
+    const mod = await loadServeModule();
+    const start = mod.startFixtureConsole;
+    expect(typeof start).toBe("function");
+    const harness = await start!({ controlPort: 0, distPath: makeDistDir(), port: 0 });
+    harnesses.push(harness);
+    const configPath = process.env["LLAMACTL_CONFIG"];
+    expect(typeof configPath).toBe("string");
+    expect(existsSync(configPath ?? "")).toBe(true);
+    const tempDir = dirname(configPath ?? "");
+    expect(existsSync(tempDir)).toBe(true);
+    const index = await fetch(stripTrailingSlash(harness.console.url));
+    expect(index.status).toBe(200);
+    await harness.stop();
+    expect(process.env["LLAMACTL_CONFIG"]).toBeUndefined();
+    expect(process.env["DEV_STORAGE"]).toBeUndefined();
+    expect(existsSync(tempDir)).toBe(false);
   }, 30_000);
 });

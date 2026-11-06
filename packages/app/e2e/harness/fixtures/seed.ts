@@ -7,7 +7,14 @@
 // keep it off the wire.
 
 import type { nodeFacts, server } from "@llamactl/core";
-import type { workloadSchema } from "@llamactl/remote";
+import type { AppRouter } from "@llamactl/remote";
+import type { inferRouterOutputs } from "@trpc/server";
+
+// The manifest type is taken from the REAL router output rather than
+// the raw z.infer alias: under exactOptionalPropertyTypes the two
+// spell optional properties differently, and fixtures must satisfy
+// the router form so drift in the schema fails typecheck here.
+type RouterOutputs = inferRouterOutputs<AppRouter>;
 
 export const E2E_SENTINELS = {
   arg: "sentinel-arg",
@@ -42,10 +49,16 @@ export const E2E_DEFAULT_NODE = "local";
 
 export const E2E_UNREACHABLE_NODES: readonly string[] = Object.freeze(["agent-off"]);
 
-export type E2EModelRun = workloadSchema.ModelRun;
+export type E2EModelRun = Extract<
+  RouterOutputs["workloadDescribe"]["manifest"],
+  { kind: "ModelRun" }
+>;
 export type E2EServerStatus = server.ServerStatus;
 export type E2ENodeFacts = nodeFacts.NodeFacts;
-export type E2ELogLineEvent = { type: "line"; line: string };
+// Pinned to the yielded frame of the real serverLogs subscription
+// output; a change to the wire event fails typecheck here.
+export type E2ELogLineEvent =
+  RouterOutputs["serverLogs"] extends AsyncIterable<infer T> ? T : never;
 
 export const E2E_KUBECONFIG_YAML = `apiVersion: llamactl/v1
 kind: Config
@@ -171,8 +184,9 @@ export const E2E_NODE_FACTS: E2ENodeFacts = {
 // env is a sentinel subset on purpose: the real procedure returns a
 // full ResolvedEnv, and the console projection treats it as an opaque
 // record (maskEnvSecrets + redactDeep), so the fixture must not
-// fabricate host paths for fields no console view renders.
-export const E2E_ENV: Readonly<Record<string, string>> = Object.freeze({
+// fabricate host paths for fields no console view renders. The
+// fixture backend pins this shape against inferRouterOutputs.
+export const E2E_ENV = Object.freeze({
   DEV_STORAGE: "/tmp/llamactl-e2e-storage",
   LM_API_TOKEN: E2E_SENTINELS.lm,
   OPENAI_API_KEY: E2E_SENTINELS.lm,
