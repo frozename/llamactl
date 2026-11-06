@@ -209,6 +209,55 @@ describe("subscribeViaCaller", () => {
     expect(recorder.events).toEqual(["started", "data", "complete"]);
   });
 
+  test("a throwing onComplete after normal completion settles once and never errors", async () => {
+    const events: string[] = [];
+    let completeCount = 0;
+    let errorCount = 0;
+    let signalClosed: (() => void) | undefined;
+    const closed = new Promise<void>((resolve) => {
+      signalClosed = resolve;
+    });
+
+    const caller: CallerFactory = (signal) => {
+      signal.addEventListener("abort", () => {
+        signalClosed?.();
+      });
+      return {
+        stream: async function* (): AsyncGenerator<{ n: number }> {
+          await Promise.resolve();
+          yield { n: 1 };
+        },
+      };
+    };
+
+    subscribeViaCaller(
+      caller,
+      "stream",
+      {},
+      {
+        onData: () => {
+          events.push("data");
+        },
+        onError: () => {
+          errorCount += 1;
+          events.push("error");
+        },
+        onComplete: () => {
+          completeCount += 1;
+          events.push("complete");
+          throw new Error("onComplete exploded");
+        },
+      },
+    );
+
+    await closed;
+    await flush();
+
+    expect(completeCount).toBe(1);
+    expect(errorCount).toBe(0);
+    expect(events).toEqual(["data", "complete"]);
+  });
+
   test("omitting onStarted still completes the happy path", async () => {
     const recorder = makeRecorder(false);
 
