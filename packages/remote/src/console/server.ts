@@ -67,6 +67,7 @@ function remapBatchInput(
   rawInput: string,
   names: string[],
   kept: string[],
+  keptIdx: number[],
 ): Record<string, unknown> | null {
   let parsed: unknown;
   try {
@@ -77,11 +78,26 @@ function remapBatchInput(
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
   const source = parsed as Record<string, unknown>;
   const remapped: Record<string, unknown> = {};
-  for (const [newIndex, name] of kept.entries()) {
-    const value = source[String(names.indexOf(name))];
+  for (const [newIndex, sourceIdx] of keptIdx.entries()) {
+    const value = source[String(sourceIdx)];
     if (value !== undefined) remapped[String(newIndex)] = value;
   }
   return remapped;
+}
+
+function filterNonMutationSegments(
+  names: string[],
+  mutations: ReadonlySet<string>,
+): { kept: string[]; keptIdx: number[] } {
+  const kept: string[] = [];
+  const keptIdx: number[] = [];
+  for (const [i, name] of names.entries()) {
+    if (!mutations.has(name)) {
+      kept.push(name);
+      keptIdx.push(i);
+    }
+  }
+  return { kept, keptIdx };
 }
 
 async function handleBatchWithMutation(
@@ -96,11 +112,11 @@ async function handleBatchWithMutation(
   if (url.searchParams.get("batch") !== "1") return null;
   const mutations = new Set(names.filter((name) => CONSOLE_ALLOWLIST[name]?.type === "mutation"));
   if (mutations.size === 0) return null;
-  const kept = names.filter((name) => !mutations.has(name));
+  const { kept, keptIdx } = filterNonMutationSegments(names, mutations);
   const params = new URLSearchParams(url.searchParams);
   const rawInput = params.get("input");
   if (rawInput !== null && kept.length > 0) {
-    const remapped = remapBatchInput(rawInput, names, kept);
+    const remapped = remapBatchInput(rawInput, names, kept, keptIdx);
     if (remapped === null) return null;
     params.set("input", JSON.stringify(remapped));
   }

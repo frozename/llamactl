@@ -4,9 +4,8 @@
 // procedure_not_exposed (R6), the allowlist snapshot pins the 9
 // read-only entries plus the serverStop mutation (R6), and tRPC's
 // comma-batching cannot smuggle a non-allowlisted segment through: the
-// guard decodes %2C, splits on every comma, rejects empty/duplicate
-// segments and >16 segments with 400 bad_batch BEFORE checking
-// membership (R7).
+// guard decodes %2C, splits on every comma, rejects empty segments
+// and >16 segments with 400 bad_batch BEFORE checking membership (R7).
 
 import { afterEach, describe, expect, test } from "bun:test";
 
@@ -180,7 +179,7 @@ describe("console batch guard", () => {
     expect(spy.calls.map((c) => c.path)).toEqual(["nodeList", "env"]);
   });
 
-  for (const path of ["nodeList,,env", ",env", "env,", "env,env"]) {
+  for (const path of ["nodeList,,env", ",env", "env,"]) {
     test(`(R7) "${path}" → 400 bad_batch`, async () => {
       const r = api();
       const spy = makeSpyBackend(spyFixtures());
@@ -257,5 +256,96 @@ describe("console batch guard", () => {
     expect(rows).toHaveLength(3);
     for (const row of rows) expect(row.result.data).toBeDefined();
     expect(spy.calls.map((c) => c.path)).toEqual(["nodeList", "env", "workloadList"]);
+  });
+
+  test("(R7) checkConsoleTrpcPath accepts repeated allowlisted segments, order preserved", () => {
+    expect(
+      remote.checkConsoleTrpcPath("nodeTest,nodeTest,nodeTest,nodeTest,nodeTest", new Set(ALLOWED)),
+    ).toEqual({ ok: true, names: Array(5).fill("nodeTest") });
+    expect(remote.checkConsoleTrpcPath("nodeList,env,nodeList", new Set(ALLOWED))).toEqual({
+      ok: true,
+      names: ["nodeList", "env", "nodeList"],
+    });
+  });
+
+  test("(R7) checkConsoleTrpcPath rejects 17 repeated segments as bad_batch", () => {
+    expect(
+      remote.checkConsoleTrpcPath(Array(17).fill("nodeTest").join(","), new Set(ALLOWED)),
+    ).toEqual({ ok: false, status: 400, error: "bad_batch" });
+  });
+
+  test("(R7) GET nodeTest x5 ?batch=1 → 200, each duplicate runs with its own input", async () => {
+    const r = api();
+    const spy = makeSpyBackend(spyFixtures());
+    const h = await startConsole(r, {
+      distPath: consoleTestFixture().distPath,
+      backend: spy.router,
+    });
+    const res = await fetch(
+      trpcUrl(h, Array(5).fill("nodeTest").join(","), {
+        batch: true,
+        input: {
+          "0": { name: "n0" },
+          "1": { name: "n1" },
+          "2": { name: "n2" },
+          "3": { name: "n3" },
+          "4": { name: "n4" },
+        },
+      }),
+      { headers: apiHeaders(h) },
+    );
+    expect(res.status).toBe(200);
+    const rows = (await res.json()) as { result: { data: unknown } }[];
+    expect(rows).toHaveLength(5);
+    for (const row of rows) expect(row.result.data).toBeDefined();
+    expect(spy.calls.map((c) => c.path)).toEqual(Array(5).fill("nodeTest"));
+    expect(spy.calls.map((c) => c.input)).toEqual([
+      { name: "n0" },
+      { name: "n1" },
+      { name: "n2" },
+      { name: "n3" },
+      { name: "n4" },
+    ]);
+  });
+
+  test("(R7) GET nodeTest x17 ?batch=1 → 400 bad_batch before any call runs", async () => {
+    const r = api();
+    const spy = makeSpyBackend(spyFixtures());
+    const h = await startConsole(r, {
+      distPath: consoleTestFixture().distPath,
+      backend: spy.router,
+    });
+    const res = await fetch(
+      trpcUrl(h, Array(17).fill("nodeTest").join(","), { batch: true, input: {} }),
+      { headers: apiHeaders(h) },
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "bad_batch" });
+    expect(spy.calls).toEqual([]);
+  });
+
+  test("(R7) GET nodeTest,serverStop,nodeTest?batch=1 → 405 and each nodeTest keeps its own input", async () => {
+    const r = api();
+    const spy = makeSpyBackend(spyFixtures());
+    const h = await startConsole(r, {
+      distPath: consoleTestFixture().distPath,
+      backend: spy.router,
+    });
+    const res = await fetch(
+      trpcUrl(h, "nodeTest,serverStop,nodeTest", {
+        batch: true,
+        input: { "0": { name: "a" }, "1": {}, "2": { name: "b" } },
+      }),
+      { headers: apiHeaders(h) },
+    );
+    expect(res.status).toBe(405);
+    const rows = (await res.json()) as {
+      error?: { data?: { code?: string } };
+      result?: { data: unknown };
+    }[];
+    expect(rows).toHaveLength(3);
+    expect(rows[1]?.error?.data?.code).toBe("METHOD_NOT_SUPPORTED");
+    expect(spy.calls.map((c) => c.path)).toEqual(["nodeTest", "nodeTest"]);
+    expect(spy.calls.map((c) => c.input)).toEqual([{ name: "a" }, { name: "b" }]);
   });
 });
