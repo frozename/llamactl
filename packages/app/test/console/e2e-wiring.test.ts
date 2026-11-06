@@ -1,14 +1,15 @@
 // packages/app/test/console/e2e-wiring.test.ts
-// Issue frozename/llamactl#410 (plan P5b part 2a) — RED wiring contract
-// for the Playwright console e2e suite. Pure file reads only: no
-// process, no network, no clock. Every case fails by assertion at the
-// base commit — never by import or ENOENT — through the
-// existsSync-then-readFileSync pattern. The suite pins the
+// Issue frozename/llamactl#410 (plan P5b parts 2a + 2b) — RED wiring
+// contract for the Playwright console e2e suite. Pure file reads
+// only: no process, no network, no clock. Every case fails by
+// assertion at the base commit — never by import or ENOENT — through
+// the existsSync-then-readFileSync pattern. The suite pins the
 // chromium-only playwright.config.ts, the serve.ts dist preflight,
-// the fixtures/test.ts control fixture, the four console specs'
-// import contract, the advisory console-e2e workflow and the ignore
-// entries that keep Playwright artifacts out of the lint, format and
-// test sweeps.
+// the fixtures/test.ts control fixture, the six console specs'
+// import contract plus the logs.spec stream/teardown/masking pins
+// and the lifecycle.spec stop-gating pins, the advisory console-e2e
+// workflow and the ignore entries that keep Playwright artifacts out
+// of the lint, format and test sweeps.
 
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
@@ -33,7 +34,7 @@ const ESLINT_CONFIG = join(ROOT, "eslint.config.mjs");
 const APP_GITIGNORE = join(APP, ".gitignore");
 const BUN_TEST_DIR = join(APP, "test");
 
-const SPEC_NAMES = ["fleet", "workloads", "nodes", "session"] as const;
+const SPEC_NAMES = ["fleet", "workloads", "nodes", "session", "logs", "lifecycle"] as const;
 
 const pwImport = "from " + JSON.stringify("@playwright/" + "test");
 
@@ -113,7 +114,7 @@ function firstIgnoresBlock(text: string): string {
   return close < 0 ? "" : text.slice(marker, close + 1);
 }
 
-describe("e2e wiring contract (#410 P5b part 2a)", () => {
+describe("e2e wiring contract (#410 P5b parts 2a + 2b)", () => {
   test("R1 playwright.config.ts pins a single-worker chromium run", () => {
     expect(existsSync(PLAYWRIGHT_CONFIG)).toBe(true);
     const text = readText(PLAYWRIGHT_CONFIG);
@@ -264,5 +265,60 @@ describe("e2e wiring contract (#410 P5b part 2a)", () => {
     const gitignore = readText(APP_GITIGNORE);
     expect(gitignore).toContain("test-results/");
     expect(gitignore).toContain("playwright-report/");
+  });
+
+  test("R11 logs.spec pins stream, follow, teardown, offline, masking and one documented fixme", () => {
+    const raw = readText(join(E2E_DIR, "logs.spec.ts"));
+    const text = stripComments(raw);
+    for (const needle of [
+      "emitLog",
+      "dropStream",
+      "expect.poll",
+      "wB-stopped",
+      "serverLogs",
+      "Follow",
+      "[redacted]",
+      "E2E_SENTINEL_VALUES",
+      "text/event-stream",
+      "console-logs-offline",
+    ]) {
+      expect(text).toContain(needle);
+    }
+    expect(text).toMatch(/timeout:\s*(?:2000|2_000)\b/);
+    const fixmeCount = text.split("test.fixme").length - 1;
+    expect(fixmeCount).toBeLessThanOrEqual(1);
+    expect(text).not.toContain("test.only");
+    expect(text).not.toContain("waitForTimeout");
+    // The src-line citation for the spec's one documented gap lives in
+    // a comment, so it only survives in the raw text — the stripped
+    // copy drops it.
+    if (fixmeCount > 0) {
+      expect(raw).toContain("sse-lifecycle");
+      expect(raw).toContain("logs-scope");
+    }
+  });
+
+  test("R12 lifecycle.spec pins stop modes, confirm gating, precheck and no retries", () => {
+    const text = stripComments(readText(join(E2E_DIR, "lifecycle.spec.ts")));
+    for (const needle of [
+      "setServerStopMode",
+      '"not-stopped"',
+      '"throw"',
+      '"ok"',
+      "serverStop",
+      "graceSeconds",
+      "workload_node_mismatch",
+      "409",
+      "Cancel",
+      "toBeDisabled",
+      "wMulti",
+      "role",
+      "E2E_SENTINEL_VALUES",
+    ]) {
+      expect(text).toContain(needle);
+    }
+    expect(text).not.toContain("test.fixme");
+    expect(text).not.toContain("test.only");
+    expect(text).not.toContain("waitForTimeout");
   });
 });
