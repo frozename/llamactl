@@ -244,6 +244,14 @@ describe("e2e wiring contract (#410 P5b part 2a)", () => {
     expect(wdRun || cwdRun).toBe(true);
     expect(runLines.some((run) => /playwright test.*(?:\s-c\s|--config)/.test(run))).toBe(false);
     expect(readText(CHECK_WORKFLOW)).not.toContain("playwright");
+    // The workflow header's advisory contract: failures must reach the
+    // PR status unmasked — continue-on-error would silently swallow them.
+    for (const job of jobList) {
+      expect(Boolean(job["continue-on-error"])).toBe(false);
+    }
+    for (const step of allSteps) {
+      expect(Boolean(step["continue-on-error"])).toBe(false);
+    }
   });
 
   test("R10 ignores cover the Playwright output artifacts", () => {

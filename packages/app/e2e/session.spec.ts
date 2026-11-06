@@ -102,6 +102,20 @@ test("the api mount guards origin, allowlist, batch and session", async ({
 // segment-by-segment, which is not what the browser client sends.
 test("a repeated-procedure batch is served per segment unaided", async ({ control, page }) => {
   await page.goto("/");
+  // The fleet view fires one load-time nodeTest probe per tile at the
+  // tab node, and each probe lands in the same recorded-call log as the
+  // manual batch. Let every tile settle (a settled label proves the
+  // probe was recorded server-side), then clear the log so the counts
+  // below pin the manual batch alone.
+  for (const name of ["local", "agent-1", "gw-1", "ragdb"]) {
+    await expect(
+      page.getByTestId(`console-fleet-node-${name}`).getByText("reachable", { exact: true }),
+    ).toBeVisible();
+  }
+  await expect(page.getByTestId("console-fleet-node-agent-off")).toContainText(
+    "unreachable: e2e node unreachable",
+  );
+  await control.reset();
   const input = encodeURIComponent(
     JSON.stringify({ "0": { name: "agent-1" }, "1": { name: "agent-off" } }),
   );
@@ -124,4 +138,7 @@ test("a repeated-procedure batch is served per segment unaided", async ({ contro
     .map((call) => JSON.stringify(call.input));
   expect(probeInputs).toContain('{"name":"agent-1"}');
   expect(probeInputs).toContain('{"name":"agent-off"}');
+  expect(probeInputs.filter((value) => value === '{"name":"agent-1"}')).toHaveLength(1);
+  expect(probeInputs.filter((value) => value === '{"name":"agent-off"}')).toHaveLength(1);
+  expect(probeInputs).toHaveLength(2);
 });
