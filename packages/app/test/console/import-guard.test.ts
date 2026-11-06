@@ -30,13 +30,18 @@ const MODULES_FILE = "packages/app/src/modules/server/use-server-control.ts";
 const configs = new Map<string, Linter.Config>();
 const linter = new Linter({ configType: "flat" });
 
+// calculateConfigForFile builds the type-aware TS program backed by
+// tsconfig.eslint.json. The e2e glob added in PR #472 grew that program
+// past bun's 5 s default hook timeout on slower macOS runners, so warm
+// it once here with a generous budget instead of letting the hook die
+// unnamed at 5 s.
 beforeAll(async () => {
   const eslint = new ESLint({ cwd: REPO });
   for (const path of [PROBE, SCOPE_FILE, WRAPPER_FILE, MODULES_FILE]) {
     const cfg = (await eslint.calculateConfigForFile(join(REPO, path))) as Linter.Config;
     configs.set(path, cfg);
   }
-});
+}, 120_000);
 
 function ruleEntry(path: string): Linter.RuleEntry {
   return configs.get(path)?.rules?.[RULE_ID] ?? "off";
