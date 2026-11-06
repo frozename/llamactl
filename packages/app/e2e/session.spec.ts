@@ -8,13 +8,18 @@
 
 import type { APIResponse } from "@playwright/test";
 
-import { E2E_CONSOLE_PORT, E2E_SENTINEL_VALUES } from "./harness/fixtures/seed";
+import { E2E_CONSOLE_PORT, E2E_NODE_FACTS, E2E_SENTINEL_VALUES } from "./harness/fixtures/seed";
 import { expect, test } from "./harness/fixtures/test";
 
 const INVALID_SESSION_MESSAGE = "Console restarted or session expired — reload";
 const NODE_LIST = "/api/n/local/trpc/nodeList";
 const APPLY = "/api/n/local/trpc/workloadApply";
 const SAME_ORIGIN = { "sec-fetch-site": "same-origin" };
+
+interface BatchItem {
+  error?: { message?: string };
+  result?: { data?: { error?: string; ok?: boolean } };
+}
 
 function parsedError(text: string): unknown {
   return JSON.parse(text) as unknown;
@@ -87,4 +92,36 @@ test("the api mount guards origin, allowlist, batch and session", async ({
       expect(body).not.toContain(sentinel);
     }
   }
+});
+
+// Pinned after #482 let the console guard accept repeated procedures:
+// the fleet/nodes views fold their per-row nodeTest probes into one
+// batch, and the harness must not rewrite that request. The old guard
+// answered 400 bad_batch here. The URL is absolute on purpose: page
+// .request joins a comma-bearing relative path onto the config baseURL
+// segment-by-segment, which is not what the browser client sends.
+test("a repeated-procedure batch is served per segment unaided", async ({ control, page }) => {
+  await page.goto("/");
+  const input = encodeURIComponent(
+    JSON.stringify({ "0": { name: "agent-1" }, "1": { name: "agent-off" } }),
+  );
+  const batchRes = await page.request.get(
+    `http://127.0.0.1:${String(E2E_CONSOLE_PORT)}/api/n/local/trpc/nodeTest,nodeTest?batch=1&input=${input}`,
+    { headers: SAME_ORIGIN },
+  );
+  expect(batchRes.status()).toBe(200);
+  const batchBody = await batchRes.text();
+  const items = JSON.parse(batchBody) as BatchItem[];
+  expect(items).toHaveLength(2);
+  expect(items[0]?.result?.data).toEqual({ facts: E2E_NODE_FACTS, ok: true });
+  expect(items[1]?.result?.data).toEqual({ error: "e2e node unreachable", ok: false });
+  for (const sentinel of E2E_SENTINEL_VALUES) {
+    expect(batchBody).not.toContain(sentinel);
+  }
+
+  const probeInputs = (await control.calls("local"))
+    .filter((call) => call.procedure === "nodeTest")
+    .map((call) => JSON.stringify(call.input));
+  expect(probeInputs).toContain('{"name":"agent-1"}');
+  expect(probeInputs).toContain('{"name":"agent-off"}');
 });

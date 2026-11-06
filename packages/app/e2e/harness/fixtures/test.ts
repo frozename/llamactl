@@ -7,12 +7,7 @@
 // hand, and never import serve.ts or fixture-backend.ts (they pull in
 // @trpc/server and Bun).
 
-import type {
-  APIRequestContext,
-  APIResponse,
-  Request as PlaywrightRequest,
-  Route,
-} from "@playwright/test";
+import type { APIRequestContext, APIResponse } from "@playwright/test";
 
 import { test as base, expect } from "@playwright/test";
 
@@ -118,112 +113,6 @@ function createControlClient(context: APIRequestContext): ControlClient {
 
 const CONSOLE_ORIGIN = `http://127.0.0.1:${String(E2E_CONSOLE_PORT)}`;
 
-const TRPC_API = /\/api\/n\/[^/]+\/trpc\//;
-
-function trpcSegments(url: URL): string[] | null {
-  const at = url.pathname.indexOf("/trpc/");
-  if (at < 0) return null;
-  try {
-    return decodeURIComponent(url.pathname.slice(at + "/trpc/".length)).split(",");
-  } catch {
-    return null;
-  }
-}
-
-function batchInputs(request: PlaywrightRequest, url: URL): Record<string, unknown> | null {
-  const raw = request.method() === "GET" ? url.searchParams.get("input") : request.postData();
-  if (raw === null || raw === "") return {};
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    return isRecord(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-// The console guard rejects any batch that repeats a procedure name
-// (checkConsoleTrpcPath → 400 bad_batch, pinned by remote's batch
-// tests), while the fleet + nodes views fire one nodeTest query per
-// row and tRPC's batch link folds them into `nodeTest,nodeTest,…` —
-// every reachability probe would error. The harness splits exactly
-// those batches into one sub-request per segment and reassembles the
-// array response; every other request passes through untouched.
-async function fetchSplitItem(
-  route: Route,
-  request: PlaywrightRequest,
-  url: URL,
-  proc: string,
-  input: unknown,
-): Promise<unknown> {
-  const sub = new URL(url.href);
-  sub.pathname = `${url.pathname.slice(0, url.pathname.indexOf("/trpc/"))}/trpc/${proc}`;
-  const headers: Record<string, string> = {
-    ...request.headers(),
-    "sec-fetch-site": "same-origin",
-  };
-  let postData: string | undefined;
-  if (request.method() === "GET") {
-    if (input === undefined) sub.searchParams.delete("input");
-    else sub.searchParams.set("input", JSON.stringify({ "0": input }));
-  } else {
-    delete headers["content-length"];
-    postData = JSON.stringify(input === undefined ? {} : { "0": input });
-  }
-  const options: Parameters<Route["fetch"]>[0] =
-    postData === undefined ? { headers, url: sub.href } : { headers, postData, url: sub.href };
-  const res = await route.fetch(options);
-  return await firstBatchItem(res);
-}
-
-async function splitDuplicateBatch(route: Route): Promise<void> {
-  const request = route.request();
-  const url = new URL(request.url());
-  const segments = trpcSegments(url);
-  const inputs = segments === null ? null : batchInputs(request, url);
-  if (
-    segments === null ||
-    inputs === null ||
-    segments.length < 2 ||
-    new Set(segments).size === segments.length
-  ) {
-    await route.fallback();
-    return;
-  }
-  const results: unknown[] = [];
-  try {
-    for (const [index, proc] of segments.entries()) {
-      results.push(await fetchSplitItem(route, request, url, proc, inputs[String(index)]));
-    }
-  } catch {
-    await route.fulfill({
-      body: JSON.stringify({ error: { message: "e2e_batch_split_failed" } }),
-      contentType: "application/json",
-      status: 502,
-    });
-    return;
-  }
-  await route.fulfill({
-    body: JSON.stringify(results),
-    contentType: "application/json",
-    status: 200,
-  });
-}
-
-async function firstBatchItem(res: APIResponse): Promise<unknown> {
-  const text = await res.text();
-  let body: unknown = null;
-  try {
-    body = JSON.parse(text) as unknown;
-  } catch {
-    body = null;
-  }
-  if (Array.isArray(body)) {
-    const items = body as unknown[];
-    return items[0] ?? null;
-  }
-  return body;
-}
-
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void is the Playwright fixture spelling.
 export const test = base.extend<{ control: ControlClient; sentinelGuard: void }>({
   control: [
@@ -242,7 +131,6 @@ export const test = base.extend<{ control: ControlClient; sentinelGuard: void }>
   ],
   sentinelGuard: [
     async ({ page }, use): Promise<void> => {
-      await page.route(TRPC_API, splitDuplicateBatch);
       const bodies: Promise<string>[] = [];
       page.on("response", (response) => {
         const contentType = response.headers()["content-type"] ?? "";
