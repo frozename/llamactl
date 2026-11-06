@@ -18,6 +18,7 @@
     "packages/*/src/**/*.tsx",
     "packages/*/test/**/*.ts",
     "packages/*/test/**/*.tsx",
+    "packages/app/e2e/**/*.ts",
     "packages/app/electron/**/*.ts",
     "packages/app/electron.vite.config.ts",
     "packages/app/vite.web.config.ts",

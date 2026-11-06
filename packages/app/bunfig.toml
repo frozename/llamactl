@@ -1,0 +1,6 @@
+# Keeps the Playwright e2e specs under e2e/ out of `bun test`
+# (issue frozename/llamactl#410 P5b): bun's test runner defaults to
+# scanning the whole package, which would try to run *.spec.ts files
+# that need a live harness server.
+[test]
+root = "test"
