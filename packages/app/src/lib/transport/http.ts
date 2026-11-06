@@ -29,6 +29,12 @@ type HttpBatchFetch = NonNullable<Parameters<typeof httpBatchLink>[0]["fetch"]>;
 
 export const CONSOLE_NODE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,252}$/;
 
+// Literal copy of CONSOLE_MAX_BATCH_SEGMENTS in @llamactl/remote's
+// console/guards.ts and must stay a copy: the web graph stays server-free,
+// same as CONSOLE_NODE_NAME.
+// packages/app/test/lib/transport/http-links.test.ts guards against drift.
+export const CONSOLE_MAX_BATCH_ITEMS = 16;
+
 export function isConsoleNodeName(name: string): boolean {
   return CONSOLE_NODE_NAME.test(name);
 }
@@ -99,6 +105,7 @@ export function buildHttpLinks<TRouter extends AnyRouter>(
       invalidSessionObserverLink,
       httpBatchLink<AnyRouter>({
         url,
+        maxItems: CONSOLE_MAX_BATCH_ITEMS,
         fetch: credentialedFetch as unknown as HttpBatchFetch,
       }),
     ],
