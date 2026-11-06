@@ -39,6 +39,8 @@ describe("findLocalMmproj", () => {
 
   test("(b) empty directory returns null", () => {
     const dir = join(rootFor("b"), "empty");
+    mkdirSync(dir, { recursive: true });
+    expect(existsSync(dir)).toBe(true);
     expect(findLocalMmproj(dir)).toBeNull();
   });
 
@@ -215,5 +217,13 @@ describe("bench defaultModeForRel local mmproj sibling", () => {
   test("(s) machineLabel returns expected profile", () => {
     resolved = buildEnv();
     expect(machineLabel(resolved)).toBe("macbook-pro-48g");
+  });
+
+  test("(t) nested rel uses the deepest directory for the mmproj sibling -> vision", () => {
+    resolved = buildEnv();
+    const nestedRel = "org/Acme-GGUF/x.gguf";
+    writeFiles(nestedRel, { "x.gguf": "dummy", "mmproj-F16.gguf": "dummy" });
+    expect(findLocalMmproj(join(models, "org"))).toBeNull();
+    expect(defaultModeForRel(nestedRel, resolved)).toBe("vision");
   });
 });
