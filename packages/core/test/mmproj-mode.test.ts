@@ -6,16 +6,13 @@ import { defaultModeForRel, machineLabel } from "../src/bench/mode.js";
 import { BUILTIN_CATALOG } from "../src/catalog.js";
 import { resolveEnv } from "../src/env.js";
 import { findLocalMmproj, findLocalMmprojForRel } from "../src/mmproj.js";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 const CLEANUP_ROOTS: string[] = [];
 
 function rootFor(name: string): string {
-  let root = CLEANUP_ROOTS.find((r) => r.includes(name));
-  if (!root) {
-    root = mkdtempSync(join(tmpdir(), `llamactl-mmproj-${name}-`));
-    CLEANUP_ROOTS.push(root);
-  }
+  const root = mkdtempSync(join(tmpdir(), `llamactl-mmproj-${name}-`));
+  CLEANUP_ROOTS.push(root);
   return root;
 }
 
@@ -83,30 +80,30 @@ describe("findLocalMmproj", () => {
 });
 
 describe("findLocalMmprojForRel", () => {
-  test("(i) rel with no '/' returns null even when modelsRoot holds mmproj", () => {
-    const modelsRoot = join(rootFor("i"), "models");
+  test("(h) rel with no '/' returns null even when modelsRoot holds mmproj", () => {
+    const modelsRoot = join(rootFor("h"), "models");
     writeModelDir(modelsRoot, { "mmproj-F16.gguf": "dummy" });
     expect(findLocalMmprojForRel(modelsRoot, "bare.gguf")).toBeNull();
   });
 
-  test("(j) rel with one '/' finds sibling in subdirectory", () => {
-    const modelsRoot = join(rootFor("j"), "models");
+  test("(i) rel with one '/' finds sibling in subdirectory", () => {
+    const modelsRoot = join(rootFor("i"), "models");
     const subDir = join(modelsRoot, "Acme-GGUF");
     writeModelDir(subDir, { "Acme-Q4_K_M.gguf": "dummy", "mmproj-F16.gguf": "dummy" });
     const result = findLocalMmprojForRel(modelsRoot, "Acme-GGUF/Acme-Q4_K_M.gguf");
     expect(result).toBe(join(modelsRoot, "Acme-GGUF", "mmproj-F16.gguf"));
   });
 
-  test("(k) only the last '/' counts — nested dirs", () => {
-    const modelsRoot = join(rootFor("k"), "models");
+  test("(j) only the last '/' counts — nested dirs", () => {
+    const modelsRoot = join(rootFor("j"), "models");
     const nestedDir = join(modelsRoot, "org", "Acme-GGUF");
     writeModelDir(nestedDir, { "x.gguf": "dummy", "mmproj-F16.gguf": "dummy" });
     const result = findLocalMmprojForRel(modelsRoot, "org/Acme-GGUF/x.gguf");
     expect(result).toBe(join(modelsRoot, "org", "Acme-GGUF", "mmproj-F16.gguf"));
   });
 
-  test("(l) returns null when derived directory does not exist", () => {
-    const modelsRoot = join(rootFor("l"), "models");
+  test("(k) returns null when derived directory does not exist", () => {
+    const modelsRoot = join(rootFor("k"), "models");
     expect(findLocalMmprojForRel(modelsRoot, "org/Acme-GGUF/x.gguf")).toBeNull();
   });
 });
@@ -139,7 +136,7 @@ describe("bench defaultModeForRel local mmproj sibling", () => {
 
   const REL = "LlamactlPinTest-GGUF/LlamactlPinTest-Q4_K_M.gguf";
 
-  test("(m) model + mmproj sibling -> vision", () => {
+  test("(l) model + mmproj sibling -> vision", () => {
     resolved = buildEnv();
     writeFiles(REL, {
       "LlamactlPinTest-Q4_K_M.gguf": "dummy",
@@ -148,13 +145,13 @@ describe("bench defaultModeForRel local mmproj sibling", () => {
     expect(defaultModeForRel(REL, resolved)).toBe("vision");
   });
 
-  test("(n) model present, no mmproj -> text", () => {
+  test("(m) model present, no mmproj -> text", () => {
     resolved = buildEnv();
     writeFiles(REL, { "LlamactlPinTest-Q4_K_M.gguf": "dummy" });
     expect(defaultModeForRel(REL, resolved)).toBe("text");
   });
 
-  test("(o) mmproj sibling present, model absent -> text", () => {
+  test("(n) mmproj sibling present, model absent -> text", () => {
     resolved = buildEnv();
     const dir = join(models, REL.slice(0, REL.lastIndexOf("/")));
     mkdirSync(dir, { recursive: true });
@@ -162,7 +159,7 @@ describe("bench defaultModeForRel local mmproj sibling", () => {
     expect(defaultModeForRel(REL, resolved)).toBe("text");
   });
 
-  test("(p) Qwen3.5-27B-GGUF locked to text even with mmproj sibling", () => {
+  test("(o) Qwen3.5-27B-GGUF locked to text even with mmproj sibling", () => {
     resolved = buildEnv();
     const qwenRel = "Qwen3.5-27B-GGUF/Qwen3.5-27B-UD-Q5_K_XL.gguf";
     writeFiles(qwenRel, {
@@ -172,7 +169,7 @@ describe("bench defaultModeForRel local mmproj sibling", () => {
     expect(defaultModeForRel(qwenRel, resolved)).toBe("text");
   });
 
-  test("(q) local mmproj sibling overrides non-multimodal catalog class -> vision", () => {
+  test("(p) local mmproj sibling overrides non-multimodal catalog class -> vision", () => {
     resolved = buildEnv();
     const general = BUILTIN_CATALOG.find(
       (e) =>
@@ -189,7 +186,19 @@ describe("bench defaultModeForRel local mmproj sibling", () => {
     expect(defaultModeForRel(general.rel, resolved)).toBe("vision");
   });
 
-  test("(s) same general rel, model only, no mmproj -> text", () => {
+  test("(q) uninstalled multimodal catalog rel with no local files -> vision", () => {
+    resolved = buildEnv();
+    const multimodal = BUILTIN_CATALOG.find(
+      (e) =>
+        e.class === "multimodal" && e.rel.includes("/") && !e.rel.startsWith("Qwen3.5-27B-GGUF/"),
+    );
+    expect(multimodal).toBeDefined();
+    if (!multimodal) return;
+    expect(existsSync(join(models, multimodal.rel))).toBe(false);
+    expect(defaultModeForRel(multimodal.rel, resolved)).toBe("vision");
+  });
+
+  test("(r) same general rel, model only, no mmproj -> text", () => {
     resolved = buildEnv();
     const general = BUILTIN_CATALOG.find(
       (e) =>
@@ -203,7 +212,7 @@ describe("bench defaultModeForRel local mmproj sibling", () => {
     expect(defaultModeForRel(general.rel, resolved)).toBe("text");
   });
 
-  test("(r) machineLabel returns expected profile", () => {
+  test("(s) machineLabel returns expected profile", () => {
     resolved = buildEnv();
     expect(machineLabel(resolved)).toBe("macbook-pro-48g");
   });
