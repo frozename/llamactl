@@ -24,7 +24,7 @@ let restoreStderr: () => void;
 function makeCell(row: Partial<Cell> & Pick<Cell, "model_name" | "workload_name">): Cell {
   const { model_name, workload_name, ...rest } = row;
   return {
-    run_id: "run-escape",
+    run_id: "run-default",
     model_name,
     workload_name,
     n_rows: 10,
@@ -157,20 +157,21 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("matrix/diff main — exit codes and error paths", () => {
-  test("1. --format xml returns 1, stderr is exact, stdout is empty", () => {
+  test("--format xml returns 1, stderr is exact, stdout is empty", () => {
     const exit = main(["--db", dbPath, "--format", "xml"]);
     expect(exit).toBe(1);
     expect(stderrBuf).toBe("diff: --format must be md|csv|json, got: xml\n");
     expect(stdoutBuf).toBe("");
   });
 
-  test("2. nonexistent --db returns 1 with db-not-found stderr", () => {
-    const exit = main(["--db", "/tmp/does-not-exist-abc123.db"]);
+  test("nonexistent --db returns 1 with db-not-found stderr", () => {
+    const missing = join(tmp, "missing.db");
+    const exit = main(["--db", missing]);
     expect(exit).toBe(1);
-    expect(stderrBuf).toBe(`diff: db not found at /tmp/does-not-exist-abc123.db\n`);
+    expect(stderrBuf).toBe(`diff: db not found at ${missing}\n`);
   });
 
-  test("3. --models no-such-model returns 2, stderr is exact", () => {
+  test("--models no-such-model returns 2, stderr is exact", () => {
     const exit = main(["--db", dbPath, "--models", "no-such-model"]);
     expect(exit).toBe(2);
     expect(stderrBuf).toBe("diff: no cells matched the filter\n");
@@ -182,25 +183,33 @@ describe("matrix/diff main — exit codes and error paths", () => {
 // ---------------------------------------------------------------------------
 
 describe("matrix/diff main — successful paths", () => {
-  test("4. --format json returns 0, stdout is JSON.parse(loadCells) deep-equals", () => {
+  test("--format json returns 0, stdout is JSON.parse(loadCells) deep-equals", () => {
     const exit = main(["--db", dbPath, "--format", "json"]);
     expect(exit).toBe(0);
-    const cells = loadCells(new Database(dbPath, { readonly: true }), { allRuns: false });
-    new Database(dbPath, { readonly: true }).close();
-    expect(JSON.parse(stdoutBuf)).toEqual(cells);
+    const db = new Database(dbPath, { readonly: true });
+    try {
+      const cells = loadCells(db, { allRuns: false });
+      expect(JSON.parse(stdoutBuf)).toEqual(cells);
+    } finally {
+      db.close();
+    }
     expect(stdoutBuf.endsWith("\n")).toBe(true);
   });
 
-  test("5. no --format returns 0, stdout equals renderMd(loadCells(...))", () => {
+  test("no --format returns 0, stdout equals renderMd(loadCells(...))", () => {
     const exit = main(["--db", dbPath]);
     expect(exit).toBe(0);
-    const cells = loadCells(new Database(dbPath, { readonly: true }), { allRuns: false });
-    new Database(dbPath, { readonly: true }).close();
-    expect(stdoutBuf).toBe(renderMd(cells));
+    const db = new Database(dbPath, { readonly: true });
+    try {
+      const cells = loadCells(db, { allRuns: false });
+      expect(stdoutBuf).toBe(renderMd(cells));
+    } finally {
+      db.close();
+    }
     expect(stdoutBuf).toMatch(/^\| Workload \| Model \|/);
   });
 
-  test("6. --format csv --all-runs returns 0, stdout has 1 header + rows", () => {
+  test("--format csv --all-runs returns 0, stdout has 1 header + rows", () => {
     const exit = main(["--db", dbPath, "--format", "csv", "--all-runs"]);
     expect(exit).toBe(0);
     const lines = stdoutBuf.trim().split("\n");
@@ -213,7 +222,7 @@ describe("matrix/diff main — successful paths", () => {
 // ---------------------------------------------------------------------------
 
 describe("matrix/diff renderJson", () => {
-  test("7. renderJson(cells) === JSON.stringify(cells, null, 2) + newline", () => {
+  test("renderJson(cells) === JSON.stringify(cells, null, 2) + newline", () => {
     const cells = [
       makeCell({ model_name: "m1", workload_name: "w1" }),
       makeCell({ model_name: "m2", workload_name: "w2" }),
@@ -221,7 +230,7 @@ describe("matrix/diff renderJson", () => {
     expect(renderJson(cells)).toBe(JSON.stringify(cells, null, 2) + "\n");
   });
 
-  test("8. renderJson([]) === '[]' + newline", () => {
+  test("renderJson([]) === '[]' + newline", () => {
     expect(renderJson([])).toBe("[]\n");
   });
 });
@@ -231,11 +240,14 @@ describe("matrix/diff renderJson", () => {
 // ---------------------------------------------------------------------------
 
 describe("matrix/diff renderMd ordering and formatting", () => {
-  test("9. Rows sort by workload_name asc, primary_metric_value desc, model_name asc", () => {
+  test("Rows sort by workload_name asc, primary_metric_value desc, model_name asc", () => {
+    // m-model precedes a-model in the input so the model_name tiebreak on the
+    // tied 0.9 pair is what produces the expected order; a stable sort without
+    // it would keep m-model first.
     const cells = [
       makeCell({ model_name: "z-model", workload_name: "alpha", primary_metric_value: 0.5 }),
-      makeCell({ model_name: "a-model", workload_name: "alpha", primary_metric_value: 0.9 }),
       makeCell({ model_name: "m-model", workload_name: "alpha", primary_metric_value: 0.9 }),
+      makeCell({ model_name: "a-model", workload_name: "alpha", primary_metric_value: 0.9 }),
       makeCell({ model_name: "b-model", workload_name: "beta", primary_metric_value: 0.8 }),
     ];
     const md = renderMd(cells);
@@ -252,7 +264,7 @@ describe("matrix/diff renderMd ordering and formatting", () => {
     expect(modelNames).toEqual(["a-model", "m-model", "z-model", "b-model"]);
   });
 
-  test("10. NaN and Infinity render as literal strings", () => {
+  test("NaN and Infinity render as literal strings", () => {
     const cells: Cell[] = [
       {
         ...makeCell({ model_name: "nan-model", workload_name: "special" }),
@@ -265,14 +277,16 @@ describe("matrix/diff renderMd ordering and formatting", () => {
     expect(md).toContain("NaN");
     expect(md).toContain("Infinity");
     expect(md).toContain("-Infinity");
-    expect(md).not.toContain("toFixed");
+    expect(md).toContain(
+      "| special | nan-model | 10 | mean_accuracy | NaN | Infinity | -Infinity | 0 |",
+    );
 
     const csv = renderCsv(cells);
     expect(csv).toContain("NaN");
     expect(csv).toContain("Infinity");
   });
 
-  test("11. renderMd escapes a backslash inside a model name", () => {
+  test("renderMd escapes a backslash inside a model name", () => {
     const cells = [makeCell({ model_name: "a\\b", workload_name: "escape-test" })];
     const md = renderMd(cells);
     expect(md).toContain("a\\\\b");
@@ -284,12 +298,12 @@ describe("matrix/diff renderMd ordering and formatting", () => {
 // ---------------------------------------------------------------------------
 
 describe("matrix/diff parseArgs", () => {
-  test("12. --models with spaces and blanks trims and filters", () => {
+  test("--models with spaces and blanks trims and filters", () => {
     const args = parseArgs(["--db", "/tmp/x.db", "--models", " a , ,b "]);
     expect(args.models).toEqual(["a", "b"]);
   });
 
-  test("13. --models ',,' gives models: [] and matches loadCells with no filter", () => {
+  test("--models ',,' gives models: [] and matches loadCells with no filter", () => {
     const args = parseArgs(["--db", "/tmp/x.db", "--models", ",,"]);
     expect(args.models).toEqual([]);
     const db = new Database(dbPath, { readonly: true });
@@ -301,12 +315,12 @@ describe("matrix/diff parseArgs", () => {
     expect(filtered).toEqual(unfiltered);
   });
 
-  test("14. --models as last argument leaves models key absent", () => {
+  test("--models as last argument leaves models key absent", () => {
     const args = parseArgs(["--db", "/tmp/x.db", "--models"]);
     expect("models" in args).toBe(false);
   });
 
-  test("15. --format csv and --format json are accepted", () => {
+  test("--format csv and --format json are accepted", () => {
     const csvArgs = parseArgs(["--db", "/tmp/x.db", "--format", "csv"]);
     expect(csvArgs.format).toBe("csv");
     const jsonArgs = parseArgs(["--db", "/tmp/x.db", "--format", "json"]);
@@ -319,7 +333,7 @@ describe("matrix/diff parseArgs", () => {
 // ---------------------------------------------------------------------------
 
 describe("matrix/diff loadCells", () => {
-  test("16. models + workloads together returns only matching rows (AND)", () => {
+  test("models + workloads together returns only matching rows (AND)", () => {
     const db = new Database(dbPath, { readonly: true });
     const cells = loadCells(db, { allRuns: false, models: ["mlx-4bit"], workloads: ["tool-call"] });
     db.close();
@@ -329,7 +343,7 @@ describe("matrix/diff loadCells", () => {
     expect(c0.workload_name).toBe("tool-call");
   });
 
-  test("17. allRuns: true returns rows ordered by started_at descending", () => {
+  test("allRuns: true returns rows ordered by started_at descending", () => {
     const db = new Database(dbPath, { readonly: true });
     const cells = loadCells(db, { allRuns: true });
     db.close();
