@@ -58,8 +58,8 @@ jobs:
         run: bun run --cwd packages/cli test
 
       - name: Test packages/app
-        working-directory: llamactl/packages/app
-        run: bun test
+        working-directory: llamactl
+        run: bun run --cwd packages/app test
 
       - name: Test packages/remote
         working-directory: llamactl
