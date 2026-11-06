@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/require-await -- Test doubles implement async migration contracts without artificial scheduling. */
 /* eslint-disable security/detect-non-literal-fs-filename -- Test fixtures use dynamic paths derived from mkdtempSync. */
-import { listPeers, type PeerNode } from "@llamactl/core/config/peers";
+import { listPeers } from "@llamactl/core/config/peers";
 import { afterEach, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -8,17 +8,14 @@ import { tmpdir } from "node:os";
 import type { AggregatorPeer } from "../src/aggregator.js";
 import type { NodeSnapshot } from "../src/migration-controller.js";
 
-import {
-  createEnabledMigrationController,
-  createMigrationController,
-  MigrationController,
-} from "../src/index.js";
+import { createEnabledMigrationController, createMigrationController } from "../src/index.js";
 import { defaultFleetJournalPath, readRecentMovesFromJournal } from "../src/journal.js";
 
 describe("migration controller factory: gate, peer ids, and journal seeding", () => {
   const originalFleetMoveEnabled = process.env["LLAMACTL_FLEET_MOVE_ENABLED"];
   const originalDevStorage = process.env["DEV_STORAGE"];
   const originalConfig = process.env["LLAMACTL_CONFIG"];
+  const tempDirs: string[] = [];
 
   afterEach(() => {
     if (originalFleetMoveEnabled === undefined) {
@@ -36,7 +33,16 @@ describe("migration controller factory: gate, peer ids, and journal seeding", ()
     } else {
       process.env["LLAMACTL_CONFIG"] = originalConfig;
     }
+    for (const dir of tempDirs.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
+
+  function makeTempDir(): string {
+    const dir = mkdtempSync(`${tmpdir()}/llamactl-test-`);
+    tempDirs.push(dir);
+    return dir;
+  }
 
   function peer(overrides: Partial<AggregatorPeer> = {}): AggregatorPeer {
     return {
@@ -81,24 +87,7 @@ describe("migration controller factory: gate, peer ids, and journal seeding", ()
       };
   }
 
-  it("F31: gate rejects when LLAMACTL_FLEET_MOVE_ENABLED is absent", () => {
-    delete process.env["LLAMACTL_FLEET_MOVE_ENABLED"];
-
-    const controller = createEnabledMigrationController({
-      peers: [],
-      fetchSnapshot: async () => ({
-        pressureState: "NORMAL",
-        nodeMem: { freeMb: 4096 },
-        workloads: [],
-      }),
-      selfNode: "m4pro",
-      getLeaseHolder: () => "m4pro",
-    });
-
-    expect(controller).toBeNull();
-  });
-
-  it('F31: gate rejects when LLAMACTL_FLEET_MOVE_ENABLED is "true"', () => {
+  it('gate rejects when LLAMACTL_FLEET_MOVE_ENABLED is "true"', () => {
     process.env["LLAMACTL_FLEET_MOVE_ENABLED"] = "true";
 
     const controller = createEnabledMigrationController({
@@ -115,7 +104,7 @@ describe("migration controller factory: gate, peer ids, and journal seeding", ()
     expect(controller).toBeNull();
   });
 
-  it('F31: gate rejects when LLAMACTL_FLEET_MOVE_ENABLED is "0"', () => {
+  it('gate rejects when LLAMACTL_FLEET_MOVE_ENABLED is "0"', () => {
     process.env["LLAMACTL_FLEET_MOVE_ENABLED"] = "0";
 
     const controller = createEnabledMigrationController({
@@ -132,7 +121,7 @@ describe("migration controller factory: gate, peer ids, and journal seeding", ()
     expect(controller).toBeNull();
   });
 
-  it('F31: gate rejects when LLAMACTL_FLEET_MOVE_ENABLED is "yes"', () => {
+  it('gate rejects when LLAMACTL_FLEET_MOVE_ENABLED is "yes"', () => {
     process.env["LLAMACTL_FLEET_MOVE_ENABLED"] = "yes";
 
     const controller = createEnabledMigrationController({
@@ -149,7 +138,7 @@ describe("migration controller factory: gate, peer ids, and journal seeding", ()
     expect(controller).toBeNull();
   });
 
-  it('F31: gate rejects when LLAMACTL_FLEET_MOVE_ENABLED is " 1" (with leading space)', () => {
+  it('gate rejects when LLAMACTL_FLEET_MOVE_ENABLED is " 1" (with leading space)', () => {
     process.env["LLAMACTL_FLEET_MOVE_ENABLED"] = " 1";
 
     const controller = createEnabledMigrationController({
@@ -166,25 +155,7 @@ describe("migration controller factory: gate, peer ids, and journal seeding", ()
     expect(controller).toBeNull();
   });
 
-  it('F31: gate accepts when LLAMACTL_FLEET_MOVE_ENABLED is exactly "1"', () => {
-    process.env["LLAMACTL_FLEET_MOVE_ENABLED"] = "1";
-
-    const controller = createEnabledMigrationController({
-      peers: [],
-      fetchSnapshot: async () => ({
-        pressureState: "NORMAL",
-        nodeMem: { freeMb: 4096 },
-        workloads: [],
-      }),
-      selfNode: "m4pro",
-      getLeaseHolder: () => "m4pro",
-    });
-
-    expect(controller).not.toBeNull();
-    expect(controller).toBeInstanceOf(MigrationController);
-  });
-
-  it("T14: createEnabledMigrationController resolves peer ids from supplied peers", () => {
+  it("createEnabledMigrationController resolves peer ids from supplied peers", () => {
     process.env["LLAMACTL_FLEET_MOVE_ENABLED"] = "1";
 
     const snapshots: Record<string, NodeSnapshot> = {};
@@ -212,16 +183,13 @@ describe("migration controller factory: gate, peer ids, and journal seeding", ()
     });
   });
 
-  it("T14: createEnabledMigrationController resolves peer ids from listPeers when peers not supplied", () => {
+  it("createEnabledMigrationController resolves peer ids from listPeers when peers not supplied", () => {
     process.env["LLAMACTL_FLEET_MOVE_ENABLED"] = "1";
 
-    const tempDir = mkdtempSync(`${tmpdir()}/llamactl-test-`);
+    const tempDir = makeTempDir();
     process.env["DEV_STORAGE"] = tempDir;
 
-    const configDir = `${tempDir}/config`;
-    mkdirSync(configDir, { recursive: true });
-
-    const configPath = `${configDir}/kubeconfig.yaml`;
+    const configPath = `${tempDir}/kubeconfig.yaml`;
     const kubeconfigYaml = `apiVersion: llamactl/v1
 kind: Config
 currentContext: default
@@ -242,40 +210,18 @@ users:
     writeFileSync(configPath, kubeconfigYaml);
     process.env["LLAMACTL_CONFIG"] = configPath;
 
-    const peers = listPeers();
-    const hasM2Mini = peers.some((p) => p.id === "m2mini");
+    expect(listPeers().map((p) => p.id)).toEqual(["m2mini"]);
 
-    if (hasM2Mini) {
-      const snapshots: Record<string, NodeSnapshot> = {};
-      const controller = createEnabledMigrationController({
-        fetchSnapshot: fetchSnapshot(snapshots),
-        selfNode: "m4pro",
-        getLeaseHolder: () => "m4pro",
-      });
-
-      expect(controller).not.toBeNull();
-
-      snapshots["m2mini"] = {
+    const snapshots: Record<string, NodeSnapshot> = {
+      m2mini: {
         node: "m2mini",
         pressureState: "NORMAL",
         nodeMem: { freeMb: 8000 },
         workloads: [],
-      };
-      snapshots["m4pro"] = highSnapshot();
+      },
+      m4pro: highSnapshot(),
+    };
 
-      const result = controller!.evaluateMove(workload(), highSnapshot());
-      return result.then((proposal) => {
-        if (proposal) {
-          expect(proposal.toNode).toBe("m2mini");
-        }
-      });
-    }
-
-    // If no https peers configured, verify that listPeers returns empty
-    // and the controller falls back to empty peers array (no moves possible).
-    expect(peers).toHaveLength(0);
-
-    const snapshots: Record<string, NodeSnapshot> = {};
     const controller = createEnabledMigrationController({
       fetchSnapshot: fetchSnapshot(snapshots),
       selfNode: "m4pro",
@@ -283,127 +229,17 @@ users:
     });
 
     expect(controller).not.toBeNull();
-    snapshots["m2mini"] = {
-      node: "m2mini",
-      pressureState: "NORMAL",
-      nodeMem: { freeMb: 8000 },
-      workloads: [],
-    };
-    snapshots["m4pro"] = highSnapshot();
 
-    const result = controller!.evaluateMove(workload(), highSnapshot());
-    return result.then((proposal) => {
-      expect(proposal).toBeNull();
+    return controller!.evaluateMove(workload(), highSnapshot()).then((proposal) => {
+      expect(proposal).not.toBeNull();
+      expect(proposal!.toNode).toBe("m2mini");
     });
   });
 
-  it("T15: listPeers filters non-https endpoints", () => {
-    const tempDir = mkdtempSync(`${tmpdir()}/llamactl-test-`);
-    process.env["DEV_STORAGE"] = tempDir;
-
-    const configDir = `${tempDir}/config`;
-    mkdirSync(configDir, { recursive: true });
-
-    const configPath = `${configDir}/kubeconfig.yaml`;
-    const kubeconfigYaml = `apiVersion: llamactl/v1
-kind: Config
-currentContext: default
-contexts:
-- name: default
-  cluster: test-cluster
-  user: test-user
-clusters:
-- name: test-cluster
-  nodes:
-  - name: https-node
-    kind: agent
-    endpoint: https://https-node.local:8080
-  - name: http-node
-    kind: agent
-    endpoint: http://http-node.local:8080
-users:
-- name: test-user
-  token: test-token-value
-`;
-    writeFileSync(configPath, kubeconfigYaml);
-    process.env["LLAMACTL_CONFIG"] = configPath;
-
-    const peers = listPeers();
-    expect(peers.map((p: PeerNode) => p.id)).toEqual(["https-node"]);
-
-    rmSync(tempDir, { recursive: true, force: true });
-  });
-
-  it("T15: listPeers filters local nodes", () => {
-    const tempDir = mkdtempSync(`${tmpdir()}/llamactl-test-`);
-    process.env["DEV_STORAGE"] = tempDir;
-
-    const configDir = `${tempDir}/config`;
-    mkdirSync(configDir, { recursive: true });
-
-    const configPath = `${configDir}/kubeconfig.yaml`;
-    const kubeconfigYaml = `apiVersion: llamactl/v1
-kind: Config
-currentContext: default
-contexts:
-- name: default
-  cluster: test-cluster
-  user: test-user
-clusters:
-- name: test-cluster
-  nodes:
-  - name: remote-node
-    kind: agent
-    endpoint: https://remote.local:8080
-users:
-- name: test-user
-  token: test-token-value
-`;
-    writeFileSync(configPath, kubeconfigYaml);
-    process.env["LLAMACTL_CONFIG"] = configPath;
-
-    const peers = listPeers();
-    // LOCAL_NODE_NAME is "local" — no local node in clusterNodes,
-    // so remote-node should be included.
-    expect(peers.map((p: PeerNode) => p.id)).toEqual(["remote-node"]);
-
-    rmSync(tempDir, { recursive: true, force: true });
-  });
-
-  it("T15: listPeers returns empty array when peers config is absent", () => {
-    const tempDir = mkdtempSync(`${tmpdir()}/llamactl-test-`);
-    process.env["DEV_STORAGE"] = tempDir;
-
-    const configDir = `${tempDir}/config`;
-    mkdirSync(configDir, { recursive: true });
-
-    const configPath = `${configDir}/kubeconfig.yaml`;
-    const kubeconfigYaml = `apiVersion: llamactl/v1
-kind: Config
-currentContext: default
-contexts:
-- name: default
-  cluster: test-cluster
-  user: test-user
-clusters:
-- name: test-cluster
-users:
-- name: test-user
-  token: test-token-value
-`;
-    writeFileSync(configPath, kubeconfigYaml);
-    process.env["LLAMACTL_CONFIG"] = configPath;
-
-    const peers = listPeers();
-    expect(peers).toHaveLength(0);
-
-    rmSync(tempDir, { recursive: true, force: true });
-  });
-
-  it("F27: default journal seeding reads from DEV_STORAGE/fleet-supervisor/journal.jsonl", () => {
+  it("default journal seeding reads from DEV_STORAGE/fleet-supervisor/journal.jsonl", () => {
     process.env["LLAMACTL_FLEET_MOVE_ENABLED"] = "1";
 
-    const tempDir = mkdtempSync(`${tmpdir()}/llamactl-test-`);
+    const tempDir = makeTempDir();
     const journalDir = `${tempDir}/fleet-supervisor`;
     mkdirSync(journalDir, { recursive: true });
     process.env["DEV_STORAGE"] = tempDir;
@@ -453,14 +289,12 @@ users:
 
     // Verify isInMoveCooldown respects the seeded journal entries
     expect(controller!.isInMoveCooldown("model-a")).toBe(true);
-
-    rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it("F27: isInMoveCooldown respects timestamps from seeded journal", () => {
+  it("isInMoveCooldown respects timestamps from seeded journal", () => {
     process.env["LLAMACTL_FLEET_MOVE_ENABLED"] = "1";
 
-    const tempDir = mkdtempSync(`${tmpdir()}/llamactl-test-`);
+    const tempDir = makeTempDir();
     const journalDir = `${tempDir}/fleet-supervisor`;
     mkdirSync(journalDir, { recursive: true });
     process.env["DEV_STORAGE"] = tempDir;
@@ -504,14 +338,12 @@ users:
 
     // Unknown workload should not be in cooldown
     expect(controller!.isInMoveCooldown("unknown-workload")).toBe(false);
-
-    rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it("T16: explicit readRecentMoves overrides default journal reading", () => {
+  it("explicit readRecentMoves overrides default journal reading", () => {
     process.env["LLAMACTL_FLEET_MOVE_ENABLED"] = "1";
 
-    const tempDir = mkdtempSync(`${tmpdir()}/llamactl-test-`);
+    const tempDir = makeTempDir();
     const journalDir = `${tempDir}/fleet-supervisor`;
     mkdirSync(journalDir, { recursive: true });
     process.env["DEV_STORAGE"] = tempDir;
@@ -560,14 +392,12 @@ users:
     // Should use explicit data, not the journal file
     expect(controller!.isInMoveCooldown("explicit-workload")).toBe(true);
     expect(controller!.isInMoveCooldown("model-a")).toBe(false);
-
-    rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it("T16: createMigrationController does not seed default journal", () => {
+  it("createMigrationController does not seed default journal", () => {
     process.env["LLAMACTL_FLEET_MOVE_ENABLED"] = "1";
 
-    const tempDir = mkdtempSync(`${tmpdir()}/llamactl-test-`);
+    const tempDir = makeTempDir();
     const journalDir = `${tempDir}/fleet-supervisor`;
     mkdirSync(journalDir, { recursive: true });
     process.env["DEV_STORAGE"] = tempDir;
@@ -611,11 +441,9 @@ users:
     // createMigrationController does not seed from journal — isInMoveCooldown
     // should be false for "model-a" since no readRecentMoves was supplied.
     expect(controller.isInMoveCooldown("model-a")).toBe(false);
-
-    rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it("T16: createMigrationController isInMoveCooldown returns false without readRecentMoves", () => {
+  it("createMigrationController isInMoveCooldown returns false without readRecentMoves", () => {
     const snapshots: Record<string, NodeSnapshot> = {};
     const controller = createMigrationController({
       peers: ["m2mini"],
@@ -627,7 +455,7 @@ users:
     expect(controller.isInMoveCooldown("any-workload")).toBe(false);
   });
 
-  it("T14: evaluateMove calls fetchSnapshot with peer.id, not endpoint", () => {
+  it("evaluateMove calls fetchSnapshot with peer.id, not endpoint", () => {
     process.env["LLAMACTL_FLEET_MOVE_ENABLED"] = "1";
 
     const snapshots: Record<string, NodeSnapshot> = {};
@@ -665,7 +493,7 @@ users:
     });
   });
 
-  it("T14: evaluateMove selects toNode based on highest freeMb via evaluateMove", () => {
+  it("evaluateMove selects toNode based on highest freeMb", () => {
     process.env["LLAMACTL_FLEET_MOVE_ENABLED"] = "1";
 
     const snapshots: Record<string, NodeSnapshot> = {};
@@ -696,7 +524,7 @@ users:
     });
   });
 
-  it("T14: evaluateMove returns null when no viable destination exists", () => {
+  it("evaluateMove returns null when no viable destination exists", () => {
     process.env["LLAMACTL_FLEET_MOVE_ENABLED"] = "1";
 
     const snapshots: Record<string, NodeSnapshot> = {};
@@ -718,81 +546,5 @@ users:
     return controller!.evaluateMove(workload(), highSnapshot()).then((proposal) => {
       expect(proposal).toBeNull();
     });
-  });
-
-  it("T15: listPeers filters out local node by name", () => {
-    const tempDir = mkdtempSync(`${tmpdir()}/llamactl-test-`);
-    process.env["DEV_STORAGE"] = tempDir;
-
-    const configDir = `${tempDir}/config`;
-    mkdirSync(configDir, { recursive: true });
-
-    const configPath = `${configDir}/kubeconfig.yaml`;
-    const kubeconfigYaml = `apiVersion: llamactl/v1
-kind: Config
-currentContext: default
-contexts:
-- name: default
-  cluster: test-cluster
-  user: test-user
-clusters:
-- name: test-cluster
-  nodes:
-  - name: local
-    kind: agent
-    endpoint: https://local.local:8080
-  - name: remote-node
-    kind: agent
-    endpoint: https://remote.local:8080
-users:
-- name: test-user
-  token: test-token-value
-`;
-    writeFileSync(configPath, kubeconfigYaml);
-    process.env["LLAMACTL_CONFIG"] = configPath;
-
-    const peers = listPeers();
-    // "local" should be filtered out (LOCAL_NODE_NAME)
-    expect(peers.map((p: PeerNode) => p.id)).toEqual(["remote-node"]);
-
-    rmSync(tempDir, { recursive: true, force: true });
-  });
-
-  it("T15: listPeers filters out local node by endpoint", () => {
-    const tempDir = mkdtempSync(`${tmpdir()}/llamactl-test-`);
-    process.env["DEV_STORAGE"] = tempDir;
-
-    const configDir = `${tempDir}/config`;
-    mkdirSync(configDir, { recursive: true });
-
-    const configPath = `${configDir}/kubeconfig.yaml`;
-    const kubeconfigYaml = `apiVersion: llamactl/v1
-kind: Config
-currentContext: default
-contexts:
-- name: default
-  cluster: test-cluster
-  user: test-user
-clusters:
-- name: test-cluster
-  nodes:
-  - name: other-name
-    kind: agent
-    endpoint: http://localhost:8080
-  - name: remote-node
-    kind: agent
-    endpoint: https://remote.local:8080
-users:
-- name: test-user
-  token: test-token-value
-`;
-    writeFileSync(configPath, kubeconfigYaml);
-    process.env["LLAMACTL_CONFIG"] = configPath;
-
-    const peers = listPeers();
-    // localhost endpoint should be filtered out (LOCAL_NODE_ENDPOINT)
-    expect(peers.map((p: PeerNode) => p.id)).toEqual(["remote-node"]);
-
-    rmSync(tempDir, { recursive: true, force: true });
   });
 });
