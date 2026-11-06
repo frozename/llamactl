@@ -30,6 +30,8 @@ export default tseslint.config(
       "docs/notes/**",
       "packages/train/vendor/**",
       "packages/train/.spike-work/**",
+      "packages/app/test-results/**",
+      "packages/app/playwright-report/**",
       "**/.venv/**",
       "packages/app/release/**",
       ".claude/**",
