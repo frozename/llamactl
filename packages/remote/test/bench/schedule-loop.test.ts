@@ -409,6 +409,45 @@ describe("bench scheduler loop", () => {
     expect(existsSync(benchRunLockPath())).toBe(false);
   }, 10_000);
 
+  test("a lockfile naming this pid is reclaimed as stale", async () => {
+    writeFileSync(
+      benchRunLockPath(),
+      JSON.stringify({ pid: process.pid, startedAt: "2026-01-01T00:00:00.000Z" }),
+      "utf8",
+    );
+    saveSchedules([dueSchedule("lock-20")], schedulePath);
+
+    await kickBenchScheduler(autoCompleting().getClient);
+
+    const entry = loadSchedules(schedulePath).find((s) => s.id === "lock-20")!;
+    expect(entry.lastRunAt).not.toBe("2000-01-01T00:00:00.000Z");
+    expect(Number.isNaN(Date.parse(entry.lastRunAt!))).toBe(false);
+    expect(existsSync(benchRunLockPath())).toBe(false);
+  });
+
+  test("release leaves a lockfile that now names a foreign pid", async () => {
+    saveSchedules([dueSchedule("lock-21")], schedulePath);
+    const { getClient, held } = fakeClient(
+      new Map([["org/repo/lock-21.gguf", { complete: false }]]),
+    );
+
+    const kick = kickBenchScheduler(getClient);
+    expect(benchSchedulerStatus().inflight).toBe(true);
+    expect(held).toHaveLength(1);
+
+    // Another process replaced the lockfile while this bench ran.
+    writeFileSync(
+      benchRunLockPath(),
+      JSON.stringify({ pid: 1, startedAt: "2026-01-01T00:00:00.000Z" }),
+      "utf8",
+    );
+    held[0]!.onComplete();
+    await kick;
+
+    const holder = JSON.parse(readFileSync(benchRunLockPath(), "utf8")) as { pid: number };
+    expect(holder.pid).toBe(1);
+  });
+
   test("stop after the first due schedule fires no further benches in the tick", async () => {
     saveSchedules(
       [dueSchedule("stop-17a"), dueSchedule("stop-17b"), dueSchedule("stop-17c")],
