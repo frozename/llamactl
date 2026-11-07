@@ -10,6 +10,7 @@
 import type { TRPCLink } from "@trpc/client";
 import type { AnyRouter } from "@trpc/server";
 
+import * as remote from "@llamactl/remote";
 import { createTRPCClient } from "@trpc/client";
 import { describe, expect, test } from "bun:test";
 
@@ -28,6 +29,7 @@ interface BuildHttpLinksOptions {
 
 interface HttpTransportModule {
   buildHttpLinks?: (opts: BuildHttpLinksOptions) => TRPCLink<AnyRouter>[];
+  CONSOLE_MAX_BATCH_ITEMS?: number;
   CONSOLE_NODE_NAME?: RegExp;
   isConsoleNodeName?: (name: string) => boolean;
 }
@@ -251,6 +253,51 @@ describe("buildHttpLinks (#410 P3)", () => {
     const mod = await importHttpTransport();
     expect(mod?.CONSOLE_NODE_NAME).toBeInstanceOf(RegExp);
     expect(mod?.isConsoleNodeName).toBeFunction();
+  });
+
+  test("batch link caps a fan-out at CONSOLE_MAX_BATCH_ITEMS (16), matching the server's CONSOLE_MAX_BATCH_SEGMENTS", async () => {
+    const mod = await importHttpTransport();
+    const items: unknown = mod?.CONSOLE_MAX_BATCH_ITEMS;
+    expect(typeof items).toBe("number");
+    expect(items as number).toBe(16);
+    const serverLimit: unknown = (remote as unknown as Record<string, unknown>)[
+      "CONSOLE_MAX_BATCH_SEGMENTS"
+    ];
+    expect(typeof serverLimit).toBe("number");
+    expect(items as number).toBe(serverLimit as number);
+  });
+
+  test("a fan-out of 17 queries makes 2 batch fetches (16 + 1) and every query resolves", async () => {
+    const mod = await importHttpTransport();
+    expect(mod?.buildHttpLinks).toBeFunction();
+
+    const segmentsPerCall: number[] = [];
+    const fakeFetch: FakeFetch = (input) => {
+      const url = input instanceof Request ? input.url : input instanceof URL ? input.href : input;
+      const path = url.split("?")[0] ?? "";
+      const procs = decodeURIComponent(path.slice(path.indexOf("/trpc/") + "/trpc/".length)).split(
+        ",",
+      );
+      segmentsPerCall.push(procs.length);
+      return Promise.resolve(
+        new Response(JSON.stringify(procs.map((_, i) => ({ result: { data: i } }))), {
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    };
+    const client = makeClient(mod!.buildHttpLinks!, {
+      baseUrl: "/api",
+      node: "local",
+      fetch: fakeFetch,
+      EventSource: FakeEventSource,
+    });
+
+    const results = await Promise.all(
+      Array.from({ length: 17 }, () => client.serverStatus.query()),
+    );
+
+    expect(segmentsPerCall).toEqual([16, 1]);
+    expect(results).toHaveLength(17);
   });
 });
 
