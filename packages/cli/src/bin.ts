@@ -6,6 +6,7 @@ import { runBench } from "./commands/bench.js";
 import { runCandidate } from "./commands/candidate.js";
 import { runCatalog } from "./commands/catalog.js";
 import { runComposite } from "./commands/composite.js";
+import { runConsole } from "./commands/console.js";
 import { runController } from "./commands/controller.js";
 import { runCostGuardian } from "./commands/cost-guardian.js";
 import { runCtx } from "./commands/ctx.js";
@@ -235,6 +236,9 @@ Agentic operations:
                                               /tunnel-relay POST against it.
   llamactl fleet snapshot [--all]             Show local or cluster fleet snapshots
   llamactl fleet status                       Show one-line fleet pressure summary per node
+  llamactl console [--port <n>] [--no-open]   Serve the web console on 127.0.0.1
+      [--dist <path>]                         (build first: bun run --cwd
+                                              packages/app build:web)
 
 Self-update (source installs):
   llamactl update [--check]                   Fetch and show what an update to
@@ -340,6 +344,8 @@ async function main(argv: string[]): Promise<number> {
       return await runTunnel(rest);
     case "fleet":
       return await runFleet(rest);
+    case "console":
+      return await runConsole(rest);
     case "update":
       return await runUpdate(rest);
     case "--version":

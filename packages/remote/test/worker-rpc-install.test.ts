@@ -660,6 +660,8 @@ describe("I1: clean install", () => {
       "candidate",
       "catalog",
       "composite",
+      // `llamactl console` web-console launcher (frozename/llamactl#410).
+      "console",
       "controller",
       "cost-guardian",
       "ctx",
@@ -750,6 +752,8 @@ describe("I1: clean install", () => {
     // #289: 0600 bearer-file paths for the tunnel bearers, so launchd/systemd units never embed the token.
     BASELINE_ENV.add("LLAMACTL_TUNNEL_BEARER_FILE");
     BASELINE_ENV.add("LLAMACTL_TUNNEL_CENTRAL_BEARER_FILE");
+    // #410: dist-dir override for the `llamactl console` web launcher, not the worker RPC.
+    BASELINE_ENV.add("LLAMACTL_CONSOLE_DIST");
     const sources = join(import.meta.dir, "..", "..");
     const read = new Map<string, string[]>();
     for (const pkg of readdirSync(sources)) {
