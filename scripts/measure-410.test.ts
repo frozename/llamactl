@@ -1,12 +1,11 @@
 // scripts/measure-410.test.ts
 // Issue frozename/llamactl#410 (P6) — contract for the footprint
 // measurement script and the operator decision record. R1-R9 fixtures
-// are pure in-memory: no process, no network, no clock. R10-R15 read
+// are pure in-memory: no process, no network, no clock. R10-R20 read
 // the decision doc, the real packages/app/e2e specs and temp trees.
 // The module type is imported with `import type` (erased at runtime)
-// and loaded through an existsSync gate, so each case fails by
-// assertion while scripts/measure-410.ts and
-// docs/decisions/410-ui-runtime.md are absent.
+// and loaded through an existsSync gate, so a missing module fails by
+// assertion rather than a thrown import error.
 
 import { describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
@@ -71,6 +70,120 @@ function section(text: string, heading: string): string {
   }
   const end = text.indexOf("\n## ", start + heading.length);
   return text.slice(start, end < 0 ? undefined : end);
+}
+
+const norm = (s: string): string => s.replaceAll(/\s+/g, " ");
+
+const ASSERTION_FORM = /expect\(|\)\.to[A-Z]/;
+
+// measureSecurityChecklist(root) and CREDENTIALS_SPEC_PROBE land with
+// the fix; this widened view keeps the suite type-checking before and
+// after they do.
+type PendingMeasureExports = {
+  CREDENTIALS_SPEC_PROBE?: Measure.CoverageProbe;
+  measureSecurityChecklist?: (root?: string) => { credentialsSpec?: unknown };
+};
+
+function probesOf(m: typeof Measure, id: string): readonly Measure.CoverageProbe[] {
+  return m.COVERAGE_PROBES[id] ?? [];
+}
+
+function needlesBySpec(
+  coverageProbes: Readonly<Record<string, readonly Measure.CoverageProbe[]>>,
+): Map<string, string[]> {
+  const bySpec = new Map<string, string[]>();
+  for (const probes of Object.values(coverageProbes)) {
+    for (const probe of probes) {
+      bySpec.set(probe.spec, [...(bySpec.get(probe.spec) ?? []), ...probe.needles]);
+    }
+  }
+  return bySpec;
+}
+
+function tempTree(prefix: string): {
+  cleanup: () => void;
+  root: string;
+  write: (spec: string, text: string) => void;
+} {
+  const root = mkdtempSync(join(tmpdir(), prefix));
+  return {
+    cleanup: (): void => {
+      rmSync(root, { force: true, recursive: true });
+    },
+    root,
+    write: (spec: string, text: string): void => {
+      const path = join(root, spec);
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, text);
+    },
+  };
+}
+
+function expectContainsAll(text: string, needles: readonly string[]): void {
+  for (const needle of needles) {
+    expect(text).toContain(needle);
+  }
+}
+
+function expectNotContainsAny(text: string, needles: readonly string[]): void {
+  for (const needle of needles) {
+    expect(text).not.toContain(needle);
+  }
+}
+
+function expectAssertionNeedles(probes: readonly Measure.CoverageProbe[]): void {
+  for (const probe of probes) {
+    for (const needle of probe.needles) {
+      expect(needle).toMatch(ASSERTION_FORM);
+    }
+  }
+}
+
+function expectPhantomFree(mapped: ReadonlySet<string>, phantoms: readonly string[]): void {
+  for (const spec of mapped) {
+    for (const phantom of phantoms) {
+      expect(spec.endsWith(phantom)).toBe(false);
+    }
+  }
+}
+
+function checkCommentBlindness(
+  m: typeof Measure,
+  id: "T2" | "T5" | "T6",
+  spec: string,
+  prose: string,
+): void {
+  const tree = tempTree(`measure-410-${id.toLowerCase()}-`);
+  try {
+    for (const [target, needles] of needlesBySpec(m.COVERAGE_PROBES)) {
+      tree.write(target, needles.join("\n"));
+    }
+    const needles = probesOf(m, id)
+      .filter((probe) => probe.spec === spec)
+      .flatMap((probe) => probe.needles);
+    expect(needles.length).toBeGreaterThan(0);
+    const missing = needles.map((needle) => `${spec}#${needle}`);
+    const commentedStatus = id === "T2" ? "partial" : "missing";
+    const row = (): Measure.TaskCoverageRow | undefined =>
+      new Map(m.measureTaskCoverage(tree.root).rows.map((entry) => [entry.id, entry])).get(id);
+
+    tree.write(spec, needles.join("\n"));
+    expect(row()?.status).toBe("covered");
+    expect(row()?.covered).toBe(true);
+    expect(row()?.missingNeedles).toEqual([]);
+
+    tree.write(spec, needles.map((needle) => `// ${needle}`).join("\n"));
+    expect(row()?.status).toBe(commentedStatus);
+    expect(row()?.covered).toBe(false);
+    expect(row()?.missingNeedles).toEqual(missing);
+
+    tree.write(spec, `// ${prose}`);
+    expect(row()?.status).toBe(commentedStatus);
+    expect(row()?.covered).toBe(false);
+    expect(row()?.missingNeedles).toEqual(missing);
+  } finally {
+    tree.cleanup();
+  }
 }
 
 describe("measure-410 contract (#410 P6)", () => {
@@ -431,11 +544,12 @@ describe("measure-410 contract (#410 P6)", () => {
     expect(verdict(covered, "setup-le-3-no-signing")).toBe("pass");
   });
 
-  test("R10 the decision doc carries measurements, coverage, thresholds and an open decision", () => {
+  test("R10 the decision doc carries measurements, coverage, thresholds and a recorded decision", () => {
     expect(existsSync(DOC)).toBe(true);
     const text = readFileSync(DOC, "utf8");
+    const whole = norm(text);
 
-    for (const heading of [
+    expectContainsAll(whole, [
       "## Measurements",
       "## Task coverage",
       "## Thresholds",
@@ -443,9 +557,7 @@ describe("measure-410 contract (#410 P6)", () => {
       "## Risks",
       "## Recommendation",
       "## Operator decision",
-    ]) {
-      expect(text).toContain(heading);
-    }
+    ]);
 
     const measurements = section(text, "## Measurements");
     const fenceStart = measurements.indexOf("```json");
@@ -463,7 +575,8 @@ describe("measure-410 contract (#410 P6)", () => {
     }
 
     const lines = text.split("\n");
-    const taskRow = (id: string): string => lines.find((line) => line.startsWith(`| ${id}`)) ?? "";
+    const taskRow = (id: string): string =>
+      norm(lines.find((line) => line.startsWith(`| ${id}`)) ?? "");
     for (const id of ["T1", "T2", "T3", "T4", "T5", "T6"]) {
       expect(taskRow(id)).not.toBe("");
     }
@@ -478,23 +591,23 @@ describe("measure-410 contract (#410 P6)", () => {
     expect(taskRow("T4")).toContain("stop X with confirmation");
     expect(taskRow("T4")).toContain("packages/app/e2e/lifecycle.spec.ts");
     expect(taskRow("T5")).toContain("tail logs on two nodes in two tabs at once");
+    expect(taskRow("T5")).toContain("packages/app/e2e/two-tabs.spec.ts");
     expect(taskRow("T6")).toContain("recover after a console restart");
+    expect(taskRow("T6")).toContain("packages/app/e2e/restart.spec.ts");
     for (const id of ["T1", "T3", "T4"]) {
       expect(taskRow(id)).toContain("covered");
       expect(taskRow(id)).not.toContain("not yet covered");
     }
-    expect(taskRow("T2")).toContain("partial");
-    expect(taskRow("T2")).not.toContain("not yet covered");
-    expect(taskRow("T5")).toContain("not yet covered");
-    expect(taskRow("T6")).toContain("not yet covered");
-    expect(taskRow("T6")).not.toContain("usage study");
-    for (const phantom of ["navigation.spec", "inspect.spec", "two-tabs.spec"]) {
-      expect(text).not.toContain(phantom);
+    for (const id of ["T2", "T5", "T6"]) {
+      expect(taskRow(id)).toContain("covered");
+      expect(taskRow(id)).not.toContain("partial");
+      expect(taskRow(id)).not.toContain("not yet covered");
     }
+    expect(taskRow("T6")).not.toContain("usage study");
+    expectNotContainsAny(whole, ["navigation.spec", "inspect.spec"]);
 
-    for (const needle of [
+    expectContainsAll(whole, [
       "#489",
-      "fixme",
       "bench scheduler",
       "P7-A",
       "P7-B",
@@ -502,20 +615,19 @@ describe("measure-410 contract (#410 P6)", () => {
       "credentials.spec",
       "llamactl bench schedule",
       "scheduled benches stop",
-    ]) {
-      expect(text).toContain(needle);
-    }
-    for (const stale of [
+    ]);
+    expectNotContainsAny(whole, [
       "usage parity",
       "standing in for a live human usage study",
       "not normalized against",
       "bench scheduler normalization",
       "per-runner normalization",
-    ]) {
-      expect(text).not.toContain(stale);
-    }
+    ]);
 
-    const recommendation = section(text, "## Recommendation").replaceAll(/\s+/g, " ");
+    const gaps = norm(section(text, "## Known gaps"));
+    expectNotContainsAny(gaps, ["fixme", "credentialsSpec` stays"]);
+
+    const recommendation = norm(section(text, "## Recommendation"));
     expect(recommendation).toMatch(/Option [AB]/);
     expect(recommendation).toMatch(/focused web conversion/i);
     expect(recommendation).toMatch(/retire the UI completely/i);
@@ -523,21 +635,38 @@ describe("measure-410 contract (#410 P6)", () => {
     expect(recommendation).toContain("P7-B");
     expect(recommendation).not.toMatch(/thin launcher/);
 
-    const decision = section(text, "## Operator decision");
-    expect(decision).not.toMatch(/\bDecision:\s*[AB]\b/);
-    expect(decision).not.toContain("Option A selected");
-    expect(decision).not.toContain("Option B selected");
+    const decision = norm(section(text, "## Operator decision"));
+    expectContainsAll(decision, [
+      "Option A",
+      "focused web conversion",
+      "P7-A",
+      "2026-11-07",
+      '"A. for 2 do as you recommend"',
+      "llamactl bench schedule",
+      "console-e2e",
+      "(b)",
+      "(c)",
+      "(d)",
+      "localStorage",
+      "llamactl console",
+    ]);
+    expect(decision).toMatch(/≥\s*5 consecutive/);
+    expect(decision).toMatch(/scheduled benches (do not|don't) stop|keep scheduled benches/i);
+    expect(whole).not.toContain("awaiting operator decision");
   });
 
-  test("R11 coverage probes point at real specs and the real tree lands covered, partial and missing", async () => {
+  test("R11 coverage probes point at real specs and the real tree lands covered", async () => {
     const m = await load();
     expect(Object.keys(m.COVERAGE_PROBES).sort()).toEqual(["T1", "T2", "T3", "T4", "T5", "T6"]);
     const realSpecs = [
+      "packages/app/e2e/credentials.spec.ts",
       "packages/app/e2e/fleet.spec.ts",
       "packages/app/e2e/lifecycle.spec.ts",
       "packages/app/e2e/logs.spec.ts",
       "packages/app/e2e/nodes.spec.ts",
+      "packages/app/e2e/restart.spec.ts",
       "packages/app/e2e/session.spec.ts",
+      "packages/app/e2e/two-tabs.spec.ts",
       "packages/app/e2e/workloads.spec.ts",
     ];
     const mapped = new Set<string>();
@@ -547,48 +676,58 @@ describe("measure-410 contract (#410 P6)", () => {
         mapped.add(probe.spec);
       }
     }
-    expect(m.COVERAGE_PROBES["T5"]).toEqual([]);
-    expect(m.COVERAGE_PROBES["T6"]).toEqual([]);
-    for (const phantom of [
-      "navigation.spec.ts",
-      "inspect.spec.ts",
-      "credentials.spec.ts",
-      "two-tabs.spec.ts",
-    ]) {
-      for (const spec of mapped) {
-        expect(spec.endsWith(phantom)).toBe(false);
-      }
-    }
+    expect(probesOf(m, "T5").length).toBeGreaterThan(0);
+    expect(probesOf(m, "T5").map((probe) => probe.spec)).toEqual([
+      "packages/app/e2e/two-tabs.spec.ts",
+    ]);
+    expect(probesOf(m, "T6").length).toBeGreaterThan(0);
+    expect(probesOf(m, "T6").map((probe) => probe.spec)).toEqual([
+      "packages/app/e2e/restart.spec.ts",
+    ]);
+    expectPhantomFree(mapped, ["navigation.spec.ts", "inspect.spec.ts", "credentials.spec.ts"]);
 
     const byId = new Map(m.measureTaskCoverage().rows.map((row) => [row.id, row]));
-    expect(byId.get("T1")?.status).toBe("covered");
-    expect(byId.get("T3")?.status).toBe("covered");
-    expect(byId.get("T4")?.status).toBe("covered");
-    expect(byId.get("T5")?.status).toBe("missing");
-    expect(byId.get("T6")?.status).toBe("missing");
-    const t2 = byId.get("T2");
-    expect(t2?.status).toBe("partial");
-    expect(t2?.covered).toBe(false);
-    expect(t2?.missingNeedles).toEqual([
-      'packages/app/e2e/workloads.spec.ts#toContainText("Running")',
-    ]);
-    const t2probes = m.COVERAGE_PROBES["T2"] ?? [];
-    expect(t2probes.map((probe) => probe.spec)).toEqual([
-      "packages/app/e2e/fleet.spec.ts",
-      "packages/app/e2e/workloads.spec.ts",
-    ]);
-    const fleet = readFileSync(
-      join(import.meta.dir, "..", "packages/app/e2e/fleet.spec.ts"),
-      "utf8",
-    );
-    for (const needle of t2probes[0]?.needles ?? []) {
-      expect(fleet).toContain(needle);
+    for (const id of ["T1", "T2", "T3", "T4", "T5", "T6"]) {
+      expect(byId.get(id)?.status).toBe("covered");
+      expect(byId.get(id)?.covered).toBe(true);
+      expect(byId.get(id)?.missingNeedles).toEqual([]);
     }
-    const workloads = readFileSync(
-      join(import.meta.dir, "..", "packages/app/e2e/workloads.spec.ts"),
-      "utf8",
-    );
-    expect(workloads).not.toContain("Running");
+
+    // bare T1/T3/T4 needles: follow-up
+    const pending = m as unknown as PendingMeasureExports;
+    const credentialsProbe = pending.CREDENTIALS_SPEC_PROBE;
+    expect(credentialsProbe).toBeDefined();
+    const assertionProbes: Measure.CoverageProbe[] = [
+      ...probesOf(m, "T2"),
+      ...probesOf(m, "T5"),
+      ...probesOf(m, "T6"),
+    ];
+    if (credentialsProbe !== undefined) {
+      assertionProbes.push(credentialsProbe);
+    }
+    expectAssertionNeedles(assertionProbes);
+    expect(probesOf(m, "T2").flatMap((probe) => probe.needles)).not.toContain("advertisedEndpoint");
+
+    const codeOnly = (text: string): string =>
+      text
+        .split("\n")
+        .filter((line) => {
+          const trimmed = line.trimStart();
+          return !trimmed.startsWith("//") && !trimmed.startsWith("/*") && !trimmed.startsWith("*");
+        })
+        .join("\n");
+    const allProbes: Measure.CoverageProbe[] = Object.values(m.COVERAGE_PROBES).flat();
+    if (credentialsProbe !== undefined) {
+      allProbes.push(credentialsProbe);
+    }
+    const specText = new Map<string, string>();
+    for (const probe of allProbes) {
+      const text =
+        specText.get(probe.spec) ??
+        codeOnly(readFileSync(join(import.meta.dir, "..", probe.spec), "utf8"));
+      specText.set(probe.spec, text);
+      expectContainsAll(text, probe.needles);
+    }
 
     const probe = [{ needles: ["alpha"], spec: "a.spec.ts" }];
     expect(m.coverageStatus(probe, () => "alpha here")).toEqual({
@@ -623,18 +762,19 @@ describe("measure-410 contract (#410 P6)", () => {
     expect(
       m.coverageStatus(pair, (spec) => (spec === "a.spec.ts" ? "alpha" : "beta here")),
     ).toEqual({ covered: true, missingNeedles: [], status: "covered" });
+    expect(
+      m.coverageStatus(
+        [{ needles: ["alpha"], spec: "a.spec.ts" }],
+        () => "// alpha\n/* alpha */\n * alpha",
+      ),
+    ).toEqual({ covered: false, missingNeedles: ["a.spec.ts#alpha"], status: "missing" });
   });
 
   test("R12 measureTaskCoverage reads a temp fixture tree: covered, partial, missing", async () => {
     const m = await load();
-    const root = mkdtempSync(join(tmpdir(), "measure-410-cov-"));
-    const write = (spec: string, text: string): void => {
-      const path = join(root, spec);
-      mkdirSync(dirname(path), { recursive: true });
-      writeFileSync(path, text);
-    };
+    const tree = tempTree("measure-410-cov-");
     try {
-      const empty = m.measureTaskCoverage(root);
+      const empty = m.measureTaskCoverage(tree.root);
       for (const row of empty.rows) {
         expect(row.status).toBe("missing");
         expect(row.covered).toBe(false);
@@ -644,45 +784,40 @@ describe("measure-410 contract (#410 P6)", () => {
           expect(row.missingNeedles).toContain(`${spec} (absent)`);
         }
       }
-      const bySpec = new Map<string, string[]>();
-      for (const probes of Object.values(m.COVERAGE_PROBES)) {
-        for (const probe of probes) {
-          bySpec.set(probe.spec, [...(bySpec.get(probe.spec) ?? []), ...probe.needles]);
-        }
+      for (const [spec, needles] of needlesBySpec(m.COVERAGE_PROBES)) {
+        tree.write(spec, needles.join("\n"));
       }
-      for (const [spec, needles] of bySpec) {
-        write(spec, needles.join("\n"));
-      }
-      const full = new Map(m.measureTaskCoverage(root).rows.map((row) => [row.id, row]));
-      for (const id of ["T1", "T2", "T3", "T4"]) {
+      const full = new Map(m.measureTaskCoverage(tree.root).rows.map((row) => [row.id, row]));
+      for (const id of ["T1", "T2", "T3", "T4", "T5", "T6"]) {
         expect(full.get(id)?.status).toBe("covered");
         expect(full.get(id)?.covered).toBe(true);
         expect(full.get(id)?.missingNeedles).toEqual([]);
       }
-      for (const id of ["T5", "T6"]) {
-        expect(full.get(id)?.status).toBe("missing");
-      }
-      write(
+      const workloadsNeedles = probesOf(m, "T2")
+        .filter((probe) => probe.spec === "packages/app/e2e/workloads.spec.ts")
+        .flatMap((probe) => probe.needles);
+      expect(workloadsNeedles.length).toBeGreaterThan(0);
+      tree.write(
         "packages/app/e2e/workloads.spec.ts",
         [
-          "// the row settles into the Running phase once the workload starts",
+          ...workloadsNeedles.map((needle) => `// ${needle}`),
           'await expect(row).toContainText("local");',
         ].join("\n"),
       );
-      const partial = new Map(m.measureTaskCoverage(root).rows.map((row) => [row.id, row]));
+      const partial = new Map(m.measureTaskCoverage(tree.root).rows.map((row) => [row.id, row]));
       expect(partial.get("T2")?.status).toBe("partial");
       expect(partial.get("T2")?.covered).toBe(false);
-      expect(partial.get("T2")?.missingNeedles).toEqual([
-        'packages/app/e2e/workloads.spec.ts#toContainText("Running")',
-      ]);
+      expect(partial.get("T2")?.missingNeedles).toEqual(
+        workloadsNeedles.map((needle) => `packages/app/e2e/workloads.spec.ts#${needle}`),
+      );
       expect(partial.get("T1")?.status).toBe("covered");
-      write("packages/app/e2e/workloads.spec.ts", 'await expect(row).toContainText("Running");');
-      const asserted = new Map(m.measureTaskCoverage(root).rows.map((row) => [row.id, row]));
+      tree.write("packages/app/e2e/workloads.spec.ts", workloadsNeedles.join("\n"));
+      const asserted = new Map(m.measureTaskCoverage(tree.root).rows.map((row) => [row.id, row]));
       expect(asserted.get("T2")?.status).toBe("covered");
       expect(asserted.get("T2")?.covered).toBe(true);
       expect(asserted.get("T2")?.missingNeedles).toEqual([]);
     } finally {
-      rmSync(root, { force: true, recursive: true });
+      tree.cleanup();
     }
   });
 
@@ -862,5 +997,75 @@ describe("measure-410 contract (#410 P6)", () => {
     } finally {
       rmSync(root, { force: true, recursive: true });
     }
+  });
+
+  test("R17 T2 coverage requires workloads.spec.ts needles as code, not comments", async () => {
+    const m = await load();
+    checkCommentBlindness(
+      m,
+      "T2",
+      "packages/app/e2e/workloads.spec.ts",
+      "#410 T2: phase and endpoint coverage note",
+    );
+  });
+
+  test("R18 T5 coverage requires two-tabs.spec.ts needles as code, not comments", async () => {
+    const m = await load();
+    checkCommentBlindness(
+      m,
+      "T5",
+      "packages/app/e2e/two-tabs.spec.ts",
+      "#410 T5: two log tabs on two nodes while a stop runs",
+    );
+  });
+
+  test("R19 T6 coverage requires restart.spec.ts needles as code, not comments", async () => {
+    const m = await load();
+    checkCommentBlindness(
+      m,
+      "T6",
+      "packages/app/e2e/restart.spec.ts",
+      "#410 T6: recover after a console restart",
+    );
+  });
+
+  test("R20 credentialsSpec requires the credentials spec needles as code", async () => {
+    const m = await load();
+    const pending = m as unknown as PendingMeasureExports;
+    expect(pending.CREDENTIALS_SPEC_PROBE).toBeDefined();
+    const credentialsProbe = pending.CREDENTIALS_SPEC_PROBE;
+    expect(credentialsProbe?.spec).toBe("packages/app/e2e/credentials.spec.ts");
+    const needles = credentialsProbe?.needles ?? [];
+    expect(needles.length).toBeGreaterThan(0);
+    expectAssertionNeedles(credentialsProbe === undefined ? [] : [credentialsProbe]);
+    expect(typeof pending.measureSecurityChecklist).toBe("function");
+    const measure = pending.measureSecurityChecklist;
+    const checklist = (root?: string): { credentialsSpec?: unknown } | undefined => measure?.(root);
+
+    const tree = tempTree("measure-410-creds-");
+    try {
+      const spec = "packages/app/e2e/credentials.spec.ts";
+      expect(checklist(tree.root)?.credentialsSpec).toBe(false);
+      tree.write(spec, 'test("credentials sweep", async () => {});');
+      expect(checklist(tree.root)?.credentialsSpec).toBe(false);
+      tree.write(spec, needles.map((needle) => `// ${needle}`).join("\n"));
+      expect(checklist(tree.root)?.credentialsSpec).toBe(false);
+      tree.write(spec, needles.join("\n"));
+      expect(checklist(tree.root)?.credentialsSpec).toBe(true);
+      expect(checklist()?.credentialsSpec).toBe(true);
+    } finally {
+      tree.cleanup();
+    }
+
+    const text = readFileSync(DOC, "utf8");
+    const measurements = section(text, "## Measurements");
+    const fenceStart = measurements.indexOf("```json");
+    const fenceEnd =
+      fenceStart < 0 ? -1 : measurements.indexOf("```", fenceStart + "```json".length);
+    expect(fenceStart).toBeGreaterThanOrEqual(0);
+    expect(fenceEnd).toBeGreaterThanOrEqual(0);
+    const report = asRecord(parseJsonSafe(measurements.slice(fenceStart + 7, fenceEnd)));
+    const security = asRecord(report?.["securityChecklist"]);
+    expect(security?.["credentialsSpec"]).toBe(true);
   });
 });

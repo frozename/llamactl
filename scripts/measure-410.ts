@@ -835,59 +835,6 @@ export function measureConsoleUpkeep(root: string = ROOT): ConsoleUpkeepMeasurem
   };
 }
 
-function measureSecurityChecklist(): Record<string, unknown> {
-  const probes: [string, string, string[]][] = [
-    [
-      "session cookie is port-scoped HttpOnly",
-      "packages/remote/test/console/session.test.ts",
-      ["HttpOnly session cookie"],
-    ],
-    [
-      "CSRF + loopback hostname guard",
-      "packages/remote/test/console/guards.test.ts",
-      ["cross_site_request_forbidden", "refuses a non-loopback hostname"],
-    ],
-    ["batch size guard", "packages/remote/test/console/batch.test.ts", ["bad_batch"]],
-    [
-      "no sentinel on the wire",
-      "packages/remote/test/console/redaction.test.ts",
-      ["no sentinel on the wire"],
-    ],
-    [
-      "node credentials fail closed",
-      "packages/remote/test/console/fail-closed.test.ts",
-      ["node_credentials_unavailable"],
-    ],
-    [
-      "zero stop calls on precheck failure",
-      "packages/remote/test/console/stop-precheck.test.ts",
-      ["zero stop calls"],
-    ],
-    [
-      "forged stops refused before backend",
-      "packages/app/e2e/lifecycle.spec.ts",
-      ["forged stops are refused before the backend"],
-    ],
-    ["sentinel guard in harness", "packages/app/e2e/harness/test.ts", ["sentinelGuard"]],
-    [
-      "node scope never touches localStorage",
-      "packages/remote/test/console/node-scope.test.ts",
-      ["never touches localStorage"],
-    ],
-  ];
-  const items = probes.map(([item, file, needles]) => {
-    const text = existsSync(join(ROOT, file)) ? readFileSync(join(ROOT, file), "utf8") : "";
-    return {
-      evidenced: needles.length > 0 && needles.every((needle) => text.includes(needle)),
-      file,
-      item,
-      missingNeedles: needles.filter((needle) => !text.includes(needle)),
-    };
-  });
-  const credentialsSpec = existsSync(join(ROOT, "packages/app/e2e/credentials.spec.ts"));
-  return { credentialsSpec, items };
-}
-
 export interface CoverageProbe {
   needles: readonly string[];
   spec: string;
@@ -909,24 +856,32 @@ export interface TaskCoverageMeasurement {
 }
 
 // Plan #410 P6 task list mapped to the specs that actually exist in
-// packages/app/e2e. Coverage means the spec exists AND its text asserts
-// the task's behaviour (needle grep), not just file presence. A task is
-// partial when at least one probe hits but not all of them do: T2's
-// endpoint half is asserted in fleet.spec.ts (advertisedEndpoint links),
-// but no spec yet asserts a workload phase, so T2 is partial. The phase
-// needle demands a toContainText("Running") assertion, not a bare
-// mention of Running that a comment could satisfy. T5 (tail
-// logs on two nodes in two tabs at once while stopping a workload in one
-// of them) and T6 (recover after a console restart) have no covering
-// spec yet, so they map to no probes.
+// packages/app/e2e. Coverage means the spec exists AND its comment-stripped
+// text contains every needle: stripCommentLines drops commented lines before
+// matching, so a needle that appears only in a comment never counts. The T2,
+// T5 and T6 needles are assertion fragments — each one matches
+// /expect\(|\)\.to[A-Z]/ — so a hit implies the spec asserts the behaviour
+// rather than mentioning it. T1, T3 and T4 keep their legacy bare needles
+// until a follow-up tightens them the same way.
 export const COVERAGE_PROBES: Readonly<Record<string, readonly CoverageProbe[]>> = {
   T1: [
     { needles: ["unreachable"], spec: "packages/app/e2e/fleet.spec.ts" },
     { needles: ["unreachable: e2e node unreachable"], spec: "packages/app/e2e/nodes.spec.ts" },
   ],
   T2: [
-    { needles: ["advertisedEndpoint"], spec: "packages/app/e2e/fleet.spec.ts" },
-    { needles: ['toContainText("Running")'], spec: "packages/app/e2e/workloads.spec.ts" },
+    {
+      needles: ['[target="_blank"]`)).toHaveCount(1)'],
+      spec: "packages/app/e2e/fleet.spec.ts",
+    },
+    {
+      needles: [
+        'await expect(row).toContainText("Running");',
+        '-stopped")).toContainText("Stopped");',
+        'await expect(row.getByRole("link", { name: endpoint })).toHaveAttribute("href", endpoint);',
+        'await expect(liveStatus).toContainText(`"advertisedEndpoint": "${endpoint}"`);',
+      ],
+      spec: "packages/app/e2e/workloads.spec.ts",
+    },
   ],
   T3: [{ needles: ["agent-1", "serverLogs"], spec: "packages/app/e2e/logs.spec.ts" }],
   T4: [
@@ -935,9 +890,50 @@ export const COVERAGE_PROBES: Readonly<Record<string, readonly CoverageProbe[]>>
       spec: "packages/app/e2e/lifecycle.spec.ts",
     },
   ],
-  T5: [],
-  T6: [],
+  T5: [
+    {
+      needles: [
+        "expect(localStops).toEqual([]);",
+        'await expect(connA).toHaveAttribute("data-state", "streaming");',
+        'await expect(connB).toHaveAttribute("data-state", "streaming");',
+        ".filter({ hasText: markerA })).toHaveCount(0);",
+        ".filter({ hasText: markerB })).toHaveCount(0);",
+      ],
+      spec: "packages/app/e2e/two-tabs.spec.ts",
+    },
+  ],
+  T6: [
+    {
+      needles: [
+        'await expect(page.getByRole("alert")).toHaveText(INVALID_SESSION_MESSAGE);',
+        'await expect(page.getByRole("alert")).toHaveCount(0);',
+        "expect(after[0]?.value).not.toBe(oldCookie);",
+      ],
+      spec: "packages/app/e2e/restart.spec.ts",
+    },
+  ],
 };
+
+export const CREDENTIALS_SPEC_PROBE: CoverageProbe = {
+  needles: [
+    "expect(sentinelsIn(entry.request.url)).toEqual([]);",
+    "expect(sentinelsIn(headerText)).toEqual([]);",
+    'expect(sentinelsIn(entry.response.content?.text ?? "")).toEqual([]);',
+    'expect(await harPage.evaluate(() => document.cookie)).toBe("");',
+    "expect(cookie?.httpOnly).toBe(true);",
+  ],
+  spec: "packages/app/e2e/credentials.spec.ts",
+};
+
+export function stripCommentLines(text: string): string {
+  return text
+    .split("\n")
+    .filter((line) => {
+      const trimmed = line.trimStart();
+      return !trimmed.startsWith("//") && !trimmed.startsWith("/*") && !trimmed.startsWith("*");
+    })
+    .join("\n");
+}
 
 function probeMisses(
   probe: CoverageProbe,
@@ -946,8 +942,9 @@ function probeMisses(
   if (text === null) {
     return { hit: false, misses: [`${probe.spec} (absent)`] };
   }
+  const code = stripCommentLines(text);
   const misses = probe.needles
-    .filter((needle) => !text.includes(needle))
+    .filter((needle) => !code.includes(needle))
     .map((needle) => `${probe.spec}#${needle}`);
   return { hit: misses.length === 0, misses };
 }
@@ -988,6 +985,66 @@ export function measureTaskCoverage(root: string = ROOT): TaskCoverageMeasuremen
     });
   }
   return { rows };
+}
+
+export interface SecurityChecklistMeasurement {
+  credentialsSpec: boolean;
+  items: { evidenced: boolean; file: string; item: string; missingNeedles: string[] }[];
+}
+
+export function measureSecurityChecklist(root: string = ROOT): SecurityChecklistMeasurement {
+  const probes: [string, string, string[]][] = [
+    [
+      "session cookie is port-scoped HttpOnly",
+      "packages/remote/test/console/session.test.ts",
+      ["HttpOnly session cookie"],
+    ],
+    [
+      "CSRF + loopback hostname guard",
+      "packages/remote/test/console/guards.test.ts",
+      ["cross_site_request_forbidden", "refuses a non-loopback hostname"],
+    ],
+    ["batch size guard", "packages/remote/test/console/batch.test.ts", ["bad_batch"]],
+    [
+      "no sentinel on the wire",
+      "packages/remote/test/console/redaction.test.ts",
+      ["no sentinel on the wire"],
+    ],
+    [
+      "node credentials fail closed",
+      "packages/remote/test/console/fail-closed.test.ts",
+      ["node_credentials_unavailable"],
+    ],
+    [
+      "zero stop calls on precheck failure",
+      "packages/remote/test/console/stop-precheck.test.ts",
+      ["zero stop calls"],
+    ],
+    [
+      "forged stops refused before backend",
+      "packages/app/e2e/lifecycle.spec.ts",
+      ["forged stops are refused before the backend"],
+    ],
+    ["sentinel guard in harness", "packages/app/e2e/harness/test.ts", ["sentinelGuard"]],
+    [
+      "node scope never touches localStorage",
+      "packages/remote/test/console/node-scope.test.ts",
+      ["never touches localStorage"],
+    ],
+  ];
+  const items = probes.map(([item, file, needles]) => {
+    const text = existsSync(join(root, file)) ? readFileSync(join(root, file), "utf8") : "";
+    return {
+      evidenced: needles.length > 0 && needles.every((needle) => text.includes(needle)),
+      file,
+      item,
+      missingNeedles: needles.filter((needle) => !text.includes(needle)),
+    };
+  });
+  const credentialsSpec = coverageStatus([CREDENTIALS_SPEC_PROBE], (spec) =>
+    readIfExists(join(root, spec)),
+  ).covered;
+  return { credentialsSpec, items };
 }
 
 export interface ConsoleSetupMeasurement {
