@@ -274,6 +274,20 @@ describe("console batch guard", () => {
     ).toEqual({ ok: false, status: 400, error: "bad_batch" });
   });
 
+  test("(R7) CONSOLE_MAX_BATCH_SEGMENTS is exported and equals 16", () => {
+    const limit: unknown = (remote as unknown as Record<string, unknown>)[
+      "CONSOLE_MAX_BATCH_SEGMENTS"
+    ];
+    expect(typeof limit).toBe("number");
+    expect(limit as number).toBe(16);
+  });
+
+  test("(R7) checkConsoleTrpcPath accepts exactly 16 repeated segments", () => {
+    expect(
+      remote.checkConsoleTrpcPath(Array(16).fill("nodeTest").join(","), new Set(ALLOWED)),
+    ).toEqual({ ok: true, names: Array(16).fill("nodeTest") });
+  });
+
   test("(R7) GET nodeTest x5 ?batch=1 → 200, each duplicate runs with its own input", async () => {
     const r = api();
     const spy = makeSpyBackend(spyFixtures());
