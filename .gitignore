@@ -5,7 +5,7 @@
 *.swp
 *~
 
-# Node / Electron (future)
+# Node
 # no trailing slash: must also match symlinks named node_modules (worktree autocommit artifacts)
 node_modules
 dist/
@@ -26,9 +26,6 @@ __pycache__/
 .env
 .env.local
 
-# UI-audit diff artifacts (local runs of `bun run audit`)
-.audit-diffs/
-
 # Brainstorming / visual-companion scratch
 .superpowers/
 .claude/worktrees/
@@ -40,9 +37,6 @@ __pycache__/
 .antigravitycli/
 .claude/scheduled_tasks.lock
 *.bak
-
-# Failure screenshots emitted by tests/ui-flows (uploaded as CI artifacts)
-tests/ui-flows/screenshots/
 
 # Dispatch-worktree provisioning state (worktree-mode / worktree-ready).
 # Written into each agent worktree by the dispatch tooling, not by anything in

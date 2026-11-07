@@ -1,8 +1,8 @@
 name: console-e2e
 
-# ADVISORY: not a required check until plan P7. Deliberately kept out of
-# check.yml, and this job must not use continue-on-error — failures
-# report on the PR without blocking merges until P7 promotes it.
+# REQUIRED: the Bun-served web console is the only UI runtime since
+# #410 P7-A, so this job gates every PR and push to main. It must not
+# use continue-on-error — failures block merges.
 
 on:
   pull_request:

@@ -7,8 +7,8 @@
 Local-first control plane for llama.cpp fleets. Discover models,
 tune and benchmark presets, run `llama-server` on one or many
 machines, and deploy the same infra everywhere through declarative
-manifests — all from a single CLI and an optional Electron
-dashboard.
+manifests — all from a single CLI and a browser console
+(`llamactl console`).
 
 Think `kubectl` scoped to a single-operator AI stack: one control
 plane, N agent nodes, the same verbs (apply, get, describe, delete)
@@ -81,12 +81,14 @@ model`, `onboard-new-gpu-node`) are deterministic, LLM-driven
 └──────────────────────────┘     └───────────────────────────────────┘
 
 ┌──────────────────────────┐
-│ packages/app (Electron)  │ ─── electron-trpc IPC ──► same appRouter
+│ packages/app (web        │ ─── tRPC HTTP/SSE ──► console server ──► same appRouter
+│  console, Bun-served)    │
 └──────────────────────────┘
 ```
 
-**One router, three mounts**: electron-trpc (existing), agent HTTP /
-SSE, in-proc via `createCaller`. Core stays adapter-free.
+**One router, three mounts**: the Bun-served web console over tRPC
+HTTP/SSE (the only UI runtime since #410 P7-A), agent HTTP / SSE,
+in-proc via `createCaller`. Core stays adapter-free.
 
 ## Package layout
 
@@ -100,11 +102,10 @@ packages/
 ├── remote/      Shared tRPC router + agent/server mount +
 │                kubeconfig + infra + workload reconcilers + tunnel.
 │                Consumed by cli, app, and the agent.
-├── app/         Electron dashboard — models, pulls, servers,
-│                benchmarks, settings, candidate-test, Cost guardian
-│                dashboard, multi-turn Operator Plan chat (stub + LLM),
-│                A/B compare mode in Chat (two panes, independent
-│                node/model/capabilities).
+├── app/         Bun-served web console (React 19 + Vite, the only UI
+│                runtime since #410 P7-A) — fleet, workloads, nodes and
+│                logs views over tRPC HTTP/SSE; `llamactl console`
+│                serves the `build:web` bundle on loopback.
 ├── mcp/         `@llamactl/mcp` — stdio MCP server projecting the tRPC
 │                surface as 18 tools across: catalog (list, promote,
 │                promoteDelete), node (ls, facts, add, remove),

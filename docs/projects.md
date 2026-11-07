@@ -42,9 +42,11 @@ add X --path Y --rag-node kb-pg --rag-collection Y_docs` registers
   captures the declared ceiling; enforcement against cost-guardian
   snapshots is a follow-up) let operators see "my NovaFlow work
   cost $0.04 today" separately from cluster-wide spend.
-- **A clean cockpit surface.** Electron's Projects module lists
-  every registered project with its policy + recent routing
-  decisions, so "where did my last chat go" has an obvious answer.
+- **A clean cockpit surface.** The retired Electron Projects module
+  listed every registered project with its policy + recent routing
+  decisions; the console ships only fleet/workloads/nodes/logs since
+  #410 P7-A, so CLI + MCP are the surface — "where did my last chat
+  go" is answered by `llamactl project get` / routing journal today.
 
 Stick to plain `llamactl chat --via <node>` for one-off calls that
 don't have a project context.
@@ -220,7 +222,12 @@ cat novaflow.yaml | llamactl project apply -f -
 
 ---
 
-## Electron Projects module
+## Electron Projects module (retired)
+
+> **Retired in #410 P7-A.** The Electron app is gone; the Bun-served
+> console ships only fleet/workloads/nodes/logs. This section is kept
+> for history — the CLI (`llamactl project …`) and MCP
+> (`llamactl.project.*`) surfaces remain the supported interface.
 
 Click the folder-kanban icon in the activity bar. Each registered
 project gets a row with:
@@ -305,6 +312,6 @@ Detail card (opened by clicking the row):
   "Open Chat" shortcut on a project row is a small UX
   follow-up once the Chat module's node picker gains a
   project-selector.
-- **Live budget visualization** in the Electron detail page —
+- **Live budget visualization** in a future console detail page —
   replaces the "declared-only" budget display once cost-guardian
   snapshots are wired.

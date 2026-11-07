@@ -1,8 +1,14 @@
 {
-  "files": [],
-  "references": [
-    { "path": "./tsconfig.main.json" },
-    { "path": "./tsconfig.node.json" },
-    { "path": "./tsconfig.web.json" }
-  ]
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": ["vite/client", "node", "bun"],
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "vite.web.config.ts"]
 }

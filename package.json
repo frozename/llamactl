@@ -1,7 +1,7 @@
 {
   "name": "llamactl",
   "version": "0.0.0",
-  "description": "Local-first toolkit for running llama.cpp: discovery, benchmarks, candidate evaluation, shell + Electron control surfaces.",
+  "description": "Local-first toolkit for running llama.cpp: discovery, benchmarks, candidate evaluation, shell + web console control surfaces.",
   "repository": "https://github.com/frozename/llamactl",
   "license": "MIT",
   "type": "module",
@@ -22,9 +22,6 @@
     "test:core": "bun run --cwd packages/core test",
     "test:cli": "bun run --cwd packages/cli test",
     "test:shell": "zsh test/shell-smoke.zsh",
-    "audit": "scripts/audit.sh diff",
-    "audit:update": "scripts/audit.sh update",
-    "audit:functional": "scripts/audit.sh functional",
     "typecheck:strict": "bun scripts/typecheck-strict.ts",
     "secrets:scan": "bun scripts/secret-scan.ts"
   },

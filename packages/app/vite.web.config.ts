@@ -1,8 +1,6 @@
-// Console-only web renderer build (no Electron main/preload): bundles
-// the #410 console shell from src/index.web.html into out/web, served
-// by the agent's console gate. The Electron renderer keeps its own
-// section in electron.vite.config.ts; the shared renderer options
-// (react + tailwind + `@/` alias) must stay in sync between the two.
+// Web console renderer build: the only UI runtime since #410 P7-A.
+// Bundles the console shell from src/index.web.html into out/web,
+// served by `llamactl console` on loopback.
 
 import type { Plugin } from "vite";
 
