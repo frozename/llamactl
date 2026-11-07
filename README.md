@@ -178,7 +178,7 @@ gates and the systemd/launchd configuration.
 | `catalog list / status / promote`                      | Curated-model registry on the target node.                              |
 | `pull file / candidate`                                | Stream HuggingFace downloads via the node.                              |
 | `server start / stop / logs / status`                  | Launch + supervise `llama-server`.                                      |
-| `bench preset / vision / compare / show`               | Tuning + regression benchmarks.                                         |
+| `bench preset / vision / compare / show / schedule`    | Tuning + regression benchmarks, plus recurring benches (`run` loops).   |
 | `candidate test`                                       | Evaluate a model against a fixed prompt suite.                          |
 | `recommendations`                                      | Size- and capability-aware suggestions.                                 |
 | `apply / get / describe / delete`                      | Declarative `ModelRun` + `NodeRun` manifests.                           |

@@ -77,6 +77,12 @@ Write commands:
                                               profiles and save the fastest
   llamactl bench vision <target>              Run the multimodal bench and
                                               record the timings (--json supported)
+  llamactl bench schedule list|add|rm|toggle|status|kick
+                                              Manage recurring bench schedules on
+                                              the control plane
+  llamactl bench schedule run [--interval=60] Foreground loop host for recurring
+                                              benches (opt-in; drive it with
+                                              launchd/systemd)
   llamactl candidate test <repo> [file] [profile]
                                               Discover + pull + tune + compare
                                               pipeline (--json supported)

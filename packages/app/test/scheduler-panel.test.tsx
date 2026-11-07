@@ -1,5 +1,10 @@
+import type { Root } from "react-dom/client";
+
 import { afterAll, describe, expect, mock, test } from "bun:test";
+import { act } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+
+import { installDomShim } from "./console/dom-shim";
 
 const UiActual = await import("../src/ui/index");
 
@@ -29,6 +34,20 @@ interface TestSchedule {
 interface TestMutation {
   isPending: false;
   mutate: () => undefined;
+}
+
+interface CapturedMutationOptions {
+  onError?: ((error: Error) => void) | undefined;
+  onSuccess?: (() => void) | undefined;
+}
+
+const capturedMutations = new Map<string, CapturedMutationOptions>();
+
+function capturingMutation(name: string): (options?: CapturedMutationOptions) => TestMutation {
+  return (options) => {
+    if (options !== undefined) capturedMutations.set(name, options);
+    return mutation();
+  };
 }
 
 interface TestUtils {
@@ -74,13 +93,13 @@ void mock.module("@/lib/trpc", () => ({
       useMutation: mutation,
     },
     benchSchedulerStart: {
-      useMutation: mutation,
+      useMutation: capturingMutation("benchSchedulerStart"),
     },
     benchSchedulerStop: {
       useMutation: mutation,
     },
     benchSchedulerKick: {
-      useMutation: mutation,
+      useMutation: capturingMutation("benchSchedulerKick"),
     },
   },
 }));
@@ -125,5 +144,98 @@ describe("SchedulerPanel", () => {
     const html = await renderSchedulerPanel(7200);
 
     expect(html).toContain("every 2 hours");
+  });
+
+  test("start and kick mutation errors surface in the panel", async () => {
+    schedules = [];
+    const shim = installDomShim();
+    let root: Root | undefined;
+    try {
+      const { createRoot } = await import("react-dom/client");
+      const container = shim.document.createElement("div");
+      const mountedRoot = createRoot(container);
+      root = mountedRoot;
+      const { SchedulerPanel } = await import("../src/modules/bench/scheduler-panel");
+      await act(() => {
+        mountedRoot.render(<SchedulerPanel />);
+        return Promise.resolve();
+      });
+      expect(container.textContent).not.toContain("run lock");
+
+      for (const name of ["benchSchedulerStart", "benchSchedulerKick"] as const) {
+        const onError = capturedMutations.get(name)?.onError;
+        expect(onError).toBeFunction();
+        await act(() => {
+          onError!(new Error(`refused: ${name}`));
+          return Promise.resolve();
+        });
+        expect(container.textContent).toContain(`refused: ${name}`);
+      }
+    } finally {
+      if (root !== undefined) {
+        const mountedRoot = root;
+        await act(() => {
+          mountedRoot.unmount();
+          return Promise.resolve();
+        });
+      }
+      await new Promise<void>((resolve) => {
+        setTimeout(() => {
+          resolve();
+        }, 0);
+      });
+      shim.uninstall();
+      capturedMutations.clear();
+    }
+  });
+
+  test("a successful start or kick clears a stale mutation error", async () => {
+    schedules = [];
+    const shim = installDomShim();
+    let root: Root | undefined;
+    try {
+      const { createRoot } = await import("react-dom/client");
+      const container = shim.document.createElement("div");
+      const mountedRoot = createRoot(container);
+      root = mountedRoot;
+      const { SchedulerPanel } = await import("../src/modules/bench/scheduler-panel");
+      await act(() => {
+        mountedRoot.render(<SchedulerPanel />);
+        return Promise.resolve();
+      });
+
+      for (const name of ["benchSchedulerStart", "benchSchedulerKick"] as const) {
+        const message = `refused: ${name}`;
+        const options = capturedMutations.get(name);
+        expect(options?.onError).toBeFunction();
+        expect(options?.onSuccess).toBeFunction();
+        await act(() => {
+          options!.onError!(new Error(message));
+          return Promise.resolve();
+        });
+        expect(container.textContent).toContain(message);
+
+        await act(() => {
+          capturedMutations.get(name)?.onSuccess?.();
+          return Promise.resolve();
+        });
+        expect(container.textContent).not.toContain(message);
+      }
+    } finally {
+      if (root !== undefined) {
+        const mountedRoot = root;
+        await act(() => {
+          mountedRoot.unmount();
+          return Promise.resolve();
+        });
+      }
+      await new Promise<void>((resolve) => {
+        setTimeout(() => {
+          resolve();
+        }, 0);
+      });
+      shim.uninstall();
+      capturedMutations.clear();
+    }
   });
 });
