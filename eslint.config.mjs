@@ -33,6 +33,7 @@ export default tseslint.config(
       "packages/app/test-results/**",
       "packages/app/playwright-report/**",
       "**/.venv/**",
+      // Stale electron-builder output from pre-#410 checkouts; drop after the next release.
       "packages/app/release/**",
       ".claude/**",
     ],
@@ -182,19 +183,13 @@ export default tseslint.config(
     },
   },
   {
-    files: ["packages/agents/demos/**/*.ts", "tests/**/*.ts", "tools/**/*.ts"],
+    files: ["packages/agents/demos/**/*.ts", "tools/**/*.ts"],
     languageOptions: {
       parser: tseslint.parser,
       parserOptions: {
         tsconfigRootDir: import.meta.dirname,
       },
       globals: { ...globals.node, Bun: "readonly" },
-    },
-  },
-  {
-    files: ["tests/**/*.js"],
-    languageOptions: {
-      globals: { ...globals.browser },
     },
   },
   {
@@ -228,11 +223,7 @@ export default tseslint.config(
     },
   },
   {
-    files: [
-      "packages/app/electron/**/*.ts",
-      "packages/app/electron.vite.config.ts",
-      "packages/app/vite.config.ts",
-    ],
+    files: ["packages/app/vite.web.config.ts"],
     languageOptions: {
       globals: { ...globals.node, Bun: "readonly" },
     },

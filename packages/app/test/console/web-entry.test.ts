@@ -67,13 +67,6 @@ function reachableFrom(entry: string): Set<string> {
   return reached;
 }
 
-const hadElectronTRPC = "electronTRPC" in globalThis;
-const prevElectronTRPC = globalThis.electronTRPC;
-globalThis.electronTRPC ??= {
-  sendMessage: (): undefined => undefined,
-  onMessage: (): undefined => undefined,
-};
-
 const uiReal = { ...(await import("../../src/ui/index")) };
 void mock.module("@/ui", () => uiReal);
 
@@ -123,11 +116,6 @@ afterAll(() => {
     globalWithDocument.document = prevDocument;
   } else {
     delete globalWithDocument.document;
-  }
-  if (hadElectronTRPC) {
-    globalThis.electronTRPC = prevElectronTRPC;
-  } else {
-    delete (globalThis as { electronTRPC?: unknown }).electronTRPC;
   }
 });
 

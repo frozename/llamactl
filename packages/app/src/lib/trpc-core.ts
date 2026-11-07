@@ -1,5 +1,5 @@
-// #410: transport-neutral tRPC React core shared by the Electron renderer
-// (via lib/trpc) and the web console; must stay free of the IPC transport.
+// #410: transport-neutral tRPC React core for the web console; the
+// caller injects the link set (HTTP/SSE in the browser).
 
 import type { AppRouter } from "@llamactl/remote";
 import type { TRPCLink } from "@trpc/client";

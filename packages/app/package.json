@@ -1,22 +1,14 @@
 {
   "name": "@llamactl/app",
   "version": "0.0.0",
-  "description": "Electron dashboard for llamactl.",
+  "description": "Bun-served web console for llamactl.",
   "author": "Alexandre Cordeiro <alexandre.s.b.cordeiro@gmail.com>",
   "type": "module",
-  "main": "./out/main/index.cjs",
   "scripts": {
-    "dev": "env -u ELECTRON_RUN_AS_NODE electron-vite dev",
-    "build": "electron-vite build",
+    "build": "vite build -c vite.web.config.ts",
     "build:web": "vite build -c vite.web.config.ts",
     "e2e": "playwright test",
-    "start": "env -u ELECTRON_RUN_AS_NODE electron-vite preview",
-    "typecheck": "tsc -p tsconfig.main.json --noEmit --tsBuildInfoFile /dev/null && tsc -p tsconfig.node.json --noEmit --tsBuildInfoFile /dev/null && tsc -p tsconfig.web.json --noEmit --tsBuildInfoFile /dev/null && tsc -p tsconfig.e2e.json --noEmit --tsBuildInfoFile /dev/null",
-    "package": "bun run build && electron-builder --config electron-builder.yml",
-    "package:mac": "bun run build && electron-builder --config electron-builder.yml --mac",
-    "package:mac:arm64": "bun run build && electron-builder --config electron-builder.yml --mac --arm64",
-    "package:mac:x64": "bun run build && electron-builder --config electron-builder.yml --mac --x64",
-    "package:dir": "bun run build && electron-builder --config electron-builder.yml --dir",
+    "typecheck": "tsc -p tsconfig.json --noEmit --tsBuildInfoFile /dev/null && tsc -p tsconfig.e2e.json --noEmit --tsBuildInfoFile /dev/null",
     "test": "bun test"
   },
   "dependencies": {
@@ -26,13 +18,11 @@
     "@trpc/client": "11.16.0",
     "@trpc/react-query": "11.16.0",
     "@trpc/server": "11.16.0",
-    "electron-trpc": "1.0.0-alpha.0",
     "eventsource": "4.1.0",
     "lucide-react": "1.8.0",
     "react": "19.2.5",
     "react-dom": "19.2.5",
     "superjson": "2.2.6",
-    "undici": "7.30.1",
     "yaml": "2.8.3",
     "zod": "4.6.6",
     "zustand": "5.0.12"
@@ -43,13 +33,8 @@
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "5.2.0",
-    "bufferutil": "^4.1.0",
-    "electron": "41.10.3",
-    "electron-builder": "26.8.1",
-    "electron-vite": "5.0.0",
     "tailwindcss": "4.2.2",
     "typescript": "5.9.3",
-    "utf-8-validate": "^6.0.6",
     "vite": "7.3.5"
   }
 }

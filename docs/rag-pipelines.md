@@ -312,7 +312,12 @@ llamactl rag pipeline rm llamactl-docs
   # DOES NOT remove already-stored documents from the rag node.
 ```
 
-### Electron — Knowledge > Pipelines
+### Electron — Knowledge > Pipelines (retired)
+
+> **Retired in #410 P7-A.** The Electron app is gone; the console
+> ships only fleet/workloads/nodes/logs. Kept for history — the CLI
+> (`llamactl rag pipeline …`) and MCP (`llamactl.rag.pipeline.*`)
+> surfaces remain.
 
 The Knowledge module carries a Pipelines tab with the same
 surface:

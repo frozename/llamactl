@@ -33,7 +33,7 @@ fingerprint must match before a connection is attempted. A different CA,
 incorrect certificate name, or mismatched fingerprint is refused. This setting
 does not disable certificate verification or replace bearer authentication.
 
-The configured identity is used by CLI and Electron node dispatch, peer
+The configured identity is used by CLI and console node dispatch, peer
 snapshot and health polling, infrastructure calls, direct peer inference, and
 the OpenAI proxy's peer forwarding. Reverse-tunnel authentication and the
 central relay's TLS configuration retain their existing behavior.

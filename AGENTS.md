@@ -16,10 +16,11 @@ harnesses.
 
 - **Runtime**: Bun 1.3+. No node, no npm, no yarn, no pnpm.
 - **TS**: 5.9+, NodeNext ESM, `.js` on import specifiers.
-- **RPC**: tRPC v11 (shared router across Electron + agent HTTPS +
-  in-proc `createCaller`). React Query v5.
+- **RPC**: tRPC v11 (shared router across the Bun-served web console +
+  agent HTTPS + in-proc `createCaller`). React Query v5.
 - **Validation**: Zod 4.3+.
-- **UI**: Electron + electron-trpc 1.0.0-alpha, React 19, Vite 7.
+- **UI**: Bun-served web console only (React 19, Vite 7) — the Electron
+  runtime was removed in #410 P7-A; `llamactl console` is the UI.
 - **MCP SDK**: 1.29.0.
 - **WebSocket**: Bun native (for the reverse tunnel in I.3).
 - **Cross-repo dep**: `@novaproto/contracts`, `@novaproto/mcp-shared`,
@@ -40,13 +41,12 @@ packages/
 ├── remote/     tRPC router + agent HTTPS mount + kubeconfig +
 │               workload reconcilers + infra + tunnel. Shared by
 │               cli + app + the agent.
-├── app/        Electron. electron-trpc IPC; reads @llamactl/remote
-│               for the router; renders with React 19. Ships the
-│               Operator Console (N.4) which plans *and* executes
-│               MCP tools with tiered approval cards, the N.4.5
-│               Planner chat, A/B compare chat (K.2), Cost dashboard
-│               (N.3.7), and the Pipelines builder + "Save as MCP
-│               tool" exporter (K.6).
+├── app/        Bun-served web console (the only UI runtime since
+│               #410 P7-A). tRPC over HTTP/SSE via @llamactl/remote's
+│               console server; ships the fleet / workloads / nodes /
+│               logs views. Retired Electron modules (Operator
+│               Console, Planner chat, Cost dashboard, Pipelines
+│               builder) are gone — CLI + MCP remain their surface.
 ├── mcp/        @llamactl/mcp. Projects tRPC procedures as MCP tools.
 │               18 native tools today across read + mutation (dry-run
 │               + wet) tiers: catalog, node, bench (compare + history),
@@ -80,8 +80,9 @@ bun run --cwd packages/app tsc --noEmit
 bun packages/cli/src/bin.ts <verb> --help
 zsh test/run-all.zsh          # full sweep with shell smoke tests
 
-# Electron dev
-cd packages/app && bun run dev
+# Web console dev
+bun run --cwd packages/app build:web   # build the console bundle
+llamactl console                        # serve it on loopback
 ```
 
 Never skip hooks. If a pre-commit hook fails, investigate — don't
@@ -113,8 +114,8 @@ Never skip hooks. If a pre-commit hook fails, investigate — don't
 - `createTRPCClient` (not `createTRPCProxyClient` — that was v10).
 - Subscriptions over SSE via `unstable_httpSubscriptionLink` +
   `splitLink` keyed on `op.type === 'subscription'`.
-- `electron-trpc 1.0.0-alpha` — `exposeElectronTRPC` in preload,
-  `ipcLink` in renderer.
+- The console talks plain tRPC over HTTP/SSE — the Electron
+  `electron-trpc` IPC bridge is gone (#410 P7-A).
 - Bun lacks `EventSource` globally. Route product SSE subscriptions
   through `buildPinnedLinks` (`packages/remote/src/client/links.ts`),
   or pass `ClosedSafeEventSource` as `httpSubscriptionLink`'s
@@ -404,15 +405,16 @@ via chroma-mcp) and `pgvector` (native SQL against Postgres +
 pgvector). Adapters implement a shared `RetrievalProvider` contract
 from `@novaproto/contracts`; tRPC exposes `ragSearch` / `ragStore` /
 `ragDelete` / `ragListCollections`; MCP mirrors the same surface as
-`llamactl.rag.*`; the Electron activity bar surfaces them through
-the Knowledge module.
+`llamactl.rag.*`; the retired Electron Knowledge module surfaced them
+in the UI — the console ships only fleet/workloads/nodes/logs since
+#410 P7-A, so CLI + MCP are the surface.
 
 For **RAG pipelines** (declarative ingestion — filesystem / http /
 git sources → markdown-aware chunking → embed → store, with
-dedupe, scheduling, and a 4-step Electron wizard), see
-`docs/rag-pipelines.md`. `llamactl rag pipeline {apply, run, list,
-get, rm, logs, scheduler, draft}` on the CLI; `llamactl.rag.
-pipeline.*` on MCP; Knowledge → Pipelines tab in the Electron app.
+dedupe, scheduling, and a 4-step wizard that lived in the retired
+Electron app), see `docs/rag-pipelines.md`. `llamactl rag pipeline
+{apply, run, list, get, rm, logs, scheduler, draft}` on the CLI;
+`llamactl.rag.pipeline.*` on MCP.
 Sources plug in via `packages/remote/src/rag/pipeline/fetchers/`;
 transforms via `packages/remote/src/rag/pipeline/transforms/`.
 
@@ -421,8 +423,8 @@ subscription-CLI orchestration lens — register a project dir,
 auto-index its docs, declare per-task-kind routing targets across
 all three lanes, journal every decision), see `docs/projects.md`.
 `llamactl project {add, list, get, rm, index, route, apply}` on
-the CLI; `llamactl.project.*` on ops-chat dispatch; Projects
-module in the Electron activity bar. CLI subscription backends
+the CLI; `llamactl.project.*` on ops-chat dispatch; the Projects
+module lived in the retired Electron app — CLI + MCP remain. CLI subscription backends
 (`claude -p` / `codex exec` / `gemini -p`) are declared as
 `cli: []` bindings on agent nodes and synthesize as virtual
 `<agent>.<cli>` provider-kind nodes.
@@ -442,9 +444,11 @@ handlers for new container kinds (nginx, redis, databases) the
 same way gateway-handlers plug into `workload/gateway-handlers/`.
 tRPC: `compositeApply` / `compositeDestroy` / `compositeList` /
 `compositeGet` / `compositeStatus`. MCP: `llamactl.composite.*`.
-Electron module: `Composites` (activity bar, `Boxes` icon) — YAML
-editor + dry-run preview + Apply/Destroy, plus a Detail tab that
-streams `compositeStatus` events. The editor is a plain textarea;
+The retired Electron `Composites` module (activity bar, `Boxes`
+icon) had a YAML editor + dry-run preview + Apply/Destroy plus a
+Detail tab streaming `compositeStatus` events; the console no longer
+ships it — CLI + MCP are the surface. The editor was a plain
+textarea;
 runtime selection happens by editing `spec.runtime:` in the
 manifest (first-class picker is a UI follow-up). The planner
 prefers `llamactl.composite.apply` over multi-step plans when
@@ -736,11 +740,11 @@ behind `LLAMACTL_UNIFIED_PROXY=1`.
 - Use `InMemoryTransport.createLinkedPair()` for MCP smoke tests.
   No subprocess needed.
 
-### Test profiles for hermetic audits
+### Test profiles for hermetic runs
 
 Set `LLAMACTL_TEST_PROFILE=<dir>` to reroot every AI-model / runtime /
-cache path under one prefix. Designed for repeatable UI audits and CI
-runs where the operator's real `$DEV_STORAGE` and llama-server would
+cache path under one prefix. Designed for repeatable test runs and CI
+where the operator's real `$DEV_STORAGE` and llama-server would
 otherwise bleed through.
 
 When `$LLAMACTL_TEST_PROFILE` is set the resolver applies these
@@ -766,11 +770,11 @@ shell fallback cascade (`shell/env.zsh`) honour the same priority
 order: individual env var > `$LLAMACTL_TEST_PROFILE` default >
 production default.
 
-Example — hermetic UI audit:
+Example — hermetic console e2e run:
 
 ```sh
-LLAMACTL_TEST_PROFILE="$(mktemp -d -t llamactl-audit)" \
-  bun run tests/ui-audit-driver-v2.ts --executable=<path>
+LLAMACTL_TEST_PROFILE="$(mktemp -d -t llamactl-e2e)" \
+  bun run --cwd packages/app e2e
 ```
 
 Unset `LLAMACTL_TEST_PROFILE` (or pass the empty string) for normal
@@ -778,11 +782,11 @@ production behaviour — zero change for users that do not opt in.
 
 ### UI regression gate
 
-Every PR + push to `main` runs a pixel-diff gate over the 16 top-level
-Electron modules against baselines at `tests/ui-audit-baselines/`. See
-[`docs/ui-audit.md`](./docs/ui-audit.md) — covers how to handle
-failures, reseed baselines after intentional UI changes
-(`bun run audit:update`), and run the gate locally (`bun run audit`).
+The Bun-served web console's UI gate is the `console-e2e` workflow
+(Ubuntu + Chromium Playwright) — required on every PR and push to
+`main` since #410 P7-A. The old Electron pixel-diff audit chain
+(`ui-audit`, `ui-tier-a`, `ui-flows-nightly`, `tests/ui-*`,
+`scripts/audit.sh`, `docs/ui-audit.md`) was deleted with the runtime.
 
 ## Secret references
 
@@ -913,7 +917,7 @@ cross-repo test sweep + a commit.
 ## What to avoid
 
 - Committing to `packages/core` anything that imports from
-  `packages/remote`, `packages/app`, `tRPC`, `electron-trpc`, or
+  `packages/remote`, `packages/app`, `tRPC`, or
   MCP. Core is the base of the dependency DAG.
 - Rewriting Nova schemas in llamactl. Release Nova, bump the
   `@novaproto/*` pins, `bun install` here.

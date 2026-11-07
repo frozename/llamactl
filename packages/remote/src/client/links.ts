@@ -23,9 +23,9 @@ type HttpBatchFetch = NonNullable<Parameters<typeof httpBatchLink>[0]["fetch"]>;
 // a loose shape that our pinned fetch wrapper can satisfy.
 /**
  * Verify the supplied PEM's fingerprint matches the stored one. Shared
- * by every pinned-fetch implementation (Bun on the CLI, undici in the
- * Electron main) so tampering is caught the same way regardless of
- * runtime.
+ * by every pinned-fetch implementation (Bun on the CLI/console, the
+ * browser-side fetch wrapper) so tampering is caught the same way
+ * regardless of runtime.
  */
 export function assertFingerprintMatch(node: ClusterNode): void {
   const ca = node.certificate;
@@ -53,9 +53,8 @@ function isLocalEndpoint(endpoint: string): boolean {
 
 /**
  * Bun-native pinned fetch. Uses Bun's `tls.ca` fetch option, which
- * ignores system roots and trusts only the supplied CA. Node runtimes
- * (Electron main) must inject a different factory — see
- * `packages/app/electron/trpc/node-pinned-fetch.ts`.
+ * ignores system roots and trusts only the supplied CA. Non-Bun
+ * runtimes must inject a different factory.
  */
 export function makePinnedFetch(node: ClusterNode): PinnedFetch {
   assertFingerprintMatch(node);
@@ -78,8 +77,8 @@ export function makePinnedFetch(node: ClusterNode): PinnedFetch {
  * concrete router type.
  *
  * `fetchFactory` lets runtimes that can't use Bun's `tls.ca` option
- * (Electron main, browser envs) inject their own pinned-fetch
- * implementation. Defaults to the Bun-native one.
+ * (browser envs) inject their own pinned-fetch implementation.
+ * Defaults to the Bun-native one.
  */
 
 export function buildPinnedLinks(

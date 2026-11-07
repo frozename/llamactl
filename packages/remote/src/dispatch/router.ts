@@ -1,8 +1,6 @@
-// The local-vs-pinned-remote dispatch layer extracted from
-// packages/app/electron/trpc/dispatcher.ts (#410 P2a). Host-agnostic:
-// Electron wraps buildDispatchRouter with its ui router + the
-// electron-trpc v10 shims; P2b's console wraps it with error-mode
-// resolution.
+// The local-vs-pinned-remote dispatch layer extracted from the retired
+// Electron dispatcher (#410 P2a). Host-agnostic: the Bun-served console
+// wraps buildDispatchRouter with error-mode resolution.
 import type {
   AnyProcedure,
   BuiltRouter,
@@ -180,8 +178,8 @@ export interface DispatchTarget {
  * Resolve where a procedure call should run: the control plane
  * ("local") or a pinned remote node ("remote"). `onUnresolvable`
  * picks the failure policy — "local" fails open to the control plane
- * (Electron parity), "error" throws DispatchResolutionError with a
- * machine-readable code instead.
+ * (the retired Electron dispatcher's mode), "error" throws
+ * DispatchResolutionError with a machine-readable code instead.
  */
 export function resolveDispatchTarget(
   path: string,

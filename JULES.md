@@ -68,7 +68,7 @@ zsh test/run-all.zsh
 packages/core/        pure business logic (no HTTP / tRPC / MCP)
 packages/cli/         CLI entrypoint + commands
 packages/remote/      tRPC router, kubeconfig, workloads, tunnel
-packages/app/         Electron
+packages/app/         Bun-served web console (only UI runtime)
 packages/mcp/         @llamactl/mcp
 packages/agents/      runbooks + healer loop
 ```
