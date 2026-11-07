@@ -383,4 +383,65 @@ describe("console logs reconnect (#410)", () => {
       { kind: "line", text: "b" },
     ]);
   });
+
+  test("logsConnState reports error before the reconnecting flag", () => {
+    expect(logsConnState4!("pending", "boom", "online", true)).toBe("error");
+    expect(logsConnState4!("error", "boom", "online", true)).toBe("error");
+    expect(logsConnState4!("error", null, "online", true)).toBe("error");
+  });
+
+  test("the reconnecting flag survives a line event", () => {
+    const reducer = scope.logsReducer;
+    let state = scope.INITIAL_LOGS_STATE;
+
+    state = reducer(state, { type: "event", event: RECONNECTING_FRAME });
+    state = reducer(state, { type: "event", event: lineEvent("a") });
+
+    expect(reconnectingFlag(state)).toBe(true);
+    expect(state.entries).toEqual([{ kind: "line", text: "a" }]);
+  });
+
+  test("isReconnectingSignal matches a structurally equal non-identical frame", () => {
+    // Frames arrive parsed off the wire, so identity with the frozen
+    // constant is never guaranteed — the type match is the contract.
+    const fresh = { type: "__reconnecting__" };
+    expect(fresh === lifecycle.RECONNECTING_SIGNAL).toBe(false);
+    expect(lifecycle.isReconnectingSignal(fresh)).toBe(true);
+    expect(lifecycle.isReconnectingSignal(lifecycle.RECONNECTING_SIGNAL)).toBe(true);
+    expect(lifecycle.isReconnectingSignal(lineEvent("a"))).toBe(false);
+  });
+
+  test("gate-off then a first-attempt reconnecting frame then stream-start drops the flag", () => {
+    // Reachability: a FRESH subscription's first attempt (attempt 0) that
+    // hits a retryable transport error still emits a __reconnecting__ frame
+    // through the resumable path, so the reducer can hold the flag with
+    // pendingFreshStart still set when stream-start fires. A carry of the
+    // flag past stream-start pins the conn dot on "reconnecting" forever,
+    // because the new attempt never emits RECONNECT_SIGNAL.
+    const h = makeHarness();
+    h.inners[0]!.error(new Error("socket hang up"));
+    const signals = payloadsOf(h.outer).filter(isReconnecting);
+    expect(signals).toHaveLength(1);
+
+    const reducer = scope.logsReducer;
+    let state = scope.INITIAL_LOGS_STATE;
+
+    state = reducer(state, { type: "event", event: lineEvent("a") });
+    state = reducer(state, { type: "gate-off" });
+    expect(state.pendingFreshStart).toBe(true);
+    expect(reconnectingFlag(state)).toBeFalsy();
+
+    state = reducer(state, { type: "event", event: signals[0] });
+    expect(reconnectingFlag(state)).toBe(true);
+    expect(state.pendingFreshStart).toBe(true);
+
+    state = reducer(state, { type: "stream-start" });
+    expect(reconnectingFlag(state)).toBeFalsy();
+    expect(Object.hasOwn(state, "reconnecting")).toBe(false);
+    expect(state.pendingFreshStart).toBe(false);
+    expect(state.entries).toEqual([{ kind: "divider" }]);
+    expect(logsConnState4!("pending", null, "online", reconnectingFlag(state) === true)).toBe(
+      "streaming",
+    );
+  });
 });
