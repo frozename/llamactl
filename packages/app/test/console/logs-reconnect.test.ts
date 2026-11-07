@@ -170,7 +170,7 @@ function makeHarness(): Harness {
       states.push(event);
     },
     resumablePaths: ["serverLogs"],
-  } as never)({});
+  })({});
 
   const obs = link({
     op: {
@@ -338,5 +338,49 @@ describe("console logs reconnect (#410)", () => {
 
     expect(reconnectingFlag(state)).toBe(true);
     expect(state.entries).toEqual([]);
+  });
+
+  test("logsReducer drops the reconnecting flag across gate-off + stream-start", () => {
+    const reducer = scope.logsReducer;
+    let state = scope.INITIAL_LOGS_STATE;
+
+    state = reducer(state, { type: "event", event: lineEvent("a") });
+    state = reducer(state, { type: "event", event: RECONNECTING_FRAME });
+    expect(reconnectingFlag(state)).toBe(true);
+
+    state = reducer(state, { type: "gate-off" });
+    expect(reconnectingFlag(state)).toBeFalsy();
+    expect(state.pendingFreshStart).toBe(true);
+
+    state = reducer(state, { type: "stream-start" });
+    expect(reconnectingFlag(state)).toBeFalsy();
+    expect(Object.hasOwn(state, "reconnecting")).toBe(false);
+    expect(state.pendingFreshStart).toBe(false);
+    expect(state.entries).toEqual([{ kind: "divider" }]);
+
+    state = reducer(state, { type: "event", event: lineEvent("b") });
+    expect(state.entries).toEqual([{ kind: "divider" }, { kind: "line", text: "b" }]);
+    expect(reconnectingFlag(state)).toBeFalsy();
+    expect(Object.hasOwn(state, "reconnecting")).toBe(false);
+    expect(logsConnState4!("pending", null, "online", false)).toBe("streaming");
+    expect(logsConnState4!("pending", null, "online", reconnectingFlag(state) === true)).toBe(
+      "streaming",
+    );
+  });
+
+  test("logsReducer gate-off drops the reconnecting flag without clearing the buffer", () => {
+    const reducer = scope.logsReducer;
+    let state = scope.INITIAL_LOGS_STATE;
+
+    state = reducer(state, { type: "event", event: lineEvent("a") });
+    state = reducer(state, { type: "event", event: RECONNECTING_FRAME });
+    state = reducer(state, { type: "event", event: lineEvent("b") });
+
+    state = reducer(state, { type: "gate-off" });
+    expect(reconnectingFlag(state)).toBeFalsy();
+    expect(state.entries).toEqual([
+      { kind: "line", text: "a" },
+      { kind: "line", text: "b" },
+    ]);
   });
 });

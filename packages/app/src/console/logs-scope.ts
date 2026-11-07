@@ -160,6 +160,15 @@ function reconnectingCarry(state: LogsState): { reconnecting?: true } {
   return state.reconnecting === true ? { reconnecting: true } : {};
 }
 
+// A brand-new subscription starts at attempt 0 and never emits
+// RECONNECT_SIGNAL, the only event that clears the flag through the
+// event path, so any action that marks a fresh subscription must drop
+// it here or the conn dot sticks on "reconnecting" forever.
+function withoutReconnecting(state: LogsState): LogsState {
+  if (state.reconnecting !== true) return state;
+  return { entries: state.entries, pendingFreshStart: state.pendingFreshStart };
+}
+
 function reduceLogEvent(state: LogsState, event: unknown): LogsState {
   if (isReconnectSignal(event)) {
     return { entries: [{ kind: "divider" }], pendingFreshStart: state.pendingFreshStart };
@@ -187,15 +196,12 @@ export function logsReducer(state: LogsState, action: LogsAction): LogsState {
       : INITIAL_LOGS_STATE;
   }
   if (action.type === "gate-off") {
-    return state.pendingFreshStart ? state : { ...state, pendingFreshStart: true };
+    const base = withoutReconnecting(state);
+    return base.pendingFreshStart ? base : { ...base, pendingFreshStart: true };
   }
   if (action.type === "stream-start") {
     if (!state.pendingFreshStart) return state;
-    return {
-      entries: [{ kind: "divider" }],
-      pendingFreshStart: false,
-      ...reconnectingCarry(state),
-    };
+    return { entries: [{ kind: "divider" }], pendingFreshStart: false };
   }
   return reduceLogEvent(state, action.event);
 }
