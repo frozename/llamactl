@@ -9,6 +9,9 @@ import {
   matchDoneEvent,
   subscribeRemote,
 } from "../dispatcher.js";
+import { runBenchSchedule } from "./bench-schedule.js";
+
+export { __resetBenchScheduleTestSeams, __setBenchScheduleTestSeams } from "./bench-schedule.js";
 
 const USAGE = `Usage: llamactl bench <subcommand>
 
@@ -36,6 +39,12 @@ Subcommands:
   vision <target> [--json]  Run the real multimodal bench via llama-mtmd-cli
                             on the target's mmproj sibling and record the
                             timings into bench-vision.tsv. --json emits JSON.
+
+  schedule <list|add|rm|toggle|status|kick|run>
+                            Recurring benches stored on the control plane.
+                            'run' hosts the tick loop in the foreground
+                            (opt-in; drive it with launchd/systemd). See
+                            'llamactl bench schedule --help'.
 `;
 
 function printShow(opts: {
@@ -481,6 +490,8 @@ export async function runBench(args: string[]): Promise<number> {
       return await runPreset(rest);
     case "vision":
       return await runVision(rest);
+    case "schedule":
+      return await runBenchSchedule(rest);
     case undefined:
     case "-h":
     case "--help":
