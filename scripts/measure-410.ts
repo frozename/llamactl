@@ -589,7 +589,16 @@ function presentNames(diff: DiffDepsResult): string[] {
   return [...names];
 }
 
-function measureDependencies(pkgJsons: PackageJsonInput[]): Record<string, unknown> {
+export interface DependenciesMeasurement {
+  added: number;
+  addedDeclared: string[];
+  present: DiffDepsEntry[];
+  removablePresent: number;
+  removableTotal: number;
+  undiciRendererImportedByAnyFile: boolean;
+}
+
+function measureDependencies(pkgJsons: PackageJsonInput[]): DependenciesMeasurement {
   const removable = [...REMOVABLE_DEPS];
   const diff = diffDeps(pkgJsons, [...removable, ...ADDED_DEPS]);
   const present = presentNames(diff);
@@ -642,7 +651,16 @@ function firstExistingModule(base: string): string | null {
   return null;
 }
 
-function measureRenderer(): Record<string, unknown> {
+export interface RendererMeasurement {
+  entry: string;
+  ratio: number | null;
+  retainedFiles: number;
+  retainedLines: number;
+  totalFiles: number;
+  totalLines: number;
+}
+
+function measureRenderer(): RendererMeasurement {
   const srcDir = join(ROOT, "packages/app/src");
   const entry = join(srcDir, "main.web.tsx");
   const seen = new Set<string>();
@@ -687,7 +705,12 @@ function measureElectron(): Record<string, unknown> {
   return { count: files.length, files: files.map(relPath).sort() };
 }
 
-function measureElectronMcp(): Record<string, unknown> {
+export interface ElectronMcpMeasurement {
+  consolePathReferences: number;
+  referencingWorkflows: string[];
+}
+
+function measureElectronMcp(): ElectronMcpMeasurement {
   const workflowsDir = join(ROOT, ".github/workflows");
   const referencing: string[] = [];
   let consolePathReferences = 0;
@@ -711,16 +734,41 @@ function countMatches(text: string, pattern: RegExp): number {
   return (text.match(pattern) ?? []).length;
 }
 
-function measureShims(): Record<string, unknown> {
-  const vite = readFileSync(join(ROOT, "packages/app/electron.vite.config.ts"), "utf8");
-  const dispatcher = readFileSync(join(ROOT, "packages/app/electron/trpc/dispatcher.ts"), "utf8");
-  const bundle = /const WORKSPACE_BUNDLE = \[([\s\S]*?)\]/.exec(vite)?.[1] ?? "";
+export interface ShimsMeasurement {
+  absent: string[];
+  bunShim: boolean;
+  bunSqliteShim: boolean;
+  cjsFormatUses: number;
+  dispatcherLines: number;
+  v10ShimSymbols: number;
+  workspaceBundleEntries: number;
+}
+
+const SHIM_FILES = {
+  dispatcher: "packages/app/electron/trpc/dispatcher.ts",
+  vite: "packages/app/electron.vite.config.ts",
+} as const;
+
+function readIfExists(path: string): string | null {
+  return existsSync(path) ? readFileSync(path, "utf8") : null;
+}
+
+export function measureShims(root: string = ROOT): ShimsMeasurement {
+  const vite = readIfExists(join(root, SHIM_FILES.vite));
+  const dispatcher = readIfExists(join(root, SHIM_FILES.dispatcher));
+  const bundle = /const WORKSPACE_BUNDLE = \[([\s\S]*?)\]/.exec(vite ?? "")?.[1] ?? "";
   return {
-    bunShim: existsSync(join(ROOT, "packages/app/electron/shims/bun.ts")),
-    bunSqliteShim: existsSync(join(ROOT, "packages/app/electron/shims/bun-sqlite.ts")),
-    cjsFormatUses: countMatches(vite, /format:\s*"cjs"/g),
-    dispatcherLines: countLines(dispatcher),
-    v10ShimSymbols: countMatches(dispatcher, /asyncIterableToObservable|V10ProcedureCallOptions/g),
+    absent: Object.values(SHIM_FILES)
+      .filter((file) => !existsSync(join(root, file)))
+      .sort(),
+    bunShim: existsSync(join(root, "packages/app/electron/shims/bun.ts")),
+    bunSqliteShim: existsSync(join(root, "packages/app/electron/shims/bun-sqlite.ts")),
+    cjsFormatUses: countMatches(vite ?? "", /format:\s*"cjs"/g),
+    dispatcherLines: dispatcher === null ? 0 : countLines(dispatcher),
+    v10ShimSymbols: countMatches(
+      dispatcher ?? "",
+      /asyncIterableToObservable|V10ProcedureCallOptions/g,
+    ),
     workspaceBundleEntries: countMatches(bundle, /"[^"]+"/g),
   };
 }
@@ -743,18 +791,43 @@ function braceBlock(text: string, openingIndex: number): string {
   return text.slice(openingIndex);
 }
 
-function measureConsoleUpkeep(): Record<string, unknown> {
-  const allowlist = readFileSync(join(ROOT, "packages/remote/src/console/allowlist.ts"), "utf8");
-  const open = allowlist.indexOf("{", allowlist.indexOf("CONSOLE_ALLOWLIST"));
-  const body = braceBlock(allowlist, open);
+export interface ConsoleUpkeepMeasurement {
+  absent: string[];
+  allowlistKeys: number;
+  mutationEntries: number;
+  projectionEntries: number;
+  sentinelCases: number;
+}
+
+const UPKEEP_FILES = {
+  allowlist: "packages/remote/src/console/allowlist.ts",
+  seed: "packages/app/e2e/harness/fixtures/seed.ts",
+} as const;
+
+function braceBlockAfter(text: string | null, marker: string): string {
+  if (text === null) {
+    return "";
+  }
+  return braceBlock(text, text.indexOf("{", text.indexOf(marker)));
+}
+
+export function measureConsoleUpkeep(root: string = ROOT): ConsoleUpkeepMeasurement {
+  const body = braceBlockAfter(
+    readIfExists(join(root, UPKEEP_FILES.allowlist)),
+    "CONSOLE_ALLOWLIST",
+  );
   const keys = [...body.matchAll(/^ {2}([A-Za-z]\w*):\s*\{/gm)].map((match) => match[1] ?? "");
-  const seed = readFileSync(join(ROOT, "packages/app/e2e/harness/fixtures/seed.ts"), "utf8");
-  const sentinelOpen = seed.indexOf("{", seed.indexOf("E2E_SENTINELS"));
-  const sentinelBody = braceBlock(seed, sentinelOpen);
+  const sentinelBody = braceBlockAfter(
+    readIfExists(join(root, UPKEEP_FILES.seed)),
+    "E2E_SENTINELS",
+  );
   const sentinels = [...sentinelBody.matchAll(/^ {2}([A-Za-z]\w*):/gm)].map(
     (match) => match[1] ?? "",
   );
   return {
+    absent: Object.values(UPKEEP_FILES)
+      .filter((file) => !existsSync(join(root, file)))
+      .sort(),
     allowlistKeys: keys.length,
     mutationEntries: countMatches(body, /type:\s*"mutation"/g),
     projectionEntries: countMatches(body, /project:\s*\(out\)\s*=>/g),
@@ -815,26 +888,104 @@ function measureSecurityChecklist(): Record<string, unknown> {
   return { credentialsSpec, items };
 }
 
-const COVERAGE_SPECS: Record<string, string[]> = {
-  T1: ["packages/app/e2e/navigation.spec.ts", "packages/app/e2e/lifecycle.spec.ts"],
-  T2: ["packages/app/e2e/workloads.spec.ts"],
-  T3: ["packages/app/e2e/inspect.spec.ts", "packages/app/e2e/credentials.spec.ts"],
-  T4: ["packages/app/e2e/inspect.spec.ts"],
-  T5: ["packages/app/e2e/two-tabs.spec.ts"],
+export interface CoverageProbe {
+  needles: readonly string[];
+  spec: string;
+}
+
+export interface TaskCoverageRow {
+  covered: boolean;
+  id: string;
+  missingNeedles: string[];
+  specs: string[];
+  wallTime: null;
+}
+
+export interface TaskCoverageMeasurement {
+  rows: TaskCoverageRow[];
+}
+
+// Plan #410 P6 task list mapped to the specs that actually exist in
+// packages/app/e2e. Coverage means the spec exists AND its text asserts
+// the task's behaviour (needle grep), not just file presence. T5 (tail
+// logs on two nodes in two tabs at once while stopping a workload in one
+// of them) and T6 (recover after a console restart) have no covering
+// spec yet, so they map to no probes.
+export const COVERAGE_PROBES: Readonly<Record<string, readonly CoverageProbe[]>> = {
+  T1: [
+    { needles: ["unreachable"], spec: "packages/app/e2e/fleet.spec.ts" },
+    { needles: ["unreachable: e2e node unreachable"], spec: "packages/app/e2e/nodes.spec.ts" },
+  ],
+  T2: [
+    {
+      needles: ["console-workload-row-wB", "Describe"],
+      spec: "packages/app/e2e/workloads.spec.ts",
+    },
+  ],
+  T3: [{ needles: ["agent-1", "serverLogs"], spec: "packages/app/e2e/logs.spec.ts" }],
+  T4: [
+    {
+      needles: ["the typed name matches", "zero stop mutations"],
+      spec: "packages/app/e2e/lifecycle.spec.ts",
+    },
+  ],
+  T5: [],
   T6: [],
 };
 
-function measureTaskCoverage(): Record<string, unknown> {
-  const rows: Record<string, unknown>[] = [];
+export function coverageStatus(
+  probes: readonly CoverageProbe[],
+  readSpec: (spec: string) => string | null,
+): { covered: boolean; missingNeedles: string[] } {
+  if (probes.length === 0) {
+    return { covered: false, missingNeedles: [] };
+  }
+  const missingNeedles: string[] = [];
+  for (const probe of probes) {
+    const text = readSpec(probe.spec);
+    if (text === null) {
+      missingNeedles.push(`${probe.spec} (absent)`);
+      continue;
+    }
+    for (const needle of probe.needles) {
+      if (!text.includes(needle)) {
+        missingNeedles.push(`${probe.spec}#${needle}`);
+      }
+    }
+  }
+  return { covered: missingNeedles.length === 0, missingNeedles };
+}
+
+function measureTaskCoverage(): TaskCoverageMeasurement {
+  const rows: TaskCoverageRow[] = [];
   for (const id of ["T1", "T2", "T3", "T4", "T5", "T6"]) {
-    const specs = COVERAGE_SPECS[id] ?? [];
-    const covered = specs.length > 0 && specs.every((spec) => existsSync(join(ROOT, spec)));
-    rows.push({ covered, id, specs, wallTime: null });
+    const probes = COVERAGE_PROBES[id] ?? [];
+    const status = coverageStatus(probes, (spec) => readIfExists(join(ROOT, spec)));
+    rows.push({
+      covered: status.covered,
+      id,
+      missingNeedles: status.missingNeedles,
+      specs: probes.map((probe) => probe.spec),
+      wallTime: null,
+    });
   }
   return { rows };
 }
 
-function measureSetup(pkgJsons: PackageJsonInput[]): Record<string, unknown> {
+export interface ConsoleSetupMeasurement {
+  buildWebPresent: boolean;
+  commands: number;
+  launcherPresent: boolean;
+  signingRequired: boolean;
+}
+
+export interface SetupMeasurement {
+  buildWebPresent: boolean;
+  console: ConsoleSetupMeasurement;
+  signing: { adHoc: boolean; identity: string };
+}
+
+function measureSetup(pkgJsons: PackageJsonInput[]): SetupMeasurement {
   const app = pkgJsons.find((entry) => entry.path === "packages/app/package.json");
   const rawScripts = app === undefined ? undefined : app.json["scripts"];
   const scripts = isRecord(rawScripts) ? rawScripts : {};
@@ -893,22 +1044,24 @@ function measureCi(): Record<string, unknown> {
 }
 
 function thresholdInput(
-  setup: Record<string, unknown>,
-  dependencies: Record<string, unknown>,
-  renderer: Record<string, unknown>,
-  electronMcp: Record<string, unknown>,
-  taskCoverage: Record<string, unknown>,
+  setup: SetupMeasurement,
+  dependencies: DependenciesMeasurement,
+  renderer: RendererMeasurement,
+  electronMcp: ElectronMcpMeasurement,
+  taskCoverage: TaskCoverageMeasurement,
 ): ThresholdInput {
-  const rows = (taskCoverage["rows"] ?? []) as { covered: boolean; id: string }[];
   return {
-    dependencies: {
-      added: dependencies["added"] as number,
-      removablePresent: dependencies["removablePresent"] as number,
+    dependencies: { added: dependencies.added, removablePresent: dependencies.removablePresent },
+    electronMcp: { consolePathReferences: electronMcp.consolePathReferences },
+    renderer: { ratio: renderer.ratio },
+    setup: {
+      console: {
+        commands: setup.console.commands,
+        launcherPresent: setup.console.launcherPresent,
+        signingRequired: setup.console.signingRequired,
+      },
     },
-    electronMcp: { consolePathReferences: electronMcp["consolePathReferences"] as number },
-    renderer: { ratio: renderer["ratio"] as number | null },
-    setup: setup as unknown as ThresholdInput["setup"],
-    taskCoverage: rows,
+    taskCoverage: taskCoverage.rows,
   };
 }
 
