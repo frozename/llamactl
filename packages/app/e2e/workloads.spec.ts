@@ -4,12 +4,28 @@
 // drawer here, switch-link notice with zero backend calls there) and
 // the no-reconciler / stop-inside-row toolbar contract.
 
-import { E2E_SENTINELS } from "./harness/fixtures/seed";
+import { E2E_SENTINELS, E2E_SERVER_STATUS } from "./harness/fixtures/seed";
 import { expect, test } from "./harness/fixtures/test";
 
 function isInputRecord(input: unknown): input is Record<string, unknown> {
   return typeof input === "object" && input !== null && !Array.isArray(input);
 }
+
+test("row phases, the endpoint link and the liveStatus drawer agree for wB (#410 T2)", async ({
+  page,
+}) => {
+  await page.goto("/workloads?node=agent-1");
+  const row = page.getByTestId("console-workload-row-wB");
+  await expect(row).toContainText("Running");
+  await expect(page.getByTestId("console-workload-row-wB-stopped")).toContainText("Stopped");
+  const endpoint = E2E_SERVER_STATUS["wB"]?.advertisedEndpoint ?? "";
+  expect(endpoint).toBe("http://127.0.0.1:8082");
+  await expect(row.getByRole("link", { name: endpoint })).toHaveAttribute("href", endpoint);
+  await row.getByRole("button", { name: "Describe" }).click();
+  const liveStatus = row.locator("pre").nth(1);
+  await expect(liveStatus).toContainText(`"advertisedEndpoint": "${endpoint}"`);
+  await expect(liveStatus).toContainText(`"state": "up"`);
+});
 
 test("rows are scoped to the tab node with an other-nodes footer", async ({ page }) => {
   await page.goto("/workloads?node=agent-1");

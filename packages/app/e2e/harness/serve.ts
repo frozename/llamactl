@@ -23,6 +23,7 @@ export interface FixtureConsoleHandle {
   backend: FixtureBackend;
   console: { port: number; url: string };
   control: { hostname: string; port: number; url: string };
+  restartConsole(): Promise<void>;
   stop(): Promise<void>;
 }
 
@@ -117,26 +118,26 @@ function handleControlPost(
   });
 }
 
+function handleControlGet(controls: FixtureBackend["controls"], url: URL): Response {
+  const node = url.searchParams.get("node");
+  if (node === null) return badRequest("node_required");
+  if (url.pathname === "/calls") return ok({ calls: controls.calls(node) });
+  if (url.pathname === "/streams") return ok({ streams: controls.streams(node) });
+  return notFound();
+}
+
 function handleControl(
   backend: FixtureBackend,
+  restart: () => Promise<number>,
   req: Request,
   url: URL,
 ): Promise<Response> | Response {
   const { controls } = backend;
-  if (req.method === "GET") {
-    if (url.pathname === "/calls") {
-      const node = url.searchParams.get("node");
-      if (node === null) return badRequest("node_required");
-      return ok({ calls: controls.calls(node) });
-    }
-    if (url.pathname === "/streams") {
-      const node = url.searchParams.get("node");
-      if (node === null) return badRequest("node_required");
-      return ok({ streams: controls.streams(node) });
-    }
-    return notFound();
-  }
+  if (req.method === "GET") return handleControlGet(controls, url);
   if (req.method !== "POST") return notFound();
+  if (url.pathname === "/restart-console") {
+    return restart().then((port) => ok({ port }));
+  }
   return handleControlPost(controls, req, url);
 }
 
@@ -173,22 +174,32 @@ export async function startFixtureConsole(
 ): Promise<FixtureConsoleHandle> {
   const restoreEnv = ensureFixtureConfig();
   const backend = createFixtureBackend();
+  const consoleOptions = {
+    backend: backend.router,
+    distPath: opts.distPath,
+    lookupWorkload: (name: string): unknown => seed.E2E_MODEL_RUNS[name] ?? null,
+  };
   let consoleServer: RunningConsoleServer;
   try {
-    consoleServer = await startConsoleServer({
-      backend: backend.router,
-      distPath: opts.distPath,
-      lookupWorkload: (name: string): unknown => seed.E2E_MODEL_RUNS[name] ?? null,
-      port: opts.port,
-    });
+    consoleServer = await startConsoleServer({ ...consoleOptions, port: opts.port });
   } catch (err) {
     restoreEnv();
     throw err;
   }
+  // A restart rebinds the console on its already-allocated port so the
+  // browser keeps talking to 127.0.0.1:<same port> with a fresh session
+  // nonce, while the fixture backend (control state + recorded calls)
+  // survives untouched.
+  const restartConsole = async (): Promise<number> => {
+    const boundPort = consoleServer.port;
+    await consoleServer.stop();
+    consoleServer = await startConsoleServer({ ...consoleOptions, port: boundPort });
+    return consoleServer.port;
+  };
   let controlServer: Server<unknown>;
   try {
     controlServer = Bun.serve({
-      fetch: (req) => handleControl(backend, req, new URL(req.url)),
+      fetch: (req) => handleControl(backend, restartConsole, req, new URL(req.url)),
       hostname: "127.0.0.1",
       port: opts.controlPort,
     });
@@ -208,6 +219,9 @@ export async function startFixtureConsole(
       hostname: controlHostname,
       port: controlPort,
       url: `http://${controlHostname}:${String(controlPort)}`,
+    },
+    restartConsole: async (): Promise<void> => {
+      await restartConsole();
     },
     stop: async (): Promise<void> => {
       try {
