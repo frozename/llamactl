@@ -630,6 +630,30 @@ describe("e2e harness contract (#410 P5b)", () => {
     expect(closed).toBe(true);
   }, 30_000);
 
+  test("restart-console rebinds the port, rotates the cookie, keeps the backend", async () => {
+    expectHarnessModules();
+    const h = await startHarness();
+    const oldCookie = h.cookie;
+    expect(oldCookie).not.toBe("");
+    const before = await getQuery(h, "local", "workloadList");
+    expect(before.res.status).toBe(200);
+    const restarted = await postControl(h, "/restart-console");
+    const restartBody: unknown = await restarted.json();
+    expect(dig(restartBody, "port")).toBe(Number(h.port));
+    const stale = await getQuery(h, "local", "nodeList", { headers: { cookie: oldCookie } });
+    expect(stale.res.status).toBe(401);
+    expect(stale.json).toEqual({ error: "invalid_session" });
+    const fresh = await fetch(`${h.apiBase}/`);
+    expect(fresh.status).toBe(200);
+    const newCookie = sessionCookie(fresh);
+    expect(newCookie).not.toBe("");
+    expect(newCookie).not.toBe(oldCookie);
+    const revived = await getQuery(h, "local", "nodeList", { headers: { cookie: newCookie } });
+    expect(revived.res.status).toBe(200);
+    const calls = await controlCalls(h, "local");
+    expect(calls.some((call) => call.procedure === "workloadList")).toBe(true);
+  }, 30_000);
+
   test("unsetting LLAMACTL_CONFIG + DEV_STORAGE: temp kubeconfig in, env restored, temp dir gone", async () => {
     expectHarnessModules();
     Reflect.deleteProperty(process.env, "LLAMACTL_CONFIG");
