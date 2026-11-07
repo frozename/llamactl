@@ -40,6 +40,7 @@ const bufferStyle: React.CSSProperties = {
 
 function connTone(conn: string): StatusDotTone {
   if (conn === "streaming") return "ok";
+  if (conn === "reconnecting") return "warn";
   if (conn === "connecting") return "info";
   if (conn === "error") return "err";
   return "idle";
@@ -111,7 +112,7 @@ function LogsStream({ workload, gate }: { workload: string; gate: LogsGate }): R
       setError(err.message);
     },
   });
-  const conn = logsConnState(sub.status, error, gate);
+  const conn = logsConnState(sub.status, error, gate, state.reconnecting === true);
 
   React.useEffect(() => {
     if (follow && scrollRef.current !== null) {
@@ -126,7 +127,7 @@ function LogsStream({ workload, gate }: { workload: string; gate: LogsGate }): R
           data-testid="console-logs-conn"
           data-state={conn}
           tone={connTone(conn)}
-          pulse={conn === "streaming" || conn === "connecting"}
+          pulse={conn === "streaming" || conn === "connecting" || conn === "reconnecting"}
           label={conn}
         />
         <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12 }}>
