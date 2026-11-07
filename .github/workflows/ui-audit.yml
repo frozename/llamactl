@@ -29,15 +29,13 @@ jobs:
           path: llamactl
 
       - name: Checkout electron-mcp-server
-        # Pinned to the commit that shipped the driver's library-generic
-        # `--modules=<path>` + `--out-dir=<path>` flags (with
-        # screenshot_diff + env/userDataDir launch params preserved).
-        # Bump this when the driver API changes.
+        # Retains the exact compared frames under the audit output directory.
+        # Keep this pin aligned with the functional Linux job.
         uses: actions/checkout@v4
         with:
           repository: frozename/electron-mcp
           path: electron-mcp-server
-          ref: f976710523b63764ff148385de7d64089699f49f
+          ref: b88b36cc2e5d1a4a22159078c9bc8368a3f22001
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -73,8 +71,8 @@ jobs:
           include-hidden-files: true
           retention-days: 14
 
-      - name: Upload audit report on failure
-        if: failure()
+      - name: Upload audit report
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ui-audit-report
@@ -111,7 +109,7 @@ jobs:
         with:
           repository: frozename/electron-mcp
           path: electron-mcp-server
-          ref: f976710523b63764ff148385de7d64089699f49f
+          ref: b88b36cc2e5d1a4a22159078c9bc8368a3f22001
 
       - name: Install Electron system dependencies
         run: |
@@ -153,8 +151,8 @@ jobs:
           ELECTRON_MCP_DIR: ${{ github.workspace }}/electron-mcp-server
         run: xvfb-run -a bun run audit:functional
 
-      - name: Upload audit report on failure
-        if: failure()
+      - name: Upload audit report
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ui-audit-linux-report
