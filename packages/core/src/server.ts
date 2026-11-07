@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { basename, join } from "node:path";
 
+import type { ServingReadiness } from "./serving-readiness.js";
 import type { ResolvedEnv } from "./types.js";
 import type { WorkloadKey } from "./workloadRuntime.js";
 
@@ -29,6 +30,7 @@ import {
 } from "./pidIdentity.js";
 import { findTcpListenerPid, probeHealthEndpoint } from "./probe.js";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "./safe-fs.js";
+import { servingReadinessCheck } from "./serving-readiness.js";
 import { resolveTarget } from "./target.js";
 import { ensureWorkloadRuntimeDir, workloadRuntimeDir } from "./workloadRuntime.js";
 
@@ -524,6 +526,13 @@ export interface StartServerOptions {
    * both files and its refused result even when aborted. The listener is removed before resolving.
    */
   signal?: AbortSignal;
+  /**
+   * Optional declared serving-readiness contract (issue #220). When set, every
+   * ready verdict of this start — the initial /health poll, the mmproj retry
+   * poll, and adoption of an already-bound server — additionally requires the
+   * declared endpoint to pass. Absence keeps the legacy /health-only behavior.
+   */
+  readiness?: ServingReadiness;
 }
 
 export interface StartServerResult {
@@ -576,6 +585,21 @@ async function detectPortConflict(endpointUrl: string): Promise<string | null> {
 // unreliable) routable + managed. Mirrors modelhost.ts `tryAdoptLiveHost`.
 
 const ADOPT_PROBE_TIMEOUT_MS = 3000;
+
+// Bound for one declared-contract check inside the /health poll loop; the
+// 1 s poll cadence tolerates a full budget without stalling the loop.
+const READINESS_PROBE_TIMEOUT_MS = 1000;
+
+function buildReadinessCheck(
+  readiness: ServingReadiness | undefined,
+  baseUrl: string,
+): (() => Promise<boolean>) | undefined {
+  if (readiness === undefined) return undefined;
+  return () =>
+    servingReadinessCheck(`${baseUrl}${readiness.path}`, readiness, {
+      timeoutMs: READINESS_PROBE_TIMEOUT_MS,
+    });
+}
 
 async function probeServerModelIds(endpointUrl: string, timeoutMs: number): Promise<string[]> {
   try {
@@ -630,6 +654,12 @@ export async function tryAdoptExistingServer(args: {
   rel: string;
   extraArgs: string[];
   binary: string;
+  /**
+   * Optional declared serving-readiness contract (issue #220). When set, the
+   * declared endpoint must pass before the live server is adopted; a /health-
+   * healthy or model-listing server with a failing contract is not adopted.
+   */
+  readiness?: ServingReadiness;
   deps?: Partial<AdoptDeps>;
 }): Promise<number | null> {
   const probe = args.deps?.probeModelIds ?? probeServerModelIds;
@@ -648,6 +678,14 @@ export async function tryAdoptExistingServer(args: {
     !modelIds.some((id) => aliases.has(id) || aliases.has(basename(id)))
   ) {
     return null;
+  }
+  if (args.readiness !== undefined) {
+    const contractPass = await servingReadinessCheck(
+      `${args.endpointUrl}${args.readiness.path}`,
+      args.readiness,
+      { timeoutMs: ADOPT_PROBE_TIMEOUT_MS },
+    );
+    if (!contractPass) return null;
   }
   const pid = await find(args.host, args.port);
   // TOCTOU: the listener may have exited between probe and now.
@@ -692,6 +730,7 @@ async function probeHealthOnce(
   healthUrl: string,
   attempt: number,
   onEvent?: (e: ServerEvent) => void,
+  readinessCheck?: () => Promise<boolean>,
 ): Promise<HealthProbeOutcome> {
   try {
     const res = await fetch(healthUrl, {
@@ -699,7 +738,16 @@ async function probeHealthOnce(
       signal: AbortSignal.timeout(1000),
     });
     const httpCode = String(res.status);
-    if (res.status === 200) return { kind: "ready", httpCode };
+    if (res.status === 200) {
+      // Liveness alone is not servability: a declared contract (#220) must
+      // also pass, otherwise the 200-with-loading-engine case would flip us
+      // to ready while the model can still answer nothing.
+      if (readinessCheck === undefined || (await readinessCheck())) {
+        return { kind: "ready", httpCode };
+      }
+      onEvent?.({ type: "waiting", attempt, httpCode });
+      return { kind: "waiting", httpCode, nonLoading: false };
+    }
     // 503 is the documented "loading" code llama-server emits
     // while loading the model. Any other non-200 (401/403/404)
     // almost always means *something else* is bound to the same
@@ -769,12 +817,13 @@ async function pollReady(
   timeoutSeconds: number,
   onEvent?: (e: ServerEvent) => void,
   signal?: AbortSignal,
+  readinessCheck?: () => Promise<boolean>,
 ): Promise<PollReadyResult> {
   let lastHttpCode: string | null = null;
   let nonLoadingHttpCount = 0;
   for (let attempt = 0; attempt < timeoutSeconds; attempt += 1) {
     if (signal?.aborted) return { outcome: "aborted" };
-    const probe = await probeHealthOnce(pid, healthUrl, attempt, onEvent);
+    const probe = await probeHealthOnce(pid, healthUrl, attempt, onEvent, readinessCheck);
     lastHttpCode = probe.httpCode ?? lastHttpCode;
     if (probe.kind === "ready") return { outcome: "ready", lastHttpCode: probe.httpCode };
     if (probe.kind === "exited") return exitedResult(lastHttpCode);
@@ -944,6 +993,7 @@ interface MmprojRetryContext {
   launchPort: number | string;
   healthUrl: string;
   timeoutSeconds: number;
+  readinessCheck: (() => Promise<boolean>) | undefined;
   abortKiller: AbortKiller;
 }
 
@@ -1091,6 +1141,7 @@ async function retryWithMmprojSafeFlags(
     ctx.timeoutSeconds,
     opts.onEvent,
     opts.signal,
+    ctx.readinessCheck,
   );
   if (readyResult.outcome === "aborted") {
     return {
@@ -1148,6 +1199,7 @@ async function handlePortConflict(
     rel: target.rel,
     extraArgs: opts.extraArgs ?? [],
     binary: target.bin,
+    ...omitUndefined({ readiness: opts.readiness }),
   });
   if (adoptedPid !== null) {
     return startServerSuccess(resolved, launchEndpoint, null, false, adoptedPid, opts.onEvent);
@@ -1272,7 +1324,15 @@ export async function startServer(opts: StartServerOptions): Promise<StartServer
 
   const timeoutSeconds = opts.timeoutSeconds ?? 60;
   const healthUrl = `${endpoint(resolved, launchEndpoint)}/health`;
-  let readyResult = await pollReady(pid, healthUrl, timeoutSeconds, opts.onEvent, opts.signal);
+  const readinessCheck = buildReadinessCheck(opts.readiness, endpoint(resolved, launchEndpoint));
+  let readyResult = await pollReady(
+    pid,
+    healthUrl,
+    timeoutSeconds,
+    opts.onEvent,
+    opts.signal,
+    readinessCheck,
+  );
   let outcome = readyResult.outcome;
   if (outcome === "aborted") {
     return abortedStartResult(
@@ -1301,6 +1361,7 @@ export async function startServer(opts: StartServerOptions): Promise<StartServer
       launchPort,
       healthUrl,
       timeoutSeconds,
+      readinessCheck,
       abortKiller,
     });
     if (retry.result) return retry.result;

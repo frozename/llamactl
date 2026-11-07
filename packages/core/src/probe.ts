@@ -1,10 +1,20 @@
 import { spawn } from "node:child_process";
 
+import type { ServingReadiness } from "./serving-readiness.js";
+
 import { existsSync } from "./safe-fs.js";
+import { servingReadinessCheck } from "./serving-readiness.js";
 
 export interface ProbeHealthOptions {
   fetch?: typeof globalThis.fetch;
   timeoutMs?: number;
+  /**
+   * Optional declared serving-readiness contract (issue #220). When set,
+   * `reachable` is true only when the contract passes after /health answers
+   * ok — a healthy /health with a failing declared endpoint is not reachable.
+   * Absence keeps the legacy /health-only liveness behavior.
+   */
+  readiness?: ServingReadiness;
 }
 
 export interface ProbeHealthResult {
@@ -25,7 +35,7 @@ export async function probeHealthEndpoint(
   port: number,
   opts: ProbeHealthOptions = {},
 ): Promise<ProbeHealthResult> {
-  const { fetch: fetchFn = globalThis.fetch, timeoutMs = 1000 } = opts;
+  const { fetch: fetchFn = globalThis.fetch, timeoutMs = 1000, readiness } = opts;
   const endpoint = formatEndpoint(host, port);
   const controller = new AbortController();
   const timer = setTimeout(() => {
@@ -33,7 +43,13 @@ export async function probeHealthEndpoint(
   }, timeoutMs);
   try {
     const res = await fetchFn(`${endpoint}/health`, { signal: controller.signal });
-    return { reachable: res.ok };
+    if (!res.ok) return { reachable: false };
+    if (readiness === undefined) return { reachable: true };
+    const contractPass = await servingReadinessCheck(`${endpoint}${readiness.path}`, readiness, {
+      fetch: fetchFn,
+      signal: controller.signal,
+    });
+    return { reachable: contractPass };
   } catch {
     return { reachable: false };
   } finally {

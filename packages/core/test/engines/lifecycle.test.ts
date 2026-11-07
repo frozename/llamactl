@@ -3,7 +3,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { gracefulShutdown } from "../../src/engines/lifecycle.js";
+import { gracefulShutdown, pollUntilModelIds } from "../../src/engines/lifecycle.js";
 import {
   existsSync,
   mkdtempSync,
@@ -190,5 +190,69 @@ describe("gracefulShutdown SIGKILL escalation", () => {
         // Best-effort cleanup; failures are not actionable here.
       }
     }
+  });
+});
+
+describe("pollUntilModelIds declared readiness contract (#220)", () => {
+  async function withEngine(
+    fetch: (req: Request) => Response,
+    run: (port: number) => Promise<void>,
+  ): Promise<void> {
+    const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch });
+    try {
+      if (typeof server.port !== "number") throw new Error("no ephemeral port assigned");
+      await run(server.port);
+    } finally {
+      await server.stop(true);
+    }
+  }
+
+  const modelsResponse = (): Response => Response.json({ data: [{ id: "m" }] });
+
+  test("not ready while the declared endpoint answers 503", async () => {
+    await withEngine(
+      (req) =>
+        new URL(req.url).pathname === "/v1/models"
+          ? modelsResponse()
+          : new Response("loading", { status: 503 }),
+      async (port) => {
+        const result = await pollUntilModelIds({ host: "127.0.0.1", port }, 400, {
+          path: "/ready",
+        });
+        expect(result.ready).toBe(false);
+        expect(result.modelIds).toEqual([]);
+      },
+    );
+  });
+
+  test("ready once models and the declared contract pass", async () => {
+    await withEngine(
+      (req) =>
+        new URL(req.url).pathname === "/v1/models"
+          ? modelsResponse()
+          : Response.json({ status: "ready" }),
+      async (port) => {
+        const result = await pollUntilModelIds({ host: "127.0.0.1", port }, 2000, {
+          path: "/ready",
+          expectJson: { status: "ready" },
+        });
+        expect(result.ready).toBe(true);
+        expect(result.modelIds).toEqual(["m"]);
+      },
+    );
+  });
+
+  test("absence of the contract keeps model-ids-only readiness", async () => {
+    await withEngine(
+      (req) =>
+        new URL(req.url).pathname === "/v1/models"
+          ? modelsResponse()
+          : new Response("not found", { status: 404 }),
+      async (port) => {
+        const result = await pollUntilModelIds({ host: "127.0.0.1", port }, 2000);
+        expect(result.ready).toBe(true);
+        expect(result.modelIds).toEqual(["m"]);
+      },
+    );
   });
 });

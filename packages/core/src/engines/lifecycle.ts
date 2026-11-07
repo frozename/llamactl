@@ -1,6 +1,7 @@
 import type { ModelHostReadiness } from "./types.js";
 
 import { isProcessAlive, psColumn, type SignalIdentity, verifyPidFile } from "../pidIdentity.js";
+import { servingReadinessCheck } from "../serving-readiness.js";
 
 const POLL_MS = 100;
 // A SIGKILLed process can take seconds to release model memory and its port, and must be reaped before kill(pid, 0) fails.
@@ -103,24 +104,11 @@ async function fetchReadinessOk(
   readiness: ModelHostReadiness,
   timeoutMs: number,
 ): Promise<boolean> {
-  const response = await fetch(
+  return await servingReadinessCheck(
     `http://${formatHostForUrl(endpoint.host)}:${String(endpoint.port)}${readiness.path}`,
-    {
-      signal: AbortSignal.timeout(timeoutMs),
-    },
+    readiness,
+    { timeoutMs },
   );
-  if (response.status !== (readiness.expectStatus ?? 200)) {
-    return false;
-  }
-  if (readiness.expectJson === undefined) {
-    return true;
-  }
-  const body: unknown = await response.json().catch(() => null);
-  if (typeof body !== "object" || body === null || Array.isArray(body)) {
-    return false;
-  }
-  const record = body as Record<string, unknown>;
-  return Object.entries(readiness.expectJson).every(([key, value]) => record[key] === value);
 }
 
 export async function pollUntilModelIds(
