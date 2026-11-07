@@ -421,8 +421,12 @@ describe("bench scheduler loop", () => {
     startBenchScheduler({ getClient, tickIntervalMs: 3_600_000 });
     expect(held).toHaveLength(1);
     stopBenchScheduler();
+    // The draining bench still holds the lock, so other processes stay out
+    // until it exits.
+    expect(existsSync(benchRunLockPath())).toBe(true);
     held[0]!.onComplete();
     await waitUntil(() => !benchSchedulerStatus().inflight);
+    expect(existsSync(benchRunLockPath())).toBe(false);
 
     expect(subscribeInputs.map((input) => input.target)).toEqual(["org/repo/stop-17a.gguf"]);
     const rows = loadSchedules(schedulePath);
@@ -458,6 +462,34 @@ describe("bench scheduler loop", () => {
     await kickBenchScheduler(autoCompleting().getClient);
     const entry = loadSchedules(schedulePath).find((s) => s.id === "after-18")!;
     expect(entry.lastRunAt).not.toBe("2000-01-01T00:00:00.000Z");
+    expect(existsSync(benchRunLockPath())).toBe(false);
+  }, 10_000);
+
+  test("a kick in flight when the loop starts keeps the run lock held", async () => {
+    saveSchedules([dueSchedule("overlap-19")], schedulePath);
+    const { getClient, held } = fakeClient(
+      new Map([["org/repo/overlap-19.gguf", { complete: false }]]),
+    );
+
+    const kick = kickBenchScheduler(getClient);
+    expect(benchSchedulerStatus().inflight).toBe(true);
+    expect(held).toHaveLength(1);
+
+    // start adopts the kick's lock and skips the in-flight tick; when the
+    // kick drains, the still-running loop must keep the lockfile.
+    startBenchScheduler({ getClient, tickIntervalMs: 3_600_000 });
+    held[0]!.onComplete();
+    await kick;
+
+    try {
+      expect(benchSchedulerStatus().running).toBe(true);
+      expect(benchSchedulerStatus().inflight).toBe(false);
+      expect(existsSync(benchRunLockPath())).toBe(true);
+      const holder = JSON.parse(readFileSync(benchRunLockPath(), "utf8")) as { pid: number };
+      expect(holder.pid).toBe(process.pid);
+    } finally {
+      stopBenchScheduler();
+    }
     expect(existsSync(benchRunLockPath())).toBe(false);
   }, 10_000);
 

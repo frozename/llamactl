@@ -245,7 +245,7 @@ type SchedulerMutations = {
   kick: ReturnType<typeof trpc.benchSchedulerKick.useMutation>;
 };
 
-function useSchedulerMutations(setError: (message: string) => void): SchedulerMutations {
+function useSchedulerMutations(setError: (message: string | null) => void): SchedulerMutations {
   const utils = trpc.useUtils();
   const add = trpc.benchScheduleAdd.useMutation({
     onSuccess: () => {
@@ -264,6 +264,7 @@ function useSchedulerMutations(setError: (message: string) => void): SchedulerMu
   });
   const start = trpc.benchSchedulerStart.useMutation({
     onSuccess: () => {
+      setError(null);
       void utils.benchSchedulerStatus.invalidate();
     },
     onError: (e) => {
@@ -277,6 +278,7 @@ function useSchedulerMutations(setError: (message: string) => void): SchedulerMu
   });
   const kick = trpc.benchSchedulerKick.useMutation({
     onSuccess: () => {
+      setError(null);
       void utils.benchScheduleList.invalidate();
       void utils.benchSchedulerStatus.invalidate();
     },

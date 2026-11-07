@@ -38,6 +38,7 @@ interface TestMutation {
 
 interface CapturedMutationOptions {
   onError?: ((error: Error) => void) | undefined;
+  onSuccess?: (() => void) | undefined;
 }
 
 const capturedMutations = new Map<string, CapturedMutationOptions>();
@@ -169,6 +170,56 @@ describe("SchedulerPanel", () => {
           return Promise.resolve();
         });
         expect(container.textContent).toContain(`refused: ${name}`);
+      }
+    } finally {
+      if (root !== undefined) {
+        const mountedRoot = root;
+        await act(() => {
+          mountedRoot.unmount();
+          return Promise.resolve();
+        });
+      }
+      await new Promise<void>((resolve) => {
+        setTimeout(() => {
+          resolve();
+        }, 0);
+      });
+      shim.uninstall();
+      capturedMutations.clear();
+    }
+  });
+
+  test("a successful start or kick clears a stale mutation error", async () => {
+    schedules = [];
+    const shim = installDomShim();
+    let root: Root | undefined;
+    try {
+      const { createRoot } = await import("react-dom/client");
+      const container = shim.document.createElement("div");
+      const mountedRoot = createRoot(container);
+      root = mountedRoot;
+      const { SchedulerPanel } = await import("../src/modules/bench/scheduler-panel");
+      await act(() => {
+        mountedRoot.render(<SchedulerPanel />);
+        return Promise.resolve();
+      });
+
+      for (const name of ["benchSchedulerStart", "benchSchedulerKick"] as const) {
+        const message = `refused: ${name}`;
+        const options = capturedMutations.get(name);
+        expect(options?.onError).toBeFunction();
+        expect(options?.onSuccess).toBeFunction();
+        await act(() => {
+          options!.onError!(new Error(message));
+          return Promise.resolve();
+        });
+        expect(container.textContent).toContain(message);
+
+        await act(() => {
+          capturedMutations.get(name)?.onSuccess?.();
+          return Promise.resolve();
+        });
+        expect(container.textContent).not.toContain(message);
       }
     } finally {
       if (root !== undefined) {
