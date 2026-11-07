@@ -425,6 +425,32 @@ describe("bench scheduler loop", () => {
     expect(existsSync(benchRunLockPath())).toBe(false);
   });
 
+  test("an empty lockfile is reclaimed as stale", async () => {
+    writeFileSync(benchRunLockPath(), "", "utf8");
+    saveSchedules([dueSchedule("lock-22")], schedulePath);
+
+    await kickBenchScheduler(autoCompleting().getClient);
+
+    const entry = loadSchedules(schedulePath).find((s) => s.id === "lock-22")!;
+    expect(entry.lastRunAt).not.toBe("2000-01-01T00:00:00.000Z");
+    expect(Number.isNaN(Date.parse(entry.lastRunAt!))).toBe(false);
+    expect(getClientCalls).toBe(1);
+    expect(existsSync(benchRunLockPath())).toBe(false);
+  });
+
+  test("a truncated JSON lockfile is reclaimed as stale", async () => {
+    writeFileSync(benchRunLockPath(), "{", "utf8");
+    saveSchedules([dueSchedule("lock-23")], schedulePath);
+
+    await kickBenchScheduler(autoCompleting().getClient);
+
+    const entry = loadSchedules(schedulePath).find((s) => s.id === "lock-23")!;
+    expect(entry.lastRunAt).not.toBe("2000-01-01T00:00:00.000Z");
+    expect(Number.isNaN(Date.parse(entry.lastRunAt!))).toBe(false);
+    expect(getClientCalls).toBe(1);
+    expect(existsSync(benchRunLockPath())).toBe(false);
+  });
+
   test("release leaves a lockfile that now names a foreign pid", async () => {
     saveSchedules([dueSchedule("lock-21")], schedulePath);
     const { getClient, held } = fakeClient(
