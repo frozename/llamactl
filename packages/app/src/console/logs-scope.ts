@@ -7,7 +7,7 @@
 
 import type { ConsoleWorkloadRow } from "./workloads-scope";
 
-import { isReconnectSignal } from "../lib/transport/sse-lifecycle";
+import { isReconnectingSignal, isReconnectSignal } from "../lib/transport/sse-lifecycle";
 import { consoleHref } from "./router";
 import { workloadLocation, workloadsForTab } from "./workloads-scope";
 
@@ -16,7 +16,7 @@ export const MAX_LOG_LINES = 2000;
 
 export type LogsGate = "pending" | "error" | "offline" | "online";
 
-export type LogsConnState = "connecting" | "streaming" | "error" | "idle";
+export type LogsConnState = "connecting" | "streaming" | "reconnecting" | "error" | "idle";
 
 export type LogsSelection =
   | { kind: "pending" }
@@ -33,6 +33,10 @@ export interface LogsState {
   // onStarted opens a fresh subscription whose backfill would otherwise
   // replay lines the buffer already holds.
   pendingFreshStart: boolean;
+  // Set by the RECONNECTING_SIGNAL frame when a resumable subscription
+  // receives a server RETURN: the reconnect is scheduled and the backoff
+  // timer is running. Cleared when the RECONNECT_SIGNAL frame arrives.
+  reconnecting?: true;
 }
 
 export const INITIAL_LOGS_STATE: LogsState = { entries: [], pendingFreshStart: false };
@@ -129,16 +133,19 @@ export function logsStreamGate(statusQuery: unknown): LogsGate {
 }
 
 // "pending" here is the tRPC v11 useSubscription status: the
-// connection is open and awaiting data. A "reconnecting" state needs
-// the P4 sse-lifecycle onStateChange, which create-node-scope does not
-// plumb yet. That is a follow-up.
+// connection is open and awaiting data. A "reconnecting" state is
+// produced by the P4 sse-lifecycle when a resumable subscription
+// receives a server RETURN: the backoff timer is running and the
+// __reconnecting__ frame has been emitted.
 export function logsConnState(
   status: unknown,
   error: string | null,
   gate: LogsGate,
+  reconnecting?: boolean,
 ): LogsConnState {
   if (gate !== "online") return "idle";
   if (error !== null || status === "error") return "error";
+  if (reconnecting === true) return "reconnecting";
   if (status === "pending") return "streaming";
   if (status === "connecting") return "connecting";
   if (status === "idle") return "idle";
@@ -149,18 +156,26 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-export function logsReducer(state: LogsState, action: LogsAction): LogsState {
-  if (action.type === "clear") return INITIAL_LOGS_STATE;
-  if (action.type === "gate-off") {
-    return state.pendingFreshStart ? state : { ...state, pendingFreshStart: true };
-  }
-  if (action.type === "stream-start") {
-    if (!state.pendingFreshStart) return state;
-    return { entries: [{ kind: "divider" }], pendingFreshStart: false };
-  }
-  const event = action.event;
+function reconnectingCarry(state: LogsState): { reconnecting?: true } {
+  return state.reconnecting === true ? { reconnecting: true } : {};
+}
+
+// A brand-new subscription starts at attempt 0 and never emits
+// RECONNECT_SIGNAL, the only event that clears the flag through the
+// event path, so any action that marks a fresh subscription must drop
+// it here or the conn dot sticks on "reconnecting" forever.
+function withoutReconnecting(state: LogsState): LogsState {
+  if (state.reconnecting !== true) return state;
+  return { entries: state.entries, pendingFreshStart: state.pendingFreshStart };
+}
+
+function reduceLogEvent(state: LogsState, event: unknown): LogsState {
   if (isReconnectSignal(event)) {
     return { entries: [{ kind: "divider" }], pendingFreshStart: state.pendingFreshStart };
+  }
+  if (isReconnectingSignal(event)) {
+    if (state.reconnecting === true) return state;
+    return { ...state, reconnecting: true };
   }
   if (isObject(event) && event["type"] === "line" && typeof event["line"] === "string") {
     const entries = [...state.entries, { kind: "line" as const, text: maskLogLine(event["line"]) }];
@@ -168,7 +183,25 @@ export function logsReducer(state: LogsState, action: LogsAction): LogsState {
       entries:
         entries.length > MAX_LOG_LINES ? entries.slice(entries.length - MAX_LOG_LINES) : entries,
       pendingFreshStart: state.pendingFreshStart,
+      ...reconnectingCarry(state),
     };
   }
   return state;
+}
+
+export function logsReducer(state: LogsState, action: LogsAction): LogsState {
+  if (action.type === "clear") {
+    return state.reconnecting === true
+      ? { ...INITIAL_LOGS_STATE, reconnecting: true }
+      : INITIAL_LOGS_STATE;
+  }
+  if (action.type === "gate-off") {
+    const base = withoutReconnecting(state);
+    return base.pendingFreshStart ? base : { ...base, pendingFreshStart: true };
+  }
+  if (action.type === "stream-start") {
+    if (!state.pendingFreshStart) return state;
+    return { entries: [{ kind: "divider" }], pendingFreshStart: false };
+  }
+  return reduceLogEvent(state, action.event);
 }

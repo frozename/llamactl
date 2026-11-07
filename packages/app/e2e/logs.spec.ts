@@ -4,8 +4,9 @@
 // auto-scroll contract, a wire-level masking proof for a second in-page
 // subscription (the auto guard skips text/event-stream bodies, so it can
 // neither leak nor prove there), unmount teardown via nav, the
-// stopped-workload gate with zero stream calls, and the single
-// documented reconnect gap.
+// stopped-workload gate with zero stream calls, and the reconnect
+// contract: a server RETURN lands the conn dot on "reconnecting", then
+// re-tails into a fresh buffer behind exactly one divider.
 
 import type { ControlClient } from "./harness/fixtures/test";
 
@@ -150,14 +151,12 @@ test("the masked projection holds on the wire, not just on screen", async ({ con
   }
 });
 
-// Gap pinned for #410: handleInnerComplete in sse-lifecycle.ts treats a
-// server-completed stream as terminal and never dispatches
-// RECONNECT_SIGNAL, and logsConnState in logs-scope.ts (L131-134) has
-// no reconnecting state to land in — the divider + re-tail below is the
-// intended contract once reconnect lands. A wet spec cannot pin it
-// without a src change: the fixture drop ends the generator cleanly,
-// and a shaped error frame classifies as non-retryable.
-test.fixme("a dropped stream reconnects into a fresh tail behind a divider", async ({
+// The fixture drop ends the generator cleanly, so the server RETURN
+// lands on the resumable reconnect path: RECONNECTING_SIGNAL flips the
+// conn dot to "reconnecting" behind the 1s backoff, and the fresh
+// subscription's RECONNECT_SIGNAL resets the buffer to exactly one
+// divider before the backfill re-tails — no duplicate boot line.
+test("a dropped stream reconnects into a fresh tail behind a divider", async ({
   control,
   page,
 }) => {
@@ -169,21 +168,19 @@ test.fixme("a dropped stream reconnects into a fresh tail behind a divider", asy
     "reconnecting",
     { timeout: 2_000 },
   );
-  await expect(page.getByTestId("console-logs-divider")).toBeVisible();
-  await expect(page.getByTestId("console-logs-line").filter({ hasText: BOOT_MARKER })).toHaveCount(
-    1,
-  );
-});
-
-test("a dropped stream currently completes without reconnect noise", async ({ control, page }) => {
-  await page.goto(LOGS_ROUTE);
-  await waitForStream(control, true);
-  await control.dropStream("agent-1", "wB");
   await waitForStream(control, false);
-  await expect(page.getByTestId("console-logs-divider")).toHaveCount(0);
+  await waitForStream(control, true);
+  await expect(page.getByTestId("console-logs-divider")).toHaveCount(1);
   await expect(page.getByTestId("console-logs-line").filter({ hasText: BOOT_MARKER })).toHaveCount(
     1,
   );
+  await expect(page.getByTestId("console-logs-conn")).toHaveAttribute("data-state", "streaming", {
+    timeout: 5_000,
+  });
+  await control.emitLog("agent-1", "wB", "e2e-after-reconnect");
+  await expect(
+    page.getByTestId("console-logs-line").filter({ hasText: "e2e-after-reconnect" }),
+  ).toBeVisible();
 });
 
 test("leaving the route tears the stream down", async ({ control, page }) => {
