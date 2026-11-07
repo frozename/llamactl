@@ -10,6 +10,7 @@
 // opening the browser by default with the printed URL, --no-open
 // suppressing the opener, and runConsole's injectable opener seam.
 
+import { sourceRevision } from "@llamactl/core";
 import { afterEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -90,11 +91,16 @@ function makeFixture(): ConsoleFixture {
 
 type ConsoleProc = Bun.Subprocess<"ignore", "pipe", "pipe">;
 
-function spawnConsole(args: string[], env: Record<string, string | undefined>): ConsoleProc {
+function spawnConsole(
+  args: string[],
+  env: Record<string, string | undefined>,
+  cwd?: string,
+): ConsoleProc {
   return Bun.spawn([process.execPath, CLI_BIN, "console", ...args], {
     env,
     stderr: "pipe",
     stdout: "pipe",
+    ...(cwd === undefined ? {} : { cwd }),
   });
 }
 
@@ -243,6 +249,7 @@ describe("llamactl console", () => {
         const { code, stdout } = await collect(proc);
         expect(code).toBe(0);
         expect(stdout).toContain("--no-open");
+        expect(stdout).toMatch(/^ {2}--no-open\s+Do not open/m);
         expect(stdout).not.toMatch(/^\s+--open\s/m);
       } finally {
         proc.kill("SIGKILL");
@@ -321,6 +328,53 @@ describe("llamactl console", () => {
           await expectServesIndex(proc);
           proc.kill("SIGTERM");
           expect(await withTimeout(proc.exited, 5_000)).toBe(0);
+        } finally {
+          proc.kill("SIGKILL");
+        }
+      },
+      SPAWN_TIMEOUT_MS,
+    );
+
+    // An empty LLAMACTL_CONSOLE_DIST must fall back to the repo
+    // checkout, not to resolve("") relative to the cwd. The cwd is a
+    // temp dir holding its own index.html: if the empty env value were
+    // treated as a real path, that decoy would be served instead of
+    // the checkout's packages/app/out/web.
+    test(
+      'LLAMACTL_CONSOLE_DIST="" falls back to the repo checkout, not the cwd',
+      async () => {
+        const fx = makeFixture();
+        const cwd = tmpDir("llamactl-console-cwd-");
+        writeFileSync(join(cwd, "index.html"), INDEX_HTML);
+        const repoIndex = join(
+          sourceRevision.findRepoRoot(import.meta.dir) ?? process.cwd(),
+          "packages",
+          "app",
+          "out",
+          "web",
+          "index.html",
+        );
+        const proc = spawnConsole(
+          ["--port", "0", "--no-open"],
+          { ...fx.env, LLAMACTL_CONSOLE_DIST: "" },
+          cwd,
+        );
+        try {
+          if (existsSync(repoIndex)) {
+            const match = await readUntil(proc.stdout, CONSOLE_URL_RE);
+            expect(match).not.toBeNull();
+            const url = match?.[1] ?? "";
+            expect(url).not.toBe("");
+            const served = await (await fetch(`${url}/`)).text();
+            expect(served).not.toBe(INDEX_HTML);
+            proc.kill("SIGTERM");
+            expect(await withTimeout(proc.exited, 5_000)).toBe(0);
+          } else {
+            const { code, stderr } = await collect(proc);
+            expect(code).toBe(1);
+            expect(stderr).toContain(repoIndex);
+            expect(stderr).not.toContain(join(cwd, "index.html"));
+          }
         } finally {
           proc.kill("SIGKILL");
         }
