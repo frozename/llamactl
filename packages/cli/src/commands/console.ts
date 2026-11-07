@@ -15,7 +15,7 @@ import { existsSync } from "../safe-fs.js";
 const DEFAULT_CONSOLE_PORT = 4520;
 const LOOPBACK_HOST = "127.0.0.1";
 
-const CONSOLE_USAGE = `Usage: llamactl console [--port <n>] [--host <h>] [--dist <path>] [--open]
+const CONSOLE_USAGE = `Usage: llamactl console [--port <n>] [--host <h>] [--dist <path>] [--no-open]
 
 Serve the Operator Console web UI on 127.0.0.1 (loopback only).
 
@@ -24,8 +24,8 @@ Serve the Operator Console web UI on 127.0.0.1 (loopback only).
   --host <h>        Bind host (only 127.0.0.1 is accepted).
   --dist <path>     Path to the built web UI directory. Falls back to
                     LLAMACTL_CONSOLE_DIST, then packages/app/out/web.
-  --open            Open the console in the default browser.
-  --no-open         Do not open a browser (the default).
+  --no-open         Do not open the console in the default browser
+                    (a browser is opened by default).
   -h, --help        Show this help message.
 
 The web UI must be built first: bun run --cwd packages/app build:web
@@ -103,11 +103,10 @@ function parseOneFlag(args: string[], index: number, flags: ConsoleFlags): FlagS
   const arg = args[index];
   if (arg === undefined) return { kind: "error", error: "unexpected end of arguments" };
   if (arg === "-h" || arg === "--help") return { kind: "help" };
-  if (arg === "--open") {
-    flags.open = true;
+  if (arg === "--no-open") {
+    flags.open = false;
     return { kind: "ok", next: index };
   }
-  if (arg === "--no-open") return { kind: "ok", next: index };
   if (arg === "--port" || arg.startsWith("--port=")) {
     return stepPort(args, index, arg, flags);
   }
@@ -119,7 +118,7 @@ function parseOneFlag(args: string[], index: number, flags: ConsoleFlags): FlagS
 }
 
 function parseConsoleFlags(args: string[]): ConsoleParseResult {
-  const flags: ConsoleFlags = { dist: undefined, open: false, port: DEFAULT_CONSOLE_PORT };
+  const flags: ConsoleFlags = { dist: undefined, open: true, port: DEFAULT_CONSOLE_PORT };
   let index = 0;
   while (index < args.length) {
     const step = parseOneFlag(args, index, flags);
@@ -174,7 +173,12 @@ function waitForShutdownSignal(): Promise<void> {
   });
 }
 
-export async function runConsole(args: string[]): Promise<number> {
+export interface ConsoleDeps {
+  openBrowser?: (url: string) => void;
+  waitForShutdown?: () => Promise<void>;
+}
+
+export async function runConsole(args: string[], deps: ConsoleDeps = {}): Promise<number> {
   const parsed = parseConsoleFlags(args);
   if (!parsed.ok) {
     if (parsed.help) {
@@ -207,9 +211,9 @@ export async function runConsole(args: string[]): Promise<number> {
   }
 
   process.stdout.write(`Console: ${server.url}\nPress Ctrl+C to stop.\n`);
-  if (open) openBrowser(server.url);
+  if (open) (deps.openBrowser ?? openBrowser)(server.url);
 
-  await waitForShutdownSignal();
+  await (deps.waitForShutdown ?? waitForShutdownSignal)();
   await server.stop();
   process.stdout.write("Console stopped.\n");
   return 0;

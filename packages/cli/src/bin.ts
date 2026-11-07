@@ -230,7 +230,7 @@ Agentic operations:
                                               /tunnel-relay POST against it.
   llamactl fleet snapshot [--all]             Show local or cluster fleet snapshots
   llamactl fleet status                       Show one-line fleet pressure summary per node
-  llamactl console [--port <n>] [--open]      Serve the web console on 127.0.0.1
+  llamactl console [--port <n>] [--no-open]   Serve the web console on 127.0.0.1
       [--dist <path>]                         (build first: bun run --cwd
                                               packages/app build:web)
 

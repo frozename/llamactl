@@ -1,16 +1,20 @@
 // RED pins for frozename/llamactl#410 (P7-A) — the `llamactl console`
-// launcher for the web console. Every case spawns the real CLI as a
-// subprocess against temp dirs; fake `open`/`xdg-open` shims sit first
-// on PATH so no real browser can launch. Pinned contract: loopback-only
-// flag refusals, the missing-dist build:web hint, the printed
-// `Console: http://127.0.0.1:<port>` URL, the port-scoped session cookie
-// and Host guard on GET /, clean SIGTERM/SIGINT shutdown, and --open
-// handing the URL to the opener.
+// launcher for the web console. Subprocess cases spawn the real CLI
+// against temp dirs; fake `open`/`xdg-open` shims sit first on PATH so
+// no real browser can launch, and every case except the default-open
+// one passes --no-open. Pinned contract: loopback-only flag refusals,
+// the missing-dist build:web hint, the dist resolution order
+// (--dist > LLAMACTL_CONSOLE_DIST > repo checkout), the printed
+// `Console: http://127.0.0.1:<port>` URL, the port-scoped session
+// cookie and Host guard on GET /, clean SIGTERM/SIGINT shutdown,
+// opening the browser by default with the printed URL, --no-open
+// suppressing the opener, and runConsole's injectable opener seam.
 
 import { afterEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { runConsole } from "../src/commands/console.js";
 import {
   chmodSync,
   existsSync,
@@ -24,6 +28,7 @@ import {
 const CLI_BIN = join(import.meta.dir, "..", "src", "bin.ts");
 const INDEX_HTML = "<!doctype html><title>console-launcher-test</title>";
 const CONSOLE_URL_RE = /Console: (http:\/\/127\.0\.0\.1:(\d+))/;
+const LOOPBACK_URL_RE = /^http:\/\/127\.0\.0\.1:\d+$/;
 const SPAWN_TIMEOUT_MS = 30_000;
 
 const tmpDirs: string[] = [];
@@ -49,6 +54,9 @@ interface ConsoleFixture {
 // dir, an empty dist dir for the missing-index case, and a marker file
 // the shims write their argv to. LLAMACTL_CONFIG points at a file that
 // does not exist — the launcher must serve / without a kubeconfig.
+// LLAMACTL_CONSOLE_DIST is pinned to "" (the resolver treats empty as
+// unset) so an ambient value on the test host can never leak into a
+// case that does not set it explicitly.
 function makeFixture(): ConsoleFixture {
   const root = tmpDir("llamactl-console-cli-");
   const fakeBin = join(root, "fake-bin");
@@ -73,6 +81,7 @@ function makeFixture(): ConsoleFixture {
       CONSOLE_TEST_OPEN_MARKER: markerPath,
       DEV_STORAGE: storageDir,
       LLAMACTL_CONFIG: join(root, "config"),
+      LLAMACTL_CONSOLE_DIST: "",
       PATH: `${fakeBin}:${process.env["PATH"] ?? ""}`,
     },
     markerPath,
@@ -157,6 +166,24 @@ async function pollUntil(cond: () => boolean, deadlineMs: number): Promise<boole
   return cond();
 }
 
+// Wait for the Console: URL, then assert the built index is served
+// with the port-scoped session cookie; returns the URL.
+async function expectServesIndex(proc: ConsoleProc): Promise<string> {
+  const match = await readUntil(proc.stdout, CONSOLE_URL_RE);
+  expect(match).not.toBeNull();
+  const url = match?.[1] ?? "";
+  const port = Number(match?.[2] ?? "0");
+  expect(url).not.toBe("");
+  expect(port).toBeGreaterThan(0);
+
+  const index = await fetch(`${url}/`);
+  expect(index.status).toBe(200);
+  expect(await index.text()).toBe(INDEX_HTML);
+  const cookies = index.headers.getAll("set-cookie");
+  expect(cookies.some((line) => line.startsWith(`llamactl_console_${String(port)}=`))).toBe(true);
+  return url;
+}
+
 describe("llamactl console", () => {
   describe("argument refusals", () => {
     const REFUSAL_CASES: {
@@ -177,6 +204,7 @@ describe("llamactl console", () => {
       { args: ["--port", "1.5"], name: "--port 1.5", stderrIncludes: "--port" },
       { args: ["--port"], name: "--port without a value", stderrIncludes: "--port" },
       { args: ["--bogus"], name: "--bogus" },
+      { args: ["--open"], name: "--open", stderrIncludes: "unknown flag" },
     ];
 
     for (const refusal of REFUSAL_CASES) {
@@ -184,7 +212,7 @@ describe("llamactl console", () => {
         `${refusal.name} is refused`,
         async () => {
           const fx = makeFixture();
-          const proc = spawnConsole(["--dist", fx.distDir, ...refusal.args], fx.env);
+          const proc = spawnConsole(["--no-open", "--dist", fx.distDir, ...refusal.args], fx.env);
           try {
             const { code, stderr, stdout } = await collect(proc);
             expect(code).not.toBe(0);
@@ -207,10 +235,27 @@ describe("llamactl console", () => {
   });
 
   test(
+    "--help documents --no-open and no longer advertises --open",
+    async () => {
+      const fx = makeFixture();
+      const proc = spawnConsole(["--help"], fx.env);
+      try {
+        const { code, stdout } = await collect(proc);
+        expect(code).toBe(0);
+        expect(stdout).toContain("--no-open");
+        expect(stdout).not.toMatch(/^\s+--open\s/m);
+      } finally {
+        proc.kill("SIGKILL");
+      }
+    },
+    SPAWN_TIMEOUT_MS,
+  );
+
+  test(
     "a dist dir without index.html exits 1 with the build:web hint",
     async () => {
       const fx = makeFixture();
-      const proc = spawnConsole(["--port", "0", "--dist", fx.emptyDistDir], fx.env);
+      const proc = spawnConsole(["--port", "0", "--no-open", "--dist", fx.emptyDistDir], fx.env);
       try {
         const { code, stderr, stdout } = await collect(proc);
         expect(code).toBe(1);
@@ -225,30 +270,76 @@ describe("llamactl console", () => {
     SPAWN_TIMEOUT_MS,
   );
 
+  describe("dist resolution order", () => {
+    test(
+      "LLAMACTL_CONSOLE_DIST is served when --dist is absent",
+      async () => {
+        const fx = makeFixture();
+        const proc = spawnConsole(["--port", "0", "--no-open"], {
+          ...fx.env,
+          LLAMACTL_CONSOLE_DIST: fx.distDir,
+        });
+        try {
+          await expectServesIndex(proc);
+          proc.kill("SIGTERM");
+          expect(await withTimeout(proc.exited, 5_000)).toBe(0);
+        } finally {
+          proc.kill("SIGKILL");
+        }
+      },
+      SPAWN_TIMEOUT_MS,
+    );
+
+    test(
+      "the missing-build error names the LLAMACTL_CONSOLE_DIST index.html when --dist is absent",
+      async () => {
+        const fx = makeFixture();
+        const proc = spawnConsole(["--port", "0", "--no-open"], {
+          ...fx.env,
+          LLAMACTL_CONSOLE_DIST: fx.emptyDistDir,
+        });
+        try {
+          const { code, stderr } = await collect(proc);
+          expect(code).toBe(1);
+          expect(stderr).toContain(join(fx.emptyDistDir, "index.html"));
+        } finally {
+          proc.kill("SIGKILL");
+        }
+      },
+      SPAWN_TIMEOUT_MS,
+    );
+
+    test(
+      "--dist wins over LLAMACTL_CONSOLE_DIST",
+      async () => {
+        const fx = makeFixture();
+        const proc = spawnConsole(["--port", "0", "--no-open", "--dist", fx.distDir], {
+          ...fx.env,
+          LLAMACTL_CONSOLE_DIST: fx.emptyDistDir,
+        });
+        try {
+          await expectServesIndex(proc);
+          proc.kill("SIGTERM");
+          expect(await withTimeout(proc.exited, 5_000)).toBe(0);
+        } finally {
+          proc.kill("SIGKILL");
+        }
+      },
+      SPAWN_TIMEOUT_MS,
+    );
+  });
+
   for (const signal of ["SIGTERM", "SIGINT"] as const) {
     test(
       `serves the console on loopback and exits 0 on ${signal}`,
       async () => {
         const fx = makeFixture();
-        const proc = spawnConsole(["--port", "0", "--dist", fx.distDir], fx.env);
+        const proc = spawnConsole(["--port", "0", "--no-open", "--dist", fx.distDir], fx.env);
         try {
-          const match = await readUntil(proc.stdout, CONSOLE_URL_RE);
-          expect(match).not.toBeNull();
-          const url = match?.[1] ?? "";
-          const port = Number(match?.[2] ?? "0");
-          expect(url).not.toBe("");
-          expect(port).toBeGreaterThan(0);
-
-          const index = await fetch(`${url}/`);
-          expect(index.status).toBe(200);
-          expect(await index.text()).toBe(INDEX_HTML);
-          const cookies = index.headers.getAll("set-cookie");
-          expect(cookies.some((line) => line.startsWith(`llamactl_console_${String(port)}=`))).toBe(
-            true,
-          );
+          const url = await expectServesIndex(proc);
 
           const foreign = await fetch(`${url}/`, {
-            headers: { host: `evil.test:${String(port)}` },
+            headers: { host: `evil.test:${String(Number(new URL(url).port))}` },
           });
           expect(foreign.status).not.toBe(200);
 
@@ -270,10 +361,10 @@ describe("llamactl console", () => {
   }
 
   test(
-    "--open hands the printed URL to the platform opener",
+    "opens the browser by default with the printed URL",
     async () => {
       const fx = makeFixture();
-      const proc = spawnConsole(["--port", "0", "--dist", fx.distDir, "--open"], fx.env);
+      const proc = spawnConsole(["--port", "0", "--dist", fx.distDir], fx.env);
       try {
         const match = await readUntil(proc.stdout, CONSOLE_URL_RE);
         expect(match).not.toBeNull();
@@ -294,4 +385,51 @@ describe("llamactl console", () => {
     },
     SPAWN_TIMEOUT_MS,
   );
+
+  test(
+    "--no-open suppresses the browser opener",
+    async () => {
+      const fx = makeFixture();
+      const proc = spawnConsole(["--port", "0", "--no-open", "--dist", fx.distDir], fx.env);
+      try {
+        await expectServesIndex(proc);
+        proc.kill("SIGTERM");
+        expect(await withTimeout(proc.exited, 5_000)).toBe(0);
+        await pollUntil(() => existsSync(fx.markerPath), 500);
+        expect(existsSync(fx.markerPath)).toBe(false);
+      } finally {
+        proc.kill("SIGKILL");
+      }
+    },
+    SPAWN_TIMEOUT_MS,
+  );
+
+  describe("runConsole injectable deps", () => {
+    test("the default path calls the injected opener with the loopback console URL", async () => {
+      const fx = makeFixture();
+      const opened: string[] = [];
+      const code = await runConsole(["--port", "0", "--dist", fx.distDir], {
+        openBrowser: (url) => {
+          opened.push(url);
+        },
+        waitForShutdown: () => Promise.resolve(),
+      });
+      expect(code).toBe(0);
+      expect(opened).toHaveLength(1);
+      expect(opened[0]).toMatch(LOOPBACK_URL_RE);
+    });
+
+    test("--no-open does not call the injected opener", async () => {
+      const fx = makeFixture();
+      const opened: string[] = [];
+      const code = await runConsole(["--port", "0", "--no-open", "--dist", fx.distDir], {
+        openBrowser: (url) => {
+          opened.push(url);
+        },
+        waitForShutdown: () => Promise.resolve(),
+      });
+      expect(code).toBe(0);
+      expect(opened).toEqual([]);
+    });
+  });
 });
