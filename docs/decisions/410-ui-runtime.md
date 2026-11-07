@@ -424,5 +424,5 @@ P7-A entry preconditions, all met before deletion:
 Electron deletion has landed: `packages/app/electron/**`, the packaging
 configs, the IPC transport and the retired renderer modules are gone, the
 console manifest ships exactly `fleet`, `workloads`, `nodes` and `logs`,
-and `console-e2e` is the required UI check. #369 closed as superseded once
-the post-merge green streak existed.
+and `console-e2e` is the required UI check. #369 closed as superseded after
+`console-e2e` passed on main at f906133b (the #514 merge commit).
