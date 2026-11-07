@@ -857,8 +857,9 @@ export interface TaskCoverageMeasurement {
 
 // Plan #410 P6 task list mapped to the specs that actually exist in
 // packages/app/e2e. Coverage means the spec exists AND its comment-stripped
-// text contains every needle: stripCommentLines drops commented lines before
-// matching, so a needle that appears only in a comment never counts. The T2,
+// text contains every needle: stripComments drops // and /* */ regions before
+// matching (string literals stay), so a needle that appears only in a comment
+// never counts. The T2,
 // T5 and T6 needles are assertion fragments — each one matches
 // /expect\(|\)\.to[A-Z]/ — so a hit implies the spec asserts the behaviour
 // rather than mentioning it. T1, T3 and T4 keep their legacy bare needles
@@ -925,14 +926,76 @@ export const CREDENTIALS_SPEC_PROBE: CoverageProbe = {
   spec: "packages/app/e2e/credentials.spec.ts",
 };
 
-export function stripCommentLines(text: string): string {
-  return text
-    .split("\n")
-    .filter((line) => {
-      const trimmed = line.trimStart();
-      return !trimmed.startsWith("//") && !trimmed.startsWith("/*") && !trimmed.startsWith("*");
-    })
-    .join("\n");
+// Real comment stripper: one pass over the source as a state machine, so a
+// trailing `code(); // expect(x)` loses its comment and every line inside a
+// /* */ block is dropped regardless of how it starts. String literals
+// (single, double and backtick) are emitted verbatim and their interiors never
+// open a comment, so a URL's `//` survives and `${}` interpolation stays
+// opaque. Deliberate: string
+// contents count for needle matching — needles are assertion fragments that
+// contain string literals themselves, and T1/T3/T4's bare needles live in
+// test titles.
+function lineCommentEnd(text: string, from: number): number {
+  let index = from;
+  while (index < text.length && text[index] !== "\n") {
+    index += 1;
+  }
+  return index;
+}
+
+function blockCommentEnd(text: string, from: number, out: string[]): number {
+  let index = from;
+  while (index < text.length) {
+    if (text[index] === "*" && text[index + 1] === "/") {
+      return index + 2;
+    }
+    if (text[index] === "\n") {
+      out.push("\n");
+    }
+    index += 1;
+  }
+  return index;
+}
+
+function stringLiteralEnd(text: string, from: number, quote: string, out: string[]): number {
+  let index = from;
+  out.push(quote);
+  while (index < text.length) {
+    const current = text[index] ?? "";
+    out.push(current);
+    index += 1;
+    if (current === "\\" && index < text.length) {
+      out.push(text[index] ?? "");
+      index += 1;
+    } else if (current === quote) {
+      break;
+    }
+  }
+  return index;
+}
+
+export function stripComments(text: string): string {
+  const out: string[] = [];
+  let index = 0;
+  while (index < text.length) {
+    const char = text[index] ?? "";
+    const after = text[index + 1] ?? "";
+    if (char === "/" && after === "/") {
+      index = lineCommentEnd(text, index + 2);
+      continue;
+    }
+    if (char === "/" && after === "*") {
+      index = blockCommentEnd(text, index + 2, out);
+      continue;
+    }
+    if (char === '"' || char === "'" || char === "`") {
+      index = stringLiteralEnd(text, index + 1, char, out);
+      continue;
+    }
+    out.push(char);
+    index += 1;
+  }
+  return out.join("");
 }
 
 function probeMisses(
@@ -942,7 +1005,7 @@ function probeMisses(
   if (text === null) {
     return { hit: false, misses: [`${probe.spec} (absent)`] };
   }
-  const code = stripCommentLines(text);
+  const code = stripComments(text);
   const misses = probe.needles
     .filter((needle) => !code.includes(needle))
     .map((needle) => `${probe.spec}#${needle}`);

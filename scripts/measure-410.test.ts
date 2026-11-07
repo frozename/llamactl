@@ -1,8 +1,9 @@
 // scripts/measure-410.test.ts
 // Issue frozename/llamactl#410 (P6) — contract for the footprint
-// measurement script and the operator decision record. R1-R9 fixtures
-// are pure in-memory: no process, no network, no clock. R10-R20 read
-// the decision doc, the real packages/app/e2e specs and temp trees.
+// measurement script and the operator decision record. R1-R9 and
+// R21-R22 fixtures are pure in-memory: no process, no network, no
+// clock. R10-R20 read the decision doc, the real packages/app/e2e
+// specs and temp trees.
 // The module type is imported with `import type` (erased at runtime)
 // and loaded through an existsSync gate, so a missing module fails by
 // assertion rather than a thrown import error.
@@ -76,14 +77,6 @@ const norm = (s: string): string => s.replaceAll(/\s+/g, " ");
 
 const ASSERTION_FORM = /expect\(|\)\.to[A-Z]/;
 
-// measureSecurityChecklist(root) and CREDENTIALS_SPEC_PROBE land with
-// the fix; this widened view keeps the suite type-checking before and
-// after they do.
-type PendingMeasureExports = {
-  CREDENTIALS_SPEC_PROBE?: Measure.CoverageProbe;
-  measureSecurityChecklist?: (root?: string) => { credentialsSpec?: unknown };
-};
-
 function probesOf(m: typeof Measure, id: string): readonly Measure.CoverageProbe[] {
   return m.COVERAGE_PROBES[id] ?? [];
 }
@@ -137,6 +130,15 @@ function expectAssertionNeedles(probes: readonly Measure.CoverageProbe[]): void 
       expect(needle).toMatch(ASSERTION_FORM);
     }
   }
+}
+
+function expectNeedleFor(
+  needles: readonly string[],
+  behavior: string,
+  ...fragments: string[]
+): void {
+  const hits = needles.filter((needle) => fragments.every((fragment) => needle.includes(fragment)));
+  expect({ behavior, covered: hits.length > 0 }).toEqual({ behavior, covered: true });
 }
 
 function expectPhantomFree(mapped: ReadonlySet<string>, phantoms: readonly string[]): void {
@@ -694,37 +696,24 @@ describe("measure-410 contract (#410 P6)", () => {
     }
 
     // bare T1/T3/T4 needles: follow-up
-    const pending = m as unknown as PendingMeasureExports;
-    const credentialsProbe = pending.CREDENTIALS_SPEC_PROBE;
-    expect(credentialsProbe).toBeDefined();
     const assertionProbes: Measure.CoverageProbe[] = [
       ...probesOf(m, "T2"),
       ...probesOf(m, "T5"),
       ...probesOf(m, "T6"),
+      m.CREDENTIALS_SPEC_PROBE,
     ];
-    if (credentialsProbe !== undefined) {
-      assertionProbes.push(credentialsProbe);
-    }
     expectAssertionNeedles(assertionProbes);
     expect(probesOf(m, "T2").flatMap((probe) => probe.needles)).not.toContain("advertisedEndpoint");
 
-    const codeOnly = (text: string): string =>
-      text
-        .split("\n")
-        .filter((line) => {
-          const trimmed = line.trimStart();
-          return !trimmed.startsWith("//") && !trimmed.startsWith("/*") && !trimmed.startsWith("*");
-        })
-        .join("\n");
-    const allProbes: Measure.CoverageProbe[] = Object.values(m.COVERAGE_PROBES).flat();
-    if (credentialsProbe !== undefined) {
-      allProbes.push(credentialsProbe);
-    }
+    const allProbes: Measure.CoverageProbe[] = [
+      ...Object.values(m.COVERAGE_PROBES).flat(),
+      m.CREDENTIALS_SPEC_PROBE,
+    ];
     const specText = new Map<string, string>();
     for (const probe of allProbes) {
       const text =
         specText.get(probe.spec) ??
-        codeOnly(readFileSync(join(import.meta.dir, "..", probe.spec), "utf8"));
+        m.stripComments(readFileSync(join(import.meta.dir, "..", probe.spec), "utf8"));
       specText.set(probe.spec, text);
       expectContainsAll(text, probe.needles);
     }
@@ -765,7 +754,7 @@ describe("measure-410 contract (#410 P6)", () => {
     expect(
       m.coverageStatus(
         [{ needles: ["alpha"], spec: "a.spec.ts" }],
-        () => "// alpha\n/* alpha */\n * alpha",
+        () => "// alpha\n/* alpha\n * alpha\n */",
       ),
     ).toEqual({ covered: false, missingNeedles: ["a.spec.ts#alpha"], status: "missing" });
   });
@@ -1031,28 +1020,23 @@ describe("measure-410 contract (#410 P6)", () => {
 
   test("R20 credentialsSpec requires the credentials spec needles as code", async () => {
     const m = await load();
-    const pending = m as unknown as PendingMeasureExports;
-    expect(pending.CREDENTIALS_SPEC_PROBE).toBeDefined();
-    const credentialsProbe = pending.CREDENTIALS_SPEC_PROBE;
-    expect(credentialsProbe?.spec).toBe("packages/app/e2e/credentials.spec.ts");
-    const needles = credentialsProbe?.needles ?? [];
+    const credentialsProbe = m.CREDENTIALS_SPEC_PROBE;
+    expect(credentialsProbe.spec).toBe("packages/app/e2e/credentials.spec.ts");
+    const needles = credentialsProbe.needles;
     expect(needles.length).toBeGreaterThan(0);
-    expectAssertionNeedles(credentialsProbe === undefined ? [] : [credentialsProbe]);
-    expect(typeof pending.measureSecurityChecklist).toBe("function");
-    const measure = pending.measureSecurityChecklist;
-    const checklist = (root?: string): { credentialsSpec?: unknown } | undefined => measure?.(root);
+    expectAssertionNeedles([credentialsProbe]);
 
     const tree = tempTree("measure-410-creds-");
     try {
       const spec = "packages/app/e2e/credentials.spec.ts";
-      expect(checklist(tree.root)?.credentialsSpec).toBe(false);
+      expect(m.measureSecurityChecklist(tree.root).credentialsSpec).toBe(false);
       tree.write(spec, 'test("credentials sweep", async () => {});');
-      expect(checklist(tree.root)?.credentialsSpec).toBe(false);
+      expect(m.measureSecurityChecklist(tree.root).credentialsSpec).toBe(false);
       tree.write(spec, needles.map((needle) => `// ${needle}`).join("\n"));
-      expect(checklist(tree.root)?.credentialsSpec).toBe(false);
+      expect(m.measureSecurityChecklist(tree.root).credentialsSpec).toBe(false);
       tree.write(spec, needles.join("\n"));
-      expect(checklist(tree.root)?.credentialsSpec).toBe(true);
-      expect(checklist()?.credentialsSpec).toBe(true);
+      expect(m.measureSecurityChecklist(tree.root).credentialsSpec).toBe(true);
+      expect(m.measureSecurityChecklist().credentialsSpec).toBe(true);
     } finally {
       tree.cleanup();
     }
@@ -1067,5 +1051,115 @@ describe("measure-410 contract (#410 P6)", () => {
     const report = asRecord(parseJsonSafe(measurements.slice(fenceStart + 7, fenceEnd)));
     const security = asRecord(report?.["securityChecklist"]);
     expect(security?.["credentialsSpec"]).toBe(true);
+  });
+
+  test("R21 T2, T5, T6 and the credentials probe needle sets are pinned exactly", async () => {
+    const m = await load();
+    expect(probesOf(m, "T2")).toEqual([
+      {
+        needles: ['[target="_blank"]`)).toHaveCount(1)'],
+        spec: "packages/app/e2e/fleet.spec.ts",
+      },
+      {
+        needles: [
+          'await expect(row).toContainText("Running");',
+          '-stopped")).toContainText("Stopped");',
+          'await expect(row.getByRole("link", { name: endpoint })).toHaveAttribute("href", endpoint);',
+          'await expect(liveStatus).toContainText(`"advertisedEndpoint": "${endpoint}"`);',
+        ],
+        spec: "packages/app/e2e/workloads.spec.ts",
+      },
+    ]);
+    expect(probesOf(m, "T5")).toEqual([
+      {
+        needles: [
+          "expect(localStops).toEqual([]);",
+          'await expect(connA).toHaveAttribute("data-state", "streaming");',
+          'await expect(connB).toHaveAttribute("data-state", "streaming");',
+          ".filter({ hasText: markerA })).toHaveCount(0);",
+          ".filter({ hasText: markerB })).toHaveCount(0);",
+        ],
+        spec: "packages/app/e2e/two-tabs.spec.ts",
+      },
+    ]);
+    expect(probesOf(m, "T6")).toEqual([
+      {
+        needles: [
+          'await expect(page.getByRole("alert")).toHaveText(INVALID_SESSION_MESSAGE);',
+          'await expect(page.getByRole("alert")).toHaveCount(0);',
+          "expect(after[0]?.value).not.toBe(oldCookie);",
+        ],
+        spec: "packages/app/e2e/restart.spec.ts",
+      },
+    ]);
+    expect(m.CREDENTIALS_SPEC_PROBE).toEqual({
+      needles: [
+        "expect(sentinelsIn(entry.request.url)).toEqual([]);",
+        "expect(sentinelsIn(headerText)).toEqual([]);",
+        'expect(sentinelsIn(entry.response.content?.text ?? "")).toEqual([]);',
+        'expect(await harPage.evaluate(() => document.cookie)).toBe("");',
+        "expect(cookie?.httpOnly).toBe(true);",
+      ],
+      spec: "packages/app/e2e/credentials.spec.ts",
+    });
+
+    const t2 = probesOf(m, "T2").flatMap((probe) => [...probe.needles]);
+    expectNeedleFor(t2, "T2 phase Running", 'toContainText("Running")');
+    expectNeedleFor(t2, "T2 phase Stopped", 'toContainText("Stopped")');
+    expectNeedleFor(t2, "T2 endpoint href", 'toHaveAttribute("href", endpoint)');
+    expectNeedleFor(t2, "T2 advertisedEndpoint line", "advertisedEndpoint");
+    const t5 = probesOf(m, "T5").flatMap((probe) => [...probe.needles]);
+    expectNeedleFor(t5, "T5 connA streaming", "connA", "streaming");
+    expectNeedleFor(t5, "T5 connB streaming", "connB", "streaming");
+    expectNeedleFor(t5, "T5 markerA isolation", "markerA", "toHaveCount(0)");
+    expectNeedleFor(t5, "T5 markerB isolation", "markerB", "toHaveCount(0)");
+    const t6 = probesOf(m, "T6").flatMap((probe) => [...probe.needles]);
+    expectNeedleFor(t6, "T6 cookie rotation", "not.toBe(oldCookie)");
+    expectNeedleFor(m.CREDENTIALS_SPEC_PROBE.needles, "credentials httpOnly", "httpOnly");
+  });
+
+  test("R22 stripComments strips trailing and block comments, string contents count", async () => {
+    const m = await load();
+    expect(m.stripComments("await expect(a).toBe(1); // expect(b).toBe(2)")).toBe(
+      "await expect(a).toBe(1); ",
+    );
+    expect(m.stripComments("foo(/* expect(c) */ bar());")).toBe("foo( bar());");
+    expect(
+      m.stripComments("kept(); /* head\nexpect(d).toBe(1);\nplain interior line\n*/ tail();"),
+    ).toBe("kept(); \n\n\n tail();");
+    const title = 'test("expect(e).toBe(1) survives", async () => {});';
+    expect(m.stripComments(title)).toBe(title);
+    const url = 'const url = "https://example.com/a/*b*/c"; ok();';
+    expect(m.stripComments(url)).toBe(url);
+    const escaped = 'const q = "a \\" // still inside the string"; after();';
+    expect(m.stripComments(escaped)).toBe(escaped);
+    expect(m.stripComments("// don't count this\nkept();")).toBe("\nkept();");
+
+    expect(
+      m.coverageStatus(
+        [{ needles: ["expect(x).toBe(1)"], spec: "a.spec.ts" }],
+        () => "foo(); // expect(x).toBe(1)",
+      ),
+    ).toEqual({
+      covered: false,
+      missingNeedles: ["a.spec.ts#expect(x).toBe(1)"],
+      status: "missing",
+    });
+    expect(
+      m.coverageStatus(
+        [{ needles: ["expect(y).toBe(1)"], spec: "a.spec.ts" }],
+        () => "/* note\nexpect(y).toBe(1);\n*/",
+      ),
+    ).toEqual({
+      covered: false,
+      missingNeedles: ["a.spec.ts#expect(y).toBe(1)"],
+      status: "missing",
+    });
+    expect(
+      m.coverageStatus(
+        [{ needles: ["expect(z).toBe(1)"], spec: "a.spec.ts" }],
+        () => 'test("expect(z).toBe(1) in a title", async () => {});',
+      ),
+    ).toEqual({ covered: true, missingNeedles: [], status: "covered" });
   });
 });
