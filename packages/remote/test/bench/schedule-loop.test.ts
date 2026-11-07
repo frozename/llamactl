@@ -2,7 +2,15 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { type BenchSchedule, loadSchedules, saveSchedules } from "../src/bench/schedule.js";
+import {
+  addSchedule,
+  benchRunLockPath,
+  type BenchSchedule,
+  loadSchedules,
+  removeSchedule,
+  saveSchedules,
+  updateSchedule,
+} from "../../src/bench/schedule.js";
 import {
   type BenchClient,
   type BenchLoopStatus,
@@ -10,15 +18,24 @@ import {
   kickBenchScheduler,
   startBenchScheduler,
   stopBenchScheduler,
-} from "../src/bench/scheduleLoop.js";
-import { mkdtempSync, rmSync } from "../src/safe-fs.js";
+} from "../../src/bench/scheduleLoop.js";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
 
 /**
  * Loop-level coverage for the in-process bench scheduler: dueness
- * gating, failure recording, the inflight guard and status. Fake
- * clients settle synchronously, so no sleeps and no timers are
- * awaited anywhere.
+ * gating, failure recording, the inflight guard, status, the
+ * cross-process run lock and the reload-before-stamp write path.
+ * Fake clients settle synchronously or on a manual `held` release;
+ * the only sleeps anywhere are bounded polls for a held release.
  */
+
+async function waitUntil(cond: () => boolean, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!cond()) {
+    if (Date.now() > deadline) throw new Error("condition not met in time");
+    await Bun.sleep(5);
+  }
+}
 
 type ScriptStep = {
   events?: unknown[];
@@ -307,4 +324,111 @@ describe("bench scheduler loop", () => {
     expect(recent[recent.length - 1]!.id).toBe("cap-200");
     expect(recent.some((entry) => entry.id === "cap-0")).toBe(false);
   }, 30_000);
+
+  test("a removal from another process during a running bench is not reverted", async () => {
+    saveSchedules([dueSchedule("race-13"), notDueSchedule("keep-13")], schedulePath);
+    const { getClient, held } = fakeClient(
+      new Map([["org/repo/race-13.gguf", { complete: false }]]),
+    );
+
+    const first = kickBenchScheduler(getClient);
+    expect(benchSchedulerStatus().inflight).toBe(true);
+    // Concurrent `bench schedule rm race-13` from another process.
+    saveSchedules(removeSchedule(loadSchedules(schedulePath), "race-13"), schedulePath);
+    held[0]!.onComplete();
+    await first;
+
+    expect(loadSchedules(schedulePath).map((s) => s.id)).toEqual(["keep-13"]);
+  });
+
+  test("concurrent adds and disables survive a bench; the disabled id is not stamped", async () => {
+    saveSchedules([dueSchedule("race-14")], schedulePath);
+    const { getClient, held } = fakeClient(
+      new Map([["org/repo/race-14.gguf", { complete: false }]]),
+    );
+
+    const first = kickBenchScheduler(getClient);
+    saveSchedules(
+      updateSchedule(
+        addSchedule(loadSchedules(schedulePath), {
+          id: "added-14",
+          node: "fake-node",
+          rel: "org/repo/added-14.gguf",
+          mode: "auto",
+          intervalSeconds: 3_600,
+          enabled: true,
+        }),
+        "race-14",
+        { enabled: false },
+      ),
+      schedulePath,
+    );
+    held[0]!.onComplete();
+    await first;
+
+    const rows = loadSchedules(schedulePath);
+    expect(rows.map((s) => s.id).sort()).toEqual(["added-14", "race-14"]);
+    expect(rows.find((s) => s.id === "race-14")!.lastRunAt).toBe("2000-01-01T00:00:00.000Z");
+  });
+
+  test("kick is refused while another live process holds the run lock", async () => {
+    writeFileSync(
+      benchRunLockPath(),
+      JSON.stringify({ pid: 1, startedAt: "2026-01-01T00:00:00.000Z" }),
+      "utf8",
+    );
+    saveSchedules([dueSchedule("lock-15")], schedulePath);
+
+    try {
+      await kickBenchScheduler(autoCompleting().getClient);
+      expect.unreachable("kick should have been refused while pid 1 holds the lock");
+    } catch (err) {
+      expect((err as Error).message).toContain(
+        "a bench scheduler run already holds the run lock (pid 1,",
+      );
+    }
+    expect(getClientCalls).toBe(0);
+    const entry = loadSchedules(schedulePath).find((s) => s.id === "lock-15")!;
+    expect(entry.lastRunAt).toBe("2000-01-01T00:00:00.000Z");
+  });
+
+  test("a stale lock from a dead pid is reclaimed by the next kick", async () => {
+    const child = Bun.spawn(["sleep", "0"]);
+    await child.exited;
+    writeFileSync(
+      benchRunLockPath(),
+      JSON.stringify({ pid: child.pid, startedAt: "2026-01-01T00:00:00.000Z" }),
+      "utf8",
+    );
+    saveSchedules([dueSchedule("lock-16")], schedulePath);
+
+    await kickBenchScheduler(autoCompleting().getClient);
+
+    const entry = loadSchedules(schedulePath).find((s) => s.id === "lock-16")!;
+    expect(entry.lastRunAt).not.toBe("2000-01-01T00:00:00.000Z");
+    expect(existsSync(benchRunLockPath())).toBe(false);
+  }, 10_000);
+
+  test("stop after the first due schedule fires no further benches in the tick", async () => {
+    saveSchedules(
+      [dueSchedule("stop-17a"), dueSchedule("stop-17b"), dueSchedule("stop-17c")],
+      schedulePath,
+    );
+    const { getClient, held, subscribeInputs } = fakeClient(
+      new Map([["org/repo/stop-17a.gguf", { complete: false }]]),
+    );
+
+    startBenchScheduler({ getClient, tickIntervalMs: 3_600_000 });
+    expect(held).toHaveLength(1);
+    stopBenchScheduler();
+    held[0]!.onComplete();
+    await waitUntil(() => !benchSchedulerStatus().inflight);
+
+    expect(subscribeInputs.map((input) => input.target)).toEqual(["org/repo/stop-17a.gguf"]);
+    const rows = loadSchedules(schedulePath);
+    expect(rows.find((s) => s.id === "stop-17a")!.lastRunAt).not.toBe("2000-01-01T00:00:00.000Z");
+    expect(rows.find((s) => s.id === "stop-17b")!.lastRunAt).toBe("2000-01-01T00:00:00.000Z");
+    expect(rows.find((s) => s.id === "stop-17c")!.lastRunAt).toBe("2000-01-01T00:00:00.000Z");
+    expect(existsSync(benchRunLockPath())).toBe(false);
+  }, 10_000);
 });

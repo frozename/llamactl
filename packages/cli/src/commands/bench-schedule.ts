@@ -70,13 +70,19 @@ SUBCOMMANDS:
   rm        Remove a schedule by id.
   toggle    Enable or disable a schedule: \`toggle <id> on|off\`.
   status    The schedules plus this process's loop state (running, tick
-            interval, last/next tick, in-flight, recent runs).
-            --json emits { schedules, loop }.
+             interval, last/next tick, in-flight, recent runs).
+             --json emits { schedules, loop }.
   kick      Run one tick now and print what fired; exits 1 when any
-            scheduled bench failed.
-  run       Foreground loop host: starts the tick loop, stays alive until
-            SIGINT/SIGTERM, drains an in-flight bench, then exits.
-            --interval is the tick interval in seconds (30-3600, default 60).
+             scheduled bench failed. Refused while another live process
+             (a \`bench schedule run\`) holds the run lock.
+  run       Foreground loop host: takes the run lock, starts the tick
+             loop, stays alive until SIGINT/SIGTERM, drains an in-flight
+             bench, then exits. --interval is the tick interval in
+             seconds (30-3600, default 60).
+             STOP LATENCY: a stop signal finishes the bench in flight
+             and starts no further due schedules, so the worst-case
+             stop time is one bench timeout (15 minutes). Set your
+             launchd/systemd stop timeout accordingly.
 
 Schedules resolve their node from the current config when they fire, so
 --context and --cluster-config are not supported here.
@@ -434,7 +440,12 @@ function newRecentEntries(before: LoopStatus, after: LoopStatus): RecentEntry[] 
 async function runKick(): Promise<number> {
   const c = await resolveCaller();
   const before = await c.benchSchedulerStatus();
-  await c.benchSchedulerKick();
+  try {
+    await c.benchSchedulerKick();
+  } catch (err) {
+    process.stderr.write(`bench schedule kick: ${describeCallerError(err)}\n`);
+    return 1;
+  }
   const after = await c.benchSchedulerStatus();
   const fresh = newRecentEntries(before, after);
   if (fresh.length === 0) {
@@ -501,9 +512,14 @@ async function drainInflight(c: BenchScheduleCaller): Promise<void> {
 async function runLoop(argv: string[]): Promise<number> {
   const parsed = parseRunArgs(argv);
   if ("bail" in parsed) return parsed.bail;
-  const shutdown = waitForShutdown();
   const c = await resolveCaller();
-  await c.benchSchedulerStart({ tickIntervalSeconds: parsed.tickIntervalSeconds });
+  try {
+    await c.benchSchedulerStart({ tickIntervalSeconds: parsed.tickIntervalSeconds });
+  } catch (err) {
+    process.stderr.write(`bench schedule run: ${describeCallerError(err)}\n`);
+    return 1;
+  }
+  const shutdown = waitForShutdown();
   process.stderr.write(
     `bench-scheduler: running (tick every ${String(parsed.tickIntervalSeconds)}s); Ctrl-C to stop\n`,
   );

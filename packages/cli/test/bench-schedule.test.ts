@@ -84,6 +84,17 @@ interface BenchScheduleSeams {
   sleep?: (ms: number) => Promise<void>;
 }
 
+function recentEntry(id: string, ok = true): RecentEntry {
+  return {
+    ts: "2026-01-01T00:00:00.000Z",
+    id,
+    rel: `org/repo/${id}.gguf`,
+    node: "gpu1",
+    ok,
+    ...(ok ? {} : { message: "boom" }),
+  };
+}
+
 interface CallerCalls {
   list: number;
   add: unknown[];
@@ -117,6 +128,8 @@ function installFakeCaller(opts: {
   schedules?: ScheduleShape[];
   status?: () => LoopStatusShape;
   kickResult?: LoopStatusShape;
+  kickRejects?: Error;
+  startRejects?: Error;
   onKick?: () => void;
 }): { caller: BenchScheduleCaller; calls: CallerCalls } {
   const calls: CallerCalls = {
@@ -153,6 +166,7 @@ function installFakeCaller(opts: {
     },
     benchSchedulerStart: (input) => {
       calls.start.push(input);
+      if (opts.startRejects !== undefined) return Promise.reject(opts.startRejects);
       return Promise.resolve(
         loopStatus({
           running: true,
@@ -166,6 +180,7 @@ function installFakeCaller(opts: {
     },
     benchSchedulerKick: () => {
       calls.kick += 1;
+      if (opts.kickRejects !== undefined) return Promise.reject(opts.kickRejects);
       opts.onKick?.();
       return Promise.resolve(opts.kickResult ?? loopStatus());
     },
@@ -417,7 +432,16 @@ describe("llamactl bench schedule — subprocess", () => {
     );
     expect(r.code).toBe(1);
     expect(r.stderr).toContain("60");
+    expect(r.stderr).toContain("Too small");
+    expect(r.stderr).not.toContain('"code"');
     expect(listJson()).toEqual([]);
+  });
+
+  test("run --help documents the one-bench stop bound", () => {
+    const r = runCli(["bench", "schedule", "run", "--help"], env);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain("STOP LATENCY");
+    expect(r.stdout).toContain("15 minutes");
   });
 
   test("add with a duplicate id is refused", () => {
@@ -847,5 +871,108 @@ describe("llamactl bench schedule — in-process seams", () => {
     expect(calls.kick).toBe(1);
     expect(result).toBe(0);
     expect(stdout).toContain("no schedules due");
+  });
+
+  test("kick prints only the entries appended to a non-empty recent buffer", async () => {
+    let kicked = false;
+    const before = loopStatus({ recent: [recentEntry("old-1"), recentEntry("old-2")] });
+    const after = loopStatus({
+      recent: [recentEntry("old-1"), recentEntry("old-2"), recentEntry("fresh-3")],
+    });
+    const { caller, calls } = installFakeCaller({
+      status: () => (kicked ? after : before),
+      kickResult: after,
+      onKick: () => {
+        kicked = true;
+      },
+    });
+    setBenchScheduleSeams({ caller });
+
+    const { result, stdout } = await captureProcessStreams(() =>
+      benchCmd.runBench(["schedule", "kick"]),
+    );
+    expect(calls.kick).toBe(1);
+    expect(result).toBe(0);
+    expect(stdout).toContain("fresh-3");
+    expect(stdout).not.toContain("old-1");
+    expect(stdout).not.toContain("old-2");
+  });
+
+  test("kick prints only the new entry at the 200-entry recent cap", async () => {
+    let kicked = false;
+    const before = loopStatus({
+      recent: Array.from({ length: 200 }, (_, i) => recentEntry(`old-${String(i)}`)),
+    });
+    const after = loopStatus({
+      recent: [
+        ...Array.from({ length: 199 }, (_, i) => recentEntry(`old-${String(i + 1)}`)),
+        recentEntry("fresh-cap"),
+      ],
+    });
+    const { caller, calls } = installFakeCaller({
+      status: () => (kicked ? after : before),
+      kickResult: after,
+      onKick: () => {
+        kicked = true;
+      },
+    });
+    setBenchScheduleSeams({ caller });
+
+    const { result, stdout } = await captureProcessStreams(() =>
+      benchCmd.runBench(["schedule", "kick"]),
+    );
+    expect(calls.kick).toBe(1);
+    expect(result).toBe(0);
+    expect(stdout).toContain("fresh-cap");
+    expect(stdout).not.toContain("old-");
+  });
+
+  test("kick surfaces the run-lock refusal from the caller and exits 1", async () => {
+    const { caller, calls } = installFakeCaller({
+      kickRejects: new Error(
+        "a bench scheduler run already holds the run lock (pid 4242, " +
+          "started 2026-01-01T00:00:00.000Z); stop it before kicking or starting another run",
+      ),
+    });
+    setBenchScheduleSeams({ caller });
+
+    const { result, stdout, stderr } = await captureProcessStreams(() =>
+      benchCmd.runBench(["schedule", "kick"]),
+    );
+    expect(calls.kick).toBe(1);
+    expect(result).toBe(1);
+    expect(stderr).toContain("bench schedule kick:");
+    expect(stderr).toContain("already holds the run lock (pid 4242");
+    expect(stdout).toBe("");
+    expect(calls.status).toBe(1);
+  });
+
+  test("run surfaces a run-lock refusal from start and exits 1", async () => {
+    let shutdownCalls = 0;
+    const { caller, calls } = installFakeCaller({
+      startRejects: new Error(
+        "a bench scheduler run already holds the run lock (pid 4242, " +
+          "started 2026-01-01T00:00:00.000Z); stop it before kicking or starting another run",
+      ),
+    });
+    setBenchScheduleSeams({
+      caller,
+      waitForShutdown: () => {
+        shutdownCalls += 1;
+        return new Promise<string>((_resolve) => {
+          void _resolve;
+        });
+      },
+      sleep: () => Promise.resolve(),
+    });
+
+    const { result, stderr } = await captureProcessStreams(() =>
+      benchCmd.runBench(["schedule", "run", "--interval=30"]),
+    );
+    expect(calls.start).toEqual([{ tickIntervalSeconds: 30 }]);
+    expect(shutdownCalls).toBe(0);
+    expect(result).toBe(1);
+    expect(stderr).toContain("bench schedule run:");
+    expect(stderr).toContain("already holds the run lock (pid 4242");
   });
 });

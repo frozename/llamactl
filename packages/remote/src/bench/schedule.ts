@@ -3,7 +3,8 @@ import { dirname, join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { z } from "zod";
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "../safe-fs.js";
+import { atomicWriteFileSync } from "../atomic-write.js";
+import { existsSync, mkdirSync, readFileSync } from "../safe-fs.js";
 
 /**
  * Recurring bench schedules. The control plane stores them in
@@ -45,6 +46,15 @@ export function defaultScheduleFilePath(env: NodeJS.ProcessEnv = process.env): s
   return join(base, "bench-schedules.yaml");
 }
 
+/**
+ * Path of the cross-process run lock, kept beside the store so a
+ * `bench schedule run` and a `bench schedule kick` from different
+ * processes serialise on the same file.
+ */
+export function benchRunLockPath(env: NodeJS.ProcessEnv = process.env): string {
+  return join(dirname(defaultScheduleFilePath(env)), "bench-schedule-run.lock");
+}
+
 export function loadSchedules(path: string = defaultScheduleFilePath()): BenchSchedule[] {
   if (!existsSync(path)) return [];
   const raw = readFileSync(path, "utf8");
@@ -62,7 +72,7 @@ export function saveSchedules(
     kind: "BenchScheduleList",
     schedules: schedules.map((s) => BenchScheduleSchema.parse(s)),
   };
-  writeFileSync(path, stringifyYaml(file), "utf8");
+  atomicWriteFileSync(path, stringifyYaml(file));
 }
 
 export function addSchedule(
@@ -87,6 +97,26 @@ export function updateSchedule(
   return schedules.map((s) =>
     s.id === id ? BenchScheduleSchema.parse({ ...s, ...patch, id: s.id }) : s,
   );
+}
+
+/**
+ * Stamp one schedule's run outcome without clobbering concurrent edits:
+ * the loop holds no lock across a bench run (up to 15 minutes), so the
+ * in-memory list is stale by the time the bench finishes. Re-load the
+ * store, patch only this id's run fields, and skip the write when the
+ * schedule was removed or disabled in another process meanwhile.
+ * Returns whether the store was written.
+ */
+export function recordRunOutcome(
+  path: string,
+  id: string,
+  patch: Pick<BenchSchedule, "lastRunAt" | "lastError">,
+): boolean {
+  const fresh = loadSchedules(path);
+  const current = fresh.find((s) => s.id === id);
+  if (!current?.enabled) return false;
+  saveSchedules(updateSchedule(fresh, id, patch), path);
+  return true;
 }
 
 /** True when `now - lastRunAt >= intervalSeconds` (or never run yet). */
