@@ -147,18 +147,58 @@ function resolveDistPath(flagDist: string | undefined): string {
   return resolve(flagDist ?? fallback ?? defaultDistDir());
 }
 
-function openBrowser(url: string): void {
-  const argv =
-    process.platform === "darwin"
-      ? ["open", url]
-      : process.platform === "win32"
-        ? ["cmd", "/c", "start", "", url]
-        : ["xdg-open", url];
+// The browser opener is fire-and-forget: the spawned helper must be
+// unref'd because Bun waits for every spawned subprocess before
+// shutting down, and a wedged opener (headless xdg-open probing for a
+// browser) would otherwise hold the console's exit open. A spawn
+// failure only warns — it must never turn into a non-zero exit.
+export interface ConsoleOpenerProc {
+  unref(): void;
+  exited: Promise<number>;
+}
+
+export interface ConsoleOpenerSpawnOptions {
+  stdin: "ignore";
+  stdout: "ignore";
+  stderr: "ignore";
+}
+
+export type ConsoleOpenerSpawn = (
+  argv: string[],
+  options: ConsoleOpenerSpawnOptions,
+) => ConsoleOpenerProc;
+
+function spawnConsoleOpener(argv: string[], options: ConsoleOpenerSpawnOptions): ConsoleOpenerProc {
+  return Bun.spawn(argv, options);
+}
+
+function openerArgv(platform: NodeJS.Platform, url: string): string[] {
+  if (platform === "darwin") return ["open", url];
+  if (platform === "win32") return ["cmd", "/c", "start", "", url];
+  // linux and the remaining unix-likes share the freedesktop opener.
+  return ["xdg-open", url];
+}
+
+function openBrowser(
+  url: string,
+  platform: NodeJS.Platform = process.platform,
+  spawn: ConsoleOpenerSpawn = spawnConsoleOpener,
+): void {
+  let proc: ConsoleOpenerProc;
   try {
-    Bun.spawn(argv, { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+    proc = spawn(openerArgv(platform, url), {
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+    });
   } catch {
     process.stderr.write(`llamactl console: could not open a browser; open ${url} manually\n`);
+    return;
   }
+  proc.unref();
+  void proc.exited.catch(() => {
+    process.stderr.write(`llamactl console: could not open a browser; open ${url} manually\n`);
+  });
 }
 
 function waitForShutdownSignal(): Promise<void> {
@@ -176,6 +216,9 @@ function waitForShutdownSignal(): Promise<void> {
 export interface ConsoleDeps {
   openBrowser?: (url: string) => void;
   waitForShutdown?: () => Promise<void>;
+  /** Test seams forwarded to the default opener when openBrowser is unset. */
+  platform?: NodeJS.Platform;
+  spawn?: ConsoleOpenerSpawn;
 }
 
 export async function runConsole(args: string[], deps: ConsoleDeps = {}): Promise<number> {
@@ -211,7 +254,13 @@ export async function runConsole(args: string[], deps: ConsoleDeps = {}): Promis
   }
 
   process.stdout.write(`Console: ${server.url}\nPress Ctrl+C to stop.\n`);
-  if (open) (deps.openBrowser ?? openBrowser)(server.url);
+  if (open) {
+    if (deps.openBrowser !== undefined) {
+      deps.openBrowser(server.url);
+    } else {
+      openBrowser(server.url, deps.platform, deps.spawn);
+    }
+  }
 
   await (deps.waitForShutdown ?? waitForShutdownSignal)();
   await server.stop();

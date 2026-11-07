@@ -11,11 +11,11 @@
 // suppressing the opener, and runConsole's injectable opener seam.
 
 import { sourceRevision } from "@llamactl/core";
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { runConsole } from "../src/commands/console.js";
+import { type ConsoleDeps, runConsole } from "../src/commands/console.js";
 import {
   chmodSync,
   existsSync,
@@ -170,6 +170,85 @@ async function pollUntil(cond: () => boolean, deadlineMs: number): Promise<boole
     });
   }
   return cond();
+}
+
+// Structural mirror of the console opener spawn seam, declared locally
+// so this file keeps compiling against the pre-seam module shape.
+type OpenerSpawnFn = (
+  argv: string[],
+  options: { stdin: "ignore"; stdout: "ignore"; stderr: "ignore" },
+) => { unref: () => void; exited: Promise<number> };
+
+interface OpenerSpawnCall {
+  argv: string[];
+  options: { stdin: "ignore"; stdout: "ignore"; stderr: "ignore" };
+}
+
+function recordingOpenerSpawn(makeExited: () => Promise<number> = () => Promise.resolve(0)): {
+  calls: OpenerSpawnCall[];
+  spawn: OpenerSpawnFn;
+  unrefCount: () => number;
+} {
+  const calls: OpenerSpawnCall[] = [];
+  let unrefs = 0;
+  const spawn: OpenerSpawnFn = (argv, options) => {
+    calls.push({ argv: [...argv], options });
+    return {
+      unref: (): void => {
+        unrefs += 1;
+      },
+      exited: makeExited(),
+    };
+  };
+  return { calls, spawn, unrefCount: (): number => unrefs };
+}
+
+// In-process counterpart of the fixture's PATH shims: prepends a
+// fake-bin holding `open`/`xdg-open` recorder scripts to PATH so the
+// default opener can never launch a real browser when a deps-driven
+// case falls through to it.
+async function withOpenerShims<T>(fn: () => Promise<T>): Promise<T> {
+  const root = tmpDir("llamactl-console-opener-");
+  const fakeBin = join(root, "fake-bin");
+  mkdirSync(fakeBin, { recursive: true });
+  const markerPath = join(root, "opened");
+  for (const name of ["open", "xdg-open"]) {
+    const shim = join(fakeBin, name);
+    writeFileSync(shim, '#!/bin/sh\nprintf \'%s\\n\' "$@" > "$CONSOLE_TEST_OPEN_MARKER"\n');
+    chmodSync(shim, 0o755);
+  }
+  const savedPath = process.env["PATH"];
+  const savedMarker = process.env["CONSOLE_TEST_OPEN_MARKER"];
+  process.env["PATH"] = `${fakeBin}:${savedPath ?? ""}`;
+  process.env["CONSOLE_TEST_OPEN_MARKER"] = markerPath;
+  try {
+    return await fn();
+  } finally {
+    if (savedPath === undefined) {
+      delete process.env["PATH"];
+    } else {
+      process.env["PATH"] = savedPath;
+    }
+    if (savedMarker === undefined) {
+      delete process.env["CONSOLE_TEST_OPEN_MARKER"];
+    } else {
+      process.env["CONSOLE_TEST_OPEN_MARKER"] = savedMarker;
+    }
+  }
+}
+
+async function captureStderr<T>(fn: () => Promise<T>): Promise<{ result: T; stderr: string }> {
+  const chunks: string[] = [];
+  const spy = spyOn(process.stderr, "write").mockImplementation((chunk: unknown) => {
+    chunks.push(String(chunk));
+    return true;
+  });
+  try {
+    const result = await fn();
+    return { result, stderr: chunks.join("") };
+  } finally {
+    spy.mockRestore();
+  }
 }
 
 // Wait for the Console: URL, then assert the built index is served
@@ -484,6 +563,88 @@ describe("llamactl console", () => {
       });
       expect(code).toBe(0);
       expect(opened).toEqual([]);
+    });
+  });
+
+  describe("browser opener", () => {
+    const OPENER_ARGV_CASES: {
+      expected: (url: string) => string[];
+      name: string;
+      platform: NodeJS.Platform;
+    }[] = [
+      { expected: (url) => ["open", url], name: "darwin", platform: "darwin" },
+      { expected: (url) => ["xdg-open", url], name: "linux", platform: "linux" },
+      {
+        expected: (url) => ["cmd", "/c", "start", "", url],
+        name: "win32",
+        platform: "win32",
+      },
+    ];
+
+    for (const openerCase of OPENER_ARGV_CASES) {
+      test(`platform ${openerCase.name} spawns the pinned opener argv and unrefs it`, async () => {
+        const fx = makeFixture();
+        await withOpenerShims(async () => {
+          const recorder = recordingOpenerSpawn();
+          const deps: ConsoleDeps = {
+            platform: openerCase.platform,
+            spawn: recorder.spawn,
+            waitForShutdown: () => Promise.resolve(),
+          };
+          const code = await runConsole(["--port", "0", "--dist", fx.distDir], deps);
+          expect(code).toBe(0);
+          expect(recorder.calls).toHaveLength(1);
+          const call = recorder.calls[0];
+          expect(call?.options).toEqual({
+            stdin: "ignore",
+            stdout: "ignore",
+            stderr: "ignore",
+          });
+          const url = call?.argv.at(-1) ?? "";
+          expect(url).toMatch(LOOPBACK_URL_RE);
+          expect(call?.argv).toEqual(openerCase.expected(url));
+          expect(recorder.unrefCount()).toBe(1);
+        });
+      });
+    }
+
+    test("a spawn failure warns on stderr and still exits 0", async () => {
+      const fx = makeFixture();
+      await withOpenerShims(async () => {
+        const deps: ConsoleDeps = {
+          platform: "linux",
+          spawn: () => {
+            throw new Error("opener spawn failed");
+          },
+          waitForShutdown: () => Promise.resolve(),
+        };
+        const { result: code, stderr } = await captureStderr(() =>
+          runConsole(["--port", "0", "--dist", fx.distDir], deps),
+        );
+        expect(code).toBe(0);
+        expect(stderr).toContain("could not open a browser");
+      });
+    });
+
+    test("an opener child that fails after spawn does not crash the console", async () => {
+      const fx = makeFixture();
+      await withOpenerShims(async () => {
+        const recorder = recordingOpenerSpawn(() =>
+          Promise.reject(new Error("late opener failure")),
+        );
+        const deps: ConsoleDeps = {
+          platform: "linux",
+          spawn: recorder.spawn,
+          waitForShutdown: () => Promise.resolve(),
+        };
+        const { result: code, stderr } = await captureStderr(() =>
+          runConsole(["--port", "0", "--dist", fx.distDir], deps),
+        );
+        expect(code).toBe(0);
+        expect(recorder.calls).toHaveLength(1);
+        expect(recorder.unrefCount()).toBe(1);
+        expect(stderr).toContain("could not open a browser");
+      });
     });
   });
 });
