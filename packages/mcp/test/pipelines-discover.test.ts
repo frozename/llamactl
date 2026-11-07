@@ -95,8 +95,8 @@ describe("discoverPipelineTools", () => {
     const result = discoverPipelineTools({ pipelinesDir: tmp });
     expect(result).toHaveLength(1);
     const tool = result[0] as Record<string, unknown>;
-    expect(tool.description).toEqual("");
-    expect(tool.inputSchema).toEqual({
+    expect(tool["description"]).toEqual("");
+    expect(tool["inputSchema"]).toEqual({
       type: "object",
       properties: {},
       required: [],
