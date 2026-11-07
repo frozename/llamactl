@@ -7,8 +7,10 @@
 // (--dist > LLAMACTL_CONSOLE_DIST > repo checkout), the printed
 // `Console: http://127.0.0.1:<port>` URL, the port-scoped session
 // cookie and Host guard on GET /, clean SIGTERM/SIGINT shutdown,
-// opening the browser by default with the printed URL, --no-open
-// suppressing the opener, and runConsole's injectable opener seam.
+// opening the browser by default with the printed URL through the
+// host platform's opener, --no-open suppressing the opener, a warned
+// opener that never affects the exit, and runConsole's injectable
+// opener seam.
 
 import { sourceRevision } from "@llamactl/core";
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
@@ -31,6 +33,12 @@ const INDEX_HTML = "<!doctype html><title>console-launcher-test</title>";
 const CONSOLE_URL_RE = /Console: (http:\/\/127\.0\.0\.1:(\d+))/;
 const LOOPBACK_URL_RE = /^http:\/\/127\.0\.0\.1:\d+$/;
 const SPAWN_TIMEOUT_MS = 30_000;
+
+// Each opener shim records "<argv0> <args>" — which platform opener
+// ran, not just that one did — so the default-open case can pin the
+// per-platform choice on the real (non-injected) spawn path.
+const OPENER_SHIM_SCRIPT =
+  '#!/bin/sh\nprintf \'%s\\n\' "${0##*/} $*" > "$CONSOLE_TEST_OPEN_MARKER"\n';
 
 const tmpDirs: string[] = [];
 
@@ -71,7 +79,7 @@ function makeFixture(): ConsoleFixture {
   const markerPath = join(root, "opened");
   for (const name of ["open", "xdg-open"]) {
     const shim = join(fakeBin, name);
-    writeFileSync(shim, '#!/bin/sh\nprintf \'%s\\n\' "$@" > "$CONSOLE_TEST_OPEN_MARKER"\n');
+    writeFileSync(shim, OPENER_SHIM_SCRIPT);
     chmodSync(shim, 0o755);
   }
   return {
@@ -214,7 +222,7 @@ async function withOpenerShims<T>(fn: () => Promise<T>): Promise<T> {
   const markerPath = join(root, "opened");
   for (const name of ["open", "xdg-open"]) {
     const shim = join(fakeBin, name);
-    writeFileSync(shim, '#!/bin/sh\nprintf \'%s\\n\' "$@" > "$CONSOLE_TEST_OPEN_MARKER"\n');
+    writeFileSync(shim, OPENER_SHIM_SCRIPT);
     chmodSync(shim, 0o755);
   }
   const savedPath = process.env["PATH"];
@@ -503,12 +511,16 @@ describe("llamactl console", () => {
         expect(match).not.toBeNull();
         const url = match?.[1] ?? "";
         expect(url).not.toBe("");
+        const expectedOpener = process.platform === "darwin" ? "open" : "xdg-open";
 
         const opened = await pollUntil(
           () => existsSync(fx.markerPath) && readFileSync(fx.markerPath, "utf8").includes(url),
           5_000,
         );
         expect(opened).toBe(true);
+        const recorded = readFileSync(fx.markerPath, "utf8").trim();
+        expect(recorded.split(" ")[0]).toBe(expectedOpener);
+        expect(recorded).toContain(url);
 
         proc.kill("SIGTERM");
         expect(await withTimeout(proc.exited, 5_000)).toBe(0);
@@ -626,7 +638,7 @@ describe("llamactl console", () => {
       });
     });
 
-    test("an opener child that fails after spawn does not crash the console", async () => {
+    test("an opener exited rejection warns on stderr and still exits 0", async () => {
       const fx = makeFixture();
       await withOpenerShims(async () => {
         const recorder = recordingOpenerSpawn(() =>
@@ -644,6 +656,31 @@ describe("llamactl console", () => {
         expect(recorder.calls).toHaveLength(1);
         expect(recorder.unrefCount()).toBe(1);
         expect(stderr).toContain("could not open a browser");
+      });
+    });
+
+    test("an opener exiting non-zero warns on stderr and the console keeps serving", async () => {
+      const fx = makeFixture();
+      await withOpenerShims(async () => {
+        const recorder = recordingOpenerSpawn(() => Promise.resolve(3));
+        let servedIndex = false;
+        const deps: ConsoleDeps = {
+          platform: "linux",
+          spawn: recorder.spawn,
+          waitForShutdown: async () => {
+            const url = recorder.calls[0]?.argv.at(-1) ?? "";
+            const res = await fetch(`${url}/`);
+            servedIndex = res.status === 200;
+          },
+        };
+        const { result: code, stderr } = await captureStderr(() =>
+          runConsole(["--port", "0", "--dist", fx.distDir], deps),
+        );
+        expect(code).toBe(0);
+        expect(servedIndex).toBe(true);
+        expect(stderr).toContain("could not open a browser");
+        expect(recorder.calls).toHaveLength(1);
+        expect(recorder.unrefCount()).toBe(1);
       });
     });
   });

@@ -150,8 +150,9 @@ function resolveDistPath(flagDist: string | undefined): string {
 // The browser opener is fire-and-forget: the spawned helper must be
 // unref'd because Bun waits for every spawned subprocess before
 // shutting down, and a wedged opener (headless xdg-open probing for a
-// browser) would otherwise hold the console's exit open. A spawn
-// failure only warns — it must never turn into a non-zero exit.
+// browser) would otherwise hold the console's exit open. Whatever the
+// opener does — spawn throws, exited rejects, or it exits non-zero —
+// the console only warns; its own exit is never affected.
 export interface ConsoleOpenerProc {
   unref(): void;
   exited: Promise<number>;
@@ -196,9 +197,15 @@ function openBrowser(
     return;
   }
   proc.unref();
-  void proc.exited.catch(() => {
-    process.stderr.write(`llamactl console: could not open a browser; open ${url} manually\n`);
-  });
+  void proc.exited
+    .then((code) => {
+      if (code !== 0) {
+        process.stderr.write(`llamactl console: could not open a browser; open ${url} manually\n`);
+      }
+    })
+    .catch(() => {
+      process.stderr.write(`llamactl console: could not open a browser; open ${url} manually\n`);
+    });
 }
 
 function waitForShutdownSignal(): Promise<void> {
