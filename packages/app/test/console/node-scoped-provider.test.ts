@@ -8,28 +8,13 @@ import type { ComponentType, ReactNode } from "react";
 import type { Root } from "react-dom/client";
 
 import { QueryClient, useQueryClient } from "@tanstack/react-query";
-import { afterAll, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { act, createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 const PROVIDER_SPEC = "../../src/console/node-scoped-provider.tsx";
 const SCOPE_SPEC = "../../src/console/create-node-scope.ts";
-const TRPC_SPEC = "../../src/lib/trpc";
-
-// The provider imports src/lib/trpc, which builds an IPC UI client at
-// eval time; without the preload bridge global that eval throws before
-// any expect can fail, so stub the bridge first and restore it after.
-const hadElectronTRPC = "electronTRPC" in globalThis;
-const prevElectronTRPC = globalThis.electronTRPC;
-globalThis.electronTRPC ??= {
-  sendMessage: (): undefined => undefined,
-  onMessage: (): undefined => undefined,
-};
-
-afterAll(() => {
-  if (hadElectronTRPC) globalThis.electronTRPC = prevElectronTRPC;
-  else delete (globalThis as { electronTRPC?: unknown }).electronTRPC;
-});
+const TRPC_SPEC = "../../src/lib/trpc-core";
 
 type FetchInput = string | URL | Request;
 type FakeFetch = (input: FetchInput, init?: RequestInit) => Promise<Response>;

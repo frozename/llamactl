@@ -10,28 +10,13 @@
 
 import type { ComponentType, ReactNode } from "react";
 
-import { afterAll, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 const SPEC = "../../src/console/node-trpc.ts";
 const PROVIDER_SPEC = "../../src/console/node-scoped-provider.tsx";
-const TRPC_SPEC = "../../src/lib/trpc";
-
-// The provider imports src/lib/trpc, which builds an IPC UI client at
-// eval time; without the preload bridge global that eval throws before
-// any expect can fail, so stub the bridge first and restore it after.
-const hadElectronTRPC = "electronTRPC" in globalThis;
-const prevElectronTRPC = globalThis.electronTRPC;
-globalThis.electronTRPC ??= {
-  sendMessage: (): undefined => undefined,
-  onMessage: (): undefined => undefined,
-};
-
-afterAll(() => {
-  if (hadElectronTRPC) globalThis.electronTRPC = prevElectronTRPC;
-  else delete (globalThis as { electronTRPC?: unknown }).electronTRPC;
-});
+const TRPC_SPEC = "../../src/lib/trpc-core";
 
 type FetchInput = string | URL | Request;
 type FakeFetch = (input: FetchInput, init?: RequestInit) => Promise<Response>;

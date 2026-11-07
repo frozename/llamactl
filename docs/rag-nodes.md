@@ -3,8 +3,8 @@
 Register vector stores and knowledge bases as first-class cluster
 nodes alongside `agent`, `gateway`, and `provider` kinds. Every RAG
 node exposes a uniform surface (`search`, `store`, `delete`,
-`listCollections`) through tRPC and MCP so ops-chat, the Electron
-Knowledge module, and future Chat / Pipelines consumers talk to the
+`listCollections`) through tRPC and MCP so ops-chat, the console,
+and future Chat / Pipelines consumers talk to the
 same contract regardless of backend.
 
 ---
@@ -183,7 +183,11 @@ is too easy to get wrong from inside the adapter. A
 
 ## Day-to-day usage
 
-### From the Electron Knowledge module
+### From the Electron Knowledge module (retired)
+
+> **Retired in #410 P7-A.** The Electron app is gone; the console
+> ships only fleet/workloads/nodes/logs. Kept for history — use the
+> CLI (`llamactl rag …`) or MCP (`llamactl.rag.*`) instead.
 
 Click the Knowledge icon in the activity bar. The module surfaces
 three tabs:

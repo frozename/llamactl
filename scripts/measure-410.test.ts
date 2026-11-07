@@ -957,9 +957,15 @@ describe("measure-410 contract (#410 P6)", () => {
     expect(report?.["thresholds"]).toEqual(fields.thresholds);
   });
 
-  test("R15 shims and upkeep measurements survive the P7-A deletions", async () => {
+  test("R15 shim and upkeep meters read the post-P7-A tree", async () => {
     const m = await load();
-    expect(m.measureShims().absent).toEqual([]);
+    const liveShims = m.measureShims();
+    expect(liveShims.absent).toEqual([
+      "packages/app/electron.vite.config.ts",
+      "packages/app/electron/trpc/dispatcher.ts",
+    ]);
+    expect(liveShims.bunShim).toBe(false);
+    expect(liveShims.bunSqliteShim).toBe(false);
     expect(m.measureConsoleUpkeep().absent).toEqual([]);
     const root = mkdtempSync(join(tmpdir(), "measure-410-absent-"));
     try {

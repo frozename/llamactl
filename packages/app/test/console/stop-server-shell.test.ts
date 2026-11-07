@@ -22,15 +22,6 @@ const NODE_TRPC_SPEC = "../../src/console/node-trpc.ts";
 const CONSOLE_NODE = "local";
 const WORKLOAD = "qwen";
 
-// Loading the real node-trpc evaluates lib/trpc, which builds the IPC
-// UI client; stub the preload bridge global first and restore it after.
-const hadElectronTRPC = "electronTRPC" in globalThis;
-const prevElectronTRPC = globalThis.electronTRPC;
-globalThis.electronTRPC ??= {
-  sendMessage: (): undefined => undefined,
-  onMessage: (): undefined => undefined,
-};
-
 const uiReal = { ...(await import("../../src/ui/index")) };
 const nodeTrpcReal = { ...(await import("../../src/console/node-trpc.ts")) };
 
@@ -139,8 +130,6 @@ const { StopServerDialog } = await import("../../src/console/actions/stop-server
 afterAll(() => {
   void mock.module("@/ui", () => uiReal);
   void mock.module(NODE_TRPC_SPEC, () => nodeTrpcReal);
-  if (hadElectronTRPC) globalThis.electronTRPC = prevElectronTRPC;
-  else delete (globalThis as { electronTRPC?: unknown }).electronTRPC;
 });
 
 function makeRow(): ConsoleWorkloadRow {

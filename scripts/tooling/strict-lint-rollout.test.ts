@@ -45,9 +45,8 @@ describe("strict lint rollout baselines", () => {
     const typecheck = pkg.scripts?.["typecheck"] ?? "";
 
     expect(typecheck.trim()).not.toBe("tsc --noEmit");
-    expect(typecheck).toContain("tsconfig.main.json");
-    expect(typecheck).toContain("tsconfig.node.json");
-    expect(typecheck).toContain("tsconfig.web.json");
+    expect(typecheck).toContain("tsc -p tsconfig.json");
+    expect(typecheck).toContain("tsconfig.e2e.json");
   });
 
   test("root package.json exposes the strict lint and format scripts", () => {

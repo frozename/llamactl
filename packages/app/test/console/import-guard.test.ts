@@ -25,7 +25,7 @@ const RULE_ID = "no-restricted-imports";
 const PROBE = "packages/app/src/console/actions/stop-server.tsx";
 const SCOPE_FILE = "packages/app/src/console/create-node-scope.ts";
 const WRAPPER_FILE = "packages/app/src/console/node-trpc.ts";
-const MODULES_FILE = "packages/app/src/modules/server/use-server-control.ts";
+const MODULES_FILE = "packages/app/src/lib/transport/http.ts";
 
 const configs = new Map<string, Linter.Config>();
 const linter = new Linter({ configType: "flat" });

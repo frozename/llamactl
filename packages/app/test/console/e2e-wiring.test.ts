@@ -218,9 +218,16 @@ describe("e2e wiring contract (#410 P5b parts 2a + 2b)", () => {
     expect(session).toMatch(/getByRole\(\s*["']alert["']\s*\)/);
   });
 
-  test("R9 console-e2e.yml is advisory and check.yml stays playwright-free", () => {
+  test("R9 console-e2e.yml is required and check.yml stays playwright-free", () => {
     expect(existsSync(E2E_WORKFLOW)).toBe(true);
-    const doc = asRecord(parseYamlSafe(readText(E2E_WORKFLOW)));
+    const raw = readText(E2E_WORKFLOW);
+    expect(raw).not.toContain("ADVISORY");
+    const doc = asRecord(parseYamlSafe(raw));
+    const on = asRecord(doc?.["on"]);
+    const pullRequest = asRecord(on?.["pull_request"]);
+    expect(pullRequest).not.toBeNull();
+    expect(pullRequest?.["paths"]).toBeUndefined();
+    expect(pullRequest?.["paths-ignore"]).toBeUndefined();
     const jobs = asRecord(doc?.["jobs"]);
     const jobList = jobs === null ? [] : asRecordArray(Object.values(jobs));
     const ubuntuJobs = jobList.filter((job) =>
@@ -245,8 +252,8 @@ describe("e2e wiring contract (#410 P5b parts 2a + 2b)", () => {
     expect(wdRun || cwdRun).toBe(true);
     expect(runLines.some((run) => /playwright test.*(?:\s-c\s|--config)/.test(run))).toBe(false);
     expect(readText(CHECK_WORKFLOW)).not.toContain("playwright");
-    // The workflow header's advisory contract: failures must reach the
-    // PR status unmasked — continue-on-error would silently swallow them.
+    // Required-check contract: failures must reach the PR status
+    // unmasked — continue-on-error would silently swallow them.
     for (const job of jobList) {
       expect(Boolean(job["continue-on-error"])).toBe(false);
     }

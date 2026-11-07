@@ -217,7 +217,7 @@ describe("env.formatEvalScript", () => {
 
 describe("env.resolveEnv — process.env seed shape", () => {
   /**
-   * Electron main (`packages/app/electron/main.ts`) does:
+   * Host entrypoints seed `process.env` from `resolveEnv()` like:
    *
    *   const resolved = resolveEnv();
    *   for (const [k, v] of Object.entries(resolved))
@@ -246,7 +246,7 @@ describe("env.resolveEnv — process.env seed shape", () => {
   });
 
   test("Object.assign-with-undefined-filter preserves existing overrides", () => {
-    // Simulate the Electron seed loop on a scratch process.env copy.
+    // Simulate the process.env seed loop on a scratch copy.
     const procEnv: NodeJS.ProcessEnv = {
       LLAMACTL_TEST_PROFILE: "/tmp/hermetic-seed",
       LLAMA_CPP_MACHINE_PROFILE: "macbook-pro-48g",

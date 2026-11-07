@@ -110,7 +110,8 @@ export function tierOf(toolName: string): Tier {
 }
 
 /** Minimal PlanStep shape the severity gate consumes. Matches the
- *  planner's `PlanStep` (see packages/app/src/modules/ops-chat/index.tsx:22-27). */
+ *  planner's `PlanStep` (the ops-chat planner module was retired with
+ *  the Electron app in #410 P7-A; the shape is kept for runbook plans). */
 export interface PlanStepLike {
   tool: string;
   args?: Record<string, unknown>;

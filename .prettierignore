@@ -10,8 +10,6 @@ packages/app/release/**
 packages/eval/results/**
 packages/eval/tools/*.py
 .pytest_cache/**
-# code-as-data: evaluated as a renderer EXPRESSION by scripts/audit.sh --setup-script; a trailing semicolon breaks it
-tests/ui-audit-setup.js
 .husky/
 # prettier has no parser for ignore files; explicit --check runs must skip them
 .prettierignore

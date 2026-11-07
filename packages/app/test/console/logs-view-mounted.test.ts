@@ -26,13 +26,6 @@ const REPLAY_LINES = ["a", "b", "c"] as const;
 
 type StatusGate = "error" | "offline" | "online";
 
-const hadElectronTRPC = "electronTRPC" in globalThis;
-const prevElectronTRPC = globalThis.electronTRPC;
-globalThis.electronTRPC ??= {
-  sendMessage: (): undefined => undefined,
-  onMessage: (): undefined => undefined,
-};
-
 interface StubButtonProps {
   children?: ReactNode;
 }
@@ -161,11 +154,6 @@ beforeEach(() => {
 afterAll(() => {
   void mock.module("@/ui", () => uiReal);
   void mock.module(NODE_TRPC_SPEC, () => nodeTrpcReal);
-  if (hadElectronTRPC) {
-    globalThis.electronTRPC = prevElectronTRPC;
-  } else {
-    delete (globalThis as { electronTRPC?: unknown }).electronTRPC;
-  }
 });
 
 function setStatus(gate: StatusGate): void {
