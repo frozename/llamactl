@@ -39,8 +39,9 @@ describe("tierOf verb suffixes not covered elsewhere", () => {
     expect(tierOf("llamactl.config.set")).toBe(2);
   });
 
-  test("classifies llamactl.node.drain as tier 3", () => {
+  test("classifies .drain as tier 3 ahead of a tier-1 suffix", () => {
     expect(tierOf("llamactl.node.drain")).toBe(3);
+    expect(tierOf("llamactl.node.drain.status")).toBe(3);
   });
 
   test("classifies the onboard-new-gpu-node runbook override as tier 2", () => {
@@ -124,15 +125,12 @@ describe("gatePlan boundaries", () => {
     });
   });
 
-  test("refuses when requiresConfirmation is true and a step exceeds the threshold", () => {
+  test("refuses when requiresConfirmation is true even within the threshold", () => {
     const plan: PlanLike = {
       steps: [{ tool: "llamactl.node.remove" }],
       reasoning: "r",
       requiresConfirmation: true,
     };
-    expect(gatePlan(plan, 2)).toEqual({
-      allowed: false,
-      refusedSteps: [{ index: 0, tool: "llamactl.node.remove", tier: 3 }],
-    });
+    expect(gatePlan(plan, 3)).toEqual({ allowed: false, refusedSteps: [] });
   });
 });
