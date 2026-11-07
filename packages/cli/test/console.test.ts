@@ -189,6 +189,7 @@ type OpenerSpawnFn = (
 
 interface OpenerSpawnCall {
   argv: string[];
+  exited: Promise<number>;
   options: { stdin: "ignore"; stdout: "ignore"; stderr: "ignore" };
 }
 
@@ -200,12 +201,13 @@ function recordingOpenerSpawn(makeExited: () => Promise<number> = () => Promise.
   const calls: OpenerSpawnCall[] = [];
   let unrefs = 0;
   const spawn: OpenerSpawnFn = (argv, options) => {
-    calls.push({ argv: [...argv], options });
+    const exited = makeExited();
+    calls.push({ argv: [...argv], exited, options });
     return {
       unref: (): void => {
         unrefs += 1;
       },
-      exited: makeExited(),
+      exited,
     };
   };
   return { calls, spawn, unrefCount: (): number => unrefs };
@@ -524,6 +526,8 @@ describe("llamactl console", () => {
 
         proc.kill("SIGTERM");
         expect(await withTimeout(proc.exited, 5_000)).toBe(0);
+        const stderr = await new Response(proc.stderr).text();
+        expect(stderr).not.toContain("could not open a browser");
       } finally {
         proc.kill("SIGKILL");
       }
@@ -603,7 +607,14 @@ describe("llamactl console", () => {
             spawn: recorder.spawn,
             waitForShutdown: () => Promise.resolve(),
           };
-          const code = await runConsole(["--port", "0", "--dist", fx.distDir], deps);
+          const { result: code, stderr } = await captureStderr(async () => {
+            const result = await runConsole(["--port", "0", "--dist", fx.distDir], deps);
+            // The exited-promise handler that warns on a failed opener
+            // runs asynchronously; flush it while stderr is captured.
+            await recorder.calls[0]?.exited;
+            await Promise.resolve();
+            return result;
+          });
           expect(code).toBe(0);
           expect(recorder.calls).toHaveLength(1);
           const call = recorder.calls[0];
@@ -616,6 +627,7 @@ describe("llamactl console", () => {
           expect(url).toMatch(LOOPBACK_URL_RE);
           expect(call?.argv).toEqual(openerCase.expected(url));
           expect(recorder.unrefCount()).toBe(1);
+          expect(stderr).not.toContain("could not open a browser");
         });
       });
     }
