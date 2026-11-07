@@ -70,19 +70,19 @@ SUBCOMMANDS:
   rm        Remove a schedule by id.
   toggle    Enable or disable a schedule: \`toggle <id> on|off\`.
   status    The schedules plus this process's loop state (running, tick
-             interval, last/next tick, in-flight, recent runs).
-             --json emits { schedules, loop }.
+            interval, last/next tick, in-flight, recent runs).
+            --json emits { schedules, loop }.
   kick      Run one tick now and print what fired; exits 1 when any
-             scheduled bench failed. Refused while another live process
-             (a \`bench schedule run\`) holds the run lock.
+            scheduled bench failed. Refused while another live process
+            (a \`bench schedule run\`) holds the run lock.
   run       Foreground loop host: takes the run lock, starts the tick
-             loop, stays alive until SIGINT/SIGTERM, drains an in-flight
-             bench, then exits. --interval is the tick interval in
-             seconds (30-3600, default 60).
-             STOP LATENCY: a stop signal finishes the bench in flight
-             and starts no further due schedules, so the worst-case
-             stop time is one bench timeout (15 minutes). Set your
-             launchd/systemd stop timeout accordingly.
+            loop, stays alive until SIGINT/SIGTERM, drains an in-flight
+            bench, then exits. --interval is the tick interval in
+            seconds (30-3600, default 60).
+            STOP LATENCY: a stop signal finishes the bench in flight
+            and starts no further due schedules, so the worst-case
+            stop time is one bench timeout (15 minutes). Set your
+            launchd/systemd stop timeout accordingly.
 
 Schedules resolve their node from the current config when they fire, so
 --context and --cluster-config are not supported here.

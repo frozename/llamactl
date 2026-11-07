@@ -236,11 +236,17 @@ function ScheduleList(props: {
   );
 }
 
-export function SchedulerPanel(): React.JSX.Element {
+type SchedulerMutations = {
+  add: ReturnType<typeof trpc.benchScheduleAdd.useMutation>;
+  remove: ReturnType<typeof trpc.benchScheduleRemove.useMutation>;
+  toggle: ReturnType<typeof trpc.benchScheduleToggle.useMutation>;
+  start: ReturnType<typeof trpc.benchSchedulerStart.useMutation>;
+  stop: ReturnType<typeof trpc.benchSchedulerStop.useMutation>;
+  kick: ReturnType<typeof trpc.benchSchedulerKick.useMutation>;
+};
+
+function useSchedulerMutations(setError: (message: string) => void): SchedulerMutations {
   const utils = trpc.useUtils();
-  const list = trpc.benchScheduleList.useQuery();
-  const status = trpc.benchSchedulerStatus.useQuery(undefined, { refetchInterval: 5000 });
-  const nodes = trpc.nodeList.useQuery();
   const add = trpc.benchScheduleAdd.useMutation({
     onSuccess: () => {
       void utils.benchScheduleList.invalidate();
@@ -260,6 +266,9 @@ export function SchedulerPanel(): React.JSX.Element {
     onSuccess: () => {
       void utils.benchSchedulerStatus.invalidate();
     },
+    onError: (e) => {
+      setError(e.message);
+    },
   });
   const stop = trpc.benchSchedulerStop.useMutation({
     onSuccess: () => {
@@ -271,13 +280,23 @@ export function SchedulerPanel(): React.JSX.Element {
       void utils.benchScheduleList.invalidate();
       void utils.benchSchedulerStatus.invalidate();
     },
+    onError: (e) => {
+      setError(e.message);
+    },
   });
+  return { add, remove, toggle, start, stop, kick };
+}
 
+export function SchedulerPanel(): React.JSX.Element {
+  const list = trpc.benchScheduleList.useQuery();
+  const status = trpc.benchSchedulerStatus.useQuery(undefined, { refetchInterval: 5000 });
+  const nodes = trpc.nodeList.useQuery();
   const [id, setId] = useState("");
   const [node, setNode] = useState("local");
   const [rel, setRel] = useState("");
   const [hours, setHours] = useState(24);
   const [error, setError] = useState<string | null>(null);
+  const { add, remove, toggle, start, stop, kick } = useSchedulerMutations(setError);
 
   const schedules = (list.data ?? []) as Schedule[];
   const running = status.data?.running ?? false;

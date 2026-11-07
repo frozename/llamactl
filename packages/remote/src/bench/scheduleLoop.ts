@@ -26,12 +26,18 @@ import {
  * - Run fields are never written from a stale in-memory list. Each
  *   bench's outcome is stamped through `recordRunOutcome`, which
  *   re-loads the store and patches only that id, skipping a schedule
- *   that was removed or disabled while the bench ran.
+ *   that was removed or disabled while the bench ran. The tick's
+ *   schedule list is equally stale by the time a bench finishes, so
+ *   each entry is re-checked against a fresh load right before it
+ *   fires — a schedule removed or disabled mid-tick never benches.
  * - One run lock (a lockfile beside the store, holding pid + start
  *   time) serialises bench execution across processes. `run` takes it
  *   for the loop's lifetime; `kick` takes it for the duration of the
  *   tick and refuses while a live pid holds it. Dead pids (and pids
- *   from a crashed run in this same process) are reclaimed.
+ *   from a crashed run in this same process) are reclaimed. The lock
+ *   is released by whichever completion leaves the loop neither
+ *   running nor in flight — including a `kick` tick that outlives a
+ *   `stop`.
  */
 
 type SubscribeCallbacks = {
@@ -173,6 +179,10 @@ function releaseRunLock(): void {
   if (holder === null || holder.pid === process.pid) unlinkRunLock(path);
 }
 
+function releaseRunLockIfIdle(): void {
+  if (!state.running && !state.inflight) releaseRunLock();
+}
+
 function schedule(getClient: (nodeName: string) => BenchClient): void {
   if (!state.running) return;
   state.timer = setTimeout(() => {
@@ -262,13 +272,17 @@ async function tick(
       // flight, never start the remaining due ones.
       if (opts.forLoop && !state.running) break;
       if (!isDue(s, now)) continue;
-      const outcome = await runWithOutcome(s, getClient);
-      recordRunOutcome(path, s.id, outcome.patch);
+      // A bench can run for 15 minutes; the snapshot above is stale by
+      // the time the loop reaches this entry, so re-check the store.
+      const fresh = loadSchedules(path).find((entry) => entry.id === s.id);
+      if (fresh === undefined || !isDue(fresh, now)) continue;
+      const outcome = await runWithOutcome(fresh, getClient);
+      recordRunOutcome(path, fresh.id, outcome.patch);
       state.recent = [...state.recent, outcome.entry].slice(-200);
     }
   } finally {
     state.inflight = false;
-    if (opts.forLoop && !state.running) releaseRunLock();
+    releaseRunLockIfIdle();
     schedule(getClient);
   }
 }
@@ -290,20 +304,20 @@ export function stopBenchScheduler(): void {
     clearTimeout(state.timer);
     state.timer = null;
   }
-  // With a bench in flight the lock is released by that tick's finally,
-  // so a draining `run` keeps other processes out until it exits.
-  if (!state.inflight) releaseRunLock();
+  // With a bench in flight the lock is released when that tick's
+  // finally drains it, so a draining `run` keeps other processes out
+  // until it exits.
+  releaseRunLockIfIdle();
 }
 
 export async function kickBenchScheduler(
   getClient: (nodeName: string) => BenchClient,
 ): Promise<void> {
-  const heldBefore = state.lockPath !== null;
   acquireRunLock();
   try {
     await tick(getClient, { forLoop: false });
   } finally {
-    if (!heldBefore) releaseRunLock();
+    releaseRunLockIfIdle();
   }
 }
 

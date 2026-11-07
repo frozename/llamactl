@@ -19,7 +19,7 @@ import {
   startBenchScheduler,
   stopBenchScheduler,
 } from "../../src/bench/scheduleLoop.js";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
 
 /**
  * Loop-level coverage for the in-process bench scheduler: dueness
@@ -431,4 +431,87 @@ describe("bench scheduler loop", () => {
     expect(rows.find((s) => s.id === "stop-17c")!.lastRunAt).toBe("2000-01-01T00:00:00.000Z");
     expect(existsSync(benchRunLockPath())).toBe(false);
   }, 10_000);
+
+  test("a kick bench that outlives stop still releases the run lock", async () => {
+    const { getClient, held } = fakeClient(
+      new Map([["org/repo/drain-18.gguf", { complete: false }]]),
+    );
+
+    startBenchScheduler({ getClient, tickIntervalMs: 3_600_000 });
+    // The loop's opening tick finds an empty store and finishes, leaving
+    // the loop running with the lock held and nothing in flight.
+    saveSchedules([dueSchedule("drain-18")], schedulePath);
+    const kick = kickBenchScheduler(getClient);
+    expect(benchSchedulerStatus().inflight).toBe(true);
+    expect(held).toHaveLength(1);
+
+    stopBenchScheduler();
+    held[0]!.onComplete();
+    await kick;
+
+    expect(benchSchedulerStatus().running).toBe(false);
+    expect(benchSchedulerStatus().inflight).toBe(false);
+    // A fresh process only consults the lockfile; it must be gone.
+    expect(existsSync(benchRunLockPath())).toBe(false);
+
+    saveSchedules([dueSchedule("after-18")], schedulePath);
+    await kickBenchScheduler(autoCompleting().getClient);
+    const entry = loadSchedules(schedulePath).find((s) => s.id === "after-18")!;
+    expect(entry.lastRunAt).not.toBe("2000-01-01T00:00:00.000Z");
+    expect(existsSync(benchRunLockPath())).toBe(false);
+  }, 10_000);
+
+  test("start is refused by a live foreign lock and writes its own pid", () => {
+    writeFileSync(
+      benchRunLockPath(),
+      JSON.stringify({ pid: 1, startedAt: "2026-01-01T00:00:00.000Z" }),
+      "utf8",
+    );
+    const { getClient } = autoCompleting();
+
+    expect(() => {
+      startBenchScheduler({ getClient, tickIntervalMs: 3_600_000 });
+    }).toThrow(/already holds the run lock/);
+    expect(benchSchedulerStatus().running).toBe(false);
+    expect(getClientCalls).toBe(0);
+
+    rmSync(benchRunLockPath(), { force: true });
+    startBenchScheduler({ getClient, tickIntervalMs: 3_600_000 });
+    try {
+      const holder = JSON.parse(readFileSync(benchRunLockPath(), "utf8")) as { pid: number };
+      expect(holder.pid).toBe(process.pid);
+      expect(benchSchedulerStatus().running).toBe(true);
+    } finally {
+      stopBenchScheduler();
+    }
+    expect(existsSync(benchRunLockPath())).toBe(false);
+  });
+
+  test("schedules removed or disabled mid-tick never fire their own bench", async () => {
+    saveSchedules(
+      [dueSchedule("stale-a"), dueSchedule("stale-b"), dueSchedule("stale-c")],
+      schedulePath,
+    );
+    const { getClient, held, subscribeInputs } = fakeClient(
+      new Map([["org/repo/stale-a.gguf", { complete: false }]]),
+    );
+
+    const kick = kickBenchScheduler(getClient);
+    expect(held).toHaveLength(1);
+    // Another process removes stale-b and disables stale-c while stale-a runs.
+    saveSchedules(
+      updateSchedule(removeSchedule(loadSchedules(schedulePath), "stale-b"), "stale-c", {
+        enabled: false,
+      }),
+      schedulePath,
+    );
+    held[0]!.onComplete();
+    await kick;
+
+    expect(subscribeInputs.map((input) => input.target)).toEqual(["org/repo/stale-a.gguf"]);
+    expect(getClientCalls).toBe(1);
+    const rows = loadSchedules(schedulePath);
+    expect(rows.map((s) => s.id).sort()).toEqual(["stale-a", "stale-c"]);
+    expect(rows.find((s) => s.id === "stale-c")!.lastRunAt).toBe("2000-01-01T00:00:00.000Z");
+  });
 });
