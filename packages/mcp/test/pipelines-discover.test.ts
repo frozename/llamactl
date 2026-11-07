@@ -50,14 +50,6 @@ function stagesFrom(tools: object[]): object[][] {
   return tools.map((t) => (t as { stages: object[] }).stages);
 }
 
-function descriptionFrom(tools: object[]): string[] {
-  return tools.map((t) => (t as { description: string }).description);
-}
-
-function schemaFrom(tools: object[]): object[] {
-  return tools.map((t) => (t as { inputSchema: object }).inputSchema);
-}
-
 describe("discoverPipelineTools", () => {
   test("non-existent dir returns [] with no warnings", () => {
     const warnings: string[] = [];
@@ -148,24 +140,25 @@ describe("discoverPipelineTools", () => {
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain("pipeline-tool: skipped");
     expect(warnings[0]).not.toContain("invalid JSON");
+  });
 
-    // Separate test: stages: [] is also rejected
-    const tmp2 = mkdtempSync(join(tmpdir(), "llamactl-pipeline-discover-nostages-"));
-    dirsToClean.push(tmp2);
+  test("stages: [] is rejected with one warning", () => {
+    const nostagesDir = mkdtempSync(join(tmpdir(), "llamactl-pipeline-discover-nostages-"));
+    dirsToClean.push(nostagesDir);
     writeFileSync(
-      join(tmp2, "nostages.json"),
+      join(nostagesDir, "nostages.json"),
       JSON.stringify(validPipeline("nostages", { stages: [] })),
     );
 
-    const warnings2: string[] = [];
-    const result2 = discoverPipelineTools({
-      pipelinesDir: tmp2,
-      onWarn: (msg) => warnings2.push(msg),
+    const warnings: string[] = [];
+    const result = discoverPipelineTools({
+      pipelinesDir: nostagesDir,
+      onWarn: (msg) => warnings.push(msg),
     });
-    expect(result2).toEqual([]);
-    expect(warnings2).toHaveLength(1);
-    expect(warnings2[0]).toContain("pipeline-tool: skipped");
-    expect(warnings2[0]).not.toContain("invalid JSON");
+    expect(result).toEqual([]);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("pipeline-tool: skipped");
+    expect(warnings[0]).not.toContain("invalid JSON");
   });
 
   test("env override: LLAMACTL_MCP_PIPELINES_DIR", () => {
@@ -184,7 +177,6 @@ describe("discoverPipelineTools", () => {
     writeFileSync(join(envDir, "fromenv.json"), JSON.stringify(validPipeline("fromenv")));
 
     process.env["LLAMACTL_MCP_PIPELINES_DIR"] = envDir;
-    const result = discoverPipelineTools({ pipelinesDir: tmp });
     writeFileSync(join(tmp, "explicit.json"), JSON.stringify(validPipeline("explicit")));
     expect(namesFrom(discoverPipelineTools({ pipelinesDir: tmp }))).toEqual(["explicit"]);
   });
@@ -246,7 +238,7 @@ describe("registerPipelineTools listing", () => {
     }
   });
 
-  test("registerPipelineTools returns sorted names", () => {
+  test("registerPipelineTools returns the registered names", () => {
     const a = validPipeline("alpha");
     const b = validPipeline("beta");
 
@@ -255,6 +247,6 @@ describe("registerPipelineTools listing", () => {
 
     const server = new McpServer({ name: "test", version: "0.0.0" });
     const registered = registerPipelineTools(server, { pipelinesDir: tmp });
-    expect(registered.sort()).toEqual(["alpha", "beta"]);
+    expect([...registered].sort()).toEqual(["alpha", "beta"]);
   });
 });
