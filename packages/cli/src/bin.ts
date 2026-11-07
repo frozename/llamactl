@@ -6,6 +6,7 @@ import { runBench } from "./commands/bench.js";
 import { runCandidate } from "./commands/candidate.js";
 import { runCatalog } from "./commands/catalog.js";
 import { runComposite } from "./commands/composite.js";
+import { runConsole } from "./commands/console.js";
 import { runController } from "./commands/controller.js";
 import { runCostGuardian } from "./commands/cost-guardian.js";
 import { runCtx } from "./commands/ctx.js";
@@ -76,6 +77,12 @@ Write commands:
                                               profiles and save the fastest
   llamactl bench vision <target>              Run the multimodal bench and
                                               record the timings (--json supported)
+  llamactl bench schedule list|add|rm|toggle|status|kick
+                                              Manage recurring bench schedules on
+                                              the control plane
+  llamactl bench schedule run [--interval=60] Foreground loop host for recurring
+                                              benches (opt-in; drive it with
+                                              launchd/systemd)
   llamactl candidate test <repo> [file] [profile]
                                               Discover + pull + tune + compare
                                               pipeline (--json supported)
@@ -229,6 +236,9 @@ Agentic operations:
                                               /tunnel-relay POST against it.
   llamactl fleet snapshot [--all]             Show local or cluster fleet snapshots
   llamactl fleet status                       Show one-line fleet pressure summary per node
+  llamactl console [--port <n>] [--no-open]   Serve the web console on 127.0.0.1
+      [--dist <path>]                         (build first: bun run --cwd
+                                              packages/app build:web)
 
 Self-update (source installs):
   llamactl update [--check]                   Fetch and show what an update to
@@ -334,6 +344,8 @@ async function main(argv: string[]): Promise<number> {
       return await runTunnel(rest);
     case "fleet":
       return await runFleet(rest);
+    case "console":
+      return await runConsole(rest);
     case "update":
       return await runUpdate(rest);
     case "--version":
