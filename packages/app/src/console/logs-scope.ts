@@ -7,7 +7,7 @@
 
 import type { ConsoleWorkloadRow } from "./workloads-scope";
 
-import { isReconnectSignal, isReconnectingSignal, RECONNECTING_SIGNAL } from "../lib/transport/sse-lifecycle";
+import { isReconnectingSignal, isReconnectSignal } from "../lib/transport/sse-lifecycle";
 import { consoleHref } from "./router";
 import { workloadLocation, workloadsForTab } from "./workloads-scope";
 
@@ -141,11 +141,11 @@ export function logsConnState(
   status: unknown,
   error: string | null,
   gate: LogsGate,
-  reconnecting: boolean,
+  reconnecting?: boolean,
 ): LogsConnState {
-  if (reconnecting) return "reconnecting";
   if (gate !== "online") return "idle";
   if (error !== null || status === "error") return "error";
+  if (reconnecting === true) return "reconnecting";
   if (status === "pending") return "streaming";
   if (status === "connecting") return "connecting";
   if (status === "idle") return "idle";
@@ -156,21 +156,17 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-export function logsReducer(state: LogsState, action: LogsAction): LogsState {
-  if (action.type === "clear") return { ...INITIAL_LOGS_STATE, reconnecting: true };
-  if (action.type === "gate-off") {
-    return state.pendingFreshStart ? state : { ...state, pendingFreshStart: true };
-  }
-  if (action.type === "stream-start") {
-    if (!state.pendingFreshStart) return state;
-    return { entries: [{ kind: "divider" }], pendingFreshStart: false };
-  }
-  const event = action.event;
+function reconnectingCarry(state: LogsState): { reconnecting?: true } {
+  return state.reconnecting === true ? { reconnecting: true } : {};
+}
+
+function reduceLogEvent(state: LogsState, event: unknown): LogsState {
   if (isReconnectSignal(event)) {
     return { entries: [{ kind: "divider" }], pendingFreshStart: state.pendingFreshStart };
   }
   if (isReconnectingSignal(event)) {
-    return { ...state, entries: state.entries, pendingFreshStart: state.pendingFreshStart, reconnecting: true };
+    if (state.reconnecting === true) return state;
+    return { ...state, reconnecting: true };
   }
   if (isObject(event) && event["type"] === "line" && typeof event["line"] === "string") {
     const entries = [...state.entries, { kind: "line" as const, text: maskLogLine(event["line"]) }];
@@ -178,7 +174,28 @@ export function logsReducer(state: LogsState, action: LogsAction): LogsState {
       entries:
         entries.length > MAX_LOG_LINES ? entries.slice(entries.length - MAX_LOG_LINES) : entries,
       pendingFreshStart: state.pendingFreshStart,
+      ...reconnectingCarry(state),
     };
   }
   return state;
+}
+
+export function logsReducer(state: LogsState, action: LogsAction): LogsState {
+  if (action.type === "clear") {
+    return state.reconnecting === true
+      ? { ...INITIAL_LOGS_STATE, reconnecting: true }
+      : INITIAL_LOGS_STATE;
+  }
+  if (action.type === "gate-off") {
+    return state.pendingFreshStart ? state : { ...state, pendingFreshStart: true };
+  }
+  if (action.type === "stream-start") {
+    if (!state.pendingFreshStart) return state;
+    return {
+      entries: [{ kind: "divider" }],
+      pendingFreshStart: false,
+      ...reconnectingCarry(state),
+    };
+  }
+  return reduceLogEvent(state, action.event);
 }

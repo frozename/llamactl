@@ -369,7 +369,7 @@ describe("logs scope (#410 P5a-3d)", () => {
     state = reducer(state, lineAction("keep"));
     state = reducer(state, { type: "gate-off" });
     state = reducer(state, { type: "clear" });
-      expect(state).toEqual({ entries: [], pendingFreshStart: false, reconnecting: true });
+    expect(state).toEqual({ entries: [], pendingFreshStart: false });
     expect(reducer(state, { type: "stream-start" })).toBe(state);
   });
 });

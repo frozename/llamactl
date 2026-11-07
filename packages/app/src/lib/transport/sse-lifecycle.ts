@@ -3,7 +3,10 @@
 // classifyTransportError, retryable failures reconnect on BACKOFF_MS, the
 // backoff only resets after HEALTH_CONFIRM_MS of stable streaming, and a
 // successful reopen emits exactly one RECONNECT_SIGNAL data frame so
-// consumers can resync. Every inner attempt gets a fresh AbortSignal —
+// consumers can resync. Paths in resumablePaths (serverLogs) get one more
+// branch: a server RETURN schedules the same bounded reconnect behind a
+// RECONNECTING_SIGNAL data frame instead of completing the subscription.
+// Every inner attempt gets a fresh AbortSignal —
 // tRPC 11.16's raceAbortSignals adds a permanent 'abort' listener to
 // whatever signal it is handed, so the caller's op.signal must never reach
 // next(). Inner completions (server RETURN) are abandoned rather than
@@ -34,7 +37,9 @@ export function isReconnectSignal(value: unknown): boolean {
 }
 
 export function isReconnectingSignal(value: unknown): boolean {
-  return value === RECONNECTING_SIGNAL || (isObject(value) && value["type"] === RECONNECTING_SIGNAL.type);
+  return (
+    value === RECONNECTING_SIGNAL || (isObject(value) && value["type"] === RECONNECTING_SIGNAL.type)
+  );
 }
 
 export type SseLifecycleState = "connecting" | "streaming" | "reconnecting" | "idle" | "error";
@@ -114,7 +119,7 @@ interface LifecycleDeps {
   timers: LifecycleTimers;
   onInvalidSession: () => void;
   onStateChange: ((event: SseLifecycleStateChange) => void) | undefined;
-  resumablePaths: readonly string[];
+  resumablePaths?: readonly string[];
 }
 
 interface SourceLike {
@@ -134,7 +139,7 @@ class SseLifecycleRunner {
   private attemptSource: SourceLike | undefined;
   private attemptSourceError: ((event: unknown) => void) | undefined;
   private readonly callerSignal: AbortSignal | undefined;
-  private readonly resumablePaths: readonly string[];
+  private readonly resumable: boolean;
   private readonly callerAbort = (): void => {
     if (this.torn) return;
     this.teardown();
@@ -143,7 +148,7 @@ class SseLifecycleRunner {
 
   constructor(private readonly deps: LifecycleDeps) {
     this.callerSignal = deps.op.signal ?? undefined;
-    this.resumablePaths = deps.resumablePaths;
+    this.resumable = deps.resumablePaths?.includes(deps.op.path) ?? false;
   }
 
   begin(): () => void {
@@ -263,9 +268,16 @@ class SseLifecycleRunner {
       this.teardown();
       return;
     }
+    this.scheduleReconnect();
+  }
+
+  private scheduleReconnect(): void {
     const delay = BACKOFF_MS[Math.min(this.attempt, BACKOFF_MS.length - 1)] ?? 30000;
     this.attempt += 1;
     this.emitState("reconnecting", { delayMs: delay });
+    if (this.resumable) {
+      this.deps.observer.next({ result: { type: "data", data: RECONNECTING_SIGNAL } });
+    }
     this.backoffHandle = this.deps.timers.setTimeout(() => {
       if (this.torn) return;
       this.backoffHandle = undefined;
@@ -334,26 +346,19 @@ class SseLifecycleRunner {
     this.attemptAc = undefined;
     this.detachSource();
     // Resumable paths: schedule a bounded reconnect behind a
-    // RECONNECTING_SIGNAL data frame instead of completing.
-    if (this.resumablePaths.includes(this.deps.op.path)) {
+    // RECONNECTING_SIGNAL data frame instead of completing. The throw
+    // below still applies — httpSubscriptionLink's run().catch swallows
+    // it so the inner teardown never runs a second close.
+    if (this.resumable) {
       if (this.healthHandle !== undefined) {
         this.deps.timers.clearTimeout(this.healthHandle);
         this.healthHandle = undefined;
       }
-      this.deps.observer.next({ result: { type: "data", data: RECONNECTING_SIGNAL } });
-      const delay = BACKOFF_MS[Math.min(this.attempt, BACKOFF_MS.length - 1)] ?? 30000;
-      this.attempt += 1;
-      this.emitState("reconnecting", { delayMs: delay });
-      this.backoffHandle = this.deps.timers.setTimeout(() => {
-        if (this.torn) return;
-        this.backoffHandle = undefined;
-        this.emitState("connecting");
-        this.startAttempt();
-      }, delay);
-      return;
+      this.scheduleReconnect();
+    } else {
+      this.deps.observer.complete();
+      this.teardown();
     }
-    this.deps.observer.complete();
-    this.teardown();
     // The wrapped complete() must never reach its unsubscribe(): that would
     // run the inner teardownRef and its ac.abort() -> onAbort ->
     // EventSource.close() a second time. The throw unwinds into
@@ -388,7 +393,6 @@ export function sseLifecycleLink<TRouter extends AnyRouter>(
   const timers = linkOpts.timers ?? defaultTimers;
   const onInvalidSession = linkOpts.onInvalidSession ?? consoleSessionStore.markInvalid;
   const onStateChange = linkOpts.onStateChange;
-  const resumablePaths = linkOpts.resumablePaths ?? [];
 
   return () => {
     return ({ op, next }) => {
@@ -400,7 +404,9 @@ export function sseLifecycleLink<TRouter extends AnyRouter>(
           timers,
           onInvalidSession,
           onStateChange,
-          resumablePaths,
+          ...(linkOpts.resumablePaths !== undefined
+            ? { resumablePaths: linkOpts.resumablePaths }
+            : {}),
         });
         return runner.begin();
       });

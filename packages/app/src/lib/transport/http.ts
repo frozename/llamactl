@@ -43,6 +43,7 @@ export interface BuildHttpLinksOptions {
   timers?: LifecycleTimers;
   onInvalidSession?: () => void;
   onStateChange?: (event: SseLifecycleStateChange) => void;
+  resumablePaths?: readonly string[];
 }
 
 export function buildHttpLinks<TRouter extends AnyRouter>(
@@ -86,7 +87,7 @@ export function buildHttpLinks<TRouter extends AnyRouter>(
         ...(opts.timers ? { timers: opts.timers } : {}),
         ...(opts.onInvalidSession ? { onInvalidSession: opts.onInvalidSession } : {}),
         ...(opts.onStateChange ? { onStateChange: opts.onStateChange } : {}),
-        resumablePaths: CONSOLE_RESUMABLE_SUBSCRIPTIONS,
+        resumablePaths: opts.resumablePaths ?? CONSOLE_RESUMABLE_SUBSCRIPTIONS,
       }),
       httpSubscriptionLink<AnyRouter, typeof ConsoleEventSource>({
         url,

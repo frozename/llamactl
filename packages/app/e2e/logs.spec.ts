@@ -189,9 +189,6 @@ test("a dropped stream currently completes without reconnect noise", async ({ co
 test("leaving the route tears the stream down", async ({ control, page }) => {
   await page.goto(LOGS_ROUTE);
   await waitForStream(control, true);
-  await expect(page.getByTestId("console-logs-conn")).toHaveAttribute("data-state", "reconnecting", {
-    timeout: 2_000,
-  });
   await page.getByRole("navigation").getByRole("link", { name: "Workloads" }).click();
   await expect(page.getByTestId("console-view-workloads")).toBeVisible();
   await waitForStream(control, false);
