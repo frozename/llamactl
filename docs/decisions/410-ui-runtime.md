@@ -1,7 +1,8 @@
 # Decision record #410 — UI runtime: Electron vs browser console
 
-Status: **P7-A in progress — Electron removed; the Bun-served web console is
-the only UI runtime.** This record captures the P6 footprint measurements
+Status: **P7-A complete — merged in #514; #410 is closed. Electron is
+removed and the Bun-served web console is the only UI runtime.** This
+record captures the P6 footprint measurements
 behind retiring the Electron shell in favor of the already-shipped web
 console (`packages/app/src/main.web.tsx`, built by
 `bun run --cwd packages/app build:web`), plus the post-deletion
@@ -338,10 +339,11 @@ Evaluated by `evaluateThresholds` against the report above:
 - There is **no live usage study** quantifying which Electron-only
   affordances operators relied on day to day; the T1–T6 list stood in for
   real usage and the operator accepted that trade-off on 2026-11-07.
-- `console-e2e` is now the required UI check; the ≥ 5 consecutive green
-  runs on main called for by precondition (d) are still being accumulated
-  post-merge. #369 stays open until that streak exists — it is closed as
-  superseded only afterwards.
+- `console-e2e` is the required UI check, and the ≥ 5 consecutive green
+  runs on main called for by precondition (d) exist: the job went green on
+  main for 10+ consecutive runs before P7-A, passed again on main at
+  f906133b after the #514 merge, and now gates every PR and push to main.
+  #369 closed as superseded.
 - Follow-up dependency cleanup (`lucide-react`, `zustand`, `superjson`,
   `zod`, `@llamactl/core` look unused by the retained app) is deliberately
   deferred so the measure-410 before/after numbers stay comparable.
@@ -357,9 +359,6 @@ Evaluated by `evaluateThresholds` against the report above:
 - There is no live usage study, so the T1–T6 list stood in for real usage;
   an Electron-only affordance that none of the tasks modeled could have
   been missed entirely by this record.
-- Ad-hoc signing (`signing.identity: "-"`) is fine for a local launcher but
-  is a separate distribution question from the runtime choice; do not
-  conflate.
 
 ## Remaining costs
 
@@ -425,5 +424,5 @@ P7-A entry preconditions, all met before deletion:
 Electron deletion has landed: `packages/app/electron/**`, the packaging
 configs, the IPC transport and the retired renderer modules are gone, the
 console manifest ships exactly `fleet`, `workloads`, `nodes` and `logs`,
-and `console-e2e` is the required UI check. #369 remains open until the
-post-merge green streak exists, then closes as superseded.
+and `console-e2e` is the required UI check. #369 closed as superseded once
+the post-merge green streak existed.
