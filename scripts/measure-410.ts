@@ -913,7 +913,9 @@ export interface TaskCoverageMeasurement {
 // the task's behaviour (needle grep), not just file presence. A task is
 // partial when at least one probe hits but not all of them do: T2's
 // endpoint half is asserted in fleet.spec.ts (advertisedEndpoint links),
-// but no spec yet asserts a workload phase, so T2 is partial. T5 (tail
+// but no spec yet asserts a workload phase, so T2 is partial. The phase
+// needle demands a toContainText("Running") assertion, not a bare
+// mention of Running that a comment could satisfy. T5 (tail
 // logs on two nodes in two tabs at once while stopping a workload in one
 // of them) and T6 (recover after a console restart) have no covering
 // spec yet, so they map to no probes.
@@ -924,7 +926,7 @@ export const COVERAGE_PROBES: Readonly<Record<string, readonly CoverageProbe[]>>
   ],
   T2: [
     { needles: ["advertisedEndpoint"], spec: "packages/app/e2e/fleet.spec.ts" },
-    { needles: ["Running"], spec: "packages/app/e2e/workloads.spec.ts" },
+    { needles: ['toContainText("Running")'], spec: "packages/app/e2e/workloads.spec.ts" },
   ],
   T3: [{ needles: ["agent-1", "serverLogs"], spec: "packages/app/e2e/logs.spec.ts" }],
   T4: [

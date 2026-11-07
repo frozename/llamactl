@@ -569,7 +569,9 @@ describe("measure-410 contract (#410 P6)", () => {
     const t2 = byId.get("T2");
     expect(t2?.status).toBe("partial");
     expect(t2?.covered).toBe(false);
-    expect(t2?.missingNeedles).toEqual(["packages/app/e2e/workloads.spec.ts#Running"]);
+    expect(t2?.missingNeedles).toEqual([
+      'packages/app/e2e/workloads.spec.ts#toContainText("Running")',
+    ]);
     const t2probes = m.COVERAGE_PROBES["T2"] ?? [];
     expect(t2probes.map((probe) => probe.spec)).toEqual([
       "packages/app/e2e/fleet.spec.ts",
@@ -660,14 +662,25 @@ describe("measure-410 contract (#410 P6)", () => {
       for (const id of ["T5", "T6"]) {
         expect(full.get(id)?.status).toBe("missing");
       }
-      write("packages/app/e2e/workloads.spec.ts", "a workload row without a phase assertion");
+      write(
+        "packages/app/e2e/workloads.spec.ts",
+        [
+          "// the row settles into the Running phase once the workload starts",
+          'await expect(row).toContainText("local");',
+        ].join("\n"),
+      );
       const partial = new Map(m.measureTaskCoverage(root).rows.map((row) => [row.id, row]));
       expect(partial.get("T2")?.status).toBe("partial");
       expect(partial.get("T2")?.covered).toBe(false);
       expect(partial.get("T2")?.missingNeedles).toEqual([
-        "packages/app/e2e/workloads.spec.ts#Running",
+        'packages/app/e2e/workloads.spec.ts#toContainText("Running")',
       ]);
       expect(partial.get("T1")?.status).toBe("covered");
+      write("packages/app/e2e/workloads.spec.ts", 'await expect(row).toContainText("Running");');
+      const asserted = new Map(m.measureTaskCoverage(root).rows.map((row) => [row.id, row]));
+      expect(asserted.get("T2")?.status).toBe("covered");
+      expect(asserted.get("T2")?.covered).toBe(true);
+      expect(asserted.get("T2")?.missingNeedles).toEqual([]);
     } finally {
       rmSync(root, { force: true, recursive: true });
     }
@@ -747,6 +760,61 @@ describe("measure-410 contract (#410 P6)", () => {
         "T1-T5-no-cli-fallback",
       ),
     ).toBe("fail");
+  });
+
+  test("R16 thresholdInput forwards non-default signing and electron-mcp counts and they flip their thresholds", async () => {
+    const m = await load();
+    const row = (id: string): Measure.TaskCoverageRow => ({
+      covered: true,
+      id,
+      missingNeedles: [],
+      specs: ["packages/app/e2e/spec.ts"],
+      status: "covered",
+      wallTime: null,
+    });
+    const setup: Measure.SetupMeasurement = {
+      buildWebPresent: true,
+      console: {
+        buildWebPresent: true,
+        commands: 3,
+        launcherPresent: true,
+        signingRequired: true,
+      },
+      signing: { adHoc: false, identity: "Developer ID Application: acme" },
+    };
+    const dependencies: Measure.DependenciesMeasurement = {
+      added: 1,
+      addedDeclared: ["@playwright/test"],
+      present: [],
+      removablePresent: 7,
+      removableTotal: 7,
+      undiciRendererImportedByAnyFile: false,
+    };
+    const renderer: Measure.RendererMeasurement = {
+      entry: "packages/app/src/main.web.tsx",
+      ratio: 0.1,
+      retainedFiles: 2,
+      retainedLines: 10,
+      totalFiles: 20,
+      totalLines: 100,
+    };
+    const electronMcp: Measure.ElectronMcpMeasurement = {
+      consolePathReferences: 2,
+      referencingWorkflows: [".github/workflows/console-e2e.yml"],
+    };
+    const coverage: Measure.TaskCoverageMeasurement = {
+      rows: [row("T1"), row("T2"), row("T3"), row("T4"), row("T5")],
+    };
+    const input = m.thresholdInput(setup, dependencies, renderer, electronMcp, coverage);
+    expect(input.setup.console.signingRequired).toBe(true);
+    expect(input.electronMcp.consolePathReferences).toBe(2);
+    const verdict = (entry: Measure.ThresholdInput, id: string): Measure.ThresholdVerdict =>
+      m.evaluateThresholds(entry).find((result) => result.id === id)?.verdict ?? "not-measured";
+    expect(verdict(input, "setup-le-3-no-signing")).toBe("fail");
+    expect(verdict(input, "zero-electron-mcp")).toBe("fail");
+    expect(verdict(input, "T1-T5-no-cli-fallback")).toBe("pass");
+    expect(verdict(input, "net-deps-removed-gt-added")).toBe("pass");
+    expect(verdict(input, "renderer-le-25pct")).toBe("pass");
   });
 
   test("R14 the doc's committed taskCoverage and thresholds blocks equal the script's output", async () => {
