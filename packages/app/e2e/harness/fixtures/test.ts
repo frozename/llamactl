@@ -32,6 +32,7 @@ export interface ControlClient {
   dropStream(node: string, workload: string): Promise<void>;
   emitLog(node: string, workload: string, line: string): Promise<void>;
   reset(): Promise<void>;
+  restartConsole(): Promise<void>;
   setReachable(node: string, reachable: boolean): Promise<void>;
   setServerStopMode(mode: ServerStopMode): Promise<void>;
   streams(node: string): Promise<StreamEntry[]>;
@@ -104,6 +105,7 @@ function createControlClient(context: APIRequestContext): ControlClient {
     dropStream: (node, workload) => postControl(context, "/drop-stream", { node, workload }),
     emitLog: (node, workload, line) => postControl(context, "/emit-log", { line, node, workload }),
     reset: () => postControl(context, "/reset"),
+    restartConsole: () => postControl(context, "/restart-console"),
     setReachable: (node, reachable) => postControl(context, "/reachability", { node, reachable }),
     setServerStopMode: (mode) => postControl(context, "/server-stop-mode", { mode }),
     streams: (node) =>
