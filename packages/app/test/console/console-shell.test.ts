@@ -28,13 +28,6 @@ const SHELL_SPEC = "../../src/console/ConsoleShell.tsx";
 const LOGS_VIEW_SPEC = "../../src/console/views/logs.tsx";
 const CONSOLE_NODE = "local";
 
-const hadElectronTRPC = "electronTRPC" in globalThis;
-const prevElectronTRPC = globalThis.electronTRPC;
-globalThis.electronTRPC ??= {
-  sendMessage: (): undefined => undefined,
-  onMessage: (): undefined => undefined,
-};
-
 interface LocationStub {
   pathname: string;
   search: string;
@@ -245,11 +238,6 @@ afterAll(() => {
   // guarantee that logs-view.test.ts (in any file order) imports the
   // real LogsView — same pattern as test/chat-stream-ownership.test.ts.
   void mock.module(LOGS_VIEW_SPEC, () => logsViewReal);
-  if (hadElectronTRPC) {
-    globalThis.electronTRPC = prevElectronTRPC;
-  } else {
-    delete (globalThis as { electronTRPC?: unknown }).electronTRPC;
-  }
   if (hadLocation) {
     locationHolder.location = prevLocation;
   } else {

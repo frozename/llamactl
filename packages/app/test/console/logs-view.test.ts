@@ -28,13 +28,6 @@ const VIEW_SPEC = "../../src/console/views/logs.tsx";
 const CONSOLE_NODE = "local";
 const ALLOWED_PROCEDURES = new Set(["workloadList", "serverStatus", "serverLogs"]);
 
-const hadElectronTRPC = "electronTRPC" in globalThis;
-const prevElectronTRPC = globalThis.electronTRPC;
-globalThis.electronTRPC ??= {
-  sendMessage: (): undefined => undefined,
-  onMessage: (): undefined => undefined,
-};
-
 interface StubButtonProps {
   children?: ReactNode;
   disabled?: boolean | undefined;
@@ -238,11 +231,6 @@ beforeEach(() => {
 afterAll(() => {
   void mock.module("@/ui", () => uiReal);
   void mock.module(NODE_TRPC_SPEC, () => nodeTrpcReal);
-  if (hadElectronTRPC) {
-    globalThis.electronTRPC = prevElectronTRPC;
-  } else {
-    delete (globalThis as { electronTRPC?: unknown }).electronTRPC;
-  }
 });
 
 function renderMarkup(element: ReactElement): string {

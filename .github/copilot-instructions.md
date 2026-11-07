@@ -16,7 +16,8 @@ a self-hosted agent on every machine.
 - **Language**: TypeScript 5.9+, NodeNext ESM.
 - **RPC**: tRPC v11 (`createTRPCClient`). React Query v5.
 - **Validation**: Zod 4.3+.
-- **UI**: Electron + electron-trpc 1.0.0-alpha + React 19 + Vite 7.
+- **UI**: Bun-served web console only (`llamactl console`) — React 19
+  and Vite 7; the Electron runtime was removed in #410 P7-A.
 - **MCP**: `@modelcontextprotocol/sdk` 1.29.
 - **Nova** via exact `@novaproto/*` npm pins.
 
@@ -27,7 +28,7 @@ packages/
 ├── core/       adapter-free business logic (no HTTP, no tRPC)
 ├── cli/        Bun CLI + commands + dispatcher
 ├── remote/     tRPC router, kubeconfig, workloads, tunnel, infra
-├── app/        Electron dashboard
+├── app/        Bun-served web console (only UI runtime)
 ├── mcp/        @llamactl/mcp
 └── agents/     runbooks + healer loop
 ```
@@ -35,7 +36,8 @@ packages/
 ## Hard rules
 
 - **`packages/core` is adapter-free.** No tRPC, electron, HTTP, MCP
-  imports in core.
+  imports in core. (Historically this also banned `electron-trpc`; the
+  Electron runtime is gone since #410 P7-A.)
 - **Every `--node`-aware CLI verb routes through the dispatcher**
   (`packages/cli/src/dispatcher.ts`).
 - **Zod 4** — `z.record(z.string(), z.unknown())`, `.partial()`,

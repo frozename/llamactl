@@ -8,6 +8,9 @@
 // never by import error.
 
 import { describe, expect, test } from "bun:test";
+import { join } from "node:path";
+
+import { existsSync, readdirSync } from "../../src/safe-fs.js";
 
 const MANIFEST_SPEC = "../../src/console/console-manifest.ts";
 
@@ -74,5 +77,20 @@ describe("console module manifest (#410 P5a)", () => {
     for (const retired of ["chat", "models", "settings", "projects"]) {
       expect(ids).not.toContain(retired);
     }
+  });
+
+  test("shipped modules equal the console manifest (#410 P7-A RED 5)", async () => {
+    const mod = await importManifest();
+    expect(mod?.CONSOLE_MODULES).toBeDefined();
+
+    const modulesDir = join(import.meta.dir, "..", "..", "src", "modules");
+    expect(existsSync(join(modulesDir, "registry.ts"))).toBe(false);
+
+    const moduleIds = new Set(mod!.CONSOLE_MODULES!.map((entry) => entry.id));
+    const shipped = readdirSync(modulesDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort();
+    expect(shipped.filter((name) => !moduleIds.has(name))).toEqual([]);
   });
 });

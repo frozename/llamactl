@@ -1,15 +1,15 @@
 // packages/app/test/console/web-graph-electron-free.test.ts
-// Issue #410 RED — the web console graph must stay free of the Electron
-// IPC bridge. A static walk from every src/console module (plus the HTTP
-// transport root and src/main.web.tsx once it lands) resolves each
-// specifier through the "@/" alias and the usual extension list, then
-// fails if any reached file — or its source text, which also catches the
-// type-only imports Bun.Transpiler.scanImports drops — touches electron,
-// electron-trpc, ipc-link, ui-client.electron or transport/ipc. A second
-// pin bundles the four console entrypoints for the browser and fails if
-// any output still references electronTRPC. At the base commit
-// node-trpc.ts -> lib/trpc.ts -> lib/transport/ipc.ts puts the bridge in
-// the graph, so the assertions fail — never by import or type error.
+// Issue #410, P7-A regression ban — the web console graph must stay
+// free of the Electron IPC bridge. A static walk from every src/console
+// module (plus the HTTP transport root and src/main.web.tsx) resolves
+// each specifier through the "@/" alias and the usual extension list,
+// then fails if any reached file — or its source text, which also
+// catches the type-only imports Bun.Transpiler.scanImports drops —
+// touches electron, electron-trpc, ipc-link, ui-client.electron or
+// transport/ipc. A second pin bundles the four console entrypoints for
+// the browser and fails if any output still references electronTRPC.
+// The Electron renderer is gone (#410 P7-A); this guard keeps the
+// bridge from ever growing back into the console graph.
 
 import { describe, expect, test } from "bun:test";
 import { dirname, join, relative, resolve } from "node:path";
@@ -203,7 +203,7 @@ describe("web console graph stays electron-free (#410)", () => {
       ],
       target: "browser",
       packages: "external",
-      tsconfig: join(APP_DIR, "tsconfig.web.json"),
+      tsconfig: join(APP_DIR, "tsconfig.json"),
     });
     expect(result.success).toBe(true);
     const hits: string[] = [];

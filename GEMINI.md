@@ -15,7 +15,9 @@ authoritative source; this file calls out Gemini-specific nudges.
 ## Non-negotiables
 
 - **`packages/core` stays adapter-free.** No imports from `remote`,
-  `app`, tRPC, electron-trpc, MCP, or HTTP libraries in `core`.
+  `app`, tRPC, MCP, or HTTP libraries in `core`. (Historically this
+  also banned `electron-trpc`; the Electron runtime is gone since
+  #410 P7-A.)
 - **Dispatcher routing for every CLI verb.** `runOp(nodeId, ...)`
   is the only sanctioned way to reach a node; bypassing it breaks
   `--node gpu1` and `-n all` fan-out.

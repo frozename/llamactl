@@ -19,14 +19,11 @@
     "packages/*/test/**/*.ts",
     "packages/*/test/**/*.tsx",
     "packages/app/e2e/**/*.ts",
-    "packages/app/electron/**/*.ts",
-    "packages/app/electron.vite.config.ts",
     "packages/app/playwright.config.ts",
     "packages/app/vite.web.config.ts",
     "scripts/**/*.ts",
     "packages/agents/demos/**/*.ts",
     "tools/**/*.ts",
-    "tests/**/*.ts",
     "eslint.config.mjs"
   ],
   "exclude": [
