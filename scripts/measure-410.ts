@@ -893,11 +893,14 @@ export interface CoverageProbe {
   spec: string;
 }
 
+export type CoverageStatus = "covered" | "missing" | "partial";
+
 export interface TaskCoverageRow {
   covered: boolean;
   id: string;
   missingNeedles: string[];
   specs: string[];
+  status: CoverageStatus;
   wallTime: null;
 }
 
@@ -907,7 +910,10 @@ export interface TaskCoverageMeasurement {
 
 // Plan #410 P6 task list mapped to the specs that actually exist in
 // packages/app/e2e. Coverage means the spec exists AND its text asserts
-// the task's behaviour (needle grep), not just file presence. T5 (tail
+// the task's behaviour (needle grep), not just file presence. A task is
+// partial when at least one probe hits but not all of them do: T2's
+// endpoint half is asserted in fleet.spec.ts (advertisedEndpoint links),
+// but no spec yet asserts a workload phase, so T2 is partial. T5 (tail
 // logs on two nodes in two tabs at once while stopping a workload in one
 // of them) and T6 (recover after a console restart) have no covering
 // spec yet, so they map to no probes.
@@ -917,10 +923,8 @@ export const COVERAGE_PROBES: Readonly<Record<string, readonly CoverageProbe[]>>
     { needles: ["unreachable: e2e node unreachable"], spec: "packages/app/e2e/nodes.spec.ts" },
   ],
   T2: [
-    {
-      needles: ["console-workload-row-wB", "Describe"],
-      spec: "packages/app/e2e/workloads.spec.ts",
-    },
+    { needles: ["advertisedEndpoint"], spec: "packages/app/e2e/fleet.spec.ts" },
+    { needles: ["Running"], spec: "packages/app/e2e/workloads.spec.ts" },
   ],
   T3: [{ needles: ["agent-1", "serverLogs"], spec: "packages/app/e2e/logs.spec.ts" }],
   T4: [
@@ -933,39 +937,51 @@ export const COVERAGE_PROBES: Readonly<Record<string, readonly CoverageProbe[]>>
   T6: [],
 };
 
+function probeMisses(
+  probe: CoverageProbe,
+  text: string | null,
+): { hit: boolean; misses: string[] } {
+  if (text === null) {
+    return { hit: false, misses: [`${probe.spec} (absent)`] };
+  }
+  const misses = probe.needles
+    .filter((needle) => !text.includes(needle))
+    .map((needle) => `${probe.spec}#${needle}`);
+  return { hit: misses.length === 0, misses };
+}
+
 export function coverageStatus(
   probes: readonly CoverageProbe[],
   readSpec: (spec: string) => string | null,
-): { covered: boolean; missingNeedles: string[] } {
+): { covered: boolean; missingNeedles: string[]; status: CoverageStatus } {
   if (probes.length === 0) {
-    return { covered: false, missingNeedles: [] };
+    return { covered: false, missingNeedles: [], status: "missing" };
   }
   const missingNeedles: string[] = [];
+  let hit = 0;
   for (const probe of probes) {
-    const text = readSpec(probe.spec);
-    if (text === null) {
-      missingNeedles.push(`${probe.spec} (absent)`);
-      continue;
-    }
-    for (const needle of probe.needles) {
-      if (!text.includes(needle)) {
-        missingNeedles.push(`${probe.spec}#${needle}`);
-      }
+    const result = probeMisses(probe, readSpec(probe.spec));
+    missingNeedles.push(...result.misses);
+    if (result.hit) {
+      hit += 1;
     }
   }
-  return { covered: missingNeedles.length === 0, missingNeedles };
+  const status: CoverageStatus =
+    missingNeedles.length === 0 ? "covered" : hit > 0 ? "partial" : "missing";
+  return { covered: status === "covered", missingNeedles, status };
 }
 
-function measureTaskCoverage(): TaskCoverageMeasurement {
+export function measureTaskCoverage(root: string = ROOT): TaskCoverageMeasurement {
   const rows: TaskCoverageRow[] = [];
   for (const id of ["T1", "T2", "T3", "T4", "T5", "T6"]) {
     const probes = COVERAGE_PROBES[id] ?? [];
-    const status = coverageStatus(probes, (spec) => readIfExists(join(ROOT, spec)));
+    const status = coverageStatus(probes, (spec) => readIfExists(join(root, spec)));
     rows.push({
       covered: status.covered,
       id,
       missingNeedles: status.missingNeedles,
       specs: probes.map((probe) => probe.spec),
+      status: status.status,
       wallTime: null,
     });
   }
@@ -1043,7 +1059,7 @@ function measureCi(): Record<string, unknown> {
   };
 }
 
-function thresholdInput(
+export function thresholdInput(
   setup: SetupMeasurement,
   dependencies: DependenciesMeasurement,
   renderer: RendererMeasurement,
@@ -1062,6 +1078,26 @@ function thresholdInput(
       },
     },
     taskCoverage: taskCoverage.rows,
+  };
+}
+
+export interface CiIndependentFields {
+  taskCoverage: TaskCoverageMeasurement;
+  thresholds: ThresholdResult[];
+}
+
+export function ciIndependentFields(): CiIndependentFields {
+  const pkgJsons = packageJsonInputs();
+  const setup = measureSetup(pkgJsons);
+  const dependencies = measureDependencies(pkgJsons);
+  const renderer = measureRenderer();
+  const electronMcp = measureElectronMcp();
+  const taskCoverage = measureTaskCoverage();
+  return {
+    taskCoverage,
+    thresholds: evaluateThresholds(
+      thresholdInput(setup, dependencies, renderer, electronMcp, taskCoverage),
+    ),
   };
 }
 

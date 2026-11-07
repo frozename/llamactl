@@ -1,8 +1,8 @@
 // scripts/measure-410.test.ts
 // Issue frozename/llamactl#410 (P6) — contract for the footprint
 // measurement script and the operator decision record. R1-R9 fixtures
-// are pure in-memory: no process, no network, no clock. R10-R12 read
-// the decision doc, the real packages/app/e2e specs and a temp tree.
+// are pure in-memory: no process, no network, no clock. R10-R15 read
+// the decision doc, the real packages/app/e2e specs and temp trees.
 // The module type is imported with `import type` (erased at runtime)
 // and loaded through an existsSync gate, so each case fails by
 // assertion while scripts/measure-410.ts and
@@ -10,11 +10,18 @@
 
 import { describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import type * as Measure from "./measure-410.ts";
 
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "./safe-fs.js";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "./safe-fs.js";
 
 const MEASURE = join(import.meta.dir, "measure-410.ts");
 const DOC = join(import.meta.dir, "..", "docs", "decisions", "410-ui-runtime.md");
@@ -464,6 +471,7 @@ describe("measure-410 contract (#410 P6)", () => {
     expect(taskRow("T1")).toContain("packages/app/e2e/fleet.spec.ts");
     expect(taskRow("T1")).toContain("packages/app/e2e/nodes.spec.ts");
     expect(taskRow("T2")).toContain("find workload X's phase and endpoint");
+    expect(taskRow("T2")).toContain("packages/app/e2e/fleet.spec.ts");
     expect(taskRow("T2")).toContain("packages/app/e2e/workloads.spec.ts");
     expect(taskRow("T3")).toContain("tail X's logs on a remote node");
     expect(taskRow("T3")).toContain("packages/app/e2e/logs.spec.ts");
@@ -471,12 +479,15 @@ describe("measure-410 contract (#410 P6)", () => {
     expect(taskRow("T4")).toContain("packages/app/e2e/lifecycle.spec.ts");
     expect(taskRow("T5")).toContain("tail logs on two nodes in two tabs at once");
     expect(taskRow("T6")).toContain("recover after a console restart");
-    for (const id of ["T1", "T2", "T3", "T4"]) {
+    for (const id of ["T1", "T3", "T4"]) {
       expect(taskRow(id)).toContain("covered");
       expect(taskRow(id)).not.toContain("not yet covered");
     }
+    expect(taskRow("T2")).toContain("partial");
+    expect(taskRow("T2")).not.toContain("not yet covered");
     expect(taskRow("T5")).toContain("not yet covered");
     expect(taskRow("T6")).toContain("not yet covered");
+    expect(taskRow("T6")).not.toContain("usage study");
     for (const phantom of ["navigation.spec", "inspect.spec", "two-tabs.spec"]) {
       expect(text).not.toContain(phantom);
     }
@@ -489,8 +500,19 @@ describe("measure-410 contract (#410 P6)", () => {
       "P7-B",
       "no live usage study",
       "credentials.spec",
+      "llamactl bench schedule",
+      "scheduled benches stop",
     ]) {
       expect(text).toContain(needle);
+    }
+    for (const stale of [
+      "usage parity",
+      "standing in for a live human usage study",
+      "not normalized against",
+      "bench scheduler normalization",
+      "per-runner normalization",
+    ]) {
+      expect(text).not.toContain(stale);
     }
 
     const recommendation = section(text, "## Recommendation").replaceAll(/\s+/g, " ");
@@ -507,7 +529,7 @@ describe("measure-410 contract (#410 P6)", () => {
     expect(decision).not.toContain("Option B selected");
   });
 
-  test("R11 coverage probes point at real specs and their asserted behaviour", async () => {
+  test("R11 coverage probes point at real specs and the real tree lands covered, partial and missing", async () => {
     const m = await load();
     expect(Object.keys(m.COVERAGE_PROBES).sort()).toEqual(["T1", "T2", "T3", "T4", "T5", "T6"]);
     const realSpecs = [
@@ -523,10 +545,6 @@ describe("measure-410 contract (#410 P6)", () => {
       for (const probe of probes) {
         expect(realSpecs).toContain(probe.spec);
         mapped.add(probe.spec);
-        const text = readFileSync(join(import.meta.dir, "..", probe.spec), "utf8");
-        for (const needle of probe.needles) {
-          expect(text).toContain(needle);
-        }
       }
     }
     expect(m.COVERAGE_PROBES["T5"]).toEqual([]);
@@ -542,23 +560,212 @@ describe("measure-410 contract (#410 P6)", () => {
       }
     }
 
+    const byId = new Map(m.measureTaskCoverage().rows.map((row) => [row.id, row]));
+    expect(byId.get("T1")?.status).toBe("covered");
+    expect(byId.get("T3")?.status).toBe("covered");
+    expect(byId.get("T4")?.status).toBe("covered");
+    expect(byId.get("T5")?.status).toBe("missing");
+    expect(byId.get("T6")?.status).toBe("missing");
+    const t2 = byId.get("T2");
+    expect(t2?.status).toBe("partial");
+    expect(t2?.covered).toBe(false);
+    expect(t2?.missingNeedles).toEqual(["packages/app/e2e/workloads.spec.ts#Running"]);
+    const t2probes = m.COVERAGE_PROBES["T2"] ?? [];
+    expect(t2probes.map((probe) => probe.spec)).toEqual([
+      "packages/app/e2e/fleet.spec.ts",
+      "packages/app/e2e/workloads.spec.ts",
+    ]);
+    const fleet = readFileSync(
+      join(import.meta.dir, "..", "packages/app/e2e/fleet.spec.ts"),
+      "utf8",
+    );
+    for (const needle of t2probes[0]?.needles ?? []) {
+      expect(fleet).toContain(needle);
+    }
+    const workloads = readFileSync(
+      join(import.meta.dir, "..", "packages/app/e2e/workloads.spec.ts"),
+      "utf8",
+    );
+    expect(workloads).not.toContain("Running");
+
     const probe = [{ needles: ["alpha"], spec: "a.spec.ts" }];
     expect(m.coverageStatus(probe, () => "alpha here")).toEqual({
       covered: true,
       missingNeedles: [],
+      status: "covered",
     });
     expect(m.coverageStatus(probe, () => null)).toEqual({
       covered: false,
       missingNeedles: ["a.spec.ts (absent)"],
+      status: "missing",
     });
     expect(m.coverageStatus(probe, () => "beta")).toEqual({
       covered: false,
       missingNeedles: ["a.spec.ts#alpha"],
+      status: "missing",
     });
-    expect(m.coverageStatus([], () => "alpha")).toEqual({ covered: false, missingNeedles: [] });
+    expect(m.coverageStatus([], () => "alpha")).toEqual({
+      covered: false,
+      missingNeedles: [],
+      status: "missing",
+    });
+    const pair = [
+      { needles: ["alpha"], spec: "a.spec.ts" },
+      { needles: ["beta"], spec: "b.spec.ts" },
+    ];
+    expect(m.coverageStatus(pair, (spec) => (spec === "a.spec.ts" ? "alpha" : null))).toEqual({
+      covered: false,
+      missingNeedles: ["b.spec.ts (absent)"],
+      status: "partial",
+    });
+    expect(
+      m.coverageStatus(pair, (spec) => (spec === "a.spec.ts" ? "alpha" : "beta here")),
+    ).toEqual({ covered: true, missingNeedles: [], status: "covered" });
   });
 
-  test("R12 shims and upkeep measurements survive the P7-A deletions", async () => {
+  test("R12 measureTaskCoverage reads a temp fixture tree: covered, partial, missing", async () => {
+    const m = await load();
+    const root = mkdtempSync(join(tmpdir(), "measure-410-cov-"));
+    const write = (spec: string, text: string): void => {
+      const path = join(root, spec);
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, text);
+    };
+    try {
+      const empty = m.measureTaskCoverage(root);
+      for (const row of empty.rows) {
+        expect(row.status).toBe("missing");
+        expect(row.covered).toBe(false);
+      }
+      for (const row of empty.rows) {
+        for (const spec of row.specs) {
+          expect(row.missingNeedles).toContain(`${spec} (absent)`);
+        }
+      }
+      const bySpec = new Map<string, string[]>();
+      for (const probes of Object.values(m.COVERAGE_PROBES)) {
+        for (const probe of probes) {
+          bySpec.set(probe.spec, [...(bySpec.get(probe.spec) ?? []), ...probe.needles]);
+        }
+      }
+      for (const [spec, needles] of bySpec) {
+        write(spec, needles.join("\n"));
+      }
+      const full = new Map(m.measureTaskCoverage(root).rows.map((row) => [row.id, row]));
+      for (const id of ["T1", "T2", "T3", "T4"]) {
+        expect(full.get(id)?.status).toBe("covered");
+        expect(full.get(id)?.covered).toBe(true);
+        expect(full.get(id)?.missingNeedles).toEqual([]);
+      }
+      for (const id of ["T5", "T6"]) {
+        expect(full.get(id)?.status).toBe("missing");
+      }
+      write("packages/app/e2e/workloads.spec.ts", "a workload row without a phase assertion");
+      const partial = new Map(m.measureTaskCoverage(root).rows.map((row) => [row.id, row]));
+      expect(partial.get("T2")?.status).toBe("partial");
+      expect(partial.get("T2")?.covered).toBe(false);
+      expect(partial.get("T2")?.missingNeedles).toEqual([
+        "packages/app/e2e/workloads.spec.ts#Running",
+      ]);
+      expect(partial.get("T1")?.status).toBe("covered");
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("R13 thresholdInput forwards every measurement and evaluateThresholds reacts to it", async () => {
+    const m = await load();
+    const row = (id: string, covered: boolean): Measure.TaskCoverageRow => ({
+      covered,
+      id,
+      missingNeedles: covered ? [] : ["spec#needle"],
+      specs: ["packages/app/e2e/spec.ts"],
+      status: covered ? "covered" : "missing",
+      wallTime: null,
+    });
+    const setup: Measure.SetupMeasurement = {
+      buildWebPresent: true,
+      console: {
+        buildWebPresent: true,
+        commands: 3,
+        launcherPresent: true,
+        signingRequired: false,
+      },
+      signing: { adHoc: true, identity: "-" },
+    };
+    const dependencies: Measure.DependenciesMeasurement = {
+      added: 1,
+      addedDeclared: ["@playwright/test"],
+      present: [],
+      removablePresent: 7,
+      removableTotal: 7,
+      undiciRendererImportedByAnyFile: false,
+    };
+    const renderer: Measure.RendererMeasurement = {
+      entry: "packages/app/src/main.web.tsx",
+      ratio: 0.1097,
+      retainedFiles: 23,
+      retainedLines: 3196,
+      totalFiles: 216,
+      totalLines: 29136,
+    };
+    const electronMcp: Measure.ElectronMcpMeasurement = {
+      consolePathReferences: 0,
+      referencingWorkflows: [],
+    };
+    const coverage: Measure.TaskCoverageMeasurement = {
+      rows: [
+        row("T1", true),
+        row("T2", true),
+        row("T3", true),
+        row("T4", true),
+        row("T5", true),
+        row("T6", false),
+      ],
+    };
+    const input = m.thresholdInput(setup, dependencies, renderer, electronMcp, coverage);
+    expect(input.taskCoverage).toEqual(coverage.rows);
+    expect(input.setup.console).toEqual({
+      commands: 3,
+      launcherPresent: true,
+      signingRequired: false,
+    });
+    expect(input.setup).not.toHaveProperty("buildWebPresent");
+    expect(input.dependencies).toEqual({ added: 1, removablePresent: 7 });
+    expect(input.renderer).toEqual({ ratio: 0.1097 });
+    expect(input.electronMcp).toEqual({ consolePathReferences: 0 });
+    const verdict = (entry: Measure.ThresholdInput, id: string): Measure.ThresholdVerdict =>
+      m.evaluateThresholds(entry).find((result) => result.id === id)?.verdict ?? "not-measured";
+    expect(verdict(input, "T1-T5-no-cli-fallback")).toBe("pass");
+    expect(verdict({ ...input, taskCoverage: [] }, "T1-T5-no-cli-fallback")).toBe("fail");
+    const partialRows = coverage.rows.map((entry) =>
+      entry.id === "T2" ? { ...entry, covered: false, status: "partial" as const } : entry,
+    );
+    expect(
+      verdict(
+        m.thresholdInput(setup, dependencies, renderer, electronMcp, { rows: partialRows }),
+        "T1-T5-no-cli-fallback",
+      ),
+    ).toBe("fail");
+  });
+
+  test("R14 the doc's committed taskCoverage and thresholds blocks equal the script's output", async () => {
+    const m = await load();
+    const text = readFileSync(DOC, "utf8");
+    const measurements = section(text, "## Measurements");
+    const fenceStart = measurements.indexOf("```json");
+    const fenceEnd =
+      fenceStart < 0 ? -1 : measurements.indexOf("```", fenceStart + "```json".length);
+    expect(fenceStart).toBeGreaterThanOrEqual(0);
+    expect(fenceEnd).toBeGreaterThanOrEqual(0);
+    const report = asRecord(parseJsonSafe(measurements.slice(fenceStart + 7, fenceEnd)));
+    expect(report).not.toBeNull();
+    const fields = m.ciIndependentFields();
+    expect(report?.["taskCoverage"]).toEqual(fields.taskCoverage);
+    expect(report?.["thresholds"]).toEqual(fields.thresholds);
+  });
+
+  test("R15 shims and upkeep measurements survive the P7-A deletions", async () => {
     const m = await load();
     expect(m.measureShims().absent).toEqual([]);
     expect(m.measureConsoleUpkeep().absent).toEqual([]);
