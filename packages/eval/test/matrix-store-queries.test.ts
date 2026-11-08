@@ -478,4 +478,24 @@ describe("perf_runs", () => {
       "m-b/s1/m1",
     ]);
   });
+
+  test("insertPerfRun upserts on the same (run_id, model_name, suite_name, metric_name) key, replacing metric and provenance", () => {
+    const first = perfRow({
+      metric: { value: 42.5, status: "ok" as const },
+      provenance: provenance({ engine: "gufo", engine_version: "0.9.1" }),
+    });
+    store.insertPerfRun(db, first);
+
+    const second = perfRow({
+      metric: { value: 55.0, status: "ok" as const },
+      provenance: provenance({ engine: "llamacpp", engine_version: "3000" }),
+    });
+    store.insertPerfRun(db, second);
+
+    const rows = store.listPerfRuns(db);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.metric).toEqual({ value: 55.0, status: "ok" });
+    expect(rows[0]!.provenance.engine).toBe("llamacpp");
+    expect(rows[0]!.provenance.engine_version).toBe("3000");
+  });
 });
