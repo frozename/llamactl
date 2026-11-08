@@ -593,7 +593,11 @@ describe("spec.resources memory declarations (#277)", () => {
     const hEmpty = computeModelHostSpecHash(specForHash(emptyResources.data.spec));
     expect(computeModelHostSpecHash(specForHash(noResources.data.spec))).not.toBe(hEmpty);
 
-    for (const resources of [{ residentGiB: 5 }, { residentGiB: 5, diskBackedGiB: 2 }]) {
+    const newFieldsOnly: Record<string, number>[] = [
+      { residentGiB: 5 },
+      { residentGiB: 5, diskBackedGiB: 2 },
+    ];
+    for (const resources of newFieldsOnly) {
       const result = parseWith(resources);
       expect(result.success).toBe(true);
       if (!result.success) return;
