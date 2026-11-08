@@ -612,7 +612,7 @@ describe("bench scheduler loop", () => {
     expect(rows.find((s) => s.id === "stale-c")!.lastRunAt).toBe("2000-01-01T00:00:00.000Z");
   });
 
-  test("a suite schedule dispatches runSuite on the second tick", async () => {
+  test("kick dispatches a due suite schedule through runSuite", async () => {
     const suiteCalls: { scheduleId: string; suite: string; node: string; rel: string }[] = [];
     const runSuite = (req: {
       scheduleId: string;
@@ -626,7 +626,6 @@ describe("bench scheduler loop", () => {
 
     saveSchedules([dueSchedule("suite-tick", { kind: "suite", suite: "my-suite" })], schedulePath);
 
-    // First tick (kick) should dispatch the suite schedule through runSuite
     await kickBenchScheduler(autoCompleting().getClient, { runSuite });
 
     expect(suiteCalls).toHaveLength(1);
@@ -638,6 +637,30 @@ describe("bench scheduler loop", () => {
     const entry = loadSchedules(schedulePath).find((s) => s.id === "suite-tick")!;
     expect(entry.lastRunAt).not.toBe("2000-01-01T00:00:00.000Z");
     expect(entry.lastError).toBeNull();
+  });
+
+  test("the running loop keeps runSuite on ticks after the first", async () => {
+    const suiteCalls: string[] = [];
+    const runSuite = (req: { scheduleId: string }): Promise<void> => {
+      suiteCalls.push(req.scheduleId);
+      return Promise.resolve();
+    };
+    saveSchedules([], schedulePath);
+
+    startBenchScheduler({ getClient: autoCompleting().getClient, runSuite, tickIntervalMs: 10 });
+    await waitUntil(() => benchSchedulerStatus().lastTickAt !== null);
+    expect(suiteCalls).toHaveLength(0);
+
+    // Due only after the first tick has settled, so only a timer-driven
+    // tick (which must carry runSuite forward) can dispatch it.
+    saveSchedules([dueSchedule("suite-later", { kind: "suite", suite: "my-suite" })], schedulePath);
+    await waitUntil(
+      () => suiteCalls.length > 0 || (loadSchedules(schedulePath)[0]?.lastError ?? null) !== null,
+    );
+    stopBenchScheduler();
+
+    expect(suiteCalls).toStrictEqual(["suite-later"]);
+    expect(loadSchedules(schedulePath).find((x) => x.id === "suite-later")!.lastError).toBeNull();
   });
 
   test("a suite schedule with no runner records an error", async () => {
