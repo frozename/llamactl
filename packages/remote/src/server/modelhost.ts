@@ -149,8 +149,10 @@ function toRuntimeEnv(env: NodeJS.ProcessEnv | undefined): NodeJS.ProcessEnv {
 // still present one of the engine's argv0 basenames (`llama-server` for
 // llamacpp, `strata-server` for strata; for oMLX both the `omlx` launcher
 // shim and `omlx-server`, the process title the running server sets for
-// itself, #357). A fresh-recorded impostor fails this even when the
-// start-time check cannot see the recycling.
+// itself, #357). A record's binaryNames (#516) replaces the engine default —
+// the record is the authority because stop and status never see the
+// manifest. A fresh-recorded impostor fails this even when the start-time
+// check cannot see the recycling.
 const ENGINE_BINARY_BASENAMES: Record<EngineName, readonly string[]> = {
   llamacpp: ["llama-server"],
   omlx: ["omlx", "omlx-server"],
@@ -158,8 +160,37 @@ const ENGINE_BINARY_BASENAMES: Record<EngineName, readonly string[]> = {
   kapitsa: ["kapitsa"],
 };
 
-function hostIdentityDeps(engine: EngineName, deps?: PidIdentityDeps): PidIdentityDeps {
-  return { ...deps, expectCommand: { binaries: ENGINE_BINARY_BASENAMES[engine] } };
+function hostIdentityDeps(
+  engine: EngineName,
+  deps?: PidIdentityDeps,
+  binaryNames?: readonly string[],
+): PidIdentityDeps {
+  return {
+    ...deps,
+    expectCommand: { binaries: binaryNames ?? ENGINE_BINARY_BASENAMES[engine] },
+  };
+}
+
+// Reap-path argv0 names (#516). A legacy record that predates #516 carries
+// none, so the manifest's declared names are unioned with the engine
+// default — one apply can then reap the fork, with identity still anchored
+// to the pid-file mtime and the process start time. When the record and the
+// manifest both declare names their union is used; recovering a legacy fork
+// whose record lacks names requires an explicit `llamactl apply` once
+// binaryNames is added, because the reconciler deliberately skips
+// identityUnknown hosts.
+function reapBinaryNames(
+  engine: EngineName,
+  recorded: readonly string[] | undefined,
+  declared: readonly string[] | undefined,
+): readonly string[] | undefined {
+  if (recorded !== undefined) {
+    return declared !== undefined ? [...new Set([...recorded, ...declared])] : recorded;
+  }
+  if (declared !== undefined) {
+    return [...new Set([...ENGINE_BINARY_BASENAMES[engine], ...declared])];
+  }
+  return undefined;
 }
 
 const CHILD_ENV_ALLOWLIST = [
@@ -294,6 +325,13 @@ function defaultFindListenerPid(
   });
 }
 
+// #516: the pid records carry spec.binaryNames verbatim; the conditional
+// spread keeps the key absent — never an explicit undefined — when the spec
+// omits it, so pre-#516 consumers see a byte-identical record.
+function binaryNamesField(binaryNames: readonly string[] | undefined): { binaryNames?: string[] } {
+  return binaryNames === undefined ? {} : { binaryNames: [...binaryNames] };
+}
+
 // Given a live process (`livePid`) already bound to the endpoint, adopt it iff
 // it is serving OUR model: re-record its pid so the proxy route recovers,
 // rather than spawning a competitor that could not bind the held port. Returns
@@ -355,6 +393,7 @@ async function tryAdoptLiveHost(
       startedAt: new Date().toISOString(),
       slotSavePath: typeof cmdline === "string" ? parseSlotSavePathFromCommand(cmdline) : null,
       specHash: computeModelHostSpecHash(specForHash(manifest.spec)),
+      ...binaryNamesField(manifest.spec.binaryNames),
     },
     opts.key,
     resolved,
@@ -386,11 +425,16 @@ async function reapStartingOrphan(
   opts: StartModelHostOptions,
   resolved: ReturnType<typeof resolveEnv>,
   engine: (typeof ENGINES)[keyof typeof ENGINES],
+  declaredBinaryNames: readonly string[] | undefined,
 ): Promise<StartModelHostResult | null> {
   const starting = readModelHostStarting(opts.key, resolved);
   if (!starting) return null;
   const recordPath = modelhostStartingFile(resolved, opts.key);
-  const identity = hostIdentityDeps(starting.engine, opts.identity);
+  const identity = hostIdentityDeps(
+    starting.engine,
+    opts.identity,
+    reapBinaryNames(starting.engine, starting.binaryNames, declaredBinaryNames),
+  );
   const verdict = verifyPidFile(recordPath, starting.pid, identity);
   if (verdict === "unknown") {
     return { ok: false, pid: null, error: "pid identity unknown; deferring restart" };
@@ -431,7 +475,9 @@ async function reapOrAdoptPriorHost(
   engine: (typeof ENGINES)[keyof typeof ENGINES],
 ): Promise<StartModelHostResult | null> {
   const priorState = readModelHostState(opts.key, resolved);
-  if (!priorState) return await reapStartingOrphan(opts, resolved, engine);
+  if (!priorState) {
+    return await reapStartingOrphan(opts, resolved, engine, manifest.spec.binaryNames);
+  }
   // The recorded pid is verified against the pid file it was recorded in
   // (written before the sidecar, so its mtime is the right identity anchor)
   // and corroborated by the engine's argv0. A recycled pid is not ours and
@@ -439,7 +485,11 @@ async function reapOrAdoptPriorHost(
   // defers the whole restart so the tracking files survive for a later
   // reconcile.
   const recordPath = modelhostPidFile(resolved, opts.key);
-  const identity = hostIdentityDeps(priorState.engine, opts.identity);
+  const identity = hostIdentityDeps(
+    priorState.engine,
+    opts.identity,
+    reapBinaryNames(priorState.engine, priorState.binaryNames, manifest.spec.binaryNames),
+  );
   const priorVerdict = verifyPidFile(recordPath, priorState.pid, identity);
   if (priorVerdict === "alive") {
     await engine
@@ -484,7 +534,7 @@ async function reapOrAdoptPriorHost(
   }
   // No live listener — the port is free; fall through to a normal spawn,
   // after reaping any starting orphan a crashed agent left for this workload.
-  return await reapStartingOrphan(opts, resolved, engine);
+  return await reapStartingOrphan(opts, resolved, engine, manifest.spec.binaryNames);
 }
 
 /**
@@ -754,6 +804,7 @@ async function launchModelHost(
         pid,
         startedAt: new Date().toISOString(),
         specHash: startSpecHash,
+        ...binaryNamesField(manifest.spec.binaryNames),
       },
       opts.key,
       resolved,
@@ -793,6 +844,7 @@ async function launchModelHost(
         startedAt: new Date().toISOString(),
         slotSavePath: extraArgsResolved.slotSavePath,
         specHash: startSpecHash,
+        ...binaryNamesField(manifest.spec.binaryNames),
       },
       opts.key,
       resolved,
@@ -891,7 +943,7 @@ async function stopStartingRecord(
   const starting = readModelHostStarting(opts.key, resolved);
   if (!starting) return { ok: true, pid: null };
   const recordPath = modelhostStartingFile(resolved, opts.key);
-  const identity = hostIdentityDeps(starting.engine, opts.identity);
+  const identity = hostIdentityDeps(starting.engine, opts.identity, starting.binaryNames);
   const verdict = verifyPidFile(recordPath, starting.pid, identity);
   if (verdict === "unknown") {
     return { ok: false, pid: starting.pid, error: "pid identity unknown" };
@@ -919,7 +971,7 @@ export async function stopModelHost(opts: StopModelHostOptions): Promise<StopMod
   // (the identity anchor, written before the sidecar) and corroborated by
   // the engine's argv0 first.
   const recordPath = modelhostPidFile(resolved, opts.key);
-  const identity = hostIdentityDeps(state.engine, opts.identity);
+  const identity = hostIdentityDeps(state.engine, opts.identity, state.binaryNames);
   const verdict = verifyPidFile(recordPath, state.pid, identity);
   if (verdict === "unknown") {
     return { ok: false, pid: state.pid, error: "pid identity unknown" };
@@ -953,7 +1005,7 @@ export function statusModelHost(opts: StatusModelHostOptions): StatusModelHostRe
   const verdict = verifyPidFile(
     modelhostPidFile(resolved, opts.key),
     state.pid,
-    hostIdentityDeps(state.engine, opts.identity),
+    hostIdentityDeps(state.engine, opts.identity, state.binaryNames),
   );
   if (verdict !== "alive") {
     return {

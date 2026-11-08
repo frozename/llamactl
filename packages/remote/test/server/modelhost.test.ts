@@ -2265,3 +2265,437 @@ describe("server/modelhost", () => {
     }
   });
 });
+
+// #516: spec.binaryNames lets a llama-server-compatible fork (the Gufo
+// `llama-server-fork-pristine` shim) pass the same pid-identity contract the
+// stock `llama-server` argv0 gets. Records carry the names, manifests may
+// declare them, and a legacy record without the field falls back to the
+// engine default unioned with the desired manifest's names on the start path.
+describe("llamacpp fork process identity (#516)", () => {
+  const LLAMA_KEY = { name: "gufo-host" };
+  const FORK_BINARY_NAME = "llama-server-fork-pristine";
+  const FORK_CMDLINE = "/opt/gufo/bin/llama-server-fork-pristine --port 8095";
+  const STOCK_CMDLINE = "/usr/local/bin/llama-server --port 8095";
+
+  function seedLlamaRecord(
+    runtimeDir: string,
+    opts: { pid: number; binaryNames?: string[]; starting?: boolean },
+  ): string {
+    const hostDir = join(runtimeDir, "workloads", "gufo-host");
+    mkdirSync(hostDir, { recursive: true });
+    writeFileSync(join(hostDir, "modelhost.pid"), `${String(opts.pid)}\n`);
+    const names = opts.binaryNames === undefined ? {} : { binaryNames: opts.binaryNames };
+    const record = opts.starting
+      ? {
+          kind: "ModelHostStarting",
+          engine: "llamacpp",
+          pid: opts.pid,
+          startedAt: new Date().toISOString(),
+          ...names,
+        }
+      : {
+          kind: "ModelHost",
+          engine: "llamacpp",
+          pid: opts.pid,
+          host: "127.0.0.1",
+          port: 8095,
+          modelAliases: ["gufo/model.gguf", "model.gguf"],
+          startedAt: new Date().toISOString(),
+          ...names,
+        };
+    writeFileSync(
+      join(hostDir, opts.starting ? "modelhost.starting" : "modelhost.state"),
+      JSON.stringify(record),
+    );
+    return hostDir;
+  }
+
+  function writeLlamaManifest(
+    tmp: string,
+    binaryNames?: string[],
+  ): { workloadsDir: string; runtimeDir: string } {
+    const workloadsDir = join(tmp, "workloads");
+    const runtimeDir = join(tmp, "runtime");
+    const fakeBinary = join(tmp, "gufo-llama-server");
+    mkdirSync(workloadsDir, { recursive: true });
+    writeFileSync(fakeBinary, "#!/bin/sh\nexit 0\n");
+    writeFileSync(
+      join(workloadsDir, "gufo-host.yaml"),
+      [
+        "apiVersion: llamactl/v1",
+        "kind: ModelHost",
+        "metadata:",
+        "  name: gufo-host",
+        "spec:",
+        "  engine: llamacpp",
+        "  node: local",
+        "  enabled: true",
+        `  binary: ${fakeBinary}`,
+        "  endpoint:",
+        "    host: 127.0.0.1",
+        "    port: 8095",
+        "  hostedModels:",
+        "    - rel: gufo/model.gguf",
+        "  extraArgs: []",
+        "  restartPolicy: Always",
+        "  timeoutSeconds: 60",
+        ...(binaryNames === undefined
+          ? []
+          : ["  binaryNames:", ...binaryNames.map((name) => `    - ${name}`)]),
+        "",
+      ].join("\n"),
+    );
+    mkdirSync(join(tmp, "models", "gufo"), { recursive: true });
+    writeFileSync(join(tmp, "models", "gufo", "model.gguf"), "fake gguf\n");
+    return { workloadsDir, runtimeDir };
+  }
+
+  function forkIdentity(cmdline: string): {
+    processStartMs: () => number;
+    processCommand: () => string;
+  } {
+    return {
+      processStartMs: () => 0,
+      processCommand: () => cmdline,
+    };
+  }
+
+  function patchLlamacppTeardown(): { tornDown: number[]; restore: () => void } {
+    const engine = ENGINES.llamacpp;
+    const originalTeardown = engine.teardown.bind(engine);
+    const tornDown: number[] = [];
+    engine.teardown = mock((pid: number) => {
+      tornDown.push(pid);
+      return Promise.resolve();
+    });
+    return {
+      tornDown,
+      restore: (): void => {
+        engine.teardown = originalTeardown;
+      },
+    };
+  }
+
+  test("status and stop verify a fork pid against the record's binaryNames", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-fork-stop-"));
+    const runtimeDir = join(tmp, "runtime");
+    const identity = forkIdentity(FORK_CMDLINE);
+    try {
+      const hostDir = seedLlamaRecord(runtimeDir, {
+        pid: process.pid,
+        binaryNames: [FORK_BINARY_NAME],
+      });
+      expect(statusModelHost({ key: LLAMA_KEY, runtimeDir, identity })).toEqual({
+        state: "Running",
+        pid: process.pid,
+      });
+      const tornDown: number[] = [];
+      const stopped = await stopModelHost({
+        key: LLAMA_KEY,
+        runtimeDir,
+        identity,
+        teardown: (pid) => {
+          tornDown.push(pid);
+          return Promise.resolve();
+        },
+      });
+      expect(stopped).toEqual({ ok: true, pid: process.pid });
+      expect(tornDown).toEqual([process.pid]);
+      expect(existsSync(join(hostDir, "modelhost.state"))).toBe(false);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("stop tears down a still-starting fork child named by binaryNames", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-fork-starting-"));
+    const runtimeDir = join(tmp, "runtime");
+    try {
+      const hostDir = seedLlamaRecord(runtimeDir, {
+        pid: process.pid,
+        binaryNames: [FORK_BINARY_NAME],
+        starting: true,
+      });
+      const tornDown: number[] = [];
+      const stopped = await stopModelHost({
+        key: LLAMA_KEY,
+        runtimeDir,
+        identity: forkIdentity(FORK_CMDLINE),
+        teardown: (pid) => {
+          tornDown.push(pid);
+          return Promise.resolve();
+        },
+      });
+      expect(stopped).toEqual({ ok: true, pid: process.pid });
+      expect(tornDown).toEqual([process.pid]);
+      expect(existsSync(join(hostDir, "modelhost.starting"))).toBe(false);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("record binaryNames replace the engine default on identity checks", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-fork-replaces-"));
+    const runtimeDir = join(tmp, "runtime");
+    const identity = forkIdentity(STOCK_CMDLINE);
+    try {
+      const hostDir = seedLlamaRecord(runtimeDir, {
+        pid: process.pid,
+        binaryNames: [FORK_BINARY_NAME],
+      });
+      expect(statusModelHost({ key: LLAMA_KEY, runtimeDir, identity })).toEqual({
+        state: "Stopped",
+        identityUnknown: true,
+      });
+      const tornDown: number[] = [];
+      const stopped = await stopModelHost({
+        key: LLAMA_KEY,
+        runtimeDir,
+        identity,
+        teardown: (pid) => {
+          tornDown.push(pid);
+          return Promise.resolve();
+        },
+      });
+      expect(stopped).toEqual({ ok: false, pid: process.pid, error: "pid identity unknown" });
+      expect(tornDown).toEqual([]);
+      expect(existsSync(join(hostDir, "modelhost.state"))).toBe(true);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("start persists manifest binaryNames into the state and starting records", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-fork-start-"));
+    const { workloadsDir, runtimeDir } = writeLlamaManifest(tmp, [FORK_BINARY_NAME]);
+    const patch = patchLlamacppTeardown();
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
+    const gate = readinessGate();
+    let startingBinaryNames: unknown;
+    const probeReady = (): Promise<{ ready: boolean; modelIds: string[] }> => {
+      const raw = JSON.parse(
+        readFileSync(join(runtimeDir, "workloads", "gufo-host", "modelhost.starting"), "utf8"),
+      ) as { binaryNames?: unknown };
+      startingBinaryNames = raw.binaryNames;
+      gate.open();
+      return gate.promise;
+    };
+    try {
+      const r = await startModelHost({
+        key: LLAMA_KEY,
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        identity: forkIdentity(FORK_CMDLINE),
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady,
+      }).catch((e: unknown) => ({ ok: false as const, pid: null, error: String(e) }));
+      expect(r.ok).toBe(true);
+      expect(startingBinaryNames).toEqual([FORK_BINARY_NAME]);
+      const state = JSON.parse(
+        readFileSync(join(runtimeDir, "workloads", "gufo-host", "modelhost.state"), "utf8"),
+      ) as { pid?: number; binaryNames?: string[] };
+      expect(state.pid).toBe(4321);
+      expect(state.binaryNames).toEqual([FORK_BINARY_NAME]);
+    } finally {
+      patch.restore();
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("reap accepts a fork cmdline for a legacy record the manifest names", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-fork-reap-"));
+    const { workloadsDir, runtimeDir } = writeLlamaManifest(tmp, [FORK_BINARY_NAME]);
+    seedLlamaRecord(runtimeDir, { pid: process.pid });
+    const patch = patchLlamacppTeardown();
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
+    try {
+      const r = await startModelHost({
+        key: LLAMA_KEY,
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        identity: forkIdentity(FORK_CMDLINE),
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
+      }).catch((e: unknown) => ({ ok: false as const, pid: null, error: String(e) }));
+      expect(r.ok).toBe(true);
+      expect(patch.tornDown).toEqual([process.pid]);
+      expect(spawn).toHaveBeenCalledTimes(1);
+      const state = JSON.parse(
+        readFileSync(join(runtimeDir, "workloads", "gufo-host", "modelhost.state"), "utf8"),
+      ) as { pid?: number; binaryNames?: string[] };
+      expect(state.pid).toBe(4321);
+      expect(state.binaryNames).toEqual([FORK_BINARY_NAME]);
+    } finally {
+      patch.restore();
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("reap still accepts the stock binary for a legacy record", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-fork-reapstock-"));
+    const { workloadsDir, runtimeDir } = writeLlamaManifest(tmp, [FORK_BINARY_NAME]);
+    seedLlamaRecord(runtimeDir, { pid: process.pid });
+    const patch = patchLlamacppTeardown();
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
+    try {
+      const r = await startModelHost({
+        key: LLAMA_KEY,
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        identity: forkIdentity(STOCK_CMDLINE),
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
+      }).catch((e: unknown) => ({ ok: false as const, pid: null, error: String(e) }));
+      expect(r.ok).toBe(true);
+      expect(patch.tornDown).toEqual([process.pid]);
+    } finally {
+      patch.restore();
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("the record's binaryNames are authoritative over the manifest's on reap", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-fork-authority-"));
+    const { workloadsDir, runtimeDir } = writeLlamaManifest(tmp, [FORK_BINARY_NAME]);
+    seedLlamaRecord(runtimeDir, { pid: process.pid, binaryNames: [FORK_BINARY_NAME] });
+    const patch = patchLlamacppTeardown();
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
+    try {
+      const r = await startModelHost({
+        key: LLAMA_KEY,
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        identity: forkIdentity(STOCK_CMDLINE),
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
+      }).catch((e: unknown) => ({ ok: false as const, pid: null, error: String(e) }));
+      expect(r).toEqual({
+        ok: false,
+        pid: null,
+        error: "pid identity unknown; deferring restart",
+      });
+      expect(patch.tornDown).toEqual([]);
+      expect(spawn).not.toHaveBeenCalled();
+    } finally {
+      patch.restore();
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("reapStartingOrphan accepts a fork cmdline for a legacy starting record", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-fork-startreap-"));
+    const { workloadsDir, runtimeDir } = writeLlamaManifest(tmp, [FORK_BINARY_NAME]);
+    seedLlamaRecord(runtimeDir, { pid: process.pid, starting: true });
+    const patch = patchLlamacppTeardown();
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
+    try {
+      const r = await startModelHost({
+        key: LLAMA_KEY,
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        identity: forkIdentity(FORK_CMDLINE),
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
+      }).catch((e: unknown) => ({ ok: false as const, pid: null, error: String(e) }));
+      expect(r.ok).toBe(true);
+      expect(patch.tornDown).toEqual([process.pid]);
+    } finally {
+      patch.restore();
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("legacy records without binaryNames keep the engine-default identity", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-fork-legacy-"));
+    const runtimeDir = join(tmp, "runtime");
+    const patch = patchLlamacppTeardown();
+    const forkDeps = forkIdentity(FORK_CMDLINE);
+    try {
+      const hostDir = seedLlamaRecord(runtimeDir, { pid: process.pid });
+      const { workloadsDir } = writeLlamaManifest(tmp);
+      const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
+      const r = await startModelHost({
+        key: LLAMA_KEY,
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        identity: forkDeps,
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
+      }).catch((e: unknown) => ({ ok: false as const, pid: null, error: String(e) }));
+      expect(r.ok).toBe(false);
+      expect(r.error).toContain("pid identity unknown; deferring restart");
+      expect(patch.tornDown).toEqual([]);
+      expect(spawn).not.toHaveBeenCalled();
+
+      const tornDown: number[] = [];
+      const stopped = await stopModelHost({
+        key: LLAMA_KEY,
+        runtimeDir,
+        identity: forkDeps,
+        teardown: (pid) => {
+          tornDown.push(pid);
+          return Promise.resolve();
+        },
+      });
+      expect(stopped.ok).toBe(false);
+      expect(stopped.error).toContain("pid identity unknown");
+      expect(tornDown).toEqual([]);
+      expect(existsSync(join(hostDir, "modelhost.state"))).toBe(true);
+
+      // The stock argv0 still verifies against the engine default.
+      seedLlamaRecord(runtimeDir, { pid: process.pid });
+      const stockDeps = forkIdentity(STOCK_CMDLINE);
+      expect(statusModelHost({ key: LLAMA_KEY, runtimeDir, identity: stockDeps })).toEqual({
+        state: "Running",
+        pid: process.pid,
+      });
+      const tornDownStock: number[] = [];
+      const stoppedStock = await stopModelHost({
+        key: LLAMA_KEY,
+        runtimeDir,
+        identity: stockDeps,
+        teardown: (pid) => {
+          tornDownStock.push(pid);
+          return Promise.resolve();
+        },
+      });
+      expect(stoppedStock).toEqual({ ok: true, pid: process.pid });
+      expect(tornDownStock).toEqual([process.pid]);
+    } finally {
+      patch.restore();
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("start without binaryNames writes a state record with no binaryNames key", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-fork-nonames-"));
+    const { workloadsDir, runtimeDir } = writeLlamaManifest(tmp);
+    const patch = patchLlamacppTeardown();
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
+    try {
+      const r = await startModelHost({
+        key: LLAMA_KEY,
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        identity: forkIdentity(FORK_CMDLINE),
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
+      }).catch((e: unknown) => ({ ok: false as const, pid: null, error: String(e) }));
+      expect(r.ok).toBe(true);
+      const state = JSON.parse(
+        readFileSync(join(runtimeDir, "workloads", "gufo-host", "modelhost.state"), "utf8"),
+      ) as Record<string, unknown>;
+      expect("binaryNames" in state).toBe(false);
+    } finally {
+      patch.restore();
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
