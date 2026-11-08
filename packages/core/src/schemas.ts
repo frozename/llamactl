@@ -14,16 +14,79 @@ import { MACHINE_PROFILES } from "./types.js";
  */
 
 // ---- curated-models.tsv -------------------------------------------------
-export const CuratedModel = z.object({
-  id: z.string().min(1),
-  label: z.string().min(1),
-  family: z.string().min(1),
-  class: z.enum(["multimodal", "reasoning", "general", "custom"]),
-  scope: z.string().min(1),
-  rel: z.string().min(1),
-  repo: z.string().min(1),
-  format: z.enum(["gguf", "mlx"]).optional().default("gguf"),
+/**
+ * Optional candidate metadata carried as compact JSON in column 9
+ * (`meta`). Every key is absent by default, so builtin and legacy rows
+ * keep the eight-column wire shape unchanged.
+ */
+export const CatalogAvailability = z.discriminatedUnion("declared", [
+  z.object({ declared: z.literal("available"), reason: z.string().min(1).optional() }),
+  z.object({
+    declared: z.literal("unavailable"),
+    // Required when unavailable — a row that cannot run and does not
+    // say why is unactionable. Deliberate tightening over the
+    // issue's optional `reason?`; pending operator sign-off.
+    reason: z.string().min(1),
+  }),
+]);
+
+export const QUALIFICATION_STAGES = [
+  "experimental",
+  "candidate",
+  "validated",
+  "production",
+  "degraded",
+] as const;
+
+export const CatalogQualification = z.object({
+  stage: z.enum(QUALIFICATION_STAGES),
+  since: z.string().min(1).optional(),
+  evidenceRef: z.string().min(1).optional(),
 });
+
+export const CatalogRuntime = z.object({
+  engines: z.array(z.string().min(1)).min(1),
+  minBuild: z.string().min(1).optional(),
+  toolCallFormat: z.string().min(1).optional(),
+  reasoningFormat: z.string().min(1).optional(),
+  chatTemplate: z.string().min(1).optional(),
+});
+
+export const CatalogParams = z.object({
+  totalB: z.number().positive().optional(),
+  activeB: z.number().positive().optional(),
+  experts: z.number().int().positive().optional(),
+});
+
+export const CatalogMemory = z.object({
+  residentGiB: z.number().nonnegative().optional(),
+  diskBackedGiB: z.number().nonnegative().optional(),
+  kvGiBPer32k: z.number().nonnegative().optional(),
+});
+
+export const CuratedMeta = z.object({
+  availability: CatalogAvailability.optional(),
+  qualification: CatalogQualification.optional(),
+  runtime: CatalogRuntime.optional(),
+  contextMax: z.number().int().positive().optional(),
+  params: CatalogParams.optional(),
+  memory: CatalogMemory.optional(),
+  residencyGroup: z.string().min(1).optional(),
+  license: z.string().min(1).optional(),
+});
+
+export const CuratedModel = z
+  .object({
+    id: z.string().min(1),
+    label: z.string().min(1),
+    family: z.string().min(1),
+    class: z.enum(["multimodal", "reasoning", "general", "custom"]),
+    scope: z.string().min(1),
+    rel: z.string().min(1),
+    repo: z.string().min(1),
+    format: z.enum(["gguf", "mlx"]).optional().default("gguf"),
+  })
+  .extend(CuratedMeta.shape);
 export type CuratedModel = z.infer<typeof CuratedModel>;
 
 export const curatedTsvFields = [
@@ -35,6 +98,24 @@ export const curatedTsvFields = [
   "rel",
   "repo",
   "format",
+] as const;
+
+/**
+ * Column 9 is optional compact JSON holding only the set keys; the
+ * canonical top-level and nested key order is the zod schema order.
+ */
+export const curatedMetaColumn = "meta" as const;
+
+/** Canonical top-level key order inside the `meta` JSON column. */
+export const curatedMetaFields = [
+  "availability",
+  "qualification",
+  "runtime",
+  "contextMax",
+  "params",
+  "memory",
+  "residencyGroup",
+  "license",
 ] as const;
 
 // ---- preset-overrides.tsv ----------------------------------------------

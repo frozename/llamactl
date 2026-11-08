@@ -4,6 +4,7 @@ import * as os from "node:os";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import * as catalogModule from "../src/catalog.js";
 import {
   BUILTIN_CATALOG,
   curatedStatusForRepoFile,
@@ -19,6 +20,7 @@ import {
 } from "../src/catalog.js";
 import * as envModule from "../src/env.js";
 import { mkdtempSync, writeFileSync } from "../src/safe-fs.js";
+import { CuratedModel } from "../src/schemas.js";
 import { FIXTURE_DIR } from "./helpers.js";
 
 describe("catalog.BUILTIN_CATALOG", () => {
@@ -227,5 +229,204 @@ describe("catalog TSV formatters", () => {
     expect(formatCatalogRow(row).split("\t").length).toBe(8);
     expect(formatCatalogRow(row).split("\t")[7]).toBe("gguf");
     expect(formatCatalogTsv(BUILTIN_CATALOG).split("\n").length).toBe(BUILTIN_CATALOG.length);
+  });
+});
+
+describe("catalog candidate metadata (#515)", () => {
+  const parseCatalogRow = (catalogModule as Record<string, unknown>)["parseCatalogRow"] as
+    | undefined
+    | ((line: string) => { ok: true; entry: CuratedModel } | { ok: false; error: string });
+
+  const base: CuratedModel = {
+    id: "x",
+    label: "X",
+    family: "glm",
+    class: "reasoning",
+    scope: "candidate",
+    rel: "X-GGUF/x.gguf",
+    repo: "org/X-GGUF",
+    format: "gguf",
+  };
+
+  test("every builtin row parses unchanged and round-trips byte-for-byte", () => {
+    for (const row of BUILTIN_CATALOG) {
+      const line = formatCatalogRow(row);
+      expect(line.split("\t")).toHaveLength(8);
+
+      expect(typeof parseCatalogRow).toBe("function");
+      const r = parseCatalogRow!(line);
+      expect(r.ok).toBe(true);
+      if (!r.ok) throw new Error(r.error);
+      expect(r.entry).toStrictEqual({ ...row });
+      expect(formatCatalogRow(r.entry)).toBe(line);
+    }
+
+    const tsv = formatCatalogTsv(BUILTIN_CATALOG);
+    const dir = mkdtempSync(join(tmpdir(), "llamactl-catalog-meta-"));
+    const file = join(dir, "builtin.tsv");
+    writeFileSync(file, `${tsv}\n`);
+
+    const rows = readCustomCatalog(file);
+    expect(rows).toStrictEqual(BUILTIN_CATALOG.map((r) => ({ ...r })));
+    expect(formatCatalogTsv(rows)).toBe(tsv);
+  });
+
+  test("a legacy 7-column row still loads", () => {
+    const line =
+      "legacy-7\tLegacy Seven\tqwen35\tgeneral\tcandidate\tLegacy-GGUF/legacy-Q4_K_M.gguf\tunsloth/Legacy-GGUF";
+
+    expect(typeof parseCatalogRow).toBe("function");
+    const r = parseCatalogRow!(line);
+    expect(r.ok).toBe(true);
+    if (!r.ok) throw new Error(r.error);
+    expect(r.entry.format).toBe("gguf");
+    expect(Object.keys(r.entry).sort()).toStrictEqual([
+      "class",
+      "family",
+      "format",
+      "id",
+      "label",
+      "rel",
+      "repo",
+      "scope",
+    ]);
+
+    const formatted = formatCatalogRow(r.entry);
+    expect(formatted).toBe(`${line}\tgguf`);
+    expect(formatted.split("\t")).toHaveLength(8);
+
+    const dir = mkdtempSync(join(tmpdir(), "llamactl-catalog-meta-"));
+    const file = join(dir, "legacy-7.tsv");
+    writeFileSync(file, `${line}\n`);
+
+    const rows = readCustomCatalog(file);
+    expect(rows).toHaveLength(1);
+    const row = rows[0];
+    expect(row).toBeDefined();
+    if (!row) return;
+    expect(Object.keys(row).sort()).toStrictEqual([
+      "class",
+      "family",
+      "format",
+      "id",
+      "label",
+      "rel",
+      "repo",
+      "scope",
+    ]);
+  });
+
+  test("availability.declared=unavailable without reason is rejected", () => {
+    expect(
+      CuratedModel.safeParse({ ...base, availability: { declared: "unavailable" } }).success,
+    ).toBe(false);
+
+    const withReason = CuratedModel.safeParse({
+      ...base,
+      availability: { declared: "unavailable", reason: "artifact-not-downloaded" },
+    });
+    expect(withReason.success).toBe(true);
+    if (!withReason.success) throw new Error("unavailable with reason must parse");
+    expect((withReason.data as Record<string, unknown>)["availability"]).toStrictEqual({
+      declared: "unavailable",
+      reason: "artifact-not-downloaded",
+    });
+
+    const declaredAvailable = CuratedModel.safeParse({
+      ...base,
+      availability: { declared: "available" },
+    });
+    expect(declaredAvailable.success).toBe(true);
+    if (!declaredAvailable.success) throw new Error("available must parse");
+    expect((declaredAvailable.data as Record<string, unknown>)["availability"]).toStrictEqual({
+      declared: "available",
+    });
+
+    expect(typeof parseCatalogRow).toBe("function");
+    const metaLine = `${formatCatalogRow(base)}\t${JSON.stringify({
+      availability: { declared: "unavailable" },
+    })}`;
+    expect(parseCatalogRow!(metaLine).ok).toBe(false);
+
+    const dir = mkdtempSync(join(tmpdir(), "llamactl-catalog-meta-"));
+    const file = join(dir, "unavailable-no-reason.tsv");
+    writeFileSync(file, `${metaLine}\n`);
+
+    const spy = spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      expect(readCustomCatalog(file)).toStrictEqual([]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("an unknown qualification.stage is rejected", () => {
+    expect(CuratedModel.safeParse({ ...base, qualification: { stage: "beta" } }).success).toBe(
+      false,
+    );
+
+    for (const stage of ["experimental", "candidate", "validated", "production", "degraded"]) {
+      const res = CuratedModel.safeParse({ ...base, qualification: { stage } });
+      expect(res.success).toBe(true);
+      if (!res.success) throw new Error(`stage ${stage} must parse`);
+      expect((res.data as Record<string, unknown>)["qualification"]).toStrictEqual({ stage });
+    }
+
+    expect(typeof parseCatalogRow).toBe("function");
+    const metaLine = `${formatCatalogRow(base)}\t${JSON.stringify({
+      qualification: { stage: "beta" },
+    })}`;
+    expect(parseCatalogRow!(metaLine).ok).toBe(false);
+  });
+
+  test("a row with all new fields round-trips", () => {
+    const full: CuratedModel = {
+      ...base,
+      availability: { declared: "unavailable", reason: "runtime-not-pinned" },
+      qualification: {
+        stage: "experimental",
+        since: "2026-11-07",
+        evidenceRef: "eval/glm53-flash-001",
+      },
+      runtime: {
+        engines: ["llamacpp", "omlx"],
+        minBuild: "b6100",
+        toolCallFormat: "glm45",
+        reasoningFormat: "deepseek",
+        chatTemplate: "glm-4.5",
+      },
+      contextMax: 131072,
+      params: { totalB: 106, activeB: 12, experts: 128 },
+      memory: { residentGiB: 18.5, diskBackedGiB: 42, kvGiBPer32k: 2.25 },
+      residencyGroup: "big-moe",
+      license: "mit",
+    };
+
+    const line = formatCatalogRow(full);
+    expect(line.split("\t")).toHaveLength(9);
+    expect(
+      Object.keys(JSON.parse(line.split("\t")[8] ?? "{}") as Record<string, unknown>),
+    ).toStrictEqual([
+      "availability",
+      "qualification",
+      "runtime",
+      "contextMax",
+      "params",
+      "memory",
+      "residencyGroup",
+      "license",
+    ]);
+
+    expect(typeof parseCatalogRow).toBe("function");
+    const r = parseCatalogRow!(line);
+    expect(r.ok).toBe(true);
+    if (!r.ok) throw new Error(r.error);
+    expect(r.entry).toStrictEqual(full);
+    expect(formatCatalogRow(r.entry)).toBe(line);
+
+    const dir = mkdtempSync(join(tmpdir(), "llamactl-catalog-meta-"));
+    const file = join(dir, "full-meta.tsv");
+    writeFileSync(file, `${line}\n`);
+    expect(readCustomCatalog(file)).toStrictEqual([full]);
   });
 });
