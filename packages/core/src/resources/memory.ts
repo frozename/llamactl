@@ -1,9 +1,12 @@
-// DF04a1 slice 1: typed host-memory observations + a pure, conservative
-// headroom derivation. Trusts only the host's physical + available readings;
-// every other field stays a distinct source-attributed observation. This is
-// NOT a model-load grant and NOT a calibrated envelope — calibration keys,
-// swap deltas, remote OS collectors and all consumers are deferred. No IO, no
-// Date.now, no platform probing: timestamps and readings are injected.
+// DF04a1 slice 1 + DF-04 remainder (#277): typed host-memory observations, a
+// pure, conservative headroom derivation, Linux GTT counter parsing and
+// per-model KV envelopes keyed by (model, ctx, kvType, slots). Calibration
+// keys are now provided via kvEnvelopeKey; swap deltas, remote OS collectors
+// and all consumers are still deferred. Trusts only the host's physical +
+// available readings; every other field stays a distinct source-attributed
+// observation. GTT is a device-wide shared counter — never attributed to a
+// model, never added to OS used memory. This is NOT a model-load grant. No
+// IO, no Date.now, no platform probing: timestamps and readings are injected.
 //
 // Core accepts already-validated typed observations here. Untyped transport
 // decoding, auth and provenance validation belong to the remote observer /
@@ -127,5 +130,147 @@ export function deriveHostHeadroom(
     physicalBytes,
     availableBytes,
     reservedBytes: reserveBytes,
+  };
+}
+
+export interface GttObservation {
+  status: MemoryReadStatus;
+  totalBytes: number | null;
+  usedBytes: number | null;
+  observedAtMs: number | null;
+  source: string;
+  scope: "shared";
+}
+
+export function parseGttCounters(
+  totalRaw: string,
+  usedRaw: string,
+  meta: { source: string; observedAtMs: number },
+): GttObservation {
+  const fail = (): GttObservation => ({
+    status: "unavailable",
+    totalBytes: null,
+    usedBytes: null,
+    observedAtMs: meta.observedAtMs,
+    source: meta.source,
+    scope: "shared",
+  });
+  const totalText = totalRaw.trim();
+  const usedText = usedRaw.trim();
+  if (!/^\d+$/.test(totalText) || !/^\d+$/.test(usedText)) return fail();
+  const totalBytes = Number(totalText);
+  const usedBytes = Number(usedText);
+  if (!Number.isSafeInteger(totalBytes) || !Number.isSafeInteger(usedBytes)) return fail();
+  if (usedBytes > totalBytes) return fail();
+  return {
+    status: "ok",
+    totalBytes,
+    usedBytes,
+    observedAtMs: meta.observedAtMs,
+    source: meta.source,
+    scope: "shared",
+  };
+}
+
+export function gttDeviceReading(obs: GttObservation): HostMemoryObservation["device"] {
+  return {
+    bytes: obs.status === "ok" ? obs.usedBytes : null,
+    observedAtMs: obs.observedAtMs,
+    source: obs.source,
+    status: obs.status,
+    scope: "shared",
+  };
+}
+
+export interface KvEnvelopeKey {
+  model: string;
+  ctx: number;
+  kvType: string;
+  slots: number;
+}
+
+export function kvEnvelopeKey(key: KvEnvelopeKey): string | null {
+  const model = key.model.trim();
+  if (model === "") return null;
+  if (!Number.isSafeInteger(key.ctx) || key.ctx <= 0) return null;
+  if (!Number.isSafeInteger(key.slots) || key.slots <= 0) return null;
+  if (key.kvType === "") return null;
+  return JSON.stringify([model, key.ctx, key.kvType, key.slots]);
+}
+
+export interface KvEnvelope {
+  key: KvEnvelopeKey;
+  weightsBytes: number;
+  kvBytes: number;
+  workspaceBytes: number;
+  provenance: "declared" | "measured";
+}
+
+export type ModelKvBudget =
+  | {
+      known: true;
+      key: string;
+      usableBytes: number;
+      requiredBytes: number;
+      kvBudgetBytes: number;
+      fits: boolean;
+      provenance: "declared" | "measured";
+    }
+  | {
+      known: false;
+      reason:
+        | "invalid-input"
+        | "unknown-source"
+        | "stale-source"
+        | "pressure"
+        | "no-envelope"
+        | "invalid-envelope";
+    };
+
+function canonicalEnvelopeKey(envelope: KvEnvelope): string | null {
+  const canonical = kvEnvelopeKey(envelope.key);
+  if (canonical === null) return null;
+  const bytes = [envelope.weightsBytes, envelope.kvBytes, envelope.workspaceBytes];
+  if (bytes.some((b) => !Number.isFinite(b) || b < 0)) return null;
+  return canonical;
+}
+
+export function deriveModelKvBudget(input: {
+  envelopes: readonly KvEnvelope[];
+  key: KvEnvelopeKey;
+  observation: HostMemoryObservation;
+  options: HostHeadroomOptions;
+}): ModelKvBudget {
+  const queryKey = kvEnvelopeKey(input.key);
+  if (queryKey === null) return { known: false, reason: "invalid-envelope" };
+
+  const seen = new Set<string>();
+  let match: KvEnvelope | null = null;
+  for (const envelope of input.envelopes) {
+    const canonical = canonicalEnvelopeKey(envelope);
+    if (canonical === null || seen.has(canonical)) {
+      return { known: false, reason: "invalid-envelope" };
+    }
+    seen.add(canonical);
+    if (canonical === queryKey) match = envelope;
+  }
+  if (match === null) return { known: false, reason: "no-envelope" };
+
+  const headroom = deriveHostHeadroom(input.observation, input.options);
+  if (!headroom.known) return { known: false, reason: headroom.reason };
+
+  const requiredBytes = match.weightsBytes + match.kvBytes + match.workspaceBytes;
+  const kvBudgetBytes = Math.max(
+    0,
+    headroom.usableBytes - match.weightsBytes - match.workspaceBytes,
+  );
+  return {
+    known: true,
+    key: queryKey,
+    usableBytes: headroom.usableBytes,
+    requiredBytes,
+    kvBudgetBytes,
+    fits: requiredBytes <= headroom.usableBytes,
+    provenance: match.provenance,
   };
 }

@@ -22,12 +22,50 @@ Per-user catalog extensions appended by `llama-curated-add` and `llama-candidate
 | 5   | scope  | string | `best` / `vision` / `balanced` / `fast` / `quality` / `compact` / `candidate` / freeform        |
 | 6   | rel    | string | relative GGUF path under `$LLAMA_CPP_MODELS`, e.g. `Qwen3.5-4B-GGUF/Qwen3.5-4B-UD-Q4_K_XL.gguf` |
 | 7   | repo   | string | Hugging Face repo id, e.g. `unsloth/Qwen3.5-4B-GGUF`                                            |
+| 8   | format | enum   | `gguf` \| `mlx`; an empty or missing column means `gguf`                                        |
+| 9   | meta   | object | optional compact JSON holding candidate metadata; emitted only when at least one key is set     |
 
 Example row:
 
 ```
 qwen3.5-4b-gguf-q4\tQwen3.5-4B-UD-Q4_K_XL\tqwen35\tmultimodal\tcandidate\tQwen3.5-4B-GGUF/Qwen3.5-4B-UD-Q4_K_XL.gguf\tunsloth/Qwen3.5-4B-GGUF
 ```
+
+### Column 9: `meta`
+
+An optional compact JSON object carrying candidate metadata. It is emitted only when at least one key is set; rows without it are legacy rows and load unchanged. A non-empty column 9 must be a JSON object — legacy rows with other trailing text are now skipped, with a warning on stderr. Unknown keys are dropped on load.
+
+Canonical order: top-level keys are emitted in the order listed below, and nested keys in schema order, so a hand-written row round-trips byte-for-byte after a parse/format cycle.
+
+| key                         | type     | constraints                                                                              |
+| --------------------------- | -------- | ---------------------------------------------------------------------------------------- |
+| `availability.declared`     | enum     | `available` \| `unavailable`                                                             |
+| `availability.reason`       | string   | optional when `available`; required when `unavailable`                                   |
+| `qualification.stage`       | enum     | `experimental` \| `candidate` \| `validated` \| `production` \| `degraded`               |
+| `qualification.since`       | string   | optional, non-empty                                                                      |
+| `qualification.evidenceRef` | string   | optional, non-empty                                                                      |
+| `runtime.engines`           | string[] | non-empty; each engine name non-empty                                                    |
+| `runtime.minBuild`          | string   | optional, non-empty                                                                      |
+| `runtime.toolCallFormat`    | string   | optional, non-empty                                                                      |
+| `runtime.reasoningFormat`   | string   | optional, non-empty                                                                      |
+| `runtime.chatTemplate`      | string   | optional, non-empty                                                                      |
+| `contextMax`                | int      | positive                                                                                 |
+| `params.totalB`             | number   | positive; optional — inner keys are optional so partial measurements can be recorded     |
+| `params.activeB`            | number   | positive; optional                                                                       |
+| `params.experts`            | int      | positive; optional                                                                       |
+| `memory.residentGiB`        | number   | non-negative; optional — inner keys are optional so partial measurements can be recorded |
+| `memory.diskBackedGiB`      | number   | non-negative; optional                                                                   |
+| `memory.kvGiBPer32k`        | number   | non-negative; optional                                                                   |
+| `residencyGroup`            | string   | non-empty                                                                                |
+| `license`                   | string   | non-empty                                                                                |
+
+Example 9-column row:
+
+```
+glm53-flash\tGLM-5.3 Flash\tglm\treasoning\tcandidate\tGLM-5.3-Flash-GGUF/glm-5.3-flash-Q4_K_M.gguf\tunsloth/GLM-5.3-Flash-GGUF\tgguf\t{"availability":{"declared":"unavailable","reason":"runtime-not-pinned"},"qualification":{"stage":"experimental","since":"2026-11-07","evidenceRef":"eval/glm53-flash-001"},"runtime":{"engines":["llamacpp","omlx"],"minBuild":"b6100"},"contextMax":131072,"params":{"totalB":106,"activeB":12,"experts":128},"memory":{"residentGiB":18.5},"residencyGroup":"big-moe","license":"mit"}
+```
+
+Shell note: the awk lookups in `shell/llamactl.zsh` at :264/:1080/:1292 select columns by number and ignore column 9. `_llama_curated_meta_for_rel` (:942) passes the whole row through, and the positional `read -r` consumers at :2041 and :2119 fold trailing columns into their last variable. That is an existing limitation, already caused by `format`.
 
 ## `preset-overrides.tsv`
 

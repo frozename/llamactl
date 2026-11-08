@@ -585,6 +585,11 @@ function writeModelHostSidecar(
         startedAt: new Date().toISOString(),
         slotSavePath: existing?.pid === status.pid ? (existing.slotSavePath ?? null) : null,
         specHash: computeModelHostSpecHash(specForHash(manifest.spec)),
+        // This sidecar replaces the one launchModelHost wrote, so identity
+        // fields must be carried or stop and status lose the fork identity.
+        ...(manifest.spec.binaryNames !== undefined
+          ? { binaryNames: [...manifest.spec.binaryNames] }
+          : {}),
       },
       { name: manifest.metadata.name },
       resolved,

@@ -17,6 +17,8 @@
 
 import { Database, type SQLQueryBindings } from "bun:sqlite";
 
+import type { MetricValue } from "./types.js";
+
 import { existsSync } from "../safe-fs.js";
 
 export interface DiffArgs {
@@ -122,6 +124,36 @@ function csvField(value: string): string {
     return `"${value.replaceAll('"', '""')}"`;
   }
   return value;
+}
+
+export interface MetricComparison {
+  verdict: "improved" | "regressed" | "unchanged" | "unavailable";
+  delta: number | null;
+  reason: string | null;
+}
+
+export function compareMetric(
+  baseline: MetricValue,
+  candidate: MetricValue,
+  opts: { higherIsBetter: boolean; tolerance?: number },
+): MetricComparison {
+  if (baseline.status === "unavailable" || candidate.status === "unavailable") {
+    const reasons: string[] = [];
+    if (baseline.status === "unavailable") reasons.push(`baseline: ${baseline.reason}`);
+    if (candidate.status === "unavailable") reasons.push(`candidate: ${candidate.reason}`);
+    return { verdict: "unavailable", delta: null, reason: reasons.join("; ") };
+  }
+  const delta = candidate.value - baseline.value;
+  if (Math.abs(delta) <= (opts.tolerance ?? 0)) {
+    return { verdict: "unchanged", delta, reason: null };
+  }
+  const improved = opts.higherIsBetter ? delta > 0 : delta < 0;
+  return { verdict: improved ? "improved" : "regressed", delta, reason: null };
+}
+
+export function formatMetric(metric: MetricValue, digits: number): string {
+  if (metric.status === "unavailable") return "unavailable";
+  return fmt(metric.value, digits);
 }
 
 export function renderMd(cells: Cell[]): string {

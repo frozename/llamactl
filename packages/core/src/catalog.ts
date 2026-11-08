@@ -1,6 +1,13 @@
 import { resolveCustomCatalogFile } from "./env.js";
 import { readFileSync } from "./safe-fs.js";
-import { CuratedModel, curatedTsvFields, formatTsvRow, splitTsvRow } from "./schemas.js";
+import {
+  CuratedMeta,
+  curatedMetaFields,
+  CuratedModel,
+  curatedTsvFields,
+  formatTsvRow,
+  splitTsvRow,
+} from "./schemas.js";
 
 /**
  * Built-in curated catalog. Mirrors `_llama_curated_catalog()` in the
@@ -153,19 +160,8 @@ export interface CatalogLoadOptions {
   customCatalogFile?: string;
 }
 
-/**
- * Read custom catalog entries from the on-disk TSV file. Blank lines,
- * lines starting with `#`, and lines with fewer than seven columns are
- * dropped — matching the tolerance of the historical shell awk filter.
- * Each surviving row is validated via zod; rows that fail validation
- * are skipped with a warning on stderr so one malformed append never
- * blows up the whole list.
- */
-function parseCustomCatalogRow(line: string, lineNo: number, file: string): CuratedModel | null {
-  const cols = splitTsvRow(line);
-  if (cols.length < curatedTsvFields.length - 1) return null;
-
-  const record: Record<string, string> = {};
+function buildLegacyRecord(cols: readonly string[]): Record<string, unknown> {
+  const record: Record<string, unknown> = {};
   for (const [j, field] of curatedTsvFields.entries()) {
     if (field === "format" && (cols[j] === undefined || cols[j] === "")) {
       record[field] = "gguf";
@@ -173,15 +169,74 @@ function parseCustomCatalogRow(line: string, lineNo: number, file: string): Cura
     }
     record[field] = cols[j] ?? "";
   }
+  return record;
+}
+
+function parseMetaColumn(raw: string): Record<string, unknown> | string {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw) as unknown;
+  } catch {
+    return "invalid meta JSON";
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return "meta must be a JSON object";
+  }
+  const obj = value as Record<string, unknown>;
+  const record: Record<string, unknown> = {};
+  for (const key of curatedMetaFields) {
+    if (Object.hasOwn(obj, key)) {
+      record[key] = obj[key];
+    }
+  }
+  return record;
+}
+
+export type CatalogRowParse = { ok: true; entry: CuratedModel } | { ok: false; error: string };
+
+export function parseCatalogRow(line: string): CatalogRowParse {
+  const cols = splitTsvRow(line);
+  if (cols.length < curatedTsvFields.length - 1) {
+    return { ok: false, error: "too few columns" };
+  }
+
+  const record = buildLegacyRecord(cols);
+  const metaRaw = cols[curatedTsvFields.length];
+  if (metaRaw !== undefined && metaRaw !== "") {
+    const meta = parseMetaColumn(metaRaw);
+    if (typeof meta === "string") {
+      return { ok: false, error: meta };
+    }
+    Object.assign(record, meta);
+  }
 
   const parsed = CuratedModel.safeParse(record);
   if (!parsed.success) {
-    process.stderr.write(
-      `llamactl: skipping invalid catalog row in ${file}:${String(lineNo)} (${parsed.error.issues.map((i) => i.message).join("; ")})\n`,
-    );
-    return null;
+    return { ok: false, error: parsed.error.issues.map((i) => i.message).join("; ") };
   }
-  return parsed.data;
+  return { ok: true, entry: parsed.data };
+}
+
+/**
+ * Custom-catalog rows tolerate blank lines, `#` comments, and rows with
+ * fewer than seven columns — matching the historical shell awk filter.
+ * A non-empty column 9 (`meta`) must be a JSON object matching the
+ * candidate-metadata schema; anything else, including trailing text on
+ * a hand-edited legacy row, skips the row with a warning on stderr so
+ * one malformed append never blows up the whole list.
+ */
+function parseCustomCatalogRow(line: string, lineNo: number, file: string): CuratedModel | null {
+  if (splitTsvRow(line).length < curatedTsvFields.length - 1) return null;
+
+  const cols = splitTsvRow(line);
+  const rel = cols[5] ?? "";
+  const result = parseCatalogRow(line);
+  if (result.ok) return result.entry;
+
+  process.stderr.write(
+    `llamactl: skipping invalid catalog row in ${file}:${String(lineNo)} rel=${rel} (${result.error})\n`,
+  );
+  return null;
 }
 
 export function readCustomCatalog(file: string): CuratedModel[] {
@@ -232,7 +287,19 @@ export function listCatalog(scope: CatalogScope, opts: CatalogLoadOptions = {}):
 /** Serialise an entry as a TSV row using the canonical column order. */
 export function formatCatalogRow(entry: CuratedModel): string {
   const normalized = { ...entry, format: entry.format };
-  return formatTsvRow(curatedTsvFields, normalized as unknown as Record<string, unknown>);
+  const line = formatTsvRow(curatedTsvFields, normalized as unknown as Record<string, unknown>);
+
+  const picked: Record<string, unknown> = {};
+  for (const key of curatedMetaFields) {
+    const value = entry[key];
+    if (value !== undefined) picked[key] = value;
+  }
+  if (Object.keys(picked).length === 0) return line;
+
+  const canonical = CuratedMeta.safeParse(picked);
+  if (!canonical.success) return line;
+
+  return `${line}\t${JSON.stringify(canonical.data)}`;
 }
 
 /** Serialise a list of entries as a TSV block (one row per line). */
