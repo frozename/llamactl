@@ -2,6 +2,7 @@ import { join } from "node:path";
 
 import type { ResolvedEnv } from "../types.js";
 import type { EngineName } from "./index.js";
+import type { ModelHostReadiness } from "./types.js";
 
 import { resolveEnv } from "../env.js";
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "../safe-fs.js";
@@ -34,6 +35,8 @@ export interface ModelHostState {
   // #516: argv0 basenames this host's process may run under; replaces the
   // engine default in pid-identity checks. Written from spec.binaryNames.
   binaryNames?: string[];
+  /** Declared serving probe (#220); absent = legacy behaviour. */
+  readiness?: ModelHostReadiness;
 }
 
 /**
@@ -176,6 +179,41 @@ export function writeModelHostState(
   writeFileSync(modelhostStateFile(resolved, key), JSON.stringify(state, null, 2));
 }
 
+function validReadiness(readiness: unknown): readiness is ModelHostReadiness {
+  if (
+    typeof readiness !== "object" ||
+    readiness === null ||
+    Object.getPrototypeOf(readiness) !== Object.prototype
+  ) {
+    return false;
+  }
+  const record = readiness as Record<string, unknown>;
+  if (typeof record["path"] !== "string" || !record["path"].startsWith("/")) return false;
+  const expectStatus = record["expectStatus"];
+  if (
+    expectStatus !== undefined &&
+    (typeof expectStatus !== "number" || !Number.isInteger(expectStatus))
+  ) {
+    return false;
+  }
+  const expectJson = record["expectJson"];
+  return expectJson === undefined || validReadinessExpectJson(expectJson);
+}
+
+function validReadinessExpectJson(expectJson: unknown): boolean {
+  if (
+    typeof expectJson !== "object" ||
+    expectJson === null ||
+    Array.isArray(expectJson) ||
+    Object.getPrototypeOf(expectJson) !== Object.prototype
+  ) {
+    return false;
+  }
+  return Object.values(expectJson as Record<string, unknown>).every(
+    (value) => typeof value === "string" || typeof value === "number" || typeof value === "boolean",
+  );
+}
+
 function validModelAliases(modelAliases: unknown): modelAliases is string[] {
   if (!Array.isArray(modelAliases) || modelAliases.length === 0) return false;
   return !modelAliases.some(
@@ -203,6 +241,7 @@ function validateModelHostState(parsed: Partial<ModelHostState>): ModelHostState
     slotSavePath: typeof parsed.slotSavePath === "string" ? parsed.slotSavePath : null,
     ...(typeof parsed.specHash === "string" ? { specHash: parsed.specHash } : {}),
     ...(validBinaryNames(binaryNames) ? { binaryNames: [...binaryNames] } : {}),
+    ...(validReadiness(parsed.readiness) ? { readiness: parsed.readiness } : {}),
   };
 }
 

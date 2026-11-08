@@ -2120,7 +2120,8 @@ test("a local exact pin is not sent to an unlabeled peer", async () => {
 // failure, never an import or type error).
 // ---------------------------------------------------------------------------
 
-const MIMO_REL = "MiMo-V2.6-Flash-MOPD-GGUF/BPW2.5/MiMo-V2.6-Flash-MOPD-BPW2.5.gguf";
+const MIMO_REL =
+  "MiMo-V2.6-Flash-MOPD-GGUF-AesSedai/b6e95d58/BPW2.5/MiMo-V2.6-Flash-MOPD-BPW2.5-00001-of-00003.gguf";
 const MIMO_ID = "mimo26-flash-mopd-bpw25";
 
 const COLD_UNAVAILABLE_ROW =

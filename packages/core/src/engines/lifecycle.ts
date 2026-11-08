@@ -98,29 +98,59 @@ async function fetchModelIds(
   return (body.data ?? []).map((model) => model.id ?? "").filter(Boolean);
 }
 
+/**
+ * Single-shot serving-readiness probe (#220): GET <path> must answer
+ * expectStatus (default exactly 200) and, when expectJson is set, a JSON
+ * object body whose top-level keys strictly equal every expected value.
+ * Fails closed — any fetch, parse, or deadline failure resolves false.
+ */
+export async function checkServingReadiness(
+  endpoint: { host: string; port: number },
+  readiness: ModelHostReadiness,
+  opts: { fetch?: typeof globalThis.fetch; timeoutMs?: number } = {},
+): Promise<boolean> {
+  try {
+    const fetchImpl = opts.fetch ?? globalThis.fetch;
+    const timeoutMs = opts.timeoutMs ?? 1_000;
+    const signal = AbortSignal.timeout(timeoutMs);
+    const response = await fetchImpl(
+      `http://${formatHostForUrl(endpoint.host)}:${String(endpoint.port)}${readiness.path}`,
+      { signal },
+    );
+    if (response.status !== (readiness.expectStatus ?? 200)) {
+      return false;
+    }
+    if (readiness.expectJson === undefined) {
+      return true;
+    }
+    const aborted = new Promise<null>((resolve) => {
+      if (signal.aborted) resolve(null);
+      else
+        signal.addEventListener(
+          "abort",
+          () => {
+            resolve(null);
+          },
+          { once: true },
+        );
+    });
+    const body: unknown = await Promise.race([response.json(), aborted]);
+    if (typeof body !== "object" || body === null || Array.isArray(body)) {
+      return false;
+    }
+    const record = body as Record<string, unknown>;
+    return Object.entries(readiness.expectJson).every(([key, value]) => record[key] === value);
+  } catch {
+    return false;
+  }
+}
+
 async function fetchReadinessOk(
   endpoint: { host: string; port: number },
   readiness: ModelHostReadiness,
   timeoutMs: number,
 ): Promise<boolean> {
-  const response = await fetch(
-    `http://${formatHostForUrl(endpoint.host)}:${String(endpoint.port)}${readiness.path}`,
-    {
-      signal: AbortSignal.timeout(timeoutMs),
-    },
-  );
-  if (response.status !== (readiness.expectStatus ?? 200)) {
-    return false;
-  }
-  if (readiness.expectJson === undefined) {
-    return true;
-  }
-  const body: unknown = await response.json().catch(() => null);
-  if (typeof body !== "object" || body === null || Array.isArray(body)) {
-    return false;
-  }
-  const record = body as Record<string, unknown>;
-  return Object.entries(readiness.expectJson).every(([key, value]) => record[key] === value);
+  return await checkServingReadiness(endpoint, readiness, { timeoutMs });
 }
 
 export async function pollUntilModelIds(

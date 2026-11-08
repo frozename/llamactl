@@ -1,0 +1,60 @@
+# EXPERIMENTAL: DeepSeek V4.1 Flash 1017 UD-IQ1_S, unsloth revision 2688c0c3.
+# Pinned to upstream llama.cpp b12206 @ cf34d311332e (BUILDINFO.json on the
+# Z13 records binary sha256). This is a separate ModelHost, not Gufo.
+#
+# This upstream HIP host is the baseline; the operator's primary DeepSeek
+# engine is libosmos ROCm/HIP + DSpark (adapter to come). Streaming
+# behaviour of upstream for V4.1 is unverified.
+#
+# It is committed disabled because it shares the exclusive z13-large-gpu
+# group with production Qwen, GLM and MiMo. Enabling it needs an
+# operator-approved window.
+#
+# residentGiB 114 / diskBackedGiB 103 mirror the catalog row
+# deepseek41-flash-1017-ud-iq1s memory (04 C-1). They are not measured.
+# 103 GiB is the IQ4_NL Engram, which stays on SSD. No expert-offload
+# flag is passed, so the full non-Engram weights are charged resident.
+# expectedMemoryGiB is deliberately not set.
+#
+# Tool calls are DSML, handled by llama.cpp's built-in DeepSeek parser,
+# so --jinja is not passed. DSML tool-call parsing on this build is
+# unvalidated.
+apiVersion: llamactl/v1
+kind: ModelHost
+metadata:
+  name: llamacpp-deepseek41-flash-iq1s
+  labels:
+    family: deepseek41
+    llamactl.io/qualification: experimental
+    llamactl.io/residency-group: z13-large-gpu
+spec:
+  engine: llamacpp
+  node: z13
+  enabled: false
+  binary: /home/alex/strix-halo-bench/runtimes/llama.cpp-cf34d311332e/bin/llama-server
+  resources:
+    residentGiB: 114
+    diskBackedGiB: 103
+  # Port 8084 avoids 8080-8083 on z13 (production Gufo, gufo-glm53-exp,
+  # gufo-qwen38-v026-exp, llamacpp-mimo26).
+  endpoint:
+    host: 127.0.0.1
+    port: 8084
+  hostedModels:
+    - rel: DeepSeek-V4.1-Flash-1017-GGUF-unsloth/2688c0c3/UD-IQ1_S/DeepSeek-V4.1-Flash-1017-UD-IQ1_S-00001-of-00005.gguf
+  extraArgs:
+    # --served-model-name equals the GGUF basename, because a ModelHost
+    # routes by rel and basename.
+    - --served-model-name
+    - DeepSeek-V4.1-Flash-1017-UD-IQ1_S-00001-of-00005.gguf
+    # -c 65536 sits inside the 64K-128K Z13 band of a 1M-context model.
+    - -c
+    - "65536"
+    # --spec-type draft-dspark + -md drafter path (b12206 has no --dspark).
+    # The drafter file is relative so llamacpp resolves it against the models
+    # dir (#544).
+    - --spec-type
+    - draft-dspark
+    - -md
+    - DeepSeek-V4.1-Flash-1017-GGUF-unsloth/2688c0c3/dspark/dspark-DeepSeek-V4.1-Flash-1017-Q8_0.gguf
+  restartPolicy: Never

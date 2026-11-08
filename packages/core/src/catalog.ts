@@ -181,7 +181,7 @@ export const BUILTIN_CATALOG: readonly CuratedModel[] = [
     family: "deepseek41",
     class: "reasoning",
     scope: "candidate",
-    rel: "DeepSeek-V4.1-Flash-1017-GGUF/UD-IQ1_S/DeepSeek-V4.1-Flash-1017-UD-IQ1_S-00001-of-00005.gguf",
+    rel: "DeepSeek-V4.1-Flash-1017-GGUF-unsloth/2688c0c3/UD-IQ1_S/DeepSeek-V4.1-Flash-1017-UD-IQ1_S-00001-of-00005.gguf",
     repo: "unsloth/DeepSeek-V4.1-Flash-1017-GGUF",
     format: "gguf",
     availability: {
@@ -239,7 +239,7 @@ export const BUILTIN_CATALOG: readonly CuratedModel[] = [
     family: "mimo26",
     class: "reasoning",
     scope: "candidate",
-    rel: "MiMo-V2.6-Flash-MOPD-GGUF/BPW2.5/MiMo-V2.6-Flash-MOPD-BPW2.5.gguf",
+    rel: "MiMo-V2.6-Flash-MOPD-GGUF-AesSedai/b6e95d58/BPW2.5/MiMo-V2.6-Flash-MOPD-BPW2.5-00001-of-00003.gguf",
     repo: "AesSedai/MiMo-V2.6-Flash-MOPD-GGUF",
     format: "gguf",
     availability: { declared: "unavailable", reason: "artifact-not-downloaded" },
