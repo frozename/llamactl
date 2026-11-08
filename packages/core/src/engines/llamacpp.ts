@@ -1,10 +1,37 @@
-import { resolve, sep } from "node:path";
+import { isAbsolute, resolve, sep } from "node:path";
 
 import type { EngineAdapter, EngineBootEnv, ModelHostSpecForEngine } from "./types.js";
 
 import { gracefulShutdown, pollUntilModelIds } from "./lifecycle.js";
 
 const LOOPBACK = new Set(["127.0.0.1", "::1", "localhost", "0.0.0.0"]);
+
+// These flags take a model-file path resolved against the models dir, like -m and --lora.
+const DRAFT_MODEL_PATH_FLAGS: ReadonlySet<string> = new Set([
+  "-md",
+  "--model-draft",
+  "--spec-draft-model",
+  "--dspark",
+]);
+
+// Absolute draft paths pass through on purpose, matching the issue's "relative" wording.
+// The `--flag=value` form of these flags is a known limitation and is not resolved.
+function resolveDraftModelArgs(
+  extraArgs: readonly string[],
+  resolveInModelsDir: (rel: string, label: string) => string,
+): string[] {
+  const out: string[] = [];
+  let prev: string | undefined;
+  for (const token of extraArgs) {
+    if (prev !== undefined && DRAFT_MODEL_PATH_FLAGS.has(prev) && !isAbsolute(token)) {
+      out.push(resolveInModelsDir(token, `${prev} path`));
+    } else {
+      out.push(token);
+    }
+    prev = token;
+  }
+  return out;
+}
 
 export const llamacppEngine: EngineAdapter = {
   name: "llamacpp",
@@ -57,7 +84,7 @@ export const llamacppEngine: EngineAdapter = {
     if (hostedModel.lora_path) {
       args.push("--lora", resolveInModelsDir(hostedModel.lora_path, "hostedModel lora_path"));
     }
-    args.push(...spec.extraArgs);
+    args.push(...resolveDraftModelArgs(spec.extraArgs, resolveInModelsDir));
     return { binary: spec.binary, args };
   },
 
