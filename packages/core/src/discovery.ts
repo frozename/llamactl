@@ -4,6 +4,7 @@ import type { MachineProfile, ModelClass, ResolvedEnv } from "./types.js";
 import {
   type CuratedStatus,
   curatedStatusForRepoFile,
+  findByRepoFile,
   relFromRepoAndFile,
   repoKnown,
 } from "./catalog.js";
@@ -92,7 +93,8 @@ export function profileForDiscovery(
  * Classify a repo into {multimodal, reasoning, general}. Mirrors
  * `_llama_discovery_classify_repo`: pipeline_tag=image-text-to-text
  * short-circuits to multimodal; otherwise tag substrings or repo-name
- * heuristics decide. Matching is case-insensitive everywhere.
+ * heuristics decide. Matching is case-insensitive everywhere. The
+ * glm-5 repo hint (#515) has no counterpart in the shell helper yet.
  */
 export function classifyRepo(repo: string, pipeline: string, tags: string): ModelClass {
   const repoL = repo.toLowerCase();
@@ -108,6 +110,7 @@ export function classifyRepo(repo: string, pipeline: string, tags: string): Mode
     tagsL.includes("reasoning") ||
     tagsL.includes("thinking") ||
     repoL.includes("deepseek") ||
+    repoL.includes("glm-5") ||
     repoL.includes("qwq") ||
     repoL.includes("qwen") ||
     repoL.includes("r1")
@@ -307,10 +310,18 @@ function applyRepoQuantOverrides(
 }
 
 /**
- * Final fit heuristic. Combines (a) size-tier classification when the
- * repo tree yielded a real byte count, (b) a quant-pattern fallback
- * when we can't compute bytes, (c) per-profile repo overrides, and
- * (d) a hard clamp on known-too-big multimodal/deepseek families.
+ * Final fit heuristic. Catalog-declared resident memory beats the tree
+ * probe: when a catalog row for this (repo, file) declares
+ * `memory.residentGiB`, the fit is that number's size tier plus the
+ * profile overrides — no byte estimate, and the deepseek reasoning
+ * clamp is skipped because the declared memory takes priority.
+ * Otherwise combines (a) size-tier classification when the repo tree
+ * yielded a real byte count, (b) a quant-pattern fallback when we can't
+ * compute bytes, (c) per-profile repo overrides, and (d) a hard clamp
+ * on known-too-big multimodal/deepseek families. The deepseek-v4 clamp
+ * matches whole versions only (#515), so v4.1 and other v4.x releases
+ * are no longer swallowed; deepseek-v3 and the multimodal 72b/70b
+ * clamps are unchanged.
  */
 export async function discoveryFit(
   profile: MachineProfile,
@@ -320,6 +331,12 @@ export async function discoveryFit(
 ): Promise<DiscoveryFit> {
   if (!file) return "unknown";
 
+  const repoL = repo.toLowerCase();
+  const declared = findByRepoFile(repo, file)?.memory?.residentGiB;
+  if (typeof declared === "number") {
+    return applyRepoQuantOverrides(sizeFit(declared, profile), profile, repoL, file);
+  }
+
   let fit: DiscoveryFit = "unknown";
   const bytes = await estimatedBytes(repo, file, klass);
   if (bytes !== null) {
@@ -328,11 +345,11 @@ export async function discoveryFit(
     fit = quantFallbackFit(file);
   }
 
-  const repoL = repo.toLowerCase();
   fit = applyRepoQuantOverrides(fit, profile, repoL, file);
 
   if (
-    (klass === "reasoning" && (repoL.includes("deepseek-v3") || repoL.includes("deepseek-v4"))) ||
+    (klass === "reasoning" &&
+      (repoL.includes("deepseek-v3") || /deepseek-v4(?![.\d])/.test(repoL))) ||
     (klass === "multimodal" && (repoL.includes("72b") || repoL.includes("70b")))
   ) {
     fit = "poor";

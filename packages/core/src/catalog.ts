@@ -152,7 +152,150 @@ export const BUILTIN_CATALOG: readonly CuratedModel[] = [
     repo: "unsloth/granite-4.1-3b-GGUF",
     format: "gguf",
   },
-] as const;
+  {
+    // Quant revision 07c62fcdeaf1c05d22bd123c3da8058a1b1e63e2; base
+    // zai-org/GLM-5.3-Flash@46a050bec13002ad29ee795c16e61cf4fa3c4a9c. The
+    // GGUF arch is glm5next, which mainline llama.cpp cannot load. The rel
+    // is the Z13 on-disk dir; no HF repo carries that name. The revisions
+    // live here because repo stays a plain HF id: pull and hf read it.
+    id: "glm53-flash-aj-iq2xxs",
+    label: "GLM-5.3-Flash AJ-IQ2_XXS",
+    family: "glm53",
+    class: "reasoning",
+    scope: "candidate",
+    rel: "GLM-5.3-Flash-AJ-GGUF/AJ-IQ2_XXS/GLM-5.3-Flash-AJ-IQ2_XXS-00001-of-00002.gguf",
+    repo: "aj9o9/GLM-5.3-Flash-GGUF",
+    format: "gguf",
+    qualification: { stage: "experimental" },
+    runtime: { engines: ["llamacpp"], minBuild: "fork:mikealanni/gufo@2e499c39" },
+    contextMax: 1048576,
+    residencyGroup: "z13-large-gpu",
+    license:
+      "drafter: Anbeeld/GLM-5.3-Flash-DFlash2-GGUF CC-BY-NC-ND-4.0 (non-commercial); incoai/GLM-5.3-Flash-DFlash2 licence unknown",
+  },
+  {
+    // Revision 2688c0c3c2c3b052ec4f6d10a8417b0ef7ee4eba; diskBackedGiB is
+    // the IQ4_NL Engram on SSD.
+    id: "deepseek41-flash-1017-ud-iq1s",
+    label: "DeepSeek V4.1 Flash 1017 UD-IQ1_S",
+    family: "deepseek41",
+    class: "reasoning",
+    scope: "candidate",
+    rel: "DeepSeek-V4.1-Flash-1017-GGUF/UD-IQ1_S/DeepSeek-V4.1-Flash-1017-UD-IQ1_S-00001-of-00005.gguf",
+    repo: "unsloth/DeepSeek-V4.1-Flash-1017-GGUF",
+    format: "gguf",
+    availability: {
+      declared: "unavailable",
+      reason: "artifact-not-downloaded; runtime-not-pinned",
+    },
+    qualification: { stage: "experimental" },
+    runtime: { engines: ["llamacpp"], minBuild: "b11870" },
+    memory: { residentGiB: 114.0, diskBackedGiB: 103 },
+    residencyGroup: "z13-large-gpu",
+  },
+  {
+    // Revision 2688c0c3c2c3b052ec4f6d10a8417b0ef7ee4eba; diskBackedGiB is
+    // the IQ4_NL Engram on SSD.
+    id: "deepseek41-flash-1017-ud-iq1m",
+    label: "DeepSeek V4.1 Flash 1017 UD-IQ1_M",
+    family: "deepseek41",
+    class: "reasoning",
+    scope: "candidate",
+    rel: "DeepSeek-V4.1-Flash-1017-GGUF/UD-IQ1_M/DeepSeek-V4.1-Flash-1017-UD-IQ1_M-00001-of-00005.gguf",
+    repo: "unsloth/DeepSeek-V4.1-Flash-1017-GGUF",
+    format: "gguf",
+    availability: {
+      declared: "unavailable",
+      reason: "artifact-not-downloaded; runtime-not-pinned",
+    },
+    qualification: { stage: "experimental" },
+    runtime: { engines: ["llamacpp"], minBuild: "b11870" },
+    memory: { residentGiB: 130.2, diskBackedGiB: 103 },
+    residencyGroup: "z13-large-gpu",
+  },
+  {
+    // Revision and shard file names were not captured, so rel is the quant
+    // dir only. Pin it when the artifact is approved.
+    id: "deepseek41-flash-1017-gsq-rco-iq1m",
+    label: "DeepSeek V4.1 Flash 1017 GSQ-RCO IQ1_M",
+    family: "deepseek41",
+    class: "reasoning",
+    scope: "candidate",
+    rel: "DeepSeek-V4.1-Flash-1017-GSQ-RCO-GGUF/IQ1_M",
+    repo: "ISTA-DASLab/DeepSeek-V4.1-Flash-1017-GSQ-RCO-GGUF",
+    format: "gguf",
+    availability: {
+      declared: "unavailable",
+      reason: "artifact-not-downloaded; runtime-not-pinned; exceeds-node-budget-resident",
+    },
+    qualification: { stage: "experimental" },
+    runtime: { engines: ["llamacpp"], minBuild: "b11870" },
+    residencyGroup: "z13-large-gpu",
+  },
+  {
+    // Revision b6e95d58; base XiaomiMiMo/MiMo-V2.6-Flash-MOPD@5220c3f5.
+    id: "mimo26-flash-mopd-bpw25",
+    label: "MiMo-V2.6-Flash MOPD BPW2.5",
+    family: "mimo26",
+    class: "reasoning",
+    scope: "candidate",
+    rel: "MiMo-V2.6-Flash-MOPD-GGUF/BPW2.5/MiMo-V2.6-Flash-MOPD-BPW2.5.gguf",
+    repo: "AesSedai/MiMo-V2.6-Flash-MOPD-GGUF",
+    format: "gguf",
+    availability: { declared: "unavailable", reason: "artifact-not-downloaded" },
+    qualification: { stage: "experimental" },
+    runtime: {
+      engines: ["llamacpp"],
+      minBuild: "b11298",
+      toolCallFormat: "mimo-xml",
+      reasoningFormat: "think-tags",
+    },
+    residencyGroup: "z13-large-gpu",
+  },
+  {
+    // Revision 7c9ba384; file name not captured.
+    id: "mimo26-flash-mopd-a4x",
+    label: "MiMo-V2.6-Flash MOPD a4-x",
+    family: "mimo26",
+    class: "reasoning",
+    scope: "candidate",
+    rel: "MiMo-V2.6-Flash-MOPD-a4-x",
+    repo: "j2ipper/MiMo-V2.6-Flash-MOPD-a4-x",
+    format: "gguf",
+    availability: {
+      declared: "unavailable",
+      reason: "artifact-not-downloaded; runtime-unverified",
+    },
+    qualification: { stage: "experimental" },
+    runtime: {
+      engines: ["llamacpp"],
+      minBuild: "b11298",
+      toolCallFormat: "mimo-xml",
+      reasoningFormat: "think-tags",
+    },
+    residencyGroup: "z13-large-gpu",
+  },
+  {
+    // File name not captured.
+    id: "mimo26-flash-mopd-bpw30",
+    label: "MiMo-V2.6-Flash MOPD BPW3.0",
+    family: "mimo26",
+    class: "reasoning",
+    scope: "candidate",
+    rel: "MiMo-V2.6-Flash-MOPD-GGUF/BPW3.0",
+    repo: "AesSedai/MiMo-V2.6-Flash-MOPD-GGUF",
+    format: "gguf",
+    availability: { declared: "unavailable", reason: "exceeds-node-budget" },
+    qualification: { stage: "experimental" },
+    runtime: {
+      engines: ["llamacpp"],
+      minBuild: "b11298",
+      toolCallFormat: "mimo-xml",
+      reasoningFormat: "think-tags",
+    },
+    residencyGroup: "z13-large-gpu",
+  },
+];
 
 export type CatalogScope = "all" | "builtin" | "custom";
 

@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import type { DiscoveryFit } from "../src/discovery.js";
 import type { HFModelInfo } from "../src/schemas.js";
-import type { MachineProfile } from "../src/types.js";
+import type { MachineProfile, ModelClass } from "../src/types.js";
 
 import {
   classifyRepo,
@@ -34,6 +34,9 @@ describe("discovery.classifyRepo", () => {
     expect(classifyRepo("unsloth/qwen-3", "", "")).toBe("reasoning");
     expect(classifyRepo("unsloth/unknown", "", "reasoning")).toBe("reasoning");
     expect(classifyRepo("unsloth/qwq-32b", "", "")).toBe("reasoning");
+  });
+  test("GLM-5.3-Flash repo name -> reasoning (#515)", () => {
+    expect(classifyRepo("aj9o9/GLM-5.3-Flash-GGUF", "", "")).toBe("reasoning");
   });
   test("default fallthrough -> general", () => {
     expect(classifyRepo("unsloth/random-llm", "", "")).toBe("general");
@@ -96,7 +99,13 @@ describe("discovery.discoveryFit size tiers", () => {
 
   async function withSeededTree(
     fn: (
-      probe: (repo: string, bytes: number, profile: MachineProfile) => Promise<DiscoveryFit>,
+      probe: (
+        repo: string,
+        bytes: number,
+        profile: MachineProfile,
+        klass?: ModelClass,
+      ) => Promise<DiscoveryFit>,
+      runtimeDir: string,
     ) => Promise<void>,
   ): Promise<void> {
     const runtimeDir = mkdtempSync(join(tmpdir(), "llamactl-fit-"));
@@ -104,22 +113,27 @@ describe("discovery.discoveryFit size tiers", () => {
       "LOCAL_AI_RUNTIME_DIR",
       "LOCAL_AI_RECOMMENDATIONS_SOURCE",
       "LOCAL_AI_HF_CACHE_TTL_SECONDS",
+      "LOCAL_AI_CUSTOM_CATALOG_FILE",
     ];
     const saved = new Map(keys.map((k) => [k, process.env[k]]));
     process.env["LOCAL_AI_RUNTIME_DIR"] = runtimeDir;
     process.env["LOCAL_AI_RECOMMENDATIONS_SOURCE"] = "hf";
     process.env["LOCAL_AI_HF_CACHE_TTL_SECONDS"] = "3600";
+    // Pin the custom catalog inside the temp runtime so a host
+    // curated-models.tsv can never leak declared memory into a probe.
+    process.env["LOCAL_AI_CUSTOM_CATALOG_FILE"] = join(runtimeDir, "curated-models.tsv");
     const probe = async (
       repo: string,
       bytes: number,
       profile: MachineProfile,
+      klass: ModelClass = "general",
     ): Promise<DiscoveryFit> => {
       const tree = [{ type: "file", path: FILE, size: bytes, lfs: { size: bytes } }];
       writeFileSync(repoTreeCacheFile(runtimeDir, repo), JSON.stringify(tree));
-      return await discoveryFit(profile, repo, "general", FILE);
+      return await discoveryFit(profile, repo, klass, FILE);
     };
     try {
-      await fn(probe);
+      await fn(probe, runtimeDir);
     } finally {
       for (const [k, v] of saved) {
         if (v === undefined) Reflect.deleteProperty(process.env, k);
@@ -152,6 +166,50 @@ describe("discovery.discoveryFit size tiers", () => {
   test("405b stays poor even on large-128g", async () => {
     await withSeededTree(async (probe) => {
       expect(await probe("meta/sizefit-405b", 60 * GIB, "large-128g")).toBe("poor");
+    });
+  });
+
+  // #515: catalog-declared memory beats the tree-size tier, and the
+  // reasoning deepseek-v4 clamp no longer swallows V4.1.
+  test("V4.1 with declared catalog memory defers to it", async () => {
+    await withSeededTree(async (probe, runtimeDir) => {
+      writeFileSync(
+        join(runtimeDir, "curated-models.tsv"),
+        [
+          "deepseek41-flash-test",
+          "DeepSeek V4.1 Flash Test",
+          "deepseek41",
+          "reasoning",
+          "candidate",
+          "DeepSeek-V4.1-Flash-Test-GGUF/model.gguf",
+          "example/DeepSeek-V4.1-Flash-Test-GGUF",
+          "gguf",
+          '{"memory":{"residentGiB":60}}',
+        ].join("\t") + "\n",
+      );
+      const repo = "example/DeepSeek-V4.1-Flash-Test-GGUF";
+      expect(await probe(repo, 200 * GIB, "large-128g", "reasoning")).toBe("excellent");
+    });
+  });
+
+  test("V4.1 without catalog meta is no longer swallowed by the deepseek-v4 clamp", async () => {
+    await withSeededTree(async (probe) => {
+      const repo = "example/DeepSeek-V4.1-Flash-NoMeta-GGUF";
+      expect(await probe(repo, 60 * GIB, "large-128g", "reasoning")).toBe("excellent");
+    });
+  });
+
+  test("deepseek-v3 and non-4.1 deepseek-v4 reasoning stays clamped to poor", async () => {
+    await withSeededTree(async (probe) => {
+      expect(await probe("deepseek-ai/DeepSeek-V3-GGUF", 60 * GIB, "large-128g", "reasoning")).toBe(
+        "poor",
+      );
+      expect(
+        await probe("unsloth/DeepSeek-V4-Flash-GGUF", 60 * GIB, "large-128g", "reasoning"),
+      ).toBe("poor");
+      expect(await probe("unsloth/DeepSeek-V4-Flash-GGUF", 60 * GIB, "large-128g", "general")).toBe(
+        "excellent",
+      );
     });
   });
 });
