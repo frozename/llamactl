@@ -17,7 +17,7 @@ import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { type ConsoleDeps, runConsole } from "../src/commands/console.js";
+import { type ConsoleDeps, type ConsoleOpenerSpawn, runConsole } from "../src/commands/console.js";
 import {
   chmodSync,
   existsSync,
@@ -695,5 +695,105 @@ describe("llamactl console", () => {
         expect(recorder.unrefCount()).toBe(1);
       });
     });
+  });
+
+  // #535: a SIGTERM landing between the `Console:` print and the
+  // waitForShutdownSignal listener install hit the default disposition
+  // and exited 143 on Linux CI. process.emit drives the same JS
+  // listeners a real signal would — and can never signal the runner.
+  describe("shutdown signal handlers (#535)", () => {
+    test("installs SIGTERM/SIGINT handlers before printing the URL and before spawning the opener", async () => {
+      const fx = makeFixture();
+      const baseTerm = process.listenerCount("SIGTERM");
+      const baseInt = process.listenerCount("SIGINT");
+      const atUrl: { int: number; term: number }[] = [];
+      const atSpawn: { int: number; term: number }[] = [];
+      const recorder = recordingOpenerSpawn();
+      const writeSpy = spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
+        if (String(chunk).includes("Console: ")) {
+          atUrl.push({
+            int: process.listenerCount("SIGINT"),
+            term: process.listenerCount("SIGTERM"),
+          });
+        }
+        return true;
+      });
+      const spawn: ConsoleOpenerSpawn = (argv, options) => {
+        atSpawn.push({
+          int: process.listenerCount("SIGINT"),
+          term: process.listenerCount("SIGTERM"),
+        });
+        return recorder.spawn(argv, options);
+      };
+      const run = runConsole(["--port", "0", "--dist", fx.distDir], { platform: "linux", spawn });
+      let code: number | "timeout" = "timeout";
+      try {
+        await pollUntil(() => recorder.calls.length === 1, 10_000);
+      } finally {
+        process.emit("SIGTERM");
+        code = await withTimeout(run, 15_000);
+        writeSpy.mockRestore();
+      }
+      expect(code).toBe(0);
+      expect(atUrl).toHaveLength(1);
+      expect(atSpawn).toHaveLength(1);
+      expect(atUrl[0]?.term).toBeGreaterThan(baseTerm);
+      expect(atUrl[0]?.int).toBeGreaterThan(baseInt);
+      expect(atSpawn[0]?.term).toBeGreaterThan(baseTerm);
+      expect(atSpawn[0]?.int).toBeGreaterThan(baseInt);
+      expect(recorder.calls[0]?.argv.at(-1)).toMatch(LOOPBACK_URL_RE);
+    });
+
+    test("keeps the handlers installed until the server has stopped, then removes them", async () => {
+      const fx = makeFixture();
+      const baseTerm = process.listenerCount("SIGTERM");
+      const baseInt = process.listenerCount("SIGINT");
+      let urlPrinted = false;
+      const writeSpy = spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
+        if (String(chunk).includes("Console: ")) {
+          urlPrinted = true;
+        }
+        return true;
+      });
+      const run = runConsole(["--port", "0", "--no-open", "--dist", fx.distDir], {
+        platform: "linux",
+      });
+      let code: number | "timeout" = "timeout";
+      let afterFirst = { int: -1, term: -1 };
+      try {
+        expect(await pollUntil(() => urlPrinted, 10_000)).toBe(true);
+        process.emit("SIGTERM");
+        afterFirst = {
+          int: process.listenerCount("SIGINT"),
+          term: process.listenerCount("SIGTERM"),
+        };
+        process.emit("SIGTERM");
+        code = await withTimeout(run, 15_000);
+      } finally {
+        process.emit("SIGTERM");
+        await withTimeout(run, 15_000).catch(() => undefined);
+        writeSpy.mockRestore();
+      }
+      expect(code).toBe(0);
+      expect(afterFirst.term).toBeGreaterThan(baseTerm);
+      expect(afterFirst.int).toBeGreaterThan(baseInt);
+      expect(process.listenerCount("SIGTERM")).toBe(baseTerm);
+      expect(process.listenerCount("SIGINT")).toBe(baseInt);
+    });
+
+    test("exits 0 when SIGTERM arrives as soon as the URL is printed (default open, repeated)", async () => {
+      for (let iteration = 0; iteration < 5; iteration += 1) {
+        const fx = makeFixture();
+        const proc = spawnConsole(["--port", "0", "--dist", fx.distDir], fx.env);
+        try {
+          const match = await readUntil(proc.stdout, CONSOLE_URL_RE);
+          expect(match).not.toBeNull();
+          proc.kill("SIGTERM");
+          expect(await withTimeout(proc.exited, 10_000)).toBe(0);
+        } finally {
+          proc.kill("SIGKILL");
+        }
+      }
+    }, 120_000);
   });
 });

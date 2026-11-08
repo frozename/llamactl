@@ -208,16 +208,35 @@ function openBrowser(
     });
 }
 
-function waitForShutdownSignal(): Promise<void> {
-  return new Promise<void>((resolvePromise) => {
-    const onSignal = (): void => {
+interface ShutdownSignals {
+  wait: Promise<void>;
+  dispose(): void;
+}
+
+// #535: a SIGTERM landing between the `Console:` print and the listener
+// install used to hit the default disposition and exit 143 on Linux CI,
+// so the handlers are installed before the URL is printed and before the
+// opener spawns. `on` instead of `once` so a repeated signal arriving
+// while the server stops is swallowed rather than falling through to the
+// default disposition. Resolving twice is harmless; dispose() runs only
+// after stop finishes so the handlers never leak.
+function installShutdownSignals(): ShutdownSignals {
+  let release: () => void = () => undefined;
+  const wait = new Promise<void>((resolvePromise) => {
+    release = resolvePromise;
+  });
+  const onSignal = (): void => {
+    release();
+  };
+  process.on("SIGINT", onSignal);
+  process.on("SIGTERM", onSignal);
+  return {
+    wait,
+    dispose(): void {
       process.off("SIGINT", onSignal);
       process.off("SIGTERM", onSignal);
-      resolvePromise();
-    };
-    process.once("SIGINT", onSignal);
-    process.once("SIGTERM", onSignal);
-  });
+    },
+  };
 }
 
 export interface ConsoleDeps {
@@ -260,17 +279,29 @@ export async function runConsole(args: string[], deps: ConsoleDeps = {}): Promis
     return 1;
   }
 
-  process.stdout.write(`Console: ${server.url}\nPress Ctrl+C to stop.\n`);
-  if (open) {
-    if (deps.openBrowser !== undefined) {
-      deps.openBrowser(server.url);
-    } else {
-      openBrowser(server.url, deps.platform, deps.spawn);
-    }
-  }
+  return await serveUntilShutdown(server, open, deps);
+}
 
-  await (deps.waitForShutdown ?? waitForShutdownSignal)();
-  await server.stop();
-  process.stdout.write("Console stopped.\n");
-  return 0;
+async function serveUntilShutdown(
+  server: RunningConsoleServer,
+  open: boolean,
+  deps: ConsoleDeps,
+): Promise<number> {
+  const signals = deps.waitForShutdown === undefined ? installShutdownSignals() : undefined;
+  try {
+    process.stdout.write(`Console: ${server.url}\nPress Ctrl+C to stop.\n`);
+    if (open) {
+      if (deps.openBrowser !== undefined) {
+        deps.openBrowser(server.url);
+      } else {
+        openBrowser(server.url, deps.platform, deps.spawn);
+      }
+    }
+    await (deps.waitForShutdown?.() ?? signals?.wait);
+    await server.stop();
+    process.stdout.write("Console stopped.\n");
+    return 0;
+  } finally {
+    signals?.dispose();
+  }
 }
