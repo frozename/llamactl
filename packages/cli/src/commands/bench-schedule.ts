@@ -255,6 +255,8 @@ interface AddArgs {
   rel: string | undefined;
   mode: string | undefined;
   every: string | undefined;
+  kind: string | undefined;
+  suite: string | undefined;
 }
 
 type AddParse =
@@ -262,7 +264,13 @@ type AddParse =
   | { kind: "help" }
   | { kind: "error"; message: string };
 
-const VALUED_ADD_FLAGS: ReadonlySet<string> = new Set(["--every", "--mode", "--rel"]);
+const VALUED_ADD_FLAGS: ReadonlySet<string> = new Set([
+  "--every",
+  "--mode",
+  "--rel",
+  "--kind",
+  "--suite",
+]);
 
 function flagName(arg: string): string {
   const eq = arg.indexOf("=");
@@ -277,11 +285,20 @@ function flagInlineValue(arg: string, queue: string[]): string | undefined {
 function assignAddFlag(args: AddArgs, name: string, value: string): void {
   if (name === "--rel") args.rel = value;
   else if (name === "--mode") args.mode = value;
+  else if (name === "--kind") args.kind = value;
+  else if (name === "--suite") args.suite = value;
   else args.every = value;
 }
 
 function parseAddArgs(argv: string[]): AddParse {
-  const args: AddArgs = { positional: [], rel: undefined, mode: undefined, every: undefined };
+  const args: AddArgs = {
+    positional: [],
+    rel: undefined,
+    mode: undefined,
+    every: undefined,
+    kind: undefined,
+    suite: undefined,
+  };
   const rest = [...argv];
   let arg = rest.shift();
   while (arg !== undefined) {
@@ -321,9 +338,24 @@ type AddPlan =
         rel: string;
         mode: "auto" | "text" | "vision";
         intervalSeconds: number;
+        kind?: "preset" | "suite";
+        suite?: string;
       };
     }
   | { error: string };
+
+function validateSuiteArgs(
+  kind: "preset" | "suite" | undefined,
+  suite: string | undefined,
+): string | null {
+  if (kind === "suite" && !suite) {
+    return "--suite is required when kind is 'suite'";
+  }
+  if (kind !== "suite" && suite) {
+    return "--suite is only valid when kind is 'suite'";
+  }
+  return null;
+}
 
 function planAddArgs(args: AddArgs): AddPlan {
   const id = args.positional[0];
@@ -338,7 +370,27 @@ function planAddArgs(args: AddArgs): AddPlan {
   if (mode !== "auto" && mode !== "text" && mode !== "vision") {
     return { error: "--mode must be one of auto, text, vision" };
   }
-  return { input: { id, node, rel: args.rel, mode, intervalSeconds } };
+  const kind = args.kind ? (args.kind as "preset" | "suite") : undefined;
+  const suiteError = validateSuiteArgs(kind, args.suite);
+  if (suiteError) return { error: suiteError };
+  const input: {
+    id: string;
+    node: string;
+    rel: string;
+    mode: "auto" | "text" | "vision";
+    intervalSeconds: number;
+    kind?: "preset" | "suite";
+    suite?: string;
+  } = {
+    id,
+    node,
+    rel: args.rel,
+    mode,
+    intervalSeconds,
+  };
+  if (kind !== undefined) input.kind = kind;
+  if (args.suite !== undefined) input.suite = args.suite;
+  return { input };
 }
 
 function describeCallerError(err: unknown): string {

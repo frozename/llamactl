@@ -116,7 +116,8 @@ export function addSchedule(
   if (schedules.some((s) => s.id === entry.id)) {
     throw new Error(`schedule with id '${entry.id}' already exists`);
   }
-  return [...schedules, { ...entry, lastRunAt: null, lastError: null }];
+  const validated = BenchScheduleSchema.parse(entry);
+  return [...schedules, { ...validated, lastRunAt: null, lastError: null }];
 }
 
 export function removeSchedule(schedules: readonly BenchSchedule[], id: string): BenchSchedule[] {

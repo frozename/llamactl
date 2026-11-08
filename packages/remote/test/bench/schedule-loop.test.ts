@@ -611,4 +611,47 @@ describe("bench scheduler loop", () => {
     expect(rows.map((s) => s.id).sort()).toEqual(["stale-a", "stale-c"]);
     expect(rows.find((s) => s.id === "stale-c")!.lastRunAt).toBe("2000-01-01T00:00:00.000Z");
   });
+
+  test("a suite schedule dispatches runSuite on the second tick", async () => {
+    const suiteCalls: { scheduleId: string; suite: string; node: string; rel: string }[] = [];
+    const runSuite = (req: {
+      scheduleId: string;
+      suite: string;
+      node: string;
+      rel: string;
+    }): Promise<void> => {
+      suiteCalls.push(req);
+      return Promise.resolve();
+    };
+
+    saveSchedules([dueSchedule("suite-tick", { kind: "suite", suite: "my-suite" })], schedulePath);
+
+    // First tick (kick) should dispatch the suite schedule through runSuite
+    await kickBenchScheduler(autoCompleting().getClient, { runSuite });
+
+    expect(suiteCalls).toHaveLength(1);
+    expect(suiteCalls[0]!.scheduleId).toBe("suite-tick");
+    expect(suiteCalls[0]!.suite).toBe("my-suite");
+    expect(suiteCalls[0]!.node).toBe("fake-node");
+    expect(suiteCalls[0]!.rel).toBe("org/repo/suite-tick.gguf");
+
+    const entry = loadSchedules(schedulePath).find((s) => s.id === "suite-tick")!;
+    expect(entry.lastRunAt).not.toBe("2000-01-01T00:00:00.000Z");
+    expect(entry.lastError).toBeNull();
+  });
+
+  test("a suite schedule with no runner records an error", async () => {
+    saveSchedules(
+      [dueSchedule("suite-norun", { kind: "suite", suite: "missing-suite" })],
+      schedulePath,
+    );
+
+    await kickBenchScheduler(autoCompleting().getClient);
+
+    const entry = loadSchedules(schedulePath).find((s) => s.id === "suite-norun")!;
+    expect(entry.lastError).toBe("no suite runner configured for suite 'missing-suite'");
+    const recentEntry = recentFor("suite-norun");
+    expect(recentEntry?.ok).toBe(false);
+    expect(recentEntry?.message).toBe("no suite runner configured for suite 'missing-suite'");
+  });
 });
