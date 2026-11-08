@@ -185,7 +185,7 @@ function reapBinaryNames(
   declared: readonly string[] | undefined,
 ): readonly string[] | undefined {
   if (recorded !== undefined) {
-    return declared !== undefined ? [...new Set([...recorded, ...declared])] : recorded;
+    return recorded;
   }
   if (declared !== undefined) {
     return [...new Set([...ENGINE_BINARY_BASENAMES[engine], ...declared])];
