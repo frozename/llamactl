@@ -11,6 +11,7 @@ import {
   saveSchedules,
   updateSchedule,
 } from "../src/bench/schedule.js";
+import { router } from "../src/router.js";
 import { mkdtempSync, rmSync } from "../src/safe-fs.js";
 
 /**
@@ -103,5 +104,105 @@ describe("bench schedule store", () => {
 
     const disabled = { ...fresh, enabled: false };
     expect(isDue(disabled, now)).toBe(false);
+  });
+
+  test("a suite schedule round-trips through YAML with kind and suite", () => {
+    const path = makeScheduleFile();
+    const entry = {
+      id: "suite-s1",
+      node: "local",
+      rel: "org/repo/model-Q4.gguf",
+      mode: "auto" as const,
+      intervalSeconds: 86_400,
+      enabled: true,
+      kind: "suite" as const,
+      suite: "my-perf-suite",
+    };
+    saveSchedules(addSchedule([], entry), path);
+    const loaded = loadSchedules(path);
+    expect(loaded).toHaveLength(1);
+    expect(loaded[0]!.id).toBe("suite-s1");
+    expect(loaded[0]!.kind).toBe("suite");
+    expect(loaded[0]!.suite).toBe("my-perf-suite");
+  });
+
+  test("kind 'suite' without suite id is rejected", () => {
+    const entry = {
+      id: "suite-bad",
+      node: "local",
+      rel: "x/y.gguf",
+      mode: "auto" as const,
+      intervalSeconds: 3600,
+      enabled: true,
+      kind: "suite" as const,
+    } as BenchSchedule;
+    expect(() => addSchedule([], entry)).toThrow(/suite id is required/);
+  });
+
+  test("kind 'preset' with a suite id is rejected", () => {
+    const entry: BenchSchedule = {
+      id: "preset-bad",
+      node: "local",
+      rel: "x/y.gguf",
+      mode: "auto",
+      intervalSeconds: 3600,
+      enabled: true,
+      kind: "preset" as const,
+      suite: "some-suite",
+      lastRunAt: null,
+      lastError: null,
+    };
+    expect(() => addSchedule([], entry)).toThrow(/suite is only valid/);
+  });
+
+  test("benchScheduleAdd accepts kind and suite", async () => {
+    const path = makeScheduleFile();
+    const previous = process.env["LLAMACTL_BENCH_SCHEDULES"];
+    process.env["LLAMACTL_BENCH_SCHEDULES"] = path;
+    try {
+      const caller = router.createCaller({});
+      const result = await caller.benchScheduleAdd({
+        id: "router-suite",
+        node: "local",
+        rel: "org/repo/model.gguf",
+        intervalSeconds: 3600,
+        kind: "suite",
+        suite: "perf-regression",
+      });
+      expect(result).toHaveLength(1);
+      expect(result[0]!.id).toBe("router-suite");
+      expect(result[0]!.kind).toBe("suite");
+      expect(result[0]!.suite).toBe("perf-regression");
+    } finally {
+      if (previous === undefined) delete process.env["LLAMACTL_BENCH_SCHEDULES"];
+      else process.env["LLAMACTL_BENCH_SCHEDULES"] = previous;
+      if (tmp) rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("benchScheduleAdd rejects kind 'suite' without suite id", async () => {
+    const path = makeScheduleFile();
+    const previous = process.env["LLAMACTL_BENCH_SCHEDULES"];
+    process.env["LLAMACTL_BENCH_SCHEDULES"] = path;
+    try {
+      const caller = router.createCaller({});
+      try {
+        await caller.benchScheduleAdd({
+          id: "suite-no-id",
+          node: "local",
+          rel: "x/y.gguf",
+          intervalSeconds: 3600,
+          kind: "suite",
+        });
+        expect.unreachable("should have rejected");
+      } catch (err) {
+        const msg = (err as Error).message;
+        expect(msg).toContain("suite id is required");
+      }
+    } finally {
+      if (previous === undefined) delete process.env["LLAMACTL_BENCH_SCHEDULES"];
+      else process.env["LLAMACTL_BENCH_SCHEDULES"] = previous;
+      if (tmp) rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });

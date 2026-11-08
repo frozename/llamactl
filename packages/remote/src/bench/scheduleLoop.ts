@@ -8,6 +8,7 @@ import {
   isDue,
   loadSchedules,
   recordRunOutcome,
+  scheduleKind,
 } from "./schedule.js";
 
 /**
@@ -18,6 +19,12 @@ import {
  * bench doesn't cascade into overlapping model loads on the same
  * GPU. Users who need richer scheduling can run `llamactl bench run`
  * from a cron of their own.
+ *
+ * A schedule carrying `kind: "suite"` dispatches a named perf suite
+ * through an injected runner (`runSuite`). The runner is the seam for
+ * the F-2 perf runner (`packages/eval/src/perf/runner.ts`). The
+ * scheduler never resolves a suite id itself: an unknown id is the
+ * runner's to reject, and the rejection lands in `lastError`.
  *
  * Two cross-process invariants make `llamactl bench schedule run` +
  * `kick` + `rm` safe next to each other (and next to this module's
@@ -39,6 +46,15 @@ import {
  *   running nor in flight — including a `kick` tick that outlives a
  *   `stop`.
  */
+
+export interface BenchSuiteRequest {
+  scheduleId: string;
+  suite: string;
+  node: string;
+  rel: string;
+}
+
+export type BenchSuiteRunner = (req: BenchSuiteRequest) => Promise<void>;
 
 type SubscribeCallbacks = {
   onData: (e: unknown) => void;
@@ -183,10 +199,13 @@ function releaseRunLockIfIdle(): void {
   if (!state.running && !state.inflight) releaseRunLock();
 }
 
-function schedule(getClient: (nodeName: string) => BenchClient): void {
+function schedule(
+  getClient: (nodeName: string) => BenchClient,
+  runSuite: BenchSuiteRunner | undefined,
+): void {
   if (!state.running) return;
   state.timer = setTimeout(() => {
-    void tick(getClient, { forLoop: true });
+    void tick(getClient, { forLoop: true }, runSuite);
   }, state.tickIntervalMs);
 }
 
@@ -232,11 +251,23 @@ interface RunOutcome {
 async function runWithOutcome(
   schedule: BenchSchedule,
   getClient: (nodeName: string) => BenchClient,
+  runSuite: BenchSuiteRunner | undefined,
 ): Promise<RunOutcome> {
   const ts = new Date().toISOString();
   const lastRunAt = new Date().toISOString();
   try {
-    await runOne(schedule, getClient(schedule.node));
+    if (scheduleKind(schedule) === "suite") {
+      const suite = schedule.suite ?? "";
+      if (runSuite === undefined) {
+        throw new Error(`no suite runner configured for suite '${suite}'`);
+      }
+      await runSuiteWithCap(
+        { scheduleId: schedule.id, suite, node: schedule.node, rel: schedule.rel },
+        runSuite,
+      );
+    } else {
+      await runOne(schedule, getClient(schedule.node));
+    }
     return {
       entry: { ts, id: schedule.id, rel: schedule.rel, node: schedule.node, ok: true },
       patch: { lastRunAt, lastError: null },
@@ -257,9 +288,28 @@ async function runWithOutcome(
   }
 }
 
+function runSuiteWithCap(req: BenchSuiteRequest, runSuite: BenchSuiteRunner): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error("bench run timed out after 15m"));
+    }, 15 * 60_000);
+    runSuite(req).then(
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+      (err: unknown) => {
+        clearTimeout(timer);
+        reject(err instanceof Error ? err : new Error(String(err)));
+      },
+    );
+  });
+}
+
 async function tick(
   getClient: (nodeName: string) => BenchClient,
   opts: { forLoop: boolean },
+  runSuite: BenchSuiteRunner | undefined,
 ): Promise<void> {
   if (state.inflight) return;
   state.inflight = true;
@@ -276,26 +326,27 @@ async function tick(
       // the time the loop reaches this entry, so re-check the store.
       const fresh = loadSchedules(path).find((entry) => entry.id === s.id);
       if (fresh === undefined || !isDue(fresh, now)) continue;
-      const outcome = await runWithOutcome(fresh, getClient);
+      const outcome = await runWithOutcome(fresh, getClient, runSuite);
       recordRunOutcome(path, fresh.id, outcome.patch);
       state.recent = [...state.recent, outcome.entry].slice(-200);
     }
   } finally {
     state.inflight = false;
     releaseRunLockIfIdle();
-    schedule(getClient);
+    schedule(getClient, runSuite);
   }
 }
 
 export function startBenchScheduler(opts: {
   getClient: (nodeName: string) => BenchClient;
   tickIntervalMs?: number;
+  runSuite?: BenchSuiteRunner;
 }): void {
   if (state.running) return;
   acquireRunLock();
   state.running = true;
   state.tickIntervalMs = opts.tickIntervalMs ?? 60_000;
-  void tick(opts.getClient, { forLoop: true });
+  void tick(opts.getClient, { forLoop: true }, opts.runSuite);
 }
 
 export function stopBenchScheduler(): void {
@@ -312,10 +363,11 @@ export function stopBenchScheduler(): void {
 
 export async function kickBenchScheduler(
   getClient: (nodeName: string) => BenchClient,
+  opts: { runSuite?: BenchSuiteRunner } = {},
 ): Promise<void> {
   acquireRunLock();
   try {
-    await tick(getClient, { forLoop: false });
+    await tick(getClient, { forLoop: false }, opts.runSuite);
   } finally {
     releaseRunLockIfIdle();
   }
