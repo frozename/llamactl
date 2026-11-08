@@ -1,3 +1,8 @@
+import type {
+  ManagedAdmissionClaim,
+  ManagedAdmissionDecision,
+} from "@llamactl/core/residency/admission";
+
 import { resolveEnv } from "@llamactl/core/env";
 import { expect, test } from "bun:test";
 import { tmpdir, totalmem } from "node:os";
@@ -11,6 +16,7 @@ import { mkdirSync, mkdtempSync, rmSync, truncateSync, writeFileSync } from "../
 import {
   type AdmissionInput,
   computeNodeBudget,
+  createTargetAdmissionAuthority,
   declaredModelHostMemoryGiB,
   defaultNodeBudgetGiB,
   estimateModelHostMemoryGiB,
@@ -604,6 +610,53 @@ test("listAnyWorkloadsForAdmission charges residentGiB for ModelHost incumbents"
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
+});
+
+test("E-1: tryClaim charges living claims with the ledger, deduplicated by runtimeKey", () => {
+  const authority = createTargetAdmissionAuthority();
+  const living: ManagedAdmissionClaim[] = [
+    {
+      claimId: "store:x",
+      runtimeKey: "x",
+      specDigest: "d-x",
+      state: "resident",
+      allocationGiB: 8,
+      kind: "ModelRun",
+    },
+  ];
+  const claim = (
+    runtimeKey: string,
+    budgetGiB: number,
+    extraLiving: ManagedAdmissionClaim[] = [],
+  ): ManagedAdmissionDecision =>
+    authority.tryClaim({
+      targetIdentity: "t",
+      runtimeKey,
+      specDigest: `d-${runtimeKey}`,
+      kind: "ModelRun",
+      allocationGiB: 8,
+      budgetGiB,
+      living: [...living, ...extraLiving],
+    }).decision;
+
+  // 8 GiB living + 8 GiB incoming on a 12 GiB budget refuses.
+  expect(claim("a", 12)).toMatchObject({ kind: "refuse", reason: "BudgetExceeded" });
+  // On 16 GiB it admits and charges living + incoming = 16.
+  expect(claim("a", 16)).toMatchObject({ kind: "admit", committedGiB: 16 });
+  // The admitted "a" stays pending in the ledger: living x(8) + pending a(8)
+  // + incoming b(8) = 24 > 20 refuses even though each pair would fit.
+  expect(claim("b", 20)).toMatchObject({ kind: "refuse", reason: "BudgetExceeded" });
+  // A living projection of "a" must not double-charge the ledger claim:
+  // deduplicated, x(8) + a(8) + incoming c(8) = 24 <= 28 admits.
+  const dup: ManagedAdmissionClaim = {
+    claimId: "store:a",
+    runtimeKey: "a",
+    specDigest: "d-a",
+    state: "resident",
+    allocationGiB: 8,
+    kind: "ModelRun",
+  };
+  expect(claim("c", 28, [dup])).toMatchObject({ kind: "admit", committedGiB: 24 });
 });
 
 test("two resident-declared hosts cannot both be admitted on a 32 GiB node", () => {

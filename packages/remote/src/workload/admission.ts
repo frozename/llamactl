@@ -308,6 +308,9 @@ export interface TargetAdmissionAuthority {
     kind: ManagedWorkloadKind;
     allocationGiB: number | undefined;
     budgetGiB: number | undefined;
+    /** Committed (living) reservations already charged against the
+     *  target, merged with the pending ledger for evaluation. */
+    living?: readonly ManagedAdmissionClaim[];
   }): { decision: ManagedAdmissionDecision; handle: TargetAdmissionClaimHandle | null };
   snapshot(targetIdentity: string): readonly ManagedAdmissionClaim[];
 }
@@ -329,9 +332,20 @@ export function createTargetAdmissionAuthority(): TargetAdmissionAuthority {
         list = [];
         claimsByTarget.set(input.targetIdentity, list);
       }
+      // The ledger must charge committed manifests together with pending
+      // claims, deduplicated by runtimeKey so one workload is never
+      // charged twice. Ledger claims come first: an in-flight pending or
+      // resident claim keeps its state over the store-derived projection.
+      const seenRuntimeKeys = new Set<string>();
+      const claims: ManagedAdmissionClaim[] = [];
+      for (const c of [...list, ...(input.living ?? [])]) {
+        if (seenRuntimeKeys.has(c.runtimeKey)) continue;
+        seenRuntimeKeys.add(c.runtimeKey);
+        claims.push(c);
+      }
       const decision = evaluateManagedAdmission({
         budgetGiB: input.budgetGiB,
-        claims: list,
+        claims,
         incoming: {
           runtimeKey: input.runtimeKey,
           specDigest: input.specDigest,

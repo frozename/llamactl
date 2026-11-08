@@ -1467,3 +1467,167 @@ test("E-1: resident claims are absorbing in this slice (pins the deferred-replac
     rmSync(workloadsDir, { recursive: true, force: true });
   }
 });
+
+test("E-1: committed manifests charge the target ledger so two aliases admit exactly one load", async () => {
+  const make = (remoteAdmission as Partial<typeof remoteAdmission>).createTargetAdmissionAuthority;
+  const targetAdmission: TargetAdmissionAuthority | undefined = make?.();
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-e1-living-"));
+  const starts: string[] = [];
+  const held: ServerStartCallbacks[] = [];
+  const client: WorkloadClient = {
+    ...makeClient(new Map<string, WorkloadState>()),
+    serverStart: {
+      subscribe: (input, callbacks): UnsubscribableLike => {
+        starts.push(input.workload);
+        held.push(callbacks);
+        return { unsubscribe: () => undefined };
+      },
+    },
+  };
+  const opts = {
+    workloadsDir,
+    getNodeBudgetGiB: (): number => 20,
+    listManifests: (): ModelRun[] => [mkManifest("resident", { ram: 8, node: "mac-mini.local" })],
+    resolveNodeIdentity: (n: string): string | null =>
+      n === "mac-mini" || n === "mac-mini.local" ? "mac-mini" : null,
+    ...(targetAdmission ? { targetAdmission } : {}),
+  };
+  const settled: { name: string; result?: ApplyResult; error?: unknown }[] = [];
+  const pa = applyOne(
+    mkManifest("a", { port: 8090, ram: 8, node: "mac-mini" }),
+    () => client,
+    undefined,
+    undefined,
+    opts,
+  );
+  const pb = applyOne(
+    mkManifest("b", { port: 8091, ram: 8, node: "mac-mini.local" }),
+    () => client,
+    undefined,
+    undefined,
+    opts,
+  );
+  void pa.then(
+    (result) => settled.push({ name: "a", result }),
+    (error: unknown) => settled.push({ name: "a", error }),
+  );
+  void pb.then(
+    (result) => settled.push({ name: "b", result }),
+    (error: unknown) => settled.push({ name: "b", error }),
+  );
+  let startsAtPeak: string[] = [];
+  try {
+    const deadline = Date.now() + 2000;
+    while (Date.now() < deadline && starts.length < 1 && settled.length === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    startsAtPeak = [...starts];
+  } finally {
+    for (const callbacks of held) {
+      callbacks.onData({
+        type: "done",
+        result: { ok: true, pid: 100, endpoint: "http://127.0.0.1:8181" },
+      });
+      callbacks.onComplete();
+    }
+    await Promise.allSettled([pa, pb]);
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+  // 8 GiB living + the winner's 8 GiB pending claim leaves no room for the
+  // second 8 GiB load: 8 + 8 + 8 > 20 GiB.
+  expect(startsAtPeak).toHaveLength(1);
+  expect(settled.filter((s) => s.result?.action === "started")).toHaveLength(1);
+  const pendingEntry = settled.find((s) => s.result?.action === "pending");
+  expect(pendingEntry).toBeDefined();
+  expect(startsAtPeak).not.toContain(pendingEntry!.name);
+  expect(pendingEntry!.result!.statusSection.phase).toBe("Failed");
+  expect(pendingEntry!.result!.statusSection.conditions[0]?.reason).toBe("BudgetExceeded");
+  expect(pendingEntry!.result!.error).toContain("mac-mini");
+  const snapshot = targetAdmission!.snapshot("mac-mini");
+  expect(snapshot).toHaveLength(1);
+  expect(snapshot[0]?.state).toBe("resident");
+  expect(snapshot[0]?.allocationGiB).toBe(8);
+});
+
+test("E-1: a worker-start failure releases the target claim so a later load can use the capacity", async () => {
+  const make = (remoteAdmission as Partial<typeof remoteAdmission>).createTargetAdmissionAuthority;
+  const targetAdmission: TargetAdmissionAuthority | undefined = make?.();
+  const state: WorkloadStateMap = new Map();
+  const base = makeClient(state);
+  const client: WorkloadClient = {
+    ...base,
+    rpcServerStart: {
+      subscribe: (_input, callbacks): { unsubscribe: () => undefined } => {
+        queueMicrotask(() => {
+          callbacks.onData({ type: "done", result: { ok: false, error: "rpc boom" } });
+          callbacks.onComplete();
+        });
+        return { unsubscribe: () => undefined };
+      },
+    },
+  };
+  const workerManifest = mkManifest("w", { ram: 8 });
+  workerManifest.spec.workers = [
+    { node: "w1", rpcHost: "127.0.0.1", rpcPort: 5001, extraArgs: [], timeoutSeconds: 5 },
+  ];
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-e1-workerfail-"));
+  try {
+    const opts = {
+      workloadsDir,
+      getNodeBudgetGiB: (): number => 12,
+      listManifests: (): ModelRun[] => [],
+      ...(targetAdmission ? { targetAdmission } : {}),
+    };
+    const failed = await applyOne(workerManifest, () => client, undefined, undefined, opts);
+    expect(failed.statusSection.phase).toBe("Failed");
+    expect(failed.error).toContain("worker w1");
+    expect(state.has("w")).toBe(false);
+    expect(targetAdmission?.snapshot("local")).toEqual([]);
+
+    const later = await applyOne(
+      mkManifest("x", { port: 8090, ram: 8 }),
+      () => client,
+      undefined,
+      undefined,
+      opts,
+    );
+    expect(later.action).toBe("started");
+    expect(state.has("x")).toBe(true);
+    expect(targetAdmission?.snapshot("local")).toHaveLength(1);
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("E-1: a no-op apply of a matching running server bypasses the target ledger", async () => {
+  const make = (remoteAdmission as Partial<typeof remoteAdmission>).createTargetAdmissionAuthority;
+  const targetAdmission: TargetAdmissionAuthority | undefined = make?.();
+  const state: WorkloadStateMap = new Map();
+  const { client, starts } = makeRecordingClient(state);
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-e1-noop-"));
+  try {
+    const opts = {
+      workloadsDir,
+      getNodeBudgetGiB: (): number => 20,
+      listManifests: (): ModelRun[] => [],
+      ...(targetAdmission ? { targetAdmission } : {}),
+    };
+    const manifest = mkManifest("a", { ram: 8 });
+    const first = await applyOne(manifest, () => client, undefined, undefined, opts);
+    expect(first.action).toBe("started");
+    expect(targetAdmission?.snapshot("local")).toHaveLength(1);
+
+    // The resident claim would answer already-resident if the ledger were
+    // consulted; the matching-server bypass must keep this a no-op.
+    const second = await applyOne(manifest, () => client, undefined, undefined, opts);
+    expect(second.action).toBe("unchanged");
+    expect(second.statusSection.phase).toBe("Running");
+    expect(second.statusSection.serverPid).toBe(1);
+    expect(second.error).toBeUndefined();
+    expect(starts).toEqual(["a"]);
+    expect(targetAdmission?.snapshot("local")).toHaveLength(1);
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});

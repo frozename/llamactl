@@ -1,4 +1,7 @@
-import type { ManagedAdmissionDecision } from "@llamactl/core/residency/admission";
+import type {
+  ManagedAdmissionClaim,
+  ManagedAdmissionDecision,
+} from "@llamactl/core/residency/admission";
 import type { spawn as nodeSpawn } from "node:child_process";
 
 import { server as serverMod, target as targetMod } from "@llamactl/core";
@@ -331,6 +334,26 @@ async function resolveDesiredRel(
 
   const local = targetMod.resolveTarget(target.value);
   return local ?? target.value;
+}
+
+/**
+ * The coordinator's effective extraArgs: user args plus the --rpc flag
+ * when this workload has workers. The server.rel / extraArgs comparison
+ * uses the composed form so a diff between "with --rpc" and "without"
+ * triggers a restart.
+ */
+function desiredArgsFor(manifest: ModelRun): string[] {
+  const workers = manifest.spec.workers;
+  if (workers.length === 0) return manifest.spec.extraArgs;
+  return [
+    ...manifest.spec.extraArgs,
+    "--rpc",
+    workers.map((w) => `${w.rpcHost}:${String(w.rpcPort)}`).join(","),
+  ];
+}
+
+function specDigestFor(manifest: ModelRun, desiredArgs: readonly string[]): string {
+  return JSON.stringify([manifest.spec.target.kind, manifest.spec.target.value, desiredArgs]);
 }
 
 function normalizeLoopbackHost(host: string | undefined): string {
@@ -873,7 +896,10 @@ interface ApplyOneOpts {
   /** Opt-in target-owned pending admission (DF-01 #274, E-1 slice).
    *  Inactive unless supplied. Not wired into the router, reconciler,
    *  CLI or ModelHost paths — only a caller that passes an authority
-   *  explicitly gets claim evaluation. LIMITATION: resident and
+   *  explicitly gets claim evaluation. The ledger charges the living
+   *  manifests from the same admission set as resident claims, so
+   *  committed capacity counts against the target budget alongside
+   *  pending claims. LIMITATION: resident and
    *  uncertain claims are absorbing until the "admission before
    *  destructive replacement with verified release" gate lands, so
    *  under this option a crashed or reconfigured runtimeKey is refused
@@ -1328,7 +1354,12 @@ function preservedRunningWithBudgetRefusal(
 }
 
 async function admitServerBudget(ctx: ConvergeServerContext): Promise<
-  | { ok: true; adm: Extract<AdmissionResult, { ok: true }>; verified: Set<string> }
+  | {
+      ok: true;
+      adm: Extract<AdmissionResult, { ok: true }>;
+      verified: Set<string>;
+      living: ModelRun[];
+    }
   | {
       ok: false;
       adm?: Extract<AdmissionResult, { ok: false }>;
@@ -1373,7 +1404,7 @@ async function admitServerBudget(ctx: ConvergeServerContext): Promise<
   if (!adm.ok) {
     return { ok: false, adm, result: admissionFailureResult(adm, now) };
   }
-  return { ok: true, adm, verified };
+  return { ok: true, adm, verified, living };
 }
 
 function failedApplyResult(action: ApplyAction, error: string, when: string): ApplyResult {
@@ -1555,22 +1586,31 @@ type TargetClaim =
 function claimTargetAdmission(
   ctx: ConvergeServerContext,
   adm: Extract<AdmissionResult, { ok: true }>,
+  living: readonly ModelRun[],
 ): TargetClaim {
   const targetAdmission = ctx.opts?.targetAdmission;
   if (!targetAdmission || ctx.matches) return { kind: "inactive" };
   const { manifest, desiredArgs, now } = ctx;
   const targetIdentity = ctx.opts?.resolveNodeIdentity?.(manifest.spec.node) ?? manifest.spec.node;
+  // The ledger charges committed manifests together with pending claims:
+  // the same living set the finite-budget check saw is projected into
+  // resident claims so concurrent applies cannot both fit one target.
+  const livingClaims: ManagedAdmissionClaim[] = living.map((m) => ({
+    claimId: `store:${m.metadata.name}`,
+    runtimeKey: m.metadata.name,
+    specDigest: specDigestFor(m, desiredArgsFor(m)),
+    state: "resident",
+    allocationGiB: m.spec.resources?.expectedMemoryGiB,
+    kind: "ModelRun",
+  }));
   const { decision, handle } = targetAdmission.tryClaim({
     targetIdentity,
     runtimeKey: manifest.metadata.name,
-    specDigest: JSON.stringify([
-      manifest.spec.target.kind,
-      manifest.spec.target.value,
-      desiredArgs,
-    ]),
+    specDigest: specDigestFor(manifest, desiredArgs),
     kind: "ModelRun",
     allocationGiB: manifest.spec.resources?.expectedMemoryGiB,
     budgetGiB: adm.budget ?? undefined,
+    living: livingClaims,
   });
   if (decision.kind === "admit") return { kind: "claimed", handle };
   return {
@@ -1707,11 +1747,12 @@ async function convergeServerUnderLock(ctx: ConvergeServerContext): Promise<Appl
   if (!admission.ok) return admissionRejection(ctx, admission);
   const adm = admission.adm;
   const verified = admission.verified;
+  const living = admission.living;
 
   const bindRefusal = refuseHostBindBeforeTeardown(ctx);
   if (bindRefusal !== null) return bindRefusal;
 
-  const claim = claimTargetAdmission(ctx, adm);
+  const claim = claimTargetAdmission(ctx, adm, living);
   if (claim.kind === "refused") return claim.result;
   const handle = claim.kind === "claimed" ? claim.handle : null;
 
@@ -1775,19 +1816,7 @@ export async function applyOne(
 
   const desiredRel = await resolveDesiredRel(manifest.spec.target, client);
   const desiredEndpoint = manifest.spec.endpoint;
-  // Compose the effective extraArgs: user args + the --rpc flag if
-  // this workload has workers. The coordinator's server.rel /
-  // extraArgs comparison below uses the composed form so a diff
-  // between "with --rpc" and "without" triggers a restart.
-  let effectiveExtraArgs: string[] = manifest.spec.extraArgs;
-  const workers = manifest.spec.workers;
-
-  let rpcFlag: string[] = [];
-  if (workers.length > 0) {
-    rpcFlag = ["--rpc", workers.map((w) => `${w.rpcHost}:${String(w.rpcPort)}`).join(",")];
-    effectiveExtraArgs = [...manifest.spec.extraArgs, ...rpcFlag];
-  }
-  const desiredArgs = effectiveExtraArgs;
+  const desiredArgs = desiredArgsFor(manifest);
   const liveRel = status.rel;
   const liveArgs = status.extraArgs;
   const running = status.state === "up";
