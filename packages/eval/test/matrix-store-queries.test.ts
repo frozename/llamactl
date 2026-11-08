@@ -498,4 +498,94 @@ describe("perf_runs", () => {
     expect(rows[0]!.provenance.engine).toBe("llamacpp");
     expect(rows[0]!.provenance.engine_version).toBe("3000");
   });
+
+  test("upsert from ok to unavailable replaces status, reason, started_at and host_machine", () => {
+    store.insertPerfRun(
+      db,
+      perfRow({
+        metric: { value: 42, status: "ok" },
+        started_at: "2025-01-01T00:00:00Z",
+        host_machine: "z13",
+      }),
+    );
+    store.insertPerfRun(
+      db,
+      perfRow({
+        metric: { value: null, status: "unavailable", reason: "no acceptance data" },
+        started_at: "2025-02-02T00:00:00Z",
+        host_machine: "macbook",
+      }),
+    );
+
+    const rows = store.listPerfRuns(db);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.metric).toEqual({
+      value: null,
+      status: "unavailable",
+      reason: "no acceptance data",
+    });
+    expect(rows[0]!.started_at).toBe("2025-02-02T00:00:00Z");
+    expect(rows[0]!.host_machine).toBe("macbook");
+
+    const raw = db
+      .query(
+        `SELECT metric_value, metric_status, metric_reason, started_at, host_machine FROM perf_runs`,
+      )
+      .get() as {
+      metric_value: number | null;
+      metric_status: string;
+      metric_reason: string | null;
+      started_at: string;
+      host_machine: string;
+    } | null;
+    expect(raw).not.toBeNull();
+    expect(raw!.metric_value).toBeNull();
+    expect(raw!.metric_status).toBe("unavailable");
+    expect(raw!.metric_reason).toBe("no acceptance data");
+    expect(raw!.started_at).toBe("2025-02-02T00:00:00Z");
+    expect(raw!.host_machine).toBe("macbook");
+  });
+
+  test("upsert from unavailable to ok clears the reason and replaces started_at and host_machine", () => {
+    store.insertPerfRun(
+      db,
+      perfRow({
+        metric: { value: null, status: "unavailable", reason: "no acceptance data" },
+        started_at: "2025-01-01T00:00:00Z",
+        host_machine: "z13",
+      }),
+    );
+    store.insertPerfRun(
+      db,
+      perfRow({
+        metric: { value: 42, status: "ok" },
+        started_at: "2025-02-02T00:00:00Z",
+        host_machine: "macbook",
+      }),
+    );
+
+    const rows = store.listPerfRuns(db);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.metric).toEqual({ value: 42, status: "ok" });
+    expect(rows[0]!.started_at).toBe("2025-02-02T00:00:00Z");
+    expect(rows[0]!.host_machine).toBe("macbook");
+
+    const raw = db
+      .query(
+        `SELECT metric_value, metric_status, metric_reason, started_at, host_machine FROM perf_runs`,
+      )
+      .get() as {
+      metric_value: number | null;
+      metric_status: string;
+      metric_reason: string | null;
+      started_at: string;
+      host_machine: string;
+    } | null;
+    expect(raw).not.toBeNull();
+    expect(raw!.metric_value).toBe(42);
+    expect(raw!.metric_status).toBe("ok");
+    expect(raw!.metric_reason).toBeNull();
+    expect(raw!.started_at).toBe("2025-02-02T00:00:00Z");
+    expect(raw!.host_machine).toBe("macbook");
+  });
 });
