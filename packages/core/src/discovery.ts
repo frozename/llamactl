@@ -4,6 +4,7 @@ import type { MachineProfile, ModelClass, ResolvedEnv } from "./types.js";
 import {
   type CuratedStatus,
   curatedStatusForRepoFile,
+  findByRepoFile,
   relFromRepoAndFile,
   repoKnown,
 } from "./catalog.js";
@@ -92,7 +93,8 @@ export function profileForDiscovery(
  * Classify a repo into {multimodal, reasoning, general}. Mirrors
  * `_llama_discovery_classify_repo`: pipeline_tag=image-text-to-text
  * short-circuits to multimodal; otherwise tag substrings or repo-name
- * heuristics decide. Matching is case-insensitive everywhere.
+ * heuristics decide. Matching is case-insensitive everywhere. The
+ * glm-5 repo hint (#515) has no counterpart in the shell helper yet.
  */
 export function classifyRepo(repo: string, pipeline: string, tags: string): ModelClass {
   const repoL = repo.toLowerCase();
@@ -108,6 +110,7 @@ export function classifyRepo(repo: string, pipeline: string, tags: string): Mode
     tagsL.includes("reasoning") ||
     tagsL.includes("thinking") ||
     repoL.includes("deepseek") ||
+    repoL.includes("glm-5") ||
     repoL.includes("qwq") ||
     repoL.includes("qwen") ||
     repoL.includes("r1")
@@ -307,10 +310,20 @@ function applyRepoQuantOverrides(
 }
 
 /**
- * Final fit heuristic. Combines (a) size-tier classification when the
- * repo tree yielded a real byte count, (b) a quant-pattern fallback
- * when we can't compute bytes, (c) per-profile repo overrides, and
- * (d) a hard clamp on known-too-big multimodal/deepseek families.
+ * Final fit heuristic. Catalog-declared resident memory beats the tree
+ * probe: when a catalog row for this (repo, file) declares
+ * `memory.residentGiB`, the fit is that number's size tier with only the
+ * family-wide "poor" ceilings applied (see `applyDeclaredFit`). No byte
+ * estimate is used, and no override that would improve the fit applies,
+ * including quant-name upgrades and the deepseek reasoning clamp path,
+ * because the declared memory takes priority.
+ * Otherwise combines (a) size-tier classification when the repo tree
+ * yielded a real byte count, (b) a quant-pattern fallback when we can't
+ * compute bytes, (c) per-profile repo overrides, and (d) a hard clamp
+ * on known-too-big multimodal/deepseek families. The deepseek-v4 clamp
+ * matches whole versions only (#515), so v4.1 and other v4.x releases
+ * are no longer swallowed; deepseek-v3 and the multimodal 72b/70b
+ * clamps are unchanged.
  */
 export async function discoveryFit(
   profile: MachineProfile,
@@ -320,6 +333,12 @@ export async function discoveryFit(
 ): Promise<DiscoveryFit> {
   if (!file) return "unknown";
 
+  const repoL = repo.toLowerCase();
+  const declared = findByRepoFile(repo, file)?.memory?.residentGiB;
+  if (typeof declared === "number") {
+    return applyDeclaredFit(sizeFit(declared, profile), profile, repoL);
+  }
+
   let fit: DiscoveryFit = "unknown";
   const bytes = await estimatedBytes(repo, file, klass);
   if (bytes !== null) {
@@ -328,11 +347,11 @@ export async function discoveryFit(
     fit = quantFallbackFit(file);
   }
 
-  const repoL = repo.toLowerCase();
   fit = applyRepoQuantOverrides(fit, profile, repoL, file);
 
   if (
-    (klass === "reasoning" && (repoL.includes("deepseek-v3") || repoL.includes("deepseek-v4"))) ||
+    (klass === "reasoning" &&
+      (repoL.includes("deepseek-v3") || /deepseek-v4(?![.\d])/.test(repoL))) ||
     (klass === "multimodal" && (repoL.includes("72b") || repoL.includes("70b")))
   ) {
     fit = "poor";
@@ -465,6 +484,34 @@ async function buildDiscoveryRow(
     estimatedSize: humanSize(bytes),
     visionStatus: resolveVisionStatus(klass, mmproj),
   };
+}
+
+/**
+ * Fit for a catalog row that declares `memory.residentGiB` (#515).
+ * Declared memory is the true resident footprint, so it wins over every
+ * quant-name heuristic: no override that would improve the size-tier fit
+ * (Q4_K_M → 'good'/'excellent' and similar) is applied. Only the
+ * family-wide "poor" ceilings for macbook-pro-48g and large-128g
+ * (671b/405b, plus 123b/120b on 48g) still apply, because they encode a
+ * hardware limit rather than a quant guess. On mac-mini-16g and balanced
+ * the size tier is used as-is: the v3|v4 and 70b+ clamps from
+ * `applyRepoQuantOverrides` are deliberately dropped there, since the
+ * declared size tier already rates such models poor on those profiles.
+ */
+function applyDeclaredFit(
+  base: DiscoveryFit,
+  profile: MachineProfile,
+  repoL: string,
+): DiscoveryFit {
+  switch (profile) {
+    case "macbook-pro-48g":
+      return /671b|405b|123b|120b/.test(repoL) ? "poor" : base;
+    case "large-128g":
+      return /671b|405b/.test(repoL) ? "poor" : base;
+    case "mac-mini-16g":
+    case "balanced":
+      return base;
+  }
 }
 
 /**
