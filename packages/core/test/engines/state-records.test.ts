@@ -76,6 +76,18 @@ describe("starting record", () => {
     expect(readModelHostStarting(KEY, env)).toEqual(record);
   });
 
+  test("readModelHostStarting roundtrips a libosmos starting record", () => {
+    const record: ModelHostStartingState = {
+      kind: "ModelHostStarting",
+      engine: "libosmos",
+      pid: 4242,
+      startedAt: "2026-05-19T00:00:00Z",
+      specHash: "h1",
+    };
+    writeModelHostStarting(record, KEY, env);
+    expect(readModelHostStarting(KEY, env)).toEqual(record);
+  });
+
   test.each(["llamacpp", "omlx", "strata"] as const)(
     "readModelHostStarting roundtrips a %s starting record",
     (engine) => {
@@ -320,5 +332,25 @@ describe("computeModelHostSpecHash", () => {
     );
     const withBinaryNames = { ...BASE_SPEC, binaryNames: ["x"] };
     expect(computeModelHostSpecHash(withBinaryNames)).toBe(computeModelHostSpecHash(BASE_SPEC));
+  });
+
+  // GUARD (#557 S3): the production Gufo llamacpp spec must keep hashing
+  // byte-identically — the libosmos change must not perturb the hash shape.
+  test("hashes a production Gufo llamacpp spec byte-identically", () => {
+    expect(
+      computeModelHostSpecHash({
+        engine: "llamacpp",
+        binary: "/home/alex/strix-halo-bench/gufo/bin/llama-server-fork-pristine",
+        endpoint: { host: "127.0.0.1", port: 8080 },
+        hostedModels: [{ rel: "Qwen3.8-Flash-Next-GGUF/Qwen3.8-Flash-Next-Q4_K_M.gguf" }],
+        extraArgs: ["--served-model-name", "Qwen3.8-Flash-Next-Q4_K_M.gguf", "--context", "131072"],
+        resources: { expectedMemoryGiB: 60 },
+        restartPolicy: "Always",
+        timeoutSeconds: 600,
+        env: { ROCBLAS_USE_HIPBLASLT: "1" },
+      }),
+    ).toBe(
+      '{"engine":"llamacpp","binary":"/home/alex/strix-halo-bench/gufo/bin/llama-server-fork-pristine","endpoint":{"host":"127.0.0.1","port":8080},"hostedModels":[{"rel":"Qwen3.8-Flash-Next-GGUF/Qwen3.8-Flash-Next-Q4_K_M.gguf"}],"extraArgs":["--served-model-name","Qwen3.8-Flash-Next-Q4_K_M.gguf","--context","131072"],"resources":{"expectedMemoryGiB":60},"restartPolicy":"Always","timeoutSeconds":600,"env":{"ROCBLAS_USE_HIPBLASLT":"1"}}',
+    );
   });
 });

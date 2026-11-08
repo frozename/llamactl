@@ -1471,6 +1471,80 @@ describe("server/modelhost", () => {
     }
   });
 
+  test("stopModelHost corroborates a libosmos pid against the osmos-api argv0", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-libosmos-"));
+    const runtimeDir = join(tmp, "runtime");
+    const hostDir = join(runtimeDir, "workloads", "libosmos-host-server");
+    mkdirSync(hostDir, { recursive: true });
+    const seedLibosmosSidecar = (pid: number): void => {
+      writeFileSync(join(hostDir, "modelhost.pid"), `${String(pid)}\n`);
+      writeFileSync(
+        join(hostDir, "modelhost.state"),
+        JSON.stringify({
+          kind: "ModelHost",
+          engine: "libosmos",
+          pid,
+          host: "127.0.0.1",
+          port: 8084,
+          modelAliases: ["DeepSeek-V4.1-Flash-1017-UD-IQ1_M-00001-of-00005.gguf"],
+          startedAt: new Date().toISOString(),
+        }),
+      );
+    };
+
+    // A live osmos-api argv0 corroborates the libosmos identity map, so
+    // teardown runs; a llama-server argv0 against the same libosmos record
+    // is a command mismatch (unknown identity) and must NOT be torn down.
+    const matched = spawnImpostor("/bin/sleep", ["60"], {
+      stdio: "ignore",
+      argv0: "osmos-api",
+    });
+    const mismatched = spawnImpostor("/bin/sleep", ["60"], {
+      stdio: "ignore",
+      argv0: "llama-server",
+    });
+    try {
+      if (matched.pid === undefined || mismatched.pid === undefined) {
+        throw new Error("impostor spawn failed");
+      }
+
+      seedLibosmosSidecar(matched.pid);
+      const tornDown: number[] = [];
+      const okResult = await stopModelHost({
+        key: { name: "libosmos-host-server" },
+        runtimeDir,
+        teardown: (pid) => {
+          tornDown.push(pid);
+          return Promise.resolve();
+        },
+      });
+      expect(okResult.ok).toBe(true);
+      expect(tornDown).toEqual([matched.pid]);
+
+      seedLibosmosSidecar(mismatched.pid);
+      const refusedTornDown: number[] = [];
+      const refused = await stopModelHost({
+        key: { name: "libosmos-host-server" },
+        runtimeDir,
+        teardown: (pid) => {
+          refusedTornDown.push(pid);
+          return Promise.resolve();
+        },
+      });
+      expect(refused.ok).toBe(false);
+      expect(refusedTornDown).toEqual([]);
+    } finally {
+      for (const proc of [matched, mismatched]) {
+        try {
+          proc.kill("SIGKILL");
+        } catch {
+          // already gone
+        }
+      }
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   test("identity is anchored on modelhost.pid, not the state sidecar", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-pidanchor-"));
     const runtimeDir = join(tmp, "runtime");

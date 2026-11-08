@@ -61,6 +61,20 @@ describe("engines/state", () => {
     expect(readModelHostState(KEY, env)).toEqual({ ...state, slotSavePath: null });
   });
 
+  test("roundtrips a libosmos ModelHostState through write + read", () => {
+    const state: ModelHostState = {
+      kind: "ModelHost",
+      engine: "libosmos",
+      pid: 4444,
+      host: "127.0.0.1",
+      port: 8084,
+      modelAliases: ["DeepSeek-V4.1-Flash-1017-UD-IQ1_M-00001-of-00005.gguf"],
+      startedAt: "2026-05-19T00:00:00Z",
+    };
+    writeModelHostState(state, KEY, env);
+    expect(readModelHostState(KEY, env)).toEqual({ ...state, slotSavePath: null });
+  });
+
   test("returns null when no state file exists", () => {
     expect(readModelHostState(KEY, env)).toBeNull();
   });
