@@ -892,3 +892,32 @@ describe("experimental qualification (#518)", () => {
     expect(candidates[0]?.advertisement.routeId).toBe("route/ext-prod");
   });
 });
+
+// ---------------------------------------------------------------------------
+// #280 D-2 — declared-unavailable catalog models. The "model-unavailable"
+// CapabilityRejection variant lands with the fix; the safeParse assertions
+// below pin its shape — availabilityReason is required and non-empty — while
+// the experimental-excluded guard keeps passing.
+// ---------------------------------------------------------------------------
+describe("declared-unavailable rejection (#280)", () => {
+  test("CapabilityRejectionSchema accepts model-unavailable only with a non-empty availabilityReason", () => {
+    expect(
+      CapabilityRejectionSchema.safeParse({
+        reason: "model-unavailable",
+        availabilityReason: "artifact-not-downloaded",
+      }).success,
+    ).toBe(true);
+    expect(CapabilityRejectionSchema.safeParse({ reason: "model-unavailable" }).success).toBe(
+      false,
+    );
+    expect(
+      CapabilityRejectionSchema.safeParse({
+        reason: "model-unavailable",
+        availabilityReason: "",
+      }).success,
+    ).toBe(false);
+    expect(CapabilityRejectionSchema.safeParse({ reason: "experimental-excluded" }).success).toBe(
+      true,
+    );
+  });
+});
