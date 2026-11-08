@@ -2589,7 +2589,6 @@ describe("llamacpp fork process identity (#516)", () => {
   test("recorded binaryNames refuse a manifest-only name and tear down a matching fork", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-fork-authority-diff-"));
     const { workloadsDir, runtimeDir } = writeLlamaManifest(tmp, ["other-binary"]);
-    const otherPid = 11111;
     const otherProcess = spawnImpostor("/bin/sleep", ["60"], {
       stdio: "ignore",
       argv0: "other-binary",
@@ -2673,13 +2672,96 @@ describe("llamacpp fork process identity (#516)", () => {
         workloadsDir,
         runtimeDir,
         env: modelHostEnv(tmp),
-        identity: forkIdentity(FORK_CMDLINE),
+        identity: forkIdentity(STOCK_CMDLINE),
         spawn: spawn as unknown as typeof nodeSpawn,
         probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
       }).catch((e: unknown) => ({ ok: false as const, pid: null, error: String(e) }));
       expect(r.ok).toBe(true);
       expect(patch.tornDown).toEqual([process.pid]);
     } finally {
+      patch.restore();
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("reapStartingOrphan uses starting record binaryNames exclusively", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-fork-startreap-binarynames-"));
+    const { workloadsDir, runtimeDir } = writeLlamaManifest(tmp, ["other-binary"]);
+    const otherProcess = spawnImpostor("/bin/sleep", ["60"], {
+      stdio: "ignore",
+      argv0: "other-binary",
+    });
+    const patch = patchLlamacppTeardown();
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
+    try {
+      if (otherProcess.pid === undefined) throw new Error("impostor spawn failed");
+      // Seed a starting record with binaryNames: ["llama-server-fork-pristine"]
+      // and a manifest that declares ["other-binary"].
+      // The starting record's binaryNames should be used exclusively —
+      // the manifest's "other-binary" must NOT appear in the identity check.
+      seedLlamaRecord(runtimeDir, {
+        pid: otherProcess.pid,
+        binaryNames: [FORK_BINARY_NAME],
+        starting: true,
+      });
+      // A start whose identity matches the manifest-only name ("other-binary")
+      // is refused because the starting record only accepts ["llama-server-fork-pristine"].
+      // The existing "other-binary" process must NOT be torn down.
+      const otherCmdline = "/opt/other/bin/other-binary --port 8095";
+      const r = await startModelHost({
+        key: LLAMA_KEY,
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        identity: forkIdentity(otherCmdline),
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
+      }).catch((e: unknown) => ({ ok: false as const, pid: null, error: String(e) }));
+      expect(r).toEqual({
+        ok: false,
+        pid: null,
+        error: "pid identity unknown; deferring restart",
+      });
+      expect(patch.tornDown).toEqual([]);
+      expect(spawn).not.toHaveBeenCalled();
+
+      // A process matching the starting record's binaryNames IS torn down.
+      const forkProcess = spawnImpostor("/bin/sleep", ["60"], {
+        stdio: "ignore",
+        argv0: FORK_BINARY_NAME,
+      });
+      try {
+        if (forkProcess.pid === undefined) throw new Error("fork impostor spawn failed");
+        // Overwrite the starting record with the fork process pid.
+        seedLlamaRecord(runtimeDir, {
+          pid: forkProcess.pid,
+          binaryNames: [FORK_BINARY_NAME],
+          starting: true,
+        });
+        const r2 = await startModelHost({
+          key: LLAMA_KEY,
+          workloadsDir,
+          runtimeDir,
+          env: modelHostEnv(tmp),
+          identity: forkIdentity(FORK_CMDLINE),
+          spawn: spawn as unknown as typeof nodeSpawn,
+          probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
+        }).catch((e: unknown) => ({ ok: false as const, pid: null, error: String(e) }));
+        expect(r2).toEqual({ ok: true, pid: 4321 });
+        expect(patch.tornDown).toEqual([forkProcess.pid]);
+      } finally {
+        try {
+          forkProcess.kill("SIGKILL");
+        } catch {
+          // already gone
+        }
+      }
+    } finally {
+      try {
+        otherProcess.kill("SIGKILL");
+      } catch {
+        // already gone
+      }
       patch.restore();
       rmSync(tmp, { recursive: true, force: true });
     }

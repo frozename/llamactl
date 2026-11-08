@@ -171,10 +171,11 @@ function hostIdentityDeps(
   };
 }
 
-// Reap-path argv0 names (#516). A legacy record that predates #516 carries
-// none, so the manifest's declared names are unioned with the engine
-// default — one apply can then reap the fork, with identity still anchored
-// to the pid-file mtime and the process start time. When the record and the
+// Reap-path argv0 names (#516). The record's `binaryNames` are used
+// exclusively when present; the manifest's declared names are unioned with
+// the engine default only when the record predates #516 and carries none —
+// one apply can then reap the fork, with identity still anchored to the
+// pid-file mtime and the process start time. When the record and the
 // manifest both declare names their union is used; recovering a legacy fork
 // whose record lacks names requires an explicit `llamactl apply` once
 // binaryNames is added, because the reconciler deliberately skips
@@ -433,7 +434,7 @@ async function reapStartingOrphan(
   const identity = hostIdentityDeps(
     starting.engine,
     opts.identity,
-    reapBinaryNames(starting.engine, starting.binaryNames, declaredBinaryNames),
+    reapBinaryNames(starting.engine, starting.binaryNames, undefined),
   );
   const verdict = verifyPidFile(recordPath, starting.pid, identity);
   if (verdict === "unknown") {
