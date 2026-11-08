@@ -97,17 +97,39 @@ export const ModelHostSpecSchema = z
     // /v1/models before they can serve (Gufo) declare a probe endpoint that
     // actually means "can serve". Absent means today's /v1/models behaviour.
     readiness: ModelHostReadinessSchema.optional(),
+    // Opt-in argv0 basenames a llama-server-compatible fork may run under
+    // (#516); recorded on the pid records and replaces the engine default in
+    // identity checks. Deliberately NOT defaulted: absent by default, so it
+    // is never serialized to older strict remote agents, and it is outside
+    // the spec hash.
+    binaryNames: z
+      .array(
+        z
+          .string()
+          .min(1)
+          .regex(/^[^\s/\\]+$/, "binaryNames entries must be bare argv0 basenames"),
+      )
+      .min(1)
+      .optional(),
   })
   .strict()
   .superRefine((spec, ctx) => {
-    if (spec.engine !== "kapitsa") return;
-    for (const name of ["KAPITSA_HOME", "KAPITSA_NO_AUTO_UPDATE"]) {
-      if (spec.env?.[name] !== undefined) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["env", name],
-          message: `${name} is owned by the Kapitsa adapter`,
-        });
+    if (spec.binaryNames !== undefined && spec.engine !== "llamacpp") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["binaryNames"],
+        message: "binaryNames is only supported for engine llamacpp",
+      });
+    }
+    if (spec.engine === "kapitsa") {
+      for (const name of ["KAPITSA_HOME", "KAPITSA_NO_AUTO_UPDATE"]) {
+        if (spec.env?.[name] !== undefined) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["env", name],
+            message: `${name} is owned by the Kapitsa adapter`,
+          });
+        }
       }
     }
   });
