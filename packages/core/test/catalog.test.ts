@@ -272,58 +272,31 @@ describe("catalog candidate metadata (#515)", () => {
   });
 
   test("byte-exact round-trip with reordered nested keys produces canonical output", () => {
-    // Build a full entry with all meta fields, format it, and use that
-    // as the canonical fixture. Then reorder the nested keys in the
-    // input JSON and assert the output is byte-identical to the fixture.
-    const full: CuratedModel = {
-      ...base,
-      availability: { declared: "unavailable", reason: "runtime-not-pinned" },
-      qualification: {
-        stage: "experimental",
-        since: "2026-11-07",
-        evidenceRef: "eval/glm53-flash-001",
-      },
-      runtime: {
-        engines: ["llamacpp", "omlx"],
-        minBuild: "b6100",
-        toolCallFormat: "glm45",
-        reasoningFormat: "deepseek",
-        chatTemplate: "glm-4.5",
-      },
-      contextMax: 131072,
-      params: { totalB: 106, activeB: 12, experts: 128 },
-      memory: { residentGiB: 18.5, diskBackedGiB: 42, kvGiBPer32k: 2.25 },
-      residencyGroup: "big-moe",
-      license: "mit",
-    };
+    // The example 9-column row from docs/tsv-schemas.md, verbatim, as
+    // the canonical fixture. A computed fixture would let a key-order
+    // swap in schemas.ts move the expected bytes with it; a literal
+    // pins the documented order independently.
+    const literal =
+      'glm53-flash\tGLM-5.3 Flash\tglm\treasoning\tcandidate\tGLM-5.3-Flash-GGUF/glm-5.3-flash-Q4_K_M.gguf\tunsloth/GLM-5.3-Flash-GGUF\tgguf\t{"availability":{"declared":"unavailable","reason":"runtime-not-pinned"},"qualification":{"stage":"experimental","since":"2026-11-07","evidenceRef":"eval/glm53-flash-001"},"runtime":{"engines":["llamacpp","omlx"],"minBuild":"b6100"},"contextMax":131072,"params":{"totalB":106,"activeB":12,"experts":128},"memory":{"residentGiB":18.5},"residencyGroup":"big-moe","license":"mit"}';
 
-    const canonicalLine = formatCatalogRow(full);
-    expect(canonicalLine.split("\t")).toHaveLength(9);
+    expect(literal.split("\t")).toHaveLength(9);
 
-    // Parse the canonical line and re-format: must be byte-identical.
     expect(typeof parseCatalogRow).toBe("function");
-    const canonicalParse = parseCatalogRow!(canonicalLine);
-    expect(canonicalParse.ok).toBe(true);
-    if (!canonicalParse.ok) throw new Error(canonicalParse.error);
-    expect(formatCatalogRow(canonicalParse.entry)).toBe(canonicalLine);
+    const parsed = parseCatalogRow!(literal);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) throw new Error(parsed.error);
+    expect(formatCatalogRow(parsed.entry)).toBe(literal);
 
-    // Now construct a line with the same data but nested keys
-    // reordered (e.g. memory: kvGiBPer32k, diskBackedGiB, residentGiB
-    // instead of residentGiB, diskBackedGiB, kvGiBPer32k).
-    const basePart = canonicalLine.split("\t").slice(0, 8).join("\t");
+    // Same data with top-level and nested keys reordered: formatting
+    // must canonicalise back to the literal byte-for-byte.
+    const basePart = literal.split("\t").slice(0, 8).join("\t");
     const reOrderedMeta = JSON.stringify({
       license: "mit",
-      memory: { kvGiBPer32k: 2.25, diskBackedGiB: 42, residentGiB: 18.5 },
       residencyGroup: "big-moe",
+      memory: { residentGiB: 18.5 },
       params: { experts: 128, activeB: 12, totalB: 106 },
       contextMax: 131072,
-      runtime: {
-        chatTemplate: "glm-4.5",
-        reasoningFormat: "deepseek",
-        toolCallFormat: "glm45",
-        minBuild: "b6100",
-        engines: ["llamacpp", "omlx"],
-      },
+      runtime: { minBuild: "b6100", engines: ["llamacpp", "omlx"] },
       qualification: {
         evidenceRef: "eval/glm53-flash-001",
         since: "2026-11-07",
@@ -331,13 +304,24 @@ describe("catalog candidate metadata (#515)", () => {
       },
       availability: { reason: "runtime-not-pinned", declared: "unavailable" },
     });
-    const reOrderedLine = `${basePart}\t${reOrderedMeta}`;
 
-    const reOrderedParse = parseCatalogRow!(reOrderedLine);
+    const reOrderedParse = parseCatalogRow!(`${basePart}\t${reOrderedMeta}`);
     expect(reOrderedParse.ok).toBe(true);
     if (!reOrderedParse.ok) throw new Error(reOrderedParse.error);
-    const reOrderedReformatted = formatCatalogRow(reOrderedParse.entry);
-    expect(reOrderedReformatted).toBe(canonicalLine);
+    expect(formatCatalogRow(reOrderedParse.entry)).toBe(literal);
+  });
+
+  test("formatCatalogRow drops invalid meta and emits exactly eight columns", () => {
+    const invalidMetaEntry = {
+      ...base,
+      availability: { declared: "unavailable" },
+    } as unknown as CuratedModel;
+
+    const line = formatCatalogRow(invalidMetaEntry);
+    const cols = line.split("\t");
+    expect(cols).toHaveLength(8);
+    expect(cols[7]).toBe("gguf");
+    expect(cols[8]).toBeUndefined();
   });
 
   test("a legacy 7-column row still loads", () => {
