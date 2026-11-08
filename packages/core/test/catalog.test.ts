@@ -221,6 +221,20 @@ describe("catalog.relFromRepoAndFile + curatedStatusForRepoFile", () => {
       "new",
     );
   });
+  test("directory-only rels (no trailing file) stay unavailable", () => {
+    const deepseek = findByRel("DeepSeek-V4.1-Flash-1017-GSQ-RCO-GGUF/IQ1_M");
+    expect(deepseek).toBeDefined();
+    expect(deepseek!.availability?.declared).toBe("unavailable");
+    expect(deepseek!.availability?.reason).toContain("artifact-not-downloaded");
+
+    const a4x = findByRel("MiMo-V2.6-Flash-MOPD-a4-x");
+    expect(a4x).toBeDefined();
+    expect(a4x!.availability?.declared).toBe("unavailable");
+
+    const bpw30 = findByRel("MiMo-V2.6-Flash-MOPD-GGUF/BPW3.0");
+    expect(bpw30).toBeDefined();
+    expect(bpw30!.availability?.declared).toBe("unavailable");
+  });
 });
 
 describe("catalog TSV formatters", () => {

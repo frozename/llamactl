@@ -249,6 +249,134 @@ describe("discovery.filterMatches", () => {
   });
 });
 
+describe("discovery.discoveryFit declared memory overrides", () => {
+  const GIB = 1024 ** 3;
+
+  async function withDeclaredMemory(
+    catalogLine: string,
+    fn: (
+      probe: (repo: string, file: string, profile: MachineProfile) => Promise<DiscoveryFit>,
+      runtimeDir: string,
+    ) => Promise<void>,
+  ): Promise<void> {
+    const runtimeDir = mkdtempSync(join(tmpdir(), "llamactl-declared-"));
+    const keys = [
+      "LOCAL_AI_RUNTIME_DIR",
+      "LOCAL_AI_RECOMMENDATIONS_SOURCE",
+      "LOCAL_AI_HF_CACHE_TTL_SECONDS",
+      "LOCAL_AI_CUSTOM_CATALOG_FILE",
+    ];
+    const saved = new Map(keys.map((k) => [k, process.env[k]]));
+    process.env["LOCAL_AI_RUNTIME_DIR"] = runtimeDir;
+    process.env["LOCAL_AI_RECOMMENDATIONS_SOURCE"] = "hf";
+    process.env["LOCAL_AI_HF_CACHE_TTL_SECONDS"] = "3600";
+    process.env["LOCAL_AI_CUSTOM_CATALOG_FILE"] = join(runtimeDir, "curated-models.tsv");
+    writeFileSync(join(runtimeDir, "curated-models.tsv"), catalogLine + "\n");
+    const probe = async (
+      repo: string,
+      file: string,
+      profile: MachineProfile,
+    ): Promise<DiscoveryFit> => {
+      return await discoveryFit(profile, repo, "general", file);
+    };
+    try {
+      await fn(probe, runtimeDir);
+    } finally {
+      for (const [k, v] of saved) {
+        if (v === undefined) Reflect.deleteProperty(process.env, k);
+        else process.env[k] = v;
+      }
+      rmSync(runtimeDir, { recursive: true, force: true });
+    }
+  }
+
+  test("declared 114 GiB on mac-mini-16g stays poor — no quant-name upgrade", async () => {
+    await withDeclaredMemory(
+      [
+        "qwen36-35b-a3b-mtp",
+        "Qwen3.6 35B A3B MTP",
+        "qwen36",
+        "general",
+        "candidate",
+        "Qwen3.6-35B-A3B-MTP-GGUF/Big-Q4_K_M.gguf",
+        "b1-mtp-qwen-rebase/Qwen3.6-35B-A3B-MTP-GGUF",
+        "gguf",
+        '{"memory":{"residentGiB":114}}',
+      ].join("\t") + "\n",
+      async (probe) => {
+        const repo = "b1-mtp-qwen-rebase/Qwen3.6-35B-A3B-MTP-GGUF";
+        const file = "Qwen3.6-35B-A3B-MTP-GGUF/Big-Q4_K_M.gguf";
+        expect(await probe(repo, file, "mac-mini-16g")).toBe("poor");
+      },
+    );
+  });
+
+  test("declared 114 GiB on balanced stays poor — no quant-name upgrade", async () => {
+    await withDeclaredMemory(
+      [
+        "qwen36-35b-a3b-mtp",
+        "Qwen3.6 35B A3B MTP",
+        "qwen36",
+        "general",
+        "candidate",
+        "Qwen3.6-35B-A3B-MTP-GGUF/Big-Q4_K_M.gguf",
+        "b1-mtp-qwen-rebase/Qwen3.6-35B-A3B-MTP-GGUF",
+        "gguf",
+        '{"memory":{"residentGiB":114}}',
+      ].join("\t") + "\n",
+      async (probe) => {
+        const repo = "b1-mtp-qwen-rebase/Qwen3.6-35B-A3B-MTP-GGUF";
+        const file = "Qwen3.6-35B-A3B-MTP-GGUF/Big-Q4_K_M.gguf";
+        expect(await probe(repo, file, "balanced")).toBe("poor");
+      },
+    );
+  });
+
+  test("declared 114 GiB on macbook-pro-48g stays poor — no quant-name upgrade", async () => {
+    await withDeclaredMemory(
+      [
+        "gemma4-26b-a4b",
+        "Gemma 4 26B A4B",
+        "gemma4",
+        "general",
+        "candidate",
+        "gemma-4-26b-a4b-Q8_0.gguf",
+        "example/gemma-4-26b-a4b-Q8_0-GGUF",
+        "gguf",
+        '{"memory":{"residentGiB":114}}',
+      ].join("\t") + "\n",
+      async (probe) => {
+        const repo = "example/gemma-4-26b-a4b-Q8_0-GGUF";
+        const file = "gemma-4-26b-a4b-Q8_0.gguf";
+        // 114 GiB on 48g exceeds fair (52) → poor; no upgrade applied
+        expect(await probe(repo, file, "macbook-pro-48g")).toBe("poor");
+      },
+    );
+  });
+
+  test("declared 114 GiB on macbook-pro-48g with 671b repo clamps to poor", async () => {
+    await withDeclaredMemory(
+      [
+        "mixtral-671b",
+        "Mixtral 671B",
+        "mixtral",
+        "general",
+        "candidate",
+        "mixtral-671b-Q8_0.gguf",
+        "example/mixtral-671b-Q8_0-GGUF",
+        "gguf",
+        '{"memory":{"residentGiB":114}}',
+      ].join("\t") + "\n",
+      async (probe) => {
+        const repo = "example/mixtral-671b-Q8_0-GGUF";
+        const file = "mixtral-671b-Q8_0.gguf";
+        // 114 GiB on 48g → excellent, but 671b family clamps to poor
+        expect(await probe(repo, file, "macbook-pro-48g")).toBe("poor");
+      },
+    );
+  });
+});
+
 describe("discovery.profileForDiscovery", () => {
   // Pin the env profile so host memory detection never runs: on a >64 GiB
   // host an empty env would already resolve to large-128g.

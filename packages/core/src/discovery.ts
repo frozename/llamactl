@@ -334,7 +334,7 @@ export async function discoveryFit(
   const repoL = repo.toLowerCase();
   const declared = findByRepoFile(repo, file)?.memory?.residentGiB;
   if (typeof declared === "number") {
-    return applyRepoQuantOverrides(sizeFit(declared, profile), profile, repoL, file);
+    return applyDeclaredFit(sizeFit(declared, profile), profile, repoL, file);
   }
 
   let fit: DiscoveryFit = "unknown";
@@ -482,6 +482,32 @@ async function buildDiscoveryRow(
     estimatedSize: humanSize(bytes),
     visionStatus: resolveVisionStatus(klass, mmproj),
   };
+}
+
+/**
+ * Apply only the "poor" clamps from `applyRepoQuantOverrides` — the
+ * profile-level size limits that say "this family is always too big for
+ * this machine".  Declared memory already represents the true resident
+ * footprint, so quant-name fit upgrades (Q4_K_M → 'good'/'excellent')
+ * must not apply; only the hard clamps that downgrade to 'poor' are
+ * valid because they reflect a family-wide hardware ceiling, not a
+ * quant-name heuristic.
+ */
+function applyDeclaredFit(
+  base: DiscoveryFit,
+  profile: MachineProfile,
+  _repoL: string,
+  _file: string,
+): DiscoveryFit {
+  switch (profile) {
+    case "macbook-pro-48g":
+      return /671b|405b|123b|120b/.test(_repoL) ? "poor" : base;
+    case "large-128g":
+      return /671b|405b/.test(_repoL) ? "poor" : base;
+    case "mac-mini-16g":
+    case "balanced":
+      return base;
+  }
 }
 
 /**

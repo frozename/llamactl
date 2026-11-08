@@ -253,7 +253,8 @@ export const BUILTIN_CATALOG: readonly CuratedModel[] = [
     residencyGroup: "z13-large-gpu",
   },
   {
-    // Revision 7c9ba384; file name not captured.
+    // Revision 7c9ba384; rel is the quant dir only (file name not captured).
+    // Pin it when the artifact is approved.
     id: "mimo26-flash-mopd-a4x",
     label: "MiMo-V2.6-Flash MOPD a4-x",
     family: "mimo26",
@@ -276,7 +277,8 @@ export const BUILTIN_CATALOG: readonly CuratedModel[] = [
     residencyGroup: "z13-large-gpu",
   },
   {
-    // File name not captured.
+    // File name not captured; rel is the quant dir only. Pin it when the
+    // artifact is approved.
     id: "mimo26-flash-mopd-bpw30",
     label: "MiMo-V2.6-Flash MOPD BPW3.0",
     family: "mimo26",
