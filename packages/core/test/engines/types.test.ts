@@ -3,11 +3,13 @@ import { describe, expect, test } from "bun:test";
 import { type EngineName, ENGINES } from "../../src/engines/index.js";
 
 describe("engine registry", () => {
-  test("registry contains llamacpp, omlx, and strata keys", () => {
-    const keys: EngineName[] = Object.keys(ENGINES) as EngineName[];
+  test("registry contains every wired engine key", () => {
+    const keys = Object.keys(ENGINES);
     expect(keys).toContain("llamacpp");
     expect(keys).toContain("omlx");
     expect(keys).toContain("strata");
+    expect(keys).toContain("kapitsa");
+    expect(keys).toContain("libosmos");
   });
 
   test("every registered engine reports its own name", () => {
