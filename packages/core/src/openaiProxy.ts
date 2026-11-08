@@ -375,7 +375,7 @@ function requestedModelFromBody(bodyText: string): string | undefined {
  * LLAMA_CPP_SERVER_ALIAS (passed as `--alias` by server.ts launchBackground)
  * and LLAMA_CPP_DEFAULT_MODEL. See #306.
  */
-function defaultTargetModelIds(resolved: ResolvedEnv): Set<string> {
+export function defaultTargetModelIds(resolved: ResolvedEnv): Set<string> {
   const ids = new Set<string>();
   if (resolved.LLAMA_CPP_SERVER_ALIAS) ids.add(resolved.LLAMA_CPP_SERVER_ALIAS);
   if (resolved.LLAMA_CPP_DEFAULT_MODEL) ids.add(resolved.LLAMA_CPP_DEFAULT_MODEL);
