@@ -272,6 +272,21 @@ describe("resolveAgentEndpoint", () => {
     });
   });
 
+  test("argv --port= and the --bind= alias override agent.yaml bindHost and port", () => {
+    const files = new Map([["/a/agent.yaml", "bindHost: 10.0.0.9\nport: 9443\n"]]);
+    const readFile = (p: string): string | null => files.get(p) ?? null;
+    const result = resolveAgentEndpoint({
+      override: null,
+      argv: ["--dir=/a", "--bind=10.0.0.7", "--port=9555"],
+      env: {},
+      readFile,
+    });
+    expect(result).toStrictEqual({
+      url: "https://10.0.0.7:9555",
+      source: join("/a", "agent.yaml"),
+    });
+  });
+
   test("space-separated argv flags are ignored, agent.yaml values win", () => {
     const files = new Map([["/a/agent.yaml", "bindHost: 10.0.0.9\nport: 9443\n"]]);
     const readFile = (p: string): string | null => files.get(p) ?? null;
@@ -285,7 +300,6 @@ describe("resolveAgentEndpoint", () => {
   });
 
   test("override URL wins over everything", () => {
-    const files = new Map<string, string>();
     const readFile = (_p: string): string | null => null;
     const result = resolveAgentEndpoint({
       override: "https://h:1//",
