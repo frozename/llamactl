@@ -36,6 +36,8 @@ interface ScheduleShape {
   enabled: boolean;
   lastRunAt: string | null;
   lastError: string | null;
+  kind?: "preset" | "suite";
+  suite?: string;
 }
 
 interface RecentEntry {
@@ -69,6 +71,8 @@ interface BenchScheduleCaller {
     rel: string;
     mode?: string;
     intervalSeconds: number;
+    kind?: "preset" | "suite";
+    suite?: string;
   }) => Promise<ScheduleShape[]>;
   benchScheduleRemove: (input: { id: string }) => Promise<ScheduleShape[]>;
   benchScheduleToggle: (input: { id: string; enabled: boolean }) => Promise<ScheduleShape[]>;
@@ -291,6 +295,84 @@ describe("llamactl bench schedule — subprocess", () => {
     expect(s["enabled"]).toBe(true);
     expect(s["lastRunAt"]).toBeNull();
     expect(s["lastError"]).toBeNull();
+  });
+
+  test("add with --kind suite + --suite creates a suite schedule", () => {
+    const add = runCli(
+      [
+        "bench",
+        "schedule",
+        "add",
+        "perf-suite",
+        "--node",
+        "local",
+        "--rel",
+        "org/repo/m.gguf",
+        "--every",
+        "1d",
+        "--kind",
+        "suite",
+        "--suite",
+        "my-perf-suite",
+      ],
+      env,
+    );
+    expect(add.code).toBe(0);
+    expect(add.stdout).toContain("added perf-suite");
+
+    const rows = listJson();
+    expect(rows).toHaveLength(1);
+    const s = scheduleById(rows, "perf-suite");
+    expect(s["kind"]).toBe("suite");
+    expect(s["suite"]).toBe("my-perf-suite");
+  });
+
+  test("add with --kind preset rejects --suite", () => {
+    const r = runCli(
+      [
+        "bench",
+        "schedule",
+        "add",
+        "x",
+        "--node",
+        "local",
+        "--rel",
+        "r",
+        "--every",
+        "1d",
+        "--kind",
+        "preset",
+        "--suite",
+        "some-suite",
+      ],
+      env,
+    );
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("--suite is only valid");
+    expect(listJson()).toEqual([]);
+  });
+
+  test("add with --kind suite but no --suite is refused", () => {
+    const r = runCli(
+      [
+        "bench",
+        "schedule",
+        "add",
+        "x",
+        "--node",
+        "local",
+        "--rel",
+        "r",
+        "--every",
+        "1d",
+        "--kind",
+        "suite",
+      ],
+      env,
+    );
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("--suite is required when kind is 'suite'");
+    expect(listJson()).toEqual([]);
   });
 
   test("add writes the BenchScheduleList YAML store", () => {

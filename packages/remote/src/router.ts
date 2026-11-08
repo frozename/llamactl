@@ -2134,6 +2134,11 @@ export const router = t.router({
           .int()
           .min(60)
           .max(30 * 24 * 3600),
+        kind: z.enum(["preset", "suite"]).optional(),
+        suite: z
+          .string()
+          .regex(/^[a-z0-9][a-z0-9._-]*$/)
+          .optional(),
       }),
     )
     .mutation(({ input }) => {
@@ -2146,6 +2151,8 @@ export const router = t.router({
         mode: input.mode ?? "auto",
         intervalSeconds: input.intervalSeconds,
         enabled: true,
+        kind: input.kind,
+        suite: input.suite,
       });
       benchScheduleMod.saveSchedules(next, path);
       return next;
