@@ -310,3 +310,52 @@ test("defaults to canonical tool_use translation when toolMap is absent", () => 
     },
   ]);
 });
+
+test("assistant thinking and redacted_thinking blocks are dropped from history", () => {
+  const request = {
+    model: "claude-3-7-sonnet",
+    messages: [
+      { role: "user", content: "hi" },
+      {
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "secret plan", signature: "sig" },
+          { type: "redacted_thinking", data: "opaque" },
+          { type: "text", text: "Answer" },
+        ],
+      },
+      { role: "user", content: "next" },
+    ],
+  } as unknown as AnthropicMessagesRequest;
+
+  let out: ReturnType<typeof translateAnthropicRequest> | undefined;
+  expect(() => {
+    out = translateAnthropicRequest(request);
+  }).not.toThrow();
+  expect(out).toBeDefined();
+
+  expect(out!.messages).toEqual([
+    { role: "user", content: "hi" },
+    { role: "assistant", content: "Answer" },
+    { role: "user", content: "next" },
+  ]);
+  expect(out!.messages[1]).not.toHaveProperty("tool_calls");
+
+  const serialized = JSON.stringify(out);
+  expect(serialized).not.toContain("secret plan");
+  expect(serialized).not.toContain("opaque");
+});
+
+test("thinking block in a user message is still rejected", () => {
+  expect(() =>
+    translateAnthropicRequest({
+      model: "claude-3-7-sonnet",
+      messages: [
+        {
+          role: "user",
+          content: [{ type: "thinking", thinking: "x", signature: "s" }],
+        },
+      ],
+    } as unknown as AnthropicMessagesRequest),
+  ).toThrow(AnthropicTranslationError);
+});

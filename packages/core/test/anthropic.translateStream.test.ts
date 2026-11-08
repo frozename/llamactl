@@ -656,3 +656,225 @@ test("ping timer is cleared each read iteration (no per-chunk setTimeout leak)",
   const leaked = pingTimerIds.filter((id) => !clearedIds.has(id));
   expect(leaked).toEqual([]);
 });
+
+test("reasoning_content deltas are emitted as a thinking block closed before the text block", async () => {
+  const upstream = makeSseStream([
+    'data: {"id":"msg_think","choices":[{"delta":{"reasoning_content":"Let me "},"finish_reason":null}]}\n\n',
+    'data: {"choices":[{"delta":{"reasoning_content":"think."},"finish_reason":null}]}\n\n',
+    'data: {"choices":[{"delta":{"content":"Answer"},"finish_reason":null}]}\n\n',
+    'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
+    "data: [DONE]\n\n",
+  ]);
+
+  const translated = translateOpenAIStreamToAnthropic(upstream, { model: "claude-3-7-sonnet" });
+  const events = parseAnthropicSse(await readStreamText(translated));
+
+  expect(events.map((event) => event.event)).toEqual([
+    "message_start",
+    "content_block_start",
+    "content_block_delta",
+    "content_block_delta",
+    "content_block_stop",
+    "content_block_start",
+    "content_block_delta",
+    "content_block_stop",
+    "message_delta",
+    "message_stop",
+  ]);
+
+  expect(events[1]!.data).toMatchObject({
+    type: "content_block_start",
+    index: 0,
+    content_block: { type: "thinking", thinking: "" },
+  });
+  expect(events[2]!.data).toMatchObject({
+    type: "content_block_delta",
+    index: 0,
+    delta: { type: "thinking_delta", thinking: "Let me " },
+  });
+  expect(events[3]!.data).toMatchObject({
+    type: "content_block_delta",
+    index: 0,
+    delta: { type: "thinking_delta", thinking: "think." },
+  });
+  expect(events[4]!.data).toMatchObject({ type: "content_block_stop", index: 0 });
+  expect(events[5]!.data).toMatchObject({
+    type: "content_block_start",
+    index: 1,
+    content_block: { type: "text" },
+  });
+  expect(events[6]!.data).toMatchObject({
+    type: "content_block_delta",
+    index: 1,
+    delta: { type: "text_delta", text: "Answer" },
+  });
+
+  const messageDelta = events.find((event) => event.event === "message_delta");
+  expect(messageDelta?.data["usage"]).toMatchObject({ output_tokens: 3 });
+
+  const textDeltaText = events
+    .filter((event) => event.event === "content_block_delta")
+    .map((event) => event.data["delta"] as { type?: string; text?: string })
+    .filter((delta) => delta.type === "text_delta")
+    .map((delta) => delta.text ?? "")
+    .join("");
+  expect(textDeltaText).not.toContain("think");
+
+  assertContentBlockDeltaInvariant(events);
+});
+
+test("text content is unchanged when reasoning_content and content share a chunk", async () => {
+  const upstream = makeSseStream([
+    'data: {"id":"msg_both","choices":[{"delta":{"reasoning_content":"plan","content":"Hel"},"finish_reason":null}]}\n\n',
+    'data: {"choices":[{"delta":{"content":"lo"},"finish_reason":null}]}\n\n',
+    'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
+    "data: [DONE]\n\n",
+  ]);
+
+  const translated = translateOpenAIStreamToAnthropic(upstream, { model: "claude-3-7-sonnet" });
+  const events = parseAnthropicSse(await readStreamText(translated));
+
+  const deltas = events
+    .filter((event) => event.event === "content_block_delta")
+    .map((event) => event.data["delta"] as { type?: string; text?: string; thinking?: string });
+  const textDeltaText = deltas
+    .filter((delta) => delta.type === "text_delta")
+    .map((delta) => delta.text ?? "")
+    .join("");
+  expect(textDeltaText).toBe("Hello");
+
+  const thinkingDeltaText = deltas
+    .filter((delta) => delta.type === "thinking_delta")
+    .map((delta) => delta.thinking ?? "")
+    .join("");
+  expect(thinkingDeltaText).toBe("plan");
+
+  const thinkingStart = events.find(
+    (event) =>
+      event.event === "content_block_start" &&
+      (event.data["content_block"] as { type?: string }).type === "thinking",
+  );
+  const textStart = events.find(
+    (event) =>
+      event.event === "content_block_start" &&
+      (event.data["content_block"] as { type?: string }).type === "text",
+  );
+  expect(thinkingStart).toBeDefined();
+  expect(textStart).toBeDefined();
+  expect(thinkingStart!.data).toMatchObject({
+    index: 0,
+    content_block: { type: "thinking" },
+  });
+  expect(textStart!.data).toMatchObject({ index: 1, content_block: { type: "text" } });
+
+  const thinkingStartPos = events.indexOf(thinkingStart!);
+  const textStartPos = events.indexOf(textStart!);
+  expect(thinkingStartPos).toBeLessThan(textStartPos);
+
+  const thinkingStop = events.find(
+    (event, index) =>
+      index > thinkingStartPos &&
+      index < textStartPos &&
+      event.event === "content_block_stop" &&
+      numericEventIndex(event) === 0,
+  );
+  expect(thinkingStop).toBeDefined();
+
+  assertContentBlockDeltaInvariant(events);
+});
+
+test("reasoning before a tool call yields thinking@0 and tool_use@1", async () => {
+  const upstream = makeSseStream([
+    'data: {"id":"msg_reason_tool","choices":[{"delta":{"reasoning_content":"need tool"},"finish_reason":null}]}\n\n',
+    'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_r","function":{"name":"f","arguments":"{}"}}]},"finish_reason":null}]}\n\n',
+    'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n',
+    "data: [DONE]\n\n",
+  ]);
+
+  const translated = translateOpenAIStreamToAnthropic(upstream, { model: "claude-3-7-sonnet" });
+  const events = parseAnthropicSse(await readStreamText(translated));
+
+  expect(contentBlockStartIndices(events)).toEqual([0, 1]);
+
+  const starts = events.filter((event) => event.event === "content_block_start");
+  expect(starts[0]!.data).toMatchObject({
+    index: 0,
+    content_block: { type: "thinking" },
+  });
+  expect(starts[1]!.data).toMatchObject({
+    index: 1,
+    content_block: { type: "tool_use", id: "call_r", name: "f" },
+  });
+
+  const secondStartPos = events.indexOf(starts[1]!);
+  const thinkingStopBeforeSecondStart = events
+    .slice(0, secondStartPos)
+    .some((event) => event.event === "content_block_stop" && numericEventIndex(event) === 0);
+  expect(thinkingStopBeforeSecondStart).toBe(true);
+
+  const messageDelta = events.find((event) => event.event === "message_delta");
+  expect(messageDelta?.data).toMatchObject({ delta: { stop_reason: "tool_use" } });
+
+  assertContentBlockDeltaInvariant(events);
+});
+
+test("stream without reasoning is byte-identical", async () => {
+  const fixture = [
+    'data: {"id":"msg_1","choices":[{"delta":{"content":"Hello"},"finish_reason":null}],"usage":{"completion_tokens":1}}\n\n',
+    'data: {"choices":[{"delta":{"content":" world"},"finish_reason":null}],"usage":{"completion_tokens":2}}\n\n',
+    'data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"completion_tokens":2}}\n\n',
+    "data: [DONE]\n\n",
+  ];
+
+  const golden = `event: message_start
+data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"model":"claude-3-7-sonnet","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":0,"output_tokens":0}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" world"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":2}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+`;
+
+  const translated = translateOpenAIStreamToAnthropic(makeSseStream(fixture), {
+    model: "claude-3-7-sonnet",
+  });
+  expect(await readStreamText(translated)).toBe(golden);
+
+  const nullReasoningFixture = [
+    'data: {"id":"msg_1","choices":[{"delta":{"content":"Hello","reasoning_content":null},"finish_reason":null}],"usage":{"completion_tokens":1}}\n\n',
+    'data: {"choices":[{"delta":{"content":" world","reasoning_content":null},"finish_reason":null}],"usage":{"completion_tokens":2}}\n\n',
+    'data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"completion_tokens":2}}\n\n',
+    "data: [DONE]\n\n",
+  ];
+  const nullReasoningTranslated = translateOpenAIStreamToAnthropic(
+    makeSseStream(nullReasoningFixture),
+    { model: "claude-3-7-sonnet" },
+  );
+  expect(await readStreamText(nullReasoningTranslated)).toBe(golden);
+
+  const emptyReasoningFixture = [
+    'data: {"id":"msg_1","choices":[{"delta":{"content":"Hello","reasoning_content":""},"finish_reason":null}],"usage":{"completion_tokens":1}}\n\n',
+    'data: {"choices":[{"delta":{"content":" world","reasoning_content":""},"finish_reason":null}],"usage":{"completion_tokens":2}}\n\n',
+    'data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"completion_tokens":2}}\n\n',
+    "data: [DONE]\n\n",
+  ];
+  const emptyReasoningTranslated = translateOpenAIStreamToAnthropic(
+    makeSseStream(emptyReasoningFixture),
+    { model: "claude-3-7-sonnet" },
+  );
+  expect(await readStreamText(emptyReasoningTranslated)).toBe(golden);
+});
