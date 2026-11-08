@@ -4,13 +4,22 @@
  *
  * A seeded generator produces 40 fleet configurations (four peers serving
  * random subsets of one model pool, random qualification labels, random
- * default-target env). The oracle is computed from the generated spec only
+ * default-target env, and per-peer capability advertisements for one
+ * dedicated alias). The oracle is computed from the generated spec only
  * — never from production ordering code: a route is experimental iff its
  * label is "experimental", or its label is absent and its id is the
  * catalog-experimental rel. Across every case: a stable peer route always
  * wins over an experimental one, an experimental route never captures a
  * default-target id, and an exact pin of an experimental-only id still
  * reaches the experimental peer.
+ *
+ * The capability axis pins the other half of the same guard: a pinned
+ * request whose needed capability no stable candidate satisfies is rejected
+ * with a capability error instead of falling through to an experimental
+ * candidate (the `!hasStable` condition in `selectCatalogCandidates`). The
+ * legacy path never routes the capability alias to a peer at all. The
+ * /v1/models section also checks that the unified shadow-catalog candidate
+ * markers agree with the legacy listing markers for every pooled id.
  *
  * Not covered: project task-kind routing and scorer selection — there is no
  * catalog-driven scorer at base, and project routing returns an
@@ -20,7 +29,7 @@ import type { PeerNode } from "@llamactl/core/config/peers";
 import type { ResolvedEnv } from "@llamactl/core/types";
 import type { PeerSnapshot } from "@llamactl/core/workloadRuntime";
 
-import { openaiProxy, routingCapabilities } from "@llamactl/core";
+import { openaiProxy, routingCapabilities, routingCatalog } from "@llamactl/core";
 import { resolveEnv } from "@llamactl/core/env";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
@@ -43,6 +52,7 @@ const N_CASES = 40;
 const MODEL_POOL = ["m-a", "m-b", "exp/model.gguf", "default-alias"];
 const PEER_IDS = ["peer-a", "peer-b", "peer-c", "peer-d"];
 const EXPERIMENTAL_REL = "exp/model.gguf";
+const CAP_ALIAS = "cap/model.gguf";
 
 type LabelChoice = "none" | "experimental" | "production";
 
@@ -51,8 +61,14 @@ interface ServedWorkload {
   label: LabelChoice;
 }
 
+interface CapSpec {
+  experimental: boolean;
+  tools: boolean;
+}
+
 interface GeneratedCase {
   byPeer: Record<string, ServedWorkload[]>;
+  capByPeer: Record<string, CapSpec>;
   defaultKind: "none" | "alias" | "default-model";
   defaultModelId: string;
 }
@@ -83,6 +99,22 @@ function generatePeerWorkloads(rng: () => number): ServedWorkload[] {
   return served;
 }
 
+function generateCapSpec(rng: () => number): CapSpec | undefined {
+  if (rng() < 0.4) return undefined;
+  const experimental = rng() >= 0.5;
+  const tools = rng() < (experimental ? 0.75 : 0.35);
+  return { experimental, tools };
+}
+
+function generateCapByPeer(rng: () => number): Record<string, CapSpec> {
+  const out: Record<string, CapSpec> = {};
+  for (const peer of PEER_IDS) {
+    const spec = generateCapSpec(rng);
+    if (spec !== undefined) out[peer] = spec;
+  }
+  return out;
+}
+
 function defaultKindFor(d: number): GeneratedCase["defaultKind"] {
   if (d < 1 / 3) return "none";
   if (d < 2 / 3) return "alias";
@@ -97,6 +129,8 @@ function pickModel(rng: () => number): string {
 
 function generateCases(): GeneratedCase[] {
   const rng = mulberry32(SEED);
+  // Separate stream so the capability draws never perturb the routing cases.
+  const capRng = mulberry32(SEED ^ 0x9e3779b9);
   const cases: GeneratedCase[] = [];
   for (let i = 0; i < N_CASES; i += 1) {
     const byPeer: Record<string, ServedWorkload[]> = {};
@@ -104,7 +138,12 @@ function generateCases(): GeneratedCase[] {
       byPeer[peer] = generatePeerWorkloads(rng);
     }
     const defaultKind = defaultKindFor(rng());
-    cases.push({ byPeer, defaultKind, defaultModelId: pickModel(rng) });
+    cases.push({
+      byPeer,
+      capByPeer: generateCapByPeer(capRng),
+      defaultKind,
+      defaultModelId: pickModel(rng),
+    });
   }
   return cases;
 }
@@ -281,11 +320,27 @@ function scenarioFor(c: GeneratedCase): Scenario {
   };
 }
 
-function chatReq(model: string): Request {
+const TOOLS_BODY = {
+  tools: [{ type: "function", function: { name: "lookup", parameters: {} } }],
+};
+
+const IMAGE_BODY = {
+  messages: [
+    {
+      role: "user",
+      content: [
+        { type: "text", text: "describe this image" },
+        { type: "image_url", image_url: { url: "http://127.0.0.1:1/pic.png" } },
+      ],
+    },
+  ],
+};
+
+function chatReq(model: string, extra: Record<string, unknown> = {}): Request {
   return new Request("http://agent.test/v1/chat/completions", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ model, messages: [{ role: "user", content: "hi" }] }),
+    body: JSON.stringify({ model, messages: [{ role: "user", content: "hi" }], ...extra }),
   });
 }
 
@@ -331,6 +386,179 @@ async function unifiedServe(s: Scenario, model: string): Promise<UnifiedOutcome>
   expect(response.status).toBe(200);
   const servedBy = defaultCalls.length > 0 ? "default" : (acquired.at(-1) ?? "unrouted");
   return { status: response.status, servedBy, defaultCalls };
+}
+
+function fullCapabilities(
+  over: Partial<routingCapabilities.RouteCapabilities> = {},
+): routingCapabilities.RouteCapabilities {
+  return { ...routingCapabilities.LEGACY_PROXY_CAPABILITIES, ...over };
+}
+
+function capAdvertisement(
+  peer: string,
+  capabilities: routingCapabilities.RouteCapabilities,
+  over: Partial<routingCatalog.RouteAdvertisementV1> = {},
+): routingCatalog.RouteAdvertisementV1 {
+  return {
+    schemaVersion: 1,
+    routeId: `route/cap-${peer}`,
+    deploymentId: `deploy/cap-${peer}`,
+    backendId: `backend/cap-${peer}`,
+    ownerNodeId: peer,
+    publicModelIds: [CAP_ALIAS],
+    upstreamModelId: CAP_ALIAS,
+    backendKind: "cloud-api",
+    transport: "cloud-direct",
+    endpoint: "http://127.0.0.1:1/v1",
+    capabilities,
+    modelRevision: routingCatalog.knownRevision(`cap-model-${peer}`),
+    deploymentEpoch: routingCatalog.knownRevision(`cap-epoch-${peer}`),
+    adapterRevision: routingCatalog.UNKNOWN_REVISION,
+    policyRevision: routingCatalog.UNKNOWN_REVISION,
+    weight: 1,
+    draining: false,
+    priority: 0,
+    ...over,
+  };
+}
+
+function capAdvertisementsFor(
+  capByPeer: Record<string, CapSpec>,
+): routingCatalog.RouteAdvertisementV1[] {
+  const ads: routingCatalog.RouteAdvertisementV1[] = [];
+  for (const peer of PEER_IDS) {
+    const spec = capByPeer[peer];
+    if (spec === undefined) continue;
+    ads.push(
+      capAdvertisement(
+        peer,
+        fullCapabilities({ tools: spec.tools }),
+        spec.experimental ? { qualification: { stage: "experimental" } } : {},
+      ),
+    );
+  }
+  return ads;
+}
+
+function capPeersWith(
+  cap: Record<string, CapSpec>,
+  experimental: boolean,
+  tools: boolean,
+): string[] {
+  const out: string[] = [];
+  for (const peer of PEER_IDS) {
+    const spec = cap[peer];
+    if (spec?.experimental === experimental && spec.tools === tools) {
+      out.push(peer);
+    }
+  }
+  return out;
+}
+
+function capSummary(capByPeer: Record<string, CapSpec>): string {
+  return PEER_IDS.map((peer) => {
+    const spec = capByPeer[peer];
+    if (spec === undefined) return "-";
+    return `${spec.experimental ? "exp" : "stable"}:${spec.tools ? "tools" : "no-tools"}`;
+  }).join(",");
+}
+
+interface CapOutcome {
+  status: number;
+  servedBy: string;
+  acquired: string[];
+  body: unknown;
+}
+
+async function unifiedCapServe(
+  s: Scenario,
+  ads: readonly routingCatalog.RouteAdvertisementV1[],
+  request: Request,
+): Promise<CapOutcome> {
+  const defaultCalls: string[] = [];
+  const acquired: string[] = [];
+  const proxy = createProxy({
+    env: { LLAMACTL_UNIFIED_PROXY: "1" },
+    resolved: () => s.resolved,
+    peers: s.peers,
+    peerSnapshots: new Map(),
+    executor: recordingExecutor("default", defaultCalls),
+    acquireExecutor: (candidate) => {
+      const owner = candidate.advertisement.ownerNodeId;
+      acquired.push(owner);
+      return recordingExecutor(owner);
+    },
+    advertisements: ads,
+  });
+  const response = await proxy.handleRequest(request);
+  const body: unknown = await response.json();
+  const servedBy = defaultCalls.length > 0 ? "default" : (acquired.at(-1) ?? "unrouted");
+  return { status: response.status, servedBy, acquired, body };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function errorCode(body: unknown): unknown {
+  if (!isRecord(body)) return undefined;
+  const error = body["error"];
+  return isRecord(error) ? error["code"] : undefined;
+}
+
+async function legacyCapProbe(
+  s: Scenario,
+  request: Request,
+): Promise<{ status: number; servedBy: string }> {
+  openaiProxy.__resetOpenAIProxyRouteMapCacheForTests();
+  openaiProxy.__setOpenAIProxyClusterRoutingForTests({
+    clusterPeers: s.peers,
+    peerSnapshots: s.peerSnapshots,
+  });
+  const response = await openaiProxy.proxyOpenAI(request, s.resolved);
+  const status = response.status;
+  if (recordedChat(fx().defaultEngine.records)) return { status, servedBy: "default" };
+  for (const id of PEER_IDS) {
+    if (recordedChat(peerEngine(id).records)) return { status, servedBy: id };
+  }
+  return { status, servedBy: "unrouted" };
+}
+
+type CapExpected = { kind: "served"; by: string } | { kind: "rejected"; code: string };
+
+function capExpected(cap: Record<string, CapSpec>): CapExpected {
+  const stableAll = capPeersWith(cap, false, true).concat(capPeersWith(cap, false, false));
+  const stableTools = capPeersWith(cap, false, true);
+  if (stableAll.length > 0) {
+    return stableTools.length > 0
+      ? { kind: "served", by: stableTools[0] ?? "none" }
+      : { kind: "rejected", code: "unsupported-tools" };
+  }
+  const expAll = capPeersWith(cap, true, true).concat(capPeersWith(cap, true, false));
+  if (expAll.length === 0) return { kind: "served", by: "default" };
+  const expTools = capPeersWith(cap, true, true);
+  return expTools.length > 0
+    ? { kind: "served", by: expTools[0] ?? "none" }
+    : { kind: "rejected", code: "unsupported-tools" };
+}
+
+function assertCapInvariant(o: CapOutcome, cap: Record<string, CapSpec>, ctx: string): void {
+  const expected = capExpected(cap);
+  if (expected.kind === "rejected") {
+    expect(o.status, `${ctx}: cap rejection status`).toBe(400);
+    expect(errorCode(o.body), `${ctx}: cap rejection code`).toBe(expected.code);
+    expect(o.acquired.length, `${ctx}: nothing acquired on rejection`).toBe(0);
+    expect(o.servedBy, `${ctx}: servedBy on rejection`).toBe("unrouted");
+    return;
+  }
+  expect(o.status, `${ctx}: served status`).toBe(200);
+  expect(o.servedBy, `${ctx}: servedBy`).toBe(expected.by);
+  const expPeers = new Set(capPeersWith(cap, true, true).concat(capPeersWith(cap, true, false)));
+  const stableAll = capPeersWith(cap, false, true).concat(capPeersWith(cap, false, false));
+  for (const peer of o.acquired) {
+    const forbidden = expPeers.has(peer) && stableAll.length > 0;
+    expect(forbidden, `${ctx}: experimental ${peer} served behind a stable candidate`).toBe(false);
+  }
 }
 
 function recordedChat(records: readonly EngineRecord[]): boolean {
@@ -414,6 +642,39 @@ function assertModelsMarker(
   }
 }
 
+function assertUnifiedMarkerAgreement(
+  catalog: routingCatalog.RouteCatalog,
+  byId: Map<string, Record<string, unknown>>,
+  id: string,
+  e: RoutingExpectation,
+): void {
+  const { stable, exp, isDefault, ctx } = e;
+  const candidates = routingCatalog.catalogCandidatesFor(catalog, id);
+  const hasStable = candidates.some(
+    (candidate) => !routingCatalog.isExperimentalAdvertisement(candidate.advertisement),
+  );
+  const entry = byId.get(id);
+  if (stable.length > 0) {
+    expect(candidates.length, `${ctx}: unified candidate`).toBeGreaterThan(0);
+    expect(hasStable, `${ctx}: unified stable marker`).toBe(true);
+    expect(entry?.["experimental"] === true, `${ctx}: legacy marker`).toBe(false);
+  } else if (exp.length > 0) {
+    expect(hasStable, `${ctx}: unified marks experimental-only`).toBe(false);
+    if (isDefault) {
+      // Known documented divergence: the unified catalog keeps the
+      // experimental candidate for a default-target id while /v1/models
+      // drops the id entirely (buildRouteCatalog default-id rule). Routing
+      // still agrees: both paths serve the default endpoint.
+      expect(entry, `${ctx}: legacy entry dropped`).toBeUndefined();
+    } else {
+      expect(candidates.length, `${ctx}: unified candidate`).toBeGreaterThan(0);
+      expect(entry?.["experimental"], `${ctx}: legacy marker`).toBe(true);
+    }
+  } else {
+    expect(candidates.length, `${ctx}: unified no candidate`).toBe(0);
+  }
+}
+
 beforeAll(() => {
   const sandbox = mkdtempSync(join(tmpdir(), "llamactl-exp-invariant-"));
   const runtimeDir = join(sandbox, "runtime");
@@ -486,13 +747,137 @@ describe("experimental route exclusion invariants, legacy vs unified (G-1, #285)
         peerSnapshots: s.peerSnapshots,
       });
       const models = openaiProxy.listOpenAIModels(s.resolved);
-      const byId = new Map(models.data.map((m) => [m.id, m as unknown as Record<string, unknown>]));
+      const byId = new Map<string, Record<string, unknown>>(
+        models.data.map((m) => {
+          const entry: Record<string, unknown> = { ...m };
+          return [m.id, entry] as const;
+        }),
+      );
+      const modelsProxy = createProxy({
+        env: { LLAMACTL_UNIFIED_PROXY: "1" },
+        resolved: () => s.resolved,
+        peers: s.peers,
+        peerSnapshots: s.peerSnapshots,
+        executor: recordingExecutor("models-default"),
+      });
+      const unifiedCatalog = await modelsProxy.shadowCatalog();
       for (const id of MODEL_POOL) {
         const stable = stablePeersOf(c, id);
         const exp = expPeersOf(c, id);
         const ctx = `seed=${String(SEED)} case=${String(i)} model=${id} /v1/models`;
         assertModelsMarker(byId, id, { stable, exp, isDefault: defaultId === id, ctx });
+        assertUnifiedMarkerAgreement(unifiedCatalog, byId, id, {
+          stable,
+          exp,
+          isDefault: defaultId === id,
+          ctx,
+        });
       }
+
+      const ctxCap = `seed=${String(SEED)} case=${String(i)} model=${CAP_ALIAS} cap=[${capSummary(c.capByPeer)}]`;
+      clearRecords();
+      const capOutcome = await unifiedCapServe(
+        s,
+        capAdvertisementsFor(c.capByPeer),
+        chatReq(CAP_ALIAS, TOOLS_BODY),
+      );
+      assertCapInvariant(capOutcome, c.capByPeer, ctxCap);
+      clearRecords();
+      const legacyCap = await legacyCapProbe(s, chatReq(CAP_ALIAS, TOOLS_BODY));
+      expect(
+        PEER_IDS.includes(legacyCap.servedBy),
+        `${ctxCap}: legacy served ${legacyCap.servedBy}`,
+      ).toBe(false);
+      expect(
+        [200, 404].includes(legacyCap.status),
+        `${ctxCap}: legacy status ${String(legacyCap.status)}`,
+      ).toBe(true);
     });
   }
+});
+
+describe("stable-lacks-capability guard over experimental, unified + legacy (#285)", () => {
+  // selectCatalogCandidates keeps a pinned model's experimental candidates
+  // only while no stable candidate exists (the `!hasStable` clause). Remove
+  // that clause and peer-b below becomes eligible for the capability filter,
+  // passes it, and gatedExecute acquires it — flipping every assertion here
+  // from green to red.
+  function targetedScenario(): Scenario {
+    return { resolved: resolvedFor({}), peers: peersFor(), peerSnapshots: new Map() };
+  }
+
+  test("pinned tools request with a no-tools stable + tools experimental advertisement: 400, never the experimental peer", async () => {
+    const s = targetedScenario();
+    const ads = [
+      capAdvertisement("peer-a", fullCapabilities({ tools: false })),
+      capAdvertisement("peer-b", fullCapabilities(), {
+        qualification: { stage: "experimental" },
+      }),
+    ];
+    clearRecords();
+    const outcome = await unifiedCapServe(s, ads, chatReq(CAP_ALIAS, TOOLS_BODY));
+    expect(outcome.status).toBe(400);
+    expect(errorCode(outcome.body)).toBe("unsupported-tools");
+    expect(outcome.acquired).toEqual([]);
+  });
+
+  test("pinned vision request with a text-only stable + full experimental advertisement: 400, never the experimental peer", async () => {
+    const s = targetedScenario();
+    const ads = [
+      capAdvertisement("peer-a", fullCapabilities({ modalities: ["text"] })),
+      capAdvertisement("peer-b", fullCapabilities(), {
+        qualification: { stage: "experimental" },
+      }),
+    ];
+    clearRecords();
+    const outcome = await unifiedCapServe(s, ads, chatReq(CAP_ALIAS, IMAGE_BODY));
+    expect(outcome.status).toBe(400);
+    expect(errorCode(outcome.body)).toBe("unsupported-modality");
+    expect(outcome.acquired).toEqual([]);
+  });
+
+  test("control: an experimental-only pin is served when it holds the capability", async () => {
+    const s = targetedScenario();
+    const ads = [
+      capAdvertisement("peer-b", fullCapabilities(), {
+        qualification: { stage: "experimental" },
+      }),
+    ];
+    clearRecords();
+    const outcome = await unifiedCapServe(s, ads, chatReq(CAP_ALIAS, TOOLS_BODY));
+    expect(outcome.status).toBe(200);
+    expect(outcome.servedBy).toBe("peer-b");
+    expect(outcome.acquired).toEqual(["peer-b"]);
+  });
+
+  test("control: the first stable candidate holding the capability wins, even listed after a no-tools stable", async () => {
+    const s = targetedScenario();
+    const ads = [
+      capAdvertisement("peer-a", fullCapabilities({ tools: false })),
+      capAdvertisement("peer-b", fullCapabilities()),
+      capAdvertisement("peer-c", fullCapabilities(), {
+        qualification: { stage: "experimental" },
+      }),
+    ];
+    clearRecords();
+    const outcome = await unifiedCapServe(s, ads, chatReq(CAP_ALIAS, TOOLS_BODY));
+    expect(outcome.status).toBe(200);
+    expect(outcome.servedBy).toBe("peer-b");
+    expect(outcome.acquired).toEqual(["peer-b"]);
+  });
+
+  test("legacy: a tools request for a stable+experimental split id goes to the stable peer only", async () => {
+    const s: Scenario = {
+      resolved: resolvedFor({}),
+      peers: peersFor(),
+      peerSnapshots: peerSnapshotsFor({
+        "peer-a": [{ modelId: CAP_ALIAS }],
+        "peer-b": [{ modelId: CAP_ALIAS, labels: { [QUALIFICATION_LABEL]: "experimental" } }],
+      }),
+    };
+    clearRecords();
+    const servedBy = await legacyServedBy(s, CAP_ALIAS);
+    expect(servedBy).toBe("peer-a");
+    expect(recordedChat(peerEngine("peer-b").records)).toBe(false);
+  });
 });
