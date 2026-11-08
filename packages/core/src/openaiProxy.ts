@@ -51,6 +51,7 @@ import {
   translateChatCompletionToResponses,
   translateResponsesRequest,
 } from "./responses/index.js";
+import { isExperimentalRoute } from "./routing/capabilities.js";
 import { mkdirSync, readdirSync, statSync } from "./safe-fs.js";
 import { endpoint as llamaEndpoint, readServerPid, readServerState } from "./server.js";
 import * as workloadRuntime from "./workloadRuntime.js";
@@ -126,17 +127,38 @@ function listRoutesForProxy(resolved: ResolvedEnv): workloadRuntime.ClusterRoute
     peers,
   };
   const peerSnapshots = clusterRoutingOverrideForTests?.peerSnapshots ?? productionPeerSnapshots;
-  return workloadRuntime.listClusterRoutes(localRoutes, peerSnapshots, clusterConfig);
+  return workloadRuntime.listClusterRoutes(localRoutes, peerSnapshots, clusterConfig, Date.now(), {
+    stageByModel: workloadRuntime.catalogQualificationStages(resolved),
+  });
 }
 
-function buildListOpenAIModels(resolved: ResolvedEnv): ModelListResponse {
-  const data: ModelInfo[] = [];
-  const winners = new Map<string, { kind: string; workload: string }>();
-  const routes = [...listRoutesForProxy(resolved)].sort((a, b) => {
+/**
+ * Proxy route order (#518): non-experimental before experimental, then
+ * ModelRun before ModelHost, then workload name — kept in parity with
+ * compareDeployments in routing/catalog.ts. An experimental route whose
+ * model is a default-target id is dropped entirely, so requests for that
+ * id fall through to the node's default endpoint instead of being captured
+ * by the experimental workload.
+ */
+function orderedProxyRoutes(resolved: ResolvedEnv): workloadRuntime.ClusterRoute[] {
+  const defaultTargets = defaultTargetModelIds(resolved);
+  const routes = listRoutesForProxy(resolved).filter(
+    (route) => !(isExperimentalRoute(route) && defaultTargets.has(route.model)),
+  );
+  routes.sort((a, b) => {
+    const aExperimental = isExperimentalRoute(a);
+    const bExperimental = isExperimentalRoute(b);
+    if (aExperimental !== bExperimental) return aExperimental ? 1 : -1;
     if (a.kind !== b.kind) return a.kind === "ModelRun" ? -1 : 1;
     return a.workload.localeCompare(b.workload);
   });
-  for (const route of routes) {
+  return routes;
+}
+
+function buildListOpenAIModels(resolved: ResolvedEnv): ModelListResponse {
+  const data: (ModelInfo & { experimental?: true })[] = [];
+  const winners = new Map<string, { kind: string; workload: string }>();
+  for (const route of orderedProxyRoutes(resolved)) {
     if (winners.has(route.model)) {
       const prior = winners.get(route.model);
       if (!prior) continue;
@@ -146,13 +168,15 @@ function buildListOpenAIModels(resolved: ResolvedEnv): ModelListResponse {
       continue;
     }
     winners.set(route.model, { kind: route.kind, workload: route.workload });
-    data.push({
+    const entry: ModelInfo & { experimental?: true } = {
       id: route.model,
       object: "model",
       created: createdAtForRoute(route, resolved),
       owned_by: route.kind === "ModelHost" ? "llamactl-host" : "llamactl-agent",
       capabilities: ["chat"],
-    });
+    };
+    if (isExperimentalRoute(route)) entry.experimental = true;
+    data.push(entry);
   }
   return { object: "list", data };
 }
@@ -191,6 +215,9 @@ function workloadRuntimeCacheSignature(resolved: ResolvedEnv): string {
   } catch {
     // workloads root missing/unreadable — signature is just the root stat.
   }
+  // #518: catalog qualification join — editing the custom catalog must
+  // invalidate the route/models caches without a workload restart.
+  parts.push(statMtimeNs(workloadRuntime.customCatalogFileFor(resolved)));
   return parts.join("|");
 }
 
@@ -294,6 +321,9 @@ type RouteEntry = {
   kind: "ModelRun" | "ModelHost";
   engine: workloadRuntime.LocalRoute["engine"];
   model: string;
+  /** Catalog-qualified experimental (#518); kept for downstream consumers
+   *  of the route entry, never routed by implicitly. */
+  experimental?: true;
   isPeer?: true;
   peerEndpoint?: string;
   certificate?: string;
@@ -415,11 +445,7 @@ function buildRouteMap(resolved: ResolvedEnv): Map<string, RouteEntry> {
   routeMapBuildCount += 1;
   const out = new Map<string, RouteEntry>();
   const winners = new Map<string, { kind: string; workload: string }>();
-  const routes = [...listRoutesForProxy(resolved)].sort((a, b) => {
-    if (a.kind !== b.kind) return a.kind === "ModelRun" ? -1 : 1;
-    return a.workload.localeCompare(b.workload);
-  });
-  for (const route of routes) {
+  for (const route of orderedProxyRoutes(resolved)) {
     const prior = winners.get(route.model);
     if (prior) {
       console.warn(
@@ -446,6 +472,7 @@ function buildRouteMap(resolved: ResolvedEnv): Map<string, RouteEntry> {
       kind: route.kind,
       engine: route.engine,
       model: route.model,
+      ...(isExperimentalRoute(route) ? { experimental: true as const } : {}),
       ...peerFields,
     });
   }
