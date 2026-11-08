@@ -132,7 +132,7 @@ describe("libosmos engine adapter", () => {
       ]) {
         const result = adapter!.validateSpec({ ...spec, extraArgs });
         expect(result.ok).toBe(false);
-        if (!result.ok) expect(result.error).toContain(flag);
+        if (!result.ok) expect(result.error).toContain("refused flag");
       }
     }
   });
@@ -276,10 +276,12 @@ describe("libosmos engine adapter", () => {
     const env: EngineBootEnv = { LLAMACTL_RUNTIME_DIR: runtimeDir, workloadName: "libosmos-x" };
     await expect(prep(spec, env)).rejects.toThrow();
 
+    writeFileSync(join(dir, "escape.gguf"), "");
+
     const withModels = bootEnv(runtimeDir, "libosmos-x");
     await expect(
       prep({ ...spec, hostedModels: [{ rel: "../escape.gguf" }] }, withModels),
-    ).rejects.toThrow();
+    ).rejects.toThrow("escapes models dir");
     await expect(
       prep({ ...spec, hostedModels: [{ rel: "Missing-Model/missing.gguf" }] }, withModels),
     ).rejects.toThrow();
