@@ -11,6 +11,7 @@ import { mkdirSync, mkdtempSync, rmSync, truncateSync, writeFileSync } from "../
 import {
   type AdmissionInput,
   computeNodeBudget,
+  declaredModelHostMemoryGiB,
   defaultNodeBudgetGiB,
   estimateModelHostMemoryGiB,
   estimateWorkloadMemoryGiB,
@@ -408,8 +409,9 @@ test("estimateModelHostMemoryGiB uses expectedMemoryGiB before model-size fallba
 
 // #277 C-2: spec.resources gains residentGiB (memory charged at admission) and
 // diskBackedGiB (weights on disk, not resident). A streamed model declares both
-// instead of expectedMemoryGiB; the estimator must prefer residentGiB and must
-// not fall back to the 2x weights heuristic when only disk-backed size is known.
+// instead of expectedMemoryGiB; the estimator charges the larger of residentGiB
+// and expectedMemoryGiB and must not fall back to the 2x weights heuristic when
+// only disk-backed size is known.
 test("estimateModelHostMemoryGiB charges a declared residentGiB for a streamed model", () => {
   const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-resident-"));
   const modelsDir = join(tmp, "models");
@@ -455,22 +457,58 @@ test("estimateModelHostMemoryGiB charges a declared residentGiB for a streamed m
   }
 });
 
-test("residentGiB takes precedence over expectedMemoryGiB for admission", () => {
-  const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-resident-precedence-"));
+test("declaredModelHostMemoryGiB charges the larger of residentGiB and expectedMemoryGiB", () => {
+  expect(declaredModelHostMemoryGiB(mkModelHost("both-max"))).toBe(null);
+  expect(declaredModelHostMemoryGiB(mkModelHost("expected-max", { expectedMemoryGiB: 24 }))).toBe(
+    24,
+  );
+  expect(declaredModelHostMemoryGiB(mkModelHost("resident-max", { residentGiB: 12 }))).toBe(12);
+  expect(
+    declaredModelHostMemoryGiB(
+      mkModelHost("both-small-resident", { expectedMemoryGiB: 24, residentGiB: 10 }),
+    ),
+  ).toBe(24);
+  expect(
+    declaredModelHostMemoryGiB(
+      mkModelHost("both-large-resident", { expectedMemoryGiB: 24, residentGiB: 30 }),
+    ),
+  ).toBe(30);
+  expect(
+    declaredModelHostMemoryGiB(
+      mkModelHost("disk-only-max", { residentGiB: 5, diskBackedGiB: 103 }),
+    ),
+  ).toBe(5);
+  expect(declaredModelHostMemoryGiB(mkModelHost("disk-never-charged", { diskBackedGiB: 40 }))).toBe(
+    null,
+  );
+});
+
+test("estimateModelHostMemoryGiB charges the larger of residentGiB and expectedMemoryGiB", () => {
+  const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-resident-max-"));
   const modelsDir = join(tmp, "models");
-  const rel = "mlx-community/precedence-weights";
+  const rel = "mlx-community/max-weights";
   const modelDir = join(modelsDir, rel);
   try {
     mkdirSync(modelDir, { recursive: true });
     const weights = join(modelDir, "weights.bin");
     writeFileSync(weights, "");
     truncateSync(weights, 23 * 1024 ** 3);
+    const resolved = { ...resolveEnv({ LLAMA_CPP_MODELS: modelsDir }) };
     expect(
       estimateModelHostMemoryGiB(
-        mkModelHost("precedence", { expectedMemoryGiB: 24, residentGiB: 10, rel }),
-        { ...resolveEnv({ LLAMA_CPP_MODELS: modelsDir }) },
+        mkModelHost("smaller-resident", { expectedMemoryGiB: 24, residentGiB: 10, rel }),
+        resolved,
       ),
-    ).toBe(10);
+    ).toBe(24);
+    expect(
+      estimateModelHostMemoryGiB(
+        mkModelHost("larger-resident", { expectedMemoryGiB: 24, residentGiB: 30, rel }),
+        resolved,
+      ),
+    ).toBe(30);
+    expect(
+      estimateModelHostMemoryGiB(mkModelHost("resident-only", { residentGiB: 12, rel }), resolved),
+    ).toBe(12);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
@@ -553,7 +591,7 @@ test("listAnyWorkloadsForAdmission charges residentGiB for ModelHost incumbents"
     const declared = new Map(
       listAnyWorkloadsForAdmission(workloadsDir).map((m) => [m.metadata.name, m]),
     );
-    expect(declared.get("mlx-host-resident")?.spec.resources?.expectedMemoryGiB).toBe(10);
+    expect(declared.get("mlx-host-resident")?.spec.resources?.expectedMemoryGiB).toBe(24);
     expect(declared.get("mlx-host-expected")?.spec.resources?.expectedMemoryGiB).toBe(24);
 
     const estimated = new Map(
@@ -561,8 +599,72 @@ test("listAnyWorkloadsForAdmission charges residentGiB for ModelHost incumbents"
         (m) => [m.metadata.name, m],
       ),
     );
-    expect(estimated.get("mlx-host-resident")?.spec.resources?.expectedMemoryGiB).toBe(10);
+    expect(estimated.get("mlx-host-resident")?.spec.resources?.expectedMemoryGiB).toBe(24);
     expect(estimated.get("mlx-host-expected")?.spec.resources?.expectedMemoryGiB).toBe(24);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("two resident-declared hosts cannot both be admitted on a 32 GiB node", () => {
+  const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-tight-node-"));
+  const workloadsDir = join(tmp, "workloads");
+  try {
+    mkdirSync(workloadsDir, { recursive: true });
+    const hostManifest = (
+      name: string,
+      rel: string,
+      resources: Record<string, number>,
+    ): Record<string, unknown> => ({
+      apiVersion: "llamactl/v1",
+      kind: "ModelHost",
+      metadata: { name },
+      spec: {
+        engine: "omlx",
+        node: "local",
+        enabled: true,
+        binary: "/usr/bin/true",
+        endpoint: { host: "127.0.0.1", port: 18094 },
+        hostedModels: [{ rel }],
+        extraArgs: [],
+        restartPolicy: "Always",
+        timeoutSeconds: 60,
+        resources,
+      },
+    });
+    writeFileSync(
+      join(workloadsDir, "host-a.yaml"),
+      stringifyYaml(hostManifest("host-a", "ghost-a", { residentGiB: 20 })),
+    );
+    writeFileSync(
+      join(workloadsDir, "host-b.yaml"),
+      stringifyYaml(hostManifest("host-b", "ghost-b", { residentGiB: 14 })),
+    );
+
+    const projections = listAnyWorkloadsForAdmission(workloadsDir);
+    expect(sumReservedForNode(projections, "local")).toBe(34);
+
+    const [incumbent, incoming] = projections;
+    if (!incumbent || !incoming) throw new Error("expected two projected ModelRuns");
+    const admit = computeNodeBudget({
+      nodeName: "local",
+      nodeBudgetGiB: 32,
+      livingManifests: [incumbent],
+      incoming,
+      forceAdmit: false,
+    });
+    expect(admit.ok).toBe(false);
+    if (!admit.ok) expect(admit.kind).toBe("over-budget");
+    if (!admit.ok && admit.kind === "over-budget") expect(admit.reservedAfter).toBe(34);
+
+    const loose = computeNodeBudget({
+      nodeName: "local",
+      nodeBudgetGiB: 40,
+      livingManifests: [incumbent],
+      incoming,
+      forceAdmit: false,
+    });
+    expect(loose.ok).toBe(true);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }

@@ -239,8 +239,19 @@ function pathSizeBytes(path: string): number {
   return total;
 }
 
-export function declaredModelHostMemoryGiB(manifest: ModelHostManifest): number | null {
-  return manifest.spec.resources?.residentGiB ?? manifest.spec.resources?.expectedMemoryGiB ?? null;
+// Structural param (not ModelHostManifest) so the supervisor migration gate and
+// `llamactl admit` share this single resolver instead of re-deriving the rule.
+export function declaredModelHostMemoryGiB(manifest: {
+  spec?: {
+    resources?:
+      | { expectedMemoryGiB?: number | undefined; residentGiB?: number | undefined }
+      | undefined;
+  };
+}): number | null {
+  const resident = manifest.spec?.resources?.residentGiB;
+  const expected = manifest.spec?.resources?.expectedMemoryGiB;
+  if (resident !== undefined && expected !== undefined) return Math.max(resident, expected);
+  return resident ?? expected ?? null;
 }
 
 export function estimateModelHostMemoryGiB(

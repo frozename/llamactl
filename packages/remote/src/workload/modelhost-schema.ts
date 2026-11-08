@@ -76,7 +76,8 @@ export const ModelHostSpecSchema = z
     enabled: z.boolean().default(true),
     binary: z.string().min(1),
     // residentGiB / diskBackedGiB mirror the catalog's memory.{residentGiB,
-    // diskBackedGiB} (#529/#541). residentGiB is the admission charge;
+    // diskBackedGiB} (#529/#541). residentGiB is the admission charge (the
+    // larger of it and expectedMemoryGiB when both are declared);
     // expectedMemoryGiB keeps its meaning (oMLX --memory-guard-gb). Both new
     // fields are admission metadata: outside the spec hash and the engine spec.
     resources: z
@@ -216,21 +217,18 @@ export function modelHostBindRefusal(manifest: ModelHostManifest): string | null
  * property is dropped by `JSON.stringify` either way) while satisfying the type.
  *
  * `residentGiB` and `diskBackedGiB` are admission metadata and never enter the
- * hash. A resources object carrying only them omits the `resources` key entirely;
- * hosts hash-keyed before #277 keep their hash byte-identical (legacy `{}` and
- * `{ expectedMemoryGiB }` outputs are unchanged).
+ * hash: a resources object carrying only them normalizes to `{}`, so adding
+ * either field to a host whose resources was `{}` leaves the hash byte-identical.
+ * A host that never declared resources still omits the key (absent ≠ `{}`
+ * downstream), and legacy `{}` / `{ expectedMemoryGiB }` outputs are unchanged.
  */
 export function specForHash(
   spec: ModelHostSpec,
 ): Omit<ModelHostSpec, "resources"> & { resources?: { expectedMemoryGiB?: number } } {
   const { resources, ...rest } = spec;
-  const memoryDeclarationsOnly =
-    resources !== undefined &&
-    resources.expectedMemoryGiB === undefined &&
-    (resources.residentGiB !== undefined || resources.diskBackedGiB !== undefined);
   return {
     ...rest,
-    ...(resources !== undefined && !memoryDeclarationsOnly
+    ...(resources !== undefined
       ? {
           resources: {
             ...(resources.expectedMemoryGiB !== undefined

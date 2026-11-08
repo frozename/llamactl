@@ -574,37 +574,34 @@ describe("spec.resources memory declarations (#277)", () => {
     }
   });
 
-  test("resource-memory-only resources hash like absent resources", () => {
+  test("resources holding only the new memory fields hash like legacy empty resources", () => {
     const specNoResources: Record<string, unknown> = { ...valid.spec };
     delete specNoResources["resources"];
+    const parseWith = (
+      resources: Record<string, number>,
+    ): ReturnType<(typeof ModelHostManifestSchema)["safeParse"]> =>
+      ModelHostManifestSchema.safeParse({ ...valid, spec: { ...specNoResources, resources } });
+
     const noResources = ModelHostManifestSchema.safeParse({ ...valid, spec: specNoResources });
     expect(noResources.success).toBe(true);
     if (!noResources.success) return;
-    const h0 = computeModelHostSpecHash(specForHash(noResources.data.spec));
 
-    for (const resources of [{ residentGiB: 5 }, { residentGiB: 5, diskBackedGiB: 2 }]) {
-      const result = ModelHostManifestSchema.safeParse({
-        ...valid,
-        spec: { ...specNoResources, resources },
-      });
-      expect(result.success).toBe(true);
-      if (!result.success) return;
-      expect(computeModelHostSpecHash(specForHash(result.data.spec))).toBe(h0);
-      expect("resources" in specForHash(result.data.spec)).toBe(false);
-    }
-
-    const emptyResources = ModelHostManifestSchema.safeParse({
-      ...valid,
-      spec: { ...specNoResources, resources: {} },
-    });
+    const emptyResources = parseWith({});
     expect(emptyResources.success).toBe(true);
     if (!emptyResources.success) return;
     expect(specForHash(emptyResources.data.spec).resources).toStrictEqual({});
+    const hEmpty = computeModelHostSpecHash(specForHash(emptyResources.data.spec));
+    expect(computeModelHostSpecHash(specForHash(noResources.data.spec))).not.toBe(hEmpty);
 
-    const expectedOnly = ModelHostManifestSchema.safeParse({
-      ...valid,
-      spec: { ...specNoResources, resources: { expectedMemoryGiB: 12 } },
-    });
+    for (const resources of [{ residentGiB: 5 }, { residentGiB: 5, diskBackedGiB: 2 }]) {
+      const result = parseWith(resources);
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+      expect(specForHash(result.data.spec).resources).toStrictEqual({});
+      expect(computeModelHostSpecHash(specForHash(result.data.spec))).toBe(hEmpty);
+    }
+
+    const expectedOnly = parseWith({ expectedMemoryGiB: 12 });
     expect(expectedOnly.success).toBe(true);
     if (!expectedOnly.success) return;
     expect(specForHash(expectedOnly.data.spec).resources).toStrictEqual({

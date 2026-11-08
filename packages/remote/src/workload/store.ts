@@ -11,6 +11,8 @@ import { declaredModelHostMemoryGiB, estimateModelHostMemoryGiB } from "./admiss
 import { type ModelHostManifest, ModelHostManifestSchema } from "./modelhost-schema.js";
 import { type ModelRun, ModelRunSchema } from "./schema.js";
 
+export { declaredModelHostMemoryGiB };
+
 export function defaultWorkloadsDir(env: NodeJS.ProcessEnv = process.env): string {
   const override = env["LLAMACTL_WORKLOADS_DIR"]?.trim();
   if (override) return override;
