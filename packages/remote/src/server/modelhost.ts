@@ -175,8 +175,7 @@ function hostIdentityDeps(
 // exclusively when present; the manifest's declared names are unioned with
 // the engine default only when the record predates #516 and carries none —
 // one apply can then reap the fork, with identity still anchored to the
-// pid-file mtime and the process start time. When the record and the
-// manifest both declare names their union is used; recovering a legacy fork
+// pid-file mtime and the process start time. Recovering a legacy fork
 // whose record lacks names requires an explicit `llamactl apply` once
 // binaryNames is added, because the reconciler deliberately skips
 // identityUnknown hosts.
@@ -434,7 +433,7 @@ async function reapStartingOrphan(
   const identity = hostIdentityDeps(
     starting.engine,
     opts.identity,
-    reapBinaryNames(starting.engine, starting.binaryNames, undefined),
+    reapBinaryNames(starting.engine, starting.binaryNames, declaredBinaryNames),
   );
   const verdict = verifyPidFile(recordPath, starting.pid, identity);
   if (verdict === "unknown") {

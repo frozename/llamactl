@@ -2672,7 +2672,7 @@ describe("llamacpp fork process identity (#516)", () => {
         workloadsDir,
         runtimeDir,
         env: modelHostEnv(tmp),
-        identity: forkIdentity(STOCK_CMDLINE),
+        identity: forkIdentity(FORK_CMDLINE),
         spawn: spawn as unknown as typeof nodeSpawn,
         probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
       }).catch((e: unknown) => ({ ok: false as const, pid: null, error: String(e) }));
