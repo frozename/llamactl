@@ -1169,6 +1169,7 @@ const MALFORMED_READINESS: [string, unknown][] = [
   ["a path without a leading slash", { path: "ready" }],
   ["a nested expectJson value", { path: "/ready", expectJson: { nested: { a: 1 } } }],
   ["a string expectStatus", { path: "/ready", expectStatus: "200" }],
+  ["a non-integer expectStatus", { path: "/ready", expectStatus: 200.5 }],
 ];
 
 for (const [label, readiness] of MALFORMED_READINESS) {
