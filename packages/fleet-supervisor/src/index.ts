@@ -14,6 +14,7 @@ import { createPeerFetch } from "./peer-fetch.js";
 export * from "./aggregator-db.js";
 export * from "./aggregator.js";
 export * from "./audit-reader.js";
+export * from "./cold-start.js";
 export * from "./completion-probe.js";
 export * from "./engine-throughput-collector.js";
 export * from "./engine-throughput.js";
