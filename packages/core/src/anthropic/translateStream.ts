@@ -52,6 +52,7 @@ type UpstreamChoice = {
   stop_sequence?: string | null;
   delta?: {
     content?: string;
+    reasoning_content?: string | null;
     tool_calls?: UpstreamToolCall[];
   };
 };
@@ -70,6 +71,10 @@ type TranslatorContext = {
 };
 
 type OpenBlockState =
+  | {
+      kind: "thinking";
+      index: number;
+    }
   | {
       kind: "text";
       index: number;
@@ -141,6 +146,27 @@ function closeOpenBlock(state: StreamState, emit: StreamEmit): void {
     index: state.openBlock.index,
   });
   state.openBlock = null;
+}
+
+function ensureThinkingBlock(
+  state: StreamState,
+  emit: StreamEmit,
+): Extract<OpenBlockState, { kind: "thinking" }> {
+  if (state.openBlock?.kind === "thinking") return state.openBlock;
+  closeOpenBlock(state, emit);
+  ensureMessageStart(state, emit);
+  const index = state.nextBlockIndex;
+  state.nextBlockIndex += 1;
+  state.openBlock = { kind: "thinking", index };
+  emit("content_block_start", {
+    type: "content_block_start",
+    index,
+    content_block: {
+      type: "thinking",
+      thinking: "",
+    },
+  });
+  return state.openBlock;
 }
 
 function ensureTextBlock(
@@ -236,6 +262,24 @@ function recordStopMetadata(state: StreamState, choice: UpstreamChoice): void {
   }
 }
 
+function emitThinkingDelta(
+  state: StreamState,
+  reasoning: string | null | undefined,
+  emit: StreamEmit,
+): void {
+  if (typeof reasoning !== "string" || reasoning.length === 0) return;
+  const block = ensureThinkingBlock(state, emit);
+  emit("content_block_delta", {
+    type: "content_block_delta",
+    index: block.index,
+    delta: {
+      type: "thinking_delta",
+      thinking: reasoning,
+    },
+  });
+  addOutputEmission(state);
+}
+
 function emitTextDelta(state: StreamState, content: string | undefined, emit: StreamEmit): void {
   if (typeof content !== "string" || content.length === 0) return;
   const block = ensureTextBlock(state, emit);
@@ -280,6 +324,7 @@ function handleChunk(state: StreamState, parsed: UpstreamChunk, emit: StreamEmit
   if (!choice) return;
 
   recordStopMetadata(state, choice);
+  emitThinkingDelta(state, choice.delta?.reasoning_content, emit);
   emitTextDelta(state, choice.delta?.content, emit);
   emitToolCallDeltas(state, choice.delta?.tool_calls, emit);
 }
