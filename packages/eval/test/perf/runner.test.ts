@@ -382,4 +382,58 @@ describe("runPerfSuite", () => {
       expectUnavailable(metricOf(rows, name), /context unknown/i);
     }
   });
+
+  test("falls back to /v1/models context when provenance and opts ctx are absent", async () => {
+    const clock = createManualClock();
+    const ctxValue = 40960;
+    const fake = startEngine(
+      engineOpts(clock, { ctx: ctxValue, noCtxFields: false, acceptance: "llamacpp" }),
+    );
+    const client = createHttpPerfEngineClient(fake.url, { clock });
+    const emptyProvenance: EvalProvenance = {
+      engine: "llamacpp",
+      engine_version: "v1",
+      engine_commit: "aaaa1111",
+      binary_sha256: "ff".repeat(32),
+      gguf_sha256: "ee".repeat(32),
+      hf_revision: "main@00000000",
+      quant: "Q8_0",
+      ctx: null,
+      flags: [],
+      host: "test-host",
+    };
+
+    await runPerfSuite(db, suiteOpts({ client, clock, provenance: emptyProvenance }));
+
+    const rows = listPerfRuns(db, { run_id: RUN_ID });
+    expectMetricNames(rows);
+    expect(metricOf(rows, "prefill_4k_tps").status).toBe("ok");
+    expect(metricOf(rows, "prefill_16k_tps").status).toBe("ok");
+    expect(metricOf(rows, "prefill_32k_tps").status).toBe("ok");
+    expectUnavailable(metricOf(rows, "prefill_64k_tps"), /context/i);
+  });
+
+  test("reports peak GTT from the highest sample across all phases", async () => {
+    const clock = createManualClock();
+    const fake = startEngine(engineOpts(clock));
+    const client = createHttpPerfEngineClient(fake.url, { clock });
+    let phaseIndex = 0;
+    const gttValues = [8000, 3000, 5000, 2000, 4000];
+    const readers: PerfSuiteReaders = {
+      gtt: () => {
+        const value = gttValues[phaseIndex] ?? gttValues[gttValues.length - 1];
+        phaseIndex += 1;
+        return parseGttCounters(String(value), String(value), {
+          source: "fixture",
+          observedAtMs: 0,
+        });
+      },
+    };
+
+    await runPerfSuite(db, suiteOpts({ client, clock, readers }));
+
+    const rows = listPerfRuns(db, { run_id: RUN_ID });
+    expectMetricNames(rows);
+    expect(metricOf(rows, "peak_gtt_bytes")).toEqual({ value: 8000, status: "ok" });
+  });
 });
