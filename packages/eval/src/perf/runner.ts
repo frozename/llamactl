@@ -181,6 +181,13 @@ async function runLoadHook(
 async function runLoadPhase(run: PerfSuiteRun): Promise<void> {
   await runLoadHook(run, "cold", "load_cold_ms");
   await runLoadHook(run, "warm", "load_warm_ms");
+  run.record(
+    "peak_gtt_bytes",
+    peakGttMetric(
+      run.rows.find((r) => r.metric_name === "peak_gtt_bytes")?.metric,
+      await readPeakGtt(run.opts.readers),
+    ),
+  );
 }
 
 function ctxFromModelsPayload(payload: unknown): number | null {
@@ -282,6 +289,13 @@ async function runPrefillSize(
 async function runPrefillPhase(run: PerfSuiteRun, ctx: number | null): Promise<void> {
   for (const step of PREFILL_STEPS) {
     await runPrefillSize(run, ctx, step);
+    run.record(
+      "peak_gtt_bytes",
+      peakGttMetric(
+        run.rows.find((r) => r.metric_name === "peak_gtt_bytes")?.metric,
+        await readPeakGtt(run.opts.readers),
+      ),
+    );
   }
 }
 
@@ -302,6 +316,13 @@ async function runDecodePhase(run: PerfSuiteRun): Promise<void> {
     run.record("ttft_ms", ttftMetric(stream.ttftMs));
     run.record("spec_acceptance", normaliseAcceptance(stream.final));
   });
+  run.record(
+    "peak_gtt_bytes",
+    peakGttMetric(
+      run.rows.find((r) => r.metric_name === "peak_gtt_bytes")?.metric,
+      await readPeakGtt(run.opts.readers),
+    ),
+  );
 }
 
 async function runConcurrencyLevel(run: PerfSuiteRun, level: number): Promise<void> {
@@ -344,6 +365,13 @@ async function runConcurrencyLevel(run: PerfSuiteRun, level: number): Promise<vo
 async function runConcurrencyPhase(run: PerfSuiteRun): Promise<void> {
   for (const level of CONCURRENCY_LEVELS) {
     await runConcurrencyLevel(run, level);
+    run.record(
+      "peak_gtt_bytes",
+      peakGttMetric(
+        run.rows.find((r) => r.metric_name === "peak_gtt_bytes")?.metric,
+        await readPeakGtt(run.opts.readers),
+      ),
+    );
   }
 }
 
@@ -401,9 +429,16 @@ async function runMemoryPhase(run: PerfSuiteRun): Promise<void> {
       value === null ? unavailableMetric("no peak-RSS (VmHWM) reader") : okMetric(value),
     );
   });
-  await run.step(["peak_gtt_bytes"], async () => {
-    run.record("peak_gtt_bytes", await readPeakGtt(run.opts.readers));
-  });
+  run.record("peak_gtt_bytes", await readPeakGtt(run.opts.readers));
+}
+
+function peakGttMetric(existing: MetricValue | undefined, candidate: MetricValue): MetricValue {
+  if (existing === undefined) return candidate;
+  if (existing.status === "ok" && candidate.status === "ok") {
+    return okMetric(Math.max(existing.value, candidate.value));
+  }
+  if (candidate.status !== "ok") return existing;
+  return candidate;
 }
 
 export async function runPerfSuite(db: Database, opts: PerfSuiteOptions): Promise<PerfRunRow[]> {

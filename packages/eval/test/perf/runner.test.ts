@@ -54,11 +54,12 @@ function suiteOpts(args: {
   slots?: number | null;
   load?: PerfSuiteLoadHooks;
   readers?: PerfSuiteReaders;
+  provenance?: EvalProvenance;
 }): PerfSuiteOptions {
   return {
     run_id: RUN_ID,
     model_name: "fake-model",
-    provenance: PROVENANCE,
+    provenance: args.provenance ?? PROVENANCE,
     client: args.client,
     clock: args.clock,
     ...(args.slots === undefined ? {} : { slots: args.slots }),
@@ -187,6 +188,21 @@ describe("runPerfSuite", () => {
     expect(metricOf(rows, "peak_gtt_bytes")).toEqual({ value: 3000, status: "ok" });
   });
 
+  test("samples GTT across phases and records the true peak", async () => {
+    const clock = createManualClock();
+    const fake = startEngine(engineOpts(clock));
+    const client = createHttpPerfEngineClient(fake.url, { clock });
+    const readers: PerfSuiteReaders = {
+      gtt: () => parseGttCounters("8000", "5000", { source: "fixture", observedAtMs: 0 }),
+    };
+
+    await runPerfSuite(db, suiteOpts({ client, clock, readers }));
+
+    const rows = listPerfRuns(db, { run_id: RUN_ID });
+    expectMetricNames(rows);
+    expect(metricOf(rows, "peak_gtt_bytes")).toEqual({ value: 5000, status: "ok" });
+  });
+
   test("marks spec_acceptance unavailable when the engine reports no draft metrics", async () => {
     const clock = createManualClock();
     const fake = startEngine(engineOpts(clock, { acceptance: "none" }));
@@ -294,5 +310,76 @@ describe("runPerfSuite", () => {
     const rows = listPerfRuns(db, { run_id: RUN_ID });
     expectMetricNames(rows);
     expectUnavailable(metricOf(rows, "prefill_4k_tps"), /token-exact/i);
+  });
+
+  test("marks prefill unavailable when engine prompt_tokens differs from target by more than 8", async () => {
+    const clock = createManualClock();
+    const fake = startEngine(engineOpts(clock, { promptTokenOverride: 1000 }));
+    const client = createHttpPerfEngineClient(fake.url, { clock });
+
+    await runPerfSuite(db, suiteOpts({ client, clock }));
+
+    const rows = listPerfRuns(db, { run_id: RUN_ID });
+    expectMetricNames(rows);
+    expectUnavailable(metricOf(rows, "prefill_4k_tps"), /engine counted/);
+    expect(metricOf(rows, "decode_tps").status).toBe("ok");
+  });
+
+  test("records prefill normally when engine prompt_tokens differs by 8 or fewer", async () => {
+    const clock = createManualClock();
+    const fake = startEngine(engineOpts(clock, { promptTokenOffset: 8 }));
+    const client = createHttpPerfEngineClient(fake.url, { clock });
+
+    await runPerfSuite(db, suiteOpts({ client, clock }));
+
+    const rows = listPerfRuns(db, { run_id: RUN_ID });
+    expectMetricNames(rows);
+    expect(metricOf(rows, "prefill_4k_tps").status).toBe("ok");
+  });
+
+  test("records sizes above ctx from /v1/models as unavailable", async () => {
+    const clock = createManualClock();
+    const fake = startEngine(engineOpts(clock, { ctx: 40960 }));
+    const client = createHttpPerfEngineClient(fake.url, { clock });
+
+    await runPerfSuite(db, suiteOpts({ client, clock }));
+
+    const rows = listPerfRuns(db, { run_id: RUN_ID });
+    expectMetricNames(rows);
+    expect(metricOf(rows, "prefill_4k_tps").status).toBe("ok");
+    expect(metricOf(rows, "prefill_16k_tps").status).toBe("ok");
+    expect(metricOf(rows, "prefill_32k_tps").status).toBe("ok");
+    expectUnavailable(metricOf(rows, "prefill_64k_tps"), /context/i);
+  });
+
+  test("marks all prefill sizes unavailable when model context is unknown", async () => {
+    const clock = createManualClock();
+    const fake = startEngine(engineOpts(clock, { ctx: 0, noCtxFields: true }));
+    const client = createHttpPerfEngineClient(fake.url, { clock });
+    const emptyProvenance: EvalProvenance = {
+      engine: "llamacpp",
+      engine_version: "v1",
+      engine_commit: "aaaa1111",
+      binary_sha256: "ff".repeat(32),
+      gguf_sha256: "ee".repeat(32),
+      hf_revision: "main@00000000",
+      quant: "Q8_0",
+      ctx: null,
+      flags: [],
+      host: "test-host",
+    };
+
+    await runPerfSuite(db, suiteOpts({ client, clock, provenance: emptyProvenance }));
+
+    const rows = listPerfRuns(db, { run_id: RUN_ID });
+    expectMetricNames(rows);
+    for (const name of [
+      "prefill_4k_tps",
+      "prefill_16k_tps",
+      "prefill_32k_tps",
+      "prefill_64k_tps",
+    ]) {
+      expectUnavailable(metricOf(rows, name), /context unknown/i);
+    }
   });
 });

@@ -30,6 +30,9 @@ export interface FakeEngineOptions {
   decodeTps: number;
   tokenize?: FakeEngineTokenizeMode;
   rejectPromptAbove?: number;
+  promptTokenOverride?: number;
+  promptTokenOffset?: number;
+  noCtxFields?: boolean;
 }
 
 export interface FakeEngineRequest {
@@ -93,6 +96,12 @@ async function readBody(req: Request): Promise<unknown> {
 }
 
 function handleModels(opts: FakeEngineOptions): Response {
+  if (opts.noCtxFields) {
+    return Response.json({
+      object: "list",
+      data: [{ id: "fake-model", object: "model" }],
+    });
+  }
   return Response.json({
     object: "list",
     data: [{ id: "fake-model", object: "model", meta: { n_ctx_train: opts.ctx } }],
@@ -138,8 +147,9 @@ function buildFinalPayload(
   words: number,
   maxTokens: number,
 ): Record<string, unknown> {
+  const promptTokens = opts.promptTokenOverride ?? (opts.promptTokenOffset ?? 0) + words;
   const usage: Record<string, unknown> = {
-    prompt_tokens: words,
+    prompt_tokens: promptTokens,
     completion_tokens: maxTokens,
   };
   switch (opts.acceptance) {
