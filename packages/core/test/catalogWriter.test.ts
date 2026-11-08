@@ -54,6 +54,11 @@ describe("catalogWriter.addCurated (integration)", () => {
     expect(await fam("unsloth/qwen3.5-X-GGUF", "b.gguf")).toBe("qwen35");
     expect(await fam("unsloth/Qwen3.6-X-GGUF", "c.gguf")).toBe("qwen36");
     expect(await fam("unsloth/deepseek-X-GGUF", "d.gguf")).toBe("deepseek");
+    // #515 families; filenames stay clear of every builtin rel.
+    expect(await fam("aj9o9/GLM-5.3-Flash-GGUF", "g.gguf")).toBe("glm53");
+    expect(await fam("unsloth/DeepSeek-V4.1-Flash-1017-GGUF", "e.gguf")).toBe("deepseek41");
+    expect(await fam("AesSedai/MiMo-V2.6-Flash-MOPD-GGUF", "m.gguf")).toBe("mimo26");
+    expect(await fam("j2ipper/MiMo-V2.6-Flash-MOPD-a4-x", "n.gguf")).toBe("mimo26");
   });
 
   test("refuses duplicate rel", async () => {

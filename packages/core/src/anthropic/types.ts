@@ -40,11 +40,24 @@ export interface AnthropicToolResultContentBlockBase {
   content: string | AnthropicToolResultContentBlock[];
 }
 
+export interface AnthropicThinkingContentBlock {
+  type: "thinking";
+  thinking: string;
+  signature?: string;
+}
+
+export interface AnthropicRedactedThinkingContentBlock {
+  type: "redacted_thinking";
+  data: string;
+}
+
 export interface AnthropicContentBlockByType {
   text: AnthropicTextContentBlock;
   image: AnthropicImageContentBlock;
   tool_use: AnthropicToolUseContentBlock;
   tool_result: AnthropicToolResultContentBlockBase;
+  thinking: AnthropicThinkingContentBlock;
+  redacted_thinking: AnthropicRedactedThinkingContentBlock;
 }
 
 export type AnthropicContentBlock = AnthropicContentBlockByType[keyof AnthropicContentBlockByType];
