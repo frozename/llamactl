@@ -14,9 +14,17 @@ import { existsSync, mkdirSync, readFileSync } from "../safe-fs.js";
  * the timestamp back to disk. Bench history itself (the TSV tables
  * in core) keeps being the source of truth for "how is this model
  * performing over time" — this module just triggers runs.
+ *
+ * A schedule carrying `kind: "suite"` + `suite: "<name>"` dispatches
+ * a named perf suite through an injected runner instead of
+ * `benchPresetRun.subscribe`. The scheduler never resolves the suite
+ * id itself: an unknown id is the runner's to reject, and the
+ * rejection lands in `lastError`.
  */
 
-export const BenchScheduleSchema = z.object({
+export const BENCH_SCHEDULE_KINDS = ["preset", "suite"] as const;
+
+const benchScheduleBase = z.object({
   id: z.string().min(1),
   node: z.string().min(1),
   rel: z.string().min(1),
@@ -29,8 +37,34 @@ export const BenchScheduleSchema = z.object({
   enabled: z.boolean().default(true),
   lastRunAt: z.string().nullable().default(null),
   lastError: z.string().nullable().default(null),
+  kind: z.enum(BENCH_SCHEDULE_KINDS).optional(),
+  suite: z
+    .string()
+    .regex(/^[a-z0-9][a-z0-9._-]*$/)
+    .optional(),
+});
+
+export const BenchScheduleSchema = benchScheduleBase.superRefine((data, ctx) => {
+  if (data.kind === "suite" && !data.suite) {
+    ctx.addIssue({
+      code: "custom",
+      message: "suite id is required for kind 'suite'",
+      path: ["suite"],
+    });
+  }
+  if (data.kind !== "suite" && data.suite !== undefined) {
+    ctx.addIssue({
+      code: "custom",
+      message: "suite is only valid with kind 'suite'",
+      path: ["suite"],
+    });
+  }
 });
 export type BenchSchedule = z.infer<typeof BenchScheduleSchema>;
+
+export function scheduleKind(s: Pick<BenchSchedule, "kind">): "preset" | "suite" {
+  return s.kind ?? "preset";
+}
 
 const BenchScheduleFileSchema = z.object({
   apiVersion: z.literal("llamactl/v1").default("llamactl/v1"),
