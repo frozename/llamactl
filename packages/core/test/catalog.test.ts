@@ -271,6 +271,75 @@ describe("catalog candidate metadata (#515)", () => {
     expect(formatCatalogTsv(rows)).toBe(tsv);
   });
 
+  test("byte-exact round-trip with reordered nested keys produces canonical output", () => {
+    // Build a full entry with all meta fields, format it, and use that
+    // as the canonical fixture. Then reorder the nested keys in the
+    // input JSON and assert the output is byte-identical to the fixture.
+    const full: CuratedModel = {
+      ...base,
+      availability: { declared: "unavailable", reason: "runtime-not-pinned" },
+      qualification: {
+        stage: "experimental",
+        since: "2026-11-07",
+        evidenceRef: "eval/glm53-flash-001",
+      },
+      runtime: {
+        engines: ["llamacpp", "omlx"],
+        minBuild: "b6100",
+        toolCallFormat: "glm45",
+        reasoningFormat: "deepseek",
+        chatTemplate: "glm-4.5",
+      },
+      contextMax: 131072,
+      params: { totalB: 106, activeB: 12, experts: 128 },
+      memory: { residentGiB: 18.5, diskBackedGiB: 42, kvGiBPer32k: 2.25 },
+      residencyGroup: "big-moe",
+      license: "mit",
+    };
+
+    const canonicalLine = formatCatalogRow(full);
+    expect(canonicalLine.split("\t")).toHaveLength(9);
+
+    // Parse the canonical line and re-format: must be byte-identical.
+    expect(typeof parseCatalogRow).toBe("function");
+    const canonicalParse = parseCatalogRow!(canonicalLine);
+    expect(canonicalParse.ok).toBe(true);
+    if (!canonicalParse.ok) throw new Error(canonicalParse.error);
+    expect(formatCatalogRow(canonicalParse.entry)).toBe(canonicalLine);
+
+    // Now construct a line with the same data but nested keys
+    // reordered (e.g. memory: kvGiBPer32k, diskBackedGiB, residentGiB
+    // instead of residentGiB, diskBackedGiB, kvGiBPer32k).
+    const basePart = canonicalLine.split("\t").slice(0, 8).join("\t");
+    const reOrderedMeta = JSON.stringify({
+      license: "mit",
+      memory: { kvGiBPer32k: 2.25, diskBackedGiB: 42, residentGiB: 18.5 },
+      residencyGroup: "big-moe",
+      params: { experts: 128, activeB: 12, totalB: 106 },
+      contextMax: 131072,
+      runtime: {
+        chatTemplate: "glm-4.5",
+        reasoningFormat: "deepseek",
+        toolCallFormat: "glm45",
+        minBuild: "b6100",
+        engines: ["llamacpp", "omlx"],
+      },
+      qualification: {
+        evidenceRef: "eval/glm53-flash-001",
+        since: "2026-11-07",
+        stage: "experimental",
+      },
+      availability: { reason: "runtime-not-pinned", declared: "unavailable" },
+    });
+    const reOrderedLine = `${basePart}\t${reOrderedMeta}`;
+
+    const reOrderedParse = parseCatalogRow!(reOrderedLine);
+    expect(reOrderedParse.ok).toBe(true);
+    if (!reOrderedParse.ok) throw new Error(reOrderedParse.error);
+    const reOrderedReformatted = formatCatalogRow(reOrderedParse.entry);
+    expect(reOrderedReformatted).toBe(canonicalLine);
+  });
+
   test("a legacy 7-column row still loads", () => {
     const line =
       "legacy-7\tLegacy Seven\tqwen35\tgeneral\tcandidate\tLegacy-GGUF/legacy-Q4_K_M.gguf\tunsloth/Legacy-GGUF";
@@ -451,11 +520,20 @@ describe("catalog candidate metadata (#515)", () => {
 
     writeFileSync(file, `${nullMetaLine}\n${arrayMetaLine}\n${primitiveMetaLine}\n${goodLine}\n`);
 
-    const spy = spyOn(process.stderr, "write").mockImplementation(() => true);
+    const calls: string[] = [];
+    const spy = spyOn(process.stderr, "write").mockImplementation((...args: unknown[]) => {
+      calls.push(String(args[0]));
+      return true;
+    });
     try {
       const rows = readCustomCatalog(file);
       expect(rows).toHaveLength(1);
       expect(rows[0]?.id).toBe("good-row");
+      // Each bad meta line produces one warning; assert the row's rel and a reason are present.
+      expect(calls.length).toBe(3);
+      const allMessages = calls.join("\n");
+      expect(allMessages).toContain("Qwen-GGUF/good.gguf");
+      expect(allMessages).toMatch(/meta must be a JSON object/);
     } finally {
       spy.mockRestore();
     }
@@ -483,14 +561,52 @@ describe("catalog candidate metadata (#515)", () => {
 
     writeFileSync(file, `${badJsonLine}\n${validMetaLine}\n`);
 
-    const spy = spyOn(process.stderr, "write").mockImplementation(() => true);
+    const calls: string[] = [];
+    const spy = spyOn(process.stderr, "write").mockImplementation((...args: unknown[]) => {
+      calls.push(String(args[0]));
+      return true;
+    });
     try {
       const rows = readCustomCatalog(file);
       expect(rows).toHaveLength(1);
       expect(rows[0]?.id).toBe("good-row");
+      expect(calls.length).toBe(1);
+      expect(calls[0]).toContain("Qwen-GGUF/good.gguf");
+      expect(calls[0]).toMatch(/invalid meta JSON/);
       expect((rows[0] as Record<string, unknown>)["availability"]).toStrictEqual({
         declared: "available",
       });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("empty column 9 (trailing tab) is treated as absent: row loads with no meta", () => {
+    const base = formatCatalogRow({
+      id: "trailing-tab",
+      label: "Trailing Tab",
+      family: "qwen",
+      class: "general",
+      scope: "candidate",
+      rel: "Qwen-GGUF/trailing.gguf",
+      repo: "org/Qwen-GGUF",
+      format: "gguf",
+    });
+
+    const dir = mkdtempSync(join(tmpdir(), "llamactl-catalog-meta-"));
+    const file = join(dir, "trailing-tab.tsv");
+    writeFileSync(file, `${base}\t\n`);
+
+    const spy = spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      const rows = readCustomCatalog(file);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.id).toBe("trailing-tab");
+      // No meta keys should be present (trailing empty column = absent).
+      const keys = Object.keys(rows[0]!).filter(
+        (k) => !["id", "label", "family", "class", "scope", "rel", "repo", "format"].includes(k),
+      );
+      expect(keys).toHaveLength(0);
     } finally {
       spy.mockRestore();
     }

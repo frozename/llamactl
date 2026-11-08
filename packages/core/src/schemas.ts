@@ -19,6 +19,7 @@ import { MACHINE_PROFILES } from "./types.js";
  * (`meta`). Every key is absent by default, so builtin and legacy rows
  * keep the eight-column wire shape unchanged.
  */
+// availability.reason is required when declared=unavailable.
 export const CatalogAvailability = z.discriminatedUnion("declared", [
   z.object({ declared: z.literal("available"), reason: z.string().min(1).optional() }),
   z.object({
