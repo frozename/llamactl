@@ -1,10 +1,9 @@
 import { Database } from "bun:sqlite";
 
-import type { ModelSpec, WorkloadEval } from "./types.js";
-
 import { renderCsvReport, renderMarkdownReport } from "./report.js";
 import { runMatrix } from "./runner.js";
 import { listCellRows } from "./store.js";
+import { EVAL_ENGINES, type EvalEngine, type ModelSpec, type WorkloadEval } from "./types.js";
 import { codeHumanevalWorkload } from "./workloads/code-humaneval.js";
 import { codeMbppWorkload } from "./workloads/code-mbpp.js";
 import {
@@ -135,12 +134,35 @@ function isValidQuarantineField(value: unknown): boolean {
   return typeof reason === "string" && reason.trim().length > 0;
 }
 
+function isEvalEngine(value: string): value is EvalEngine {
+  return (EVAL_ENGINES as readonly string[]).includes(value);
+}
+
+function parseEngine(value: unknown): EvalEngine {
+  if (value === undefined) return "llamacpp";
+  if (typeof value !== "string") {
+    throw new Error(`invalid ModelSpec: unknown engine ${JSON.stringify(value)}`);
+  }
+  if (!isEvalEngine(value)) {
+    throw new Error(`invalid ModelSpec: unknown engine ${value}`);
+  }
+  return value;
+}
+
+function assertEngineNotManaged(engine: EvalEngine, managed: unknown): void {
+  if ((engine === "gufo" || engine === "kapitsa") && managed === true) {
+    throw new Error(
+      `invalid ModelSpec: engine ${engine} is not managed by eval; set managed=false and run the server externally`,
+    );
+  }
+}
+
 function validateModelSpec(value: unknown): ModelSpec {
   if (typeof value !== "object" || value === null) {
     throw new Error("invalid ModelSpec: missing/bad field name");
   }
   const spec = value as Record<string, unknown>;
-  const engine = typeof spec["engine"] === "string" ? spec["engine"] : "llamacpp";
+  const engine = parseEngine(spec["engine"]);
   const modelPathField: keyof ModelSpec = engine === "omlx" ? "mlx_model_dir" : "gguf_path";
   const required: (keyof ModelSpec)[] = [
     "name",
@@ -168,6 +190,7 @@ function validateModelSpec(value: unknown): ModelSpec {
       throw new Error(`invalid ModelSpec: missing/bad field ${field}`);
     }
   }
+  assertEngineNotManaged(engine, spec["managed"]);
   if (!isValidQuarantineField(spec["quarantined"])) {
     throw new Error(
       "invalid ModelSpec: quarantined must be { reason: <non-empty string> } when present",

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { loadModels } from "../src/matrix/cli.js";
+import * as types from "../src/matrix/types.js";
 import { mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 let dir: string;
@@ -149,5 +150,43 @@ describe("loadModels quarantine and empty list", () => {
     await expect(loadModels(path)).rejects.toThrow(
       `--models points to an empty list (${path}); nothing to bench`,
     );
+  });
+});
+
+describe("loadModels eval engines", () => {
+  test("EVAL_ENGINES lists llamacpp, omlx, gufo and kapitsa", () => {
+    expect(types.EVAL_ENGINES).toEqual(["llamacpp", "omlx", "gufo", "kapitsa"]);
+  });
+
+  test("refuses an unknown engine", async () => {
+    expect(types.EVAL_ENGINES).toEqual(["llamacpp", "omlx", "gufo", "kapitsa"]);
+    const path = writeSpec([{ ...baseSpec(), engine: "vllm" }]);
+    await expect(loadModels(path)).rejects.toThrow("invalid ModelSpec: unknown engine vllm");
+  });
+
+  test("refuses a managed gufo engine", async () => {
+    expect(types.EVAL_ENGINES).toEqual(["llamacpp", "omlx", "gufo", "kapitsa"]);
+    const path = writeSpec([{ ...baseSpec(), engine: "gufo", managed: true }]);
+    await expect(loadModels(path)).rejects.toThrow(/engine gufo is not managed by eval/);
+  });
+
+  test("refuses a managed kapitsa engine", async () => {
+    expect(types.EVAL_ENGINES).toEqual(["llamacpp", "omlx", "gufo", "kapitsa"]);
+    const path = writeSpec([{ ...baseSpec(), engine: "kapitsa", managed: true }]);
+    await expect(loadModels(path)).rejects.toThrow(/engine kapitsa is not managed by eval/);
+  });
+
+  test("gufo engine with gguf_path and managed false loads and round-trips", async () => {
+    const entry = { ...baseSpec(), engine: "gufo", managed: false };
+    const path = writeSpec([entry]);
+    const loaded: unknown = await loadModels(path);
+    expect(loaded).toEqual([entry]);
+  });
+
+  test("kapitsa engine with gguf_path loads and round-trips", async () => {
+    const entry = { ...baseSpec(), engine: "kapitsa" };
+    const path = writeSpec([entry]);
+    const loaded: unknown = await loadModels(path);
+    expect(loaded).toEqual([entry]);
   });
 });
