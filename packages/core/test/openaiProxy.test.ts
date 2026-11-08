@@ -9,7 +9,7 @@ import type { PeerSnapshot } from "../src/workloadRuntime.js";
 import { resolveEnv } from "../src/env.js";
 import { openaiProxy } from "../src/index.js";
 import * as routeCatalogModule from "../src/routing/catalog.js";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "../src/safe-fs.js";
 import * as workloadRuntimeModule from "../src/workloadRuntime.js";
 import { installConditionalChatUpstream } from "./conditionalUpstream.js";
 
@@ -1832,6 +1832,13 @@ const writeExperimentalCatalog = (dir: string): void => {
   writeFileSync(join(dir, "curated-models.tsv"), EXPERIMENTAL_CATALOG_TSV);
 };
 
+const writeQualifiedCatalog = (dir: string, stage: string): void => {
+  writeFileSync(
+    join(dir, "curated-models.tsv"),
+    `exp-model\tExp test\texp\tcustom\tcustom\texp/model.gguf\torg/exp\tgguf\t{"qualification":{"stage":"${stage}"}}\n`,
+  );
+};
+
 // selectCatalogCandidates lands with #518; the widened view lets the RED
 // cases call it before the export exists.
 const selectCatalogCandidates = (
@@ -1968,6 +1975,35 @@ test("/v1/models flags experimental entries", () => {
     expect(prodEntry !== undefined && "experimental" in prodEntry).toBe(false);
     expect(expEntry?.["capabilities"]).toEqual(["chat"]);
     expect(prodEntry?.["capabilities"]).toEqual(["chat"]);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a catalog edit invalidates the /v1/models cache without a workload restart", () => {
+  const t = tempEnv();
+  try {
+    const catalogFile = join(t.dir, "curated-models.tsv");
+    writeQualifiedCatalog(t.dir, "validated");
+    writeLlamaServerWorkload(t.dir, "wl-exp", { rel: "exp/model.gguf", port: 8340 });
+    const epoch = new Date("2026-01-01T00:00:00.000Z");
+    utimesSync(catalogFile, epoch, epoch);
+
+    const before = openaiProxy.listOpenAIModels(t.env);
+    const beforeEntry = before.data.find((m) => m.id === "exp/model.gguf") as unknown as
+      | Record<string, unknown>
+      | undefined;
+    expect(beforeEntry?.["id"]).toBe("exp/model.gguf");
+    expect("experimental" in (beforeEntry ?? {})).toBe(false);
+
+    writeQualifiedCatalog(t.dir, "experimental");
+    utimesSync(catalogFile, epoch, new Date(epoch.getTime() + 1_000));
+
+    const after = openaiProxy.listOpenAIModels(t.env);
+    const afterEntry = after.data.find((m) => m.id === "exp/model.gguf") as unknown as
+      | Record<string, unknown>
+      | undefined;
+    expect(afterEntry?.["experimental"]).toBe(true);
   } finally {
     t.cleanup();
   }

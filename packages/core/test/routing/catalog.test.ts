@@ -794,6 +794,21 @@ describe("experimental qualification (#518)", () => {
     expect(bProdAd !== undefined && "qualification" in bProdAd).toBe(false);
   });
 
+  test("an experimental route later in a workload's route list flags the whole group", () => {
+    const aStable = localRoute({ workload: "a-mixed", model: "shared-alias" });
+    const aExp = {
+      ...localRoute({ workload: "a-mixed", model: "mixed-exp" }),
+      labels: { "llamactl.io/qualification": "experimental" },
+    };
+    const bProd = localRoute({ workload: "b-prod", model: "shared-alias" });
+    const catalog = buildRouteCatalog({ routes: [aStable, aExp, bProd] });
+    const aMixed = catalog.deployments.find((d) => d.routeId === "route/local/a-mixed");
+    expect(adQualification(aMixed)).toEqual({ stage: "experimental" });
+    expect(effectiveCandidate(catalog, "shared-alias")?.advertisement.routeId).toBe(
+      "route/local/b-prod",
+    );
+  });
+
   test("a label-flagged route is experimental", () => {
     const labelled = {
       ...localRoute({ workload: "wl-label", model: "labelled-model" }),

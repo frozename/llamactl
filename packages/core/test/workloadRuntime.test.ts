@@ -12,6 +12,7 @@ import type {
 } from "../src/workloadRuntime.js";
 
 import { writeModelHostState } from "../src/engines/state.js";
+import { resolveEnv } from "../src/env.js";
 import * as capabilitiesModule from "../src/routing/capabilities.js";
 import {
   buildRouteCatalog,
@@ -30,6 +31,7 @@ import {
 } from "../src/safe-fs.js";
 import * as workloadRuntimeModule from "../src/workloadRuntime.js";
 import {
+  customCatalogFileFor,
   ensureWorkloadRuntimeDir,
   listLocalRoutes,
   listLocalWorkloads,
@@ -748,6 +750,87 @@ test("peer routes take the catalog stage by model id", () => {
   const lb = routesLabelled.find((r) => r.model === "cat/model.gguf");
   expect(lb).toBeDefined();
   expect("qualificationStage" in lb!).toBe(false);
+});
+
+test("customCatalogFileFor honours a relocated custom catalog", () => {
+  const t = tempEnv();
+  const catalogDir = mkdtempSync(join(tmpdir(), "workloadrt-catalog-"));
+  const relocated = join(catalogDir, "operator-picks.tsv");
+  try {
+    expect(customCatalogFileFor(t.resolved)).toBe(join(t.runtimeDir, "curated-models.tsv"));
+    writeFileSync(relocated, `${catalogRow("exp-model", "exp/model.gguf", "experimental")}\n`);
+    writeCustomCatalog(t.runtimeDir, [catalogRow("exp-model", "exp/model.gguf", "validated")]);
+    const resolved = resolveEnv({
+      DEV_STORAGE: t.runtimeDir,
+      LOCAL_AI_RUNTIME_DIR: t.runtimeDir,
+      LOCAL_AI_CUSTOM_CATALOG_FILE: relocated,
+    });
+    expect(customCatalogFileFor(resolved)).toBe(relocated);
+    writeRunState(join(t.runtimeDir, "workloads", "exp-run"), process.pid, {
+      rel: "exp/model.gguf",
+      port: 8306,
+    });
+    const routes = listLocalRoutes(resolved);
+    expect(routes).toHaveLength(1);
+    expect(routeRecord(routes[0]!)["qualificationStage"]).toBe("experimental");
+  } finally {
+    rmSync(catalogDir, { recursive: true, force: true });
+    t.cleanup();
+  }
+});
+
+test("a stable local route after an experimental one clears the experimental-only holder", () => {
+  const stableLocal: LocalRoute = {
+    workload: "prod",
+    model: "exp/model.gguf",
+    host: "127.0.0.1",
+    port: 8312,
+    engine: "llamacpp",
+    kind: "ModelRun",
+    pid: 2,
+  };
+  const snapshot: QualifiedPeerSnapshot = {
+    workloads: [
+      {
+        modelId: "exp/model.gguf",
+        port: 9103,
+        labels: { "llamactl.io/qualification": "validated" },
+      },
+    ],
+    pressure: "NORMAL",
+    fetchedAt: Date.now(),
+  };
+  const routes = workloadRuntimeModule.listClusterRoutes(
+    [EXPERIMENTAL_LOCAL, stableLocal],
+    new Map<string, PeerSnapshot>([["peer-a", snapshot]]),
+    PEER_A_CONFIG,
+  );
+  const forId = routes.filter((r) => r.model === "exp/model.gguf");
+  expect(forId).toHaveLength(2);
+  expect(forId.every((r) => !("isPeer" in r))).toBe(true);
+  const catalog = buildRouteCatalog({ routes });
+  const winner = effectiveCandidate(catalog, "exp/model.gguf");
+  expect(winner?.advertisement.deploymentId).toContain("prod");
+  expect(winner !== null && "qualification" in winner.advertisement).toBe(false);
+});
+
+test("a peer label map carrying a non-string value is dropped entirely", () => {
+  const dirtyLabels = { "llamactl.io/qualification": "experimental", count: 7 };
+  const snapshot: Omit<QualifiedPeerSnapshot, "workloads"> & {
+    workloads: { modelId: string; port: number; labels?: unknown }[];
+  } = {
+    workloads: [{ modelId: "dirty/model.gguf", port: 9300, labels: dirtyLabels }],
+    pressure: "NORMAL",
+    fetchedAt: Date.now(),
+  };
+  const routes = workloadRuntimeModule.listClusterRoutes(
+    [],
+    new Map<string, PeerSnapshot>([["peer-a", snapshot as unknown as PeerSnapshot]]),
+    PEER_A_CONFIG,
+  );
+  expect(routes).toHaveLength(1);
+  expect("labels" in routes[0]!).toBe(false);
+  expect(isExperimentalRoute?.(routes[0]!)).toBe(false);
 });
 
 test("a local route's labels survive listClusterRoutes unchanged", () => {
