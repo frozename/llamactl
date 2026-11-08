@@ -1,5 +1,7 @@
 import { resolveEnv } from "./env.js";
 
+const GLM53_DEFAULT_CTX = "131072";
+
 /**
  * Pick the default context size for a model relative path.
  *
@@ -17,12 +19,18 @@ import { resolveEnv } from "./env.js";
  * as `mlx-community/Qwen3-8B-MLX-4bit` is not a llama.cpp Qwen model dir
  * and still resolves to Gemma, exactly as before.
  *
- * Matches `_llama_ctx_for_model` in the shell library.
+ * The GLM-5.3 rule (#515) is TS-only: the shell `_llama_ctx_for_model`
+ * does not have it yet, so the shell still resolves GLM rels to the Gemma
+ * envelope. The GLM ctx is a constant (the deployed 131072), not an env
+ * var; the Qwen and Gemma env paths are unchanged.
  */
 export function ctxForModel(rel: string, resolved = resolveEnv()): string {
   const family = rel.split("/")[0] ?? "";
   if (family.startsWith("Qwen")) {
     return resolved.LLAMA_CPP_QWEN_CTX_SIZE;
+  }
+  if (family.startsWith("GLM-5.3-")) {
+    return GLM53_DEFAULT_CTX;
   }
   return resolved.LLAMA_CPP_GEMMA_CTX_SIZE;
 }

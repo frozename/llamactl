@@ -12,12 +12,14 @@
 // opener that never affects the exit, and runConsole's injectable
 // opener seam.
 
+import type { RunningConsoleServer, StartConsoleServerOptions } from "@llamactl/remote";
+
 import { sourceRevision } from "@llamactl/core";
-import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { type ConsoleDeps, runConsole } from "../src/commands/console.js";
+import { type ConsoleDeps, type ConsoleOpenerSpawn, runConsole } from "../src/commands/console.js";
 import {
   chmodSync,
   existsSync,
@@ -39,6 +41,12 @@ const SPAWN_TIMEOUT_MS = 30_000;
 // per-platform choice on the real (non-injected) spawn path.
 const OPENER_SHIM_SCRIPT =
   '#!/bin/sh\nprintf \'%s\\n\' "${0##*/} $*" > "$CONSOLE_TEST_OPEN_MARKER"\n';
+
+// Snapshot the real @llamactl/remote exports before any mock.module
+// registers over them. mock.module is process-global, so re-registering
+// the snapshot in the test's finally keeps later code in this bun
+// process on the real module.
+const remoteReal = { ...(await import("@llamactl/remote")) };
 
 const tmpDirs: string[] = [];
 
@@ -695,5 +703,168 @@ describe("llamactl console", () => {
         expect(recorder.unrefCount()).toBe(1);
       });
     });
+  });
+
+  // #535: a SIGTERM landing between the `Console:` print and the
+  // waitForShutdownSignal listener install hit the default disposition
+  // and exited 143 on Linux CI. process.emit drives the same JS
+  // listeners a real signal would — and can never signal the runner.
+  describe("shutdown signal handlers (#535)", () => {
+    test("installs SIGTERM/SIGINT handlers before printing the URL and before spawning the opener", async () => {
+      const fx = makeFixture();
+      const baseTerm = process.listenerCount("SIGTERM");
+      const baseInt = process.listenerCount("SIGINT");
+      const atUrl: { int: number; term: number }[] = [];
+      const atSpawn: { int: number; term: number }[] = [];
+      const recorder = recordingOpenerSpawn();
+      const writeSpy = spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
+        if (String(chunk).includes("Console: ")) {
+          atUrl.push({
+            int: process.listenerCount("SIGINT"),
+            term: process.listenerCount("SIGTERM"),
+          });
+        }
+        return true;
+      });
+      const spawn: ConsoleOpenerSpawn = (argv, options) => {
+        atSpawn.push({
+          int: process.listenerCount("SIGINT"),
+          term: process.listenerCount("SIGTERM"),
+        });
+        return recorder.spawn(argv, options);
+      };
+      const run = runConsole(["--port", "0", "--dist", fx.distDir], { platform: "linux", spawn });
+      let code: number | "timeout" = "timeout";
+      try {
+        await pollUntil(() => recorder.calls.length === 1, 10_000);
+      } finally {
+        process.emit("SIGTERM");
+        code = await withTimeout(run, 15_000);
+        writeSpy.mockRestore();
+      }
+      expect(code).toBe(0);
+      expect(atUrl).toHaveLength(1);
+      expect(atSpawn).toHaveLength(1);
+      expect(atUrl[0]?.term).toBeGreaterThan(baseTerm);
+      expect(atUrl[0]?.int).toBeGreaterThan(baseInt);
+      expect(atSpawn[0]?.term).toBeGreaterThan(baseTerm);
+      expect(atSpawn[0]?.int).toBeGreaterThan(baseInt);
+      expect(recorder.calls[0]?.argv.at(-1)).toMatch(LOOPBACK_URL_RE);
+    });
+
+    test("keeps the handlers installed until the server has stopped, then removes them", async () => {
+      const fx = makeFixture();
+      const baseTerm = process.listenerCount("SIGTERM");
+      const baseInt = process.listenerCount("SIGINT");
+      let urlPrinted = false;
+      let stopCalls = 0;
+      let stopResolved = false;
+      let releaseStop: () => void = () => undefined;
+      const stopGate = new Promise<void>((resolve) => {
+        releaseStop = resolve;
+      });
+      const writeSpy = spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
+        if (String(chunk).includes("Console: ")) {
+          urlPrinted = true;
+        }
+        return true;
+      });
+      // Wrap the real server so stop() stays pending until the test
+      // releases it: the "while stop is pending" sample below then lands
+      // inside the stop window for sure instead of racing it.
+      void mock.module("@llamactl/remote", () => ({
+        ...remoteReal,
+        startConsoleServer: async (
+          opts: StartConsoleServerOptions,
+        ): Promise<RunningConsoleServer> => {
+          const server = await remoteReal.startConsoleServer(opts);
+          return {
+            ...server,
+            stop: async (): Promise<void> => {
+              stopCalls += 1;
+              await stopGate;
+              await server.stop();
+              stopResolved = true;
+            },
+          };
+        },
+      }));
+      const run = runConsole(["--port", "0", "--no-open", "--dist", fx.distDir], {
+        platform: "linux",
+      });
+      let code: number | "timeout" = "timeout";
+      let afterFirst = { int: -1, term: -1 };
+      let duringStop = { int: -1, term: -1 };
+      try {
+        expect(await pollUntil(() => urlPrinted, 10_000)).toBe(true);
+        process.emit("SIGTERM");
+        afterFirst = {
+          int: process.listenerCount("SIGINT"),
+          term: process.listenerCount("SIGTERM"),
+        };
+        expect(await pollUntil(() => stopCalls === 1, 10_000)).toBe(true);
+        duringStop = {
+          int: process.listenerCount("SIGINT"),
+          term: process.listenerCount("SIGTERM"),
+        };
+        // A repeated signal while stop is pending must be swallowed by
+        // the still-installed handler, never reach the default
+        // disposition.
+        process.emit("SIGTERM");
+        releaseStop();
+        code = await withTimeout(run, 15_000);
+      } finally {
+        releaseStop();
+        process.emit("SIGTERM");
+        await withTimeout(run, 15_000).catch(() => undefined);
+        void mock.module("@llamactl/remote", () => remoteReal);
+        writeSpy.mockRestore();
+      }
+      expect(code).toBe(0);
+      expect(stopCalls).toBe(1);
+      expect(stopResolved).toBe(true);
+      expect(afterFirst.term).toBeGreaterThan(baseTerm);
+      expect(afterFirst.int).toBeGreaterThan(baseInt);
+      expect(duringStop.term).toBeGreaterThan(baseTerm);
+      expect(duringStop.int).toBeGreaterThan(baseInt);
+      expect(process.listenerCount("SIGTERM")).toBe(baseTerm);
+      expect(process.listenerCount("SIGINT")).toBe(baseInt);
+    });
+
+    // Review round 1: a SIGTERM landing while the server is still
+    // stopping used to hit the default disposition (exit 143) because
+    // the handlers were torn down before stop finished. Three back-to-
+    // back SIGTERMs all queue before the loop processes the first, so
+    // the trailing ones land inside the stop window on both macOS and
+    // Linux; the exit budget stays generous for slow CI.
+    test("three SIGTERMs in quick succession still exit 0", async () => {
+      const fx = makeFixture();
+      const proc = spawnConsole(["--port", "0", "--no-open", "--dist", fx.distDir], fx.env);
+      try {
+        const match = await readUntil(proc.stdout, CONSOLE_URL_RE);
+        expect(match).not.toBeNull();
+        for (let burst = 0; burst < 3; burst += 1) {
+          proc.kill("SIGTERM");
+        }
+        expect(await withTimeout(proc.exited, 30_000)).toBe(0);
+      } finally {
+        proc.kill("SIGKILL");
+      }
+    }, 90_000);
+
+    test("exits 0 when SIGTERM arrives as soon as the URL is printed (default open, repeated)", async () => {
+      for (let iteration = 0; iteration < 5; iteration += 1) {
+        const fx = makeFixture();
+        const proc = spawnConsole(["--port", "0", "--dist", fx.distDir], fx.env);
+        try {
+          const match = await readUntil(proc.stdout, CONSOLE_URL_RE);
+          expect(match).not.toBeNull();
+          proc.kill("SIGTERM");
+          expect(await withTimeout(proc.exited, 10_000)).toBe(0);
+        } finally {
+          proc.kill("SIGKILL");
+        }
+      }
+    }, 120_000);
   });
 });

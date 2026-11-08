@@ -63,7 +63,7 @@ interface CommonOpts {
   path: string;
 }
 
-function parseCommonOpts(argv: string[]): { opts: CommonOpts; rest: string[] } | null {
+function parseCommonOpts(argv: string[]): { opts: CommonOpts; rest: string[] } | { exit: number } {
   let path = embersynthMod.defaultEmbersynthConfigPath();
   const rest: string[] = [];
   for (let i = 0; i < argv.length; i++) {
@@ -72,12 +72,12 @@ function parseCommonOpts(argv: string[]): { opts: CommonOpts; rest: string[] } |
       const next = argv[++i];
       if (!next) {
         process.stderr.write(`--path requires a value\n`);
-        return null;
+        return { exit: 1 };
       }
       path = next;
     } else if (a === "--help" || a === "-h") {
       process.stdout.write(USAGE);
-      return null;
+      return { exit: 0 };
     } else {
       rest.push(required(a));
     }
@@ -88,7 +88,7 @@ function parseCommonOpts(argv: string[]): { opts: CommonOpts; rest: string[] } |
 // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
 async function runInit(argv: string[]): Promise<number> {
   const parsed = parseCommonOpts(argv);
-  if (!parsed) return 0;
+  if ("exit" in parsed) return parsed.exit;
   const { path } = parsed.opts;
   const existing = embersynthMod.loadEmbersynthConfig(path);
   if (existing) {
@@ -113,7 +113,7 @@ async function runInit(argv: string[]): Promise<number> {
 // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
 async function runSync(argv: string[]): Promise<number> {
   const parsed = parseCommonOpts(argv);
-  if (!parsed) return 0;
+  if ("exit" in parsed) return parsed.exit;
   const { path } = parsed.opts;
   const existing = embersynthMod.loadEmbersynthConfig(path);
   const next = embersynthMod.generateEmbersynthConfig({
@@ -131,7 +131,7 @@ async function runSync(argv: string[]): Promise<number> {
 // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
 async function runShow(argv: string[]): Promise<number> {
   const parsed = parseCommonOpts(argv);
-  if (!parsed) return 0;
+  if ("exit" in parsed) return parsed.exit;
   const { path } = parsed.opts;
   const existing = embersynthMod.loadEmbersynthConfig(path);
   if (!existing) {
@@ -214,7 +214,7 @@ async function runPromotePrivate(argv: string[]): Promise<number> {
     return 1;
   }
   const parsed = parseCommonOpts(argv.slice(1));
-  if (!parsed) return 0;
+  if ("exit" in parsed) return parsed.exit;
   const { path } = parsed.opts;
 
   const existing = embersynthMod.loadEmbersynthConfig(path);

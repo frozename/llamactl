@@ -232,6 +232,9 @@ function collectMessageParts(
         throw new AnthropicTranslationError(
           "tool_result blocks must appear in user messages without mixed content",
         );
+      case "thinking":
+      case "redacted_thinking":
+        throw new AnthropicTranslationError(`unsupported content block type: ${block.type}`);
       default:
         throw new AnthropicTranslationError(`unsupported content block type: ${blockType(block)}`);
     }
@@ -256,7 +259,14 @@ function translateMessageContent(
     return message.content.map((block) => toolMessageFromBlock(block));
   }
 
-  const { textParts, imageParts, toolCalls } = collectMessageParts(message.content, options);
+  const blocks =
+    message.role === "assistant"
+      ? message.content.filter(
+          (block) => block.type !== "thinking" && block.type !== "redacted_thinking",
+        )
+      : message.content;
+
+  const { textParts, imageParts, toolCalls } = collectMessageParts(blocks, options);
 
   const joinedText = textParts.join("");
   const content: string | (OpenAITextPart | OpenAIImagePart)[] =

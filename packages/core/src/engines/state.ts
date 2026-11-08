@@ -31,6 +31,9 @@ export interface ModelHostState {
    * unchanged (no spurious restart on existing hosts).
    */
   specHash?: string;
+  // #516: argv0 basenames this host's process may run under; replaces the
+  // engine default in pid-identity checks. Written from spec.binaryNames.
+  binaryNames?: string[];
 }
 
 /**
@@ -82,6 +85,9 @@ export interface ModelHostStartingState {
   pid: number;
   startedAt: string;
   specHash?: string;
+  // #516: argv0 basenames this host's process may run under; replaces the
+  // engine default in pid-identity checks. Written from spec.binaryNames.
+  binaryNames?: string[];
 }
 
 export function modelhostStartingFile(
@@ -104,11 +110,18 @@ function isModelHostEngine(engine: unknown): engine is EngineName {
   return engine === "llamacpp" || engine === "omlx" || engine === "strata" || engine === "kapitsa";
 }
 
+function validBinaryNames(v: unknown): v is string[] {
+  if (!Array.isArray(v) || v.length === 0) return false;
+  return v.every(
+    (entry) => typeof entry === "string" && entry.length > 0 && !/[\s/\\]/.test(entry),
+  );
+}
+
 function validateModelHostStarting(
   parsed: Partial<ModelHostStartingState>,
 ): ModelHostStartingState | null {
   if (parsed.kind !== "ModelHostStarting") return null;
-  const { engine, pid, startedAt, specHash } = parsed;
+  const { engine, pid, startedAt, specHash, binaryNames } = parsed;
   if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return null;
   if (!isModelHostEngine(engine)) return null;
   if (typeof startedAt !== "string" || Number.isNaN(Date.parse(startedAt))) return null;
@@ -118,6 +131,7 @@ function validateModelHostStarting(
     pid,
     startedAt,
     ...(typeof specHash === "string" ? { specHash } : {}),
+    ...(validBinaryNames(binaryNames) ? { binaryNames: [...binaryNames] } : {}),
   };
 }
 
@@ -165,7 +179,7 @@ function validModelAliases(modelAliases: unknown): modelAliases is string[] {
 
 function validateModelHostState(parsed: Partial<ModelHostState>): ModelHostState | null {
   if (parsed.kind !== "ModelHost") return null;
-  const { engine, host, modelAliases, pid, port, startedAt } = parsed;
+  const { engine, host, modelAliases, pid, port, startedAt, binaryNames } = parsed;
   if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return null;
   if (typeof host !== "string" || !LOOPBACK_HOSTS.has(host)) return null;
   if (typeof port !== "number" || !Number.isInteger(port) || port < 1 || port > 65535) return null;
@@ -182,6 +196,7 @@ function validateModelHostState(parsed: Partial<ModelHostState>): ModelHostState
     startedAt,
     slotSavePath: typeof parsed.slotSavePath === "string" ? parsed.slotSavePath : null,
     ...(typeof parsed.specHash === "string" ? { specHash: parsed.specHash } : {}),
+    ...(validBinaryNames(binaryNames) ? { binaryNames: [...binaryNames] } : {}),
   };
 }
 

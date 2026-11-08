@@ -1,6 +1,13 @@
 import { resolveCustomCatalogFile } from "./env.js";
 import { readFileSync } from "./safe-fs.js";
-import { CuratedModel, curatedTsvFields, formatTsvRow, splitTsvRow } from "./schemas.js";
+import {
+  CuratedMeta,
+  curatedMetaFields,
+  CuratedModel,
+  curatedTsvFields,
+  formatTsvRow,
+  splitTsvRow,
+} from "./schemas.js";
 
 /**
  * Built-in curated catalog. Mirrors `_llama_curated_catalog()` in the
@@ -145,7 +152,152 @@ export const BUILTIN_CATALOG: readonly CuratedModel[] = [
     repo: "unsloth/granite-4.1-3b-GGUF",
     format: "gguf",
   },
-] as const;
+  {
+    // Quant revision 07c62fcdeaf1c05d22bd123c3da8058a1b1e63e2; base
+    // zai-org/GLM-5.3-Flash@46a050bec13002ad29ee795c16e61cf4fa3c4a9c. The
+    // GGUF arch is glm5next, which mainline llama.cpp cannot load. The rel
+    // is the Z13 on-disk dir; no HF repo carries that name. The revisions
+    // live here because repo stays a plain HF id: pull and hf read it.
+    id: "glm53-flash-aj-iq2xxs",
+    label: "GLM-5.3-Flash AJ-IQ2_XXS",
+    family: "glm53",
+    class: "reasoning",
+    scope: "candidate",
+    rel: "GLM-5.3-Flash-AJ-GGUF/AJ-IQ2_XXS/GLM-5.3-Flash-AJ-IQ2_XXS-00001-of-00002.gguf",
+    repo: "aj9o9/GLM-5.3-Flash-GGUF",
+    format: "gguf",
+    qualification: { stage: "experimental" },
+    runtime: { engines: ["llamacpp"], minBuild: "fork:mikealanni/gufo@2e499c39" },
+    contextMax: 1048576,
+    residencyGroup: "z13-large-gpu",
+    license:
+      "drafter: Anbeeld/GLM-5.3-Flash-DFlash2-GGUF CC-BY-NC-ND-4.0 (non-commercial); incoai/GLM-5.3-Flash-DFlash2 licence unknown",
+  },
+  {
+    // Revision 2688c0c3c2c3b052ec4f6d10a8417b0ef7ee4eba; diskBackedGiB is
+    // the IQ4_NL Engram on SSD.
+    id: "deepseek41-flash-1017-ud-iq1s",
+    label: "DeepSeek V4.1 Flash 1017 UD-IQ1_S",
+    family: "deepseek41",
+    class: "reasoning",
+    scope: "candidate",
+    rel: "DeepSeek-V4.1-Flash-1017-GGUF/UD-IQ1_S/DeepSeek-V4.1-Flash-1017-UD-IQ1_S-00001-of-00005.gguf",
+    repo: "unsloth/DeepSeek-V4.1-Flash-1017-GGUF",
+    format: "gguf",
+    availability: {
+      declared: "unavailable",
+      reason: "artifact-not-downloaded; runtime-not-pinned",
+    },
+    qualification: { stage: "experimental" },
+    runtime: { engines: ["llamacpp"], minBuild: "b11870" },
+    memory: { residentGiB: 114.0, diskBackedGiB: 103 },
+    residencyGroup: "z13-large-gpu",
+  },
+  {
+    // Revision 2688c0c3c2c3b052ec4f6d10a8417b0ef7ee4eba; diskBackedGiB is
+    // the IQ4_NL Engram on SSD.
+    id: "deepseek41-flash-1017-ud-iq1m",
+    label: "DeepSeek V4.1 Flash 1017 UD-IQ1_M",
+    family: "deepseek41",
+    class: "reasoning",
+    scope: "candidate",
+    rel: "DeepSeek-V4.1-Flash-1017-GGUF/UD-IQ1_M/DeepSeek-V4.1-Flash-1017-UD-IQ1_M-00001-of-00005.gguf",
+    repo: "unsloth/DeepSeek-V4.1-Flash-1017-GGUF",
+    format: "gguf",
+    availability: {
+      declared: "unavailable",
+      reason: "artifact-not-downloaded; runtime-not-pinned",
+    },
+    qualification: { stage: "experimental" },
+    runtime: { engines: ["llamacpp"], minBuild: "b11870" },
+    memory: { residentGiB: 130.2, diskBackedGiB: 103 },
+    residencyGroup: "z13-large-gpu",
+  },
+  {
+    // Revision and shard file names were not captured, so rel is the quant
+    // dir only. Pin it when the artifact is approved.
+    id: "deepseek41-flash-1017-gsq-rco-iq1m",
+    label: "DeepSeek V4.1 Flash 1017 GSQ-RCO IQ1_M",
+    family: "deepseek41",
+    class: "reasoning",
+    scope: "candidate",
+    rel: "DeepSeek-V4.1-Flash-1017-GSQ-RCO-GGUF/IQ1_M",
+    repo: "ISTA-DASLab/DeepSeek-V4.1-Flash-1017-GSQ-RCO-GGUF",
+    format: "gguf",
+    availability: {
+      declared: "unavailable",
+      reason: "artifact-not-downloaded; runtime-not-pinned; exceeds-node-budget-resident",
+    },
+    qualification: { stage: "experimental" },
+    runtime: { engines: ["llamacpp"], minBuild: "b11870" },
+    residencyGroup: "z13-large-gpu",
+  },
+  {
+    // Revision b6e95d58; base XiaomiMiMo/MiMo-V2.6-Flash-MOPD@5220c3f5.
+    id: "mimo26-flash-mopd-bpw25",
+    label: "MiMo-V2.6-Flash MOPD BPW2.5",
+    family: "mimo26",
+    class: "reasoning",
+    scope: "candidate",
+    rel: "MiMo-V2.6-Flash-MOPD-GGUF/BPW2.5/MiMo-V2.6-Flash-MOPD-BPW2.5.gguf",
+    repo: "AesSedai/MiMo-V2.6-Flash-MOPD-GGUF",
+    format: "gguf",
+    availability: { declared: "unavailable", reason: "artifact-not-downloaded" },
+    qualification: { stage: "experimental" },
+    runtime: {
+      engines: ["llamacpp"],
+      minBuild: "b11298",
+      toolCallFormat: "mimo-xml",
+      reasoningFormat: "think-tags",
+    },
+    residencyGroup: "z13-large-gpu",
+  },
+  {
+    // Revision 7c9ba384; rel is the quant dir only (file name not captured).
+    // Pin it when the artifact is approved.
+    id: "mimo26-flash-mopd-a4x",
+    label: "MiMo-V2.6-Flash MOPD a4-x",
+    family: "mimo26",
+    class: "reasoning",
+    scope: "candidate",
+    rel: "MiMo-V2.6-Flash-MOPD-a4-x",
+    repo: "j2ipper/MiMo-V2.6-Flash-MOPD-a4-x",
+    format: "gguf",
+    availability: {
+      declared: "unavailable",
+      reason: "artifact-not-downloaded; runtime-unverified",
+    },
+    qualification: { stage: "experimental" },
+    runtime: {
+      engines: ["llamacpp"],
+      minBuild: "b11298",
+      toolCallFormat: "mimo-xml",
+      reasoningFormat: "think-tags",
+    },
+    residencyGroup: "z13-large-gpu",
+  },
+  {
+    // File name not captured; rel is the quant dir only. Pin it when the
+    // artifact is approved.
+    id: "mimo26-flash-mopd-bpw30",
+    label: "MiMo-V2.6-Flash MOPD BPW3.0",
+    family: "mimo26",
+    class: "reasoning",
+    scope: "candidate",
+    rel: "MiMo-V2.6-Flash-MOPD-GGUF/BPW3.0",
+    repo: "AesSedai/MiMo-V2.6-Flash-MOPD-GGUF",
+    format: "gguf",
+    availability: { declared: "unavailable", reason: "exceeds-node-budget" },
+    qualification: { stage: "experimental" },
+    runtime: {
+      engines: ["llamacpp"],
+      minBuild: "b11298",
+      toolCallFormat: "mimo-xml",
+      reasoningFormat: "think-tags",
+    },
+    residencyGroup: "z13-large-gpu",
+  },
+];
 
 export type CatalogScope = "all" | "builtin" | "custom";
 
@@ -153,19 +305,8 @@ export interface CatalogLoadOptions {
   customCatalogFile?: string;
 }
 
-/**
- * Read custom catalog entries from the on-disk TSV file. Blank lines,
- * lines starting with `#`, and lines with fewer than seven columns are
- * dropped — matching the tolerance of the historical shell awk filter.
- * Each surviving row is validated via zod; rows that fail validation
- * are skipped with a warning on stderr so one malformed append never
- * blows up the whole list.
- */
-function parseCustomCatalogRow(line: string, lineNo: number, file: string): CuratedModel | null {
-  const cols = splitTsvRow(line);
-  if (cols.length < curatedTsvFields.length - 1) return null;
-
-  const record: Record<string, string> = {};
+function buildLegacyRecord(cols: readonly string[]): Record<string, unknown> {
+  const record: Record<string, unknown> = {};
   for (const [j, field] of curatedTsvFields.entries()) {
     if (field === "format" && (cols[j] === undefined || cols[j] === "")) {
       record[field] = "gguf";
@@ -173,15 +314,74 @@ function parseCustomCatalogRow(line: string, lineNo: number, file: string): Cura
     }
     record[field] = cols[j] ?? "";
   }
+  return record;
+}
+
+function parseMetaColumn(raw: string): Record<string, unknown> | string {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw) as unknown;
+  } catch {
+    return "invalid meta JSON";
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return "meta must be a JSON object";
+  }
+  const obj = value as Record<string, unknown>;
+  const record: Record<string, unknown> = {};
+  for (const key of curatedMetaFields) {
+    if (Object.hasOwn(obj, key)) {
+      record[key] = obj[key];
+    }
+  }
+  return record;
+}
+
+export type CatalogRowParse = { ok: true; entry: CuratedModel } | { ok: false; error: string };
+
+export function parseCatalogRow(line: string): CatalogRowParse {
+  const cols = splitTsvRow(line);
+  if (cols.length < curatedTsvFields.length - 1) {
+    return { ok: false, error: "too few columns" };
+  }
+
+  const record = buildLegacyRecord(cols);
+  const metaRaw = cols[curatedTsvFields.length];
+  if (metaRaw !== undefined && metaRaw !== "") {
+    const meta = parseMetaColumn(metaRaw);
+    if (typeof meta === "string") {
+      return { ok: false, error: meta };
+    }
+    Object.assign(record, meta);
+  }
 
   const parsed = CuratedModel.safeParse(record);
   if (!parsed.success) {
-    process.stderr.write(
-      `llamactl: skipping invalid catalog row in ${file}:${String(lineNo)} (${parsed.error.issues.map((i) => i.message).join("; ")})\n`,
-    );
-    return null;
+    return { ok: false, error: parsed.error.issues.map((i) => i.message).join("; ") };
   }
-  return parsed.data;
+  return { ok: true, entry: parsed.data };
+}
+
+/**
+ * Custom-catalog rows tolerate blank lines, `#` comments, and rows with
+ * fewer than seven columns — matching the historical shell awk filter.
+ * A non-empty column 9 (`meta`) must be a JSON object matching the
+ * candidate-metadata schema; anything else, including trailing text on
+ * a hand-edited legacy row, skips the row with a warning on stderr so
+ * one malformed append never blows up the whole list.
+ */
+function parseCustomCatalogRow(line: string, lineNo: number, file: string): CuratedModel | null {
+  if (splitTsvRow(line).length < curatedTsvFields.length - 1) return null;
+
+  const cols = splitTsvRow(line);
+  const rel = cols[5] ?? "";
+  const result = parseCatalogRow(line);
+  if (result.ok) return result.entry;
+
+  process.stderr.write(
+    `llamactl: skipping invalid catalog row in ${file}:${String(lineNo)} rel=${rel} (${result.error})\n`,
+  );
+  return null;
 }
 
 export function readCustomCatalog(file: string): CuratedModel[] {
@@ -232,7 +432,19 @@ export function listCatalog(scope: CatalogScope, opts: CatalogLoadOptions = {}):
 /** Serialise an entry as a TSV row using the canonical column order. */
 export function formatCatalogRow(entry: CuratedModel): string {
   const normalized = { ...entry, format: entry.format };
-  return formatTsvRow(curatedTsvFields, normalized as unknown as Record<string, unknown>);
+  const line = formatTsvRow(curatedTsvFields, normalized as unknown as Record<string, unknown>);
+
+  const picked: Record<string, unknown> = {};
+  for (const key of curatedMetaFields) {
+    const value = entry[key];
+    if (value !== undefined) picked[key] = value;
+  }
+  if (Object.keys(picked).length === 0) return line;
+
+  const canonical = CuratedMeta.safeParse(picked);
+  if (!canonical.success) return line;
+
+  return `${line}\t${JSON.stringify(canonical.data)}`;
 }
 
 /** Serialise a list of entries as a TSV block (one row per line). */

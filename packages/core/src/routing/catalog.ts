@@ -10,7 +10,16 @@ import { z } from "zod";
 
 import type { ClusterRoute, LocalRoute } from "../workloadRuntime.js";
 
-import { LEGACY_PROXY_CAPABILITIES, RouteCapabilitiesSchema } from "./capabilities.js";
+import { QUALIFICATION_STAGES } from "../schemas.js";
+import {
+  type CapabilityRejection,
+  isExperimentalRoute,
+  LEGACY_PROXY_CAPABILITIES,
+  RouteCapabilitiesSchema,
+} from "./capabilities.js";
+
+const isQualificationStage = (stage: string): boolean =>
+  (QUALIFICATION_STAGES as readonly string[]).includes(stage);
 
 export const BackendKindSchema = z.enum(["local-model", "cloud-api", "cli", "acp"]);
 export type BackendKind = z.infer<typeof BackendKindSchema>;
@@ -91,6 +100,19 @@ export const RouteAdvertisementV1Schema = z.object({
   trustDomain: z.string().min(1).optional(),
   replicaGroup: z.string().min(1).optional(),
   priority: z.number().optional(),
+  // #518. The stage carries a QUALIFICATION_STAGES value; the refine
+  // validates it at this boundary while keeping the inferred type a plain
+  // string, so hand-built advertisements and label-derived stages typecheck.
+  qualification: z
+    .object({
+      stage: z
+        .string()
+        .min(1)
+        .refine(isQualificationStage, {
+          message: `stage must be one of: ${QUALIFICATION_STAGES.join(", ")}`,
+        }),
+    })
+    .optional(),
 });
 export type RouteAdvertisementV1 = z.infer<typeof RouteAdvertisementV1Schema>;
 
@@ -128,6 +150,19 @@ export interface RouteCandidate {
   advertisement: RouteAdvertisementV1;
   alias: string;
   source: "legacy" | "advertised";
+  /**
+   * First candidate for this alias in legacy precedence order.
+   *
+   * Known divergence (#518): for a default-target id (LLAMA_CPP_SERVER_ALIAS
+   * / LLAMA_CPP_DEFAULT_MODEL) served only by an experimental route, the
+   * proxy drops that route so requests fall through to the node's default
+   * endpoint, while the catalog still marks the experimental candidate
+   * legacyWinner. Callers must go through selectCatalogCandidates with
+   * `pinned: false` for such ids instead of trusting legacyWinner.
+   * follow-up: create-proxy — call
+   * selectCatalogCandidates(catalog, model, { pinned: !defaultTargetModelIds.has(model) })
+   * and pass stageByModel when building the catalog's routes.
+   */
   legacyWinner: boolean;
 }
 
@@ -167,6 +202,10 @@ interface DeploymentGroup {
   deploymentEpoch: RevisionV1;
   models: string[];
   seen: Set<string>;
+  /** True when any route of the group is experimental (#518). */
+  experimental: boolean;
+  /** First qualificationStage seen on a route of the group (#518). */
+  stage?: string;
 }
 
 function groupKeyFor(route: ClusterRoute): string {
@@ -189,6 +228,8 @@ function groupFor(route: ClusterRoute, nodeId: string): DeploymentGroup {
     deploymentEpoch: isPeer ? UNKNOWN_REVISION : knownRevision(`pid:${String(route.pid)}`),
     models: [],
     seen: new Set(),
+    experimental: isExperimentalRoute(route),
+    ...(route.qualificationStage !== undefined ? { stage: route.qualificationStage } : {}),
   };
 }
 
@@ -217,11 +258,17 @@ export function workloadOfDeployment(deploymentId: string, nodeId: string): stri
   return deploymentId.startsWith(prefix) ? deploymentId.slice(prefix.length) : null;
 }
 
+function qualificationForGroup(group: DeploymentGroup): { stage: string } | undefined {
+  if (group.experimental) return { stage: "experimental" };
+  return group.stage === undefined ? undefined : { stage: group.stage };
+}
+
 function adForGroup(group: DeploymentGroup): RouteAdvertisementV1 {
   // Legacy-derived advertisements go through the same schema validation
   // as added ones — the endpoint is rewritten to its credential-free
   // form first so a peer URL carrying userinfo/query/fragment cannot
   // reach catalog output.
+  const qualification = qualificationForGroup(group);
   return RouteAdvertisementV1Schema.parse({
     schemaVersion: 1,
     routeId: `route/${group.owner}/${group.workload}`,
@@ -241,12 +288,17 @@ function adForGroup(group: DeploymentGroup): RouteAdvertisementV1 {
     policyRevision: UNKNOWN_REVISION,
     weight: 1,
     draining: false,
+    ...(qualification !== undefined ? { qualification } : {}),
   });
 }
 
 // Legacy collision ordering from openaiProxy.buildRouteMap: ModelRun before
 // ModelHost, then workload-name order; the first route per alias wins.
+// #518 adds a leading non-experimental-before-experimental tier, kept in
+// parity with orderedProxyRoutes in openaiProxy.ts — an experimental
+// deployment never wins an alias.
 function compareDeployments(a: DeploymentGroup, b: DeploymentGroup): number {
+  if (a.experimental !== b.experimental) return a.experimental ? 1 : -1;
   if (a.kind !== b.kind) return a.kind === "ModelRun" ? -1 : 1;
   return a.workload.localeCompare(b.workload);
 }
@@ -298,6 +350,23 @@ function admissionConflict(
   };
 }
 
+/** True when an advertisement declares its qualification stage experimental (#518). */
+export function isExperimentalAdvertisement(ad: RouteAdvertisementV1): boolean {
+  return ad.qualification?.stage === "experimental";
+}
+
+/** Insert a non-experimental advertisement before the first experimental
+ *  candidate of each alias list (#518); experimental ones append. */
+function insertCandidate(list: RouteCandidate[], candidate: RouteCandidate): void {
+  if (isExperimentalAdvertisement(candidate.advertisement)) {
+    list.push(candidate);
+    return;
+  }
+  const firstExperimental = list.findIndex((c) => isExperimentalAdvertisement(c.advertisement));
+  if (firstExperimental === -1) list.push(candidate);
+  else list.splice(firstExperimental, 0, candidate);
+}
+
 export function addCatalogAdvertisement(
   catalog: RouteCatalog,
   input: RouteAdvertisementV1,
@@ -318,10 +387,54 @@ export function addCatalogAdvertisement(
   catalog.deployments.push(ad);
   for (const alias of ad.publicModelIds) {
     const list = catalog.candidates.get(alias) ?? [];
-    list.push({ advertisement: ad, alias, source: "advertised", legacyWinner: false });
+    insertCandidate(list, { advertisement: ad, alias, source: "advertised", legacyWinner: false });
     catalog.candidates.set(alias, list);
   }
   return { accepted: true };
+}
+
+/**
+ * Split an alias' candidates into eligible and rejected for a request.
+ * #518: non-experimental candidates are always eligible in catalog order;
+ * an experimental candidate is eligible only when the client pinned the
+ * exact id (`opts.pinned`) and no non-experimental candidate exists for the
+ * alias — otherwise it is rejected with `experimental-excluded`.
+ */
+export function selectCatalogCandidates(
+  catalog: RouteCatalog,
+  publicModelId: string,
+  opts: { pinned?: boolean } = {},
+): {
+  eligible: RouteCandidate[];
+  rejected: { candidate: RouteCandidate; rejection: CapabilityRejection }[];
+} {
+  const candidates = catalogCandidatesFor(catalog, publicModelId);
+  const hasStable = candidates.some((c) => !isExperimentalAdvertisement(c.advertisement));
+  const eligible: RouteCandidate[] = [];
+  const rejected: { candidate: RouteCandidate; rejection: CapabilityRejection }[] = [];
+  for (const candidate of candidates) {
+    if (isExperimentalAdvertisement(candidate.advertisement)) {
+      if (opts.pinned === true && !hasStable) {
+        eligible.push(candidate);
+      } else {
+        rejected.push({ candidate, rejection: { reason: "experimental-excluded" } });
+      }
+    } else {
+      eligible.push(candidate);
+    }
+  }
+  return { eligible, rejected };
+}
+
+function mergeRouteIntoGroup(group: DeploymentGroup, route: ClusterRoute): void {
+  if (isExperimentalRoute(route)) group.experimental = true;
+  if (group.stage === undefined && route.qualificationStage !== undefined) {
+    group.stage = route.qualificationStage;
+  }
+  if (!group.seen.has(route.model)) {
+    group.seen.add(route.model);
+    group.models.push(route.model);
+  }
 }
 
 export function buildRouteCatalog(opts: {
@@ -343,10 +456,7 @@ export function buildRouteCatalog(opts: {
       group = groupFor(route, nodeId);
       groups.set(key, group);
     }
-    if (!group.seen.has(route.model)) {
-      group.seen.add(route.model);
-      group.models.push(route.model);
-    }
+    mergeRouteIntoGroup(group, route);
   }
   const sorted = [...groups.values()].sort(compareDeployments);
   // Model ids within a deployment arrive in input order; sort them so the
