@@ -1,6 +1,6 @@
 import type { Database, SQLQueryBindings } from "bun:sqlite";
 
-import type { CellRow, CellRowDetail } from "./types.js";
+import type { CellRow, CellRowDetail, EvalProvenance, MetricValue, PerfRunRow } from "./types.js";
 
 /** Idempotent and safe to call on every operation; v1 may memoize per-Database instance. */
 export function ensureMatrixSchema(db: Database): void {
@@ -36,6 +36,26 @@ export function ensureMatrixSchema(db: Database): void {
       metrics_json TEXT NOT NULL,
       latency_ms REAL,
       PRIMARY KEY (run_id, model_name, workload_name, row_index)
+    )
+  `);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS perf_runs (
+      run_id TEXT NOT NULL,
+      model_name TEXT NOT NULL,
+      suite_name TEXT NOT NULL,
+      metric_name TEXT NOT NULL,
+      metric_value REAL,
+      metric_status TEXT NOT NULL,
+      metric_reason TEXT,
+      provenance_json TEXT NOT NULL,
+      started_at TEXT NOT NULL,
+      host_machine TEXT NOT NULL,
+      CHECK (
+        (metric_status = 'ok' AND metric_value IS NOT NULL AND metric_reason IS NULL)
+        OR (metric_status = 'unavailable' AND metric_value IS NULL
+            AND metric_reason IS NOT NULL AND length(trim(metric_reason)) > 0)
+      ),
+      PRIMARY KEY (run_id, model_name, suite_name, metric_name)
     )
   `);
 }
@@ -171,4 +191,125 @@ export function listCellRowDetails(
        ORDER BY run_id ASC, model_name ASC, workload_name ASC, row_index ASC`,
     )
     .all(...params) as CellRowDetail[];
+}
+
+function assertValidMetricValue(metric: MetricValue, metricName: string): void {
+  const raw: { status?: unknown; value?: unknown; reason?: unknown } = metric;
+  if (raw.status === "ok") {
+    if (typeof raw.value !== "number" || !Number.isFinite(raw.value)) {
+      throw new Error(`insertPerfRun: metric ${metricName} has status "ok" but a non-finite value`);
+    }
+    return;
+  }
+  if (raw.status === "unavailable") {
+    if (typeof raw.reason !== "string" || raw.reason.trim().length === 0) {
+      throw new Error(
+        `insertPerfRun: metric ${metricName} is unavailable with a missing or blank reason`,
+      );
+    }
+    return;
+  }
+  throw new Error(`insertPerfRun: metric ${metricName} has unknown status ${String(raw.status)}`);
+}
+
+// Returns the upserted row; the non-void signature keeps
+// `() => insertPerfRun(...)` expect-arrows valid under
+// no-confusing-void-expression.
+export function insertPerfRun(db: Database, row: PerfRunRow): PerfRunRow {
+  ensureMatrixSchema(db);
+  assertValidMetricValue(row.metric, row.metric_name);
+  const metricValue = row.metric.status === "ok" ? row.metric.value : null;
+  const metricReason = row.metric.status === "unavailable" ? row.metric.reason : null;
+  db.query(
+    `
+      INSERT INTO perf_runs (
+        run_id, model_name, suite_name, metric_name,
+        metric_value, metric_status, metric_reason,
+        provenance_json, started_at, host_machine
+      ) VALUES (
+        $run_id, $model_name, $suite_name, $metric_name,
+        $metric_value, $metric_status, $metric_reason,
+        $provenance_json, $started_at, $host_machine
+      )
+      ON CONFLICT(run_id, model_name, suite_name, metric_name) DO UPDATE SET
+        metric_value=excluded.metric_value,
+        metric_status=excluded.metric_status,
+        metric_reason=excluded.metric_reason,
+        provenance_json=excluded.provenance_json,
+        started_at=excluded.started_at,
+        host_machine=excluded.host_machine
+    `,
+  ).run({
+    $run_id: row.run_id,
+    $model_name: row.model_name,
+    $suite_name: row.suite_name,
+    $metric_name: row.metric_name,
+    $metric_value: metricValue,
+    $metric_status: row.metric.status,
+    $metric_reason: metricReason,
+    $provenance_json: JSON.stringify(row.provenance),
+    $started_at: row.started_at,
+    $host_machine: row.host_machine,
+  });
+  return row;
+}
+
+interface PerfRunRecord {
+  run_id: string;
+  model_name: string;
+  suite_name: string;
+  metric_name: string;
+  metric_value: number | null;
+  metric_status: string;
+  metric_reason: string | null;
+  provenance_json: string;
+  started_at: string;
+  host_machine: string;
+}
+
+function decodeMetricValue(record: PerfRunRecord): MetricValue {
+  if (record.metric_status === "unavailable" && typeof record.metric_reason === "string") {
+    return { value: null, status: "unavailable", reason: record.metric_reason };
+  }
+  if (record.metric_status === "ok" && typeof record.metric_value === "number") {
+    return { value: record.metric_value, status: "ok" };
+  }
+  throw new Error(
+    `perf_runs row ${record.run_id}/${record.model_name}/${record.suite_name}/${record.metric_name} has inconsistent metric columns`,
+  );
+}
+
+export function listPerfRuns(
+  db: Database,
+  filter: { run_id?: string; model_name?: string } = {},
+): PerfRunRow[] {
+  ensureMatrixSchema(db);
+  const clauses: string[] = [];
+  const params: SQLQueryBindings[] = [];
+  if (filter.run_id) {
+    clauses.push("run_id = ?");
+    params.push(filter.run_id);
+  }
+  if (filter.model_name) {
+    clauses.push("model_name = ?");
+    params.push(filter.model_name);
+  }
+  const rows = db
+    .query(
+      `SELECT run_id, model_name, suite_name, metric_name, metric_value, metric_status, metric_reason, provenance_json, started_at, host_machine
+       FROM perf_runs
+       ${clauses.length ? `WHERE ${clauses.join(" AND ")}` : ""}
+       ORDER BY run_id ASC, model_name ASC, suite_name ASC, metric_name ASC`,
+    )
+    .all(...params) as PerfRunRecord[];
+  return rows.map((record) => ({
+    run_id: record.run_id,
+    model_name: record.model_name,
+    suite_name: record.suite_name,
+    metric_name: record.metric_name,
+    metric: decodeMetricValue(record),
+    provenance: JSON.parse(record.provenance_json) as EvalProvenance,
+    started_at: record.started_at,
+    host_machine: record.host_machine,
+  }));
 }
