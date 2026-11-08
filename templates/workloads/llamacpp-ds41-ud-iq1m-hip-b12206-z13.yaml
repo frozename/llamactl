@@ -1,0 +1,65 @@
+# EXPERIMENTAL: DeepSeek V4.1 Flash 1017 UD-IQ1_M, unsloth revision
+# 2688c0c3, on the upstream HIP baseline arm D-L. Pinned to upstream
+# llama.cpp b12206 @ cf34d311332e (BUILDINFO.json on the Z13 records
+# binary sha256). This is a separate ModelHost, not Gufo.
+#
+# This upstream HIP host is the baseline; the operator's primary DeepSeek
+# engine is libosmos ROCm/HIP + DSpark, and its adapter is S3.
+#
+# It is committed disabled because it shares the exclusive z13-large-gpu
+# group with production Qwen, GLM and MiMo. Enabling it needs an
+# operator-approved Gufo window.
+#
+# residentGiB 130.2 / diskBackedGiB 103 are derived and mirror the catalog
+# row deepseek41-flash-1017-ud-iq1m memory; they are not measured. 103 GiB
+# is the IQ4_NL Engram, which stays on SSD. No expert-offload flag is
+# passed, so the full non-Engram weights are charged resident.
+# expectedMemoryGiB is deliberately not set.
+# residentGiB 130.2 exceeds the z13 116 GiB GTT ceiling (ttm.pages_limit) and 124.9 GiB MemTotal (z13.md); no expert-offload flag is passed, so this arm needs an offload or memory plan before it can be enabled.
+#
+# Tool calls are DSML, handled by llama.cpp's built-in DeepSeek parser,
+# so --jinja is not passed. DSML tool-call parsing on this build is
+# unvalidated. No gfx1151 benchmark exists [?] for this arm.
+#
+# See 05-runtime-engine-matrix.md section 4.
+# TODO(#557 catalog follow-up): the catalog row uses the legacy DeepSeek-V4.1-Flash-1017-GGUF/UD-IQ1_M rel layout, so this arm does not join it until that row is repinned.
+apiVersion: llamactl/v1
+kind: ModelHost
+metadata:
+  name: llamacpp-ds41-ud-iq1m-hip-b12206
+  labels:
+    family: deepseek41
+    llamactl.io/qualification: experimental
+    llamactl.io/residency-group: z13-large-gpu
+    llamactl.io/runtime-arm: D-L-cf34d311332e
+    llamactl.io/backend: hip
+spec:
+  engine: llamacpp
+  node: z13
+  enabled: false
+  binary: /home/alex/strix-halo-bench/runtimes/llama.cpp-cf34d311332e/bin/llama-server
+  resources:
+    residentGiB: 130.2
+    diskBackedGiB: 103
+  # Port 8090 avoids the production and experimental hosts 8080-8089 on z13.
+  endpoint:
+    host: 127.0.0.1
+    port: 8090
+  hostedModels:
+    - rel: DeepSeek-V4.1-Flash-1017-GGUF-unsloth/2688c0c3/UD-IQ1_M/DeepSeek-V4.1-Flash-1017-UD-IQ1_M-00001-of-00005.gguf
+  extraArgs:
+    # --served-model-name equals the GGUF basename, because a ModelHost
+    # routes by rel and basename.
+    - --served-model-name
+    - DeepSeek-V4.1-Flash-1017-UD-IQ1_M-00001-of-00005.gguf
+    # -c 65536 sits inside the 64K-128K Z13 band of a 1M-context model.
+    - -c
+    - "65536"
+    # --spec-type draft-dspark + -md drafter path (b12206 has no --dspark).
+    # The drafter file is relative so llamacpp resolves it against the models
+    # dir (#544).
+    - --spec-type
+    - draft-dspark
+    - -md
+    - DeepSeek-V4.1-Flash-1017-GGUF-unsloth/2688c0c3/dspark/dspark-DeepSeek-V4.1-Flash-1017-Q8_0.gguf
+  restartPolicy: Never
