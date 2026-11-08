@@ -311,6 +311,37 @@ describe("catalog candidate metadata (#515)", () => {
     expect(formatCatalogRow(reOrderedParse.entry)).toBe(literal);
   });
 
+  test("byte-exact round-trip pins every runtime and memory key in schema order", () => {
+    // The docs row above sets only runtime {engines, minBuild} and
+    // memory {residentGiB}, so it cannot pin the order of the other
+    // nested keys. This literal fills every runtime and memory field.
+    const literal =
+      'dsv41-flash-iq1s\tDeepSeek V4.1 Flash\tdeepseek\treasoning\tcandidate\tDeepSeek-V4.1-Flash-GGUF/UD-IQ1_S/model-00001.gguf\tunsloth/DeepSeek-V4.1-Flash-GGUF\tgguf\t{"availability":{"declared":"unavailable","reason":"artifact-not-downloaded"},"runtime":{"engines":["llamacpp"],"minBuild":"b11870","toolCallFormat":"deepseek","reasoningFormat":"deepseek-r1","chatTemplate":"deepseek-v4"},"memory":{"residentGiB":114,"diskBackedGiB":20,"kvGiBPer32k":4.5}}';
+
+    expect(literal.split("\t")).toHaveLength(9);
+    const parsed = parseCatalogRow!(literal);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) throw new Error(parsed.error);
+    expect(formatCatalogRow(parsed.entry)).toBe(literal);
+
+    const basePart = literal.split("\t").slice(0, 8).join("\t");
+    const reOrderedMeta = JSON.stringify({
+      memory: { kvGiBPer32k: 4.5, diskBackedGiB: 20, residentGiB: 114 },
+      runtime: {
+        chatTemplate: "deepseek-v4",
+        reasoningFormat: "deepseek-r1",
+        toolCallFormat: "deepseek",
+        minBuild: "b11870",
+        engines: ["llamacpp"],
+      },
+      availability: { reason: "artifact-not-downloaded", declared: "unavailable" },
+    });
+    const reOrderedParse = parseCatalogRow!(`${basePart}\t${reOrderedMeta}`);
+    expect(reOrderedParse.ok).toBe(true);
+    if (!reOrderedParse.ok) throw new Error(reOrderedParse.error);
+    expect(formatCatalogRow(reOrderedParse.entry)).toBe(literal);
+  });
+
   test("formatCatalogRow drops invalid meta and emits exactly eight columns", () => {
     const invalidMetaEntry = {
       ...base,
