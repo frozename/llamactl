@@ -15,13 +15,14 @@ import {
 /**
  * Pins frozename/llamactl#515 (D-3, rel fix in C-3): the MiMo-V2.6-Flash MOPD
  * BPW2.5 GGUF is served on z13 by a disabled, experimental ModelHost template
- * on upstream llama.cpp (no Gufo fork identity, no /ready probe). The drafter
- * file is pinned and stays a models-dir-relative path so the engine boot
- * command resolves it, and the hosted rel is the pinned models-root layout
- * the catalog row also carries. The runtime placeholder and the --spec-type
- * spelling stay explicit. The last cases guard the catalog rel, the metadata
- * name and the z13-large-gpu residency group against a second registration
- * anywhere else in the templates dir.
+ * on upstream llama.cpp b12206 @ cf34d311332e (no Gufo fork identity, no
+ * /ready probe). The drafter file is pinned and stays a models-dir-relative
+ * path so the engine boot command resolves it, and the hosted rel is the
+ * pinned models-root layout the catalog row also carries. The runtime is
+ * pinned to llama.cpp-cf34d311332e. --spec-type draft-dflash + -md replace
+ * the old -md-only wiring. The last cases guard the catalog rel, the
+ * metadata name and the z13-large-gpu residency group against a second
+ * registration anywhere else in the templates dir.
  */
 const TEMPLATES_DIR = resolve(import.meta.dir, "../../../../templates/workloads");
 const FILE = "llamacpp-mimo26-flash-bpw25-z13.yaml";
@@ -31,7 +32,7 @@ const MODEL_REL =
 const DRAFT_REL =
   "MiMo-V2.6-Flash-MOPD-GGUF-ggml-org/c9d86979/dflash/dflash-MiMo-V2.6-Flash-MOPD-Q8_0.gguf";
 const DRAFT_DIR = "MiMo-V2.6-Flash-MOPD-GGUF-ggml-org/c9d86979/dflash/";
-const RUNTIME_PREFIX = "/home/alex/strix-halo-bench/runtimes/llama.cpp-";
+const RUNTIME_PREFIX = "/home/alex/strix-halo-bench/runtimes/llama.cpp-cf34d311332e/";
 const MIMO_ROW = catalog.BUILTIN_CATALOG.find((m) => m.id === "mimo26-flash-mopd-bpw25");
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -325,18 +326,20 @@ describe("llamacpp-mimo26-flash-bpw25-z13.yaml (#515 D-3)", () => {
     expect(offenders).toEqual([]);
   });
 
-  test("keeps the unpinned runtime and --spec-type placeholders explicit", () => {
+  test("pins the runtime and --spec-type flags", () => {
     const { manifest } = loadManifest();
     const spec = manifest.spec;
-    // Pinning the llama.cpp commit or the --spec-type spelling must update
-    // this case.
-    expect(spec.binary.startsWith(`${RUNTIME_PREFIX}unpinned/`)).toBe(true);
+    expect(spec.binary.startsWith(RUNTIME_PREFIX)).toBe(true);
     const args = spec.extraArgs;
+    const specTypeIdx = args.indexOf("--spec-type");
+    expect(specTypeIdx).toBeGreaterThanOrEqual(0);
+    expect(args.lastIndexOf("--spec-type")).toBe(specTypeIdx);
+    expect(args[specTypeIdx + 1]).toBe("draft-dflash");
     const mdIdx = args.indexOf("-md");
     expect(mdIdx).toBeGreaterThanOrEqual(0);
+    expect(args.lastIndexOf("-md")).toBe(mdIdx);
     const draft = draftArgValue(args);
     expect(draft).toBe(DRAFT_REL);
     expect(draft.includes("unpinned")).toBe(false);
-    expect(args).not.toContain("--spec-type");
   });
 });

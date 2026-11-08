@@ -1,13 +1,14 @@
 # EXPERIMENTAL: DeepSeek V4.1 Flash 1017 UD-IQ1_S, unsloth revision 2688c0c3.
-# It needs upstream llama.cpp >= b11870. This is a separate ModelHost, not
-# Gufo.
+# Pinned to upstream llama.cpp b12206 @ cf34d311332e (BUILDINFO.json on the
+# Z13 records binary sha256). This is a separate ModelHost, not Gufo.
+#
+# This upstream HIP host is the baseline; the operator's primary DeepSeek
+# engine is libosmos ROCm/HIP + DSpark (adapter to come). Streaming
+# behaviour of upstream for V4.1 is unverified.
 #
 # It is committed disabled because it shares the exclusive z13-large-gpu
 # group with production Qwen, GLM and MiMo. Enabling it needs an
 # operator-approved window.
-#
-# The runtime path is a placeholder until a pinned build exists under
-# runtimes/llama.cpp-<commit12>. Replace "unpinned" with the recorded sha.
 #
 # residentGiB 114 / diskBackedGiB 103 mirror the catalog row
 # deepseek41-flash-1017-ud-iq1s memory (04 C-1). They are not measured.
@@ -30,7 +31,7 @@ spec:
   engine: llamacpp
   node: z13
   enabled: false
-  binary: /home/alex/strix-halo-bench/runtimes/llama.cpp-unpinned/bin/llama-server
+  binary: /home/alex/strix-halo-bench/runtimes/llama.cpp-cf34d311332e/bin/llama-server
   resources:
     residentGiB: 114
     diskBackedGiB: 103
@@ -49,8 +50,11 @@ spec:
     # -c 65536 sits inside the 64K-128K Z13 band of a 1M-context model.
     - -c
     - "65536"
-    # --dspark enables DeepSeek sparse dispatch; the drafter file is
-    # relative so llamacpp resolves it against the models dir (#544).
-    - --dspark
+    # --spec-type draft-dspark + -md drafter path (b12206 has no --dspark).
+    # The drafter file is relative so llamacpp resolves it against the models
+    # dir (#544).
+    - --spec-type
+    - draft-dspark
+    - -md
     - DeepSeek-V4.1-Flash-1017-GGUF-unsloth/2688c0c3/dspark/dspark-DeepSeek-V4.1-Flash-1017-Q8_0.gguf
   restartPolicy: Never

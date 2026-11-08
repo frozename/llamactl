@@ -15,14 +15,14 @@ import {
 /**
  * Pins frozename/llamactl#515 (C-3): the DeepSeek-V4.1-Flash-1017 UD-IQ1_S
  * GGUF is served on z13 by a disabled, experimental ModelHost template on
- * upstream llama.cpp (no Gufo fork identity, no /ready probe). The drafter
- * is the pinned dspark Q8_0 file kept models-dir-relative so the engine
- * boot command resolves it, and the hosted rel is the pinned
- * <repo>-<owner>/<rev8> models-root layout the catalog row also carries.
- * The runtime placeholder stays explicit until the llama.cpp commit is
- * pinned. The last cases guard the catalog rel, the metadata name, the
- * port and the z13-large-gpu residency group against a second registration
- * anywhere else in the templates dir.
+ * upstream llama.cpp b12206 @ cf34d311332e (no Gufo fork identity, no
+ * /ready probe). The drafter is the pinned dspark Q8_0 file kept
+ * models-dir-relative so the engine boot command resolves it, and the
+ * hosted rel is the pinned <repo>-<owner>/<rev8> models-root layout the
+ * catalog row also carries. The runtime is pinned to
+ * llama.cpp-cf34d311332e. The last cases guard the catalog rel, the
+ * metadata name, the port and the z13-large-gpu residency group against a
+ * second registration anywhere else in the templates dir.
  */
 const TEMPLATES_DIR = resolve(import.meta.dir, "../../../../templates/workloads");
 const FILE = "llamacpp-deepseek41-flash-iq1s-z13.yaml";
@@ -31,7 +31,7 @@ const MODEL_REL =
   "DeepSeek-V4.1-Flash-1017-GGUF-unsloth/2688c0c3/UD-IQ1_S/DeepSeek-V4.1-Flash-1017-UD-IQ1_S-00001-of-00005.gguf";
 const DRAFT_REL =
   "DeepSeek-V4.1-Flash-1017-GGUF-unsloth/2688c0c3/dspark/dspark-DeepSeek-V4.1-Flash-1017-Q8_0.gguf";
-const RUNTIME_PREFIX = "/home/alex/strix-halo-bench/runtimes/llama.cpp-";
+const RUNTIME_PREFIX = "/home/alex/strix-halo-bench/runtimes/llama.cpp-cf34d311332e/";
 const DS_ROW = catalog.BUILTIN_CATALOG.find((m) => m.id === "deepseek41-flash-1017-ud-iq1s");
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -198,7 +198,7 @@ describe("llamacpp-deepseek41-flash-iq1s-z13.yaml (#515 C-3)", () => {
     expect(spec.endpoint).toEqual({ host: "127.0.0.1", port: 8084 });
     expect(isAbsolute(spec.binary)).toBe(true);
     expect(basename(spec.binary)).toBe("llama-server");
-    expect(spec.binary.startsWith(`${RUNTIME_PREFIX}unpinned/`)).toBe(true);
+    expect(spec.binary.startsWith(RUNTIME_PREFIX)).toBe(true);
     const binaryName = spec.binary.toLowerCase();
     expect(binaryName.includes("gufo")).toBe(false);
     expect(binaryName.includes("devstorage")).toBe(false);
@@ -233,7 +233,7 @@ describe("llamacpp-deepseek41-flash-iq1s-z13.yaml (#515 C-3)", () => {
     expect(flagArgValue(args, "--served-model-name")).toBe(basename(MODEL_REL));
   });
 
-  test("wires the 64k context without chat-template or draft flags", () => {
+  test("wires the 64k context with --spec-type draft-dspark + -md", () => {
     const { manifest } = loadManifest();
     const args = manifest.spec.extraArgs;
     const ctxIdx = args.indexOf("-c");
@@ -244,24 +244,29 @@ describe("llamacpp-deepseek41-flash-iq1s-z13.yaml (#515 C-3)", () => {
     expect(args).not.toContain("--no-jinja");
     expect(args).not.toContain("--chat-template");
     expect(args).not.toContain("--chat-template-file");
-    expect(args).not.toContain("-md");
+    expect(args).not.toContain("--dspark");
     expect(args).not.toContain("--model-draft");
-    expect(args).not.toContain("--spec-draft-model");
-    expect(args).not.toContain("--spec-type");
+    // --spec-type appears once (for draft-dspark)
+    expect(args.filter((a) => a === "--spec-type")).toHaveLength(1);
+    expect(args).not.toContain("--dflash");
     expect(DS_ROW).toBeDefined();
     if (DS_ROW === undefined) return;
     expect(DS_ROW.runtime?.engines).toContain("llamacpp");
     expect(DS_ROW.runtime?.minBuild).toBe("b11870");
   });
 
-  test("resolves the --dspark drafter against the models dir at boot", () => {
+  test("resolves the --spec-type draft-dspark + -md drafter at boot", () => {
     const { manifest } = loadManifest();
     const spec = manifest.spec;
     const args = spec.extraArgs;
-    const dsparkIdx = args.indexOf("--dspark");
-    expect(dsparkIdx).toBeGreaterThanOrEqual(0);
-    expect(args.lastIndexOf("--dspark")).toBe(dsparkIdx);
-    const draft = flagArgValue(args, "--dspark");
+    const specTypeIdx = args.indexOf("--spec-type");
+    expect(specTypeIdx).toBeGreaterThanOrEqual(0);
+    expect(args.lastIndexOf("--spec-type")).toBe(specTypeIdx);
+    expect(flagArgValue(args, "--spec-type")).toBe("draft-dspark");
+    const mdIdx = args.indexOf("-md");
+    expect(mdIdx).toBeGreaterThanOrEqual(0);
+    expect(args.lastIndexOf("-md")).toBe(mdIdx);
+    const draft = flagArgValue(args, "-md");
     expect(draft).toBe(DRAFT_REL);
     expect(isAbsolute(draft)).toBe(false);
 
@@ -271,7 +276,7 @@ describe("llamacpp-deepseek41-flash-iq1s-z13.yaml (#515 C-3)", () => {
     });
     expect(boot.binary).toBe(spec.binary);
     expect(flagArgValue(boot.args, "-m")).toBe(resolve(modelsDir, MODEL_REL));
-    expect(flagArgValue(boot.args, "--dspark")).toBe(resolve(modelsDir, DRAFT_REL));
+    expect(flagArgValue(boot.args, "-md")).toBe(resolve(modelsDir, DRAFT_REL));
   });
 
   test("labels the host experimental on the z13-large-gpu residency group", () => {
@@ -331,6 +336,6 @@ describe("llamacpp-deepseek41-flash-iq1s-z13.yaml (#515 C-3)", () => {
     expect(text).toContain("dsml");
     expect(text).toContain("unvalidated");
     expect(text).toContain("not measured");
-    expect(text).toContain('replace "unpinned" with the recorded sha');
+    expect(text).toContain("cf34d311332e");
   });
 });
