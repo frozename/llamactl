@@ -312,9 +312,11 @@ function applyRepoQuantOverrides(
 /**
  * Final fit heuristic. Catalog-declared resident memory beats the tree
  * probe: when a catalog row for this (repo, file) declares
- * `memory.residentGiB`, the fit is that number's size tier plus the
- * profile overrides — no byte estimate, and the deepseek reasoning
- * clamp is skipped because the declared memory takes priority.
+ * `memory.residentGiB`, the fit is that number's size tier with only the
+ * family-wide "poor" ceilings applied (see `applyDeclaredFit`). No byte
+ * estimate is used, and no override that would improve the fit applies,
+ * including quant-name upgrades and the deepseek reasoning clamp path,
+ * because the declared memory takes priority.
  * Otherwise combines (a) size-tier classification when the repo tree
  * yielded a real byte count, (b) a quant-pattern fallback when we can't
  * compute bytes, (c) per-profile repo overrides, and (d) a hard clamp
@@ -334,7 +336,7 @@ export async function discoveryFit(
   const repoL = repo.toLowerCase();
   const declared = findByRepoFile(repo, file)?.memory?.residentGiB;
   if (typeof declared === "number") {
-    return applyDeclaredFit(sizeFit(declared, profile), profile, repoL, file);
+    return applyDeclaredFit(sizeFit(declared, profile), profile, repoL);
   }
 
   let fit: DiscoveryFit = "unknown";
@@ -485,25 +487,27 @@ async function buildDiscoveryRow(
 }
 
 /**
- * Apply only the "poor" clamps from `applyRepoQuantOverrides` — the
- * profile-level size limits that say "this family is always too big for
- * this machine".  Declared memory already represents the true resident
- * footprint, so quant-name fit upgrades (Q4_K_M → 'good'/'excellent')
- * must not apply; only the hard clamps that downgrade to 'poor' are
- * valid because they reflect a family-wide hardware ceiling, not a
- * quant-name heuristic.
+ * Fit for a catalog row that declares `memory.residentGiB` (#515).
+ * Declared memory is the true resident footprint, so it wins over every
+ * quant-name heuristic: no override that would improve the size-tier fit
+ * (Q4_K_M → 'good'/'excellent' and similar) is applied. Only the
+ * family-wide "poor" ceilings for macbook-pro-48g and large-128g
+ * (671b/405b, plus 123b/120b on 48g) still apply, because they encode a
+ * hardware limit rather than a quant guess. On mac-mini-16g and balanced
+ * the size tier is used as-is: the v3|v4 and 70b+ clamps from
+ * `applyRepoQuantOverrides` are deliberately dropped there, since the
+ * declared size tier already rates such models poor on those profiles.
  */
 function applyDeclaredFit(
   base: DiscoveryFit,
   profile: MachineProfile,
-  _repoL: string,
-  _file: string,
+  repoL: string,
 ): DiscoveryFit {
   switch (profile) {
     case "macbook-pro-48g":
-      return /671b|405b|123b|120b/.test(_repoL) ? "poor" : base;
+      return /671b|405b|123b|120b/.test(repoL) ? "poor" : base;
     case "large-128g":
-      return /671b|405b/.test(_repoL) ? "poor" : base;
+      return /671b|405b/.test(repoL) ? "poor" : base;
     case "mac-mini-16g":
     case "balanced":
       return base;

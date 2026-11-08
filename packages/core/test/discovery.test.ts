@@ -293,19 +293,21 @@ describe("discovery.discoveryFit declared memory overrides", () => {
   test("declared 114 GiB on mac-mini-16g stays poor — no quant-name upgrade", async () => {
     await withDeclaredMemory(
       [
-        "qwen36-35b-a3b-mtp",
-        "Qwen3.6 35B A3B MTP",
-        "qwen36",
-        "general",
+        "big-q4",
+        "Big Q4",
+        "big",
+        "reasoning",
         "candidate",
-        "Qwen3.6-35B-A3B-MTP-GGUF/Big-Q4_K_M.gguf",
-        "b1-mtp-qwen-rebase/Qwen3.6-35B-A3B-MTP-GGUF",
+        "Big-GGUF/Big-Q4_K_M.gguf",
+        "example/Big-GGUF",
         "gguf",
         '{"memory":{"residentGiB":114}}',
       ].join("\t") + "\n",
       async (probe) => {
-        const repo = "b1-mtp-qwen-rebase/Qwen3.6-35B-A3B-MTP-GGUF";
-        const file = "Qwen3.6-35B-A3B-MTP-GGUF/Big-Q4_K_M.gguf";
+        // No family clamp matches this repo, so only a (skipped) Q4_K_M
+        // quant-name upgrade could lift the 114 GiB size tier.
+        const repo = "example/Big-GGUF";
+        const file = "Big-GGUF/Big-Q4_K_M.gguf";
         expect(await probe(repo, file, "mac-mini-16g")).toBe("poor");
       },
     );
@@ -314,19 +316,21 @@ describe("discovery.discoveryFit declared memory overrides", () => {
   test("declared 114 GiB on balanced stays poor — no quant-name upgrade", async () => {
     await withDeclaredMemory(
       [
-        "qwen36-35b-a3b-mtp",
-        "Qwen3.6 35B A3B MTP",
-        "qwen36",
-        "general",
+        "big-q4",
+        "Big Q4",
+        "big",
+        "reasoning",
         "candidate",
-        "Qwen3.6-35B-A3B-MTP-GGUF/Big-Q4_K_M.gguf",
-        "b1-mtp-qwen-rebase/Qwen3.6-35B-A3B-MTP-GGUF",
+        "Big-GGUF/Big-Q4_K_M.gguf",
+        "example/Big-GGUF",
         "gguf",
         '{"memory":{"residentGiB":114}}',
       ].join("\t") + "\n",
       async (probe) => {
-        const repo = "b1-mtp-qwen-rebase/Qwen3.6-35B-A3B-MTP-GGUF";
-        const file = "Qwen3.6-35B-A3B-MTP-GGUF/Big-Q4_K_M.gguf";
+        // No family clamp matches this repo, so only a (skipped) Q4_K_M
+        // quant-name upgrade could lift the 114 GiB size tier.
+        const repo = "example/Big-GGUF";
+        const file = "Big-GGUF/Big-Q4_K_M.gguf";
         expect(await probe(repo, file, "balanced")).toBe("poor");
       },
     );
@@ -348,13 +352,13 @@ describe("discovery.discoveryFit declared memory overrides", () => {
       async (probe) => {
         const repo = "example/gemma-4-26b-a4b-Q8_0-GGUF";
         const file = "gemma-4-26b-a4b-Q8_0.gguf";
-        // 114 GiB on 48g exceeds fair (52) → poor; no upgrade applied
+        // 114 GiB on 48g exceeds the fair tier → poor; no upgrade applies.
         expect(await probe(repo, file, "macbook-pro-48g")).toBe("poor");
       },
     );
   });
 
-  test("declared 114 GiB on macbook-pro-48g with 671b repo clamps to poor", async () => {
+  test("declared 10 GiB with a 671b repo is clamped to poor on macbook-pro-48g and large-128g", async () => {
     await withDeclaredMemory(
       [
         "mixtral-671b",
@@ -365,13 +369,36 @@ describe("discovery.discoveryFit declared memory overrides", () => {
         "mixtral-671b-Q8_0.gguf",
         "example/mixtral-671b-Q8_0-GGUF",
         "gguf",
-        '{"memory":{"residentGiB":114}}',
+        '{"memory":{"residentGiB":10}}',
       ].join("\t") + "\n",
       async (probe) => {
         const repo = "example/mixtral-671b-Q8_0-GGUF";
         const file = "mixtral-671b-Q8_0.gguf";
-        // 114 GiB on 48g → excellent, but 671b family clamps to poor
+        // 10 GiB alone would rate well on both profiles; only the family-wide
+        // 671b ceiling makes it poor, so dropping that clamp fails here.
         expect(await probe(repo, file, "macbook-pro-48g")).toBe("poor");
+        expect(await probe(repo, file, "large-128g")).toBe("poor");
+      },
+    );
+  });
+
+  test("declared 10 GiB without a clamped family keeps its size tier on macbook-pro-48g", async () => {
+    await withDeclaredMemory(
+      [
+        "small-q8",
+        "Small Q8",
+        "small",
+        "general",
+        "candidate",
+        "small-Q8_0.gguf",
+        "example/small-Q8_0-GGUF",
+        "gguf",
+        '{"memory":{"residentGiB":10}}',
+      ].join("\t") + "\n",
+      async (probe) => {
+        expect(await probe("example/small-Q8_0-GGUF", "small-Q8_0.gguf", "macbook-pro-48g")).toBe(
+          "excellent",
+        );
       },
     );
   });
