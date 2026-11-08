@@ -25,6 +25,11 @@ import { curatedMetaFields, CuratedModel } from "../src/schemas.js";
 import { FIXTURE_DIR } from "./helpers.js";
 
 describe("catalog.BUILTIN_CATALOG", () => {
+  const PINNED: Record<string, string> = {
+    "deepseek41-flash-1017-ud-iq1s": "2688c0c3",
+    "mimo26-flash-mopd-bpw25": "b6e95d58",
+  };
+
   test("has 19 entries in the expected order", () => {
     expect(BUILTIN_CATALOG.length).toBe(19);
     expect(BUILTIN_CATALOG[0]?.id).toBe("gemma4-e4b-q8");
@@ -46,6 +51,9 @@ describe("catalog.BUILTIN_CATALOG", () => {
       // GLM-5.3-Flash-AJ-GGUF — the rel's first segment is the Z13
       // on-disk dir, not the repo basename (glm.md:48).
       if (row.id === "glm53-flash-aj-iq2xxs") continue;
+      // Pinned rows use the <repo>-<owner>/<rev8> models-root layout —
+      // pinned by the dedicated test below.
+      if (row.id in PINNED) continue;
       const dir = row.rel.split("/")[0];
       expect(dir).toBe(row.repo.split("/").pop());
     }
@@ -54,6 +62,20 @@ describe("catalog.BUILTIN_CATALOG", () => {
     expect(glm?.rel.split("/").slice(1).join("/")).toBe(
       "AJ-IQ2_XXS/GLM-5.3-Flash-AJ-IQ2_XXS-00001-of-00002.gguf",
     );
+  });
+
+  test("pinned rows use the <repo>-<owner>/<rev8> models-root layout", () => {
+    for (const [id, rev] of Object.entries(PINNED)) {
+      const row = BUILTIN_CATALOG.find((r) => r.id === id);
+      expect(row).toBeDefined();
+      if (row === undefined) continue;
+      const [owner = "", base = ""] = row.repo.split("/");
+      const segs = row.rel.split("/");
+      expect(segs[0]).toBe(`${base}-${owner}`);
+      expect(segs[1]).toBe(rev);
+      expect(segs[1]).toMatch(/^[0-9a-f]{8}$/);
+      expect(row.rel.endsWith(".gguf")).toBe(true);
+    }
   });
 });
 
@@ -731,11 +753,12 @@ describe("catalog candidate metadata (#515)", () => {
 describe("catalog experimental candidate rows (#515)", () => {
   const GLM_REL = "GLM-5.3-Flash-AJ-GGUF/AJ-IQ2_XXS/GLM-5.3-Flash-AJ-IQ2_XXS-00001-of-00002.gguf";
   const DS_S_REL =
-    "DeepSeek-V4.1-Flash-1017-GGUF/UD-IQ1_S/DeepSeek-V4.1-Flash-1017-UD-IQ1_S-00001-of-00005.gguf";
+    "DeepSeek-V4.1-Flash-1017-GGUF-unsloth/2688c0c3/UD-IQ1_S/DeepSeek-V4.1-Flash-1017-UD-IQ1_S-00001-of-00005.gguf";
   const DS_M_REL =
     "DeepSeek-V4.1-Flash-1017-GGUF/UD-IQ1_M/DeepSeek-V4.1-Flash-1017-UD-IQ1_M-00001-of-00005.gguf";
   const DS_GSQ_REL = "DeepSeek-V4.1-Flash-1017-GSQ-RCO-GGUF/IQ1_M";
-  const MIMO25_REL = "MiMo-V2.6-Flash-MOPD-GGUF/BPW2.5/MiMo-V2.6-Flash-MOPD-BPW2.5.gguf";
+  const MIMO25_REL =
+    "MiMo-V2.6-Flash-MOPD-GGUF-AesSedai/b6e95d58/BPW2.5/MiMo-V2.6-Flash-MOPD-BPW2.5-00001-of-00003.gguf";
   const MIMO_A4X_REL = "MiMo-V2.6-Flash-MOPD-a4-x";
   const MIMO30_REL = "MiMo-V2.6-Flash-MOPD-GGUF/BPW3.0";
 

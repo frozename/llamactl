@@ -13,20 +13,26 @@ import {
 } from "../../src/workload/modelhost-schema.js";
 
 /**
- * Pins frozename/llamactl#515 (D-3): the MiMo-V2.6-Flash MOPD BPW2.5 GGUF is
- * served on z13 by a disabled, experimental ModelHost template on upstream
- * llama.cpp (no Gufo fork identity, no /ready probe). The drafter stays a
- * models-dir-relative path so the engine boot command resolves it, and the
- * runtime placeholders stay explicit until the commit, drafter name and
- * --spec-type spelling are pinned. The last cases guard the catalog rel,
- * the metadata name and the z13-large-gpu residency group against a second
+ * Pins frozename/llamactl#515 (D-3, rel fix in C-3): the MiMo-V2.6-Flash MOPD
+ * BPW2.5 GGUF is served on z13 by a disabled, experimental ModelHost template
+ * on upstream llama.cpp b12206 @ cf34d311332e (no Gufo fork identity, no
+ * /ready probe). The drafter file is pinned and stays a models-dir-relative
+ * path so the engine boot command resolves it, and the hosted rel is the
+ * pinned models-root layout the catalog row also carries. The runtime is
+ * pinned to llama.cpp-cf34d311332e. --spec-type draft-dflash + -md replace
+ * the old -md-only wiring. The last cases guard the catalog rel, the
+ * metadata name and the z13-large-gpu residency group against a second
  * registration anywhere else in the templates dir.
  */
 const TEMPLATES_DIR = resolve(import.meta.dir, "../../../../templates/workloads");
 const FILE = "llamacpp-mimo26-flash-bpw25-z13.yaml";
 const NAME = "llamacpp-mimo26-flash-bpw25";
+const MODEL_REL =
+  "MiMo-V2.6-Flash-MOPD-GGUF-AesSedai/b6e95d58/BPW2.5/MiMo-V2.6-Flash-MOPD-BPW2.5-00001-of-00003.gguf";
+const DRAFT_REL =
+  "MiMo-V2.6-Flash-MOPD-GGUF-ggml-org/c9d86979/dflash/dflash-MiMo-V2.6-Flash-MOPD-Q8_0.gguf";
 const DRAFT_DIR = "MiMo-V2.6-Flash-MOPD-GGUF-ggml-org/c9d86979/dflash/";
-const RUNTIME_PREFIX = "/home/alex/strix-halo-bench/runtimes/llama.cpp-";
+const RUNTIME_PREFIX = "/home/alex/strix-halo-bench/runtimes/llama.cpp-cf34d311332e/";
 const MIMO_ROW = catalog.BUILTIN_CATALOG.find((m) => m.id === "mimo26-flash-mopd-bpw25");
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -202,20 +208,22 @@ describe("llamacpp-mimo26-flash-bpw25-z13.yaml (#515 D-3)", () => {
     expect(spec.resources?.expectedMemoryGiB).toBe(98);
   });
 
-  test("hosts the mimo26-flash-mopd-bpw25 catalog rel", () => {
+  test("hosts the pinned BPW2.5 rel and joins the catalog row", () => {
     const { manifest } = loadManifest();
     expect(MIMO_ROW).toBeDefined();
     if (MIMO_ROW === undefined) return;
     const hosted = manifest.spec.hostedModels;
     expect(hosted).toHaveLength(1);
     const entry = hosted[0];
+    expect(entry?.rel).toBe(MODEL_REL);
     expect(entry?.rel).toBe(MIMO_ROW.rel);
+    expect(MIMO_ROW.rel).toBe(MODEL_REL);
     expect(entry?.lora_path).toBeUndefined();
     expect(entry?.dflash).toBeUndefined();
     const args = manifest.spec.extraArgs;
     const idx = args.indexOf("--served-model-name");
     expect(idx).toBeGreaterThanOrEqual(0);
-    expect(args[idx + 1]).toBe(basename(MIMO_ROW.rel));
+    expect(args[idx + 1]).toBe(basename(MODEL_REL));
   });
 
   test("wires the 64k context, jinja template and catalog formats", () => {
@@ -250,6 +258,7 @@ describe("llamacpp-mimo26-flash-bpw25-z13.yaml (#515 D-3)", () => {
     expect(mdIdx).toBeGreaterThanOrEqual(0);
     expect(args.lastIndexOf("-md")).toBe(mdIdx);
     const draft = draftArgValue(args);
+    expect(draft).toBe(DRAFT_REL);
     expect(isAbsolute(draft)).toBe(false);
     expect(draft.startsWith(DRAFT_DIR)).toBe(true);
     expect(draft.endsWith(".gguf")).toBe(true);
@@ -262,7 +271,7 @@ describe("llamacpp-mimo26-flash-bpw25-z13.yaml (#515 D-3)", () => {
     expect(boot.binary).toBe(spec.binary);
     const modelIdx = boot.args.indexOf("-m");
     expect(modelIdx).toBeGreaterThanOrEqual(0);
-    expect(boot.args[modelIdx + 1]).toBe(resolve(modelsDir, MIMO_ROW.rel));
+    expect(boot.args[modelIdx + 1]).toBe(resolve(modelsDir, MODEL_REL));
     const bootDraftIdx = boot.args.indexOf("-md");
     expect(bootDraftIdx).toBeGreaterThanOrEqual(0);
     expect(boot.args[bootDraftIdx + 1]).toBe(resolve(modelsDir, draft));
@@ -289,7 +298,7 @@ describe("llamacpp-mimo26-flash-bpw25-z13.yaml (#515 D-3)", () => {
       doc.rels.map((rel) => ({ file: doc.file, name: doc.name, rel })),
     );
     const matches = entries
-      .filter((entry) => entry.rel === MIMO_ROW.rel)
+      .filter((entry) => entry.rel === MODEL_REL)
       .map((entry) => ({ file: entry.file, name: entry.name }));
     expect(matches).toEqual([{ file: FILE, name: NAME }]);
     const nameClashes = docs.filter((doc) => doc.file !== FILE && doc.name === NAME);
@@ -299,6 +308,10 @@ describe("llamacpp-mimo26-flash-bpw25-z13.yaml (#515 D-3)", () => {
       .map(({ file, doc }) => ({ file, ...modelHostNodePort(doc) }))
       .filter((entry) => entry.node === "z13" && entry.port === 8083);
     expect(endpointClashes).toEqual([]);
+    const draftClashes = readdirSync(TEMPLATES_DIR)
+      .filter((file) => file.endsWith(".yaml") && file !== FILE)
+      .filter((file) => readFileSync(join(TEMPLATES_DIR, file), "utf8").includes(DRAFT_REL));
+    expect(draftClashes).toEqual([]);
   });
 
   test("keeps every z13-large-gpu ModelHost disabled", () => {
@@ -313,16 +326,29 @@ describe("llamacpp-mimo26-flash-bpw25-z13.yaml (#515 D-3)", () => {
     expect(offenders).toEqual([]);
   });
 
-  test("keeps the unpinned runtime placeholders explicit", () => {
+  test("pins the runtime and --spec-type flags", () => {
     const { manifest } = loadManifest();
     const spec = manifest.spec;
-    // Pinning the llama.cpp commit, the drafter file name and the --spec-type
-    // spelling must update this case.
-    expect(spec.binary.startsWith(`${RUNTIME_PREFIX}unpinned/`)).toBe(true);
+    expect(spec.binary.startsWith(RUNTIME_PREFIX)).toBe(true);
     const args = spec.extraArgs;
+    const specTypeIdx = args.indexOf("--spec-type");
+    expect(specTypeIdx).toBeGreaterThanOrEqual(0);
+    expect(args.lastIndexOf("--spec-type")).toBe(specTypeIdx);
+    expect(args[specTypeIdx + 1]).toBe("draft-dflash");
     const mdIdx = args.indexOf("-md");
     expect(mdIdx).toBeGreaterThanOrEqual(0);
-    expect(draftArgValue(args).includes("unpinned")).toBe(true);
-    expect(args).not.toContain("--spec-type");
+    expect(args.lastIndexOf("-md")).toBe(mdIdx);
+    const draft = draftArgValue(args);
+    expect(draft).toBe(DRAFT_REL);
+    expect(draft.includes("unpinned")).toBe(false);
+    expect(args).not.toContain("--dspark");
+  });
+
+  test("keeps the baseline and pinning comments explicit", () => {
+    const text = readFileSync(join(TEMPLATES_DIR, FILE), "utf8").toLowerCase();
+    expect(text).toContain("baseline");
+    expect(text).toContain("vulkan + dflash");
+    expect(text).toContain("buildinfo.json");
+    expect(text).toContain("<tool_call>");
   });
 });
