@@ -4,6 +4,7 @@ import * as os from "node:os";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import * as catalogModule from "../src/catalog.js";
 import {
   BUILTIN_CATALOG,
   curatedStatusForRepoFile,
@@ -19,6 +20,7 @@ import {
 } from "../src/catalog.js";
 import * as envModule from "../src/env.js";
 import { mkdtempSync, writeFileSync } from "../src/safe-fs.js";
+import { CuratedModel } from "../src/schemas.js";
 import { FIXTURE_DIR } from "./helpers.js";
 
 describe("catalog.BUILTIN_CATALOG", () => {
@@ -227,5 +229,437 @@ describe("catalog TSV formatters", () => {
     expect(formatCatalogRow(row).split("\t").length).toBe(8);
     expect(formatCatalogRow(row).split("\t")[7]).toBe("gguf");
     expect(formatCatalogTsv(BUILTIN_CATALOG).split("\n").length).toBe(BUILTIN_CATALOG.length);
+  });
+});
+
+describe("catalog candidate metadata (#515)", () => {
+  const parseCatalogRow = (catalogModule as Record<string, unknown>)["parseCatalogRow"] as
+    | undefined
+    | ((line: string) => { ok: true; entry: CuratedModel } | { ok: false; error: string });
+
+  const base: CuratedModel = {
+    id: "x",
+    label: "X",
+    family: "glm",
+    class: "reasoning",
+    scope: "candidate",
+    rel: "X-GGUF/x.gguf",
+    repo: "org/X-GGUF",
+    format: "gguf",
+  };
+
+  test("every builtin row parses unchanged and round-trips byte-for-byte", () => {
+    for (const row of BUILTIN_CATALOG) {
+      const line = formatCatalogRow(row);
+      expect(line.split("\t")).toHaveLength(8);
+
+      expect(typeof parseCatalogRow).toBe("function");
+      const r = parseCatalogRow!(line);
+      expect(r.ok).toBe(true);
+      if (!r.ok) throw new Error(r.error);
+      expect(r.entry).toStrictEqual({ ...row });
+      expect(formatCatalogRow(r.entry)).toBe(line);
+    }
+
+    const tsv = formatCatalogTsv(BUILTIN_CATALOG);
+    const dir = mkdtempSync(join(tmpdir(), "llamactl-catalog-meta-"));
+    const file = join(dir, "builtin.tsv");
+    writeFileSync(file, `${tsv}\n`);
+
+    const rows = readCustomCatalog(file);
+    expect(rows).toStrictEqual(BUILTIN_CATALOG.map((r) => ({ ...r })));
+    expect(formatCatalogTsv(rows)).toBe(tsv);
+  });
+
+  test("byte-exact round-trip with reordered nested keys produces canonical output", () => {
+    // The example 9-column row from docs/tsv-schemas.md, verbatim, as
+    // the canonical fixture. A computed fixture would let a key-order
+    // swap in schemas.ts move the expected bytes with it; a literal
+    // pins the documented order independently.
+    const literal =
+      'glm53-flash\tGLM-5.3 Flash\tglm\treasoning\tcandidate\tGLM-5.3-Flash-GGUF/glm-5.3-flash-Q4_K_M.gguf\tunsloth/GLM-5.3-Flash-GGUF\tgguf\t{"availability":{"declared":"unavailable","reason":"runtime-not-pinned"},"qualification":{"stage":"experimental","since":"2026-11-07","evidenceRef":"eval/glm53-flash-001"},"runtime":{"engines":["llamacpp","omlx"],"minBuild":"b6100"},"contextMax":131072,"params":{"totalB":106,"activeB":12,"experts":128},"memory":{"residentGiB":18.5},"residencyGroup":"big-moe","license":"mit"}';
+
+    expect(literal.split("\t")).toHaveLength(9);
+
+    expect(typeof parseCatalogRow).toBe("function");
+    const parsed = parseCatalogRow!(literal);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) throw new Error(parsed.error);
+    expect(formatCatalogRow(parsed.entry)).toBe(literal);
+
+    // Same data with top-level and nested keys reordered: formatting
+    // must canonicalise back to the literal byte-for-byte.
+    const basePart = literal.split("\t").slice(0, 8).join("\t");
+    const reOrderedMeta = JSON.stringify({
+      license: "mit",
+      residencyGroup: "big-moe",
+      memory: { residentGiB: 18.5 },
+      params: { experts: 128, activeB: 12, totalB: 106 },
+      contextMax: 131072,
+      runtime: { minBuild: "b6100", engines: ["llamacpp", "omlx"] },
+      qualification: {
+        evidenceRef: "eval/glm53-flash-001",
+        since: "2026-11-07",
+        stage: "experimental",
+      },
+      availability: { reason: "runtime-not-pinned", declared: "unavailable" },
+    });
+
+    const reOrderedParse = parseCatalogRow!(`${basePart}\t${reOrderedMeta}`);
+    expect(reOrderedParse.ok).toBe(true);
+    if (!reOrderedParse.ok) throw new Error(reOrderedParse.error);
+    expect(formatCatalogRow(reOrderedParse.entry)).toBe(literal);
+  });
+
+  test("byte-exact round-trip pins every runtime and memory key in schema order", () => {
+    // The docs row above sets only runtime {engines, minBuild} and
+    // memory {residentGiB}, so it cannot pin the order of the other
+    // nested keys. This literal fills every runtime and memory field.
+    const literal =
+      'dsv41-flash-iq1s\tDeepSeek V4.1 Flash\tdeepseek\treasoning\tcandidate\tDeepSeek-V4.1-Flash-GGUF/UD-IQ1_S/model-00001.gguf\tunsloth/DeepSeek-V4.1-Flash-GGUF\tgguf\t{"availability":{"declared":"unavailable","reason":"artifact-not-downloaded"},"runtime":{"engines":["llamacpp"],"minBuild":"b11870","toolCallFormat":"deepseek","reasoningFormat":"deepseek-r1","chatTemplate":"deepseek-v4"},"memory":{"residentGiB":114,"diskBackedGiB":20,"kvGiBPer32k":4.5}}';
+
+    expect(literal.split("\t")).toHaveLength(9);
+    const parsed = parseCatalogRow!(literal);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) throw new Error(parsed.error);
+    expect(formatCatalogRow(parsed.entry)).toBe(literal);
+
+    const basePart = literal.split("\t").slice(0, 8).join("\t");
+    const reOrderedMeta = JSON.stringify({
+      memory: { kvGiBPer32k: 4.5, diskBackedGiB: 20, residentGiB: 114 },
+      runtime: {
+        chatTemplate: "deepseek-v4",
+        reasoningFormat: "deepseek-r1",
+        toolCallFormat: "deepseek",
+        minBuild: "b11870",
+        engines: ["llamacpp"],
+      },
+      availability: { reason: "artifact-not-downloaded", declared: "unavailable" },
+    });
+    const reOrderedParse = parseCatalogRow!(`${basePart}\t${reOrderedMeta}`);
+    expect(reOrderedParse.ok).toBe(true);
+    if (!reOrderedParse.ok) throw new Error(reOrderedParse.error);
+    expect(formatCatalogRow(reOrderedParse.entry)).toBe(literal);
+  });
+
+  test("formatCatalogRow drops invalid meta and emits exactly eight columns", () => {
+    const invalidMetaEntry = {
+      ...base,
+      availability: { declared: "unavailable" },
+    } as unknown as CuratedModel;
+
+    const line = formatCatalogRow(invalidMetaEntry);
+    const cols = line.split("\t");
+    expect(cols).toHaveLength(8);
+    expect(cols[7]).toBe("gguf");
+    expect(cols[8]).toBeUndefined();
+  });
+
+  test("a legacy 7-column row still loads", () => {
+    const line =
+      "legacy-7\tLegacy Seven\tqwen35\tgeneral\tcandidate\tLegacy-GGUF/legacy-Q4_K_M.gguf\tunsloth/Legacy-GGUF";
+
+    expect(typeof parseCatalogRow).toBe("function");
+    const r = parseCatalogRow!(line);
+    expect(r.ok).toBe(true);
+    if (!r.ok) throw new Error(r.error);
+    expect(r.entry.format).toBe("gguf");
+    expect(Object.keys(r.entry).sort()).toStrictEqual([
+      "class",
+      "family",
+      "format",
+      "id",
+      "label",
+      "rel",
+      "repo",
+      "scope",
+    ]);
+
+    const formatted = formatCatalogRow(r.entry);
+    expect(formatted).toBe(`${line}\tgguf`);
+    expect(formatted.split("\t")).toHaveLength(8);
+
+    const dir = mkdtempSync(join(tmpdir(), "llamactl-catalog-meta-"));
+    const file = join(dir, "legacy-7.tsv");
+    writeFileSync(file, `${line}\n`);
+
+    const rows = readCustomCatalog(file);
+    expect(rows).toHaveLength(1);
+    const row = rows[0];
+    expect(row).toBeDefined();
+    if (!row) return;
+    expect(Object.keys(row).sort()).toStrictEqual([
+      "class",
+      "family",
+      "format",
+      "id",
+      "label",
+      "rel",
+      "repo",
+      "scope",
+    ]);
+  });
+
+  test("availability.declared=unavailable without reason is rejected", () => {
+    expect(
+      CuratedModel.safeParse({ ...base, availability: { declared: "unavailable" } }).success,
+    ).toBe(false);
+
+    const withReason = CuratedModel.safeParse({
+      ...base,
+      availability: { declared: "unavailable", reason: "artifact-not-downloaded" },
+    });
+    expect(withReason.success).toBe(true);
+    if (!withReason.success) throw new Error("unavailable with reason must parse");
+    expect((withReason.data as Record<string, unknown>)["availability"]).toStrictEqual({
+      declared: "unavailable",
+      reason: "artifact-not-downloaded",
+    });
+
+    const declaredAvailable = CuratedModel.safeParse({
+      ...base,
+      availability: { declared: "available" },
+    });
+    expect(declaredAvailable.success).toBe(true);
+    if (!declaredAvailable.success) throw new Error("available must parse");
+    expect((declaredAvailable.data as Record<string, unknown>)["availability"]).toStrictEqual({
+      declared: "available",
+    });
+
+    expect(typeof parseCatalogRow).toBe("function");
+    const metaLine = `${formatCatalogRow(base)}\t${JSON.stringify({
+      availability: { declared: "unavailable" },
+    })}`;
+    expect(parseCatalogRow!(metaLine).ok).toBe(false);
+
+    const dir = mkdtempSync(join(tmpdir(), "llamactl-catalog-meta-"));
+    const file = join(dir, "unavailable-no-reason.tsv");
+    writeFileSync(file, `${metaLine}\n`);
+
+    const spy = spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      expect(readCustomCatalog(file)).toStrictEqual([]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("an unknown qualification.stage is rejected", () => {
+    expect(CuratedModel.safeParse({ ...base, qualification: { stage: "beta" } }).success).toBe(
+      false,
+    );
+
+    for (const stage of ["experimental", "candidate", "validated", "production", "degraded"]) {
+      const res = CuratedModel.safeParse({ ...base, qualification: { stage } });
+      expect(res.success).toBe(true);
+      if (!res.success) throw new Error(`stage ${stage} must parse`);
+      expect((res.data as Record<string, unknown>)["qualification"]).toStrictEqual({ stage });
+    }
+
+    expect(typeof parseCatalogRow).toBe("function");
+    const metaLine = `${formatCatalogRow(base)}\t${JSON.stringify({
+      qualification: { stage: "beta" },
+    })}`;
+    expect(parseCatalogRow!(metaLine).ok).toBe(false);
+  });
+
+  test("a row with all new fields round-trips", () => {
+    const full: CuratedModel = {
+      ...base,
+      availability: { declared: "unavailable", reason: "runtime-not-pinned" },
+      qualification: {
+        stage: "experimental",
+        since: "2026-11-07",
+        evidenceRef: "eval/glm53-flash-001",
+      },
+      runtime: {
+        engines: ["llamacpp", "omlx"],
+        minBuild: "b6100",
+        toolCallFormat: "glm45",
+        reasoningFormat: "deepseek",
+        chatTemplate: "glm-4.5",
+      },
+      contextMax: 131072,
+      params: { totalB: 106, activeB: 12, experts: 128 },
+      memory: { residentGiB: 18.5, diskBackedGiB: 42, kvGiBPer32k: 2.25 },
+      residencyGroup: "big-moe",
+      license: "mit",
+    };
+
+    const line = formatCatalogRow(full);
+    expect(line.split("\t")).toHaveLength(9);
+    expect(
+      Object.keys(JSON.parse(line.split("\t")[8] ?? "{}") as Record<string, unknown>),
+    ).toStrictEqual([
+      "availability",
+      "qualification",
+      "runtime",
+      "contextMax",
+      "params",
+      "memory",
+      "residencyGroup",
+      "license",
+    ]);
+
+    expect(typeof parseCatalogRow).toBe("function");
+    const r = parseCatalogRow!(line);
+    expect(r.ok).toBe(true);
+    if (!r.ok) throw new Error(r.error);
+    expect(r.entry).toStrictEqual(full);
+    expect(formatCatalogRow(r.entry)).toBe(line);
+
+    const dir = mkdtempSync(join(tmpdir(), "llamactl-catalog-meta-"));
+    const file = join(dir, "full-meta.tsv");
+    writeFileSync(file, `${line}\n`);
+    expect(readCustomCatalog(file)).toStrictEqual([full]);
+  });
+
+  test("meta column null/[]/primitive is skipped with warning; rest loads", () => {
+    const dir = mkdtempSync(join(tmpdir(), "llamactl-catalog-meta-"));
+    const file = join(dir, "bad-meta.tsv");
+
+    const goodLine = formatCatalogRow({
+      id: "good-row",
+      label: "Good",
+      family: "qwen",
+      class: "general",
+      scope: "candidate",
+      rel: "Qwen-GGUF/good.gguf",
+      repo: "org/Qwen-GGUF",
+      format: "gguf",
+    });
+
+    const nullMetaLine = `${goodLine}\tnull`;
+    const arrayMetaLine = `${goodLine}\t[1, 2]`;
+    const primitiveMetaLine = `${goodLine}\t5`;
+
+    writeFileSync(file, `${nullMetaLine}\n${arrayMetaLine}\n${primitiveMetaLine}\n${goodLine}\n`);
+
+    const calls: string[] = [];
+    const spy = spyOn(process.stderr, "write").mockImplementation((...args: unknown[]) => {
+      calls.push(String(args[0]));
+      return true;
+    });
+    try {
+      const rows = readCustomCatalog(file);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.id).toBe("good-row");
+      // Each bad meta line produces one warning; assert the row's rel and a reason are present.
+      expect(calls.length).toBe(3);
+      const allMessages = calls.join("\n");
+      expect(allMessages).toContain("Qwen-GGUF/good.gguf");
+      expect(allMessages).toMatch(/meta must be a JSON object/);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("invalid JSON in meta column is skipped with warning; rest loads", () => {
+    const dir = mkdtempSync(join(tmpdir(), "llamactl-catalog-meta-"));
+    const file = join(dir, "bad-json.tsv");
+
+    const goodLine = formatCatalogRow({
+      id: "good-row",
+      label: "Good",
+      family: "qwen",
+      class: "general",
+      scope: "candidate",
+      rel: "Qwen-GGUF/good.gguf",
+      repo: "org/Qwen-GGUF",
+      format: "gguf",
+    });
+
+    const badJsonLine = `${goodLine}\t{bad`;
+    const validMetaLine = `${goodLine}\t${JSON.stringify({
+      availability: { declared: "available" },
+    })}`;
+
+    writeFileSync(file, `${badJsonLine}\n${validMetaLine}\n`);
+
+    const calls: string[] = [];
+    const spy = spyOn(process.stderr, "write").mockImplementation((...args: unknown[]) => {
+      calls.push(String(args[0]));
+      return true;
+    });
+    try {
+      const rows = readCustomCatalog(file);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.id).toBe("good-row");
+      expect(calls.length).toBe(1);
+      expect(calls[0]).toContain("Qwen-GGUF/good.gguf");
+      expect(calls[0]).toMatch(/invalid meta JSON/);
+      expect((rows[0] as Record<string, unknown>)["availability"]).toStrictEqual({
+        declared: "available",
+      });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("empty column 9 (trailing tab) is treated as absent: row loads with no meta", () => {
+    const base = formatCatalogRow({
+      id: "trailing-tab",
+      label: "Trailing Tab",
+      family: "qwen",
+      class: "general",
+      scope: "candidate",
+      rel: "Qwen-GGUF/trailing.gguf",
+      repo: "org/Qwen-GGUF",
+      format: "gguf",
+    });
+
+    const dir = mkdtempSync(join(tmpdir(), "llamactl-catalog-meta-"));
+    const file = join(dir, "trailing-tab.tsv");
+    writeFileSync(file, `${base}\t\n`);
+
+    const spy = spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      const rows = readCustomCatalog(file);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.id).toBe("trailing-tab");
+      // No meta keys should be present (trailing empty column = absent).
+      const keys = Object.keys(rows[0]!).filter(
+        (k) => !["id", "label", "family", "class", "scope", "rel", "repo", "format"].includes(k),
+      );
+      expect(keys).toHaveLength(0);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("formatCatalogRow emits canonical nested key order", () => {
+    const entry: CuratedModel = {
+      id: "order-test",
+      label: "Order Test",
+      family: "qwen",
+      class: "general",
+      scope: "candidate",
+      rel: "Qwen-GGUF/order.gguf",
+      repo: "org/Qwen-GGUF",
+      format: "gguf",
+      runtime: {
+        minBuild: "b100",
+        engines: ["llamacpp"],
+      },
+      availability: {
+        declared: "available",
+      },
+    };
+
+    const line = formatCatalogRow(entry);
+    const metaStr = line.split("\t")[8];
+    expect(metaStr).toBeDefined();
+
+    const keys = Object.keys(JSON.parse(metaStr ?? "{}") as Record<string, unknown>);
+    // Only present keys are emitted; they appear in schema order.
+    expect(keys).toStrictEqual(["availability", "runtime"]);
+
+    const runtimeMeta = (JSON.parse(metaStr ?? "{}") as Record<string, unknown>)["runtime"] as
+      | Record<string, unknown>
+      | undefined;
+    expect(runtimeMeta).toBeDefined();
+    const runtimeKeys = Object.keys(runtimeMeta ?? {});
+    // Only present nested keys in schema order: engines before minBuild.
+    expect(runtimeKeys).toStrictEqual(["engines", "minBuild"]);
   });
 });
