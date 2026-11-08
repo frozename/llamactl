@@ -60,6 +60,9 @@ interface PerfSuiteRun {
   record(name: string, metric: MetricValue): void;
   step(names: readonly string[], fn: () => Promise<void>): Promise<void>;
   sampleIo(): Promise<IoByteCounts | null>;
+  /** Fold one GTT sample into the in-memory peak (recorded once, at the end). */
+  observeGtt(sample: MetricValue): void;
+  peakGtt(): MetricValue | undefined;
 }
 
 const PREFILL_STEPS = [
@@ -135,6 +138,11 @@ function createPerfSuiteRun(db: Database, opts: PerfSuiteOptions): PerfSuiteRun 
     }
   };
 
+  let gttPeak: MetricValue | undefined;
+  const observeGtt = (sample: MetricValue): void => {
+    gttPeak = peakGttMetric(gttPeak, sample);
+  };
+
   return {
     opts,
     clock: opts.clock,
@@ -145,6 +153,8 @@ function createPerfSuiteRun(db: Database, opts: PerfSuiteOptions): PerfSuiteRun 
     record,
     step,
     sampleIo,
+    observeGtt,
+    peakGtt: () => gttPeak,
   };
 }
 
@@ -181,13 +191,7 @@ async function runLoadHook(
 async function runLoadPhase(run: PerfSuiteRun): Promise<void> {
   await runLoadHook(run, "cold", "load_cold_ms");
   await runLoadHook(run, "warm", "load_warm_ms");
-  run.record(
-    "peak_gtt_bytes",
-    peakGttMetric(
-      run.rows.find((r) => r.metric_name === "peak_gtt_bytes")?.metric,
-      await readPeakGtt(run.opts.readers),
-    ),
-  );
+  run.observeGtt(await readPeakGtt(run.opts.readers));
 }
 
 function ctxFromModelsPayload(payload: unknown): number | null {
@@ -289,13 +293,7 @@ async function runPrefillSize(
 async function runPrefillPhase(run: PerfSuiteRun, ctx: number | null): Promise<void> {
   for (const step of PREFILL_STEPS) {
     await runPrefillSize(run, ctx, step);
-    run.record(
-      "peak_gtt_bytes",
-      peakGttMetric(
-        run.rows.find((r) => r.metric_name === "peak_gtt_bytes")?.metric,
-        await readPeakGtt(run.opts.readers),
-      ),
-    );
+    run.observeGtt(await readPeakGtt(run.opts.readers));
   }
 }
 
@@ -316,13 +314,7 @@ async function runDecodePhase(run: PerfSuiteRun): Promise<void> {
     run.record("ttft_ms", ttftMetric(stream.ttftMs));
     run.record("spec_acceptance", normaliseAcceptance(stream.final));
   });
-  run.record(
-    "peak_gtt_bytes",
-    peakGttMetric(
-      run.rows.find((r) => r.metric_name === "peak_gtt_bytes")?.metric,
-      await readPeakGtt(run.opts.readers),
-    ),
-  );
+  run.observeGtt(await readPeakGtt(run.opts.readers));
 }
 
 async function runConcurrencyLevel(run: PerfSuiteRun, level: number): Promise<void> {
@@ -365,13 +357,7 @@ async function runConcurrencyLevel(run: PerfSuiteRun, level: number): Promise<vo
 async function runConcurrencyPhase(run: PerfSuiteRun): Promise<void> {
   for (const level of CONCURRENCY_LEVELS) {
     await runConcurrencyLevel(run, level);
-    run.record(
-      "peak_gtt_bytes",
-      peakGttMetric(
-        run.rows.find((r) => r.metric_name === "peak_gtt_bytes")?.metric,
-        await readPeakGtt(run.opts.readers),
-      ),
-    );
+    run.observeGtt(await readPeakGtt(run.opts.readers));
   }
 }
 
@@ -429,7 +415,10 @@ async function runMemoryPhase(run: PerfSuiteRun): Promise<void> {
       value === null ? unavailableMetric("no peak-RSS (VmHWM) reader") : okMetric(value),
     );
   });
-  run.record("peak_gtt_bytes", await readPeakGtt(run.opts.readers));
+  // record() is first-write-wins, so the peak is folded in memory across
+  // every phase and written exactly once here.
+  run.observeGtt(await readPeakGtt(run.opts.readers));
+  run.record("peak_gtt_bytes", run.peakGtt() ?? unavailableMetric("GTT counters unavailable"));
 }
 
 function peakGttMetric(existing: MetricValue | undefined, candidate: MetricValue): MetricValue {

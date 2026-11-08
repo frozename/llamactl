@@ -51,16 +51,27 @@ describe("createHttpPerfEngineClient TTFT", () => {
 
       let index = 0;
       return new Response(
-        new ReadableStream({
-          pull(controller): void {
-            if (index < chunks.length) {
-              controller.enqueue(chunks[index]);
-              index += 1;
-            } else {
-              controller.close();
-            }
+        new ReadableStream(
+          {
+            pull(controller): void {
+              // The client pulls the next chunk only after it has parsed the
+              // previous one, so advancing the clock here (not in fetchImpl)
+              // gives each delta its own arrival time: 250 for the first,
+              // then +20 ms per token. A client that overwrote TTFT on every
+              // delta would report 250 + 63 * 20 = 1510.
+              if (index > 0 && index < maxTokens) clock.advance(20);
+              if (index < chunks.length) {
+                controller.enqueue(chunks[index]);
+                index += 1;
+              } else {
+                controller.close();
+              }
+            },
           },
-        }),
+          // highWaterMark 0: pull() runs only when the client reads, never
+          // ahead of it, so the clock tracks delivery to the parser.
+          { highWaterMark: 0 },
+        ),
         { headers: { "content-type": "text/event-stream" } },
       );
     };
