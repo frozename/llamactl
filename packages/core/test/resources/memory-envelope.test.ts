@@ -777,7 +777,7 @@ describe("kvEnvelopeKey", () => {
     const keyOf = api.kvEnvelopeKey;
     expect(typeof keyOf).toBe("function");
     const withSeparator = keyOf!({ model: "a|1", ctx: 5, kvType: "q8_0", slots: 2 });
-    const plain = keyOf!({ model: "a", ctx: 15, kvType: "q8_0", slots: 2 });
+    const plain = keyOf!({ model: "a", ctx: 1, kvType: "5|q8_0", slots: 2 });
     expect(withSeparator).not.toBeNull();
     expect(plain).not.toBeNull();
     expect(withSeparator).not.toBe(plain);
@@ -850,6 +850,29 @@ describe("deriveModelKvBudget", () => {
       requiredBytes: 6.5 * GiB,
       kvBudgetBytes: 2.5 * GiB,
       fits: false,
+      provenance: "measured",
+    });
+  });
+
+  test("fits at the equality boundary where requiredBytes equals usableBytes", () => {
+    const derive = api.deriveModelKvBudget;
+    expect(typeof derive).toBe("function");
+    const key = kvKey();
+    const result = derive!(
+      budgetArgs({
+        envelopes: [
+          kvEnvelope({ key, weightsBytes: 3 * GiB, kvBytes: 2.5 * GiB, workspaceBytes: 0.5 * GiB }),
+        ],
+        key,
+      }),
+    );
+    expect(result).toEqual({
+      known: true,
+      key: encodedKey(key),
+      usableBytes: 6 * GiB,
+      requiredBytes: 6 * GiB,
+      kvBudgetBytes: 2.5 * GiB,
+      fits: true,
       provenance: "measured",
     });
   });
