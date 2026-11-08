@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { join } from "node:path";
+import { parse as parseYaml } from "yaml";
 
 import { computeModelHostSpecHash } from "../../../core/src/engines/state.js";
+import { readdirSync, readFileSync } from "../../src/safe-fs.js";
 import {
   externalManagerOf,
   MANAGED_BY_LABEL,
@@ -469,5 +472,144 @@ describe("spec.binaryNames (#516)", () => {
     expect(computeModelHostSpecHash(specForHash(withField))).toBe(
       computeModelHostSpecHash(specForHash(parsed.spec)),
     );
+  });
+});
+
+// #277 C-2: spec.resources gains residentGiB (memory charged at admission) and
+// diskBackedGiB (weights on disk, not resident). The fields are admission
+// metadata: they must never leak into the launch spec hash or engine spec.
+describe("spec.resources memory declarations (#277)", () => {
+  test("accepts optional resources.residentGiB and diskBackedGiB; absent by default", () => {
+    const withMemory = ModelHostManifestSchema.safeParse({
+      ...valid,
+      spec: {
+        ...valid.spec,
+        resources: { expectedMemoryGiB: 12, residentGiB: 100, diskBackedGiB: 103 },
+      },
+    });
+    expect(withMemory.success).toBe(true);
+    if (!withMemory.success) return;
+    expect(withMemory.data.spec.resources).toMatchObject({
+      expectedMemoryGiB: 12,
+      residentGiB: 100,
+      diskBackedGiB: 103,
+    });
+
+    const base = ModelHostManifestSchema.safeParse(valid);
+    expect(base.success).toBe(true);
+    if (!base.success) return;
+    expect("residentGiB" in (base.data.spec.resources ?? {})).toBe(false);
+    expect("diskBackedGiB" in (base.data.spec.resources ?? {})).toBe(false);
+  });
+
+  test("rejects diskBackedGiB without residentGiB", () => {
+    const result = ModelHostManifestSchema.safeParse({
+      ...valid,
+      spec: {
+        ...valid.spec,
+        resources: { expectedMemoryGiB: 12, diskBackedGiB: 103 },
+      },
+    });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    const issue = result.error.issues.find((i) => i.path.at(-1) === "diskBackedGiB");
+    expect(issue?.path).toEqual(["spec", "resources", "diskBackedGiB"]);
+    expect(issue?.message).toContain("residentGiB");
+  });
+
+  test("rejects non-positive residentGiB and negative diskBackedGiB", () => {
+    const rejected: { resources: Record<string, number>; field: string }[] = [
+      { resources: { residentGiB: 0 }, field: "residentGiB" },
+      { resources: { residentGiB: -1 }, field: "residentGiB" },
+      { resources: { residentGiB: 5, diskBackedGiB: -1 }, field: "diskBackedGiB" },
+    ];
+    for (const { resources, field } of rejected) {
+      const result = ModelHostManifestSchema.safeParse({
+        ...valid,
+        spec: { ...valid.spec, resources },
+      });
+      expect(result.success).toBe(false);
+      if (result.success) continue;
+      expect(result.error.issues.some((issue) => issue.path.at(-1) === field)).toBe(true);
+    }
+    const accepted = ModelHostManifestSchema.safeParse({
+      ...valid,
+      spec: { ...valid.spec, resources: { residentGiB: 5, diskBackedGiB: 0 } },
+    });
+    expect(accepted.success).toBe(true);
+  });
+
+  test("the new memory fields never change any template's spec hash or engine spec", () => {
+    const templatesDir = join(import.meta.dir, "../../../../templates/workloads");
+    const raws: unknown[] = [];
+    for (const file of readdirSync(templatesDir)) {
+      if (!file.endsWith(".yaml")) continue;
+      const raw: unknown = parseYaml(readFileSync(join(templatesDir, file), "utf8"));
+      if (typeof raw !== "object" || raw === null) continue;
+      if ((raw as { kind?: unknown }).kind !== "ModelHost") continue;
+      raws.push(raw);
+    }
+    expect(raws.length).toBeGreaterThan(0);
+    for (const raw of raws) {
+      const parsed = ModelHostManifestSchema.safeParse(raw);
+      expect(parsed.success).toBe(true);
+      if (!parsed.success) continue;
+      const spec = parsed.data.spec;
+      const h0 = computeModelHostSpecHash(specForHash(spec));
+      const e0 = specForEngine(spec);
+
+      const clone = structuredClone(raw) as {
+        spec?: { resources?: Record<string, number> };
+      };
+      clone.spec = {
+        ...clone.spec,
+        resources: { ...clone.spec?.resources, residentGiB: 7, diskBackedGiB: 3 },
+      };
+      const reparsed = ModelHostManifestSchema.safeParse(clone);
+      expect(reparsed.success).toBe(true);
+      if (!reparsed.success) continue;
+      expect(reparsed.data.spec.resources).toMatchObject({ residentGiB: 7, diskBackedGiB: 3 });
+      expect(computeModelHostSpecHash(specForHash(reparsed.data.spec))).toBe(h0);
+      expect(specForEngine(reparsed.data.spec)).toStrictEqual(e0);
+    }
+  });
+
+  test("resources holding only the new memory fields hash like legacy empty resources", () => {
+    const specNoResources: Record<string, unknown> = { ...valid.spec };
+    delete specNoResources["resources"];
+    const parseWith = (
+      resources: Record<string, number>,
+    ): ReturnType<(typeof ModelHostManifestSchema)["safeParse"]> =>
+      ModelHostManifestSchema.safeParse({ ...valid, spec: { ...specNoResources, resources } });
+
+    const noResources = ModelHostManifestSchema.safeParse({ ...valid, spec: specNoResources });
+    expect(noResources.success).toBe(true);
+    if (!noResources.success) return;
+
+    const emptyResources = parseWith({});
+    expect(emptyResources.success).toBe(true);
+    if (!emptyResources.success) return;
+    expect(specForHash(emptyResources.data.spec).resources).toStrictEqual({});
+    const hEmpty = computeModelHostSpecHash(specForHash(emptyResources.data.spec));
+    expect(computeModelHostSpecHash(specForHash(noResources.data.spec))).not.toBe(hEmpty);
+
+    const newFieldsOnly: Record<string, number>[] = [
+      { residentGiB: 5 },
+      { residentGiB: 5, diskBackedGiB: 2 },
+    ];
+    for (const resources of newFieldsOnly) {
+      const result = parseWith(resources);
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+      expect(specForHash(result.data.spec).resources).toStrictEqual({});
+      expect(computeModelHostSpecHash(specForHash(result.data.spec))).toBe(hEmpty);
+    }
+
+    const expectedOnly = parseWith({ expectedMemoryGiB: 12 });
+    expect(expectedOnly.success).toBe(true);
+    if (!expectedOnly.success) return;
+    expect(specForHash(expectedOnly.data.spec).resources).toStrictEqual({
+      expectedMemoryGiB: 12,
+    });
   });
 });

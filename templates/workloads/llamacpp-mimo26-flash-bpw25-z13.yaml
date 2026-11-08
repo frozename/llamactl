@@ -1,0 +1,70 @@
+# EXPERIMENTAL: MiMo-V2.6-Flash-MOPD, AesSedai BPW2.5 at b6e95d58
+# (90.09 GiB), on the base XiaomiMiMo/MiMo-V2.6-Flash-MOPD at 5220c3f5.
+#
+# It needs upstream llama.cpp >= b11298 (arch mimo2 plus DFlash PR
+# #29650). Gufo has no MiMo support, so this is a separate ModelHost.
+#
+# It is committed disabled because it shares the exclusive
+# z13-large-gpu group with production Qwen and GLM. Enabling it needs an
+# operator-approved window.
+#
+# The runtime path is a placeholder until a pinned build exists under
+# runtimes/llama.cpp-<commit12> (03 §4). Replace "unpinned" with the
+# recorded sha.
+#
+# DFLASH WIRING IS INCOMPLETE. The drafter file name was not captured
+# (03 §A2 lists only dflash-*-Q8_0 at ggml-org c9d86979), and the
+# upstream --spec-type spelling for DFlash was not captured. Until both
+# are pinned, -md alone selects classic draft-model speculation on
+# upstream llama.cpp, not DFlash. Before enabling, pin the drafter file
+# and add the --spec-type flag checked against the pinned build's
+# `llama-server --help`, then update the template test's placeholder
+# case.
+#
+# expectedMemoryGiB 98 is the upper bound of the derived ~95-98 GiB
+# estimate in 02. It is not measured.
+#
+# Tool calls are MiMo XML (<tool_call><function=..><parameter=..>, no
+# newlines), parsed by llama.cpp's generic path from
+# chat_template.jinja. Reasoning is <think> and on by default (mimo.md
+# §2). Issue #29931 (long-context tool-call corruption on Vulkan+RPC)
+# is unresolved.
+apiVersion: llamactl/v1
+kind: ModelHost
+metadata:
+  name: llamacpp-mimo26-flash-bpw25
+  labels:
+    family: mimo26
+    llamactl.io/qualification: experimental
+    llamactl.io/residency-group: z13-large-gpu
+spec:
+  engine: llamacpp
+  node: z13
+  enabled: false
+  binary: /home/alex/strix-halo-bench/runtimes/llama.cpp-unpinned/bin/llama-server
+  resources:
+    expectedMemoryGiB: 98
+  # Port 8083 avoids 8080 (production Gufo), 8081 (gufo-glm53-exp)
+  # and 8082 (gufo-qwen38-v026-exp) on z13.
+  endpoint:
+    host: 127.0.0.1
+    port: 8083
+  hostedModels:
+    - rel: MiMo-V2.6-Flash-MOPD-GGUF/BPW2.5/MiMo-V2.6-Flash-MOPD-BPW2.5.gguf
+  extraArgs:
+    # --served-model-name equals the GGUF basename, because a ModelHost
+    # routes by rel and basename.
+    - --served-model-name
+    - MiMo-V2.6-Flash-MOPD-BPW2.5.gguf
+    # -c 65536 sits inside the 64K-128K Z13 band of a 1M-context model.
+    - -c
+    - "65536"
+    # --jinja makes the shipped chat template drive tool calls and
+    # reasoning.
+    - --jinja
+    # The drafter path is relative so llamacpp resolves it against the
+    # models dir (#544). It is a placeholder, and --spec-type is still
+    # to be pinned.
+    - -md
+    - MiMo-V2.6-Flash-MOPD-GGUF-ggml-org/c9d86979/dflash/dflash-unpinned-Q8_0.gguf
+  restartPolicy: Never

@@ -1048,7 +1048,9 @@ interface ResolveWorkloadUrlDeps {
   loadWorkloadByNameAny?: (name: string) => {
     spec: {
       useProxy?: boolean | undefined;
-      resources?: { expectedMemoryGiB?: number | undefined } | undefined;
+      resources?:
+        | { expectedMemoryGiB?: number | undefined; residentGiB?: number | undefined }
+        | undefined;
     };
   };
   resolveInternalProxyEndpoint?: typeof envMod.resolveInternalProxyEndpoint;
@@ -1151,11 +1153,11 @@ export function resolveWorkloadTargetsAtStartup(
 }
 
 /**
- * Read the workload's deployed manifest and convert ModelHost
- * `spec.resources.expectedMemoryGiB` → MiB for the migration memory-gate.
- * Returns undefined when the manifest can't be loaded, is not a ModelHost,
- * or omits the field — the migration controller keeps its 512 MB default
- * for truly-undeclared workloads.
+ * Read the workload's deployed manifest and convert the declared ModelHost
+ * memory (residentGiB / expectedMemoryGiB, resolved by the shared admission
+ * resolver) → MiB for the migration memory-gate. Returns undefined when the
+ * manifest can't be loaded, is not a ModelHost, or omits both fields — the
+ * migration controller keeps its 512 MB default for truly-undeclared workloads.
  */
 function resolveExpectedMemoryMb(
   name: string,
@@ -1164,11 +1166,15 @@ function resolveExpectedMemoryMb(
   try {
     const manifest = loadManifest(name) as {
       kind?: string;
-      spec?: { resources?: { expectedMemoryGiB?: number } };
+      spec?: {
+        resources?:
+          | { expectedMemoryGiB?: number | undefined; residentGiB?: number | undefined }
+          | undefined;
+      };
     };
     if (manifest.kind !== undefined && manifest.kind !== "ModelHost") return undefined;
-    const gib = manifest.spec?.resources?.expectedMemoryGiB;
-    if (typeof gib !== "number" || !Number.isFinite(gib) || gib <= 0) return undefined;
+    const gib = workloadStore.declaredModelHostMemoryGiB(manifest);
+    if (gib === null || !Number.isFinite(gib) || gib <= 0) return undefined;
     return gib * 1024;
   } catch {
     return undefined;

@@ -31,6 +31,7 @@ import type { ModelRun, ModelRunStatus, ModelRunWorker } from "./schema.js";
 import {
   type AdmissionResult,
   computeNodeBudget,
+  declaredModelHostMemoryGiB,
   defaultNodeBudgetGiB,
   estimateModelHostMemoryGiB,
 } from "./admission.js";
@@ -362,10 +363,11 @@ function validateModelHostAdmission(
   manifest: ModelHostManifest,
   opts: Omit<ApplyManifestOptions, "manifest">,
 ): { ok: false; error: string } | null {
-  if (opts.supervisor && manifest.spec.resources?.expectedMemoryGiB) {
+  const declaredGiB = declaredModelHostMemoryGiB(manifest);
+  if (opts.supervisor && declaredGiB) {
     const projected = projectAdmissionHeadroom({
       currentFreeGiB: opts.supervisor.currentFreeGiB,
-      expectedMemoryGiB: manifest.spec.resources.expectedMemoryGiB,
+      expectedMemoryGiB: declaredGiB,
       headroomMinGiB: opts.supervisor.headroomMinGiB,
       ...(opts.supervisor.safetyFactor !== undefined
         ? { safetyFactor: opts.supervisor.safetyFactor }
