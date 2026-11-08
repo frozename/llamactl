@@ -856,3 +856,369 @@ test("a local route's labels survive listClusterRoutes unchanged", () => {
     team: "eval",
   });
 });
+
+// ---------------------------------------------------------------------------
+// #220 — declared serving readiness in the route source. listLocalRoutes must
+// carry the sidecar's readiness onto each route, and listServingLocalRoutes
+// partitions routes into ready vs warming by probing that declaration. Both
+// exports land with the fix; the namespace lookups keep these cases
+// typechecking before they exist (undefined at runtime on the base revision,
+// so the typeof guards fail by assertion first).
+// ---------------------------------------------------------------------------
+
+type ListServingLocalRoutesFn = (
+  resolved: ResolvedEnv,
+  opts?: { fetch?: typeof fetch; timeoutMs?: number },
+) => Promise<{ ready: LocalRoute[]; warming: LocalRoute[] }>;
+
+const requireListServingLocalRoutes = (): ListServingLocalRoutesFn => {
+  const fn = (workloadRuntimeModule as unknown as Record<string, unknown>)[
+    "listServingLocalRoutes"
+  ] as ListServingLocalRoutesFn;
+  expect(typeof fn).toBe("function");
+  return fn;
+};
+
+type ServingFetchStub = (input: Request | URL | string, init?: RequestInit) => Promise<Response>;
+
+const makeServingStub = (): {
+  stub: ServingFetchStub;
+  calls: string[];
+  setRoutes: (routes: Record<string, (url: string) => Response | Promise<Response>>) => void;
+} => {
+  const calls: string[] = [];
+  let routes: Record<string, (url: string) => Response | Promise<Response>> = {};
+
+  const stub: ServingFetchStub = (input) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    calls.push(url);
+    const urlObj = new URL(url);
+    const lookupKey = urlObj.pathname + urlObj.search;
+    const handler = routes[lookupKey];
+    if (handler) return Promise.resolve(handler(url));
+    return Promise.resolve(new Response("not found", { status: 404 }));
+  };
+
+  return {
+    stub,
+    calls,
+    setRoutes(next: Record<string, (url: string) => Response | Promise<Response>>): void {
+      routes = next;
+    },
+  };
+};
+
+const installFetchTripwire = (): { calls: string[]; restore: () => void } => {
+  const calls: string[] = [];
+  const originalFetch = globalThis.fetch;
+  const tripwire: ServingFetchStub = (input) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    calls.push(url);
+    return Promise.reject(new Error("globalThis.fetch must not be used"));
+  };
+  globalThis.fetch = tripwire as unknown as typeof fetch;
+  return {
+    calls,
+    restore: (): void => {
+      globalThis.fetch = originalFetch;
+    },
+  };
+};
+
+const writeGufoHost = (resolved: ResolvedEnv): void => {
+  const state = {
+    kind: "ModelHost" as const,
+    engine: "llamacpp" as const,
+    pid: process.pid,
+    host: "127.0.0.1",
+    port: 18091,
+    modelAliases: ["qwen3-8b", "Qwen3-8B"],
+    startedAt: "2026-05-19T00:00:00Z",
+    readiness: { path: "/ready", expectJson: { status: "ready" } },
+  };
+  writeModelHostState(state, { name: "gufo-host" }, resolved);
+};
+
+const writeProbeLessHost = (resolved: ResolvedEnv): void => {
+  writeModelHostState(
+    {
+      kind: "ModelHost",
+      engine: "omlx",
+      pid: process.pid,
+      host: "127.0.0.1",
+      port: 18094,
+      modelAliases: ["omlx-model-a", "omlx-model-b"],
+      startedAt: "2026-05-19T00:00:00Z",
+    },
+    { name: "omlx-host" },
+    resolved,
+  );
+};
+
+const GUFO_ROUTES_STUB = {
+  "/v1/models": (): Response => Response.json({ object: "list", data: [{ id: "qwen3-8b" }] }),
+};
+
+test("listLocalRoutes carries the declared ModelHost readiness on every alias route", () => {
+  const t = tempEnv();
+  try {
+    writeGufoHost(t.resolved);
+    const routes = listLocalRoutes(t.resolved);
+    const gufo = routes.filter((r) => r.workload === "gufo-host");
+    expect(gufo).toHaveLength(2);
+    for (const route of gufo) {
+      expect(routeRecord(route)["readiness"]).toEqual({
+        path: "/ready",
+        expectJson: { status: "ready" },
+      });
+    }
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("listServingLocalRoutes parks readiness-gated routes in warming while the probe reports loading", async () => {
+  const t = tempEnv();
+  const tripwire = installFetchTripwire();
+  try {
+    writeGufoHost(t.resolved);
+    const { stub, setRoutes } = makeServingStub();
+    setRoutes({
+      ...GUFO_ROUTES_STUB,
+      "/ready": () => Response.json({ status: "loading" }, { status: 503 }),
+    });
+    const listServing = requireListServingLocalRoutes();
+    const result = await listServing(t.resolved, {
+      fetch: stub as unknown as typeof fetch,
+      timeoutMs: 2000,
+    });
+    expect(result.ready).toHaveLength(0);
+    expect(result.warming).toHaveLength(2);
+    expect(new Set(result.warming.map((r) => r.model))).toEqual(new Set(["qwen3-8b", "Qwen3-8B"]));
+    expect(result.warming.every((r) => r.workload === "gufo-host" && r.kind === "ModelHost")).toBe(
+      true,
+    );
+    expect(tripwire.calls).toEqual([]);
+  } finally {
+    tripwire.restore();
+    t.cleanup();
+  }
+});
+
+test("listServingLocalRoutes marks readiness-gated routes ready when the probe passes", async () => {
+  const t = tempEnv();
+  const tripwire = installFetchTripwire();
+  try {
+    writeGufoHost(t.resolved);
+    const { stub, setRoutes } = makeServingStub();
+    setRoutes({
+      ...GUFO_ROUTES_STUB,
+      "/ready": () => Response.json({ status: "ready", model: "gufo" }),
+    });
+    const listServing = requireListServingLocalRoutes();
+    const result = await listServing(t.resolved, {
+      fetch: stub as unknown as typeof fetch,
+      timeoutMs: 2000,
+    });
+    expect(result.ready).toHaveLength(2);
+    expect(new Set(result.ready.map((r) => r.model))).toEqual(new Set(["qwen3-8b", "Qwen3-8B"]));
+    expect(result.warming).toHaveLength(0);
+    expect(tripwire.calls).toEqual([]);
+  } finally {
+    tripwire.restore();
+    t.cleanup();
+  }
+});
+
+test("listServingLocalRoutes re-partitions the same routes as readiness flips", async () => {
+  const t = tempEnv();
+  const tripwire = installFetchTripwire();
+  try {
+    writeGufoHost(t.resolved);
+    const { stub, setRoutes } = makeServingStub();
+    let readyStatus = 503;
+    setRoutes({
+      ...GUFO_ROUTES_STUB,
+      "/ready": (): Response =>
+        readyStatus === 503
+          ? Response.json({ status: "loading" }, { status: 503 })
+          : Response.json({ status: "ready" }),
+    });
+    const listServing = requireListServingLocalRoutes();
+    const opts = { fetch: stub as unknown as typeof fetch, timeoutMs: 2000 };
+    const first = await listServing(t.resolved, opts);
+    expect(first.ready).toHaveLength(0);
+    expect(first.warming).toHaveLength(2);
+    readyStatus = 200;
+    const second = await listServing(t.resolved, opts);
+    expect(second.ready).toHaveLength(2);
+    expect(second.warming).toHaveLength(0);
+    expect(tripwire.calls).toEqual([]);
+  } finally {
+    tripwire.restore();
+    t.cleanup();
+  }
+});
+
+test("listServingLocalRoutes probes each readiness-declaring workload once per call", async () => {
+  const t = tempEnv();
+  const tripwire = installFetchTripwire();
+  try {
+    writeGufoHost(t.resolved);
+    const { stub, calls, setRoutes } = makeServingStub();
+    setRoutes({
+      ...GUFO_ROUTES_STUB,
+      "/ready": () => Response.json({ status: "ready" }),
+    });
+    const listServing = requireListServingLocalRoutes();
+    const result = await listServing(t.resolved, {
+      fetch: stub as unknown as typeof fetch,
+      timeoutMs: 2000,
+    });
+    expect(result.ready).toHaveLength(2);
+    expect(calls.filter((c) => c.endsWith("/ready"))).toHaveLength(1);
+    expect(tripwire.calls).toEqual([]);
+  } finally {
+    tripwire.restore();
+    t.cleanup();
+  }
+});
+
+test("listServingLocalRoutes makes zero fetch calls and reports ready when no route declares readiness", async () => {
+  const t = tempEnv();
+  const tripwire = installFetchTripwire();
+  try {
+    writeProbeLessHost(t.resolved);
+    writeRunState(join(t.runtimeDir, "workloads", "plain-run"), process.pid, {
+      rel: "org/plain.gguf",
+      port: 8411,
+    });
+    const { stub, calls } = makeServingStub();
+    const listServing = requireListServingLocalRoutes();
+    const result = await listServing(t.resolved, {
+      fetch: stub as unknown as typeof fetch,
+      timeoutMs: 2000,
+    });
+    expect(result.ready).toEqual(listLocalRoutes(t.resolved));
+    expect(result.warming).toEqual([]);
+    expect(calls).toEqual([]);
+    for (const route of result.ready) {
+      expect(Object.hasOwn(route, "readiness")).toBe(false);
+    }
+    expect(tripwire.calls).toEqual([]);
+  } finally {
+    tripwire.restore();
+    t.cleanup();
+  }
+});
+
+test("listServingLocalRoutes partitions probe-less hosts into ready and warming hosts into warming", async () => {
+  const t = tempEnv();
+  const tripwire = installFetchTripwire();
+  try {
+    writeGufoHost(t.resolved);
+    writeProbeLessHost(t.resolved);
+    const { stub, setRoutes } = makeServingStub();
+    setRoutes({
+      ...GUFO_ROUTES_STUB,
+      "/ready": () => Response.json({ status: "loading" }, { status: 503 }),
+    });
+    const listServing = requireListServingLocalRoutes();
+    const result = await listServing(t.resolved, {
+      fetch: stub as unknown as typeof fetch,
+      timeoutMs: 2000,
+    });
+    expect(result.ready).toHaveLength(2);
+    expect(result.ready.every((r) => r.workload === "omlx-host")).toBe(true);
+    expect(result.warming).toHaveLength(2);
+    expect(result.warming.every((r) => r.workload === "gufo-host")).toBe(true);
+    expect(tripwire.calls).toEqual([]);
+  } finally {
+    tripwire.restore();
+    t.cleanup();
+  }
+});
+
+test("listServingLocalRoutes fails closed to warming when the readiness fetch rejects", async () => {
+  const t = tempEnv();
+  const tripwire = installFetchTripwire();
+  try {
+    writeGufoHost(t.resolved);
+    const { stub, setRoutes } = makeServingStub();
+    setRoutes({
+      ...GUFO_ROUTES_STUB,
+      "/ready": (): Promise<Response> => Promise.reject(new TypeError("socket hangup")),
+    });
+    const listServing = requireListServingLocalRoutes();
+    const result = await listServing(t.resolved, {
+      fetch: stub as unknown as typeof fetch,
+      timeoutMs: 2000,
+    });
+    expect(result.ready).toHaveLength(0);
+    expect(result.warming).toHaveLength(2);
+    expect(result.warming.every((r) => r.workload === "gufo-host")).toBe(true);
+    expect(tripwire.calls).toEqual([]);
+  } finally {
+    tripwire.restore();
+    t.cleanup();
+  }
+});
+
+const MALFORMED_READINESS: [string, unknown][] = [
+  ["a non-string path", { path: 5 }],
+  ["a path without a leading slash", { path: "ready" }],
+  ["a nested expectJson value", { path: "/ready", expectJson: { nested: { a: 1 } } }],
+  ["a string expectStatus", { path: "/ready", expectStatus: "200" }],
+];
+
+for (const [label, readiness] of MALFORMED_READINESS) {
+  test(`listServingLocalRoutes drops malformed declared readiness (${label})`, async () => {
+    const t = tempEnv();
+    const tripwire = installFetchTripwire();
+    try {
+      const dir = join(t.runtimeDir, "workloads", "bad-host");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "modelhost.pid"), `${String(process.pid)}\n`);
+      writeFileSync(
+        join(dir, "modelhost.state"),
+        JSON.stringify({
+          kind: "ModelHost",
+          engine: "llamacpp",
+          pid: process.pid,
+          host: "127.0.0.1",
+          port: 18097,
+          modelAliases: ["bad-model"],
+          startedAt: "2026-05-19T00:00:00Z",
+          readiness,
+        }),
+      );
+      const routes = listLocalRoutes(t.resolved);
+      expect(routes).toHaveLength(1);
+      const route = routes[0]!;
+      expect(route).toEqual({
+        workload: "bad-host",
+        model: "bad-model",
+        host: "127.0.0.1",
+        port: 18097,
+        engine: "llamacpp",
+        kind: "ModelHost",
+        pid: process.pid,
+      });
+      expect(Object.hasOwn(route, "readiness")).toBe(false);
+
+      const { stub, calls } = makeServingStub();
+      const listServing = requireListServingLocalRoutes();
+      const result = await listServing(t.resolved, {
+        fetch: stub as unknown as typeof fetch,
+        timeoutMs: 2000,
+      });
+      expect(result.ready).toEqual(routes);
+      expect(result.warming).toEqual([]);
+      expect(calls.filter((c) => c.endsWith("/ready"))).toEqual([]);
+      expect(tripwire.calls).toEqual([]);
+    } finally {
+      tripwire.restore();
+      t.cleanup();
+    }
+  });
+}
