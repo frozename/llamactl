@@ -818,6 +818,60 @@ test("reasoning before a tool call yields thinking@0 and tool_use@1", async () =
   assertContentBlockDeltaInvariant(events);
 });
 
+test("late reasoning closes the open text block before the thinking block starts", async () => {
+  const upstream = makeSseStream([
+    'data: {"id":"msg_text_reason","choices":[{"delta":{"content":"Answer"},"finish_reason":null}]}\n\n',
+    'data: {"choices":[{"delta":{"reasoning_content":"rethinking"},"finish_reason":null}]}\n\n',
+    'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
+    "data: [DONE]\n\n",
+  ]);
+
+  const translated = translateOpenAIStreamToAnthropic(upstream, { model: "claude-3-7-sonnet" });
+  const events = parseAnthropicSse(await readStreamText(translated));
+
+  const textStopPos = events.findIndex(
+    (event) => event.event === "content_block_stop" && numericEventIndex(event) === 0,
+  );
+  const thinkingStartPos = events.findIndex(
+    (event) =>
+      event.event === "content_block_start" &&
+      numericEventIndex(event) === 1 &&
+      (event.data["content_block"] as { type?: string }).type === "thinking",
+  );
+  expect(textStopPos).toBeGreaterThan(-1);
+  expect(thinkingStartPos).toBeGreaterThan(-1);
+  expect(textStopPos).toBeLessThan(thinkingStartPos);
+
+  assertContentBlockDeltaInvariant(events);
+});
+
+test("late reasoning closes the open tool block before the thinking block starts", async () => {
+  const upstream = makeSseStream([
+    'data: {"id":"msg_tool_reason","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_tr","function":{"name":"f","arguments":"{}"}}]},"finish_reason":null}]}\n\n',
+    'data: {"choices":[{"delta":{"reasoning_content":"rethinking"},"finish_reason":null}]}\n\n',
+    'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n',
+    "data: [DONE]\n\n",
+  ]);
+
+  const translated = translateOpenAIStreamToAnthropic(upstream, { model: "claude-3-7-sonnet" });
+  const events = parseAnthropicSse(await readStreamText(translated));
+
+  const toolStopPos = events.findIndex(
+    (event) => event.event === "content_block_stop" && numericEventIndex(event) === 0,
+  );
+  const thinkingStartPos = events.findIndex(
+    (event) =>
+      event.event === "content_block_start" &&
+      numericEventIndex(event) === 1 &&
+      (event.data["content_block"] as { type?: string }).type === "thinking",
+  );
+  expect(toolStopPos).toBeGreaterThan(-1);
+  expect(thinkingStartPos).toBeGreaterThan(-1);
+  expect(toolStopPos).toBeLessThan(thinkingStartPos);
+
+  assertContentBlockDeltaInvariant(events);
+});
+
 test("stream without reasoning is byte-identical", async () => {
   const fixture = [
     'data: {"id":"msg_1","choices":[{"delta":{"content":"Hello"},"finish_reason":null}],"usage":{"completion_tokens":1}}\n\n',
