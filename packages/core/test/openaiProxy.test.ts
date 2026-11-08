@@ -2439,6 +2439,49 @@ test("a custom row that redeclares a builtin rel under a different ID pins the c
   }
 });
 
+test("with no routes, a builtin id whose rel a custom row redeclares unavailable returns 503, not the default endpoint", async () => {
+  // The builtin gemma4-26b-q4 row declares no availability; only the custom
+  // row does. Its id must still resolve to the rel, so the pin is rejected
+  // instead of falling through to the default endpoint (#280).
+  const GEMMA_REL = "gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf";
+  const t = tempEnv({ LLAMA_CPP_PORT: "17777" });
+  try {
+    writeFileSync(
+      join(t.dir, "curated-models.tsv"),
+      `gemma-alt\tGemma alt\tgemma4\tmultimodal\tcustom\t${GEMMA_REL}\torg/gemma-alt\tgguf\t{"availability":{"declared":"unavailable","reason":"custom-redecl"}}\n`,
+    );
+    const upstream = installConditionalChatUpstream();
+
+    const res = await openaiProxy.proxyOpenAI(chatRequest("gemma4-26b-q4"), t.env);
+
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as { error: { code: string; reason: string } };
+    expect(body.error.code).toBe("model_unavailable");
+    expect(body.error.reason).toBe("custom-redecl");
+    expect(upstream.calls).toHaveLength(0);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a catalog-id pin of an unavailable rel that has a live route is not turned into 503 (P3)", async () => {
+  const t = tempEnv({ LLAMA_CPP_PORT: "17777" });
+  try {
+    writeLlamaServerWorkload(t.dir, "wl-mimo", { rel: MIMO_REL, port: 8143 });
+    const upstream = installConditionalChatUpstream();
+
+    const res = await openaiProxy.proxyOpenAI(chatRequest(MIMO_ID), t.env);
+
+    // A live route for the rel wins over the declared-unavailable rejection,
+    // so the catalog-id pin keeps its pre-#280 behaviour.
+    expect(res.status).not.toBe(503);
+    const body = (await res.json()) as { error?: { code: string } };
+    expect(body.error?.code).not.toBe("model_unavailable");
+  } finally {
+    t.cleanup();
+  }
+});
+
 test("a default target catalog id that is also a catalog unavailable id is not rejected (P7)", async () => {
   const t = tempEnv({ LLAMA_CPP_PORT: "17777", LLAMA_CPP_DEFAULT_MODEL: MIMO_ID });
   try {

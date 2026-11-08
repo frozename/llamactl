@@ -217,14 +217,14 @@ function declaredUnavailableModels(resolved: ResolvedEnv): {
       ...(stage === undefined ? {} : { stage }),
     });
   }
+  // Every row's id maps to its rel, whatever that row declares: a builtin
+  // id must still resolve when a custom row redeclares its rel as
+  // unavailable under another id (#280). Availability is then read from
+  // byRel, the winning declaration per rel.
   const relByCatalogId = new Map<string, string>();
   for (const row of listCatalog("all", {
     customCatalogFile: workloadRuntime.customCatalogFileFor(resolved),
   })) {
-    const availability = row.availability;
-    if (availability === undefined || availability.declared === "available") {
-      continue;
-    }
     relByCatalogId.set(row.id, row.rel);
   }
   return { byRel, relByCatalogId };
