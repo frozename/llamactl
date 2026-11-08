@@ -159,9 +159,9 @@ export interface RouteCandidate {
    * endpoint, while the catalog still marks the experimental candidate
    * legacyWinner. Callers must go through selectCatalogCandidates with
    * `pinned: false` for such ids instead of trusting legacyWinner.
-   * follow-up: create-proxy — call
-   * selectCatalogCandidates(catalog, model, { pinned: !defaultTargetModelIds.has(model) })
-   * and pass stageByModel when building the catalog's routes.
+   * createProxy now selects through selectCatalogCandidates with
+   * `pinned = !defaultTargetModelIds(resolved).has(model)` and builds its
+   * routes with stageByModel, so legacyWinner is informational only.
    */
   legacyWinner: boolean;
 }

@@ -20,6 +20,7 @@ import { currentContext, loadConfig } from "@llamactl/core/config/kubeconfig";
 import { LOCAL_NODE_ENDPOINT, LOCAL_NODE_NAME } from "@llamactl/core/config/schema";
 import { resolveEnv } from "@llamactl/core/env";
 import {
+  catalogQualificationStages,
   listClusterRoutes,
   listLocalRoutes,
   type PeerSnapshot,
@@ -219,20 +220,28 @@ async function gatedExecute(
   ctx: BackendExecutionContext,
 ): Promise<Response> {
   const catalog = await deps.catalogForGate();
-  const candidates = catalog === null ? [] : routingCatalog.catalogCandidatesFor(catalog, model);
-  if (candidates.length === 0) return await deps.executor.execute(envelope, ctx);
+  if (catalog === null) return await deps.executor.execute(envelope, ctx);
+
+  // #518: a default-target id is an implicit fall-through, not an exact
+  // client pin, so experimental candidates for it stay excluded.
+  const pinned = !openaiProxy.defaultTargetModelIds(ctx.resolved).has(model);
+  const selection = routingCatalog.selectCatalogCandidates(catalog, model, { pinned });
+  if (selection.eligible.length === 0 && selection.rejected.length === 0) {
+    return await deps.executor.execute(envelope, ctx);
+  }
 
   const { eligible, rejected } = routingCapabilities.filterCandidatesByCapabilities(
     features,
-    candidates,
+    selection.eligible,
     (candidate) => candidate.advertisement.capabilities,
   );
   const candidate = eligible.at(0);
   if (candidate === undefined) {
     const rejection = rejected.at(0)?.rejection;
-    return rejection === undefined
-      ? await deps.executor.execute(envelope, ctx)
-      : capabilityError(rejection, envelope.ingressProtocol);
+    if (rejection !== undefined) return capabilityError(rejection, envelope.ingressProtocol);
+    // #518: every candidate was experimental-excluded. Mirror legacy: a
+    // default-target id falls through to the node's default endpoint.
+    return await deps.executor.execute(envelope, ctx);
   }
 
   if (deps.resolveCredentials !== undefined) await deps.resolveCredentials(candidate);
@@ -368,10 +377,13 @@ export function createProxy(opts: UnifiedProxyOptions = {}): UnifiedProxy {
   }
 
   function buildShadowCatalog(): routingCatalog.RouteCatalog {
+    const resolvedEnv = resolve();
     const routes = listClusterRoutes(
-      listLocalRoutes(resolve()),
+      listLocalRoutes(resolvedEnv),
       opts.peerSnapshots ?? publishedPeerSnapshots,
       { peers: configuredPeers() },
+      Date.now(),
+      { stageByModel: catalogQualificationStages(resolvedEnv) },
     );
     return routingCatalog.buildRouteCatalog({
       routes,

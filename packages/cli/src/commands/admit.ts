@@ -1,5 +1,6 @@
 import { probeNodeMem, projectAdmissionHeadroom } from "@llamactl/fleet-supervisor";
 import { readMeasuredMemoryCache } from "@llamactl/fleet-supervisor/measured-memory";
+import { workloadStore } from "@llamactl/remote";
 import { spawnSync } from "node:child_process";
 import yaml from "yaml";
 
@@ -36,13 +37,14 @@ FLAGS:
   --quiet                Suppress narrative; print just allow/deny + reason.
 
 NOTE: this check is only as accurate as spec.resources.expectedMemoryGiB
+(or residentGiB for streamed ModelHosts; the larger of the two is charged)
 in the workload YAML. Underestimates in the YAML → false ALLOW. Bench
 the model under real load to calibrate the value if uncertain.
 
 EXIT CODES:
   0 — admission allowed
   1 — admission denied
-  2 — usage error / file not found / spec missing expectedMemoryGiB
+  2 — usage error / file not found / spec missing expectedMemoryGiB and residentGiB
 `;
 
 interface AdmitFlags {
@@ -193,7 +195,7 @@ function printAdmitResult(opts: AdmitPrintOpts): void {
 type AdmitManifest = {
   kind?: string;
   spec?: {
-    resources?: { expectedMemoryGiB?: number };
+    resources?: { expectedMemoryGiB?: number; residentGiB?: number };
     target?: { value?: string };
     hostedModels?: { rel?: string }[];
   };
@@ -245,10 +247,10 @@ export async function runAdmit(args: string[]): Promise<number> {
   }
   const manifest = read.manifest;
   const name = manifest.metadata?.name ?? target;
-  const expectedMemoryGiB = manifest.spec?.resources?.expectedMemoryGiB;
-  if (typeof expectedMemoryGiB !== "number") {
+  const declaredMemoryGiB = workloadStore.declaredModelHostMemoryGiB(manifest);
+  if (declaredMemoryGiB === null) {
     console.error(
-      `admit: ${name}: spec.resources.expectedMemoryGiB missing — cannot project headroom`,
+      `admit: ${name}: spec.resources must declare expectedMemoryGiB or residentGiB — cannot project headroom`,
     );
     return 2;
   }
@@ -271,7 +273,7 @@ export async function runAdmit(args: string[]): Promise<number> {
   const currentCompressorGiB = nodeMem.compressor_mb / 1024;
   const result = projectAdmissionHeadroom({
     currentFreeGiB,
-    expectedMemoryGiB,
+    expectedMemoryGiB: declaredMemoryGiB,
     headroomMinGiB: parsed.headroomMb / 1024,
     safetyFactor: parsed.safetyFactor,
     ...(measured ? { measuredPeakMb: measured.peakMb } : {}),
@@ -283,7 +285,7 @@ export async function runAdmit(args: string[]): Promise<number> {
   printAdmitResult({
     name,
     nodeMem,
-    expectedMemoryGiB,
+    expectedMemoryGiB: declaredMemoryGiB,
     result,
     ...parsed,
     measured,

@@ -75,9 +75,16 @@ export const ModelHostSpecSchema = z
     node: z.string().min(1),
     enabled: z.boolean().default(true),
     binary: z.string().min(1),
+    // residentGiB / diskBackedGiB mirror the catalog's memory.{residentGiB,
+    // diskBackedGiB} (#529/#541). residentGiB is the admission charge (the
+    // larger of it and expectedMemoryGiB when both are declared);
+    // expectedMemoryGiB keeps its meaning (oMLX --memory-guard-gb). Both new
+    // fields are admission metadata: outside the spec hash and the engine spec.
     resources: z
       .object({
         expectedMemoryGiB: z.number().positive().optional(),
+        residentGiB: z.number().positive().optional(),
+        diskBackedGiB: z.number().nonnegative().optional(),
       })
       .optional(),
     endpoint: ModelHostEndpointSchema,
@@ -114,6 +121,13 @@ export const ModelHostSpecSchema = z
   })
   .strict()
   .superRefine((spec, ctx) => {
+    if (spec.resources?.diskBackedGiB !== undefined && spec.resources.residentGiB === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["resources", "diskBackedGiB"],
+        message: "diskBackedGiB requires residentGiB (the resident admission charge)",
+      });
+    }
     if (spec.binaryNames !== undefined && spec.engine !== "llamacpp") {
       ctx.addIssue({
         code: "custom",
@@ -201,6 +215,12 @@ export function modelHostBindRefusal(manifest: ModelHostManifest): string | null
  * `exactOptionalPropertyTypes` as `{ expectedMemoryGiB?: number }`. Reconstructing
  * the object with a conditional-spread keeps the value JSON-identical (an undefined
  * property is dropped by `JSON.stringify` either way) while satisfying the type.
+ *
+ * `residentGiB` and `diskBackedGiB` are admission metadata and never enter the
+ * hash: a resources object carrying only them normalizes to `{}`, so adding
+ * either field to a host whose resources was `{}` leaves the hash byte-identical.
+ * A host that never declared resources still omits the key (absent ≠ `{}`
+ * downstream), and legacy `{}` / `{ expectedMemoryGiB }` outputs are unchanged.
  */
 export function specForHash(
   spec: ModelHostSpec,
