@@ -239,12 +239,17 @@ function pathSizeBytes(path: string): number {
   return total;
 }
 
+export function declaredModelHostMemoryGiB(manifest: ModelHostManifest): number | null {
+  return manifest.spec.resources?.residentGiB ?? manifest.spec.resources?.expectedMemoryGiB ?? null;
+}
+
 export function estimateModelHostMemoryGiB(
   manifest: ModelHostManifest,
   resolved: ResolvedEnv,
 ): number | null {
-  const declared = manifest.spec.resources?.expectedMemoryGiB;
-  if (declared !== undefined) return declared;
+  const declared = declaredModelHostMemoryGiB(manifest);
+  if (declared !== null) return declared;
+  if (manifest.spec.resources?.diskBackedGiB !== undefined) return null;
   const rel = manifest.spec.hostedModels[0]?.rel;
   if (!rel) return null;
   try {

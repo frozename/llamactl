@@ -2,6 +2,7 @@ import { resolveEnv } from "@llamactl/core/env";
 import { expect, test } from "bun:test";
 import { tmpdir, totalmem } from "node:os";
 import { join } from "node:path";
+import { stringify as stringifyYaml } from "yaml";
 
 import type { ModelHostManifest } from "./modelhost-schema.js";
 import type { ModelRun } from "./schema.js";
@@ -16,6 +17,7 @@ import {
   reservedForNodeBreakdown,
   sumReservedForNode,
 } from "./admission.js";
+import { listAnyWorkloadsForAdmission } from "./store.js";
 
 const mkManifest = (
   name: string,
@@ -43,27 +45,49 @@ const mkManifest = (
 
 const mkModelHost = (
   name: string,
-  opts: Partial<{ expectedMemoryGiB: number; rel: string }> = {},
-): ModelHostManifest => ({
-  apiVersion: "llamactl/v1",
-  kind: "ModelHost",
-  metadata: { name },
-  spec: {
-    engine: "omlx",
-    node: "local",
-    enabled: true,
-    binary: "/usr/bin/true",
-    endpoint: { host: "127.0.0.1", port: 18094 },
-    hostedModels: [{ rel: opts.rel ?? `${name}.gguf` }],
-    extraArgs: [],
-    restartPolicy: "Always",
-    timeoutSeconds: 60,
-    resources:
-      opts.expectedMemoryGiB !== undefined
-        ? { expectedMemoryGiB: opts.expectedMemoryGiB }
-        : undefined,
-  },
-});
+  opts: Partial<{
+    expectedMemoryGiB: number;
+    residentGiB: number;
+    diskBackedGiB: number;
+    rel: string;
+  }> = {},
+): ModelHostManifest => {
+  const resources:
+    | {
+        expectedMemoryGiB?: number;
+        residentGiB?: number;
+        diskBackedGiB?: number;
+      }
+    | undefined =
+    opts.expectedMemoryGiB !== undefined ||
+    opts.residentGiB !== undefined ||
+    opts.diskBackedGiB !== undefined
+      ? {
+          ...(opts.expectedMemoryGiB !== undefined
+            ? { expectedMemoryGiB: opts.expectedMemoryGiB }
+            : {}),
+          ...(opts.residentGiB !== undefined ? { residentGiB: opts.residentGiB } : {}),
+          ...(opts.diskBackedGiB !== undefined ? { diskBackedGiB: opts.diskBackedGiB } : {}),
+        }
+      : undefined;
+  return {
+    apiVersion: "llamactl/v1",
+    kind: "ModelHost",
+    metadata: { name },
+    spec: {
+      engine: "omlx",
+      node: "local",
+      enabled: true,
+      binary: "/usr/bin/true",
+      endpoint: { host: "127.0.0.1", port: 18094 },
+      hostedModels: [{ rel: opts.rel ?? `${name}.gguf` }],
+      extraArgs: [],
+      restartPolicy: "Always",
+      timeoutSeconds: 60,
+      resources,
+    },
+  };
+};
 
 test("sumReservedForNode sums expectedMemoryGiB for enabled manifests on the node", () => {
   const all = [
@@ -377,6 +401,168 @@ test("estimateModelHostMemoryGiB uses expectedMemoryGiB before model-size fallba
         ...resolveEnv({ LLAMA_CPP_MODELS: modelsDir }),
       }),
     ).toBe(46);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+// #277 C-2: spec.resources gains residentGiB (memory charged at admission) and
+// diskBackedGiB (weights on disk, not resident). A streamed model declares both
+// instead of expectedMemoryGiB; the estimator must prefer residentGiB and must
+// not fall back to the 2x weights heuristic when only disk-backed size is known.
+test("estimateModelHostMemoryGiB charges a declared residentGiB for a streamed model", () => {
+  const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-resident-"));
+  const modelsDir = join(tmp, "models");
+  const rel = "mlx-community/streamed-weights";
+  const modelDir = join(modelsDir, rel);
+  try {
+    mkdirSync(modelDir, { recursive: true });
+    const weights = join(modelDir, "weights.bin");
+    writeFileSync(weights, "");
+    truncateSync(weights, 60 * 1024 ** 3);
+    const resolved = { ...resolveEnv({ LLAMA_CPP_MODELS: modelsDir }) };
+    const estimate = estimateModelHostMemoryGiB(
+      mkModelHost("streamed", { residentGiB: 100, diskBackedGiB: 103, rel }),
+      resolved,
+    );
+    expect(estimate).toBe(100);
+    if (estimate === null) return;
+    const admit = computeNodeBudget({
+      nodeName: "local",
+      nodeBudgetGiB: 110,
+      livingManifests: [],
+      incoming: mkManifest("streamed", { expectedMemoryGiB: estimate }),
+      forceAdmit: false,
+    });
+    expect(admit.ok).toBe(true);
+    if (admit.ok) expect(admit.reservedAfter).toBe(100);
+    // Control: the same weights without memory declarations still hit the 2x
+    // fallback, which is exactly what the declared fields exist to replace.
+    const control = estimateModelHostMemoryGiB(mkModelHost("control", { rel }), resolved);
+    expect(control).toBe(120);
+    if (control === null) return;
+    const controlAdmit = computeNodeBudget({
+      nodeName: "local",
+      nodeBudgetGiB: 110,
+      livingManifests: [],
+      incoming: mkManifest("control", { expectedMemoryGiB: control }),
+      forceAdmit: false,
+    });
+    expect(controlAdmit.ok).toBe(false);
+    if (!controlAdmit.ok) expect(controlAdmit.kind).toBe("over-budget");
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("residentGiB takes precedence over expectedMemoryGiB for admission", () => {
+  const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-resident-precedence-"));
+  const modelsDir = join(tmp, "models");
+  const rel = "mlx-community/precedence-weights";
+  const modelDir = join(modelsDir, rel);
+  try {
+    mkdirSync(modelDir, { recursive: true });
+    const weights = join(modelDir, "weights.bin");
+    writeFileSync(weights, "");
+    truncateSync(weights, 23 * 1024 ** 3);
+    expect(
+      estimateModelHostMemoryGiB(
+        mkModelHost("precedence", { expectedMemoryGiB: 24, residentGiB: 10, rel }),
+        { ...resolveEnv({ LLAMA_CPP_MODELS: modelsDir }) },
+      ),
+    ).toBe(10);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("declared diskBackedGiB without residentGiB never applies the 2x weights fallback", () => {
+  const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-diskbacked-"));
+  const modelsDir = join(tmp, "models");
+  const rel = "mlx-community/diskbacked-weights";
+  const modelDir = join(modelsDir, rel);
+  try {
+    mkdirSync(modelDir, { recursive: true });
+    const weights = join(modelDir, "weights.bin");
+    writeFileSync(weights, "");
+    truncateSync(weights, 60 * 1024 ** 3);
+    const resolved = { ...resolveEnv({ LLAMA_CPP_MODELS: modelsDir }) };
+    expect(
+      estimateModelHostMemoryGiB(mkModelHost("disk-only", { diskBackedGiB: 103, rel }), resolved),
+    ).toBe(null);
+    expect(
+      estimateModelHostMemoryGiB(
+        mkModelHost("disk-and-expected", { diskBackedGiB: 103, expectedMemoryGiB: 30, rel }),
+        resolved,
+      ),
+    ).toBe(30);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("listAnyWorkloadsForAdmission charges residentGiB for ModelHost incumbents", () => {
+  const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-incumbent-"));
+  const workloadsDir = join(tmp, "workloads");
+  const modelsDir = join(tmp, "models-empty");
+  try {
+    mkdirSync(workloadsDir, { recursive: true });
+    mkdirSync(modelsDir, { recursive: true });
+    const hostManifest = (
+      name: string,
+      rel: string,
+      resources: Record<string, number>,
+    ): Record<string, unknown> => ({
+      apiVersion: "llamactl/v1",
+      kind: "ModelHost",
+      metadata: { name },
+      spec: {
+        engine: "omlx",
+        node: "local",
+        enabled: true,
+        binary: "/usr/bin/true",
+        endpoint: { host: "127.0.0.1", port: 18094 },
+        hostedModels: [{ rel }],
+        extraArgs: [],
+        restartPolicy: "Always",
+        timeoutSeconds: 60,
+        resources,
+      },
+    });
+    // Raw YAML on purpose: saveModelHost would re-parse through the schema and
+    // drop the not-yet-declared memory fields before they ever hit disk.
+    writeFileSync(
+      join(workloadsDir, "mlx-host-resident.yaml"),
+      stringifyYaml(
+        hostManifest("mlx-host-resident", "mlx-community/ghost-resident", {
+          expectedMemoryGiB: 24,
+          residentGiB: 10,
+          diskBackedGiB: 40,
+        }),
+      ),
+    );
+    writeFileSync(
+      join(workloadsDir, "mlx-host-expected.yaml"),
+      stringifyYaml(
+        hostManifest("mlx-host-expected", "mlx-community/ghost-expected", {
+          expectedMemoryGiB: 24,
+        }),
+      ),
+    );
+
+    const declared = new Map(
+      listAnyWorkloadsForAdmission(workloadsDir).map((m) => [m.metadata.name, m]),
+    );
+    expect(declared.get("mlx-host-resident")?.spec.resources?.expectedMemoryGiB).toBe(10);
+    expect(declared.get("mlx-host-expected")?.spec.resources?.expectedMemoryGiB).toBe(24);
+
+    const estimated = new Map(
+      listAnyWorkloadsForAdmission(workloadsDir, resolveEnv({ LLAMA_CPP_MODELS: modelsDir })).map(
+        (m) => [m.metadata.name, m],
+      ),
+    );
+    expect(estimated.get("mlx-host-resident")?.spec.resources?.expectedMemoryGiB).toBe(10);
+    expect(estimated.get("mlx-host-expected")?.spec.resources?.expectedMemoryGiB).toBe(24);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }

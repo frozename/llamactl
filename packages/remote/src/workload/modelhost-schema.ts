@@ -75,9 +75,15 @@ export const ModelHostSpecSchema = z
     node: z.string().min(1),
     enabled: z.boolean().default(true),
     binary: z.string().min(1),
+    // residentGiB / diskBackedGiB mirror the catalog's memory.{residentGiB,
+    // diskBackedGiB} (#529/#541). residentGiB is the admission charge;
+    // expectedMemoryGiB keeps its meaning (oMLX --memory-guard-gb). Both new
+    // fields are admission metadata: outside the spec hash and the engine spec.
     resources: z
       .object({
         expectedMemoryGiB: z.number().positive().optional(),
+        residentGiB: z.number().positive().optional(),
+        diskBackedGiB: z.number().nonnegative().optional(),
       })
       .optional(),
     endpoint: ModelHostEndpointSchema,
@@ -114,6 +120,13 @@ export const ModelHostSpecSchema = z
   })
   .strict()
   .superRefine((spec, ctx) => {
+    if (spec.resources?.diskBackedGiB !== undefined && spec.resources.residentGiB === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["resources", "diskBackedGiB"],
+        message: "diskBackedGiB requires residentGiB (the resident admission charge)",
+      });
+    }
     if (spec.binaryNames !== undefined && spec.engine !== "llamacpp") {
       ctx.addIssue({
         code: "custom",
@@ -201,14 +214,23 @@ export function modelHostBindRefusal(manifest: ModelHostManifest): string | null
  * `exactOptionalPropertyTypes` as `{ expectedMemoryGiB?: number }`. Reconstructing
  * the object with a conditional-spread keeps the value JSON-identical (an undefined
  * property is dropped by `JSON.stringify` either way) while satisfying the type.
+ *
+ * `residentGiB` and `diskBackedGiB` are admission metadata and never enter the
+ * hash. A resources object carrying only them omits the `resources` key entirely;
+ * hosts hash-keyed before #277 keep their hash byte-identical (legacy `{}` and
+ * `{ expectedMemoryGiB }` outputs are unchanged).
  */
 export function specForHash(
   spec: ModelHostSpec,
 ): Omit<ModelHostSpec, "resources"> & { resources?: { expectedMemoryGiB?: number } } {
   const { resources, ...rest } = spec;
+  const memoryDeclarationsOnly =
+    resources !== undefined &&
+    resources.expectedMemoryGiB === undefined &&
+    (resources.residentGiB !== undefined || resources.diskBackedGiB !== undefined);
   return {
     ...rest,
-    ...(resources !== undefined
+    ...(resources !== undefined && !memoryDeclarationsOnly
       ? {
           resources: {
             ...(resources.expectedMemoryGiB !== undefined

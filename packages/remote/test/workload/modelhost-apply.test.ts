@@ -4,6 +4,7 @@ import { openAggregatorDb, writeSnapshot } from "@llamactl/fleet-supervisor";
 import { describe, expect, mock, spyOn, test } from "bun:test";
 import { tmpdir, totalmem } from "node:os";
 import { join } from "node:path";
+import { stringify as stringifyYaml } from "yaml";
 
 import type { ModelHostManifest } from "../../src/workload/modelhost-schema.js";
 import type { ModelRun } from "../../src/workload/schema.js";
@@ -1458,5 +1459,172 @@ describe("applyManifest — kind dispatch", () => {
     if (result.ok) return;
     expect(result.error).toContain("no viable placement node");
     rmSync(tmp, { recursive: true, force: true });
+  });
+
+  // #277 C-2: a streamed ModelHost declares residentGiB + diskBackedGiB instead
+  // of expectedMemoryGiB; admission must charge the resident figure, not the
+  // 2x weights-on-disk fallback.
+  test("applyOneModelHost admits a streamed ModelHost on its declared residentGiB", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-streamed-"));
+    const workloadsDir = join(tmp, "workloads");
+    const modelsDir = join(tmp, "models");
+    const streamedResources: { residentGiB: number; diskBackedGiB: number } = {
+      residentGiB: 100,
+      diskBackedGiB: 103,
+    };
+    const baseManifest = makeModelHostManifest("mlx-host-streamed", 1);
+    const manifest = {
+      ...baseManifest,
+      spec: { ...baseManifest.spec, resources: streamedResources },
+    };
+    const client: WorkloadClient = {
+      serverStatus: {
+        query: () =>
+          Promise.resolve({
+            state: "down",
+            rel: null,
+            extraArgs: [],
+            pid: null,
+            host: null,
+            port: null,
+            binary: null,
+            endpoint: "",
+          }),
+      },
+      serverStop: { mutate: () => Promise.resolve({ ok: true }) },
+      serverStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
+      modelHostStart: {
+        subscribe: (_input, callbacks) => {
+          queueMicrotask(() => {
+            callbacks.onData({
+              type: "done",
+              result: { ok: true, pid: 123, state: "Running" },
+            });
+            callbacks.onComplete();
+          });
+          return { unsubscribe: () => undefined };
+        },
+      },
+      modelHostStop: { mutate: () => Promise.resolve({ ok: true }) },
+      modelHostStatus: { query: () => Promise.resolve({ state: "Running", pid: 123 }) },
+      rpcServerStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
+      rpcServerStop: { mutate: () => Promise.resolve({ ok: true }) },
+      rpcServerDoctor: {
+        query: () => Promise.resolve({ ok: true, path: null, llamaCppBin: null }),
+      },
+    };
+
+    try {
+      fs.mkdirSync(workloadsDir, { recursive: true });
+      const weightsDir = join(modelsDir, "mlx-community", "mlx-host-streamed");
+      fs.mkdirSync(weightsDir, { recursive: true });
+      const weights = join(weightsDir, "weights.bin");
+      fs.writeFileSync(weights, "");
+      fs.truncateSync(weights, 60 * 1024 ** 3);
+
+      const result = await applyManifest({
+        manifest,
+        workloadsDir,
+        getNodeBudgetGiB: () => 110,
+        getClient: () => client,
+        spawn: spawnStub,
+        env: {
+          ...process.env,
+          LOCAL_AI_RUNTIME_DIR: tmp,
+          LLAMA_CPP_MODELS: modelsDir,
+          LLAMACTL_WORKLOADS_DIR: workloadsDir,
+        },
+      });
+
+      if (!result.ok) console.error("ERROR:", result);
+      expect(result.ok).toBe(true);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("applyOneModelHost charges an incumbent's residentGiB against the node budget", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-incumbent-resident-"));
+    const workloadsDir = join(tmp, "workloads");
+    const client: WorkloadClient = {
+      serverStatus: {
+        query: () =>
+          Promise.resolve({
+            state: "down",
+            rel: null,
+            extraArgs: [],
+            pid: null,
+            host: null,
+            port: null,
+            binary: null,
+            endpoint: "",
+          }),
+      },
+      serverStop: { mutate: () => Promise.resolve({ ok: true }) },
+      serverStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
+      modelHostStart: {
+        subscribe: (_input, callbacks) => {
+          queueMicrotask(() => {
+            callbacks.onData({
+              type: "done",
+              result: { ok: true, pid: 123, state: "Running" },
+            });
+            callbacks.onComplete();
+          });
+          return { unsubscribe: () => undefined };
+        },
+      },
+      modelHostStop: { mutate: () => Promise.resolve({ ok: true }) },
+      modelHostStatus: { query: () => Promise.resolve({ state: "Running", pid: 123 }) },
+      rpcServerStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
+      rpcServerStop: { mutate: () => Promise.resolve({ ok: true }) },
+      rpcServerDoctor: {
+        query: () => Promise.resolve({ ok: true, path: null, llamaCppBin: null }),
+      },
+    };
+
+    try {
+      saveModelHost(makeModelHostManifest("mlx-host-a", 6), workloadsDir);
+      // Raw YAML on purpose: saveModelHost would re-parse through the schema and
+      // drop the not-yet-declared memory fields before they ever hit disk.
+      fs.writeFileSync(
+        join(workloadsDir, "mlx-host-b.yaml"),
+        stringifyYaml({
+          apiVersion: "llamactl/v1",
+          kind: "ModelHost",
+          metadata: { name: "mlx-host-b" },
+          spec: {
+            engine: "omlx",
+            node: "local",
+            enabled: true,
+            binary: "/usr/bin/true",
+            endpoint: { host: "127.0.0.1", port: 18094 },
+            hostedModels: [{ rel: "mlx-community/ghost-incumbent-b" }],
+            extraArgs: [],
+            restartPolicy: "Always",
+            timeoutSeconds: 60,
+            resources: { residentGiB: 6, diskBackedGiB: 40 },
+          },
+        }),
+      );
+      const result = await applyManifest({
+        manifest: makeModelHostManifest("mlx-host-c", 6),
+        workloadsDir,
+        getNodeBudgetGiB: () => 16,
+        getClient: () => client,
+        spawn: spawnStub,
+        env: {
+          ...process.env,
+          LOCAL_AI_RUNTIME_DIR: tmp,
+          LLAMACTL_WORKLOADS_DIR: workloadsDir,
+        },
+      });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toContain("would reserve 18.0 GiB");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });
