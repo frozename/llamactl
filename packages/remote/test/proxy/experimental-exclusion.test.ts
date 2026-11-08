@@ -188,18 +188,52 @@ function chatReq(body: Record<string, unknown>): Request {
   });
 }
 
-function recordingExecutor(id: string): BackendExecutor {
+function recordingExecutor(id: string, calls: string[] = []): BackendExecutor {
   return {
     describe: (): BackendExecutorDescription => ({
       id,
       backendKinds: [],
       transports: [],
     }),
-    execute: (): Promise<Response> => Promise.resolve(Response.json({ ok: true, executor: id })),
+    execute: (envelope): Promise<Response> => {
+      calls.push(envelope.publicModelId);
+      return Promise.resolve(Response.json({ ok: true, executor: id }));
+    },
     cancel: (): boolean => false,
     drain: (): Promise<void> => Promise.resolve(),
     close: (): Promise<void> => Promise.resolve(),
   };
+}
+
+interface UnifiedOutcome {
+  status: number;
+  servedBy: string;
+  defaultCalls: string[];
+}
+
+async function unifiedServe(
+  scenario: () => Scenario,
+  body: Record<string, unknown>,
+  acquired: string[] = [],
+): Promise<UnifiedOutcome> {
+  const s = scenario();
+  const defaultCalls: string[] = [];
+  const proxy = createProxy({
+    env: { LLAMACTL_UNIFIED_PROXY: "1" },
+    resolved: () => s.resolved,
+    peers: s.peers,
+    peerSnapshots: s.peerSnapshots,
+    executor: recordingExecutor("default", defaultCalls),
+    acquireExecutor: (candidate) => {
+      const owner = candidate.advertisement.ownerNodeId;
+      acquired.push(owner);
+      return recordingExecutor(owner);
+    },
+  });
+  const response = await proxy.handleRequest(chatReq(body));
+  expect(response.status).toBe(200);
+  const servedBy = defaultCalls.length > 0 ? "default" : (acquired.at(-1) ?? "unrouted");
+  return { status: response.status, servedBy, defaultCalls };
 }
 
 async function unifiedServedBy(
@@ -207,21 +241,8 @@ async function unifiedServedBy(
   body: Record<string, unknown>,
   acquired: string[] = [],
 ): Promise<string> {
-  const s = scenario();
-  const proxy = createProxy({
-    env: { LLAMACTL_UNIFIED_PROXY: "1" },
-    resolved: () => s.resolved,
-    peers: s.peers,
-    peerSnapshots: s.peerSnapshots,
-    executor: recordingExecutor("default"),
-    acquireExecutor: (candidate) => {
-      const owner = candidate.advertisement.ownerNodeId;
-      acquired.push(owner);
-      return recordingExecutor(owner);
-    },
-  });
-  await proxy.handleRequest(chatReq(body));
-  return acquired.at(-1) ?? "default";
+  const outcome = await unifiedServe(scenario, body, acquired);
+  return outcome.servedBy;
 }
 
 function recordedChat(records: readonly EngineRecord[]): boolean {
@@ -294,13 +315,18 @@ afterAll(async () => {
 describe("unified proxy experimental exclusion (#518)", () => {
   test("an experimental peer never captures a default-target id", async () => {
     const acquired: string[] = [];
-    const servedBy = await unifiedServedBy(scenarioA, { model: "default-alias" }, acquired);
-    expect(servedBy).toBe("default");
+    const outcome = await unifiedServe(scenarioA, { model: "default-alias" }, acquired);
+    expect(outcome.status).toBe(200);
+    expect(outcome.servedBy).toBe("default");
+    expect(outcome.defaultCalls.length).toBeGreaterThan(0);
     expect(acquired).not.toContain("peer-exp");
   });
 
   test("a catalog-experimental peer (relocated LOCAL_AI_CUSTOM_CATALOG_FILE) never captures the default model", async () => {
-    expect(await unifiedServedBy(scenarioB, { model: "exp/model.gguf" })).toBe("default");
+    const outcome = await unifiedServe(scenarioB, { model: "exp/model.gguf" });
+    expect(outcome.status).toBe(200);
+    expect(outcome.servedBy).toBe("default");
+    expect(outcome.defaultCalls.length).toBeGreaterThan(0);
   });
 
   test("an experimental replica never wins a shared id over a stable replica", async () => {
@@ -387,7 +413,12 @@ describe("experimental exclusion parity, legacy vs unified (#518)", () => {
   for (const { name, scenario, model, expected } of cases) {
     test(`${name}: legacy and unified agree on '${expected}'`, async () => {
       expect(await legacyServedBy(scenario, { model })).toBe(expected);
-      expect(await unifiedServedBy(scenario, { model })).toBe(expected);
+      const outcome = await unifiedServe(scenario, { model });
+      expect(outcome.status).toBe(200);
+      expect(outcome.servedBy).toBe(expected);
+      if (expected === "default") {
+        expect(outcome.defaultCalls.length).toBeGreaterThan(0);
+      }
     });
   }
 });
