@@ -9,10 +9,15 @@ import { dirname, isAbsolute, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { RouteCapabilities } from "../../src/routing/capabilities.js";
-import type { RouteAdvertisementV1 } from "../../src/routing/catalog.js";
+import type {
+  RouteAdvertisementV1,
+  RouteCandidate,
+  RouteCatalog,
+} from "../../src/routing/catalog.js";
 import type { ClusterRoute, LocalRoute } from "../../src/workloadRuntime.js";
 
 import {
+  CapabilityRejectionSchema,
   checkRouteCapabilities,
   deriveRequestFeatures,
   filterCandidatesByCapabilities,
@@ -21,6 +26,7 @@ import {
   LEGACY_PROXY_CAPABILITIES,
   ModalitySchema,
 } from "../../src/routing/capabilities.js";
+import * as routeCatalogModule from "../../src/routing/catalog.js";
 import {
   addCatalogAdvertisement,
   buildRouteCatalog,
@@ -727,5 +733,191 @@ describe("core stays adapter-free", () => {
       expect(specs.length).toBeGreaterThan(0);
       expect(specs.some((spec) => specifierBanned(spec, file))).toBe(banned);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #518 B-4 — experimental qualification on catalog candidates. The
+// qualificationStage/labels route fields, the advertisement `qualification`
+// payload, selectCatalogCandidates and the "experimental-excluded" rejection
+// land with the fix; the widened views below keep these RED cases
+// typechecking before those exports exist (undefined at runtime on the base
+// revision, so the typeof guard fails by assertion first).
+// ---------------------------------------------------------------------------
+
+// selectCatalogCandidates lands with #518; the widened view lets the RED
+// cases call it before the export exists.
+const selectCatalogCandidates = (
+  routeCatalogModule as unknown as {
+    selectCatalogCandidates?: (
+      catalog: RouteCatalog,
+      publicModelId: string,
+      opts?: { pinned?: boolean },
+    ) => {
+      eligible: RouteCandidate[];
+      rejected: { candidate: RouteCandidate; rejection: { reason: string } }[];
+    };
+  }
+).selectCatalogCandidates;
+
+const adQualification = (ad: RouteAdvertisementV1 | undefined): unknown =>
+  (ad as { qualification?: unknown } | undefined)?.qualification;
+
+describe("experimental qualification (#518)", () => {
+  test("an experimental deployment never wins an alias", () => {
+    const aExp = {
+      ...localRoute({ workload: "a-exp", model: "shared-alias" }),
+      qualificationStage: "experimental",
+    };
+    const bProd = localRoute({ workload: "b-prod", model: "shared-alias" });
+    const catalog = buildRouteCatalog({ routes: [aExp, bProd] });
+    const candidates = catalogCandidatesFor(catalog, "shared-alias");
+    expect(candidates[0]?.advertisement.routeId).toBe("route/local/b-prod");
+    expect(candidates[0]?.legacyWinner).toBe(true);
+    const aExpCandidate = candidates.find((c) => c.advertisement.routeId === "route/local/a-exp");
+    expect(aExpCandidate?.legacyWinner).toBe(false);
+    expect(effectiveCandidate(catalog, "shared-alias")?.advertisement.routeId).toBe(
+      "route/local/b-prod",
+    );
+  });
+
+  test("advertisements carry the qualification stage", () => {
+    const aExp = {
+      ...localRoute({ workload: "a-exp", model: "shared-alias" }),
+      qualificationStage: "experimental",
+    };
+    const bProd = localRoute({ workload: "b-prod", model: "shared-alias" });
+    const catalog = buildRouteCatalog({ routes: [aExp, bProd] });
+    const aExpAd = catalog.deployments.find((d) => d.routeId === "route/local/a-exp");
+    const bProdAd = catalog.deployments.find((d) => d.routeId === "route/local/b-prod");
+    expect(adQualification(aExpAd)).toEqual({ stage: "experimental" });
+    expect(bProdAd !== undefined && "qualification" in bProdAd).toBe(false);
+  });
+
+  test("an experimental route later in a workload's route list flags the whole group", () => {
+    const aStable = localRoute({ workload: "a-mixed", model: "shared-alias" });
+    const aExp = {
+      ...localRoute({ workload: "a-mixed", model: "mixed-exp" }),
+      labels: { "llamactl.io/qualification": "experimental" },
+    };
+    const bProd = localRoute({ workload: "b-prod", model: "shared-alias" });
+    const catalog = buildRouteCatalog({ routes: [aStable, aExp, bProd] });
+    const aMixed = catalog.deployments.find((d) => d.routeId === "route/local/a-mixed");
+    expect(adQualification(aMixed)).toEqual({ stage: "experimental" });
+    expect(effectiveCandidate(catalog, "shared-alias")?.advertisement.routeId).toBe(
+      "route/local/b-prod",
+    );
+  });
+
+  test("a label-flagged route is experimental", () => {
+    const labelled = {
+      ...localRoute({ workload: "wl-label", model: "labelled-model" }),
+      labels: { "llamactl.io/qualification": "experimental" },
+    };
+    const catalog = buildRouteCatalog({ routes: [labelled] });
+    const ad = catalog.deployments[0];
+    expect(adQualification(ad)).toEqual({ stage: "experimental" });
+  });
+
+  test("non-pinned selection yields a typed experimental-excluded rejection", () => {
+    expect(typeof selectCatalogCandidates).toBe("function");
+    const aExpRoutes = [
+      {
+        ...localRoute({ workload: "a-exp", model: "exp-only" }),
+        qualificationStage: "experimental",
+      },
+      {
+        ...localRoute({ workload: "a-exp", model: "shared-alias" }),
+        qualificationStage: "experimental",
+      },
+    ];
+    const bProd = localRoute({ workload: "b-prod", model: "shared-alias" });
+    const catalog = buildRouteCatalog({ routes: [...aExpRoutes, bProd] });
+
+    const expOnlyOpen = selectCatalogCandidates?.(catalog, "exp-only", { pinned: false });
+    expect(expOnlyOpen?.eligible).toEqual([]);
+    expect(expOnlyOpen?.rejected).toHaveLength(1);
+    expect(expOnlyOpen?.rejected[0]?.rejection).toEqual({ reason: "experimental-excluded" });
+    expect(expOnlyOpen?.rejected[0]?.candidate.advertisement.deploymentId).toContain("a-exp");
+
+    const expOnlyPinned = selectCatalogCandidates?.(catalog, "exp-only", { pinned: true });
+    expect(expOnlyPinned?.eligible).toHaveLength(1);
+    expect(expOnlyPinned?.eligible[0]?.advertisement.deploymentId).toContain("a-exp");
+
+    const sharedOpen = selectCatalogCandidates?.(catalog, "shared-alias", { pinned: false });
+    expect(sharedOpen?.eligible).toHaveLength(1);
+    expect(sharedOpen?.eligible[0]?.advertisement.deploymentId).toContain("b-prod");
+    expect(sharedOpen?.rejected).toHaveLength(1);
+    expect(sharedOpen?.rejected[0]?.rejection).toEqual({ reason: "experimental-excluded" });
+
+    const sharedPinned = selectCatalogCandidates?.(catalog, "shared-alias", { pinned: true });
+    expect(sharedPinned?.eligible).toHaveLength(1);
+    expect(sharedPinned?.eligible[0]?.advertisement.deploymentId).toContain("b-prod");
+    expect(sharedPinned?.rejected).toHaveLength(1);
+    expect(sharedPinned?.rejected[0]?.rejection).toEqual({ reason: "experimental-excluded" });
+    expect(sharedPinned?.rejected[0]?.candidate.advertisement.deploymentId).toContain("a-exp");
+
+    expect(CapabilityRejectionSchema.safeParse({ reason: "experimental-excluded" }).success).toBe(
+      true,
+    );
+  });
+
+  test("an advertised experimental replica never precedes a non-experimental one", () => {
+    const expAd = {
+      ...advertised({
+        routeId: "route/ext-exp",
+        deploymentId: "deploy/ext-exp",
+        backendId: "backend/ext-exp",
+        publicModelIds: ["replica-model"],
+        upstreamModelId: "hf.co/org/replica-model",
+        providerKind: "prov-x",
+        replicaGroup: "rg",
+        modelRevision: knownRevision("rev-9"),
+      }),
+      qualification: { stage: "experimental" },
+    };
+    const prodAd = advertised({
+      routeId: "route/ext-prod",
+      deploymentId: "deploy/ext-prod",
+      backendId: "backend/ext-prod",
+      publicModelIds: ["replica-model"],
+      upstreamModelId: "hf.co/org/replica-model",
+      providerKind: "prov-x",
+      replicaGroup: "rg",
+      modelRevision: knownRevision("rev-9"),
+    });
+    const catalog = buildRouteCatalog({ routes: [], advertisements: [expAd, prodAd] });
+    const candidates = catalogCandidatesFor(catalog, "replica-model");
+    expect(candidates).toHaveLength(2);
+    expect(candidates[0]?.advertisement.routeId).toBe("route/ext-prod");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #280 D-2 — declared-unavailable catalog models. The "model-unavailable"
+// CapabilityRejection variant lands with the fix; the safeParse assertions
+// below pin its shape — availabilityReason is required and non-empty — while
+// the experimental-excluded guard keeps passing.
+// ---------------------------------------------------------------------------
+describe("declared-unavailable rejection (#280)", () => {
+  test("CapabilityRejectionSchema accepts model-unavailable only with a non-empty availabilityReason", () => {
+    expect(
+      CapabilityRejectionSchema.safeParse({
+        reason: "model-unavailable",
+        availabilityReason: "artifact-not-downloaded",
+      }).success,
+    ).toBe(true);
+    expect(CapabilityRejectionSchema.safeParse({ reason: "model-unavailable" }).success).toBe(
+      false,
+    );
+    expect(
+      CapabilityRejectionSchema.safeParse({
+        reason: "model-unavailable",
+        availabilityReason: "",
+      }).success,
+    ).toBe(false);
+    expect(CapabilityRejectionSchema.safeParse({ reason: "experimental-excluded" }).success).toBe(
+      true,
+    );
   });
 });

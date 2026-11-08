@@ -5,6 +5,8 @@
  */
 import { z } from "zod";
 
+import type { QUALIFICATION_STAGES } from "../schemas.js";
+
 export const InferenceOperationSchema = z.enum(["generate", "embed", "count-tokens"]);
 export type InferenceOperation = z.infer<typeof InferenceOperationSchema>;
 
@@ -60,8 +62,42 @@ export const CapabilityRejectionSchema = z.discriminatedUnion("reason", [
   z.object({ reason: z.literal("unsupported-token-counting") }),
   z.object({ reason: z.literal("unsupported-cancellation") }),
   z.object({ reason: z.literal("unsupported-session") }),
+  // #518: an experimental-qualified candidate dropped from non-pinned selection.
+  z.object({ reason: z.literal("experimental-excluded") }),
+  // #280 D-2: an exact pin of a catalog row declared unavailable.
+  z.object({
+    reason: z.literal("model-unavailable"),
+    availabilityReason: z.string().min(1),
+  }),
 ]);
 export type CapabilityRejection = z.infer<typeof CapabilityRejectionSchema>;
+
+/**
+ * Route label carrying a qualification stage (#518). A value of
+ * "experimental" marks the route experimental.
+ */
+export const QUALIFICATION_LABEL = "llamactl.io/qualification";
+
+export type QualificationStage = (typeof QUALIFICATION_STAGES)[number];
+
+/**
+ * True when a route is flagged experimental — either by the catalog join
+ * (`qualificationStage`, keyed by the route's rel/model id) or by an
+ * explicit `llamactl.io/qualification: experimental` label (#518).
+ * `qualificationStage` is carried as a plain string on route shapes so
+ * peer snapshots and hand-built routes can hold raw label values; catalog
+ * rows and advertisements validate against QUALIFICATION_STAGES at their
+ * own boundaries.
+ */
+export function isExperimentalRoute(route: {
+  readonly labels?: Readonly<Record<string, string>>;
+  readonly qualificationStage?: string;
+}): boolean {
+  return (
+    route.qualificationStage === "experimental" ||
+    route.labels?.[QUALIFICATION_LABEL] === "experimental"
+  );
+}
 
 /**
  * What the legacy forwarding path will attempt today. The proxy forwards
