@@ -1,0 +1,64 @@
+# EXPERIMENTAL: libosmos v0.5.5 @934b51b9 ROCm/HIP + DSpark drafter;
+# unsloth revision 2688c0c3; osmos-evo-1017 picks/drafter at 3c6b0aeb256c.
+#
+# The IQ4_NL Engram shard 5 sits next to shard 1, as libosmos requires.
+#
+# It is committed disabled because it shares the exclusive z13-large-gpu
+# group; enabling it needs an operator window.
+#
+# The figures are derived, not measured. The non-Engram weights are 130.2
+# GiB (IQ1_M) / 114 GiB (IQ1_S), against the ~118 GiB GTT, so osmos
+# streams experts. --budget 100 maps to drafted_budget_gib and equals
+# residentGiB. diskBackedGiB = the 103 GiB Engram + the non-Engram
+# remainder over budget.
+#
+# osmos-api decodes greedy-only: it returns HTTP 400 for temperature != 0
+# / top_p != 1, and stop and n are constrained. The llamactl proxy does
+# not sanitise, so clients and the bench harness must send greedy
+# requests.
+#
+# The Z13 agent must be upgraded to a build that knows engine libosmos
+# before these can run there.
+#
+# Port 8091/8092 avoids 8080-8090; 8095 is the benchmark port.
+apiVersion: llamactl/v1
+kind: ModelHost
+metadata:
+  name: libosmos-ds41-ud-iq1s
+  labels:
+    family: deepseek41
+    llamactl.io/qualification: experimental
+    llamactl.io/residency-group: z13-large-gpu
+    llamactl.io/runtime-arm: libosmos-934b51b932be
+    llamactl.io/backend: hip
+spec:
+  engine: libosmos
+  node: z13
+  enabled: false
+  binary: /home/alex/strix-halo-bench/runtimes/libosmos-934b51b932be/src/bin/osmos-api
+  endpoint:
+    host: 127.0.0.1
+    port: 8092
+  hostedModels:
+    - rel: DeepSeek-V4.1-Flash-1017-GGUF-unsloth/2688c0c3/UD-IQ1_S/DeepSeek-V4.1-Flash-1017-UD-IQ1_S-00001-of-00005.gguf
+  extraArgs:
+    - --picks
+    - osmos-evo-1017/3c6b0aeb256c/picks/UD-IQ1_S/osmos-picks.bin
+    - --dspark
+    - osmos-evo-1017/3c6b0aeb256c/dspark-iq2xs
+    - --budget
+    - "100"
+    - --max-context
+    - "65536"
+    - --parallel
+    - "1"
+    - --no-guess
+  resources:
+    residentGiB: 100
+    diskBackedGiB: 117
+  readiness:
+    path: /health
+    expectStatus: 200
+    expectJson:
+      status: ok
+  restartPolicy: Never

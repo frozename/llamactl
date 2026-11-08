@@ -807,9 +807,17 @@ describe("catalog experimental candidate rows (#515)", () => {
     const gsq = findByRel(DS_GSQ_REL, { scope: "builtin" });
     for (const row of [iq1s, iq1m, gsq]) {
       expect(row?.family).toBe("deepseek41");
-      expect(row?.runtime).toStrictEqual({ engines: ["llamacpp"], minBuild: "b11870" });
       expect(row?.availability?.declared).toBe("unavailable");
     }
+    expect(iq1s?.runtime).toStrictEqual({
+      engines: ["llamacpp", "libosmos"],
+      minBuild: "b11870",
+    });
+    expect(iq1m?.runtime).toStrictEqual({
+      engines: ["llamacpp", "libosmos"],
+      minBuild: "b11870",
+    });
+    expect(gsq?.runtime).toStrictEqual({ engines: ["llamacpp"], minBuild: "b11870" });
     expect(iq1s?.availability?.reason).toBe("artifact-not-downloaded; runtime-not-pinned");
     expect(iq1m?.availability?.reason).toBe("artifact-not-downloaded; runtime-not-pinned");
     expect(gsq?.availability?.reason).toBe(
