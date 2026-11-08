@@ -341,5 +341,14 @@ describe("llamacpp-mimo26-flash-bpw25-z13.yaml (#515 D-3)", () => {
     const draft = draftArgValue(args);
     expect(draft).toBe(DRAFT_REL);
     expect(draft.includes("unpinned")).toBe(false);
+    expect(args).not.toContain("--dspark");
+  });
+
+  test("keeps the baseline and pinning comments explicit", () => {
+    const text = readFileSync(join(TEMPLATES_DIR, FILE), "utf8").toLowerCase();
+    expect(text).toContain("baseline");
+    expect(text).toContain("vulkan + dflash");
+    expect(text).toContain("buildinfo.json");
+    expect(text).toContain("<tool_call>");
   });
 });

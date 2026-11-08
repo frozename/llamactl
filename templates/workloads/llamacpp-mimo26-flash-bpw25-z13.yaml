@@ -14,7 +14,7 @@
 # expectedMemoryGiB 98 is the upper bound of the derived ~95-98 GiB
 # estimate in 02. It is not measured.
 #
-# Tool calls are MiMo XML (<function=..><parameter=..>, no
+# Tool calls are MiMo XML (<tool_call><function=..><parameter=..>, no
 # newlines), parsed by llama.cpp's generic path from
 # chat_template.jinja. Reasoning is <think> and on by default (mimo.md
 # §2). Issue #29931 (long-context tool-call corruption on Vulkan+RPC)

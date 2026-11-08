@@ -337,5 +337,8 @@ describe("llamacpp-deepseek41-flash-iq1s-z13.yaml (#515 C-3)", () => {
     expect(text).toContain("unvalidated");
     expect(text).toContain("not measured");
     expect(text).toContain("cf34d311332e");
+    expect(text).toContain("baseline");
+    expect(text).toContain("libosmos");
+    expect(text).toContain("unverified");
   });
 });
