@@ -218,7 +218,15 @@ function declaredUnavailableModels(resolved: ResolvedEnv): {
     });
   }
   const relByCatalogId = new Map<string, string>();
-  for (const [rel, entry] of byRel) relByCatalogId.set(entry.catalogId, rel);
+  for (const row of listCatalog("all", {
+    customCatalogFile: workloadRuntime.customCatalogFileFor(resolved),
+  })) {
+    const availability = row.availability;
+    if (availability === undefined || availability.declared === "available") {
+      continue;
+    }
+    relByCatalogId.set(row.id, row.rel);
+  }
   return { byRel, relByCatalogId };
 }
 

@@ -2415,3 +2415,55 @@ test("editing the custom catalog invalidates the /v1/models unavailable list", (
     t.cleanup();
   }
 });
+
+test("a custom row that redeclares a builtin rel under a different ID pins the custom catalog ID to 503", async () => {
+  const t = tempEnv({ LLAMA_CPP_PORT: "17777" });
+  try {
+    const customCatalog = join(t.dir, "curated-models.tsv");
+    writeFileSync(
+      customCatalog,
+      `mimo-redecl\tMiMo redecl\tmimo26\treasoning\tcustom\t${MIMO_REL}\torg/redecl\tgguf\t{"availability":{"declared":"unavailable","reason":"custom-redecl"}}\n`,
+    );
+    writeLlamaServerWorkload(t.dir, "wl-routed", { rel: "routed/model.gguf", port: 8142 });
+    const upstream = installConditionalChatUpstream();
+
+    const res = await openaiProxy.proxyOpenAI(chatRequest(MIMO_ID), t.env);
+
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as { error: { code: string; reason: string } };
+    expect(body.error.code).toBe("model_unavailable");
+    expect(body.error.reason).toBe("custom-redecl");
+    expect(upstream.calls).toHaveLength(0);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a default target catalog id that is also a catalog unavailable id is not rejected (P7)", async () => {
+  const t = tempEnv({ LLAMA_CPP_PORT: "17777", LLAMA_CPP_DEFAULT_MODEL: MIMO_ID });
+  try {
+    writeLlamaServerWorkload(t.dir, "wl-routed", { rel: "routed/model.gguf", port: 8142 });
+    const upstream = installConditionalChatUpstream();
+
+    const res = await openaiProxy.proxyOpenAI(chatRequest(MIMO_ID), t.env);
+
+    expect(res.status).toBe(200);
+    expect(upstream.calls).toHaveLength(1);
+    expect(upstream.calls[0]!.url).toBe("http://127.0.0.1:17777/v1/chat/completions");
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("/v1/models excludes default-target rels from the unavailable list (P9)", () => {
+  const t = tempEnv({ LLAMA_CPP_PORT: "17777", LLAMA_CPP_DEFAULT_MODEL: MIMO_REL });
+  try {
+    const models = openaiProxy.listOpenAIModels(t.env);
+    const unavailable = unavailableEntries(models);
+
+    expect(Array.isArray(unavailable)).toBe(true);
+    expect((unavailable ?? []).some((e) => e.id === MIMO_REL)).toBe(false);
+  } finally {
+    t.cleanup();
+  }
+});
