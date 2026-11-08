@@ -2,12 +2,15 @@ import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { RouteCandidate, RouteCatalog } from "../src/routing/catalog.js";
 import type { ResolvedEnv } from "../src/types.js";
 import type { PeerSnapshot } from "../src/workloadRuntime.js";
 
 import { resolveEnv } from "../src/env.js";
 import { openaiProxy } from "../src/index.js";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
+import * as routeCatalogModule from "../src/routing/catalog.js";
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "../src/safe-fs.js";
+import * as workloadRuntimeModule from "../src/workloadRuntime.js";
 import { installConditionalChatUpstream } from "./conditionalUpstream.js";
 
 const originalFetch = globalThis.fetch;
@@ -1811,4 +1814,699 @@ describe("known defects at 7443403 (fix in later slices)", () => {
       t.cleanup();
     }
   });
+});
+
+// ---------------------------------------------------------------------------
+// #518 B-4 — experimental qualification in the proxy route builders. The
+// catalog join, peer snapshot labels, selectCatalogCandidates and the
+// "experimental-excluded" rejection land with the fix; the widened views
+// below keep these RED cases typechecking before those exports exist
+// (undefined at runtime on the base revision, so the typeof guard fails by
+// assertion first).
+// ---------------------------------------------------------------------------
+
+const EXPERIMENTAL_CATALOG_TSV =
+  'exp-model\tExp test\texp\tcustom\tcustom\texp/model.gguf\torg/exp\tgguf\t{"qualification":{"stage":"experimental"}}\n';
+
+const writeExperimentalCatalog = (dir: string): void => {
+  writeFileSync(join(dir, "curated-models.tsv"), EXPERIMENTAL_CATALOG_TSV);
+};
+
+const writeQualifiedCatalog = (dir: string, stage: string): void => {
+  writeFileSync(
+    join(dir, "curated-models.tsv"),
+    `exp-model\tExp test\texp\tcustom\tcustom\texp/model.gguf\torg/exp\tgguf\t{"qualification":{"stage":"${stage}"}}\n`,
+  );
+};
+
+// selectCatalogCandidates lands with #518; the widened view lets the RED
+// cases call it before the export exists.
+const selectCatalogCandidates = (
+  routeCatalogModule as unknown as {
+    selectCatalogCandidates?: (
+      catalog: RouteCatalog,
+      publicModelId: string,
+      opts?: { pinned?: boolean },
+    ) => {
+      eligible: RouteCandidate[];
+      rejected: { candidate: RouteCandidate; rejection: { reason: string } }[];
+    };
+  }
+).selectCatalogCandidates;
+
+const adQualificationStage = (ad: unknown): unknown =>
+  (ad as { qualification?: { stage?: unknown } } | null | undefined)?.qualification?.stage;
+
+const clusterCatalog = (env: ResolvedEnv): RouteCatalog =>
+  routeCatalogModule.buildRouteCatalog({
+    routes: workloadRuntimeModule.listClusterRoutes(
+      workloadRuntimeModule.listLocalRoutes(env),
+      new Map<string, PeerSnapshot>(),
+      { peers: [] },
+    ),
+  });
+
+const chatRequest = (model: string): Request =>
+  new Request("http://localhost/v1/chat/completions", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: "user", content: "hi" }],
+    }),
+  });
+
+test("an experimental route loses an alias collision", async () => {
+  const t = tempEnv();
+  const warnSpy = spyOn(console, "warn").mockImplementation(() => undefined);
+  try {
+    writeExperimentalCatalog(t.dir);
+    writeLlamaServerWorkload(t.dir, "a-exp", {
+      rel: "exp/model.gguf",
+      port: 8321,
+      extraArgs: ["--alias", "shared-alias"],
+    });
+    writeLlamaServerWorkload(t.dir, "b-prod", {
+      rel: "prod/model.gguf",
+      port: 8322,
+      extraArgs: ["--alias", "shared-alias"],
+    });
+    const upstream = installConditionalChatUpstream();
+
+    const res = await openaiProxy.proxyOpenAI(chatRequest("shared-alias"), t.env);
+
+    expect(res.status).toBe(200);
+    const chatCalls = upstream.calls.filter((c) => c.url.endsWith("/v1/chat/completions"));
+    expect(chatCalls).toHaveLength(1);
+    expect(chatCalls[0]!.url).toBe("http://127.0.0.1:8322/v1/chat/completions");
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[openaiProxy] route-map collision on model='shared-alias': keeping ModelRun:b-prod, ignoring ModelRun:a-exp",
+    );
+  } finally {
+    warnSpy.mockRestore();
+    t.cleanup();
+  }
+});
+
+test("an experimental exact pin still forwards to its own port", async () => {
+  const t = tempEnv();
+  try {
+    writeExperimentalCatalog(t.dir);
+    writeLlamaServerWorkload(t.dir, "a-exp", {
+      rel: "exp/model.gguf",
+      port: 8321,
+      extraArgs: ["--alias", "shared-alias"],
+    });
+    writeLlamaServerWorkload(t.dir, "b-prod", {
+      rel: "prod/model.gguf",
+      port: 8322,
+      extraArgs: ["--alias", "shared-alias"],
+    });
+    const upstream = installConditionalChatUpstream();
+
+    const res = await openaiProxy.proxyOpenAI(chatRequest("exp/model.gguf"), t.env);
+
+    expect(res.status).toBe(200);
+    const chatCalls = upstream.calls.filter((c) => c.url.endsWith("/v1/chat/completions"));
+    expect(chatCalls).toHaveLength(1);
+    expect(chatCalls[0]!.url).toBe("http://127.0.0.1:8321/v1/chat/completions");
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("an experimental route never captures a default-target id", async () => {
+  const t = tempEnv({ LLAMA_CPP_PORT: "17777", LLAMA_CPP_SERVER_ALIAS: "default-alias" });
+  try {
+    writeExperimentalCatalog(t.dir);
+    writeLlamaServerWorkload(t.dir, "wl-exp", {
+      rel: "exp/model.gguf",
+      port: 8331,
+      extraArgs: ["--alias", "default-alias"],
+    });
+    writeLlamaServerWorkload(t.dir, "wl-prod", {
+      rel: "prod/model.gguf",
+      port: 8332,
+    });
+    const upstream = installConditionalChatUpstream();
+
+    const res = await openaiProxy.proxyOpenAI(chatRequest("default-alias"), t.env);
+
+    expect(res.status).toBe(200);
+    expect(upstream.calls).toHaveLength(1);
+    expect(upstream.calls[0]!.url).toBe("http://127.0.0.1:17777/v1/chat/completions");
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("/v1/models flags experimental entries", () => {
+  const t = tempEnv();
+  try {
+    writeExperimentalCatalog(t.dir);
+    writeLlamaServerWorkload(t.dir, "wl-exp", { rel: "exp/model.gguf", port: 8340 });
+    writeLlamaServerWorkload(t.dir, "wl-prod", { rel: "prod/model.gguf", port: 8341 });
+
+    const models = openaiProxy.listOpenAIModels(t.env);
+    const byId = new Map(models.data.map((m) => [m.id, m as unknown as Record<string, unknown>]));
+    const expEntry = byId.get("exp/model.gguf");
+    const prodEntry = byId.get("prod/model.gguf");
+    expect(expEntry?.["experimental"]).toBe(true);
+    expect(prodEntry !== undefined && "experimental" in prodEntry).toBe(false);
+    expect(expEntry?.["capabilities"]).toEqual(["chat"]);
+    expect(prodEntry?.["capabilities"]).toEqual(["chat"]);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a catalog edit invalidates the /v1/models cache without a workload restart", () => {
+  const t = tempEnv();
+  try {
+    const catalogFile = join(t.dir, "curated-models.tsv");
+    writeQualifiedCatalog(t.dir, "validated");
+    writeLlamaServerWorkload(t.dir, "wl-exp", { rel: "exp/model.gguf", port: 8340 });
+    const epoch = new Date("2026-01-01T00:00:00.000Z");
+    utimesSync(catalogFile, epoch, epoch);
+
+    const before = openaiProxy.listOpenAIModels(t.env);
+    const beforeEntry = before.data.find((m) => m.id === "exp/model.gguf") as unknown as
+      | Record<string, unknown>
+      | undefined;
+    expect(beforeEntry?.["id"]).toBe("exp/model.gguf");
+    expect("experimental" in (beforeEntry ?? {})).toBe(false);
+
+    writeQualifiedCatalog(t.dir, "experimental");
+    utimesSync(catalogFile, epoch, new Date(epoch.getTime() + 1_000));
+
+    const after = openaiProxy.listOpenAIModels(t.env);
+    const afterEntry = after.data.find((m) => m.id === "exp/model.gguf") as unknown as
+      | Record<string, unknown>
+      | undefined;
+    expect(afterEntry?.["experimental"]).toBe(true);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("legacy and unified agree on experimental exclusion", async () => {
+  const t = tempEnv();
+  try {
+    writeExperimentalCatalog(t.dir);
+    writeLlamaServerWorkload(t.dir, "a-exp", {
+      rel: "exp/model.gguf",
+      port: 8321,
+      extraArgs: ["--alias", "shared-alias"],
+    });
+    writeLlamaServerWorkload(t.dir, "b-prod", {
+      rel: "prod/model.gguf",
+      port: 8322,
+      extraArgs: ["--alias", "shared-alias"],
+    });
+    const upstream = installConditionalChatUpstream();
+
+    const res = await openaiProxy.proxyOpenAI(chatRequest("shared-alias"), t.env);
+
+    expect(res.status).toBe(200);
+    const chatCalls = upstream.calls.filter((c) => c.url.endsWith("/v1/chat/completions"));
+    expect(chatCalls).toHaveLength(1);
+    expect(chatCalls[0]!.url).toBe("http://127.0.0.1:8322/v1/chat/completions");
+
+    const catalog = clusterCatalog(t.env);
+    const shared = routeCatalogModule.effectiveCandidate(catalog, "shared-alias");
+    expect(shared?.advertisement.endpoint).toBe("http://127.0.0.1:8322");
+    const expCand = routeCatalogModule.effectiveCandidate(catalog, "exp/model.gguf");
+    expect(adQualificationStage(expCand?.advertisement)).toBe("experimental");
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("documented divergence: default-target ids", async () => {
+  const t = tempEnv({ LLAMA_CPP_PORT: "17777", LLAMA_CPP_SERVER_ALIAS: "default-alias" });
+  try {
+    writeExperimentalCatalog(t.dir);
+    writeLlamaServerWorkload(t.dir, "wl-exp", {
+      rel: "exp/model.gguf",
+      port: 8331,
+      extraArgs: ["--alias", "default-alias"],
+    });
+    writeLlamaServerWorkload(t.dir, "wl-prod", {
+      rel: "prod/model.gguf",
+      port: 8332,
+    });
+    const upstream = installConditionalChatUpstream();
+
+    const res = await openaiProxy.proxyOpenAI(chatRequest("default-alias"), t.env);
+
+    expect(res.status).toBe(200);
+    expect(upstream.calls).toHaveLength(1);
+    expect(upstream.calls[0]!.url).toBe("http://127.0.0.1:17777/v1/chat/completions");
+
+    const catalog = clusterCatalog(t.env);
+    const winner = routeCatalogModule.effectiveCandidate(catalog, "default-alias");
+    expect(winner?.legacyWinner).toBe(true);
+    expect(winner?.advertisement.deploymentId).toContain("wl-exp");
+
+    expect(typeof selectCatalogCandidates).toBe("function");
+    const sel = selectCatalogCandidates?.(catalog, "default-alias", { pinned: false });
+    expect(sel?.eligible).toEqual([]);
+    expect(sel?.rejected).toHaveLength(1);
+    expect(sel?.rejected[0]?.rejection).toEqual({ reason: "experimental-excluded" });
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a local exact pin is not sent to an unlabeled peer", async () => {
+  const t = tempEnv();
+  try {
+    writeExperimentalCatalog(t.dir);
+    writeLlamaServerWorkload(t.dir, "wl-exp", { rel: "exp/model.gguf", port: 8341 });
+    openaiProxy.__setOpenAIProxyClusterRoutingForTests({
+      clusterPeers: [{ id: "peer-x", endpoint: "https://peer-x.test:443" }],
+      peerSnapshots: new Map<string, PeerSnapshot>([
+        [
+          "peer-x",
+          {
+            workloads: [{ modelId: "exp/model.gguf", port: 9200 }],
+            pressure: "NORMAL",
+            fetchedAt: Date.now(),
+          },
+        ],
+      ]),
+    });
+    const upstream = installConditionalChatUpstream();
+
+    const res = await openaiProxy.proxyOpenAI(chatRequest("exp/model.gguf"), t.env);
+
+    expect(res.status).toBe(200);
+    const chatCalls = upstream.calls.filter((c) => c.url.endsWith("/v1/chat/completions"));
+    expect(chatCalls).toHaveLength(1);
+    expect(chatCalls[0]!.url).toBe("http://127.0.0.1:8341/v1/chat/completions");
+  } finally {
+    t.cleanup();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// #280 D-2 — declared-unavailable catalog models
+// Catalog rows whose availability.declared is "unavailable" must surface as
+// a typed 503 model_unavailable rejection — by rel or by catalog id — ahead
+// of the #306 model_not_routed 404 and the default-endpoint fallthrough, and
+// /v1/models reports them under `unavailable` instead of `data`. That field
+// is absent from ModelListResponse at the base revision, so the widened view
+// below keeps these RED cases typechecking (undefined at runtime → assertion
+// failure, never an import or type error).
+// ---------------------------------------------------------------------------
+
+const MIMO_REL = "MiMo-V2.6-Flash-MOPD-GGUF/BPW2.5/MiMo-V2.6-Flash-MOPD-BPW2.5.gguf";
+const MIMO_ID = "mimo26-flash-mopd-bpw25";
+
+const COLD_UNAVAILABLE_ROW =
+  'cold-x\tCold X\tcold\tcustom\tcustom\tcold/x.gguf\torg/cold\tgguf\t{"availability":{"declared":"unavailable","reason":"runtime-unsupported:test"}}';
+const COLD_AVAILABLE_ROW =
+  'cold-x\tCold X\tcold\tcustom\tcustom\tcold/x.gguf\torg/cold\tgguf\t{"availability":{"declared":"available"}}';
+const COLD_UNAVAILABLE_R2_ROW =
+  'cold-x\tCold X\tcold\tcustom\tcustom\tcold/x.gguf\torg/cold\tgguf\t{"availability":{"declared":"unavailable","reason":"r2"}}';
+
+interface UnavailableModelListEntry {
+  id: string;
+  object: string;
+  created: number;
+  owned_by: string;
+  catalogId: string;
+  status: string;
+  reason: string;
+  qualification?: { stage: string };
+  routable: boolean;
+}
+
+const unavailableEntries = (models: unknown): UnavailableModelListEntry[] | undefined =>
+  (models as { unavailable?: UnavailableModelListEntry[] }).unavailable;
+
+test("a declared-unavailable rel returns 503 model_unavailable ahead of model_not_routed", async () => {
+  const t = tempEnv({ LLAMA_CPP_PORT: "17777" });
+  try {
+    writeLlamaServerWorkload(t.dir, "wl-routed", { rel: "routed/model.gguf", port: 8142 });
+    const upstream = installConditionalChatUpstream();
+
+    const res = await openaiProxy.proxyOpenAI(chatRequest(MIMO_REL), t.env);
+
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as {
+      error: {
+        code: string;
+        type: string;
+        param: string;
+        reason: string;
+        message: string;
+      };
+    };
+    expect(body.error.code).toBe("model_unavailable");
+    expect(body.error.type).toBe("model_unavailable");
+    expect(body.error.param).toBe("model");
+    expect(body.error.reason).toBe("artifact-not-downloaded");
+    expect(body.error.message).toContain(MIMO_REL);
+    expect(body.error.message).toContain("artifact-not-downloaded");
+    expect(upstream.calls).toHaveLength(0);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a declared-unavailable rel is rejected with no routes instead of hitting the default endpoint", async () => {
+  const t = tempEnv({ LLAMA_CPP_PORT: "17777" });
+  try {
+    const upstream = installConditionalChatUpstream();
+
+    const res = await openaiProxy.proxyOpenAI(chatRequest(MIMO_REL), t.env);
+
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("model_unavailable");
+    expect(upstream.calls).toHaveLength(0);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("the catalog id is an exact pin for the unavailable rejection", async () => {
+  const t = tempEnv({ LLAMA_CPP_PORT: "17777" });
+  try {
+    writeLlamaServerWorkload(t.dir, "wl-routed", { rel: "routed/model.gguf", port: 8142 });
+    const upstream = installConditionalChatUpstream();
+
+    const res = await openaiProxy.proxyOpenAI(chatRequest(MIMO_ID), t.env);
+
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as { error: { code: string; reason: string } };
+    expect(body.error.code).toBe("model_unavailable");
+    expect(body.error.reason).toBe("artifact-not-downloaded");
+    expect(upstream.calls).toHaveLength(0);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("/v1/messages returns the same model_unavailable rejection", async () => {
+  const t = tempEnv({ LLAMA_CPP_PORT: "17777" });
+  try {
+    writeLlamaServerWorkload(t.dir, "wl-routed", { rel: "routed/model.gguf", port: 8142 });
+    const upstream = installConditionalChatUpstream();
+
+    const res = await openaiProxy.proxyOpenAI(
+      anthropicChatRequest({
+        model: MIMO_REL,
+        max_tokens: 16,
+        messages: [{ role: "user", content: "hi" }],
+      }),
+      t.env,
+    );
+
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("model_unavailable");
+    expect(upstream.calls).toHaveLength(0);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a custom catalog row supplies its own unavailable reason", async () => {
+  const t = tempEnv({ LLAMA_CPP_PORT: "17777" });
+  try {
+    writeFileSync(join(t.dir, "curated-models.tsv"), `${COLD_UNAVAILABLE_ROW}\n`);
+    writeLlamaServerWorkload(t.dir, "wl-routed", { rel: "routed/model.gguf", port: 8142 });
+    const upstream = installConditionalChatUpstream();
+
+    const res = await openaiProxy.proxyOpenAI(chatRequest("cold/x.gguf"), t.env);
+
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as { error: { code: string; reason: string } };
+    expect(body.error.code).toBe("model_unavailable");
+    expect(body.error.reason).toBe("runtime-unsupported:test");
+    expect(upstream.calls).toHaveLength(0);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a later custom row declaring the rel available clears the builtin unavailable", async () => {
+  const t = tempEnv({ LLAMA_CPP_PORT: "17777" });
+  try {
+    writeFileSync(
+      join(t.dir, "curated-models.tsv"),
+      `mimo-override\tMiMo override\tmimo26\treasoning\tcustom\t${MIMO_REL}\torg/override\tgguf\t{"availability":{"declared":"available"}}\n`,
+    );
+    writeLlamaServerWorkload(t.dir, "wl-routed", { rel: "routed/model.gguf", port: 8142 });
+    const upstream = installConditionalChatUpstream();
+
+    const res = await openaiProxy.proxyOpenAI(chatRequest(MIMO_REL), t.env);
+
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("model_not_routed");
+    expect(upstream.calls).toHaveLength(0);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("an unknown model keeps the model_not_routed 404 and known_models", async () => {
+  const t = tempEnv({ LLAMA_CPP_PORT: "17777" });
+  try {
+    writeLlamaServerWorkload(t.dir, "wl-routed", { rel: "routed/model.gguf", port: 8142 });
+    const upstream = installConditionalChatUpstream();
+
+    const res = await openaiProxy.proxyOpenAI(chatRequest("nope/unknown.gguf"), t.env);
+
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as {
+      error: { code: string; known_models: string[] };
+    };
+    expect(body.error.code).toBe("model_not_routed");
+    expect(body.error.known_models).toEqual(["routed/model.gguf"]);
+    expect(upstream.calls).toHaveLength(0);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a live route for the rel wins over the unavailable declaration", async () => {
+  const t = tempEnv({ LLAMA_CPP_PORT: "17777" });
+  try {
+    writeLlamaServerWorkload(t.dir, "wl-mimo", { rel: MIMO_REL, port: 8351 });
+    const upstream = installConditionalChatUpstream();
+
+    const res = await openaiProxy.proxyOpenAI(chatRequest(MIMO_REL), t.env);
+
+    expect(res.status).toBe(200);
+    const chatCalls = upstream.calls.filter((c) => c.url.endsWith("/v1/chat/completions"));
+    expect(chatCalls).toHaveLength(1);
+    expect(chatCalls[0]!.url).toBe("http://127.0.0.1:8351/v1/chat/completions");
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a default-target rel keeps the default-endpoint fallthrough", async () => {
+  const t = tempEnv({ LLAMA_CPP_PORT: "17777", LLAMA_CPP_DEFAULT_MODEL: MIMO_REL });
+  try {
+    writeLlamaServerWorkload(t.dir, "wl-routed", { rel: "routed/model.gguf", port: 8142 });
+    const upstream = installConditionalChatUpstream();
+
+    const res = await openaiProxy.proxyOpenAI(chatRequest(MIMO_REL), t.env);
+
+    expect(res.status).toBe(200);
+    expect(upstream.calls).toHaveLength(1);
+    expect(upstream.calls[0]!.url).toBe("http://127.0.0.1:17777/v1/chat/completions");
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a default-target rel named by its catalog id is not turned into a 503", async () => {
+  const t = tempEnv({ LLAMA_CPP_PORT: "17777", LLAMA_CPP_DEFAULT_MODEL: MIMO_REL });
+  try {
+    writeLlamaServerWorkload(t.dir, "wl-routed", { rel: "routed/model.gguf", port: 8142 });
+    const upstream = installConditionalChatUpstream();
+
+    const res = await openaiProxy.proxyOpenAI(chatRequest(MIMO_ID), t.env);
+
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as {
+      error: { code: string; known_models: string[] };
+    };
+    expect(body.error.code).toBe("model_not_routed");
+    expect(body.error.known_models).toEqual(["routed/model.gguf"]);
+    expect(upstream.calls).toHaveLength(0);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("/v1/models reports declared-unavailable catalog rows under `unavailable`", () => {
+  const t = tempEnv();
+  try {
+    writeLlamaServerWorkload(t.dir, "wl-prod", { rel: "prod/model.gguf", port: 8341 });
+
+    const models = openaiProxy.listOpenAIModels(t.env);
+    const unavailable = unavailableEntries(models);
+
+    expect(models.data).toHaveLength(1);
+    expect(models.data[0]!.id).toBe("prod/model.gguf");
+    expect(models.data[0]!.capabilities).toEqual(["chat"]);
+    expect(models.data.some((m) => m.id === MIMO_REL)).toBe(false);
+    expect(Array.isArray(unavailable)).toBe(true);
+    const entries = unavailable ?? [];
+    expect(entries.find((e) => e.id === MIMO_REL)).toEqual({
+      id: MIMO_REL,
+      object: "model",
+      created: 0,
+      owned_by: "llamactl-catalog",
+      catalogId: MIMO_ID,
+      status: "unavailable",
+      reason: "artifact-not-downloaded",
+      qualification: { stage: "experimental" },
+      routable: false,
+    });
+    const ids = entries.map((e) => e.id);
+    expect(ids).toEqual([...ids].sort());
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("/v1/models does not report a rel unavailable while a live route serves it", () => {
+  const t = tempEnv();
+  try {
+    writeLlamaServerWorkload(t.dir, "wl-mimo", { rel: MIMO_REL, port: 8351 });
+
+    const models = openaiProxy.listOpenAIModels(t.env);
+    const unavailable = unavailableEntries(models);
+
+    expect(models.data.find((m) => m.id === MIMO_REL)?.capabilities).toEqual(["chat"]);
+    expect(Array.isArray(unavailable)).toBe(true);
+    expect((unavailable ?? []).some((e) => e.id === MIMO_REL)).toBe(false);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("editing the custom catalog invalidates the /v1/models unavailable list", () => {
+  const t = tempEnv();
+  try {
+    const catalogFile = join(t.dir, "curated-models.tsv");
+    const epoch = new Date("2026-01-01T00:00:00.000Z");
+    writeFileSync(catalogFile, `${COLD_AVAILABLE_ROW}\n`);
+    utimesSync(catalogFile, epoch, epoch);
+    writeLlamaServerWorkload(t.dir, "wl-prod", { rel: "prod/model.gguf", port: 8341 });
+
+    const before = unavailableEntries(openaiProxy.listOpenAIModels(t.env)) ?? [];
+    expect(before.some((e) => e.id === "cold/x.gguf")).toBe(false);
+
+    writeFileSync(catalogFile, `${COLD_UNAVAILABLE_R2_ROW}\n`);
+    utimesSync(catalogFile, epoch, new Date(epoch.getTime() + 1_000));
+
+    const after = unavailableEntries(openaiProxy.listOpenAIModels(t.env)) ?? [];
+    expect(after.find((e) => e.id === "cold/x.gguf")?.reason).toBe("r2");
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a custom row that redeclares a builtin rel under a different ID pins the custom catalog ID to 503", async () => {
+  const t = tempEnv({ LLAMA_CPP_PORT: "17777" });
+  try {
+    const customCatalog = join(t.dir, "curated-models.tsv");
+    writeFileSync(
+      customCatalog,
+      `mimo-redecl\tMiMo redecl\tmimo26\treasoning\tcustom\t${MIMO_REL}\torg/redecl\tgguf\t{"availability":{"declared":"unavailable","reason":"custom-redecl"}}\n`,
+    );
+    writeLlamaServerWorkload(t.dir, "wl-routed", { rel: "routed/model.gguf", port: 8142 });
+    const upstream = installConditionalChatUpstream();
+
+    const res = await openaiProxy.proxyOpenAI(chatRequest(MIMO_ID), t.env);
+
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as { error: { code: string; reason: string } };
+    expect(body.error.code).toBe("model_unavailable");
+    expect(body.error.reason).toBe("custom-redecl");
+    expect(upstream.calls).toHaveLength(0);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("with no routes, a builtin id whose rel a custom row redeclares unavailable returns 503, not the default endpoint", async () => {
+  // The builtin gemma4-26b-q4 row declares no availability; only the custom
+  // row does. Its id must still resolve to the rel, so the pin is rejected
+  // instead of falling through to the default endpoint (#280).
+  const GEMMA_REL = "gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf";
+  const t = tempEnv({ LLAMA_CPP_PORT: "17777" });
+  try {
+    writeFileSync(
+      join(t.dir, "curated-models.tsv"),
+      `gemma-alt\tGemma alt\tgemma4\tmultimodal\tcustom\t${GEMMA_REL}\torg/gemma-alt\tgguf\t{"availability":{"declared":"unavailable","reason":"custom-redecl"}}\n`,
+    );
+    const upstream = installConditionalChatUpstream();
+
+    const res = await openaiProxy.proxyOpenAI(chatRequest("gemma4-26b-q4"), t.env);
+
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as { error: { code: string; reason: string } };
+    expect(body.error.code).toBe("model_unavailable");
+    expect(body.error.reason).toBe("custom-redecl");
+    expect(upstream.calls).toHaveLength(0);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a catalog-id pin of an unavailable rel that has a live route is not turned into 503 (P3)", async () => {
+  const t = tempEnv({ LLAMA_CPP_PORT: "17777" });
+  try {
+    writeLlamaServerWorkload(t.dir, "wl-mimo", { rel: MIMO_REL, port: 8143 });
+    const upstream = installConditionalChatUpstream();
+
+    const res = await openaiProxy.proxyOpenAI(chatRequest(MIMO_ID), t.env);
+
+    // A live route for the rel wins over the declared-unavailable rejection,
+    // so the catalog-id pin keeps its pre-#280 behaviour.
+    expect(res.status).not.toBe(503);
+    const body = (await res.json()) as { error?: { code: string } };
+    expect(body.error?.code).not.toBe("model_unavailable");
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a default target catalog id that is also a catalog unavailable id is not rejected (P7)", async () => {
+  const t = tempEnv({ LLAMA_CPP_PORT: "17777", LLAMA_CPP_DEFAULT_MODEL: MIMO_ID });
+  try {
+    writeLlamaServerWorkload(t.dir, "wl-routed", { rel: "routed/model.gguf", port: 8142 });
+    const upstream = installConditionalChatUpstream();
+
+    const res = await openaiProxy.proxyOpenAI(chatRequest(MIMO_ID), t.env);
+
+    expect(res.status).toBe(200);
+    expect(upstream.calls).toHaveLength(1);
+    expect(upstream.calls[0]!.url).toBe("http://127.0.0.1:17777/v1/chat/completions");
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("/v1/models excludes default-target rels from the unavailable list (P9)", () => {
+  const t = tempEnv({ LLAMA_CPP_PORT: "17777", LLAMA_CPP_DEFAULT_MODEL: MIMO_REL });
+  try {
+    const models = openaiProxy.listOpenAIModels(t.env);
+    const unavailable = unavailableEntries(models);
+
+    expect(Array.isArray(unavailable)).toBe(true);
+    expect((unavailable ?? []).some((e) => e.id === MIMO_REL)).toBe(false);
+  } finally {
+    t.cleanup();
+  }
 });
