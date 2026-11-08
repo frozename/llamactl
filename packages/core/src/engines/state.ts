@@ -107,7 +107,13 @@ export function writeModelHostStarting(
 }
 
 function isModelHostEngine(engine: unknown): engine is EngineName {
-  return engine === "llamacpp" || engine === "omlx" || engine === "strata" || engine === "kapitsa";
+  return (
+    engine === "llamacpp" ||
+    engine === "omlx" ||
+    engine === "strata" ||
+    engine === "kapitsa" ||
+    engine === "libosmos"
+  );
 }
 
 function validBinaryNames(v: unknown): v is string[] {

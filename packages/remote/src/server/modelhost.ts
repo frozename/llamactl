@@ -155,6 +155,7 @@ function toRuntimeEnv(env: NodeJS.ProcessEnv | undefined): NodeJS.ProcessEnv {
 // check cannot see the recycling.
 const ENGINE_BINARY_BASENAMES: Record<EngineName, readonly string[]> = {
   llamacpp: ["llama-server"],
+  libosmos: ["osmos-api"],
   omlx: ["omlx", "omlx-server"],
   strata: ["strata-server"],
   kapitsa: ["kapitsa"],
@@ -750,14 +751,15 @@ async function launchModelHost(
     ...omitUndefined({
       LLAMACTL_MODELS_DIR: env["LLAMACTL_MODELS_DIR"],
       LLAMA_CPP_MODELS: env["LLAMA_CPP_MODELS"],
-      // Kapitsa keeps KAPITSA_HOME beside the workload's pid/state/boot log,
-      // so its boot env always sees the resolved launch root. Other engines
+      // Kapitsa keeps KAPITSA_HOME and libosmos its .osmos/osmos.json beside
+      // the workload's pid/state/boot log, so their boot envs always see the
+      // resolved launch root. Other engines
       // keep an operator-set LLAMACTL_RUNTIME_DIR (it still redirects e.g.
       // oMLX's .omlx) and otherwise fall back to the resolved runtime dir,
       // never to a bare resolveEnv() inside the engine: an injected
       // runtimeDir (tests, scoped agents) must reroot their boot writes too.
       LLAMACTL_RUNTIME_DIR:
-        spec.engine === "kapitsa"
+        spec.engine === "kapitsa" || spec.engine === "libosmos"
           ? resolved.LOCAL_AI_RUNTIME_DIR
           : (env["LLAMACTL_RUNTIME_DIR"] ?? resolved.LOCAL_AI_RUNTIME_DIR),
     }),
