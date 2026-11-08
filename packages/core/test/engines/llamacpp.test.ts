@@ -1,6 +1,7 @@
 import type { Server } from "bun";
 
 import { describe, expect, test } from "bun:test";
+import { resolve } from "node:path";
 
 import type { EngineBootEnv, ModelHostSpecForEngine } from "../../src/engines/types.js";
 
@@ -296,5 +297,82 @@ describe("llamacpp engine adapter", () => {
     const elapsed = Date.now() - started;
     expect(elapsed).toBeLessThan(2000);
     expect(() => process.kill(proc.pid, 0)).toThrow();
+  });
+});
+
+describe("llamacpp draft-model path resolution", () => {
+  const env = { LLAMA_CPP_MODELS: "/tmp/models" };
+  const draftRel = "drafters/draft-q8.gguf";
+  const draftPath = resolve("/tmp/models", draftRel);
+
+  const specWithArgs = (extraArgs: string[]): ModelHostSpecForEngine => ({
+    ...baseSpec,
+    extraArgs,
+  });
+
+  test.each(["-md", "--model-draft", "--spec-draft-model", "--dspark"])(
+    "resolves the %s draft path against the models dir",
+    (flag) => {
+      const built = ENGINES.llamacpp.buildBootCommand(
+        specWithArgs(["--jinja", flag, draftRel]),
+        env,
+      );
+      expect(built.args[built.args.indexOf(flag) + 1]).toBe(draftPath);
+    },
+  );
+
+  test("rejects a relative draft path that escapes the models dir", () => {
+    expect(() =>
+      ENGINES.llamacpp.buildBootCommand(specWithArgs(["-md", "../escape-draft.gguf"]), env),
+    ).toThrow(/-md path escapes models dir/);
+  });
+
+  test("resolves relative draft paths and leaves absolute draft paths unchanged", () => {
+    const built = ENGINES.llamacpp.buildBootCommand(
+      specWithArgs(["--dspark", "drafters/d.gguf", "--spec-draft-model", "/abs/drafters/s.gguf"]),
+      env,
+    );
+    expect(built.args[built.args.indexOf("--dspark") + 1]).toBe(
+      resolve("/tmp/models", "drafters/d.gguf"),
+    );
+    expect(built.args[built.args.indexOf("--spec-draft-model") + 1]).toBe("/abs/drafters/s.gguf");
+  });
+
+  describe("guards", () => {
+    test("an absolute draft path is passed through unchanged", () => {
+      const built = ENGINES.llamacpp.buildBootCommand(
+        specWithArgs(["-md", "/opt/drafters/draft.gguf"]),
+        env,
+      );
+      expect(built.args[built.args.indexOf("-md") + 1]).toBe("/opt/drafters/draft.gguf");
+    });
+
+    test.each([
+      ["--mmproj-x", draftRel],
+      ["--chat-template-file", "templates/t.jinja"],
+    ])("an unknown flag keeps its path argument verbatim: %s", (flag: string, value: string) => {
+      const built = ENGINES.llamacpp.buildBootCommand(specWithArgs([flag, value]), env);
+      expect(built.args[built.args.indexOf(flag) + 1]).toBe(value);
+    });
+
+    test("a trailing draft flag with no value is emitted unchanged", () => {
+      const built = ENGINES.llamacpp.buildBootCommand(specWithArgs(["--jinja", "-md"]), env);
+      expect(built.args.at(-1)).toBe("-md");
+    });
+
+    test("buildBootCommand does not mutate spec.extraArgs", () => {
+      const spec = specWithArgs(["--jinja", "-md", draftRel]);
+      const before = structuredClone(spec.extraArgs);
+      ENGINES.llamacpp.buildBootCommand(spec, env);
+      expect(spec.extraArgs).toEqual(before);
+    });
+
+    test("extraArgs keep their order and token count", () => {
+      const extraArgs = ["--jinja", "-md", draftRel, "--chat-template-file", "templates/t.jinja"];
+      const built = ENGINES.llamacpp.buildBootCommand(specWithArgs(extraArgs), env);
+      const jinjaIdx = built.args.indexOf("--jinja");
+      expect(jinjaIdx).toBeGreaterThan(built.args.indexOf("--port"));
+      expect(built.args.length - jinjaIdx).toBe(extraArgs.length);
+    });
   });
 });
