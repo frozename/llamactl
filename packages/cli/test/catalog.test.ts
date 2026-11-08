@@ -15,10 +15,11 @@ describe("llamactl catalog", () => {
     const r = runCli(["catalog", "list"], temp.env);
     expect(r.code).toBe(0);
     const lines = r.stdout.trim().split("\n");
-    expect(lines.length).toBe(12);
+    expect(lines.length).toBe(19);
     expect(lines[0]).toContain("gemma4-e4b-q8");
-    expect(lines.at(-2)).toContain("granite41-8b-q4");
-    expect(lines.at(-1)).toContain("granite41-3b-q4");
+    expect(lines[10]).toContain("granite41-8b-q4");
+    expect(lines[11]).toContain("granite41-3b-q4");
+    expect(lines.at(-1)).toContain("mimo26-flash-mopd-bpw30");
   });
 
   test("catalog list --json returns a JSON array", () => {
