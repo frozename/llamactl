@@ -12,14 +12,17 @@ import {
   modelhostStartAttemptFile,
   modelhostStartingFile,
   type ModelHostStartingState,
+  type ModelHostState,
   modelhostStateFile,
   readModelHostStartAttempt,
   readModelHostStarting,
+  readModelHostState,
   removeModelHostStartAttempt,
   removeModelHostStarting,
   removeModelHostState,
   writeModelHostStartAttempt,
   writeModelHostStarting,
+  writeModelHostState,
 } from "../../src/engines/state.js";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
 
@@ -202,6 +205,79 @@ describe("start attempt", () => {
   });
 });
 
+// #516: binaryNames lets a llama-server-compatible fork (e.g. the Gufo
+// `llama-server-fork-pristine` shim) pass pid-identity checks. The field is
+// seeded as raw JSON — the writers' types do not carry it yet.
+describe("record binaryNames (#516)", () => {
+  const LLAMA_STATE: ModelHostState = {
+    kind: "ModelHost",
+    engine: "llamacpp",
+    pid: 4321,
+    host: "127.0.0.1",
+    port: 8095,
+    modelAliases: ["gufo/model.gguf", "model.gguf"],
+    startedAt: "2026-05-19T00:00:00Z",
+  };
+  const LLAMA_STARTING: ModelHostStartingState = {
+    kind: "ModelHostStarting",
+    engine: "llamacpp",
+    pid: 4242,
+    startedAt: "2026-05-19T00:00:00Z",
+  };
+  const FORK_NAMES = ["llama-server-fork-pristine"];
+
+  test("readModelHostStarting keeps binaryNames on a llamacpp record", () => {
+    writeModelHostStarting(LLAMA_STARTING, KEY, env);
+    writeFileSync(
+      modelhostStartingFile(env, KEY),
+      JSON.stringify({ ...LLAMA_STARTING, binaryNames: FORK_NAMES }),
+    );
+    expect(readModelHostStarting(KEY, env)).toEqual({
+      ...LLAMA_STARTING,
+      binaryNames: FORK_NAMES,
+    });
+  });
+
+  test("readModelHostState keeps binaryNames on a llamacpp record", () => {
+    writeModelHostState(LLAMA_STATE, KEY, env);
+    writeFileSync(
+      modelhostStateFile(env, KEY),
+      JSON.stringify({ ...LLAMA_STATE, binaryNames: FORK_NAMES }),
+    );
+    expect(readModelHostState(KEY, env)).toEqual({
+      ...LLAMA_STATE,
+      binaryNames: FORK_NAMES,
+      slotSavePath: null,
+    });
+  });
+
+  test.each([
+    ["a string", "llama-server"],
+    ["an empty list", []],
+    ["a non-string entry", [1]],
+    ["an empty entry", [""]],
+    ["a path entry", ["a/b"]],
+    ["a whitespace entry", ["a b"]],
+  ] as const)(
+    "drops invalid binaryNames (%s) and keeps the rest of the record",
+    (_label, binaryNames) => {
+      writeModelHostState(LLAMA_STATE, KEY, env);
+      writeFileSync(modelhostStateFile(env, KEY), JSON.stringify({ ...LLAMA_STATE, binaryNames }));
+      writeModelHostStarting(LLAMA_STARTING, KEY, env);
+      writeFileSync(
+        modelhostStartingFile(env, KEY),
+        JSON.stringify({ ...LLAMA_STARTING, binaryNames }),
+      );
+
+      const state = readModelHostState(KEY, env);
+      expect(state).toEqual({ ...LLAMA_STATE, slotSavePath: null });
+      expect(Object.hasOwn(state!, "binaryNames")).toBe(false);
+      expect(readModelHostStarting(KEY, env)).toEqual(LLAMA_STARTING);
+      expect(Object.hasOwn(readModelHostStarting(KEY, env)!, "binaryNames")).toBe(false);
+    },
+  );
+});
+
 describe("computeModelHostSpecHash", () => {
   test("is deterministic", () => {
     expect(computeModelHostSpecHash(BASE_SPEC)).toBe(computeModelHostSpecHash(BASE_SPEC));
@@ -236,5 +312,13 @@ describe("computeModelHostSpecHash", () => {
   test("a key outside the hashed set does not change the hash", () => {
     const withExtra = { ...BASE_SPEC, extra: "x" } as unknown as SpecForHash;
     expect(computeModelHostSpecHash(withExtra)).toBe(computeModelHostSpecHash(BASE_SPEC));
+  });
+
+  test("binaryNames is outside the hashed set (#516)", () => {
+    expect(computeModelHostSpecHash(BASE_SPEC)).toBe(
+      '{"engine":"omlx","binary":"/opt/omlx","endpoint":{"host":"127.0.0.1","port":8094},"hostedModels":[{"rel":"a"}],"extraArgs":[],"resources":null,"restartPolicy":"Always","timeoutSeconds":60,"env":null}',
+    );
+    const withBinaryNames = { ...BASE_SPEC, binaryNames: ["x"] };
+    expect(computeModelHostSpecHash(withBinaryNames)).toBe(computeModelHostSpecHash(BASE_SPEC));
   });
 });

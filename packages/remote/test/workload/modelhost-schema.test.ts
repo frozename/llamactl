@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
+import { computeModelHostSpecHash } from "../../../core/src/engines/state.js";
 import {
   externalManagerOf,
   MANAGED_BY_LABEL,
@@ -7,6 +8,7 @@ import {
   type ModelHostManifest,
   ModelHostManifestSchema,
   specForEngine,
+  specForHash,
 } from "../../src/workload/modelhost-schema.js";
 
 function hostWithLabels(labels?: Record<string, string>): ModelHostManifest {
@@ -395,6 +397,77 @@ describe("externalManagerOf", () => {
   test("trims surrounding whitespace from the manager", () => {
     expect(externalManagerOf(hostWithLabels({ [MANAGED_BY_LABEL]: "  mac-mini  " }))).toBe(
       "mac-mini",
+    );
+  });
+});
+
+// #516: binaryNames names the argv0 basenames a llama-server-compatible fork
+// may run under, so pid-identity checks stop refusing the Gufo shim.
+describe("spec.binaryNames (#516)", () => {
+  const llamacppSpec = {
+    ...valid.spec,
+    engine: "llamacpp",
+    binary: "/usr/local/bin/llama-server-fork-pristine",
+    hostedModels: [{ rel: "gufo/model.gguf" }],
+  };
+
+  test("accepts binaryNames on a llamacpp spec", () => {
+    const result = ModelHostManifestSchema.safeParse({
+      ...valid,
+      spec: { ...llamacppSpec, binaryNames: ["llama-server-fork-pristine"] },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.spec).toMatchObject({
+        binaryNames: ["llama-server-fork-pristine"],
+      });
+    }
+  });
+
+  test.each([
+    ["an empty list", []],
+    ["an empty entry", [""]],
+    ["a path entry", ["/opt/x/llama-server"]],
+    ["a whitespace entry", ["a b"]],
+    ["a backslash entry", ["a\\b"]],
+  ] as const)("rejects binaryNames with %s", (_label, binaryNames) => {
+    const result = ModelHostManifestSchema.safeParse({
+      ...valid,
+      spec: { ...llamacppSpec, binaryNames: [...binaryNames] },
+    });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.issues.some((issue) => issue.path.includes("binaryNames"))).toBe(true);
+  });
+
+  test("rejects binaryNames on a non-llamacpp engine", () => {
+    const result = ModelHostManifestSchema.safeParse({
+      ...valid,
+      spec: { ...valid.spec, binaryNames: ["llama-server-fork-pristine"] },
+    });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.issues.some((issue) => issue.path.includes("binaryNames"))).toBe(true);
+  });
+
+  test("a spec without binaryNames parses with no binaryNames key", () => {
+    const result = ModelHostManifestSchema.safeParse(valid);
+    expect(result.success).toBe(true);
+    if (result.success) expect("binaryNames" in result.data.spec).toBe(false);
+  });
+
+  test("specForEngine never emits a binaryNames key", () => {
+    const parsed = ModelHostManifestSchema.parse(valid);
+    const withField = { ...parsed.spec, binaryNames: ["llama-server-fork-pristine"] };
+    expect("binaryNames" in specForEngine(parsed.spec)).toBe(false);
+    expect("binaryNames" in specForEngine(withField)).toBe(false);
+  });
+
+  test("binaryNames does not change the spec hash", () => {
+    const parsed = ModelHostManifestSchema.parse({ ...valid, spec: { ...llamacppSpec } });
+    const withField = { ...parsed.spec, binaryNames: ["llama-server-fork-pristine"] };
+    expect(computeModelHostSpecHash(specForHash(withField))).toBe(
+      computeModelHostSpecHash(specForHash(parsed.spec)),
     );
   });
 });

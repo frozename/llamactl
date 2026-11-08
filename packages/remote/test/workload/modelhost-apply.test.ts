@@ -1002,6 +1002,109 @@ describe("applyManifest — kind dispatch", () => {
     }
   });
 
+  // #516: a llamacpp ModelHost may name the fork argv0 basenames its pid
+  // identity check accepts; apply must carry spec.binaryNames into the
+  // controller-side state sidecar.
+  function makeGufoApplyClient(): WorkloadClient {
+    return {
+      serverStatus: {
+        query: () =>
+          Promise.resolve({
+            state: "down",
+            rel: null,
+            extraArgs: [],
+            pid: null,
+            host: null,
+            port: null,
+            binary: null,
+            endpoint: "",
+          }),
+      },
+      serverStop: { mutate: () => Promise.resolve({ ok: true }) },
+      serverStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
+      modelHostStart: {
+        subscribe: (_input, callbacks): { unsubscribe: () => void } => {
+          queueMicrotask(() => {
+            callbacks.onData({ type: "done", result: { ok: true, pid: 99, state: "Running" } });
+            callbacks.onComplete();
+          });
+          return { unsubscribe: () => undefined };
+        },
+      },
+      modelHostStop: { mutate: () => Promise.resolve({ ok: true }) },
+      modelHostStatus: { query: () => Promise.resolve({ state: "Running", pid: 99 }) },
+      rpcServerStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
+      rpcServerStop: { mutate: () => Promise.resolve({ ok: true }) },
+      rpcServerDoctor: {
+        query: () => Promise.resolve({ ok: true, path: null, llamaCppBin: null }),
+      },
+    };
+  }
+
+  function makeGufoApplyManifest(binaryNames?: string[]): ModelHostManifest {
+    const base = makeModelHostManifest("gufo-apply", 4);
+    return {
+      ...base,
+      spec: {
+        ...base.spec,
+        engine: "llamacpp",
+        binary: "/usr/local/bin/llama-server-fork-pristine",
+        hostedModels: [{ rel: "gufo/model.gguf" }],
+        ...(binaryNames !== undefined ? { binaryNames } : {}),
+      },
+    } as unknown as ModelHostManifest;
+  }
+
+  test("applyOneModelHost persists spec.binaryNames into the state sidecar", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-binarynames-"));
+    try {
+      const result = await applyManifest({
+        manifest: makeGufoApplyManifest(["llama-server-fork-pristine"]),
+        workloadsDir: tmp,
+        getClient: () => makeGufoApplyClient(),
+        spawn: spawnStub,
+        env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp },
+      });
+
+      if (!result.ok) console.error("ERROR:", result);
+      expect(result.ok).toBe(true);
+      const state = readModelHostState(
+        { name: "gufo-apply" },
+        resolveEnv({ ...process.env, LOCAL_AI_RUNTIME_DIR: tmp }),
+      );
+      expect(state).not.toBeNull();
+      expect((state as unknown as { binaryNames?: string[] } | null)?.binaryNames).toEqual([
+        "llama-server-fork-pristine",
+      ]);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("applyOneModelHost without binaryNames writes no binaryNames key", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-nobinarynames-"));
+    try {
+      const result = await applyManifest({
+        manifest: makeGufoApplyManifest(),
+        workloadsDir: tmp,
+        getClient: () => makeGufoApplyClient(),
+        spawn: spawnStub,
+        env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp },
+      });
+
+      if (!result.ok) console.error("ERROR:", result);
+      expect(result.ok).toBe(true);
+      const statePath = modelHostState.modelhostStateFile(
+        resolveEnv({ ...process.env, LOCAL_AI_RUNTIME_DIR: tmp }),
+        { name: "gufo-apply" },
+      );
+      const raw = JSON.parse(fs.readFileSync(statePath, "utf8")) as Record<string, unknown>;
+      expect("binaryNames" in raw).toBe(false);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   test("ModelRun manifests still take the legacy path", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelrun-legacy-"));
     const fakeSpawn = mock(() => {
