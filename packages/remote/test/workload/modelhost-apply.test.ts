@@ -1331,6 +1331,55 @@ describe("applyManifest — kind dispatch", () => {
     }
   });
 
+  test("applyOneModelHost charges residentGiB-only hosts in the supervisor headroom check", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-supervisor-"));
+    try {
+      const workloadsDir = join(tmp, "workloads");
+      const manifest: ModelHostManifest = {
+        apiVersion: "llamactl/v1",
+        kind: "ModelHost",
+        metadata: { name: "mlx-host-resident" },
+        spec: {
+          engine: "omlx",
+          node: "local",
+          enabled: true,
+          binary: "/usr/bin/true",
+          endpoint: { host: "127.0.0.1", port: 18094 },
+          resources: { residentGiB: 12 },
+          hostedModels: [{ rel: "mlx-community/big-model" }],
+          extraArgs: [],
+          restartPolicy: "Always",
+          timeoutSeconds: 60,
+        },
+      };
+
+      let launchCalled = false;
+      const client: WorkloadClient = {
+        ...makeModelRunClient(),
+        modelHostStart: {
+          subscribe: (_input, callbacks) => {
+            launchCalled = true;
+            queueMicrotask(() => {
+              callbacks.onComplete();
+            });
+            return { unsubscribe: () => undefined };
+          },
+        },
+      };
+
+      const result = await applyOneModelHost(manifest, () => client, undefined, {
+        workloadsDir,
+        supervisor: { currentFreeGiB: 18, headroomMinGiB: 8, safetyFactor: 1.3 },
+      });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toContain("projected_free_below_headroom");
+      expect(launchCalled).toBe(false);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   test("auto placement writes manifest to chosen node before apply", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelrun-placement-"));
     const dbPath = join(tmp, "cluster.db");

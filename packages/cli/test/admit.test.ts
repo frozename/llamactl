@@ -61,7 +61,7 @@ test("residentGiB alone is an accepted declaration and is admitted with zero hea
 
 test("residentGiB alone can still be denied when it exceeds free memory", async () => {
   const path = writeHostManifest({ residentGiB: 1_000_000 }, "admit-huge");
-  expect(await runQuiet([path])).toBe(1);
+  expect(await runQuiet([path, "--headroom-mb=0", "--safety-factor=1"])).toBe(1);
 });
 
 test("expectedMemoryGiB alone keeps working", async () => {
