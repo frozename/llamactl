@@ -4,6 +4,11 @@ import {
   type AdmissionReservation,
   admitAgainstFiniteBudget,
   capacityBudgetGiB,
+  evaluateManagedAdmission,
+  type ManagedAdmissionClaim,
+  type ManagedAdmissionDecision,
+  type ManagedClaimState,
+  type ManagedWorkloadKind,
 } from "@llamactl/core/residency/admission";
 import { totalmem } from "node:os";
 import { join } from "node:path";
@@ -272,4 +277,102 @@ export function estimateModelHostMemoryGiB(
   } catch {
     return null;
   }
+}
+
+/**
+ * Handle for one admitted pending claim. Transitions apply only from
+ * `pending`: pending -> resident, pending -> uncertain, pending ->
+ * released. Resident and uncertain are absorbing in this slice — there
+ * is no expiry and no force input; releasing them belongs to the
+ * destructive-replacement gate, not here.
+ */
+export interface TargetAdmissionClaimHandle {
+  claimId: string;
+  state(): ManagedClaimState | "released";
+  markResident(): void;
+  markUncertain(): void;
+  releaseUnstarted(): void;
+}
+
+/**
+ * In-process, synchronous target-owned pending admission (DF-01 #274,
+ * E-1 slice). One claim ledger per resolved target identity; the check
+ * and the claim insert happen in the same synchronous call so two
+ * concurrent applies cannot both fit the same budget.
+ */
+export interface TargetAdmissionAuthority {
+  tryClaim(input: {
+    targetIdentity: string;
+    runtimeKey: string;
+    specDigest: string;
+    kind: ManagedWorkloadKind;
+    allocationGiB: number | undefined;
+    budgetGiB: number | undefined;
+  }): { decision: ManagedAdmissionDecision; handle: TargetAdmissionClaimHandle | null };
+  snapshot(targetIdentity: string): readonly ManagedAdmissionClaim[];
+}
+
+export function createTargetAdmissionAuthority(): TargetAdmissionAuthority {
+  const claimsByTarget = new Map<string, ManagedAdmissionClaim[]>();
+  const nextClaimSeq = new Map<string, number>();
+
+  const findClaim = (targetIdentity: string, claimId: string): ManagedAdmissionClaim | undefined =>
+    claimsByTarget.get(targetIdentity)?.find((c) => c.claimId === claimId);
+
+  return {
+    tryClaim(input): {
+      decision: ManagedAdmissionDecision;
+      handle: TargetAdmissionClaimHandle | null;
+    } {
+      let list = claimsByTarget.get(input.targetIdentity);
+      if (list === undefined) {
+        list = [];
+        claimsByTarget.set(input.targetIdentity, list);
+      }
+      const decision = evaluateManagedAdmission({
+        budgetGiB: input.budgetGiB,
+        claims: list,
+        incoming: {
+          runtimeKey: input.runtimeKey,
+          specDigest: input.specDigest,
+          allocationGiB: input.allocationGiB,
+          kind: input.kind,
+        },
+      });
+      if (decision.kind !== "admit") return { decision, handle: null };
+      const seq = (nextClaimSeq.get(input.targetIdentity) ?? 0) + 1;
+      nextClaimSeq.set(input.targetIdentity, seq);
+      const claimId = `${input.targetIdentity}#${String(seq)}`;
+      const claim: ManagedAdmissionClaim = {
+        claimId,
+        runtimeKey: input.runtimeKey,
+        specDigest: input.specDigest,
+        state: "pending",
+        allocationGiB: input.allocationGiB,
+        kind: input.kind,
+      };
+      list.push(claim);
+      const targetIdentity = input.targetIdentity;
+      const handle: TargetAdmissionClaimHandle = {
+        claimId,
+        state: () => findClaim(targetIdentity, claimId)?.state ?? "released",
+        markResident: () => {
+          const c = findClaim(targetIdentity, claimId);
+          if (c?.state === "pending") c.state = "resident";
+        },
+        markUncertain: () => {
+          const c = findClaim(targetIdentity, claimId);
+          if (c?.state === "pending") c.state = "uncertain";
+        },
+        releaseUnstarted: () => {
+          const idx = list.findIndex((c) => c.claimId === claimId);
+          if (idx >= 0 && list[idx]?.state === "pending") list.splice(idx, 1);
+        },
+      };
+      return { decision, handle };
+    },
+    snapshot(targetIdentity): readonly ManagedAdmissionClaim[] {
+      return (claimsByTarget.get(targetIdentity) ?? []).map((c) => ({ ...c }));
+    },
+  };
 }
