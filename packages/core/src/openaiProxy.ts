@@ -15,6 +15,7 @@ import {
 import { translateOpenAIResponse } from "./anthropic/translateResponse.js";
 import { translateOpenAIStreamToAnthropic } from "./anthropic/translateStream.js";
 import { boundaryNaiveBytePrefixSha, canonicalRequestSha } from "./cache-identity/canonical.js";
+import { listCatalog } from "./catalog.js";
 import { listPeers, type PeerNode } from "./config/peers.js";
 import { ctxForModel } from "./ctx.js";
 import { readModelHostState } from "./engines/state.js";
@@ -51,7 +52,11 @@ import {
   translateChatCompletionToResponses,
   translateResponsesRequest,
 } from "./responses/index.js";
-import { isExperimentalRoute } from "./routing/capabilities.js";
+import {
+  type CapabilityRejection,
+  isExperimentalRoute,
+  type QualificationStage,
+} from "./routing/capabilities.js";
 import { mkdirSync, readdirSync, statSync } from "./safe-fs.js";
 import { endpoint as llamaEndpoint, readServerPid, readServerState } from "./server.js";
 import * as workloadRuntime from "./workloadRuntime.js";
@@ -69,25 +74,49 @@ const MAX_JSON_BODY_BYTES = 10 * 1024 * 1024;
  * response shape back unchanged.
  *
  * `listOpenAIModels` returns `nova.ModelListResponse` — the
- * canonical shape every AI provider in this family publishes.
+ * canonical shape every AI provider in this family publishes —
+ * widened with an `unavailable` sibling array (#280 D-2) listing
+ * catalog rows whose availability is declared unavailable.
  *
  * JSON requests can route by request-body `model` across live
  * workloads on the node. When no model matches, or the body is not
  * parseable JSON, the proxy falls back to the node's default endpoint
- * for back-compat.
+ * for back-compat. An exact pin of a declared-unavailable catalog row
+ * is instead answered with a typed `model_unavailable` 503 (#280 D-2),
+ * ahead of the `model_not_routed` 404 and the default-endpoint
+ * fallthrough.
  */
+
+/** A catalog row declared unavailable, surfaced under `unavailable`
+ *  in listOpenAIModels (#280 D-2). Never routable; `reason` carries
+ *  the catalog's availability reason. */
+export interface UnavailableModelInfo {
+  id: string;
+  object: "model";
+  created: 0;
+  owned_by: "llamactl-catalog";
+  catalogId: string;
+  status: "unavailable";
+  reason: string;
+  qualification?: { stage: QualificationStage };
+  routable: false;
+}
+
+export type OpenAIModelListResponse = ModelListResponse & {
+  unavailable: UnavailableModelInfo[];
+};
 
 /**
  * List the models this agent currently exposes. For now that's the
  * single llama-server that's running (identified by its rel), or an
  * empty list when nothing is tracked.
  */
-export function listOpenAIModels(resolved?: ResolvedEnv): ModelListResponse;
+export function listOpenAIModels(resolved?: ResolvedEnv): OpenAIModelListResponse;
 export function listOpenAIModels(key: WorkloadKey, resolved?: ResolvedEnv): ModelListResponse;
 export function listOpenAIModels(
   keyOrResolved: WorkloadKey | ResolvedEnv = resolveEnv(),
   resolved: ResolvedEnv = resolveEnv(),
-): ModelListResponse {
+): ModelListResponse | OpenAIModelListResponse {
   if ("name" in keyOrResolved) {
     const key = keyOrResolved;
     const state = readServerState(key, resolved);
@@ -155,7 +184,53 @@ function orderedProxyRoutes(resolved: ResolvedEnv): workloadRuntime.ClusterRoute
   return routes;
 }
 
-function buildListOpenAIModels(resolved: ResolvedEnv): ModelListResponse {
+type DeclaredUnavailableEntry = {
+  catalogId: string;
+  reason: string;
+  stage?: QualificationStage;
+};
+
+/**
+ * Catalog rows declared unavailable (#280 D-2). Iterates the catalog in
+ * load order — builtin rows first, then custom — so the last row for a
+ * rel wins, mirroring catalogQualificationStages: a later row that
+ * declares the rel available (or drops the declaration) clears any
+ * earlier unavailable entry.
+ */
+function declaredUnavailableModels(resolved: ResolvedEnv): {
+  byRel: Map<string, DeclaredUnavailableEntry>;
+  relByCatalogId: Map<string, string>;
+} {
+  const byRel = new Map<string, DeclaredUnavailableEntry>();
+  for (const row of listCatalog("all", {
+    customCatalogFile: workloadRuntime.customCatalogFileFor(resolved),
+  })) {
+    const availability = row.availability;
+    if (availability === undefined || availability.declared === "available") {
+      byRel.delete(row.rel);
+      continue;
+    }
+    const stage = row.qualification?.stage;
+    byRel.set(row.rel, {
+      catalogId: row.id,
+      reason: availability.reason,
+      ...(stage === undefined ? {} : { stage }),
+    });
+  }
+  // Every row's id maps to its rel, whatever that row declares: a builtin
+  // id must still resolve when a custom row redeclares its rel as
+  // unavailable under another id (#280). Availability is then read from
+  // byRel, the winning declaration per rel.
+  const relByCatalogId = new Map<string, string>();
+  for (const row of listCatalog("all", {
+    customCatalogFile: workloadRuntime.customCatalogFileFor(resolved),
+  })) {
+    relByCatalogId.set(row.id, row.rel);
+  }
+  return { byRel, relByCatalogId };
+}
+
+function buildListOpenAIModels(resolved: ResolvedEnv): OpenAIModelListResponse {
   const data: (ModelInfo & { experimental?: true })[] = [];
   const winners = new Map<string, { kind: string; workload: string }>();
   for (const route of orderedProxyRoutes(resolved)) {
@@ -178,7 +253,38 @@ function buildListOpenAIModels(resolved: ResolvedEnv): ModelListResponse {
     if (isExperimentalRoute(route)) entry.experimental = true;
     data.push(entry);
   }
-  return { object: "list", data };
+  return { object: "list", data, unavailable: unavailableModelEntries(resolved, winners) };
+}
+
+/**
+ * #280 D-2: the `unavailable` sibling array of listOpenAIModels. Declared-
+ * unavailable rels lose to a live route (a rel in `winners`) and to a
+ * default-target id; surviving rels sort with the default JS string order.
+ */
+function unavailableModelEntries(
+  resolved: ResolvedEnv,
+  winners: ReadonlyMap<string, unknown>,
+): UnavailableModelInfo[] {
+  const { byRel } = declaredUnavailableModels(resolved);
+  const defaultTargets = defaultTargetModelIds(resolved);
+  const unavailable: UnavailableModelInfo[] = [];
+  for (const rel of [...byRel.keys()].sort()) {
+    if (winners.has(rel) || defaultTargets.has(rel)) continue;
+    const entry = byRel.get(rel);
+    if (!entry) continue;
+    unavailable.push({
+      id: rel,
+      object: "model",
+      created: 0,
+      owned_by: "llamactl-catalog",
+      catalogId: entry.catalogId,
+      status: "unavailable",
+      reason: entry.reason,
+      ...(entry.stage === undefined ? {} : { qualification: { stage: entry.stage } }),
+      routable: false,
+    });
+  }
+  return unavailable;
 }
 
 const WORKLOAD_STATE_FILES = [
@@ -221,9 +327,9 @@ function workloadRuntimeCacheSignature(resolved: ResolvedEnv): string {
   return parts.join("|");
 }
 
-let modelsResponseCache: { sig: string; response: ModelListResponse } | null = null;
+let modelsResponseCache: { sig: string; response: OpenAIModelListResponse } | null = null;
 
-function getCachedModelsResponse(resolved: ResolvedEnv): ModelListResponse {
+function getCachedModelsResponse(resolved: ResolvedEnv): OpenAIModelListResponse {
   try {
     const sig = workloadRuntimeCacheSignature(resolved);
     if (modelsResponseCache?.sig === sig) return modelsResponseCache.response;
@@ -292,6 +398,29 @@ function modelNotRoutedResponse(model: string, knownModels: string[]): Response 
       },
     },
     { status: 404 },
+  );
+}
+
+/**
+ * Build a 503 response for an exact pin of a catalog row declared
+ * unavailable (#280 D-2). No Retry-After: the condition clears only when
+ * the catalog or the artifact changes, not on a timer.
+ */
+function modelUnavailableResponse(
+  model: string,
+  rejection: Extract<CapabilityRejection, { reason: "model-unavailable" }>,
+): Response {
+  return Response.json(
+    {
+      error: {
+        message: `model '${model}' is declared unavailable: ${rejection.availabilityReason}`,
+        type: "model_unavailable",
+        code: "model_unavailable",
+        param: "model",
+        reason: rejection.availabilityReason,
+      },
+    },
+    { status: 503 },
   );
 }
 
@@ -1919,6 +2048,27 @@ function releaseWarmHitLease(context: ProxyContext): void {
 }
 
 /**
+ * #280 D-2: 503 for an exact pin (rel or catalog id) of a declared-unavailable
+ * catalog row, or null when the request keeps the #306 / default-endpoint
+ * paths. Live routes for the rel and default-target ids (by rel, or by
+ * catalog id whose rel is a default id) are exempt.
+ */
+function declaredUnavailableRejectionFor(model: string, resolved: ResolvedEnv): Response | null {
+  const defaults = defaultTargetModelIds(resolved);
+  if (defaults.has(model)) return null;
+  const { byRel, relByCatalogId } = declaredUnavailableModels(resolved);
+  const rel = byRel.has(model) ? model : relByCatalogId.get(model);
+  if (rel === undefined || defaults.has(rel)) return null;
+  if (getRouteMap(resolved).has(rel)) return null;
+  const entry = byRel.get(rel);
+  if (!entry) return null;
+  return modelUnavailableResponse(model, {
+    reason: "model-unavailable",
+    availabilityReason: entry.reason,
+  });
+}
+
+/**
  * Route a JSON request by its body `model` field. Reads (and size-caps)
  * the body when it hasn't been read yet; leaves the default target in
  * place when the model is absent or empty.
@@ -1929,6 +2079,14 @@ function releaseWarmHitLease(context: ProxyContext): void {
  * default llama-server — unless the model is one of the default target's
  * own ids (LLAMA_CPP_SERVER_ALIAS / LLAMA_CPP_DEFAULT_MODEL), which keep
  * the fallthrough.
+ *
+ * #280 D-2: ahead of that 404, an exact pin (by rel or catalog id) of a
+ * catalog row declared unavailable whose rel matches no route is answered
+ * with a typed `model_unavailable` 503, independent of whether the route
+ * map has any entries — so an unavailable pin never reaches the default
+ * endpoint. Default-target ids are exempt by rel, and so is a catalog id
+ * whose rel is a default-target id, keeping parity with the `unavailable`
+ * list in listOpenAIModels.
  *
  * Known limitation: when the operator's extraArgs already pass `--alias`
  * or `-a`, server.ts skips adding `--alias LLAMA_CPP_SERVER_ALIAS`, so the
@@ -1968,10 +2126,18 @@ async function resolveJsonBodyRoute(context: ProxyContext): Promise<ProxyContext
       context.route = routedTarget;
       return context;
     }
-    const routeMap = getRouteMap(context.resolved);
-    if (routeMap.size > 0 && !defaultTargetModelIds(context.resolved).has(model)) {
-      return modelNotRoutedResponse(model, [...routeMap.keys()].sort());
-    }
+    return routeMissResponse(context, model);
+  }
+  return context;
+}
+
+/** Rejection chain for a body model that matched no route (#306 + #280 D-2). */
+function routeMissResponse(context: ProxyContext, model: string): ProxyContext | Response {
+  const unavailableRejection = declaredUnavailableRejectionFor(model, context.resolved);
+  if (unavailableRejection) return unavailableRejection;
+  const routeMap = getRouteMap(context.resolved);
+  if (routeMap.size > 0 && !defaultTargetModelIds(context.resolved).has(model)) {
+    return modelNotRoutedResponse(model, [...routeMap.keys()].sort());
   }
   return context;
 }
