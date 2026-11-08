@@ -2,15 +2,28 @@ import { catalog } from "@llamactl/core";
 import { ENGINES } from "@llamactl/core/engines";
 import { describe, expect, test } from "bun:test";
 import { basename, isAbsolute, join, resolve } from "node:path";
-import { parse, parseAllDocuments } from "yaml";
+import { parse } from "yaml";
 
-import { existsSync, readdirSync, readFileSync } from "../../src/safe-fs.js";
+import { existsSync, readFileSync } from "../../src/safe-fs.js";
 import {
   type ModelHostManifest,
   ModelHostManifestSchema,
   ModelHostSpecSchema,
   specForEngine,
 } from "../../src/workload/modelhost-schema.js";
+import {
+  asRecord,
+  carriers,
+  expectArmGroup,
+  fileClaimingName,
+  filesClaimingNodePort,
+  hostedModelRels,
+  modelHostNodePort,
+  modelRunsTargetingRel,
+  residencyGroupLabel,
+  templateDocs,
+  TEMPLATES_DIR,
+} from "./template-arms.js";
 
 /**
  * Pins frozename/llamactl#515 (C-3): the DeepSeek-V4.1-Flash-1017 UD-IQ1_S
@@ -21,10 +34,10 @@ import {
  * hosted rel is the pinned <repo>-<owner>/<rev8> models-root layout the
  * catalog row also carries. The runtime is pinned to
  * llama.cpp-cf34d311332e. The last cases guard the catalog rel, the
- * metadata name, the port and the z13-large-gpu residency group against a
- * second registration anywhere else in the templates dir.
+ * metadata name, the port and the z13-large-gpu residency group: the rel may
+ * be carried by several disabled arm templates (#557) as long as each claims
+ * a distinct name and z13 port, and no ModelRun targets the rels.
  */
-const TEMPLATES_DIR = resolve(import.meta.dir, "../../../../templates/workloads");
 const FILE = "llamacpp-deepseek41-flash-iq1s-z13.yaml";
 const NAME = "llamacpp-deepseek41-flash-iq1s";
 const MODEL_REL =
@@ -33,18 +46,6 @@ const DRAFT_REL =
   "DeepSeek-V4.1-Flash-1017-GGUF-unsloth/2688c0c3/dspark/dspark-DeepSeek-V4.1-Flash-1017-Q8_0.gguf";
 const RUNTIME_PREFIX = "/home/alex/strix-halo-bench/runtimes/llama.cpp-cf34d311332e/";
 const DS_ROW = catalog.BUILTIN_CATALOG.find((m) => m.id === "deepseek41-flash-1017-ud-iq1s");
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isUnknownArray(value: unknown): value is unknown[] {
-  return Array.isArray(value);
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return isRecord(value) ? value : null;
-}
 
 function loadTemplate(): unknown {
   const path = join(TEMPLATES_DIR, FILE);
@@ -63,100 +64,6 @@ function loadManifest(): { raw: unknown; manifest: ModelHostManifest } {
   return { raw, manifest: result.data };
 }
 
-function metadataName(doc: Record<string, unknown>): string | null {
-  const name = asRecord(doc["metadata"])?.["name"];
-  return typeof name === "string" ? name : null;
-}
-
-function hostedModelRels(doc: Record<string, unknown>): string[] {
-  const hosted = asRecord(doc["spec"])?.["hostedModels"];
-  if (!isUnknownArray(hosted)) return [];
-  const rels: string[] = [];
-  for (const entry of hosted) {
-    const rel = asRecord(entry)?.["rel"];
-    if (typeof rel === "string") rels.push(rel);
-  }
-  return rels;
-}
-
-function modelRunRel(doc: Record<string, unknown>): string | null {
-  const target = asRecord(asRecord(doc["spec"])?.["target"]);
-  if (target?.["kind"] !== "rel") return null;
-  const value = target["value"];
-  return typeof value === "string" ? value : null;
-}
-
-function docRels(doc: Record<string, unknown>): string[] {
-  const kind = doc["kind"];
-  if (kind === "ModelHost") return hostedModelRels(doc);
-  if (kind === "ModelRun") {
-    const rel = modelRunRel(doc);
-    return rel === null ? [] : [rel];
-  }
-  return [];
-}
-
-interface ScannedTemplate {
-  file: string;
-  name: string | null;
-  rels: string[];
-}
-
-function scanTemplates(): ScannedTemplate[] {
-  const files = readdirSync(TEMPLATES_DIR)
-    .filter((name) => name.endsWith(".yaml"))
-    .sort();
-  const out: ScannedTemplate[] = [];
-  for (const file of files) {
-    const text = readFileSync(join(TEMPLATES_DIR, file), "utf8");
-    for (const doc of parseAllDocuments(text)) {
-      const js = doc.toJS() as unknown;
-      if (!isRecord(js)) continue;
-      out.push({ file, name: metadataName(js), rels: docRels(js) });
-    }
-  }
-  return out;
-}
-
-interface TemplateDoc {
-  file: string;
-  doc: Record<string, unknown>;
-}
-
-function templateDocs(): TemplateDoc[] {
-  const files = readdirSync(TEMPLATES_DIR)
-    .filter((name) => name.endsWith(".yaml"))
-    .sort();
-  const out: TemplateDoc[] = [];
-  for (const file of files) {
-    const text = readFileSync(join(TEMPLATES_DIR, file), "utf8");
-    for (const parsed of parseAllDocuments(text)) {
-      const js = parsed.toJS() as unknown;
-      if (isRecord(js)) out.push({ file, doc: js });
-    }
-  }
-  return out;
-}
-
-function modelHostNodePort(doc: Record<string, unknown>): {
-  node: string | null;
-  port: number | null;
-} {
-  const spec = asRecord(doc["spec"]);
-  const node = spec?.["node"];
-  const port = asRecord(spec?.["endpoint"])?.["port"];
-  return {
-    node: typeof node === "string" ? node : null,
-    port: typeof port === "number" ? port : null,
-  };
-}
-
-function residencyGroupLabel(doc: Record<string, unknown>): string | null {
-  const labels = asRecord(asRecord(doc["metadata"])?.["labels"]);
-  const group = labels?.["llamactl.io/residency-group"];
-  return typeof group === "string" ? group : null;
-}
-
 function flagArgValue(args: readonly string[], flag: string): string {
   const idx = args.indexOf(flag);
   const value = idx >= 0 ? args[idx + 1] : undefined;
@@ -164,6 +71,23 @@ function flagArgValue(args: readonly string[], flag: string): string {
     throw new Error(`expected ${flag} to be followed by a value`);
   }
   return value;
+}
+
+function expectDuplicatedZ13RelsFormArmGroups(): void {
+  const z13RelCounts = new Map<string, number>();
+  for (const { doc } of templateDocs()) {
+    if (doc["kind"] !== "ModelHost" || modelHostNodePort(doc).node !== "z13") continue;
+    for (const rel of hostedModelRels(doc)) {
+      z13RelCounts.set(rel, (z13RelCounts.get(rel) ?? 0) + 1);
+    }
+  }
+  for (const [rel, count] of z13RelCounts) {
+    if (count <= 1) continue;
+    const entries = carriers((candidate) => hostedModelRels(candidate).includes(rel)).filter(
+      (entry) => entry.node === "z13",
+    );
+    expectArmGroup(entries, 2);
+  }
 }
 
 describe("llamacpp-deepseek41-flash-iq1s-z13.yaml (#515 C-3)", () => {
@@ -291,31 +215,17 @@ describe("llamacpp-deepseek41-flash-iq1s-z13.yaml (#515 C-3)", () => {
     expect(labels?.["family"]).toBe(DS_ROW.family);
   });
 
-  test("registers the DeepSeek rel once and claims name, port and drafter nowhere else", () => {
+  test("registers the DeepSeek rel on disabled z13 arms and claims name, port and drafter uniquely", () => {
     expect(loadTemplate()).not.toBeNull();
-    const docs = scanTemplates();
-    const entries = docs.flatMap((doc) =>
-      doc.rels.map((rel) => ({ file: doc.file, name: doc.name, rel })),
-    );
-    const matches = entries
-      .filter((entry) => entry.rel === MODEL_REL)
-      .map((entry) => ({ file: entry.file, name: entry.name }));
-    expect(matches).toEqual([{ file: FILE, name: NAME }]);
-    const nameClashes = docs.filter((doc) => doc.file !== FILE && doc.name === NAME);
-    expect(nameClashes).toEqual([]);
-    const endpointClashes = templateDocs()
-      .filter(({ file, doc }) => file !== FILE && doc["kind"] === "ModelHost")
-      .map(({ file, doc }) => ({ file, ...modelHostNodePort(doc) }))
-      .filter((entry) => entry.node === "z13" && entry.port === 8084);
-    expect(endpointClashes).toEqual([]);
-    const draftClashes = readdirSync(TEMPLATES_DIR)
-      .filter((file) => file.endsWith(".yaml") && file !== FILE)
-      .filter((file) => readFileSync(join(TEMPLATES_DIR, file), "utf8").includes(DRAFT_REL));
-    expect(draftClashes).toEqual([]);
-    const z13Rels = templateDocs()
-      .filter(({ doc }) => doc["kind"] === "ModelHost" && modelHostNodePort(doc).node === "z13")
-      .flatMap(({ doc }) => hostedModelRels(doc));
-    expect(new Set(z13Rels).size).toBe(z13Rels.length);
+    const modelCarriers = carriers((doc) => hostedModelRels(doc).includes(MODEL_REL));
+    expectArmGroup(modelCarriers);
+    expect(modelCarriers.map((entry) => entry.file)).toContain(FILE);
+    expectArmGroup(carriers((_doc, _file, text) => text.includes(DRAFT_REL)));
+    expect(fileClaimingName(NAME)).toEqual([FILE]);
+    expect(filesClaimingNodePort("z13", 8084)).toEqual([FILE]);
+    expect(modelRunsTargetingRel(MODEL_REL)).toEqual([]);
+    expect(modelRunsTargetingRel(DRAFT_REL)).toEqual([]);
+    expectDuplicatedZ13RelsFormArmGroups();
   });
 
   test("keeps every z13-large-gpu ModelHost disabled", () => {

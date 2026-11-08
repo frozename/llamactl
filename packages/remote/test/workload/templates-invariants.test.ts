@@ -73,6 +73,16 @@ const EXPECTED_SPEC_HASHES: Readonly<Record<string, string>> = {
   "gufo-glm53-exp-z13.yaml": "107a6d71f35796d31bd501eb3b6ee13f0c22a85fa9088be46d667c0e24d39c94",
   "llamacpp-deepseek41-flash-iq1s-z13.yaml":
     "c83849ef63837c3089a6c665d164260caf0935a42e4cb701d6a5c4ad3bd8b9f6",
+  "llamacpp-ds41-ud-iq1m-hip-b12206-z13.yaml":
+    "3a70e9b77ff6515c0686ccd1459f3853462985e883af471ce1555347644fd66e",
+  "llamacpp-glm53-hip-b12206-z13.yaml":
+    "312ab3c78fc1d40f4ceedbd020fe76db1f350ecb8ac5b87c72a0649a6cc07d04",
+  "llamacpp-glm53-vulkan-halo-z13.yaml":
+    "72447a32815d584ebae9ca25dd72e30a53b4236a91b028aa632b9dc67273a1ca",
+  "llamacpp-mimo26-bpw25-vulkan-b12206-z13.yaml":
+    "1aa33001a7b82c2037af5fcfa7407449b637c2bfa06647dd64b49209988892bd",
+  "llamacpp-mimo26-bpw25-vulkan-halo-z13.yaml":
+    "af6421466f686a4e5eb5c7b869446cd24227933d2bf5c41d9e44698614eec8f6",
   "llamacpp-mimo26-flash-bpw25-z13.yaml":
     "2cdb168b1e880c0c8eb71398e8bf15aa115d943ee3c96364bd2d318fb53edc3e",
   "mlx-granite-3b-iso-mac-mini.yaml":

@@ -1,0 +1,97 @@
+# EXPERIMENTAL: MiMo-V2.6-Flash-MOPD BPW2.5 (AesSedai) on mainline
+# llama.cpp Vulkan arm M-V2. This is a separate ModelHost, not Gufo. It is
+# committed disabled because the arm shares the exclusive z13-large-gpu
+# residency group with production; enabling it needs an operator-approved
+# Gufo window.
+#
+# Runtime pin: upstream llama.cpp b12206 @ cf34d311332e (BUILDINFO.json on
+# the Z13 records binary sha256). The Vulkan binary is a new build beside
+# the HIP bin, under the bin-vulkan/ dir:
+# /home/alex/strix-halo-bench/runtimes/llama.cpp-cf34d311332e/bin-vulkan/
+#
+# Quant: MiMo-V2.6-Flash-MOPD BPW2.5 from AesSedai @b6e95d58; the DFlash
+# drafter is from ggml-org @c9d86979 and stays models-dir relative so
+# llamacpp resolves it at boot.
+#
+# The stock build lacks --spec-draft-vocab, LLAMA_SPEC_ADAPTIVE and the
+# GGML_VK_FA_* env knobs, so this arm passes neither; it exists to isolate
+# the patch-series effect against the halo arm.
+#
+# No Vulkan gfx1151 benchmark exists [?] for this combination.
+#
+# Resources are derived, not measured: 98 GiB mirrors the 02 ~95-98 GiB
+# estimate.
+#
+# See 05-runtime-engine-matrix.md section 2.4.
+apiVersion: llamactl/v1
+kind: ModelHost
+metadata:
+  name: llamacpp-mimo26-bpw25-vulkan-b12206
+  labels:
+    family: mimo26
+    llamactl.io/qualification: experimental
+    llamactl.io/residency-group: z13-large-gpu
+    llamactl.io/runtime-arm: M-V2-cf34d311332e
+    llamactl.io/backend: vulkan
+spec:
+  engine: llamacpp
+  node: z13
+  enabled: false
+  binary: /home/alex/strix-halo-bench/runtimes/llama.cpp-cf34d311332e/bin-vulkan/llama-server
+  resources:
+    residentGiB: 98
+  # Port 8089 avoids the production and experimental hosts 8080-8088 on z13.
+  endpoint:
+    host: 127.0.0.1
+    port: 8089
+  hostedModels:
+    - rel: MiMo-V2.6-Flash-MOPD-GGUF-AesSedai/b6e95d58/BPW2.5/MiMo-V2.6-Flash-MOPD-BPW2.5-00001-of-00003.gguf
+  extraArgs:
+    # --served-model-name equals the GGUF basename, because a ModelHost
+    # routes by rel and basename.
+    - --served-model-name
+    - MiMo-V2.6-Flash-MOPD-BPW2.5-00001-of-00003.gguf
+    - -ngl
+    - "999"
+    - -fa
+    - "on"
+    - -fit
+    - "off"
+    - --load-mode
+    - none
+    - --parallel
+    - "1"
+    # 131072, not the reference 196608: no raised amdgpu.lockup_timeout on
+    # this host and the reference hit device-lost at 200K+.
+    - -c
+    - "131072"
+    - -ctk
+    - q8_0
+    - -ctv
+    - q8_0
+    - -ub
+    - "2048"
+    - -b
+    - "2048"
+    - --cache-ram
+    - "0"
+    # --jinja drives the MiMo XML tool calls and think-tag reasoning.
+    - --jinja
+    - --temp
+    - "1.0"
+    - --top-p
+    - "1.0"
+    - --top-k
+    - "20"
+    - --min-p
+    - "0.0"
+    # DFlash drafter, models-dir relative so the boot command resolves it.
+    - -md
+    - MiMo-V2.6-Flash-MOPD-GGUF-ggml-org/c9d86979/dflash/dflash-MiMo-V2.6-Flash-MOPD-Q8_0.gguf
+    - -ngld
+    - "999"
+    - --spec-type
+    - draft-dflash
+    - --spec-draft-n-max
+    - "4"
+  restartPolicy: Never
