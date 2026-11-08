@@ -4,9 +4,21 @@ import { join } from "node:path";
 
 import type { PidIdentityDeps } from "../src/pidIdentity.js";
 import type { ResolvedEnv } from "../src/types.js";
+import type {
+  ClusterConfigLike,
+  ClusterRoute,
+  LocalRoute,
+  PeerSnapshot,
+} from "../src/workloadRuntime.js";
 
 import { writeModelHostState } from "../src/engines/state.js";
-import { buildRouteCatalog, knownRevision, workloadOfDeployment } from "../src/routing/catalog.js";
+import * as capabilitiesModule from "../src/routing/capabilities.js";
+import {
+  buildRouteCatalog,
+  effectiveCandidate,
+  knownRevision,
+  workloadOfDeployment,
+} from "../src/routing/catalog.js";
 import {
   existsSync,
   mkdirSync,
@@ -16,6 +28,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "../src/safe-fs.js";
+import * as workloadRuntimeModule from "../src/workloadRuntime.js";
 import {
   ensureWorkloadRuntimeDir,
   listLocalRoutes,
@@ -390,4 +403,373 @@ test("one workload's routes give its deployment the epoch the full catalog gives
   } finally {
     t.cleanup();
   }
+});
+
+// ---------------------------------------------------------------------------
+// #518 B-4 — experimental qualification on routes. The catalog join, peer
+// snapshot labels, the stageByModel inheritance argument and the new routing
+// helpers land with the fix; the widened views below keep these cases
+// typechecking before those exports exist (undefined at runtime on the base
+// revision, so the typeof guards fail by assertion first).
+// ---------------------------------------------------------------------------
+
+type RouteQualificationFields = {
+  qualificationStage?: string;
+  labels?: Record<string, string>;
+};
+
+type QualifiedLocalRoute = LocalRoute & RouteQualificationFields;
+
+type QualifiedPeerSnapshot = Omit<PeerSnapshot, "workloads"> & {
+  workloads: (PeerSnapshot["workloads"][number] & {
+    labels?: Record<string, string>;
+  })[];
+};
+
+const routeRecord = (route: ClusterRoute): Record<string, unknown> =>
+  route as unknown as Record<string, unknown>;
+
+const isExperimentalRoute = (
+  capabilitiesModule as unknown as {
+    isExperimentalRoute?: (route: ClusterRoute) => boolean;
+  }
+).isExperimentalRoute;
+
+const catalogQualificationStages = (
+  workloadRuntimeModule as unknown as {
+    catalogQualificationStages?: (resolved: ResolvedEnv) => Map<string, string>;
+  }
+).catalogQualificationStages;
+
+// listClusterRoutes gains a fifth qualification argument with #518; the
+// widened signature lets the RED cases pass it before the parameter exists.
+type ListClusterRoutesQualified = (
+  localRoutes: LocalRoute[],
+  peerSnapshots: Map<string, PeerSnapshot>,
+  config: ClusterConfigLike,
+  now?: number,
+  qualification?: { stageByModel?: Map<string, string> },
+) => ClusterRoute[];
+
+const listClusterRoutesQualified: ListClusterRoutesQualified =
+  workloadRuntimeModule.listClusterRoutes;
+
+const catalogRow = (id: string, rel: string, stage: string): string =>
+  `${id}\t${id} label\texp\tcustom\tcustom\t${rel}\torg/${id}\tgguf\t{"qualification":{"stage":"${stage}"}}`;
+
+const writeCustomCatalog = (dir: string, rows: readonly string[]): void => {
+  writeFileSync(join(dir, "curated-models.tsv"), `${rows.join("\n")}\n`);
+};
+
+const writeRunState = (
+  dir: string,
+  pid: number,
+  state: { rel: string; port: number; extraArgs?: string[] },
+): void => {
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "llama-server.pid"), `${String(pid)}\n`);
+  writeFileSync(
+    join(dir, "llama-server.state"),
+    JSON.stringify({
+      rel: state.rel,
+      extraArgs: state.extraArgs ?? [],
+      host: "127.0.0.1",
+      port: state.port,
+      pid,
+      startedAt: "t",
+      tunedProfile: null,
+    }),
+  );
+};
+
+const EXPERIMENTAL_LOCAL: QualifiedLocalRoute = {
+  workload: "exp",
+  model: "exp/model.gguf",
+  host: "127.0.0.1",
+  port: 8310,
+  engine: "llamacpp",
+  kind: "ModelRun",
+  pid: 1,
+  qualificationStage: "experimental",
+};
+
+const PEER_A_CONFIG: ClusterConfigLike = {
+  peers: [{ id: "peer-a", endpoint: "https://peer-a.test:443" }],
+};
+
+test("listLocalRoutes joins the catalog qualification stage on rel", () => {
+  const t = tempEnv();
+  try {
+    writeCustomCatalog(t.runtimeDir, [
+      catalogRow("exp-model", "exp/model.gguf", "experimental"),
+      catalogRow("exp-host-model", "exp/host.gguf", "experimental"),
+    ]);
+    writeRunState(join(t.runtimeDir, "workloads", "exp-run"), process.pid, {
+      rel: "exp/model.gguf",
+      port: 8301,
+      extraArgs: ["--alias", "exp-alias"],
+    });
+    writeModelHostState(
+      {
+        kind: "ModelHost",
+        engine: "omlx",
+        pid: process.pid,
+        host: "127.0.0.1",
+        port: 8302,
+        modelAliases: ["exp/host.gguf", "host.gguf"],
+        startedAt: "2026-05-19T00:00:00Z",
+      },
+      { name: "exp-host" },
+      t.resolved,
+    );
+    writeRunState(join(t.runtimeDir, "workloads", "prod-run"), process.pid, {
+      rel: "prod/model.gguf",
+      port: 8303,
+    });
+
+    const routes = listLocalRoutes(t.resolved);
+    const expRoutes = routes.filter((r) => r.workload === "exp-run" || r.workload === "exp-host");
+    const prodRoutes = routes.filter((r) => r.workload === "prod-run");
+    expect(expRoutes).toHaveLength(4);
+    expect(prodRoutes).toHaveLength(1);
+    for (const r of expRoutes) {
+      expect(routeRecord(r)["qualificationStage"]).toBe("experimental");
+    }
+    for (const r of prodRoutes) {
+      expect("qualificationStage" in r).toBe(false);
+    }
+
+    const one = listWorkloadRoutes(t.resolved, "exp-run");
+    expect(one).toHaveLength(2);
+    for (const r of one) {
+      expect(routeRecord(r)["qualificationStage"]).toBe("experimental");
+    }
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("the join keys on the rel only", () => {
+  const t = tempEnv();
+  try {
+    writeCustomCatalog(t.runtimeDir, [catalogRow("exp-model", "exp/model.gguf", "experimental")]);
+    writeRunState(join(t.runtimeDir, "workloads", "alias-run"), process.pid, {
+      rel: "unlisted/model.gguf",
+      port: 8304,
+      extraArgs: ["--alias", "exp/model.gguf"],
+    });
+    const routes = listLocalRoutes(t.resolved);
+    expect(routes).toHaveLength(2);
+    for (const r of routes) {
+      expect("qualificationStage" in r).toBe(false);
+    }
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("the last catalog row for a rel wins", () => {
+  const t = tempEnv();
+  try {
+    expect(typeof catalogQualificationStages).toBe("function");
+    writeCustomCatalog(t.runtimeDir, [
+      catalogRow("dup-a", "dup/model.gguf", "experimental"),
+      catalogRow("dup-b", "dup/model.gguf", "validated"),
+    ]);
+    writeRunState(join(t.runtimeDir, "workloads", "dup-run"), process.pid, {
+      rel: "dup/model.gguf",
+      port: 8305,
+    });
+    const routes = listLocalRoutes(t.resolved);
+    expect(routes).toHaveLength(1);
+    expect(routeRecord(routes[0]!)["qualificationStage"]).toBe("validated");
+    expect(catalogQualificationStages?.(t.resolved).get("dup/model.gguf")).toBe("validated");
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("listClusterRoutes carries peer snapshot labels", () => {
+  expect(typeof isExperimentalRoute).toBe("function");
+  const snapshot: QualifiedPeerSnapshot = {
+    workloads: [
+      {
+        modelId: "peer/model.gguf",
+        port: 9001,
+        labels: { "llamactl.io/qualification": "experimental" },
+      },
+    ],
+    pressure: "NORMAL",
+    fetchedAt: Date.now(),
+  };
+  const routes = workloadRuntimeModule.listClusterRoutes(
+    [],
+    new Map<string, PeerSnapshot>([["peer-a", snapshot]]),
+    PEER_A_CONFIG,
+  );
+  const peers = routes.filter((r) => "isPeer" in r);
+  expect(peers).toHaveLength(1);
+  expect(routeRecord(peers[0]!)["labels"]).toEqual({
+    "llamactl.io/qualification": "experimental",
+  });
+  expect(isExperimentalRoute?.(peers[0]!)).toBe(true);
+});
+
+test("an unlabeled peer serving a locally experimental id stays shadowed", () => {
+  const snapshot: PeerSnapshot = {
+    workloads: [{ modelId: "exp/model.gguf", port: 9100 }],
+    pressure: "NORMAL",
+    fetchedAt: Date.now(),
+  };
+  const snaps = new Map<string, PeerSnapshot>([["peer-a", snapshot]]);
+  const routesPlain = workloadRuntimeModule.listClusterRoutes(
+    [EXPERIMENTAL_LOCAL],
+    snaps,
+    PEER_A_CONFIG,
+  );
+  const routesStaged = listClusterRoutesQualified(
+    [EXPERIMENTAL_LOCAL],
+    snaps,
+    PEER_A_CONFIG,
+    Date.now(),
+    { stageByModel: new Map([["exp/model.gguf", "experimental"]]) },
+  );
+  for (const routes of [routesPlain, routesStaged]) {
+    const forId = routes.filter((r) => r.model === "exp/model.gguf");
+    expect(forId).toHaveLength(1);
+    expect("isPeer" in forId[0]!).toBe(false);
+  }
+});
+
+test("an explicitly non-experimental peer is admitted beside a local experimental route", () => {
+  expect(typeof isExperimentalRoute).toBe("function");
+  const snapshot: QualifiedPeerSnapshot = {
+    workloads: [
+      {
+        modelId: "exp/model.gguf",
+        port: 9100,
+        labels: { "llamactl.io/qualification": "validated" },
+      },
+    ],
+    pressure: "NORMAL",
+    fetchedAt: Date.now(),
+  };
+  const routes = workloadRuntimeModule.listClusterRoutes(
+    [EXPERIMENTAL_LOCAL],
+    new Map<string, PeerSnapshot>([["peer-a", snapshot]]),
+    PEER_A_CONFIG,
+  );
+  const forId = routes.filter((r) => r.model === "exp/model.gguf");
+  expect(forId).toHaveLength(2);
+  const peer = forId.find((r) => "isPeer" in r);
+  expect(peer).toBeDefined();
+  expect(routeRecord(peer!)["labels"]).toEqual({
+    "llamactl.io/qualification": "validated",
+  });
+  expect(isExperimentalRoute?.(peer!)).toBe(false);
+});
+
+test("peer-vs-peer: an experimental-only id admits a later non-experimental peer", () => {
+  const snapA: QualifiedPeerSnapshot = {
+    workloads: [
+      {
+        modelId: "peer/model.gguf",
+        port: 9101,
+        labels: { "llamactl.io/qualification": "experimental" },
+      },
+    ],
+    pressure: "NORMAL",
+    fetchedAt: Date.now(),
+  };
+  const snapB: PeerSnapshot = {
+    workloads: [{ modelId: "peer/model.gguf", port: 9102 }],
+    pressure: "NORMAL",
+    fetchedAt: Date.now(),
+  };
+  const snaps = new Map<string, PeerSnapshot>([
+    ["peer-a", snapA],
+    ["peer-b", snapB],
+  ]);
+  const peerA = { id: "peer-a", endpoint: "https://peer-a.test:443" };
+  const peerB = { id: "peer-b", endpoint: "https://peer-b.test:443" };
+  const routes = workloadRuntimeModule.listClusterRoutes([], snaps, {
+    peers: [peerA, peerB],
+  });
+  const forId = routes.filter((r) => r.model === "peer/model.gguf");
+  expect(forId).toHaveLength(2);
+  const catalog = buildRouteCatalog({ routes });
+  expect(effectiveCandidate(catalog, "peer/model.gguf")?.advertisement.ownerNodeId).toBe("peer-b");
+
+  const routesRev = workloadRuntimeModule.listClusterRoutes([], snaps, {
+    peers: [peerB, peerA],
+  });
+  const forIdRev = routesRev.filter((r) => r.model === "peer/model.gguf");
+  expect(forIdRev).toHaveLength(1);
+  const only = forIdRev[0]!;
+  expect("isPeer" in only && only.targetNodeId === "peer-b").toBe(true);
+});
+
+test("peer routes take the catalog stage by model id", () => {
+  const stageByModel = new Map([["cat/model.gguf", "experimental"]]);
+  const unlabeled: PeerSnapshot = {
+    workloads: [{ modelId: "cat/model.gguf", port: 9200 }],
+    pressure: "NORMAL",
+    fetchedAt: Date.now(),
+  };
+  const labelled: QualifiedPeerSnapshot = {
+    workloads: [
+      {
+        modelId: "cat/model.gguf",
+        port: 9200,
+        labels: { "llamactl.io/qualification": "validated" },
+      },
+    ],
+    pressure: "NORMAL",
+    fetchedAt: Date.now(),
+  };
+  const routesUnlabeled = listClusterRoutesQualified(
+    [],
+    new Map<string, PeerSnapshot>([["peer-a", unlabeled]]),
+    PEER_A_CONFIG,
+    Date.now(),
+    { stageByModel },
+  );
+  const un = routesUnlabeled.find((r) => r.model === "cat/model.gguf");
+  expect(un).toBeDefined();
+  expect(routeRecord(un!)["qualificationStage"]).toBe("experimental");
+
+  const routesLabelled = listClusterRoutesQualified(
+    [],
+    new Map<string, PeerSnapshot>([["peer-a", labelled]]),
+    PEER_A_CONFIG,
+    Date.now(),
+    { stageByModel },
+  );
+  const lb = routesLabelled.find((r) => r.model === "cat/model.gguf");
+  expect(lb).toBeDefined();
+  expect("qualificationStage" in lb!).toBe(false);
+});
+
+test("a local route's labels survive listClusterRoutes unchanged", () => {
+  const labelled: QualifiedLocalRoute = {
+    workload: "exp",
+    model: "exp/model.gguf",
+    host: "127.0.0.1",
+    port: 8310,
+    engine: "llamacpp",
+    kind: "ModelRun",
+    pid: 1,
+    labels: { "llamactl.io/qualification": "validated", team: "eval" },
+  };
+  const routes = workloadRuntimeModule.listClusterRoutes(
+    [labelled],
+    new Map<string, PeerSnapshot>(),
+    { peers: [] },
+  );
+  const found = routes.find((r) => r.workload === "exp" && r.model === "exp/model.gguf");
+  expect(found).toBeDefined();
+  expect(routeRecord(found!)["labels"]).toEqual({
+    "llamactl.io/qualification": "validated",
+    team: "eval",
+  });
 });

@@ -2,12 +2,15 @@ import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { RouteCandidate, RouteCatalog } from "../src/routing/catalog.js";
 import type { ResolvedEnv } from "../src/types.js";
 import type { PeerSnapshot } from "../src/workloadRuntime.js";
 
 import { resolveEnv } from "../src/env.js";
 import { openaiProxy } from "../src/index.js";
+import * as routeCatalogModule from "../src/routing/catalog.js";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
+import * as workloadRuntimeModule from "../src/workloadRuntime.js";
 import { installConditionalChatUpstream } from "./conditionalUpstream.js";
 
 const originalFetch = globalThis.fetch;
@@ -1811,4 +1814,261 @@ describe("known defects at 7443403 (fix in later slices)", () => {
       t.cleanup();
     }
   });
+});
+
+// ---------------------------------------------------------------------------
+// #518 B-4 — experimental qualification in the proxy route builders. The
+// catalog join, peer snapshot labels, selectCatalogCandidates and the
+// "experimental-excluded" rejection land with the fix; the widened views
+// below keep these RED cases typechecking before those exports exist
+// (undefined at runtime on the base revision, so the typeof guard fails by
+// assertion first).
+// ---------------------------------------------------------------------------
+
+const EXPERIMENTAL_CATALOG_TSV =
+  'exp-model\tExp test\texp\tcustom\tcustom\texp/model.gguf\torg/exp\tgguf\t{"qualification":{"stage":"experimental"}}\n';
+
+const writeExperimentalCatalog = (dir: string): void => {
+  writeFileSync(join(dir, "curated-models.tsv"), EXPERIMENTAL_CATALOG_TSV);
+};
+
+// selectCatalogCandidates lands with #518; the widened view lets the RED
+// cases call it before the export exists.
+const selectCatalogCandidates = (
+  routeCatalogModule as unknown as {
+    selectCatalogCandidates?: (
+      catalog: RouteCatalog,
+      publicModelId: string,
+      opts?: { pinned?: boolean },
+    ) => {
+      eligible: RouteCandidate[];
+      rejected: { candidate: RouteCandidate; rejection: { reason: string } }[];
+    };
+  }
+).selectCatalogCandidates;
+
+const adQualificationStage = (ad: unknown): unknown =>
+  (ad as { qualification?: { stage?: unknown } } | null | undefined)?.qualification?.stage;
+
+const clusterCatalog = (env: ResolvedEnv): RouteCatalog =>
+  routeCatalogModule.buildRouteCatalog({
+    routes: workloadRuntimeModule.listClusterRoutes(
+      workloadRuntimeModule.listLocalRoutes(env),
+      new Map<string, PeerSnapshot>(),
+      { peers: [] },
+    ),
+  });
+
+const chatRequest = (model: string): Request =>
+  new Request("http://localhost/v1/chat/completions", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: "user", content: "hi" }],
+    }),
+  });
+
+test("an experimental route loses an alias collision", async () => {
+  const t = tempEnv();
+  const warnSpy = spyOn(console, "warn").mockImplementation(() => undefined);
+  try {
+    writeExperimentalCatalog(t.dir);
+    writeLlamaServerWorkload(t.dir, "a-exp", {
+      rel: "exp/model.gguf",
+      port: 8321,
+      extraArgs: ["--alias", "shared-alias"],
+    });
+    writeLlamaServerWorkload(t.dir, "b-prod", {
+      rel: "prod/model.gguf",
+      port: 8322,
+      extraArgs: ["--alias", "shared-alias"],
+    });
+    const upstream = installConditionalChatUpstream();
+
+    const res = await openaiProxy.proxyOpenAI(chatRequest("shared-alias"), t.env);
+
+    expect(res.status).toBe(200);
+    const chatCalls = upstream.calls.filter((c) => c.url.endsWith("/v1/chat/completions"));
+    expect(chatCalls).toHaveLength(1);
+    expect(chatCalls[0]!.url).toBe("http://127.0.0.1:8322/v1/chat/completions");
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[openaiProxy] route-map collision on model='shared-alias': keeping ModelRun:b-prod, ignoring ModelRun:a-exp",
+    );
+  } finally {
+    warnSpy.mockRestore();
+    t.cleanup();
+  }
+});
+
+test("an experimental exact pin still forwards to its own port", async () => {
+  const t = tempEnv();
+  try {
+    writeExperimentalCatalog(t.dir);
+    writeLlamaServerWorkload(t.dir, "a-exp", {
+      rel: "exp/model.gguf",
+      port: 8321,
+      extraArgs: ["--alias", "shared-alias"],
+    });
+    writeLlamaServerWorkload(t.dir, "b-prod", {
+      rel: "prod/model.gguf",
+      port: 8322,
+      extraArgs: ["--alias", "shared-alias"],
+    });
+    const upstream = installConditionalChatUpstream();
+
+    const res = await openaiProxy.proxyOpenAI(chatRequest("exp/model.gguf"), t.env);
+
+    expect(res.status).toBe(200);
+    const chatCalls = upstream.calls.filter((c) => c.url.endsWith("/v1/chat/completions"));
+    expect(chatCalls).toHaveLength(1);
+    expect(chatCalls[0]!.url).toBe("http://127.0.0.1:8321/v1/chat/completions");
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("an experimental route never captures a default-target id", async () => {
+  const t = tempEnv({ LLAMA_CPP_PORT: "17777", LLAMA_CPP_SERVER_ALIAS: "default-alias" });
+  try {
+    writeExperimentalCatalog(t.dir);
+    writeLlamaServerWorkload(t.dir, "wl-exp", {
+      rel: "exp/model.gguf",
+      port: 8331,
+      extraArgs: ["--alias", "default-alias"],
+    });
+    writeLlamaServerWorkload(t.dir, "wl-prod", {
+      rel: "prod/model.gguf",
+      port: 8332,
+    });
+    const upstream = installConditionalChatUpstream();
+
+    const res = await openaiProxy.proxyOpenAI(chatRequest("default-alias"), t.env);
+
+    expect(res.status).toBe(200);
+    expect(upstream.calls).toHaveLength(1);
+    expect(upstream.calls[0]!.url).toBe("http://127.0.0.1:17777/v1/chat/completions");
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("/v1/models flags experimental entries", () => {
+  const t = tempEnv();
+  try {
+    writeExperimentalCatalog(t.dir);
+    writeLlamaServerWorkload(t.dir, "wl-exp", { rel: "exp/model.gguf", port: 8340 });
+    writeLlamaServerWorkload(t.dir, "wl-prod", { rel: "prod/model.gguf", port: 8341 });
+
+    const models = openaiProxy.listOpenAIModels(t.env);
+    const byId = new Map(models.data.map((m) => [m.id, m as unknown as Record<string, unknown>]));
+    const expEntry = byId.get("exp/model.gguf");
+    const prodEntry = byId.get("prod/model.gguf");
+    expect(expEntry?.["experimental"]).toBe(true);
+    expect(prodEntry !== undefined && "experimental" in prodEntry).toBe(false);
+    expect(expEntry?.["capabilities"]).toEqual(["chat"]);
+    expect(prodEntry?.["capabilities"]).toEqual(["chat"]);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("legacy and unified agree on experimental exclusion", async () => {
+  const t = tempEnv();
+  try {
+    writeExperimentalCatalog(t.dir);
+    writeLlamaServerWorkload(t.dir, "a-exp", {
+      rel: "exp/model.gguf",
+      port: 8321,
+      extraArgs: ["--alias", "shared-alias"],
+    });
+    writeLlamaServerWorkload(t.dir, "b-prod", {
+      rel: "prod/model.gguf",
+      port: 8322,
+      extraArgs: ["--alias", "shared-alias"],
+    });
+    const upstream = installConditionalChatUpstream();
+
+    const res = await openaiProxy.proxyOpenAI(chatRequest("shared-alias"), t.env);
+
+    expect(res.status).toBe(200);
+    const chatCalls = upstream.calls.filter((c) => c.url.endsWith("/v1/chat/completions"));
+    expect(chatCalls).toHaveLength(1);
+    expect(chatCalls[0]!.url).toBe("http://127.0.0.1:8322/v1/chat/completions");
+
+    const catalog = clusterCatalog(t.env);
+    const shared = routeCatalogModule.effectiveCandidate(catalog, "shared-alias");
+    expect(shared?.advertisement.endpoint).toBe("http://127.0.0.1:8322");
+    const expCand = routeCatalogModule.effectiveCandidate(catalog, "exp/model.gguf");
+    expect(adQualificationStage(expCand?.advertisement)).toBe("experimental");
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("documented divergence: default-target ids", async () => {
+  const t = tempEnv({ LLAMA_CPP_PORT: "17777", LLAMA_CPP_SERVER_ALIAS: "default-alias" });
+  try {
+    writeExperimentalCatalog(t.dir);
+    writeLlamaServerWorkload(t.dir, "wl-exp", {
+      rel: "exp/model.gguf",
+      port: 8331,
+      extraArgs: ["--alias", "default-alias"],
+    });
+    writeLlamaServerWorkload(t.dir, "wl-prod", {
+      rel: "prod/model.gguf",
+      port: 8332,
+    });
+    const upstream = installConditionalChatUpstream();
+
+    const res = await openaiProxy.proxyOpenAI(chatRequest("default-alias"), t.env);
+
+    expect(res.status).toBe(200);
+    expect(upstream.calls).toHaveLength(1);
+    expect(upstream.calls[0]!.url).toBe("http://127.0.0.1:17777/v1/chat/completions");
+
+    const catalog = clusterCatalog(t.env);
+    const winner = routeCatalogModule.effectiveCandidate(catalog, "default-alias");
+    expect(winner?.legacyWinner).toBe(true);
+    expect(winner?.advertisement.deploymentId).toContain("wl-exp");
+
+    expect(typeof selectCatalogCandidates).toBe("function");
+    const sel = selectCatalogCandidates?.(catalog, "default-alias", { pinned: false });
+    expect(sel?.eligible).toEqual([]);
+    expect(sel?.rejected).toHaveLength(1);
+    expect(sel?.rejected[0]?.rejection).toEqual({ reason: "experimental-excluded" });
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a local exact pin is not sent to an unlabeled peer", async () => {
+  const t = tempEnv();
+  try {
+    writeExperimentalCatalog(t.dir);
+    writeLlamaServerWorkload(t.dir, "wl-exp", { rel: "exp/model.gguf", port: 8341 });
+    openaiProxy.__setOpenAIProxyClusterRoutingForTests({
+      clusterPeers: [{ id: "peer-x", endpoint: "https://peer-x.test:443" }],
+      peerSnapshots: new Map<string, PeerSnapshot>([
+        [
+          "peer-x",
+          {
+            workloads: [{ modelId: "exp/model.gguf", port: 9200 }],
+            pressure: "NORMAL",
+            fetchedAt: Date.now(),
+          },
+        ],
+      ]),
+    });
+    const upstream = installConditionalChatUpstream();
+
+    const res = await openaiProxy.proxyOpenAI(chatRequest("exp/model.gguf"), t.env);
+
+    expect(res.status).toBe(200);
+    const chatCalls = upstream.calls.filter((c) => c.url.endsWith("/v1/chat/completions"));
+    expect(chatCalls).toHaveLength(1);
+    expect(chatCalls[0]!.url).toBe("http://127.0.0.1:8341/v1/chat/completions");
+  } finally {
+    t.cleanup();
+  }
 });

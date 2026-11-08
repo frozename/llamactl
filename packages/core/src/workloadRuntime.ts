@@ -1,8 +1,10 @@
 import { basename, join } from "node:path";
 
 import type { EngineName } from "./engines/index.js";
+import type { QualificationStage } from "./routing/capabilities.js";
 import type { ResolvedEnv } from "./types.js";
 
+import { listCatalog } from "./catalog.js";
 import { modelhostPidFile, readModelHostState } from "./engines/state.js";
 import { resolveEnv } from "./env.js";
 import {
@@ -11,6 +13,7 @@ import {
   type PidVerdict,
   verifyPidFiles,
 } from "./pidIdentity.js";
+import { isExperimentalRoute, QUALIFICATION_LABEL } from "./routing/capabilities.js";
 import {
   existsSync,
   lstatSync,
@@ -40,6 +43,14 @@ export interface LocalRoute {
   engine: EngineName;
   kind: "ModelRun" | "ModelHost";
   pid: number;
+  /** Labels carried alongside the route (#518); the qualification label
+   *  (llamactl.io/qualification) can flag a route experimental. */
+  labels?: Readonly<Record<string, string>>;
+  /** Catalog qualification stage joined by the route's rel/model id (#518).
+   *  Carried as a plain string so hand-built routes and inherited peer
+   *  stages need no cast; catalog rows and advertisements validate the
+   *  stage against QUALIFICATION_STAGES at their own boundaries. */
+  qualificationStage?: string;
 }
 
 export interface PeerSnapshot {
@@ -48,7 +59,14 @@ export interface PeerSnapshot {
    *  reads agree, null otherwise. Used to invalidate cross-node response
    *  caches on a peer restart/swap. Optional for back-compat with peers that
    *  don't advertise it. */
-  workloads: { modelId: string; port: number; revision?: string | null }[];
+  workloads: {
+    modelId: string;
+    port: number;
+    revision?: string | null;
+    /** Peer-advertised labels (#518); the qualification label can flag the
+     *  peer route experimental so an experimental-only id stays shadowed. */
+    labels?: Record<string, string>;
+  }[];
   pressure: "NORMAL" | "HIGH";
   fetchedAt: number;
 }
@@ -83,6 +101,43 @@ export interface ClusterConfigLike {
 
 const PEER_ROUTE_STALE_MS = 30_000;
 
+/** Resolved path of the operator's custom catalog file, honouring
+ *  LOCAL_AI_CUSTOM_CATALOG_FILE then the runtime-dir default. Never reads
+ *  process.env — the ResolvedEnv is the only input. */
+export function customCatalogFileFor(resolved: ResolvedEnv): string {
+  const file = resolved.LOCAL_AI_CUSTOM_CATALOG_FILE;
+  if (!file) return join(resolved.LOCAL_AI_RUNTIME_DIR, "curated-models.tsv");
+  return file;
+}
+
+/**
+ * Qualification stage per catalog rel, builtin rows first so the last row
+ * per rel wins and custom rows override builtins (#518). A later row without
+ * a qualification clears an earlier one.
+ */
+export function catalogQualificationStages(resolved: ResolvedEnv): Map<string, QualificationStage> {
+  const stages = new Map<string, QualificationStage>();
+  for (const row of listCatalog("all", { customCatalogFile: customCatalogFileFor(resolved) })) {
+    const stage = row.qualification?.stage;
+    if (stage === undefined) stages.delete(row.rel);
+    else stages.set(row.rel, stage);
+  }
+  return stages;
+}
+
+/** Join the catalog stage onto one dir's routes. The key is the first
+ *  route's model only — state.rel for ModelRun, modelAliases[0] for
+ *  ModelHost — so aliases never match catalog rows (#518). */
+function withCatalogStages(
+  routes: LocalRoute[],
+  stageByModel: ReadonlyMap<string, QualificationStage>,
+): LocalRoute[] {
+  const key = routes[0]?.model;
+  const stage = key === undefined ? undefined : stageByModel.get(key);
+  if (stage === undefined) return routes;
+  return routes.map((route) => ({ ...route, qualificationStage: stage }));
+}
+
 function endpointPortForUrl(url: URL): number {
   if (url.port) {
     const parsed = Number.parseInt(url.port, 10);
@@ -91,12 +146,92 @@ function endpointPortForUrl(url: URL): number {
   return url.protocol === "https:" ? 443 : 80;
 }
 
-/** Append routes for one healthy peer snapshot, deduplicating on model id. */
+interface PeerAdmissionHolder {
+  /** True while every admitted route for this model id is experimental. */
+  experimentalOnly: boolean;
+  /** Qualification stage of the first local route for this id, inherited by
+   *  unlabeled peer routes when stageByModel has no entry (#518). */
+  stage?: string;
+}
+
+function seedPeerHolders(localRoutes: readonly LocalRoute[]): Map<string, PeerAdmissionHolder> {
+  const holders = new Map<string, PeerAdmissionHolder>();
+  for (const route of localRoutes) {
+    const holder = holders.get(route.model);
+    if (holder === undefined) {
+      holders.set(route.model, {
+        experimentalOnly: isExperimentalRoute(route),
+        ...(route.qualificationStage !== undefined ? { stage: route.qualificationStage } : {}),
+      });
+    } else if (!isExperimentalRoute(route)) {
+      holder.experimentalOnly = false;
+    }
+  }
+  return holders;
+}
+
+/** Copy peer labels only when they are a plain object of string values.
+ *  The runtime guards cover a remote snapshot whose JSON carries null or
+ *  non-string values despite the declared type. */
+function sanitizePeerLabels(
+  labels: Record<string, string> | undefined,
+): Record<string, string> | undefined {
+  if (!labels || Object.getPrototypeOf(labels) !== Object.prototype) {
+    return undefined;
+  }
+  for (const value of Object.values(labels)) {
+    if (typeof value !== "string") return undefined;
+  }
+  return { ...labels };
+}
+
+/**
+ * #518 admission: a route is admitted when no route exists for its id yet,
+ * or when the id is held only by experimental routes and this route is not
+ * experimental (the holder then flips to mixed). An experimental route for
+ * an id with a non-experimental holder is skipped, so experimental never
+ * shadows a stable route.
+ */
+function admitPeerRoute(
+  holders: Map<string, PeerAdmissionHolder>,
+  route: { model: string; labels?: Readonly<Record<string, string>>; qualificationStage?: string },
+): boolean {
+  const holder = holders.get(route.model);
+  const experimental = isExperimentalRoute(route);
+  if (holder === undefined) {
+    holders.set(route.model, { experimentalOnly: experimental });
+    return true;
+  }
+  if (holder.experimentalOnly && !experimental) {
+    holder.experimentalOnly = false;
+    return true;
+  }
+  return false;
+}
+
+function peerTlsFields(peer: ClusterConfigPeer): {
+  certificate?: string;
+  tlsServerName?: string;
+  token?: string;
+} {
+  return {
+    ...(peer.certificate !== undefined ? { certificate: peer.certificate } : {}),
+    ...(peer.tlsServerName !== undefined ? { tlsServerName: peer.tlsServerName } : {}),
+    ...(peer.token !== undefined ? { token: peer.token } : {}),
+  };
+}
+
+/** Append routes for one healthy peer snapshot, admitting per #518.
+ *  Unlabeled peer routes inherit a qualification stage (stageByModel first,
+ *  then the first local route's stage), so a peer serving a locally
+ *  experimental id stays shadowed; an explicit peer label always beats the
+ *  inherited stage. */
 function appendPeerRoutes(
   routes: ClusterRoute[],
-  seenModels: Set<string>,
+  holders: Map<string, PeerAdmissionHolder>,
   peer: ClusterConfigPeer,
   snapshot: PeerSnapshot,
+  stageByModel: ReadonlyMap<string, string> | undefined,
 ): void {
   let endpoint: URL;
   try {
@@ -106,9 +241,13 @@ function appendPeerRoutes(
   }
 
   for (const workload of snapshot.workloads) {
-    if (seenModels.has(workload.modelId)) continue;
-    seenModels.add(workload.modelId);
-    routes.push({
+    const labels = sanitizePeerLabels(workload.labels);
+    // An explicit peer qualification label beats any inherited stage.
+    const inherited =
+      labels?.[QUALIFICATION_LABEL] === undefined
+        ? (stageByModel?.get(workload.modelId) ?? holders.get(workload.modelId)?.stage)
+        : undefined;
+    const route: ClusterRoute = {
       workload: `${peer.id}:${workload.modelId}`,
       model: workload.modelId,
       host: endpoint.hostname,
@@ -117,30 +256,42 @@ function appendPeerRoutes(
       kind: "ModelRun",
       isPeer: true,
       peerEndpoint: peer.endpoint,
-      ...(peer.certificate !== undefined ? { certificate: peer.certificate } : {}),
-      ...(peer.tlsServerName !== undefined ? { tlsServerName: peer.tlsServerName } : {}),
-      ...(peer.token !== undefined ? { token: peer.token } : {}),
+      ...peerTlsFields(peer),
       targetNodeId: peer.id,
       revision: workload.revision ?? null,
-    });
+      ...(labels !== undefined ? { labels } : {}),
+      ...(inherited !== undefined ? { qualificationStage: inherited } : {}),
+    };
+    if (!admitPeerRoute(holders, route)) continue;
+    routes.push(route);
   }
 }
 
+/**
+ * Merge local and peer routes for cluster routing.
+ *
+ * `opts.stageByModel` is keyed by the exact model id only — there is no
+ * basename(rel) alias matching, so a peer advertising a basename alias of a
+ * locally experimental rel does not inherit the stage. Known limitation
+ * tracked by the #518 follow-up (create-proxy) alongside the legacyWinner
+ * divergence documented on RouteCandidate in routing/catalog.ts.
+ */
 export function listClusterRoutes(
   localRoutes: LocalRoute[],
   peerSnapshots: Map<string, PeerSnapshot>,
   config: ClusterConfigLike,
   now: number = Date.now(),
+  opts: { stageByModel?: ReadonlyMap<string, string> } = {},
 ): ClusterRoute[] {
   const routes: ClusterRoute[] = [...localRoutes];
-  const seenModels = new Set(localRoutes.map((route) => route.model));
+  const holders = seedPeerHolders(localRoutes);
 
   for (const peer of config.peers) {
     const snapshot = peerSnapshots.get(peer.id);
     if (!snapshot) continue;
     if (snapshot.pressure === "HIGH") continue;
     if (now - snapshot.fetchedAt > PEER_ROUTE_STALE_MS) continue;
-    appendPeerRoutes(routes, seenModels, peer, snapshot);
+    appendPeerRoutes(routes, holders, peer, snapshot, opts.stageByModel);
   }
 
   return routes;
@@ -336,7 +487,10 @@ export function listLocalRoutes(
     dirs.flatMap((dr) => recordsOf(dr)),
     deps,
   );
-  return dirs.flatMap((dr) => routesForDir(dr, verdicts, resolved));
+  const stageByModel = catalogQualificationStages(resolved);
+  return dirs.flatMap((dr) =>
+    withCatalogStages(routesForDir(dr, verdicts, resolved), stageByModel),
+  );
 }
 
 /**
@@ -356,7 +510,10 @@ export function listWorkloadRoutes(
   if (name.includes("\0")) return [];
   if (lstatSync(join(root, name), { throwIfNoEntry: false })?.isDirectory() !== true) return [];
   const dr = dirPidRecords(root, name, resolved);
-  return routesForDir(dr, verifyPidFiles(recordsOf(dr), deps), resolved);
+  return withCatalogStages(
+    routesForDir(dr, verifyPidFiles(recordsOf(dr), deps), resolved),
+    catalogQualificationStages(resolved),
+  );
 }
 
 export function listWorkloadDirs(resolved: ResolvedEnv = resolveEnv()): string[] {
