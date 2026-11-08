@@ -519,6 +519,35 @@ describe("checkServingReadiness (single-shot, injectable fetch)", () => {
     }
   });
 
+  test("a 200 response whose json() never settles is bounded by timeoutMs", async () => {
+    const check = requireCheckServingReadiness();
+    const tripwire = installFetchTripwire();
+    const stalledBody = new ReadableStream<Uint8Array>({
+      start(): void {
+        // Deliberately never enqueue and never close: response.json()
+        // on this body never settles, so only the abort race bounds it.
+      },
+    });
+    const stalledFetch = Object.assign(
+      (_input: Parameters<typeof fetch>[0], _init?: RequestInit): Promise<Response> =>
+        Promise.resolve(new Response(stalledBody, { status: 200 })),
+      { preconnect: globalThis.fetch.preconnect },
+    );
+    try {
+      const start = Date.now();
+      const result = await check(
+        { host: "127.0.0.1", port: 18080 },
+        { path: "/ready", expectJson: { status: "ready" } },
+        { fetch: stalledFetch, timeoutMs: 50 },
+      );
+      expect(result).toBe(false);
+      expect(Date.now() - start).toBeLessThan(1000);
+      expect(tripwire.calls).toEqual([]);
+    } finally {
+      tripwire.restore();
+    }
+  }, 2000);
+
   test("the probe URL brackets an IPv6 host and keeps the readiness path verbatim", async () => {
     const check = requireCheckServingReadiness();
     const { stub, calls, setRoutes } = makeStub();
