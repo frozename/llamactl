@@ -28,6 +28,22 @@ const T = {
 };
 
 const policy = { thresholds: { candidate: T } };
+const autoPolicy = { thresholds: { candidate: T }, autoApply: true };
+
+// Inclusive boundaries: each metric sitting exactly at its min (or
+// exactly at maxRegression) must still yield a proposal, pinning `<`
+// vs `<=` and `>` vs `>=` in the threshold comparisons
+// (frozename/llamactl#518 review).
+const METRIC_BOUNDARIES: readonly (readonly [PromotionNs.PromotionMetric, number])[] = [
+  ["firstAttemptSuccess", T.minFirstAttemptSuccess],
+  ["repairSuccess", T.minRepairSuccess],
+  ["toolCallCorrectness", T.minToolCallCorrectness],
+  ["structuredOutputValidity", T.minStructuredOutputValidity],
+  ["regression", T.maxRegression],
+  ["improvement", T.minImprovement],
+  ["memoryStability", T.minMemoryStability],
+  ["runtimeReliability", T.minRuntimeReliability],
+];
 
 const E = {
   evaluatedTasks: 12,
@@ -95,6 +111,38 @@ describe("qualification.promotion.proposePromotion", () => {
       },
     });
   });
+
+  test("treats evaluatedTasks equal to minEvaluatedTasks as sufficient", async () => {
+    const { proposePromotion } = await loadPromotion();
+    const decision = proposePromotion({
+      rel: "m.gguf",
+      declared: "experimental",
+      evidence: { ...E, evaluatedTasks: T.minEvaluatedTasks },
+      policy,
+    });
+    expect(decision).toMatchObject({
+      kind: "proposal",
+      proposal: { rel: "m.gguf", from: "experimental", to: "candidate" },
+    });
+  });
+
+  for (const [metric, boundary] of METRIC_BOUNDARIES) {
+    test(`treats ${metric} exactly at its threshold as passing`, async () => {
+      const { proposePromotion } = await loadPromotion();
+      const evidence: PromotionNs.PromotionEvidence = { ...E, evaluatedTasks: T.minEvaluatedTasks };
+      evidence[metric] = boundary;
+      const decision = proposePromotion({
+        rel: "m.gguf",
+        declared: "experimental",
+        evidence,
+        policy,
+      });
+      expect(decision).toMatchObject({
+        kind: "proposal",
+        proposal: { rel: "m.gguf", from: "experimental", to: "candidate" },
+      });
+    });
+  }
 
   test("never skips a stage: candidate promotes to validated", async () => {
     const { proposePromotion } = await loadPromotion();
@@ -248,7 +296,7 @@ describe("qualification.promotion.proposePromotion", () => {
 });
 
 describe("qualification.promotion.applyPromotion", () => {
-  test("proposes without applying when autoApply is absent", async () => {
+  test("proposes without applying when the policy omits autoApply", async () => {
     const { applyPromotion, proposePromotion } = await loadPromotion();
     const calls: unknown[] = [];
     const apply = (p: unknown): void => {
@@ -260,11 +308,11 @@ describe("qualification.promotion.applyPromotion", () => {
       evidence: E,
       policy,
     });
-    expect(applyPromotion(decision, {})).toMatchObject({ status: "proposed" });
+    expect(applyPromotion(decision, { policy, apply })).toEqual({ status: "proposed" });
     expect(calls).toHaveLength(0);
   });
 
-  test("proposes without applying when autoApply is false", async () => {
+  test("proposes without applying when the policy sets autoApply false", async () => {
     const { applyPromotion, proposePromotion } = await loadPromotion();
     const calls: unknown[] = [];
     const apply = (p: unknown): void => {
@@ -276,13 +324,16 @@ describe("qualification.promotion.applyPromotion", () => {
       evidence: E,
       policy,
     });
-    expect(applyPromotion(decision, { autoApply: false, apply })).toMatchObject({
-      status: "proposed",
-    });
+    expect(
+      applyPromotion(decision, {
+        policy: { thresholds: { candidate: T }, autoApply: false },
+        apply,
+      }),
+    ).toEqual({ status: "proposed" });
     expect(calls).toHaveLength(0);
   });
 
-  test("applies the proposal when autoApply is true", async () => {
+  test("applies the proposal when the policy sets autoApply true", async () => {
     const { applyPromotion, proposePromotion } = await loadPromotion();
     const calls: unknown[] = [];
     const apply = (p: unknown): void => {
@@ -294,11 +345,22 @@ describe("qualification.promotion.applyPromotion", () => {
       evidence: E,
       policy,
     });
-    expect(applyPromotion(decision, { autoApply: true, apply })).toMatchObject({
+    expect(applyPromotion(decision, { policy: autoPolicy, apply })).toEqual({
       status: "applied",
       to: "candidate",
     });
     expect(calls).toHaveLength(1);
+  });
+
+  test("stays proposed when autoApply is true but no writer is injected", async () => {
+    const { applyPromotion, proposePromotion } = await loadPromotion();
+    const decision = proposePromotion({
+      rel: "m.gguf",
+      declared: "experimental",
+      evidence: E,
+      policy,
+    });
+    expect(applyPromotion(decision, { policy: autoPolicy })).toEqual({ status: "proposed" });
   });
 
   test("skips kind-none decisions even with autoApply", async () => {
@@ -313,9 +375,7 @@ describe("qualification.promotion.applyPromotion", () => {
       evidence: { ...E, evaluatedTasks: 3 },
       policy,
     });
-    expect(applyPromotion(decision, { autoApply: true, apply })).toMatchObject({
-      status: "skipped",
-    });
+    expect(applyPromotion(decision, { policy: autoPolicy, apply })).toEqual({ status: "skipped" });
     expect(calls).toHaveLength(0);
   });
 });

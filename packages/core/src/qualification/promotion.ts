@@ -176,7 +176,7 @@ export function proposePromotion(input: ProposePromotionInput): PromotionDecisio
 }
 
 export interface ApplyPromotionOptions {
-  autoApply?: boolean;
+  policy: PromotionPolicyInput;
   apply?: (proposal: PromotionProposal) => void;
 }
 
@@ -186,15 +186,19 @@ export type ApplyPromotionResult =
   | { status: "applied"; to: PromotionTarget };
 
 /**
- * Gate a decision through autoApply. The catalog-row writer is
- * injected; the real one is built in E-14.
+ * Gate a decision through the parsed policy's autoApply, the single
+ * source of truth (frozename/llamactl#518 review). The catalog-row
+ * writer is injected; the real one is built in E-14. autoApply without
+ * a writer writes nothing, so the result stays `proposed` rather than
+ * claiming an apply that never happened.
  */
 export function applyPromotion(
   decision: PromotionDecision,
   options: ApplyPromotionOptions,
 ): ApplyPromotionResult {
   if (decision.kind === "none") return { status: "skipped" };
-  if (options.autoApply !== true) return { status: "proposed" };
-  options.apply?.(decision.proposal);
+  const { autoApply } = PromotionPolicySchema.parse(options.policy);
+  if (!autoApply || options.apply === undefined) return { status: "proposed" };
+  options.apply(decision.proposal);
   return { status: "applied", to: decision.proposal.to };
 }

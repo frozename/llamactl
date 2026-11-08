@@ -88,9 +88,11 @@ export function readQualificationOverrides(file: string): QualificationOverride[
 /**
  * Write an override row, replacing the existing `(rel, action)` row in
  * place when present. Validation runs before any IO, so an invalid row
- * never touches the file. Returns the persisted row; a non-void return
- * keeps the contract test's `expect(() => fn(...))` shorthand
- * lint-clean under `no-confusing-void-expression`
+ * never touches the file. The file is rewritten from the parsed rows,
+ * mirroring writePresetOverride: `#` comments and invalid rows present
+ * before the write do not survive it. Returns the persisted row; a
+ * non-void return keeps the contract test's `expect(() => fn(...))`
+ * shorthand lint-clean under `no-confusing-void-expression`
  * (frozename/llamactl#518).
  */
 export function writeQualificationOverride(
@@ -111,7 +113,9 @@ export function writeQualificationOverride(
 /**
  * Remove the `(rel, action)` row if present. Returns `true` only when
  * a row was actually removed. Deletes the file entirely when no rows
- * remain, mirroring deletePresetOverride.
+ * remain, mirroring deletePresetOverride. Like
+ * writeQualificationOverride, the rewrite drops `#` comments and
+ * invalid rows that predate the delete.
  */
 export function deleteQualificationOverride(
   file: string,
