@@ -26,6 +26,27 @@ describe("ctxForModel", () => {
     expect(ctxForModel("foo/bar-UD-Q4_K_XL.gguf", env)).toBe("32768");
   });
 
+  // #515: GLM-5.3-Flash gets its own 128K envelope. Same fail-closed
+  // shape as the Qwen rule — the leading segment must start with
+  // `GLM-5.3` case-sensitively, so vendor-prefixed dirs, older GLM
+  // majors, and lowercase dirs all stay on the Gemma envelope.
+  describe("GLM-5.3 ctx envelope (#515)", () => {
+    const GLM_REL = "GLM-5.3-Flash-AJ-GGUF/AJ-IQ2_XXS/GLM-5.3-Flash-AJ-IQ2_XXS-00001-of-00002.gguf";
+
+    test("GLM-5.3-Flash-AJ rel uses the GLM ctx", () => {
+      expect(ctxForModel(GLM_REL, env)).toBe("131072");
+    });
+
+    test("non-GLM-5.3 leading segments stay on the Gemma envelope", () => {
+      // GLM is not the leading segment.
+      expect(ctxForModel("mlx-community/GLM-5.3-Flash-4bit", env)).toBe("32768");
+      // Case-sensitive: the on-disk dir is capital-GLM.
+      expect(ctxForModel("glm-5.3-flash-GGUF/x.gguf", env)).toBe("32768");
+      // The rule is scoped to GLM-5.3.
+      expect(ctxForModel("GLM-4.6-GGUF/GLM-4.6-Q4_K_M.gguf", env)).toBe("32768");
+    });
+  });
+
   // Pins the routing RULE, not a model list: any leading path segment
   // starting with `Qwen` takes the Qwen envelope, so a future release
   // cannot silently regress into the Gemma envelope (which would poison

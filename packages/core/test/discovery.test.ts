@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import type { DiscoveryFit } from "../src/discovery.js";
 import type { HFModelInfo } from "../src/schemas.js";
-import type { MachineProfile } from "../src/types.js";
+import type { MachineProfile, ModelClass } from "../src/types.js";
 
 import {
   classifyRepo,
@@ -34,6 +34,9 @@ describe("discovery.classifyRepo", () => {
     expect(classifyRepo("unsloth/qwen-3", "", "")).toBe("reasoning");
     expect(classifyRepo("unsloth/unknown", "", "reasoning")).toBe("reasoning");
     expect(classifyRepo("unsloth/qwq-32b", "", "")).toBe("reasoning");
+  });
+  test("GLM-5.3-Flash repo name -> reasoning (#515)", () => {
+    expect(classifyRepo("aj9o9/GLM-5.3-Flash-GGUF", "", "")).toBe("reasoning");
   });
   test("default fallthrough -> general", () => {
     expect(classifyRepo("unsloth/random-llm", "", "")).toBe("general");
@@ -96,7 +99,13 @@ describe("discovery.discoveryFit size tiers", () => {
 
   async function withSeededTree(
     fn: (
-      probe: (repo: string, bytes: number, profile: MachineProfile) => Promise<DiscoveryFit>,
+      probe: (
+        repo: string,
+        bytes: number,
+        profile: MachineProfile,
+        klass?: ModelClass,
+      ) => Promise<DiscoveryFit>,
+      runtimeDir: string,
     ) => Promise<void>,
   ): Promise<void> {
     const runtimeDir = mkdtempSync(join(tmpdir(), "llamactl-fit-"));
@@ -104,22 +113,27 @@ describe("discovery.discoveryFit size tiers", () => {
       "LOCAL_AI_RUNTIME_DIR",
       "LOCAL_AI_RECOMMENDATIONS_SOURCE",
       "LOCAL_AI_HF_CACHE_TTL_SECONDS",
+      "LOCAL_AI_CUSTOM_CATALOG_FILE",
     ];
     const saved = new Map(keys.map((k) => [k, process.env[k]]));
     process.env["LOCAL_AI_RUNTIME_DIR"] = runtimeDir;
     process.env["LOCAL_AI_RECOMMENDATIONS_SOURCE"] = "hf";
     process.env["LOCAL_AI_HF_CACHE_TTL_SECONDS"] = "3600";
+    // Pin the custom catalog inside the temp runtime so a host
+    // curated-models.tsv can never leak declared memory into a probe.
+    process.env["LOCAL_AI_CUSTOM_CATALOG_FILE"] = join(runtimeDir, "curated-models.tsv");
     const probe = async (
       repo: string,
       bytes: number,
       profile: MachineProfile,
+      klass: ModelClass = "general",
     ): Promise<DiscoveryFit> => {
       const tree = [{ type: "file", path: FILE, size: bytes, lfs: { size: bytes } }];
       writeFileSync(repoTreeCacheFile(runtimeDir, repo), JSON.stringify(tree));
-      return await discoveryFit(profile, repo, "general", FILE);
+      return await discoveryFit(profile, repo, klass, FILE);
     };
     try {
-      await fn(probe);
+      await fn(probe, runtimeDir);
     } finally {
       for (const [k, v] of saved) {
         if (v === undefined) Reflect.deleteProperty(process.env, k);
@@ -152,6 +166,50 @@ describe("discovery.discoveryFit size tiers", () => {
   test("405b stays poor even on large-128g", async () => {
     await withSeededTree(async (probe) => {
       expect(await probe("meta/sizefit-405b", 60 * GIB, "large-128g")).toBe("poor");
+    });
+  });
+
+  // #515: catalog-declared memory beats the tree-size tier, and the
+  // reasoning deepseek-v4 clamp no longer swallows V4.1.
+  test("V4.1 with declared catalog memory defers to it", async () => {
+    await withSeededTree(async (probe, runtimeDir) => {
+      writeFileSync(
+        join(runtimeDir, "curated-models.tsv"),
+        [
+          "deepseek41-flash-test",
+          "DeepSeek V4.1 Flash Test",
+          "deepseek41",
+          "reasoning",
+          "candidate",
+          "DeepSeek-V4.1-Flash-Test-GGUF/model.gguf",
+          "example/DeepSeek-V4.1-Flash-Test-GGUF",
+          "gguf",
+          '{"memory":{"residentGiB":60}}',
+        ].join("\t") + "\n",
+      );
+      const repo = "example/DeepSeek-V4.1-Flash-Test-GGUF";
+      expect(await probe(repo, 200 * GIB, "large-128g", "reasoning")).toBe("excellent");
+    });
+  });
+
+  test("V4.1 without catalog meta is no longer swallowed by the deepseek-v4 clamp", async () => {
+    await withSeededTree(async (probe) => {
+      const repo = "example/DeepSeek-V4.1-Flash-NoMeta-GGUF";
+      expect(await probe(repo, 60 * GIB, "large-128g", "reasoning")).toBe("excellent");
+    });
+  });
+
+  test("deepseek-v3 and non-4.1 deepseek-v4 reasoning stays clamped to poor", async () => {
+    await withSeededTree(async (probe) => {
+      expect(await probe("deepseek-ai/DeepSeek-V3-GGUF", 60 * GIB, "large-128g", "reasoning")).toBe(
+        "poor",
+      );
+      expect(
+        await probe("unsloth/DeepSeek-V4-Flash-GGUF", 60 * GIB, "large-128g", "reasoning"),
+      ).toBe("poor");
+      expect(await probe("unsloth/DeepSeek-V4-Flash-GGUF", 60 * GIB, "large-128g", "general")).toBe(
+        "excellent",
+      );
     });
   });
 });
@@ -188,6 +246,161 @@ describe("discovery.filterMatches", () => {
     expect(filterMatches("qwen3", "general", "unsloth/Qwen3.5-9B-GGUF", "good")).toBe(true);
     expect(filterMatches("GEMMA", "general", "unsloth/gemma-4-27B-it-GGUF", "good")).toBe(true);
     expect(filterMatches("qwen3", "general", "unsloth/gemma-4-27B-it-GGUF", "good")).toBe(false);
+  });
+});
+
+describe("discovery.discoveryFit declared memory overrides", () => {
+  const GIB = 1024 ** 3;
+
+  async function withDeclaredMemory(
+    catalogLine: string,
+    fn: (
+      probe: (repo: string, file: string, profile: MachineProfile) => Promise<DiscoveryFit>,
+      runtimeDir: string,
+    ) => Promise<void>,
+  ): Promise<void> {
+    const runtimeDir = mkdtempSync(join(tmpdir(), "llamactl-declared-"));
+    const keys = [
+      "LOCAL_AI_RUNTIME_DIR",
+      "LOCAL_AI_RECOMMENDATIONS_SOURCE",
+      "LOCAL_AI_HF_CACHE_TTL_SECONDS",
+      "LOCAL_AI_CUSTOM_CATALOG_FILE",
+    ];
+    const saved = new Map(keys.map((k) => [k, process.env[k]]));
+    process.env["LOCAL_AI_RUNTIME_DIR"] = runtimeDir;
+    process.env["LOCAL_AI_RECOMMENDATIONS_SOURCE"] = "hf";
+    process.env["LOCAL_AI_HF_CACHE_TTL_SECONDS"] = "3600";
+    process.env["LOCAL_AI_CUSTOM_CATALOG_FILE"] = join(runtimeDir, "curated-models.tsv");
+    writeFileSync(join(runtimeDir, "curated-models.tsv"), catalogLine + "\n");
+    const probe = async (
+      repo: string,
+      file: string,
+      profile: MachineProfile,
+    ): Promise<DiscoveryFit> => {
+      return await discoveryFit(profile, repo, "general", file);
+    };
+    try {
+      await fn(probe, runtimeDir);
+    } finally {
+      for (const [k, v] of saved) {
+        if (v === undefined) Reflect.deleteProperty(process.env, k);
+        else process.env[k] = v;
+      }
+      rmSync(runtimeDir, { recursive: true, force: true });
+    }
+  }
+
+  test("declared 114 GiB on mac-mini-16g stays poor — no quant-name upgrade", async () => {
+    await withDeclaredMemory(
+      [
+        "big-q4",
+        "Big Q4",
+        "big",
+        "reasoning",
+        "candidate",
+        "Big-GGUF/Big-Q4_K_M.gguf",
+        "example/Big-GGUF",
+        "gguf",
+        '{"memory":{"residentGiB":114}}',
+      ].join("\t") + "\n",
+      async (probe) => {
+        // No family clamp matches this repo, so only a (skipped) Q4_K_M
+        // quant-name upgrade could lift the 114 GiB size tier.
+        const repo = "example/Big-GGUF";
+        const file = "Big-GGUF/Big-Q4_K_M.gguf";
+        expect(await probe(repo, file, "mac-mini-16g")).toBe("poor");
+      },
+    );
+  });
+
+  test("declared 114 GiB on balanced stays poor — no quant-name upgrade", async () => {
+    await withDeclaredMemory(
+      [
+        "big-q4",
+        "Big Q4",
+        "big",
+        "reasoning",
+        "candidate",
+        "Big-GGUF/Big-Q4_K_M.gguf",
+        "example/Big-GGUF",
+        "gguf",
+        '{"memory":{"residentGiB":114}}',
+      ].join("\t") + "\n",
+      async (probe) => {
+        // No family clamp matches this repo, so only a (skipped) Q4_K_M
+        // quant-name upgrade could lift the 114 GiB size tier.
+        const repo = "example/Big-GGUF";
+        const file = "Big-GGUF/Big-Q4_K_M.gguf";
+        expect(await probe(repo, file, "balanced")).toBe("poor");
+      },
+    );
+  });
+
+  test("declared 114 GiB on macbook-pro-48g stays poor — no quant-name upgrade", async () => {
+    await withDeclaredMemory(
+      [
+        "gemma4-26b-a4b",
+        "Gemma 4 26B A4B",
+        "gemma4",
+        "general",
+        "candidate",
+        "gemma-4-26b-a4b-Q8_0.gguf",
+        "example/gemma-4-26b-a4b-Q8_0-GGUF",
+        "gguf",
+        '{"memory":{"residentGiB":114}}',
+      ].join("\t") + "\n",
+      async (probe) => {
+        const repo = "example/gemma-4-26b-a4b-Q8_0-GGUF";
+        const file = "gemma-4-26b-a4b-Q8_0.gguf";
+        // 114 GiB on 48g exceeds the fair tier → poor; no upgrade applies.
+        expect(await probe(repo, file, "macbook-pro-48g")).toBe("poor");
+      },
+    );
+  });
+
+  test("declared 10 GiB with a 671b repo is clamped to poor on macbook-pro-48g and large-128g", async () => {
+    await withDeclaredMemory(
+      [
+        "mixtral-671b",
+        "Mixtral 671B",
+        "mixtral",
+        "general",
+        "candidate",
+        "mixtral-671b-Q8_0.gguf",
+        "example/mixtral-671b-Q8_0-GGUF",
+        "gguf",
+        '{"memory":{"residentGiB":10}}',
+      ].join("\t") + "\n",
+      async (probe) => {
+        const repo = "example/mixtral-671b-Q8_0-GGUF";
+        const file = "mixtral-671b-Q8_0.gguf";
+        // 10 GiB alone would rate well on both profiles; only the family-wide
+        // 671b ceiling makes it poor, so dropping that clamp fails here.
+        expect(await probe(repo, file, "macbook-pro-48g")).toBe("poor");
+        expect(await probe(repo, file, "large-128g")).toBe("poor");
+      },
+    );
+  });
+
+  test("declared 10 GiB without a clamped family keeps its size tier on macbook-pro-48g", async () => {
+    await withDeclaredMemory(
+      [
+        "small-q8",
+        "Small Q8",
+        "small",
+        "general",
+        "candidate",
+        "small-Q8_0.gguf",
+        "example/small-Q8_0-GGUF",
+        "gguf",
+        '{"memory":{"residentGiB":10}}',
+      ].join("\t") + "\n",
+      async (probe) => {
+        expect(await probe("example/small-Q8_0-GGUF", "small-Q8_0.gguf", "macbook-pro-48g")).toBe(
+          "excellent",
+        );
+      },
+    );
   });
 });
 

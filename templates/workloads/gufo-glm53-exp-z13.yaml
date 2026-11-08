@@ -1,0 +1,61 @@
+# EXPERIMENTAL GLM-5.3-Flash AJ-IQ2_XXS on the mikealanni/gufo fork
+# @2e499c39e4cd (build builds/fork-2e499c39-gpu, shim
+# llama-server-fork-pristine).
+#
+# This mirrors the Z13 workload record of the same name. It is committed
+# disabled so a reconciler can never co-start it beside production Gufo
+# (only one big GPU engine fits). Enabling it needs an explicit
+# operator-approved window that swaps production out.
+#
+# The drafter licence is unresolved (see the catalog row).
+#
+# The exact spellings of the cache-ram and draft-model flags were not
+# captured by the 2026-11-07 read-only probe. Diff them against
+# ~/DevStorage/llamactl-z13/state/workloads/gufo-glm53-exp.yaml on z13
+# before enabling.
+apiVersion: llamactl/v1
+kind: ModelHost
+metadata:
+  name: gufo-glm53-exp
+  labels:
+    family: glm53
+    arm: G2c8-incoai-dc77ff1c99ee
+    llamactl.io/qualification: experimental
+    llamactl.io/residency-group: z13-large-gpu
+spec:
+  engine: llamacpp
+  node: z13
+  enabled: false
+  binary: /home/alex/strix-halo-bench/glm-fleet/bin/llama-server-fork-pristine
+  # binaryNames lets llamactl identify and stop the fork shim (#531).
+  binaryNames:
+    - llama-server-fork-pristine
+  resources:
+    expectedMemoryGiB: 90
+  endpoint:
+    host: 127.0.0.1
+    port: 8081
+  hostedModels:
+    - rel: GLM-5.3-Flash-AJ-GGUF/AJ-IQ2_XXS/GLM-5.3-Flash-AJ-IQ2_XXS-00001-of-00002.gguf
+  extraArgs:
+    # --served-model-name must equal the GGUF basename, because a ModelHost
+    # routes by rel and basename.
+    - --served-model-name
+    - GLM-5.3-Flash-AJ-IQ2_XXS-00001-of-00002.gguf
+    - --sessions
+    - "1"
+    - --context
+    - "131072"
+    - --cache-ram
+    - "8192"
+    - --speculative
+    - dflash2
+    # The drafter is absolute because llamacpp only resolves -m and --lora
+    # against the models dir.
+    - -md
+    - /mnt/z13-models/models/GLM-5.3-Flash-DFlash2-GGUF/incoai-dc77ff1c99ee-bf16.gguf
+  readiness:
+    # /ready flips to 200 only once Gufo can serve (#220 measurement).
+    path: /ready
+    expectStatus: 200
+  restartPolicy: Never

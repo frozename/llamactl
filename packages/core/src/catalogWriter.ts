@@ -31,14 +31,18 @@ export type AddCuratedResult =
 
 /**
  * Derive a model family from the HF repo id. Mirrors the case ladder in
- * `llama-curated-add` verbatim so rows from the TS path file under the
- * same family bucket the shell would have produced.
+ * `llama-curated-add` so rows from the TS path file land under the same
+ * family bucket the shell would have produced. The glm53 / deepseek41 /
+ * mimo26 rules have no rows for these families in the shell ladder yet.
  */
 function deriveFamily(repo: string): string {
   const l = repo.toLowerCase();
   if (l.includes("gemma-4")) return "gemma4";
   if (l.includes("qwen3.6")) return "qwen36";
   if (l.includes("qwen3.5")) return "qwen35";
+  if (l.includes("glm-5.3")) return "glm53";
+  if (l.includes("deepseek-v4.1")) return "deepseek41";
+  if (l.includes("mimo-v2.6")) return "mimo26";
   if (l.includes("deepseek")) return "deepseek";
   return "custom";
 }
