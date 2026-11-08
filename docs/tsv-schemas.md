@@ -37,27 +37,27 @@ An optional compact JSON object carrying candidate metadata. It is emitted only 
 
 Canonical order: top-level keys are emitted in the order listed below, and nested keys in schema order, so a hand-written row round-trips byte-for-byte after a parse/format cycle.
 
-| key                         | type     | constraints                                                                                                                                                                                                                                                          |
-| --------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `availability.declared`     | enum     | `available` \| `unavailable`                                                                                                                                                                                                                                         |
-| `availability.reason`       | string   | optional when `available`; **required** when `unavailable` — a deliberate tightening over the originally-specified optional `reason?`, pending operator sign-off. Examples: `artifact-not-downloaded`, `runtime-unsupported`, `runtime-not-pinned`, `license-review` |
-| `qualification.stage`       | enum     | `experimental` \| `candidate` \| `validated` \| `production` \| `degraded`                                                                                                                                                                                           |
-| `qualification.since`       | string   | optional, non-empty                                                                                                                                                                                                                                                  |
-| `qualification.evidenceRef` | string   | optional, non-empty                                                                                                                                                                                                                                                  |
-| `runtime.engines`           | string[] | non-empty; each engine name non-empty                                                                                                                                                                                                                                |
-| `runtime.minBuild`          | string   | optional, non-empty                                                                                                                                                                                                                                                  |
-| `runtime.toolCallFormat`    | string   | optional, non-empty                                                                                                                                                                                                                                                  |
-| `runtime.reasoningFormat`   | string   | optional, non-empty                                                                                                                                                                                                                                                  |
-| `runtime.chatTemplate`      | string   | optional, non-empty                                                                                                                                                                                                                                                  |
-| `contextMax`                | int      | positive                                                                                                                                                                                                                                                             |
-| `params.totalB`             | number   | positive; optional — inner keys are optional so partial measurements can be recorded                                                                                                                                                                                 |
-| `params.activeB`            | number   | positive; optional                                                                                                                                                                                                                                                   |
-| `params.experts`            | int      | positive; optional                                                                                                                                                                                                                                                   |
-| `memory.residentGiB`        | number   | non-negative; optional — inner keys are optional so partial measurements can be recorded                                                                                                                                                                             |
-| `memory.diskBackedGiB`      | number   | non-negative; optional                                                                                                                                                                                                                                               |
-| `memory.kvGiBPer32k`        | number   | non-negative; optional                                                                                                                                                                                                                                               |
-| `residencyGroup`            | string   | non-empty                                                                                                                                                                                                                                                            |
-| `license`                   | string   | non-empty                                                                                                                                                                                                                                                            |
+| key                         | type     | constraints                                                                              |
+| --------------------------- | -------- | ---------------------------------------------------------------------------------------- |
+| `availability.declared`     | enum     | `available` \| `unavailable`                                                             |
+| `availability.reason`       | string   | optional when `available`; required when `unavailable`                                   |
+| `qualification.stage`       | enum     | `experimental` \| `candidate` \| `validated` \| `production` \| `degraded`               |
+| `qualification.since`       | string   | optional, non-empty                                                                      |
+| `qualification.evidenceRef` | string   | optional, non-empty                                                                      |
+| `runtime.engines`           | string[] | non-empty; each engine name non-empty                                                    |
+| `runtime.minBuild`          | string   | optional, non-empty                                                                      |
+| `runtime.toolCallFormat`    | string   | optional, non-empty                                                                      |
+| `runtime.reasoningFormat`   | string   | optional, non-empty                                                                      |
+| `runtime.chatTemplate`      | string   | optional, non-empty                                                                      |
+| `contextMax`                | int      | positive                                                                                 |
+| `params.totalB`             | number   | positive; optional — inner keys are optional so partial measurements can be recorded     |
+| `params.activeB`            | number   | positive; optional                                                                       |
+| `params.experts`            | int      | positive; optional                                                                       |
+| `memory.residentGiB`        | number   | non-negative; optional — inner keys are optional so partial measurements can be recorded |
+| `memory.diskBackedGiB`      | number   | non-negative; optional                                                                   |
+| `memory.kvGiBPer32k`        | number   | non-negative; optional                                                                   |
+| `residencyGroup`            | string   | non-empty                                                                                |
+| `license`                   | string   | non-empty                                                                                |
 
 Example 9-column row:
 

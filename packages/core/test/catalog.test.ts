@@ -429,4 +429,106 @@ describe("catalog candidate metadata (#515)", () => {
     writeFileSync(file, `${line}\n`);
     expect(readCustomCatalog(file)).toStrictEqual([full]);
   });
+
+  test("meta column null/[]/primitive is skipped with warning; rest loads", () => {
+    const dir = mkdtempSync(join(tmpdir(), "llamactl-catalog-meta-"));
+    const file = join(dir, "bad-meta.tsv");
+
+    const goodLine = formatCatalogRow({
+      id: "good-row",
+      label: "Good",
+      family: "qwen",
+      class: "general",
+      scope: "candidate",
+      rel: "Qwen-GGUF/good.gguf",
+      repo: "org/Qwen-GGUF",
+      format: "gguf",
+    });
+
+    const nullMetaLine = `${goodLine}\tnull`;
+    const arrayMetaLine = `${goodLine}\t[1, 2]`;
+    const primitiveMetaLine = `${goodLine}\t5`;
+
+    writeFileSync(file, `${nullMetaLine}\n${arrayMetaLine}\n${primitiveMetaLine}\n${goodLine}\n`);
+
+    const spy = spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      const rows = readCustomCatalog(file);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.id).toBe("good-row");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("invalid JSON in meta column is skipped with warning; rest loads", () => {
+    const dir = mkdtempSync(join(tmpdir(), "llamactl-catalog-meta-"));
+    const file = join(dir, "bad-json.tsv");
+
+    const goodLine = formatCatalogRow({
+      id: "good-row",
+      label: "Good",
+      family: "qwen",
+      class: "general",
+      scope: "candidate",
+      rel: "Qwen-GGUF/good.gguf",
+      repo: "org/Qwen-GGUF",
+      format: "gguf",
+    });
+
+    const badJsonLine = `${goodLine}\t{bad`;
+    const validMetaLine = `${goodLine}\t${JSON.stringify({
+      availability: { declared: "available" },
+    })}`;
+
+    writeFileSync(file, `${badJsonLine}\n${validMetaLine}\n`);
+
+    const spy = spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      const rows = readCustomCatalog(file);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.id).toBe("good-row");
+      expect((rows[0] as Record<string, unknown>)["availability"]).toStrictEqual({
+        declared: "available",
+      });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("formatCatalogRow emits canonical nested key order", () => {
+    const entry: CuratedModel = {
+      id: "order-test",
+      label: "Order Test",
+      family: "qwen",
+      class: "general",
+      scope: "candidate",
+      rel: "Qwen-GGUF/order.gguf",
+      repo: "org/Qwen-GGUF",
+      format: "gguf",
+      runtime: {
+        minBuild: "b100",
+        engines: ["llamacpp"],
+      },
+      availability: {
+        declared: "available",
+      },
+    };
+
+    const line = formatCatalogRow(entry);
+    const metaStr = line.split("\t")[8];
+    expect(metaStr).toBeDefined();
+
+    const keys = Object.keys(JSON.parse(metaStr ?? "{}") as Record<string, unknown>);
+    // Only present keys are emitted; they appear in schema order.
+    expect(keys).toStrictEqual(["availability", "runtime"]);
+
+    const runtimeMeta = (JSON.parse(metaStr ?? "{}") as Record<string, unknown>)["runtime"] as
+      | Record<string, unknown>
+      | undefined;
+    expect(runtimeMeta).toBeDefined();
+    const runtimeKeys = Object.keys(runtimeMeta ?? {});
+    // Only present nested keys in schema order: engines before minBuild.
+    expect(runtimeKeys).toStrictEqual(["engines", "minBuild"]);
+  });
 });

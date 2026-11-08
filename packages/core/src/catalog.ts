@@ -296,7 +296,44 @@ export function formatCatalogRow(entry: CuratedModel): string {
 
   const canonical = CuratedMeta.safeParse(picked);
   const meta = canonical.success ? canonical.data : picked;
-  return `${line}\t${JSON.stringify(meta)}`;
+
+  const result: Record<string, unknown> = {};
+  for (const key of curatedMetaFields) {
+    const value = (meta as Record<string, unknown>)[key];
+    if (value === undefined) continue;
+    result[key] = normalizeNested(value, key);
+  }
+  return `${line}\t${JSON.stringify(result)}`;
+}
+
+/** Sort keys of a nested object in schema order; pass through scalars unchanged. */
+function normalizeNested(value: unknown, key: string): unknown {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
+  const obj = value as Record<string, unknown>;
+  const sorted: Record<string, unknown> = {};
+  const order = ((): readonly string[] => {
+    switch (key) {
+      case "availability":
+        return ["declared", "reason"];
+      case "qualification":
+        return ["stage", "since", "evidenceRef"];
+      case "runtime":
+        return ["engines", "minBuild", "toolCallFormat", "reasoningFormat", "chatTemplate"];
+      case "params":
+        return ["totalB", "activeB", "experts"];
+      case "memory":
+        return ["residentGiB", "diskBackedGiB", "kvGiBPer32k"];
+      default:
+        return [];
+    }
+  })();
+  for (const k of order) {
+    if (k in obj) sorted[k] = obj[k];
+  }
+  for (const k of Object.keys(obj)) {
+    if (!(k in sorted)) sorted[k] = obj[k];
+  }
+  return sorted;
 }
 
 /** Serialise a list of entries as a TSV block (one row per line). */

@@ -23,9 +23,6 @@ export const CatalogAvailability = z.discriminatedUnion("declared", [
   z.object({ declared: z.literal("available"), reason: z.string().min(1).optional() }),
   z.object({
     declared: z.literal("unavailable"),
-    // Required when unavailable — a row that cannot run and does not
-    // say why is unactionable. Deliberate tightening over the
-    // issue's optional `reason?`; pending operator sign-off.
     reason: z.string().min(1),
   }),
 ]);
