@@ -1,6 +1,8 @@
+import { type GttObservation, parseGttCounters } from "@llamactl/core/resources/memory";
+
 import type { NodeMemSnapshot } from "./types.js";
 
-import { readFileSync } from "./safe-fs.js";
+import { readdirSync, readFileSync } from "./safe-fs.js";
 
 const PAGE_FIELDS: Record<
   string,
@@ -137,5 +139,106 @@ export async function probeNodeMem(opts?: {
     swap_out: 0,
     available: false,
     unavailable_reason: "unsupported-platform",
+  };
+}
+
+const DRM_DIR = "/sys/class/drm";
+const DRM_CARD = /^card\d+$/;
+
+function drmCardNumber(name: string): number {
+  return Number(name.slice("card".length));
+}
+
+function isPermissionError(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "code" in err &&
+    (err.code === "EACCES" || err.code === "EPERM")
+  );
+}
+
+export async function probeGpuGtt(opts?: {
+  platform?: NodeJS.Platform;
+  readDir?: (path: string) => Promise<string[]>;
+  readFile?: (path: string) => Promise<string>;
+  now?: () => number;
+}): Promise<GttObservation> {
+  const platform = opts?.platform ?? process.platform;
+  if (platform !== "linux") {
+    return {
+      status: "unsupported",
+      totalBytes: null,
+      usedBytes: null,
+      observedAtMs: null,
+      source: "",
+      scope: "shared",
+    };
+  }
+
+  const readDir =
+    opts?.readDir ??
+    ((path: string): Promise<string[]> => {
+      try {
+        return Promise.resolve(readdirSync(path));
+      } catch (err) {
+        return Promise.reject(err instanceof Error ? err : new Error(String(err)));
+      }
+    });
+  const readFile =
+    opts?.readFile ??
+    ((path: string): Promise<string> => {
+      try {
+        return Promise.resolve(readFileSync(path, "utf8"));
+      } catch (err) {
+        return Promise.reject(err instanceof Error ? err : new Error(String(err)));
+      }
+    });
+  const now = opts?.now ?? ((): number => Date.now());
+
+  let entries: string[];
+  try {
+    entries = await readDir(DRM_DIR);
+  } catch {
+    return {
+      status: "unavailable",
+      totalBytes: null,
+      usedBytes: null,
+      observedAtMs: null,
+      source: "",
+      scope: "shared",
+    };
+  }
+
+  const cards = entries
+    .filter((name) => DRM_CARD.test(name))
+    .sort((a, b) => drmCardNumber(a) - drmCardNumber(b));
+
+  let sawDenied = false;
+  for (const card of cards) {
+    const device = `${DRM_DIR}/${card}/device`;
+    let totalRaw: string;
+    let usedRaw: string;
+    try {
+      totalRaw = await readFile(`${device}/mem_info_gtt_total`);
+      usedRaw = await readFile(`${device}/mem_info_gtt_used`);
+    } catch (err) {
+      if (isPermissionError(err)) sawDenied = true;
+      continue;
+    }
+    const observation = parseGttCounters(totalRaw, usedRaw, {
+      source: device,
+      observedAtMs: now(),
+    });
+    if (observation.status === "ok") return observation;
+  }
+
+  return {
+    status: sawDenied ? "denied" : "unavailable",
+    totalBytes: null,
+    usedBytes: null,
+    observedAtMs: null,
+    source: "",
+    scope: "shared",
   };
 }

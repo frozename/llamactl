@@ -1,8 +1,16 @@
 import type { ResponseFormat } from "../client.js";
 
+export const EVAL_ENGINES = ["llamacpp", "omlx", "gufo", "kapitsa"] as const;
+export type EvalEngine = (typeof EVAL_ENGINES)[number];
+
 export interface ModelSpec {
   name: string;
-  engine?: "llamacpp" | "omlx";
+  /** `gufo` and `kapitsa` are OpenAI-compatible servers that eval only
+   *  targets when they are already running: `managed` must not be true
+   *  (loadModels enforces this so lifecycle never boots llama-server for
+   *  them; a ModelSpec built without loadModels bypasses that guard) and
+   *  the model artifact is `gguf_path`, same as llamacpp. */
+  engine?: EvalEngine;
   gguf_path: string;
   mlx_model_dir?: string;
   quant: string;
@@ -103,5 +111,36 @@ export interface CellRow {
   errors: number;
   started_at: string;
   finished_at: string;
+  host_machine: string;
+}
+
+/** A scored metric. `unavailable` means the engine could not produce the
+ *  metric; it is never coerced to 0 — diff surfaces it as its own verdict
+ *  instead of a bogus regression. */
+export type MetricValue =
+  | { value: number; status: "ok" }
+  | { value: null; status: "unavailable"; reason: string };
+
+export interface EvalProvenance {
+  engine: EvalEngine;
+  engine_version: string | null;
+  engine_commit: string | null;
+  binary_sha256: string | null;
+  gguf_sha256: string | null;
+  hf_revision: string | null;
+  quant: string;
+  ctx: number | null;
+  flags: string[];
+  host: string;
+}
+
+export interface PerfRunRow {
+  run_id: string;
+  model_name: string;
+  suite_name: string;
+  metric_name: string;
+  metric: MetricValue;
+  provenance: EvalProvenance;
+  started_at: string;
   host_machine: string;
 }
