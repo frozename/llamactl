@@ -7,9 +7,11 @@ import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 import { atomicWriteFileSync } from "../atomic-write.js";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "../safe-fs.js";
-import { estimateModelHostMemoryGiB } from "./admission.js";
+import { declaredModelHostMemoryGiB, estimateModelHostMemoryGiB } from "./admission.js";
 import { type ModelHostManifest, ModelHostManifestSchema } from "./modelhost-schema.js";
 import { type ModelRun, ModelRunSchema } from "./schema.js";
+
+export { declaredModelHostMemoryGiB };
 
 export function defaultWorkloadsDir(env: NodeJS.ProcessEnv = process.env): string {
   const override = env["LLAMACTL_WORKLOADS_DIR"]?.trim();
@@ -207,7 +209,7 @@ export function listWorkloads(
 function projectModelHostToModelRun(manifest: ModelHostManifest, resolved?: ResolvedEnv): ModelRun {
   const expectedMemoryGiB = resolved
     ? estimateModelHostMemoryGiB(manifest, resolved)
-    : (manifest.spec.resources?.expectedMemoryGiB ?? null);
+    : declaredModelHostMemoryGiB(manifest);
   const firstHostedModel = manifest.spec.hostedModels[0];
   if (!firstHostedModel) {
     throw new Error(`ModelHost ${manifest.metadata.name} must declare at least one hosted model`);

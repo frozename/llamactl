@@ -64,6 +64,11 @@ export const CapabilityRejectionSchema = z.discriminatedUnion("reason", [
   z.object({ reason: z.literal("unsupported-session") }),
   // #518: an experimental-qualified candidate dropped from non-pinned selection.
   z.object({ reason: z.literal("experimental-excluded") }),
+  // #280 D-2: an exact pin of a catalog row declared unavailable.
+  z.object({
+    reason: z.literal("model-unavailable"),
+    availabilityReason: z.string().min(1),
+  }),
 ]);
 export type CapabilityRejection = z.infer<typeof CapabilityRejectionSchema>;
 
