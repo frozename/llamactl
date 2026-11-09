@@ -145,9 +145,9 @@ zod):
 | `minMemoryStability`          | ratio, 0 to 1   |
 | `minRuntimeReliability`       | ratio, 0 to 1   |
 
-`autoApply` defaults to false. `applyPromotion` returns `proposed`
-unless `autoApply` is set AND a writer is injected; `autoApply`
-without a writer writes nothing.
+`autoApply` defaults to false. `applyPromotion` returns `skipped` for a
+`none` decision, returns `proposed` unless `autoApply` is set AND a
+writer is injected; `autoApply` without a writer writes nothing.
 
 Effective status at this commit: `effectiveStage`,
 `proposePromotion`, `applyPromotion` and the overrides reader are
@@ -223,7 +223,7 @@ Steps:
    first.
 7. Wait for the readiness probe, then `llamactl describe workload <name>`.
 8. Run the eval.
-9. Exit the window: `llamactl disable <arm>`, then
+9. Exit the window: `llamactl disable <name>`, then
    `llamactl enable <production-workload>`, then verify Running and
    readiness.
 

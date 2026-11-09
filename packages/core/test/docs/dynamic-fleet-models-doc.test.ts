@@ -154,11 +154,27 @@ describe("docs/dynamic-fleet-models.md (#522)", () => {
 
   test("case 9: GLM-5.3-Flash eval record", () => {
     expect(glmArmIds.length).toBeGreaterThan(0);
-    for (const arm of glmArmIds) {
-      expect(doc).toContain(arm);
+
+    // Step 9 uses workload <name>, not runtime arm id.
+    expect(doc).toMatch(/llamactl disable <name>/);
+
+    // Eval-record section: one row per GLM arm with `unavailable` cells.
+    const evalSection = doc
+      .split(/^##+/m)
+      .find((section) => /GLM-5\.3-Flash.*eval record/.test(section));
+    expect(evalSection).toBeDefined();
+    if (evalSection === undefined) {
+      throw new Error("GLM-5.3-Flash eval record section missing from doc");
     }
-    expect(doc).toMatch(/^##+ .*GLM-5\.3-Flash.*eval record/im);
-    expect(doc).toContain("`unavailable`");
+    // Extract arm ids from the eval-record table first column.
+    const evalArms = [...evalSection.matchAll(/^\| `([^`]+)`/gm)].map((m) => m[1]);
+    expect(evalArms.length).toBeGreaterThan(0);
+    // Every GLM arm id from templates must appear in the eval-record table.
+    for (const arm of glmArmIds) {
+      expect(evalArms).toContain(arm);
+    }
+    // The eval-record table carries an arm row with an `unavailable` cell.
+    expect(evalSection).toMatch(/^\| `[^`]+` \|[^|]+\| `unavailable`/im);
   });
 
   test("case 10: model download flags", () => {
