@@ -73,7 +73,10 @@ type MeasuredEnvelope =
       envelopeBytes: number;
       attribution: "process" | "uncertain";
     }
-  | { known: false; reason: "invalid-input" | "invalid-key" | "insufficient-samples" };
+  | {
+      known: false;
+      reason: "invalid-input" | "invalid-key" | "insufficient-samples" | "unknown-device";
+    };
 
 type CalibrationApi = {
   deriveSwapRate: (
@@ -89,7 +92,7 @@ type CalibrationApi = {
   }) => MeasuredEnvelope;
 };
 
-const api = memoryNs as unknown as Partial<CalibrationApi>;
+const api = memoryNs as Partial<CalibrationApi>;
 
 const GiB = 1024 ** 3;
 const MiB = 1024 ** 2;
@@ -696,7 +699,7 @@ describe("memoryCalibrationKey", () => {
   ])("invalid key returns null: $label", ({ patch }) => {
     const keyOf = api.memoryCalibrationKey;
     expect(typeof keyOf).toBe("function");
-    const invalid = { ...baseCalibrationKey(), ...patch } as unknown as MemoryCalibrationKey;
+    const invalid = { ...baseCalibrationKey(), ...patch } as MemoryCalibrationKey;
     expect(keyOf!(invalid)).toBeNull();
   });
 });
@@ -728,7 +731,7 @@ describe("calibrateMeasuredEnvelope", () => {
     });
   });
 
-  test("shared device counters are never attributed to the process", () => {
+  test("null processDeviceBytes is unknown-device, not uncertain", () => {
     const calibrate = api.calibrateMeasuredEnvelope;
     expect(typeof calibrate).toBe("function");
     const samples = [
@@ -741,37 +744,40 @@ describe("calibrateMeasuredEnvelope", () => {
         samples,
         options: calibrationOptions({ minSamples: 2, overheadFraction: 0 }),
       }),
-    ).toEqual({
-      known: true,
-      key: encodedCalibrationKey(baseCalibrationKey()),
-      provenance: "measured",
-      sampleCount: 2,
-      peakBytes: 2 * GiB,
-      calibrationOverheadBytes: 0,
-      envelopeBytes: 2 * GiB,
-      attribution: "uncertain",
-    });
+    ).toEqual({ known: false, reason: "unknown-device" });
   });
 
   test("non-ok samples are skipped rather than counted as zero", () => {
     const calibrate = api.calibrateMeasuredEnvelope;
     expect(typeof calibrate).toBe("function");
+    const samples = [
+      calibrationSample({ processBytes: 4 * GiB, processDeviceBytes: 16 * GiB }),
+      calibrationSample({ processBytes: 2 * GiB, processDeviceBytes: 15 * GiB }),
+      calibrationSample({ status: "unavailable", observedAtMs: null, processBytes: null }),
+      calibrationSample({ status: "denied", observedAtMs: null, processBytes: 0 }),
+    ];
     expect(
       calibrate!({
         key: baseCalibrationKey(),
-        samples: samplesWithSkippedReads(),
+        samples,
         options: calibrationOptions({ minSamples: 2 }),
       }),
-    ).toMatchObject({ known: true, sampleCount: 2, peakBytes: 4 * GiB });
+    ).toMatchObject({ known: true, sampleCount: 2, peakBytes: 20 * GiB });
   });
 
   test("fewer ok samples than minSamples is insufficient-samples", () => {
     const calibrate = api.calibrateMeasuredEnvelope;
     expect(typeof calibrate).toBe("function");
+    const samples = [
+      calibrationSample({ processBytes: 4 * GiB, processDeviceBytes: 16 * GiB }),
+      calibrationSample({ processBytes: 2 * GiB, processDeviceBytes: 15 * GiB }),
+      calibrationSample({ status: "unavailable", observedAtMs: null, processBytes: null }),
+      calibrationSample({ status: "denied", observedAtMs: null, processBytes: 0 }),
+    ];
     expect(
       calibrate!({
         key: baseCalibrationKey(),
-        samples: samplesWithSkippedReads(),
+        samples,
         options: calibrationOptions({ minSamples: 3 }),
       }),
     ).toEqual({ known: false, reason: "insufficient-samples" });
@@ -852,8 +858,8 @@ describe("calibrateMeasuredEnvelope", () => {
     const calibrate = api.calibrateMeasuredEnvelope;
     expect(typeof calibrate).toBe("function");
     const samples = [
-      calibrationSample({ processBytes: 3 * GiB }),
-      calibrationSample({ processBytes: GiB }),
+      calibrationSample({ processBytes: 3 * GiB, processDeviceBytes: 16 * GiB }),
+      calibrationSample({ processBytes: GiB, processDeviceBytes: 15 * GiB }),
     ];
     expect(
       calibrate!({
@@ -866,14 +872,14 @@ describe("calibrateMeasuredEnvelope", () => {
       key: encodedCalibrationKey(baseCalibrationKey()),
       provenance: "measured",
       sampleCount: 2,
-      peakBytes: 3 * GiB,
+      peakBytes: 19 * GiB,
       calibrationOverheadBytes: 0,
-      envelopeBytes: 3 * GiB,
-      attribution: "uncertain",
+      envelopeBytes: 19 * GiB,
+      attribution: "process",
     });
   });
 
-  test("null processDeviceBytes with non-null sharedDeviceBytes is uncertain", () => {
+  test("null processDeviceBytes with non-null sharedDeviceBytes is unknown-device", () => {
     const calibrate = api.calibrateMeasuredEnvelope;
     expect(typeof calibrate).toBe("function");
     const samples = [
@@ -889,19 +895,10 @@ describe("calibrateMeasuredEnvelope", () => {
         samples,
         options: calibrationOptions({ minSamples: 1 }),
       }),
-    ).toEqual({
-      known: true,
-      key: encodedCalibrationKey(baseCalibrationKey()),
-      provenance: "measured",
-      sampleCount: 1,
-      peakBytes: 2 * GiB,
-      calibrationOverheadBytes: 0,
-      envelopeBytes: 2 * GiB,
-      attribution: "uncertain",
-    });
+    ).toEqual({ known: false, reason: "unknown-device" });
   });
 
-  test("null processDeviceBytes with null sharedDeviceBytes is uncertain (not process)", () => {
+  test("null processDeviceBytes with null sharedDeviceBytes is unknown-device", () => {
     const calibrate = api.calibrateMeasuredEnvelope;
     expect(typeof calibrate).toBe("function");
     const samples = [
@@ -911,22 +908,19 @@ describe("calibrateMeasuredEnvelope", () => {
         sharedDeviceBytes: null,
       }),
     ];
-    const result = calibrate!({
-      key: baseCalibrationKey(),
-      samples,
-      options: calibrationOptions({ minSamples: 1 }),
-    });
-    expect(result.known).toBe(true);
-    if (result.known) {
-      expect(result.attribution).toBe("uncertain");
-      expect(result.peakBytes).toBe(4 * GiB);
-    }
+    expect(
+      calibrate!({
+        key: baseCalibrationKey(),
+        samples,
+        options: calibrationOptions({ minSamples: 1 }),
+      }),
+    ).toEqual({ known: false, reason: "unknown-device" });
   });
 
   test("a different speculative mode yields a different result key", () => {
     const calibrate = api.calibrateMeasuredEnvelope;
     expect(typeof calibrate).toBe("function");
-    const samples = [calibrationSample({ processBytes: 2 * GiB })];
+    const samples = [calibrationSample({ processBytes: 2 * GiB, processDeviceBytes: 16 * GiB })];
     const options = calibrationOptions({ minSamples: 1 });
     const none = calibrate!({ key: baseCalibrationKey(), samples, options });
     const mtp = calibrate!({
@@ -939,6 +933,45 @@ describe("calibrateMeasuredEnvelope", () => {
     if (none.known && mtp.known) {
       expect(none.key).not.toBe(mtp.key);
     }
+  });
+
+  test("null processDeviceBytes in any sample is unknown-device", () => {
+    const calibrate = api.calibrateMeasuredEnvelope;
+    expect(typeof calibrate).toBe("function");
+    const samples = [
+      calibrationSample({ processBytes: 2 * GiB, processDeviceBytes: 16 * GiB }),
+      calibrationSample({ processBytes: 3 * GiB, processDeviceBytes: null }),
+    ];
+    expect(
+      calibrate!({
+        key: baseCalibrationKey(),
+        samples,
+        options: calibrationOptions({ minSamples: 2 }),
+      }),
+    ).toEqual({ known: false, reason: "unknown-device" });
+  });
+
+  test("overhead rounds up when peakBytes * overheadFraction is non-integral", () => {
+    const calibrate = api.calibrateMeasuredEnvelope;
+    expect(typeof calibrate).toBe("function");
+    // peakBytes = 3 (from a single sample), overheadFraction = 0.5
+    // product = 1.5, ceil(1.5) = 2: a conservative envelope never rounds down
+    expect(
+      calibrate!({
+        key: baseCalibrationKey(),
+        samples: [calibrationSample({ processBytes: 3, processDeviceBytes: 0 })],
+        options: calibrationOptions({ minSamples: 1, overheadFraction: 0.5 }),
+      }),
+    ).toEqual({
+      known: true,
+      key: encodedCalibrationKey(baseCalibrationKey()),
+      provenance: "measured",
+      sampleCount: 1,
+      peakBytes: 3,
+      calibrationOverheadBytes: 2,
+      envelopeBytes: 5,
+      attribution: "process",
+    });
   });
 });
 

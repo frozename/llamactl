@@ -352,7 +352,7 @@ export type MeasuredEnvelope =
     }
   | {
       known: false;
-      reason: "invalid-input" | "invalid-key" | "insufficient-samples";
+      reason: "invalid-input" | "invalid-key" | "insufficient-samples" | "unknown-device";
     };
 
 interface ValidSwapSample {
@@ -548,13 +548,14 @@ export function calibrateMeasuredEnvelope(input: {
   }
 
   // Shared device counters are never attributed to the process. A null
-  // per-process device reading is unknown, not zero: the peak then covers only
-  // the known process bytes and the envelope is marked uncertain.
+  // per-process device reading is unknown, not zero: refuse the calibration
+  // so the envelope stays unknown-device rather than a lower-bound process
+  // attribution. On Metal/AMD RSS understates GPU memory, so a device-blind
+  // calibration is not a conservative admission envelope.
   let peakBytes = 0;
-  let hasUncertain = false;
   for (const { processBytes, processDeviceBytes } of usableSamples) {
-    peakBytes = Math.max(peakBytes, processBytes + (processDeviceBytes ?? 0));
-    if (processDeviceBytes === null) hasUncertain = true;
+    if (processDeviceBytes === null) return { known: false, reason: "unknown-device" };
+    peakBytes = Math.max(peakBytes, processBytes + processDeviceBytes);
   }
 
   const calibrationOverheadBytes = Math.ceil(peakBytes * input.options.overheadFraction);
@@ -568,6 +569,6 @@ export function calibrateMeasuredEnvelope(input: {
     peakBytes,
     calibrationOverheadBytes,
     envelopeBytes,
-    attribution: hasUncertain ? "uncertain" : "process",
+    attribution: "process",
   };
 }
