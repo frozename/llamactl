@@ -48,7 +48,15 @@ import {
   specForEngine,
   specForHash,
 } from "../workload/modelhost-schema.js";
-import { loadModelHostByName, saveModelHost } from "../workload/modelhost-store.js";
+import { listModelHosts, loadModelHostByName, saveModelHost } from "../workload/modelhost-store.js";
+
+/**
+ * Label marking ModelHosts that share exclusive memory on a node (#557 S5):
+ * at most one host per group value may hold the group's memory at a time,
+ * so startModelHost refuses a same-group start while a peer is Running,
+ * Starting, or unverifiable (Unknown).
+ */
+export const RESIDENCY_GROUP_LABEL = "llamactl.io/residency-group";
 
 function isProcessAlive(pid: number): boolean {
   try {
@@ -102,6 +110,13 @@ export interface StartModelHostResult {
    *  process is gone before releasing memory; `pid` stays null because a
    *  failure is never a running host. */
   spawnedPid?: number;
+  /** Present when the residency-group guard refused the start: the shared
+   *  group, the conflicting peer's name, and the state it was observed in. */
+  residencyConflict?: {
+    group: string;
+    host: string;
+    state: "Running" | "Starting" | "Unknown";
+  };
 }
 
 export interface StopModelHostOptions {
@@ -871,6 +886,70 @@ async function launchModelHost(
   }
 }
 
+// #557 S5: the residency state a same-group peer is observed in, or null
+// when it holds nothing. Ordered cheapest-first: an in-flight registration
+// or a live/unverifiable starting record means Starting; otherwise the
+// recorded sidecar decides Running vs Unknown, failing closed on an
+// unverifiable pid exactly like the #317 reap paths.
+function residencyPeerState(
+  peerKey: WorkloadKey,
+  opts: StartModelHostOptions,
+  resolved: ReturnType<typeof resolveEnv>,
+): "Running" | "Starting" | "Unknown" | null {
+  if (inFlightModelHostStarts.has(`${resolved.LOCAL_AI_RUNTIME_DIR}\0${peerKey.name}`)) {
+    return "Starting";
+  }
+  const starting = readModelHostStarting(peerKey, resolved);
+  if (starting !== null) {
+    const verdict = verifyPidFile(
+      modelhostStartingFile(resolved, peerKey),
+      starting.pid,
+      hostIdentityDeps(starting.engine, opts.identity, starting.binaryNames),
+    );
+    if (verdict === "alive" || verdict === "unknown") return "Starting";
+  }
+  const status = statusModelHost({
+    key: peerKey,
+    ...omitUndefined({
+      runtimeDir: opts.runtimeDir,
+      env: opts.env,
+      identity: opts.identity,
+    }),
+  });
+  if (status.state === "Running") return "Running";
+  if (status.identityUnknown === true) return "Unknown";
+  return null;
+}
+
+// #557 S5: ModelHosts carrying the same residency-group label share
+// exclusive memory on the node, so at most one may hold the group at a
+// time. The guard runs before the manifest is persisted and before any
+// reap/spawn, so a refused start leaves no desired state behind. The scope
+// is this agent's store and runtime dir — that IS the node, so spec.node
+// is deliberately not consulted. In-process starts are race-free because
+// in-flight registration is synchronous; two separate agent processes
+// (e.g. a CLI in-process apply and the daemon) starting different group
+// members at the same instant can both pass, because a peer's starting
+// record is written only after prepareLaunch and spawn — a known limit; a
+// per-group lock file under the runtime dir is out of scope.
+function residencyGroupConflict(
+  manifest: ModelHostManifest,
+  opts: StartModelHostOptions,
+  resolved: ReturnType<typeof resolveEnv>,
+): { group: string; host: string; state: "Running" | "Starting" | "Unknown" } | null {
+  const group = manifest.metadata.labels?.[RESIDENCY_GROUP_LABEL];
+  if (group === undefined || group === "") return null;
+  for (const peer of listModelHosts(opts.workloadsDir)) {
+    if (peer.metadata.name === manifest.metadata.name) continue;
+    if (peer.metadata.labels?.[RESIDENCY_GROUP_LABEL] !== group) continue;
+    const state = residencyPeerState({ name: peer.metadata.name }, opts, resolved);
+    if (state !== null) {
+      return { group, host: peer.metadata.name, state };
+    }
+  }
+  return null;
+}
+
 export async function startModelHost(opts: StartModelHostOptions): Promise<StartModelHostResult> {
   const env = toRuntimeEnv(opts.env);
   const runtimeEnv = withRuntimeDir(env, opts.runtimeDir);
@@ -901,6 +980,21 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
   const bindRefusal = modelHostBindRefusal(manifest);
   if (bindRefusal !== null) {
     const result = { ok: false, pid: null, error: bindRefusal };
+    opts.onEvent?.({ type: "done", result });
+    return result;
+  }
+
+  // Same residency-group exclusion as the bind gate: refuse BEFORE the
+  // manifest is saved and before reapOrAdoptPriorHost/spawn/teardown, so a
+  // denied start cannot kill a live peer or persist desired state.
+  const residency = residencyGroupConflict(manifest, opts, resolved);
+  if (residency !== null) {
+    const result = {
+      ok: false,
+      pid: null,
+      error: `residency-group ${residency.group} already has ${residency.state} ModelHost ${residency.host} on this node; stop it before starting ${manifest.metadata.name}`,
+      residencyConflict: residency,
+    };
     opts.onEvent?.({ type: "done", result });
     return result;
   }
