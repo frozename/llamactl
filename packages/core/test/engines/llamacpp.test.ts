@@ -350,6 +350,15 @@ describe("llamacpp draft-model path resolution", () => {
     },
   );
 
+  test("splits an inline draft flag on the first '=' when the path contains '='", () => {
+    const built = ENGINES.llamacpp.buildBootCommand(
+      specWithArgs(["--model-draft=a=b/d.gguf"]),
+      env,
+    );
+    expect(built.args).toContain(`--model-draft=${resolve("/tmp/models", "a=b/d.gguf")}`);
+    expect(built.args).not.toContain("--model-draft=a=b/d.gguf");
+  });
+
   test("rejects an inline relative draft path that escapes the models dir", () => {
     expect(() =>
       ENGINES.llamacpp.buildBootCommand(
