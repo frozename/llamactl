@@ -5,7 +5,6 @@ import { expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { TargetAdmissionAuthority } from "./admission.js";
 import type { ModelHostManifest } from "./modelhost-schema.js";
 import type { ModelRun } from "./schema.js";
 
@@ -18,6 +17,7 @@ import {
   truncateSync,
   writeFileSync,
 } from "../safe-fs.js";
+import { createTargetAdmissionAuthority, type TargetAdmissionAuthority } from "./admission.js";
 import * as remoteAdmission from "./admission.js";
 import { applyOne, applyOneModelHost, type ApplyResult, type WorkloadClient } from "./apply.js";
 import { saveModelHost } from "./modelhost-store.js";
@@ -1595,6 +1595,41 @@ test("E-1: a worker-start failure releases the target claim so a later load can 
     expect(later.action).toBe("started");
     expect(state.has("x")).toBe(true);
     expect(targetAdmission?.snapshot("local")).toHaveLength(1);
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("E-1: specDigestFor includes args so reconfiguring ONLY args on a held runtimeKey returns WorkloadBusy", async () => {
+  const targetAdmission: TargetAdmissionAuthority = createTargetAdmissionAuthority();
+  const state: WorkloadStateMap = new Map();
+  const { client } = makeRecordingClient(state);
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-e1-specdigest-"));
+  try {
+    const opts = {
+      workloadsDir,
+      getNodeBudgetGiB: (): number => 24,
+      listManifests: (): ModelRun[] => [],
+      resolveNodeIdentity: (n: string): string | null =>
+        n === "mac-mini" || n === "mac-mini.local" ? "mac-mini" : null,
+      targetAdmission,
+    };
+    // First, apply a manifest with no extra args — this creates a pending
+    // claim with specDigest based on [].
+    const manifest1 = mkManifest("a", { ram: 8, node: "mac-mini" });
+    const first = await applyOne(manifest1, () => client, undefined, undefined, opts);
+    expect(first.action).toBe("started");
+    // The pending claim holds runtimeKey "a" with specDigest =
+    // JSON.stringify(["rel", "x.gguf", []]).
+    // Now apply a second manifest "a" with different args — same runtimeKey
+    // but different specDigest (args differ). This should be WorkloadBusy.
+    const manifest2 = mkManifest("a", { ram: 8, node: "mac-mini" });
+    manifest2.spec.extraArgs = ["--some-arg"];
+    const second = await applyOne(manifest2, () => client, undefined, undefined, opts);
+    expect(second.action).toBe("pending");
+    expect(second.statusSection.phase).toBe("Failed");
+    expect(second.statusSection.conditions[0]?.reason).toBe("WorkloadBusy");
+    expect(second.error).toContain("mac-mini");
   } finally {
     rmSync(workloadsDir, { recursive: true, force: true });
   }

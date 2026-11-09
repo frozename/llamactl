@@ -659,6 +659,110 @@ test("E-1: tryClaim charges living claims with the ledger, deduplicated by runti
   expect(claim("c", 28, [dup])).toMatchObject({ kind: "admit", committedGiB: 24 });
 });
 
+test("E-1: a living manifest projection with the same runtimeKey as a ledger claim in a different state loses to the ledger claim and charges once", () => {
+  const authority = createTargetAdmissionAuthority();
+  // First, create a pending ledger claim for runtimeKey "x" by admitting
+  // a claim. This adds "t#1" to the ledger with specDigest "d-x" and
+  // state "pending".
+  const result1 = authority.tryClaim({
+    targetIdentity: "t",
+    runtimeKey: "x",
+    specDigest: "d-x",
+    kind: "ModelRun",
+    allocationGiB: 8,
+    budgetGiB: 20,
+  });
+  expect(result1.decision).toMatchObject({ kind: "admit", committedGiB: 8 });
+  // Now a living manifest projection arrives with the SAME runtimeKey "x"
+  // but a DIFFERENT specDigest. The specDigest mismatch triggers
+  // WorkloadBusy — the ledger's "pending" claim wins and the projection
+  // is refused.
+  const projection: ManagedAdmissionClaim = {
+    claimId: "store:x",
+    runtimeKey: "x",
+    specDigest: "d-x-different",
+    state: "resident",
+    allocationGiB: 8,
+    kind: "ModelRun",
+  };
+  const result2 = authority.tryClaim({
+    targetIdentity: "t",
+    runtimeKey: "x",
+    specDigest: "d-x-different",
+    kind: "ModelRun",
+    allocationGiB: 8,
+    budgetGiB: 20,
+    living: [projection],
+  });
+  // The specDigest mismatch ("d-x-different" vs "d-x") means the
+  // existing ledger claim is "conflicting", so the decision is
+  // WorkloadBusy. The ledger's "pending" state wins over the projection:
+  // the projection does NOT override the ledger.
+  expect(result2.decision).toMatchObject({
+    kind: "refuse",
+    reason: "WorkloadBusy",
+  });
+  expect((result2.decision as { kind: "refuse"; reason: string; detail: string }).reason).toBe(
+    "WorkloadBusy",
+  );
+  const snapshot = authority.snapshot("t");
+  expect(snapshot).toHaveLength(1);
+  // The original ledger claim keeps its "pending" state (not overwritten
+  // by the projection).
+  expect(snapshot.find((c) => c.claimId === "t#1")?.state).toBe("pending");
+  // Only one claim for "x" exists (deduplicated — the projection did not
+  // create a second claim).
+  expect(snapshot.filter((c) => c.runtimeKey === "x")).toHaveLength(1);
+});
+
+test("E-1: reversing the dedup order (projection before ledger) changes the winning state — pin the order", () => {
+  const authority = createTargetAdmissionAuthority();
+  // First, create a pending claim for "x".
+  const result1 = authority.tryClaim({
+    targetIdentity: "t",
+    runtimeKey: "x",
+    specDigest: "d-x",
+    kind: "ModelRun",
+    allocationGiB: 8,
+    budgetGiB: 20,
+  });
+  expect(result1.decision).toMatchObject({ kind: "admit", committedGiB: 8 });
+  // Now add a ledger claim with state "resident" for the same runtimeKey.
+  // In the correct order (ledger first), the ledger's "resident" wins.
+  // But if we reverse the order (projection first), the projection's
+  // "resident" would be seen first and the ledger claim skipped — the
+  // test verifies the current code order is ledger-first.
+  const projection: ManagedAdmissionClaim = {
+    claimId: "store:x",
+    runtimeKey: "x",
+    specDigest: "d-x",
+    state: "resident",
+    allocationGiB: 8,
+    kind: "ModelRun",
+  };
+  const result2 = authority.tryClaim({
+    targetIdentity: "t",
+    runtimeKey: "x",
+    specDigest: "d-x",
+    kind: "ModelRun",
+    allocationGiB: 8,
+    budgetGiB: 20,
+    living: [projection],
+  });
+  // The runtimeKey "x" already exists in the ledger (as "pending" from
+  // result1), so the decision is "join-pending" — the incoming claim
+  // joins the existing ledger claim. The ledger claim "t#1" keeps its
+  // "pending" state because the projection was deduplicated (skipped) —
+  // the projection did not override it.
+  expect(result2.decision).toMatchObject({ kind: "join-pending", claimId: "t#1" });
+  const snapshot = authority.snapshot("t");
+  // Only one claim for "x" exists (deduplicated).
+  expect(snapshot.filter((c) => c.runtimeKey === "x")).toHaveLength(1);
+  // The ledger claim keeps its "pending" state — the projection did not
+  // override it.
+  expect(snapshot.find((c) => c.claimId === "t#1")?.state).toBe("pending");
+});
+
 test("two resident-declared hosts cannot both be admitted on a 32 GiB node", () => {
   const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-tight-node-"));
   const workloadsDir = join(tmp, "workloads");
