@@ -189,7 +189,7 @@ export const BUILTIN_CATALOG: readonly CuratedModel[] = [
       reason: "artifact-not-downloaded; runtime-not-pinned",
     },
     qualification: { stage: "experimental" },
-    runtime: { engines: ["llamacpp"], minBuild: "b11870" },
+    runtime: { engines: ["llamacpp", "libosmos"], minBuild: "b11870" },
     memory: { residentGiB: 114.0, diskBackedGiB: 103 },
     residencyGroup: "z13-large-gpu",
   },

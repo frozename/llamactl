@@ -1,3 +1,7 @@
+import type {
+  ManagedAdmissionClaim,
+  ManagedAdmissionDecision,
+} from "@llamactl/core/residency/admission";
 import type { spawn as nodeSpawn } from "node:child_process";
 
 import { server as serverMod, target as targetMod } from "@llamactl/core";
@@ -34,6 +38,8 @@ import {
   declaredModelHostMemoryGiB,
   defaultNodeBudgetGiB,
   estimateModelHostMemoryGiB,
+  type TargetAdmissionAuthority,
+  type TargetAdmissionClaimHandle,
 } from "./admission.js";
 import {
   LOCAL_NODE_ID,
@@ -328,6 +334,26 @@ async function resolveDesiredRel(
 
   const local = targetMod.resolveTarget(target.value);
   return local ?? target.value;
+}
+
+/**
+ * The coordinator's effective extraArgs: user args plus the --rpc flag
+ * when this workload has workers. The server.rel / extraArgs comparison
+ * uses the composed form so a diff between "with --rpc" and "without"
+ * triggers a restart.
+ */
+function desiredArgsFor(manifest: ModelRun): string[] {
+  const workers = manifest.spec.workers;
+  if (workers.length === 0) return manifest.spec.extraArgs;
+  return [
+    ...manifest.spec.extraArgs,
+    "--rpc",
+    workers.map((w) => `${w.rpcHost}:${String(w.rpcPort)}`).join(","),
+  ];
+}
+
+function specDigestFor(manifest: ModelRun, desiredArgs: readonly string[]): string {
+  return JSON.stringify([manifest.spec.target.kind, manifest.spec.target.value, desiredArgs]);
 }
 
 function normalizeLoopbackHost(host: string | undefined): string {
@@ -867,6 +893,18 @@ interface ApplyOneOpts {
   listManifests?: (dir?: string) => ModelRun[];
   /** May be async so a caller can size a remote node from its reported memory. */
   getNodeBudgetGiB?: (nodeName: string) => number | undefined | Promise<number | undefined>;
+  /** Opt-in target-owned pending admission (DF-01 #274, E-1 slice).
+   *  Inactive unless supplied. Not wired into the router, reconciler,
+   *  CLI or ModelHost paths — only a caller that passes an authority
+   *  explicitly gets claim evaluation. The ledger charges the living
+   *  manifests from the same admission set as resident claims, so
+   *  committed capacity counts against the target budget alongside
+   *  pending claims. LIMITATION: resident and
+   *  uncertain claims are absorbing until the "admission before
+   *  destructive replacement with verified release" gate lands, so
+   *  under this option a crashed or reconfigured runtimeKey is refused
+   *  (AlreadyResident / WorkloadBusy) rather than restarted. */
+  targetAdmission?: TargetAdmissionAuthority;
 }
 
 type ServerStatusSnapshot = Awaited<ReturnType<WorkloadClient["serverStatus"]["query"]>>;
@@ -1316,7 +1354,12 @@ function preservedRunningWithBudgetRefusal(
 }
 
 async function admitServerBudget(ctx: ConvergeServerContext): Promise<
-  | { ok: true; adm: Extract<AdmissionResult, { ok: true }>; verified: Set<string> }
+  | {
+      ok: true;
+      adm: Extract<AdmissionResult, { ok: true }>;
+      verified: Set<string>;
+      living: ModelRun[];
+    }
   | {
       ok: false;
       adm?: Extract<AdmissionResult, { ok: false }>;
@@ -1361,7 +1404,7 @@ async function admitServerBudget(ctx: ConvergeServerContext): Promise<
   if (!adm.ok) {
     return { ok: false, adm, result: admissionFailureResult(adm, now) };
   }
-  return { ok: true, adm, verified };
+  return { ok: true, adm, verified, living };
 }
 
 function failedApplyResult(action: ApplyAction, error: string, when: string): ApplyResult {
@@ -1487,61 +1530,123 @@ function admissionRejection(
   return admission.result;
 }
 
-async function convergeServerUnderLock(ctx: ConvergeServerContext): Promise<ApplyResult> {
-  const { manifest, client, getClient, onEvent, now, status, matches, desiredArgs, evictTargets } =
-    ctx;
-  const admission = await admitServerBudget(ctx);
-  if (!admission.ok) return admissionRejection(ctx, admission);
-  const adm = admission.adm;
-  const verified = admission.verified;
+function targetAdmissionRefusal(
+  decision: Exclude<ManagedAdmissionDecision, { kind: "admit" }>,
+  targetIdentity: string,
+  budgetGiB: number | null,
+  now: string,
+): ApplyResult {
+  const reason =
+    decision.kind === "refuse"
+      ? decision.reason
+      : decision.kind === "join-pending"
+        ? "AdmissionPending"
+        : "AlreadyResident";
+  const detail =
+    decision.kind === "refuse"
+      ? decision.detail
+      : decision.kind === "join-pending"
+        ? `target '${targetIdentity}' already has pending claim ${decision.claimId}`
+        : `target '${targetIdentity}' already has resident claim ${decision.claimId}`;
+  const budgetText = budgetGiB === null ? "unknown" : `${budgetGiB.toFixed(1)} GiB`;
+  const error = `target admission refused for '${targetIdentity}' (budget ${budgetText}): ${detail}`;
+  return {
+    action: "pending",
+    error,
+    statusSection: {
+      phase: "Failed",
+      serverPid: null,
+      endpoint: null,
+      lastTransitionTime: now,
+      conditions: [
+        {
+          type: "Applied",
+          status: "False",
+          reason,
+          message: error,
+          lastTransitionTime: now,
+        },
+      ],
+    },
+  };
+}
 
-  const bindRefusal = refuseHostBindBeforeTeardown(ctx);
-  if (bindRefusal !== null) return bindRefusal;
+type TargetClaim =
+  | { kind: "inactive" }
+  | { kind: "refused"; result: ApplyResult }
+  | { kind: "claimed"; handle: TargetAdmissionClaimHandle | null };
 
-  // Evict only AFTER admission succeeds and from INSIDE the node lock.
-  // Eviction is destructive: stopping the victims for a workload that
-  // is then rejected (budget/admission fail) would tear down running
-  // servers to make room for a server that never starts. The budget
-  // computation already excludes evictTargets from `living`, so an
-  // admitted workload has accounted for the freed capacity here.
-  const verifiedTargets = evictTargets.filter((t) => verified.has(t));
-  await stopEvictTargets(manifest, client, verifiedTargets, onEvent);
+/**
+ * Target-owned pending admission (DF-01 #274, E-1 slice): claim the
+ * target's budget after the finite-budget and bind checks pass but
+ * before any teardown, so two in-flight applies cannot both fit one
+ * target. Opt-in via ApplyOneOpts.targetAdmission; the force-admit
+ * annotation does not reach it.
+ */
+function claimTargetAdmission(
+  ctx: ConvergeServerContext,
+  adm: Extract<AdmissionResult, { ok: true }>,
+  living: readonly ModelRun[],
+): TargetClaim {
+  const targetAdmission = ctx.opts?.targetAdmission;
+  if (!targetAdmission || ctx.matches) return { kind: "inactive" };
+  const { manifest, desiredArgs, now } = ctx;
+  const targetIdentity = ctx.opts?.resolveNodeIdentity?.(manifest.spec.node) ?? manifest.spec.node;
+  // The ledger charges committed manifests together with pending claims:
+  // the same living set the finite-budget check saw is projected into
+  // resident claims so concurrent applies cannot both fit one target.
+  const livingClaims: ManagedAdmissionClaim[] = living.map((m) => ({
+    claimId: `store:${m.metadata.name}`,
+    runtimeKey: m.metadata.name,
+    specDigest: specDigestFor(m, desiredArgsFor(m)),
+    state: "resident",
+    allocationGiB: m.spec.resources?.expectedMemoryGiB,
+    kind: "ModelRun",
+  }));
+  const { decision, handle } = targetAdmission.tryClaim({
+    targetIdentity,
+    runtimeKey: manifest.metadata.name,
+    specDigest: specDigestFor(manifest, desiredArgs),
+    kind: "ModelRun",
+    allocationGiB: manifest.spec.resources?.expectedMemoryGiB,
+    budgetGiB: adm.budget ?? undefined,
+    living: livingClaims,
+  });
+  if (decision.kind === "admit") return { kind: "claimed", handle };
+  return {
+    kind: "refused",
+    result: targetAdmissionRefusal(decision, targetIdentity, adm.budget, now),
+  };
+}
 
-  if (matches) {
-    onEvent?.({
-      type: "skipped",
-      message: `${manifest.metadata.name}: already running (${manifest.spec.target.value})`,
-    });
-    return {
-      action: "unchanged",
-      statusSection: {
-        phase: "Running",
-        serverPid: status.pid,
-        endpoint: status.endpoint,
-        lastTransitionTime: now,
-        conditions: [
-          { type: "Applied", status: "True", reason: "unchanged", lastTransitionTime: now },
-        ],
-      },
-    };
-  }
+/**
+ * Tracks how far the post-claim section got: `destructive` flips once
+ * teardown may already have run (verified evictions, the
+ * mismatched-server stop, worker starts) and `startInvoked` once the
+ * coordinator subscribe is imminent.
+ */
+interface ClaimLifecycle {
+  destructive: boolean;
+  startInvoked: boolean;
+}
 
-  let action: ApplyAction;
-  if (status.state === "up") {
-    onEvent?.({ type: "stop", message: `${manifest.metadata.name}: stopping mismatched server` });
-    await client.serverStop.mutate({ workload: manifest.metadata.name, graceSeconds: 5 });
-    action = "restarted";
-  } else {
-    action = "started";
-  }
-
+async function startClaimedServer(
+  ctx: ConvergeServerContext,
+  action: ApplyAction,
+  adm: Extract<AdmissionResult, { ok: true }>,
+  handle: TargetAdmissionClaimHandle | null,
+  lifecycle: ClaimLifecycle,
+): Promise<ApplyResult> {
+  const { manifest, client, getClient, onEvent, now, desiredArgs } = ctx;
   const workers = manifest.spec.workers;
   if (workers.length > 0) {
+    lifecycle.destructive = true;
     const wres = await startWorkers(workers, getClient, onEvent);
     if (wres.error) {
       // Already inside `workers.length > 0`; stop the partially-started workers
       // before returning so a worker-start failure is all-or-nothing.
       await stopWorkers(workers, getClient);
+      handle?.releaseUnstarted();
       return failedApplyResult(action, wres.error, new Date().toISOString());
     }
   }
@@ -1550,13 +1655,17 @@ async function convergeServerUnderLock(ctx: ConvergeServerContext): Promise<Appl
     type: "start",
     message: `${manifest.metadata.name}: starting ${manifest.spec.target.value}`,
   });
+  lifecycle.startInvoked = true;
   const startResult = await startCoordinator(client, manifest, desiredArgs);
 
   if (!startResult?.ok) {
     const err = startResult?.error ?? "serverStart failed";
     if (workers.length > 0) await stopWorkers(workers, getClient);
+    handle?.markUncertain();
     return failedApplyResult(action, err, now);
   }
+
+  handle?.markResident();
 
   onEvent?.({
     type: "started",
@@ -1581,6 +1690,87 @@ async function convergeServerUnderLock(ctx: ConvergeServerContext): Promise<Appl
       ],
     },
   };
+}
+
+async function convergeClaimedServer(
+  ctx: ConvergeServerContext,
+  adm: Extract<AdmissionResult, { ok: true }>,
+  verified: ReadonlySet<string>,
+  handle: TargetAdmissionClaimHandle | null,
+  lifecycle: ClaimLifecycle,
+): Promise<ApplyResult> {
+  const { manifest, client, onEvent, now, status, matches, evictTargets } = ctx;
+  // Evict only AFTER admission succeeds and from INSIDE the node lock.
+  // Eviction is destructive: stopping the victims for a workload that
+  // is then rejected (budget/admission fail) would tear down running
+  // servers to make room for a server that never starts. The budget
+  // computation already excludes evictTargets from `living`, so an
+  // admitted workload has accounted for the freed capacity here.
+  const verifiedTargets = evictTargets.filter((t) => verified.has(t));
+  if (verifiedTargets.length > 0) lifecycle.destructive = true;
+  await stopEvictTargets(manifest, client, verifiedTargets, onEvent);
+
+  if (matches) {
+    onEvent?.({
+      type: "skipped",
+      message: `${manifest.metadata.name}: already running (${manifest.spec.target.value})`,
+    });
+    return {
+      action: "unchanged",
+      statusSection: {
+        phase: "Running",
+        serverPid: status.pid,
+        endpoint: status.endpoint,
+        lastTransitionTime: now,
+        conditions: [
+          { type: "Applied", status: "True", reason: "unchanged", lastTransitionTime: now },
+        ],
+      },
+    };
+  }
+
+  let action: ApplyAction;
+  if (status.state === "up") {
+    onEvent?.({ type: "stop", message: `${manifest.metadata.name}: stopping mismatched server` });
+    lifecycle.destructive = true;
+    await client.serverStop.mutate({ workload: manifest.metadata.name, graceSeconds: 5 });
+    action = "restarted";
+  } else {
+    action = "started";
+  }
+
+  return await startClaimedServer(ctx, action, adm, handle, lifecycle);
+}
+
+async function convergeServerUnderLock(ctx: ConvergeServerContext): Promise<ApplyResult> {
+  const admission = await admitServerBudget(ctx);
+  if (!admission.ok) return admissionRejection(ctx, admission);
+  const adm = admission.adm;
+  const verified = admission.verified;
+  const living = admission.living;
+
+  const bindRefusal = refuseHostBindBeforeTeardown(ctx);
+  if (bindRefusal !== null) return bindRefusal;
+
+  const claim = claimTargetAdmission(ctx, adm, living);
+  if (claim.kind === "refused") return claim.result;
+  const handle = claim.kind === "claimed" ? claim.handle : null;
+
+  // An admitted claim must leave `pending` on every exit path: a throw
+  // between the claim and the terminal transition marks the claim
+  // uncertain once anything destructive ran, and releases it otherwise.
+  const lifecycle: ClaimLifecycle = { destructive: false, startInvoked: false };
+  try {
+    return await convergeClaimedServer(ctx, adm, verified, handle, lifecycle);
+  } finally {
+    if (handle !== null && handle.state() === "pending") {
+      if (lifecycle.destructive || lifecycle.startInvoked) {
+        handle.markUncertain();
+      } else {
+        handle.releaseUnstarted();
+      }
+    }
+  }
 }
 
 /**
@@ -1626,19 +1816,7 @@ export async function applyOne(
 
   const desiredRel = await resolveDesiredRel(manifest.spec.target, client);
   const desiredEndpoint = manifest.spec.endpoint;
-  // Compose the effective extraArgs: user args + the --rpc flag if
-  // this workload has workers. The coordinator's server.rel /
-  // extraArgs comparison below uses the composed form so a diff
-  // between "with --rpc" and "without" triggers a restart.
-  let effectiveExtraArgs: string[] = manifest.spec.extraArgs;
-  const workers = manifest.spec.workers;
-
-  let rpcFlag: string[] = [];
-  if (workers.length > 0) {
-    rpcFlag = ["--rpc", workers.map((w) => `${w.rpcHost}:${String(w.rpcPort)}`).join(",")];
-    effectiveExtraArgs = [...manifest.spec.extraArgs, ...rpcFlag];
-  }
-  const desiredArgs = effectiveExtraArgs;
+  const desiredArgs = desiredArgsFor(manifest);
   const liveRel = status.rel;
   const liveArgs = status.extraArgs;
   const running = status.state === "up";

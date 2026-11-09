@@ -71,6 +71,10 @@ const EXPECTED_SPEC_HASHES: Readonly<Record<string, string>> = {
     "88e9c5dfd9ff9c71df0708821414103020b3932bbc8e01e321483ea938a6db24",
   "granite41-8b-mac-mini.yaml": "efb925bbf6a9dd5bb475b2d659c1e5aa009733bf4b683ae594f76d2ba8a76569",
   "gufo-glm53-exp-z13.yaml": "107a6d71f35796d31bd501eb3b6ee13f0c22a85fa9088be46d667c0e24d39c94",
+  "libosmos-ds41-ud-iq1m-z13.yaml":
+    "f3519024369416d93937f63d2e83447571c344e9243f670df2d93b1c919f9bab",
+  "libosmos-ds41-ud-iq1s-z13.yaml":
+    "8d94eddab8a2cfd06d4797339decd6bd7feb7252fffbc98ef431bb2bf5c86897",
   "llamacpp-deepseek41-flash-iq1s-z13.yaml":
     "c83849ef63837c3089a6c665d164260caf0935a42e4cb701d6a5c4ad3bd8b9f6",
   "llamacpp-ds41-ud-iq1m-hip-b12206-z13.yaml":
