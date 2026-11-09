@@ -411,6 +411,46 @@ describe("commitReservation and finishOperation", () => {
         nowMs: 2_500,
       });
       expect(missing).toEqual({ ok: false, reason: "not-found" });
+
+      // P10: stale and unissued fence tokens are rejected on commitReservation.
+      // fenceA is the old (stale) fence — a second claimOwnership bumped the
+      // authority to fenceB's token, so fenceA no longer matches.
+      const staleCommit = store.commitReservation({
+        fenceToken: fenceA.fenceToken,
+        operationId: "op-1",
+        expectedVersion: 2,
+        nowMs: 2_600,
+      });
+      expect(staleCommit).toEqual({ ok: false, reason: "stale-fence" });
+      expect(store.getOperation("op-1")).toEqual(
+        expectedRecord({
+          phase: "committed",
+          ownerId: "owner-b",
+          incarnation: "inc-b",
+          fenceToken: fenceB.fenceToken,
+          version: 2,
+          updatedAtMs: 2_000,
+        }),
+      );
+
+      // An unissued token (99) that has never been handed out is also stale.
+      const unissuedCommit = store.commitReservation({
+        fenceToken: 99,
+        operationId: "op-1",
+        expectedVersion: 2,
+        nowMs: 2_700,
+      });
+      expect(unissuedCommit).toEqual({ ok: false, reason: "stale-fence" });
+      expect(store.getOperation("op-1")).toEqual(
+        expectedRecord({
+          phase: "committed",
+          ownerId: "owner-b",
+          incarnation: "inc-b",
+          fenceToken: fenceB.fenceToken,
+          version: 2,
+          updatedAtMs: 2_000,
+        }),
+      );
     } finally {
       store.close();
     }
