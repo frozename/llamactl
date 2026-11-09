@@ -302,10 +302,10 @@ class RequestQueuePolicyImpl implements RequestQueuePolicy {
     this.expireDue(now, actions);
 
     // Step 2: Start executions for available models
-    this.startExecutions(actions);
+    this.startExecutions(actions, now);
 
     // Step 3: At most one start-load
-    this.maybeStartLoad(actions);
+    this.maybeStartLoad(actions, now);
 
     return actions;
   }
@@ -480,14 +480,14 @@ class RequestQueuePolicyImpl implements RequestQueuePolicy {
 
   // ── Start executions for available models ────────────────────────────
 
-  private startExecutions(actions: QueueAction[]): void {
+  private startExecutions(actions: QueueAction[], now: number): void {
     const execSlots = this.limits.maxExecutions - this.executing.size;
     if (execSlots <= 0) return;
 
     // Gather ALL candidates sorted by urgency then enqueue order,
     // then walk the whole list skipping unavailable models until
     // slots are filled (work-conserving).
-    const candidates = this.candidatesForExecution();
+    const candidates = this.candidatesForExecution(now);
 
     let filled = 0;
     for (const candidate of candidates) {
@@ -512,42 +512,34 @@ class RequestQueuePolicyImpl implements RequestQueuePolicy {
     }
   }
 
-  private candidatesForExecution(): QueuedRequest[] {
+  private candidatesForExecution(now: number): QueuedRequest[] {
     const entries: QueuedRequest[] = [];
     for (const [_id, entry] of this.queue) {
       entries.push(entry);
     }
-    entries.sort((a, b) => this.compareUrgency(a, b));
+    entries.sort((a, b) => this.compareUrgency(a, b, now));
     return entries;
   }
 
-  private compareUrgency(a: QueuedRequest, b: QueuedRequest): number {
-    const now = this.now();
+  private compareUrgency(a: QueuedRequest, b: QueuedRequest, now: number): number {
+    const rankDiff = this.urgencyRank(a, now) - this.urgencyRank(b, now);
+    return rankDiff !== 0 ? rankDiff : a.seq - b.seq;
+  }
 
-    // Starvation: background past its bound outranks interactive
-    const aStarved =
-      a.priority === "background" && now - a.enqueuedAt >= this.limits.starvationBoundMs;
-    const bStarved =
-      b.priority === "background" && now - b.enqueuedAt >= this.limits.starvationBoundMs;
-
-    if (aStarved && bStarved) return a.seq - b.seq;
-    if (aStarved) return -1;
-    if (bStarved) return 1;
-
-    // Neither starved: interactive outranks background
-    if (a.priority !== b.priority) {
-      return a.priority === "interactive" ? -1 : 1;
-    }
-
-    return a.seq - b.seq;
+  // Interactive waiters and starved background waiters share the top tier;
+  // enqueue sequence breaks ties, so a starved background only overtakes
+  // interactive waiters enqueued after it.
+  private urgencyRank(entry: QueuedRequest, now: number): number {
+    if (entry.priority === "interactive") return 0;
+    return now - entry.enqueuedAt >= this.limits.starvationBoundMs ? 0 : 1;
   }
 
   // ── Start at most one load ───────────────────────────────────────────
 
-  private maybeStartLoad(actions: QueueAction[]): void {
+  private maybeStartLoad(actions: QueueAction[], now: number): void {
     if (this.inFlight !== null) return;
 
-    const modelKey = this.modelKeyForNextLoad();
+    const modelKey = this.modelKeyForNextLoad(now);
     if (modelKey === null) return;
 
     const loadId = `load-${String(this.nextLoadId++)}`;
@@ -555,7 +547,7 @@ class RequestQueuePolicyImpl implements RequestQueuePolicy {
     actions.push({ kind: "start-load", loadId, modelKey });
   }
 
-  private modelKeyForNextLoad(): string | null {
+  private modelKeyForNextLoad(now: number): string | null {
     // Pick the load target from the most urgent queued waiter
     // (same compareUrgency ordering used for execution), so
     // starvation bounds and priority also cover loads.
@@ -564,7 +556,7 @@ class RequestQueuePolicyImpl implements RequestQueuePolicy {
       entries.push(entry);
     }
     if (entries.length === 0) return null;
-    entries.sort((a, b) => this.compareUrgency(a, b));
+    entries.sort((a, b) => this.compareUrgency(a, b, now));
     // Walk from most urgent; return the first model that needs loading
     for (const entry of entries) {
       const isAvailable = this.isModelAvailable(entry.modelKey);
@@ -573,18 +565,6 @@ class RequestQueuePolicyImpl implements RequestQueuePolicy {
       }
     }
     return null;
-  }
-
-  private modelKeysWithQueuedWaiters(): string[] {
-    const keys = new Set<string>();
-    for (const [_id, entry] of this.queue) {
-      keys.add(entry.modelKey);
-    }
-    const result: string[] = [];
-    for (const key of keys) {
-      result.push(key);
-    }
-    return result.sort();
   }
 
   private isModelAvailable(modelKey: string): boolean {

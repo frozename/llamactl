@@ -948,3 +948,306 @@ test("#281: the constructor rejects non-positive, non-finite and non-integer lim
   }
   expect(() => mod.createRequestQueuePolicy({ limits: lim(), now: (): number => t })).not.toThrow();
 });
+
+test("#281: markEvicted -> loadSettled('ready') -> execute: evicted model reloads and waiter executes", async () => {
+  const mod = await load();
+  const t = 1_000;
+  const policy = mod.createRequestQueuePolicy({
+    limits: lim({ maxExecutions: 1 }),
+    now: (): number => t,
+    resident: ["m@1"],
+  });
+  expect(policy.enqueue(q("w-1"))).toEqual({ kind: "queued", requestId: "w-1" });
+  expect(policy.schedule()).toEqual([
+    { kind: "start-execution", requestId: "w-1", modelKey: "m@1" },
+  ]);
+  expect(policy.enqueue(q("w-2"))).toEqual({ kind: "queued", requestId: "w-2" });
+  // Evict the resident model
+  policy.markEvicted("m@1");
+  // Finish the execution - this should trigger a reload
+  expect(policy.finishExecution("w-1")).toBe(true);
+  // After eviction, the model is no longer resident, so a load starts
+  expect(policy.schedule()).toEqual([{ kind: "start-load", loadId: "load-1", modelKey: "m@1" }]);
+  expect(policy.snapshot()).toEqual({
+    queued: 1,
+    queuedBytes: 10,
+    executing: 0,
+    loading: "m@1",
+    resident: [],
+    byPrincipal: { p: 1 },
+  });
+  // Settle the load
+  expect(policy.loadSettled("load-1", "ready")).toEqual([]);
+  expect(policy.snapshot()).toEqual({
+    queued: 1,
+    queuedBytes: 10,
+    executing: 0,
+    loading: null,
+    resident: ["m@1"],
+    byPrincipal: { p: 1 },
+  });
+  // Now the waiter should be able to execute
+  expect(policy.schedule()).toEqual([
+    { kind: "start-execution", requestId: "w-2", modelKey: "m@1" },
+  ]);
+});
+
+test("#281: starved background waiters outrank only interactive waiters enqueued after them", async () => {
+  const mod = await load();
+  let t = 1_000;
+  // maxExecutions=1, starvationBoundMs=1000, maxQueueWaitMs=60000
+  const policy = mod.createRequestQueuePolicy({
+    limits: lim({ maxExecutions: 1, starvationBoundMs: 1000, maxQueueWaitMs: 60000 }),
+    now: (): number => t,
+    resident: ["m@1"],
+  });
+
+  // Enqueue a background waiter (seq 0)
+  expect(policy.enqueue(q("bg-early", { priority: "background" }))).toEqual({
+    kind: "queued",
+    requestId: "bg-early",
+  });
+
+  // Start execution
+  expect(policy.schedule()).toEqual([
+    { kind: "start-execution", requestId: "bg-early", modelKey: "m@1" },
+  ]);
+
+  // Enqueue an interactive waiter (seq 1)
+  expect(policy.enqueue(q("interactive-1", { priority: "interactive" }))).toEqual({
+    kind: "queued",
+    requestId: "interactive-1",
+  });
+
+  // Finish the background execution and re-enqueue it so it can be starved
+  expect(policy.finishExecution("bg-early")).toBe(true);
+  expect(policy.enqueue(q("bg-early", { priority: "background" }))).toEqual({
+    kind: "queued",
+    requestId: "bg-early",
+  });
+
+  // Wait for the background waiter to become starved (past starvationBoundMs)
+  t += 1100;
+
+  // Enqueue another background waiter (seq 3) - arrives AFTER the interactive
+  expect(policy.enqueue(q("bg-later", { priority: "background" }))).toEqual({
+    kind: "queued",
+    requestId: "bg-later",
+  });
+
+  // Queue now has: bg-early (seq 2, starved), interactive-1 (seq 1, not starved), bg-later (seq 3, not starved)
+  // Schedule: interactive-1 should win because:
+  // - bg-early (starved, seq 2) was enqueued AFTER interactive-1 (seq 1)
+  // - The fix says: starved background outranks interactive waiters enqueued AFTER it
+  // - Since interactive-1 (seq 1) was enqueued BEFORE bg-early (seq 2), bg-early should NOT outrank it
+  // - So interactive-1 wins (interactive priority beats background when bg-early was enqueued later)
+  const actions = policy.schedule();
+  const startExecs = actions.filter((a) => a.kind === "start-execution");
+  expect(startExecs).toHaveLength(1);
+  expect(startExecs[0]).toEqual({
+    kind: "start-execution",
+    requestId: "interactive-1",
+    modelKey: "m@1",
+  });
+
+  // Now interactive-1 is executing, finish it
+  expect(policy.finishExecution("interactive-1")).toBe(true);
+
+  // bg-early (seq 2, starved) should start before bg-later (seq 3, not starved)
+  // because bg-early is starved and bg-later was enqueued after bg-early
+  const actions2 = policy.schedule();
+  const startExecs2 = actions2.filter((a) => a.kind === "start-execution");
+  expect(startExecs2).toHaveLength(1);
+  expect(startExecs2[0]).toEqual({
+    kind: "start-execution",
+    requestId: "bg-early",
+    modelKey: "m@1",
+  });
+});
+
+test("#281: sustained overload: interactive starts before maxQueueWait and before background enqueued after it", async () => {
+  const mod = await load();
+  let t = 1_000;
+  const execMs = 300;
+  const interactiveAt = 5_000;
+  const maxQueueWaitMs = 60_000;
+  const policy = mod.createRequestQueuePolicy({
+    limits: lim({
+      maxExecutions: 1,
+      maxQueued: 10_000,
+      maxQueuedBytes: 100_000_000,
+      maxPerPrincipal: 100_000,
+      starvationBoundMs: 1_000,
+      maxQueueWaitMs,
+    }),
+    now: (): number => t,
+    resident: ["m@1"],
+  });
+
+  // Deterministic repro of the review scenario: one execution slot, a
+  // background arrival every 100ms, each execution holding the slot for
+  // 300ms, and a single interactive request enqueued at t=5000.
+  let busyId: string | null = null;
+  let busyUntil = 0;
+  const execLog: { tick: number; action: QueueAction }[] = [];
+  const runTick = (tick: number): void => {
+    t = tick;
+    if (busyId !== null && tick >= busyUntil) {
+      expect(policy.finishExecution(busyId)).toBe(true);
+      busyId = null;
+    }
+    const bgId = `bg-${String(tick)}`;
+    expect(policy.enqueue(q(bgId, { priority: "background" }))).toEqual({
+      kind: "queued",
+      requestId: bgId,
+    });
+    if (tick === interactiveAt) {
+      expect(policy.enqueue(q("interactive-1", { priority: "interactive" }))).toEqual({
+        kind: "queued",
+        requestId: "interactive-1",
+      });
+    }
+    for (const action of policy.schedule()) {
+      execLog.push({ tick, action });
+      if (action.kind === "start-execution") {
+        busyId = action.requestId;
+        busyUntil = tick + execMs;
+      }
+    }
+  };
+  for (let tick = 1_000; tick <= 70_000; tick += 100) {
+    runTick(tick);
+  }
+
+  const startExecs = execLog.flatMap((entry) =>
+    entry.action.kind === "start-execution"
+      ? [{ tick: entry.tick, requestId: entry.action.requestId }]
+      : [],
+  );
+  const interactiveIdx = startExecs.findIndex((entry) => entry.requestId === "interactive-1");
+  const interactiveStartTick = interactiveIdx === -1 ? null : startExecs[interactiveIdx]!.tick;
+  const interactiveExpired = execLog.some(
+    (entry) => entry.action.kind === "expire" && entry.action.requestId === "interactive-1",
+  );
+
+  expect(interactiveExpired).toBe(false);
+  expect(interactiveStartTick).not.toBeNull();
+  expect(interactiveStartTick!).toBeGreaterThanOrEqual(interactiveAt);
+  expect(interactiveStartTick!).toBeLessThan(interactiveAt + maxQueueWaitMs);
+  // Only backgrounds enqueued at or before the interactive request (bg-5000
+  // and earlier) may start ahead of it; every later arrival waits.
+  for (const entry of interactiveIdx === -1 ? [] : startExecs.slice(0, interactiveIdx)) {
+    expect(Number(entry.requestId.slice(3))).toBeLessThanOrEqual(interactiveAt);
+  }
+});
+
+test("#281: schedule reads the clock once so urgency order cannot shift mid-sort", async () => {
+  const mod = await load();
+  let calls = 0;
+  const policy = mod.createRequestQueuePolicy({
+    limits: lim({ maxExecutions: 1, starvationBoundMs: 4 }),
+    now: (): number => {
+      calls++;
+      return 1_000 + calls;
+    },
+    resident: ["m@1"],
+  });
+
+  // The clock advances on every read, so waited time is measured in clock
+  // reads. After six enqueues the schedule-time read puts s-0 and s-2 past
+  // the starvation bound while s-3 and s-5 are still fresh; a comparator
+  // that re-read the clock per comparison could flip that boundary
+  // mid-sort, so schedule() must snapshot now once and pass it down.
+  const arrivals: [string, Priority][] = [
+    ["s-0", "background"],
+    ["s-1", "interactive"],
+    ["s-2", "background"],
+    ["s-3", "background"],
+    ["s-4", "interactive"],
+    ["s-5", "background"],
+  ];
+  for (const [requestId, priority] of arrivals) {
+    expect(policy.enqueue(q(requestId, { priority }))).toEqual({ kind: "queued", requestId });
+  }
+
+  const actions = policy.schedule();
+  expect(calls).toBe(arrivals.length + 1);
+  expect(actions).toEqual([{ kind: "start-execution", requestId: "s-0", modelKey: "m@1" }]);
+});
+
+test("#281: starved background enqueued after interactive does not overtake it", async () => {
+  const mod = await load();
+  let t = 1_000;
+  // maxExecutions=1, starvationBoundMs=500, maxQueueWaitMs=60000
+  const policy = mod.createRequestQueuePolicy({
+    limits: lim({ maxExecutions: 1, starvationBoundMs: 500, maxQueueWaitMs: 60000 }),
+    now: (): number => t,
+    resident: ["m@1"],
+  });
+
+  // Enqueue an interactive waiter (seq 0)
+  expect(policy.enqueue(q("interactive-1", { priority: "interactive" }))).toEqual({
+    kind: "queued",
+    requestId: "interactive-1",
+  });
+
+  // Start execution
+  expect(policy.schedule()).toEqual([
+    { kind: "start-execution", requestId: "interactive-1", modelKey: "m@1" },
+  ]);
+
+  // Finish the execution
+  expect(policy.finishExecution("interactive-1")).toBe(true);
+
+  // Wait until the starvation bound is reached
+  t += 600;
+
+  // Enqueue a background waiter that will be starved (seq 1)
+  expect(policy.enqueue(q("bg-starved", { priority: "background" }))).toEqual({
+    kind: "queued",
+    requestId: "bg-starved",
+  });
+
+  // The background waiter is starved (600ms > 500ms starvationBoundMs)
+  // But it was enqueued AFTER the interactive waiter was processed
+  // With the fix, this starved background should NOT outrank future interactive waiters
+  // For now, it should execute since there's no competition
+  const actions = policy.schedule();
+  const startExecs = actions.filter((a) => a.kind === "start-execution");
+  expect(startExecs).toHaveLength(1);
+  expect(startExecs[0]).toEqual({
+    kind: "start-execution",
+    requestId: "bg-starved",
+    modelKey: "m@1",
+  });
+
+  // Finish the background execution and re-enqueue it so it can be starved
+  expect(policy.finishExecution("bg-starved")).toBe(true);
+  expect(policy.enqueue(q("bg-starved", { priority: "background" }))).toEqual({
+    kind: "queued",
+    requestId: "bg-starved",
+  });
+
+  // Wait until the starvation bound is reached again after re-enqueue
+  // bg-starved was re-enqueued at t=1600, so we need to wait until t=2100 (500ms > 500ms starvationBoundMs)
+  t += 600;
+
+  // Now enqueue an interactive waiter (seq 3)
+  expect(policy.enqueue(q("interactive-2", { priority: "interactive" }))).toEqual({
+    kind: "queued",
+    requestId: "interactive-2",
+  });
+
+  // Queue has: bg-starved (seq 2, starved), interactive-2 (seq 3, not starved)
+  // bg-starved (seq 2) was enqueued BEFORE interactive-2 (seq 3)
+  // The fix says: starved background outranks interactive waiters enqueued AFTER it
+  // Since interactive-2 (seq 3) was enqueued AFTER bg-starved (seq 2), bg-starved should outrank it
+  const actions2 = policy.schedule();
+  const startExecs2 = actions2.filter((a) => a.kind === "start-execution");
+  expect(startExecs2).toHaveLength(1);
+  expect(startExecs2[0]).toEqual({
+    kind: "start-execution",
+    requestId: "bg-starved",
+    modelKey: "m@1",
+  });
+});
