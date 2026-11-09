@@ -10,7 +10,7 @@ import {
 
 export const TEMPLATES_DIR = resolve(import.meta.dir, "../../../../templates/workloads");
 
-export const RESERVED_PORTS: readonly number[] = [8080, 8081, 8082, 8083, 8084, 8095];
+export const RESERVED_PORTS: readonly number[] = [8080, 8081, 8082, 8083, 8084, 8091, 8095];
 
 const RESIDENCY_GROUP = "z13-large-gpu";
 

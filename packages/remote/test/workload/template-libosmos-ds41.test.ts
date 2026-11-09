@@ -70,6 +70,11 @@ interface ArmSpec {
   resources: ArmResources;
   baselineFile: string;
   catalogRowId?: string;
+  /**
+   * The catalog row still uses the legacy rel layout and stays
+   * llamacpp-only until the #557 catalog follow-up repins it.
+   */
+  pendingCatalogRepin?: boolean;
   extraArgs: string[];
   headerPins: readonly string[];
 }
@@ -83,6 +88,8 @@ const ARMS: readonly ArmSpec[] = [
     picks: PICKS_M,
     resources: { residentGiB: 100, diskBackedGiB: 133.2 },
     baselineFile: "llamacpp-ds41-ud-iq1m-hip-b12206-z13.yaml",
+    catalogRowId: "deepseek41-flash-1017-ud-iq1m",
+    pendingCatalogRepin: true,
     extraArgs: [
       "--picks",
       PICKS_M,
@@ -96,7 +103,7 @@ const ARMS: readonly ArmSpec[] = [
       "1",
       "--no-guess",
     ],
-    headerPins: HEADER_PINS,
+    headerPins: [...HEADER_PINS, "catalog follow-up"],
   },
   {
     file: "libosmos-ds41-ud-iq1s-z13.yaml",
@@ -278,17 +285,22 @@ for (const arm of ARMS) {
 
     const catalogRowId = arm.catalogRowId;
     if (catalogRowId !== undefined) {
-      test("joins the pinned catalog row rel, engines, residency group and family", () => {
+      const pending = arm.pendingCatalogRepin === true;
+      const title = pending
+        ? "keeps the legacy catalog row llamacpp-only until the repin, sharing residency group and family"
+        : "joins the pinned catalog row rel, engines, residency group and family";
+      test(title, () => {
         const { raw, manifest } = loadModelHostTemplate(arm.file);
         const row = catalog.BUILTIN_CATALOG.find((m) => m.id === catalogRowId);
         expect(row).toBeDefined();
         if (row === undefined) return;
-        expect(row.rel).toBe(arm.rel);
-        expect(row.runtime?.engines).toEqual(
-          arm.catalogRowId === "deepseek41-flash-1017-ud-iq1m"
-            ? ["llamacpp"]
-            : ["llamacpp", "libosmos"],
-        );
+        if (pending) {
+          expect(row.rel).not.toBe(arm.rel);
+          expect(row.runtime?.engines).toEqual(["llamacpp"]);
+        } else {
+          expect(row.rel).toBe(arm.rel);
+          expect(row.runtime?.engines).toEqual(["llamacpp", "libosmos"]);
+        }
         const doc = asRecord(raw);
         expect(doc).not.toBeNull();
         if (doc === null) return;

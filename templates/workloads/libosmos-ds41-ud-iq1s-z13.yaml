@@ -20,7 +20,8 @@
 # The Z13 agent must be upgraded to a build that knows engine libosmos
 # before these can run there.
 #
-# Port 8091/8092 avoids 8080-8090; 8095 is the benchmark port.
+# Port 8092 avoids the reserved z13 ports 8080-8084, 8091 and 8095, the
+# tier-0 arms on 8086-8090, and D-O1 on 8085.
 apiVersion: llamactl/v1
 kind: ModelHost
 metadata:
