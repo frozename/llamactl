@@ -338,6 +338,38 @@ describe("llamacpp draft-model path resolution", () => {
     expect(built.args[built.args.indexOf("--spec-draft-model") + 1]).toBe("/abs/drafters/s.gguf");
   });
 
+  test.each(["--model-draft", "--spec-draft-model", "--dspark", "-md"])(
+    "resolves the inline %s=<rel> draft path against the models dir",
+    (flag) => {
+      const built = ENGINES.llamacpp.buildBootCommand(
+        specWithArgs(["--jinja", `${flag}=${draftRel}`]),
+        env,
+      );
+      expect(built.args).toContain(`${flag}=${draftPath}`);
+      expect(built.args).not.toContain(`${flag}=${draftRel}`);
+    },
+  );
+
+  test("rejects an inline relative draft path that escapes the models dir", () => {
+    expect(() =>
+      ENGINES.llamacpp.buildBootCommand(
+        specWithArgs(["--spec-draft-model=../escape-draft.gguf"]),
+        env,
+      ),
+    ).toThrow(/--spec-draft-model path escapes models dir/);
+  });
+
+  test("inline and separate forms resolve in the same argv", () => {
+    const built = ENGINES.llamacpp.buildBootCommand(
+      specWithArgs(["--dspark", "drafters/d.gguf", `--model-draft=${draftRel}`]),
+      env,
+    );
+    expect(built.args[built.args.indexOf("--dspark") + 1]).toBe(
+      resolve("/tmp/models", "drafters/d.gguf"),
+    );
+    expect(built.args).toContain(`--model-draft=${draftPath}`);
+  });
+
   describe("guards", () => {
     test("an absolute draft path is passed through unchanged", () => {
       const built = ENGINES.llamacpp.buildBootCommand(
@@ -345,6 +377,14 @@ describe("llamacpp draft-model path resolution", () => {
         env,
       );
       expect(built.args[built.args.indexOf("-md") + 1]).toBe("/opt/drafters/draft.gguf");
+    });
+
+    test("an inline absolute draft path is passed through unchanged", () => {
+      const built = ENGINES.llamacpp.buildBootCommand(
+        specWithArgs(["--model-draft=/opt/drafters/draft.gguf"]),
+        env,
+      );
+      expect(built.args).toContain("--model-draft=/opt/drafters/draft.gguf");
     });
 
     test.each([
@@ -355,9 +395,22 @@ describe("llamacpp draft-model path resolution", () => {
       expect(built.args[built.args.indexOf(flag) + 1]).toBe(value);
     });
 
+    test("an unknown inline flag keeps its value verbatim", () => {
+      const built = ENGINES.llamacpp.buildBootCommand(
+        specWithArgs(["--chat-template-file=templates/t.jinja"]),
+        env,
+      );
+      expect(built.args).toContain("--chat-template-file=templates/t.jinja");
+    });
+
     test("a trailing draft flag with no value is emitted unchanged", () => {
       const built = ENGINES.llamacpp.buildBootCommand(specWithArgs(["--jinja", "-md"]), env);
       expect(built.args.at(-1)).toBe("-md");
+    });
+
+    test("an inline draft flag with an empty value is emitted unchanged", () => {
+      const built = ENGINES.llamacpp.buildBootCommand(specWithArgs(["--model-draft="]), env);
+      expect(built.args.at(-1)).toBe("--model-draft=");
     });
 
     test("buildBootCommand does not mutate spec.extraArgs", () => {
