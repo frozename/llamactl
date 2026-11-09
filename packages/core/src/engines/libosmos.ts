@@ -1,10 +1,13 @@
 // libosmos engine adapter for osmos-api (mrsirg97-rgb/libosmos v0.5.5
-// @934b51b9). The llamactl proxy does NOT sanitise sampling params yet:
-// osmos-api decodes greedily only and returns a 400 for temperature != 0
-// or top_p != 1 (tools/api/request.c); stop and n are constrained too, so
-// clients and the bench harness must send greedy requests. The endpoint
-// host must be exactly 127.0.0.1: osmos-api binds IPv4 via inet_pton, and
-// llamactl's state validator and bind gate accept no other IPv4 loopback.
+// @934b51b9). osmos-api decodes greedily only and returns a 400 for
+// temperature != 0 or top_p != 1 (tools/api/request.c); stop and n are
+// constrained too. The llamactl proxy rewrites libosmos requests to
+// greedy before forwarding — temperature 0, top_p 1, n 1, and stop is
+// DROPPED, so generation runs past client stop strings (a semantic
+// change acceptable for a benchmark arm); every rewrite is logged as
+// libosmos_greedy_rewrite. The endpoint host must be exactly 127.0.0.1:
+// osmos-api binds IPv4 via inet_pton, and llamactl's state validator and
+// bind gate accept no other IPv4 loopback.
 
 import { basename, isAbsolute, join, resolve, sep } from "node:path";
 
@@ -282,6 +285,34 @@ function writeOsmosJson(spec: ModelHostSpecForEngine, bootEnv: EngineBootEnv): v
   const configPath = join(home, "osmos.json");
   writeFileSync(configPath, `${JSON.stringify(cfg, null, 2)}\n`, { mode: 0o600 });
   chmodSync(configPath, 0o600);
+}
+
+/**
+ * Rewrite the greedy-only sampling fields of an OpenAI-style request body
+ * in place for osmos-api, which answers 400 on temperature != 0, top_p != 1,
+ * any `stop` key, or n != 1. Returns the rewritten field names in the fixed
+ * order temperature, top_p, stop, n; absent keys are never added and
+ * already-greedy values are left untouched.
+ */
+export function sanitizeLibosmosGreedyBody(body: Record<string, unknown>): string[] {
+  const rewritten: string[] = [];
+  if (Object.prototype.hasOwnProperty.call(body, "temperature") && body["temperature"] !== 0) {
+    body["temperature"] = 0;
+    rewritten.push("temperature");
+  }
+  if (Object.prototype.hasOwnProperty.call(body, "top_p") && body["top_p"] !== 1) {
+    body["top_p"] = 1;
+    rewritten.push("top_p");
+  }
+  if (Object.prototype.hasOwnProperty.call(body, "stop")) {
+    delete body["stop"];
+    rewritten.push("stop");
+  }
+  if (Object.prototype.hasOwnProperty.call(body, "n") && body["n"] !== 1) {
+    body["n"] = 1;
+    rewritten.push("n");
+  }
+  return rewritten;
 }
 
 export const libosmosEngine: EngineAdapter = {
