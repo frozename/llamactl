@@ -9,6 +9,7 @@ import {
   fileClaimingName,
   filesClaimingNodePort,
   loadModelHostTemplate,
+  RESERVED_PORTS,
 } from "./template-arms.js";
 
 /**
@@ -43,8 +44,6 @@ const DS_IQ1_M_REL =
   "DeepSeek-V4.1-Flash-1017-GGUF-unsloth/2688c0c3/UD-IQ1_M/DeepSeek-V4.1-Flash-1017-UD-IQ1_M-00001-of-00005.gguf";
 const DS_DRAFT_REL =
   "DeepSeek-V4.1-Flash-1017-GGUF-unsloth/2688c0c3/dspark/dspark-DeepSeek-V4.1-Flash-1017-Q8_0.gguf";
-
-const RESERVED_PORTS = [8080, 8081, 8082, 8083, 8084, 8091];
 
 interface ArmResources {
   residentGiB?: number;

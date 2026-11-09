@@ -20,11 +20,7 @@
 # The Z13 agent must be upgraded to a build that knows engine libosmos
 # before these can run there.
 #
-# Port 8091/8092 avoids 8080-8090; 8095 is the benchmark port.
-#
-# TODO(#557 catalog follow-up): the catalog row uses the legacy
-# DeepSeek-V4.1-Flash-1017-GGUF/UD-IQ1_M rel layout, so this arm does
-# not join it until that row is repinned.
+# Port 8085 avoids 8080-8084 and 8086-8090; 8095 is the benchmark port.
 apiVersion: llamactl/v1
 kind: ModelHost
 metadata:
@@ -42,7 +38,7 @@ spec:
   binary: /home/alex/strix-halo-bench/runtimes/libosmos-934b51b932be/src/bin/osmos-api
   endpoint:
     host: 127.0.0.1
-    port: 8091
+    port: 8085
   hostedModels:
     - rel: DeepSeek-V4.1-Flash-1017-GGUF-unsloth/2688c0c3/UD-IQ1_M/DeepSeek-V4.1-Flash-1017-UD-IQ1_M-00001-of-00005.gguf
   extraArgs:

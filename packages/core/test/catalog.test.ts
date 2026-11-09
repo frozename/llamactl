@@ -814,7 +814,7 @@ describe("catalog experimental candidate rows (#515)", () => {
       minBuild: "b11870",
     });
     expect(iq1m?.runtime).toStrictEqual({
-      engines: ["llamacpp", "libosmos"],
+      engines: ["llamacpp"],
       minBuild: "b11870",
     });
     expect(gsq?.runtime).toStrictEqual({ engines: ["llamacpp"], minBuild: "b11870" });

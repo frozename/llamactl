@@ -15,6 +15,7 @@ import {
   hostedModelRels,
   loadModelHostTemplate,
   modelRunsTargetingRel,
+  RESERVED_PORTS,
   residencyGroupLabel,
   templateDocs,
 } from "./template-arms.js";
@@ -22,7 +23,7 @@ import {
 /**
  * RED pins for frozename/llamactl#557 (S4): two libosmos DeepSeek
  * V4.1-Flash-1017 runtime-arm ModelHosts on z13 — D-O1 (UD-IQ1_M, port
- * 8091) and D-O2 (UD-IQ1_S, port 8092). Both boot the pinned
+ * 8085) and D-O2 (UD-IQ1_S, port 8092). Both boot the pinned
  * libosmos-934b51b932be osmos-api with the 3c6b0aeb256c evo picks and
  * the dspark-iq2xs drafter; osmos-api decodes greedily only (it 400s on
  * temperature/top_p), so no sampling flags may appear. Each arm pairs
@@ -77,7 +78,7 @@ const ARMS: readonly ArmSpec[] = [
   {
     file: "libosmos-ds41-ud-iq1m-z13.yaml",
     name: "libosmos-ds41-ud-iq1m",
-    port: 8091,
+    port: 8085,
     rel: IQ1M_REL,
     picks: PICKS_M,
     resources: { residentGiB: 100, diskBackedGiB: 133.2 },
@@ -95,7 +96,7 @@ const ARMS: readonly ArmSpec[] = [
       "1",
       "--no-guess",
     ],
-    headerPins: [...HEADER_PINS, "catalog follow-up"],
+    headerPins: HEADER_PINS,
   },
   {
     file: "libosmos-ds41-ud-iq1s-z13.yaml",
@@ -251,11 +252,12 @@ for (const arm of ARMS) {
       });
     });
 
-    test("claims its name, z13 port and rel uniquely", () => {
-      loadModelHostTemplate(arm.file);
+    test("claims its name, z13 port and rel uniquely and avoids reserved ports", () => {
+      const { manifest } = loadModelHostTemplate(arm.file);
       expect(fileClaimingName(arm.name)).toEqual([arm.file]);
       expect(filesClaimingNodePort("z13", arm.port)).toEqual([arm.file]);
       expect(modelRunsTargetingRel(arm.rel)).toEqual([]);
+      expect(RESERVED_PORTS).not.toContain(manifest.spec.endpoint.port);
     });
 
     test("forms a disabled arm pair with its llamacpp baseline on the shared rel", () => {
@@ -282,8 +284,11 @@ for (const arm of ARMS) {
         expect(row).toBeDefined();
         if (row === undefined) return;
         expect(row.rel).toBe(arm.rel);
-        expect(row.runtime?.engines).toContain("libosmos");
-        expect(row.runtime?.engines).toContain("llamacpp");
+        expect(row.runtime?.engines).toEqual(
+          arm.catalogRowId === "deepseek41-flash-1017-ud-iq1m"
+            ? ["llamacpp"]
+            : ["llamacpp", "libosmos"],
+        );
         const doc = asRecord(raw);
         expect(doc).not.toBeNull();
         if (doc === null) return;
