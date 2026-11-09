@@ -20,6 +20,18 @@ import type {
   WhenIdleResult,
 } from "./types.js";
 
+export type {
+  AcquireResult,
+  BeginDrainResult,
+  CommitUnloadResult,
+  DrainToken,
+  Lease,
+  ResidencyAuditEntry,
+  ResidencyLeases,
+  ResidencySnapshot,
+  WhenIdleResult,
+};
+
 // ── Internal types ──────────────────────────────────────────────────────
 
 type Phase = "open" | "draining" | "unloaded";
@@ -128,18 +140,6 @@ function bindLeaseToBody(
 
       try {
         const { done, value } = await reader.read();
-        // On forced unload while pull() awaits reader.read() on a quiet
-        // upstream, the abortListener errors the outer controller and
-        // cancels the upstream reader; the pending read returns {done:true}
-        // or rejects.  If the signal was aborted by a forced unload, treat
-        // it as an error — never as completion, so a revoked stream is not
-        // indistinguishable from a completed one.
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-        if (lease.signal.aborted) {
-          ensureReaderClosed();
-          controller.error(lease.signal.reason);
-          return;
-        }
         if (done) {
           ensureReaderClosed();
           settle();
@@ -357,16 +357,21 @@ export function createResidencyLeases(): ResidencyLeases {
     return true;
   }
 
+  function waiterCount(workload: string): number {
+    return countWaiters(registries, workload);
+  }
+
   function snapshot(workload: string): ResidencySnapshot {
     const state = registries.get(workload);
     if (state === undefined) {
-      return { workload, phase: "open", epoch: 0, active: [] };
+      return { workload, phase: "open", epoch: 0, active: [], waiters: 0 };
     }
     return {
       workload,
       phase: state.phase,
       epoch: state.epoch,
       active: activeIds(state),
+      waiters: state.waiters.size,
     };
   }
 
@@ -383,8 +388,15 @@ export function createResidencyLeases(): ResidencyLeases {
     cancelDrain,
     reopen,
     snapshot,
+    waiterCount,
     audit,
   };
 }
 
 export { bindLeaseToBody };
+
+function countWaiters(registries: Map<string, WorkloadState>, workload: string): number {
+  const state = registries.get(workload);
+  if (state === undefined) return 0;
+  return state.waiters.size;
+}

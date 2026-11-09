@@ -1,5 +1,13 @@
 import { expect, test } from "bun:test";
 
+import type {
+  DrainToken as DrainTokenType,
+  Lease as LeaseType,
+  ResidencyAuditEntry as ResidencyAuditEntryType,
+  ResidencyLeases as ResidencyLeasesType,
+  WhenIdleResult as WhenIdleResultType,
+} from "../src/residency/leases.js";
+
 // #278: request-lifetime residency leases land with the fix. A variable
 // specifier keeps tsc from resolving the not-yet-existing module, so each
 // case fails by assertion at the pinned base rather than by a resolution
@@ -7,69 +15,12 @@ import { expect, test } from "bun:test";
 const LEASES_MODULE = "../src/residency/leases.js";
 const INDEX_SPEC = "../src/index.js";
 
-type Lease = {
-  id: string;
-  workload: string;
-  epoch: number;
-  signal: AbortSignal;
-  release: () => boolean;
-};
-
-type AcquireResult =
-  | { ok: true; lease: Lease }
-  | { ok: false; reason: "Draining" | "Unloaded"; workload: string; epoch: number };
-
-type DrainToken = {
-  workload: string;
-  epoch: number;
-};
-
-type BeginDrainResult =
-  | { ok: true; token: DrainToken; active: string[] }
-  | { ok: false; reason: "AlreadyDraining" | "Unloaded"; workload: string; epoch: number };
-
-type WhenIdleResult =
-  | { idle: true }
-  | { idle: false; reason: "Aborted" | "DrainCancelled" | "StaleDrainToken"; active: string[] };
-
-type CommitUnloadResult =
-  | { ok: true; revoked: string[] }
-  | { ok: false; reason: "LeasesActive"; active: string[] }
-  | { ok: false; reason: "StaleDrainToken" };
-
-type ResidencySnapshot = {
-  workload: string;
-  phase: "open" | "draining" | "unloaded";
-  epoch: number;
-  active: string[];
-};
-
-type ResidencyAuditEntry = {
-  workload: string;
-  epoch: number;
-  forced: true;
-  revoked: string[];
-  reason?: string;
-};
-
-type ResidencyLeases = {
-  acquire: (workload: string) => AcquireResult;
-  active: (workload: string) => string[];
-  beginDrain: (workload: string) => BeginDrainResult;
-  whenIdle: (token: DrainToken, opts?: { signal?: AbortSignal }) => Promise<WhenIdleResult>;
-  commitUnload: (
-    token: DrainToken,
-    opts?: { force?: boolean; reason?: string },
-  ) => CommitUnloadResult;
-  cancelDrain: (token: DrainToken) => boolean;
-  reopen: (token: DrainToken) => boolean;
-  snapshot: (workload: string) => ResidencySnapshot;
-  audit: () => ResidencyAuditEntry[];
-};
-
 type Mod = {
-  createResidencyLeases: () => ResidencyLeases;
-  bindLeaseToBody: (body: ReadableStream<Uint8Array>, lease: Lease) => ReadableStream<Uint8Array>;
+  createResidencyLeases: () => ResidencyLeasesType;
+  bindLeaseToBody: (
+    body: ReadableStream<Uint8Array>,
+    lease: LeaseType,
+  ) => ReadableStream<Uint8Array>;
 };
 
 async function load(): Promise<Mod> {
@@ -85,7 +36,7 @@ async function flushMicrotasks(): Promise<void> {
   await Promise.resolve();
 }
 
-function mustAcquire(reg: ResidencyLeases, workload: string): Lease {
+function mustAcquire(reg: ResidencyLeasesType, workload: string): LeaseType {
   const res = reg.acquire(workload);
   expect(res.ok).toBe(true);
   if (!res.ok) {
@@ -95,9 +46,9 @@ function mustAcquire(reg: ResidencyLeases, workload: string): Lease {
 }
 
 function mustBeginDrain(
-  reg: ResidencyLeases,
+  reg: ResidencyLeasesType,
   workload: string,
-): { token: DrainToken; active: string[] } {
+): { token: DrainTokenType; active: string[] } {
   const res = reg.beginDrain(workload);
   expect(res.ok).toBe(true);
   if (!res.ok) {
@@ -163,6 +114,7 @@ test("#278: a bound body pins its lease until the stream finishes", async () => 
   expect(lease.release()).toBe(false);
   expect(reg.commitUnload(drain.token)).toEqual({ ok: true, revoked: [] });
   expect(reg.snapshot("glm").phase).toBe("unloaded");
+  expect(reg.snapshot("glm").waiters).toBe(0);
 });
 
 test("#278: cancelling or erroring a bound body releases its lease", async () => {
@@ -249,7 +201,7 @@ test("#278: whenIdle abort signal removes waiter", async () => {
 
   const abort = new AbortController();
   let settled = false;
-  const idle = reg.whenIdle(drain.token, { signal: abort.signal }).then((r): WhenIdleResult => {
+  const idle = reg.whenIdle(drain.token, { signal: abort.signal }).then((r): WhenIdleResultType => {
     settled = true;
     return r;
   });
@@ -269,7 +221,7 @@ test("#278: whenIdle abort signal removes waiter", async () => {
   let newSettled = false;
   const newIdle = reg
     .whenIdle(drain.token, { signal: newAbort.signal })
-    .then((r): WhenIdleResult => {
+    .then((r): WhenIdleResultType => {
       newSettled = true;
       return r;
     });
@@ -306,6 +258,7 @@ test("#278: draining fences acquires until the drain commits or reopens", async 
     expect(unloaded.reason).toBe("Unloaded");
   }
   expect(reg.snapshot("glm").phase).toBe("unloaded");
+  expect(reg.snapshot("glm").waiters).toBe(0);
 
   expect(reg.reopen(drain.token)).toBe(true);
   expect(mustAcquire(reg, "glm").workload).toBe("glm");
@@ -319,7 +272,7 @@ test("#278: whenIdle waits for leases and reports abort, cancel and stale tokens
   const a = mustAcquire(regA, "glm");
   const drainA = mustBeginDrain(regA, "glm");
   let settledA = false;
-  const idleA = regA.whenIdle(drainA.token).then((r): WhenIdleResult => {
+  const idleA = regA.whenIdle(drainA.token).then((r): WhenIdleResultType => {
     settledA = true;
     return r;
   });
@@ -342,7 +295,7 @@ test("#278: whenIdle waits for leases and reports abort, cancel and stale tokens
   expect(regB.active("glm")).toEqual([b.id]);
 
   let settledC = false;
-  const idleC = regB.whenIdle(token).then((r): WhenIdleResult => {
+  const idleC = regB.whenIdle(token).then((r): WhenIdleResultType => {
     settledC = true;
     return r;
   });
@@ -357,7 +310,7 @@ test("#278: whenIdle waits for leases and reports abort, cancel and stale tokens
   const c = mustAcquire(regB, "glm");
 
   let settledD = false;
-  const idleD = regB.whenIdle(token).then((r): WhenIdleResult => {
+  const idleD = regB.whenIdle(token).then((r): WhenIdleResultType => {
     settledD = true;
     return r;
   });
@@ -394,7 +347,7 @@ test("#278: a forced commit revokes leases and audits the unload", async () => {
   // eslint-disable-next-line @typescript-eslint/await-thenable, @typescript-eslint/no-confusing-void-expression -- Bun's rejects matcher is typed as void.
   await expect(reader.read()).rejects.toThrow();
   expect(reg.active("glm")).toEqual([]);
-  const glmAudit: ResidencyAuditEntry[] = [
+  const glmAudit: ResidencyAuditEntryType[] = [
     { workload: "glm", epoch: 1, forced: true, revoked: [lease.id], reason: "operator" },
   ];
   expect(reg.audit()).toEqual(glmAudit);
@@ -461,6 +414,7 @@ test("#278: the leases module is wired through the core index and exports map", 
     exports: Record<string, string>;
   };
   expect(pkg.exports["./residency/leases"]).toBe("./src/residency/leases.ts");
+  expect(pkg.exports["./residency/types"]).toBe("./src/residency/types.ts");
 });
 
 test("#278: forced unload while read is pending on idle upstream rejects the read", async () => {
@@ -499,4 +453,41 @@ test("#278: forced unload while read is pending on idle upstream rejects the rea
     reason: "StaleDrainToken",
   });
   expect(reg.snapshot("glm").phase).toBe("unloaded");
+  expect(reg.snapshot("glm").waiters).toBe(0);
+});
+
+test("#278: reopen rejects when phase is draining (P12)", async () => {
+  const mod = await load();
+  const reg = mod.createResidencyLeases();
+  mustAcquire(reg, "glm");
+  const drain = mustBeginDrain(reg, "glm");
+  // reopen during draining should return false (not just during unloaded)
+  expect(reg.reopen(drain.token)).toBe(false);
+  // cancelDrain moves back to open, reopen on open should also fail (not unloaded)
+  expect(reg.reopen(drain.token)).toBe(false);
+  expect(reg.cancelDrain(drain.token)).toBe(true);
+  // After cancel, phase is open — reopen should still fail (not unloaded)
+  expect(reg.reopen(drain.token)).toBe(false);
+});
+
+test("#278: aborted waiters drop to 0 (P10)", async () => {
+  const mod = await load();
+  const reg = mod.createResidencyLeases();
+  const lease = mustAcquire(reg, "glm");
+  const drain = mustBeginDrain(reg, "glm");
+
+  // Register a waiter
+  const abort = new AbortController();
+  const idlePromise = reg.whenIdle(drain.token, { signal: abort.signal });
+  await flushMicrotasks();
+  expect(reg.snapshot("glm").waiters).toBe(1);
+
+  // Abort the signal — the waiter should be removed
+  abort.abort();
+  await idlePromise;
+  expect(reg.snapshot("glm").waiters).toBe(0);
+
+  // Release the lease and verify waiters stays 0
+  expect(lease.release()).toBe(true);
+  expect(reg.snapshot("glm").waiters).toBe(0);
 });

@@ -37,6 +37,7 @@ export type ResidencySnapshot = {
   phase: "open" | "draining" | "unloaded";
   epoch: number;
   active: string[];
+  waiters: number;
 };
 
 export type ResidencyAuditEntry = {
@@ -59,5 +60,6 @@ export interface ResidencyLeases {
   cancelDrain: (token: DrainToken) => boolean;
   reopen: (token: DrainToken) => boolean;
   snapshot: (workload: string) => ResidencySnapshot;
+  waiterCount: (workload: string) => number;
   audit: () => ResidencyAuditEntry[];
 }
