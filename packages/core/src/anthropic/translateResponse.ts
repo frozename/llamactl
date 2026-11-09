@@ -69,6 +69,12 @@ export function translateOpenAIResponse(res: OpenAIChatResponse): AnthropicMessa
 
   const choice = choiceFromResponse(res);
   const content: AnthropicContentBlock[] = [];
+  if (
+    typeof choice.message.reasoning_content === "string" &&
+    choice.message.reasoning_content.length > 0
+  ) {
+    content.push({ type: "thinking", thinking: choice.message.reasoning_content });
+  }
   if (typeof choice.message.content === "string" && choice.message.content.length > 0) {
     content.push({ type: "text", text: choice.message.content });
   }

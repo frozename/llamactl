@@ -139,6 +139,138 @@ test("preserves text before tool calls", () => {
   });
 });
 
+test("maps non-streaming reasoning_content to a thinking block before text", () => {
+  expect(
+    translateOpenAIResponse({
+      id: "msg_reasoning_1",
+      model: "claude-3-7-sonnet",
+      choices: [
+        {
+          index: 0,
+          message: {
+            role: "assistant",
+            content: "hello",
+            reasoning_content: "let me think",
+          },
+          finish_reason: "stop",
+        },
+      ],
+      usage: { prompt_tokens: 1, completion_tokens: 5 },
+    } as unknown as OpenAIChatResponse),
+  ).toEqual({
+    id: "msg_reasoning_1",
+    type: "message",
+    role: "assistant",
+    content: [
+      { type: "thinking", thinking: "let me think" },
+      { type: "text", text: "hello" },
+    ],
+    model: "claude-3-7-sonnet",
+    stop_reason: "end_turn",
+    usage: { input_tokens: 1, output_tokens: 5 },
+  });
+});
+
+test("reasoning_content before tool calls yields thinking then tool_use", () => {
+  expect(
+    translateOpenAIResponse({
+      id: "msg_reasoning_2",
+      model: "claude-3-7-sonnet",
+      choices: [
+        {
+          index: 0,
+          message: {
+            role: "assistant",
+            content: null,
+            reasoning_content: "plan",
+            tool_calls: [
+              {
+                id: "call_1",
+                type: "function",
+                function: { name: "lookup", arguments: '{"q":"x"}' },
+              },
+            ],
+          },
+          finish_reason: "tool_calls",
+        },
+      ],
+      usage: { prompt_tokens: 1, completion_tokens: 5 },
+    } as unknown as OpenAIChatResponse),
+  ).toEqual({
+    id: "msg_reasoning_2",
+    type: "message",
+    role: "assistant",
+    content: [
+      { type: "thinking", thinking: "plan" },
+      { type: "tool_use", id: "call_1", name: "lookup", input: { q: "x" } },
+    ],
+    model: "claude-3-7-sonnet",
+    stop_reason: "tool_use",
+    usage: { input_tokens: 1, output_tokens: 5 },
+  });
+});
+
+test("reasoning-only response (content null) yields a single thinking block", () => {
+  expect(
+    translateOpenAIResponse({
+      id: "msg_reasoning_3",
+      model: "claude-3-7-sonnet",
+      choices: [
+        {
+          index: 0,
+          message: {
+            role: "assistant",
+            content: null,
+            reasoning_content: "only thoughts",
+          },
+          finish_reason: "length",
+        },
+      ],
+      usage: { prompt_tokens: 1, completion_tokens: 5 },
+    } as unknown as OpenAIChatResponse),
+  ).toEqual({
+    id: "msg_reasoning_3",
+    type: "message",
+    role: "assistant",
+    content: [{ type: "thinking", thinking: "only thoughts" }],
+    model: "claude-3-7-sonnet",
+    stop_reason: "max_tokens",
+    usage: { input_tokens: 1, output_tokens: 5 },
+  });
+});
+
+test.each([[null], [""]] as const)(
+  "does not emit a thinking block for empty reasoning_content %s",
+  (reasoningContent) => {
+    expect(
+      translateOpenAIResponse({
+        id: "msg_reasoning_empty",
+        model: "claude-3-7-sonnet",
+        choices: [
+          {
+            index: 0,
+            message: {
+              role: "assistant",
+              content: "hello",
+              reasoning_content: reasoningContent,
+            },
+            finish_reason: "stop",
+          },
+        ],
+        usage: { prompt_tokens: 1, completion_tokens: 5 },
+      } as unknown as OpenAIChatResponse),
+    ).toEqual({
+      id: "msg_reasoning_empty",
+      type: "message",
+      role: "assistant",
+      content: [{ type: "text", text: "hello" }],
+      model: "claude-3-7-sonnet",
+      stop_reason: "end_turn",
+      usage: { input_tokens: 1, output_tokens: 5 },
+    });
+  },
+);
+
 test("throws for malformed responses", () => {
   expect(() =>
     translateOpenAIResponse({
