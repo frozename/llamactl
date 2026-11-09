@@ -409,3 +409,23 @@ test("G2 reverse: a labelled host is not blocked by an unlabelled peer", async (
     rmSync(root, { recursive: true, force: true });
   }
 }, 60_000);
+
+test("G3: two unlabelled hosts do not conflict — second start succeeds when peer is Running", async () => {
+  const arms = armTemplates();
+  const root = mkdtempSync(join(tmpdir(), "llamactl-residency-guard-"));
+  try {
+    const ctx = await setupRoot(root, arms);
+
+    const resultA = await startHost(ctx, arms.a, ctx.portA, { residencyGroup: null });
+    expect(resultA.ok).toBe(true);
+    recordPid(resultA);
+
+    const resultB = await startHost(ctx, arms.b, ctx.portB, { residencyGroup: null });
+    recordPid(resultB);
+    expect(resultB.ok).toBe(true);
+    expect(residencyConflict(resultB)).toBeUndefined();
+  } finally {
+    await stopBoth(root);
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 60_000);
