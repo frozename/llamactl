@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/await-thenable, @typescript-eslint/no-confusing-void-expression -- Bun's rejects/resolves matchers are typed as void. */
 import { readModelHostState, writeModelHostState } from "@llamactl/core/engines/state";
 import { resolveEnv } from "@llamactl/core/env";
 import { expect, test } from "bun:test";
@@ -16,7 +17,9 @@ import {
   truncateSync,
   writeFileSync,
 } from "../safe-fs.js";
-import { applyOne, applyOneModelHost, type WorkloadClient } from "./apply.js";
+import { createTargetAdmissionAuthority, type TargetAdmissionAuthority } from "./admission.js";
+import * as remoteAdmission from "./admission.js";
+import { applyOne, applyOneModelHost, type ApplyResult, type WorkloadClient } from "./apply.js";
 import { saveModelHost } from "./modelhost-store.js";
 import { loadWorkloadByNameAny, saveWorkload } from "./store.js";
 
@@ -108,6 +111,7 @@ function makeRecordingClient(state: WorkloadStateMap): {
 }
 
 type UnsubscribableLike = ReturnType<WorkloadClient["serverStart"]["subscribe"]>;
+type ServerStartCallbacks = Parameters<WorkloadClient["serverStart"]["subscribe"]>[1];
 
 const mkManifest = (
   name: string,
@@ -1252,5 +1256,413 @@ test("DF-01A: no-op apply of a matching running server keeps Running on an over-
     expect(state.has("b")).toBe(true);
   } finally {
     temp.cleanup();
+  }
+});
+
+test("E-1: two aliases of one target with a 24 GiB budget admit exactly one of two 16 GiB loads while both starts are pending", async () => {
+  const make = (remoteAdmission as Partial<typeof remoteAdmission>).createTargetAdmissionAuthority;
+  const targetAdmission: TargetAdmissionAuthority | undefined = make?.();
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-e1-alias-"));
+  const starts: string[] = [];
+  const held: ServerStartCallbacks[] = [];
+  const client: WorkloadClient = {
+    ...makeClient(new Map<string, WorkloadState>()),
+    serverStart: {
+      subscribe: (input, callbacks): UnsubscribableLike => {
+        starts.push(input.workload);
+        held.push(callbacks);
+        return { unsubscribe: () => undefined };
+      },
+    },
+  };
+  const opts = {
+    workloadsDir,
+    getNodeBudgetGiB: (): number => 24,
+    listManifests: (): ModelRun[] => [],
+    resolveNodeIdentity: (n: string): string | null =>
+      n === "mac-mini" || n === "mac-mini.local" ? "mac-mini" : null,
+    ...(targetAdmission ? { targetAdmission } : {}),
+  };
+  const settled: { name: string; result?: ApplyResult; error?: unknown }[] = [];
+  const pa = applyOne(
+    mkManifest("a", { port: 8090, ram: 16, node: "mac-mini" }),
+    () => client,
+    undefined,
+    undefined,
+    opts,
+  );
+  const pb = applyOne(
+    mkManifest("b", { port: 8091, ram: 16, node: "mac-mini.local" }),
+    () => client,
+    undefined,
+    undefined,
+    opts,
+  );
+  void pa.then(
+    (result) => settled.push({ name: "a", result }),
+    (error: unknown) => settled.push({ name: "a", error }),
+  );
+  void pb.then(
+    (result) => settled.push({ name: "b", result }),
+    (error: unknown) => settled.push({ name: "b", error }),
+  );
+  let startsAtPeak: string[] = [];
+  try {
+    const deadline = Date.now() + 2000;
+    while (Date.now() < deadline && starts.length < 2 && settled.length === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    startsAtPeak = [...starts];
+  } finally {
+    for (const callbacks of held) {
+      callbacks.onData({
+        type: "done",
+        result: { ok: true, pid: 100, endpoint: "http://127.0.0.1:8181" },
+      });
+      callbacks.onComplete();
+    }
+    await Promise.allSettled([pa, pb]);
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+  expect(startsAtPeak).toHaveLength(1);
+  expect(settled.filter((s) => s.result?.action === "started")).toHaveLength(1);
+  const pendingEntry = settled.find((s) => s.result?.action === "pending");
+  expect(pendingEntry).toBeDefined();
+  expect(startsAtPeak).not.toContain(pendingEntry!.name);
+  expect(pendingEntry!.result!.statusSection.phase).toBe("Failed");
+  expect(pendingEntry!.result!.statusSection.conditions[0]?.reason).toBe("BudgetExceeded");
+  expect(pendingEntry!.result!.error).toContain("mac-mini");
+  const snapshot = targetAdmission!.snapshot("mac-mini");
+  expect(snapshot).toHaveLength(1);
+  expect(snapshot[0]?.state).toBe("resident");
+  expect(snapshot[0]?.allocationGiB).toBe(16);
+});
+
+test("E-1: llamactl.io/force-admit does not bypass the target authority", async () => {
+  const make = (remoteAdmission as Partial<typeof remoteAdmission>).createTargetAdmissionAuthority;
+  const targetAdmission: TargetAdmissionAuthority | undefined = make?.();
+  const state: WorkloadStateMap = new Map();
+  const { client, starts } = makeRecordingClient(state);
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-e1-force-"));
+  try {
+    const opts = {
+      workloadsDir,
+      getNodeBudgetGiB: (): number => 24,
+      listManifests: (): ModelRun[] => [],
+      resolveNodeIdentity: (n: string): string | null =>
+        n === "mac-mini" || n === "mac-mini.local" ? "mac-mini" : null,
+      ...(targetAdmission ? { targetAdmission } : {}),
+    };
+    await applyOne(
+      mkManifest("a", { port: 8090, ram: 16, node: "mac-mini" }),
+      () => client,
+      undefined,
+      undefined,
+      opts,
+    );
+    const refused = await applyOne(
+      mkManifest("b", {
+        port: 8091,
+        ram: 16,
+        node: "mac-mini.local",
+        annotations: { "llamactl.io/force-admit": "true" },
+      }),
+      () => client,
+      undefined,
+      undefined,
+      opts,
+    );
+    expect(starts).toEqual(["a"]);
+    expect(refused.action).toBe("pending");
+    expect(refused.statusSection.phase).toBe("Failed");
+    expect(refused.statusSection.conditions[0]?.reason).toBe("BudgetExceeded");
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("E-1: a claim never stays pending when the start path throws", async () => {
+  const make = (remoteAdmission as Partial<typeof remoteAdmission>).createTargetAdmissionAuthority;
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-e1-throw-"));
+  try {
+    const targetAdmission: TargetAdmissionAuthority | undefined = make?.();
+    const baseOpts = {
+      workloadsDir,
+      getNodeBudgetGiB: (): number => 24,
+      listManifests: (): ModelRun[] => [],
+      resolveNodeIdentity: (n: string): string | null =>
+        n === "mac-mini" || n === "mac-mini.local" ? "mac-mini" : null,
+    };
+    const opts = {
+      ...baseOpts,
+      ...(targetAdmission ? { targetAdmission } : {}),
+    };
+    const stateC: WorkloadStateMap = new Map([["c", { up: true, rel: "old.gguf", args: [] }]]);
+    const recordingC = makeRecordingClient(stateC);
+    const clientC: WorkloadClient = {
+      ...recordingC.client,
+      serverStop: { mutate: () => Promise.reject(new Error("stop boom")) },
+    };
+    await expect(
+      applyOne(
+        mkManifest("c", { ram: 16, node: "mac-mini" }),
+        () => clientC,
+        undefined,
+        undefined,
+        opts,
+      ),
+    ).rejects.toThrow("stop boom");
+    expect(targetAdmission?.snapshot("mac-mini").filter((x) => x.state === "pending")).toEqual([]);
+    expect(targetAdmission?.snapshot("mac-mini").map((x) => x.state)).toEqual(["uncertain"]);
+
+    const targetAdmission2: TargetAdmissionAuthority | undefined = make?.();
+    const opts2 = {
+      ...baseOpts,
+      ...(targetAdmission2 ? { targetAdmission: targetAdmission2 } : {}),
+    };
+    const { client: clientD } = makeRecordingClient(new Map<string, WorkloadState>());
+    await expect(
+      applyOne(
+        mkManifest("d", { ram: 16, node: "mac-mini" }),
+        () => clientD,
+        (e): void => {
+          if (e.type === "start") throw new Error("event boom");
+        },
+        undefined,
+        opts2,
+      ),
+    ).rejects.toThrow("event boom");
+    expect(targetAdmission2?.snapshot("mac-mini")).toEqual([]);
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("E-1: resident claims are absorbing in this slice (pins the deferred-replacement limitation)", async () => {
+  const make = (remoteAdmission as Partial<typeof remoteAdmission>).createTargetAdmissionAuthority;
+  const targetAdmission: TargetAdmissionAuthority | undefined = make?.();
+  const m: WorkloadStateMap = new Map();
+  const { client, starts } = makeRecordingClient(m);
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-e1-resident-"));
+  try {
+    const opts = {
+      workloadsDir,
+      getNodeBudgetGiB: (): number => 24,
+      listManifests: (): ModelRun[] => [],
+      resolveNodeIdentity: (n: string): string | null =>
+        n === "mac-mini" || n === "mac-mini.local" ? "mac-mini" : null,
+      ...(targetAdmission ? { targetAdmission } : {}),
+    };
+    const manifest = mkManifest("a", { ram: 16, node: "mac-mini" });
+    const first = await applyOne(manifest, () => client, undefined, undefined, opts);
+    expect(first.action).toBe("started");
+    m.delete("a");
+    const second = await applyOne(manifest, () => client, undefined, undefined, opts);
+    expect(starts).toEqual(["a"]);
+    expect(second.action).toBe("pending");
+    expect(second.statusSection.phase).toBe("Failed");
+    expect(second.statusSection.conditions[0]?.reason).toBe("AlreadyResident");
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("E-1: committed manifests charge the target ledger so two aliases admit exactly one load", async () => {
+  const make = (remoteAdmission as Partial<typeof remoteAdmission>).createTargetAdmissionAuthority;
+  const targetAdmission: TargetAdmissionAuthority | undefined = make?.();
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-e1-living-"));
+  const starts: string[] = [];
+  const held: ServerStartCallbacks[] = [];
+  const client: WorkloadClient = {
+    ...makeClient(new Map<string, WorkloadState>()),
+    serverStart: {
+      subscribe: (input, callbacks): UnsubscribableLike => {
+        starts.push(input.workload);
+        held.push(callbacks);
+        return { unsubscribe: () => undefined };
+      },
+    },
+  };
+  const opts = {
+    workloadsDir,
+    getNodeBudgetGiB: (): number => 20,
+    listManifests: (): ModelRun[] => [mkManifest("resident", { ram: 8, node: "mac-mini.local" })],
+    resolveNodeIdentity: (n: string): string | null =>
+      n === "mac-mini" || n === "mac-mini.local" ? "mac-mini" : null,
+    ...(targetAdmission ? { targetAdmission } : {}),
+  };
+  const settled: { name: string; result?: ApplyResult; error?: unknown }[] = [];
+  const pa = applyOne(
+    mkManifest("a", { port: 8090, ram: 8, node: "mac-mini" }),
+    () => client,
+    undefined,
+    undefined,
+    opts,
+  );
+  const pb = applyOne(
+    mkManifest("b", { port: 8091, ram: 8, node: "mac-mini.local" }),
+    () => client,
+    undefined,
+    undefined,
+    opts,
+  );
+  void pa.then(
+    (result) => settled.push({ name: "a", result }),
+    (error: unknown) => settled.push({ name: "a", error }),
+  );
+  void pb.then(
+    (result) => settled.push({ name: "b", result }),
+    (error: unknown) => settled.push({ name: "b", error }),
+  );
+  let startsAtPeak: string[] = [];
+  try {
+    const deadline = Date.now() + 2000;
+    while (Date.now() < deadline && starts.length < 1 && settled.length === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    startsAtPeak = [...starts];
+  } finally {
+    for (const callbacks of held) {
+      callbacks.onData({
+        type: "done",
+        result: { ok: true, pid: 100, endpoint: "http://127.0.0.1:8181" },
+      });
+      callbacks.onComplete();
+    }
+    await Promise.allSettled([pa, pb]);
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+  // 8 GiB living + the winner's 8 GiB pending claim leaves no room for the
+  // second 8 GiB load: 8 + 8 + 8 > 20 GiB.
+  expect(startsAtPeak).toHaveLength(1);
+  expect(settled.filter((s) => s.result?.action === "started")).toHaveLength(1);
+  const pendingEntry = settled.find((s) => s.result?.action === "pending");
+  expect(pendingEntry).toBeDefined();
+  expect(startsAtPeak).not.toContain(pendingEntry!.name);
+  expect(pendingEntry!.result!.statusSection.phase).toBe("Failed");
+  expect(pendingEntry!.result!.statusSection.conditions[0]?.reason).toBe("BudgetExceeded");
+  expect(pendingEntry!.result!.error).toContain("mac-mini");
+  const snapshot = targetAdmission!.snapshot("mac-mini");
+  expect(snapshot).toHaveLength(1);
+  expect(snapshot[0]?.state).toBe("resident");
+  expect(snapshot[0]?.allocationGiB).toBe(8);
+});
+
+test("E-1: a worker-start failure releases the target claim so a later load can use the capacity", async () => {
+  const make = (remoteAdmission as Partial<typeof remoteAdmission>).createTargetAdmissionAuthority;
+  const targetAdmission: TargetAdmissionAuthority | undefined = make?.();
+  const state: WorkloadStateMap = new Map();
+  const base = makeClient(state);
+  const client: WorkloadClient = {
+    ...base,
+    rpcServerStart: {
+      subscribe: (_input, callbacks): { unsubscribe: () => undefined } => {
+        queueMicrotask(() => {
+          callbacks.onData({ type: "done", result: { ok: false, error: "rpc boom" } });
+          callbacks.onComplete();
+        });
+        return { unsubscribe: () => undefined };
+      },
+    },
+  };
+  const workerManifest = mkManifest("w", { ram: 8 });
+  workerManifest.spec.workers = [
+    { node: "w1", rpcHost: "127.0.0.1", rpcPort: 5001, extraArgs: [], timeoutSeconds: 5 },
+  ];
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-e1-workerfail-"));
+  try {
+    const opts = {
+      workloadsDir,
+      getNodeBudgetGiB: (): number => 12,
+      listManifests: (): ModelRun[] => [],
+      ...(targetAdmission ? { targetAdmission } : {}),
+    };
+    const failed = await applyOne(workerManifest, () => client, undefined, undefined, opts);
+    expect(failed.statusSection.phase).toBe("Failed");
+    expect(failed.error).toContain("worker w1");
+    expect(state.has("w")).toBe(false);
+    expect(targetAdmission?.snapshot("local")).toEqual([]);
+
+    const later = await applyOne(
+      mkManifest("x", { port: 8090, ram: 8 }),
+      () => client,
+      undefined,
+      undefined,
+      opts,
+    );
+    expect(later.action).toBe("started");
+    expect(state.has("x")).toBe(true);
+    expect(targetAdmission?.snapshot("local")).toHaveLength(1);
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("E-1: specDigestFor includes args so reconfiguring ONLY args on a held runtimeKey returns WorkloadBusy", async () => {
+  const targetAdmission: TargetAdmissionAuthority = createTargetAdmissionAuthority();
+  const state: WorkloadStateMap = new Map();
+  const { client } = makeRecordingClient(state);
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-e1-specdigest-"));
+  try {
+    const opts = {
+      workloadsDir,
+      getNodeBudgetGiB: (): number => 24,
+      listManifests: (): ModelRun[] => [],
+      resolveNodeIdentity: (n: string): string | null =>
+        n === "mac-mini" || n === "mac-mini.local" ? "mac-mini" : null,
+      targetAdmission,
+    };
+    // First, apply a manifest with no extra args — this creates a pending
+    // claim with specDigest based on [].
+    const manifest1 = mkManifest("a", { ram: 8, node: "mac-mini" });
+    const first = await applyOne(manifest1, () => client, undefined, undefined, opts);
+    expect(first.action).toBe("started");
+    // The pending claim holds runtimeKey "a" with specDigest =
+    // JSON.stringify(["rel", "x.gguf", []]).
+    // Now apply a second manifest "a" with different args — same runtimeKey
+    // but different specDigest (args differ). This should be WorkloadBusy.
+    const manifest2 = mkManifest("a", { ram: 8, node: "mac-mini" });
+    manifest2.spec.extraArgs = ["--some-arg"];
+    const second = await applyOne(manifest2, () => client, undefined, undefined, opts);
+    expect(second.action).toBe("pending");
+    expect(second.statusSection.phase).toBe("Failed");
+    expect(second.statusSection.conditions[0]?.reason).toBe("WorkloadBusy");
+    expect(second.error).toContain("mac-mini");
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("E-1: a no-op apply of a matching running server bypasses the target ledger", async () => {
+  const make = (remoteAdmission as Partial<typeof remoteAdmission>).createTargetAdmissionAuthority;
+  const targetAdmission: TargetAdmissionAuthority | undefined = make?.();
+  const state: WorkloadStateMap = new Map();
+  const { client, starts } = makeRecordingClient(state);
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-e1-noop-"));
+  try {
+    const opts = {
+      workloadsDir,
+      getNodeBudgetGiB: (): number => 20,
+      listManifests: (): ModelRun[] => [],
+      ...(targetAdmission ? { targetAdmission } : {}),
+    };
+    const manifest = mkManifest("a", { ram: 8 });
+    const first = await applyOne(manifest, () => client, undefined, undefined, opts);
+    expect(first.action).toBe("started");
+    expect(targetAdmission?.snapshot("local")).toHaveLength(1);
+
+    // The resident claim would answer already-resident if the ledger were
+    // consulted; the matching-server bypass must keep this a no-op.
+    const second = await applyOne(manifest, () => client, undefined, undefined, opts);
+    expect(second.action).toBe("unchanged");
+    expect(second.statusSection.phase).toBe("Running");
+    expect(second.statusSection.serverPid).toBe(1);
+    expect(second.error).toBeUndefined();
+    expect(starts).toEqual(["a"]);
+    expect(targetAdmission?.snapshot("local")).toHaveLength(1);
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
   }
 });
