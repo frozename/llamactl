@@ -15,7 +15,19 @@ const DRAFT_MODEL_PATH_FLAGS: ReadonlySet<string> = new Set([
 ]);
 
 // Absolute draft paths pass through on purpose, matching the issue's "relative" wording.
-// The `--flag=value` form of these flags is a known limitation and is not resolved.
+// Both the separate and the `--flag=value` forms are resolved.
+function resolveInlineDraftFlag(
+  token: string,
+  resolveInModelsDir: (rel: string, label: string) => string,
+): string | undefined {
+  const eq = token.indexOf("=");
+  if (eq === -1) return undefined;
+  const name = token.slice(0, eq);
+  const value = token.slice(eq + 1);
+  if (!DRAFT_MODEL_PATH_FLAGS.has(name) || value === "" || isAbsolute(value)) return undefined;
+  return `${name}=${resolveInModelsDir(value, `${name} path`)}`;
+}
+
 function resolveDraftModelArgs(
   extraArgs: readonly string[],
   resolveInModelsDir: (rel: string, label: string) => string,
@@ -26,7 +38,7 @@ function resolveDraftModelArgs(
     if (prev !== undefined && DRAFT_MODEL_PATH_FLAGS.has(prev) && !isAbsolute(token)) {
       out.push(resolveInModelsDir(token, `${prev} path`));
     } else {
-      out.push(token);
+      out.push(resolveInlineDraftFlag(token, resolveInModelsDir) ?? token);
     }
     prev = token;
   }
