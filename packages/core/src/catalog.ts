@@ -174,6 +174,31 @@ export const BUILTIN_CATALOG: readonly CuratedModel[] = [
       "drafter: Anbeeld/GLM-5.3-Flash-DFlash2-GGUF CC-BY-NC-ND-4.0 (non-commercial); incoai/GLM-5.3-Flash-DFlash2 licence unknown",
   },
   {
+    // Hugging Face j2ipper/GLM-5.3-Flash-a4e3s@5716e4835f50, 4 shards,
+    // 117,529,994,489 B (109.46 GiB). Build pins: 529ac893e754 (b11636) +
+    // nsbradley88/halo-tuning@16da7de2a165 + local 0047.
+    id: "glm53-flash-a4e3s",
+    label: "GLM-5.3-Flash a4e3s",
+    family: "glm53",
+    class: "reasoning",
+    scope: "candidate",
+    rel: "GLM-5.3-Flash-a4e3s-j2ipper/5716e483/GLM-5.3-Flash-a4e3s-00001-of-00004.gguf",
+    repo: "j2ipper/GLM-5.3-Flash-a4e3s",
+    format: "gguf",
+    availability: {
+      declared: "unavailable",
+      reason: "artifact-not-downloaded",
+    },
+    qualification: { stage: "experimental" },
+    runtime: {
+      engines: ["llamacpp"],
+      minBuild: "patched:ggml-org/llama.cpp@529ac893e+nsbradley88/halo-tuning@16da7de2+local-0047",
+    },
+    memory: { residentGiB: 112 },
+    contextMax: 1048576,
+    residencyGroup: "z13-large-gpu",
+  },
+  {
     // Revision 2688c0c3c2c3b052ec4f6d10a8417b0ef7ee4eba; diskBackedGiB is
     // the IQ4_NL Engram on SSD.
     id: "deepseek41-flash-1017-ud-iq1s",
@@ -195,13 +220,15 @@ export const BUILTIN_CATALOG: readonly CuratedModel[] = [
   },
   {
     // Revision 2688c0c3c2c3b052ec4f6d10a8417b0ef7ee4eba; diskBackedGiB is
-    // the IQ4_NL Engram on SSD.
+    // the IQ4_NL Engram on SSD. The rel uses the <repo>-<owner>/<rev8>
+    // models-root layout, like the IQ1_S row. D-O1 (libosmos) and D-L
+    // (llamacpp HIP baseline) join it by rel.
     id: "deepseek41-flash-1017-ud-iq1m",
     label: "DeepSeek V4.1 Flash 1017 UD-IQ1_M",
     family: "deepseek41",
     class: "reasoning",
     scope: "candidate",
-    rel: "DeepSeek-V4.1-Flash-1017-GGUF/UD-IQ1_M/DeepSeek-V4.1-Flash-1017-UD-IQ1_M-00001-of-00005.gguf",
+    rel: "DeepSeek-V4.1-Flash-1017-GGUF-unsloth/2688c0c3/UD-IQ1_M/DeepSeek-V4.1-Flash-1017-UD-IQ1_M-00001-of-00005.gguf",
     repo: "unsloth/DeepSeek-V4.1-Flash-1017-GGUF",
     format: "gguf",
     availability: {
@@ -209,7 +236,7 @@ export const BUILTIN_CATALOG: readonly CuratedModel[] = [
       reason: "artifact-not-downloaded; runtime-not-pinned",
     },
     qualification: { stage: "experimental" },
-    runtime: { engines: ["llamacpp"], minBuild: "b11870" },
+    runtime: { engines: ["llamacpp", "libosmos"], minBuild: "b11870" },
     memory: { residentGiB: 130.2, diskBackedGiB: 103 },
     residencyGroup: "z13-large-gpu",
   },

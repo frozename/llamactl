@@ -22,7 +22,8 @@
 # unvalidated. No gfx1151 benchmark exists [?] for this arm.
 #
 # See 05-runtime-engine-matrix.md section 4.
-# TODO(#557 catalog follow-up): the catalog row uses the legacy DeepSeek-V4.1-Flash-1017-GGUF/UD-IQ1_M rel layout, so this arm does not join it until that row is repinned.
+#
+# Joins the catalog row deepseek41-flash-1017-ud-iq1m by rel.
 apiVersion: llamactl/v1
 kind: ModelHost
 metadata:
