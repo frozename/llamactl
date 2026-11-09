@@ -905,6 +905,16 @@ interface ApplyOneOpts {
    *  under this option a crashed or reconfigured runtimeKey is refused
    *  (AlreadyResident / WorkloadBusy) rather than restarted. */
   targetAdmission?: TargetAdmissionAuthority;
+  /**
+   * #520 active-session protection: consulted before any eviction stops a
+   * workload. Opt-in and inert unless supplied. NON-FENCING: it narrows
+   * but does not close the race with a concurrent acquire; fencing is
+   * deferred to the #278 lease composition. */
+  sessionGate?: SessionUnloadGate;
+}
+
+interface SessionUnloadGate {
+  checkUnload(workload: string): { ok: true } | { ok: false; sessions?: readonly string[] };
 }
 
 type ServerStatusSnapshot = Awaited<ReturnType<WorkloadClient["serverStatus"]["query"]>>;
@@ -1240,7 +1250,46 @@ function checkEvictTarget(
       ),
     };
   }
+  const gated = checkEvictSessionGate(ctx, target);
+  if (gated) return { status: "refused", result: gated };
   return { status: "verified" };
+}
+
+function checkEvictSessionGate(ctx: ConvergeServerContext, target: string): ApplyResult | null {
+  const gate = ctx.opts?.sessionGate;
+  if (gate === undefined) return null;
+  let check: { ok: true } | { ok: false; sessions?: readonly string[] };
+  try {
+    check = gate.checkUnload(target);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return evictRefusalResult(
+      ctx,
+      target,
+      `session ownership could not be verified (${message})`,
+      "EvictSessionUnknown",
+    );
+  }
+  if (!check.ok) {
+    const sessions = check.sessions ?? [];
+    const why =
+      sessions.length > 0
+        ? `sessions ${sessions.join(", ")} are still active`
+        : "an active session";
+    return evictRefusalResult(ctx, target, why, "EvictSessionActive");
+  }
+  return null;
+}
+
+function recheckEvictSessionGates(
+  ctx: ConvergeServerContext,
+  verifiedTargets: readonly string[],
+): ApplyResult | null {
+  for (const target of verifiedTargets) {
+    const refusal = checkEvictSessionGate(ctx, target);
+    if (refusal !== null) return refusal;
+  }
+  return null;
 }
 
 function evictRefusalResult(
@@ -1707,6 +1756,11 @@ async function convergeClaimedServer(
   // computation already excludes evictTargets from `living`, so an
   // admitted workload has accounted for the freed capacity here.
   const verifiedTargets = evictTargets.filter((t) => verified.has(t));
+  // #520: a session can appear between authorization and teardown. This
+  // re-check is synchronous — no await between it and the first stop —
+  // so nothing destructive has run yet and the finally releases the claim.
+  const gateRefusal = recheckEvictSessionGates(ctx, verifiedTargets);
+  if (gateRefusal !== null) return gateRefusal;
   if (verifiedTargets.length > 0) lifecycle.destructive = true;
   await stopEvictTargets(manifest, client, verifiedTargets, onEvent);
 

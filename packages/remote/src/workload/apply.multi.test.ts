@@ -206,6 +206,21 @@ function seedModelDir(modelsDir: string, rel: string, sizeBytes: number): void {
   truncateSync(weights, sizeBytes);
 }
 
+// #520: applyOne consults an optional session gate before evicting. The gate
+// is a structural fake — the real store lives in
+// @llamactl/core/residency/sessions and is never imported here.
+type SessionGateCheck =
+  | { ok: true; released: string[] }
+  | { ok: false; reason: string; sessions: string[] };
+
+type SessionGate = {
+  checkUnload: (workload: string) => SessionGateCheck;
+};
+
+function makeSessionGate(checkUnload: (workload: string) => SessionGateCheck): SessionGate {
+  return { checkUnload };
+}
+
 test("disabled manifest stops the server if running and reports Disabled", async () => {
   const state = new Map([["a", { up: true, rel: "a.gguf", args: [] }]]);
   const result = await applyOne(mkManifest("a", { enabled: false }), () => makeClient(state));
@@ -1662,6 +1677,184 @@ test("E-1: a no-op apply of a matching running server bypasses the target ledger
     expect(second.error).toBeUndefined();
     expect(starts).toEqual(["a"]);
     expect(targetAdmission?.snapshot("local")).toHaveLength(1);
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("#520: evict is refused while the session gate reports an active session", async () => {
+  const state: WorkloadStateMap = new Map([["a", { up: true, rel: "a.gguf", args: [] }]]);
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-evict-session-"));
+  saveWorkload(mkManifest("a"), workloadsDir);
+  const { client, stops, starts } = makeRecordingClient(state);
+  const calls: string[] = [];
+  const opts = {
+    workloadsDir,
+    getNodeBudgetGiB: (): number => 32,
+    sessionGate: makeSessionGate((workload) => {
+      calls.push(workload);
+      return { ok: false, reason: "SessionActive", sessions: ["sess-1"] };
+    }),
+  };
+  try {
+    const result = await applyOne(
+      mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090 }),
+      () => client,
+      undefined,
+      undefined,
+      opts,
+    );
+    expect(result.action).toBe("pending");
+    expect(result.statusSection.phase).toBe("Failed");
+    expect(result.statusSection.conditions[0]?.reason).toBe("EvictSessionActive");
+    expect(result.error).toMatch(/sess-1/);
+    expect(stops).toEqual([]);
+    expect(starts).toEqual([]);
+    expect(calls).toEqual(["a"]);
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("#520: a clean session gate lets eviction proceed after authorize and pre-stop checks", async () => {
+  const state: WorkloadStateMap = new Map([["a", { up: true, rel: "a.gguf", args: [] }]]);
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-evict-session-ok-"));
+  saveWorkload(mkManifest("a"), workloadsDir);
+  const { client, stops, starts } = makeRecordingClient(state);
+  const calls: string[] = [];
+  const opts = {
+    workloadsDir,
+    getNodeBudgetGiB: (): number => 32,
+    sessionGate: makeSessionGate((workload) => {
+      calls.push(workload);
+      return { ok: true, released: [] };
+    }),
+  };
+  try {
+    const result = await applyOne(
+      mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090 }),
+      () => client,
+      undefined,
+      undefined,
+      opts,
+    );
+    expect(result.action).toBe("started");
+    expect(stops).toEqual(["a"]);
+    expect(starts).toEqual(["b"]);
+    expect(calls).toEqual(["a", "a"]);
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("#520: a throwing session gate fails closed as EvictSessionUnknown", async () => {
+  const state: WorkloadStateMap = new Map([["a", { up: true, rel: "a.gguf", args: [] }]]);
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-evict-session-throw-"));
+  saveWorkload(mkManifest("a"), workloadsDir);
+  const { client, stops, starts } = makeRecordingClient(state);
+  const calls: string[] = [];
+  const opts = {
+    workloadsDir,
+    getNodeBudgetGiB: (): number => 32,
+    sessionGate: makeSessionGate((workload) => {
+      calls.push(workload);
+      throw new Error("session gate exploded");
+    }),
+  };
+  try {
+    const result = await applyOne(
+      mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090 }),
+      () => client,
+      undefined,
+      undefined,
+      opts,
+    );
+    expect(result.action).toBe("pending");
+    expect(result.statusSection.phase).toBe("Failed");
+    expect(result.statusSection.conditions[0]?.reason).toBe("EvictSessionUnknown");
+    expect(stops).toEqual([]);
+    expect(starts).toEqual([]);
+    expect(calls).toEqual(["a"]);
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("#520: a refused session on any evict target stops the whole eviction", async () => {
+  const state: WorkloadStateMap = new Map([
+    ["a", { up: true, rel: "a.gguf", args: [] }],
+    ["c", { up: true, rel: "c.gguf", args: [] }],
+  ]);
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-evict-session-multi-"));
+  saveWorkload(mkManifest("a"), workloadsDir);
+  saveWorkload(mkManifest("c", { port: 8182 }), workloadsDir);
+  const { client, stops, starts } = makeRecordingClient(state);
+  const calls: string[] = [];
+  const opts = {
+    workloadsDir,
+    getNodeBudgetGiB: (): number => 32,
+    sessionGate: makeSessionGate((workload) => {
+      calls.push(workload);
+      if (workload === "c") {
+        return { ok: false, reason: "SessionActive", sessions: ["sess-c"] };
+      }
+      return { ok: true, released: [] };
+    }),
+  };
+  try {
+    const result = await applyOne(
+      mkManifest("b", { annotations: { "llamactl.io/evict": "a,c" }, port: 8090 }),
+      () => client,
+      undefined,
+      undefined,
+      opts,
+    );
+    expect(result.action).toBe("pending");
+    expect(result.statusSection.phase).toBe("Failed");
+    expect(result.statusSection.conditions[0]?.reason).toBe("EvictSessionActive");
+    expect(result.error).toContain("sess-c");
+    expect(stops).toEqual([]);
+    expect(starts).toEqual([]);
+    expect(calls).toContain("c");
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("#520: a session appearing after authorization is caught by the pre-stop re-check", async () => {
+  const state: WorkloadStateMap = new Map([["a", { up: true, rel: "a.gguf", args: [] }]]);
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-evict-session-late-"));
+  saveWorkload(mkManifest("a"), workloadsDir);
+  const { client, stops, starts } = makeRecordingClient(state);
+  const calls: string[] = [];
+  let gateCalls = 0;
+  const opts = {
+    workloadsDir,
+    getNodeBudgetGiB: (): number => 32,
+    sessionGate: makeSessionGate((workload) => {
+      calls.push(workload);
+      gateCalls += 1;
+      if (gateCalls === 1) {
+        return { ok: true, released: [] };
+      }
+      return { ok: false, reason: "SessionActive", sessions: ["late-1"] };
+    }),
+  };
+  try {
+    const result = await applyOne(
+      mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090 }),
+      () => client,
+      undefined,
+      undefined,
+      opts,
+    );
+    expect(result.action).toBe("pending");
+    expect(result.statusSection.phase).toBe("Failed");
+    expect(result.statusSection.conditions[0]?.reason).toBe("EvictSessionActive");
+    expect(result.error).toMatch(/late-1/);
+    expect(stops).toEqual([]);
+    expect(starts).toEqual([]);
+    expect(calls).toEqual(["a", "a"]);
   } finally {
     rmSync(workloadsDir, { recursive: true, force: true });
   }
