@@ -340,6 +340,39 @@ describe("buildDeclaredModelEntries", () => {
     expect(entries.some((e) => String(e["id"]).startsWith("/"))).toBe(false);
   });
 
+  test("ModelHost with an absolute hostedModels[0].rel drops it, keeps relative", async () => {
+    const mod = await residencyCatalog();
+    expect(typeof mod.buildDeclaredModelEntries).toBe("function");
+
+    const absHost: ModelHostManifest = {
+      apiVersion: "llamactl/v1",
+      kind: "ModelHost",
+      metadata: { name: "host-abs" },
+      spec: {
+        engine: "omlx",
+        node: "local",
+        enabled: true,
+        binary: "/x/engine",
+        endpoint: { host: "127.0.0.1", port: 8100 },
+        hostedModels: [{ rel: "/abs/secret/model.gguf" }, { rel: "org/relative/model.gguf" }],
+        extraArgs: [],
+        restartPolicy: "Always",
+        timeoutSeconds: 60,
+      },
+    };
+
+    const entries = mod.buildDeclaredModelEntries!({
+      nodeName: "local",
+      modelHosts: [absHost],
+      modelRuns: [],
+      liveModelIds: new Set<string>(),
+    });
+
+    const declaredModelIds = entries.map((e) => e["id"]);
+    expect(declaredModelIds).toEqual(["model.gguf"]);
+    expect(declaredModelIds.some((id) => String(id).startsWith("/"))).toBe(false);
+  });
+
   test("entries carry no host, port, binary, env or path keys", async () => {
     const mod = await residencyCatalog();
     expect(typeof mod.buildDeclaredModelEntries).toBe("function");
