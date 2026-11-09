@@ -491,3 +491,80 @@ test("#278: aborted waiters drop to 0 (P10)", async () => {
   expect(lease.release()).toBe(true);
   expect(reg.snapshot("glm").waiters).toBe(0);
 });
+
+test("#278: waiterCount matches snapshot().waiters before/after abort and release, 0 for unknown", async () => {
+  const mod = await load();
+  const reg = mod.createResidencyLeases();
+
+  // Unknown workload: waiterCount === 0 === snapshot().waiters
+  expect(reg.waiterCount("unknown-workload")).toBe(0);
+  expect(reg.snapshot("unknown-workload").waiters).toBe(0);
+
+  const lease = mustAcquire(reg, "glm");
+  const drain = mustBeginDrain(reg, "glm");
+
+  // Register a waiter — waiterCount should match snapshot().waiters
+  const abort = new AbortController();
+  const idlePromise = reg.whenIdle(drain.token, { signal: abort.signal });
+  await flushMicrotasks();
+  expect(reg.waiterCount("glm")).toBe(1);
+  expect(reg.snapshot("glm").waiters).toBe(1);
+
+  // Abort the signal — the waiter should be removed
+  abort.abort();
+  await idlePromise;
+  expect(reg.waiterCount("glm")).toBe(0);
+  expect(reg.snapshot("glm").waiters).toBe(0);
+
+  // Release the lease — waiterCount should still be 0
+  expect(lease.release()).toBe(true);
+  expect(reg.waiterCount("glm")).toBe(0);
+  expect(reg.snapshot("glm").waiters).toBe(0);
+});
+
+test("#278: snapshot().waiters is 0 for an unknown workload", async () => {
+  const mod = await load();
+  const reg = mod.createResidencyLeases();
+  expect(reg.snapshot("no-such-workload").waiters).toBe(0);
+  expect(reg.snapshot("no-such-workload").phase).toBe("open");
+  expect(reg.snapshot("no-such-workload").active).toEqual([]);
+});
+
+test("#278: forced unload with force:true cancels upstream ReadableStream underlying source", async () => {
+  const mod = await load();
+  const reg = mod.createResidencyLeases();
+  const lease = mustAcquire(reg, "glm");
+
+  let upstreamCancelled = false;
+  const body = new ReadableStream<Uint8Array>({
+    start(): void {
+      // no-op
+    },
+    cancel(): void {
+      upstreamCancelled = true;
+    },
+  });
+  const bound = mod.bindLeaseToBody(body, lease);
+  const reader = bound.getReader();
+  // Do NOT enqueue anything — the upstream is idle, so reader.read()
+  // will await indefinitely. A forced commitUnload must cancel the
+  // upstream.
+  const readPromise = reader.read();
+  await Bun.sleep(0);
+
+  const drain = mustBeginDrain(reg, "glm");
+  const unloadResult = reg.commitUnload(drain.token, { force: true });
+  expect(unloadResult).toEqual({ ok: true, revoked: [lease.id] });
+
+  // The pending read must reject with the revocation reason.
+  // eslint-disable-next-line @typescript-eslint/await-thenable, @typescript-eslint/no-confusing-void-expression -- Bun's rejects matcher is typed as void.
+  await expect(readPromise).rejects.toThrow("lease revoked: forced unload");
+
+  // The upstream underlying source cancel() must have fired.
+  expect(upstreamCancelled).toBe(true);
+
+  // The lease must be released (no-op since revoked).
+  expect(lease.release()).toBe(false);
+  expect(lease.signal.aborted).toBe(true);
+  expect(reg.active("glm")).toEqual([]);
+});
