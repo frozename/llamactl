@@ -18,6 +18,7 @@ import { boundaryNaiveBytePrefixSha, canonicalRequestSha } from "./cache-identit
 import { listCatalog } from "./catalog.js";
 import { listPeers, type PeerNode } from "./config/peers.js";
 import { ctxForModel } from "./ctx.js";
+import { sanitizeLibosmosGreedyBody } from "./engines/libosmos.js";
 import { readModelHostState } from "./engines/state.js";
 import { resolveEnv } from "./env.js";
 import {
@@ -2738,6 +2739,38 @@ function stripVendorFieldsFromBody(routed: ProxyContext): void {
   }
 }
 
+/**
+ * osmos-api decodes greedy-only and answers 400 on non-greedy sampling
+ * fields, so libosmos routes get temperature/top_p/n rewritten and `stop`
+ * dropped before the body feeds the response-cache key and the upstream
+ * fetch. Runs after stripVendorFieldsFromBody so both rewrites land on the
+ * same parsed record; already-greedy bodies and every other engine stay
+ * byte-identical.
+ */
+function sanitizeLibosmosGreedyFromBody(routed: ProxyContext): void {
+  if (routed.route?.engine !== "libosmos") return;
+  if (!routed.bodyText) return;
+  let parsedBody: unknown;
+  try {
+    parsedBody = JSON.parse(routed.bodyText);
+  } catch {
+    return;
+  }
+  if (!isRecord(parsedBody)) return;
+  const fields = sanitizeLibosmosGreedyBody(parsedBody);
+  if (fields.length === 0) return;
+  const bodyText = JSON.stringify(parsedBody);
+  routed.bodyText = bodyText;
+  routed.init = { ...routed.init, body: bodyText };
+  console.warn(
+    JSON.stringify({
+      event: "libosmos_greedy_rewrite",
+      workload: routed.route.workload,
+      fields,
+    }),
+  );
+}
+
 function warnKvStageFailure(stage: "lookup" | "persist", error: unknown): void {
   console.warn(
     `[openaiProxy] kv ${stage} failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -2768,6 +2801,7 @@ export async function proxyOpenAI(
     return Response.json({ error: "cross-node slot ops not supported" }, { status: 400 });
   }
   stripVendorFieldsFromBody(routed);
+  sanitizeLibosmosGreedyFromBody(routed);
   let withResponseCacheLookup = routed;
   try {
     withResponseCacheLookup = await maybeResponseCacheLookup(routed);

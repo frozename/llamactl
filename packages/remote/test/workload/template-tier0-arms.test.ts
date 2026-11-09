@@ -118,8 +118,8 @@ const ARMS: readonly ArmSpec[] = [
       "[u]",
       "derived",
       "glm-dv-65536.bin",
-      "catalog follow-up",
     ],
+    catalogRowId: "glm53-flash-a4e3s",
   },
   {
     file: "llamacpp-glm53-hip-b12206-z13.yaml",
@@ -333,8 +333,9 @@ const ARMS: readonly ArmSpec[] = [
       "exceeds",
       "116",
       "124.9",
-      "catalog follow-up",
+      "offload or memory plan",
     ],
+    catalogRowId: "deepseek41-flash-1017-ud-iq1m",
   },
 ];
 
@@ -464,12 +465,14 @@ for (const arm of ARMS) {
     const catalogRowId = arm.catalogRowId;
     if (catalogRowId !== undefined) {
       test("joins the pinned catalog row rel and family", () => {
-        const { manifest } = loadModelHostTemplate(arm.file);
+        const { manifest, header } = loadModelHostTemplate(arm.file);
         const row = catalog.BUILTIN_CATALOG.find((m) => m.id === catalogRowId);
         expect(row).toBeDefined();
         if (row === undefined) return;
         expect(manifest.spec.hostedModels[0]?.rel).toBe(row.rel);
         expect(manifest.metadata.labels?.["family"]).toBe(row.family);
+        expect(header).not.toContain("catalog follow-up");
+        expect(row.runtime?.engines).toContain(manifest.spec.engine);
       });
     }
   });
