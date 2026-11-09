@@ -27,16 +27,19 @@ import { FIXTURE_DIR } from "./helpers.js";
 describe("catalog.BUILTIN_CATALOG", () => {
   const PINNED: Record<string, string> = {
     "deepseek41-flash-1017-ud-iq1s": "2688c0c3",
+    "deepseek41-flash-1017-ud-iq1m": "2688c0c3",
+    "glm53-flash-a4e3s": "5716e483",
     "mimo26-flash-mopd-bpw25": "b6e95d58",
   };
 
-  test("has 19 entries in the expected order", () => {
-    expect(BUILTIN_CATALOG.length).toBe(19);
+  test("has 20 entries in the expected order", () => {
+    expect(BUILTIN_CATALOG.length).toBe(20);
     expect(BUILTIN_CATALOG[0]?.id).toBe("gemma4-e4b-q8");
     expect(BUILTIN_CATALOG[11]?.id).toBe("granite41-3b-q4");
     expect(BUILTIN_CATALOG[BUILTIN_CATALOG.length - 1]?.id).toBe("mimo26-flash-mopd-bpw30");
     expect(BUILTIN_CATALOG.slice(12).map((row) => row.id)).toStrictEqual([
       "glm53-flash-aj-iq2xxs",
+      "glm53-flash-a4e3s",
       "deepseek41-flash-1017-ud-iq1s",
       "deepseek41-flash-1017-ud-iq1m",
       "deepseek41-flash-1017-gsq-rco-iq1m",
@@ -752,10 +755,13 @@ describe("catalog candidate metadata (#515)", () => {
 
 describe("catalog experimental candidate rows (#515)", () => {
   const GLM_REL = "GLM-5.3-Flash-AJ-GGUF/AJ-IQ2_XXS/GLM-5.3-Flash-AJ-IQ2_XXS-00001-of-00002.gguf";
+  const GLM_A4E3S = "GLM-5.3-Flash-a4e3s-j2ipper/5716e483/GLM-5.3-Flash-a4e3s-00001-of-00004.gguf";
+  const HALO_MINBUILD =
+    "patched:ggml-org/llama.cpp@529ac893e+nsbradley88/halo-tuning@16da7de2+local-0047";
   const DS_S_REL =
     "DeepSeek-V4.1-Flash-1017-GGUF-unsloth/2688c0c3/UD-IQ1_S/DeepSeek-V4.1-Flash-1017-UD-IQ1_S-00001-of-00005.gguf";
-  const DS_M_REL =
-    "DeepSeek-V4.1-Flash-1017-GGUF/UD-IQ1_M/DeepSeek-V4.1-Flash-1017-UD-IQ1_M-00001-of-00005.gguf";
+  const DS_M_NEW =
+    "DeepSeek-V4.1-Flash-1017-GGUF-unsloth/2688c0c3/UD-IQ1_M/DeepSeek-V4.1-Flash-1017-UD-IQ1_M-00001-of-00005.gguf";
   const DS_GSQ_REL = "DeepSeek-V4.1-Flash-1017-GSQ-RCO-GGUF/IQ1_M";
   const MIMO25_REL =
     "MiMo-V2.6-Flash-MOPD-GGUF-AesSedai/b6e95d58/BPW2.5/MiMo-V2.6-Flash-MOPD-BPW2.5-00001-of-00003.gguf";
@@ -764,8 +770,9 @@ describe("catalog experimental candidate rows (#515)", () => {
 
   const EXPERIMENTAL: readonly (readonly [string, string])[] = [
     [GLM_REL, "glm53-flash-aj-iq2xxs"],
+    [GLM_A4E3S, "glm53-flash-a4e3s"],
     [DS_S_REL, "deepseek41-flash-1017-ud-iq1s"],
-    [DS_M_REL, "deepseek41-flash-1017-ud-iq1m"],
+    [DS_M_NEW, "deepseek41-flash-1017-ud-iq1m"],
     [DS_GSQ_REL, "deepseek41-flash-1017-gsq-rco-iq1m"],
     [MIMO25_REL, "mimo26-flash-mopd-bpw25"],
     [MIMO_A4X_REL, "mimo26-flash-mopd-a4x"],
@@ -801,9 +808,31 @@ describe("catalog experimental candidate rows (#515)", () => {
     expect(row?.availability).toBeUndefined();
   });
 
+  test("glm53-flash-a4e3s pins the halo build for the G-V1 arm (#557)", () => {
+    const row = findByRel(GLM_A4E3S, { scope: "builtin" });
+    expect(row?.id).toBe("glm53-flash-a4e3s");
+    expect(row?.family).toBe("glm53");
+    expect(row?.repo).toBe("j2ipper/GLM-5.3-Flash-a4e3s");
+    expect(row?.runtime).toStrictEqual({
+      engines: ["llamacpp"],
+      minBuild: HALO_MINBUILD,
+    });
+    expect(row?.contextMax).toBe(1048576);
+    expect(row?.availability).toStrictEqual({
+      declared: "unavailable",
+      reason: "artifact-not-downloaded",
+    });
+    expect(row?.qualification?.stage).toBe("experimental");
+    expect(row?.residencyGroup).toBe("z13-large-gpu");
+    expect(row?.class).toBe("reasoning");
+    expect(row?.format).toBe("gguf");
+    expect(row?.license).toBeUndefined();
+    expect(row?.memory?.residentGiB).toBe(112);
+  });
+
   test("deepseek41 rows pin b11870 and declare unavailable with reasons", () => {
     const iq1s = findByRel(DS_S_REL, { scope: "builtin" });
-    const iq1m = findByRel(DS_M_REL, { scope: "builtin" });
+    const iq1m = findByRel(DS_M_NEW, { scope: "builtin" });
     const gsq = findByRel(DS_GSQ_REL, { scope: "builtin" });
     for (const row of [iq1s, iq1m, gsq]) {
       expect(row?.family).toBe("deepseek41");
@@ -814,7 +843,7 @@ describe("catalog experimental candidate rows (#515)", () => {
       minBuild: "b11870",
     });
     expect(iq1m?.runtime).toStrictEqual({
-      engines: ["llamacpp"],
+      engines: ["llamacpp", "libosmos"],
       minBuild: "b11870",
     });
     expect(gsq?.runtime).toStrictEqual({ engines: ["llamacpp"], minBuild: "b11870" });

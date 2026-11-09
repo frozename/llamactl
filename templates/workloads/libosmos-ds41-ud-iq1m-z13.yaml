@@ -23,9 +23,7 @@
 # Port 8085 avoids the reserved z13 ports 8080-8084, 8091 and 8095 and
 # the tier-0 arms on 8086-8090.
 #
-# TODO(#557 catalog follow-up): the catalog row uses the legacy
-# DeepSeek-V4.1-Flash-1017-GGUF/UD-IQ1_M rel layout, so this arm does
-# not join it until that row is repinned.
+# Joins the catalog row deepseek41-flash-1017-ud-iq1m by rel.
 apiVersion: llamactl/v1
 kind: ModelHost
 metadata:
