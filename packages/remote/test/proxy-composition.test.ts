@@ -14,7 +14,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:tes
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { configSchema, config as kubecfg } from "../src/index.js";
+import { configSchema, config as kubecfg, listPeers } from "../src/index.js";
 import {
   type BackendExecutor,
   type BackendExecutorDescription,
@@ -772,22 +772,29 @@ describe("default-path credential and snapshot ordering", () => {
     return cfgPath;
   }
 
-  function countTokenReads(): () => number {
+  function countTokenReads(): { reads: () => number; restore: () => void } {
     let reads = 0;
-    Object.defineProperty(process.env, probeVar, {
-      configurable: true,
-      enumerable: true,
-      get: (): string => {
-        reads += 1;
-        return "probe-token";
+    const original = process.env;
+    process.env = new Proxy(original, {
+      get(target, key, receiver): unknown {
+        if (key === probeVar) {
+          reads += 1;
+          return "probe-token";
+        }
+        return Reflect.get(target, key, receiver);
       },
     });
-    return () => reads;
+    return {
+      reads: () => reads,
+      restore: (): void => {
+        process.env = original;
+      },
+    };
   }
 
   test("a capability-rejected request resolves no credentials on the default path", async () => {
     process.env["LLAMACTL_CONFIG"] = writePeerKubeconfig();
-    const reads = countTokenReads();
+    const probe = countTokenReads();
     try {
       const narrowAd = advertisedAd(
         ["blocked-model"],
@@ -818,9 +825,16 @@ describe("default-path credential and snapshot ordering", () => {
       expect(res.status).toBe(400);
       // The default catalog build + capability filtering ran; the
       // credential materialization listPeers performs must not have.
-      expect(reads()).toBe(0);
+      expect(probe.reads()).toBe(0);
       expect(upstreamCalls).toHaveLength(0);
+      // Positive control: with the probe still installed, a direct
+      // listPeers must resolve the tokenRef through the swapped env, so
+      // the zero-reads assertion above can't pass vacuously.
+      const peers = listPeers();
+      expect(probe.reads()).toBeGreaterThan(0);
+      expect(peers.find((p) => p.id === "peer1")?.token).toBe("probe-token");
     } finally {
+      probe.restore();
       Reflect.deleteProperty(process.env, probeVar);
     }
   });
