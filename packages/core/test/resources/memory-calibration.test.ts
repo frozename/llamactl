@@ -76,6 +76,16 @@ type MeasuredEnvelope =
   | {
       known: false;
       reason: "invalid-input" | "invalid-key" | "insufficient-samples" | "unknown-device";
+    }
+  | {
+      known: true;
+      key: string;
+      provenance: "measured";
+      sampleCount: number;
+      peakBytes: number;
+      calibrationOverheadBytes: number;
+      envelopeBytes: number;
+      attribution: "process";
     };
 
 type CalibrationApi = {
@@ -151,15 +161,6 @@ function encodedCalibrationKey(key: MemoryCalibrationKey): string {
     throw new Error("memoryCalibrationKey returned null for a valid key");
   }
   return encoded;
-}
-
-function samplesWithSkippedReads(): CalibrationSample[] {
-  return [
-    calibrationSample({ processBytes: 4 * GiB }),
-    calibrationSample({ processBytes: 2 * GiB }),
-    calibrationSample({ status: "unavailable", observedAtMs: null, processBytes: null }),
-    calibrationSample({ status: "denied", observedAtMs: null, processBytes: 0 }),
-  ];
 }
 
 describe("deriveSwapRate", () => {
@@ -970,6 +971,28 @@ describe("calibrateMeasuredEnvelope", () => {
       peakBytes: 3,
       calibrationOverheadBytes: 2,
       envelopeBytes: 5,
+      attribution: "process",
+    });
+  });
+
+  test("rounds fractional overhead below 0.5 (peakBytes 10, overheadFraction 0.01 -> overhead 1, envelope 11)", () => {
+    const calibrate = api.calibrateMeasuredEnvelope;
+    expect(typeof calibrate).toBe("function");
+    // peakBytes = 10, overheadFraction = 0.01 -> product = 0.1, ceil(0.1) = 1
+    expect(
+      calibrate!({
+        key: baseCalibrationKey(),
+        samples: [calibrationSample({ processBytes: 10, processDeviceBytes: 0 })],
+        options: calibrationOptions({ minSamples: 1, overheadFraction: 0.01 }),
+      }),
+    ).toEqual({
+      known: true,
+      key: encodedCalibrationKey(baseCalibrationKey()),
+      provenance: "measured",
+      sampleCount: 1,
+      peakBytes: 10,
+      calibrationOverheadBytes: 1,
+      envelopeBytes: 11,
       attribution: "process",
     });
   });
