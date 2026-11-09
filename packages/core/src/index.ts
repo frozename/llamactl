@@ -24,6 +24,7 @@ export * as quant from "./quant.js";
 export * as recommendations from "./recommendations.js";
 export * as residencyAdmission from "./residency/admission.js";
 export * as residencyLifecycle from "./residency/lifecycle.js";
+export * as residencyQueuePolicy from "./residency/queue-policy.js";
 export * as residencySessions from "./residency/sessions.js";
 export * as resourcesMemory from "./resources/memory.js";
 export * as responsecache from "./responsecache/index.js";
