@@ -12,6 +12,13 @@
 // decoding, auth and provenance validation belong to the remote observer /
 // consumer slice; the `source` string is attribution metadata, not a
 // credential, so no source-prefix allowlist or trusted flag exists in core.
+//
+// DF-04 runtime budget: evaluateRuntimeMemoryBudget charges a single basis
+// (footprint when ok and fresh, RSS as fallback) against a per-role byte
+// budget. JS heap, external memory and device-wide counters are never
+// attributed to a control process — JS/external memory is a subset of the
+// process charge and device counters are shared, so they are never summed
+// into the charge.
 
 export type MemoryReadStatus = "ok" | "unavailable" | "denied" | "unsupported";
 
@@ -273,6 +280,101 @@ export function deriveModelKvBudget(input: {
     fits: requiredBytes <= headroom.usableBytes,
     provenance: match.provenance,
   };
+}
+
+export interface RuntimeMemorySample {
+  role: string;
+  rss: MemoryReading;
+  footprint: MemoryReading;
+  jsHeapUsed: MemoryReading;
+  external: MemoryReading;
+  device: HostMemoryObservation["device"];
+}
+
+export interface RuntimeMemoryBudget {
+  role: string;
+  maxBytes: number;
+}
+
+export interface RuntimeMemoryBudgetOptions {
+  nowMs: number;
+  maxAgeMs: number;
+}
+
+export type RuntimeMemoryVerdict =
+  | {
+      known: true;
+      role: string;
+      basis: "footprint" | "rss";
+      chargedBytes: number;
+      maxBytes: number;
+      withinBudget: boolean;
+      overBytes: number;
+    }
+  | {
+      known: false;
+      reason: "invalid-input" | "unknown-source" | "stale-source" | "role-mismatch";
+    };
+
+/**
+ * JS heap, external memory and device-wide counters are never attributed to
+ * a control process — JS/external memory is a subset of the process charge
+ * and device counters are shared, so they are never summed into the charge.
+ */
+export function evaluateRuntimeMemoryBudget(
+  sample: RuntimeMemorySample,
+  budget: RuntimeMemoryBudget,
+  options: RuntimeMemoryBudgetOptions,
+): RuntimeMemoryVerdict {
+  const { nowMs, maxAgeMs } = options;
+  const numericOptionsValid =
+    Number.isFinite(nowMs) &&
+    nowMs >= 0 &&
+    Number.isFinite(maxAgeMs) &&
+    maxAgeMs >= 0 &&
+    Number.isFinite(budget.maxBytes) &&
+    budget.maxBytes > 0;
+  if (!numericOptionsValid) return { known: false, reason: "invalid-input" };
+
+  const sampleRole = sample.role.trim();
+  const budgetRole = budget.role.trim();
+  if (sampleRole === "" || budgetRole === "") return { known: false, reason: "invalid-input" };
+  if (sampleRole !== budgetRole) return { known: false, reason: "role-mismatch" };
+
+  const footprintVerdict = inspectReading(sample.footprint, nowMs, maxAgeMs);
+  if ("bytes" in footprintVerdict) {
+    const chargedBytes = footprintVerdict.bytes;
+    return {
+      known: true,
+      role: sampleRole,
+      basis: "footprint",
+      chargedBytes,
+      maxBytes: budget.maxBytes,
+      withinBudget: chargedBytes <= budget.maxBytes,
+      overBytes: Math.max(0, chargedBytes - budget.maxBytes),
+    };
+  }
+
+  // A malformed footprint refuses immediately — never falls back to RSS.
+  if (footprintVerdict.refusal === "invalid-input") {
+    return { known: false, reason: "invalid-input" };
+  }
+
+  const rssVerdict = inspectReading(sample.rss, nowMs, maxAgeMs);
+  if ("bytes" in rssVerdict) {
+    const chargedBytes = rssVerdict.bytes;
+    return {
+      known: true,
+      role: sampleRole,
+      basis: "rss",
+      chargedBytes,
+      maxBytes: budget.maxBytes,
+      withinBudget: chargedBytes <= budget.maxBytes,
+      overBytes: Math.max(0, chargedBytes - budget.maxBytes),
+    };
+  }
+
+  return { known: false, reason: worseRefusal(footprintVerdict.refusal, rssVerdict.refusal) };
 }
 
 // DF-04 unified-memory calibration (#277): swap-rate derivation, canonical

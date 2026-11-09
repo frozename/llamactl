@@ -58,6 +58,7 @@ import {
   openaiRequestDurationSeconds,
   openaiRequestsTotal,
   openaiUpstreamErrorsTotal,
+  setAgentRuntimeIdentity,
   setModelHostMetricsNode,
   statusClass,
 } from "./metrics.js";
@@ -196,6 +197,14 @@ export interface StartAgentOptions {
     /** Stands in for the engines, so a test can hold a backend's unwind after a cancel. */
     backends?: WorkerRpcHostOptions["backends"];
   };
+  /**
+   * Per-role runtime memory budget. Sets the identity (role + optional
+   * memory budget) so the Prometheus gauges emit per-role series. When
+   * omitted, the role defaults to "agent" and no budget/over-budget
+   * series are emitted.
+   */
+  runtimeRole?: string;
+  runtimeMemoryBudgetBytes?: number;
 }
 
 export interface RunningAgent {
@@ -1013,6 +1022,16 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
   const gate = makeNoAuthGate(noAuth, bindHost);
 
   const workerRpc = maybePublishWorkerRpc(opts);
+
+  // Wire runtime role + memory budget into the metrics identity.
+  if (opts.runtimeRole !== undefined || opts.runtimeMemoryBudgetBytes !== undefined) {
+    setAgentRuntimeIdentity({
+      role: opts.runtimeRole ?? "agent",
+      ...(opts.runtimeMemoryBudgetBytes !== undefined
+        ? { memoryBudgetBytes: opts.runtimeMemoryBudgetBytes }
+        : {}),
+    });
+  }
 
   const fetchHandler = createAgentFetchHandler({ opts, endpoint, tunnelServer, gate, workerRpc });
 
