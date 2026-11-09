@@ -170,6 +170,21 @@ describe("unified proxy candidate ranking (#518)", () => {
     expect(acquired.at(-1)).toBe("node-b");
   });
 
+  test("a resident degraded candidate yields to a load-penalized unstaged peer on tier", async () => {
+    // The peer alone carries the 600000 load cost, so only the degraded
+    // tier ordering can put the peer first; score alone would rank the
+    // resident degraded candidate (cost 0) above the penalized peer.
+    const { status, acquired } = await serveRanked(
+      [rankAd("node-a", 0, { qualification: { stage: "degraded" } }), rankAd("node-b", 1)],
+      {
+        resident: new Set(["deploy/node-a/w"]),
+        expectedLoadMs: () => 600_000,
+      },
+    );
+    expect(status).toBe(200);
+    expect(acquired.at(-1)).toBe("node-b");
+  });
+
   test("a draining deployment ranks below an unstaged peer", async () => {
     const { status, acquired } = await serveRanked([
       rankAd("node-a", 0, { draining: true }),
@@ -289,12 +304,14 @@ describe("unified proxy candidate ranking guards (#518)", () => {
   });
 
   test("guard: unknown residency adds no load cost", async () => {
+    // Asymmetric charge: if the unknown-residency short-circuit were gone,
+    // node-a alone would eat the 600000 load cost and lose to node-b.
     const { status, acquired } = await serveRanked(
       [
         rankAd("node-a", 0, { qualification: { stage: "production" } }),
         rankAd("node-b", 1, { qualification: { stage: "validated" } }),
       ],
-      { expectedLoadMs: () => 600_000 },
+      { expectedLoadMs: (ad) => (ad.ownerNodeId === "node-a" ? 600_000 : undefined) },
     );
     expect(status).toBe(200);
     expect(acquired.at(-1)).toBe("node-a");
