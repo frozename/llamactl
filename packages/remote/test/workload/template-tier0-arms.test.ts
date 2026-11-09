@@ -474,3 +474,11 @@ for (const arm of ARMS) {
     }
   });
 }
+
+describe("reserved z13 ports", () => {
+  test("pins the reserved set: production 8080, the exp hosts 8081-8084, 8091 and the bench port 8095", () => {
+    expect([...RESERVED_PORTS].sort((a, b) => a - b)).toStrictEqual([
+      8080, 8081, 8082, 8083, 8084, 8091, 8095,
+    ]);
+  });
+});
