@@ -79,6 +79,19 @@ Runtime promotions written by `llama-curated-promote`. Each row overrides what a
 
 At most one row per `(profile, preset)`. Writers replace the matching row; there is no row-level history.
 
+## `qualification-overrides.tsv`
+
+Pin/freeze rows for the model-qualification lifecycle (`packages/core/src/qualification/overrides.ts`), keyed on `(rel, action)`. Resolved from `LOCAL_AI_QUALIFICATION_OVERRIDES_FILE`, otherwise `qualification-overrides.tsv` under `$LOCAL_AI_RUNTIME_DIR`. A `pin` row requires a non-empty `stage`; a `freeze` row must carry an empty `stage`. Writers replace the matching `(rel, action)` row; `#` comments and invalid rows do not survive a write; a delete removes the file when it empties. Library-only until #284: editing this file today changes no routing or lifecycle behaviour.
+
+| col | field        | type   | notes                                             |
+| --- | ------------ | ------ | ------------------------------------------------- |
+| 1   | `rel`        | string | model rel path, tab/newline-free                  |
+| 2   | `action`     | enum   | `pin` \| `freeze`                                 |
+| 3   | `stage`      | enum   | qualification stage for `pin`; empty for `freeze` |
+| 4   | `author`     | string | who set the override, tab/newline-free            |
+| 5   | `reason`     | string | why, tab/newline-free                             |
+| 6   | `updated_at` | string | optional; missing pads to empty                   |
+
 ## `bench-profiles.tsv`
 
 Current best tuned launch profile per `(machine, rel, mode, ctx, build)`. Written by `llama-bench-preset`; read by `llama-start` when `LLAMA_CPP_USE_TUNED_ARGS=true`.
