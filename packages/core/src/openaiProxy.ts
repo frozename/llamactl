@@ -58,6 +58,11 @@ import {
   isExperimentalRoute,
   type QualificationStage,
 } from "./routing/capabilities.js";
+import {
+  type DeclaredModelEntryV1,
+  DeclaredModelEntryV1Schema,
+  type DeclaredModelState,
+} from "./routing/catalog.js";
 import { mkdirSync, readdirSync, statSync } from "./safe-fs.js";
 import { endpoint as llamaEndpoint, readServerPid, readServerState } from "./server.js";
 import * as workloadRuntime from "./workloadRuntime.js";
@@ -77,14 +82,20 @@ const MAX_JSON_BODY_BYTES = 10 * 1024 * 1024;
  * `listOpenAIModels` returns `nova.ModelListResponse` — the
  * canonical shape every AI provider in this family publishes —
  * widened with an `unavailable` sibling array (#280 D-2) listing
- * catalog rows whose availability is declared unavailable.
+ * catalog rows whose availability is declared unavailable, and a
+ * `declared` sibling array (#280 DF-07) listing non-ready declared
+ * model entries. The declared-model source is a seam only for now:
+ * declared entries do not reach the /v1/models HTTP surface — the
+ * server still emits only `.data`.
  *
  * JSON requests can route by request-body `model` across live
  * workloads on the node. When no model matches, or the body is not
  * parseable JSON, the proxy falls back to the node's default endpoint
  * for back-compat. An exact pin of a declared-unavailable catalog row
  * is instead answered with a typed `model_unavailable` 503 (#280 D-2),
- * ahead of the `model_not_routed` 404 and the default-endpoint
+ * and an exact pin of a declared-but-not-loaded model entry with a
+ * typed `model_not_loaded`/`model_unavailable` 503 (#280 DF-07) —
+ * both ahead of the `model_not_routed` 404 and the default-endpoint
  * fallthrough.
  */
 
@@ -103,8 +114,26 @@ export interface UnavailableModelInfo {
   routable: false;
 }
 
+/** A declared-but-not-ready model entry surfaced under `declared` in
+ *  listOpenAIModels (#280 DF-07). Never routable; `status` carries the
+ *  declared state and `auto_load_eligible` whether a load may be
+ *  scheduled for it. */
+export interface DeclaredModelInfo {
+  id: string;
+  object: "model";
+  created: 0;
+  owned_by: "llamactl-declared";
+  workload: string;
+  kind: "ModelRun" | "ModelHost";
+  status: DeclaredModelState;
+  auto_load_eligible: boolean;
+  routable: false;
+  reason?: string;
+}
+
 export type OpenAIModelListResponse = ModelListResponse & {
   unavailable: UnavailableModelInfo[];
+  declared: DeclaredModelInfo[];
 };
 
 /**
@@ -135,7 +164,11 @@ export function listOpenAIModels(
     return { object: "list", data };
   }
 
-  return getCachedModelsResponse(keyOrResolved);
+  // `declared` is computed outside the models-response cache on every
+  // call so source mutations are observed without re-registering; the
+  // cached object itself is never mutated.
+  const base = getCachedModelsResponse(keyOrResolved);
+  return { ...base, declared: declaredModelInfos(keyOrResolved, base) };
 }
 
 function createdAtForRoute(route: workloadRuntime.ClusterRoute, resolved: ResolvedEnv): number {
@@ -254,7 +287,12 @@ function buildListOpenAIModels(resolved: ResolvedEnv): OpenAIModelListResponse {
     if (isExperimentalRoute(route)) entry.experimental = true;
     data.push(entry);
   }
-  return { object: "list", data, unavailable: unavailableModelEntries(resolved, winners) };
+  return {
+    object: "list",
+    data,
+    unavailable: unavailableModelEntries(resolved, winners),
+    declared: [],
+  };
 }
 
 /**
@@ -286,6 +324,42 @@ function unavailableModelEntries(
     });
   }
   return unavailable;
+}
+
+/**
+ * #280 DF-07: the `declared` sibling array of listOpenAIModels. Runs
+ * outside the models-response cache so source mutations are observed on
+ * the next call. Non-ready entries only; ids already live in `data`,
+ * declared `unavailable`, or default-target are skipped — a declared
+ * entry never shadows a real route or a stronger declaration.
+ */
+function declaredModelInfos(
+  resolved: ResolvedEnv,
+  base: OpenAIModelListResponse,
+): DeclaredModelInfo[] {
+  const routedIds = new Set(base.data.map((model) => model.id));
+  const unavailableIds = new Set(base.unavailable.map((entry) => entry.id));
+  const defaultTargets = defaultTargetModelIds(resolved);
+  const declared: DeclaredModelInfo[] = [];
+  for (const entry of declaredModelEntries()) {
+    if (entry.state === "ready") continue;
+    if (routedIds.has(entry.id) || unavailableIds.has(entry.id) || defaultTargets.has(entry.id)) {
+      continue;
+    }
+    declared.push({
+      id: entry.id,
+      object: "model",
+      created: 0,
+      owned_by: "llamactl-declared",
+      workload: entry.workload,
+      kind: entry.kind,
+      status: entry.state,
+      auto_load_eligible: entry.autoLoadEligible,
+      routable: false,
+      ...(entry.reason !== undefined ? { reason: entry.reason } : {}),
+    });
+  }
+  return declared;
 }
 
 const WORKLOAD_STATE_FILES = [
@@ -550,6 +624,23 @@ let clusterRoutingOverrideForTests: {
 // in the proxy process (startAgentServer). Empty until the poller publishes —
 // so a node with no peers (or before the first poll) routes only local models.
 let productionPeerSnapshots = new Map<string, workloadRuntime.PeerSnapshot>();
+// #280 DF-07: declared-model entry source, read fresh on every route
+// miss and every /v1/models listing — never cached — so manifest
+// changes and in-place source mutations are observed without
+// re-registration.
+let declaredModelSource: (() => readonly unknown[]) | null = null;
+
+/**
+ * Publish the declared-model entry source (workload manifests projected
+ * to DeclaredModelEntryV1). Nulling the route/models caches mirrors
+ * setPeerSnapshots: entries read through a stale route map would be
+ * masked by cached state.
+ */
+export function setDeclaredModelSource(source: (() => readonly unknown[]) | null): void {
+  declaredModelSource = source;
+  routeMapCache = null;
+  modelsResponseCache = null;
+}
 
 /**
  * Publish the latest peer fleet snapshots so cross-node (peer) models become
@@ -626,6 +717,7 @@ export function __resetOpenAIProxyRouteMapCacheForTests(): void {
   modelsResponseCache = null;
   routeMapBuildCount = 0;
   clusterRoutingOverrideForTests = null;
+  declaredModelSource = null;
   for (const runtime of kvRuntimeByDataRoot.values()) {
     runtime.storage.close();
   }
@@ -2070,6 +2162,77 @@ function declaredUnavailableRejectionFor(model: string, resolved: ResolvedEnv): 
 }
 
 /**
+ * #280 DF-07: validated declared-model entries from the registered
+ * source. A throwing source or schema-invalid rows degrade to "no
+ * declarations" — a malformed declared catalog must never fail a
+ * request. Sorted by id then workload; on duplicate ids the first
+ * claim wins.
+ */
+function declaredModelEntries(): DeclaredModelEntryV1[] {
+  if (declaredModelSource === null) return [];
+  let raw: readonly unknown[];
+  try {
+    raw = declaredModelSource();
+  } catch {
+    return [];
+  }
+  const entries: DeclaredModelEntryV1[] = [];
+  for (const item of raw) {
+    const parsed = DeclaredModelEntryV1Schema.safeParse(item);
+    if (parsed.success) entries.push(parsed.data);
+  }
+  entries.sort((a, b) => {
+    if (a.id !== b.id) return a.id < b.id ? -1 : 1;
+    return a.workload.localeCompare(b.workload);
+  });
+  const seen = new Set<string>();
+  return entries.filter((entry) => {
+    if (seen.has(entry.id)) return false;
+    seen.add(entry.id);
+    return true;
+  });
+}
+
+/**
+ * #280 DF-07: 503 for an exact pin of a declared model that is not
+ * loaded, or null when the request keeps the #306 / default-endpoint
+ * paths. Default-target ids, ids with a live route, undeclared models
+ * and `ready` entries are exempt — a ready declaration with no route
+ * is still just unrouted.
+ *
+ * `disabled`/`unavailable` map to `model_unavailable`, the same
+ * never-loadable class as the #549 catalog rejections: the declaration
+ * says no load can be scheduled, so the client must not treat the pin
+ * as a transient not-yet-loaded state. `cold`/`loading`/`draining`
+ * map to `model_not_loaded`. No Retry-After: readiness changes when
+ * the declaration changes, not on a timer.
+ */
+function declaredNotLoadedRejectionFor(model: string, resolved: ResolvedEnv): Response | null {
+  if (defaultTargetModelIds(resolved).has(model)) return null;
+  if (getRouteMap(resolved).has(model)) return null;
+  const entry = declaredModelEntries().find((candidate) => candidate.id === model);
+  if (entry === undefined || entry.state === "ready") return null;
+  const type =
+    entry.state === "disabled" || entry.state === "unavailable"
+      ? "model_unavailable"
+      : "model_not_loaded";
+  return Response.json(
+    {
+      error: {
+        message: `model '${model}' is declared but not loaded (state: ${entry.state})`,
+        type,
+        code: type,
+        param: "model",
+        state: entry.state,
+        auto_load_eligible: entry.autoLoadEligible,
+        ...(entry.reason !== undefined ? { reason: entry.reason } : {}),
+      },
+    },
+    { status: 503 },
+  );
+}
+
+/**
  * Route a JSON request by its body `model` field. Reads (and size-caps)
  * the body when it hasn't been read yet; leaves the default target in
  * place when the model is absent or empty.
@@ -2132,10 +2295,12 @@ async function resolveJsonBodyRoute(context: ProxyContext): Promise<ProxyContext
   return context;
 }
 
-/** Rejection chain for a body model that matched no route (#306 + #280 D-2). */
+/** Rejection chain for a body model that matched no route (#306 + #280). */
 function routeMissResponse(context: ProxyContext, model: string): ProxyContext | Response {
   const unavailableRejection = declaredUnavailableRejectionFor(model, context.resolved);
   if (unavailableRejection) return unavailableRejection;
+  const notLoadedRejection = declaredNotLoadedRejectionFor(model, context.resolved);
+  if (notLoadedRejection) return notLoadedRejection;
   const routeMap = getRouteMap(context.resolved);
   if (routeMap.size > 0 && !defaultTargetModelIds(context.resolved).has(model)) {
     return modelNotRoutedResponse(model, [...routeMap.keys()].sort());
