@@ -1175,7 +1175,70 @@ test("#281: schedule reads the clock once so urgency order cannot shift mid-sort
   expect(actions).toEqual([{ kind: "start-execution", requestId: "s-0", modelKey: "m@1" }]);
 });
 
-test("#281: starved background enqueued after interactive does not overtake it", async () => {
+test("#281: starvation in cold-load target choice: starved background executes before its model loads", async () => {
+  const mod = await load();
+  let t = 1_000;
+  // maxExecutions=1, starvationBoundMs=1000, resident=[]
+  const policy = mod.createRequestQueuePolicy({
+    limits: lim({ maxExecutions: 1, starvationBoundMs: 1000 }),
+    now: (): number => t,
+    resident: [],
+  });
+
+  // Enqueue an interactive request and start its load-1
+  expect(
+    policy.enqueue(
+      q("interactive-c", { priority: "interactive", model: { name: "c", revision: "1" } }),
+    ),
+  ).toEqual({
+    kind: "queued",
+    requestId: "interactive-c",
+  });
+  expect(policy.schedule()).toEqual([{ kind: "start-load", loadId: "load-1", modelKey: "c@1" }]);
+
+  // At t=1000, enqueue a background request for model a@1
+  t = 1000;
+  expect(
+    policy.enqueue(q("bg-a", { priority: "background", model: { name: "a", revision: "1" } })),
+  ).toEqual({
+    kind: "queued",
+    requestId: "bg-a",
+  });
+
+  // At t=2500, enqueue an interactive request for model z@1
+  t = 2500;
+  expect(
+    policy.enqueue(
+      q("interactive-z", { priority: "interactive", model: { name: "z", revision: "1" } }),
+    ),
+  ).toEqual({
+    kind: "queued",
+    requestId: "interactive-z",
+  });
+
+  // No schedule should start yet (load-1 is in flight)
+  expect(policy.schedule()).toEqual([]);
+
+  // Settle load-1 (model c@1 is now loaded)
+  expect(policy.loadSettled("load-1", "ready")).toEqual([]);
+
+  // Schedule should start execution for interactive-c (load-1 done) and
+  // start-load for model a@1 (bg-a's model), NOT model z@1.
+  // This pins the starvation-bound fix: modelKeyForNextLoad must use 0
+  // (not `now`) so that the starvation-bound check in the load path
+  // never fires, and the first non-resident model wins regardless of
+  // whether a starved background waiter exists in the queue.
+  const actions = policy.schedule();
+  const startLoads = actions.filter((a) => a.kind === "start-load");
+  expect(startLoads).toHaveLength(1);
+  expect(startLoads[0]).toEqual({
+    kind: "start-load",
+    loadId: "load-2",
+    modelKey: "a@1",
+  });
+});
+
+test("#281: starved background enqueued before interactive-2 outranks interactive-2", async () => {
   const mod = await load();
   let t = 1_000;
   // maxExecutions=1, starvationBoundMs=500, maxQueueWaitMs=60000
