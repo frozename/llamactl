@@ -58,6 +58,35 @@ const exclusiveRows = BUILTIN_CATALOG.filter((row) => row.residencyGroup === RES
 const GLM53_FAMILY = /^\s+family:\s*glm53\s*$/m;
 const RUNTIME_ARM = /^\s+(?:arm|llamactl\.io\/runtime-arm):\s*(\S+)\s*$/m;
 const WORKLOAD_NAME = /^metadata:\n\s+name:\s*(\S+)/m;
+const TEMPLATE_PORT = /^\s+port:\s*(\d+)\s*$/m;
+const RUNBOOK_ROW = /^\|\s*`([^`]+)`\s*\|([^|]+)\|\s*(\d+)\s*\|/;
+
+interface RunbookRow {
+  arm: string;
+  port: string;
+}
+
+function sectionBody(heading: RegExp): string | undefined {
+  const lines = doc.split("\n");
+  const start = lines.findIndex((line) => heading.test(line));
+  if (start === -1) return undefined;
+  const end = lines.findIndex((line, i) => i > start && /^#{1,6} /.test(line));
+  return lines.slice(start + 1, end === -1 ? lines.length : end).join("\n");
+}
+
+function runbookRows(section: string): Map<string, RunbookRow> {
+  const rows = new Map<string, RunbookRow>();
+  for (const line of section.split("\n")) {
+    const match = RUNBOOK_ROW.exec(line);
+    const name = match?.[1];
+    const arm = match?.[2]?.trim();
+    const port = match?.[3];
+    if (name !== undefined && arm !== undefined && port !== undefined) {
+      rows.set(name, { arm, port });
+    }
+  }
+  return rows;
+}
 
 const glmArmIds = residencyTemplates
   .filter((t) => GLM53_FAMILY.test(t.text))
@@ -123,11 +152,24 @@ describe("docs/dynamic-fleet-models.md (#522)", () => {
 
   test("case 7: exclusive-window runbook templates", () => {
     expect(residencyTemplates.length).toBeGreaterThan(0);
+    const runbook = sectionBody(/^#{2,} .*exclusive-window runbook/i);
+    expect(runbook, "exclusive-window runbook section missing").toBeDefined();
+    const rows = runbook === undefined ? new Map<string, RunbookRow>() : runbookRows(runbook);
     for (const t of residencyTemplates) {
       const name = WORKLOAD_NAME.exec(t.text)?.[1];
       expect(name, `metadata.name missing in ${t.file}`).toBeDefined();
       if (name === undefined) continue;
       expect(doc, `template ${t.file}`).toContain(`\`${name}\``);
+      const port = TEMPLATE_PORT.exec(t.text)?.[1];
+      expect(port, `port missing in ${t.file}`).toBeDefined();
+      const arm = RUNTIME_ARM.exec(t.text)?.[1];
+      const row = rows.get(name);
+      expect(row, `runbook table row for ${name} missing`).toBeDefined();
+      if (row === undefined || port === undefined) continue;
+      expect(row.port, `runbook port for ${name}`).toBe(port);
+      expect(row.arm, `runbook runtime arm for ${name}`).toBe(
+        arm === undefined ? "none" : `\`${arm}\``,
+      );
     }
     expect(doc).toMatch(/^##+ .*exclusive-window runbook/im);
     expect(doc).toContain("`llamactl disable");
@@ -175,6 +217,28 @@ describe("docs/dynamic-fleet-models.md (#522)", () => {
     }
     // The eval-record table carries an arm row with an `unavailable` cell.
     expect(evalSection).toMatch(/^\| `[^`]+` \|[^|]+\| `unavailable`/im);
+
+    // Every GLM arm row has an `unavailable` cell in every
+    // PROMOTION_METRICS column, located via the header row.
+    const evalLines = evalSection.split("\n");
+    const header = evalLines.find((line) => /^\|\s*arm\s*\|/.test(line));
+    expect(header, "eval-record table header row missing").toBeDefined();
+    const headerCells = (header ?? "").split("|").map((cell) => cell.trim());
+    const metricColumns = new Map<string, number>();
+    for (const metric of PROMOTION_METRICS) {
+      const col = headerCells.indexOf(`\`${metric}\``);
+      expect(col, `metric column ${metric} missing from eval-record header`).toBeGreaterThan(0);
+      if (col > 0) metricColumns.set(metric, col);
+    }
+    for (const arm of glmArmIds) {
+      const row = evalLines.find((line) => line.startsWith(`| \`${arm}\``));
+      expect(row, `eval-record row for arm ${arm} missing`).toBeDefined();
+      if (row === undefined) continue;
+      const cells = row.split("|").map((cell) => cell.trim());
+      for (const [metric, col] of metricColumns) {
+        expect(cells[col], `eval arm ${arm} metric ${metric}`).toBe("`unavailable`");
+      }
+    }
   });
 
   test("case 10: model download flags", () => {
