@@ -254,6 +254,45 @@ describe("evaluateResidencyTransition", () => {
       peer: { id: "a" },
     });
   });
+
+  test("L15 a lone exclusive-group member is not blocked by itself", async () => {
+    const lc = await load();
+    const chain: [LifecycleModule.ResidencyState, LifecycleModule.ResidencyState][] = [
+      ["downloaded", "loading"],
+      ["loading", "warming"],
+      ["warming", "ready"],
+    ];
+    for (const [from, to] of chain) {
+      const members: LifecycleModule.ResidencyMember[] = [
+        { id: "solo", state: from, group: "z13-large-gpu" },
+      ];
+      expect(
+        lc.evaluateResidencyTransition({
+          groups: EXCLUSIVE_GROUPS,
+          members,
+          id: "solo",
+          to,
+        }),
+      ).toEqual({ ok: true });
+    }
+  });
+
+  test("L16 occupying members outside the group do not block entry into it", async () => {
+    const lc = await load();
+    const members: LifecycleModule.ResidencyMember[] = [
+      { id: "pooled", state: "ready", group: "pool" },
+      { id: "ungrouped", state: "ready" },
+      { id: "ds", state: "downloaded", group: "z13-large-gpu" },
+    ];
+    expect(
+      lc.evaluateResidencyTransition({
+        groups: EXCLUSIVE_GROUPS,
+        members,
+        id: "ds",
+        to: "loading",
+      }),
+    ).toEqual({ ok: true });
+  });
 });
 
 describe("findExclusiveGroupViolations", () => {
@@ -279,6 +318,17 @@ describe("findExclusiveGroupViolations", () => {
       lc.findExclusiveGroupViolations(shared, [
         { id: "a", state: "ready", group: "pool" },
         { id: "b", state: "ready", group: "pool" },
+      ]),
+    ).toEqual([]);
+  });
+
+  test("L17 occupying members outside the evaluated group are not attributed to it", async () => {
+    const lc = await load();
+    expect(
+      lc.findExclusiveGroupViolations(EXCLUSIVE_GROUPS, [
+        { id: "in", state: "ready", group: "z13-large-gpu" },
+        { id: "out-pooled", state: "ready", group: "pool" },
+        { id: "out-ungrouped", state: "warming" },
       ]),
     ).toEqual([]);
   });
