@@ -526,3 +526,43 @@ export function routeCatalogToV1(catalog: RouteCatalog): RouteCatalogV1 {
 export function serializeRouteCatalog(catalog: RouteCatalog): string {
   return JSON.stringify(routeCatalogToV1(catalog));
 }
+
+export const DeclaredModelStateSchema = z.enum([
+  "cold",
+  "loading",
+  "ready",
+  "draining",
+  "disabled",
+  "unavailable",
+]);
+export type DeclaredModelState = z.infer<typeof DeclaredModelStateSchema>;
+
+/**
+ * DeclaredModelEntryV1 — a workload-declared model id that is not (yet) a
+ * route (#280 DF-07). Declared entries carry no endpoint, host, port or
+ * path, and are never routes: they exist so a pin of a declared-but-not-
+ * loaded id can be answered with a typed rejection instead of falling
+ * through to the node's default endpoint. `autoLoadEligible` marks the
+ * `cold` state — the only state a load can be scheduled from — so the
+ * schema refuses it on `disabled`/`unavailable`, where no load can run.
+ */
+export const DeclaredModelEntryV1Schema = z
+  .object({
+    id: z.string().min(1),
+    workload: z.string().min(1),
+    kind: z.enum(["ModelRun", "ModelHost"]),
+    ownerNodeId: z.string().min(1),
+    state: DeclaredModelStateSchema,
+    autoLoadEligible: z.boolean(),
+    reason: z.string().min(1).optional(),
+  })
+  .strict()
+  .superRefine((entry, ctx) => {
+    if (entry.autoLoadEligible && (entry.state === "disabled" || entry.state === "unavailable")) {
+      ctx.addIssue({
+        code: "custom",
+        message: "autoLoadEligible cannot be true for disabled or unavailable states",
+      });
+    }
+  });
+export type DeclaredModelEntryV1 = z.infer<typeof DeclaredModelEntryV1Schema>;
