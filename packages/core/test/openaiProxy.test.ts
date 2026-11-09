@@ -2511,3 +2511,526 @@ test("/v1/models excludes default-target rels from the unavailable list (P9)", (
     t.cleanup();
   }
 });
+
+// ---------------------------------------------------------------------------
+// #280 DF-07 — declared cold models. The declared-source seam and the
+// `declared` sibling of /v1/models land with the fix; the structural
+// cast keeps these cases typechecking before the export exists — they
+// fail by assertion, never by a missing export or a type error. Every
+// seam call is `?.` so the guards pass at base and afterEach never
+// throws.
+// ---------------------------------------------------------------------------
+
+type DeclaredModelSource = (() => readonly unknown[]) | null;
+
+const declaredModelSeam = openaiProxy as unknown as {
+  setDeclaredModelSource?: (source: DeclaredModelSource) => void;
+};
+
+function declaredModelEntry(
+  id: string,
+  over: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    id,
+    workload: "wl-declared",
+    kind: "ModelRun",
+    ownerNodeId: "local",
+    state: "cold",
+    autoLoadEligible: true,
+    ...over,
+  };
+}
+
+interface DeclaredListEntry {
+  id: string;
+  object: string;
+  created: number;
+  owned_by: string;
+  workload: string;
+  kind: string;
+  status: string;
+  auto_load_eligible: boolean;
+  routable: boolean;
+  reason?: string;
+}
+
+const declaredEntries = (models: unknown): DeclaredListEntry[] | undefined =>
+  (models as { declared?: DeclaredListEntry[] }).declared;
+
+describe("declared cold models (#280)", () => {
+  afterEach(() => {
+    declaredModelSeam.setDeclaredModelSource?.(null);
+    openaiProxy.__resetOpenAIProxyRouteMapCacheForTests();
+  });
+
+  test("the route-map reset also clears the declared model source", async () => {
+    const t = tempEnv({ LLAMA_CPP_PORT: "17777" });
+    try {
+      const upstream = installConditionalChatUpstream();
+      expect(typeof declaredModelSeam.setDeclaredModelSource).toBe("function");
+      declaredModelSeam.setDeclaredModelSource?.(() => [declaredModelEntry("cold/model-a.gguf")]);
+
+      const pinned = await openaiProxy.proxyOpenAI(chatRequest("cold/model-a.gguf"), t.env);
+      expect(pinned.status).toBe(503);
+
+      openaiProxy.__resetOpenAIProxyRouteMapCacheForTests();
+
+      const afterReset = await openaiProxy.proxyOpenAI(chatRequest("cold/model-a.gguf"), t.env);
+      expect(afterReset.status).toBe(200);
+      expect(upstream.calls).toHaveLength(1);
+      expect(upstream.calls[0]!.url).toBe("http://127.0.0.1:17777/v1/chat/completions");
+    } finally {
+      t.cleanup();
+    }
+  });
+
+  test("a declared cold pin returns 503 model_not_loaded instead of the default endpoint", async () => {
+    const t = tempEnv({ LLAMA_CPP_PORT: "17777" });
+    try {
+      const upstream = installConditionalChatUpstream();
+      declaredModelSeam.setDeclaredModelSource?.(() => [declaredModelEntry("cold/model-a.gguf")]);
+
+      const res = await openaiProxy.proxyOpenAI(chatRequest("cold/model-a.gguf"), t.env);
+
+      expect(res.status).toBe(503);
+      const body = (await res.json()) as {
+        error: {
+          code: string;
+          type: string;
+          param: string;
+          state: string;
+          auto_load_eligible: boolean;
+        };
+      };
+      expect(body.error.code).toBe("model_not_loaded");
+      expect(body.error.type).toBe("model_not_loaded");
+      expect(body.error.param).toBe("model");
+      expect(body.error.state).toBe("cold");
+      expect(body.error.auto_load_eligible).toBe(true);
+      expect(res.headers.get("retry-after")).toBeNull();
+      expect(upstream.calls).toHaveLength(0);
+    } finally {
+      t.cleanup();
+    }
+  });
+
+  test("a declared cold pin is model_not_loaded, not model_not_routed, when routes exist", async () => {
+    const t = tempEnv({ LLAMA_CPP_PORT: "17777" });
+    try {
+      writeLlamaServerWorkload(t.dir, "wl-routed", { rel: "routed/model.gguf", port: 8142 });
+      const upstream = installConditionalChatUpstream();
+      declaredModelSeam.setDeclaredModelSource?.(() => [declaredModelEntry("cold/model-a.gguf")]);
+
+      const res = await openaiProxy.proxyOpenAI(chatRequest("cold/model-a.gguf"), t.env);
+
+      expect(res.status).toBe(503);
+      const body = (await res.json()) as { error: { code: string } };
+      expect(body.error.code).toBe("model_not_loaded");
+      expect(upstream.calls).toHaveLength(0);
+    } finally {
+      t.cleanup();
+    }
+  });
+
+  test("a declared disabled entry returns 503 model_unavailable", async () => {
+    const t = tempEnv({ LLAMA_CPP_PORT: "17777" });
+    try {
+      const upstream = installConditionalChatUpstream();
+      declaredModelSeam.setDeclaredModelSource?.(() => [
+        declaredModelEntry("disabled/model-b.gguf", {
+          state: "disabled",
+          autoLoadEligible: false,
+        }),
+      ]);
+
+      const res = await openaiProxy.proxyOpenAI(chatRequest("disabled/model-b.gguf"), t.env);
+
+      expect(res.status).toBe(503);
+      const body = (await res.json()) as {
+        error: {
+          code: string;
+          type: string;
+          param: string;
+          state: string;
+          auto_load_eligible: boolean;
+        };
+      };
+      expect(body.error.code).toBe("model_unavailable");
+      expect(body.error.type).toBe("model_unavailable");
+      expect(body.error.param).toBe("model");
+      expect(body.error.state).toBe("disabled");
+      expect(body.error.auto_load_eligible).toBe(false);
+      expect(upstream.calls).toHaveLength(0);
+    } finally {
+      t.cleanup();
+    }
+  });
+
+  test("a declared unavailable entry returns 503 model_unavailable with its reason", async () => {
+    const t = tempEnv({ LLAMA_CPP_PORT: "17777" });
+    try {
+      const upstream = installConditionalChatUpstream();
+      declaredModelSeam.setDeclaredModelSource?.(() => [
+        declaredModelEntry("unavailable/model-c.gguf", {
+          state: "unavailable",
+          autoLoadEligible: false,
+          reason: "alias-collision",
+        }),
+      ]);
+
+      const res = await openaiProxy.proxyOpenAI(chatRequest("unavailable/model-c.gguf"), t.env);
+
+      expect(res.status).toBe(503);
+      const body = (await res.json()) as {
+        error: { code: string; type: string; state: string; reason: string };
+      };
+      expect(body.error.code).toBe("model_unavailable");
+      expect(body.error.type).toBe("model_unavailable");
+      expect(body.error.state).toBe("unavailable");
+      expect(body.error.reason).toBe("alias-collision");
+      expect(upstream.calls).toHaveLength(0);
+    } finally {
+      t.cleanup();
+    }
+  });
+
+  test("a declared cold pin through /v1/messages returns 503 model_not_loaded", async () => {
+    const t = tempEnv({ LLAMA_CPP_PORT: "17777" });
+    try {
+      const upstream = installConditionalChatUpstream();
+      declaredModelSeam.setDeclaredModelSource?.(() => [declaredModelEntry("cold/model-a.gguf")]);
+
+      const res = await openaiProxy.proxyOpenAI(
+        anthropicChatRequest({
+          model: "cold/model-a.gguf",
+          max_tokens: 16,
+          messages: [{ role: "user", content: "hi" }],
+        }),
+        t.env,
+      );
+
+      expect(res.status).toBe(503);
+      const body = (await res.json()) as { error: { code: string } };
+      expect(body.error.code).toBe("model_not_loaded");
+      expect(upstream.calls).toHaveLength(0);
+    } finally {
+      t.cleanup();
+    }
+  });
+
+  test("guard: a live route for the declared id wins and is forwarded", async () => {
+    const t = tempEnv({ LLAMA_CPP_PORT: "17777" });
+    try {
+      writeLlamaServerWorkload(t.dir, "wl-cold", { rel: "cold/model-a.gguf", port: 8350 });
+      const upstream = installConditionalChatUpstream();
+      declaredModelSeam.setDeclaredModelSource?.(() => [declaredModelEntry("cold/model-a.gguf")]);
+
+      const res = await openaiProxy.proxyOpenAI(chatRequest("cold/model-a.gguf"), t.env);
+
+      expect(res.status).toBe(200);
+      const chatCalls = upstream.calls.filter((c) => c.url.endsWith("/v1/chat/completions"));
+      expect(chatCalls).toHaveLength(1);
+      expect(chatCalls[0]!.url).toBe("http://127.0.0.1:8350/v1/chat/completions");
+    } finally {
+      t.cleanup();
+    }
+  });
+
+  test("guard: a default-target id keeps the default-endpoint fallthrough", async () => {
+    const t = tempEnv({ LLAMA_CPP_PORT: "17777", LLAMA_CPP_SERVER_ALIAS: "cold/model-a.gguf" });
+    try {
+      writeLlamaServerWorkload(t.dir, "wl-routed", { rel: "routed/model.gguf", port: 8142 });
+      const upstream = installConditionalChatUpstream();
+      declaredModelSeam.setDeclaredModelSource?.(() => [declaredModelEntry("cold/model-a.gguf")]);
+
+      const res = await openaiProxy.proxyOpenAI(chatRequest("cold/model-a.gguf"), t.env);
+
+      expect(res.status).toBe(200);
+      expect(upstream.calls).toHaveLength(1);
+      expect(upstream.calls[0]!.url).toBe("http://127.0.0.1:17777/v1/chat/completions");
+    } finally {
+      t.cleanup();
+    }
+  });
+
+  test("guard: a ready declared entry with no live route is model_not_routed when routes exist", async () => {
+    const t = tempEnv({ LLAMA_CPP_PORT: "17777" });
+    try {
+      writeLlamaServerWorkload(t.dir, "wl-routed", { rel: "routed/model.gguf", port: 8142 });
+      const upstream = installConditionalChatUpstream();
+      declaredModelSeam.setDeclaredModelSource?.(() => [
+        declaredModelEntry("ready/model.gguf", { state: "ready", autoLoadEligible: false }),
+      ]);
+
+      const res = await openaiProxy.proxyOpenAI(chatRequest("ready/model.gguf"), t.env);
+
+      expect(res.status).toBe(404);
+      const body = (await res.json()) as { error: { code: string } };
+      expect(body.error.code).toBe("model_not_routed");
+      expect(upstream.calls).toHaveLength(0);
+    } finally {
+      t.cleanup();
+    }
+  });
+
+  test("guard: an undeclared unknown id is model_not_routed with known_models", async () => {
+    const t = tempEnv({ LLAMA_CPP_PORT: "17777" });
+    try {
+      writeLlamaServerWorkload(t.dir, "wl-routed", { rel: "routed/model.gguf", port: 8142 });
+      const upstream = installConditionalChatUpstream();
+      declaredModelSeam.setDeclaredModelSource?.(() => [declaredModelEntry("cold/other.gguf")]);
+
+      const res = await openaiProxy.proxyOpenAI(chatRequest("nope/unknown.gguf"), t.env);
+
+      expect(res.status).toBe(404);
+      const body = (await res.json()) as {
+        error: { code: string; known_models: string[] };
+      };
+      expect(body.error.code).toBe("model_not_routed");
+      expect(body.error.known_models.includes("routed/model.gguf")).toBe(true);
+      expect(upstream.calls).toHaveLength(0);
+    } finally {
+      t.cleanup();
+    }
+  });
+
+  test("guard: a throwing declared source is treated as empty", async () => {
+    const t = tempEnv({ LLAMA_CPP_PORT: "17777" });
+    try {
+      const upstream = installConditionalChatUpstream();
+      declaredModelSeam.setDeclaredModelSource?.(() => {
+        throw new Error("declared source boom");
+      });
+
+      const res = await openaiProxy.proxyOpenAI(chatRequest("cold/model-a.gguf"), t.env);
+
+      expect(res.status).toBe(200);
+      expect(upstream.calls).toHaveLength(1);
+      expect(upstream.calls[0]!.url).toBe("http://127.0.0.1:17777/v1/chat/completions");
+    } finally {
+      t.cleanup();
+    }
+  });
+
+  test("guard: schema-invalid declared entries are treated as empty", async () => {
+    const t = tempEnv({ LLAMA_CPP_PORT: "17777" });
+    try {
+      const upstream = installConditionalChatUpstream();
+      declaredModelSeam.setDeclaredModelSource?.(() => [
+        { id: "cold/model-a.gguf", state: "warm" },
+        { id: "", state: "cold" },
+      ]);
+
+      const res = await openaiProxy.proxyOpenAI(chatRequest("cold/model-a.gguf"), t.env);
+
+      expect(res.status).toBe(200);
+      expect(upstream.calls).toHaveLength(1);
+    } finally {
+      t.cleanup();
+    }
+  });
+
+  test("guard: the catalog unavailable rejection still wins over a declared cold entry", async () => {
+    const t = tempEnv({ LLAMA_CPP_PORT: "17777" });
+    try {
+      writeFileSync(join(t.dir, "curated-models.tsv"), `${COLD_UNAVAILABLE_ROW}\n`);
+      writeLlamaServerWorkload(t.dir, "wl-routed", { rel: "routed/model.gguf", port: 8142 });
+      const upstream = installConditionalChatUpstream();
+      declaredModelSeam.setDeclaredModelSource?.(() => [declaredModelEntry("cold/x.gguf")]);
+
+      const res = await openaiProxy.proxyOpenAI(chatRequest("cold/x.gguf"), t.env);
+
+      expect(res.status).toBe(503);
+      const body = (await res.json()) as { error: { code: string; reason: string } };
+      expect(body.error.code).toBe("model_unavailable");
+      expect(body.error.reason).toBe("runtime-unsupported:test");
+      expect(upstream.calls).toHaveLength(0);
+    } finally {
+      t.cleanup();
+    }
+  });
+
+  test("/v1/models lists each non-ready declared entry sorted by id", () => {
+    const t = tempEnv();
+    try {
+      writeLlamaServerWorkload(t.dir, "wl-live", { rel: "live/model.gguf", port: 8360 });
+      declaredModelSeam.setDeclaredModelSource?.(() => [
+        declaredModelEntry("cold/b.gguf", { workload: "wl-b", kind: "ModelHost" }),
+        declaredModelEntry("cold/a.gguf", { workload: "wl-a" }),
+        declaredModelEntry("disabled/d.gguf", {
+          workload: "wl-d",
+          state: "disabled",
+          autoLoadEligible: false,
+        }),
+        declaredModelEntry("unavailable/u.gguf", {
+          workload: "wl-u",
+          state: "unavailable",
+          autoLoadEligible: false,
+          reason: "alias-collision",
+        }),
+        declaredModelEntry("ready/r.gguf", {
+          workload: "wl-r",
+          state: "ready",
+          autoLoadEligible: false,
+        }),
+        declaredModelEntry("live/model.gguf", { workload: "wl-shadow" }),
+      ]);
+
+      const models = openaiProxy.listOpenAIModels(t.env);
+
+      expect(declaredEntries(models)).toEqual([
+        {
+          id: "cold/a.gguf",
+          object: "model",
+          created: 0,
+          owned_by: "llamactl-declared",
+          workload: "wl-a",
+          kind: "ModelRun",
+          status: "cold",
+          auto_load_eligible: true,
+          routable: false,
+        },
+        {
+          id: "cold/b.gguf",
+          object: "model",
+          created: 0,
+          owned_by: "llamactl-declared",
+          workload: "wl-b",
+          kind: "ModelHost",
+          status: "cold",
+          auto_load_eligible: true,
+          routable: false,
+        },
+        {
+          id: "disabled/d.gguf",
+          object: "model",
+          created: 0,
+          owned_by: "llamactl-declared",
+          workload: "wl-d",
+          kind: "ModelRun",
+          status: "disabled",
+          auto_load_eligible: false,
+          routable: false,
+        },
+        {
+          id: "unavailable/u.gguf",
+          object: "model",
+          created: 0,
+          owned_by: "llamactl-declared",
+          workload: "wl-u",
+          kind: "ModelRun",
+          status: "unavailable",
+          auto_load_eligible: false,
+          routable: false,
+          reason: "alias-collision",
+        },
+      ]);
+      expect(models.data.some((m) => m.id === "live/model.gguf")).toBe(true);
+    } finally {
+      t.cleanup();
+    }
+  });
+
+  test("/v1/models declared omits live, default-target and catalog-unavailable ids", () => {
+    const t = tempEnv({ LLAMA_CPP_SERVER_ALIAS: "cold/default.gguf" });
+    try {
+      writeLlamaServerWorkload(t.dir, "wl-live", { rel: "live/model.gguf", port: 8360 });
+      writeFileSync(join(t.dir, "curated-models.tsv"), `${COLD_UNAVAILABLE_ROW}\n`);
+      declaredModelSeam.setDeclaredModelSource?.(() => [
+        declaredModelEntry("live/model.gguf", { workload: "wl-shadow" }),
+        declaredModelEntry("cold/default.gguf"),
+        declaredModelEntry("cold/x.gguf"),
+        declaredModelEntry("cold/keep.gguf"),
+      ]);
+
+      const models = openaiProxy.listOpenAIModels(t.env);
+      const declared = declaredEntries(models);
+
+      expect(declared?.map((e) => e.id)).toEqual(["cold/keep.gguf"]);
+      expect(unavailableEntries(models)?.some((e) => e.id === "cold/x.gguf")).toBe(true);
+    } finally {
+      t.cleanup();
+    }
+  });
+
+  test("/v1/models data is unchanged by a declared source", () => {
+    const t = tempEnv();
+    try {
+      writeLlamaServerWorkload(t.dir, "wl-live", { rel: "live/model.gguf", port: 8360 });
+      const before = openaiProxy.listOpenAIModels(t.env);
+      declaredModelSeam.setDeclaredModelSource?.(() => [declaredModelEntry("cold/new.gguf")]);
+      const after = openaiProxy.listOpenAIModels(t.env);
+
+      expect(after.data).toEqual(before.data);
+      expect(declaredEntries(after)).toEqual([
+        {
+          id: "cold/new.gguf",
+          object: "model",
+          created: 0,
+          owned_by: "llamactl-declared",
+          workload: "wl-declared",
+          kind: "ModelRun",
+          status: "cold",
+          auto_load_eligible: true,
+          routable: false,
+        },
+      ]);
+    } finally {
+      t.cleanup();
+    }
+  });
+
+  test("/v1/models declared is an empty array when no source is set", () => {
+    const t = tempEnv();
+    try {
+      writeLlamaServerWorkload(t.dir, "wl-live", { rel: "live/model.gguf", port: 8360 });
+
+      const models = openaiProxy.listOpenAIModels(t.env);
+      const declared = declaredEntries(models);
+
+      expect(Array.isArray(declared)).toBe(true);
+      expect(declared).toEqual([]);
+    } finally {
+      t.cleanup();
+    }
+  });
+
+  test("/v1/models declared reflects source mutations without re-registering", () => {
+    const t = tempEnv();
+    try {
+      const entries = [declaredModelEntry("cold/first.gguf")];
+      declaredModelSeam.setDeclaredModelSource?.(() => entries);
+
+      const first = declaredEntries(openaiProxy.listOpenAIModels(t.env));
+      expect(first?.map((e) => e.id)).toEqual(["cold/first.gguf"]);
+
+      entries.push(declaredModelEntry("cold/second.gguf"));
+
+      const second = declaredEntries(openaiProxy.listOpenAIModels(t.env));
+      expect(second?.map((e) => e.id)).toEqual(["cold/first.gguf", "cold/second.gguf"]);
+    } finally {
+      t.cleanup();
+    }
+  });
+
+  test("declaredModelEntries dedupes by first-claim-wins on duplicate ids", () => {
+    const t = tempEnv();
+    try {
+      declaredModelSeam.setDeclaredModelSource?.(() => [
+        declaredModelEntry("cold/dup.gguf", { workload: "wl-alpha" }),
+        declaredModelEntry("cold/dup.gguf", { workload: "wl-beta" }),
+        declaredModelEntry("cold/dup.gguf", { workload: "wl-gamma" }),
+      ]);
+
+      const models = openaiProxy.listOpenAIModels(t.env);
+      const declared = declaredEntries(models);
+
+      const dupIds = declared?.filter((e) => e.id === "cold/dup.gguf");
+      expect(dupIds?.length).toBe(1);
+      expect(dupIds?.[0]?.workload).toBe("wl-alpha");
+    } finally {
+      t.cleanup();
+    }
+  });
+});

@@ -921,3 +921,86 @@ describe("declared-unavailable rejection (#280)", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// #280 DF-07 — declared cold model entries. DeclaredModelStateSchema and
+// DeclaredModelEntryV1Schema land with the fix; the structural cast keeps
+// these cases typechecking before the exports exist — they fail by
+// assertion, never by a missing export or a type error.
+// ---------------------------------------------------------------------------
+const declaredCatalogSchemas = routeCatalogModule as unknown as {
+  DeclaredModelEntryV1Schema?: { safeParse(v: unknown): { success: boolean } };
+  DeclaredModelStateSchema?: { safeParse(v: unknown): { success: boolean } };
+};
+
+const DECLARED_STATES = ["cold", "loading", "ready", "draining", "disabled", "unavailable"];
+
+function declaredEntryV1(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: "org/repo/m.gguf",
+    workload: "wl-declared",
+    kind: "ModelRun",
+    ownerNodeId: "local",
+    state: "cold",
+    autoLoadEligible: true,
+    ...over,
+  };
+}
+
+describe("declared model entries (#280)", () => {
+  test("DeclaredModelStateSchema accepts exactly the six declared states", () => {
+    const schema = declaredCatalogSchemas.DeclaredModelStateSchema;
+    expect(schema).toBeDefined();
+    for (const state of DECLARED_STATES) {
+      expect(schema?.safeParse(state).success).toBe(true);
+    }
+    for (const state of ["warm", "Cold", ""]) {
+      expect(schema?.safeParse(state).success).toBe(false);
+    }
+  });
+
+  test("DeclaredModelEntryV1Schema accepts a complete entry for both workload kinds", () => {
+    const schema = declaredCatalogSchemas.DeclaredModelEntryV1Schema;
+    expect(schema).toBeDefined();
+    for (const kind of ["ModelHost", "ModelRun"]) {
+      expect(schema?.safeParse(declaredEntryV1({ kind })).success).toBe(true);
+    }
+    expect(
+      schema?.safeParse(
+        declaredEntryV1({
+          state: "unavailable",
+          autoLoadEligible: false,
+          reason: "alias-collision",
+        }),
+      ).success,
+    ).toBe(true);
+  });
+
+  test("DeclaredModelEntryV1Schema rejects host, port, endpoint and path keys", () => {
+    const schema = declaredCatalogSchemas.DeclaredModelEntryV1Schema;
+    expect(schema).toBeDefined();
+    for (const key of ["host", "port", "endpoint", "path"]) {
+      expect(schema?.safeParse(declaredEntryV1({ [key]: "x" })).success).toBe(false);
+    }
+  });
+
+  test("DeclaredModelEntryV1Schema rejects autoLoadEligible on disabled and unavailable states", () => {
+    const schema = declaredCatalogSchemas.DeclaredModelEntryV1Schema;
+    expect(schema).toBeDefined();
+    for (const state of ["disabled", "unavailable"]) {
+      expect(schema?.safeParse(declaredEntryV1({ state, autoLoadEligible: true })).success).toBe(
+        false,
+      );
+      expect(schema?.safeParse(declaredEntryV1({ state, autoLoadEligible: false })).success).toBe(
+        true,
+      );
+    }
+  });
+
+  test("DeclaredModelEntryV1Schema rejects an empty id and an empty reason", () => {
+    const schema = declaredCatalogSchemas.DeclaredModelEntryV1Schema;
+    expect(schema).toBeDefined();
+    expect(schema?.safeParse(declaredEntryV1({ id: "" })).success).toBe(false);
+    expect(schema?.safeParse(declaredEntryV1({ reason: "" })).success).toBe(false);
+  });
+});
