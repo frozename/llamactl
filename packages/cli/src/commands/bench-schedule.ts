@@ -1,6 +1,18 @@
+import type {
+  EvalProvenance,
+  PerfEngineClient,
+  PerfEngineClock,
+  PerfSuiteOptions,
+} from "@llamactl/eval";
 import type { router } from "@llamactl/remote";
 
+import { llamactlHome } from "@llamactl/core/config/env";
+import { Database } from "bun:sqlite";
+import { hostname } from "node:os";
+import { join } from "node:path";
+
 import { getGlobals } from "../dispatcher.js";
+import { mkdirSync } from "../safe-fs.js";
 
 /**
  * `llamactl bench schedule` — the CLI counterpart of the control-plane
@@ -26,8 +38,16 @@ type ScheduleRow = Awaited<ReturnType<BenchScheduleCaller["benchScheduleList"]>>
 type LoopStatus = Awaited<ReturnType<BenchScheduleCaller["benchSchedulerStatus"]>>;
 type RecentEntry = LoopStatus["recent"][number];
 
+export interface PerfSuiteRunnerDeps {
+  runPerfSuite(db: Database, opts: PerfSuiteOptions): Promise<unknown>;
+  resolveEndpoint(node: string): { baseUrl: string; fetchImpl?: typeof fetch };
+  openDb(): Database;
+  clock?: PerfEngineClock;
+}
+
 export interface BenchScheduleTestSeams {
   caller?: BenchScheduleCaller;
+  perfSuite?: Partial<PerfSuiteRunnerDeps>;
   waitForShutdown?: () => Promise<NodeJS.Signals>;
   sleep?: (ms: number) => Promise<void>;
 }
@@ -48,6 +68,7 @@ USAGE:
   llamactl bench schedule list [--json]
   llamactl bench schedule add <id> --node <node> --rel <rel>
       [--mode auto|text|vision] --every <duration>
+      [--kind suite --suite <perf-quick|perf-full>]
   llamactl bench schedule rm <id>
   llamactl bench schedule toggle <id> on|off
   llamactl bench schedule status [--json]
@@ -67,6 +88,10 @@ SUBCOMMANDS:
             --node flag (--node <node> / -n <node>) and is required.
             --every takes a positive integer with an optional s, m, h or
             d suffix (e.g. 90m, 6h, 1d).
+            --kind suite --suite <perf-quick|perf-full> registers a
+            named perf suite instead of a bench preset; it needs an
+            HTTP agent node already serving <rel>, and perf rows go to
+            $DEV_STORAGE/eval/perf.sqlite (or ~/.llamactl/eval/perf.sqlite).
   rm        Remove a schedule by id.
   toggle    Enable or disable a schedule: \`toggle <id> on|off\`.
   status    The schedules plus this process's loop state (running, tick
@@ -111,10 +136,132 @@ const LOOP_CONTROL_REFUSAL =
   "`llamactl bench schedule run` (foreground; stop it with Ctrl-C or " +
   "SIGTERM, e.g. under launchd/systemd)";
 
+interface SuiteRunRequest {
+  scheduleId: string;
+  suite: string;
+  node: string;
+  rel: string;
+}
+
+type PerfBenchSuiteRunner = (req: SuiteRunRequest) => Promise<void>;
+type ResolvedEndpoint = { baseUrl: string; fetchImpl?: typeof fetch };
+
+function buildProvenance(): EvalProvenance {
+  return {
+    engine: "llamacpp",
+    engine_version: null,
+    engine_commit: null,
+    binary_sha256: null,
+    gguf_sha256: null,
+    hf_revision: null,
+    quant: "unknown",
+    ctx: null,
+    flags: [],
+    host: hostname(),
+  };
+}
+
+function defaultOpenDb(): Database {
+  const dir = join(llamactlHome(), "eval");
+  mkdirSync(dir, { recursive: true });
+  return new Database(join(dir, "perf.sqlite"));
+}
+
+function servedModelIds(payload: unknown): string[] {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    return [];
+  }
+  const data = (payload as Record<string, unknown>)["data"];
+  if (!Array.isArray(data)) return [];
+  const ids: string[] = [];
+  for (const entry of data) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const id = (entry as Record<string, unknown>)["id"];
+    if (typeof id === "string") ids.push(id);
+  }
+  return ids;
+}
+
+async function assertServesModel(client: PerfEngineClient, req: SuiteRunRequest): Promise<void> {
+  const ids = servedModelIds(await client.listModels());
+  if (ids.includes(req.rel)) return;
+  throw new Error(
+    `node '${req.node}' is not serving '${req.rel}' (serving: ${ids.join(", ") || "nothing"})`,
+  );
+}
+
+async function defaultEndpoint(node: string): Promise<ResolvedEndpoint> {
+  const { config: cfgMod, configSchema, makePinnedFetch } = await import("@llamactl/remote");
+  const r = cfgMod.resolveNode(cfgMod.loadConfig(), node);
+  if (r.node.endpoint.startsWith("inproc://")) {
+    throw new Error(`perf suite runs need an HTTP agent endpoint; node '${node}' is in-process`);
+  }
+  const kind = configSchema.resolveNodeKind(r.node);
+  if (r.node.endpoint === "" || kind !== "agent") {
+    throw new Error(
+      `perf suite runs need an HTTP agent endpoint; node '${node}' is a ${kind} node`,
+    );
+  }
+  const token = cfgMod.resolveToken(r.user);
+  const pinned = makePinnedFetch(r.node);
+  const fetchImpl = async (
+    input: string | URL | Request,
+    init?: RequestInit,
+  ): Promise<Response> => {
+    const headers = new Headers(init?.headers);
+    headers.set("authorization", `Bearer ${token}`);
+    return await pinned(input, { ...init, headers });
+  };
+  return { baseUrl: r.node.endpoint, fetchImpl: fetchImpl as typeof fetch };
+}
+
+async function suiteEndpoint(
+  node: string,
+  override: PerfSuiteRunnerDeps["resolveEndpoint"] | undefined,
+): Promise<ResolvedEndpoint> {
+  if (override !== undefined) return override(node);
+  return await defaultEndpoint(node);
+}
+
+export function createPerfBenchSuiteRunner(
+  overrides: Partial<PerfSuiteRunnerDeps> = {},
+): PerfBenchSuiteRunner {
+  return async (req) => {
+    const ev = await import("@llamactl/eval");
+    const preset = ev.resolvePerfSuite(req.suite);
+    const ep = await suiteEndpoint(req.node, overrides.resolveEndpoint);
+    const clock: PerfEngineClock = overrides.clock ?? { now: () => performance.now() };
+    // Through the agent gateway only /v1/* is forwarded and /tokenize is
+    // not routed, so prefill_*_tps records 'unavailable'. Direct
+    // llama-server resolution is a follow-up.
+    const client = ev.createHttpPerfEngineClient(ep.baseUrl, {
+      clock,
+      model: req.rel,
+      ...(ep.fetchImpl ? { fetchImpl: ep.fetchImpl } : {}),
+    });
+    await assertServesModel(client, req);
+    const db = (overrides.openDb ?? defaultOpenDb)();
+    try {
+      await (overrides.runPerfSuite ?? ev.runPerfSuite)(db, {
+        ...preset,
+        run_id: `${req.scheduleId}-${new Date().toISOString()}`,
+        model_name: req.rel,
+        client,
+        clock,
+        provenance: buildProvenance(),
+      });
+    } finally {
+      db.close();
+    }
+  };
+}
+
 function resolveCaller(): Promise<BenchScheduleCaller> {
   if (seams.caller) return Promise.resolve(seams.caller);
   return import("@llamactl/remote").then(({ router: remoteRouter }) =>
-    remoteRouter.createCaller({}),
+    remoteRouter.createCaller({
+      benchSuiteRunner: createPerfBenchSuiteRunner(seams.perfSuite),
+    }),
   );
 }
 

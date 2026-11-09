@@ -608,6 +608,10 @@ export interface AgentRouterContext {
   fleetJournalPath?: string;
   /** #306: route source override for the fleetSnapshot local-routes fallback, like fleetJournalPath. Production leaves it unset. */
   fleetLocalRoutes?: () => LocalRoute[];
+  /** #521: runner for kind:"suite" bench schedules — the CLI injects a
+   *  runPerfSuite bridge; the agent server leaves it unset so suite
+   *  schedules record "no suite runner configured". */
+  benchSuiteRunner?: benchScheduleLoopMod.BenchSuiteRunner;
 }
 
 const t = initTRPC.context<AgentRouterContext>().create();
@@ -2188,11 +2192,12 @@ export const router = t.router({
         })
         .optional(),
     )
-    .mutation(({ input }) => {
+    .mutation(({ input, ctx }) => {
       const cfg = kubecfg.loadConfig();
       benchScheduleLoopMod.startBenchScheduler({
         tickIntervalMs: (input?.tickIntervalSeconds ?? 60) * 1000,
         getClient: (nodeName) => clientForNode(cfg, nodeName),
+        ...(ctx.benchSuiteRunner !== undefined ? { runSuite: ctx.benchSuiteRunner } : {}),
       });
       return benchScheduleLoopMod.benchSchedulerStatus();
     }),
@@ -2202,9 +2207,11 @@ export const router = t.router({
     return benchScheduleLoopMod.benchSchedulerStatus();
   }),
 
-  benchSchedulerKick: t.procedure.mutation(async () => {
+  benchSchedulerKick: t.procedure.mutation(async ({ ctx }) => {
     const cfg = kubecfg.loadConfig();
-    await benchScheduleLoopMod.kickBenchScheduler((nodeName) => clientForNode(cfg, nodeName));
+    await benchScheduleLoopMod.kickBenchScheduler((nodeName) => clientForNode(cfg, nodeName), {
+      ...(ctx.benchSuiteRunner !== undefined ? { runSuite: ctx.benchSuiteRunner } : {}),
+    });
     return benchScheduleLoopMod.benchSchedulerStatus();
   }),
 

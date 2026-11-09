@@ -28,7 +28,8 @@
 # top_p 0.95. shaderc >=2026.x is needed for the int-dot kernels.
 #
 # See 05-runtime-engine-matrix.md section 2.1.
-# TODO(#557 catalog follow-up): no catalog row has this rel (only AJ-IQ2_XXS), so this arm inherits no catalog qualification yet.
+#
+# Joins the catalog row glm53-flash-a4e3s by rel.
 apiVersion: llamactl/v1
 kind: ModelHost
 metadata:
