@@ -13,9 +13,9 @@
 # remainder over budget.
 #
 # osmos-api decodes greedy-only: it returns HTTP 400 for temperature != 0
-# / top_p != 1, and stop and n are constrained. The llamactl proxy does
-# not sanitise, so clients and the bench harness must send greedy
-# requests.
+# / top_p != 1, and stop and n are constrained. The llamactl proxy
+# rewrites requests to greedy (temperature 0, top_p 1, n 1) and drops
+# stop.
 #
 # The Z13 agent must be upgraded to a build that knows engine libosmos
 # before these can run there.
