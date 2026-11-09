@@ -3013,4 +3013,24 @@ describe("declared cold models (#280)", () => {
       t.cleanup();
     }
   });
+
+  test("declaredModelEntries dedupes by first-claim-wins on duplicate ids", () => {
+    const t = tempEnv();
+    try {
+      declaredModelSeam.setDeclaredModelSource?.(() => [
+        declaredModelEntry("cold/dup.gguf", { workload: "wl-alpha" }),
+        declaredModelEntry("cold/dup.gguf", { workload: "wl-beta" }),
+        declaredModelEntry("cold/dup.gguf", { workload: "wl-gamma" }),
+      ]);
+
+      const models = openaiProxy.listOpenAIModels(t.env);
+      const declared = declaredEntries(models);
+
+      const dupIds = declared?.filter((e) => e.id === "cold/dup.gguf");
+      expect(dupIds?.length).toBe(1);
+      expect(dupIds?.[0]?.workload).toBe("wl-alpha");
+    } finally {
+      t.cleanup();
+    }
+  });
 });

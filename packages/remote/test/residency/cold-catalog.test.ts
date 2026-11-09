@@ -388,6 +388,20 @@ describe("buildDeclaredModelEntries", () => {
     }
   });
 
+  test("a ModelHost pinned to another node yields no claims", async () => {
+    const mod = await residencyCatalog();
+    expect(typeof mod.buildDeclaredModelEntries).toBe("function");
+
+    const entries = mod.buildDeclaredModelEntries!({
+      nodeName: "local",
+      modelHosts: [hostManifest("host-gpu1", { node: "gpu1" })],
+      modelRuns: [],
+      liveModelIds: new Set<string>(),
+    });
+
+    expect(entries).toEqual([]);
+  });
+
   test("output is sorted by id then workload", async () => {
     const mod = await residencyCatalog();
     expect(typeof mod.buildDeclaredModelEntries).toBe("function");
