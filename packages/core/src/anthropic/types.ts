@@ -126,6 +126,7 @@ export interface OpenAIChatToolCall {
 export interface OpenAIChatMessageResponse {
   role: "assistant";
   content: string | null;
+  reasoning_content?: string | null;
   tool_calls?: OpenAIChatToolCall[];
 }
 
