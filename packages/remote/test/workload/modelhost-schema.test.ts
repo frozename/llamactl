@@ -613,3 +613,66 @@ describe("spec.resources memory declarations (#277)", () => {
     });
   });
 });
+
+// #557 S3: libosmos joins the engine enum; binaryNames stays llamacpp-only.
+describe("engine=libosmos (#557)", () => {
+  const libosmosSpec = {
+    ...valid.spec,
+    engine: "libosmos",
+    binary: "/usr/local/bin/osmos-api",
+    hostedModels: [
+      {
+        rel: "DeepSeek-V4.1-Flash-1017-GGUF/UD-IQ1_M/DeepSeek-V4.1-Flash-1017-UD-IQ1_M-00001-of-00005.gguf",
+      },
+    ],
+    extraArgs: ["--max-context", "65536"],
+  };
+
+  test("accepts a libosmos manifest and threads the engine through", () => {
+    const result = ModelHostManifestSchema.safeParse({
+      ...valid,
+      spec: libosmosSpec,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(specForEngine(result.data.spec).engine as string).toBe("libosmos");
+    }
+  });
+
+  test("rejects binaryNames on a libosmos spec with an issue on binaryNames", () => {
+    const result = ModelHostManifestSchema.safeParse({
+      ...valid,
+      spec: { ...libosmosSpec, binaryNames: ["osmos-api"] },
+    });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.issues.some((issue) => issue.path.includes("binaryNames"))).toBe(true);
+  });
+
+  // GUARD (#557 S3): the production Gufo llamacpp manifest must keep hashing
+  // byte-identically — readiness and binaryNames stay outside the hash.
+  test("hashes a production Gufo llamacpp manifest byte-identically", () => {
+    const manifest = ModelHostManifestSchema.parse({
+      apiVersion: "llamactl/v1",
+      kind: "ModelHost",
+      metadata: { name: "gufo-host" },
+      spec: {
+        engine: "llamacpp",
+        node: "local",
+        binary: "/home/alex/strix-halo-bench/gufo/bin/llama-server-fork-pristine",
+        endpoint: { host: "127.0.0.1", port: 8080 },
+        hostedModels: [{ rel: "Qwen3.8-Flash-Next-GGUF/Qwen3.8-Flash-Next-Q4_K_M.gguf" }],
+        extraArgs: ["--served-model-name", "Qwen3.8-Flash-Next-Q4_K_M.gguf", "--context", "131072"],
+        resources: { expectedMemoryGiB: 60 },
+        restartPolicy: "Always",
+        timeoutSeconds: 600,
+        env: { ROCBLAS_USE_HIPBLASLT: "1" },
+        binaryNames: ["llama-server-fork-pristine"],
+        readiness: { path: "/ready", expectStatus: 200 },
+      },
+    });
+    expect(computeModelHostSpecHash(specForHash(manifest.spec))).toBe(
+      '{"engine":"llamacpp","binary":"/home/alex/strix-halo-bench/gufo/bin/llama-server-fork-pristine","endpoint":{"host":"127.0.0.1","port":8080},"hostedModels":[{"rel":"Qwen3.8-Flash-Next-GGUF/Qwen3.8-Flash-Next-Q4_K_M.gguf"}],"extraArgs":["--served-model-name","Qwen3.8-Flash-Next-Q4_K_M.gguf","--context","131072"],"resources":{"expectedMemoryGiB":60},"restartPolicy":"Always","timeoutSeconds":600,"env":{"ROCBLAS_USE_HIPBLASLT":"1"}}',
+    );
+  });
+});

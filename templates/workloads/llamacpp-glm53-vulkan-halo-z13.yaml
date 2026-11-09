@@ -1,0 +1,93 @@
+# EXPERIMENTAL: GLM-5.3-Flash a4e3s (j2ipper) on the halo-tuned llama.cpp
+# Vulkan arm G-V1. This is a separate ModelHost, not Gufo. It is committed
+# disabled because the arm shares the exclusive z13-large-gpu residency
+# group with production; enabling it needs an operator-approved Gufo window.
+#
+# Runtime pins:
+# - llama.cpp 529ac893e754 (b11636);
+# - nsbradley88/halo-tuning patch series 0001..0046 @16da7de2a165;
+# - local patch 0047;
+# - built head e742170e08db.
+# Binary dir: /home/alex/strix-halo-bench/runtimes/llama.cpp-halo-529ac893e754-16da7de2a165/bin/
+# HALO_CFG dir: /home/alex/strix-halo-bench/runtimes/halo-configs-16da7de2a165/
+#
+# Quant: Hugging Face j2ipper/GLM-5.3-Flash-a4e3s@5716e4835f50, 4 shards,
+# 117,529,994,489 B total, not yet downloaded on z13.
+#
+# Benchmark [U] (self-reported): halo-tuning glm/README @16da7de on an HP
+# ZBook at 70 W: chat 28.6 t/s, code 30.1 t/s; decode at 2K/32K 25.8/29.9
+# t/s. Nothing is measured on z13.
+#
+# Resources are derived, not measured: 112 GiB is 109.46 GiB weights plus
+# KV/compute headroom; the author's 120 GiB pool left 7-9 GiB [U].
+#
+# --spec-draft-vocab points at halo-configs-16da7de2a165/glm-dv-65536.bin
+# and is absolute because llamacpp.ts resolves only
+# -md/--model-draft/--spec-draft-model/--dspark against the models dir.
+# KV stays f16 (no -ctk/-ctv). Sampling is client-side: temp 1.0,
+# top_p 0.95. shaderc >=2026.x is needed for the int-dot kernels.
+#
+# See 05-runtime-engine-matrix.md section 2.1.
+# TODO(#557 catalog follow-up): no catalog row has this rel (only AJ-IQ2_XXS), so this arm inherits no catalog qualification yet.
+apiVersion: llamactl/v1
+kind: ModelHost
+metadata:
+  name: llamacpp-glm53-vulkan-halo
+  labels:
+    family: glm53
+    llamactl.io/qualification: experimental
+    llamactl.io/residency-group: z13-large-gpu
+    llamactl.io/runtime-arm: G-V1-e742170e08db
+    llamactl.io/backend: vulkan
+spec:
+  engine: llamacpp
+  node: z13
+  enabled: false
+  binary: /home/alex/strix-halo-bench/runtimes/llama.cpp-halo-529ac893e754-16da7de2a165/bin/llama-server
+  env:
+    GGML_VK_DMMV_LARGE_MAX_M: "1024"
+    GGML_VK_DMMV_LARGE_MIN_K: "8192"
+  resources:
+    residentGiB: 112
+  # Port 8086 avoids 8080-8084 on z13 (production Gufo, gufo-glm53-exp,
+  # gufo-qwen38-v026-exp, llamacpp-mimo26, llamacpp-deepseek41-iq1s) and
+  # the reserved 8091.
+  endpoint:
+    host: 127.0.0.1
+    port: 8086
+  hostedModels:
+    - rel: GLM-5.3-Flash-a4e3s-j2ipper/5716e483/GLM-5.3-Flash-a4e3s-00001-of-00004.gguf
+  extraArgs:
+    # --served-model-name equals the GGUF basename, because a ModelHost
+    # routes by rel and basename.
+    - --served-model-name
+    - GLM-5.3-Flash-a4e3s-00001-of-00004.gguf
+    # --jinja makes the shipped chat template drive tool calls.
+    - --jinja
+    - -ngl
+    - "99"
+    - -ub
+    - "1024"
+    - --load-mode
+    - none
+    - -c
+    - "65536"
+    - --parallel
+    - "1"
+    - -ctxcp
+    - "4"
+    - --cache-ram
+    - "0"
+    # MTP draft acceleration via the halo patch series; the vocab table is
+    # absolute (see the header).
+    - --spec-type
+    - draft-mtp
+    - --spec-draft-n-max
+    - "2"
+    - --spec-draft-ubatch
+    - "128"
+    - --spec-draft-sampling
+    - probabilistic
+    - --spec-draft-vocab
+    - /home/alex/strix-halo-bench/runtimes/halo-configs-16da7de2a165/glm-dv-65536.bin
+  restartPolicy: Never

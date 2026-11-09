@@ -1,0 +1,109 @@
+# EXPERIMENTAL: MiMo-V2.6-Flash-MOPD BPW2.5 (AesSedai) on the halo-tuned
+# llama.cpp Vulkan arm M-V1. This is a separate ModelHost, not Gufo. It is
+# committed disabled because the arm shares the exclusive z13-large-gpu
+# residency group with production; enabling it needs an operator-approved
+# Gufo window.
+#
+# Runtime pins:
+# - llama.cpp 529ac893e754 (b11636);
+# - nsbradley88/halo-tuning patch series 0001..0046 @16da7de2a165;
+# - local patch 0047;
+# - built head e742170e08db.
+# Binary dir: /home/alex/strix-halo-bench/runtimes/llama.cpp-halo-529ac893e754-16da7de2a165/bin/
+# HALO_CFG dir: /home/alex/strix-halo-bench/runtimes/halo-configs-16da7de2a165/
+#
+# Quant: MiMo-V2.6-Flash-MOPD BPW2.5 from AesSedai @b6e95d58; the DFlash
+# drafter is from ggml-org @c9d86979 and stays models-dir relative so
+# llamacpp resolves it at boot. --spec-draft-vocab points at
+# halo-configs-16da7de2a165/mimo-dv-65536.bin and is absolute because
+# llamacpp.ts resolves only -md/--model-draft/--spec-draft-model/--dspark.
+#
+# Z13 deviation: --ctx-size 131072 instead of the reference 196608,
+# because this host has no raised amdgpu.lockup_timeout and the reference
+# config hit device-lost at 200K+.
+#
+# Benchmark [U] (self-reported): halo-tuning mimo/README @16da7de, release
+# BPW2.5 with no spec: code 24.9/23.4 t/s at 1K/31K. No BPW2.5+DFlash cell
+# is published.
+#
+# Resources are derived, not measured: 98 GiB mirrors the 02 ~95-98 GiB
+# estimate.
+#
+# See 05-runtime-engine-matrix.md section 2.3.
+apiVersion: llamactl/v1
+kind: ModelHost
+metadata:
+  name: llamacpp-mimo26-bpw25-vulkan-halo
+  labels:
+    family: mimo26
+    llamactl.io/qualification: experimental
+    llamactl.io/residency-group: z13-large-gpu
+    llamactl.io/runtime-arm: M-V1-e742170e08db
+    llamactl.io/backend: vulkan
+spec:
+  engine: llamacpp
+  node: z13
+  enabled: false
+  binary: /home/alex/strix-halo-bench/runtimes/llama.cpp-halo-529ac893e754-16da7de2a165/bin/llama-server
+  env:
+    GGML_VK_FA_WAVE32: "1"
+    GGML_VK_FA_KV_SLICE: "8192"
+    LLAMA_SPEC_ADAPTIVE: "1.2"
+  resources:
+    residentGiB: 98
+  # Port 8088 avoids the production and experimental hosts 8080-8087 on z13.
+  endpoint:
+    host: 127.0.0.1
+    port: 8088
+  hostedModels:
+    - rel: MiMo-V2.6-Flash-MOPD-GGUF-AesSedai/b6e95d58/BPW2.5/MiMo-V2.6-Flash-MOPD-BPW2.5-00001-of-00003.gguf
+  extraArgs:
+    # --served-model-name equals the GGUF basename, because a ModelHost
+    # routes by rel and basename.
+    - --served-model-name
+    - MiMo-V2.6-Flash-MOPD-BPW2.5-00001-of-00003.gguf
+    - --n-gpu-layers
+    - "999"
+    - --flash-attn
+    - "on"
+    - -fit
+    - "off"
+    - --load-mode
+    - none
+    - --parallel
+    - "1"
+    # 131072, not the reference 196608; see the header deviation.
+    - --ctx-size
+    - "131072"
+    - -ctk
+    - q8_0
+    - -ctv
+    - q8_0
+    - --ubatch-size
+    - "2048"
+    - --batch-size
+    - "2048"
+    - --cache-ram
+    - "0"
+    # --jinja drives the MiMo XML tool calls and think-tag reasoning.
+    - --jinja
+    - --temp
+    - "1.0"
+    - --top-p
+    - "1.0"
+    - --top-k
+    - "20"
+    - --min-p
+    - "0.0"
+    # DFlash drafter, models-dir relative so the boot command resolves it.
+    - -md
+    - MiMo-V2.6-Flash-MOPD-GGUF-ggml-org/c9d86979/dflash/dflash-MiMo-V2.6-Flash-MOPD-Q8_0.gguf
+    - -ngld
+    - "999"
+    - --spec-type
+    - draft-dflash
+    - --spec-draft-n-max
+    - "4"
+    - --spec-draft-vocab
+    - /home/alex/strix-halo-bench/runtimes/halo-configs-16da7de2a165/mimo-dv-65536.bin
+  restartPolicy: Never

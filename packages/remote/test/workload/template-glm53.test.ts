@@ -1,37 +1,36 @@
 import { catalog } from "@llamactl/core";
 import { describe, expect, test } from "bun:test";
-import { basename, isAbsolute, join, resolve } from "node:path";
-import { parse, parseAllDocuments } from "yaml";
+import { basename, isAbsolute, join } from "node:path";
+import { parse } from "yaml";
 
-import { existsSync, readdirSync, readFileSync } from "../../src/safe-fs.js";
+import { existsSync, readFileSync } from "../../src/safe-fs.js";
 import {
   type ModelHostManifest,
   ModelHostManifestSchema,
   ModelHostSpecSchema,
 } from "../../src/workload/modelhost-schema.js";
+import {
+  asRecord,
+  carriers,
+  expectArmGroup,
+  fileClaimingName,
+  filesClaimingNodePort,
+  hostedModelRels,
+  isRecord,
+  modelRunsTargetingRel,
+  TEMPLATES_DIR,
+} from "./template-arms.js";
 
 /**
  * Pins frozename/llamactl#515 (B-3): the gufo-glm53-exp manifest is committed
  * under templates/workloads as a disabled experimental ModelHost template.
- * The last case guards the GLM-5.3-Flash catalog rel against a second
- * registration anywhere else in the templates dir.
+ * The last case guards the GLM-5.3-Flash catalog rel: it may be carried by
+ * several disabled arm templates (#557) as long as each claims a distinct
+ * name and z13 port, and no ModelRun targets the rel.
  */
-const TEMPLATES_DIR = resolve(import.meta.dir, "../../../../templates/workloads");
 const FILE = "gufo-glm53-exp-z13.yaml";
 const DRAFT_MODEL_BASENAME = "incoai-dc77ff1c99ee-bf16.gguf";
 const GLM_ROW = catalog.BUILTIN_CATALOG.find((m) => m.id === "glm53-flash-aj-iq2xxs");
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isUnknownArray(value: unknown): value is unknown[] {
-  return Array.isArray(value);
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return isRecord(value) ? value : null;
-}
 
 function loadTemplate(): unknown {
   const path = join(TEMPLATES_DIR, FILE);
@@ -48,61 +47,6 @@ function loadManifest(): { raw: unknown; manifest: ModelHostManifest } {
     throw new Error("gufo-glm53-exp-z13.yaml must parse as a ModelHost manifest");
   }
   return { raw, manifest: result.data };
-}
-
-function metadataName(doc: Record<string, unknown>): string | null {
-  const name = asRecord(doc["metadata"])?.["name"];
-  return typeof name === "string" ? name : null;
-}
-
-function hostedModelRels(doc: Record<string, unknown>): string[] {
-  const hosted = asRecord(doc["spec"])?.["hostedModels"];
-  if (!isUnknownArray(hosted)) return [];
-  const rels: string[] = [];
-  for (const entry of hosted) {
-    const rel = asRecord(entry)?.["rel"];
-    if (typeof rel === "string") rels.push(rel);
-  }
-  return rels;
-}
-
-function modelRunRel(doc: Record<string, unknown>): string | null {
-  const target = asRecord(asRecord(doc["spec"])?.["target"]);
-  if (target?.["kind"] !== "rel") return null;
-  const value = target["value"];
-  return typeof value === "string" ? value : null;
-}
-
-function docRels(doc: Record<string, unknown>): string[] {
-  const kind = doc["kind"];
-  if (kind === "ModelHost") return hostedModelRels(doc);
-  if (kind === "ModelRun") {
-    const rel = modelRunRel(doc);
-    return rel === null ? [] : [rel];
-  }
-  return [];
-}
-
-interface ScannedTemplate {
-  file: string;
-  name: string | null;
-  rels: string[];
-}
-
-function scanTemplates(): ScannedTemplate[] {
-  const files = readdirSync(TEMPLATES_DIR)
-    .filter((name) => name.endsWith(".yaml"))
-    .sort();
-  const out: ScannedTemplate[] = [];
-  for (const file of files) {
-    const text = readFileSync(join(TEMPLATES_DIR, file), "utf8");
-    for (const doc of parseAllDocuments(text)) {
-      const js = doc.toJS() as unknown;
-      if (!isRecord(js)) continue;
-      out.push({ file, name: metadataName(js), rels: docRels(js) });
-    }
-  }
-  return out;
 }
 
 describe("gufo-glm53-exp-z13.yaml (#515)", () => {
@@ -175,19 +119,15 @@ describe("gufo-glm53-exp-z13.yaml (#515)", () => {
     expect(labels?.["llamactl.io/residency-group"]).toBe(GLM_ROW.residencyGroup);
   });
 
-  test("registers the GLM rel exactly once and claims the name nowhere else", () => {
+  test("registers the GLM rel on disabled z13 arms and claims name and port uniquely", () => {
     expect(loadTemplate()).not.toBeNull();
     expect(GLM_ROW).toBeDefined();
     if (GLM_ROW === undefined) return;
-    const docs = scanTemplates();
-    const entries = docs.flatMap((doc) =>
-      doc.rels.map((rel) => ({ file: doc.file, name: doc.name, rel })),
-    );
-    const matches = entries
-      .filter((entry) => entry.rel === GLM_ROW.rel)
-      .map((entry) => ({ file: entry.file, name: entry.name }));
-    expect(matches).toEqual([{ file: FILE, name: "gufo-glm53-exp" }]);
-    const nameClashes = docs.filter((doc) => doc.file !== FILE && doc.name === "gufo-glm53-exp");
-    expect(nameClashes).toEqual([]);
+    const relCarriers = carriers((doc) => hostedModelRels(doc).includes(GLM_ROW.rel));
+    expectArmGroup(relCarriers);
+    expect(relCarriers.map((entry) => entry.file)).toContain(FILE);
+    expect(fileClaimingName("gufo-glm53-exp")).toEqual([FILE]);
+    expect(filesClaimingNodePort("z13", 8081)).toEqual([FILE]);
+    expect(modelRunsTargetingRel(GLM_ROW.rel)).toEqual([]);
   });
 });

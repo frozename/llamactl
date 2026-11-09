@@ -1,10 +1,12 @@
 import { basename, join } from "node:path";
 
 import type { EngineName } from "./engines/index.js";
+import type { ModelHostReadiness } from "./engines/types.js";
 import type { QualificationStage } from "./routing/capabilities.js";
 import type { ResolvedEnv } from "./types.js";
 
 import { listCatalog } from "./catalog.js";
+import { checkServingReadiness } from "./engines/lifecycle.js";
 import { modelhostPidFile, readModelHostState } from "./engines/state.js";
 import { resolveEnv } from "./env.js";
 import {
@@ -51,6 +53,9 @@ export interface LocalRoute {
    *  stages need no cast; catalog rows and advertisements validate the
    *  stage against QUALIFICATION_STAGES at their own boundaries. */
   qualificationStage?: string;
+  /** Declared serving probe (#220). ModelHost routes only, copied from the
+   *  sidecar when declared; consumed by partitionServingRoutes. */
+  readiness?: ModelHostReadiness;
 }
 
 export interface PeerSnapshot {
@@ -398,6 +403,7 @@ function modelHostRoutesForDir(
       engine: state.engine,
       kind: "ModelHost",
       pid: hostPid,
+      ...(state.readiness !== undefined ? { readiness: state.readiness } : {}),
     });
   }
   return out;
@@ -491,6 +497,44 @@ export function listLocalRoutes(
   return dirs.flatMap((dr) =>
     withCatalogStages(routesForDir(dr, verdicts, resolved), stageByModel),
   );
+}
+
+/**
+ * Partition local routes by declared serving readiness (#220). Routes
+ * without a readiness declaration are ready with no I/O; declared probes
+ * run concurrently, deduped per workload+endpoint+path so alias routes
+ * share one request. A failed probe parks the route in warming; input
+ * order is preserved within each list.
+ */
+export async function partitionServingRoutes(
+  routes: readonly LocalRoute[],
+  opts: { fetch?: typeof globalThis.fetch; timeoutMs?: number } = {},
+): Promise<{ ready: LocalRoute[]; warming: LocalRoute[] }> {
+  const keyOf = (route: LocalRoute): string =>
+    `${route.workload}\0${route.host}\0${String(route.port)}\0${route.readiness?.path ?? ""}`;
+  const probes = new Map<string, Promise<boolean>>();
+  for (const route of routes) {
+    if (route.readiness === undefined || probes.has(keyOf(route))) continue;
+    probes.set(keyOf(route), checkServingReadiness(route, route.readiness, opts));
+  }
+  const keys = [...probes.keys()];
+  const verdicts = await Promise.all(probes.values());
+  const okByKey = new Map(keys.map((key, index) => [key, verdicts[index] === true] as const));
+  const ready: LocalRoute[] = [];
+  const warming: LocalRoute[] = [];
+  for (const route of routes) {
+    if (route.readiness === undefined) ready.push(route);
+    else if (okByKey.get(keyOf(route)) === true) ready.push(route);
+    else warming.push(route);
+  }
+  return { ready, warming };
+}
+
+export async function listServingLocalRoutes(
+  resolved: ResolvedEnv = resolveEnv(),
+  opts: { deps?: PidIdentityDeps; fetch?: typeof globalThis.fetch; timeoutMs?: number } = {},
+): Promise<{ ready: LocalRoute[]; warming: LocalRoute[] }> {
+  return await partitionServingRoutes(listLocalRoutes(resolved, opts.deps), opts);
 }
 
 /**

@@ -1,0 +1,85 @@
+# EXPERIMENTAL: GLM-5.3-Flash UD-IQ2_XXS (unsloth) on mainline llama.cpp
+# HIP arm G-H1. This is a separate ModelHost, not Gufo. It is committed
+# disabled because the arm shares the exclusive z13-large-gpu residency
+# group with production; enabling it needs an operator-approved Gufo window.
+#
+# Runtime pin: upstream llama.cpp b12206 @ cf34d311332e (BUILDINFO.json on
+# the Z13 records binary sha256).
+# Binary dir: /home/alex/strix-halo-bench/runtimes/llama.cpp-cf34d311332e/bin/
+#
+# Quant: unsloth/GLM-5.3-Flash-GGUF@a38483c8cd5df544f53d70fb281afe97369d5ab6,
+# arch glm5next, NextN head in shard 4. The models-dir layout is from
+# z13.md (on disk, 4 shards, 95G); the shard-1 file name is from the HF
+# tree at a38483c8.
+# TODO(#557): confirm the on-disk shard-1 file name with ls on z13 before enabling.
+#
+# Loading glm5next on mainline b12206 is unverified and contradicts packages/core/src/catalog.ts:158 ("mainline llama.cpp cannot load"); verify it loads before enabling.
+#
+# The flags are derived and unbenchmarked [D]. b12206 has no
+# --spec-draft-vocab or --spec-draft-ubatch; the MTP knob spellings differ
+# from the halo arm. A/B --load-mode none vs dio when the arm is windowed.
+#
+# No unpatched HIP benchmark exists; the nearest number is halo-on-HIP
+# chat 21.5 t/s [U] (self-reported).
+#
+# Resources are derived, not measured: 100 GiB sits in the ~98-100 GiB
+# estimate for this quant.
+#
+# See 05-runtime-engine-matrix.md section 2.2.
+# TODO(#557 catalog follow-up): no catalog row has this rel (only AJ-IQ2_XXS), so this arm inherits no catalog qualification yet.
+apiVersion: llamactl/v1
+kind: ModelHost
+metadata:
+  name: llamacpp-glm53-hip-b12206
+  labels:
+    family: glm53
+    llamactl.io/qualification: experimental
+    llamactl.io/residency-group: z13-large-gpu
+    llamactl.io/runtime-arm: G-H1-cf34d311332e
+    llamactl.io/backend: hip
+spec:
+  engine: llamacpp
+  node: z13
+  enabled: false
+  binary: /home/alex/strix-halo-bench/runtimes/llama.cpp-cf34d311332e/bin/llama-server
+  resources:
+    residentGiB: 100
+  # Port 8087 avoids the production and experimental hosts 8080-8086 on z13.
+  endpoint:
+    host: 127.0.0.1
+    port: 8087
+  hostedModels:
+    - rel: GLM-5.3-Flash-GGUF/UD-IQ2_XXS/GLM-5.3-Flash-UD-IQ2_XXS-00001-of-00004.gguf
+  extraArgs:
+    # --served-model-name equals the GGUF basename, because a ModelHost
+    # routes by rel and basename.
+    - --served-model-name
+    - GLM-5.3-Flash-UD-IQ2_XXS-00001-of-00004.gguf
+    # --jinja makes the shipped chat template drive tool calls.
+    - --jinja
+    - -ngl
+    - "99"
+    - -fa
+    - "on"
+    - -ub
+    - "1024"
+    - --load-mode
+    - none
+    - -c
+    - "65536"
+    - --parallel
+    - "1"
+    - -ctxcp
+    - "4"
+    - --cache-ram
+    - "0"
+    # NextN MTP draft; the head ships inside the quant, so no -md.
+    - --spec-type
+    - draft-mtp
+    - --spec-draft-n-max
+    - "2"
+    - --spec-draft-n-ubatch
+    - "128"
+    - --spec-draft-sampling
+    - probabilistic
+  restartPolicy: Never
