@@ -12,6 +12,63 @@ export interface AdmissionReservation {
 
 export const MEMORY_BUDGET_HEADROOM_RATIO = 0.75;
 
+/**
+ * Residency tuning knobs (Refs #519). Only `safetyMarginRatio` has a
+ * consumer today (`defaultNodeBudgetGiB`, opt-in); the other fields are
+ * reserved and not yet enforced.
+ */
+export interface ResidencyPolicy {
+  /** 0 = never evict idle residents. */
+  idleEvictSeconds: number;
+  /** 0 = no minimum before eviction. */
+  minResidencySeconds: number;
+  /** 0 = no cooldown between model switches. */
+  switchCooldownSeconds: number;
+  /** The fraction of node memory admission may commit; defaults to
+   *  MEMORY_BUDGET_HEADROOM_RATIO. */
+  safetyMarginRatio: number;
+  /** 0 = no bias toward already-resident models. */
+  residentPreference: number;
+  /** 0 = no cold-load penalty in scoring. */
+  coldLoadPenaltyMs: number;
+}
+
+export const DEFAULT_RESIDENCY_POLICY: Readonly<ResidencyPolicy> = Object.freeze({
+  idleEvictSeconds: 0,
+  minResidencySeconds: 0,
+  switchCooldownSeconds: 0,
+  safetyMarginRatio: MEMORY_BUDGET_HEADROOM_RATIO,
+  residentPreference: 0,
+  coldLoadPenaltyMs: 0,
+});
+
+export function resolveResidencyPolicy(
+  overrides?: Partial<ResidencyPolicy> | null,
+): ResidencyPolicy {
+  const policy: ResidencyPolicy = { ...DEFAULT_RESIDENCY_POLICY };
+  if (!overrides) return policy;
+  const { safetyMarginRatio } = overrides;
+  if (
+    safetyMarginRatio !== undefined &&
+    Number.isFinite(safetyMarginRatio) &&
+    safetyMarginRatio > 0 &&
+    safetyMarginRatio <= 1
+  ) {
+    policy.safetyMarginRatio = safetyMarginRatio;
+  }
+  for (const key of [
+    "idleEvictSeconds",
+    "minResidencySeconds",
+    "switchCooldownSeconds",
+    "residentPreference",
+    "coldLoadPenaltyMs",
+  ] as const) {
+    const value = overrides[key];
+    if (value !== undefined && Number.isFinite(value) && value >= 0) policy[key] = value;
+  }
+  return policy;
+}
+
 const GIB = 1024 ** 3;
 
 export function isFiniteBudgetGiB(value: unknown): value is number {
