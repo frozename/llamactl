@@ -252,6 +252,8 @@ same harness.
 - `docs/self-update.md` — `llamactl update`: check, apply and roll back
   a source install (git checkout + bun services) without stopping the
   model hosts.
+- `docs/dynamic-fleet-models.md`: dynamic fleet models, qualification
+  and promotion, exclusive-window runbook.
 - `docs/` gains more as features stabilize.
 
 ## Tests
