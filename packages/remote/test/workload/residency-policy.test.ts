@@ -3,6 +3,7 @@
 // access yields undefined and each case fails by assertion, not by import.
 import * as residencyAdmission from "@llamactl/core/residency/admission";
 import { expect, test } from "bun:test";
+import { totalmem } from "node:os";
 
 import { defaultNodeBudgetGiB } from "../../src/workload/admission.js";
 import { NodeRunSchema } from "../../src/workload/noderun-schema.js";
@@ -34,6 +35,8 @@ test("resolveResidencyPolicy fills defaults and overrides only given fields", ()
     idleEvictSeconds: 300,
   });
   expect(resolve!({ safetyMarginRatio: 0 }).safetyMarginRatio).toBe(0.75);
+  expect(resolve!({ safetyMarginRatio: 1.5 }).safetyMarginRatio).toBe(0.75);
+  expect(resolve!({ safetyMarginRatio: 1 }).safetyMarginRatio).toBe(1);
   expect(resolve!({ idleEvictSeconds: -1 }).idleEvictSeconds).toBe(0);
 });
 
@@ -82,4 +85,12 @@ test("defaultNodeBudgetGiB applies the policy safety margin to node memory", () 
   expect(defaultNodeBudgetGiB(undefined, 124 * GiB, {})).toBe(93);
   expect(defaultNodeBudgetGiB(undefined, 124 * GiB, undefined)).toBe(93);
   expect(defaultNodeBudgetGiB(40, 124 * GiB, { safetyMarginRatio: 0.5 })).toBe(40);
+});
+
+test("defaultNodeBudgetGiB falls back to totalmem() with the policy ratio when nodeMemBytes is null", () => {
+  const total = totalmem();
+  expect(defaultNodeBudgetGiB(undefined, null, { safetyMarginRatio: 0.5 })).toBe(
+    (total / 1024 ** 3) * 0.5,
+  );
+  expect(defaultNodeBudgetGiB(undefined, null, undefined)).toBe((total / 1024 ** 3) * 0.75);
 });
