@@ -16,6 +16,7 @@ type CheckUnloadResult =
 type SessionRefcounts = {
   acquire: (sessionId: string, workload: string) => AcquireResult;
   release: (sessionId: string) => unknown;
+  touch: (sessionId: string) => unknown;
   checkUnload: (workload: string, opts?: { force?: boolean }) => CheckUnloadResult;
   forceRelease: (workload: string) => string[];
   activeSessions: (workload: string) => string[];
@@ -53,6 +54,56 @@ test("#520: a released session still blocks unload until the idle timeout lapses
   rc.acquire("s1", "glm");
   rc.release("s1");
   t += idleTimeoutMs - 1;
+  expect(rc.checkUnload("glm")).toEqual({
+    ok: false,
+    reason: "SessionActive",
+    sessions: ["s1"],
+  });
+  t += 1;
+  expect(rc.checkUnload("glm")).toEqual({ ok: true, released: [] });
+  expect(rc.activeSessions("glm")).toEqual([]);
+});
+
+test("#520: release refreshes the idle deadline, expiring only idleTimeoutMs after the release", async () => {
+  const mod = await load();
+  let t = 1_000;
+  const idleTimeoutMs = 5_000;
+  const rc = mod.createSessionRefcounts({ idleTimeoutMs, now: (): number => t });
+  rc.acquire("s1", "glm");
+  t += 2 * idleTimeoutMs;
+  rc.release("s1");
+  expect(rc.checkUnload("glm")).toEqual({
+    ok: false,
+    reason: "SessionActive",
+    sessions: ["s1"],
+  });
+  t += idleTimeoutMs - 1;
+  expect(rc.checkUnload("glm")).toEqual({
+    ok: false,
+    reason: "SessionActive",
+    sessions: ["s1"],
+  });
+  t += 1;
+  expect(rc.checkUnload("glm")).toEqual({ ok: true, released: [] });
+  expect(rc.activeSessions("glm")).toEqual([]);
+});
+
+test("#520: touch before the idle deadline extends the session past the original expiry", async () => {
+  const mod = await load();
+  let t = 1_000;
+  const idleTimeoutMs = 5_000;
+  const rc = mod.createSessionRefcounts({ idleTimeoutMs, now: (): number => t });
+  rc.acquire("s1", "glm");
+  rc.release("s1");
+  t += idleTimeoutMs - 1;
+  rc.touch("s1");
+  t += 1;
+  expect(rc.checkUnload("glm")).toEqual({
+    ok: false,
+    reason: "SessionActive",
+    sessions: ["s1"],
+  });
+  t += idleTimeoutMs - 2;
   expect(rc.checkUnload("glm")).toEqual({
     ok: false,
     reason: "SessionActive",

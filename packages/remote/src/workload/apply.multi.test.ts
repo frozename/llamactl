@@ -1859,3 +1859,50 @@ test("#520: a session appearing after authorization is caught by the pre-stop re
     rmSync(workloadsDir, { recursive: true, force: true });
   }
 });
+
+test("#520: the pre-stop re-check covers every evict target, not just the first", async () => {
+  const state: WorkloadStateMap = new Map([
+    ["a", { up: true, rel: "a.gguf", args: [] }],
+    ["c", { up: true, rel: "c.gguf", args: [] }],
+  ]);
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-evict-session-late-multi-"));
+  saveWorkload(mkManifest("a"), workloadsDir);
+  saveWorkload(mkManifest("c", { port: 8182 }), workloadsDir);
+  const { client, stops, starts } = makeRecordingClient(state);
+  const calls: string[] = [];
+  const callsPerTarget = new Map<string, number>();
+  const opts = {
+    workloadsDir,
+    getNodeBudgetGiB: (): number => 32,
+    sessionGate: makeSessionGate((workload) => {
+      calls.push(workload);
+      const seen = (callsPerTarget.get(workload) ?? 0) + 1;
+      callsPerTarget.set(workload, seen);
+      // 'c' looks clean during authorization, then a late session appears
+      // just in time for the pre-stop re-check.
+      if (workload === "c" && seen >= 2) {
+        return { ok: false, reason: "SessionActive", sessions: ["late-c"] };
+      }
+      return { ok: true, released: [] };
+    }),
+  };
+  try {
+    const result = await applyOne(
+      mkManifest("b", { annotations: { "llamactl.io/evict": "a,c" }, port: 8090 }),
+      () => client,
+      undefined,
+      undefined,
+      opts,
+    );
+    expect(result.action).toBe("pending");
+    expect(result.statusSection.phase).toBe("Failed");
+    expect(result.statusSection.conditions[0]?.reason).toBe("EvictSessionActive");
+    expect(result.error).toContain("late-c");
+    expect(result.error).toContain("'c'");
+    expect(stops).toEqual([]);
+    expect(starts).toEqual([]);
+    expect(calls).toEqual(["a", "c", "a", "c"]);
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
