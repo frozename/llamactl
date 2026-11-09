@@ -9,6 +9,8 @@ import {
   type ManagedAdmissionDecision,
   type ManagedClaimState,
   type ManagedWorkloadKind,
+  type ResidencyPolicy,
+  resolveResidencyPolicy,
 } from "@llamactl/core/residency/admission";
 import { totalmem } from "node:os";
 import { join } from "node:path";
@@ -85,15 +87,21 @@ export function sumReservedForNode(manifests: ModelRun[], nodeName: string): num
   );
 }
 
+/**
+ * No production caller passes `residency` yet; unspecified callers get the
+ * DEFAULT_RESIDENCY_POLICY safety margin (0.75), matching prior behaviour.
+ */
 export function defaultNodeBudgetGiB(
   nodeBudgetFromManifest?: number,
   nodeMemBytes?: number | null,
+  residency?: Partial<ResidencyPolicy> | null,
 ): number {
   if (typeof nodeBudgetFromManifest === "number") return nodeBudgetFromManifest;
+  const ratio = resolveResidencyPolicy(residency).safetyMarginRatio;
   if (typeof nodeMemBytes === "number" && Number.isFinite(nodeMemBytes) && nodeMemBytes > 0) {
-    return capacityBudgetGiB(nodeMemBytes);
+    return capacityBudgetGiB(nodeMemBytes, ratio);
   }
-  return capacityBudgetGiB(totalmem());
+  return capacityBudgetGiB(totalmem(), ratio);
 }
 
 function formatAdmissionBreakdown(

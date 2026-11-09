@@ -15,6 +15,7 @@ import {
   openaiProxy,
   routingCapabilities,
   routingCatalog,
+  routingRanking,
 } from "@llamactl/core";
 import { currentContext, loadConfig } from "@llamactl/core/config/kubeconfig";
 import { LOCAL_NODE_ENDPOINT, LOCAL_NODE_NAME } from "@llamactl/core/config/schema";
@@ -70,6 +71,7 @@ export interface UnifiedProxyOptions {
   advertisements?: readonly routingCatalog.RouteAdvertisementV1[];
   nodeId?: string;
   now?: () => number;
+  rankingSignals?: routingRanking.RankingSignals | (() => routingRanking.RankingSignals);
 }
 
 export interface UnifiedProxy {
@@ -182,6 +184,7 @@ interface UnifiedDeps {
   catalogForGate: () => Promise<routingCatalog.RouteCatalog | null>;
   resolveCredentials?: UnifiedProxyOptions["resolveCredentials"];
   acquireExecutor?: UnifiedProxyOptions["acquireExecutor"];
+  rankingSignals: () => routingRanking.RankingSignals;
 }
 
 function makeEnvelope(input: {
@@ -235,7 +238,10 @@ async function gatedExecute(
     selection.eligible,
     (candidate) => candidate.advertisement.capabilities,
   );
-  const candidate = eligible.at(0);
+  const candidate = routingRanking.pickRouteCandidate(eligible, {
+    now: deps.now(),
+    signals: deps.rankingSignals(),
+  });
   if (candidate === undefined) {
     const rejection = rejected.at(0)?.rejection;
     if (rejection !== undefined) return capabilityError(rejection, envelope.ingressProtocol);
@@ -358,6 +364,11 @@ export function createProxy(opts: UnifiedProxyOptions = {}): UnifiedProxy {
     ((req: Request): Promise<Response> => openaiProxy.proxyOpenAI(req, resolve()));
   const now: () => number = opts.now ?? ((): number => Date.now());
   const nodeId = opts.nodeId ?? LOCAL_NODE_NAME;
+  const rankingSignalsOpt = opts.rankingSignals;
+  const rankingSignals: () => routingRanking.RankingSignals =
+    typeof rankingSignalsOpt === "function"
+      ? rankingSignalsOpt
+      : (): routingRanking.RankingSignals => rankingSignalsOpt ?? {};
   // worker-rpc candidates run on the worker RPC, over the transport their
   // declared owner's kubeconfig node selects; everything else keeps the
   // default executor.
@@ -408,6 +419,7 @@ export function createProxy(opts: UnifiedProxyOptions = {}): UnifiedProxy {
       ? { resolveCredentials: opts.resolveCredentials }
       : {}),
     acquireExecutor,
+    rankingSignals,
   };
 
   return {

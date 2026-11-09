@@ -48,6 +48,31 @@ export const NodeRunInfraItemSchema = z
   });
 export type NodeRunInfraItem = z.infer<typeof NodeRunInfraItemSchema>;
 
+/**
+ * Residency tuning for a NodeRun. The field is validated and persisted
+ * but NOT yet applied to admission, eviction or scheduling. Wiring is a
+ * follow-up (Refs #519). When applied, budget.memoryGiB overrides any
+ * computed budget.
+ */
+export const ResidencyPolicySchema = z
+  .object({
+    /** reserved; not yet enforced */
+    idleEvictSeconds: z.number().int().nonnegative().optional(),
+    /** reserved; not yet enforced */
+    minResidencySeconds: z.number().int().nonnegative().optional(),
+    /** reserved; not yet enforced */
+    switchCooldownSeconds: z.number().int().nonnegative().optional(),
+    /** defaults to 0.75; not yet read from NodeRun by apply, the
+     *  reconciler or nodeBudget */
+    safetyMarginRatio: z.number().gt(0).lte(1).optional(),
+    /** reserved; not yet enforced */
+    residentPreference: z.number().nonnegative().optional(),
+    /** reserved; not yet enforced */
+    coldLoadPenaltyMs: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+export type NodeRunResidency = z.infer<typeof ResidencyPolicySchema>;
+
 export const NodeRunSpecSchema = z
   .object({
     node: z.string().min(1),
@@ -56,6 +81,7 @@ export const NodeRunSpecSchema = z
         memoryGiB: z.number().positive(),
       })
       .optional(),
+    residency: ResidencyPolicySchema.optional(),
     infra: z.array(NodeRunInfraItemSchema).default([]),
   })
   .refine(
