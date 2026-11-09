@@ -27,6 +27,7 @@ export * as resourcesMemory from "./resources/memory.js";
 export * as responsecache from "./responsecache/index.js";
 export * as routingCapabilities from "./routing/capabilities.js";
 export * as routingCatalog from "./routing/catalog.js";
+export * as routingRanking from "./routing/ranking.js";
 export * as rpcServer from "./rpcServer.js";
 export * from "./safetyTier.js";
 export * as schemas from "./schemas.js";
