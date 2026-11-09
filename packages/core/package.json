@@ -25,6 +25,7 @@
     "./profile": "./src/profile.ts",
     "./residency/admission": "./src/residency/admission.ts",
     "./residency/lifecycle": "./src/residency/lifecycle.ts",
+    "./residency/sessions": "./src/residency/sessions.ts",
     "./resources/memory": "./src/resources/memory.ts",
     "./schemas": "./src/schemas.ts",
     "./tunnel-relay": "./src/tunnel-relay.ts",
