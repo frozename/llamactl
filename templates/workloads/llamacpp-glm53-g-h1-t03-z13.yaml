@@ -3,8 +3,8 @@
 # stays at the 2048 default). This is a separate ModelHost, not Gufo.
 #
 # Residency: these three W4 ModelHosts carry
-# llamactl.io/residency-group: z13-large-gpu among themselves only. The
-# deployed Z13 agent (2d0c095a) has no residency guard, and production
+# llamactl.io/residency-group: z13-large-gpu, shared with the other z13-large-gpu templates
+# (production does not carry it). The deployed Z13 agent (2d0c095a) has no residency guard, and production
 # gufo-qwen38-mtp carries no group label, so nothing stops two large hosts
 # loading at once. It is committed disabled. Before enabling it the operator
 # must disable gufo-qwen38-mtp and every other enabled z13 ModelHost (use
