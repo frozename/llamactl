@@ -1,3 +1,5 @@
+import type { Config } from "@llamactl/core/config/schema";
+
 import { sourceRevision } from "@llamactl/core";
 import {
   type CgroupOomSample,
@@ -5,6 +7,7 @@ import {
   readOomBaseline,
   writeOomBaseline,
 } from "@llamactl/core/cgroupOom";
+import { resolveNode } from "@llamactl/core/config/kubeconfig";
 import { recordModelHostOomKill } from "@llamactl/core/engines/conditions";
 import { resolveEnv } from "@llamactl/core/env";
 import {
@@ -46,6 +49,10 @@ Flags:
 A lock file at $LLAMACTL_WORKLOADS_DIR/.controller.lock guards against
 two controllers racing on the same directory. Stale locks from
 crashed controllers are stolen automatically when their PID is gone.
+
+A node's kubeconfig rpcTimeouts: { queryMs, mutateMs } block overrides the
+default 10 s query / 30 s mutate node RPC deadlines for that node; it is read
+once at controller start.
 
 A reconcile error is logged to stderr once per distinct message, again
 every 10 minutes while it persists, and once on recovery. On Linux the
@@ -435,6 +442,33 @@ function parseServeInvocation(args: string[]): ControllerFlags | { code: number 
   return parsed;
 }
 
+type NodeRpcTimeoutsForNode = (
+  nodeName: string,
+) => { queryMs?: number; mutateMs?: number } | undefined;
+
+/**
+ * #221: resolves a per-node controller→node RPC deadline from the kubeconfig's
+ * `rpcTimeouts` block. Returns undefined when the node has no block or cannot
+ * be resolved, so the reconcile pass falls back to its defaults. Fields are
+ * mapped conditionally so the result matches the remote Partial<NodeRpcTimeouts>
+ * contract under exactOptionalPropertyTypes (zod optionals carry `| undefined`).
+ */
+export function nodeRpcTimeoutsFromConfig(cfg: Config): NodeRpcTimeoutsForNode {
+  return (nodeName: string): { queryMs?: number; mutateMs?: number } | undefined => {
+    let block: { queryMs?: number | undefined; mutateMs?: number | undefined } | undefined;
+    try {
+      block = resolveNode(cfg, nodeName).node.rpcTimeouts;
+    } catch {
+      return undefined;
+    }
+    if (block === undefined) return undefined;
+    return {
+      ...(block.queryMs !== undefined ? { queryMs: block.queryMs } : {}),
+      ...(block.mutateMs !== undefined ? { mutateMs: block.mutateMs } : {}),
+    };
+  };
+}
+
 export async function runController(args: string[]): Promise<number> {
   const invocation = parseServeInvocation(args);
   if ("code" in invocation) return invocation.code;
@@ -460,6 +494,7 @@ export async function runController(args: string[]): Promise<number> {
       return null;
     }
   };
+  const rpcTimeoutsFor = nodeRpcTimeoutsFromConfig(cfg);
 
   const acquired = workloadLock.acquireLock(workloadsDir);
   if ("error" in acquired) {
@@ -485,7 +520,7 @@ export async function runController(args: string[]): Promise<number> {
   const { isStopping, onSignal } = setupSignalHandlers(stopping, wakeRef);
 
   const runOnePass = (state: ControllerPassState): Promise<ControllerPassState> =>
-    runReconcilePass(workloadsDir, resolveNodeIdentity, state);
+    runReconcilePass(workloadsDir, resolveNodeIdentity, rpcTimeoutsFor, state);
   const initialPass: ControllerPassState = {
     errors: new Map(),
     oom: { last: readOomBaseline(oomBaselineFile(workloadsDir)), pendingKills: 0 },
@@ -558,6 +593,7 @@ export function observeOomKills(
 async function runReconcilePass(
   workloadsDir: string,
   resolveNodeIdentity: (n: string) => string | null,
+  rpcTimeoutsFor: NodeRpcTimeoutsForNode,
   state: ControllerPassState,
 ): Promise<ControllerPassState> {
   // ModelRun pass — converges llama-server lifecycle per manifest.
@@ -565,6 +601,7 @@ async function runReconcilePass(
     workloadsDir,
     getClient: (nodeName) => getNodeClientByName(nodeName),
     resolveNodeIdentity,
+    rpcTimeoutsFor,
     onEvent: (e) => {
       process.stdout.write(`[${new Date().toISOString()}] ${e.name}: ${e.message}\n`);
     },
@@ -573,6 +610,7 @@ async function runReconcilePass(
   const noderunResult = await noderunReconciler.reconcileNodeRunsOnce({
     workloadsDir,
     getClient: (nodeName) => getNodeClientByName(nodeName),
+    rpcTimeoutsFor,
     getArtifactResolver: (_node, client) =>
       makeSpecArtifactResolver({
         client: client as unknown as Parameters<typeof makeSpecArtifactResolver>[0]["client"],
