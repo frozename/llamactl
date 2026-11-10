@@ -959,3 +959,44 @@ test("G9 the reconcile pass shares its eviction grace with apply", async () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("G10 the reconcile guard honours an evicted-at stamped on disk mid-pass", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "llamactl-df02-g10-"));
+  const state: StateMap = new Map([["a", upEntry(8182)]]);
+  saveWorkload(mkManifest("a", { port: 8182 }), dir);
+  saveWorkload(mkManifest("z", { port: 8183 }), dir);
+  const { client, starts } = makeClient(state, {
+    status: (workload) => {
+      if (workload !== "a") return undefined;
+      const fresh = loadWorkloadByName("z", dir);
+      saveWorkload(
+        {
+          ...fresh,
+          metadata: {
+            ...fresh.metadata,
+            annotations: {
+              ...fresh.metadata.annotations,
+              "llamactl.io/evicted-by": "ghost",
+              "llamactl.io/evicted-at": new Date().toISOString(),
+            },
+          },
+        },
+        dir,
+      );
+      return undefined;
+    },
+  });
+  try {
+    const tick = await reconcileOnce({ workloadsDir: dir, getClient: () => client });
+    expect(starts).not.toContain("z");
+    const reportZ = tick.reports.find((r) => r.name === "z");
+    expect(reportZ).toBeDefined();
+    expect(reportZ?.error).toBeUndefined();
+    expect(reportEvictedBy(reportZ)).toBe("ghost");
+    const storedZ = loadWorkloadByName("z", dir);
+    expect(storedZ.metadata.annotations["llamactl.io/evicted-by"]).toBe("ghost");
+    expect(storedZ.metadata.annotations["llamactl.io/evicted-at"]).not.toBeUndefined();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
