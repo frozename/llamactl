@@ -284,11 +284,17 @@ function observeEntry(entry: Record<string, unknown>, id: string): NativeModelSt
   if (typeof loaded !== "boolean" || typeof isLoading !== "boolean") {
     return { state: "failed", reason: "MalformedStatus" };
   }
+  const engineType = entry["engine_type"];
+  const engineTypeValue = typeof engineType === "string" ? engineType : null;
   if (isLoading) {
-    return { state: "loading", modelId: id };
+    return engineTypeValue !== null
+      ? { state: "loading", modelId: id, engineType: engineTypeValue }
+      : { state: "loading", modelId: id };
   }
   if (!loaded) {
-    return { state: "discovered", modelId: id };
+    return engineTypeValue !== null
+      ? { state: "discovered", modelId: id, engineType: engineTypeValue }
+      : { state: "discovered", modelId: id };
   }
   const actualSize = readSize(entry["actual_size"]);
   if (!actualSize.ok) {
@@ -298,12 +304,20 @@ function observeEntry(entry: Record<string, unknown>, id: string): NativeModelSt
   if (!residentEstimatedSize.ok) {
     return { state: "failed", reason: "MalformedStatus" };
   }
-  return {
-    state: "loaded",
-    modelId: id,
-    actualSize: actualSize.value,
-    residentEstimatedSize: residentEstimatedSize.value,
-  };
+  return engineTypeValue !== null
+    ? {
+        state: "loaded",
+        modelId: id,
+        actualSize: actualSize.value,
+        residentEstimatedSize: residentEstimatedSize.value,
+        engineType: engineTypeValue,
+      }
+    : {
+        state: "loaded",
+        modelId: id,
+        actualSize: actualSize.value,
+        residentEstimatedSize: residentEstimatedSize.value,
+      };
 }
 
 // oMLX lists every model it knows about, not just the hosted one, so sibling

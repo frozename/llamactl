@@ -29,6 +29,18 @@ import {
   parseOmlxModelsStatus,
 } from "@llamactl/core/engines";
 
+const OBSERVABLE_ENGINES = new Set(["batched"]);
+
+function engineIsObservable(engineType: string | null | undefined): boolean {
+  if (engineType === null) {
+    return false;
+  }
+  if (engineType === undefined) {
+    return true;
+  }
+  return OBSERVABLE_ENGINES.has(engineType);
+}
+
 // --- public types ---
 
 export type NativeStatus =
@@ -214,8 +226,14 @@ function activityKnown(activity: NativeModelActivity | "unknown"): activity is N
   return activity !== "unknown";
 }
 
-async function fetchActivity(ctx: ClientCtx): Promise<NativeModelActivity | "unknown"> {
+async function fetchActivity(
+  ctx: ClientCtx,
+  engineType: string | null | undefined,
+): Promise<NativeModelActivity | "unknown"> {
   if (!ctx.activityObservable) {
+    return "unknown";
+  }
+  if (!engineIsObservable(engineType)) {
     return "unknown";
   }
   const sent = await send(ctx, OMLX_ACTIVITY_PATH, "GET", ctx.statusTimeoutMs);
@@ -280,7 +298,8 @@ async function statusInner(ctx: ClientCtx): Promise<NativeStatus> {
     return observation;
   }
 
-  const activity = await fetchActivity(ctx);
+  const engineType = "engineType" in observation ? observation.engineType : undefined;
+  const activity = await fetchActivity(ctx, engineType);
   if (
     ctx.readiness === undefined ||
     (activityKnown(activity) && activity.activeRequests + activity.waitingRequests > 0)

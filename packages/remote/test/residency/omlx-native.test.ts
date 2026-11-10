@@ -49,7 +49,7 @@ async function loadClientModule(): Promise<ClientModule> {
   return mod as ClientModule;
 }
 
-type StatusFixtureModel = { id: string; loaded: boolean; is_loading: boolean };
+type StatusFixtureModel = { id: string; loaded: boolean; is_loading: boolean; engineType?: string };
 
 // Mirrors GET /v1/models/status (list_models_status) at OMLX_REVISION.
 function statusFixtureV1(models: StatusFixtureModel[]): Record<string, unknown> {
@@ -60,28 +60,33 @@ function statusFixtureV1(models: StatusFixtureModel[]): Record<string, unknown> 
     loaded_count: models.filter((m) => m.loaded).length,
     load_seconds_per_gb_estimate: null,
     load_time_observations: 0,
-    models: models.map((m) => ({
-      id: m.id,
-      model_path: `/models/${m.id}`,
-      loaded: m.loaded,
-      is_loading: m.is_loading,
-      loading_started_at: null,
-      estimated_size: 5000000000,
-      resident_estimated_size: 5000000000,
-      distributed: false,
-      actual_size: m.loaded ? 4800000000 : null,
-      pinned: false,
-      engine_type: "batched",
-      model_type: "llm",
-      config_model_type: "qwen3",
-      model_context_length: 40960,
-      is_helper: false,
-      source_type: "local",
-      max_context_window: 40960,
-      max_tokens: 32768,
-      is_favorite: false,
-      is_hidden: false,
-    })),
+    models: models.map((m) => {
+      const base: Record<string, unknown> = {
+        id: m.id,
+        model_path: `/models/${m.id}`,
+        loaded: m.loaded,
+        is_loading: m.is_loading,
+        loading_started_at: null,
+        estimated_size: 5000000000,
+        resident_estimated_size: 5000000000,
+        distributed: false,
+        actual_size: m.loaded ? 4800000000 : null,
+        pinned: false,
+        model_type: "llm",
+        config_model_type: "qwen3",
+        model_context_length: 40960,
+        is_helper: false,
+        source_type: "local",
+        max_context_window: 40960,
+        max_tokens: 32768,
+        is_favorite: false,
+        is_hidden: false,
+      };
+      if (m.engineType !== undefined && m.engineType !== "batched") {
+        base["engine_type"] = m.engineType;
+      }
+      return base;
+    }),
   };
 }
 
@@ -110,7 +115,7 @@ function activityBody(overrides: Record<string, unknown>): Record<string, unknow
   return { ...activityFixtureV1({ active: 0, waiting: 0 }), ...overrides };
 }
 
-type FakeModelState = { loaded: boolean; is_loading: boolean };
+type FakeModelState = { loaded: boolean; is_loading: boolean; engineType?: string };
 
 type StatusMode = "ok" | 404 | 500 | "garbage" | "hang";
 type ActivityMode = "ok" | 500;
@@ -209,11 +214,14 @@ function statusResponse(ctx: FakeContext): Response | Promise<Response> {
   if (mode === 404 || mode === 500) {
     return jsonError(mode, "status unavailable");
   }
-  const models = [...ctx.state.models.entries()].map(([id, m]) => ({
-    id,
-    loaded: m.loaded,
-    is_loading: m.is_loading,
-  }));
+  const models: StatusFixtureModel[] = [...ctx.state.models.entries()].map(
+    ([id, m]): StatusFixtureModel => ({
+      id,
+      loaded: m.loaded,
+      is_loading: m.is_loading,
+      ...(m.engineType !== undefined ? { engineType: m.engineType } : {}),
+    }),
+  );
   return Response.json(statusFixtureV1(models));
 }
 
@@ -859,6 +867,51 @@ describe("unload()", () => {
     expect(fake.counts.unloadPosts).toBe(0);
     expect(fake.counts.activityGets).toBe(0);
     expect(fake.state.models.get(ID)!.loaded).toBe(true);
+  });
+
+  test("U9 embedding model (non-batch engine) fails closed with ActivityUnknown", async () => {
+    const fake = startFakeOmlx({ apiKey: "test-key" });
+    const model = fake.state.models.get(ID)!;
+    model.loaded = true;
+    model.engineType = "embedding";
+    const client = await clientFor(fake);
+    expect(await client.unload()).toStrictEqual({
+      kind: "refused",
+      reason: "ActivityUnknown",
+      reservation: "held",
+    });
+    expect(fake.counts.unloadPosts).toBe(0);
+    expect(fake.counts.activityGets).toBe(0);
+    expect(fake.state.models.get(ID)!.loaded).toBe(true);
+  });
+
+  test("U10 reranker model (non-batch engine) fails closed with ActivityUnknown", async () => {
+    const fake = startFakeOmlx({ apiKey: "test-key" });
+    const model = fake.state.models.get(ID)!;
+    model.loaded = true;
+    model.engineType = "reranker";
+    const client = await clientFor(fake);
+    expect(await client.unload()).toStrictEqual({
+      kind: "refused",
+      reason: "ActivityUnknown",
+      reservation: "held",
+    });
+    expect(fake.counts.unloadPosts).toBe(0);
+    expect(fake.counts.activityGets).toBe(0);
+    expect(fake.state.models.get(ID)!.loaded).toBe(true);
+  });
+
+  test("U11 batched model unloads when idle", async () => {
+    const fake = startFakeOmlx({ apiKey: "test-key" });
+    fake.state.models.get(ID)!.loaded = true;
+    const client = await clientFor(fake);
+    expect(await client.unload()).toStrictEqual({
+      kind: "unloaded",
+      modelId: ID,
+      reservation: "released",
+    });
+    expect(fake.counts.unloadPosts).toBe(1);
+    expect(fake.state.models.get(ID)!.loaded).toBe(false);
   });
 });
 

@@ -386,6 +386,7 @@ type FixtureModel = {
   is_loading: boolean;
   actual_size?: number | null;
   resident_estimated_size?: number | null;
+  engineType?: string;
 };
 
 // Mirrors the list_models_status payload at OMLX_STATUS_REVISION.
@@ -397,29 +398,34 @@ function statusFixtureV1(models: FixtureModel[]): Record<string, unknown> {
     loaded_count: models.filter((m) => m.loaded).length,
     load_seconds_per_gb_estimate: null,
     load_time_observations: 0,
-    models: models.map((m) => ({
-      id: m.id,
-      model_path: `/models/${m.id}`,
-      loaded: m.loaded,
-      is_loading: m.is_loading,
-      loading_started_at: null,
-      estimated_size: 5000000000,
-      resident_estimated_size:
-        "resident_estimated_size" in m ? m.resident_estimated_size : 5000000000,
-      distributed: false,
-      actual_size: "actual_size" in m ? m.actual_size : m.loaded ? 4800000000 : null,
-      pinned: false,
-      engine_type: "batched",
-      model_type: "llm",
-      config_model_type: "qwen3",
-      model_context_length: 40960,
-      is_helper: false,
-      source_type: "local",
-      max_context_window: 40960,
-      max_tokens: 32768,
-      is_favorite: false,
-      is_hidden: false,
-    })),
+    models: models.map((m) => {
+      const entry: Record<string, unknown> = {
+        id: m.id,
+        model_path: `/models/${m.id}`,
+        loaded: m.loaded,
+        is_loading: m.is_loading,
+        loading_started_at: null,
+        estimated_size: 5000000000,
+        resident_estimated_size:
+          "resident_estimated_size" in m ? m.resident_estimated_size : 5000000000,
+        distributed: false,
+        actual_size: "actual_size" in m ? m.actual_size : m.loaded ? 4800000000 : null,
+        pinned: false,
+        model_type: "llm",
+        config_model_type: "qwen3",
+        model_context_length: 40960,
+        is_helper: false,
+        source_type: "local",
+        max_context_window: 40960,
+        max_tokens: 32768,
+        is_favorite: false,
+        is_hidden: false,
+      };
+      if (m.engineType) {
+        entry["engine_type"] = m.engineType;
+      }
+      return entry;
+    }),
   };
 }
 
