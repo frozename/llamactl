@@ -1,11 +1,13 @@
 import { type AnyTRPCRouter, callTRPCProcedure } from "@trpc/server";
 
 import {
+  encodeTunnelMessage,
   frameBytes,
   resolveStreamLimits,
   type StreamLimits,
   streamLimitsFor,
   type StreamLimitsPolicy,
+  TUNNEL_MAX_FRAME_BYTES,
   TUNNEL_STREAM_CANCELLED,
   TUNNEL_STREAM_OVERFLOW,
   type TunnelReq,
@@ -144,11 +146,13 @@ export interface TunnelSubscription {
  *   - A cancelled stream ends through `onError` typed
  *     `stream-cancelled`: the node's acknowledgement of central's
  *     `stream-cancel` (P4.1 X4), never a success-shaped end.
- *   - Streams are bounded (P4.1 X3): an event above
- *     `limits.maxFrameBytes`, or an Observable backlog above
- *     `limits.maxQueuedBytes`, ends the stream through `onError` typed
- *     `stream-overflow` and cancels the producer. The caps are chosen
- *     per procedure path; by default only the worker RPC's are tight.
+ *   - Streams are bounded (P4.1 X3): an event whose encoded
+ *     `stream-event` frame (as central measures it) exceeds the
+ *     smaller of `limits.maxFrameBytes` and the tunnel frame limit, or
+ *     an Observable backlog above `limits.maxQueuedBytes`, ends the
+ *     stream through `onError` typed `stream-overflow` and cancels the
+ *     producer. The caps are chosen per procedure path; by default
+ *     only the worker RPC's are tight.
  *   - `createContext` sees the req frame, so a context can carry what
  *     the frame authenticates (the worker RPC's service claims).
  */
@@ -161,6 +165,16 @@ export function createTunnelSubscriptionHandler(
     const params = (req.params ?? {}) as TunnelRouterParams;
     const path = req.method;
     const limits = resolveStreamLimits(policy, path);
+    const frameOverhead =
+      frameBytes(
+        encodeTunnelMessage({
+          type: "stream-event",
+          id: req.id,
+          index: Number.MAX_SAFE_INTEGER,
+          data: null,
+        }),
+      ) - frameBytes("null");
+    const frameCap = Math.min(limits.maxFrameBytes, TUNNEL_MAX_FRAME_BYTES);
     return {
       subscribe(handlers): { cancel(): void } {
         const abort = new AbortController();
@@ -222,6 +236,8 @@ export function createTunnelSubscriptionHandler(
           await pumpEvents(iterable, {
             abort,
             limits,
+            frameOverhead,
+            frameCap,
             isCancelled: () => cancelled,
             onEvent: (value) => {
               try {
@@ -270,6 +286,8 @@ function eventBytes(value: unknown): number {
 interface PumpOptions {
   abort: AbortController;
   limits: StreamLimits;
+  frameOverhead: number;
+  frameCap: number;
   isCancelled: () => boolean;
   onEvent: (value: unknown) => void;
   finish: () => void;
@@ -280,11 +298,11 @@ async function pumpEvents(iterable: AsyncIterable<unknown>, opts: PumpOptions): 
   try {
     for await (const value of iterable) {
       if (opts.abort.signal.aborted) break;
-      const bytes = eventBytes(value);
-      if (bytes > opts.limits.maxFrameBytes) {
+      const dataBytes = eventBytes(value);
+      if (opts.frameOverhead + dataBytes > opts.frameCap) {
         throw streamError(
           TUNNEL_STREAM_OVERFLOW,
-          `a ${String(bytes)}-byte event exceeds the ${String(opts.limits.maxFrameBytes)}-byte frame cap`,
+          `a ${String(opts.frameOverhead + dataBytes)}-byte stream-event frame exceeds the ${String(opts.frameCap)}-byte frame cap`,
         );
       }
       opts.onEvent(value);

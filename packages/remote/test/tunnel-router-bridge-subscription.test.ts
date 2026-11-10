@@ -4,6 +4,10 @@ import { describe, expect, test } from "bun:test";
 import { z } from "zod";
 
 import {
+  encodeTunnelMessage,
+  frameBytes,
+  parseTunnelMessage,
+  TUNNEL_MAX_FRAME_BYTES,
   TUNNEL_STREAM_CANCELLED,
   TUNNEL_STREAM_OVERFLOW,
   type TunnelReq,
@@ -373,5 +377,256 @@ describe("per-subscription event caps", () => {
 
   test("an inferenceRpc subscription ends a 2 MiB event typed stream-overflow", async () => {
     expect(await run("inferenceRpc.stream")).toEqual({ events: 0, code: TUNNEL_STREAM_OVERFLOW });
+  });
+});
+
+/**
+ * P4.1 (#139) X3 — the per-event cap has to bound the encoded
+ * `stream-event` frame, not just the event's own JSON. An event whose
+ * data bytes fit under `maxFrameBytes` can still serialize past it once
+ * the frame's `type`/`id`/`index` envelope is added, and central's
+ * `parseTunnelMessage` would refuse that frame and drop the link.
+ */
+describe("per-event caps bound the encoded stream-event frame (P4.1 X3)", () => {
+  const LIMITS = { maxFrameBytes: 4096, maxQueuedBytes: 16 * 1024 };
+
+  // eslint-disable-next-line @typescript-eslint/explicit-function-return-type -- tRPC BuiltRouter internals are unnameable; the bridge accepts any router instance.
+  function buildFrameRouter() {
+    return t.router({
+      serverLogs: t.procedure
+        .input(
+          z.object({
+            n: z.number().int().min(0),
+            count: z.number().int().min(1).optional(),
+          }),
+        )
+        .subscription(async function* ({ input }) {
+          await Promise.resolve();
+          for (let i = 0; i < (input.count ?? 1); i++) {
+            yield { pad: "x".repeat(input.n) };
+          }
+        }),
+    });
+  }
+
+  function padEvent(n: number): { pad: string } {
+    return { pad: "x".repeat(n) };
+  }
+
+  function eventJsonBytes(event: unknown): number {
+    return frameBytes(JSON.stringify(event));
+  }
+
+  function streamFrameBytes(req: TunnelReq, index: number, data: unknown): number {
+    return frameBytes(encodeTunnelMessage({ type: "stream-event", id: req.id, index, data }));
+  }
+
+  interface Settled {
+    error: (Error & { code?: string }) | null;
+    complete: boolean;
+  }
+
+  function settle(
+    sub: TunnelSubscription,
+    events: unknown[],
+  ): Promise<Settled> & {
+    cancel: () => void;
+  } {
+    let cancel = (): void => undefined;
+    const done = new Promise<Settled>((resolve) => {
+      cancel = sub.subscribe({
+        onEvent: (d) => events.push(d),
+        onError: (e) => {
+          resolve({ error: e, complete: false });
+        },
+        onComplete: () => {
+          resolve({ error: null, complete: true });
+        },
+      }).cancel;
+    });
+    return Object.assign(done, {
+      cancel: (): void => {
+        cancel();
+      },
+    });
+  }
+
+  test("an event under the data-byte cap whose encoded frame exceeds it ends typed stream-overflow", async () => {
+    const n = TUNNEL_MAX_FRAME_BYTES - 16 - eventJsonBytes(padEvent(0));
+    const req = makeReq("serverLogs", { n });
+    const event = padEvent(n);
+    expect(eventJsonBytes(event)).toBe(TUNNEL_MAX_FRAME_BYTES - 16);
+    const makeSub = createTunnelSubscriptionHandler(buildFrameRouter(), () => ({}));
+    const events: unknown[] = [];
+    const result = await settle(makeSub(req), events);
+    expect(events).toHaveLength(0);
+    expect(result.error?.code ?? null).toBe(TUNNEL_STREAM_OVERFLOW);
+    expect(result.complete).toBe(false);
+    const encoded = encodeTunnelMessage({
+      type: "stream-event",
+      id: req.id,
+      index: 0,
+      data: event,
+    });
+    expect(frameBytes(encoded)).toBeGreaterThan(TUNNEL_MAX_FRAME_BYTES);
+    expect(parseTunnelMessage(encoded)).toBeNull();
+  });
+
+  test("explicit limits: an event under maxFrameBytes whose encoded frame exceeds it ends typed stream-overflow", async () => {
+    const { maxFrameBytes } = LIMITS;
+    const n = maxFrameBytes - 8 - eventJsonBytes(padEvent(0));
+    const req = makeReq("serverLogs", { n });
+    const event = padEvent(n);
+    expect(eventJsonBytes(event)).toBe(maxFrameBytes - 8);
+    expect(streamFrameBytes(req, 0, event)).toBeGreaterThan(maxFrameBytes);
+    const makeSub = createTunnelSubscriptionHandler(buildFrameRouter(), () => ({}), LIMITS);
+    const events: unknown[] = [];
+    const result = await settle(makeSub(req), events);
+    expect(events).toHaveLength(0);
+    expect(result.error?.code ?? null).toBe(TUNNEL_STREAM_OVERFLOW);
+    expect(result.complete).toBe(false);
+  });
+
+  test("every delivered event's encoded stream-event frame stays within the cap", async () => {
+    const { maxFrameBytes } = LIMITS;
+    const n = maxFrameBytes - 8 - eventJsonBytes(padEvent(0));
+    const req = makeReq("serverLogs", { n, count: 3 });
+    const makeSub = createTunnelSubscriptionHandler(buildFrameRouter(), () => ({}), LIMITS);
+    const events: unknown[] = [];
+    const result = await settle(makeSub(req), events);
+    for (const [index, data] of events.entries()) {
+      expect(streamFrameBytes(req, index, data)).toBeLessThanOrEqual(maxFrameBytes);
+    }
+    expect(result.error?.code ?? null).toBe(TUNNEL_STREAM_OVERFLOW);
+  });
+
+  test("an event whose encoded frame fits within the cap is delivered and completes", async () => {
+    const { maxFrameBytes } = LIMITS;
+    const margin = 128;
+    const probe = makeReq("serverLogs", undefined);
+    const n = maxFrameBytes - margin - streamFrameBytes(probe, 0, padEvent(0));
+    const req: TunnelReq = {
+      ...probe,
+      params: { type: "subscription", input: { n } },
+    };
+    const event = padEvent(n);
+    expect(streamFrameBytes(req, 0, event)).toBe(maxFrameBytes - margin);
+    const makeSub = createTunnelSubscriptionHandler(buildFrameRouter(), () => ({}), LIMITS);
+    const events: unknown[] = [];
+    const result = await settle(makeSub(req), events);
+    expect(result).toEqual({ error: null, complete: true });
+    expect(events).toEqual([event]);
+  });
+
+  test("overhead reserved for the widest stream index: frameCap - overhead(0) events end typed stream-overflow or deliver within cap", async () => {
+    const frameCap = LIMITS.maxFrameBytes;
+    const probe = makeReq("serverLogs", { n: 0, count: 15 });
+    const overheadAtZero =
+      frameBytes(
+        encodeTunnelMessage({ type: "stream-event", id: probe.id, index: 0, data: null }),
+      ) - frameBytes("null");
+    const dataN = frameCap - overheadAtZero - eventJsonBytes(padEvent(0));
+    const req: TunnelReq = {
+      ...probe,
+      params: { type: "subscription", input: { n: dataN, count: 15 } },
+    };
+    // Each event measures exactly frameCap - overhead(0). The bridge
+    // reserves overhead at Number.MAX_SAFE_INTEGER (16 index digits),
+    // so the same events measure frameCap + 15 and must overflow typed;
+    // an index-0 reserve would deliver all 15, and the frames at
+    // two-digit indices would exceed the cap by a byte.
+    expect(overheadAtZero + eventJsonBytes(padEvent(dataN))).toBe(frameCap);
+    const makeSub = createTunnelSubscriptionHandler(buildFrameRouter(), () => ({}), LIMITS);
+    const events: unknown[] = [];
+    const result = await settle(makeSub(req), events);
+    for (const [index, data] of events.entries()) {
+      expect(streamFrameBytes(req, index, data)).toBeLessThanOrEqual(frameCap);
+    }
+    expect(result.error?.code === TUNNEL_STREAM_OVERFLOW || result.complete).toBe(true);
+  });
+
+  test("limits above the tunnel frame size still clamp: a >16 MiB event ends typed stream-overflow", async () => {
+    const clampedLimits = { maxFrameBytes: 32 * 1024 * 1024, maxQueuedBytes: 64 * 1024 * 1024 };
+    const event = { pad: "x".repeat(17 * 1024 * 1024) };
+    const req = makeReq("big", undefined);
+    // Over the 16 MiB tunnel frame limit but under the requested 32
+    // MiB: only the Math.min clamp can turn this into an overflow.
+    expect(streamFrameBytes(req, 0, event)).toBeGreaterThan(TUNNEL_MAX_FRAME_BYTES);
+    expect(streamFrameBytes(req, 0, event)).toBeLessThan(clampedLimits.maxFrameBytes);
+    const router = t.router({
+      big: t.procedure.subscription(async function* () {
+        await Promise.resolve();
+        yield event;
+      }),
+    });
+    const makeSub = createTunnelSubscriptionHandler(router, () => ({}), clampedLimits);
+    const events: unknown[] = [];
+    const result = await settle(makeSub(req), events);
+    expect(result.error?.code ?? null).toBe(TUNNEL_STREAM_OVERFLOW);
+    expect(result.complete).toBe(false);
+    expect(events).toHaveLength(0);
+  });
+
+  test("an event whose measured stream-event frame is exactly the cap is delivered", async () => {
+    const frameCap = LIMITS.maxFrameBytes;
+    const id = `exact-${Math.random().toString(36).slice(2, 10)}`;
+    const frameOverhead =
+      frameBytes(
+        encodeTunnelMessage({
+          type: "stream-event",
+          id,
+          index: Number.MAX_SAFE_INTEGER,
+          data: null,
+        }),
+      ) - frameBytes("null");
+    const n = frameCap - frameOverhead - eventJsonBytes(padEvent(0));
+    const event = padEvent(n);
+    const req: TunnelReq = {
+      id,
+      type: "req",
+      method: "serverLogs",
+      params: { type: "subscription", input: { n, count: 1 } },
+    };
+    // The bridge measures overhead + data bytes with the widest index
+    // reserved, so the measure lands exactly on the cap: `>` delivers,
+    // `>=` would overflow. The real index-0 frame sits 15 bytes under.
+    expect(frameOverhead + eventJsonBytes(event)).toBe(frameCap);
+    expect(streamFrameBytes(req, 0, event)).toBe(frameCap - 15);
+    const makeSub = createTunnelSubscriptionHandler(buildFrameRouter(), () => ({}), LIMITS);
+    const events: unknown[] = [];
+    const result = await settle(makeSub(req), events);
+    expect(result).toEqual({ error: null, complete: true });
+    expect(events).toEqual([event]);
+  });
+
+  test("an event whose measured stream-event frame is one byte over the cap overflows", async () => {
+    const frameCap = LIMITS.maxFrameBytes;
+    const id = `over-${Math.random().toString(36).slice(2, 10)}`;
+    const frameOverhead =
+      frameBytes(
+        encodeTunnelMessage({
+          type: "stream-event",
+          id,
+          index: Number.MAX_SAFE_INTEGER,
+          data: null,
+        }),
+      ) - frameBytes("null");
+    const n = frameCap + 1 - frameOverhead - eventJsonBytes(padEvent(0));
+    const event = padEvent(n);
+    const req: TunnelReq = {
+      id,
+      type: "req",
+      method: "serverLogs",
+      params: { type: "subscription", input: { n, count: 1 } },
+    };
+    // Mirror of the exact-boundary case: one byte past the reserved-index
+    // measure must end typed stream-overflow with nothing delivered.
+    expect(frameOverhead + eventJsonBytes(event)).toBe(frameCap + 1);
+    const makeSub = createTunnelSubscriptionHandler(buildFrameRouter(), () => ({}), LIMITS);
+    const events: unknown[] = [];
+    const result = await settle(makeSub(req), events);
+    expect(result.error?.code ?? null).toBe(TUNNEL_STREAM_OVERFLOW);
+    expect(result.complete).toBe(false);
+    expect(events).toHaveLength(0);
   });
 });
