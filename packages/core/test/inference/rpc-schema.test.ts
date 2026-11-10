@@ -20,7 +20,10 @@ import {
   InferenceRpcNegotiateRequestV1Schema,
   InferenceRpcNegotiateResultV1Schema,
   InferenceRpcOperationSchema,
+  InferenceRpcStatusRequestV1Schema,
   InferenceRpcStatusResultV1Schema,
+  InferenceRpcStreamRequestV1Schema,
+  InferenceRpcSubmitRequestV1Schema,
   InferenceRpcSubmitResultV1Schema,
   InferenceRpcVersionSchema,
 } from "../../src/inference/rpc-schema.js";
@@ -280,5 +283,108 @@ describe("compareInferenceRpcVersions", () => {
   test("compares minors within the same major", () => {
     expect(compareInferenceRpcVersions({ major: 1, minor: 3 }, { major: 1, minor: 1 })).toBe(2);
     expect(compareInferenceRpcVersions({ major: 1, minor: 1 }, { major: 1, minor: 1 })).toBe(0);
+  });
+});
+
+describe("InferenceRpcV1 id bounds", () => {
+  const envelope = {
+    requestId: "req-1",
+    attemptId: "att-1",
+    deadline: 1_900_000_000_000,
+    tenantId: "tenant-a",
+    projectId: "proj-1",
+    credentialScopeId: "cred-scope-1",
+    operation: "generate",
+    ingressProtocol: "openai-chat",
+    publicModelId: "m",
+    features: {
+      operation: "generate",
+      protocol: "openai-chat",
+      stream: true,
+      modalities: ["text"],
+      tools: false,
+      structuredOutput: false,
+      session: false,
+      cancellation: true,
+    },
+    stream: true,
+    nativeBody: { model: "m", messages: [{ role: "user", content: "hi" }] },
+    headerFingerprint: { allowlist: ["content-type"], fingerprint: "fp-1" },
+  };
+
+  const submit = {
+    version: { major: 1, minor: 0 },
+    envelope,
+    target: {
+      deploymentId: "dep-1",
+      expectedDeploymentEpoch: "ep-1",
+      catalogGeneration: "gen-1",
+      workerIncarnation: "inc-1",
+    },
+    cancelId: "c-1",
+  };
+
+  test("rejects a submit envelope attemptId over 128 characters", () => {
+    const req = { ...submit, envelope: { ...envelope, attemptId: "a".repeat(129) } };
+    expect(InferenceRpcSubmitRequestV1Schema.safeParse(req).success).toBe(false);
+  });
+
+  test("rejects a submit envelope requestId over 128 characters", () => {
+    const req = { ...submit, envelope: { ...envelope, requestId: "r".repeat(129) } };
+    expect(InferenceRpcSubmitRequestV1Schema.safeParse(req).success).toBe(false);
+  });
+
+  test("status rejects an attemptId over 128 characters", () => {
+    expect(
+      InferenceRpcStatusRequestV1Schema.safeParse({ attemptId: "a".repeat(129) }).success,
+    ).toBe(false);
+  });
+
+  test("stream rejects an attemptId over 128 characters", () => {
+    expect(
+      InferenceRpcStreamRequestV1Schema.safeParse({ attemptId: "a".repeat(129) }).success,
+    ).toBe(false);
+  });
+
+  test("cancel rejects an attemptId over 128 characters", () => {
+    expect(
+      InferenceRpcCancelRequestV1Schema.safeParse({ attemptId: "a".repeat(129) }).success,
+    ).toBe(false);
+  });
+
+  test("accepts a submit with 128-character attemptId and requestId", () => {
+    const req = {
+      ...submit,
+      envelope: { ...envelope, attemptId: "a".repeat(128), requestId: "r".repeat(128) },
+    };
+    expect(InferenceRpcSubmitRequestV1Schema.safeParse(req).success).toBe(true);
+  });
+
+  test("accepts proxy-shaped attemptId and requestId", () => {
+    const req = {
+      ...submit,
+      envelope: {
+        ...envelope,
+        attemptId: `att-${crypto.randomUUID()}`,
+        requestId: `req-${crypto.randomUUID()}`,
+      },
+    };
+    expect(InferenceRpcSubmitRequestV1Schema.safeParse(req).success).toBe(true);
+  });
+
+  test("status, stream and cancel accept a 128-character attemptId", () => {
+    const attemptId = "a".repeat(128);
+    expect(InferenceRpcStatusRequestV1Schema.safeParse({ attemptId }).success).toBe(true);
+    expect(InferenceRpcStreamRequestV1Schema.safeParse({ attemptId }).success).toBe(true);
+    expect(InferenceRpcCancelRequestV1Schema.safeParse({ attemptId }).success).toBe(true);
+  });
+
+  test("the parsed submit keeps nativeBody deep-frozen", () => {
+    const parsed = InferenceRpcSubmitRequestV1Schema.parse(submit);
+    const body = parsed.envelope.nativeBody;
+    expect(Object.isFrozen(body)).toBe(true);
+    const messages = body["messages"];
+    expect(Object.isFrozen(messages)).toBe(true);
+    expect(Object.isFrozen((messages as unknown[])[0])).toBe(true);
   });
 });

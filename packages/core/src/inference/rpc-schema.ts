@@ -11,6 +11,11 @@
  * one consumer of an accepted attempt and starts it, `status` and
  * `cancel` resolve an attempt by id. A transport loss is resolved through
  * `status`; `unknown` never means a retry is safe.
+ *
+ * Id bounds are enforced here: every transport validates through this
+ * schema, including the embedded client via `inferenceRpcRouter.createCaller`,
+ * so an oversized id is refused as a tRPC input error before `host.submit`,
+ * `status`, `stream` or `cancel` runs, and no record is created.
  */
 import { ExecutionEventV1Schema, ExecutionTerminalSchema } from "@novaproto/contracts";
 import { z } from "zod";
@@ -50,6 +55,16 @@ export const INFERENCE_RPC_MAX_HOPS = 1;
 
 /** Bound on the visited-node chain. A node that appears twice is a loop. */
 export const INFERENCE_RPC_MAX_VISITED_NODES = 8;
+
+/**
+ * Maximum length for every attempt and request id that appears in an RPC
+ * envelope. The worker keeps every attempt's ids in a tombstone for the
+ * record-retention window, so they are bounded here, at the RPC boundary,
+ * to keep the per-owner record store at the size procedures.ts documents.
+ * 128 matches the existing cancelId bound; caller-generated ids
+ * (`att-<uuid>`/`req-<uuid>`, 40 characters) sit well inside it.
+ */
+export const INFERENCE_RPC_ID_MAX_LENGTH = 128;
 
 export const InferenceRpcOperationSchema = z.enum([
   "negotiate",
@@ -91,6 +106,8 @@ export const InferenceRpcRejectionV1Schema = z.object({
   catalogGeneration: z.string().min(1).optional(),
 });
 export type InferenceRpcRejectionV1 = z.infer<typeof InferenceRpcRejectionV1Schema>;
+
+export const InferenceRpcIdSchema = z.string().min(1).max(INFERENCE_RPC_ID_MAX_LENGTH);
 
 const rejected = z.object({
   outcome: z.literal("rejected"),
@@ -174,9 +191,12 @@ export type InferenceRpcTargetV1 = z.infer<typeof InferenceRpcTargetV1Schema>;
 
 export const InferenceRpcSubmitRequestV1Schema = z.object({
   version: InferenceRpcVersionSchema,
-  envelope: InferenceEnvelopeV1Schema,
+  envelope: InferenceEnvelopeV1Schema.extend({
+    requestId: InferenceRpcIdSchema,
+    attemptId: InferenceRpcIdSchema,
+  }),
   target: InferenceRpcTargetV1Schema,
-  cancelId: z.string().min(1).max(128),
+  cancelId: InferenceRpcIdSchema,
 });
 export type InferenceRpcSubmitRequestV1 = z.infer<typeof InferenceRpcSubmitRequestV1Schema>;
 export type InferenceRpcSubmitInputV1 = z.input<typeof InferenceRpcSubmitRequestV1Schema>;
@@ -229,7 +249,7 @@ export const InferenceRpcSubmitResultV1Schema = z.discriminatedUnion("outcome", 
 ]);
 export type InferenceRpcSubmitResultV1 = z.infer<typeof InferenceRpcSubmitResultV1Schema>;
 
-export const InferenceRpcStreamRequestV1Schema = z.object({ attemptId: z.string().min(1) });
+export const InferenceRpcStreamRequestV1Schema = z.object({ attemptId: InferenceRpcIdSchema });
 export type InferenceRpcStreamRequestV1 = z.infer<typeof InferenceRpcStreamRequestV1Schema>;
 
 export const InferenceRpcStreamFrameV1Schema = z.discriminatedUnion("frame", [
@@ -243,7 +263,7 @@ export const InferenceRpcStreamFrameV1Schema = z.discriminatedUnion("frame", [
 ]);
 export type InferenceRpcStreamFrameV1 = z.infer<typeof InferenceRpcStreamFrameV1Schema>;
 
-export const InferenceRpcStatusRequestV1Schema = z.object({ attemptId: z.string().min(1) });
+export const InferenceRpcStatusRequestV1Schema = z.object({ attemptId: InferenceRpcIdSchema });
 export type InferenceRpcStatusRequestV1 = z.infer<typeof InferenceRpcStatusRequestV1Schema>;
 
 export const InferenceRpcStatusResultV1Schema = z.discriminatedUnion("outcome", [
@@ -253,8 +273,8 @@ export const InferenceRpcStatusResultV1Schema = z.discriminatedUnion("outcome", 
 export type InferenceRpcStatusResultV1 = z.infer<typeof InferenceRpcStatusResultV1Schema>;
 
 export const InferenceRpcCancelRequestV1Schema = z.union([
-  z.object({ attemptId: z.string().min(1) }),
-  z.object({ cancelId: z.string().min(1).max(128) }),
+  z.object({ attemptId: InferenceRpcIdSchema }),
+  z.object({ cancelId: InferenceRpcIdSchema }),
 ]);
 export type InferenceRpcCancelRequestV1 = z.infer<typeof InferenceRpcCancelRequestV1Schema>;
 
