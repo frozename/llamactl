@@ -1098,4 +1098,98 @@ describe("lease fencing", () => {
     expect(fake.counts.unloadPosts).toBe(0);
     expect(registry.commitUnload(d.token)).toStrictEqual({ ok: true, revoked: [] });
   });
+
+  test("F6 failed/ambiguous native load does NOT call reopen — phase stays 'unloaded'", async () => {
+    const fake = startFakeOmlx({ apiKey: "test-key" });
+    fake.state.models.get(ID)!.loaded = true;
+    const registry = createResidencyLeases();
+    const client = await leasedClientFor(fake, registry);
+
+    expect(await client.unload()).toStrictEqual({
+      kind: "unloaded",
+      modelId: ID,
+      reservation: "released",
+    });
+    expect(registry.snapshot(W).phase).toBe("unloaded");
+    expect(fake.counts.unloadPosts).toBe(1);
+
+    fake.state.loadMode = 500;
+    const loadResult = await client.load();
+    expect(loadResult).toStrictEqual({
+      kind: "ambiguous",
+      reason: "HttpError",
+      reservation: "uncertain",
+      httpStatus: 500,
+    });
+    expect(fake.counts.loadPosts).toBe(1);
+    expect(registry.snapshot(W).phase).toBe("unloaded");
+    expect(registry.acquire(W)).toMatchObject({ ok: false, reason: "Unloaded" });
+  });
+
+  test("F7 failed native load (timeout) does NOT call reopen", async () => {
+    const fake = startFakeOmlx({ apiKey: "test-key" });
+    fake.state.models.get(ID)!.loaded = true;
+    const registry = createResidencyLeases();
+    const client = await leasedClientFor(fake, registry);
+
+    expect(await client.unload()).toStrictEqual({
+      kind: "unloaded",
+      modelId: ID,
+      reservation: "released",
+    });
+    expect(registry.snapshot(W).phase).toBe("unloaded");
+    expect(fake.counts.unloadPosts).toBe(1);
+
+    fake.state.loadMode = "hang";
+    const loadResult = await client.load();
+    expect(loadResult).toStrictEqual({
+      kind: "ambiguous",
+      reason: "Timeout",
+      reservation: "uncertain",
+    });
+    expect(fake.counts.loadPosts).toBe(1);
+    expect(registry.snapshot(W).phase).toBe("unloaded");
+    expect(registry.acquire(W)).toMatchObject({ ok: false, reason: "Unloaded" });
+  }, 5000);
+
+  test("F8 already-unloaded commit branch on open workload", async () => {
+    const fake = startFakeOmlx({ apiKey: "test-key" });
+    const registry = createResidencyLeases();
+    const client = await leasedClientFor(fake, registry);
+
+    expect(registry.snapshot(W).phase).toBe("open");
+    expect(fake.state.models.get(ID)!.loaded).toBe(false);
+
+    const unloadResult = await client.unload();
+    expect(unloadResult).toStrictEqual({
+      kind: "already-unloaded",
+      modelId: ID,
+      reservation: "released",
+    });
+    expect(fake.counts.unloadPosts).toBe(0);
+    expect(registry.snapshot(W).phase).toBe("unloaded");
+    expect(registry.acquire(W)).toMatchObject({ ok: false, reason: "Unloaded" });
+  });
+
+  test("F9 already-loaded from reopen set — phase stays 'unloaded'", async () => {
+    const fake = startFakeOmlx({ apiKey: "test-key" });
+    fake.state.models.get(ID)!.loaded = true;
+    const registry = createResidencyLeases();
+    const client = await leasedClientFor(fake, registry);
+
+    expect(await client.unload()).toStrictEqual({
+      kind: "unloaded",
+      modelId: ID,
+      reservation: "released",
+    });
+    expect(registry.snapshot(W).phase).toBe("unloaded");
+    expect(fake.counts.unloadPosts).toBe(1);
+
+    fake.state.models.get(ID)!.loaded = true;
+    const loadResult = await client.load();
+    expect(loadResult).toStrictEqual({ kind: "already-loaded", modelId: ID });
+    expect(fake.counts.loadPosts).toBe(0);
+    expect(registry.snapshot(W).phase).toBe("unloaded");
+    expect(registry.acquire(W)).toMatchObject({ ok: false, reason: "Unloaded" });
+  });
 });

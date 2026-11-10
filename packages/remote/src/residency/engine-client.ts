@@ -397,7 +397,7 @@ async function runLoadWithLeases(ctx: ClientCtx): Promise<NativeLoadResult> {
   const leases = ctx.leases;
   if (
     leases !== undefined &&
-    (result.kind === "loaded" || result.kind === "already-loaded") &&
+    result.kind === "loaded" &&
     registrySnapshot(leases.registry, leases.workload).phase === "unloaded"
   ) {
     const snap = registrySnapshot(leases.registry, leases.workload);
@@ -545,7 +545,13 @@ async function runUnloadWithLeases(ctx: ClientCtx): Promise<NativeUnloadResult> 
     };
   }
 
-  const result = await runUnload(ctx);
+  let result: NativeUnloadResult;
+  try {
+    result = await runUnload(ctx);
+  } catch (err) {
+    registry.cancelDrain(token);
+    throw err;
+  }
 
   if (result.kind === "unloaded" || result.kind === "already-unloaded") {
     registry.commitUnload(token);
