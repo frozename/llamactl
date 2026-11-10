@@ -361,6 +361,7 @@ async function reconcileModelRun(
       {
         workloadsDir: dir,
         ...(opts.resolveNodeIdentity && { resolveNodeIdentity: opts.resolveNodeIdentity }),
+        ...(opts.evictionGraceMs !== undefined ? { evictionGraceMs: opts.evictionGraceMs } : {}),
         getNodeBudgetGiB: (nodeName) =>
           resolveModelRunBudgetGiB(nodeName, nodeBudgetByName, nodeMemBytesByName, opts.getClient),
       },

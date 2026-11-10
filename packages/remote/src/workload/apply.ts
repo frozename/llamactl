@@ -918,6 +918,11 @@ interface ApplyOneOpts {
    * stop and release check before the apply fails. Default 15_000
    * (15 seconds). */
   evictStopTimeoutMs?: number;
+  /** How long an evicted-by marker keeps its victim suppressed while the
+   *  owning replacement is missing or not yet confirmed. The reconciler
+   *  forwards its evictionGraceMs so the guard and this check share one
+   *  rule. Defaults to EVICTION_INTENT_GRACE_MS. */
+  evictionGraceMs?: number;
 }
 
 interface SessionUnloadGate {
@@ -1078,12 +1083,17 @@ export function replacementHoldsEviction(
  * reconciler guard's rule so an apply never overwrites a hold the
  * resurrection guard would still honour.
  */
-function liveEvictionOwner(victim: ModelRun, workloadsDir: string, nowMs: number): string | null {
+function liveEvictionOwner(
+  victim: ModelRun,
+  workloadsDir: string,
+  nowMs: number,
+  graceMs: number,
+): string | null {
   const ownerName = victim.metadata.annotations[EVICTED_BY_ANNOTATION];
   if (ownerName === undefined) return null;
   const evictedAt = victim.metadata.annotations[EVICTED_AT_ANNOTATION];
   const atMs = evictedAt === undefined ? Number.NaN : Date.parse(evictedAt);
-  const withinGrace = !Number.isNaN(atMs) && nowMs - atMs < EVICTION_INTENT_GRACE_MS;
+  const withinGrace = !Number.isNaN(atMs) && nowMs - atMs < graceMs;
   let owner: ModelRun | ModelHostManifest | undefined;
   try {
     owner = loadWorkloadByNameAny(ownerName, workloadsDir);
@@ -1197,6 +1207,7 @@ function persistEvictIntent(
   workloadsDir: string,
   now: string,
   claimedTargets: Set<string>,
+  graceMs: number,
 ): EvictStopFailure | null {
   try {
     const victim = loadWorkloadByName(target, workloadsDir);
@@ -1207,7 +1218,7 @@ function persistEvictIntent(
     if (owner !== manifest.metadata.name) {
       // A live foreign hold belongs to another replacement: overwriting
       // it would let this apply's rollback erase a hold it never owned.
-      const holder = liveEvictionOwner(victim, workloadsDir, Date.parse(now));
+      const holder = liveEvictionOwner(victim, workloadsDir, Date.parse(now), graceMs);
       if (holder !== null) {
         return evictStopFailure(
           manifest,
@@ -1247,8 +1258,9 @@ async function stopEvictTargets(
 ): Promise<EvictStopResult | null> {
   const { manifest, client, onEvent, opts, now, evictionClaims } = ctx;
   const workloadsDir = opts?.workloadsDir ?? defaultWorkloadsDir(opts?.env);
+  const graceMs = opts?.evictionGraceMs ?? EVICTION_INTENT_GRACE_MS;
   for (const target of verifiedTargets) {
-    const intent = persistEvictIntent(manifest, target, workloadsDir, now, evictionClaims);
+    const intent = persistEvictIntent(manifest, target, workloadsDir, now, evictionClaims, graceMs);
     if (intent !== null) return intent;
     const deadlineAt = Date.now() + timeoutMs;
     const remainingMs = (): number => Math.max(0, deadlineAt - Date.now());

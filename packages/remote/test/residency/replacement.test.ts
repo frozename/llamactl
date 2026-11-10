@@ -616,3 +616,346 @@ test("G6 a failure before the eviction stage keeps the existing hold", async () 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("R11 an apply exception releases only the markers it claimed", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "llamactl-df02-r11-"));
+  const state: StateMap = new Map([["a", upEntry(8182)]]);
+  saveWorkload(mkManifest("a", { port: 8182 }), dir);
+  saveWorkload(
+    mkManifest("d", {
+      port: 8184,
+      annotations: {
+        "llamactl.io/evicted-by": "b",
+        "llamactl.io/evicted-at": "2020-01-01T00:00:00.000Z",
+      },
+    }),
+    dir,
+  );
+  const { client, stops, starts } = makeClient(state);
+  try {
+    let failure = "";
+    try {
+      await applyOne(
+        mkManifest("b", { annotations: { "llamactl.io/evict": "a,d" }, port: 8090 }),
+        () => client,
+        (e) => {
+          if (e.type === "stop" && e.message.includes("evicting a")) {
+            throw new Error("injected evict-event failure");
+          }
+        },
+        undefined,
+        { workloadsDir: dir, getNodeBudgetGiB: () => 32 },
+      );
+    } catch (err) {
+      failure = err instanceof Error ? err.message : String(err);
+    }
+    expect(failure).toContain("injected evict-event failure");
+    expect(
+      loadWorkloadByName("a", dir).metadata.annotations["llamactl.io/evicted-by"],
+    ).toBeUndefined();
+    const storedD = loadWorkloadByName("d", dir);
+    expect(storedD.metadata.annotations["llamactl.io/evicted-by"]).toBe("b");
+    expect(storedD.metadata.annotations["llamactl.io/evicted-at"]).toBe("2020-01-01T00:00:00.000Z");
+    expect(stops).toEqual([]);
+    expect(starts).toEqual([]);
+    expect(state.has("a")).toBe(true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("R12 a self-owned eviction marker is reaffirmed across a re-apply", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "llamactl-df02-r12-"));
+  const state: StateMap = new Map([["a", upEntry(8182)]]);
+  const evictedAt = new Date(Date.now() - 60_000).toISOString();
+  saveWorkload(
+    mkManifest("a", {
+      port: 8182,
+      annotations: {
+        "llamactl.io/evicted-by": "b",
+        "llamactl.io/evicted-at": evictedAt,
+      },
+    }),
+    dir,
+  );
+  saveWorkload(mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090 }), dir);
+  const { client, stops, starts } = makeClient(state);
+  try {
+    const result = await applyOne(
+      mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090 }),
+      () => client,
+      undefined,
+      undefined,
+      { workloadsDir: dir, getNodeBudgetGiB: () => 32 },
+    );
+    expect(result.error).toBeUndefined();
+    expect(result.statusSection.phase).toBe("Running");
+    expect(stops).toEqual(["a"]);
+    expect(starts).toEqual(["b"]);
+    const storedA = loadWorkloadByName("a", dir);
+    expect(storedA.metadata.annotations["llamactl.io/evicted-by"]).toBe("b");
+    expect(storedA.metadata.annotations["llamactl.io/evicted-at"]).toBe(evictedAt);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("R13 a lapsed foreign owner that dropped the victim is taken over", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "llamactl-df02-r13-"));
+  const state: StateMap = new Map([["a", upEntry(8182)]]);
+  saveWorkload(
+    mkManifest("a", {
+      port: 8182,
+      annotations: {
+        "llamactl.io/evicted-by": "c",
+        "llamactl.io/evicted-at": "2020-01-01T00:00:00.000Z",
+      },
+    }),
+    dir,
+  );
+  saveWorkload(mkManifest("c", { annotations: { "llamactl.io/evict": "x" }, port: 8183 }), dir);
+  const { client, stops, starts } = makeClient(state);
+  try {
+    const result = await applyOne(
+      mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090 }),
+      () => client,
+      undefined,
+      undefined,
+      { workloadsDir: dir, getNodeBudgetGiB: () => 32 },
+    );
+    expect(result.error).toBeUndefined();
+    expect(stops).toEqual(["a"]);
+    expect(starts).toEqual(["b"]);
+    expect(loadWorkloadByName("a", dir).metadata.annotations["llamactl.io/evicted-by"]).toBe("b");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("R14 a fresh foreign marker with no owner manifest refuses the takeover", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "llamactl-df02-r14-"));
+  const state: StateMap = new Map([["a", upEntry(8182)]]);
+  const evictedAt = new Date().toISOString();
+  saveWorkload(
+    mkManifest("a", {
+      port: 8182,
+      annotations: {
+        "llamactl.io/evicted-by": "ghost",
+        "llamactl.io/evicted-at": evictedAt,
+      },
+    }),
+    dir,
+  );
+  const { client, stops, starts } = makeClient(state);
+  try {
+    const result = await applyOne(
+      mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090 }),
+      () => client,
+      undefined,
+      undefined,
+      { workloadsDir: dir, getNodeBudgetGiB: () => 32 },
+    );
+    expect(result.statusSection.conditions[0]?.reason).toBe("EvictIntentHeld");
+    expect(result.error).toContain("EvictIntentHeld");
+    const storedA = loadWorkloadByName("a", dir);
+    expect(storedA.metadata.annotations["llamactl.io/evicted-by"]).toBe("ghost");
+    expect(storedA.metadata.annotations["llamactl.io/evicted-at"]).toBe(evictedAt);
+    expect(state.has("a")).toBe(true);
+    expect(stops).toEqual([]);
+    expect(starts).toEqual([]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("R15 a fresh foreign marker held by an enabled owner refuses the takeover", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "llamactl-df02-r15-"));
+  const state: StateMap = new Map([["a", upEntry(8182)]]);
+  const evictedAt = new Date().toISOString();
+  saveWorkload(
+    mkManifest("a", {
+      port: 8182,
+      annotations: {
+        "llamactl.io/evicted-by": "c",
+        "llamactl.io/evicted-at": evictedAt,
+      },
+    }),
+    dir,
+  );
+  saveWorkload(mkManifest("c", { annotations: { "llamactl.io/evict": "x" }, port: 8183 }), dir);
+  const { client, stops, starts } = makeClient(state);
+  try {
+    const result = await applyOne(
+      mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090 }),
+      () => client,
+      undefined,
+      undefined,
+      { workloadsDir: dir, getNodeBudgetGiB: () => 32 },
+    );
+    expect(result.statusSection.conditions[0]?.reason).toBe("EvictIntentHeld");
+    expect(result.error).toContain("EvictIntentHeld");
+    const storedA = loadWorkloadByName("a", dir);
+    expect(storedA.metadata.annotations["llamactl.io/evicted-by"]).toBe("c");
+    expect(storedA.metadata.annotations["llamactl.io/evicted-at"]).toBe(evictedAt);
+    expect(state.has("a")).toBe(true);
+    expect(stops).toEqual([]);
+    expect(starts).toEqual([]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("R16 apply honours a non-default eviction grace", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "llamactl-df02-r16-"));
+  const state: StateMap = new Map([["a", upEntry(8182)]]);
+  const evictedAt = new Date(Date.now() - 10 * 60_000).toISOString();
+  saveWorkload(
+    mkManifest("a", {
+      port: 8182,
+      annotations: {
+        "llamactl.io/evicted-by": "c",
+        "llamactl.io/evicted-at": evictedAt,
+      },
+    }),
+    dir,
+  );
+  saveWorkload(mkManifest("c", { annotations: { "llamactl.io/evict": "x" }, port: 8183 }), dir);
+  const { client, stops, starts } = makeClient(state);
+  const b = mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090 });
+  try {
+    const held = await applyOne(b, () => client, undefined, undefined, {
+      workloadsDir: dir,
+      getNodeBudgetGiB: () => 32,
+    });
+    expect(held.statusSection.conditions[0]?.reason).toBe("EvictIntentHeld");
+    expect(held.error).toContain("EvictIntentHeld");
+    starts.length = 0;
+    stops.length = 0;
+    const taken = await applyOne(b, () => client, undefined, undefined, {
+      workloadsDir: dir,
+      getNodeBudgetGiB: () => 32,
+      evictionGraceMs: 5 * 60_000,
+    });
+    expect(taken.error).toBeUndefined();
+    expect(stops).toEqual(["a"]);
+    expect(starts).toEqual(["b"]);
+    expect(loadWorkloadByName("a", dir).metadata.annotations["llamactl.io/evicted-by"]).toBe("b");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("G7 rollback leaves a marker re-owned by another replacement", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "llamactl-df02-g7-"));
+  const state: StateMap = new Map([["a", upEntry(8182)]]);
+  saveWorkload(mkManifest("a", { port: 8182 }), dir);
+  const foreignAt = "2020-01-01T00:00:00.000Z";
+  const { client, stops, starts } = makeClient(state, {
+    stop: (workload) => {
+      if (workload !== "a") return undefined;
+      const victim = loadWorkloadByName("a", dir);
+      saveWorkload(
+        {
+          ...victim,
+          metadata: {
+            ...victim.metadata,
+            annotations: {
+              ...victim.metadata.annotations,
+              "llamactl.io/evicted-by": "c",
+              "llamactl.io/evicted-at": foreignAt,
+            },
+          },
+        },
+        dir,
+      );
+      return undefined;
+    },
+    start: (workload) => workload === "b",
+  });
+  try {
+    const result = await applyOne(
+      mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090 }),
+      () => client,
+      undefined,
+      undefined,
+      { workloadsDir: dir, getNodeBudgetGiB: () => 32 },
+    );
+    expect(result.error).toBeTruthy();
+    expect(result.statusSection.phase).toBe("Failed");
+    expect(stops).toEqual(["a"]);
+    expect(starts).toEqual(["b"]);
+    const storedA = loadWorkloadByName("a", dir);
+    expect(storedA.metadata.annotations["llamactl.io/evicted-by"]).toBe("c");
+    expect(storedA.metadata.annotations["llamactl.io/evicted-at"]).toBe(foreignAt);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("G8 the reconcile guard honours a marker stamped earlier in the pass", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "llamactl-df02-g8-"));
+  const state: StateMap = new Map();
+  saveWorkload(
+    mkManifest("z", {
+      port: 8182,
+      annotations: {
+        "llamactl.io/evicted-by": "ghost",
+        "llamactl.io/evicted-at": "2020-01-01T00:00:00.000Z",
+      },
+    }),
+    dir,
+  );
+  saveWorkload(mkManifest("b", { annotations: { "llamactl.io/evict": "z" }, port: 8090 }), dir);
+  const { client, starts } = makeClient(state);
+  try {
+    const tick = await reconcileOnce({ workloadsDir: dir, getClient: () => client });
+    expect(starts).toContain("b");
+    expect(starts).not.toContain("z");
+    const reportZ = tick.reports.find((r) => r.name === "z");
+    expect(reportZ).toBeDefined();
+    expect(reportEvictedBy(reportZ)).toBe("b");
+    const storedZ = loadWorkloadByName("z", dir);
+    expect(storedZ.metadata.annotations["llamactl.io/evicted-by"]).toBe("b");
+    expect(storedZ.metadata.annotations["llamactl.io/evicted-at"]).not.toBe(
+      "2020-01-01T00:00:00.000Z",
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("G9 the reconcile pass shares its eviction grace with apply", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "llamactl-df02-g9-"));
+  const state: StateMap = new Map();
+  const evictedAt = new Date(Date.now() - 10 * 60_000).toISOString();
+  saveWorkload(
+    mkManifest("z", {
+      port: 8182,
+      annotations: {
+        "llamactl.io/evicted-by": "c",
+        "llamactl.io/evicted-at": evictedAt,
+      },
+    }),
+    dir,
+  );
+  saveWorkload(mkManifest("c", { annotations: { "llamactl.io/evict": "x" }, port: 8183 }), dir);
+  saveWorkload(mkManifest("b", { annotations: { "llamactl.io/evict": "z" }, port: 8090 }), dir);
+  const { client, starts } = makeClient(state);
+  try {
+    const tick = await reconcileOnce({
+      workloadsDir: dir,
+      getClient: () => client,
+      evictionGraceMs: 5 * 60_000,
+    });
+    const reportB = tick.reports.find((r) => r.name === "b");
+    expect(reportB).toBeDefined();
+    expect(reportB?.error).toBeUndefined();
+    expect(starts).toContain("b");
+    expect(loadWorkloadByName("z", dir).metadata.annotations["llamactl.io/evicted-by"]).toBe("b");
+    const reportZ = tick.reports.find((r) => r.name === "z");
+    expect(reportZ).toBeDefined();
+    expect(reportEvictedBy(reportZ)).toBe("b");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
