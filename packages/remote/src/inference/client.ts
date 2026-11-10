@@ -1350,11 +1350,13 @@ async function runAttempt(
   signal: AbortSignal,
 ): Promise<AttemptOutcome> {
   const version = opts.version ?? inferenceRpc.INFERENCE_RPC_VERSION;
+  const offered = inferenceRpc.inferenceRpcVersionsSpokenAt(version);
+  const required = ["execution-event-v1"];
   let negotiated: inferenceRpc.InferenceRpcNegotiateResultV1;
   try {
     negotiated = await opts.client.negotiate({
-      versions: inferenceRpc.inferenceRpcVersionsSpokenAt(version),
-      requiredFeatures: ["execution-event-v1"],
+      versions: offered,
+      requiredFeatures: required,
     });
   } catch (err) {
     // A worker that predates the route positively reports no RPC.
@@ -1365,6 +1367,8 @@ async function runAttempt(
   if (negotiated.outcome === "rejected") {
     return { kind: "rejected", rejection: negotiated.rejection };
   }
+  const refused = refusedVersionOrFeature(offered, required, negotiated);
+  if (refused) return refused;
   const answer = await submitOnce({
     client: opts.client,
     deploymentId: opts.deploymentId,
@@ -1378,6 +1382,41 @@ async function runAttempt(
   });
   const resolver = resolverFor(opts.client, opts.resolveTimeoutMs ?? DEFAULT_RESOLVE_TIMEOUT_MS);
   return await resolveAccepted(opts.client, resolver, envelope, answer, signal);
+}
+
+/**
+ * Fail-closed: refuse a negotiated version or required feature that the
+ * caller did not offer (Issue #139).
+ */
+function refusedVersionOrFeature(
+  offered: inferenceRpc.InferenceRpcVersion[],
+  required: string[],
+  negotiated: inferenceRpc.InferenceRpcNegotiateResultV1,
+): { kind: "rejected"; rejection: Rejection } | null {
+  if (negotiated.outcome !== "negotiated") return null;
+  const mismatch = offered.some(
+    (v) => inferenceRpc.compareInferenceRpcVersions(v, negotiated.version) === 0,
+  );
+  if (!mismatch)
+    return {
+      kind: "rejected",
+      rejection: {
+        code: "unsupported-version",
+        message: `the negotiated version was not offered by the caller`,
+        supportedVersions: offered,
+      },
+    };
+  const missing = required.filter((f) => !negotiated.features.includes(f));
+  if (missing.length > 0)
+    return {
+      kind: "rejected",
+      rejection: {
+        code: "unsupported-feature",
+        message: `missing required features: ${missing.join(", ")}`,
+        unsupportedFeatures: missing,
+      },
+    };
+  return null;
 }
 
 /** A deadline past the horizon is refused before anything is sent: no worker would accept it. */
