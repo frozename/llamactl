@@ -1054,6 +1054,47 @@ export function parseEvictTargets(manifest: ModelRun): string[] {
     .filter((s) => s.length > 0);
 }
 
+/**
+ * Whether the replacement still owns the victim's suppression. Within the
+ * grace window the replacement may simply not be saved yet (apply -f
+ * writes the victim markers before the replacement manifest lands), so
+ * a missing replacement still holds; once the grace expires the hold
+ * requires a live replacement that still names this victim in its evict
+ * list.
+ */
+export function replacementHoldsEviction(
+  replacement: ModelRun | ModelHostManifest | undefined,
+  withinGrace: boolean,
+  namesVictim: boolean,
+): boolean {
+  const enabled = replacement?.spec.enabled === true;
+  if (withinGrace) return replacement === undefined || enabled;
+  return replacement !== undefined && enabled && namesVictim;
+}
+
+/**
+ * The name on the victim's evicted-by marker when that hold is still
+ * live, or null when the marker is absent or lapsed. Shares the
+ * reconciler guard's rule so an apply never overwrites a hold the
+ * resurrection guard would still honour.
+ */
+function liveEvictionOwner(victim: ModelRun, workloadsDir: string, nowMs: number): string | null {
+  const ownerName = victim.metadata.annotations[EVICTED_BY_ANNOTATION];
+  if (ownerName === undefined) return null;
+  const evictedAt = victim.metadata.annotations[EVICTED_AT_ANNOTATION];
+  const atMs = evictedAt === undefined ? Number.NaN : Date.parse(evictedAt);
+  const withinGrace = !Number.isNaN(atMs) && nowMs - atMs < EVICTION_INTENT_GRACE_MS;
+  let owner: ModelRun | ModelHostManifest | undefined;
+  try {
+    owner = loadWorkloadByNameAny(ownerName, workloadsDir);
+  } catch {
+    owner = undefined;
+  }
+  const namesVictim =
+    owner?.kind === "ModelRun" && parseEvictTargets(owner).includes(victim.metadata.name);
+  return replacementHoldsEviction(owner, withinGrace, namesVictim) ? ownerName : null;
+}
+
 class EvictDeadlineError extends Error {}
 
 async function withDeadline<T>(promise: Promise<T>, ms: number): Promise<T> {
@@ -1079,6 +1120,7 @@ type EvictFailureReason =
   | "EvictStopTimedOut"
   | "EvictReleaseUnverified"
   | "EvictIntentUnpersisted"
+  | "EvictIntentHeld"
   | "EvictCapacityUnverified";
 
 interface EvictStopFailure {
@@ -1142,38 +1184,54 @@ async function stopAndVerifyEvictTarget(
  * keys on: it suppresses the victim's resurrection until the replacement
  * lands or the grace expires, and the apply's exit rollback releases it
  * when this pass fails. An already-down victim keeps the marker too —
- * it was still evicted by this replacement. Any failure to record the
- * intent fails the victim before any stop, since an unmarked stop would
- * let the reconciler resurrect the victim underneath the replacement.
+ * it was still evicted by this replacement. A marker still owned by a
+ * different live replacement is refused rather than overwritten — this
+ * apply must never claim, or later release, another replacement's hold.
+ * Any failure to record the intent fails the victim before any stop,
+ * since an unmarked stop would let the reconciler resurrect the victim
+ * underneath the replacement.
  */
 function persistEvictIntent(
   manifest: ModelRun,
   target: string,
   workloadsDir: string,
   now: string,
+  claimedTargets: Set<string>,
 ): EvictStopFailure | null {
   try {
     const victim = loadWorkloadByName(target, workloadsDir);
     if (victim.metadata.name !== target) {
       throw new Error(`manifest declares metadata.name '${victim.metadata.name}', not '${target}'`);
     }
-    if (victim.metadata.annotations[EVICTED_BY_ANNOTATION] === manifest.metadata.name) {
-      return null;
-    }
-    saveWorkload(
-      {
-        ...victim,
-        metadata: {
-          ...victim.metadata,
-          annotations: {
-            ...victim.metadata.annotations,
-            [EVICTED_BY_ANNOTATION]: manifest.metadata.name,
-            [EVICTED_AT_ANNOTATION]: now,
+    const owner = victim.metadata.annotations[EVICTED_BY_ANNOTATION];
+    if (owner !== manifest.metadata.name) {
+      // A live foreign hold belongs to another replacement: overwriting
+      // it would let this apply's rollback erase a hold it never owned.
+      const holder = liveEvictionOwner(victim, workloadsDir, Date.parse(now));
+      if (holder !== null) {
+        return evictStopFailure(
+          manifest,
+          target,
+          "EvictIntentHeld",
+          `'${target}' is already held by eviction owner '${holder}'`,
+        );
+      }
+      saveWorkload(
+        {
+          ...victim,
+          metadata: {
+            ...victim.metadata,
+            annotations: {
+              ...victim.metadata.annotations,
+              [EVICTED_BY_ANNOTATION]: manifest.metadata.name,
+              [EVICTED_AT_ANNOTATION]: now,
+            },
           },
         },
-      },
-      workloadsDir,
-    );
+        workloadsDir,
+      );
+    }
+    claimedTargets.add(target);
     return null;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -1187,10 +1245,10 @@ async function stopEvictTargets(
   lifecycle: ClaimLifecycle,
   timeoutMs: number,
 ): Promise<EvictStopResult | null> {
-  const { manifest, client, onEvent, opts, now } = ctx;
+  const { manifest, client, onEvent, opts, now, evictionClaims } = ctx;
   const workloadsDir = opts?.workloadsDir ?? defaultWorkloadsDir(opts?.env);
   for (const target of verifiedTargets) {
-    const intent = persistEvictIntent(manifest, target, workloadsDir, now);
+    const intent = persistEvictIntent(manifest, target, workloadsDir, now, evictionClaims);
     if (intent !== null) return intent;
     const deadlineAt = Date.now() + timeoutMs;
     const remainingMs = (): number => Math.max(0, deadlineAt - Date.now());
@@ -1230,6 +1288,9 @@ interface ConvergeServerContext {
   matches: boolean;
   desiredArgs: string[];
   evictTargets: string[];
+  /** Evict victims whose marker this apply persisted or reaffirmed;
+   *  failure rollback releases exactly these holds. */
+  evictionClaims: Set<string>;
 }
 
 /** Map a node name to a stable physical identity when a resolver is
@@ -2066,50 +2127,74 @@ async function convergeClaimedServer(
 
 /**
  * DF-02 rollback: when a replacement apply does not reach Running, release
- * every eviction marker this replacement owns so the reconciler's normal
- * budget-checked admission can recover the victims. Markers are cleared
- * whether or not this pass wrote them — a stored replacement that crashed
- * and now fails its restart must still free its victims. Missing or
+ * the eviction markers this apply's eviction stage persisted or
+ * reaffirmed so the reconciler's normal budget-checked admission can
+ * recover the victims — a stored replacement that crashed and now fails
+ * its restart must still free its victims. A failure before that stage
+ * (budget, bind or session-gate refusals) never reaches persist, so every
+ * prior hold stays untouched: the still-running replacement owns it, and
+ * a foreign owner's marker is never this apply's to clear. Missing or
  * unreadable victims are skipped and save failures are collected; the
  * clear itself never throws.
  */
 function clearEvictionMarkers(
   manifest: ModelRun,
   opts: ApplyOneOpts | undefined,
+  claimedTargets: ReadonlySet<string>,
 ): { released: string[]; problems: string[] } {
   const workloadsDir = opts?.workloadsDir ?? defaultWorkloadsDir(opts?.env);
   const released: string[] = [];
   const problems: string[] = [];
   for (const target of parseEvictTargets(manifest)) {
-    let victim: ModelRun | ModelHostManifest;
-    try {
-      victim = loadWorkloadByNameAny(target, workloadsDir);
-    } catch {
-      continue;
-    }
-    if (victim.kind !== "ModelRun" || victim.metadata.name !== target) continue;
-    if (victim.metadata.annotations[EVICTED_BY_ANNOTATION] !== manifest.metadata.name) continue;
-    const {
-      [EVICTED_BY_ANNOTATION]: _evictedBy,
-      [EVICTED_AT_ANNOTATION]: _evictedAt,
-      ...annotations
-    } = victim.metadata.annotations;
-    try {
-      saveWorkload({ ...victim, metadata: { ...victim.metadata, annotations } }, workloadsDir);
-      released.push(target);
-    } catch (err) {
-      problems.push(`'${target}': ${err instanceof Error ? err.message : String(err)}`);
-    }
+    if (!claimedTargets.has(target)) continue;
+    const outcome = releaseClaimedMarker(target, manifest.metadata.name, workloadsDir);
+    if (outcome.released) released.push(target);
+    if (outcome.problem !== undefined) problems.push(outcome.problem);
   }
   return { released, problems };
+}
+
+/** Clear one claimed victim's marker; `problem` carries a save failure. */
+function releaseClaimedMarker(
+  target: string,
+  ownerName: string,
+  workloadsDir: string,
+): { released: boolean; problem?: string } {
+  let victim: ModelRun | ModelHostManifest;
+  try {
+    victim = loadWorkloadByNameAny(target, workloadsDir);
+  } catch {
+    return { released: false };
+  }
+  if (victim.kind !== "ModelRun" || victim.metadata.name !== target) {
+    return { released: false };
+  }
+  if (victim.metadata.annotations[EVICTED_BY_ANNOTATION] !== ownerName) {
+    return { released: false };
+  }
+  const {
+    [EVICTED_BY_ANNOTATION]: _evictedBy,
+    [EVICTED_AT_ANNOTATION]: _evictedAt,
+    ...annotations
+  } = victim.metadata.annotations;
+  try {
+    saveWorkload({ ...victim, metadata: { ...victim.metadata, annotations } }, workloadsDir);
+    return { released: true };
+  } catch (err) {
+    return {
+      released: false,
+      problem: `'${target}': ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
 }
 
 function applyEvictionRollback(
   result: ApplyResult,
   manifest: ModelRun,
   opts: ApplyOneOpts | undefined,
+  claimedTargets: ReadonlySet<string>,
 ): ApplyResult {
-  const { released, problems } = clearEvictionMarkers(manifest, opts);
+  const { released, problems } = clearEvictionMarkers(manifest, opts, claimedTargets);
   const notes: string[] = [];
   if (released.length > 0) {
     notes.push(`released eviction intent on ${released.map((n) => `'${n}'`).join(", ")}`);
@@ -2213,6 +2298,7 @@ export async function applyOne(
 
   const now = new Date().toISOString();
   const evictTargets = parseEvictTargets(manifest);
+  const evictionClaims = new Set<string>();
 
   return await withNodeLock(manifest.spec.node, async () => {
     const ctx: ConvergeServerContext = {
@@ -2226,18 +2312,19 @@ export async function applyOne(
       matches,
       desiredArgs,
       evictTargets,
+      evictionClaims,
     };
     let result: ApplyResult;
     try {
       result = await convergeServerUnderLock(ctx);
     } catch (err) {
-      clearEvictionMarkers(manifest, opts);
+      clearEvictionMarkers(manifest, opts, evictionClaims);
       throw err;
     }
     if (result.error === undefined && result.statusSection.phase === "Running") {
       return result;
     }
-    return applyEvictionRollback(result, manifest, opts);
+    return applyEvictionRollback(result, manifest, opts, evictionClaims);
   });
 }
 

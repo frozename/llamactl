@@ -33,6 +33,7 @@ import {
   EVICTED_BY_ANNOTATION,
   EVICTION_INTENT_GRACE_MS,
   parseEvictTargets,
+  replacementHoldsEviction,
   type WorkloadClient,
 } from "./apply.js";
 import {
@@ -259,24 +260,6 @@ export async function reconcileOnce(opts: ReconcileOptions): Promise<ReconcileRe
 
 type EvictionGuard = { kind: "hold"; evictedBy: string } | { kind: "apply"; manifest: ModelRun };
 
-/**
- * Whether the replacement still owns the victim's suppression. Within the
- * grace window the replacement may simply not be saved yet (apply -f
- * writes the victim markers before the replacement manifest lands), so
- * a missing replacement still holds; once the grace expires the hold
- * requires a live replacement that still names this victim in its evict
- * list.
- */
-function replacementHoldsEviction(
-  replacement: ModelRun | ModelHostManifest | undefined,
-  withinGrace: boolean,
-  namesVictim: boolean,
-): boolean {
-  const enabled = replacement?.spec.enabled === true;
-  if (withinGrace) return replacement === undefined || enabled;
-  return replacement !== undefined && enabled && namesVictim;
-}
-
 /** Clear a stale eviction marker from disk; fall back to the snapshot. */
 function clearStaleEvictionMarker(manifest: ModelRun, dir: string): ModelRun {
   try {
@@ -304,11 +287,22 @@ function clearStaleEvictionMarker(manifest: ModelRun, dir: string): ModelRun {
  */
 function evictionGuard(manifest: ModelRun, opts: ReconcileOptions, dir: string): EvictionGuard {
   const name = manifest.metadata.name;
-  const evictedBy = manifest.metadata.annotations[EVICTED_BY_ANNOTATION];
+  // The pass-start snapshot predates this workload's turn: an earlier
+  // apply in the same pass can stamp this victim's marker (same-tick
+  // eviction) or a failed replacement's rollback can clear one, so the
+  // guard decides on the on-disk annotations, not the snapshot.
+  let annotations = manifest.metadata.annotations;
+  try {
+    const fresh = loadWorkloadByName(name, dir);
+    if (fresh.metadata.name === name) annotations = fresh.metadata.annotations;
+  } catch {
+    // Vanished or unreadable mid-pass; the snapshot still decides.
+  }
+  const evictedBy = annotations[EVICTED_BY_ANNOTATION];
   if (!evictedBy) return { kind: "apply", manifest };
   const graceMs = opts.evictionGraceMs ?? EVICTION_INTENT_GRACE_MS;
   const nowMs = (opts.now?.() ?? new Date()).getTime();
-  const evictedAt = manifest.metadata.annotations[EVICTED_AT_ANNOTATION];
+  const evictedAt = annotations[EVICTED_AT_ANNOTATION];
   const atMs = evictedAt === undefined ? Number.NaN : Date.parse(evictedAt);
   const withinGrace = !Number.isNaN(atMs) && nowMs - atMs < graceMs;
   let replacement: ModelRun | ModelHostManifest | undefined;

@@ -455,3 +455,164 @@ test("G4 expired grace with missing replacement releases the victim", async () =
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("R8 a same-tick eviction holds the victim for the rest of the pass", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "llamactl-df02-r8-"));
+  const state: StateMap = new Map([
+    ["z", { rel: "z.gguf", args: [], host: "127.0.0.1", port: 8182 }],
+  ]);
+  saveWorkload(mkManifest("b", { annotations: { "llamactl.io/evict": "z" }, port: 8090 }), dir);
+  saveWorkload(mkManifest("z", { port: 8182 }), dir);
+  const { client, stops, starts } = makeClient(state);
+  try {
+    const tick = await reconcileOnce({ workloadsDir: dir, getClient: () => client });
+    expect(starts).toEqual(["b"]);
+    expect(stops).toEqual(["z"]);
+    expect(state.has("b")).toBe(true);
+    expect(state.has("z")).toBe(false);
+    const reportZ = tick.reports.find((r) => r.name === "z");
+    expect(reportZ).toBeDefined();
+    expect(reportEvictedBy(reportZ)).toBe("b");
+    expect(loadWorkloadByName("z", dir).metadata.annotations["llamactl.io/evicted-by"]).toBe("b");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("G5 expired grace releases the victim once the replacement drops it", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "llamactl-df02-g5-"));
+  const state: StateMap = new Map();
+  saveWorkload(
+    mkManifest("a", {
+      port: 8182,
+      annotations: {
+        "llamactl.io/evicted-by": "b",
+        "llamactl.io/evicted-at": "2020-01-01T00:00:00.000Z",
+      },
+    }),
+    dir,
+  );
+  saveWorkload(mkManifest("b", { annotations: { "llamactl.io/evict": "c" }, port: 8090 }), dir);
+  const { client, starts } = makeClient(state);
+  try {
+    const tick = await reconcileOnce({ workloadsDir: dir, getClient: () => client });
+    expect(
+      loadWorkloadByName("a", dir).metadata.annotations["llamactl.io/evicted-by"],
+    ).toBeUndefined();
+    expect(starts.filter((s) => s === "a")).toHaveLength(1);
+    const reportA = tick.reports.find((r) => r.name === "a");
+    expect(reportA).toBeDefined();
+    expect(reportEvictedBy(reportA)).toBeUndefined();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("R9 a live foreign eviction owner refuses the takeover and survives rollback", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "llamactl-df02-r9-"));
+  const state: StateMap = new Map([["a", upEntry(8182)]]);
+  const evictedAt = "2020-01-01T00:00:00.000Z";
+  saveWorkload(
+    mkManifest("a", {
+      port: 8182,
+      annotations: { "llamactl.io/evicted-by": "c", "llamactl.io/evicted-at": evictedAt },
+    }),
+    dir,
+  );
+  saveWorkload(mkManifest("c", { annotations: { "llamactl.io/evict": "a" }, port: 8183 }), dir);
+  const { client, stops, starts } = makeClient(state);
+  try {
+    const result = await applyOne(
+      mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090 }),
+      () => client,
+      undefined,
+      undefined,
+      { workloadsDir: dir, getNodeBudgetGiB: () => 32 },
+    );
+    expect(result.statusSection.conditions[0]?.reason).toBe("EvictIntentHeld");
+    expect(result.error).toContain("EvictIntentHeld");
+    const storedA = loadWorkloadByName("a", dir);
+    expect(storedA.metadata.annotations["llamactl.io/evicted-by"]).toBe("c");
+    expect(storedA.metadata.annotations["llamactl.io/evicted-at"]).toBe(evictedAt);
+    expect(state.has("a")).toBe(true);
+    expect(stops).toEqual([]);
+    expect(starts).toEqual([]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("R10 a lapsed foreign eviction owner is taken over", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "llamactl-df02-r10-"));
+  const state: StateMap = new Map([["a", upEntry(8182)]]);
+  saveWorkload(
+    mkManifest("a", {
+      port: 8182,
+      annotations: {
+        "llamactl.io/evicted-by": "c",
+        "llamactl.io/evicted-at": "2020-01-01T00:00:00.000Z",
+      },
+    }),
+    dir,
+  );
+  saveWorkload(
+    mkManifest("c", { enabled: false, annotations: { "llamactl.io/evict": "a" }, port: 8183 }),
+    dir,
+  );
+  const { client, stops, starts } = makeClient(state);
+  try {
+    const result = await applyOne(
+      mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090 }),
+      () => client,
+      undefined,
+      undefined,
+      { workloadsDir: dir, getNodeBudgetGiB: () => 32 },
+    );
+    expect(result.error).toBeUndefined();
+    expect(stops).toEqual(["a"]);
+    expect(starts).toEqual(["b"]);
+    expect(loadWorkloadByName("a", dir).metadata.annotations["llamactl.io/evicted-by"]).toBe("b");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("G6 a failure before the eviction stage keeps the existing hold", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "llamactl-df02-g6-"));
+  const state: StateMap = new Map([
+    ["b", { rel: "b.gguf", args: [], host: "127.0.0.1", port: 8090 }],
+  ]);
+  saveWorkload(
+    mkManifest("a", {
+      port: 8182,
+      annotations: {
+        "llamactl.io/evicted-by": "b",
+        "llamactl.io/evicted-at": "2020-01-01T00:00:00.000Z",
+      },
+    }),
+    dir,
+  );
+  saveWorkload(
+    mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090, ram: 8 }),
+    dir,
+  );
+  saveWorkload(mkManifest("d", { port: 8183, ram: 8 }), dir);
+  const { client, stops, starts } = makeClient(state);
+  try {
+    const result = await applyOne(
+      mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090, ram: 8 }),
+      () => client,
+      undefined,
+      undefined,
+      { workloadsDir: dir, getNodeBudgetGiB: () => 10 },
+    );
+    expect(result.action).toBe("unchanged");
+    expect(result.statusSection.phase).toBe("Running");
+    expect(result.error).toContain("eviction");
+    expect(loadWorkloadByName("a", dir).metadata.annotations["llamactl.io/evicted-by"]).toBe("b");
+    expect(stops).toEqual([]);
+    expect(starts).toEqual([]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
