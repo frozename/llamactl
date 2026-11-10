@@ -1076,3 +1076,56 @@ test("#283 W31: members sharing a runtimeKey but not a specDigest bill as separa
   expect(wakeC.reason).toBe("BudgetExceeded");
   expect(controller.snapshot().committedGiB).toBe(20);
 });
+
+test("#283 W32: the join bill delta is scoped to the joiner's runtime group", async () => {
+  const mod = await load();
+  const controller = ctl(mod, 14);
+  controller.register(
+    { id: "a", runtimeKey: "rk", specDigest: "d", allocationGiB: 5, capability: GUARDED },
+    "ready",
+  );
+  controller.register(
+    { id: "c", runtimeKey: "rk2", specDigest: "x", allocationGiB: 8, capability: GUARDED },
+    "ready",
+  );
+  controller.register(
+    { id: "b", runtimeKey: "rk", specDigest: "d", allocationGiB: 7, capability: GUARDED },
+    "sleeping",
+  );
+  // rk/d bills at a's 5 GiB and rk2/x at c's 8 GiB; b is released: 13 committed.
+  expect(controller.snapshot().committedGiB).toBe(13);
+
+  // b's join delta is 7 - 5 = 2 measured against its own group only:
+  // 13 + 2 = 15 > 14. c's larger 8 GiB belongs to another runtime and must
+  // not shrink the delta into an admit.
+  const wakeB = controller.requestWake("b", { cacheIdentity: "kb" });
+  expect(wakeB.kind).toBe("refuse");
+  expect(wakeB.reason).toBe("BudgetExceeded");
+  expect(snapMember(controller, "b").state).toBe("sleeping");
+  expect(controller.snapshot().committedGiB).toBe(13);
+});
+
+test("#283 W33: a join delta landing exactly on the budget is admitted", async () => {
+  const mod = await load();
+  const controller = ctl(mod, 15);
+  controller.register(
+    { id: "a", runtimeKey: "rk", specDigest: "d", allocationGiB: 5, capability: GUARDED },
+    "ready",
+  );
+  controller.register(
+    { id: "c", runtimeKey: "rk2", specDigest: "x", allocationGiB: 8, capability: GUARDED },
+    "ready",
+  );
+  controller.register(
+    { id: "b", runtimeKey: "rk", specDigest: "d", allocationGiB: 7, capability: GUARDED },
+    "sleeping",
+  );
+  expect(controller.snapshot().committedGiB).toBe(13);
+
+  // 13 committed + 2 delta = 15, exactly the budget: the over-budget check is
+  // strict, so the join is admitted and the group re-bills at its largest 7.
+  const wakeB = controller.requestWake("b", { cacheIdentity: "kb" });
+  expect(wakeB.kind).toBe("already-awake");
+  expect(snapMember(controller, "b").state).toBe("ready");
+  expect(controller.snapshot().committedGiB).toBe(15);
+});
