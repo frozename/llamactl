@@ -1400,6 +1400,113 @@ describe("server/modelhost", () => {
     }
   });
 
+  // DF-02 slice 3 (#275): the eviction intent markers are legal ModelHost
+  // metadata — they must parse, round-trip through the store, and stay
+  // outside the engine spec hash so a marked host does not read as drift.
+  test("DF-02 slice 3: evicted-by/evicted-at annotations parse, round-trip, and stay out of the spec hash", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-evict-ann-"));
+    try {
+      const { manifest, workloadsDir } = makeManifest(tmp);
+      const annotated = {
+        ...manifest,
+        metadata: {
+          name: "mlx-host-server",
+          annotations: {
+            "llamactl.io/evicted-by": "r",
+            "llamactl.io/evicted-at": "2026-11-09T00:00:00Z",
+          },
+        },
+      };
+      const parsed = ModelHostManifestSchema.safeParse(annotated);
+      expect(parsed.success).toBe(true);
+      if (!parsed.success) return;
+      saveModelHost(parsed.data, workloadsDir);
+      const loaded = loadModelHostByName("mlx-host-server", workloadsDir);
+      const annotations = (loaded.metadata as { annotations?: Record<string, string> }).annotations;
+      expect(annotations?.["llamactl.io/evicted-by"]).toBe("r");
+      expect(annotations?.["llamactl.io/evicted-at"]).toBe("2026-11-09T00:00:00Z");
+      const plain = ModelHostManifestSchema.safeParse(manifest);
+      expect(plain.success).toBe(true);
+      if (!plain.success) return;
+      expect(computeModelHostSpecHash(specForHash(parsed.data.spec))).toBe(
+        computeModelHostSpecHash(specForHash(plain.data.spec)),
+      );
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  // The evict/force-admit annotations are ModelRun-only: a ModelHost
+  // carrying either must fail validation with a message that names the
+  // offending annotation, not a bare unrecognized-key error.
+  test("DF-02 slice 3: ModelHost rejects ModelRun-only evict/force-admit annotations by name", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-evict-reject-"));
+    try {
+      const { manifest } = makeManifest(tmp);
+      for (const [annotation, value] of [
+        ["llamactl.io/evict", "x"],
+        ["llamactl.io/force-admit", "true"],
+      ] as const) {
+        const parsed = ModelHostManifestSchema.safeParse({
+          ...manifest,
+          metadata: { name: "mlx-host-server", annotations: { [annotation]: value } },
+        });
+        expect(parsed.success).toBe(false);
+        if (parsed.success) continue;
+        expect(
+          parsed.error.issues.some(
+            (issue) => issue.message.includes(annotation) && issue.message.includes("ModelHost"),
+          ),
+        ).toBe(true);
+      }
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  // G pin: a recycled recorded pid is never signalled, and a second stop
+  // is a clean no-op — stopModelHost stays idempotent on stale records.
+  test("DF-02 slice 3: stopModelHost is idempotent on a recycled pid — never kills, second stop reports pid null", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-evict-idem-"));
+    const runtimeDir = join(tmp, "runtime");
+    const impostor = spawnImpostor("/bin/sleep", ["60"], { stdio: "ignore" });
+    try {
+      if (impostor.pid === undefined) throw new Error("impostor spawn failed");
+      const pid = impostor.pid;
+      seedImpostorSidecar(runtimeDir, pid, true);
+      const tornDown: number[] = [];
+      const teardown = (teardownPid: number): Promise<void> => {
+        tornDown.push(teardownPid);
+        return Promise.resolve();
+      };
+      const first = await stopModelHost({
+        key: { name: "mlx-host-server" },
+        runtimeDir,
+        teardown,
+      });
+      const second = await stopModelHost({
+        key: { name: "mlx-host-server" },
+        runtimeDir,
+        teardown,
+      });
+      expect(tornDown).toEqual([]);
+      expect(first.ok).toBe(true);
+      expect(first.pid).toBe(pid);
+      expect(second.ok).toBe(true);
+      expect(second.pid).toBeNull();
+      const st = statusModelHost({ key: { name: "mlx-host-server" }, runtimeDir });
+      expect(st.state).toBe("Stopped");
+      expect(st.identityUnknown).toBeUndefined();
+    } finally {
+      try {
+        impostor.kill("SIGKILL");
+      } catch {
+        // already gone
+      }
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   test("stopModelHost corroborates a strata pid against the strata-server argv0", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-strata-"));
     const runtimeDir = join(tmp, "runtime");

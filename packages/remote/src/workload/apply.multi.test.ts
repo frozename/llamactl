@@ -4,6 +4,7 @@ import { resolveEnv } from "@llamactl/core/env";
 import { expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { parse as parseYaml } from "yaml";
 
 import type { ModelHostManifest } from "./modelhost-schema.js";
 import type { ModelRun } from "./schema.js";
@@ -27,7 +28,7 @@ import {
   type WorkloadClient,
 } from "./apply.js";
 import { saveModelHost } from "./modelhost-store.js";
-import { loadWorkloadByNameAny, saveWorkload } from "./store.js";
+import { saveWorkload } from "./store.js";
 
 type WorkloadState = { up: boolean; rel: string; args: string[] };
 type WorkloadStateMap = Map<string, WorkloadState>;
@@ -380,35 +381,6 @@ test("evict annotation stops named workload before starting incoming", async () 
     expect(result.action).toBe("started");
   } finally {
     rmSync(workloadsDir, { recursive: true, force: true });
-  }
-});
-
-test("DF-01A: evict naming a stored ModelHost is refused before any stop or start", async () => {
-  const temp = makeTempRuntime();
-  const env = envForTemp(temp);
-  const workloadsDir = join(temp.devStorage, "workloads");
-  saveModelHost(
-    mkModelHostManifest("resident-host", { resources: { expectedMemoryGiB: 24 } }),
-    workloadsDir,
-  );
-  const state: WorkloadStateMap = new Map();
-  const { client, stops, starts } = makeRecordingClient(state);
-  try {
-    const result = await applyOne(
-      mkManifest("incoming-run", { ram: 8, annotations: { "llamactl.io/evict": "resident-host" } }),
-      () => client,
-      undefined,
-      undefined,
-      { env, workloadsDir, getNodeBudgetGiB: () => 24 },
-    );
-    expect(result.action).toBe("pending");
-    expect(result.statusSection.phase).toBe("Failed");
-    expect(result.statusSection.conditions[0]?.reason).toBe("EvictKindUnsupported");
-    expect(stops).toEqual([]);
-    expect(starts).toEqual([]);
-    expect(loadWorkloadByNameAny("resident-host", workloadsDir).kind).toBe("ModelHost");
-  } finally {
-    temp.cleanup();
   }
 });
 
@@ -1260,15 +1232,13 @@ test("DF-01A: matching running server with refused evict keeps Running with Evic
   const temp = makeTempRuntime();
   const env = envForTemp(temp);
   const workloadsDir = join(temp.devStorage, "workloads");
-  saveModelHost(
-    mkModelHostManifest("resident-host", { resources: { expectedMemoryGiB: 24 } }),
-    workloadsDir,
-  );
+  mkdirSync(workloadsDir, { recursive: true });
+  writeFileSync(join(workloadsDir, "ghost-host.yaml"), "kind: ModelHost\nspec: [unterminated\n");
   const state: WorkloadStateMap = new Map([["a", { up: true, rel: "a.gguf", args: [] }]]);
   const { client, stops, starts } = makeRecordingClient(state);
   try {
     const result = await applyOne(
-      mkManifest("a", { ram: 8, annotations: { "llamactl.io/evict": "resident-host" } }),
+      mkManifest("a", { ram: 8, annotations: { "llamactl.io/evict": "ghost-host" } }),
       () => client,
       undefined,
       undefined,
@@ -1278,7 +1248,7 @@ test("DF-01A: matching running server with refused evict keeps Running with Evic
     expect(result.statusSection.phase).toBe("Running");
     expect(result.statusSection.serverPid).toBe(1);
     expect(result.statusSection.endpoint).toBe("http://127.0.0.1:8181");
-    expect(result.error).toContain("resident-host");
+    expect(result.error).toContain("ghost-host");
     const refused = result.statusSection.conditions.find((c) => c.type === "EvictRefused");
     expect(refused?.status).toBe("False");
     expect(refused?.reason).toBe("EvictKindUnsupported");
@@ -2275,5 +2245,443 @@ test("DF-02: an evict victim already down is skipped without a stop call", async
     expect(state.has("b")).toBe(true);
   } finally {
     rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+// DF-02 slice 3 (#275): verified ModelHost eviction. The victim is a
+// stored ModelHost seeded through saveModelHost (un-annotated, so it is
+// legal at the pinned base); the replacement only fits the 24 GiB node
+// budget when the victim's declared 24 GiB is credited as evicted
+// capacity. modelHostStatus / modelHostStop are scripted per workload
+// through `faults`; every call lands in hostStops / hostStatusCalls /
+// hostStarts, and callLog interleaves the ModelRun and ModelHost
+// lifecycle calls in issue order.
+type ModelHostStatusReply = {
+  state: string;
+  pid?: number | null;
+  specHash?: string;
+  identityUnknown?: boolean;
+};
+
+function makeModelHostEvictClient(
+  state: WorkloadStateMap,
+  faults: {
+    hostStatus?: (
+      workload: string,
+    ) => ModelHostStatusReply | Promise<ModelHostStatusReply> | undefined;
+    hostStop?: (workload: string) => unknown;
+  } = {},
+): {
+  client: WorkloadClient;
+  stops: string[];
+  starts: string[];
+  hostStops: string[];
+  hostStatusCalls: string[];
+  hostStarts: string[];
+  callLog: string[];
+} {
+  const callLog: string[] = [];
+  const { client: rec, stops, starts } = makeRecordingClient(state);
+  const hostStops: string[] = [];
+  const hostStatusCalls: string[] = [];
+  const hostStarts: string[] = [];
+  const client: WorkloadClient = {
+    ...rec,
+    serverStop: {
+      mutate: (input): Promise<unknown> => {
+        callLog.push(`stop:${input.workload}`);
+        return rec.serverStop.mutate(input);
+      },
+    },
+    serverStart: {
+      subscribe: (input, callbacks): UnsubscribableLike => {
+        callLog.push(`start:${input.workload}`);
+        return rec.serverStart.subscribe(input, callbacks);
+      },
+    },
+    modelHostStart: {
+      subscribe: (input, callbacks): UnsubscribableLike => {
+        hostStarts.push(input.workload);
+        queueMicrotask(() => {
+          callbacks.onData({
+            type: "done",
+            result: { ok: true, pid: 12345, state: "Running" },
+          });
+          callbacks.onComplete();
+        });
+        return { unsubscribe: () => undefined };
+      },
+    },
+    modelHostStop: {
+      mutate: (input): Promise<unknown> => {
+        hostStops.push(input.workload);
+        callLog.push(`hostStop:${input.workload}`);
+        const scripted = faults.hostStop?.(input.workload);
+        return Promise.resolve(scripted ?? { ok: true, pid: null });
+      },
+    },
+    modelHostStatus: {
+      query: (input): Promise<ModelHostStatusReply> => {
+        hostStatusCalls.push(input.workload);
+        const scripted = faults.hostStatus?.(input.workload);
+        return Promise.resolve(scripted ?? { state: "Stopped", pid: null });
+      },
+    },
+  };
+  return { client, stops, starts, hostStops, hostStatusCalls, hostStarts, callLog };
+}
+
+function readWorkloadAnnotations(path: string): Record<string, string> | undefined {
+  const raw = parseYaml(readFileSync(path, "utf8")) as {
+    metadata?: { annotations?: Record<string, string> };
+  } | null;
+  return raw?.metadata?.annotations;
+}
+
+function seedModelHostVictim(workloadsDir: string): string {
+  saveModelHost(
+    mkModelHostManifest("resident-host", { resources: { expectedMemoryGiB: 24 } }),
+    workloadsDir,
+  );
+  return join(workloadsDir, "resident-host.yaml");
+}
+
+function incomingRunManifest(): ModelRun {
+  return mkManifest("incoming-run", {
+    ram: 8,
+    annotations: { "llamactl.io/evict": "resident-host" },
+  });
+}
+
+test("MK1: a running ModelHost victim is marked, stopped, verified, then replaced", async () => {
+  const temp = makeTempRuntime();
+  const env = envForTemp(temp);
+  const workloadsDir = join(temp.devStorage, "workloads");
+  const victimYaml = seedModelHostVictim(workloadsDir);
+  let victimDown = false;
+  let capturedEvictedBy: string | undefined;
+  const state: WorkloadStateMap = new Map();
+  const { client, stops, starts, hostStops, callLog } = makeModelHostEvictClient(state, {
+    hostStatus: (workload) => {
+      if (workload !== "resident-host") return undefined;
+      return victimDown ? { state: "Stopped", pid: null } : { state: "Running", pid: 4242 };
+    },
+    hostStop: (workload) => {
+      if (workload !== "resident-host") return undefined;
+      capturedEvictedBy = readWorkloadAnnotations(victimYaml)?.["llamactl.io/evicted-by"];
+      victimDown = true;
+      return { ok: true, pid: 4242 };
+    },
+  });
+  try {
+    const result = await applyOne(incomingRunManifest(), () => client, undefined, undefined, {
+      env,
+      workloadsDir,
+      getNodeBudgetGiB: () => 24,
+    });
+    expect(result.action).toBe("started");
+    expect(result.statusSection.phase).toBe("Running");
+    expect(result.error).toBeUndefined();
+    expect(hostStops).toEqual(["resident-host"]);
+    expect(stops).toEqual([]);
+    expect(starts).toEqual(["incoming-run"]);
+    const hostStopIdx = callLog.indexOf("hostStop:resident-host");
+    const startIdx = callLog.indexOf("start:incoming-run");
+    expect(hostStopIdx).toBeGreaterThanOrEqual(0);
+    expect(startIdx).toBeGreaterThan(hostStopIdx);
+    // The durable intent must exist on disk before the stop RPC runs.
+    expect(capturedEvictedBy).toBe("incoming-run");
+    const after = readWorkloadAnnotations(victimYaml);
+    expect(after?.["llamactl.io/evicted-by"]).toBe("incoming-run");
+    const evictedAt = after?.["llamactl.io/evicted-at"];
+    expect(typeof evictedAt).toBe("string");
+    expect(Number.isNaN(Date.parse(evictedAt ?? ""))).toBe(false);
+  } finally {
+    temp.cleanup();
+  }
+});
+
+test("MK2: a refused ModelHost stop fails the apply and rollback releases the marker", async () => {
+  const temp = makeTempRuntime();
+  const env = envForTemp(temp);
+  const workloadsDir = join(temp.devStorage, "workloads");
+  const victimYaml = seedModelHostVictim(workloadsDir);
+  const state: WorkloadStateMap = new Map();
+  const { client, stops, starts, hostStops } = makeModelHostEvictClient(state, {
+    hostStatus: (workload) =>
+      workload === "resident-host" ? { state: "Running", pid: 4242 } : undefined,
+    hostStop: (workload) =>
+      workload === "resident-host"
+        ? { ok: false, pid: 4242, error: "pid identity unknown" }
+        : undefined,
+  });
+  try {
+    const result = await applyOne(incomingRunManifest(), () => client, undefined, undefined, {
+      env,
+      workloadsDir,
+      getNodeBudgetGiB: () => 24,
+    });
+    expect(result.statusSection.conditions[0]?.reason).toBe("EvictStopRefused");
+    expect(hostStops).toEqual(["resident-host"]);
+    expect(stops).toEqual([]);
+    expect(starts).toEqual([]);
+    const after = readWorkloadAnnotations(victimYaml);
+    expect(after?.["llamactl.io/evicted-by"]).toBeUndefined();
+    expect(after?.["llamactl.io/evicted-at"]).toBeUndefined();
+  } finally {
+    temp.cleanup();
+  }
+});
+
+test("MK3: an unverifiable ModelHost status fails with EvictStatusUnknown before any stop", async () => {
+  const temp = makeTempRuntime();
+  const env = envForTemp(temp);
+  const workloadsDir = join(temp.devStorage, "workloads");
+  seedModelHostVictim(workloadsDir);
+  const state: WorkloadStateMap = new Map();
+  const { client, stops, starts, hostStops } = makeModelHostEvictClient(state, {
+    hostStatus: (workload) =>
+      workload === "resident-host"
+        ? { state: "Stopped", pid: 4242, identityUnknown: true }
+        : undefined,
+  });
+  try {
+    const result = await applyOne(incomingRunManifest(), () => client, undefined, undefined, {
+      env,
+      workloadsDir,
+      getNodeBudgetGiB: () => 24,
+    });
+    expect(result.statusSection.conditions[0]?.reason).toBe("EvictStatusUnknown");
+    expect(hostStops).toEqual([]);
+    expect(stops).toEqual([]);
+    expect(starts).toEqual([]);
+  } finally {
+    temp.cleanup();
+  }
+});
+
+test("MK4: a ModelHost still up after an accepted stop fails with EvictReleaseUnverified", async () => {
+  const temp = makeTempRuntime();
+  const env = envForTemp(temp);
+  const workloadsDir = join(temp.devStorage, "workloads");
+  seedModelHostVictim(workloadsDir);
+  const state: WorkloadStateMap = new Map();
+  const { client, stops, starts, hostStops } = makeModelHostEvictClient(state, {
+    hostStatus: (workload) =>
+      workload === "resident-host" ? { state: "Running", pid: 4242 } : undefined,
+    hostStop: (workload) => (workload === "resident-host" ? { ok: true, pid: 4242 } : undefined),
+  });
+  try {
+    const result = await applyOne(incomingRunManifest(), () => client, undefined, undefined, {
+      env,
+      workloadsDir,
+      getNodeBudgetGiB: () => 24,
+    });
+    expect(result.statusSection.conditions[0]?.reason).toBe("EvictReleaseUnverified");
+    expect(hostStops).toEqual(["resident-host"]);
+    expect(stops).toEqual([]);
+    expect(starts).toEqual([]);
+  } finally {
+    temp.cleanup();
+  }
+});
+
+test("MK5: a throwing ModelHost stop fails the apply with EvictStopFailed", async () => {
+  const temp = makeTempRuntime();
+  const env = envForTemp(temp);
+  const workloadsDir = join(temp.devStorage, "workloads");
+  seedModelHostVictim(workloadsDir);
+  const state: WorkloadStateMap = new Map();
+  const { client, stops, starts, hostStops } = makeModelHostEvictClient(state, {
+    hostStatus: (workload) =>
+      workload === "resident-host" ? { state: "Running", pid: 4242 } : undefined,
+    hostStop: (workload) =>
+      workload === "resident-host" ? Promise.reject(new Error("rpc down")) : undefined,
+  });
+  try {
+    const result = await applyOne(incomingRunManifest(), () => client, undefined, undefined, {
+      env,
+      workloadsDir,
+      getNodeBudgetGiB: () => 24,
+    });
+    expect(result.statusSection.conditions[0]?.reason).toBe("EvictStopFailed");
+    expect(hostStops).toEqual(["resident-host"]);
+    expect(stops).toEqual([]);
+    expect(starts).toEqual([]);
+  } finally {
+    temp.cleanup();
+  }
+});
+
+test("MK6: a clean Stopped ModelHost still gets the stop RPC because only stop sees a starting record", async () => {
+  const temp = makeTempRuntime();
+  const env = envForTemp(temp);
+  const workloadsDir = join(temp.devStorage, "workloads");
+  seedModelHostVictim(workloadsDir);
+  const state: WorkloadStateMap = new Map();
+  const { client, stops, starts, hostStops } = makeModelHostEvictClient(state, {
+    hostStatus: (workload) =>
+      workload === "resident-host" ? { state: "Stopped", pid: null } : undefined,
+    hostStop: (workload) => (workload === "resident-host" ? { ok: true, pid: null } : undefined),
+  });
+  try {
+    const result = await applyOne(incomingRunManifest(), () => client, undefined, undefined, {
+      env,
+      workloadsDir,
+      getNodeBudgetGiB: () => 24,
+    });
+    expect(result.statusSection.phase).toBe("Running");
+    expect(hostStops).toEqual(["resident-host"]);
+    expect(stops).toEqual([]);
+    expect(starts).toEqual(["incoming-run"]);
+  } finally {
+    temp.cleanup();
+  }
+});
+
+test("MK7: a torn-down starting record still verifies through the stop result", async () => {
+  const temp = makeTempRuntime();
+  const env = envForTemp(temp);
+  const workloadsDir = join(temp.devStorage, "workloads");
+  seedModelHostVictim(workloadsDir);
+  const state: WorkloadStateMap = new Map();
+  const { client, stops, starts, hostStops, callLog } = makeModelHostEvictClient(state, {
+    hostStatus: (workload) =>
+      workload === "resident-host" ? { state: "Stopped", pid: null } : undefined,
+    hostStop: (workload) => (workload === "resident-host" ? { ok: true, pid: 5151 } : undefined),
+  });
+  try {
+    const result = await applyOne(incomingRunManifest(), () => client, undefined, undefined, {
+      env,
+      workloadsDir,
+      getNodeBudgetGiB: () => 24,
+    });
+    expect(result.statusSection.phase).toBe("Running");
+    expect(hostStops).toEqual(["resident-host"]);
+    expect(stops).toEqual([]);
+    expect(starts).toEqual(["incoming-run"]);
+    const hostStopIdx = callLog.indexOf("hostStop:resident-host");
+    const startIdx = callLog.indexOf("start:incoming-run");
+    expect(hostStopIdx).toBeGreaterThanOrEqual(0);
+    expect(startIdx).toBeGreaterThan(hostStopIdx);
+  } finally {
+    temp.cleanup();
+  }
+});
+
+test("MK8: a ModelHost stop past its deadline fails with EvictStopTimedOut and releases the marker", async () => {
+  const temp = makeTempRuntime();
+  const env = envForTemp(temp);
+  const workloadsDir = join(temp.devStorage, "workloads");
+  const victimYaml = seedModelHostVictim(workloadsDir);
+  const state: WorkloadStateMap = new Map();
+  const { client, stops, starts, hostStops } = makeModelHostEvictClient(state, {
+    hostStatus: (workload) =>
+      workload === "resident-host" ? { state: "Running", pid: 4242 } : undefined,
+    hostStop: (workload) =>
+      workload === "resident-host" ? new Promise(() => undefined) : undefined,
+  });
+  try {
+    const result = await applyOne(incomingRunManifest(), () => client, undefined, undefined, {
+      env,
+      workloadsDir,
+      getNodeBudgetGiB: () => 24,
+      evictStopTimeoutMs: 50,
+    });
+    expect(result.statusSection.conditions[0]?.reason).toBe("EvictStopTimedOut");
+    expect(hostStops).toEqual(["resident-host"]);
+    expect(stops).toEqual([]);
+    expect(starts).toEqual([]);
+    expect(readWorkloadAnnotations(victimYaml)?.["llamactl.io/evicted-by"]).toBeUndefined();
+  } finally {
+    temp.cleanup();
+  }
+});
+
+test("F1: evicting a ModelRun whose listener pid is foreign is refused before any stop", async () => {
+  const temp = makeTempRuntime();
+  const env = envForTemp(temp);
+  const workloadsDir = join(temp.devStorage, "workloads");
+  saveWorkload(mkManifest("a", { port: 8182 }), workloadsDir);
+  const state: WorkloadStateMap = new Map([["a", { up: true, rel: "a.gguf", args: [] }]]);
+  const { client: rec, stops, starts } = makeModelHostEvictClient(state);
+  const client: WorkloadClient = {
+    ...rec,
+    serverStatus: {
+      query: (input) =>
+        input.workload === "a"
+          ? Promise.resolve({
+              state: "up",
+              pid: 1,
+              rel: "a.gguf",
+              extraArgs: [],
+              host: "127.0.0.1",
+              port: 8182,
+              binary: null,
+              endpoint: "http://127.0.0.1:8182",
+              foreign: true,
+              listenerPid: 999,
+            })
+          : rec.serverStatus.query(input),
+    },
+  };
+  try {
+    const result = await applyOne(
+      mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090 }),
+      () => client,
+      undefined,
+      undefined,
+      { env, workloadsDir, getNodeBudgetGiB: () => 32 },
+    );
+    expect(result.statusSection.conditions[0]?.reason).toBe("EvictTargetForeign");
+    expect(stops).toEqual([]);
+    expect(starts).toEqual([]);
+  } finally {
+    temp.cleanup();
+  }
+});
+
+test("W1: applyOneModelHost strips eviction annotations before the wire manifest reaches modelHostStart", async () => {
+  const temp = makeTempRuntime();
+  const env = envForTemp(temp);
+  const workloadsDir = join(temp.devStorage, "workloads");
+  const annotated = {
+    ...mkModelHostManifest("remote-annotated", { node: "mac-mini" }),
+    metadata: {
+      name: "remote-annotated",
+      annotations: {
+        "llamactl.io/evicted-by": "x",
+        "llamactl.io/evicted-at": "2026-11-09T00:00:00Z",
+      },
+    },
+  } as unknown as ModelHostManifest;
+  let recorded: ModelHostManifest | undefined;
+  const client: WorkloadClient = {
+    ...makeModelHostClient(),
+    modelHostStart: {
+      subscribe: (input, callbacks): UnsubscribableLike => {
+        recorded = input.manifest;
+        queueMicrotask(() => {
+          callbacks.onData({
+            type: "done",
+            result: { ok: true, pid: 777, state: "Running" },
+          });
+          callbacks.onComplete();
+        });
+        return { unsubscribe: () => undefined };
+      },
+    },
+  };
+  try {
+    const result = await applyOneModelHost(annotated, () => client, undefined, {
+      env,
+      workloadsDir,
+      getNodeBudgetGiB: () => 32,
+    });
+    expect(result.ok).toBe(true);
+    expect(recorded).toBeDefined();
+    expect(recorded !== undefined && "annotations" in recorded.metadata).toBe(false);
+  } finally {
+    temp.cleanup();
   }
 });
