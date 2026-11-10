@@ -185,6 +185,23 @@ function releasableSelfIdentity(command: string): {
   };
 }
 
+function unknownAfterTeardownIdentity(command: string): {
+  identity: PidIdentityDeps;
+  release: () => void;
+} {
+  let released = false;
+  return {
+    identity: {
+      processStartMs: (): number | null => (released ? null : 0),
+      processCommand: (): string => command,
+      probe: (): void => undefined,
+    },
+    release: (): void => {
+      released = true;
+    },
+  };
+}
+
 describe("server/modelhost", () => {
   test("persists inline manifest to workloadsDir before start", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-inline-"));
@@ -3364,6 +3381,89 @@ describe("llamacpp fork process identity (#516)", () => {
       });
       expect(stopped).toEqual({ ok: true, pid: impostor.pid });
       expect(existsSync(join(hostDir, "modelhost.starting"))).toBe(false);
+    } finally {
+      try {
+        impostor.kill("SIGKILL");
+      } catch {
+        // already gone
+      }
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("stopModelHost reports ok:false with 'pid identity unknown after teardown' when identity becomes unverifiable post-teardown (state path)", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-unknown-after-teardown-state-"));
+    const runtimeDir = join(tmp, "runtime");
+    const impostor = spawnImpostor("/bin/sleep", ["60"], {
+      stdio: "ignore",
+      argv0: FORK_BINARY_NAME,
+    });
+    try {
+      if (impostor.pid === undefined) throw new Error("impostor spawn failed");
+      const hostDir = seedLlamaRecord(runtimeDir, {
+        pid: impostor.pid,
+        binaryNames: [FORK_BINARY_NAME],
+      });
+      const { identity, release } = unknownAfterTeardownIdentity(FORK_CMDLINE);
+      const tornDown: number[] = [];
+      const result = await stopModelHost({
+        key: LLAMA_KEY,
+        runtimeDir,
+        identity,
+        teardown: (teardownPid) => {
+          tornDown.push(teardownPid);
+          release();
+          return Promise.resolve();
+        },
+      });
+      expect(result.ok).toBe(false);
+      expect(result.pid).toBe(impostor.pid);
+      expect(result.error).toBe("pid identity unknown after teardown");
+      expect(tornDown).toEqual([impostor.pid]);
+      expect(existsSync(join(hostDir, "modelhost.pid"))).toBe(true);
+      expect(existsSync(join(hostDir, "modelhost.state"))).toBe(true);
+    } finally {
+      try {
+        impostor.kill("SIGKILL");
+      } catch {
+        // already gone
+      }
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("stopModelHost starting path reports ok:false with 'pid identity unknown after teardown' when identity becomes unverifiable post-teardown", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-unknown-after-teardown-starting-"));
+    const runtimeDir = join(tmp, "runtime");
+    const impostor = spawnImpostor("/bin/sleep", ["60"], {
+      stdio: "ignore",
+      argv0: FORK_BINARY_NAME,
+    });
+    try {
+      if (impostor.pid === undefined) throw new Error("impostor spawn failed");
+      const hostDir = seedLlamaRecord(runtimeDir, {
+        pid: impostor.pid,
+        binaryNames: [FORK_BINARY_NAME],
+        starting: true,
+      });
+      const { identity, release } = unknownAfterTeardownIdentity(FORK_CMDLINE);
+      const startingPath = join(hostDir, "modelhost.starting");
+      const tornDown: number[] = [];
+      const stopped = await stopModelHost({
+        key: LLAMA_KEY,
+        runtimeDir,
+        identity,
+        teardown: (teardownPid) => {
+          tornDown.push(teardownPid);
+          release();
+          return Promise.resolve();
+        },
+      });
+      expect(stopped.ok).toBe(false);
+      expect(stopped.pid).toBe(impostor.pid);
+      expect(stopped.error).toBe("pid identity unknown after teardown");
+      expect(tornDown).toEqual([impostor.pid]);
+      expect(existsSync(startingPath)).toBe(true);
     } finally {
       try {
         impostor.kill("SIGKILL");
