@@ -1171,7 +1171,7 @@ describe("lease fencing", () => {
     expect(registry.acquire(W)).toMatchObject({ ok: false, reason: "Unloaded" });
   });
 
-  test("F9 already-loaded from reopen set — phase stays 'unloaded'", async () => {
+  test("F9 already-loaded from reopen set reopens the committed workload", async () => {
     const fake = startFakeOmlx({ apiKey: "test-key" });
     fake.state.models.get(ID)!.loaded = true;
     const registry = createResidencyLeases();
@@ -1189,7 +1189,7 @@ describe("lease fencing", () => {
     const loadResult = await client.load();
     expect(loadResult).toStrictEqual({ kind: "already-loaded", modelId: ID });
     expect(fake.counts.loadPosts).toBe(0);
-    expect(registry.snapshot(W).phase).toBe("unloaded");
-    expect(registry.acquire(W)).toMatchObject({ ok: false, reason: "Unloaded" });
+    expect(registry.snapshot(W).phase).toBe("open");
+    expect(registry.acquire(W).ok).toBe(true);
   });
 });

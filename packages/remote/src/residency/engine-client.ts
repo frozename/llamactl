@@ -395,12 +395,13 @@ async function runLoad(ctx: ClientCtx): Promise<NativeLoadResult> {
 async function runLoadWithLeases(ctx: ClientCtx): Promise<NativeLoadResult> {
   const result = await runLoad(ctx);
   const leases = ctx.leases;
-  if (
-    leases !== undefined &&
-    result.kind === "loaded" &&
-    registrySnapshot(leases.registry, leases.workload).phase === "unloaded"
-  ) {
-    const snap = registrySnapshot(leases.registry, leases.workload);
+  if (leases === undefined) {
+    return result;
+  }
+  // A single snapshot drives both the phase guard and the reopen epoch, so the
+  // reopen cannot race a phase change between two reads.
+  const snap = registrySnapshot(leases.registry, leases.workload);
+  if ((result.kind === "loaded" || result.kind === "already-loaded") && snap.phase === "unloaded") {
     leases.registry.reopen({ workload: leases.workload, epoch: snap.epoch });
   }
   return result;
