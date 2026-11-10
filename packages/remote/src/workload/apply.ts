@@ -180,7 +180,8 @@ export interface ApplyEvent {
     | "worker-start"
     | "worker-ready"
     | "worker-preflight"
-    | "gateway-pending";
+    | "gateway-pending"
+    | "evict-failed";
   message: string;
 }
 
@@ -911,6 +912,9 @@ interface ApplyOneOpts {
    * but does not close the race with a concurrent acquire; fencing is
    * deferred to the #278 lease composition. */
   sessionGate?: SessionUnloadGate;
+  /** Milliseconds to wait for a verified evict target to stop before
+   * failing the apply. Default 15_000 (15 seconds). */
+  evictStopTimeoutMs?: number;
 }
 
 interface SessionUnloadGate {
@@ -1043,31 +1047,115 @@ function parseEvictTargets(manifest: ModelRun): string[] {
     .filter((s) => s.length > 0);
 }
 
+class EvictDeadlineError extends Error {}
+
+async function withDeadline<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        reject(new EvictDeadlineError(`deadline ${String(ms)}ms exceeded`));
+      }, ms);
+    });
+    return await Promise.race([promise, deadline]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+const DEFAULT_EVICT_STOP_TIMEOUT_MS = 15_000;
+
+type EvictFailureReason =
+  | "EvictStatusUnknown"
+  | "EvictStopRefused"
+  | "EvictStopFailed"
+  | "EvictStopTimedOut"
+  | "EvictReleaseUnverified";
+
+interface EvictStopFailure {
+  ok: false;
+  target: string;
+  reason: EvictFailureReason;
+  message: string;
+}
+
+type EvictStopResult = { ok: true } | EvictStopFailure;
+
+function evictStopFailure(
+  manifest: ModelRun,
+  target: string,
+  reason: EvictFailureReason,
+  detail: string,
+): EvictStopFailure {
+  return {
+    ok: false,
+    target,
+    reason,
+    message: `${manifest.metadata.name}: eviction of '${target}' failed (${reason}): ${detail}`,
+  };
+}
+
+/** Stops one victim that was observed up and verifies its release.
+ * Returns null once the victim is confirmed down. */
+async function stopAndVerifyEvictTarget(
+  manifest: ModelRun,
+  client: WorkloadClient,
+  target: string,
+  timeoutMs: number,
+): Promise<EvictStopFailure | null> {
+  try {
+    const stopResult = await withDeadline(
+      client.serverStop.mutate({ workload: target, graceSeconds: 5 }),
+      timeoutMs,
+    );
+    const stopped = (stopResult as { stopped?: boolean } | undefined)?.stopped;
+    if (stopped === false) {
+      return evictStopFailure(manifest, target, "EvictStopRefused", "refused to stop");
+    }
+    const postStatus = await withDeadline(
+      client.serverStatus.query({ workload: target }),
+      timeoutMs,
+    );
+    if (postStatus.state === "up") {
+      return evictStopFailure(manifest, target, "EvictReleaseUnverified", "still up after stop");
+    }
+    return null;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const reason = err instanceof EvictDeadlineError ? "EvictStopTimedOut" : "EvictStopFailed";
+    return evictStopFailure(manifest, target, reason, message);
+  }
+}
+
 async function stopEvictTargets(
   manifest: ModelRun,
   client: WorkloadClient,
   evictTargets: readonly string[],
   onEvent: ((e: ApplyEvent) => void) | undefined,
-): Promise<void> {
+  lifecycle: ClaimLifecycle,
+  timeoutMs: number,
+): Promise<EvictStopResult | null> {
   for (const target of evictTargets) {
+    let targetStatus: { state: string };
     try {
-      const targetStatus = await client.serverStatus.query({ workload: target });
-      if (targetStatus.state !== "up") {
-        onEvent?.({
-          type: "skipped",
-          message: `${manifest.metadata.name}: eviction target ${target} already stopped`,
-        });
-        continue;
-      }
-      onEvent?.({ type: "stop", message: `${manifest.metadata.name}: evicting ${target}` });
-      await client.serverStop.mutate({ workload: target, graceSeconds: 5 });
-    } catch {
+      targetStatus = await withDeadline(client.serverStatus.query({ workload: target }), timeoutMs);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return evictStopFailure(manifest, target, "EvictStatusUnknown", message);
+    }
+    if (targetStatus.state !== "up") {
       onEvent?.({
         type: "skipped",
-        message: `${manifest.metadata.name}: eviction target ${target} not found`,
+        message: `${manifest.metadata.name}: eviction target ${target} already stopped`,
       });
+      continue;
     }
+    onEvent?.({ type: "stop", message: `${manifest.metadata.name}: evicting ${target}` });
+    lifecycle.destructive = true;
+    const failure = await stopAndVerifyEvictTarget(manifest, client, target, timeoutMs);
+    if (failure !== null) return failure;
   }
+  return null;
 }
 
 interface ConvergeServerContext {
@@ -1313,6 +1401,57 @@ function evictRefusalResult(
           { type: "Applied", status: "True", reason: "unchanged", lastTransitionTime: now },
           {
             type: "EvictRefused",
+            status: "False",
+            reason,
+            message: error,
+            lastTransitionTime: now,
+          },
+        ],
+      },
+    };
+  }
+  return {
+    action: "pending",
+    error,
+    statusSection: {
+      phase: "Failed",
+      serverPid: null,
+      endpoint: null,
+      lastTransitionTime: now,
+      conditions: [
+        {
+          type: "Applied",
+          status: "False",
+          reason,
+          message: error,
+          lastTransitionTime: now,
+        },
+      ],
+    },
+  };
+}
+
+function evictFailureResult(
+  ctx: ConvergeServerContext,
+  target: string,
+  message: string,
+  reason: string,
+): ApplyResult {
+  const { now, status, matches } = ctx;
+  const error = `eviction of '${target}' did not complete (${reason}): ${message}; replacement was not started`;
+  if (ctx.matches) {
+    return {
+      action: "unchanged",
+      error,
+      statusSection: {
+        phase: "Running",
+        serverPid: status.pid,
+        endpoint: status.endpoint,
+        lastTransitionTime: now,
+        conditions: [
+          { type: "Applied", status: "True", reason: "unchanged", lastTransitionTime: now },
+          {
+            type: "EvictFailed",
             status: "False",
             reason,
             message: error,
@@ -1761,8 +1900,19 @@ async function convergeClaimedServer(
   // so nothing destructive has run yet and the finally releases the claim.
   const gateRefusal = recheckEvictSessionGates(ctx, verifiedTargets);
   if (gateRefusal !== null) return gateRefusal;
-  if (verifiedTargets.length > 0) lifecycle.destructive = true;
-  await stopEvictTargets(manifest, client, verifiedTargets, onEvent);
+  const timeoutMs = ctx.opts?.evictStopTimeoutMs ?? DEFAULT_EVICT_STOP_TIMEOUT_MS;
+  const evictFailure = await stopEvictTargets(
+    manifest,
+    client,
+    verifiedTargets,
+    onEvent,
+    lifecycle,
+    timeoutMs,
+  );
+  if (evictFailure !== null && !evictFailure.ok) {
+    onEvent?.({ type: "evict-failed", message: evictFailure.message });
+    return evictFailureResult(ctx, evictFailure.target, evictFailure.message, evictFailure.reason);
+  }
 
   if (matches) {
     onEvent?.({

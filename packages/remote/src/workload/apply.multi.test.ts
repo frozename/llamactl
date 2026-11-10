@@ -19,7 +19,13 @@ import {
 } from "../safe-fs.js";
 import { createTargetAdmissionAuthority, type TargetAdmissionAuthority } from "./admission.js";
 import * as remoteAdmission from "./admission.js";
-import { applyOne, applyOneModelHost, type ApplyResult, type WorkloadClient } from "./apply.js";
+import {
+  type ApplyEvent,
+  applyOne,
+  applyOneModelHost,
+  type ApplyResult,
+  type WorkloadClient,
+} from "./apply.js";
 import { saveModelHost } from "./modelhost-store.js";
 import { loadWorkloadByNameAny, saveWorkload } from "./store.js";
 
@@ -219,6 +225,50 @@ type SessionGate = {
 
 function makeSessionGate(checkUnload: (workload: string) => SessionGateCheck): SessionGate {
   return { checkUnload };
+}
+
+// DF-02 (#275): a fault handler that returns a promise replaces the healthy
+// behavior for that one workload; returning undefined delegates to the
+// recording client. Fault paths still push into the shared stops array
+// exactly once so call counts stay honest.
+function makeEvictFaultClient(
+  state: WorkloadStateMap,
+  faults: {
+    stop?: (workload: string) => Promise<unknown> | undefined;
+    status?: (workload: string) => ReturnType<WorkloadClient["serverStatus"]["query"]> | undefined;
+  } = {},
+): { client: WorkloadClient; stops: string[]; starts: string[] } {
+  const { client: rec, stops, starts } = makeRecordingClient(state);
+  const client: WorkloadClient = {
+    ...rec,
+    serverStatus: {
+      query: (input) => faults.status?.(input.workload) ?? rec.serverStatus.query(input),
+    },
+    serverStop: {
+      mutate: (input) => {
+        const fault = faults.stop?.(input.workload);
+        if (fault !== undefined) {
+          stops.push(input.workload);
+          return fault;
+        }
+        return rec.serverStop.mutate(input);
+      },
+    },
+  };
+  return { client, stops, starts };
+}
+
+function makeEventRecorder(): {
+  events: { type: string; message: string }[];
+  onEvent: (event: ApplyEvent) => void;
+} {
+  const events: { type: string; message: string }[] = [];
+  return {
+    events,
+    onEvent: (event: ApplyEvent): void => {
+      events.push({ type: event.type, message: event.message });
+    },
+  };
 }
 
 test("disabled manifest stops the server if running and reports Disabled", async () => {
@@ -1902,6 +1952,327 @@ test("#520: the pre-stop re-check covers every evict target, not just the first"
     expect(stops).toEqual([]);
     expect(starts).toEqual([]);
     expect(calls).toEqual(["a", "c", "a", "c"]);
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+// DF-02 (#275): verified eviction. Every victim manifest is saved into
+// workloadsDir so authorizeEvictTargets verifies it, and each victim gets a
+// port distinct from the incoming 8090 so checkPortCollision cannot
+// short-circuit the apply.
+test("DF-02: a refused evict stop fails the apply before the replacement starts", async () => {
+  const state: WorkloadStateMap = new Map([["a", { up: true, rel: "a.gguf", args: [] }]]);
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-df02-stop-refused-"));
+  saveWorkload(mkManifest("a", { port: 8182 }), workloadsDir);
+  const { client, stops, starts } = makeEvictFaultClient(state, {
+    stop: (workload) => (workload === "a" ? Promise.resolve({ stopped: false }) : undefined),
+  });
+  const { events, onEvent } = makeEventRecorder();
+  try {
+    const result = await applyOne(
+      mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090 }),
+      () => client,
+      onEvent,
+      undefined,
+      { workloadsDir, getNodeBudgetGiB: () => 32 },
+    );
+    expect(starts).toEqual([]);
+    expect(stops).toEqual(["a"]);
+    expect(state.has("a")).toBe(true);
+    expect(state.has("b")).toBe(false);
+    expect(result.action).toBe("pending");
+    expect(result.statusSection.phase).toBe("Failed");
+    expect(result.statusSection.conditions[0]?.reason).toBe("EvictStopRefused");
+    expect(result.error).toMatch(/evict/i);
+    expect(result.error).toContain("a");
+    expect(events.some((e) => e.message.includes("a not found"))).toBe(false);
+    expect(events.some((e) => e.type === "evict-failed")).toBe(true);
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("DF-02: a throwing evict stop fails the apply with EvictStopFailed", async () => {
+  const state: WorkloadStateMap = new Map([["a", { up: true, rel: "a.gguf", args: [] }]]);
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-df02-stop-threw-"));
+  saveWorkload(mkManifest("a", { port: 8182 }), workloadsDir);
+  const { client, stops, starts } = makeEvictFaultClient(state, {
+    stop: (workload) => (workload === "a" ? Promise.reject(new Error("rpc boom")) : undefined),
+  });
+  const { onEvent } = makeEventRecorder();
+  try {
+    const result = await applyOne(
+      mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090 }),
+      () => client,
+      onEvent,
+      undefined,
+      { workloadsDir, getNodeBudgetGiB: () => 32 },
+    );
+    expect(starts).toEqual([]);
+    expect(stops).toEqual(["a"]);
+    expect(state.has("a")).toBe(true);
+    expect(result.action).toBe("pending");
+    expect(result.statusSection.phase).toBe("Failed");
+    expect(result.statusSection.conditions[0]?.reason).toBe("EvictStopFailed");
+    expect(result.error).toMatch(/evict/i);
+    expect(result.error).toContain("rpc boom");
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("DF-02: an evict stop that leaves the victim up fails with EvictReleaseUnverified", async () => {
+  const state: WorkloadStateMap = new Map([["a", { up: true, rel: "a.gguf", args: [] }]]);
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-df02-release-unverified-"));
+  saveWorkload(mkManifest("a", { port: 8182 }), workloadsDir);
+  const { client, stops, starts } = makeEvictFaultClient(state, {
+    // stopped:true, but "a" stays in state so the follow-up status still says up.
+    stop: (workload) => (workload === "a" ? Promise.resolve({ stopped: true }) : undefined),
+  });
+  const { onEvent } = makeEventRecorder();
+  try {
+    const result = await applyOne(
+      mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090 }),
+      () => client,
+      onEvent,
+      undefined,
+      { workloadsDir, getNodeBudgetGiB: () => 32 },
+    );
+    expect(starts).toEqual([]);
+    expect(stops).toEqual(["a"]);
+    expect(state.has("a")).toBe(true);
+    expect(result.action).toBe("pending");
+    expect(result.statusSection.phase).toBe("Failed");
+    expect(result.statusSection.conditions[0]?.reason).toBe("EvictReleaseUnverified");
+    expect(result.error).toMatch(/evict/i);
+    expect(result.error).toContain("a");
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("DF-02: an unreadable evict target status fails with EvictStatusUnknown", async () => {
+  const state: WorkloadStateMap = new Map([["a", { up: true, rel: "a.gguf", args: [] }]]);
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-df02-status-unknown-"));
+  saveWorkload(mkManifest("a", { port: 8182 }), workloadsDir);
+  const { client, stops, starts } = makeEvictFaultClient(state, {
+    status: (workload) =>
+      workload === "a" ? Promise.reject(new Error("status rpc boom")) : undefined,
+  });
+  const { onEvent } = makeEventRecorder();
+  try {
+    const result = await applyOne(
+      mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090 }),
+      () => client,
+      onEvent,
+      undefined,
+      { workloadsDir, getNodeBudgetGiB: () => 32 },
+    );
+    expect(starts).toEqual([]);
+    expect(stops).toEqual([]);
+    expect(result.action).toBe("pending");
+    expect(result.statusSection.phase).toBe("Failed");
+    expect(result.statusSection.conditions[0]?.reason).toBe("EvictStatusUnknown");
+    expect(result.error).toMatch(/evict/i);
+    expect(result.error).toContain("a");
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("DF-02: EvictStatusUnknown releases the claim and a healthy retry starts", async () => {
+  const targetAdmission = createTargetAdmissionAuthority();
+  const state: WorkloadStateMap = new Map([["a", { up: true, rel: "a.gguf", args: [] }]]);
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-df02-claim-release-"));
+  saveWorkload(mkManifest("a", { port: 8182 }), workloadsDir);
+  const failing = makeEvictFaultClient(state, {
+    status: (workload) =>
+      workload === "a" ? Promise.reject(new Error("status rpc boom")) : undefined,
+  });
+  const incoming = mkManifest("b", {
+    annotations: { "llamactl.io/evict": "a" },
+    port: 8090,
+  });
+  const { onEvent } = makeEventRecorder();
+  const opts = { workloadsDir, getNodeBudgetGiB: (): number => 32, targetAdmission };
+  try {
+    const result = await applyOne(incoming, () => failing.client, onEvent, undefined, opts);
+    expect(result.action).toBe("pending");
+    expect(result.statusSection.phase).toBe("Failed");
+    expect(result.statusSection.conditions[0]?.reason).toBe("EvictStatusUnknown");
+    expect(result.error).toMatch(/evict/i);
+    expect(failing.starts).toEqual([]);
+    expect(failing.stops).toEqual([]);
+    // Nothing destructive ran, so the claim was released, not marked uncertain.
+    expect(targetAdmission.snapshot("local")).toHaveLength(0);
+
+    const healthy = makeRecordingClient(state);
+    const retry = await applyOne(incoming, () => healthy.client, undefined, undefined, opts);
+    expect(retry.action).toBe("started");
+    expect(healthy.starts).toContain("b");
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("DF-02: a refused evict stop marks the admission claim uncertain", async () => {
+  const targetAdmission = createTargetAdmissionAuthority();
+  const state: WorkloadStateMap = new Map([["a", { up: true, rel: "a.gguf", args: [] }]]);
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-df02-claim-uncertain-"));
+  saveWorkload(mkManifest("a", { port: 8182 }), workloadsDir);
+  const { client, stops, starts } = makeEvictFaultClient(state, {
+    stop: (workload) => (workload === "a" ? Promise.resolve({ stopped: false }) : undefined),
+  });
+  const { onEvent } = makeEventRecorder();
+  try {
+    const result = await applyOne(
+      mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090 }),
+      () => client,
+      onEvent,
+      undefined,
+      { workloadsDir, getNodeBudgetGiB: () => 32, targetAdmission },
+    );
+    expect(starts).toEqual([]);
+    expect(stops).toEqual(["a"]);
+    expect(result.action).toBe("pending");
+    expect(result.statusSection.phase).toBe("Failed");
+    expect(result.statusSection.conditions[0]?.reason).toBe("EvictStopRefused");
+    const snapshot = targetAdmission.snapshot("local");
+    expect(snapshot).toHaveLength(1);
+    expect(snapshot[0]?.state).toBe("uncertain");
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("DF-02: the first failed evict stop leaves later victims untouched", async () => {
+  const state: WorkloadStateMap = new Map([
+    ["a", { up: true, rel: "a.gguf", args: [] }],
+    ["v2", { up: true, rel: "v2.gguf", args: [] }],
+  ]);
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-df02-multi-victim-"));
+  saveWorkload(mkManifest("a", { port: 8182 }), workloadsDir);
+  saveWorkload(mkManifest("v2", { port: 8183 }), workloadsDir);
+  const { client, stops, starts } = makeEvictFaultClient(state, {
+    stop: (workload) => (workload === "a" ? Promise.resolve({ stopped: false }) : undefined),
+  });
+  const { onEvent } = makeEventRecorder();
+  try {
+    const result = await applyOne(
+      mkManifest("b", { annotations: { "llamactl.io/evict": "a,v2" }, port: 8090 }),
+      () => client,
+      onEvent,
+      undefined,
+      { workloadsDir, getNodeBudgetGiB: () => 32 },
+    );
+    expect(stops).toEqual(["a"]);
+    expect(starts).toEqual([]);
+    expect(state.has("v2")).toBe(true);
+    expect(state.has("b")).toBe(false);
+    expect(result.action).toBe("pending");
+    expect(result.statusSection.phase).toBe("Failed");
+    expect(result.statusSection.conditions[0]?.reason).toBe("EvictStopRefused");
+    expect(result.error).toMatch(/evict/i);
+    expect(result.error).toContain("a");
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("DF-02: a failed evict on a matching running server reports EvictFailed and stays Running", async () => {
+  const state: WorkloadStateMap = new Map([
+    ["a", { up: true, rel: "a.gguf", args: [] }],
+    ["v", { up: true, rel: "v.gguf", args: [] }],
+  ]);
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-df02-matching-evict-"));
+  saveWorkload(mkManifest("v", { port: 8182 }), workloadsDir);
+  const { client, stops, starts } = makeEvictFaultClient(state, {
+    stop: (workload) => (workload === "v" ? Promise.resolve({ stopped: false }) : undefined),
+  });
+  const { onEvent } = makeEventRecorder();
+  try {
+    const result = await applyOne(
+      mkManifest("a", { annotations: { "llamactl.io/evict": "v" } }),
+      () => client,
+      onEvent,
+      undefined,
+      { workloadsDir, getNodeBudgetGiB: () => 32 },
+    );
+    expect(stops).toEqual(["v"]);
+    expect(starts).toEqual([]);
+    expect(result.action).toBe("unchanged");
+    expect(result.statusSection.phase).toBe("Running");
+    expect(result.error).toMatch(/evict/i);
+    const evictFailed = result.statusSection.conditions.find((c) => c.type === "EvictFailed");
+    expect(evictFailed?.status).toBe("False");
+    expect(evictFailed?.reason).toBe("EvictStopRefused");
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("DF-02: an evict stop past its deadline fails with EvictStopTimedOut", async () => {
+  const state: WorkloadStateMap = new Map([["a", { up: true, rel: "a.gguf", args: [] }]]);
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-df02-stop-timeout-"));
+  saveWorkload(mkManifest("a", { port: 8182 }), workloadsDir);
+  const { client, stops, starts } = makeEvictFaultClient(state, {
+    stop: (workload) =>
+      workload === "a"
+        ? new Promise((resolve) => {
+            setTimeout(() => {
+              state.delete("a");
+              resolve({ stopped: true });
+            }, 200);
+          })
+        : undefined,
+  });
+  const { onEvent } = makeEventRecorder();
+  const opts = {
+    workloadsDir,
+    getNodeBudgetGiB: (): number => 32,
+    evictStopTimeoutMs: 25,
+  };
+  try {
+    const result = await applyOne(
+      mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090 }),
+      () => client,
+      onEvent,
+      undefined,
+      opts,
+    );
+    expect(starts).toEqual([]);
+    expect(stops).toEqual(["a"]);
+    expect(state.has("b")).toBe(false);
+    expect(result.action).toBe("pending");
+    expect(result.statusSection.phase).toBe("Failed");
+    expect(result.statusSection.conditions[0]?.reason).toBe("EvictStopTimedOut");
+    expect(result.error).toMatch(/evict/i);
+  } finally {
+    // The 200ms stop resolves after the 25ms deadline; let it drain.
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("DF-02: an evict victim already down is skipped without a stop call", async () => {
+  const state: WorkloadStateMap = new Map();
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-df02-victim-down-"));
+  saveWorkload(mkManifest("a", { port: 8182 }), workloadsDir);
+  const { client, stops, starts } = makeRecordingClient(state);
+  const { onEvent } = makeEventRecorder();
+  try {
+    const result = await applyOne(
+      mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090 }),
+      () => client,
+      onEvent,
+      undefined,
+      { workloadsDir, getNodeBudgetGiB: () => 32 },
+    );
+    expect(result.action).toBe("started");
+    expect(stops).toEqual([]);
+    expect(starts).toEqual(["b"]);
+    expect(state.has("b")).toBe(true);
   } finally {
     rmSync(workloadsDir, { recursive: true, force: true });
   }
