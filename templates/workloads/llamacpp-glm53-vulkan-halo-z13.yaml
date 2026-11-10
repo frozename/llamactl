@@ -21,7 +21,7 @@
 # Resources are derived, not measured: 112 GiB is 109.46 GiB weights plus
 # KV/compute headroom; the author's 120 GiB pool left 7-9 GiB [U].
 #
-# --spec-draft-vocab points at halo-configs-16da7de2a165/glm-dv-65536.bin
+# --spec-draft-vocab points at halo-configs-16da7de2a165/configs/glm/glm-dv-65536.bin
 # and is absolute because llamacpp.ts resolves only
 # -md/--model-draft/--spec-draft-model/--dspark against the models dir.
 # KV stays f16 (no -ctk/-ctv). Sampling is client-side: temp 1.0,
@@ -91,5 +91,5 @@ spec:
     - --spec-draft-sampling
     - probabilistic
     - --spec-draft-vocab
-    - /home/alex/strix-halo-bench/runtimes/halo-configs-16da7de2a165/glm-dv-65536.bin
+    - /home/alex/strix-halo-bench/runtimes/halo-configs-16da7de2a165/configs/glm/glm-dv-65536.bin
   restartPolicy: Never

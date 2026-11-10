@@ -25,7 +25,7 @@ import {
 const HALO_BINARY =
   "/home/alex/strix-halo-bench/runtimes/llama.cpp-halo-529ac893e754-16da7de2a165/bin/llama-server";
 const HALO_GLM_VOCAB =
-  "/home/alex/strix-halo-bench/runtimes/halo-configs-16da7de2a165/glm-dv-65536.bin";
+  "/home/alex/strix-halo-bench/runtimes/halo-configs-16da7de2a165/configs/glm/glm-dv-65536.bin";
 const HALO_MIMO_VOCAB =
   "/home/alex/strix-halo-bench/runtimes/halo-configs-16da7de2a165/configs/mimo/mimo-dv-65536.bin";
 const B12206_HIP_BINARY =

@@ -86,7 +86,7 @@ const EXPECTED_SPEC_HASHES: Readonly<Record<string, string>> = {
   "llamacpp-glm53-hip-b12206-z13.yaml":
     "84795817aab9bb19599ce145a6aa671987d6b420232cff6566e0c2ed18712647",
   "llamacpp-glm53-vulkan-halo-z13.yaml":
-    "523738beb6c72e586f5e74a1c6721474a47ae3beb9fc2053738073cafa8a9340",
+    "0b4ea19754488de5490cc797499a4bdbc6c7df4d319c9acfa734a7daf0217c21",
   "llamacpp-mimo-m-v1-t06-z13.yaml":
     "86dbab471d873882201f49362a514e293aa5fe95b75d007d6abb4bbc5e8eee9a",
   "llamacpp-mimo26-bpw25-vulkan-b12206-z13.yaml":
