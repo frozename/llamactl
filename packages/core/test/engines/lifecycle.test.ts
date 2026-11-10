@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { type ChildProcess, spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -191,4 +191,25 @@ describe("gracefulShutdown SIGKILL escalation", () => {
       }
     }
   });
+});
+
+describe("gracefulShutdown exit confirmation", () => {
+  test("rejects when the process is still alive after the SIGKILL wait", async () => {
+    // Every liveness probe reports alive and every signal is a no-op, so the
+    // pid survives SIGKILL past KILL_WAIT_MS — shutdown must not resolve as
+    // if the process were confirmed gone.
+    const killSpy = spyOn(process, "kill").mockImplementation(() => true);
+    let caught: unknown;
+    try {
+      await gracefulShutdown(424242, 50);
+    } catch (err) {
+      caught = err;
+    } finally {
+      killSpy.mockRestore();
+    }
+    expect(caught).toBeInstanceOf(Error);
+    if (caught instanceof Error) {
+      expect(caught.message).toContain("still alive");
+    }
+  }, 20000);
 });

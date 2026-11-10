@@ -2645,7 +2645,7 @@ test("W1: applyOneModelHost strips eviction annotations before the wire manifest
   const temp = makeTempRuntime();
   const env = envForTemp(temp);
   const workloadsDir = join(temp.devStorage, "workloads");
-  const annotated = {
+  const annotated: ModelHostManifest = {
     ...mkModelHostManifest("remote-annotated", { node: "mac-mini" }),
     metadata: {
       name: "remote-annotated",
@@ -2654,7 +2654,7 @@ test("W1: applyOneModelHost strips eviction annotations before the wire manifest
         "llamactl.io/evicted-at": "2026-11-09T00:00:00Z",
       },
     },
-  } as unknown as ModelHostManifest;
+  };
   let recorded: ModelHostManifest | undefined;
   const client: WorkloadClient = {
     ...makeModelHostClient(),

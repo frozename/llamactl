@@ -29,6 +29,7 @@ import {
 } from "@llamactl/core/kvstore";
 import { omitUndefined } from "@llamactl/core/object";
 import {
+  isRecordedPidGone,
   type PidIdentityDeps,
   type SignalIdentity,
   verifyPidFile,
@@ -1052,7 +1053,23 @@ async function stopStartingRecord(
           pid,
           teardownIdentity(recordPath, opts.identity, identity.expectCommand),
         ));
-    await teardown(starting.pid, opts.graceSeconds);
+    try {
+      await teardown(starting.pid, opts.graceSeconds);
+    } catch {
+      // A resolved or thrown teardown is not proof of release; the identity
+      // re-check below is authoritative.
+    }
+    const released = verifyPidFile(recordPath, starting.pid, identity);
+    if (!isRecordedPidGone(released)) {
+      return {
+        ok: false,
+        pid: starting.pid,
+        error:
+          released === "alive"
+            ? "process still alive after teardown"
+            : "pid identity unknown after teardown",
+      };
+    }
   }
   removeModelHostStarting(opts.key, resolved);
   return { ok: true, pid: starting.pid };
@@ -1080,7 +1097,23 @@ export async function stopModelHost(opts: StopModelHostOptions): Promise<StopMod
           pid,
           teardownIdentity(recordPath, opts.identity, identity.expectCommand),
         ));
-    await teardown(state.pid, opts.graceSeconds);
+    try {
+      await teardown(state.pid, opts.graceSeconds);
+    } catch {
+      // A resolved or thrown teardown is not proof of release; the identity
+      // re-check below is authoritative.
+    }
+    const released = verifyPidFile(recordPath, state.pid, identity);
+    if (!isRecordedPidGone(released)) {
+      return {
+        ok: false,
+        pid: state.pid,
+        error:
+          released === "alive"
+            ? "process still alive after teardown"
+            : "pid identity unknown after teardown",
+      };
+    }
   }
   removeModelHostState(opts.key, resolved);
   return { ok: true, pid: state.pid };

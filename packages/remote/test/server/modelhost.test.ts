@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { EngineBootEnv } from "../../../core/src/engines/types.js";
+import type { PidIdentityDeps } from "../../../core/src/pidIdentity.js";
 
 import {
   recordModelHostOomKill,
@@ -138,6 +139,49 @@ async function settleWithin<T>(promise: Promise<T>): Promise<T | "timed-out"> {
   } finally {
     clearTimeout(timer);
   }
+}
+
+// A teardown stand-in that really kills the recorded impostor and resolves
+// only once the pid is gone, so the post-teardown identity check observes
+// the same ESRCH a production teardown produces.
+function killTeardown(proc: ReturnType<typeof spawnImpostor>): (pid: number) => Promise<void> {
+  return (pid) => {
+    proc.kill("SIGKILL");
+    return waitFor(() => {
+      try {
+        process.kill(pid, 0);
+        return false;
+      } catch {
+        return true;
+      }
+    }, "impostor exit");
+  };
+}
+
+// These tests record this test process as the host pid — it cannot be
+// killed — so the injected probe reports it gone once teardown ran,
+// standing in for the confirmed release a real teardown produces.
+function releasableSelfIdentity(command: string): {
+  identity: PidIdentityDeps;
+  release: () => void;
+} {
+  let released = false;
+  return {
+    identity: {
+      processStartMs: () => 0,
+      processCommand: () => command,
+      probe: (): void => {
+        if (released) {
+          const err: NodeJS.ErrnoException = new Error(" ESRCH");
+          err.code = "ESRCH";
+          throw err;
+        }
+      },
+    },
+    release: (): void => {
+      released = true;
+    },
+  };
 }
 
 describe("server/modelhost", () => {
@@ -656,12 +700,13 @@ describe("server/modelhost", () => {
         probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
       });
 
+      const kill = killTeardown(impostor);
       const result = await stopModelHost({
         key: { name: "mlx-host-server" },
         runtimeDir,
         teardown: (pid) => {
           tornDown.push(pid);
-          return Promise.resolve();
+          return kill(pid);
         },
       });
 
@@ -1378,12 +1423,13 @@ describe("server/modelhost", () => {
       const pid = impostor.pid;
       seedImpostorSidecar(runtimeDir, pid, false);
       const tornDown: number[] = [];
+      const kill = killTeardown(impostor);
       const result = await stopModelHost({
         key: { name: "mlx-host-server" },
         runtimeDir,
         teardown: (teardownPid) => {
           tornDown.push(teardownPid);
-          return Promise.resolve();
+          return kill(teardownPid);
         },
       });
 
@@ -1543,12 +1589,13 @@ describe("server/modelhost", () => {
 
       seedStrataSidecar(matched.pid);
       const tornDown: number[] = [];
+      const kill = killTeardown(matched);
       const okResult = await stopModelHost({
         key: { name: "strata-host-server" },
         runtimeDir,
         teardown: (pid) => {
           tornDown.push(pid);
-          return Promise.resolve();
+          return kill(pid);
         },
       });
       expect(okResult.ok).toBe(true);
@@ -1617,12 +1664,13 @@ describe("server/modelhost", () => {
 
       seedLibosmosSidecar(matched.pid);
       const tornDown: number[] = [];
+      const kill = killTeardown(matched);
       const okResult = await stopModelHost({
         key: { name: "libosmos-host-server" },
         runtimeDir,
         teardown: (pid) => {
           tornDown.push(pid);
-          return Promise.resolve();
+          return kill(pid);
         },
       });
       expect(okResult.ok).toBe(true);
@@ -1779,10 +1827,7 @@ describe("server/modelhost", () => {
     const key = { name: "mlx-host-server" };
     // A running oMLX server sets its own process title, so ps prints
     // `omlx-server` plus padding instead of the `omlx` launcher name.
-    const identity = {
-      processStartMs: (): number => 0,
-      processCommand: (): string => "omlx-server                ",
-    };
+    const { identity, release } = releasableSelfIdentity("omlx-server                ");
     try {
       seedImpostorSidecar(runtimeDir, process.pid, false);
       expect(statusModelHost({ key, runtimeDir, identity })).toEqual({
@@ -1796,6 +1841,7 @@ describe("server/modelhost", () => {
         identity,
         teardown: (teardownPid) => {
           tornDown.push(teardownPid);
+          release();
           return Promise.resolve();
         },
       });
@@ -1842,6 +1888,46 @@ describe("server/modelhost", () => {
       } catch {
         // already gone
       }
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("stopModelHost keeps state and reports failure while the process survives teardown", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-survives-"));
+    const runtimeDir = join(tmp, "runtime");
+    const key = { name: "mlx-host-server" };
+    // The injected probe never throws, so the recorded pid verifies alive
+    // before AND after teardown: a resolved teardown is not proof of release,
+    // and the record must survive so status keeps reporting a live host.
+    const identity = {
+      processStartMs: (): number => 0,
+      processCommand: (): string => "omlx serve --port 8094",
+      probe: (): void => undefined,
+    };
+    try {
+      const hostDir = seedImpostorSidecar(runtimeDir, process.pid, false);
+      const tornDown: number[] = [];
+      const result = await stopModelHost({
+        key,
+        runtimeDir,
+        identity,
+        teardown: (pid) => {
+          tornDown.push(pid);
+          return Promise.resolve();
+        },
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.pid).toBe(process.pid);
+      expect(result.error).toContain("still alive");
+      expect(tornDown).toEqual([process.pid]);
+      expect(existsSync(join(hostDir, "modelhost.pid"))).toBe(true);
+      expect(existsSync(join(hostDir, "modelhost.state"))).toBe(true);
+      expect(statusModelHost({ key, runtimeDir, identity })).toEqual({
+        state: "Running",
+        pid: process.pid,
+      });
+    } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
   });
@@ -2059,12 +2145,13 @@ describe("server/modelhost", () => {
       });
       await waitFor(() => spawn.mock.calls.length === 1, "spawn");
 
+      const kill = killTeardown(impostor);
       const result = await stopModelHost({
         key: { name: "mlx-host-server" },
         runtimeDir,
         teardown: (pid) => {
           tornDown.push(pid);
-          return Promise.resolve();
+          return kill(pid);
         },
       });
 
@@ -2146,12 +2233,13 @@ describe("server/modelhost", () => {
       if (impostor.pid === undefined) throw new Error("impostor spawn failed");
       const hostDir = seedStartingRecord(runtimeDir, impostor.pid, "seeded-hash");
       const tornDown: number[] = [];
+      const kill = killTeardown(impostor);
       const result = await stopModelHost({
         key: { name: "mlx-host-server" },
         runtimeDir,
         teardown: (pid) => {
           tornDown.push(pid);
-          return Promise.resolve();
+          return kill(pid);
         },
       });
 
@@ -2560,7 +2648,7 @@ describe("llamacpp fork process identity (#516)", () => {
   test("status and stop verify a fork pid against the record's binaryNames", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-fork-stop-"));
     const runtimeDir = join(tmp, "runtime");
-    const identity = forkIdentity(FORK_CMDLINE);
+    const { identity, release } = releasableSelfIdentity(FORK_CMDLINE);
     try {
       const hostDir = seedLlamaRecord(runtimeDir, {
         pid: process.pid,
@@ -2577,6 +2665,7 @@ describe("llamacpp fork process identity (#516)", () => {
         identity,
         teardown: (pid) => {
           tornDown.push(pid);
+          release();
           return Promise.resolve();
         },
       });
@@ -2597,13 +2686,15 @@ describe("llamacpp fork process identity (#516)", () => {
         binaryNames: [FORK_BINARY_NAME],
         starting: true,
       });
+      const { identity, release } = releasableSelfIdentity(FORK_CMDLINE);
       const tornDown: number[] = [];
       const stopped = await stopModelHost({
         key: LLAMA_KEY,
         runtimeDir,
-        identity: forkIdentity(FORK_CMDLINE),
+        identity,
         teardown: (pid) => {
           tornDown.push(pid);
+          release();
           return Promise.resolve();
         },
       });
@@ -2988,7 +3079,7 @@ describe("llamacpp fork process identity (#516)", () => {
 
       // The stock argv0 still verifies against the engine default.
       seedLlamaRecord(runtimeDir, { pid: process.pid });
-      const stockDeps = forkIdentity(STOCK_CMDLINE);
+      const { identity: stockDeps, release: releaseStock } = releasableSelfIdentity(STOCK_CMDLINE);
       expect(statusModelHost({ key: LLAMA_KEY, runtimeDir, identity: stockDeps })).toEqual({
         state: "Running",
         pid: process.pid,
@@ -3000,6 +3091,7 @@ describe("llamacpp fork process identity (#516)", () => {
         identity: stockDeps,
         teardown: (pid) => {
           tornDownStock.push(pid);
+          releaseStock();
           return Promise.resolve();
         },
       });
