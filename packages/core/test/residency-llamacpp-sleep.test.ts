@@ -66,6 +66,7 @@ type SleepControllerResult = {
   kind: string;
   reason?: string | undefined;
   chargedGiB?: number | undefined;
+  committedGiB?: number | undefined;
   slots?: string | undefined;
 };
 
@@ -650,7 +651,7 @@ test("#283 W16: out-of-order sleepSettled on a non-sleep-pending member is ignor
   expect(controller.snapshot().committedGiB).toBe(0);
 });
 
-test("#283 W17: requestSleep from 'waking' is refused with SleepInFlight", async () => {
+test("#283 W17: requestSleep from 'waking' is refused with WakeInFlight", async () => {
   const mod = await load();
   const controller = ctl(mod, 40);
   registerMember(controller, "a", "sleeping");
@@ -658,7 +659,7 @@ test("#283 W17: requestSleep from 'waking' is refused with SleepInFlight", async
   expect(snapMember(controller, "a").state).toBe("waking");
   const sleep = controller.requestSleep("a");
   expect(sleep.kind).toBe("refuse");
-  expect(sleep.reason).toBe("SleepInFlight");
+  expect(sleep.reason).toBe("WakeInFlight");
   expect(controller.snapshot().committedGiB).toBe(24);
 });
 
@@ -864,4 +865,83 @@ test("#283 W23: requestSleep reports AlreadySleeping for asleep members", async 
   const pending = controller.requestSleep("p");
   expect(pending.kind).toBe("refuse");
   expect(pending.reason).toBe("AlreadySleeping");
+});
+
+// ── DF-10 (#283) shared-runtime admission joins ────────────────────────────
+
+const sharedRuntimeMember = (id: string): SleepMemberSpec => ({
+  id,
+  runtimeKey: "rk",
+  specDigest: "d",
+  allocationGiB: 10,
+  capability: GUARDED,
+});
+
+test("#283 W24: waking a sleeper whose runtime is already resident joins without a second charge", async () => {
+  const mod = await load();
+  const controller = ctl(mod, 15);
+  controller.register(sharedRuntimeMember("a"), "ready");
+  controller.register(sharedRuntimeMember("b"), "sleeping");
+  expect(controller.snapshot().committedGiB).toBe(10);
+
+  const wakeB = controller.requestWake("b", { cacheIdentity: "kb" });
+  expect(wakeB.kind).toBe("already-awake");
+  expect(snapMember(controller, "b").state).toBe("ready");
+  // One runtime, one charge: the join must not push committed to 20 > 15.
+  expect(controller.snapshot().committedGiB).toBe(10);
+  expect(controller.snapshot().committedGiB).toBeLessThanOrEqual(15);
+
+  // The joiner can still sleep; the resident sibling keeps the single charge.
+  expect(controller.requestSleep("b").kind).toBe("sleep");
+  controller.sleepSettled("b", "slept", "kb");
+  expect(snapMember(controller, "b").state).toBe("sleeping");
+  expect(controller.snapshot().committedGiB).toBe(10);
+  expect(controller.snapshot().committedGiB).toBeLessThanOrEqual(15);
+});
+
+test("#283 W25: a second wake on a shared runtime joins the pending wake without a second charge", async () => {
+  const mod = await load();
+  const controller = ctl(mod, 15);
+  controller.register(sharedRuntimeMember("a"), "sleeping");
+  controller.register(sharedRuntimeMember("b"), "sleeping");
+  controller.register(
+    { id: "c", runtimeKey: "rc", specDigest: "dc", allocationGiB: 10, capability: GUARDED },
+    "sleeping",
+  );
+
+  const wakeA = controller.requestWake("a", { cacheIdentity: "ka" });
+  expect(wakeA.kind).toBe("wake");
+  expect(controller.snapshot().committedGiB).toBe(10);
+
+  const wakeB = controller.requestWake("b", { cacheIdentity: "kb" });
+  expect(wakeB.kind).toBe("join-wake");
+  expect(snapMember(controller, "b").state).toBe("waking");
+  expect(controller.snapshot().committedGiB).toBe(10);
+  expect(controller.snapshot().committedGiB).toBeLessThanOrEqual(15);
+
+  // Both members settle on the single shared wake; still one charge.
+  controller.wakeSettled("a", "ready");
+  controller.wakeSettled("b", "ready");
+  expect(controller.snapshot().committedGiB).toBe(10);
+  expect(controller.snapshot().committedGiB).toBeLessThanOrEqual(15);
+
+  // A distinct runtime is still charged and budget-checked on its own.
+  const wakeC = controller.requestWake("c", { cacheIdentity: "kc" });
+  expect(wakeC.kind).toBe("refuse");
+  expect(wakeC.reason).toBe("BudgetExceeded");
+  expect(controller.snapshot().committedGiB).toBe(10);
+});
+
+test("#283 W26: a same-runtimeKey member with a different specDigest is refused WorkloadBusy", async () => {
+  const mod = await load();
+  const controller = ctl(mod, 40);
+  controller.register(sharedRuntimeMember("a"), "ready");
+  controller.register(
+    { id: "b", runtimeKey: "rk", specDigest: "other", allocationGiB: 10, capability: GUARDED },
+    "sleeping",
+  );
+  const wakeB = controller.requestWake("b", { cacheIdentity: "kb" });
+  expect(wakeB.kind).toBe("refuse");
+  expect(wakeB.reason).toBe("WorkloadBusy");
+  expect(controller.snapshot().committedGiB).toBe(10);
 });

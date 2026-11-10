@@ -4,7 +4,7 @@
  * yet; actual memory admission stays with evaluateManagedAdmission.
  */
 
-import type { ManagedAdmissionClaim } from "./admission.js";
+import type { ManagedAdmissionClaim, ManagedClaimState } from "./admission.js";
 
 import { evaluateManagedAdmission } from "./admission.js";
 
@@ -210,15 +210,8 @@ export interface LlamacppSleepController {
         reason: string;
       }
     | {
-        kind: "process-stop";
-      }
-    | {
         kind: "refuse";
         reason: string;
-      }
-    | {
-        kind: "sleep";
-        committedGiB: number;
       };
   wakeSettled: (id: string, outcome: "ready" | "cancelled" | "readiness-failed") => void;
   requestSleep: (id: string) =>
@@ -292,28 +285,79 @@ function getClaimState(state: ControllerState): ManagedAdmissionClaim["state"] {
   }
 }
 
+// Members that share a runtimeKey+specDigest are handles on one runtime:
+// the budget and the admission claims bill the group once, at its largest
+// declared allocation, so a wake joining a resident or pending sibling
+// never double-charges.
+function runtimeGroupKey(member: { runtimeKey: string; specDigest: string }): string {
+  return JSON.stringify([member.runtimeKey, member.specDigest]);
+}
+
 function computeCommittedGiB(members: ReadonlyMap<string, ControllerMember>): number {
-  let total = 0;
+  const groups = new Map<string, number>();
   for (const m of members.values()) {
-    if (m.reservation !== "released") {
-      total += m.allocationGiB;
-    }
+    if (m.reservation === "released") continue;
+    const key = runtimeGroupKey(m);
+    const prev = groups.get(key);
+    groups.set(key, prev === undefined ? m.allocationGiB : Math.max(prev, m.allocationGiB));
+  }
+  let total = 0;
+  for (const allocationGiB of groups.values()) {
+    total += allocationGiB;
   }
   return total;
 }
 
+function managedClaimRank(state: ManagedClaimState): number {
+  switch (state) {
+    case "pending":
+      return 2;
+    case "resident":
+      return 1;
+    case "uncertain":
+      return 0;
+  }
+}
+
+function groupMembersByRuntime(
+  members: ReadonlyMap<string, ControllerMember>,
+): Map<string, ControllerMember[]> {
+  const groups = new Map<string, ControllerMember[]>();
+  for (const m of members.values()) {
+    if (m.reservation === "released") continue;
+    const key = runtimeGroupKey(m);
+    const group = groups.get(key);
+    if (group === undefined) {
+      groups.set(key, [m]);
+    } else {
+      group.push(m);
+    }
+  }
+  return groups;
+}
+
+function mergeRuntimeGroup(group: readonly ControllerMember[]): ManagedAdmissionClaim {
+  const primary = group.reduce((a, b) => (a.id < b.id ? a : b));
+  let state = getClaimState(primary.state);
+  let allocationGiB = primary.allocationGiB;
+  for (const m of group) {
+    const claimState = getClaimState(m.state);
+    if (managedClaimRank(claimState) > managedClaimRank(state)) state = claimState;
+    if (m.allocationGiB > allocationGiB) allocationGiB = m.allocationGiB;
+  }
+  return {
+    claimId: primary.id,
+    runtimeKey: primary.runtimeKey,
+    specDigest: primary.specDigest,
+    state,
+    allocationGiB,
+  };
+}
+
 function buildClaims(members: ReadonlyMap<string, ControllerMember>): ManagedAdmissionClaim[] {
   const claims: ManagedAdmissionClaim[] = [];
-  for (const m of members.values()) {
-    if (m.reservation !== "released") {
-      claims.push({
-        claimId: m.id,
-        runtimeKey: m.runtimeKey,
-        specDigest: m.specDigest,
-        state: getClaimState(m.state),
-        allocationGiB: m.allocationGiB,
-      });
-    }
+  for (const group of groupMembersByRuntime(members).values()) {
+    claims.push(mergeRuntimeGroup(group));
   }
   return claims;
 }
@@ -515,22 +559,45 @@ class LlamacppSleepControllerImpl implements LlamacppSleepController {
       },
     });
 
-    if (decision.kind === "refuse") {
-      return { kind: "refuse", reason: decision.reason };
+    switch (decision.kind) {
+      case "refuse":
+        return { kind: "refuse", reason: decision.reason };
+      case "already-resident": {
+        // A sibling member on the same runtime is already resident: the
+        // member joins it — the runtime group stays billed once.
+        member.state = "ready";
+        member.reservation = "resident";
+        return { kind: "already-awake" };
+      }
+      case "join-pending": {
+        // A sibling member on the same runtime has a wake in flight: join
+        // it — the pending reservation is billed once for the group.
+        member.state = "waking";
+        member.reservation = "pending";
+        return {
+          kind: "join-wake",
+          committedGiB: computeCommittedGiB(this.members),
+        };
+      }
+      case "admit": {
+        member.state = "waking";
+        member.reservation = "pending";
+        const slots: "restore" | "discard" =
+          opts?.cacheIdentity && member.cacheIdentity === opts.cacheIdentity
+            ? "restore"
+            : "discard";
+        return {
+          kind: "wake",
+          chargedGiB: member.allocationGiB,
+          committedGiB: computeCommittedGiB(this.members),
+          slots,
+        };
+      }
+      default: {
+        const exhaustive: never = decision;
+        throw new Error(`Unhandled admission decision: ${JSON.stringify(exhaustive)}`);
+      }
     }
-
-    // Admit: move to waking
-    member.state = "waking";
-    member.reservation = "pending";
-    const slots: "restore" | "discard" =
-      opts?.cacheIdentity && member.cacheIdentity === opts.cacheIdentity ? "restore" : "discard";
-
-    return {
-      kind: "wake",
-      chargedGiB: member.allocationGiB,
-      committedGiB: computeCommittedGiB(this.members),
-      slots,
-    };
   }
 
   private doRequestSleep(
@@ -551,7 +618,7 @@ class LlamacppSleepControllerImpl implements LlamacppSleepController {
     // resolved first (either to resident via wakeSettled('ready') or to
     // uncertain via wakeSettled('cancelled')).
     if (member.state === "waking") {
-      return { kind: "refuse", reason: "SleepInFlight" };
+      return { kind: "refuse", reason: "WakeInFlight" };
     }
 
     if (member.state === "sleeping" || member.state === "sleep-pending") {
