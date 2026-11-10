@@ -31,14 +31,8 @@ import {
 
 const OBSERVABLE_ENGINES = new Set(["batched"]);
 
-function engineIsObservable(engineType: string | null | undefined): boolean {
-  if (engineType === null) {
-    return false;
-  }
-  if (engineType === undefined) {
-    return true;
-  }
-  return OBSERVABLE_ENGINES.has(engineType);
+function engineIsObservable(engineType: string | undefined): boolean {
+  return engineType !== undefined && OBSERVABLE_ENGINES.has(engineType);
 }
 
 // --- public types ---
@@ -228,7 +222,7 @@ function activityKnown(activity: NativeModelActivity | "unknown"): activity is N
 
 async function fetchActivity(
   ctx: ClientCtx,
-  engineType: string | null | undefined,
+  engineType: string | undefined,
 ): Promise<NativeModelActivity | "unknown"> {
   if (!ctx.activityObservable) {
     return "unknown";

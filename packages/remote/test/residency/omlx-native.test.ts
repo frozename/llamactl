@@ -82,7 +82,8 @@ function statusFixtureV1(models: StatusFixtureModel[]): Record<string, unknown> 
         is_favorite: false,
         is_hidden: false,
       };
-      if (m.engineType !== undefined && m.engineType !== "batched") {
+      // engine_type: "batched" for batched models (engine_pool.get_status default)
+      if (m.engineType !== undefined) {
         base["engine_type"] = m.engineType;
       }
       return base;
@@ -328,7 +329,7 @@ function routeRequest(ctx: FakeContext, method: string, url: URL): Response | Pr
 
 function startFakeOmlx(opts: { apiKey?: string; loadDelayMs?: number }): FakeOmlx {
   const state: FakeState = {
-    models: new Map([[ID, { loaded: false, is_loading: false }]]),
+    models: new Map([[ID, { loaded: false, is_loading: false, engineType: "batched" }]]),
     activity: { active: 0, waiting: 0 },
     readyStatus: 503,
     statusMode: "ok",
@@ -458,7 +459,11 @@ describe("status()", () => {
   test("S1 reports a discovered model", async () => {
     const fake = startFakeOmlx({ apiKey: "test-key" });
     const client = await clientFor(fake);
-    expect(await client.status()).toStrictEqual({ state: "discovered", modelId: ID });
+    expect(await client.status()).toStrictEqual({
+      state: "discovered",
+      modelId: ID,
+      engineType: "batched",
+    });
     expect(fake.seen.authHeaders).toContain("Bearer test-key");
   });
 
@@ -466,7 +471,11 @@ describe("status()", () => {
     const fake = startFakeOmlx({ apiKey: "test-key" });
     fake.state.models.get(ID)!.is_loading = true;
     const client = await clientFor(fake);
-    expect(await client.status()).toStrictEqual({ state: "loading", modelId: ID });
+    expect(await client.status()).toStrictEqual({
+      state: "loading",
+      modelId: ID,
+      engineType: "batched",
+    });
   });
 
   test("S3 promotes a loaded idle model to ready", async () => {
@@ -703,7 +712,11 @@ describe("unload()", () => {
     });
     expect(fake.counts.unloadPosts).toBe(1);
     expect(fake.seen.unloadSearch).toStrictEqual([""]);
-    expect(await client.status()).toStrictEqual({ state: "discovered", modelId: ID });
+    expect(await client.status()).toStrictEqual({
+      state: "discovered",
+      modelId: ID,
+      engineType: "batched",
+    });
     expect(await client.unload()).toStrictEqual({
       kind: "already-unloaded",
       modelId: ID,
@@ -903,7 +916,9 @@ describe("unload()", () => {
 
   test("U11 batched model unloads when idle", async () => {
     const fake = startFakeOmlx({ apiKey: "test-key" });
-    fake.state.models.get(ID)!.loaded = true;
+    const model = fake.state.models.get(ID)!;
+    model.loaded = true;
+    model.engineType = "batched";
     const client = await clientFor(fake);
     expect(await client.unload()).toStrictEqual({
       kind: "unloaded",
@@ -912,6 +927,22 @@ describe("unload()", () => {
     });
     expect(fake.counts.unloadPosts).toBe(1);
     expect(fake.state.models.get(ID)!.loaded).toBe(false);
+  });
+
+  test("U12 missing engine_type refuses unload with ActivityUnknown", async () => {
+    const fake = startFakeOmlx({ apiKey: "test-key" });
+    const model = fake.state.models.get(ID)!;
+    model.loaded = true;
+    delete model.engineType;
+    const client = await clientFor(fake);
+    expect(await client.unload()).toStrictEqual({
+      kind: "refused",
+      reason: "ActivityUnknown",
+      reservation: "held",
+    });
+    expect(fake.counts.unloadPosts).toBe(0);
+    expect(fake.counts.activityGets).toBe(0);
+    expect(fake.state.models.get(ID)!.loaded).toBe(true);
   });
 });
 

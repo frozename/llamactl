@@ -486,6 +486,70 @@ describe("#282 DF-09 oMLX native model status contract", () => {
     );
   });
 
+  test("P2a engineType emitted when engine_type is a string", () => {
+    const parse = parseStatusFn();
+    expect(
+      parse(
+        statusFixtureV1([{ id: ID, loaded: false, is_loading: true, engineType: "batched" }]),
+        REL,
+      ),
+    ).toStrictEqual({ state: "loading", modelId: ID, engineType: "batched" });
+    expect(
+      parse(
+        statusFixtureV1([{ id: ID, loaded: false, is_loading: false, engineType: "llm" }]),
+        REL,
+      ),
+    ).toStrictEqual({ state: "discovered", modelId: ID, engineType: "llm" });
+    expect(
+      parse(
+        statusFixtureV1([
+          {
+            id: ID,
+            loaded: true,
+            is_loading: false,
+            engineType: "embedding",
+          },
+        ]),
+        REL,
+      ),
+    ).toStrictEqual({
+      state: "loaded",
+      modelId: ID,
+      actualSize: 4800000000,
+      residentEstimatedSize: 5000000000,
+      engineType: "embedding",
+    });
+  });
+
+  test("P2b engineType absent when engine_type is missing or non-string", () => {
+    const parse = parseStatusFn();
+    const noEngineType: FixtureModel = { id: ID, loaded: false, is_loading: true };
+    expect(parse(statusFixtureV1([noEngineType]), REL)).toStrictEqual({
+      state: "loading",
+      modelId: ID,
+    });
+    expect(
+      parse(statusFixtureV1([{ id: ID, loaded: false, is_loading: false }]), REL),
+    ).toStrictEqual({ state: "discovered", modelId: ID });
+    expect(
+      parse(
+        statusFixtureV1([
+          {
+            id: ID,
+            loaded: true,
+            is_loading: false,
+          },
+        ]),
+        REL,
+      ),
+    ).toStrictEqual({
+      state: "loaded",
+      modelId: ID,
+      actualSize: 4800000000,
+      residentEstimatedSize: 5000000000,
+    });
+  });
+
   test("P3 loaded: sizes come from actual_size and resident_estimated_size", () => {
     const parse = parseStatusFn();
     expect(
