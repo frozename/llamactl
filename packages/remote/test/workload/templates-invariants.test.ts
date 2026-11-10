@@ -10,12 +10,12 @@ import { profile, residencyAdmission } from "@llamactl/core";
 import { computeModelHostSpecHash } from "@llamactl/core/engines/state";
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 
 import { readdirSync, readFileSync } from "../../src/safe-fs.js";
 import { defaultNodeBudgetGiB } from "../../src/workload/admission.js";
-import { specForHash } from "../../src/workload/modelhost-schema.js";
+import { type ModelHostSpec, specForHash } from "../../src/workload/modelhost-schema.js";
 import { parseModelHost } from "../../src/workload/modelhost-store.js";
 import { ModelRunSchema } from "../../src/workload/schema.js";
 import { parseManifestYaml } from "../../src/workload/store.js";
@@ -156,6 +156,51 @@ describe("workload template spec-hash snapshots (G-1, #285)", () => {
       expect(specDigest(file)).toBe(expected);
     });
   }
+});
+
+describe("mainline llama-server templates never pass --served-model-name (#593)", () => {
+  function mainlineLlamacppSpecs(): { file: string; spec: ModelHostSpec }[] {
+    const specs: { file: string; spec: ModelHostSpec }[] = [];
+    for (const name of readdirSync(TEMPLATES_DIR)
+      .filter((entry) => entry.endsWith(".yaml"))
+      .sort()) {
+      const raw = readFileSync(resolve(TEMPLATES_DIR, name), "utf8");
+      const kind = (parseYaml(raw) as { kind?: string } | null)?.kind;
+      if (kind !== "ModelHost") continue;
+      const { spec } = parseModelHost(raw);
+      if (spec.engine !== "llamacpp") continue;
+      if (basename(spec.binary) !== "llama-server") continue;
+      specs.push({ file: name, spec });
+    }
+    return specs;
+  }
+
+  test("no mainline llamacpp ModelHost template passes --served-model-name", () => {
+    const offenders = mainlineLlamacppSpecs()
+      .filter(({ spec }) =>
+        spec.extraArgs.some(
+          (arg) => arg === "--served-model-name" || arg.startsWith("--served-model-name="),
+        ),
+      )
+      .map(({ file }) => file);
+    expect(offenders).toEqual([]);
+  });
+
+  test("every mainline llamacpp z13 ModelHost that names its served id uses --alias basename(rel)", () => {
+    const missing = mainlineLlamacppSpecs()
+      .filter(({ spec }) => spec.node === "z13")
+      .filter(({ spec }) => {
+        const rel = spec.hostedModels[0]?.rel;
+        if (rel === undefined) return true;
+        const served = basename(rel);
+        return !spec.extraArgs.some(
+          (arg, index) =>
+            (arg === "--alias" || arg === "-a") && spec.extraArgs[index + 1] === served,
+        );
+      })
+      .map(({ file }) => file);
+    expect(missing).toEqual([]);
+  });
 });
 
 describe("machine-profile thresholds (G-1, #285)", () => {

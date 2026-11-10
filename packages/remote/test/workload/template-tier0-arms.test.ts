@@ -27,7 +27,7 @@ const HALO_BINARY =
 const HALO_GLM_VOCAB =
   "/home/alex/strix-halo-bench/runtimes/halo-configs-16da7de2a165/glm-dv-65536.bin";
 const HALO_MIMO_VOCAB =
-  "/home/alex/strix-halo-bench/runtimes/halo-configs-16da7de2a165/mimo-dv-65536.bin";
+  "/home/alex/strix-halo-bench/runtimes/halo-configs-16da7de2a165/configs/mimo/mimo-dv-65536.bin";
 const B12206_HIP_BINARY =
   "/home/alex/strix-halo-bench/runtimes/llama.cpp-cf34d311332e/bin/llama-server";
 const B12206_VULKAN_BINARY =
@@ -80,7 +80,7 @@ const ARMS: readonly ArmSpec[] = [
     rel: GLM_A4E3S_REL,
     env: { GGML_VK_DMMV_LARGE_MAX_M: "1024", GGML_VK_DMMV_LARGE_MIN_K: "8192" },
     extraArgs: [
-      "--served-model-name",
+      "--alias",
       "GLM-5.3-Flash-a4e3s-00001-of-00004.gguf",
       "--jinja",
       "-ngl",
@@ -131,7 +131,7 @@ const ARMS: readonly ArmSpec[] = [
     binary: B12206_HIP_BINARY,
     rel: GLM_IQ2_XXS_REL,
     extraArgs: [
-      "--served-model-name",
+      "--alias",
       "GLM-5.3-Flash-UD-IQ2_XXS-00001-of-00004.gguf",
       "--jinja",
       "-ngl",
@@ -185,7 +185,7 @@ const ARMS: readonly ArmSpec[] = [
       LLAMA_SPEC_ADAPTIVE: "1.2",
     },
     extraArgs: [
-      "--served-model-name",
+      "--alias",
       "MiMo-V2.6-Flash-MOPD-BPW2.5-00001-of-00003.gguf",
       "--n-gpu-layers",
       "999",
@@ -241,6 +241,7 @@ const ARMS: readonly ArmSpec[] = [
       "[u]",
       "derived",
       "131072",
+      "configs/mimo/mimo-dv-65536.bin",
       "mimo-dv-65536.bin",
     ],
     catalogRowId: "mimo26-flash-mopd-bpw25",
@@ -255,7 +256,7 @@ const ARMS: readonly ArmSpec[] = [
     binary: B12206_VULKAN_BINARY,
     rel: MIMO_MODEL_REL,
     extraArgs: [
-      "--served-model-name",
+      "--alias",
       "MiMo-V2.6-Flash-MOPD-BPW2.5-00001-of-00003.gguf",
       "-ngl",
       "999",
@@ -312,7 +313,7 @@ const ARMS: readonly ArmSpec[] = [
     binary: B12206_HIP_BINARY,
     rel: DS_IQ1_M_REL,
     extraArgs: [
-      "--served-model-name",
+      "--alias",
       "DeepSeek-V4.1-Flash-1017-UD-IQ1_M-00001-of-00005.gguf",
       "-c",
       "65536",
@@ -385,7 +386,7 @@ for (const arm of ARMS) {
       expect(labels?.["family"]).toBe(arm.family);
     });
 
-    test("hosts exactly the pinned rel with served-model-name matching its basename", () => {
+    test("hosts exactly the pinned rel with --alias matching its basename", () => {
       const { manifest } = loadModelHostTemplate(arm.file);
       const hosted = manifest.spec.hostedModels;
       expect(hosted).toHaveLength(1);
@@ -394,9 +395,10 @@ for (const arm of ARMS) {
       expect(entry?.lora_path).toBeUndefined();
       expect(entry?.dflash).toBeUndefined();
       const args = manifest.spec.extraArgs;
-      const idx = args.indexOf("--served-model-name");
+      const idx = args.indexOf("--alias");
       expect(idx).toBeGreaterThanOrEqual(0);
       expect(args[idx + 1]).toBe(basename(arm.rel));
+      expect(args).not.toContain("--served-model-name");
     });
 
     test("declares the arm env or none", () => {
