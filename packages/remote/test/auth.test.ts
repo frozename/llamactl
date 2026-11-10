@@ -365,6 +365,54 @@ describe("service tokens (P4.1)", () => {
     expect(v.claimsFor(late, served(call), [a.binding])).not.toBeNull();
     expect(v.heldNonces()).toBe(1);
   });
+
+  test("a token in any non-canonical encoding is refused malformed and does not spend its nonce", () => {
+    const a = bind("svc-a");
+    const reasons: string[] = [];
+    const v = createServiceTokenVerifier({
+      node: NODE,
+      now: () => NOW,
+      monotonicNow: () => 0,
+      onRefused: (reason) => reasons.push(reason),
+    });
+    const control = mintServiceToken(a.token, statusCall(), { now: NOW });
+    expect(v.claimsFor(control, served(statusCall()), [a.binding])?.serviceId).toBe("svc-a");
+    expect(reasons).toEqual([]);
+
+    const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    const nonCanonical: [index: number, change: (value: string) => string][] = [
+      [1, (node64): string => `${node64}=`],
+      [1, (node64): string => `${node64.slice(0, 1)}!${node64.slice(1)}`],
+      [4, (subject64): string => `${subject64}=`],
+      [
+        5,
+        (mac64): string => {
+          // XOR 1 flips only the lowest bit of the last char's index, a padding bit: the MAC decodes to the same 32 bytes.
+          const last = mac64.at(-1) ?? "";
+          const flipped = alphabet[alphabet.indexOf(last) ^ 1];
+          return `${mac64.slice(0, -1)}${flipped ?? last}`;
+        },
+      ],
+      [5, (mac64): string => `${mac64}=`],
+      [2, (expiry): string => `0${expiry}`],
+    ];
+    for (const [index, change] of nonCanonical) {
+      const token = mintServiceToken(a.token, statusCall(), { now: NOW });
+      const parts = token.split(".");
+      parts[index] = change(parts[index] ?? "");
+      const variant = parts.join(".");
+      expect(v.claimsFor(variant, served(statusCall()), [a.binding])).toBeNull();
+      expect(v.claimsFor(token, served(statusCall()), [a.binding])?.serviceId).toBe("svc-a");
+    }
+    expect(reasons).toEqual([
+      "malformed",
+      "malformed",
+      "malformed",
+      "malformed",
+      "malformed",
+      "malformed",
+    ]);
+  });
 });
 
 /**

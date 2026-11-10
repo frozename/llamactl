@@ -394,7 +394,23 @@ async function tryAdoptLiveHost(
   // applied change (e.g. a resources bump), so tear it down and let the caller
   // respawn with the applied spec. A same-spec respawn is still adopted.
   if (priorSpecHash !== computeModelHostSpecHash(specForHash(manifest.spec))) {
-    await engine.teardown(livePid).catch(() => undefined);
+    // The live listener has no record anchor to re-verify, so liveness itself
+    // is the only available proof of release. A resolved teardown is not
+    // proof the port was freed: respawn only once the pid is actually gone,
+    // otherwise the replacement cannot bind and we defer the restart.
+    try {
+      await engine.teardown(livePid);
+    } catch {
+      // A thrown teardown is not proof either way; the liveness re-check below
+      // decides.
+    }
+    if (isProcessAlive(livePid)) {
+      return {
+        ok: false,
+        pid: null,
+        error: `live pid ${String(livePid)} survived teardown on spec drift; deferring restart`,
+      };
+    }
     return "relaunch";
   }
   const readProcessCommand = opts.readProcessCommand ?? defaultReadProcessCommand;
@@ -433,6 +449,36 @@ function teardownIdentity(
   };
 }
 
+// #595: a resolved teardown is not proof the process is gone. Await it in a
+// try/catch (a thrown teardown is not proof either way), then re-verify the
+// recorded identity; only a confirmed-gone verdict lets the restart proceed.
+// Mirrors the authoritative post-teardown re-check in stopModelHost /
+// stopStartingRecord. Returns null when the pid is confirmed gone, or a
+// deferral result naming why the restart cannot proceed.
+async function confirmRecordedTeardown(
+  teardown: () => Promise<void>,
+  recordPath: string,
+  pid: number,
+  identity: PidIdentityDeps,
+): Promise<StartModelHostResult | null> {
+  try {
+    await teardown();
+  } catch {
+    // A resolved or thrown teardown is not proof of release; the identity
+    // re-check below is authoritative.
+  }
+  const released = verifyPidFile(recordPath, pid, identity);
+  if (isRecordedPidGone(released)) return null;
+  return {
+    ok: false,
+    pid: null,
+    error:
+      released === "alive"
+        ? "process still alive after teardown; deferring restart"
+        : "pid identity unknown after teardown; deferring restart",
+  };
+}
+
 // #317: a child spawned by a previous agent that died before readiness leaves
 // only its starting record. Verify its identity against the record (the mtime
 // anchor plus the engine argv0), reap it when it is provably ours, and defer
@@ -457,9 +503,17 @@ async function reapStartingOrphan(
     return { ok: false, pid: null, error: "pid identity unknown; deferring restart" };
   }
   if (verdict === "alive") {
-    await engine
-      .teardown(starting.pid, teardownIdentity(recordPath, opts.identity, identity.expectCommand))
-      .catch(() => undefined);
+    const failure = await confirmRecordedTeardown(
+      () =>
+        engine.teardown(
+          starting.pid,
+          teardownIdentity(recordPath, opts.identity, identity.expectCommand),
+        ),
+      recordPath,
+      starting.pid,
+      identity,
+    );
+    if (failure !== null) return failure;
   }
   removeModelHostStarting(opts.key, resolved);
   return null;
@@ -509,10 +563,19 @@ async function reapOrAdoptPriorHost(
   );
   const priorVerdict = verifyPidFile(recordPath, priorState.pid, identity);
   if (priorVerdict === "alive") {
-    await engine
-      .teardown(priorState.pid, teardownIdentity(recordPath, opts.identity, identity.expectCommand))
-      .catch(() => undefined);
-    return null;
+    // A resolved teardown is not proof the prior host released the port; only
+    // a confirmed-gone re-check lets the replacement spawn. On failure the
+    // state sidecar and recorded pid are left intact for a later reconcile.
+    return await confirmRecordedTeardown(
+      () =>
+        engine.teardown(
+          priorState.pid,
+          teardownIdentity(recordPath, opts.identity, identity.expectCommand),
+        ),
+      recordPath,
+      priorState.pid,
+      identity,
+    );
   }
   if (priorVerdict === "unknown") {
     return { ok: false, pid: null, error: "pid identity unknown; deferring restart" };
