@@ -138,6 +138,8 @@ export function authenticateServiceCredential(
  * serving, and accepts each nonce once.
  *
  * Format: `v2.<base64url node>.<expiresAtMs>.<nonce>.<base64url subject>.<base64url mac>`.
+ * Each field must appear in its canonical encoding (unpadded base64url, decimal expiry with no
+ * leading zero), so one token has exactly one wire form.
  */
 export const SERVICE_TOKEN_HEADER = "x-llamactl-service-token";
 export const SERVICE_TOKEN_TTL_MS = 60_000;
@@ -154,7 +156,7 @@ const SERVICE_TOKEN_VERSION = "v2";
 const SERVICE_TOKEN_DOMAIN = "llamactl-worker-rpc-service-token";
 const TUNNEL_KEY_LABEL = "llamactl-worker-rpc-token\0";
 const NONCE_PATTERN = /^[A-Za-z0-9_-]{16,64}$/;
-const EXPIRY_PATTERN = /^[0-9]{1,15}$/;
+const EXPIRY_PATTERN = /^(?:0|[1-9][0-9]{0,14})$/;
 
 /** What a service token is bound to, besides its subject, nonce and expiry. */
 export interface ServiceTokenCall {
@@ -280,6 +282,10 @@ function parseServiceToken(token: string): ParsedServiceToken | null {
   const subject = Buffer.from(subject64, "base64url").toString("utf8");
   const mac = Buffer.from(mac64, "base64url");
   if (node.length === 0 || subject.length === 0 || mac.length !== 32) return null;
+  // Each field must be the unique canonical encoding of its value, so a token has exactly one wire form.
+  if (Buffer.from(node, "utf8").toString("base64url") !== node64) return null;
+  if (Buffer.from(subject, "utf8").toString("base64url") !== subject64) return null;
+  if (mac.toString("base64url") !== mac64) return null;
   return { node, expiresAt: Number(expiry), nonce, subject, mac };
 }
 
