@@ -1,0 +1,120 @@
+# EXPERIMENTAL W4 WINNER: DeepSeek-V4.1-Flash-1017 UD-IQ1_S on libosmos
+# v0.5.5 @934b51b9 + df-round1 patch 0001 (build libosmos-934b51b932be-zp1),
+# ROCm/HIP + DSpark drafter, arm D-O2-T00 (= D-O2 at drafted_budget_gib
+# 102.0, max_context 66560, OSMOS_STATS=1).
+#
+# NOT RUNNABLE ON THE DEPLOYED Z13 AGENT: build 2d0c095a's ModelHost schema
+# only knows engine llamacpp|omlx|strata and has no libosmos adapter. The
+# Z13 agent must be upgraded to a build that includes engine libosmos
+# (origin/main) before this can be applied there. Until then the 2d0c095a
+# schema rejects this manifest on spec.engine only; its resources object is
+# not strict, so on that build residentGiB/diskBackedGiB would be silently
+# dropped rather than rejected.
+#
+# Residency: these three W4 ModelHosts carry
+# llamactl.io/residency-group: z13-large-gpu among themselves only. The
+# deployed Z13 agent (2d0c095a) has no residency guard, and production
+# gufo-qwen38-mtp carries no group label, so nothing stops two large hosts
+# loading at once. It is committed disabled. Before enabling it the operator
+# must disable gufo-qwen38-mtp and every other enabled z13 ModelHost (use
+# bench/prod-ctl-agent.sh), enable exactly this one, and restore production
+# afterwards.
+#
+# Operator note: pre-warm the page cache before the first enable (cat the
+# five GGUF shards, the IQ4_NL Engram shard, and the osmos-evo-1017 picks /
+# dspark files to /dev/null on the Z13), because timeoutSeconds is capped at
+# 600 and a cold ~130 GiB load may not reach /health in time.
+#
+# Source arm: /Volumes/AI-DATA/maestro/bench/df-round1/arms/W3-deepseek.json
+# id D-O2-T00 (W4 tier S, order 3; D-O2 with drafted_budget_gib 102.5 ->
+# 102.0, max_context 66560, include_usage, OSMOS_STATS=1; coding plain@4096).
+# Bench result (W4, tune profile, memory guard off, 2026-11-09):
+#   132.7 verified tasks/h, 9/9 coding (variant plain4k: greedy,
+#   quality_max_tokens 4096), decode 26.3 t/s @2K / 25.3 t/s @32K, prefill
+#   228 / 374 t/s, min MemAvailable 9.2 GiB, peak GTT 111.79 GiB,
+#   spawn-to-ready 42.3 s.
+#   results/D-O2-T00.w4/summary.json; registrar 8597fec9 W4 result events
+#   2455/2462/2465.
+#
+# Pins: mrsirg97-rgb/libosmos@934b51b932be (v0.5.5) + patches/libosmos/
+# 0001-chat-parse-zero-param-invokes.patch (sha256 a7a1d5bf...); unsloth
+# revision 2688c0c3; osmos-evo-1017 picks/drafter at 3c6b0aeb256c. The
+# IQ4_NL Engram shard 5 sits next to shard 1, as libosmos requires.
+#
+# osmos_config mapping (the adapter writes osmos.json from extraArgs and
+# owns --config/--host/--port):
+#   pack               -> basename(rel) minus .gguf (adapter-owned; the arm
+#                         used "ud-iq1_s", so osmos-api reports
+#                         osmos-DeepSeek-V4.1-Flash-1017-UD-IQ1_S-00001-of-00005
+#                         and llamactl maps it to basename(rel))
+#   model              -> <models dir>/<rel>
+#   picks / drafter    -> --picks / --dspark (models-dir relative)
+#   drafted_budget_gib -> --budget 102 (written as drafted_budget_gib because
+#                         --dspark is set)
+#   max_context 66560  -> --max-context 66560 (65536 + 1024 headroom)
+#   parallel 1         -> --parallel 1
+#   no_guess true      -> --no-guess
+#   env OSMOS_STATS=1  -> spec.env
+#
+# Memory: peak GTT 111.79 GiB measured = budget 102 + ~9.8 GiB. residentGiB
+# is the admission charge (max of it and expectedMemoryGiB). diskBackedGiB =
+# the 103 GiB Engram + the ~12 GiB non-Engram remainder over the 102 GiB
+# budget (114 - 102).
+#
+# osmos-api decodes greedy-only; the llamactl proxy rewrites requests to
+# temperature 0, top_p 1, n 1 and drops stop.
+#
+# Port 8099 avoids the z13 templates on 8080-8090/8092, the reserved 8091,
+# the Z13 records on 8080-8082, the bench harness port 8095 and the other
+# W4 winners on 8097/8098.
+apiVersion: llamactl/v1
+kind: ModelHost
+metadata:
+  name: libosmos-ds41-d-o2-t00-z13
+  labels:
+    family: deepseek41
+    profile: experimental
+    bench: w4
+    llamactl.io/qualification: experimental
+    llamactl.io/residency-group: z13-large-gpu
+    llamactl.io/runtime-arm: D-O2-T00
+    llamactl.io/backend: hip
+spec:
+  engine: libosmos
+  node: z13
+  enabled: false
+  binary: /home/alex/strix-halo-bench/runtimes/libosmos-934b51b932be-zp1/src/bin/osmos-api
+  env:
+    OSMOS_STATS: "1"
+  endpoint:
+    host: 127.0.0.1
+    port: 8099
+  hostedModels:
+    - rel: DeepSeek-V4.1-Flash-1017-GGUF-unsloth/2688c0c3/UD-IQ1_S/DeepSeek-V4.1-Flash-1017-UD-IQ1_S-00001-of-00005.gguf
+  extraArgs:
+    - --picks
+    - osmos-evo-1017/3c6b0aeb256c/picks/UD-IQ1_S/osmos-picks.bin
+    - --dspark
+    - osmos-evo-1017/3c6b0aeb256c/dspark-iq2xs
+    - --budget
+    - "102"
+    - --max-context
+    - "66560"
+    - --parallel
+    - "1"
+    - --no-guess
+  resources:
+    # Measured W4 peak GTT 111.79 GiB, rounded up.
+    expectedMemoryGiB: 112
+    residentGiB: 112
+    diskBackedGiB: 115
+  readiness:
+    path: /health
+    expectStatus: 200
+    expectJson:
+      status: ok
+  restartPolicy: Never
+  # Benched spawn-to-ready was 42.3 s with a warm page cache; a cold load of
+  # ~130 GiB from the Gen3 x4 SSD may need longer than 600 (the schema max),
+  # so pre-warm the page cache first (see the header).
+  timeoutSeconds: 600

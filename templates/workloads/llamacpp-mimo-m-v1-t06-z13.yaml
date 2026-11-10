@@ -1,0 +1,138 @@
+# EXPERIMENTAL W4 WINNER: MiMo-V2.6-Flash-MOPD BPW2.5 (AesSedai) on the
+# halo-tuned llama.cpp Vulkan arm M-V1-T06 (= M-V1 with KV f16 instead of
+# q8_0). This is a separate ModelHost, not Gufo.
+#
+# Residency: these three W4 ModelHosts carry
+# llamactl.io/residency-group: z13-large-gpu among themselves only. The
+# deployed Z13 agent (2d0c095a) has no residency guard, and production
+# gufo-qwen38-mtp carries no group label, so nothing stops two large hosts
+# loading at once. It is committed disabled. Before enabling it the operator
+# must disable gufo-qwen38-mtp and every other enabled z13 ModelHost (use
+# bench/prod-ctl-agent.sh), enable exactly this one, and restore production
+# afterwards.
+#
+# Source arm: /Volumes/AI-DATA/maestro/bench/df-round1/arms/W1-mimo.json
+# id M-V1-T06 (W4 tier S, order 7; change "-ctk q8_0 -ctv q8_0 -> f16 f16").
+# Bench result (W4, tune profile, memory guard off, 2026-11-09):
+#   113.9 verified tasks/h, 9/9 coding (variant "a" = W1 body, thinking off),
+#   decode 31.4 t/s @2K / 36.4 t/s @32K, spec acceptance 0.76 / 0.96,
+#   min MemAvailable 18.6 GiB, peak GTT 102.44 GiB, spawn-to-ready 38.7 s.
+#   results/M-V1-T06.w4/summary.json; registrar 8597fec9 W4 result events
+#   2455/2462/2465.
+#
+# Runtime pins (arm repo_commit / patch_series):
+# - ggml-org/llama.cpp 529ac893e754 (b11636);
+# - nsbradley88/halo-tuning 0001..0046 @16da7de2a165 + local 0047;
+# - built head e742170e08db.
+# Binary dir: /home/alex/strix-halo-bench/runtimes/llama.cpp-halo-529ac893e754-16da7de2a165/bin/
+#
+# Argv mapping from the arm (args + preset_args, AGENTIC_PRESET=1 as benched):
+# - "-m ${model}" is dropped: the llamacpp adapter emits -m <models dir>/<rel>.
+# - harness_args "--host 127.0.0.1 --port 8095" are dropped: the adapter
+#   emits --host/--port from spec.endpoint.
+# - --alias is added so /v1/models reports basename(rel). llama.cpp has no
+#   --served-model-name (that is a Gufo flag; b11636/b12206 common/arg.cpp
+#   only define -a/--alias), and llamactl's adopt path already matches
+#   --alias values.
+# - -md is ABSOLUTE: the deployed Z13 agent (2d0c095a) does not resolve
+#   draft paths against the models dir (main does, and passes absolute
+#   paths through unchanged).
+# - --spec-draft-vocab uses the arm's verified path under configs/mimo/
+#   (the older llamacpp-mimo26-bpw25-vulkan-halo template points at
+#   halo-configs-16da7de2a165/mimo-dv-65536.bin, which does not exist).
+# - Every other flag, value and the env block are the arm's, verbatim.
+#
+# Client sampling: bench variant "a" ran greedy (temperature 0, sent by the
+# client) while this server default stays --temp 1.0 as in the arm; the
+# seat's opencode.json sends temperature 0 to match the bench.
+#
+# Validates against the deployed 2d0c095a ModelHost schema and origin/main
+# (no residentGiB, no binaryNames).
+#
+# Port 8097 avoids the z13 templates on 8080-8090/8092, the reserved 8091,
+# the Z13 records on 8080-8082 and the bench harness port 8095.
+apiVersion: llamactl/v1
+kind: ModelHost
+metadata:
+  name: llamacpp-mimo-m-v1-t06-z13
+  labels:
+    family: mimo26
+    profile: experimental
+    bench: w4
+    llamactl.io/qualification: experimental
+    llamactl.io/residency-group: z13-large-gpu
+    llamactl.io/runtime-arm: M-V1-T06
+    llamactl.io/backend: vulkan
+spec:
+  engine: llamacpp
+  node: z13
+  enabled: false
+  binary: /home/alex/strix-halo-bench/runtimes/llama.cpp-halo-529ac893e754-16da7de2a165/bin/llama-server
+  env:
+    GGML_VK_FA_WAVE32: "1"
+    GGML_VK_FA_KV_SLICE: "8192"
+    LLAMA_SPEC_ADAPTIVE: "1.2"
+  resources:
+    # Measured W4 peak GTT 102.44 GiB, rounded up.
+    expectedMemoryGiB: 103
+  endpoint:
+    host: 127.0.0.1
+    port: 8097
+  hostedModels:
+    - rel: MiMo-V2.6-Flash-MOPD-GGUF-AesSedai/b6e95d58/BPW2.5/MiMo-V2.6-Flash-MOPD-BPW2.5-00001-of-00003.gguf
+  extraArgs:
+    # Served id = basename(rel); see the header.
+    - --alias
+    - MiMo-V2.6-Flash-MOPD-BPW2.5-00001-of-00003.gguf
+    - --n-gpu-layers
+    - "999"
+    - --flash-attn
+    - "on"
+    - -fit
+    - "off"
+    - --load-mode
+    - none
+    - --parallel
+    - "1"
+    # 131072, the Z13 deviation from the reference 196608 (no raised
+    # amdgpu.lockup_timeout on this host).
+    - --ctx-size
+    - "131072"
+    # The T06 change: KV f16 (M-V1 used q8_0).
+    - -ctk
+    - f16
+    - -ctv
+    - f16
+    - --ubatch-size
+    - "2048"
+    - --batch-size
+    - "2048"
+    - --cache-ram
+    - "0"
+    - --jinja
+    - --temp
+    - "1.0"
+    - --top-p
+    - "1.0"
+    - --top-k
+    - "20"
+    - --min-p
+    - "0.0"
+    # DFlash drafter (ggml-org @c9d86979), absolute; see the header.
+    - -md
+    - /mnt/z13-models/models/MiMo-V2.6-Flash-MOPD-GGUF-ggml-org/c9d86979/dflash/dflash-MiMo-V2.6-Flash-MOPD-Q8_0.gguf
+    - -ngld
+    - "999"
+    - --spec-type
+    - draft-dflash
+    - --spec-draft-n-max
+    - "4"
+    - --spec-draft-vocab
+    - /home/alex/strix-halo-bench/runtimes/halo-configs-16da7de2a165/configs/mimo/mimo-dv-65536.bin
+    # preset_args (agentic preset, as benched): thinking off.
+    - --reasoning
+    - "off"
+  restartPolicy: Never
+  # Benched spawn-to-ready was 38.7 s with a warm page cache; 600 (the
+  # schema max) covers a cold read of ~95 GiB.
+  timeoutSeconds: 600

@@ -1,0 +1,113 @@
+# EXPERIMENTAL W4 WINNER: GLM-5.3-Flash UD-IQ2_XXS (unsloth) on mainline
+# llama.cpp HIP arm G-H1-T03 (= G-H1 with -ub 2048 instead of 1024; batch
+# stays at the 2048 default). This is a separate ModelHost, not Gufo.
+#
+# Residency: these three W4 ModelHosts carry
+# llamactl.io/residency-group: z13-large-gpu among themselves only. The
+# deployed Z13 agent (2d0c095a) has no residency guard, and production
+# gufo-qwen38-mtp carries no group label, so nothing stops two large hosts
+# loading at once. It is committed disabled. Before enabling it the operator
+# must disable gufo-qwen38-mtp and every other enabled z13 ModelHost (use
+# bench/prod-ctl-agent.sh), enable exactly this one, and restore production
+# afterwards.
+#
+# Source arm: /Volumes/AI-DATA/maestro/bench/df-round1/arms/W2-glm.json
+# id G-H1-T03 (W4 tier S, order 4; change "-ub 1024 -> 2048").
+# Bench result (W4, tune profile, memory guard off, 2026-11-09):
+#   92.1 verified tasks/h, 9/9 coding (variant low4k: reasoning_effort low,
+#   thinking on, quality_max_tokens 4096), decode 21.0 t/s @2K / 17.8 t/s
+#   @32K, MTP acceptance 0.78 / 0.98, min MemAvailable 19.7 GiB, peak GTT
+#   100.49 GiB, spawn-to-ready 40.2 s.
+#   results/G-H1-T03.w4/summary.json; registrar 8597fec9 W4 result events
+#   2455/2462/2465.
+#
+# Runtime pin: upstream ggml-org/llama.cpp b12206 @ cf34d311332e, no patches
+# (BUILDINFO.json on the Z13 records the binary sha256).
+# Binary dir: /home/alex/strix-halo-bench/runtimes/llama.cpp-cf34d311332e/bin/
+# The W2/W2b/W4 windows loaded this glm5-next quant on b12206, which settles
+# the older template's "mainline cannot load" doubt for this file.
+#
+# Argv mapping from the arm (args; preset_args is empty):
+# - "-m ${model}" is dropped: the llamacpp adapter emits -m <models dir>/<rel>.
+# - harness_args "--host 127.0.0.1 --port 8095" are dropped: the adapter
+#   emits --host/--port from spec.endpoint.
+# - --alias is added so /v1/models reports basename(rel). llama.cpp has no
+#   --served-model-name (Gufo-only; b12206 common/arg.cpp defines -a/--alias).
+# - NextN MTP head ships inside the quant, so no -md.
+# - --temp 0 is added: bench variant low4k ran temperature 0, so the server
+#   default matches it (the seat's opencode.json also sends temperature 0).
+# - Every other flag and value is the arm's, verbatim. The arm env is empty.
+#
+# Client sampling as benched: reasoning_effort "low" (the GGUF template maps
+# exactly "low" to "Reasoning Effort: Low"; anything else renders Max),
+# temperature 0.
+#
+# Validates against the deployed 2d0c095a ModelHost schema and origin/main
+# (no residentGiB, no binaryNames).
+#
+# Port 8098 avoids the z13 templates on 8080-8090/8092, the reserved 8091,
+# the Z13 records on 8080-8082, the bench harness port 8095 and the MiMo
+# winner on 8097.
+apiVersion: llamactl/v1
+kind: ModelHost
+metadata:
+  name: llamacpp-glm53-g-h1-t03-z13
+  labels:
+    family: glm53
+    profile: experimental
+    bench: w4
+    llamactl.io/qualification: experimental
+    llamactl.io/residency-group: z13-large-gpu
+    llamactl.io/runtime-arm: G-H1-T03
+    llamactl.io/backend: hip
+spec:
+  engine: llamacpp
+  node: z13
+  enabled: false
+  binary: /home/alex/strix-halo-bench/runtimes/llama.cpp-cf34d311332e/bin/llama-server
+  resources:
+    # Measured W4 peak GTT 100.49 GiB, rounded up.
+    expectedMemoryGiB: 101
+  endpoint:
+    host: 127.0.0.1
+    port: 8098
+  hostedModels:
+    - rel: GLM-5.3-Flash-GGUF/UD-IQ2_XXS/GLM-5.3-Flash-UD-IQ2_XXS-00001-of-00004.gguf
+  extraArgs:
+    # Served id = basename(rel); see the header.
+    - --alias
+    - GLM-5.3-Flash-UD-IQ2_XXS-00001-of-00004.gguf
+    - --jinja
+    - -ngl
+    - "99"
+    - -fa
+    - "on"
+    # The T03 change: ubatch 2048 (G-H1 used 1024).
+    - -ub
+    - "2048"
+    - --load-mode
+    - none
+    # 132096 = 131072 + 1024 answer/template headroom (W2b design).
+    - -c
+    - "132096"
+    - --parallel
+    - "1"
+    - -ctxcp
+    - "4"
+    - --cache-ram
+    - "0"
+    - --spec-type
+    - draft-mtp
+    - --spec-draft-n-max
+    - "2"
+    - --spec-draft-n-ubatch
+    - "128"
+    - --spec-draft-sampling
+    - probabilistic
+    # Bench variant low4k sampled at temperature 0.
+    - --temp
+    - "0"
+  restartPolicy: Never
+  # Benched spawn-to-ready was 40.2 s with a warm page cache; 600 (the
+  # schema max) covers a cold read of ~95 GiB.
+  timeoutSeconds: 600
