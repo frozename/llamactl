@@ -83,14 +83,21 @@ export interface EngineAdapter {
   teardown(pid: number, identity?: SignalIdentity): Promise<void>;
 }
 
+/**
+ * Parsed from oMLX GET /api/status (pinned feec0a0e). Not observable for
+ * DFlash engines (server.py:3171-3188 walks engine._engine only).
+ */
+export type NativeModelActivity = { activeRequests: number; waitingRequests: number };
+
 /** Parsed oMLX GET /v1/models/status entry for one hosted model (pinned jundot/omlx feec0a0e). Pure; no IO. */
 export type NativeModelStatusObservation =
-  | { state: "discovered" | "loading"; modelId: string }
+  | { state: "discovered" | "loading"; modelId: string; engineType?: string }
   | {
       state: "loaded";
       modelId: string;
       actualSize: number | null;
       residentEstimatedSize: number | null;
+      engineType?: string;
     }
   | { state: "failed"; reason: "ModelNotListed" | "MalformedStatus" };
 

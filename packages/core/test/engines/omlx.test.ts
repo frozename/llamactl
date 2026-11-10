@@ -386,6 +386,8 @@ type FixtureModel = {
   is_loading: boolean;
   actual_size?: number | null;
   resident_estimated_size?: number | null;
+  // unknown so tests can send non-string engine_type values; written whenever present.
+  engineType?: unknown;
 };
 
 // Mirrors the list_models_status payload at OMLX_STATUS_REVISION.
@@ -397,29 +399,34 @@ function statusFixtureV1(models: FixtureModel[]): Record<string, unknown> {
     loaded_count: models.filter((m) => m.loaded).length,
     load_seconds_per_gb_estimate: null,
     load_time_observations: 0,
-    models: models.map((m) => ({
-      id: m.id,
-      model_path: `/models/${m.id}`,
-      loaded: m.loaded,
-      is_loading: m.is_loading,
-      loading_started_at: null,
-      estimated_size: 5000000000,
-      resident_estimated_size:
-        "resident_estimated_size" in m ? m.resident_estimated_size : 5000000000,
-      distributed: false,
-      actual_size: "actual_size" in m ? m.actual_size : m.loaded ? 4800000000 : null,
-      pinned: false,
-      engine_type: "batched",
-      model_type: "llm",
-      config_model_type: "qwen3",
-      model_context_length: 40960,
-      is_helper: false,
-      source_type: "local",
-      max_context_window: 40960,
-      max_tokens: 32768,
-      is_favorite: false,
-      is_hidden: false,
-    })),
+    models: models.map((m) => {
+      const entry: Record<string, unknown> = {
+        id: m.id,
+        model_path: `/models/${m.id}`,
+        loaded: m.loaded,
+        is_loading: m.is_loading,
+        loading_started_at: null,
+        estimated_size: 5000000000,
+        resident_estimated_size:
+          "resident_estimated_size" in m ? m.resident_estimated_size : 5000000000,
+        distributed: false,
+        actual_size: "actual_size" in m ? m.actual_size : m.loaded ? 4800000000 : null,
+        pinned: false,
+        model_type: "llm",
+        config_model_type: "qwen3",
+        model_context_length: 40960,
+        is_helper: false,
+        source_type: "local",
+        max_context_window: 40960,
+        max_tokens: 32768,
+        is_favorite: false,
+        is_hidden: false,
+      };
+      if ("engineType" in m) {
+        entry["engine_type"] = m.engineType;
+      }
+      return entry;
+    }),
   };
 }
 
@@ -478,6 +485,90 @@ describe("#282 DF-09 oMLX native model status contract", () => {
     expect(parse(statusFixtureV1([{ id: ID, loaded: true, is_loading: true }]), REL)).toStrictEqual(
       { state: "loading", modelId: ID },
     );
+  });
+
+  test("P2a engineType emitted when engine_type is a string", () => {
+    const parse = parseStatusFn();
+    expect(
+      parse(
+        statusFixtureV1([{ id: ID, loaded: false, is_loading: true, engineType: "batched" }]),
+        REL,
+      ),
+    ).toStrictEqual({ state: "loading", modelId: ID, engineType: "batched" });
+    expect(
+      parse(
+        statusFixtureV1([{ id: ID, loaded: false, is_loading: false, engineType: "llm" }]),
+        REL,
+      ),
+    ).toStrictEqual({ state: "discovered", modelId: ID, engineType: "llm" });
+    expect(
+      parse(
+        statusFixtureV1([
+          {
+            id: ID,
+            loaded: true,
+            is_loading: false,
+            engineType: "embedding",
+          },
+        ]),
+        REL,
+      ),
+    ).toStrictEqual({
+      state: "loaded",
+      modelId: ID,
+      actualSize: 4800000000,
+      residentEstimatedSize: 5000000000,
+      engineType: "embedding",
+    });
+  });
+
+  test("P2b engineType absent when engine_type is missing or non-string", () => {
+    const parse = parseStatusFn();
+    const noEngineType: FixtureModel = { id: ID, loaded: false, is_loading: true };
+    expect(parse(statusFixtureV1([noEngineType]), REL)).toStrictEqual({
+      state: "loading",
+      modelId: ID,
+    });
+    expect(
+      parse(statusFixtureV1([{ id: ID, loaded: false, is_loading: false }]), REL),
+    ).toStrictEqual({ state: "discovered", modelId: ID });
+    expect(
+      parse(
+        statusFixtureV1([
+          {
+            id: ID,
+            loaded: true,
+            is_loading: false,
+          },
+        ]),
+        REL,
+      ),
+    ).toStrictEqual({
+      state: "loaded",
+      modelId: ID,
+      actualSize: 4800000000,
+      residentEstimatedSize: 5000000000,
+    });
+  });
+
+  test("P2c engineType absent when engine_type is not a string", () => {
+    const parse = parseStatusFn();
+    for (const engineType of [42, null, {}]) {
+      expect(
+        parse(statusFixtureV1([{ id: ID, loaded: false, is_loading: true, engineType }]), REL),
+      ).toStrictEqual({ state: "loading", modelId: ID });
+      expect(
+        parse(statusFixtureV1([{ id: ID, loaded: false, is_loading: false, engineType }]), REL),
+      ).toStrictEqual({ state: "discovered", modelId: ID });
+      expect(
+        parse(statusFixtureV1([{ id: ID, loaded: true, is_loading: false, engineType }]), REL),
+      ).toStrictEqual({
+        state: "loaded",
+        modelId: ID,
+        actualSize: 4800000000,
+        residentEstimatedSize: 5000000000,
+      });
+    }
   });
 
   test("P3 loaded: sizes come from actual_size and resident_estimated_size", () => {

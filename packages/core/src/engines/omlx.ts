@@ -4,6 +4,7 @@ import type {
   EngineAdapter,
   EngineBootEnv,
   ModelHostSpecForEngine,
+  NativeModelActivity,
   NativeModelResidency,
   NativeModelStatusObservation,
 } from "./types.js";
@@ -27,6 +28,34 @@ const LOOPBACK = new Set(["127.0.0.1", "::1", "localhost", "0.0.0.0"]);
 // jundot/omlx server.py list_models_status — pinned native status contract.
 export const OMLX_MODELS_STATUS_PATH = "/v1/models/status";
 export const OMLX_NATIVE_STATUS_REVISION = "feec0a0e4eda6ad5c227a5f9ee216c6fb6d2fe9b";
+export const OMLX_ACTIVITY_PATH = "/api/status";
+
+export function omlxModelActionPath(action: "load" | "unload", modelId: string): string {
+  return `/v1/models/${encodeURIComponent(modelId)}/${action}`;
+}
+
+export function parseOmlxActivity(body: unknown): NativeModelActivity | null {
+  if (!isRecord(body)) {
+    return null;
+  }
+  const activeRequests = body["active_requests"];
+  const waitingRequests = body["waiting_requests"];
+  if (
+    typeof activeRequests !== "number" ||
+    !Number.isInteger(activeRequests) ||
+    activeRequests < 0
+  ) {
+    return null;
+  }
+  if (
+    typeof waitingRequests !== "number" ||
+    !Number.isInteger(waitingRequests) ||
+    waitingRequests < 0
+  ) {
+    return null;
+  }
+  return { activeRequests, waitingRequests };
+}
 
 function omxBasePath(env: EngineBootEnv, workloadName: string): string {
   if (env.LLAMACTL_RUNTIME_DIR) {
@@ -255,11 +284,17 @@ function observeEntry(entry: Record<string, unknown>, id: string): NativeModelSt
   if (typeof loaded !== "boolean" || typeof isLoading !== "boolean") {
     return { state: "failed", reason: "MalformedStatus" };
   }
+  const engineType = entry["engine_type"];
+  const engineTypeValue = typeof engineType === "string" ? engineType : null;
   if (isLoading) {
-    return { state: "loading", modelId: id };
+    return engineTypeValue !== null
+      ? { state: "loading", modelId: id, engineType: engineTypeValue }
+      : { state: "loading", modelId: id };
   }
   if (!loaded) {
-    return { state: "discovered", modelId: id };
+    return engineTypeValue !== null
+      ? { state: "discovered", modelId: id, engineType: engineTypeValue }
+      : { state: "discovered", modelId: id };
   }
   const actualSize = readSize(entry["actual_size"]);
   if (!actualSize.ok) {
@@ -269,12 +304,20 @@ function observeEntry(entry: Record<string, unknown>, id: string): NativeModelSt
   if (!residentEstimatedSize.ok) {
     return { state: "failed", reason: "MalformedStatus" };
   }
-  return {
-    state: "loaded",
-    modelId: id,
-    actualSize: actualSize.value,
-    residentEstimatedSize: residentEstimatedSize.value,
-  };
+  return engineTypeValue !== null
+    ? {
+        state: "loaded",
+        modelId: id,
+        actualSize: actualSize.value,
+        residentEstimatedSize: residentEstimatedSize.value,
+        engineType: engineTypeValue,
+      }
+    : {
+        state: "loaded",
+        modelId: id,
+        actualSize: actualSize.value,
+        residentEstimatedSize: residentEstimatedSize.value,
+      };
 }
 
 // oMLX lists every model it knows about, not just the hosted one, so sibling
