@@ -27,6 +27,7 @@
     "./residency/leases": "./src/residency/leases.ts",
     "./residency/lifecycle": "./src/residency/lifecycle.ts",
     "./residency/llamacpp-sleep": "./src/residency/llamacpp-sleep.ts",
+    "./residency/planner": "./src/residency/planner.ts",
     "./residency/queue-policy": "./src/residency/queue-policy.ts",
     "./residency/sessions": "./src/residency/sessions.ts",
     "./residency/types": "./src/residency/types.ts",
