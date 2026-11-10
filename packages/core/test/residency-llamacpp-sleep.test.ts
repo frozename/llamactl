@@ -945,3 +945,134 @@ test("#283 W26: a same-runtimeKey member with a different specDigest is refused 
   expect(wakeB.reason).toBe("WorkloadBusy");
   expect(controller.snapshot().committedGiB).toBe(10);
 });
+
+test("#283 W27: joining a resident runtime is refused when the bill delta exceeds the budget", async () => {
+  const mod = await load();
+  const controller = ctl(mod, 15);
+  controller.register(
+    { id: "a", runtimeKey: "rk", specDigest: "d", allocationGiB: 10, capability: GUARDED },
+    "ready",
+  );
+  controller.register(
+    { id: "c", runtimeKey: "rk2", specDigest: "x", allocationGiB: 5, capability: GUARDED },
+    "ready",
+  );
+  controller.register(
+    { id: "b", runtimeKey: "rk", specDigest: "d", allocationGiB: 12, capability: GUARDED },
+    "sleeping",
+  );
+  expect(controller.snapshot().committedGiB).toBe(15);
+
+  // The group bills at its largest member: b's 12 GiB would raise the rk/d
+  // charge from 10 to 12, and 15 + 2 exceeds the 15 GiB budget.
+  const wakeB = controller.requestWake("b", { cacheIdentity: "kb" });
+  expect(wakeB.kind).toBe("refuse");
+  expect(wakeB.reason).toBe("BudgetExceeded");
+  expect(snapMember(controller, "b").state).toBe("sleeping");
+  expect(controller.snapshot().committedGiB).toBe(15);
+  expect(controller.snapshot().committedGiB).toBeLessThanOrEqual(15);
+});
+
+test("#283 W28: joining a pending wake is refused when the bill delta exceeds the budget", async () => {
+  const mod = await load();
+  const controller = ctl(mod, 15);
+  controller.register(
+    { id: "a", runtimeKey: "rk", specDigest: "d", allocationGiB: 10, capability: GUARDED },
+    "sleeping",
+  );
+  controller.register(
+    { id: "b", runtimeKey: "rk", specDigest: "d", allocationGiB: 12, capability: GUARDED },
+    "sleeping",
+  );
+  controller.register(
+    { id: "c", runtimeKey: "rk2", specDigest: "x", allocationGiB: 5, capability: GUARDED },
+    "ready",
+  );
+
+  const wakeA = controller.requestWake("a", { cacheIdentity: "ka" });
+  expect(wakeA.kind).toBe("wake");
+  expect(controller.snapshot().committedGiB).toBe(15);
+
+  const wakeB = controller.requestWake("b", { cacheIdentity: "kb" });
+  expect(wakeB.kind).toBe("refuse");
+  expect(wakeB.reason).toBe("BudgetExceeded");
+  expect(snapMember(controller, "b").state).toBe("sleeping");
+  expect(controller.snapshot().committedGiB).toBe(15);
+  expect(controller.snapshot().committedGiB).toBeLessThanOrEqual(15);
+});
+
+test("#283 W29: a join whose bill delta fits is admitted and charged only the difference", async () => {
+  const mod = await load();
+  const controller = ctl(mod, 20);
+  controller.register(
+    { id: "a", runtimeKey: "rk", specDigest: "d", allocationGiB: 10, capability: GUARDED },
+    "ready",
+  );
+  controller.register(
+    { id: "c", runtimeKey: "rk2", specDigest: "x", allocationGiB: 5, capability: GUARDED },
+    "ready",
+  );
+  controller.register(
+    { id: "b", runtimeKey: "rk", specDigest: "d", allocationGiB: 12, capability: GUARDED },
+    "sleeping",
+  );
+  expect(controller.snapshot().committedGiB).toBe(15);
+
+  // 15 committed + 2 delta = 17 <= 20: the join is admitted and the group
+  // rises to its largest member's 12 GiB — not a second full charge.
+  const wakeB = controller.requestWake("b", { cacheIdentity: "kb" });
+  expect(wakeB.kind).toBe("already-awake");
+  expect(snapMember(controller, "b").state).toBe("ready");
+  expect(controller.snapshot().committedGiB).toBe(17);
+  expect(controller.snapshot().committedGiB).toBeLessThanOrEqual(20);
+});
+
+test("#283 W30: a runtime group bills at its largest member allocation", async () => {
+  const mod = await load();
+  const controller = ctl(mod, 15);
+  controller.register(
+    { id: "a", runtimeKey: "rk", specDigest: "d", allocationGiB: 5, capability: GUARDED },
+    "ready",
+  );
+  controller.register(
+    { id: "b", runtimeKey: "rk", specDigest: "d", allocationGiB: 10, capability: GUARDED },
+    "ready",
+  );
+  controller.register(
+    { id: "c", runtimeKey: "rk2", specDigest: "x", allocationGiB: 8, capability: GUARDED },
+    "sleeping",
+  );
+  // One runtime group, billed once at the max member allocation: 10, not 15.
+  expect(controller.snapshot().committedGiB).toBe(10);
+
+  // 10 committed + 8 incoming = 18 > 15.
+  const wakeC = controller.requestWake("c", { cacheIdentity: "kc" });
+  expect(wakeC.kind).toBe("refuse");
+  expect(wakeC.reason).toBe("BudgetExceeded");
+  expect(controller.snapshot().committedGiB).toBe(10);
+});
+
+test("#283 W31: members sharing a runtimeKey but not a specDigest bill as separate groups", async () => {
+  const mod = await load();
+  const controller = ctl(mod, 25);
+  controller.register(
+    { id: "a", runtimeKey: "rk", specDigest: "d", allocationGiB: 10, capability: GUARDED },
+    "ready",
+  );
+  controller.register(
+    { id: "b", runtimeKey: "rk", specDigest: "e", allocationGiB: 10, capability: GUARDED },
+    "ready",
+  );
+  controller.register(
+    { id: "c", runtimeKey: "rk3", specDigest: "z", allocationGiB: 10, capability: GUARDED },
+    "sleeping",
+  );
+  // Two distinct runtimes: 10 + 10 = 20, not a merged single charge.
+  expect(controller.snapshot().committedGiB).toBe(20);
+
+  // 20 committed + 10 incoming = 30 > 25.
+  const wakeC = controller.requestWake("c", { cacheIdentity: "kc" });
+  expect(wakeC.kind).toBe("refuse");
+  expect(wakeC.reason).toBe("BudgetExceeded");
+  expect(controller.snapshot().committedGiB).toBe(20);
+});

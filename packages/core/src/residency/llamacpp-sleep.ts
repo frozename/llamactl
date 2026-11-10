@@ -6,7 +6,7 @@
 
 import type { ManagedAdmissionClaim, ManagedClaimState } from "./admission.js";
 
-import { evaluateManagedAdmission } from "./admission.js";
+import { evaluateManagedAdmission, isFiniteBudgetGiB } from "./admission.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -308,6 +308,27 @@ function computeCommittedGiB(members: ReadonlyMap<string, ControllerMember>): nu
   return total;
 }
 
+// A joiner declaring more than its runtime group's current billed
+// allocation raises committedGiB by only the difference; that delta must
+// still fit the budget or the join is refused like any other admit.
+function joinDeltaOverBudget(
+  members: ReadonlyMap<string, ControllerMember>,
+  member: ControllerMember,
+  budgetGiB: number | undefined,
+): boolean {
+  const key = runtimeGroupKey(member);
+  let billedGiB = 0;
+  for (const m of members.values()) {
+    if (m.reservation !== "released" && runtimeGroupKey(m) === key && m.allocationGiB > billedGiB) {
+      billedGiB = m.allocationGiB;
+    }
+  }
+  const deltaGiB = member.allocationGiB - billedGiB;
+  if (deltaGiB <= 0) return false;
+  if (!isFiniteBudgetGiB(budgetGiB)) return true;
+  return computeCommittedGiB(members) + deltaGiB > budgetGiB;
+}
+
 function managedClaimRank(state: ManagedClaimState): number {
   switch (state) {
     case "pending":
@@ -562,23 +583,9 @@ class LlamacppSleepControllerImpl implements LlamacppSleepController {
     switch (decision.kind) {
       case "refuse":
         return { kind: "refuse", reason: decision.reason };
-      case "already-resident": {
-        // A sibling member on the same runtime is already resident: the
-        // member joins it — the runtime group stays billed once.
-        member.state = "ready";
-        member.reservation = "resident";
-        return { kind: "already-awake" };
-      }
-      case "join-pending": {
-        // A sibling member on the same runtime has a wake in flight: join
-        // it — the pending reservation is billed once for the group.
-        member.state = "waking";
-        member.reservation = "pending";
-        return {
-          kind: "join-wake",
-          committedGiB: computeCommittedGiB(this.members),
-        };
-      }
+      case "already-resident":
+      case "join-pending":
+        return this.joinRuntimeGroup(member, decision.kind);
       case "admit": {
         member.state = "waking";
         member.reservation = "pending";
@@ -598,6 +605,30 @@ class LlamacppSleepControllerImpl implements LlamacppSleepController {
         throw new Error(`Unhandled admission decision: ${JSON.stringify(exhaustive)}`);
       }
     }
+  }
+
+  // A sibling on the same runtime is already resident or mid-wake: the
+  // member joins it and the group stays billed once at its largest member
+  // allocation. A joiner above that bill adds only the difference to
+  // committedGiB, and the delta must fit the budget.
+  private joinRuntimeGroup(
+    member: ControllerMember,
+    join: "already-resident" | "join-pending",
+  ): ReturnType<LlamacppSleepController["requestWake"]> {
+    if (joinDeltaOverBudget(this.members, member, this.budgetGiB)) {
+      return { kind: "refuse", reason: "BudgetExceeded" };
+    }
+    if (join === "join-pending") {
+      member.state = "waking";
+      member.reservation = "pending";
+      return {
+        kind: "join-wake",
+        committedGiB: computeCommittedGiB(this.members),
+      };
+    }
+    member.state = "ready";
+    member.reservation = "resident";
+    return { kind: "already-awake" };
   }
 
   private doRequestSleep(
