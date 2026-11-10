@@ -1,6 +1,12 @@
 import { basename, dirname, join, resolve, sep } from "node:path";
 
-import type { EngineAdapter, EngineBootEnv, ModelHostSpecForEngine } from "./types.js";
+import type {
+  EngineAdapter,
+  EngineBootEnv,
+  ModelHostSpecForEngine,
+  NativeModelResidency,
+  NativeModelStatusObservation,
+} from "./types.js";
 
 import { resolveEnv } from "../env.js";
 import { defaultOmlxMemoryGiBForProfile } from "../profile.js";
@@ -17,6 +23,10 @@ import { ensureWorkloadRuntimeDir } from "../workloadRuntime.js";
 import { gracefulShutdown, pollUntilModelIds } from "./lifecycle.js";
 
 const LOOPBACK = new Set(["127.0.0.1", "::1", "localhost", "0.0.0.0"]);
+
+// jundot/omlx server.py list_models_status — pinned native status contract.
+export const OMLX_MODELS_STATUS_PATH = "/v1/models/status";
+export const OMLX_NATIVE_STATUS_REVISION = "feec0a0e4eda6ad5c227a5f9ee216c6fb6d2fe9b";
 
 function omxBasePath(env: EngineBootEnv, workloadName: string): string {
   if (env.LLAMACTL_RUNTIME_DIR) {
@@ -200,4 +210,104 @@ export const omlxEngine: EngineAdapter = {
 
 export function matchHostedModel(rel: string, ids: string[]): boolean {
   return ids.includes(rel) || ids.includes(basename(rel));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isUnknownArray(value: unknown): value is unknown[] {
+  return Array.isArray(value);
+}
+
+type SizeField = { ok: true; value: number | null } | { ok: false };
+
+function readSize(value: unknown): SizeField {
+  if (value === undefined || value === null) {
+    return { ok: true, value: null };
+  }
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+    return { ok: true, value };
+  }
+  return { ok: false };
+}
+
+function findHostedEntry(
+  models: unknown[],
+  hostedRel: string,
+): { entry: Record<string, unknown>; id: string } | null {
+  for (const element of models) {
+    if (!isRecord(element)) {
+      continue;
+    }
+    const id = element["id"];
+    if (typeof id !== "string" || !matchHostedModel(hostedRel, [id])) {
+      continue;
+    }
+    return { entry: element, id };
+  }
+  return null;
+}
+
+function observeEntry(entry: Record<string, unknown>, id: string): NativeModelStatusObservation {
+  const loaded = entry["loaded"];
+  const isLoading = entry["is_loading"];
+  if (typeof loaded !== "boolean" || typeof isLoading !== "boolean") {
+    return { state: "failed", reason: "MalformedStatus" };
+  }
+  if (isLoading) {
+    return { state: "loading", modelId: id };
+  }
+  if (!loaded) {
+    return { state: "discovered", modelId: id };
+  }
+  const actualSize = readSize(entry["actual_size"]);
+  if (!actualSize.ok) {
+    return { state: "failed", reason: "MalformedStatus" };
+  }
+  const residentEstimatedSize = readSize(entry["resident_estimated_size"]);
+  if (!residentEstimatedSize.ok) {
+    return { state: "failed", reason: "MalformedStatus" };
+  }
+  return {
+    state: "loaded",
+    modelId: id,
+    actualSize: actualSize.value,
+    residentEstimatedSize: residentEstimatedSize.value,
+  };
+}
+
+// oMLX lists every model it knows about, not just the hosted one, so sibling
+// entries are skipped without validation — only the matched entry is observed.
+export function parseOmlxModelsStatus(
+  body: unknown,
+  hostedRel: string,
+): NativeModelStatusObservation {
+  if (!isRecord(body)) {
+    return { state: "failed", reason: "MalformedStatus" };
+  }
+  const models = body["models"];
+  if (!isUnknownArray(models)) {
+    return { state: "failed", reason: "MalformedStatus" };
+  }
+  const found = findHostedEntry(models, hostedRel);
+  if (found === null) {
+    return { state: "failed", reason: "ModelNotListed" };
+  }
+  return observeEntry(found.entry, found.id);
+}
+
+export function deriveOmlxResidency(
+  observation: NativeModelStatusObservation,
+  readinessOk: boolean | undefined,
+): NativeModelResidency {
+  if (observation.state !== "loaded") {
+    return observation;
+  }
+  return {
+    state: readinessOk === false ? "resident" : "ready",
+    modelId: observation.modelId,
+    actualSize: observation.actualSize,
+    residentEstimatedSize: observation.residentEstimatedSize,
+  };
 }
