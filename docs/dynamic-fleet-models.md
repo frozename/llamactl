@@ -188,18 +188,21 @@ same-group ModelHost, but it does not cover the production workload,
 whose name and group membership are node-local and not in this repo —
 swapping production out stays an operator step.
 
-The ten z13-large-gpu templates (runtime-arm label where present, and
+The thirteen z13-large-gpu templates (runtime-arm label where present, and
 port):
 
 | metadata.name                         | runtime arm                | port |
 | ------------------------------------- | -------------------------- | ---- |
 | `gufo-glm53-exp`                      | `G2c8-incoai-dc77ff1c99ee` | 8081 |
+| `libosmos-ds41-d-o2-t00-z13`          | `D-O2-T00`                 | 8099 |
 | `libosmos-ds41-ud-iq1m`               | `libosmos-934b51b932be`    | 8085 |
 | `libosmos-ds41-ud-iq1s`               | `libosmos-934b51b932be`    | 8092 |
 | `llamacpp-deepseek41-flash-iq1s`      | none                       | 8084 |
 | `llamacpp-ds41-ud-iq1m-hip-b12206`    | `D-L-cf34d311332e`         | 8090 |
+| `llamacpp-glm53-g-h1-t03-z13`         | `G-H1-T03`                 | 8098 |
 | `llamacpp-glm53-hip-b12206`           | `G-H1-cf34d311332e`        | 8087 |
 | `llamacpp-glm53-vulkan-halo`          | `G-V1-e742170e08db`        | 8086 |
+| `llamacpp-mimo-m-v1-t06-z13`          | `M-V1-T06`                 | 8097 |
 | `llamacpp-mimo26-bpw25-vulkan-b12206` | `M-V2-cf34d311332e`        | 8089 |
 | `llamacpp-mimo26-bpw25-vulkan-halo`   | `M-V1-e742170e08db`        | 8088 |
 | `llamacpp-mimo26-flash-bpw25`         | none                       | 8083 |
@@ -263,11 +266,12 @@ repo code and is out of scope.
 
 One row per GLM template arm; one column per promotion metric.
 
-| arm                        | template                     | `firstAttemptSuccess` | `repairSuccess` | `toolCallCorrectness` | `structuredOutputValidity` | `regression`  | `improvement` | `memoryStability` | `runtimeReliability` |
-| -------------------------- | ---------------------------- | --------------------- | --------------- | --------------------- | -------------------------- | ------------- | ------------- | ----------------- | -------------------- |
-| `G2c8-incoai-dc77ff1c99ee` | `gufo-glm53-exp`             | `unavailable`         | `unavailable`   | `unavailable`         | `unavailable`              | `unavailable` | `unavailable` | `unavailable`     | `unavailable`        |
-| `G-V1-e742170e08db`        | `llamacpp-glm53-vulkan-halo` | `unavailable`         | `unavailable`   | `unavailable`         | `unavailable`              | `unavailable` | `unavailable` | `unavailable`     | `unavailable`        |
-| `G-H1-cf34d311332e`        | `llamacpp-glm53-hip-b12206`  | `unavailable`         | `unavailable`   | `unavailable`         | `unavailable`              | `unavailable` | `unavailable` | `unavailable`     | `unavailable`        |
+| arm                        | template                      | `firstAttemptSuccess` | `repairSuccess` | `toolCallCorrectness` | `structuredOutputValidity` | `regression`  | `improvement` | `memoryStability` | `runtimeReliability` |
+| -------------------------- | ----------------------------- | --------------------- | --------------- | --------------------- | -------------------------- | ------------- | ------------- | ----------------- | -------------------- |
+| `G2c8-incoai-dc77ff1c99ee` | `gufo-glm53-exp`              | `unavailable`         | `unavailable`   | `unavailable`         | `unavailable`              | `unavailable` | `unavailable` | `unavailable`     | `unavailable`        |
+| `G-V1-e742170e08db`        | `llamacpp-glm53-vulkan-halo`  | `unavailable`         | `unavailable`   | `unavailable`         | `unavailable`              | `unavailable` | `unavailable` | `unavailable`     | `unavailable`        |
+| `G-H1-cf34d311332e`        | `llamacpp-glm53-hip-b12206`   | `unavailable`         | `unavailable`   | `unavailable`         | `unavailable`              | `unavailable` | `unavailable` | `unavailable`     | `unavailable`        |
+| `G-H1-T03`                 | `llamacpp-glm53-g-h1-t03-z13` | `unavailable`         | `unavailable`   | `unavailable`         | `unavailable`              | `unavailable` | `unavailable` | `unavailable`     | `unavailable`        |
 
 Notes:
 
