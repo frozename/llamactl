@@ -13,7 +13,8 @@ on:
 
 jobs:
   console-e2e:
-    runs-on: ubuntu-latest
+    # ubuntu-latest moved to 26.04, which Playwright has no chromium build for; pin until it does.
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - name: Checkout

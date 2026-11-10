@@ -82,3 +82,31 @@ export interface EngineAdapter {
    */
   teardown(pid: number, identity?: SignalIdentity): Promise<void>;
 }
+
+/** Parsed oMLX GET /v1/models/status entry for one hosted model (pinned jundot/omlx feec0a0e). Pure; no IO. */
+export type NativeModelStatusObservation =
+  | { state: "discovered" | "loading"; modelId: string }
+  | {
+      state: "loaded";
+      modelId: string;
+      actualSize: number | null;
+      residentEstimatedSize: number | null;
+    }
+  | { state: "failed"; reason: "ModelNotListed" | "MalformedStatus" };
+
+/**
+ * "discovered" means listed by oMLX but not loaded, and is NOT serving-ready.
+ * "resident" means loaded, but the configured readiness probe has not passed.
+ * "ready" means loaded, and readiness passed or none is configured.
+ * HTTP and auth outcomes (unreachable, unauthorized, unsupported) and "busy"
+ * are added by the remote client slice.
+ */
+export type NativeModelResidency =
+  | { state: "discovered" | "loading"; modelId: string }
+  | {
+      state: "resident" | "ready";
+      modelId: string;
+      actualSize: number | null;
+      residentEstimatedSize: number | null;
+    }
+  | { state: "failed"; reason: "ModelNotListed" | "MalformedStatus" };

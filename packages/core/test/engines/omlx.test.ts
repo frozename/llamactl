@@ -6,6 +6,7 @@ import type { EngineBootEnv, ModelHostSpecForEngine } from "../../src/engines/ty
 
 import { ENGINES } from "../../src/engines/index.js";
 import { gracefulShutdown } from "../../src/engines/lifecycle.js";
+import * as omlxModule from "../../src/engines/omlx.js";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
 
 function makeFakeBinary(): string {
@@ -355,5 +356,292 @@ describe("omlx engine adapter", () => {
     } catch {
       // Best-effort cleanup for a temp binary already removed by the OS.
     }
+  });
+});
+
+const OMLX_STATUS_REVISION = "feec0a0e4eda6ad5c227a5f9ee216c6fb6d2fe9b"; // jundot/omlx server.py list_models_status
+const REL = "mlx-community/Qwen3-8B-MLX-4bit";
+const ID = "Qwen3-8B-MLX-4bit";
+
+type ParseStatusFn = (body: unknown, hostedRel: string) => unknown;
+type DeriveFn = (observation: unknown, readinessOk: boolean | undefined) => unknown;
+
+const omlxExports = omlxModule as unknown as Record<string, unknown>;
+
+function parseStatusFn(): ParseStatusFn {
+  const fn = omlxExports["parseOmlxModelsStatus"];
+  expect(typeof fn).toBe("function");
+  return fn as ParseStatusFn;
+}
+
+function deriveFn(): DeriveFn {
+  const fn = omlxExports["deriveOmlxResidency"];
+  expect(typeof fn).toBe("function");
+  return fn as DeriveFn;
+}
+
+type FixtureModel = {
+  id: string;
+  loaded: boolean;
+  is_loading: boolean;
+  actual_size?: number | null;
+  resident_estimated_size?: number | null;
+};
+
+// Mirrors the list_models_status payload at OMLX_STATUS_REVISION.
+function statusFixtureV1(models: FixtureModel[]): Record<string, unknown> {
+  return {
+    final_ceiling: 34359738368,
+    current_model_memory: 0,
+    model_count: models.length,
+    loaded_count: models.filter((m) => m.loaded).length,
+    load_seconds_per_gb_estimate: null,
+    load_time_observations: 0,
+    models: models.map((m) => ({
+      id: m.id,
+      model_path: `/models/${m.id}`,
+      loaded: m.loaded,
+      is_loading: m.is_loading,
+      loading_started_at: null,
+      estimated_size: 5000000000,
+      resident_estimated_size:
+        "resident_estimated_size" in m ? m.resident_estimated_size : 5000000000,
+      distributed: false,
+      actual_size: "actual_size" in m ? m.actual_size : m.loaded ? 4800000000 : null,
+      pinned: false,
+      engine_type: "batched",
+      model_type: "llm",
+      config_model_type: "qwen3",
+      model_context_length: 40960,
+      is_helper: false,
+      source_type: "local",
+      max_context_window: 40960,
+      max_tokens: 32768,
+      is_favorite: false,
+      is_hidden: false,
+    })),
+  };
+}
+
+const LOADED = {
+  state: "loaded",
+  modelId: ID,
+  actualSize: 4800000000,
+  residentEstimatedSize: 5000000000,
+};
+
+const READINESS_VALUES: (boolean | undefined)[] = [true, false, undefined];
+
+const MALFORMED_STATUS_BODIES: { label: string; body: unknown }[] = [
+  { label: "null body", body: null },
+  { label: "array body", body: [] },
+  { label: "string body", body: "x" },
+  { label: "empty object body", body: {} },
+  { label: "models not an array", body: { models: "x" } },
+  {
+    label: "loaded not a boolean",
+    body: { models: [{ id: ID, loaded: "yes", is_loading: false }] },
+  },
+  { label: "is_loading missing", body: { models: [{ id: ID, loaded: true }] } },
+  {
+    label: "actual_size not a number",
+    body: { models: [{ id: ID, loaded: true, is_loading: false, actual_size: "4GB" }] },
+  },
+  {
+    label: "actual_size negative",
+    body: { models: [{ id: ID, loaded: true, is_loading: false, actual_size: -1 }] },
+  },
+  {
+    label: "resident_estimated_size negative",
+    body: {
+      models: [{ id: ID, loaded: true, is_loading: false, resident_estimated_size: -5 }],
+    },
+  },
+];
+
+// #282 DF-09: pure contract for oMLX's native list_models_status payload and the
+// residency derivation that folds the readiness probe into it. No IO.
+describe("#282 DF-09 oMLX native model status contract", () => {
+  test("P1 discovered when listed but neither loaded nor loading", () => {
+    const parse = parseStatusFn();
+    expect(OMLX_STATUS_REVISION).toHaveLength(40);
+    expect(
+      parse(statusFixtureV1([{ id: ID, loaded: false, is_loading: false }]), REL),
+    ).toStrictEqual({ state: "discovered", modelId: ID });
+  });
+
+  test("P2 loading: is_loading wins over loaded", () => {
+    const parse = parseStatusFn();
+    expect(
+      parse(statusFixtureV1([{ id: ID, loaded: false, is_loading: true }]), REL),
+    ).toStrictEqual({ state: "loading", modelId: ID });
+    expect(parse(statusFixtureV1([{ id: ID, loaded: true, is_loading: true }]), REL)).toStrictEqual(
+      { state: "loading", modelId: ID },
+    );
+  });
+
+  test("P3 loaded: sizes come from actual_size and resident_estimated_size", () => {
+    const parse = parseStatusFn();
+    expect(
+      parse(statusFixtureV1([{ id: ID, loaded: true, is_loading: false }]), REL),
+    ).toStrictEqual({
+      state: "loaded",
+      modelId: ID,
+      actualSize: 4800000000,
+      residentEstimatedSize: 5000000000,
+    });
+    expect(
+      parse(
+        statusFixtureV1([
+          {
+            id: ID,
+            loaded: true,
+            is_loading: false,
+            actual_size: null,
+            resident_estimated_size: null,
+          },
+        ]),
+        REL,
+      ),
+    ).toStrictEqual({
+      state: "loaded",
+      modelId: ID,
+      actualSize: null,
+      residentEstimatedSize: null,
+    });
+    expect(parse({ models: [{ id: ID, loaded: true, is_loading: false }] }, REL)).toStrictEqual({
+      state: "loaded",
+      modelId: ID,
+      actualSize: null,
+      residentEstimatedSize: null,
+    });
+  });
+
+  test("P4 id matching: full rel id; sibling loaded flags never borrowed", () => {
+    const parse = parseStatusFn();
+    expect(
+      parse(statusFixtureV1([{ id: REL, loaded: false, is_loading: false }]), REL),
+    ).toStrictEqual({ state: "discovered", modelId: REL });
+    expect(
+      parse(
+        statusFixtureV1([
+          { id: "Other-Model", loaded: true, is_loading: false },
+          { id: ID, loaded: false, is_loading: false },
+        ]),
+        REL,
+      ),
+    ).toStrictEqual({ state: "discovered", modelId: ID });
+  });
+
+  test("P5 not listed when no entry matches the hosted rel", () => {
+    const parse = parseStatusFn();
+    expect(
+      parse(statusFixtureV1([{ id: "Other-Model", loaded: true, is_loading: false }]), REL),
+    ).toStrictEqual({ state: "failed", reason: "ModelNotListed" });
+    expect(parse(statusFixtureV1([]), REL)).toStrictEqual({
+      state: "failed",
+      reason: "ModelNotListed",
+    });
+  });
+
+  for (const { label, body } of MALFORMED_STATUS_BODIES) {
+    test(`P6 malformed status: ${label}`, () => {
+      const parse = parseStatusFn();
+      expect(parse(body, REL)).toStrictEqual({ state: "failed", reason: "MalformedStatus" });
+    });
+  }
+
+  test("P7 tolerant siblings: only the matched entry is validated", () => {
+    const parse = parseStatusFn();
+    expect(
+      parse(
+        {
+          models: [
+            42,
+            null,
+            { loaded: true, is_loading: false },
+            { id: 7, loaded: true },
+            { id: "Other-Model", loaded: "weird" },
+            {
+              id: ID,
+              loaded: true,
+              is_loading: false,
+              actual_size: 4800000000,
+              resident_estimated_size: 5000000000,
+            },
+          ],
+        },
+        REL,
+      ),
+    ).toStrictEqual({
+      state: "loaded",
+      modelId: ID,
+      actualSize: 4800000000,
+      residentEstimatedSize: 5000000000,
+    });
+  });
+
+  test("D1 no readiness configured: loaded promotes to ready", () => {
+    const derive = deriveFn();
+    expect(derive(LOADED, undefined)).toStrictEqual({
+      state: "ready",
+      modelId: ID,
+      actualSize: 4800000000,
+      residentEstimatedSize: 5000000000,
+    });
+  });
+
+  test("D2 readiness honoured: false stays resident, true promotes to ready", () => {
+    const derive = deriveFn();
+    expect(derive(LOADED, false)).toStrictEqual({
+      state: "resident",
+      modelId: ID,
+      actualSize: 4800000000,
+      residentEstimatedSize: 5000000000,
+    });
+    expect(derive(LOADED, true)).toStrictEqual({
+      state: "ready",
+      modelId: ID,
+      actualSize: 4800000000,
+      residentEstimatedSize: 5000000000,
+    });
+  });
+
+  test("D3 readiness never upgrades an unloaded model", () => {
+    const derive = deriveFn();
+    const observations = [
+      { state: "discovered", modelId: ID },
+      { state: "loading", modelId: ID },
+    ];
+    for (const observation of observations) {
+      for (const readinessOk of READINESS_VALUES) {
+        expect(derive(observation, readinessOk)).toStrictEqual(observation);
+      }
+    }
+  });
+
+  test("D4 failures pass through unchanged", () => {
+    const derive = deriveFn();
+    const observations = [
+      { state: "failed", reason: "ModelNotListed" },
+      { state: "failed", reason: "MalformedStatus" },
+    ];
+    for (const observation of observations) {
+      for (const readinessOk of READINESS_VALUES) {
+        expect(derive(observation, readinessOk)).toStrictEqual(observation);
+      }
+    }
+  });
+
+  test("D5 null sizes are carried through to ready", () => {
+    const derive = deriveFn();
+    expect(
+      derive({ state: "loaded", modelId: ID, actualSize: null, residentEstimatedSize: null }, true),
+    ).toStrictEqual({
+      state: "ready",
+      modelId: ID,
+      actualSize: null,
+      residentEstimatedSize: null,
+    });
   });
 });
