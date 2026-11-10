@@ -15,7 +15,9 @@ export const MEMORY_BUDGET_HEADROOM_RATIO = 0.75;
 /**
  * Residency tuning knobs (Refs #519). Only `safetyMarginRatio` has a
  * consumer today (`defaultNodeBudgetGiB`, opt-in); the other fields are
- * reserved and not yet enforced.
+ * reserved and not yet enforced. `minResidencySeconds` and
+ * `switchCooldownSeconds` are now consumed by the dry-run profile
+ * planner (`planner.ts`).
  */
 export interface ResidencyPolicy {
   /** 0 = never evict idle residents. */

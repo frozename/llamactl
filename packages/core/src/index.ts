@@ -25,6 +25,7 @@ export * as recommendations from "./recommendations.js";
 export * as residencyAdmission from "./residency/admission.js";
 export * as residencyLeases from "./residency/leases.js";
 export * as residencyLifecycle from "./residency/lifecycle.js";
+export * as residencyPlanner from "./residency/planner.js";
 export * as residencyQueuePolicy from "./residency/queue-policy.js";
 export * as residencySessions from "./residency/sessions.js";
 export * as resourcesMemory from "./resources/memory.js";
