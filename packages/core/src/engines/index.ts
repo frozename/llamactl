@@ -15,7 +15,17 @@ export const ENGINES: Record<EngineName, EngineAdapter> = {
 };
 
 export { libosmosEngine } from "./libosmos.js";
-export { matchHostedModel } from "./omlx.js";
+export { checkServingReadiness, formatHostForUrl } from "./lifecycle.js";
+export {
+  deriveOmlxResidency,
+  matchHostedModel,
+  OMLX_ACTIVITY_PATH,
+  OMLX_MODELS_STATUS_PATH,
+  OMLX_NATIVE_STATUS_REVISION,
+  omlxModelActionPath,
+  parseOmlxActivity,
+  parseOmlxModelsStatus,
+} from "./omlx.js";
 export type {
   EngineAdapter,
   EngineBootEnv,
@@ -23,4 +33,7 @@ export type {
   ModelHostHostedModel,
   ModelHostReadiness,
   ModelHostSpecForEngine,
+  NativeModelActivity,
+  NativeModelResidency,
+  NativeModelStatusObservation,
 } from "./types.js";

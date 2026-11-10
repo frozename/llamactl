@@ -4,6 +4,7 @@ import type {
   EngineAdapter,
   EngineBootEnv,
   ModelHostSpecForEngine,
+  NativeModelActivity,
   NativeModelResidency,
   NativeModelStatusObservation,
 } from "./types.js";
@@ -27,6 +28,34 @@ const LOOPBACK = new Set(["127.0.0.1", "::1", "localhost", "0.0.0.0"]);
 // jundot/omlx server.py list_models_status — pinned native status contract.
 export const OMLX_MODELS_STATUS_PATH = "/v1/models/status";
 export const OMLX_NATIVE_STATUS_REVISION = "feec0a0e4eda6ad5c227a5f9ee216c6fb6d2fe9b";
+export const OMLX_ACTIVITY_PATH = "/api/status";
+
+export function omlxModelActionPath(action: "load" | "unload", modelId: string): string {
+  return `/v1/models/${encodeURIComponent(modelId)}/${action}`;
+}
+
+export function parseOmlxActivity(body: unknown): NativeModelActivity | null {
+  if (!isRecord(body)) {
+    return null;
+  }
+  const activeRequests = body["active_requests"];
+  const waitingRequests = body["waiting_requests"];
+  if (
+    typeof activeRequests !== "number" ||
+    !Number.isInteger(activeRequests) ||
+    activeRequests < 0
+  ) {
+    return null;
+  }
+  if (
+    typeof waitingRequests !== "number" ||
+    !Number.isInteger(waitingRequests) ||
+    waitingRequests < 0
+  ) {
+    return null;
+  }
+  return { activeRequests, waitingRequests };
+}
 
 function omxBasePath(env: EngineBootEnv, workloadName: string): string {
   if (env.LLAMACTL_RUNTIME_DIR) {
