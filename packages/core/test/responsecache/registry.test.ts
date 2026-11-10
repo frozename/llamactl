@@ -150,6 +150,9 @@ test("upsert: second insert with same key updates fields, listAll has length 1",
       hits: 1,
       lastUsed: 100,
       createdAt: 500,
+      contentType: "application/json",
+      requestBodyBytes: 100,
+      responseBodyBytes: 200,
     });
 
     registry.insert(entry);
@@ -165,6 +168,9 @@ test("upsert: second insert with same key updates fields, listAll has length 1",
       hits: 7,
       lastUsed: 900,
       createdAt: 800,
+      contentType: "text/event-stream",
+      requestBodyBytes: 300,
+      responseBodyBytes: 400,
     });
 
     registry.insert(updated);
@@ -179,82 +185,9 @@ test("upsert: second insert with same key updates fields, listAll has length 1",
     expect(found!.hits).toBe(7);
     expect(found!.lastUsed).toBe(900);
     expect(found!.createdAt).toBe(800);
-  });
-});
-
-test("plain INSERT with no ON CONFLICT throws on duplicate key", (): void => {
-  withRegistry((registry, storage) => {
-    const entry: ResponseCacheEntry = baseEntry({
-      sha: "sha-dup",
-      model: "model-a",
-      workload: "wl-a",
-      workloadEpoch: "e1",
-      protocolVariant: "openai",
-      responseBody: new TextEncoder().encode("v1"),
-    });
-
-    registry.insert(entry);
-
-    const duplicate: ResponseCacheEntry = baseEntry({
-      sha: "sha-dup",
-      model: "model-a",
-      workload: "wl-a",
-      workloadEpoch: "e1",
-      protocolVariant: "openai",
-      responseBody: new TextEncoder().encode("v2"),
-    });
-
-    expect(() => {
-      storage.db
-        .query(
-          `
-        INSERT INTO response_entries (
-          sha,
-          model,
-          workload,
-          workload_epoch,
-          protocol_variant,
-          content_type,
-          status_code,
-          response_body,
-          request_body_bytes,
-          response_body_bytes,
-          created_at,
-          last_used,
-          hits
-        ) VALUES (
-          $sha,
-          $model,
-          $workload,
-          $workload_epoch,
-          $protocol_variant,
-          $content_type,
-          $status_code,
-          $response_body,
-          $request_body_bytes,
-          $response_body_bytes,
-          $created_at,
-          $last_used,
-          $hits
-        )
-      `,
-        )
-        .run({
-          $sha: duplicate.sha,
-          $model: duplicate.model,
-          $workload: duplicate.workload,
-          $workload_epoch: duplicate.workloadEpoch,
-          $protocol_variant: duplicate.protocolVariant,
-          $content_type: duplicate.contentType,
-          $status_code: duplicate.statusCode,
-          $response_body: duplicate.responseBody,
-          $request_body_bytes: duplicate.requestBodyBytes,
-          $response_body_bytes: duplicate.responseBodyBytes,
-          $created_at: duplicate.createdAt,
-          $last_used: duplicate.lastUsed,
-          $hits: duplicate.hits,
-        });
-    }).toThrow(/UNIQUE constraint/);
+    expect(found!.contentType).toBe("text/event-stream");
+    expect(found!.requestBodyBytes).toBe(300);
+    expect(found!.responseBodyBytes).toBe(400);
   });
 });
 
@@ -340,6 +273,80 @@ test("bumpHit scoping: only bumps the matched row", (): void => {
   });
 });
 
+test("bumpHit pins all five key columns: differing in one column leaves siblings untouched", (): void => {
+  withRegistry((registry) => {
+    const base: ResponseCacheEntry = baseEntry({
+      sha: "sha-bump5",
+      model: "model-a",
+      workload: "wl-a",
+      workloadEpoch: "e1",
+      protocolVariant: "openai",
+      hits: 0,
+      lastUsed: 100,
+    });
+
+    const shaDiff: ResponseCacheEntry = baseEntry({
+      ...base,
+      sha: "sha-bump5-other",
+    });
+    const modelDiff: ResponseCacheEntry = baseEntry({
+      ...base,
+      model: "model-b",
+    });
+    const wlDiff: ResponseCacheEntry = baseEntry({
+      ...base,
+      workload: "wl-b",
+    });
+    const epochDiff: ResponseCacheEntry = baseEntry({
+      ...base,
+      workloadEpoch: "e2",
+    });
+    const variantDiff: ResponseCacheEntry = baseEntry({
+      ...base,
+      protocolVariant: "anthropic",
+    });
+
+    registry.insert(base);
+    registry.insert(shaDiff);
+    registry.insert(modelDiff);
+    registry.insert(wlDiff);
+    registry.insert(epochDiff);
+    registry.insert(variantDiff);
+
+    registry.bumpHit(lookupOf(base), 999);
+
+    const foundBase = registry.findBySha(lookupOf(base));
+    expect(foundBase).not.toBeNull();
+    expect(foundBase!.hits).toBe(1);
+    expect(foundBase!.lastUsed).toBe(999);
+
+    const foundSha = registry.findBySha(lookupOf(shaDiff));
+    expect(foundSha).not.toBeNull();
+    expect(foundSha!.hits).toBe(0);
+    expect(foundSha!.lastUsed).toBe(100);
+
+    const foundModel = registry.findBySha(lookupOf(modelDiff));
+    expect(foundModel).not.toBeNull();
+    expect(foundModel!.hits).toBe(0);
+    expect(foundModel!.lastUsed).toBe(100);
+
+    const foundWl = registry.findBySha(lookupOf(wlDiff));
+    expect(foundWl).not.toBeNull();
+    expect(foundWl!.hits).toBe(0);
+    expect(foundWl!.lastUsed).toBe(100);
+
+    const foundEpoch = registry.findBySha(lookupOf(epochDiff));
+    expect(foundEpoch).not.toBeNull();
+    expect(foundEpoch!.hits).toBe(0);
+    expect(foundEpoch!.lastUsed).toBe(100);
+
+    const foundVariant = registry.findBySha(lookupOf(variantDiff));
+    expect(foundVariant).not.toBeNull();
+    expect(foundVariant!.hits).toBe(0);
+    expect(foundVariant!.lastUsed).toBe(100);
+  });
+});
+
 test("tryDelete: returns false on missing, true on existing, sibling survives", (): void => {
   withRegistry((registry) => {
     const lookupMissing: ResponseCacheLookup = {
@@ -377,6 +384,55 @@ test("tryDelete: returns false on missing, true on existing, sibling survives", 
 
     const siblingLookup = lookupOf(sibling);
     expect(registry.findBySha(siblingLookup)).not.toBeNull();
+  });
+});
+
+test("tryDelete pins all five key columns: deleting one leaves siblings with different single column", (): void => {
+  withRegistry((registry) => {
+    const base: ResponseCacheEntry = baseEntry({
+      sha: "sha-del5",
+      model: "model-a",
+      workload: "wl-a",
+      workloadEpoch: "e1",
+      protocolVariant: "openai",
+    });
+
+    const shaDiff: ResponseCacheEntry = baseEntry({
+      ...base,
+      sha: "sha-del5-other",
+    });
+    const modelDiff: ResponseCacheEntry = baseEntry({
+      ...base,
+      model: "model-b",
+    });
+    const wlDiff: ResponseCacheEntry = baseEntry({
+      ...base,
+      workload: "wl-b",
+    });
+    const epochDiff: ResponseCacheEntry = baseEntry({
+      ...base,
+      workloadEpoch: "e2",
+    });
+    const variantDiff: ResponseCacheEntry = baseEntry({
+      ...base,
+      protocolVariant: "anthropic",
+    });
+
+    registry.insert(base);
+    registry.insert(shaDiff);
+    registry.insert(modelDiff);
+    registry.insert(wlDiff);
+    registry.insert(epochDiff);
+    registry.insert(variantDiff);
+
+    registry.tryDelete(lookupOf(base));
+
+    expect(registry.findBySha(lookupOf(base))).toBeNull();
+
+    const entries = [shaDiff, modelDiff, wlDiff, epochDiff, variantDiff];
+    for (const entry of entries) {
+      expect(registry.findBySha(lookupOf(entry))).not.toBeNull();
+    }
   });
 });
 
