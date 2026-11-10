@@ -317,6 +317,11 @@ export async function runApply(args: string[]): Promise<number> {
     return await applyNodeRunFromRaw(raw, parsed.json);
   }
   if (kind === "ModelHost") {
+    const flagRefusal = modelHostApplyFlagsRefusal(parsed);
+    if (flagRefusal !== null) {
+      process.stderr.write(flagRefusal);
+      return 1;
+    }
     return await applyModelHostFromRaw(raw, parsed.json);
   }
   return await applyModelRunFromRaw(raw, parsed.json, parsed);
@@ -557,6 +562,15 @@ function handoffOrRefuseLocalModelHost(manifest: ModelHostManifest, json: boolea
 
 function preserveDisabledModelHostIntent(manifest: ModelHostManifest): void {
   if (!manifest.spec.enabled) saveModelHost(manifest);
+}
+
+// --evict/--force only have meaning on the ModelRun admission path; a
+// ModelHost apply has no eviction target to honour them against, so they
+// are refused outright rather than silently dropped.
+function modelHostApplyFlagsRefusal(flags: Pick<ApplyFlags, "evict" | "force">): string | null {
+  return flags.evict.length > 0 || flags.force
+    ? "apply: --evict and --force are not supported for ModelHost manifests\n"
+    : null;
 }
 
 async function applyModelHostFromRaw(raw: string, json: boolean): Promise<number> {

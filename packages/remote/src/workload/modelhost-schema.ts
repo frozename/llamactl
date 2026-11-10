@@ -161,11 +161,32 @@ export const ModelHostManifestSchema = z
             "name must be lowercase alphanumeric with dashes, max 63 chars",
           ),
         labels: z.record(z.string(), z.string()).optional(),
+        // Controller-side annotations (DF-02 eviction markers). Optional so
+        // an unmarked host serializes byte-identical to before; they are
+        // never sent to remote agents — startModelHostProcess strips them
+        // from the wire manifest — and they stay outside the spec hash.
+        annotations: z.record(z.string(), z.string()).optional(),
       })
       .strict(),
     spec: ModelHostSpecSchema,
   })
-  .strict();
+  .strict()
+  .superRefine((manifest, ctx) => {
+    const annotations = manifest.metadata.annotations;
+    if (annotations === undefined) return;
+    // The replacement-control keys stay ModelRun-only until the
+    // ModelHost-as-replacement follow-up lifts this rejection; the
+    // evicted-by / evicted-at markers and other keys are allowed.
+    for (const key of ["llamactl.io/evict", "llamactl.io/force-admit"] as const) {
+      if (annotations[key] !== undefined) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["metadata", "annotations", key],
+          message: `${key} is not yet supported for ModelHost manifests`,
+        });
+      }
+    }
+  });
 
 export type ModelHostManifest = z.infer<typeof ModelHostManifestSchema>;
 export type ModelHostSpec = z.infer<typeof ModelHostSpecSchema>;

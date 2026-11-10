@@ -258,6 +258,8 @@ export async function reconcileOnce(opts: ReconcileOptions): Promise<ReconcileRe
   return { reports, errors };
 }
 
+type EvictionDecision = { kind: "none" } | { kind: "hold"; evictedBy: string } | { kind: "stale" };
+
 type EvictionGuard = { kind: "hold"; evictedBy: string } | { kind: "apply"; manifest: ModelRun };
 
 /** Clear a stale eviction marker from disk; fall back to the snapshot. */
@@ -280,26 +282,49 @@ function clearStaleEvictionMarker(manifest: ModelRun, dir: string): ModelRun {
 }
 
 /**
- * DF-02 resurrection guard: a verified eviction stamps evicted-by /
- * evicted-at on the victim before the stop RPC. While that intent is
- * live the reconciler must not restart the victim underneath its
- * replacement — no status RPC, no applyOne.
+ * ModelHost variant of clearStaleEvictionMarker: same marker strip through
+ * the ModelHost store. annotations is optional on ModelHost, so the key is
+ * dropped entirely when nothing remains rather than left as {}.
  */
-function evictionGuard(manifest: ModelRun, opts: ReconcileOptions, dir: string): EvictionGuard {
-  const name = manifest.metadata.name;
-  // The pass-start snapshot predates this workload's turn: an earlier
-  // apply in the same pass can stamp this victim's marker (same-tick
-  // eviction) or a failed replacement's rollback can clear one, so the
-  // guard decides on the on-disk annotations, not the snapshot.
-  let annotations = manifest.metadata.annotations;
+function clearStaleHostEvictionMarker(manifest: ModelHostManifest, dir: string): ModelHostManifest {
   try {
-    const fresh = loadWorkloadByName(name, dir);
-    if (fresh.metadata.name === name) annotations = fresh.metadata.annotations;
+    const fresh = loadModelHostByName(manifest.metadata.name, dir);
+    const {
+      [EVICTED_BY_ANNOTATION]: _evictedBy,
+      [EVICTED_AT_ANNOTATION]: _evictedAt,
+      ...annotations
+    } = fresh.metadata.annotations ?? {};
+    const { annotations: _stale, ...metadata } = fresh.metadata;
+    const cleared: ModelHostManifest = {
+      ...fresh,
+      metadata: Object.keys(annotations).length > 0 ? { ...metadata, annotations } : metadata,
+    };
+    saveModelHost(cleared, dir);
+    return cleared;
   } catch {
-    // Vanished or unreadable mid-pass; the snapshot still decides.
+    // The manifest vanished or the marker clear failed; reconcile the
+    // pass-start snapshot and let a later pass retry the removal.
+    return manifest;
   }
-  const evictedBy = annotations[EVICTED_BY_ANNOTATION];
-  if (!evictedBy) return { kind: "apply", manifest };
+}
+
+/**
+ * DF-02 resurrection-guard decision shared by ModelRun and ModelHost
+ * victims (#275): a verified eviction stamps evicted-by / evicted-at on
+ * the victim before the stop RPC. While that intent is live the
+ * reconciler must not restart the victim underneath its replacement —
+ * the caller reports the hold with no status RPC and no apply. The hold
+ * owner must be a ModelRun naming this victim, exactly as the apply-side
+ * liveEvictionOwner check requires.
+ */
+function evictionDecision(
+  name: string,
+  annotations: Record<string, string> | undefined,
+  opts: ReconcileOptions,
+  dir: string,
+): EvictionDecision {
+  const evictedBy = annotations?.[EVICTED_BY_ANNOTATION];
+  if (annotations === undefined || !evictedBy) return { kind: "none" };
   const graceMs = opts.evictionGraceMs ?? EVICTION_INTENT_GRACE_MS;
   const nowMs = (opts.now?.() ?? new Date()).getTime();
   const evictedAt = annotations[EVICTED_AT_ANNOTATION];
@@ -316,7 +341,33 @@ function evictionGuard(manifest: ModelRun, opts: ReconcileOptions, dir: string):
   if (replacementHoldsEviction(replacement, withinGrace, namesVictim)) {
     return { kind: "hold", evictedBy };
   }
-  return { kind: "apply", manifest: clearStaleEvictionMarker(manifest, dir) };
+  return { kind: "stale" };
+}
+
+/**
+ * DF-02 resurrection guard for ModelRun victims: the pass-start snapshot
+ * predates this workload's turn, so the decision runs on the on-disk
+ * annotations; a lapsed marker is cleared before the apply continues.
+ */
+function evictionGuard(manifest: ModelRun, opts: ReconcileOptions, dir: string): EvictionGuard {
+  const name = manifest.metadata.name;
+  // The pass-start snapshot predates this workload's turn: an earlier
+  // apply in the same pass can stamp this victim's marker (same-tick
+  // eviction) or a failed replacement's rollback can clear one, so the
+  // guard decides on the on-disk annotations, not the snapshot.
+  let annotations = manifest.metadata.annotations;
+  try {
+    const fresh = loadWorkloadByName(name, dir);
+    if (fresh.metadata.name === name) annotations = fresh.metadata.annotations;
+  } catch {
+    // Vanished or unreadable mid-pass; the snapshot still decides.
+  }
+  const decision = evictionDecision(name, annotations, opts, dir);
+  if (decision.kind === "hold") return { kind: "hold", evictedBy: decision.evictedBy };
+  if (decision.kind === "stale") {
+    return { kind: "apply", manifest: clearStaleEvictionMarker(manifest, dir) };
+  }
+  return { kind: "apply", manifest };
 }
 
 /**
@@ -683,23 +734,53 @@ async function reconcileModelHost(
     });
     return 0;
   }
-  return await reconcileUnmanagedModelHost(current, opts, dir, nodeBudgetByName, reports);
+  // DF-02 (#275): the same resurrection guard as ModelRun victims, decided
+  // on the re-read `current`. A live hold reports unchanged with no client
+  // access and no apply; a lapsed marker is cleared on disk and the pass
+  // continues with the cleared manifest.
+  const name = current.metadata.name;
+  const decision = evictionDecision(name, current.metadata.annotations, opts, dir);
+  if (decision.kind === "hold") {
+    reports.push({
+      kind: "ModelHost",
+      name,
+      node: current.spec.node,
+      action: "unchanged",
+      evictedBy: decision.evictedBy,
+    });
+    return 0;
+  }
+  const host = decision.kind === "stale" ? clearStaleHostEvictionMarker(current, dir) : current;
+  return await reconcileUnmanagedModelHost(host, opts, dir, nodeBudgetByName, reports);
 }
 
 /**
  * Persist the applied manifest unless the on-disk copy gained an external
  * managed-by marker (or vanished) while the apply was awaited: another
  * controller owns the hand-over now, so the stale in-memory manifest must
- * not be written back over it.
+ * not be written back over it. The write carries the ON-DISK
+ * metadata.annotations — a CLI eviction marker stamped during the apply
+ * await is controller-side metadata this pass never saw, and dropping it
+ * would let the next pass resurrect the victim.
  */
 function saveAppliedHost(manifest: ModelHostManifest, name: string, dir: string): void {
-  let claimed = true;
+  let onDisk: ModelHostManifest;
   try {
-    claimed = externalManagerOf(loadModelHostByName(name, dir)) !== null;
+    onDisk = loadModelHostByName(name, dir);
   } catch {
-    // claimed stays true: the vanished or unreadable file is not ours to recreate.
+    // The vanished or unreadable file is not ours to recreate.
+    return;
   }
-  if (!claimed) saveModelHost(manifest, dir);
+  if (externalManagerOf(onDisk) !== null) return;
+  const annotations = onDisk.metadata.annotations;
+  const { annotations: _applied, ...appliedMetadata } = manifest.metadata;
+  saveModelHost(
+    {
+      ...manifest,
+      metadata: annotations === undefined ? appliedMetadata : { ...appliedMetadata, annotations },
+    },
+    dir,
+  );
 }
 
 /** #358: the spec hash of a local host's last automatic start attempt, if any. */

@@ -1581,6 +1581,66 @@ describe("reconcileOnce", () => {
     });
   });
 
+  describe("ModelHost eviction markers", () => {
+    test("an evicted-by/evicted-at marker stamped during an in-flight apply survives the save", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "llamactl-reconciler-evict-race-"));
+      const previousRuntimeDir = process.env["LOCAL_AI_RUNTIME_DIR"];
+      try {
+        const manifest = makeHostManifest();
+        saveModelHost(manifest, dir);
+        process.env["LOCAL_AI_RUNTIME_DIR"] = dir;
+
+        const client: WorkloadClient = {
+          ...makeClient(),
+          modelHostStatus: { query: () => Promise.resolve({ state: "Stopped" }) },
+          modelHostStart: {
+            subscribe: (input, callbacks): { unsubscribe: () => undefined } => {
+              // A verified eviction stamps its intent on disk while this
+              // apply is in flight; the post-apply save must carry it forward
+              // or the next pass resurrects the victim.
+              const fresh = loadModelHostByName(input.workload, dir);
+              saveModelHost(
+                {
+                  ...fresh,
+                  metadata: {
+                    ...fresh.metadata,
+                    annotations: {
+                      ...fresh.metadata.annotations,
+                      "llamactl.io/evicted-by": "incoming-run",
+                      "llamactl.io/evicted-at": "2026-11-09T12:00:00.000Z",
+                    },
+                  },
+                },
+                dir,
+              );
+              queueMicrotask(() => {
+                callbacks.onData({ type: "done", result: { ok: true } });
+                callbacks.onComplete();
+              });
+              return { unsubscribe: (): undefined => undefined };
+            },
+          },
+        };
+
+        const result = await reconcileOnce({ workloadsDir: dir, getClient: () => client });
+
+        expect(result.errors).toBe(0);
+        expect(result.reports).toEqual([
+          { kind: "ModelHost", name: "host-a", node: "local", action: "started" },
+        ]);
+        const persisted = loadModelHostByName("host-a", dir);
+        expect(persisted.metadata.annotations?.["llamactl.io/evicted-by"]).toBe("incoming-run");
+        expect(persisted.metadata.annotations?.["llamactl.io/evicted-at"]).toBe(
+          "2026-11-09T12:00:00.000Z",
+        );
+      } finally {
+        if (previousRuntimeDir === undefined) delete process.env["LOCAL_AI_RUNTIME_DIR"];
+        else process.env["LOCAL_AI_RUNTIME_DIR"] = previousRuntimeDir;
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  });
+
   describe("node RPC deadlines", () => {
     test("an unreachable node times out without stalling the pass", async () => {
       const dir = mkdtempSync(join(tmpdir(), "llamactl-reconciler-timeout-"));

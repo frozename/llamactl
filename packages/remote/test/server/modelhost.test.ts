@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { EngineBootEnv } from "../../../core/src/engines/types.js";
+import type { PidIdentityDeps } from "../../../core/src/pidIdentity.js";
 
 import {
   recordModelHostOomKill,
@@ -18,6 +19,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   utimesSync,
   writeFileSync,
 } from "../../src/safe-fs.js";
@@ -138,6 +140,66 @@ async function settleWithin<T>(promise: Promise<T>): Promise<T | "timed-out"> {
   } finally {
     clearTimeout(timer);
   }
+}
+
+// A teardown stand-in that really kills the recorded impostor and resolves
+// only once the pid is gone, so the post-teardown identity check observes
+// the same ESRCH a production teardown produces.
+function killTeardown(proc: ReturnType<typeof spawnImpostor>): (pid: number) => Promise<void> {
+  return (pid) => {
+    proc.kill("SIGKILL");
+    return waitFor(() => {
+      try {
+        process.kill(pid, 0);
+        return false;
+      } catch {
+        return true;
+      }
+    }, "impostor exit");
+  };
+}
+
+// These tests record this test process as the host pid — it cannot be
+// killed — so the injected probe reports it gone once teardown ran,
+// standing in for the confirmed release a real teardown produces.
+function releasableSelfIdentity(command: string): {
+  identity: PidIdentityDeps;
+  release: () => void;
+} {
+  let released = false;
+  return {
+    identity: {
+      processStartMs: () => 0,
+      processCommand: () => command,
+      probe: (): void => {
+        if (released) {
+          const err: NodeJS.ErrnoException = new Error(" ESRCH");
+          err.code = "ESRCH";
+          throw err;
+        }
+      },
+    },
+    release: (): void => {
+      released = true;
+    },
+  };
+}
+
+function unknownAfterTeardownIdentity(command: string): {
+  identity: PidIdentityDeps;
+  release: () => void;
+} {
+  let released = false;
+  return {
+    identity: {
+      processStartMs: (): number | null => (released ? null : 0),
+      processCommand: (): string => command,
+      probe: (): void => undefined,
+    },
+    release: (): void => {
+      released = true;
+    },
+  };
 }
 
 describe("server/modelhost", () => {
@@ -656,12 +718,13 @@ describe("server/modelhost", () => {
         probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
       });
 
+      const kill = killTeardown(impostor);
       const result = await stopModelHost({
         key: { name: "mlx-host-server" },
         runtimeDir,
         teardown: (pid) => {
           tornDown.push(pid);
-          return Promise.resolve();
+          return kill(pid);
         },
       });
 
@@ -1378,18 +1441,126 @@ describe("server/modelhost", () => {
       const pid = impostor.pid;
       seedImpostorSidecar(runtimeDir, pid, false);
       const tornDown: number[] = [];
+      const kill = killTeardown(impostor);
       const result = await stopModelHost({
         key: { name: "mlx-host-server" },
         runtimeDir,
         teardown: (teardownPid) => {
           tornDown.push(teardownPid);
-          return Promise.resolve();
+          return kill(teardownPid);
         },
       });
 
       expect(result.ok).toBe(true);
       expect(tornDown).toEqual([pid]);
       expect(result.pid).toBe(pid);
+    } finally {
+      try {
+        impostor.kill("SIGKILL");
+      } catch {
+        // already gone
+      }
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  // DF-02 slice 3 (#275): the eviction intent markers are legal ModelHost
+  // metadata — they must parse, round-trip through the store, and stay
+  // outside the engine spec hash so a marked host does not read as drift.
+  test("DF-02 slice 3: evicted-by/evicted-at annotations parse, round-trip, and stay out of the spec hash", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-evict-ann-"));
+    try {
+      const { manifest, workloadsDir } = makeManifest(tmp);
+      const annotated = {
+        ...manifest,
+        metadata: {
+          name: "mlx-host-server",
+          annotations: {
+            "llamactl.io/evicted-by": "r",
+            "llamactl.io/evicted-at": "2026-11-09T00:00:00Z",
+          },
+        },
+      };
+      const parsed = ModelHostManifestSchema.safeParse(annotated);
+      expect(parsed.success).toBe(true);
+      if (!parsed.success) return;
+      saveModelHost(parsed.data, workloadsDir);
+      const loaded = loadModelHostByName("mlx-host-server", workloadsDir);
+      const annotations = (loaded.metadata as { annotations?: Record<string, string> }).annotations;
+      expect(annotations?.["llamactl.io/evicted-by"]).toBe("r");
+      expect(annotations?.["llamactl.io/evicted-at"]).toBe("2026-11-09T00:00:00Z");
+      const plain = ModelHostManifestSchema.safeParse(manifest);
+      expect(plain.success).toBe(true);
+      if (!plain.success) return;
+      expect(computeModelHostSpecHash(specForHash(parsed.data.spec))).toBe(
+        computeModelHostSpecHash(specForHash(plain.data.spec)),
+      );
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  // The evict/force-admit annotations are ModelRun-only: a ModelHost
+  // carrying either must fail validation with a message that names the
+  // offending annotation, not a bare unrecognized-key error.
+  test("DF-02 slice 3: ModelHost rejects ModelRun-only evict/force-admit annotations by name", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-evict-reject-"));
+    try {
+      const { manifest } = makeManifest(tmp);
+      for (const [annotation, value] of [
+        ["llamactl.io/evict", "x"],
+        ["llamactl.io/force-admit", "true"],
+      ] as const) {
+        const parsed = ModelHostManifestSchema.safeParse({
+          ...manifest,
+          metadata: { name: "mlx-host-server", annotations: { [annotation]: value } },
+        });
+        expect(parsed.success).toBe(false);
+        if (parsed.success) continue;
+        expect(
+          parsed.error.issues.some(
+            (issue) => issue.message.includes(annotation) && issue.message.includes("ModelHost"),
+          ),
+        ).toBe(true);
+      }
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  // G pin: a recycled recorded pid is never signalled, and a second stop
+  // is a clean no-op — stopModelHost stays idempotent on stale records.
+  test("DF-02 slice 3: stopModelHost is idempotent on a recycled pid — never kills, second stop reports pid null", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-evict-idem-"));
+    const runtimeDir = join(tmp, "runtime");
+    const impostor = spawnImpostor("/bin/sleep", ["60"], { stdio: "ignore" });
+    try {
+      if (impostor.pid === undefined) throw new Error("impostor spawn failed");
+      const pid = impostor.pid;
+      seedImpostorSidecar(runtimeDir, pid, true);
+      const tornDown: number[] = [];
+      const teardown = (teardownPid: number): Promise<void> => {
+        tornDown.push(teardownPid);
+        return Promise.resolve();
+      };
+      const first = await stopModelHost({
+        key: { name: "mlx-host-server" },
+        runtimeDir,
+        teardown,
+      });
+      const second = await stopModelHost({
+        key: { name: "mlx-host-server" },
+        runtimeDir,
+        teardown,
+      });
+      expect(tornDown).toEqual([]);
+      expect(first.ok).toBe(true);
+      expect(first.pid).toBe(pid);
+      expect(second.ok).toBe(true);
+      expect(second.pid).toBeNull();
+      const st = statusModelHost({ key: { name: "mlx-host-server" }, runtimeDir });
+      expect(st.state).toBe("Stopped");
+      expect(st.identityUnknown).toBeUndefined();
     } finally {
       try {
         impostor.kill("SIGKILL");
@@ -1436,12 +1607,13 @@ describe("server/modelhost", () => {
 
       seedStrataSidecar(matched.pid);
       const tornDown: number[] = [];
+      const kill = killTeardown(matched);
       const okResult = await stopModelHost({
         key: { name: "strata-host-server" },
         runtimeDir,
         teardown: (pid) => {
           tornDown.push(pid);
-          return Promise.resolve();
+          return kill(pid);
         },
       });
       expect(okResult.ok).toBe(true);
@@ -1510,12 +1682,13 @@ describe("server/modelhost", () => {
 
       seedLibosmosSidecar(matched.pid);
       const tornDown: number[] = [];
+      const kill = killTeardown(matched);
       const okResult = await stopModelHost({
         key: { name: "libosmos-host-server" },
         runtimeDir,
         teardown: (pid) => {
           tornDown.push(pid);
-          return Promise.resolve();
+          return kill(pid);
         },
       });
       expect(okResult.ok).toBe(true);
@@ -1672,10 +1845,7 @@ describe("server/modelhost", () => {
     const key = { name: "mlx-host-server" };
     // A running oMLX server sets its own process title, so ps prints
     // `omlx-server` plus padding instead of the `omlx` launcher name.
-    const identity = {
-      processStartMs: (): number => 0,
-      processCommand: (): string => "omlx-server                ",
-    };
+    const { identity, release } = releasableSelfIdentity("omlx-server                ");
     try {
       seedImpostorSidecar(runtimeDir, process.pid, false);
       expect(statusModelHost({ key, runtimeDir, identity })).toEqual({
@@ -1689,6 +1859,7 @@ describe("server/modelhost", () => {
         identity,
         teardown: (teardownPid) => {
           tornDown.push(teardownPid);
+          release();
           return Promise.resolve();
         },
       });
@@ -1735,6 +1906,46 @@ describe("server/modelhost", () => {
       } catch {
         // already gone
       }
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("stopModelHost keeps state and reports failure while the process survives teardown", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-survives-"));
+    const runtimeDir = join(tmp, "runtime");
+    const key = { name: "mlx-host-server" };
+    // The injected probe never throws, so the recorded pid verifies alive
+    // before AND after teardown: a resolved teardown is not proof of release,
+    // and the record must survive so status keeps reporting a live host.
+    const identity = {
+      processStartMs: (): number => 0,
+      processCommand: (): string => "omlx serve --port 8094",
+      probe: (): void => undefined,
+    };
+    try {
+      const hostDir = seedImpostorSidecar(runtimeDir, process.pid, false);
+      const tornDown: number[] = [];
+      const result = await stopModelHost({
+        key,
+        runtimeDir,
+        identity,
+        teardown: (pid) => {
+          tornDown.push(pid);
+          return Promise.resolve();
+        },
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.pid).toBe(process.pid);
+      expect(result.error).toContain("still alive");
+      expect(tornDown).toEqual([process.pid]);
+      expect(existsSync(join(hostDir, "modelhost.pid"))).toBe(true);
+      expect(existsSync(join(hostDir, "modelhost.state"))).toBe(true);
+      expect(statusModelHost({ key, runtimeDir, identity })).toEqual({
+        state: "Running",
+        pid: process.pid,
+      });
+    } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
   });
@@ -1952,12 +2163,13 @@ describe("server/modelhost", () => {
       });
       await waitFor(() => spawn.mock.calls.length === 1, "spawn");
 
+      const kill = killTeardown(impostor);
       const result = await stopModelHost({
         key: { name: "mlx-host-server" },
         runtimeDir,
         teardown: (pid) => {
           tornDown.push(pid);
-          return Promise.resolve();
+          return kill(pid);
         },
       });
 
@@ -1968,6 +2180,120 @@ describe("server/modelhost", () => {
       await startPromise;
     } finally {
       engine.teardown = originalTeardown;
+      try {
+        impostor.kill("SIGKILL");
+      } catch {
+        // already gone
+      }
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("stopModelHost returns error when a starting pid survives teardown", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-starting-alive-"));
+    const runtimeDir = join(tmp, "runtime");
+    const impostor = spawnImpostor("/bin/sleep", ["60"], {
+      stdio: "ignore",
+      argv0: "omlx",
+    });
+    try {
+      if (impostor.pid === undefined) throw new Error("impostor spawn failed");
+      const hostDir = seedStartingRecord(runtimeDir, impostor.pid, "seeded-hash");
+      // Identity that never reports the process gone — the probe callback
+      // is a no-op, so verifyPidFile always classifies the pid as "alive".
+      const aliveIdentity = (): {
+        processStartMs: () => number;
+        processCommand: () => string;
+        probe: () => void;
+      } => ({
+        processStartMs: () => 0,
+        processCommand: () => "omlx-server              ",
+        probe: (): void => {
+          // intentionally no-op: never throws ESRCH
+        },
+      });
+      const result = await stopModelHost({
+        key: { name: "mlx-host-server" },
+        runtimeDir,
+        identity: aliveIdentity(),
+        teardown: (pid) => {
+          // teardown that does nothing — the impostor stays alive.
+          return Promise.resolve();
+        },
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.pid).toBe(impostor.pid);
+      expect(result).toEqual({
+        ok: false,
+        pid: impostor.pid,
+        error: "process still alive after teardown",
+      });
+      expect(existsSync(join(hostDir, "modelhost.starting"))).toBe(true);
+    } finally {
+      try {
+        impostor.kill("SIGKILL");
+      } catch {
+        // already gone
+      }
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("stopModelHost returns error when teardown throws for a state record", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-state-throw-"));
+    const runtimeDir = join(tmp, "runtime");
+    const impostor = spawnImpostor("/bin/sleep", ["60"], {
+      stdio: "ignore",
+      argv0: "llama-server",
+    });
+    try {
+      if (impostor.pid === undefined) throw new Error("impostor spawn failed");
+      const hostDir = join(runtimeDir, "workloads", "gufo-host");
+      mkdirSync(hostDir, { recursive: true });
+      writeFileSync(join(hostDir, "modelhost.pid"), `${String(impostor.pid)}\n`);
+      const record = {
+        kind: "ModelHost",
+        engine: "llamacpp",
+        pid: impostor.pid,
+        host: "127.0.0.1",
+        port: 8095,
+        modelAliases: ["gufo/model.gguf", "model.gguf"],
+        binaryNames: ["llama-server"],
+        startedAt: new Date().toISOString(),
+      };
+      writeFileSync(join(hostDir, "modelhost.state"), JSON.stringify(record));
+      const aliveIdentity = (): {
+        processStartMs: () => number;
+        processCommand: () => string;
+        probe: () => void;
+      } => ({
+        processStartMs: () => 0,
+        processCommand: () => "llama-server                ",
+        probe: (): void => {
+          // intentionally no-op: never throws ESRCH
+        },
+      });
+      const result = await stopModelHost({
+        key: { name: "gufo-host" },
+        runtimeDir,
+        identity: aliveIdentity(),
+        teardown: (_pid: number) => {
+          // teardown that rejects — the post-teardown identity check
+          // still runs and observes the impostor alive.
+          return Promise.reject(new Error("teardown failed"));
+        },
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.pid).toBe(impostor.pid);
+      expect(result).toEqual({
+        ok: false,
+        pid: impostor.pid,
+        error: "process still alive after teardown",
+      });
+      expect(existsSync(join(hostDir, "modelhost.state"))).toBe(true);
+    } finally {
       try {
         impostor.kill("SIGKILL");
       } catch {
@@ -2039,12 +2365,13 @@ describe("server/modelhost", () => {
       if (impostor.pid === undefined) throw new Error("impostor spawn failed");
       const hostDir = seedStartingRecord(runtimeDir, impostor.pid, "seeded-hash");
       const tornDown: number[] = [];
+      const kill = killTeardown(impostor);
       const result = await stopModelHost({
         key: { name: "mlx-host-server" },
         runtimeDir,
         teardown: (pid) => {
           tornDown.push(pid);
-          return Promise.resolve();
+          return kill(pid);
         },
       });
 
@@ -2453,7 +2780,7 @@ describe("llamacpp fork process identity (#516)", () => {
   test("status and stop verify a fork pid against the record's binaryNames", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-fork-stop-"));
     const runtimeDir = join(tmp, "runtime");
-    const identity = forkIdentity(FORK_CMDLINE);
+    const { identity, release } = releasableSelfIdentity(FORK_CMDLINE);
     try {
       const hostDir = seedLlamaRecord(runtimeDir, {
         pid: process.pid,
@@ -2470,6 +2797,7 @@ describe("llamacpp fork process identity (#516)", () => {
         identity,
         teardown: (pid) => {
           tornDown.push(pid);
+          release();
           return Promise.resolve();
         },
       });
@@ -2490,13 +2818,15 @@ describe("llamacpp fork process identity (#516)", () => {
         binaryNames: [FORK_BINARY_NAME],
         starting: true,
       });
+      const { identity, release } = releasableSelfIdentity(FORK_CMDLINE);
       const tornDown: number[] = [];
       const stopped = await stopModelHost({
         key: LLAMA_KEY,
         runtimeDir,
-        identity: forkIdentity(FORK_CMDLINE),
+        identity,
         teardown: (pid) => {
           tornDown.push(pid);
+          release();
           return Promise.resolve();
         },
       });
@@ -2881,7 +3211,7 @@ describe("llamacpp fork process identity (#516)", () => {
 
       // The stock argv0 still verifies against the engine default.
       seedLlamaRecord(runtimeDir, { pid: process.pid });
-      const stockDeps = forkIdentity(STOCK_CMDLINE);
+      const { identity: stockDeps, release: releaseStock } = releasableSelfIdentity(STOCK_CMDLINE);
       expect(statusModelHost({ key: LLAMA_KEY, runtimeDir, identity: stockDeps })).toEqual({
         state: "Running",
         pid: process.pid,
@@ -2893,6 +3223,7 @@ describe("llamacpp fork process identity (#516)", () => {
         identity: stockDeps,
         teardown: (pid) => {
           tornDownStock.push(pid);
+          releaseStock();
           return Promise.resolve();
         },
       });
@@ -2926,6 +3257,219 @@ describe("llamacpp fork process identity (#516)", () => {
       expect("binaryNames" in state).toBe(false);
     } finally {
       patch.restore();
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("stopStartingRecord wraps teardown in try/catch and returns error when process survives", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-fork-starting-teardown-err-"));
+    const runtimeDir = join(tmp, "runtime");
+    const impostor = spawnImpostor("/bin/sleep", ["60"], {
+      stdio: "ignore",
+      argv0: FORK_BINARY_NAME,
+    });
+    try {
+      if (impostor.pid === undefined) throw new Error("impostor spawn failed");
+      const hostDir = seedLlamaRecord(runtimeDir, {
+        pid: impostor.pid,
+        binaryNames: [FORK_BINARY_NAME],
+        starting: true,
+      });
+      const thrown = new Error("teardown failed");
+      const stopped = await stopModelHost({
+        key: LLAMA_KEY,
+        runtimeDir,
+        identity: forkIdentity(FORK_CMDLINE),
+        teardown: (_pid: number): Promise<void> => {
+          throw thrown;
+        },
+      });
+      expect(stopped).toEqual({
+        ok: false,
+        pid: impostor.pid,
+        error: "process still alive after teardown",
+      });
+      expect(existsSync(join(hostDir, "modelhost.starting"))).toBe(true);
+    } finally {
+      try {
+        impostor.kill("SIGKILL");
+      } catch {
+        // already gone
+      }
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("recycled pid after teardown reports reused verdict on state-sidecar path", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-fork-recycled-state-"));
+    const runtimeDir = join(tmp, "runtime");
+    const impostor = spawnImpostor("/bin/sleep", ["60"], {
+      stdio: "ignore",
+      argv0: FORK_BINARY_NAME,
+    });
+    try {
+      if (impostor.pid === undefined) throw new Error("impostor spawn failed");
+      const hostDir = seedLlamaRecord(runtimeDir, {
+        pid: impostor.pid,
+        binaryNames: [FORK_BINARY_NAME],
+      });
+      const recordedMtime = statSync(join(hostDir, "modelhost.state")).mtimeMs;
+      const recycledCmdline = "/opt/gufo/bin/llama-server-fork-pristine --port 9090";
+      let identityCallCount = 0;
+      const recycledIdentity = {
+        processStartMs: (): number => {
+          identityCallCount += 1;
+          if (identityCallCount === 1) return recordedMtime;
+          return recordedMtime + 30_001;
+        },
+        processCommand: (): string => recycledCmdline,
+        probe: (): void => undefined,
+      };
+      const stopped = await stopModelHost({
+        key: LLAMA_KEY,
+        runtimeDir,
+        identity: recycledIdentity,
+        teardown: (_pid: number): Promise<void> => {
+          return Promise.resolve();
+        },
+      });
+      expect(stopped).toEqual({ ok: true, pid: impostor.pid });
+      expect(existsSync(join(hostDir, "modelhost.state"))).toBe(false);
+    } finally {
+      try {
+        impostor.kill("SIGKILL");
+      } catch {
+        // already gone
+      }
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("recycled pid after teardown reports reused verdict on starting path", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-fork-recycled-starting-"));
+    const runtimeDir = join(tmp, "runtime");
+    const impostor = spawnImpostor("/bin/sleep", ["60"], {
+      stdio: "ignore",
+      argv0: FORK_BINARY_NAME,
+    });
+    try {
+      if (impostor.pid === undefined) throw new Error("impostor spawn failed");
+      const hostDir = seedLlamaRecord(runtimeDir, {
+        pid: impostor.pid,
+        binaryNames: [FORK_BINARY_NAME],
+        starting: true,
+      });
+      const recordedMtime = statSync(join(hostDir, "modelhost.starting")).mtimeMs;
+      const recycledCmdline = "/opt/gufo/bin/llama-server-fork-pristine --port 9090";
+      let identityCallCount = 0;
+      const recycledIdentity = {
+        processStartMs: (): number => {
+          identityCallCount += 1;
+          if (identityCallCount === 1) return recordedMtime;
+          return recordedMtime + 30_001;
+        },
+        processCommand: (): string => recycledCmdline,
+        probe: (): void => undefined,
+      };
+      const stopped = await stopModelHost({
+        key: LLAMA_KEY,
+        runtimeDir,
+        identity: recycledIdentity,
+        teardown: (_pid: number): Promise<void> => {
+          return Promise.resolve();
+        },
+      });
+      expect(stopped).toEqual({ ok: true, pid: impostor.pid });
+      expect(existsSync(join(hostDir, "modelhost.starting"))).toBe(false);
+    } finally {
+      try {
+        impostor.kill("SIGKILL");
+      } catch {
+        // already gone
+      }
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("stopModelHost reports ok:false with 'pid identity unknown after teardown' when identity becomes unverifiable post-teardown (state path)", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-unknown-after-teardown-state-"));
+    const runtimeDir = join(tmp, "runtime");
+    const impostor = spawnImpostor("/bin/sleep", ["60"], {
+      stdio: "ignore",
+      argv0: FORK_BINARY_NAME,
+    });
+    try {
+      if (impostor.pid === undefined) throw new Error("impostor spawn failed");
+      const hostDir = seedLlamaRecord(runtimeDir, {
+        pid: impostor.pid,
+        binaryNames: [FORK_BINARY_NAME],
+      });
+      const { identity, release } = unknownAfterTeardownIdentity(FORK_CMDLINE);
+      const tornDown: number[] = [];
+      const result = await stopModelHost({
+        key: LLAMA_KEY,
+        runtimeDir,
+        identity,
+        teardown: (teardownPid) => {
+          tornDown.push(teardownPid);
+          release();
+          return Promise.resolve();
+        },
+      });
+      expect(result.ok).toBe(false);
+      expect(result.pid).toBe(impostor.pid);
+      expect(result.error).toBe("pid identity unknown after teardown");
+      expect(tornDown).toEqual([impostor.pid]);
+      expect(existsSync(join(hostDir, "modelhost.pid"))).toBe(true);
+      expect(existsSync(join(hostDir, "modelhost.state"))).toBe(true);
+    } finally {
+      try {
+        impostor.kill("SIGKILL");
+      } catch {
+        // already gone
+      }
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("stopModelHost starting path reports ok:false with 'pid identity unknown after teardown' when identity becomes unverifiable post-teardown", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-unknown-after-teardown-starting-"));
+    const runtimeDir = join(tmp, "runtime");
+    const impostor = spawnImpostor("/bin/sleep", ["60"], {
+      stdio: "ignore",
+      argv0: FORK_BINARY_NAME,
+    });
+    try {
+      if (impostor.pid === undefined) throw new Error("impostor spawn failed");
+      const hostDir = seedLlamaRecord(runtimeDir, {
+        pid: impostor.pid,
+        binaryNames: [FORK_BINARY_NAME],
+        starting: true,
+      });
+      const { identity, release } = unknownAfterTeardownIdentity(FORK_CMDLINE);
+      const startingPath = join(hostDir, "modelhost.starting");
+      const tornDown: number[] = [];
+      const stopped = await stopModelHost({
+        key: LLAMA_KEY,
+        runtimeDir,
+        identity,
+        teardown: (teardownPid) => {
+          tornDown.push(teardownPid);
+          release();
+          return Promise.resolve();
+        },
+      });
+      expect(stopped.ok).toBe(false);
+      expect(stopped.pid).toBe(impostor.pid);
+      expect(stopped.error).toBe("pid identity unknown after teardown");
+      expect(tornDown).toEqual([impostor.pid]);
+      expect(existsSync(startingPath)).toBe(true);
+    } finally {
+      try {
+        impostor.kill("SIGKILL");
+      } catch {
+        // already gone
+      }
       rmSync(tmp, { recursive: true, force: true });
     }
   });

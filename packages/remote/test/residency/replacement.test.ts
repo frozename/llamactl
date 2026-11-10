@@ -1,19 +1,27 @@
-// DF-02 slice 2 (#275): verified ModelRun eviction must persist the
+// DF-02 slices 2+3 (#275): verified eviction must persist the
 // victim's evicted-by/evicted-at intent before the stop RPC, re-check
 // capacity after the victim is released but before the replacement
 // starts, and hold the reconcile tick's resurrection guard until the
-// replacement lands (or the grace expires). These cases pin that
-// contract; at the pinned base the marker is never written, capacity is
-// never re-checked, and the reconciler restarts the victim on the next
-// tick, so R1-R7 fail by assertion while G1-G4 stay green.
+// replacement lands (or the grace expires). Slice 2 pins that
+// contract for ModelRun victims; slice 3 widens it to ModelHost
+// victims and mixed-kind replacements — the markers become legal
+// ModelHost metadata, the tick's guard holds a marked host by kind, a
+// lapsed marker clears, and a live foreign hold refuses takeover.
+// At the pinned base the ModelHost cases fail by assertion (the
+// markers are not schema-legal, the stop RPC is never issued, and the
+// reconciler has no host-side guard) while the slice-2 cases keep
+// their existing verdicts.
 import { expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 import type { ApplyEvent, WorkloadClient } from "../../src/workload/apply.js";
+import type { ModelHostManifest } from "../../src/workload/modelhost-schema.js";
 
-import { mkdtempSync, rmSync } from "../../src/safe-fs.js";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
 import { applyOne } from "../../src/workload/apply.js";
+import { saveModelHost } from "../../src/workload/modelhost-store.js";
 import { reconcileOnce } from "../../src/workload/reconciler.js";
 import { loadWorkloadByName, saveWorkload } from "../../src/workload/store.js";
 
@@ -30,6 +38,17 @@ type Faults = {
   ) => Promise<StatusReply> | undefined;
   stop?: (workload: string, delegate: () => Promise<unknown>) => Promise<unknown> | undefined;
   start?: (workload: string) => boolean;
+  hostStatus?: (
+    workload: string,
+  ) => ModelHostStatusReply | Promise<ModelHostStatusReply> | undefined;
+  hostStop?: (workload: string) => unknown;
+};
+
+type ModelHostStatusReply = {
+  state: string;
+  pid?: number | null;
+  specHash?: string;
+  identityUnknown?: boolean;
 };
 
 const mkManifest = (
@@ -63,9 +82,17 @@ const mkManifest = (
 function makeClient(
   state: StateMap,
   faults: Faults = {},
-): { client: WorkloadClient; stops: string[]; starts: string[] } {
+): {
+  client: WorkloadClient;
+  stops: string[];
+  starts: string[];
+  hostStops: string[];
+  hostStarts: string[];
+} {
   const stops: string[] = [];
   const starts: string[] = [];
+  const hostStops: string[] = [];
+  const hostStarts: string[] = [];
   const upReply = (s: RecordedState): StatusReply => ({
     state: "up",
     pid: 100,
@@ -138,14 +165,37 @@ function makeClient(
         return { unsubscribe: () => undefined };
       },
     },
-    modelHostStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
-    modelHostStop: { mutate: () => Promise.resolve({ stopped: true }) },
-    modelHostStatus: { query: () => Promise.resolve({ state: "Stopped", pid: null }) },
+    modelHostStart: {
+      subscribe: (input, callbacks) => {
+        hostStarts.push(input.workload);
+        queueMicrotask(() => {
+          callbacks.onData({
+            type: "done",
+            result: { ok: true, pid: 12345, state: "Running" },
+          });
+          callbacks.onComplete();
+        });
+        return { unsubscribe: () => undefined };
+      },
+    },
+    modelHostStop: {
+      mutate: (input) => {
+        hostStops.push(input.workload);
+        const scripted = faults.hostStop?.(input.workload);
+        return Promise.resolve(scripted ?? { ok: true, pid: null });
+      },
+    },
+    modelHostStatus: {
+      query: (input) => {
+        const scripted = faults.hostStatus?.(input.workload);
+        return Promise.resolve(scripted ?? { state: "Stopped", pid: null });
+      },
+    },
     rpcServerStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
     rpcServerStop: { mutate: () => Promise.resolve({ stopped: true }) },
     rpcServerDoctor: { query: () => Promise.resolve({ ok: true, path: "", llamaCppBin: "" }) },
   };
-  return { client, stops, starts };
+  return { client, stops, starts, hostStops, hostStarts };
 }
 
 function upEntry(port: number): RecordedState {
@@ -154,6 +204,72 @@ function upEntry(port: number): RecordedState {
 
 function reportEvictedBy(report: unknown): unknown {
   return (report as { evictedBy?: unknown }).evictedBy;
+}
+
+// DF-02 slice 3 (#275): ModelHost victims. An un-annotated victim may go
+// through saveModelHost; an annotated one cannot at the pinned base
+// (metadata is strict), so those are seeded as raw YAML instead.
+type HostOverrides = Partial<{
+  enabled: boolean;
+  node: string;
+  binary: string;
+  port: number;
+  ram: number;
+}>;
+
+function mkModelHostManifest(name: string, overrides: HostOverrides = {}): ModelHostManifest {
+  return {
+    apiVersion: "llamactl/v1",
+    kind: "ModelHost",
+    metadata: { name },
+    spec: {
+      engine: "omlx",
+      node: overrides.node ?? "local",
+      enabled: overrides.enabled ?? true,
+      binary: overrides.binary ?? "/usr/bin/true",
+      endpoint: { host: "127.0.0.1", port: overrides.port ?? 18094 },
+      hostedModels: [{ rel: `${name}.gguf` }],
+      extraArgs: [],
+      restartPolicy: "Always",
+      timeoutSeconds: 60,
+      ...(overrides.ram !== undefined ? { resources: { expectedMemoryGiB: overrides.ram } } : {}),
+    },
+  };
+}
+
+function writeAnnotatedModelHost(
+  dir: string,
+  name: string,
+  annotations: Record<string, string>,
+  overrides: HostOverrides = {},
+): void {
+  const manifest = mkModelHostManifest(name, overrides);
+  writeFileSync(
+    join(dir, `${name}.yaml`),
+    stringifyYaml({ ...manifest, metadata: { name, annotations } }),
+  );
+}
+
+function readWorkloadAnnotations(path: string): Record<string, string> | undefined {
+  const raw = parseYaml(readFileSync(path, "utf8")) as {
+    metadata?: { annotations?: Record<string, string> };
+  } | null;
+  return raw?.metadata?.annotations;
+}
+
+// reconcileOnce resolves the ModelHost runtime dir from process.env, so a
+// host apply would otherwise write its sidecar wherever the ambient env
+// points. Pin it into the test's temp dir for the duration of the pass.
+function pinLocalRuntimeDir(dir: string): () => void {
+  const prev = process.env["LOCAL_AI_RUNTIME_DIR"];
+  process.env["LOCAL_AI_RUNTIME_DIR"] = dir;
+  return () => {
+    if (prev === undefined) {
+      delete process.env["LOCAL_AI_RUNTIME_DIR"];
+    } else {
+      process.env["LOCAL_AI_RUNTIME_DIR"] = prev;
+    }
+  };
 }
 
 test("R1 intent persisted before stop and kept on success", async () => {
@@ -998,5 +1114,128 @@ test("G10 the reconcile guard honours an evicted-at stamped on disk mid-pass", a
     expect(storedZ.metadata.annotations["llamactl.io/evicted-at"]).not.toBeUndefined();
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("MK-R1 a mixed-kind replacement survives a reconcile tick", async () => {
+  const tmp = mkdtempSync(join(tmpdir(), "llamactl-df02-mkr1-"));
+  const dir = join(tmp, "workloads");
+  mkdirSync(dir, { recursive: true });
+  const fakeBinary = join(tmp, "omlx");
+  writeFileSync(fakeBinary, "#!/bin/sh\nexit 0\n");
+  saveModelHost(mkModelHostManifest("victim", { binary: fakeBinary }), dir);
+  let victimDown = false;
+  const state: StateMap = new Map();
+  const { client, stops, starts, hostStops, hostStarts } = makeClient(state, {
+    hostStatus: (workload) => {
+      if (workload !== "victim") return undefined;
+      return victimDown ? { state: "Stopped", pid: null } : { state: "Running", pid: 4242 };
+    },
+    hostStop: (workload) => {
+      if (workload !== "victim") return undefined;
+      victimDown = true;
+      return { ok: true, pid: 4242 };
+    },
+  });
+  const incoming = mkManifest("incoming", {
+    annotations: { "llamactl.io/evict": "victim" },
+    port: 8090,
+    ram: 8,
+  });
+  const restoreRuntimeDir = pinLocalRuntimeDir(join(tmp, "runtime"));
+  try {
+    const result = await applyOne(incoming, () => client, undefined, undefined, {
+      workloadsDir: dir,
+      getNodeBudgetGiB: () => 64,
+    });
+    saveWorkload({ ...incoming, status: result.statusSection }, dir);
+    starts.length = 0;
+    stops.length = 0;
+    hostStops.length = 0;
+    hostStarts.length = 0;
+    const tick = await reconcileOnce({ workloadsDir: dir, getClient: () => client });
+    const reportVictim = tick.reports.find((r) => r.name === "victim");
+    expect(reportVictim).toBeDefined();
+    expect(reportVictim?.kind).toBe("ModelHost");
+    expect(reportVictim?.action).toBe("unchanged");
+    expect(reportEvictedBy(reportVictim)).toBe("incoming");
+    expect(hostStarts).toEqual([]);
+    expect(starts).not.toContain("incoming");
+  } finally {
+    restoreRuntimeDir();
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("MK-R2 a stale ModelHost marker is cleared", async () => {
+  const tmp = mkdtempSync(join(tmpdir(), "llamactl-df02-mkr2-"));
+  const dir = join(tmp, "workloads");
+  mkdirSync(dir, { recursive: true });
+  const fakeBinary = join(tmp, "omlx");
+  writeFileSync(fakeBinary, "#!/bin/sh\nexit 0\n");
+  writeAnnotatedModelHost(
+    dir,
+    "victim",
+    {
+      "llamactl.io/evicted-by": "ghost-repl",
+      "llamactl.io/evicted-at": "2000-01-01T00:00:00Z",
+    },
+    { binary: fakeBinary },
+  );
+  const state: StateMap = new Map();
+  const { client } = makeClient(state);
+  const restoreRuntimeDir = pinLocalRuntimeDir(join(tmp, "runtime"));
+  try {
+    const tick = await reconcileOnce({ workloadsDir: dir, getClient: () => client });
+    const reportVictim = tick.reports.find((r) => r.name === "victim");
+    expect(reportVictim).toBeDefined();
+    expect(reportVictim?.kind).toBe("ModelHost");
+    expect(reportEvictedBy(reportVictim)).toBeUndefined();
+    const annotations = readWorkloadAnnotations(join(dir, "victim.yaml"));
+    expect(annotations?.["llamactl.io/evicted-by"]).toBeUndefined();
+    expect(annotations?.["llamactl.io/evicted-at"]).toBeUndefined();
+    expect(annotations).toBeUndefined();
+  } finally {
+    restoreRuntimeDir();
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("MK-R3 a live foreign hold on a ModelHost victim is respected", async () => {
+  const tmp = mkdtempSync(join(tmpdir(), "llamactl-df02-mkr3-"));
+  const dir = join(tmp, "workloads");
+  mkdirSync(dir, { recursive: true });
+  writeAnnotatedModelHost(dir, "victim", {
+    "llamactl.io/evicted-by": "other",
+    "llamactl.io/evicted-at": new Date().toISOString(),
+  });
+  saveWorkload(
+    mkManifest("other", {
+      port: 8091,
+      annotations: { "llamactl.io/evict": "victim" },
+    }),
+    dir,
+  );
+  const state: StateMap = new Map();
+  const { client, hostStops, starts } = makeClient(state);
+  try {
+    const result = await applyOne(
+      mkManifest("incoming", {
+        annotations: { "llamactl.io/evict": "victim" },
+        port: 8090,
+        ram: 8,
+      }),
+      () => client,
+      undefined,
+      undefined,
+      { workloadsDir: dir, getNodeBudgetGiB: () => 64 },
+    );
+    expect(result.statusSection.conditions[0]?.reason).toBe("EvictIntentHeld");
+    expect(hostStops).toEqual([]);
+    expect(starts).toEqual([]);
+    const annotations = readWorkloadAnnotations(join(dir, "victim.yaml"));
+    expect(annotations?.["llamactl.io/evicted-by"]).toBe("other");
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
   }
 });

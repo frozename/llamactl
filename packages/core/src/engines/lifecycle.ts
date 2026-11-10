@@ -35,6 +35,18 @@ function shutdownSignalTarget(pid: number): number {
   return pid > 1 && processGroupId(pid) === pid ? -pid : pid;
 }
 
+// Resolving a teardown while the pid is still alive would report a shutdown
+// that never confirmed exit: a survivor past the wait is a failed shutdown,
+// not a stopped process.
+async function awaitProcessExit(pid: number, deadlineMs: number): Promise<void> {
+  while (Date.now() < deadlineMs && isProcessAlive(pid)) {
+    await sleep(POLL_MS);
+  }
+  if (isProcessAlive(pid)) {
+    throw new Error(`process ${String(pid)} still alive after SIGKILL`);
+  }
+}
+
 export async function gracefulShutdown(
   pid: number,
   graceMs = 10_000,
@@ -75,10 +87,7 @@ export async function gracefulShutdown(
     // Best-effort cleanup; failures are not actionable here.
   }
 
-  const killDeadline = Date.now() + KILL_WAIT_MS;
-  while (Date.now() < killDeadline && isProcessAlive(pid)) {
-    await sleep(POLL_MS);
-  }
+  await awaitProcessExit(pid, Date.now() + KILL_WAIT_MS);
 }
 
 async function fetchModelIds(

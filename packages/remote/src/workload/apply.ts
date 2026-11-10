@@ -49,13 +49,13 @@ import {
   specForEngine,
   specForHash,
 } from "./modelhost-schema.js";
+import { saveModelHost } from "./modelhost-store.js";
 import { withNodeLock } from "./node-mutex.js";
 import { ModelRunSchema } from "./schema.js";
 import {
   defaultWorkloadsDir,
   listAnyWorkloadsForAdmission,
   listWorkloads,
-  loadWorkloadByName,
   loadWorkloadByNameAny,
   saveWorkload,
 } from "./store.js";
@@ -535,6 +535,13 @@ async function startModelHostProcess(
   { ok: false; error: string } | { ok: true; status: { state: string; pid?: number | null } }
 > {
   const timeoutMs = manifest.spec.timeoutSeconds * 1000;
+  // Wire contract: metadata.annotations are controller-side markers
+  // (eviction intent) that older strict remote agents — router.ts's
+  // modelHostStartInput parses the manifest with
+  // ModelHostManifestSchema.optional() — reject as unknown keys, so the
+  // manifest sent on the wire is a copy with annotations removed.
+  const { annotations: _wireAnnotations, ...wireMetadata } = manifest.metadata;
+  const wireManifest: ModelHostManifest = { ...manifest, metadata: wireMetadata };
   let sub: Unsubscribable | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -550,7 +557,7 @@ async function startModelHostProcess(
         {
           workload: manifest.metadata.name,
           timeoutSeconds: manifest.spec.timeoutSeconds,
-          manifest,
+          manifest: wireManifest,
         },
         {
           onData: (evt: unknown) => {
@@ -1084,14 +1091,15 @@ export function replacementHoldsEviction(
  * resurrection guard would still honour.
  */
 function liveEvictionOwner(
-  victim: ModelRun,
+  victim: { metadata: { name: string; annotations?: Record<string, string> | undefined } },
   workloadsDir: string,
   nowMs: number,
   graceMs: number,
 ): string | null {
-  const ownerName = victim.metadata.annotations[EVICTED_BY_ANNOTATION];
+  const annotations = victim.metadata.annotations;
+  const ownerName = annotations?.[EVICTED_BY_ANNOTATION];
   if (ownerName === undefined) return null;
-  const evictedAt = victim.metadata.annotations[EVICTED_AT_ANNOTATION];
+  const evictedAt = annotations?.[EVICTED_AT_ANNOTATION];
   const atMs = evictedAt === undefined ? Number.NaN : Date.parse(evictedAt);
   const withinGrace = !Number.isNaN(atMs) && nowMs - atMs < graceMs;
   let owner: ModelRun | ModelHostManifest | undefined;
@@ -1125,6 +1133,7 @@ const DEFAULT_EVICT_STOP_TIMEOUT_MS = 15_000;
 
 type EvictFailureReason =
   | "EvictStatusUnknown"
+  | "EvictTargetForeign"
   | "EvictStopRefused"
   | "EvictStopFailed"
   | "EvictStopTimedOut"
@@ -1156,31 +1165,166 @@ function evictStopFailure(
   };
 }
 
+type EvictVictimKind = "ModelRun" | "ModelHost";
+
+/** Pre-stop probe outcome for one verified evict victim. */
+type EvictVictimProbe =
+  | { kind: "down" }
+  | { kind: "ready" }
+  | { kind: "failed"; failure: EvictStopFailure };
+
+/**
+ * Per-kind victim adapter for the verified-eviction teardown (#275
+ * slice 3). Every method runs inside the caller's shared remainingMs
+ * deadline. ModelRun: an already-down victim skips the stop, a `foreign`
+ * listener fails before any stop, and release is proven by a non-up
+ * serverStatus. ModelHost: statusModelHost cannot see the
+ * modelhost.starting record, so modelHostStop is issued even when
+ * status says Stopped — it is identity-verified, never signals a
+ * recycled pid, and reports {ok:true,pid:null} on stale records.
+ */
+const EVICT_VICTIM_OPS: Record<
+  EvictVictimKind,
+  {
+    probe(
+      manifest: ModelRun,
+      client: WorkloadClient,
+      target: string,
+      remainingMs: () => number,
+    ): Promise<EvictVictimProbe>;
+    stop(
+      manifest: ModelRun,
+      client: WorkloadClient,
+      target: string,
+      remainingMs: () => number,
+    ): Promise<EvictStopFailure | null>;
+    verify(
+      manifest: ModelRun,
+      client: WorkloadClient,
+      target: string,
+      remainingMs: () => number,
+    ): Promise<EvictStopFailure | null>;
+  }
+> = {
+  ModelRun: {
+    probe: async (manifest, client, target, remainingMs) => {
+      let status: ServerStatusSnapshot;
+      try {
+        status = await withDeadline(client.serverStatus.query({ workload: target }), remainingMs());
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return {
+          kind: "failed",
+          failure: evictStopFailure(manifest, target, "EvictStatusUnknown", message),
+        };
+      }
+      if (status.state !== "up") return { kind: "down" };
+      if (status.foreign === true) {
+        return {
+          kind: "failed",
+          failure: evictStopFailure(
+            manifest,
+            target,
+            "EvictTargetForeign",
+            "the recorded server's listener pid is foreign to this workload",
+          ),
+        };
+      }
+      return { kind: "ready" };
+    },
+    stop: async (manifest, client, target, remainingMs) => {
+      const stopResult = await withDeadline(
+        client.serverStop.mutate({ workload: target, graceSeconds: 5 }),
+        remainingMs(),
+      );
+      const stopped = (stopResult as { stopped?: boolean } | undefined)?.stopped;
+      if (stopped === false) {
+        return evictStopFailure(manifest, target, "EvictStopRefused", "refused to stop");
+      }
+      return null;
+    },
+    verify: async (manifest, client, target, remainingMs) => {
+      const postStatus = await withDeadline(
+        client.serverStatus.query({ workload: target }),
+        remainingMs(),
+      );
+      if (postStatus.state === "up") {
+        return evictStopFailure(manifest, target, "EvictReleaseUnverified", "still up after stop");
+      }
+      return null;
+    },
+  },
+  ModelHost: {
+    probe: async (manifest, client, target, remainingMs) => {
+      let status: { state: string; identityUnknown?: boolean };
+      try {
+        status = await withDeadline(
+          client.modelHostStatus.query({ workload: target }),
+          remainingMs(),
+        );
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return {
+          kind: "failed",
+          failure: evictStopFailure(manifest, target, "EvictStatusUnknown", message),
+        };
+      }
+      if (status.identityUnknown === true) {
+        return {
+          kind: "failed",
+          failure: evictStopFailure(
+            manifest,
+            target,
+            "EvictStatusUnknown",
+            "modelHost status identity unknown",
+          ),
+        };
+      }
+      return { kind: "ready" };
+    },
+    stop: async (manifest, client, target, remainingMs) => {
+      const outcome = await withDeadline(
+        client.modelHostStop.mutate({ workload: target, graceSeconds: 5 }),
+        remainingMs(),
+      );
+      const refused = refusedStopReason(outcome);
+      if (refused !== null) {
+        return evictStopFailure(manifest, target, "EvictStopRefused", refused);
+      }
+      return null;
+    },
+    verify: async (manifest, client, target, remainingMs) => {
+      const post = await withDeadline(
+        client.modelHostStatus.query({ workload: target }),
+        remainingMs(),
+      );
+      if (post.state === "Running" || post.identityUnknown === true) {
+        return evictStopFailure(
+          manifest,
+          target,
+          "EvictReleaseUnverified",
+          "still running after stop",
+        );
+      }
+      return null;
+    },
+  },
+};
+
 /** Stops one victim that was observed up and verifies its release.
  * Returns null once the victim is confirmed down. */
 async function stopAndVerifyEvictTarget(
   manifest: ModelRun,
   client: WorkloadClient,
   target: string,
+  kind: EvictVictimKind,
   remainingMs: () => number,
 ): Promise<EvictStopFailure | null> {
+  const ops = EVICT_VICTIM_OPS[kind];
   try {
-    const stopResult = await withDeadline(
-      client.serverStop.mutate({ workload: target, graceSeconds: 5 }),
-      remainingMs(),
-    );
-    const stopped = (stopResult as { stopped?: boolean } | undefined)?.stopped;
-    if (stopped === false) {
-      return evictStopFailure(manifest, target, "EvictStopRefused", "refused to stop");
-    }
-    const postStatus = await withDeadline(
-      client.serverStatus.query({ workload: target }),
-      remainingMs(),
-    );
-    if (postStatus.state === "up") {
-      return evictStopFailure(manifest, target, "EvictReleaseUnverified", "still up after stop");
-    }
-    return null;
+    const stopFailure = await ops.stop(manifest, client, target, remainingMs);
+    if (stopFailure !== null) return stopFailure;
+    return await ops.verify(manifest, client, target, remainingMs);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const reason = err instanceof EvictDeadlineError ? "EvictStopTimedOut" : "EvictStopFailed";
@@ -1210,11 +1354,11 @@ function persistEvictIntent(
   graceMs: number,
 ): EvictStopFailure | null {
   try {
-    const victim = loadWorkloadByName(target, workloadsDir);
+    const victim = loadWorkloadByNameAny(target, workloadsDir);
     if (victim.metadata.name !== target) {
       throw new Error(`manifest declares metadata.name '${victim.metadata.name}', not '${target}'`);
     }
-    const owner = victim.metadata.annotations[EVICTED_BY_ANNOTATION];
+    const owner = victim.metadata.annotations?.[EVICTED_BY_ANNOTATION];
     if (owner !== manifest.metadata.name) {
       // A live foreign hold belongs to another replacement: overwriting
       // it would let this apply's rollback erase a hold it never owned.
@@ -1227,20 +1371,16 @@ function persistEvictIntent(
           `'${target}' is already held by eviction owner '${holder}'`,
         );
       }
-      saveWorkload(
-        {
-          ...victim,
-          metadata: {
-            ...victim.metadata,
-            annotations: {
-              ...victim.metadata.annotations,
-              [EVICTED_BY_ANNOTATION]: manifest.metadata.name,
-              [EVICTED_AT_ANNOTATION]: now,
-            },
-          },
-        },
-        workloadsDir,
-      );
+      const annotations = {
+        ...victim.metadata.annotations,
+        [EVICTED_BY_ANNOTATION]: manifest.metadata.name,
+        [EVICTED_AT_ANNOTATION]: now,
+      };
+      if (victim.kind === "ModelHost") {
+        saveModelHost({ ...victim, metadata: { ...victim.metadata, annotations } }, workloadsDir);
+      } else {
+        saveWorkload({ ...victim, metadata: { ...victim.metadata, annotations } }, workloadsDir);
+      }
     }
     claimedTargets.add(target);
     return null;
@@ -1256,7 +1396,7 @@ async function stopEvictTargets(
   lifecycle: ClaimLifecycle,
   timeoutMs: number,
 ): Promise<EvictStopResult | null> {
-  const { manifest, client, onEvent, opts, now, evictionClaims } = ctx;
+  const { manifest, client, onEvent, opts, now, evictionClaims, evictKinds } = ctx;
   const workloadsDir = opts?.workloadsDir ?? defaultWorkloadsDir(opts?.env);
   const graceMs = opts?.evictionGraceMs ?? EVICTION_INTENT_GRACE_MS;
   for (const target of verifiedTargets) {
@@ -1264,17 +1404,11 @@ async function stopEvictTargets(
     if (intent !== null) return intent;
     const deadlineAt = Date.now() + timeoutMs;
     const remainingMs = (): number => Math.max(0, deadlineAt - Date.now());
-    let targetStatus: { state: string };
-    try {
-      targetStatus = await withDeadline(
-        client.serverStatus.query({ workload: target }),
-        remainingMs(),
-      );
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return evictStopFailure(manifest, target, "EvictStatusUnknown", message);
-    }
-    if (targetStatus.state !== "up") {
+    const kind = evictKinds.get(target) ?? "ModelRun";
+    const ops = EVICT_VICTIM_OPS[kind];
+    const probe = await ops.probe(manifest, client, target, remainingMs);
+    if (probe.kind === "failed") return probe.failure;
+    if (probe.kind === "down") {
       onEvent?.({
         type: "skipped",
         message: `${manifest.metadata.name}: eviction target ${target} already stopped`,
@@ -1283,7 +1417,7 @@ async function stopEvictTargets(
     }
     onEvent?.({ type: "stop", message: `${manifest.metadata.name}: evicting ${target}` });
     lifecycle.destructive = true;
-    const failure = await stopAndVerifyEvictTarget(manifest, client, target, remainingMs);
+    const failure = await stopAndVerifyEvictTarget(manifest, client, target, kind, remainingMs);
     if (failure !== null) return failure;
   }
   return null;
@@ -1300,6 +1434,10 @@ interface ConvergeServerContext {
   matches: boolean;
   desiredArgs: string[];
   evictTargets: string[];
+  /** Verified kind of each evict victim, recorded by
+   *  authorizeEvictTargets so the teardown adapter picks the right
+   *  status/stop procedures. */
+  evictKinds: Map<string, "ModelRun" | "ModelHost">;
   /** Evict victims whose marker this apply persisted or reaffirmed;
    *  failure rollback releases exactly these holds. */
   evictionClaims: Set<string>;
@@ -1364,20 +1502,22 @@ function isMissingManifestError(err: unknown): boolean {
 }
 
 /**
- * An evict target frees capacity only when it is a *verified* ModelRun in
- * the store (DF-01A). A verified ModelHost is started by the ModelHost
- * apply path and an unreadable manifest could be either kind — neither may
- * be credited as freed capacity or stopped by this path, so the apply is
- * refused before any teardown. Ambiguous identities are refused with the
- * same precedence: more than one stored manifest claiming the target name,
- * or a canonical `<target>.yaml` whose metadata.name disagrees with the
- * target, means the freed capacity cannot be attributed to one victim.
- * Ownership is verified too — a target whose spec.node is not verifiably
- * the incoming manifest's node is refused, since the credit would apply
- * to a different node's budget. A genuinely missing manifest is the legacy
+ * An evict target frees capacity only when it is a *verified* ModelRun or
+ * ModelHost in the store (DF-01A / DF-02 slice 3). An unreadable manifest
+ * could be either kind — it may not be credited as freed capacity or
+ * stopped by this path, so the apply is refused before any teardown.
+ * Ambiguous identities are refused with the same precedence: more than
+ * one stored manifest claiming the target name, or a canonical
+ * `<target>.yaml` whose metadata.name disagrees with the target, means
+ * the freed capacity cannot be attributed to one victim. Ownership is
+ * verified too — a target whose spec.node is not verifiably the incoming
+ * manifest's node is refused, since the credit would apply to a
+ * different node's budget. A genuinely missing manifest is the legacy
  * already-gone victim (e.g. a stale evict annotation surviving its
- * victim's delete): it is a no-op skip — nothing is resident to stop, and
- * since it is absent from the store it grants no capacity credit either.
+ * victim's delete): it is a no-op skip — nothing is resident to stop,
+ * and since it is absent from the store it grants no capacity credit
+ * either. Each verified target's kind is recorded on the context so the
+ * teardown stage picks the matching status/stop procedures.
  */
 function authorizeEvictTargets(
   ctx: ConvergeServerContext,
@@ -1399,18 +1539,32 @@ function authorizeEvictTargets(
       sameNode,
     );
     if (check.status === "refused") return { ok: false, result: check.result };
-    if (check.status === "verified") verified.add(target);
+    if (check.status === "verified") {
+      verified.add(target);
+      ctx.evictKinds.set(target, check.kind);
+    }
   }
   return { ok: true, verified };
 }
 
+/**
+ * Verify one evict target for `authorizeEvictTargets`: the stored
+ * manifest must parse (either kind), declare the requested name, live
+ * on the incoming manifest's node, and pass the session gate. A parsed
+ * ModelHost is a verifiable victim — its kind rides along on the
+ * verified result so the teardown stage picks the ModelHost status/stop
+ * procedures. Anything unreadable keeps EvictKindUnsupported.
+ */
 function checkEvictTarget(
   ctx: ConvergeServerContext,
   target: string,
   workloadsDir: string,
   claimCount: number,
   sameNode: (other: string) => boolean,
-): { status: "verified" } | { status: "skip" } | { status: "refused"; result: ApplyResult } {
+):
+  | { status: "verified"; kind: "ModelRun" | "ModelHost" }
+  | { status: "skip" }
+  | { status: "refused"; result: ApplyResult } {
   const { manifest } = ctx;
   if (claimCount > 1) {
     return {
@@ -1450,17 +1604,6 @@ function checkEvictTarget(
       ),
     };
   }
-  if (loaded.kind !== "ModelRun") {
-    return {
-      status: "refused",
-      result: evictRefusalResult(
-        ctx,
-        target,
-        `it is a ${loaded.kind}, which this path cannot stop or account for`,
-        "EvictKindUnsupported",
-      ),
-    };
-  }
   if (!sameNode(loaded.spec.node)) {
     return {
       status: "refused",
@@ -1474,7 +1617,7 @@ function checkEvictTarget(
   }
   const gated = checkEvictSessionGate(ctx, target);
   if (gated) return { status: "refused", result: gated };
-  return { status: "verified" };
+  return { status: "verified", kind: loaded.kind };
 }
 
 function checkEvictSessionGate(ctx: ConvergeServerContext, target: string): ApplyResult | null {
@@ -2178,19 +2321,34 @@ function releaseClaimedMarker(
   } catch {
     return { released: false };
   }
-  if (victim.kind !== "ModelRun" || victim.metadata.name !== target) {
+  if (victim.metadata.name !== target) {
     return { released: false };
   }
-  if (victim.metadata.annotations[EVICTED_BY_ANNOTATION] !== ownerName) {
+  if (victim.metadata.annotations?.[EVICTED_BY_ANNOTATION] !== ownerName) {
     return { released: false };
   }
+  const source: Record<string, string> = victim.metadata.annotations ?? {};
   const {
     [EVICTED_BY_ANNOTATION]: _evictedBy,
     [EVICTED_AT_ANNOTATION]: _evictedAt,
     ...annotations
-  } = victim.metadata.annotations;
+  } = source;
   try {
-    saveWorkload({ ...victim, metadata: { ...victim.metadata, annotations } }, workloadsDir);
+    if (victim.kind === "ModelHost") {
+      const { annotations: _stale, ...hostMetadata } = victim.metadata;
+      // ModelHost annotations are optional: drop the key entirely when
+      // nothing remains rather than leave `annotations: {}` behind.
+      saveModelHost(
+        {
+          ...victim,
+          metadata:
+            Object.keys(annotations).length > 0 ? { ...hostMetadata, annotations } : hostMetadata,
+        },
+        workloadsDir,
+      );
+    } else {
+      saveWorkload({ ...victim, metadata: { ...victim.metadata, annotations } }, workloadsDir);
+    }
     return { released: true };
   } catch (err) {
     return {
@@ -2324,6 +2482,7 @@ export async function applyOne(
       matches,
       desiredArgs,
       evictTargets,
+      evictKinds: new Map(),
       evictionClaims,
     };
     let result: ApplyResult;
