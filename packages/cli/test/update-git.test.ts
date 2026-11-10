@@ -227,7 +227,15 @@ test("originGithubRepo parses the origin remote and nulls on failure", async () 
   expect(await originGithubRepo(ssh.git)).toBe("frozename/llamactl");
   expect(ssh.calls).toEqual(["remote get-url origin"]);
 
-  const missing = scripted(byKey({ "remote get-url origin": fail("no such remote", 2) }));
+  const missing = scripted(
+    byKey({
+      "remote get-url origin": {
+        code: 2,
+        stdout: "git@github.com:o/r.git",
+        stderr: "no such remote",
+      },
+    }),
+  );
   expect(await originGithubRepo(missing.git)).toBeNull();
 });
 
