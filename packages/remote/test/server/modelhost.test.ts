@@ -159,6 +159,25 @@ function killTeardown(proc: ReturnType<typeof spawnImpostor>): (pid: number) => 
   };
 }
 
+// Same release guarantee as killTeardown, but keyed only on the pid the
+// teardown received, for tests whose recorded process is spawned after the
+// teardown stub is installed.
+function killRecordedPid(pid: number): Promise<void> {
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {
+    // already gone
+  }
+  return waitFor(() => {
+    try {
+      process.kill(pid, 0);
+      return false;
+    } catch {
+      return true;
+    }
+  }, "recorded pid exit");
+}
+
 // These tests record this test process as the host pid — it cannot be
 // killed — so the injected probe reports it gone once teardown ran,
 // standing in for the confirmed release a real teardown produces.
@@ -871,10 +890,12 @@ describe("server/modelhost", () => {
           startedAt: new Date().toISOString(),
         }),
       );
-      // Mock teardown so the reap does NOT actually signal the impostor.
+      // The reap must confirm the impostor is gone before spawning, so the
+      // mock signals it and resolves only once the pid has exited.
+      const kill = killTeardown(impostor);
       engine.teardown = mock((pid: number) => {
         tornDown.push(pid);
-        return Promise.resolve();
+        return kill(pid);
       });
 
       const result = await startModelHost({
@@ -898,6 +919,335 @@ describe("server/modelhost", () => {
       } catch {
         // already gone
       }
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("reap defers the restart when the prior host survives teardown", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-reap-survive-"));
+    const { workloadsDir, runtimeDir } = makeManifest(tmp);
+    const engine = ENGINES.omlx;
+    const originalTeardown = engine.teardown.bind(engine);
+    const tornDown: number[] = [];
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
+    const impostor = spawnImpostor("/bin/sleep", ["60"], { stdio: "ignore", argv0: "omlx" });
+    try {
+      if (impostor.pid === undefined) throw new Error("impostor spawn failed");
+      const hostDir = join(runtimeDir, "workloads", "mlx-host-server");
+      mkdirSync(hostDir, { recursive: true });
+      writeFileSync(join(hostDir, "modelhost.pid"), `${String(impostor.pid)}\n`);
+      writeFileSync(
+        join(hostDir, "modelhost.state"),
+        JSON.stringify({
+          kind: "ModelHost",
+          engine: "omlx",
+          pid: impostor.pid,
+          host: "127.0.0.1",
+          port: 8094,
+          modelAliases: ["mlx-community/Qwen3-8B-MLX-4bit", "Qwen3-8B-MLX-4bit"],
+          startedAt: new Date().toISOString(),
+        }),
+      );
+      // Teardown resolves without releasing the pid: a resolved teardown is
+      // not proof of release, so the re-check must observe it still alive.
+      engine.teardown = mock((pid: number) => {
+        tornDown.push(pid);
+        return Promise.resolve();
+      });
+
+      const result = await startModelHost({
+        key: { name: "mlx-host-server" },
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
+      });
+
+      expect(result).toEqual({
+        ok: false,
+        pid: null,
+        error: "process still alive after teardown; deferring restart",
+      });
+      expect(tornDown).toEqual([impostor.pid]);
+      expect(spawn).not.toHaveBeenCalled();
+      // The recorded pid and sidecar are left intact for a later reconcile.
+      const untouched = readFileSync(join(hostDir, "modelhost.state"), "utf8");
+      expect(untouched).toContain(`"pid":${String(impostor.pid)}`);
+      expect(untouched).not.toContain("4321");
+    } finally {
+      engine.teardown = originalTeardown;
+      try {
+        impostor.kill("SIGKILL");
+      } catch {
+        // already gone
+      }
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("reap proceeds when teardown throws but the prior pid is gone", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-reap-throwgone-"));
+    const { workloadsDir, runtimeDir } = makeManifest(tmp);
+    const engine = ENGINES.omlx;
+    const originalTeardown = engine.teardown.bind(engine);
+    const tornDown: number[] = [];
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
+    const impostor = spawnImpostor("/bin/sleep", ["60"], { stdio: "ignore", argv0: "omlx" });
+    try {
+      if (impostor.pid === undefined) throw new Error("impostor spawn failed");
+      const hostDir = join(runtimeDir, "workloads", "mlx-host-server");
+      mkdirSync(hostDir, { recursive: true });
+      writeFileSync(join(hostDir, "modelhost.pid"), `${String(impostor.pid)}\n`);
+      writeFileSync(
+        join(hostDir, "modelhost.state"),
+        JSON.stringify({
+          kind: "ModelHost",
+          engine: "omlx",
+          pid: impostor.pid,
+          host: "127.0.0.1",
+          port: 8094,
+          modelAliases: ["mlx-community/Qwen3-8B-MLX-4bit", "Qwen3-8B-MLX-4bit"],
+          startedAt: new Date().toISOString(),
+        }),
+      );
+      // A thrown teardown is not proof either way: the pid really exited, so
+      // the identity re-check confirms release and the spawn proceeds.
+      const kill = killTeardown(impostor);
+      engine.teardown = mock(async (pid: number) => {
+        tornDown.push(pid);
+        await kill(pid);
+        throw new Error("teardown exploded after signalling");
+      });
+
+      const result = await startModelHost({
+        key: { name: "mlx-host-server" },
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
+      });
+
+      expect(result).toEqual({ ok: true, pid: 4321 });
+      expect(tornDown).toEqual([impostor.pid]);
+      expect(spawn).toHaveBeenCalledTimes(1);
+      expect(readFileSync(join(hostDir, "modelhost.state"), "utf8")).toContain('"pid": 4321');
+    } finally {
+      engine.teardown = originalTeardown;
+      try {
+        impostor.kill("SIGKILL");
+      } catch {
+        // already gone
+      }
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("reap defers the restart when identity is unverifiable after teardown", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-reap-unknown-"));
+    const { workloadsDir, runtimeDir } = makeManifest(tmp);
+    const engine = ENGINES.omlx;
+    const originalTeardown = engine.teardown.bind(engine);
+    const tornDown: number[] = [];
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
+    try {
+      const hostDir = join(runtimeDir, "workloads", "mlx-host-server");
+      mkdirSync(hostDir, { recursive: true });
+      writeFileSync(join(hostDir, "modelhost.pid"), `${String(process.pid)}\n`);
+      writeFileSync(
+        join(hostDir, "modelhost.state"),
+        JSON.stringify({
+          kind: "ModelHost",
+          engine: "omlx",
+          pid: process.pid,
+          host: "127.0.0.1",
+          port: 8094,
+          modelAliases: ["mlx-community/Qwen3-8B-MLX-4bit", "Qwen3-8B-MLX-4bit"],
+          startedAt: new Date().toISOString(),
+        }),
+      );
+      const { identity, release } = unknownAfterTeardownIdentity("omlx-server --port 8094");
+      engine.teardown = mock((pid: number) => {
+        tornDown.push(pid);
+        release();
+        return Promise.resolve();
+      });
+
+      const result = await startModelHost({
+        key: { name: "mlx-host-server" },
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        identity,
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
+      });
+
+      expect(result).toEqual({
+        ok: false,
+        pid: null,
+        error: "pid identity unknown after teardown; deferring restart",
+      });
+      expect(tornDown).toEqual([process.pid]);
+      expect(spawn).not.toHaveBeenCalled();
+      const untouched = readFileSync(join(hostDir, "modelhost.state"), "utf8");
+      expect(untouched).toContain(`"pid":${String(process.pid)}`);
+      expect(untouched).not.toContain("4321");
+    } finally {
+      engine.teardown = originalTeardown;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("reapStartingOrphan defers and keeps the record when the orphan survives teardown", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-startreap-survive-"));
+    const { workloadsDir, runtimeDir } = makeManifest(tmp);
+    const engine = ENGINES.omlx;
+    const originalTeardown = engine.teardown.bind(engine);
+    const tornDown: number[] = [];
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
+    const impostor = spawnImpostor("/bin/sleep", ["60"], { stdio: "ignore", argv0: "omlx" });
+    try {
+      if (impostor.pid === undefined) throw new Error("impostor spawn failed");
+      const desired = loadModelHostByName("mlx-host-server", workloadsDir);
+      const hostDir = seedStartingRecord(
+        runtimeDir,
+        impostor.pid,
+        computeModelHostSpecHash(specForHash(desired.spec)),
+      );
+      engine.teardown = mock((pid: number) => {
+        tornDown.push(pid);
+        return Promise.resolve();
+      });
+
+      const result = await startModelHost({
+        key: { name: "mlx-host-server" },
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
+        findListenerPid: () => Promise.resolve(null),
+      });
+
+      expect(result).toEqual({
+        ok: false,
+        pid: null,
+        error: "process still alive after teardown; deferring restart",
+      });
+      expect(tornDown).toEqual([impostor.pid]);
+      expect(spawn).not.toHaveBeenCalled();
+      // The starting record survives because the orphan was never confirmed
+      // gone; deleting it would orphan a live engine with no tracking file.
+      expect(existsSync(join(hostDir, "modelhost.starting"))).toBe(true);
+    } finally {
+      engine.teardown = originalTeardown;
+      try {
+        impostor.kill("SIGKILL");
+      } catch {
+        // already gone
+      }
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("reapStartingOrphan removes the record when teardown throws but the orphan is gone", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-startreap-throwgone-"));
+    const { workloadsDir, runtimeDir } = makeManifest(tmp);
+    const engine = ENGINES.omlx;
+    const originalTeardown = engine.teardown.bind(engine);
+    const tornDown: number[] = [];
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
+    const impostor = spawnImpostor("/bin/sleep", ["60"], { stdio: "ignore", argv0: "omlx" });
+    try {
+      if (impostor.pid === undefined) throw new Error("impostor spawn failed");
+      const desired = loadModelHostByName("mlx-host-server", workloadsDir);
+      const hostDir = seedStartingRecord(
+        runtimeDir,
+        impostor.pid,
+        computeModelHostSpecHash(specForHash(desired.spec)),
+      );
+      const kill = killTeardown(impostor);
+      engine.teardown = mock(async (pid: number) => {
+        tornDown.push(pid);
+        await kill(pid);
+        throw new Error("teardown exploded after signalling");
+      });
+
+      const result = await startModelHost({
+        key: { name: "mlx-host-server" },
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
+        findListenerPid: () => Promise.resolve(null),
+      });
+
+      expect(result).toEqual({ ok: true, pid: 4321 });
+      expect(tornDown).toEqual([impostor.pid]);
+      expect(spawn).toHaveBeenCalledTimes(1);
+      expect(existsSync(join(hostDir, "modelhost.starting"))).toBe(false);
+    } finally {
+      engine.teardown = originalTeardown;
+      try {
+        impostor.kill("SIGKILL");
+      } catch {
+        // already gone
+      }
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("spec drift defers the restart when the live listener survives teardown", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-drift-survive-"));
+    const { workloadsDir, runtimeDir, manifest } = makeManifest(tmp);
+    const engine = ENGINES.omlx;
+    const originalTeardown = engine.teardown.bind(engine);
+    const tornDown: number[] = [];
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
+    try {
+      seedDeadSidecar(
+        runtimeDir,
+        computeModelHostSpecHash(
+          specForHash(
+            ModelHostManifestSchema.parse({
+              ...manifest,
+              spec: { ...manifest.spec, resources: { expectedMemoryGiB: 24 } },
+            }).spec,
+          ),
+        ),
+      );
+      engine.teardown = mock((pid: number) => {
+        tornDown.push(pid);
+        return Promise.resolve();
+      });
+
+      const result = await startModelHost({
+        key: { name: "mlx-host-server" },
+        manifest: {
+          ...manifest,
+          spec: { ...manifest.spec, resources: { expectedMemoryGiB: 32 } },
+        },
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady: () =>
+          Promise.resolve({ ready: true, modelIds: ["mlx-community/Qwen3-8B-MLX-4bit"] }),
+        // The listener is this test process, which cannot exit on teardown.
+        findListenerPid: () => Promise.resolve(process.pid),
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.pid).toBeNull();
+      expect(result.error).toContain("survived teardown on spec drift");
+      expect(result.error).toContain("deferring restart");
+      expect(tornDown).toEqual([process.pid]);
+      expect(spawn).not.toHaveBeenCalled();
+    } finally {
+      engine.teardown = originalTeardown;
       rmSync(tmp, { recursive: true, force: true });
     }
   });
@@ -1261,7 +1611,12 @@ describe("server/modelhost", () => {
     const originalTeardown = engine.teardown.bind(engine);
     const tornDown: number[] = [];
     const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
+    const impostor = spawnImpostor("/bin/sleep", ["60"], {
+      stdio: "ignore",
+      argv0: "omlx",
+    });
     try {
+      if (impostor.pid === undefined) throw new Error("impostor spawn failed");
       const hostDir = seedDeadSidecar(
         runtimeDir,
         // The recorded launch ran with expectedMemoryGiB=24; the applied
@@ -1276,9 +1631,10 @@ describe("server/modelhost", () => {
           ),
         ),
       );
+      const kill = killTeardown(impostor);
       engine.teardown = mock((pid: number) => {
         tornDown.push(pid);
-        return Promise.resolve();
+        return kill(pid);
       });
 
       const result = await startModelHost({
@@ -1294,13 +1650,13 @@ describe("server/modelhost", () => {
         probeReady: () =>
           Promise.resolve({ ready: true, modelIds: ["mlx-community/Qwen3-8B-MLX-4bit"] }),
         // The stale spec's process is still bound to the endpoint.
-        findListenerPid: () => Promise.resolve(process.pid),
+        findListenerPid: () => Promise.resolve(impostor.pid ?? null),
       });
 
       // A drifted spec must not be silently adopted: the stale listener is
       // torn down and a replacement spawned, so the new resources take effect.
       expect(result.ok).toBe(true);
-      expect(tornDown).toEqual([process.pid]);
+      expect(tornDown).toEqual([impostor.pid]);
       expect(spawn).toHaveBeenCalledTimes(1);
       expect(result.pid).toBe(4321);
       const state = JSON.parse(readFileSync(join(hostDir, "modelhost.state"), "utf8")) as {
@@ -1309,6 +1665,11 @@ describe("server/modelhost", () => {
       expect(state.specHash).toContain('"expectedMemoryGiB":32');
     } finally {
       engine.teardown = originalTeardown;
+      try {
+        impostor.kill("SIGKILL");
+      } catch {
+        // already gone
+      }
       rmSync(tmp, { recursive: true, force: true });
     }
   });
@@ -2323,9 +2684,10 @@ describe("server/modelhost", () => {
         impostor.pid,
         computeModelHostSpecHash(specForHash(desired.spec)),
       );
+      const kill = killTeardown(impostor);
       engine.teardown = mock((pid: number) => {
         tornDown.push(pid);
-        return Promise.resolve();
+        return kill(pid);
       });
 
       const result = await startModelHost({
@@ -2761,13 +3123,16 @@ describe("llamacpp fork process identity (#516)", () => {
     };
   }
 
-  function patchLlamacppTeardown(): { tornDown: number[]; restore: () => void } {
+  function patchLlamacppTeardown(onTeardown?: (pid: number) => void | Promise<void>): {
+    tornDown: number[];
+    restore: () => void;
+  } {
     const engine = ENGINES.llamacpp;
     const originalTeardown = engine.teardown.bind(engine);
     const tornDown: number[] = [];
-    engine.teardown = mock((pid: number) => {
+    engine.teardown = mock(async (pid: number) => {
       tornDown.push(pid);
-      return Promise.resolve();
+      await onTeardown?.(pid);
     });
     return {
       tornDown,
@@ -2911,7 +3276,10 @@ describe("llamacpp fork process identity (#516)", () => {
     const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-fork-reap-"));
     const { workloadsDir, runtimeDir } = writeLlamaManifest(tmp, [FORK_BINARY_NAME]);
     seedLlamaRecord(runtimeDir, { pid: process.pid });
-    const patch = patchLlamacppTeardown();
+    const { identity, release } = releasableSelfIdentity(FORK_CMDLINE);
+    const patch = patchLlamacppTeardown(() => {
+      release();
+    });
     const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
     try {
       const r = await startModelHost({
@@ -2919,7 +3287,7 @@ describe("llamacpp fork process identity (#516)", () => {
         workloadsDir,
         runtimeDir,
         env: modelHostEnv(tmp),
-        identity: forkIdentity(FORK_CMDLINE),
+        identity,
         spawn: spawn as unknown as typeof nodeSpawn,
         probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
       }).catch((e: unknown) => ({ ok: false as const, pid: null, error: String(e) }));
@@ -2941,7 +3309,10 @@ describe("llamacpp fork process identity (#516)", () => {
     const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-fork-reapstock-"));
     const { workloadsDir, runtimeDir } = writeLlamaManifest(tmp, [FORK_BINARY_NAME]);
     seedLlamaRecord(runtimeDir, { pid: process.pid });
-    const patch = patchLlamacppTeardown();
+    const { identity, release } = releasableSelfIdentity(STOCK_CMDLINE);
+    const patch = patchLlamacppTeardown(() => {
+      release();
+    });
     const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
     try {
       const r = await startModelHost({
@@ -2949,7 +3320,7 @@ describe("llamacpp fork process identity (#516)", () => {
         workloadsDir,
         runtimeDir,
         env: modelHostEnv(tmp),
-        identity: forkIdentity(STOCK_CMDLINE),
+        identity,
         spawn: spawn as unknown as typeof nodeSpawn,
         probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
       }).catch((e: unknown) => ({ ok: false as const, pid: null, error: String(e) }));
@@ -2997,7 +3368,7 @@ describe("llamacpp fork process identity (#516)", () => {
       stdio: "ignore",
       argv0: "other-binary",
     });
-    const patch = patchLlamacppTeardown();
+    const patch = patchLlamacppTeardown((pid) => killRecordedPid(pid));
     const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
     try {
       if (otherProcess.pid === undefined) throw new Error("impostor spawn failed");
@@ -3068,7 +3439,10 @@ describe("llamacpp fork process identity (#516)", () => {
     const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-fork-startreap-"));
     const { workloadsDir, runtimeDir } = writeLlamaManifest(tmp, [FORK_BINARY_NAME]);
     seedLlamaRecord(runtimeDir, { pid: process.pid, starting: true });
-    const patch = patchLlamacppTeardown();
+    const { identity, release } = releasableSelfIdentity(FORK_CMDLINE);
+    const patch = patchLlamacppTeardown(() => {
+      release();
+    });
     const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
     try {
       const r = await startModelHost({
@@ -3076,7 +3450,7 @@ describe("llamacpp fork process identity (#516)", () => {
         workloadsDir,
         runtimeDir,
         env: modelHostEnv(tmp),
-        identity: forkIdentity(FORK_CMDLINE),
+        identity,
         spawn: spawn as unknown as typeof nodeSpawn,
         probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
       }).catch((e: unknown) => ({ ok: false as const, pid: null, error: String(e) }));
@@ -3095,7 +3469,7 @@ describe("llamacpp fork process identity (#516)", () => {
       stdio: "ignore",
       argv0: "other-binary",
     });
-    const patch = patchLlamacppTeardown();
+    const patch = patchLlamacppTeardown((pid) => killRecordedPid(pid));
     const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
     try {
       if (otherProcess.pid === undefined) throw new Error("impostor spawn failed");
