@@ -30,6 +30,7 @@ type ClientOpts = {
   requestTimeoutMs?: number;
   statusTimeoutMs?: number;
   leases?: { registry: ResidencyLeases; workload: string };
+  fetch?: (input: URL | Request | string, init?: RequestInit) => unknown;
 };
 
 type NativeClient = {
@@ -974,10 +975,15 @@ describe("cross-operation", () => {
 describe("lease fencing", () => {
   const W = "omlx-host";
 
-  async function leasedClientFor(fake: FakeOmlx, registry: ResidencyLeases): Promise<NativeClient> {
+  async function leasedClientFor(
+    fake: FakeOmlx,
+    registry: ResidencyLeases,
+    fetch?: ClientOpts["fetch"],
+  ): Promise<NativeClient> {
     const opts: ClientOpts = {
       ...baseClientOpts(fake.endpoint),
       leases: { registry, workload: W },
+      ...(fetch !== undefined ? { fetch } : {}),
     };
     return await clientFor(fake, opts);
   }
@@ -1190,6 +1196,24 @@ describe("lease fencing", () => {
     expect(loadResult).toStrictEqual({ kind: "already-loaded", modelId: ID });
     expect(fake.counts.loadPosts).toBe(0);
     expect(registry.snapshot(W).phase).toBe("open");
+    expect(registry.acquire(W).ok).toBe(true);
+  });
+
+  test("F10 a throw from the native path cancels the drain and reopens admission", async () => {
+    const fake = startFakeOmlx({ apiKey: "test-key" });
+    fake.state.models.get(ID)!.loaded = true;
+    const registry = createResidencyLeases();
+    // A fetch resolving to a non-Response makes statusInner dereference
+    // `.status` outside any try, so runUnload throws with the drain held.
+    const client = await leasedClientFor(fake, registry, () => {
+      return Promise.resolve(undefined);
+    });
+
+    const failure: unknown = await client.unload().catch((err: unknown): unknown => err);
+    expect(failure).toBeInstanceOf(TypeError);
+    expect(fake.counts.statusGets).toBe(0);
+    expect(fake.counts.unloadPosts).toBe(0);
+    expect(registry.snapshot(W)).toMatchObject({ phase: "open", epoch: 1, active: [] });
     expect(registry.acquire(W).ok).toBe(true);
   });
 });
