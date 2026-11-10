@@ -19,6 +19,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   utimesSync,
   writeFileSync,
 } from "../../src/safe-fs.js";
@@ -3239,6 +3240,136 @@ describe("llamacpp fork process identity (#516)", () => {
       expect("binaryNames" in state).toBe(false);
     } finally {
       patch.restore();
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("stopStartingRecord wraps teardown in try/catch and returns error when process survives", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-fork-starting-teardown-err-"));
+    const runtimeDir = join(tmp, "runtime");
+    const impostor = spawnImpostor("/bin/sleep", ["60"], {
+      stdio: "ignore",
+      argv0: FORK_BINARY_NAME,
+    });
+    try {
+      if (impostor.pid === undefined) throw new Error("impostor spawn failed");
+      const hostDir = seedLlamaRecord(runtimeDir, {
+        pid: impostor.pid,
+        binaryNames: [FORK_BINARY_NAME],
+        starting: true,
+      });
+      const thrown = new Error("teardown failed");
+      const stopped = await stopModelHost({
+        key: LLAMA_KEY,
+        runtimeDir,
+        identity: forkIdentity(FORK_CMDLINE),
+        teardown: (_pid: number): Promise<void> => {
+          throw thrown;
+        },
+      });
+      expect(stopped).toEqual({
+        ok: false,
+        pid: impostor.pid,
+        error: "process still alive after teardown",
+      });
+      expect(existsSync(join(hostDir, "modelhost.starting"))).toBe(true);
+    } finally {
+      try {
+        impostor.kill("SIGKILL");
+      } catch {
+        // already gone
+      }
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("recycled pid after teardown reports reused verdict on state-sidecar path", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-fork-recycled-state-"));
+    const runtimeDir = join(tmp, "runtime");
+    const impostor = spawnImpostor("/bin/sleep", ["60"], {
+      stdio: "ignore",
+      argv0: FORK_BINARY_NAME,
+    });
+    try {
+      if (impostor.pid === undefined) throw new Error("impostor spawn failed");
+      const hostDir = seedLlamaRecord(runtimeDir, {
+        pid: impostor.pid,
+        binaryNames: [FORK_BINARY_NAME],
+      });
+      const recordedMtime = statSync(join(hostDir, "modelhost.state")).mtimeMs;
+      const recycledCmdline = "/opt/gufo/bin/llama-server-fork-pristine --port 9090";
+      let identityCallCount = 0;
+      const recycledIdentity = {
+        processStartMs: (): number => {
+          identityCallCount += 1;
+          if (identityCallCount === 1) return recordedMtime;
+          return recordedMtime + 30_001;
+        },
+        processCommand: (): string => recycledCmdline,
+        probe: (): void => undefined,
+      };
+      const stopped = await stopModelHost({
+        key: LLAMA_KEY,
+        runtimeDir,
+        identity: recycledIdentity,
+        teardown: (_pid: number): Promise<void> => {
+          return Promise.resolve();
+        },
+      });
+      expect(stopped).toEqual({ ok: true, pid: impostor.pid });
+      expect(existsSync(join(hostDir, "modelhost.state"))).toBe(false);
+    } finally {
+      try {
+        impostor.kill("SIGKILL");
+      } catch {
+        // already gone
+      }
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("recycled pid after teardown reports reused verdict on starting path", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-fork-recycled-starting-"));
+    const runtimeDir = join(tmp, "runtime");
+    const impostor = spawnImpostor("/bin/sleep", ["60"], {
+      stdio: "ignore",
+      argv0: FORK_BINARY_NAME,
+    });
+    try {
+      if (impostor.pid === undefined) throw new Error("impostor spawn failed");
+      const hostDir = seedLlamaRecord(runtimeDir, {
+        pid: impostor.pid,
+        binaryNames: [FORK_BINARY_NAME],
+        starting: true,
+      });
+      const recordedMtime = statSync(join(hostDir, "modelhost.starting")).mtimeMs;
+      const recycledCmdline = "/opt/gufo/bin/llama-server-fork-pristine --port 9090";
+      let identityCallCount = 0;
+      const recycledIdentity = {
+        processStartMs: (): number => {
+          identityCallCount += 1;
+          if (identityCallCount === 1) return recordedMtime;
+          return recordedMtime + 30_001;
+        },
+        processCommand: (): string => recycledCmdline,
+        probe: (): void => undefined,
+      };
+      const stopped = await stopModelHost({
+        key: LLAMA_KEY,
+        runtimeDir,
+        identity: recycledIdentity,
+        teardown: (_pid: number): Promise<void> => {
+          return Promise.resolve();
+        },
+      });
+      expect(stopped).toEqual({ ok: true, pid: impostor.pid });
+      expect(existsSync(join(hostDir, "modelhost.starting"))).toBe(false);
+    } finally {
+      try {
+        impostor.kill("SIGKILL");
+      } catch {
+        // already gone
+      }
       rmSync(tmp, { recursive: true, force: true });
     }
   });
