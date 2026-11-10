@@ -29,6 +29,11 @@ import {
   applyOne,
   applyOneModelHost,
   type ApplyResult,
+  EVICTED_AT_ANNOTATION,
+  EVICTED_BY_ANNOTATION,
+  EVICTION_INTENT_GRACE_MS,
+  parseEvictTargets,
+  replacementHoldsEviction,
   type WorkloadClient,
 } from "./apply.js";
 import {
@@ -52,6 +57,7 @@ import {
   defaultWorkloadsDir,
   listWorkloads,
   loadWorkloadByName,
+  loadWorkloadByNameAny,
   saveWorkload,
   workloadPath,
 } from "./store.js";
@@ -66,6 +72,9 @@ export interface ReconcileNodeReport {
   /** Set with action "skipped-external": the manager named in the host's
    *  llamactl.io/managed-by label. */
   managedBy?: string;
+  /** Set with action "unchanged" when an eviction intent marker suppressed
+   *  this pass: the name of the replacement that evicted the workload. */
+  evictedBy?: string;
   /** Set when the engine was up as of the last pass but not Running now: on
    *  the local node proof is the launch record; on a remote node it is the
    *  controller history's lastKnownRunning (#308). */
@@ -100,6 +109,10 @@ export interface ReconcileOptions {
   /** Per-call deadlines for node .query / .mutate RPCs; defaults to
    *  DEFAULT_NODE_RPC_QUERY_TIMEOUT_MS / DEFAULT_NODE_RPC_MUTATE_TIMEOUT_MS. */
   rpcTimeouts?: Partial<NodeRpcTimeouts>;
+  /** How long an evicted-by marker holds a victim down while its
+   *  replacement is missing or not yet confirmed. Defaults to
+   *  EVICTION_INTENT_GRACE_MS (15 minutes). */
+  evictionGraceMs?: number;
 }
 
 /** Controller-side bookkeeping context for #308: where the ModelHost history
@@ -245,6 +258,67 @@ export async function reconcileOnce(opts: ReconcileOptions): Promise<ReconcileRe
   return { reports, errors };
 }
 
+type EvictionGuard = { kind: "hold"; evictedBy: string } | { kind: "apply"; manifest: ModelRun };
+
+/** Clear a stale eviction marker from disk; fall back to the snapshot. */
+function clearStaleEvictionMarker(manifest: ModelRun, dir: string): ModelRun {
+  try {
+    const fresh = loadWorkloadByName(manifest.metadata.name, dir);
+    const {
+      [EVICTED_BY_ANNOTATION]: _evictedBy,
+      [EVICTED_AT_ANNOTATION]: _evictedAt,
+      ...annotations
+    } = fresh.metadata.annotations;
+    const cleared: ModelRun = { ...fresh, metadata: { ...fresh.metadata, annotations } };
+    saveWorkload(cleared, dir);
+    return cleared;
+  } catch {
+    // The manifest vanished or the marker clear failed; apply the
+    // pass-start snapshot and let a later pass retry the removal.
+    return manifest;
+  }
+}
+
+/**
+ * DF-02 resurrection guard: a verified eviction stamps evicted-by /
+ * evicted-at on the victim before the stop RPC. While that intent is
+ * live the reconciler must not restart the victim underneath its
+ * replacement — no status RPC, no applyOne.
+ */
+function evictionGuard(manifest: ModelRun, opts: ReconcileOptions, dir: string): EvictionGuard {
+  const name = manifest.metadata.name;
+  // The pass-start snapshot predates this workload's turn: an earlier
+  // apply in the same pass can stamp this victim's marker (same-tick
+  // eviction) or a failed replacement's rollback can clear one, so the
+  // guard decides on the on-disk annotations, not the snapshot.
+  let annotations = manifest.metadata.annotations;
+  try {
+    const fresh = loadWorkloadByName(name, dir);
+    if (fresh.metadata.name === name) annotations = fresh.metadata.annotations;
+  } catch {
+    // Vanished or unreadable mid-pass; the snapshot still decides.
+  }
+  const evictedBy = annotations[EVICTED_BY_ANNOTATION];
+  if (!evictedBy) return { kind: "apply", manifest };
+  const graceMs = opts.evictionGraceMs ?? EVICTION_INTENT_GRACE_MS;
+  const nowMs = (opts.now?.() ?? new Date()).getTime();
+  const evictedAt = annotations[EVICTED_AT_ANNOTATION];
+  const atMs = evictedAt === undefined ? Number.NaN : Date.parse(evictedAt);
+  const withinGrace = !Number.isNaN(atMs) && nowMs - atMs < graceMs;
+  let replacement: ModelRun | ModelHostManifest | undefined;
+  try {
+    replacement = loadWorkloadByNameAny(evictedBy, dir);
+  } catch {
+    replacement = undefined;
+  }
+  const namesVictim =
+    replacement?.kind === "ModelRun" && parseEvictTargets(replacement).includes(name);
+  if (replacementHoldsEviction(replacement, withinGrace, namesVictim)) {
+    return { kind: "hold", evictedBy };
+  }
+  return { kind: "apply", manifest: clearStaleEvictionMarker(manifest, dir) };
+}
+
 /**
  * Reconcile one ModelRun manifest. Pushes its report(s) onto
  * `reports` and returns the number of errors observed.
@@ -266,8 +340,19 @@ async function reconcileModelRun(
       reports.push({ kind: "ModelRun", name, node: spec.node, action: "skipped-deleted" });
       return 0;
     }
+    const guard = evictionGuard(manifest, opts, dir);
+    if (guard.kind === "hold") {
+      reports.push({
+        kind: "ModelRun",
+        name,
+        node: spec.node,
+        action: "unchanged",
+        evictedBy: guard.evictedBy,
+      });
+      return 0;
+    }
     const result = await applyOne(
-      manifest,
+      guard.manifest,
       opts.getClient,
       (e) => {
         opts.onEvent?.({ ...e, name });
@@ -276,6 +361,7 @@ async function reconcileModelRun(
       {
         workloadsDir: dir,
         ...(opts.resolveNodeIdentity && { resolveNodeIdentity: opts.resolveNodeIdentity }),
+        ...(opts.evictionGraceMs !== undefined ? { evictionGraceMs: opts.evictionGraceMs } : {}),
         getNodeBudgetGiB: (nodeName) =>
           resolveModelRunBudgetGiB(nodeName, nodeBudgetByName, nodeMemBytesByName, opts.getClient),
       },
