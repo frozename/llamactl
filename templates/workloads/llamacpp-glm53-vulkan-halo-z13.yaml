@@ -59,9 +59,10 @@ spec:
   hostedModels:
     - rel: GLM-5.3-Flash-a4e3s-j2ipper/5716e483/GLM-5.3-Flash-a4e3s-00001-of-00004.gguf
   extraArgs:
-    # --served-model-name equals the GGUF basename, because a ModelHost
-    # routes by rel and basename.
-    - --served-model-name
+    # --alias equals the GGUF basename so /v1/models reports basename(rel);
+    # mainline llama-server has no --served-model-name (Gufo-only; b12206
+    # common/arg.cpp defines -a/--alias).
+    - --alias
     - GLM-5.3-Flash-a4e3s-00001-of-00004.gguf
     # --jinja makes the shipped chat template drive tool calls.
     - --jinja

@@ -78,23 +78,23 @@ const EXPECTED_SPEC_HASHES: Readonly<Record<string, string>> = {
   "libosmos-ds41-ud-iq1s-z13.yaml":
     "8d94eddab8a2cfd06d4797339decd6bd7feb7252fffbc98ef431bb2bf5c86897",
   "llamacpp-deepseek41-flash-iq1s-z13.yaml":
-    "c83849ef63837c3089a6c665d164260caf0935a42e4cb701d6a5c4ad3bd8b9f6",
+    "ff7e2f3cac4efed86cb5e97a0dc45525a9283bd6df3f5aa4e5c6a26ced7df7c0",
   "llamacpp-ds41-ud-iq1m-hip-b12206-z13.yaml":
-    "3a70e9b77ff6515c0686ccd1459f3853462985e883af471ce1555347644fd66e",
+    "87bb7b5591c77ed65efa4627368e9ab06dcb5885c2219a6d12d363d67cbeecde",
   "llamacpp-glm53-g-h1-t03-z13.yaml":
     "2897d1d55579b35fd8ea4dfacb3b6688b2e0775d1344f2d1c0b0063f2378a111",
   "llamacpp-glm53-hip-b12206-z13.yaml":
-    "312ab3c78fc1d40f4ceedbd020fe76db1f350ecb8ac5b87c72a0649a6cc07d04",
+    "84795817aab9bb19599ce145a6aa671987d6b420232cff6566e0c2ed18712647",
   "llamacpp-glm53-vulkan-halo-z13.yaml":
-    "72447a32815d584ebae9ca25dd72e30a53b4236a91b028aa632b9dc67273a1ca",
+    "523738beb6c72e586f5e74a1c6721474a47ae3beb9fc2053738073cafa8a9340",
   "llamacpp-mimo-m-v1-t06-z13.yaml":
     "86dbab471d873882201f49362a514e293aa5fe95b75d007d6abb4bbc5e8eee9a",
   "llamacpp-mimo26-bpw25-vulkan-b12206-z13.yaml":
-    "1aa33001a7b82c2037af5fcfa7407449b637c2bfa06647dd64b49209988892bd",
+    "22a2c688dd63943f69a80c4da88a4d82bf4a55285cdf6568d24c026c25ff26a1",
   "llamacpp-mimo26-bpw25-vulkan-halo-z13.yaml":
-    "af6421466f686a4e5eb5c7b869446cd24227933d2bf5c41d9e44698614eec8f6",
+    "8a45e1e7f016721e13e1f56ceb04dbfc436740306a325a2ea708b00fc81030d0",
   "llamacpp-mimo26-flash-bpw25-z13.yaml":
-    "2cdb168b1e880c0c8eb71398e8bf15aa115d943ee3c96364bd2d318fb53edc3e",
+    "0bc5f672ef75c6ef3f1dfdd2bcdd40681931c7122bc093d69a97ae7734df16c1",
   "mlx-granite-3b-iso-mac-mini.yaml":
     "087bb40fa6b90c6105da3ad12afa835b7fe984ceee03bf173da97e83aa9dd42a",
   "mlx-granite-3b-judge-mac-mini.yaml":
