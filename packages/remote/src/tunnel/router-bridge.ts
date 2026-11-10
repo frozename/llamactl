@@ -170,7 +170,7 @@ export function createTunnelSubscriptionHandler(
         encodeTunnelMessage({
           type: "stream-event",
           id: req.id,
-          index: 0,
+          index: Number.MAX_SAFE_INTEGER,
           data: null,
         }),
       ) - frameBytes("null");
