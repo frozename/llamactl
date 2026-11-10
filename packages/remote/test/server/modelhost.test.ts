@@ -2171,6 +2171,120 @@ describe("server/modelhost", () => {
     }
   });
 
+  test("stopModelHost returns error when a starting pid survives teardown", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-starting-alive-"));
+    const runtimeDir = join(tmp, "runtime");
+    const impostor = spawnImpostor("/bin/sleep", ["60"], {
+      stdio: "ignore",
+      argv0: "omlx",
+    });
+    try {
+      if (impostor.pid === undefined) throw new Error("impostor spawn failed");
+      const hostDir = seedStartingRecord(runtimeDir, impostor.pid, "seeded-hash");
+      // Identity that never reports the process gone — the probe callback
+      // is a no-op, so verifyPidFile always classifies the pid as "alive".
+      const aliveIdentity = (): {
+        processStartMs: () => number;
+        processCommand: () => string;
+        probe: () => void;
+      } => ({
+        processStartMs: () => 0,
+        processCommand: () => "omlx-server              ",
+        probe: (): void => {
+          // intentionally no-op: never throws ESRCH
+        },
+      });
+      const result = await stopModelHost({
+        key: { name: "mlx-host-server" },
+        runtimeDir,
+        identity: aliveIdentity(),
+        teardown: (pid) => {
+          // teardown that does nothing — the impostor stays alive.
+          return Promise.resolve();
+        },
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.pid).toBe(impostor.pid);
+      expect(result).toEqual({
+        ok: false,
+        pid: impostor.pid,
+        error: "process still alive after teardown",
+      });
+      expect(existsSync(join(hostDir, "modelhost.starting"))).toBe(true);
+    } finally {
+      try {
+        impostor.kill("SIGKILL");
+      } catch {
+        // already gone
+      }
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("stopModelHost returns error when teardown throws for a state record", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-state-throw-"));
+    const runtimeDir = join(tmp, "runtime");
+    const impostor = spawnImpostor("/bin/sleep", ["60"], {
+      stdio: "ignore",
+      argv0: "llama-server",
+    });
+    try {
+      if (impostor.pid === undefined) throw new Error("impostor spawn failed");
+      const hostDir = join(runtimeDir, "workloads", "gufo-host");
+      mkdirSync(hostDir, { recursive: true });
+      writeFileSync(join(hostDir, "modelhost.pid"), `${String(impostor.pid)}\n`);
+      const record = {
+        kind: "ModelHost",
+        engine: "llamacpp",
+        pid: impostor.pid,
+        host: "127.0.0.1",
+        port: 8095,
+        modelAliases: ["gufo/model.gguf", "model.gguf"],
+        binaryNames: ["llama-server"],
+        startedAt: new Date().toISOString(),
+      };
+      writeFileSync(join(hostDir, "modelhost.state"), JSON.stringify(record));
+      const aliveIdentity = (): {
+        processStartMs: () => number;
+        processCommand: () => string;
+        probe: () => void;
+      } => ({
+        processStartMs: () => 0,
+        processCommand: () => "llama-server                ",
+        probe: (): void => {
+          // intentionally no-op: never throws ESRCH
+        },
+      });
+      const result = await stopModelHost({
+        key: { name: "gufo-host" },
+        runtimeDir,
+        identity: aliveIdentity(),
+        teardown: (_pid: number) => {
+          // teardown that rejects — the post-teardown identity check
+          // still runs and observes the impostor alive.
+          return Promise.reject(new Error("teardown failed"));
+        },
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.pid).toBe(impostor.pid);
+      expect(result).toEqual({
+        ok: false,
+        pid: impostor.pid,
+        error: "process still alive after teardown",
+      });
+      expect(existsSync(join(hostDir, "modelhost.state"))).toBe(true);
+    } finally {
+      try {
+        impostor.kill("SIGKILL");
+      } catch {
+        // already gone
+      }
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   test("startModelHost reaps an orphan left by an agent restart during start-up", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-starting-reap-"));
     const { workloadsDir, runtimeDir } = makeManifest(tmp);
