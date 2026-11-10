@@ -208,15 +208,19 @@ function checkEmptyRequiredServices(request: ProfileSwitchRequest): RefusalPlan 
 const PROFILE_SWITCH_TIMEOUT_KEYS = ["drainMs", "unloadMs", "loadMs", "readyMs"] as const;
 
 function checkTimeouts(request: ProfileSwitchRequest): RefusalPlan | null {
-  const overrides = request.timeouts;
+  const overrides: unknown = request.timeouts;
   if (overrides === undefined || overrides === null) {
     return null;
   }
+  if (typeof overrides !== "object" || Array.isArray(overrides)) {
+    return buildRefusal("InvalidRequest", "timeouts must be an object", []);
+  }
+  const record = overrides as Record<string, unknown>;
   for (const key of PROFILE_SWITCH_TIMEOUT_KEYS) {
-    if (!Object.prototype.hasOwnProperty.call(overrides, key)) {
+    if (!Object.prototype.hasOwnProperty.call(record, key)) {
       continue;
     }
-    const value = overrides[key];
+    const value = record[key];
     if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
       return buildRefusal(
         "InvalidRequest",

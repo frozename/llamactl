@@ -684,3 +684,29 @@ test("#279 P20: absent timeout keys keep defaults while present keys override", 
   expectOk(plan);
   expect(plan.deadlineMs).toBe(NOW_MS + 5 + 60_000 + 600_000 + 7);
 });
+
+test("#279 P21: null timeouts keep every default so the deadline matches the untimed plan", () => {
+  const plan = planProfileSwitch(req({ from: "interactive", timeouts: null }));
+  expectOk(plan);
+  expect(plan.noop).toBe(false);
+  expect(plan.deadlineMs).toBe(NOW_MS + 810_000);
+});
+
+test("#279 P22: a zero timeout override is accepted and contributes zero to the deadline", () => {
+  const plan = planProfileSwitch(req({ from: "interactive", timeouts: { drainMs: 0 } }));
+  expectOk(plan);
+  expect(plan.deadlineMs).toBe(NOW_MS + 780_000);
+});
+
+test("#279 P23: non-object timeouts values refuse as InvalidRequest", () => {
+  const badTimeouts: unknown[] = ["abc", 5, [1]];
+  for (const timeouts of badTimeouts) {
+    const plan = planProfileSwitch({
+      ...req({ from: "interactive" }),
+      timeouts: timeouts as ProfileSwitchTimeoutOverrides,
+    });
+    expectRefused(plan);
+    expect(plan.reason).toBe("InvalidRequest");
+    expect(plan.steps).toEqual([]);
+  }
+});
