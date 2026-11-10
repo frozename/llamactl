@@ -23,6 +23,12 @@ export type ProfileSwitchTimeouts = {
   readyMs: number;
 };
 
+// Overrides are boundary input: present keys are validated in
+// planProfileSwitch, so null/undefined/non-number values stay representable.
+export type ProfileSwitchTimeoutOverrides = {
+  [K in keyof ProfileSwitchTimeouts]?: number | null | undefined;
+};
+
 export type ProfileSwitchRequest = {
   node: string;
   to: string;
@@ -35,7 +41,7 @@ export type ProfileSwitchRequest = {
   lastSwitchAtMs?: number | null;
   inFlightOperationId?: string | null;
   nowMs: number;
-  timeouts?: Partial<ProfileSwitchTimeouts>;
+  timeouts?: ProfileSwitchTimeoutOverrides | null;
 };
 
 export type PlannerWorkload = {
@@ -199,6 +205,29 @@ function checkEmptyRequiredServices(request: ProfileSwitchRequest): RefusalPlan 
   return null;
 }
 
+const PROFILE_SWITCH_TIMEOUT_KEYS = ["drainMs", "unloadMs", "loadMs", "readyMs"] as const;
+
+function checkTimeouts(request: ProfileSwitchRequest): RefusalPlan | null {
+  const overrides = request.timeouts;
+  if (overrides === undefined || overrides === null) {
+    return null;
+  }
+  for (const key of PROFILE_SWITCH_TIMEOUT_KEYS) {
+    if (!Object.prototype.hasOwnProperty.call(overrides, key)) {
+      continue;
+    }
+    const value = overrides[key];
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+      return buildRefusal(
+        "InvalidRequest",
+        `timeouts.${key} must be a finite non-negative number`,
+        [],
+      );
+    }
+  }
+  return null;
+}
+
 function validateRequest(request: ProfileSwitchRequest): RefusalPlan | null {
   const emptyTo = checkEmptyTo(request);
   if (emptyTo) return emptyTo;
@@ -214,6 +243,9 @@ function validateRequest(request: ProfileSwitchRequest): RefusalPlan | null {
 
   const emptyServices = checkEmptyRequiredServices(request);
   if (emptyServices) return emptyServices;
+
+  const invalidTimeouts = checkTimeouts(request);
+  if (invalidTimeouts) return invalidTimeouts;
 
   return null;
 }
@@ -583,8 +615,24 @@ function buildSteps(request: ProfileSwitchRequest, partition: Partition): Profil
   return steps;
 }
 
+function resolveTimeouts(
+  overrides: ProfileSwitchTimeoutOverrides | null | undefined,
+): ProfileSwitchTimeouts {
+  const resolved: ProfileSwitchTimeouts = { ...DEFAULT_PROFILE_SWITCH_TIMEOUTS };
+  if (overrides === undefined || overrides === null) {
+    return resolved;
+  }
+  for (const key of PROFILE_SWITCH_TIMEOUT_KEYS) {
+    const value = overrides[key];
+    if (typeof value === "number") {
+      resolved[key] = value;
+    }
+  }
+  return resolved;
+}
+
 function computeDeadlineMs(request: ProfileSwitchRequest, partition: Partition): number {
-  const timeouts = { ...DEFAULT_PROFILE_SWITCH_TIMEOUTS, ...request.timeouts };
+  const timeouts = resolveTimeouts(request.timeouts);
   let total = 0;
 
   if (partition.victims.length > 0) {

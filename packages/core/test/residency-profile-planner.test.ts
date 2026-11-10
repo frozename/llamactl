@@ -1,12 +1,19 @@
 import { expect, test } from "bun:test";
 
-import type { ResidencyGroupDeclaration, ResidencyState } from "../src/residency/lifecycle.js";
+import type { ResidencyGroupDeclaration } from "../src/residency/lifecycle.js";
+import type {
+  OkPlan,
+  PlannerWorkload,
+  ProfileSwitchPlan,
+  ProfileSwitchPolicy,
+  ProfileSwitchRequest,
+  ProfileSwitchStep,
+  ProfileSwitchTimeoutOverrides,
+  RefusalPlan,
+  StepKind,
+} from "../src/residency/planner.js";
 
-// #279: the whole-process fleet profile-switch planner lands with the fix.
-// A variable specifier keeps tsc from resolving the not-yet-existing module,
-// so each case fails by assertion at the pinned base rather than by a
-// resolution error.
-const PLANNER_MODULE = "../src/residency/planner.js";
+import { DEFAULT_PROFILE_SWITCH_TIMEOUTS, planProfileSwitch } from "../src/residency/planner.js";
 
 const NOW_MS = 1_000_000_000;
 
@@ -14,104 +21,6 @@ const GROUPS: ResidencyGroupDeclaration[] = [
   { name: "z13-large-gpu", exclusive: true },
   { name: "g", exclusive: true },
 ];
-
-type ProfileSwitchTimeouts = {
-  drainMs: number;
-  unloadMs: number;
-  loadMs: number;
-  readyMs: number;
-};
-
-type ProfileSwitchPolicy = {
-  minResidencySeconds?: number;
-  switchCooldownSeconds?: number;
-};
-
-type PlannerWorkload = {
-  id: string;
-  profiles: string[];
-  state: ResidencyState;
-  expectedMemoryGiB: number;
-  group?: string;
-  protected?: boolean;
-  disabled?: boolean;
-  loadedAtMs?: number;
-};
-
-type ProfileSwitchRequest = {
-  node: string;
-  to: string;
-  from?: string | null;
-  budgetGiB: number | null;
-  groups: ResidencyGroupDeclaration[];
-  workloads: PlannerWorkload[];
-  requiredServices?: string[];
-  policy?: ProfileSwitchPolicy;
-  lastSwitchAtMs?: number | null;
-  inFlightOperationId?: string | null;
-  nowMs: number;
-  timeouts?: Partial<ProfileSwitchTimeouts>;
-};
-
-type StepKind =
-  | "fence-admission"
-  | "drain"
-  | "persist-suppression"
-  | "unload"
-  | "verify-release"
-  | "reserve"
-  | "start"
-  | "verify-ready"
-  | "publish"
-  | "complete";
-
-type ProfileSwitchStep = {
-  kind: StepKind;
-  workloads?: string[];
-  freedGiB?: number;
-  reservationGiB?: number;
-  profile?: string;
-};
-
-type OkPlan = {
-  ok: true;
-  noop: boolean;
-  node: string;
-  from: string | null;
-  to: string;
-  victims: string[];
-  replacements: string[];
-  retained: string[];
-  protected: string[];
-  skipped: string[];
-  beforeGiB: number;
-  afterGiB: number;
-  peakGiB: number;
-  budgetGiB: number | null;
-  steps: ProfileSwitchStep[];
-  deadlineMs: number;
-};
-
-type RefusalPlan = {
-  ok: false;
-  reason: string;
-  detail: string;
-  workloads: string[];
-  retryAfterMs: number | null;
-  steps: ProfileSwitchStep[];
-};
-
-type ProfileSwitchPlan = OkPlan | RefusalPlan;
-
-type Mod = {
-  DEFAULT_PROFILE_SWITCH_TIMEOUTS: ProfileSwitchTimeouts;
-  planProfileSwitch: (request: ProfileSwitchRequest) => ProfileSwitchPlan;
-};
-
-async function load(): Promise<Mod | null> {
-  const mod = (await import(PLANNER_MODULE).catch(() => undefined)) as Mod | undefined;
-  return mod ?? null;
-}
 
 function workload(id: string, spec: Omit<PlannerWorkload, "id">): PlannerWorkload {
   return {
@@ -159,7 +68,7 @@ type RequestSpec = {
   lastSwitchAtMs?: number | null;
   inFlightOperationId?: string | null;
   nowMs?: number;
-  timeouts?: Partial<ProfileSwitchTimeouts>;
+  timeouts?: ProfileSwitchTimeoutOverrides | null;
 };
 
 function req(over: RequestSpec = {}): ProfileSwitchRequest {
@@ -198,24 +107,19 @@ function stepByKind(plan: OkPlan, kind: StepKind): ProfileSwitchStep {
   return step;
 }
 
-test("#279 P1: module exports planProfileSwitch and frozen DEFAULT_PROFILE_SWITCH_TIMEOUTS", async () => {
-  const mod = await load();
-  expect(mod).not.toBeNull();
-  expect(typeof mod?.planProfileSwitch).toBe("function");
-  expect(mod?.DEFAULT_PROFILE_SWITCH_TIMEOUTS).toEqual({
+test("#279 P1: planner exports planProfileSwitch and frozen DEFAULT_PROFILE_SWITCH_TIMEOUTS", () => {
+  expect(typeof planProfileSwitch).toBe("function");
+  expect(DEFAULT_PROFILE_SWITCH_TIMEOUTS).toEqual({
     drainMs: 30_000,
     unloadMs: 60_000,
     loadMs: 600_000,
     readyMs: 120_000,
   });
-  expect(Object.isFrozen(mod?.DEFAULT_PROFILE_SWITCH_TIMEOUTS)).toBe(true);
+  expect(Object.isFrozen(DEFAULT_PROFILE_SWITCH_TIMEOUTS)).toBe(true);
 });
 
-test("#279 P2: interactive to maintenance drains victims then reserves, starts and publishes", async () => {
-  const mod = await load();
-  expect(mod).not.toBeNull();
-  expect(typeof mod?.planProfileSwitch).toBe("function");
-  const plan = mod!.planProfileSwitch(req({ from: "interactive" }));
+test("#279 P2: interactive to maintenance drains victims then reserves, starts and publishes", () => {
+  const plan = planProfileSwitch(req({ from: "interactive" }));
   expectOk(plan);
   expect(plan).toMatchObject({
     noop: false,
@@ -259,11 +163,8 @@ test("#279 P2: interactive to maintenance drains victims then reserves, starts a
   }
 });
 
-test("#279 P3: exclusive-group swap orders unload before start and never mixes victim and replacement ids", async () => {
-  const mod = await load();
-  expect(mod).not.toBeNull();
-  expect(typeof mod?.planProfileSwitch).toBe("function");
-  const plan = mod!.planProfileSwitch(
+test("#279 P3: exclusive-group swap orders unload before start and never mixes victim and replacement ids", () => {
+  const plan = planProfileSwitch(
     req({
       budgetGiB: 128,
       workloads: [
@@ -297,11 +198,8 @@ test("#279 P3: exclusive-group swap orders unload before start and never mixes v
   }
 });
 
-test("#279 P4: protected exclusive-group occupant refuses the switch as ProtectedEviction", async () => {
-  const mod = await load();
-  expect(mod).not.toBeNull();
-  expect(typeof mod?.planProfileSwitch).toBe("function");
-  const plan = mod!.planProfileSwitch(
+test("#279 P4: protected exclusive-group occupant refuses the switch as ProtectedEviction", () => {
+  const plan = planProfileSwitch(
     req({
       budgetGiB: 128,
       workloads: [
@@ -327,11 +225,8 @@ test("#279 P4: protected exclusive-group occupant refuses the switch as Protecte
   expect(plan.steps).toEqual([]);
 });
 
-test("#279 P5: replacements exceeding budgetGiB refuse as OverBudget", async () => {
-  const mod = await load();
-  expect(mod).not.toBeNull();
-  expect(typeof mod?.planProfileSwitch).toBe("function");
-  const plan = mod!.planProfileSwitch(
+test("#279 P5: replacements exceeding budgetGiB refuse as OverBudget", () => {
+  const plan = planProfileSwitch(
     req({
       budgetGiB: 16,
       workloads: [
@@ -353,11 +248,8 @@ test("#279 P5: replacements exceeding budgetGiB refuse as OverBudget", async () 
   expect(plan.steps).toEqual([]);
 });
 
-test("#279 P6: replacement-only switch emits no victim steps", async () => {
-  const mod = await load();
-  expect(mod).not.toBeNull();
-  expect(typeof mod?.planProfileSwitch).toBe("function");
-  const plan = mod!.planProfileSwitch(
+test("#279 P6: replacement-only switch emits no victim steps", () => {
+  const plan = planProfileSwitch(
     req({
       budgetGiB: 128,
       workloads: [
@@ -409,21 +301,15 @@ test("#279 P6: replacement-only switch emits no victim steps", async () => {
   expect(stepByKind(plan, "publish").profile).toBe("maintenance");
 });
 
-test("#279 P7: null budgetGiB refuses as UnknownBudget", async () => {
-  const mod = await load();
-  expect(mod).not.toBeNull();
-  expect(typeof mod?.planProfileSwitch).toBe("function");
-  const plan = mod!.planProfileSwitch(req({ from: "interactive", budgetGiB: null }));
+test("#279 P7: null budgetGiB refuses as UnknownBudget", () => {
+  const plan = planProfileSwitch(req({ from: "interactive", budgetGiB: null }));
   expectRefused(plan);
   expect(plan.reason).toBe("UnknownBudget");
   expect(plan.steps).toEqual([]);
 });
 
-test("#279 P8a: disabled downloaded target is skipped rather than replaced", async () => {
-  const mod = await load();
-  expect(mod).not.toBeNull();
-  expect(typeof mod?.planProfileSwitch).toBe("function");
-  const plan = mod!.planProfileSwitch(
+test("#279 P8a: disabled downloaded target is skipped rather than replaced", () => {
+  const plan = planProfileSwitch(
     req({
       from: "interactive",
       workloads: [
@@ -446,11 +332,8 @@ test("#279 P8a: disabled downloaded target is skipped rather than replaced", asy
   }
 });
 
-test("#279 P8b: required disabled service refuses as RequiredServiceUnavailable", async () => {
-  const mod = await load();
-  expect(mod).not.toBeNull();
-  expect(typeof mod?.planProfileSwitch).toBe("function");
-  const plan = mod!.planProfileSwitch(
+test("#279 P8b: required disabled service refuses as RequiredServiceUnavailable", () => {
+  const plan = planProfileSwitch(
     req({
       from: "interactive",
       requiredServices: ["batch"],
@@ -471,43 +354,31 @@ test("#279 P8b: required disabled service refuses as RequiredServiceUnavailable"
   expect(plan.steps).toEqual([]);
 });
 
-test("#279 P9a: unknown required service refuses as RequiredServiceUnavailable", async () => {
-  const mod = await load();
-  expect(mod).not.toBeNull();
-  expect(typeof mod?.planProfileSwitch).toBe("function");
-  const plan = mod!.planProfileSwitch(req({ from: "interactive", requiredServices: ["ghost"] }));
+test("#279 P9a: unknown required service refuses as RequiredServiceUnavailable", () => {
+  const plan = planProfileSwitch(req({ from: "interactive", requiredServices: ["ghost"] }));
   expectRefused(plan);
   expect(plan.reason).toBe("RequiredServiceUnavailable");
   expect(plan.workloads).toEqual(["ghost"]);
   expect(plan.steps).toEqual([]);
 });
 
-test("#279 P9b: required service that is a victim refuses as RequiredServiceUnavailable", async () => {
-  const mod = await load();
-  expect(mod).not.toBeNull();
-  expect(typeof mod?.planProfileSwitch).toBe("function");
-  const plan = mod!.planProfileSwitch(req({ from: "interactive", requiredServices: ["chat"] }));
+test("#279 P9b: required service that is a victim refuses as RequiredServiceUnavailable", () => {
+  const plan = planProfileSwitch(req({ from: "interactive", requiredServices: ["chat"] }));
   expectRefused(plan);
   expect(plan.reason).toBe("RequiredServiceUnavailable");
   expect(plan.workloads).toEqual(["chat"]);
   expect(plan.steps).toEqual([]);
 });
 
-test("#279 P10a: in-flight operation refuses as NodeBusy", async () => {
-  const mod = await load();
-  expect(mod).not.toBeNull();
-  expect(typeof mod?.planProfileSwitch).toBe("function");
-  const plan = mod!.planProfileSwitch(req({ from: "interactive", inFlightOperationId: "op-1" }));
+test("#279 P10a: in-flight operation refuses as NodeBusy", () => {
+  const plan = planProfileSwitch(req({ from: "interactive", inFlightOperationId: "op-1" }));
   expectRefused(plan);
   expect(plan.reason).toBe("NodeBusy");
   expect(plan.steps).toEqual([]);
 });
 
-test("#279 P10b: draining workload refuses as NodeBusy", async () => {
-  const mod = await load();
-  expect(mod).not.toBeNull();
-  expect(typeof mod?.planProfileSwitch).toBe("function");
-  const plan = mod!.planProfileSwitch(
+test("#279 P10b: draining workload refuses as NodeBusy", () => {
+  const plan = planProfileSwitch(
     req({
       from: "interactive",
       workloads: mapWorkload(p2Workloads(), "coder", (wl) => ({ ...wl, state: "draining" })),
@@ -519,11 +390,8 @@ test("#279 P10b: draining workload refuses as NodeBusy", async () => {
   expect(plan.steps).toEqual([]);
 });
 
-test("#279 P10c: unloading workload refuses as NodeBusy", async () => {
-  const mod = await load();
-  expect(mod).not.toBeNull();
-  expect(typeof mod?.planProfileSwitch).toBe("function");
-  const plan = mod!.planProfileSwitch(
+test("#279 P10c: unloading workload refuses as NodeBusy", () => {
+  const plan = planProfileSwitch(
     req({
       from: "interactive",
       workloads: mapWorkload(p2Workloads(), "coder", (wl) => ({ ...wl, state: "unloading" })),
@@ -535,11 +403,8 @@ test("#279 P10c: unloading workload refuses as NodeBusy", async () => {
   expect(plan.steps).toEqual([]);
 });
 
-test("#279 P11: switch inside the cooldown window refuses with the remaining retryAfterMs", async () => {
-  const mod = await load();
-  expect(mod).not.toBeNull();
-  expect(typeof mod?.planProfileSwitch).toBe("function");
-  const plan = mod!.planProfileSwitch(
+test("#279 P11: switch inside the cooldown window refuses with the remaining retryAfterMs", () => {
+  const plan = planProfileSwitch(
     req({
       from: "interactive",
       policy: { switchCooldownSeconds: 300 },
@@ -552,11 +417,8 @@ test("#279 P11: switch inside the cooldown window refuses with the remaining ret
   expect(plan.steps).toEqual([]);
 });
 
-test("#279 P12: victim inside minResidency refuses with the remaining retryAfterMs", async () => {
-  const mod = await load();
-  expect(mod).not.toBeNull();
-  expect(typeof mod?.planProfileSwitch).toBe("function");
-  const plan = mod!.planProfileSwitch(
+test("#279 P12: victim inside minResidency refuses with the remaining retryAfterMs", () => {
+  const plan = planProfileSwitch(
     req({
       from: "interactive",
       policy: { minResidencySeconds: 600 },
@@ -573,11 +435,8 @@ test("#279 P12: victim inside minResidency refuses with the remaining retryAfter
   expect(plan.steps).toEqual([]);
 });
 
-test("#279 P13: nothing to switch is a noop that skips hysteresis but still honours required services", async () => {
-  const mod = await load();
-  expect(mod).not.toBeNull();
-  expect(typeof mod?.planProfileSwitch).toBe("function");
-  const plan = mod!.planProfileSwitch(
+test("#279 P13: nothing to switch is a noop that skips hysteresis but still honours required services", () => {
+  const plan = planProfileSwitch(
     req({
       workloads: [
         workload("embed", {
@@ -611,12 +470,9 @@ test("#279 P13: nothing to switch is a noop that skips hysteresis but still hono
   expect(plan.peakGiB).toBe(26);
 });
 
-test("#279 P14: failed or unavailable target refuses as TargetUnavailable", async () => {
-  const mod = await load();
-  expect(mod).not.toBeNull();
-  expect(typeof mod?.planProfileSwitch).toBe("function");
+test("#279 P14: failed or unavailable target refuses as TargetUnavailable", () => {
   for (const state of ["failed", "unavailable"] as const) {
-    const plan = mod!.planProfileSwitch(
+    const plan = planProfileSwitch(
       req({
         workloads: [workload("x", { profiles: ["maintenance"], state, expectedMemoryGiB: 4 })],
       }),
@@ -628,11 +484,8 @@ test("#279 P14: failed or unavailable target refuses as TargetUnavailable", asyn
   }
 });
 
-test("#279 P15a: deadlineMs is nowMs plus the summed phase timeouts", async () => {
-  const mod = await load();
-  expect(mod).not.toBeNull();
-  expect(typeof mod?.planProfileSwitch).toBe("function");
-  const plan = mod!.planProfileSwitch(
+test("#279 P15a: deadlineMs is nowMs plus the summed phase timeouts", () => {
+  const plan = planProfileSwitch(
     req({
       from: "interactive",
       timeouts: { drainMs: 1, unloadMs: 2, loadMs: 4, readyMs: 8 },
@@ -642,12 +495,9 @@ test("#279 P15a: deadlineMs is nowMs plus the summed phase timeouts", async () =
   expect(plan.deadlineMs).toBe(NOW_MS + 15);
 });
 
-test("#279 P15b: reversing the workloads array yields an identical plan", async () => {
-  const mod = await load();
-  expect(mod).not.toBeNull();
-  expect(typeof mod?.planProfileSwitch).toBe("function");
-  const forward = mod!.planProfileSwitch(req({ from: "interactive" }));
-  const reversed = mod!.planProfileSwitch(
+test("#279 P15b: reversing the workloads array yields an identical plan", () => {
+  const forward = planProfileSwitch(req({ from: "interactive" }));
+  const reversed = planProfileSwitch(
     req({ from: "interactive", workloads: p2Workloads().reverse() }),
   );
   expectOk(forward);
@@ -655,20 +505,14 @@ test("#279 P15b: reversing the workloads array yields an identical plan", async 
   expect(reversed).toEqual(forward);
 });
 
-test("#279 P15c: planProfileSwitch does not mutate the request", async () => {
-  const mod = await load();
-  expect(mod).not.toBeNull();
-  expect(typeof mod?.planProfileSwitch).toBe("function");
+test("#279 P15c: planProfileSwitch does not mutate the request", () => {
   const input = req({ from: "interactive" });
   const snapshot = structuredClone(input);
-  expect(mod!.planProfileSwitch(input)).toBeDefined();
+  expect(planProfileSwitch(input)).toBeDefined();
   expect(input).toEqual(snapshot);
 });
 
-test("#279 P15d: invalid requests refuse as InvalidRequest", async () => {
-  const mod = await load();
-  expect(mod).not.toBeNull();
-  expect(typeof mod?.planProfileSwitch).toBe("function");
+test("#279 P15d: invalid requests refuse as InvalidRequest", () => {
   const invalid: ProfileSwitchRequest[] = [
     req({
       from: "interactive",
@@ -703,18 +547,15 @@ test("#279 P15d: invalid requests refuse as InvalidRequest", async () => {
     req({ from: "interactive", requiredServices: [""] }),
   ];
   for (const bad of invalid) {
-    const plan = mod!.planProfileSwitch(bad);
+    const plan = planProfileSwitch(bad);
     expectRefused(plan);
     expect(plan.reason).toBe("InvalidRequest");
     expect(plan.steps).toEqual([]);
   }
 });
 
-test("#279 P16: required check runs before noop so a disabled-only target still refuses", async () => {
-  const mod = await load();
-  expect(mod).not.toBeNull();
-  expect(typeof mod?.planProfileSwitch).toBe("function");
-  const plan = mod!.planProfileSwitch(
+test("#279 P16: required check runs before noop so a disabled-only target still refuses", () => {
+  const plan = planProfileSwitch(
     req({
       workloads: [
         workload("batch", {
@@ -731,4 +572,115 @@ test("#279 P16: required check runs before noop so a disabled-only target still 
   expect(plan.reason).toBe("RequiredServiceUnavailable");
   expect(plan.workloads).toEqual(["batch"]);
   expect(plan.steps).toEqual([]);
+});
+
+test("#279 P17a: two downloaded replacements in one exclusive group refuse as ExclusiveGroupConflict", () => {
+  const plan = planProfileSwitch(
+    req({
+      budgetGiB: 128,
+      workloads: [
+        workload("ds-a", {
+          profiles: ["maintenance"],
+          state: "downloaded",
+          expectedMemoryGiB: 40,
+          group: "g",
+        }),
+        workload("ds-b", {
+          profiles: ["maintenance"],
+          state: "downloaded",
+          expectedMemoryGiB: 50,
+          group: "g",
+        }),
+      ],
+    }),
+  );
+  expectRefused(plan);
+  expect(plan.reason).toBe("ExclusiveGroupConflict");
+  expect(plan.workloads).toEqual(["ds-a", "ds-b"]);
+  expect(plan.steps).toEqual([]);
+});
+
+test("#279 P17b: retained ready occupant plus downloaded replacement in one exclusive group refuse as ExclusiveGroupConflict", () => {
+  const plan = planProfileSwitch(
+    req({
+      budgetGiB: 256,
+      workloads: [
+        workload("glm", {
+          profiles: ["maintenance"],
+          state: "ready",
+          expectedMemoryGiB: 80,
+          group: "g",
+        }),
+        workload("ds", {
+          profiles: ["maintenance"],
+          state: "downloaded",
+          expectedMemoryGiB: 90,
+          group: "g",
+        }),
+      ],
+    }),
+  );
+  expectRefused(plan);
+  expect(plan.reason).toBe("ExclusiveGroupConflict");
+  expect(plan.workloads).toEqual(["ds", "glm"]);
+  expect(plan.steps).toEqual([]);
+});
+
+test("#279 P18: victims-only switch with null budgetGiB plans ok because afterGiB is zero", () => {
+  const plan = planProfileSwitch(
+    req({
+      budgetGiB: null,
+      workloads: [
+        workload("chat", { profiles: ["interactive"], state: "ready", expectedMemoryGiB: 20 }),
+        workload("coder", { profiles: ["interactive"], state: "ready", expectedMemoryGiB: 8 }),
+      ],
+    }),
+  );
+  expectOk(plan);
+  expect(plan.noop).toBe(false);
+  expect(plan.victims).toEqual(["chat", "coder"]);
+  expect(plan.retained).toEqual([]);
+  expect(plan.replacements).toEqual([]);
+  expect(plan.beforeGiB).toBe(28);
+  expect(plan.afterGiB).toBe(0);
+  expect(plan.budgetGiB).toBeNull();
+  expect(plan.steps.map((s) => s.kind)).toEqual([
+    "fence-admission",
+    "drain",
+    "persist-suppression",
+    "unload",
+    "verify-release",
+    "publish",
+    "complete",
+  ]);
+  expect(plan.deadlineMs).toBe(NOW_MS + 90_000);
+});
+
+test("#279 P19: non-finite, negative, null or undefined timeout overrides refuse as InvalidRequest", () => {
+  const badValues = [
+    Number.NaN,
+    -1,
+    Number.POSITIVE_INFINITY,
+    Number.NEGATIVE_INFINITY,
+    null,
+    undefined,
+  ];
+  for (const key of ["drainMs", "unloadMs", "loadMs", "readyMs"] as const) {
+    for (const value of badValues) {
+      const timeouts: ProfileSwitchTimeoutOverrides = {};
+      timeouts[key] = value;
+      const plan = planProfileSwitch(req({ from: "interactive", timeouts }));
+      expectRefused(plan);
+      expect(plan.reason).toBe("InvalidRequest");
+      expect(plan.steps).toEqual([]);
+    }
+  }
+});
+
+test("#279 P20: absent timeout keys keep defaults while present keys override", () => {
+  const plan = planProfileSwitch(
+    req({ from: "interactive", timeouts: { drainMs: 5, readyMs: 7 } }),
+  );
+  expectOk(plan);
+  expect(plan.deadlineMs).toBe(NOW_MS + 5 + 60_000 + 600_000 + 7);
 });
