@@ -1941,6 +1941,101 @@ describe("the worker-rpc executor behind the unified proxy", () => {
     expect(calls).toEqual([]);
   });
 
+  test("a negotiated version the caller never offered is refused typed and nothing is submitted", async () => {
+    useHost();
+    const real = createEmbeddedInferenceRpcClient(claims());
+    for (const version of [
+      { major: 2, minor: 0 },
+      { major: 1, minor: 7 },
+    ]) {
+      let submits = 0;
+      const calls: string[] = [];
+      const forging: InferenceRpcClient = {
+        ...real,
+        negotiate: async (input) => {
+          const r = await real.negotiate(input);
+          return r.outcome === "negotiated" ? { ...r, version } : r;
+        },
+        submit: async (input) => {
+          submits += 1;
+          return await real.submit(input);
+        },
+      };
+      const env = envelope(`att-never-offered-${String(version.major)}-${String(version.minor)}`);
+      const res = await createWorkerRpcExecutor({
+        client: forging,
+        deploymentId: LOCAL,
+        fallback: recordingFallback(calls),
+        nodeId: "gw",
+      }).execute(env, ctxFor(env));
+      expect(res.status).toBe(503);
+      expect(await res.json()).toMatchObject({ error: { code: "unsupported-version" } });
+      expect(submits).toBe(0);
+      expect(calls).toEqual([]);
+      expect(engine.requests).toHaveLength(0);
+    }
+  });
+
+  test("a negotiation that drops a required feature is refused typed and nothing is submitted", async () => {
+    useHost();
+    const real = createEmbeddedInferenceRpcClient(claims());
+    for (const features of [[], ["cancel-ack"]]) {
+      let submits = 0;
+      const calls: string[] = [];
+      const forging: InferenceRpcClient = {
+        ...real,
+        negotiate: async (input) => {
+          const r = await real.negotiate(input);
+          return r.outcome === "negotiated" ? { ...r, features } : r;
+        },
+        submit: async (input) => {
+          submits += 1;
+          return await real.submit(input);
+        },
+      };
+      const env = envelope(`att-dropped-feature-${features.join("-") || "none"}`);
+      const res = await createWorkerRpcExecutor({
+        client: forging,
+        deploymentId: LOCAL,
+        fallback: recordingFallback(calls),
+        nodeId: "gw",
+      }).execute(env, ctxFor(env));
+      const body = await res.text();
+      expect(res.status).toBe(400);
+      expect(JSON.parse(body)).toMatchObject({ error: { code: "unsupported-feature" } });
+      expect(submits).toBe(0);
+      expect(calls).toEqual([]);
+      expect(engine.requests).toHaveLength(0);
+    }
+  });
+
+  test("a genuine negotiation through the counting wrapper still submits once and streams", async () => {
+    useHost();
+    const real = createEmbeddedInferenceRpcClient(claims());
+    let submits = 0;
+    const calls: string[] = [];
+    const counting: InferenceRpcClient = {
+      ...real,
+      negotiate: async (input) => await real.negotiate(input),
+      submit: async (input) => {
+        submits += 1;
+        return await real.submit(input);
+      },
+    };
+    const env = envelope("att-genuine-negotiation");
+    const res = await createWorkerRpcExecutor({
+      client: counting,
+      deploymentId: LOCAL,
+      fallback: recordingFallback(calls),
+      nodeId: "gw",
+    }).execute(env, ctxFor(env));
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("[DONE]");
+    expect(submits).toBe(1);
+    expect(calls).toEqual([]);
+    expect(engine.requests).toHaveLength(1);
+  });
+
   test("a non-streaming request is assembled from the event stream with observed usage", async () => {
     useHost();
     const res = await proxyWith(recordingFallback([])).handleRequest(
