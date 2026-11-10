@@ -7,7 +7,10 @@
  * oMLX server mirrors jundot/omlx server.py at OMLX_REVISION
  * (list_models_status, load_model_public, unload_model, /api/status).
  */
+import type { ResidencyLeases } from "@llamactl/core/residency/leases";
+
 import * as coreEngines from "@llamactl/core/engines";
+import { createResidencyLeases } from "@llamactl/core/residency/leases";
 import { afterEach, describe, expect, test } from "bun:test";
 
 // Pinned jundot/omlx revision: server.py list_models_status,
@@ -26,6 +29,7 @@ type ClientOpts = {
   readiness?: { path: string; expectStatus?: number };
   requestTimeoutMs?: number;
   statusTimeoutMs?: number;
+  leases?: { registry: ResidencyLeases; workload: string };
 };
 
 type NativeClient = {
@@ -964,5 +968,134 @@ describe("cross-operation", () => {
       modelId: ID,
       reservation: "released",
     });
+  });
+});
+
+describe("lease fencing", () => {
+  const W = "omlx-host";
+
+  async function leasedClientFor(fake: FakeOmlx, registry: ResidencyLeases): Promise<NativeClient> {
+    const opts: ClientOpts = {
+      ...baseClientOpts(fake.endpoint),
+      leases: { registry, workload: W },
+    };
+    return await clientFor(fake, opts);
+  }
+
+  test("F1 refuses unload while a lease is held, then unloads and commits once released", async () => {
+    const fake = startFakeOmlx({ apiKey: "test-key" });
+    fake.state.models.get(ID)!.loaded = true;
+    const registry = createResidencyLeases();
+    const client = await leasedClientFor(fake, registry);
+
+    const a = registry.acquire(W);
+    expect(a.ok).toBe(true);
+    if (!a.ok) {
+      throw new Error(`acquire(${W}) refused`);
+    }
+
+    expect(await client.unload()).toStrictEqual({
+      kind: "refused",
+      reason: "LeasesActive",
+      reservation: "held",
+      active: [a.lease.id],
+    });
+    expect(fake.counts.unloadPosts).toBe(0);
+    expect(registry.snapshot(W).phase).toBe("open");
+    expect(fake.state.models.get(ID)!.loaded).toBe(true);
+
+    a.lease.release();
+
+    expect(await client.unload()).toStrictEqual({
+      kind: "unloaded",
+      modelId: ID,
+      reservation: "released",
+    });
+    expect(fake.counts.unloadPosts).toBe(1);
+    expect(registry.snapshot(W).phase).toBe("unloaded");
+    expect(registry.acquire(W)).toMatchObject({ ok: false, reason: "Unloaded" });
+  });
+
+  test("F2 drain fences new acquires while native unload is in flight; ambiguous outcome cancels the drain", async () => {
+    const fake = startFakeOmlx({ apiKey: "test-key" });
+    fake.state.models.get(ID)!.loaded = true;
+    fake.state.unloadMode = "hang";
+    const registry = createResidencyLeases();
+    const client = await leasedClientFor(fake, registry);
+
+    const p = client.unload();
+    expect(registry.acquire(W)).toMatchObject({ ok: false, reason: "Draining" });
+
+    expect(await p).toStrictEqual({
+      kind: "ambiguous",
+      reason: "Timeout",
+      reservation: "uncertain",
+    });
+    expect(registry.snapshot(W)).toMatchObject({ phase: "open", epoch: 1, active: [] });
+    expect(registry.acquire(W).ok).toBe(true);
+  }, 5000);
+
+  test("F3 refusal and failure outcomes cancel the drain", async () => {
+    const fake = startFakeOmlx({ apiKey: "test-key" });
+    fake.state.models.get(ID)!.loaded = true;
+    fake.state.activity = { active: 1, waiting: 0 };
+    const registry = createResidencyLeases();
+    const client = await leasedClientFor(fake, registry);
+
+    expect(await client.unload()).toStrictEqual({
+      kind: "refused",
+      reason: "BackendBusy",
+      reservation: "held",
+    });
+    expect(registry.snapshot(W)).toMatchObject({ phase: "open", epoch: 1 });
+    expect(registry.acquire(W).ok).toBe(true);
+  });
+
+  test("F4 commit fences admission until a native load reopens it", async () => {
+    const fake = startFakeOmlx({ apiKey: "test-key" });
+    fake.state.models.get(ID)!.loaded = true;
+    const registry = createResidencyLeases();
+    const client = await leasedClientFor(fake, registry);
+
+    expect(await client.unload()).toStrictEqual({
+      kind: "unloaded",
+      modelId: ID,
+      reservation: "released",
+    });
+    const committed = registry.snapshot(W);
+    expect(committed.phase).toBe("unloaded");
+
+    expect(await client.unload()).toStrictEqual({
+      kind: "already-unloaded",
+      modelId: ID,
+      reservation: "released",
+    });
+    expect(fake.counts.unloadPosts).toBe(1);
+    expect(registry.snapshot(W).epoch).toBe(committed.epoch);
+
+    expect(await client.load()).toStrictEqual({ kind: "loaded", modelId: ID });
+    expect(registry.snapshot(W).phase).toBe("open");
+    expect(registry.acquire(W).ok).toBe(true);
+  });
+
+  test("F5 refuses unload while another drain owns the workload", async () => {
+    const fake = startFakeOmlx({ apiKey: "test-key" });
+    fake.state.models.get(ID)!.loaded = true;
+    const registry = createResidencyLeases();
+    const client = await leasedClientFor(fake, registry);
+
+    const d = registry.beginDrain(W);
+    expect(d.ok).toBe(true);
+    if (!d.ok) {
+      throw new Error(`beginDrain(${W}) refused`);
+    }
+
+    expect(await client.unload()).toStrictEqual({
+      kind: "refused",
+      reason: "DrainInProgress",
+      reservation: "held",
+    });
+    expect(fake.counts.unloadPosts).toBe(0);
+    expect(registry.commitUnload(d.token)).toStrictEqual({ ok: true, revoked: [] });
   });
 });

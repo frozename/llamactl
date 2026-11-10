@@ -4,7 +4,12 @@
  * The BackendBusy/ActivityUnknown guard is advisory and racy: it is a
  * check-then-act against oMLX's immediate-abort unload, so a request that
  * arrives between the activity GET and the unload POST is still aborted.
- * llamactl-side ResidencyLeases fencing lands in the next #282 slice.
+ *
+ * When `leases` is supplied, the activity guard is backed by lease fencing
+ * for llamactl-routed requests: beginDrain() fences before any HTTP call,
+ * cancelDrain() reopens admission on non-terminal outcomes, and
+ * commitUnload() fences until a native load reopens.  Traffic that bypasses
+ * llamactl still races the activity check.
  *
  * DFlash caveat: DFlash-hosted model activity is invisible to /api/status at
  * feec0a0e (server.py:3171-3188 walks engine._engine.engine._output_collectors
@@ -17,6 +22,7 @@ import type {
   NativeModelActivity,
   NativeModelStatusObservation,
 } from "@llamactl/core/engines";
+import type { ResidencyLeases } from "@llamactl/core/residency/leases";
 
 import {
   checkServingReadiness,
@@ -78,8 +84,15 @@ export type NativeUnloadResult =
         | "LoadInProgress"
         | "OperationInProgress"
         | "BackendBusy"
-        | "ActivityUnknown";
+        | "ActivityUnknown"
+        | "DrainInProgress";
       reservation: "held";
+    }
+  | {
+      kind: "refused";
+      reason: "LeasesActive";
+      reservation: "held";
+      active: string[];
     }
   | {
       kind: "failed";
@@ -113,6 +126,8 @@ export type OmlxNativeClientOptions = {
   requestTimeoutMs?: number;
   statusTimeoutMs?: number;
   fetch?: typeof globalThis.fetch;
+  /** ModelHost workload key for residency lease fencing. */
+  leases?: { registry: ResidencyLeases; workload: string };
 };
 
 export type OmlxNativeClient = {
@@ -133,6 +148,7 @@ type ClientCtx = {
   requestTimeoutMs: number;
   statusTimeoutMs: number;
   base: typeof globalThis.fetch;
+  leases: { registry: ResidencyLeases; workload: string } | undefined;
 };
 
 type SendResult =
@@ -376,6 +392,28 @@ async function runLoad(ctx: ClientCtx): Promise<NativeLoadResult> {
   return { kind: "ambiguous", reason: "HttpError", reservation: "uncertain", httpStatus };
 }
 
+async function runLoadWithLeases(ctx: ClientCtx): Promise<NativeLoadResult> {
+  const result = await runLoad(ctx);
+  const leases = ctx.leases;
+  if (
+    leases !== undefined &&
+    (result.kind === "loaded" || result.kind === "already-loaded") &&
+    registrySnapshot(leases.registry, leases.workload).phase === "unloaded"
+  ) {
+    const snap = registrySnapshot(leases.registry, leases.workload);
+    leases.registry.reopen({ workload: leases.workload, epoch: snap.epoch });
+  }
+  return result;
+}
+
+function registrySnapshot(
+  registry: ResidencyLeases,
+  workload: string,
+): { phase: string; epoch: number } {
+  const snap = registry.snapshot(workload);
+  return { phase: snap.phase, epoch: snap.epoch };
+}
+
 // A 400 means "not loaded"; only a follow-up status that parses as discovered
 // confirms it, so a stale 400 stays ambiguous rather than claiming release.
 async function confirmUnload400(ctx: ClientCtx, modelId: string): Promise<NativeUnloadResult> {
@@ -474,11 +512,58 @@ async function runUnload(ctx: ClientCtx): Promise<NativeUnloadResult> {
   return { kind: "refused", reason: "StatusUnavailable", reservation: "held" };
 }
 
+async function runUnloadWithLeases(ctx: ClientCtx): Promise<NativeUnloadResult> {
+  const leases = ctx.leases;
+  if (leases === undefined) {
+    return await runUnload(ctx);
+  }
+
+  const { registry, workload } = leases;
+  const drainResult = registry.beginDrain(workload);
+
+  if (!drainResult.ok) {
+    if (drainResult.reason === "AlreadyDraining") {
+      return {
+        kind: "refused",
+        reason: "DrainInProgress",
+        reservation: "held",
+      };
+    }
+    return await runUnload(ctx);
+  }
+
+  const token = drainResult.token;
+  const activeLeases = drainResult.active;
+
+  if (activeLeases.length > 0) {
+    registry.cancelDrain(token);
+    return {
+      kind: "refused",
+      reason: "LeasesActive",
+      reservation: "held",
+      active: activeLeases,
+    };
+  }
+
+  const result = await runUnload(ctx);
+
+  if (result.kind === "unloaded" || result.kind === "already-unloaded") {
+    registry.commitUnload(token);
+    return result;
+  }
+
+  registry.cancelDrain(token);
+  return result;
+}
+
 // --- single-flight wrapper ---
 
 // The entry is committed synchronously at entry (before any await) so a
 // concurrent call from another client sees it; same op shares the promise, the
 // other op is refused without issuing a request.
+//
+// When ctx.leases is set for unload, beginDrain() fences before any HTTP call;
+// the drain is visible synchronously to callers that have not awaited unload().
 function singleFlightRun<T>(
   ctx: ClientCtx,
   op: "load" | "unload",
@@ -513,6 +598,7 @@ export function createOmlxNativeClient(opts: OmlxNativeClientOptions): OmlxNativ
     requestTimeoutMs: opts.requestTimeoutMs ?? 120_000,
     statusTimeoutMs: opts.statusTimeoutMs ?? 5_000,
     base: opts.fetch ?? globalThis.fetch,
+    leases: opts.leases,
   };
 
   return {
@@ -524,7 +610,7 @@ export function createOmlxNativeClient(opts: OmlxNativeClientOptions): OmlxNativ
         ctx,
         "load",
         () => ({ kind: "refused", reason: "OperationInProgress" }),
-        () => runLoad(ctx),
+        () => runLoadWithLeases(ctx),
       );
     },
     async unload(): Promise<NativeUnloadResult> {
@@ -532,7 +618,7 @@ export function createOmlxNativeClient(opts: OmlxNativeClientOptions): OmlxNativ
         ctx,
         "unload",
         () => ({ kind: "refused", reason: "OperationInProgress", reservation: "held" }),
-        () => runUnload(ctx),
+        () => runUnloadWithLeases(ctx),
       );
     },
   };
