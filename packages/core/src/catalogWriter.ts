@@ -1,11 +1,12 @@
 import type { CuratedModel } from "./schemas.js";
 
-import { findByRel, listCatalog } from "./catalog.js";
+import { findByRel, formatCatalogRow, listCatalog } from "./catalog.js";
 import { classifyRepo } from "./discovery.js";
 import { resolveEnv } from "./env.js";
 import { appendLine } from "./fsAtomic.js";
 import { fetchModelInfo } from "./hf.js";
 import { quantFromRel } from "./quant.js";
+import { CuratedMeta, CuratedModel as CuratedModelValue } from "./schemas.js";
 
 const VALID_CLASSES = new Set<CuratedModel["class"]>([
   "multimodal",
@@ -23,6 +24,8 @@ export interface AddCuratedInput {
   class?: string;
   /** Defaults to `candidate` to match the shell library. */
   scope?: string;
+  /** Optional candidate metadata (#515), validated against CuratedMeta and written as catalog column 9. */
+  meta?: unknown;
 }
 
 export type AddCuratedResult =
@@ -132,15 +135,38 @@ export async function addCurated(input: AddCuratedInput): Promise<AddCuratedResu
     };
   }
 
+  let parsedMeta: Record<string, unknown> | undefined = undefined;
+  if (input.meta !== undefined) {
+    const parsed = CuratedMeta.strict().safeParse(input.meta);
+    if (!parsed.success) {
+      const issues = parsed.error.issues.map((i) => {
+        if (i.code === "unrecognized_keys") {
+          return `unrecognized key(s): ${(i as { keys: string[] }).keys.join(", ")}`;
+        }
+        const path = i.path.join(".") || "(root)";
+        return `${path}: ${i.message}`;
+      });
+      return {
+        ok: false,
+        error: `invalid catalog meta: ${issues.join("; ")}`,
+      };
+    }
+    parsedMeta = parsed.data;
+  }
+
   const resolved = resolveEnv();
   const file = resolved.LOCAL_AI_CUSTOM_CATALOG_FILE;
-  appendLine(file, [id, label, family, validatedClass, scope, rel, repo, format].join("\t"));
 
   const entry: CuratedModel = {
     ...fields,
     class: validatedClass,
     format,
+    ...(parsedMeta ?? {}),
   };
+
+  const canonical = CuratedModelValue.parse(entry);
+
+  appendLine(file, formatCatalogRow(canonical));
 
   // `findByRel` reads the catalog each call so subsequent writers in the
   // same process will see the new row; also exercise it here as a
@@ -148,5 +174,5 @@ export async function addCurated(input: AddCuratedInput): Promise<AddCuratedResu
   // loader path.
   void listCatalog("custom");
 
-  return { ok: true, entry, file };
+  return { ok: true, entry: canonical, file };
 }
