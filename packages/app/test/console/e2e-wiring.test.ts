@@ -231,7 +231,7 @@ describe("e2e wiring contract (#410 P5b parts 2a + 2b)", () => {
     const jobs = asRecord(doc?.["jobs"]);
     const jobList = jobs === null ? [] : asRecordArray(Object.values(jobs));
     const ubuntuJobs = jobList.filter((job) =>
-      asStringList(job["runs-on"]).includes("ubuntu-latest"),
+      asStringList(job["runs-on"]).some((label) => label.startsWith("ubuntu-")),
     );
     expect(ubuntuJobs.length).toBeGreaterThan(0);
     const ubuntuSteps = ubuntuJobs.flatMap((job) => asRecordArray(job["steps"]));
