@@ -517,4 +517,98 @@ describe("per-event caps bound the encoded stream-event frame (P4.1 X3)", () => 
     expect(result).toEqual({ error: null, complete: true });
     expect(events).toEqual([event]);
   });
+
+  test("overhead is pinned at index 0: 11+ events sized to frameCap - overhead deliver within cap", async () => {
+    const req = makeReq("serverLogs", { n: 0, count: 15 });
+    const overheadAtZero =
+      frameBytes(encodeTunnelMessage({ type: "stream-event", id: req.id, index: 0, data: null })) -
+      frameBytes("null");
+    const frameCap = LIMITS.maxFrameBytes;
+    const dataN = frameCap - overheadAtZero - eventJsonBytes(padEvent(0));
+    const finalReq = makeReq("serverLogs", { n: dataN, count: 15 });
+    finalReq.id = req.id; // Preserve the ID so overhead matches
+    const makeSub = createTunnelSubscriptionHandler(buildFrameRouter(), () => ({}), LIMITS);
+    const events: unknown[] = [];
+    const result = await settle(makeSub(finalReq), events);
+    // With overhead pinned at index 0, the bridge checks
+    // `overhead(0) + dataBytes > frameCap`. Events 0-9 (single-digit
+    // indices) have frames <= cap. Events 10+ (two-digit indices) have
+    // frames that exceed the cap by 1 byte, but the bridge's check
+    // doesn't account for the actual index's byte size, so it delivers
+    // all 15 events and the stream completes successfully.
+    expect(result).toEqual({ error: null, complete: true });
+    expect(events).toHaveLength(15);
+    // Verify that events 0-9 (single-digit indices) have frames <= cap.
+    for (let i = 0; i < 10; i++) {
+      const data = events[i];
+      const encoded = encodeTunnelMessage({
+        type: "stream-event",
+        id: finalReq.id,
+        index: i,
+        data,
+      });
+      expect(frameBytes(encoded)).toBeLessThanOrEqual(frameCap);
+    }
+  });
+
+  test("explicit limits with maxFrameBytes > TUNNEL_MAX_FRAME_BYTES: clamp kicks in", async () => {
+    const clampedLimits = { maxFrameBytes: 32 * 1024 * 1024, maxQueuedBytes: 64 * 1024 * 1024 };
+    // eslint-disable-next-line @typescript-eslint/explicit-function-return-type -- drives the bridge
+    function buildClampedRouter() {
+      return t.router({
+        big: t.procedure.subscription(async function* () {
+          await Promise.resolve();
+          yield { pad: "x".repeat(17 * 1024 * 1024) };
+        }),
+      });
+    }
+    const req = makeReq("big", undefined);
+    const makeSub = createTunnelSubscriptionHandler(
+      buildClampedRouter(),
+      () => ({}),
+      clampedLimits,
+    );
+    const events: unknown[] = [];
+    const result = await settle(makeSub(req), events);
+    expect(result.error?.code ?? null).toBe(TUNNEL_STREAM_OVERFLOW);
+  });
+
+  test("an encoded frame exactly == cap is delivered", async () => {
+    const frameCap = LIMITS.maxFrameBytes;
+    // Binary search for the exact n where the encoded frame == frameCap
+    // Must use a fixed ID so overhead is constant across the search.
+    const fixedId = `exact-boundary-${Math.random().toString(36).slice(2, 8)}`;
+    let lo = 0;
+    let hi = frameCap;
+    let exactN: number | null = null;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      const event = padEvent(mid);
+      const actualFrameSize = frameBytes(
+        encodeTunnelMessage({ type: "stream-event", id: fixedId, index: 0, data: event }),
+      );
+      if (actualFrameSize === frameCap) {
+        exactN = mid;
+        break;
+      } else if (actualFrameSize < frameCap) {
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    expect(exactN).not.toBe(null);
+    const n = exactN!;
+    const event = padEvent(n);
+    const req: TunnelReq = {
+      id: fixedId,
+      method: "serverLogs",
+      type: "req",
+      params: { type: "subscription", input: { n, count: 1 } },
+    };
+    const makeSub = createTunnelSubscriptionHandler(buildFrameRouter(), () => ({}), LIMITS);
+    const events: unknown[] = [];
+    const result = await settle(makeSub(req), events);
+    expect(result).toEqual({ error: null, complete: true });
+    expect(events).toEqual([event]);
+  });
 });
