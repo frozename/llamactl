@@ -55,7 +55,9 @@ import {
   defaultWorkloadsDir,
   listAnyWorkloadsForAdmission,
   listWorkloads,
+  loadWorkloadByName,
   loadWorkloadByNameAny,
+  saveWorkload,
 } from "./store.js";
 
 /**
@@ -912,8 +914,9 @@ interface ApplyOneOpts {
    * but does not close the race with a concurrent acquire; fencing is
    * deferred to the #278 lease composition. */
   sessionGate?: SessionUnloadGate;
-  /** Milliseconds to wait for a verified evict target to stop before
-   * failing the apply. Default 15_000 (15 seconds). */
+  /** Shared deadline per verified evict victim covering its status read,
+   * stop and release check before the apply fails. Default 15_000
+   * (15 seconds). */
   evictStopTimeoutMs?: number;
 }
 
@@ -1040,7 +1043,11 @@ function checkPortCollision(
   return null;
 }
 
-function parseEvictTargets(manifest: ModelRun): string[] {
+export const EVICTED_BY_ANNOTATION = "llamactl.io/evicted-by";
+export const EVICTED_AT_ANNOTATION = "llamactl.io/evicted-at";
+export const EVICTION_INTENT_GRACE_MS = 15 * 60_000;
+
+export function parseEvictTargets(manifest: ModelRun): string[] {
   return (manifest.metadata.annotations["llamactl.io/evict"] ?? "")
     .split(",")
     .map((s) => s.trim())
@@ -1070,7 +1077,9 @@ type EvictFailureReason =
   | "EvictStopRefused"
   | "EvictStopFailed"
   | "EvictStopTimedOut"
-  | "EvictReleaseUnverified";
+  | "EvictReleaseUnverified"
+  | "EvictIntentUnpersisted"
+  | "EvictCapacityUnverified";
 
 interface EvictStopFailure {
   ok: false;
@@ -1101,12 +1110,12 @@ async function stopAndVerifyEvictTarget(
   manifest: ModelRun,
   client: WorkloadClient,
   target: string,
-  timeoutMs: number,
+  remainingMs: () => number,
 ): Promise<EvictStopFailure | null> {
   try {
     const stopResult = await withDeadline(
       client.serverStop.mutate({ workload: target, graceSeconds: 5 }),
-      timeoutMs,
+      remainingMs(),
     );
     const stopped = (stopResult as { stopped?: boolean } | undefined)?.stopped;
     if (stopped === false) {
@@ -1114,7 +1123,7 @@ async function stopAndVerifyEvictTarget(
     }
     const postStatus = await withDeadline(
       client.serverStatus.query({ workload: target }),
-      timeoutMs,
+      remainingMs(),
     );
     if (postStatus.state === "up") {
       return evictStopFailure(manifest, target, "EvictReleaseUnverified", "still up after stop");
@@ -1127,18 +1136,70 @@ async function stopAndVerifyEvictTarget(
   }
 }
 
-async function stopEvictTargets(
+/**
+ * Persist the durable eviction intent for one verified victim before its
+ * first status read or stop RPC. The marker is what the reconcile guard
+ * keys on: it suppresses the victim's resurrection until the replacement
+ * lands or the grace expires, and the apply's exit rollback releases it
+ * when this pass fails. An already-down victim keeps the marker too —
+ * it was still evicted by this replacement. Any failure to record the
+ * intent fails the victim before any stop, since an unmarked stop would
+ * let the reconciler resurrect the victim underneath the replacement.
+ */
+function persistEvictIntent(
   manifest: ModelRun,
-  client: WorkloadClient,
-  evictTargets: readonly string[],
-  onEvent: ((e: ApplyEvent) => void) | undefined,
+  target: string,
+  workloadsDir: string,
+  now: string,
+): EvictStopFailure | null {
+  try {
+    const victim = loadWorkloadByName(target, workloadsDir);
+    if (victim.metadata.name !== target) {
+      throw new Error(`manifest declares metadata.name '${victim.metadata.name}', not '${target}'`);
+    }
+    if (victim.metadata.annotations[EVICTED_BY_ANNOTATION] === manifest.metadata.name) {
+      return null;
+    }
+    saveWorkload(
+      {
+        ...victim,
+        metadata: {
+          ...victim.metadata,
+          annotations: {
+            ...victim.metadata.annotations,
+            [EVICTED_BY_ANNOTATION]: manifest.metadata.name,
+            [EVICTED_AT_ANNOTATION]: now,
+          },
+        },
+      },
+      workloadsDir,
+    );
+    return null;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return evictStopFailure(manifest, target, "EvictIntentUnpersisted", message);
+  }
+}
+
+async function stopEvictTargets(
+  ctx: ConvergeServerContext,
+  verifiedTargets: readonly string[],
   lifecycle: ClaimLifecycle,
   timeoutMs: number,
 ): Promise<EvictStopResult | null> {
-  for (const target of evictTargets) {
+  const { manifest, client, onEvent, opts, now } = ctx;
+  const workloadsDir = opts?.workloadsDir ?? defaultWorkloadsDir(opts?.env);
+  for (const target of verifiedTargets) {
+    const intent = persistEvictIntent(manifest, target, workloadsDir, now);
+    if (intent !== null) return intent;
+    const deadlineAt = Date.now() + timeoutMs;
+    const remainingMs = (): number => Math.max(0, deadlineAt - Date.now());
     let targetStatus: { state: string };
     try {
-      targetStatus = await withDeadline(client.serverStatus.query({ workload: target }), timeoutMs);
+      targetStatus = await withDeadline(
+        client.serverStatus.query({ workload: target }),
+        remainingMs(),
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return evictStopFailure(manifest, target, "EvictStatusUnknown", message);
@@ -1152,7 +1213,7 @@ async function stopEvictTargets(
     }
     onEvent?.({ type: "stop", message: `${manifest.metadata.name}: evicting ${target}` });
     lifecycle.destructive = true;
-    const failure = await stopAndVerifyEvictTarget(manifest, client, target, timeoutMs);
+    const failure = await stopAndVerifyEvictTarget(manifest, client, target, remainingMs);
     if (failure !== null) return failure;
   }
   return null;
@@ -1541,6 +1602,62 @@ function preservedRunningWithBudgetRefusal(
   };
 }
 
+/**
+ * The living-manifest set admission charges against the node budget:
+ * every stored workload on the same node that is enabled, minus the
+ * incoming manifest itself and minus verified evict victims (their
+ * capacity is being freed by this apply). Shared by the pre-teardown
+ * admission check and the post-eviction capacity re-check so both see
+ * the same filter.
+ */
+function admissionLivingManifests(
+  ctx: ConvergeServerContext,
+  verified: ReadonlySet<string>,
+): { living: ModelRun[]; sameNode: (otherNode: string) => boolean } {
+  const { manifest, opts } = ctx;
+  const workloadsDir = opts?.workloadsDir ?? defaultWorkloadsDir(opts?.env);
+  const listManifests: (dir?: string) => ModelRun[] =
+    opts?.listManifests ??
+    ((dir?: string): ModelRun[] =>
+      listAnyWorkloadsForAdmission(dir ?? workloadsDir, resolveEnv(opts?.env)));
+  const sameNode = nodeIdentityMatcher(opts, manifest.spec.node);
+  const living = listManifests(opts?.workloadsDir).filter(
+    (m) =>
+      m.metadata.name !== manifest.metadata.name &&
+      sameNode(m.spec.node) &&
+      m.spec.enabled &&
+      !verified.has(m.metadata.name),
+  );
+  return { living, sameNode };
+}
+
+/**
+ * Post-eviction capacity re-check (DF-02): after every verified victim
+ * is down, re-list the living manifests — a concurrent apply may have
+ * claimed the freed budget while the stops were in flight — and rerun
+ * the same finite-budget computation against the already-resolved
+ * adm.budget. Returns the refusal reason, or null when the replacement
+ * still fits.
+ */
+function recheckEvictionCapacity(
+  ctx: ConvergeServerContext,
+  adm: Extract<AdmissionResult, { ok: true }>,
+  verified: ReadonlySet<string>,
+): string | null {
+  const { manifest } = ctx;
+  const { living, sameNode } = admissionLivingManifests(ctx, verified);
+  const forceAdmit = manifest.metadata.annotations["llamactl.io/force-admit"] === "true";
+  const recheck = computeNodeBudget({
+    nodeName: manifest.spec.node,
+    nodeBudgetGiB: adm.budget,
+    livingManifests: living,
+    incoming: manifest,
+    forceAdmit,
+    sameNode,
+  });
+  return recheck.ok ? null : recheck.reason;
+}
+
 async function admitServerBudget(ctx: ConvergeServerContext): Promise<
   | {
       ok: true;
@@ -1554,23 +1671,12 @@ async function admitServerBudget(ctx: ConvergeServerContext): Promise<
       result: ApplyResult;
     }
 > {
-  const { manifest, opts, evictTargets, now } = ctx;
+  const { manifest, opts, now } = ctx;
   const workloadsDir = opts?.workloadsDir ?? defaultWorkloadsDir(opts?.env);
   const eviction = authorizeEvictTargets(ctx, workloadsDir);
   if (!eviction.ok) return { ok: false, result: eviction.result };
   const verified = eviction.verified;
-  const listManifests: (dir?: string) => ModelRun[] =
-    opts?.listManifests ??
-    ((dir?: string): ModelRun[] =>
-      listAnyWorkloadsForAdmission(dir ?? workloadsDir, resolveEnv(opts?.env)));
-  const sameNode = nodeIdentityMatcher(opts, manifest.spec.node);
-  const living = listManifests(opts?.workloadsDir).filter(
-    (m) =>
-      m.metadata.name !== manifest.metadata.name &&
-      sameNode(m.spec.node) &&
-      m.spec.enabled &&
-      !eviction.verified.has(m.metadata.name),
-  );
+  const { living, sameNode } = admissionLivingManifests(ctx, verified);
   const incomingMemory = manifest.spec.resources?.expectedMemoryGiB ?? 0;
   const hasDeclaredReservations =
     incomingMemory > 0 || living.some((m) => (m.spec.resources?.expectedMemoryGiB ?? 0) > 0);
@@ -1901,14 +2007,7 @@ async function convergeClaimedServer(
   const gateRefusal = recheckEvictSessionGates(ctx, verifiedTargets);
   if (gateRefusal !== null) return gateRefusal;
   const timeoutMs = ctx.opts?.evictStopTimeoutMs ?? DEFAULT_EVICT_STOP_TIMEOUT_MS;
-  const evictFailure = await stopEvictTargets(
-    manifest,
-    client,
-    verifiedTargets,
-    onEvent,
-    lifecycle,
-    timeoutMs,
-  );
+  const evictFailure = await stopEvictTargets(ctx, verifiedTargets, lifecycle, timeoutMs);
   if (evictFailure !== null && !evictFailure.ok) {
     onEvent?.({ type: "evict-failed", message: evictFailure.message });
     return evictFailureResult(ctx, evictFailure.target, evictFailure.message, evictFailure.reason);
@@ -1933,6 +2032,25 @@ async function convergeClaimedServer(
     };
   }
 
+  // The victims are verified down but the world may have moved while the
+  // stops were in flight — another apply can have landed a new resident
+  // in the freed budget. Re-check capacity against a fresh manifest list
+  // before tearing down the mismatched self or starting the replacement;
+  // the claim's finally marks it uncertain because destructive work ran.
+  if (verifiedTargets.length > 0) {
+    const capacityError = recheckEvictionCapacity(ctx, adm, verified);
+    if (capacityError !== null) {
+      const message = `capacity re-check after evicting ${verifiedTargets.join(", ")} failed: ${capacityError}`;
+      onEvent?.({ type: "evict-failed", message });
+      return evictFailureResult(
+        ctx,
+        verifiedTargets.join(", "),
+        capacityError,
+        "EvictCapacityUnverified",
+      );
+    }
+  }
+
   let action: ApplyAction;
   if (status.state === "up") {
     onEvent?.({ type: "stop", message: `${manifest.metadata.name}: stopping mismatched server` });
@@ -1944,6 +2062,64 @@ async function convergeClaimedServer(
   }
 
   return await startClaimedServer(ctx, action, adm, handle, lifecycle);
+}
+
+/**
+ * DF-02 rollback: when a replacement apply does not reach Running, release
+ * every eviction marker this replacement owns so the reconciler's normal
+ * budget-checked admission can recover the victims. Markers are cleared
+ * whether or not this pass wrote them — a stored replacement that crashed
+ * and now fails its restart must still free its victims. Missing or
+ * unreadable victims are skipped and save failures are collected; the
+ * clear itself never throws.
+ */
+function clearEvictionMarkers(
+  manifest: ModelRun,
+  opts: ApplyOneOpts | undefined,
+): { released: string[]; problems: string[] } {
+  const workloadsDir = opts?.workloadsDir ?? defaultWorkloadsDir(opts?.env);
+  const released: string[] = [];
+  const problems: string[] = [];
+  for (const target of parseEvictTargets(manifest)) {
+    let victim: ModelRun | ModelHostManifest;
+    try {
+      victim = loadWorkloadByNameAny(target, workloadsDir);
+    } catch {
+      continue;
+    }
+    if (victim.kind !== "ModelRun" || victim.metadata.name !== target) continue;
+    if (victim.metadata.annotations[EVICTED_BY_ANNOTATION] !== manifest.metadata.name) continue;
+    const {
+      [EVICTED_BY_ANNOTATION]: _evictedBy,
+      [EVICTED_AT_ANNOTATION]: _evictedAt,
+      ...annotations
+    } = victim.metadata.annotations;
+    try {
+      saveWorkload({ ...victim, metadata: { ...victim.metadata, annotations } }, workloadsDir);
+      released.push(target);
+    } catch (err) {
+      problems.push(`'${target}': ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  return { released, problems };
+}
+
+function applyEvictionRollback(
+  result: ApplyResult,
+  manifest: ModelRun,
+  opts: ApplyOneOpts | undefined,
+): ApplyResult {
+  const { released, problems } = clearEvictionMarkers(manifest, opts);
+  const notes: string[] = [];
+  if (released.length > 0) {
+    notes.push(`released eviction intent on ${released.map((n) => `'${n}'`).join(", ")}`);
+  }
+  for (const problem of problems) {
+    notes.push(`failed to release eviction intent on ${problem}`);
+  }
+  if (notes.length === 0) return result;
+  const note = notes.join("; ");
+  return { ...result, error: result.error !== undefined ? `${result.error}; ${note}` : note };
 }
 
 async function convergeServerUnderLock(ctx: ConvergeServerContext): Promise<ApplyResult> {
@@ -2038,22 +2214,31 @@ export async function applyOne(
   const now = new Date().toISOString();
   const evictTargets = parseEvictTargets(manifest);
 
-  return await withNodeLock(
-    manifest.spec.node,
-    async () =>
-      await convergeServerUnderLock({
-        manifest,
-        client,
-        getClient,
-        onEvent,
-        opts,
-        now,
-        status,
-        matches,
-        desiredArgs,
-        evictTargets,
-      }),
-  );
+  return await withNodeLock(manifest.spec.node, async () => {
+    const ctx: ConvergeServerContext = {
+      manifest,
+      client,
+      getClient,
+      onEvent,
+      opts,
+      now,
+      status,
+      matches,
+      desiredArgs,
+      evictTargets,
+    };
+    let result: ApplyResult;
+    try {
+      result = await convergeServerUnderLock(ctx);
+    } catch (err) {
+      clearEvictionMarkers(manifest, opts);
+      throw err;
+    }
+    if (result.error === undefined && result.statusSection.phase === "Running") {
+      return result;
+    }
+    return applyEvictionRollback(result, manifest, opts);
+  });
 }
 
 async function applyModelRunManifest(opts: ApplyManifestOptions): Promise<ApplyManifestOutcome> {
