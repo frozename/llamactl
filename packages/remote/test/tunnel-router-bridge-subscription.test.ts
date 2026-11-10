@@ -598,4 +598,35 @@ describe("per-event caps bound the encoded stream-event frame (P4.1 X3)", () => 
     expect(result).toEqual({ error: null, complete: true });
     expect(events).toEqual([event]);
   });
+
+  test("an event whose measured stream-event frame is one byte over the cap overflows", async () => {
+    const frameCap = LIMITS.maxFrameBytes;
+    const id = `over-${Math.random().toString(36).slice(2, 10)}`;
+    const frameOverhead =
+      frameBytes(
+        encodeTunnelMessage({
+          type: "stream-event",
+          id,
+          index: Number.MAX_SAFE_INTEGER,
+          data: null,
+        }),
+      ) - frameBytes("null");
+    const n = frameCap + 1 - frameOverhead - eventJsonBytes(padEvent(0));
+    const event = padEvent(n);
+    const req: TunnelReq = {
+      id,
+      type: "req",
+      method: "serverLogs",
+      params: { type: "subscription", input: { n, count: 1 } },
+    };
+    // Mirror of the exact-boundary case: one byte past the reserved-index
+    // measure must end typed stream-overflow with nothing delivered.
+    expect(frameOverhead + eventJsonBytes(event)).toBe(frameCap + 1);
+    const makeSub = createTunnelSubscriptionHandler(buildFrameRouter(), () => ({}), LIMITS);
+    const events: unknown[] = [];
+    const result = await settle(makeSub(req), events);
+    expect(result.error?.code ?? null).toBe(TUNNEL_STREAM_OVERFLOW);
+    expect(result.complete).toBe(false);
+    expect(events).toHaveLength(0);
+  });
 });
