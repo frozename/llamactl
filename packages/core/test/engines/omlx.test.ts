@@ -386,7 +386,8 @@ type FixtureModel = {
   is_loading: boolean;
   actual_size?: number | null;
   resident_estimated_size?: number | null;
-  engineType?: string;
+  // unknown so tests can send non-string engine_type values; written whenever present.
+  engineType?: unknown;
 };
 
 // Mirrors the list_models_status payload at OMLX_STATUS_REVISION.
@@ -421,7 +422,7 @@ function statusFixtureV1(models: FixtureModel[]): Record<string, unknown> {
         is_favorite: false,
         is_hidden: false,
       };
-      if (m.engineType) {
+      if ("engineType" in m) {
         entry["engine_type"] = m.engineType;
       }
       return entry;
@@ -548,6 +549,26 @@ describe("#282 DF-09 oMLX native model status contract", () => {
       actualSize: 4800000000,
       residentEstimatedSize: 5000000000,
     });
+  });
+
+  test("P2c engineType absent when engine_type is not a string", () => {
+    const parse = parseStatusFn();
+    for (const engineType of [42, null, {}]) {
+      expect(
+        parse(statusFixtureV1([{ id: ID, loaded: false, is_loading: true, engineType }]), REL),
+      ).toStrictEqual({ state: "loading", modelId: ID });
+      expect(
+        parse(statusFixtureV1([{ id: ID, loaded: false, is_loading: false, engineType }]), REL),
+      ).toStrictEqual({ state: "discovered", modelId: ID });
+      expect(
+        parse(statusFixtureV1([{ id: ID, loaded: true, is_loading: false, engineType }]), REL),
+      ).toStrictEqual({
+        state: "loaded",
+        modelId: ID,
+        actualSize: 4800000000,
+        residentEstimatedSize: 5000000000,
+      });
+    }
   });
 
   test("P3 loaded: sizes come from actual_size and resident_estimated_size", () => {
