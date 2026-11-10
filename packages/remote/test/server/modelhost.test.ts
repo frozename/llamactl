@@ -1674,6 +1674,76 @@ describe("server/modelhost", () => {
     }
   });
 
+  test("relaunches after a spec-drift teardown that kills the listener then throws", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-adoptdrift-throw-"));
+    const { workloadsDir, runtimeDir, manifest } = makeManifest(tmp);
+    const engine = ENGINES.omlx;
+    const originalTeardown = engine.teardown.bind(engine);
+    const tornDown: number[] = [];
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
+    const impostor = spawnImpostor("/bin/sleep", ["60"], {
+      stdio: "ignore",
+      argv0: "omlx",
+    });
+    try {
+      if (impostor.pid === undefined) throw new Error("impostor spawn failed");
+      seedDeadSidecar(
+        runtimeDir,
+        // The recorded launch ran with expectedMemoryGiB=24; the applied
+        // manifest bumps only resources to 32, so the live listener is a
+        // spec-drifted process, not a same-spec respawn.
+        computeModelHostSpecHash(
+          specForHash(
+            ModelHostManifestSchema.parse({
+              ...manifest,
+              spec: { ...manifest.spec, resources: { expectedMemoryGiB: 24 } },
+            }).spec,
+          ),
+        ),
+      );
+      const kill = killTeardown(impostor);
+      // A teardown that really releases the port but then throws is not proof
+      // either way: the liveness re-check, not the throw, decides. A mutant
+      // that propagates this throw (instead of swallowing it) makes the whole
+      // start reject and fails the assertions below.
+      engine.teardown = mock(async (pid: number) => {
+        tornDown.push(pid);
+        await kill(pid);
+        throw new Error("teardown exploded after signalling");
+      });
+
+      const result = await startModelHost({
+        key: { name: "mlx-host-server" },
+        manifest: {
+          ...manifest,
+          spec: { ...manifest.spec, resources: { expectedMemoryGiB: 32 } },
+        },
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady: () =>
+          Promise.resolve({ ready: true, modelIds: ["mlx-community/Qwen3-8B-MLX-4bit"] }),
+        // The stale spec's process is still bound to the endpoint.
+        findListenerPid: () => Promise.resolve(impostor.pid ?? null),
+      });
+
+      // The thrown teardown is swallowed; the impostor is gone, so the drift
+      // path relaunches a replacement rather than deferring or rejecting.
+      expect(result).toEqual({ ok: true, pid: 4321 });
+      expect(tornDown).toEqual([impostor.pid]);
+      expect(spawn).toHaveBeenCalledTimes(1);
+    } finally {
+      engine.teardown = originalTeardown;
+      try {
+        impostor.kill("SIGKILL");
+      } catch {
+        // already gone
+      }
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   test("defers (does not spawn) when a live process holds the endpoint but is not yet adoptable", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-defer-"));
     const { workloadsDir, runtimeDir } = makeManifest(tmp);
