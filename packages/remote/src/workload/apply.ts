@@ -2,6 +2,7 @@ import type {
   ManagedAdmissionClaim,
   ManagedAdmissionDecision,
 } from "@llamactl/core/residency/admission";
+import type { MeasuredEnvelope } from "@llamactl/core/resources/memory";
 import type { spawn as nodeSpawn } from "node:child_process";
 
 import { server as serverMod, target as targetMod } from "@llamactl/core";
@@ -31,6 +32,7 @@ import {
 import { basename } from "node:path";
 
 import type { GatewayDispatch } from "./gateway-handlers/types.js";
+import type { NodeRunResidency } from "./noderun-schema.js";
 import type { ModelRun, ModelRunStatus, ModelRunWorker } from "./schema.js";
 
 import {
@@ -39,6 +41,7 @@ import {
   declaredModelHostMemoryGiB,
   defaultNodeBudgetGiB,
   estimateModelHostMemoryGiB,
+  modelHostAdmissionChargeGiB,
   type TargetAdmissionAuthority,
   type TargetAdmissionClaimHandle,
 } from "./admission.js";
@@ -220,6 +223,13 @@ export interface ApplyManifestOptions {
     modelFilePenaltyMb?: number;
     /** Nodes whose latest snapshot is older than this many ms are excluded. Default 150000 (5× 30s tick). staleCutoffMs <= 0 disables filtering. */
     staleCutoffMs?: number;
+  };
+  /** #277 DF-04 opt-in: measured calibration envelopes in ModelHost budget
+   *  admission. Absent => charging is unchanged. Synchronous so the default
+   *  path gains no await; no production caller passes it yet. */
+  residencyAdmission?: {
+    getNodeResidencyPolicy: (nodeName: string) => NodeRunResidency | null | undefined;
+    getMeasuredEnvelope: (manifest: ModelHostManifest) => MeasuredEnvelope | null | undefined;
   };
 }
 
@@ -498,7 +508,20 @@ function admitModelHostBudget(
     .filter((m) => m.metadata.name !== manifest.metadata.name)
     .filter((m) => m.spec.node === manifest.spec.node)
     .filter((m) => m.spec.enabled);
-  const expectedMemoryGiB = estimateModelHostMemoryGiB(manifest, resolved);
+  const estimateGiB = estimateModelHostMemoryGiB(manifest, resolved);
+  let expectedMemoryGiB = estimateGiB;
+  if (opts.residencyAdmission !== undefined) {
+    const policy = opts.residencyAdmission.getNodeResidencyPolicy(manifest.spec.node);
+    const policyPresent = policy !== null && policy !== undefined;
+    const envelope = policyPresent
+      ? opts.residencyAdmission.getMeasuredEnvelope(manifest)
+      : undefined;
+    expectedMemoryGiB = modelHostAdmissionChargeGiB({
+      estimateGiB,
+      residencyPolicyPresent: policyPresent,
+      envelope,
+    });
+  }
   const admit = computeNodeBudget({
     nodeName: manifest.spec.node,
     nodeBudgetGiB: budget,
@@ -695,6 +718,10 @@ export async function applyOneModelHost(
       headroomMinGiB: number;
       safetyFactor?: number;
     };
+    residencyAdmission?: {
+      getNodeResidencyPolicy: (nodeName: string) => NodeRunResidency | null | undefined;
+      getMeasuredEnvelope: (manifest: ModelHostManifest) => MeasuredEnvelope | null | undefined;
+    };
   },
 ): Promise<ApplyManifestOutcome> {
   return await applyModelHostManifest(manifest, {
@@ -704,6 +731,9 @@ export async function applyOneModelHost(
     ...(opts?.workloadsDir !== undefined ? { workloadsDir: opts.workloadsDir } : {}),
     ...(opts?.getNodeBudgetGiB !== undefined ? { getNodeBudgetGiB: opts.getNodeBudgetGiB } : {}),
     ...(opts?.supervisor !== undefined ? { supervisor: opts.supervisor } : {}),
+    ...(opts?.residencyAdmission !== undefined
+      ? { residencyAdmission: opts.residencyAdmission }
+      : {}),
   });
 }
 
