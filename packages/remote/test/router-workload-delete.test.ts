@@ -2,6 +2,11 @@ import {
   readControllerHostHistory,
   updateControllerHostHistory,
 } from "@llamactl/core/engines/conditions";
+import {
+  createResidencyLeases,
+  type ResidencyLeases,
+  setResidencyLeaseRegistry,
+} from "@llamactl/core/residency/leases";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -83,6 +88,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  setResidencyLeaseRegistry(null);
   rmSync(tmp, { recursive: true, force: true });
   for (const k of Object.keys(process.env)) Reflect.deleteProperty(process.env, k);
   Object.assign(process.env, originalEnv);
@@ -90,6 +96,33 @@ afterEach(() => {
 
 function hostRuntimeDir(): string {
   return join(runtimeDir, "workloads", "mlx-host");
+}
+
+// A tracked pid whose record mtime is at/after the holder's start reads as
+// "alive" to verifyPidFile, so serverStatus reports `up`. We record the test
+// runner's own pid so the fence (which refuses before any signal when a lease
+// is held) never targets a real process.
+function pinServerUp(workload: string, rel: string, registry: ResidencyLeases): void {
+  const acquired = registry.acquire(workload);
+  if (!acquired.ok) {
+    throw new Error("expected lease acquire to succeed");
+  }
+  const dir = join(runtimeDir, "workloads", workload);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "llama-server.pid"), `${String(process.pid)}\n`);
+  writeFileSync(
+    join(dir, "llama-server.state"),
+    JSON.stringify({
+      rel,
+      extraArgs: [],
+      host: "127.0.0.1",
+      port: "0",
+      binary: "/usr/bin/llama-server",
+      pid: process.pid,
+      startedAt: new Date().toISOString(),
+      tunedProfile: null,
+    }),
+  );
 }
 
 describe("workloadDelete", () => {
@@ -131,6 +164,22 @@ describe("workloadDelete", () => {
 
     expect(result).toEqual({ ok: true, name: "gemma-solo", stops: [] });
     expect(existsSync(workloadPath("gemma-solo", tmp))).toBe(false);
+  });
+
+  test("a held lease on a running ModelRun refuses the delete", async () => {
+    const registry = createResidencyLeases();
+    setResidencyLeaseRegistry(registry);
+    saveWorkload(parseWorkload(modelRunYaml), tmp);
+    pinServerUp("gemma-solo", "gemma.gguf", registry);
+
+    const result = await router.createCaller({}).workloadDelete({ name: "gemma-solo" });
+
+    if (!("error" in result)) {
+      throw new Error(`expected workloadDelete refusal, got ${JSON.stringify(result)}`);
+    }
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("LeasesActive");
+    expect(existsSync(workloadPath("gemma-solo", tmp))).toBe(true);
   });
 });
 
