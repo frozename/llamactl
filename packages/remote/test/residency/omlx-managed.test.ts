@@ -14,6 +14,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 
 import {
   createOmlxNativeClient,
+  type NativeLoadResult,
+  type NativeUnloadResult,
   type OmlxNativeClient,
 } from "../../src/residency/engine-client.js";
 import {
@@ -798,5 +800,61 @@ describe("managed oMLX residency", () => {
       reason: "ResidencyUncertain",
     });
     expect(fake.counts.total).toBe(totalBefore);
+  });
+
+  test("M16 unload during ensureLoaded flight is refused, client.unload never called, claim stays pending", async () => {
+    const mod = await loadManagedModule();
+    const authority = createTargetAdmissionAuthority();
+
+    // Build a non-single-flight client whose load() stays pending via a deferred resolver.
+    let loadResolve: (() => void) | undefined;
+    const loadPending = new Promise<unknown>((resolve) => {
+      loadResolve = (): void => {
+        resolve({ kind: "loaded", modelId: ID });
+      };
+    });
+
+    const client: OmlxNativeClient = {
+      status: () => Promise.resolve({ state: "discovered", modelId: ID }),
+      load: (): Promise<NativeLoadResult> => loadPending as Promise<NativeLoadResult>,
+      unload: (): Promise<NativeUnloadResult> => {
+        // Track that unload was called so we can assert it was NOT called.
+        return Promise.resolve({
+          kind: "unloaded",
+          modelId: ID,
+          reservation: "released",
+        } as never);
+      },
+    };
+
+    const residency = mod.createManagedOmlxResidency(managedOpts(client, authority));
+
+    // Start the ensureLoaded flight — it will block on the deferred load.
+    const ensurePromise = residency.ensureLoaded();
+
+    // The flight is in progress: unload should be refused.
+    const unloadResult = await residency.unload();
+    expect(unloadResult).toStrictEqual({
+      kind: "refused",
+      reason: "OperationInProgress",
+      reservation: "held",
+    });
+
+    // The claim handle must still exist and be in pending state.
+    const claimId = authority.snapshot("node-a");
+    expect(claimId).toHaveLength(1);
+    expect(claimId[0]?.state).toBe("pending");
+
+    // Now resolve the deferred load so the flight completes.
+    loadResolve!();
+
+    // The ensureLoaded should now resolve with the loaded result.
+    const ensureResult = await ensurePromise;
+    expect(ensureResult).toStrictEqual({ kind: "loaded", modelId: ID });
+
+    // The claim should now be resident.
+    expect(await residency.residency()).toBe("resident");
+    expect(authority.snapshot("node-a")).toHaveLength(1);
+    expect(authority.snapshot("node-a")[0]?.state).toBe("resident");
   });
 });
