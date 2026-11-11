@@ -4,6 +4,11 @@ import type {
 } from "@llamactl/core/residency/admission";
 
 import { resolveEnv } from "@llamactl/core/env";
+import {
+  calibrateMeasuredEnvelope,
+  type CalibrationSample,
+  type MeasuredEnvelope,
+} from "@llamactl/core/resources/memory";
 import { expect, test } from "bun:test";
 import { tmpdir, totalmem } from "node:os";
 import { join } from "node:path";
@@ -24,6 +29,7 @@ import {
   reservedForNodeBreakdown,
   sumReservedForNode,
 } from "./admission.js";
+import * as admissionMod from "./admission.js";
 import { listAnyWorkloadsForAdmission } from "./store.js";
 
 const mkManifest = (
@@ -825,4 +831,173 @@ test("two resident-declared hosts cannot both be admitted on a 32 GiB node", () 
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
+});
+
+// #277 DF-04: modelHostAdmissionChargeGiB lands with the fix. The symbol is
+// read through a Record cast so each case fails by assertion at base, not by
+// import.
+type ModelHostAdmissionChargeInput = {
+  estimateGiB: number | null;
+  residencyPolicyPresent: boolean;
+  envelope: MeasuredEnvelope | null | undefined;
+};
+
+const measuredEnvelopeGiB = (gib: number): MeasuredEnvelope => {
+  const processBytes = gib * 1024 ** 3 - 1024 ** 3;
+  const sample = (observedAtMs: number): CalibrationSample => ({
+    status: "ok",
+    source: "synthetic",
+    observedAtMs,
+    processBytes,
+    processDeviceBytes: 1024 ** 3,
+    sharedDeviceBytes: null,
+  });
+  const envelope = calibrateMeasuredEnvelope({
+    key: {
+      artifactRevision: "rev-a",
+      engine: "omlx",
+      engineBuild: "b1",
+      ctx: 8192,
+      kvType: "f16",
+      speculative: { mode: "none" },
+      prefillBatch: 512,
+      concurrency: 1,
+    },
+    samples: [sample(1), sample(2), sample(3)],
+    options: { minSamples: 3, overheadFraction: 0 },
+  });
+  expect(envelope.known).toBe(true);
+  if (envelope.known) expect(envelope.envelopeBytes).toBe(gib * 1024 ** 3);
+  return envelope;
+};
+
+const measuredEnvelopeLiteral = (envelopeBytes: number): MeasuredEnvelope => ({
+  known: true,
+  key: "k",
+  provenance: "measured",
+  sampleCount: 3,
+  peakBytes: envelopeBytes,
+  calibrationOverheadBytes: 0,
+  envelopeBytes,
+  attribution: "process",
+});
+
+test("modelHostAdmissionChargeGiB charges a measured envelope above the declared charge under a residency policy", () => {
+  const charge = (admissionMod as Record<string, unknown>)["modelHostAdmissionChargeGiB"];
+  expect(typeof charge).toBe("function");
+  const chargeGiB = charge as (input: ModelHostAdmissionChargeInput) => number | null;
+  expect(
+    chargeGiB({
+      estimateGiB: 6,
+      residencyPolicyPresent: true,
+      envelope: measuredEnvelopeGiB(20),
+    }),
+  ).toBe(20);
+});
+
+test("measured envelope never lowers the declared charge", () => {
+  const charge = (admissionMod as Record<string, unknown>)["modelHostAdmissionChargeGiB"];
+  expect(typeof charge).toBe("function");
+  const chargeGiB = charge as (input: ModelHostAdmissionChargeInput) => number | null;
+  expect(
+    chargeGiB({
+      estimateGiB: 18,
+      residencyPolicyPresent: true,
+      envelope: measuredEnvelopeGiB(10),
+    }),
+  ).toBe(18);
+});
+
+test("no policy or no usable measurement leaves the charge unchanged", () => {
+  const charge = (admissionMod as Record<string, unknown>)["modelHostAdmissionChargeGiB"];
+  expect(typeof charge).toBe("function");
+  const chargeGiB = charge as (input: ModelHostAdmissionChargeInput) => number | null;
+  const cases: {
+    label: string;
+    input: ModelHostAdmissionChargeInput;
+    expected: number | null;
+  }[] = [
+    {
+      label: "no residency policy",
+      input: {
+        estimateGiB: 6,
+        residencyPolicyPresent: false,
+        envelope: measuredEnvelopeGiB(20),
+      },
+      expected: 6,
+    },
+    {
+      label: "envelope null",
+      input: { estimateGiB: 6, residencyPolicyPresent: true, envelope: null },
+      expected: 6,
+    },
+    {
+      label: "envelope undefined",
+      input: { estimateGiB: 6, residencyPolicyPresent: true, envelope: undefined },
+      expected: 6,
+    },
+    {
+      label: "envelope not known",
+      input: {
+        estimateGiB: 6,
+        residencyPolicyPresent: true,
+        envelope: { known: false, reason: "insufficient-samples" },
+      },
+      expected: 6,
+    },
+    {
+      label: "envelopeBytes NaN",
+      input: {
+        estimateGiB: 6,
+        residencyPolicyPresent: true,
+        envelope: measuredEnvelopeLiteral(Number.NaN),
+      },
+      expected: 6,
+    },
+    {
+      label: "envelopeBytes negative",
+      input: {
+        estimateGiB: 6,
+        residencyPolicyPresent: true,
+        envelope: measuredEnvelopeLiteral(-1),
+      },
+      expected: 6,
+    },
+    {
+      label: "envelopeBytes infinite",
+      input: {
+        estimateGiB: 6,
+        residencyPolicyPresent: true,
+        envelope: measuredEnvelopeLiteral(Number.POSITIVE_INFINITY),
+      },
+      expected: 6,
+    },
+    {
+      label: "null estimate without policy",
+      input: {
+        estimateGiB: null,
+        residencyPolicyPresent: false,
+        envelope: measuredEnvelopeGiB(20),
+      },
+      expected: null,
+    },
+  ];
+  for (const c of cases) {
+    const result: unknown = chargeGiB(c.input);
+    expect(result instanceof Promise).toBe(false);
+    expect(result).toBe(c.expected);
+  }
+});
+
+test("null estimate with a policy and a measurement charges the measurement", () => {
+  const charge = (admissionMod as Record<string, unknown>)["modelHostAdmissionChargeGiB"];
+  expect(typeof charge).toBe("function");
+  const chargeGiB = charge as (input: ModelHostAdmissionChargeInput) => number | null;
+  expect(
+    chargeGiB({
+      estimateGiB: null,
+      residencyPolicyPresent: true,
+      envelope: measuredEnvelopeGiB(8),
+    }),
+  ).toBe(8);
 });

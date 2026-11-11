@@ -1,4 +1,5 @@
 import type { ResolvedEnv } from "@llamactl/core";
+import type { MeasuredEnvelope } from "@llamactl/core/resources/memory";
 
 import {
   type AdmissionReservation,
@@ -285,6 +286,33 @@ export function estimateModelHostMemoryGiB(
   } catch {
     return null;
   }
+}
+
+/** #277 DF-04: with a NodeRun residency policy and a usable measured
+ *  calibration envelope, admission charges max(declared estimate,
+ *  measured envelope). No policy, or no/unknown/invalid measurement,
+ *  returns the estimate unchanged. Never lowers the declared charge.
+ *  The envelope's `envelopeBytes` (peak + calibration overhead) is the
+ *  conservative stand-in for the p95 named in the issue. */
+export function modelHostAdmissionChargeGiB(input: {
+  estimateGiB: number | null;
+  residencyPolicyPresent: boolean;
+  envelope: MeasuredEnvelope | null | undefined;
+}): number | null {
+  const { estimateGiB, residencyPolicyPresent, envelope } = input;
+  if (!residencyPolicyPresent) return estimateGiB;
+  if (envelope === null || envelope === undefined) return estimateGiB;
+  // Defensive runtime read: the schema narrows provenance to the literal
+  // "measured", but a hand-built or future envelope could carry another
+  // provenance (or a non-finite envelopeBytes), so re-validate before charging.
+  const measured = envelope as { provenance?: unknown; envelopeBytes?: unknown };
+  if (measured.provenance !== "measured") return estimateGiB;
+  const envelopeBytes = measured.envelopeBytes;
+  if (typeof envelopeBytes !== "number" || !Number.isFinite(envelopeBytes) || envelopeBytes < 0) {
+    return estimateGiB;
+  }
+  const measuredGiB = envelopeBytes / 1024 ** 3;
+  return estimateGiB === null ? measuredGiB : Math.max(estimateGiB, measuredGiB);
 }
 
 /**

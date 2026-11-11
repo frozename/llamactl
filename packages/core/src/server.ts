@@ -32,6 +32,7 @@ import {
   type DrainToken,
   getResidencyLeaseRegistry,
   type ResidencyLeases,
+  withReopenAfterLoad,
 } from "./residency/leases.js";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "./safe-fs.js";
 import { resolveTarget } from "./target.js";
@@ -1382,8 +1383,21 @@ function wireAbortToKill(signal: AbortSignal | undefined, killOnAbort: () => voi
  *
  * Returns a structured result; non-null `error` indicates a hard
  * failure the caller should surface.
+ *
+ * Part of #278 DF-05: a successful start reopens residency admission for the
+ * workload through `withReopenAfterLoad`, so a keepAlive restart (or any other
+ * start path) lifts a verified-stopped workload back to open. Inert without a
+ * published registry; a failed start never reopens.
  */
-export async function startServer(opts: StartServerOptions): Promise<StartServerResult> {
+export function startServer(opts: StartServerOptions): Promise<StartServerResult> {
+  return withReopenAfterLoad(
+    opts.key.name,
+    () => startServerUnwrapped(opts),
+    (r) => r.ok,
+  );
+}
+
+async function startServerUnwrapped(opts: StartServerOptions): Promise<StartServerResult> {
   const env = opts.env ?? process.env;
   const resolved = opts.resolved ?? resolveEnv(env);
   const key = opts.key;

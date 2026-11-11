@@ -1,5 +1,5 @@
 /**
- * Active-session refcounts for residency (#520). Pure and adapter-free:
+ * Active-session refcounts for residency (#520, #569). Pure and adapter-free:
  * no IO, no timers. This is a partial #520 slice: it layers on the DF-05
  * request leases (#278) rather than replacing them.
  *
