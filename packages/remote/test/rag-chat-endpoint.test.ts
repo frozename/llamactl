@@ -364,6 +364,40 @@ describe("handleRagChatCompletions — validation", () => {
     expect(caller.chatCalls).toHaveLength(0);
   });
 
+  test("fallback request carries the client abort signal (#316)", async () => {
+    const caller = makeStubCaller();
+    const controller = new AbortController();
+    const req = new Request("http://localhost/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer test-token",
+      },
+      body: JSON.stringify({
+        model: "m",
+        messages: [{ role: "user", content: "q" }],
+      }),
+      signal: controller.signal,
+    });
+    let fallbackReq: Request | null = null;
+    const res = await handleRagChatCompletions(req, {
+      appRouter,
+      caller,
+      log: () => undefined,
+      fallback: async (r) => {
+        await Promise.resolve();
+        fallbackReq = r;
+        controller.abort();
+        return new Response("{}");
+      },
+    });
+    expect(res.status).toBe(200);
+    expect(fallbackReq).not.toBeNull();
+    // The rebuilt Request must follow the original req.signal — a fresh
+    // signal would swallow the client abort before it reaches the proxy.
+    expect(fallbackReq!.signal.aborted).toBe(true);
+  });
+
   test("neither rag nor via AND no fallback configured → 400", async () => {
     const res = await handleRagChatCompletions(
       makeRequest({

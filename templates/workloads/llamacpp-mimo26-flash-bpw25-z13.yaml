@@ -42,9 +42,10 @@ spec:
   hostedModels:
     - rel: MiMo-V2.6-Flash-MOPD-GGUF-AesSedai/b6e95d58/BPW2.5/MiMo-V2.6-Flash-MOPD-BPW2.5-00001-of-00003.gguf
   extraArgs:
-    # --served-model-name equals the GGUF basename, because a ModelHost
-    # routes by rel and basename.
-    - --served-model-name
+    # --alias equals the GGUF basename so /v1/models reports basename(rel);
+    # mainline llama-server has no --served-model-name (Gufo-only; b12206
+    # common/arg.cpp defines -a/--alias).
+    - --alias
     - MiMo-V2.6-Flash-MOPD-BPW2.5-00001-of-00003.gguf
     # -c 65536 sits inside the 64K-128K Z13 band of a 1M-context model.
     - -c
