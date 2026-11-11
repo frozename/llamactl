@@ -8,6 +8,7 @@ import type { ExecFn, ExecResult } from "./deps.js";
 
 export type ServiceRole = "agent" | "controller";
 export type ServiceManagerKind = "launchd" | "systemd";
+export type ServiceScope = "user" | "system";
 
 export interface ServiceInfo {
   role: ServiceRole;
@@ -57,6 +58,9 @@ export const DEFAULT_UNITS: Record<ServiceManagerKind, Record<ServiceRole, strin
 
 /** launchd: hosts deployed by `llamactl infra` register the agent under this label. */
 export const LAUNCHD_AGENT_FALLBACK = "com.llamactl.node-agent";
+
+/** launchd: the label `install-launchd --scope=system` uses for the system-domain agent job. */
+export const LAUNCHD_SYSTEM_AGENT_LABEL = "com.llamactl.agent.daemon";
 
 export function pickServiceManagerKind(
   requested: string | null | undefined,
@@ -258,9 +262,10 @@ export function systemdManager(
   exec: ExecFn,
   readFile: (path: string) => string | null,
   specifiers: Record<string, string> = {},
+  scope: ServiceScope = "user",
 ): ServiceManager {
   const ctl = async (...args: string[]): Promise<ExecResult> =>
-    await exec(["systemctl", "--user", ...args]);
+    await exec(["systemctl", ...(scope === "user" ? ["--user"] : []), ...args]);
   return {
     kind: "systemd",
     describe: async (role, name, explicit): Promise<ServiceInfo> => {
@@ -299,7 +304,7 @@ export function systemdManager(
     journalSince: async (info, sinceMs): Promise<string | null> => {
       const r = await exec([
         "journalctl",
-        "--user",
+        ...(scope === "user" ? ["--user"] : []),
         "--unit",
         info.name,
         "--since",
@@ -391,8 +396,12 @@ function applyPrintBlockLine(out: LaunchctlPrint, block: string, line: string): 
   }
 }
 
-export function launchdManager(exec: ExecFn, uid: number): ServiceManager {
-  const domain = `gui/${String(uid)}`;
+export function launchdManager(
+  exec: ExecFn,
+  uid: number,
+  scope: ServiceScope = "user",
+): ServiceManager {
+  const domain = scope === "system" ? "system" : `gui/${String(uid)}`;
   const target = (info: ServiceInfo): string => `${domain}/${info.name}`;
   const print = async (name: string): Promise<LaunchctlPrint | null> => {
     const r = await exec(["launchctl", "print", `${domain}/${name}`]);

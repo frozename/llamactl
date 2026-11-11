@@ -606,6 +606,50 @@ describe("agent status service manager", () => {
     expect(JSON.stringify(report)).not.toContain(LEAK_MARKER);
     expect(formatAgentStatus(report)).not.toContain(LEAK_MARKER);
   });
+
+  test("a system-scope service keeps scope in --json and renders (system, loaded, active)", async () => {
+    const scoped = {
+      manager: "launchd",
+      name: "com.llamactl.agent.daemon",
+      loaded: true,
+      active: true,
+      pid: 31,
+      scope: "system",
+      env: { LLAMACTL_TUNNEL_BEARER: LEAK_MARKER },
+    } as AgentServiceStatus;
+    const report = await statusWithService(() => Promise.resolve(scoped));
+    expect(report.service).toEqual({
+      manager: "launchd",
+      name: "com.llamactl.agent.daemon",
+      loaded: true,
+      active: true,
+      pid: 31,
+      scope: "system",
+    } as AgentServiceStatus);
+    const text = formatAgentStatus(report);
+    expect(text).toContain(
+      "\nservice launchd com.llamactl.agent.daemon (system, loaded, active) pid=31\n",
+    );
+    expect(JSON.stringify(report)).not.toContain(LEAK_MARKER);
+    expect(text).not.toContain(LEAK_MARKER);
+
+    // Only "system" survives the whitelist: a bogus scope is dropped like env/argv.
+    const cfgPath = join(tmp, "agent.yaml");
+    const cfg = agentConfigMod.loadAgentConfig(cfgPath);
+    const bogus = { ...scoped, scope: "bogus" } as unknown as AgentServiceStatus;
+    const bogusReport = await collectAgentStatus({
+      configPath: cfgPath,
+      cfg,
+      probe: () => Promise.resolve(false),
+      listModelHosts: () => [],
+      describeService: () => Promise.resolve(bogus),
+    });
+    expect(bogusReport.service?.name).toBe("com.llamactl.agent.daemon");
+    expect(Object.keys(bogusReport.service ?? {})).not.toContain("scope");
+    const bogusText = formatAgentStatus(bogusReport);
+    expect(bogusText).toContain("(loaded, active)");
+    expect(bogusText).not.toContain("(bogus");
+  });
 });
 
 describe("describeAgentService", () => {
@@ -657,7 +701,11 @@ describe("describeAgentService", () => {
       active: false,
       pid: null,
     });
-    expect(calls).toHaveLength(2);
+    expect(calls).toEqual([
+      ["launchctl", "print", "gui/501/com.llamactl.agent"],
+      ["launchctl", "print", "gui/501/com.llamactl.node-agent"],
+      ["launchctl", "print", "system/com.llamactl.agent.daemon"],
+    ]);
   });
 
   test("systemd describes llamactl-agent.service in the user scope and drops its env", async () => {
@@ -737,6 +785,105 @@ describe("describeAgentService", () => {
     const s = await describeAgentService(serviceDeps("win32", exec));
     expect(s).toBeNull();
     expect(calls).toEqual([]);
+  });
+
+  test("launchd falls back to the system-domain com.llamactl.agent.daemon when no gui label is loaded", async () => {
+    const calls: string[][] = [];
+    const s = await describeAgentService(
+      serviceDeps(
+        "darwin",
+        fakeLaunchctl(
+          { "com.llamactl.agent.daemon": launchctlPrint("com.llamactl.agent.daemon", 31) },
+          calls,
+        ),
+      ),
+    );
+    expect(s).toEqual({
+      manager: "launchd",
+      name: "com.llamactl.agent.daemon",
+      loaded: true,
+      active: true,
+      pid: 31,
+      scope: "system",
+    } as AgentServiceStatus);
+    expect(calls).toEqual([
+      ["launchctl", "print", "gui/501/com.llamactl.agent"],
+      ["launchctl", "print", "gui/501/com.llamactl.node-agent"],
+      ["launchctl", "print", "system/com.llamactl.agent.daemon"],
+    ]);
+    expect(JSON.stringify(s)).not.toContain(LEAK_MARKER);
+  });
+
+  test("systemd falls back to the system unit when the --user unit is not loaded, without reading linger", async () => {
+    const calls: string[][] = [];
+    const exec: ServiceProbeDeps["exec"] = (argv) => {
+      calls.push([...argv]);
+      if (argv[1] === "--user" && argv[2] === "show") {
+        return Promise.resolve({
+          code: 0,
+          stdout:
+            "Id=llamactl-agent.service\nLoadState=not-found\nActiveState=inactive\nMainPID=0\n",
+          stderr: "",
+        });
+      }
+      if (argv[1] === "show") {
+        return Promise.resolve({
+          code: 0,
+          stdout: `Id=llamactl-agent.service\nLoadState=loaded\nActiveState=active\nMainPID=888\nEnvironment=LLAMACTL_TUNNEL_BEARER=${LEAK_MARKER}\n`,
+          stderr: "",
+        });
+      }
+      return Promise.resolve({ code: 0, stdout: "", stderr: "" });
+    };
+    const s = await describeAgentService(serviceDeps("linux", exec));
+    expect(s).toEqual({
+      manager: "systemd",
+      name: "llamactl-agent.service",
+      loaded: true,
+      active: true,
+      pid: 888,
+      scope: "system",
+    } as AgentServiceStatus);
+    expect(calls.some((c) => c[0] === "loginctl")).toBe(false);
+    expect(calls.map((c) => c.slice(0, 3))).toEqual([
+      ["systemctl", "--user", "show"],
+      ["systemctl", "show", "llamactl-agent.service"],
+      ["systemctl", "cat", "llamactl-agent.service"],
+    ]);
+    expect(JSON.stringify(s)).not.toContain(LEAK_MARKER);
+  });
+
+  test("systemd with neither scope loaded reports the user unit as not loaded and still reads linger", async () => {
+    const calls: string[][] = [];
+    const notFound =
+      "Id=llamactl-agent.service\nLoadState=not-found\nActiveState=inactive\nMainPID=0\n";
+    const exec: ServiceProbeDeps["exec"] = (argv) => {
+      calls.push([...argv]);
+      if (argv[0] === "loginctl") {
+        return Promise.resolve({ code: 0, stdout: "yes\n", stderr: "" });
+      }
+      if (argv[1] === "--user" && argv[2] === "show") {
+        return Promise.resolve({ code: 0, stdout: notFound, stderr: "" });
+      }
+      if (argv[1] === "show") {
+        return Promise.resolve({ code: 0, stdout: notFound, stderr: "" });
+      }
+      return Promise.resolve({ code: 0, stdout: "", stderr: "" });
+    };
+    const s = await describeAgentService(serviceDeps("linux", exec));
+    expect(s).toEqual({
+      manager: "systemd",
+      name: "llamactl-agent.service",
+      loaded: false,
+      active: false,
+      pid: null,
+      linger: true,
+    });
+    expect(calls.map((c) => c.slice(0, 3))).toEqual([
+      ["systemctl", "--user", "show"],
+      ["systemctl", "show", "llamactl-agent.service"],
+      ["loginctl", "show-user", "501"],
+    ]);
   });
 });
 

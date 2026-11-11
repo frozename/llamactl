@@ -271,7 +271,7 @@ const STATUS_USAGE = `Usage: llamactl agent status [flags]
 
 Report the agent config, whether /healthz answers, a loopback-only
 bind, cert expiry + SAN coverage of the advertised host, and the
-launchd label or systemd --user unit that manages the agent.
+launchd label or systemd unit (user, then system scope) that manages the agent.
 
 Flags:
 ${DIR_FLAG_HELP}
