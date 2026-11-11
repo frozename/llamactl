@@ -151,6 +151,7 @@ export const OPS_CHAT_TOOLS = [
     tier: "mutation-dry-run-safe",
     surfaces: OPS_CHAT_AND_MCP_SURFACES,
   },
+  { name: "llamactl.residency.status", tier: "read", surfaces: OPS_CHAT_AND_MCP_SURFACES },
   { name: "llamactl.server.status", tier: "read", surfaces: OPS_CHAT_AND_MCP_SURFACES },
   {
     name: "llamactl.server.stop",
@@ -315,6 +316,8 @@ async function executeReadTool(
       return await caller.nodeFacts();
     case "llamactl.node.budget":
       return await caller.nodeBudget({ node: requireString(args, "node") });
+    case "llamactl.residency.status":
+      return await caller.residencyStatus({ node: requireString(args, "node") });
     case "llamactl.promotions.list":
       return await caller.promotions();
     case "llamactl.workload.list":

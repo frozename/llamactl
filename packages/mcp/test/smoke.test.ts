@@ -1,11 +1,13 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
+import { getResidencyLeaseRegistry } from "@llamactl/core/residency/leases";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { router } from "../../remote/src/router.js";
 import { saveModelHost } from "../../remote/src/workload/modelhost-store.js";
 import { saveNodeRun } from "../../remote/src/workload/noderun-store.js";
 import { saveWorkload } from "../../remote/src/workload/store.js";
@@ -262,6 +264,7 @@ describe("@llamactl/mcp read surface", () => {
       "llamactl.rag.search",
       "llamactl.rag.store",
       "llamactl.reconciler.kick",
+      "llamactl.residency.status",
       "llamactl.server.status",
       "llamactl.server.stop",
       "llamactl.supervisor.execute",
@@ -447,6 +450,68 @@ describe("@llamactl/mcp read surface", () => {
     expect(row).toBeDefined();
     expect(row?.endpoint).toBe("127.0.0.1:8181");
     expect(row?.phase).toBe("Pending");
+  });
+
+  test("llamactl.residency.status projects residencyStatus", async () => {
+    const storePath = join(runtimeDir, "residency-state", "operations.sqlite");
+    process.env["LLAMACTL_RESIDENCY_STORE"] = storePath;
+    seedNodeBudgetFixtures();
+    const { client } = await connected();
+    expect(getResidencyLeaseRegistry()).toBeNull();
+
+    const result = await client
+      .callTool({
+        name: "llamactl.residency.status",
+        arguments: { node: "budget-node" },
+      })
+      .catch((e: unknown) => ({
+        isError: true,
+        content: [{ type: "text", text: String(e) }],
+      }));
+    expect(result.isError).not.toBe(true);
+
+    const parsed = JSON.parse(textOf(result)) as {
+      nodeRun: { present: boolean };
+      policy: { present: boolean };
+      budget: { memoryGiB: number; source: string };
+      store: { path: string; present: boolean; scope: string };
+    };
+    expect(parsed).toEqual(await router.createCaller({}).residencyStatus({ node: "budget-node" }));
+    expect(parsed.budget).toEqual({ memoryGiB: 24, source: "noderun" });
+    expect(parsed.nodeRun.present).toBe(true);
+    expect(parsed.policy).toEqual({ present: false });
+    expect(parsed.store).toEqual({
+      path: storePath,
+      present: false,
+      scope: "serving-process",
+    });
+    expect(existsSync(join(runtimeDir, "residency-state"))).toBe(false);
+    expect(getResidencyLeaseRegistry()).toBeNull();
+  });
+
+  test("llamactl.residency.status advertises read-only annotations", async () => {
+    const { client } = await connected();
+    const list = await client.listTools();
+    const tool = list.tools.find((t) => t.name === "llamactl.residency.status");
+    expect(tool?.annotations?.readOnlyHint).toBe(true);
+  });
+
+  test("llamactl.residency.status registration stays inert", async () => {
+    process.env["LLAMACTL_RESIDENCY_STORE"] = join(
+      runtimeDir,
+      "residency-state",
+      "operations.sqlite",
+    );
+    const { client } = await connected();
+    expect(getResidencyLeaseRegistry()).toBeNull();
+    await client
+      .callTool({
+        name: "llamactl.residency.status",
+        arguments: { node: "local" },
+      })
+      .catch(() => undefined);
+    expect(getResidencyLeaseRegistry()).toBeNull();
+    expect(existsSync(join(runtimeDir, "residency-state"))).toBe(false);
   });
 
   test("llamactl.workload.apply dry-run previews kind/name/node without applying", async () => {
@@ -966,7 +1031,7 @@ describe("@llamactl/mcp M.1 pipeline-tool pickup", () => {
     const llamactlTools = list.tools
       .map((t) => t.name)
       .filter((n) => n.startsWith("llamactl.") && !n.startsWith("llamactl.pipeline."));
-    expect(llamactlTools.length).toBe(55);
+    expect(llamactlTools.length).toBe(56);
   });
 });
 

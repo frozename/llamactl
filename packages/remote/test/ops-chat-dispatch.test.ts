@@ -1,6 +1,7 @@
+import { getResidencyLeaseRegistry } from "@llamactl/core/residency/leases";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import { readOpsChatAudit } from "../src/ops-chat/audit.js";
 import {
@@ -11,8 +12,10 @@ import {
   toolSurfaces,
   toolTier,
 } from "../src/ops-chat/dispatch.js";
+import { openResidencyOperationStore } from "../src/residency/store.js";
 import { router } from "../src/router.js";
-import { mkdtempSync, rmSync } from "../src/safe-fs.js";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "../src/safe-fs.js";
+import { saveNodeRun } from "../src/workload/noderun-store.js";
 
 /**
  * N.4.a — ops-chat tool dispatch. Every handler returns a
@@ -192,6 +195,164 @@ describe("operatorRunTool", () => {
     const known = [...KNOWN_OPS_CHAT_TOOLS].sort();
     const got = [...listing.tools].sort();
     expect(got).toEqual(known);
+  });
+});
+
+describe("residency.status dispatch", () => {
+  /**
+   * #284 (DF-11) — `llamactl.residency.status` is a read-tier ops-chat
+   * tool projecting the read-only `residencyStatus` query. Registration
+   * must stay inert: dispatching it never installs the process-wide
+   * lease registry and the status read never creates the store.
+   */
+
+  test("registry advertises llamactl.residency.status as a read tool on mcp + ops-chat", () => {
+    process.env["LLAMACTL_WORKLOADS_DIR"] = join(runtimeDir, "workloads");
+    process.env["LLAMACTL_RESIDENCY_STORE"] = join(
+      runtimeDir,
+      "residency-state",
+      "operations.sqlite",
+    );
+    expect((KNOWN_OPS_CHAT_TOOLS as readonly string[]).includes("llamactl.residency.status")).toBe(
+      true,
+    );
+    const entry = OPS_CHAT_TOOLS.find((t) => (t.name as string) === "llamactl.residency.status");
+    expect(entry).toBeDefined();
+    expect(entry?.tier).toBe("read");
+    expect(entry?.surfaces).toEqual(["mcp", "ops-chat"]);
+  });
+
+  test("static-fleet default: dispatch returns the inert residencyStatus payload", async () => {
+    const storePath = join(runtimeDir, "residency-state", "operations.sqlite");
+    process.env["LLAMACTL_WORKLOADS_DIR"] = join(runtimeDir, "workloads");
+    process.env["LLAMACTL_RESIDENCY_STORE"] = storePath;
+
+    const before = readdirSync(runtimeDir).sort();
+    expect(getResidencyLeaseRegistry()).toBeNull();
+
+    const caller = router.createCaller({});
+    const expected = await caller.residencyStatus({ node: "local" });
+    const res = await caller.operatorRunTool({
+      name: "llamactl.residency.status",
+      arguments: { node: "local" },
+      dryRun: false,
+    });
+    expect(res.ok).toBe(true);
+    expect(res.tier).toBe("read");
+    expect(res.result).toEqual(expected);
+
+    const result = res.result as typeof expected;
+    expect(result.store).toEqual({
+      path: storePath,
+      present: false,
+      scope: "serving-process",
+    });
+    expect(result.policy).toEqual({ present: false });
+    expect(result.nodeRun).toEqual({ present: false });
+    expect(result.budget.source).toBe("computed");
+
+    expect(existsSync(join(runtimeDir, "residency-state"))).toBe(false);
+    const after = readdirSync(runtimeDir)
+      .sort()
+      .filter((name) => name !== basename(auditPath));
+    expect(after).toEqual(before);
+    expect(getResidencyLeaseRegistry()).toBeNull();
+
+    const tail = readOpsChatAudit({ path: auditPath });
+    expect(tail.entries).toHaveLength(1);
+    const entry = tail.entries[0]!;
+    expect(entry.tool).toBe("llamactl.residency.status");
+    expect(entry.ok).toBe(true);
+    expect(entry.dryRun).toBe(false);
+  });
+
+  test("dispatch round-trips residencyStatus against a seeded NodeRun + live store", async () => {
+    const workloadsDir = join(runtimeDir, "workloads");
+    const storePath = join(runtimeDir, "residency-state", "operations.sqlite");
+    process.env["LLAMACTL_WORKLOADS_DIR"] = workloadsDir;
+    process.env["LLAMACTL_RESIDENCY_STORE"] = storePath;
+
+    saveNodeRun(
+      {
+        apiVersion: "llamactl/v1",
+        kind: "NodeRun",
+        metadata: { name: "local", labels: {} },
+        spec: {
+          node: "local",
+          budget: { memoryGiB: 36 },
+          residency: { safetyMarginRatio: 0.5, idleEvictSeconds: 600 },
+          infra: [],
+        },
+      },
+      workloadsDir,
+    );
+
+    mkdirSync(dirname(storePath), { recursive: true });
+    const writer = openResidencyOperationStore({ path: storePath });
+    try {
+      const fence = writer.claimOwnership({ ownerId: "o", incarnation: "i" });
+      writer.beginOperation({
+        fenceToken: fence.fenceToken,
+        operationId: "op-a",
+        model: "m-a",
+        targetState: "ready",
+        desiredRevision: 1,
+        reservationGiB: 8,
+        nowMs: 1,
+      });
+    } finally {
+      writer.close();
+    }
+
+    const caller = router.createCaller({});
+    const expected = await caller.residencyStatus({ node: "local" });
+    const res = await caller.operatorRunTool({
+      name: "llamactl.residency.status",
+      arguments: { node: "local" },
+      dryRun: false,
+    });
+    expect(res.ok).toBe(true);
+    expect(res.tier).toBe("read");
+
+    const result = res.result as typeof expected;
+    expect(result.policy).toEqual({
+      present: true,
+      residency: { safetyMarginRatio: 0.5, idleEvictSeconds: 600 },
+    });
+    expect(result.budget).toEqual({ memoryGiB: 36, source: "noderun" });
+
+    const store = result.store;
+    expect(store.present).toBe(true);
+    if (!("nonterminalCount" in store)) {
+      throw new Error("expected residency store snapshot with a nonterminal listing");
+    }
+    expect(store.nonterminalCount).toBe(1);
+    expect(store.nonterminal[0]).toMatchObject({
+      operationId: "op-a",
+      model: "m-a",
+      targetState: "ready",
+      reservationGiB: 8,
+    });
+
+    expect(res.result).toEqual(expected);
+  });
+
+  test("missing node argument surfaces a dispatch error", async () => {
+    process.env["LLAMACTL_WORKLOADS_DIR"] = join(runtimeDir, "workloads");
+    process.env["LLAMACTL_RESIDENCY_STORE"] = join(
+      runtimeDir,
+      "residency-state",
+      "operations.sqlite",
+    );
+    const caller = router.createCaller({});
+    const res = await caller.operatorRunTool({
+      name: "llamactl.residency.status",
+      arguments: {},
+      dryRun: false,
+    });
+    expect(res.ok).toBe(false);
+    expect(res.error?.code).toBe("dispatch_error");
+    expect(res.error?.message).toContain("node");
   });
 });
 
