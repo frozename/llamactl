@@ -866,4 +866,110 @@ describe("unverified and failed stops keep the fence honest (#278 DF-05)", () =>
     });
     expect(reg.acquire(W)).toEqual({ ok: false, reason: "Unloaded", workload: W, epoch: 1 });
   });
+
+  test("a failed serverStart through the router leaves a verified stop unloaded", async () => {
+    const reg = createResidencyLeases();
+    setResidencyLeaseRegistry(reg);
+    const modelsDir = join(tmp, "models");
+    mkdirSync(modelsDir, { recursive: true });
+    Object.assign(process.env, {
+      LLAMA_CPP_BIN: join(tmp, "bin-missing"),
+      LLAMA_CPP_MODELS: modelsDir,
+      LLAMA_CPP_LOGS: join(tmp, "logs"),
+      LLAMA_CPP_USE_TUNED_ARGS: "false",
+    });
+
+    const stopped = await stopCaller().serverStop({ workload: W });
+    expect(stopped).toEqual({ stopped: true, pid: null, killed: false });
+    expect(reg.snapshot(W).phase).toBe("unloaded");
+
+    const stream = await router.createCaller({}).serverStart({
+      workload: W,
+      target: "missing.gguf",
+      skipTuned: true,
+    });
+    const events: unknown[] = [];
+    for await (const event of stream) {
+      events.push(event);
+    }
+
+    const done = events.find(
+      (e): e is { type: "done"; result: { ok: boolean } } =>
+        typeof e === "object" && e !== null && (e as { type?: unknown }).type === "done",
+    );
+    expect(done?.result.ok).toBe(false);
+    expect(reg.snapshot(W)).toEqual({
+      workload: W,
+      phase: "unloaded",
+      epoch: 1,
+      active: [],
+      waiters: 0,
+    });
+    expect(reg.acquire(W)).toEqual({ ok: false, reason: "Unloaded", workload: W, epoch: 1 });
+  });
+
+  test("a failed modelHostStart through the router leaves a verified stop unloaded", async () => {
+    const reg = createResidencyLeases();
+    setResidencyLeaseRegistry(reg);
+    const binDir = join(tmp, "bin");
+    mkdirSync(binDir, { recursive: true });
+    mkdirSync(join(tmp, "models"), { recursive: true });
+    Object.assign(process.env, { LLAMA_CPP_MODELS: join(tmp, "models") });
+    const port = pickPort();
+    // A binary that exits at once without ever serving: the start can never
+    // reach readiness, so startModelHost resolves ok:false.
+    const binary = join(binDir, "llama-host");
+    writeFileSync(binary, "#!/bin/bash\nexit 1\n", { mode: 0o755 });
+    saveModelHost(
+      parseModelHost(`
+apiVersion: llamactl/v1
+kind: ModelHost
+metadata:
+  name: ${HOST_REOPEN}
+spec:
+  engine: llamacpp
+  node: local
+  enabled: true
+  binary: ${binary}
+  endpoint:
+    host: 127.0.0.1
+    port: ${String(port)}
+  hostedModels:
+    - rel: m.gguf
+`),
+      tmp,
+    );
+
+    const stopped = await stopCaller().modelHostStop({ workload: HOST_REOPEN });
+    expect(stopped).toEqual({ ok: true, pid: null });
+    expect(reg.snapshot(HOST_REOPEN).phase).toBe("unloaded");
+
+    const stream = await router
+      .createCaller({})
+      .modelHostStart({ workload: HOST_REOPEN, timeoutSeconds: 2 });
+    const events: unknown[] = [];
+    for await (const event of stream) {
+      events.push(event);
+    }
+    registerSpawnedPid(join(runtimeRoot(), "workloads", HOST_REOPEN, "modelhost.pid"));
+
+    const done = events.find(
+      (e): e is { type: "done"; result: { ok: boolean } } =>
+        typeof e === "object" && e !== null && (e as { type?: unknown }).type === "done",
+    );
+    expect(done?.result.ok).toBe(false);
+    expect(reg.snapshot(HOST_REOPEN)).toEqual({
+      workload: HOST_REOPEN,
+      phase: "unloaded",
+      epoch: 1,
+      active: [],
+      waiters: 0,
+    });
+    expect(reg.acquire(HOST_REOPEN)).toEqual({
+      ok: false,
+      reason: "Unloaded",
+      workload: HOST_REOPEN,
+      epoch: 1,
+    });
+  });
 });
