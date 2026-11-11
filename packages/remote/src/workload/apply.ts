@@ -2,6 +2,7 @@ import type {
   ManagedAdmissionClaim,
   ManagedAdmissionDecision,
 } from "@llamactl/core/residency/admission";
+import type { MeasuredEnvelope } from "@llamactl/core/resources/memory";
 import type { spawn as nodeSpawn } from "node:child_process";
 
 import { server as serverMod, target as targetMod } from "@llamactl/core";
@@ -14,6 +15,7 @@ import {
 } from "@llamactl/core/engines/state";
 import { resolveEnv } from "@llamactl/core/env";
 import { omitUndefined } from "@llamactl/core/object";
+import { currentSessionRefcounts } from "@llamactl/core/residency/sessions";
 import {
   appendFleetJournal,
   chooseBestNode,
@@ -30,6 +32,7 @@ import {
 import { basename } from "node:path";
 
 import type { GatewayDispatch } from "./gateway-handlers/types.js";
+import type { NodeRunResidency } from "./noderun-schema.js";
 import type { ModelRun, ModelRunStatus, ModelRunWorker } from "./schema.js";
 
 import {
@@ -38,6 +41,7 @@ import {
   declaredModelHostMemoryGiB,
   defaultNodeBudgetGiB,
   estimateModelHostMemoryGiB,
+  modelHostAdmissionChargeGiB,
   type TargetAdmissionAuthority,
   type TargetAdmissionClaimHandle,
 } from "./admission.js";
@@ -219,6 +223,13 @@ export interface ApplyManifestOptions {
     modelFilePenaltyMb?: number;
     /** Nodes whose latest snapshot is older than this many ms are excluded. Default 150000 (5× 30s tick). staleCutoffMs <= 0 disables filtering. */
     staleCutoffMs?: number;
+  };
+  /** #277 DF-04 opt-in: measured calibration envelopes in ModelHost budget
+   *  admission. Absent => charging is unchanged. Synchronous so the default
+   *  path gains no await; no production caller passes it yet. */
+  residencyAdmission?: {
+    getNodeResidencyPolicy: (nodeName: string) => NodeRunResidency | null | undefined;
+    getMeasuredEnvelope: (manifest: ModelHostManifest) => MeasuredEnvelope | null | undefined;
   };
 }
 
@@ -497,7 +508,20 @@ function admitModelHostBudget(
     .filter((m) => m.metadata.name !== manifest.metadata.name)
     .filter((m) => m.spec.node === manifest.spec.node)
     .filter((m) => m.spec.enabled);
-  const expectedMemoryGiB = estimateModelHostMemoryGiB(manifest, resolved);
+  const estimateGiB = estimateModelHostMemoryGiB(manifest, resolved);
+  let expectedMemoryGiB = estimateGiB;
+  if (opts.residencyAdmission !== undefined) {
+    const policy = opts.residencyAdmission.getNodeResidencyPolicy(manifest.spec.node);
+    const policyPresent = policy !== null && policy !== undefined;
+    const envelope = policyPresent
+      ? opts.residencyAdmission.getMeasuredEnvelope(manifest)
+      : undefined;
+    expectedMemoryGiB = modelHostAdmissionChargeGiB({
+      estimateGiB,
+      residencyPolicyPresent: policyPresent,
+      envelope,
+    });
+  }
   const admit = computeNodeBudget({
     nodeName: manifest.spec.node,
     nodeBudgetGiB: budget,
@@ -694,6 +718,10 @@ export async function applyOneModelHost(
       headroomMinGiB: number;
       safetyFactor?: number;
     };
+    residencyAdmission?: {
+      getNodeResidencyPolicy: (nodeName: string) => NodeRunResidency | null | undefined;
+      getMeasuredEnvelope: (manifest: ModelHostManifest) => MeasuredEnvelope | null | undefined;
+    };
   },
 ): Promise<ApplyManifestOutcome> {
   return await applyModelHostManifest(manifest, {
@@ -703,6 +731,9 @@ export async function applyOneModelHost(
     ...(opts?.workloadsDir !== undefined ? { workloadsDir: opts.workloadsDir } : {}),
     ...(opts?.getNodeBudgetGiB !== undefined ? { getNodeBudgetGiB: opts.getNodeBudgetGiB } : {}),
     ...(opts?.supervisor !== undefined ? { supervisor: opts.supervisor } : {}),
+    ...(opts?.residencyAdmission !== undefined
+      ? { residencyAdmission: opts.residencyAdmission }
+      : {}),
   });
 }
 
@@ -919,7 +950,9 @@ interface ApplyOneOpts {
    * #520 active-session protection: consulted before any eviction stops a
    * workload. Opt-in and inert unless supplied. NON-FENCING: it narrows
    * but does not close the race with a concurrent acquire; fencing is
-   * deferred to the #278 lease composition. */
+   * deferred to the #278 lease composition. When omitted, the installed
+   * process-wide registry (via currentSessionRefcounts()) is consulted;
+   * if no registry is installed, eviction proceeds as before. */
   sessionGate?: SessionUnloadGate;
   /** Shared deadline per verified evict victim covering its status read,
    * stop and release check before the apply fails. Default 15_000
@@ -934,6 +967,24 @@ interface ApplyOneOpts {
 
 interface SessionUnloadGate {
   checkUnload(workload: string): { ok: true } | { ok: false; sessions?: readonly string[] };
+}
+
+/** Resolve an evict session gate from explicit opts or the installed registry.
+ * When opts.sessionGate is explicitly provided it is returned; otherwise the
+ * process-wide registry (currentSessionRefcounts()) is consulted and wrapped
+ * as a SessionUnloadGate.  Returns null when no registry is installed,
+ * keeping eviction behaviour unchanged. */
+function resolveEvictSessionGate(opts: ApplyOneOpts | undefined): SessionUnloadGate | null {
+  if (opts?.sessionGate !== undefined) return opts.sessionGate;
+  const registry = currentSessionRefcounts();
+  if (registry === null) return null;
+  return {
+    checkUnload: (workload: string): { ok: true } | { ok: false; sessions?: readonly string[] } => {
+      const check = registry.checkUnload(workload);
+      if (check.ok) return { ok: true };
+      return { ok: false, sessions: check.sessions };
+    },
+  };
 }
 
 type ServerStatusSnapshot = Awaited<ReturnType<WorkloadClient["serverStatus"]["query"]>>;
@@ -1621,8 +1672,8 @@ function checkEvictTarget(
 }
 
 function checkEvictSessionGate(ctx: ConvergeServerContext, target: string): ApplyResult | null {
-  const gate = ctx.opts?.sessionGate;
-  if (gate === undefined) return null;
+  const gate = resolveEvictSessionGate(ctx.opts);
+  if (gate === null) return null;
   let check: { ok: true } | { ok: false; sessions?: readonly string[] };
   try {
     check = gate.checkUnload(target);

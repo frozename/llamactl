@@ -2506,4 +2506,27 @@ describe("runNodeGroups (#221)", () => {
     expect(outcome).toBe(failure);
     expect([...ran].sort((a, b) => a - b)).toEqual([0, 1, 2]);
   });
+
+  test("several rejections in one group rethrow the first error (index 0's)", async () => {
+    // A single group means one worker awaits strictly in order, so it records
+    // index 0's rejection before index 2 runs: no cross-worker microtask ordering.
+    const ran: number[] = [];
+    const first = new Error("index 0 failed");
+    const second = new Error("index 2 failed");
+    const run = (index: number): Promise<void> => {
+      ran.push(index);
+      if (index === 0) return Promise.reject(first);
+      if (index === 2) return Promise.reject(second);
+      return Promise.resolve();
+    };
+
+    const outcome: unknown = await runNodeGroups([[0, 1, 2]], 2, run).then(
+      () => "resolved",
+      (err: unknown): unknown => err,
+    );
+
+    expect(outcome).toBe(first);
+    expect(outcome).not.toBe(second);
+    expect(ran).toEqual([0, 1, 2]);
+  });
 });
