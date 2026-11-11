@@ -869,3 +869,136 @@ test("#520: a forced unload releases the session synchronously, exactly once", a
     t.cleanup();
   }
 });
+
+test("#520: session ID exceeding max length returns 400", async () => {
+  const t = tempKvEnv();
+  try {
+    const sessionsMod = await loadSessionsModule();
+    const leasesMod = await loadLeaseModule();
+    writeLocalModelRunWorkload(t.root, "wl-a", WL_A_PORT);
+    installFetchStub(
+      () =>
+        new Response(UPSTREAM_TEXT, {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    const { spy: sessions } = installSessionRefcounts(sessionsMod, () => 1_000);
+    installSpyRegistry(leasesMod);
+
+    const longId = "s".repeat(129);
+    const res = await openaiProxy.proxyOpenAI(
+      embeddingsRequest(KV_MODEL, { [SESSION_HEADER]: longId }),
+      t.env,
+    );
+    expect(res.status).toBe(400);
+    const error = await readProxyError(res);
+    expect(error.code).toBe("InvalidSessionId");
+    expect(error.type).toBe("session_id_invalid");
+    expect(sessions.releaseCalls).toEqual([]);
+    expect(sessions.activeSessions("wl-a")).toEqual([]);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("#520: session ID with invalid characters returns 400", async () => {
+  const t = tempKvEnv();
+  try {
+    const sessionsMod = await loadSessionsModule();
+    const leasesMod = await loadLeaseModule();
+    writeLocalModelRunWorkload(t.root, "wl-a", WL_A_PORT);
+    installFetchStub(
+      () =>
+        new Response(UPSTREAM_TEXT, {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    const { spy: sessions } = installSessionRefcounts(sessionsMod, () => 1_000);
+    installSpyRegistry(leasesMod);
+
+    const res = await openaiProxy.proxyOpenAI(
+      embeddingsRequest(KV_MODEL, { [SESSION_HEADER]: "s@#$invalid" }),
+      t.env,
+    );
+    expect(res.status).toBe(400);
+    const error = await readProxyError(res);
+    expect(error.code).toBe("InvalidSessionId");
+    expect(error.type).toBe("session_id_invalid");
+    expect(sessions.releaseCalls).toEqual([]);
+    expect(sessions.activeSessions("wl-a")).toEqual([]);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("#520: session releases on 503 draining refusal", async () => {
+  const t = tempKvEnv();
+  try {
+    const sessionsMod = await loadSessionsModule();
+    const leasesMod = await loadLeaseModule();
+    writeLocalModelRunWorkload(t.root, "wl-a", WL_A_PORT);
+    installFetchStub(
+      () =>
+        new Response(UPSTREAM_TEXT, {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    const { spy: sessions } = installSessionRefcounts(sessionsMod, () => 1_000);
+    const { spy: leases } = installSpyRegistry(leasesMod);
+
+    sessions.acquire("s1", "wl-a");
+    const drain = leases.beginDrain("wl-a");
+    expect(drain.ok).toBe(true);
+
+    const res = await openaiProxy.proxyOpenAI(
+      embeddingsRequest(KV_MODEL, { [SESSION_HEADER]: "s1" }),
+      t.env,
+    );
+    expect(res.status).toBe(503);
+    const error = await readProxyError(res);
+    expect(error.code).toBe("Draining");
+    expect(sessions.releaseCalls).toEqual(["s1"]);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("#520: session releases on 503 not loaded refusal", async () => {
+  const t = tempKvEnv();
+  try {
+    const sessionsMod = await loadSessionsModule();
+    const leasesMod = await loadLeaseModule();
+    writeLocalModelRunWorkload(t.root, "wl-a", WL_A_PORT);
+    installFetchStub(
+      () =>
+        new Response(UPSTREAM_TEXT, {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    const { spy: sessions } = installSessionRefcounts(sessionsMod, () => 1_000);
+    const { spy: leases } = installSpyRegistry(leasesMod);
+
+    sessions.acquire("s1", "wl-a");
+    const drain = leases.beginDrain("wl-a");
+    expect(drain.ok).toBe(true);
+    const unload = leases.commitUnload(
+      (drain as unknown as { token: { workload: string; epoch: number } }).token,
+    );
+    expect(unload.ok).toBe(true);
+
+    const res = await openaiProxy.proxyOpenAI(
+      embeddingsRequest(KV_MODEL, { [SESSION_HEADER]: "s1" }),
+      t.env,
+    );
+    expect(res.status).toBe(503);
+    const error = await readProxyError(res);
+    expect(error.code).toBe("Unloaded");
+    expect(sessions.releaseCalls).toEqual(["s1"]);
+  } finally {
+    t.cleanup();
+  }
+});

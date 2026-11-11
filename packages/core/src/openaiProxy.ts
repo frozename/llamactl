@@ -73,6 +73,8 @@ const anthropicStreamCompletionByResponse = new WeakMap<Response, Promise<boolea
 
 const MAX_JSON_BODY_BYTES = 10 * 1024 * 1024;
 const SESSION_HEADER = "x-llamactl-session";
+const MAX_SESSION_ID_LENGTH = 128;
+const SESSION_ID_PATTERN = /^[A-Za-z0-9._:-]+$/;
 
 /**
  * OpenAI-compatible gateway in front of the local llama-server.
@@ -3042,6 +3044,9 @@ function composeLeaseIntoInit(context: ProxyContext, lease: Lease): void {
  * lease to the final response body. On a null body or any throw the lease is
  * released exactly once and the client-abort listener is detached; with a
  * body the lease lives until the bound stream settles (or is revoked).
+ * When lease is null (peer route or no workload), session release is
+ * performed immediately in the finally block since there is no body
+ * binding to defer it.
  */
 async function forwardAndBindResidencyLease(
   context: ProxyContext,
@@ -3079,23 +3084,50 @@ async function forwardAndBindResidencyLease(
       if (onClientAbort !== null) {
         context.req.signal.removeEventListener("abort", onClientAbort);
       }
-      if (typeof onSessionRelease === "function") {
-        onSessionRelease();
-      }
+    }
+    if (lease === null && typeof onSessionRelease === "function") {
+      onSessionRelease();
     }
   }
 }
 
 /**
- * #278 (DF-05): acquire a session and return a 409 on affinity conflict,
- * or a `{ ok, release }` handle for successful acquires. Returns `null`
- * when neither session nor residency seams are active.
+ * #278 (DF-05): validate and acquire a session, returning a 400 on
+ * validation failure, a 409 on affinity conflict, or a `{ ok, release }`
+ * handle for successful acquires. Returns `null` when the route is
+ * peer-routed or has no workload — peer routes bypass session tracking,
+ * and workload-less requests bypass residency entirely.
  */
 function acquireProxySession(
   sessionRegistry: SessionRefcounts,
   sessionId: string,
   route: RoutedEntry | undefined,
 ): Response | { ok: true; release: (() => void) | null } | null {
+  if (route?.isPeer === true) return null;
+  if (sessionId.length > MAX_SESSION_ID_LENGTH) {
+    return Response.json(
+      {
+        error: {
+          message: `session ID exceeds maximum length of ${String(MAX_SESSION_ID_LENGTH)}`,
+          type: "session_id_invalid",
+          code: "InvalidSessionId",
+        },
+      },
+      { status: 400 },
+    );
+  }
+  if (!SESSION_ID_PATTERN.test(sessionId)) {
+    return Response.json(
+      {
+        error: {
+          message: `session ID contains invalid characters`,
+          type: "session_id_invalid",
+          code: "InvalidSessionId",
+        },
+      },
+      { status: 400 },
+    );
+  }
   const workload = route?.workload;
   if (workload === undefined) return { ok: true, release: null };
   const sessionAcquireResult = sessionRegistry.acquire(sessionId, workload);
