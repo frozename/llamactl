@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { resolveEnv } from "../src/env.js";
+import { processStartMs } from "../src/pidIdentity.js";
 import { rpcServerStatus, startRpcServer, stopRpcServer } from "../src/rpcServer.js";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 import { reapFakeProcesses } from "./fake-process-reaper.js";
@@ -12,6 +13,7 @@ let tmp = "";
 let resolved: ReturnType<typeof resolveEnv>;
 let resolvedReady = false;
 const origEnv = { ...process.env };
+const FILE_LOADED_MS = Date.now();
 
 // Fake rpc-server: a bash-wrapped Bun one-liner that binds a TCP
 // port and accepts connections until SIGTERM. Matches what the real
@@ -51,7 +53,12 @@ function isLiveFakeRpcServer(pid: number): boolean {
   const line = res.stdout.trim();
   if (res.status !== 0 || line === "" || line.startsWith("Z")) return false;
   const argv0 = line.split(/\s+/)[1] ?? "";
-  return argv0.slice(argv0.lastIndexOf("/") + 1) === "rpc-server";
+  if (argv0.slice(argv0.lastIndexOf("/") + 1) !== "rpc-server") return false;
+  // Identity guard before the SIGKILL fallback: only this file's fake (its
+  // inline script reads FAKE_PORT) started after the file loaded, so a
+  // reused pid now held by a real rpc-server is never signalled.
+  const startedMs = processStartMs(pid);
+  return line.includes("FAKE_PORT") && startedMs !== null && startedMs >= FILE_LOADED_MS - 1000;
 }
 
 function pickPort(): number {
