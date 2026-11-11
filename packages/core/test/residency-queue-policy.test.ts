@@ -1314,3 +1314,23 @@ test("#281: starved background enqueued before interactive-2 outranks interactiv
     modelKey: "m@1",
   });
 });
+
+test("#281: queueLimits returns a copy, so mutating it cannot change a live policy's limits", async () => {
+  const mod = await load();
+  const configured = lim({ maxQueued: 2, maxExecutions: 1 });
+  const policy = mod.createRequestQueuePolicy({
+    limits: configured,
+    now: (): number => 1_000,
+    resident: [],
+  });
+  const withLimits = policy as QueuePolicy & { queueLimits: () => Limits };
+  const first = withLimits.queueLimits();
+  expect(first).toEqual(configured);
+  first.maxQueued = 0;
+  first.maxExecutions = 0;
+  expect(policy.enqueue(q("after-mutation"))).toEqual({
+    kind: "queued",
+    requestId: "after-mutation",
+  });
+  expect(withLimits.queueLimits()).toEqual(configured);
+});
