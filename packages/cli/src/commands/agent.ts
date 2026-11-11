@@ -68,25 +68,24 @@ Subcommands:
         [--tunnel-node-name=<name>]
         [--tunnel-central=true] [--tunnel-bearer=<token> | --tunnel-bearer-file=<abs path>]
         [--tunnel-journal=<path>] [--fleet-journal=<path>]
-       Run the node agent (blocks until SIGINT/SIGTERM).
-       With --dial-central + --central-bearer (or --central-bearer-file),
-       the agent additionally dials a central's /tunnel endpoint so its
-       tRPC router is reachable through the reverse tunnel. With no
-       literal flag or --central-bearer-file, the bearer is read by
-       default from <dir>/tunnel-bearer when present (0600 required),
-       then from a 0600 file named by LLAMACTL_TUNNEL_BEARER_FILE. The
-       plain LLAMACTL_TUNNEL_BEARER env var still works but is
-       deprecated; prefer the file so the token never lands in a unit
-       file or process env.
-       With --tunnel-central=true + --tunnel-bearer (or
-       --tunnel-bearer-file), the agent mounts /tunnel (WS upgrade) and
-       /tunnel-relay on itself so NAT'd nodes can dial in. With no
-       literal flag or --tunnel-bearer-file, the bearer is read by
-       default from <dir>/tunnel-central-bearer when present (0600
-       required), then from a 0600 file named by
-       LLAMACTL_TUNNEL_CENTRAL_BEARER_FILE. The plain
-       LLAMACTL_TUNNEL_CENTRAL_BEARER env var still works but is
-       deprecated.
+      Run the node agent (blocks until SIGINT/SIGTERM).
+      With --dial-central + --central-bearer (or --central-bearer-file),
+      the agent additionally dials a central's /tunnel endpoint so its
+      tRPC router is reachable through the reverse tunnel. The dial
+      bearer is taken from the first source present, in order:
+      --central-bearer, then --central-bearer-file, then a 0600 file
+      named by LLAMACTL_TUNNEL_BEARER_FILE, then <dir>/tunnel-bearer
+      (0600 required), then the plain LLAMACTL_TUNNEL_BEARER env var
+      (deprecated; prefer a file so the token never lands in a unit
+      file or process env).
+      With --tunnel-central=true + --tunnel-bearer (or
+      --tunnel-bearer-file), the agent mounts /tunnel (WS upgrade) and
+      /tunnel-relay on itself so NAT'd nodes can dial in. The central
+      bearer is taken from the first source present, in order:
+      --tunnel-bearer, then --tunnel-bearer-file, then a 0600 file
+      named by LLAMACTL_TUNNEL_CENTRAL_BEARER_FILE, then
+      <dir>/tunnel-central-bearer (0600 required), then the plain
+      LLAMACTL_TUNNEL_CENTRAL_BEARER env var (deprecated).
       --tunnel-journal overrides the JSONL audit path for tunnel
       events (default ~/.llamactl/tunnel/journal.jsonl, also
       settable via LLAMACTL_TUNNEL_JOURNAL).
@@ -233,27 +232,29 @@ ${DIR_FLAG_HELP}
   --central-bearer=<token>    Tunnel bearer for --dial-central
   --central-bearer-file=<abs path>
                               0600 file holding the dial-side tunnel
-                              bearer. Otherwise read by default from
+                              bearer. Precedence: --central-bearer, then
+                              --central-bearer-file, then the 0600 file
+                              named by LLAMACTL_TUNNEL_BEARER_FILE, then
                               <dir>/tunnel-bearer when present (0600
-                              required), then from LLAMACTL_TUNNEL_BEARER_FILE.
-                              LLAMACTL_TUNNEL_BEARER still works but is
-                              deprecated; prefer a file under
+                              required), then LLAMACTL_TUNNEL_BEARER
+                              (deprecated; prefer a file under
                               launchd/systemd so the token never lands in
-                              a unit file or process env.
+                              a unit file or process env).
   --tunnel-node-name=<name>   Identity in the tunnel hello frame
                               (default: nodeName from agent.yaml)
   --tunnel-central=true       Mount /tunnel and /tunnel-relay so NAT'd nodes can dial in
   --tunnel-bearer=<token>     Bearer for --tunnel-central
   --tunnel-bearer-file=<abs path>
                               0600 file holding the central bearer.
-                              Otherwise read by default from
-                              <dir>/tunnel-central-bearer when present
-                              (0600 required), then from
-                              LLAMACTL_TUNNEL_CENTRAL_BEARER_FILE.
-                              LLAMACTL_TUNNEL_CENTRAL_BEARER still works
-                              but is deprecated; prefer a file under
-                              launchd/systemd so the token never lands
-                              in a unit file or process env.
+                              Precedence: --tunnel-bearer, then
+                              --tunnel-bearer-file, then the 0600 file
+                              named by LLAMACTL_TUNNEL_CENTRAL_BEARER_FILE,
+                              then <dir>/tunnel-central-bearer when present
+                              (0600 required), then
+                              LLAMACTL_TUNNEL_CENTRAL_BEARER (deprecated;
+                              prefer a file under launchd/systemd so the
+                              token never lands in a unit file or process
+                              env).
   --tunnel-journal=<path>     Tunnel audit JSONL (default: ~/.llamactl/tunnel/journal.jsonl,
                               or LLAMACTL_TUNNEL_JOURNAL)
   --fleet-journal=<path>      Fleet journal served at GET /v1/fleet/snapshot
