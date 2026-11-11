@@ -1055,6 +1055,40 @@ function maybeCreateTunnelServer(opts: StartAgentOptions): TunnelServer | null {
 }
 
 /**
+ * Last, and bounded: bonjour's stop has no timeout, and a hung one must
+ * not keep the tunnel serving or hold stop() open. The waits here run
+ * concurrently, so stop() stays inside the drain timeout plus three flush
+ * windows: the drain's, the shared one in stop and this one. The in-flight
+ * wait only joins this window when a declared source is registered; without
+ * the opt-in stop() never waits on a client request at all. With neither
+ * opt-in nor mDNS there is nothing to flush: no await at all, so the default
+ * stop() keeps its pre-#610 timing.
+ */
+async function finalFlushWindow(
+  servedRequests: { untilIdle: () => Promise<void> } | null,
+  mdns: PublishedAgent | null,
+): Promise<void> {
+  const finalFlush: Promise<boolean>[] = [];
+  if (servedRequests !== null) {
+    // Requests already inside the handler when the listener went away
+    // answer their route miss later, from the declared source, so this
+    // window is what makes the source outlive them (DF-07).
+    finalFlush.push(within(TERMINAL_FLUSH_MS, servedRequests.untilIdle()));
+  }
+  if (mdns) {
+    finalFlush.push(
+      within(
+        TERMINAL_FLUSH_MS,
+        mdns.stop().catch(() => undefined),
+      ),
+    );
+  }
+  if (finalFlush.length > 0) {
+    await Promise.all(finalFlush);
+  }
+}
+
+/**
  * Starts a Bun HTTP(S) server that exposes the llamactl tRPC router
  * behind bearer-token auth. The fetchRequestHandler is the same surface
  * the Electron main process mounts via electron-trpc — one router,
@@ -1084,7 +1118,6 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
 
   startSearchIngest().catch(() => undefined);
   const stopPeerSnapshotPoller = maybeStartPeerSnapshotPoller(opts);
-  const unregisterDeclaredModels = maybeRegisterDeclaredModels(opts);
   const nodeName = opts.nodeName ?? process.env["LLAMACTL_NODE_NAME"] ?? "agent";
   agentInfo.set(
     {
@@ -1119,7 +1152,7 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     workerRpc,
   });
   const servedRequests =
-    unregisterDeclaredModels === null ? null : trackServedRequests(baseFetchHandler);
+    opts.declaredModels === true ? trackServedRequests(baseFetchHandler) : null;
   const fetchHandler = servedRequests?.handler ?? baseFetchHandler;
 
   const wsConfig = tunnelServer ? tunnelServer.websocket : null;
@@ -1134,6 +1167,11 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
       ? { idleTimeoutSeconds: opts.idleTimeoutSeconds }
       : {}),
   });
+  // Registered only once the listener is actually up: a failed bind (port
+  // in use) must not leave the module-global declared source behind a
+  // server that never existed (DF-07 review). Binding is synchronous and
+  // this call is the next statement, so no request can observe the gap.
+  const unregisterDeclaredModels = maybeRegisterDeclaredModels(opts);
 
   const scheme = opts.tls && !allowPlainHttp ? "https" : "http";
   const listenPort = server.port ?? port;
@@ -1190,29 +1228,7 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
         }
         void server.stop(true);
         workerRpc?.unpublish();
-        // Last, and bounded: bonjour's stop has no timeout, and a hung one
-        // must not keep the tunnel serving or hold stop() open. The waits
-        // here run concurrently, so stop() stays inside the drain timeout
-        // plus three flush windows: the drain's, the shared one above and
-        // this one. The in-flight wait only joins this window when a
-        // declared source is registered; without the opt-in stop() never
-        // waits on a client request at all.
-        const finalFlush: Promise<boolean>[] = [];
-        if (servedRequests !== null) {
-          // Requests already inside the handler when the listener went away
-          // answer their route miss later, from the declared source, so this
-          // window is what makes the source outlive them (DF-07).
-          finalFlush.push(within(TERMINAL_FLUSH_MS, servedRequests.untilIdle()));
-        }
-        if (mdns) {
-          finalFlush.push(
-            within(
-              TERMINAL_FLUSH_MS,
-              mdns.stop().catch(() => undefined),
-            ),
-          );
-        }
-        await Promise.all(finalFlush);
+        await finalFlushWindow(servedRequests, mdns);
         // Unregister the declared-model source only once the HTTP server, the
         // tunnel client and every request that could still read it are done:
         // while any of them is up, a cold pin must still get its declared

@@ -12,6 +12,12 @@
  * seam — without the opt-in nothing is tracked, so `stop()` never waits on
  * a client request — and (g) pins where the source takes its `liveModelIds`
  * from: a fresh read of the local routes, not the proxy's cached ones.
+ *
+ * (h) pins the release side of the tracking: a settled request must drop
+ * the count, or every later `stop()` burns the whole flush window, and (i)
+ * pins that a request still in flight releases the moment it settles
+ * rather than at the window end. (j) pins the failed-bind path: a
+ * `Bun.serve` that throws must not leave the source registered.
  */
 import { openaiProxy } from "@llamactl/core";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
@@ -409,5 +415,72 @@ describe("declared cold-model source opt-in (#280 DF-07)", () => {
 
     const served = await running.handleRequest!(postChatCompletions(COLD_PIN), LOOPBACK_CLIENT);
     expect(served.status).toBe(200);
+  });
+
+  test("(h) opt-in: stop() after a completed request returns well under the flush window", async () => {
+    setupSandbox();
+    writeRunColdManifest();
+    const running = startAgentServer(agentOptions(true));
+    agent = running;
+
+    const res = await running.handleRequest!(postChatCompletions(COLD_PIN), LOOPBACK_CLIENT);
+    expect(res.status).toBe(503);
+    await res.text();
+
+    // A request that already settled must have released its slot; without
+    // the release the count never drops and untilIdle() hangs to the
+    // window end, so stop() sits idle for the full TERMINAL_FLUSH_MS.
+    const startedAt = Date.now();
+    await running.stop();
+    agent = null;
+    expect(Date.now() - startedAt).toBeLessThan(TERMINAL_FLUSH_MS);
+    expect(openaiProxy.listOpenAIModels().declared).toEqual([]);
+  });
+
+  test("(i) opt-in: stop() returns the moment the in-flight request settles, not at the window end", async () => {
+    setupSandbox();
+    writeRunColdManifest();
+    const running = startAgentServer(agentOptions(true));
+    agent = running;
+
+    const inflight = running.handleRequest!(
+      lateBodyChatCompletions(COLD_PIN, 150),
+      LOOPBACK_CLIENT,
+    );
+    const startedAt = Date.now();
+    const stopPromise = running.stop();
+
+    const res = await inflight;
+    expect(res.status).toBe(503);
+    await res.text();
+    const settledAt = Date.now();
+
+    await stopPromise;
+    agent = null;
+    // The request settles at ~150 ms; the unregister must follow it
+    // immediately. A slot that is never released keeps untilIdle() pending
+    // until the window times out, i.e. stop() closes only at ~1000 ms.
+    expect(settledAt - startedAt).toBeLessThan(TERMINAL_FLUSH_MS);
+    expect(Date.now() - settledAt).toBeLessThan(TERMINAL_FLUSH_MS / 2);
+    expect(openaiProxy.listOpenAIModels().declared).toEqual([]);
+  });
+
+  test("(j) opt-in: a failed bind unregisters the declared source before the error escapes", async () => {
+    setupSandbox();
+    writeRunColdManifest();
+    // A plain server holds the port with no SO_REUSEPORT, so the agent's
+    // reusePort bind fails with EADDRINUSE inside startBunServer.
+    const occupied = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: () => new Response("busy"),
+    });
+    const occupiedPort = occupied.port ?? 0;
+    try {
+      expect(() => startAgentServer({ ...agentOptions(true), port: occupiedPort })).toThrow();
+      expect(openaiProxy.listOpenAIModels().declared).toEqual([]);
+    } finally {
+      await occupied.stop(true);
+    }
   });
 });
