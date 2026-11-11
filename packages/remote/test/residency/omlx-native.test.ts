@@ -10,8 +10,12 @@
 import type { ResidencyLeases } from "@llamactl/core/residency/leases";
 
 import * as coreEngines from "@llamactl/core/engines";
-import { createResidencyLeases } from "@llamactl/core/residency/leases";
-import { afterEach, describe, expect, test } from "bun:test";
+import {
+  createResidencyLeases,
+  getResidencyLeaseRegistry,
+  setResidencyLeaseRegistry,
+} from "@llamactl/core/residency/leases";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 // Pinned jundot/omlx revision: server.py list_models_status,
 // load_model_public, unload_model and /api/status (engine_pool.get_status).
@@ -1215,5 +1219,156 @@ describe("lease fencing", () => {
     expect(fake.counts.unloadPosts).toBe(0);
     expect(registry.snapshot(W)).toMatchObject({ phase: "open", epoch: 1, active: [] });
     expect(registry.acquire(W).ok).toBe(true);
+  });
+});
+
+describe("published lease registry (#615 seam)", () => {
+  const W = "omlx-host";
+  let previous: ResidencyLeases | null = null;
+  const started: FakeOmlx[] = [];
+
+  type AgentClientFactory = (
+    opts: Omit<ClientOpts, "leases"> & { workload: string },
+  ) => NativeClient;
+
+  // Same guarded-import pattern as loadClientModule: at the pinned base the
+  // export does not exist, so every case fails on the typeof assertion.
+  async function loadAgentFactory(): Promise<AgentClientFactory> {
+    const href = new URL("../../src/residency/engine-client.ts", import.meta.url).href;
+    const rec = (await import(href).catch(() => ({}))) as Record<string, unknown>;
+    expect(typeof rec["createAgentOmlxNativeClient"]).toBe("function");
+    return rec["createAgentOmlxNativeClient"] as AgentClientFactory;
+  }
+
+  function startFake(): FakeOmlx {
+    const fake = startFakeOmlx({ apiKey: "test-key" });
+    started.push(fake);
+    return fake;
+  }
+
+  beforeEach(() => {
+    previous = getResidencyLeaseRegistry();
+  });
+
+  afterEach(async () => {
+    setResidencyLeaseRegistry(previous);
+    const pending = started.splice(0);
+    await Promise.all(pending.map((fake): Promise<void> => fake.stop()));
+  });
+
+  test("P1 published registry fences unload until the lease releases", async () => {
+    const factory = await loadAgentFactory();
+    const registry = createResidencyLeases();
+    setResidencyLeaseRegistry(registry);
+    const fake = startFake();
+    fake.state.models.get(ID)!.loaded = true;
+    const client = factory({ ...baseClientOpts(fake.endpoint), workload: W });
+
+    const acquired = getResidencyLeaseRegistry()!.acquire(W);
+    expect(acquired.ok).toBe(true);
+    if (!acquired.ok) {
+      throw new Error(`acquire(${W}) refused`);
+    }
+
+    expect(await client.unload()).toStrictEqual({
+      kind: "refused",
+      reason: "LeasesActive",
+      reservation: "held",
+      active: [acquired.lease.id],
+    });
+    expect(fake.counts.unloadPosts).toBe(0);
+    expect(registry.snapshot(W).phase).toBe("open");
+
+    acquired.lease.release();
+
+    expect(await client.unload()).toStrictEqual({
+      kind: "unloaded",
+      modelId: ID,
+      reservation: "released",
+    });
+    expect(fake.counts.unloadPosts).toBe(1);
+    expect(registry.snapshot(W).phase).toBe("unloaded");
+    expect(registry.acquire(W)).toMatchObject({ ok: false, reason: "Unloaded" });
+  });
+
+  test("P2 native load reopens the same published ledger", async () => {
+    const factory = await loadAgentFactory();
+    const registry = createResidencyLeases();
+    setResidencyLeaseRegistry(registry);
+    const fake = startFake();
+    fake.state.models.get(ID)!.loaded = true;
+    const client = factory({ ...baseClientOpts(fake.endpoint), workload: W });
+
+    expect(await client.unload()).toStrictEqual({
+      kind: "unloaded",
+      modelId: ID,
+      reservation: "released",
+    });
+    expect(registry.snapshot(W).phase).toBe("unloaded");
+    expect(registry.acquire(W)).toMatchObject({ ok: false, reason: "Unloaded" });
+
+    expect(await client.load()).toMatchObject({ kind: "loaded" });
+    expect(registry.snapshot(W).phase).toBe("open");
+    expect(registry.acquire(W).ok).toBe(true);
+  });
+
+  test("P3 inert default: without a published registry the factory adds no fencing", async () => {
+    expect(getResidencyLeaseRegistry()).toBeNull();
+    const unpublished = createResidencyLeases();
+    const held = unpublished.acquire(W);
+    expect(held.ok).toBe(true);
+    if (!held.ok) {
+      throw new Error(`acquire(${W}) refused`);
+    }
+
+    const fakeA = startFake();
+    fakeA.state.models.get(ID)!.loaded = true;
+    const fakeB = startFake();
+    fakeB.state.models.get(ID)!.loaded = true;
+
+    const plain = (await loadClientModule()).createOmlxNativeClient(baseClientOpts(fakeA.endpoint));
+    const factory = await loadAgentFactory();
+    const viaFactory = factory({ ...baseClientOpts(fakeB.endpoint), workload: W });
+
+    expect(viaFactory instanceof Promise).toBe(false);
+    expect(Object.keys(viaFactory).sort()).toStrictEqual(["load", "status", "unload"]);
+
+    const viaFactoryResult = await viaFactory.unload();
+    const plainResult = await plain.unload();
+    expect(viaFactoryResult).toStrictEqual(plainResult);
+    expect(viaFactoryResult).toStrictEqual({
+      kind: "unloaded",
+      modelId: ID,
+      reservation: "released",
+    });
+    expect(fakeB.counts).toStrictEqual(fakeA.counts);
+
+    expect(unpublished.snapshot(W).phase).toBe("open");
+    expect(unpublished.active(W)).toStrictEqual([held.lease.id]);
+    expect(getResidencyLeaseRegistry()).toBeNull();
+  });
+
+  test("P4 the registry is captured at construction, not read per call", async () => {
+    const factory = await loadAgentFactory();
+    const registry = createResidencyLeases();
+    setResidencyLeaseRegistry(registry);
+    const fake = startFake();
+    fake.state.models.get(ID)!.loaded = true;
+    const client = factory({ ...baseClientOpts(fake.endpoint), workload: W });
+
+    // Agent stop restores the seam; the client must keep fencing on the
+    // registry it captured at construction.
+    setResidencyLeaseRegistry(null);
+    expect(getResidencyLeaseRegistry()).toBeNull();
+
+    expect(await client.unload()).toStrictEqual({
+      kind: "unloaded",
+      modelId: ID,
+      reservation: "released",
+    });
+    expect(registry.snapshot(W).phase).toBe("unloaded");
+
+    expect(await client.load()).toMatchObject({ kind: "loaded" });
+    expect(registry.snapshot(W).phase).toBe("open");
   });
 });
