@@ -150,9 +150,13 @@ function toOpenAiV1(base: string): string {
  * without a serving proxy now defaults to the proxy port; setting
  * LOCAL_AI_PROVIDER_ROUTE=direct restores the tracked llama-server.
  *
- * Residual: a provider URL derived from inputs that were later removed
- * (e.g. a 9001 proxy override that was since unset) still looks
- * explicit and sticks until unset.
+ * Derived marker (#638): resolveEnv also emits
+ * LOCAL_AI_PROVIDER_URL_DERIVED, the provider URL it derived ("" when the
+ * URL was explicit). A re-fed LOCAL_AI_PROVIDER_URL equal to that marker
+ * is a stale derivation, so changing or unsetting a non-default proxy
+ * re-derives; an operator export that differs from the marker stays
+ * explicit. Without a marker (env seeded before #638) a 9001-style
+ * derivation whose proxy was since changed or unset still looks explicit.
  *
  * Test-profile sentinel: hermetic runs must never point at a live proxy,
  * so without an explicit proxy they keep the pinned `65534` llama-server
@@ -162,7 +166,7 @@ function resolveLlamaCppProviderUrl(
   env: NodeJS.ProcessEnv,
   testProfile: Record<string, string> | null,
   basics: EnvBasics,
-): string {
+): { url: string; derived: boolean } {
   const trackedDerived = `http://${basics.host}:${basics.port}/v1`;
   const proxyOverride = nonEmpty(env["LLAMACTL_INTERNAL_PROXY_URL"]);
   const proxyUrl = toOpenAiV1(proxyOverride ?? DEFAULT_INTERNAL_PROXY_URL);
@@ -176,21 +180,26 @@ function resolveLlamaCppProviderUrl(
   ]);
 
   const explicitProviderUrl = nonEmpty(env["LOCAL_AI_PROVIDER_URL"]);
-  if (explicitProviderUrl !== undefined && !derived.has(explicitProviderUrl)) {
-    return explicitProviderUrl;
+  if (
+    explicitProviderUrl !== undefined &&
+    explicitProviderUrl !== nonEmpty(env["LOCAL_AI_PROVIDER_URL_DERIVED"]) &&
+    !derived.has(explicitProviderUrl)
+  ) {
+    return { url: explicitProviderUrl, derived: false };
   }
-  if (env["LOCAL_AI_PROVIDER_ROUTE"] === "direct") return basics.llamaCppBaseUrl;
+  const d = (url: string): { url: string; derived: boolean } => ({ url, derived: true });
+  if (env["LOCAL_AI_PROVIDER_ROUTE"] === "direct") return d(basics.llamaCppBaseUrl);
   const explicitTracked = nonEmpty(env["LOCAL_AI_LLAMA_CPP_BASE_URL"]);
   if (
     explicitTracked !== undefined &&
     explicitTracked !== trackedDerived &&
     explicitTracked !== LEGACY_TRACKED_SERVER_URL
   ) {
-    return basics.llamaCppBaseUrl;
+    return d(basics.llamaCppBaseUrl);
   }
-  if (proxyOverride !== undefined) return proxyUrl;
-  if (testProfile !== null) return basics.llamaCppBaseUrl;
-  return defaultProxyUrl;
+  if (proxyOverride !== undefined) return d(proxyUrl);
+  if (testProfile !== null) return d(basics.llamaCppBaseUrl);
+  return d(defaultProxyUrl);
 }
 
 type EnvBasics = {
@@ -395,7 +404,8 @@ export function resolveEnv(env: NodeJS.ProcessEnv = process.env): ResolvedEnv {
   const sourceModel = pick(env["LOCAL_AI_SOURCE_MODEL"], defaultModel);
   const contextLength = pick(env["LOCAL_AI_CONTEXT_LENGTH"], gemmaCtx);
 
-  const providerUrl = resolveLlamaCppProviderUrl(env, testProfile, basics);
+  const llamaCppProvider = resolveLlamaCppProviderUrl(env, testProfile, basics);
+  const providerUrl = llamaCppProvider.url;
   const {
     providerUrl: resolvedProviderUrl,
     apiKey,
@@ -460,6 +470,8 @@ export function resolveEnv(env: NodeJS.ProcessEnv = process.env): ResolvedEnv {
     LOCAL_AI_PROVIDER: provider,
     LOCAL_AI_CONTEXT_LENGTH: contextLength,
     LOCAL_AI_PROVIDER_URL: resolvedProviderUrl,
+    LOCAL_AI_PROVIDER_URL_DERIVED:
+      provider === "lmstudio" || llamaCppProvider.derived ? resolvedProviderUrl : "",
     LOCAL_AI_API_KEY: apiKey,
     LOCAL_AI_MODEL: model,
     OPENAI_BASE_URL: resolvedProviderUrl,

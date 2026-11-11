@@ -534,13 +534,21 @@ describe("env.resolveEnv — LOCAL_AI_PROVIDER_URL routes through the internal p
   });
 
   // kills: dropping the seeded non-default proxy URL (proxyUrl) from the derived set, which pins the re-fed 9001/v1 as explicit.
-  describe("a seeded non-default proxy URL counts as derived", () => {
+  // The "pre-#638" variant strips the marker, so only the derived set can recognise the seeded URL.
+  describe.each([
+    ["with the #638 marker", (s: NodeJS.ProcessEnv): NodeJS.ProcessEnv => s],
+    [
+      "pre-#638, without the marker",
+      ({ LOCAL_AI_PROVIDER_URL_DERIVED: _marker, ...rest }: NodeJS.ProcessEnv): NodeJS.ProcessEnv =>
+        rest,
+    ],
+  ])("a seeded non-default proxy URL counts as derived (%s)", (_label, strip) => {
     const P9001 = "http://127.0.0.1:9001/v1";
     const input = { ...B, LLAMACTL_INTERNAL_PROXY_URL: "http://127.0.0.1:9001" };
     const seeded = (): NodeJS.ProcessEnv => {
       const first = resolveEnv(input);
       expect(first.LOCAL_AI_PROVIDER_URL).toBe(P9001); // post-fix guard
-      const s = seed(input, first);
+      const s = strip(seed(input, first));
       expect(s["LOCAL_AI_PROVIDER_URL"]).toBe(P9001); // post-fix guard
       return s;
     };
@@ -559,5 +567,53 @@ describe("env.resolveEnv — LOCAL_AI_PROVIDER_URL routes through the internal p
       expect(r.LOCAL_AI_PROVIDER_URL).toBe("http://10.0.0.99:9999/v1");
       expect(r.OPENAI_BASE_URL).toBe("http://10.0.0.99:9999/v1");
     });
+  });
+
+  // kills: ignoring LOCAL_AI_PROVIDER_URL_DERIVED on re-feed (the stale 9001/v1 sticks); never emitting the marker.
+  test("#638 changing a non-default proxy URL after a seed re-derives the provider URL", () => {
+    const input = { ...B, LLAMACTL_INTERNAL_PROXY_URL: "http://127.0.0.1:9001" };
+    const first = resolveEnv(input);
+    expect(first.LOCAL_AI_PROVIDER_URL_DERIVED).toBe("http://127.0.0.1:9001/v1");
+    expect(formatEvalScript(first)).toContain(
+      "export LOCAL_AI_PROVIDER_URL_DERIVED=http://127.0.0.1:9001/v1\n",
+    );
+    const s = seed(input, first);
+    const r = resolveEnv({ ...s, LLAMACTL_INTERNAL_PROXY_URL: "http://127.0.0.1:9002" });
+    expect(r.LOCAL_AI_PROVIDER_URL).toBe("http://127.0.0.1:9002/v1");
+    expect(r.OPENAI_BASE_URL).toBe("http://127.0.0.1:9002/v1");
+    expect(r.LOCAL_AI_PROVIDER_URL_DERIVED).toBe("http://127.0.0.1:9002/v1");
+    const unset = { ...s };
+    delete unset["LLAMACTL_INTERNAL_PROXY_URL"];
+    expect(resolveEnv(unset).LOCAL_AI_PROVIDER_URL).toBe(PX);
+  });
+
+  // kills: emitting the marker for an explicit URL (it would then be re-derived away); trusting a stale marker over a new export.
+  test("#638 an explicit LOCAL_AI_PROVIDER_URL survives a proxy change on re-feed", () => {
+    const input = {
+      ...B,
+      LLAMACTL_INTERNAL_PROXY_URL: "http://127.0.0.1:9001",
+      LOCAL_AI_PROVIDER_URL: "http://127.0.0.1:5555/v1",
+    };
+    const first = resolveEnv(input);
+    expect(first.LOCAL_AI_PROVIDER_URL).toBe("http://127.0.0.1:5555/v1");
+    expect(first.LOCAL_AI_PROVIDER_URL_DERIVED).toBe("");
+    const r = resolveEnv({
+      ...seed(input, first),
+      LLAMACTL_INTERNAL_PROXY_URL: "http://127.0.0.1:9002",
+    });
+    expect(r.LOCAL_AI_PROVIDER_URL).toBe("http://127.0.0.1:5555/v1");
+    expect(r.OPENAI_BASE_URL).toBe("http://127.0.0.1:5555/v1");
+    // An operator export made after a derived seed differs from the marker, so it is explicit.
+    const derivedSeed = seed(
+      { ...B, LLAMACTL_INTERNAL_PROXY_URL: "http://127.0.0.1:9001" },
+      resolveEnv({ ...B, LLAMACTL_INTERNAL_PROXY_URL: "http://127.0.0.1:9001" }),
+    );
+    expect(
+      resolveEnv({
+        ...derivedSeed,
+        LOCAL_AI_PROVIDER_URL: "http://127.0.0.1:5555/v1",
+        LLAMACTL_INTERNAL_PROXY_URL: "http://127.0.0.1:9002",
+      }).LOCAL_AI_PROVIDER_URL,
+    ).toBe("http://127.0.0.1:5555/v1");
   });
 });
