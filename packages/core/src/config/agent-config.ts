@@ -82,13 +82,26 @@ export type AgentWorkerRpcRelay = z.infer<typeof AgentWorkerRpcRelaySchema>;
 export const BEARER_TOKEN_NAME = /^[a-z0-9][a-z0-9._-]{0,62}$/;
 
 /**
+ * The name audit records give the primary agent.yaml tokenHash bearer
+ * (#218). It is reserved: no named token may take it, so an audit line
+ * reading token=default always means the primary.
+ */
+export const PRIMARY_BEARER_NAME = "default";
+
+/** Why a named token may not be called {@link PRIMARY_BEARER_NAME}. */
+export const RESERVED_BEARER_NAME_MESSAGE = `token name '${PRIMARY_BEARER_NAME}' is reserved for the primary bearer; choose another name`;
+
+/**
  * A named operator bearer token (#218), stored only as the SHA-256 of its
  * token, like the primary bearer. Each one authenticates the agent's
  * authed API routes exactly as `tokenHash` does, and can be revoked on
  * its own; the primary bearer rotates wholesale with `rotate-token`.
  */
 export const AgentBearerTokenSchema = z.object({
-  name: z.string().regex(BEARER_TOKEN_NAME),
+  name: z
+    .string()
+    .regex(BEARER_TOKEN_NAME)
+    .refine((name) => name !== PRIMARY_BEARER_NAME, { message: RESERVED_BEARER_NAME_MESSAGE }),
   tokenHash: z.string().regex(SHA256_HEX),
   createdAt: z.string().min(1),
 });

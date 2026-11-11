@@ -91,6 +91,17 @@ describe("bearerTokensReader", () => {
     expect(stderr).toContain("ignoring the bearerTokens block");
   });
 
+  test("a named token called default is rejected at load with the reserved-name reason", () => {
+    const entries = [bearerEntry("ci", HEX("c")), bearerEntry("default", HEX("d"))];
+    agentConfigMod.saveAgentConfig(baseConfig({ bearerTokens: entries }), configPath);
+    const stderr = captureStderr(() => {
+      expect(agentConfigMod.bearerTokensReader(configPath)()).toBeUndefined();
+    });
+    expect(stderr).toContain("ignoring the bearerTokens block");
+    expect(stderr).toContain("token name 'default' is reserved for the primary bearer");
+    expect(agentConfigMod.PRIMARY_BEARER_NAME).toBe("default");
+  });
+
   test("a malformed hash is ignored and the config still loads", () => {
     const entries = [bearerEntry("ci", "not-hex")];
     agentConfigMod.saveAgentConfig(baseConfig({ bearerTokens: entries }), configPath);

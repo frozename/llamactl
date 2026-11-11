@@ -16,9 +16,10 @@ export const TOKEN_USAGE = `Usage: llamactl agent token <subcommand> [flags]
 Subcommands:
   add <name> [--out=<file>] [--json] [--dir=<path>]
       Mint a new named bearer token and record its hash in agent.yaml.
-      The name matches [a-z0-9][a-z0-9._-]{0,62}. The token is printed
-      once, on stdout, and is never shown again; with --out it is
-      written to that file (mode 0600) instead of printed.
+      The name matches [a-z0-9][a-z0-9._-]{0,62}; 'default' is reserved
+      for the primary bearer. The token is printed once, on stdout, and
+      is never shown again; with --out it is written to that file (mode
+      0600) instead of printed.
   list [--json] [--dir=<path>]
       List the recorded tokens as name<TAB>createdAt. Hashes and tokens
       are never listed.
@@ -102,7 +103,8 @@ function readEntries(
   if (config.bearerTokens === undefined) return null;
   const parsed = agentConfigMod.AgentBearerTokensSchema.safeParse(config.bearerTokens);
   if (!parsed.success) {
-    return fail(`${configPath} has an invalid bearerTokens block; fix it first`);
+    const reason = parsed.error.issues[0]?.message ?? "invalid";
+    return fail(`${configPath} has an invalid bearerTokens block (${reason}); fix it first`);
   }
   return parsed.data;
 }
@@ -132,6 +134,9 @@ function tokenAdd(name: string | undefined, args: string[]): number {
     return fail(
       `invalid token name ${name}: use 1-63 characters from a-z, 0-9, '.', '_', '-', starting with a-z or 0-9`,
     );
+  }
+  if (name === agentConfigMod.PRIMARY_BEARER_NAME) {
+    return fail(agentConfigMod.RESERVED_BEARER_NAME_MESSAGE);
   }
   const state = loadTokenState(flags);
   if (state === 1) return 1;

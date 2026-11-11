@@ -1,5 +1,6 @@
 import type { inferenceRpc } from "@llamactl/core";
 
+import { PRIMARY_BEARER_NAME } from "@llamactl/core/config/agent-config";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
 /**
@@ -79,9 +80,10 @@ export function namedBearerFor(
 
 /**
  * The legacy single agent.yaml tokenHash is the bearer named 'default'
- * in audit records.
+ * in audit records; agent.yaml validation reserves the name, so no
+ * named token can be recorded under it.
  */
-export const PRIMARY_BEARER_NAME = "default";
+export { PRIMARY_BEARER_NAME };
 
 /**
  * The name of the bearer a request presents, across the primary hash and

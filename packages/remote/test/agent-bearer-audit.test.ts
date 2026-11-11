@@ -122,6 +122,40 @@ describe("bearer auth audit", () => {
     expect((authMod as Record<string, unknown>)["PRIMARY_BEARER_NAME"]).toBe("default");
   });
 
+  test("bearerNameFor gives default when a named entry carries the primary's hash", () => {
+    list.push({ name: "audit-primary-clash", tokenHash: primary.hash });
+    expect(authMod.bearerNameFor(primary.token, primary.hash, list)).toBe("default");
+  });
+
+  test("bearerNameFor gives the first of two named entries sharing a hash", () => {
+    list.push({ name: "audit-first", tokenHash: named.hash });
+    list.push({ name: "audit-second", tokenHash: named.hash });
+    expect(authMod.bearerNameFor(named.token, primary.hash, list)).toBe("audit-first");
+  });
+
+  test("a throwing onAuthenticated hook still admits the request and notes the failure without the secret", async () => {
+    const name = "audit-throwing-hook";
+    list.push({ name, tokenHash: named.hash });
+    await server.stop();
+    server = startAgentServer({
+      tokenHash: primary.hash,
+      bearerTokens: () => list,
+      onAuthenticated: (): void => {
+        throw new Error("audit sink down");
+      },
+    });
+    let status = 0;
+    const captured = await captureStderr(async () => {
+      status = (await get("/metrics?secret=zzz", named.token)).status;
+    });
+    expect(status).toBe(200);
+    expect(captured).toContain(`[agent] auth sink failed for token=${name} GET /metrics`);
+    expect(captured).not.toContain("zzz");
+    for (const secret of [named.token, named.hash, primary.token, primary.hash]) {
+      expect(captured).not.toContain(secret);
+    }
+  });
+
   test("a request authenticated by the primary bearer is recorded as default", async () => {
     list.push({ name: "audit-primary-default", tokenHash: named.hash });
     const res = await get("/metrics", primary.token);

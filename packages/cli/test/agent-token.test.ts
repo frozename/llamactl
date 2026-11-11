@@ -101,6 +101,51 @@ describe("agent token", () => {
     }
   });
 
+  test("add refuses the reserved primary name default with exit 1 and mints nothing", async () => {
+    capture();
+    try {
+      const dir = await seedAgent();
+      const before = readFileSync(join(dir, "agent.yaml"), "utf8");
+      expect(await runAgent(["token", "add", "default", `--dir=${dir}`])).toBe(1);
+      expect(stderrBuf).toContain("token name 'default' is reserved for the primary bearer");
+      expect(stdoutBuf).not.toMatch(/ll_agt_/);
+      expect(readFileSync(join(dir, "agent.yaml"), "utf8")).toBe(before);
+      expect(bearerEntries(dir)).toHaveLength(0);
+    } finally {
+      restore();
+    }
+  });
+
+  test("an agent.yaml that already names a token default makes add exit 1 with the reason", async () => {
+    capture();
+    try {
+      const dir = await seedAgent();
+      const configPath = join(dir, "agent.yaml");
+      const cfg = agentConfigMod.loadAgentConfig(configPath);
+      agentConfigMod.saveAgentConfig(
+        {
+          ...cfg,
+          bearerTokens: [
+            {
+              name: "default",
+              tokenHash: auth.hashToken("a"),
+              createdAt: "2026-01-01T00:00:00.000Z",
+            },
+          ],
+        },
+        configPath,
+      );
+      const before = readFileSync(configPath, "utf8");
+      expect(await runAgent(["token", "add", "graf", `--dir=${dir}`])).toBe(1);
+      expect(stderrBuf).toContain(configPath);
+      expect(stderrBuf).toContain("token name 'default' is reserved for the primary bearer");
+      expect(stdoutBuf).not.toMatch(/ll_agt_/);
+      expect(readFileSync(configPath, "utf8")).toBe(before);
+    } finally {
+      restore();
+    }
+  });
+
   test("add --out writes the token at mode 0600 and never prints it", async () => {
     capture();
     try {
