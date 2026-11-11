@@ -82,21 +82,21 @@ const MAX_JSON_BODY_BYTES = 10 * 1024 * 1024;
  * `listOpenAIModels` returns `nova.ModelListResponse` — the
  * canonical shape every AI provider in this family publishes —
  * widened with an `unavailable` sibling array (#280 D-2) listing
- * catalog rows whose availability is declared unavailable, and a
- * `declared` sibling array (#280 DF-07) listing non-ready declared
- * model entries. The declared-model source is a seam only for now:
- * declared entries do not reach the /v1/models HTTP surface — the
- * server still emits only `.data`.
- *
- * JSON requests can route by request-body `model` across live
- * workloads on the node. When no model matches, or the body is not
- * parseable JSON, the proxy falls back to the node's default endpoint
- * for back-compat. An exact pin of a declared-unavailable catalog row
- * is instead answered with a typed `model_unavailable` 503 (#280 D-2),
- * and an exact pin of a declared-but-not-loaded model entry with a
- * typed `model_not_loaded`/`model_unavailable` 503 (#280 DF-07) —
- * both ahead of the `model_not_routed` 404 and the default-endpoint
- * fallthrough.
+  * catalog rows whose availability is declared unavailable, and a
+  * `declared` sibling array (#280 DF-07) listing non-ready declared
+  * model entries. The declared-model source is a seam only for now:
+  * when `?include=declared` is specified, declared entries reach the
+  * /v1/models HTTP surface alongside the standard `.data` array.
+  *
+  * JSON requests can route by request-body `model` across live
+  * workloads on the node. When no model matches, or the body is not
+  * parseable JSON, the proxy falls back to the node's default endpoint
+  * for back-compat. An exact pin of a declared-unavailable catalog row
+  * is instead answered with a typed `model_unavailable` 503 (#280 D-2),
+  * and an exact pin of a declared-but-not-loaded model entry with a
+  * typed `model_not_loaded`/`model_unavailable` 503 (#280 DF-07) —
+  * both ahead of the `model_not_routed` 404 and the default-endpoint
+  * fallthrough.
  */
 
 /** A catalog row declared unavailable, surfaced under `unavailable`

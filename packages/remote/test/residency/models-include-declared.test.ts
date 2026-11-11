@@ -36,11 +36,15 @@ const NODE_MODELS_DECLARED_KEYS = ["declared", "kind", "models", "node", "unavai
 let tmp = "";
 let agent: RunningAgent | null = null;
 let oldPeer: ReturnType<typeof Bun.serve> | null = null;
+let gatewayServer: ReturnType<typeof Bun.serve> | null = null;
+let cloudServer: ReturnType<typeof Bun.serve> | null = null;
 let agentToken = "";
 let certPem = "";
 let originalEnv: NodeJS.ProcessEnv | null = null;
 const agentSeen: string[] = [];
 const oldSeen: string[] = [];
+const gatewaySeen: string[] = [];
+const cloudSeen: string[] = [];
 
 beforeAll(async () => {
   originalEnv = { ...process.env };
@@ -98,6 +102,37 @@ beforeAll(async () => {
     },
   });
 
+  // Gateway-style cloud node: responds to /v1/models with a standard
+  // data array (no declared/unavailable — simulating an older gateway
+  // that doesn't support the opt-in).
+  gatewayServer = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch(req) {
+      const u = new URL(req.url);
+      gatewaySeen.push(u.pathname + u.search);
+      return Response.json({
+        object: "list",
+        data: [{ id: "gateway/model-a", owned_by: "sirius" }],
+      });
+    },
+  });
+
+  // Direct cloud node: responds to /v1/models with a standard data
+  // array (no declared/unavailable).
+  cloudServer = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch(req) {
+      const u = new URL(req.url);
+      cloudSeen.push(u.pathname + u.search);
+      return Response.json({
+        object: "list",
+        data: [{ id: "cloud/model-b" }],
+      });
+    },
+  });
+
   const kubeconfig = {
     apiVersion: "llamactl/v1",
     kind: "Config",
@@ -115,6 +150,32 @@ beforeAll(async () => {
             certificateFingerprint: cert.fingerprint,
           },
           { name: "oldpeer", endpoint: `http://127.0.0.1:${String(oldPeer.port)}` },
+          {
+            name: "gateway-node",
+            kind: "gateway",
+            endpoint: `http://127.0.0.1:${String(gatewayServer.port)}`,
+            cloud: {
+              provider: "openai-compatible" as const,
+              baseUrl: `http://127.0.0.1:${String(gatewayServer.port)}/v1`,
+            },
+          },
+          {
+            name: "cloud-node",
+            kind: "cloud",
+            endpoint: `http://127.0.0.1:${String(cloudServer.port)}`,
+            cloud: {
+              provider: "openai" as const,
+              baseUrl: `http://127.0.0.1:${String(cloudServer.port)}/v1`,
+            },
+          },
+          {
+            name: "provider-node",
+            provider: {
+              gateway: "gateway-node",
+              providerName: "sirius",
+              source: "sirius" as const,
+            },
+          },
         ],
       },
     ],
@@ -145,6 +206,8 @@ afterAll(async () => {
   openaiProxy.__resetOpenAIProxyRouteMapCacheForTests();
   await agent?.stop();
   await oldPeer?.stop(true);
+  await gatewayServer?.stop(true);
+  await cloudServer?.stop(true);
   if (tmp !== "") rmSync(tmp, { recursive: true, force: true });
   if (originalEnv !== null) process.env = { ...originalEnv };
 });
@@ -306,6 +369,45 @@ describe("nodeModels ?include=declared", () => {
     expect(out).toEqual({ node: "oldpeer", kind: "agent", models: [{ id: "old/m" }] });
     expect(oldSeen).toEqual(["/v1/models"]);
   });
+
+  test("gateway node returns declared + unavailable on opt-in", async () => {
+    gatewaySeen.length = 0;
+    const out = (await router.createCaller({}).nodeModels({
+      name: "gateway-node",
+      include: ["declared"],
+    })) as Record<string, unknown>;
+    expect(Object.keys(out).sort()).toEqual(NODE_MODELS_DECLARED_KEYS);
+    expect(out["declared"]).toEqual([]);
+    expect(out["unavailable"]).toEqual([]);
+    expect((out["models"] as unknown[]).length).toBeGreaterThan(0);
+    expect(gatewaySeen).toEqual(["/v1/models"]);
+  });
+
+  test("cloud node returns declared + unavailable on opt-in", async () => {
+    cloudSeen.length = 0;
+    const out = (await router.createCaller({}).nodeModels({
+      name: "cloud-node",
+      include: ["declared"],
+    })) as Record<string, unknown>;
+    expect(Object.keys(out).sort()).toEqual(NODE_MODELS_DECLARED_KEYS);
+    expect(out["declared"]).toEqual([]);
+    expect(out["unavailable"]).toEqual([]);
+    expect((out["models"] as unknown[]).length).toBeGreaterThan(0);
+    expect(cloudSeen).toEqual(["/v1/models"]);
+  });
+
+  test("provider node returns declared + unavailable on opt-in", async () => {
+    gatewaySeen.length = 0;
+    const out = (await router.createCaller({}).nodeModels({
+      name: "provider-node",
+      include: ["declared"],
+    })) as Record<string, unknown>;
+    expect(Object.keys(out).sort()).toEqual(NODE_MODELS_DECLARED_KEYS);
+    expect(out["declared"]).toEqual([]);
+    expect(out["unavailable"]).toEqual([]);
+    expect((out["models"] as unknown[]).length).toBeGreaterThan(0);
+    expect(gatewaySeen).toEqual(["/v1/models"]);
+  });
 });
 
 describe("projectModelsBody", () => {
@@ -351,6 +453,12 @@ describe("projectModelsBody", () => {
   test("non-array fields collapse to empty arrays", () => {
     expect(
       projectModelsBody?.({ object: "list", data: 5, declared: "x", unavailable: null }, true),
+    ).toEqual({ models: [], declared: [], unavailable: [] });
+    expect(
+      projectModelsBody?.(
+        { object: "list", data: 5, declared: "x", unavailable: { reason: "unavailable" } },
+        true,
+      ),
     ).toEqual({ models: [], declared: [], unavailable: [] });
   });
 
