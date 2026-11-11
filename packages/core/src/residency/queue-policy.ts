@@ -100,6 +100,7 @@ export interface RequestQueuePolicy {
   cancel: (requestId: string) => CancelResult;
   finishExecution: (requestId: string) => boolean;
   snapshot: () => QueueSnapshot;
+  queueLimits: () => RequestQueueLimits;
 }
 
 // ── Internal structures ────────────────────────────────────────────────────
@@ -419,6 +420,12 @@ class RequestQueuePolicyImpl implements RequestQueuePolicy {
       resident: residentList.sort(),
       byPrincipal: Object.fromEntries(byPrincipalEntries),
     };
+  }
+
+  // ── queueLimits ─────────────────────────────────────────────────────
+
+  queueLimits(): RequestQueueLimits {
+    return { ...this.limits };
   }
 
   // ── Private helpers ──────────────────────────────────────────────────
