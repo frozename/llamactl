@@ -18,6 +18,7 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { SearchIngestStop } from "../src/search/ingest/lifecycle.js";
 import type { PeerSnapshotPollerOptions } from "../src/server/peer-snapshot-poller.js";
 import type { RunningAgent, StartAgentOptions } from "../src/server/serve.js";
 import type { TunnelClient, TunnelClientOptions } from "../src/tunnel/index.js";
@@ -60,10 +61,24 @@ const wrappedPollerStart = (opts?: PeerSnapshotPollerOptions): (() => void) => {
   };
 };
 
-const wrappedIngestStart = (): Promise<void> => {
+// startAgentServer stops its ingest through the handle startSearchIngest
+// returns (#634), so the stop count lives on the handle. Like the real
+// handle it is idempotent: only its first call counts.
+const wrappedIngestStart = (): SearchIngestStop => {
   ingestStarts += 1;
   if (throwIngestStart) throw new Error("ingest start boom");
-  return ingestReal.startSearchIngest();
+  const realStop = ingestReal.startSearchIngest();
+  let stopped = false;
+  return () => {
+    if (stopped) return;
+    stopped = true;
+    ingestStops += 1;
+    realStop();
+    if (throwNext) {
+      throwNext = false;
+      throw new Error("ingest stop boom");
+    }
+  };
 };
 
 const wrappedCreateTunnelClient = (opts: TunnelClientOptions): TunnelClient => {
@@ -78,15 +93,6 @@ const wrappedCreateTunnelClient = (opts: TunnelClientOptions): TunnelClient => {
   } as unknown as TunnelClient;
 };
 
-const wrappedIngestStop = (): void => {
-  ingestStops += 1;
-  if (throwNext) {
-    throwNext = false;
-    throw new Error("ingest stop boom");
-  }
-  ingestReal.stopSearchIngest();
-};
-
 await mock.module("../src/server/peer-snapshot-poller.js", () => ({
   ...pollerReal,
   startPeerSnapshotPoller: wrappedPollerStart,
@@ -94,7 +100,6 @@ await mock.module("../src/server/peer-snapshot-poller.js", () => ({
 await mock.module("../src/search/ingest/lifecycle.js", () => ({
   ...ingestReal,
   startSearchIngest: wrappedIngestStart,
-  stopSearchIngest: wrappedIngestStop,
 }));
 await mock.module("../src/tunnel/index.js", () => ({
   ...tunnelReal,
