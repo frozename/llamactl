@@ -6,6 +6,12 @@
  * typechecks at base, the flag is ignored, and (a), (c) and the first
  * assertion of (d) fail by assertion — never by import or type error.
  * (b) is the production-inert pin and passes at base.
+ *
+ * (e) pins that a request already inside the handler when `stop()` began
+ * still reads the declared source, (f) pins the other side of the same
+ * seam — without the opt-in nothing is tracked, so `stop()` never waits on
+ * a client request — and (g) pins where the source takes its `liveModelIds`
+ * from: a fresh read of the local routes, not the proxy's cached ones.
  */
 import { openaiProxy } from "@llamactl/core";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
@@ -19,10 +25,12 @@ import {
   type RunningAgent,
   type StartAgentOptions,
   startAgentServer,
+  TERMINAL_FLUSH_MS,
 } from "../../src/server/serve.js";
 import { ModelRunSchema } from "../../src/workload/schema.js";
 
 const COLD_PIN = "cold/model-a.gguf";
+const WARM_PIN = "served/model-b.gguf";
 
 const LOOPBACK_CLIENT = { address: "127.0.0.1", port: 12345, family: "IPv4" };
 
@@ -151,6 +159,53 @@ function postChatCompletions(model: string): Request {
   });
 }
 
+/**
+ * Same request, but the body lands `delayMs` after the handler took it —
+ * the route miss is resolved only once the body is read, so this is what
+ * makes a request still in flight while `stop()` runs.
+ */
+function lateBodyChatCompletions(model: string, delayMs: number): Request {
+  const payload = JSON.stringify({ model, messages: [{ role: "user", content: "hi" }] });
+  const body = new ReadableStream<Uint8Array>({
+    start(controller): void {
+      setTimeout(() => {
+        controller.enqueue(new TextEncoder().encode(payload));
+        controller.close();
+      }, delayMs);
+    },
+  });
+  return new Request("http://x/v1/chat/completions", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    duplex: "half",
+    body,
+  });
+}
+
+function writeLlamaServerState(workload: string, rel: string, port: number): void {
+  writeFileSync(
+    join(runtimeDir, "workloads", workload, "llama-server.state"),
+    JSON.stringify({
+      rel,
+      extraArgs: [],
+      host: "127.0.0.1",
+      port,
+      binary: "/x/llama-server",
+      pid: process.pid,
+      startedAt: "2026-05-24T00:00:00.000Z",
+      tunedProfile: null,
+    }),
+  );
+}
+
+/** A live llama-server route for `rel`, backed by this test process's pid. */
+function seedLiveRoute(workload: string, rel: string, port: number): void {
+  const dir = join(runtimeDir, "workloads", workload);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "llama-server.pid"), `${String(process.pid)}\n`);
+  writeLlamaServerState(workload, rel, port);
+}
+
 describe("declared cold-model source opt-in (#280 DF-07)", () => {
   test("(a) opt-in: a cold declared pin returns 503 model_not_loaded, default target untouched", async () => {
     setupSandbox();
@@ -268,5 +323,88 @@ describe("declared cold-model source opt-in (#280 DF-07)", () => {
     expect(secondBody.error.state).toBe("disabled");
     expect(secondBody.error.auto_load_eligible).toBe(false);
     expect(stubCalls).toHaveLength(0);
+  });
+
+  test("(e) opt-in: a request accepted before stop() whose body lands mid-teardown still gets 503", async () => {
+    setupSandbox();
+    writeRunColdManifest();
+    const running = startAgentServer(agentOptions(true));
+    agent = running;
+
+    // The handler takes the request while the listener is still up, then
+    // awaits the body. stop() runs entirely inside that window, so without
+    // in-flight tracking the source is unregistered before the route miss
+    // is resolved and the pin falls through to the default target.
+    const inflight = running.handleRequest!(
+      lateBodyChatCompletions(COLD_PIN, 120),
+      LOOPBACK_CLIENT,
+    );
+    const stopPromise = running.stop();
+
+    const res = await inflight;
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as {
+      error: { code: string; state: string; auto_load_eligible: boolean };
+    };
+    expect(body.error.code).toBe("model_not_loaded");
+    expect(body.error.state).toBe("cold");
+    expect(body.error.auto_load_eligible).toBe(true);
+    expect(stubCalls).toHaveLength(0);
+
+    await stopPromise;
+    agent = null;
+  });
+
+  test("(f) inert default: stop() does not wait for an in-flight request without the opt-in", async () => {
+    setupSandbox();
+    writeRunColdManifest();
+    const running = startAgentServer(agentOptions());
+    agent = running;
+
+    // The body outlives the whole flush window, so a handler wrapped for
+    // tracking would hold stop() open for TERMINAL_FLUSH_MS. With no
+    // declared source registered there is nothing to keep alive.
+    const inflight = running.handleRequest!(
+      lateBodyChatCompletions(COLD_PIN, TERMINAL_FLUSH_MS + 200),
+      LOOPBACK_CLIENT,
+    );
+    const startedAt = Date.now();
+    await running.stop();
+    agent = null;
+    expect(Date.now() - startedAt).toBeLessThan(TERMINAL_FLUSH_MS);
+
+    // The late request is still answered — over the default target, which
+    // is exactly the pre-#610 behaviour.
+    const res = await inflight;
+    expect(res.status).toBe(200);
+    expect(stubCalls).toContain("POST /v1/chat/completions");
+  });
+
+  test("(g) opt-in: the live-model set is read fresh from local routes, not from the cached ones", async () => {
+    setupSandbox();
+    writeRunColdManifest();
+    const running = startAgentServer(agentOptions(true));
+    agent = running;
+
+    // A live route for another model warms the route and models caches.
+    // Rewriting llama-server.state in place is invisible to the cache
+    // signature, so after the rewrite only a reader that goes back to
+    // listLocalRoutes sees the declared rel served — which is exactly what
+    // the source's live-model projection has to do. A cached or empty set
+    // would leave the claim cold: `declared` would list it and the pin
+    // would get a 503 instead of an answer.
+    seedLiveRoute("run-cold", WARM_PIN, stub!.port ?? 0);
+    const warmed = openaiProxy.listOpenAIModels();
+    expect(warmed.data.map((model) => model.id)).toEqual([WARM_PIN]);
+    expect(warmed.declared.find((entry) => entry.id === COLD_PIN)?.status).toBe("cold");
+
+    writeLlamaServerState("run-cold", COLD_PIN, stub!.port ?? 0);
+
+    const models = openaiProxy.listOpenAIModels();
+    expect(models.data.map((model) => model.id)).toEqual([WARM_PIN]);
+    expect(models.declared.find((entry) => entry.id === COLD_PIN)).toBeUndefined();
+
+    const served = await running.handleRequest!(postChatCompletions(COLD_PIN), LOOPBACK_CLIENT);
+    expect(served.status).toBe(200);
   });
 });

@@ -693,7 +693,9 @@ function createAgentFetchHandler(args: {
  * gone — both the socket path and the synthetic `handleRequest` path
  * reach this handler. `stop()` waits for the count to drop before it
  * unregisters that source (DF-07); streams release at their head, since
- * the declared lookup happens before the upstream fetch.
+ * the declared lookup happens before the upstream fetch. Only wired when a
+ * declared source is registered: with none nothing reads it late, so the
+ * default stop() keeps its pre-#610 timing.
  */
 function trackServedRequests(handler: AgentFetchHandler): {
   handler: AgentFetchHandler;
@@ -931,7 +933,9 @@ function maybeRegisterDeclaredModels(opts: StartAgentOptions): (() => void) | nu
   // manifests carry spec.node 'local' (router.ts:144, reconciler.ts:480),
   // while nodeName defaults to LLAMACTL_NODE_NAME or 'agent'. No `dir`:
   // defaultWorkloadsDir() re-reads env on every call. No cache: in-place
-  // manifest edits do not bump the dir mtime.
+  // manifest edits do not bump the dir mtime. The live set is keyed by the
+  // route's model, never its workload name: a live llama-server marks the
+  // claim for that model ready, and a name-keyed set would mark nothing.
   openaiProxy.setDeclaredModelSource(() =>
     listDeclaredModels({
       nodeName: LOCAL_NODE_ID,
@@ -1107,9 +1111,16 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     });
   }
 
-  const { handler: fetchHandler, untilIdle: untilServedRequestsIdle } = trackServedRequests(
-    createAgentFetchHandler({ opts, endpoint, tunnelServer, gate, workerRpc }),
-  );
+  const baseFetchHandler = createAgentFetchHandler({
+    opts,
+    endpoint,
+    tunnelServer,
+    gate,
+    workerRpc,
+  });
+  const servedRequests =
+    unregisterDeclaredModels === null ? null : trackServedRequests(baseFetchHandler);
+  const fetchHandler = servedRequests?.handler ?? baseFetchHandler;
 
   const wsConfig = tunnelServer ? tunnelServer.websocket : null;
   const { server, fingerprint } = startBunServer({
@@ -1180,15 +1191,19 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
         void server.stop(true);
         workerRpc?.unpublish();
         // Last, and bounded: bonjour's stop has no timeout, and a hung one
-        // must not keep the tunnel serving or hold stop() open. That keeps
-        // stop() within the drain timeout plus three flush windows (the
-        // drain's, the shared one above and this one), or two without mDNS.
-        const finalFlush: Promise<boolean>[] = [
+        // must not keep the tunnel serving or hold stop() open. The waits
+        // here run concurrently, so stop() stays inside the drain timeout
+        // plus three flush windows: the drain's, the shared one above and
+        // this one. The in-flight wait only joins this window when a
+        // declared source is registered; without the opt-in stop() never
+        // waits on a client request at all.
+        const finalFlush: Promise<boolean>[] = [];
+        if (servedRequests !== null) {
           // Requests already inside the handler when the listener went away
           // answer their route miss later, from the declared source, so this
           // window is what makes the source outlive them (DF-07).
-          within(TERMINAL_FLUSH_MS, untilServedRequestsIdle()),
-        ];
+          finalFlush.push(within(TERMINAL_FLUSH_MS, servedRequests.untilIdle()));
+        }
         if (mdns) {
           finalFlush.push(
             within(
