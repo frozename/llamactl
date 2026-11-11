@@ -401,11 +401,14 @@ async function handleOpenAIRoute(
   let status = 0;
   try {
     if (req.method === "GET" && url.pathname === "/v1/models") {
-      const data = openaiProxy.listOpenAIModels().data;
-      const models = { object: "list" as const, data };
-      llamaServerUp.set(data.length > 0 ? 1 : 0);
+      const includeDeclared = url.searchParams
+        .getAll("include")
+        .flatMap((v) => v.split(","))
+        .some((v) => v.trim() === "declared");
+      const full = openaiProxy.listOpenAIModels();
+      llamaServerUp.set(full.data.length > 0 ? 1 : 0);
       status = 200;
-      return Response.json(models);
+      return Response.json(openaiProxy.projectModelsResponseBody(full, includeDeclared));
     }
     server.timeout?.(req, proxiedRouteIdleSeconds());
     const res = await dispatchProxyRequest(req);

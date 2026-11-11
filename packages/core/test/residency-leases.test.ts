@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
 
 import type {
   DrainToken as DrainTokenType,
@@ -8,12 +8,27 @@ import type {
   WhenIdleResult as WhenIdleResultType,
 } from "../src/residency/leases.js";
 
+import { openaiProxy } from "../src/index.js";
+
 // #278: request-lifetime residency leases land with the fix. A variable
 // specifier keeps tsc from resolving the not-yet-existing module, so each
 // case fails by assertion at the pinned base rather than by a resolution
 // error.
 const LEASES_MODULE = "../src/residency/leases.js";
 const INDEX_SPEC = "../src/index.js";
+
+const originalFetch = globalThis.fetch;
+
+afterEach(async () => {
+  const mod = (await import(LEASES_MODULE)) as unknown as {
+    setResidencyLeaseRegistry?: (registry: ResidencyLeasesType | null) => void;
+  };
+  if (typeof mod.setResidencyLeaseRegistry === "function") {
+    mod.setResidencyLeaseRegistry(null);
+  }
+  globalThis.fetch = originalFetch;
+  openaiProxy.__resetOpenAIProxyRouteMapCacheForTests();
+});
 
 type Mod = {
   createResidencyLeases: () => ResidencyLeasesType;
@@ -567,4 +582,30 @@ test("#278: forced unload with force:true cancels upstream ReadableStream underl
   expect(lease.release()).toBe(false);
   expect(lease.signal.aborted).toBe(true);
   expect(reg.active("glm")).toEqual([]);
+});
+
+test("#278: the lease registry seam defaults to null and round-trips", async () => {
+  const mod = (await import(LEASES_MODULE)) as unknown as {
+    createResidencyLeases: () => ResidencyLeasesType;
+    setResidencyLeaseRegistry: (registry: ResidencyLeasesType | null) => void;
+    getResidencyLeaseRegistry: () => ResidencyLeasesType | null;
+  };
+  expect(typeof mod.setResidencyLeaseRegistry).toBe("function");
+  expect(typeof mod.getResidencyLeaseRegistry).toBe("function");
+  expect(mod.getResidencyLeaseRegistry()).toBeNull();
+
+  const registry = mod.createResidencyLeases();
+  mod.setResidencyLeaseRegistry(registry);
+  expect(mod.getResidencyLeaseRegistry()).toBe(registry);
+  mod.setResidencyLeaseRegistry(null);
+  expect(mod.getResidencyLeaseRegistry()).toBeNull();
+
+  const index = (await import(INDEX_SPEC)) as unknown as {
+    residencyLeases?: {
+      setResidencyLeaseRegistry?: unknown;
+      getResidencyLeaseRegistry?: unknown;
+    };
+  };
+  expect(index.residencyLeases?.setResidencyLeaseRegistry).toBe(mod.setResidencyLeaseRegistry);
+  expect(index.residencyLeases?.getResidencyLeaseRegistry).toBe(mod.getResidencyLeaseRegistry);
 });

@@ -1909,5 +1909,172 @@ describe("reconcileOnce", () => {
         rmSync(dir, { recursive: true, force: true });
       }
     });
+
+    test("a per-node deadline bounds a silent node when the pass default is long", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "llamactl-reconciler-per-node-"));
+      try {
+        const run: ModelRun = {
+          ...makeRunManifest(),
+          spec: { ...makeRunManifest().spec, node: "z13" },
+        };
+        const host: ModelHostManifest = {
+          ...makeHostManifest(),
+          spec: { ...makeHostManifest().spec, node: "mac-mini" },
+        };
+        saveWorkload(run, dir);
+        saveModelHost(host, dir);
+
+        const outcome = await Promise.race([
+          reconcileOnce({
+            workloadsDir: dir,
+            rpcTimeouts: { queryMs: 60_000, mutateMs: 60_000 },
+            rpcTimeoutsFor: (node: string) =>
+              node === "z13" ? { queryMs: 20, mutateMs: 20 } : undefined,
+            getClient: (node): WorkloadClient =>
+              node === "z13"
+                ? {
+                    ...makeClient(),
+                    serverStatus: {
+                      query: (): Promise<never> => new Promise<never>(() => undefined),
+                    },
+                  }
+                : {
+                    ...makeClient(),
+                    modelHostStatus: {
+                      query: (): Promise<{ state: string; pid: number; specHash: string }> =>
+                        Promise.resolve({
+                          state: "Running",
+                          pid: 1234,
+                          specHash: computeModelHostSpecHash(specForHash(host.spec)),
+                        }),
+                    },
+                  },
+          }),
+          new Promise<"stalled">((resolve) => {
+            setTimeout(() => {
+              resolve("stalled");
+            }, 1000);
+          }),
+        ]);
+
+        expect(outcome).not.toBe("stalled");
+        const result = outcome as ReconcileResult;
+        const runReport = result.reports.find((r) => r.name === "run-a");
+        expect(runReport?.error).toMatch(/did not respond to serverStatus\.query within 20 ms/);
+        expect(runReport?.reason).toBe("NodeUnreachable");
+        const hostReport = result.reports.find((r) => r.name === "host-a");
+        expect(hostReport?.action).toBe("unchanged");
+        expect(hostReport?.error).toBeUndefined();
+        expect(result.errors).toBe(1);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    test("a per-node mutateMs bounds a hung serverStop.mutate when the pass default is long", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "llamactl-reconciler-per-node-mutate-"));
+      try {
+        const run: ModelRun = {
+          ...makeRunManifest(),
+          spec: { ...makeRunManifest().spec, node: "z13", enabled: false },
+        };
+        saveWorkload(run, dir);
+
+        const outcome = await Promise.race([
+          reconcileOnce({
+            workloadsDir: dir,
+            rpcTimeouts: { queryMs: 60_000, mutateMs: 60_000 },
+            rpcTimeoutsFor: (node: string) => (node === "z13" ? { mutateMs: 20 } : undefined),
+            getClient: (): WorkloadClient => ({
+              ...makeClient(),
+              serverStatus: {
+                query: () =>
+                  Promise.resolve({
+                    state: "up",
+                    rel: "mlx-community/run-a.gguf",
+                    extraArgs: [],
+                    pid: 111,
+                    host: "127.0.0.1",
+                    port: 18080,
+                    binary: null,
+                    endpoint: "http://127.0.0.1:18080",
+                  }),
+              },
+              serverStop: { mutate: (): Promise<never> => new Promise<never>(() => undefined) },
+            }),
+          }),
+          new Promise<"stalled">((resolve) => {
+            setTimeout(() => {
+              resolve("stalled");
+            }, 1000);
+          }),
+        ]);
+
+        if (outcome === "stalled") {
+          throw new Error("reconcileOnce ignored the per-node mutateMs for serverStop.mutate");
+        }
+        expect(outcome.errors).toBe(1);
+        const runReport = outcome.reports.find((r) => r.name === "run-a");
+        expect(runReport?.error).toMatch(/did not respond to serverStop\.mutate within 20 ms/);
+        expect(runReport?.reason).toBe("NodeUnreachable");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    test("a per-node deadline does not leak to other nodes", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "llamactl-reconciler-per-node-leak-"));
+      try {
+        const run: ModelRun = {
+          ...makeRunManifest(),
+          spec: { ...makeRunManifest().spec, node: "z13" },
+        };
+        const host: ModelHostManifest = {
+          ...makeHostManifest(),
+          spec: { ...makeHostManifest().spec, node: "mac-mini" },
+        };
+        saveWorkload(run, dir);
+        saveModelHost(host, dir);
+
+        const result = await reconcileOnce({
+          workloadsDir: dir,
+          rpcTimeouts: { queryMs: 20, mutateMs: 20 },
+          rpcTimeoutsFor: (node: string) =>
+            node === "mac-mini" ? { queryMs: 60_000, mutateMs: 60_000 } : undefined,
+          getClient: (node): WorkloadClient =>
+            node === "z13"
+              ? {
+                  ...makeClient(),
+                  serverStatus: {
+                    query: (): Promise<never> => new Promise<never>(() => undefined),
+                  },
+                }
+              : {
+                  ...makeClient(),
+                  modelHostStatus: {
+                    query: (): Promise<{ state: string; pid: number; specHash: string }> =>
+                      new Promise((resolve) => {
+                        setTimeout(() => {
+                          resolve({
+                            state: "Running",
+                            pid: 1234,
+                            specHash: computeModelHostSpecHash(specForHash(host.spec)),
+                          });
+                        }, 150);
+                      }),
+                  },
+                },
+        });
+
+        const hostReport = result.reports.find((r) => r.name === "host-a");
+        expect(hostReport?.error).toBeUndefined();
+        expect(hostReport?.action).toBe("unchanged");
+        const runReport = result.reports.find((r) => r.name === "run-a");
+        expect(runReport?.error).toMatch(/within 20 ms/);
+        expect(result.errors).toBe(1);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
   });
 });
