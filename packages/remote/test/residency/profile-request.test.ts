@@ -14,6 +14,7 @@ import type {
   OkPlan,
   PlannerWorkload,
   ProfileSwitchPlan,
+  ProfileSwitchPolicy,
   ProfileSwitchRequest,
   RefusalPlan,
 } from "@llamactl/core/residency/planner";
@@ -22,6 +23,7 @@ import { RESIDENCY_GROUPS } from "@llamactl/core/residency/lifecycle";
 import { planProfileSwitch } from "@llamactl/core/residency/planner";
 import { describe, expect, test } from "bun:test";
 
+import type { BuildProfileSwitchRequestInput } from "../../src/residency/coordinator.js";
 import type { ModelHostManifest } from "../../src/workload/modelhost-schema.js";
 import type { ModelRun } from "../../src/workload/schema.js";
 
@@ -41,23 +43,14 @@ const PROTECTED_ANNOTATION = "llamactl.io/residency-protected";
 
 type ObservedWorkloadState = "running" | "starting" | "stopped" | "unknown";
 
-interface ProfileSwitchBuildInput {
-  node: string;
-  to: string;
-  budgetGiB: number | null;
-  modelHosts: readonly ModelHostManifest[];
-  modelRuns: readonly ModelRun[];
-  observed: ReadonlyMap<string, ObservedWorkloadState>;
-  memoryGiBOf: (name: string) => number;
-  nowMs: number;
-}
-
 type BuildProfileSwitchRequestResult =
   | { ok: true; request: ProfileSwitchRequest }
   | { ok: false; reason: string; workloads: string[] };
 
 interface ResidencyCoordinatorModule {
-  buildProfileSwitchRequest?: (input: ProfileSwitchBuildInput) => BuildProfileSwitchRequestResult;
+  buildProfileSwitchRequest?: (
+    input: BuildProfileSwitchRequestInput,
+  ) => BuildProfileSwitchRequestResult;
   RESIDENCY_GROUP_LABEL?: string;
   RESIDENCY_PROFILES_ANNOTATION?: string;
   RESIDENCY_PROTECTED_ANNOTATION?: string;
@@ -70,6 +63,7 @@ async function residencyCoordinator(): Promise<ResidencyCoordinatorModule> {
 
 interface ManifestOptions {
   node?: string;
+  enabled?: boolean;
   labels?: Record<string, string>;
   annotations?: Record<string, string>;
 }
@@ -86,6 +80,7 @@ function hostManifest(name: string, options: ManifestOptions = {}): ModelHostMan
     spec: {
       engine: "omlx",
       node: options.node ?? NODE,
+      enabled: options.enabled ?? true,
       binary: "/x/engine",
       endpoint: { host: "127.0.0.1", port: 8100 },
       hostedModels: [{ rel: "org/repo/m.gguf" }],
@@ -104,6 +99,7 @@ function runManifest(name: string, options: ManifestOptions = {}): ModelRun {
     },
     spec: {
       node: options.node ?? NODE,
+      enabled: options.enabled ?? true,
       target: { kind: "rel", value: "org/repo/run.gguf" },
     },
   });
@@ -133,18 +129,28 @@ interface FleetSpec {
   memory?: Record<string, number>;
   to?: string;
   budgetGiB?: number | null;
+  from?: string | null;
+  policy?: ProfileSwitchPolicy;
+  requiredServices?: string[];
+  lastSwitchAtMs?: number | null;
+  groups?: readonly { name: string; exclusive: boolean }[];
 }
 
-function profileSwitchInput(spec: FleetSpec): ProfileSwitchBuildInput {
+function profileSwitchInput(spec: FleetSpec): BuildProfileSwitchRequestInput {
   return {
     node: NODE,
     to: spec.to ?? "interactive",
+    from: spec.from,
     budgetGiB: spec.budgetGiB === undefined ? 64 : spec.budgetGiB,
     modelHosts: spec.modelHosts ?? [],
     modelRuns: spec.modelRuns ?? [],
     observed: spec.observed ?? new Map<string, ObservedWorkloadState>(),
     memoryGiBOf: memoryOf(spec.memory ?? {}),
     nowMs: NOW_MS,
+    ...(spec.policy !== undefined ? { policy: spec.policy } : {}),
+    ...(spec.requiredServices !== undefined ? { requiredServices: spec.requiredServices } : {}),
+    ...(spec.lastSwitchAtMs !== undefined ? { lastSwitchAtMs: spec.lastSwitchAtMs } : {}),
+    ...(spec.groups !== undefined ? { groups: spec.groups } : {}),
   };
 }
 
@@ -428,7 +434,7 @@ describe("buildProfileSwitchRequest", () => {
     expect(result).toEqual({ ok: false, reason: "DuplicateId", workloads: ["coder"] });
   });
 
-  test("refuses DuplicateId when the only annotation lives on the off-node twin", async () => {
+  test("refuses NotOptedIn when the only annotated workload is off-node", async () => {
     const mod = await residencyCoordinator();
     expect(typeof mod.buildProfileSwitchRequest).toBe("function");
 
@@ -540,5 +546,157 @@ describe("buildProfileSwitchRequest", () => {
     expect(structuredClone({ modelHosts, modelRuns })).toEqual(manifestsBefore);
     expect(structuredClone([...observed])).toEqual(observedBefore);
     expect(second).toEqual(first);
+  });
+
+  test("maps stopped ModelRun with enabled:false to disabled:true in planner workload", async () => {
+    const mod = await residencyCoordinator();
+    expect(typeof mod.buildProfileSwitchRequest).toBe("function");
+
+    const result = mod.buildProfileSwitchRequest!(
+      profileSwitchInput({
+        modelRuns: [
+          runManifest("chat", {
+            annotations: { [PROFILES_ANNOTATION]: "interactive" },
+            enabled: false,
+          }),
+        ],
+        observed: observedOf({ chat: "stopped" }),
+        memory: { chat: 20 },
+        to: "interactive",
+      }),
+    );
+
+    const request = okRequest(result);
+    const chat = plannerWorkload(request.workloads, "chat");
+    expect(chat.disabled).toBe(true);
+    expect(chat.state).toBe("downloaded");
+
+    const plan = okPlan(planProfileSwitch(request));
+    expect(plan.skipped).toContain("chat");
+    expect(plan.replacements).not.toContain("chat");
+  });
+
+  test("maps stopped ModelHost with enabled:false to disabled:true in planner workload", async () => {
+    const mod = await residencyCoordinator();
+    expect(typeof mod.buildProfileSwitchRequest).toBe("function");
+
+    const result = mod.buildProfileSwitchRequest!(
+      profileSwitchInput({
+        modelHosts: [
+          hostManifest("dream", {
+            annotations: { [PROFILES_ANNOTATION]: "maintenance" },
+            enabled: false,
+          }),
+        ],
+        observed: observedOf({ dream: "stopped" }),
+        memory: { dream: 24 },
+        to: "maintenance",
+      }),
+    );
+
+    const request = okRequest(result);
+    const dream = plannerWorkload(request.workloads, "dream");
+    expect(dream.disabled).toBe(true);
+    expect(dream.state).toBe("downloaded");
+
+    const plan = okPlan(planProfileSwitch(request));
+    expect(plan.skipped).toContain("dream");
+    expect(plan.replacements).not.toContain("dream");
+  });
+
+  test("maps 'starting' observed state to 'loading' planner state", async () => {
+    const mod = await residencyCoordinator();
+    expect(typeof mod.buildProfileSwitchRequest).toBe("function");
+
+    const result = mod.buildProfileSwitchRequest!(
+      profileSwitchInput({
+        modelRuns: [runManifest("chat", { annotations: { [PROFILES_ANNOTATION]: "chat" } })],
+        observed: observedOf({ chat: "starting" }),
+        memory: { chat: 20 },
+        to: "chat",
+      }),
+    );
+
+    const request = okRequest(result);
+    const chat = plannerWorkload(request.workloads, "chat");
+    expect(chat.state).toBe("loading");
+  });
+
+  test("passes through from, policy, requiredServices, lastSwitchAtMs and groups", async () => {
+    const mod = await residencyCoordinator();
+    expect(typeof mod.buildProfileSwitchRequest).toBe("function");
+
+    const policy: ProfileSwitchPolicy = {
+      minResidencySeconds: 300,
+      switchCooldownSeconds: 600,
+    };
+    const requiredServices = ["vector-db", "cache"];
+    const groups = [{ name: "custom-group", exclusive: false }];
+
+    const result = mod.buildProfileSwitchRequest!(
+      profileSwitchInput({
+        modelRuns: [runManifest("chat", { annotations: { [PROFILES_ANNOTATION]: "chat" } })],
+        observed: observedOf({ chat: "running" }),
+        memory: { chat: 20 },
+        to: "code",
+        from: "interactive",
+        policy,
+        requiredServices,
+        lastSwitchAtMs: 900_000_000,
+        groups,
+      }),
+    );
+
+    const request = okRequest(result);
+    expect(request.from).toBe("interactive");
+    expect(request.policy).toEqual(policy);
+    expect(request.requiredServices).toEqual(requiredServices);
+    expect(request.lastSwitchAtMs).toBe(900_000_000);
+    expect(request.groups).toEqual(groups);
+
+    const requiredCopy = request.requiredServices;
+    const inputRequired = requiredServices;
+    expect(requiredCopy).not.toBe(inputRequired);
+  });
+
+  test("refuses switch when cooldown period has not elapsed", async () => {
+    const mod = await residencyCoordinator();
+    expect(typeof mod.buildProfileSwitchRequest).toBe("function");
+
+    const policy: ProfileSwitchPolicy = {
+      switchCooldownSeconds: 600,
+    };
+
+    const result = mod.buildProfileSwitchRequest!(
+      profileSwitchInput({
+        modelRuns: [runManifest("chat", { annotations: { [PROFILES_ANNOTATION]: "chat" } })],
+        observed: observedOf({ chat: "running" }),
+        memory: { chat: 20 },
+        to: "code",
+        policy,
+        lastSwitchAtMs: NOW_MS - 200_000,
+      }),
+    );
+
+    const plan = refusedPlan(planProfileSwitch(okRequest(result)));
+    expect(plan.reason).toBe("Cooldown");
+  });
+
+  test("refuses switch when required service is unavailable", async () => {
+    const mod = await residencyCoordinator();
+    expect(typeof mod.buildProfileSwitchRequest).toBe("function");
+
+    const result = mod.buildProfileSwitchRequest!(
+      profileSwitchInput({
+        modelRuns: [runManifest("chat", { annotations: { [PROFILES_ANNOTATION]: "chat" } })],
+        observed: observedOf({ chat: "running" }),
+        memory: { chat: 20 },
+        to: "code",
+        requiredServices: ["vector-db"],
+      }),
+    );
+
+    const plan = refusedPlan(planProfileSwitch(okRequest(result)));
+    expect(plan.reason).toBe("RequiredServiceUnavailable");
   });
 });
