@@ -14,6 +14,7 @@ import type { EngineName } from "../../../core/src/engines/types.js";
 import { readModelHostState } from "../../../core/src/engines/state.js";
 import { resolveEnv } from "../../../core/src/env.js";
 import { isProcessAlive } from "../../../core/src/pidIdentity.js";
+import { reapFakeProcesses } from "../../../core/test/fake-process-reaper.js";
 import {
   existsSync,
   mkdirSync,
@@ -105,19 +106,8 @@ beforeAll(async () => {
   workloadsDir = join(tmp, "workloads");
 });
 
-afterAll(() => {
-  for (const pid of spawnedPids) {
-    try {
-      process.kill(-pid, "SIGKILL");
-    } catch {
-      // already gone
-    }
-    try {
-      process.kill(pid, "SIGKILL");
-    } catch {
-      // already gone
-    }
-  }
+afterAll(async () => {
+  await reapFakeProcesses({ scratch: tmp, pids: [...spawnedPids] });
   rmSync(tmp, { recursive: true, force: true });
 });
 

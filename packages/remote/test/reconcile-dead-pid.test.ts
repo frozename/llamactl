@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { reapFakeProcesses } from "../../core/test/fake-process-reaper.js";
 import { router } from "../src/router.js";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 import { loadWorkloadByName, parseWorkload, saveWorkload } from "../src/workload/store.js";
@@ -119,11 +120,9 @@ afterEach(async () => {
   try {
     await router.createCaller({}).serverStop({ workload: NAME, graceSeconds: 1 });
   } catch {
-    // best effort; the pid sweep below is the safety net
+    // best effort; the reaper below is the safety net
   }
-  for (const pid of spawnedPids) {
-    if (isAlive(pid)) process.kill(pid, "SIGKILL");
-  }
+  await reapFakeProcesses({ scratch: tmp, pids: [...spawnedPids] });
   spawnedPids.clear();
   await decoy?.stop(true);
   decoy = null;

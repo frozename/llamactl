@@ -12,14 +12,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "../src/safe-fs.js";
+import { reapFakeProcesses } from "../../core/test/fake-process-reaper.js";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 /**
  * Controller reconcile-loop E2E. Uses the same fake-llama-server
@@ -166,17 +160,7 @@ afterEach(async () => {
     await agent.stop();
     agent = null;
   }
-  const pidFile = join(runtimeDir, "llama-server.pid");
-  if (existsSync(pidFile)) {
-    const pid = Number.parseInt(readFileSync(pidFile, "utf8").trim(), 10);
-    if (Number.isFinite(pid) && pid > 0) {
-      try {
-        process.kill(pid, "SIGTERM");
-      } catch {
-        /* Intentionally empty. */
-      }
-    }
-  }
+  await reapFakeProcesses({ scratch: tmp, pidFiles: [join(runtimeDir, "llama-server.pid")] });
   process.env = { ...originalEnv };
   rmSync(tmp, { recursive: true, force: true });
 });

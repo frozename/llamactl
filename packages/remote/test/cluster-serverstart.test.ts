@@ -2,15 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { reapFakeProcesses } from "../../core/test/fake-process-reaper.js";
 import { createRemoteNodeClient } from "../src/client/node-client.js";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "../src/safe-fs.js";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 import { generateToken } from "../src/server/auth.js";
 import { type RunningAgent, startAgentServer } from "../src/server/serve.js";
 import { generateSelfSignedCert } from "../src/server/tls.js";
@@ -141,21 +135,10 @@ afterEach(async () => {
     await agent.stop();
     agent = null;
   }
-  // Best-effort: kill any PID still tracked in the runtime dir so a
-  // failed test doesn't leak the fake server across iterations.
-  const pidFile = process.env["LOCAL_AI_RUNTIME_DIR"]
-    ? join(process.env["LOCAL_AI_RUNTIME_DIR"], "llama-server.pid")
-    : null;
-  if (pidFile && existsSync(pidFile)) {
-    const pid = Number.parseInt(readFileSync(pidFile, "utf8").trim(), 10);
-    if (Number.isFinite(pid) && pid > 0) {
-      try {
-        process.kill(pid, "SIGTERM");
-      } catch {
-        return undefined;
-      }
-    }
-  }
+  await reapFakeProcesses({
+    scratch: tmp,
+    pidFiles: [join(tmp, "devstorage", "ai-models", "local-ai", "llama-server.pid")],
+  });
   process.env = { ...originalEnv };
   rmSync(tmp, { recursive: true, force: true });
 });

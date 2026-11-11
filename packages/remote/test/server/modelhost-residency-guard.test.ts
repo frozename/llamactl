@@ -9,7 +9,7 @@
 // root and stops both host keys in finally so a RED failure cannot leave
 // Running sidecars behind.
 
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, afterEach, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -17,6 +17,7 @@ import type { PidIdentityDeps } from "../../../core/src/pidIdentity.js";
 
 import { readModelHostStarting } from "../../../core/src/engines/state.js";
 import { resolveEnv } from "../../../core/src/env.js";
+import { reapFakeProcesses } from "../../../core/test/fake-process-reaper.js";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
 import {
   startModelHost,
@@ -36,23 +37,27 @@ const GROUP = "z13-large-gpu";
 
 const fakeOsmsApi = join(import.meta.dir, "..", "fixtures", "fake-osmos-api.ts");
 const spawnedPids = new Set<number>();
+const roots = new Set<string>();
 
-// Backstop for pids recorded before a mid-test failure: the per-test
-// finally stops hosts through their state records, this only covers a
-// start that returned ok after the finally's stop window.
-afterAll(() => {
-  for (const pid of spawnedPids) {
-    try {
-      process.kill(-pid, "SIGKILL");
-    } catch {
-      // already gone
-    }
-    try {
-      process.kill(pid, "SIGKILL");
-    } catch {
-      // already gone
-    }
-  }
+function newRoot(): string {
+  const created = mkdtempSync(join(tmpdir(), "llamactl-residency-guard-"));
+  roots.add(created);
+  return created;
+}
+
+// Backstop for fakes that outlive their test: afterEach covers the
+// just-finished test, afterAll covers a start that returned ok after the
+// finally's stop window.
+async function reapAllRoots(): Promise<void> {
+  await reapFakeProcesses({ scratch: [...roots], pids: [...spawnedPids] });
+}
+
+afterEach(async () => {
+  await reapAllRoots();
+});
+
+afterAll(async () => {
+  await reapAllRoots();
 });
 
 interface ArmTemplates {
@@ -236,7 +241,7 @@ async function waitFor(condition: () => boolean, label: string): Promise<void> {
 
 test("R1: refuses a same-group start while a peer is Running", async () => {
   const arms = armTemplates();
-  const root = mkdtempSync(join(tmpdir(), "llamactl-residency-guard-"));
+  const root = newRoot();
   try {
     const ctx = await setupRoot(root, arms);
 
@@ -265,7 +270,7 @@ test("R1: refuses a same-group start while a peer is Running", async () => {
 
 test("R2: refuses a same-group start while a peer is Starting", async () => {
   const arms = armTemplates();
-  const root = mkdtempSync(join(tmpdir(), "llamactl-residency-guard-"));
+  const root = newRoot();
   const gate = readinessGate();
   let startA: Promise<StartModelHostResult> | null = null;
   try {
@@ -302,7 +307,7 @@ test("R2: refuses a same-group start while a peer is Starting", async () => {
 
 test("R4: fails closed when a same-group peer's pid identity is Unknown", async () => {
   const arms = armTemplates();
-  const root = mkdtempSync(join(tmpdir(), "llamactl-residency-guard-"));
+  const root = newRoot();
   try {
     const ctx = await setupRoot(root, arms);
 
@@ -331,7 +336,7 @@ test("R4: fails closed when a same-group peer's pid identity is Unknown", async 
 
 test("R3: allows a same-group start after the peer stops", async () => {
   const arms = armTemplates();
-  const root = mkdtempSync(join(tmpdir(), "llamactl-residency-guard-"));
+  const root = newRoot();
   try {
     const ctx = await setupRoot(root, arms);
 
@@ -353,7 +358,7 @@ test("R3: allows a same-group start after the peer stops", async () => {
 
 test("G1: a different residency group does not conflict", async () => {
   const arms = armTemplates();
-  const root = mkdtempSync(join(tmpdir(), "llamactl-residency-guard-"));
+  const root = newRoot();
   try {
     const ctx = await setupRoot(root, arms);
 
@@ -374,7 +379,7 @@ test("G1: a different residency group does not conflict", async () => {
 
 test("G2: an unlabelled host does not conflict with a labelled peer", async () => {
   const arms = armTemplates();
-  const root = mkdtempSync(join(tmpdir(), "llamactl-residency-guard-"));
+  const root = newRoot();
   try {
     const ctx = await setupRoot(root, arms);
 
@@ -393,7 +398,7 @@ test("G2: an unlabelled host does not conflict with a labelled peer", async () =
 
 test("G2 reverse: a labelled host is not blocked by an unlabelled peer", async () => {
   const arms = armTemplates();
-  const root = mkdtempSync(join(tmpdir(), "llamactl-residency-guard-"));
+  const root = newRoot();
   try {
     const ctx = await setupRoot(root, arms);
 
@@ -412,7 +417,7 @@ test("G2 reverse: a labelled host is not blocked by an unlabelled peer", async (
 
 test("G3: two unlabelled hosts do not conflict — second start succeeds when peer is Running", async () => {
   const arms = armTemplates();
-  const root = mkdtempSync(join(tmpdir(), "llamactl-residency-guard-"));
+  const root = newRoot();
   try {
     const ctx = await setupRoot(root, arms);
 

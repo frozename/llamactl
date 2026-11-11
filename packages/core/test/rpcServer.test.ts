@@ -5,17 +5,12 @@ import { join } from "node:path";
 
 import { resolveEnv } from "../src/env.js";
 import { rpcServerStatus, startRpcServer, stopRpcServer } from "../src/rpcServer.js";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "../src/safe-fs.js";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
+import { reapFakeProcesses } from "./fake-process-reaper.js";
 
 let tmp: string;
 let resolved: ReturnType<typeof resolveEnv>;
+let resolvedReady = false;
 const origEnv = { ...process.env };
 
 // Fake rpc-server: a bash-wrapped Bun one-liner that binds a TCP
@@ -54,21 +49,15 @@ beforeEach(() => {
   process.env["LOCAL_AI_RUNTIME_DIR"] = runtimeDir;
   process.env["LLAMA_CPP_LOGS"] = join(devStorage, "logs", "llama.cpp");
   resolved = resolveEnv();
+  resolvedReady = true;
 });
 
-afterEach(() => {
-  // Best-effort teardown of any fake that's still listening.
-  const pidFile = join(resolved.LOCAL_AI_RUNTIME_DIR, "rpc-server.pid");
-  if (existsSync(pidFile)) {
-    const pid = Number.parseInt(readFileSync(pidFile, "utf8").trim(), 10);
-    if (Number.isFinite(pid) && pid > 0) {
-      try {
-        process.kill(pid, "SIGTERM");
-      } catch {
-        // Best-effort cleanup; failures are not actionable here.
-      }
-    }
-  }
+afterEach(async () => {
+  // The fake's argv carries no tmp path, so the pidfile is the only way
+  // the reaper finds it. The flag keeps the pidfile read out of reach of
+  // an unassigned `resolved` when beforeEach threw early.
+  const pidFiles = resolvedReady ? [join(resolved.LOCAL_AI_RUNTIME_DIR, "rpc-server.pid")] : [];
+  await reapFakeProcesses({ scratch: tmp, pidFiles });
   process.env = { ...origEnv };
   rmSync(tmp, { recursive: true, force: true });
 });

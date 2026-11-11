@@ -12,14 +12,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "../src/safe-fs.js";
+import { reapFakeProcesses } from "../../core/test/fake-process-reaper.js";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 /**
  * End-to-end workload lifecycle test. One hermetic agent acts as
@@ -83,12 +77,13 @@ let agent: RunningAgent | null = null;
 let kubeconfigPath = "";
 let workloadsDir = "";
 let manifestPath = "";
+let runtimeDir = "";
 const originalEnv: NodeJS.ProcessEnv = { ...process.env };
 
 beforeEach(async () => {
   tmp = mkdtempSync(join(tmpdir(), "llamactl-wl-e2e-"));
   const devStorage = join(tmp, "devstorage");
-  const runtimeDir = join(devStorage, "ai-models", "local-ai");
+  runtimeDir = join(devStorage, "ai-models", "local-ai");
   const modelsDir = join(devStorage, "ai-models", "llama.cpp", "models");
   const binDir = join(tmp, "bin");
   const logsDir = join(devStorage, "logs", "llama.cpp");
@@ -170,19 +165,7 @@ afterEach(async () => {
     await agent.stop();
     agent = null;
   }
-  const pidFile = process.env["LOCAL_AI_RUNTIME_DIR"]
-    ? join(process.env["LOCAL_AI_RUNTIME_DIR"], "llama-server.pid")
-    : null;
-  if (pidFile && existsSync(pidFile)) {
-    const pid = Number.parseInt(readFileSync(pidFile, "utf8").trim(), 10);
-    if (Number.isFinite(pid) && pid > 0) {
-      try {
-        process.kill(pid, "SIGTERM");
-      } catch {
-        /* Intentionally empty. */
-      }
-    }
-  }
+  await reapFakeProcesses({ scratch: tmp, pidFiles: [join(runtimeDir, "llama-server.pid")] });
   process.env = { ...originalEnv };
   rmSync(tmp, { recursive: true, force: true });
 });
