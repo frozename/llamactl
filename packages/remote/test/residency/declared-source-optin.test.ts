@@ -174,12 +174,15 @@ function lateBodyChatCompletions(model: string, delayMs: number): Request {
       }, delayMs);
     },
   });
-  return new Request("http://x/v1/chat/completions", {
+  // The strict typecheck's RequestInit omits `duplex`; the intersection names
+  // it without a cast so a stream body still builds a half-duplex Request.
+  const init: RequestInit & { duplex: "half" } = {
     method: "POST",
     headers: { "content-type": "application/json" },
-    duplex: "half",
     body,
-  });
+    duplex: "half",
+  };
+  return new Request("http://x/v1/chat/completions", init);
 }
 
 function writeLlamaServerState(workload: string, rel: string, port: number): void {
