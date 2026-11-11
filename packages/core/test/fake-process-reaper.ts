@@ -2,13 +2,29 @@
 // tests can leave fake llama-server / rpc-server / osmos-api processes
 // (and their same-group children, e.g. a backgrounded `sleep`) alive past
 // the tmpdir teardown. This helper finds them by scratch-path match, by
-// pidfile (with a pid-reuse guard) or by explicit pid list, SIGTERMs them
-// and their process groups, escalates to SIGKILL, and returns whatever is
-// still alive. It never signals its own process group.
+// pidfile or by explicit pid list, SIGTERMs them, escalates to SIGKILL,
+// waits for them to exit and returns whatever is still alive.
+//
+// Identity guards, so a recycled pid now held by a production llama-server
+// is never signalled:
+// - a pidfile pid must pass the production identity check (verifyPidFile:
+//   its holder started no later than the pidfile mtime + slack) and must
+//   still look like a fake (scratch needle in argv, or engine argv0);
+// - an explicit pid must look like a fake and must have started after this
+//   module loaded. ps etime has one-second resolution and rounds the start
+//   toward later, so a holder that started up to a second before load can
+//   pass the start check; it still has to look like a fake;
+// - a process group is signalled only when a verified target leads it
+//   (pgid === pid), and never the runner's own group. Every other target
+//   is signalled on its own.
+import { processStartMs, verifyPidFile } from "../src/pidIdentity.js";
 import { existsSync, readFileSync } from "../src/safe-fs.js";
 
+const MODULE_LOADED_AT_MS = Date.now();
+
 export interface ReapFakeOptions {
-  scratch: string | readonly string[];
+  /** Paths whose appearance in argv marks a fake. Unset or empty matches nothing. */
+  scratch?: string | readonly string[] | undefined;
   pidFiles?: readonly string[];
   pids?: readonly number[];
   graceMs?: number;
@@ -78,9 +94,12 @@ function ownProcessGroup(rows: readonly PsRow[]): number {
   return own.pgid;
 }
 
-function needlesFor(scratch: string | readonly string[]): string[] {
-  const list = typeof scratch === "string" ? [scratch] : [...scratch];
-  return list.filter((entry) => entry !== "");
+function needlesFor(scratch: ReapFakeOptions["scratch"]): string[] {
+  if (scratch === undefined) {
+    return [];
+  }
+  const list: readonly unknown[] = typeof scratch === "string" ? [scratch] : scratch;
+  return list.filter((entry): entry is string => typeof entry === "string" && entry !== "");
 }
 
 function argv0Basename(command: string): string {
@@ -98,17 +117,18 @@ function pidFromPidFile(file: string): number | null {
   return Number.isFinite(pid) && pid > 0 ? pid : null;
 }
 
+function matchesNeedle(row: PsRow, needles: readonly string[]): boolean {
+  return needles.some((needle) => row.command.includes(needle));
+}
+
 function matchesFakeEngine(row: PsRow, needles: readonly string[]): boolean {
-  return (
-    needles.some((needle) => row.command.includes(needle)) ||
-    ENGINE_ARGV0.has(argv0Basename(row.command))
-  );
+  return matchesNeedle(row, needles) || ENGINE_ARGV0.has(argv0Basename(row.command));
 }
 
 function rowTargets(rows: readonly PsRow[], needles: readonly string[]): Set<number> {
   const targets = new Set<number>();
   for (const row of rows) {
-    if (row.pid !== process.pid && needles.some((needle) => row.command.includes(needle))) {
+    if (row.pid !== process.pid && matchesNeedle(row, needles)) {
       targets.add(row.pid);
     }
   }
@@ -126,22 +146,38 @@ function pidFileTargets(
     if (pid === null || pid === process.pid) {
       continue;
     }
-    // Pid-reuse guard: only a live row that still looks like a fake may be signalled.
     const row = byPid.get(pid);
-    if (row !== undefined && matchesFakeEngine(row, needles)) {
+    if (row === undefined || !matchesFakeEngine(row, needles)) {
+      continue;
+    }
+    // Pid-reuse guard: a holder that started after the pidfile was written
+    // is not the process the pidfile recorded. Only "alive" is signalled.
+    if (verifyPidFile(file, pid) === "alive") {
       targets.add(pid);
     }
   }
   return targets;
 }
 
+function startedAfterModuleLoad(pid: number): boolean {
+  const startedAtMs = processStartMs(pid);
+  return startedAtMs !== null && startedAtMs > MODULE_LOADED_AT_MS;
+}
+
 function extraPidTargets(
   byPid: ReadonlyMap<number, PsRow>,
+  needles: readonly string[],
   extraPids: readonly number[],
 ): Set<number> {
   const targets = new Set<number>();
   for (const pid of extraPids) {
-    if (pid !== process.pid && byPid.has(pid)) {
+    if (pid === process.pid) {
+      continue;
+    }
+    // A pid that already exited is a no-op. A live one must look like a
+    // fake and must have started after this module loaded.
+    const row = byPid.get(pid);
+    if (row !== undefined && matchesFakeEngine(row, needles) && startedAfterModuleLoad(pid)) {
       targets.add(pid);
     }
   }
@@ -159,7 +195,7 @@ function collectTargets(
   for (const pid of pidFileTargets(byPid, needles, pidFiles)) {
     targets.add(pid);
   }
-  for (const pid of extraPidTargets(byPid, extraPids)) {
+  for (const pid of extraPidTargets(byPid, needles, extraPids)) {
     targets.add(pid);
   }
   return targets;
@@ -172,7 +208,9 @@ function collectGroups(
 ): Set<number> {
   const groups = new Set<number>();
   for (const row of rows) {
-    if (targets.has(row.pid) && row.pgid > 1 && row.pgid !== ownPgid) {
+    // Only a verified target that leads its own group takes the group down.
+    const leadsGroup = row.pgid === row.pid;
+    if (targets.has(row.pid) && leadsGroup && row.pgid > 1 && row.pgid !== ownPgid) {
       groups.add(row.pgid);
     }
   }

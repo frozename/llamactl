@@ -108,7 +108,8 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await reapFakeProcesses({ scratch: tmp, pids: [...spawnedPids] });
-  rmSync(tmp, { recursive: true, force: true });
+  // tmp stays empty when beforeAll threw before mkdtempSync.
+  if (tmp !== "") rmSync(tmp, { recursive: true, force: true });
 });
 
 test("libosmos host lifecycle: start, adopt, stop", async () => {

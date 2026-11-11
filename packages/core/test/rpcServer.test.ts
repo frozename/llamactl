@@ -8,7 +8,7 @@ import { rpcServerStatus, startRpcServer, stopRpcServer } from "../src/rpcServer
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 import { reapFakeProcesses } from "./fake-process-reaper.js";
 
-let tmp: string;
+let tmp = "";
 let resolved: ReturnType<typeof resolveEnv>;
 let resolvedReady = false;
 const origEnv = { ...process.env };
@@ -56,10 +56,13 @@ afterEach(async () => {
   // The fake's argv carries no tmp path, so the pidfile is the only way
   // the reaper finds it. The flag keeps the pidfile read out of reach of
   // an unassigned `resolved` when beforeEach threw early.
+  // tmp stays empty when beforeEach threw before mkdtempSync.
   const pidFiles = resolvedReady ? [join(resolved.LOCAL_AI_RUNTIME_DIR, "rpc-server.pid")] : [];
-  await reapFakeProcesses({ scratch: tmp, pidFiles });
   process.env = { ...origEnv };
+  if (tmp === "") return;
+  await reapFakeProcesses({ scratch: tmp, pidFiles });
   rmSync(tmp, { recursive: true, force: true });
+  tmp = "";
 });
 
 describe("rpcServer", () => {

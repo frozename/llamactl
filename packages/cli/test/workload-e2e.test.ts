@@ -72,7 +72,7 @@ done
 exec -a llama-server bun -e "const s=Bun.serve({port:Number(process.env.FAKE_PORT),hostname:process.env.FAKE_HOST,fetch(){return new Response('ok',{status:200});}});process.on('SIGTERM',()=>{s.stop(true);process.exit(0);});process.on('SIGINT',()=>{s.stop(true);process.exit(0);});await new Promise(()=>{});" "$FAKE_MODEL"
 `;
 
-let tmp: string;
+let tmp = "";
 let agent: RunningAgent | null = null;
 let kubeconfigPath = "";
 let workloadsDir = "";
@@ -165,9 +165,13 @@ afterEach(async () => {
     await agent.stop();
     agent = null;
   }
-  await reapFakeProcesses({ scratch: tmp, pidFiles: [join(runtimeDir, "llama-server.pid")] });
   process.env = { ...originalEnv };
+  // tmp stays empty when beforeEach threw before mkdtempSync; skip the
+  // teardown then so the original error is the one reported.
+  if (tmp === "") return;
+  await reapFakeProcesses({ scratch: tmp, pidFiles: [join(runtimeDir, "llama-server.pid")] });
   rmSync(tmp, { recursive: true, force: true });
+  tmp = "";
 });
 
 function testEnv(): NodeJS.ProcessEnv {

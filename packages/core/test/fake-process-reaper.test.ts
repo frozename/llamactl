@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
+import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -9,8 +9,10 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from "../src/safe-fs.js";
+import { reapFakeProcesses } from "./fake-process-reaper.js";
 
 type PsRow = { pid: number; pgid: number; stat: string; command: string };
 
@@ -246,4 +248,281 @@ test("every fake-engine spawn site reaps through the shared helper (#627)", () =
     (file) => !readFileSync(join(repoRoot, file), "utf8").includes("reapFakeProcesses("),
   );
   expect(missing).toEqual([]);
+});
+
+// ---------------------------------------------------------------------------
+// Identity guards (#627 review). Every process below is a throwaway `sleep`
+// this file spawns itself and tracks; each test kills what it spawned in a
+// finally block, and afterAll sweeps anything a failed assertion left.
+// ---------------------------------------------------------------------------
+
+const HELPER_PATH = join(import.meta.dir, "fake-process-reaper.ts");
+const ENGINE_SLEEP = "exec -a llama-server sleep 600";
+const ownedPids = new Set<number>();
+const ownedGroups = new Set<number>();
+
+afterAll(() => {
+  for (const pgid of ownedGroups) sigkill(-pgid);
+  for (const pid of ownedPids) sigkill(pid);
+});
+
+function rowOf(pid: number): PsRow | undefined {
+  return scanProcesses().find((row) => row.pid === pid);
+}
+
+function isLive(pid: number): boolean {
+  return rowOf(pid) !== undefined;
+}
+
+async function waitFor(cond: () => boolean, timeoutMs = 3000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!cond()) {
+    if (Date.now() > deadline) throw new Error("timed out waiting for condition");
+    await sleep(25);
+  }
+}
+
+function track(child: ChildProcess, detached: boolean): number {
+  const pid = child.pid;
+  if (pid === undefined) throw new Error("spawn returned no pid");
+  ownedPids.add(pid);
+  if (detached) ownedGroups.add(pid);
+  return pid;
+}
+
+/** Spawn `bash -c script` and wait until its row shows `argv0`. */
+async function spawnShell(script: string, detached: boolean, argv0: string): Promise<number> {
+  const child = spawn("bash", ["-c", script], { detached, stdio: "ignore" });
+  if (detached) child.unref();
+  const pid = track(child, detached);
+  await waitFor(() => (rowOf(pid)?.command ?? "").split(/\s/)[0]?.endsWith(argv0) === true);
+  return pid;
+}
+
+function killOwned(...pids: number[]): void {
+  for (const pid of pids) {
+    if (ownedGroups.has(pid)) sigkill(-pid);
+    sigkill(pid);
+  }
+}
+
+function newScratch(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  scratchDirs.push(dir);
+  return dir;
+}
+
+function writePidFile(dir: string, pid: number, mtimeSec?: number): string {
+  const file = join(dir, "engine.pid");
+  writeFileSync(file, String(pid));
+  if (mtimeSec !== undefined) utimesSync(file, mtimeSec, mtimeSec);
+  return file;
+}
+
+/** Run a fresh bun process that loads the reaper and reaps `opts`; returns its stdout. */
+function reapInFreshRunner(scratch: string, opts: object): { status: number | null; out: string } {
+  const script = join(scratch, `reap-${String(Date.now())}.ts`);
+  writeFileSync(
+    script,
+    `const { reapFakeProcesses } = await import(${JSON.stringify(HELPER_PATH)});
+const survivors = await reapFakeProcesses(${JSON.stringify(opts)});
+process.stdout.write(JSON.stringify(survivors));
+`,
+  );
+  const run = spawnSync(process.execPath, [script], { encoding: "utf8", timeout: 15000 });
+  return { status: run.status, out: run.stdout };
+}
+
+test("a pidfile naming a live non-fake process outside scratch is not signalled", async () => {
+  const scratch = newScratch("llamactl-reaper-nonfake-");
+  const pid = await spawnShell("exec /bin/sleep 600", true, "sleep");
+  try {
+    const pidFile = writePidFile(scratch, pid);
+    const survivors = await reapFakeProcesses({
+      scratch,
+      pidFiles: [pidFile],
+      graceMs: 200,
+      timeoutMs: 500,
+    });
+    expect(survivors).toEqual([]);
+    expect(isLive(pid)).toBe(true);
+  } finally {
+    killOwned(pid);
+  }
+});
+
+test("a pidfile written before an engine-named process took its pid is not signalled", async () => {
+  const scratch = newScratch("llamactl-reaper-reuse-");
+  const pid = await spawnShell(ENGINE_SLEEP, true, "llama-server");
+  try {
+    // The record predates the holder's start by an hour: a recycled pid.
+    const pidFile = writePidFile(scratch, pid, Math.floor(Date.now() / 1000) - 3600);
+    const survivors = await reapFakeProcesses({
+      scratch,
+      pidFiles: [pidFile],
+      graceMs: 200,
+      timeoutMs: 500,
+    });
+    expect(survivors).toEqual([]);
+    expect(isLive(pid)).toBe(true);
+  } finally {
+    killOwned(pid);
+  }
+});
+
+test("a pidfile naming a fake whose argv carries no scratch path is reaped by argv0", async () => {
+  const scratch = newScratch("llamactl-reaper-argv0-");
+  const pid = await spawnShell(ENGINE_SLEEP, true, "llama-server");
+  try {
+    expect(rowOf(pid)?.command.includes(scratch)).toBe(false);
+    const pidFile = writePidFile(scratch, pid);
+    const survivors = await reapFakeProcesses({ scratch, pidFiles: [pidFile] });
+    expect(survivors).toEqual([]);
+    expect(isLive(pid)).toBe(false);
+  } finally {
+    killOwned(pid);
+  }
+});
+
+test("a target in the runner's own group is killed alone and the group is never signalled", async () => {
+  const ownPgid = rowOf(process.pid)?.pgid;
+  const target = await spawnShell(ENGINE_SLEEP, false, "llama-server");
+  const sibling = await spawnShell("exec /bin/sleep 600", false, "sleep");
+  try {
+    expect(rowOf(target)?.pgid).toBe(ownPgid);
+    expect(rowOf(sibling)?.pgid).toBe(ownPgid);
+    const survivors = await reapFakeProcesses({ pids: [target] });
+    expect(survivors).toEqual([]);
+    expect(isLive(target)).toBe(false);
+    expect(isLive(sibling)).toBe(true);
+    expect(isLive(process.pid)).toBe(true);
+  } finally {
+    killOwned(target, sibling);
+  }
+});
+
+test("a target that does not lead its group is killed alone and its group leader survives", async () => {
+  // The leader becomes a plain sleep; the engine-named child shares its group.
+  const child = spawn("bash", ["-c", `${ENGINE_SLEEP} & echo $!; exec /bin/sleep 600`], {
+    detached: true,
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  child.unref();
+  const leader = track(child, true);
+  try {
+    const first = await new Promise<string>((resolve) => {
+      child.stdout.once("data", (chunk: Buffer) => {
+        resolve(chunk.toString("utf8"));
+      });
+    });
+    child.stdout.destroy();
+    const target = Number.parseInt(first.trim(), 10);
+    ownedPids.add(target);
+    await waitFor(() => (rowOf(target)?.command ?? "").startsWith("llama-server"));
+    await waitFor(() => (rowOf(leader)?.command ?? "").startsWith("/bin/sleep"));
+    expect(rowOf(target)?.pgid).toBe(leader);
+    const survivors = await reapFakeProcesses({ pids: [target] });
+    expect(survivors).toEqual([]);
+    expect(isLive(target)).toBe(false);
+    expect(isLive(leader)).toBe(true);
+  } finally {
+    killOwned(leader);
+  }
+});
+
+test("a verified target leading the runner's own group never takes that group down", async () => {
+  // The runner here is a bun process whose group is led by an engine-named
+  // bash recorded in a fresh pidfile: a verified target with pgid === pid
+  // that is also the runner's own group.
+  const scratch = newScratch("llamactl-reaper-owngroup-");
+  const pidFile = join(scratch, "leader.pid");
+  const script = join(scratch, "reap-own-group.ts");
+  writeFileSync(
+    script,
+    `const { reapFakeProcesses } = await import(${JSON.stringify(HELPER_PATH)});
+const survivors = await reapFakeProcesses({ pidFiles: [${JSON.stringify(pidFile)}] });
+process.stdout.write("survivors=" + JSON.stringify(survivors));
+`,
+  );
+  const inner = `"${process.execPath}" "${script}"; echo`;
+  const child = spawn(
+    "bash",
+    ["-c", `echo $$ > "${pidFile}"; exec -a llama-server bash -c '${inner}'`],
+    { detached: true, stdio: ["ignore", "pipe", "ignore"] },
+  );
+  child.unref();
+  const leader = track(child, true);
+  try {
+    const out = await new Promise<string>((resolve, reject) => {
+      let buf = "";
+      const timer = setTimeout(() => {
+        reject(new Error(`inner runner timed out: ${buf}`));
+      }, 15000);
+      child.stdout.on("data", (chunk: Buffer) => {
+        buf += chunk.toString("utf8");
+      });
+      child.stdout.on("close", () => {
+        clearTimeout(timer);
+        resolve(buf);
+      });
+    });
+    expect(out.trim()).toBe("survivors=[]");
+    expect(isLive(leader)).toBe(false);
+  } finally {
+    killOwned(leader);
+  }
+}, 20000);
+
+test("reapFakeProcesses waits until a TERM-ignoring fake is gone before resolving", async () => {
+  const pid = await spawnShell(`trap '' TERM; ${ENGINE_SLEEP}`, true, "llama-server");
+  try {
+    const survivors = await reapFakeProcesses({ pids: [pid], graceMs: 100, timeoutMs: 2000 });
+    // Either it is gone by the time the promise resolves, or it is reported.
+    expect(survivors.includes(pid) || !isLive(pid)).toBe(true);
+    expect(survivors).toEqual([]);
+    expect(isLive(pid)).toBe(false);
+  } finally {
+    killOwned(pid);
+  }
+});
+
+test("an explicit pid that started before the reaper module loaded is not signalled", async () => {
+  const scratch = newScratch("llamactl-reaper-preexisting-");
+  const pid = await spawnShell(ENGINE_SLEEP, true, "llama-server");
+  try {
+    // ps etime has one-second resolution: leave a clear margin before the
+    // fresh runner loads the module.
+    await sleep(2200);
+    const run = reapInFreshRunner(scratch, { pids: [pid], graceMs: 200, timeoutMs: 500 });
+    expect(run.status).toBe(0);
+    expect(run.out).toBe("[]");
+    expect(isLive(pid)).toBe(true);
+  } finally {
+    killOwned(pid);
+  }
+}, 20000);
+
+test("an explicit pid matching neither a needle nor an engine argv0 is not signalled", async () => {
+  const scratch = newScratch("llamactl-reaper-unrelated-");
+  const pid = await spawnShell("exec /bin/sleep 600", true, "sleep");
+  try {
+    const survivors = await reapFakeProcesses({
+      scratch,
+      pids: [pid],
+      graceMs: 200,
+      timeoutMs: 500,
+    });
+    expect(survivors).toEqual([]);
+    expect(isLive(pid)).toBe(true);
+  } finally {
+    killOwned(pid);
+  }
+});
+
+test("an explicit pid that already exited and an unset scratch are a no-op", async () => {
+  const pid = await spawnShell(ENGINE_SLEEP, true, "llama-server");
+  killOwned(pid);
+  await waitFor(() => !isLive(pid));
+  expect(await reapFakeProcesses({ scratch: undefined, pids: [pid] })).toEqual([]);
+  expect(await reapFakeProcesses({ scratch: [""] })).toEqual([]);
 });

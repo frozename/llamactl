@@ -128,7 +128,9 @@ afterEach(async () => {
   decoy = null;
   for (const k of Object.keys(process.env)) Reflect.deleteProperty(process.env, k);
   Object.assign(process.env, originalEnv);
-  rmSync(tmp, { recursive: true, force: true });
+  // tmp stays empty when beforeEach threw before mkdtempSync.
+  if (tmp !== "") rmSync(tmp, { recursive: true, force: true });
+  tmp = "";
 });
 
 test("reconcile restarts a Running workload whose recorded pid died out-of-band", async () => {

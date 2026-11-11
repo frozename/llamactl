@@ -62,7 +62,7 @@ function wrapWithEnv(script: string, vars: Record<string, string>): string {
   return script.replace("exec -a", `${envSetup}\nexec -a`);
 }
 
-let tmp: string;
+let tmp = "";
 let agent: RunningAgent | null = null;
 let certPem = "";
 let agentToken = "";
@@ -135,12 +135,16 @@ afterEach(async () => {
     await agent.stop();
     agent = null;
   }
+  process.env = { ...originalEnv };
+  // tmp stays empty when beforeEach threw before mkdtempSync; skip the
+  // teardown then so the original error is the one reported.
+  if (tmp === "") return;
   await reapFakeProcesses({
     scratch: tmp,
     pidFiles: [join(tmp, "devstorage", "ai-models", "local-ai", "llama-server.pid")],
   });
-  process.env = { ...originalEnv };
   rmSync(tmp, { recursive: true, force: true });
+  tmp = "";
 });
 
 describe("cluster-serverstart: remote serverStart over SSE", () => {
