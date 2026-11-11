@@ -164,12 +164,12 @@ const singleFlight = new Map<string, SingleFlightEntry>();
 
 // --- request helpers ---
 
-function buildBaseUrl(host: string, port: number): string {
+export function buildBaseUrl(host: string, port: number): string {
   const normalizedHost = host === "0.0.0.0" ? "127.0.0.1" : host;
   return `http://${formatHostForUrl(normalizedHost)}:${String(port)}`;
 }
 
-function applyAuth(apiKey: string | undefined, init: RequestInit): RequestInit {
+export function applyAuth(apiKey: string | undefined, init: RequestInit): RequestInit {
   if (apiKey === undefined) {
     return init;
   }
@@ -189,7 +189,7 @@ function errorName(err: unknown): string | undefined {
 // Bun rejects an AbortSignal.timeout fetch with a DOMException named
 // "TimeoutError"; treat that, "AbortError" or an aborted signal as a timeout
 // and anything else as an unreachable network failure.
-function classifyFetchError(signal: AbortSignal, err: unknown): "Timeout" | "Unreachable" {
+export function classifyFetchError(signal: AbortSignal, err: unknown): "Timeout" | "Unreachable" {
   const name = errorName(err);
   if (signal.aborted || name === "TimeoutError" || name === "AbortError") {
     return "Timeout";
