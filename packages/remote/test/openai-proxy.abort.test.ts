@@ -27,26 +27,39 @@ import { type ControllerClosedGuard, installControllerClosedGuard } from "./help
  * startAgentServer in a subprocess makes the chain production-shaped
  * over TLS — but it all runs on loopback, not between machines.
  *
- * Case 1 POSTs /v1/chat/completions, which on every agent goes through
- * handleRagChatCompletions → dispatchPlainOpenAiRequest: that path
- * rebuilds the Request WITHOUT req.signal, so the client signal is
- * dropped before proxyOpenAI ever sees it. The abort still reaches the
- * engine because each hop's abortUpstreamOnBodyCancel (#321) tears the
- * upstream fetch down when the response body is cancelled — the only
- * disconnect signal Bun.serve exposes once a response is returned
- * (req.signal never fires for a returned response).
+ * Root cause (#316, Bun-version honest). The original incident needs two
+ * ingredients: an `agent serve` running on a Bun 1.3.x runtime, and the
+ * req.signal that the chat/completions fallback dropped before #602. On
+ * Bun 1.3.14 a fetch client's `reader.cancel()` neither closes the
+ * connection nor propagates a passthrough-body cancel, so a body-reader
+ * hangup is never observed at the far agent and the engine is never torn
+ * down. On Bun 1.4.3 both happen at 0ms, so the same code propagates the
+ * abort. There is no defect in the passthrough path reproducible on the
+ * CI-pinned 1.4.3 — this file is the regression pin, not a fix.
  *
- * Case 2 POSTs /v1/completions, which skips the RAG endpoint entirely:
- * handleOpenAIRoute → dispatchProxyRequest hands proxyOpenAI the
- * original request, so req.signal survives into forward()'s composed
- * upstream signal. Same engine-side assertion — the abort must arrive
- * promptly on BOTH ingress paths.
+ * The chat/completions path (handleRagChatCompletions →
+ * dispatchPlainOpenAiRequest) now carries req.signal into the rebuilt
+ * Request (#602), so a client abort before response headers cancels the
+ * upstream fetch. Once a streamed response has been returned, req.signal
+ * never fires for that returned response, so post-header teardown rides
+ * each hop's abortUpstreamOnBodyCancel (#321), the only disconnect signal
+ * Bun.serve exposes on a returned body. The /v1/completions path skips the
+ * RAG endpoint (handleOpenAIRoute → dispatchProxyRequest hands proxyOpenAI
+ * the original request) so req.signal survives into forward()'s composed
+ * upstream signal directly.
+ *
+ * Case 1 exercises the body-reader cancel and is therefore gated to
+ * Bun >= 1.4. Cases B and C hang up with an AbortController, which closes
+ * the socket on every supported runtime, so they pin the same
+ * chat/completions teardown on both Bun lines. Case 2 is the
+ * signal-preserving /v1/completions control.
  *
  * The discriminator is the engine's view: with a cancel-swallowing
- * abortUpstreamOnBodyCancel the engine keeps producing for ~0.8-1s and
- * 74+ chunks past the client hangup; at base it observes the abort in
- * ~0-1ms. We assert both a propagation budget and a bounded chunk count
- * in the abort window.
+ * abortUpstreamOnBodyCancel and req.signal dropped from the chat
+ * fallback, the engine keeps producing for ~0.8-1s and 74+ chunks past
+ * the client hangup; at base it observes the abort in ~0-1ms. Cases B and
+ * C assert both a propagation budget and a bounded chunk count in the
+ * abort window so that mutation of either teardown path fails loudly.
  */
 
 const PEER_ID = "agent-b";
@@ -64,6 +77,20 @@ const ENV_KEYS = [
   "LLAMA_CPP_HOST",
   "LLAMA_CPP_PORT",
 ] as const;
+
+/**
+ * On Bun < 1.4 the fetch client's `reader.cancel()` neither closes the
+ * connection nor propagates a passthrough-body cancel, so a body-reader
+ * hangup never reaches the engine and case 1 cannot hold. Bun >= 1.4 does
+ * both at 0ms. Version-gate only that case; the AbortController cases (B,
+ * C) close the socket on every supported runtime and run everywhere.
+ */
+function supportsBodyReaderCancelAbort(): boolean {
+  const [major = 0, minor = 0] = Bun.version
+    .split(".")
+    .map((part): number => Number.parseInt(part, 10) || 0);
+  return major > 1 || (major === 1 && minor >= 4);
+}
 
 interface AbortEngineStats {
   requests: number;
@@ -419,8 +446,8 @@ afterAll(async () => {
 });
 
 describe("client abort propagates through a real two-agent TLS chain to the engine (#316)", () => {
-  test(
-    "POST /v1/chat/completions aborts the peer engine via dispatchPlainOpenAiRequest (req.signal dropped)",
+  test.skipIf(!supportsBodyReaderCancelAbort())(
+    "case 1: POST /v1/chat/completions aborts the peer engine on a body-reader cancel (Bun >= 1.4)",
     async () => {
       await ensurePeerAgent();
       advertisePeerModel();
@@ -459,8 +486,96 @@ describe("client abort propagates through a real two-agent TLS chain to the engi
     TEST_TIMEOUT_MS,
   );
 
+  // Mutation-measured abort latency for this case (and case C) when both
+  // teardown paths are neutered (signal dropped from dispatchPlainOpenAiRequest
+  // and abortUpstreamOnBodyCancel.cancel() made a no-op): the engine only
+  // tears down via socket backpressure once the gone-client send buffer
+  // fills. Observed engine abort latency (engine abortedAtMs - test
+  // cancelAtMs) on the pinned Bun 1.4.3 over 3 runs: case B ≈875–883 ms,
+  // case C ≈975–977 ms — always past ABORT_PROPAGATION_BUDGET_MS, so the
+  // kill never tears down inside the budget. At base the same delta is
+  // ~0–1 ms.
   test(
-    "POST /v1/completions aborts the peer engine via the signal-preserving /v1/* dispatch",
+    "case B: POST /v1/chat/completions aborts the peer engine on an AbortController disconnect (any Bun)",
+    async () => {
+      await ensurePeerAgent();
+      advertisePeerModel();
+      const controller = new AbortController();
+      const res = await agentFetch("/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: PEER_MODEL,
+          stream: true,
+          messages: [{ role: "user", content: "hang up mid-stream" }],
+        }),
+        signal: controller.signal,
+      });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toContain("text/event-stream");
+
+      const reader = res.body!.getReader();
+      const first = await reader.read();
+      expect(first.done).toBe(false);
+      expect(new TextDecoder().decode(first.value)).toContain("chunk-");
+
+      const chunksBeforeAbort = engine!.stats.chunksEnqueued;
+      const cancelAtMs = performance.now();
+      controller.abort();
+
+      expect(await engine!.nextAbort(ABORT_OBSERVE_TIMEOUT_MS)).toBe(true);
+      const abortedAtMs = engine!.stats.abortedAtMs;
+      expect(abortedAtMs).not.toBeNull();
+      expect(abortedAtMs! - cancelAtMs).toBeLessThan(ABORT_PROPAGATION_BUDGET_MS);
+      expect(engine!.stats.chunksAtAbort - chunksBeforeAbort).toBeLessThanOrEqual(
+        MAX_ENGINE_CHUNKS_DURING_ABORT,
+      );
+      expect(engine!.stats.paths).toEqual(["/v1/chat/completions"]);
+      expect(engine!.stats.models).toEqual([PEER_MODEL]);
+      expect(engine!.stats.requests).toBe(1);
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "case C: POST /v1/chat/completions aborts the peer engine when the client hangs up before reading",
+    async () => {
+      await ensurePeerAgent();
+      advertisePeerModel();
+      const controller = new AbortController();
+      const res = await agentFetch("/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: PEER_MODEL,
+          stream: true,
+          messages: [{ role: "user", content: "hang up before the first chunk" }],
+        }),
+        signal: controller.signal,
+      });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toContain("text/event-stream");
+
+      const chunksBeforeAbort = engine!.stats.chunksEnqueued;
+      const cancelAtMs = performance.now();
+      controller.abort();
+
+      expect(await engine!.nextAbort(ABORT_OBSERVE_TIMEOUT_MS)).toBe(true);
+      const abortedAtMs = engine!.stats.abortedAtMs;
+      expect(abortedAtMs).not.toBeNull();
+      expect(abortedAtMs! - cancelAtMs).toBeLessThan(ABORT_PROPAGATION_BUDGET_MS);
+      expect(engine!.stats.chunksAtAbort - chunksBeforeAbort).toBeLessThanOrEqual(
+        MAX_ENGINE_CHUNKS_DURING_ABORT,
+      );
+      expect(engine!.stats.paths).toEqual(["/v1/chat/completions"]);
+      expect(engine!.stats.models).toEqual([PEER_MODEL]);
+      expect(engine!.stats.requests).toBe(1);
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "case 2: POST /v1/completions aborts the peer engine via the signal-preserving /v1/* dispatch",
     async () => {
       await ensurePeerAgent();
       advertisePeerModel();
