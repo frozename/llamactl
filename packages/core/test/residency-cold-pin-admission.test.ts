@@ -1,7 +1,11 @@
 import { expect, test } from "bun:test";
 
 import type {
+  CancelResult,
+  EnqueueResult,
+  QueueAction,
   QueueRequest,
+  QueueSnapshot,
   RequestQueueLimits,
   RequestQueuePolicy,
 } from "../src/residency/queue-policy.js";
@@ -33,7 +37,8 @@ type ProbeRefuseReason =
   | "NotLoadable"
   | "PrincipalShareExceeded"
   | "QueueBytesExceeded"
-  | "QueueFull";
+  | "QueueFull"
+  | "RequestIdConflict";
 
 type ProbeResult =
   | { kind: "would_queue"; queueDepth: number; maxWaitMs: number }
@@ -42,7 +47,6 @@ type ProbeResult =
 type ProbeInput = {
   entry: DeclaredEntry;
   policy: RequestQueuePolicy;
-  maxQueueWaitMs: number;
   probeId: string;
   bytes: number;
   maxCompletionTokens: number;
@@ -50,7 +54,6 @@ type ProbeInput = {
 
 type ProbeOver = {
   entry?: DeclaredEntry;
-  maxQueueWaitMs?: number;
   probeId?: string;
   bytes?: number;
   maxCompletionTokens?: number;
@@ -82,7 +85,7 @@ const lim = (over: Partial<RequestQueueLimits> = {}): RequestQueueLimits => ({
   maxExecutions: over.maxExecutions ?? 2,
   maxQueued: over.maxQueued ?? 8,
   maxQueuedBytes: over.maxQueuedBytes ?? 1_000_000,
-  maxQueueWaitMs: over.maxQueueWaitMs ?? 10_000_000,
+  maxQueueWaitMs: over.maxQueueWaitMs ?? 30_000,
   maxPerPrincipal: over.maxPerPrincipal ?? 100,
   starvationBoundMs: over.starvationBoundMs ?? 10_000_000,
   maxContextTokens: over.maxContextTokens ?? 100_000,
@@ -115,7 +118,6 @@ const probe = (target: RequestQueuePolicy, over: ProbeOver = {}): ProbeResult =>
   return mod.probeColdPinQueue({
     entry: entry(),
     policy: target,
-    maxQueueWaitMs: 30_000,
     probeId: "p1",
     bytes: 10,
     maxCompletionTokens: 0,
@@ -135,6 +137,31 @@ const untouchableQueuePolicy = (): RequestQueuePolicy => {
     cancel: touch,
     finishExecution: touch,
     snapshot: touch,
+    limits: touch,
+  };
+};
+
+const spyPolicy = (
+  inner: RequestQueuePolicy,
+): { policy: RequestQueuePolicy; principals: string[] } => {
+  const principals: string[] = [];
+  return {
+    principals,
+    policy: {
+      enqueue: (request): EnqueueResult => {
+        principals.push(request.principal);
+        return inner.enqueue(request);
+      },
+      schedule: (): QueueAction[] => inner.schedule(),
+      loadSettled: (loadId, outcome): QueueAction[] => inner.loadSettled(loadId, outcome),
+      markEvicted: (modelKey): void => {
+        inner.markEvicted(modelKey);
+      },
+      cancel: (requestId): CancelResult => inner.cancel(requestId),
+      finishExecution: (requestId): boolean => inner.finishExecution(requestId),
+      snapshot: (): QueueSnapshot => inner.snapshot(),
+      limits: (): RequestQueueLimits => inner.limits(),
+    },
   };
 };
 
@@ -247,9 +274,53 @@ test("#281: repeated probeIds do not accumulate queue state", async () => {
   });
 });
 
-test("#281: the probe principal is unique so maxPerPrincipal does not refuse it", async () => {
+test("#281: the probe passes a probeId-derived principal, not a fixed one", async () => {
   await load();
-  const target = policy({ maxPerPrincipal: 1 });
-  fill(target, 1);
-  expect(probe(target)).toEqual({ kind: "would_queue", queueDepth: 2, maxWaitMs: 30_000 });
+  const inner = policy({ maxPerPrincipal: 1 });
+  fill(inner, 1);
+  const { policy: spied, principals } = spyPolicy(inner);
+  expect(probe(spied, { probeId: "unique-principal-9" })).toEqual({
+    kind: "would_queue",
+    queueDepth: 2,
+    maxWaitMs: 30_000,
+  });
+  expect(principals).toEqual(["cold-pin-probe:unique-principal-9"]);
+});
+
+test("#281: a pre-existing entry with the probe's id is neither cancelled nor reported as would_queue", async () => {
+  await load();
+  const target = createRequestQueuePolicy({
+    limits: lim(),
+    now: () => 1_000,
+    resident: ["other@1"],
+  });
+  const preexisting: QueueRequest = {
+    requestId: "cold-pin-probe:collision",
+    principal: "someone-else",
+    priority: "background",
+    model: { name: "other", revision: "1" },
+    bytes: 1,
+    promptTokens: 0,
+    maxCompletionTokens: 0,
+    deadlineMs: Number.POSITIVE_INFINITY,
+  };
+  expect(target.enqueue(preexisting)).toEqual({
+    kind: "queued",
+    requestId: preexisting.requestId,
+  });
+  target.schedule();
+  expect(target.snapshot()).toMatchObject({ queued: 0, executing: 1 });
+
+  expect(probe(target, { probeId: "collision", bytes: 1e9, maxCompletionTokens: 1e9 })).toEqual({
+    kind: "would_refuse",
+    reason: "RequestIdConflict",
+    retryAfterMs: null,
+  });
+  expect(target.snapshot()).toMatchObject({ queued: 0, executing: 1 });
+});
+
+test("#281: would_queue reports the policy limits' maxQueueWaitMs as its single source", async () => {
+  await load();
+  const target = policy({ maxQueueWaitMs: 12_345 });
+  expect(probe(target)).toEqual({ kind: "would_queue", queueDepth: 1, maxWaitMs: 12_345 });
 });

@@ -2532,7 +2532,7 @@ const declaredModelSeam = openaiProxy as unknown as {
 // #281 DF-08: the cold-pin queue probe seam lands with the fix; same
 // structural-cast + `?.` pattern as the declared-source seam above.
 const coldPinQueueProbeSeam = openaiProxy as unknown as {
-  setColdPinQueueProbe?: (c: { policy: unknown; maxQueueWaitMs: number } | null) => void;
+  setColdPinQueueProbe?: (c: { policy: unknown } | null) => void;
 };
 
 const queueLimits = (over: Partial<RequestQueueLimits> = {}): RequestQueueLimits => ({
@@ -3060,10 +3060,10 @@ describe("declared cold models (#280)", () => {
       const upstream = installConditionalChatUpstream();
       expect(typeof coldPinQueueProbeSeam.setColdPinQueueProbe).toBe("function");
       const policy = createRequestQueuePolicy({
-        limits: queueLimits(),
+        limits: queueLimits({ maxQueueWaitMs: 30_000 }),
         now: () => 1_000,
       });
-      coldPinQueueProbeSeam.setColdPinQueueProbe?.({ policy, maxQueueWaitMs: 30_000 });
+      coldPinQueueProbeSeam.setColdPinQueueProbe?.({ policy });
       declaredModelSeam.setDeclaredModelSource?.(() => [declaredModelEntry("cold/model-a.gguf")]);
 
       const res = await openaiProxy.proxyOpenAI(chatRequest("cold/model-a.gguf"), t.env);
@@ -3101,6 +3101,51 @@ describe("declared cold models (#280)", () => {
     }
   });
 
+  test("#281: a request body over maxQueuedBytes makes the probe report QueueBytesExceeded", async () => {
+    const t = tempEnv({ LLAMA_CPP_PORT: "17777" });
+    try {
+      const upstream = installConditionalChatUpstream();
+      const policy = createRequestQueuePolicy({
+        limits: queueLimits({ maxQueuedBytes: 200 }),
+        now: () => 1_000,
+      });
+      coldPinQueueProbeSeam.setColdPinQueueProbe?.({ policy });
+      declaredModelSeam.setDeclaredModelSource?.(() => [declaredModelEntry("cold/model-a.gguf")]);
+
+      const res = await openaiProxy.proxyOpenAI(
+        new Request("http://localhost/v1/chat/completions", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            model: "cold/model-a.gguf",
+            messages: [{ role: "user", content: "x".repeat(500) }],
+          }),
+        }),
+        t.env,
+      );
+
+      expect(res.status).toBe(503);
+      const body = (await res.json()) as { error: { queue_probe?: unknown } };
+      expect(body.error.queue_probe).toEqual({
+        kind: "would_refuse",
+        reason: "QueueBytesExceeded",
+        retry_after_ms: null,
+      });
+      expect(res.headers.get("retry-after")).toBeNull();
+      expect(upstream.calls).toHaveLength(0);
+      expect(policy.snapshot()).toEqual({
+        queued: 0,
+        queuedBytes: 0,
+        executing: 0,
+        loading: null,
+        resident: [],
+        byPrincipal: {},
+      });
+    } finally {
+      t.cleanup();
+    }
+  });
+
   test("#281: a full queue makes the probe report would_refuse QueueFull without a retry-after header", async () => {
     const t = tempEnv({ LLAMA_CPP_PORT: "17777" });
     try {
@@ -3121,7 +3166,7 @@ describe("declared cold models (#280)", () => {
           deadlineMs: Number.POSITIVE_INFINITY,
         }),
       ).toEqual({ kind: "queued", requestId: "held" });
-      coldPinQueueProbeSeam.setColdPinQueueProbe?.({ policy, maxQueueWaitMs: 30_000 });
+      coldPinQueueProbeSeam.setColdPinQueueProbe?.({ policy });
       declaredModelSeam.setDeclaredModelSource?.(() => [declaredModelEntry("cold/model-a.gguf")]);
 
       const res = await openaiProxy.proxyOpenAI(chatRequest("cold/model-a.gguf"), t.env);
@@ -3148,7 +3193,7 @@ describe("declared cold models (#280)", () => {
         limits: queueLimits({ maxContextTokens: 1_000 }),
         now: () => 1_000,
       });
-      coldPinQueueProbeSeam.setColdPinQueueProbe?.({ policy, maxQueueWaitMs: 30_000 });
+      coldPinQueueProbeSeam.setColdPinQueueProbe?.({ policy });
       declaredModelSeam.setDeclaredModelSource?.(() => [declaredModelEntry("cold/model-a.gguf")]);
 
       const res = await openaiProxy.proxyOpenAI(
@@ -3185,7 +3230,7 @@ describe("declared cold models (#280)", () => {
         limits: queueLimits(),
         now: () => 1_000,
       });
-      coldPinQueueProbeSeam.setColdPinQueueProbe?.({ policy, maxQueueWaitMs: 30_000 });
+      coldPinQueueProbeSeam.setColdPinQueueProbe?.({ policy });
       declaredModelSeam.setDeclaredModelSource?.(() => [
         declaredModelEntry("disabled/model-b.gguf", {
           state: "disabled",
@@ -3218,7 +3263,7 @@ describe("declared cold models (#280)", () => {
         limits: queueLimits(),
         now: () => 1_000,
       });
-      coldPinQueueProbeSeam.setColdPinQueueProbe?.({ policy, maxQueueWaitMs: 30_000 });
+      coldPinQueueProbeSeam.setColdPinQueueProbe?.({ policy });
 
       openaiProxy.__resetOpenAIProxyRouteMapCacheForTests();
       declaredModelSeam.setDeclaredModelSource?.(() => [declaredModelEntry("cold/model-a.gguf")]);
@@ -3270,7 +3315,7 @@ describe("declared cold models (#280)", () => {
         limits: queueLimits(),
         now: () => 1_000,
       });
-      coldPinQueueProbeSeam.setColdPinQueueProbe?.({ policy, maxQueueWaitMs: 30_000 });
+      coldPinQueueProbeSeam.setColdPinQueueProbe?.({ policy });
 
       const res = await openaiProxy.proxyOpenAI(chatRequest("cold/model-a.gguf"), t.env);
 
