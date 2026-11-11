@@ -241,8 +241,15 @@ describe("server.startServer residency start fence (#278)", () => {
       sentToFirstPid.push(signal);
       return true;
     }) as typeof process.kill);
+    // Spy on the caller signal (call-through) so the abort listeners
+    // startServer wires and removes on it are recorded.
+    const addSpy = spyOn(controller.signal, "addEventListener");
+    const removeSpy = spyOn(controller.signal, "removeEventListener");
 
     let run!: Awaited<ReturnType<typeof startWithMockedIo>>;
+    let abortAdds: unknown[] = [];
+    let abortRemoves: unknown[] = [];
+    let killer: unknown;
     try {
       run = await startWithMockedIo(
         {
@@ -267,12 +274,26 @@ describe("server.startServer residency start fence (#278)", () => {
         FIRST_PID,
         "rejecting",
       );
+      // Snapshot the listener traffic before any mockRestore, which clears the
+      // recorded calls. wireAbortToKill arms the killer with { once: true }
+      // immediately after the first launch and before pollReady attaches
+      // anything, so the first "abort" listener is the killer the LeasesActive
+      // refusal must de-arm.
+      abortAdds = addSpy.mock.calls
+        .filter(([type]) => type === "abort")
+        .map(([, fn]) => fn as unknown);
+      abortRemoves = removeSpy.mock.calls
+        .filter(([type]) => type === "abort")
+        .map(([, fn]) => fn as unknown);
+      killer = abortAdds[0];
       // The refusal must have de-armed the abort killer: aborting now, with the
       // first pid alive, signals nothing.
       firstPidAlive = true;
       controller.abort();
     } finally {
       killSpy.mockRestore();
+      addSpy.mockRestore();
+      removeSpy.mockRestore();
     }
     const { result, spawnCalls } = run;
 
@@ -287,6 +308,9 @@ describe("server.startServer residency start fence (#278)", () => {
     expect(result.retried).toBe(false);
     expect(events).not.toContain("retry");
     expect(sentToFirstPid).toEqual([]);
+    // The killer was armed on the caller signal and the refusal removed it.
+    expect(abortAdds.length).toBeGreaterThan(0);
+    expect(abortRemoves).toContain(killer);
     expect(readServerPid(TEST_KEY)).toBe(FIRST_PID);
     expect(leaseSignal?.aborted).toBe(false);
   });
@@ -418,11 +442,18 @@ describe("server.startServer residency start fence (#278)", () => {
     setResidencyLeaseRegistry(null);
     writeTrackedPid(4194305);
     const events: string[] = [];
+    const probed: number[] = [];
 
     const { result, spawnCalls } = await startWithMockedIo(
       {
         key: TEST_KEY,
         target: "Demo/demo.gguf",
+        identity: {
+          probe: (pid: number) => {
+            probed.push(pid);
+            throw Object.assign(new Error("gone"), { code: "ESRCH" });
+          },
+        },
         onEvent: (e) => {
           events.push(e.type);
         },
@@ -432,6 +463,10 @@ describe("server.startServer residency start fence (#278)", () => {
     );
 
     expect(result.ok).toBe(true);
+    // The unfenced stop-before-start really ran: it probed the tracked pid
+    // exactly once, and the verified stop let the new spawn's pid (process.pid)
+    // replace it.
+    expect(probed).toEqual([4194305]);
     expect(readServerPid(TEST_KEY)).toBe(process.pid);
     expect(spawnCalls).toBe(1);
     expect(events).toEqual(["launch", "ready"]);
@@ -460,7 +495,7 @@ describe("server.startServer residency start fence (#278)", () => {
     expect(events).toContain("retry");
   });
 
-  test("an unloaded workload starts unfenced and stays unloaded", async () => {
+  test("an unloaded workload starts unfenced, and the successful start reopens admission", async () => {
     standUpModelAndBin();
     const registry = createResidencyLeases();
     setResidencyLeaseRegistry(registry);
@@ -490,6 +525,8 @@ describe("server.startServer residency start fence (#278)", () => {
     // exactly once, and the verified stop let the new spawn's pid replace it.
     expect(probed).toEqual([4194305]);
     expect(readServerPid(TEST_KEY)).toBe(process.pid);
-    expect(registry.snapshot("test-wl").phase).toBe("unloaded");
+    // #623: every successful start path reopens admission (withReopenAfterLoad),
+    // so the workload committed to 'unloaded' is admitting again afterwards.
+    expect(registry.snapshot("test-wl").phase).toBe("open");
   });
 });
