@@ -1061,8 +1061,8 @@ function maybeCreateTunnelServer(opts: StartAgentOptions): TunnelServer | null {
  * windows: the drain's, the shared one in stop and this one. The in-flight
  * wait only joins this window when a declared source is registered; without
  * the opt-in stop() never waits on a client request at all. With neither
- * opt-in nor mDNS there is nothing to flush: no await at all, so the default
- * stop() keeps its pre-#610 timing.
+ * opt-in nor mDNS there is nothing to flush, and the caller skips this
+ * function entirely, so the default stop() keeps its pre-#610 timing.
  */
 async function finalFlushWindow(
   servedRequests: { untilIdle: () => Promise<void> } | null,
@@ -1228,7 +1228,10 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
         }
         void server.stop(true);
         workerRpc?.unpublish();
-        await finalFlushWindow(servedRequests, mdns);
+        // Guarded at the call site: awaiting even an empty async function
+        // costs a microtask, and the default stop() (no opt-in, no mDNS) must
+        // keep its pre-#610 timing.
+        if (servedRequests !== null || mdns) await finalFlushWindow(servedRequests, mdns);
         // Unregister the declared-model source only once the HTTP server, the
         // tunnel client and every request that could still read it are done:
         // while any of them is up, a cold pin must still get its declared
