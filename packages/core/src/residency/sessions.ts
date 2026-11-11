@@ -6,6 +6,10 @@
  * NON-FENCING: checkUnload does not block a concurrent acquire. This
  * slice only makes checkUnload report SessionActive; refusing an unload
  * while a session holds the workload is wired by a later slice.
+ *
+ * Release is generation-aware (#520 follow-up from the #617 review): a
+ * stale release carrying an old generation cannot drop a newer
+ * acquisition of the same session ID.
  */
 
 export interface SessionRefcountOptions {
@@ -14,7 +18,7 @@ export interface SessionRefcountOptions {
 }
 
 export type SessionAcquireResult =
-  | { ok: true; workload: string; refs: number }
+  | { ok: true; workload: string; refs: number; generation: number }
   | { ok: false; reason: "AffinityConflict"; boundWorkload: string };
 
 export type SessionUnloadCheck =
@@ -23,7 +27,14 @@ export type SessionUnloadCheck =
 
 export interface SessionRefcounts {
   acquire(sessionId: string, workload: string): SessionAcquireResult;
-  release(sessionId: string): void;
+  /**
+   * Decrement the refcount for a session. When `generation` is given and
+   * does not match the live entry's generation (or no entry exists), the
+   * call is a no-op and does not refresh lastActivityMs, so a stale
+   * release cannot drop a newer acquisition. When `generation` is
+   * omitted, the legacy by-id decrement is kept unchanged.
+   */
+  release(sessionId: string, generation?: number): void;
   touch(sessionId: string): void;
   forceRelease(workload: string): string[];
   activeSessions(workload: string): string[];
@@ -45,6 +56,7 @@ export function currentSessionRefcounts(): SessionRefcounts | null {
 interface SessionEntry {
   workload: string;
   refs: number;
+  generation: number;
   lastActivityMs: number;
 }
 
@@ -61,6 +73,7 @@ export function createSessionRefcounts(opts: SessionRefcountOptions): SessionRef
   const idleTimeoutMs = opts.idleTimeoutMs;
   const now = opts.now ?? Date.now;
   const sessions = new Map<string, SessionEntry>();
+  let nextGeneration = 0;
 
   const isExpired = (entry: SessionEntry): boolean =>
     entry.refs === 0 && now() - entry.lastActivityMs >= idleTimeoutMs;
@@ -86,20 +99,22 @@ export function createSessionRefcounts(opts: SessionRefcountOptions): SessionRef
       prune();
       const entry = sessions.get(sessionId);
       if (entry === undefined) {
-        sessions.set(sessionId, { workload, refs: 1, lastActivityMs: now() });
-        return { ok: true, workload, refs: 1 };
+        const generation = ++nextGeneration;
+        sessions.set(sessionId, { workload, refs: 1, generation, lastActivityMs: now() });
+        return { ok: true, workload, refs: 1, generation };
       }
       if (entry.workload !== workload) {
         return { ok: false, reason: "AffinityConflict", boundWorkload: entry.workload };
       }
       entry.refs += 1;
       entry.lastActivityMs = now();
-      return { ok: true, workload, refs: entry.refs };
+      return { ok: true, workload, refs: entry.refs, generation: entry.generation };
     },
-    release(sessionId): void {
+    release(sessionId, generation): void {
       prune();
       const entry = sessions.get(sessionId);
       if (entry === undefined) return;
+      if (generation !== undefined && entry.generation !== generation) return;
       entry.refs = Math.max(0, entry.refs - 1);
       entry.lastActivityMs = now();
     },

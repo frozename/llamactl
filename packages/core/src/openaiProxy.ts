@@ -3251,10 +3251,11 @@ function acquireProxySession(
     );
   }
   let released = false;
+  const { generation } = sessionAcquireResult;
   const release = (): void => {
     if (released) return;
     released = true;
-    sessionRegistry.release(sessionId);
+    sessionRegistry.release(sessionId, generation);
   };
   return { ok: true, release };
 }
