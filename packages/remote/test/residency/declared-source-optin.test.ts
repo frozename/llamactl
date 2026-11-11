@@ -205,6 +205,42 @@ describe("declared cold-model source opt-in (#280 DF-07)", () => {
     expect(openaiProxy.listOpenAIModels().declared).toEqual([]);
   });
 
+  test("(d) opt-in: a cold pin during stop() returns 503 model_not_loaded, source not unregistered before server stops", async () => {
+    setupSandbox();
+    writeRunColdManifest();
+    const running = startAgentServer(agentOptions(true));
+    agent = running;
+
+    // Verify the source is registered
+    const entry = openaiProxy
+      .listOpenAIModels()
+      .declared.find((candidate) => candidate.id === COLD_PIN);
+    expect(entry?.status).toBe("cold");
+
+    // Start stop() without awaiting — this begins the drain/teardown sequence
+    // but does not yet unregister the declared-model source (DF-07 fix).
+    const stopPromise = running.stop();
+
+    // Send a cold pin request while stop() is in-flight. The source is still
+    // registered and the HTTP server is not yet fully stopped, so the proxy
+    // must return 503 model_not_loaded (not fall through to the default
+    // target stub).
+    const res = await running.handleRequest!(postChatCompletions(COLD_PIN), LOOPBACK_CLIENT);
+
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as {
+      error: { code: string; state: string; auto_load_eligible: boolean };
+    };
+    expect(body.error.code).toBe("model_not_loaded");
+    expect(body.error.state).toBe("cold");
+    expect(body.error.auto_load_eligible).toBe(true);
+    expect(stubCalls).toHaveLength(0);
+
+    // Complete the stop to clean up.
+    await stopPromise;
+    agent = null;
+  });
+
   test("(d) opt-in: an in-place manifest disable is observed on the next request", async () => {
     setupSandbox();
     writeRunColdManifest();

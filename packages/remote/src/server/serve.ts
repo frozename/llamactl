@@ -1100,10 +1100,6 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
       });
     },
     stop: async (): Promise<void> => {
-      // Clear the declared-model source so its entries vanish from
-      // listOpenAIModels() before any other subsystem tears down; this
-      // must run first so the proxy caches are invalidated early.
-      unregisterDeclaredModels?.();
       // Worker-RPC attempts drain first, while their transports are up.
       await workerRpc?.drain();
       // Remove exactly the process handlers this call installed so
@@ -1147,6 +1143,10 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
             mdns.stop().catch(() => undefined),
           );
         }
+        // Unregister the declared-model source only after the HTTP server
+        // and tunnel client are stopped, so no request is still served
+        // once the source is gone (DF-07 invariant).
+        unregisterDeclaredModels?.();
       }
     },
     ...(tunnelServer ? { tunnelServer } : {}),
