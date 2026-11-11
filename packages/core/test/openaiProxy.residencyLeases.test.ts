@@ -531,8 +531,24 @@ test("#278: a forced unload revokes an open response body", async () => {
       revoked: [leaseId],
     });
 
-    // eslint-disable-next-line @typescript-eslint/await-thenable, @typescript-eslint/no-confusing-void-expression -- Bun's rejects matcher is typed as void.
-    await expect(reader.read()).rejects.toThrow("lease revoked: forced unload");
+    // Bound the wait: if the bound body never learns about the revocation
+    // this read pends forever and the suite hangs instead of failing.
+    const readResult = await Promise.race([
+      reader.read().then(
+        () => null,
+        (error: unknown) => error,
+      ),
+      new Promise<"timeout">((resolve) => {
+        setTimeout(() => {
+          resolve("timeout");
+        }, 2_000);
+      }),
+    ]);
+    expect(readResult).not.toBe("timeout");
+    expect(readResult).toBeInstanceOf(Error);
+    if (readResult instanceof Error) {
+      expect(readResult.message).toContain("lease revoked: forced unload");
+    }
     expect(real.active("wl-a")).toEqual([]);
     expect(real.audit()).toHaveLength(1);
     expect(real.audit()[0]).toMatchObject({ forced: true, reason: "test" });
