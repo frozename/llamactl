@@ -1,4 +1,5 @@
 import type { PidIdentityDeps } from "@llamactl/core/pidIdentity";
+import type { Lease, ResidencyLeases } from "@llamactl/core/residency/leases";
 import type { ResolvedEnv } from "@llamactl/core/types";
 
 /**
@@ -17,6 +18,12 @@ import type { ResolvedEnv } from "@llamactl/core/types";
  * worker-RPC target. Until a worker publishes a host that lists versions,
  * the RPC is not advertised. A draining host stops advertising for new
  * requests while its attempts run to their terminal.
+ *
+ * When `residencyLeases` is provided in `WorkerRpcHostOptions`, an
+ * opt-in residency lease is acquired after all acceptance fences pass
+ * (after `fenceExecution`, before `admit`), released in `settle`, and
+ * revoked when the lease is force-unloaded. Without it, behaviour is
+ * unchanged.
  */
 import { type inferenceContracts, inferenceRpc, routingCatalog } from "@llamactl/core";
 import { LOCAL_NODE_NAME } from "@llamactl/core/config/schema";
@@ -122,6 +129,13 @@ export interface WorkerRpcHostOptions {
   now?: () => number;
   /** Monotonic time: record retention, which a wall-clock step must not shorten. */
   monotonicNow?: () => number;
+  /**
+   * Opt-in residency leases: when set, a lease is acquired after all
+   * acceptance fences pass (after `fenceExecution`, before `admit`) and
+   * released in `settle`. Unset (the default) means no lease is taken
+   * and behaviour is unchanged.
+   */
+  residencyLeases?: ResidencyLeases;
 }
 
 export interface WorkerRpcHost {
@@ -157,7 +171,7 @@ export interface WorkerRpcHost {
   close(): void;
 }
 
-type StopReason = "cancel" | "deadline" | "disconnect" | "attach-timeout" | "close";
+type StopReason = "cancel" | "deadline" | "disconnect" | "attach-timeout" | "close" | "revoked";
 
 /**
  * An owner, the service and credential scope its records belong to, how
@@ -182,6 +196,8 @@ interface AttemptRun {
   acceptedAt: string;
   state: "accepted" | "started" | "emitting";
   streamed: boolean;
+  lease: Lease | undefined;
+  onRevoke: (() => void) | undefined;
 }
 
 /**
@@ -245,6 +261,7 @@ interface HostState {
   /** Streams attached and not yet ended. */
   streams: number;
   idle: (() => void)[];
+  leases: ResidencyLeases | undefined;
 }
 
 interface WorkerCatalog {
@@ -509,6 +526,29 @@ function listCatalog(
 
 // ---- submit: acceptance fencing -------------------------------------------
 
+/**
+ * Acquire a residency lease after all acceptance fences pass. Returns
+ * `{lease}` on success (including when no leases are configured or the
+ * deployment has no workload), or `{rejection}` when the workload is
+ * draining or unloaded.
+ */
+function acquireResidency(
+  state: HostState,
+  deployment: Deployment,
+): { lease: Lease | undefined } | { rejection: Rejection } {
+  if (state.leases === undefined) return { lease: undefined };
+  const workload = routingCatalog.workloadOfDeployment(deployment.deploymentId, state.workerId);
+  if (workload === null) return { lease: undefined };
+  const r = state.leases.acquire(workload);
+  if (r.ok) return { lease: r.lease };
+  return {
+    rejection: {
+      code: "target-unavailable",
+      message: `residency ${r.reason}`,
+    },
+  };
+}
+
 function fenceClaims(
   claims: Claims,
   input: SubmitRequest,
@@ -703,7 +743,7 @@ function statusOf(record: AttemptRecord): AttemptStatus {
 /**
  * Settles once. The record is then a tombstone: the run goes with the
  * envelope, backend and deployment it held, so a settled attempt holds no
- * request body however large it was.
+ * request body however large it was. Releases any residency lease.
  */
 function settle(
   state: HostState,
@@ -713,7 +753,16 @@ function settle(
   if (record.terminal !== undefined) return record.terminal;
   record.terminal = terminal;
   for (const timer of record.run?.timers ?? []) clearTimeout(timer);
+  const run = record.run;
+  const lease = run?.lease;
+  const onRevoke = run?.onRevoke;
+  if (lease !== undefined && onRevoke !== undefined) {
+    lease.signal.removeEventListener("abort", onRevoke);
+  }
   record.run = undefined;
+  if (lease !== undefined) {
+    lease.release();
+  }
   state.active -= 1;
   record.owner.active -= 1;
   notifyIdle(state);
@@ -853,6 +902,7 @@ function admit(
   input: SubmitRequest,
   deployment: Deployment,
   backend: WorkerRpcBackend,
+  lease: Lease | undefined,
 ): AttemptRun {
   const { envelope } = input;
   const run: AttemptRun = {
@@ -864,7 +914,15 @@ function admit(
     acceptedAt: new Date(state.now()).toISOString(),
     state: "accepted",
     streamed: false,
+    lease,
+    onRevoke: undefined,
   };
+  if (run.lease !== undefined) {
+    run.onRevoke = (): void => {
+      stopAttempt(state, record, "revoked");
+    };
+    run.lease.signal.addEventListener("abort", run.onRevoke, { once: true });
+  }
   const owner = ownerOf(state, claims);
   state.admissions += 1;
   const record: AttemptRecord = {
@@ -931,7 +989,9 @@ function submit(
   if ("rejection" in owned) return rejectedWith(owned.rejection);
   const execution = fenceExecution(state, claims, owned.deployment, input.envelope);
   if ("rejection" in execution) return rejectedWith(execution.rejection);
-  const run = admit(state, claims, input, owned.deployment, execution.backend);
+  const residency = acquireResidency(state, owned.deployment);
+  if ("rejection" in residency) return rejectedWith(residency.rejection);
+  const run = admit(state, claims, input, owned.deployment, execution.backend, residency.lease);
   return {
     outcome: "accepted",
     requestId: input.envelope.requestId,
@@ -1235,6 +1295,7 @@ export function createWorkerRpcHost(opts: WorkerRpcHostOptions): WorkerRpcHost {
     active: 0,
     streams: 0,
     idle: [],
+    leases: opts.residencyLeases,
   };
   const host: WorkerRpcHost = {
     workerId: state.workerId,

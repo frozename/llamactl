@@ -15,7 +15,8 @@
 # Quant: MiMo-V2.6-Flash-MOPD BPW2.5 from AesSedai @b6e95d58; the DFlash
 # drafter is from ggml-org @c9d86979 and stays models-dir relative so
 # llamacpp resolves it at boot. --spec-draft-vocab points at
-# halo-configs-16da7de2a165/mimo-dv-65536.bin and is absolute because
+# halo-configs-16da7de2a165/configs/mimo/mimo-dv-65536.bin (the benched
+# path, same as llamacpp-mimo-m-v1-t06-z13.yaml) and is absolute because
 # llamacpp.ts resolves only -md/--model-draft/--spec-draft-model/--dspark.
 #
 # Z13 deviation: --ctx-size 131072 instead of the reference 196608,
@@ -58,9 +59,10 @@ spec:
   hostedModels:
     - rel: MiMo-V2.6-Flash-MOPD-GGUF-AesSedai/b6e95d58/BPW2.5/MiMo-V2.6-Flash-MOPD-BPW2.5-00001-of-00003.gguf
   extraArgs:
-    # --served-model-name equals the GGUF basename, because a ModelHost
-    # routes by rel and basename.
-    - --served-model-name
+    # --alias equals the GGUF basename so /v1/models reports basename(rel);
+    # mainline llama-server has no --served-model-name (Gufo-only; b12206
+    # common/arg.cpp defines -a/--alias).
+    - --alias
     - MiMo-V2.6-Flash-MOPD-BPW2.5-00001-of-00003.gguf
     - --n-gpu-layers
     - "999"
@@ -105,5 +107,5 @@ spec:
     - --spec-draft-n-max
     - "4"
     - --spec-draft-vocab
-    - /home/alex/strix-halo-bench/runtimes/halo-configs-16da7de2a165/mimo-dv-65536.bin
+    - /home/alex/strix-halo-bench/runtimes/halo-configs-16da7de2a165/configs/mimo/mimo-dv-65536.bin
   restartPolicy: Never
