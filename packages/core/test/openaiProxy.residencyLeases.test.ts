@@ -487,6 +487,11 @@ test("#278: a client abort before headers releases the lease exactly once", asyn
     controller.abort();
     const res = await responsePromise;
     expect(res.status).toBe(502);
+    // Assert before the body settles: bindLeaseToBody alone would hold the
+    // lease until the 502 body is consumed, so only the abort listener can
+    // satisfy this ordering.
+    expect(real.active("wl-a")).toEqual([]);
+    expect(releaseResults.filter((released) => released)).toHaveLength(1);
     await res.text();
     expect(real.active("wl-a")).toEqual([]);
     expect(releaseResults.filter((released) => released)).toHaveLength(1);
@@ -700,50 +705,38 @@ test("#278: null-body path releases the lease and clears active leases", async (
   }
 });
 
-test("#278: client-abort clears active leases before body is read", async () => {
+test("#278: a throw inside the forward pipeline releases the lease exactly once", async () => {
   const t = tempKvEnv();
   try {
     const mod = await loadLeaseModule();
     writeLocalModelRunWorkload(t.root, "wl-a", WL_A_PORT);
-    let fetchStarted!: () => void;
-    const started = new Promise<void>((resolve) => {
-      fetchStarted = resolve;
-    });
-    installFetchStub((_url, init) => {
-      fetchStarted();
-      const signal = init?.signal ?? null;
-      return new Promise<Response>((resolve, reject) => {
-        if (signal === null) {
-          resolve(new Response(UPSTREAM_TEXT, { status: 200 }));
-          return;
-        }
-        const onAbort = (): void => {
-          reject(new DOMException("The operation was aborted.", "AbortError"));
-        };
-        if (signal.aborted) {
-          onAbort();
-          return;
-        }
-        signal.addEventListener("abort", onAbort, { once: true });
-      });
+    installFetchStub(() => {
+      const upstream = new Response(
+        new ReadableStream<Uint8Array>({
+          start(c): void {
+            c.enqueue(new TextEncoder().encode(UPSTREAM_TEXT));
+          },
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      );
+      // Lock the body so abortUpstreamOnBodyCancel's getReader() throws,
+      // propagating out of forward() through forwardAndBindResidencyLease.
+      const lockedReader = upstream.body?.getReader();
+      expect(lockedReader).toBeDefined();
+      return upstream;
     });
     const { real, releaseResults } = installSpyRegistry(mod);
 
-    const controller = new AbortController();
-    const responsePromise = openaiProxy.proxyOpenAI(
-      new Request("http://localhost/v1/embeddings", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ model: KV_MODEL, input: "x" }),
-        signal: controller.signal,
-      }),
-      t.env,
-    );
-    await started;
-    controller.abort();
-    const res = await responsePromise;
-    expect(res.status).toBe(502);
-    await res.text();
+    let rejection: unknown = null;
+    try {
+      await openaiProxy.proxyOpenAI(embeddingsRequest(KV_MODEL), t.env);
+    } catch (error) {
+      rejection = error;
+    }
+    expect(rejection).toBeInstanceOf(Error);
     expect(real.active("wl-a")).toEqual([]);
     expect(releaseResults.filter((released) => released)).toHaveLength(1);
   } finally {
@@ -751,19 +744,21 @@ test("#278: client-abort clears active leases before body is read", async () => 
   }
 });
 
-test("#278: forced commitUnload aborts the fetch signal and gives client a terminal error", async () => {
+test("#278: forced commitUnload aborts the in-flight fetch signal", async () => {
   const t = tempKvEnv();
   try {
     const mod = await loadLeaseModule();
     writeLocalModelRunWorkload(t.root, "wl-a", WL_A_PORT);
     let fetchStarted!: () => void;
-    let upstreamCancelled = false;
     const started = new Promise<void>((resolve) => {
       fetchStarted = resolve;
     });
+    const upstreamSignals: (AbortSignal | null)[] = [];
+    let upstreamCancelled = false;
     installFetchStub((_url, init) => {
       fetchStarted();
       const signal = init?.signal ?? null;
+      upstreamSignals.push(signal);
       const body = new ReadableStream<Uint8Array>({
         start(c): void {
           c.enqueue(new TextEncoder().encode(UPSTREAM_TEXT));
@@ -792,58 +787,71 @@ test("#278: forced commitUnload aborts the fetch signal and gives client a termi
     });
     const { real } = installSpyRegistry(mod);
 
-    const controller = new AbortController();
-    const responsePromise = openaiProxy.proxyOpenAI(
-      new Request("http://localhost/v1/embeddings", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ model: KV_MODEL, input: "x" }),
-        signal: controller.signal,
-      }),
-      t.env,
-    );
+    const responsePromise = openaiProxy.proxyOpenAI(embeddingsRequest(KV_MODEL), t.env);
     await started;
-    // Force unload before response arrives — the composed fetch signal
-    // must be aborted so upstream is torn down.
+    const activeBefore = real.active("wl-a");
+    expect(activeBefore).toHaveLength(1);
     const drain = real.beginDrain("wl-a");
     expect(drain.ok).toBe(true);
     if (!drain.ok) {
       throw new Error("beginDrain(wl-a) refused");
     }
+    // Force unload while the upstream fetch is still pending: the lease
+    // signal must already be composed into the fetch signal so revocation
+    // aborts upstream and the client gets a terminal error.
     const result = real.commitUnload(drain.token, { force: true, reason: "test" });
-    expect(result).toMatchObject({ ok: true });
+    expect(result).toEqual({ ok: true, revoked: activeBefore });
+    expect(upstreamSignals[0]?.aborted).toBe(true);
 
     const res = await responsePromise;
     expect(res.status).toBe(502);
     expect(upstreamCancelled).toBe(true);
+    expect(real.active("wl-a")).toEqual([]);
   } finally {
     t.cleanup();
   }
 });
 
-test("#278: null-registry returns the identical upstream response object", async () => {
+test("#278: null-registry returns the upstream body stream untouched", async () => {
   const t = tempKvEnv();
   try {
     const mod = await loadLeaseModule();
     writeLocalModelRunWorkload(t.root, "wl-a", WL_A_PORT);
     mod.setResidencyLeaseRegistry(null);
 
-    const expectedHeaders = new Headers({
-      "x-custom": "value",
-      "content-type": "application/json",
+    let upstreamBodyCancelled = false;
+    const upstreamBody = new ReadableStream<Uint8Array>({
+      start(c): void {
+        c.enqueue(new TextEncoder().encode(UPSTREAM_TEXT));
+      },
+      cancel(): void {
+        upstreamBodyCancelled = true;
+      },
     });
-    const expectedBody = UPSTREAM_TEXT;
-    const upstreamResponse = new Response(expectedBody, {
-      status: 200,
-      statusText: "OK",
-      headers: expectedHeaders,
-    });
-    installFetchStub(() => upstreamResponse);
+    installFetchStub(
+      () =>
+        new Response(upstreamBody, {
+          status: 200,
+          statusText: "OK",
+          headers: {
+            "content-type": "application/json",
+            "x-custom": "value",
+          },
+        }),
+    );
 
     const res = await openaiProxy.proxyOpenAI(embeddingsRequest(KV_MODEL), t.env);
-    expect(res).toBe(upstreamResponse);
     expect(res.status).toBe(200);
-    expect(await res.text()).toBe(expectedBody);
+    expect(res.statusText).toBe("OK");
+    expect(res.headers.get("content-type")).toBe("application/json");
+    expect(res.headers.get("x-custom")).toBe("value");
+
+    // The null-registry path must not interpose a stream: cancelling the
+    // client body reaches the upstream stream's cancel synchronously. An
+    // extra TransformStream in the pipeline defers that propagation.
+    const cancelPromise = res.body!.cancel();
+    expect(upstreamBodyCancelled).toBe(true);
+    await cancelPromise;
   } finally {
     t.cleanup();
   }
