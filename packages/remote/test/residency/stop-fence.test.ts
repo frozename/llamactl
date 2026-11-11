@@ -1,12 +1,14 @@
 /**
  * #278 (DF-05) — serverStop/modelHostStop must be fenced by the opt-in
  * residency lease registry: beginDrain blocks new acquires, held leases
- * refuse the stop, and a verified stop cycles commitUnload+reopen so the
- * epoch advances while the phase returns to open. The fence helper and
- * the router wiring land with the fix, so the helper is reached through a
- * guarded dynamic import and the specifier stays a `string` (not a
- * literal) so `tsc` cannot resolve it at base — every RED case fails by
- * assertion, never by a missing module or a type error.
+ * refuse the stop, a verified stop commits the unload and stays `unloaded`
+ * (a stopped engine must refuse new acquires, not 503 model_not_loaded
+ * against a dead server), and only a later load reopens it. An unverified
+ * or failed stop cancels the drain back to open. The fence helper and the
+ * router wiring land with the fix, so the helper is reached through a
+ * guarded dynamic import and the specifier stays a `string` (not a literal)
+ * so `tsc` cannot resolve it at base — every RED case fails by assertion,
+ * never by a missing module or a type error.
  */
 import { server as serverMod } from "@llamactl/core";
 import {
@@ -20,11 +22,33 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { router } from "../../src/router.js";
-import { mkdtempSync, rmSync } from "../../src/safe-fs.js";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
 import { stopModelHost } from "../../src/server/modelhost.js";
+import { parseModelHost, saveModelHost } from "../../src/workload/modelhost-store.js";
+import { parseWorkload, saveWorkload, workloadPath } from "../../src/workload/store.js";
 
 const FENCE_MODULE = "../../src/residency/stop-fence.js" as string;
 const W = "absent";
+const HOST = "mlx-host";
+const RUN = "gemma-solo";
+const RUN_REL = "gemma.gguf";
+
+const modelHostYaml = `
+apiVersion: llamactl/v1
+kind: ModelHost
+metadata:
+  name: ${HOST}
+spec:
+  engine: omlx
+  node: local
+  enabled: true
+  binary: /usr/bin/omlx
+  endpoint:
+    host: 127.0.0.1
+    port: 8094
+  hostedModels:
+    - rel: Qwen3-8B-MLX-4bit
+`;
 
 type FenceRefusal = {
   reason: string;
@@ -39,6 +63,11 @@ type FenceModule = {
     isVerifiedStop: (result: T) => boolean;
     refuse: (refusal: FenceRefusal) => R;
   }) => Promise<T | R>;
+  reopenWorkloadAfterLoad: (
+    workload: string,
+    loaded: boolean,
+    registry?: ResidencyLeases | null,
+  ) => void;
 };
 
 type ServerStopOutcome = {
@@ -139,7 +168,23 @@ describe("serverStop/modelHostStop lease fence (#278)", () => {
     expect(lease.release()).toBe(true);
   });
 
-  test("a fenced stop drains, commits unload and reopens", async () => {
+  test("a verified modelHostStop on an open workload parks it unloaded", async () => {
+    const reg = createResidencyLeases();
+    setResidencyLeaseRegistry(reg);
+
+    const hostStopped = await stopCaller().modelHostStop({ workload: W });
+    expect(hostStopped).toEqual({ ok: true, pid: null });
+    expect(reg.snapshot(W)).toEqual({
+      workload: W,
+      phase: "unloaded",
+      epoch: 1,
+      active: [],
+      waiters: 0,
+    });
+    expect(reg.acquire(W)).toEqual({ ok: false, reason: "Unloaded", workload: W, epoch: 1 });
+  });
+
+  test("a verified stop commits unload and refuses new acquires until a load", async () => {
     const reg = createResidencyLeases();
     setResidencyLeaseRegistry(reg);
     const call = stopCaller();
@@ -149,21 +194,71 @@ describe("serverStop/modelHostStop lease fence (#278)", () => {
     expect("refused" in stopped).toBe(false);
     expect(reg.snapshot(W)).toEqual({
       workload: W,
+      phase: "unloaded",
+      epoch: 1,
+      active: [],
+      waiters: 0,
+    });
+    expect(reg.acquire(W)).toEqual({ ok: false, reason: "Unloaded", workload: W, epoch: 1 });
+
+    const hostStopped = await call.modelHostStop({ workload: W });
+    expect(hostStopped).toEqual({ ok: true, pid: null });
+    // Already unloaded: beginDrain refuses with Unloaded, so the stop runs
+    // unfenced and the epoch does not advance.
+    expect(reg.snapshot(W)).toEqual({
+      workload: W,
+      phase: "unloaded",
+      epoch: 1,
+      active: [],
+      waiters: 0,
+    });
+    expect(reg.acquire(W)).toEqual({ ok: false, reason: "Unloaded", workload: W, epoch: 1 });
+  });
+
+  test("a start after a verified stop reopens admission at the same epoch", async () => {
+    const reg = createResidencyLeases();
+    setResidencyLeaseRegistry(reg);
+
+    const stopped = await stopCaller().serverStop({ workload: W });
+    expect(stopped).toEqual({ stopped: true, pid: null, killed: false });
+    expect(reg.snapshot(W).phase).toBe("unloaded");
+
+    (await requireFence()).reopenWorkloadAfterLoad(W, true, reg);
+    expect(reg.snapshot(W)).toEqual({
+      workload: W,
       phase: "open",
       epoch: 1,
       active: [],
       waiters: 0,
     });
+    const lease = acquireHeldLease(reg);
+    expect(lease.epoch).toBe(1);
+    expect(lease.release()).toBe(true);
+  });
 
-    const hostStopped = await call.modelHostStop({ workload: W });
-    expect(hostStopped).toEqual({ ok: true, pid: null });
+  test("an unverified stop leaves the workload open and admits new leases", async () => {
+    const reg = createResidencyLeases();
+    setResidencyLeaseRegistry(reg);
+    const fence = await requireFence();
+
+    await fence.fenceWorkloadStop({
+      workload: W,
+      registry: reg,
+      stop: () => Promise.resolve({ ok: false }),
+      isVerifiedStop: (r) => r.ok,
+      refuse: (refusal) => ({ refused: refusal }),
+    });
+
     expect(reg.snapshot(W)).toEqual({
       workload: W,
       phase: "open",
-      epoch: 2,
+      epoch: 1,
       active: [],
       waiters: 0,
     });
+    const lease = acquireHeldLease(reg);
+    expect(lease.epoch).toBe(1);
+    expect(lease.release()).toBe(true);
   });
 
   test("modelHostStop refuses with LeasesActive while a lease is held", async () => {
@@ -178,13 +273,16 @@ describe("serverStop/modelHostStop lease fence (#278)", () => {
     expect(lease.release()).toBe(true);
   });
 
-  test("a reopened workload accepts new leases at the drain epoch", async () => {
+  test("a verified stop refuses acquires until a load reopens at the drain epoch", async () => {
     const reg = createResidencyLeases();
     setResidencyLeaseRegistry(reg);
 
     const stopped = await stopCaller().serverStop({ workload: W });
     expect(stopped).toEqual({ stopped: true, pid: null, killed: false });
+    expect(reg.snapshot(W).phase).toBe("unloaded");
+    expect(reg.acquire(W)).toEqual({ ok: false, reason: "Unloaded", workload: W, epoch: 1 });
 
+    (await requireFence()).reopenWorkloadAfterLoad(W, true, reg);
     const lease = acquireHeldLease(reg);
     expect(lease.epoch).toBe(1);
     expect(lease.release()).toBe(true);
@@ -254,11 +352,13 @@ describe("fenceWorkloadStop", () => {
     expect(stopCalls).toBe(1);
     expect(reg.snapshot(W)).toEqual({
       workload: W,
-      phase: "open",
+      phase: "unloaded",
       epoch: 1,
       active: [],
       waiters: 0,
     });
+    expect(reg.acquire(W)).toEqual({ ok: false, reason: "Unloaded", workload: W, epoch: 1 });
+    fence.reopenWorkloadAfterLoad(W, true, reg);
     const reacquired = reg.acquire(W);
     expect(reacquired.ok).toBe(true);
     if (reacquired.ok) {
@@ -408,5 +508,84 @@ describe("fenceWorkloadStop", () => {
       expect(verifiedCalls).toBe(0);
       expect(calls).toEqual([]);
     }
+  });
+});
+
+describe("workloadDelete lease refusal (#278)", () => {
+  test("a held lease keeps the ModelHost manifest and surfaces LeasesActive", async () => {
+    const reg = createResidencyLeases();
+    setResidencyLeaseRegistry(reg);
+    saveModelHost(parseModelHost(modelHostYaml), tmp);
+    const acquired = reg.acquire(HOST);
+    if (!acquired.ok) {
+      throw new Error("expected lease acquire to succeed");
+    }
+
+    const result = await router.createCaller({}).workloadDelete({ name: HOST });
+
+    if (!("error" in result)) {
+      throw new Error(`expected workloadDelete refusal, got ${JSON.stringify(result)}`);
+    }
+    expect(result.error).toContain("LeasesActive");
+    expect(result.ok).toBe(false);
+    expect(result.stops).toEqual([]);
+    expect(existsSync(workloadPath(HOST, tmp))).toBe(true);
+    expect(acquired.lease.signal.aborted).toBe(false);
+    expect(acquired.lease.release()).toBe(true);
+  });
+
+  test("a held lease keeps the ModelRun manifest and surfaces LeasesActive", async () => {
+    const reg = createResidencyLeases();
+    setResidencyLeaseRegistry(reg);
+    saveWorkload(
+      parseWorkload(
+        `
+apiVersion: llamactl/v1
+kind: ModelRun
+metadata:
+  name: ${RUN}
+spec:
+  node: local
+  target:
+    kind: rel
+    value: ${RUN_REL}
+`,
+      ),
+      tmp,
+    );
+    const acquired = reg.acquire(RUN);
+    if (!acquired.ok) {
+      throw new Error("expected lease acquire to succeed");
+    }
+    // A tracked pid equal to the live test-runner pid, with a sidecar record
+    // mtime at/after its start, reads as "alive": serverStatus reports `up`
+    // with the matching rel, so the delete reaches the fenced serverStop.
+    const dir = join(process.env["LOCAL_AI_RUNTIME_DIR"] ?? "", "workloads", RUN);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "llama-server.pid"), `${String(process.pid)}\n`);
+    writeFileSync(
+      join(dir, "llama-server.state"),
+      JSON.stringify({
+        rel: RUN_REL,
+        extraArgs: [],
+        host: "127.0.0.1",
+        port: "0",
+        binary: "/usr/bin/llama-server",
+        pid: process.pid,
+        startedAt: new Date().toISOString(),
+        tunedProfile: null,
+      }),
+    );
+
+    const result = await router.createCaller({}).workloadDelete({ name: RUN });
+
+    if (!("error" in result)) {
+      throw new Error(`expected workloadDelete refusal, got ${JSON.stringify(result)}`);
+    }
+    expect(result.error).toContain("LeasesActive");
+    expect(result.ok).toBe(false);
+    expect(existsSync(workloadPath(RUN, tmp))).toBe(true);
+    expect(acquired.lease.signal.aborted).toBe(false);
+    expect(acquired.lease.release()).toBe(true);
   });
 });

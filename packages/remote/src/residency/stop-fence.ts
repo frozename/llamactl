@@ -1,8 +1,11 @@
 /**
  * Node-side stop fence for serverStop/modelHostStop (Part of #278, DF-05).
  * Mirrors the #599 engine-client drain pattern: beginDrain blocks new
- * acquires, held leases refuse the stop, and a verified stop cycles
- * commitUnload+reopen so the epoch advances while the phase returns to open.
+ * acquires, held leases refuse the stop, and a verified stop commits the
+ * unload so the workload stays `unloaded` at the advanced epoch — a stopped
+ * engine must not admit new requests, which would 503 model_not_loaded
+ * against a dead server. Only a later load (reopenWorkloadAfterLoad) returns
+ * it to open. An unverified or failed stop cancels the drain back to open.
  * Inert when no registry is published: the stop promise is returned
  * unwrapped, byte-identical to the unfenced call.
  */
@@ -45,10 +48,7 @@ async function runFenced<R>(
     throw e;
   }
   if (opts.isVerifiedStop(r)) {
-    const c = registry.commitUnload(d.token);
-    if (c.ok) {
-      registry.reopen(d.token);
-    }
+    registry.commitUnload(d.token);
     return r;
   }
   registry.cancelDrain(d.token);
@@ -61,4 +61,27 @@ export function fenceWorkloadStop<R>(opts: FenceWorkloadStopOptions<R>): Promise
     return opts.stop();
   }
   return runFenced(registry, opts);
+}
+
+/**
+ * Reopen admission after a successful load (Part of #278, DF-05). A verified
+ * stop leaves the workload `unloaded`, so a later start is the only event that
+ * returns it to open. Mirrors the #599 engine-client reopen: a single snapshot
+ * drives both the phase guard and the reopen epoch, so the reopen cannot race a
+ * phase change between two reads. Inert without a registry or when the load
+ * did not succeed or the workload is not parked unloaded.
+ */
+export function reopenWorkloadAfterLoad(
+  workload: string,
+  loaded: boolean,
+  registry?: ResidencyLeases | null,
+): void {
+  const reg = registry === undefined ? getResidencyLeaseRegistry() : registry;
+  if (reg === null || !loaded) {
+    return;
+  }
+  const snap = reg.snapshot(workload);
+  if (snap.phase === "unloaded") {
+    reg.reopen({ workload, epoch: snap.epoch });
+  }
 }

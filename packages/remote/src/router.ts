@@ -90,7 +90,7 @@ import { getSessionSummary, listSessions } from "./ops-chat/sessions/list.js";
 import { createRagAdapter } from "./rag/index.js";
 import { resolveRagNode } from "./rag/resolve.js";
 import { buildResidencyStatus } from "./residency/procedures.js";
-import { fenceWorkloadStop } from "./residency/stop-fence.js";
+import { fenceWorkloadStop, reopenWorkloadAfterLoad } from "./residency/stop-fence.js";
 import { defaultResidencyStorePath, readResidencyStoreSnapshot } from "./residency/store.js";
 import { readFleetSnapshotOrLocalRoutes } from "./routes/fleet.js";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "./safe-fs.js";
@@ -366,10 +366,30 @@ function nodeRunBudgetGiB(nodeName: string, workloadsDir: string): number | unde
 }
 
 type ServerStopRefusalShape = { reason?: unknown; active?: unknown };
+type ServerStopDeleteOutcome = {
+  stopped?: unknown;
+  refused?: ServerStopRefusalShape | null;
+};
 
 function serverStopDeleteRefusal(node: string, refused: ServerStopRefusalShape): string {
   const active = Array.isArray(refused.active) ? refused.active.join(", ") : "";
   return `serverStop on ${node} refused (${String(refused.reason)}: ${active}); manifest preserved`;
+}
+
+async function stopRunWorkersForDelete(
+  cfg: Config,
+  workers: ModelRun["spec"]["workers"],
+  stops: string[],
+): Promise<void> {
+  for (const worker of [...workers].reverse()) {
+    try {
+      const wc = clientForNode(cfg, worker.node);
+      await wc.rpcServerStop.mutate({ graceSeconds: 3 });
+      stops.push(`stopped rpc-server on ${worker.node}`);
+    } catch (err) {
+      stops.push(`warning: worker ${worker.node}: ${(err as Error).message}`);
+    }
+  }
 }
 
 /**
@@ -391,9 +411,9 @@ async function stopWorkloadForDelete(manifest: ModelRun, stops: string[]): Promi
       const stopOutcome = (await client.serverStop.mutate({
         workload: manifest.metadata.name,
         graceSeconds: 5,
-      })) as { stopped?: unknown; refused?: { reason?: unknown; active?: unknown } } | null;
+      })) as ServerStopDeleteOutcome | null;
       if (stopOutcome !== null && stopOutcome.stopped === false) {
-        if (typeof stopOutcome.refused === "object") {
+        if (typeof stopOutcome.refused === "object" && stopOutcome.refused !== null) {
           return serverStopDeleteRefusal(manifest.spec.node, stopOutcome.refused);
         }
         return `serverStop on ${manifest.spec.node} refused (pid identity unverifiable); manifest preserved`;
@@ -403,15 +423,7 @@ async function stopWorkloadForDelete(manifest: ModelRun, stops: string[]): Promi
   } catch (err) {
     stops.push(`warning: coordinator ${manifest.spec.node}: ${(err as Error).message}`);
   }
-  for (const worker of [...manifest.spec.workers].reverse()) {
-    try {
-      const wc = clientForNode(cfg, worker.node);
-      await wc.rpcServerStop.mutate({ graceSeconds: 3 });
-      stops.push(`stopped rpc-server on ${worker.node}`);
-    } catch (err) {
-      stops.push(`warning: worker ${worker.node}: ${(err as Error).message}`);
-    }
-  }
+  await stopRunWorkersForDelete(cfg, manifest.spec.workers, stops);
   return null;
 }
 
@@ -2080,13 +2092,14 @@ export const router = t.router({
     signal,
   }) {
     yield* bridgeEventStream(signal ?? new AbortController().signal, async (emit, subSignal) => {
-      await startModelHost({
+      const result = await startModelHost({
         key: { name: input.workload },
         ...(input.timeoutSeconds !== undefined ? { timeoutSeconds: input.timeoutSeconds } : {}),
         ...(input.manifest !== undefined ? { manifest: input.manifest } : {}),
         signal: subSignal,
         onEvent: emit,
       });
+      reopenWorkloadAfterLoad(input.workload, result.ok);
     });
   }),
 
@@ -2624,6 +2637,7 @@ export const router = t.router({
           signal: sig,
           onEvent: emit,
         });
+        reopenWorkloadAfterLoad(input.workload, result.ok);
         emit({ type: "done", result });
       });
     }),
