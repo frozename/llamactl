@@ -556,8 +556,9 @@ expectedBearerHash, onNodeConnect?, onNodeDisconnect? } })` in
   extend `agent serve` with a matching flag in a follow-up slice).
 - _On dialing node_ — `llamactl agent serve`:
   - `--dial-central=<wss-url>` — the central's `/tunnel` URL.
-  - `--central-bearer=<token>` — tunnel bearer (or set
-    `LLAMACTL_TUNNEL_BEARER` so it stays out of the command line).
+  - `--central-bearer=<token>` — tunnel bearer (or write it to a 0600
+    `<dir>/tunnel-bearer` file so it stays out of the command line; the
+    now-deprecated `LLAMACTL_TUNNEL_BEARER` env var still works).
   - `--tunnel-node-name=<name>` — identity presented in the hello
     frame; defaults to the agent's `nodeName`.
 - _In kubeconfig_: mark a node with `tunnelPreferred: true` and
