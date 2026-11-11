@@ -43,6 +43,7 @@ import {
   specForHash,
 } from "./modelhost-schema.js";
 import { listModelHosts, loadModelHostByName, saveModelHost } from "./modelhost-store.js";
+import { groupByNodes, normalizeNodeConcurrency, runNodeGroups } from "./node-concurrency.js";
 import {
   DEFAULT_NODE_RPC_MUTATE_TIMEOUT_MS,
   DEFAULT_NODE_RPC_QUERY_TIMEOUT_MS,
@@ -117,6 +118,12 @@ export interface ReconcileOptions {
    *  replacement is missing or not yet confirmed. Defaults to
    *  EVICTION_INTENT_GRACE_MS (15 minutes). */
   evictionGraceMs?: number;
+  /** #221: bound on concurrent physical-node groups in a pass. Applies only
+   *  when resolveNodeIdentity is supplied; items sharing a physical node
+   *  (coordinator or worker, transitively) stay serial with ModelRuns before
+   *  ModelHosts, auto-placed runs serialize the pass, and per-node rpc
+   *  deadlines still apply. Defaults to DEFAULT_RECONCILE_NODE_CONCURRENCY. */
+  nodeConcurrency?: number;
 }
 
 /** Controller-side bookkeeping context for #308: where the ModelHost history
@@ -208,11 +215,19 @@ function hostSpecsEqual(manifest: ModelHostManifest, current: Record<string, unk
   );
 }
 
+/** One entry of the pass work list: a manifest plus its kind. */
+type ReconcileWorkItem =
+  | { kind: "run"; manifest: ModelRun }
+  | { kind: "host"; manifest: ModelHostManifest };
+
 /**
- * One reconciliation pass across every workload in the store. Each
- * workload is applied in sequence (avoids N parallel serverStart
- * subscriptions competing for the same port on a shared node). The
- * persisted manifest's status section is updated in place so
+ * One reconciliation pass across every workload in the store. The pass is
+ * serial per physical-node group (#221): items sharing a resolved node —
+ * coordinator or worker, transitively — apply one after another, which is
+ * what keeps parallel serverStart subscriptions from racing the same port
+ * or the same rpc-server worker. Distinct groups run concurrently through
+ * a bounded pool, so one slow node cannot delay the others. The persisted
+ * manifest's status section is updated in place so
  * `llamactl get workloads` reflects the latest pass. Node .query /
  * .mutate RPCs carry a per-call deadline (see node-rpc-deadline.ts)
  * so one unreachable node cannot stall the rest of the pass; #221 lets
@@ -252,25 +267,48 @@ export async function reconcileOnce(opts: ReconcileOptions): Promise<ReconcileRe
   );
   const nodeMemBytesByName = new Map<string, Promise<number | null>>();
   const manifests = opts.filter ? all.filter(opts.filter) : all;
-  const reports: ReconcileNodeReport[] = [];
-  let errors = 0;
+  // One ordered work list (ModelRuns then ModelHosts) so reports keep the
+  // manifest order regardless of which group finishes first.
+  const work: readonly ReconcileWorkItem[] = [
+    ...manifests.map((manifest): ReconcileWorkItem => ({ kind: "run", manifest })),
+    ...hosts.map((manifest): ReconcileWorkItem => ({ kind: "host", manifest })),
+  ];
+  const identityOf = (nodeName: string): string => opts.resolveNodeIdentity?.(nodeName) ?? nodeName;
+  const keysOf = (item: ReconcileWorkItem): readonly string[] | null => {
+    if (item.kind === "host") return [identityOf(item.manifest.spec.node)];
+    const { spec } = item.manifest;
+    if (spec.node === "auto") return null;
+    return [identityOf(spec.node), ...spec.workers.map((worker) => identityOf(worker.node))];
+  };
+  // Without a resolver every item may share a node: one serial group, as before.
+  const groups =
+    opts.resolveNodeIdentity === undefined
+      ? [Array.from({ length: work.length }, (_u, index) => index)]
+      : groupByNodes(work, keysOf);
+  const slotReports: ReconcileNodeReport[][] = work.map((): ReconcileNodeReport[] => []);
+  const slotErrors: number[] = work.map((): number => 0);
 
-  for (const manifest of manifests) {
-    errors += await reconcileModelRun(
-      manifest,
-      deadlineOpts,
-      dir,
-      nodeBudgetByName,
-      nodeMemBytesByName,
-      reports,
-    );
-  }
+  await runNodeGroups(groups, normalizeNodeConcurrency(opts.nodeConcurrency), async (index) => {
+    const item = work[index];
+    const slot = slotReports[index];
+    if (item === undefined || slot === undefined) return;
+    slotErrors[index] =
+      item.kind === "run"
+        ? await reconcileModelRun(
+            item.manifest,
+            deadlineOpts,
+            dir,
+            nodeBudgetByName,
+            nodeMemBytesByName,
+            slot,
+          )
+        : await reconcileModelHost(item.manifest, deadlineOpts, dir, nodeBudgetByName, slot);
+  });
 
-  for (const manifest of hosts) {
-    errors += await reconcileModelHost(manifest, deadlineOpts, dir, nodeBudgetByName, reports);
-  }
-
-  return { reports, errors };
+  return {
+    reports: slotReports.flat(),
+    errors: slotErrors.reduce((sum, count) => sum + count, 0),
+  };
 }
 
 type EvictionDecision = { kind: "none" } | { kind: "hold"; evictedBy: string } | { kind: "stale" };

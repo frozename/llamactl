@@ -634,6 +634,7 @@ export async function runReconcilePass(
   const noderunResult = await (deps.reconcileNodeRuns ?? noderunReconciler.reconcileNodeRunsOnce)({
     workloadsDir,
     getClient: (nodeName) => getNodeClientByName(nodeName),
+    resolveNodeIdentity,
     rpcTimeoutsFor,
     getArtifactResolver: (_node, client) =>
       makeSpecArtifactResolver({
