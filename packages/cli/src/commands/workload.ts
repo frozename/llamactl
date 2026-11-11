@@ -38,7 +38,7 @@ import {
 import { resolve as resolvePath } from "node:path";
 import { parse as parseYaml } from "yaml";
 
-import { getNodeClientByName } from "../dispatcher.js";
+import { getGlobals, getNodeClientByName } from "../dispatcher.js";
 import { required } from "../required.js";
 import { existsSync, readFileSync, rmSync } from "../safe-fs.js";
 import { makeSpecArtifactResolver, nodeRunBudgetLookup } from "./noderun-helpers.js";
@@ -161,8 +161,29 @@ class NodeQueryDeadlineError extends Error {}
 // before, and `delete` preserves the manifest on it unless --force is set.
 // The timer is cleared on every path, so it cannot keep the process alive. Shaped like
 // queryServerStatusWithTimeout in packages/remote/src/router.ts.
+/**
+ * #221: the deadline for one node query. The test seam wins; else the kubeconfig
+ * node's `rpcTimeouts.queryMs` (resolved through the same `--context` global the
+ * dispatcher uses); else GET_NODE_QUERY_TIMEOUT_MS. An unreadable config or an
+ * unknown node falls back to the default instead of failing the command.
+ */
+export function nodeQueryTimeoutMsFor(node: string): number {
+  const seamMs = workloadTestSeams.nodeQueryTimeoutMs;
+  if (seamMs !== undefined) return seamMs;
+  const globals = getGlobals();
+  try {
+    const cfg = kubecfg.loadConfig(globals.configPath ?? kubecfg.defaultConfigPath());
+    const queryMs = kubecfg.resolveNode(cfg, node, globals.contextName ?? undefined).node
+      .rpcTimeouts?.queryMs;
+    if (queryMs !== undefined) return queryMs;
+  } catch {
+    // No readable kubeconfig or unknown node: the CLI default bounds the query.
+  }
+  return GET_NODE_QUERY_TIMEOUT_MS;
+}
+
 export async function withNodeQueryDeadline<T>(node: string, query: () => Promise<T>): Promise<T> {
-  const timeoutMs = workloadTestSeams.nodeQueryTimeoutMs ?? GET_NODE_QUERY_TIMEOUT_MS;
+  const timeoutMs = nodeQueryTimeoutMsFor(node);
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_resolve, reject): void => {
     timer = setTimeout((): void => {

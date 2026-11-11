@@ -256,6 +256,21 @@ export const NodeWorkerRpcSchema = z
   .strict();
 export type NodeWorkerRpc = z.infer<typeof NodeWorkerRpcSchema>;
 
+/**
+ * #221: per-node controller→node RPC deadlines that override the controller
+ * defaults (10 s query / 30 s mutate) field by field. The max keeps every
+ * value under setTimeout's 2^31-1 ms clamp. NodeRun mutations are never
+ * bounded. Strict, so a misspelled key refuses the node instead of being
+ * silently stripped.
+ */
+export const NodeRpcTimeoutsConfigSchema = z
+  .object({
+    queryMs: z.number().int().positive().max(2_147_483_647).optional(),
+    mutateMs: z.number().int().positive().max(2_147_483_647).optional(),
+  })
+  .strict();
+export type NodeRpcTimeoutsConfig = z.infer<typeof NodeRpcTimeoutsConfigSchema>;
+
 export const ClusterNodeSchema = z
   .object({
     name: z.string().min(1),
@@ -303,6 +318,13 @@ export const ClusterNodeSchema = z
      * the caller keeps the existing path for the node's deployments.
      */
     workerRpc: z.unknown().optional(),
+    /**
+     * #221: a per-node controller→node RPC deadline that overrides the
+     * controller defaults (10 s query / 30 s mutate) field by field; the max
+     * stays under setTimeout's 2^31-1 clamp; NodeRun mutations are never
+     * bounded.
+     */
+    rpcTimeouts: NodeRpcTimeoutsConfigSchema.optional(),
   })
   .refine(
     (n) => {
