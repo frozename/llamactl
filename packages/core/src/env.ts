@@ -157,6 +157,12 @@ function toOpenAiV1(base: string): string {
  * re-derives; an operator export that differs from the marker stays
  * explicit. Without a marker (env seeded before #638) a 9001-style
  * derivation whose proxy was since changed or unset still looks explicit.
+ * The resolved tracked URL (basics.llamaCppBaseUrl) is in the derived set
+ * so a shell seeded before #638 with a custom LOCAL_AI_LLAMA_CPP_BASE_URL,
+ * which carries that URL as LOCAL_AI_PROVIDER_URL with no marker, gets a
+ * marker on its next eval and follows later tracked-URL changes. Every
+ * derivation branch that this membership can reach returns that same URL,
+ * so only the marker changes.
  *
  * Test-profile sentinel: hermetic runs must never point at a live proxy,
  * so without an explicit proxy they keep the pinned `65534` llama-server
@@ -174,6 +180,7 @@ function resolveLlamaCppProviderUrl(
   const derived = new Set([
     trackedDerived,
     LEGACY_TRACKED_SERVER_URL,
+    basics.llamaCppBaseUrl,
     basics.lmStudioBaseUrl,
     proxyUrl,
     defaultProxyUrl,

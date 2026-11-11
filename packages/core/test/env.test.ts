@@ -616,4 +616,59 @@ describe("env.resolveEnv — LOCAL_AI_PROVIDER_URL routes through the internal p
       }).LOCAL_AI_PROVIDER_URL,
     ).toBe("http://127.0.0.1:5555/v1");
   });
+
+  // A shell seeded on main with LOCAL_AI_LLAMA_CPP_BASE_URL=A carries LOCAL_AI_PROVIDER_URL=A and no marker.
+  const A = "http://10.0.0.99:9999/v1";
+  const mainSeeded = {
+    ...B,
+    LOCAL_AI_LLAMA_CPP_BASE_URL: A,
+    LOCAL_AI_PROVIDER_URL: A,
+    OPENAI_BASE_URL: A,
+  };
+
+  // kills: dropping basics.llamaCppBaseUrl from the derived set (the marker comes back "" and A is pinned as explicit).
+  test.each([
+    ["no overrides", {}],
+    ["LOCAL_AI_PROVIDER_ROUTE=direct", { LOCAL_AI_PROVIDER_ROUTE: "direct" }],
+    ["a non-default proxy", { LLAMACTL_INTERNAL_PROXY_URL: "http://127.0.0.1:9001" }],
+    ["a test profile", { LLAMACTL_TEST_PROFILE: "/tmp/hermetic" }],
+  ])(
+    "#638 a main-seeded tracked URL resolves to the same URL and is marked derived (%s)",
+    (_label, extra) => {
+      const r = resolveEnv({ ...mainSeeded, ...extra });
+      expect(r.LOCAL_AI_PROVIDER_URL).toBe(A); // post-fix guard: output unchanged by the fix
+      expect(r.OPENAI_BASE_URL).toBe(A); // post-fix guard
+      expect(r.LOCAL_AI_PROVIDER_URL_DERIVED).toBe(A);
+    },
+  );
+
+  // kills: dropping basics.llamaCppBaseUrl from the derived set (A stays pinned after the tracked URL moves to B).
+  test("#638 a main-seeded tracked URL A re-derives to B when the tracked URL changes", () => {
+    const Bu = "http://10.0.0.98:9998/v1";
+    const first = resolveEnv(mainSeeded);
+    expect(first.LOCAL_AI_PROVIDER_URL).toBe(A); // post-fix guard
+    const r = resolveEnv({ ...seed(mainSeeded, first), LOCAL_AI_LLAMA_CPP_BASE_URL: Bu });
+    expect(r.LOCAL_AI_PROVIDER_URL).toBe(Bu);
+    expect(r.OPENAI_BASE_URL).toBe(Bu);
+    expect(r.LOCAL_AI_PROVIDER_URL_DERIVED).toBe(Bu);
+  });
+
+  // kills: dropping the provider === "lmstudio" arm of the marker (an explicit llama.cpp URL would blank it and pin the LM Studio URL).
+  test("#638 the lmstudio marker is the LM Studio URL and re-derives after switching to llama.cpp", () => {
+    const LM = "http://10.0.0.7:4321/v1";
+    const input = {
+      ...B,
+      LOCAL_AI_PROVIDER: "lmstudio",
+      LOCAL_AI_LMSTUDIO_BASE_URL: LM,
+      LOCAL_AI_PROVIDER_URL: "http://127.0.0.1:5555/v1",
+    };
+    const first = resolveEnv(input);
+    expect(first.LOCAL_AI_PROVIDER_URL).toBe(LM); // post-fix guard
+    expect(first.LOCAL_AI_PROVIDER_URL_DERIVED).toBe(LM);
+    const s = seed(input, first);
+    delete s["LOCAL_AI_LMSTUDIO_BASE_URL"];
+    const r = resolveEnv({ ...s, LOCAL_AI_PROVIDER: "llama.cpp" });
+    expect(r.LOCAL_AI_PROVIDER_URL).toBe(PX);
+    expect(r.OPENAI_BASE_URL).toBe(PX);
+  });
 });
