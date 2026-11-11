@@ -288,11 +288,15 @@ export function estimateModelHostMemoryGiB(
 }
 
 /**
- * Handle for one admitted pending claim. Transitions apply only from
- * `pending`: pending -> resident, pending -> uncertain, pending ->
- * released. Resident and uncertain are absorbing in this slice — there
- * is no expiry and no force input; releasing them belongs to the
- * destructive-replacement gate, not here.
+ * Handle for one admitted pending claim. Pending transitions: pending ->
+ * resident, pending -> uncertain, pending -> released via
+ * `releaseUnstarted`. `demoteUncertain` retires an unconfirmed outcome by
+ * moving resident -> uncertain (a no-op for pending, uncertain and
+ * released; pending -> uncertain stays `markUncertain`).
+ * `releaseVerified` removes a resident or uncertain claim from the
+ * ledger — valid only after a confirmed release, such as a confirmed
+ * native unload, and never after an ambiguous outcome. Resident claims
+ * stay absorbing for the apply path, which never calls these two.
  */
 export interface TargetAdmissionClaimHandle {
   claimId: string;
@@ -300,6 +304,8 @@ export interface TargetAdmissionClaimHandle {
   markResident(): void;
   markUncertain(): void;
   releaseUnstarted(): void;
+  demoteUncertain(): void;
+  releaseVerified(): void;
 }
 
 /**
@@ -389,6 +395,15 @@ export function createTargetAdmissionAuthority(): TargetAdmissionAuthority {
         releaseUnstarted: () => {
           const idx = list.findIndex((c) => c.claimId === claimId);
           if (idx >= 0 && list[idx]?.state === "pending") list.splice(idx, 1);
+        },
+        demoteUncertain: () => {
+          const c = findClaim(targetIdentity, claimId);
+          if (c?.state === "resident") c.state = "uncertain";
+        },
+        releaseVerified: () => {
+          const idx = list.findIndex((c) => c.claimId === claimId);
+          const held = idx >= 0 ? list[idx]?.state : undefined;
+          if (idx >= 0 && (held === "resident" || held === "uncertain")) list.splice(idx, 1);
         },
       };
       return { decision, handle };

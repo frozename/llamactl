@@ -1,3 +1,5 @@
+import type { Config } from "@llamactl/core/config/schema";
+
 import { sourceRevision } from "@llamactl/core";
 import {
   type CgroupOomSample,
@@ -5,6 +7,7 @@ import {
   readOomBaseline,
   writeOomBaseline,
 } from "@llamactl/core/cgroupOom";
+import { resolveNode } from "@llamactl/core/config/kubeconfig";
 import { recordModelHostOomKill } from "@llamactl/core/engines/conditions";
 import { resolveEnv } from "@llamactl/core/env";
 import {
@@ -21,7 +24,7 @@ import {
 } from "@llamactl/remote/workload/modelhost-schema";
 import { join } from "node:path";
 
-import { getNodeClientByName } from "../dispatcher.js";
+import { getGlobals, getNodeClientByName } from "../dispatcher.js";
 import { makeSpecArtifactResolver } from "./noderun-helpers.js";
 
 const USAGE = `Usage: llamactl controller serve [--interval=<s>] [--once]
@@ -46,6 +49,10 @@ Flags:
 A lock file at $LLAMACTL_WORKLOADS_DIR/.controller.lock guards against
 two controllers racing on the same directory. Stale locks from
 crashed controllers are stolen automatically when their PID is gone.
+
+A node's kubeconfig rpcTimeouts: { queryMs, mutateMs } block overrides the
+default 10 s query / 30 s mutate node RPC deadlines for that node; it is read
+once at controller start.
 
 A reconcile error is logged to stderr once per distinct message, again
 every 10 minutes while it persists, and once on recovery. On Linux the
@@ -383,7 +390,7 @@ function writeLines(lines: readonly ControllerLogLine[]): void {
   }
 }
 
-interface ControllerPassState {
+export interface ControllerPassState {
   errors: ReconcileErrorLog;
   oom: OomWatchState;
 }
@@ -435,13 +442,48 @@ function parseServeInvocation(args: string[]): ControllerFlags | { code: number 
   return parsed;
 }
 
+type NodeRpcTimeoutsForNode = (
+  nodeName: string,
+) => { queryMs?: number; mutateMs?: number } | undefined;
+
+/**
+ * #221: resolves a per-node controller→node RPC deadline from the kubeconfig's
+ * `rpcTimeouts` block. Returns undefined when the node has no block or cannot
+ * be resolved, so the reconcile pass falls back to its defaults. Fields are
+ * mapped conditionally so the result matches the remote Partial<NodeRpcTimeouts>
+ * contract under exactOptionalPropertyTypes (zod optionals carry `| undefined`).
+ * `contextName` carries the `--context` global so a same-named node resolves
+ * through the selected context, matching the dispatcher's own node lookup.
+ */
+export function nodeRpcTimeoutsFromConfig(
+  cfg: Config,
+  contextName?: string | null,
+): NodeRpcTimeoutsForNode {
+  return (nodeName: string): { queryMs?: number; mutateMs?: number } | undefined => {
+    let block: { queryMs?: number | undefined; mutateMs?: number | undefined } | undefined;
+    try {
+      block = resolveNode(cfg, nodeName, contextName ?? undefined).node.rpcTimeouts;
+    } catch {
+      return undefined;
+    }
+    if (block === undefined) return undefined;
+    return {
+      ...(block.queryMs !== undefined ? { queryMs: block.queryMs } : {}),
+      ...(block.mutateMs !== undefined ? { mutateMs: block.mutateMs } : {}),
+    };
+  };
+}
+
 export async function runController(args: string[]): Promise<number> {
   const invocation = parseServeInvocation(args);
   if ("code" in invocation) return invocation.code;
   const parsed = invocation;
 
   const { config: kubecfg } = await import("@llamactl/remote");
-  const cfgPath = process.env["LLAMACTL_CONFIG"] ?? kubecfg.defaultConfigPath();
+  // Honour `--cluster-config` (which lands in getGlobals().configPath) so the
+  // controller reconciles against the same kubeconfig every other verb uses,
+  // matching loadConfigForDispatch; fall back to the LLAMACTL_CONFIG/default.
+  const cfgPath = getGlobals().configPath ?? kubecfg.defaultConfigPath();
   // Reuse the canonical resolver instead of reinventing the
   // DEV_STORAGE→~/.llamactl base (the inline copy used $HOME +
   // `??`, which fed an "undefined/.llamactl" path when HOME was
@@ -453,6 +495,10 @@ export async function runController(args: string[]): Promise<number> {
     return 1;
   }
   const cfg = kubecfg.loadConfig(cfgPath);
+  // The started banner echoes the cluster/context actually loaded from cfgPath,
+  // so an operator can confirm --cluster-config was honoured rather than the
+  // config silently falling back to the default file's context.
+  const activeContext = getGlobals().contextName ?? cfg.currentContext;
   const resolveNodeIdentity = (n: string): string | null => {
     try {
       return kubecfg.resolveNode(cfg, n).node.endpoint || null;
@@ -460,6 +506,7 @@ export async function runController(args: string[]): Promise<number> {
       return null;
     }
   };
+  const rpcTimeoutsFor = nodeRpcTimeoutsFromConfig(cfg, getGlobals().contextName);
 
   const acquired = workloadLock.acquireLock(workloadsDir);
   if ("error" in acquired) {
@@ -467,7 +514,7 @@ export async function runController(args: string[]): Promise<number> {
     return 1;
   }
   process.stdout.write(
-    `controller started pid=${String(process.pid)} workloads=${workloadsDir} cfg=${cfgPath}\n`,
+    `controller started pid=${String(process.pid)} workloads=${workloadsDir} cfg=${cfgPath} context=${activeContext}\n`,
   );
 
   // Source-staleness auto-reload: capture the running source revision once; the
@@ -485,7 +532,7 @@ export async function runController(args: string[]): Promise<number> {
   const { isStopping, onSignal } = setupSignalHandlers(stopping, wakeRef);
 
   const runOnePass = (state: ControllerPassState): Promise<ControllerPassState> =>
-    runReconcilePass(workloadsDir, resolveNodeIdentity, state);
+    runReconcilePass(workloadsDir, resolveNodeIdentity, rpcTimeoutsFor, state);
   const initialPass: ControllerPassState = {
     errors: new Map(),
     oom: { last: readOomBaseline(oomBaselineFile(workloadsDir)), pendingKills: 0 },
@@ -555,24 +602,39 @@ export function observeOomKills(
   return watch.nextState;
 }
 
-async function runReconcilePass(
+/** Seam over the two reconciler entry points so tests can assert the pass
+ *  wiring (notably that `rpcTimeoutsFor` reaches both) without live nodes. */
+export interface ReconcilePassDeps {
+  reconcileModelRuns?: (
+    opts: workloadReconciler.ReconcileOptions,
+  ) => Promise<workloadReconciler.ReconcileResult>;
+  reconcileNodeRuns?: (
+    opts: noderunReconciler.NodeRunReconcileOptions,
+  ) => Promise<noderunReconciler.NodeRunReconcileResult>;
+}
+
+export async function runReconcilePass(
   workloadsDir: string,
   resolveNodeIdentity: (n: string) => string | null,
+  rpcTimeoutsFor: NodeRpcTimeoutsForNode,
   state: ControllerPassState,
+  deps: ReconcilePassDeps = {},
 ): Promise<ControllerPassState> {
   // ModelRun pass — converges llama-server lifecycle per manifest.
-  const modelrunResult = await workloadReconciler.reconcileOnce({
+  const modelrunResult = await (deps.reconcileModelRuns ?? workloadReconciler.reconcileOnce)({
     workloadsDir,
     getClient: (nodeName) => getNodeClientByName(nodeName),
     resolveNodeIdentity,
+    rpcTimeoutsFor,
     onEvent: (e) => {
       process.stdout.write(`[${new Date().toISOString()}] ${e.name}: ${e.message}\n`);
     },
   });
   // NodeRun pass — converges infra inventory per manifest.
-  const noderunResult = await noderunReconciler.reconcileNodeRunsOnce({
+  const noderunResult = await (deps.reconcileNodeRuns ?? noderunReconciler.reconcileNodeRunsOnce)({
     workloadsDir,
     getClient: (nodeName) => getNodeClientByName(nodeName),
+    rpcTimeoutsFor,
     getArtifactResolver: (_node, client) =>
       makeSpecArtifactResolver({
         client: client as unknown as Parameters<typeof makeSpecArtifactResolver>[0]["client"],

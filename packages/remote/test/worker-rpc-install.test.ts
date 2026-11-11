@@ -690,6 +690,8 @@ describe("I1: clean install", () => {
       "pull",
       "rag",
       "recommendations",
+      // #614 (#284): read-only `llamactl residency status`, not the worker RPC.
+      "residency",
       "runbook",
       "server",
       "sirius",
@@ -756,6 +758,10 @@ describe("I1: clean install", () => {
     BASELINE_ENV.add("LLAMACTL_CONSOLE_DIST");
     // #609 (#284): residency operation store path override read by the read-only residencyStatus query, not the worker RPC.
     BASELINE_ENV.add("LLAMACTL_RESIDENCY_STORE");
+    // #610 (#280): opt-in flag for `agent serve` to publish declared cold models, not the worker RPC.
+    BASELINE_ENV.add("LLAMACTL_DECLARED_MODELS");
+    // #278 (DF-05): opt-in residency lease registry read by `agent serve`, not the worker RPC.
+    BASELINE_ENV.add("LLAMACTL_RESIDENCY_LEASES");
     const sources = join(import.meta.dir, "..", "..");
     const read = new Map<string, string[]>();
     for (const pkg of readdirSync(sources)) {
