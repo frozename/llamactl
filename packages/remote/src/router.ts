@@ -90,13 +90,19 @@ import { getSessionSummary, listSessions } from "./ops-chat/sessions/list.js";
 import { createRagAdapter } from "./rag/index.js";
 import { resolveRagNode } from "./rag/resolve.js";
 import { buildResidencyStatus } from "./residency/procedures.js";
+import { fenceWorkloadStop } from "./residency/stop-fence.js";
 import { defaultResidencyStorePath, readResidencyStoreSnapshot } from "./residency/store.js";
 import { readFleetSnapshotOrLocalRoutes } from "./routes/fleet.js";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "./safe-fs.js";
 import { searchLogs } from "./search/logs.js";
 import { resolveDefaultRagNode } from "./search/rag-node.js";
 import { searchSessions } from "./search/sessions.js";
-import { startModelHost, statusModelHost, stopModelHost } from "./server/modelhost.js";
+import {
+  startModelHost,
+  statusModelHost,
+  stopModelHost,
+  type StopModelHostResult,
+} from "./server/modelhost.js";
 import { defaultNodeBudgetGiB, estimateModelHostMemoryGiB } from "./workload/admission.js";
 import * as workloadApplyMod from "./workload/apply.js";
 import { CompositeOwnershipSchema } from "./workload/gateway-catalog/schema.js";
@@ -359,11 +365,19 @@ function nodeRunBudgetGiB(nodeName: string, workloadsDir: string): number | unde
   return nodeRuns.find((n) => n.metadata.name === nodeName)?.spec.budget?.memoryGiB;
 }
 
+type ServerStopRefusalShape = { reason?: unknown; active?: unknown };
+
+function serverStopDeleteRefusal(node: string, refused: ServerStopRefusalShape): string {
+  const active = Array.isArray(refused.active) ? refused.active.join(", ") : "";
+  return `serverStop on ${node} refused (${String(refused.reason)}: ${active}); manifest preserved`;
+}
+
 /**
  * Stop a ModelRun's server + workers before workloadDelete. Returns a refusal
  * message when the coordinator's serverStop reports `stopped: false` — the
- * remote could not prove the recorded pid's identity, and deleting the
- * manifest would orphan a possibly-live process nobody could find later.
+ * remote could not prove the recorded pid's identity (or the residency lease
+ * fence refused, #278), and deleting the manifest would orphan a possibly-live
+ * process nobody could find later.
  */
 async function stopWorkloadForDelete(manifest: ModelRun, stops: string[]): Promise<string | null> {
   const cfg = kubecfg.loadConfig();
@@ -377,8 +391,11 @@ async function stopWorkloadForDelete(manifest: ModelRun, stops: string[]): Promi
       const stopOutcome = (await client.serverStop.mutate({
         workload: manifest.metadata.name,
         graceSeconds: 5,
-      })) as { stopped?: unknown } | null;
+      })) as { stopped?: unknown; refused?: { reason?: unknown; active?: unknown } } | null;
       if (stopOutcome !== null && stopOutcome.stopped === false) {
+        if (typeof stopOutcome.refused === "object") {
+          return serverStopDeleteRefusal(manifest.spec.node, stopOutcome.refused);
+        }
         return `serverStop on ${manifest.spec.node} refused (pid identity unverifiable); manifest preserved`;
       }
       stops.push(`stopped llama-server on ${manifest.spec.node}`);
@@ -2046,9 +2063,15 @@ export const router = t.router({
 
   modelHostStop: t.procedure.input(modelHostStopInput).mutation(
     async ({ input }) =>
-      await stopModelHost({
-        key: { name: input.workload },
-        ...(input.graceSeconds !== undefined ? { graceSeconds: input.graceSeconds } : {}),
+      await fenceWorkloadStop<StopModelHostResult>({
+        workload: input.workload,
+        stop: () =>
+          stopModelHost({
+            key: { name: input.workload },
+            ...(input.graceSeconds !== undefined ? { graceSeconds: input.graceSeconds } : {}),
+          }),
+        isVerifiedStop: (r) => r.ok,
+        refuse: (f) => ({ ok: false, pid: null, error: `${f.reason}: ${f.active.join(", ")}` }),
       }),
   ),
 
@@ -2548,9 +2571,15 @@ export const router = t.router({
     )
     .mutation(
       async ({ input }) =>
-        await serverMod.stopServer({
-          key: { name: input.workload },
-          ...(input.graceSeconds !== undefined ? { graceSeconds: input.graceSeconds } : {}),
+        await fenceWorkloadStop<serverMod.StopServerResult>({
+          workload: input.workload,
+          stop: () =>
+            serverMod.stopServer({
+              key: { name: input.workload },
+              ...(input.graceSeconds !== undefined ? { graceSeconds: input.graceSeconds } : {}),
+            }),
+          isVerifiedStop: (r) => r.stopped,
+          refuse: (refused) => ({ stopped: false, pid: null, killed: false, refused }),
         }),
     ),
 
