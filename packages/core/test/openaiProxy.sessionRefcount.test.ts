@@ -3,9 +3,11 @@ import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { AcquireResult, ResidencyLeases } from "../src/residency/leases.js";
+import type { PeerNode } from "../src/config/peers.js";
+import type { AcquireResult, Lease, ResidencyLeases } from "../src/residency/leases.js";
 import type { SessionRefcounts } from "../src/residency/sessions.js";
 import type { ResolvedEnv } from "../src/types.js";
+import type { PeerSnapshot } from "../src/workloadRuntime.js";
 
 import { resolveEnv } from "../src/env.js";
 import { openaiProxy } from "../src/index.js";
@@ -49,6 +51,11 @@ type LeaseModule = {
   createResidencyLeases: () => ResidencyLeases;
   setResidencyLeaseRegistry: (registry: ResidencyLeases | null) => void;
   getResidencyLeaseRegistry: () => ResidencyLeases | null;
+  bindLeaseToBody: (
+    body: ReadableStream<Uint8Array>,
+    lease: Lease,
+    onSettle?: () => void,
+  ) => ReadableStream<Uint8Array>;
 };
 
 type SessionsModule = {
@@ -66,6 +73,7 @@ async function loadLeaseModule(): Promise<LeaseModule> {
   const mod = (await import(LEASES_MODULE)) as unknown as LeaseModule;
   expect(typeof mod.setResidencyLeaseRegistry).toBe("function");
   expect(typeof mod.getResidencyLeaseRegistry).toBe("function");
+  expect(typeof mod.bindLeaseToBody).toBe("function");
   return mod;
 }
 
@@ -1001,4 +1009,184 @@ test("#520: session releases on 503 not loaded refusal", async () => {
   } finally {
     t.cleanup();
   }
+});
+
+test("#520: a peer-routed session request holds no refcount and does not poison the id", async () => {
+  const t = tempKvEnv();
+  try {
+    const sessionsMod = await loadSessionsModule();
+    const leasesMod = await loadLeaseModule();
+    writeLocalModelRunWorkload(t.root, "wl-a", WL_A_PORT);
+    const peers: PeerNode[] = [{ id: "peer-a", endpoint: "https://peer-a.local:7843" }];
+    const peerSnapshots = new Map<string, PeerSnapshot>([
+      [
+        "peer-a",
+        {
+          workloads: [{ modelId: "peer-only/model.gguf", port: 9333 }],
+          pressure: "NORMAL",
+          fetchedAt: Date.now(),
+        },
+      ],
+    ]);
+    openaiProxy.__setOpenAIProxyClusterRoutingForTests({
+      clusterPeers: peers,
+      peerSnapshots,
+    });
+    installFetchStub(
+      () =>
+        new Response(UPSTREAM_TEXT, {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    const { spy: sessions } = installSessionRefcounts(sessionsMod, () => 1_000);
+    const { acquireWorkloads } = installSpyRegistry(leasesMod);
+
+    // Peer routes carry a workload id but bypass both seams: no lease
+    // acquire and no session refcount may be taken for them.
+    const peerRes = await openaiProxy.proxyOpenAI(
+      embeddingsRequest("peer-only/model.gguf", { [SESSION_HEADER]: "s1" }),
+      t.env,
+    );
+    expect(peerRes.status).toBe(200);
+    expect(await peerRes.text()).toBe(UPSTREAM_TEXT);
+    expect(acquireWorkloads).toEqual([]);
+    expect(sessions.releaseCalls).toEqual([]);
+    expect(sessions.activeSessions("peer-a:peer-only/model.gguf")).toEqual([]);
+
+    // A leaked peer-side ref would bind s1 to the peer workload and turn
+    // this local request into a 409 AffinityConflict.
+    const localRes = await openaiProxy.proxyOpenAI(
+      embeddingsRequest(KV_MODEL, { [SESSION_HEADER]: "s1" }),
+      t.env,
+    );
+    expect(localRes.status).toBe(200);
+    expect(await localRes.text()).toBe(UPSTREAM_TEXT);
+    expect(sessions.releaseCalls).toEqual(["s1"]);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("#520: a null-body response releases the session ref exactly once", async () => {
+  const t = tempKvEnv();
+  try {
+    const sessionsMod = await loadSessionsModule();
+    const leasesMod = await loadLeaseModule();
+    writeLocalModelRunWorkload(t.root, "wl-a", WL_A_PORT);
+    installFetchStub(() => new Response(null, { status: 204 }));
+    const { spy: sessions } = installSessionRefcounts(sessionsMod, () => 1_000);
+    const { real: leases } = installSpyRegistry(leasesMod);
+
+    const res = await openaiProxy.proxyOpenAI(
+      embeddingsRequest(KV_MODEL, { [SESSION_HEADER]: "s1" }),
+      t.env,
+    );
+    expect(res.status).toBe(204);
+    expect(await res.text()).toBe("");
+    // No body means nothing is handed to bindLeaseToBody: the finally must
+    // release the session even though a lease was held.
+    expect(sessions.releaseCalls).toEqual(["s1"]);
+    expect(leases.active("wl-a")).toEqual([]);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("#520: a forward throw releases the session ref exactly once", async () => {
+  const t = tempKvEnv();
+  try {
+    const sessionsMod = await loadSessionsModule();
+    const leasesMod = await loadLeaseModule();
+    writeLocalModelRunWorkload(t.root, "wl-a", WL_A_PORT);
+    installFetchStub(() => {
+      const upstream = new Response(
+        new ReadableStream<Uint8Array>({
+          start(c): void {
+            c.enqueue(new TextEncoder().encode(UPSTREAM_TEXT));
+          },
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      );
+      // Lock the body so abortUpstreamOnBodyCancel's getReader() throws,
+      // propagating out of forward() through forwardAndBindResidencyLease.
+      const lockedReader = upstream.body?.getReader();
+      expect(lockedReader).toBeDefined();
+      return upstream;
+    });
+    const { spy: sessions } = installSessionRefcounts(sessionsMod, () => 1_000);
+    const { real: leases } = installSpyRegistry(leasesMod);
+
+    let rejection: unknown = null;
+    try {
+      await openaiProxy.proxyOpenAI(embeddingsRequest(KV_MODEL, { [SESSION_HEADER]: "s1" }), t.env);
+    } catch (error) {
+      rejection = error;
+    }
+    expect(rejection).toBeInstanceOf(Error);
+    expect(sessions.releaseCalls).toEqual(["s1"]);
+    expect(leases.active("wl-a")).toEqual([]);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("#278: bindLeaseToBody fires onSettle exactly once when abort races a pending read", async () => {
+  const leasesMod = await loadLeaseModule();
+  const real = leasesMod.createResidencyLeases();
+  const acquired = real.acquire("wl-bind");
+  if (!acquired.ok) {
+    throw new Error("acquire(wl-bind) refused");
+  }
+  const lease = acquired.lease;
+
+  // The upstream never produces data, so the bound stream's first pull is
+  // parked on reader.read() when the forced unload lands.
+  const upstream = new ReadableStream<Uint8Array>();
+  let settleCalls = 0;
+  const bound = leasesMod.bindLeaseToBody(upstream, lease, () => {
+    settleCalls += 1;
+  });
+  const reader = bound.getReader();
+  const pendingRead = reader.read();
+  // Let pull() reach its pending upstream read before revoking.
+  await new Promise((resolve) => {
+    setTimeout(resolve, 0);
+  });
+
+  const drain = real.beginDrain("wl-bind");
+  if (!drain.ok) {
+    throw new Error("beginDrain(wl-bind) refused");
+  }
+  expect(real.commitUnload(drain.token, { force: true })).toEqual({
+    ok: true,
+    revoked: [lease.id],
+  });
+  // Abort dispatch is synchronous: the abort path has already fired
+  // onSettle once. A second call here means the listener does not guard
+  // onSettle itself.
+  expect(settleCalls).toBe(1);
+
+  // The cancelled upstream read resolves done and runs settle(); the
+  // once-flag must keep onSettle at exactly one call across both paths.
+  const readResult = await Promise.race([
+    pendingRead.then(
+      () => null,
+      (error: unknown) => error,
+    ),
+    new Promise<"timeout">((resolve) => {
+      setTimeout(() => {
+        resolve("timeout");
+      }, 2_000);
+    }),
+  ]);
+  expect(readResult).not.toBe("timeout");
+  expect(readResult).toBeInstanceOf(Error);
+  await new Promise((resolve) => {
+    setTimeout(resolve, 0);
+  });
+  expect(settleCalls).toBe(1);
 });

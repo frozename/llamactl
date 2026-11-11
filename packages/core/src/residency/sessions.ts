@@ -1,11 +1,11 @@
 /**
  * Active-session refcounts for residency (#520). Pure and adapter-free:
  * no IO, no timers. This is a partial #520 slice: it layers on the DF-05
- * request leases (#278, not yet landed) rather than replacing them.
+ * request leases (#278) rather than replacing them.
  *
- * NON-FENCING: checkUnload does not block a concurrent acquire, so a
- * fencing beginUnload/drain token composed with the #278 leases is
- * required before any ingress wiring.
+ * NON-FENCING: checkUnload does not block a concurrent acquire. This
+ * slice only makes checkUnload report SessionActive; refusing an unload
+ * while a session holds the workload is wired by a later slice.
  */
 
 export interface SessionRefcountOptions {

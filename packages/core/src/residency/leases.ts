@@ -135,11 +135,12 @@ function bindLeaseToBody(
   //
   // On abort: error the OUTER stream via the saved controller so the
   // consumer sees a revoked stream (not a normal end-of-stream).  Then
-  // cancel the upstream reader to unblock any pending read.  The
-  // settled-guard ensures onSettle fires exactly once (abort path or
-  // natural settle, never both).
+  // cancel the upstream reader to unblock any pending read.  Marking
+  // settled here keeps onSettle exactly-once inside this module: a later
+  // settle() from the cancelled read must not fire it a second time.
   const abortListener = (): void => {
     if (settled) return;
+    settled = true;
     if (outerController !== null) {
       outerController.error(lease.signal.reason);
     }

@@ -3044,9 +3044,9 @@ function composeLeaseIntoInit(context: ProxyContext, lease: Lease): void {
  * lease to the final response body. On a null body or any throw the lease is
  * released exactly once and the client-abort listener is detached; with a
  * body the lease lives until the bound stream settles (or is revoked).
- * When lease is null (peer route or no workload), session release is
- * performed immediately in the finally block since there is no body
- * binding to defer it.
+ * Whenever the body is not handed off the session release runs in the
+ * finally block, independent of whether a lease exists, since there is no
+ * body binding to defer it.
  */
 async function forwardAndBindResidencyLease(
   context: ProxyContext,
@@ -3079,15 +3079,33 @@ async function forwardAndBindResidencyLease(
     return res;
   } finally {
     releaseWarmHitLease(context);
-    if (!handedOff && lease !== null) {
-      lease.release();
-      if (onClientAbort !== null) {
-        context.req.signal.removeEventListener("abort", onClientAbort);
-      }
+    if (!handedOff) {
+      releaseUnhandedResidency(context, lease, onClientAbort, onSessionRelease);
     }
-    if (lease === null && typeof onSessionRelease === "function") {
-      onSessionRelease();
+  }
+}
+
+/**
+ * #278 (DF-05): release the lease (when one was acquired) and the session
+ * refcount (when one is held) for a request whose body never reached
+ * bindLeaseToBody — a null body, a throw, or a lease-free route. The
+ * session release runs regardless of lease nullness so peer and
+ * workload-less requests cannot leak a refcount.
+ */
+function releaseUnhandedResidency(
+  context: ProxyContext,
+  lease: Lease | null,
+  onClientAbort: (() => void) | null,
+  onSessionRelease: (() => void) | null | undefined,
+): void {
+  if (lease !== null) {
+    lease.release();
+    if (onClientAbort !== null) {
+      context.req.signal.removeEventListener("abort", onClientAbort);
     }
+  }
+  if (typeof onSessionRelease === "function") {
+    onSessionRelease();
   }
 }
 
