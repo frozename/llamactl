@@ -24,6 +24,7 @@
     "./probe": "./src/probe.ts",
     "./profile": "./src/profile.ts",
     "./residency/admission": "./src/residency/admission.ts",
+    "./residency/cold-pin-admission": "./src/residency/cold-pin-admission.ts",
     "./residency/leases": "./src/residency/leases.ts",
     "./residency/lifecycle": "./src/residency/lifecycle.ts",
     "./residency/llamacpp-sleep": "./src/residency/llamacpp-sleep.ts",

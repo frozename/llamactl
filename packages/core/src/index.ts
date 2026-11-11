@@ -23,6 +23,7 @@ export * as pull from "./pull.js";
 export * as quant from "./quant.js";
 export * as recommendations from "./recommendations.js";
 export * as residencyAdmission from "./residency/admission.js";
+export * as residencyColdPinAdmission from "./residency/cold-pin-admission.js";
 export * as residencyLeases from "./residency/leases.js";
 export * as residencyLifecycle from "./residency/lifecycle.js";
 export * as residencyPlanner from "./residency/planner.js";
