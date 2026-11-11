@@ -116,7 +116,6 @@ function resolveProvider(raw: string | undefined): Provider {
 }
 
 const DEFAULT_INTERNAL_PROXY_URL = "http://127.0.0.1:7944";
-const LEGACY_TRACKED_SERVER_URL = "http://127.0.0.1:8080/v1";
 
 /** Empty string is unset: normalise every raw env read through here. */
 function nonEmpty(value: string | undefined): string | undefined {
@@ -130,107 +129,57 @@ function toOpenAiV1(base: string): string {
 }
 
 /**
- * Pick the llama.cpp provider URL (#315). Precedence, first match wins:
+ * Derive the llama.cpp provider URL (#315). Derive-only, as on main: the
+ * result depends on the inputs below and never on LOCAL_AI_PROVIDER_URL
+ * or OPENAI_BASE_URL. Shells and Electron feed resolveEnv's output back in
+ * as input, so reading those keys would pin stale values; ignoring them
+ * makes every re-resolve a fixed point that follows the current inputs.
  *
- * (a) an explicit LOCAL_AI_PROVIDER_URL that differs from every value
- *     resolveEnv itself derives; (r) LOCAL_AI_PROVIDER_ROUTE=direct, the
- *     legacy single-server opt-out; (b) an explicit
- *     LOCAL_AI_LLAMA_CPP_BASE_URL that is not the tracked-server
- *     derivation nor the legacy default; (c) a configured proxy;
- *     (d) under a test profile, the llama-server sentinel; (e) the
- *     default proxy endpoint in `/v1` form.
+ * First match wins:
  *
- * Principle: a value resolveEnv emits is trusted as operator intent only
- * when it differs from every value resolveEnv derives, because the shell
- * surface and Electron feed the resolver output back in as input. That
- * makes provider switching, proxy changes and inherited stale `:8080`
- * values all self-correcting re-derivations instead of sticky state.
+ * 1. LOCAL_AI_PROVIDER_ROUTE=direct: the tracked llama-server URL
+ *    (LOCAL_AI_LLAMA_CPP_BASE_URL, else host:port), exactly as on main.
+ * 2. An explicit LOCAL_AI_LLAMA_CPP_BASE_URL that differs from the
+ *    host:port default: that tracked URL, as on main.
+ * 3. LLAMACTL_INTERNAL_PROXY_URL set: that proxy, normalised to `/v1`.
+ * 4. Under a test profile: the tracked URL, which carries the `65534`
+ *    sentinel, so hermetic runs never dial a live proxy.
+ * 5. Otherwise the default internal proxy, `http://127.0.0.1:7944/v1`.
  *
- * Deliberate trade-off: a host that runs only `llamactl server start`
- * without a serving proxy now defaults to the proxy port; setting
- * LOCAL_AI_PROVIDER_ROUTE=direct restores the tracked llama-server.
+ * Decision for rule 2: #315 is about the default, a provider URL that
+ * points at a port nothing listens on when nobody configured anything. An
+ * operator who points LOCAL_AI_LLAMA_CPP_BASE_URL at a specific server has
+ * configured something, and main sends consumers there (pinned by
+ * env.resolvers.test.ts case 16), so that keeps main's semantics. The
+ * host:port default, including the `:8080` value that every eval re-feeds,
+ * is not a configuration and goes to the proxy. Limitation, shared with
+ * main: resolveEnv emits LOCAL_AI_LLAMA_CPP_BASE_URL, so after a seeded
+ * shell changes LLAMA_CPP_PORT the re-fed old value reads as explicit and
+ * stays the provider URL, exactly as main keeps it as the tracked URL.
  *
- * Derived marker (#638): resolveEnv also emits
- * LOCAL_AI_PROVIDER_URL_DERIVED, the provider URL it derived ("" when the
- * URL was explicit). A re-fed LOCAL_AI_PROVIDER_URL equal to that marker
- * is a stale derivation, so changing or unsetting a non-default proxy
- * re-derives; an operator export that differs from the marker stays
- * explicit.
- *
- * Main-era seeds (#638): main never read LOCAL_AI_PROVIDER_URL, and every
- * eval it emitted carried LOCAL_AI_PROVIDER plus OPENAI_BASE_URL equal to
- * LOCAL_AI_PROVIDER_URL, with no LOCAL_AI_PROVIDER_URL_DERIVED key. An
- * input with exactly that shape (key absent, not "") is re-derived as main
- * would, so a main-seeded shell that changes or unsets its tracked URL or
- * proxy before its first post-upgrade eval follows the change instead of
- * pinning the stale URL. Trade-off: an operator who, without any #638
- * seed, exports LOCAL_AI_PROVIDER, LOCAL_AI_PROVIDER_URL and an identical
- * OPENAI_BASE_URL is indistinguishable from that seed and gets the
- * derivation; any other export (OPENAI_BASE_URL left at main's value or
- * absent, or made over a #638 seed, whose marker key is always present)
- * stays explicit. The zsh fallback in shell/env.zsh emits the same shape.
- *
- * Without a marker and outside that shape (for example LOCAL_AI_PROVIDER
- * unset after a seed) the derived set below still applies. The resolved
- * tracked URL (basics.llamaCppBaseUrl) is in the derived set
- * so a shell seeded before #638 with a custom LOCAL_AI_LLAMA_CPP_BASE_URL,
- * which carries that URL as LOCAL_AI_PROVIDER_URL with no marker, gets a
- * marker on its next eval and follows later tracked-URL changes. Every
- * derivation branch that this membership can reach returns that same URL,
- * so only the marker changes.
- *
- * Test-profile sentinel: hermetic runs must never point at a live proxy,
- * so without an explicit proxy they keep the pinned `65534` llama-server
- * URL, which the reseed loop also recognises as derived, not explicit.
+ * A custom endpoint is configured with LLAMACTL_INTERNAL_PROXY_URL, or
+ * with LOCAL_AI_LLAMA_CPP_BASE_URL (plus LOCAL_AI_PROVIDER_ROUTE=direct to
+ * use the host:port server). Trade-off: a host that runs only `llamactl
+ * server start` without a serving proxy now defaults to the proxy port;
+ * ROUTE=direct restores it.
  */
 function resolveLlamaCppProviderUrl(
   env: NodeJS.ProcessEnv,
   testProfile: Record<string, string> | null,
   basics: EnvBasics,
-): { url: string; derived: boolean } {
-  const trackedDerived = `http://${basics.host}:${basics.port}/v1`;
-  const proxyOverride = nonEmpty(env["LLAMACTL_INTERNAL_PROXY_URL"]);
-  const proxyUrl = toOpenAiV1(proxyOverride ?? DEFAULT_INTERNAL_PROXY_URL);
-  const defaultProxyUrl = toOpenAiV1(DEFAULT_INTERNAL_PROXY_URL);
-  const derived = new Set([
-    trackedDerived,
-    LEGACY_TRACKED_SERVER_URL,
-    basics.llamaCppBaseUrl,
-    basics.lmStudioBaseUrl,
-    proxyUrl,
-    defaultProxyUrl,
-  ]);
-
-  const explicitProviderUrl = nonEmpty(env["LOCAL_AI_PROVIDER_URL"]);
-  // Main-era seed: main emitted LOCAL_AI_PROVIDER and OPENAI_BASE_URL equal
-  // to LOCAL_AI_PROVIDER_URL and never a marker key, so that exact shape is
-  // a main derivation, not an operator export. `undefined` only: an empty
-  // marker is #638's "explicit" verdict and must stay explicit.
-  const mainEraSeed =
-    env["LOCAL_AI_PROVIDER_URL_DERIVED"] === undefined &&
-    nonEmpty(env["LOCAL_AI_PROVIDER"]) !== undefined &&
-    explicitProviderUrl === nonEmpty(env["OPENAI_BASE_URL"]);
-  if (
-    explicitProviderUrl !== undefined &&
-    !mainEraSeed &&
-    explicitProviderUrl !== nonEmpty(env["LOCAL_AI_PROVIDER_URL_DERIVED"]) &&
-    !derived.has(explicitProviderUrl)
-  ) {
-    return { url: explicitProviderUrl, derived: false };
-  }
-  const d = (url: string): { url: string; derived: boolean } => ({ url, derived: true });
-  if (env["LOCAL_AI_PROVIDER_ROUTE"] === "direct") return d(basics.llamaCppBaseUrl);
+): string {
+  if (env["LOCAL_AI_PROVIDER_ROUTE"] === "direct") return basics.llamaCppBaseUrl;
   const explicitTracked = nonEmpty(env["LOCAL_AI_LLAMA_CPP_BASE_URL"]);
   if (
     explicitTracked !== undefined &&
-    explicitTracked !== trackedDerived &&
-    explicitTracked !== LEGACY_TRACKED_SERVER_URL
+    explicitTracked !== `http://${basics.host}:${basics.port}/v1`
   ) {
-    return d(basics.llamaCppBaseUrl);
+    return basics.llamaCppBaseUrl;
   }
-  if (proxyOverride !== undefined) return d(proxyUrl);
-  if (testProfile !== null) return d(basics.llamaCppBaseUrl);
-  return d(defaultProxyUrl);
+  const proxyOverride = nonEmpty(env["LLAMACTL_INTERNAL_PROXY_URL"]);
+  if (proxyOverride !== undefined) return toOpenAiV1(proxyOverride);
+  if (testProfile !== null) return basics.llamaCppBaseUrl;
+  return toOpenAiV1(DEFAULT_INTERNAL_PROXY_URL);
 }
 
 type EnvBasics = {
@@ -435,13 +384,13 @@ export function resolveEnv(env: NodeJS.ProcessEnv = process.env): ResolvedEnv {
   const sourceModel = pick(env["LOCAL_AI_SOURCE_MODEL"], defaultModel);
   const contextLength = pick(env["LOCAL_AI_CONTEXT_LENGTH"], gemmaCtx);
 
-  const llamaCppProvider = resolveLlamaCppProviderUrl(env, testProfile, basics);
-  const providerUrl = llamaCppProvider.url;
-  const {
-    providerUrl: resolvedProviderUrl,
-    apiKey,
-    model,
-  } = resolveProviderConfig(provider, providerUrl, basics.lmStudioBaseUrl, env, sourceModel);
+  const { providerUrl, apiKey, model } = resolveProviderConfig(
+    provider,
+    resolveLlamaCppProviderUrl(env, testProfile, basics),
+    basics.lmStudioBaseUrl,
+    env,
+    sourceModel,
+  );
 
   return {
     DEV_STORAGE: basics.devStorage,
@@ -500,12 +449,10 @@ export function resolveEnv(env: NodeJS.ProcessEnv = process.env): ResolvedEnv {
     LOCAL_AI_SOURCE_MODEL: sourceModel,
     LOCAL_AI_PROVIDER: provider,
     LOCAL_AI_CONTEXT_LENGTH: contextLength,
-    LOCAL_AI_PROVIDER_URL: resolvedProviderUrl,
-    LOCAL_AI_PROVIDER_URL_DERIVED:
-      provider === "lmstudio" || llamaCppProvider.derived ? resolvedProviderUrl : "",
+    LOCAL_AI_PROVIDER_URL: providerUrl,
     LOCAL_AI_API_KEY: apiKey,
     LOCAL_AI_MODEL: model,
-    OPENAI_BASE_URL: resolvedProviderUrl,
+    OPENAI_BASE_URL: providerUrl,
     OPENAI_API_KEY: apiKey,
   };
 }

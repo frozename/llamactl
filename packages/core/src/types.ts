@@ -92,8 +92,6 @@ export interface ResolvedEnv {
   LOCAL_AI_PROVIDER: Provider;
   LOCAL_AI_CONTEXT_LENGTH: string;
   LOCAL_AI_PROVIDER_URL: string;
-  /** #638: the provider URL resolveEnv derived; "" when LOCAL_AI_PROVIDER_URL was explicit. */
-  LOCAL_AI_PROVIDER_URL_DERIVED: string;
   LOCAL_AI_API_KEY: string;
   LOCAL_AI_MODEL: string;
   OPENAI_BASE_URL: string;
