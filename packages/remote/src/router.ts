@@ -2637,7 +2637,6 @@ export const router = t.router({
           signal: sig,
           onEvent: emit,
         });
-        reopenWorkloadAfterLoad(input.workload, result.ok);
         emit({ type: "done", result });
       });
     }),

@@ -10,7 +10,8 @@
  * The only mutable state here is the process-wide nullable registry binding
  * below: an opt-in seam with no I/O of its own. Null (the default) leaves
  * every ingress unchanged; a host installs a registry to activate
- * lease-checked admission.
+ * lease-checked admission. The same seam drives the `withReopenAfterLoad` /
+ * `reopenWorkloadAfterLoad` helpers at the bottom of this module.
  */
 
 import type {
@@ -47,6 +48,51 @@ export function setResidencyLeaseRegistry(registry: ResidencyLeases | null): voi
 
 export function getResidencyLeaseRegistry(): ResidencyLeases | null {
   return installedRegistry;
+}
+
+/**
+ * Reopen admission after a successful load (Part of #278, DF-05). A verified
+ * stop leaves the workload `unloaded`, so a later start is the only event that
+ * returns it to open. A single snapshot drives both the phase guard and the
+ * reopen epoch, so the reopen cannot race a phase change between two reads.
+ * Inert without a registry, when the load did not succeed, or when the workload
+ * is not parked unloaded.
+ */
+export function reopenWorkloadAfterLoad(
+  workload: string,
+  loaded: boolean,
+  registry?: ResidencyLeases | null,
+): void {
+  const reg = registry === undefined ? installedRegistry : registry;
+  if (reg === null || !loaded) {
+    return;
+  }
+  const snap = reg.snapshot(workload);
+  if (snap.phase === "unloaded") {
+    reg.reopen({ workload, epoch: snap.epoch });
+  }
+}
+
+/**
+ * Wrap a start call so a successful load reopens admission (Part of #278,
+ * DF-05). Inert without a published registry: the default path returns the
+ * `start()` promise unchanged, adding no await. A rejection propagates without
+ * reopening; only a resolved, loaded result reopens.
+ */
+export function withReopenAfterLoad<R>(
+  workload: string,
+  start: () => Promise<R>,
+  isLoaded: (r: R) => boolean,
+  registry?: ResidencyLeases | null,
+): Promise<R> {
+  const reg = registry === undefined ? installedRegistry : registry;
+  if (reg === null) {
+    return start();
+  }
+  return start().then((r) => {
+    reopenWorkloadAfterLoad(workload, isLoaded(r), reg);
+    return r;
+  });
 }
 
 // ── Internal types ──────────────────────────────────────────────────────
