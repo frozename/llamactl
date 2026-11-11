@@ -243,6 +243,10 @@ ${DIR_FLAG_HELP}
                               (default: DEV_STORAGE/fleet-supervisor/journal.jsonl,
                               else ~/.llamactl/fleet-supervisor/journal.jsonl)
   -h, --help       Show this help
+
+Environment:
+  LLAMACTL_RESIDENCY_LEASES   "1"/"true" publishes one residency lease
+                              registry at start (opt-in, off by default).
 `;
 
 const STATUS_USAGE = `Usage: llamactl agent status [flags]
@@ -1326,11 +1330,17 @@ function validateServeWiring(parsed: ServeFlags): ServeWiring | { error: string 
   return { dialUrl, dialBearer, tunnelCentralOn, tunnelCentralBearer };
 }
 
+/** Opt-in residency leases: only "1"/"true", matching LLAMACTL_DISABLE_MDNS. */
+function residencyLeasesOptIn(env: Readonly<Record<string, string | undefined>>): boolean {
+  return env["LLAMACTL_RESIDENCY_LEASES"] === "1" || env["LLAMACTL_RESIDENCY_LEASES"] === "true";
+}
+
 export function buildServeOptions(
   parsed: ServeFlags,
   cfg: ReturnType<typeof agentConfigMod.loadAgentConfig>,
   wiring: ServeWiring,
   dialNodeName: string,
+  env: Readonly<Record<string, string | undefined>> = process.env,
 ): Parameters<typeof startAgentServer>[0] {
   const { dialUrl, dialBearer, tunnelCentralOn, tunnelCentralBearer } = wiring;
   const serverOptions = {
@@ -1385,6 +1395,8 @@ export function buildServeOptions(
           },
         }
       : {}),
+    // #278 DF-05: opt-in residency lease registry, off unless the env says on.
+    ...(residencyLeasesOptIn(env) ? { residencyLeases: true } : {}),
   } as Parameters<typeof startAgentServer>[0];
   if (parsed.noAuth !== undefined) {
     (serverOptions as Parameters<typeof startAgentServer>[0] & { noAuth?: boolean }).noAuth =

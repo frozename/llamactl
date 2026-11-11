@@ -2,6 +2,12 @@ import type { AgentWorkerRpc, AgentWorkerRpcRelay } from "@llamactl/core/config/
 
 import { inferenceRpc, openaiProxy } from "@llamactl/core";
 import { resolveEnv } from "@llamactl/core/env";
+import {
+  createResidencyLeases,
+  getResidencyLeaseRegistry,
+  type ResidencyLeases,
+  setResidencyLeaseRegistry,
+} from "@llamactl/core/residency/leases";
 import { migrateLegacySingletonRuntime } from "@llamactl/core/workloadRuntime";
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
 import { join } from "node:path";
@@ -197,6 +203,21 @@ export interface StartAgentOptions {
     /** Stands in for the engines, so a test can hold a backend's unwind after a cancel. */
     backends?: WorkerRpcHostOptions["backends"];
   };
+  /**
+   * Opt-in residency leases (#278 DF-05): `agent serve` sets it from
+   * `LLAMACTL_RESIDENCY_LEASES`. When true, `startAgentServer` creates ONE
+   * registry with `createResidencyLeases()`, installs it in the process-wide
+   * seam `proxyOpenAI` reads, and passes that same instance to the Worker RPC
+   * host, so drain and admission share one ledger. `stop()` restores the
+   * seam's previous value after the worker-RPC drain settles in-flight bodies.
+   * When unset (the production default) the seam is never read or written,
+   * the host gets no `residencyLeases`, and behaviour is identical.
+   *
+   * FOLLOW-UP: the #599 engine-client oMLX native unload takes its own
+   * `leases.registry` option (residency/engine-client.ts:130) and is not yet
+   * given this published registry.
+   */
+  residencyLeases?: boolean;
   /**
    * Per-role runtime memory budget. Sets the identity (role + optional
    * memory budget) so the Prometheus gauges emit per-role series. When
@@ -920,6 +941,26 @@ function defaultActiveShare(bindings: readonly ServiceCredentialBinding[]): numb
 }
 
 /**
+ * Publishes the one opt-in residency lease registry (DF-05, #278). Returns
+ * null unless `opts.residencyLeases` is true, so the default path only does a
+ * null check and never reads or writes the process-wide seam. Otherwise it
+ * captures the seam's previous value, installs a fresh registry, and returns
+ * a restore that puts the previous value back — mirroring publishWorkerRpcHost.
+ */
+function maybePublishResidencyLeases(
+  opts: StartAgentOptions,
+): { registry: ResidencyLeases; restore: () => void } | null {
+  if (opts.residencyLeases !== true) return null;
+  const previous = getResidencyLeaseRegistry();
+  const registry = createResidencyLeases();
+  setResidencyLeaseRegistry(registry);
+  const restore = (): void => {
+    setResidencyLeaseRegistry(previous);
+  };
+  return { registry, restore };
+}
+
+/**
  * Publishes this agent's worker-RPC host (P4.1). It advertises the
  * versions agent.yaml lists that this build speaks, read on every call,
  * so emptying the list stops the advertisement for new requests while
@@ -927,13 +968,17 @@ function defaultActiveShare(bindings: readonly ServiceCredentialBinding[]): numb
  * read on every submit too, so it can be changed without a restart, which
  * would drain and then cancel every attempt in flight.
  */
-function maybePublishWorkerRpc(opts: StartAgentOptions): WorkerRpcServing | null {
+function maybePublishWorkerRpc(
+  opts: StartAgentOptions,
+  leases: ResidencyLeases | null,
+): WorkerRpcServing | null {
   const config = opts.workerRpc;
   if (config === undefined) return null;
   const spoken = inferenceRpc.inferenceRpcVersionsSpokenAt(inferenceRpc.INFERENCE_RPC_VERSION);
   const host = createWorkerRpcHost({
     workerId: config.workerId,
     ...(config.backends !== undefined ? { backends: config.backends } : {}),
+    ...(leases !== null ? { residencyLeases: leases } : {}),
     versions: () =>
       (config.settings()?.versions ?? []).filter((v) =>
         spoken.some((s) => inferenceRpc.compareInferenceRpcVersions(s, v) === 0),
@@ -1024,7 +1069,8 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
 
   const gate = makeNoAuthGate(noAuth, bindHost);
 
-  const workerRpc = maybePublishWorkerRpc(opts);
+  const leases = maybePublishResidencyLeases(opts);
+  const workerRpc = maybePublishWorkerRpc(opts, leases?.registry ?? null);
 
   // Wire runtime role + memory budget into the metrics identity.
   if (opts.runtimeRole !== undefined || opts.runtimeMemoryBudgetBytes !== undefined) {
@@ -1106,6 +1152,9 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
         }
         void server.stop(true);
         workerRpc?.unpublish();
+        // After the worker-RPC drain and server.stop(), so in-flight bodies
+        // settle against the published registry before the seam reverts.
+        leases?.restore();
         // Last, and bounded: bonjour's stop has no timeout, and a hung one
         // must not keep the tunnel serving or hold stop() open. That keeps
         // stop() within the drain timeout plus three flush windows (the
