@@ -67,7 +67,7 @@ export function probeColdPinQueue(input: ColdPinQueueProbeInput): ColdPinQueuePr
   if (result.kind === "queued") {
     try {
       const queueDepth = policy.snapshot().queued;
-      const maxWaitMs = policy.limits().maxQueueWaitMs;
+      const maxWaitMs = policy.queueLimits().maxQueueWaitMs;
       return { kind: "would_queue", queueDepth, maxWaitMs };
     } finally {
       policy.cancel(requestId);

@@ -100,7 +100,7 @@ export interface RequestQueuePolicy {
   cancel: (requestId: string) => CancelResult;
   finishExecution: (requestId: string) => boolean;
   snapshot: () => QueueSnapshot;
-  limits: () => RequestQueueLimits;
+  queueLimits: () => RequestQueueLimits;
 }
 
 // ── Internal structures ────────────────────────────────────────────────────
@@ -174,7 +174,7 @@ function validateRequest(req: QueueRequest): boolean {
 // ── Implementation class ───────────────────────────────────────────────────
 
 class RequestQueuePolicyImpl implements RequestQueuePolicy {
-  private readonly queueLimits: RequestQueueLimits;
+  private readonly limits: RequestQueueLimits;
   private readonly now: () => number;
   private readonly resident: readonly string[];
   private readonly queue: Map<string, QueuedRequest>;
@@ -187,7 +187,7 @@ class RequestQueuePolicyImpl implements RequestQueuePolicy {
 
   constructor(opts: RequestQueuePolicyOptions) {
     validateLimits(opts.limits);
-    this.queueLimits = opts.limits;
+    this.limits = opts.limits;
     this.now = opts.now ?? ((): number => Date.now());
     this.resident = opts.resident ?? [];
     this.queue = new Map();
@@ -221,7 +221,7 @@ class RequestQueuePolicyImpl implements RequestQueuePolicy {
     const modelKey = modelKeyOf(req.model);
 
     // 3. Context tokens check (before deadline and capacity)
-    if (req.promptTokens + req.maxCompletionTokens > this.queueLimits.maxContextTokens) {
+    if (req.promptTokens + req.maxCompletionTokens > this.limits.maxContextTokens) {
       return {
         kind: "refused",
         reason: "ContextLimitExceeded",
@@ -230,7 +230,7 @@ class RequestQueuePolicyImpl implements RequestQueuePolicy {
     }
 
     // 4. Bytes check: individual bytes > maxQueuedBytes → null retry
-    if (req.bytes > this.queueLimits.maxQueuedBytes) {
+    if (req.bytes > this.limits.maxQueuedBytes) {
       return {
         kind: "refused",
         reason: "QueueBytesExceeded",
@@ -248,30 +248,30 @@ class RequestQueuePolicyImpl implements RequestQueuePolicy {
     }
 
     // 6. Principal share check (queued + executing)
-    if (this.principalCount(req.principal) >= this.queueLimits.maxPerPrincipal) {
+    if (this.principalCount(req.principal) >= this.limits.maxPerPrincipal) {
       return {
         kind: "refused",
         reason: "PrincipalShareExceeded",
-        retryAfterMs: this.queueLimits.retryAfterMs,
+        retryAfterMs: this.limits.retryAfterMs,
       };
     }
 
     // 7. Queue full (count only queued, not executing)
-    if (this.queue.size >= this.queueLimits.maxQueued) {
+    if (this.queue.size >= this.limits.maxQueued) {
       return {
         kind: "refused",
         reason: "QueueFull",
-        retryAfterMs: this.queueLimits.retryAfterMs,
+        retryAfterMs: this.limits.retryAfterMs,
       };
     }
 
     // 8. Aggregate bytes > maxQueuedBytes (queue not full by entries)
     const aggregateBytes = this.queueBytes + req.bytes;
-    if (aggregateBytes > this.queueLimits.maxQueuedBytes) {
+    if (aggregateBytes > this.limits.maxQueuedBytes) {
       return {
         kind: "refused",
         reason: "QueueBytesExceeded",
-        retryAfterMs: this.queueLimits.retryAfterMs,
+        retryAfterMs: this.limits.retryAfterMs,
       };
     }
 
@@ -338,7 +338,7 @@ class RequestQueuePolicyImpl implements RequestQueuePolicy {
           kind: "fail",
           requestId: id,
           reason: "LoadFailed",
-          retryAfterMs: this.queueLimits.retryAfterMs,
+          retryAfterMs: this.limits.retryAfterMs,
         });
         toRemove.push(id);
       }
@@ -422,10 +422,10 @@ class RequestQueuePolicyImpl implements RequestQueuePolicy {
     };
   }
 
-  // ── limits ───────────────────────────────────────────────────────────
+  // ── queueLimits ─────────────────────────────────────────────────────
 
-  limits(): RequestQueueLimits {
-    return { ...this.queueLimits };
+  queueLimits(): RequestQueueLimits {
+    return { ...this.limits };
   }
 
   // ── Private helpers ──────────────────────────────────────────────────
@@ -465,7 +465,7 @@ class RequestQueuePolicyImpl implements RequestQueuePolicy {
       }
       // Queue-wait expiry
       const waitMs = now - entry.enqueuedAt;
-      if (waitMs >= this.queueLimits.maxQueueWaitMs) {
+      if (waitMs >= this.limits.maxQueueWaitMs) {
         toExpire.push({ entry, reason: "QueueWaitExceeded" });
       }
     }
@@ -474,7 +474,7 @@ class RequestQueuePolicyImpl implements RequestQueuePolicy {
     toExpire.sort((a, b) => a.entry.seq - b.entry.seq);
 
     for (const { entry, reason } of toExpire) {
-      const retryAfterMs = reason === "DeadlineExceeded" ? null : this.queueLimits.retryAfterMs;
+      const retryAfterMs = reason === "DeadlineExceeded" ? null : this.limits.retryAfterMs;
       actions.push({
         kind: "expire",
         requestId: entry.requestId,
@@ -488,7 +488,7 @@ class RequestQueuePolicyImpl implements RequestQueuePolicy {
   // ── Start executions for available models ────────────────────────────
 
   private startExecutions(actions: QueueAction[], now: number): void {
-    const execSlots = this.queueLimits.maxExecutions - this.executing.size;
+    const execSlots = this.limits.maxExecutions - this.executing.size;
     if (execSlots <= 0) return;
 
     // Gather ALL candidates sorted by urgency then enqueue order,
@@ -538,7 +538,7 @@ class RequestQueuePolicyImpl implements RequestQueuePolicy {
   // interactive waiters enqueued after it.
   private urgencyRank(entry: QueuedRequest, now: number): number {
     if (entry.priority === "interactive") return 0;
-    return now - entry.enqueuedAt >= this.queueLimits.starvationBoundMs ? 0 : 1;
+    return now - entry.enqueuedAt >= this.limits.starvationBoundMs ? 0 : 1;
   }
 
   // ── Start at most one load ───────────────────────────────────────────

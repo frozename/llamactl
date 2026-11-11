@@ -137,7 +137,7 @@ const untouchableQueuePolicy = (): RequestQueuePolicy => {
     cancel: touch,
     finishExecution: touch,
     snapshot: touch,
-    limits: touch,
+    queueLimits: touch,
   };
 };
 
@@ -160,7 +160,7 @@ const spyPolicy = (
       cancel: (requestId): CancelResult => inner.cancel(requestId),
       finishExecution: (requestId): boolean => inner.finishExecution(requestId),
       snapshot: (): QueueSnapshot => inner.snapshot(),
-      limits: (): RequestQueueLimits => inner.limits(),
+      queueLimits: (): RequestQueueLimits => inner.queueLimits(),
     },
   };
 };
