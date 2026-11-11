@@ -1354,6 +1354,9 @@ export function buildServeOptions(
     // Publish cluster peers' fleet snapshots so peer models route through this
     // proxy with prefix-cache. No-op when listPeers() is empty (single-node).
     peerSnapshotPoll: true,
+    // Opt-in, off by default, so the static production fleet stays inert
+    // (#280 DF-07); only the exact string '1' enables it.
+    ...(process.env["LLAMACTL_DECLARED_MODELS"] === "1" ? { declaredModels: true } : {}),
     // Undefined → journal.ts resolves the default path (honors
     // $LLAMACTL_TUNNEL_JOURNAL and $DEV_STORAGE).
     ...(parsed.tunnelJournal ? { tunnelJournalPath: parsed.tunnelJournal } : {}),

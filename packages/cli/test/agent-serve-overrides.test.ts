@@ -1,5 +1,5 @@
-import { agentConfig } from "@llamactl/remote";
-import { afterAll, describe, expect, test } from "bun:test";
+import { agentConfig, type StartAgentOptions } from "@llamactl/remote";
+import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -148,5 +148,46 @@ describe("parseServeFlags for bind/port overrides", () => {
     const unknown = parseServeFlags(["--listen=0.0.0.0"]);
     if (!("error" in unknown)) throw new Error("expected a parse error");
     expect(unknown.error).toContain("unknown flag");
+  });
+});
+
+describe("agent serve declared-models opt-in (#280)", () => {
+  const DECLARED_MODELS_ENV = "LLAMACTL_DECLARED_MODELS";
+  let savedDeclaredModelsEnv: string | undefined;
+
+  beforeEach(() => {
+    savedDeclaredModelsEnv = process.env[DECLARED_MODELS_ENV];
+  });
+
+  afterEach(() => {
+    if (savedDeclaredModelsEnv === undefined) {
+      Reflect.deleteProperty(process.env, DECLARED_MODELS_ENV);
+    } else {
+      process.env[DECLARED_MODELS_ENV] = savedDeclaredModelsEnv;
+    }
+  });
+
+  function declaredModelsOption(): boolean | undefined {
+    const dir = freshDir("serve-declared-");
+    const cfg = seedConfig(dir, "127.0.0.1", 7843);
+    const parsed = serveFlags([`--dir=${dir}`]);
+    const options = buildServeOptions(parsed, cfg, idleWiring, "test-node") as StartAgentOptions & {
+      declaredModels?: boolean;
+    };
+    return options.declaredModels;
+  }
+
+  test("unset, '0' and 'true' leave the declared-model source off", () => {
+    Reflect.deleteProperty(process.env, DECLARED_MODELS_ENV);
+    expect(declaredModelsOption()).not.toBe(true);
+    process.env[DECLARED_MODELS_ENV] = "0";
+    expect(declaredModelsOption()).not.toBe(true);
+    process.env[DECLARED_MODELS_ENV] = "true";
+    expect(declaredModelsOption()).not.toBe(true);
+  });
+
+  test("'1' opts the agent into the declared-model source", () => {
+    process.env[DECLARED_MODELS_ENV] = "1";
+    expect(declaredModelsOption()).toBe(true);
   });
 });

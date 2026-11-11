@@ -361,4 +361,53 @@ describe("reconcileNodeRunsOnce node RPC deadline", () => {
     expect(result.reports.filter((r) => "reason" in r)).toEqual([]);
     expect(seen).toEqual(["none"]);
   });
+
+  test("a per-node query deadline bounds a silent node when the pass default is long", async () => {
+    saveNodeRun(sampleManifest("a-run", "z13"), dir);
+    saveNodeRun(sampleManifest("b-run", "mac-mini"), dir);
+    const silent = silentClient({ infraList: 0 });
+    const state = { settled: false };
+    const run = reconcileNodeRunsOnce({
+      workloadsDir: dir,
+      getClient: (node) => (node === "z13" ? silent : mockClient()),
+      getArtifactResolver: () => (): Promise<{ tarballUrl: string; sha256: string }> =>
+        Promise.resolve({ tarballUrl: "https://x", sha256: "a".repeat(64) }),
+      rpcTimeouts: { queryMs: 60_000 },
+      rpcTimeoutsFor: (node: string) => (node === "z13" ? { queryMs: 5 } : undefined),
+    }).finally((): void => {
+      state.settled = true;
+    });
+    await waitUntil((): boolean => state.settled);
+    expect(state.settled).toBe(true);
+    const result = await run;
+    const down = result.reports.find((r) => r.name === "a-run")!;
+    const up = result.reports.find((r) => r.name === "b-run")!;
+    expect(down.phase).toBe("Failed");
+    expect(down.error).toMatch(/did not respond to infraList\.query within 5 ms/);
+    expect(down.reason).toBe("NodeUnreachable");
+    expect(up.phase).toBe("Converged");
+  });
+
+  test("a node mutateMs does not bound NodeRun mutations", async () => {
+    saveNodeRun(sampleManifest("a-run", "z13"), dir);
+    const raw = mockClient();
+    const seen: NodeRunInfraClient[] = [];
+    await reconcileNodeRunsOnce({
+      workloadsDir: dir,
+      getClient: () => raw,
+      getArtifactResolver: (_node, client) => {
+        seen.push(client);
+        return (): Promise<{ tarballUrl: string; sha256: string }> =>
+          Promise.resolve({ tarballUrl: "https://x", sha256: "a".repeat(64) });
+      },
+      rpcTimeoutsFor: () => ({ queryMs: 5, mutateMs: 1 }),
+    });
+    expect(seen).toHaveLength(1);
+    const rawRefs: InfraProcedureRefs = raw;
+    const handedRefs: InfraProcedureRefs = seen[0]!;
+    expect(handedRefs.infraList.query).not.toBe(rawRefs.infraList.query);
+    expect(handedRefs.infraInstall.mutate).toBe(rawRefs.infraInstall.mutate);
+    expect(handedRefs.infraActivate.mutate).toBe(rawRefs.infraActivate.mutate);
+    expect(handedRefs.infraUninstall.mutate).toBe(rawRefs.infraUninstall.mutate);
+  });
 });
