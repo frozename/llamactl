@@ -284,6 +284,18 @@ describe("GET /v1/models ?include=declared", () => {
     expect(line).toBeTruthy();
     expect(line).toMatch(/llamactl_llama_server_up.*\s0\s*$/);
   });
+
+  test("projectModelsResponseBody widens the HTTP body only on the opt-in", () => {
+    const full = openaiProxy.listOpenAIModels();
+    expect(openaiProxy.projectModelsResponseBody(full, false)).toEqual({
+      object: "list",
+      data: full.data,
+    });
+    const widened = openaiProxy.projectModelsResponseBody(full, true);
+    expect(Object.keys(widened).sort()).toEqual(DECLARED_LIST_KEYS);
+    expect(widened.declared).toEqual(full.declared);
+    expect(widened.unavailable).toEqual(full.unavailable);
+  });
 });
 
 describe("nodeModels ?include=declared", () => {
@@ -408,6 +420,30 @@ describe("nodeModels ?include=declared", () => {
     expect((out["models"] as unknown[]).length).toBeGreaterThan(0);
     expect(gatewaySeen).toEqual(["/v1/models"]);
   });
+
+  test("gateway node without include omits declared + unavailable", async () => {
+    const out = (await router.createCaller({}).nodeModels({ name: "gateway-node" })) as Record<
+      string,
+      unknown
+    >;
+    expect(Object.keys(out).sort()).toEqual(["kind", "models", "node"]);
+  });
+
+  test("cloud node without include omits declared + unavailable", async () => {
+    const out = (await router.createCaller({}).nodeModels({ name: "cloud-node" })) as Record<
+      string,
+      unknown
+    >;
+    expect(Object.keys(out).sort()).toEqual(["kind", "models", "node"]);
+  });
+
+  test("provider node without include omits declared + unavailable", async () => {
+    const out = (await router.createCaller({}).nodeModels({ name: "provider-node" })) as Record<
+      string,
+      unknown
+    >;
+    expect(Object.keys(out).sort()).toEqual(["kind", "models", "node"]);
+  });
 });
 
 describe("projectModelsBody", () => {
@@ -457,6 +493,12 @@ describe("projectModelsBody", () => {
     expect(
       projectModelsBody?.(
         { object: "list", data: 5, declared: "x", unavailable: { reason: "unavailable" } },
+        true,
+      ),
+    ).toEqual({ models: [], declared: [], unavailable: [] });
+    expect(
+      projectModelsBody?.(
+        { object: "list", data: 5, declared: { id: "d" }, unavailable: "nope" },
         true,
       ),
     ).toEqual({ models: [], declared: [], unavailable: [] });

@@ -395,18 +395,9 @@ async function handleOpenAIRoute(
         .flatMap((v) => v.split(","))
         .some((v) => v.trim() === "declared");
       const full = openaiProxy.listOpenAIModels();
-      const data = full.data;
-      llamaServerUp.set(data.length > 0 ? 1 : 0);
-      const models = includeDeclared
-        ? {
-            object: "list" as const,
-            data,
-            declared: full.declared,
-            unavailable: full.unavailable,
-          }
-        : { object: "list" as const, data };
+      llamaServerUp.set(full.data.length > 0 ? 1 : 0);
       status = 200;
-      return Response.json(models);
+      return Response.json(openaiProxy.projectModelsResponseBody(full, includeDeclared));
     }
     server.timeout?.(req, proxiedRouteIdleSeconds());
     const res = await dispatchProxyRequest(req);
