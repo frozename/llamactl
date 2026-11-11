@@ -19,6 +19,7 @@ import * as fs from "../../src/safe-fs.js";
 import { mkdtempSync, rmSync } from "../../src/safe-fs.js";
 import { type ModelHostManifest, specForHash } from "../../src/workload/modelhost-schema.js";
 import { loadModelHostByName, saveModelHost } from "../../src/workload/modelhost-store.js";
+import { groupByNodes } from "../../src/workload/node-concurrency.js";
 import {
   type ReconcileNodeReport,
   reconcileOnce,
@@ -2378,6 +2379,34 @@ describe("reconcileOnce", () => {
       }
     });
 
+    test("an auto-placed ModelRun serializes the whole pass", async () => {
+      // spec.node "auto" picks its node at apply time, so it may land on any
+      // pinned run's node: the pass must not run two items concurrently.
+      const dir = mkdtempSync(join(tmpdir(), "llamactl-reconciler-auto-serial-"));
+      try {
+        const counter = { current: 0, max: 0 };
+        saveWorkload(modelRunOn("auto", "a-auto", "mlx-community/a-auto.gguf"), dir);
+        saveWorkload(modelRunOn("n1", "b-run", "mlx-community/b-run.gguf"), dir);
+        saveWorkload(modelRunOn("n2", "c-run", "mlx-community/c-run.gguf"), dir);
+
+        const opts = {
+          workloadsDir: dir,
+          resolveNodeIdentity: (node: string): string | null => node,
+          nodeConcurrency: 4,
+          getClient: (): WorkloadClient => ({
+            ...makeClient(),
+            serverStatus: { query: inFlightStatusQuery(counter) },
+          }),
+        };
+        const result = await reconcileOnce(opts);
+
+        expect(counter.max).toBe(1);
+        expect(result.reports.map((r) => r.name)).toEqual(["a-auto", "b-run", "c-run"]);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
     test("without resolveNodeIdentity the pass stays serial", async () => {
       const dir = mkdtempSync(join(tmpdir(), "llamactl-reconciler-no-resolver-"));
       try {
@@ -2401,5 +2430,12 @@ describe("reconcileOnce", () => {
         rmSync(dir, { recursive: true, force: true });
       }
     });
+  });
+});
+
+describe("groupByNodes (#221)", () => {
+  test("a null key list merges every item into one ascending group", () => {
+    const keys: (readonly string[] | null)[] = [["n1"], ["n2"], null, ["n3"], []];
+    expect(groupByNodes(keys, (k) => k)).toEqual([[0, 1, 2, 3, 4]]);
   });
 });

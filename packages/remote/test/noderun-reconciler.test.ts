@@ -206,9 +206,9 @@ describe("reconcileNodeRunsOnce", () => {
     expect(result.reports.map((r) => r.name)).toEqual(["a"]);
   });
 
-  test("onReport fires per manifest, in order within a node", async () => {
+  test("onReport fires per manifest, in order", async () => {
     saveNodeRun(sampleManifest("a", "nodeA"), dir);
-    saveNodeRun(sampleManifest("b", "nodeA"), dir);
+    saveNodeRun(sampleManifest("b", "nodeB"), dir);
     const names: string[] = [];
     const result = await reconcileNodeRunsOnce({
       workloadsDir: dir,
@@ -217,7 +217,7 @@ describe("reconcileNodeRunsOnce", () => {
         Promise.resolve({ tarballUrl: "https://x", sha256: "a".repeat(64) }),
       onReport: (r) => names.push(r.manifestName),
     });
-    // listNodeRuns returns alphabetical order; a node's manifests stay serial.
+    // listNodeRuns returns alphabetical order; without a resolver the pass stays serial.
     expect(names).toEqual(["a", "b"]);
     expect(result.reports.map((r) => r.name)).toEqual(["a", "b"]);
   });
