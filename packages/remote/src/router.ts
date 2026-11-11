@@ -1114,6 +1114,26 @@ export function recordChatUsageObservation(
   appendUsageBackground({ record: v1 });
 }
 
+/**
+ * Projects a `/v1/models` body onto the nodeModels return shape.
+ * Pure, no IO. Without the declared opt-in only `models` is returned;
+ * with it, `declared` and `unavailable` are carried through, collapsing
+ * to `[]` when an older peer omits them (#280 DF-07).
+ */
+export function projectModelsBody(
+  body: unknown,
+  includeDeclared: boolean,
+): { models: unknown[]; declared?: unknown[]; unavailable?: unknown[] } {
+  const b = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+  const models = Array.isArray(b["data"]) ? b["data"] : [];
+  if (!includeDeclared) return { models };
+  return {
+    models,
+    declared: Array.isArray(b["declared"]) ? b["declared"] : [],
+    unavailable: Array.isArray(b["unavailable"]) ? b["unavailable"] : [],
+  };
+}
+
 export const router = t.router({
   env: t.procedure.query(() => envMod.resolveEnv()),
 
@@ -1587,81 +1607,102 @@ export const router = t.router({
    * by the aggregate `/v1/models` surface and the chat UI's model
    * picker.
    */
-  nodeModels: t.procedure.input(z.object({ name: z.string().min(1) })).query(async ({ input }) => {
-    const cfg = kubecfg.loadConfig();
-    const resolved = kubecfg.resolveNode(cfg, input.name);
-    const { resolveNodeKind } = await import("@llamactl/core/config/schema");
-    const kind = resolveNodeKind(resolved.node);
-    if (kind === "provider") {
-      // Scope to the parent gateway's catalog, filtered by
-      // `owned_by === providerName`. Sirius tags each model with
-      // the provider that serves it, so this is the natural
-      // narrowing for the chat UI's picker.
-      const binding = resolved.node.provider;
-      if (!binding) {
-        throw new TRPCError({
-          code: "INTERNAL_SERVER_ERROR",
-          message: `provider node '${resolved.node.name}' missing provider binding`,
-        });
+  nodeModels: t.procedure
+    .input(
+      z.object({
+        name: z.string().min(1),
+        include: z.array(z.enum(["declared"])).optional(),
+      }),
+    )
+    .query(async ({ input }) => {
+      const cfg = kubecfg.loadConfig();
+      const resolved = kubecfg.resolveNode(cfg, input.name);
+      const includeDeclared = input.include?.includes("declared") ?? false;
+      const declaredExtras = includeDeclared ? { declared: [], unavailable: [] } : {};
+      const { resolveNodeKind } = await import("@llamactl/core/config/schema");
+      const kind = resolveNodeKind(resolved.node);
+      if (kind === "provider") {
+        // Scope to the parent gateway's catalog, filtered by
+        // `owned_by === providerName`. Sirius tags each model with
+        // the provider that serves it, so this is the natural
+        // narrowing for the chat UI's picker.
+        const binding = resolved.node.provider;
+        if (!binding) {
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: `provider node '${resolved.node.name}' missing provider binding`,
+          });
+        }
+        const parent = cfg.clusters
+          .find((c) => c.name === kubecfg.currentContext(cfg).cluster)
+          ?.nodes.find((n) => n.name === binding.gateway);
+        if (!parent) {
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: `parent gateway '${binding.gateway}' not found`,
+          });
+        }
+        const { providerForCloudNode } = await import("./providers/factory.js");
+        const gatewayProvider = providerForCloudNode(parent);
+        const all = (await gatewayProvider.listModels?.()) ?? [];
+        const filtered = all.filter(
+          (m) => (m as { owned_by?: string }).owned_by === binding.providerName,
+        );
+        return {
+          node: input.name,
+          kind,
+          models: filtered,
+          ...declaredExtras,
+        };
       }
-      const parent = cfg.clusters
-        .find((c) => c.name === kubecfg.currentContext(cfg).cluster)
-        ?.nodes.find((n) => n.name === binding.gateway);
-      if (!parent) {
-        throw new TRPCError({
-          code: "INTERNAL_SERVER_ERROR",
-          message: `parent gateway '${binding.gateway}' not found`,
-        });
+      if (kind === "gateway" || kind === "cloud") {
+        // Cloud-direct and gateway-style cloud nodes both carry a
+        // `cloud` binding with a base URL + API key ref. The
+        // OpenAI-compat provider factory handles both identically
+        // — it opens an openai-compat client at that base URL with
+        // the resolved API key and scrapes /v1/models. We forward
+        // the effective kind so the chat UI can render the right
+        // label without round-tripping.
+        const { providerForCloudNode } = await import("./providers/factory.js");
+        const provider = providerForCloudNode(resolved.node);
+        const models = (await provider.listModels?.()) ?? [];
+        return {
+          node: input.name,
+          kind,
+          models,
+          ...declaredExtras,
+        };
       }
-      const { providerForCloudNode } = await import("./providers/factory.js");
-      const gatewayProvider = providerForCloudNode(parent);
-      const all = (await gatewayProvider.listModels?.()) ?? [];
-      const filtered = all.filter(
-        (m) => (m as { owned_by?: string }).owned_by === binding.providerName,
+      // Agent path — tRPC to the agent's nodeModels-via-openaiProxy.
+      // Reuse the existing forwarding shape: local caller or pinned
+      // client via clientForNode, then call openaiProxy's /v1/models
+      // through the agent's /v1 HTTP surface. For simplicity today,
+      // inline a call through the pinned-fetch path when remote,
+      // and use the core listOpenAIModels directly when local.
+      if (resolved.node.endpoint.startsWith("inproc://")) {
+        const { openaiProxy } = await import("@llamactl/core");
+        const full = openaiProxy.listOpenAIModels();
+        return { node: input.name, kind, ...projectModelsBody(full, includeDeclared) };
+      }
+      // Remote agent: scrape its /v1/models endpoint via pinned fetch.
+      const token = kubecfg.resolveToken(resolved.user);
+      const { makePinnedFetch } = await import("./client/links.js");
+      const pinned = makePinnedFetch(resolved.node);
+      const r = await pinned(
+        `${resolved.node.endpoint}/v1/models${includeDeclared ? "?include=declared" : ""}`,
+        {
+          method: "GET",
+          headers: { authorization: `Bearer ${token}` },
+        },
       );
-      return { node: input.name, kind, models: filtered };
-    }
-    if (kind === "gateway" || kind === "cloud") {
-      // Cloud-direct and gateway-style cloud nodes both carry a
-      // `cloud` binding with a base URL + API key ref. The
-      // OpenAI-compat provider factory handles both identically
-      // — it opens an openai-compat client at that base URL with
-      // the resolved API key and scrapes /v1/models. We forward
-      // the effective kind so the chat UI can render the right
-      // label without round-tripping.
-      const { providerForCloudNode } = await import("./providers/factory.js");
-      const provider = providerForCloudNode(resolved.node);
-      const models = (await provider.listModels?.()) ?? [];
-      return { node: input.name, kind, models };
-    }
-    // Agent path — tRPC to the agent's nodeModels-via-openaiProxy.
-    // Reuse the existing forwarding shape: local caller or pinned
-    // client via clientForNode, then call openaiProxy's /v1/models
-    // through the agent's /v1 HTTP surface. For simplicity today,
-    // inline a call through the pinned-fetch path when remote,
-    // and use the core listOpenAIModels directly when local.
-    if (resolved.node.endpoint.startsWith("inproc://")) {
-      const { openaiProxy } = await import("@llamactl/core");
-      const data = openaiProxy.listOpenAIModels().data;
-      return { node: input.name, kind, models: data };
-    }
-    // Remote agent: scrape its /v1/models endpoint via pinned fetch.
-    const token = kubecfg.resolveToken(resolved.user);
-    const { makePinnedFetch } = await import("./client/links.js");
-    const pinned = makePinnedFetch(resolved.node);
-    const r = await pinned(`${resolved.node.endpoint}/v1/models`, {
-      method: "GET",
-      headers: { authorization: `Bearer ${token}` },
-    });
-    if (!r.ok) {
-      throw new TRPCError({
-        code: "INTERNAL_SERVER_ERROR",
-        message: `remote /v1/models ${String(r.status)}`,
-      });
-    }
-    const body = (await r.json()) as { data?: unknown[] };
-    return { node: input.name, kind, models: body.data ?? [] };
-  }),
+      if (!r.ok) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: `remote /v1/models ${String(r.status)}`,
+        });
+      }
+      return { node: input.name, kind, ...projectModelsBody(await r.json(), includeDeclared) };
+    }),
 
   /**
    * Bundle everything a user needs to point an external OpenAI client

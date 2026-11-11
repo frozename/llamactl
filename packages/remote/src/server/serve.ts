@@ -390,9 +390,21 @@ async function handleOpenAIRoute(
   let status = 0;
   try {
     if (req.method === "GET" && url.pathname === "/v1/models") {
-      const data = openaiProxy.listOpenAIModels().data;
-      const models = { object: "list" as const, data };
+      const includeDeclared = url.searchParams
+        .getAll("include")
+        .flatMap((v) => v.split(","))
+        .some((v) => v.trim() === "declared");
+      const full = openaiProxy.listOpenAIModels();
+      const data = full.data;
       llamaServerUp.set(data.length > 0 ? 1 : 0);
+      const models = includeDeclared
+        ? {
+            object: "list" as const,
+            data,
+            declared: full.declared,
+            unavailable: full.unavailable,
+          }
+        : { object: "list" as const, data };
       status = 200;
       return Response.json(models);
     }
