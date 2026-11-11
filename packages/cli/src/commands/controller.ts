@@ -480,7 +480,10 @@ export async function runController(args: string[]): Promise<number> {
   const parsed = invocation;
 
   const { config: kubecfg } = await import("@llamactl/remote");
-  const cfgPath = process.env["LLAMACTL_CONFIG"] ?? kubecfg.defaultConfigPath();
+  // Honour `--cluster-config` (which lands in getGlobals().configPath) so the
+  // controller reconciles against the same kubeconfig every other verb uses,
+  // matching loadConfigForDispatch; fall back to the LLAMACTL_CONFIG/default.
+  const cfgPath = getGlobals().configPath ?? kubecfg.defaultConfigPath();
   // Reuse the canonical resolver instead of reinventing the
   // DEV_STORAGE→~/.llamactl base (the inline copy used $HOME +
   // `??`, which fed an "undefined/.llamactl" path when HOME was
@@ -492,6 +495,10 @@ export async function runController(args: string[]): Promise<number> {
     return 1;
   }
   const cfg = kubecfg.loadConfig(cfgPath);
+  // The started banner echoes the cluster/context actually loaded from cfgPath,
+  // so an operator can confirm --cluster-config was honoured rather than the
+  // config silently falling back to the default file's context.
+  const activeContext = getGlobals().contextName ?? cfg.currentContext;
   const resolveNodeIdentity = (n: string): string | null => {
     try {
       return kubecfg.resolveNode(cfg, n).node.endpoint || null;
@@ -507,7 +514,7 @@ export async function runController(args: string[]): Promise<number> {
     return 1;
   }
   process.stdout.write(
-    `controller started pid=${String(process.pid)} workloads=${workloadsDir} cfg=${cfgPath}\n`,
+    `controller started pid=${String(process.pid)} workloads=${workloadsDir} cfg=${cfgPath} context=${activeContext}\n`,
   );
 
   // Source-staleness auto-reload: capture the running source revision once; the
