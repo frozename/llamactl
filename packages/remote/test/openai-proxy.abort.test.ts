@@ -168,6 +168,13 @@ function startAbortEngine(): AbortEngine {
     models: [],
   };
   let abortWaiters: (() => void)[] = [];
+  // Every live chunk timer, so reset()/stop() can clear any a test leaves.
+  const timers = new Set<ReturnType<typeof setInterval>>();
+  const clearTimer = (t: ReturnType<typeof setInterval> | undefined): void => {
+    if (t === undefined) return;
+    clearInterval(t);
+    timers.delete(t);
+  };
 
   const server = Bun.serve({
     port: 0,
@@ -186,10 +193,12 @@ function startAbortEngine(): AbortEngine {
 
       let timer: ReturnType<typeof setInterval> | undefined;
       const markAborted = (): void => {
+        // Clear this request's timer even when an earlier abort already
+        // recorded the stats, so no interval outlives its stream.
+        clearTimer(timer);
         if (stats.abortedAtMs !== null) return;
         stats.abortedAtMs = performance.now();
         stats.chunksAtAbort = stats.chunksEnqueued;
-        if (timer !== undefined) clearInterval(timer);
         const waiters = abortWaiters;
         abortWaiters = [];
         for (const wake of waiters) wake();
@@ -213,6 +222,8 @@ function startAbortEngine(): AbortEngine {
             }
           }),
         ]);
+        // Aborted during the held prefill: never start the chunk stream.
+        if (req.signal.aborted) return new Response(null, { status: 499 });
       }
 
       const body = new ReadableStream<Uint8Array>({
@@ -227,6 +238,7 @@ function startAbortEngine(): AbortEngine {
           };
           push();
           timer = setInterval(push, ENGINE_CHUNK_INTERVAL_MS);
+          timers.add(timer);
         },
         cancel(): void {
           markAborted();
@@ -260,6 +272,7 @@ function startAbortEngine(): AbortEngine {
       });
     },
     reset(): void {
+      for (const t of [...timers]) clearTimer(t);
       engine.holdFirstByteMs = 0;
       stats.requests = 0;
       stats.chunksEnqueued = 0;
@@ -269,6 +282,7 @@ function startAbortEngine(): AbortEngine {
       stats.models.length = 0;
     },
     async stop(): Promise<void> {
+      for (const t of [...timers]) clearTimer(t);
       await server.stop(true);
     },
   };
