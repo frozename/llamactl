@@ -19,6 +19,8 @@ import {
   __setWorkloadTestSeams,
   runGet,
 } from "../src/commands/workload.js";
+import { EMPTY_GLOBALS, resetGlobals, setGlobals } from "../src/dispatcher.js";
+import { recordNodeFailed } from "../src/node-contact.js";
 import {
   existsSync,
   mkdirSync,
@@ -84,6 +86,7 @@ beforeEach(() => {
 afterEach(() => {
   for (const release of seamReleases.splice(0)) release();
   __resetWorkloadTestSeams();
+  resetGlobals();
   process.env = { ...originalEnv };
   rmSync(tmp, { recursive: true, force: true });
 });
@@ -519,13 +522,16 @@ test("node ls reports the first failing row's error when rows on one node fail d
   );
 });
 
-const LEAKY = "upstream said:\n\u001b[31mdenied\u001b[0m for Bearer abc123\r\tretry\u0007";
-const LEAKY_CLEAN = "upstream said: denied for Bearer [redacted] retry";
+// U+2028 and the doubled space survive the control-character pass, so only
+// the whitespace collapse turns them into single spaces.
+const LEAKY =
+  "upstream said:\n\u001b[31mdenied\u001b[0m  for Bearer abc123\r\tretry\u2028now\u0007";
+const LEAKY_CLEAN = "upstream said: denied for Bearer [redacted] retry now";
 
 function expectClean(text: string): void {
   expect(text).not.toContain("abc123");
   // eslint-disable-next-line no-control-regex
-  expect(/[\u0000-\u001f\u007f-\u009f]/.test(text)).toBe(false);
+  expect(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(text)).toBe(false);
 }
 
 test("contact errors are redacted and single-line in --json, text and node ls (#221)", async () => {
@@ -614,4 +620,102 @@ test("contact records are scoped to the context's cluster (#221)", async () => {
   expect(home.phase).toBe("Unreachable");
   expect(home.lastSeen).toBe(T1);
   expect(home.observedAt).toBe(T2);
+});
+
+test("get workloads keys contact by the --context global, not current-context (#221)", async () => {
+  seedTwoContextConfig("default");
+  seedRemoteWorkloads();
+  const contactDir = join(tmp, "workloads", ".node-contact");
+  const homeFile = join(contactDir, "home", "gpu1.json");
+  mkdirSync(join(contactDir, "home"), { recursive: true });
+  const homeBefore = `${JSON.stringify(
+    { cluster: "home", node: "gpu1", lastSeen: T1, lastError: null, lastErrorAt: null },
+    null,
+    2,
+  )}\n`;
+  writeFileSync(homeFile, homeBefore);
+
+  setGlobals({ ...EMPTY_GLOBALS, contextName: "lab" });
+  seamFor({ host: "hung", run: "hung", now: T2 });
+  await getWorkloadsJson();
+
+  const labFile = join(contactDir, "lab", "gpu1.json");
+  expect(existsSync(labFile)).toBe(true);
+  expect(JSON.parse(readFileSync(labFile, "utf8"))).toEqual({
+    cluster: "lab",
+    node: "gpu1",
+    lastSeen: null,
+    lastError: ERR,
+    lastErrorAt: T2,
+  });
+  expect(readFileSync(homeFile, "utf8")).toBe(homeBefore);
+});
+
+function writeRawContact(cluster: string, record: Record<string, unknown>): void {
+  const dir = join(tmp, "workloads", ".node-contact", cluster);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "gpu1.json"), `${JSON.stringify(record, null, 2)}\n`);
+}
+
+test("node ls sanitizes a stored lastError at read time (#221)", async () => {
+  seedConfig();
+  writeRawContact("home", {
+    cluster: "home",
+    node: "gpu1",
+    lastSeen: T1,
+    lastError: LEAKY,
+    lastErrorAt: T2,
+  });
+
+  const { nodes } = await nodeLsJson();
+  expect(gpu1Node(nodes)).toEqual({
+    name: "gpu1",
+    endpoint: "https://gpu1.lan:7843",
+    phase: "Unreachable",
+    lastSeen: T1,
+    observedAt: T2,
+    error: LEAKY_CLEAN,
+  });
+  const lsText = await nodeLsText();
+  expect(lsText).toBe(
+    "local  inproc://local (default)\n" +
+      "gpu1   https://gpu1.lan:7843\n" +
+      `unreachable: gpu1 as of ${T2}, last answered ${T1}: ${LEAKY_CLEAN}\n`,
+  );
+  expectClean(lsText.replaceAll("\n", " "));
+});
+
+test("node ls ignores a contact record whose cluster or node disagrees with its path (#221)", async () => {
+  seedConfig();
+  const plain = { name: "gpu1", endpoint: "https://gpu1.lan:7843" };
+  const failed = { lastSeen: T1, lastError: ERR, lastErrorAt: T2 };
+
+  writeRawContact("home", { cluster: "lab", node: "gpu1", ...failed });
+  expect(gpu1Node((await nodeLsJson()).nodes)).toEqual(plain);
+  expect(await nodeLsText()).not.toContain("unreachable:");
+
+  writeRawContact("home", { cluster: "home", node: "gpu2", ...failed });
+  expect(gpu1Node((await nodeLsJson()).nodes)).toEqual(plain);
+  expect(await nodeLsText()).not.toContain("unreachable:");
+
+  // The same record with a matching identity is read.
+  writeRawContact("home", { cluster: "home", node: "gpu1", ...failed });
+  expect(gpu1Node((await nodeLsJson()).nodes).phase).toBe("Unreachable");
+});
+
+test("recordNodeFailed stores only the sanitized error (#221)", () => {
+  const dir = join(tmp, "workloads");
+  recordNodeFailed("home", "gpu1", LEAKY, new Date(T2), dir);
+
+  const stored = readFileSync(join(dir, ".node-contact", "home", "gpu1.json"), "utf8");
+  expect(stored).not.toContain("abc123");
+  expect(stored).not.toContain("\\u001b");
+  expect(stored).not.toContain("\\u2028");
+  expect(JSON.parse(stored)).toEqual({
+    cluster: "home",
+    node: "gpu1",
+    lastSeen: null,
+    lastError: LEAKY_CLEAN,
+    lastErrorAt: T2,
+  });
 });

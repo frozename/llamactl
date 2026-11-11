@@ -372,12 +372,10 @@ async function runAdd(args: string[]): Promise<number> {
 
   const cfgPath = defaultConfigPath();
   let ctxName = "";
-  let clusterName = "";
   try {
     mutateConfigLocked(cfgPath, (cfg: Config) => {
       const ctx = currentContext(cfg);
       ctxName = ctx.name;
-      clusterName = ctx.cluster;
       if (!f.replaceToken) assertTokenReplaceable(cfg, ctx.cluster, ctx.user, token, f.name);
       const withUser = persistUserToken(cfg, ctx.user, token);
       const nodeEntry: configSchema.ClusterNode = {
