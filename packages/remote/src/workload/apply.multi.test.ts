@@ -1,7 +1,11 @@
 /* eslint-disable @typescript-eslint/await-thenable, @typescript-eslint/no-confusing-void-expression -- Bun's rejects/resolves matchers are typed as void. */
 import { readModelHostState, writeModelHostState } from "@llamactl/core/engines/state";
 import { resolveEnv } from "@llamactl/core/env";
-import { expect, test } from "bun:test";
+import {
+  createSessionRefcounts,
+  setSessionRefcountRegistry,
+} from "@llamactl/core/residency/sessions";
+import { afterEach, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
@@ -214,8 +218,9 @@ function seedModelDir(modelsDir: string, rel: string, sizeBytes: number): void {
 }
 
 // #520: applyOne consults an optional session gate before evicting. The gate
-// is a structural fake — the real store lives in
-// @llamactl/core/residency/sessions and is never imported here.
+// is a structural fake — the #569 tests at the bottom of this file import the
+// real @llamactl/core/residency/sessions store to install a process-wide
+// registry, and a file-level afterEach clears it after every test.
 type SessionGateCheck =
   | { ok: true; released: string[] }
   | { ok: false; reason: string; sessions: string[] };
@@ -2683,5 +2688,203 @@ test("W1: applyOneModelHost strips eviction annotations before the wire manifest
     expect(recorded !== undefined && "annotations" in recorded.metadata).toBe(false);
   } finally {
     temp.cleanup();
+  }
+});
+
+// #569: applyOne must refuse an eviction while the process-wide session
+// refcount registry reports a live session on the victim — the same gate an
+// explicit opts.sessionGate applies, consulted through
+// currentSessionRefcounts() when no gate is supplied. The registry is
+// process-wide state, so the afterEach below plus a per-test finally keep a
+// leaked install from reaching any other case in this file.
+afterEach(() => {
+  setSessionRefcountRegistry(null);
+});
+
+test("#569: an installed session registry refuses eviction while a session holds the target", async () => {
+  const state: WorkloadStateMap = new Map([["a", { up: true, rel: "a.gguf", args: [] }]]);
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-evict-session-registry-"));
+  saveWorkload(mkManifest("a"), workloadsDir);
+  const { client, stops, starts } = makeRecordingClient(state);
+  const registry = createSessionRefcounts({ idleTimeoutMs: 60_000 });
+  registry.acquire("sess-1", "a");
+  try {
+    setSessionRefcountRegistry(registry);
+    const result = await applyOne(
+      mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090 }),
+      () => client,
+      undefined,
+      undefined,
+      { workloadsDir, getNodeBudgetGiB: () => 32 },
+    );
+    expect(result.action).toBe("pending");
+    expect(result.statusSection.phase).toBe("Failed");
+    expect(result.statusSection.conditions[0]?.reason).toBe("EvictSessionActive");
+    expect(result.error).toMatch(/sess-1/);
+    expect(stops).toEqual([]);
+    expect(starts).toEqual([]);
+    expect(registry.activeSessions("a")).toEqual(["sess-1"]);
+  } finally {
+    setSessionRefcountRegistry(null);
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("#569: eviction proceeds once the held session is released and idle-expired", async () => {
+  const state: WorkloadStateMap = new Map([["a", { up: true, rel: "a.gguf", args: [] }]]);
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-evict-session-expired-"));
+  saveWorkload(mkManifest("a"), workloadsDir);
+  const { client, stops, starts } = makeRecordingClient(state);
+  let t = 0;
+  const registry = createSessionRefcounts({ idleTimeoutMs: 1000, now: () => t });
+  const acquired = registry.acquire("sess-1", "a");
+  if (!acquired.ok) throw new Error("session acquire refused");
+  const opts = { workloadsDir, getNodeBudgetGiB: (): number => 32 };
+  try {
+    setSessionRefcountRegistry(registry);
+    const refused = await applyOne(
+      mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090 }),
+      () => client,
+      undefined,
+      undefined,
+      opts,
+    );
+    expect(refused.action).toBe("pending");
+    expect(refused.statusSection.phase).toBe("Failed");
+    expect(refused.statusSection.conditions[0]?.reason).toBe("EvictSessionActive");
+    expect(refused.error).toMatch(/sess-1/);
+    expect(stops).toEqual([]);
+    expect(starts).toEqual([]);
+
+    registry.release("sess-1", acquired.generation);
+    t = 5000;
+    const result = await applyOne(
+      mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090 }),
+      () => client,
+      undefined,
+      undefined,
+      opts,
+    );
+    expect(result.action).toBe("started");
+    expect(stops).toEqual(["a"]);
+    expect(starts).toEqual(["b"]);
+  } finally {
+    setSessionRefcountRegistry(null);
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("#569: a session that appears after authorization is caught by the pre-stop re-check", async () => {
+  const state: WorkloadStateMap = new Map([["a", { up: true, rel: "a.gguf", args: [] }]]);
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-evict-session-late-registry-"));
+  saveWorkload(mkManifest("a"), workloadsDir);
+  const { client, stops, starts } = makeRecordingClient(state);
+  const registry = createSessionRefcounts({ idleTimeoutMs: 60_000 });
+  let acquired = false;
+  try {
+    setSessionRefcountRegistry(registry);
+    const result = await applyOne(
+      mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090 }),
+      () => client,
+      undefined,
+      undefined,
+      {
+        workloadsDir,
+        getNodeBudgetGiB: () => {
+          if (!acquired) {
+            registry.acquire("late-1", "a");
+            acquired = true;
+          }
+          return 32;
+        },
+      },
+    );
+    expect(result.action).toBe("pending");
+    expect(result.statusSection.phase).toBe("Failed");
+    expect(result.statusSection.conditions[0]?.reason).toBe("EvictSessionActive");
+    expect(result.error).toMatch(/late-1/);
+    expect(stops).toEqual([]);
+    expect(starts).toEqual([]);
+  } finally {
+    setSessionRefcountRegistry(null);
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("#569: without an installed registry eviction is unchanged", async () => {
+  const state: WorkloadStateMap = new Map([["a", { up: true, rel: "a.gguf", args: [] }]]);
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-evict-no-registry-"));
+  saveWorkload(mkManifest("a"), workloadsDir);
+  const { client, stops, starts } = makeRecordingClient(state);
+  try {
+    setSessionRefcountRegistry(null);
+    const result = await applyOne(
+      mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090 }),
+      () => client,
+      undefined,
+      undefined,
+      { workloadsDir, getNodeBudgetGiB: () => 32 },
+    );
+    expect(result.action).toBe("started");
+    expect(stops).toEqual(["a"]);
+    expect(starts).toEqual(["b"]);
+  } finally {
+    setSessionRefcountRegistry(null);
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("#569: an installed registry with sessions only on other workloads does not block eviction", async () => {
+  const state: WorkloadStateMap = new Map([["a", { up: true, rel: "a.gguf", args: [] }]]);
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-evict-session-other-"));
+  saveWorkload(mkManifest("a"), workloadsDir);
+  const { client, stops, starts } = makeRecordingClient(state);
+  const registry = createSessionRefcounts({ idleTimeoutMs: 60_000 });
+  registry.acquire("sess-x", "c");
+  try {
+    setSessionRefcountRegistry(registry);
+    const result = await applyOne(
+      mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090 }),
+      () => client,
+      undefined,
+      undefined,
+      { workloadsDir, getNodeBudgetGiB: () => 32 },
+    );
+    expect(result.action).toBe("started");
+    expect(stops).toEqual(["a"]);
+    expect(starts).toEqual(["b"]);
+    expect(registry.activeSessions("c")).toEqual(["sess-x"]);
+  } finally {
+    setSessionRefcountRegistry(null);
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("#569: an explicit opts.sessionGate takes precedence over the installed registry", async () => {
+  const state: WorkloadStateMap = new Map([["a", { up: true, rel: "a.gguf", args: [] }]]);
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-evict-session-gate-wins-"));
+  saveWorkload(mkManifest("a"), workloadsDir);
+  const { client, stops, starts } = makeRecordingClient(state);
+  const registry = createSessionRefcounts({ idleTimeoutMs: 60_000 });
+  registry.acquire("sess-1", "a");
+  try {
+    setSessionRefcountRegistry(registry);
+    const result = await applyOne(
+      mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090 }),
+      () => client,
+      undefined,
+      undefined,
+      {
+        workloadsDir,
+        getNodeBudgetGiB: () => 32,
+        sessionGate: makeSessionGate(() => ({ ok: true, released: [] })),
+      },
+    );
+    expect(result.action).toBe("started");
+    expect(stops).toEqual(["a"]);
+    expect(starts).toEqual(["b"]);
+  } finally {
+    setSessionRefcountRegistry(null);
+    rmSync(workloadsDir, { recursive: true, force: true });
   }
 });
