@@ -30,6 +30,18 @@ export interface SessionRefcounts {
   checkUnload(workload: string, opts?: { force?: boolean }): SessionUnloadCheck;
 }
 
+// ── Process-wide registry seam ──────────────────────────────────────────
+
+let installedSessions: SessionRefcounts | null = null;
+
+export function setSessionRefcountRegistry(registry: SessionRefcounts | null): void {
+  installedSessions = registry;
+}
+
+export function currentSessionRefcounts(): SessionRefcounts | null {
+  return installedSessions;
+}
+
 interface SessionEntry {
   workload: string;
   refs: number;

@@ -106,6 +106,7 @@ function activeIds(state: WorkloadState): string[] {
 function bindLeaseToBody(
   body: ReadableStream<Uint8Array>,
   lease: Lease,
+  onSettle?: () => void,
 ): ReadableStream<Uint8Array> {
   let settled = false;
   let readerClosed = false;
@@ -117,6 +118,7 @@ function bindLeaseToBody(
     settled = true;
     lease.release();
     lease.signal.removeEventListener("abort", abortListener);
+    if (onSettle !== undefined) onSettle();
   }
 
   function ensureReaderClosed(): void {
@@ -140,6 +142,7 @@ function bindLeaseToBody(
       outerController.error(lease.signal.reason);
     }
     ensureReaderClosed();
+    if (onSettle !== undefined) onSettle();
   };
   lease.signal.addEventListener("abort", abortListener, { once: true });
 

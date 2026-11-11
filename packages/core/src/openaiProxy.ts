@@ -41,6 +41,7 @@ import {
 } from "./kvstore/index.js";
 import { omitUndefined } from "./object.js";
 import { bindLeaseToBody, getResidencyLeaseRegistry, type Lease } from "./residency/leases.js";
+import { currentSessionRefcounts, type SessionRefcounts } from "./residency/sessions.js";
 import {
   isDeterministic,
   openResponseCacheStorage,
@@ -71,6 +72,7 @@ import * as workloadRuntime from "./workloadRuntime.js";
 const anthropicStreamCompletionByResponse = new WeakMap<Response, Promise<boolean>>();
 
 const MAX_JSON_BODY_BYTES = 10 * 1024 * 1024;
+const SESSION_HEADER = "x-llamactl-session";
 
 /**
  * OpenAI-compatible gateway in front of the local llama-server.
@@ -3006,9 +3008,16 @@ function acquireProxyResidencyLease(route: RoutedEntry | undefined): Lease | Res
  * listener so the non-body and throw paths can detach it; release() is
  * idempotent, so a double-settle (abort listener plus bound body) is safe.
  */
-function attachLeaseAbortRelease(req: Request, lease: Lease): () => void {
+function attachLeaseAbortRelease(
+  req: Request,
+  lease: Lease,
+  onSessionAbortRelease?: (() => void) | null,
+): () => void {
   const onAbort = (): void => {
     lease.release();
+    if (onSessionAbortRelease !== null && typeof onSessionAbortRelease === "function") {
+      onSessionAbortRelease();
+    }
   };
   if (req.signal.aborted) onAbort();
   else req.signal.addEventListener("abort", onAbort, { once: true });
@@ -3038,6 +3047,7 @@ async function forwardAndBindResidencyLease(
   context: ProxyContext,
   lease: Lease | null,
   onClientAbort: (() => void) | null,
+  onSessionRelease?: (() => void) | null,
 ): Promise<Response> {
   let handedOff = false;
   try {
@@ -3052,11 +3062,14 @@ async function forwardAndBindResidencyLease(
     const res = await maybePersistResponseCache(context, translatedResponse);
     if (lease !== null && res.body !== null) {
       handedOff = true;
-      return new Response(bindLeaseToBody(res.body, lease), {
-        status: res.status,
-        statusText: res.statusText,
-        headers: res.headers,
-      });
+      return new Response(
+        bindLeaseToBody(res.body, lease, onSessionRelease !== null ? onSessionRelease : undefined),
+        {
+          status: res.status,
+          statusText: res.statusText,
+          headers: res.headers,
+        },
+      );
     }
     return res;
   } finally {
@@ -3066,8 +3079,45 @@ async function forwardAndBindResidencyLease(
       if (onClientAbort !== null) {
         context.req.signal.removeEventListener("abort", onClientAbort);
       }
+      if (typeof onSessionRelease === "function") {
+        onSessionRelease();
+      }
     }
   }
+}
+
+/**
+ * #278 (DF-05): acquire a session and return a 409 on affinity conflict,
+ * or a `{ ok, release }` handle for successful acquires. Returns `null`
+ * when neither session nor residency seams are active.
+ */
+function acquireProxySession(
+  sessionRegistry: SessionRefcounts,
+  sessionId: string,
+  route: RoutedEntry | undefined,
+): Response | { ok: true; release: (() => void) | null } | null {
+  const workload = route?.workload;
+  if (workload === undefined) return { ok: true, release: null };
+  const sessionAcquireResult = sessionRegistry.acquire(sessionId, workload);
+  if (!sessionAcquireResult.ok) {
+    return Response.json(
+      {
+        error: {
+          message: `session ${sessionId} bound to ${sessionAcquireResult.boundWorkload}`,
+          type: "session_affinity_conflict",
+          code: "AffinityConflict",
+        },
+      },
+      { status: 409 },
+    );
+  }
+  let released = false;
+  const release = (): void => {
+    if (released) return;
+    released = true;
+    sessionRegistry.release(sessionId);
+  };
+  return { ok: true, release };
 }
 
 /**
@@ -3101,20 +3151,85 @@ export async function proxyOpenAI(
     return withResponseCacheLookup.responseCacheHit;
   }
 
+  const sessionHeader = req.headers.get(SESSION_HEADER);
+  const trimmedSessionId =
+    sessionHeader === null || sessionHeader.trim() === "" ? null : sessionHeader.trim();
+  const sessionRegistry = currentSessionRefcounts();
+  const leaseRegistry = getResidencyLeaseRegistry();
+
+  const sessionResult =
+    trimmedSessionId !== null && sessionRegistry !== null && leaseRegistry !== null
+      ? acquireProxySession(sessionRegistry, trimmedSessionId, withResponseCacheLookup.route)
+      : null;
+  if (sessionResult instanceof Response) return sessionResult;
+
+  const prepared = prepareSessionAndLease(
+    req,
+    withResponseCacheLookup,
+    sessionResult,
+    sessionRegistry,
+    trimmedSessionId,
+  );
+  if (prepared instanceof Response) return prepared;
+
+  const withKvLookup = await withKvFallback(withResponseCacheLookup);
+  if (prepared.lease !== null) composeLeaseIntoInit(withKvLookup, prepared.lease);
+  return await forwardAndBindResidencyLease(
+    withKvLookup,
+    prepared.lease,
+    prepared.onClientAbort,
+    prepared.onSessionRelease,
+  );
+}
+
+/**
+ * #278 (DF-05): run KV lookup with fallback to unchanged context on
+ * failure (e.g. SQLITE_BUSY). The caller must compose the lease signal
+ * into init and forward with the result.
+ */
+async function withKvFallback(routed: ProxyContext): Promise<ProxyContext> {
+  try {
+    return await maybeKvLookup(routed);
+  } catch (error) {
+    warnKvStageFailure("lookup", error);
+    return routed;
+  }
+}
+
+/**
+ * #278 (DF-05): prepare session acquisition and residency lease for a
+ * request that has passed cache lookup. Returns a 409/503 refusal or a
+ * prepared context with lease, abort handler, and session release callback.
+ */
+function prepareSessionAndLease(
+  req: Request,
+  routed: ProxyContext,
+  sessionResult: { ok: true; release: (() => void) | null } | null,
+  sessionRegistry: SessionRefcounts | null,
+  trimmedSessionId: string | null,
+):
+  | Response
+  | {
+      lease: Lease | null;
+      onClientAbort: (() => void) | null;
+      onSessionRelease: (() => void) | null;
+    } {
+  const hasBothSeams =
+    trimmedSessionId !== null && sessionRegistry !== null && sessionResult !== null;
+
   // #278 (DF-05): acquire before maybeKvLookup so a refused or draining
   // request never runs applyWarmKvHit (slot restore, KV row reserve, slot
   // allocator), and cache hits never need a lease.
-  const admission = acquireProxyResidencyLease(withResponseCacheLookup.route);
-  if (admission instanceof Response) return admission;
-  const lease = admission;
-  const onClientAbort = lease === null ? null : attachLeaseAbortRelease(req, lease);
-
-  let withKvLookup = withResponseCacheLookup;
-  try {
-    withKvLookup = await maybeKvLookup(withResponseCacheLookup);
-  } catch (error) {
-    warnKvStageFailure("lookup", error);
+  const admission = acquireProxyResidencyLease(routed.route);
+  if (admission instanceof Response) {
+    if (hasBothSeams) {
+      sessionResult.release?.();
+    }
+    return admission;
   }
-  if (lease !== null) composeLeaseIntoInit(withKvLookup, lease);
-  return await forwardAndBindResidencyLease(withKvLookup, lease, onClientAbort);
+  const lease = admission;
+  const onSessionRelease = hasBothSeams ? (sessionResult.release ?? null) : null;
+  const onClientAbort =
+    lease === null ? null : attachLeaseAbortRelease(req, lease, onSessionRelease);
+  return { lease, onClientAbort, onSessionRelease };
 }
