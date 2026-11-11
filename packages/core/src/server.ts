@@ -1632,6 +1632,12 @@ export interface StopServerResult {
    * not sent.
    */
   killed: boolean;
+  /**
+   * Set only by the node-side residency lease fence (#278), never by
+   * `stopServer` itself: which lease-backed refusal blocked the stop and the
+   * lease ids that were active at refusal time.
+   */
+  refused?: { reason: "LeasesActive" | "DrainInProgress"; active: string[] };
 }
 
 /**

@@ -225,9 +225,12 @@ export interface StartAgentOptions {
    * default) the seam is never read or written, the host gets no
    * `residencyLeases`, and behaviour is identical.
    *
-   * FOLLOW-UP: the #599 engine-client oMLX native unload takes its own
-   * `leases.registry` option (residency/engine-client.ts:130) and is not yet
-   * given this published registry.
+   * The #599 oMLX native client gets this published registry through
+   * residency/engine-client.ts createAgentOmlxNativeClient (#282). No
+   * production unload caller is wired yet: modelhost.ts has no native
+   * load/unload path, and adding one is a separate activation step. Until
+   * that lands, the lease acceptance is not enforced on any production
+   * native unload.
    */
   residencyLeases?: boolean;
   /**
