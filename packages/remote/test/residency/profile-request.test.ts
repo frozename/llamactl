@@ -388,6 +388,65 @@ describe("buildProfileSwitchRequest", () => {
     expect(request.workloads.map((wl) => wl.id)).toEqual(["chat"]);
   });
 
+  test("excludes an off-node annotated workload even when it is observed", async () => {
+    const mod = await residencyCoordinator();
+    expect(typeof mod.buildProfileSwitchRequest).toBe("function");
+
+    const result = mod.buildProfileSwitchRequest!(
+      profileSwitchInput({
+        modelHosts: [
+          hostManifest("remote", {
+            node: "other",
+            annotations: { [PROFILES_ANNOTATION]: "chat" },
+          }),
+        ],
+        modelRuns: [runManifest("chat", { annotations: { [PROFILES_ANNOTATION]: "chat" } })],
+        observed: observedOf({ chat: "running", remote: "running" }),
+        memory: { chat: 20, remote: 40 },
+        to: "chat",
+      }),
+    );
+
+    const request = okRequest(result);
+    expect(request.workloads.map((wl) => wl.id)).toEqual(["chat"]);
+  });
+
+  test("refuses DuplicateId when a ModelRun and a ModelHost share a name", async () => {
+    const mod = await residencyCoordinator();
+    expect(typeof mod.buildProfileSwitchRequest).toBe("function");
+
+    const result = mod.buildProfileSwitchRequest!(
+      profileSwitchInput({
+        modelRuns: [runManifest("coder", { annotations: { [PROFILES_ANNOTATION]: "code" } })],
+        modelHosts: [hostManifest("coder", { annotations: { [PROFILES_ANNOTATION]: "code" } })],
+        observed: observedOf({ coder: "running" }),
+        memory: { coder: 20 },
+        to: "code",
+      }),
+    );
+
+    expect(result).toEqual({ ok: false, reason: "DuplicateId", workloads: ["coder"] });
+  });
+
+  test("refuses DuplicateId when the only annotation lives on the off-node twin", async () => {
+    const mod = await residencyCoordinator();
+    expect(typeof mod.buildProfileSwitchRequest).toBe("function");
+
+    const result = mod.buildProfileSwitchRequest!(
+      profileSwitchInput({
+        modelRuns: [
+          runManifest("coder", { node: "other", annotations: { [PROFILES_ANNOTATION]: "code" } }),
+        ],
+        modelHosts: [hostManifest("embed")],
+        observed: observedOf({ embed: "running" }),
+        memory: { embed: 6 },
+        to: "code",
+      }),
+    );
+
+    expect(result).toEqual({ ok: false, reason: "NotOptedIn", workloads: [] });
+  });
+
   test("treats a malformed profiles annotation as unannotated", async () => {
     const mod = await residencyCoordinator();
     expect(typeof mod.buildProfileSwitchRequest).toBe("function");

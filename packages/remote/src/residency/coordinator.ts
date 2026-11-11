@@ -45,9 +45,9 @@ export type BuildProfileSwitchRequestInput = {
   modelRuns: readonly ModelRun[];
   modelHosts: readonly ModelHostManifest[];
   observed: ReadonlyMap<string, ObservedWorkloadState>;
-  // The contract test keys its memory table by workload name, so the
-  // callback accepts the id directly alongside the resolved source.
-  memoryGiBOf: (src: ProfileWorkloadSource | string) => number;
+  // Memory is keyed by workload name alone: the id is the only stable
+  // handle shared across ModelRun and ModelHost sources.
+  memoryGiBOf: (name: string) => number;
   groups?: readonly ResidencyGroupDeclaration[];
   policy?: ProfileSwitchPolicy;
   requiredServices?: string[];
@@ -56,7 +56,11 @@ export type BuildProfileSwitchRequestInput = {
 
 export type BuildProfileSwitchRequestResult =
   | { ok: true; request: ProfileSwitchRequest }
-  | { ok: false; reason: "UnknownState" | "NotOptedIn"; workloads: string[] };
+  | {
+      ok: false;
+      reason: "UnknownState" | "NotOptedIn" | "DuplicateId";
+      workloads: string[];
+    };
 
 function compareStrings(a: string, b: string): number {
   if (a < b) return -1;
@@ -110,6 +114,17 @@ function buildWorkload(
   };
 }
 
+function duplicateNames(sources: readonly ProfileWorkloadSource[]): string[] {
+  const seen = new Set<string>();
+  const duplicates = new Set<string>();
+  for (const src of sources) {
+    const name = nameOf(src);
+    if (seen.has(name)) duplicates.add(name);
+    seen.add(name);
+  }
+  return [...duplicates].sort(compareStrings);
+}
+
 export function buildProfileSwitchRequest(
   input: BuildProfileSwitchRequestInput,
 ): BuildProfileSwitchRequestResult {
@@ -118,9 +133,12 @@ export function buildProfileSwitchRequest(
     ...input.modelHosts.map((manifest): ProfileWorkloadSource => ({ kind: "ModelHost", manifest })),
   ];
 
-  const onNode = sources.filter(
-    (src) => src.manifest.spec.node === input.node || input.observed.has(nameOf(src)),
-  );
+  const onNode = sources.filter((src) => src.manifest.spec.node === input.node);
+
+  const duplicates = duplicateNames(onNode);
+  if (duplicates.length > 0) {
+    return { ok: false, reason: "DuplicateId", workloads: duplicates };
+  }
 
   const annotated = onNode.some(
     (src) =>
