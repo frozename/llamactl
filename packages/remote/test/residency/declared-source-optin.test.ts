@@ -217,8 +217,9 @@ describe("declared cold-model source opt-in (#280 DF-07)", () => {
       .declared.find((candidate) => candidate.id === COLD_PIN);
     expect(entry?.status).toBe("cold");
 
-    // Start stop() without awaiting — this begins the drain/teardown sequence
-    // but does not yet unregister the declared-model source (DF-07 fix).
+    // Start stop() without awaiting — the drain/teardown sequence begins,
+    // but the declared-model source survives until the HTTP server, the
+    // tunnel client and every request already inside the handler are done.
     const stopPromise = running.stop();
 
     // Send a cold pin request while stop() is in-flight. The source is still
@@ -236,9 +237,11 @@ describe("declared cold-model source opt-in (#280 DF-07)", () => {
     expect(body.error.auto_load_eligible).toBe(true);
     expect(stubCalls).toHaveLength(0);
 
-    // Complete the stop to clean up.
+    // Complete the stop to clean up: only now is the source gone.
     await stopPromise;
     agent = null;
+    expect(openaiProxy.listOpenAIModels().declared).toEqual([]);
+    expect(stubCalls).toHaveLength(0);
   });
 
   test("(d) opt-in: an in-place manifest disable is observed on the next request", async () => {

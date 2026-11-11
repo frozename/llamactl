@@ -685,6 +685,50 @@ function createAgentFetchHandler(args: {
   };
 }
 
+/**
+ * Counts the requests still executing inside the fetch handler. A route
+ * miss is resolved only after the handler has awaited the request body,
+ * so a request accepted before `stop()` can still be about to read the
+ * declared-model source once the HTTP listener and the tunnel client are
+ * gone — both the socket path and the synthetic `handleRequest` path
+ * reach this handler. `stop()` waits for the count to drop before it
+ * unregisters that source (DF-07); streams release at their head, since
+ * the declared lookup happens before the upstream fetch.
+ */
+function trackServedRequests(handler: AgentFetchHandler): {
+  handler: AgentFetchHandler;
+  untilIdle: () => Promise<void>;
+} {
+  const idleWaiters: (() => void)[] = [];
+  let active = 0;
+  const release = (): void => {
+    active -= 1;
+    if (active === 0) {
+      for (const settle of idleWaiters.splice(0)) settle();
+    }
+  };
+  return {
+    handler: (req: Request, server: AgentFetchServer): Response | Promise<Response> => {
+      active += 1;
+      try {
+        const outcome = handler(req, server);
+        if (outcome instanceof Promise) return outcome.finally(release);
+        release();
+        return outcome;
+      } catch (error) {
+        release();
+        throw error;
+      }
+    },
+    untilIdle: (): Promise<void> =>
+      active === 0
+        ? Promise.resolve()
+        : new Promise<void>((resolve) => {
+            idleWaiters.push(resolve);
+          }),
+  };
+}
+
 function startBunServer(args: {
   tls: StartAgentOptions["tls"];
   allowPlainHttp: boolean;
@@ -1063,7 +1107,9 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     });
   }
 
-  const fetchHandler = createAgentFetchHandler({ opts, endpoint, tunnelServer, gate, workerRpc });
+  const { handler: fetchHandler, untilIdle: untilServedRequestsIdle } = trackServedRequests(
+    createAgentFetchHandler({ opts, endpoint, tunnelServer, gate, workerRpc }),
+  );
 
   const wsConfig = tunnelServer ? tunnelServer.websocket : null;
   const { server, fingerprint } = startBunServer({
@@ -1137,15 +1183,25 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
         // must not keep the tunnel serving or hold stop() open. That keeps
         // stop() within the drain timeout plus three flush windows (the
         // drain's, the shared one above and this one), or two without mDNS.
+        const finalFlush: Promise<boolean>[] = [
+          // Requests already inside the handler when the listener went away
+          // answer their route miss later, from the declared source, so this
+          // window is what makes the source outlive them (DF-07).
+          within(TERMINAL_FLUSH_MS, untilServedRequestsIdle()),
+        ];
         if (mdns) {
-          await within(
-            TERMINAL_FLUSH_MS,
-            mdns.stop().catch(() => undefined),
+          finalFlush.push(
+            within(
+              TERMINAL_FLUSH_MS,
+              mdns.stop().catch(() => undefined),
+            ),
           );
         }
-        // Unregister the declared-model source only after the HTTP server
-        // and tunnel client are stopped, so no request is still served
-        // once the source is gone (DF-07 invariant).
+        await Promise.all(finalFlush);
+        // Unregister the declared-model source only once the HTTP server, the
+        // tunnel client and every request that could still read it are done:
+        // while any of them is up, a cold pin must still get its declared
+        // 503 instead of the default-target fallthrough (DF-07).
         unregisterDeclaredModels?.();
       }
     },
