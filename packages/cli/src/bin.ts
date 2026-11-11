@@ -31,6 +31,7 @@ import { runProject } from "./commands/project.js";
 import { runPull } from "./commands/pull.js";
 import { runRag } from "./commands/rag.js";
 import { runRecommendations } from "./commands/recommendations.js";
+import { runResidency } from "./commands/residency.js";
 import { runRunbookCmd } from "./commands/runbook.js";
 import { runServer } from "./commands/server.js";
 import { runSirius } from "./commands/sirius.js";
@@ -142,6 +143,8 @@ Declarative workloads (Kubernetes-style):
                                               busy slots, deferral)
   llamactl workload top [--watch[=<s>]] [--json]  Live per-ModelHost throughput
                                               (journaled; never wakes a model)
+  llamactl residency status --node <name>     Read-only residency status
+      [--json]                                (policy, budget, store; never wakes a model)
   llamactl enable <workload>                  Flip spec.enabled=true and
                                               re-apply the manifest.
   llamactl disable <workload>                 Flip spec.enabled=false and
@@ -297,6 +300,8 @@ async function main(argv: string[]): Promise<number> {
       return await runDelete(rest);
     case "workload":
       return await runWorkload(rest);
+    case "residency":
+      return await runResidency(rest);
     case "enable":
       return await runEnable(rest);
     case "disable":
