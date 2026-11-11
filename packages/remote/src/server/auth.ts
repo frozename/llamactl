@@ -78,6 +78,33 @@ export function namedBearerFor(
 }
 
 /**
+ * The legacy single agent.yaml tokenHash is the bearer named 'default'
+ * in audit records.
+ */
+export const PRIMARY_BEARER_NAME = "default";
+
+/**
+ * The name of the bearer a request presents, across the primary hash and
+ * every named entry, matched in constant time so the timing shows neither
+ * a near miss nor which entry matched. The primary wins: it returns
+ * {@link PRIMARY_BEARER_NAME} when the primary matches, else the first
+ * matching named entry's name, else null. Null when there is no token.
+ */
+export function bearerNameFor(
+  token: string | null | undefined,
+  primaryHash: string,
+  tokens: readonly NamedBearerToken[],
+): string | null {
+  if (token === null || token === undefined || token.length === 0) return null;
+  let match: string | null = null;
+  if (bearerHashMatches(token, primaryHash)) match = PRIMARY_BEARER_NAME;
+  for (const entry of tokens) {
+    if (bearerHashMatches(token, entry.tokenHash) && match === null) match = entry.name;
+  }
+  return match;
+}
+
+/**
  * A worker-RPC service credential's binding (P4.1): the claims it carries,
  * the credential's SHA-256 for the direct path, and the per-worker key its
  * tunnel tokens are checked with (`serviceTunnelKey`). Without the key the

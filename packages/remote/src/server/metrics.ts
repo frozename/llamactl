@@ -22,7 +22,8 @@ import { collectDefaultMetrics, Counter, Gauge, Histogram, Registry } from "prom
  *
  * Labels are kept tight on purpose — path/status/rel cardinality is
  * bounded (handful of OpenAI endpoints, ~5 HTTP status bins, one
- * rel at a time). Nothing unbounded like per-request IDs.
+ * rel at a time). Nothing unbounded like per-request IDs. Token names
+ * are operator-chosen, regex-bounded and few.
  */
 
 export const registry = new Registry();
@@ -54,6 +55,20 @@ export const trpcRequestsTotal = new Counter({
   name: "llamactl_trpc_requests_total",
   help: "tRPC procedure calls handled by the agent, by procedure and operation type.",
   labelNames: ["procedure", "type"] as const,
+  registers: [registry],
+});
+
+export const agentBearerRequestsTotal = new Counter({
+  name: "llamactl_agent_bearer_requests_total",
+  help: "Authenticated agent API requests by bearer token name (#218); never the token or its hash.",
+  labelNames: ["token"] as const,
+  registers: [registry],
+});
+
+export const agentBearerLastUsedSeconds = new Gauge({
+  name: "llamactl_agent_bearer_last_used_timestamp_seconds",
+  help: "Unix time of the last authenticated request per bearer token name (#218).",
+  labelNames: ["token"] as const,
   registers: [registry],
 });
 
