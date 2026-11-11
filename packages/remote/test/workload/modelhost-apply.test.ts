@@ -13,6 +13,11 @@ import { setWorkloadEnabledWithDeps } from "../../../cli/src/commands/setEnabled
 import * as modelHostState from "../../../core/src/engines/state.js";
 import { readModelHostState, removeModelHostState } from "../../../core/src/engines/state.js";
 import { resolveEnv } from "../../../core/src/env.js";
+import {
+  calibrateMeasuredEnvelope,
+  type CalibrationSample,
+  type MeasuredEnvelope,
+} from "../../../core/src/resources/memory.js";
 import * as fs from "../../src/safe-fs.js";
 import { mkdtempSync, rmSync } from "../../src/safe-fs.js";
 import { applyManifest, applyOneModelHost, type WorkloadClient } from "../../src/workload/apply.js";
@@ -1674,6 +1679,263 @@ describe("applyManifest — kind dispatch", () => {
       expect(result.error).toContain("would reserve 18.0 GiB");
     } finally {
       rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  // #277 DF-04: residencyAdmission lands with the fix, so the option is passed
+  // through a Parameters cast — the file still typechecks at base and each
+  // case fails by assertion once applyManifest ignores it.
+  function makeResidencyAdmissionClient(): {
+    client: WorkloadClient;
+    startSubscribes: { count: number };
+  } {
+    const startSubscribes = { count: 0 };
+    const client: WorkloadClient = {
+      serverStatus: {
+        query: () =>
+          Promise.resolve({
+            state: "down",
+            rel: null,
+            extraArgs: [],
+            pid: null,
+            host: null,
+            port: null,
+            binary: null,
+            endpoint: "",
+          }),
+      },
+      serverStop: { mutate: () => Promise.resolve({ ok: true }) },
+      serverStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
+      modelHostStart: {
+        subscribe: (_input, callbacks) => {
+          startSubscribes.count += 1;
+          queueMicrotask(() => {
+            callbacks.onData({
+              type: "done",
+              result: { ok: true, pid: 123, state: "Running" },
+            });
+            callbacks.onComplete();
+          });
+          return { unsubscribe: () => undefined };
+        },
+      },
+      modelHostStop: { mutate: () => Promise.resolve({ ok: true }) },
+      modelHostStatus: { query: () => Promise.resolve({ state: "Running", pid: 123 }) },
+      rpcServerStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
+      rpcServerStop: { mutate: () => Promise.resolve({ ok: true }) },
+      rpcServerDoctor: {
+        query: () => Promise.resolve({ ok: true, path: null, llamaCppBin: null }),
+      },
+    };
+    return { client, startSubscribes };
+  }
+
+  const measuredEnvelopeGiB = (gib: number): MeasuredEnvelope => {
+    const processBytes = gib * 1024 ** 3 - 1024 ** 3;
+    const sample = (observedAtMs: number): CalibrationSample => ({
+      status: "ok",
+      source: "synthetic",
+      observedAtMs,
+      processBytes,
+      processDeviceBytes: 1024 ** 3,
+      sharedDeviceBytes: null,
+    });
+    const envelope = calibrateMeasuredEnvelope({
+      key: {
+        artifactRevision: "rev-a",
+        engine: "omlx",
+        engineBuild: "b1",
+        ctx: 8192,
+        kvType: "f16",
+        speculative: { mode: "none" },
+        prefillBatch: 512,
+        concurrency: 1,
+      },
+      samples: [sample(1), sample(2), sample(3)],
+      options: { minSamples: 3, overheadFraction: 0 },
+    });
+    expect(envelope.known).toBe(true);
+    if (envelope.known) expect(envelope.envelopeBytes).toBe(gib * 1024 ** 3);
+    return envelope;
+  };
+
+  test("ModelHost admission charges a measured envelope above the declared value under a NodeRun residency policy", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-measured-"));
+    const { client, startSubscribes } = makeResidencyAdmissionClient();
+    try {
+      const result = await applyManifest({
+        manifest: makeModelHostManifest("mlx-host-measured", 6),
+        workloadsDir: join(tmp, "workloads"),
+        getNodeBudgetGiB: () => 16,
+        getClient: () => client,
+        spawn: spawnStub,
+        env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp },
+        residencyAdmission: {
+          getNodeResidencyPolicy: () => ({}),
+          getMeasuredEnvelope: () => measuredEnvelopeGiB(20),
+        },
+      });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toContain("'mlx-host-measured' (20.0 GiB)");
+        expect(result.error).toContain("Budget is 16.0 GiB");
+      }
+      expect(startSubscribes.count).toBe(0);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("measured-envelope admission is inert without a policy or when the option is absent", async () => {
+    const envelopeSpy = mock(() => measuredEnvelopeGiB(20));
+
+    // Arm 1 — a NodeRun residency policy is present: the measured envelope is
+    // charged and refuses the apply past the node budget.
+    const tmpPolicy = mkdtempSync(join(tmpdir(), "llamactl-modelhost-env-policy-"));
+    const policyArm = makeResidencyAdmissionClient();
+    try {
+      const result = await applyManifest({
+        manifest: makeModelHostManifest("mlx-host-env-policy", 6),
+        workloadsDir: join(tmpPolicy, "workloads"),
+        getNodeBudgetGiB: () => 16,
+        getClient: () => policyArm.client,
+        spawn: spawnStub,
+        env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmpPolicy },
+        residencyAdmission: {
+          getNodeResidencyPolicy: () => ({}),
+          getMeasuredEnvelope: envelopeSpy,
+        },
+      });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toContain("'mlx-host-env-policy' (20.0 GiB)");
+        expect(result.error).toContain("Budget is 16.0 GiB");
+      }
+      expect(policyArm.startSubscribes.count).toBe(0);
+    } finally {
+      rmSync(tmpPolicy, { recursive: true, force: true });
+    }
+
+    // Arm 2 — no residency policy on the node: admission stays on the declared
+    // charge and the envelope is never even read.
+    const tmpNoPolicy = mkdtempSync(join(tmpdir(), "llamactl-modelhost-env-nopolicy-"));
+    const noPolicyArm = makeResidencyAdmissionClient();
+    let admittedShape: { ok: true; kind: "ModelHost"; pid: number | null } | null = null;
+    try {
+      const result = await applyManifest({
+        manifest: makeModelHostManifest("mlx-host-env-nopolicy", 6),
+        workloadsDir: join(tmpNoPolicy, "workloads"),
+        getNodeBudgetGiB: () => 16,
+        getClient: () => noPolicyArm.client,
+        spawn: spawnStub,
+        env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmpNoPolicy },
+        residencyAdmission: {
+          getNodeResidencyPolicy: () => null,
+          getMeasuredEnvelope: envelopeSpy,
+        },
+      });
+
+      if (!result.ok) console.error("ERROR:", result);
+      expect(result.ok).toBe(true);
+      if (result.ok && result.kind === "ModelHost") {
+        admittedShape = { ok: result.ok, kind: result.kind, pid: result.pid };
+      }
+      expect(admittedShape).not.toBeNull();
+      expect(noPolicyArm.startSubscribes.count).toBe(1);
+      expect(envelopeSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      rmSync(tmpNoPolicy, { recursive: true, force: true });
+    }
+
+    // Arm 3 — residencyAdmission omitted entirely: same outcome as arm 2.
+    const tmpAbsent = mkdtempSync(join(tmpdir(), "llamactl-modelhost-env-absent-"));
+    const absentArm = makeResidencyAdmissionClient();
+    try {
+      const result = await applyManifest({
+        manifest: makeModelHostManifest("mlx-host-env-absent", 6),
+        workloadsDir: join(tmpAbsent, "workloads"),
+        getNodeBudgetGiB: () => 16,
+        getClient: () => absentArm.client,
+        spawn: spawnStub,
+        env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmpAbsent },
+      });
+
+      if (!result.ok) console.error("ERROR:", result);
+      expect(result.ok).toBe(true);
+      const absentShape =
+        result.ok && result.kind === "ModelHost"
+          ? { ok: result.ok, kind: result.kind, pid: result.pid }
+          : null;
+      expect(absentShape).toEqual(admittedShape);
+      expect(absentArm.startSubscribes.count).toBe(1);
+    } finally {
+      rmSync(tmpAbsent, { recursive: true, force: true });
+    }
+
+    expect(envelopeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  test("declared residentGiB is maxed with the measured envelope", async () => {
+    const streamedHost = (
+      name: string,
+      resources: { residentGiB: number; diskBackedGiB: number },
+    ): ModelHostManifest => {
+      const base = makeModelHostManifest(name, 1);
+      return { ...base, spec: { ...base.spec, resources } };
+    };
+
+    // env(20) above residentGiB 6 refuses past the 16 GiB budget.
+    const tmpOver = mkdtempSync(join(tmpdir(), "llamactl-modelhost-env-over-"));
+    const overArm = makeResidencyAdmissionClient();
+    try {
+      const result = await applyManifest({
+        manifest: streamedHost("mlx-host-env-over", { residentGiB: 6, diskBackedGiB: 40 }),
+        workloadsDir: join(tmpOver, "workloads"),
+        getNodeBudgetGiB: () => 16,
+        getClient: () => overArm.client,
+        spawn: spawnStub,
+        env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmpOver },
+        residencyAdmission: {
+          getNodeResidencyPolicy: () => ({}),
+          getMeasuredEnvelope: () => measuredEnvelopeGiB(20),
+        },
+      });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toContain("(20.0 GiB)");
+        expect(result.error).toContain("Budget is 16.0 GiB");
+      }
+      expect(overArm.startSubscribes.count).toBe(0);
+    } finally {
+      rmSync(tmpOver, { recursive: true, force: true });
+    }
+
+    // env(4) below residentGiB 12 stays admitted — the envelope never lowers
+    // the declared resident charge.
+    const tmpUnder = mkdtempSync(join(tmpdir(), "llamactl-modelhost-env-under-"));
+    const underArm = makeResidencyAdmissionClient();
+    try {
+      const result = await applyManifest({
+        manifest: streamedHost("mlx-host-env-under", { residentGiB: 12, diskBackedGiB: 40 }),
+        workloadsDir: join(tmpUnder, "workloads"),
+        getNodeBudgetGiB: () => 16,
+        getClient: () => underArm.client,
+        spawn: spawnStub,
+        env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmpUnder },
+        residencyAdmission: {
+          getNodeResidencyPolicy: () => ({}),
+          getMeasuredEnvelope: () => measuredEnvelopeGiB(4),
+        },
+      });
+
+      if (!result.ok) console.error("ERROR:", result);
+      expect(result.ok).toBe(true);
+      expect(underArm.startSubscribes.count).toBe(1);
+    } finally {
+      rmSync(tmpUnder, { recursive: true, force: true });
     }
   });
 });

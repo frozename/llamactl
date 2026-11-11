@@ -81,6 +81,55 @@ describe("agent subcommand --help", () => {
     }
   }
 
+  // #289: the order --help states must match resolveBearerSide (literal flag >
+  // --*-bearer-file > *_FILE env > <dir> default file > deprecated plain env).
+  const DIAL_ORDER = [
+    "--central-bearer",
+    "--central-bearer-file",
+    "LLAMACTL_TUNNEL_BEARER_FILE",
+    "<dir>/tunnel-bearer",
+    "LLAMACTL_TUNNEL_BEARER",
+  ];
+  const CENTRAL_ORDER = [
+    "--tunnel-bearer",
+    "--tunnel-bearer-file",
+    "LLAMACTL_TUNNEL_CENTRAL_BEARER_FILE",
+    "<dir>/tunnel-central-bearer",
+    "LLAMACTL_TUNNEL_CENTRAL_BEARER",
+  ];
+  const SOURCE_RE =
+    /--(?:central|tunnel)-bearer(?:-file)?|LLAMACTL_TUNNEL_(?:CENTRAL_)?BEARER(?:_FILE)?|<dir>\/tunnel-(?:central-)?bearer/g;
+
+  function statedOrders(out: string, marker: string): string[][] {
+    const text = out.replaceAll(/\s+/g, " ");
+    const orders: string[][] = [];
+    let from = 0;
+    for (;;) {
+      const start = text.indexOf(marker, from);
+      if (start === -1) break;
+      const end = text.indexOf("(deprecated", start);
+      expect(end).toBeGreaterThan(start);
+      orders.push(text.slice(start, end).match(SOURCE_RE) ?? []);
+      from = end;
+    }
+    return orders;
+  }
+
+  test("agent --help states the real tunnel-bearer precedence for both sides", async () => {
+    const r = await capture(["--help"]);
+    expect(r.code).toBe(0);
+    expect(statedOrders(r.out, "first source present, in order:")).toEqual([
+      DIAL_ORDER,
+      CENTRAL_ORDER,
+    ]);
+  });
+
+  test("agent serve --help states the real tunnel-bearer precedence for both sides", async () => {
+    const r = await capture(["serve", "--help"]);
+    expect(r.code).toBe(0);
+    expect(statedOrders(r.out, "Precedence:")).toEqual([DIAL_ORDER, CENTRAL_ORDER]);
+  });
+
   test("--help wins over other flags and does not write agent state", async () => {
     const r = await capture(["init", `--dir=${tmp}`, "--help"]);
     expect(r.code).toBe(0);

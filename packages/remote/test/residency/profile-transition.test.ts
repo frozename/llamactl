@@ -19,13 +19,18 @@ import type {
   StepKind,
 } from "@llamactl/core/residency/planner";
 
+import { setResidencyLeaseRegistry } from "@llamactl/core/residency/leases";
 import { planProfileSwitch } from "@llamactl/core/residency/planner";
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 
 // Widened to `string` on purpose: a literal specifier would let `tsc`
 // resolve (and fail on) the not-yet-existing module at base.
 const TRANSITION_SPEC = "../../src/residency/profile-transition.js" as string;
+
+beforeEach(() => {
+  setResidencyLeaseRegistry(null);
+});
 
 const NODE = "n1";
 const NOW_MS = 1_000_000_000;
