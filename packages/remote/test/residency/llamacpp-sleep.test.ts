@@ -47,6 +47,7 @@ type AgentLlamacppSleepDriverOptions = {
   verifiedStop: VerifiedStop;
   cacheIdentity?: string | undefined;
   sleepTimeoutMs?: number | undefined;
+  fetch?: typeof globalThis.fetch | undefined;
 };
 
 type AgentLlamacppSleepDriver = {
@@ -207,9 +208,10 @@ function memberSpec(id: string, capability: SleepCapability): SleepMember {
 // whose wake fits the 10 GiB budget only while a's charge is released.
 function makeController(
   capabilityA: SleepCapability = GUARDED_CAPABILITY,
+  stateA: "ready" | "loading" = "ready",
 ): LlamacppSleepController {
   const controller = createLlamacppSleepController({ budgetGiB: 10 });
-  controller.register(memberSpec("a", capabilityA), "ready");
+  controller.register(memberSpec("a", capabilityA), stateA);
   controller.register(memberSpec("b", GUARDED_CAPABILITY), "sleeping");
   return controller;
 }
@@ -221,6 +223,7 @@ async function makeDriver(opts: {
   memberId?: string | undefined;
   cacheIdentity?: string | undefined;
   sleepTimeoutMs?: number | undefined;
+  fetch?: typeof globalThis.fetch | undefined;
 }): Promise<AgentLlamacppSleepDriver> {
   const mod = await loadClientModule();
   return mod.createAgentLlamacppSleepDriver({
@@ -230,6 +233,7 @@ async function makeDriver(opts: {
     verifiedStop: opts.verifiedStop,
     cacheIdentity: opts.cacheIdentity,
     sleepTimeoutMs: opts.sleepTimeoutMs,
+    ...(opts.fetch !== undefined ? { fetch: opts.fetch } : {}),
   });
 }
 
@@ -600,5 +604,121 @@ describe("createAgentLlamacppSleepDriver (DF-10 #283)", () => {
       state: "sleep-pending",
       reservation: "resident",
     });
+  });
+  // A response whose body cancel throws: the driver's cancel() rejects, and
+  // that rejection must be handled, never surfacing as unhandledRejection.
+  function cancelThrowingFetch(status: number): typeof globalThis.fetch {
+    const fetchImpl = (): Promise<Response> =>
+      Promise.resolve(
+        new Response(
+          new ReadableStream({
+            cancel(): never {
+              throw new Error("boom");
+            },
+          }),
+          { status },
+        ),
+      );
+    return fetchImpl as unknown as typeof globalThis.fetch;
+  }
+
+  async function sleepWithUnhandledWatch(
+    run: () => Promise<SleepDriveOutcome>,
+  ): Promise<{ outcome: SleepDriveOutcome; unhandled: unknown[] }> {
+    const unhandled: unknown[] = [];
+    const listener = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", listener);
+    try {
+      const outcome = await run();
+      for (let i = 0; i < 5; i += 1) {
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 0);
+        });
+      }
+      return { outcome, unhandled };
+    } finally {
+      process.off("unhandledRejection", listener);
+    }
+  }
+
+  test("a rejecting body cancel on a 2xx sleep is handled and still sleeps", async () => {
+    const fake = startFakeLlama();
+    const controller = makeController();
+    const stops: StopCounter = { count: 0 };
+    const driver = await makeDriver({
+      controller,
+      fake,
+      verifiedStop: releaseVerifiedStop(fake, stops),
+      fetch: cancelThrowingFetch(200),
+    });
+
+    const { outcome, unhandled } = await sleepWithUnhandledWatch(() => driver.sleep());
+
+    expect(outcome).toMatchObject({ kind: "slept", reservation: "released" });
+    expect(unhandled).toEqual([]);
+    expect(stops.count).toBe(0);
+    expect(snapshotMember(controller, "a")).toEqual({
+      state: "sleeping",
+      reservation: "released",
+    });
+  });
+
+  test("a rejecting body cancel on a non-2xx sleep is handled and falls back", async () => {
+    const fake = startFakeLlama();
+    const controller = makeController();
+    const stops: StopCounter = { count: 0 };
+    const driver = await makeDriver({
+      controller,
+      fake,
+      verifiedStop: releaseVerifiedStop(fake, stops),
+      fetch: cancelThrowingFetch(409),
+    });
+
+    const { outcome, unhandled } = await sleepWithUnhandledWatch(() => driver.sleep());
+
+    expect(outcome).toMatchObject({
+      kind: "stopped",
+      trigger: "SleepRefused",
+      httpStatus: 409,
+      reservation: "released",
+    });
+    expect(unhandled).toEqual([]);
+    expect(stops.count).toBe(1);
+    expect(snapshotMember(controller, "a")).toEqual({
+      state: "stopped",
+      reservation: "released",
+    });
+  });
+
+  test("process-fallback member mid-wake is held, not stopped", async () => {
+    const fake = startFakeLlama();
+    const capability = qualifySleepCapability({ engine: "llamacpp" }, []);
+    expect(capability.kind).toBe("process-fallback");
+    const controller = makeController(capability, "loading");
+    expect(snapshotMember(controller, "a")).toEqual({
+      state: "waking",
+      reservation: "pending",
+    });
+    const stops: StopCounter = { count: 0 };
+    const driver = await makeDriver({
+      controller,
+      fake,
+      verifiedStop: releaseVerifiedStop(fake, stops),
+    });
+
+    const outcome = await driver.sleep();
+
+    expect(outcome).toEqual({ kind: "refused", reason: "WakeInFlight", reservation: "held" });
+    expect(stops.count).toBe(0);
+    expect(fake.counts.sleepPosts).toBe(0);
+    expect(snapshotMember(controller, "a")).toEqual({
+      state: "waking",
+      reservation: "pending",
+    });
+    expect(controller.snapshot().committedGiB).toBe(8);
+    const health = await fetch(`${fake.baseUrl}/health`);
+    expect(health.ok).toBe(true);
   });
 });

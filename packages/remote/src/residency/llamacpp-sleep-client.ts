@@ -80,8 +80,16 @@ function createLlamacppSleepDriver(opts: LlamacppSleepDriverOptions): LlamacppSl
       return { kind: "refused", reason: v.reason, reservation: "held" };
     }
 
-    // Step 2: process-fallback — skip HTTP, go straight to verified stop
+    // Step 2: process-fallback — skip HTTP, go straight to verified stop.
+    // The controller answers process-stop whatever the member's state, but
+    // a member mid-transition cannot accept the 'stopped' observation that
+    // proves the release, so killing it would report a release the
+    // controller never records. Hold it, as the guarded path does.
     if (v.kind === "process-stop") {
+      const inFlight = transitionInFlight(controller, memberId);
+      if (inFlight !== null) {
+        return { kind: "refused", reason: inFlight, reservation: "held" };
+      }
       return await runVerifiedStop(
         "ProcessFallback",
         undefined,
@@ -134,6 +142,18 @@ function createLlamacppSleepDriver(opts: LlamacppSleepDriverOptions): LlamacppSl
   }
 
   return { sleep };
+}
+
+// A waking member blocks every observation except 'ready'/'loading'
+// (WakeInFlight), and a sleep-pending one blocks all of them (SleepInFlight).
+function transitionInFlight(
+  controller: LlamacppSleepController,
+  memberId: string,
+): "WakeInFlight" | "SleepInFlight" | null {
+  const state = controller.snapshot().members[memberId]?.state;
+  if (state === "waking") return "WakeInFlight";
+  if (state === "sleep-pending") return "SleepInFlight";
+  return null;
 }
 
 // ── Verified stop fallback (step 5) ──────────────────────────────────────
