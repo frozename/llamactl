@@ -11,6 +11,7 @@
  * never by a missing module or a type error.
  */
 import { server as serverMod } from "@llamactl/core";
+import { type ModelHostState, writeModelHostState } from "@llamactl/core/engines/state";
 import {
   createResidencyLeases,
   type Lease,
@@ -22,7 +23,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { router } from "../../src/router.js";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "../../src/safe-fs.js";
 import { stopModelHost } from "../../src/server/modelhost.js";
 import { parseModelHost, saveModelHost } from "../../src/workload/modelhost-store.js";
 import { parseWorkload, saveWorkload, workloadPath } from "../../src/workload/store.js";
@@ -91,6 +99,22 @@ type StopCaller = {
 const originalEnv = { ...process.env };
 let tmp = "";
 
+// Fake engines left running by the reopen-through-router tests. Killed before
+// the temp runtime dir is torn down so a failed assertion cannot leak a Bun
+// listener (and its bound loopback port) across iterations.
+const spawnedServerPids = new Set<number>();
+
+function killSpawnedServers(): void {
+  for (const pid of spawnedServerPids) {
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {
+      // Already gone or not ours to signal; nothing to clean.
+    }
+  }
+  spawnedServerPids.clear();
+}
+
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), "llamactl-stop-fence-"));
   Object.assign(process.env, {
@@ -102,6 +126,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  killSpawnedServers();
   setResidencyLeaseRegistry(null);
   rmSync(tmp, { recursive: true, force: true });
   for (const k of Object.keys(process.env)) Reflect.deleteProperty(process.env, k);
@@ -587,5 +612,258 @@ spec:
     expect(existsSync(workloadPath(RUN, tmp))).toBe(true);
     expect(acquired.lease.signal.aborted).toBe(false);
     expect(acquired.lease.release()).toBe(true);
+  });
+});
+
+const HOST_REOPEN = "reopen-host";
+
+// A bash + Bun fake that impersonates a serving engine: it binds a loopback
+// port and answers `/health` (llama-server readiness) and `/v1/models`
+// (ModelHost readiness) with 200, then blocks until SIGTERM. The router's
+// start subscriptions spawn it exactly like the real binaries, so a start
+// resolves `ok` and `reopenWorkloadAfterLoad(..., true)` fires for real.
+function writeFakeServer(path: string, host: string, port: number): void {
+  const js =
+    "const s=Bun.serve({hostname:" +
+    JSON.stringify(host) +
+    ",port:" +
+    String(port) +
+    ",fetch(req){const u=new URL(req.url);" +
+    "if(u.pathname==='/health')return new Response('ok',{status:200});" +
+    "if(u.pathname==='/v1/models')return Response.json({data:[{id:'m'}]});" +
+    "return new Response('stub',{status:200});}});" +
+    "process.on('SIGTERM',()=>{s.stop(true);process.exit(0);});" +
+    "await new Promise(()=>undefined);";
+  const script =
+    "#!/bin/bash\nexec -a llama-server " +
+    JSON.stringify(process.execPath) +
+    " -e " +
+    JSON.stringify(js) +
+    "\n";
+  writeFileSync(path, script, { mode: 0o755 });
+}
+
+function pickPort(): number {
+  return 18200 + Math.floor(Math.random() * 80);
+}
+
+function registerSpawnedPid(pidFile: string): void {
+  if (!existsSync(pidFile)) {
+    return;
+  }
+  const pid = Number.parseInt(readFileSync(pidFile, "utf8").trim(), 10);
+  if (Number.isFinite(pid) && pid > 0) {
+    spawnedServerPids.add(pid);
+  }
+}
+
+function runtimeRoot(): string {
+  return process.env["LOCAL_AI_RUNTIME_DIR"] ?? "";
+}
+
+describe("load reopens admission through the router (#278 DF-05)", () => {
+  test("a verified stop then serverStart reopens the workload at the drain epoch", async () => {
+    const reg = createResidencyLeases();
+    setResidencyLeaseRegistry(reg);
+    const binDir = join(tmp, "bin");
+    const modelsDir = join(tmp, "models");
+    mkdirSync(binDir, { recursive: true });
+    mkdirSync(modelsDir, { recursive: true });
+    const port = pickPort();
+    writeFakeServer(join(binDir, "llama-server"), "127.0.0.1", port);
+    writeFileSync(join(modelsDir, "fake-model.gguf"), "GGUF-fake");
+    Object.assign(process.env, {
+      LLAMA_CPP_BIN: binDir,
+      LLAMA_CPP_MODELS: modelsDir,
+      LLAMA_CPP_LOGS: join(tmp, "logs"),
+      LLAMA_CPP_HOST: "127.0.0.1",
+      LLAMA_CPP_PORT: String(port),
+      LLAMA_CPP_USE_TUNED_ARGS: "false",
+    });
+
+    const stopped = await stopCaller().serverStop({ workload: W });
+    expect(stopped).toEqual({ stopped: true, pid: null, killed: false });
+    expect(reg.snapshot(W).phase).toBe("unloaded");
+
+    const stream = await router.createCaller({}).serverStart({
+      workload: W,
+      target: "fake-model.gguf",
+      endpoint: { host: "127.0.0.1", port },
+      timeoutSeconds: 10,
+      skipTuned: true,
+    });
+    const events: unknown[] = [];
+    for await (const event of stream) {
+      events.push(event);
+    }
+    registerSpawnedPid(join(runtimeRoot(), "workloads", W, "llama-server.pid"));
+
+    expect(events.length).toBeGreaterThan(0);
+    expect(reg.snapshot(W)).toEqual({
+      workload: W,
+      phase: "open",
+      epoch: 1,
+      active: [],
+      waiters: 0,
+    });
+    const acquired = reg.acquire(W);
+    expect(acquired.ok).toBe(true);
+    if (acquired.ok) {
+      expect(acquired.lease.epoch).toBe(1);
+      expect(acquired.lease.release()).toBe(true);
+    }
+  });
+
+  test("a verified stop then modelHostStart reopens the workload at the drain epoch", async () => {
+    const reg = createResidencyLeases();
+    setResidencyLeaseRegistry(reg);
+    const binDir = join(tmp, "bin");
+    mkdirSync(binDir, { recursive: true });
+    mkdirSync(join(tmp, "models"), { recursive: true });
+    const port = pickPort();
+    const binary = join(binDir, "llama-host");
+    writeFakeServer(binary, "127.0.0.1", port);
+    Object.assign(process.env, { LLAMA_CPP_MODELS: join(tmp, "models") });
+    saveModelHost(
+      parseModelHost(`
+apiVersion: llamactl/v1
+kind: ModelHost
+metadata:
+  name: ${HOST_REOPEN}
+spec:
+  engine: llamacpp
+  node: local
+  enabled: true
+  binary: ${binary}
+  endpoint:
+    host: 127.0.0.1
+    port: ${String(port)}
+  hostedModels:
+    - rel: m.gguf
+`),
+      tmp,
+    );
+
+    const stopped = await stopCaller().modelHostStop({ workload: HOST_REOPEN });
+    expect(stopped).toEqual({ ok: true, pid: null });
+    expect(reg.snapshot(HOST_REOPEN).phase).toBe("unloaded");
+
+    const stream = await router
+      .createCaller({})
+      .modelHostStart({ workload: HOST_REOPEN, timeoutSeconds: 10 });
+    const events: unknown[] = [];
+    for await (const event of stream) {
+      events.push(event);
+    }
+    registerSpawnedPid(join(runtimeRoot(), "workloads", HOST_REOPEN, "modelhost.pid"));
+
+    expect(events.length).toBeGreaterThan(0);
+    expect(reg.snapshot(HOST_REOPEN)).toEqual({
+      workload: HOST_REOPEN,
+      phase: "open",
+      epoch: 1,
+      active: [],
+      waiters: 0,
+    });
+    const acquired = reg.acquire(HOST_REOPEN);
+    expect(acquired.ok).toBe(true);
+    if (acquired.ok) {
+      expect(acquired.lease.epoch).toBe(1);
+      expect(acquired.lease.release()).toBe(true);
+    }
+  });
+});
+
+describe("unverified and failed stops keep the fence honest (#278 DF-05)", () => {
+  test("an unverified serverStop through the router leaves admission open", async () => {
+    const reg = createResidencyLeases();
+    setResidencyLeaseRegistry(reg);
+    const dir = join(runtimeRoot(), "workloads", W);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "llama-server.pid"), `${String(process.pid)}\n`);
+    writeFileSync(
+      join(dir, "llama-server.state"),
+      JSON.stringify({
+        rel: RUN_REL,
+        extraArgs: [],
+        host: "127.0.0.1",
+        port: "0",
+        binary: "/usr/bin/llama-server",
+        pid: process.pid,
+        startedAt: new Date().toISOString(),
+        tunedProfile: null,
+      }),
+    );
+
+    const result = await stopCaller().serverStop({ workload: W });
+
+    expect(result.stopped).toBe(false);
+    expect(result.pid).toBe(process.pid);
+    expect(reg.snapshot(W)).toEqual({
+      workload: W,
+      phase: "open",
+      epoch: 1,
+      active: [],
+      waiters: 0,
+    });
+    const acquired = reg.acquire(W);
+    expect(acquired.ok).toBe(true);
+    if (acquired.ok) {
+      expect(acquired.lease.epoch).toBe(1);
+      expect(acquired.lease.release()).toBe(true);
+    }
+  });
+
+  test("an unverified modelHostStop through the router leaves admission open", async () => {
+    const reg = createResidencyLeases();
+    setResidencyLeaseRegistry(reg);
+    const state: ModelHostState = {
+      kind: "ModelHost",
+      engine: "llamacpp",
+      pid: process.pid,
+      host: "127.0.0.1",
+      port: 8094,
+      modelAliases: ["m"],
+      startedAt: new Date().toISOString(),
+    };
+    writeModelHostState(state, { name: W });
+
+    const result = await stopCaller().modelHostStop({ workload: W });
+
+    expect(result.ok).toBe(false);
+    expect(result.pid).toBe(process.pid);
+    expect(reg.snapshot(W)).toEqual({
+      workload: W,
+      phase: "open",
+      epoch: 1,
+      active: [],
+      waiters: 0,
+    });
+    const acquired = reg.acquire(W);
+    expect(acquired.ok).toBe(true);
+    if (acquired.ok) {
+      expect(acquired.lease.epoch).toBe(1);
+      expect(acquired.lease.release()).toBe(true);
+    }
+  });
+
+  test("a load that did not succeed leaves a verified stop unloaded", async () => {
+    const reg = createResidencyLeases();
+    setResidencyLeaseRegistry(reg);
+
+    const stopped = await stopCaller().serverStop({ workload: W });
+    expect(stopped).toEqual({ stopped: true, pid: null, killed: false });
+    expect(reg.snapshot(W).phase).toBe("unloaded");
+
+    (await requireFence()).reopenWorkloadAfterLoad(W, false, reg);
+
+    expect(reg.snapshot(W)).toEqual({
+      workload: W,
+      phase: "unloaded",
+      epoch: 1,
+      active: [],
+      waiters: 0,
+    });
+    expect(reg.acquire(W)).toEqual({ ok: false, reason: "Unloaded", workload: W, epoch: 1 });
   });
 });
