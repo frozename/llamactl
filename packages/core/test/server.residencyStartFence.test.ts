@@ -221,6 +221,131 @@ describe("server.startServer residency start fence (#278)", () => {
     let leaseId: string | undefined;
     let leaseSignal: AbortSignal | undefined;
     let launches = 0;
+    const controller = new AbortController();
+    // The fake first pid reads as exited while startServer polls (so the retry
+    // path runs) and as alive afterwards, so an abort killer still armed on it
+    // would send SIGTERM. Signals to it are recorded, never forwarded.
+    const FIRST_PID = 4194306;
+    const realKill = process.kill.bind(process);
+    let firstPidAlive = false;
+    const sentToFirstPid: (string | number | undefined)[] = [];
+    const killSpy = spyOn(process, "kill").mockImplementation(((
+      pid: number,
+      signal?: string | number,
+    ): boolean => {
+      if (pid !== FIRST_PID) return realKill(pid, signal);
+      if (signal === 0) {
+        if (firstPidAlive) return true;
+        throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+      }
+      sentToFirstPid.push(signal);
+      return true;
+    }) as typeof process.kill);
+
+    let run!: Awaited<ReturnType<typeof startWithMockedIo>>;
+    try {
+      run = await startWithMockedIo(
+        {
+          key: TEST_KEY,
+          target: "Demo/demo.gguf",
+          signal: controller.signal,
+          extraArgs: ["--mmproj", "/tmp/does-not-matter-mmproj.gguf"],
+          onEvent: (e) => {
+            events.push(e.type);
+            if (e.type === "launch") {
+              launches += 1;
+              if (launches === 1) {
+                const res = registry.acquire("test-wl");
+                if (res.ok) {
+                  leaseId = res.lease.id;
+                  leaseSignal = res.lease.signal;
+                }
+              }
+            }
+          },
+        },
+        FIRST_PID,
+        "rejecting",
+      );
+      // The refusal must have de-armed the abort killer: aborting now, with the
+      // first pid alive, signals nothing.
+      firstPidAlive = true;
+      controller.abort();
+    } finally {
+      killSpy.mockRestore();
+    }
+    const { result, spawnCalls } = run;
+
+    expect(spawnCalls).toBe(1);
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/LeasesActive/);
+    expect((result as { refused?: unknown }).refused).toEqual({
+      reason: "LeasesActive",
+      active: [leaseId],
+    });
+    expect(result.retried).toBe(false);
+    expect(events).not.toContain("retry");
+    expect(sentToFirstPid).toEqual([]);
+    expect(readServerPid(TEST_KEY)).toBe(FIRST_PID);
+    expect(leaseSignal?.aborted).toBe(false);
+  });
+
+  test("the mmproj retry stop runs under a drain that blocks new acquires, then admission reopens", async () => {
+    standUpModelAndBin();
+    const registry = createResidencyLeases();
+    setResidencyLeaseRegistry(registry);
+    const events: string[] = [];
+    const phaseAtRetryEvent: string[] = [];
+    const phaseDuringStop: string[] = [];
+    const acquireDuringStop: unknown[] = [];
+
+    const { result, spawnCalls } = await startWithMockedIo(
+      {
+        key: TEST_KEY,
+        target: "Demo/demo.gguf",
+        extraArgs: ["--mmproj", "/tmp/does-not-matter-mmproj.gguf"],
+        // No pid is tracked before the first launch, so the only stop that
+        // probes identity is the retry's stop of the first pid.
+        identity: {
+          probe: () => {
+            phaseDuringStop.push(registry.snapshot("test-wl").phase);
+            acquireDuringStop.push(registry.acquire("test-wl"));
+            throw Object.assign(new Error("gone"), { code: "ESRCH" });
+          },
+        },
+        onEvent: (e) => {
+          events.push(e.type);
+          if (e.type === "retry") {
+            phaseAtRetryEvent.push(registry.snapshot("test-wl").phase);
+          }
+        },
+      },
+      4194306,
+      "rejecting",
+    );
+
+    expect(spawnCalls).toBe(2);
+    expect(events).toContain("retry");
+    expect(result.retried).toBe(true);
+    expect(Object.prototype.hasOwnProperty.call(result, "refused")).toBe(false);
+    expect(phaseAtRetryEvent).toEqual(["draining"]);
+    expect(phaseDuringStop).toEqual(["draining"]);
+    expect(acquireDuringStop).toEqual([expect.objectContaining({ ok: false, reason: "Draining" })]);
+    expect(registry.snapshot("test-wl").phase).toBe("open");
+    const post = registry.acquire("test-wl");
+    expect(post.ok).toBe(true);
+    if (post.ok) {
+      post.lease.release();
+    }
+  });
+
+  test("refuses the mmproj retry with DrainInProgress when a foreign drain opens during the first poll", async () => {
+    standUpModelAndBin();
+    const registry = createResidencyLeases();
+    setResidencyLeaseRegistry(registry);
+    const events: string[] = [];
+    let token: DrainToken | undefined;
+    let launches = 0;
 
     const { result, spawnCalls } = await startWithMockedIo(
       {
@@ -232,11 +357,7 @@ describe("server.startServer residency start fence (#278)", () => {
           if (e.type === "launch") {
             launches += 1;
             if (launches === 1) {
-              const res = registry.acquire("test-wl");
-              if (res.ok) {
-                leaseId = res.lease.id;
-                leaseSignal = res.lease.signal;
-              }
+              token = mustDrainToken(registry, "test-wl");
             }
           }
         },
@@ -247,15 +368,47 @@ describe("server.startServer residency start fence (#278)", () => {
 
     expect(spawnCalls).toBe(1);
     expect(result.ok).toBe(false);
-    expect(result.error).toMatch(/LeasesActive/);
-    expect((result as { refused?: unknown }).refused).toEqual({
-      reason: "LeasesActive",
-      active: [leaseId],
+    expect((result as { refused?: unknown }).refused).toMatchObject({
+      reason: "DrainInProgress",
     });
-    expect(result.retried).toBe(false);
     expect(events).not.toContain("retry");
     expect(readServerPid(TEST_KEY)).toBe(4194306);
-    expect(leaseSignal?.aborted).toBe(false);
+    expect(registry.snapshot("test-wl").phase).toBe("draining");
+    expect(token).toBeDefined();
+    if (token !== undefined) {
+      expect(registry.cancelDrain(token)).toBe(true);
+    }
+  });
+
+  test("an identity-unknown mmproj retry stop still reopens admission", async () => {
+    standUpModelAndBin();
+    const registry = createResidencyLeases();
+    setResidencyLeaseRegistry(registry);
+    const phaseDuringStop: string[] = [];
+
+    const { result, spawnCalls } = await startWithMockedIo(
+      {
+        key: TEST_KEY,
+        target: "Demo/demo.gguf",
+        extraArgs: ["--mmproj", "/tmp/does-not-matter-mmproj.gguf"],
+        identity: {
+          probe: () => {
+            phaseDuringStop.push(registry.snapshot("test-wl").phase);
+            throw Object.assign(new Error("probe wedged"), { code: "EIO" });
+          },
+        },
+      },
+      4194306,
+      "rejecting",
+    );
+
+    expect(spawnCalls).toBe(1);
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/identity unknown/);
+    expect(Object.prototype.hasOwnProperty.call(result, "refused")).toBe(false);
+    expect(phaseDuringStop).toEqual(["draining"]);
+    expect(readServerPid(TEST_KEY)).toBe(4194306);
+    expect(registry.snapshot("test-wl").phase).toBe("open");
   });
 
   test("no published registry: the start is unchanged", async () => {
