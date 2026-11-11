@@ -67,13 +67,21 @@ export interface NodeRunReconcileOptions {
    *  resolver makes on the client it is handed). Default DEFAULT_NODE_RPC_QUERY_TIMEOUT_MS.
    *  Mutations are never bounded here: infraInstall downloads tarballs. */
   rpcTimeouts?: { queryMs?: number };
+  /** #221: per-node query deadlines that override `rpcTimeouts.queryMs`. Any
+   *  per-node mutateMs is ignored: NodeRun mutations (infraInstall downloads
+   *  tarballs) stay unbounded. */
+  rpcTimeoutsFor?: (nodeName: string) => Partial<NodeRpcTimeouts> | undefined;
 }
 
 /** #221: bound node queries; leave .mutate unbounded (null) so a long infraInstall
- *  download never inherits a deadline. */
-function nodeRunRpcTimeouts(opts: NodeRunReconcileOptions): NodeRpcTimeouts {
+ *  download never inherits a deadline. A node's `rpcTimeoutsFor` deadline overrides
+ *  the pass default; its mutateMs is ignored. */
+function nodeRunRpcTimeouts(opts: NodeRunReconcileOptions, node: string): NodeRpcTimeouts {
   return {
-    queryMs: opts.rpcTimeouts?.queryMs ?? DEFAULT_NODE_RPC_QUERY_TIMEOUT_MS,
+    queryMs:
+      opts.rpcTimeoutsFor?.(node)?.queryMs ??
+      opts.rpcTimeouts?.queryMs ??
+      DEFAULT_NODE_RPC_QUERY_TIMEOUT_MS,
     mutateMs: null,
   };
 }
@@ -96,7 +104,6 @@ export async function reconcileNodeRunsOnce(
   const filtered = opts.filter ? manifests.filter(opts.filter) : manifests;
   const reports: NodeRunReconcileReport[] = [];
   let errors = 0;
-  const timeouts = nodeRunRpcTimeouts(opts);
   // One pass state per call: after a node's first timeout, its later NodeRuns in this
   // pass fail fast with NodeRpcSkippedError. The next pass tries the node again.
   const pass: NodeRpcPassState = { timedOut: new Map() };
@@ -104,6 +111,7 @@ export async function reconcileNodeRunsOnce(
   for (const manifest of filtered) {
     const name = manifest.metadata.name;
     const node = manifest.spec.node;
+    const timeouts = nodeRunRpcTimeouts(opts, node);
     try {
       const client = withNodeRpcDeadline(opts.getClient(node), node, timeouts, pass);
       const resolveArtifact = opts.getArtifactResolver(node, client);
