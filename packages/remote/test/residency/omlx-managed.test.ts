@@ -808,22 +808,19 @@ describe("managed oMLX residency", () => {
 
     // Build a non-single-flight client whose load() stays pending via a deferred resolver.
     let loadResolve: (() => void) | undefined;
-    const loadPending = new Promise<unknown>((resolve) => {
+    const loadPending = new Promise<NativeLoadResult>((resolve) => {
       loadResolve = (): void => {
         resolve({ kind: "loaded", modelId: ID });
       };
     });
 
+    let unloadCalls = 0;
     const client: OmlxNativeClient = {
       status: () => Promise.resolve({ state: "discovered", modelId: ID }),
-      load: (): Promise<NativeLoadResult> => loadPending as Promise<NativeLoadResult>,
+      load: (): Promise<NativeLoadResult> => loadPending,
       unload: (): Promise<NativeUnloadResult> => {
-        // Track that unload was called so we can assert it was NOT called.
-        return Promise.resolve({
-          kind: "unloaded",
-          modelId: ID,
-          reservation: "released",
-        } as never);
+        unloadCalls += 1;
+        return Promise.resolve({ kind: "unloaded", modelId: ID, reservation: "released" });
       },
     };
 
@@ -839,6 +836,8 @@ describe("managed oMLX residency", () => {
       reason: "OperationInProgress",
       reservation: "held",
     });
+    // The refusal must not have reached the client at all.
+    expect(unloadCalls).toBe(0);
 
     // The claim handle must still exist and be in pending state.
     const claimId = authority.snapshot("node-a");
@@ -853,8 +852,72 @@ describe("managed oMLX residency", () => {
     expect(ensureResult).toStrictEqual({ kind: "loaded", modelId: ID });
 
     // The claim should now be resident.
-    expect(await residency.residency()).toBe("resident");
+    expect(residency.residency()).toBe("resident");
     expect(authority.snapshot("node-a")).toHaveLength(1);
     expect(authority.snapshot("node-a")[0]?.state).toBe("resident");
+    expect(unloadCalls).toBe(0);
+  });
+
+  test("M17 ensureLoaded is refused mid-unload and the unload retires only the claim it held", async () => {
+    const mod = await loadManagedModule();
+    const authority = createTargetAdmissionAuthority();
+
+    // A non-single-flight client: the managed layer must serialize the
+    // operations itself, not lean on the real client's global single-flight.
+    let unloadResolve: ((result: NativeUnloadResult) => void) | undefined;
+    const unloadPending = new Promise<NativeUnloadResult>((resolve) => {
+      unloadResolve = (result: NativeUnloadResult): void => {
+        resolve(result);
+      };
+    });
+
+    let loadCalls = 0;
+    const client: OmlxNativeClient = {
+      status: () => Promise.resolve({ state: "discovered", modelId: ID }),
+      load: (): Promise<NativeLoadResult> => {
+        loadCalls += 1;
+        return Promise.resolve({ kind: "loaded", modelId: ID });
+      },
+      unload: (): Promise<NativeUnloadResult> => unloadPending,
+    };
+
+    const residency = mod.createManagedOmlxResidency(managedOpts(client, authority));
+    expect(await residency.ensureLoaded()).toStrictEqual({ kind: "loaded", modelId: ID });
+    expect(loadCalls).toBe(1);
+    expect(residency.residency()).toBe("resident");
+
+    // Start an unload and let it park inside the client.
+    const unloadPromise = residency.unload();
+
+    // While the unload is in flight, ensureLoaded refuses without touching
+    // the client: no new claim may be admitted mid-unload.
+    expect(await residency.ensureLoaded()).toStrictEqual({
+      kind: "refused",
+      reason: "OperationInProgress",
+    });
+    expect(loadCalls).toBe(1);
+    // A second unload is refused too.
+    expect(await residency.unload()).toStrictEqual({
+      kind: "refused",
+      reason: "OperationInProgress",
+      reservation: "held",
+    });
+    // The resident claim is untouched while the unload is pending.
+    const inFlight = authority.snapshot("node-a");
+    expect(inFlight).toHaveLength(1);
+    expect(inFlight[0]?.state).toBe("resident");
+
+    // Resolve the pending unload: it retires exactly the claim it held.
+    unloadResolve!({ kind: "unloaded", modelId: ID, reservation: "released" });
+    expect(await unloadPromise).toStrictEqual({
+      kind: "unloaded",
+      modelId: ID,
+      reservation: "released",
+    });
+    // Nothing was admitted mid-unload and nothing is left unmetered or
+    // double-released: the ledger is empty and residency is unclaimed.
+    expect(authority.snapshot("node-a")).toHaveLength(0);
+    expect(residency.residency()).toBe("unclaimed");
+    expect(loadCalls).toBe(1);
   });
 });

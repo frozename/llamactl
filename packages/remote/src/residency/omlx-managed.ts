@@ -66,7 +66,13 @@ export function createManagedOmlxResidency(
 ): ManagedOmlxResidency {
   let state: ManagedOmlxResidencyState = "unclaimed";
   let handle: TargetAdmissionClaimHandle | null = null;
+  // One shared operation flight gates the whole layer: while a load or an
+  // unload is in flight, a concurrent ensureLoaded joins the load promise
+  // (M10) but a second unload, and any ensureLoaded against a pending
+  // unload, are refused without touching the client, so an unload can never
+  // release a claim admitted after it started.
   let flight: Promise<ManagedEnsureLoadedResult> | null = null;
+  let unloadInFlight = false;
 
   const abandonClaim = (admitted: TargetAdmissionClaimHandle): void => {
     admitted.releaseUnstarted();
@@ -133,6 +139,7 @@ export function createManagedOmlxResidency(
   return {
     async ensureLoaded(): Promise<ManagedEnsureLoadedResult> {
       if (state === "uncertain") return { kind: "refused", reason: "ResidencyUncertain" };
+      if (unloadInFlight) return { kind: "refused", reason: "OperationInProgress" };
       if (flight !== null) return await flight;
       const promise = ensureLoadedInner().finally(() => {
         flight = null;
@@ -141,25 +148,33 @@ export function createManagedOmlxResidency(
       return await promise;
     },
     async unload(): Promise<NativeUnloadResult> {
-      if (flight !== null) {
+      if (flight !== null || unloadInFlight) {
         return { kind: "refused", reason: "OperationInProgress", reservation: "held" };
       }
-      const result = await opts.client.unload();
-      if (result.reservation === "released") {
-        if (handle !== null && (state === "resident" || state === "uncertain")) {
-          handle.releaseVerified();
+      // The shared flight marker is held across the whole unload, so no
+      // ensureLoaded can admit a claim mid-unload and the claim this unload
+      // retires below is provably the one it started with.
+      unloadInFlight = true;
+      try {
+        const result = await opts.client.unload();
+        if (result.reservation === "released") {
+          if (handle !== null && (state === "resident" || state === "uncertain")) {
+            handle.releaseVerified();
+          }
+          handle = null;
+          state = "unclaimed";
+        } else if (result.reservation === "uncertain") {
+          if (handle !== null && state === "resident") {
+            handle.demoteUncertain();
+          }
+          // Even with no claim held, local residency goes uncertain so a
+          // later ensureLoaded refuses instead of guessing at the backend.
+          state = "uncertain";
         }
-        handle = null;
-        state = "unclaimed";
-      } else if (result.reservation === "uncertain") {
-        if (handle !== null && state === "resident") {
-          handle.demoteUncertain();
-        }
-        // Even with no claim held, local residency goes uncertain so a
-        // later ensureLoaded refuses instead of guessing at the backend.
-        state = "uncertain";
+        return result;
+      } finally {
+        unloadInFlight = false;
       }
-      return result;
     },
     residency(): ManagedOmlxResidencyState {
       return state;
