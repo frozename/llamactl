@@ -2,7 +2,7 @@ import type { AgentWorkerRpc, AgentWorkerRpcRelay } from "@llamactl/core/config/
 
 import { inferenceRpc, openaiProxy } from "@llamactl/core";
 import { resolveEnv } from "@llamactl/core/env";
-import { migrateLegacySingletonRuntime } from "@llamactl/core/workloadRuntime";
+import { listLocalRoutes, migrateLegacySingletonRuntime } from "@llamactl/core/workloadRuntime";
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
 import { join } from "node:path";
 
@@ -16,6 +16,7 @@ import {
   type WorkerRpcHostOptions,
 } from "../inference/procedures.js";
 import { dispatchProxyRequest, publishUnifiedPeerSnapshots } from "../proxy/create-proxy.js";
+import { listDeclaredModels } from "../residency/catalog.js";
 import { type AgentRouterContext, router as appRouter } from "../router.js";
 import { handleFleetSnapshotRoute } from "../routes/fleet.js";
 import { existsSync, readFileSync } from "../safe-fs.js";
@@ -32,6 +33,7 @@ import {
   type TunnelState,
 } from "../tunnel/index.js";
 import { isInferenceRpcProcedure } from "../tunnel/messages.js";
+import { LOCAL_NODE_ID } from "../workload/modelhost-schema.js";
 import { listWorkloads, saveWorkload } from "../workload/store.js";
 import { handleAgentRollback, handleAgentUpdate } from "./agent-update.js";
 import { type ArtifactsHandlerOptions, handleArtifact } from "./artifacts.js";
@@ -110,6 +112,15 @@ export interface StartAgentOptions {
    */
   peerSnapshotPoll?: boolean;
   peerSnapshotPollIntervalMs?: number;
+  /**
+   * Registers the #280 DF-07 declared-model source with openaiProxy:
+   * agent-local workload manifests projected to DeclaredModelEntryV1.
+   * Off by default — only `agent serve` with LLAMACTL_DECLARED_MODELS=1
+   * enables it. The source is read fresh on every route miss and every
+   * listing and never cached, because in-place manifest edits do not
+   * bump the dir mtime.
+   */
+  declaredModels?: boolean;
   /**
    * Override paths for the /register handler. Production leaves this
    * unset so the handler uses ~/.llamactl/bootstrap-tokens and
@@ -870,6 +881,24 @@ function maybeStartPeerSnapshotPoller(opts: StartAgentOptions): (() => void) | n
   });
 }
 
+function maybeRegisterDeclaredModels(opts: StartAgentOptions): (() => void) | null {
+  if (!opts.declaredModels) return null;
+  // Project with LOCAL_NODE_ID, not the agent's nodeName: agent-local
+  // manifests carry spec.node 'local' (router.ts:144, reconciler.ts:480),
+  // while nodeName defaults to LLAMACTL_NODE_NAME or 'agent'. No `dir`:
+  // defaultWorkloadsDir() re-reads env on every call. No cache: in-place
+  // manifest edits do not bump the dir mtime.
+  openaiProxy.setDeclaredModelSource(() =>
+    listDeclaredModels({
+      nodeName: LOCAL_NODE_ID,
+      liveModelIds: new Set(listLocalRoutes(resolveEnv()).map((route) => route.model)),
+    }),
+  );
+  return (): void => {
+    openaiProxy.setDeclaredModelSource(null);
+  };
+}
+
 interface WorkerRpcServing {
   /** The service-credential bindings current now. */
   bindings(): readonly ServiceCredentialBinding[];
@@ -1007,6 +1036,7 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
 
   startSearchIngest().catch(() => undefined);
   const stopPeerSnapshotPoller = maybeStartPeerSnapshotPoller(opts);
+  const unregisterDeclaredModels = maybeRegisterDeclaredModels(opts);
   const nodeName = opts.nodeName ?? process.env["LLAMACTL_NODE_NAME"] ?? "agent";
   agentInfo.set(
     {
@@ -1070,6 +1100,10 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
       });
     },
     stop: async (): Promise<void> => {
+      // Clear the declared-model source so its entries vanish from
+      // listOpenAIModels() before any other subsystem tears down; this
+      // must run first so the proxy caches are invalidated early.
+      unregisterDeclaredModels?.();
       // Worker-RPC attempts drain first, while their transports are up.
       await workerRpc?.drain();
       // Remove exactly the process handlers this call installed so
