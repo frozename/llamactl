@@ -14,9 +14,12 @@ import type { QueueRefuseReason, RequestQueuePolicy } from "./queue-policy.js";
 
 /**
  * Refuse reasons for the probe. Beyond the policy's own reasons it reports
- * `NotLoadable` (the declared entry can never load) and `RequestIdConflict`
- * (the probe's id matched an entry the probe did not create, so the probe
- * cannot report a verdict without disturbing that entry).
+ * `NotLoadable` (the declared entry is not both `cold` and auto-load-eligible:
+ * this covers never-loadable `disabled`/`unavailable` entries and entries that
+ * are not auto-load-eligible, but also the transient `loading` and `draining`
+ * states, so it does not by itself mean the entry can never load) and
+ * `RequestIdConflict` (the probe's id matched an entry the probe did not
+ * create, so the probe cannot report a verdict without disturbing that entry).
  */
 export type ColdPinProbeRefuseReason = "NotLoadable" | "RequestIdConflict" | QueueRefuseReason;
 

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { RequestQueueLimits } from "../src/residency/queue-policy.js";
+import type { RequestQueueLimits, RequestQueuePolicy } from "../src/residency/queue-policy.js";
 import type { RouteCandidate, RouteCatalog } from "../src/routing/catalog.js";
 import type { ResolvedEnv } from "../src/types.js";
 import type { PeerSnapshot } from "../src/workloadRuntime.js";
@@ -3221,6 +3221,144 @@ describe("declared cold models (#280)", () => {
       t.cleanup();
     }
   });
+
+  const probeBodyRequest = (extra: Record<string, unknown>): Request =>
+    new Request("http://localhost/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "cold/model-a.gguf",
+        messages: [{ role: "user", content: "hi" }],
+        ...extra,
+      }),
+    });
+
+  test("#281: max_completion_tokens takes precedence over max_tokens in the probe", async () => {
+    const t = tempEnv({ LLAMA_CPP_PORT: "17777" });
+    try {
+      const upstream = installConditionalChatUpstream();
+      const policy = createRequestQueuePolicy({
+        limits: queueLimits({ maxContextTokens: 1_000 }),
+        now: () => 1_000,
+      });
+      coldPinQueueProbeSeam.setColdPinQueueProbe?.({ policy });
+      declaredModelSeam.setDeclaredModelSource?.(() => [declaredModelEntry("cold/model-a.gguf")]);
+
+      const overByCompletion = await openaiProxy.proxyOpenAI(
+        probeBodyRequest({ max_completion_tokens: 5_000, max_tokens: 10 }),
+        t.env,
+      );
+      expect(overByCompletion.status).toBe(503);
+      const overBody = (await overByCompletion.json()) as { error: { queue_probe?: unknown } };
+      expect(overBody.error.queue_probe).toEqual({
+        kind: "would_refuse",
+        reason: "ContextLimitExceeded",
+        retry_after_ms: null,
+      });
+
+      const underByCompletion = await openaiProxy.proxyOpenAI(
+        probeBodyRequest({ max_completion_tokens: 10, max_tokens: 5_000 }),
+        t.env,
+      );
+      expect(underByCompletion.status).toBe(503);
+      const underBody = (await underByCompletion.json()) as { error: { queue_probe?: unknown } };
+      expect(underBody.error.queue_probe).toEqual({
+        kind: "would_queue",
+        queue_depth: 1,
+        max_wait_ms: 10_000_000,
+      });
+      expect(upstream.calls).toHaveLength(0);
+    } finally {
+      t.cleanup();
+    }
+  });
+
+  test("#281: negative and non-integer token limits are dropped, not passed to the policy", async () => {
+    const t = tempEnv({ LLAMA_CPP_PORT: "17777" });
+    try {
+      const upstream = installConditionalChatUpstream();
+      const policy = createRequestQueuePolicy({
+        limits: queueLimits({ maxContextTokens: 1_000 }),
+        now: () => 1_000,
+      });
+      coldPinQueueProbeSeam.setColdPinQueueProbe?.({ policy });
+      declaredModelSeam.setDeclaredModelSource?.(() => [declaredModelEntry("cold/model-a.gguf")]);
+
+      for (const extra of [
+        { max_tokens: -5 },
+        { max_completion_tokens: -5 },
+        { max_tokens: 5_000.5 },
+        { max_completion_tokens: 5_000.5 },
+      ]) {
+        const res = await openaiProxy.proxyOpenAI(probeBodyRequest(extra), t.env);
+        expect(res.status).toBe(503);
+        const body = (await res.json()) as { error: { queue_probe?: unknown } };
+        expect(body.error.queue_probe).toEqual({
+          kind: "would_queue",
+          queue_depth: 1,
+          max_wait_ms: 10_000_000,
+        });
+      }
+      expect(upstream.calls).toHaveLength(0);
+    } finally {
+      t.cleanup();
+    }
+  });
+
+  // A real policy whose `throwOn` method throws; the other methods delegate.
+  const throwingPolicy = (throwOn: "enqueue" | "snapshot"): RequestQueuePolicy => {
+    const real = createRequestQueuePolicy({ limits: queueLimits(), now: () => 1_000 });
+    return new Proxy(real, {
+      get(target, prop, receiver): unknown {
+        if (prop === throwOn) {
+          return (): never => {
+            throw new Error(`${throwOn} exploded`);
+          };
+        }
+        const value: unknown = Reflect.get(target, prop, receiver);
+        return typeof value === "function"
+          ? (value as (...a: unknown[]) => unknown).bind(target)
+          : value;
+      },
+    });
+  };
+
+  for (const label of ["enqueue", "snapshot"] as const) {
+    const makePolicy = (): RequestQueuePolicy => throwingPolicy(label);
+    test(`#281: a policy whose ${label} throws leaves queue_probe out of the #280 503 body`, async () => {
+      const t = tempEnv({ LLAMA_CPP_PORT: "17777" });
+      try {
+        const upstream = installConditionalChatUpstream();
+        declaredModelSeam.setDeclaredModelSource?.(() => [declaredModelEntry("cold/model-a.gguf")]);
+        const optInOff = await openaiProxy.proxyOpenAI(chatRequest("cold/model-a.gguf"), t.env);
+        expect(optInOff.status).toBe(503);
+        const optInOffText = await optInOff.text();
+
+        coldPinQueueProbeSeam.setColdPinQueueProbe?.({ policy: makePolicy() });
+        const res = await openaiProxy.proxyOpenAI(chatRequest("cold/model-a.gguf"), t.env);
+
+        expect(res.status).toBe(503);
+        expect(res.headers.get("retry-after")).toBeNull();
+        const text = await res.text();
+        const body = JSON.parse(text) as { error: Record<string, unknown> };
+        expect("queue_probe" in body.error).toBe(false);
+        expect(text).toBe(optInOffText);
+        expect(body).toEqual({
+          error: {
+            message: "model 'cold/model-a.gguf' is declared but not loaded (state: cold)",
+            type: "model_not_loaded",
+            code: "model_not_loaded",
+            param: "model",
+            state: "cold",
+            auto_load_eligible: true,
+          },
+        });
+        expect(upstream.calls).toHaveLength(0);
+      } finally {
+        t.cleanup();
+      }
+    });
+  }
 
   test("#281: a declared entry that cannot load reports would_refuse NotLoadable", async () => {
     const t = tempEnv({ LLAMA_CPP_PORT: "17777" });
