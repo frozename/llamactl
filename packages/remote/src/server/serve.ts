@@ -225,6 +225,9 @@ export interface StartAgentOptions {
    * default) the seam is never read or written, the host gets no
    * `residencyLeases`, and behaviour is identical.
    *
+   * A throw anywhere after the Worker RPC host is published now
+   * unpublishes it, restores the seam and stops the bound server.
+   *
    * FOLLOW-UP: the #599 engine-client oMLX native unload takes its own
    * `leases.registry` option (residency/engine-client.ts:130) and is not yet
    * given this published registry.
@@ -979,8 +982,97 @@ interface WorkerRpcServing {
   claimsFor(token: string | null | undefined): InferenceClaims | null;
   /** Drains active attempts and cancels what outlives the window. */
   drain(): Promise<void>;
-  /** Stops serving the host; called once the HTTP server has stopped. */
+  /** Stops serving the host; called once the HTTP server has stopped,
+   * and also during startup-failure rollback. */
   unpublish(): void;
+}
+
+// Rollback helpers started during startup: best-effort, each step
+// individually try/catch'd so one failure cannot mask the original
+// error or skip the others.
+function rollbackStartupResources(
+  started: {
+    server?: { stop(closeActive?: boolean): unknown };
+    unregisterDeclaredModels?: (() => void) | null;
+    mdns?: ReturnType<typeof maybePublishAgentMdns>;
+    tunnelClient?: ReturnType<typeof maybeStartTunnelClient>;
+  },
+  workerRpc: WorkerRpcServing | null,
+  leases: ReturnType<typeof maybePublishResidencyLeases> | null,
+): void {
+  try {
+    started.tunnelClient?.stop();
+  } catch {
+    /* ignore */
+  }
+  try {
+    if (started.mdns) void started.mdns.stop().catch(() => undefined);
+  } catch {
+    /* ignore */
+  }
+  try {
+    void started.server?.stop(true);
+  } catch {
+    /* ignore */
+  }
+  try {
+    started.unregisterDeclaredModels?.();
+  } catch {
+    /* ignore */
+  }
+  try {
+    workerRpc?.unpublish();
+  } catch {
+    /* ignore */
+  }
+  try {
+    leases?.restore();
+  } catch {
+    /* ignore */
+  }
+}
+
+// stop() body extracted to reduce cognitive complexity: drain worker-RPC,
+// remove process handlers, stop the HTTP server, flush served requests,
+// restore the residency seam, and unregister declared-models.
+async function stopAgentServerResources(
+  workerRpc: WorkerRpcServing | null,
+  onUncaughtException: (err: Error) => void,
+  onUnhandledRejection: (err: Error) => void,
+  stopPeerSnapshotPoller: (() => void) | null,
+  server: { stop(closeActive?: boolean): unknown },
+  tunnelClient: ReturnType<typeof maybeStartTunnelClient>,
+  servedRequests: ReturnType<typeof trackServedRequests> | null,
+  mdns: ReturnType<typeof maybePublishAgentMdns>,
+  leases: ReturnType<typeof maybePublishResidencyLeases> | null,
+  unregisterDeclaredModels: (() => void) | null,
+): Promise<void> {
+  await workerRpc?.drain();
+  process.off("uncaughtException", onUncaughtException);
+  process.off("unhandledRejection", onUnhandledRejection);
+  stopSearchIngest();
+  stopPeerSnapshotPoller?.();
+  try {
+    if (workerRpc !== null) {
+      await within(
+        TERMINAL_FLUSH_MS,
+        Promise.all([server.stop(), tunnelClient?.whenIdle()]).then(() => undefined),
+      );
+    }
+  } finally {
+    if (tunnelClient) {
+      try {
+        tunnelClient.stop();
+      } catch {
+        /* ignore */
+      }
+    }
+    void server.stop(true);
+    workerRpc?.unpublish();
+    if (servedRequests !== null || mdns) await finalFlushWindow(servedRequests, mdns);
+    leases?.restore();
+    unregisterDeclaredModels?.();
+  }
 }
 
 // Inside launchd's default 20 s ExitTimeOut, so a SIGTERM'd agent still
@@ -1190,121 +1282,105 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
   const leases = maybePublishResidencyLeases(opts);
   const workerRpc = maybePublishWorkerRpc(opts, leases?.registry ?? null);
 
-  // Wire runtime role + memory budget into the metrics identity.
-  if (opts.runtimeRole !== undefined || opts.runtimeMemoryBudgetBytes !== undefined) {
-    setAgentRuntimeIdentity({
+  const started: {
+    server?: { stop(closeActive?: boolean): unknown };
+    unregisterDeclaredModels?: (() => void) | null;
+    mdns?: ReturnType<typeof maybePublishAgentMdns>;
+    tunnelClient?: ReturnType<typeof maybeStartTunnelClient>;
+  } = {};
+  try {
+    // Wire runtime role + memory budget into the metrics identity.
+    const runtimeIdentity: { role: string; memoryBudgetBytes?: number } = {
       role: opts.runtimeRole ?? "agent",
-      ...(opts.runtimeMemoryBudgetBytes !== undefined
-        ? { memoryBudgetBytes: opts.runtimeMemoryBudgetBytes }
+    };
+    if (opts.runtimeMemoryBudgetBytes !== undefined) {
+      runtimeIdentity.memoryBudgetBytes = opts.runtimeMemoryBudgetBytes;
+    }
+    if (opts.runtimeRole !== undefined || opts.runtimeMemoryBudgetBytes !== undefined) {
+      setAgentRuntimeIdentity(runtimeIdentity);
+    }
+
+    const baseFetchHandler = createAgentFetchHandler({
+      opts,
+      endpoint,
+      tunnelServer,
+      gate,
+      workerRpc,
+    });
+    const servedRequests =
+      opts.declaredModels === true ? trackServedRequests(baseFetchHandler) : null;
+    const fetchHandler = servedRequests?.handler ?? baseFetchHandler;
+
+    const wsConfig = tunnelServer ? tunnelServer.websocket : null;
+    const { server, fingerprint } = startBunServer({
+      tls: opts.tls,
+      allowPlainHttp,
+      port,
+      bindHost,
+      wsConfig,
+      fetchHandler,
+      ...(opts.idleTimeoutSeconds !== undefined
+        ? { idleTimeoutSeconds: opts.idleTimeoutSeconds }
         : {}),
     });
+    started.server = server;
+    // Published only once the listener is actually up, beside the declared
+    // source: a failed bind (a missing cert, a port in use) must not leave an
+    // orphan registry in the process-wide seam for a later start to capture as
+    // its previous value (DF-05 review). The Worker RPC host already holds the
+    // registry instance directly, so deferring the seam write does not desync
+    // drain from admission. Binding is synchronous and this call is the next
+    // statement, so no request can observe the gap. A throw anywhere after
+    // the Worker RPC host is published now unpublishes it, restores the seam
+    // and stops the bound server (#278 DF-05).
+    leases?.publish();
+    const unregisterDeclaredModels = maybeRegisterDeclaredModels(opts);
+    started.unregisterDeclaredModels = unregisterDeclaredModels;
+
+    const scheme = opts.tls && !allowPlainHttp ? "https" : "http";
+    const listenPort = server.port ?? port;
+
+    const mdns = maybePublishAgentMdns(opts, listenPort, fingerprint);
+    started.mdns = mdns;
+
+    const tunnelClient = maybeStartTunnelClient(opts, workerRpc);
+    started.tunnelClient = tunnelClient;
+
+    return {
+      url: `${scheme}://${bindHost}:${String(listenPort)}`,
+      port: listenPort,
+      fingerprint,
+      handleRequest: async (
+        req: Request,
+        address: ClientAddress | null = null,
+      ): Promise<Response> => {
+        return await fetchHandler(req, {
+          requestIP: () => address,
+          // Tunneled requests are synthetic — no socket to upgrade.
+          upgrade: () => false,
+        });
+      },
+      stop: async (): Promise<void> => {
+        await stopAgentServerResources(
+          workerRpc,
+          onUncaughtException,
+          onUnhandledRejection,
+          stopPeerSnapshotPoller,
+          server,
+          tunnelClient,
+          servedRequests,
+          mdns,
+          leases,
+          unregisterDeclaredModels,
+        );
+      },
+      ...(tunnelServer ? { tunnelServer } : {}),
+      ...(tunnelClient ? { tunnelClient } : {}),
+    };
+  } catch (err) {
+    // Synchronous, best-effort rollback: each step is individually try/catch'd
+    // so one failure cannot mask the original error or skip the others.
+    rollbackStartupResources(started, workerRpc, leases);
+    throw err;
   }
-
-  const baseFetchHandler = createAgentFetchHandler({
-    opts,
-    endpoint,
-    tunnelServer,
-    gate,
-    workerRpc,
-  });
-  const servedRequests =
-    opts.declaredModels === true ? trackServedRequests(baseFetchHandler) : null;
-  const fetchHandler = servedRequests?.handler ?? baseFetchHandler;
-
-  const wsConfig = tunnelServer ? tunnelServer.websocket : null;
-  const { server, fingerprint } = startBunServer({
-    tls: opts.tls,
-    allowPlainHttp,
-    port,
-    bindHost,
-    wsConfig,
-    fetchHandler,
-    ...(opts.idleTimeoutSeconds !== undefined
-      ? { idleTimeoutSeconds: opts.idleTimeoutSeconds }
-      : {}),
-  });
-  // Published only once the listener is actually up, beside the declared
-  // source: a failed bind (a missing cert, a port in use) must not leave an
-  // orphan registry in the process-wide seam for a later start to capture as
-  // its previous value (DF-05 review). The Worker RPC host already holds the
-  // registry instance directly, so deferring the seam write does not desync
-  // drain from admission. Binding is synchronous and this call is the next
-  // statement, so no request can observe the gap.
-  leases?.publish();
-  const unregisterDeclaredModels = maybeRegisterDeclaredModels(opts);
-
-  const scheme = opts.tls && !allowPlainHttp ? "https" : "http";
-  const listenPort = server.port ?? port;
-
-  const mdns = maybePublishAgentMdns(opts, listenPort, fingerprint);
-
-  const tunnelClient = maybeStartTunnelClient(opts, workerRpc);
-
-  return {
-    url: `${scheme}://${bindHost}:${String(listenPort)}`,
-    port: listenPort,
-    fingerprint,
-    handleRequest: async (
-      req: Request,
-      address: ClientAddress | null = null,
-    ): Promise<Response> => {
-      return await fetchHandler(req, {
-        requestIP: () => address,
-        // Tunneled requests are synthetic — no socket to upgrade.
-        upgrade: () => false,
-      });
-    },
-    stop: async (): Promise<void> => {
-      // Worker-RPC attempts drain first, while their transports are up.
-      await workerRpc?.drain();
-      // Remove exactly the process handlers this call installed so
-      // repeated start/stop cycles don't accumulate listeners.
-      process.off("uncaughtException", onUncaughtException);
-      process.off("unhandledRejection", onUnhandledRejection);
-      stopSearchIngest();
-      stopPeerSnapshotPoller?.();
-      try {
-        // A drained or cancelled worker-RPC stream has handed its terminal
-        // to its response; let in-flight responses finish before closing.
-        // Tunneled calls never pass through the HTTP server, so the tunnel
-        // stays up until it is idle too, in the same window. The host stays
-        // published until then, so a status or cancel still in flight, over
-        // either transport, is answered by the attempts it names.
-        if (workerRpc !== null) {
-          await within(
-            TERMINAL_FLUSH_MS,
-            Promise.all([server.stop(), tunnelClient?.whenIdle()]).then(() => undefined),
-          );
-        }
-      } finally {
-        // Best-effort — never let a tunnel-client teardown error
-        // prevent the HTTP server from also stopping.
-        if (tunnelClient) {
-          try {
-            tunnelClient.stop();
-          } catch {
-            /* ignore */
-          }
-        }
-        void server.stop(true);
-        workerRpc?.unpublish();
-        // Guarded at the call site: awaiting even an empty async function
-        // costs a microtask, and the default stop() (no opt-in, no mDNS) must
-        // keep its pre-#610 timing. Bonjour's stop is bounded inside it: a
-        // hung one must not keep the tunnel serving or hold stop() open.
-        if (servedRequests !== null || mdns) await finalFlushWindow(servedRequests, mdns);
-        // After the worker-RPC drain, server.stop() and the final flush of
-        // served requests, so in-flight bodies (which may hold leases) settle
-        // against the published registry before the seam reverts (#278 DF-05).
-        leases?.restore();
-        // Unregister the declared-model source only once the HTTP server, the
-        // tunnel client and every request that could still read it are done:
-        // while any of them is up, a cold pin must still get its declared
-        // 503 instead of the default-target fallthrough (DF-07).
-        unregisterDeclaredModels?.();
-      }
-    },
-    ...(tunnelServer ? { tunnelServer } : {}),
-    ...(tunnelClient ? { tunnelClient } : {}),
-  };
 }
