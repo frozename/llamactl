@@ -12,14 +12,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "../src/safe-fs.js";
+import { reapFakeProcesses } from "../../core/test/fake-process-reaper.js";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 /**
  * Controller reconcile-loop E2E. Uses the same fake-llama-server
@@ -79,7 +73,7 @@ done
 exec -a llama-server bun -e "const s=Bun.serve({port:Number(process.env.FAKE_PORT),hostname:process.env.FAKE_HOST,fetch(){return new Response('ok',{status:200});}});process.on('SIGTERM',()=>{s.stop(true);process.exit(0);});process.on('SIGINT',()=>{s.stop(true);process.exit(0);});await new Promise(()=>{});" "$FAKE_MODEL"
 `;
 
-let tmp: string;
+let tmp = "";
 let agent: RunningAgent | null = null;
 let kubeconfigPath = "";
 let workloadsDir = "";
@@ -166,19 +160,18 @@ afterEach(async () => {
     await agent.stop();
     agent = null;
   }
-  const pidFile = join(runtimeDir, "llama-server.pid");
-  if (existsSync(pidFile)) {
-    const pid = Number.parseInt(readFileSync(pidFile, "utf8").trim(), 10);
-    if (Number.isFinite(pid) && pid > 0) {
-      try {
-        process.kill(pid, "SIGTERM");
-      } catch {
-        /* Intentionally empty. */
-      }
-    }
-  }
   process.env = { ...originalEnv };
+  // tmp stays empty when beforeEach threw before mkdtempSync; skip the
+  // teardown then so the original error is the one reported.
+  if (tmp === "") return;
+  const survivors = await reapFakeProcesses({
+    scratch: tmp,
+    pidFiles: [join(runtimeDir, "llama-server.pid")],
+  });
   rmSync(tmp, { recursive: true, force: true });
+  tmp = "";
+  // A fake the reaper could not take down fails the file, after cleanup.
+  expect(survivors).toEqual([]);
 });
 
 function testEnv(): NodeJS.ProcessEnv {
