@@ -551,11 +551,14 @@ async function dispatchPlainOpenAiRequest(
   if (ctx.fallback) {
     // Rebuild a fresh Request so the fallback can .text() / .json()
     // the body itself (the original Request's body is already
-    // consumed above).
+    // consumed above). The signal must be carried so a client abort
+    // before response headers (prefill, or non-streaming) cancels
+    // upstream inference (#316).
     const forwarded = new Request(req.url, {
       method: req.method,
       headers: req.headers,
       body: bodyText,
+      signal: req.signal,
     });
     return await ctx.fallback(forwarded);
   }

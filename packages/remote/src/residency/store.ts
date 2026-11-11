@@ -13,10 +13,11 @@
 // reservationGiB is recorded, not admitted: nothing here checks the value
 // against a node memory budget — that is the job of #274 and the #276
 // follow-ups.
+import { llamactlHome } from "@llamactl/core/config/env";
 import { Database } from "bun:sqlite";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 
-import { mkdirSync } from "../safe-fs.js";
+import { existsSync, mkdirSync } from "../safe-fs.js";
 
 const SCHEMA_VERSION = 1;
 
@@ -199,6 +200,42 @@ function openDb(path: string): Database {
     throw error;
   }
   return db;
+}
+
+// Single source of truth for the node-local residency store path. The file
+// must resolve to node-local disk: a network path would silently rot the
+// fence, so this resolver — not the caller's cwd — decides where it lives.
+export function defaultResidencyStorePath(env: NodeJS.ProcessEnv = process.env): string {
+  const override = env["LLAMACTL_RESIDENCY_STORE"]?.trim();
+  if (override) {
+    return override;
+  }
+  return join(llamactlHome(env), "residency", "operations.sqlite");
+}
+
+export type ResidencyStoreSnapshot =
+  | { path: string; present: false }
+  | { path: string; present: true; nonterminal: ResidencyOperationRecord[] }
+  | { path: string; present: true; error: string };
+
+// Read-only view of an existing store. Never mkdir, never set journal_mode,
+// never migrate, never claim ownership — a status read must leave the file
+// byte-identical. Opened readonly but NOT immutable: immutable=1 skips the
+// WAL, so rows a live writer has not checkpointed yet would go unseen.
+export function readResidencyStoreSnapshot(path: string): ResidencyStoreSnapshot {
+  if (!existsSync(path)) {
+    return { path, present: false };
+  }
+  let db: Database | null = null;
+  try {
+    db = new Database(path, { readonly: true });
+    db.run("PRAGMA busy_timeout = 15000");
+    return { path, present: true, nonterminal: listNonterminalRows(db) };
+  } catch (error: unknown) {
+    return { path, present: true, error: (error as Error).message };
+  } finally {
+    db?.close();
+  }
 }
 
 function migrate(db: Database): void {

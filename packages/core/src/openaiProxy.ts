@@ -40,6 +40,7 @@ import {
   writeTrailer,
 } from "./kvstore/index.js";
 import { omitUndefined } from "./object.js";
+import { bindLeaseToBody, getResidencyLeaseRegistry, type Lease } from "./residency/leases.js";
 import {
   isDeterministic,
   openResponseCacheStorage,
@@ -84,9 +85,10 @@ const MAX_JSON_BODY_BYTES = 10 * 1024 * 1024;
  * widened with an `unavailable` sibling array (#280 D-2) listing
  * catalog rows whose availability is declared unavailable, and a
  * `declared` sibling array (#280 DF-07) listing non-ready declared
- * model entries. The declared-model source is a seam only for now:
- * declared entries do not reach the /v1/models HTTP surface — the
- * server still emits only `.data`.
+ * model entries. `listOpenAIModels` always computes both siblings, but
+ * the /v1/models HTTP surface emits only `.data` by default; it widens
+ * the body with `declared`/`unavailable` only when the caller opts in
+ * with `?include=declared` — see `projectModelsResponseBody`.
  *
  * JSON requests can route by request-body `model` across live
  * workloads on the node. When no model matches, or the body is not
@@ -169,6 +171,32 @@ export function listOpenAIModels(
   // cached object itself is never mutated.
   const base = getCachedModelsResponse(keyOrResolved);
   return { ...base, declared: declaredModelInfos(keyOrResolved, base) };
+}
+
+/**
+ * Projects the models response onto the `/v1/models` HTTP body. The
+ * default body is the standard `{object,data}` shape; the
+ * `?include=declared` opt-in (#280 DF-07) widens it with the `declared`
+ * and `unavailable` sibling arrays. Keeping the projection beside the
+ * response it reads is what lets the opt-in shape be pinned without a
+ * live agent.
+ */
+export function projectModelsResponseBody(
+  full: OpenAIModelListResponse,
+  includeDeclared: boolean,
+): {
+  object: "list";
+  data: ModelInfo[];
+  declared?: DeclaredModelInfo[];
+  unavailable?: UnavailableModelInfo[];
+} {
+  if (!includeDeclared) return { object: "list", data: full.data };
+  return {
+    object: "list",
+    data: full.data,
+    declared: full.declared,
+    unavailable: full.unavailable,
+  };
 }
 
 function createdAtForRoute(route: workloadRuntime.ClusterRoute, resolved: ResolvedEnv): number {
@@ -2949,6 +2977,100 @@ function warnResponseCacheStageFailure(stage: "lookup" | "persist", error: unkno
 }
 
 /**
+ * #278 (DF-05): opt-in residency-lease admission for a locally routed
+ * request. `null` means "not applicable" (no installed registry, no route,
+ * or a peer route) and the request proceeds lease-free; a `Response` is the
+ * 503 refusal for a draining or unloaded workload.
+ */
+function acquireProxyResidencyLease(route: RoutedEntry | undefined): Lease | Response | null {
+  const registry = getResidencyLeaseRegistry();
+  if (registry === null || route === undefined || route.isPeer === true) return null;
+  const acquired = registry.acquire(route.workload);
+  if (acquired.ok) return acquired.lease;
+  const draining = acquired.reason === "Draining";
+  return Response.json(
+    {
+      error: {
+        message: `model ${route.model} (workload ${route.workload}) is ${draining ? "draining" : "not loaded"}`,
+        type: draining ? "model_draining" : "model_not_loaded",
+        code: acquired.reason,
+      },
+    },
+    { status: 503 },
+  );
+}
+
+/**
+ * #278 (DF-05): release the lease when the client aborts, releasing
+ * immediately if the request signal is already aborted. Returns the
+ * listener so the non-body and throw paths can detach it; release() is
+ * idempotent, so a double-settle (abort listener plus bound body) is safe.
+ */
+function attachLeaseAbortRelease(req: Request, lease: Lease): () => void {
+  const onAbort = (): void => {
+    lease.release();
+  };
+  if (req.signal.aborted) onAbort();
+  else req.signal.addEventListener("abort", onAbort, { once: true });
+  return onAbort;
+}
+
+/**
+ * #278 (DF-05): stage the lease signal into the upstream fetch signal so a
+ * forced commitUnload before headers aborts upstream. Composed after
+ * maybeKvLookup because the warm-KV path rewrites init; forward() folds it
+ * together with the client signal and the upstream budget unchanged.
+ */
+function composeLeaseIntoInit(context: ProxyContext, lease: Lease): void {
+  context.init = {
+    ...context.init,
+    signal: composeAbortSignals(context.init.signal, lease.signal) ?? null,
+  };
+}
+
+/**
+ * #278 (DF-05): run the forward/persist pipeline and hand the residency
+ * lease to the final response body. On a null body or any throw the lease is
+ * released exactly once and the client-abort listener is detached; with a
+ * body the lease lives until the bound stream settles (or is revoked).
+ */
+async function forwardAndBindResidencyLease(
+  context: ProxyContext,
+  lease: Lease | null,
+  onClientAbort: (() => void) | null,
+): Promise<Response> {
+  let handedOff = false;
+  try {
+    const upstream = await forward(context);
+    try {
+      await maybePersistKv(context, upstream);
+    } catch (error) {
+      warnKvStageFailure("persist", error);
+    }
+    const synthesizedSse = await maybeSynthesizeOmlxSseResponse(context, upstream);
+    const translatedResponse = synthesizedSse ?? (await maybeTranslateResponse(context, upstream));
+    const res = await maybePersistResponseCache(context, translatedResponse);
+    if (lease !== null && res.body !== null) {
+      handedOff = true;
+      return new Response(bindLeaseToBody(res.body, lease), {
+        status: res.status,
+        statusText: res.statusText,
+        headers: res.headers,
+      });
+    }
+    return res;
+  } finally {
+    releaseWarmHitLease(context);
+    if (!handedOff && lease !== null) {
+      lease.release();
+      if (onClientAbort !== null) {
+        context.req.signal.removeEventListener("abort", onClientAbort);
+      }
+    }
+  }
+}
+
+/**
  * Proxy an OpenAI-style request (chat/completions, completions,
  * embeddings, etc.) to the local llama-server. JSON bodies can route
  * by `model` across live workloads, and Bun/Node fetch responses are
@@ -2979,24 +3101,20 @@ export async function proxyOpenAI(
     return withResponseCacheLookup.responseCacheHit;
   }
 
+  // #278 (DF-05): acquire before maybeKvLookup so a refused or draining
+  // request never runs applyWarmKvHit (slot restore, KV row reserve, slot
+  // allocator), and cache hits never need a lease.
+  const admission = acquireProxyResidencyLease(withResponseCacheLookup.route);
+  if (admission instanceof Response) return admission;
+  const lease = admission;
+  const onClientAbort = lease === null ? null : attachLeaseAbortRelease(req, lease);
+
   let withKvLookup = withResponseCacheLookup;
   try {
     withKvLookup = await maybeKvLookup(withResponseCacheLookup);
   } catch (error) {
     warnKvStageFailure("lookup", error);
   }
-  try {
-    const upstream = await forward(withKvLookup);
-    try {
-      await maybePersistKv(withKvLookup, upstream);
-    } catch (error) {
-      warnKvStageFailure("persist", error);
-    }
-    const synthesizedSse = await maybeSynthesizeOmlxSseResponse(withKvLookup, upstream);
-    const translatedResponse =
-      synthesizedSse ?? (await maybeTranslateResponse(withKvLookup, upstream));
-    return await maybePersistResponseCache(withKvLookup, translatedResponse);
-  } finally {
-    releaseWarmHitLease(withKvLookup);
-  }
+  if (lease !== null) composeLeaseIntoInit(withKvLookup, lease);
+  return await forwardAndBindResidencyLease(withKvLookup, lease, onClientAbort);
 }

@@ -754,6 +754,8 @@ describe("I1: clean install", () => {
     BASELINE_ENV.add("LLAMACTL_TUNNEL_CENTRAL_BEARER_FILE");
     // #410: dist-dir override for the `llamactl console` web launcher, not the worker RPC.
     BASELINE_ENV.add("LLAMACTL_CONSOLE_DIST");
+    // #609 (#284): residency operation store path override read by the read-only residencyStatus query, not the worker RPC.
+    BASELINE_ENV.add("LLAMACTL_RESIDENCY_STORE");
     const sources = join(import.meta.dir, "..", "..");
     const read = new Map<string, string[]>();
     for (const pkg of readdirSync(sources)) {
