@@ -460,7 +460,7 @@ describe("server.startServer residency start fence (#278)", () => {
     expect(events).toContain("retry");
   });
 
-  test("an unloaded workload starts unfenced and stays unloaded", async () => {
+  test("an unloaded workload starts unfenced, and the successful start reopens admission", async () => {
     standUpModelAndBin();
     const registry = createResidencyLeases();
     setResidencyLeaseRegistry(registry);
@@ -490,6 +490,8 @@ describe("server.startServer residency start fence (#278)", () => {
     // exactly once, and the verified stop let the new spawn's pid replace it.
     expect(probed).toEqual([4194305]);
     expect(readServerPid(TEST_KEY)).toBe(process.pid);
-    expect(registry.snapshot("test-wl").phase).toBe("unloaded");
+    // #623: every successful start path reopens admission (withReopenAfterLoad),
+    // so the workload committed to 'unloaded' is admitting again afterwards.
+    expect(registry.snapshot("test-wl").phase).toBe("open");
   });
 });
