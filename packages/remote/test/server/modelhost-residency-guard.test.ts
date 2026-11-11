@@ -48,8 +48,9 @@ function newRoot(): string {
 // Backstop for fakes that outlive their test: afterEach covers the
 // just-finished test, afterAll covers a start that returned ok after the
 // finally's stop window.
+// A fake the reaper could not take down fails the file.
 async function reapAllRoots(): Promise<void> {
-  await reapFakeProcesses({ scratch: [...roots], pids: [...spawnedPids] });
+  expect(await reapFakeProcesses({ scratch: [...roots], pids: [...spawnedPids] })).toEqual([]);
 }
 
 afterEach(async () => {

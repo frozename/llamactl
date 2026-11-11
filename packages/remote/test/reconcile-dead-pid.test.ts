@@ -122,7 +122,7 @@ afterEach(async () => {
   } catch {
     // best effort; the reaper below is the safety net
   }
-  await reapFakeProcesses({ scratch: tmp, pids: [...spawnedPids] });
+  const survivors = await reapFakeProcesses({ scratch: tmp, pids: [...spawnedPids] });
   spawnedPids.clear();
   await decoy?.stop(true);
   decoy = null;
@@ -131,6 +131,8 @@ afterEach(async () => {
   // tmp stays empty when beforeEach threw before mkdtempSync.
   if (tmp !== "") rmSync(tmp, { recursive: true, force: true });
   tmp = "";
+  // A fake the reaper could not take down fails the file, after cleanup.
+  expect(survivors).toEqual([]);
 });
 
 test("reconcile restarts a Running workload whose recorded pid died out-of-band", async () => {

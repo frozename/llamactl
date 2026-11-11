@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -31,6 +31,29 @@ export FAKE_PORT="$PORT"
 exec -a rpc-server bun -e "const s=Bun.listen({hostname:process.env.FAKE_HOST,port:Number(process.env.FAKE_PORT),socket:{data(){},open(){},close(){},error(){}}});process.on('SIGTERM',()=>{s.stop();process.exit(0);});process.on('SIGINT',()=>{s.stop();process.exit(0);});await new Promise(()=>{});"
 `;
 
+// Every pid startRpcServer hands back. The fake's argv carries no tmp
+// path, so a test that deletes the pidfile would otherwise hide a live
+// fake from the reaper; afterEach passes these as explicit pids.
+const startedPids = new Set<number>();
+
+async function startTracked(
+  opts: Parameters<typeof startRpcServer>[0],
+): ReturnType<typeof startRpcServer> {
+  const result = await startRpcServer(opts);
+  if (result.pid !== null) startedPids.add(result.pid);
+  return result;
+}
+
+function isLiveFakeRpcServer(pid: number): boolean {
+  const res = spawnSync("ps", ["-ww", "-o", "stat=,command=", "-p", String(pid)], {
+    encoding: "utf8",
+  });
+  const line = res.stdout.trim();
+  if (res.status !== 0 || line === "" || line.startsWith("Z")) return false;
+  const argv0 = line.split(/\s+/)[1] ?? "";
+  return argv0.slice(argv0.lastIndexOf("/") + 1) === "rpc-server";
+}
+
 function pickPort(): number {
   return 19050 + Math.floor(Math.random() * 99);
 }
@@ -53,22 +76,36 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  // The fake's argv carries no tmp path, so the pidfile is the only way
-  // the reaper finds it. The flag keeps the pidfile read out of reach of
-  // an unassigned `resolved` when beforeEach threw early.
-  // tmp stays empty when beforeEach threw before mkdtempSync.
+  // The fake's argv carries no tmp path, so the reaper finds it by the
+  // pidfile and by the pids startRpcServer returned. The flag keeps the
+  // pidfile read out of reach of an unassigned `resolved` when beforeEach
+  // threw early. tmp stays empty when beforeEach threw before mkdtempSync.
   const pidFiles = resolvedReady ? [join(resolved.LOCAL_AI_RUNTIME_DIR, "rpc-server.pid")] : [];
   process.env = { ...origEnv };
   if (tmp === "") return;
-  await reapFakeProcesses({ scratch: tmp, pidFiles });
+  const pids = [...startedPids];
+  startedPids.clear();
+  const survivors = await reapFakeProcesses({ scratch: tmp, pidFiles, pids });
+  // A fake the reaper never found still holds its rpc-server argv0: kill
+  // it here so the failure below cannot leak it past the run.
+  const leaked = pids.filter(isLiveFakeRpcServer);
+  for (const pid of leaked) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // already gone
+    }
+  }
   rmSync(tmp, { recursive: true, force: true });
   tmp = "";
+  expect(survivors).toEqual([]);
+  expect(leaked).toEqual([]);
 });
 
 describe("rpcServer", () => {
   test("starts, reports status=up with host+port, stops cleanly", async () => {
     const port = pickPort();
-    const result = await startRpcServer({ host: "127.0.0.1", port, timeoutSeconds: 5 });
+    const result = await startTracked({ host: "127.0.0.1", port, timeoutSeconds: 5 });
     expect(result.ok).toBe(true);
     expect(result.endpoint).toBe(`127.0.0.1:${String(port)}`);
     expect(result.pid).not.toBeNull();
@@ -91,7 +128,7 @@ describe("rpcServer", () => {
 
   test("missing binary returns an ok=false StartResult", async () => {
     rmSync(join(resolved.LLAMA_CPP_BIN, "rpc-server"));
-    const result = await startRpcServer({ host: "127.0.0.1", port: pickPort() });
+    const result = await startTracked({ host: "127.0.0.1", port: pickPort() });
     expect(result.ok).toBe(false);
     expect(result.error).toContain("rpc-server binary not found");
   });
@@ -105,7 +142,7 @@ describe("rpcServer", () => {
   test("emits launch → waiting*? → ready events", async () => {
     const events: { type: string }[] = [];
     const port = pickPort();
-    const result = await startRpcServer({
+    const result = await startTracked({
       host: "127.0.0.1",
       port,
       timeoutSeconds: 5,
@@ -156,7 +193,7 @@ describe("rpcServer", () => {
     const stateFile = join(resolved.LOCAL_AI_RUNTIME_DIR, "rpc-server.state");
 
     const port = pickPort();
-    const result = await startRpcServer({ host: "127.0.0.1", port, timeoutSeconds: 1 });
+    const result = await startTracked({ host: "127.0.0.1", port, timeoutSeconds: 1 });
 
     expect(result.ok).toBe(false);
     expect(result.error).toContain("timeout");

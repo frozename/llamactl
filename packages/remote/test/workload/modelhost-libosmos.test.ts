@@ -107,9 +107,11 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await reapFakeProcesses({ scratch: tmp, pids: [...spawnedPids] });
+  const survivors = await reapFakeProcesses({ scratch: tmp, pids: [...spawnedPids] });
   // tmp stays empty when beforeAll threw before mkdtempSync.
   if (tmp !== "") rmSync(tmp, { recursive: true, force: true });
+  // A fake the reaper could not take down fails the file, after cleanup.
+  expect(survivors).toEqual([]);
 });
 
 test("libosmos host lifecycle: start, adopt, stop", async () => {

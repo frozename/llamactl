@@ -486,6 +486,48 @@ test("reapFakeProcesses waits until a TERM-ignoring fake is gone before resolvin
   }
 });
 
+test("a TERM-ignoring group member without the scratch path gets SIGTERM, then SIGKILL", async () => {
+  // The leader is an engine-named sleep that dies on SIGTERM. Its child
+  // shares the group, carries no scratch path in argv (the marker path
+  // arrives through the environment) and traps TERM: the handler writes
+  // the marker and the loop carries on, so only the group SIGKILL ends it.
+  const scratch = newScratch("llamactl-reaper-groupmember-");
+  const marker = join(scratch, "member-got-term");
+  const ready = join(scratch, "member-ready");
+  const member = `trap 'echo term > "$MARKER"' TERM; echo ready > "$READY"; while :; do sleep 0.05; done`;
+  const child = spawn("bash", ["-c", `bash -c "$1" & echo $!; ${ENGINE_SLEEP}`, "leader", member], {
+    detached: true,
+    stdio: ["ignore", "pipe", "ignore"],
+    env: { ...process.env, MARKER: marker, READY: ready },
+  });
+  child.unref();
+  const leader = track(child, true);
+  let memberPid = 0;
+  try {
+    const first = await new Promise<string>((resolve) => {
+      child.stdout.once("data", (chunk: Buffer) => {
+        resolve(chunk.toString("utf8"));
+      });
+    });
+    child.stdout.destroy();
+    memberPid = Number.parseInt(first.trim(), 10);
+    ownedPids.add(memberPid);
+    await waitFor(() => (rowOf(leader)?.command ?? "").startsWith("llama-server"));
+    await waitFor(() => existsSync(ready));
+    const memberRow = rowOf(memberPid);
+    expect(memberRow?.pgid).toBe(leader);
+    expect(memberRow?.command.includes(scratch)).toBe(false);
+
+    const survivors = await reapFakeProcesses({ pids: [leader], graceMs: 500, timeoutMs: 2000 });
+    expect(isLive(memberPid)).toBe(false);
+    expect(survivors).toEqual([]);
+    expect(existsSync(marker)).toBe(true);
+  } finally {
+    killOwned(leader);
+    if (memberPid > 0) killOwned(memberPid);
+  }
+}, 15000);
+
 test("an explicit pid that started before the reaper module loaded is not signalled", async () => {
   const scratch = newScratch("llamactl-reaper-preexisting-");
   const pid = await spawnShell(ENGINE_SLEEP, true, "llama-server");

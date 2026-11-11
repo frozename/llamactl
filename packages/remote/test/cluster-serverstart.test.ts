@@ -139,12 +139,14 @@ afterEach(async () => {
   // tmp stays empty when beforeEach threw before mkdtempSync; skip the
   // teardown then so the original error is the one reported.
   if (tmp === "") return;
-  await reapFakeProcesses({
+  const survivors = await reapFakeProcesses({
     scratch: tmp,
     pidFiles: [join(tmp, "devstorage", "ai-models", "local-ai", "llama-server.pid")],
   });
   rmSync(tmp, { recursive: true, force: true });
   tmp = "";
+  // A fake the reaper could not take down fails the file, after cleanup.
+  expect(survivors).toEqual([]);
 });
 
 describe("cluster-serverstart: remote serverStart over SSE", () => {
