@@ -115,6 +115,73 @@ function resolveProvider(raw: string | undefined): Provider {
   return raw === "lmstudio" ? "lmstudio" : "llama.cpp";
 }
 
+const DEFAULT_INTERNAL_PROXY_URL = "http://127.0.0.1:7944";
+
+/** Empty string is unset: normalise every raw env read through here. */
+function nonEmpty(value: string | undefined): string | undefined {
+  return value && value.length > 0 ? value : undefined;
+}
+
+/** Normalise a base URL to OpenAI-compatible `/v1` form. */
+function toOpenAiV1(base: string): string {
+  const trimmed = base.replace(/\/+$/u, "");
+  return trimmed.endsWith("/v1") ? trimmed : `${trimmed}/v1`;
+}
+
+/**
+ * Derive the llama.cpp provider URL (#315). Derive-only, as on main: the
+ * result depends on the inputs below and never on LOCAL_AI_PROVIDER_URL
+ * or OPENAI_BASE_URL. Shells and Electron feed resolveEnv's output back in
+ * as input, so reading those keys would pin stale values; ignoring them
+ * makes every re-resolve a fixed point that follows the current inputs.
+ *
+ * First match wins:
+ *
+ * 1. LOCAL_AI_PROVIDER_ROUTE=direct: the tracked llama-server URL
+ *    (LOCAL_AI_LLAMA_CPP_BASE_URL, else host:port), exactly as on main.
+ * 2. An explicit LOCAL_AI_LLAMA_CPP_BASE_URL that differs from the
+ *    host:port default: that tracked URL, as on main.
+ * 3. LLAMACTL_INTERNAL_PROXY_URL set: that proxy, normalised to `/v1`.
+ * 4. Under a test profile: the tracked URL, which carries the `65534`
+ *    sentinel, so hermetic runs never dial a live proxy.
+ * 5. Otherwise the default internal proxy, `http://127.0.0.1:7944/v1`.
+ *
+ * Decision for rule 2: #315 is about the default, a provider URL that
+ * points at a port nothing listens on when nobody configured anything. An
+ * operator who points LOCAL_AI_LLAMA_CPP_BASE_URL at a specific server has
+ * configured something, and main sends consumers there (pinned by
+ * env.resolvers.test.ts case 16), so that keeps main's semantics. The
+ * host:port default, including the `:8080` value that every eval re-feeds,
+ * is not a configuration and goes to the proxy. Limitation, shared with
+ * main: resolveEnv emits LOCAL_AI_LLAMA_CPP_BASE_URL, so after a seeded
+ * shell changes LLAMA_CPP_PORT the re-fed old value reads as explicit and
+ * stays the provider URL, exactly as main keeps it as the tracked URL.
+ *
+ * A custom endpoint is configured with LLAMACTL_INTERNAL_PROXY_URL, or
+ * with LOCAL_AI_LLAMA_CPP_BASE_URL (plus LOCAL_AI_PROVIDER_ROUTE=direct to
+ * use the host:port server). Trade-off: a host that runs only `llamactl
+ * server start` without a serving proxy now defaults to the proxy port;
+ * ROUTE=direct restores it.
+ */
+function resolveLlamaCppProviderUrl(
+  env: NodeJS.ProcessEnv,
+  testProfile: Record<string, string> | null,
+  basics: EnvBasics,
+): string {
+  if (env["LOCAL_AI_PROVIDER_ROUTE"] === "direct") return basics.llamaCppBaseUrl;
+  const explicitTracked = nonEmpty(env["LOCAL_AI_LLAMA_CPP_BASE_URL"]);
+  if (
+    explicitTracked !== undefined &&
+    explicitTracked !== `http://${basics.host}:${basics.port}/v1`
+  ) {
+    return basics.llamaCppBaseUrl;
+  }
+  const proxyOverride = nonEmpty(env["LLAMACTL_INTERNAL_PROXY_URL"]);
+  if (proxyOverride !== undefined) return toOpenAiV1(proxyOverride);
+  if (testProfile !== null) return basics.llamaCppBaseUrl;
+  return toOpenAiV1(DEFAULT_INTERNAL_PROXY_URL);
+}
+
 type EnvBasics = {
   devStorage: string;
   hfHome: string;
@@ -204,7 +271,7 @@ type ProviderConfig = {
 
 function resolveProviderConfig(
   provider: Provider,
-  llamaCppBaseUrl: string,
+  providerUrl: string,
   lmStudioBaseUrl: string,
   env: NodeJS.ProcessEnv,
   sourceModel: string,
@@ -217,14 +284,20 @@ function resolveProviderConfig(
     };
   }
   return {
-    providerUrl: llamaCppBaseUrl,
+    providerUrl,
     apiKey: "local",
     model: pick(env["LOCAL_AI_MODEL"], pick(env["LLAMA_CPP_SERVER_ALIAS"], "local")),
   };
 }
 
+/**
+ * Proxy endpoint for callers that dial it (supervisor, health probes).
+ * `??` semantics are deliberate here, unlike the provider-URL resolver:
+ * the supervisor and tests pin this function directly and rely on the
+ * raw override winning even when empty-ish handling differs elsewhere.
+ */
 export function resolveInternalProxyEndpoint(env: NodeJS.ProcessEnv = process.env): string {
-  return env["LLAMACTL_INTERNAL_PROXY_URL"] ?? "http://127.0.0.1:7944";
+  return env["LLAMACTL_INTERNAL_PROXY_URL"] ?? DEFAULT_INTERNAL_PROXY_URL;
 }
 
 function resolveDefaultModel(
@@ -313,7 +386,7 @@ export function resolveEnv(env: NodeJS.ProcessEnv = process.env): ResolvedEnv {
 
   const { providerUrl, apiKey, model } = resolveProviderConfig(
     provider,
-    basics.llamaCppBaseUrl,
+    resolveLlamaCppProviderUrl(env, testProfile, basics),
     basics.lmStudioBaseUrl,
     env,
     sourceModel,
