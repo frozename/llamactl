@@ -94,17 +94,27 @@ export function createManagedOmlxResidency(
     if (admitted === null) throw new Error("admission admitted without a claim handle");
     handle = admitted;
     state = "pending";
-    const result = await opts.client.load();
-    if (result.kind === "loaded" || result.kind === "already-loaded") {
-      admitted.markResident();
-      state = "resident";
-    } else if (loadDemotesToUncertain(result)) {
-      admitted.markUncertain();
-      state = "uncertain";
-    } else {
-      abandonClaim(admitted);
+    // An admitted claim must leave `pending` on every exit path: a throw
+    // from the client means the load may already have reached the backend,
+    // so the finally marks the claim uncertain instead of releasing it.
+    try {
+      const result = await opts.client.load();
+      if (result.kind === "loaded" || result.kind === "already-loaded") {
+        admitted.markResident();
+        state = "resident";
+      } else if (loadDemotesToUncertain(result)) {
+        admitted.markUncertain();
+        state = "uncertain";
+      } else {
+        abandonClaim(admitted);
+      }
+      return result;
+    } finally {
+      if (admitted.state() === "pending") {
+        admitted.markUncertain();
+        state = "uncertain";
+      }
     }
-    return result;
   };
 
   const ensureLoadedInner = async (): Promise<ManagedEnsureLoadedResult> => {

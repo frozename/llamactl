@@ -743,28 +743,28 @@ describe("managed oMLX residency", () => {
     expect(snap[0]?.state).toBe("uncertain");
   });
 
-  test("M14 exception path in admitAndLoad releases the claim (httpAttempted not set)", async () => {
-    const fake = startFakeOmlx();
-    // Set loadMode to hang so the POST never completes.
-    fake.state.loadMode = "hang";
+  test("M14 client.load() exception leaves the claim uncertain, not pending", async () => {
     const mod = await loadManagedModule();
     const authority = createTargetAdmissionAuthority();
-    const residency = createResidency(mod, fake, authority);
-    // Start the ensureLoaded which will hang.
-    const loadPromise = residency.ensureLoaded();
-    // Wait for the load POST to be in flight.
-    await fake.loadPosted;
-    // The POST is in flight, so httpAttempted will be true when it completes.
-    // Give it time to timeout and trigger the finally block.
-    await delay(350);
-    // The POST completed (with timeout), so httpAttempted is true.
-    // The claim should be uncertain, not abandoned.
+    const client: OmlxNativeClient = {
+      status: () => Promise.reject(new Error("unused")),
+      load: () => Promise.reject(new Error("load exploded")),
+      unload: () => Promise.reject(new Error("unused")),
+    };
+    const residency = mod.createManagedOmlxResidency(managedOpts(client, authority));
+    const failure: unknown = await residency.ensureLoaded().catch((err: unknown) => err);
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure instanceof Error ? failure.message : "").toBe("load exploded");
     const snap = authority.snapshot("node-a");
     expect(snap).toHaveLength(1);
     expect(snap[0]?.state).toBe("uncertain");
     expect(await residency.residency()).toBe("uncertain");
-    // Clean up the hanging promise.
-    await loadPromise.catch(() => undefined);
+    // The uncertain claim keeps charging the budget and blocks retries
+    // until a verified unload retires it.
+    expect(await residency.ensureLoaded()).toStrictEqual({
+      kind: "refused",
+      reason: "ResidencyUncertain",
+    });
   });
 
   test("M15 ambiguous unload with no claim makes local state uncertain", async () => {
@@ -772,7 +772,8 @@ describe("managed oMLX residency", () => {
     const mod = await loadManagedModule();
     const authority = createTargetAdmissionAuthority();
     const residency = await loadResidency(mod, fake, authority);
-    // Fully unload to clear the claim and get to unclaimed state with no handle.
+    // A verified unload retires the claim; the backend then loads the
+    // model on its own, leaving residency with no claim held.
     expect(await residency.unload()).toStrictEqual({
       kind: "unloaded",
       modelId: ID,
@@ -780,22 +781,9 @@ describe("managed oMLX residency", () => {
     });
     expect(await residency.residency()).toBe("unclaimed");
     expect(authority.snapshot("node-a")).toHaveLength(0);
-    // Load again.
-    expect(await residency.ensureLoaded()).toStrictEqual({ kind: "loaded", modelId: ID });
-    // Do a verified unload to clear the claim (no handle held after this).
-    expect(await residency.unload()).toStrictEqual({
-      kind: "unloaded",
-      modelId: ID,
-      reservation: "released",
-    });
-    expect(await residency.residency()).toBe("unclaimed");
-    // Load once more.
-    expect(await residency.ensureLoaded()).toStrictEqual({ kind: "loaded", modelId: ID });
-    // Set the model as loaded and make the unload ambiguous.
     fake.state.model.loaded = true;
     fake.state.unloadMode = 500;
-    const result = await residency.unload();
-    expect(result).toStrictEqual({
+    expect(await residency.unload()).toStrictEqual({
       kind: "ambiguous",
       reason: "HttpError",
       reservation: "uncertain",
@@ -803,7 +791,7 @@ describe("managed oMLX residency", () => {
     });
     // Even with no claim held, local state goes to uncertain.
     expect(await residency.residency()).toBe("uncertain");
-    // ensureLoaded should refuse without touching backend.
+    // ensureLoaded refuses without touching the backend at all.
     const totalBefore = fake.counts.total;
     expect(await residency.ensureLoaded()).toStrictEqual({
       kind: "refused",
