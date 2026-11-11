@@ -532,4 +532,32 @@ describe("env.resolveEnv — LOCAL_AI_PROVIDER_URL routes through the internal p
       "http://127.0.0.1:65534/v1",
     ); // post-fix guard
   });
+
+  // kills: dropping the seeded non-default proxy URL (proxyUrl) from the derived set, which pins the re-fed 9001/v1 as explicit.
+  describe("a seeded non-default proxy URL counts as derived", () => {
+    const P9001 = "http://127.0.0.1:9001/v1";
+    const input = { ...B, LLAMACTL_INTERNAL_PROXY_URL: "http://127.0.0.1:9001" };
+    const seeded = (): NodeJS.ProcessEnv => {
+      const first = resolveEnv(input);
+      expect(first.LOCAL_AI_PROVIDER_URL).toBe(P9001); // post-fix guard
+      const s = seed(input, first);
+      expect(s["LOCAL_AI_PROVIDER_URL"]).toBe(P9001); // post-fix guard
+      return s;
+    };
+
+    test("re-fed with LOCAL_AI_PROVIDER_ROUTE=direct, the direct route wins", () => {
+      const r = resolveEnv({ ...seeded(), LOCAL_AI_PROVIDER_ROUTE: "direct" });
+      expect(r.LOCAL_AI_PROVIDER_URL).toBe("http://127.0.0.1:8080/v1");
+      expect(r.OPENAI_BASE_URL).toBe("http://127.0.0.1:8080/v1");
+    });
+
+    test("re-fed with a custom LOCAL_AI_LLAMA_CPP_BASE_URL, the tracked URL wins", () => {
+      const r = resolveEnv({
+        ...seeded(),
+        LOCAL_AI_LLAMA_CPP_BASE_URL: "http://10.0.0.99:9999/v1",
+      });
+      expect(r.LOCAL_AI_PROVIDER_URL).toBe("http://10.0.0.99:9999/v1");
+      expect(r.OPENAI_BASE_URL).toBe("http://10.0.0.99:9999/v1");
+    });
+  });
 });
