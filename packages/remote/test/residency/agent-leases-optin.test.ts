@@ -413,4 +413,32 @@ describe("#278 DF-05: the residencyLeases opt-in publishes one registry at agent
     await agents.splice(agents.indexOf(agent), 1)[0]?.stop();
     expect(getResidencyLeaseRegistry()).toBe(sentinel);
   }, 15_000);
+
+  test("(h) flag on, missing cert: the throw leaves the seam untouched", () => {
+    expect(getResidencyLeaseRegistry()).toBeNull();
+    const options: ServeOpts = {
+      bindHost: "127.0.0.1",
+      port: 0,
+      tokenHash: generateToken().hash,
+      advertiseMdns: false,
+      tls: {
+        certPath: join(temp.runtimeDir, "missing-agent.crt"),
+        keyPath: join(temp.runtimeDir, "missing-agent.key"),
+      },
+      residencyLeases: true,
+    };
+    expect(() => startAgentServer(options)).toThrow("cert not found");
+    expect(getResidencyLeaseRegistry()).toBeNull();
+  }, 15_000);
+
+  test("(i) pin: stop() restores the seam's previous registry, not null", async () => {
+    const sentinel = createResidencyLeases();
+    setResidencyLeaseRegistry(sentinel);
+    const agent = startAgent(true, { workerRpc: false });
+    const published = getResidencyLeaseRegistry();
+    expect(published).not.toBeNull();
+    expect(published).not.toBe(sentinel);
+    await agents.splice(agents.indexOf(agent), 1)[0]?.stop();
+    expect(getResidencyLeaseRegistry()).toBe(sentinel);
+  }, 15_000);
 });

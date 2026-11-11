@@ -217,12 +217,13 @@ export interface StartAgentOptions {
   /**
    * Opt-in residency leases (#278 DF-05): `agent serve` sets it from
    * `LLAMACTL_RESIDENCY_LEASES`. When true, `startAgentServer` creates ONE
-   * registry with `createResidencyLeases()`, installs it in the process-wide
-   * seam `proxyOpenAI` reads, and passes that same instance to the Worker RPC
-   * host, so drain and admission share one ledger. `stop()` restores the
-   * seam's previous value after the worker-RPC drain settles in-flight bodies.
-   * When unset (the production default) the seam is never read or written,
-   * the host gets no `residencyLeases`, and behaviour is identical.
+   * registry with `createResidencyLeases()`, passes that same instance to the
+   * Worker RPC host, and installs it in the process-wide seam `proxyOpenAI`
+   * reads only once the listener is up, so a failed bind never leaves an
+   * orphan registry behind. `stop()` restores the seam's previous value after
+   * the worker-RPC drain settles in-flight bodies. When unset (the production
+   * default) the seam is never read or written, the host gets no
+   * `residencyLeases`, and behaviour is identical.
    *
    * FOLLOW-UP: the #599 engine-client oMLX native unload takes its own
    * `leases.registry` option (residency/engine-client.ts:130) and is not yet
@@ -1018,23 +1019,29 @@ function defaultActiveShare(bindings: readonly ServiceCredentialBinding[]): numb
 }
 
 /**
- * Publishes the one opt-in residency lease registry (DF-05, #278). Returns
+ * Prepares the one opt-in residency lease registry (DF-05, #278). Returns
  * null unless `opts.residencyLeases` is true, so the default path only does a
  * null check and never reads or writes the process-wide seam. Otherwise it
- * captures the seam's previous value, installs a fresh registry, and returns
- * a restore that puts the previous value back — mirroring publishWorkerRpcHost.
+ * captures the seam's previous value and builds a fresh registry, but does NOT
+ * install it: `publish` installs the registry and `restore` puts the captured
+ * previous value back. The caller publishes only once the listener is up (next
+ * to maybeRegisterDeclaredModels), so a failed bind (a missing cert, a port in
+ * use) never leaves an orphan registry in the seam for a later start to
+ * capture as its previous value.
  */
 function maybePublishResidencyLeases(
   opts: StartAgentOptions,
-): { registry: ResidencyLeases; restore: () => void } | null {
+): { registry: ResidencyLeases; publish: () => void; restore: () => void } | null {
   if (opts.residencyLeases !== true) return null;
   const previous = getResidencyLeaseRegistry();
   const registry = createResidencyLeases();
-  setResidencyLeaseRegistry(registry);
+  const publish = (): void => {
+    setResidencyLeaseRegistry(registry);
+  };
   const restore = (): void => {
     setResidencyLeaseRegistry(previous);
   };
-  return { registry, restore };
+  return { registry, publish, restore };
 }
 
 /**
@@ -1216,10 +1223,14 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
       ? { idleTimeoutSeconds: opts.idleTimeoutSeconds }
       : {}),
   });
-  // Registered only once the listener is actually up: a failed bind (port
-  // in use) must not leave the module-global declared source behind a
-  // server that never existed (DF-07 review). Binding is synchronous and
-  // this call is the next statement, so no request can observe the gap.
+  // Published only once the listener is actually up, beside the declared
+  // source: a failed bind (a missing cert, a port in use) must not leave an
+  // orphan registry in the process-wide seam for a later start to capture as
+  // its previous value (DF-05 review). The Worker RPC host already holds the
+  // registry instance directly, so deferring the seam write does not desync
+  // drain from admission. Binding is synchronous and this call is the next
+  // statement, so no request can observe the gap.
+  leases?.publish();
   const unregisterDeclaredModels = maybeRegisterDeclaredModels(opts);
 
   const scheme = opts.tls && !allowPlainHttp ? "https" : "http";
