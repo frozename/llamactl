@@ -126,7 +126,7 @@ export interface NodeBudgetView {
 
 interface WorkloadTestSeams {
   getNodeClientByName?: typeof getNodeClientByName;
-  /** #221: deadline in ms for each node query in `get workloads`, `describe workload`, `describe node`, `describe noderun` and the ModelRun status query in `delete` (default GET_NODE_QUERY_TIMEOUT_MS). */
+  /** #221: deadline in ms for each node query in `get workloads`, `describe workload`, `describe node`, `describe noderun`, `residency status` and the ModelRun status query in `delete` (default GET_NODE_QUERY_TIMEOUT_MS). */
   nodeQueryTimeoutMs?: number;
   /** #308: clock for the history ages printed by `describe workload`. */
   now?: () => Date;
@@ -156,7 +156,7 @@ class NodeQueryDeadlineError extends Error {}
 
 // #221: race one node query against a deadline, so a node that never answers
 // (suspended laptop, Wi-Fi drop) cannot stall `get workloads`, `describe workload`,
-// `describe node`, `describe noderun` or the ModelRun status query in `delete`. On timeout
+// `describe node`, `describe noderun`, `residency status` or the ModelRun status query in `delete`. On timeout
 // this rejects with NodeQueryDeadlineError; the get/describe callers print its message as
 // before, and `delete` preserves the manifest on it unless --force is set.
 // The timer is cleared on every path, so it cannot keep the process alive. Shaped like

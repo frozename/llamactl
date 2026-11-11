@@ -690,6 +690,8 @@ describe("I1: clean install", () => {
       "pull",
       "rag",
       "recommendations",
+      // #614 (#284): read-only `llamactl residency status`, not the worker RPC.
+      "residency",
       "runbook",
       "server",
       "sirius",
