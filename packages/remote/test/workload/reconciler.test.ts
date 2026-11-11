@@ -19,7 +19,7 @@ import * as fs from "../../src/safe-fs.js";
 import { mkdtempSync, rmSync } from "../../src/safe-fs.js";
 import { type ModelHostManifest, specForHash } from "../../src/workload/modelhost-schema.js";
 import { loadModelHostByName, saveModelHost } from "../../src/workload/modelhost-store.js";
-import { groupByNodes } from "../../src/workload/node-concurrency.js";
+import { groupByNodes, runNodeGroups } from "../../src/workload/node-concurrency.js";
 import {
   type ReconcileNodeReport,
   reconcileOnce,
@@ -195,6 +195,24 @@ function inFlightStatusQuery(counter: { current: number; max: number }) {
     await new Promise((resolve) => setTimeout(resolve, 30));
     counter.current -= 1;
     return downStatus();
+  };
+}
+
+/** #221: a Running modelHostStatus that shares the in-flight `counter`. */
+function inFlightHostStatusQuery(
+  host: ModelHostManifest,
+  counter: { current: number; max: number },
+) {
+  return async (): ReturnType<WorkloadClient["modelHostStatus"]["query"]> => {
+    counter.current += 1;
+    counter.max = Math.max(counter.max, counter.current);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    counter.current -= 1;
+    return {
+      state: "Running",
+      pid: 1234,
+      specHash: computeModelHostSpecHash(specForHash(host.spec)),
+    };
   };
 }
 
@@ -2307,6 +2325,37 @@ describe("reconcileOnce", () => {
       }
     });
 
+    test("a ModelHost stays serial with a ModelRun on the same physical node", async () => {
+      // The run and the host name two aliases of one machine: the host's
+      // node key must join the run's group, or their queries overlap.
+      const dir = mkdtempSync(join(tmpdir(), "llamactl-reconciler-host-run-serial-"));
+      try {
+        const counter = { current: 0, max: 0 };
+        const host = hostManifestOn("mini-lan");
+        saveWorkload(modelRunOn("mac-mini", "run-a", "mlx-community/run-a.gguf"), dir);
+        saveModelHost(host, dir);
+
+        const opts = {
+          workloadsDir: dir,
+          resolveNodeIdentity: (node: string): string | null =>
+            node === "mac-mini" || node === "mini-lan" ? "same-host" : node,
+          nodeConcurrency: 2,
+          getClient: (): WorkloadClient => ({
+            ...makeClient(),
+            serverStatus: { query: inFlightStatusQuery(counter) },
+            modelHostStatus: { query: inFlightHostStatusQuery(host, counter) },
+          }),
+        };
+        const result = await reconcileOnce(opts);
+
+        expect(counter.max).toBe(1);
+        expect(result.reports.map((r) => r.name)).toEqual(["run-a", "host-a"]);
+        expect(result.reports.map((r) => r.kind)).toEqual(["ModelRun", "ModelHost"]);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
     test("a getClient failure stays scoped to its node", async () => {
       const dir = mkdtempSync(join(tmpdir(), "llamactl-reconciler-client-error-"));
       try {
@@ -2437,5 +2486,24 @@ describe("groupByNodes (#221)", () => {
   test("a null key list merges every item into one ascending group", () => {
     const keys: (readonly string[] | null)[] = [["n1"], ["n2"], null, ["n3"], []];
     expect(groupByNodes(keys, (k) => k)).toEqual([[0, 1, 2, 3, 4]]);
+  });
+});
+
+describe("runNodeGroups (#221)", () => {
+  test("a rejection runs every other index, then rethrows the first error", async () => {
+    const ran: number[] = [];
+    const failure = new Error("index 0 failed");
+    const run = (index: number): Promise<void> => {
+      ran.push(index);
+      return index === 0 ? Promise.reject(failure) : Promise.resolve();
+    };
+
+    const outcome: unknown = await runNodeGroups([[0, 1], [2]], 2, run).then(
+      () => "resolved",
+      (err: unknown): unknown => err,
+    );
+
+    expect(outcome).toBe(failure);
+    expect([...ran].sort((a, b) => a - b)).toEqual([0, 1, 2]);
   });
 });
