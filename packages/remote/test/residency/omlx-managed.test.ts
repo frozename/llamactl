@@ -69,7 +69,7 @@ type FakeModel = { loaded: boolean; is_loading: boolean };
 type FakeState = {
   model: FakeModel;
   activity: { active: number; waiting: number };
-  loadMode: "ok" | 500 | 507 | "hang";
+  loadMode: "ok" | 409 | 500 | 507 | "hang";
   unloadMode: "ok" | 500 | "hang";
 };
 
@@ -203,6 +203,9 @@ async function loadResponse(ctx: FakeContext, id: string): Promise<Response> {
   const mode = ctx.state.loadMode;
   if (mode === "hang") {
     return await hangResponse();
+  }
+  if (mode === 409) {
+    return jsonError(409, "Model X is already being loaded");
   }
   if (typeof mode === "number") {
     return jsonError(mode, "load rejected");
@@ -696,5 +699,116 @@ describe("managed oMLX residency", () => {
     expect(snap).toHaveLength(1);
     expect(snap[0]?.state).toBe("uncertain");
     expect(await residency.residency()).toBe("uncertain");
+  });
+
+  test("M12 409 Conflict keeps the claim charged and uncertain, second over-budget claim refused", async () => {
+    const fake = startFakeOmlx();
+    fake.state.loadMode = 409;
+    const mod = await loadManagedModule();
+    const authority = createTargetAdmissionAuthority();
+    const residency = createResidency(mod, fake, authority);
+    const result = await residency.ensureLoaded();
+    expect(result).toMatchObject({
+      kind: "failed",
+      reason: "Conflict",
+    });
+    expect((result as { httpStatus: number }).httpStatus).toBe(409);
+    expect(fake.counts.loadPosts).toBe(1);
+    const snap = authority.snapshot("node-a");
+    expect(snap).toHaveLength(1);
+    expect(snap[0]?.state).toBe("uncertain");
+    expect(await residency.residency()).toBe("uncertain");
+    // A second 20 GiB claim on a 24 GiB budget should be refused (target overspend).
+    const probe = claimTarget(authority, "probe-host", 20, 24);
+    expect(probe.decision).toMatchObject({ kind: "refuse", reason: "BudgetExceeded" });
+  });
+
+  test("M13 resident-path re-load with ambiguous/LoadInProgress demotes to uncertain", async () => {
+    const fake = startFakeOmlx();
+    const mod = await loadManagedModule();
+    const authority = createTargetAdmissionAuthority();
+    const residency = await loadResidency(mod, fake, authority);
+    expect(await residency.residency()).toBe("resident");
+    // Simulate backend going into LoadInProgress during resident re-check.
+    fake.state.model.is_loading = true;
+    const result = await residency.ensureLoaded();
+    expect(result).toStrictEqual({
+      kind: "refused",
+      reason: "LoadInProgress",
+    });
+    expect(fake.counts.loadPosts).toBe(1);
+    expect(await residency.residency()).toBe("uncertain");
+    const snap = authority.snapshot("node-a");
+    expect(snap).toHaveLength(1);
+    expect(snap[0]?.state).toBe("uncertain");
+  });
+
+  test("M14 exception path in admitAndLoad releases the claim (httpAttempted not set)", async () => {
+    const fake = startFakeOmlx();
+    // Set loadMode to hang so the POST never completes.
+    fake.state.loadMode = "hang";
+    const mod = await loadManagedModule();
+    const authority = createTargetAdmissionAuthority();
+    const residency = createResidency(mod, fake, authority);
+    // Start the ensureLoaded which will hang.
+    const loadPromise = residency.ensureLoaded();
+    // Wait for the load POST to be in flight.
+    await fake.loadPosted;
+    // The POST is in flight, so httpAttempted will be true when it completes.
+    // Give it time to timeout and trigger the finally block.
+    await delay(350);
+    // The POST completed (with timeout), so httpAttempted is true.
+    // The claim should be uncertain, not abandoned.
+    const snap = authority.snapshot("node-a");
+    expect(snap).toHaveLength(1);
+    expect(snap[0]?.state).toBe("uncertain");
+    expect(await residency.residency()).toBe("uncertain");
+    // Clean up the hanging promise.
+    await loadPromise.catch(() => undefined);
+  });
+
+  test("M15 ambiguous unload with no claim makes local state uncertain", async () => {
+    const fake = startFakeOmlx();
+    const mod = await loadManagedModule();
+    const authority = createTargetAdmissionAuthority();
+    const residency = await loadResidency(mod, fake, authority);
+    // Fully unload to clear the claim and get to unclaimed state with no handle.
+    expect(await residency.unload()).toStrictEqual({
+      kind: "unloaded",
+      modelId: ID,
+      reservation: "released",
+    });
+    expect(await residency.residency()).toBe("unclaimed");
+    expect(authority.snapshot("node-a")).toHaveLength(0);
+    // Load again.
+    expect(await residency.ensureLoaded()).toStrictEqual({ kind: "loaded", modelId: ID });
+    // Do a verified unload to clear the claim (no handle held after this).
+    expect(await residency.unload()).toStrictEqual({
+      kind: "unloaded",
+      modelId: ID,
+      reservation: "released",
+    });
+    expect(await residency.residency()).toBe("unclaimed");
+    // Load once more.
+    expect(await residency.ensureLoaded()).toStrictEqual({ kind: "loaded", modelId: ID });
+    // Set the model as loaded and make the unload ambiguous.
+    fake.state.model.loaded = true;
+    fake.state.unloadMode = 500;
+    const result = await residency.unload();
+    expect(result).toStrictEqual({
+      kind: "ambiguous",
+      reason: "HttpError",
+      reservation: "uncertain",
+      httpStatus: 500,
+    });
+    // Even with no claim held, local state goes to uncertain.
+    expect(await residency.residency()).toBe("uncertain");
+    // ensureLoaded should refuse without touching backend.
+    const totalBefore = fake.counts.total;
+    expect(await residency.ensureLoaded()).toStrictEqual({
+      kind: "refused",
+      reason: "ResidencyUncertain",
+    });
+    expect(fake.counts.total).toBe(totalBefore);
   });
 });

@@ -51,11 +51,13 @@ export type ManagedOmlxResidency = {
   claimId(): string | undefined;
 };
 
-// Ambiguous or backend-side in-flight loads cannot be told apart from a
-// load that actually happened: the claim must stay charged as uncertain.
+// Ambiguous, LoadInProgress, or Conflict (409 'already being loaded') cannot
+// be told apart from a load that actually happened: the claim must stay
+// charged as uncertain.
 function loadDemotesToUncertain(result: NativeLoadResult): boolean {
+  // prettier-ignore
   return (
-    result.kind === "ambiguous" || (result.kind === "refused" && result.reason === "LoadInProgress")
+    result.kind === "ambiguous" || (result.kind === "refused" && result.reason === "LoadInProgress") || (result.kind === "failed" && result.reason === "Conflict")
   );
 }
 
@@ -97,8 +99,8 @@ export function createManagedOmlxResidency(
     // the request may have reached the backend so mark it uncertain.
     let httpAttempted = false;
     try {
-      httpAttempted = true;
       const result = await opts.client.load();
+      httpAttempted = true;
       if (result.kind === "loaded" || result.kind === "already-loaded") {
         admitted.markResident();
         state = "resident";
