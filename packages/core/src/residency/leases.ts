@@ -6,6 +6,11 @@
  *
  * This module composes with sessions.ts (#569) as the fencing drain token
  * required before ingress wiring.
+ *
+ * The only mutable state here is the process-wide nullable registry binding
+ * below: an opt-in seam with no I/O of its own. Null (the default) leaves
+ * every ingress unchanged; a host installs a registry to activate
+ * lease-checked admission.
  */
 
 import type {
@@ -31,6 +36,18 @@ export type {
   ResidencySnapshot,
   WhenIdleResult,
 };
+
+// ── Process-wide registry seam ──────────────────────────────────────────
+
+let installedRegistry: ResidencyLeases | null = null;
+
+export function setResidencyLeaseRegistry(registry: ResidencyLeases | null): void {
+  installedRegistry = registry;
+}
+
+export function getResidencyLeaseRegistry(): ResidencyLeases | null {
+  return installedRegistry;
+}
 
 // ── Internal types ──────────────────────────────────────────────────────
 
