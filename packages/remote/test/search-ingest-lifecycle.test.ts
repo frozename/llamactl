@@ -43,6 +43,7 @@ test("no RAG destination leaves session ingestion inactive", () => {
 
 function installSearchIngestFixture(): {
   readonly live: number;
+  readonly rawUnsubscribes: number;
   teardown: () => Promise<void>;
 } {
   const tmp = mkdtempSync(join(tmpdir(), "ingest-lifecycle-"));
@@ -82,6 +83,9 @@ function installSearchIngestFixture(): {
   // ingest loops, so the operator's real KB can never receive a write.
   const realSubscribeAll = sessionEventBus.subscribeAll.bind(sessionEventBus);
   let live = 0;
+  // Every call to a subscription's real unsubscribe, NOT de-duplicated, so a
+  // stop function run twice shows up here even though `live` does not move.
+  let rawUnsubscribes = 0;
   const subscribeAll = spyOn(sessionEventBus, "subscribeAll").mockImplementation((listener) => {
     const off = realSubscribeAll(listener);
     live += 1;
@@ -91,12 +95,16 @@ function installSearchIngestFixture(): {
         done = true;
         live -= 1;
       }
+      rawUnsubscribes += 1;
       off();
     };
   });
   return {
     get live(): number {
       return live;
+    },
+    get rawUnsubscribes(): number {
+      return rawUnsubscribes;
     },
     teardown: async (): Promise<void> => {
       stopSearchIngest();
@@ -159,19 +167,70 @@ describe("startSearchIngest stop handles (#634)", () => {
   /**
    * Kills: handles that register only in their own list and not in the
    * module registry — stopSearchIngest() would leave live ingests running
-   * (live stays 2).
+   * (live stays 2). Also kills a stopSearchIngest() that no longer clears
+   * the registry: a later a()/b() would find its entries still registered
+   * and run each real stop a second time. The raw counters are not
+   * de-duplicated, unlike `live`, so that double stop is visible.
    */
   test("stopSearchIngest() still stops every started ingest, and a later handle call is a no-op", () => {
+    const timers: unknown[] = [];
+    const realSetInterval = globalThis.setInterval;
+    const realClearInterval = globalThis.clearInterval;
+    const si = spyOn(globalThis, "setInterval").mockImplementation(((
+      ...args: Parameters<typeof setInterval>
+    ) => {
+      const timer = realSetInterval(...args);
+      timers.push(timer);
+      return timer;
+    }) as typeof setInterval);
+    const ownClears = new Map<unknown, number>();
+    const ci = spyOn(globalThis, "clearInterval").mockImplementation(((
+      timer?: Parameters<typeof clearInterval>[0],
+    ) => {
+      if (timers.includes(timer)) ownClears.set(timer, (ownClears.get(timer) ?? 0) + 1);
+      realClearInterval(timer);
+    }) as typeof clearInterval);
+    try {
+      const a = startSearchIngest();
+      const b = startSearchIngest();
+      expect(typeof a).toBe("function");
+      expect(fixture.live).toBe(2);
+      // One logs-ingest interval per start.
+      expect(timers).toHaveLength(2);
+      stopSearchIngest();
+      expect(fixture.live).toBe(0);
+      expect(() => {
+        a();
+        b();
+      }).not.toThrow();
+      expect(fixture.live).toBe(0);
+      // Each sessions ingest unsubscribed exactly once, each logs ingest
+      // interval cleared exactly once, across stopSearchIngest() + a() + b().
+      expect(fixture.rawUnsubscribes).toBe(2);
+      expect(timers.map((t) => ownClears.get(t) ?? 0)).toEqual([1, 1]);
+    } finally {
+      ci.mockRestore();
+      si.mockRestore();
+    }
+  });
+
+  /**
+   * Kills: dropping the `if (index === -1) continue;` guard in stopEntries.
+   * a's entries are already gone from the registry after stopSearchIngest(),
+   * so indexOf returns -1 and splice(-1, 1) would remove b's entries from
+   * the registry instead — the final stopSearchIngest() would then miss b
+   * (live stays 1).
+   */
+  test("a handle called after stopSearchIngest() leaves a later ingest in the registry", () => {
     const a = startSearchIngest();
-    const b = startSearchIngest();
-    expect(typeof a).toBe("function");
-    expect(fixture.live).toBe(2);
     stopSearchIngest();
     expect(fixture.live).toBe(0);
-    expect(() => {
-      a();
-      b();
-    }).not.toThrow();
+    const b = startSearchIngest();
+    expect(typeof b).toBe("function");
+    expect(fixture.live).toBe(1);
+    a();
+    expect(fixture.live).toBe(1);
+    stopSearchIngest();
     expect(fixture.live).toBe(0);
   });
 });
