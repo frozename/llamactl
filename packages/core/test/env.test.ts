@@ -354,3 +354,182 @@ describe("env.ensureDirs — subsystem directories", () => {
     }
   });
 });
+
+describe("env.resolveEnv — LOCAL_AI_PROVIDER_URL routes through the internal proxy (#315)", () => {
+  const B = { DEV_STORAGE: "/tmp/ds", LLAMA_CPP_MACHINE_PROFILE: "macbook-pro-48g" };
+  const PX = "http://127.0.0.1:7944/v1";
+  const seed = (
+    input: NodeJS.ProcessEnv,
+    out: ReturnType<typeof resolveEnv>,
+  ): NodeJS.ProcessEnv => ({
+    ...input,
+    ...Object.fromEntries(
+      (Object.entries(out) as [string, unknown][]).map(([key, value]): [string, string] => [
+        key,
+        String(value),
+      ]),
+    ),
+  });
+
+  // kills: providerUrl = llamaCppBaseUrl (base behaviour); applying the proxy to the lmstudio branch.
+  test("default provider URL is the internal proxy; tracked-server URL unchanged", () => {
+    const r = resolveEnv(B);
+    expect(r.LOCAL_AI_PROVIDER_URL).toBe(PX);
+    expect(r.OPENAI_BASE_URL).toBe(PX);
+    expect(r.LOCAL_AI_LLAMA_CPP_BASE_URL).toBe("http://127.0.0.1:8080/v1"); // post-fix guard
+    expect(r.LOCAL_AI_API_KEY).toBe("local"); // post-fix guard
+    expect(
+      resolveEnv({
+        ...B,
+        LOCAL_AI_PROVIDER: "lmstudio",
+        LLAMACTL_INTERNAL_PROXY_URL: "http://127.0.0.1:9001",
+      }).LOCAL_AI_PROVIDER_URL,
+    ).toBe("http://127.0.0.1:1234/v1"); // post-fix guard
+  });
+
+  // kills: deriving the provider default from host/port; dropping LLAMA_CPP_PORT from the tracked URL.
+  test("LLAMA_CPP_PORT moves the tracked server URL, not the provider URL", () => {
+    const r = resolveEnv({ ...B, LLAMA_CPP_PORT: "9090" });
+    expect(r.LOCAL_AI_PROVIDER_URL).toBe(PX);
+    expect(r.LOCAL_AI_LLAMA_CPP_BASE_URL).toBe("http://127.0.0.1:9090/v1"); // post-fix guard
+    expect(r.LLAMA_CPP_PORT).toBe("9090"); // post-fix guard
+  });
+
+  // kills: hardcoded 7944 that ignores the override; no trailing-slash strip; unconditional /v1 append; the proxy outranking an explicit tracked URL.
+  test("LLAMACTL_INTERNAL_PROXY_URL steers the default and is normalised to /v1", () => {
+    expect(
+      resolveEnv({ ...B, LLAMACTL_INTERNAL_PROXY_URL: "http://10.0.0.5:9001/" })
+        .LOCAL_AI_PROVIDER_URL,
+    ).toBe("http://10.0.0.5:9001/v1");
+    expect(
+      resolveEnv({ ...B, LLAMACTL_INTERNAL_PROXY_URL: "http://10.0.0.5:9001/v1" })
+        .LOCAL_AI_PROVIDER_URL,
+    ).toBe("http://10.0.0.5:9001/v1");
+    expect(
+      resolveEnv({ ...B, LLAMACTL_INTERNAL_PROXY_URL: "http://10.0.0.5:9001" })
+        .LOCAL_AI_PROVIDER_URL,
+    ).toBe("http://10.0.0.5:9001/v1");
+    expect(
+      resolveEnv({
+        ...B,
+        LLAMACTL_INTERNAL_PROXY_URL: "http://10.0.0.5:9001",
+        LOCAL_AI_LLAMA_CPP_BASE_URL: "http://10.0.0.99:9999/v1",
+      }).LOCAL_AI_PROVIDER_URL,
+    ).toBe("http://10.0.0.99:9999/v1"); // post-fix guard
+  });
+
+  // kills: never reading env LOCAL_AI_PROVIDER_URL; ranking it below the tracked URL, the route or the proxy.
+  test("explicit non-derived LOCAL_AI_PROVIDER_URL wins for llama.cpp", () => {
+    const input = {
+      ...B,
+      LOCAL_AI_PROVIDER_URL: "http://10.0.0.7:5555/v1",
+      LOCAL_AI_LLAMA_CPP_BASE_URL: "http://10.0.0.99:9999/v1",
+      LLAMACTL_INTERNAL_PROXY_URL: "http://10.0.0.5:9001",
+      LOCAL_AI_PROVIDER_ROUTE: "direct",
+    };
+    const r = resolveEnv(input);
+    expect(r.LOCAL_AI_PROVIDER_URL).toBe("http://10.0.0.7:5555/v1");
+    expect(r.OPENAI_BASE_URL).toBe("http://10.0.0.7:5555/v1");
+    expect(r.LOCAL_AI_LLAMA_CPP_BASE_URL).toBe("http://10.0.0.99:9999/v1"); // post-fix guard
+    expect(resolveEnv(seed(input, r)).LOCAL_AI_PROVIDER_URL).toBe("http://10.0.0.7:5555/v1");
+  });
+
+  // kills: using `??` (gives "/v1" or ""), or treating an empty route as direct.
+  test("empty strings are unset", () => {
+    expect(
+      resolveEnv({
+        ...B,
+        LOCAL_AI_PROVIDER_URL: "",
+        LLAMACTL_INTERNAL_PROXY_URL: "",
+        LOCAL_AI_LLAMA_CPP_BASE_URL: "",
+        LOCAL_AI_PROVIDER_ROUTE: "",
+      }).LOCAL_AI_PROVIDER_URL,
+    ).toBe(PX);
+  });
+
+  // kills: trusting a seeded LOCAL_AI_LLAMA_CPP_BASE_URL that equals the host:port derivation.
+  test("re-resolving a seeded env is a fixed point", () => {
+    const first = resolveEnv(B);
+    const second = resolveEnv(seed(B, first));
+    expect(second.LOCAL_AI_PROVIDER_URL).toBe(PX);
+    expect(second.LOCAL_AI_LLAMA_CPP_BASE_URL).toBe("http://127.0.0.1:8080/v1"); // post-fix guard
+  });
+
+  // kills: treating the seeded lmstudio URL (1234) as an explicit LOCAL_AI_PROVIDER_URL.
+  test("provider switch lmstudio -> llama.cpp after a seed returns to the proxy", () => {
+    const s = seed(
+      { ...B, LOCAL_AI_PROVIDER: "lmstudio" },
+      resolveEnv({ ...B, LOCAL_AI_PROVIDER: "lmstudio" }),
+    );
+    const r = resolveEnv({ ...s, LOCAL_AI_PROVIDER: "llama.cpp" });
+    expect(r.LOCAL_AI_PROVIDER_URL).toBe(PX);
+    expect(r.LOCAL_AI_PROVIDER_URL).not.toBe("http://127.0.0.1:1234/v1"); // post-fix guard
+  });
+
+  // kills: treating the seeded default-proxy URL 7944/v1 as explicit.
+  test("changing LLAMACTL_INTERNAL_PROXY_URL after a seed is honoured", () => {
+    const s = seed(B, resolveEnv(B));
+    const r = resolveEnv({ ...s, LLAMACTL_INTERNAL_PROXY_URL: "http://127.0.0.1:9001" });
+    expect(r.LOCAL_AI_PROVIDER_URL).toBe("http://127.0.0.1:9001/v1");
+  });
+
+  // kills: trusting the literal legacy default 127.0.0.1:8080/v1 when the current port differs.
+  test("issue #315 inherited stale :8080 values are corrected", () => {
+    expect(
+      resolveEnv({
+        ...B,
+        LOCAL_AI_LLAMA_CPP_BASE_URL: "http://127.0.0.1:8080/v1",
+        LOCAL_AI_PROVIDER_URL: "http://127.0.0.1:8080/v1",
+        OPENAI_BASE_URL: "http://127.0.0.1:8080/v1",
+        LLAMA_CPP_PORT: "9090",
+      }).LOCAL_AI_PROVIDER_URL,
+    ).toBe(PX);
+    expect(
+      resolveEnv({
+        ...B,
+        LOCAL_AI_LLAMA_CPP_BASE_URL: "http://127.0.0.1:8080/v1",
+        LOCAL_AI_PROVIDER_URL: "http://127.0.0.1:8080/v1",
+        OPENAI_BASE_URL: "http://127.0.0.1:8080/v1",
+      }).LOCAL_AI_PROVIDER_URL,
+    ).toBe(PX);
+  });
+
+  // kills: ignoring the opt-out; checking the proxy before the route.
+  test("LOCAL_AI_PROVIDER_ROUTE=direct is the legacy single-server opt-out", () => {
+    expect(resolveEnv({ ...B, LLAMA_CPP_PORT: "9090" }).LOCAL_AI_PROVIDER_URL).toBe(PX);
+    expect(
+      resolveEnv({
+        ...B,
+        LLAMA_CPP_PORT: "9090",
+        LOCAL_AI_PROVIDER_ROUTE: "direct",
+        LLAMACTL_INTERNAL_PROXY_URL: "http://127.0.0.1:9001",
+      }).LOCAL_AI_PROVIDER_URL,
+    ).toBe("http://127.0.0.1:9090/v1"); // post-fix guard
+    expect(
+      resolveEnv({
+        ...B,
+        LLAMA_CPP_PORT: "9090",
+        LOCAL_AI_PROVIDER_ROUTE: "direct",
+        LOCAL_AI_PROVIDER_URL: PX,
+      }).LOCAL_AI_PROVIDER_URL,
+    ).toBe("http://127.0.0.1:9090/v1"); // post-fix guard
+  });
+
+  // kills: a test-profile short-circuit that ignores a configured proxy; defaulting hermetic runs to 7944.
+  test("test profile keeps the sentinel unless a proxy is configured", () => {
+    const r = resolveEnv({
+      LLAMACTL_TEST_PROFILE: "/tmp/hermetic",
+      LLAMA_CPP_MACHINE_PROFILE: "macbook-pro-48g",
+      LLAMACTL_INTERNAL_PROXY_URL: "http://127.0.0.1:9001",
+    });
+    expect(r.LOCAL_AI_PROVIDER_URL).toBe("http://127.0.0.1:9001/v1");
+    expect(r.LOCAL_AI_LLAMA_CPP_BASE_URL).toBe("http://127.0.0.1:65534/v1"); // post-fix guard
+    const tp = {
+      LLAMACTL_TEST_PROFILE: "/tmp/hermetic",
+      LLAMA_CPP_MACHINE_PROFILE: "macbook-pro-48g",
+    };
+    expect(resolveEnv(seed(tp, resolveEnv(tp))).LOCAL_AI_PROVIDER_URL).toBe(
+      "http://127.0.0.1:65534/v1",
+    ); // post-fix guard
+  });
+});
