@@ -34,6 +34,7 @@ import {
   parseOmlxActivity,
   parseOmlxModelsStatus,
 } from "@llamactl/core/engines";
+import { getResidencyLeaseRegistry } from "@llamactl/core/residency/leases";
 
 const OBSERVABLE_ENGINES = new Set(["batched"]);
 
@@ -629,4 +630,32 @@ export function createOmlxNativeClient(opts: OmlxNativeClientOptions): OmlxNativ
       );
     },
   };
+}
+
+export type AgentOmlxNativeClientOptions = Omit<OmlxNativeClientOptions, "leases"> & {
+  workload: string;
+};
+
+/**
+ * Agent-side construction seam for #282. A native unload built through this
+ * factory drains leases from the same ledger as proxy admission (openaiProxy
+ * acquireProxyResidencyLease) and Worker RPC (serve.ts).
+ *
+ * The registry is captured once at construction, so unload's commitUnload and
+ * load's reopen always hit one ledger even if the seam is cleared afterwards.
+ *
+ * Callers MUST construct per operation, not once per process: a client built
+ * before the registry was published is not fenced by it. That is a known
+ * limitation, not a supported mode. This factory never writes the seam.
+ *
+ * With no published registry (LLAMACTL_RESIDENCY_LEASES unset) the result is
+ * exactly createOmlxNativeClient without leases.
+ */
+export function createAgentOmlxNativeClient(opts: AgentOmlxNativeClientOptions): OmlxNativeClient {
+  const registry = getResidencyLeaseRegistry();
+  const { workload, ...rest } = opts;
+  if (registry === null) {
+    return createOmlxNativeClient(rest);
+  }
+  return createOmlxNativeClient({ ...rest, leases: { registry, workload } });
 }
