@@ -126,7 +126,7 @@ function runLs(args: string[]): number {
     error: string;
   }[] = [];
   const listed = nodes.map((n) => {
-    const rec = readNodeContact(n.name);
+    const rec = readNodeContact(ctx.cluster, n.name);
     if (!nodeUnreachable(rec)) return n;
     unreachable.push({
       name: n.name,
@@ -372,10 +372,12 @@ async function runAdd(args: string[]): Promise<number> {
 
   const cfgPath = defaultConfigPath();
   let ctxName = "";
+  let clusterName = "";
   try {
     mutateConfigLocked(cfgPath, (cfg: Config) => {
       const ctx = currentContext(cfg);
       ctxName = ctx.name;
+      clusterName = ctx.cluster;
       if (!f.replaceToken) assertTokenReplaceable(cfg, ctx.cluster, ctx.user, token, f.name);
       const withUser = persistUserToken(cfg, ctx.user, token);
       const nodeEntry: configSchema.ClusterNode = {
@@ -415,10 +417,12 @@ function runRm(args: string[]): number {
   }
   const cfgPath = defaultConfigPath();
   let ctxName = "";
+  let clusterName = "";
   try {
     mutateConfigLocked(cfgPath, (cfg: Config) => {
       const ctx = currentContext(cfg);
       ctxName = ctx.name;
+      clusterName = ctx.cluster;
       return removeNode(cfg, ctx.cluster, name);
     });
   } catch (err) {
@@ -426,7 +430,7 @@ function runRm(args: string[]): number {
     return 1;
   }
   process.stdout.write(`removed node '${name}' from context '${ctxName}'\n`);
-  clearNodeContact(name);
+  clearNodeContact(clusterName, name);
   return 0;
 }
 

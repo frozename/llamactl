@@ -39,7 +39,12 @@ import { resolve as resolvePath } from "node:path";
 import { parse as parseYaml } from "yaml";
 
 import { getGlobals, getNodeClientByName } from "../dispatcher.js";
-import { readNodeContact, recordNodeAnswered, recordNodeFailed } from "../node-contact.js";
+import {
+  readNodeContact,
+  recordNodeAnswered,
+  recordNodeFailed,
+  sanitizeContactError,
+} from "../node-contact.js";
 import { required } from "../required.js";
 import { existsSync, readFileSync, rmSync } from "../safe-fs.js";
 import { makeSpecArtifactResolver, nodeRunBudgetLookup } from "./noderun-helpers.js";
@@ -754,7 +759,7 @@ async function inspect(manifest: workloadSchema.ModelRun): Promise<WorkloadRow> 
       nodeQuery: { answered: true, error: null },
     };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = sanitizeContactError(err instanceof Error ? err.message : String(err));
     return {
       name: manifest.metadata.name,
       node: manifest.spec.node,
@@ -843,7 +848,7 @@ async function inspectRemoteModelHost(manifest: ModelHostManifest): Promise<Mode
       nodeQuery: { answered: true, error: null },
     };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = sanitizeContactError(err instanceof Error ? err.message : String(err));
     return {
       phase: "Unreachable",
       endpoint,
@@ -925,7 +930,7 @@ export async function runGet(args: string[]): Promise<number> {
   );
   const allRows = [...runRows, ...hostRows];
   const now = (workloadTestSeams.now ?? ((): Date => new Date()))();
-  const lastSeenByNode = recordRunContacts(allRows, now);
+  const lastSeenByNode = recordRunContacts(allRows, now, contactClusterName());
   const rows = allRows.map((row) => {
     const { nodeQuery, ...base } = row;
     const error = nodeQuery?.error ?? null;
@@ -959,6 +964,20 @@ export async function runGet(args: string[]): Promise<number> {
   return 0;
 }
 
+// #221: the cluster of the context node clients resolve against (the
+// `--context` global, else current-context), which keys the contact records.
+// null when no kubeconfig resolves: contact is then neither read nor stored.
+function contactClusterName(): string | null {
+  const globals = getGlobals();
+  try {
+    const cfg = kubecfg.loadConfig(globals.configPath ?? kubecfg.defaultConfigPath());
+    const ctxName = globals.contextName ?? cfg.currentContext;
+    return cfg.contexts.find((c) => c.name === ctxName)?.cluster ?? null;
+  } catch {
+    return null;
+  }
+}
+
 // #221: record, once per node per run, whether the node answered this run. A
 // node that answered anywhere in the run is contactable; otherwise the first
 // unanswered row's error is stored with the time it was observed, keeping the
@@ -967,12 +986,26 @@ export async function runGet(args: string[]): Promise<number> {
 function recordRunContacts(
   rows: readonly { node: string; nodeQuery?: NodeQueryOutcome | undefined }[],
   now: Date,
+  cluster: string | null,
 ): Map<string, string | null> {
-  interface NodeOutcome {
-    answered: boolean;
-    firstError: string | null;
+  const lastSeenByNode = new Map<string, string | null>();
+  for (const [node, outcome] of collectNodeOutcomes(rows)) {
+    lastSeenByNode.set(node, recordNodeOutcome(cluster, node, outcome, now));
   }
-  const outcomes = new Map<string, NodeOutcome>();
+  return lastSeenByNode;
+}
+
+interface NodeRunOutcome {
+  answered: boolean;
+  firstError: string | null;
+}
+
+// #221: fold each node's rows into one outcome: answered when any row
+// answered, else the error of the first row that failed.
+function collectNodeOutcomes(
+  rows: readonly { node: string; nodeQuery?: NodeQueryOutcome | undefined }[],
+): Map<string, NodeRunOutcome> {
+  const outcomes = new Map<string, NodeRunOutcome>();
   for (const row of rows) {
     if (row.nodeQuery === undefined) continue;
     const existing = outcomes.get(row.node);
@@ -981,23 +1014,31 @@ function recordRunContacts(
         answered: row.nodeQuery.answered,
         firstError: row.nodeQuery.error,
       });
-      continue;
-    }
-    if (row.nodeQuery.answered) existing.answered = true;
-    else existing.firstError ??= row.nodeQuery.error;
-  }
-  const lastSeenByNode = new Map<string, string | null>();
-  for (const [node, outcome] of outcomes) {
-    const prior = readNodeContact(node);
-    if (outcome.answered) {
-      recordNodeAnswered(node, now);
-      lastSeenByNode.set(node, now.toISOString());
+    } else if (row.nodeQuery.answered) {
+      existing.answered = true;
     } else {
-      recordNodeFailed(node, outcome.firstError ?? "", now);
-      lastSeenByNode.set(node, prior?.lastSeen ?? null);
+      existing.firstError ??= row.nodeQuery.error;
     }
   }
-  return lastSeenByNode;
+  return outcomes;
+}
+
+// #221: persist one node's outcome under its cluster (skipped when no cluster
+// resolves) and return the lastSeen its rows report.
+function recordNodeOutcome(
+  cluster: string | null,
+  node: string,
+  outcome: NodeRunOutcome,
+  now: Date,
+): string | null {
+  if (outcome.answered) {
+    if (cluster !== null) recordNodeAnswered(cluster, node, now);
+    return now.toISOString();
+  }
+  if (cluster === null) return null;
+  const prior = readNodeContact(cluster, node);
+  recordNodeFailed(cluster, node, outcome.firstError ?? "", now);
+  return prior?.lastSeen ?? null;
 }
 
 function writeExternalBindWarnings(

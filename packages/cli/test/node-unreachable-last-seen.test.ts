@@ -19,14 +19,23 @@ import {
   __setWorkloadTestSeams,
   runGet,
 } from "../src/commands/workload.js";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "../src/safe-fs.js";
 
 const T1 = "2026-11-05T12:00:00.000Z";
 const T2 = "2026-11-05T12:05:00.000Z";
 const T3 = "2026-11-05T12:10:00.000Z";
 const ERR = "node 'gpu1' did not answer within 1 ms";
 
-type QueryMode = "ok" | "hung" | "appError";
+const TRANSPORT_ERR = "fetch failed: connect ECONNREFUSED 10.0.0.7:7843";
+
+type QueryMode = "ok" | "hung" | "appError" | "transportError";
 
 type WorkloadSeams = Parameters<typeof __setWorkloadTestSeams>[0];
 type NodeClientFactory = NonNullable<WorkloadSeams["getNodeClientByName"]>;
@@ -156,8 +165,10 @@ function seedRemoteWorkloads(): void {
 // "ok" resolves the healthy reply, "hung" stays pending until afterEach
 // releases the gate (the 1 ms query deadline still fires first), and
 // "appError" rejects with the shape of a tRPC error the node itself sent
-// back — an answer, not a silence.
-function seamFor(opts: { host: QueryMode; run: QueryMode; now: string }): void {
+// back — an answer, not a silence. "transportError" rejects with a plain
+// Error carrying no tRPC data.code, the shape of a connection failure.
+// `message` overrides the error text of either rejecting mode.
+function seamFor(opts: { host: QueryMode; run: QueryMode; now: string; message?: string }): void {
   let openGate = (): void => undefined;
   const gate = new Promise<void>((resolve) => {
     openGate = resolve;
@@ -170,9 +181,12 @@ function seamFor(opts: { host: QueryMode; run: QueryMode; now: string }): void {
     if (mode === "hung") return gate.then((): T => ok);
     if (mode === "appError") {
       return Promise.reject(
-        Object.assign(new Error("no such workload"), { data: { code: "NOT_FOUND" } }),
+        Object.assign(new Error(opts.message ?? "no such workload"), {
+          data: { code: "NOT_FOUND" },
+        }),
       );
     }
+    if (mode === "transportError") return Promise.reject(new Error(opts.message ?? TRANSPORT_ERR));
     return Promise.resolve(ok);
   };
 
@@ -374,7 +388,7 @@ test("node rm clears the node contact record (#221)", async () => {
   seedConfig();
   const after = await nodeLsJson();
   expect(gpu1Node(after.nodes)).toEqual({ name: "gpu1", endpoint: "https://gpu1.lan:7843" });
-  expect(existsSync(join(tmp, "workloads", ".node-contact", "gpu1.json"))).toBe(false);
+  expect(existsSync(join(tmp, "workloads", ".node-contact", "home", "gpu1.json"))).toBe(false);
 });
 
 test("get workloads --json: a node-sent error counts as the node answering (#221)", async () => {
@@ -437,4 +451,167 @@ test("a local ModelHost with no state file reads Stopped without contact keys (#
   expect(row.phase).toBe("Stopped");
   expect("lastSeen" in row).toBe(false);
   expect("error" in row).toBe(false);
+});
+
+test("get workloads --json: node-sent errors on every row still count as the node answering (#221)", async () => {
+  seedConfig();
+  seedRemoteWorkloads();
+  seamFor({ host: "ok", run: "ok", now: T1 });
+  await getWorkloadsJson();
+  seamFor({ host: "appError", run: "appError", now: T2 });
+
+  const rows = await getWorkloadsJson();
+  for (const name of ["hung-run", "hung-host"]) {
+    const row = rowByName(rows, name);
+    expect(row.phase).toBe("Unreachable");
+    expect(row.error).toBe("no such workload");
+    expect(row.lastSeen).toBe(T2);
+  }
+
+  const { nodes } = await nodeLsJson();
+  expect(gpu1Node(nodes)).toEqual({ name: "gpu1", endpoint: "https://gpu1.lan:7843" });
+  expect(await nodeLsText()).not.toContain("unreachable:");
+});
+
+test("get workloads --json: a plain Error without data.code counts as the node not answering (#221)", async () => {
+  seedConfig();
+  seedRemoteWorkloads();
+  seamFor({ host: "ok", run: "ok", now: T1 });
+  await getWorkloadsJson();
+  seamFor({ host: "transportError", run: "transportError", now: T2 });
+
+  const rows = await getWorkloadsJson();
+  for (const name of ["hung-run", "hung-host"]) {
+    const row = rowByName(rows, name);
+    expect(row.phase).toBe("Unreachable");
+    expect(row.error).toBe(TRANSPORT_ERR);
+    expect(row.lastSeen).toBe(T1);
+  }
+
+  const { nodes } = await nodeLsJson();
+  expect(gpu1Node(nodes)).toEqual({
+    name: "gpu1",
+    endpoint: "https://gpu1.lan:7843",
+    phase: "Unreachable",
+    lastSeen: T1,
+    observedAt: T2,
+    error: TRANSPORT_ERR,
+  });
+});
+
+test("node ls reports the first failing row's error when rows on one node fail differently (#221)", async () => {
+  seedConfig();
+  seedRemoteWorkloads();
+  seamFor({ host: "ok", run: "ok", now: T1 });
+  await getWorkloadsJson();
+  // Rows are inspected ModelRuns first: the run misses its deadline, then the
+  // host fails on transport.
+  seamFor({ host: "transportError", run: "hung", now: T2 });
+
+  const rows = await getWorkloadsJson();
+  expect(rowByName(rows, "hung-run").error).toBe(ERR);
+  expect(rowByName(rows, "hung-host").error).toBe(TRANSPORT_ERR);
+
+  const { nodes } = await nodeLsJson();
+  expect(gpu1Node(nodes).error).toBe(ERR);
+  expect(await nodeLsText()).toContain(
+    `unreachable: gpu1 as of ${T2}, last answered ${T1}: ${ERR}\n`,
+  );
+});
+
+const LEAKY = "upstream said:\n\u001b[31mdenied\u001b[0m for Bearer abc123\r\tretry\u0007";
+const LEAKY_CLEAN = "upstream said: denied for Bearer [redacted] retry";
+
+function expectClean(text: string): void {
+  expect(text).not.toContain("abc123");
+  // eslint-disable-next-line no-control-regex
+  expect(/[\u0000-\u001f\u007f-\u009f]/.test(text)).toBe(false);
+}
+
+test("contact errors are redacted and single-line in --json, text and node ls (#221)", async () => {
+  seedConfig();
+  seedRemoteWorkloads();
+  seamFor({ host: "appError", run: "appError", now: T1, message: LEAKY });
+
+  const answeredRows = await getWorkloadsJson();
+  for (const row of answeredRows) expect(row.error).toBe(LEAKY_CLEAN);
+  const answeredText = await getWorkloadsText();
+  expect(answeredText).toContain(
+    `unreachable: modelrun/hung-run on node gpu1, last answered ${T1}: ${LEAKY_CLEAN}\n`,
+  );
+  expect(answeredText).not.toContain("abc123");
+  expect(answeredText).not.toContain("\u001b");
+
+  seamFor({ host: "transportError", run: "transportError", now: T2, message: LEAKY });
+  const failedRows = await getWorkloadsJson();
+  for (const row of failedRows) expect(row.error).toBe(LEAKY_CLEAN);
+
+  const stored = readFileSync(join(tmp, "workloads", ".node-contact", "home", "gpu1.json"), "utf8");
+  expect(stored).not.toContain("abc123");
+  expect((JSON.parse(stored) as { lastError: string }).lastError).toBe(LEAKY_CLEAN);
+
+  const { nodes } = await nodeLsJson();
+  expect(gpu1Node(nodes).error).toBe(LEAKY_CLEAN);
+  const lsText = await nodeLsText();
+  expect(lsText).toBe(
+    "local  inproc://local (default)\n" +
+      "gpu1   https://gpu1.lan:7843\n" +
+      `unreachable: gpu1 as of ${T2}, last answered ${T1}: ${LEAKY_CLEAN}\n`,
+  );
+  expectClean(lsText.replaceAll("\n", " "));
+});
+
+function seedTwoContextConfig(current: "default" | "lab"): void {
+  writeFileSync(
+    join(tmp, "config"),
+    stringify({
+      apiVersion: "llamactl/v1",
+      kind: "Config",
+      currentContext: current,
+      contexts: [
+        { name: "default", cluster: "home", user: "me", defaultNode: "local" },
+        { name: "lab", cluster: "lab", user: "me", defaultNode: "local" },
+      ],
+      clusters: [
+        {
+          name: "home",
+          nodes: [
+            { name: "local", endpoint: "inproc://local" },
+            { name: "gpu1", endpoint: "https://gpu1.lan:7843" },
+          ],
+        },
+        {
+          name: "lab",
+          nodes: [
+            { name: "local", endpoint: "inproc://local" },
+            { name: "gpu1", endpoint: "https://gpu1.lab:7843" },
+          ],
+        },
+      ],
+      users: [{ name: "me", token: "tok-a" }],
+    }),
+  );
+}
+
+test("contact records are scoped to the context's cluster (#221)", async () => {
+  seedTwoContextConfig("default");
+  seedRemoteWorkloads();
+  await runOkThenHung();
+  expect(gpu1Node((await nodeLsJson()).nodes).phase).toBe("Unreachable");
+
+  // The lab cluster's gpu1 is a different node: home's miss does not show.
+  seedTwoContextConfig("lab");
+  expect(gpu1Node((await nodeLsJson()).nodes)).toEqual({
+    name: "gpu1",
+    endpoint: "https://gpu1.lab:7843",
+  });
+
+  // lab's gpu1 answering does not clear home's record.
+  seamFor({ host: "ok", run: "ok", now: T3 });
+  await getWorkloadsJson();
+  seedTwoContextConfig("default");
+  const home = gpu1Node((await nodeLsJson()).nodes);
+  expect(home.phase).toBe("Unreachable");
+  expect(home.lastSeen).toBe(T1);
+  expect(home.observedAt).toBe(T2);
 });
