@@ -5,8 +5,9 @@
 import type { ResidencyLeases } from "@llamactl/core/residency/leases";
 import type { LlamacppSleepController } from "@llamactl/core/residency/llamacpp-sleep";
 
-import { formatHostForUrl } from "@llamactl/core/engines";
 import { getResidencyLeaseRegistry } from "@llamactl/core/residency/leases";
+
+import { applyAuth, buildBaseUrl, classifyFetchError } from "./engine-client.js";
 
 // ── Public types ──────────────────────────────────────────────────────────
 
@@ -52,38 +53,6 @@ export type LlamacppSleepDriverOptions = {
   fetch?: typeof globalThis.fetch;
   verifiedStop: () => Promise<LlamacppVerifiedStopResult>;
 };
-
-// ── Internal helpers (duplicated from engine-client.ts) ──────────────────
-
-function buildBaseUrl(host: string, port: number): string {
-  const normalizedHost = host === "0.0.0.0" ? "127.0.0.1" : host;
-  return `http://${formatHostForUrl(normalizedHost)}:${String(port)}`;
-}
-
-function applyAuth(apiKey: string | undefined, init: RequestInit): RequestInit {
-  if (apiKey === undefined) {
-    return init;
-  }
-  const headers = new Headers(init.headers);
-  headers.set("Authorization", `Bearer ${apiKey}`);
-  return { ...init, headers };
-}
-
-function errorName(err: unknown): string | undefined {
-  if (typeof err === "object" && err !== null && "name" in err) {
-    const name = err.name;
-    return typeof name === "string" ? name : undefined;
-  }
-  return undefined;
-}
-
-function classifyFetchError(signal: AbortSignal, err: unknown): "Timeout" | "Unreachable" {
-  const name = errorName(err);
-  if (signal.aborted || name === "TimeoutError" || name === "AbortError") {
-    return "Timeout";
-  }
-  return "Unreachable";
-}
 
 // ── Driver implementation ────────────────────────────────────────────────
 
@@ -133,8 +102,11 @@ function createLlamacppSleepDriver(opts: LlamacppSleepDriverOptions): LlamacppSl
       );
       httpStatus = response.status;
 
-      // Drain or cancel the body to avoid resource leaks
-      void (response.body ? response.body.cancel() : undefined);
+      // Cancel the unread body to release the connection; a rejected cancel
+      // has nothing left to clean up, so it is swallowed.
+      if (response.body) {
+        response.body.cancel().catch(() => undefined);
+      }
 
       // Step 4: classify the response
       if (response.ok) {
@@ -184,6 +156,9 @@ async function runVerifiedStop(
       typeof (thrown as Record<string, unknown>)["reason"] === "string"
         ? ((thrown as Record<string, unknown>)["reason"] as string)
         : "StopFailed";
+    // A throwing stop is as unproven as an ok:false one: leave the member in
+    // the same unknown/uncertain controller state either way.
+    controller.observe(memberId, "unknown");
     return {
       kind: "stop-failed",
       trigger,

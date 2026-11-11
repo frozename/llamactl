@@ -480,6 +480,79 @@ describe("createAgentLlamacppSleepDriver (DF-10 #283)", () => {
     expect(controller.snapshot().committedGiB).toBe(0);
   });
 
+  test("process-fallback stop that fails or throws ends in the same uncertain controller state", async () => {
+    const capability = qualifySleepCapability({ engine: "llamacpp" }, []);
+    expect(capability.kind).toBe("process-fallback");
+
+    async function runFailedFallback(makeStop: (stops: StopCounter) => VerifiedStop): Promise<{
+      outcome: SleepDriveOutcome;
+      member: { state: string; reservation: string };
+      committedGiB: number;
+      sleepPosts: number;
+      stops: number;
+    }> {
+      const fake = startFakeLlama();
+      const controller = makeController(capability);
+      const stops: StopCounter = { count: 0 };
+      const driver = await makeDriver({ controller, fake, verifiedStop: makeStop(stops) });
+      const outcome = await driver.sleep();
+      return {
+        outcome,
+        member: snapshotMember(controller, "a"),
+        committedGiB: controller.snapshot().committedGiB,
+        sleepPosts: fake.counts.sleepPosts,
+        stops: stops.count,
+      };
+    }
+
+    const refused = await runFailedFallback(refusedVerifiedStop);
+    const thrown = await runFailedFallback(throwingVerifiedStop);
+
+    const expected = {
+      outcome: {
+        kind: "stop-failed",
+        trigger: "ProcessFallback",
+        stopReason: "EvictStopRefused",
+        reservation: "uncertain",
+      },
+      member: { state: "unknown", reservation: "uncertain" },
+      committedGiB: 8,
+      sleepPosts: 0,
+      stops: 1,
+    };
+    expect(refused).toEqual(expected);
+    expect(thrown).toEqual(expected);
+  });
+
+  test("unreachable sleep endpoint (connection refused) falls back with trigger SleepUnreachable", async () => {
+    const fake = startFakeLlama();
+    // Close the port first so the sleep POST is refused at connect time.
+    await fake.stop();
+    const controller = makeController();
+    const stops: StopCounter = { count: 0 };
+    const driver = await makeDriver({
+      controller,
+      fake,
+      verifiedStop: releaseVerifiedStop(fake, stops),
+    });
+
+    const outcome = await driver.sleep();
+
+    expect(outcome).toMatchObject({
+      kind: "stopped",
+      trigger: "SleepUnreachable",
+      reservation: "released",
+    });
+    expect(outcome.httpStatus).toBeUndefined();
+    expect(fake.counts.sleepPosts).toBe(0);
+    expect(stops.count).toBe(1);
+    expect(snapshotMember(controller, "a")).toEqual({
+      state: "stopped",
+      reservation: "released",
+    });
+    expect(controller.snapshot().committedGiB).toBe(0);
+  });
+
   test("inert by default without a published residency lease registry", async () => {
     setResidencyLeaseRegistry(null);
     const fake = startFakeLlama();
