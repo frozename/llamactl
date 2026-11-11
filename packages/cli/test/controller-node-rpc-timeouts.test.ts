@@ -113,6 +113,44 @@ describe("runReconcilePass wiring (#221)", () => {
     // (Linux CI runners have a real cgroup), so only the RPC wiring is asserted here.
     expect(nextState.errors).toBeInstanceOf(Map);
   });
+
+  test("threads resolveNodeIdentity into both the ModelRun and the NodeRun reconciler", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-pass-node-identity-"));
+    const captured: {
+      modelrun?: Parameters<NonNullable<ReconcilePassDeps["reconcileModelRuns"]>>[0];
+      noderun?: Parameters<NonNullable<ReconcilePassDeps["reconcileNodeRuns"]>>[0];
+    } = {};
+    const deps: ReconcilePassDeps = {
+      reconcileModelRuns: (opts) => {
+        captured.modelrun = opts;
+        return Promise.resolve({ reports: [], errors: 0 });
+      },
+      reconcileNodeRuns: (opts) => {
+        captured.noderun = opts;
+        return Promise.resolve({ reports: [], errors: 0 });
+      },
+    };
+    const resolveNodeIdentity = (nodeName: string): string | null =>
+      nodeName === "gpu1" ? "id-gpu1" : null;
+    const state: ControllerPassState = { errors: new Map(), oom: { last: null, pendingKills: 0 } };
+
+    const stdoutOrig = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (): boolean => true;
+    try {
+      await runReconcilePass(tmp, resolveNodeIdentity, () => undefined, state, deps);
+    } finally {
+      process.stdout.write = stdoutOrig;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+
+    expect(captured.modelrun?.resolveNodeIdentity?.("gpu1")).toBe("id-gpu1");
+    const noderun = captured.noderun as
+      | (NonNullable<typeof captured.noderun> & {
+          resolveNodeIdentity?: (nodeName: string) => string | null;
+        })
+      | undefined;
+    expect(noderun?.resolveNodeIdentity?.("gpu1")).toBe("id-gpu1");
+  });
 });
 
 describe("controller kubeconfig path honours --cluster-config (#221)", () => {

@@ -152,6 +152,94 @@ function makeHostManifest(): ModelHostManifest {
   };
 }
 
+type ServerStatusResult = Awaited<ReturnType<WorkloadClient["serverStatus"]["query"]>>;
+
+function downStatus(): ServerStatusResult {
+  return {
+    state: "down",
+    rel: null,
+    extraArgs: [],
+    pid: null,
+    host: null,
+    port: null,
+    binary: null,
+    endpoint: "",
+  };
+}
+
+/**
+ * #221: a query that never answers on its own. The deadline wrapper hands
+ * every query an AbortSignal as its second argument; when the pass deadline
+ * fires it aborts that signal, which lands `${tag}:deadline` in the log and
+ * rejects the call — the observable proof a node's deadline elapsed.
+ */
+function hangingStatusQuery(log: string[], tag: string) {
+  return (_input?: unknown, o?: { signal?: AbortSignal }): Promise<never> => {
+    log.push(`${tag}:query`);
+    const signal = o?.signal;
+    return new Promise<never>((_resolve, reject) => {
+      signal?.addEventListener("abort", () => {
+        log.push(`${tag}:deadline`);
+        reject(signal.reason as Error);
+      });
+    });
+  };
+}
+
+/** #221: counts queries in flight across every client sharing `counter`. */
+function inFlightStatusQuery(counter: { current: number; max: number }) {
+  return async (): Promise<ServerStatusResult> => {
+    counter.current += 1;
+    counter.max = Math.max(counter.max, counter.current);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    counter.current -= 1;
+    return downStatus();
+  };
+}
+
+function modelRunOn(node: string, name: string, rel: string): ModelRun {
+  const base = makeRunManifest();
+  return {
+    ...base,
+    metadata: { name, labels: {}, annotations: {} },
+    spec: { ...base.spec, node, target: { kind: "rel", value: rel } },
+  };
+}
+
+function hostManifestOn(node: string): ModelHostManifest {
+  const base = makeHostManifest();
+  return { ...base, spec: { ...base.spec, node } };
+}
+
+/** A client whose modelHostStatus reports Running with the manifest's own specHash. */
+function runningHostClient(host: ModelHostManifest, onQuery?: () => void): WorkloadClient {
+  return {
+    ...makeClient(),
+    modelHostStatus: {
+      query: (): ReturnType<WorkloadClient["modelHostStatus"]["query"]> => {
+        onQuery?.();
+        return Promise.resolve({
+          state: "Running",
+          pid: 1234,
+          specHash: computeModelHostSpecHash(specForHash(host.spec)),
+        });
+      },
+    },
+  };
+}
+
+/**
+ * #221 ordering contract: the healthy node's query must land before the
+ * slow node's deadline fires, and the deadline must be the last entry —
+ * proof the two nodes reconciled concurrently rather than in series.
+ */
+function expectMacMiniBeforeZ13Deadline(log: string[]): void {
+  expect(log).toHaveLength(3);
+  expect(log.indexOf("mac-mini:query")).toBeGreaterThanOrEqual(0);
+  expect(log.indexOf("mac-mini:query")).toBeLessThan(log.indexOf("z13:deadline"));
+  expect(log[log.length - 1]).toBe("z13:deadline");
+}
+
 describe("reconcileOnce", () => {
   test("processes ModelRun and ModelHost manifests from the shared store", async () => {
     const dir = mkdtempSync(join(tmpdir(), "llamactl-reconciler-"));
@@ -2072,6 +2160,243 @@ describe("reconcileOnce", () => {
         const runReport = result.reports.find((r) => r.name === "run-a");
         expect(runReport?.error).toMatch(/within 20 ms/);
         expect(result.errors).toBe(1);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe("concurrent node reconcile (#221)", () => {
+    test("a hanging node query does not delay a healthy node's host report", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "llamactl-reconciler-concurrent-"));
+      try {
+        const log: string[] = [];
+        const host = hostManifestOn("mac-mini");
+        saveWorkload(modelRunOn("z13", "run-a", "mlx-community/run-a.gguf"), dir);
+        saveModelHost(host, dir);
+
+        const opts = {
+          workloadsDir: dir,
+          rpcTimeouts: { queryMs: 60_000, mutateMs: 60_000 },
+          rpcTimeoutsFor: (node: string): { queryMs?: number; mutateMs?: number } | undefined =>
+            node === "z13"
+              ? { queryMs: 300, mutateMs: 300 }
+              : node === "mac-mini"
+                ? { queryMs: 20, mutateMs: 20 }
+                : undefined,
+          resolveNodeIdentity: (node: string): string | null => node,
+          getClient: (node: string): WorkloadClient =>
+            node === "z13"
+              ? { ...makeClient(), serverStatus: { query: hangingStatusQuery(log, "z13") } }
+              : runningHostClient(host, () => log.push("mac-mini:query")),
+        };
+        const result = await reconcileOnce(opts);
+
+        expectMacMiniBeforeZ13Deadline(log);
+        expect(result.errors).toBe(1);
+        expect(result.reports.map((r) => r.name)).toEqual(["run-a", "host-a"]);
+        const runReport = result.reports.find((r) => r.name === "run-a");
+        expect(runReport?.node).toBe("z13");
+        expect(runReport?.action).toBe("unchanged");
+        expect(runReport?.reason).toBe("NodeUnreachable");
+        expect(runReport?.error).toMatch(/did not respond to serverStatus\.query within 300 ms/);
+        const hostReport = result.reports.find((r) => r.name === "host-a");
+        expect(hostReport?.action).toBe("unchanged");
+        expect(hostReport?.error).toBeUndefined();
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    test("reports stay in manifest order while nodes reconcile concurrently", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "llamactl-reconciler-concurrent-order-"));
+      try {
+        const log: string[] = [];
+        saveWorkload(modelRunOn("z13", "a-run", "mlx-community/a-run.gguf"), dir);
+        saveWorkload(modelRunOn("mac-mini", "b-run", "mlx-community/b-run.gguf"), dir);
+
+        const opts = {
+          workloadsDir: dir,
+          rpcTimeouts: { queryMs: 60_000, mutateMs: 60_000 },
+          rpcTimeoutsFor: (node: string): { queryMs?: number; mutateMs?: number } | undefined =>
+            node === "z13"
+              ? { queryMs: 300, mutateMs: 300 }
+              : node === "mac-mini"
+                ? { queryMs: 20, mutateMs: 20 }
+                : undefined,
+          resolveNodeIdentity: (node: string): string | null => node,
+          getClient: (node: string): WorkloadClient =>
+            node === "z13"
+              ? { ...makeClient(), serverStatus: { query: hangingStatusQuery(log, "z13") } }
+              : {
+                  ...makeClient(),
+                  serverStatus: {
+                    query: (): Promise<ServerStatusResult> => {
+                      log.push("mac-mini:query");
+                      return Promise.resolve(downStatus());
+                    },
+                  },
+                },
+        };
+        const result = await reconcileOnce(opts);
+
+        expectMacMiniBeforeZ13Deadline(log);
+        expect(result.errors).toBe(1);
+        expect(result.reports.map((r) => r.name)).toEqual(["a-run", "b-run"]);
+        const down = result.reports.find((r) => r.name === "a-run");
+        expect(down?.node).toBe("z13");
+        expect(down?.action).toBe("unchanged");
+        expect(down?.reason).toBe("NodeUnreachable");
+        expect(down?.error).toMatch(/did not respond to serverStatus\.query within 300 ms/);
+        const up = result.reports.find((r) => r.name === "b-run");
+        expect(up?.error).toBeUndefined();
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    test("bounds in-flight node reconciles to nodeConcurrency", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "llamactl-reconciler-pool-"));
+      try {
+        const counter = { current: 0, max: 0 };
+        for (const node of ["n1", "n2", "n3"]) {
+          saveWorkload(modelRunOn(node, `run-${node}`, `mlx-community/run-${node}.gguf`), dir);
+        }
+
+        const opts = {
+          workloadsDir: dir,
+          resolveNodeIdentity: (node: string): string | null => node,
+          nodeConcurrency: 2,
+          getClient: (): WorkloadClient => ({
+            ...makeClient(),
+            serverStatus: { query: inFlightStatusQuery(counter) },
+          }),
+        };
+        const result = await reconcileOnce(opts);
+
+        expect(counter.max).toBe(2);
+        expect(result.reports.map((r) => r.name)).toEqual(["run-n1", "run-n2", "run-n3"]);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    test("nodes that resolve to one identity stay serial under nodeConcurrency", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "llamactl-reconciler-alias-"));
+      try {
+        const counter = { current: 0, max: 0 };
+        saveWorkload(modelRunOn("local", "run-local", "mlx-community/run-local.gguf"), dir);
+        saveWorkload(modelRunOn("mac-mini", "run-mini", "mlx-community/run-mini.gguf"), dir);
+
+        const opts = {
+          workloadsDir: dir,
+          resolveNodeIdentity: (node: string): string | null =>
+            node === "local" || node === "mac-mini" ? "same-host" : node,
+          nodeConcurrency: 4,
+          getClient: (): WorkloadClient => ({
+            ...makeClient(),
+            serverStatus: { query: inFlightStatusQuery(counter) },
+          }),
+        };
+        await reconcileOnce(opts);
+
+        expect(counter.max).toBe(1);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    test("a getClient failure stays scoped to its node", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "llamactl-reconciler-client-error-"));
+      try {
+        const host = hostManifestOn("mac-mini");
+        saveWorkload(modelRunOn("z13", "run-a", "mlx-community/run-a.gguf"), dir);
+        saveModelHost(host, dir);
+
+        const opts = {
+          workloadsDir: dir,
+          resolveNodeIdentity: (node: string): string | null => node,
+          nodeConcurrency: 2,
+          getClient: (node: string): WorkloadClient => {
+            if (node === "z13") throw new Error("boom");
+            return runningHostClient(host);
+          },
+        };
+        const result = await reconcileOnce(opts);
+
+        expect(result.errors).toBe(1);
+        const runReport = result.reports.find((r) => r.name === "run-a");
+        expect(runReport?.error).toBe("boom");
+        expect(result.reports.filter((r) => "reason" in r)).toEqual([]);
+        expect(result.reports.find((r) => r.name === "host-a")?.error).toBeUndefined();
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    test("worker nodes count toward a manifest's concurrency group", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "llamactl-reconciler-worker-group-"));
+      try {
+        const counter = { current: 0, max: 0 };
+        const baseA = modelRunOn("n1", "a-run", "mlx-community/a-run.gguf");
+        const runA: ModelRun = {
+          ...baseA,
+          spec: {
+            ...baseA.spec,
+            workers: [
+              { node: "n2", rpcHost: "10.0.0.2", rpcPort: 50052, extraArgs: [], timeoutSeconds: 1 },
+            ],
+          },
+        };
+        saveWorkload(runA, dir);
+        saveWorkload(modelRunOn("n2", "b-run", "mlx-community/b-run.gguf"), dir);
+
+        const g3Client: WorkloadClient = {
+          ...makeClient(),
+          serverStatus: { query: inFlightStatusQuery(counter) },
+          rpcServerStart: {
+            subscribe(_input, callbacks) {
+              queueMicrotask(() => {
+                callbacks.onError(new Error("no rpc in test"));
+              });
+              return { unsubscribe: () => undefined };
+            },
+          },
+        };
+        const opts = {
+          workloadsDir: dir,
+          resolveNodeIdentity: (node: string): string | null => node,
+          nodeConcurrency: 2,
+          getClient: (): WorkloadClient => g3Client,
+        };
+        const result = await reconcileOnce(opts);
+
+        expect(counter.max).toBe(1);
+        expect(result.reports.map((r) => r.name)).toEqual(["a-run", "b-run"]);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    test("without resolveNodeIdentity the pass stays serial", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "llamactl-reconciler-no-resolver-"));
+      try {
+        const counter = { current: 0, max: 0 };
+        for (const node of ["n1", "n2", "n3"]) {
+          saveWorkload(modelRunOn(node, `run-${node}`, `mlx-community/run-${node}.gguf`), dir);
+        }
+
+        const opts = {
+          workloadsDir: dir,
+          nodeConcurrency: 2,
+          getClient: (): WorkloadClient => ({
+            ...makeClient(),
+            serverStatus: { query: inFlightStatusQuery(counter) },
+          }),
+        };
+        await reconcileOnce(opts);
+
+        expect(counter.max).toBe(1);
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }

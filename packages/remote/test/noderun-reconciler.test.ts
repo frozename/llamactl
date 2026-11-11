@@ -99,6 +99,41 @@ function rejectingClient(err: Error): NodeRunInfraClient {
   };
 }
 
+/**
+ * #221: a query that never answers on its own. The deadline wrapper hands
+ * every query an AbortSignal as its second argument; when the pass deadline
+ * fires it aborts that signal, which lands `${tag}:deadline` in the log and
+ * rejects the call — the observable proof a node's deadline elapsed.
+ */
+function hangingInfraQuery(log: string[], tag: string) {
+  return (_input?: unknown, o?: { signal?: AbortSignal }): Promise<never> => {
+    log.push(`${tag}:query`);
+    const signal = o?.signal;
+    return new Promise<never>((_resolve, reject) => {
+      signal?.addEventListener("abort", () => {
+        log.push(`${tag}:deadline`);
+        reject(signal.reason as Error);
+      });
+    });
+  };
+}
+
+/** #221: counts infraList queries in flight across every client sharing `counter`. */
+function inFlightInfraQuery(counter: {
+  current: number;
+  max: number;
+}): NodeRunInfraClient["infraList"] {
+  return {
+    query: async (): Promise<InstalledInfra[]> => {
+      counter.current += 1;
+      counter.max = Math.max(counter.max, counter.current);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      counter.current -= 1;
+      return [];
+    },
+  };
+}
+
 /** Wait for `cond` across timer turns, at most `turns` turns of 5 ms; never a fixed sleep. */
 async function waitUntil(cond: () => boolean, turns = 400): Promise<void> {
   let left = turns;
@@ -171,19 +206,20 @@ describe("reconcileNodeRunsOnce", () => {
     expect(result.reports.map((r) => r.name)).toEqual(["a"]);
   });
 
-  test("onReport fires per manifest, in order", async () => {
+  test("onReport fires per manifest, in order within a node", async () => {
     saveNodeRun(sampleManifest("a", "nodeA"), dir);
-    saveNodeRun(sampleManifest("b", "nodeB"), dir);
+    saveNodeRun(sampleManifest("b", "nodeA"), dir);
     const names: string[] = [];
-    await reconcileNodeRunsOnce({
+    const result = await reconcileNodeRunsOnce({
       workloadsDir: dir,
       getClient: () => mockClient(),
       getArtifactResolver: () => (): Promise<{ tarballUrl: string; sha256: string }> =>
         Promise.resolve({ tarballUrl: "https://x", sha256: "a".repeat(64) }),
       onReport: (r) => names.push(r.manifestName),
     });
-    // listNodeRuns returns alphabetical order.
+    // listNodeRuns returns alphabetical order; a node's manifests stay serial.
     expect(names).toEqual(["a", "b"]);
+    expect(result.reports.map((r) => r.name)).toEqual(["a", "b"]);
   });
 
   test("client throws → surfaces as phase:Failed + errors:1 without tearing down the loop", async () => {
@@ -409,5 +445,115 @@ describe("reconcileNodeRunsOnce node RPC deadline", () => {
     expect(handedRefs.infraInstall.mutate).toBe(rawRefs.infraInstall.mutate);
     expect(handedRefs.infraActivate.mutate).toBe(rawRefs.infraActivate.mutate);
     expect(handedRefs.infraUninstall.mutate).toBe(rawRefs.infraUninstall.mutate);
+  });
+});
+
+describe("reconcileNodeRunsOnce concurrent nodes (#221)", () => {
+  test("a silent node does not delay a healthy node's NodeRun", async () => {
+    saveNodeRun(sampleManifest("a-run", "z13"), dir);
+    saveNodeRun(sampleManifest("b-run", "mac-mini"), dir);
+    const log: string[] = [];
+    const silentZ13: NodeRunInfraClient = {
+      ...mockClient(),
+      infraList: { query: hangingInfraQuery(log, "z13") },
+    };
+    const baseMac = mockClient();
+    let macQueries = 0;
+    const macClient: NodeRunInfraClient = {
+      ...baseMac,
+      infraList: {
+        query: () => {
+          macQueries += 1;
+          if (macQueries === 1) log.push("mac-mini:query");
+          return baseMac.infraList.query();
+        },
+      },
+    };
+    const opts = {
+      workloadsDir: dir,
+      getClient: (node: string): NodeRunInfraClient => (node === "z13" ? silentZ13 : macClient),
+      getArtifactResolver: () => (): Promise<{ tarballUrl: string; sha256: string }> =>
+        Promise.resolve({ tarballUrl: "https://x", sha256: "a".repeat(64) }),
+      rpcTimeouts: { queryMs: 60_000 },
+      rpcTimeoutsFor: (node: string): { queryMs?: number } | undefined =>
+        node === "z13" ? { queryMs: 300 } : node === "mac-mini" ? { queryMs: 20 } : undefined,
+      resolveNodeIdentity: (node: string): string | null => node,
+    };
+    const result = await reconcileNodeRunsOnce(opts);
+
+    expect(log).toHaveLength(3);
+    expect(log.indexOf("mac-mini:query")).toBeGreaterThanOrEqual(0);
+    expect(log.indexOf("mac-mini:query")).toBeLessThan(log.indexOf("z13:deadline"));
+    expect(log[log.length - 1]).toBe("z13:deadline");
+    expect(result.reports.map((r) => r.name)).toEqual(["a-run", "b-run"]);
+    const down = result.reports.find((r) => r.name === "a-run")!;
+    expect(down.phase).toBe("Failed");
+    expect(down.reason).toBe("NodeUnreachable");
+    const up = result.reports.find((r) => r.name === "b-run")!;
+    expect(up.phase).toBe("Converged");
+    expect(result.errors).toBe(1);
+  });
+
+  test("bounds in-flight NodeRun reconciles to nodeConcurrency", async () => {
+    const counter = { current: 0, max: 0 };
+    for (const node of ["n1", "n2", "n3"]) {
+      saveNodeRun(sampleManifest(`run-${node}`, node), dir);
+    }
+    const opts = {
+      workloadsDir: dir,
+      getClient: (): NodeRunInfraClient => ({
+        ...mockClient(),
+        infraList: inFlightInfraQuery(counter),
+      }),
+      getArtifactResolver: () => (): Promise<{ tarballUrl: string; sha256: string }> =>
+        Promise.resolve({ tarballUrl: "https://x", sha256: "a".repeat(64) }),
+      resolveNodeIdentity: (node: string): string | null => node,
+      nodeConcurrency: 2,
+    };
+    const result = await reconcileNodeRunsOnce(opts);
+
+    expect(counter.max).toBe(2);
+    expect(result.reports.map((r) => r.name)).toEqual(["run-n1", "run-n2", "run-n3"]);
+  });
+
+  test("nodes that resolve to one identity stay serial under nodeConcurrency", async () => {
+    const counter = { current: 0, max: 0 };
+    saveNodeRun(sampleManifest("run-local", "local"), dir);
+    saveNodeRun(sampleManifest("run-mini", "mac-mini"), dir);
+    const opts = {
+      workloadsDir: dir,
+      getClient: (): NodeRunInfraClient => ({
+        ...mockClient(),
+        infraList: inFlightInfraQuery(counter),
+      }),
+      getArtifactResolver: () => (): Promise<{ tarballUrl: string; sha256: string }> =>
+        Promise.resolve({ tarballUrl: "https://x", sha256: "a".repeat(64) }),
+      resolveNodeIdentity: (node: string): string | null =>
+        node === "local" || node === "mac-mini" ? "same-host" : node,
+      nodeConcurrency: 4,
+    };
+    await reconcileNodeRunsOnce(opts);
+
+    expect(counter.max).toBe(1);
+  });
+
+  test("without resolveNodeIdentity the pass stays serial", async () => {
+    const counter = { current: 0, max: 0 };
+    for (const node of ["n1", "n2", "n3"]) {
+      saveNodeRun(sampleManifest(`run-${node}`, node), dir);
+    }
+    const opts = {
+      workloadsDir: dir,
+      getClient: (): NodeRunInfraClient => ({
+        ...mockClient(),
+        infraList: inFlightInfraQuery(counter),
+      }),
+      getArtifactResolver: () => (): Promise<{ tarballUrl: string; sha256: string }> =>
+        Promise.resolve({ tarballUrl: "https://x", sha256: "a".repeat(64) }),
+      nodeConcurrency: 4,
+    };
+    await reconcileNodeRunsOnce(opts);
+
+    expect(counter.max).toBe(1);
   });
 });
