@@ -283,6 +283,7 @@ describe("server.startServer residency start fence (#278)", () => {
       reason: "LeasesActive",
       active: [leaseId],
     });
+    expect(result.pid).toBe(FIRST_PID);
     expect(result.retried).toBe(false);
     expect(events).not.toContain("retry");
     expect(sentToFirstPid).toEqual([]);
@@ -371,6 +372,7 @@ describe("server.startServer residency start fence (#278)", () => {
     expect((result as { refused?: unknown }).refused).toMatchObject({
       reason: "DrainInProgress",
     });
+    expect(result.pid).toBe(4194306);
     expect(events).not.toContain("retry");
     expect(readServerPid(TEST_KEY)).toBe(4194306);
     expect(registry.snapshot("test-wl").phase).toBe("draining");
@@ -465,13 +467,15 @@ describe("server.startServer residency start fence (#278)", () => {
     const token = mustDrainToken(registry, "test-wl");
     expect(registry.commitUnload(token)).toEqual({ ok: true, revoked: [] });
     writeTrackedPid(4194305);
+    const probed: number[] = [];
 
     const { result, spawnCalls } = await startWithMockedIo(
       {
         key: TEST_KEY,
         target: "Demo/demo.gguf",
         identity: {
-          probe: () => {
+          probe: (pid: number) => {
+            probed.push(pid);
             throw Object.assign(new Error("gone"), { code: "ESRCH" });
           },
         },
@@ -482,6 +486,10 @@ describe("server.startServer residency start fence (#278)", () => {
 
     expect(result.ok).toBe(true);
     expect(spawnCalls).toBe(1);
+    // The unfenced stop-before-start really ran: it probed the tracked pid
+    // exactly once, and the verified stop let the new spawn's pid replace it.
+    expect(probed).toEqual([4194305]);
+    expect(readServerPid(TEST_KEY)).toBe(process.pid);
     expect(registry.snapshot("test-wl").phase).toBe("unloaded");
   });
 });
