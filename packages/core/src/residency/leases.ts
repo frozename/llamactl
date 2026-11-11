@@ -148,6 +148,11 @@ function bindLeaseToBody(
     if (onSettle !== undefined) onSettle();
   };
   lease.signal.addEventListener("abort", abortListener, { once: true });
+  // A lease revoked before it is bound (forced commitUnload landing in the
+  // post-forward awaits) never dispatches to the listener above, and the
+  // pull() abort branch errors without settling. Settle eagerly here; the
+  // once-guard in abortListener keeps onSettle exactly-once.
+  if (lease.signal.aborted) abortListener();
 
   return new ReadableStream<Uint8Array>({
     async pull(controller): Promise<void> {

@@ -1190,3 +1190,110 @@ test("#278: bindLeaseToBody fires onSettle exactly once when abort races a pendi
   });
   expect(settleCalls).toBe(1);
 });
+
+async function readBoundError(stream: ReadableStream<Uint8Array>): Promise<unknown> {
+  const reader = stream.getReader();
+  return await Promise.race([
+    reader.read().then(
+      () => null,
+      (error: unknown) => error,
+    ),
+    new Promise<"timeout">((resolve) => {
+      setTimeout(() => {
+        resolve("timeout");
+      }, 2_000);
+    }),
+  ]);
+}
+
+test("#520: bindLeaseToBody settles exactly once when the lease was revoked before binding", async () => {
+  const leasesMod = await loadLeaseModule();
+  const real = leasesMod.createResidencyLeases();
+  const acquired = real.acquire("wl-prebind");
+  if (!acquired.ok) {
+    throw new Error("acquire(wl-prebind) refused");
+  }
+  const lease = acquired.lease;
+  const drain = real.beginDrain("wl-prebind");
+  if (!drain.ok) {
+    throw new Error("beginDrain(wl-prebind) refused");
+  }
+  expect(real.commitUnload(drain.token, { force: true })).toEqual({
+    ok: true,
+    revoked: [lease.id],
+  });
+  expect(lease.signal.aborted).toBe(true);
+
+  // The abort already dispatched, so only a bind-time check can settle.
+  let settleCalls = 0;
+  const bound = leasesMod.bindLeaseToBody(
+    new ReadableStream<Uint8Array>({
+      start(c): void {
+        c.enqueue(new TextEncoder().encode(UPSTREAM_TEXT));
+      },
+    }),
+    lease,
+    () => {
+      settleCalls += 1;
+    },
+  );
+  expect(settleCalls).toBe(1);
+
+  const readResult = await readBoundError(bound);
+  expect(readResult).not.toBe("timeout");
+  expect(readResult).toBeInstanceOf(Error);
+  expect((readResult as Error).message).toContain("lease revoked");
+  await new Promise((resolve) => {
+    setTimeout(resolve, 0);
+  });
+  expect(settleCalls).toBe(1);
+});
+
+test("#520: a lease revoked between forward and bind releases the session ref exactly once", async () => {
+  const t = tempKvEnv();
+  try {
+    const sessionsMod = await loadSessionsModule();
+    const leasesMod = await loadLeaseModule();
+    writeLocalModelRunWorkload(t.root, "wl-a", WL_A_PORT);
+    const { spy: sessions } = installSessionRefcounts(sessionsMod, () => 1_000);
+    const { real: leases } = installSpyRegistry(leasesMod);
+    let revoked: string[] = [];
+    // The stub ignores the composed abort signal: it builds the upstream
+    // response, then a forced unload lands before the proxy binds the body,
+    // so bindLeaseToBody receives an already-aborted lease.
+    installFetchStub(() => {
+      const upstream = new Response(UPSTREAM_TEXT, {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+      const drain = leases.beginDrain("wl-a");
+      if (!drain.ok) {
+        throw new Error("beginDrain(wl-a) refused");
+      }
+      const unload = leases.commitUnload(drain.token, { force: true });
+      if (unload.ok) revoked = unload.revoked;
+      return upstream;
+    });
+
+    const res = await openaiProxy.proxyOpenAI(
+      embeddingsRequest(KV_MODEL, { [SESSION_HEADER]: "s1" }),
+      t.env,
+    );
+    expect(revoked).toHaveLength(1);
+    expect(res.status).toBe(200);
+    expect(res.body).not.toBeNull();
+    // Settled at bind time, before the body is consumed.
+    expect(sessions.releaseCalls).toEqual(["s1"]);
+
+    const readResult = await readBoundError(res.body as ReadableStream<Uint8Array>);
+    expect(readResult).not.toBe("timeout");
+    expect(readResult).toBeInstanceOf(Error);
+    await new Promise((resolve) => {
+      setTimeout(resolve, 0);
+    });
+    expect(sessions.releaseCalls).toEqual(["s1"]);
+    expect(leases.active("wl-a")).toEqual([]);
+  } finally {
+    t.cleanup();
+  }
+});
