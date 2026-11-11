@@ -864,10 +864,13 @@ function maybePublishAgentMdns(
 // the background and uses its own reconnect loop, so an unreachable
 // central never blocks the local agent. Bridges inbound `req`
 // frames from central — queries, mutations and subscriptions — into
-// the same appRouter the /trpc endpoint serves.
+// the same appRouter the /trpc endpoint serves. `onCreated` receives
+// the client before start() runs, so a start that throws still leaves
+// the startup rollback a handle to stop (#278 DF-05).
 function maybeStartTunnelClient(
   opts: StartAgentOptions,
   workerRpc: WorkerRpcServing | null,
+  onCreated: (tunnelClient: TunnelClient) => void,
 ): TunnelClient | null {
   if (!opts.tunnelDial) return null;
   // Central forwards a worker-RPC caller's single-use token on the req
@@ -916,6 +919,7 @@ function maybeStartTunnelClient(
       ? { WebSocketCtor: opts.tunnelDial.WebSocketCtor }
       : {}),
   });
+  onCreated(tunnelClient);
   // Fire-and-forget; state transitions are observable via
   // opts.tunnelDial.onStateChange.
   void tunnelClient.start();
@@ -1283,13 +1287,80 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
   process.on("uncaughtException", onUncaughtException);
   process.on("unhandledRejection", onUnhandledRejection);
 
-  runStartupMigration();
-  if (noAuth) {
-    warnNoAuthEnabled(allowPlainHttp);
+  // From here on a throw at ANY step must also undo the early steps: the
+  // process handlers above, the search ingest and the peer-snapshot poller.
+  // The post-bind resources are rolled back by the inner catch first.
+  const early: EarlyStartup = { searchIngestStarted: false, stopPeerSnapshotPoller: null };
+  try {
+    runStartupMigration();
+    if (noAuth) {
+      warnNoAuthEnabled(allowPlainHttp);
+    }
+    return startAgentServerAfterHandlers(
+      opts,
+      { bindHost, port, endpoint, noAuth, allowPlainHttp },
+      { onUncaughtException, onUnhandledRejection },
+      early,
+    );
+  } catch (err) {
+    rollbackEarlyStartupSteps(early, onUncaughtException, onUnhandledRejection);
+    throw err;
   }
+}
+
+// The startup steps that run before any listener is bound. Recorded as
+// they happen so a failed start undoes exactly what THIS call started:
+// stopSearchIngest() is process-wide, so it runs only when this call
+// started the ingest — a start that fails earlier must not stop the
+// ingest another running agent owns.
+interface EarlyStartup {
+  searchIngestStarted: boolean;
+  stopPeerSnapshotPoller: (() => void) | null;
+}
+
+// Best-effort, each step individually try/catch'd so one failure cannot
+// mask the original error or skip the others.
+function rollbackEarlyStartupSteps(
+  early: EarlyStartup,
+  onUncaughtException: (err: Error) => void,
+  onUnhandledRejection: (err: Error) => void,
+): void {
+  try {
+    early.stopPeerSnapshotPoller?.();
+  } catch {
+    /* ignore */
+  }
+  try {
+    if (early.searchIngestStarted) stopSearchIngest();
+  } catch {
+    /* ignore */
+  }
+  process.off("uncaughtException", onUncaughtException);
+  process.off("unhandledRejection", onUnhandledRejection);
+}
+
+function startAgentServerAfterHandlers(
+  opts: StartAgentOptions,
+  bind: {
+    bindHost: string;
+    port: number;
+    endpoint: string;
+    noAuth: boolean;
+    allowPlainHttp: boolean;
+  },
+  handlers: {
+    onUncaughtException: (err: Error) => void;
+    onUnhandledRejection: (err: Error) => void;
+  },
+  early: EarlyStartup,
+): RunningAgent {
+  const { bindHost, port, endpoint, noAuth, allowPlainHttp } = bind;
+  const { onUncaughtException, onUnhandledRejection } = handlers;
 
   startSearchIngest().catch(() => undefined);
+  early.searchIngestStarted = true;
   const stopPeerSnapshotPoller = maybeStartPeerSnapshotPoller(opts);
+  early.stopPeerSnapshotPoller = stopPeerSnapshotPoller;
   const nodeName = opts.nodeName ?? process.env["LLAMACTL_NODE_NAME"] ?? "agent";
   agentInfo.set(
     {
@@ -1368,8 +1439,9 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     const mdns = maybePublishAgentMdns(opts, listenPort, fingerprint);
     started.mdns = mdns;
 
-    const tunnelClient = maybeStartTunnelClient(opts, workerRpc);
-    started.tunnelClient = tunnelClient;
+    const tunnelClient = maybeStartTunnelClient(opts, workerRpc, (client) => {
+      started.tunnelClient = client;
+    });
 
     return {
       url: `${scheme}://${bindHost}:${String(listenPort)}`,
