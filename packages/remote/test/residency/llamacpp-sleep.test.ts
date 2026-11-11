@@ -11,6 +11,7 @@
 import type { ResidencyLeases } from "@llamactl/core/residency/leases";
 import type {
   LlamacppSleepController,
+  ObservedSleepState,
   SleepCapability,
   SleepMember,
 } from "@llamactl/core/residency/llamacpp-sleep";
@@ -208,7 +209,7 @@ function memberSpec(id: string, capability: SleepCapability): SleepMember {
 // whose wake fits the 10 GiB budget only while a's charge is released.
 function makeController(
   capabilityA: SleepCapability = GUARDED_CAPABILITY,
-  stateA: "ready" | "loading" = "ready",
+  stateA: ObservedSleepState = "ready",
 ): LlamacppSleepController {
   const controller = createLlamacppSleepController({ budgetGiB: 10 });
   controller.register(memberSpec("a", capabilityA), stateA);
@@ -605,59 +606,68 @@ describe("createAgentLlamacppSleepDriver (DF-10 #283)", () => {
       reservation: "resident",
     });
   });
-  // A response whose body cancel throws: the driver's cancel() rejects, and
-  // that rejection must be handled, never surfacing as unhandledRejection.
-  function cancelThrowingFetch(status: number): typeof globalThis.fetch {
-    const fetchImpl = (): Promise<Response> =>
-      Promise.resolve(
-        new Response(
-          new ReadableStream({
-            cancel(): never {
-              throw new Error("boom");
-            },
-          }),
-          { status },
-        ),
-      );
-    return fetchImpl as unknown as typeof globalThis.fetch;
-  }
+  // bun test fails a test on any unhandled rejection, so dropping the
+  // driver's .catch on body.cancel() is already caught by the runner. The
+  // cases below also make the handling observable on their own: cancel()
+  // returns a rejected promise we keep, and we record every rejection
+  // handler the driver attaches to it.
+  type CancelRecord = { cancels: number; rejectionHandlers: number };
 
-  async function sleepWithUnhandledWatch(
-    run: () => Promise<SleepDriveOutcome>,
-  ): Promise<{ outcome: SleepDriveOutcome; unhandled: unknown[] }> {
-    const unhandled: unknown[] = [];
-    const listener = (reason: unknown): void => {
-      unhandled.push(reason);
+  function trackedCancelFetch(status: number): {
+    fetch: typeof globalThis.fetch;
+    record: CancelRecord;
+  } {
+    const record: CancelRecord = { cancels: 0, rejectionHandlers: 0 };
+    const fetchImpl = (): Promise<Response> => {
+      const rejected = Promise.reject(new Error("boom"));
+      // Pre-handled so a missing driver handler fails our assertion below,
+      // not the runner's unhandled-rejection check.
+      rejected.catch(() => undefined);
+      const originalThen = rejected.then.bind(rejected);
+      // Promise.prototype.catch delegates to this.then, so recording then
+      // covers both .then(_, onRejected) and .catch(onRejected).
+      // defineProperty returns the (pre-handled) promise itself.
+      void Object.defineProperty(rejected, "then", {
+        value: (onFulfilled?: unknown, onRejected?: unknown): Promise<unknown> => {
+          if (typeof onRejected === "function") {
+            record.rejectionHandlers += 1;
+          }
+          return originalThen(
+            onFulfilled as ((value: never) => unknown) | undefined,
+            onRejected as ((reason: unknown) => unknown) | undefined,
+          );
+        },
+      });
+      const response = new Response(null, { status });
+      Object.defineProperty(response, "body", {
+        value: {
+          cancel: (): Promise<void> => {
+            record.cancels += 1;
+            return rejected;
+          },
+        },
+      });
+      return Promise.resolve(response);
     };
-    process.on("unhandledRejection", listener);
-    try {
-      const outcome = await run();
-      for (let i = 0; i < 5; i += 1) {
-        await new Promise<void>((resolve) => {
-          setTimeout(resolve, 0);
-        });
-      }
-      return { outcome, unhandled };
-    } finally {
-      process.off("unhandledRejection", listener);
-    }
+    return { fetch: fetchImpl as unknown as typeof globalThis.fetch, record };
   }
 
   test("a rejecting body cancel on a 2xx sleep is handled and still sleeps", async () => {
     const fake = startFakeLlama();
     const controller = makeController();
     const stops: StopCounter = { count: 0 };
+    const tracked = trackedCancelFetch(200);
     const driver = await makeDriver({
       controller,
       fake,
       verifiedStop: releaseVerifiedStop(fake, stops),
-      fetch: cancelThrowingFetch(200),
+      fetch: tracked.fetch,
     });
 
-    const { outcome, unhandled } = await sleepWithUnhandledWatch(() => driver.sleep());
+    const outcome = await driver.sleep();
 
     expect(outcome).toMatchObject({ kind: "slept", reservation: "released" });
-    expect(unhandled).toEqual([]);
+    expect(tracked.record).toEqual({ cancels: 1, rejectionHandlers: 1 });
     expect(stops.count).toBe(0);
     expect(snapshotMember(controller, "a")).toEqual({
       state: "sleeping",
@@ -669,14 +679,15 @@ describe("createAgentLlamacppSleepDriver (DF-10 #283)", () => {
     const fake = startFakeLlama();
     const controller = makeController();
     const stops: StopCounter = { count: 0 };
+    const tracked = trackedCancelFetch(409);
     const driver = await makeDriver({
       controller,
       fake,
       verifiedStop: releaseVerifiedStop(fake, stops),
-      fetch: cancelThrowingFetch(409),
+      fetch: tracked.fetch,
     });
 
-    const { outcome, unhandled } = await sleepWithUnhandledWatch(() => driver.sleep());
+    const outcome = await driver.sleep();
 
     expect(outcome).toMatchObject({
       kind: "stopped",
@@ -684,13 +695,74 @@ describe("createAgentLlamacppSleepDriver (DF-10 #283)", () => {
       httpStatus: 409,
       reservation: "released",
     });
-    expect(unhandled).toEqual([]);
+    expect(tracked.record).toEqual({ cancels: 1, rejectionHandlers: 1 });
     expect(stops.count).toBe(1);
     expect(snapshotMember(controller, "a")).toEqual({
       state: "stopped",
       reservation: "released",
     });
   });
+
+  test("process-fallback member mid-sleep is held with SleepInFlight, not stopped", async () => {
+    const fake = startFakeLlama();
+    const controller = makeController();
+    expect(controller.requestSleep("a").kind).toBe("sleep");
+    const capability = qualifySleepCapability({ engine: "llamacpp" }, []);
+    expect(capability.kind).toBe("process-fallback");
+    // Re-registering an existing member swaps its capability and keeps its
+    // sleep-pending state.
+    controller.register(memberSpec("a", capability), "ready");
+    expect(snapshotMember(controller, "a")).toEqual({
+      state: "sleep-pending",
+      reservation: "resident",
+    });
+    const stops: StopCounter = { count: 0 };
+    const driver = await makeDriver({
+      controller,
+      fake,
+      verifiedStop: releaseVerifiedStop(fake, stops),
+    });
+
+    const outcome = await driver.sleep();
+
+    expect(outcome).toEqual({ kind: "refused", reason: "SleepInFlight", reservation: "held" });
+    expect(stops.count).toBe(0);
+    expect(fake.counts.sleepPosts).toBe(0);
+    expect(snapshotMember(controller, "a")).toEqual({
+      state: "sleep-pending",
+      reservation: "resident",
+    });
+  });
+
+  // Every registered state that is not mid-transition accepts the 'stopped'
+  // observation, so each one is process-stopped and released. 'unhealthy'
+  // registers as 'unknown' in the controller, which is why both start from
+  // an uncertain reservation.
+  test.each<ObservedSleepState>(["unknown", "unhealthy", "sleeping", "stopped"])(
+    "process-fallback member registered %s is process-stopped and released",
+    async (registered) => {
+      const fake = startFakeLlama();
+      const capability = qualifySleepCapability({ engine: "llamacpp" }, []);
+      expect(capability.kind).toBe("process-fallback");
+      const controller = makeController(capability, registered);
+      const stops: StopCounter = { count: 0 };
+      const driver = await makeDriver({
+        controller,
+        fake,
+        verifiedStop: releaseVerifiedStop(fake, stops),
+      });
+
+      const outcome = await driver.sleep();
+
+      expect(outcome).toMatchObject({ kind: "stopped", trigger: "ProcessFallback" });
+      expect(stops.count).toBe(1);
+      expect(fake.counts.sleepPosts).toBe(0);
+      expect(snapshotMember(controller, "a")).toEqual({
+        state: "stopped",
+        reservation: "released",
+      });
+    },
+  );
 
   test("process-fallback member mid-wake is held, not stopped", async () => {
     const fake = startFakeLlama();
