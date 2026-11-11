@@ -155,9 +155,24 @@ function toOpenAiV1(base: string): string {
  * URL was explicit). A re-fed LOCAL_AI_PROVIDER_URL equal to that marker
  * is a stale derivation, so changing or unsetting a non-default proxy
  * re-derives; an operator export that differs from the marker stays
- * explicit. Without a marker (env seeded before #638) a 9001-style
- * derivation whose proxy was since changed or unset still looks explicit.
- * The resolved tracked URL (basics.llamaCppBaseUrl) is in the derived set
+ * explicit.
+ *
+ * Main-era seeds (#638): main never read LOCAL_AI_PROVIDER_URL, and every
+ * eval it emitted carried LOCAL_AI_PROVIDER plus OPENAI_BASE_URL equal to
+ * LOCAL_AI_PROVIDER_URL, with no LOCAL_AI_PROVIDER_URL_DERIVED key. An
+ * input with exactly that shape (key absent, not "") is re-derived as main
+ * would, so a main-seeded shell that changes or unsets its tracked URL or
+ * proxy before its first post-upgrade eval follows the change instead of
+ * pinning the stale URL. Trade-off: an operator who, without any #638
+ * seed, exports LOCAL_AI_PROVIDER, LOCAL_AI_PROVIDER_URL and an identical
+ * OPENAI_BASE_URL is indistinguishable from that seed and gets the
+ * derivation; any other export (OPENAI_BASE_URL left at main's value or
+ * absent, or made over a #638 seed, whose marker key is always present)
+ * stays explicit. The zsh fallback in shell/env.zsh emits the same shape.
+ *
+ * Without a marker and outside that shape (for example LOCAL_AI_PROVIDER
+ * unset after a seed) the derived set below still applies. The resolved
+ * tracked URL (basics.llamaCppBaseUrl) is in the derived set
  * so a shell seeded before #638 with a custom LOCAL_AI_LLAMA_CPP_BASE_URL,
  * which carries that URL as LOCAL_AI_PROVIDER_URL with no marker, gets a
  * marker on its next eval and follows later tracked-URL changes. Every
@@ -187,8 +202,17 @@ function resolveLlamaCppProviderUrl(
   ]);
 
   const explicitProviderUrl = nonEmpty(env["LOCAL_AI_PROVIDER_URL"]);
+  // Main-era seed: main emitted LOCAL_AI_PROVIDER and OPENAI_BASE_URL equal
+  // to LOCAL_AI_PROVIDER_URL and never a marker key, so that exact shape is
+  // a main derivation, not an operator export. `undefined` only: an empty
+  // marker is #638's "explicit" verdict and must stay explicit.
+  const mainEraSeed =
+    env["LOCAL_AI_PROVIDER_URL_DERIVED"] === undefined &&
+    nonEmpty(env["LOCAL_AI_PROVIDER"]) !== undefined &&
+    explicitProviderUrl === nonEmpty(env["OPENAI_BASE_URL"]);
   if (
     explicitProviderUrl !== undefined &&
+    !mainEraSeed &&
     explicitProviderUrl !== nonEmpty(env["LOCAL_AI_PROVIDER_URL_DERIVED"]) &&
     !derived.has(explicitProviderUrl)
   ) {

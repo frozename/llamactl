@@ -671,4 +671,93 @@ describe("env.resolveEnv — LOCAL_AI_PROVIDER_URL routes through the internal p
     expect(r.LOCAL_AI_PROVIDER_URL).toBe(PX);
     expect(r.OPENAI_BASE_URL).toBe(PX);
   });
+
+  // A main-era seed: main's eval carried LOCAL_AI_PROVIDER and OPENAI_BASE_URL equal to
+  // LOCAL_AI_PROVIDER_URL, and no LOCAL_AI_PROVIDER_URL_DERIVED key. Stripping the marker from a
+  // seed whose provider URL main would also have emitted reproduces that shape exactly. The
+  // "LOCAL_AI_PROVIDER since unset" variant falls outside the main-seed shape, so only the
+  // derived set can recognise the stale URL there.
+  const stripMarker = ({
+    LOCAL_AI_PROVIDER_URL_DERIVED: _marker,
+    ...rest
+  }: NodeJS.ProcessEnv): NodeJS.ProcessEnv => rest;
+  const mainSeed = (input: NodeJS.ProcessEnv, mainUrl: string): NodeJS.ProcessEnv => {
+    const s = stripMarker(seed(input, resolveEnv(input)));
+    expect(s["LOCAL_AI_PROVIDER_URL"]).toBe(mainUrl); // post-fix guard: main emitted this URL
+    expect(s["OPENAI_BASE_URL"]).toBe(mainUrl); // post-fix guard
+    expect("LOCAL_AI_PROVIDER_URL_DERIVED" in s).toBe(false); // post-fix guard
+    return s;
+  };
+
+  describe.each([
+    ["main seed", (s: NodeJS.ProcessEnv): NodeJS.ProcessEnv => s],
+    [
+      "main seed, LOCAL_AI_PROVIDER since unset",
+      ({ LOCAL_AI_PROVIDER: _p, ...rest }: NodeJS.ProcessEnv): NodeJS.ProcessEnv => rest,
+    ],
+  ])("#638 unmarked main-era seeds re-derive (%s)", (_label, vary) => {
+    // kills: dropping basics.lmStudioBaseUrl from the derived set (the seeded 1234/v1 is pinned).
+    test("lmstudio seeded on main, then llama.cpp, returns to the proxy", () => {
+      const lm = { ...B, LOCAL_AI_PROVIDER: "lmstudio" };
+      const s = vary(mainSeed(lm, "http://127.0.0.1:1234/v1"));
+      const r = resolveEnv({ ...s, LOCAL_AI_PROVIDER: "llama.cpp" });
+      expect(r.LOCAL_AI_PROVIDER_URL).toBe(PX);
+      expect(r.OPENAI_BASE_URL).toBe(PX);
+      const unset = { ...s };
+      delete unset["LOCAL_AI_PROVIDER"];
+      expect(resolveEnv(unset).LOCAL_AI_PROVIDER_URL).toBe(PX);
+    });
+
+    // kills: dropping trackedDerived from the derived set (the seeded 9090/v1 is pinned).
+    test("a LLAMA_CPP_PORT=9090 main seed follows a new tracked URL", () => {
+      const C = "http://10.0.0.97:9997/v1";
+      const p = { ...B, LLAMA_CPP_PORT: "9090", LOCAL_AI_PROVIDER_ROUTE: "direct" };
+      const s = vary(mainSeed(p, "http://127.0.0.1:9090/v1"));
+      delete s["LOCAL_AI_PROVIDER_ROUTE"];
+      const r = resolveEnv({ ...s, LOCAL_AI_LLAMA_CPP_BASE_URL: C });
+      expect(r.LOCAL_AI_PROVIDER_URL).toBe(C);
+      expect(r.OPENAI_BASE_URL).toBe(C);
+      expect(r.LOCAL_AI_PROVIDER_URL_DERIVED).toBe(C);
+    });
+  });
+
+  // kills: dropping the main-era-seed rule (X is treated as explicit and pinned with an empty marker).
+  test("#638 a main seed with tracked X follows an exported tracked Y, and an unset", () => {
+    const X = "http://10.0.0.99:9999/v1";
+    const Y = "http://10.0.0.98:9998/v1";
+    const s = mainSeed({ ...B, LOCAL_AI_LLAMA_CPP_BASE_URL: X }, X);
+    const r = resolveEnv({ ...s, LOCAL_AI_LLAMA_CPP_BASE_URL: Y });
+    expect(r.LOCAL_AI_PROVIDER_URL).toBe(Y);
+    expect(r.OPENAI_BASE_URL).toBe(Y);
+    expect(r.LOCAL_AI_PROVIDER_URL_DERIVED).toBe(Y);
+    const unset = { ...s };
+    delete unset["LOCAL_AI_LLAMA_CPP_BASE_URL"];
+    const u = resolveEnv(unset);
+    expect(u.LOCAL_AI_PROVIDER_URL).toBe(PX);
+    expect(u.LOCAL_AI_PROVIDER_URL_DERIVED).toBe(PX);
+  });
+
+  // kills: treating an empty marker as absent; skipping the OPENAI_BASE_URL equality check;
+  // skipping the LOCAL_AI_PROVIDER presence check.
+  test("#638 explicit exports still win over and without a main-era seed", () => {
+    const X = "http://10.0.0.99:9999/v1";
+    const Y = "http://10.0.0.98:9998/v1";
+    const E = "http://10.0.0.7:5555/v1";
+    const s = mainSeed({ ...B, LOCAL_AI_LLAMA_CPP_BASE_URL: X }, X);
+    // An export over a main seed leaves OPENAI_BASE_URL at main's X, so it is explicit.
+    expect(
+      resolveEnv({ ...s, LOCAL_AI_PROVIDER_URL: E, LOCAL_AI_LLAMA_CPP_BASE_URL: Y })
+        .LOCAL_AI_PROVIDER_URL,
+    ).toBe(E);
+    // An explicit URL seeded after #638 carries an empty marker and equal OPENAI_BASE_URL.
+    const explicitInput = { ...B, LOCAL_AI_PROVIDER: "llama.cpp", LOCAL_AI_PROVIDER_URL: E };
+    const e = seed(explicitInput, resolveEnv(explicitInput));
+    expect(e["LOCAL_AI_PROVIDER_URL_DERIVED"]).toBe(""); // post-fix guard
+    expect(e["OPENAI_BASE_URL"]).toBe(E); // post-fix guard
+    expect(resolveEnv({ ...e, LOCAL_AI_LLAMA_CPP_BASE_URL: Y }).LOCAL_AI_PROVIDER_URL).toBe(E);
+    // No seed: LOCAL_AI_PROVIDER_URL and OPENAI_BASE_URL both exported without LOCAL_AI_PROVIDER.
+    expect(
+      resolveEnv({ ...B, LOCAL_AI_PROVIDER_URL: E, OPENAI_BASE_URL: E }).LOCAL_AI_PROVIDER_URL,
+    ).toBe(E);
+  });
 });
