@@ -764,24 +764,23 @@ test("#278: forced commitUnload aborts the fetch signal and gives client a termi
     installFetchStub((_url, init) => {
       fetchStarted();
       const signal = init?.signal ?? null;
+      const body = new ReadableStream<Uint8Array>({
+        start(c): void {
+          c.enqueue(new TextEncoder().encode(UPSTREAM_TEXT));
+        },
+        cancel(): void {
+          upstreamCancelled = true;
+        },
+      });
       return new Promise<Response>((resolve, reject) => {
         if (signal === null) {
           resolve(
-            new Response(
-              new ReadableStream<Uint8Array>({
-                start(c): void {
-                  c.enqueue(new TextEncoder().encode(UPSTREAM_TEXT));
-                },
-                cancel(): void {
-                  upstreamCancelled = true;
-                },
-              }),
-              { status: 200, headers: { "content-type": "application/json" } },
-            ),
+            new Response(body, { status: 200, headers: { "content-type": "application/json" } }),
           );
           return;
         }
         const onAbort = (): void => {
+          void body.cancel();
           reject(new DOMException("The operation was aborted.", "AbortError"));
         };
         if (signal.aborted) {
@@ -829,7 +828,10 @@ test("#278: null-registry returns the identical upstream response object", async
     writeLocalModelRunWorkload(t.root, "wl-a", WL_A_PORT);
     mod.setResidencyLeaseRegistry(null);
 
-    const expectedHeaders = new Headers({ "x-custom": "value", "content-type": "application/json" });
+    const expectedHeaders = new Headers({
+      "x-custom": "value",
+      "content-type": "application/json",
+    });
     const expectedBody = UPSTREAM_TEXT;
     const upstreamResponse = new Response(expectedBody, {
       status: 200,
@@ -839,6 +841,7 @@ test("#278: null-registry returns the identical upstream response object", async
     installFetchStub(() => upstreamResponse);
 
     const res = await openaiProxy.proxyOpenAI(embeddingsRequest(KV_MODEL), t.env);
+    expect(res).toBe(upstreamResponse);
     expect(res.status).toBe(200);
     expect(await res.text()).toBe(expectedBody);
   } finally {

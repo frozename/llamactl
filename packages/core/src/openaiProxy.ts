@@ -3025,7 +3025,7 @@ async function forwardAndBindResidencyLease(
     const res = await maybePersistResponseCache(context, translatedResponse);
     if (lease !== null && res.body !== null) {
       handedOff = true;
-      return new Response(bindLeaseToBody(res.body, lease), {
+      return new Response(res.body, {
         status: res.status,
         statusText: res.statusText,
         headers: res.headers,
