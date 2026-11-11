@@ -106,6 +106,7 @@ function activeIds(state: WorkloadState): string[] {
 function bindLeaseToBody(
   body: ReadableStream<Uint8Array>,
   lease: Lease,
+  onSettle?: () => void,
 ): ReadableStream<Uint8Array> {
   let settled = false;
   let readerClosed = false;
@@ -117,6 +118,7 @@ function bindLeaseToBody(
     settled = true;
     lease.release();
     lease.signal.removeEventListener("abort", abortListener);
+    if (onSettle !== undefined) onSettle();
   }
 
   function ensureReaderClosed(): void {
@@ -133,15 +135,24 @@ function bindLeaseToBody(
   //
   // On abort: error the OUTER stream via the saved controller so the
   // consumer sees a revoked stream (not a normal end-of-stream).  Then
-  // cancel the upstream reader to unblock any pending read().
+  // cancel the upstream reader to unblock any pending read.  Marking
+  // settled here keeps onSettle exactly-once inside this module: a later
+  // settle() from the cancelled read must not fire it a second time.
   const abortListener = (): void => {
     if (settled) return;
+    settled = true;
     if (outerController !== null) {
       outerController.error(lease.signal.reason);
     }
     ensureReaderClosed();
+    if (onSettle !== undefined) onSettle();
   };
   lease.signal.addEventListener("abort", abortListener, { once: true });
+  // A lease revoked before it is bound (forced commitUnload landing in the
+  // post-forward awaits) never dispatches to the listener above, and the
+  // pull() abort branch errors without settling. Settle eagerly here; the
+  // once-guard in abortListener keeps onSettle exactly-once.
+  if (lease.signal.aborted) abortListener();
 
   return new ReadableStream<Uint8Array>({
     async pull(controller): Promise<void> {
