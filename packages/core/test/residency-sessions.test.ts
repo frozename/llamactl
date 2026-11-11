@@ -6,7 +6,7 @@ import { expect, test } from "bun:test";
 const SESSIONS_MODULE = "../src/residency/sessions.js";
 
 type AcquireResult =
-  | { ok: true; workload: string; refs: number }
+  | { ok: true; workload: string; refs: number; generation?: number }
   | { ok: false; reason: "AffinityConflict"; boundWorkload: string };
 
 type CheckUnloadResult =
@@ -15,7 +15,7 @@ type CheckUnloadResult =
 
 type SessionRefcounts = {
   acquire: (sessionId: string, workload: string) => AcquireResult;
-  release: (sessionId: string) => unknown;
+  release: (sessionId: string, generation?: number) => unknown;
   touch: (sessionId: string) => unknown;
   checkUnload: (workload: string, opts?: { force?: boolean }) => CheckUnloadResult;
   forceRelease: (workload: string) => string[];
@@ -33,6 +33,10 @@ async function load(): Promise<Mod> {
   const mod = (await import(SESSIONS_MODULE).catch(() => undefined)) as Mod | undefined;
   expect(typeof mod?.createSessionRefcounts).toBe("function");
   return mod!;
+}
+
+function generationOf(result: AcquireResult): number | undefined {
+  return result.ok ? result.generation : undefined;
 }
 
 test("#520: an active session refuses unload as SessionActive", async () => {
@@ -141,7 +145,7 @@ test("#520: session affinity pins a session to its first workload until expiry",
     reason: "AffinityConflict",
     boundWorkload: "glm",
   });
-  expect(rc.acquire("s1", "glm")).toEqual({ ok: true, workload: "glm", refs: 2 });
+  expect(rc.acquire("s1", "glm")).toMatchObject({ ok: true, workload: "glm", refs: 2 });
   rc.release("s1");
   rc.release("s1");
   t += idleTimeoutMs;
@@ -187,7 +191,60 @@ test("#520: release underflow is a no-op and never drives refs negative", async 
   rc.release("s1");
   rc.release("s1");
   rc.release("s1");
-  expect(rc.acquire("s1", "glm")).toEqual({ ok: true, workload: "glm", refs: 1 });
+  expect(rc.acquire("s1", "glm")).toMatchObject({ ok: true, workload: "glm", refs: 1 });
+});
+
+test("#520: a stale release after forceRelease cannot drop a re-acquired session", async () => {
+  const mod = await load();
+  const rc = mod.createSessionRefcounts({ idleTimeoutMs: 60_000, now: () => 1_000 });
+  const a1 = rc.acquire("s1", "glm");
+  expect(a1.ok && typeof a1.generation).toBe("number");
+  const gen1 = generationOf(a1);
+  expect(rc.forceRelease("glm")).toEqual(["s1"]);
+  const a2 = rc.acquire("s1", "glm");
+  expect(a2).toMatchObject({ ok: true, workload: "glm", refs: 1 });
+  const gen2 = generationOf(a2);
+  expect(gen2).not.toBe(gen1);
+  rc.release("s1", gen1);
+  expect(rc.acquire("s1", "glm")).toMatchObject({
+    ok: true,
+    workload: "glm",
+    refs: 2,
+    generation: gen2,
+  });
+});
+
+test("#520: a stale release after checkUnload({force:true}) is a no-op", async () => {
+  const mod = await load();
+  const rc = mod.createSessionRefcounts({ idleTimeoutMs: 60_000, now: () => 1_000 });
+  const a1 = rc.acquire("s1", "glm");
+  expect(a1.ok && typeof a1.generation).toBe("number");
+  const gen1 = generationOf(a1);
+  expect(rc.checkUnload("glm", { force: true })).toEqual({ ok: true, released: ["s1"] });
+  const a2 = rc.acquire("s1", "glm");
+  expect(a2).toMatchObject({ ok: true, workload: "glm", refs: 1 });
+  const gen2 = generationOf(a2);
+  expect(gen2).not.toBe(gen1);
+  rc.release("s1", gen1);
+  expect(rc.activeSessions("glm")).toEqual(["s1"]);
+  expect(rc.acquire("s1", "glm")).toMatchObject({
+    ok: true,
+    workload: "glm",
+    refs: 2,
+    generation: gen2,
+  });
+});
+
+test("#520: a current-generation release decrements exactly once", async () => {
+  const mod = await load();
+  const rc = mod.createSessionRefcounts({ idleTimeoutMs: 60_000, now: () => 1_000 });
+  const a1 = rc.acquire("s1", "glm");
+  const a2 = rc.acquire("s1", "glm");
+  expect(a1.ok && a2.ok && a1.generation === a2.generation).toBe(true);
+  rc.release("s1", generationOf(a2));
+  expect(rc.acquire("s1", "glm")).toMatchObject({ ok: true, workload: "glm", refs: 2 });
+  rc.release("s1");
+  expect(rc.acquire("s1", "glm")).toMatchObject({ ok: true, workload: "glm", refs: 2 });
 });
 
 test("#520: constructor and acquire fail closed on invalid input", async () => {
@@ -198,4 +255,25 @@ test("#520: constructor and acquire fail closed on invalid input", async () => {
   const rc = mod.createSessionRefcounts({ idleTimeoutMs: 60_000 });
   expect(() => rc.acquire("", "glm")).toThrow();
   expect(() => rc.acquire("s", "")).toThrow();
+});
+
+test("#520: a stale release does not refresh lastActivityMs, so idle expiry proceeds from the current release", async () => {
+  const mod = await load();
+  let t = 1_000;
+  const idleTimeoutMs = 5_000;
+  const rc = mod.createSessionRefcounts({ idleTimeoutMs, now: (): number => t });
+  const a1 = rc.acquire("s1", "glm");
+  expect(a1.ok && typeof a1.generation).toBe("number");
+  const gen1 = generationOf(a1);
+  expect(rc.forceRelease("glm")).toEqual(["s1"]);
+  const a2 = rc.acquire("s1", "glm");
+  expect(a2).toMatchObject({ ok: true, workload: "glm", refs: 1 });
+  const gen2 = generationOf(a2);
+  expect(gen2).not.toBe(gen1);
+  rc.release("s1", gen2);
+  t += idleTimeoutMs / 2;
+  rc.release("s1", gen1);
+  expect(rc.activeSessions("glm")).toEqual(["s1"]);
+  t += idleTimeoutMs / 2;
+  expect(rc.activeSessions("glm")).toEqual([]);
 });

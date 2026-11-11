@@ -40,6 +40,11 @@ import {
   writeTrailer,
 } from "./kvstore/index.js";
 import { omitUndefined } from "./object.js";
+import {
+  type ColdPinQueueProbe,
+  type ColdPinQueueProbeConfig,
+  probeColdPinQueue,
+} from "./residency/cold-pin-admission.js";
 import { bindLeaseToBody, getResidencyLeaseRegistry, type Lease } from "./residency/leases.js";
 import { currentSessionRefcounts, type SessionRefcounts } from "./residency/sessions.js";
 import {
@@ -661,6 +666,20 @@ let productionPeerSnapshots = new Map<string, workloadRuntime.PeerSnapshot>();
 // changes and in-place source mutations are observed without
 // re-registration.
 let declaredModelSource: (() => readonly unknown[]) | null = null;
+// #281 DF-08: opt-in cold-pin queue probe config and a monotonic id so every
+// probe carries a unique requestId/principal. Null (the default) keeps the
+// declared 503 byte-identical.
+let coldPinQueueProbe: ColdPinQueueProbeConfig | null = null;
+let coldPinProbeSeq = 0;
+
+/**
+ * Publish the opt-in cold-pin queue probe config consulted by the declared
+ * 503 path. No production caller in this PR; null (the default) leaves the
+ * declared rejection byte-identical. Part of #281.
+ */
+export function setColdPinQueueProbe(config: ColdPinQueueProbeConfig | null): void {
+  coldPinQueueProbe = config;
+}
 
 /**
  * Publish the declared-model entry source (workload manifests projected
@@ -750,6 +769,8 @@ export function __resetOpenAIProxyRouteMapCacheForTests(): void {
   routeMapBuildCount = 0;
   clusterRoutingOverrideForTests = null;
   declaredModelSource = null;
+  coldPinQueueProbe = null;
+  coldPinProbeSeq = 0;
   for (const runtime of kvRuntimeByDataRoot.values()) {
     runtime.storage.close();
   }
@@ -2225,6 +2246,61 @@ function declaredModelEntries(): DeclaredModelEntryV1[] {
   });
 }
 
+type QueueProbeProjection =
+  | { kind: "would_queue"; queue_depth: number; max_wait_ms: number }
+  | { kind: "would_refuse"; reason: string; retry_after_ms: number | null };
+
+function projectQueueProbe(probe: ColdPinQueueProbe): QueueProbeProjection {
+  return probe.kind === "would_queue"
+    ? { kind: "would_queue", queue_depth: probe.queueDepth, max_wait_ms: probe.maxWaitMs }
+    : { kind: "would_refuse", reason: probe.reason, retry_after_ms: probe.retryAfterMs };
+}
+
+function nonNegativeSafeInt(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
+
+function maxCompletionTokensFromBody(bodyText: string | undefined): number {
+  try {
+    const parsed = JSON.parse(bodyText ?? "") as {
+      max_completion_tokens?: unknown;
+      max_tokens?: unknown;
+    };
+    return (
+      nonNegativeSafeInt(parsed.max_completion_tokens) ?? nonNegativeSafeInt(parsed.max_tokens) ?? 0
+    );
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * #281 DF-08: hypothetical queue probe field for the declared 503. Returns `{}`
+ * on the default path (no config, so no body parse) or when anything throws, so
+ * a broken policy never fails a request. Sync: no await, no scheduling.
+ */
+function queueProbeFieldFor(
+  entry: DeclaredModelEntryV1,
+  bodyText: string | undefined,
+): Partial<{ queue_probe: QueueProbeProjection }> {
+  const config = coldPinQueueProbe;
+  if (config === null) return {};
+  try {
+    const bytes = Buffer.byteLength(bodyText ?? "", "utf8");
+    const maxCompletionTokens = maxCompletionTokensFromBody(bodyText);
+    const probe = probeColdPinQueue({
+      ...config,
+      entry,
+      probeId: String(++coldPinProbeSeq),
+      bytes,
+      maxCompletionTokens,
+    });
+    return { queue_probe: projectQueueProbe(probe) };
+  } catch {
+    return {};
+  }
+}
+
 /**
  * #280 DF-07: 503 for an exact pin of a declared model that is not
  * loaded, or null when the request keeps the #306 / default-endpoint
@@ -2238,8 +2314,16 @@ function declaredModelEntries(): DeclaredModelEntryV1[] {
  * as a transient not-yet-loaded state. `cold`/`loading`/`draining`
  * map to `model_not_loaded`. No Retry-After: readiness changes when
  * the declaration changes, not on a timer.
+ *
+ * #281 DF-08: when a cold-pin queue probe is configured, an opt-in,
+ * hypothetical `queue_probe` field reports what the queue policy would do
+ * with this request; absent config leaves the body byte-identical.
  */
-function declaredNotLoadedRejectionFor(model: string, resolved: ResolvedEnv): Response | null {
+function declaredNotLoadedRejectionFor(
+  model: string,
+  resolved: ResolvedEnv,
+  bodyText: string | undefined,
+): Response | null {
   if (defaultTargetModelIds(resolved).has(model)) return null;
   if (getRouteMap(resolved).has(model)) return null;
   const entry = declaredModelEntries().find((candidate) => candidate.id === model);
@@ -2258,6 +2342,7 @@ function declaredNotLoadedRejectionFor(model: string, resolved: ResolvedEnv): Re
         state: entry.state,
         auto_load_eligible: entry.autoLoadEligible,
         ...(entry.reason !== undefined ? { reason: entry.reason } : {}),
+        ...queueProbeFieldFor(entry, bodyText),
       },
     },
     { status: 503 },
@@ -2331,7 +2416,11 @@ async function resolveJsonBodyRoute(context: ProxyContext): Promise<ProxyContext
 function routeMissResponse(context: ProxyContext, model: string): ProxyContext | Response {
   const unavailableRejection = declaredUnavailableRejectionFor(model, context.resolved);
   if (unavailableRejection) return unavailableRejection;
-  const notLoadedRejection = declaredNotLoadedRejectionFor(model, context.resolved);
+  const notLoadedRejection = declaredNotLoadedRejectionFor(
+    model,
+    context.resolved,
+    context.bodyText,
+  );
   if (notLoadedRejection) return notLoadedRejection;
   const routeMap = getRouteMap(context.resolved);
   if (routeMap.size > 0 && !defaultTargetModelIds(context.resolved).has(model)) {
@@ -3162,10 +3251,11 @@ function acquireProxySession(
     );
   }
   let released = false;
+  const { generation } = sessionAcquireResult;
   const release = (): void => {
     if (released) return;
     released = true;
-    sessionRegistry.release(sessionId);
+    sessionRegistry.release(sessionId, generation);
   };
   return { ok: true, release };
 }

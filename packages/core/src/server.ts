@@ -28,7 +28,12 @@ import {
   verifyPidFile,
 } from "./pidIdentity.js";
 import { findTcpListenerPid, probeHealthEndpoint } from "./probe.js";
-import { withReopenAfterLoad } from "./residency/leases.js";
+import {
+  type DrainToken,
+  getResidencyLeaseRegistry,
+  type ResidencyLeases,
+  withReopenAfterLoad,
+} from "./residency/leases.js";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "./safe-fs.js";
 import { resolveTarget } from "./target.js";
 import { ensureWorkloadRuntimeDir, workloadRuntimeDir } from "./workloadRuntime.js";
@@ -538,6 +543,20 @@ export interface StartServerResult {
   tunedProfile: string | null;
   retried: boolean;
   error?: string;
+  /**
+   * Set only when a published residency lease registry refused the
+   * stop-before-start or the mmproj retry: `LeasesActive` while a lease
+   * is held, `DrainInProgress` when a foreign drain already owns the
+   * workload (Part of #278). `startServer` never reopens a workload whose
+   * unload has been committed; reopening is the router's job.
+   */
+  refused?: StartResidencyRefusal;
+}
+
+/** A residency refusal raised by a published lease registry (Part of #278). */
+export interface StartResidencyRefusal {
+  reason: "LeasesActive" | "DrainInProgress";
+  active: string[];
 }
 
 /**
@@ -814,6 +833,7 @@ function startServerError(
   retried: boolean,
   error: string,
   pid: number | null = null,
+  refused?: StartResidencyRefusal,
 ): StartServerResult {
   return {
     ok: false,
@@ -823,6 +843,7 @@ function startServerError(
     tunedProfile,
     retried,
     error,
+    ...(refused !== undefined ? { refused } : {}),
   };
 }
 
@@ -946,6 +967,7 @@ interface MmprojRetryContext {
   healthUrl: string;
   timeoutSeconds: number;
   abortKiller: AbortKiller;
+  firstPid: number;
 }
 
 type MmprojRetryOutcome =
@@ -1032,6 +1054,159 @@ function launchedServerState(
 }
 
 /**
+ * Decide how a residency registry fences a stop-before-start (Part of #278).
+ * A drain that finds held leases is refused and immediately cancelled so the
+ * running instance is never disturbed; a foreign drain already in progress is
+ * refused without touching its token; an unloaded workload is unfenced.
+ */
+type StartDrainDecision =
+  | { kind: "refused"; refused: StartResidencyRefusal }
+  | { kind: "drained"; token: DrainToken }
+  | { kind: "unfenced" };
+
+function beginStartDrain(registry: ResidencyLeases, workload: string): StartDrainDecision {
+  const drain = registry.beginDrain(workload);
+  if (drain.ok) {
+    if (drain.active.length > 0) {
+      registry.cancelDrain(drain.token);
+      return { kind: "refused", refused: { reason: "LeasesActive", active: drain.active } };
+    }
+    return { kind: "drained", token: drain.token };
+  }
+  if (drain.reason === "AlreadyDraining") {
+    return {
+      kind: "refused",
+      refused: { reason: "DrainInProgress", active: registry.active(workload) },
+    };
+  }
+  return { kind: "unfenced" };
+}
+
+type FencedStopResult =
+  | { refused: StartResidencyRefusal }
+  | { refused: null; stopResult: StopServerResult };
+
+/**
+ * Run `stopServer` under the residency fence: with no registry, or for an
+ * unfenced (unloaded) workload, stop as before; otherwise hold a drain for the
+ * stop's duration and reopen admission in a finally, before the port probe and
+ * launch. A refusal stops nothing.
+ */
+async function fencedStop(
+  opts: StartServerOptions,
+  resolved: ResolvedEnv,
+  key: WorkloadKey,
+  registry: ResidencyLeases | null,
+): Promise<FencedStopResult> {
+  const stop = async (): Promise<StopServerResult> =>
+    await stopServer({ key, resolved, ...omitUndefined({ identity: opts.identity }) });
+  if (registry === null) return { refused: null, stopResult: await stop() };
+  const decision = beginStartDrain(registry, key.name);
+  if (decision.kind === "refused") return { refused: decision.refused };
+  if (decision.kind === "unfenced") return { refused: null, stopResult: await stop() };
+  try {
+    return { refused: null, stopResult: await stop() };
+  } finally {
+    registry.cancelDrain(decision.token);
+  }
+}
+
+/**
+ * Stop-before-start: bring down any previous instance under the residency
+ * fence. Returns a refusal result when a published registry declined the drain
+ * (`LeasesActive` / `DrainInProgress`), the existing identity-unknown refusal
+ * when the tracked pid could not be verified, or null to proceed with the start.
+ */
+async function stopBeforeStart(
+  opts: StartServerOptions,
+  resolved: ResolvedEnv,
+  key: WorkloadKey,
+  launchEndpoint: StartServerOptions["endpoint"],
+): Promise<StartServerResult | null> {
+  const fenced = await fencedStop(opts, resolved, key, getResidencyLeaseRegistry());
+  if (fenced.refused !== null) {
+    return startServerError(
+      resolved,
+      launchEndpoint,
+      null,
+      false,
+      `${fenced.refused.reason}: ${fenced.refused.active.join(", ")} — refusing to start ${key.name} while residency leases are held`,
+      null,
+      fenced.refused,
+    );
+  }
+  if (!fenced.stopResult.stopped) {
+    return startServerError(
+      resolved,
+      launchEndpoint,
+      null,
+      false,
+      `pid identity unknown for tracked pid ${String(fenced.stopResult.pid)} in ${pidFile(resolved, key)} — refusing to start over an unverifiable process`,
+    );
+  }
+  return null;
+}
+
+/**
+ * Fence the mmproj retry's stop. A refusal (before the retry event fires)
+ * de-arms the abort killer, leaves both tracking files and the first pid in
+ * place, and returns the refused result. Otherwise this emits the `retry`
+ * event, runs the fenced stop, and reports whether the stop verified: null
+ * means the caller proceeds, a StartServerResult is the identity-unknown
+ * refusal for the retry path.
+ */
+async function stopForMmprojRetry(
+  opts: StartServerOptions,
+  ctx: MmprojRetryContext,
+): Promise<MmprojRetryOutcome | { stopOk: boolean }> {
+  const { resolved, key, launchEndpoint, prepared, abortKiller } = ctx;
+  const registry = getResidencyLeaseRegistry();
+  const decision: StartDrainDecision =
+    registry === null ? { kind: "unfenced" } : beginStartDrain(registry, key.name);
+  if (decision.kind === "refused") {
+    abortKiller.targetPid = null;
+    opts.signal?.removeEventListener("abort", abortKiller.kill);
+    return {
+      result: startServerError(
+        resolved,
+        launchEndpoint,
+        prepared.tunedProfile,
+        false,
+        `${decision.refused.reason}: ${decision.refused.active.join(", ")} — refusing mmproj retry for ${key.name} while residency leases are held`,
+        ctx.firstPid,
+        decision.refused,
+      ),
+      readyResult: { outcome: "timeout" },
+    };
+  }
+  abortKiller.targetPid = null;
+  opts.onEvent?.({ type: "retry", reason: "mmproj safe-flag retry" });
+  const stopResult =
+    decision.kind === "drained" && registry !== null
+      ? await fencedStopDrained(opts, resolved, key, registry, decision.token)
+      : await stopServer({ key, resolved, ...omitUndefined({ identity: opts.identity }) });
+  if (!stopResult.stopped) {
+    opts.signal?.removeEventListener("abort", abortKiller.kill);
+    return { stopOk: false };
+  }
+  return { stopOk: true };
+}
+
+async function fencedStopDrained(
+  opts: StartServerOptions,
+  resolved: ResolvedEnv,
+  key: WorkloadKey,
+  registry: ResidencyLeases,
+  token: DrainToken,
+): Promise<StopServerResult> {
+  try {
+    return await stopServer({ key, resolved, ...omitUndefined({ identity: opts.identity }) });
+  } finally {
+    registry.cancelDrain(token);
+  }
+}
+
+/**
  * Retry path: disarm the first pid, stop it, relaunch with mmproj-safe flags, restore both tracking
  * files and arm the retry pid, then poll again. Returns a final result for ready, aborted and refused
  * outcomes; timeout and exited fall through with the retry pid and updated readiness result.
@@ -1041,15 +1216,9 @@ async function retryWithMmprojSafeFlags(
   ctx: MmprojRetryContext,
 ): Promise<MmprojRetryOutcome> {
   const { resolved, key, launchEndpoint, target, prepared } = ctx;
-  ctx.abortKiller.targetPid = null;
-  opts.onEvent?.({ type: "retry", reason: "mmproj safe-flag retry" });
-  const stopResult = await stopServer({
-    key,
-    resolved,
-    ...omitUndefined({ identity: opts.identity }),
-  });
-  if (!stopResult.stopped) {
-    opts.signal?.removeEventListener("abort", ctx.abortKiller.kill);
+  const stopGate = await stopForMmprojRetry(opts, ctx);
+  if ("result" in stopGate) return stopGate;
+  if (!stopGate.stopOk) {
     return {
       result: startServerError(
         resolved,
@@ -1200,8 +1369,11 @@ function wireAbortToKill(signal: AbortSignal | undefined, killOnAbort: () => voi
  * Start llama-server in the background. Mirrors the shell `llama-start`:
  *
  *   1. Resolve the target to a rel + model path; fail if missing.
- *   2. Stop any previous instance, then spawn llama-server detached,
- *      redirecting stdout/stderr to `$LLAMA_CPP_LOGS/server.log`.
+ *   2. Stop any previous instance under the residency lease fence, then
+ *      spawn llama-server detached, redirecting stdout/stderr to
+ *      `$LLAMA_CPP_LOGS/server.log`. When a registry is published, refuse
+ *      with `LeasesActive`/`DrainInProgress` while leases are held, and
+ *      never reopen a workload whose unload has been committed.
  *   3. Apply tuned launch args from bench-profiles.tsv when a record
  *      exists for (machine, rel, mode, ctx, build); otherwise use the
  *      `default` profile args.
@@ -1236,23 +1408,9 @@ async function startServerUnwrapped(opts: StartServerOptions): Promise<StartServ
   if ("result" in validation) return validation.result;
   const { rel } = validation;
 
-  // Stop any existing instance. When the recorded pid's identity cannot be
-  // proven, refuse to start: a replacement would either orphan the tracked
-  // process or fight it for the port.
-  const stopResult = await stopServer({
-    key,
-    resolved,
-    ...omitUndefined({ identity: opts.identity }),
-  });
-  if (!stopResult.stopped) {
-    return startServerError(
-      resolved,
-      launchEndpoint,
-      null,
-      false,
-      `pid identity unknown for tracked pid ${String(stopResult.pid)} in ${pidFile(resolved, key)} — refusing to start over an unverifiable process`,
-    );
-  }
+  // Stop any existing instance under the residency lease fence (see stopBeforeStart).
+  const stopRefusal = await stopBeforeStart(opts, resolved, key, launchEndpoint);
+  if (stopRefusal) return stopRefusal;
 
   const conflictResult = await handlePortConflict(
     opts,
@@ -1316,6 +1474,7 @@ async function startServerUnwrapped(opts: StartServerOptions): Promise<StartServ
       healthUrl,
       timeoutSeconds,
       abortKiller,
+      firstPid: pid,
     });
     if (retry.result) return retry.result;
     readyResult = retry.readyResult;

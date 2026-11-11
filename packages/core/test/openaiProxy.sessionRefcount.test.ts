@@ -58,16 +58,25 @@ type LeaseModule = {
   ) => ReadableStream<Uint8Array>;
 };
 
+type SessionAcquireResult =
+  | { ok: true; workload: string; refs: number; generation: number }
+  | { ok: false; reason: "AffinityConflict"; boundWorkload: string };
+
+type SessionRefcountsV2 = Omit<SessionRefcounts, "acquire" | "release"> & {
+  acquire: (sessionId: string, workload: string) => SessionAcquireResult;
+  release: (sessionId: string, generation?: number) => void;
+};
+
 type SessionsModule = {
   createSessionRefcounts: (options: {
     idleTimeoutMs: number;
     now?: () => number;
-  }) => SessionRefcounts;
+  }) => SessionRefcountsV2;
   setSessionRefcountRegistry: (registry: SessionRefcounts | null) => void;
   currentSessionRefcounts: () => SessionRefcounts | null;
 };
 
-type SessionsSpy = SessionRefcounts & { releaseCalls: string[] };
+type SessionsSpy = SessionRefcountsV2 & { releaseCalls: string[] };
 
 async function loadLeaseModule(): Promise<LeaseModule> {
   const mod = (await import(LEASES_MODULE)) as unknown as LeaseModule;
@@ -174,13 +183,13 @@ function installSpyRegistry(mod: LeaseModule): {
   return { real, spy, acquireWorkloads, releaseResults };
 }
 
-function spySessions(real: SessionRefcounts): SessionsSpy {
+function spySessions(real: SessionRefcountsV2): SessionsSpy {
   const releaseCalls: string[] = [];
   return {
     acquire: (sessionId, workload) => real.acquire(sessionId, workload),
-    release: (sessionId): void => {
+    release: (sessionId, generation): void => {
       releaseCalls.push(sessionId);
-      real.release(sessionId);
+      real.release(sessionId, generation);
     },
     touch: (sessionId): void => {
       real.touch(sessionId);
@@ -195,7 +204,7 @@ function spySessions(real: SessionRefcounts): SessionsSpy {
 function installSessionRefcounts(
   mod: SessionsModule,
   now: () => number,
-): { real: SessionRefcounts; spy: SessionsSpy } {
+): { real: SessionRefcountsV2; spy: SessionsSpy } {
   const real = mod.createSessionRefcounts({ idleTimeoutMs: 1_000, now });
   const spy = spySessions(real);
   mod.setSessionRefcountRegistry(spy);
@@ -418,7 +427,7 @@ test("#520: a session bound to another workload conflicts with 409", async () =>
     );
     const { real: sessionsReal } = installSessionRefcounts(sessionsMod, () => 1_000);
     const { real: leases } = installSpyRegistry(leasesMod);
-    expect(sessionsReal.acquire("s1", "wl-b")).toEqual({
+    expect(sessionsReal.acquire("s1", "wl-b")).toMatchObject({
       ok: true,
       workload: "wl-b",
       refs: 1,
@@ -873,6 +882,40 @@ test("#520: a forced unload releases the session synchronously, exactly once", a
     nowMs += 1_000;
     expect(sessions.activeSessions("wl-a")).toEqual([]);
     expect(sessions.checkUnload("wl-a").ok).toBe(true);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("#520: a late release from a request whose session was force-released cannot drop a re-acquired session", async () => {
+  const t = tempKvEnv();
+  try {
+    const sessionsMod = await loadSessionsModule();
+    const leasesMod = await loadLeaseModule();
+    writeLocalModelRunWorkload(t.root, "wl-a", WL_A_PORT);
+    const upstream = gatedUpstream();
+    installFetchStub(() => upstream.respond());
+    const { real: sessionsReal, spy: sessions } = installSessionRefcounts(sessionsMod, () => 1_000);
+    installSpyRegistry(leasesMod);
+
+    const res = await openaiProxy.proxyOpenAI(
+      embeddingsRequest(KV_MODEL, { [SESSION_HEADER]: "s1" }),
+      t.env,
+    );
+    expect(res.status).toBe(200);
+    expect(sessions.releaseCalls).toEqual([]);
+
+    // Only the sessions registry is dropped: the lease and the streaming
+    // body stay live, so the request's late release lands on a session
+    // re-acquired under a newer generation.
+    expect(sessionsReal.forceRelease("wl-a")).toEqual(["s1"]);
+    expect(sessionsReal.acquire("s1", "wl-a")).toMatchObject({ ok: true, refs: 1 });
+
+    upstream.close();
+    expect(await res.text()).toBe(UPSTREAM_TEXT);
+    expect(sessions.releaseCalls).toEqual(["s1"]);
+
+    expect(sessionsReal.acquire("s1", "wl-a")).toMatchObject({ ok: true, refs: 2 });
   } finally {
     t.cleanup();
   }
