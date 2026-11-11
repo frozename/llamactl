@@ -14,6 +14,7 @@ import type { EngineName } from "../../../core/src/engines/types.js";
 import { readModelHostState } from "../../../core/src/engines/state.js";
 import { resolveEnv } from "../../../core/src/env.js";
 import { isProcessAlive } from "../../../core/src/pidIdentity.js";
+import { reapFakeProcesses } from "../../../core/test/fake-process-reaper.js";
 import {
   existsSync,
   mkdirSync,
@@ -105,20 +106,12 @@ beforeAll(async () => {
   workloadsDir = join(tmp, "workloads");
 });
 
-afterAll(() => {
-  for (const pid of spawnedPids) {
-    try {
-      process.kill(-pid, "SIGKILL");
-    } catch {
-      // already gone
-    }
-    try {
-      process.kill(pid, "SIGKILL");
-    } catch {
-      // already gone
-    }
-  }
-  rmSync(tmp, { recursive: true, force: true });
+afterAll(async () => {
+  const survivors = await reapFakeProcesses({ scratch: tmp, pids: [...spawnedPids] });
+  // tmp stays empty when beforeAll threw before mkdtempSync.
+  if (tmp !== "") rmSync(tmp, { recursive: true, force: true });
+  // A fake the reaper could not take down fails the file, after cleanup.
+  expect(survivors).toEqual([]);
 });
 
 test("libosmos host lifecycle: start, adopt, stop", async () => {

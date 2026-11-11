@@ -1,22 +1,19 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { resolveEnv } from "../src/env.js";
+import { processStartMs } from "../src/pidIdentity.js";
 import { rpcServerStatus, startRpcServer, stopRpcServer } from "../src/rpcServer.js";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "../src/safe-fs.js";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
+import { reapFakeProcesses } from "./fake-process-reaper.js";
 
-let tmp: string;
+let tmp = "";
 let resolved: ReturnType<typeof resolveEnv>;
+let resolvedReady = false;
 const origEnv = { ...process.env };
+const FILE_LOADED_MS = Date.now();
 
 // Fake rpc-server: a bash-wrapped Bun one-liner that binds a TCP
 // port and accepts connections until SIGTERM. Matches what the real
@@ -36,6 +33,34 @@ export FAKE_PORT="$PORT"
 exec -a rpc-server bun -e "const s=Bun.listen({hostname:process.env.FAKE_HOST,port:Number(process.env.FAKE_PORT),socket:{data(){},open(){},close(){},error(){}}});process.on('SIGTERM',()=>{s.stop();process.exit(0);});process.on('SIGINT',()=>{s.stop();process.exit(0);});await new Promise(()=>{});"
 `;
 
+// Every pid startRpcServer hands back. The fake's argv carries no tmp
+// path, so a test that deletes the pidfile would otherwise hide a live
+// fake from the reaper; afterEach passes these as explicit pids.
+const startedPids = new Set<number>();
+
+async function startTracked(
+  opts: Parameters<typeof startRpcServer>[0],
+): ReturnType<typeof startRpcServer> {
+  const result = await startRpcServer(opts);
+  if (result.pid !== null) startedPids.add(result.pid);
+  return result;
+}
+
+function isLiveFakeRpcServer(pid: number): boolean {
+  const res = spawnSync("ps", ["-ww", "-o", "stat=,command=", "-p", String(pid)], {
+    encoding: "utf8",
+  });
+  const line = res.stdout.trim();
+  if (res.status !== 0 || line === "" || line.startsWith("Z")) return false;
+  const argv0 = line.split(/\s+/)[1] ?? "";
+  if (argv0.slice(argv0.lastIndexOf("/") + 1) !== "rpc-server") return false;
+  // Identity guard before the SIGKILL fallback: only this file's fake (its
+  // inline script reads FAKE_PORT) started after the file loaded, so a
+  // reused pid now held by a real rpc-server is never signalled.
+  const startedMs = processStartMs(pid);
+  return line.includes("FAKE_PORT") && startedMs !== null && startedMs >= FILE_LOADED_MS - 1000;
+}
+
 function pickPort(): number {
   return 19050 + Math.floor(Math.random() * 99);
 }
@@ -54,29 +79,40 @@ beforeEach(() => {
   process.env["LOCAL_AI_RUNTIME_DIR"] = runtimeDir;
   process.env["LLAMA_CPP_LOGS"] = join(devStorage, "logs", "llama.cpp");
   resolved = resolveEnv();
+  resolvedReady = true;
 });
 
-afterEach(() => {
-  // Best-effort teardown of any fake that's still listening.
-  const pidFile = join(resolved.LOCAL_AI_RUNTIME_DIR, "rpc-server.pid");
-  if (existsSync(pidFile)) {
-    const pid = Number.parseInt(readFileSync(pidFile, "utf8").trim(), 10);
-    if (Number.isFinite(pid) && pid > 0) {
-      try {
-        process.kill(pid, "SIGTERM");
-      } catch {
-        // Best-effort cleanup; failures are not actionable here.
-      }
+afterEach(async () => {
+  // The fake's argv carries no tmp path, so the reaper finds it by the
+  // pidfile and by the pids startRpcServer returned. The flag keeps the
+  // pidfile read out of reach of an unassigned `resolved` when beforeEach
+  // threw early. tmp stays empty when beforeEach threw before mkdtempSync.
+  const pidFiles = resolvedReady ? [join(resolved.LOCAL_AI_RUNTIME_DIR, "rpc-server.pid")] : [];
+  process.env = { ...origEnv };
+  if (tmp === "") return;
+  const pids = [...startedPids];
+  startedPids.clear();
+  const survivors = await reapFakeProcesses({ scratch: tmp, pidFiles, pids });
+  // A fake the reaper never found still holds its rpc-server argv0: kill
+  // it here so the failure below cannot leak it past the run.
+  const leaked = pids.filter(isLiveFakeRpcServer);
+  for (const pid of leaked) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // already gone
     }
   }
-  process.env = { ...origEnv };
   rmSync(tmp, { recursive: true, force: true });
+  tmp = "";
+  expect(survivors).toEqual([]);
+  expect(leaked).toEqual([]);
 });
 
 describe("rpcServer", () => {
   test("starts, reports status=up with host+port, stops cleanly", async () => {
     const port = pickPort();
-    const result = await startRpcServer({ host: "127.0.0.1", port, timeoutSeconds: 5 });
+    const result = await startTracked({ host: "127.0.0.1", port, timeoutSeconds: 5 });
     expect(result.ok).toBe(true);
     expect(result.endpoint).toBe(`127.0.0.1:${String(port)}`);
     expect(result.pid).not.toBeNull();
@@ -99,7 +135,7 @@ describe("rpcServer", () => {
 
   test("missing binary returns an ok=false StartResult", async () => {
     rmSync(join(resolved.LLAMA_CPP_BIN, "rpc-server"));
-    const result = await startRpcServer({ host: "127.0.0.1", port: pickPort() });
+    const result = await startTracked({ host: "127.0.0.1", port: pickPort() });
     expect(result.ok).toBe(false);
     expect(result.error).toContain("rpc-server binary not found");
   });
@@ -113,7 +149,7 @@ describe("rpcServer", () => {
   test("emits launch → waiting*? → ready events", async () => {
     const events: { type: string }[] = [];
     const port = pickPort();
-    const result = await startRpcServer({
+    const result = await startTracked({
       host: "127.0.0.1",
       port,
       timeoutSeconds: 5,
@@ -164,7 +200,7 @@ describe("rpcServer", () => {
     const stateFile = join(resolved.LOCAL_AI_RUNTIME_DIR, "rpc-server.state");
 
     const port = pickPort();
-    const result = await startRpcServer({ host: "127.0.0.1", port, timeoutSeconds: 1 });
+    const result = await startTracked({ host: "127.0.0.1", port, timeoutSeconds: 1 });
 
     expect(result.ok).toBe(false);
     expect(result.error).toContain("timeout");

@@ -26,7 +26,7 @@ import { listDeclaredModels } from "../residency/catalog.js";
 import { type AgentRouterContext, router as appRouter } from "../router.js";
 import { handleFleetSnapshotRoute } from "../routes/fleet.js";
 import { existsSync, readFileSync } from "../safe-fs.js";
-import { startSearchIngest, stopSearchIngest } from "../search/ingest/lifecycle.js";
+import { type SearchIngestStop, startSearchIngest } from "../search/ingest/lifecycle.js";
 import {
   type ClientWebSocketConstructor,
   createTunnelClient,
@@ -1040,8 +1040,9 @@ function rollbackStartupResources(
 }
 
 // stop() body extracted to reduce cognitive complexity: drain worker-RPC,
-// remove process handlers, stop the HTTP server, flush served requests,
-// restore the residency seam, and unregister declared-models.
+// remove process handlers, stop this agent's own search ingest (#634), stop
+// the HTTP server, flush served requests, restore the residency seam, and
+// unregister declared-models.
 async function stopAgentServerResources(
   workerRpc: WorkerRpcServing | null,
   onUncaughtException: (err: Error) => void,
@@ -1053,6 +1054,7 @@ async function stopAgentServerResources(
   mdns: ReturnType<typeof maybePublishAgentMdns>,
   leases: ReturnType<typeof maybePublishResidencyLeases> | null,
   unregisterDeclaredModels: (() => void) | null,
+  stopIngest: SearchIngestStop,
 ): Promise<void> {
   // Worker-RPC attempts drain first, while their transports are up.
   await workerRpc?.drain();
@@ -1060,7 +1062,9 @@ async function stopAgentServerResources(
   // repeated start/stop cycles don't accumulate listeners.
   process.off("uncaughtException", onUncaughtException);
   process.off("unhandledRejection", onUnhandledRejection);
-  stopSearchIngest();
+  // Scoped to this agent's own ingest, so stopping one agent leaves another's
+  // search ingest running (#634).
+  stopIngest();
   stopPeerSnapshotPoller?.();
   try {
     // A drained or cancelled worker-RPC stream has handed its terminal
@@ -1290,7 +1294,7 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
   // From here on a throw at ANY step must also undo the early steps: the
   // process handlers above, the search ingest and the peer-snapshot poller.
   // The post-bind resources are rolled back by the inner catch first.
-  const early: EarlyStartup = { searchIngestStarted: false, stopPeerSnapshotPoller: null };
+  const early: EarlyStartup = { stopSearchIngest: null, stopPeerSnapshotPoller: null };
   try {
     runStartupMigration();
     if (noAuth) {
@@ -1310,11 +1314,11 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
 
 // The startup steps that run before any listener is bound. Recorded as
 // they happen so a failed start undoes exactly what THIS call started:
-// stopSearchIngest() is process-wide, so it runs only when this call
-// started the ingest — a start that fails earlier must not stop the
-// ingest another running agent owns.
+// the search-ingest stop is the handle this call's startSearchIngest()
+// returned, scoped to the ingests it started, so a failed start never
+// stops the ingest another in-process agent owns (#634).
 interface EarlyStartup {
-  searchIngestStarted: boolean;
+  stopSearchIngest: SearchIngestStop | null;
   stopPeerSnapshotPoller: (() => void) | null;
 }
 
@@ -1331,7 +1335,7 @@ function rollbackEarlyStartupSteps(
     /* ignore */
   }
   try {
-    if (early.searchIngestStarted) stopSearchIngest();
+    early.stopSearchIngest?.();
   } catch {
     /* ignore */
   }
@@ -1357,8 +1361,11 @@ function startAgentServerAfterHandlers(
   const { bindHost, port, endpoint, noAuth, allowPlainHttp } = bind;
   const { onUncaughtException, onUnhandledRejection } = handlers;
 
-  startSearchIngest().catch(() => undefined);
-  early.searchIngestStarted = true;
+  // Ingest stop is scoped to the agent that started it (#634): a synchronous
+  // throw from a partial start is already undone inside startSearchIngest,
+  // so the handle is recorded only once the start fully succeeded.
+  const stopOwnIngest = startSearchIngest();
+  early.stopSearchIngest = stopOwnIngest;
   const stopPeerSnapshotPoller = maybeStartPeerSnapshotPoller(opts);
   early.stopPeerSnapshotPoller = stopPeerSnapshotPoller;
   const nodeName = opts.nodeName ?? process.env["LLAMACTL_NODE_NAME"] ?? "agent";
@@ -1469,6 +1476,7 @@ function startAgentServerAfterHandlers(
           mdns,
           leases,
           unregisterDeclaredModels,
+          stopOwnIngest,
         );
       },
       ...(tunnelServer ? { tunnelServer } : {}),
@@ -1476,7 +1484,9 @@ function startAgentServerAfterHandlers(
     };
   } catch (err) {
     // Synchronous, best-effort rollback: each step is individually try/catch'd
-    // so one failure cannot mask the original error or skip the others.
+    // so one failure cannot mask the original error or skip the others. The
+    // rethrow reaches startAgentServer's early-step rollback, which stops
+    // this agent's own search ingest through its handle (#634).
     rollbackStartupResources(started, workerRpc, leases);
     throw err;
   }
