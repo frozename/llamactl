@@ -18,6 +18,7 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { SearchIngestStop } from "../src/search/ingest/lifecycle.js";
 import type { PeerSnapshotPollerOptions } from "../src/server/peer-snapshot-poller.js";
 import type { RunningAgent, StartAgentOptions } from "../src/server/serve.js";
 import type { TunnelClient, TunnelClientOptions } from "../src/tunnel/index.js";
@@ -36,6 +37,9 @@ const tunnelReal = { ...(await import("../src/tunnel/index.js")) };
 let pollerStops = 0;
 let ingestStarts = 0;
 let ingestStops = 0;
+// Every invocation of the handle, including the no-op repeat calls that
+// ingestStops (first-call effects only) cannot see.
+let ingestCalls = 0;
 let throwNext = false;
 // (g): createTunnelClient hands back a client whose start() throws
 // synchronously, standing in for any throw after the client exists.
@@ -60,10 +64,26 @@ const wrappedPollerStart = (opts?: PeerSnapshotPollerOptions): (() => void) => {
   };
 };
 
-const wrappedIngestStart = (): Promise<void> => {
+// startAgentServer stops its ingest through the handle startSearchIngest
+// returns (#634), so the stop count lives on the handle. Like the real
+// handle it is idempotent: ingestStops counts only its first call, while
+// ingestCalls counts every call, so a second stop on the same path shows.
+const wrappedIngestStart = (): SearchIngestStop => {
   ingestStarts += 1;
   if (throwIngestStart) throw new Error("ingest start boom");
-  return ingestReal.startSearchIngest();
+  const realStop = ingestReal.startSearchIngest();
+  let stopped = false;
+  return () => {
+    ingestCalls += 1;
+    if (stopped) return;
+    stopped = true;
+    ingestStops += 1;
+    realStop();
+    if (throwNext) {
+      throwNext = false;
+      throw new Error("ingest stop boom");
+    }
+  };
 };
 
 const wrappedCreateTunnelClient = (opts: TunnelClientOptions): TunnelClient => {
@@ -78,15 +98,6 @@ const wrappedCreateTunnelClient = (opts: TunnelClientOptions): TunnelClient => {
   } as unknown as TunnelClient;
 };
 
-const wrappedIngestStop = (): void => {
-  ingestStops += 1;
-  if (throwNext) {
-    throwNext = false;
-    throw new Error("ingest stop boom");
-  }
-  ingestReal.stopSearchIngest();
-};
-
 await mock.module("../src/server/peer-snapshot-poller.js", () => ({
   ...pollerReal,
   startPeerSnapshotPoller: wrappedPollerStart,
@@ -94,7 +105,6 @@ await mock.module("../src/server/peer-snapshot-poller.js", () => ({
 await mock.module("../src/search/ingest/lifecycle.js", () => ({
   ...ingestReal,
   startSearchIngest: wrappedIngestStart,
-  stopSearchIngest: wrappedIngestStop,
 }));
 await mock.module("../src/tunnel/index.js", () => ({
   ...tunnelReal,
@@ -184,6 +194,7 @@ beforeEach(() => {
   pollerStops = 0;
   ingestStarts = 0;
   ingestStops = 0;
+  ingestCalls = 0;
   throwNext = false;
   fakeTunnelClient = false;
   tunnelStops = 0;
@@ -219,6 +230,9 @@ describe("startAgentServer startup rollback (#278 DF-05)", () => {
     expect(() => startAgentServer(startOptions(true))).toThrow("cert not found");
     expect(pollerStops).toBe(1);
     expect(ingestStops).toBe(1);
+    // The bind failure stops the ingest once, from the early-step rollback
+    // only; the inner bind-failure rollback must not call the handle too.
+    expect(ingestCalls).toBe(1);
   });
 
   test("(c) repeated failed starts roll back every time", () => {
@@ -238,6 +252,7 @@ describe("startAgentServer startup rollback (#278 DF-05)", () => {
     expect(process.listenerCount("unhandledRejection")).toBe(unhandledBaseline);
     expect(pollerStops).toBe(1);
     expect(ingestStops).toBe(1);
+    expect(ingestCalls).toBe(1);
   });
 
   test("(e) pin: stop() on a successful start rolls back handlers, poller and ingest", async () => {
@@ -274,6 +289,7 @@ describe("startAgentServer startup rollback (#278 DF-05)", () => {
     expect(process.listenerCount("unhandledRejection")).toBe(unhandledBaseline);
     expect(pollerStops).toBe(1);
     expect(ingestStops).toBe(1);
+    expect(ingestCalls).toBe(1);
   });
 
   test("(h) a start that fails before its ingest leaves another agent's ingest running", async () => {
