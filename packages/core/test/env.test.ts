@@ -464,6 +464,10 @@ describe("env.resolveEnv — LOCAL_AI_PROVIDER_URL routes through the internal p
     });
     expect(r.LOCAL_AI_PROVIDER_URL).toBe("http://10.0.0.99:9999/v1");
     expect(r.OPENAI_BASE_URL).toBe("http://10.0.0.99:9999/v1");
+    // Only the exact value "direct" opts out; any other value keeps the proxy.
+    for (const route of ["proxy", "DIRECT", "Direct", "direct-ish"]) {
+      expect(resolveEnv({ ...B, LOCAL_AI_PROVIDER_ROUTE: route }).LOCAL_AI_PROVIDER_URL).toBe(PX);
+    }
     // Leaving direct mode after a seed returns to the proxy.
     const s = seed({ ...B, LOCAL_AI_PROVIDER_ROUTE: "direct" });
     delete s["LOCAL_AI_PROVIDER_ROUTE"];
