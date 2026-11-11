@@ -109,6 +109,10 @@ export interface ReconcileOptions {
   /** Per-call deadlines for node .query / .mutate RPCs; defaults to
    *  DEFAULT_NODE_RPC_QUERY_TIMEOUT_MS / DEFAULT_NODE_RPC_MUTATE_TIMEOUT_MS. */
   rpcTimeouts?: Partial<NodeRpcTimeouts>;
+  /** #221: per-node deadlines that override `rpcTimeouts` field by field, read
+   *  from the kubeconfig's node `rpcTimeouts` block. Resolved once per node
+   *  per pass; a per-node value never leaks to another node. */
+  rpcTimeoutsFor?: (nodeName: string) => Partial<NodeRpcTimeouts> | undefined;
   /** How long an evicted-by marker holds a victim down while its
    *  replacement is missing or not yet confirmed. Defaults to
    *  EVICTION_INTENT_GRACE_MS (15 minutes). */
@@ -211,20 +215,31 @@ function hostSpecsEqual(manifest: ModelHostManifest, current: Record<string, unk
  * persisted manifest's status section is updated in place so
  * `llamactl get workloads` reflects the latest pass. Node .query /
  * .mutate RPCs carry a per-call deadline (see node-rpc-deadline.ts)
- * so one unreachable node cannot stall the rest of the pass. After
- * the first timeout on a node, that node's remaining calls in the
- * pass fail fast with NodeRpcSkippedError; the next pass retries it.
+ * so one unreachable node cannot stall the rest of the pass; #221 lets
+ * a node's kubeconfig `rpcTimeouts` block override the pass defaults
+ * per field. After the first timeout on a node, that node's remaining
+ * calls in the pass fail fast with NodeRpcSkippedError; the next pass
+ * retries it.
  */
 export async function reconcileOnce(opts: ReconcileOptions): Promise<ReconcileResult> {
-  const timeouts: NodeRpcTimeouts = {
-    queryMs: opts.rpcTimeouts?.queryMs ?? DEFAULT_NODE_RPC_QUERY_TIMEOUT_MS,
-    mutateMs: opts.rpcTimeouts?.mutateMs ?? DEFAULT_NODE_RPC_MUTATE_TIMEOUT_MS,
+  const timeoutsByNode = new Map<string, NodeRpcTimeouts>();
+  const timeoutsForNode = (nodeName: string): NodeRpcTimeouts => {
+    const cached = timeoutsByNode.get(nodeName);
+    if (cached !== undefined) return cached;
+    const perNode = opts.rpcTimeoutsFor?.(nodeName);
+    const resolved: NodeRpcTimeouts = {
+      queryMs: perNode?.queryMs ?? opts.rpcTimeouts?.queryMs ?? DEFAULT_NODE_RPC_QUERY_TIMEOUT_MS,
+      mutateMs:
+        perNode?.mutateMs ?? opts.rpcTimeouts?.mutateMs ?? DEFAULT_NODE_RPC_MUTATE_TIMEOUT_MS,
+    };
+    timeoutsByNode.set(nodeName, resolved);
+    return resolved;
   };
   const pass: NodeRpcPassState = { timedOut: new Map() };
   const deadlineOpts: ReconcileOptions = {
     ...opts,
     getClient: (nodeName) =>
-      withNodeRpcDeadline(opts.getClient(nodeName), nodeName, timeouts, pass),
+      withNodeRpcDeadline(opts.getClient(nodeName), nodeName, timeoutsForNode(nodeName), pass),
   };
   const dir = opts.workloadsDir ?? defaultWorkloadsDir();
   const all = listWorkloads(dir);

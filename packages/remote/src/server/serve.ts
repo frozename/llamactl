@@ -2,7 +2,7 @@ import type { AgentWorkerRpc, AgentWorkerRpcRelay } from "@llamactl/core/config/
 
 import { inferenceRpc, openaiProxy } from "@llamactl/core";
 import { resolveEnv } from "@llamactl/core/env";
-import { migrateLegacySingletonRuntime } from "@llamactl/core/workloadRuntime";
+import { listLocalRoutes, migrateLegacySingletonRuntime } from "@llamactl/core/workloadRuntime";
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
 import { join } from "node:path";
 
@@ -16,6 +16,7 @@ import {
   type WorkerRpcHostOptions,
 } from "../inference/procedures.js";
 import { dispatchProxyRequest, publishUnifiedPeerSnapshots } from "../proxy/create-proxy.js";
+import { listDeclaredModels } from "../residency/catalog.js";
 import { type AgentRouterContext, router as appRouter } from "../router.js";
 import { handleFleetSnapshotRoute } from "../routes/fleet.js";
 import { existsSync, readFileSync } from "../safe-fs.js";
@@ -32,6 +33,7 @@ import {
   type TunnelState,
 } from "../tunnel/index.js";
 import { isInferenceRpcProcedure } from "../tunnel/messages.js";
+import { LOCAL_NODE_ID } from "../workload/modelhost-schema.js";
 import { listWorkloads, saveWorkload } from "../workload/store.js";
 import { handleAgentRollback, handleAgentUpdate } from "./agent-update.js";
 import { type ArtifactsHandlerOptions, handleArtifact } from "./artifacts.js";
@@ -110,6 +112,15 @@ export interface StartAgentOptions {
    */
   peerSnapshotPoll?: boolean;
   peerSnapshotPollIntervalMs?: number;
+  /**
+   * Registers the #280 DF-07 declared-model source with openaiProxy:
+   * agent-local workload manifests projected to DeclaredModelEntryV1.
+   * Off by default — only `agent serve` with LLAMACTL_DECLARED_MODELS=1
+   * enables it. The source is read fresh on every route miss and every
+   * listing and never cached, because in-place manifest edits do not
+   * bump the dir mtime.
+   */
+  declaredModels?: boolean;
   /**
    * Override paths for the /register handler. Production leaves this
    * unset so the handler uses ~/.llamactl/bootstrap-tokens and
@@ -677,6 +688,52 @@ function createAgentFetchHandler(args: {
   };
 }
 
+/**
+ * Counts the requests still executing inside the fetch handler. A route
+ * miss is resolved only after the handler has awaited the request body,
+ * so a request accepted before `stop()` can still be about to read the
+ * declared-model source once the HTTP listener and the tunnel client are
+ * gone — both the socket path and the synthetic `handleRequest` path
+ * reach this handler. `stop()` waits for the count to drop before it
+ * unregisters that source (DF-07); streams release at their head, since
+ * the declared lookup happens before the upstream fetch. Only wired when a
+ * declared source is registered: with none nothing reads it late, so the
+ * default stop() keeps its pre-#610 timing.
+ */
+function trackServedRequests(handler: AgentFetchHandler): {
+  handler: AgentFetchHandler;
+  untilIdle: () => Promise<void>;
+} {
+  const idleWaiters: (() => void)[] = [];
+  let active = 0;
+  const release = (): void => {
+    active -= 1;
+    if (active === 0) {
+      for (const settle of idleWaiters.splice(0)) settle();
+    }
+  };
+  return {
+    handler: (req: Request, server: AgentFetchServer): Response | Promise<Response> => {
+      active += 1;
+      try {
+        const outcome = handler(req, server);
+        if (outcome instanceof Promise) return outcome.finally(release);
+        release();
+        return outcome;
+      } catch (error) {
+        release();
+        throw error;
+      }
+    },
+    untilIdle: (): Promise<void> =>
+      active === 0
+        ? Promise.resolve()
+        : new Promise<void>((resolve) => {
+            idleWaiters.push(resolve);
+          }),
+  };
+}
+
 function startBunServer(args: {
   tls: StartAgentOptions["tls"];
   allowPlainHttp: boolean;
@@ -873,6 +930,26 @@ function maybeStartPeerSnapshotPoller(opts: StartAgentOptions): (() => void) | n
   });
 }
 
+function maybeRegisterDeclaredModels(opts: StartAgentOptions): (() => void) | null {
+  if (!opts.declaredModels) return null;
+  // Project with LOCAL_NODE_ID, not the agent's nodeName: agent-local
+  // manifests carry spec.node 'local' (router.ts:144, reconciler.ts:480),
+  // while nodeName defaults to LLAMACTL_NODE_NAME or 'agent'. No `dir`:
+  // defaultWorkloadsDir() re-reads env on every call. No cache: in-place
+  // manifest edits do not bump the dir mtime. The live set is keyed by the
+  // route's model, never its workload name: a live llama-server marks the
+  // claim for that model ready, and a name-keyed set would mark nothing.
+  openaiProxy.setDeclaredModelSource(() =>
+    listDeclaredModels({
+      nodeName: LOCAL_NODE_ID,
+      liveModelIds: new Set(listLocalRoutes(resolveEnv()).map((route) => route.model)),
+    }),
+  );
+  return (): void => {
+    openaiProxy.setDeclaredModelSource(null);
+  };
+}
+
 interface WorkerRpcServing {
   /** The service-credential bindings current now. */
   bindings(): readonly ServiceCredentialBinding[];
@@ -981,6 +1058,40 @@ function maybeCreateTunnelServer(opts: StartAgentOptions): TunnelServer | null {
 }
 
 /**
+ * Last, and bounded: bonjour's stop has no timeout, and a hung one must
+ * not keep the tunnel serving or hold stop() open. The waits here run
+ * concurrently, so stop() stays inside the drain timeout plus three flush
+ * windows: the drain's, the shared one in stop and this one. The in-flight
+ * wait only joins this window when a declared source is registered; without
+ * the opt-in stop() never waits on a client request at all. With neither
+ * opt-in nor mDNS there is nothing to flush, and the caller skips this
+ * function entirely, so the default stop() keeps its pre-#610 timing.
+ */
+async function finalFlushWindow(
+  servedRequests: { untilIdle: () => Promise<void> } | null,
+  mdns: PublishedAgent | null,
+): Promise<void> {
+  const finalFlush: Promise<boolean>[] = [];
+  if (servedRequests !== null) {
+    // Requests already inside the handler when the listener went away
+    // answer their route miss later, from the declared source, so this
+    // window is what makes the source outlive them (DF-07).
+    finalFlush.push(within(TERMINAL_FLUSH_MS, servedRequests.untilIdle()));
+  }
+  if (mdns) {
+    finalFlush.push(
+      within(
+        TERMINAL_FLUSH_MS,
+        mdns.stop().catch(() => undefined),
+      ),
+    );
+  }
+  if (finalFlush.length > 0) {
+    await Promise.all(finalFlush);
+  }
+}
+
+/**
  * Starts a Bun HTTP(S) server that exposes the llamactl tRPC router
  * behind bearer-token auth. The fetchRequestHandler is the same surface
  * the Electron main process mounts via electron-trpc — one router,
@@ -1036,7 +1147,16 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     });
   }
 
-  const fetchHandler = createAgentFetchHandler({ opts, endpoint, tunnelServer, gate, workerRpc });
+  const baseFetchHandler = createAgentFetchHandler({
+    opts,
+    endpoint,
+    tunnelServer,
+    gate,
+    workerRpc,
+  });
+  const servedRequests =
+    opts.declaredModels === true ? trackServedRequests(baseFetchHandler) : null;
+  const fetchHandler = servedRequests?.handler ?? baseFetchHandler;
 
   const wsConfig = tunnelServer ? tunnelServer.websocket : null;
   const { server, fingerprint } = startBunServer({
@@ -1050,6 +1170,11 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
       ? { idleTimeoutSeconds: opts.idleTimeoutSeconds }
       : {}),
   });
+  // Registered only once the listener is actually up: a failed bind (port
+  // in use) must not leave the module-global declared source behind a
+  // server that never existed (DF-07 review). Binding is synchronous and
+  // this call is the next statement, so no request can observe the gap.
+  const unregisterDeclaredModels = maybeRegisterDeclaredModels(opts);
 
   const scheme = opts.tls && !allowPlainHttp ? "https" : "http";
   const listenPort = server.port ?? port;
@@ -1106,16 +1231,15 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
         }
         void server.stop(true);
         workerRpc?.unpublish();
-        // Last, and bounded: bonjour's stop has no timeout, and a hung one
-        // must not keep the tunnel serving or hold stop() open. That keeps
-        // stop() within the drain timeout plus three flush windows (the
-        // drain's, the shared one above and this one), or two without mDNS.
-        if (mdns) {
-          await within(
-            TERMINAL_FLUSH_MS,
-            mdns.stop().catch(() => undefined),
-          );
-        }
+        // Guarded at the call site: awaiting even an empty async function
+        // costs a microtask, and the default stop() (no opt-in, no mDNS) must
+        // keep its pre-#610 timing.
+        if (servedRequests !== null || mdns) await finalFlushWindow(servedRequests, mdns);
+        // Unregister the declared-model source only once the HTTP server, the
+        // tunnel client and every request that could still read it are done:
+        // while any of them is up, a cold pin must still get its declared
+        // 503 instead of the default-target fallthrough (DF-07).
+        unregisterDeclaredModels?.();
       }
     },
     ...(tunnelServer ? { tunnelServer } : {}),
