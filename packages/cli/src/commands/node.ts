@@ -23,6 +23,7 @@ import {
 import { dirname } from "node:path";
 
 import { getNodeClient } from "../dispatcher.js";
+import { clearNodeContact, nodeUnreachable, readNodeContact } from "../node-contact.js";
 import { required } from "../required.js";
 import { mkdirSync, readFileSync, writeFileSync } from "../safe-fs.js";
 
@@ -33,7 +34,9 @@ const USAGE = `Usage: llamactl node <subcommand>
 
 Subcommands:
   ls [--json]
-      List nodes in the current context.
+      List nodes in the current context. A node shown as Unreachable
+      reports the outcome last recorded by 'llamactl get workloads'
+      ('as of' is when it was observed); ls does not contact nodes.
   add <name> --bootstrap <blob> [--force] [--replace-token]
       Decode a bootstrap blob from 'llamactl agent init' and persist it.
   add <name> --server <url> --fingerprint <sha256:...>
@@ -116,8 +119,31 @@ function runLs(args: string[]): number {
   const ctx = currentContext(cfg);
   const cluster = cfg.clusters.find((c) => c.name === ctx.cluster);
   const nodes = cluster?.nodes ?? [];
+  const unreachable: {
+    name: string;
+    lastSeen: string | null;
+    observedAt: string | null;
+    error: string;
+  }[] = [];
+  const listed = nodes.map((n) => {
+    const rec = readNodeContact(n.name);
+    if (!nodeUnreachable(rec)) return n;
+    unreachable.push({
+      name: n.name,
+      lastSeen: rec.lastSeen,
+      observedAt: rec.lastErrorAt,
+      error: rec.lastError,
+    });
+    return {
+      ...n,
+      phase: "Unreachable",
+      lastSeen: rec.lastSeen,
+      observedAt: rec.lastErrorAt,
+      error: rec.lastError,
+    };
+  });
   if (json) {
-    process.stdout.write(`${JSON.stringify({ context: ctx.name, nodes }, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify({ context: ctx.name, nodes: listed }, null, 2)}\n`);
     return 0;
   }
   if (nodes.length === 0) {
@@ -128,6 +154,11 @@ function runLs(args: string[]): number {
   for (const n of nodes) {
     const suffix = n.name === ctx.defaultNode ? " (default)" : "";
     process.stdout.write(`${n.name.padEnd(width)}  ${n.endpoint}${suffix}\n`);
+  }
+  for (const u of unreachable) {
+    process.stdout.write(
+      `unreachable: ${u.name} as of ${String(u.observedAt)}, last answered ${u.lastSeen ?? "never"}: ${u.error}\n`,
+    );
   }
   return 0;
 }
@@ -395,6 +426,7 @@ function runRm(args: string[]): number {
     return 1;
   }
   process.stdout.write(`removed node '${name}' from context '${ctxName}'\n`);
+  clearNodeContact(name);
   return 0;
 }
 

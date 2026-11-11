@@ -39,6 +39,7 @@ import { resolve as resolvePath } from "node:path";
 import { parse as parseYaml } from "yaml";
 
 import { getGlobals, getNodeClientByName } from "../dispatcher.js";
+import { readNodeContact, recordNodeAnswered, recordNodeFailed } from "../node-contact.js";
 import { required } from "../required.js";
 import { existsSync, readFileSync, rmSync } from "../safe-fs.js";
 import { makeSpecArtifactResolver, nodeRunBudgetLookup } from "./noderun-helpers.js";
@@ -77,6 +78,11 @@ the same verdict describe workload reports.
 Each node query (serverStatus for a ModelRun, modelHostStatus for a
 ModelHost) has a 10 s deadline: a node that does not answer within
 10 s reads Unreachable, and the other rows are not held up.
+
+A row whose node query failed gets a trailing 'unreachable:' line with
+the last time its node answered, and its --json row carries lastSeen
+(an ISO time, or null when the node never answered) and error. An
+error the node itself returned still counts as the node answering.
 
 A ModelHost that binds a non-loopback host gets a trailing 'warning:'
 line, and its --json row carries exposedBind (host:port, or null) and
@@ -682,7 +688,25 @@ type WorkloadRow = {
   statePid: number | null;
   listenerPid: number | null;
   gateway: boolean;
+  nodeQuery?: NodeQueryOutcome;
 };
+
+// #221: internal per-row outcome of one node query, consumed by runGet to
+// record contact per node. Never emitted on a row.
+interface NodeQueryOutcome {
+  answered: boolean;
+  error: string | null;
+}
+
+// #221: an error carrying a tRPC `data.code` came back from the node itself,
+// so the node answered even though this row failed. A deadline miss
+// (NodeQueryDeadlineError) or a transport failure has no such code.
+function nodeAnsweredDespite(err: unknown): boolean {
+  if (typeof err !== "object" || err === null) return false;
+  const data: unknown = (err as { data?: unknown }).data;
+  if (typeof data !== "object" || data === null) return false;
+  return typeof (data as { code?: unknown }).code === "string";
+}
 
 async function inspect(manifest: workloadSchema.ModelRun): Promise<WorkloadRow> {
   // Gateway manifests never run a local server on a reachable agent
@@ -727,8 +751,10 @@ async function inspect(manifest: workloadSchema.ModelRun): Promise<WorkloadRow> 
       statePid: status.pid,
       listenerPid: status.listenerPid ?? null,
       gateway: false,
+      nodeQuery: { answered: true, error: null },
     };
-  } catch {
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
     return {
       name: manifest.metadata.name,
       node: manifest.spec.node,
@@ -738,6 +764,7 @@ async function inspect(manifest: workloadSchema.ModelRun): Promise<WorkloadRow> 
       statePid: null,
       listenerPid: null,
       gateway: false,
+      nodeQuery: { answered: nodeAnsweredDespite(err), error: message },
     };
   }
 }
@@ -754,6 +781,7 @@ type ModelHostLive = {
   endpoint: string | null;
   statePid: number | null;
   listenerPid: number | null;
+  nodeQuery?: NodeQueryOutcome;
 };
 
 async function inspectLocalModelHost(manifest: ModelHostManifest): Promise<ModelHostLive> {
@@ -798,13 +826,50 @@ async function inspectRemoteModelHost(manifest: ModelHostManifest): Promise<Mode
       client.modelHostStatus.query({ workload: manifest.metadata.name }),
     );
     if (status.state === "Running") {
-      return { phase: "Running", endpoint, statePid: status.pid ?? null, listenerPid: null };
+      return {
+        phase: "Running",
+        endpoint,
+        statePid: status.pid ?? null,
+        listenerPid: null,
+        nodeQuery: { answered: true, error: null },
+      };
     }
     const phase = status.identityUnknown === true ? "unknown" : "Stopped";
-    return { phase, endpoint, statePid: null, listenerPid: null };
-  } catch {
-    return { phase: "Unreachable", endpoint, statePid: null, listenerPid: null };
+    return {
+      phase,
+      endpoint,
+      statePid: null,
+      listenerPid: null,
+      nodeQuery: { answered: true, error: null },
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      phase: "Unreachable",
+      endpoint,
+      statePid: null,
+      listenerPid: null,
+      nodeQuery: { answered: nodeAnsweredDespite(err), error: message },
+    };
   }
+}
+
+// #221: internal row shape for a ModelHost before contact fields land;
+// nodeQuery is stripped before the row is emitted.
+interface GetHostRow {
+  kind: "modelhost";
+  name: string;
+  node: string;
+  phase: ModelHostLive["phase"];
+  rel: string;
+  endpoint: string | null;
+  statePid: number | null;
+  listenerPid: number | null;
+  gateway: false;
+  exposedBind: string | null;
+  allowExternalBind: boolean;
+  managedBy: string | null;
+  nodeQuery?: NodeQueryOutcome | undefined;
 }
 
 export async function runGet(args: string[]): Promise<number> {
@@ -830,35 +895,43 @@ export async function runGet(args: string[]): Promise<number> {
 
   const manifests = workloadStore.listWorkloads();
   const modelHosts = listModelHosts();
-  const rows = [
-    ...(await Promise.all(manifests.map(inspect))).map((row) => ({
-      ...row,
-      kind: "modelrun" as const,
-      managedBy: null,
-    })),
-    ...(await Promise.all(
-      modelHosts.map(async (manifest) => {
-        const live =
-          manifest.spec.node === LOCAL_NODE_ID
-            ? await inspectLocalModelHost(manifest)
-            : await inspectRemoteModelHost(manifest);
-        return {
-          kind: "modelhost" as const,
-          name: manifest.metadata.name,
-          node: manifest.spec.node,
-          phase: live.phase,
-          rel: manifest.spec.hostedModels.map((m) => m.rel).join(", "),
-          endpoint: live.endpoint,
-          statePid: live.statePid,
-          listenerPid: live.listenerPid,
-          gateway: false,
-          exposedBind: modelHostExposedBind(manifest),
-          allowExternalBind: manifest.spec.allowExternalBind === true,
-          managedBy: externalManagerOf(manifest),
-        };
-      }),
-    )),
-  ];
+  const runRows = (await Promise.all(manifests.map(inspect))).map((row) => ({
+    ...row,
+    kind: "modelrun" as const,
+    managedBy: null,
+  }));
+  const hostRows = await Promise.all(
+    modelHosts.map(async (manifest): Promise<GetHostRow> => {
+      const live =
+        manifest.spec.node === LOCAL_NODE_ID
+          ? await inspectLocalModelHost(manifest)
+          : await inspectRemoteModelHost(manifest);
+      return {
+        kind: "modelhost",
+        name: manifest.metadata.name,
+        node: manifest.spec.node,
+        phase: live.phase,
+        rel: manifest.spec.hostedModels.map((m) => m.rel).join(", "),
+        endpoint: live.endpoint,
+        statePid: live.statePid,
+        listenerPid: live.listenerPid,
+        gateway: false,
+        exposedBind: modelHostExposedBind(manifest),
+        allowExternalBind: manifest.spec.allowExternalBind === true,
+        managedBy: externalManagerOf(manifest),
+        nodeQuery: live.nodeQuery,
+      };
+    }),
+  );
+  const allRows = [...runRows, ...hostRows];
+  const now = (workloadTestSeams.now ?? ((): Date => new Date()))();
+  const lastSeenByNode = recordRunContacts(allRows, now);
+  const rows = allRows.map((row) => {
+    const { nodeQuery, ...base } = row;
+    const error = nodeQuery?.error ?? null;
+    if (error === null) return base;
+    return { ...base, lastSeen: lastSeenByNode.get(row.node) ?? null, error };
+  });
   if (json) {
     process.stdout.write(`${JSON.stringify(rows, null, 2)}\n`);
     return 0;
@@ -882,7 +955,49 @@ export async function runGet(args: string[]): Promise<number> {
   }
   writeExternalBindWarnings(rows);
   writeManagedByNotes(rows);
+  writeUnreachableNotes(rows);
   return 0;
+}
+
+// #221: record, once per node per run, whether the node answered this run. A
+// node that answered anywhere in the run is contactable; otherwise the first
+// unanswered row's error is stored with the time it was observed, keeping the
+// last-answered time from any earlier run. Returns the lastSeen each row
+// should report: this run's time when answered, else the prior record's.
+function recordRunContacts(
+  rows: readonly { node: string; nodeQuery?: NodeQueryOutcome | undefined }[],
+  now: Date,
+): Map<string, string | null> {
+  interface NodeOutcome {
+    answered: boolean;
+    firstError: string | null;
+  }
+  const outcomes = new Map<string, NodeOutcome>();
+  for (const row of rows) {
+    if (row.nodeQuery === undefined) continue;
+    const existing = outcomes.get(row.node);
+    if (existing === undefined) {
+      outcomes.set(row.node, {
+        answered: row.nodeQuery.answered,
+        firstError: row.nodeQuery.error,
+      });
+      continue;
+    }
+    if (row.nodeQuery.answered) existing.answered = true;
+    else existing.firstError ??= row.nodeQuery.error;
+  }
+  const lastSeenByNode = new Map<string, string | null>();
+  for (const [node, outcome] of outcomes) {
+    const prior = readNodeContact(node);
+    if (outcome.answered) {
+      recordNodeAnswered(node, now);
+      lastSeenByNode.set(node, now.toISOString());
+    } else {
+      recordNodeFailed(node, outcome.firstError ?? "", now);
+      lastSeenByNode.set(node, prior?.lastSeen ?? null);
+    }
+  }
+  return lastSeenByNode;
 }
 
 function writeExternalBindWarnings(
@@ -913,6 +1028,25 @@ function writeManagedByNotes(
     if (r.kind !== "modelhost" || r.managedBy === null) continue;
     process.stdout.write(
       `note: modelhost/${r.name} is managed by ${r.managedBy} (${MANAGED_BY_LABEL}); this controller does not reconcile it\n`,
+    );
+  }
+}
+
+// #221: name each row whose node query failed, with the last time its node
+// answered, on its own line so the table columns stay unchanged.
+function writeUnreachableNotes(
+  rows: readonly {
+    kind: string;
+    name: string;
+    node: string;
+    error?: string;
+    lastSeen?: string | null;
+  }[],
+): void {
+  for (const r of rows) {
+    if (r.error === undefined) continue;
+    process.stdout.write(
+      `unreachable: ${r.kind}/${r.name} on node ${r.node}, last answered ${r.lastSeen ?? "never"}: ${r.error}\n`,
     );
   }
 }
