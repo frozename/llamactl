@@ -24,7 +24,7 @@ import {
 } from "@llamactl/remote/workload/modelhost-schema";
 import { join } from "node:path";
 
-import { getNodeClientByName } from "../dispatcher.js";
+import { getGlobals, getNodeClientByName } from "../dispatcher.js";
 import { makeSpecArtifactResolver } from "./noderun-helpers.js";
 
 const USAGE = `Usage: llamactl controller serve [--interval=<s>] [--once]
@@ -390,7 +390,7 @@ function writeLines(lines: readonly ControllerLogLine[]): void {
   }
 }
 
-interface ControllerPassState {
+export interface ControllerPassState {
   errors: ReconcileErrorLog;
   oom: OomWatchState;
 }
@@ -452,12 +452,17 @@ type NodeRpcTimeoutsForNode = (
  * be resolved, so the reconcile pass falls back to its defaults. Fields are
  * mapped conditionally so the result matches the remote Partial<NodeRpcTimeouts>
  * contract under exactOptionalPropertyTypes (zod optionals carry `| undefined`).
+ * `contextName` carries the `--context` global so a same-named node resolves
+ * through the selected context, matching the dispatcher's own node lookup.
  */
-export function nodeRpcTimeoutsFromConfig(cfg: Config): NodeRpcTimeoutsForNode {
+export function nodeRpcTimeoutsFromConfig(
+  cfg: Config,
+  contextName?: string | null,
+): NodeRpcTimeoutsForNode {
   return (nodeName: string): { queryMs?: number; mutateMs?: number } | undefined => {
     let block: { queryMs?: number | undefined; mutateMs?: number | undefined } | undefined;
     try {
-      block = resolveNode(cfg, nodeName).node.rpcTimeouts;
+      block = resolveNode(cfg, nodeName, contextName ?? undefined).node.rpcTimeouts;
     } catch {
       return undefined;
     }
@@ -494,7 +499,7 @@ export async function runController(args: string[]): Promise<number> {
       return null;
     }
   };
-  const rpcTimeoutsFor = nodeRpcTimeoutsFromConfig(cfg);
+  const rpcTimeoutsFor = nodeRpcTimeoutsFromConfig(cfg, getGlobals().contextName);
 
   const acquired = workloadLock.acquireLock(workloadsDir);
   if ("error" in acquired) {
@@ -590,14 +595,26 @@ export function observeOomKills(
   return watch.nextState;
 }
 
-async function runReconcilePass(
+/** Seam over the two reconciler entry points so tests can assert the pass
+ *  wiring (notably that `rpcTimeoutsFor` reaches both) without live nodes. */
+export interface ReconcilePassDeps {
+  reconcileModelRuns?: (
+    opts: workloadReconciler.ReconcileOptions,
+  ) => Promise<workloadReconciler.ReconcileResult>;
+  reconcileNodeRuns?: (
+    opts: noderunReconciler.NodeRunReconcileOptions,
+  ) => Promise<noderunReconciler.NodeRunReconcileResult>;
+}
+
+export async function runReconcilePass(
   workloadsDir: string,
   resolveNodeIdentity: (n: string) => string | null,
   rpcTimeoutsFor: NodeRpcTimeoutsForNode,
   state: ControllerPassState,
+  deps: ReconcilePassDeps = {},
 ): Promise<ControllerPassState> {
   // ModelRun pass — converges llama-server lifecycle per manifest.
-  const modelrunResult = await workloadReconciler.reconcileOnce({
+  const modelrunResult = await (deps.reconcileModelRuns ?? workloadReconciler.reconcileOnce)({
     workloadsDir,
     getClient: (nodeName) => getNodeClientByName(nodeName),
     resolveNodeIdentity,
@@ -607,7 +624,7 @@ async function runReconcilePass(
     },
   });
   // NodeRun pass — converges infra inventory per manifest.
-  const noderunResult = await noderunReconciler.reconcileNodeRunsOnce({
+  const noderunResult = await (deps.reconcileNodeRuns ?? noderunReconciler.reconcileNodeRunsOnce)({
     workloadsDir,
     getClient: (nodeName) => getNodeClientByName(nodeName),
     rpcTimeoutsFor,
