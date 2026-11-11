@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { reapFakeProcesses } from "../../core/test/fake-process-reaper.js";
 import { router } from "../src/router.js";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 import { loadWorkloadByName, parseWorkload, saveWorkload } from "../src/workload/store.js";
@@ -119,17 +120,19 @@ afterEach(async () => {
   try {
     await router.createCaller({}).serverStop({ workload: NAME, graceSeconds: 1 });
   } catch {
-    // best effort; the pid sweep below is the safety net
+    // best effort; the reaper below is the safety net
   }
-  for (const pid of spawnedPids) {
-    if (isAlive(pid)) process.kill(pid, "SIGKILL");
-  }
+  const survivors = await reapFakeProcesses({ scratch: tmp, pids: [...spawnedPids] });
   spawnedPids.clear();
   await decoy?.stop(true);
   decoy = null;
   for (const k of Object.keys(process.env)) Reflect.deleteProperty(process.env, k);
   Object.assign(process.env, originalEnv);
-  rmSync(tmp, { recursive: true, force: true });
+  // tmp stays empty when beforeEach threw before mkdtempSync.
+  if (tmp !== "") rmSync(tmp, { recursive: true, force: true });
+  tmp = "";
+  // A fake the reaper could not take down fails the file, after cleanup.
+  expect(survivors).toEqual([]);
 });
 
 test("reconcile restarts a Running workload whose recorded pid died out-of-band", async () => {
