@@ -89,6 +89,8 @@ import { readJournal } from "./ops-chat/sessions/journal.js";
 import { getSessionSummary, listSessions } from "./ops-chat/sessions/list.js";
 import { createRagAdapter } from "./rag/index.js";
 import { resolveRagNode } from "./rag/resolve.js";
+import { buildResidencyStatus } from "./residency/procedures.js";
+import { defaultResidencyStorePath, readResidencyStoreSnapshot } from "./residency/store.js";
 import { readFleetSnapshotOrLocalRoutes } from "./routes/fleet.js";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "./safe-fs.js";
 import { searchLogs } from "./search/logs.js";
@@ -1942,6 +1944,22 @@ export const router = t.router({
       .filter((w) => w.enabled)
       .reduce((sum, w) => sum + (w.expectedMemoryGiB ?? 0), 0);
     return { budget, reserved, workloads };
+  }),
+
+  // Read-only residency status. nodeRun/policy/budget reflect the NodeRun
+  // manifest matched by `node`; the store section is always this serving
+  // process's own node-local store, never `node`'s coordinator state.
+  residencyStatus: t.procedure.input(z.object({ node: z.string().min(1) })).query(({ input }) => {
+    const nodeRuns = nodeRunStoreMod.listNodeRuns();
+    const node = nodeRuns.find((n: (typeof nodeRuns)[number]) => n.metadata.name === input.node);
+    const declared = node?.spec.budget?.memoryGiB;
+    return buildResidencyStatus({
+      node: input.node,
+      nodeRun: node,
+      budgetGiB: defaultNodeBudgetGiB(declared),
+      budgetSource: typeof declared === "number" ? "noderun" : "computed",
+      store: readResidencyStoreSnapshot(defaultResidencyStorePath()),
+    });
   }),
 
   workloadApply: t.procedure

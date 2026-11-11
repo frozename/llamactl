@@ -152,9 +152,10 @@ describe("llamacpp-deepseek41-flash-iq1s-z13.yaml (#515 C-3)", () => {
     expect(entry?.lora_path).toBeUndefined();
     expect(entry?.dflash).toBeUndefined();
     const args = manifest.spec.extraArgs;
-    const idx = args.indexOf("--served-model-name");
+    const idx = args.indexOf("--alias");
     expect(idx).toBeGreaterThanOrEqual(0);
-    expect(flagArgValue(args, "--served-model-name")).toBe(basename(MODEL_REL));
+    expect(flagArgValue(args, "--alias")).toBe(basename(MODEL_REL));
+    expect(args).not.toContain("--served-model-name");
   });
 
   test("wires the 64k context with --spec-type draft-dspark + -md", () => {
