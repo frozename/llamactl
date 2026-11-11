@@ -1047,12 +1047,21 @@ async function stopAgentServerResources(
   leases: ReturnType<typeof maybePublishResidencyLeases> | null,
   unregisterDeclaredModels: (() => void) | null,
 ): Promise<void> {
+  // Worker-RPC attempts drain first, while their transports are up.
   await workerRpc?.drain();
+  // Remove exactly the process handlers this call installed so
+  // repeated start/stop cycles don't accumulate listeners.
   process.off("uncaughtException", onUncaughtException);
   process.off("unhandledRejection", onUnhandledRejection);
   stopSearchIngest();
   stopPeerSnapshotPoller?.();
   try {
+    // A drained or cancelled worker-RPC stream has handed its terminal
+    // to its response; let in-flight responses finish before closing.
+    // Tunneled calls never pass through the HTTP server, so the tunnel
+    // stays up until it is idle too, in the same window. The host stays
+    // published until then, so a status or cancel still in flight, over
+    // either transport, is answered by the attempts it names.
     if (workerRpc !== null) {
       await within(
         TERMINAL_FLUSH_MS,
@@ -1060,6 +1069,8 @@ async function stopAgentServerResources(
       );
     }
   } finally {
+    // Best-effort — never let a tunnel-client teardown error
+    // prevent the HTTP server from also stopping.
     if (tunnelClient) {
       try {
         tunnelClient.stop();
@@ -1069,8 +1080,19 @@ async function stopAgentServerResources(
     }
     void server.stop(true);
     workerRpc?.unpublish();
+    // Guarded at the call site: awaiting even an empty async function
+    // costs a microtask, and the default stop() (no opt-in, no mDNS) must
+    // keep its pre-#610 timing. Bonjour's stop is bounded inside it: a
+    // hung one must not keep the tunnel serving or hold stop() open.
     if (servedRequests !== null || mdns) await finalFlushWindow(servedRequests, mdns);
+    // After the worker-RPC drain, server.stop() and the final flush of
+    // served requests, so in-flight bodies (which may hold leases) settle
+    // against the published registry before the seam reverts (#278 DF-05).
     leases?.restore();
+    // Unregister the declared-model source only once the HTTP server, the
+    // tunnel client and every request that could still read it are done:
+    // while any of them is up, a cold pin must still get its declared
+    // 503 instead of the default-target fallthrough (DF-07).
     unregisterDeclaredModels?.();
   }
 }

@@ -10,7 +10,11 @@
  * seam unrestored, and — for the post-bind throw — the listener
  * answering. Case (n) pins the #278 review regression: the banner is
  * guarded by `if (noAuth)`, so a fully authenticated start prints
- * nothing. The inert-default cases pass at base and must keep passing.
+ * nothing. Cases (o) and (p) pin the remaining rollback steps on the
+ * same post-bind tunnel throw: the declared-model source registered by
+ * `declaredModels` is unset, and a published mDNS service is stopped
+ * (the publish is spied, so no Bonjour traffic leaves the test). The
+ * inert-default cases pass at base and must keep passing.
  *
  * Agents are real `startAgentServer` instances on loopback with no TLS;
  * the Worker RPC host is driven in-process through
@@ -19,14 +23,15 @@
  * `startAgentServer` only through a conditional `residencyLeases` spread
  * on a widened options type, so the file typechecks at base.
  */
-import { inferenceContracts, inferenceRpc } from "@llamactl/core";
+import { inferenceContracts, inferenceRpc, openaiProxy } from "@llamactl/core";
 import {
   createResidencyLeases,
   getResidencyLeaseRegistry,
   setResidencyLeaseRegistry,
 } from "@llamactl/core/residency/leases";
-import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, mock, spyOn, test } from "bun:test";
 import { join } from "node:path";
+import { stringify as stringifyYaml } from "yaml";
 
 import { envForTemp, makeTempRuntime } from "../../../core/test/helpers.js";
 import {
@@ -37,9 +42,12 @@ import {
   type WorkerRpcBackendKind,
   type WorkerRpcHost,
 } from "../../src/inference/procedures.js";
+import { listDeclaredModels } from "../../src/residency/catalog.js";
 import { mkdirSync, writeFileSync } from "../../src/safe-fs.js";
 import { generateToken } from "../../src/server/auth.js";
+import * as mdnsModule from "../../src/server/mdns.js";
 import { type RunningAgent, startAgentServer } from "../../src/server/serve.js";
+import { ModelRunSchema } from "../../src/workload/schema.js";
 import { type FakeEngine, startFakeEngine } from "../fixtures/inference-rpc-v1/fake-engine.js";
 
 type Claims = inferenceRpc.InferenceServiceClaimsV1;
@@ -52,6 +60,7 @@ const TENANT = "local";
 const WORKLOAD = "wl-rpc";
 const MODEL = "rpc/model.gguf";
 const DEPLOYMENT = `deploy/${WORKER}/${WORKLOAD}`;
+const COLD_PIN = "cold/model-a.gguf";
 const V1_0 = { major: 1, minor: 0 };
 const ENV_KEYS = [
   "DEV_STORAGE",
@@ -323,6 +332,22 @@ afterAll(async () => {
   }
 });
 
+/** A tunnelDial whose nodeName getter throws inside maybeStartTunnelClient,
+ * i.e. after the declared source and mDNS are already up. */
+function throwingTunnelDial(): NonNullable<ServeOpts["tunnelDial"]> {
+  return {
+    url: "ws://127.0.0.1:9/tunnel",
+    bearer: "x",
+    get nodeName(): string {
+      throw new Error("tunnel-boom");
+    },
+  };
+}
+
+function declaredIds(): string[] {
+  return openaiProxy.listOpenAIModels().declared.map((entry) => entry.id);
+}
+
 describe("#278 DF-05: the residencyLeases opt-in publishes one registry at agent start", () => {
   test("(a) flag on, no workerRpc: published at start and restored to null on stop", async () => {
     const agent = startAgent(true, { workerRpc: false });
@@ -548,6 +573,80 @@ describe("#278 DF-05: the residencyLeases opt-in publishes one registry at agent
       const answeredByAgent = res !== null && res.status === 200 && (await res.text()) === "ok";
       expect(answeredByAgent).toBe(false);
     } finally {
+      publishWorkerRpcHost(before);
+    }
+  }, 15_000);
+
+  test("(o) declaredModels, post-bind tunnel throw: the declared source is unregistered", () => {
+    const workloadsDir = join(temp.runtimeDir, "declared-workloads-o");
+    mkdirSync(workloadsDir, { recursive: true });
+    writeFileSync(
+      join(workloadsDir, "run-cold.yaml"),
+      stringifyYaml(
+        ModelRunSchema.parse({
+          apiVersion: "llamactl/v1",
+          kind: "ModelRun",
+          metadata: { name: "run-cold" },
+          spec: { node: "local", target: { kind: "rel", value: COLD_PIN } },
+        }),
+      ),
+    );
+    const prevWorkloadsDir = process.env["LLAMACTL_WORKLOADS_DIR"];
+    process.env["LLAMACTL_WORKLOADS_DIR"] = workloadsDir;
+    const before = currentWorkerRpcHost();
+    const options: ServeOpts = {
+      bindHost: "127.0.0.1",
+      port: 0,
+      tokenHash: generateToken().hash,
+      advertiseMdns: false,
+      declaredModels: true,
+      tunnelDial: throwingTunnelDial(),
+    };
+    try {
+      // Sanity: the manifest projects to a declared cold entry while the
+      // source is registered, so an empty listing below means "unregistered",
+      // not "nothing to declare".
+      openaiProxy.setDeclaredModelSource(() =>
+        listDeclaredModels({ nodeName: "local", liveModelIds: new Set<string>() }),
+      );
+      expect(declaredIds()).toContain(COLD_PIN);
+      openaiProxy.setDeclaredModelSource(null);
+      expect(() => startAgentServer(options)).toThrow("tunnel-boom");
+      expect(declaredIds()).not.toContain(COLD_PIN);
+      expect(openaiProxy.listOpenAIModels().declared).toEqual([]);
+    } finally {
+      openaiProxy.setDeclaredModelSource(null);
+      openaiProxy.__resetOpenAIProxyRouteMapCacheForTests();
+      if (prevWorkloadsDir === undefined)
+        Reflect.deleteProperty(process.env, "LLAMACTL_WORKLOADS_DIR");
+      else process.env["LLAMACTL_WORKLOADS_DIR"] = prevWorkloadsDir;
+      publishWorkerRpcHost(before);
+    }
+  }, 15_000);
+
+  test("(p) advertiseMdns, post-bind tunnel throw: the published mDNS service is stopped", () => {
+    const stop = mock(() => Promise.resolve());
+    const publish = spyOn(mdnsModule, "publishAgentMdns").mockImplementation(() => ({
+      host: "agent-llamactl",
+      stop,
+    }));
+    const prevDisable = process.env["LLAMACTL_DISABLE_MDNS"];
+    Reflect.deleteProperty(process.env, "LLAMACTL_DISABLE_MDNS");
+    const before = currentWorkerRpcHost();
+    const options: ServeOpts = {
+      bindHost: "127.0.0.1",
+      port: 0,
+      tokenHash: generateToken().hash,
+      advertiseMdns: true,
+      tunnelDial: throwingTunnelDial(),
+    };
+    try {
+      expect(() => startAgentServer(options)).toThrow("tunnel-boom");
+      expect(publish).toHaveBeenCalledTimes(1);
+      expect(stop).toHaveBeenCalledTimes(1);
+    } finally {
+      publish.mockRestore();
+      if (prevDisable !== undefined) process.env["LLAMACTL_DISABLE_MDNS"] = prevDisable;
       publishWorkerRpcHost(before);
     }
   }, 15_000);
