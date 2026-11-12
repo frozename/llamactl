@@ -133,6 +133,7 @@ describe("agent serve bearer-file flags (#289)", () => {
     const resolve = getResolver();
     const bearer = writeBearer("dial.bearer", "tok-123\n", 0o600);
     const parsed = parseServeFlags([
+      `--dir=${dir}`,
       "--dial-central=wss://127.0.0.1:1/tunnel",
       `--central-bearer-file=${bearer}`,
     ]);
@@ -146,6 +147,7 @@ describe("agent serve bearer-file flags (#289)", () => {
     const resolve = getResolver();
     const bearer = writeBearer("dial-644.bearer", "tok-123\n", 0o644);
     const parsed = parseServeFlags([
+      `--dir=${dir}`,
       "--dial-central=wss://127.0.0.1:1/tunnel",
       `--central-bearer-file=${bearer}`,
     ]);
@@ -162,6 +164,7 @@ describe("agent serve bearer-file flags (#289)", () => {
     const resolve = getResolver();
     const missing = join(dir, "no-such.bearer");
     const parsed = parseServeFlags([
+      `--dir=${dir}`,
       "--dial-central=wss://127.0.0.1:1/tunnel",
       `--central-bearer-file=${missing}`,
     ]);
@@ -174,6 +177,7 @@ describe("agent serve bearer-file flags (#289)", () => {
   test("--central-bearer + --central-bearer-file together are rejected naming both flags", () => {
     const resolve = getResolver();
     const parsed = parseServeFlags([
+      `--dir=${dir}`,
       "--dial-central=wss://127.0.0.1:1/tunnel",
       "--central-bearer=x",
       "--central-bearer-file=/abs/b",
@@ -201,7 +205,7 @@ describe("agent serve bearer-file flags (#289)", () => {
       LLAMACTL_TUNNEL_BEARER_FILE: fileBearer,
       LLAMACTL_TUNNEL_BEARER: "from-env",
     };
-    const noFlags = parseServeFlags(["--dial-central=wss://127.0.0.1:1/tunnel"]);
+    const noFlags = parseServeFlags([`--dir=${dir}`, "--dial-central=wss://127.0.0.1:1/tunnel"]);
     if ("error" in noFlags) {
       throw new Error(noFlags.error);
     }
@@ -211,6 +215,7 @@ describe("agent serve bearer-file flags (#289)", () => {
     );
 
     const withFlag = parseServeFlags([
+      `--dir=${dir}`,
       "--dial-central=wss://127.0.0.1:1/tunnel",
       "--central-bearer=lit",
     ]);
@@ -225,6 +230,7 @@ describe("agent serve bearer-file flags (#289)", () => {
     const fileBearer = writeBearer("central.bearer", "c-tok\n", 0o600);
 
     const withFile = parseServeFlags([
+      `--dir=${dir}`,
       "--tunnel-central=true",
       `--tunnel-bearer-file=${fileBearer}`,
     ]);
@@ -233,7 +239,7 @@ describe("agent serve bearer-file flags (#289)", () => {
     }
     expect(expectOk(resolve(withFile, {})).tunnelCentralBearer).toBe("c-tok");
 
-    const envOnly = parseServeFlags(["--tunnel-central=true"]);
+    const envOnly = parseServeFlags([`--dir=${dir}`, "--tunnel-central=true"]);
     if ("error" in envOnly) {
       throw new Error(envOnly.error);
     }
@@ -246,7 +252,11 @@ describe("agent serve bearer-file flags (#289)", () => {
     expect(resolved.tunnelCentralBearer).toBe("c-tok");
 
     const weak = writeBearer("central-640.bearer", "c-tok\n", 0o640);
-    const with640 = parseServeFlags(["--tunnel-central=true", `--tunnel-bearer-file=${weak}`]);
+    const with640 = parseServeFlags([
+      `--dir=${dir}`,
+      "--tunnel-central=true",
+      `--tunnel-bearer-file=${weak}`,
+    ]);
     if ("error" in with640) {
       throw new Error(with640.error);
     }

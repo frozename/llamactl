@@ -2947,11 +2947,23 @@ async function translateResponsesJsonResponse(upstream: Response): Promise<Respo
  * This is the extension point for full streaming support. The non-streaming
  * JSON path (translateResponsesJsonResponse) is fully wired; this SSE path
  * refuses until a streaming translator is implemented.
+ *
+ * The caller cancels the started upstream stream before returning this 501 so
+ * the engine does not keep decoding to max_tokens after the refusal (#316).
  */
 function translateResponsesSseResponse(): Response {
   return responsesTranslationErrorResponse(
     new ResponsesTranslationError("streaming is not supported for /v1/responses", 501),
   );
+}
+
+async function discardUpstreamBody(upstream: Response): Promise<void> {
+  if (upstream.body === null || upstream.bodyUsed) return;
+  try {
+    await upstream.body.cancel();
+  } catch {
+    /* already errored/closed */
+  }
 }
 
 async function maybeTranslateResponse(
@@ -2966,6 +2978,8 @@ async function maybeTranslateResponse(
     return await translateAnthropicJsonResponse(upstream);
   }
   if (context.isResponsesApi && contentType?.toLowerCase().startsWith("text/event-stream")) {
+    // Cancel the started upstream stream so the engine stops decoding (#316).
+    await discardUpstreamBody(upstream);
     return translateResponsesSseResponse();
   }
   if (context.isResponsesApi && upstream.ok && contentType && isJsonContentType(contentType)) {

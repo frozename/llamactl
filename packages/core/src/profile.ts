@@ -1,4 +1,5 @@
 import { execSync } from "node:child_process";
+import { platform } from "node:os";
 
 import type { MachineProfile } from "./types.js";
 
@@ -42,6 +43,80 @@ export function detectMemoryBytes(): number | null {
   if (process.platform === "darwin") return darwinMemoryBytes();
   if (process.platform === "linux") return linuxMemoryBytes();
   return null;
+}
+
+/** Platform-agnostic machine platform identifier. */
+export type MachinePlatform = "darwin" | "linux" | "windows" | "other";
+
+/** Map a NodeJS platform string to a MachinePlatform. */
+export function platformFromNode(p: NodeJS.Platform): MachinePlatform {
+  if (p === "darwin") return "darwin";
+  if (p === "linux") return "linux";
+  if (p === "win32") return "windows";
+  return "other";
+}
+
+/** Descriptive memory tier, separate from the historical profile buckets. */
+export type MemoryTier = "16g" | "32g" | "48g" | "64g" | "96g" | "128g+" | "unknown";
+
+/**
+ * Classify memory bytes into a descriptive tier. This tier is separate
+ * from the platform-specific profile buckets — the profile id keeps its
+ * historical values for backward compatibility.
+ */
+export function memoryTierFromBytes(bytes: number | null): MemoryTier {
+  if (bytes === null) return "unknown";
+  const GiB = 1024 ** 3;
+  if (bytes <= 16 * GiB) return "16g";
+  if (bytes <= 32 * GiB) return "32g";
+  if (bytes <= 48 * GiB) return "48g";
+  if (bytes <= 64 * GiB) return "64g";
+  if (bytes <= 96 * GiB) return "96g";
+  return "128g+";
+}
+
+/** Optional probe fields passed by callers who already know platform/memory. */
+export interface MachineProbe {
+  platform?: NodeJS.Platform;
+  memoryBytes?: number | null;
+}
+
+/** Full machine description combining platform, memory tier, and profile. */
+export interface MachineDescription {
+  platform: MachinePlatform;
+  memoryBytes: number | null;
+  memoryTier: MemoryTier;
+  profile: MachineProfile;
+  profileSource: "env" | "detected";
+}
+
+/**
+ * Describe a machine: platform, memory tier, and profile with source.
+ * When probe.memoryBytes is explicitly null, detection is skipped.
+ */
+export function describeMachine(
+  env: NodeJS.ProcessEnv = process.env,
+  probe: MachineProbe = {},
+): MachineDescription {
+  const p = probe.platform ?? platform();
+  const memoryBytes = "memoryBytes" in probe ? (probe.memoryBytes ?? null) : detectMemoryBytes();
+  const override = normalizeProfile(env["LLAMA_CPP_MACHINE_PROFILE"]);
+  const profile = override ?? profileFromMemory(memoryBytes);
+  const profileSource = override ? "env" : "detected";
+  return {
+    platform: platformFromNode(p),
+    memoryBytes,
+    memoryTier: memoryTierFromBytes(memoryBytes),
+    profile,
+    profileSource,
+  };
+}
+
+/** Format a MachineDescription into a single-line summary string. */
+export function formatMachineSummary(d: MachineDescription): string {
+  const memStr =
+    d.memoryBytes === null ? "unknown" : `${(d.memoryBytes / 1024 ** 3).toFixed(1)}GiB`;
+  return `platform=${d.platform} memory=${memStr} tier=${d.memoryTier} profile=${d.profile} source=${d.profileSource}`;
 }
 
 /**
