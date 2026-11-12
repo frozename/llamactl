@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/await-thenable, @typescript-eslint/no-confusing-void-expression -- Bun's rejects matchers are typed as void. */
 /**
  * #335 test-only pin: the #221 physical-node grouping and bounded pool.
  * groupByNodes keeps items sharing a node key (transitively) in one
@@ -16,6 +15,13 @@
  * Mutation that kills it: in runNodeGroups, replace
  * `Math.min(concurrency, groups.length)` with `groups.length` (ignore
  * the worker bound); the "at most `concurrency` at a time" test fails.
+ * Also killed: in unionItemKeys, replace the root union with
+ * `else parent[index] = seen;` (link the item, not its root); the
+ * "later item bridges two components" test fails.
+ *
+ * The plain rejection-drain case is already covered in
+ * reconciler.test.ts; this file pins the gated settle-only-after-drain
+ * ordering and the concurrency bound on top of it.
  */
 import { describe, expect, test } from "bun:test";
 
@@ -97,6 +103,18 @@ describe("groupByNodes", () => {
     expect(groupByNodes(items, keysOf)).toEqual([[0, 1, 2]]);
   });
 
+  test("a later item bridges two components that already exist", () => {
+    const bridge: KeyedItem[] = [{ keys: ["n1"] }, { keys: ["n2"] }, { keys: ["n1", "n2"] }];
+    expect(groupByNodes(bridge, keysOf)).toEqual([[0, 1, 2]]);
+    const nonAdjacent: KeyedItem[] = [
+      { keys: ["a"] },
+      { keys: ["b"] },
+      { keys: ["c"] },
+      { keys: ["a", "c"] },
+    ];
+    expect(groupByNodes(nonAdjacent, keysOf)).toEqual([[0, 2, 3], [1]]);
+  });
+
   test("a null key list merges every item into one group", () => {
     const items: KeyedItem[] = [{ keys: ["n1"] }, { keys: ["n2"] }, { keys: null }];
     expect(groupByNodes(items, keysOf)).toEqual([[0, 1, 2]]);
@@ -175,17 +193,6 @@ describe("runNodeGroups", () => {
     at(release, 1).resolve();
     await done;
     expect(events).toEqual(["start 0", "end 0", "start 1", "end 1"]);
-  });
-
-  test("a rejection does not stop the other groups", async () => {
-    const attempted: number[] = [];
-    await expect(
-      runNodeGroups([[0], [1], [2]], 1, (index) => {
-        attempted.push(index);
-        return index === 1 ? Promise.reject(new Error("boom-1")) : Promise.resolve();
-      }),
-    ).rejects.toThrow("boom-1");
-    expect(attempted).toEqual([0, 1, 2]);
   });
 
   test("rethrows only the first error after every worker has finished", async () => {
