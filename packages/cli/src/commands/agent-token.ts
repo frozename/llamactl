@@ -25,6 +25,11 @@ Subcommands:
       are never listed.
   revoke <name> [--dir=<path>]
       Drop the named token. The next request with it is refused.
+  rename <old> <new> [--json] [--dir=<path>]
+      Rename a recorded token, keeping its hash and createdAt, so the
+      token itself keeps working. The new name follows the add rules.
+      Use it to move a legacy token named 'default' off the reserved
+      name; until then it is audited as token=named:default.
 
 With --json, one JSON record (or array) goes to stdout and every note
 goes to stderr. Tokens authenticate the agent's API routes immediately;
@@ -126,18 +131,25 @@ function loadTokenState(flags: TokenFlags): TokenState | 1 {
   return { configPath, config, entries };
 }
 
+/** Why `name` cannot be given to a new or renamed entry, or null when it can. */
+function newNameProblem(name: string): string | null {
+  if (!agentConfigMod.BEARER_TOKEN_NAME.test(name)) {
+    return `invalid token name ${name}: use 1-63 characters from a-z, 0-9, '.', '_', '-', starting with a-z or 0-9`;
+  }
+  // The schema still loads a legacy entry by this name, so the
+  // reservation for new names is enforced here.
+  if (name === agentConfigMod.PRIMARY_BEARER_NAME) {
+    return agentConfigMod.RESERVED_BEARER_NAME_MESSAGE;
+  }
+  return null;
+}
+
 function tokenAdd(name: string | undefined, args: string[]): number {
   const flags = parseTokenFlags(args);
   if ("error" in flags) return fail(flags.error);
   if (name === undefined || name.length === 0) return fail("add requires a token name");
-  if (!agentConfigMod.BEARER_TOKEN_NAME.test(name)) {
-    return fail(
-      `invalid token name ${name}: use 1-63 characters from a-z, 0-9, '.', '_', '-', starting with a-z or 0-9`,
-    );
-  }
-  if (name === agentConfigMod.PRIMARY_BEARER_NAME) {
-    return fail(agentConfigMod.RESERVED_BEARER_NAME_MESSAGE);
-  }
+  const problem = newNameProblem(name);
+  if (problem !== null) return fail(problem);
   const state = loadTokenState(flags);
   if (state === 1) return 1;
   if (state.entries?.some((e) => e.name === name)) {
@@ -205,6 +217,43 @@ function tokenList(args: string[]): number {
     return 0;
   }
   for (const e of state.entries) process.stdout.write(`${e.name}\t${e.createdAt}\n`);
+  if (state.entries.some((e) => e.name === agentConfigMod.PRIMARY_BEARER_NAME)) {
+    process.stderr.write(agentConfigMod.legacyDefaultBearerWarning(state.configPath));
+  }
+  return 0;
+}
+
+function tokenRename(
+  oldName: string | undefined,
+  newName: string | undefined,
+  args: string[],
+): number {
+  const flags = parseTokenFlags(args);
+  if ("error" in flags) return fail(flags.error);
+  if (oldName === undefined || newName === undefined || oldName.length === 0) {
+    return fail("rename requires the current and the new token name");
+  }
+  const problem = newNameProblem(newName);
+  if (problem !== null) return fail(problem);
+  const state = loadTokenState(flags);
+  if (state === 1) return 1;
+  if (!state.entries?.some((e) => e.name === oldName)) {
+    return fail(`no token named ${oldName} in ${state.configPath}`);
+  }
+  if (state.entries.some((e) => e.name === newName)) {
+    return fail(`a token named ${newName} already exists`);
+  }
+
+  const renamed = state.entries.map((e) => (e.name === oldName ? { ...e, name: newName } : e));
+  agentConfigMod.saveAgentConfig({ ...state.config, bearerTokens: renamed }, state.configPath);
+
+  if (flags.json) {
+    process.stdout.write(`${JSON.stringify({ renamed: oldName, to: newName })}\n`);
+  } else {
+    process.stderr.write(
+      `renamed ${oldName} to ${newName} in ${state.configPath}\nthe token itself is unchanged and keeps working\n`,
+    );
+  }
   return 0;
 }
 
@@ -244,8 +293,11 @@ export async function runAgentToken(args: string[]): Promise<number> {
   const [sub = "", ...rest] = args;
   const positional = rest.filter((a) => !a.startsWith("-"));
   const flagArgs = rest.filter((a) => a.startsWith("-"));
-  if (positional.length > (sub === "list" ? 0 : 1)) {
-    return fail(`unexpected argument ${String(positional[1])}; see 'llamactl agent token --help'`);
+  const maxPositional = sub === "list" ? 0 : sub === "rename" ? 2 : 1;
+  if (positional.length > maxPositional) {
+    return fail(
+      `unexpected argument ${String(positional[maxPositional])}; see 'llamactl agent token --help'`,
+    );
   }
   switch (sub) {
     case "add":
@@ -254,6 +306,8 @@ export async function runAgentToken(args: string[]): Promise<number> {
       return await Promise.resolve(tokenList(flagArgs));
     case "revoke":
       return await Promise.resolve(tokenRevoke(positional[0], flagArgs));
+    case "rename":
+      return await Promise.resolve(tokenRename(positional[0], positional[1], flagArgs));
     default:
       return fail(`unknown subcommand ${sub}. See 'llamactl agent token --help'.`);
   }

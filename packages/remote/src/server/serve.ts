@@ -92,7 +92,8 @@ export interface StartAgentOptions {
   /**
    * Per-request audit hook (#218), called once for each request the
    * bearer gate admits, with the matched token's name ('default' for
-   * the primary). It never receives the token, its hash or the query
+   * the primary, 'named:default' for a legacy named entry called
+   * 'default'). It never receives the token, its hash or the query
    * string. When omitted, the agent writes one stderr line per admitted
    * request: `[agent] auth token=<name> <METHOD> <pathname>\n`. Passing
    * the hook replaces that line.

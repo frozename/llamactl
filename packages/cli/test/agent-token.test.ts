@@ -116,7 +116,101 @@ describe("agent token", () => {
     }
   });
 
-  test("an agent.yaml that already names a token default makes add exit 1 with the reason", async () => {
+  /** Seed an agent whose agent.yaml records a legacy named token called default. */
+  async function seedLegacyDefault(): Promise<{ dir: string; configPath: string; hash: string }> {
+    const dir = await seedAgent();
+    const configPath = join(dir, "agent.yaml");
+    const cfg = agentConfigMod.loadAgentConfig(configPath);
+    const hash = auth.hashToken("legacy-default-token");
+    agentConfigMod.saveAgentConfig(
+      {
+        ...cfg,
+        bearerTokens: [{ name: "default", tokenHash: hash, createdAt: "2026-01-01T00:00:00.000Z" }],
+      },
+      configPath,
+    );
+    return { dir, configPath, hash };
+  }
+
+  test("an agent.yaml with a legacy named default still lets add mint another name, but not default", async () => {
+    capture();
+    try {
+      const { dir, hash } = await seedLegacyDefault();
+      expect(await runAgent(["token", "add", "default", `--dir=${dir}`])).toBe(1);
+      expect(stderrBuf).toContain("token name 'default' is reserved for the primary bearer");
+      expect(stdoutBuf).not.toMatch(/ll_agt_/);
+      expect(bearerEntries(dir).map((e) => e.name)).toEqual(["default"]);
+      expect(await runAgent(["token", "add", "graf", `--dir=${dir}`])).toBe(0);
+      const entries = bearerEntries(dir);
+      expect(entries.map((e) => e.name)).toEqual(["default", "graf"]);
+      expect(entries[0]?.tokenHash).toBe(hash);
+    } finally {
+      restore();
+    }
+  });
+
+  test("list shows a legacy named default and warns to rename it, without any hash", async () => {
+    capture();
+    try {
+      const { dir, hash } = await seedLegacyDefault();
+      expect(await runAgent(["token", "list", `--dir=${dir}`])).toBe(0);
+      expect(stdoutBuf).toMatch(/^default\t2026-01-01T00:00:00.000Z$/m);
+      expect(stderrBuf).toContain("token=named:default");
+      expect(stderrBuf).toContain("llamactl agent token rename default <new-name>");
+      expect(stdoutBuf + stderrBuf).not.toContain(hash);
+    } finally {
+      restore();
+    }
+  });
+
+  test("revoke default removes a legacy named default entry", async () => {
+    capture();
+    try {
+      const { dir, configPath } = await seedLegacyDefault();
+      expect(await runAgent(["token", "revoke", "default", `--dir=${dir}`])).toBe(0);
+      expect(bearerEntries(dir)).toHaveLength(0);
+      expect(agentConfigMod.loadAgentConfig(configPath).bearerTokens).toBeUndefined();
+    } finally {
+      restore();
+    }
+  });
+
+  test("rename moves a legacy named default to a new name and keeps its hash and createdAt", async () => {
+    capture();
+    try {
+      const { dir, hash } = await seedLegacyDefault();
+      expect(await runAgent(["token", "rename", "default", "legacy-ci", `--dir=${dir}`])).toBe(0);
+      expect(bearerEntries(dir)).toEqual([
+        { name: "legacy-ci", tokenHash: hash, createdAt: "2026-01-01T00:00:00.000Z" },
+      ]);
+      expect(stdoutBuf + stderrBuf).not.toContain(hash);
+    } finally {
+      restore();
+    }
+  });
+
+  test("rename refuses the reserved, an invalid, a taken or an unknown name with exit 1", async () => {
+    capture();
+    try {
+      const dir = await seedAgent();
+      expect(await runAgent(["token", "add", "ci", `--dir=${dir}`])).toBe(0);
+      expect(await runAgent(["token", "add", "graf", `--dir=${dir}`])).toBe(0);
+      const before = readFileSync(join(dir, "agent.yaml"), "utf8");
+      stderrBuf = "";
+      expect(await runAgent(["token", "rename", "ci", "default", `--dir=${dir}`])).toBe(1);
+      expect(stderrBuf).toContain("token name 'default' is reserved for the primary bearer");
+      expect(await runAgent(["token", "rename", "ci", "Bad Name", `--dir=${dir}`])).toBe(1);
+      expect(await runAgent(["token", "rename", "ci", "graf", `--dir=${dir}`])).toBe(1);
+      expect(await runAgent(["token", "rename", "nope", "other", `--dir=${dir}`])).toBe(1);
+      expect(await runAgent(["token", "rename", "ci", `--dir=${dir}`])).toBe(1);
+      expect(await runAgent(["token", "rename", "ci", "a", "b", `--dir=${dir}`])).toBe(1);
+      expect(readFileSync(join(dir, "agent.yaml"), "utf8")).toBe(before);
+    } finally {
+      restore();
+    }
+  });
+
+  test("an otherwise invalid bearerTokens block still makes add and revoke exit 1", async () => {
     capture();
     try {
       const dir = await seedAgent();
@@ -131,14 +225,15 @@ describe("agent token", () => {
               tokenHash: auth.hashToken("a"),
               createdAt: "2026-01-01T00:00:00.000Z",
             },
+            { name: "bad", tokenHash: "not-hex", createdAt: "2026-01-01T00:00:00.000Z" },
           ],
         },
         configPath,
       );
       const before = readFileSync(configPath, "utf8");
       expect(await runAgent(["token", "add", "graf", `--dir=${dir}`])).toBe(1);
-      expect(stderrBuf).toContain(configPath);
-      expect(stderrBuf).toContain("token name 'default' is reserved for the primary bearer");
+      expect(await runAgent(["token", "revoke", "default", `--dir=${dir}`])).toBe(1);
+      expect(stderrBuf).toContain("has an invalid bearerTokens block");
       expect(stdoutBuf).not.toMatch(/ll_agt_/);
       expect(readFileSync(configPath, "utf8")).toBe(before);
     } finally {

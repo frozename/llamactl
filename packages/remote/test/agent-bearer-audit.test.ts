@@ -8,6 +8,7 @@
  * `[agent] auth token=<name> <METHOD> <path>` stderr line. No record,
  * metric label or log line ever carries the token or its hash.
  */
+import * as agentConfigMod from "@llamactl/core/config/agent-config";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -120,6 +121,12 @@ describe("bearer auth audit", () => {
     list.splice(0, list.length);
     expect(bearerNameFor(named.token, primary.hash, list)).toBeNull();
     expect((authMod as Record<string, unknown>)["PRIMARY_BEARER_NAME"]).toBe("default");
+  });
+
+  test("bearerNameFor labels a legacy named entry called default as named:default", () => {
+    list.push({ name: "default", tokenHash: named.hash });
+    expect(authMod.bearerNameFor(named.token, primary.hash, list)).toBe("named:default");
+    expect(authMod.bearerNameFor(primary.token, primary.hash, list)).toBe("default");
   });
 
   test("bearerNameFor gives default when a named entry carries the primary's hash", () => {
@@ -235,6 +242,86 @@ describe("bearer auth audit", () => {
     expect(text).toMatch(
       new RegExp(`^llamactl_agent_bearer_requests_total\\{[^}]*token="${name}"[^}]*\\} 1$`, "m"),
     );
+  });
+
+  /** Write an agent.yaml whose primary is `primary` and whose bearerTokens block is `block`. */
+  function writeAgentYaml(block: unknown): string {
+    const configPath = join(dir, "agent.yaml");
+    agentConfigMod.saveAgentConfig(
+      {
+        apiVersion: "llamactl/v1",
+        kind: "AgentConfig",
+        bindHost: "127.0.0.1",
+        port: 7843,
+        certPath: join(dir, "agent.crt"),
+        keyPath: join(dir, "agent.key"),
+        tokenHash: primary.hash,
+        fingerprint: `sha256:${"b".repeat(64)}`,
+        bearerTokens: block,
+      },
+      configPath,
+    );
+    return configPath;
+  }
+
+  async function restartWithReader(configPath: string): Promise<void> {
+    await server.stop();
+    server = startAgentServer({
+      tokenHash: primary.hash,
+      bearerTokens: agentConfigMod.bearerTokensReader(configPath),
+      onAuthenticated: (record: BearerAuthRecord): void => {
+        records.push(record);
+      },
+    });
+  }
+
+  test("a legacy named default in agent.yaml still authenticates and is audited as named:default", async () => {
+    const createdAt = "2026-01-01T00:00:00.000Z";
+    const configPath = writeAgentYaml([
+      { name: "default", tokenHash: named.hash, createdAt },
+      { name: "audit-legacy-sibling", tokenHash: authMod.generateToken().hash, createdAt },
+    ]);
+    await restartWithReader(configPath);
+    let named200 = 0;
+    const captured = await captureStderr(async () => {
+      named200 = (await get("/trpc/env", named.token)).status;
+    });
+    expect(named200).toBe(200);
+    expect(captured).toContain("token=named:default");
+    expect(captured).not.toContain("ignoring the bearerTokens block");
+    expect((await get("/trpc/env", primary.token)).status).toBe(200);
+    expect(records).toEqual([
+      { tokenName: "named:default", method: "GET", pathname: "/trpc/env" },
+      { tokenName: "default", method: "GET", pathname: "/trpc/env" },
+    ]);
+    const text = await (await get("/metrics", primary.token)).text();
+    expect(text).toMatch(
+      /^llamactl_agent_bearer_requests_total\{[^}]*token="named:default"[^}]*\} 1$/m,
+    );
+    expect(text).toMatch(
+      /^llamactl_agent_bearer_requests_total\{[^}]*token="default"[^}]*\} \d+$/m,
+    );
+    for (const secret of [named.token, named.hash, primary.token, primary.hash]) {
+      expect(captured).not.toContain(secret);
+      expect(text).not.toContain(secret);
+    }
+  });
+
+  test("a legacy named default beside an otherwise invalid entry fails closed; the primary still works", async () => {
+    const createdAt = "2026-01-01T00:00:00.000Z";
+    const configPath = writeAgentYaml([
+      { name: "default", tokenHash: named.hash, createdAt },
+      { name: "audit-bad-hash", tokenHash: "not-hex", createdAt },
+    ]);
+    await restartWithReader(configPath);
+    let namedStatus = 0;
+    const captured = await captureStderr(async () => {
+      namedStatus = (await get("/trpc/env", named.token)).status;
+    });
+    expect(namedStatus).toBe(401);
+    expect(captured).toContain("ignoring the bearerTokens block");
+    expect((await get("/trpc/env", primary.token)).status).toBe(200);
+    expect(records).toEqual([{ tokenName: "default", method: "GET", pathname: "/trpc/env" }]);
   });
 
   test("with no hook the agent writes one stderr audit line per admitted request and never the secret", async () => {

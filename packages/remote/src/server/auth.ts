@@ -1,6 +1,6 @@
 import type { inferenceRpc } from "@llamactl/core";
 
-import { PRIMARY_BEARER_NAME } from "@llamactl/core/config/agent-config";
+import { namedBearerAuditLabel, PRIMARY_BEARER_NAME } from "@llamactl/core/config/agent-config";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
 /**
@@ -80,8 +80,8 @@ export function namedBearerFor(
 
 /**
  * The legacy single agent.yaml tokenHash is the bearer named 'default'
- * in audit records; agent.yaml validation reserves the name, so no
- * named token can be recorded under it.
+ * in audit records; new named tokens cannot take the name, and a legacy
+ * named entry called 'default' is labelled 'named:default' instead.
  */
 export { PRIMARY_BEARER_NAME };
 
@@ -90,7 +90,9 @@ export { PRIMARY_BEARER_NAME };
  * every named entry, matched in constant time so the timing shows neither
  * a near miss nor which entry matched. The primary wins: it returns
  * {@link PRIMARY_BEARER_NAME} when the primary matches, else the first
- * matching named entry's name, else null. Null when there is no token.
+ * matching named entry's audit label (its name, or 'named:default' for
+ * a legacy entry called 'default'), else null. Null when there is no
+ * token.
  */
 export function bearerNameFor(
   token: string | null | undefined,
@@ -101,7 +103,9 @@ export function bearerNameFor(
   let match: string | null = null;
   if (bearerHashMatches(token, primaryHash)) match = PRIMARY_BEARER_NAME;
   for (const entry of tokens) {
-    if (bearerHashMatches(token, entry.tokenHash) && match === null) match = entry.name;
+    if (bearerHashMatches(token, entry.tokenHash) && match === null) {
+      match = namedBearerAuditLabel(entry.name);
+    }
   }
   return match;
 }
