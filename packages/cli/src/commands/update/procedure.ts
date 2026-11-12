@@ -6,6 +6,10 @@
 // controller is down. The agent never reloads itself; it is restarted last,
 // once managed hosts are idle. Rollback is the same procedure pointed at the
 // previous ref, and whatever fails, the controller is started again at the end.
+// `--agent-only` runs the same procedure for a worker node whose controller is
+// handed to a central one: the controller is neither stopped, started nor
+// awaited (it is null in the context and the `agentOnly` opt-in drops those
+// steps), so only the agent is driven.
 import type { LockHandle, ManagedHost, UpdateDeps } from "./deps.js";
 import type { AgentEndpoint } from "./probes.js";
 import type { ServiceInfo, ServiceManager } from "./services.js";
@@ -25,7 +29,7 @@ export type DeployStep =
   | { kind: "verify"; sha: string }
   | { kind: "wait-idle"; seconds: number };
 
-export function buildDeploySteps(o: {
+export interface DeployStepsInput {
   sha: string;
   mode: BranchMode;
   depsChanged: boolean;
@@ -33,16 +37,21 @@ export function buildDeploySteps(o: {
   restartAgent: boolean;
   /** A heavy-job lock is configured: hold it from before the stop until the start. */
   lock: boolean;
-}): DeployStep[] {
+  /** Worker node whose controller is central: never stop, start or await the controller. */
+  agentOnly?: boolean;
+}
+
+export function buildDeploySteps(o: DeployStepsInput): DeployStep[] {
   const locked = o.lock && o.depsChanged;
+  const agentOnly = o.agentOnly === true;
   return [
     ...(locked ? [{ kind: "lock" } as const] : []),
-    { kind: "stop-controller" },
+    ...(agentOnly ? [] : [{ kind: "stop-controller" } as const]),
     { kind: "switch", sha: o.sha, mode: o.mode },
     ...(o.depsChanged ? [{ kind: "install" } as const] : []),
-    { kind: "start-controller" },
+    ...(agentOnly ? [] : [{ kind: "start-controller" } as const]),
     ...(locked ? [{ kind: "unlock" } as const] : []),
-    { kind: "await-controller" },
+    ...(agentOnly ? [] : [{ kind: "await-controller" } as const]),
     ...(o.restartAgent
       ? [{ kind: "wait-idle", seconds: o.waitIdleSec } as const, { kind: "restart-agent" } as const]
       : []),
@@ -149,7 +158,8 @@ export interface DeployContext {
   git: GitFn;
   repo: string;
   manager: ServiceManager;
-  controller: ServiceInfo;
+  /** Null in agent-only mode: a worker node whose controller is central. */
+  controller: ServiceInfo | null;
   agent: ServiceInfo;
   agentEndpoint: AgentEndpoint;
   /** Environment that resolves the runtime dir the controller writes pid files to. */
@@ -260,13 +270,17 @@ export function stepLabel(
     case "unlock":
       return "releasing the heavy-job lock";
     case "stop-controller":
-      return `stopping ${ctx.controller.name} (managed model hosts keep serving)`;
+      return ctx.controller === null
+        ? "stopping the controller"
+        : `stopping ${ctx.controller.name} (managed model hosts keep serving)`;
     case "switch":
       return `switching the checkout to ${short(step.sha)} on ${describeMode(step.mode)}`;
     case "install":
       return "bun install --frozen-lockfile --ignore-scripts (dependencies changed)";
     case "start-controller":
-      return `starting ${ctx.controller.name}`;
+      return ctx.controller === null
+        ? "starting the controller"
+        : `starting ${ctx.controller.name}`;
     case "await-controller":
       return "waiting for the controller to re-adopt the managed hosts";
     case "wait-idle":
@@ -306,17 +320,17 @@ function releaseLock(ctx: DeployContext): StepOutcome {
 }
 
 async function stopController(ctx: DeployContext): Promise<StepOutcome> {
-  const r = await ctx.manager.stop(ctx.controller);
+  const controller = ctx.controller;
+  if (controller === null) return fail("no controller in agent-only mode");
+  const r = await ctx.manager.stop(controller);
   const stopped = await pollUntil(
     ctx,
     ctx.timeouts.serviceStopMs,
     ctx.timeouts.pollMs,
-    async () => !(await ctx.manager.isActive(ctx.controller)),
+    async () => !(await ctx.manager.isActive(controller)),
   );
-  if (stopped) return ok(`${ctx.controller.name} stopped`);
-  return fail(
-    `could not stop ${ctx.controller.name}: ${r.stderr.trim() || `exit ${String(r.code)}`}`,
-  );
+  if (stopped) return ok(`${controller.name} stopped`);
+  return fail(`could not stop ${controller.name}: ${r.stderr.trim() || `exit ${String(r.code)}`}`);
 }
 
 async function switchCheckout(
@@ -357,6 +371,7 @@ async function install(ctx: DeployContext): Promise<StepOutcome> {
 }
 
 async function startController(ctx: DeployContext, state: RunState): Promise<StepOutcome> {
+  if (ctx.controller === null) return fail("no controller in agent-only mode");
   if (ctx.controllerLog.kind === "file") {
     state.logOffset = ctx.deps.fileSize(ctx.controllerLog.path) ?? 0;
   }
@@ -431,15 +446,17 @@ export function missingAdoptions(
 }
 
 async function readControllerOutput(ctx: DeployContext, state: RunState): Promise<string | null> {
+  const controller = ctx.controller;
+  if (controller === null) return null;
   const src = ctx.controllerLog;
   if (src.kind === "none") return null;
   if (src.kind === "journal") {
-    return await ctx.manager.journalSince(ctx.controller, state.startedAtMs - 1000);
+    return await ctx.manager.journalSince(controller, state.startedAtMs - 1000);
   }
   const size = ctx.deps.fileSize(src.path);
   if (size !== null && size < state.logOffset) state.logOffset = 0;
   const stdout = ctx.deps.readFileFrom(src.path, state.logOffset) ?? "";
-  const stderrPath = ctx.controller.stderrPath;
+  const stderrPath = controller.stderrPath;
   if (stderrPath === null || stderrPath === undefined || stderrPath === src.path) return stdout;
   const errSize = ctx.deps.fileSize(stderrPath);
   if (errSize !== null && errSize < state.errLogOffset) state.errLogOffset = 0;
@@ -523,6 +540,7 @@ async function settleController(
   state: RunState,
   why: string,
 ): Promise<StepOutcome> {
+  if (ctx.controller === null) return fail("no controller in agent-only mode");
   const deadline = ctx.deps.now() + ctx.timeouts.controllerSettleMs;
   for (;;) {
     if (!(await ctx.manager.isActive(ctx.controller))) {
@@ -543,6 +561,7 @@ async function pollControllerOnce(
   expected: readonly string[],
   deadline: number,
 ): Promise<StepOutcome | null> {
+  if (ctx.controller === null) return fail("no controller in agent-only mode");
   if (!(await ctx.manager.isActive(ctx.controller))) {
     return fail(`${ctx.controller.name} is not active`);
   }
@@ -577,6 +596,7 @@ async function pollControllerOnce(
 }
 
 async function awaitController(ctx: DeployContext, state: RunState): Promise<StepOutcome> {
+  if (ctx.controller === null) return fail("no controller in agent-only mode");
   const spawned = await awaitActive(ctx, ctx.controller, ctx.timeouts.controllerStartMs);
   if (!spawned.active) {
     if (ctx.signal.aborted) return fail(INTERRUPTED);
@@ -662,38 +682,42 @@ async function hostsNotReady(ctx: DeployContext, state: RunState): Promise<strin
   return out;
 }
 
-async function verify(ctx: DeployContext, state: RunState, sha: string): Promise<StepOutcome> {
-  const problems: string[] = [];
-  const head = await resolveCommit(ctx.git, "HEAD");
-  if (head !== sha) {
-    problems.push(`HEAD is ${head === null ? "unknown" : short(head)}, expected ${short(sha)}`);
-  }
-  const controllerSpawn = await awaitActive(ctx, ctx.controller, ctx.timeouts.controllerStartMs);
-  if (!controllerSpawn.active) {
-    problems.push(
-      inactiveDetail(
-        ctx.controller.name,
-        ctx.timeouts.controllerStartMs,
-        controllerSpawn.lastState,
-      ),
-    );
-  }
-  const agentSpawn = await awaitActive(ctx, ctx.agent, ctx.timeouts.controllerStartMs);
-  const agentOk =
-    agentSpawn.active &&
+/** Why the controller (when this run drives one) is not up in verify. */
+async function verifyControllerProblems(ctx: DeployContext): Promise<string[]> {
+  if (ctx.controller === null) return [];
+  const spawned = await awaitActive(ctx, ctx.controller, ctx.timeouts.controllerStartMs);
+  return spawned.active
+    ? []
+    : [inactiveDetail(ctx.controller.name, ctx.timeouts.controllerStartMs, spawned.lastState)];
+}
+
+/** Why the agent is not active and healthy in verify. */
+async function verifyAgentProblems(ctx: DeployContext): Promise<string[]> {
+  const spawned = await awaitActive(ctx, ctx.agent, ctx.timeouts.controllerStartMs);
+  const healthy =
+    spawned.active &&
     (await pollUntil(
       ctx,
       ctx.timeouts.agentHealthyMs,
       ctx.timeouts.pollMs,
       async () => await agentHealthy(ctx.deps.httpGet, ctx.agentEndpoint),
     ));
-  if (!agentOk) {
-    problems.push(
-      agentSpawn.active
-        ? `agent ${ctx.agent.name} is not healthy (${ctx.agentEndpoint.url}/healthz)`
-        : inactiveDetail(ctx.agent.name, ctx.timeouts.controllerStartMs, agentSpawn.lastState),
-    );
+  if (healthy) return [];
+  return [
+    spawned.active
+      ? `agent ${ctx.agent.name} is not healthy (${ctx.agentEndpoint.url}/healthz)`
+      : inactiveDetail(ctx.agent.name, ctx.timeouts.controllerStartMs, spawned.lastState),
+  ];
+}
+
+async function verify(ctx: DeployContext, state: RunState, sha: string): Promise<StepOutcome> {
+  const problems: string[] = [];
+  const head = await resolveCommit(ctx.git, "HEAD");
+  if (head !== sha) {
+    problems.push(`HEAD is ${head === null ? "unknown" : short(head)}, expected ${short(sha)}`);
   }
+  problems.push(...(await verifyControllerProblems(ctx)));
+  problems.push(...(await verifyAgentProblems(ctx)));
   const notReady = await hostsNotReady(ctx, state);
   if (notReady.length > 0) problems.push(`model hosts not ready: ${notReady.join(", ")}`);
   if (problems.length > 0) return fail(problems.join("; "));
@@ -701,7 +725,8 @@ async function verify(ctx: DeployContext, state: RunState, sha: string): Promise
   const hosts =
     ctx.snapshot.length > 0 ? `, ready: ${ctx.snapshot.map((h) => h.name).join(", ")}` : "";
   const rpc = negotiate === null ? "" : `, worker RPC negotiate: ${negotiate}`;
-  return ok(`HEAD ${short(sha)}, controller active, agent healthz ok${hosts}${rpc}`);
+  const controllerNote = ctx.controller === null ? "" : "controller active, ";
+  return ok(`HEAD ${short(sha)}, ${controllerNote}agent healthz ok${hosts}${rpc}`);
 }
 
 async function runStep(
@@ -783,6 +808,10 @@ export async function runDeploy(
  * the heavy-job lock. Never throws. Null when the controller was running.
  */
 export async function ensureControllerRunning(ctx: DeployContext): Promise<StepResult | null> {
+  if (ctx.controller === null) {
+    releaseLock(ctx);
+    return null;
+  }
   try {
     if (await ctx.manager.isActive(ctx.controller)) return null;
     // Only a spawn in progress is worth waiting out: an unloaded or finally

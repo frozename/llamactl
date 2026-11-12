@@ -128,6 +128,59 @@ function unitName(
 const UNIT_HELP =
   "configure the units with --controller-unit/--agent-unit (or LLAMACTL_UPDATE_CONTROLLER_UNIT / LLAMACTL_UPDATE_AGENT_UNIT), or run the services as the default units: see docs/self-update.md";
 
+/** Describe a role's unit, resolving `llamactl infra`'s fallback agent label on launchd. */
+async function resolveUnit(
+  manager: ServiceManager,
+  flags: UpdateFlags,
+  deps: UpdateDeps,
+  kind: ServiceManagerKind,
+  role: ServiceRole,
+): Promise<ServiceInfo> {
+  const { name, explicit } = unitName(flags, deps, kind, role);
+  let info = await manager.describe(role, name, explicit);
+  if (role === "agent" && kind === "launchd" && !explicit && !info.loaded) {
+    const infraAgent = await manager.describe(role, LAUNCHD_AGENT_FALLBACK, false);
+    if (infraAgent.loaded) info = infraAgent;
+  }
+  return info;
+}
+
+/**
+ * Resolve the controller and agent into `state`, returning the controller's
+ * name when agent-only mode dropped it (so a left-behind control-plane job is
+ * not mistaken for one update forgot). In agent-only mode the controller unit
+ * is still described (to refuse while it is active locally) but then dropped,
+ * so every safety check that iterates the units covers only the agent.
+ */
+async function applyUnits(
+  state: ServicesState,
+  manager: ServiceManager,
+  flags: UpdateFlags,
+  deps: UpdateDeps,
+  kind: ServiceManagerKind,
+  repo: string,
+): Promise<string | null> {
+  let skippedControllerName: string | null = null;
+  for (const role of ["controller", "agent"] as const) {
+    const info = await resolveUnit(manager, flags, deps, kind, role);
+    if (role === "controller" && flags.agentOnly) {
+      skippedControllerName = info.name;
+      if (info.loaded && info.active) {
+        state.problems.push(
+          `--agent-only: ${info.name} is active on this node; agent-only mode is for nodes whose controller is handed to a central one (stop and disable it, or drop --agent-only)`,
+        );
+      }
+      state.controller = null;
+      continue;
+    }
+    state[role] = info;
+    const match = checkServiceMatch(info, repo);
+    state.problems.push(...match.problems);
+    state.warnings.push(...match.warnings);
+  }
+  return skippedControllerName;
+}
+
 async function resolveServices(
   flags: UpdateFlags,
   deps: UpdateDeps,
@@ -156,21 +209,12 @@ async function resolveServices(
   }
   const manager = makeServiceManager(kind, deps.exec, deps.readFile, deps.uid, deps.env);
   state.manager = manager;
-  for (const role of ["controller", "agent"] as const) {
-    const { name, explicit } = unitName(flags, deps, kind, role);
-    let info = await manager.describe(role, name, explicit);
-    // Hosts deployed by `llamactl infra` run the agent as com.llamactl.node-agent.
-    if (role === "agent" && kind === "launchd" && !explicit && !info.loaded) {
-      const infraAgent = await manager.describe(role, LAUNCHD_AGENT_FALLBACK, false);
-      if (infraAgent.loaded) info = infraAgent;
-    }
-    state[role] = info;
-    const match = checkServiceMatch(info, repo);
-    state.problems.push(...match.problems);
-    state.warnings.push(...match.warnings);
+  const skippedControllerName = await applyUnits(state, manager, flags, deps, kind, repo);
+  if (kind === "launchd") {
+    state.warnings.push(
+      ...(await leftBehindControlPlane(deps, manager, state, repo, skippedControllerName)),
+    );
   }
-  if (kind === "launchd")
-    state.warnings.push(...(await leftBehindControlPlane(deps, manager, state, repo)));
   if (state.problems.length > 0) state.problems.push(UNIT_HELP);
   return state;
 }
@@ -185,8 +229,9 @@ async function leftBehindControlPlane(
   manager: ServiceManager,
   state: ServicesState,
   repo: string,
+  skippedControllerName: string | null,
 ): Promise<string[]> {
-  const resolved = new Set([state.controller?.name, state.agent?.name]);
+  const resolved = new Set([state.controller?.name, state.agent?.name, skippedControllerName]);
   const warnings: string[] = [];
   for (const label of infraServices.CONTROL_PLANE_LABELS) {
     if (resolved.has(label)) continue;
@@ -306,9 +351,11 @@ export async function openSession(flags: UpdateFlags, deps: UpdateDeps): Promise
   }
   const checkout = await readCheckout(git);
   const services = await resolveServices(flags, deps, repo);
-  const controllerEnv = services.controller?.env ?? {};
-  const settingEnv = { ...controllerEnv, ...deps.env };
-  const stateEnv = { ...deps.env, ...controllerEnv };
+  const managerEnv = flags.agentOnly
+    ? (services.agent?.env ?? {})
+    : (services.controller?.env ?? {});
+  const settingEnv = { ...managerEnv, ...deps.env };
+  const stateEnv = { ...deps.env, ...managerEnv };
   const hosts = await snapshotHosts(deps, stateEnv);
   services.problems.push(
     ...killModeProblems(deps, services, hosts),
@@ -363,7 +410,13 @@ export function healthProblems(s: Session): string[] {
   const problems: string[] = [];
   const { controller, agent } = s.services;
   for (const unit of [controller, agent]) {
-    if (unit?.loaded === true && !unit.active) problems.push(`${unit.name} is not active`);
+    if (unit?.loaded === true && !unit.active) {
+      problems.push(
+        unit.role === "controller"
+          ? `${unit.name} is not active (if this worker node's controller is handed to a central one, rerun with --agent-only)`
+          : `${unit.name} is not active`,
+      );
+    }
   }
   if (s.agentEndpoint !== null && !s.agentHealthy) {
     problems.push(`agent ${s.agentEndpoint.url}/healthz is not ok`);
