@@ -82,12 +82,59 @@ export type AgentWorkerRpcRelay = z.infer<typeof AgentWorkerRpcRelaySchema>;
 export const BEARER_TOKEN_NAME = /^[a-z0-9][a-z0-9._-]{0,62}$/;
 
 /**
+ * The name audit records give the primary agent.yaml tokenHash bearer
+ * (#218). It is reserved for new entries: `agent token add` and
+ * `agent token rename` refuse it, so an audit line reading
+ * token=default always means the primary.
+ *
+ * Agents created before the reservation may already record a named
+ * token called 'default'. Such an entry still loads and authenticates
+ * (refusing it would silently drop every named token on upgrade), but
+ * it is audited under {@link LEGACY_DEFAULT_BEARER_LABEL} and the agent
+ * warns once that it should be renamed.
+ */
+export const PRIMARY_BEARER_NAME = "default";
+
+/** Why a new named token may not be called {@link PRIMARY_BEARER_NAME}. */
+export const RESERVED_BEARER_NAME_MESSAGE = `token name '${PRIMARY_BEARER_NAME}' is reserved for the primary bearer; choose another name`;
+
+/**
+ * The audit and metric label of a legacy named token called 'default'
+ * (#218). The ':' lies outside {@link BEARER_TOKEN_NAME}, so no named
+ * token can carry this label, and it has no space, quote or '=', so it
+ * stays a single field in the `token=<name>` stderr line and a plain
+ * Prometheus label value.
+ */
+export const LEGACY_DEFAULT_BEARER_LABEL = `named:${PRIMARY_BEARER_NAME}`;
+
+/**
+ * The label audit records and metrics give a named token: its name,
+ * except a legacy entry called 'default', which gets
+ * {@link LEGACY_DEFAULT_BEARER_LABEL} so it never reads as the primary.
+ */
+export function namedBearerAuditLabel(name: string): string {
+  return name === PRIMARY_BEARER_NAME ? LEGACY_DEFAULT_BEARER_LABEL : name;
+}
+
+/** The one-time note for an agent.yaml that records a legacy named token called 'default'. */
+export function legacyDefaultBearerWarning(path: string): string {
+  return (
+    `[agent] ${path}: the named bearer token '${PRIMARY_BEARER_NAME}' shares the primary ` +
+    `bearer's reserved name; it still authenticates and is audited as ` +
+    `token=${LEGACY_DEFAULT_BEARER_LABEL}. Rename it with ` +
+    `'llamactl agent token rename ${PRIMARY_BEARER_NAME} <new-name>' (the token itself is unchanged)\n`
+  );
+}
+
+/**
  * A named operator bearer token (#218), stored only as the SHA-256 of its
  * token, like the primary bearer. Each one authenticates the agent's
  * authed API routes exactly as `tokenHash` does, and can be revoked on
  * its own; the primary bearer rotates wholesale with `rotate-token`.
  */
 export const AgentBearerTokenSchema = z.object({
+  // 'default' is accepted here on purpose: a legacy entry by that name
+  // must keep authenticating. New entries are refused it by the CLI.
   name: z.string().regex(BEARER_TOKEN_NAME),
   tokenHash: z.string().regex(SHA256_HEX),
   createdAt: z.string().min(1),
@@ -427,11 +474,14 @@ export function workerRpcRelayReader(
  * next request without a restart. A block that does not validate, or
  * whose hash also appears in the sibling workerRpc or workerRpcRelay
  * block, is ignored with a warning: only the primary bearer
- * authenticates, while the agent itself runs on.
+ * authenticates, while the agent itself runs on. A legacy entry named
+ * 'default' is accepted, with one warning per reader recommending a
+ * rename (see {@link PRIMARY_BEARER_NAME}).
  */
 export function bearerTokensReader(
   path: string = defaultAgentConfigPath(),
 ): () => AgentBearerTokens | undefined {
+  let warnedLegacyDefault = false;
   return agentYamlBlockReader(path, (config) => {
     if (config.bearerTokens === undefined) return undefined;
     const parsed = AgentBearerTokensSchema.safeParse(config.bearerTokens);
@@ -452,6 +502,10 @@ export function bearerTokensReader(
     ) {
       warnIgnored(path, "bearerTokens", "a bearer token hash is also a worker-RPC credential");
       return undefined;
+    }
+    if (!warnedLegacyDefault && parsed.data.some((e) => e.name === PRIMARY_BEARER_NAME)) {
+      warnedLegacyDefault = true;
+      process.stderr.write(legacyDefaultBearerWarning(path));
     }
     return parsed.data;
   });

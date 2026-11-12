@@ -91,6 +91,63 @@ describe("bearerTokensReader", () => {
     expect(stderr).toContain("ignoring the bearerTokens block");
   });
 
+  test("a legacy named token called default still loads, with one rename warning per reader", () => {
+    const entries = [bearerEntry("ci", HEX("c")), bearerEntry("default", HEX("d"))];
+    agentConfigMod.saveAgentConfig(baseConfig({ bearerTokens: entries }), configPath);
+    const read = agentConfigMod.bearerTokensReader(configPath);
+    const first = captureStderr(() => {
+      expect(read()).toEqual(entries);
+    });
+    expect(first).not.toContain("ignoring the bearerTokens block");
+    expect(first).toContain("named bearer token 'default'");
+    expect(first).toContain("token=named:default");
+    expect(first).toContain("llamactl agent token rename default <new-name>");
+    expect(first.match(/named bearer token 'default'/g)).toHaveLength(1);
+    // A later change to the file is re-read but does not warn again.
+    agentConfigMod.saveAgentConfig(
+      baseConfig({ bearerTokens: [...entries, bearerEntry("grafana", HEX("e"))] }),
+      configPath,
+    );
+    const second = captureStderr(() => {
+      expect(read()).toHaveLength(3);
+    });
+    expect(second).not.toContain("named bearer token 'default'");
+    expect(agentConfigMod.PRIMARY_BEARER_NAME).toBe("default");
+    expect(agentConfigMod.LEGACY_DEFAULT_BEARER_LABEL).toBe("named:default");
+    expect(agentConfigMod.BEARER_TOKEN_NAME.test(agentConfigMod.LEGACY_DEFAULT_BEARER_LABEL)).toBe(
+      false,
+    );
+  });
+
+  test("a block with a legacy default and any other invalid entry still fails closed", () => {
+    for (const bad of [
+      bearerEntry("ci", "not-hex"),
+      bearerEntry("Bad Name", HEX("c")),
+      bearerEntry("default", HEX("c")),
+      bearerEntry("ci", HEX("d")),
+    ]) {
+      const entries = [bearerEntry("default", HEX("d")), bad];
+      agentConfigMod.saveAgentConfig(baseConfig({ bearerTokens: entries }), configPath);
+      const stderr = captureStderr(() => {
+        expect(agentConfigMod.bearerTokensReader(configPath)()).toBeUndefined();
+      });
+      expect(stderr).toContain("ignoring the bearerTokens block");
+      expect(stderr).not.toContain("named bearer token 'default'");
+    }
+  });
+
+  test("a legacy default whose hash is a worker-RPC credential still fails closed", () => {
+    const entries = [bearerEntry("default", HEX("d"))];
+    agentConfigMod.saveAgentConfig(
+      baseConfig({ bearerTokens: entries, workerRpcRelay: { tokenHashes: [HEX("d")] } }),
+      configPath,
+    );
+    const stderr = captureStderr(() => {
+      expect(agentConfigMod.bearerTokensReader(configPath)()).toBeUndefined();
+    });
+    expect(stderr).toContain("ignoring the bearerTokens block");
+  });
+
   test("a malformed hash is ignored and the config still loads", () => {
     const entries = [bearerEntry("ci", "not-hex")];
     agentConfigMod.saveAgentConfig(baseConfig({ bearerTokens: entries }), configPath);

@@ -126,7 +126,7 @@ Subcommands:
       enable + restart it via systemctl. --dry-run prints the unit +
       systemctl plan without touching disk.
   token <subcommand>
-      Manage named operator bearer tokens (add / list / revoke). Each
+      Manage named operator bearer tokens (add / list / revoke / rename). Each
       named token authenticates the agent's authed API routes exactly
       as the primary bearer does, and can be revoked on its own; the
       agent re-reads them per request, so add and revoke apply without

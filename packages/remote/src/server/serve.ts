@@ -44,21 +44,22 @@ import { listWorkloads, saveWorkload } from "../workload/store.js";
 import { handleAgentRollback, handleAgentUpdate } from "./agent-update.js";
 import { type ArtifactsHandlerOptions, handleArtifact } from "./artifacts.js";
 import {
+  bearerNameFor,
   claimsForServiceCredential,
   createServiceTokenVerifier,
   extractBearer,
-  namedBearerFor,
   type NamedBearerToken,
   relayPrincipalOf,
   SERVICE_TOKEN_HEADER,
   SERVICE_TOKEN_MAX_LENGTH,
   type ServiceCredentialBinding,
   unauthorizedResponse,
-  verifyBearer,
 } from "./auth.js";
 import { handleInstallScript, type InstallScriptHandlerOptions } from "./install-script.js";
 import { publishAgentMdns, type PublishedAgent } from "./mdns.js";
 import {
+  agentBearerLastUsedSeconds,
+  agentBearerRequestsTotal,
   agentInfo,
   llamaServerUp,
   registry as metricsRegistry,
@@ -88,6 +89,16 @@ export interface StartAgentOptions {
    * self-update and rollback stay primary-only.
    */
   bearerTokens?: () => readonly NamedBearerToken[] | undefined;
+  /**
+   * Per-request audit hook (#218), called once for each request the
+   * bearer gate admits, with the matched token's name ('default' for
+   * the primary, 'named:default' for a legacy named entry called
+   * 'default'). It never receives the token, its hash or the query
+   * string. When omitted, the agent writes one stderr line per admitted
+   * request: `[agent] auth token=<name> <METHOD> <pathname>\n`. Passing
+   * the hook replaces that line.
+   */
+  onAuthenticated?: (record: { tokenName: string; method: string; pathname: string }) => void;
   noAuth?: boolean;
   tls?: { certPath: string; keyPath: string }; // omit for plain HTTP (test-only)
   /**
@@ -392,11 +403,39 @@ function makeNoAuthGate(noAuth: boolean, bindHost: string): NoAuthGate {
 }
 
 /**
+ * Records an admitted request under the name of the bearer that
+ * authenticated it (#218): the per-token counter, the last-used gauge,
+ * then the audit sink — `onAuthenticated` when given, else the default
+ * stderr line. The sink is wrapped so a throwing hook never fails the
+ * request; on error a note without any token is written instead.
+ */
+function recordBearerUse(
+  req: Request,
+  pathname: string,
+  name: string,
+  opts: StartAgentOptions,
+): void {
+  agentBearerRequestsTotal.inc({ token: name });
+  agentBearerLastUsedSeconds.set({ token: name }, Date.now() / 1000);
+  try {
+    if (opts.onAuthenticated) {
+      opts.onAuthenticated({ tokenName: name, method: req.method, pathname });
+    } else {
+      process.stderr.write(`[agent] auth token=${name} ${req.method} ${pathname}\n`);
+    }
+  } catch {
+    process.stderr.write(`[agent] auth sink failed for token=${name} ${req.method} ${pathname}\n`);
+  }
+}
+
+/**
  * Run the shared bearer-auth gate for a route: no-auth-eligible
  * requests are logged and admitted; everything else must carry a
  * valid bearer — the primary one or one of the named tokens. Returns
  * the 401 response when the request must be rejected, null when it
- * may proceed.
+ * may proceed. An admitted bearer request is recorded under its token
+ * name unless `record` is false, which the RAG fallback passes so a
+ * bearer check re-run there does not double-count.
  */
 function authGateReject(
   req: Request,
@@ -404,14 +443,16 @@ function authGateReject(
   address: ClientAddress | null,
   opts: StartAgentOptions,
   gate: NoAuthGate,
+  record = true,
 ): Response | null {
   if (gate.allowNoAuth(pathname, address)) {
     gate.logUnauthenticatedNoAuthRequest(req, address);
     return null;
   }
-  if (verifyBearer(req, opts.tokenHash)) return null;
-  if (namedBearerFor(extractBearer(req), opts.bearerTokens?.() ?? []) !== null) return null;
-  return unauthorizedResponse();
+  const name = bearerNameFor(extractBearer(req), opts.tokenHash, opts.bearerTokens?.() ?? []);
+  if (name === null) return unauthorizedResponse();
+  if (record) recordBearerUse(req, pathname, name, opts);
+  return null;
 }
 
 async function handleOpenAIRoute(
@@ -421,8 +462,9 @@ async function handleOpenAIRoute(
   opts: StartAgentOptions,
   gate: NoAuthGate,
   server: AgentFetchServer,
+  record = true,
 ): Promise<Response> {
-  const denied = authGateReject(req, url.pathname, address, opts, gate);
+  const denied = authGateReject(req, url.pathname, address, opts, gate, record);
   if (denied) return denied;
   const pathLabel = openaiPathBucket(url.pathname);
   const endTimer = openaiRequestDurationSeconds.startTimer({ path: pathLabel });
@@ -598,7 +640,8 @@ function handleAuthedApiRoutes(
     server.timeout?.(req, proxiedRouteIdleSeconds());
     return handleRagChatCompletions(req, {
       appRouter,
-      fallback: (forwarded) => handleOpenAIRoute(forwarded, url, clientAddress, opts, gate, server),
+      fallback: (forwarded) =>
+        handleOpenAIRoute(forwarded, url, clientAddress, opts, gate, server, false),
     });
   }
   if (req.method === "GET" && url.pathname === "/v1/fleet/snapshot") {
