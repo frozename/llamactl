@@ -33,7 +33,8 @@ Subcommands:
 
 With --json, one JSON record (or array) goes to stdout and every note
 goes to stderr. Tokens authenticate the agent's API routes immediately;
-no restart is needed.
+no restart is needed. --out is accepted only by add; list, revoke and
+rename mint no token and refuse it.
 `;
 
 function isHelpFlag(arg: string): boolean {
@@ -131,6 +132,29 @@ function loadTokenState(flags: TokenFlags): TokenState | 1 {
   return { configPath, config, entries };
 }
 
+/**
+ * The block about to be written, re-checked against the same schema the
+ * agent's reader applies, so a bug that would duplicate a name or hash
+ * is refused instead of saved. Null (and nothing written) when it fails.
+ */
+function checkedBlock(
+  configPath: string,
+  entries: agentConfigMod.AgentBearerTokens,
+): agentConfigMod.AgentBearerTokens | null {
+  const parsed = agentConfigMod.AgentBearerTokensSchema.safeParse(entries);
+  if (parsed.success) return parsed.data;
+  const reason = parsed.error.issues[0]?.message ?? "invalid";
+  fail(`refusing to write ${configPath}: the updated bearerTokens block is invalid (${reason})`);
+  return null;
+}
+
+/** Refuse --out on a subcommand that mints no token. */
+function outProblem(sub: string, flags: TokenFlags): string | null {
+  return flags.out === undefined
+    ? null
+    : `--out applies only to add, which mints a token; ${sub} mints none`;
+}
+
 /** Why `name` cannot be given to a new or renamed entry, or null when it can. */
 function newNameProblem(name: string): string | null {
   if (!agentConfigMod.BEARER_TOKEN_NAME.test(name)) {
@@ -162,6 +186,10 @@ function tokenAdd(name: string | undefined, args: string[]): number {
     tokenHash: minted.hash,
     createdAt: new Date().toISOString(),
   };
+  // Checked before the token file is written, so a refusal leaves
+  // neither a token file nor a changed agent.yaml behind.
+  const block = checkedBlock(state.configPath, [...(state.entries ?? []), entry]);
+  if (block === null) return 1;
 
   // The token file first: if it can't be written the token would be
   // useless, and agent.yaml stays untouched rather than recording a
@@ -173,10 +201,7 @@ function tokenAdd(name: string | undefined, args: string[]): number {
       return fail(`failed to write ${flags.out}: ${(err as Error).message}; ${name} not recorded`);
     }
   }
-  agentConfigMod.saveAgentConfig(
-    { ...state.config, bearerTokens: [...(state.entries ?? []), entry] },
-    state.configPath,
-  );
+  agentConfigMod.saveAgentConfig({ ...state.config, bearerTokens: block }, state.configPath);
 
   reportAdd(flags, state.configPath, name, minted.token, entry.createdAt);
   return 0;
@@ -204,6 +229,8 @@ function reportAdd(
 function tokenList(args: string[]): number {
   const flags = parseTokenFlags(args);
   if ("error" in flags) return fail(flags.error);
+  const outIssue = outProblem("list", flags);
+  if (outIssue !== null) return fail(outIssue);
   const state = loadTokenState(flags);
   if (state === 1) return 1;
 
@@ -230,6 +257,8 @@ function tokenRename(
 ): number {
   const flags = parseTokenFlags(args);
   if ("error" in flags) return fail(flags.error);
+  const outIssue = outProblem("rename", flags);
+  if (outIssue !== null) return fail(outIssue);
   if (oldName === undefined || newName === undefined || oldName.length === 0) {
     return fail("rename requires the current and the new token name");
   }
@@ -244,7 +273,11 @@ function tokenRename(
     return fail(`a token named ${newName} already exists`);
   }
 
-  const renamed = state.entries.map((e) => (e.name === oldName ? { ...e, name: newName } : e));
+  const renamed = checkedBlock(
+    state.configPath,
+    state.entries.map((e) => (e.name === oldName ? { ...e, name: newName } : e)),
+  );
+  if (renamed === null) return 1;
   agentConfigMod.saveAgentConfig({ ...state.config, bearerTokens: renamed }, state.configPath);
 
   if (flags.json) {
@@ -260,6 +293,8 @@ function tokenRename(
 function tokenRevoke(name: string | undefined, args: string[]): number {
   const flags = parseTokenFlags(args);
   if ("error" in flags) return fail(flags.error);
+  const outIssue = outProblem("revoke", flags);
+  if (outIssue !== null) return fail(outIssue);
   if (name === undefined || name.length === 0) return fail("revoke requires a token name");
   const state = loadTokenState(flags);
   if (state === 1) return 1;
