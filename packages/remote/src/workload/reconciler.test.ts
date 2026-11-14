@@ -706,13 +706,60 @@ test("reconcile queries nodeFacts once per node per pass for several remote Mode
   }
 });
 
-test("reconcile falls back to the controller budget for a remote ModelRun when nodeFacts rejects", async () => {
-  const hostGiB = totalmem() / 1024 ** 3;
-  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-reconcile-run-reject-"));
+test("reconcile refuses BudgetUnknown for a remote ModelRun when nodeFacts rejects, with zero starts", async () => {
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-reconcile-budget-unknown-run-"));
   const name = "run-facts-reject";
-  saveWorkload(makeSizedRunManifest(name, hostGiB / 2), workloadsDir);
+  const state = new Map<string, { rel: string; args: string[] }>();
+  saveWorkload(makeSizedRunManifest(name, 1), workloadsDir);
+  const base = makeRunClient(state);
+  const calls = { starts: 0, facts: 0 };
   const client: WorkloadClient = {
-    ...makeRunClient(new Map()),
+    ...base,
+    serverStart: {
+      subscribe: (input, callbacks) => {
+        calls.starts += 1;
+        return base.serverStart.subscribe(input, callbacks);
+      },
+    },
+    nodeFacts: {
+      query: () => {
+        calls.facts += 1;
+        return Promise.reject(new Error("unreachable"));
+      },
+    },
+  };
+
+  try {
+    const result = await reconcileOnce({ workloadsDir, getClient: () => client });
+    expect(result.errors).toBe(1);
+    expect(result.reports[0]?.action).toBe("pending");
+    expect(result.reports[0]?.error).toContain("node 'mac-mini' memory budget is unknown");
+    expect(calls.starts).toBe(0);
+    expect(calls.facts).toBe(1);
+    expect(state.has(name)).toBe(false);
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("reconcile refuses BudgetUnknown for a remote ModelHost when nodeFacts rejects, with zero starts", async () => {
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-reconcile-budget-unknown-host-"));
+  const name = "host-facts-reject";
+  const manifest = makeManifest(name);
+  saveModelHost(
+    { ...manifest, spec: { ...manifest.spec, resources: { expectedMemoryGiB: 1 } } },
+    workloadsDir,
+  );
+  const base = makeSlowStoppedClient(0);
+  const calls = { starts: 0 };
+  const client: WorkloadClient = {
+    ...base,
+    modelHostStart: {
+      subscribe: (input, callbacks) => {
+        calls.starts += 1;
+        return base.modelHostStart.subscribe(input, callbacks);
+      },
+    },
     nodeFacts: {
       query: () => Promise.reject(new Error("unreachable")),
     },
@@ -720,8 +767,10 @@ test("reconcile falls back to the controller budget for a remote ModelRun when n
 
   try {
     const result = await reconcileOnce({ workloadsDir, getClient: () => client });
-    expect(result.errors).toBe(0);
-    expect(result.reports[0]?.action).toBe("started");
+    expect(result.errors).toBe(1);
+    expect(result.reports[0]?.action).toBe("unchanged");
+    expect(result.reports[0]?.error).toContain("node 'mac-mini' memory budget is unknown");
+    expect(calls.starts).toBe(0);
   } finally {
     rmSync(workloadsDir, { recursive: true, force: true });
   }

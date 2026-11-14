@@ -5,7 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { generateSelfSignedCert } from "../../remote/src/server/tls.js";
+import { makeDefaultProbeFn } from "../src/loop-helpers.js";
 import { createPeerFetch } from "../src/peer-fetch.js";
+import { detectDegradation } from "../src/policy.js";
 import { mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 const originalFetch = globalThis.fetch;
@@ -404,5 +406,147 @@ describe("peer fetch", () => {
     expect(captured).toHaveLength(1);
     expect(captured[0]!.url).toBe("https://127.0.0.1:7843/v1/fleet/snapshot");
     expect(new Headers(captured[0]!.init?.headers).get("authorization")).toBe("Bearer peer-token");
+  });
+
+  test("new-peer snapshot carries health_rtt_ms and null percentiles through peer fetch (#277)", async () => {
+    const certDir = mkdtempSync(join(tmpdir(), "llamactl-peer-fetch-rtt-"));
+    const cert = await generateSelfSignedCert({
+      dir: certDir,
+      commonName: "peer.test",
+      hostnames: ["peer.test"],
+    });
+    try {
+      const workloadFetch = async (url: string): Promise<Response> => {
+        if (url.endsWith("/health")) {
+          await new Promise((resolve) => setTimeout(resolve, 15));
+          return new Response("ok", { status: 200 });
+        }
+        if (url.endsWith("/v1/models"))
+          return new Response(JSON.stringify({ data: [{ id: "m" }] }), { status: 200 });
+        return new Response("", { status: 404 });
+      };
+      const probeFn = makeDefaultProbeFn({
+        fetch: workloadFetch as unknown as typeof fetch,
+        timeoutMs: 500,
+        consecutiveErrors: new Map(),
+      });
+      const snap = await probeFn({
+        name: "mlx-host-peer",
+        endpoint: "http://127.0.0.1:8086",
+        kind: "ModelHost",
+      });
+      const body = JSON.stringify({
+        kind: "fleet-snapshot",
+        ts: "2026-05-25T17:00:00.000Z",
+        node: "peer-node",
+        node_mem: {
+          free_mb: 2048,
+          active_mb: 0,
+          inactive_mb: 0,
+          wired_mb: 0,
+          compressor_mb: 0,
+          swap_in: 0,
+          swap_out: 0,
+        },
+        workloads: [snap],
+      });
+      const fetchSpy = withStubbedSnapshotFetch(() => body);
+      try {
+        const peer: PeerNode = {
+          id: "peer-node",
+          endpoint: "https://peer.test:7843",
+          certificate: cert.certPem,
+          token: "t",
+        };
+        const snapshot = await createPeerFetch(peer)();
+        const workload = snapshot?.workloads[0];
+        expect(workload?.p50_ms).toBeNull();
+        expect(workload?.p95_ms).toBeNull();
+        expect(typeof workload?.health_rtt_ms).toBe("number");
+        expect(workload?.health_rtt_ms).toBeGreaterThan(0);
+      } finally {
+        fetchSpy.cleanup();
+      }
+    } finally {
+      rmSync(certDir, { recursive: true, force: true });
+    }
+  });
+
+  // Kills: any future strict peer parser that drops unknown keys
+  // (future_field) or requires health_rtt_ms on incoming workloads.
+  test("older peer without health_rtt_ms and unknown fields are tolerated (#277)", async () => {
+    const certDir = mkdtempSync(join(tmpdir(), "llamactl-peer-fetch-legacy-"));
+    const cert = await generateSelfSignedCert({
+      dir: certDir,
+      commonName: "peer.test",
+      hostnames: ["peer.test"],
+    });
+    try {
+      const body = JSON.stringify({
+        kind: "fleet-snapshot",
+        ts: "2026-05-25T17:00:00.000Z",
+        node: "old-peer",
+        future_field: { x: 1 },
+        node_mem: {
+          free_mb: 2048,
+          active_mb: 0,
+          inactive_mb: 0,
+          wired_mb: 0,
+          compressor_mb: 0,
+          swap_in: 0,
+          swap_out: 0,
+        },
+        workloads: [
+          {
+            name: "legacy-host",
+            kind: "ModelHost",
+            endpoint: "http://127.0.0.1:8086",
+            priority: 50,
+            rss_mb: null,
+            request_rate_5m: null,
+            error_rate_5m: 0,
+            p50_ms: 10,
+            p95_ms: 20,
+            models: ["m"],
+            reachable: true,
+            consecutiveErrors: 0,
+            revision: null,
+            future_field: { x: 1 },
+          },
+        ],
+      });
+      const fetchSpy = withStubbedSnapshotFetch(() => body);
+      try {
+        const peer: PeerNode = {
+          id: "old-peer",
+          endpoint: "https://peer.test:7843",
+          certificate: cert.certPem,
+          token: "t",
+        };
+        const snapshot = await createPeerFetch(peer)();
+        expect(snapshot).not.toBeNull();
+        if (!snapshot) return;
+        const workload = snapshot.workloads[0]!;
+        expect(workload.p95_ms).toBe(20);
+        expect(workload.health_rtt_ms).toBeUndefined();
+        expect("health_rtt_ms" in workload).toBe(false);
+        // future_field is not part of the typed snapshot; read it untyped.
+        expect((workload as unknown as Record<string, unknown>)["future_field"]).toEqual({ x: 1 });
+        expect((snapshot as unknown as Record<string, unknown>)["future_field"]).toEqual({
+          x: 1,
+        });
+        expect(
+          detectDegradation(workload, "healthy", {
+            consecutiveErrorsForDegraded: 3,
+            p95DegradedMs: 5_000,
+            consecutiveCompletionErrorsForDegraded: 2,
+          }),
+        ).toBeNull();
+      } finally {
+        fetchSpy.cleanup();
+      }
+    } finally {
+      rmSync(certDir, { recursive: true, force: true });
+    }
   });
 });

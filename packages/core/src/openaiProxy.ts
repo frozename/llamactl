@@ -40,6 +40,7 @@ import {
   writeTrailer,
 } from "./kvstore/index.js";
 import { omitUndefined } from "./object.js";
+import { qualificationOverridesFileFor } from "./qualification/overrides.js";
 import {
   type ColdPinQueueProbe,
   type ColdPinQueueProbeConfig,
@@ -436,6 +437,10 @@ function workloadRuntimeCacheSignature(resolved: ResolvedEnv): string {
   // #518: catalog qualification join — editing the custom catalog must
   // invalidate the route/models caches without a workload restart.
   parts.push(statMtimeNs(workloadRuntime.customCatalogFileFor(resolved)));
+  // #518: qualification pin overrides — editing the overrides file must
+  // invalidate the route/models caches without a workload restart. Same
+  // resolver catalogQualificationStages reads, so the stat tracks that file.
+  parts.push(statMtimeNs(qualificationOverridesFileFor(resolved)));
   return parts.join("|");
 }
 
