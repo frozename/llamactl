@@ -131,6 +131,11 @@ export function legacyDefaultBearerWarning(path: string): string {
  * token, like the primary bearer. Each one authenticates the agent's
  * authed API routes exactly as `tokenHash` does, and can be revoked on
  * its own; the primary bearer rotates wholesale with `rotate-token`.
+ *
+ * With `expiresAt` the entry stops authenticating once that time passes,
+ * with no restart and no file change needed: the reader re-checks it on
+ * every request (#218 rotate-token --grace records the previous primary
+ * under such an expiring entry).
  */
 export const AgentBearerTokenSchema = z.object({
   // 'default' is accepted here on purpose: a legacy entry by that name
@@ -138,8 +143,26 @@ export const AgentBearerTokenSchema = z.object({
   name: z.string().regex(BEARER_TOKEN_NAME),
   tokenHash: z.string().regex(SHA256_HEX),
   createdAt: z.string().min(1),
+  expiresAt: z
+    .string()
+    .refine((s) => Number.isFinite(Date.parse(s)), {
+      message: "expiresAt must be an ISO-8601 timestamp",
+    })
+    .optional(),
 });
 export type AgentBearerToken = z.infer<typeof AgentBearerTokenSchema>;
+
+/**
+ * What the bearer-token reader hands out. Zod infers `expiresAt` as
+ * `string | undefined`, which `exactOptionalPropertyTypes` refuses to
+ * assign to an `expiresAt?: string` consumer, while a plain
+ * `expiresAt?: string` shape is refused on the way out of a zod parse;
+ * the union of both shapes is assignable in either direction, so every
+ * parsed entry fits it and every entry satisfies an expiry-aware reader.
+ */
+export type AgentBearerTokenEntry =
+  | Omit<AgentBearerToken, "expiresAt">
+  | (Omit<AgentBearerToken, "expiresAt"> & { expiresAt?: string });
 
 export const AgentBearerTokensSchema = z
   .array(AgentBearerTokenSchema)
@@ -477,12 +500,18 @@ export function workerRpcRelayReader(
  * authenticates, while the agent itself runs on. A legacy entry named
  * 'default' is accepted, with one warning per reader recommending a
  * rename (see {@link PRIMARY_BEARER_NAME}).
+ *
+ * An entry whose `expiresAt` has passed stops authenticating with no
+ * restart and no file change: the expiry is re-checked on every call (the
+ * file is only re-parsed when it changes), against `now` so a caller can
+ * inject a clock.
  */
 export function bearerTokensReader(
   path: string = defaultAgentConfigPath(),
-): () => AgentBearerTokens | undefined {
+  now: () => number = Date.now,
+): () => AgentBearerTokenEntry[] | undefined {
   let warnedLegacyDefault = false;
-  return agentYamlBlockReader(path, (config) => {
+  const read = agentYamlBlockReader(path, (config) => {
     if (config.bearerTokens === undefined) return undefined;
     const parsed = AgentBearerTokensSchema.safeParse(config.bearerTokens);
     if (!parsed.success) {
@@ -509,6 +538,12 @@ export function bearerTokensReader(
     }
     return parsed.data;
   });
+  return () => {
+    const entries = read();
+    if (entries === undefined) return undefined;
+    const t = now();
+    return entries.filter((e) => e.expiresAt === undefined || Date.parse(e.expiresAt) > t);
+  };
 }
 
 export interface BootstrapBlob {

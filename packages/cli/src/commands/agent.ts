@@ -41,7 +41,7 @@ Subcommands:
       (configPath, nodeName, bindHost, port, fingerprint, blob) so the
       install-agent.sh flow can capture stdout and shell-extract the
       bootstrap blob without jq.
-  rotate-token [--dir=<path>] [--host=<host>] [--token-out=<path>] [--json]
+  rotate-token [--dir=<path>] [--host=<host>] [--token-out=<path>] [--grace=<duration>] [--json]
       Rotate the bearer token without touching the TLS cert/key. Reads
       agent.yaml, generates a fresh token, updates tokenHash, and emits
       a bootstrap blob containing the new token plus the unchanged cert
@@ -50,7 +50,11 @@ Subcommands:
       cheaper than a full 'agent init'. Restart the agent after rotating
       so it loads the new tokenHash. The default --host is 127.0.0.1;
       override when the operator's kubeconfig records a different
-      advertised endpoint.
+      advertised endpoint. With --grace the previous token is recorded in
+      bearerTokens as a named token 'rotated-<epoch-ms>' and keeps
+      authenticating until it expires, so clients can switch over; the
+      agent still needs a restart to load the new primary, and expired
+      rotated-* entries stay in agent.yaml until revoked.
   set-token (--hash=<sha256-hex> | --token-file=<path>) [--dir=<path>]
       Adopt an externally issued token (e.g. a central's cluster token)
       as agent.yaml's tokenHash, keeping the TLS cert/key. Writes the
@@ -188,6 +192,14 @@ Flags:
 ${DIR_FLAG_HELP}
   --host=<host>    Host recorded in the emitted bootstrap URL (default: 127.0.0.1)
   --token-out=<path>  Also write the new bearer token to <path> (mode 0600)
+  --grace=<duration>  Keep the previous token authenticating for this long
+                   (a positive duration up to 365d like 30m, 12h or 7d).
+                   With --grace the previous token is recorded in
+                   bearerTokens as a named token 'rotated-<epoch-ms>' and
+                   keeps authenticating until it expires, so clients can
+                   switch over. The agent still needs a restart to load
+                   the new primary; expired rotated-* entries stay in
+                   agent.yaml until revoked with 'agent token revoke'.
   --json           Emit a single-line JSON record instead of the human summary
   -h, --help       Show this help
 `;
@@ -669,7 +681,54 @@ interface RotateTokenFlags {
   dir: string;
   host: string;
   tokenOut?: string;
+  graceSeconds?: number;
   json: boolean;
+}
+
+const GRACE_UNIT_SECONDS: Record<string, number> = { s: 1, m: 60, h: 3600, d: 86400 };
+const MAX_GRACE_SECONDS = 365 * 86400;
+
+/** Parse a --grace duration (a positive span up to 365d, unit suffix optional). */
+function parseGraceSeconds(v: string): number | { error: string } {
+  const refusal = (): { error: string } => ({
+    error: `agent rotate-token: --grace must be a positive duration up to 365d, like 30m, 12h or 7d: ${v}`,
+  });
+  const match = /^(\d+)([smhd]?)$/.exec(v);
+  if (match === null) return refusal();
+  const digits = match[1];
+  const unit = match[2];
+  if (digits === undefined) return refusal();
+  const count = Number.parseInt(digits, 10);
+  if (!Number.isSafeInteger(count)) return refusal();
+  const multiplier = unit === undefined || unit === "" ? 1 : (GRACE_UNIT_SECONDS[unit] ?? 1);
+  const seconds = count * multiplier;
+  if (!Number.isSafeInteger(seconds) || seconds <= 0 || seconds > MAX_GRACE_SECONDS) {
+    return refusal();
+  }
+  return seconds;
+}
+
+function assignRotateTokenValueFlag(flags: RotateTokenFlags, k: string, v: string): string | null {
+  switch (k) {
+    case "--dir":
+      flags.dir = v;
+      return null;
+    case "--host":
+      flags.host = v;
+      return null;
+    case "--token-out":
+      if (v === "") return "agent rotate-token: --token-out requires a path";
+      flags.tokenOut = v;
+      return null;
+    case "--grace": {
+      const grace = parseGraceSeconds(v);
+      if (typeof grace === "object") return grace.error;
+      flags.graceSeconds = grace;
+      return null;
+    }
+    default:
+      return `agent rotate-token: unknown flag ${k}`;
+  }
 }
 
 function parseRotateTokenFlags(args: string[]): RotateTokenFlags | { error: string } {
@@ -685,20 +744,8 @@ function parseRotateTokenFlags(args: string[]): RotateTokenFlags | { error: stri
     }
     const [k, v] = splitFlag(arg);
     if (v === undefined) return { error: `agent rotate-token: flag must be --key=value: ${arg}` };
-    switch (k) {
-      case "--dir":
-        flags.dir = v;
-        break;
-      case "--host":
-        flags.host = v;
-        break;
-      case "--token-out":
-        if (v === "") return { error: "agent rotate-token: --token-out requires a path" };
-        flags.tokenOut = v;
-        break;
-      default:
-        return { error: `agent rotate-token: unknown flag ${k}` };
-    }
+    const err = assignRotateTokenValueFlag(flags, k, v);
+    if (err !== null) return { error: err };
   }
   return flags;
 }
@@ -717,6 +764,110 @@ function writeRotatedTokenOut(out: string, token: string): boolean {
     );
     return false;
   }
+}
+
+function refuseGraceRotation(configPath: string, reason: string): 1 {
+  process.stderr.write(
+    `agent rotate-token: ${configPath} has an invalid bearerTokens block (${reason}); fix it first. Nothing was rotated.\n`,
+  );
+  return 1;
+}
+
+interface GraceRotation {
+  name: string;
+  expiresAt: string;
+  bearerTokens: agentConfigMod.AgentBearerTokens;
+}
+
+/**
+ * Record the previous primary bearer under an expiring 'rotated-<epoch-ms>'
+ * entry so it keeps authenticating for the grace window, and validate the
+ * resulting block before anything is written. Refuses (exit 1 on stderr)
+ * when the existing or the combined block is invalid, so a rotation that
+ * cannot record the old hash rotates nothing.
+ */
+function prepareGraceRotation(
+  configPath: string,
+  existing: agentConfigMod.AgentConfig,
+  graceSeconds: number,
+): GraceRotation | 1 {
+  let entries: agentConfigMod.AgentBearerTokens = [];
+  if (existing.bearerTokens !== undefined) {
+    const parsed = agentConfigMod.AgentBearerTokensSchema.safeParse(existing.bearerTokens);
+    if (!parsed.success) {
+      return refuseGraceRotation(configPath, parsed.error.issues[0]?.message ?? "invalid");
+    }
+    entries = parsed.data;
+  }
+  const nowMs = Date.now();
+  const name = `rotated-${String(nowMs)}`;
+  const expiresAt = new Date(nowMs + graceSeconds * 1000).toISOString();
+  const entry: agentConfigMod.AgentBearerToken = {
+    name,
+    tokenHash: existing.tokenHash,
+    createdAt: new Date(nowMs).toISOString(),
+    expiresAt,
+  };
+  const combined = agentConfigMod.AgentBearerTokensSchema.safeParse([...entries, entry]);
+  if (!combined.success) {
+    return refuseGraceRotation(configPath, combined.error.issues[0]?.message ?? "invalid");
+  }
+  return { name, expiresAt, bearerTokens: combined.data };
+}
+
+interface RotateReport {
+  configPath: string;
+  existing: agentConfigMod.AgentConfig;
+  bootstrap: string;
+  tokenOut: string | undefined;
+  grace: GraceRotation | undefined;
+}
+
+function rotateTokenNote(grace: GraceRotation | undefined): string {
+  return grace === undefined
+    ? "warning: the previous token no longer authenticates; update every client that holds it (kubeconfig, local consumers; see 'llamactl agent token list')"
+    : `note: the previous token keeps authenticating until ${grace.expiresAt} as named token ${grace.name}; update every client that holds it before then (revoke early with 'llamactl agent token revoke ${grace.name}')`;
+}
+
+function rotateSummaryLines(report: RotateReport): string[] {
+  return [
+    `rotated tokenHash in ${report.configPath}`,
+    `cert   ${report.existing.certPath} (unchanged)`,
+    `fp     ${report.existing.fingerprint} (unchanged)`,
+    `bind   ${report.existing.bindHost}:${String(report.existing.port)}`,
+    rotateTokenNote(report.grace),
+    ...(report.tokenOut !== undefined ? [`token  ${report.tokenOut} (0600)`] : []),
+  ];
+}
+
+function reportRotateJson(report: RotateReport): void {
+  process.stderr.write(`${rotateSummaryLines(report).join("\n")}\n`);
+  const record = {
+    configPath: report.configPath,
+    nodeName: report.existing.nodeName,
+    bindHost: report.existing.bindHost,
+    port: report.existing.port,
+    fingerprint: report.existing.fingerprint,
+    blob: report.bootstrap,
+    ...(report.tokenOut !== undefined ? { tokenOut: report.tokenOut } : {}),
+    ...(report.grace !== undefined
+      ? { grace: { name: report.grace.name, expiresAt: report.grace.expiresAt } }
+      : {}),
+  };
+  process.stdout.write(`${JSON.stringify(record)}\n`);
+}
+
+function reportRotateHuman(report: RotateReport): void {
+  const lines = [
+    ...rotateSummaryLines(report),
+    ``,
+    `Restart the agent so it loads the new tokenHash, then update the kubeconfig:`,
+    ``,
+    `  pkill -f 'agent serve' && llamactl agent serve &`,
+    `  llamactl node add ${String(report.existing.nodeName)} --bootstrap ${report.bootstrap} --force`,
+    ``,
+  ];
+  process.stdout.write(lines.join("\n"));
 }
 
 /**
@@ -757,11 +908,18 @@ export async function runRotateToken(args: string[]): Promise<number> {
 
   const token = auth.generateToken();
 
+  const grace =
+    f.graceSeconds !== undefined
+      ? prepareGraceRotation(configPath, existing, f.graceSeconds)
+      : undefined;
+  if (grace === 1) return 1;
+
   if (f.tokenOut !== undefined && !writeRotatedTokenOut(f.tokenOut, token.token)) return 1;
 
   const updated: agentConfigMod.AgentConfig = {
     ...existing,
     tokenHash: token.hash,
+    ...(grace !== undefined ? { bearerTokens: grace.bearerTokens } : {}),
   };
   agentConfigMod.saveAgentConfig(updated, configPath);
 
@@ -773,48 +931,15 @@ export async function runRotateToken(args: string[]): Promise<number> {
     certificate: certPem,
   });
 
-  const warning =
-    "warning: the previous token no longer authenticates; update every client that holds it (kubeconfig, local consumers; see 'llamactl agent token list')";
-
-  if (f.json) {
-    process.stderr.write(
-      [
-        `rotated tokenHash in ${configPath}`,
-        `cert   ${existing.certPath} (unchanged)`,
-        `fp     ${existing.fingerprint} (unchanged)`,
-        `bind   ${existing.bindHost}:${String(existing.port)}`,
-        warning,
-        ...(f.tokenOut !== undefined ? [`token  ${f.tokenOut} (0600)`] : []),
-      ].join("\n") + "\n",
-    );
-    const record = {
-      configPath,
-      nodeName: existing.nodeName,
-      bindHost: existing.bindHost,
-      port: existing.port,
-      fingerprint: existing.fingerprint,
-      blob: bootstrap,
-      ...(f.tokenOut !== undefined ? { tokenOut: f.tokenOut } : {}),
-    };
-    process.stdout.write(`${JSON.stringify(record)}\n`);
-    return 0;
-  }
-
-  const lines = [
-    `rotated tokenHash in ${configPath}`,
-    `cert   ${existing.certPath} (unchanged)`,
-    `fp     ${existing.fingerprint} (unchanged)`,
-    `bind   ${existing.bindHost}:${String(existing.port)}`,
-    warning,
-    ...(f.tokenOut !== undefined ? [`token  ${f.tokenOut} (0600)`] : []),
-    ``,
-    `Restart the agent so it loads the new tokenHash, then update the kubeconfig:`,
-    ``,
-    `  pkill -f 'agent serve' && llamactl agent serve &`,
-    `  llamactl node add ${String(existing.nodeName)} --bootstrap ${bootstrap} --force`,
-    ``,
-  ];
-  process.stdout.write(lines.join("\n"));
+  const report: RotateReport = {
+    configPath,
+    existing,
+    bootstrap,
+    tokenOut: f.tokenOut,
+    grace,
+  };
+  if (f.json) reportRotateJson(report);
+  else reportRotateHuman(report);
   return 0;
 }
 
