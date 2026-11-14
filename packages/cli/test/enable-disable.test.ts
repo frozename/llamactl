@@ -127,10 +127,15 @@ function deps(): SetEnabledDeps {
 
 interface RecordedApplyOpts {
   getNodeBudgetGiB?: (nodeName: string) => unknown;
+  getNodeResidency?: (nodeName: string) => unknown;
   resolveNodeIdentity?: (nodeName: string) => string | null;
 }
 
-function nodeRunFixture(name: string, memoryGiB?: number): unknown {
+function nodeRunFixture(
+  name: string,
+  memoryGiB?: number,
+  residency?: Record<string, unknown>,
+): unknown {
   return {
     apiVersion: "llamactl/v1",
     kind: "NodeRun",
@@ -139,6 +144,7 @@ function nodeRunFixture(name: string, memoryGiB?: number): unknown {
       node: name,
       infra: [],
       ...(memoryGiB !== undefined ? { budget: { memoryGiB } } : {}),
+      ...(residency !== undefined ? { residency } : {}),
     },
   };
 }
@@ -209,6 +215,75 @@ describe("llamactl enable/disable", () => {
     expect(seen.opts?.getNodeBudgetGiB?.("z13")).toBe(12);
     expect(seen.opts?.getNodeBudgetGiB?.("gpu2")).toBeUndefined();
     expect(listCalls).toBe(2);
+  });
+
+  test("enable passes the NodeRun residency lookup to a ModelHost apply", async () => {
+    // Kills: setEnabled.ts not passing getNodeResidency to applyOneModelHost
+    await Bun.write(join(workloadsDir, "mlx-host.yaml"), makeModelHostManifest(false));
+    const seen: { opts?: RecordedApplyOpts | undefined } = {};
+    const result = await setWorkloadEnabledWithDeps("mlx-host", true, {
+      ...deps(),
+      listNodeRuns: () => [
+        nodeRunFixture("z13", undefined, { safetyMarginRatio: 0.5 }),
+        nodeRunFixture("gpu2"),
+      ],
+      applyOneModelHost: (
+        manifest: ModelHostManifest,
+        _g: unknown,
+        _e: unknown,
+        opts?: RecordedApplyOpts,
+      ): Promise<ApplyManifestOutcome> => {
+        applyCalls++;
+        seen.opts = opts;
+        return Promise.resolve({
+          ok: true,
+          kind: "ModelHost",
+          manifest,
+          pid: 1234,
+          endpoint: "http://127.0.0.1:8094",
+        });
+      },
+    } as unknown as SetEnabledDeps);
+
+    expect(result.code).toBe(0);
+    expect(applyCalls).toBe(1);
+    expect(seen.opts?.getNodeResidency?.("z13")).toEqual({ safetyMarginRatio: 0.5 });
+    expect(seen.opts?.getNodeResidency?.("gpu2")).toBeUndefined();
+    expect(seen.opts?.getNodeResidency?.("other")).toBeUndefined();
+  });
+
+  test("enable passes the NodeRun residency lookup to a ModelRun apply", async () => {
+    // Kills: setEnabled.ts not passing getNodeResidency to applyOne
+    saveWorkload(makeManifest(false), workloadsDir);
+    const seen: { opts?: RecordedApplyOpts | undefined } = {};
+    const result = await setWorkloadEnabledWithDeps("gemma-qa", true, {
+      ...deps(),
+      listNodeRuns: () => [
+        nodeRunFixture("z13", undefined, { safetyMarginRatio: 0.5 }),
+        nodeRunFixture("gpu2"),
+      ],
+      applyOne: (_m: unknown, _g: unknown, _e: unknown, _d: unknown, opts?: RecordedApplyOpts) => {
+        applyCalls++;
+        seen.opts = opts;
+        return Promise.resolve({
+          action: "started",
+          statusSection: {
+            phase: "Running",
+            endpoint: null,
+            serverPid: null,
+            lastTransitionTime: "2026-05-13T00:00:00.000Z",
+            conditions: [],
+          },
+          error: null,
+        });
+      },
+    } as unknown as SetEnabledDeps);
+
+    expect(result.code).toBe(0);
+    expect(applyCalls).toBe(1);
+    expect(seen.opts?.getNodeResidency?.("z13")).toEqual({ safetyMarginRatio: 0.5 });
+    expect(seen.opts?.getNodeResidency?.("gpu2")).toBeUndefined();
+    expect(seen.opts?.getNodeResidency?.("other")).toBeUndefined();
   });
 
   test("disable routes a ModelHost through its own manifest path", async () => {

@@ -6,6 +6,7 @@ import type { WorkloadTarget } from "../src/workload-probe.js";
 import {
   applyPressureTransition,
   emitPeriodicPressureStatus,
+  makeDefaultProbeFn,
   makeUnreachableFallback,
   type PressureTransitionResult,
 } from "../src/loop-helpers.js";
@@ -61,6 +62,14 @@ describe("makeUnreachableFallback (M5)", () => {
     const snap = makeUnreachableFallback(new Map())(target);
     expect(snap.p50_ms).toBeNull();
     expect(snap.p95_ms).toBeNull();
+  });
+
+  // #277 DF-04 M3: the fallback must carry health_rtt_ms: null explicitly —
+  // omitting the key surfaces as undefined, not null.
+  it("returns null for health_rtt_ms", () => {
+    const target: WorkloadTarget = { name: "t", endpoint: "http://t", kind: "ModelHost" };
+    const snap = makeUnreachableFallback(new Map())(target);
+    expect(snap.health_rtt_ms).toBeNull();
   });
 });
 
@@ -226,5 +235,42 @@ describe("emitPeriodicPressureStatus duplicate guard (M8)", () => {
     );
 
     expect(entries.filter((e) => e.kind === "fleet-pressure-status")).toHaveLength(1);
+  });
+});
+
+// #277 DF-04: p50_ms/p95_ms were mislabeled with the single /health RTT
+// sample. The fix nulls the percentiles (no real latency distribution is
+// measured) and carries the RTT as health_rtt_ms instead.
+describe("makeDefaultProbeFn health RTT (#277 DF-04)", () => {
+  const target: WorkloadTarget = {
+    name: "mlx-host-rtt",
+    endpoint: "http://127.0.0.1:8086",
+    kind: "ModelHost",
+  };
+
+  function delayedHealthyFetch(): (url: string) => Promise<Response> {
+    return async (url: string): Promise<Response> => {
+      if (url.endsWith("/health")) {
+        await new Promise((resolve) => setTimeout(resolve, 15));
+        return new Response("ok", { status: 200 });
+      }
+      if (url.endsWith("/v1/models"))
+        return new Response(JSON.stringify({ data: [{ id: "m" }] }), { status: 200 });
+      return new Response("", { status: 404 });
+    };
+  }
+
+  it("reports null percentiles and a numeric health_rtt_ms", async () => {
+    const probeFn = makeDefaultProbeFn({
+      fetch: delayedHealthyFetch() as unknown as typeof fetch,
+      timeoutMs: 500,
+      consecutiveErrors: new Map(),
+    });
+    const snap = await probeFn(target);
+
+    expect(snap.p50_ms).toBeNull();
+    expect(snap.p95_ms).toBeNull();
+    expect(typeof snap.health_rtt_ms).toBe("number");
+    expect(snap.health_rtt_ms).toBeGreaterThanOrEqual(10);
   });
 });
