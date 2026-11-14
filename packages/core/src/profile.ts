@@ -1,5 +1,5 @@
 import { execSync } from "node:child_process";
-import { platform } from "node:os";
+import { platform, totalmem } from "node:os";
 
 import type { MachineProfile } from "./types.js";
 
@@ -38,11 +38,33 @@ function linuxMemoryBytes(): number | null {
   }
 }
 
-/** Total physical memory in bytes, detected per platform. */
-export function detectMemoryBytes(): number | null {
-  if (process.platform === "darwin") return darwinMemoryBytes();
-  if (process.platform === "linux") return linuxMemoryBytes();
+/**
+ * Total physical memory in bytes, detected per platform.
+ * On platforms other than darwin/linux (or when platform-specific
+ * probes fail), falls back to os.totalmem(). Returns null when
+ * every probe fails or produces a non-positive / non-finite value.
+ */
+export function detectMemoryBytes(deps: MemoryProbeDeps = {}): number | null {
+  const p = deps.platform ?? process.platform;
+  let detected: number | null = null;
+  if (p === "darwin") detected = (deps.darwin ?? darwinMemoryBytes)();
+  else if (p === "linux") detected = (deps.linux ?? linuxMemoryBytes)();
+  if (detected !== null) return detected;
+  try {
+    const n = (deps.totalmem ?? totalmem)();
+    if (Number.isFinite(n) && n > 0) return Math.trunc(n);
+  } catch {
+    /* ignore */
+  }
   return null;
+}
+
+/** Optional probe fields passed by callers who already know platform/memory. */
+export interface MemoryProbeDeps {
+  platform?: NodeJS.Platform;
+  darwin?: () => number | null;
+  linux?: () => number | null;
+  totalmem?: () => number;
 }
 
 /** Platform-agnostic machine platform identifier. */
@@ -127,8 +149,8 @@ export function formatMachineSummary(d: MachineDescription): string {
  *   <= 32 GiB  -> balanced
  *   <= 64 GiB  -> macbook-pro-48g
  *   > 64 GiB   -> large-128g
- * Unknown memory (non-darwin, detection failure) defaults to
- * macbook-pro-48g to avoid over-restricting context on unidentified
+ * Unknown memory (every probe, including os.totalmem, failed) defaults
+ * to macbook-pro-48g to avoid over-restricting context on unidentified
  * hardware.
  */
 export function profileFromMemory(memoryBytes: number | null): MachineProfile {
@@ -149,6 +171,7 @@ export function normalizeProfile(raw: string | undefined): MachineProfile | null
       return "mac-mini-16g";
     case "balanced":
     case "mid":
+    case "32g":
       return "balanced";
     case "macbook-pro-48g":
     case "macbook-pro":
@@ -158,10 +181,13 @@ export function normalizeProfile(raw: string | undefined): MachineProfile | null
     case "desktop":
     case "48g":
     case "best":
+    case "64g":
       return "macbook-pro-48g";
     case "large-128g":
     case "large":
     case "128g":
+    case "96g":
+    case "128g+":
       return "large-128g";
     default:
       return null;
