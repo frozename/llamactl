@@ -158,6 +158,9 @@ spec:
       expect(stderr()).not.toContain("refusing to start");
       expect(stdout()).toContain("modelhost/host-managed");
       expect(stdout()).toContain("skipped-external");
+      expect(stdout()).toContain(
+        "modelhost/host-managed on local: skipped-external (managed by mac-mini via llamactl.io/managed-by)",
+      );
     });
   });
 });

@@ -19,9 +19,13 @@ import { urlHost } from "./update/probes.js";
 import {
   DEFAULT_UNITS,
   LAUNCHD_AGENT_FALLBACK,
+  LAUNCHD_SYSTEM_AGENT_LABEL,
+  launchdManager,
   makeServiceManager,
   pickServiceManagerKind,
+  type ServiceInfo,
   type ServiceManagerKind,
+  systemdManager,
 } from "./update/services.js";
 
 export interface AgentCertStatus {
@@ -55,7 +59,7 @@ export type ProbeFn = (url: string) => Promise<boolean>;
 
 export type ListenerPidFn = (host: string, port: number) => Promise<number | null>;
 
-/** #211: the launchd label or systemd --user unit managing the agent. Exactly these named fields; linger only on systemd. */
+/** #211: the launchd label or systemd unit (user, then system scope) managing the agent. Exactly these named fields; linger only on systemd. */
 export interface AgentServiceStatus {
   manager: ServiceManagerKind;
   /** launchd label or systemd unit. */
@@ -68,6 +72,8 @@ export interface AgentServiceStatus {
    * only when true); null when unknown. Absent on launchd.
    */
   linger?: boolean | null;
+  /** #211: present only when the unit lives in the system scope; absent for user scope. */
+  scope?: "system";
 }
 
 export type DescribeServiceFn = () => Promise<AgentServiceStatus | null>;
@@ -159,10 +165,34 @@ async function readLinger(exec: ServiceProbeDeps["exec"], uid: number): Promise<
   }
 }
 
-// #211: which launchd label or systemd --user unit manages the agent, resolved
-// the way `llamactl update` does (update/session.ts): the default agent unit,
-// and on launchd the `llamactl infra` label when the default is not loaded.
-// Copies five fields by name, plus linger on systemd: a ServiceInfo also carries the unit's env and argv.
+// #211: the system-scope probe, run once when nothing loaded in the user
+// scope. A system daemon does not depend on logind linger, so loginctl never
+// runs here. Null when the system unit is not loaded either.
+async function describeSystemScope(
+  kind: ServiceManagerKind,
+  d: ServiceProbeDeps,
+): Promise<ServiceInfo | null> {
+  const info =
+    kind === "launchd"
+      ? await launchdManager(d.exec, d.uid, "system").describe(
+          "agent",
+          LAUNCHD_SYSTEM_AGENT_LABEL,
+          false,
+        )
+      : await systemdManager(d.exec, d.readFile, {}, "system").describe(
+          "agent",
+          DEFAULT_UNITS.systemd.agent,
+          false,
+        );
+  return info.loaded ? info : null;
+}
+
+// #211: which launchd label or systemd unit (user, then system scope) manages
+// the agent, resolved the way `llamactl update` does (update/session.ts): the
+// default agent unit, and on launchd the `llamactl infra` label when the
+// default is not loaded. Falls back to a one-shot system-scope probe.
+// Copies five fields by name, plus linger on systemd and scope on a system
+// unit: a ServiceInfo also carries the unit's env and argv.
 export async function describeAgentService(
   d: ServiceProbeDeps,
 ): Promise<AgentServiceStatus | null> {
@@ -173,6 +203,19 @@ export async function describeAgentService(
   if (kind === "launchd" && !info.loaded) {
     const fallback = await manager.describe("agent", LAUNCHD_AGENT_FALLBACK, false);
     if (fallback.loaded) info = fallback;
+  }
+  if (!info.loaded) {
+    const system = await describeSystemScope(kind, d);
+    if (system !== null) {
+      return {
+        manager: kind,
+        name: system.name,
+        loaded: system.loaded,
+        active: system.active,
+        pid: system.pid,
+        scope: "system",
+      };
+    }
   }
   const status: AgentServiceStatus = {
     manager: kind,
@@ -221,6 +264,7 @@ async function lookupService(
     pid: s.pid,
   };
   if (s.linger !== undefined) out.linger = s.linger;
+  if (s.scope === "system") out.scope = s.scope;
   return out;
 }
 
@@ -359,11 +403,12 @@ function lingerSuffix(linger: boolean | null | undefined): string {
 
 function serviceLines(s: AgentServiceStatus | null): string[] {
   if (s === null) return [];
+  const scope = s.scope === "system" ? "system, " : "";
   const linger = lingerSuffix(s.linger);
-  if (!s.loaded) return [`service ${s.manager} ${s.name} (not loaded)${linger}`];
+  if (!s.loaded) return [`service ${s.manager} ${s.name} (${scope}not loaded)${linger}`];
   const pid = s.pid === null ? "" : ` pid=${String(s.pid)}`;
   return [
-    `service ${s.manager} ${s.name} (loaded, ${s.active ? "active" : "inactive"})${pid}${linger}`,
+    `service ${s.manager} ${s.name} (${scope}loaded, ${s.active ? "active" : "inactive"})${pid}${linger}`,
   ];
 }
 

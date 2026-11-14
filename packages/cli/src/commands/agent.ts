@@ -126,7 +126,7 @@ Subcommands:
       enable + restart it via systemctl. --dry-run prints the unit +
       systemctl plan without touching disk.
   token <subcommand>
-      Manage named operator bearer tokens (add / list / revoke). Each
+      Manage named operator bearer tokens (add / list / revoke / rename). Each
       named token authenticates the agent's authed API routes exactly
       as the primary bearer does, and can be revoked on its own; the
       agent re-reads them per request, so add and revoke apply without
@@ -271,7 +271,7 @@ const STATUS_USAGE = `Usage: llamactl agent status [flags]
 
 Report the agent config, whether /healthz answers, a loopback-only
 bind, cert expiry + SAN coverage of the advertised host, and the
-launchd label or systemd --user unit that manages the agent.
+launchd label or systemd unit (user, then system scope) that manages the agent.
 
 Flags:
 ${DIR_FLAG_HELP}
