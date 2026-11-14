@@ -18,8 +18,6 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import type { NodeRun } from "../../src/workload/noderun-schema.js";
-
 import { router } from "../../src/router.js";
 import {
   existsSync,
@@ -129,7 +127,6 @@ type BuildResidencyPlanInput = {
   from?: string | null;
   nowMs: number;
   servingNode: string | null;
-  nodeRun: NodeRun | undefined;
   budgetGiB: number;
   budgetSource: "noderun" | "computed";
   modelRuns: readonly ModelRun[];
@@ -310,7 +307,6 @@ function planInput(overrides: Partial<BuildResidencyPlanInput> = {}): BuildResid
     to: "code",
     nowMs: NOW_MS,
     servingNode: NODE,
-    nodeRun: undefined,
     budgetGiB: 24,
     budgetSource: "noderun",
     modelRuns: p1Manifests(),
@@ -477,6 +473,23 @@ describe("buildResidencyPlan", () => {
       }),
     );
     expect(plan.ok).toBe(true);
+    expect(plan.replacements).toEqual(["code-b"]);
+  });
+
+  test("P9b: null memory on a disabled target-profile workload is skipped, not refused", async () => {
+    const { buildResidencyPlan } = await loadPlanMod();
+    const plan = buildResidencyPlan(
+      planInput({
+        modelRuns: [
+          ...p1Manifests(),
+          runManifest("code-off", { enabled: false, profiles: "code", phase: "Stopped" }),
+        ],
+        observed: observedWith(p1Observed(), "code-off", "stopped"),
+        memoryGiB: memoryWith(p1Memory(), "code-off", null),
+      }),
+    );
+    expect(plan.ok).toBe(true);
+    expect(plan.skipped).toContain("code-off");
     expect(plan.replacements).toEqual(["code-b"]);
   });
 

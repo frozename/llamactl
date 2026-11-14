@@ -202,7 +202,6 @@ export function buildResidencyPlan(input: {
   from?: string | null;
   nowMs: number;
   servingNode: string | null;
-  nodeRun: NodeRun | undefined;
   budgetGiB: number;
   budgetSource: "noderun" | "computed";
   modelRuns: readonly ModelRun[];

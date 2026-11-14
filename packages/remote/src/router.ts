@@ -2036,7 +2036,6 @@ export const router = t.router({
         from: input.from ?? null,
         nowMs: Date.now(),
         servingNode,
-        nodeRun: node,
         budgetGiB: defaultNodeBudgetGiB(declared),
         budgetSource: typeof declared === "number" ? "noderun" : "computed",
         modelRuns: observations.modelRuns,
