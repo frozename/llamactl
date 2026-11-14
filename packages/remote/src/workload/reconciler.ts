@@ -158,14 +158,15 @@ interface NodeBudgetContext {
  * NodeRun budget wins; `local` uses the controller's RAM; otherwise the
  * NodeRun `spec.residency.safetyMarginRatio` (0.75 unless set) times the
  * node's reported memory, queried at most once per node per pass. A
- * missing, rejected or timed-out nodeFacts falls back to the controller's RAM.
+ * missing, rejected or timed-out nodeFacts now yields null (BudgetUnknown),
+ * not the controller's RAM, which is not authoritative for a remote node (#274).
  */
 async function resolveModelRunBudgetGiB(
   nodeName: string,
   nodeBudget: NodeBudgetContext,
   nodeMemBytesByName: Map<string, Promise<number | null>>,
   getClient: (nodeName: string) => WorkloadClient,
-): Promise<number> {
+): Promise<number | null> {
   const explicit = nodeBudget.budgetByName.get(nodeName);
   if (explicit !== undefined) return explicit;
   const residency = nodeBudget.residencyByName.get(nodeName);
@@ -175,7 +176,9 @@ async function resolveModelRunBudgetGiB(
     memBytes = queryNodeMemBytes(getClient(nodeName));
     nodeMemBytesByName.set(nodeName, memBytes);
   }
-  return defaultNodeBudgetGiB(undefined, await memBytes, residency);
+  const verified = await memBytes;
+  if (verified === null || !Number.isFinite(verified) || verified <= 0) return null;
+  return defaultNodeBudgetGiB(undefined, verified, residency);
 }
 
 /** #221: a node RPC deadline timeout, or a per-pass skip after one. */

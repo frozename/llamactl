@@ -80,8 +80,26 @@ export interface WorkloadSnapshot {
   rss_mb: number | null;
   request_rate_5m: number | null;
   error_rate_5m: number;
+  /**
+   * P50 real inference latency (ms). Always null from this version's probe:
+   * no request-path latency is collected yet. Older peers may still send
+   * /health round-trip time here; this version reports it as `health_rtt_ms`.
+   */
   p50_ms: number | null;
+  /**
+   * P95 real inference latency (ms). Always null from this version's probe:
+   * no request-path latency is collected yet. Older peers may still send
+   * /health round-trip time here; this version reports it as `health_rtt_ms`.
+   */
   p95_ms: number | null;
+  /**
+   * Round-trip time of the /health GET (ms): a network+server health probe
+   * metric, not inference latency. Null only when the probe itself threw;
+   * an unreachable result from the default probe carries the time until
+   * failure (0 for a rejected endpoint). Absent on snapshots from older
+   * peers that predate this field.
+   */
+  health_rtt_ms?: number | null;
   models: string[];
   reachable: boolean;
   consecutiveErrors: number;

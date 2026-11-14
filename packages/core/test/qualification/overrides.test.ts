@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 
 import type * as OverridesNs from "../../src/qualification/overrides.js";
+import type { ResolvedEnv } from "../../src/types.js";
 
 import { existsSync, mkdirSync, writeFileSync } from "../../src/safe-fs.js";
 import { envForTemp, makeTempRuntime } from "../helpers.js";
@@ -248,5 +249,43 @@ describe("qualification.overrides.qualificationOverridesFile", () => {
     expect(qualificationOverridesFile(envForTemp(temp))).toBe(
       join(temp.runtimeDir, "qualification-overrides.tsv"),
     );
+  });
+});
+
+describe("qualification.overrides.qualificationOverridesFileFor", () => {
+  const withProcessEnv = (value: string | undefined, fn: () => void): void => {
+    const saved = process.env["LOCAL_AI_QUALIFICATION_OVERRIDES_FILE"];
+    if (value === undefined) delete process.env["LOCAL_AI_QUALIFICATION_OVERRIDES_FILE"];
+    else process.env["LOCAL_AI_QUALIFICATION_OVERRIDES_FILE"] = value;
+    try {
+      fn();
+    } finally {
+      if (saved === undefined) delete process.env["LOCAL_AI_QUALIFICATION_OVERRIDES_FILE"];
+      else process.env["LOCAL_AI_QUALIFICATION_OVERRIDES_FILE"] = saved;
+    }
+  };
+
+  test("defaults to qualification-overrides.tsv under the resolved runtime dir", async () => {
+    const { qualificationOverridesFileFor } = await loadOverrides();
+    const resolved = { LOCAL_AI_RUNTIME_DIR: "/rt" } as ResolvedEnv;
+    withProcessEnv(undefined, () => {
+      expect(qualificationOverridesFileFor(resolved)).toBe(
+        join("/rt", "qualification-overrides.tsv"),
+      );
+    });
+    withProcessEnv("", () => {
+      expect(qualificationOverridesFileFor(resolved)).toBe(
+        join("/rt", "qualification-overrides.tsv"),
+      );
+    });
+  });
+
+  test("honours LOCAL_AI_QUALIFICATION_OVERRIDES_FILE from process.env", async () => {
+    const { qualificationOverridesFileFor } = await loadOverrides();
+    withProcessEnv("/x/q.tsv", () => {
+      expect(qualificationOverridesFileFor({ LOCAL_AI_RUNTIME_DIR: "/rt" } as ResolvedEnv)).toBe(
+        "/x/q.tsv",
+      );
+    });
   });
 });
