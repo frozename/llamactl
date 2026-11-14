@@ -15,6 +15,10 @@ import {
   type PidVerdict,
   verifyPidFiles,
 } from "./pidIdentity.js";
+import {
+  qualificationOverridesFileFor,
+  readQualificationOverrides,
+} from "./qualification/overrides.js";
 import { isExperimentalRoute, QUALIFICATION_LABEL } from "./routing/capabilities.js";
 import {
   existsSync,
@@ -118,7 +122,10 @@ export function customCatalogFileFor(resolved: ResolvedEnv): string {
 /**
  * Qualification stage per catalog rel, builtin rows first so the last row
  * per rel wins and custom rows override builtins (#518). A later row without
- * a qualification clears an earlier one.
+ * a qualification clears an earlier one. Pin rows from the qualification
+ * overrides file (`qualificationOverridesFileFor`) then replace the catalog
+ * stage for their rel, including a rel the catalog never staged. Freeze rows
+ * only block promotion, so they leave the stage unchanged.
  */
 export function catalogQualificationStages(resolved: ResolvedEnv): Map<string, QualificationStage> {
   const stages = new Map<string, QualificationStage>();
@@ -126,6 +133,10 @@ export function catalogQualificationStages(resolved: ResolvedEnv): Map<string, Q
     const stage = row.qualification?.stage;
     if (stage === undefined) stages.delete(row.rel);
     else stages.set(row.rel, stage);
+  }
+  for (const override of readQualificationOverrides(qualificationOverridesFileFor(resolved))) {
+    if (override.action === "pin" && override.stage !== "")
+      stages.set(override.rel, override.stage);
   }
   return stages;
 }

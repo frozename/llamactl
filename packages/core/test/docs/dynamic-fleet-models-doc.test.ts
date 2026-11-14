@@ -153,6 +153,7 @@ describe("docs/dynamic-fleet-models.md (#522)", () => {
       expect(doc).toContain(`\`${field}\``);
     }
     expect(doc.toLowerCase()).toContain("library-only");
+    expect(doc).toContain("catalogQualificationStages");
   });
 
   test("case 6: exclusive-group catalog rows", () => {

@@ -194,9 +194,10 @@ zod):
 writer is injected; `autoApply` without a writer writes nothing.
 
 Effective status at this commit: `effectiveStage`,
-`proposePromotion`, `applyPromotion` and the overrides reader are
-library-only — no router, catalog, lifecycle or CLI code calls them.
-Consumers are pending E-14 / #284.
+`proposePromotion` and `applyPromotion` are library-only — no router,
+catalog, lifecycle or CLI code calls them. Consumers are pending
+E-14 / #284. The overrides reader has one consumer: routing applies
+its pin rows (see Overrides).
 
 ## Overrides
 
@@ -217,9 +218,14 @@ Writer semantics: a write replaces the `(rel, action)` row and drops
 `#` comments and invalid rows present before the write. A delete
 removes the file entirely when it empties.
 
-This is the wire format future consumers will read. Editing it today
-changes no routing or lifecycle behaviour — the reader is library-only
-until #284.
+Routing reads this one shared file. `catalogQualificationStages`
+applies each `pin` row's stage over the catalog stage for its `rel`
+(also for a rel the catalog never staged), so a pin changes the stage
+the route builders and `/v1/models` see. A `freeze` row has no routing
+effect: it leaves the stage unchanged, and only the library-only
+`proposePromotion` check (`frozen`) consults it. The OpenAI proxy's
+`/v1/models` cache signature stats the same resolved file, so an edit
+takes effect without a workload restart.
 
 ## Exclusive-window runbook
 
