@@ -766,6 +766,9 @@ describe("I1: clean install", () => {
     BASELINE_ENV.add("LLAMACTL_RESIDENCY_LEASES");
     // #520: opt-in session refcount idle timeout read by `agent serve`, not the worker RPC.
     BASELINE_ENV.add("LLAMACTL_RESIDENCY_SESSION_IDLE_MS");
+    // #367: per-role runtime memory identity env fallbacks read by `agent serve`, not the worker RPC.
+    BASELINE_ENV.add("LLAMACTL_AGENT_RUNTIME_ROLE");
+    BASELINE_ENV.add("LLAMACTL_AGENT_MEMORY_BUDGET_BYTES");
     const sources = join(import.meta.dir, "..", "..");
     const read = new Map<string, string[]>();
     for (const pkg of readdirSync(sources)) {

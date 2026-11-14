@@ -1,6 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { type CheckResult, type DoctorDeps, runDoctor } from "../src/commands/doctor.js";
+import { mkdtempSync, rmSync } from "../src/safe-fs.js";
 
 /**
  * `llamactl doctor` smoke tests. The probes hit real-ish surfaces
@@ -29,6 +32,27 @@ function captureStdout<T>(fn: () => Promise<T>): Promise<{ result: T; out: strin
       process.stdout.write = original;
     });
 }
+
+// The [units] probe resolves its unit dir from XDG_CONFIG_HOME at run
+// time; aim it at an empty temp dir so the real-probe smoke tests never
+// read the operator's ~/.config/systemd/user.
+let savedXdgConfigHome: string | undefined;
+let xdgConfigHomeDir: string;
+
+beforeAll(() => {
+  savedXdgConfigHome = process.env["XDG_CONFIG_HOME"];
+  xdgConfigHomeDir = mkdtempSync(join(tmpdir(), "doctor-xdg-"));
+  process.env["XDG_CONFIG_HOME"] = xdgConfigHomeDir;
+});
+
+afterAll(() => {
+  if (savedXdgConfigHome === undefined) {
+    delete process.env["XDG_CONFIG_HOME"];
+  } else {
+    process.env["XDG_CONFIG_HOME"] = savedXdgConfigHome;
+  }
+  rmSync(xdgConfigHomeDir, { force: true, recursive: true });
+});
 
 describe("doctor --help", () => {
   test("prints USAGE and returns 0", async () => {
@@ -106,6 +130,7 @@ describe("doctor probes (via injected deps)", () => {
       // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
       checkKubernetes: async () => [{ system: "kubernetes", status: "ok", message: "stub k8s ok" }],
       checkSecrets: () => [{ system: "secrets", status: "ok", message: "stub secrets ok" }],
+      units: { platform: "darwin", unitDir: "/nonexistent" },
       ...overrides,
     };
   }

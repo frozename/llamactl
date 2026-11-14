@@ -21,8 +21,12 @@ Subcommands:
       is never shown again; with --out it is written to that file (mode
       0600) instead of printed.
   list [--json] [--dir=<path>]
-      List the recorded tokens as name<TAB>createdAt. Hashes and tokens
-      are never listed.
+      List the recorded tokens as name<TAB>createdAt, plus a third column
+      when the entry has an expiry: expires=<iso> while it is still valid,
+      expired=<iso> once the time has passed. A rotated-<ms> entry comes
+      from 'rotate-token --grace' and holds the previous primary token;
+      expired entries no longer authenticate and can be removed with
+      'token revoke'. Hashes and tokens are never listed.
   revoke <name> [--dir=<path>]
       Drop the named token. The next request with it is refused.
   rename <old> <new> [--json] [--dir=<path>]
@@ -234,8 +238,15 @@ function tokenList(args: string[]): number {
   const state = loadTokenState(flags);
   if (state === 1) return 1;
 
+  const t = Date.now();
   if (flags.json) {
-    const listed = (state.entries ?? []).map((e) => ({ name: e.name, createdAt: e.createdAt }));
+    const listed = (state.entries ?? []).map((e) => ({
+      name: e.name,
+      createdAt: e.createdAt,
+      ...(e.expiresAt !== undefined
+        ? { expiresAt: e.expiresAt, expired: Date.parse(e.expiresAt) <= t }
+        : {}),
+    }));
     process.stdout.write(`${JSON.stringify(listed)}\n`);
     return 0;
   }
@@ -243,7 +254,15 @@ function tokenList(args: string[]): number {
     process.stderr.write(`no named bearer tokens in ${state.configPath}\n`);
     return 0;
   }
-  for (const e of state.entries) process.stdout.write(`${e.name}\t${e.createdAt}\n`);
+  for (const e of state.entries) {
+    const expiry =
+      e.expiresAt === undefined
+        ? ""
+        : Date.parse(e.expiresAt) > t
+          ? `\texpires=${e.expiresAt}`
+          : `\texpired=${e.expiresAt}`;
+    process.stdout.write(`${e.name}\t${e.createdAt}${expiry}\n`);
+  }
   if (state.entries.some((e) => e.name === agentConfigMod.PRIMARY_BEARER_NAME)) {
     process.stderr.write(agentConfigMod.legacyDefaultBearerWarning(state.configPath));
   }

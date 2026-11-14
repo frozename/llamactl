@@ -13,13 +13,18 @@
  *   [kubernetes]  kubeconfig + reachable cluster + RBAC + default
  *                 StorageClass + llamactl-labelled nodes
  *   [secrets]     macOS Keychain availability (Darwin only)
+ *   [units]       Linux: installed llamactl-controller/agent user units
+ *                 (and .d drop-ins) keep OOMScoreAdjust ≤ 100 (#196)
  */
 import type { KubernetesClient } from "@llamactl/remote";
 
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
 
+import type { UnitOomProbeOptions } from "./doctor-units.js";
+
 import { existsSync, readdirSync, readFileSync } from "../safe-fs.js";
+import { checkUnitOomScores, defaultUnitDir } from "./doctor-units.js";
 
 export type Status = "ok" | "warn" | "fail" | "info";
 
@@ -45,6 +50,8 @@ export interface DoctorDeps {
   checkAgent?: () => Promise<CheckResult[]>;
   /** Override the macOS keychain CLI probe. */
   checkSecrets?: () => CheckResult[];
+  /** Test seam: platform + systemd user unit dir for the [units] probe. */
+  units?: UnitOomProbeOptions;
 }
 
 export async function runDoctor(argv: string[], deps: DoctorDeps = {}): Promise<number> {
@@ -119,6 +126,25 @@ export async function runDoctor(argv: string[], deps: DoctorDeps = {}): Promise<
       (err) =>
         results.push({
           system: "secrets",
+          status: "fail",
+          message: `probe errored: ${err}`,
+        }),
+    );
+  }
+
+  // ---- units ----
+  if (!opts.skip.has("units")) {
+    await withBudget(
+      opts.timeoutMs,
+      // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
+      async () => {
+        results.push(
+          ...checkUnitOomScores(deps.units ?? { platform: platform(), unitDir: defaultUnitDir() }),
+        );
+      },
+      (err) =>
+        results.push({
+          system: "units",
           status: "fail",
           message: `probe errored: ${err}`,
         }),
@@ -482,11 +508,11 @@ interface DoctorArgs {
   help: boolean;
   verbose: boolean;
   timeoutMs: number;
-  skip: Set<"agent" | "docker" | "kubernetes" | "secrets">;
+  skip: Set<"agent" | "docker" | "kubernetes" | "secrets" | "units">;
 }
 
 function applySkipArg(v: string, a: DoctorArgs): void {
-  if (v === "agent" || v === "docker" || v === "kubernetes" || v === "secrets") {
+  if (v === "agent" || v === "docker" || v === "kubernetes" || v === "secrets" || v === "units") {
     a.skip.add(v);
   } else if (v === "k8s") {
     a.skip.add("kubernetes");
@@ -521,7 +547,7 @@ const USAGE = `llamactl doctor — probe local + cluster readiness
 
 Usage:
   llamactl doctor [--verbose] [--timeout=<seconds>]
-                  [--skip=agent|docker|kubernetes|k8s|secrets]...
+                  [--skip=agent|docker|kubernetes|k8s|secrets|units]...
 
 Checks:
   [agent]       kubeconfig + local node + launchd plist
@@ -534,6 +560,8 @@ Checks:
                 spec.runtime:kubernetes to see the probe as ⚠
                 when the cluster is absent.
   [secrets]     macOS Keychain CLI availability
+  [units]       Linux: installed llamactl-controller/agent user units
+                (and .d drop-ins) keep OOMScoreAdjust ≤ 100 (#196)
 
 Exit 0 when every probe is ✓ or ℹ; exit 1 on ⚠ / ✗.
 `;
