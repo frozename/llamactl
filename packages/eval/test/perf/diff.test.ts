@@ -13,7 +13,7 @@ import type {
 import * as ev from "../../src/index.js";
 import { insertPerfRun } from "../../src/matrix/store.js";
 import { okMetric, unavailableMetric } from "../../src/perf/normalise.js";
-import { mkdirSync, mkdtempSync, rmSync } from "../../src/safe-fs.js";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
 
 /**
  * RED pins for #521 perf-run diffing. `../../src/perf/diff.ts` does not
@@ -390,6 +390,105 @@ describe("perf/diff", () => {
       const filtered = run(["--db", dbPath, "--base", "mm", "--candidate", "mm2", "--model", "m"]);
       expect(filtered.stdout).toContain("| perf | decode_tps | 50.00 | 50.00 | 0.00 | unchanged |");
       expect(filtered.exitCode).toBe(0);
+    },
+    SPAWN_TIMEOUT_MS,
+  );
+
+  test(
+    "a candidate run holding multiple models also requires --model",
+    () => {
+      // Kills: dropping the candidate-side single-model guard.
+      seed(dbPath, [
+        ...metricRows("one", "m", "llamacpp", { decode_tps: okMetric(50) }),
+        ...metricRows("two", "m", "llamacpp", { decode_tps: okMetric(50) }),
+        ...metricRows("two", "other", "llamacpp", { decode_tps: okMetric(60) }),
+      ]);
+      const result = run(["--db", dbPath, "--base", "one", "--candidate", "two"]);
+
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toBe(
+        "perf-diff: run 'two' holds more than one model; pass --model <name>\n",
+      );
+      expect(result.exitCode).toBe(1);
+    },
+    SPAWN_TIMEOUT_MS,
+  );
+
+  test(
+    "a metric with no known direction is unavailable, never improved or regressed",
+    () => {
+      // Kills: defaulting an unknown metric to higher-is-better.
+      seed(dbPath, [
+        ...metricRows("d1", "m", "llamacpp", { mystery_score: okMetric(10) }),
+        ...metricRows("d2", "m", "llamacpp", { mystery_score: okMetric(5) }),
+      ]);
+      const result = run(["--db", dbPath, "--base", "d1", "--candidate", "d2", "--format", "json"]);
+
+      const doc = JSON.parse(result.stdout) as PerfDiffJson;
+      const diffs = doc.diffs as PerfDiffJsonEntry[];
+      const mystery = diffs.find((d) => d.metric_name === "mystery_score");
+      expect(mystery?.verdict).toBe("unavailable");
+      expect(mystery?.delta).toBeNull();
+      expect(mystery?.reason ?? "").toContain("no direction");
+      expect(result.exitCode).toBe(0);
+    },
+    SPAWN_TIMEOUT_MS,
+  );
+
+  test(
+    "a metric present only in the candidate run is unavailable as missing in baseline",
+    () => {
+      // Kills: dropping or misreporting metrics missing on the baseline side.
+      seed(dbPath, [
+        ...metricRows("b1", "m", "llamacpp", { decode_tps: okMetric(50) }),
+        ...metricRows("c1", "m", "llamacpp", {
+          decode_tps: okMetric(50),
+          c4_tps: okMetric(30),
+        }),
+      ]);
+      const md = run(["--db", dbPath, "--base", "b1", "--candidate", "c1"]);
+      expect(md.stdout).toContain("| perf | c4_tps | unavailable | 30.00 | n/a | unavailable |");
+      expect(md.exitCode).toBe(0);
+
+      const json = run(["--db", dbPath, "--base", "b1", "--candidate", "c1", "--format", "json"]);
+      const diffs = (JSON.parse(json.stdout) as PerfDiffJson).diffs as PerfDiffJsonEntry[];
+      const c4 = diffs.find((d) => d.metric_name === "c4_tps");
+      expect(c4?.verdict).toBe("unavailable");
+      expect(c4?.reason).toBe("baseline: missing in baseline");
+    },
+    SPAWN_TIMEOUT_MS,
+  );
+
+  test(
+    "diffing a fresh db reports no rows and creates no schema tables",
+    () => {
+      // Kills: calling listPerfRuns before perf_runs exists — its
+      // ensureMatrixSchema creates the matrix tables on a read-write handle
+      // and throws on the read-only one.
+      writeFileSync(dbPath, "");
+      const result = run(["--db", dbPath, "--base", "base", "--candidate", "cand"]);
+
+      expect(result.stderr).toBe("perf-diff: no perf rows for run 'base'\n");
+      expect(result.exitCode).toBe(2);
+      const db = new Database(dbPath, { readonly: true });
+      try {
+        expect(db.query("SELECT name FROM sqlite_master").all()).toEqual([]);
+      } finally {
+        db.close();
+      }
+    },
+    SPAWN_TIMEOUT_MS,
+  );
+
+  test(
+    "a read-only db file is diffed without needing write access",
+    () => {
+      seedBaseCand();
+      chmodSync(dbPath, 0o444);
+      const result = run(["--db", dbPath, "--base", "base", "--candidate", "cand"]);
+
+      expect(result.stdout).toContain("| perf | decode_tps | 50.00 | 40.00 | -10.00 | regressed |");
+      expect(result.exitCode).toBe(3);
     },
     SPAWN_TIMEOUT_MS,
   );

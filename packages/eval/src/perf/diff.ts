@@ -224,6 +224,16 @@ function allSameModel(rows: PerfRunRow[]): boolean {
   return true;
 }
 
+// listPerfRuns runs ensureMatrixSchema, a no-op on a read-only handle once
+// the tables exist but a write on a fresh store; skip it when perf_runs is
+// absent so an empty or pre-perf db reads as "no rows" instead of throwing.
+function readPerfRows(db: Database, filter: { run_id: string; model_name?: string }): PerfRunRow[] {
+  const table = db
+    .query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'perf_runs'")
+    .get();
+  return table === null ? [] : listPerfRuns(db, filter);
+}
+
 function err(msg: string): void {
   process.stderr.write(`perf-diff: ${msg}\n`);
 }
@@ -243,9 +253,9 @@ export function perfDiffMain(
     err(`db not found at ${args.db}`);
     return 1;
   }
-  const db = new Database(args.db);
+  const db = new Database(args.db, { readonly: true });
   try {
-    const baseRows = listPerfRuns(db, filterFor(args.base, args.model));
+    const baseRows = readPerfRows(db, filterFor(args.base, args.model));
     const baseFirst = baseRows[0];
     if (baseFirst === undefined) {
       err(`no perf rows for run '${args.base}'`);
@@ -255,7 +265,7 @@ export function perfDiffMain(
       err(`run '${args.base}' holds more than one model; pass --model <name>`);
       return 1;
     }
-    const candRows = listPerfRuns(db, filterFor(args.candidate, args.model));
+    const candRows = readPerfRows(db, filterFor(args.candidate, args.model));
     const candFirst = candRows[0];
     if (candFirst === undefined) {
       err(`no perf rows for run '${args.candidate}'`);
