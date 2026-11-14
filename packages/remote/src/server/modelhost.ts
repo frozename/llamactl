@@ -819,20 +819,42 @@ interface ModelHostLaunchContext {
   apiKey?: string;
 }
 
+// Scheme prefixes resolveSecret routes on (mirrors its classify()). A ref
+// with none of them is a legacy bare file path — or a key pasted where a
+// ref belongs — so it is never echoed into an error.
+const SECRET_REF_SCHEME_PREFIXES = ["env:", "$", "keychain:", "file:"] as const;
+const REDACTED_UNPREFIXED_REF = "<redacted: ref has no env:/$/file:/keychain: prefix>";
+
+function hasSecretRefSchemePrefix(ref: string): boolean {
+  const trimmed = ref.trim();
+  return SECRET_REF_SCHEME_PREFIXES.some((prefix) => trimmed.startsWith(prefix));
+}
+
 // #214: resolve spec.apiKeyRef to the LLAMA_API_KEY value. An absent ref
 // resolves to no key; a ref that throws or yields "" is a refusal whose
 // reason is resolveSecret's redaction-safe message, never the value.
+// `refLabel` is the ref as it may appear in an error: verbatim when it
+// carries a scheme prefix, redacted otherwise. For an unprefixed ref the
+// thrown reason is replaced too, since resolveSecret's legacy-file-path
+// message echoes the path (which is the ref itself).
 function resolveModelHostApiKey(
   apiKeyRef: string | undefined,
   runtimeEnv: NodeJS.ProcessEnv,
-): { ok: true; apiKey: string | undefined } | { ok: false; reason: string } {
+): { ok: true; apiKey: string | undefined } | { ok: false; refLabel: string; reason: string } {
   if (apiKeyRef === undefined) return { ok: true, apiKey: undefined };
+  const prefixed = hasSecretRefSchemePrefix(apiKeyRef);
+  const refLabel = prefixed ? apiKeyRef : REDACTED_UNPREFIXED_REF;
   try {
     const value = resolveSecret(apiKeyRef, runtimeEnv);
-    if (value === "") return { ok: false, reason: "resolved to an empty string" };
+    if (value === "") return { ok: false, refLabel, reason: "resolved to an empty string" };
     return { ok: true, apiKey: value };
   } catch (error) {
-    return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+    const reason = prefixed
+      ? error instanceof Error
+        ? error.message
+        : String(error)
+      : "unprefixed ref did not resolve as a legacy file path";
+    return { ok: false, refLabel, reason };
   }
 }
 
@@ -1088,7 +1110,7 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
     const result = {
       ok: false,
       pid: null,
-      error: `ModelHost ${opts.key.name}: unable to resolve spec.apiKeyRef (${String(manifest.spec.apiKeyRef)}): ${apiKeyResolution.reason}`,
+      error: `ModelHost ${opts.key.name}: unable to resolve spec.apiKeyRef (${apiKeyResolution.refLabel}): ${apiKeyResolution.reason}`,
     };
     opts.onEvent?.({ type: "done", result });
     return result;

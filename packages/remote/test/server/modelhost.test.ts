@@ -4084,6 +4084,90 @@ describe("ModelHost apiKeyRef (#214)", () => {
     }
   });
 
+  test("refuses a file: apiKeyRef whose file is empty or whitespace-only", async () => {
+    // Kills: dropping the empty-string guard, which would launch the engine
+    // with LLAMA_API_KEY="" (llama-server then runs unauthenticated).
+    for (const contents of ["", "  \n\t\n"]) {
+      const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-apikey-empty-"));
+      const { workloadsDir, runtimeDir, binary } = writeKeyedLlamaManifest(tmp);
+      const keyFile = join(tmp, "empty.key");
+      writeFileSync(keyFile, contents);
+      const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
+      try {
+        const result = await startModelHost({
+          key: LLAMA_KEY,
+          manifest: keyedLlamaManifest(binary, { apiKeyRef: `file:${keyFile}` }),
+          workloadsDir,
+          runtimeDir,
+          env: modelHostEnv(tmp),
+          spawn: spawn as unknown as typeof nodeSpawn,
+          probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
+        }).catch((e: unknown) => ({ ok: false as const, pid: null, error: String(e) }));
+
+        expect(result.ok).toBe(false);
+        expect(result.error).toContain("resolved to an empty string");
+        expect(spawn).not.toHaveBeenCalled();
+        expect("apiKeyRef" in loadModelHostByName(LLAMA_KEY.name, workloadsDir).spec).toBe(false);
+      } finally {
+        rmSync(tmp, { recursive: true, force: true });
+      }
+    }
+  });
+
+  test("never echoes an unprefixed apiKeyRef (it may be a pasted key) in the refusal", async () => {
+    // Kills: interpolating the raw ref, or resolveSecret's legacy-path reason
+    // (which repeats the path), into the error for a ref with no scheme.
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-apikey-unprefixed-"));
+    const { workloadsDir, runtimeDir, binary } = writeKeyedLlamaManifest(tmp);
+    const pastedKeyLookalike = "sk-fixture-pasted-key-lookalike-0123456789abcdef";
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
+    try {
+      const result = await startModelHost({
+        key: LLAMA_KEY,
+        manifest: keyedLlamaManifest(binary, { apiKeyRef: pastedKeyLookalike }),
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
+      }).catch((e: unknown) => ({ ok: false as const, pid: null, error: String(e) }));
+
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain("unable to resolve spec.apiKeyRef");
+      expect(result.error).toContain("redacted");
+      expect(result.error).not.toContain(pastedKeyLookalike);
+      expect(result.error).not.toContain("fixture-pasted-key");
+      expect(spawn).not.toHaveBeenCalled();
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("still names a scheme-prefixed apiKeyRef in the refusal", async () => {
+    // Kills: over-redacting, which would hide the ref an operator must fix.
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-apikey-prefixed-"));
+    const { workloadsDir, runtimeDir, binary } = writeKeyedLlamaManifest(tmp);
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
+    try {
+      const result = await startModelHost({
+        key: LLAMA_KEY,
+        manifest: keyedLlamaManifest(binary, { apiKeyRef: "env:MH_ABSENT_KEY" }),
+        workloadsDir,
+        runtimeDir,
+        env: { ...modelHostEnv(tmp), MH_ABSENT_KEY: undefined },
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
+      }).catch((e: unknown) => ({ ok: false as const, pid: null, error: String(e) }));
+
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain("(env:MH_ABSENT_KEY)");
+      expect(result.error).not.toContain("redacted");
+      expect(spawn).not.toHaveBeenCalled();
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   test("warns that an allowed external bind is authenticated when apiKeyRef is set", async () => {
     // Kills: leaving the old unauthenticated wording on the authenticated path.
     const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-apikey-warn-"));
