@@ -106,6 +106,46 @@ export LLAMA_CPP_AUTO_TUNE_ON_PULL="${LLAMA_CPP_AUTO_TUNE_ON_PULL:-true}"
 export LLAMA_CPP_AUTO_BENCH_VISION="${LLAMA_CPP_AUTO_BENCH_VISION:-true}"
 export LOCAL_AI_BENCH_IMAGE="${LOCAL_AI_BENCH_IMAGE:-}"
 
+_llamactl_fallback_provider_url() {
+  # Mirrors resolveLlamaCppProviderUrl in packages/core/src/env.ts (#315):
+  # LOCAL_AI_LLAMA_CPP_BASE_URL stays the tracked llama-server URL and the
+  # provider URL is derived from the inputs below, never read back from
+  # LOCAL_AI_PROVIDER_URL or OPENAI_BASE_URL. POSIX sh only (local, case,
+  # ${x%/}, [ ]) so this fallback also runs under bash and sh.
+  local host port tracked proxy
+  host="${LLAMA_CPP_HOST:-127.0.0.1}"
+  if [ -n "${LLAMACTL_TEST_PROFILE:-}" ] && [ -z "${LLAMA_CPP_PORT:-}" ]; then
+    port=65534
+  else
+    port="${LLAMA_CPP_PORT:-8080}"
+  fi
+  tracked="${LOCAL_AI_LLAMA_CPP_BASE_URL:-http://$host:$port/v1}"
+  if [ "${LOCAL_AI_PROVIDER_ROUTE:-}" = "direct" ]; then
+    printf '%s' "$tracked"
+    return 0
+  fi
+  if [ -n "${LOCAL_AI_LLAMA_CPP_BASE_URL:-}" ] && [ "${LOCAL_AI_LLAMA_CPP_BASE_URL:-}" != "http://$host:$port/v1" ]; then
+    printf '%s' "$tracked"
+    return 0
+  fi
+  proxy="${LLAMACTL_INTERNAL_PROXY_URL:-}"
+  if [ -n "$proxy" ]; then
+    while [ "${proxy%/}" != "$proxy" ]; do
+      proxy="${proxy%/}"
+    done
+    case "$proxy" in
+      */v1) printf '%s' "$proxy" ;;
+      *) printf '%s/v1' "$proxy" ;;
+    esac
+    return 0
+  fi
+  if [ -n "${LLAMACTL_TEST_PROFILE:-}" ]; then
+    printf '%s' "$tracked"
+    return 0
+  fi
+  printf '%s' "http://127.0.0.1:7944/v1"
+}
+
 export LOCAL_AI_PROVIDER="${LOCAL_AI_PROVIDER:-llama.cpp}"
 case "$LOCAL_AI_PROVIDER" in
   lmstudio)
@@ -114,10 +154,11 @@ case "$LOCAL_AI_PROVIDER" in
     ;;
   *)
     export LOCAL_AI_PROVIDER="llama.cpp"
-    export LOCAL_AI_PROVIDER_URL="$LOCAL_AI_LLAMA_CPP_BASE_URL"
+    export LOCAL_AI_PROVIDER_URL="$(_llamactl_fallback_provider_url)"
     export LOCAL_AI_API_KEY="local"
     ;;
 esac
+unset -f _llamactl_fallback_provider_url
 
 export OPENAI_BASE_URL="$LOCAL_AI_PROVIDER_URL"
 export OPENAI_API_KEY="$LOCAL_AI_API_KEY"

@@ -134,6 +134,8 @@ function toOpenAiV1(base: string): string {
  * or OPENAI_BASE_URL. Shells and Electron feed resolveEnv's output back in
  * as input, so reading those keys would pin stale values; ignoring them
  * makes every re-resolve a fixed point that follows the current inputs.
+ * Shell mirrors: `_llamactl_fallback_provider_url` in shell/env.zsh and
+ * `_local_ai_llama_cpp_provider_url` in shell/llamactl.zsh.
  *
  * First match wins:
  *
