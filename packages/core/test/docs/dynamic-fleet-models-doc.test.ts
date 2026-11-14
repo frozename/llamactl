@@ -15,6 +15,13 @@ import {
   PromotionThresholdsSchema,
 } from "../../src/qualification/promotion.js";
 import { PROMOTION_LADDER } from "../../src/qualification/stages.js";
+import {
+  isOccupyingResidencyState,
+  RESIDENCY_GROUPS,
+  RESIDENCY_STATES,
+  RESIDENCY_TRANSITIONS,
+  type ResidencyTransitionDecision,
+} from "../../src/residency/lifecycle.js";
 import { existsSync, readdirSync, readFileSync } from "../../src/safe-fs.js";
 import { curatedMetaFields, QUALIFICATION_STAGES } from "../../src/schemas.js";
 
@@ -31,6 +38,17 @@ const REFUSAL_REASONS = [
   "insufficient-evidence",
   "below-threshold",
 ] as const satisfies readonly Extract<PromotionDecision, { kind: "none" }>["reason"][];
+
+// Part of #522: residency lifecycle states slice
+type TransitionRefusal = Extract<ResidencyTransitionDecision, { ok: false }>["reason"];
+const TRANSITION_REFUSALS = [
+  "UnknownMember",
+  "IllegalTransition",
+  "UnknownGroup",
+  "ExclusiveGroupOccupied",
+] as const satisfies readonly TransitionRefusal[];
+type MissingRefusal = Exclude<TransitionRefusal, (typeof TRANSITION_REFUSALS)[number]>;
+const ALL_REFUSALS_LISTED: [MissingRefusal] extends [never] ? true : false = true;
 
 function readOrEmpty(path: string): string {
   return existsSync(path) ? readFileSync(path, "utf8") : "";
@@ -135,6 +153,7 @@ describe("docs/dynamic-fleet-models.md (#522)", () => {
       expect(doc).toContain(`\`${field}\``);
     }
     expect(doc.toLowerCase()).toContain("library-only");
+    expect(doc).toContain("catalogQualificationStages");
   });
 
   test("case 6: exclusive-group catalog rows", () => {
@@ -263,5 +282,67 @@ describe("docs/dynamic-fleet-models.md (#522)", () => {
     for (const field of qualificationOverrideFields) {
       expect(tsvSchemas).toContain(`\`${field}\``);
     }
+  });
+
+  test("case 13: residency lifecycle states section lists all eight states", () => {
+    const raw = sectionBody(/^#{2,} .*residency lifecycle states/i);
+    expect(raw, "residency lifecycle states section missing").toBeDefined();
+    const s = raw ?? "";
+    expect(RESIDENCY_STATES.length).toBe(8);
+    for (const state of RESIDENCY_STATES) {
+      expect(s, `state \`${state}\` missing`).toContain(`\`${state}\``);
+    }
+  });
+
+  test("case 14: transitions table matches RESIDENCY_TRANSITIONS", () => {
+    const s = sectionBody(/^#{2,} .*residency lifecycle states/i) ?? "";
+    const rows = new Map<string, { next: string[]; occupying: string }>();
+    for (const line of s.split("\n")) {
+      const match = /^\|\s*`([a-z]+)`\s*\|([^|]*)\|([^|]*)\|/.exec(line);
+      const from = match?.[1];
+      const nextCell = match?.[2];
+      const occupyingCell = match?.[3];
+      if (from === undefined || nextCell === undefined || occupyingCell === undefined) {
+        continue;
+      }
+      const next = [...nextCell.matchAll(/`([a-z]+)`/g)]
+        .map((token) => token[1])
+        .filter((token): token is string => token !== undefined)
+        .sort();
+      rows.set(from, { next, occupying: occupyingCell.trim() });
+    }
+    for (const state of RESIDENCY_STATES) {
+      const row = rows.get(state);
+      expect(row, `transitions row for ${state} missing`).toBeDefined();
+      expect(row?.next ?? [], `next states for ${state}`).toEqual(
+        [...RESIDENCY_TRANSITIONS[state]].sort(),
+      );
+      expect(row?.occupying, `occupying flag for ${state}`).toBe(
+        isOccupyingResidencyState(state) ? "yes" : "no",
+      );
+    }
+  });
+
+  test("case 15: exclusive groups and transition refusals", () => {
+    const s = sectionBody(/^#{2,} .*residency lifecycle states/i) ?? "";
+    expect(s).toContain("occupying");
+    for (const group of RESIDENCY_GROUPS.filter((g) => g.exclusive)) {
+      expect(s).toContain(`\`${group.name}\``);
+      expect(s).toContain("exclusive");
+    }
+    for (const reason of TRANSITION_REFUSALS) {
+      expect(s).toContain(`\`${reason}\``);
+    }
+    expect(s).toContain("`evaluateResidencyTransition`");
+    expect(s).toContain("`findExclusiveGroupViolations`");
+    expect(s).toContain("packages/core/src/residency/lifecycle.ts");
+    expect(ALL_REFUSALS_LISTED).toBe(true);
+  });
+
+  test("case 16: stale not-implemented claim removed", () => {
+    expect(doc).not.toContain(
+      "The residency state contract (#276) is not implemented at this commit",
+    );
+    expect(doc).toContain("#517");
   });
 });

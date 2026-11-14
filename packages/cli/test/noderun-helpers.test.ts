@@ -12,6 +12,7 @@ import {
   nodeRunBudgetLookup,
   platformFromNodeFacts,
 } from "../src/commands/noderun-helpers.js";
+import * as noderunHelpers from "../src/commands/noderun-helpers.js";
 import { mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 /**
@@ -101,6 +102,23 @@ function makeNodeRun(name: string, memoryGiB?: number): noderunSchema.NodeRun {
     kind: "NodeRun",
     metadata: { name },
     spec,
+  });
+}
+
+function makeNodeRunWithResidency(
+  name: string,
+  residency: Record<string, unknown>,
+  spec?: { node?: string; memoryGiB?: number },
+): noderunSchema.NodeRun {
+  return noderunSchema.NodeRunSchema.parse({
+    apiVersion: "llamactl/v1",
+    kind: "NodeRun",
+    metadata: { name },
+    spec: {
+      node: spec?.node ?? name,
+      ...(spec?.memoryGiB !== undefined ? { budget: { memoryGiB: spec.memoryGiB } } : {}),
+      residency,
+    },
   });
 }
 
@@ -265,5 +283,55 @@ describe("nodeRunBudgetLookup", () => {
     const nodeRuns = [makeNodeRun("studio", 32), makeNodeRun("studio", 96)];
     const lookup = nodeRunBudgetLookup(() => nodeRuns);
     expect(lookup("studio")).toBe(32);
+  });
+});
+
+describe("nodeRunResidencyLookup", () => {
+  function factory(): (list: () => noderunSchema.NodeRun[]) => (nodeName: string) => unknown {
+    const found = (noderunHelpers as unknown as Record<string, unknown>)["nodeRunResidencyLookup"];
+    expect(typeof found).toBe("function");
+    return found as (list: () => noderunSchema.NodeRun[]) => (nodeName: string) => unknown;
+  }
+
+  test("returns spec.residency of the NodeRun with that metadata.name", () => {
+    // Kills: helper keyed on spec.node, or returning spec.budget
+    const nodeRunResidencyLookup = factory();
+    const nodeRuns = [
+      makeNodeRunWithResidency(
+        "z13",
+        { safetyMarginRatio: 0.5 },
+        { node: "z13-host", memoryGiB: 12 },
+      ),
+    ];
+    const lookup = nodeRunResidencyLookup(() => nodeRuns);
+    expect(lookup("z13")).toEqual({ safetyMarginRatio: 0.5 });
+  });
+
+  test("returns undefined for an unknown name or a NodeRun without spec.residency", () => {
+    // Kills: helper returning spec.budget or a fabricated residency for every NodeRun
+    const nodeRunResidencyLookup = factory();
+    const nodeRuns = [
+      makeNodeRunWithResidency("z13", { safetyMarginRatio: 0.5 }),
+      makeNodeRun("gpu2", 8),
+    ];
+    const lookup = nodeRunResidencyLookup(() => nodeRuns);
+    expect(lookup("other")).toBeUndefined();
+    expect(lookup("gpu2")).toBeUndefined();
+  });
+
+  test("re-reads the NodeRun list on every call, not when the lookup is built", () => {
+    // Kills: caching the NodeRun list at lookup construction
+    const nodeRunResidencyLookup = factory();
+    let current: noderunSchema.NodeRun[] = [];
+    let reads = 0;
+    const lookup = nodeRunResidencyLookup((): noderunSchema.NodeRun[] => {
+      reads += 1;
+      return current;
+    });
+    expect(reads).toBe(0);
+    expect(lookup("z13")).toBeUndefined();
+    current = [makeNodeRunWithResidency("z13", { safetyMarginRatio: 0.5 })];
+    expect(lookup("z13")).toEqual({ safetyMarginRatio: 0.5 });
+    expect(reads).toBe(2);
   });
 });
