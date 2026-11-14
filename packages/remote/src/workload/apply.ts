@@ -50,6 +50,7 @@ import {
   modelHostBindRefusal,
   type ModelHostManifest,
   ModelHostManifestSchema,
+  normalizeReadiness,
   specForEngine,
   specForHash,
 } from "./modelhost-schema.js";
@@ -634,6 +635,7 @@ function writeModelHostSidecar(
   rel: string,
 ): void {
   const modelAliases = Array.from(new Set([rel, basename(rel)]));
+  const readiness = normalizeReadiness(manifest.spec.readiness);
   const existing = readModelHostState({ name: manifest.metadata.name }, resolved);
   // Only write the local sidecar when this controller owns the process
   // (spec.node === 'local'). For remote nodes the remote dispatcher owns
@@ -653,10 +655,12 @@ function writeModelHostSidecar(
         slotSavePath: existing?.pid === status.pid ? (existing.slotSavePath ?? null) : null,
         specHash: computeModelHostSpecHash(specForHash(manifest.spec)),
         // This sidecar replaces the one launchModelHost wrote, so identity
-        // fields must be carried or stop and status lose the fork identity.
+        // fields AND the declared readiness must be carried, or
+        // listServingLocalRoutes loses the probe.
         ...(manifest.spec.binaryNames !== undefined
           ? { binaryNames: [...manifest.spec.binaryNames] }
           : {}),
+        ...(readiness !== undefined ? { readiness } : {}),
       },
       { name: manifest.metadata.name },
       resolved,
