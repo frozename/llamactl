@@ -91,3 +91,18 @@ export function nodeRunBudgetLookup(
   return (nodeName) =>
     listNodeRuns().find((nodeRun) => nodeRun.metadata.name === nodeName)?.spec.budget?.memoryGiB;
 }
+
+/**
+ * Part of #519: the NodeRun spec.residency for a node, keyed by
+ * metadata.name like nodeRunBudgetLookup; its safetyMarginRatio sizes the
+ * computed fallback budget. Undefined when no NodeRun has that name or it
+ * sets no residency, so admission keeps its 0.75 default. An explicit
+ * spec.budget.memoryGiB still wins. The NodeRuns are read on each call, not
+ * when the lookup is built.
+ */
+export function nodeRunResidencyLookup(
+  listNodeRuns: () => noderunSchema.NodeRun[] = () => noderunStore.listNodeRuns(),
+): (nodeName: string) => noderunSchema.NodeRunResidency | undefined {
+  return (nodeName) =>
+    listNodeRuns().find((nodeRun) => nodeRun.metadata.name === nodeName)?.spec.residency;
+}

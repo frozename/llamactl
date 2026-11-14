@@ -2057,6 +2057,138 @@ test("DF-02: an unreadable evict target status fails with EvictStatusUnknown", a
   }
 });
 
+// DF-02 (#275): serverStatus can report identityUnknown — the recorded pid
+// exists but its identity could not be verified, so a "down" snapshot is not
+// proof the process is gone. A ModelRun victim in that state must fail
+// closed exactly like an unreadable status.
+function unknownDownStatus(): Awaited<ReturnType<WorkloadClient["serverStatus"]["query"]>> {
+  return {
+    state: "down",
+    rel: null,
+    extraArgs: [],
+    pid: null,
+    host: null,
+    port: null,
+    binary: null,
+    endpoint: "http://127.0.0.1:8182",
+    listenerPid: null,
+    foreign: false,
+    identityUnknown: true,
+  };
+}
+
+// Part of #275 (DF-02). Kills mutation: 'ModelRun probe ignores identityUnknown'
+test("DF-02: a ModelRun victim with unknown pid identity and unreachable health fails with EvictStatusUnknown before any stop", async () => {
+  const state: WorkloadStateMap = new Map([["a", { up: true, rel: "a.gguf", args: [] }]]);
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-df02-identity-probe-"));
+  saveWorkload(mkManifest("a", { port: 8182 }), workloadsDir);
+  const { client, stops, starts } = makeEvictFaultClient(state, {
+    status: (workload) => (workload === "a" ? Promise.resolve(unknownDownStatus()) : undefined),
+    stop: (workload) => (workload === "a" ? Promise.resolve({ stopped: true }) : undefined),
+  });
+  const { events, onEvent } = makeEventRecorder();
+  try {
+    const result = await applyOne(
+      mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090 }),
+      () => client,
+      onEvent,
+      undefined,
+      { workloadsDir, getNodeBudgetGiB: () => 32 },
+    );
+    expect(stops).toEqual([]);
+    expect(starts).toEqual([]);
+    expect(state.has("b")).toBe(false);
+    expect(result.action).toBe("pending");
+    expect(result.statusSection.phase).toBe("Failed");
+    expect(result.statusSection.conditions[0]?.reason).toBe("EvictStatusUnknown");
+    expect(result.error).toMatch(/evict/i);
+    expect(result.error).toContain("identity");
+    expect(events.some((e) => e.message.includes("already stopped"))).toBe(false);
+    const annotations = readWorkloadAnnotations(join(workloadsDir, "a.yaml"));
+    expect(annotations?.["llamactl.io/evicted-by"]).toBeUndefined();
+    expect(annotations?.["llamactl.io/evicted-at"]).toBeUndefined();
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+// Part of #275 (DF-02). Kills mutant M8: the ModelRun probe guard narrowed to
+// `identityUnknown === true && state !== 'up'`. A /health that answers while
+// the recorded pid cannot be verified is still not proof of whose process is
+// serving, so the probe must fail closed before serverStop is ever sent.
+test("DF-02: a ModelRun victim with unknown pid identity whose /health answers fails with EvictStatusUnknown before any stop", async () => {
+  const state: WorkloadStateMap = new Map([["a", { up: true, rel: "a.gguf", args: [] }]]);
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-df02-identity-up-"));
+  saveWorkload(mkManifest("a", { port: 8182 }), workloadsDir);
+  const manifestPath = join(workloadsDir, "a.yaml");
+  const manifestBefore = readFileSync(manifestPath, "utf8");
+  const { client, stops, starts } = makeEvictFaultClient(state, {
+    status: (workload) =>
+      workload === "a" ? Promise.resolve({ ...unknownDownStatus(), state: "up" }) : undefined,
+    stop: (workload) => (workload === "a" ? Promise.resolve({ stopped: true }) : undefined),
+  });
+  const { onEvent } = makeEventRecorder();
+  try {
+    const result = await applyOne(
+      mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090 }),
+      () => client,
+      onEvent,
+      undefined,
+      { workloadsDir, getNodeBudgetGiB: () => 32 },
+    );
+    expect(stops).toEqual([]);
+    expect(starts).toEqual([]);
+    expect(state.has("b")).toBe(false);
+    expect(result.action).toBe("pending");
+    expect(result.statusSection.phase).toBe("Failed");
+    expect(result.statusSection.conditions[0]?.reason).toBe("EvictStatusUnknown");
+    expect(result.error).toContain("identity");
+    expect(readFileSync(manifestPath, "utf8")).toBe(manifestBefore);
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+// Part of #275 (DF-02). Kills mutation: 'ModelRun verify ignores identityUnknown'
+test("DF-02: a ModelRun victim whose post-stop status has unknown identity fails with EvictReleaseUnverified", async () => {
+  const state: WorkloadStateMap = new Map([["a", { up: true, rel: "a.gguf", args: [] }]]);
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-df02-verify-identity-"));
+  saveWorkload(mkManifest("a", { port: 8182 }), workloadsDir);
+  // The status fault must observe the shared stops array, which only exists
+  // once makeEvictFaultClient returns — the closure reads it through this
+  // mutable ref at call time.
+  let stops: string[] = [];
+  const built = makeEvictFaultClient(state, {
+    status: (workload) =>
+      workload === "a" && stops.includes("a") ? Promise.resolve(unknownDownStatus()) : undefined,
+    stop: (workload) => (workload === "a" ? Promise.resolve({ stopped: true }) : undefined),
+  });
+  stops = built.stops;
+  const { client, starts } = built;
+  const { onEvent } = makeEventRecorder();
+  try {
+    const result = await applyOne(
+      mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090 }),
+      () => client,
+      onEvent,
+      undefined,
+      { workloadsDir, getNodeBudgetGiB: () => 32 },
+    );
+    expect(stops).toEqual(["a"]);
+    expect(starts).toEqual([]);
+    expect(state.has("b")).toBe(false);
+    expect(result.action).toBe("pending");
+    expect(result.statusSection.phase).toBe("Failed");
+    expect(result.statusSection.conditions[0]?.reason).toBe("EvictReleaseUnverified");
+    expect(result.error).toMatch(/evict/i);
+    const annotations = readWorkloadAnnotations(join(workloadsDir, "a.yaml"));
+    expect(annotations?.["llamactl.io/evicted-by"]).toBeUndefined();
+    expect(annotations?.["llamactl.io/evicted-at"]).toBeUndefined();
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
 test("DF-02: EvictStatusUnknown releases the claim and a healthy retry starts", async () => {
   const targetAdmission = createTargetAdmissionAuthority();
   const state: WorkloadStateMap = new Map([["a", { up: true, rel: "a.gguf", args: [] }]]);
