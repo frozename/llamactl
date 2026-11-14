@@ -283,6 +283,16 @@ describe("profile.detectMemoryBytes fallback (#213)", () => {
       }),
     ).toBeNull();
   });
+
+  test("non-finite totalmem yields null", () => {
+    expect(
+      detectMemoryBytes({ platform: "freebsd", totalmem: () => Number.POSITIVE_INFINITY }),
+    ).toBeNull();
+  });
+
+  test("fractional totalmem is truncated to whole bytes", () => {
+    expect(detectMemoryBytes({ platform: "freebsd", totalmem: () => 8 * G + 0.5 })).toBe(8 * G);
+  });
 });
 
 describe("profile tier-name aliases (#213)", () => {
