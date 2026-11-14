@@ -70,6 +70,7 @@ function writeManifest(options?: {
   host?: string;
   enabled?: boolean;
   allowExternalBind?: boolean;
+  expectedMemoryGiB?: number;
 }): string {
   const manifestPath = join(tmp, "mlx-host.yaml");
   writeFileSync(
@@ -87,7 +88,7 @@ function writeManifest(options?: {
       "  resources:",
       // Small reservation: the apply path admits against the default node
       // budget (75% of the test machine's RAM), which is ~5 GiB on CI runners.
-      "    expectedMemoryGiB: 1",
+      `    expectedMemoryGiB: ${String(options?.expectedMemoryGiB ?? 1)}`,
       "  endpoint:",
       `    host: ${options?.host ?? "127.0.0.1"}`,
       "    port: 8094",
@@ -111,7 +112,7 @@ function savedManifestPath(): string {
   return join(process.env["LLAMACTL_WORKLOADS_DIR"]!, "mlx-host.yaml");
 }
 
-function writeNodeRun(memoryGiB?: number): void {
+function writeNodeRun(memoryGiB?: number, safetyMarginRatio?: number): void {
   writeFileSync(
     join(process.env["LLAMACTL_WORKLOADS_DIR"]!, "gpu1.yaml"),
     [
@@ -122,13 +123,16 @@ function writeNodeRun(memoryGiB?: number): void {
       "spec:",
       "  node: gpu1",
       ...(memoryGiB !== undefined ? ["  budget:", `    memoryGiB: ${String(memoryGiB)}`] : []),
+      ...(safetyMarginRatio !== undefined
+        ? ["  residency:", `    safetyMarginRatio: ${String(safetyMarginRatio)}`]
+        : []),
       "",
     ].join("\n"),
     "utf8",
   );
 }
 
-function writeModelRunManifest(): string {
+function writeModelRunManifest(options?: { expectedMemoryGiB?: number }): string {
   const manifestPath = join(tmp, "gemma-qa.yaml");
   writeFileSync(
     manifestPath,
@@ -144,7 +148,7 @@ function writeModelRunManifest(): string {
       "    kind: rel",
       "    value: fake-org/fake-model.gguf",
       "  resources:",
-      "    expectedMemoryGiB: 1",
+      `    expectedMemoryGiB: ${String(options?.expectedMemoryGiB ?? 1)}`,
       "  restartPolicy: Always",
       "",
     ].join("\n"),
@@ -580,6 +584,98 @@ test("a budget-refused ModelHost update preserves the previously saved manifest 
   expect(stderr).toContain("Budget is 0.5 GiB");
   expect(startCalls()).toBe(0);
   expect(readFileSync(savedManifestPath(), "utf8")).toBe(previousManifest);
+});
+
+test("apply charges a remote ModelHost the NodeRun residency safety margin", async () => {
+  // Kills: workload.ts applyManifest call not passing getNodeResidency
+  writeFileSync(join(tmp, "omlx"), "", "utf8");
+  writeNodeRun(undefined, 0.5);
+  const manifestPath = writeManifest({ node: "gpu1", expectedMemoryGiB: 10 });
+  const { startCalls } = stubStartClient(undefined, 16 * 1024 ** 3);
+
+  const { result: code, stderr } = await withCapturedIo(() => runApply(["-f", manifestPath]));
+
+  expect(code).toBe(1);
+  expect(stderr).toContain("Budget is 8.0 GiB");
+  expect(startCalls()).toBe(0);
+  expect(existsSync(savedManifestPath())).toBe(false);
+});
+
+test("apply charges a remote ModelRun the NodeRun residency safety margin", async () => {
+  // Kills: workload.ts applyOne call not passing getNodeResidency
+  writeNodeRun(undefined, 0.5);
+  const manifestPath = writeModelRunManifest({ expectedMemoryGiB: 10 });
+  let startCalls = 0;
+  __setWorkloadTestSeams({
+    getNodeClientByName: () =>
+      ({
+        nodeFacts: {
+          query: () => Promise.resolve({ memBytes: 16 * 1024 ** 3 }),
+        },
+        serverStatus: {
+          query: () =>
+            Promise.resolve({ state: "down", rel: null, extraArgs: [], pid: null, endpoint: null }),
+        },
+        serverStart: {
+          subscribe: (
+            _input: unknown,
+            cb: { onData: (evt: unknown) => void; onComplete: () => void },
+          ) => {
+            startCalls++;
+            queueMicrotask(() => {
+              cb.onData({
+                type: "done",
+                result: { ok: true, pid: 3333, endpoint: "http://127.0.0.1:8080" },
+              });
+              cb.onComplete();
+            });
+            return { unsubscribe: (): void => undefined };
+          },
+        },
+      }) as unknown as NodeClient,
+  });
+
+  const { result: code, stderr } = await withCapturedIo(() => runApply(["-f", manifestPath]));
+
+  expect(code).toBe(1);
+  expect(stderr).toContain("Budget is 8.0 GiB");
+  expect(startCalls).toBe(0);
+  expect(existsSync(join(process.env["LLAMACTL_WORKLOADS_DIR"]!, "gemma-qa.yaml"))).toBe(false);
+});
+
+test("apply keeps an explicit NodeRun budget over the residency safety margin", async () => {
+  // Kills: the residency ratio overriding spec.budget.memoryGiB in the budget lookup
+  writeFileSync(join(tmp, "omlx"), "", "utf8");
+  writeNodeRun(9, 0.5);
+  const manifestPath = writeManifest({ node: "gpu1", expectedMemoryGiB: 10 });
+  const { startCalls } = stubStartClient(undefined, 16 * 1024 ** 3);
+
+  const { result: code, stderr } = await withCapturedIo(() => runApply(["-f", manifestPath]));
+
+  expect(code).toBe(1);
+  expect(stderr).toContain("Budget is 9.0 GiB");
+  expect(stderr).not.toContain("8.0 GiB");
+  expect(startCalls()).toBe(0);
+});
+
+test("apply keeps the default 0.75 margin when the NodeRun sets no residency", async () => {
+  // Kills: nodeRunResidencyLookup substituting a non-0.75 margin for a NodeRun without spec.residency
+  writeFileSync(join(tmp, "omlx"), "", "utf8");
+  writeNodeRun();
+  const { startCalls } = stubStartClient(undefined, 16 * 1024 ** 3);
+
+  const refusedPath = writeManifest({ node: "gpu1", expectedMemoryGiB: 13 });
+  const refused = await withCapturedIo(() => runApply(["-f", refusedPath]));
+
+  expect(refused.result).toBe(1);
+  expect(refused.stderr).toContain("Budget is 12.0 GiB");
+  expect(startCalls()).toBe(0);
+
+  const admittedPath = writeManifest({ node: "gpu1", expectedMemoryGiB: 10 });
+  const admitted = await withCapturedIo(() => runApply(["-f", admittedPath]));
+
+  expect(admitted.result).toBe(0);
+  expect(startCalls()).toBe(1);
 });
 
 test("a successful in-process enable saves the desired manifest only after apply completes", async () => {

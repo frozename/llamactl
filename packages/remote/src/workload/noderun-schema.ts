@@ -51,9 +51,8 @@ export type NodeRunInfraItem = z.infer<typeof NodeRunInfraItemSchema>;
 /**
  * Residency tuning for a NodeRun. `safetyMarginRatio` is applied to computed
  * admission budgets by apply, the reconciler and the router views and apply
- * (Part of #519); the CLI direct-apply paths still use 0.75 (follow-up). The
- * other fields are validated and persisted but not yet enforced.
- * budget.memoryGiB overrides any computed budget.
+ * (Part of #519). The other fields are validated and persisted but not yet
+ * enforced. budget.memoryGiB overrides any computed budget.
  */
 export const ResidencyPolicySchema = z
   .object({
