@@ -67,6 +67,7 @@ import { z } from "zod";
 import type { CompositeApplyEvent } from "./composite/types.js";
 import type { RuntimeBackend } from "./runtime/backend.js";
 import type { RuntimeKind } from "./runtime/factory.js";
+import type { NodeRunResidency } from "./workload/noderun-schema.js";
 
 import * as benchScheduleMod from "./bench/schedule.js";
 import * as benchScheduleLoopMod from "./bench/scheduleLoop.js";
@@ -363,6 +364,17 @@ function clientForNode(cfg: Config, nodeName: string): WorkloadNodeClient {
 function nodeRunBudgetGiB(nodeName: string, workloadsDir: string): number | undefined {
   const nodeRuns = nodeRunStoreMod.listNodeRuns(workloadsDir);
   return nodeRuns.find((n) => n.metadata.name === nodeName)?.spec.budget?.memoryGiB;
+}
+
+/**
+ * Part of #519: the NodeRun spec.residency for a node, keyed by NodeRun metadata.name.
+ * Its safetyMarginRatio sizes the computed admission fallback budget. Undefined
+ * when no NodeRun has that name or it sets no residency, so admission keeps its
+ * own 0.75 default.
+ */
+function nodeRunResidency(nodeName: string, workloadsDir: string): NodeRunResidency | undefined {
+  const nodeRuns = nodeRunStoreMod.listNodeRuns(workloadsDir);
+  return nodeRuns.find((n) => n.metadata.name === nodeName)?.spec.residency;
 }
 
 type ServerStopRefusalShape = { reason?: unknown; active?: unknown };
@@ -1937,7 +1949,11 @@ export const router = t.router({
   nodeBudget: t.procedure.input(z.object({ node: z.string().min(1) })).query(({ input }) => {
     const nodeRuns = nodeRunStoreMod.listNodeRuns();
     const node = nodeRuns.find((n: (typeof nodeRuns)[number]) => n.metadata.name === input.node);
-    const budget = defaultNodeBudgetGiB(node?.spec.budget?.memoryGiB);
+    const budget = defaultNodeBudgetGiB(
+      node?.spec.budget?.memoryGiB,
+      undefined,
+      node?.spec.residency,
+    );
     const resolved = envMod.resolveEnv();
     const runRows = workloadStoreMod
       .listWorkloads()
@@ -1985,7 +2001,7 @@ export const router = t.router({
     return buildResidencyStatus({
       node: input.node,
       nodeRun: node,
-      budgetGiB: defaultNodeBudgetGiB(declared),
+      budgetGiB: defaultNodeBudgetGiB(declared, undefined, node?.spec.residency),
       budgetSource: typeof declared === "number" ? "noderun" : "computed",
       store: readResidencyStoreSnapshot(defaultResidencyStorePath()),
     });
@@ -2031,6 +2047,7 @@ export const router = t.router({
           manifest,
           getClient: (nodeName) => clientForNode(cfg, nodeName),
           getNodeBudgetGiB: (nodeName) => nodeRunBudgetGiB(nodeName, workloadsDir),
+          getNodeResidency: (nodeName) => nodeRunResidency(nodeName, workloadsDir),
         });
         if (!result.ok) {
           throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: result.error });
