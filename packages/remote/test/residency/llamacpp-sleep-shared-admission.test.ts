@@ -129,6 +129,15 @@ function pendingStart(): Promise<WakeStartOutcome> {
   return new Promise<WakeStartOutcome>(() => undefined);
 }
 
+function rejectingStart(): { starts: string[]; start: WakeStart } {
+  const starts: string[] = [];
+  const start: WakeStart = (slots): Promise<WakeStartOutcome> => {
+    starts.push(slots);
+    return Promise.reject(new Error("engine start rejected"));
+  };
+  return { starts, start };
+}
+
 describe("llama.cpp sleep wakes through the shared TargetAdmissionAuthority (DF-10 #283)", () => {
   test("a wake that fits the shared node budget is admitted and charged in the shared ledger", async () => {
     expect(typeof binder).toBe("function");
@@ -358,5 +367,95 @@ describe("llama.cpp sleep wakes through the shared TargetAdmissionAuthority (DF-
     const settledOut = await wakeMember(settledB, "b", settledBStart.start);
     expect(settledOut).toEqual({ kind: "refused", reason: "BudgetExceeded" });
     expect(settledBStart.starts).toHaveLength(0);
+  });
+
+  // Kills the mutant that drops the `kind` tag in sharedLivingClaims
+  // (`claims.map((claim) => ({ ...claim, kind }))` -> `[...claims]`): the
+  // ledger is empty, so the awake sibling reaches core only as a local
+  // `living` claim, and an untagged one reads as a kind mismatch that core
+  // refuses WorkloadBusy instead of already-resident.
+  test("a wake joins a locally awake runtime-group sibling as already-awake, not WorkloadBusy", async () => {
+    expect(typeof binder).toBe("function");
+    expect(typeof wake).toBe("function");
+    const authority = createTargetAdmissionAuthority();
+    const controller = boundController(authority, () => 16);
+    controller.register(member("a", "rk-g", "d-g"), "ready");
+    controller.register(member("b", "rk-g", "d-g"), "sleeping");
+    const { starts, start } = recordingStart("ready");
+
+    const out = await wakeMember(controller, "b", start);
+
+    expect(out).toEqual({ kind: "already-awake" });
+    expect(starts).toHaveLength(0);
+    expect(controller.snapshot().members["b"]).toEqual({
+      state: "ready",
+      reservation: "resident",
+    });
+    // The join opens no new claim: registered-awake members are not adopted
+    // into the shared ledger in this slice.
+    expect(targetClaims(authority)).toHaveLength(0);
+  });
+
+  // Kills the mutants on runWakeStart's catch branch: removing the
+  // try/catch (the rejection escapes wakeLlamacppMember), dropping the
+  // `controller.wakeSettled(memberId, "readiness-failed")` call (the member
+  // stays waking and the claim stays pending), or returning another outcome.
+  test("a wake whose start rejects settles readiness-failed and keeps the shared claim charged as uncertain", async () => {
+    expect(typeof binder).toBe("function");
+    expect(typeof wake).toBe("function");
+    const authority = createTargetAdmissionAuthority();
+    const controller = boundController(authority, () => 16);
+    controller.register(member("b"), "sleeping");
+    const { starts, start } = rejectingStart();
+
+    const out = await wakeMember(controller, "b", start);
+
+    expect(out).toEqual({ kind: "wake-failed", outcome: "readiness-failed" });
+    expect(starts).toHaveLength(1);
+    expect(claimFor(authority, "rk-b")).toMatchObject({ state: "uncertain", allocationGiB: 8 });
+    expect(controller.snapshot().members["b"]).toEqual({
+      state: "unknown",
+      reservation: "uncertain",
+    });
+    expect(foreignClaim(authority, 10).decision).toMatchObject({
+      kind: "refuse",
+      reason: "BudgetExceeded",
+    });
+  });
+
+  // Pins the binder's contract for a cancelled wake: the start may have
+  // reached the engine, so the claim stays charged as uncertain rather than
+  // released. Kills a binder wakeSettled that skips syncGroup (the claim
+  // stays pending), and one that releases the claim on 'cancelled'
+  // (releaseUnstarted/releaseVerified frees the budget for the foreign claim).
+  test("a cancelled wake keeps the shared claim charged as uncertain at the binder", async () => {
+    expect(typeof binder).toBe("function");
+    expect(typeof wake).toBe("function");
+    const authority = createTargetAdmissionAuthority();
+    const controller = boundController(authority, () => 16);
+    controller.register(member("b"), "sleeping");
+
+    expect(controller.requestWake("b")).toMatchObject({ kind: "wake", chargedGiB: 8 });
+    expect(claimFor(authority, "rk-b")?.state).toBe("pending");
+    controller.wakeSettled("b", "cancelled");
+
+    expect(claimFor(authority, "rk-b")).toMatchObject({ state: "uncertain", allocationGiB: 8 });
+    expect(controller.snapshot().members["b"]).toEqual({
+      state: "unknown",
+      reservation: "uncertain",
+    });
+    expect(foreignClaim(authority, 10).decision).toMatchObject({
+      kind: "refuse",
+      reason: "BudgetExceeded",
+    });
+
+    const viaWakeAuthority = createTargetAdmissionAuthority();
+    const viaWake = boundController(viaWakeAuthority, () => 16);
+    viaWake.register(member("c"), "sleeping");
+    const c = recordingStart("cancelled");
+    const out = await wakeMember(viaWake, "c", c.start);
+    expect(out).toEqual({ kind: "wake-failed", outcome: "cancelled" });
+    expect(c.starts).toHaveLength(1);
+    expect(claimFor(viaWakeAuthority, "rk-c")?.state).toBe("uncertain");
   });
 });
