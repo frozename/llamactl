@@ -45,6 +45,14 @@ const declaredEntrySchema = routingCatalog as unknown as {
   DeclaredModelEntryV1Schema?: { safeParse(v: unknown): { success: boolean } };
 };
 
+type LeasePhase = "open" | "draining" | "unloaded";
+
+function leasePhaseOf(
+  phases: Record<string, LeasePhase>,
+): (workload: string) => LeasePhase | undefined {
+  return (workload) => phases[workload];
+}
+
 function declaredModelEntry(
   id: string,
   over: Record<string, unknown> = {},
@@ -457,6 +465,212 @@ describe("buildDeclaredModelEntries", () => {
       "z.gguf",
     ]);
   });
+
+  test("a draining workload with no live route is draining and not auto-load eligible", async () => {
+    // Kills: dropping the draining branch in stateForClaim.
+    const mod = await residencyCatalog();
+    expect(typeof mod.buildDeclaredModelEntries).toBe("function");
+
+    const entries = mod.buildDeclaredModelEntries!({
+      nodeName: "local",
+      modelHosts: [],
+      modelRuns: [runManifest("run-a", { target: { kind: "rel", value: "org/repo/a.gguf" } })],
+      liveModelIds: new Set<string>(),
+      workloadPhase: leasePhaseOf({ "run-a": "draining" }),
+    });
+
+    expect(entries).toMatchObject([
+      {
+        id: "org/repo/a.gguf",
+        workload: "run-a",
+        kind: "ModelRun",
+        ownerNodeId: "local",
+        state: "draining",
+        autoLoadEligible: false,
+      },
+    ]);
+  });
+
+  test("a draining workload with a live route is draining, not ready", async () => {
+    // Kills: checking liveModelIds before the lease phase.
+    const mod = await residencyCatalog();
+    expect(typeof mod.buildDeclaredModelEntries).toBe("function");
+
+    const entries = mod.buildDeclaredModelEntries!({
+      nodeName: "local",
+      modelHosts: [],
+      modelRuns: [runManifest("run-a", { target: { kind: "rel", value: "org/repo/a.gguf" } })],
+      liveModelIds: new Set(["org/repo/a.gguf"]),
+      workloadPhase: leasePhaseOf({ "run-a": "draining" }),
+    });
+
+    expect(entries).toMatchObject([
+      {
+        id: "org/repo/a.gguf",
+        workload: "run-a",
+        kind: "ModelRun",
+        ownerNodeId: "local",
+        state: "draining",
+        autoLoadEligible: false,
+      },
+    ]);
+  });
+
+  test("a live id whose workload is still unloaded is loading", async () => {
+    // Kills: mapping live+unloaded to ready.
+    const mod = await residencyCatalog();
+    expect(typeof mod.buildDeclaredModelEntries).toBe("function");
+
+    const entries = mod.buildDeclaredModelEntries!({
+      nodeName: "local",
+      modelHosts: [],
+      modelRuns: [runManifest("run-a", { target: { kind: "rel", value: "org/repo/a.gguf" } })],
+      liveModelIds: new Set(["org/repo/a.gguf"]),
+      workloadPhase: leasePhaseOf({ "run-a": "unloaded" }),
+    });
+
+    expect(entries).toMatchObject([
+      {
+        id: "org/repo/a.gguf",
+        workload: "run-a",
+        kind: "ModelRun",
+        ownerNodeId: "local",
+        state: "loading",
+        autoLoadEligible: false,
+      },
+    ]);
+  });
+
+  test("an unloaded workload with no live route stays cold and auto-load eligible", async () => {
+    // Guard: passes at base — unloaded alone must not block auto-load.
+    const mod = await residencyCatalog();
+    expect(typeof mod.buildDeclaredModelEntries).toBe("function");
+
+    const entries = mod.buildDeclaredModelEntries!({
+      nodeName: "local",
+      modelHosts: [],
+      modelRuns: [runManifest("run-a", { target: { kind: "rel", value: "org/repo/a.gguf" } })],
+      liveModelIds: new Set<string>(),
+      workloadPhase: leasePhaseOf({ "run-a": "unloaded" }),
+    });
+
+    expect(entries).toMatchObject([
+      {
+        id: "org/repo/a.gguf",
+        workload: "run-a",
+        kind: "ModelRun",
+        ownerNodeId: "local",
+        state: "cold",
+        autoLoadEligible: true,
+      },
+    ]);
+  });
+
+  test("an open phase or an absent workloadPhase keeps ready/cold", async () => {
+    // Guard: passes at base — open and absent phases preserve live→ready,
+    // else→cold exactly as the pre-phase projection did.
+    const mod = await residencyCatalog();
+    expect(typeof mod.buildDeclaredModelEntries).toBe("function");
+
+    const input = {
+      nodeName: "local",
+      modelHosts: [hostManifest("host-a")],
+      modelRuns: [],
+      liveModelIds: new Set(["m.gguf"]),
+    };
+    const expected = [
+      { id: "m.gguf", state: "ready", autoLoadEligible: false },
+      { id: "org/repo/m.gguf", state: "cold", autoLoadEligible: true },
+    ];
+
+    expect(mod.buildDeclaredModelEntries!({ ...input, workloadPhase: () => "open" })).toMatchObject(
+      expected,
+    );
+    expect(mod.buildDeclaredModelEntries!(input)).toMatchObject(expected);
+  });
+
+  test("collision and disabled take precedence over the lease phase", async () => {
+    // Guard: passes at base — kills a fix that orders the phase check
+    // ahead of the collided/disabled checks in stateForClaim.
+    const mod = await residencyCatalog();
+    expect(typeof mod.buildDeclaredModelEntries).toBe("function");
+
+    const collided = mod.buildDeclaredModelEntries!({
+      nodeName: "local",
+      modelHosts: [hostManifest("host-a")],
+      modelRuns: [runManifest("run-b", { target: { kind: "rel", value: "org/repo/m.gguf" } })],
+      liveModelIds: new Set<string>(),
+      workloadPhase: leasePhaseOf({ "host-a": "draining", "run-b": "draining" }),
+    });
+    const collidedEntries = collided.filter((e) => e["id"] === "org/repo/m.gguf");
+    expect(collidedEntries).toHaveLength(2);
+    for (const entry of collidedEntries) {
+      expect(entry).toMatchObject({
+        state: "unavailable",
+        autoLoadEligible: false,
+        reason: "alias-collision",
+      });
+    }
+
+    const disabled = mod.buildDeclaredModelEntries!({
+      nodeName: "local",
+      modelHosts: [],
+      modelRuns: [runManifest("run-off", { enabled: false })],
+      liveModelIds: new Set<string>(),
+      workloadPhase: leasePhaseOf({ "run-off": "draining" }),
+    });
+    expect(disabled).toMatchObject([
+      {
+        id: "org/repo/run.gguf",
+        workload: "run-off",
+        kind: "ModelRun",
+        ownerNodeId: "local",
+        state: "disabled",
+        autoLoadEligible: false,
+      },
+    ]);
+  });
+
+  test("every phase-projected entry passes DeclaredModelEntryV1Schema", async () => {
+    const mod = await residencyCatalog();
+    expect(typeof mod.buildDeclaredModelEntries).toBe("function");
+
+    const entries = mod.buildDeclaredModelEntries!({
+      nodeName: "local",
+      modelHosts: [],
+      modelRuns: [
+        runManifest("run-drain", { target: { kind: "rel", value: "org/repo/drain.gguf" } }),
+        runManifest("run-load", { target: { kind: "rel", value: "org/repo/load.gguf" } }),
+      ],
+      liveModelIds: new Set(["org/repo/load.gguf"]),
+      workloadPhase: leasePhaseOf({ "run-drain": "draining", "run-load": "unloaded" }),
+    });
+
+    expect(entries).toMatchObject([
+      {
+        id: "org/repo/drain.gguf",
+        workload: "run-drain",
+        state: "draining",
+        autoLoadEligible: false,
+      },
+      {
+        id: "org/repo/load.gguf",
+        workload: "run-load",
+        state: "loading",
+        autoLoadEligible: false,
+      },
+    ]);
+    expect([...new Set(entries.map((e) => String(e["state"])))].sort()).toEqual([
+      "draining",
+      "loading",
+    ]);
+
+    const schema = declaredEntrySchema.DeclaredModelEntryV1Schema;
+    expect(schema).toBeDefined();
+    for (const entry of entries) {
+      expect(schema!.safeParse(entry).success).toBe(true);
+    }
+  });
 });
 
 describe("listDeclaredModels", () => {
@@ -504,6 +718,41 @@ describe("listDeclaredModels", () => {
       });
 
       expect(entries).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("listDeclaredModels forwards workloadPhase", async () => {
+    // Kills: listDeclaredModels dropping the workloadPhase input instead of
+    // threading it into buildDeclaredModelEntries.
+    const mod = await residencyCatalog();
+    expect(typeof mod.listDeclaredModels).toBe("function");
+
+    const dir = mkdtempSync(join(tmpdir(), "llamactl-declared-catalog-"));
+    try {
+      writeFileSync(
+        join(dir, "run-a.yaml"),
+        stringifyYaml(runManifest("run-a", { target: { kind: "rel", value: "org/repo/a.gguf" } })),
+      );
+
+      const entries = mod.listDeclaredModels!({
+        dir,
+        nodeName: "local",
+        liveModelIds: new Set<string>(),
+        workloadPhase: leasePhaseOf({ "run-a": "draining" }),
+      });
+
+      expect(entries).toMatchObject([
+        {
+          id: "org/repo/a.gguf",
+          workload: "run-a",
+          kind: "ModelRun",
+          ownerNodeId: "local",
+          state: "draining",
+          autoLoadEligible: false,
+        },
+      ]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
