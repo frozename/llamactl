@@ -2094,4 +2094,36 @@ describe("applyManifest — kind dispatch", () => {
       rmSync(tmpUnder, { recursive: true, force: true });
     }
   });
+
+  // #277 DF-04: applyOneModelHost must forward residencyAdmission into
+  // applyModelHostManifest — dropping the pass-through admits the apply at
+  // the declared 6 GiB instead of refusing on the measured 20 GiB envelope.
+  test("applyOneModelHost passes residencyAdmission through and refuses a 20 GiB envelope on a 16 GiB budget (#277)", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-one-env-"));
+    const { client, startSubscribes } = makeResidencyAdmissionClient();
+    try {
+      const result = await applyOneModelHost(
+        makeModelHostManifest("mlx-host-one-measured", 6),
+        () => client,
+        undefined,
+        {
+          workloadsDir: join(tmp, "workloads"),
+          env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp },
+          getNodeBudgetGiB: () => 16,
+          residencyAdmission: {
+            getNodeResidencyPolicy: () => ({}),
+            getMeasuredEnvelope: () => measuredEnvelopeGiB(20),
+          },
+        },
+      );
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toContain("'mlx-host-one-measured' (20.0 GiB)");
+      }
+      expect(startSubscribes.count).toBe(0);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });
