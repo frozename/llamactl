@@ -108,6 +108,7 @@ export interface WorkloadClient {
        *  older agents, so consumers treat undefined as "unknown". */
       listenerPid?: number | null;
       foreign?: boolean;
+      identityUnknown?: boolean;
     }>;
   };
   serverStop: {
@@ -1241,7 +1242,10 @@ type EvictVictimProbe =
  * slice 3). Every method runs inside the caller's shared remainingMs
  * deadline. ModelRun: an already-down victim skips the stop, a `foreign`
  * listener fails before any stop, and release is proven by a non-up
- * serverStatus. ModelHost: statusModelHost cannot see the
+ * serverStatus. A ModelRun victim whose serverStatus reports
+ * identityUnknown is never treated as down: probe fails with
+ * EvictStatusUnknown before any stop and verify treats it as unverified.
+ * ModelHost: statusModelHost cannot see the
  * modelhost.starting record, so modelHostStop is issued even when
  * status says Stopped — it is identity-verified, never signals a
  * recycled pid, and reports {ok:true,pid:null} on stale records.
@@ -1281,6 +1285,17 @@ const EVICT_VICTIM_OPS: Record<
           failure: evictStopFailure(manifest, target, "EvictStatusUnknown", message),
         };
       }
+      if (status.identityUnknown === true) {
+        return {
+          kind: "failed",
+          failure: evictStopFailure(
+            manifest,
+            target,
+            "EvictStatusUnknown",
+            "serverStatus pid identity unknown",
+          ),
+        };
+      }
       if (status.state !== "up") return { kind: "down" };
       if (status.foreign === true) {
         return {
@@ -1311,8 +1326,13 @@ const EVICT_VICTIM_OPS: Record<
         client.serverStatus.query({ workload: target }),
         remainingMs(),
       );
-      if (postStatus.state === "up") {
-        return evictStopFailure(manifest, target, "EvictReleaseUnverified", "still up after stop");
+      if (postStatus.state === "up" || postStatus.identityUnknown === true) {
+        return evictStopFailure(
+          manifest,
+          target,
+          "EvictReleaseUnverified",
+          "still up or identity unknown after stop",
+        );
       }
       return null;
     },
