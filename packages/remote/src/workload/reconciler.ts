@@ -20,6 +20,7 @@ import {
 } from "@llamactl/core/engines/state";
 import { resolveEnv } from "@llamactl/core/env";
 
+import type { NodeRunResidency } from "./noderun-schema.js";
 import type { ModelRun } from "./schema.js";
 
 import { existsSync } from "../safe-fs.js";
@@ -143,27 +144,38 @@ async function queryNodeMemBytes(client: WorkloadClient): Promise<number | null>
 }
 
 /**
+ * The per-pass view of every NodeRun's admission sizing knobs, keyed by
+ * node name: the explicit `spec.budget.memoryGiB` and the `spec.residency`
+ * whose safetyMarginRatio sizes the computed fallback budget (Part of #519).
+ */
+interface NodeBudgetContext {
+  budgetByName: Map<string, number | undefined>;
+  residencyByName: Map<string, NodeRunResidency | undefined>;
+}
+
+/**
  * Size the admission budget for a ModelRun on `nodeName`. An explicit
- * NodeRun budget wins; `local` uses the controller's RAM; otherwise
- * 75% of the node's reported memory, queried at most once per node
- * per pass. A missing, rejected or timed-out nodeFacts falls back to
- * the controller's RAM.
+ * NodeRun budget wins; `local` uses the controller's RAM; otherwise the
+ * NodeRun `spec.residency.safetyMarginRatio` (0.75 unless set) times the
+ * node's reported memory, queried at most once per node per pass. A
+ * missing, rejected or timed-out nodeFacts falls back to the controller's RAM.
  */
 async function resolveModelRunBudgetGiB(
   nodeName: string,
-  nodeBudgetByName: Map<string, number | undefined>,
+  nodeBudget: NodeBudgetContext,
   nodeMemBytesByName: Map<string, Promise<number | null>>,
   getClient: (nodeName: string) => WorkloadClient,
 ): Promise<number> {
-  const explicit = nodeBudgetByName.get(nodeName);
+  const explicit = nodeBudget.budgetByName.get(nodeName);
   if (explicit !== undefined) return explicit;
-  if (nodeName === LOCAL_NODE_ID) return defaultNodeBudgetGiB();
+  const residency = nodeBudget.residencyByName.get(nodeName);
+  if (nodeName === LOCAL_NODE_ID) return defaultNodeBudgetGiB(undefined, undefined, residency);
   let memBytes = nodeMemBytesByName.get(nodeName);
   if (memBytes === undefined) {
     memBytes = queryNodeMemBytes(getClient(nodeName));
     nodeMemBytesByName.set(nodeName, memBytes);
   }
-  return defaultNodeBudgetGiB(undefined, await memBytes);
+  return defaultNodeBudgetGiB(undefined, await memBytes, residency);
 }
 
 /** #221: a node RPC deadline timeout, or a per-pass skip after one. */
@@ -261,10 +273,17 @@ export async function reconcileOnce(opts: ReconcileOptions): Promise<ReconcileRe
   const hosts = listModelHosts(dir);
   // Absent NodeRun budgets stay undefined rather than resolving to the
   // controller's RAM here, so both the ModelRun and ModelHost paths can
-  // fall through to the target node's reported memory.
-  const nodeBudgetByName = new Map<string, number | undefined>(
-    listNodeRuns(dir).map((nodeRun) => [nodeRun.metadata.name, nodeRun.spec.budget?.memoryGiB]),
-  );
+  // fall through to the target node's reported memory. The residency map
+  // carries each node's safetyMarginRatio for the same computed fallback.
+  const nodeRuns = listNodeRuns(dir);
+  const nodeBudget: NodeBudgetContext = {
+    budgetByName: new Map(
+      nodeRuns.map((nodeRun) => [nodeRun.metadata.name, nodeRun.spec.budget?.memoryGiB]),
+    ),
+    residencyByName: new Map(
+      nodeRuns.map((nodeRun) => [nodeRun.metadata.name, nodeRun.spec.residency]),
+    ),
+  };
   const nodeMemBytesByName = new Map<string, Promise<number | null>>();
   const manifests = opts.filter ? all.filter(opts.filter) : all;
   // One ordered work list (ModelRuns then ModelHosts) so reports keep the
@@ -298,11 +317,11 @@ export async function reconcileOnce(opts: ReconcileOptions): Promise<ReconcileRe
             item.manifest,
             deadlineOpts,
             dir,
-            nodeBudgetByName,
+            nodeBudget,
             nodeMemBytesByName,
             slot,
           )
-        : await reconcileModelHost(item.manifest, deadlineOpts, dir, nodeBudgetByName, slot);
+        : await reconcileModelHost(item.manifest, deadlineOpts, dir, nodeBudget, slot);
   });
 
   return {
@@ -431,7 +450,7 @@ async function reconcileModelRun(
   manifest: ModelRun,
   opts: ReconcileOptions,
   dir: string,
-  nodeBudgetByName: Map<string, number | undefined>,
+  nodeBudget: NodeBudgetContext,
   nodeMemBytesByName: Map<string, Promise<number | null>>,
   reports: ReconcileNodeReport[],
 ): Promise<number> {
@@ -467,7 +486,7 @@ async function reconcileModelRun(
         ...(opts.resolveNodeIdentity && { resolveNodeIdentity: opts.resolveNodeIdentity }),
         ...(opts.evictionGraceMs !== undefined ? { evictionGraceMs: opts.evictionGraceMs } : {}),
         getNodeBudgetGiB: (nodeName) =>
-          resolveModelRunBudgetGiB(nodeName, nodeBudgetByName, nodeMemBytesByName, opts.getClient),
+          resolveModelRunBudgetGiB(nodeName, nodeBudget, nodeMemBytesByName, opts.getClient),
       },
     );
     if (result.error) errors++;
@@ -761,7 +780,7 @@ async function reconcileModelHost(
   manifest: ModelHostManifest,
   opts: ReconcileOptions,
   dir: string,
-  nodeBudgetByName: Map<string, number | undefined>,
+  nodeBudget: NodeBudgetContext,
   reports: ReconcileNodeReport[],
 ): Promise<number> {
   // The pass-start snapshot goes stale while earlier hosts are awaited: a
@@ -804,7 +823,7 @@ async function reconcileModelHost(
     return 0;
   }
   const host = decision.kind === "stale" ? clearStaleHostEvictionMarker(current, dir) : current;
-  return await reconcileUnmanagedModelHost(host, opts, dir, nodeBudgetByName, reports);
+  return await reconcileUnmanagedModelHost(host, opts, dir, nodeBudget, reports);
 }
 
 /**
@@ -871,7 +890,7 @@ async function reconcileUnmanagedModelHost(
   manifest: ModelHostManifest,
   opts: ReconcileOptions,
   dir: string,
-  nodeBudgetByName: Map<string, number | undefined>,
+  nodeBudget: NodeBudgetContext,
   reports: ReconcileNodeReport[],
 ): Promise<number> {
   const name = manifest.metadata.name;
@@ -926,7 +945,8 @@ async function reconcileUnmanagedModelHost(
       {
         env: process.env,
         workloadsDir: dir,
-        getNodeBudgetGiB: (nodeName) => nodeBudgetByName.get(nodeName),
+        getNodeBudgetGiB: (nodeName) => nodeBudget.budgetByName.get(nodeName),
+        getNodeResidency: (nodeName) => nodeBudget.residencyByName.get(nodeName),
       },
     );
     const action = wasRunning ? "restarted" : "started";

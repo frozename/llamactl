@@ -8,6 +8,12 @@ import {
   type ResidencyLeases,
   setResidencyLeaseRegistry,
 } from "@llamactl/core/residency/leases";
+import {
+  createSessionRefcounts,
+  currentSessionRefcounts,
+  type SessionRefcounts,
+  setSessionRefcountRegistry,
+} from "@llamactl/core/residency/sessions";
 import { listLocalRoutes, migrateLegacySingletonRuntime } from "@llamactl/core/workloadRuntime";
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
 import { join } from "node:path";
@@ -247,6 +253,16 @@ export interface StartAgentOptions {
    * native unload.
    */
   residencyLeases?: boolean;
+  /**
+   * Opt-in session idle timeout in milliseconds (#520), passed unchanged to
+   * `createSessionRefcounts` as `idleTimeoutMs`. Honored only when
+   * `residencyLeases` is true. When set, `startAgentServer` builds a session
+   * refcount registry and installs it through `setSessionRefcountRegistry`
+   * beside the lease registry once the listener binds. `stop()` restores the
+   * seam's previous value after the drain, so session state is in-memory and
+   * does not carry over to a restarted agent.
+   */
+  residencySessionIdleMs?: number;
   /**
    * Per-role runtime memory budget. Sets the identity (role + optional
    * memory budget) so the Prometheus gauges emit per-role series. When
@@ -1203,12 +1219,25 @@ function maybePublishResidencyLeases(
 ): { registry: ResidencyLeases; publish: () => void; restore: () => void } | null {
   if (opts.residencyLeases !== true) return null;
   const previous = getResidencyLeaseRegistry();
+  const previousSession = currentSessionRefcounts();
   const registry = createResidencyLeases();
+  let sessionRefcounts: SessionRefcounts | null = null;
+  if (opts.residencySessionIdleMs !== undefined) {
+    sessionRefcounts = createSessionRefcounts({
+      idleTimeoutMs: opts.residencySessionIdleMs,
+    });
+  }
   const publish = (): void => {
     setResidencyLeaseRegistry(registry);
+    if (sessionRefcounts !== null) {
+      setSessionRefcountRegistry(sessionRefcounts);
+    }
   };
   const restore = (): void => {
     setResidencyLeaseRegistry(previous);
+    if (sessionRefcounts !== null) {
+      setSessionRefcountRegistry(previousSession);
+    }
   };
   return { registry, publish, restore };
 }

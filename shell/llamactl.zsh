@@ -4713,6 +4713,46 @@ _local_ai_run_llama_cpp_source() {
   esac
 }
 
+_local_ai_llama_cpp_provider_url() {
+  # Mirrors resolveLlamaCppProviderUrl in packages/core/src/env.ts (#315):
+  # LOCAL_AI_LLAMA_CPP_BASE_URL stays the tracked llama-server URL and the
+  # provider URL is derived from the inputs below, never read back from
+  # LOCAL_AI_PROVIDER_URL or OPENAI_BASE_URL. POSIX sh only (local, case,
+  # ${x%/}, [ ]) so this mirror also runs under bash and sh.
+  local host port tracked proxy
+  host="${LLAMA_CPP_HOST:-127.0.0.1}"
+  if [ -n "${LLAMACTL_TEST_PROFILE:-}" ] && [ -z "${LLAMA_CPP_PORT:-}" ]; then
+    port=65534
+  else
+    port="${LLAMA_CPP_PORT:-8080}"
+  fi
+  tracked="${LOCAL_AI_LLAMA_CPP_BASE_URL:-http://$host:$port/v1}"
+  if [ "${LOCAL_AI_PROVIDER_ROUTE:-}" = "direct" ]; then
+    printf '%s' "$tracked"
+    return 0
+  fi
+  if [ -n "${LOCAL_AI_LLAMA_CPP_BASE_URL:-}" ] && [ "${LOCAL_AI_LLAMA_CPP_BASE_URL:-}" != "http://$host:$port/v1" ]; then
+    printf '%s' "$tracked"
+    return 0
+  fi
+  proxy="${LLAMACTL_INTERNAL_PROXY_URL:-}"
+  if [ -n "$proxy" ]; then
+    while [ "${proxy%/}" != "$proxy" ]; do
+      proxy="${proxy%/}"
+    done
+    case "$proxy" in
+      */v1) printf '%s' "$proxy" ;;
+      *) printf '%s/v1' "$proxy" ;;
+    esac
+    return 0
+  fi
+  if [ -n "${LLAMACTL_TEST_PROFILE:-}" ]; then
+    printf '%s' "$tracked"
+    return 0
+  fi
+  printf '%s' "http://127.0.0.1:7944/v1"
+}
+
 _local_ai_sync_env() {
   local source_model="$(_local_ai_source_model)"
 
@@ -4734,7 +4774,7 @@ _local_ai_sync_env() {
       ;;
     *)
       export LOCAL_AI_PROVIDER="llama.cpp"
-      export LOCAL_AI_PROVIDER_URL="$LOCAL_AI_LLAMA_CPP_BASE_URL"
+      export LOCAL_AI_PROVIDER_URL="$(_local_ai_llama_cpp_provider_url)"
       export LOCAL_AI_API_KEY="local"
       export LOCAL_AI_MODEL="$LLAMA_CPP_SERVER_ALIAS"
       ;;

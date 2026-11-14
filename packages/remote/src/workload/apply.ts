@@ -207,6 +207,9 @@ export interface ApplyManifestOptions {
   /** Resolve the node's memory budget for admission control. Returning
    *  undefined means "no explicit budget"; the caller sizes it itself. */
   getNodeBudgetGiB?: (nodeName: string) => number | undefined;
+  /** NodeRun spec.residency for the node; its safetyMarginRatio sizes the
+   *  computed fallback budget (Part of #519). */
+  getNodeResidency?: (nodeName: string) => NodeRunResidency | null | undefined;
   /** Bubble up per-workload progress events for logging. */
   onEvent?: (event: ApplyEvent) => void;
   /** Map a node name to a stable identity for port-collision detection across node aliases. */
@@ -478,7 +481,9 @@ async function resolveModelHostBudgetGiB(
 ): Promise<number> {
   const explicit = opts.getNodeBudgetGiB?.(manifest.spec.node);
   if (explicit !== undefined) return explicit;
-  if (manifest.spec.node === LOCAL_NODE_ID) return defaultNodeBudgetGiB();
+  const residency = opts.getNodeResidency?.(manifest.spec.node);
+  if (manifest.spec.node === LOCAL_NODE_ID)
+    return defaultNodeBudgetGiB(undefined, undefined, residency);
   // A black-holed node must not stall admission: absent, rejected or
   // timed-out facts all fall back to the controller's own RAM.
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -490,7 +495,7 @@ async function resolveModelHostBudgetGiB(
     });
     const query = client.nodeFacts?.query() ?? Promise.resolve(null);
     const facts = await Promise.race([query.catch(() => null), timeout]);
-    return defaultNodeBudgetGiB(undefined, facts?.memBytes ?? null);
+    return defaultNodeBudgetGiB(undefined, facts?.memBytes ?? null, residency);
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
@@ -713,6 +718,9 @@ export async function applyOneModelHost(
     env?: NodeJS.ProcessEnv;
     workloadsDir?: string;
     getNodeBudgetGiB?: (nodeName: string) => number | undefined;
+    /** NodeRun spec.residency for the node; its safetyMarginRatio sizes the
+     *  computed fallback budget (Part of #519). */
+    getNodeResidency?: (nodeName: string) => NodeRunResidency | null | undefined;
     supervisor?: {
       currentFreeGiB: number;
       headroomMinGiB: number;
@@ -730,6 +738,7 @@ export async function applyOneModelHost(
     ...(opts?.env !== undefined ? { env: opts.env } : {}),
     ...(opts?.workloadsDir !== undefined ? { workloadsDir: opts.workloadsDir } : {}),
     ...(opts?.getNodeBudgetGiB !== undefined ? { getNodeBudgetGiB: opts.getNodeBudgetGiB } : {}),
+    ...(opts?.getNodeResidency !== undefined ? { getNodeResidency: opts.getNodeResidency } : {}),
     ...(opts?.supervisor !== undefined ? { supervisor: opts.supervisor } : {}),
     ...(opts?.residencyAdmission !== undefined
       ? { residencyAdmission: opts.residencyAdmission }
@@ -934,6 +943,9 @@ interface ApplyOneOpts {
   listManifests?: (dir?: string) => ModelRun[];
   /** May be async so a caller can size a remote node from its reported memory. */
   getNodeBudgetGiB?: (nodeName: string) => number | undefined | Promise<number | undefined>;
+  /** NodeRun spec.residency for the node; its safetyMarginRatio sizes the
+   *  computed fallback budget (Part of #519). */
+  getNodeResidency?: (nodeName: string) => NodeRunResidency | null | undefined;
   /** Opt-in target-owned pending admission (DF-01 #274, E-1 slice).
    *  Inactive unless supplied. Not wired into the router, reconciler,
    *  CLI or ModelHost paths — only a caller that passes an authority
@@ -1523,11 +1535,13 @@ async function resolveAdmissionBudgetGiB(
   nodeName: string,
   client: WorkloadClient,
   getNodeBudgetGiB: ApplyOneOpts["getNodeBudgetGiB"],
+  getNodeResidency: ApplyOneOpts["getNodeResidency"],
   hasDeclaredReservations: boolean,
 ): Promise<number | null> {
   const explicit = await getNodeBudgetGiB?.(nodeName);
   if (explicit !== undefined) return explicit;
-  if (nodeName === LOCAL_NODE_ID) return defaultNodeBudgetGiB();
+  const residency = getNodeResidency?.(nodeName);
+  if (nodeName === LOCAL_NODE_ID) return defaultNodeBudgetGiB(undefined, undefined, residency);
   if (!hasDeclaredReservations) return null;
   if (!client.nodeFacts) return null;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -1540,7 +1554,7 @@ async function resolveAdmissionBudgetGiB(
     const facts = await Promise.race([client.nodeFacts.query().catch(() => null), timeout]);
     const memBytes = facts?.memBytes;
     if (typeof memBytes === "number" && Number.isFinite(memBytes) && memBytes > 0) {
-      return defaultNodeBudgetGiB(undefined, memBytes);
+      return defaultNodeBudgetGiB(undefined, memBytes, residency);
     }
     return null;
   } finally {
@@ -1951,6 +1965,7 @@ async function admitServerBudget(ctx: ConvergeServerContext): Promise<
     manifest.spec.node,
     ctx.client,
     opts?.getNodeBudgetGiB,
+    opts?.getNodeResidency,
     hasDeclaredReservations,
   );
   const forceAdmit = manifest.metadata.annotations["llamactl.io/force-admit"] === "true";
@@ -2577,6 +2592,7 @@ async function applyModelRunManifest(opts: ApplyManifestOptions): Promise<ApplyM
     ...omitUndefined({ workloadsDir: opts.workloadsDir }),
     ...omitUndefined({ env: opts.env }),
     ...omitUndefined({ getNodeBudgetGiB: opts.getNodeBudgetGiB }),
+    ...omitUndefined({ getNodeResidency: opts.getNodeResidency }),
     ...(opts.resolveNodeIdentity !== undefined
       ? { resolveNodeIdentity: opts.resolveNodeIdentity }
       : {}),
