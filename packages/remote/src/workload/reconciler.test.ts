@@ -102,6 +102,23 @@ function writeBudgetlessNodeRun(dir: string): void {
   );
 }
 
+function writeResidencyMarginNodeRun(dir: string): void {
+  writeFileSync(
+    join(dir, "mac-mini.yaml"),
+    [
+      "apiVersion: llamactl/v1",
+      "kind: NodeRun",
+      "metadata:",
+      "  name: mac-mini",
+      "spec:",
+      "  node: mac-mini",
+      "  residency:",
+      "    safetyMarginRatio: 0.5",
+      "  infra: []",
+    ].join("\n"),
+  );
+}
+
 function makeSlowStoppedClient(delayMs: number): WorkloadClient {
   return {
     serverStatus: {
@@ -754,6 +771,61 @@ test("reconcile reports skipped-deleted when a manifest is deleted mid-apply", a
       { kind: "ModelRun", name, node: "mac-mini", action: "skipped-deleted" },
     ]);
     expect(existsSync(workloadPath(name, workloadsDir))).toBe(false);
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("reconcile charges a budgetless NodeRun's residency margin against a remote ModelHost", async () => {
+  // Kills: the reconciler's ModelHost path not passing the NodeRun
+  // residency into applyOneModelHost — the 0.5 margin drops the budget
+  // from 3x to 2x the node's reported memory.
+  const hostGiB = totalmem() / 1024 ** 3;
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-reconcile-residency-host-"));
+  writeResidencyMarginNodeRun(workloadsDir);
+  const name = "residency-margin-host";
+  const manifest = makeManifest(name);
+  saveModelHost(
+    { ...manifest, spec: { ...manifest.spec, resources: { expectedMemoryGiB: 3.5 * hostGiB } } },
+    workloadsDir,
+  );
+  const client: WorkloadClient = {
+    ...makeSlowStoppedClient(0),
+    nodeFacts: {
+      query: () => Promise.resolve({ memBytes: 4 * hostGiB * 1024 ** 3 }),
+    },
+  };
+
+  try {
+    const result = await reconcileOnce({ workloadsDir, getClient: () => client });
+    expect(result.errors).toBe(1);
+    expect(result.reports[0]?.action).toBe("unchanged");
+    expect(result.reports[0]?.error).toContain(`Budget is ${(hostGiB * 2).toFixed(1)} GiB`);
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("reconcile charges a budgetless NodeRun's residency margin against a remote ModelRun", async () => {
+  // Kills: resolveModelRunBudgetGiB ignoring the NodeRun residency — the
+  // 0.5 margin drops the budget from 3x to 2x the node's reported memory.
+  const hostGiB = totalmem() / 1024 ** 3;
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-reconcile-residency-run-"));
+  writeResidencyMarginNodeRun(workloadsDir);
+  const name = "residency-margin-run";
+  saveWorkload(makeSizedRunManifest(name, 3.5 * hostGiB), workloadsDir);
+  const client: WorkloadClient = {
+    ...makeRunClient(new Map()),
+    nodeFacts: {
+      query: () => Promise.resolve({ memBytes: 4 * hostGiB * 1024 ** 3 }),
+    },
+  };
+
+  try {
+    const result = await reconcileOnce({ workloadsDir, getClient: () => client });
+    expect(result.errors).toBe(1);
+    expect(result.reports[0]?.action).toBe("pending");
+    expect(result.reports[0]?.error).toContain(`Budget is ${(hostGiB * 2).toFixed(1)} GiB`);
   } finally {
     rmSync(workloadsDir, { recursive: true, force: true });
   }

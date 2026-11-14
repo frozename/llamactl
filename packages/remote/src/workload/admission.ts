@@ -10,13 +10,13 @@ import {
   type ManagedAdmissionDecision,
   type ManagedClaimState,
   type ManagedWorkloadKind,
-  type ResidencyPolicy,
   resolveResidencyPolicy,
 } from "@llamactl/core/residency/admission";
 import { totalmem } from "node:os";
 import { join } from "node:path";
 
 import type { ModelHostManifest } from "./modelhost-schema.js";
+import type { NodeRunResidency } from "./noderun-schema.js";
 import type { ModelRun } from "./schema.js";
 
 import { readdirSync, statSync } from "../safe-fs.js";
@@ -89,16 +89,26 @@ export function sumReservedForNode(manifests: ModelRun[], nodeName: string): num
 }
 
 /**
- * No production caller passes `residency` yet; unspecified callers get the
- * DEFAULT_RESIDENCY_POLICY safety margin (0.75), matching prior behaviour.
+ * Sizes a node's admission budget: an explicit `nodeBudgetFromManifest`
+ * (NodeRun spec.budget.memoryGiB) always wins; otherwise the computed
+ * budget is the residency safety margin times the node's memory
+ * (`nodeMemBytes`, else the controller's own RAM). `residency` is the
+ * NodeRun spec.residency; only safetyMarginRatio is read and an absent
+ * one falls back to DEFAULT_RESIDENCY_POLICY (0.75). apply, the
+ * reconciler and the router views and apply pass it; the CLI direct-apply
+ * paths still use the default 0.75 (follow-up).
  */
 export function defaultNodeBudgetGiB(
   nodeBudgetFromManifest?: number,
   nodeMemBytes?: number | null,
-  residency?: Partial<ResidencyPolicy> | null,
+  residency?: NodeRunResidency | null,
 ): number {
   if (typeof nodeBudgetFromManifest === "number") return nodeBudgetFromManifest;
-  const ratio = resolveResidencyPolicy(residency).safetyMarginRatio;
+  const ratio = resolveResidencyPolicy(
+    residency?.safetyMarginRatio === undefined
+      ? null
+      : { safetyMarginRatio: residency.safetyMarginRatio },
+  ).safetyMarginRatio;
   if (typeof nodeMemBytes === "number" && Number.isFinite(nodeMemBytes) && nodeMemBytes > 0) {
     return capacityBudgetGiB(nodeMemBytes, ratio);
   }
@@ -118,8 +128,8 @@ function formatAdmissionBreakdown(
       ? living.map((i) => `'${i.name}' ${i.expectedMemoryGiB.toFixed(1)} GiB`).join(", ")
       : "(none)";
   const levers = supportsForceAdmit
-    ? `the llamactl.io/force-admit annotation (set by apply --force) is the explicit legacy override that admits past this budget; free capacity with --evict <name> or raise the node budget (NodeRun spec.budget.memoryGiB, default 75% of total RAM)`
-    : `free capacity by removing or disabling other workloads on this node, or raise the node budget (NodeRun spec.budget.memoryGiB, default 75% of total RAM)`;
+    ? `the llamactl.io/force-admit annotation (set by apply --force) is the explicit legacy override that admits past this budget; free capacity with --evict <name> or raise the node budget (NodeRun spec.budget.memoryGiB; default NodeRun spec.residency.safetyMarginRatio x total RAM, 75% unless set)`
+    : `free capacity by removing or disabling other workloads on this node, or raise the node budget (NodeRun spec.budget.memoryGiB; default NodeRun spec.residency.safetyMarginRatio x total RAM, 75% unless set)`;
   return [
     `node '${nodeName}' would reserve ${reservedAfter.toFixed(1)} GiB after adding '${incoming.name}' (${incoming.expectedMemoryGiB.toFixed(1)} GiB) to existing: ${livingDesc}`,
     `Budget is ${budget.toFixed(1)} GiB`,
