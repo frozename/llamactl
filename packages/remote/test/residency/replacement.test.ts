@@ -279,6 +279,24 @@ function pinLocalRuntimeDir(dir: string): () => void {
   };
 }
 
+// reconcileOnce sizes the `local` node's admission budget from an explicit
+// NodeRun spec.budget.memoryGiB, falling back to 75% of the host's
+// totalmem(). A test that expects the reconcile pass to restart an 8 GiB
+// victim must pin that budget, or the verdict depends on the machine: a
+// 7 GB macos-latest runner sizes ~5.25 GiB and refuses the restart, while
+// a 16 GB ubuntu runner sizes 12 GiB and admits it.
+function writeLocalNodeBudget(dir: string, memoryGiB: number): void {
+  writeFileSync(
+    join(dir, "local.yaml"),
+    stringifyYaml({
+      apiVersion: "llamactl/v1",
+      kind: "NodeRun",
+      metadata: { name: "local" },
+      spec: { node: "local", budget: { memoryGiB }, infra: [] },
+    }),
+  );
+}
+
 test("R1 intent persisted before stop and kept on success", async () => {
   const dir = mkdtempSync(join(tmpdir(), "llamactl-df02-r1-"));
   const state: StateMap = new Map([["a", upEntry(8182)]]);
@@ -1287,6 +1305,7 @@ test("RB1 a readiness timeout that leaves the replacement alive is torn down bef
   const dir = mkdtempSync(join(tmpdir(), "llamactl-df02-rb1-"));
   const state: StateMap = new Map([["a", upEntry(8182)]]);
   saveWorkload(mkManifest("a", { port: 8182, ram: 8 }), dir);
+  writeLocalNodeBudget(dir, 8);
   const before = loadWorkloadByName("a", dir);
   const { client, stops, starts } = makeClient(state);
   const wrapped = clientWithScriptedBStart(client, state, starts, (callbacks) => {
@@ -1353,6 +1372,7 @@ test("RB3 an unverified replacement teardown keeps the victim held instead of re
   const dir = mkdtempSync(join(tmpdir(), "llamactl-df02-rb3-"));
   const state: StateMap = new Map([["a", upEntry(8182)]]);
   saveWorkload(mkManifest("a", { port: 8182, ram: 8 }), dir);
+  writeLocalNodeBudget(dir, 8);
   const { client, starts } = makeClient(state, {
     stop: (workload) => (workload === "b" ? Promise.resolve({ stopped: false }) : undefined),
   });
