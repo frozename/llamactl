@@ -1469,6 +1469,8 @@ describe("server/modelhost", () => {
       expect(args[args.indexOf("--host") + 1]).toBe("0.0.0.0");
       expect(warnings).toHaveLength(1);
       expect(warnings[0]).toContain("0.0.0.0:8094");
+      // #214 pin: without apiKeyRef the exposed engine is still unauthenticated.
+      expect(warnings[0]).toContain("unauthenticated");
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
@@ -3914,6 +3916,204 @@ describe("llamacpp fork process identity (#516)", () => {
       } catch {
         // already gone
       }
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+// #214: spec.apiKeyRef resolves a secret ref (env:/keychain:/file:) whose
+// value is injected into the llamacpp child's env as LLAMA_API_KEY — never
+// argv — so an allowed external bind can be authenticated. An unresolvable
+// ref refuses the start before any reap, spawn or manifest persist, and the
+// external-bind warning drops the "unauthenticated" wording on that path.
+describe("ModelHost apiKeyRef (#214)", () => {
+  const LLAMA_KEY = { name: "keyed-llama-host" };
+  const FIXTURE_KEY = "fixture-key-not-a-secret";
+
+  function writeKeyedLlamaManifest(tmp: string): {
+    workloadsDir: string;
+    runtimeDir: string;
+    binary: string;
+  } {
+    const workloadsDir = join(tmp, "workloads");
+    const runtimeDir = join(tmp, "runtime");
+    const binary = join(tmp, "keyed-llama-server");
+    mkdirSync(workloadsDir, { recursive: true });
+    writeFileSync(binary, "#!/bin/sh\nexit 0\n");
+    writeFileSync(
+      join(workloadsDir, "keyed-llama-host.yaml"),
+      [
+        "apiVersion: llamactl/v1",
+        "kind: ModelHost",
+        "metadata:",
+        "  name: keyed-llama-host",
+        "spec:",
+        "  engine: llamacpp",
+        "  node: local",
+        "  enabled: true",
+        `  binary: ${binary}`,
+        "  endpoint:",
+        "    host: 127.0.0.1",
+        "    port: 8095",
+        "  hostedModels:",
+        "    - rel: gufo/model.gguf",
+        "  extraArgs: []",
+        "  restartPolicy: Always",
+        "  timeoutSeconds: 60",
+        "",
+      ].join("\n"),
+    );
+    mkdirSync(join(tmp, "models", "gufo"), { recursive: true });
+    writeFileSync(join(tmp, "models", "gufo", "model.gguf"), "fake gguf\n");
+    return { workloadsDir, runtimeDir, binary };
+  }
+
+  function keyedLlamaManifest(binary: string, specExtra: Record<string, unknown>): unknown {
+    return {
+      apiVersion: "llamactl/v1",
+      kind: "ModelHost",
+      metadata: { name: LLAMA_KEY.name },
+      spec: {
+        engine: "llamacpp",
+        node: "local",
+        enabled: true,
+        binary,
+        endpoint: { host: "127.0.0.1", port: 8095 },
+        hostedModels: [{ rel: "gufo/model.gguf" }],
+        extraArgs: [],
+        restartPolicy: "Always",
+        timeoutSeconds: 60,
+        ...specExtra,
+      },
+    };
+  }
+
+  function seedKeyedLlamaRecord(runtimeDir: string, pid: number): void {
+    const hostDir = join(runtimeDir, "workloads", LLAMA_KEY.name);
+    mkdirSync(hostDir, { recursive: true });
+    writeFileSync(join(hostDir, "modelhost.pid"), `${String(pid)}\n`);
+    writeFileSync(
+      join(hostDir, "modelhost.state"),
+      JSON.stringify({
+        kind: "ModelHost",
+        engine: "llamacpp",
+        pid,
+        host: "127.0.0.1",
+        port: 8095,
+        modelAliases: ["gufo/model.gguf", "model.gguf"],
+        startedAt: new Date().toISOString(),
+      }),
+    );
+  }
+
+  test("injects the resolved key as LLAMA_API_KEY in the child env, never in argv", async () => {
+    // Kills: not injecting the key, or passing it via argv.
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-apikey-env-"));
+    const { workloadsDir, runtimeDir, binary } = writeKeyedLlamaManifest(tmp);
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
+    try {
+      const result = await startModelHost({
+        key: LLAMA_KEY,
+        manifest: keyedLlamaManifest(binary, { apiKeyRef: "env:MH_TEST_KEY" }),
+        workloadsDir,
+        runtimeDir,
+        env: { ...modelHostEnv(tmp), MH_TEST_KEY: FIXTURE_KEY },
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
+      }).catch((e: unknown) => ({ ok: false as const, pid: null, error: String(e) }));
+
+      expect(result.ok).toBe(true);
+      expect(spawn).toHaveBeenCalledTimes(1);
+      const [, args, options] = spawn.mock.calls[0] as unknown as [
+        string,
+        string[],
+        { env?: NodeJS.ProcessEnv },
+      ];
+      expect(options.env?.["LLAMA_API_KEY"]).toBe(FIXTURE_KEY);
+      const argv = args.join(" ");
+      expect(argv).not.toContain(FIXTURE_KEY);
+      expect(argv).not.toContain("--api-key");
+      expect(options.env?.["MH_TEST_KEY"]).toBeUndefined();
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("refuses an unresolvable apiKeyRef before reaping, spawning or persisting", async () => {
+    // Kills: resolving after reap or save, or swallowing the failure.
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-apikey-unresolved-"));
+    const { workloadsDir, runtimeDir, binary } = writeKeyedLlamaManifest(tmp);
+    const engine = ENGINES.llamacpp;
+    const originalTeardown = engine.teardown.bind(engine);
+    const tornDown: number[] = [];
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
+    try {
+      // A live prior host makes a post-resolution reap observable: the patched
+      // teardown records any signal the refused start must never send. The
+      // injected identity verifies the recorded pid alive with the stock
+      // llama-server argv0, so only the apiKeyRef refusal stands in the way.
+      seedKeyedLlamaRecord(runtimeDir, process.pid);
+      engine.teardown = mock((pid: number) => {
+        tornDown.push(pid);
+        return Promise.resolve();
+      });
+      const result = await startModelHost({
+        key: LLAMA_KEY,
+        manifest: keyedLlamaManifest(binary, { apiKeyRef: "env:MH_MISSING_KEY" }),
+        workloadsDir,
+        runtimeDir,
+        env: { ...modelHostEnv(tmp), MH_MISSING_KEY: undefined },
+        identity: {
+          processStartMs: (): number => 0,
+          processCommand: (): string => "llama-server --port 8095",
+          probe: (): void => undefined,
+        },
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
+      }).catch((e: unknown) => ({ ok: false as const, pid: null, error: String(e) }));
+
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain("unable to resolve spec.apiKeyRef");
+      expect(result.error).toContain(LLAMA_KEY.name);
+      expect(tornDown).toEqual([]);
+      expect(spawn).not.toHaveBeenCalled();
+      expect("apiKeyRef" in loadModelHostByName(LLAMA_KEY.name, workloadsDir).spec).toBe(false);
+    } finally {
+      engine.teardown = originalTeardown;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("warns that an allowed external bind is authenticated when apiKeyRef is set", async () => {
+    // Kills: leaving the old unauthenticated wording on the authenticated path.
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-apikey-warn-"));
+    const { workloadsDir, runtimeDir, binary } = writeKeyedLlamaManifest(tmp);
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
+    const warnings: string[] = [];
+    try {
+      const result = await startModelHost({
+        key: LLAMA_KEY,
+        manifest: keyedLlamaManifest(binary, {
+          apiKeyRef: "env:MH_TEST_KEY",
+          endpoint: { host: "0.0.0.0", port: 8095 },
+          allowExternalBind: true,
+        }),
+        workloadsDir,
+        runtimeDir,
+        env: { ...modelHostEnv(tmp), MH_TEST_KEY: FIXTURE_KEY },
+        warn: (message) => {
+          warnings.push(message);
+        },
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
+      }).catch((e: unknown) => ({ ok: false as const, pid: null, error: String(e) }));
+
+      expect(result.ok).toBe(true);
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain("0.0.0.0:8095");
+      expect(warnings[0]).toContain("spec.apiKeyRef");
+      expect(warnings[0]).not.toContain("unauthenticated");
+    } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
   });

@@ -676,3 +676,141 @@ describe("engine=libosmos (#557)", () => {
     );
   });
 });
+
+// #214: spec.apiKeyRef names a secret ref whose resolved value the llamacpp
+// launch injects into the child env as LLAMA_API_KEY — the only way an
+// allowed external bind stays authenticated. The field is llamacpp-only,
+// owns LLAMA_API_KEY against spec.env and --api-key* argv, and constrains
+// readiness.path to endpoints that answer before auth is required.
+describe("spec.apiKeyRef (#214)", () => {
+  const llamacppSpec = {
+    ...valid.spec,
+    engine: "llamacpp",
+    binary: "/usr/local/bin/llama-server",
+    hostedModels: [{ rel: "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf" }],
+  };
+
+  const issueAt = (
+    result: ReturnType<typeof ModelHostManifestSchema.safeParse>,
+    path: readonly string[],
+    message: string,
+  ): boolean => {
+    if (result.success) return false;
+    return result.error.issues.some(
+      (issue) => JSON.stringify(issue.path) === JSON.stringify(path) && issue.message === message,
+    );
+  };
+
+  test("accepts apiKeyRef on a llamacpp ModelHost", () => {
+    // Kills: removing the field.
+    const result = ModelHostManifestSchema.safeParse({
+      ...valid,
+      spec: { ...llamacppSpec, apiKeyRef: "env:MH_TEST_KEY" },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.spec).toMatchObject({ apiKeyRef: "env:MH_TEST_KEY" });
+    }
+  });
+
+  test("omitting apiKeyRef leaves it undefined (back-compat pin)", () => {
+    // BACK-COMPAT PIN: passes at base; kills a defaulted apiKeyRef.
+    const result = ModelHostManifestSchema.safeParse({ ...valid, spec: llamacppSpec });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect("apiKeyRef" in result.data.spec).toBe(false);
+    }
+  });
+
+  test("rejects apiKeyRef on a non-llamacpp engine", () => {
+    // Kills: dropping the engine refinement.
+    const result = ModelHostManifestSchema.safeParse({
+      ...valid,
+      spec: { ...valid.spec, apiKeyRef: "env:MH_TEST_KEY" },
+    });
+    expect(result.success).toBe(false);
+    expect(
+      issueAt(result, ["spec", "apiKeyRef"], "apiKeyRef is only supported for engine llamacpp"),
+    ).toBe(true);
+  });
+
+  test("rejects env.LLAMA_API_KEY alongside apiKeyRef", () => {
+    // Kills: dropping the env-conflict refinement.
+    const result = ModelHostManifestSchema.safeParse({
+      ...valid,
+      spec: {
+        ...llamacppSpec,
+        apiKeyRef: "env:MH_TEST_KEY",
+        env: { LLAMA_API_KEY: "fixture-key-not-a-secret" },
+      },
+    });
+    expect(result.success).toBe(false);
+    expect(
+      issueAt(result, ["spec", "env", "LLAMA_API_KEY"], "LLAMA_API_KEY is owned by spec.apiKeyRef"),
+    ).toBe(true);
+  });
+
+  test.each([
+    [["--api-key", "x"]],
+    [["--api-key=x"]],
+    [["--api-key-file", "/k"]],
+    [["--api-key-file=/k"]],
+  ] as const)("rejects extraArgs %j alongside apiKeyRef", (extraArgs) => {
+    // Kills: dropping the extraArgs refinement.
+    const result = ModelHostManifestSchema.safeParse({
+      ...valid,
+      spec: { ...llamacppSpec, apiKeyRef: "env:MH_TEST_KEY", extraArgs: [...extraArgs] },
+    });
+    expect(result.success).toBe(false);
+    expect(
+      issueAt(
+        result,
+        ["spec", "extraArgs"],
+        "--api-key flags in extraArgs conflict with spec.apiKeyRef",
+      ),
+    ).toBe(true);
+  });
+
+  test.each(["/ready", "/slots", "/props"] as const)(
+    "rejects readiness.path %s alongside apiKeyRef",
+    (path) => {
+      // Kills: dropping the readiness refinement — without it every start of
+      // such a host returns 401 on the probe, times out and is torn down.
+      const result = ModelHostManifestSchema.safeParse({
+        ...valid,
+        spec: { ...llamacppSpec, apiKeyRef: "env:MH_TEST_KEY", readiness: { path } },
+      });
+      expect(result.success).toBe(false);
+      expect(
+        issueAt(
+          result,
+          ["spec", "readiness", "path"],
+          "readiness.path must be an unauthenticated llama-server endpoint (/health, /v1/health, /models, /v1/models, /api/tags) when spec.apiKeyRef is set",
+        ),
+      ).toBe(true);
+    },
+  );
+
+  test.each(["/health", "/v1/models", "/health?x=1"] as const)(
+    "accepts unauthenticated readiness.path %s alongside apiKeyRef",
+    (path) => {
+      // Kills: an over-strict refinement that rejects public endpoints or
+      // ignores query-string stripping.
+      const result = ModelHostManifestSchema.safeParse({
+        ...valid,
+        spec: { ...llamacppSpec, apiKeyRef: "env:MH_TEST_KEY", readiness: { path } },
+      });
+      expect(result.success).toBe(true);
+    },
+  );
+
+  test("readiness.path is unconstrained without apiKeyRef (back-compat pin)", () => {
+    // BACK-COMPAT PIN: passes at base; kills constraining readiness.path
+    // unconditionally.
+    const result = ModelHostManifestSchema.safeParse({
+      ...valid,
+      spec: { ...llamacppSpec, readiness: { path: "/ready" } },
+    });
+    expect(result.success).toBe(true);
+  });
+});
