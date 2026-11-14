@@ -298,30 +298,125 @@ export function estimateModelHostMemoryGiB(
   }
 }
 
+/** #277 DF-04: a stale or key-mismatched measured envelope is worse than no
+ *  envelope — it charges a workload against memory it does not use. Default
+ *  max age for a measured calibration envelope; an envelope stamped older
+ *  than this is ignored and admission falls back to the declared estimate. */
+export const DEFAULT_MEASURED_ENVELOPE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+export type MeasuredEnvelopeIgnoredReason =
+  | "not-measured"
+  | "invalid-bytes"
+  | "missing-key"
+  | "missing-measured-at"
+  | "missing-candidate-key"
+  | "key-mismatch"
+  | "invalid-freshness-input"
+  | "future-measured-at"
+  | "stale";
+
+export type MeasuredEnvelopeAdmissibility =
+  | { usable: true; envelopeBytes: number }
+  | { usable: false; reason: MeasuredEnvelopeIgnoredReason };
+
+type EnvelopeShape =
+  | { ok: true; envelopeBytes: number; key: string; measuredAtMs: number }
+  | {
+      ok: false;
+      reason: Extract<
+        MeasuredEnvelopeIgnoredReason,
+        "not-measured" | "invalid-bytes" | "missing-key" | "missing-measured-at"
+      >;
+    };
+
+// Defensive runtime read of the envelope's own fields: the schema narrows
+// provenance to the literal "measured", but a hand-built, future or older-
+// producer envelope could carry another provenance, a non-finite byte count or
+// no `measuredAtMs` at all. Shape is validated before identity or freshness.
+function inspectMeasuredEnvelope(view: Record<string, unknown>): EnvelopeShape {
+  if (view["known"] !== true || view["provenance"] !== "measured") {
+    return { ok: false, reason: "not-measured" };
+  }
+  const envelopeBytes = view["envelopeBytes"];
+  if (typeof envelopeBytes !== "number" || !Number.isFinite(envelopeBytes) || envelopeBytes < 0) {
+    return { ok: false, reason: "invalid-bytes" };
+  }
+  const key = view["key"];
+  if (typeof key !== "string" || key.trim() === "") {
+    return { ok: false, reason: "missing-key" };
+  }
+  const measuredAtMs = view["measuredAtMs"];
+  if (typeof measuredAtMs !== "number" || !Number.isFinite(measuredAtMs)) {
+    return { ok: false, reason: "missing-measured-at" };
+  }
+  return { ok: true, envelopeBytes, key, measuredAtMs };
+}
+
+/**
+ * #277 DF-04: decide, purely and synchronously, whether a measured envelope
+ * may be charged against a candidate workload. The order is fixed: shape
+ * checks (a measured envelope with finite bytes, a key and a finite
+ * `measuredAtMs` stamp), then identity (does the envelope's calibration key
+ * belong to this candidate), then freshness (valid clock inputs, a stamp not
+ * in the future and within max age). An envelope missing `measuredAtMs`
+ * from an older producer fails the shape check and is ignored, not trusted. Each
+ * refusal names exactly one reason so the caller can log why a real
+ * measurement was ignored.
+ */
+export function measuredEnvelopeAdmissibility(input: {
+  envelope: MeasuredEnvelope;
+  candidateKey?: string | undefined;
+  nowMs: number;
+  maxAgeMs: number;
+}): MeasuredEnvelopeAdmissibility {
+  const shape = inspectMeasuredEnvelope(input.envelope);
+  if (!shape.ok) return { usable: false, reason: shape.reason };
+  const candidateKey = input.candidateKey;
+  if (typeof candidateKey !== "string" || candidateKey.trim() === "") {
+    return { usable: false, reason: "missing-candidate-key" };
+  }
+  if (shape.key !== candidateKey) {
+    return { usable: false, reason: "key-mismatch" };
+  }
+  if (!Number.isFinite(input.nowMs) || !Number.isFinite(input.maxAgeMs) || input.maxAgeMs <= 0) {
+    return { usable: false, reason: "invalid-freshness-input" };
+  }
+  if (shape.measuredAtMs > input.nowMs) {
+    return { usable: false, reason: "future-measured-at" };
+  }
+  if (input.nowMs - shape.measuredAtMs > input.maxAgeMs) {
+    return { usable: false, reason: "stale" };
+  }
+  return { usable: true, envelopeBytes: shape.envelopeBytes };
+}
+
 /** #277 DF-04: with a NodeRun residency policy and a usable measured
  *  calibration envelope, admission charges max(declared estimate,
  *  measured envelope). No policy, or no/unknown/invalid measurement,
- *  returns the estimate unchanged. Never lowers the declared charge.
- *  The envelope's `envelopeBytes` (peak + calibration overhead) is the
- *  conservative stand-in for the p95 named in the issue. */
+ *  returns the estimate unchanged. Stale, key-mismatched or legacy
+ *  (un-stamped) envelopes fall back to the estimate;
+ *  {@link measuredEnvelopeAdmissibility} names the reason. Never lowers
+ *  the declared charge. The envelope's `envelopeBytes` (peak + calibration
+ *  overhead) is the conservative stand-in for the p95 named in the issue. */
 export function modelHostAdmissionChargeGiB(input: {
   estimateGiB: number | null;
   residencyPolicyPresent: boolean;
   envelope: MeasuredEnvelope | null | undefined;
+  candidateKey?: string | undefined;
+  nowMs?: number | undefined;
+  maxAgeMs?: number | undefined;
 }): number | null {
   const { estimateGiB, residencyPolicyPresent, envelope } = input;
   if (!residencyPolicyPresent) return estimateGiB;
   if (envelope === null || envelope === undefined) return estimateGiB;
-  // Defensive runtime read: the schema narrows provenance to the literal
-  // "measured", but a hand-built or future envelope could carry another
-  // provenance (or a non-finite envelopeBytes), so re-validate before charging.
-  const measured = envelope as { provenance?: unknown; envelopeBytes?: unknown };
-  if (measured.provenance !== "measured") return estimateGiB;
-  const envelopeBytes = measured.envelopeBytes;
-  if (typeof envelopeBytes !== "number" || !Number.isFinite(envelopeBytes) || envelopeBytes < 0) {
-    return estimateGiB;
-  }
-  const measuredGiB = envelopeBytes / 1024 ** 3;
+  const admissibility = measuredEnvelopeAdmissibility({
+    envelope,
+    candidateKey: input.candidateKey,
+    nowMs: input.nowMs ?? Date.now(),
+    maxAgeMs: input.maxAgeMs ?? DEFAULT_MEASURED_ENVELOPE_MAX_AGE_MS,
+  });
+  if (!admissibility.usable) return estimateGiB;
+  const measuredGiB = admissibility.envelopeBytes / 1024 ** 3;
   return estimateGiB === null ? measuredGiB : Math.max(estimateGiB, measuredGiB);
 }
 
