@@ -13,7 +13,14 @@ import type {
 import * as ev from "../../src/index.js";
 import { insertPerfRun } from "../../src/matrix/store.js";
 import { okMetric, unavailableMetric } from "../../src/perf/normalise.js";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "../../src/safe-fs.js";
 
 /**
  * RED pins for #521 perf-run diffing. `../../src/perf/diff.ts` does not
@@ -489,6 +496,45 @@ describe("perf/diff", () => {
 
       expect(result.stdout).toContain("| perf | decode_tps | 50.00 | 40.00 | -10.00 | regressed |");
       expect(result.exitCode).toBe(3);
+    },
+    SPAWN_TIMEOUT_MS,
+  );
+
+  test(
+    "a db with perf_runs but no matrix tables fails cleanly and is left untouched",
+    () => {
+      // Kills: an uncaught SQLITE_READONLY from listPerfRuns' ensureMatrixSchema;
+      // opening the db read-write, which would create the matrix tables.
+      seedBaseCand();
+      const seeded = new Database(dbPath);
+      try {
+        seeded.run("DROP TABLE matrix_runs");
+        seeded.run("DROP TABLE matrix_cell_row_details");
+      } finally {
+        seeded.close();
+      }
+      const masterRows = (): unknown => {
+        const db = new Database(dbPath, { readonly: true });
+        try {
+          return db
+            .query("SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name")
+            .all();
+        } finally {
+          db.close();
+        }
+      };
+      const masterBefore = masterRows();
+      const bytesBefore = readFileSync(dbPath);
+
+      const result = run(["--db", dbPath, "--base", "base", "--candidate", "cand"]);
+
+      expect(result.stderr).toBe(
+        `perf-diff: db at ${dbPath} lacks the matrix tables and is opened read-only\n`,
+      );
+      expect(result.stdout).toBe("");
+      expect(result.exitCode).toBe(1);
+      expect(masterRows()).toEqual(masterBefore);
+      expect(Buffer.compare(readFileSync(dbPath), bytesBefore)).toBe(0);
     },
     SPAWN_TIMEOUT_MS,
   );

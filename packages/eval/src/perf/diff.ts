@@ -224,14 +224,26 @@ function allSameModel(rows: PerfRunRow[]): boolean {
   return true;
 }
 
+class IncompleteSchemaError extends Error {}
+
 // listPerfRuns runs ensureMatrixSchema, a no-op on a read-only handle once
 // the tables exist but a write on a fresh store; skip it when perf_runs is
 // absent so an empty or pre-perf db reads as "no rows" instead of throwing.
+// A db holding perf_runs without the other matrix tables still makes it
+// write, which the read-only handle refuses with SQLITE_READONLY.
 function readPerfRows(db: Database, filter: { run_id: string; model_name?: string }): PerfRunRow[] {
   const table = db
     .query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'perf_runs'")
     .get();
-  return table === null ? [] : listPerfRuns(db, filter);
+  if (table === null) return [];
+  try {
+    return listPerfRuns(db, filter);
+  } catch (error) {
+    if ((error as { code?: unknown }).code === "SQLITE_READONLY") {
+      throw new IncompleteSchemaError("lacks the matrix tables and is opened read-only");
+    }
+    throw error;
+  }
 }
 
 function err(msg: string): void {
@@ -288,6 +300,12 @@ export function perfDiffMain(
       args.format === "json" ? renderPerfDiffJson(diffs, meta) : renderPerfDiffMd(diffs, meta);
     process.stdout.write(out);
     return diffs.some((d) => d.verdict === "regressed") ? 3 : 0;
+  } catch (error) {
+    if (error instanceof IncompleteSchemaError) {
+      err(`db at ${args.db} ${error.message}`);
+      return 1;
+    }
+    throw error;
   } finally {
     db.close();
   }
