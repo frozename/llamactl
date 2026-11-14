@@ -99,4 +99,8 @@ jobs:
         # docs/quality/lint-baseline-2026-06-10.json — 0 errors /
         # 2439 warnings); errors now block. Warnings stay advisory
         # until the warn-tier burn-down.
+        # eslint's default heap OOMs on the macos-latest runner
+        # (Abort trap: 6, "heap out of memory"); give it room.
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
         run: bun run lint
