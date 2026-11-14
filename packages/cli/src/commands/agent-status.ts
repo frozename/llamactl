@@ -315,11 +315,17 @@ export function bindHostComparable(bindHost: string): boolean {
   return isIP(h) !== 0;
 }
 
+// #211: IPv6 literals compare in compressed form, so 0:0:0:0:0:0:0:1 equals ::1.
+function canonicalHost(host: string): string {
+  const h = host.toLowerCase();
+  return isIP(h) === 6 ? normalizeSan(h) : h;
+}
+
 /** #211: whether an `lsof -n` listen address (`host:port`) satisfies `bindHost`. */
 export function listenMatchesBind(addr: string, bindHost: string): boolean {
   const colon = addr.lastIndexOf(":");
-  const host = stripBrackets(colon < 0 ? addr : addr.slice(0, colon)).toLowerCase();
-  const bind = stripBrackets(bindHost).toLowerCase();
+  const host = canonicalHost(stripBrackets(colon < 0 ? addr : addr.slice(0, colon)));
+  const bind = canonicalHost(stripBrackets(bindHost));
   if (bind === "0.0.0.0" || bind === "::" || bind === "") return host === "*";
   if (bind === "localhost") return host === "127.0.0.1" || host === "::1";
   return host === bind;

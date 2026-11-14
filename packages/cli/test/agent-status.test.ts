@@ -530,6 +530,41 @@ describe("agent status listen addresses (#211)", () => {
     noListenWarnings(report);
   });
 
+  test("localhost config matches an IPv6 loopback listener", async () => {
+    const { report } = await statusWithListener({
+      bindHost: "localhost",
+      observed: ["[::1]:59996"],
+    });
+    expect(report.listenAddresses).toEqual(["[::1]:59996"]);
+    noListenWarnings(report);
+  });
+
+  test("localhost config with a wildcard listener is flagged", async () => {
+    const { report } = await statusWithListener({
+      bindHost: "localhost",
+      observed: ["*:59996"],
+    });
+    expect(report.warnings).toContain(listenWarning("*:59996", "localhost:59996"));
+  });
+
+  test("a bracketed IPv6 bind host matches a bracketed listener", async () => {
+    const { report } = await statusWithListener({
+      bindHost: "[::1]",
+      observed: ["[::1]:59996"],
+    });
+    expect(report.listenAddresses).toEqual(["[::1]:59996"]);
+    noListenWarnings(report);
+  });
+
+  test("an expanded IPv6 bind host matches its compressed listener", async () => {
+    const { report } = await statusWithListener({
+      bindHost: "0:0:0:0:0:0:0:1",
+      observed: ["[::1]:59996"],
+    });
+    expect(report.listenAddresses).toEqual(["[::1]:59996"]);
+    noListenWarnings(report);
+  });
+
   test("a DNS-name bind host is never compared (lsof -n prints numeric addresses)", async () => {
     const { report } = await statusWithListener({
       bindHost: "agent.example.test",
