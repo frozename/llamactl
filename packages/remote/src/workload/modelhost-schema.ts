@@ -66,6 +66,67 @@ export const ModelHostReadinessSchema = z
   })
   .strict();
 
+// #214: llama-server endpoints that answer without LLAMA_API_KEY auth —
+// the only readiness paths allowed alongside spec.apiKeyRef.
+const UNAUTHENTICATED_LLAMA_SERVER_PATHS: ReadonlySet<string> = new Set([
+  "/health",
+  "/v1/health",
+  "/models",
+  "/v1/models",
+  "/api/tags",
+]);
+
+function isApiKeyFlag(token: string): boolean {
+  return (
+    token === "--api-key" ||
+    token === "--api-key-file" ||
+    token.startsWith("--api-key=") ||
+    token.startsWith("--api-key-file=")
+  );
+}
+
+// #214: the conflicts a set spec.apiKeyRef refuses — a non-llamacpp engine, a
+// second LLAMA_API_KEY source, and a readiness probe llama-server would 401.
+function apiKeyRefIssues(spec: {
+  apiKeyRef?: string | undefined;
+  engine: string;
+  env?: Record<string, string> | undefined;
+  extraArgs: readonly string[];
+  readiness?: { path: string } | undefined;
+}): { path: string[]; message: string }[] {
+  const issues: { path: string[]; message: string }[] = [];
+  if (spec.apiKeyRef === undefined) return issues;
+  if (spec.engine !== "llamacpp") {
+    issues.push({
+      path: ["apiKeyRef"],
+      message: "apiKeyRef is only supported for engine llamacpp",
+    });
+  }
+  if (spec.env?.["LLAMA_API_KEY"] !== undefined) {
+    issues.push({
+      path: ["env", "LLAMA_API_KEY"],
+      message: "LLAMA_API_KEY is owned by spec.apiKeyRef",
+    });
+  }
+  if (spec.extraArgs.some(isApiKeyFlag)) {
+    issues.push({
+      path: ["extraArgs"],
+      message: "--api-key flags in extraArgs conflict with spec.apiKeyRef",
+    });
+  }
+  if (
+    spec.readiness !== undefined &&
+    !UNAUTHENTICATED_LLAMA_SERVER_PATHS.has(spec.readiness.path.split("?")[0] ?? "")
+  ) {
+    issues.push({
+      path: ["readiness", "path"],
+      message:
+        "readiness.path must be an unauthenticated llama-server endpoint (/health, /v1/health, /models, /v1/models, /api/tags) when spec.apiKeyRef is set",
+    });
+  }
+  return issues;
+}
+
 export const ModelHostSpecSchema = z
   .object({
     // Engine selection. The registry in packages/core/src/engines/ holds
@@ -118,6 +179,20 @@ export const ModelHostSpecSchema = z
       )
       .min(1)
       .optional(),
+    // #214: a secret ref (env:VAR, $VAR, file:, keychain:svc/acct)
+    // resolved on the node at start; the value reaches llama-server only
+    // as LLAMA_API_KEY in the child env — never argv, the manifest or
+    // the spec hash. llamacpp-only for now and does NOT replace
+    // allowExternalBind. Deliberately NOT defaulted: absent keys are
+    // never serialized to older strict remote agents. The hash tracks
+    // the REF, so rotating the secret behind an unchanged ref needs an
+    // explicit restart of the host. Until llamactl forwards the key, an
+    // authenticated host still 401s — even over loopback — on
+    // router/proxy traffic, kvstore upstreamSlots /props and /slots
+    // save/restore, and residency llamacpp-sleep sleep/wake.
+    // readiness.path is restricted to llama-server's unauthenticated
+    // endpoints (enforced by apiKeyRefIssues above).
+    apiKeyRef: z.string().min(1).optional(),
   })
   .strict()
   .superRefine((spec, ctx) => {
@@ -146,6 +221,7 @@ export const ModelHostSpecSchema = z
         }
       }
     }
+    for (const issue of apiKeyRefIssues(spec)) ctx.addIssue({ code: "custom", ...issue });
   });
 
 export const ModelHostManifestSchema = z
