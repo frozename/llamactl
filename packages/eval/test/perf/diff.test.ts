@@ -12,6 +12,7 @@ import type {
 
 import * as ev from "../../src/index.js";
 import { insertPerfRun } from "../../src/matrix/store.js";
+import { perfDiffMain } from "../../src/perf/diff.js";
 import { okMetric, unavailableMetric } from "../../src/perf/normalise.js";
 import {
   chmodSync,
@@ -138,6 +139,15 @@ function baseCandRows(): PerfRunRow[] {
 
 function seedBaseCand(): void {
   seed(dbPath, baseCandRows());
+}
+
+function corruptBaseProvenance(): void {
+  const db = new Database(dbPath);
+  try {
+    db.run("UPDATE perf_runs SET provenance_json = '{not json' WHERE run_id = 'base'");
+  } finally {
+    db.close();
+  }
 }
 
 beforeEach(() => {
@@ -538,6 +548,35 @@ describe("perf/diff", () => {
     },
     SPAWN_TIMEOUT_MS,
   );
+
+  test(
+    "a non-read-only store error surfaces instead of reading as no perf rows",
+    () => {
+      // Kills: readPerfRows swallowing a non-SQLITE_READONLY error from
+      // listPerfRuns as an empty row set (misreported as an unknown run, exit 2).
+      seedBaseCand();
+      corruptBaseProvenance();
+      const result = run(["--db", dbPath, "--base", "base", "--candidate", "cand"]);
+
+      expect(result.stderr).not.toContain("no perf rows");
+      expect(result.stderr).toContain("SyntaxError");
+      expect(result.stdout).toBe("");
+      expect(result.exitCode).not.toBe(2);
+      expect(result.exitCode).not.toBe(0);
+    },
+    SPAWN_TIMEOUT_MS,
+  );
+
+  test("perfDiffMain rethrows a non-schema error instead of returning an exit code", () => {
+    // Kills: perfDiffMain's catch mapping every non-IncompleteSchemaError to
+    // a silent exit 1.
+    seedBaseCand();
+    corruptBaseProvenance();
+
+    expect(() =>
+      perfDiffMain(["--db", dbPath, "--base", "base", "--candidate", "cand"], { DEV_STORAGE: tmp }),
+    ).toThrow(SyntaxError);
+  });
 });
 
 describe("perf/diff flag validation", () => {
