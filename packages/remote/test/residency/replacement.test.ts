@@ -1388,3 +1388,99 @@ test("RB3 an unverified replacement teardown keeps the victim held instead of re
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// Drives a readiness-failed eviction start for 'b' (victim 'a') through
+// `faults`, and returns the apply result plus the shared fake's state.
+async function applyFailedReplacementWith(
+  label: string,
+  faults: (state: StateMap) => Faults,
+): Promise<{ result: ApplyResult; state: StateMap; dir: string }> {
+  const dir = mkdtempSync(join(tmpdir(), `llamactl-df02-${label}-`));
+  const state: StateMap = new Map([["a", upEntry(8182)]]);
+  saveWorkload(mkManifest("a", { port: 8182, ram: 8 }), dir);
+  const { client, starts } = makeClient(state, faults(state));
+  const wrapped = clientWithScriptedBStart(client, state, starts, (callbacks) => {
+    callbacks.onData({
+      type: "done",
+      result: { ok: false, pid: 4321, error: "llama-server readiness check timed out after 60s" },
+    });
+    callbacks.onComplete();
+  });
+  const b = mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090, ram: 8 });
+  const result = await applyOne(b, () => wrapped, undefined, undefined, {
+    workloadsDir: dir,
+    getNodeBudgetGiB: () => 8,
+  });
+  return { result, state, dir };
+}
+
+// Kills mutant P6 (dropping the post-stop 'still up after stop' check).
+test("RB4 a stop that reports success while the replacement stays up keeps the victim held", async () => {
+  const { result, state, dir } = await applyFailedReplacementWith(
+    "rb4",
+    (): Faults => ({
+      // 'b' claims to stop but the state map keeps it up.
+      stop: (workload) => (workload === "b" ? Promise.resolve({ stopped: true }) : undefined),
+    }),
+  );
+  try {
+    expect(result.statusSection.phase).toBe("Failed");
+    expect(state.has("b")).toBe(true);
+    expect(result.error).toContain(
+      "replacement 'b' teardown after failed start unverified (still up after stop)",
+    );
+    expect(result.error).toContain("eviction intent on 'a' kept");
+    expect(result.error).not.toContain("released eviction intent");
+    expect(loadWorkloadByName("a", dir).metadata.annotations["llamactl.io/evicted-by"]).toBe("b");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// Kills mutant P7 (dropping the foreign-listener guard).
+test("RB5 a foreign listener on the replacement is not stopped and keeps the victim held", async () => {
+  const { result, state, dir } = await applyFailedReplacementWith(
+    "rb5",
+    (st): Faults => ({
+      // Only once 'b' is recorded up (after its start) does it read foreign.
+      status: (workload, delegate) =>
+        workload === "b" && st.has("b")
+          ? delegate().then((reply) => ({ ...reply, foreign: true }))
+          : undefined,
+    }),
+  );
+  try {
+    expect(result.statusSection.phase).toBe("Failed");
+    expect(state.has("b")).toBe(true);
+    expect(result.error).toContain(
+      "replacement 'b' teardown after failed start unverified (the recorded server is foreign to this workload)",
+    );
+    expect(result.error).toContain("eviction intent on 'a' kept");
+    expect(result.error).not.toContain("released eviction intent");
+    expect(loadWorkloadByName("a", dir).metadata.annotations["llamactl.io/evicted-by"]).toBe("b");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// Kills mutant P8 (the teardown catch returning null, so an RPC or
+// deadline error would count as a verified teardown).
+test("RB6 an RPC error during the replacement teardown keeps the victim held", async () => {
+  const { result, dir } = await applyFailedReplacementWith(
+    "rb6",
+    (): Faults => ({
+      stop: (workload) => (workload === "b" ? Promise.reject(new Error("rpc down")) : undefined),
+    }),
+  );
+  try {
+    expect(result.statusSection.phase).toBe("Failed");
+    expect(result.error).toContain(
+      "replacement 'b' teardown after failed start unverified (rpc down)",
+    );
+    expect(result.error).toContain("eviction intent on 'a' kept");
+    expect(result.error).not.toContain("released eviction intent");
+    expect(loadWorkloadByName("a", dir).metadata.annotations["llamactl.io/evicted-by"]).toBe("b");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

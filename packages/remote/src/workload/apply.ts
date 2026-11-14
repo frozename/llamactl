@@ -2211,7 +2211,11 @@ interface ClaimLifecycle {
  * stops any partially-started workers, marks the claim uncertain, and
  * tears down a half-started eviction replacement so its victims are not
  * released beside a live process. An unverified teardown keeps the
- * eviction intent held (see `teardownFailedReplacement`).
+ * eviction intent held (see `teardownFailedReplacement`). That hold is
+ * bounded: a failed apply does not store the replacement manifest, so
+ * the kept marker suppresses the victim only for the eviction-intent
+ * grace window (`evictionGraceMs`, default EVICTION_INTENT_GRACE_MS),
+ * after which the reconciler releases it.
  */
 async function failedStartResult(
   ctx: ConvergeServerContext,
@@ -2310,8 +2314,9 @@ async function startClaimedServer(
  * exit rollback releases the victims, so the reconciler never runs a
  * victim beside a live replacement. Returns a human detail when the
  * teardown could not be verified (so the caller keeps the eviction
- * intent held), and null when there was nothing to tear down or the
- * replacement is confirmed down.
+ * intent held — only for the EVICTION_INTENT_GRACE_MS grace window
+ * while the replacement manifest is not stored), and null when there
+ * was nothing to tear down or the replacement is confirmed down.
  */
 async function teardownFailedReplacement(ctx: ConvergeServerContext): Promise<string | null> {
   if (ctx.evictionClaims.size === 0) return null;
