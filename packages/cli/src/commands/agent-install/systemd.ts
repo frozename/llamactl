@@ -43,7 +43,9 @@ Flags (all --key=value):
   --log-dir=<path>             stdout/stderr log dir, absolute
                                 default: systemd journal
   --env=KEY=VAL                additional env vars for the unit;
-                                repeatable: --env=HF_HOME=/foo --env=DEV_STORAGE=/bar
+                                repeatable: --env=HF_HOME=/foo --env=DEV_STORAGE=/bar.
+                                *_BEARER, *_TOKEN, *_SECRET and *_KEY keys are
+                                rejected; keep secrets in a 0600 file instead.
   --env-file=<path>            EnvironmentFile= path (absolute); repeatable
   --repo=<owner/repo>          for --from-release; default: frozename/llamactl
   --dry-run                    print unit + systemctl plan; no disk writes
@@ -123,6 +125,16 @@ function applySystemdEnvFlag(v: string, state: InstallSystemdFlagState): { error
   if (!ENV_KEY_RE.test(key)) {
     return {
       error: `agent install-systemd: invalid --env key "${key}" (expected [A-Za-z_][A-Za-z0-9_]*)`,
+    };
+  }
+  // #289, mirrors install-launchd applyEnvFlag: a unit file is
+  // world-readable, so secrets belong in a 0600 file. Never echo the value.
+  if (/_(?:BEARER|TOKEN|SECRET|KEY)$/i.test(key)) {
+    return {
+      error:
+        `agent install-systemd: refusing to write secret-looking env key ${key} into the unit; ` +
+        "put the token in a 0600 file in the agent dir (<dir>/tunnel-bearer or " +
+        "<dir>/tunnel-central-bearer) instead",
     };
   }
   const newline = rejectNewline("--env value", v.slice(eq + 1));

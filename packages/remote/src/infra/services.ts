@@ -175,10 +175,23 @@ export interface WrittenServiceUnit {
   label: string;
 }
 
+// #289: a service unit is world-readable; secret-looking env keys belong
+// in a 0600 file the unit references, never inline.
+function isSecretEnvKey(key: string): boolean {
+  return /_(?:BEARER|TOKEN|SECRET|KEY)$/i.test(key);
+}
+
 export function writeServiceUnit(opts: WriteServiceUnitOptions): WrittenServiceUnit {
   const host = opts.host ?? currentServiceHost();
   if (!host) {
     throw new Error(`writeServiceUnit: unsupported host platform ${nodePlatform()}`);
+  }
+  for (const key of Object.keys(opts.env)) {
+    if (isSecretEnvKey(key)) {
+      throw new Error(
+        `writeServiceUnit: refusing to write secret-looking env key ${key} into the ${opts.pkg} service unit; keep secrets in a 0600 file, not in the unit`,
+      );
+    }
   }
   const dir = opts.dir ?? defaultServicesDir(host, opts.env_proc);
   mkdirSync(dir, { recursive: true });
