@@ -150,6 +150,28 @@ describe("#520: agent serve publishes a session-refcount registry beside the DF-
     expect(currentSessionRefcounts()).toBe(sentinel);
   });
 
+  test("#520: leases without an idle timeout never write the session seam", async () => {
+    // Installed before start: a publish that writes the seam replaces it.
+    const sentinel = createSessionRefcounts({ idleTimeoutMs: 1000 });
+    setSessionRefcountRegistry(sentinel);
+    const first = startAgent({ residencyLeases: true });
+    expect(currentSessionRefcounts()).toBe(sentinel);
+    agents.splice(agents.indexOf(first), 1);
+    await first.stop();
+    expect(currentSessionRefcounts()).toBe(sentinel);
+
+    // Installed while running over a null seam: a restore that writes the
+    // seam puts the null captured at start back.
+    setSessionRefcountRegistry(null);
+    const second = startAgent({ residencyLeases: true });
+    expect(currentSessionRefcounts()).toBeNull();
+    setSessionRefcountRegistry(sentinel);
+    expect(currentSessionRefcounts()).toBe(sentinel);
+    agents.splice(agents.indexOf(second), 1);
+    await second.stop();
+    expect(currentSessionRefcounts()).toBe(sentinel);
+  });
+
   test("#520: an invalid idle timeout throws before binding and leaves both seams untouched", () => {
     expect(currentSessionRefcounts()).toBeNull();
     expect(getResidencyLeaseRegistry()).toBeNull();
