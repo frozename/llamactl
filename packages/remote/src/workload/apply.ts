@@ -235,6 +235,14 @@ export interface ApplyManifestOptions {
   residencyAdmission?: {
     getNodeResidencyPolicy: (nodeName: string) => NodeRunResidency | null | undefined;
     getMeasuredEnvelope: (manifest: ModelHostManifest) => MeasuredEnvelope | null | undefined;
+    /** The memoryCalibrationKey encoding of the candidate's calibration
+     *  inputs. The measured envelope is only charged when it matches; a null
+     *  key means the candidate is uncalibratable and the envelope is ignored. */
+    getCandidateCalibrationKey: (manifest: ModelHostManifest) => string | null | undefined;
+    /** Clock override for freshness checks; defaults to Date.now(). */
+    nowMs?: () => number;
+    /** Max envelope age in ms; defaults to DEFAULT_MEASURED_ENVELOPE_MAX_AGE_MS. */
+    maxAgeMs?: number;
   };
 }
 
@@ -528,10 +536,19 @@ function admitModelHostBudget(
     const envelope = policyPresent
       ? opts.residencyAdmission.getMeasuredEnvelope(manifest)
       : undefined;
+    const candidateKey = policyPresent
+      ? (opts.residencyAdmission.getCandidateCalibrationKey(manifest) ?? undefined)
+      : undefined;
+    const nowMs = policyPresent ? (opts.residencyAdmission.nowMs?.() ?? Date.now()) : undefined;
     expectedMemoryGiB = modelHostAdmissionChargeGiB({
       estimateGiB,
       residencyPolicyPresent: policyPresent,
       envelope,
+      candidateKey,
+      nowMs,
+      ...(opts.residencyAdmission.maxAgeMs !== undefined
+        ? { maxAgeMs: opts.residencyAdmission.maxAgeMs }
+        : {}),
     });
   }
   const admit = computeNodeBudget({
@@ -739,6 +756,14 @@ export async function applyOneModelHost(
     residencyAdmission?: {
       getNodeResidencyPolicy: (nodeName: string) => NodeRunResidency | null | undefined;
       getMeasuredEnvelope: (manifest: ModelHostManifest) => MeasuredEnvelope | null | undefined;
+      /** The memoryCalibrationKey encoding of the candidate's calibration
+       *  inputs. The measured envelope is only charged when it matches; a null
+       *  key means the candidate is uncalibratable and the envelope is ignored. */
+      getCandidateCalibrationKey: (manifest: ModelHostManifest) => string | null | undefined;
+      /** Clock override for freshness checks; defaults to Date.now(). */
+      nowMs?: () => number;
+      /** Max envelope age in ms; defaults to DEFAULT_MEASURED_ENVELOPE_MAX_AGE_MS. */
+      maxAgeMs?: number;
     };
   },
 ): Promise<ApplyManifestOutcome> {
