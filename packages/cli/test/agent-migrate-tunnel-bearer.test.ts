@@ -14,18 +14,33 @@ import { buildSystemdUnit } from "../src/commands/agent-install/systemd-template
 import { buildSystemPlist, buildUserPlist } from "../src/commands/agent-install/templates.js";
 import { runAgent } from "../src/commands/agent.js";
 import {
+  chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readlinkSync,
+  realpathSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "../src/safe-fs.js";
 import { captureProcessStreams } from "./helpers.js";
 
 const TOKEN = "fixture-bearer-289-DO-NOT-ECHO";
 const CENTRAL = "fixture-central-289-DO-NOT-ECHO";
+// Bearers whose unit spelling differs from the value: systemd's %% escape
+// and XML entities in a plist. Both spellings must stay out of output.
+const PCT_TOKEN = "fixture-pct-289-%-DO-NOT-ECHO";
+const PCT_TOKEN_UNIT = "fixture-pct-289-%%-DO-NOT-ECHO";
+const XML_TOKEN = "fixture-xml-289-&-<-&lt;-DO-NOT-ECHO";
+const XML_TOKEN_PLIST = "fixture-xml-289-&amp;-&lt;-&amp;lt;-DO-NOT-ECHO";
+const SECRETS = [TOKEN, CENTRAL, PCT_TOKEN, PCT_TOKEN_UNIT, XML_TOKEN, XML_TOKEN_PLIST];
+
+// Read-only dirs do not stop root, so those tests cannot fail the write.
+const IS_ROOT = process.getuid?.() === 0;
 
 const ENV_KEYS = ["LLAMACTL_AGENT_DIR", "DEV_STORAGE", "HOME"] as const;
 
@@ -118,8 +133,7 @@ function writeUnit(name: string, body: string): string {
 
 function expectNoSecrets(r: { stdout: string; stderr: string }): void {
   for (const text of [r.stdout, r.stderr]) {
-    expect(text).not.toContain(TOKEN);
-    expect(text).not.toContain(CENTRAL);
+    for (const secret of SECRETS) expect(text).not.toContain(secret);
   }
 }
 
@@ -490,6 +504,169 @@ describe("agent migrate-tunnel-bearer (#289)", () => {
     expect(unit).not.toContain(CENTRAL);
     expect(unit).toContain(`\nEnvironment=DEV_STORAGE=${ds}\nRestart=on-failure\n`);
     expectNoSecrets(r);
+  });
+
+  test("C15: a symlinked unit is rewritten at its target and the link is kept", async () => {
+    const agentDir = mkdtempSync(join(dir, "agent-"));
+    const realDir = mkdtempSync(join(dir, "real-"));
+    const linkDir = mkdtempSync(join(dir, "links-"));
+    const targetPath = join(realDir, "llamactl-agent.service");
+    writeFileSync(
+      targetPath,
+      handSystemdUnit(agentDir, [`Environment=HF_HOME=/hf LLAMACTL_TUNNEL_BEARER=${TOKEN}`]),
+    );
+    const linkPath = join(linkDir, "llamactl-agent.service");
+    symlinkSync(targetPath, linkPath);
+
+    const r = await run([linkPath, "--write"]);
+    expect(r.result).toBe(0);
+    expect(lstatSync(linkPath).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(linkPath)).toBe(targetPath);
+    const unit = readFileSync(targetPath, "utf8");
+    expect(unit).not.toContain("LLAMACTL_TUNNEL_BEARER");
+    expect(unit).not.toContain(TOKEN);
+    expect(unit).toContain("\nEnvironment=HF_HOME=/hf\n");
+    expect(readFileSync(join(agentDir, "tunnel-bearer"), "utf8").trim()).toBe(TOKEN);
+    expect(r.stdout).toContain(`removed LLAMACTL_TUNNEL_BEARER from ${realpathSync(targetPath)}`);
+    expect(r.stdout).toContain("systemctl --user restart llamactl-agent.service");
+    expectNoSecrets(r);
+  });
+
+  test.skipIf(IS_ROOT)(
+    "C16: an unwritable unit dir fails after the bearer file is safely written",
+    async () => {
+      const agentDir = mkdtempSync(join(dir, "agent-"));
+      const unitDir = mkdtempSync(join(dir, "units-"));
+      const unitPath = join(unitDir, "llamactl-agent.service");
+      writeFileSync(
+        unitPath,
+        handSystemdUnit(agentDir, [`Environment=LLAMACTL_TUNNEL_BEARER=${TOKEN}`]),
+      );
+      const before = readFileSync(unitPath, "utf8");
+      chmodSync(unitDir, 0o555);
+      try {
+        const r = await run([unitPath, "--write"]);
+        expect(r.result).toBe(1);
+        expect(r.stderr).toContain("could not rewrite");
+        expectNoSecrets(r);
+      } finally {
+        chmodSync(unitDir, 0o755);
+      }
+      // No token lost: the unit still has it and the 0600 file holds it.
+      expect(readFileSync(unitPath, "utf8")).toBe(before);
+      const bearerPath = join(agentDir, "tunnel-bearer");
+      expect(readFileSync(bearerPath, "utf8").trim()).toBe(TOKEN);
+      expect(statSync(bearerPath).mode & 0o777).toBe(0o600);
+    },
+  );
+
+  test.skipIf(IS_ROOT)("C17: an unwritable agent dir leaves the unit unchanged", async () => {
+    const agentDir = mkdtempSync(join(dir, "agent-"));
+    const unitPath = writeUnit(
+      "llamactl-agent.service",
+      handSystemdUnit(agentDir, [
+        `Environment=LLAMACTL_TUNNEL_BEARER=${TOKEN} LLAMACTL_TUNNEL_CENTRAL_BEARER=${CENTRAL}`,
+      ]),
+    );
+    const before = readFileSync(unitPath, "utf8");
+    chmodSync(agentDir, 0o555);
+    try {
+      const r = await run([unitPath, "--write"]);
+      expect(r.result).toBe(1);
+      expect(r.stderr).toContain("could not write a bearer file");
+      expectNoSecrets(r);
+    } finally {
+      chmodSync(agentDir, 0o755);
+    }
+    expect(readFileSync(unitPath, "utf8")).toBe(before);
+    expect(existsSync(join(agentDir, "tunnel-bearer"))).toBe(false);
+    expect(existsSync(join(agentDir, "tunnel-central-bearer"))).toBe(false);
+  });
+
+  test("C18: the rewritten unit keeps its original file mode", async () => {
+    const agentDir = mkdtempSync(join(dir, "agent-"));
+    const unitPath = writeUnit(
+      "llamactl-agent.service",
+      handSystemdUnit(agentDir, [`Environment=LLAMACTL_TUNNEL_BEARER=${TOKEN}`]),
+    );
+    chmodSync(unitPath, 0o640);
+    const r = await run([unitPath, "--write"]);
+    expect(r.result).toBe(0);
+    expect(readFileSync(unitPath, "utf8")).not.toContain(TOKEN);
+    expect(statSync(unitPath).mode & 0o777).toBe(0o640);
+    expectNoSecrets(r);
+  });
+
+  test("C19: a systemd %% in the bearer migrates as a single %", async () => {
+    const agentDir = mkdtempSync(join(dir, "agent-"));
+    const unitPath = writeUnit(
+      "llamactl-agent.service",
+      handSystemdUnit(agentDir, [`Environment=LLAMACTL_TUNNEL_BEARER=${PCT_TOKEN_UNIT}`]),
+    );
+    const r = await run([unitPath, "--write"]);
+    expect(r.result).toBe(0);
+    expect(readFileSync(join(agentDir, "tunnel-bearer"), "utf8")).toBe(`${PCT_TOKEN}\n`);
+    expect(readFileSync(unitPath, "utf8")).not.toContain("LLAMACTL_TUNNEL_BEARER");
+    expectNoSecrets(r);
+  });
+
+  test("C20: an empty bearer value is refused", async () => {
+    const agentDir = mkdtempSync(join(dir, "agent-"));
+    const unitPath = writeUnit(
+      "llamactl-agent.service",
+      handSystemdUnit(agentDir, ["Environment=LLAMACTL_TUNNEL_BEARER="]),
+    );
+    const before = readFileSync(unitPath, "utf8");
+    const r = await run([unitPath, "--write"]);
+    expect(r.result).toBe(1);
+    expect(r.stderr).toContain(`LLAMACTL_TUNNEL_BEARER in ${unitPath} is empty`);
+    expect(readFileSync(unitPath, "utf8")).toBe(before);
+    expect(existsSync(join(agentDir, "tunnel-bearer"))).toBe(false);
+    expectNoSecrets(r);
+  });
+
+  test("C21: a plist bearer is XML-decoded once into the bearer file", async () => {
+    const agentDir = mkdtempSync(join(dir, "agent-"));
+    const plistPath = writeUnit(
+      "node-agent.plist",
+      issueShapedPlist({
+        PATH: "/usr/bin",
+        LLAMACTL_AGENT_DIR: agentDir,
+        LLAMACTL_TUNNEL_BEARER: XML_TOKEN_PLIST,
+      }),
+    );
+    const r = await run([plistPath, "--write"]);
+    expect(r.result).toBe(0);
+    expect(readFileSync(join(agentDir, "tunnel-bearer"), "utf8")).toBe(`${XML_TOKEN}\n`);
+    const plist = readFileSync(plistPath, "utf8");
+    expect(plist).not.toContain("LLAMACTL_TUNNEL_BEARER");
+    expect(plist).not.toContain(XML_TOKEN_PLIST);
+    expectNoSecrets(r);
+  });
+
+  test("C22: a systemd EnvironmentFile= without --dir needs the operator's --dir", async () => {
+    const ds = mkdtempSync(join(dir, "ds-"));
+    const unitPath = writeUnit(
+      "llamactl-agent.service",
+      handSystemdUnit(undefined, [
+        "EnvironmentFile=-/etc/llamactl/agent.env",
+        `Environment=DEV_STORAGE=${ds} LLAMACTL_TUNNEL_BEARER=${TOKEN}`,
+      ]),
+    );
+    const before = readFileSync(unitPath, "utf8");
+    const r = await run([unitPath, "--write"]);
+    expect(r.result).toBe(1);
+    expect(r.stderr).toContain("EnvironmentFile=");
+    expect(r.stderr).toContain("pass --dir=<abs path>");
+    expect(readFileSync(unitPath, "utf8")).toBe(before);
+    expect(existsSync(join(ds, "tunnel-bearer"))).toBe(false);
+    expectNoSecrets(r);
+
+    const agentDir = mkdtempSync(join(dir, "agent-"));
+    const r2 = await run([unitPath, `--dir=${agentDir}`]);
+    expect(r2.result).toBe(0);
+    expect(r2.stdout).toContain(`would write ${join(agentDir, "tunnel-bearer")} (0600)`);
+    expectNoSecrets(r2);
   });
 
   test("C11: system-scope launchd plist gets a system-domain kickstart hint", async () => {

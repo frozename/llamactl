@@ -6,12 +6,17 @@ import { basename, isAbsolute, join, resolve } from "node:path";
 
 import {
   chmodSync,
+  closeSync,
   existsSync,
+  fsyncSync,
+  lstatSync,
+  openSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
-  writeFileSync,
+  writeSync,
 } from "../safe-fs.js";
 
 const USAGE = `Usage: llamactl agent migrate-tunnel-bearer <unit-path> [--write] [--dir=<abs path>]
@@ -20,7 +25,8 @@ Move LLAMACTL_TUNNEL_BEARER / LLAMACTL_TUNNEL_CENTRAL_BEARER out of a
 launchd plist or systemd unit into <dir>/tunnel-bearer /
 <dir>/tunnel-central-bearer (0600). <dir> is the agent dir the unit
 itself names: its last --dir= argument, else LLAMACTL_AGENT_DIR,
-DEV_STORAGE or HOME from the unit's environment. Dry run unless
+DEV_STORAGE or HOME from the unit's environment (a systemd unit with
+an EnvironmentFile= and no --dir= needs --dir). Dry run unless
 --write is passed; the token is never printed and the service is never
 restarted — only the reload hint is shown.
 `;
@@ -84,6 +90,8 @@ interface LaunchdUnit extends ParsedUnitBase {
 interface SystemdUnit extends ParsedUnitBase {
   format: "systemd";
   multiUser: boolean;
+  /** An EnvironmentFile= is in effect: it may set the agent dir. */
+  hasEnvironmentFile: boolean;
 }
 
 type ParsedUnit = LaunchdUnit | SystemdUnit;
@@ -318,16 +326,24 @@ function execStartWords(value: string): string[] {
   );
 }
 
-function collectSystemdLine(
-  rawLine: string,
-  span: [number, number],
-  env: EnvEntry[],
-  args: string[],
-): void {
+interface SystemdCollector {
+  env: EnvEntry[];
+  args: string[];
+  hasEnvironmentFile: boolean;
+}
+
+function collectSystemdLine(rawLine: string, span: [number, number], out: SystemdCollector): void {
+  const { env, args } = out;
   const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
   const exec = /^[ \t]*ExecStart[ \t]*=(.*)$/.exec(line);
   if (exec !== null) {
     args.push(...execStartWords(exec[1] ?? ""));
+    return;
+  }
+  const envFile = /^[ \t]*EnvironmentFile[ \t]*=(.*)$/.exec(line);
+  if (envFile !== null) {
+    // An empty assignment resets the list, as systemd does.
+    out.hasEnvironmentFile = (envFile[1] ?? "").trim() !== "";
     return;
   }
   const envM = /^([ \t]*Environment[ \t]*=)(.*)$/.exec(line);
@@ -386,22 +402,22 @@ function installWantsMultiUser(body: string): boolean {
 function parseSystemd(content: string): SystemdUnit {
   const service = extractSection(content, "Service");
   const install = extractSection(content, "Install");
-  const env: EnvEntry[] = [];
-  const args: string[] = [];
+  const out: SystemdCollector = { env: [], args: [], hasEnvironmentFile: false };
   if (service !== null) {
     let off = service.offset;
     for (const line of service.body.split("\n")) {
       const span: [number, number] = [off, off + line.length];
-      collectSystemdLine(line, span, env, args);
+      collectSystemdLine(line, span, out);
       off = span[1] + 1;
     }
   }
   return {
     format: "systemd",
-    args,
-    env,
-    envMap: envMapOf(env),
+    args: out.args,
+    env: out.env,
+    envMap: envMapOf(out.env),
     multiUser: install !== null && installWantsMultiUser(install.body),
+    hasEnvironmentFile: out.hasEnvironmentFile,
   };
 }
 
@@ -429,6 +445,18 @@ function matchOperatorDir(
   return { dir: resolved };
 }
 
+// systemd applies EnvironmentFile= after Environment=, so a file we do
+// not read may set LLAMACTL_AGENT_DIR or DEV_STORAGE: only the operator
+// can say which dir the service really uses.
+function envFileDir(optDir: string | undefined): { dir: string } | { error: string } {
+  if (optDir !== undefined) return { dir: optDir };
+  return {
+    error:
+      "the unit has an EnvironmentFile= that may set LLAMACTL_AGENT_DIR or DEV_STORAGE " +
+      "and no --dir= in its ExecStart; pass --dir=<abs path>",
+  };
+}
+
 function resolveAgentDir(
   unit: ParsedUnit,
   optDir: string | undefined,
@@ -440,6 +468,7 @@ function resolveAgentDir(
     }
     return matchOperatorDir(argDir, optDir);
   }
+  if (unit.format === "systemd" && unit.hasEnvironmentFile) return envFileDir(optDir);
   for (const key of ["LLAMACTL_AGENT_DIR", "DEV_STORAGE"] as const) {
     const v = unit.envMap.get(key)?.trim() ?? "";
     if (v !== "") return matchOperatorDir(v, optDir);
@@ -591,11 +620,43 @@ function rewriteUnit(content: string, removals: Removal[]): string {
   return out;
 }
 
-function applyWrite(plan: ReadyPlan): number {
+// Write `data` to a fresh fd and fsync it before closing, so a crash
+// after the unit rename cannot leave an empty bearer file or unit.
+function writeDurably(path: string, data: string, flag: string, mode: number): void {
+  const fd = openSync(path, flag, mode);
+  try {
+    const buf = Buffer.from(data, "utf8");
+    let off = 0;
+    while (off < buf.length) off += writeSync(fd, buf, off, buf.length - off);
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+// The file a unit path really names. A symlinked unit (e.g. a systemd
+// unit linked in from elsewhere) is rewritten at its target, so the link
+// survives and the target, which systemd/launchd read, loses the bearer.
+function resolveUnitTarget(
+  path: string,
+): { target: string; mode: number; isLink: boolean } | { error: string } {
+  try {
+    const target = realpathSync(path);
+    const isLink = lstatSync(path).isSymbolicLink();
+    return { target, mode: statSync(target).mode & 0o777, isLink };
+  } catch (err) {
+    return { error: `cannot resolve ${path}: ${errMessage(err)}` };
+  }
+}
+
+// Bearer files first, unit last: if any bearer file cannot be written the
+// unit is untouched, and the unit only loses a bearer once its 0600 file
+// is durably on disk.
+function writeBearerFiles(plan: ReadyPlan): { written: string[] } | { error: string } {
   const written: string[] = [];
   try {
     for (const t of plan.targets) {
-      writeFileSync(t.filePath, `${t.value}\n`, { flag: "wx", mode: 0o600 });
+      writeDurably(t.filePath, `${t.value}\n`, "wx", 0o600);
       try {
         chmodSync(t.filePath, 0o600);
       } catch {
@@ -604,28 +665,50 @@ function applyWrite(plan: ReadyPlan): number {
       written.push(t.filePath);
     }
   } catch (err) {
-    return fail(errMessage(err));
+    const prefix = written.length > 0 ? `wrote ${written.join(" ")} but ` : "";
+    return { error: `${prefix}could not write a bearer file: ${errMessage(err)}` };
   }
-  const removals = plan.targets.flatMap((t) => t.removals);
-  const tmp = `${plan.path}.migrate-tmp-${String(process.pid)}`;
+  return { written };
+}
+
+function replaceUnit(target: string, mode: number, content: string): string | null {
+  const tmp = `${target}.migrate-tmp-${String(process.pid)}`;
   try {
-    writeFileSync(tmp, rewriteUnit(plan.content, removals), {
-      mode: statSync(plan.path).mode & 0o777,
-    });
-    renameSync(tmp, plan.path);
+    writeDurably(tmp, content, "wx", mode);
+    chmodSync(tmp, mode);
+    renameSync(tmp, target);
+    return null;
   } catch (err) {
     try {
       rmSync(tmp, { force: true });
     } catch {
       // best-effort
     }
+    return errMessage(err);
+  }
+}
+
+function applyWrite(plan: ReadyPlan): number {
+  const unitTarget = resolveUnitTarget(plan.path);
+  if ("error" in unitTarget) return fail(unitTarget.error);
+  const { target, mode, isLink } = unitTarget;
+  const removals = plan.targets.flatMap((t) => t.removals);
+  const rewritten = rewriteUnit(plan.content, removals);
+  const bearers = writeBearerFiles(plan);
+  if ("error" in bearers) return fail(bearers.error);
+  const unitErr = replaceUnit(target, mode, rewritten);
+  if (unitErr !== null) {
     return fail(
-      `wrote ${written.join(" ")} but could not rewrite ${plan.path}: ${errMessage(err)}`,
+      `wrote ${bearers.written.join(" ")} but could not rewrite ${target}: ${unitErr}; ` +
+        `the unit still holds the bearer — remove it by hand`,
     );
   }
   for (const t of plan.targets) {
     process.stdout.write(`wrote ${t.filePath} (0600)\n`);
-    process.stdout.write(`removed ${t.envKey} from ${plan.path}\n`);
+    process.stdout.write(`removed ${t.envKey} from ${target}\n`);
+  }
+  if (isLink) {
+    process.stdout.write(`(${plan.path} is a link to ${target}; the link was kept)\n`);
   }
   process.stdout.write(`reload the service: ${reloadHint(plan.unit, plan.path)}\n`);
   return 0;
