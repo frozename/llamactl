@@ -168,6 +168,22 @@ describe("doctor [units] probe (#196)", () => {
     expect(out).not.toContain("is not an integer");
   });
 
+  test("accepts whitespace around '=' the way systemd does", async () => {
+    writeUnit(
+      "llamactl-controller.service",
+      BARE.replace("KillMode=process\n", "KillMode=process\nOOMScoreAdjust=300\n"),
+    );
+    writeDropIn("llamactl-controller.service", "oom.conf", "[Service]\nOOMScoreAdjust = 100\n");
+
+    const { result, out } = await runWithUnits([]);
+
+    expect(result).toBe(0);
+    expect(out).toContain(
+      "✓ llamactl-controller.service OOMScoreAdjust=100 (llamactl-controller.service.d/oom.conf)",
+    );
+    expect(out).not.toContain("is above 100");
+  });
+
   test.each(["abc", "100abc"])("warns when OOMScoreAdjust=%s is not an integer", async (raw) => {
     writeUnit("llamactl-controller.service", BARE);
     writeDropIn("llamactl-controller.service", "oom.conf", `[Service]\nOOMScoreAdjust=${raw}\n`);
