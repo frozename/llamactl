@@ -3,6 +3,11 @@
 // the router has no residencyStatus procedure, so both seams are probed
 // through guarded dynamic imports and an untyped _def lookup — every
 // case fails by assertion, never by a missing module or a type error.
+import {
+  createResidencyLeases,
+  type ResidencyLeases,
+  setResidencyLeaseRegistry,
+} from "@llamactl/core/residency/leases";
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
@@ -12,6 +17,7 @@ import { router } from "../../src/router.js";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "../../src/safe-fs.js";
 import { defaultNodeBudgetGiB } from "../../src/workload/admission.js";
 import { saveNodeRun } from "../../src/workload/noderun-store.js";
+import { saveWorkload } from "../../src/workload/store.js";
 
 const STORE_MODULE = "../../src/residency/store.js";
 const PROC_MODULE = "../../src/residency/procedures.js";
@@ -106,12 +112,39 @@ type StoreProbe =
     }
   | { path: string; present: true; error: string };
 
+type LeaseWorkloadRow = {
+  workload: string;
+  phase: "open" | "draining" | "unloaded";
+  epoch: number;
+  activeLeaseCount: number;
+  waiters: number;
+};
+
+type LeaseAuditRow = {
+  workload: string;
+  epoch: number;
+  forced: true;
+  revokedCount: number;
+  reason: string | null;
+};
+
+type LeasesSection =
+  | { status: "unavailable"; scope: "serving-process" }
+  | {
+      status: "available";
+      scope: "serving-process";
+      workloads: LeaseWorkloadRow[];
+      auditCount: number;
+      recentAudit: LeaseAuditRow[];
+    };
+
 type ResidencyStatus = {
   node: string;
   nodeRun: { present: boolean };
   policy: { present: false } | { present: true; residency: unknown };
   budget: { memoryGiB: number; source: "noderun" | "computed" };
   store: StoreProbe & { scope: "serving-process" };
+  leases?: LeasesSection;
 };
 
 type BuildInput = {
@@ -120,6 +153,8 @@ type BuildInput = {
   budgetGiB: number;
   budgetSource: "noderun" | "computed";
   store: StoreProbe;
+  leaseRegistry?: ResidencyLeases | null | undefined;
+  leaseWorkloads?: readonly string[] | undefined;
 };
 
 type StoreModule = {
@@ -147,6 +182,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  setResidencyLeaseRegistry(null);
   rmSync(tmp, { recursive: true, force: true });
   for (const k of Object.keys(process.env)) Reflect.deleteProperty(process.env, k);
   Object.assign(process.env, originalEnv);
@@ -232,6 +268,8 @@ describe("residencyStatus", () => {
       present: false,
       scope: "serving-process",
     });
+    expect(r.leases?.status).toBe("unavailable");
+    expect(r.leases).toEqual({ status: "unavailable", scope: "serving-process" });
     expect(existsSync(join(tmp, "residency-state"))).toBe(false);
     expect(readdirSync(tmp).sort()).toEqual(before);
   });
@@ -378,6 +416,62 @@ describe("residencyStatus", () => {
       ro.close();
     }
   });
+
+  test("residencyStatus snapshots the installed registry over manifest and audit workloads", async () => {
+    saveWorkload(
+      {
+        apiVersion: "llamactl/v1",
+        kind: "ModelRun",
+        metadata: { name: "run-a", labels: {}, annotations: {} },
+        spec: {
+          node: "local",
+          enabled: true,
+          target: { kind: "rel", value: "fake-org/run-a.gguf" },
+          extraArgs: [],
+          workers: [],
+          restartPolicy: "Always",
+          resources: { expectedMemoryGiB: 12 },
+          endpoint: { host: "127.0.0.1", port: 8199 },
+          timeoutSeconds: 60,
+          gateway: false,
+          allowExternalBind: false,
+        },
+      },
+      tmp,
+    );
+    const reg = createResidencyLeases();
+    setResidencyLeaseRegistry(reg);
+    const runLease = reg.acquire("run-a");
+    expect(runLease.ok).toBe(true);
+    const goneLease = reg.acquire("gone-model");
+    expect(goneLease.ok).toBe(true);
+    const goneDrain = reg.beginDrain("gone-model");
+    if (!goneDrain.ok) {
+      throw new Error(`beginDrain(gone-model) refused: ${goneDrain.reason}`);
+    }
+    expect(reg.commitUnload(goneDrain.token, { force: true, reason: "gc" })).toEqual({
+      ok: true,
+      revoked: ["gone-model#1"],
+    });
+
+    const r = await status("local");
+    expect(r.leases?.status).toBe("available");
+    const leases = r.leases;
+    if (leases?.status !== "available") {
+      throw new Error("expected an available leases section");
+    }
+    expect(leases.workloads.map((w) => w.workload)).toEqual(["gone-model", "run-a"]);
+    expect(leases.workloads.find((w) => w.workload === "run-a")).toEqual({
+      workload: "run-a",
+      phase: "open",
+      epoch: 0,
+      activeLeaseCount: 1,
+      waiters: 0,
+    });
+    expect(leases.recentAudit).toEqual([
+      { workload: "gone-model", epoch: 1, forced: true, revokedCount: 1, reason: "gc" },
+    ]);
+  });
 });
 
 describe("defaultResidencyStorePath", () => {
@@ -410,6 +504,121 @@ describe("buildResidencyStatus", () => {
       policy: { present: false },
       budget: { memoryGiB: 10, source: "computed" },
       store: { path: "/p", present: false, scope: "serving-process" },
+      leases: { status: "unavailable", scope: "serving-process" },
+    });
+  });
+
+  test("buildResidencyStatus reports per-workload phase, epoch, lease count, waiters and audit", async () => {
+    const proc = await requireProcModule();
+    const reg = createResidencyLeases();
+    const bLease = reg.acquire("b-run");
+    expect(bLease.ok).toBe(true);
+    const aLease = reg.acquire("a-drain");
+    expect(aLease.ok).toBe(true);
+    const drain = reg.beginDrain("a-drain");
+    if (!drain.ok) {
+      throw new Error(`beginDrain(a-drain) refused: ${drain.reason}`);
+    }
+    void reg.whenIdle(drain.token);
+    const zLease = reg.acquire("z-forced");
+    expect(zLease.ok).toBe(true);
+    const zDrain = reg.beginDrain("z-forced");
+    if (!zDrain.ok) {
+      throw new Error(`beginDrain(z-forced) refused: ${zDrain.reason}`);
+    }
+    expect(reg.commitUnload(zDrain.token, { force: true, reason: "operator test" })).toEqual({
+      ok: true,
+      revoked: ["z-forced#1"],
+    });
+
+    try {
+      const built = proc.buildResidencyStatus({
+        node: "n",
+        nodeRun: undefined,
+        budgetGiB: 10,
+        budgetSource: "computed",
+        store: { path: "/p", present: false },
+        leaseRegistry: reg,
+        leaseWorkloads: ["b-run", "a-drain", "b-run"],
+      });
+      expect(built.leases?.status).toBe("available");
+      expect(built.leases).toEqual({
+        status: "available",
+        scope: "serving-process",
+        workloads: [
+          {
+            workload: "a-drain",
+            phase: "draining",
+            epoch: 1,
+            activeLeaseCount: 1,
+            waiters: 1,
+          },
+          { workload: "b-run", phase: "open", epoch: 0, activeLeaseCount: 1, waiters: 0 },
+          {
+            workload: "z-forced",
+            phase: "unloaded",
+            epoch: 1,
+            activeLeaseCount: 0,
+            waiters: 0,
+          },
+        ],
+        auditCount: 1,
+        recentAudit: [
+          {
+            workload: "z-forced",
+            epoch: 1,
+            forced: true,
+            revokedCount: 1,
+            reason: "operator test",
+          },
+        ],
+      });
+    } finally {
+      reg.cancelDrain(drain.token);
+    }
+  });
+
+  test("recentAudit keeps the last 20 entries and a missing reason is null", async () => {
+    const proc = await requireProcModule();
+    const reg = createResidencyLeases();
+    for (let i = 0; i < 25; i += 1) {
+      const name = `w${String(i).padStart(2, "0")}`;
+      const lease = reg.acquire(name);
+      expect(lease.ok).toBe(true);
+      const drain = reg.beginDrain(name);
+      if (!drain.ok) {
+        throw new Error(`beginDrain(${name}) refused: ${drain.reason}`);
+      }
+      const committed =
+        i === 24
+          ? reg.commitUnload(drain.token, { force: true })
+          : reg.commitUnload(drain.token, { force: true, reason: `r${String(i)}` });
+      expect(committed.ok).toBe(true);
+    }
+
+    const built = proc.buildResidencyStatus({
+      node: "n",
+      nodeRun: undefined,
+      budgetGiB: 10,
+      budgetSource: "computed",
+      store: { path: "/p", present: false },
+      leaseRegistry: reg,
+      leaseWorkloads: [],
+    });
+    expect(built.leases?.status).toBe("available");
+    const leases = built.leases;
+    if (leases?.status !== "available") {
+      throw new Error("expected an available leases section");
+    }
+    expect(leases.auditCount).toBe(25);
+    expect(leases.recentAudit).toHaveLength(20);
+    expect(leases.recentAudit[0]?.workload).toBe("w05");
+    expect(leases.recentAudit[19]).toEqual({
+      workload: "w24",
+      epoch: 1,
+      forced: true,
+      revokedCount: 1,
+      reason: null,
     });
   });
 });
