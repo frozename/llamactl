@@ -114,6 +114,9 @@ _llamactl_fallback_provider_url() {
   # ${x%/}, [ ]) so this fallback also runs under bash and sh.
   local host port tracked proxy
   host="${LLAMA_CPP_HOST:-127.0.0.1}"
+  # Unreachable here (LLAMA_CPP_PORT and LOCAL_AI_LLAMA_CPP_BASE_URL are
+  # exported above); kept identical to _local_ai_llama_cpp_provider_url in
+  # shell/llamactl.zsh.
   if [ -n "${LLAMACTL_TEST_PROFILE:-}" ] && [ -z "${LLAMA_CPP_PORT:-}" ]; then
     port=65534
   else

@@ -230,6 +230,39 @@ describe("shell/llamactl.zsh _local_ai_sync_env (#315)", () => {
     ],
     // kills: printing an empty provider URL when nothing is seeded.
     ["unseeded shell", (): SyncInput => ({ env: {}, unseeded: true }), PX],
+    // kills: dropping the port=65534 test-profile branch in the mirror.
+    [
+      "unseeded test profile without LLAMA_CPP_PORT keeps the sentinel",
+      (dir): SyncInput => ({ env: { LLAMACTL_TEST_PROFILE: dir }, unseeded: true }),
+      TEST_PROFILE_URL,
+    ],
+    // kills: dropping the trailing-slash strip loop in the mirror.
+    [
+      "unseeded proxy URL with a trailing slash",
+      (dir): SyncInput => ({
+        env: { ...baseVars(dir), LLAMACTL_INTERNAL_PROXY_URL: `${PROXY_URL}/` },
+        unseeded: true,
+      }),
+      PROXY_V1,
+    ],
+    // kills: dropping the trailing-slash strip loop ahead of the /v1 check.
+    [
+      "unseeded proxy URL with a trailing /v1/",
+      (dir): SyncInput => ({
+        env: { ...baseVars(dir), LLAMACTL_INTERNAL_PROXY_URL: `${PROXY_URL}/v1/` },
+        unseeded: true,
+      }),
+      PROXY_V1,
+    ],
+    // kills: the mirror's tracked default hardcoding port 8080.
+    [
+      "unseeded ROUTE=direct follows LLAMA_CPP_PORT",
+      (dir): SyncInput => ({
+        env: { ...baseVars(dir), LOCAL_AI_PROVIDER_ROUTE: "direct", LLAMA_CPP_PORT: "9090" },
+        unseeded: true,
+      }),
+      "http://127.0.0.1:9090/v1",
+    ],
     // kills: applying the proxy rule to the lmstudio branch.
     [
       "seeded lmstudio stays on lmstudio",
@@ -247,8 +280,10 @@ describe("shell/llamactl.zsh _local_ai_sync_env (#315)", () => {
     "shell/llamactl.zsh _local_ai_sync_env %s",
     (_name, inputFn, expected) => {
       const spec = inputFn(tmp);
-      const shellVars: NodeJS.ProcessEnv =
-        spec.unseeded === true ? {} : { ...seed(spec.env), ...(spec.patch ?? {}) };
+      const shellVars: NodeJS.ProcessEnv = {
+        ...(spec.unseeded === true ? spec.env : seed(spec.env)),
+        ...(spec.patch ?? {}),
+      };
 
       const proc = Bun.spawnSync(["zsh", "-f", "-c", ZSH_CMD, "_", LLAMACTL_ZSH], {
         env: spawnEnv(shellVars),
@@ -262,7 +297,7 @@ describe("shell/llamactl.zsh _local_ai_sync_env (#315)", () => {
       expect(stderr).toBe("");
 
       const [providerUrl, openAiBaseUrl] = stdout.trim().split("|");
-      const resolved = resolveEnv(spec.unseeded === true ? {} : shellVars);
+      const resolved = resolveEnv(shellVars);
       expect(providerUrl).toBe(expected);
       expect(openAiBaseUrl).toBe(expected);
       expect(providerUrl).toBe(resolved.LOCAL_AI_PROVIDER_URL);
