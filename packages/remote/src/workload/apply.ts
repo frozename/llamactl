@@ -1198,6 +1198,12 @@ type EvictFailureReason =
   | "EvictStatusUnknown"
   | "EvictTargetForeign"
   | "EvictStopRefused"
+  /**
+   * The node's residency lease fence (#278) refused the stop because
+   * requests still hold the victim or a drain is in flight; nothing was
+   * stopped; retry after the leases drain; eviction never force-revokes leases.
+   */
+  | "EvictVictimBusy"
   | "EvictStopFailed"
   | "EvictStopTimedOut"
   | "EvictReleaseUnverified"
@@ -1226,6 +1232,10 @@ function evictStopFailure(
     reason,
     message: `${manifest.metadata.name}: eviction of '${target}' failed (${reason}): ${detail}`,
   };
+}
+
+function busyDetail(reason: string, active: string[]): string {
+  return active.length > 0 ? `${reason}: ${active.join(", ")}` : reason;
 }
 
 type EvictVictimKind = "ModelRun" | "ModelHost";
@@ -1300,8 +1310,17 @@ const EVICT_VICTIM_OPS: Record<
         client.serverStop.mutate({ workload: target, graceSeconds: 5 }),
         remainingMs(),
       );
-      const stopped = (stopResult as { stopped?: boolean } | undefined)?.stopped;
-      if (stopped === false) {
+      const refusal = stopResult as
+        | { stopped?: boolean; refused?: { reason?: unknown; active?: unknown } }
+        | undefined;
+      if (refusal?.stopped === false) {
+        const reason = refusal.refused?.reason;
+        if (reason === "LeasesActive" || reason === "DrainInProgress") {
+          const active = Array.isArray(refusal.refused?.active)
+            ? refusal.refused.active.filter((x): x is string => typeof x === "string")
+            : [];
+          return evictStopFailure(manifest, target, "EvictVictimBusy", busyDetail(reason, active));
+        }
         return evictStopFailure(manifest, target, "EvictStopRefused", "refused to stop");
       }
       return null;
@@ -1352,6 +1371,9 @@ const EVICT_VICTIM_OPS: Record<
       );
       const refused = refusedStopReason(outcome);
       if (refused !== null) {
+        if (/^(?:LeasesActive|DrainInProgress)(?::|$)/.test(refused)) {
+          return evictStopFailure(manifest, target, "EvictVictimBusy", refused);
+        }
         return evictStopFailure(manifest, target, "EvictStopRefused", refused);
       }
       return null;
