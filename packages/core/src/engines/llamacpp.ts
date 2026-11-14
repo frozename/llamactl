@@ -45,6 +45,29 @@ function resolveDraftModelArgs(
   return out;
 }
 
+function modelsDirResolver(modelsDir: string): (rel: string, label: string) => string {
+  return (rel: string, label: string): string => {
+    const full = resolve(modelsDir, rel);
+    if (!full.startsWith(`${resolve(modelsDir)}${sep}`)) {
+      throw new Error(`${label} escapes models dir: ${rel}`);
+    }
+    return full;
+  };
+}
+
+/**
+ * Resolve relative draft-model paths (-md/--model-draft/--spec-draft-model/
+ * --dspark, separate or `=` form) against `modelsDir`, refusing escapes.
+ * Shared with `startServer` so a manifest path resolves the same way `-m`
+ * does (#516).
+ */
+export function resolveDraftModelPathArgs(
+  extraArgs: readonly string[],
+  modelsDir: string,
+): string[] {
+  return resolveDraftModelArgs(extraArgs, modelsDirResolver(modelsDir));
+}
+
 export const llamacppEngine: EngineAdapter = {
   name: "llamacpp",
 
@@ -77,13 +100,7 @@ export const llamacppEngine: EngineAdapter = {
       throw new Error("hostedModels must have exactly one entry");
     }
     const modelsDir = env.LLAMACTL_MODELS_DIR ?? env.LLAMA_CPP_MODELS ?? "/tmp/models";
-    const resolveInModelsDir = (rel: string, label: string): string => {
-      const full = resolve(modelsDir, rel);
-      if (!full.startsWith(`${resolve(modelsDir)}${sep}`)) {
-        throw new Error(`${label} escapes models dir: ${rel}`);
-      }
-      return full;
-    };
+    const resolveInModelsDir = modelsDirResolver(modelsDir);
     const fullModelPath = resolveInModelsDir(hostedModel.rel, "hostedModel rel");
     const args: string[] = [
       "--host",
