@@ -140,6 +140,34 @@ function writeNodeRunManifest(infra: { pkg: string; version: string }[]): string
   return manifestPath;
 }
 
+/** A local llama-cpp@b1 package spec with an artifact for every platform. */
+function writeLlamaCppPackageSpec(): void {
+  const sha256 = "a".repeat(64);
+  const platformSpecs = ["darwin-arm64", "darwin-x64", "linux-x64", "linux-arm64"]
+    .map(
+      (platform) =>
+        `      ${platform}:\n        url: https://example.invalid/llama-cpp-b1.tgz\n        sha256: ${sha256}`,
+    )
+    .join("\n");
+  writeFileSync(
+    join(process.env["LLAMACTL_INFRA_PACKAGES_DIR"]!, "llama-cpp.yaml"),
+    `name: llama-cpp\nversions:\n  b1:\n    platforms:\n${platformSpecs}\n`,
+    "utf8",
+  );
+}
+
+/** A mutate handler that answers well after the 20 ms query deadline. */
+function slowMutate<T>(value: T, onCall: () => void): () => Promise<T> {
+  return () => {
+    onCall();
+    return new Promise<T>((resolve) => {
+      setTimeout(() => {
+        resolve(value);
+      }, 100);
+    });
+  };
+}
+
 async function runGuarded(args: string[]): Promise<number | string> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -184,18 +212,7 @@ test("a node whose infraList never answers fails apply at the node query deadlin
 });
 
 test("the artifact resolver's nodeFacts query is bounded too, and install is never attempted (#221)", async () => {
-  const sha256 = "a".repeat(64);
-  const platformSpecs = ["darwin-arm64", "darwin-x64", "linux-x64", "linux-arm64"]
-    .map(
-      (platform) =>
-        `      ${platform}:\n        url: https://example.invalid/llama-cpp-b1.tgz\n        sha256: ${sha256}`,
-    )
-    .join("\n");
-  writeFileSync(
-    join(process.env["LLAMACTL_INFRA_PACKAGES_DIR"]!, "llama-cpp.yaml"),
-    `name: llama-cpp\nversions:\n  b1:\n    platforms:\n${platformSpecs}\n`,
-    "utf8",
-  );
+  writeLlamaCppPackageSpec();
 
   const requested: string[] = [];
   let installCalls = 0;
@@ -260,6 +277,59 @@ test("mutations stay unbounded: a slow infraActivate outlives the query deadline
   expect(stdout).toContain("activate llama-cpp@b1");
   expect(stdout).not.toContain("did not answer");
   expect(activateCalls).toBe(1);
+});
+
+test("mutations stay unbounded: a slow infraInstall outlives the query deadline and still converges (#221)", async () => {
+  writeLlamaCppPackageSpec();
+  let installCalls = 0;
+  __setWorkloadTestSeams({
+    nodeQueryTimeoutMs: 20,
+    getNodeClientByName: () =>
+      makeNodeClient({
+        infraListQuery: () => Promise.resolve([]),
+        nodeFactsQuery: () => Promise.resolve({ os: "linux", arch: "x64" }),
+        infraInstallMutate: slowMutate({ ok: true }, () => {
+          installCalls += 1;
+        }),
+        infraActivateMutate: () => Promise.reject(new Error("infraActivate must not be called")),
+        infraUninstallMutate: () => Promise.reject(new Error("infraUninstall must not be called")),
+      }),
+  });
+  const manifestPath = writeNodeRunManifest([{ pkg: "llama-cpp", version: "b1" }]);
+
+  const { result, stdout } = await withCapturedIo(() => runGuarded(["-f", manifestPath]));
+
+  expect(result).toBe(0);
+  expect(stdout).toContain("converged noderun/gpu1-infra on node gpu1");
+  expect(stdout).toContain("install llama-cpp@b1 (missing)");
+  expect(stdout).not.toContain("did not answer");
+  expect(installCalls).toBe(1);
+});
+
+test("mutations stay unbounded: a slow infraUninstall outlives the query deadline and still converges (#221)", async () => {
+  let uninstallCalls = 0;
+  __setWorkloadTestSeams({
+    nodeQueryTimeoutMs: 20,
+    getNodeClientByName: () =>
+      makeNodeClient({
+        infraListQuery: () => Promise.resolve([{ pkg: "old-pkg", versions: ["v1"], active: "v1" }]),
+        nodeFactsQuery: () => Promise.reject(new Error("nodeFacts must not be queried")),
+        infraInstallMutate: () => Promise.reject(new Error("infraInstall must not be called")),
+        infraActivateMutate: () => Promise.reject(new Error("infraActivate must not be called")),
+        infraUninstallMutate: slowMutate({ ok: true, mode: "package", removed: true }, () => {
+          uninstallCalls += 1;
+        }),
+      }),
+  });
+  const manifestPath = writeNodeRunManifest([]);
+
+  const { result, stdout } = await withCapturedIo(() => runGuarded(["-f", manifestPath]));
+
+  expect(result).toBe(0);
+  expect(stdout).toContain("converged noderun/gpu1-infra on node gpu1");
+  expect(stdout).toContain("uninstall old-pkg (unwanted)");
+  expect(stdout).not.toContain("did not answer");
+  expect(uninstallCalls).toBe(1);
 });
 
 test("a real tRPC client whose node never answers fails apply within the deadline (#221)", async () => {
