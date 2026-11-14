@@ -3,6 +3,7 @@ import { readModelHostState, writeModelHostState } from "@llamactl/core/engines/
 import { resolveEnv } from "@llamactl/core/env";
 import {
   createSessionRefcounts,
+  type SessionRefcounts,
   setSessionRefcountRegistry,
 } from "@llamactl/core/residency/sessions";
 import { afterEach, expect, test } from "bun:test";
@@ -2883,6 +2884,113 @@ test("#569: an explicit opts.sessionGate takes precedence over the installed reg
     expect(result.action).toBe("started");
     expect(stops).toEqual(["a"]);
     expect(starts).toEqual(["b"]);
+  } finally {
+    setSessionRefcountRegistry(null);
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+// #520 (#631 review): the force paths and a throwing checkUnload, driven
+// through an installed registry rather than an explicit opts.sessionGate.
+async function evictAIntoB(
+  client: WorkloadClient,
+  workloadsDir: string,
+): Promise<Awaited<ReturnType<typeof applyOne>>> {
+  return await applyOne(
+    mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090 }),
+    () => client,
+    undefined,
+    undefined,
+    { workloadsDir, getNodeBudgetGiB: () => 32 },
+  );
+}
+
+test("#520: forceRelease on an installed registry lets the next eviction proceed", async () => {
+  const state: WorkloadStateMap = new Map([["a", { up: true, rel: "a.gguf", args: [] }]]);
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-evict-session-force-release-"));
+  saveWorkload(mkManifest("a"), workloadsDir);
+  const { client, stops, starts } = makeRecordingClient(state);
+  const registry = createSessionRefcounts({ idleTimeoutMs: 60_000 });
+  registry.acquire("sess-1", "a");
+  try {
+    setSessionRefcountRegistry(registry);
+    const refused = await evictAIntoB(client, workloadsDir);
+    expect(refused.statusSection.conditions[0]?.reason).toBe("EvictSessionActive");
+    expect(stops).toEqual([]);
+
+    expect(registry.forceRelease("a")).toEqual(["sess-1"]);
+    expect(registry.activeSessions("a")).toEqual([]);
+    const result = await evictAIntoB(client, workloadsDir);
+    expect(result.action).toBe("started");
+    expect(stops).toEqual(["a"]);
+    expect(starts).toEqual(["b"]);
+  } finally {
+    setSessionRefcountRegistry(null);
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("#520: checkUnload({ force: true }) on an installed registry lets the next eviction proceed", async () => {
+  const state: WorkloadStateMap = new Map([["a", { up: true, rel: "a.gguf", args: [] }]]);
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-evict-session-force-check-"));
+  saveWorkload(mkManifest("a"), workloadsDir);
+  const { client, stops, starts } = makeRecordingClient(state);
+  const registry = createSessionRefcounts({ idleTimeoutMs: 60_000 });
+  registry.acquire("sess-1", "a");
+  registry.acquire("sess-2", "a");
+  try {
+    setSessionRefcountRegistry(registry);
+    const refused = await evictAIntoB(client, workloadsDir);
+    expect(refused.statusSection.conditions[0]?.reason).toBe("EvictSessionActive");
+    expect(stops).toEqual([]);
+
+    expect(registry.checkUnload("a", { force: true })).toEqual({
+      ok: true,
+      released: ["sess-1", "sess-2"],
+    });
+    expect(registry.checkUnload("a")).toEqual({ ok: true, released: [] });
+    const result = await evictAIntoB(client, workloadsDir);
+    expect(result.action).toBe("started");
+    expect(stops).toEqual(["a"]);
+    expect(starts).toEqual(["b"]);
+  } finally {
+    setSessionRefcountRegistry(null);
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("#520: an installed registry whose checkUnload throws fails closed as EvictSessionUnknown", async () => {
+  const state: WorkloadStateMap = new Map([["a", { up: true, rel: "a.gguf", args: [] }]]);
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-evict-session-registry-throw-"));
+  saveWorkload(mkManifest("a"), workloadsDir);
+  const { client, stops, starts } = makeRecordingClient(state);
+  const real = createSessionRefcounts({ idleTimeoutMs: 60_000 });
+  const calls: string[] = [];
+  const throwing: SessionRefcounts = {
+    acquire: (sessionId, workload) => real.acquire(sessionId, workload),
+    release: (sessionId, generation) => {
+      real.release(sessionId, generation);
+    },
+    touch: (sessionId) => {
+      real.touch(sessionId);
+    },
+    forceRelease: (workload) => real.forceRelease(workload),
+    activeSessions: (workload) => real.activeSessions(workload),
+    checkUnload: (workload) => {
+      calls.push(workload);
+      throw new Error("session registry unreadable");
+    },
+  };
+  try {
+    setSessionRefcountRegistry(throwing);
+    const result = await evictAIntoB(client, workloadsDir);
+    expect(result.action).toBe("pending");
+    expect(result.statusSection.phase).toBe("Failed");
+    expect(result.statusSection.conditions[0]?.reason).toBe("EvictSessionUnknown");
+    expect(result.error).toMatch(/session registry unreadable/);
+    expect(stops).toEqual([]);
+    expect(starts).toEqual([]);
+    expect(calls).toEqual(["a"]);
   } finally {
     setSessionRefcountRegistry(null);
     rmSync(workloadsDir, { recursive: true, force: true });

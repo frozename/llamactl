@@ -63,11 +63,11 @@ function resolveLsofPath(): string {
   return "lsof";
 }
 
-function lsofListenerPid(filter: string): Promise<number | null> {
+function runLsof(args: string[]): Promise<string | null> {
   return new Promise((resolve) => {
     let settled = false;
     let child: ReturnType<typeof spawn> | null = null;
-    const finish = (value: number | null): void => {
+    const finish = (value: string | null): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
@@ -82,9 +82,7 @@ function lsofListenerPid(filter: string): Promise<number | null> {
       finish(null);
     }, FIND_LISTENER_TIMEOUT_MS);
     try {
-      child = spawn(resolveLsofPath(), ["-nP", filter, "-sTCP:LISTEN", "-t"], {
-        stdio: ["ignore", "pipe", "ignore"],
-      });
+      child = spawn(resolveLsofPath(), args, { stdio: ["ignore", "pipe", "ignore"] });
       let out = "";
       child.stdout?.on("data", (chunk) => {
         out += String(chunk);
@@ -93,16 +91,68 @@ function lsofListenerPid(filter: string): Promise<number | null> {
         finish(null);
       });
       child.on("close", () => {
-        const pid = out
-          .split(/\s+/)
-          .map((token) => Number.parseInt(token, 10))
-          .find((value) => Number.isInteger(value) && value > 0);
-        finish(pid ?? null);
+        finish(out);
       });
     } catch {
       finish(null);
     }
   });
+}
+
+async function lsofListenerPid(filter: string): Promise<number | null> {
+  const out = await runLsof(["-nP", filter, "-sTCP:LISTEN", "-t"]);
+  if (out === null) return null;
+  const pid = out
+    .split(/\s+/)
+    .map((token) => Number.parseInt(token, 10))
+    .find((value) => Number.isInteger(value) && value > 0);
+  return pid ?? null;
+}
+
+/**
+ * Keep lsof's `-Fn` name rows (`n*:7843`), strip the leading `n`, drop empties
+ * and dedupe in first-seen order. Numeric only, since `lsof -n` never resolves
+ * hostnames or service names.
+ */
+export function parseLsofListenAddresses(out: string): string[] {
+  const seen = new Set<string>();
+  for (const line of out.split("\n")) {
+    if (!line.startsWith("n")) continue;
+    const addr = line.slice(1).trim();
+    if (addr === "") continue;
+    seen.add(addr);
+  }
+  return Array.from(seen);
+}
+
+/**
+ * The numeric addresses the process `pid` holds listening on `port`, or null
+ * when the lookup failed, timed out or found nothing. The `-a` flag is
+ * required: without it lsof ORs the `-p` and `-i` filters, so it would report
+ * every fd of the pid plus every listener on the port instead of their
+ * intersection.
+ */
+export async function findTcpListenerAddresses(
+  port: number,
+  pid: number,
+  run: (args: string[]) => Promise<string | null> = runLsof,
+): Promise<string[] | null> {
+  try {
+    const out = await run([
+      "-nP",
+      "-a",
+      "-p",
+      String(pid),
+      `-iTCP:${String(port)}`,
+      "-sTCP:LISTEN",
+      "-Fn",
+    ]);
+    if (out === null) return null;
+    const addrs = parseLsofListenAddresses(out);
+    return addrs.length > 0 ? addrs : null;
+  } catch {
+    return null;
+  }
 }
 
 /**

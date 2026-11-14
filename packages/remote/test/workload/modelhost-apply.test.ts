@@ -702,6 +702,55 @@ describe("applyManifest — kind dispatch", () => {
     }
   });
 
+  test("remote ModelHost budget honors the NodeRun residency safety margin", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-residency-margin-"));
+    const { client } = makeNodeFactsClient(4 * hostGiB * 1024 ** 3);
+    try {
+      // Kills: resolveModelHostBudgetGiB ignoring opts.getNodeResidency —
+      // the 0.5 margin drops the budget from 3x to 2x reported memory,
+      // so the 3.5x host is refused against a smaller budget.
+      const result = await applyManifest({
+        manifest: modelHostOnNode("mlx-host-margin", 3.5 * hostGiB, "mac-mini"),
+        workloadsDir: join(tmp, "workloads"),
+        getClient: () => client,
+        spawn: spawnStub,
+        env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp },
+        getNodeResidency: () => ({ safetyMarginRatio: 0.5 }),
+      });
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toContain(`Budget is ${(hostGiB * 2).toFixed(1)} GiB`);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("ModelRun admission budget honors the NodeRun residency safety margin", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelrun-residency-margin-"));
+    const { client } = makeNodeFactsClient(4 * hostGiB * 1024 ** 3);
+    try {
+      // Kills: resolveAdmissionBudgetGiB ignoring the residency — the
+      // 0.5 margin drops the budget from 3x to 2x reported memory.
+      const manifest = modelRunManifestForPlacement({
+        node: "mac-mini",
+        resources: { expectedMemoryGiB: 3.5 * hostGiB },
+      });
+      const result = await applyManifest({
+        manifest,
+        workloadsDir: join(tmp, "workloads"),
+        getClient: () => client,
+        spawn: spawnStub,
+        env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp },
+        getNodeResidency: () => ({ safetyMarginRatio: 0.5 }),
+      });
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toContain(`Budget is ${(hostGiB * 2).toFixed(1)} GiB`);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   test("explicit node budget and local nodes never query nodeFacts", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-nodemem-skip-"));
     const { client, nodeFactsCalls } = makeNodeFactsClient(1 * 1024 ** 3);
