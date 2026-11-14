@@ -15,6 +15,11 @@
 // RESIDENCY_GROUPS), so exclusivity holds only when every writer passes
 // consistent declarations.
 //
+// A row's group is per-row: an omitted group keeps the stored one, and a
+// supplied group reassigns it. Reassignment is refused as group-conflict
+// while the stored row is in an occupying state, so a member cannot leave
+// or join a group while it holds that group's capacity.
+//
 // Operation phases remain caller-checked.
 //
 // reservationGiB is recorded, not admitted: nothing here checks the value
@@ -23,6 +28,7 @@
 import { llamactlHome } from "@llamactl/core/config/env";
 import {
   evaluateResidencyTransition,
+  isOccupyingResidencyState,
   isResidencyState,
   RESIDENCY_GROUPS,
   type ResidencyGroupDeclaration,
@@ -45,6 +51,7 @@ export type ResidencyOperationOutcome = (typeof OUTCOMES)[number];
 
 export type ResidencyStoreFailure =
   | "duplicate-conflict"
+  | "group-conflict"
   | "illegal-phase"
   | "invalid-input"
   | "not-found"
@@ -509,7 +516,15 @@ function transitionResidencyStateTx(
     return { ok: false, reason: "version-conflict" };
   }
   const currentState: ResidencyState = stored?.state ?? "unavailable";
-  const group = input.group ?? stored?.group ?? undefined;
+  const storedGroup = stored?.group ?? undefined;
+  if (
+    input.group !== undefined &&
+    input.group !== storedGroup &&
+    isOccupyingResidencyState(currentState)
+  ) {
+    return { ok: false, reason: "group-conflict" };
+  }
+  const group = input.group ?? storedGroup;
   const members = buildMembers(rows, input.model, group, currentState);
   const decision = evaluateResidencyTransition({
     groups: input.groups ?? RESIDENCY_GROUPS,

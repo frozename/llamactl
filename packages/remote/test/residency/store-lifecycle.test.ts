@@ -516,4 +516,116 @@ describe("residency lifecycle state store (#517)", () => {
       store.close();
     }
   });
+
+  // kills: dropping the stored-group fallback when the caller omits group
+  test("L13 an omitted group keeps the stored exclusive group for admission", () => {
+    const store = open(dbPath);
+    try {
+      expect(typeof store.transitionResidencyState).toBe("function");
+      expect(typeof store.getResidencyState).toBe("function");
+      store.claimOwnership({ ownerId: "o1", incarnation: "i1" });
+      walk(store, 1, "glm", G, ["downloaded", "loading", "warming", "ready"]);
+      walk(store, 1, "mimo", G, ["downloaded"]);
+      const refused = store.transitionResidencyState!({
+        fenceToken: 1,
+        model: "mimo",
+        to: "loading",
+        expectedVersion: 1,
+        nowMs: 2000,
+      });
+      expect(refused).toMatchObject({
+        ok: false,
+        reason: "lifecycle-refused",
+        decision: { reason: "ExclusiveGroupOccupied", group: G },
+      });
+      expect(refused.decision.peer).toEqual({ id: "glm", state: "ready" });
+      expect(store.getResidencyState!("mimo")).toMatchObject({
+        group: G,
+        state: "downloaded",
+        version: 1,
+      });
+      walk(store, 1, "glm", G, ["draining"], 4);
+      const admitted = store.transitionResidencyState!({
+        fenceToken: 1,
+        model: "mimo",
+        to: "loading",
+        expectedVersion: 1,
+        nowMs: 3000,
+      });
+      expect(admitted.ok).toBe(true);
+      expect(admitted.record).toMatchObject({ group: G, state: "loading", version: 2 });
+    } finally {
+      store.close();
+    }
+  });
+
+  // kills: allowing a group change from an occupying row, keying the check on the
+  // target state, treating an omitted group as a change, or refusing a change
+  // from a non-occupying row
+  test("L14 a group change is refused while the stored row occupies", () => {
+    const store = open(dbPath);
+    try {
+      expect(typeof store.transitionResidencyState).toBe("function");
+      expect(typeof store.getResidencyState).toBe("function");
+      store.claimOwnership({ ownerId: "o1", incarnation: "i1" });
+      walk(store, 1, "glm", G, ["downloaded", "loading", "warming", "ready"]);
+      const leave = store.transitionResidencyState!({
+        fenceToken: 1,
+        model: "glm",
+        group: "other-group",
+        to: "draining",
+        expectedVersion: 4,
+        nowMs: 2000,
+      });
+      expect(leave).toEqual({ ok: false, reason: "group-conflict" });
+      expect(store.getResidencyState!("glm")).toMatchObject({
+        group: G,
+        state: "ready",
+        version: 4,
+      });
+      const kept = store.transitionResidencyState!({
+        fenceToken: 1,
+        model: "glm",
+        to: "draining",
+        expectedVersion: 4,
+        nowMs: 2500,
+      });
+      expect(kept.ok).toBe(true);
+      expect(kept.record).toMatchObject({ group: G, state: "draining", version: 5 });
+
+      walk(store, 1, "solo", undefined, ["downloaded", "loading"]);
+      const join = store.transitionResidencyState!({
+        fenceToken: 1,
+        model: "solo",
+        group: G,
+        to: "unloading",
+        expectedVersion: 2,
+        nowMs: 3000,
+      });
+      expect(join).toEqual({ ok: false, reason: "group-conflict" });
+      expect(store.getResidencyState!("solo")).toMatchObject({
+        group: null,
+        state: "loading",
+        version: 2,
+      });
+
+      walk(store, 1, "mimo", G, ["downloaded"]);
+      const moved = store.transitionResidencyState!({
+        fenceToken: 1,
+        model: "mimo",
+        group: "other-group",
+        to: "unavailable",
+        expectedVersion: 1,
+        nowMs: 4000,
+      });
+      expect(moved.ok).toBe(true);
+      expect(moved.record).toMatchObject({
+        group: "other-group",
+        state: "unavailable",
+        version: 2,
+      });
+    } finally {
+      store.close();
+    }
+  });
 });
