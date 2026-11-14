@@ -1,8 +1,10 @@
 /**
  * 8-state residency lifecycle + declarative exclusive residency groups
  * (#517, DF-03 amendment #276). Pure and synchronous: states in, decisions
- * out. Persistence in the fenced store and enforcement in the reconciler and
- * ModelHost are deferred to #276.
+ * out. Persistence landed in #662: the fenced store
+ * (packages/remote/src/residency/store.ts) writes residency_states rows,
+ * opt-in through transitionResidencyState. Enforcement in the reconciler and
+ * ModelHost is deferred to #276.
  */
 import { z } from "zod";
 
