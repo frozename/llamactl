@@ -528,6 +528,62 @@ describe("agent rotate-token --grace", () => {
     }
   });
 
+  test("refuses to rotate when a named entry already holds the primary tokenHash", async () => {
+    // Kills: skipping validation of the combined block, which would record
+    // the previous primary hash a second time under the rotated-* name.
+    captureStdout();
+    const d = mkdtempSync(join(tmpdir(), "rotate-grace-dup-hash-"));
+    try {
+      const h0 = await seed(d);
+      const yamlPath = join(d, "agent.yaml");
+      const cfg = agentConfigMod.loadAgentConfig(yamlPath);
+      agentConfigMod.saveAgentConfig(
+        {
+          ...cfg,
+          bearerTokens: [{ name: "ci", tokenHash: h0, createdAt: "2026-01-01T00:00:00.000Z" }],
+        },
+        yamlPath,
+      );
+      const yamlBefore = readFileSync(yamlPath, "utf8");
+
+      const code = await runAgent(["rotate-token", `--dir=${d}`, "--grace=1h", "--json"]);
+      expect(code).toBe(1);
+      expect(stderrBuf).toContain("invalid bearerTokens block");
+      expect(stderrBuf).toContain("token hashes must be unique");
+      expect(stderrBuf).toContain("Nothing was rotated");
+      expect(readFileSync(yamlPath, "utf8")).toBe(yamlBefore);
+    } finally {
+      restore();
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  test("accepts --grace=365d, the cap itself", async () => {
+    // Kills: an exclusive cap ('>=' instead of '>' against the maximum):
+    // exactly 365d is allowed and records a year-long expiry.
+    captureStdout();
+    const d = mkdtempSync(join(tmpdir(), "rotate-grace-cap-"));
+    try {
+      const h0 = await seed(d);
+      const yamlPath = join(d, "agent.yaml");
+      const before = Date.now();
+      const code = await runAgent(["rotate-token", `--dir=${d}`, "--grace=365d", "--json"]);
+      const after = Date.now();
+      expect(code).toBe(0);
+      expect(stderrBuf).not.toContain("--grace must be a positive duration");
+
+      const entries = bearerTokensYaml(yamlPath);
+      expect(entries).toHaveLength(1);
+      expect(entries[0]?.tokenHash).toBe(h0);
+      const expiresAt = Date.parse(entries[0]?.expiresAt ?? "");
+      expect(expiresAt).toBeGreaterThanOrEqual(before + 365 * 86_400_000);
+      expect(expiresAt).toBeLessThanOrEqual(after + 365 * 86_400_000);
+    } finally {
+      restore();
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
+
   test("pin: without --grace the warning streams and the absent block are unchanged", async () => {
     // PIN (#218): passes at base. Kills: changing the non-grace output
     // stream, the warning text, or adding a block when no grace was asked for.

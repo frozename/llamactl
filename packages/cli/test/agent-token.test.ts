@@ -63,10 +63,10 @@ function bearerEntries(dir: string): agentConfigMod.AgentBearerToken[] {
 type BearerReaderEntry = agentConfigMod.AgentBearerToken & { expiresAt?: string };
 
 /**
- * #218 RED pin: the fix gives bearerTokensReader an injectable clock and
- * expiresAt on entries. The declared signature still takes only the path,
- * so the second argument is ignored at runtime and the schema strips
- * expiresAt — the expiry assertions below fail until the fix lands.
+ * bearerTokensReader with its injectable clock (#218), typed so every
+ * entry exposes an optional expiresAt: the reader's own return type is a
+ * union of shapes, one of which lacks the key, so reading expiresAt off
+ * it directly does not type-check.
  */
 const bearerTokensReaderAt: (
   path: string,
@@ -689,6 +689,41 @@ describe("agent token", () => {
     }
   });
 
+  test("bearerTokensReader drops an entry exactly at its expiresAt", async () => {
+    // Kills: an inclusive expiry ('>=' instead of '>'): at the instant
+    // expiresAt names, the entry must no longer authenticate.
+    capture();
+    try {
+      const dir = await seedAgent();
+      const configPath = join(dir, "agent.yaml");
+      const cfg = agentConfigMod.loadAgentConfig(configPath);
+      const expiresAt = "2030-01-01T00:00:00.000Z";
+      agentConfigMod.saveAgentConfig(
+        {
+          ...cfg,
+          bearerTokens: [
+            {
+              name: "edge",
+              tokenHash: auth.hashToken("edge-token"),
+              createdAt: "2026-01-01T00:00:00.000Z",
+              expiresAt,
+            },
+          ],
+        },
+        configPath,
+      );
+
+      let nowMs = Date.parse(expiresAt) - 1;
+      const read = bearerTokensReaderAt(configPath, () => nowMs);
+      expect(read()?.map((e) => e.name)).toEqual(["edge"]);
+
+      nowMs = Date.parse(expiresAt);
+      expect(read()).toEqual([]);
+    } finally {
+      restore();
+    }
+  });
+
   test("bearerTokensReader rejects an entry whose expiresAt is not a date", async () => {
     // Kills: dropping expiresAt validation — an unparseable expiry must
     // invalidate the whole block, not be silently stripped.
@@ -722,9 +757,12 @@ describe("agent token", () => {
 
   test("token list annotates expiry in human and --json output without hashes", async () => {
     // Kills: not surfacing expiry in list, not marking dead entries, or
-    // leaking tokenHash into either output.
+    // leaking tokenHash into either output. tokenList reads the real
+    // clock, so the live expiry is a year from now and the dead one is a
+    // fixed past date: neither depends on when the suite runs.
     capture();
     try {
+      const liveExpiresAt = new Date(Date.now() + 365 * 86_400_000).toISOString();
       const dir = await seedAgent();
       const configPath = join(dir, "agent.yaml");
       const cfg = agentConfigMod.loadAgentConfig(configPath);
@@ -741,7 +779,7 @@ describe("agent token", () => {
               name: "rotated-1",
               tokenHash: auth.hashToken("rotated-1-token"),
               createdAt: "2026-02-02T00:00:00.000Z",
-              expiresAt: "2030-01-01T00:00:00.000Z",
+              expiresAt: liveExpiresAt,
             },
             {
               name: "rotated-0",
@@ -757,7 +795,7 @@ describe("agent token", () => {
       expect(await runAgent(["token", "list", `--dir=${dir}`])).toBe(0);
       expect(stdoutBuf.trimEnd().split("\n")).toEqual([
         "plain\t2026-01-01T00:00:00.000Z",
-        "rotated-1\t2026-02-02T00:00:00.000Z\texpires=2030-01-01T00:00:00.000Z",
+        `rotated-1\t2026-02-02T00:00:00.000Z\texpires=${liveExpiresAt}`,
         "rotated-0\t2026-03-03T00:00:00.000Z\texpired=2020-01-01T00:00:00.000Z",
       ]);
 
@@ -768,7 +806,7 @@ describe("agent token", () => {
       const live = byName.get("rotated-1");
       const dead = byName.get("rotated-0");
       const plain = byName.get("plain");
-      expect(live?.["expiresAt"]).toBe("2030-01-01T00:00:00.000Z");
+      expect(live?.["expiresAt"]).toBe(liveExpiresAt);
       expect(live?.["expired"]).toBe(false);
       expect(dead?.["expiresAt"]).toBe("2020-01-01T00:00:00.000Z");
       expect(dead?.["expired"]).toBe(true);
