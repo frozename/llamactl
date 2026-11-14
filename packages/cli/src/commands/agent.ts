@@ -1,3 +1,4 @@
+import { findTcpListenerAddresses } from "@llamactl/core/probe";
 import { agentConfig as agentConfigMod, auth, startAgentServer, tls } from "@llamactl/remote";
 import { hostname } from "node:os";
 import { join } from "node:path";
@@ -40,7 +41,7 @@ Subcommands:
       (configPath, nodeName, bindHost, port, fingerprint, blob) so the
       install-agent.sh flow can capture stdout and shell-extract the
       bootstrap blob without jq.
-  rotate-token [--dir=<path>] [--host=<host>] [--token-out=<path>] [--json]
+  rotate-token [--dir=<path>] [--host=<host>] [--token-out=<path>] [--grace=<duration>] [--json]
       Rotate the bearer token without touching the TLS cert/key. Reads
       agent.yaml, generates a fresh token, updates tokenHash, and emits
       a bootstrap blob containing the new token plus the unchanged cert
@@ -49,7 +50,11 @@ Subcommands:
       cheaper than a full 'agent init'. Restart the agent after rotating
       so it loads the new tokenHash. The default --host is 127.0.0.1;
       override when the operator's kubeconfig records a different
-      advertised endpoint.
+      advertised endpoint. With --grace the previous token is recorded in
+      bearerTokens as a named token 'rotated-<epoch-ms>' and keeps
+      authenticating until it expires, so clients can switch over; the
+      agent still needs a restart to load the new primary, and expired
+      rotated-* entries stay in agent.yaml until revoked.
   set-token (--hash=<sha256-hex> | --token-file=<path>) [--dir=<path>]
       Adopt an externally issued token (e.g. a central's cluster token)
       as agent.yaml's tokenHash, keeping the TLS cert/key. Writes the
@@ -187,6 +192,14 @@ Flags:
 ${DIR_FLAG_HELP}
   --host=<host>    Host recorded in the emitted bootstrap URL (default: 127.0.0.1)
   --token-out=<path>  Also write the new bearer token to <path> (mode 0600)
+  --grace=<duration>  Keep the previous token authenticating for this long
+                   (a positive duration up to 365d like 30m, 12h or 7d).
+                   With --grace the previous token is recorded in
+                   bearerTokens as a named token 'rotated-<epoch-ms>' and
+                   keeps authenticating until it expires, so clients can
+                   switch over. The agent still needs a restart to load
+                   the new primary; expired rotated-* entries stay in
+                   agent.yaml until revoked with 'agent token revoke'.
   --json           Emit a single-line JSON record instead of the human summary
   -h, --help       Show this help
 `;
@@ -266,11 +279,28 @@ ${DIR_FLAG_HELP}
   --fleet-journal=<path>      Fleet journal served at GET /v1/fleet/snapshot
                               (default: DEV_STORAGE/fleet-supervisor/journal.jsonl,
                               else ~/.llamactl/fleet-supervisor/journal.jsonl)
+  --runtime-role=<role>       Per-role runtime identity: a-z, 0-9, _ or -,
+                              1-32 characters, starting with a letter
+  --memory-budget-bytes=<n>   Memory budget for the role, a positive integer
+                              byte count
   -h, --help       Show this help
 
 Environment:
   LLAMACTL_RESIDENCY_LEASES   "1"/"true" publishes one residency lease
                               registry at start (opt-in, off by default).
+  LLAMACTL_RESIDENCY_SESSION_IDLE_MS
+                              Session idle timeout in milliseconds: a
+                              positive integer up to
+                              Number.MAX_SAFE_INTEGER. Honored only when
+                              LLAMACTL_RESIDENCY_LEASES is on; publishes
+                              a session refcount registry beside the
+                              lease registry once the listener binds.
+                              Other values are ignored.
+  LLAMACTL_AGENT_RUNTIME_ROLE Per-role runtime identity (env fallback for
+                              --runtime-role).
+  LLAMACTL_AGENT_MEMORY_BUDGET_BYTES
+                              Memory budget in bytes (env fallback for
+                              --memory-budget-bytes).
 `;
 
 const STATUS_USAGE = `Usage: llamactl agent status [flags]
@@ -278,6 +308,9 @@ const STATUS_USAGE = `Usage: llamactl agent status [flags]
 Report the agent config, whether /healthz answers, a loopback-only
 bind, cert expiry + SAN coverage of the advertised host, and the
 launchd label or systemd unit (user, then system scope) that manages the agent.
+The report lists the addresses the running listener actually bound, and warns
+when none matches agent.yaml's bindHost (an IP, wildcard or localhost bindHost
+only).
 
 Flags:
 ${DIR_FLAG_HELP}
@@ -286,8 +319,38 @@ ${DIR_FLAG_HELP}
   -h, --help       Show this help
 `;
 
+// #367: per-role runtime memory identity. Role is a lowercase identifier
+// (a-z, 0-9, _ or -) up to 32 characters, starting with a letter. Budget
+// is a positive integer byte count, validated before the server starts.
+const RUNTIME_ROLE_RE = /^[a-z][a-z0-9_-]{0,31}$/;
+const ROLE_HINT = "(expected 1-32 characters of a-z, 0-9, _ or -, starting with a letter)";
+const BUDGET_HINT = "(expected a positive integer byte count)";
+
+function parseBudgetBytes(raw: string): number | { error: string } {
+  if (!/^\d+$/.test(raw)) return { error: "expected a positive integer byte count" };
+  const n = Number(raw);
+  // #367: reject values above MAX_SAFE_INTEGER to avoid silent truncation.
+  if (!Number.isFinite(n) || n <= 0 || !Number.isSafeInteger(n)) {
+    return { error: "expected a positive integer byte count" };
+  }
+  return n;
+}
+
 function isHelpFlag(arg: string): boolean {
   return arg === "-h" || arg === "--help";
+}
+
+/**
+ * Parse a positive integer from a string. Returns null for invalid values
+ * (non-numeric, zero, negative, floating point, whitespace-prefixed).
+ */
+function parsePositiveInteger(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (trimmed !== raw) return null;
+  const n = Number.parseInt(trimmed, 10);
+  if (!Number.isFinite(n) || n <= 0 || n > Number.MAX_SAFE_INTEGER) return null;
+  if (String(n) !== trimmed) return null;
+  return n;
 }
 
 // #210: a non-loopback advertised host on a loopback bind is unreachable remotely.
@@ -639,7 +702,54 @@ interface RotateTokenFlags {
   dir: string;
   host: string;
   tokenOut?: string;
+  graceSeconds?: number;
   json: boolean;
+}
+
+const GRACE_UNIT_SECONDS: Record<string, number> = { s: 1, m: 60, h: 3600, d: 86400 };
+const MAX_GRACE_SECONDS = 365 * 86400;
+
+/** Parse a --grace duration (a positive span up to 365d, unit suffix optional). */
+function parseGraceSeconds(v: string): number | { error: string } {
+  const refusal = (): { error: string } => ({
+    error: `agent rotate-token: --grace must be a positive duration up to 365d, like 30m, 12h or 7d: ${v}`,
+  });
+  const match = /^(\d+)([smhd]?)$/.exec(v);
+  if (match === null) return refusal();
+  const digits = match[1];
+  const unit = match[2];
+  if (digits === undefined) return refusal();
+  const count = Number.parseInt(digits, 10);
+  if (!Number.isSafeInteger(count)) return refusal();
+  const multiplier = unit === undefined || unit === "" ? 1 : (GRACE_UNIT_SECONDS[unit] ?? 1);
+  const seconds = count * multiplier;
+  if (!Number.isSafeInteger(seconds) || seconds <= 0 || seconds > MAX_GRACE_SECONDS) {
+    return refusal();
+  }
+  return seconds;
+}
+
+function assignRotateTokenValueFlag(flags: RotateTokenFlags, k: string, v: string): string | null {
+  switch (k) {
+    case "--dir":
+      flags.dir = v;
+      return null;
+    case "--host":
+      flags.host = v;
+      return null;
+    case "--token-out":
+      if (v === "") return "agent rotate-token: --token-out requires a path";
+      flags.tokenOut = v;
+      return null;
+    case "--grace": {
+      const grace = parseGraceSeconds(v);
+      if (typeof grace === "object") return grace.error;
+      flags.graceSeconds = grace;
+      return null;
+    }
+    default:
+      return `agent rotate-token: unknown flag ${k}`;
+  }
 }
 
 function parseRotateTokenFlags(args: string[]): RotateTokenFlags | { error: string } {
@@ -655,20 +765,8 @@ function parseRotateTokenFlags(args: string[]): RotateTokenFlags | { error: stri
     }
     const [k, v] = splitFlag(arg);
     if (v === undefined) return { error: `agent rotate-token: flag must be --key=value: ${arg}` };
-    switch (k) {
-      case "--dir":
-        flags.dir = v;
-        break;
-      case "--host":
-        flags.host = v;
-        break;
-      case "--token-out":
-        if (v === "") return { error: "agent rotate-token: --token-out requires a path" };
-        flags.tokenOut = v;
-        break;
-      default:
-        return { error: `agent rotate-token: unknown flag ${k}` };
-    }
+    const err = assignRotateTokenValueFlag(flags, k, v);
+    if (err !== null) return { error: err };
   }
   return flags;
 }
@@ -687,6 +785,110 @@ function writeRotatedTokenOut(out: string, token: string): boolean {
     );
     return false;
   }
+}
+
+function refuseGraceRotation(configPath: string, reason: string): 1 {
+  process.stderr.write(
+    `agent rotate-token: ${configPath} has an invalid bearerTokens block (${reason}); fix it first. Nothing was rotated.\n`,
+  );
+  return 1;
+}
+
+interface GraceRotation {
+  name: string;
+  expiresAt: string;
+  bearerTokens: agentConfigMod.AgentBearerTokens;
+}
+
+/**
+ * Record the previous primary bearer under an expiring 'rotated-<epoch-ms>'
+ * entry so it keeps authenticating for the grace window, and validate the
+ * resulting block before anything is written. Refuses (exit 1 on stderr)
+ * when the existing or the combined block is invalid, so a rotation that
+ * cannot record the old hash rotates nothing.
+ */
+function prepareGraceRotation(
+  configPath: string,
+  existing: agentConfigMod.AgentConfig,
+  graceSeconds: number,
+): GraceRotation | 1 {
+  let entries: agentConfigMod.AgentBearerTokens = [];
+  if (existing.bearerTokens !== undefined) {
+    const parsed = agentConfigMod.AgentBearerTokensSchema.safeParse(existing.bearerTokens);
+    if (!parsed.success) {
+      return refuseGraceRotation(configPath, parsed.error.issues[0]?.message ?? "invalid");
+    }
+    entries = parsed.data;
+  }
+  const nowMs = Date.now();
+  const name = `rotated-${String(nowMs)}`;
+  const expiresAt = new Date(nowMs + graceSeconds * 1000).toISOString();
+  const entry: agentConfigMod.AgentBearerToken = {
+    name,
+    tokenHash: existing.tokenHash,
+    createdAt: new Date(nowMs).toISOString(),
+    expiresAt,
+  };
+  const combined = agentConfigMod.AgentBearerTokensSchema.safeParse([...entries, entry]);
+  if (!combined.success) {
+    return refuseGraceRotation(configPath, combined.error.issues[0]?.message ?? "invalid");
+  }
+  return { name, expiresAt, bearerTokens: combined.data };
+}
+
+interface RotateReport {
+  configPath: string;
+  existing: agentConfigMod.AgentConfig;
+  bootstrap: string;
+  tokenOut: string | undefined;
+  grace: GraceRotation | undefined;
+}
+
+function rotateTokenNote(grace: GraceRotation | undefined): string {
+  return grace === undefined
+    ? "warning: the previous token no longer authenticates; update every client that holds it (kubeconfig, local consumers; see 'llamactl agent token list')"
+    : `note: the previous token keeps authenticating until ${grace.expiresAt} as named token ${grace.name}; update every client that holds it before then (revoke early with 'llamactl agent token revoke ${grace.name}')`;
+}
+
+function rotateSummaryLines(report: RotateReport): string[] {
+  return [
+    `rotated tokenHash in ${report.configPath}`,
+    `cert   ${report.existing.certPath} (unchanged)`,
+    `fp     ${report.existing.fingerprint} (unchanged)`,
+    `bind   ${report.existing.bindHost}:${String(report.existing.port)}`,
+    rotateTokenNote(report.grace),
+    ...(report.tokenOut !== undefined ? [`token  ${report.tokenOut} (0600)`] : []),
+  ];
+}
+
+function reportRotateJson(report: RotateReport): void {
+  process.stderr.write(`${rotateSummaryLines(report).join("\n")}\n`);
+  const record = {
+    configPath: report.configPath,
+    nodeName: report.existing.nodeName,
+    bindHost: report.existing.bindHost,
+    port: report.existing.port,
+    fingerprint: report.existing.fingerprint,
+    blob: report.bootstrap,
+    ...(report.tokenOut !== undefined ? { tokenOut: report.tokenOut } : {}),
+    ...(report.grace !== undefined
+      ? { grace: { name: report.grace.name, expiresAt: report.grace.expiresAt } }
+      : {}),
+  };
+  process.stdout.write(`${JSON.stringify(record)}\n`);
+}
+
+function reportRotateHuman(report: RotateReport): void {
+  const lines = [
+    ...rotateSummaryLines(report),
+    ``,
+    `Restart the agent so it loads the new tokenHash, then update the kubeconfig:`,
+    ``,
+    `  pkill -f 'agent serve' && llamactl agent serve &`,
+    `  llamactl node add ${String(report.existing.nodeName)} --bootstrap ${report.bootstrap} --force`,
+    ``,
+  ];
+  process.stdout.write(lines.join("\n"));
 }
 
 /**
@@ -727,11 +929,18 @@ export async function runRotateToken(args: string[]): Promise<number> {
 
   const token = auth.generateToken();
 
+  const grace =
+    f.graceSeconds !== undefined
+      ? prepareGraceRotation(configPath, existing, f.graceSeconds)
+      : undefined;
+  if (grace === 1) return 1;
+
   if (f.tokenOut !== undefined && !writeRotatedTokenOut(f.tokenOut, token.token)) return 1;
 
   const updated: agentConfigMod.AgentConfig = {
     ...existing,
     tokenHash: token.hash,
+    ...(grace !== undefined ? { bearerTokens: grace.bearerTokens } : {}),
   };
   agentConfigMod.saveAgentConfig(updated, configPath);
 
@@ -743,48 +952,15 @@ export async function runRotateToken(args: string[]): Promise<number> {
     certificate: certPem,
   });
 
-  const warning =
-    "warning: the previous token no longer authenticates; update every client that holds it (kubeconfig, local consumers; see 'llamactl agent token list')";
-
-  if (f.json) {
-    process.stderr.write(
-      [
-        `rotated tokenHash in ${configPath}`,
-        `cert   ${existing.certPath} (unchanged)`,
-        `fp     ${existing.fingerprint} (unchanged)`,
-        `bind   ${existing.bindHost}:${String(existing.port)}`,
-        warning,
-        ...(f.tokenOut !== undefined ? [`token  ${f.tokenOut} (0600)`] : []),
-      ].join("\n") + "\n",
-    );
-    const record = {
-      configPath,
-      nodeName: existing.nodeName,
-      bindHost: existing.bindHost,
-      port: existing.port,
-      fingerprint: existing.fingerprint,
-      blob: bootstrap,
-      ...(f.tokenOut !== undefined ? { tokenOut: f.tokenOut } : {}),
-    };
-    process.stdout.write(`${JSON.stringify(record)}\n`);
-    return 0;
-  }
-
-  const lines = [
-    `rotated tokenHash in ${configPath}`,
-    `cert   ${existing.certPath} (unchanged)`,
-    `fp     ${existing.fingerprint} (unchanged)`,
-    `bind   ${existing.bindHost}:${String(existing.port)}`,
-    warning,
-    ...(f.tokenOut !== undefined ? [`token  ${f.tokenOut} (0600)`] : []),
-    ``,
-    `Restart the agent so it loads the new tokenHash, then update the kubeconfig:`,
-    ``,
-    `  pkill -f 'agent serve' && llamactl agent serve &`,
-    `  llamactl node add ${String(existing.nodeName)} --bootstrap ${bootstrap} --force`,
-    ``,
-  ];
-  process.stdout.write(lines.join("\n"));
+  const report: RotateReport = {
+    configPath,
+    existing,
+    bootstrap,
+    tokenOut: f.tokenOut,
+    grace,
+  };
+  if (f.json) reportRotateJson(report);
+  else reportRotateHuman(report);
   return 0;
 }
 
@@ -1149,6 +1325,8 @@ export interface ServeFlags {
   tunnelBearerFile?: string;
   tunnelJournal?: string;
   fleetJournal?: string;
+  runtimeRole?: string;
+  memoryBudgetBytes?: number;
 }
 
 export function parseServeFlags(args: string[]): ServeFlags | { error: string } {
@@ -1160,6 +1338,7 @@ export function parseServeFlags(args: string[]): ServeFlags | { error: string } 
     }
     const [k, v] = splitFlag(arg);
     if (v === undefined) return { error: `agent serve: flag must be --key=value: ${arg}` };
+    let identityError: { error: string } | undefined;
     switch (k) {
       case "--dir":
         flags.dir = v;
@@ -1203,11 +1382,37 @@ export function parseServeFlags(args: string[]): ServeFlags | { error: string } 
       case "--fleet-journal":
         flags.fleetJournal = v;
         break;
+      case "--runtime-role":
+      case "--memory-budget-bytes":
+        identityError = applyRuntimeIdentityFlag(flags, k, v);
+        break;
       default:
         return { error: `agent serve: unknown flag ${k}` };
     }
+    if (identityError !== undefined) return identityError;
   }
   return flags;
+}
+
+// #367: validate and record --runtime-role / --memory-budget-bytes.
+function applyRuntimeIdentityFlag(
+  flags: ServeFlags,
+  key: "--runtime-role" | "--memory-budget-bytes",
+  value: string,
+): { error: string } | undefined {
+  if (key === "--runtime-role") {
+    if (!RUNTIME_ROLE_RE.test(value)) {
+      return { error: `agent serve: invalid --runtime-role: ${value} ${ROLE_HINT}` };
+    }
+    flags.runtimeRole = value;
+    return undefined;
+  }
+  const result = parseBudgetBytes(value);
+  if (typeof result === "object") {
+    return { error: `agent serve: invalid --memory-budget-bytes: ${value} ${BUDGET_HINT}` };
+  }
+  flags.memoryBudgetBytes = result;
+  return undefined;
 }
 
 interface ServeWiring {
@@ -1402,6 +1607,65 @@ function residencyLeasesOptIn(env: Readonly<Record<string, string | undefined>>)
   return env["LLAMACTL_RESIDENCY_LEASES"] === "1" || env["LLAMACTL_RESIDENCY_LEASES"] === "true";
 }
 
+/** #520: LLAMACTL_RESIDENCY_SESSION_IDLE_MS (milliseconds) as a spreadable option. */
+function residencySessionIdleOption(env: Readonly<Record<string, string | undefined>>): {
+  residencySessionIdleMs?: number;
+} {
+  const raw = env["LLAMACTL_RESIDENCY_SESSION_IDLE_MS"];
+  if (raw === undefined) return {};
+  const ms = parsePositiveInteger(raw);
+  return ms === null ? {} : { residencySessionIdleMs: ms };
+}
+
+export function resolveServeRuntimeIdentity(
+  flags: ServeFlags,
+  env: Readonly<Record<string, string | undefined>>,
+): { runtimeRole?: string; runtimeMemoryBudgetBytes?: number } | { error: string } {
+  // Flags override env vars: use the flag value when present, otherwise env.
+  const roleRaw = flags.runtimeRole ?? env["LLAMACTL_AGENT_RUNTIME_ROLE"];
+  const budgetRaw =
+    flags.memoryBudgetBytes !== undefined
+      ? String(flags.memoryBudgetBytes)
+      : env["LLAMACTL_AGENT_MEMORY_BUDGET_BYTES"];
+  const result: { runtimeRole?: string; runtimeMemoryBudgetBytes?: number } = {};
+
+  if (roleRaw !== undefined && roleRaw !== "") {
+    if (!RUNTIME_ROLE_RE.test(roleRaw)) {
+      return {
+        error: `agent serve: invalid LLAMACTL_AGENT_RUNTIME_ROLE: ${roleRaw} ${ROLE_HINT}`,
+      };
+    }
+    result.runtimeRole = roleRaw;
+  }
+
+  if (budgetRaw !== undefined && budgetRaw !== "") {
+    const parsed = parseBudgetBytes(budgetRaw);
+    if (typeof parsed === "object") {
+      return {
+        error: `agent serve: invalid LLAMACTL_AGENT_MEMORY_BUDGET_BYTES: ${budgetRaw} ${BUDGET_HINT}`,
+      };
+    }
+    result.runtimeMemoryBudgetBytes = parsed;
+  }
+
+  return result;
+}
+
+// #367: spread runtime identity fields into server options when present.
+function runtimeIdentitySpread(
+  identity: ReturnType<typeof resolveServeRuntimeIdentity>,
+): Record<string, unknown> {
+  if (typeof identity === "object" && !("error" in identity)) {
+    return {
+      ...("runtimeRole" in identity ? { runtimeRole: identity.runtimeRole } : {}),
+      ...(identity.runtimeMemoryBudgetBytes !== undefined
+        ? { runtimeMemoryBudgetBytes: identity.runtimeMemoryBudgetBytes }
+        : {}),
+    };
+  }
+  return {};
+}
+
 export function buildServeOptions(
   parsed: ServeFlags,
   cfg: ReturnType<typeof agentConfigMod.loadAgentConfig>,
@@ -1410,6 +1674,7 @@ export function buildServeOptions(
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): Parameters<typeof startAgentServer>[0] {
   const { dialUrl, dialBearer, tunnelCentralOn, tunnelCentralBearer } = wiring;
+  const identity = resolveServeRuntimeIdentity(parsed, env);
   const serverOptions = {
     bindHost: parsed.bindHost ?? cfg.bindHost,
     port: parsed.port ?? cfg.port,
@@ -1467,6 +1732,10 @@ export function buildServeOptions(
       : {}),
     // #278 DF-05: opt-in residency lease registry, off unless the env says on.
     ...(residencyLeasesOptIn(env) ? { residencyLeases: true } : {}),
+    // #520: opt-in session idle timeout, honored only when residencyLeases is true.
+    ...residencySessionIdleOption(env),
+    // #367: per-role runtime memory identity, flags override env vars.
+    ...runtimeIdentitySpread(identity),
   } as Parameters<typeof startAgentServer>[0];
   if (parsed.noAuth !== undefined) {
     (serverOptions as Parameters<typeof startAgentServer>[0] & { noAuth?: boolean }).noAuth =
@@ -1515,6 +1784,13 @@ async function runServe(args: string[]): Promise<number> {
   const wiring = validateServeWiring(parsed);
   if ("error" in wiring) {
     process.stderr.write(wiring.error);
+    return 1;
+  }
+
+  // #367: validate runtime identity (flags + env) before touching config.
+  const identity = resolveServeRuntimeIdentity(parsed, process.env);
+  if (typeof identity === "object" && "error" in identity) {
+    process.stderr.write(`${identity.error}\n`);
     return 1;
   }
 
@@ -1576,6 +1852,7 @@ async function runStatus(args: string[]): Promise<number> {
     configPath: cfgPath,
     cfg,
     describeService: defaultDescribeService,
+    findListenerAddresses: findTcpListenerAddresses,
     ...(parsed.host !== undefined ? { advertisedHost: parsed.host } : {}),
   });
   if (parsed.json) process.stdout.write(`${JSON.stringify(report)}\n`);

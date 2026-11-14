@@ -6,7 +6,7 @@ import { expect, test } from "bun:test";
 import { totalmem } from "node:os";
 
 import { defaultNodeBudgetGiB } from "../../src/workload/admission.js";
-import { NodeRunSchema } from "../../src/workload/noderun-schema.js";
+import { type NodeRunResidency, NodeRunSchema } from "../../src/workload/noderun-schema.js";
 
 const DEFAULTS = (residencyAdmission as Partial<typeof residencyAdmission>)
   .DEFAULT_RESIDENCY_POLICY;
@@ -93,4 +93,13 @@ test("defaultNodeBudgetGiB falls back to totalmem() with the policy ratio when n
     (total / 1024 ** 3) * 0.5,
   );
   expect(defaultNodeBudgetGiB(undefined, null, undefined)).toBe((total / 1024 ** 3) * 0.75);
+});
+
+test("defaultNodeBudgetGiB ignores non-margin residency fields and takes the NodeRun shape", () => {
+  const GiB = 1024 ** 3;
+  // Kills: defaultNodeBudgetGiB letting non-margin residency fields move
+  // the budget, and a signature that rejects spec.residency's own type.
+  expect(defaultNodeBudgetGiB(undefined, 124 * GiB, { minResidencySeconds: 60 })).toBe(93);
+  const r: NodeRunResidency = { safetyMarginRatio: 0.5 };
+  expect(defaultNodeBudgetGiB(undefined, 124 * GiB, r)).toBe(62);
 });
