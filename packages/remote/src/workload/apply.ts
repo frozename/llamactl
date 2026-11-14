@@ -50,6 +50,7 @@ import {
   modelHostBindRefusal,
   type ModelHostManifest,
   ModelHostManifestSchema,
+  normalizeReadiness,
   specForEngine,
   specForHash,
 } from "./modelhost-schema.js";
@@ -108,6 +109,7 @@ export interface WorkloadClient {
        *  older agents, so consumers treat undefined as "unknown". */
       listenerPid?: number | null;
       foreign?: boolean;
+      identityUnknown?: boolean;
     }>;
   };
   serverStop: {
@@ -639,6 +641,7 @@ function writeModelHostSidecar(
   rel: string,
 ): void {
   const modelAliases = Array.from(new Set([rel, basename(rel)]));
+  const readiness = normalizeReadiness(manifest.spec.readiness);
   const existing = readModelHostState({ name: manifest.metadata.name }, resolved);
   // Only write the local sidecar when this controller owns the process
   // (spec.node === 'local'). For remote nodes the remote dispatcher owns
@@ -658,10 +661,12 @@ function writeModelHostSidecar(
         slotSavePath: existing?.pid === status.pid ? (existing.slotSavePath ?? null) : null,
         specHash: computeModelHostSpecHash(specForHash(manifest.spec)),
         // This sidecar replaces the one launchModelHost wrote, so identity
-        // fields must be carried or stop and status lose the fork identity.
+        // fields AND the declared readiness must be carried, or
+        // listServingLocalRoutes loses the probe.
         ...(manifest.spec.binaryNames !== undefined
           ? { binaryNames: [...manifest.spec.binaryNames] }
           : {}),
+        ...(readiness !== undefined ? { readiness } : {}),
       },
       { name: manifest.metadata.name },
       resolved,
@@ -1207,6 +1212,12 @@ type EvictFailureReason =
   | "EvictStatusUnknown"
   | "EvictTargetForeign"
   | "EvictStopRefused"
+  /**
+   * The node's residency lease fence (#278) refused the stop because
+   * requests still hold the victim or a drain is in flight; nothing was
+   * stopped; retry after the leases drain; eviction never force-revokes leases.
+   */
+  | "EvictVictimBusy"
   | "EvictStopFailed"
   | "EvictStopTimedOut"
   | "EvictReleaseUnverified"
@@ -1237,6 +1248,10 @@ function evictStopFailure(
   };
 }
 
+function busyDetail(reason: string, active: string[]): string {
+  return active.length > 0 ? `${reason}: ${active.join(", ")}` : reason;
+}
+
 type EvictVictimKind = "ModelRun" | "ModelHost";
 
 /** Pre-stop probe outcome for one verified evict victim. */
@@ -1250,7 +1265,10 @@ type EvictVictimProbe =
  * slice 3). Every method runs inside the caller's shared remainingMs
  * deadline. ModelRun: an already-down victim skips the stop, a `foreign`
  * listener fails before any stop, and release is proven by a non-up
- * serverStatus. ModelHost: statusModelHost cannot see the
+ * serverStatus. A ModelRun victim whose serverStatus reports
+ * identityUnknown is never treated as down: probe fails with
+ * EvictStatusUnknown before any stop and verify treats it as unverified.
+ * ModelHost: statusModelHost cannot see the
  * modelhost.starting record, so modelHostStop is issued even when
  * status says Stopped — it is identity-verified, never signals a
  * recycled pid, and reports {ok:true,pid:null} on stale records.
@@ -1290,6 +1308,17 @@ const EVICT_VICTIM_OPS: Record<
           failure: evictStopFailure(manifest, target, "EvictStatusUnknown", message),
         };
       }
+      if (status.identityUnknown === true) {
+        return {
+          kind: "failed",
+          failure: evictStopFailure(
+            manifest,
+            target,
+            "EvictStatusUnknown",
+            "serverStatus pid identity unknown",
+          ),
+        };
+      }
       if (status.state !== "up") return { kind: "down" };
       if (status.foreign === true) {
         return {
@@ -1309,8 +1338,17 @@ const EVICT_VICTIM_OPS: Record<
         client.serverStop.mutate({ workload: target, graceSeconds: 5 }),
         remainingMs(),
       );
-      const stopped = (stopResult as { stopped?: boolean } | undefined)?.stopped;
-      if (stopped === false) {
+      const refusal = stopResult as
+        | { stopped?: boolean; refused?: { reason?: unknown; active?: unknown } }
+        | undefined;
+      if (refusal?.stopped === false) {
+        const reason = refusal.refused?.reason;
+        if (reason === "LeasesActive" || reason === "DrainInProgress") {
+          const active = Array.isArray(refusal.refused?.active)
+            ? refusal.refused.active.filter((x): x is string => typeof x === "string")
+            : [];
+          return evictStopFailure(manifest, target, "EvictVictimBusy", busyDetail(reason, active));
+        }
         return evictStopFailure(manifest, target, "EvictStopRefused", "refused to stop");
       }
       return null;
@@ -1320,8 +1358,13 @@ const EVICT_VICTIM_OPS: Record<
         client.serverStatus.query({ workload: target }),
         remainingMs(),
       );
-      if (postStatus.state === "up") {
-        return evictStopFailure(manifest, target, "EvictReleaseUnverified", "still up after stop");
+      if (postStatus.state === "up" || postStatus.identityUnknown === true) {
+        return evictStopFailure(
+          manifest,
+          target,
+          "EvictReleaseUnverified",
+          "still up or identity unknown after stop",
+        );
       }
       return null;
     },
@@ -1361,6 +1404,12 @@ const EVICT_VICTIM_OPS: Record<
       );
       const refused = refusedStopReason(outcome);
       if (refused !== null) {
+        if (/^(?:LeasesActive|DrainInProgress)(?::|$)/.test(refused)) {
+          // The fence renders "<reason>: <ids>"; with no ids, drop the
+          // dangling ": " so the detail matches ModelRun's busyDetail.
+          const detail = refused.replace(/:\s*$/, "");
+          return evictStopFailure(manifest, target, "EvictVictimBusy", detail);
+        }
         return evictStopFailure(manifest, target, "EvictStopRefused", refused);
       }
       return null;

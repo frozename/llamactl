@@ -12,12 +12,40 @@ import * as workloadMod from "../src/commands/workload.js";
 import { EMPTY_GLOBALS, resetGlobals, setGlobals } from "../src/dispatcher.js";
 import { mkdtempSync, rmSync } from "../src/safe-fs.js";
 
+type LeaseWorkloadRow = {
+  workload: string;
+  phase: "open" | "draining" | "unloaded";
+  epoch: number;
+  activeLeaseCount: number;
+  waiters: number;
+};
+
+type LeaseAuditRow = {
+  workload: string;
+  epoch: number;
+  forced: true;
+  revokedCount: number;
+  reason: string | null;
+};
+
+type LeasesSection =
+  | { status: "unavailable"; scope: "serving-process" }
+  | {
+      status: "available";
+      scope: "serving-process";
+      workloads: LeaseWorkloadRow[];
+      auditCount: number;
+      recentAudit: LeaseAuditRow[];
+    };
+
+type StatusFixture = ResidencyStatus & { leases: LeasesSection };
+
 const RESIDENCY_STORE_PATH = "/tmp/rs/operations.sqlite";
 const SPAWN_TIMEOUT_MS = 10_000;
 // Each bin case cold-starts the CLI; the test limit must sit above the 10 s spawnSync limit.
 const CLI_SPAWN_TEST_TIMEOUT_MS = 20_000;
 
-const OK_STATUS: ResidencyStatus = {
+const OK_STATUS: StatusFixture = {
   node: "gpu1",
   nodeRun: { present: true },
   policy: { present: true, residency: {} },
@@ -37,17 +65,36 @@ const OK_STATUS: ResidencyStatus = {
     ],
     scope: "serving-process",
   },
+  leases: {
+    status: "available",
+    scope: "serving-process",
+    workloads: [
+      {
+        workload: "llama-drain",
+        phase: "draining",
+        epoch: 3,
+        activeLeaseCount: 2,
+        waiters: 1,
+      },
+      { workload: "qwen3-8b", phase: "open", epoch: 0, activeLeaseCount: 1, waiters: 0 },
+    ],
+    auditCount: 1,
+    recentAudit: [
+      { workload: "old-model", epoch: 2, forced: true, revokedCount: 1, reason: "operator" },
+    ],
+  },
 };
 
-const ABSENT_STATUS: ResidencyStatus = {
+const ABSENT_STATUS: StatusFixture = {
   node: "gpu1",
   nodeRun: { present: false },
   policy: { present: false },
   budget: { memoryGiB: 16, source: "computed" },
   store: { path: RESIDENCY_STORE_PATH, present: false, scope: "serving-process" },
+  leases: { status: "unavailable", scope: "serving-process" },
 };
 
-const ERROR_STATUS: ResidencyStatus = {
+const ERROR_STATUS: StatusFixture = {
   ...ABSENT_STATUS,
   store: {
     path: RESIDENCY_STORE_PATH,
@@ -297,6 +344,30 @@ describe("llamactl residency status", () => {
     expect(stdout).toMatch(/op-1\s+qwen3-8b\s+loading -> resident\s+6\.5 GiB/);
   });
 
+  test("status renders the lease/drain section after the store", async () => {
+    const residency = await loadResidency();
+    const rec = setupResidency({
+      "residencyStatus.query": (): Promise<unknown> => Promise.resolve(OK_STATUS),
+    });
+
+    const {
+      result: code,
+      stdout,
+      stderr,
+    } = await withCapturedIo(() => residency.runResidency(["status", "--node", "gpu1"], rec.deps));
+
+    expect(code).toBe(0);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("Leases:     2 workload(s) (scope: serving-process)");
+    const leases = stdout.slice(stdout.indexOf("Leases:"));
+    expect(leases).toMatch(/llama-drain\s+draining\s+epoch 3\s+active 2\s+waiters 1/);
+    expect(leases).toMatch(/qwen3-8b\s+open\s+epoch 0\s+active 1\s+waiters 0/);
+    expect(leases.indexOf("llama-drain")).toBeLessThan(leases.indexOf("qwen3-8b"));
+    expect(leases).toContain("Audit:      1 of 1 forced unload(s)");
+    expect(leases).toMatch(/old-model\s+epoch 2\s+revoked 1\s+reason operator/);
+    expect(stdout.indexOf("Leases:")).toBeLessThan(stdout.indexOf("Note:"));
+  });
+
   test("renderResidencyStatus covers absent policy and store error states", async () => {
     const residency = await loadResidency();
 
@@ -311,6 +382,14 @@ describe("llamactl residency status", () => {
     const errored = residency.renderResidencyStatus(ERROR_STATUS);
     expect(errored).toContain(
       "Store:      error at /tmp/rs/operations.sqlite: no such table: operations (scope: serving-process)",
+    );
+  });
+
+  test("renderResidencyStatus reports an unavailable lease registry", async () => {
+    const residency = await loadResidency();
+    const rendered = residency.renderResidencyStatus(ABSENT_STATUS);
+    expect(rendered).toContain(
+      "Leases:     unavailable (no lease registry installed; scope: serving-process)",
     );
   });
 

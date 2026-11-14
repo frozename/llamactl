@@ -11,7 +11,7 @@ import {
   recordModelHostReconcileError,
 } from "../../../core/src/engines/conditions.js";
 import { ENGINES } from "../../../core/src/engines/index.js";
-import { computeModelHostSpecHash } from "../../../core/src/engines/state.js";
+import { computeModelHostSpecHash, readModelHostState } from "../../../core/src/engines/state.js";
 import { resolveEnv } from "../../../core/src/env.js";
 import {
   existsSync,
@@ -90,6 +90,28 @@ function modelHostEnv(tmp: string): NodeJS.ProcessEnv {
     LLAMACTL_MODELS_DIR: modelsDir,
     LLAMA_CPP_MODELS: modelsDir,
   };
+}
+
+// #220: the declared serving probe the sidecar must persist verbatim.
+const READINESS = {
+  path: "/ready",
+  expectStatus: 200,
+  expectJson: { status: "ready" },
+};
+
+// Persist the fixture manifest with spec.readiness declared so the
+// disk-loaded spec carries it into startModelHost.
+function saveManifestWithReadiness(
+  manifest: ManifestFixture["manifest"],
+  workloadsDir: string,
+): void {
+  saveModelHost(
+    ModelHostManifestSchema.parse({
+      ...manifest,
+      spec: { ...manifest.spec, readiness: READINESS },
+    }),
+    workloadsDir,
+  );
 }
 
 interface ReadinessGate {
@@ -589,6 +611,61 @@ describe("server/modelhost", () => {
       expect(
         readFileSync(join(runtimeDir, "workloads", "mlx-host-server", "modelhost.state"), "utf8"),
       ).toContain('"pid": 4321');
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("startModelHost persists the declared spec.readiness into the state sidecar (#220)", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-readiness-"));
+    const { manifest, workloadsDir, runtimeDir } = makeManifest(tmp);
+    saveManifestWithReadiness(manifest, workloadsDir);
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
+    try {
+      const result = await startModelHost({
+        key: { name: "mlx-host-server" },
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
+      });
+
+      expect(result.ok).toBe(true);
+      const raw = JSON.parse(
+        readFileSync(join(runtimeDir, "workloads", "mlx-host-server", "modelhost.state"), "utf8"),
+      ) as { readiness?: unknown };
+      expect(raw.readiness).toEqual(READINESS);
+      expect(
+        readModelHostState(
+          { name: "mlx-host-server" },
+          resolveEnv({ LOCAL_AI_RUNTIME_DIR: runtimeDir }),
+        )?.readiness,
+      ).toEqual(READINESS);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("start without spec.readiness writes no readiness key", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-noreadiness-"));
+    const { workloadsDir, runtimeDir } = makeManifest(tmp);
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
+    try {
+      const result = await startModelHost({
+        key: { name: "mlx-host-server" },
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
+      });
+
+      expect(result.ok).toBe(true);
+      const raw = JSON.parse(
+        readFileSync(join(runtimeDir, "workloads", "mlx-host-server", "modelhost.state"), "utf8"),
+      ) as Record<string, unknown>;
+      expect("readiness" in raw).toBe(false);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
@@ -1601,6 +1678,51 @@ describe("server/modelhost", () => {
       expect(readFileSync(join(hostDir, "modelhost.state"), "utf8")).toContain(
         `"pid": ${String(process.pid)}`,
       );
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("adopting a live host persists the declared spec.readiness into the state sidecar (#220)", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-adopt-readiness-"));
+    const { manifest, workloadsDir, runtimeDir } = makeManifest(tmp);
+    saveManifestWithReadiness(manifest, workloadsDir);
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 9999 }) as const);
+    const probeReadiness: unknown[] = [];
+    try {
+      // readiness is outside the spec hash, so the recorded launch spec still
+      // matches the desired manifest and the live listener stays adoptable.
+      const desired = loadModelHostByName("mlx-host-server", workloadsDir);
+      const hostDir = seedDeadSidecar(
+        runtimeDir,
+        computeModelHostSpecHash(specForHash(desired.spec)),
+      );
+      const result = await startModelHost({
+        key: { name: "mlx-host-server" },
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady: (_endpoint, _timeoutMs, readiness) => {
+          probeReadiness.push(readiness);
+          return Promise.resolve({
+            ready: true,
+            modelIds: ["mlx-community/Qwen3-8B-MLX-4bit"],
+          });
+        },
+        // A genuinely-alive pid serving the endpoint out-of-band.
+        findListenerPid: () => Promise.resolve(process.pid),
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.pid).toBe(process.pid);
+      expect(spawn).not.toHaveBeenCalled();
+      // The probe already receives the normalized readiness at base.
+      expect(probeReadiness).toEqual([READINESS]);
+      const raw = JSON.parse(readFileSync(join(hostDir, "modelhost.state"), "utf8")) as {
+        readiness?: unknown;
+      };
+      expect(raw.readiness).toEqual(READINESS);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

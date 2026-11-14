@@ -9,6 +9,46 @@ import { z } from "zod";
 
 export const LOCAL_NODE_ID = "local" as const;
 
+// #282 DF-09: the managed oMLX per-model settings. Every key is optional and
+// deliberately carries NO .default(): the document codec in
+// @llamactl/core/engines/omlx-model-settings writes only the keys the manifest
+// actually sets, so a defaulted key would silently rewrite model_settings.json.
+// The key set mirrors OMLX_MANAGED_MODEL_SETTINGS_KEYS; .strict() rejects the
+// unmanaged/dangerous keys (ttl_seconds, is_pinned, model_alias,
+// trust_remote_code, dflash_*, vlm_mtp_*) that must not be set this way.
+export const OmlxModelSettingsSchema = z
+  .object({
+    max_context_window: z.number().int().positive().optional(),
+    max_tokens: z.number().int().positive().optional(),
+    chat_template_kwargs: z.record(z.string(), z.json()).optional(),
+    forced_ct_kwargs: z.array(z.string().min(1)).optional(),
+    enable_thinking: z.boolean().optional(),
+    preserve_thinking: z.boolean().optional(),
+    thinking_budget_enabled: z.boolean().optional(),
+    thinking_budget_tokens: z.number().int().positive().optional(),
+    reasoning_parser: z.string().min(1).optional(),
+    turboquant_kv_enabled: z.boolean().optional(),
+    turboquant_kv_bits: z
+      .union([
+        z.literal(2),
+        z.literal(2.5),
+        z.literal(3),
+        z.literal(3.5),
+        z.literal(4),
+        z.literal(6),
+        z.literal(8),
+      ])
+      .optional(),
+    turboquant_skip_last: z.boolean().optional(),
+    specprefill_enabled: z.boolean().optional(),
+    specprefill_draft_model: z.string().min(1).optional(),
+    specprefill_keep_pct: z.number().min(0.1).max(0.5).optional(),
+    specprefill_threshold: z.number().int().positive().optional(),
+    mtp_enabled: z.boolean().optional(),
+    mtp_num_draft_tokens: z.number().int().positive().optional(),
+  })
+  .strict();
+
 /**
  * Label marking a ModelHost as supervised by another controller (e.g. a
  * central one after a node's local controller is retired). Local
@@ -48,6 +88,9 @@ export const ModelHostHostedModelSchema = z
       })
       .strict()
       .optional(),
+    // #282 DF-09: per-model oMLX settings, omlx-engine-only (the engine gate
+    // and the mtp/dflash mutual-exclusion run in ModelHostSpecSchema.superRefine).
+    omlx: OmlxModelSettingsSchema.optional(),
   })
   .strict();
 
@@ -123,6 +166,37 @@ function apiKeyRefIssues(spec: {
       message:
         "readiness.path must be an unauthenticated llama-server endpoint (/health, /v1/health, /models, /v1/models, /api/tags) when spec.apiKeyRef is set",
     });
+  }
+  return issues;
+}
+
+// #282 DF-09: the omlx conflicts on a parsed spec — settings declared on a
+// non-omlx engine, and omlx.mtp_enabled fighting an effective dflash block
+// (enabled true with dflash_enabled not explicitly false) for the single
+// speculative-decoding path oMLX allows per model.
+function hostedModelOmlxIssues(
+  engine: string,
+  hostedModels: readonly z.infer<typeof ModelHostHostedModelSchema>[],
+): { path: (string | number)[]; message: string }[] {
+  const issues: { path: (string | number)[]; message: string }[] = [];
+  for (const [index, hostedModel] of hostedModels.entries()) {
+    if (hostedModel.omlx !== undefined && engine !== "omlx") {
+      issues.push({
+        path: ["hostedModels", index, "omlx"],
+        message: "hostedModels[].omlx is only supported for engine omlx",
+      });
+    }
+    if (
+      hostedModel.omlx?.mtp_enabled === true &&
+      hostedModel.dflash?.enabled === true &&
+      hostedModel.dflash.dflash_enabled !== false
+    ) {
+      issues.push({
+        path: ["hostedModels", index, "omlx", "mtp_enabled"],
+        message:
+          "omlx.mtp_enabled and dflash cannot both be enabled; oMLX allows one speculative-decoding path per model",
+      });
+    }
   }
   return issues;
 }
@@ -222,6 +296,9 @@ export const ModelHostSpecSchema = z
       }
     }
     for (const issue of apiKeyRefIssues(spec)) ctx.addIssue({ code: "custom", ...issue });
+    for (const issue of hostedModelOmlxIssues(spec.engine, spec.hostedModels)) {
+      ctx.addIssue({ code: "custom", ...issue });
+    }
   });
 
 export const ModelHostManifestSchema = z
@@ -350,6 +427,7 @@ function normalizeHostedModel(m: ModelHostSpec["hostedModels"][number]): ModelHo
   return {
     rel: m.rel,
     ...omitUndefined({ lora_path: m.lora_path }),
+    ...(m.omlx !== undefined ? { omlx: omitUndefined(m.omlx) } : {}),
     ...(dflash !== undefined
       ? {
           dflash: {

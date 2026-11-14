@@ -275,6 +275,12 @@ export interface ServerStatus {
    */
   foreign: boolean;
   /**
+   * True when a pid record exists but its identity cannot be proven (the
+   * 'unknown' verdict): pid is null and state may read 'down', but the
+   * process may still be resident, so callers must not treat it as stopped.
+   */
+  identityUnknown?: boolean;
+  /**
    * Metadata about the currently-tracked llama-server process. Populated
    * from the `llama-server.state` sidecar written at startServer time so
    * downstream reconcilers can diff desired vs observed without needing
@@ -424,10 +430,11 @@ function sidecarStatusFields(sidecar: ServerState | null, valid: boolean): Sidec
 function resolveTrackedServerPid(
   resolved: ResolvedEnv,
   key: WorkloadKey,
+  identity?: PidIdentityDeps,
 ): { pid: number | null; identityUnknown: boolean } {
   const recorded = readServerPid(key, resolved);
   if (recorded === null) return { pid: null, identityUnknown: false };
-  const verdict = verifyPidFile(pidFile(resolved, key), recorded);
+  const verdict = verifyPidFile(pidFile(resolved, key), recorded, identity);
   if (isRecordedPidGone(verdict)) {
     removeServerPid(resolved, key);
     return { pid: null, identityUnknown: false };
@@ -439,8 +446,9 @@ function resolveTrackedServerPid(
 export async function serverStatus(
   key: WorkloadKey,
   resolved: ResolvedEnv = resolveEnv(),
+  identity?: PidIdentityDeps,
 ): Promise<ServerStatus> {
-  const { pid, identityUnknown } = resolveTrackedServerPid(resolved, key);
+  const { pid, identityUnknown } = resolveTrackedServerPid(resolved, key, identity);
   const sidecar = readServerState(key, resolved);
   // Only trust the sidecar when its PID matches the live one; if the
   // PIDs diverge, the state file is from a previous launch that
@@ -500,6 +508,7 @@ export async function serverStatus(
     health: { httpCode, reachable },
     listenerPid,
     foreign,
+    identityUnknown,
     ...sidecarStatusFields(sidecar, validSidecar),
   };
 }
