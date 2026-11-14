@@ -102,16 +102,16 @@ function writeBudgetlessNodeRun(dir: string): void {
   );
 }
 
-function writeResidencyMarginNodeRun(dir: string): void {
+function writeResidencyMarginNodeRun(dir: string, node = "mac-mini"): void {
   writeFileSync(
-    join(dir, "mac-mini.yaml"),
+    join(dir, `${node}.yaml`),
     [
       "apiVersion: llamactl/v1",
       "kind: NodeRun",
       "metadata:",
-      "  name: mac-mini",
+      `  name: ${node}`,
       "spec:",
-      "  node: mac-mini",
+      `  node: ${node}`,
       "  residency:",
       "    safetyMarginRatio: 0.5",
       "  infra: []",
@@ -826,6 +826,28 @@ test("reconcile charges a budgetless NodeRun's residency margin against a remote
     expect(result.errors).toBe(1);
     expect(result.reports[0]?.action).toBe("pending");
     expect(result.reports[0]?.error).toContain(`Budget is ${(hostGiB * 2).toFixed(1)} GiB`);
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("reconcile charges a local NodeRun's residency margin against a local ModelRun", async () => {
+  // Kills: resolveModelRunBudgetGiB's local branch ignoring the NodeRun
+  // residency — at the 0.75 default a 0.6x ModelRun starts; the 0.5
+  // margin must leave it pending on admission.
+  const hostGiB = totalmem() / 1024 ** 3;
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-reconcile-residency-local-"));
+  writeResidencyMarginNodeRun(workloadsDir, "local");
+  const name = "residency-margin-local";
+  saveWorkload(makeSizedRunManifest(name, 0.6 * hostGiB, 8181, "local"), workloadsDir);
+  const client = makeRunClient(new Map());
+
+  try {
+    const result = await reconcileOnce({ workloadsDir, getClient: () => client });
+    expect(result.errors).toBe(1);
+    expect(result.reports[0]?.node).toBe("local");
+    expect(result.reports[0]?.action).toBe("pending");
+    expect(result.reports[0]?.error).toContain(`Budget is ${(hostGiB * 0.5).toFixed(1)} GiB`);
   } finally {
     rmSync(workloadsDir, { recursive: true, force: true });
   }

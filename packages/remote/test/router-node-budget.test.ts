@@ -242,9 +242,10 @@ spec:
 `;
 }
 
-// Far above any real node's 75%-of-RAM default, so admission refuses this ModelHost with or
-// without the NodeRun budget and it never reaches its engine start.
-const budgetProbeHostYaml = `
+// By default far above any real node's 75%-of-RAM default, so admission refuses this ModelHost
+// with or without the NodeRun budget and it never reaches its engine start.
+function budgetProbeHostYaml(expectedMemoryGiB = 100000): string {
+  return `
 apiVersion: llamactl/v1
 kind: ModelHost
 metadata:
@@ -255,13 +256,14 @@ spec:
   enabled: true
   binary: /nonexistent/llama-server
   resources:
-    expectedMemoryGiB: 100000
+    expectedMemoryGiB: ${String(expectedMemoryGiB)}
   endpoint:
     host: 127.0.0.1
     port: 18432
   hostedModels:
     - rel: budget-probe-host.gguf
 `;
+}
 
 function saveProbeNodeRun(
   name: string,
@@ -333,8 +335,20 @@ describe("workloadApply NodeRun budget", () => {
 
   test("an explicit NodeRun budget sizes a ModelHost applied through the router", async () => {
     saveProbeNodeRun("local", { memoryGiB: 0.5 });
-    const message = await workloadApplyError(budgetProbeHostYaml);
+    const message = await workloadApplyError(budgetProbeHostYaml());
     expect(message).toContain("Budget is 0.5 GiB");
+  });
+
+  test("a NodeRun residency safety margin shrinks the computed local ModelHost budget", async () => {
+    // Kills: the ModelHost budget resolver's local branch dropping the
+    // NodeRun residency — admitted at the 0.75 default the probe would go
+    // on to its engine start; at the 0.5 margin it must fail admission.
+    const hostGiB = totalmem() / 1024 ** 3;
+    saveProbeNodeRun("local", undefined, { safetyMarginRatio: 0.5 });
+    const message = await workloadApplyError(
+      budgetProbeHostYaml(Number((hostGiB * 0.6).toFixed(3))),
+    );
+    expect(message).toContain(`Budget is ${(hostGiB * 0.5).toFixed(1)} GiB`);
   });
 
   test("a NodeRun residency safety margin shrinks the computed ModelRun budget", async () => {
