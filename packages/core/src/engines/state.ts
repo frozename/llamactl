@@ -55,6 +55,7 @@ export function computeModelHostSpecHash(spec: {
   restartPolicy: string;
   timeoutSeconds: number;
   env?: Record<string, string> | undefined;
+  apiKeyRef?: string | undefined;
 }): string {
   return JSON.stringify({
     engine: spec.engine,
@@ -66,6 +67,7 @@ export function computeModelHostSpecHash(spec: {
     restartPolicy: spec.restartPolicy,
     timeoutSeconds: spec.timeoutSeconds,
     env: spec.env ?? null,
+    ...(spec.apiKeyRef !== undefined ? { apiKeyRef: spec.apiKeyRef } : {}),
   });
 }
 
