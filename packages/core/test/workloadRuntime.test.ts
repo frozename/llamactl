@@ -591,6 +591,132 @@ test("the last catalog row for a rel wins", () => {
   }
 });
 
+test("a qualification pin overrides the catalog stage", () => {
+  const t = tempEnv();
+  try {
+    expect(typeof catalogQualificationStages).toBe("function");
+    const rel = "pin/model.gguf";
+    writeCustomCatalog(t.runtimeDir, [catalogRow("pin-model", rel, "validated")]);
+    writeFileSync(
+      join(t.runtimeDir, "qualification-overrides.tsv"),
+      `${rel}\tpin\texperimental\top\twhy\t2026-11-14T00:00:00Z\n`,
+    );
+    writeRunState(join(t.runtimeDir, "workloads", "pin-run"), process.pid, {
+      rel,
+      port: 8313,
+    });
+    expect(catalogQualificationStages?.(t.resolved).get(rel)).toBe("experimental");
+    const local = listLocalRoutes(t.resolved);
+    expect(local).toHaveLength(1);
+    expect(routeRecord(local[0]!)["qualificationStage"]).toBe("experimental");
+    const one = listWorkloadRoutes(t.resolved, "pin-run");
+    expect(one).toHaveLength(1);
+    expect(routeRecord(one[0]!)["qualificationStage"]).toBe("experimental");
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a pin applies to a rel with no catalog stage", () => {
+  const t = tempEnv();
+  try {
+    expect(typeof catalogQualificationStages).toBe("function");
+    const rel = "unlisted/model.gguf";
+    writeCustomCatalog(t.runtimeDir, [catalogRow("other-model", "other/model.gguf", "validated")]);
+    writeFileSync(
+      join(t.runtimeDir, "qualification-overrides.tsv"),
+      `${rel}\tpin\tdegraded\top\twhy\t2026-11-14T00:00:00Z\n`,
+    );
+    writeRunState(join(t.runtimeDir, "workloads", "pin-run"), process.pid, {
+      rel,
+      port: 8314,
+    });
+    expect(catalogQualificationStages?.(t.resolved).get(rel)).toBe("degraded");
+    const local = listLocalRoutes(t.resolved);
+    expect(local).toHaveLength(1);
+    expect(routeRecord(local[0]!)["qualificationStage"]).toBe("degraded");
+    const one = listWorkloadRoutes(t.resolved, "pin-run");
+    expect(one).toHaveLength(1);
+    expect(routeRecord(one[0]!)["qualificationStage"]).toBe("degraded");
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("LOCAL_AI_QUALIFICATION_OVERRIDES_FILE relocates the overrides read by catalogQualificationStages", () => {
+  const t = tempEnv();
+  const overrideDir = mkdtempSync(join(tmpdir(), "workloadrt-ovr-"));
+  const savedOverridesFile = process.env["LOCAL_AI_QUALIFICATION_OVERRIDES_FILE"];
+  try {
+    expect(typeof catalogQualificationStages).toBe("function");
+    const rel = "pinned/model.gguf";
+    writeCustomCatalog(t.runtimeDir, [catalogRow("pinned-model", rel, "validated")]);
+    writeFileSync(
+      join(t.runtimeDir, "qualification-overrides.tsv"),
+      `${rel}\tpin\tdegraded\top\tdefault file\t2026-11-14T00:00:00Z\n`,
+    );
+    const relocated = join(overrideDir, "operator-q.tsv");
+    writeFileSync(relocated, `${rel}\tpin\texperimental\top\twhy\t2026-11-14T00:00:00Z\n`);
+    process.env["LOCAL_AI_QUALIFICATION_OVERRIDES_FILE"] = relocated;
+    expect(catalogQualificationStages?.(t.resolved).get(rel)).toBe("experimental");
+    writeRunState(join(t.runtimeDir, "workloads", "pinned-run"), process.pid, {
+      rel,
+      port: 8315,
+    });
+    const local = listLocalRoutes(t.resolved);
+    expect(local).toHaveLength(1);
+    expect(routeRecord(local[0]!)["qualificationStage"]).toBe("experimental");
+  } finally {
+    if (savedOverridesFile === undefined)
+      delete process.env["LOCAL_AI_QUALIFICATION_OVERRIDES_FILE"];
+    else process.env["LOCAL_AI_QUALIFICATION_OVERRIDES_FILE"] = savedOverridesFile;
+    rmSync(overrideDir, { recursive: true, force: true });
+    t.cleanup();
+  }
+});
+
+test("a freeze row leaves the catalog stage unchanged", () => {
+  const t = tempEnv();
+  try {
+    expect(typeof catalogQualificationStages).toBe("function");
+    const rel = "frozen/model.gguf";
+    writeCustomCatalog(t.runtimeDir, [catalogRow("frozen-model", rel, "validated")]);
+    writeFileSync(
+      join(t.runtimeDir, "qualification-overrides.tsv"),
+      `${rel}\tfreeze\t\tops\thold promotions\t2026-11-14T00:00:00Z\n`,
+    );
+    expect(catalogQualificationStages?.(t.resolved).get(rel)).toBe("validated");
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("an override file with only comments or invalid rows changes nothing", () => {
+  const t = tempEnv();
+  try {
+    expect(typeof catalogQualificationStages).toBe("function");
+    const rel = "commented/model.gguf";
+    writeCustomCatalog(t.runtimeDir, [catalogRow("commented-model", rel, "validated")]);
+    writeFileSync(
+      join(t.runtimeDir, "qualification-overrides.tsv"),
+      [
+        "# operator notes",
+        "",
+        "only-two-cols",
+        `${rel}\tpin\t\tops\tempty stage\t2026-11-14T00:00:00Z`,
+        `${rel}\tfreeze\tvalidated\tops\tfreeze with stage\t2026-11-14T00:00:00Z`,
+        `ghost/model.gguf\tpromote\tvalidated\tops\tbad action\t2026-11-14T00:00:00Z`,
+        "",
+      ].join("\n"),
+    );
+    const stages = catalogQualificationStages?.(t.resolved);
+    expect(stages?.get(rel)).toBe("validated");
+    expect(stages?.get("ghost/model.gguf")).toBeUndefined();
+  } finally {
+    t.cleanup();
+  }
+});
+
 test("listClusterRoutes carries peer snapshot labels", () => {
   expect(typeof isExperimentalRoute).toBe("function");
   const snapshot: QualifiedPeerSnapshot = {
