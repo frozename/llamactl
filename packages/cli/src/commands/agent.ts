@@ -267,11 +267,20 @@ ${DIR_FLAG_HELP}
   --fleet-journal=<path>      Fleet journal served at GET /v1/fleet/snapshot
                               (default: DEV_STORAGE/fleet-supervisor/journal.jsonl,
                               else ~/.llamactl/fleet-supervisor/journal.jsonl)
+  --runtime-role=<role>       Per-role runtime identity: a-z, 0-9, _ or -,
+                              1-32 characters, starting with a letter
+  --memory-budget-bytes=<n>   Memory budget for the role, a positive integer
+                              byte count
   -h, --help       Show this help
 
 Environment:
   LLAMACTL_RESIDENCY_LEASES   "1"/"true" publishes one residency lease
                               registry at start (opt-in, off by default).
+  LLAMACTL_AGENT_RUNTIME_ROLE Per-role runtime identity (env fallback for
+                              --runtime-role).
+  LLAMACTL_AGENT_MEMORY_BUDGET_BYTES
+                              Memory budget in bytes (env fallback for
+                              --memory-budget-bytes).
 `;
 
 const STATUS_USAGE = `Usage: llamactl agent status [flags]
@@ -289,6 +298,23 @@ ${DIR_FLAG_HELP}
   --json           Emit a single-line JSON record instead of the human summary
   -h, --help       Show this help
 `;
+
+// #367: per-role runtime memory identity. Role is a lowercase identifier
+// (a-z, 0-9, _ or -) up to 32 characters, starting with a letter. Budget
+// is a positive integer byte count, validated before the server starts.
+const RUNTIME_ROLE_RE = /^[a-z][a-z0-9_-]{0,31}$/;
+const ROLE_HINT = "(expected 1-32 characters of a-z, 0-9, _ or -, starting with a letter)";
+const BUDGET_HINT = "(expected a positive integer byte count)";
+
+function parseBudgetBytes(raw: string): number | { error: string } {
+  if (!/^\d+$/.test(raw)) return { error: "expected a positive integer byte count" };
+  const n = Number(raw);
+  // #367: reject values above MAX_SAFE_INTEGER to avoid silent truncation.
+  if (!Number.isFinite(n) || n <= 0 || !Number.isSafeInteger(n)) {
+    return { error: "expected a positive integer byte count" };
+  }
+  return n;
+}
 
 function isHelpFlag(arg: string): boolean {
   return arg === "-h" || arg === "--help";
@@ -1153,6 +1179,8 @@ export interface ServeFlags {
   tunnelBearerFile?: string;
   tunnelJournal?: string;
   fleetJournal?: string;
+  runtimeRole?: string;
+  memoryBudgetBytes?: number;
 }
 
 export function parseServeFlags(args: string[]): ServeFlags | { error: string } {
@@ -1164,6 +1192,7 @@ export function parseServeFlags(args: string[]): ServeFlags | { error: string } 
     }
     const [k, v] = splitFlag(arg);
     if (v === undefined) return { error: `agent serve: flag must be --key=value: ${arg}` };
+    let identityError: { error: string } | undefined;
     switch (k) {
       case "--dir":
         flags.dir = v;
@@ -1207,11 +1236,37 @@ export function parseServeFlags(args: string[]): ServeFlags | { error: string } 
       case "--fleet-journal":
         flags.fleetJournal = v;
         break;
+      case "--runtime-role":
+      case "--memory-budget-bytes":
+        identityError = applyRuntimeIdentityFlag(flags, k, v);
+        break;
       default:
         return { error: `agent serve: unknown flag ${k}` };
     }
+    if (identityError !== undefined) return identityError;
   }
   return flags;
+}
+
+// #367: validate and record --runtime-role / --memory-budget-bytes.
+function applyRuntimeIdentityFlag(
+  flags: ServeFlags,
+  key: "--runtime-role" | "--memory-budget-bytes",
+  value: string,
+): { error: string } | undefined {
+  if (key === "--runtime-role") {
+    if (!RUNTIME_ROLE_RE.test(value)) {
+      return { error: `agent serve: invalid --runtime-role: ${value} ${ROLE_HINT}` };
+    }
+    flags.runtimeRole = value;
+    return undefined;
+  }
+  const result = parseBudgetBytes(value);
+  if (typeof result === "object") {
+    return { error: `agent serve: invalid --memory-budget-bytes: ${value} ${BUDGET_HINT}` };
+  }
+  flags.memoryBudgetBytes = result;
+  return undefined;
 }
 
 interface ServeWiring {
@@ -1406,6 +1461,55 @@ function residencyLeasesOptIn(env: Readonly<Record<string, string | undefined>>)
   return env["LLAMACTL_RESIDENCY_LEASES"] === "1" || env["LLAMACTL_RESIDENCY_LEASES"] === "true";
 }
 
+export function resolveServeRuntimeIdentity(
+  flags: ServeFlags,
+  env: Readonly<Record<string, string | undefined>>,
+): { runtimeRole?: string; runtimeMemoryBudgetBytes?: number } | { error: string } {
+  // Flags override env vars: use the flag value when present, otherwise env.
+  const roleRaw = flags.runtimeRole ?? env["LLAMACTL_AGENT_RUNTIME_ROLE"];
+  const budgetRaw =
+    flags.memoryBudgetBytes !== undefined
+      ? String(flags.memoryBudgetBytes)
+      : env["LLAMACTL_AGENT_MEMORY_BUDGET_BYTES"];
+  const result: { runtimeRole?: string; runtimeMemoryBudgetBytes?: number } = {};
+
+  if (roleRaw !== undefined && roleRaw !== "") {
+    if (!RUNTIME_ROLE_RE.test(roleRaw)) {
+      return {
+        error: `agent serve: invalid LLAMACTL_AGENT_RUNTIME_ROLE: ${roleRaw} ${ROLE_HINT}`,
+      };
+    }
+    result.runtimeRole = roleRaw;
+  }
+
+  if (budgetRaw !== undefined && budgetRaw !== "") {
+    const parsed = parseBudgetBytes(budgetRaw);
+    if (typeof parsed === "object") {
+      return {
+        error: `agent serve: invalid LLAMACTL_AGENT_MEMORY_BUDGET_BYTES: ${budgetRaw} ${BUDGET_HINT}`,
+      };
+    }
+    result.runtimeMemoryBudgetBytes = parsed;
+  }
+
+  return result;
+}
+
+// #367: spread runtime identity fields into server options when present.
+function runtimeIdentitySpread(
+  identity: ReturnType<typeof resolveServeRuntimeIdentity>,
+): Record<string, unknown> {
+  if (typeof identity === "object" && !("error" in identity)) {
+    return {
+      ...("runtimeRole" in identity ? { runtimeRole: identity.runtimeRole } : {}),
+      ...(identity.runtimeMemoryBudgetBytes !== undefined
+        ? { runtimeMemoryBudgetBytes: identity.runtimeMemoryBudgetBytes }
+        : {}),
+    };
+  }
+  return {};
+}
+
 export function buildServeOptions(
   parsed: ServeFlags,
   cfg: ReturnType<typeof agentConfigMod.loadAgentConfig>,
@@ -1414,6 +1518,7 @@ export function buildServeOptions(
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): Parameters<typeof startAgentServer>[0] {
   const { dialUrl, dialBearer, tunnelCentralOn, tunnelCentralBearer } = wiring;
+  const identity = resolveServeRuntimeIdentity(parsed, env);
   const serverOptions = {
     bindHost: parsed.bindHost ?? cfg.bindHost,
     port: parsed.port ?? cfg.port,
@@ -1471,6 +1576,8 @@ export function buildServeOptions(
       : {}),
     // #278 DF-05: opt-in residency lease registry, off unless the env says on.
     ...(residencyLeasesOptIn(env) ? { residencyLeases: true } : {}),
+    // #367: per-role runtime memory identity, flags override env vars.
+    ...runtimeIdentitySpread(identity),
   } as Parameters<typeof startAgentServer>[0];
   if (parsed.noAuth !== undefined) {
     (serverOptions as Parameters<typeof startAgentServer>[0] & { noAuth?: boolean }).noAuth =
@@ -1519,6 +1626,13 @@ async function runServe(args: string[]): Promise<number> {
   const wiring = validateServeWiring(parsed);
   if ("error" in wiring) {
     process.stderr.write(wiring.error);
+    return 1;
+  }
+
+  // #367: validate runtime identity (flags + env) before touching config.
+  const identity = resolveServeRuntimeIdentity(parsed, process.env);
+  if (typeof identity === "object" && "error" in identity) {
+    process.stderr.write(`${identity.error}\n`);
     return 1;
   }
 
