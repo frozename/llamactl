@@ -24,13 +24,18 @@ export function platformFromNodeFacts(facts: {
   return null;
 }
 
+/** #221: the one node procedure the resolver calls; a NodeClient satisfies it. */
+export interface NodeFactsClient {
+  nodeFacts: Pick<NodeClient["nodeFacts"], "query">;
+}
+
 /**
  * Build an ArtifactResolver bound to a specific node client + target
  * platform. Reused by both `llamactl infra install` and the NodeRun
  * apply path.
  */
 export function makeSpecArtifactResolver(opts: {
-  client: NodeClient;
+  client: NodeFactsClient;
   packagesDir?: string;
   /** Platform override — skip the nodeFacts query. Useful when the
    *  operator cross-installs from a shared control plane. */
