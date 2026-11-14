@@ -1105,6 +1105,13 @@ describe("applyManifest — kind dispatch", () => {
     }
   });
 
+  // #220: the declared serving probe apply must carry into the state sidecar.
+  const READINESS = {
+    path: "/ready",
+    expectStatus: 200,
+    expectJson: { status: "ready" },
+  };
+
   // #516: a llamacpp ModelHost may name the fork argv0 basenames its pid
   // identity check accepts; apply must carry spec.binaryNames into the
   // controller-side state sidecar.
@@ -1144,7 +1151,10 @@ describe("applyManifest — kind dispatch", () => {
     };
   }
 
-  function makeGufoApplyManifest(binaryNames?: string[]): ModelHostManifest {
+  function makeGufoApplyManifest(
+    binaryNames?: string[],
+    readiness?: ModelHostManifest["spec"]["readiness"],
+  ): ModelHostManifest {
     const base = makeModelHostManifest("gufo-apply", 4);
     return {
       ...base,
@@ -1154,6 +1164,7 @@ describe("applyManifest — kind dispatch", () => {
         binary: "/usr/local/bin/llama-server-fork-pristine",
         hostedModels: [{ rel: "gufo/model.gguf" }],
         ...(binaryNames !== undefined ? { binaryNames } : {}),
+        ...(readiness !== undefined ? { readiness } : {}),
       },
     } as unknown as ModelHostManifest;
   }
@@ -1203,6 +1214,54 @@ describe("applyManifest — kind dispatch", () => {
       );
       const raw = JSON.parse(fs.readFileSync(statePath, "utf8")) as Record<string, unknown>;
       expect("binaryNames" in raw).toBe(false);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("applyOneModelHost persists spec.readiness into the state sidecar (#220)", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-readiness-"));
+    try {
+      const result = await applyManifest({
+        manifest: makeGufoApplyManifest(undefined, READINESS),
+        workloadsDir: tmp,
+        getClient: () => makeGufoApplyClient(),
+        spawn: spawnStub,
+        env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp },
+      });
+
+      if (!result.ok) console.error("ERROR:", result);
+      expect(result.ok).toBe(true);
+      expect(
+        readModelHostState(
+          { name: "gufo-apply" },
+          resolveEnv({ ...process.env, LOCAL_AI_RUNTIME_DIR: tmp }),
+        )?.readiness,
+      ).toEqual(READINESS);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("applyOneModelHost without readiness writes no readiness key", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-noreadiness-"));
+    try {
+      const result = await applyManifest({
+        manifest: makeGufoApplyManifest(),
+        workloadsDir: tmp,
+        getClient: () => makeGufoApplyClient(),
+        spawn: spawnStub,
+        env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp },
+      });
+
+      if (!result.ok) console.error("ERROR:", result);
+      expect(result.ok).toBe(true);
+      const statePath = modelHostState.modelhostStateFile(
+        resolveEnv({ ...process.env, LOCAL_AI_RUNTIME_DIR: tmp }),
+        { name: "gufo-apply" },
+      );
+      const raw = JSON.parse(fs.readFileSync(statePath, "utf8")) as Record<string, unknown>;
+      expect("readiness" in raw).toBe(false);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
