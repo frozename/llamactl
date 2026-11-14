@@ -18,8 +18,18 @@
  * pins that a request still in flight releases the moment it settles
  * rather than at the window end. (j) pins the failed-bind path: a
  * `Bun.serve` that throws must not leave the source registered.
+ *
+ * (k) pins the lease-phase projection: with `declaredModels` AND
+ * `residencyLeases` on, `beginDrain` on the ModelRun's workload flips the
+ * declared entry to `draining` and the pin reports it; at base the
+ * declared source never reads the registry, so the pin still says
+ * `cold`/`auto_load_eligible: true` and the case fails by assertion on
+ * `error.state`. (l) is the inert guard: `declaredModels` without
+ * `residencyLeases` keeps `cold`/eligible — no registry exists to
+ * project a phase from.
  */
 import { openaiProxy } from "@llamactl/core";
+import { getResidencyLeaseRegistry } from "@llamactl/core/residency/leases";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -482,5 +492,59 @@ describe("declared cold-model source opt-in (#280 DF-07)", () => {
     } finally {
       await occupied.stop(true);
     }
+  });
+
+  test("(k) opt-in + leases: a draining cold workload's pin reports state draining", async () => {
+    // Kills: serve.ts's declared source not passing the lease registry
+    // phase into listDeclaredModels.
+    setupSandbox();
+    writeRunColdManifest();
+    const running = startAgentServer({ ...agentOptions(true), residencyLeases: true });
+    agent = running;
+
+    const registry = getResidencyLeaseRegistry();
+    expect(registry).not.toBeNull();
+    const drain = registry!.beginDrain("run-cold");
+    expect(drain.ok).toBe(true);
+    try {
+      const res = await running.handleRequest!(postChatCompletions(COLD_PIN), LOOPBACK_CLIENT);
+
+      expect(res.status).toBe(503);
+      const body = (await res.json()) as {
+        error: {
+          type: string;
+          code: string;
+          state: string;
+          auto_load_eligible: boolean;
+        };
+      };
+      expect(body.error.type).toBe("model_not_loaded");
+      expect(body.error.code).toBe("model_not_loaded");
+      expect(body.error.state).toBe("draining");
+      expect(body.error.auto_load_eligible).toBe(false);
+      expect(stubCalls).toHaveLength(0);
+    } finally {
+      if (drain.ok) registry!.cancelDrain(drain.token);
+    }
+  });
+
+  test("(l) guard: without residencyLeases the cold pin still reports state cold", async () => {
+    // Guard: passes at base — with no lease registry published there is
+    // no phase to project, so the declared entry stays cold/eligible.
+    setupSandbox();
+    writeRunColdManifest();
+    const running = startAgentServer(agentOptions(true));
+    agent = running;
+
+    expect(getResidencyLeaseRegistry()).toBeNull();
+
+    const res = await running.handleRequest!(postChatCompletions(COLD_PIN), LOOPBACK_CLIENT);
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as {
+      error: { state: string; auto_load_eligible: boolean };
+    };
+    expect(body.error.state).toBe("cold");
+    expect(body.error.auto_load_eligible).toBe(true);
+    expect(stubCalls).toHaveLength(0);
   });
 });

@@ -3,9 +3,12 @@
  * ModelHost/ModelRun manifests plus the set of currently-live model ids
  * into DeclaredModelEntryV1 rows: every id a workload would serve, with
  * its load state, so the proxy can answer a pin with a typed not-loaded
- * rejection instead of the default endpoint. Pure builder; the only I/O
- * edge is listDeclaredModels reading the workloads dir — no credentials,
- * no kubeconfig. Not wired into serve.ts yet.
+ * rejection instead of the default endpoint. The optional workloadPhase
+ * hook feeds the residency lease phase into that state — a draining
+ * lease projects 'draining', and a live id under an unloaded lease
+ * projects 'loading'. Pure builder; the only I/O edge is
+ * listDeclaredModels reading the workloads dir — no credentials, no
+ * kubeconfig.
  */
 import { routingCatalog } from "@llamactl/core";
 import { basename, isAbsolute } from "node:path";
@@ -16,6 +19,7 @@ import type { ModelRun } from "../workload/schema.js";
 import { listModelHosts } from "../workload/modelhost-store.js";
 import { defaultWorkloadsDir, listWorkloads } from "../workload/store.js";
 
+export type DeclaredWorkloadPhase = "open" | "draining" | "unloaded";
 type DeclaredKind = "ModelRun" | "ModelHost";
 type DeclaredState = routingCatalog.DeclaredModelState;
 
@@ -75,13 +79,33 @@ function runClaims(run: ModelRun, nodeName: string): DeclaredClaim[] {
     }));
 }
 
+// The phase seam is best-effort: a throwing registry degrades that claim
+// to "no phase" rather than failing the whole declared source — the same
+// degrade-to-nothing rule listWorkloads applies to unparseable manifests.
+function phaseForWorkload(
+  workloadPhase: ((workload: string) => DeclaredWorkloadPhase | undefined) | undefined,
+  workload: string,
+): DeclaredWorkloadPhase | undefined {
+  try {
+    return workloadPhase?.(workload);
+  } catch {
+    return undefined;
+  }
+}
+
 function stateForClaim(
   claim: DeclaredClaim,
   collided: boolean,
   liveModelIds: ReadonlySet<string>,
+  phase: DeclaredWorkloadPhase | undefined,
 ): DeclaredState {
   if (collided) return "unavailable";
   if (!claim.enabled) return "disabled";
+  if (phase === "draining") return "draining";
+  // Not observable through the current proxy consumers: both the 503
+  // pin rejection and the `declared` model list skip ids with a live
+  // route, so a 'loading' entry here is only seen by direct callers.
+  if (phase === "unloaded" && liveModelIds.has(claim.id)) return "loading";
   if (liveModelIds.has(claim.id)) return "ready";
   return "cold";
 }
@@ -91,6 +115,7 @@ export function buildDeclaredModelEntries(input: {
   modelHosts: readonly ModelHostManifest[];
   modelRuns: readonly ModelRun[];
   liveModelIds: ReadonlySet<string>;
+  workloadPhase?: (workload: string) => DeclaredWorkloadPhase | undefined;
 }): routingCatalog.DeclaredModelEntryV1[] {
   const claims = [
     ...input.modelHosts.flatMap((host) => hostClaims(host, input.nodeName)),
@@ -102,7 +127,8 @@ export function buildDeclaredModelEntries(input: {
   }
   const entries = claims.map((claim) => {
     const collided = (claimantsById.get(claim.id) ?? 0) > 1;
-    const state = stateForClaim(claim, collided, input.liveModelIds);
+    const phase = phaseForWorkload(input.workloadPhase, claim.workload);
+    const state = stateForClaim(claim, collided, input.liveModelIds, phase);
     return routingCatalog.DeclaredModelEntryV1Schema.parse({
       id: claim.id,
       workload: claim.workload,
@@ -126,15 +152,18 @@ export function listDeclaredModels({
   dir = defaultWorkloadsDir(),
   nodeName,
   liveModelIds,
+  workloadPhase,
 }: {
   dir?: string;
   nodeName: string;
   liveModelIds: ReadonlySet<string>;
+  workloadPhase?: (workload: string) => DeclaredWorkloadPhase | undefined;
 }): routingCatalog.DeclaredModelEntryV1[] {
   return buildDeclaredModelEntries({
     nodeName,
     modelHosts: listModelHosts(dir, noopSkip),
     modelRuns: listWorkloads(dir, noopSkip),
     liveModelIds,
+    ...(workloadPhase !== undefined ? { workloadPhase } : {}),
   });
 }
