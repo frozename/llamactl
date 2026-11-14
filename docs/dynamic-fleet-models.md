@@ -10,8 +10,12 @@ Open items:
 
 - The 8-state residency lifecycle and the exclusive-group decisions ship
   as a pure library (`packages/core/src/residency/lifecycle.ts`, #517).
-  Persistence in the fenced store and enforcement in the reconciler and
-  ModelHost are still pending #276. What enforces today is the
+  Persistence landed in #662: the fenced residency store
+  (`packages/remote/src/residency/store.ts`) writes per-model states to
+  its `residency_states` table. Writing is opt-in through
+  `transitionResidencyState`, and no production caller writes states
+  yet. Enforcement in the reconciler and ModelHost is still pending
+  #276. What enforces today is the
   finite-budget admission math plus the per-node residency-group start
   guard described below.
 - Real GLM-5.3-Flash z13 measurements are not yet committed (see the
@@ -66,9 +70,24 @@ Changing availability:
 
 ## Residency states and exclusion
 
-The residency state model exists as a library (#517); its persistence
-and enforcement are pending #276. The enforcement in place today is the
-following:
+The residency state model exists as a library (#517). Since #662 the
+fenced residency store (`packages/remote/src/residency/store.ts`)
+persists per-model states in its `residency_states` table:
+
+- The file is `residency/operations.sqlite` under the llamactl home,
+  or the path in `LLAMACTL_RESIDENCY_STORE`.
+- Each `transitionResidencyState` write is fenced, compare-and-set on
+  version, and checked against the lifecycle edges and exclusive-group
+  occupancy over all persisted rows in one IMMEDIATE transaction.
+- Writing is opt-in: only a caller that opens the store and calls
+  `transitionResidencyState` writes rows, and no production caller does
+  yet.
+- Group declarations are not persisted. They come from the caller
+  (default `RESIDENCY_GROUPS`).
+
+Still pending #276: enforcement in the reconciler and ModelHost,
+recovery, stale-revision rejection, and summing reservations against a
+node memory budget. The enforcement in place today is the following:
 
 1. `packages/core/src/residency/admission.ts` — finite-budget
    admission arithmetic: refusals for an unknown budget, an

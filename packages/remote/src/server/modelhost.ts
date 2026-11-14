@@ -354,6 +354,13 @@ function binaryNamesField(binaryNames: readonly string[] | undefined): { binaryN
   return binaryNames === undefined ? {} : { binaryNames: [...binaryNames] };
 }
 
+// #220: absent key, never explicit undefined, so pre-#220 sidecars stay byte-identical.
+function readinessField(readiness: ModelHostReadiness | undefined): {
+  readiness?: ModelHostReadiness;
+} {
+  return readiness === undefined ? {} : { readiness };
+}
+
 // Given a live process (`livePid`) already bound to the endpoint, adopt it iff
 // it is serving OUR model: re-record its pid so the proxy route recovers,
 // rather than spawning a competitor that could not bind the held port. Returns
@@ -369,14 +376,13 @@ async function tryAdoptLiveHost(
   priorSpecHash: string | undefined,
 ): Promise<StartModelHostResult | "relaunch" | null> {
   const endpoint = manifest.spec.endpoint;
-  const readiness = await probeReady(
-    endpoint,
-    ADOPT_PROBE_TIMEOUT_MS,
-    normalizeReadiness(manifest.spec.readiness),
-  ).catch(() => ({
-    ready: false,
-    modelIds: [] as string[],
-  }));
+  const declaredReadiness = normalizeReadiness(manifest.spec.readiness);
+  const readiness = await probeReady(endpoint, ADOPT_PROBE_TIMEOUT_MS, declaredReadiness).catch(
+    () => ({
+      ready: false,
+      modelIds: [] as string[],
+    }),
+  );
   if (!readiness.ready) return null;
   const firstHostedModel = manifest.spec.hostedModels[0];
   if (!firstHostedModel) return null;
@@ -432,6 +438,7 @@ async function tryAdoptLiveHost(
       slotSavePath: typeof cmdline === "string" ? parseSlotSavePathFromCommand(cmdline) : null,
       specHash: computeModelHostSpecHash(specForHash(manifest.spec)),
       ...binaryNamesField(manifest.spec.binaryNames),
+      ...readinessField(declaredReadiness),
     },
     opts.key,
     resolved,
@@ -977,6 +984,7 @@ async function launchModelHost(
         slotSavePath: extraArgsResolved.slotSavePath,
         specHash: startSpecHash,
         ...binaryNamesField(manifest.spec.binaryNames),
+        ...readinessField(spec.readiness),
       },
       opts.key,
       resolved,

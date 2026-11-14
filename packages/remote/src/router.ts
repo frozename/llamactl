@@ -30,6 +30,7 @@ import * as kubecfg from "@llamactl/core/config/kubeconfig";
 import { ENGINES } from "@llamactl/core/engines";
 import { readModelHostState } from "@llamactl/core/engines/state";
 import { probeEndpointOwnership } from "@llamactl/core/probe";
+import { getResidencyLeaseRegistry } from "@llamactl/core/residency/leases";
 import {
   type CostJournalEntry,
   decideGuardianAction,
@@ -2000,18 +2001,30 @@ export const router = t.router({
   }),
 
   // Read-only residency status. nodeRun/policy/budget reflect the NodeRun
-  // manifest matched by `node`; the store section is always this serving
-  // process's own node-local store, never `node`'s coordinator state.
+  // manifest matched by `node`; the store and leases sections are always this
+  // serving process's own state (scope "serving-process"), never `node`'s
+  // coordinator state. The lease registry is per serving process, so it is not
+  // filtered by node — the same scope as the store echo.
   residencyStatus: t.procedure.input(z.object({ node: z.string().min(1) })).query(({ input }) => {
     const nodeRuns = nodeRunStoreMod.listNodeRuns();
     const node = nodeRuns.find((n: (typeof nodeRuns)[number]) => n.metadata.name === input.node);
     const declared = node?.spec.budget?.memoryGiB;
+    const leaseRegistry = getResidencyLeaseRegistry();
+    const leaseWorkloads =
+      leaseRegistry === null
+        ? []
+        : [
+            ...workloadStoreMod.listWorkloads().map((m) => m.metadata.name),
+            ...modelHostStoreMod.listModelHosts().map((h) => h.metadata.name),
+          ];
     return buildResidencyStatus({
       node: input.node,
       nodeRun: node,
       budgetGiB: defaultNodeBudgetGiB(declared, undefined, node?.spec.residency),
       budgetSource: typeof declared === "number" ? "noderun" : "computed",
       store: readResidencyStoreSnapshot(defaultResidencyStorePath()),
+      leaseRegistry,
+      leaseWorkloads,
     });
   }),
 
