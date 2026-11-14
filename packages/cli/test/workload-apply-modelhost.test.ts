@@ -153,7 +153,10 @@ function writeModelRunManifest(): string {
   return manifestPath;
 }
 
-function stubStartClient(onStart?: () => void): { startCalls: () => number } {
+function stubStartClient(
+  onStart?: () => void,
+  nodeMemBytes: number | "reject" = 64 * 1024 ** 3,
+): { startCalls: () => number } {
   let calls = 0;
   __setWorkloadTestSeams({
     getNodeClientByName: () =>
@@ -175,6 +178,15 @@ function stubStartClient(onStart?: () => void): { startCalls: () => number } {
         modelHostStatus: {
           // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
           query: async () => ({ state: "Running", pid: 3333 }),
+        },
+        // #274: a remote ModelHost's admission budget is sized from the
+        // node's reported memory; "reject" stands in for an unreachable
+        // node whose facts cannot be verified.
+        nodeFacts: {
+          query: () =>
+            nodeMemBytes === "reject"
+              ? Promise.reject(new Error("node unreachable"))
+              : Promise.resolve({ memBytes: nodeMemBytes }),
         },
       }) as unknown as NodeClient,
   });
@@ -489,6 +501,20 @@ test("apply keeps the default budget for a remote ModelHost whose NodeRun sets n
 
   expect(code).toBe(0);
   expect(startCalls()).toBe(1);
+});
+
+test("apply refuses a remote ModelHost with no NodeRun budget and unverified node facts", async () => {
+  writeFileSync(join(tmp, "omlx"), "", "utf8");
+  writeNodeRun();
+  const manifestPath = writeManifest({ node: "gpu1" });
+  const { startCalls } = stubStartClient(undefined, "reject");
+
+  const { result: code, stderr } = await withCapturedIo(() => runApply(["-f", manifestPath]));
+
+  expect(code).toBe(1);
+  expect(stderr).toContain("node 'gpu1' memory budget is unknown");
+  expect(startCalls()).toBe(0);
+  expect(existsSync(savedManifestPath())).toBe(false);
 });
 
 test("apply refuses a remote ModelRun past its NodeRun budget", async () => {

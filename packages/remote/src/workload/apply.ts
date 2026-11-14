@@ -478,14 +478,15 @@ async function resolveModelHostBudgetGiB(
   manifest: ModelHostManifest,
   opts: Omit<ApplyManifestOptions, "manifest">,
   client: WorkloadClient,
-): Promise<number> {
+): Promise<number | null> {
   const explicit = opts.getNodeBudgetGiB?.(manifest.spec.node);
   if (explicit !== undefined) return explicit;
   const residency = opts.getNodeResidency?.(manifest.spec.node);
   if (manifest.spec.node === LOCAL_NODE_ID)
     return defaultNodeBudgetGiB(undefined, undefined, residency);
-  // A black-holed node must not stall admission: absent, rejected or
-  // timed-out facts all fall back to the controller's own RAM.
+  // A black-holed node must not stall admission: absent, rejected or timed-out
+  // facts resolve to an unknown budget (BudgetUnknown), because the
+  // controller's own RAM is not authoritative for a remote node (#274).
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const timeout = new Promise<null>((resolve) => {
@@ -495,7 +496,11 @@ async function resolveModelHostBudgetGiB(
     });
     const query = client.nodeFacts?.query() ?? Promise.resolve(null);
     const facts = await Promise.race([query.catch(() => null), timeout]);
-    return defaultNodeBudgetGiB(undefined, facts?.memBytes ?? null, residency);
+    const memBytes = facts?.memBytes;
+    if (typeof memBytes === "number" && Number.isFinite(memBytes) && memBytes > 0) {
+      return defaultNodeBudgetGiB(undefined, memBytes, residency);
+    }
+    return null;
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
@@ -506,7 +511,7 @@ function admitModelHostBudget(
   opts: Omit<ApplyManifestOptions, "manifest">,
   resolved: ReturnType<typeof resolveEnv>,
   firstHostedModel: ModelHostManifest["spec"]["hostedModels"][number],
-  budget: number,
+  budget: number | null,
 ): { ok: false; error: string } | null {
   const workloadsDir = opts.workloadsDir ?? defaultWorkloadsDir(opts.env);
   const livingManifests = listAnyWorkloadsForAdmission(workloadsDir, resolved)
@@ -941,8 +946,12 @@ interface ApplyOneOpts {
    */
   resolveNodeIdentity?: (nodeName: string) => string | null;
   listManifests?: (dir?: string) => ModelRun[];
-  /** May be async so a caller can size a remote node from its reported memory. */
-  getNodeBudgetGiB?: (nodeName: string) => number | undefined | Promise<number | undefined>;
+  /** May be async so a caller can size a remote node from its reported memory.
+   *  Return `null` to say "the budget resolved as unknown": admission must
+   *  refuse with BudgetUnknown and must not re-query the node. */
+  getNodeBudgetGiB?: (
+    nodeName: string,
+  ) => number | null | undefined | Promise<number | null | undefined>;
   /** NodeRun spec.residency for the node; its safetyMarginRatio sizes the
    *  computed fallback budget (Part of #519). */
   getNodeResidency?: (nodeName: string) => NodeRunResidency | null | undefined;
