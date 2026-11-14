@@ -8,9 +8,12 @@ catalog, router and workload lifecycle — it is not a parallel registry
 
 Open items:
 
-- The residency state contract is pending #276; what ships today is
-  the finite-budget admission math plus the per-node residency-group
-  start guard described below.
+- The 8-state residency lifecycle and the exclusive-group decisions ship
+  as a pure library (`packages/core/src/residency/lifecycle.ts`, #517).
+  Persistence in the fenced store and enforcement in the reconciler and
+  ModelHost are still pending #276. What enforces today is the
+  finite-budget admission math plus the per-node residency-group start
+  guard described below.
 - Real GLM-5.3-Flash z13 measurements are not yet committed (see the
   eval record at the bottom).
 
@@ -63,8 +66,9 @@ Changing availability:
 
 ## Residency states and exclusion
 
-The residency state contract (#276) is not implemented at this commit.
-What exists today:
+The residency state model exists as a library (#517); its persistence
+and enforcement are pending #276. The enforcement in place today is the
+following:
 
 1. `packages/core/src/residency/admission.ts` — finite-budget
    admission arithmetic: refusals for an unknown budget, an
@@ -100,6 +104,46 @@ Observable signals operators use today:
   confirm the recorded pid;
 - the guard's Running / Starting / Unknown peer states;
 - template readiness probes (e.g. `/ready` flipping to 200).
+
+### Residency lifecycle states
+
+`packages/core/src/residency/lifecycle.ts` is pure and synchronous:
+states in, decisions out. Its consumers are the residency planner and
+the remote profile-switch coordinator
+(`packages/remote/src/residency/coordinator.ts`); neither has a live
+caller yet (DF-06 #279).
+
+| state         | legal next states                | occupying |
+| ------------- | -------------------------------- | --------- |
+| `unavailable` | `downloaded`                     | no        |
+| `downloaded`  | `loading`, `unavailable`         | no        |
+| `loading`     | `warming`, `failed`, `unloading` | yes       |
+| `warming`     | `ready`, `failed`, `unloading`   | yes       |
+| `ready`       | `draining`, `failed`             | yes       |
+| `draining`    | `unloading`, `failed`            | no        |
+| `unloading`   | `downloaded`, `failed`           | no        |
+| `failed`      | `downloaded`, `unavailable`      | no        |
+
+The occupying states (`loading`, `warming`, `ready`) hold a group's
+memory.
+
+`RESIDENCY_GROUPS` declares `z13-large-gpu` as exclusive. Membership
+comes from the catalog `residencyGroup` field and the
+`llamactl.io/residency-group` label.
+
+`evaluateResidencyTransition` checks, in order:
+
+- The member must be present, else `UnknownMember`.
+- The transition must be legal per the table, else `IllegalTransition`.
+- Only when the target state is occupying and the member has a group,
+  the group must be declared, else `UnknownGroup`. If that group is
+  exclusive, no other member may be occupying it, else
+  `ExclusiveGroupOccupied`, which carries the lowest-sorted occupying
+  `peer`.
+- Refusals return `{ ok: false, reason, detail }`.
+
+`findExclusiveGroupViolations` reports every exclusive group with two or
+more occupying members.
 
 ## Qualification and promotion
 
