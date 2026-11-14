@@ -89,7 +89,11 @@ import { readJournal } from "./ops-chat/sessions/journal.js";
 import { getSessionSummary, listSessions } from "./ops-chat/sessions/list.js";
 import { createRagAdapter } from "./rag/index.js";
 import { resolveRagNode } from "./rag/resolve.js";
-import { buildResidencyStatus } from "./residency/procedures.js";
+import {
+  buildResidencyPlan,
+  buildResidencyStatus,
+  collectResidencyObservations,
+} from "./residency/procedures.js";
 import { fenceWorkloadStop, reopenWorkloadAfterLoad } from "./residency/stop-fence.js";
 import { defaultResidencyStorePath, readResidencyStoreSnapshot } from "./residency/store.js";
 import { readFleetSnapshotOrLocalRoutes } from "./routes/fleet.js";
@@ -103,7 +107,11 @@ import {
   stopModelHost,
   type StopModelHostResult,
 } from "./server/modelhost.js";
-import { defaultNodeBudgetGiB, estimateModelHostMemoryGiB } from "./workload/admission.js";
+import {
+  defaultNodeBudgetGiB,
+  estimateModelHostMemoryGiB,
+  estimateWorkloadMemoryGiB,
+} from "./workload/admission.js";
 import * as workloadApplyMod from "./workload/apply.js";
 import { CompositeOwnershipSchema } from "./workload/gateway-catalog/schema.js";
 import { liveLockHolder } from "./workload/lock.js";
@@ -1990,6 +1998,54 @@ export const router = t.router({
       store: readResidencyStoreSnapshot(defaultResidencyStorePath()),
     });
   }),
+
+  // Read-only residency plan: a dry-run profile switch, never a mutation.
+  // ModelRun state is the recorded phase; ModelHost state is pid-level and
+  // maps to "starting", not ready-probed. The store and pid status apply only
+  // when node === LLAMACTL_NODE_NAME; otherwise storeAppliesToNode:false means
+  // the in-flight state for `node` was not observed here. Failed/Pending
+  // workloads fail closed as UnknownState.
+  residencyPlan: t.procedure
+    .input(
+      z.object({
+        node: z.string().min(1),
+        to: z.string().min(1),
+        from: z.string().min(1).optional(),
+      }),
+    )
+    .query(({ input }) => {
+      const nodeRuns = nodeRunStoreMod.listNodeRuns();
+      const node = nodeRuns.find((n: (typeof nodeRuns)[number]) => n.metadata.name === input.node);
+      const declared = node?.spec.budget?.memoryGiB;
+      const rawNodeName = process.env["LLAMACTL_NODE_NAME"]?.trim() ?? "";
+      const servingNode = rawNodeName === "" ? null : rawNodeName;
+      const resolved = envMod.resolveEnv();
+      const modelHosts = modelHostStoreMod.listModelHosts();
+      const observations = collectResidencyObservations({
+        node: input.node,
+        servingNode,
+        modelRuns: workloadStoreMod.listWorkloads(),
+        modelHosts,
+        modelHostStatus: (name) => statusModelHost({ key: { name } }),
+        estimateModelRunGiB: (manifest) => estimateWorkloadMemoryGiB(manifest, resolved),
+        estimateModelHostGiB: (manifest) => estimateModelHostMemoryGiB(manifest, resolved),
+      });
+      return buildResidencyPlan({
+        node: input.node,
+        to: input.to,
+        from: input.from ?? null,
+        nowMs: Date.now(),
+        servingNode,
+        nodeRun: node,
+        budgetGiB: defaultNodeBudgetGiB(declared),
+        budgetSource: typeof declared === "number" ? "noderun" : "computed",
+        modelRuns: observations.modelRuns,
+        modelHosts,
+        observed: observations.observed,
+        memoryGiB: observations.memoryGiB,
+        store: readResidencyStoreSnapshot(defaultResidencyStorePath()),
+      });
+    }),
 
   workloadApply: t.procedure
     .input(z.object({ yaml: z.string().min(1) }))
