@@ -125,6 +125,12 @@ Subcommands:
       ~/.config/systemd/user (user) or /etc/systemd/system (system), and
       enable + restart it via systemctl. --dry-run prints the unit +
       systemctl plan without touching disk.
+  migrate-tunnel-bearer <unit-path> [--write] [--dir=<abs path>]
+      Move LLAMACTL_TUNNEL_BEARER / LLAMACTL_TUNNEL_CENTRAL_BEARER out
+      of a launchd plist or systemd unit into <dir>/tunnel-bearer /
+      <dir>/tunnel-central-bearer (0600). Dry run unless --write is
+      passed; the token is never printed and the service is never
+      restarted — only the reload hint is shown.
   token <subcommand>
       Manage named operator bearer tokens (add / list / revoke / rename). Each
       named token authenticates the agent's authed API routes exactly
@@ -345,6 +351,10 @@ export async function runAgent(args: string[]): Promise<number> {
     case "install-systemd": {
       const { runAgentInstallSystemd } = await import("./agent-install/systemd.js");
       return await runAgentInstallSystemd(rest);
+    }
+    case "migrate-tunnel-bearer": {
+      const { runAgentMigrateTunnelBearer } = await import("./agent-migrate-tunnel-bearer.js");
+      return await runAgentMigrateTunnelBearer(rest);
     }
     case "update": {
       const { runAgentUpdate } = await import("./agent-update.js");

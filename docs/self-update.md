@@ -136,6 +136,31 @@ otherwise the checkout is left detached at it. A rollback refuses only on
 tracked local changes, an unmatched service setup, or running inside a unit
 it restarts; it does not check CI or health.
 
+## Worker nodes: `--agent-only`
+
+A worker node whose local controller was retired and handed to a central
+one (#223) runs only the agent from this checkout. Without `--agent-only`,
+`--check` reports the inactive controller unit and `--apply` refuses, since
+the default procedure stops, starts and watches it. Update such a node with
+
+```bash
+llamactl update --apply --agent-only      # likewise --check / --rollback
+```
+
+The local controller unit is then never stopped, started or awaited, and the
+final "start the controller if it is not running" guard is skipped. The fetch,
+CI and health checks, switch, install, idle wait, agent restart, verify,
+history and automatic rollback all still run, covering the agent only. The
+settings in [Configuration](#configuration) are read from the agent unit's
+environment instead of the controller's, and `LLAMACTL_UPDATE_HEAVY_LOCK` is
+held from before the switch until the install is done (and dropped on every
+exit path).
+
+`--agent-only` refuses while the controller unit is still active on the node:
+stop and disable it there first (it must not supervise the same model hosts
+as the central controller), or drop the flag on a node that keeps its own
+controller.
+
 ## History
 
 One line per event, appended to `$LLAMACTL_UPDATE_HISTORY`, else

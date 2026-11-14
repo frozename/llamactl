@@ -35,6 +35,8 @@ const BASE_OPTS = {
   env: { EMBERSYNTH_PORT: "7777", EMBERSYNTH_LOG_LEVEL: "info" },
 };
 
+const TOKEN = "fixture-bearer-289-DO-NOT-ECHO";
+
 describe("infraServiceLabel + paths", () => {
   test("label uses llamactl-prefixed reverse-dns", () => {
     expect(infraServiceLabel("embersynth")).toBe("com.llamactl.infra.embersynth");
@@ -294,5 +296,57 @@ describe("writeServiceUnit / readServiceUnit / removeServiceUnit", () => {
     expect(removeServiceUnit("embersynth", "darwin", { HOME: home })).toBe(true);
     expect(existsSync(path)).toBe(false);
     rmSync(home, { recursive: true, force: true });
+  });
+});
+
+describe("writeServiceUnit refuses secret-looking env (#289)", () => {
+  const SECRET_ENV_KEYS = [
+    "LLAMACTL_TUNNEL_BEARER",
+    "LLAMACTL_TUNNEL_CENTRAL_BEARER",
+    "SIRIUS_API_TOKEN",
+    "EMBERSYNTH_SECRET",
+  ];
+
+  for (const host of ["darwin", "linux"] as const) {
+    for (const key of SECRET_ENV_KEYS) {
+      test(`${host}: env key ${key} throws before any unit file is written`, () => {
+        let thrown: unknown;
+        try {
+          writeServiceUnit({
+            ...BASE_OPTS,
+            host,
+            dir,
+            env: { EMBERSYNTH_PORT: "7777", [key]: TOKEN },
+          });
+        } catch (err) {
+          thrown = err;
+        }
+        expect(thrown).toBeInstanceOf(Error);
+        const message = thrown instanceof Error ? thrown.message : String(thrown);
+        expect(message).toContain(`refusing to write secret-looking env key ${key}`);
+        expect(message).not.toContain(TOKEN);
+        const unitPath =
+          host === "darwin"
+            ? join(dir, "com.llamactl.infra.embersynth.plist")
+            : join(dir, "llamactl-infra-embersynth.service");
+        expect(existsSync(unitPath)).toBe(false);
+      });
+    }
+  }
+
+  // Regression pin — passes at the base commit: *_FILE path vars are not
+  // secret-looking, so the guard must not reject them. Kills a guard
+  // regex missing the `$` anchor (LLAMACTL_TUNNEL_BEARER_FILE contains
+  // "_BEARER" but does not end with it).
+  test("LLAMACTL_TUNNEL_BEARER_FILE still writes on both hosts", () => {
+    for (const host of ["darwin", "linux"] as const) {
+      const { path } = writeServiceUnit({
+        ...BASE_OPTS,
+        host,
+        dir,
+        env: { EMBERSYNTH_PORT: "7777", LLAMACTL_TUNNEL_BEARER_FILE: "/abs/p" },
+      });
+      expect(readFileSync(path, "utf8")).toContain("LLAMACTL_TUNNEL_BEARER_FILE");
+    }
   });
 });
