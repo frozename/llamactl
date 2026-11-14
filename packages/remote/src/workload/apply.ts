@@ -1372,7 +1372,10 @@ const EVICT_VICTIM_OPS: Record<
       const refused = refusedStopReason(outcome);
       if (refused !== null) {
         if (/^(?:LeasesActive|DrainInProgress)(?::|$)/.test(refused)) {
-          return evictStopFailure(manifest, target, "EvictVictimBusy", refused);
+          // The fence renders "<reason>: <ids>"; with no ids, drop the
+          // dangling ": " so the detail matches ModelRun's busyDetail.
+          const detail = refused.replace(/:\s*$/, "");
+          return evictStopFailure(manifest, target, "EvictVictimBusy", detail);
         }
         return evictStopFailure(manifest, target, "EvictStopRefused", refused);
       }

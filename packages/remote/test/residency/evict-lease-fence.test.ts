@@ -9,9 +9,11 @@
  * and parks the victim unloaded at the advanced epoch. The stop mutations
  * route through the real router procedures so the #613 fence decides;
  * status probes and starts are faked — no processes, no network, no
- * sleeps. Each case fails by assertion at base 1b83685: the condition
+ * sleeps. Each busy case fails by assertion at base 1b83685: the condition
  * reason is EvictStopRefused and the ModelRun detail is the bare
- * "refused to stop".
+ * "refused to stop". The mid-string LeasesActive case is a negative guard
+ * (it must stay EvictStopRefused) and the non-string active case injects
+ * a malformed refusal; both pin the classifier's edges against mutants.
  */
 import {
   createResidencyLeases,
@@ -486,5 +488,163 @@ describe("applyOne evict lease fence (#278 DF-05)", () => {
       active: [],
       waiters: 0,
     });
+  });
+
+  test("a drain already in progress on the ModelHost victim refuses the eviction as EvictVictimBusy with DrainInProgress", async () => {
+    // Kills P4 — drops DrainInProgress from the ModelHost busy regex
+    // (/^(?:LeasesActive)(?::|$)/), so the fence's "DrainInProgress: "
+    // refusal falls through to generic EvictStopRefused.
+    saveModelHost(
+      mkModelHostManifest("resident-host", { resources: { expectedMemoryGiB: 24 } }),
+      workloadsDir,
+    );
+    const reg = createResidencyLeases();
+    setResidencyLeaseRegistry(reg);
+    const d = reg.beginDrain("resident-host");
+    expect(d.ok).toBe(true);
+    if (!d.ok) {
+      throw new Error("expected beginDrain to succeed");
+    }
+    expect(d.active).toEqual([]);
+    const rig = makeEvictClient({
+      name: "resident-host",
+      kind: "ModelHost",
+      rel: "resident-host.gguf",
+      port: 18094,
+    });
+    const { events, onEvent } = makeEventRecorder();
+    const incoming = mkManifest("incoming-run", {
+      ram: 8,
+      annotations: { "llamactl.io/evict": "resident-host" },
+    });
+
+    const result = await applyOne(incoming, () => rig.client, onEvent, undefined, {
+      workloadsDir,
+      env,
+      getNodeBudgetGiB: () => 24,
+    });
+
+    expect(result.statusSection.conditions[0]?.reason).toBe("EvictVictimBusy");
+    expect(result.error).toContain("(EvictVictimBusy): DrainInProgress");
+    expect(result.error).not.toContain("DrainInProgress: ");
+    const evictFailed = events.find((e) => e.type === "evict-failed");
+    expect(evictFailed?.message).toContain("DrainInProgress");
+    expect(result.action).toBe("pending");
+    expect(rig.starts).toEqual([]);
+    expect(rig.victimDown).toBe(false);
+    expect(rig.modelHostStops).toHaveLength(1);
+    expect(rig.modelHostStops[0]?.result.ok).toBe(false);
+    expect(rig.modelHostStops[0]?.result.error).toBe("DrainInProgress: ");
+    expect(reg.snapshot("resident-host")).toEqual({
+      workload: "resident-host",
+      phase: "draining",
+      epoch: 1,
+      active: [],
+      waiters: 0,
+    });
+    expect(
+      loadWorkloadByNameAny("resident-host", workloadsDir).metadata.annotations?.[
+        "llamactl.io/evicted-by"
+      ],
+    ).toBeUndefined();
+    expect(reg.cancelDrain(d.token)).toBe(true);
+  });
+
+  test("a ModelHost stop error that only mentions LeasesActive mid-string stays EvictStopRefused", async () => {
+    // Kills P7 — unanchors the ModelHost busy regex
+    // (/(?:LeasesActive|DrainInProgress)(?::|$)/ without ^), so an error
+    // that embeds "LeasesActive:" after other text is misclassified as busy.
+    // The reason word is followed by ":" so only the ^ anchor rejects it.
+    saveModelHost(
+      mkModelHostManifest("resident-host", { resources: { expectedMemoryGiB: 24 } }),
+      workloadsDir,
+    );
+    const rig = makeEvictClient({
+      name: "resident-host",
+      kind: "ModelHost",
+      rel: "resident-host.gguf",
+      port: 18094,
+    });
+    const stopCalls: string[] = [];
+    const client: WorkloadClient = {
+      ...rig.client,
+      modelHostStop: {
+        mutate: (input): Promise<unknown> => {
+          stopCalls.push(input.workload);
+          return Promise.resolve({
+            ok: false,
+            pid: null,
+            error: "stop failed: upstream LeasesActive: lease-x",
+          });
+        },
+      },
+    };
+    const { onEvent } = makeEventRecorder();
+    const incoming = mkManifest("incoming-run", {
+      ram: 8,
+      annotations: { "llamactl.io/evict": "resident-host" },
+    });
+
+    const result = await applyOne(incoming, () => client, onEvent, undefined, {
+      workloadsDir,
+      env,
+      getNodeBudgetGiB: () => 24,
+    });
+
+    expect(result.statusSection.conditions[0]?.reason).toBe("EvictStopRefused");
+    expect(result.error).toContain(
+      "(EvictStopRefused): stop failed: upstream LeasesActive: lease-x",
+    );
+    expect(result.action).toBe("pending");
+    expect(stopCalls).toEqual(["resident-host"]);
+    expect(rig.starts).toEqual([]);
+  });
+
+  test("a ModelRun refusal whose active list holds a non-string entry surfaces only the string lease ids", async () => {
+    // Kills P11 — drops the typeof-string filter on refused.active, so the
+    // busy detail renders the bogus entry ("LeasesActive: 42, lease-a").
+    saveWorkload(mkManifest("victim", { port: 8182 }), workloadsDir);
+    const rig = makeEvictClient({
+      name: "victim",
+      kind: "ModelRun",
+      rel: "victim.gguf",
+      port: 8182,
+    });
+    const stopCalls: string[] = [];
+    const client: WorkloadClient = {
+      ...rig.client,
+      serverStop: {
+        mutate: (input): Promise<unknown> => {
+          stopCalls.push(input.workload);
+          return Promise.resolve({
+            stopped: false,
+            pid: 4242,
+            killed: false,
+            refused: { reason: "LeasesActive", active: [42, "lease-a"] },
+          });
+        },
+      },
+    };
+    const { events, onEvent } = makeEventRecorder();
+    const incoming = mkManifest("replacement", {
+      annotations: { "llamactl.io/evict": "victim" },
+      port: 8090,
+    });
+
+    const result = await applyOne(incoming, () => client, onEvent, undefined, {
+      workloadsDir,
+      env,
+      getNodeBudgetGiB: () => 32,
+    });
+
+    expect(result.statusSection.conditions[0]?.reason).toBe("EvictVictimBusy");
+    expect(result.error).toContain("(EvictVictimBusy): LeasesActive: lease-a");
+    expect(result.error).not.toContain("42");
+    const evictFailed = events.find((e) => e.type === "evict-failed");
+    expect(evictFailed?.message).toContain("LeasesActive: lease-a");
+    expect(evictFailed?.message).not.toContain("42");
+    expect(result.action).toBe("pending");
+    expect(stopCalls).toEqual(["victim"]);
+    expect(rig.starts).toEqual([]);
   });
 });
