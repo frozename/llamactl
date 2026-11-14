@@ -165,9 +165,6 @@ function stubStartClient(
   __setWorkloadTestSeams({
     getNodeClientByName: () =>
       ({
-        nodeFacts: {
-          query: () => Promise.resolve({ memBytes: 16 * 1024 ** 3 }),
-        },
         modelHostStart: {
           subscribe: (
             _input: unknown,
@@ -594,7 +591,7 @@ test("apply charges a remote ModelHost the NodeRun residency safety margin", asy
   writeFileSync(join(tmp, "omlx"), "", "utf8");
   writeNodeRun(undefined, 0.5);
   const manifestPath = writeManifest({ node: "gpu1", expectedMemoryGiB: 10 });
-  const { startCalls } = stubStartClient();
+  const { startCalls } = stubStartClient(undefined, 16 * 1024 ** 3);
 
   const { result: code, stderr } = await withCapturedIo(() => runApply(["-f", manifestPath]));
 
@@ -651,7 +648,7 @@ test("apply keeps an explicit NodeRun budget over the residency safety margin", 
   writeFileSync(join(tmp, "omlx"), "", "utf8");
   writeNodeRun(9, 0.5);
   const manifestPath = writeManifest({ node: "gpu1", expectedMemoryGiB: 10 });
-  const { startCalls } = stubStartClient();
+  const { startCalls } = stubStartClient(undefined, 16 * 1024 ** 3);
 
   const { result: code, stderr } = await withCapturedIo(() => runApply(["-f", manifestPath]));
 
@@ -665,7 +662,7 @@ test("apply keeps the default 0.75 margin when the NodeRun sets no residency", a
   // Kills: nodeRunResidencyLookup substituting a non-0.75 margin for a NodeRun without spec.residency
   writeFileSync(join(tmp, "omlx"), "", "utf8");
   writeNodeRun();
-  const { startCalls } = stubStartClient();
+  const { startCalls } = stubStartClient(undefined, 16 * 1024 ** 3);
 
   const refusedPath = writeManifest({ node: "gpu1", expectedMemoryGiB: 13 });
   const refused = await withCapturedIo(() => runApply(["-f", refusedPath]));
