@@ -95,8 +95,8 @@ export function sumReservedForNode(manifests: ModelRun[], nodeName: string): num
  * (`nodeMemBytes`, else the controller's own RAM). `residency` is the
  * NodeRun spec.residency; only safetyMarginRatio is read and an absent
  * one falls back to DEFAULT_RESIDENCY_POLICY (0.75). apply, the
- * reconciler and the router views and apply pass it; the CLI direct-apply
- * paths still use the default 0.75 (follow-up).
+ * reconciler, the router views and apply, and the CLI direct-apply and
+ * enable/disable paths all pass it.
  */
 export function defaultNodeBudgetGiB(
   nodeBudgetFromManifest?: number,

@@ -619,8 +619,10 @@ describe("applyManifest — kind dispatch", () => {
   function makeNodeFactsClient(memBytes: number | "reject"): {
     client: WorkloadClient;
     nodeFactsCalls: { count: number };
+    startCalls: { count: number };
   } {
     const nodeFactsCalls = { count: 0 };
+    const startCalls = { count: 0 };
     const client: WorkloadClient = {
       serverStatus: {
         query: () =>
@@ -636,9 +638,22 @@ describe("applyManifest — kind dispatch", () => {
           }),
       },
       serverStop: { mutate: () => Promise.resolve({ ok: true }) },
-      serverStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
+      serverStart: {
+        subscribe: (_input, callbacks): { unsubscribe: () => undefined } => {
+          startCalls.count += 1;
+          queueMicrotask(() => {
+            callbacks.onData({
+              type: "done",
+              result: { ok: true, pid: 456, endpoint: "http://127.0.0.1:8181" },
+            });
+            callbacks.onComplete();
+          });
+          return { unsubscribe: () => undefined };
+        },
+      },
       modelHostStart: {
         subscribe: (_input, callbacks) => {
+          startCalls.count += 1;
           queueMicrotask(() => {
             callbacks.onData({ type: "done", result: { ok: true, pid: 123, state: "Running" } });
             callbacks.onComplete();
@@ -661,7 +676,7 @@ describe("applyManifest — kind dispatch", () => {
         },
       },
     };
-    return { client, nodeFactsCalls };
+    return { client, nodeFactsCalls, startCalls };
   }
 
   test("remote ModelHost admission budget comes from the node's reported memory", async () => {
@@ -781,19 +796,52 @@ describe("applyManifest — kind dispatch", () => {
     }
   });
 
-  test("remote ModelHost falls back to the controller budget when nodeFacts rejects", async () => {
-    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-nodemem-reject-"));
-    const { client } = makeNodeFactsClient("reject");
+  for (const [label, memBytes, slug] of [
+    ["nodeFacts rejects", "reject", "reject"],
+    ["nodeFacts reports zero memory", 0, "zero"],
+  ] as const) {
+    test(`remote ModelHost refuses BudgetUnknown with zero starts when ${label}`, async () => {
+      const tmp = mkdtempSync(join(tmpdir(), `llamactl-modelhost-budget-unknown-${slug}-`));
+      const { client, nodeFactsCalls, startCalls } = makeNodeFactsClient(memBytes);
+      try {
+        const result = await applyManifest({
+          manifest: modelHostOnNode(`mlx-host-nodemem-unknown-${slug}`, 1, "mac-mini"),
+          workloadsDir: join(tmp, "workloads"),
+          getClient: () => client,
+          spawn: spawnStub,
+          env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp },
+        });
+        expect(result.ok).toBe(false);
+        if (result.ok) return;
+        expect(result.error).toContain("node 'mac-mini' memory budget is unknown");
+        expect(result.error).not.toContain("force-admit");
+        expect(nodeFactsCalls.count).toBe(1);
+        expect(startCalls.count).toBe(0);
+      } finally {
+        rmSync(tmp, { recursive: true, force: true });
+      }
+    });
+  }
+
+  test("remote ModelRun apply refuses BudgetUnknown with zero starts when nodeFacts rejects", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelrun-budget-unknown-"));
+    const { client, nodeFactsCalls, startCalls } = makeNodeFactsClient("reject");
     try {
       const result = await applyManifest({
-        manifest: modelHostOnNode("mlx-host-nodemem-reject", hostGiB / 2, "mac-mini"),
+        manifest: modelRunManifestForPlacement({
+          node: "mac-mini",
+          resources: { expectedMemoryGiB: 1 },
+        }),
         workloadsDir: join(tmp, "workloads"),
         getClient: () => client,
         spawn: spawnStub,
         env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp },
       });
-      if (!result.ok) console.error("ERROR:", result);
-      expect(result.ok).toBe(true);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toContain("node 'mac-mini' memory budget is unknown");
+      expect(nodeFactsCalls.count).toBe(1);
+      expect(startCalls.count).toBe(0);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
@@ -1057,6 +1105,13 @@ describe("applyManifest — kind dispatch", () => {
     }
   });
 
+  // #220: the declared serving probe apply must carry into the state sidecar.
+  const READINESS = {
+    path: "/ready",
+    expectStatus: 200,
+    expectJson: { status: "ready" },
+  };
+
   // #516: a llamacpp ModelHost may name the fork argv0 basenames its pid
   // identity check accepts; apply must carry spec.binaryNames into the
   // controller-side state sidecar.
@@ -1096,7 +1151,10 @@ describe("applyManifest — kind dispatch", () => {
     };
   }
 
-  function makeGufoApplyManifest(binaryNames?: string[]): ModelHostManifest {
+  function makeGufoApplyManifest(
+    binaryNames?: string[],
+    readiness?: ModelHostManifest["spec"]["readiness"],
+  ): ModelHostManifest {
     const base = makeModelHostManifest("gufo-apply", 4);
     return {
       ...base,
@@ -1106,6 +1164,7 @@ describe("applyManifest — kind dispatch", () => {
         binary: "/usr/local/bin/llama-server-fork-pristine",
         hostedModels: [{ rel: "gufo/model.gguf" }],
         ...(binaryNames !== undefined ? { binaryNames } : {}),
+        ...(readiness !== undefined ? { readiness } : {}),
       },
     } as unknown as ModelHostManifest;
   }
@@ -1155,6 +1214,54 @@ describe("applyManifest — kind dispatch", () => {
       );
       const raw = JSON.parse(fs.readFileSync(statePath, "utf8")) as Record<string, unknown>;
       expect("binaryNames" in raw).toBe(false);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("applyOneModelHost persists spec.readiness into the state sidecar (#220)", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-readiness-"));
+    try {
+      const result = await applyManifest({
+        manifest: makeGufoApplyManifest(undefined, READINESS),
+        workloadsDir: tmp,
+        getClient: () => makeGufoApplyClient(),
+        spawn: spawnStub,
+        env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp },
+      });
+
+      if (!result.ok) console.error("ERROR:", result);
+      expect(result.ok).toBe(true);
+      expect(
+        readModelHostState(
+          { name: "gufo-apply" },
+          resolveEnv({ ...process.env, LOCAL_AI_RUNTIME_DIR: tmp }),
+        )?.readiness,
+      ).toEqual(READINESS);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("applyOneModelHost without readiness writes no readiness key", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-noreadiness-"));
+    try {
+      const result = await applyManifest({
+        manifest: makeGufoApplyManifest(),
+        workloadsDir: tmp,
+        getClient: () => makeGufoApplyClient(),
+        spawn: spawnStub,
+        env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp },
+      });
+
+      if (!result.ok) console.error("ERROR:", result);
+      expect(result.ok).toBe(true);
+      const statePath = modelHostState.modelhostStateFile(
+        resolveEnv({ ...process.env, LOCAL_AI_RUNTIME_DIR: tmp }),
+        { name: "gufo-apply" },
+      );
+      const raw = JSON.parse(fs.readFileSync(statePath, "utf8")) as Record<string, unknown>;
+      expect("readiness" in raw).toBe(false);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
@@ -1985,6 +2092,38 @@ describe("applyManifest — kind dispatch", () => {
       expect(underArm.startSubscribes.count).toBe(1);
     } finally {
       rmSync(tmpUnder, { recursive: true, force: true });
+    }
+  });
+
+  // #277 DF-04: applyOneModelHost must forward residencyAdmission into
+  // applyModelHostManifest — dropping the pass-through admits the apply at
+  // the declared 6 GiB instead of refusing on the measured 20 GiB envelope.
+  test("applyOneModelHost passes residencyAdmission through and refuses a 20 GiB envelope on a 16 GiB budget (#277)", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-one-env-"));
+    const { client, startSubscribes } = makeResidencyAdmissionClient();
+    try {
+      const result = await applyOneModelHost(
+        makeModelHostManifest("mlx-host-one-measured", 6),
+        () => client,
+        undefined,
+        {
+          workloadsDir: join(tmp, "workloads"),
+          env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp },
+          getNodeBudgetGiB: () => 16,
+          residencyAdmission: {
+            getNodeResidencyPolicy: () => ({}),
+            getMeasuredEnvelope: () => measuredEnvelopeGiB(20),
+          },
+        },
+      );
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toContain("'mlx-host-one-measured' (20.0 GiB)");
+      }
+      expect(startSubscribes.count).toBe(0);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
     }
   });
 });

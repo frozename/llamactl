@@ -11,7 +11,7 @@ import { applyOneModelHost } from "@llamactl/remote/workload/apply";
 import { loadModelHostByName, saveModelHost } from "@llamactl/remote/workload/modelhost-store";
 
 import { getNodeClientByName } from "../dispatcher.js";
-import { nodeRunBudgetLookup } from "./noderun-helpers.js";
+import { nodeRunBudgetLookup, nodeRunResidencyLookup } from "./noderun-helpers.js";
 
 export interface SetEnabledResult {
   code: number;
@@ -67,6 +67,7 @@ async function applyModelRunManifest(
       }
     },
     getNodeBudgetGiB: nodeRunBudgetLookup(deps.listNodeRuns),
+    getNodeResidency: nodeRunResidencyLookup(deps.listNodeRuns),
   });
   if (manifest.spec.enabled && !result.error) save(manifest);
   return result.error ?? null;
@@ -83,7 +84,10 @@ async function applyModelHostManifest(
     manifest,
     (n) => getClient(n),
     undefined,
-    { getNodeBudgetGiB: nodeRunBudgetLookup(deps.listNodeRuns) },
+    {
+      getNodeBudgetGiB: nodeRunBudgetLookup(deps.listNodeRuns),
+      getNodeResidency: nodeRunResidencyLookup(deps.listNodeRuns),
+    },
   );
   if (manifest.spec.enabled && outcome.ok) save(manifest);
   return outcome.ok ? null : outcome.error;

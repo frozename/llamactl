@@ -981,11 +981,27 @@ test("no policy or no usable measurement leaves the charge unchanged", () => {
       },
       expected: null,
     },
+    {
+      label: "null estimate with policy and negative envelope",
+      input: {
+        estimateGiB: null,
+        residencyPolicyPresent: true,
+        envelope: measuredEnvelopeLiteral(-1),
+      },
+      expected: null,
+    },
   ];
   for (const c of cases) {
     const result: unknown = chargeGiB(c.input);
-    expect(result instanceof Promise).toBe(false);
-    expect(result).toBe(c.expected);
+    expect({
+      label: c.label,
+      isPromise: result instanceof Promise,
+      result,
+    }).toEqual({
+      label: c.label,
+      isPromise: false,
+      result: c.expected,
+    });
   }
 });
 

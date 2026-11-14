@@ -8,6 +8,10 @@
 // the ModelHost pid status are attributed to `node` only when `node` is the
 // serving process's own identity (servingNode === node); for any other `node`
 // the store echo is the serving process's, never `node`'s coordinator state.
+// The leases section is the serving process's in-memory lease/drain registry:
+// per-workload phase, epoch, active lease count and waiters plus the recent
+// forced-unload audit, reported "unavailable" when no registry is installed.
+import type { ResidencyLeases } from "@llamactl/core/residency/leases";
 import type { PlannerWorkload, ProfileSwitchPlan } from "@llamactl/core/residency/planner";
 
 import { isOccupyingResidencyState } from "@llamactl/core/residency/lifecycle";
@@ -30,6 +34,75 @@ export type ResidencyStatusNonterminalOperation = {
   reservationGiB: number;
 };
 
+export const RESIDENCY_STATUS_AUDIT_LIMIT = 20;
+
+export type ResidencyStatusLeaseWorkload = {
+  workload: string;
+  phase: "open" | "draining" | "unloaded";
+  epoch: number;
+  activeLeaseCount: number;
+  waiters: number;
+};
+
+// `reason` is `string | null` rather than optional: tRPC output typing strips
+// `| undefined` from optional props, which breaks assignment in the CLI under
+// exactOptionalPropertyTypes (see the comment in cli residency.ts).
+export type ResidencyStatusLeaseAuditEntry = {
+  workload: string;
+  epoch: number;
+  forced: true;
+  revokedCount: number;
+  reason: string | null;
+};
+
+export type ResidencyStatusLeases =
+  | { status: "unavailable"; scope: "serving-process" }
+  | {
+      status: "available";
+      scope: "serving-process";
+      workloads: ResidencyStatusLeaseWorkload[];
+      auditCount: number;
+      recentAudit: ResidencyStatusLeaseAuditEntry[];
+    };
+
+export function buildResidencyLeaseSnapshot(
+  registry: Pick<ResidencyLeases, "snapshot" | "audit"> | null,
+  workloads: readonly string[],
+): ResidencyStatusLeases {
+  if (registry === null) {
+    return { status: "unavailable", scope: "serving-process" };
+  }
+  const audit = registry.audit();
+  const names = new Set<string>(workloads);
+  for (const entry of audit) {
+    names.add(entry.workload);
+  }
+  const rows = [...names].sort(compareStrings).map((name) => {
+    const s = registry.snapshot(name);
+    return {
+      workload: name,
+      phase: s.phase,
+      epoch: s.epoch,
+      activeLeaseCount: s.active.length,
+      waiters: s.waiters,
+    };
+  });
+  const recentAudit = audit.slice(-RESIDENCY_STATUS_AUDIT_LIMIT).map((e) => ({
+    workload: e.workload,
+    epoch: e.epoch,
+    forced: true as const,
+    revokedCount: e.revoked.length,
+    reason: e.reason ?? null,
+  }));
+  return {
+    status: "available",
+    scope: "serving-process",
+    workloads: rows,
+    auditCount: audit.length,
+    recentAudit,
+  };
+}
+
 export type ResidencyStatus = {
   node: string;
   nodeRun: { present: boolean };
@@ -45,6 +118,7 @@ export type ResidencyStatus = {
         nonterminal: ResidencyStatusNonterminalOperation[];
         scope: "serving-process";
       };
+  leases: ResidencyStatusLeases;
 };
 
 export function buildResidencyStatus(input: {
@@ -53,6 +127,8 @@ export function buildResidencyStatus(input: {
   budgetGiB: number;
   budgetSource: "noderun" | "computed";
   store: ResidencyStoreSnapshot;
+  leaseRegistry?: Pick<ResidencyLeases, "snapshot" | "audit"> | null | undefined;
+  leaseWorkloads?: readonly string[] | undefined;
 }): ResidencyStatus {
   const residency = input.nodeRun?.spec.residency;
   return {
@@ -61,6 +137,7 @@ export function buildResidencyStatus(input: {
     policy: residency !== undefined ? { present: true, residency } : { present: false },
     budget: { memoryGiB: input.budgetGiB, source: input.budgetSource },
     store: storeWithScope(input.store),
+    leases: buildResidencyLeaseSnapshot(input.leaseRegistry ?? null, input.leaseWorkloads ?? []),
   };
 }
 

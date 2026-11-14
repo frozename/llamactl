@@ -8,9 +8,16 @@ catalog, router and workload lifecycle — it is not a parallel registry
 
 Open items:
 
-- The residency state contract is pending #276; what ships today is
-  the finite-budget admission math plus the per-node residency-group
-  start guard described below.
+- The 8-state residency lifecycle and the exclusive-group decisions ship
+  as a pure library (`packages/core/src/residency/lifecycle.ts`, #517).
+  Persistence landed in #662: the fenced residency store
+  (`packages/remote/src/residency/store.ts`) writes per-model states to
+  its `residency_states` table. Writing is opt-in through
+  `transitionResidencyState`, and no production caller writes states
+  yet. Enforcement in the reconciler and ModelHost is still pending
+  #276. What enforces today is the
+  finite-budget admission math plus the per-node residency-group start
+  guard described below.
 - Real GLM-5.3-Flash z13 measurements are not yet committed (see the
   eval record at the bottom).
 
@@ -63,8 +70,24 @@ Changing availability:
 
 ## Residency states and exclusion
 
-The residency state contract (#276) is not implemented at this commit.
-What exists today:
+The residency state model exists as a library (#517). Since #662 the
+fenced residency store (`packages/remote/src/residency/store.ts`)
+persists per-model states in its `residency_states` table:
+
+- The file is `residency/operations.sqlite` under the llamactl home,
+  or the path in `LLAMACTL_RESIDENCY_STORE`.
+- Each `transitionResidencyState` write is fenced, compare-and-set on
+  version, and checked against the lifecycle edges and exclusive-group
+  occupancy over all persisted rows in one IMMEDIATE transaction.
+- Writing is opt-in: only a caller that opens the store and calls
+  `transitionResidencyState` writes rows, and no production caller does
+  yet.
+- Group declarations are not persisted. They come from the caller
+  (default `RESIDENCY_GROUPS`).
+
+Still pending #276: enforcement in the reconciler and ModelHost,
+recovery, stale-revision rejection, and summing reservations against a
+node memory budget. The enforcement in place today is the following:
 
 1. `packages/core/src/residency/admission.ts` — finite-budget
    admission arithmetic: refusals for an unknown budget, an
@@ -100,6 +123,46 @@ Observable signals operators use today:
   confirm the recorded pid;
 - the guard's Running / Starting / Unknown peer states;
 - template readiness probes (e.g. `/ready` flipping to 200).
+
+### Residency lifecycle states
+
+`packages/core/src/residency/lifecycle.ts` is pure and synchronous:
+states in, decisions out. Its consumers are the residency planner and
+the remote profile-switch coordinator
+(`packages/remote/src/residency/coordinator.ts`); neither has a live
+caller yet (DF-06 #279).
+
+| state         | legal next states                | occupying |
+| ------------- | -------------------------------- | --------- |
+| `unavailable` | `downloaded`                     | no        |
+| `downloaded`  | `loading`, `unavailable`         | no        |
+| `loading`     | `warming`, `failed`, `unloading` | yes       |
+| `warming`     | `ready`, `failed`, `unloading`   | yes       |
+| `ready`       | `draining`, `failed`             | yes       |
+| `draining`    | `unloading`, `failed`            | no        |
+| `unloading`   | `downloaded`, `failed`           | no        |
+| `failed`      | `downloaded`, `unavailable`      | no        |
+
+The occupying states (`loading`, `warming`, `ready`) hold a group's
+memory.
+
+`RESIDENCY_GROUPS` declares `z13-large-gpu` as exclusive. Membership
+comes from the catalog `residencyGroup` field and the
+`llamactl.io/residency-group` label.
+
+`evaluateResidencyTransition` checks, in order:
+
+- The member must be present, else `UnknownMember`.
+- The transition must be legal per the table, else `IllegalTransition`.
+- Only when the target state is occupying and the member has a group,
+  the group must be declared, else `UnknownGroup`. If that group is
+  exclusive, no other member may be occupying it, else
+  `ExclusiveGroupOccupied`, which carries the lowest-sorted occupying
+  `peer`.
+- Refusals return `{ ok: false, reason, detail }`.
+
+`findExclusiveGroupViolations` reports every exclusive group with two or
+more occupying members.
 
 ## Qualification and promotion
 
@@ -150,9 +213,10 @@ zod):
 writer is injected; `autoApply` without a writer writes nothing.
 
 Effective status at this commit: `effectiveStage`,
-`proposePromotion`, `applyPromotion` and the overrides reader are
-library-only — no router, catalog, lifecycle or CLI code calls them.
-Consumers are pending E-14 / #284.
+`proposePromotion` and `applyPromotion` are library-only — no router,
+catalog, lifecycle or CLI code calls them. Consumers are pending
+E-14 / #284. The overrides reader has one consumer: routing applies
+its pin rows (see Overrides).
 
 ## Overrides
 
@@ -173,9 +237,14 @@ Writer semantics: a write replaces the `(rel, action)` row and drops
 `#` comments and invalid rows present before the write. A delete
 removes the file entirely when it empties.
 
-This is the wire format future consumers will read. Editing it today
-changes no routing or lifecycle behaviour — the reader is library-only
-until #284.
+Routing reads this one shared file. `catalogQualificationStages`
+applies each `pin` row's stage over the catalog stage for its `rel`
+(also for a rel the catalog never staged), so a pin changes the stage
+the route builders and `/v1/models` see. A `freeze` row has no routing
+effect: it leaves the stage unchanged, and only the library-only
+`proposePromotion` check (`frozen`) consults it. The OpenAI proxy's
+`/v1/models` cache signature stats the same resolved file, so an edit
+takes effect without a workload restart.
 
 ## Exclusive-window runbook
 
