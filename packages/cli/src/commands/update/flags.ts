@@ -12,6 +12,8 @@ export interface UpdateFlags {
   serviceManager: "launchd" | "systemd" | null;
   controllerUnit: string | null;
   agentUnit: string | null;
+  /** Worker node whose controller is handed to a central one: never touch the local controller. */
+  agentOnly: boolean;
 }
 
 export const DEFAULT_TARGET_REF = "origin/main";
@@ -38,6 +40,7 @@ function defaultFlags(): UpdateFlags {
     serviceManager: null,
     controllerUnit: null,
     agentUnit: null,
+    agentOnly: false,
   };
 }
 
@@ -85,6 +88,9 @@ function applySwitch(flags: UpdateFlags, arg: string): string | null {
       return null;
     case "--json":
       flags.json = true;
+      return null;
+    case "--agent-only":
+      flags.agentOnly = true;
       return null;
     default:
       return `unknown flag ${arg}`;

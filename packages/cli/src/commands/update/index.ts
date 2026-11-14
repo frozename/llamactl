@@ -33,6 +33,8 @@ import {
   DEFAULT_TIMEOUTS,
   type DeployContext,
   type DeployOutcome,
+  type DeployStep,
+  type DeployStepsInput,
   ensureControllerRunning,
   INTERRUPTED,
   runDeploy,
@@ -82,6 +84,10 @@ Flags:
                            (default llamactl-controller.service / com.llamactl.controller).
   --agent-unit <n>         Same for the agent
                            (default llamactl-agent.service / com.llamactl.agent).
+  --agent-only             Worker node whose controller is handed to a central
+                           one: skip the local controller (it must not be
+                           active); fetch, install, idle wait, agent restart,
+                           verify, history and automatic rollback still run.
 
 Environment (flags win; the controller unit's Environment/EnvironmentFile is
 read too):
@@ -133,6 +139,7 @@ interface TargetPlan {
 interface Report {
   mode: UpdateMode;
   result: UpdateResult;
+  agentOnly: boolean;
   repo: string | null;
   current: { branch: string | null; sha: string } | null;
   target: Omit<TargetPlan, "upToDate"> | null;
@@ -163,6 +170,7 @@ function newReport(mode: UpdateMode): Report {
   return {
     mode,
     result: "error",
+    agentOnly: false,
     repo: null,
     current: null,
     target: null,
@@ -210,6 +218,12 @@ function fillSessionReport(report: Report, s: Session): void {
 function logState(s: Session): void {
   const { log } = s.deps;
   for (const w of s.warnings) log(`${P} WARNING: ${w}`);
+  if (s.flags.agentOnly) {
+    const agentName = s.services.agent?.name ?? "the agent";
+    log(
+      `${P} agent-only mode (--agent-only): the controller is managed elsewhere and is not stopped, started or watched; only ${agentName} is restarted`,
+    );
+  }
   const where = s.checkout.branch === null ? "detached HEAD" : `branch ${s.checkout.branch}`;
   log(`${P} checkout ${s.repo}: ${where} @ ${short(s.checkout.sha)}`);
   const units = [s.services.controller, s.services.agent].flatMap((u) =>
@@ -316,7 +330,10 @@ export function commonRefusals(i: {
 
 function deployContext(s: Session, signal: AbortSignal): DeployContext {
   const { manager, controller, agent } = s.services;
-  if (manager === null || controller === null || agent === null || s.agentEndpoint === null) {
+  if (manager === null || agent === null || s.agentEndpoint === null) {
+    throw new UpdateError("services are not resolved");
+  }
+  if (controller === null && !s.flags.agentOnly) {
     throw new UpdateError("services are not resolved");
   }
   return {
@@ -344,6 +361,14 @@ function heavyLock(s: Session): DeployContext["lock"] {
     return null;
   }
   return { path: s.heavyLock, handle: null };
+}
+
+/**
+ * Build the deploy steps, always forwarding `--agent-only` (#309) so the
+ * controller steps are dropped for a worker node managed by a central one.
+ */
+function updateDeploySteps(s: Session, o: DeployStepsInput): DeployStep[] {
+  return buildDeploySteps({ ...o, agentOnly: s.flags.agentOnly });
 }
 
 /**
@@ -376,7 +401,9 @@ async function withSignals(
   const off = s.deps.onSignal((sig) => {
     if (!ac.signal.aborted) {
       s.deps.log(
-        `${P} ${sig}: stopping after the current step; the controller is started again before exiting`,
+        s.flags.agentOnly
+          ? `${P} ${sig}: stopping after the current step`
+          : `${P} ${sig}: stopping after the current step; the controller is started again before exiting`,
       );
     }
     ac.abort();
@@ -400,7 +427,9 @@ function lockNotTaken(s: Session, report: Report, why: string): number {
 function interrupted(s: Session, report: Report, sha: string): number {
   history(s, failedLine(new Date(s.deps.now()).toISOString(), sha, INTERRUPTED));
   report.result = "interrupted";
-  report.error = `${INTERRUPTED}; the controller is running again, but the checkout may be anywhere between the two refs: run llamactl update --check, then --rollback if needed`;
+  report.error = s.flags.agentOnly
+    ? `${INTERRUPTED}; the checkout may be anywhere between the two refs: run llamactl update --check, then --rollback if needed`
+    : `${INTERRUPTED}; the controller is running again, but the checkout may be anywhere between the two refs: run llamactl update --check, then --rollback if needed`;
   return EXIT_INTERRUPTED;
 }
 
@@ -508,7 +537,7 @@ async function applyDeploy(
   from: HistoryRef,
   plan: TargetPlan,
 ): Promise<number> {
-  const steps = buildDeploySteps({
+  const steps = updateDeploySteps(s, {
     sha: plan.sha,
     mode: { kind: "main" },
     depsChanged: plan.depsChanged,
@@ -540,7 +569,7 @@ async function autoRollback(
     `${P} update failed (${failedStep(forward)}); rolling back to ${formatHistoryRef(from)}`,
   );
   const mode = await restoreMode(s.git, from);
-  const steps = buildDeploySteps({
+  const steps = updateDeploySteps(s, {
     sha: from.sha,
     mode,
     depsChanged: plan.depsChanged,
@@ -619,7 +648,7 @@ async function runRollback(s: Session, report: Report): Promise<number> {
     if (lockProblem !== null) return lockNotTaken(s, report, lockProblem);
     const from: HistoryRef = { branch: s.checkout.branch, sha: s.checkout.sha };
     history(s, rollbackStartLine(new Date(s.deps.now()).toISOString(), from, target));
-    const steps = buildDeploySteps({
+    const steps = updateDeploySteps(s, {
       sha: target.sha,
       mode,
       depsChanged: changed,
@@ -699,6 +728,7 @@ export async function runUpdate(
         }
       : base;
   const report = newReport(parsed.mode);
+  report.agentOnly = parsed.agentOnly;
   let code: number;
   try {
     code = await runMode(parsed, deps, report);
