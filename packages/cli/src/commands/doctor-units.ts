@@ -4,8 +4,10 @@
  * `<unitDir>/<unit>.d/*.conf` (where `<unitDir>` comes from
  * XDG_CONFIG_HOME or ~/.config/systemd/user) and merges
  * OOMScoreAdjust assignments the way systemd does (last wins, empty
- * resets). It does NOT read /etc/systemd/user, ~/.config/systemd/user.control
- * or /run drop-ins. Backslash line continuations are not joined, since
+ * resets, the key must match exactly, and an integer outside
+ * -1000..1000 is ignored so the previous value stays). It does NOT
+ * read /etc/systemd/user, ~/.config/systemd/user.control or /run
+ * drop-ins. Backslash line continuations are not joined, since
  * llamactl units never use them.
  */
 import { homedir } from "node:os";
@@ -60,37 +62,73 @@ function parseOomAssignments(text: string): (string | null)[] {
 }
 
 function extractOomValue(line: string, out: (string | null)[]): void {
-  const keyLen = "OOMScoreAdjust".length;
-  if (!line.startsWith("OOMScoreAdjust")) return;
-  const eqPos = line.indexOf("=", keyLen);
-  if (eqPos < keyLen) return;
+  // systemd splits at the first '=' and matches the trimmed key exactly;
+  // an unknown key such as OOMScoreAdjustX= is ignored.
+  const eqPos = line.indexOf("=");
+  if (eqPos < 0) return;
+  if (line.slice(0, eqPos).trim() !== "OOMScoreAdjust") return;
   const value = line.slice(eqPos + 1).trim();
   out.push(value === "" ? null : value);
 }
 
-function effectiveOom(
-  unitDir: string,
-  sources: string[],
-): { raw: string; source: string } | undefined {
+/** Parses the way systemd's safe_atoi does (a leading '+' is accepted). */
+function parseOomInteger(raw: string): number | undefined {
+  const digits = raw.startsWith("+") ? raw.slice(1) : raw;
+  const n = Number.parseInt(digits, 10);
+  if (!Number.isFinite(n) || digits !== String(n)) return undefined;
+  return n;
+}
+
+interface OomAssignment {
+  raw: string;
+  source: string;
+}
+
+interface EffectiveOom {
+  eff: OomAssignment | undefined;
+  ignored: OomAssignment[];
+}
+
+function effectiveOom(unitDir: string, sources: string[]): EffectiveOom {
   // Track the file that made each assignment: the effective value's
   // source is the file that last set it, not the last file read (a later
   // drop-in may set only Environment= and leave OOMScoreAdjust alone).
-  let result: { raw: string; source: string } | undefined;
+  let eff: OomAssignment | undefined;
+  const ignored: OomAssignment[] = [];
   for (const source of sources) {
     const text = readFileSync(join(unitDir, source), "utf8");
     for (const a of parseOomAssignments(text)) {
-      result = a === null ? undefined : { raw: a, source };
+      if (a === null) {
+        eff = undefined;
+        continue;
+      }
+      // systemd rejects an integer outside -1000..1000 with "ignoring"
+      // and keeps the previous value (and its source).
+      const n = parseOomInteger(a);
+      if (n !== undefined && (n < -1000 || n > 1000)) {
+        ignored.push({ raw: a, source });
+        continue;
+      }
+      eff = { raw: a, source };
     }
   }
-  return result;
+  return { eff, ignored };
 }
 
-function toCheckResult(
-  unit: string,
-  eff: { raw: string; source: string } | undefined,
-  unitDir: string,
-): CheckResult {
+function withIgnored(result: CheckResult, ignored: OomAssignment[], fix: string): CheckResult {
+  if (ignored.length === 0) return result;
+  const notes = ignored
+    .map((i) => `OOMScoreAdjust=${i.raw} (${i.source}) is outside -1000..1000 and ignored`)
+    .join("; ");
+  return { ...result, status: "warn", message: `${result.message}; ${notes}`, fix };
+}
+
+function toCheckResult(unit: string, { eff, ignored }: EffectiveOom, unitDir: string): CheckResult {
   const fix = `add ${join(unitDir, unit + ".d", "oom.conf")} with [Service] OOMScoreAdjust=100, then systemctl --user daemon-reload and restart ${unit} (units installed before #330 are not rewritten; only ${unitDir} is inspected — drop-ins under /etc/systemd/user and user.control are not read)`;
+  return withIgnored(baseCheckResult(unit, eff, fix), ignored, fix);
+}
+
+function baseCheckResult(unit: string, eff: OomAssignment | undefined, fix: string): CheckResult {
   if (eff === undefined) {
     return {
       system: "units",
@@ -99,10 +137,8 @@ function toCheckResult(
       fix,
     };
   }
-  // systemd parses the value with safe_atoi, which accepts a leading '+'.
-  const digits = eff.raw.startsWith("+") ? eff.raw.slice(1) : eff.raw;
-  const n = Number.parseInt(digits, 10);
-  if (!Number.isFinite(n) || digits !== String(n)) {
+  const n = parseOomInteger(eff.raw);
+  if (n === undefined) {
     return {
       system: "units",
       status: "warn",

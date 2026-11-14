@@ -168,6 +168,68 @@ describe("doctor [units] probe (#196)", () => {
     expect(out).not.toContain("is not an integer");
   });
 
+  test.each(["abc", "100abc"])("warns when OOMScoreAdjust=%s is not an integer", async (raw) => {
+    writeUnit("llamactl-controller.service", BARE);
+    writeDropIn("llamactl-controller.service", "oom.conf", `[Service]\nOOMScoreAdjust=${raw}\n`);
+
+    const { result, out } = await runWithUnits([]);
+
+    expect(result).toBe(1);
+    expect(out).toContain("⚠");
+    expect(out).toContain(
+      `llamactl-controller.service OOMScoreAdjust=${raw} (llamactl-controller.service.d/oom.conf) is not an integer`,
+    );
+  });
+
+  test("a key that only starts with OOMScoreAdjust is ignored, as systemd does", async () => {
+    writeUnit(
+      "llamactl-controller.service",
+      BARE.replace("KillMode=process\n", "KillMode=process\nOOMScoreAdjust=300\n"),
+    );
+    writeDropIn("llamactl-controller.service", "oom.conf", "[Service]\nOOMScoreAdjustX=100\n");
+
+    const { result, out } = await runWithUnits([]);
+
+    expect(result).toBe(1);
+    expect(out).toContain(
+      "llamactl-controller.service OOMScoreAdjust=300 (llamactl-controller.service) is above 100",
+    );
+    expect(out).not.toContain("oom.conf)");
+  });
+
+  test("an out-of-range drop-in is ignored and the earlier value stays", async () => {
+    writeUnit(
+      "llamactl-controller.service",
+      BARE.replace("KillMode=process\n", "KillMode=process\nOOMScoreAdjust=300\n"),
+    );
+    writeDropIn("llamactl-controller.service", "oom.conf", "[Service]\nOOMScoreAdjust=-5000\n");
+
+    const { result, out } = await runWithUnits([]);
+
+    expect(result).toBe(1);
+    expect(out).toContain(
+      "llamactl-controller.service OOMScoreAdjust=300 (llamactl-controller.service) is above 100",
+    );
+    expect(out).toContain(
+      "OOMScoreAdjust=-5000 (llamactl-controller.service.d/oom.conf) is outside -1000..1000 and ignored",
+    );
+  });
+
+  test("an ignored out-of-range drop-in warns even when the kept value is 100", async () => {
+    writeUnit(
+      "llamactl-controller.service",
+      BARE.replace("KillMode=process\n", "KillMode=process\nOOMScoreAdjust=100\n"),
+    );
+    writeDropIn("llamactl-controller.service", "oom.conf", "[Service]\nOOMScoreAdjust=1001\n");
+
+    const { result, out } = await runWithUnits([]);
+
+    expect(result).toBe(1);
+    expect(out).toContain(
+      "llamactl-controller.service OOMScoreAdjust=100 (llamactl-controller.service); OOMScoreAdjust=1001 (llamactl-controller.service.d/oom.conf) is outside -1000..1000 and ignored",
+    );
+  });
+
   test("the shipped user template passes", async () => {
     writeUnit(
       "llamactl-agent.service",
