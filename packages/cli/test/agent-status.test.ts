@@ -565,6 +565,48 @@ describe("agent status listen addresses (#211)", () => {
     noListenWarnings(report);
   });
 
+  test("an expanded IPv6 listener matches its compressed bind host", async () => {
+    const { report } = await statusWithListener({
+      bindHost: "::1",
+      observed: ["[0:0:0:0:0:0:0:1]:59996"],
+    });
+    expect(report.listenAddresses).toEqual(["[0:0:0:0:0:0:0:1]:59996"]);
+    noListenWarnings(report);
+  });
+
+  test("a zone-scoped IPv6 bind host matches its listener without throwing", async () => {
+    const { report } = await statusWithListener({
+      bindHost: "fe80::1%en0",
+      observed: ["[fe80::1%en0]:59996"],
+    });
+    expect(report.listenAddresses).toEqual(["[fe80::1%en0]:59996"]);
+    noListenWarnings(report);
+  });
+
+  test("a wildcard bind host with a zone-scoped listener is flagged without throwing", async () => {
+    const { report } = await statusWithListener({
+      bindHost: "::",
+      observed: ["[fe80::1%en0]:59996"],
+    });
+    expect(report.warnings).toContain(listenWarning("[fe80::1%en0]:59996", ":::59996"));
+  });
+
+  test("an uppercase, expanded zone-scoped bind host matches its listener", async () => {
+    const { report } = await statusWithListener({
+      bindHost: "FE80:0:0:0:0:0:0:1%EN0",
+      observed: ["[fe80::1%en0]:59996"],
+    });
+    noListenWarnings(report);
+  });
+
+  test("an uppercase localhost bind host matches a loopback listener", async () => {
+    const { report } = await statusWithListener({
+      bindHost: "LOCALHOST",
+      observed: ["127.0.0.1:59996"],
+    });
+    noListenWarnings(report);
+  });
+
   test("a DNS-name bind host is never compared (lsof -n prints numeric addresses)", async () => {
     const { report } = await statusWithListener({
       bindHost: "agent.example.test",

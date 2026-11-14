@@ -316,9 +316,13 @@ export function bindHostComparable(bindHost: string): boolean {
 }
 
 // #211: IPv6 literals compare in compressed form, so 0:0:0:0:0:0:0:1 equals ::1.
+// A zone id (fe80::1%en0) is split off first: URL rejects it, and an uncaught
+// throw here would crash `agent status`. The zone is kept, lowercased.
 function canonicalHost(host: string): string {
   const h = host.toLowerCase();
-  return isIP(h) === 6 ? normalizeSan(h) : h;
+  if (isIP(h) !== 6) return h;
+  const zone = h.indexOf("%");
+  return zone < 0 ? normalizeSan(h) : normalizeSan(h.slice(0, zone)) + h.slice(zone);
 }
 
 /** #211: whether an `lsof -n` listen address (`host:port`) satisfies `bindHost`. */
