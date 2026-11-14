@@ -2112,6 +2112,43 @@ test("DF-02: a ModelRun victim with unknown pid identity and unreachable health 
   }
 });
 
+// Part of #275 (DF-02). Kills mutant M8: the ModelRun probe guard narrowed to
+// `identityUnknown === true && state !== 'up'`. A /health that answers while
+// the recorded pid cannot be verified is still not proof of whose process is
+// serving, so the probe must fail closed before serverStop is ever sent.
+test("DF-02: a ModelRun victim with unknown pid identity whose /health answers fails with EvictStatusUnknown before any stop", async () => {
+  const state: WorkloadStateMap = new Map([["a", { up: true, rel: "a.gguf", args: [] }]]);
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-df02-identity-up-"));
+  saveWorkload(mkManifest("a", { port: 8182 }), workloadsDir);
+  const manifestPath = join(workloadsDir, "a.yaml");
+  const manifestBefore = readFileSync(manifestPath, "utf8");
+  const { client, stops, starts } = makeEvictFaultClient(state, {
+    status: (workload) =>
+      workload === "a" ? Promise.resolve({ ...unknownDownStatus(), state: "up" }) : undefined,
+    stop: (workload) => (workload === "a" ? Promise.resolve({ stopped: true }) : undefined),
+  });
+  const { onEvent } = makeEventRecorder();
+  try {
+    const result = await applyOne(
+      mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090 }),
+      () => client,
+      onEvent,
+      undefined,
+      { workloadsDir, getNodeBudgetGiB: () => 32 },
+    );
+    expect(stops).toEqual([]);
+    expect(starts).toEqual([]);
+    expect(state.has("b")).toBe(false);
+    expect(result.action).toBe("pending");
+    expect(result.statusSection.phase).toBe("Failed");
+    expect(result.statusSection.conditions[0]?.reason).toBe("EvictStatusUnknown");
+    expect(result.error).toContain("identity");
+    expect(readFileSync(manifestPath, "utf8")).toBe(manifestBefore);
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
 // Part of #275 (DF-02). Kills mutation: 'ModelRun verify ignores identityUnknown'
 test("DF-02: a ModelRun victim whose post-stop status has unknown identity fails with EvictReleaseUnverified", async () => {
   const state: WorkloadStateMap = new Map([["a", { up: true, rel: "a.gguf", args: [] }]]);
