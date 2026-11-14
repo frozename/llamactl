@@ -6,14 +6,36 @@
 // bumps it — and any mutation carrying a fenceToken that differs from the
 // stored one fails closed as stale-fence.
 //
-// Lifecycle-edge legality is the caller's job (#573/#517): this store
-// enforces phase shape and compare-and-set ordering only, never which phase
-// transitions the residency policy allows.
+// The store now persists per-model lifecycle states (Part of #517). Every
+// residency_states write is fenced, compare-and-set on version, and checked
+// against the lifecycle edges and exclusive-group occupancy over all
+// persisted rows inside one IMMEDIATE transaction.
+//
+// Group declarations are not persisted. They come from the caller (default
+// RESIDENCY_GROUPS), so exclusivity holds only when every writer passes
+// consistent declarations.
+//
+// A row's group is per-row: an omitted group keeps the stored one, and a
+// supplied group reassigns it. Reassignment is refused as group-conflict
+// while the stored row is in an occupying state, so a member cannot leave
+// or join a group while it holds that group's capacity.
+//
+// Operation phases remain caller-checked.
 //
 // reservationGiB is recorded, not admitted: nothing here checks the value
 // against a node memory budget — that is the job of #274 and the #276
 // follow-ups.
 import { llamactlHome } from "@llamactl/core/config/env";
+import {
+  evaluateResidencyTransition,
+  isOccupyingResidencyState,
+  isResidencyState,
+  RESIDENCY_GROUPS,
+  type ResidencyGroupDeclaration,
+  type ResidencyMember,
+  type ResidencyState,
+  type ResidencyTransitionDecision,
+} from "@llamactl/core/residency/lifecycle";
 import { Database } from "bun:sqlite";
 import { dirname, join } from "node:path";
 
@@ -29,12 +51,43 @@ export type ResidencyOperationOutcome = (typeof OUTCOMES)[number];
 
 export type ResidencyStoreFailure =
   | "duplicate-conflict"
+  | "group-conflict"
   | "illegal-phase"
   | "invalid-input"
   | "not-found"
   | "reservation-conflict"
   | "stale-fence"
   | "version-conflict";
+
+export type ResidencyStateRecord = {
+  model: string;
+  group: string | null;
+  state: ResidencyState;
+  ownerId: string;
+  incarnation: string;
+  fenceToken: number;
+  version: number;
+  updatedAtMs: number;
+};
+
+export type TransitionResidencyStateInput = {
+  fenceToken: number;
+  model: string;
+  group?: string;
+  to: ResidencyState;
+  expectedVersion: number;
+  nowMs: number;
+  groups?: readonly ResidencyGroupDeclaration[];
+};
+
+export type TransitionResidencyStateResult =
+  | { ok: true; record: ResidencyStateRecord }
+  | { ok: false; reason: ResidencyStoreFailure }
+  | {
+      ok: false;
+      reason: "lifecycle-refused";
+      decision: Extract<ResidencyTransitionDecision, { ok: false }>;
+    };
 
 export type ResidencyOperationRecord = {
   operationId: string;
@@ -103,6 +156,17 @@ export type ResidencyOperationStore = {
   close: () => void;
 };
 
+// Per-model lifecycle states ride on the same fenced handle as operations.
+// They live on a separate type so callers that only need operation mutations
+// keep seeing the narrower shape.
+export type ResidencyLifecycleStore = {
+  getResidencyState: (model: string) => ResidencyStateRecord | null;
+  listResidencyStates: () => ResidencyStateRecord[];
+  transitionResidencyState: (
+    input: TransitionResidencyStateInput,
+  ) => TransitionResidencyStateResult;
+};
+
 interface AuthorityRow {
   owner_id: string;
   incarnation: string;
@@ -126,11 +190,27 @@ interface OperationRow {
   updated_at_ms: number;
 }
 
+interface ResidencyStateRow {
+  model: string;
+  residency_group: string | null;
+  state: string;
+  owner_id: string;
+  incarnation: string;
+  fence_token: number;
+  version: number;
+  updated_at_ms: number;
+}
+
 const OPERATION_COLUMNS =
   "operation_id, model, target_state, desired_revision, reservation_gib, phase, " +
   "outcome, detail, owner_id, incarnation, fence_token, version, created_at_ms, updated_at_ms";
 
-export function openResidencyOperationStore(input: { path: string }): ResidencyOperationStore {
+const RESIDENCY_STATE_COLUMNS =
+  "model, residency_group, state, owner_id, incarnation, fence_token, version, updated_at_ms";
+
+export function openResidencyOperationStore(input: {
+  path: string;
+}): ResidencyOperationStore & ResidencyLifecycleStore {
   const db = openDb(input.path);
   const claimTx = db.transaction(
     (claimInput: ClaimInput): Fence => claimOwnershipTx(db, claimInput),
@@ -144,7 +224,11 @@ export function openResidencyOperationStore(input: { path: string }): ResidencyO
   const finishTx = db.transaction(
     (finishInput: FinishOperationInput): MutationResult => finishOperationTx(db, finishInput),
   );
-  const store: ResidencyOperationStore = {
+  const transitionTx = db.transaction(
+    (transitionInput: TransitionResidencyStateInput): TransitionResidencyStateResult =>
+      transitionResidencyStateTx(db, transitionInput),
+  );
+  const store: ResidencyOperationStore & ResidencyLifecycleStore = {
     beginOperation: (beginInput) => {
       const invalid = validateBeginInput(beginInput);
       if (invalid !== null) {
@@ -183,7 +267,22 @@ export function openResidencyOperationStore(input: { path: string }): ResidencyO
       }
       return rowToRecord(row);
     },
+    getResidencyState: (model) => {
+      const row = selectResidencyStateRow(db, model);
+      if (row === null) {
+        return null;
+      }
+      return parseResidencyStateRow(row);
+    },
     listNonterminal: () => listNonterminalRows(db),
+    listResidencyStates: () => listResidencyStateRows(db),
+    transitionResidencyState: (transitionInput) => {
+      const invalid = validateTransitionInput(transitionInput);
+      if (invalid !== null) {
+        return { ok: false, reason: invalid };
+      }
+      return transitionTx.immediate(transitionInput);
+    },
   };
   return store;
 }
@@ -287,6 +386,18 @@ function createTables(db: Database): void {
   db.run(
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_operations_model_nonterminal ON operations (model) WHERE phase != 'terminal'",
   );
+  db.run(`
+    CREATE TABLE IF NOT EXISTS residency_states (
+      model TEXT PRIMARY KEY,
+      residency_group TEXT,
+      state TEXT NOT NULL CHECK (state IN ('unavailable','downloaded','loading','warming','ready','draining','unloading','failed')),
+      owner_id TEXT NOT NULL,
+      incarnation TEXT NOT NULL,
+      fence_token INTEGER NOT NULL,
+      version INTEGER NOT NULL,
+      updated_at_ms INTEGER NOT NULL
+    )
+  `);
 }
 
 function readAuthority(db: Database): Fence | null {
@@ -388,6 +499,153 @@ function finishOperationTx(db: Database, input: FinishOperationInput): MutationR
     input.operationId,
   );
   return { ok: true };
+}
+
+function transitionResidencyStateTx(
+  db: Database,
+  input: TransitionResidencyStateInput,
+): TransitionResidencyStateResult {
+  const authority = readAuthority(db);
+  if (authority?.fenceToken !== input.fenceToken) {
+    return { ok: false, reason: "stale-fence" };
+  }
+  const rows = listResidencyStateRows(db);
+  const stored = rows.find((row) => row.model === input.model) ?? null;
+  const currentVersion = stored?.version ?? 0;
+  if (currentVersion !== input.expectedVersion) {
+    return { ok: false, reason: "version-conflict" };
+  }
+  const currentState: ResidencyState = stored?.state ?? "unavailable";
+  const storedGroup = stored?.group ?? undefined;
+  if (
+    input.group !== undefined &&
+    input.group !== storedGroup &&
+    isOccupyingResidencyState(currentState)
+  ) {
+    return { ok: false, reason: "group-conflict" };
+  }
+  const group = input.group ?? storedGroup;
+  const members = buildMembers(rows, input.model, group, currentState);
+  const decision = evaluateResidencyTransition({
+    groups: input.groups ?? RESIDENCY_GROUPS,
+    members,
+    id: input.model,
+    to: input.to,
+  });
+  if (!decision.ok) {
+    return { ok: false, reason: "lifecycle-refused", decision };
+  }
+  return upsertState(db, input, authority, group);
+}
+
+function buildMembers(
+  rows: readonly ResidencyStateRecord[],
+  targetId: string,
+  targetGroup: string | undefined,
+  targetState: ResidencyState,
+): ResidencyMember[] {
+  const members: ResidencyMember[] = rows
+    .filter((row) => row.model !== targetId)
+    .map((row) => rowToMember(row));
+  members.push({
+    id: targetId,
+    ...(targetGroup !== undefined ? { group: targetGroup } : {}),
+    state: targetState,
+  });
+  return members;
+}
+
+function rowToMember(row: ResidencyStateRecord): ResidencyMember {
+  return {
+    id: row.model,
+    ...(row.group !== null ? { group: row.group } : {}),
+    state: row.state,
+  };
+}
+
+function upsertState(
+  db: Database,
+  input: TransitionResidencyStateInput,
+  authority: Fence,
+  group: string | undefined,
+): TransitionResidencyStateResult {
+  const version = input.expectedVersion + 1;
+  const storedGroup = group ?? null;
+  db.query(
+    `INSERT INTO residency_states (model, residency_group, state, owner_id, incarnation, fence_token, version, updated_at_ms)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(model) DO UPDATE SET residency_group = excluded.residency_group, state = excluded.state, owner_id = excluded.owner_id, incarnation = excluded.incarnation, fence_token = excluded.fence_token, version = excluded.version, updated_at_ms = excluded.updated_at_ms`,
+  ).run(
+    input.model,
+    storedGroup,
+    input.to,
+    authority.ownerId,
+    authority.incarnation,
+    authority.fenceToken,
+    version,
+    input.nowMs,
+  );
+  const record: ResidencyStateRecord = {
+    model: input.model,
+    group: storedGroup,
+    state: input.to,
+    ownerId: authority.ownerId,
+    incarnation: authority.incarnation,
+    fenceToken: authority.fenceToken,
+    version,
+    updatedAtMs: input.nowMs,
+  };
+  return { ok: true, record };
+}
+
+function listResidencyStateRows(db: Database): ResidencyStateRecord[] {
+  const rows = db
+    .query(`SELECT ${RESIDENCY_STATE_COLUMNS} FROM residency_states ORDER BY model ASC`)
+    .all() as ResidencyStateRow[];
+  return rows.map((row) => parseResidencyStateRow(row));
+}
+
+function selectResidencyStateRow(db: Database, model: string): ResidencyStateRow | null {
+  return db
+    .query(`SELECT ${RESIDENCY_STATE_COLUMNS} FROM residency_states WHERE model = ?`)
+    .get(model) as ResidencyStateRow | null;
+}
+
+function parseResidencyStateRow(row: ResidencyStateRow): ResidencyStateRecord {
+  if (!isResidencyState(row.state)) {
+    throw new Error(`residency store row has unknown state ${row.state}`);
+  }
+  return {
+    model: row.model,
+    group: row.residency_group,
+    state: row.state,
+    ownerId: row.owner_id,
+    incarnation: row.incarnation,
+    fenceToken: row.fence_token,
+    version: row.version,
+    updatedAtMs: row.updated_at_ms,
+  };
+}
+
+function validateTransitionInput(
+  input: TransitionResidencyStateInput,
+): ResidencyStoreFailure | null {
+  if (!isNonEmpty(input.model)) {
+    return "invalid-input";
+  }
+  if (!isResidencyState(input.to)) {
+    return "invalid-input";
+  }
+  if (!isFenceToken(input.fenceToken)) {
+    return "invalid-input";
+  }
+  if (!Number.isInteger(input.expectedVersion) || input.expectedVersion < 0) {
+    return "invalid-input";
+  }
+  if (input.group !== undefined && !isNonEmpty(input.group)) {
+    return "invalid-input";
+  }
+  return null;
 }
 
 function listNonterminalRows(db: Database): ResidencyOperationRecord[] {
