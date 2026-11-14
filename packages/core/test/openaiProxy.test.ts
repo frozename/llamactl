@@ -1910,6 +1910,42 @@ test("an experimental route loses an alias collision", async () => {
   }
 });
 
+test("a pinned-experimental route loses an alias collision on the legacy proxy", async () => {
+  const t = tempEnv();
+  const warnSpy = spyOn(console, "warn").mockImplementation(() => undefined);
+  try {
+    writeQualifiedCatalog(t.dir, "validated");
+    writeFileSync(
+      join(t.dir, "qualification-overrides.tsv"),
+      "exp/model.gguf\tpin\texperimental\tops\twhy\t2026-11-14T00:00:00Z\n",
+    );
+    writeLlamaServerWorkload(t.dir, "a-exp", {
+      rel: "exp/model.gguf",
+      port: 8351,
+      extraArgs: ["--alias", "pinned-alias"],
+    });
+    writeLlamaServerWorkload(t.dir, "b-prod", {
+      rel: "prod/model.gguf",
+      port: 8352,
+      extraArgs: ["--alias", "pinned-alias"],
+    });
+    const upstream = installConditionalChatUpstream();
+
+    const res = await openaiProxy.proxyOpenAI(chatRequest("pinned-alias"), t.env);
+
+    expect(res.status).toBe(200);
+    const chatCalls = upstream.calls.filter((c) => c.url.endsWith("/v1/chat/completions"));
+    expect(chatCalls).toHaveLength(1);
+    expect(chatCalls[0]!.url).toBe("http://127.0.0.1:8352/v1/chat/completions");
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[openaiProxy] route-map collision on model='pinned-alias': keeping ModelRun:b-prod, ignoring ModelRun:a-exp",
+    );
+  } finally {
+    warnSpy.mockRestore();
+    t.cleanup();
+  }
+});
+
 test("an experimental exact pin still forwards to its own port", async () => {
   const t = tempEnv();
   try {
@@ -2007,6 +2043,78 @@ test("a catalog edit invalidates the /v1/models cache without a workload restart
       | undefined;
     expect(afterEntry?.["experimental"]).toBe(true);
   } finally {
+    t.cleanup();
+  }
+});
+
+test("a qualification pin edit invalidates the /v1/models cache without a workload restart", () => {
+  const t = tempEnv();
+  try {
+    const catalogFile = join(t.dir, "curated-models.tsv");
+    const overridesFile = join(t.dir, "qualification-overrides.tsv");
+    writeQualifiedCatalog(t.dir, "validated");
+    writeLlamaServerWorkload(t.dir, "wl-exp", { rel: "exp/model.gguf", port: 8353 });
+    const epoch = new Date("2026-01-01T00:00:00.000Z");
+    utimesSync(catalogFile, epoch, epoch);
+
+    const before = openaiProxy.listOpenAIModels(t.env);
+    const beforeEntry = before.data.find((m) => m.id === "exp/model.gguf") as unknown as
+      | Record<string, unknown>
+      | undefined;
+    expect(beforeEntry?.["id"]).toBe("exp/model.gguf");
+    expect("experimental" in (beforeEntry ?? {})).toBe(false);
+
+    writeFileSync(
+      overridesFile,
+      "exp/model.gguf\tpin\texperimental\tops\twhy\t2026-11-14T00:00:00Z\n",
+    );
+    utimesSync(overridesFile, epoch, new Date(epoch.getTime() + 1_000));
+
+    const after = openaiProxy.listOpenAIModels(t.env);
+    const afterEntry = after.data.find((m) => m.id === "exp/model.gguf") as unknown as
+      | Record<string, unknown>
+      | undefined;
+    expect(afterEntry?.["experimental"]).toBe(true);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("LOCAL_AI_QUALIFICATION_OVERRIDES_FILE relocates the pins /v1/models reads and caches on", () => {
+  const t = tempEnv();
+  const overrideDir = mkdtempSync(join(tmpdir(), "llamactl-openai-proxy-ovr-"));
+  const relocated = join(overrideDir, "operator-q.tsv");
+  const saved = process.env["LOCAL_AI_QUALIFICATION_OVERRIDES_FILE"];
+  try {
+    process.env["LOCAL_AI_QUALIFICATION_OVERRIDES_FILE"] = relocated;
+    const catalogFile = join(t.dir, "curated-models.tsv");
+    writeQualifiedCatalog(t.dir, "validated");
+    writeLlamaServerWorkload(t.dir, "wl-exp", { rel: "exp/model.gguf", port: 8354 });
+    const epoch = new Date("2026-01-01T00:00:00.000Z");
+    utimesSync(catalogFile, epoch, epoch);
+    // A default-location pin the relocation must shadow.
+    writeFileSync(
+      join(t.dir, "qualification-overrides.tsv"),
+      "exp/model.gguf\tpin\tvalidated\tops\tdefault file\t2026-11-14T00:00:00Z\n",
+    );
+    const entry = (): Record<string, unknown> | undefined => {
+      const found: unknown = openaiProxy
+        .listOpenAIModels(t.env)
+        .data.find((m) => m.id === "exp/model.gguf");
+      return found as Record<string, unknown> | undefined;
+    };
+
+    expect(entry()?.["id"]).toBe("exp/model.gguf");
+    expect("experimental" in (entry() ?? {})).toBe(false);
+
+    writeFileSync(relocated, "exp/model.gguf\tpin\texperimental\tops\twhy\t2026-11-14T00:00:00Z\n");
+    utimesSync(relocated, epoch, new Date(epoch.getTime() + 1_000));
+
+    expect(entry()?.["experimental"]).toBe(true);
+  } finally {
+    if (saved === undefined) delete process.env["LOCAL_AI_QUALIFICATION_OVERRIDES_FILE"];
+    else process.env["LOCAL_AI_QUALIFICATION_OVERRIDES_FILE"] = saved;
+    rmSync(overrideDir, { recursive: true, force: true });
     t.cleanup();
   }
 });

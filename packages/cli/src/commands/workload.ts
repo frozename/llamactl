@@ -47,7 +47,11 @@ import {
 } from "../node-contact.js";
 import { required } from "../required.js";
 import { existsSync, readFileSync, rmSync } from "../safe-fs.js";
-import { makeSpecArtifactResolver, nodeRunBudgetLookup } from "./noderun-helpers.js";
+import {
+  makeSpecArtifactResolver,
+  nodeRunBudgetLookup,
+  nodeRunResidencyLookup,
+} from "./noderun-helpers.js";
 
 const APPLY_USAGE = `Usage: llamactl apply -f <manifest.yaml> [--evict <name>]... [--force]
 
@@ -400,6 +404,7 @@ async function applyModelRunFromRaw(
       {
         resolveNodeIdentity: (n) => lookupNode(n)?.endpoint ?? null,
         getNodeBudgetGiB: nodeRunBudgetLookup(),
+        getNodeResidency: nodeRunResidencyLookup(),
       },
     );
   } catch (err) {
@@ -665,6 +670,7 @@ async function applyModelHostFromRaw(raw: string, json: boolean): Promise<number
       manifest: parsedHost,
       getClient: (name) => getWorkloadNodeClient(name),
       getNodeBudgetGiB: nodeRunBudgetLookup(),
+      getNodeResidency: nodeRunResidencyLookup(),
     });
     if (!outcome.ok) {
       process.stderr.write(`apply: ${outcome.error}\n`);

@@ -13,11 +13,12 @@ export interface AdmissionReservation {
 export const MEMORY_BUDGET_HEADROOM_RATIO = 0.75;
 
 /**
- * Residency tuning knobs (Refs #519). Only `safetyMarginRatio` has a
- * consumer today (`defaultNodeBudgetGiB`, opt-in); the other fields are
- * reserved and not yet enforced. `minResidencySeconds` and
- * `switchCooldownSeconds` are now consumed by the dry-run profile
- * planner (`planner.ts`).
+ * Residency tuning knobs (Refs #519). `safetyMarginRatio` sizes every
+ * computed admission budget via `defaultNodeBudgetGiB` (controller, router
+ * and CLI apply paths). `minResidencySeconds` and `switchCooldownSeconds`
+ * are read only by the dry-run planner (`planner.ts`).
+ * `idleEvictSeconds`, `residentPreference` and `coldLoadPenaltyMs` are
+ * reserved and not yet enforced.
  */
 export interface ResidencyPolicy {
   /** 0 = never evict idle residents. */
