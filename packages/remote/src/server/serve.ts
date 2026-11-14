@@ -1034,6 +1034,7 @@ function maybeRegisterDeclaredModels(opts: StartAgentOptions): (() => void) | nu
     listDeclaredModels({
       nodeName: LOCAL_NODE_ID,
       liveModelIds: new Set(listLocalRoutes(resolveEnv()).map((route) => route.model)),
+      workloadPhase: (workload) => getResidencyLeaseRegistry()?.snapshot(workload).phase,
     }),
   );
   return (): void => {
