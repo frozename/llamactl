@@ -50,17 +50,21 @@ export type NodeRunInfraItem = z.infer<typeof NodeRunInfraItemSchema>;
 
 /**
  * Residency tuning for a NodeRun. `safetyMarginRatio` is applied to computed
- * admission budgets by apply, the reconciler and the router views and apply
- * (Part of #519). The other fields are validated and persisted but not yet
+ * admission budgets by apply, the reconciler, the router views and apply, and
+ * the residencyPlan budget (Part of #519). `minResidencySeconds` and
+ * `switchCooldownSeconds` are passed to the profile-switch planner by
+ * residencyPlan. The remaining fields are validated and persisted but not yet
  * enforced. budget.memoryGiB overrides any computed budget.
  */
 export const ResidencyPolicySchema = z
   .object({
     /** reserved; not yet enforced */
     idleEvictSeconds: z.number().int().nonnegative().optional(),
-    /** reserved; not yet enforced */
+    /** read by the profile-switch planner; refuses only when load timing is
+     *  supplied, which no caller persists yet (#279) */
     minResidencySeconds: z.number().int().nonnegative().optional(),
-    /** reserved; not yet enforced */
+    /** read by the profile-switch planner; refuses only when switch timing is
+     *  supplied, which no caller persists yet (#279) */
     switchCooldownSeconds: z.number().int().nonnegative().optional(),
     /** defaults to 0.75; sizes the computed admission budget when
      *  spec.budget is unset */
