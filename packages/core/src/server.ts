@@ -14,6 +14,7 @@ import {
 } from "./bench/index.js";
 import { resolveBuildId } from "./build.js";
 import { ctxForModel } from "./ctx.js";
+import { resolveDraftModelPathArgs } from "./engines/llamacpp.js";
 import { resolveEnv } from "./env.js";
 import {
   defaultReadProcessCommand,
@@ -509,7 +510,12 @@ export interface StartServerOptions {
   key: WorkloadKey;
   target: string;
   identity?: PidIdentityDeps;
-  /** Additional arguments appended to the llama-server invocation. */
+  /**
+   * Additional arguments appended to the llama-server invocation.
+   * Relative `-md`/`--model-draft`/`--spec-draft-model`/`--dspark` values
+   * (separate or `=` form) are resolved against `LLAMA_CPP_MODELS`, as `-m`
+   * is; absolute paths pass through. Escapes are refused before any stop.
+   */
   extraArgs?: string[];
   allowExternalBind?: boolean;
   /** Optional endpoint override from the workload manifest. */
@@ -851,6 +857,7 @@ interface ResolvedLaunchTarget {
   rel: string;
   modelPath: string;
   bin: string;
+  draftResolvedExtraArgs: string[];
 }
 
 /**
@@ -906,7 +913,19 @@ function resolveAndValidateTarget(
   if (bindRefusal !== null) {
     return { result: startServerError(resolved, launchEndpoint, null, false, bindRefusal) };
   }
-  return { rel, modelPath, bin };
+  // Same pre-stop guarantee as the bind refusal (#516): a relative draft-model
+  // path that escapes the models dir is refused before stopServer and the port
+  // probe, so a bad manifest never disturbs the running instance.
+  try {
+    const draftResolvedExtraArgs = resolveDraftModelPathArgs(
+      opts.extraArgs ?? [],
+      resolved.LLAMA_CPP_MODELS,
+    );
+    return { rel, modelPath, bin, draftResolvedExtraArgs };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { result: startServerError(resolved, launchEndpoint, null, false, message) };
+  }
 }
 
 interface PreparedLaunchArgs {
@@ -926,17 +945,21 @@ function prepareLaunchArgs(
   resolved: ResolvedEnv,
   env: NodeJS.ProcessEnv,
   key: WorkloadKey,
+  draftResolvedExtraArgs: readonly string[],
 ): PreparedLaunchArgs {
   let tunedProfile: string | null = null;
-  const extra = opts.extraArgs ?? [];
-  const slotPathResolved = resolveSlotSavePathArgs(extra, resolved.LOCAL_AI_RUNTIME_DIR, key.name);
+  const slotPathResolved = resolveSlotSavePathArgs(
+    draftResolvedExtraArgs,
+    resolved.LOCAL_AI_RUNTIME_DIR,
+    key.name,
+  );
   if (slotPathResolved.slotSavePath !== null) {
     mkdirSync(slotPathResolved.slotSavePath, { recursive: true });
   }
   const launchArgs: string[] = [];
   let profileArgs: string[] = [];
   if (!opts.skipTuned && useTunedArgsEnabled(env)) {
-    const mode = hasMmprojArg(extra) ? "vision" : defaultModeForRel(rel, resolved);
+    const mode = hasMmprojArg(draftResolvedExtraArgs) ? "vision" : defaultModeForRel(rel, resolved);
     const ctx = ctxForModel(rel, resolved);
     const build = resolveBuildId(resolved);
     const machine = machineLabel(resolved);
@@ -1426,7 +1449,14 @@ async function startServerUnwrapped(opts: StartServerOptions): Promise<StartServ
   mkdirSync(resolved.LLAMA_CPP_CACHE, { recursive: true });
   mkdirSync(resolved.LLAMA_CPP_LOGS, { recursive: true });
 
-  const prepared = prepareLaunchArgs(opts, rel, resolved, env, key);
+  const prepared = prepareLaunchArgs(
+    opts,
+    rel,
+    resolved,
+    env,
+    key,
+    validation.draftResolvedExtraArgs,
+  );
   const { launchArgs, tunedProfile } = prepared;
 
   const pid = await launchAndRecordServer(
