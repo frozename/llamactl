@@ -607,6 +607,42 @@ describe("agent status listen addresses (#211)", () => {
     noListenWarnings(report);
   });
 
+  test("a zone-scoped IPv6 bind host does not match the same address on another zone", async () => {
+    const { report } = await statusWithListener({
+      bindHost: "fe80::1%en0",
+      observed: ["[fe80::1%en1]:59996"],
+    });
+    expect(report.warnings).toContain(listenWarning("[fe80::1%en1]:59996", "fe80::1%en0:59996"));
+  });
+
+  test("one matching address among several suppresses the mismatch warning", async () => {
+    const { report } = await statusWithListener({
+      bindHost: "127.0.0.1",
+      observed: ["127.0.0.1:59996", "[::1]:59996"],
+    });
+    expect(report.listenAddresses).toEqual(["127.0.0.1:59996", "[::1]:59996"]);
+    noListenWarnings(report);
+  });
+
+  // An empty bindHost binds every interface, like 0.0.0.0: it is compared, and
+  // only a `*` listener satisfies it.
+  test("an empty bind host with a * listener is not flagged", async () => {
+    const { report } = await statusWithListener({
+      bindHost: "",
+      observed: ["*:59996"],
+    });
+    expect(report.listenAddresses).toEqual(["*:59996"]);
+    noListenWarnings(report);
+  });
+
+  test("an empty bind host with only a loopback listener is flagged", async () => {
+    const { report } = await statusWithListener({
+      bindHost: "",
+      observed: ["127.0.0.1:59996"],
+    });
+    expect(report.warnings).toContain(listenWarning("127.0.0.1:59996", ":59996"));
+  });
+
   test("a DNS-name bind host is never compared (lsof -n prints numeric addresses)", async () => {
     const { report } = await statusWithListener({
       bindHost: "agent.example.test",

@@ -98,6 +98,10 @@ describe("listener addresses (#211)", () => {
     expect(parseLsofListenAddresses("")).toEqual([]);
   });
 
+  it("drops empty n-rows", () => {
+    expect(parseLsofListenAddresses("p123\nf7\nn\nf8\nn  \nf9\nn*:7843\n")).toEqual(["*:7843"]);
+  });
+
   it("findTcpListenerAddresses scopes lsof to the pid AND the port", async () => {
     const calls: string[][] = [];
     const run: LsofRunFn = (args) => {
