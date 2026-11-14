@@ -1,5 +1,6 @@
 import type { SignalIdentity } from "../pidIdentity.js";
 import type { ResolvedEnv } from "../types.js";
+import type { OmlxManagedModelSettings } from "./omlx-model-settings.js";
 
 export type EngineName = "llamacpp" | "omlx" | "strata" | "kapitsa" | "libosmos";
 
@@ -31,6 +32,12 @@ export interface ModelHostHostedModel {
     dflash_draft_sink_size?: number;
     dflash_verify_mode?: string | null;
   };
+  /**
+   * #282 DF-09: per-model oMLX settings managed by llamactl. Reconciled into
+   * oMLX's model_settings.json (see engines/omlx-model-settings.ts); dflash_*
+   * keys stay owned by the dflash block above.
+   */
+  omlx?: OmlxManagedModelSettings;
 }
 
 /**
