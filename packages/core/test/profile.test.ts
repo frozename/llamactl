@@ -100,6 +100,15 @@ type DescribeFn = (
   probe?: { platform?: NodeJS.Platform; memoryBytes?: number | null },
 ) => Desc;
 
+type DetectMemoryDeps = {
+  platform?: NodeJS.Platform;
+  darwin?: () => number | null;
+  linux?: () => number | null;
+  totalmem?: () => number;
+};
+
+type DetectMemoryFn = (deps?: DetectMemoryDeps) => number | null;
+
 // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters -- Callers pick the expected export type; the runtime check only proves it is a function.
 function exported<T>(name: string): T {
   const v = (profileMod as unknown as Record<string, unknown>)[name];
@@ -203,5 +212,120 @@ describe("profile.describeMachine (#213)", () => {
     expect(
       formatMachineSummary(describeMachine({}, { platform: "linux", memoryBytes: null })),
     ).toBe("platform=linux memory=unknown tier=unknown profile=macbook-pro-48g source=detected");
+  });
+});
+
+describe("profile.detectMemoryBytes fallback (#213)", () => {
+  const G = 1024 ** 3;
+  const detectMemoryBytes = exported<DetectMemoryFn>("detectMemoryBytes");
+
+  test("win32 falls back to totalmem", () => {
+    expect(detectMemoryBytes({ platform: "win32", totalmem: () => 100 * G + 4096 })).toBe(
+      100 * G + 4096,
+    );
+  });
+
+  test("freebsd falls back to totalmem", () => {
+    expect(detectMemoryBytes({ platform: "freebsd", totalmem: () => 7 * G + 8192 })).toBe(
+      7 * G + 8192,
+    );
+  });
+
+  test("darwin probe failure falls back to totalmem", () => {
+    expect(
+      detectMemoryBytes({
+        platform: "darwin",
+        darwin: () => null,
+        totalmem: () => 100 * G + 4096,
+      }),
+    ).toBe(100 * G + 4096);
+  });
+
+  test("linux probe failure falls back to totalmem", () => {
+    expect(
+      detectMemoryBytes({
+        platform: "linux",
+        linux: () => null,
+        totalmem: () => 100 * G + 4096,
+      }),
+    ).toBe(100 * G + 4096);
+  });
+
+  test("platform probe wins over totalmem", () => {
+    expect(
+      detectMemoryBytes({
+        platform: "darwin",
+        darwin: () => 48 * G + 12345,
+        totalmem: () => 100 * G + 4096,
+      }),
+    ).toBe(48 * G + 12345);
+    expect(
+      detectMemoryBytes({
+        platform: "linux",
+        linux: () => 48 * G + 12345,
+        totalmem: () => 100 * G + 4096,
+      }),
+    ).toBe(48 * G + 12345);
+  });
+
+  test("non-positive or throwing totalmem yields null", () => {
+    expect(detectMemoryBytes({ platform: "freebsd", totalmem: () => 13 * G + 555 })).toBe(
+      13 * G + 555,
+    );
+    expect(detectMemoryBytes({ platform: "freebsd", totalmem: () => 0 })).toBeNull();
+    expect(detectMemoryBytes({ platform: "freebsd", totalmem: () => Number.NaN })).toBeNull();
+    expect(
+      detectMemoryBytes({
+        platform: "freebsd",
+        totalmem: () => {
+          throw new Error("totalmem unavailable");
+        },
+      }),
+    ).toBeNull();
+  });
+
+  test("non-finite totalmem yields null", () => {
+    expect(
+      detectMemoryBytes({ platform: "freebsd", totalmem: () => Number.POSITIVE_INFINITY }),
+    ).toBeNull();
+  });
+
+  test("fractional totalmem is truncated to whole bytes", () => {
+    expect(detectMemoryBytes({ platform: "freebsd", totalmem: () => 8 * G + 0.5 })).toBe(8 * G);
+  });
+});
+
+describe("profile tier-name aliases (#213)", () => {
+  const G = 1024 ** 3;
+
+  test("tier names normalise to profiles", () => {
+    expect(normalizeProfile("32g")).toBe("balanced");
+    expect(normalizeProfile("64g")).toBe("macbook-pro-48g");
+    expect(normalizeProfile("96g")).toBe("large-128g");
+    expect(normalizeProfile("128g+")).toBe("large-128g");
+  });
+
+  test("tier names round-trip through detection buckets", () => {
+    const memoryTierFromBytes = exported<(b: number | null) => string>("memoryTierFromBytes");
+    for (const b of [16 * G, 32 * G, 32 * G + 1, 48 * G, 64 * G, 64 * G + 1, 96 * G, 128 * G]) {
+      expect(normalizeProfile(memoryTierFromBytes(b))).toBe(profileFromMemory(b));
+    }
+  });
+
+  test("env override accepts tier names", () => {
+    const describeMachine = exported<DescribeFn>("describeMachine");
+    expect(
+      describeMachine(
+        { LLAMA_CPP_MACHINE_PROFILE: "96g" },
+        { platform: "linux", memoryBytes: 16 * G },
+      ),
+    ).toEqual({
+      platform: "linux",
+      memoryBytes: 16 * G,
+      memoryTier: "16g",
+      profile: "large-128g",
+      profileSource: "env",
+    });
+    expect(resolveProfile({ LLAMA_CPP_MACHINE_PROFILE: "64g" })).toBe("macbook-pro-48g");
   });
 });

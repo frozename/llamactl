@@ -23,7 +23,7 @@ import {
   type ServiceProbeDeps,
 } from "../src/commands/agent-status.js";
 import { runAgent } from "../src/commands/agent.js";
-import { mkdtempSync, rmSync, unlinkSync } from "../src/safe-fs.js";
+import { existsSync, mkdtempSync, rmSync, unlinkSync } from "../src/safe-fs.js";
 
 /**
  * #211: `agent status` must report liveness (GET /healthz), flag a
@@ -265,11 +265,19 @@ describe("agent status", () => {
       tls: { certPath: cfg.certPath, keyPath: cfg.keyPath },
       advertiseMdns: false,
     });
+    const agentPort = agent.port;
     try {
-      agentConfigMod.saveAgentConfig({ ...cfg, port: agent.port }, cfgPath);
+      agentConfigMod.saveAgentConfig({ ...cfg, port: agentPort }, cfgPath);
       const r = await capture(["status", `--dir=${tmp}`, "--json"]);
       expect(r.code).toBe(0);
-      expect(parseReport(r.out).running).toBe(true);
+      const rep = parseReport(r.out);
+      expect(rep.running).toBe(true);
+      // #211: runStatus must wire the production listener-address lookup.
+      expect("listenAddresses" in rep).toBe(true);
+      if (existsSync("/usr/sbin/lsof") || existsSync("/usr/bin/lsof")) {
+        expect(rep.listenAddresses).toContain(`127.0.0.1:${String(agentPort)}`);
+      }
+      expect(rep.warnings.some((w) => w.startsWith("agent listens on"))).toBe(false);
     } finally {
       await agent.stop();
       agent = null;
@@ -418,6 +426,276 @@ describe("agent status listener pid", () => {
     });
     expect(calls).toEqual([["127.0.0.1", 59996]]);
     expect(report.listenerPid).toBe(7);
+  });
+});
+
+// #211: the fixed mismatch wording, verbatim — it must not prescribe a restart.
+function listenWarning(addrs: string, bind: string): string {
+  return `agent listens on ${addrs} but agent.yaml binds ${bind}; a --bind on the service command line, or a process started from an older agent.yaml, overrides it`;
+}
+
+function noListenWarnings(report: AgentStatusReport): void {
+  expect(report.warnings.filter((w) => w.startsWith("agent listens on"))).toEqual([]);
+}
+
+// #211: drives collectAgentStatus with an injected findListenerAddresses(port,
+// pid) that records its calls. `lookup: "omit"` withholds the option entirely
+// (the no-lookup path).
+async function statusWithListener(o: {
+  bindHost?: string;
+  observed?: string[];
+  probe?: boolean;
+  listenerPid?: number | null;
+  lookup?: "record" | "reject" | "omit";
+  describeService?: DescribeServiceFn;
+}): Promise<{ report: AgentStatusReport; calls: [number, number][] }> {
+  await seedInit();
+  const cfgPath = join(tmp, "agent.yaml");
+  const loaded = agentConfigMod.loadAgentConfig(cfgPath);
+  const cfg = o.bindHost === undefined ? loaded : { ...loaded, bindHost: o.bindHost };
+  const calls: [number, number][] = [];
+  const lookup = o.lookup ?? "record";
+  const opts = {
+    configPath: cfgPath,
+    cfg,
+    probe: (): Promise<boolean> => Promise.resolve(o.probe ?? true),
+    findListenerPid: (): Promise<number | null> =>
+      Promise.resolve(o.listenerPid === undefined ? 4242 : o.listenerPid),
+    ...(o.describeService === undefined ? {} : { describeService: o.describeService }),
+    ...(lookup === "omit"
+      ? {}
+      : {
+          findListenerAddresses: (port: number, pid: number): Promise<string[]> => {
+            calls.push([port, pid]);
+            return lookup === "reject"
+              ? Promise.reject(new Error("lsof failed"))
+              : Promise.resolve(o.observed ?? []);
+          },
+        }),
+  };
+  const report = await collectAgentStatus(opts);
+  return { report, calls };
+}
+
+describe("agent status listen addresses (#211)", () => {
+  test("a wildcard listener under a loopback config is flagged, with neutral wording", async () => {
+    const { report, calls } = await statusWithListener({
+      bindHost: "127.0.0.1",
+      observed: ["*:59996"],
+    });
+    expect(report.listenAddresses).toEqual(["*:59996"]);
+    expect(calls).toEqual([[59996, 4242]]);
+    expect(report.warnings).toContain(listenWarning("*:59996", "127.0.0.1:59996"));
+    expect(report.warnings.some((w) => w.includes("restart"))).toBe(false);
+    const text = formatAgentStatus(report);
+    expect(text).toContain("listen  *:59996\n");
+    expect(text).toContain(
+      "warning: agent listens on *:59996 but agent.yaml binds 127.0.0.1:59996; a --bind on the service command line",
+    );
+  });
+
+  test("0.0.0.0 config with a * listener is not flagged", async () => {
+    const { report } = await statusWithListener({
+      bindHost: "0.0.0.0",
+      observed: ["*:59996"],
+    });
+    expect(report.listenAddresses).toEqual(["*:59996"]);
+    noListenWarnings(report);
+  });
+
+  test("0.0.0.0 config with only a loopback listener is flagged", async () => {
+    const { report } = await statusWithListener({
+      bindHost: "0.0.0.0",
+      observed: ["127.0.0.1:59996"],
+    });
+    expect(report.listenAddresses).toEqual(["127.0.0.1:59996"]);
+    expect(report.warnings).toContain(listenWarning("127.0.0.1:59996", "0.0.0.0:59996"));
+  });
+
+  test("IPv6 loopback config matches a bracketed listener", async () => {
+    const { report } = await statusWithListener({
+      bindHost: "::1",
+      observed: ["[::1]:59996"],
+    });
+    expect(report.listenAddresses).toEqual(["[::1]:59996"]);
+    noListenWarnings(report);
+  });
+
+  test("localhost config matches 127.0.0.1", async () => {
+    const { report } = await statusWithListener({
+      bindHost: "localhost",
+      observed: ["127.0.0.1:59996"],
+    });
+    expect(report.listenAddresses).toEqual(["127.0.0.1:59996"]);
+    noListenWarnings(report);
+  });
+
+  test("localhost config matches an IPv6 loopback listener", async () => {
+    const { report } = await statusWithListener({
+      bindHost: "localhost",
+      observed: ["[::1]:59996"],
+    });
+    expect(report.listenAddresses).toEqual(["[::1]:59996"]);
+    noListenWarnings(report);
+  });
+
+  test("localhost config with a wildcard listener is flagged", async () => {
+    const { report } = await statusWithListener({
+      bindHost: "localhost",
+      observed: ["*:59996"],
+    });
+    expect(report.warnings).toContain(listenWarning("*:59996", "localhost:59996"));
+  });
+
+  test("a bracketed IPv6 bind host matches a bracketed listener", async () => {
+    const { report } = await statusWithListener({
+      bindHost: "[::1]",
+      observed: ["[::1]:59996"],
+    });
+    expect(report.listenAddresses).toEqual(["[::1]:59996"]);
+    noListenWarnings(report);
+  });
+
+  test("an expanded IPv6 bind host matches its compressed listener", async () => {
+    const { report } = await statusWithListener({
+      bindHost: "0:0:0:0:0:0:0:1",
+      observed: ["[::1]:59996"],
+    });
+    expect(report.listenAddresses).toEqual(["[::1]:59996"]);
+    noListenWarnings(report);
+  });
+
+  test("an expanded IPv6 listener matches its compressed bind host", async () => {
+    const { report } = await statusWithListener({
+      bindHost: "::1",
+      observed: ["[0:0:0:0:0:0:0:1]:59996"],
+    });
+    expect(report.listenAddresses).toEqual(["[0:0:0:0:0:0:0:1]:59996"]);
+    noListenWarnings(report);
+  });
+
+  test("a zone-scoped IPv6 bind host matches its listener without throwing", async () => {
+    const { report } = await statusWithListener({
+      bindHost: "fe80::1%en0",
+      observed: ["[fe80::1%en0]:59996"],
+    });
+    expect(report.listenAddresses).toEqual(["[fe80::1%en0]:59996"]);
+    noListenWarnings(report);
+  });
+
+  test("a wildcard bind host with a zone-scoped listener is flagged without throwing", async () => {
+    const { report } = await statusWithListener({
+      bindHost: "::",
+      observed: ["[fe80::1%en0]:59996"],
+    });
+    expect(report.warnings).toContain(listenWarning("[fe80::1%en0]:59996", ":::59996"));
+  });
+
+  test("an uppercase, expanded zone-scoped bind host matches its listener", async () => {
+    const { report } = await statusWithListener({
+      bindHost: "FE80:0:0:0:0:0:0:1%EN0",
+      observed: ["[fe80::1%en0]:59996"],
+    });
+    noListenWarnings(report);
+  });
+
+  test("an uppercase localhost bind host matches a loopback listener", async () => {
+    const { report } = await statusWithListener({
+      bindHost: "LOCALHOST",
+      observed: ["127.0.0.1:59996"],
+    });
+    noListenWarnings(report);
+  });
+
+  test("a zone-scoped IPv6 bind host does not match the same address on another zone", async () => {
+    const { report } = await statusWithListener({
+      bindHost: "fe80::1%en0",
+      observed: ["[fe80::1%en1]:59996"],
+    });
+    expect(report.warnings).toContain(listenWarning("[fe80::1%en1]:59996", "fe80::1%en0:59996"));
+  });
+
+  test("one matching address among several suppresses the mismatch warning", async () => {
+    const { report } = await statusWithListener({
+      bindHost: "127.0.0.1",
+      observed: ["127.0.0.1:59996", "[::1]:59996"],
+    });
+    expect(report.listenAddresses).toEqual(["127.0.0.1:59996", "[::1]:59996"]);
+    noListenWarnings(report);
+  });
+
+  // An empty bindHost binds every interface, like 0.0.0.0: it is compared, and
+  // only a `*` listener satisfies it.
+  test("an empty bind host with a * listener is not flagged", async () => {
+    const { report } = await statusWithListener({
+      bindHost: "",
+      observed: ["*:59996"],
+    });
+    expect(report.listenAddresses).toEqual(["*:59996"]);
+    noListenWarnings(report);
+  });
+
+  test("an empty bind host with only a loopback listener is flagged", async () => {
+    const { report } = await statusWithListener({
+      bindHost: "",
+      observed: ["127.0.0.1:59996"],
+    });
+    expect(report.warnings).toContain(listenWarning("127.0.0.1:59996", ":59996"));
+  });
+
+  test("a DNS-name bind host is never compared (lsof -n prints numeric addresses)", async () => {
+    const { report } = await statusWithListener({
+      bindHost: "agent.example.test",
+      observed: ["10.0.0.5:59996"],
+    });
+    expect(report.listenAddresses).toEqual(["10.0.0.5:59996"]);
+    noListenWarnings(report);
+  });
+
+  test("a known service pid that differs from the listener pid suppresses the mismatch warning", async () => {
+    const { report } = await statusWithListener({
+      bindHost: "127.0.0.1",
+      observed: ["*:59996"],
+      describeService: () =>
+        Promise.resolve({ manager: "launchd", name: "x", loaded: true, active: true, pid: 9999 }),
+    });
+    expect(report.listenAddresses).toEqual(["*:59996"]);
+    noListenWarnings(report);
+  });
+
+  test("a service pid matching the listener pid keeps the mismatch warning", async () => {
+    const { report } = await statusWithListener({
+      bindHost: "127.0.0.1",
+      observed: ["*:59996"],
+      describeService: () =>
+        Promise.resolve({ manager: "launchd", name: "x", loaded: true, active: true, pid: 4242 }),
+    });
+    expect(report.warnings).toContain(listenWarning("*:59996", "127.0.0.1:59996"));
+  });
+
+  test("not running never calls the address lookup", async () => {
+    const down = await statusWithListener({ probe: false, observed: ["*:59996"] });
+    expect(down.calls).toEqual([]);
+    expect(down.report.listenAddresses).toBeNull();
+    expect(formatAgentStatus(down.report)).not.toContain("listen  ");
+  });
+
+  test("no listener pid never calls the address lookup", async () => {
+    const noPid = await statusWithListener({ listenerPid: null, observed: ["*:59996"] });
+    expect(noPid.calls).toEqual([]);
+    expect(noPid.report.listenAddresses).toBeNull();
+    expect(formatAgentStatus(noPid.report)).not.toContain("listen  ");
+  });
+
+  test("a rejecting address lookup degrades to null with no listen warning", async () => {
+    const { report } = await statusWithListener({ observed: ["*:59996"], lookup: "reject" });
+    expect(report.listenAddresses).toBeNull();
+    noListenWarnings(report);
+  });
+
+  test("no injected lookup means no lookup", async () => {
+    const { report } = await statusWithListener({ observed: ["*:59996"], lookup: "omit" });
+    expect(report.listenAddresses).toBeNull();
   });
 });
 

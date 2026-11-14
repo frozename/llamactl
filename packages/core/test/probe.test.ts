@@ -1,6 +1,11 @@
 import { describe, expect, it } from "bun:test";
 
-import { formatEndpoint, probeHealthEndpoint } from "../src/probe.js";
+import {
+  findTcpListenerAddresses,
+  formatEndpoint,
+  parseLsofListenAddresses,
+  probeHealthEndpoint,
+} from "../src/probe.js";
 
 describe("formatEndpoint", () => {
   it("normalizes 0.0.0.0 to 127.0.0.1", () => {
@@ -79,5 +84,40 @@ describe("probeHealthEndpoint", () => {
       }),
     });
     expect(urlSeen).toBe("http://[::1]:9999/health");
+  });
+});
+
+type LsofRunFn = (args: string[]) => Promise<string | null>;
+
+describe("listener addresses (#211)", () => {
+  it("parses n-rows from lsof -Fn output, deduped, in order", () => {
+    expect(parseLsofListenAddresses("p123\nf7\nn*:7843\nf8\nn[::1]:7843\nf9\nn*:7843\n")).toEqual([
+      "*:7843",
+      "[::1]:7843",
+    ]);
+    expect(parseLsofListenAddresses("")).toEqual([]);
+  });
+
+  it("drops empty n-rows", () => {
+    expect(parseLsofListenAddresses("p123\nf7\nn\nf8\nn  \nf9\nn*:7843\n")).toEqual(["*:7843"]);
+  });
+
+  it("findTcpListenerAddresses scopes lsof to the pid AND the port", async () => {
+    const calls: string[][] = [];
+    const run: LsofRunFn = (args) => {
+      calls.push([...args]);
+      return Promise.resolve("p4242\nf5\nn127.0.0.1:7843\n");
+    };
+    const addrs = await findTcpListenerAddresses(7843, 4242, run);
+    expect(addrs).toEqual(["127.0.0.1:7843"]);
+    expect(calls).toEqual([["-nP", "-a", "-p", "4242", "-iTCP:7843", "-sTCP:LISTEN", "-Fn"]]);
+  });
+
+  it("a failed, empty or throwing lsof run gives null", async () => {
+    expect(await findTcpListenerAddresses(7843, 4242, () => Promise.resolve(null))).toBeNull();
+    expect(await findTcpListenerAddresses(7843, 4242, () => Promise.resolve("p1\n"))).toBeNull();
+    expect(
+      await findTcpListenerAddresses(7843, 4242, () => Promise.reject(new Error("lsof missing"))),
+    ).toBeNull();
   });
 });

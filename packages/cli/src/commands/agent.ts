@@ -1,3 +1,4 @@
+import { findTcpListenerAddresses } from "@llamactl/core/probe";
 import { agentConfig as agentConfigMod, auth, startAgentServer, tls } from "@llamactl/remote";
 import { hostname } from "node:os";
 import { join } from "node:path";
@@ -287,6 +288,9 @@ const STATUS_USAGE = `Usage: llamactl agent status [flags]
 Report the agent config, whether /healthz answers, a loopback-only
 bind, cert expiry + SAN coverage of the advertised host, and the
 launchd label or systemd unit (user, then system scope) that manages the agent.
+The report lists the addresses the running listener actually bound, and warns
+when none matches agent.yaml's bindHost (an IP, wildcard or localhost bindHost
+only).
 
 Flags:
 ${DIR_FLAG_HELP}
@@ -1690,6 +1694,7 @@ async function runStatus(args: string[]): Promise<number> {
     configPath: cfgPath,
     cfg,
     describeService: defaultDescribeService,
+    findListenerAddresses: findTcpListenerAddresses,
     ...(parsed.host !== undefined ? { advertisedHost: parsed.host } : {}),
   });
   if (parsed.json) process.stdout.write(`${JSON.stringify(report)}\n`);
