@@ -1,6 +1,7 @@
 // Read-only agent status report (#211): config, liveness via the
-// unauthenticated /healthz, loopback-bind detection, and cert expiry +
-// SAN coverage of the host the operator advertises.
+// unauthenticated /healthz, loopback-bind detection, the addresses the
+// running listener actually bound, and cert expiry + SAN coverage of the host
+// the operator advertises.
 import type { AgentConfig } from "@llamactl/core/config/agent-config";
 
 import { findTcpListenerPid } from "@llamactl/core/probe";
@@ -46,6 +47,14 @@ export interface AgentStatusReport {
   listenerPid: number | null;
   /** #211: service manager entry for the agent; null when not looked up or unsupported. */
   service: AgentServiceStatus | null;
+  /**
+   * #211: the addresses the agent's listener actually bound, from `lsof -n`
+   * (numeric only); null when not running, no pid, no lookup, or the lookup
+   * failed. Limitation: `listenerPid` comes from `findTcpListenerPid`, which
+   * falls back to ANY listener on the port, so the pid — and these addresses —
+   * can belong to a foreign process holding the port on another address.
+   */
+  listenAddresses: string[] | null;
   probeUrl: string;
   loopbackOnly: boolean;
   cert: AgentCertStatus | { error: string };
@@ -58,6 +67,9 @@ export interface AgentStatusReport {
 export type ProbeFn = (url: string) => Promise<boolean>;
 
 export type ListenerPidFn = (host: string, port: number) => Promise<number | null>;
+
+/** #211: numeric addresses `pid` holds listening on `port`, or null when unresolvable. */
+export type ListenerAddressesFn = (port: number, pid: number) => Promise<string[] | null>;
 
 /** #211: the launchd label or systemd unit (user, then system scope) managing the agent. Exactly these named fields; linger only on systemd. */
 export interface AgentServiceStatus {
@@ -147,6 +159,21 @@ async function lookupListenerPid(
 ): Promise<number | null> {
   if (!running) return null;
   return await find(host, port).catch(() => null);
+}
+
+// #211: the observed listen addresses are only interesting for a live listener
+// with a resolvable pid. No injected lookup means no lookup (the describeService
+// pattern), so tests and other callers never exec lsof. A separate function so
+// collectAgentStatus stays under the cognitive-complexity gate.
+async function lookupListenAddresses(
+  running: boolean,
+  pid: number | null,
+  port: number,
+  fn: ListenerAddressesFn | undefined,
+): Promise<string[] | null> {
+  if (fn === undefined) return null;
+  if (!running || pid === null) return null;
+  return await fn(port, pid).catch(() => null);
 }
 
 // #211: whether logind keeps this user's systemd manager, and so a --user
@@ -273,6 +300,62 @@ function bracketedBind(host: string, port: number): string {
   return `${h}:${String(port)}`;
 }
 
+function stripBrackets(host: string): string {
+  return host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
+}
+
+/**
+ * #211: whether `bindHost` can be compared against lsof's numeric `-n` output.
+ * A wildcard or empty bind, `localhost` and any IP literal are comparable; a
+ * DNS name is not, because `lsof -n` prints only numeric addresses.
+ */
+export function bindHostComparable(bindHost: string): boolean {
+  const h = stripBrackets(bindHost).toLowerCase();
+  if (h === "0.0.0.0" || h === "::" || h === "" || h === "localhost") return true;
+  return isIP(h) !== 0;
+}
+
+// #211: IPv6 literals compare in compressed form, so 0:0:0:0:0:0:0:1 equals ::1.
+// A zone id (fe80::1%en0) is split off first: URL rejects it, and an uncaught
+// throw here would crash `agent status`. The zone is kept, lowercased.
+function canonicalHost(host: string): string {
+  const h = host.toLowerCase();
+  if (isIP(h) !== 6) return h;
+  const zone = h.indexOf("%");
+  return zone < 0 ? normalizeSan(h) : normalizeSan(h.slice(0, zone)) + h.slice(zone);
+}
+
+/** #211: whether an `lsof -n` listen address (`host:port`) satisfies `bindHost`. */
+export function listenMatchesBind(addr: string, bindHost: string): boolean {
+  const colon = addr.lastIndexOf(":");
+  const host = canonicalHost(stripBrackets(colon < 0 ? addr : addr.slice(0, colon)));
+  const bind = canonicalHost(stripBrackets(bindHost));
+  if (bind === "0.0.0.0" || bind === "::" || bind === "") return host === "*";
+  if (bind === "localhost") return host === "127.0.0.1" || host === "::1";
+  return host === bind;
+}
+
+// #211: a mismatch between the observed listener and agent.yaml's bindHost. No
+// warning when there is nothing to compare (null/empty addrs, a DNS-name
+// bindHost), when a known service pid that differs from the listener pid points
+// at a foreign process (the findTcpListenerPid any-listener fallback), or when
+// any address already matches. The wording must not prescribe a restart: a
+// --bind on the service command line, or a process started from an older
+// agent.yaml, overrides agent.yaml, so a restart would not clear it.
+function listenMismatchWarning(
+  addrs: string[] | null,
+  cfg: AgentConfig,
+  bind: string,
+  listenerPid: number | null,
+  service: AgentServiceStatus | null,
+): string | null {
+  if (addrs === null || addrs.length === 0) return null;
+  if (!bindHostComparable(cfg.bindHost)) return null;
+  if (typeof service?.pid === "number" && service.pid !== listenerPid) return null;
+  if (addrs.some((addr) => listenMatchesBind(addr, cfg.bindHost))) return null;
+  return `agent listens on ${addrs.join(", ")} but agent.yaml binds ${bind}; a --bind on the service command line, or a process started from an older agent.yaml, overrides it`;
+}
+
 // #214: enabled ModelHosts on this node (spec.node "local" or the agent's own
 // node name) whose engine binds a non-loopback host. A failing read yields []
 // so status still reports. A separate function so collectAgentStatus stays
@@ -310,12 +393,27 @@ function exposedModelHostWarning(h: ExposedModelHost): string {
   return `modelhost/${h.name} binds an unauthenticated engine to ${h.bind}${suffix}`;
 }
 
+function advertisedHostCoverage(
+  x509: X509Certificate | null,
+  cert: AgentStatusReport["cert"],
+  advertisedHost: string | undefined,
+): { covered: boolean | null; warning: string | null } {
+  if (advertisedHost === undefined || x509 === null) return { covered: null, warning: null };
+  const covered = coversHost(x509, advertisedHost);
+  if (covered || !("sans" in cert)) return { covered, warning: null };
+  return {
+    covered,
+    warning: `cert SANs (${cert.sans.join(", ")}) do not cover advertised host ${advertisedHost}; remote clients will fail TLS verification`,
+  };
+}
+
 export async function collectAgentStatus(o: {
   configPath: string;
   cfg: AgentConfig;
   advertisedHost?: string;
   probe?: ProbeFn;
   findListenerPid?: ListenerPidFn;
+  findListenerAddresses?: ListenerAddressesFn;
   describeService?: DescribeServiceFn;
   listModelHosts?: ListModelHostsFn;
 }): Promise<AgentStatusReport> {
@@ -326,6 +424,12 @@ export async function collectAgentStatus(o: {
   const probeUrl = `https://${probeHost}:${String(o.cfg.port)}/healthz`;
   const running = await (o.probe ?? defaultProbe)(probeUrl);
   const listenerPid = await lookupListenerPid(running, probeHost, o.cfg.port, o.findListenerPid);
+  const listenAddresses = await lookupListenAddresses(
+    running,
+    listenerPid,
+    o.cfg.port,
+    o.findListenerAddresses,
+  );
   const service = await lookupService(o.describeService);
 
   let cert: AgentStatusReport["cert"];
@@ -345,20 +449,14 @@ export async function collectAgentStatus(o: {
     warnings.push(`cert at ${o.cfg.certPath} could not be read: ${message}`);
   }
 
-  let advertisedHostCovered: boolean | null = null;
-  if (o.advertisedHost !== undefined) {
-    if (x509) {
-      advertisedHostCovered = coversHost(x509, o.advertisedHost);
-      if (!advertisedHostCovered && "sans" in cert) {
-        warnings.push(
-          `cert SANs (${cert.sans.join(", ")}) do not cover advertised host ${o.advertisedHost}; remote clients will fail TLS verification`,
-        );
-      }
-    }
-  }
+  const coverage = advertisedHostCoverage(x509, cert, o.advertisedHost);
+  const advertisedHostCovered = coverage.covered;
+  if (coverage.warning !== null) warnings.push(coverage.warning);
   if (loopbackOnly) {
     warnings.push(`agent binds ${bind} (loopback only); remote control planes cannot reach it`);
   }
+  const mismatch = listenMismatchWarning(listenAddresses, o.cfg, bind, listenerPid, service);
+  if (mismatch !== null) warnings.push(mismatch);
   const exposedModelHosts = collectExposedModelHosts(o.cfg.nodeName, o.listModelHosts);
   warnings.push(...exposedModelHosts.map(exposedModelHostWarning));
 
@@ -372,6 +470,7 @@ export async function collectAgentStatus(o: {
     running,
     listenerPid,
     service,
+    listenAddresses,
     probeUrl,
     loopbackOnly,
     cert,
@@ -418,6 +517,9 @@ export function formatAgentStatus(r: AgentStatusReport): string {
     `node    ${r.nodeName ?? "(unset)"}`,
     `bind    ${r.bind}${r.loopbackOnly ? " (loopback only)" : ""}`,
     `running ${r.running ? "yes" : "no"} (${r.probeUrl})${pidSuffix(r)}`,
+    ...(r.listenAddresses !== null && r.listenAddresses.length > 0
+      ? [`listen  ${r.listenAddresses.join(", ")}`]
+      : []),
     ...serviceLines(r.service),
     `cert    ${r.certPath}`,
     ...certLines(r.cert),

@@ -137,7 +137,7 @@ export interface NodeBudgetView {
 
 interface WorkloadTestSeams {
   getNodeClientByName?: typeof getNodeClientByName;
-  /** #221: deadline in ms for each node query in `get workloads`, `describe workload`, `describe node`, `describe noderun`, `residency status` and the ModelRun status query in `delete` (default GET_NODE_QUERY_TIMEOUT_MS). */
+  /** #221: deadline in ms for each node query in `get workloads`, `describe workload`, `describe node`, `describe noderun`, `residency status`, the ModelRun status query in `delete`, and `apply (NodeRun)` (default GET_NODE_QUERY_TIMEOUT_MS). */
   nodeQueryTimeoutMs?: number;
   /** #308: clock for the history ages printed by `describe workload`. */
   now?: () => Date;
@@ -167,8 +167,8 @@ class NodeQueryDeadlineError extends Error {}
 
 // #221: race one node query against a deadline, so a node that never answers
 // (suspended laptop, Wi-Fi drop) cannot stall `get workloads`, `describe workload`,
-// `describe node`, `describe noderun`, `residency status` or the ModelRun status query in `delete`. On timeout
-// this rejects with NodeQueryDeadlineError; the get/describe callers print its message as
+// `describe node`, `describe noderun`, `residency status`, the ModelRun status query in `delete`,
+// or `apply (NodeRun)`. On timeout this rejects with NodeQueryDeadlineError; the get/describe callers print its message as
 // before, and `delete` preserves the manifest on it unless --force is set.
 // The timer is cleared on every path, so it cannot keep the process alive. Shaped like
 // queryServerStatusWithTimeout in packages/remote/src/router.ts.
@@ -477,8 +477,25 @@ async function applyNodeRunFromRaw(raw: string, json: boolean): Promise<number> 
     process.stderr.write(`apply: NodeRun manifest rejected: ${(err as Error).message}\n`);
     return 1;
   }
-  const client = getNodeClientByName(manifest.spec.node);
-  const resolveArtifact = makeSpecArtifactResolver({ client });
+  const node = manifest.spec.node;
+  const nodeClient = getWorkloadNodeClient(node);
+  // #221: bound the two node queries apply makes (infraList, and nodeFacts in
+  // the artifact resolver) at the call site, so a node that never answers fails
+  // the apply instead of hanging the CLI. tRPC client procedures are function
+  // proxies, so this binds each query explicitly rather than wrapping the client
+  // by property shape. The mutations stay unbounded, as in the controller's
+  // NodeRun pass, so a slow install or activate can still converge.
+  const client: noderunApply.NodeRunInfraClient = {
+    infraList: { query: () => withNodeQueryDeadline(node, () => nodeClient.infraList.query()) },
+    infraInstall: nodeClient.infraInstall,
+    infraActivate: nodeClient.infraActivate,
+    infraUninstall: nodeClient.infraUninstall,
+  };
+  const resolveArtifact = makeSpecArtifactResolver({
+    client: {
+      nodeFacts: { query: () => withNodeQueryDeadline(node, () => nodeClient.nodeFacts.query()) },
+    },
+  });
   let result: noderunApply.NodeRunApplyResult;
   try {
     result = await noderunApply.applyNodeRun(manifest, {

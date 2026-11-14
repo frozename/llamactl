@@ -243,13 +243,9 @@ describe("collectNodeFacts", () => {
 });
 
 describe("detectMemoryBytes", () => {
-  test("returns a number on supported platforms, null otherwise", () => {
+  test("returns a positive number on every platform (#213 totalmem fallback)", () => {
     const b = detectMemoryBytes();
-    if (process.platform === "darwin" || process.platform === "linux") {
-      expect(typeof b).toBe("number");
-      expect(b ?? 0).toBeGreaterThan(0);
-    } else {
-      expect(b).toBeNull();
-    }
+    expect(typeof b).toBe("number");
+    expect(b ?? 0).toBeGreaterThan(0);
   });
 });

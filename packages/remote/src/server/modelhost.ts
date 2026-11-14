@@ -5,6 +5,7 @@ import type {
 } from "@llamactl/core/engines/types";
 import type { WorkloadKey } from "@llamactl/core/workloadRuntime";
 
+import { resolveSecret } from "@llamactl/core/config/secret";
 import { type EngineName, ENGINES } from "@llamactl/core/engines";
 import {
   type ModelHostRuntimeStatus,
@@ -233,13 +234,16 @@ const CHILD_ENV_ALLOWLIST = [
   "MLX_METAL_BACKPRESSURE_TIMEOUT_SECS",
 ];
 
-// Merge order: parent allowlist → engineOverrides → specEnv.
+// Merge order: parent allowlist → engineOverrides → specEnv → apiKey.
 // spec.env wins on conflict so manifests can declaratively override
 // both inherited host vars and engine-level boot overrides.
+// apiKey (resolved from spec.apiKeyRef) is applied LAST as LLAMA_API_KEY
+// so it cannot be overwritten by spec.env — the ref always wins.
 function sanitizeChildEnv(
   parent: NodeJS.ProcessEnv,
   engineOverrides: Record<string, string> | undefined,
   specEnv: Record<string, string> | undefined,
+  apiKey?: string,
 ): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {};
   for (const key of CHILD_ENV_ALLOWLIST) {
@@ -252,6 +256,7 @@ function sanitizeChildEnv(
   if (specEnv) {
     for (const [key, value] of Object.entries(specEnv)) out[key] = value;
   }
+  if (apiKey !== undefined) out["LLAMA_API_KEY"] = apiKey;
   return out;
 }
 
@@ -750,9 +755,11 @@ function mergeDiskManagedByLabel(
   };
 }
 
-// Loud stderr line on every launch that knowingly exposes an unauthenticated
-// engine past loopback — the opt-in is per-workload, so the operator running
-// the agent should still see it in the agent log.
+// Loud stderr line on every launch that knowingly exposes an engine past
+// loopback — the opt-in is per-workload, so the operator running the agent
+// should still see it in the agent log.  When spec.apiKeyRef is present the
+// child is authenticated but the operator still needs to see the warning:
+// the key lives in a secret store, not on this node.
 function warnExternalBind(manifest: ModelHostManifest, opts: StartModelHostOptions): void {
   const externalHost = modelHostExternalBindHost(manifest.spec);
   if (externalHost === null || manifest.spec.allowExternalBind !== true) return;
@@ -761,8 +768,12 @@ function warnExternalBind(manifest: ModelHostManifest, opts: StartModelHostOptio
     ((message: string): void => {
       process.stderr.write(`${message}\n`);
     });
+  const endpoint = `${externalHost}:${String(manifest.spec.endpoint.port)}`;
+  const prefix = `[agent] WARNING: ModelHost ${manifest.metadata.name} (${manifest.spec.engine})`;
   warn(
-    `[agent] WARNING: ModelHost ${manifest.metadata.name} (${manifest.spec.engine}) is binding an unauthenticated engine to ${externalHost}:${String(manifest.spec.endpoint.port)} (spec.allowExternalBind: true)`,
+    manifest.spec.apiKeyRef !== undefined
+      ? `${prefix} is binding an engine authenticated by spec.apiKeyRef to ${endpoint} (spec.allowExternalBind: true)`
+      : `${prefix} is binding an unauthenticated engine to ${endpoint} (spec.allowExternalBind: true)`,
   );
 }
 
@@ -805,6 +816,46 @@ interface ModelHostLaunchContext {
   resolved: ReturnType<typeof resolveEnv>;
   engine: (typeof ENGINES)[keyof typeof ENGINES];
   spec: ModelHostSpecForEngine;
+  apiKey?: string;
+}
+
+// Scheme prefixes resolveSecret routes on (mirrors its classify()). A ref
+// with none of them is a legacy bare file path — or a key pasted where a
+// ref belongs — so it is never echoed into an error.
+const SECRET_REF_SCHEME_PREFIXES = ["env:", "$", "keychain:", "file:"] as const;
+const REDACTED_UNPREFIXED_REF = "<redacted: ref has no env:/$/file:/keychain: prefix>";
+
+function hasSecretRefSchemePrefix(ref: string): boolean {
+  const trimmed = ref.trim();
+  return SECRET_REF_SCHEME_PREFIXES.some((prefix) => trimmed.startsWith(prefix));
+}
+
+// #214: resolve spec.apiKeyRef to the LLAMA_API_KEY value. An absent ref
+// resolves to no key; a ref that throws or yields "" is a refusal whose
+// reason is resolveSecret's redaction-safe message, never the value.
+// `refLabel` is the ref as it may appear in an error: verbatim when it
+// carries a scheme prefix, redacted otherwise. For an unprefixed ref the
+// thrown reason is replaced too, since resolveSecret's legacy-file-path
+// message echoes the path (which is the ref itself).
+function resolveModelHostApiKey(
+  apiKeyRef: string | undefined,
+  runtimeEnv: NodeJS.ProcessEnv,
+): { ok: true; apiKey: string | undefined } | { ok: false; refLabel: string; reason: string } {
+  if (apiKeyRef === undefined) return { ok: true, apiKey: undefined };
+  const prefixed = hasSecretRefSchemePrefix(apiKeyRef);
+  const refLabel = prefixed ? apiKeyRef : REDACTED_UNPREFIXED_REF;
+  try {
+    const value = resolveSecret(apiKeyRef, runtimeEnv);
+    if (value === "") return { ok: false, refLabel, reason: "resolved to an empty string" };
+    return { ok: true, apiKey: value };
+  } catch (error) {
+    const reason = prefixed
+      ? error instanceof Error
+        ? error.message
+        : String(error)
+      : "unprefixed ref did not resolve as a legacy file path";
+    return { ok: false, refLabel, reason };
+  }
 }
 
 async function launchModelHost(
@@ -812,7 +863,7 @@ async function launchModelHost(
   opts: StartModelHostOptions,
   ctx: ModelHostLaunchContext,
 ): Promise<StartModelHostResult> {
-  const { env, runtimeEnv, resolved, engine, spec } = ctx;
+  const { env, runtimeEnv, resolved, engine, spec, apiKey } = ctx;
   if (opts.signal?.aborted) {
     const result = { ok: false, pid: null, error: MODEL_HOST_ABORT_MESSAGE };
     opts.onEvent?.({ type: "done", result });
@@ -867,7 +918,7 @@ async function launchModelHost(
     child = spawn(launch.binary, launch.args, {
       detached: true,
       stdio: bootStdio === "ignore" ? "ignore" : ["ignore", bootStdio, bootStdio],
-      env: sanitizeChildEnv(runtimeEnv, launch.envOverrides, manifest.spec.env),
+      env: sanitizeChildEnv(runtimeEnv, launch.envOverrides, manifest.spec.env, apiKey),
     });
     const pid = child.pid ?? null;
     if (pid === null) {
@@ -1048,6 +1099,24 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
     return result;
   }
 
+  // #214: resolve apiKeyRef after the bind gate — a refused start never
+  // touches the secret store — and before residency/persist/launch, so an
+  // unresolvable ref fails before any reap, save or spawn. The value
+  // reaches the child only as LLAMA_API_KEY; it never appears in an
+  // error, event or log (resolveSecret's failure messages are
+  // redaction-safe).
+  const apiKeyResolution = resolveModelHostApiKey(manifest.spec.apiKeyRef, runtimeEnv);
+  if (!apiKeyResolution.ok) {
+    const result = {
+      ok: false,
+      pid: null,
+      error: `ModelHost ${opts.key.name}: unable to resolve spec.apiKeyRef (${apiKeyResolution.refLabel}): ${apiKeyResolution.reason}`,
+    };
+    opts.onEvent?.({ type: "done", result });
+    return result;
+  }
+  const apiKey = apiKeyResolution.apiKey;
+
   // Same residency-group exclusion as the bind gate: refuse BEFORE the
   // manifest is saved and before reapOrAdoptPriorHost/spawn/teardown, so a
   // denied start cannot kill a live peer or persist desired state.
@@ -1080,7 +1149,14 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
   }
   // Register synchronously, before the first await inside launchModelHost can
   // yield, so a start entering on the next tick always finds this one.
-  const promise = launchModelHost(manifest, opts, { env, runtimeEnv, resolved, engine, spec });
+  const promise = launchModelHost(manifest, opts, {
+    env,
+    runtimeEnv,
+    resolved,
+    engine,
+    spec,
+    ...omitUndefined({ apiKey }),
+  });
   inFlightModelHostStarts.set(startKey, { specHash, promise });
   try {
     return await promise;

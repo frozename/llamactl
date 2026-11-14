@@ -317,8 +317,30 @@ describe("computeModelHostSpecHash", () => {
     ["restartPolicy", { ...BASE_SPEC, restartPolicy: "Never" }],
     ["timeoutSeconds", { ...BASE_SPEC, timeoutSeconds: 61 }],
     ["env", { ...BASE_SPEC, env: { A: "1" } }],
+    ["apiKeyRef", { ...BASE_SPEC, apiKeyRef: "env:A" }],
   ] as [string, SpecForHash][])("changing %s changes the hash", (_field, spec) => {
     expect(computeModelHostSpecHash(spec)).not.toBe(computeModelHostSpecHash(BASE_SPEC));
+  });
+
+  test("changing the apiKeyRef ref changes the hash (#214)", () => {
+    // Kills: hashing only the ref's presence.
+    const hashA = computeModelHostSpecHash({
+      ...BASE_SPEC,
+      apiKeyRef: "env:A",
+    });
+    const hashB = computeModelHostSpecHash({
+      ...BASE_SPEC,
+      apiKeyRef: "env:B",
+    });
+    expect(hashA).not.toBe(hashB);
+  });
+
+  test("an explicit undefined apiKeyRef hashes the same as absent, and the absent hash has no apiKeyRef key (#214)", () => {
+    // BACK-COMPAT PIN: passes at base; kills an unconditional
+    // `apiKeyRef: spec.apiKeyRef ?? null` hash term.
+    const absent = computeModelHostSpecHash(BASE_SPEC);
+    expect(computeModelHostSpecHash({ ...BASE_SPEC, apiKeyRef: undefined })).toBe(absent);
+    expect(absent).not.toContain("apiKeyRef");
   });
 
   test("a key outside the hashed set does not change the hash", () => {
