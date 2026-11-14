@@ -25,6 +25,21 @@
 // reservationGiB is recorded, not admitted: nothing here checks the value
 // against a node memory budget — that is the job of #274 and the #276
 // follow-ups.
+//
+// A stale desiredRevision is refused as stale-revision by both writers. The
+// check runs after the fence and before CAS, lifecycle and reservation
+// checks, and the row is left unchanged. Equal revisions are accepted;
+// same-operationId replays stay idempotent even when the revision is older.
+// The revision is a high-water mark taken over every operation, including
+// terminal failed or cancelled ones, plus the residency rows. A terminal op
+// at a high revision therefore blocks lower revisions, and no reset path
+// exists. This is an interpretation of the issue's "desired profile revision"
+// that later #276 follow-ups (contracts.ts / authority.ts) may refine. Note
+// the shared (not per-model) scope the DF-03 contract tests pin: cross-model
+// writes below the watermark are refused. transitionResidencyState still
+// accepts a write that carries no desiredRevision, for backward compatibility;
+// that write keeps the stored revision, so the stale-writer gap is closed only
+// for writers that pass a revision. Making the field mandatory is a follow-up.
 import { llamactlHome } from "@llamactl/core/config/env";
 import {
   evaluateResidencyTransition,
@@ -57,6 +72,7 @@ export type ResidencyStoreFailure =
   | "not-found"
   | "reservation-conflict"
   | "stale-fence"
+  | "stale-revision"
   | "version-conflict";
 
 export type ResidencyStateRecord = {
@@ -68,6 +84,7 @@ export type ResidencyStateRecord = {
   fenceToken: number;
   version: number;
   updatedAtMs: number;
+  desiredRevision?: number;
 };
 
 export type TransitionResidencyStateInput = {
@@ -78,6 +95,7 @@ export type TransitionResidencyStateInput = {
   expectedVersion: number;
   nowMs: number;
   groups?: readonly ResidencyGroupDeclaration[];
+  desiredRevision?: number;
 };
 
 export type TransitionResidencyStateResult =
@@ -199,6 +217,7 @@ interface ResidencyStateRow {
   fence_token: number;
   version: number;
   updated_at_ms: number;
+  desired_revision: number | null;
 }
 
 const OPERATION_COLUMNS =
@@ -206,7 +225,7 @@ const OPERATION_COLUMNS =
   "outcome, detail, owner_id, incarnation, fence_token, version, created_at_ms, updated_at_ms";
 
 const RESIDENCY_STATE_COLUMNS =
-  "model, residency_group, state, owner_id, incarnation, fence_token, version, updated_at_ms";
+  "model, residency_group, state, owner_id, incarnation, fence_token, version, updated_at_ms, desired_revision";
 
 export function openResidencyOperationStore(input: {
   path: string;
@@ -395,9 +414,21 @@ function createTables(db: Database): void {
       incarnation TEXT NOT NULL,
       fence_token INTEGER NOT NULL,
       version INTEGER NOT NULL,
-      updated_at_ms INTEGER NOT NULL
+      updated_at_ms INTEGER NOT NULL,
+      desired_revision INTEGER
     )
   `);
+  addColumnIfMissing(db, "residency_states", "desired_revision", "INTEGER");
+}
+
+// Additive, in-place migration: a #662-era residency_states table predates
+// desired_revision, so ALTER it in without bumping SCHEMA_VERSION.
+function addColumnIfMissing(db: Database, table: string, column: string, decl: string): void {
+  const columns = db.query(`PRAGMA table_info('${table}')`).all() as { name: string }[];
+  const present = columns.some((entry) => entry.name === column);
+  if (!present) {
+    db.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${decl}`);
+  }
 }
 
 function readAuthority(db: Database): Fence | null {
@@ -435,6 +466,10 @@ function beginOperationTx(db: Database, input: BeginOperationInput): BeginOperat
       return { ok: true, created: false, record: rowToRecord(existing) };
     }
     return { ok: false, reason: "duplicate-conflict" };
+  }
+  const watermark = storedDesiredRevision(db);
+  if (watermark !== null && input.desiredRevision < watermark) {
+    return { ok: false, reason: "stale-revision" };
   }
   if (hasNonterminalForModel(db, input.model)) {
     return { ok: false, reason: "reservation-conflict" };
@@ -509,6 +544,12 @@ function transitionResidencyStateTx(
   if (authority?.fenceToken !== input.fenceToken) {
     return { ok: false, reason: "stale-fence" };
   }
+  if (input.desiredRevision !== undefined) {
+    const watermark = storedDesiredRevision(db);
+    if (watermark !== null && input.desiredRevision < watermark) {
+      return { ok: false, reason: "stale-revision" };
+    }
+  }
   const rows = listResidencyStateRows(db);
   const stored = rows.find((row) => row.model === input.model) ?? null;
   const currentVersion = stored?.version ?? 0;
@@ -535,7 +576,7 @@ function transitionResidencyStateTx(
   if (!decision.ok) {
     return { ok: false, reason: "lifecycle-refused", decision };
   }
-  return upsertState(db, input, authority, group);
+  return upsertState(db, input, authority, group, stored?.desiredRevision ?? null);
 }
 
 function buildMembers(
@@ -568,13 +609,15 @@ function upsertState(
   input: TransitionResidencyStateInput,
   authority: Fence,
   group: string | undefined,
+  previousRevision: number | null,
 ): TransitionResidencyStateResult {
   const version = input.expectedVersion + 1;
   const storedGroup = group ?? null;
+  const inputRevision = input.desiredRevision ?? null;
   db.query(
-    `INSERT INTO residency_states (model, residency_group, state, owner_id, incarnation, fence_token, version, updated_at_ms)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(model) DO UPDATE SET residency_group = excluded.residency_group, state = excluded.state, owner_id = excluded.owner_id, incarnation = excluded.incarnation, fence_token = excluded.fence_token, version = excluded.version, updated_at_ms = excluded.updated_at_ms`,
+    `INSERT INTO residency_states (model, residency_group, state, owner_id, incarnation, fence_token, version, updated_at_ms, desired_revision)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(model) DO UPDATE SET residency_group = excluded.residency_group, state = excluded.state, owner_id = excluded.owner_id, incarnation = excluded.incarnation, fence_token = excluded.fence_token, version = excluded.version, updated_at_ms = excluded.updated_at_ms, desired_revision = COALESCE(excluded.desired_revision, residency_states.desired_revision)`,
   ).run(
     input.model,
     storedGroup,
@@ -584,7 +627,9 @@ function upsertState(
     authority.fenceToken,
     version,
     input.nowMs,
+    inputRevision,
   );
+  const resultingRevision = inputRevision ?? previousRevision;
   const record: ResidencyStateRecord = {
     model: input.model,
     group: storedGroup,
@@ -594,6 +639,7 @@ function upsertState(
     fenceToken: authority.fenceToken,
     version,
     updatedAtMs: input.nowMs,
+    ...(resultingRevision !== null ? { desiredRevision: resultingRevision } : {}),
   };
   return { ok: true, record };
 }
@@ -624,6 +670,7 @@ function parseResidencyStateRow(row: ResidencyStateRow): ResidencyStateRecord {
     fenceToken: row.fence_token,
     version: row.version,
     updatedAtMs: row.updated_at_ms,
+    ...(row.desired_revision !== null ? { desiredRevision: row.desired_revision } : {}),
   };
 }
 
@@ -643,6 +690,12 @@ function validateTransitionInput(
     return "invalid-input";
   }
   if (input.group !== undefined && !isNonEmpty(input.group)) {
+    return "invalid-input";
+  }
+  if (
+    input.desiredRevision !== undefined &&
+    !(Number.isInteger(input.desiredRevision) && input.desiredRevision >= 0)
+  ) {
     return "invalid-input";
   }
   return null;
@@ -668,6 +721,25 @@ function hasNonterminalForModel(db: Database, model: string): boolean {
     .query("SELECT 1 AS hit FROM operations WHERE model = ? AND phase != 'terminal' LIMIT 1")
     .get(model) as { hit: number } | null;
   return hit !== null;
+}
+
+// Shared desired-revision watermark: the max over every operation (all phases,
+// including terminal) and every residency row. Owner and fence are ignored.
+function storedDesiredRevision(db: Database): number | null {
+  const operations = db
+    .query("SELECT MAX(desired_revision) AS watermark FROM operations")
+    .get() as { watermark: number | null } | null;
+  const states = db
+    .query("SELECT MAX(desired_revision) AS watermark FROM residency_states")
+    .get() as { watermark: number | null } | null;
+  const candidates = [operations?.watermark ?? null, states?.watermark ?? null];
+  let watermark: number | null = null;
+  for (const candidate of candidates) {
+    if (candidate !== null && (watermark === null || candidate > watermark)) {
+      watermark = candidate;
+    }
+  }
+  return watermark;
 }
 
 function insertPendingOperation(db: Database, input: BeginOperationInput, authority: Fence): void {
