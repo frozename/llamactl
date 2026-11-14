@@ -631,6 +631,48 @@ describe("buildDeclaredModelEntries", () => {
     ]);
   });
 
+  test("a workloadPhase hook that throws for one workload degrades only that claim", async () => {
+    // Kills: rethrowing from the catch in phaseForWorkload.
+    const mod = await residencyCatalog();
+    expect(typeof mod.buildDeclaredModelEntries).toBe("function");
+
+    const entries = mod.buildDeclaredModelEntries!({
+      nodeName: "local",
+      modelHosts: [],
+      modelRuns: [
+        runManifest("run-boom", { target: { kind: "rel", value: "org/repo/boom.gguf" } }),
+        runManifest("run-drain", { target: { kind: "rel", value: "org/repo/drain.gguf" } }),
+        runManifest("run-load", { target: { kind: "rel", value: "org/repo/load.gguf" } }),
+      ],
+      liveModelIds: new Set(["org/repo/boom.gguf", "org/repo/load.gguf"]),
+      workloadPhase: (workload: string): LeasePhase | undefined => {
+        if (workload === "run-boom") throw new Error("lease registry unavailable");
+        return leasePhaseOf({ "run-drain": "draining", "run-load": "unloaded" })(workload);
+      },
+    });
+
+    expect(entries).toMatchObject([
+      {
+        id: "org/repo/boom.gguf",
+        workload: "run-boom",
+        state: "ready",
+        autoLoadEligible: false,
+      },
+      {
+        id: "org/repo/drain.gguf",
+        workload: "run-drain",
+        state: "draining",
+        autoLoadEligible: false,
+      },
+      {
+        id: "org/repo/load.gguf",
+        workload: "run-load",
+        state: "loading",
+        autoLoadEligible: false,
+      },
+    ]);
+  });
+
   test("every phase-projected entry passes DeclaredModelEntryV1Schema", async () => {
     const mod = await residencyCatalog();
     expect(typeof mod.buildDeclaredModelEntries).toBe("function");

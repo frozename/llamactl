@@ -102,6 +102,9 @@ function stateForClaim(
   if (collided) return "unavailable";
   if (!claim.enabled) return "disabled";
   if (phase === "draining") return "draining";
+  // Not observable through the current proxy consumers: both the 503
+  // pin rejection and the `declared` model list skip ids with a live
+  // route, so a 'loading' entry here is only seen by direct callers.
   if (phase === "unloaded" && liveModelIds.has(claim.id)) return "loading";
   if (liveModelIds.has(claim.id)) return "ready";
   return "cold";
