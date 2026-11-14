@@ -5,6 +5,8 @@
 import { join } from "node:path";
 import { z } from "zod";
 
+import type { ResolvedEnv } from "../types.js";
+
 import { resolveRuntimeDir } from "../env.js";
 import { atomicWriteFile } from "../fsAtomic.js";
 import { readFileSync, unlinkSync } from "../safe-fs.js";
@@ -152,13 +154,33 @@ export function overridesFor(
   return grouped;
 }
 
+const OVERRIDES_FILE_ENV = "LOCAL_AI_QUALIFICATION_OVERRIDES_FILE";
+const OVERRIDES_FILE_NAME = "qualification-overrides.tsv";
+
+function overridesFileFromEnv(env: NodeJS.ProcessEnv): string | undefined {
+  const fromEnv = env[OVERRIDES_FILE_ENV];
+  return fromEnv !== undefined && fromEnv.length > 0 ? fromEnv : undefined;
+}
+
 /**
  * Resolve the overrides file — LOCAL_AI_QUALIFICATION_OVERRIDES_FILE >
  * `qualification-overrides.tsv` under the runtime dir. Deliberately not
  * a resolveEnv key (frozename/llamactl#518).
  */
 export function qualificationOverridesFile(env: NodeJS.ProcessEnv = process.env): string {
-  const fromEnv = env["LOCAL_AI_QUALIFICATION_OVERRIDES_FILE"];
-  if (fromEnv !== undefined && fromEnv.length > 0) return fromEnv;
-  return join(resolveRuntimeDir(env), "qualification-overrides.tsv");
+  return overridesFileFromEnv(env) ?? join(resolveRuntimeDir(env), OVERRIDES_FILE_NAME);
+}
+
+/**
+ * The overrides file routing reads for `resolved` — the one resolver
+ * shared by `catalogQualificationStages` and the OpenAI proxy's
+ * `/v1/models` cache signature, so the file read and the file statted
+ * can never diverge. LOCAL_AI_QUALIFICATION_OVERRIDES_FILE is read from
+ * `process.env` because it is not a ResolvedEnv key; otherwise
+ * `qualification-overrides.tsv` under the resolved runtime dir.
+ */
+export function qualificationOverridesFileFor(resolved: ResolvedEnv): string {
+  return (
+    overridesFileFromEnv(process.env) ?? join(resolved.LOCAL_AI_RUNTIME_DIR, OVERRIDES_FILE_NAME)
+  );
 }
