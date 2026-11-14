@@ -13,7 +13,7 @@ import { withNodeQueryDeadline } from "./workload.js";
 const USAGE = `Usage: llamactl residency <subcommand>
 
 Subcommands:
-  status --node <name> [--json]   Read-only residency status: NodeRun policy, memory budget and the serving process's residency store. Never wakes a model or mutates state.
+  status --node <name> [--json]   Read-only residency status: NodeRun policy, memory budget, the serving process's residency store and its per-workload lease/drain state. Never wakes a model or mutates state.
 
 Example:
   llamactl residency status --node <name> [--json]
@@ -52,10 +52,32 @@ export function renderResidencyStatus(s: ResidencyRenderInput): string {
       );
     }
   }
+  pushLeaseLines(lines, s.leases);
   lines.push(
     `Note:       store is the serving process's node-local store, not ${s.node}'s coordinator state`,
   );
   return lines.join("\n") + "\n";
+}
+
+function pushLeaseLines(lines: string[], leases: ResidencyRenderInput["leases"]): void {
+  if (leases.status === "unavailable") {
+    lines.push(`Leases:     unavailable (no lease registry installed; scope: serving-process)`);
+    return;
+  }
+  lines.push(`Leases:     ${String(leases.workloads.length)} workload(s) (scope: serving-process)`);
+  for (const w of leases.workloads) {
+    lines.push(
+      `  ${w.workload}  ${w.phase}  epoch ${String(w.epoch)}  active ${String(w.activeLeaseCount)}  waiters ${String(w.waiters)}`,
+    );
+  }
+  lines.push(
+    `Audit:      ${String(leases.recentAudit.length)} of ${String(leases.auditCount)} forced unload(s)`,
+  );
+  for (const a of leases.recentAudit) {
+    lines.push(
+      `  ${a.workload}  epoch ${String(a.epoch)}  revoked ${String(a.revokedCount)}  reason ${a.reason ?? "-"}`,
+    );
+  }
 }
 
 type StatusFlags = { json: boolean; node: string | undefined } | { exit: number };
