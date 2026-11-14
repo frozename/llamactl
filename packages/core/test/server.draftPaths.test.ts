@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import * as childProcess from "node:child_process";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 
 import { resolveEnv } from "../src/env.js";
 import { mkdirSync, writeFileSync } from "../src/safe-fs.js";
 import { readServerPid, readServerState, startServer } from "../src/server.js";
+import { ensureWorkloadRuntimeDir } from "../src/workloadRuntime.js";
 import { envForTemp, makeTempRuntime } from "./helpers.js";
 
 const TEST_KEY = { name: "draft-wl" };
@@ -125,6 +126,50 @@ describe("server.startServer draft-path resolution (#516)", () => {
     const { result, spawnCalls } = await startDraftWorkload(["-md=../x.gguf"]);
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/-md path escapes models dir: \.\.\/x\.gguf/);
+    expect(spawnCalls).toBe(0);
+  });
+
+  test.each([
+    ["--model-draft", "../../outside.gguf"],
+    ["-md=../x.gguf", null],
+  ])(
+    "startServer refuses an escaping draft path (%s) before stopping the tracked server or probing the port",
+    async (first: string, second: string | null) => {
+      const dir = ensureWorkloadRuntimeDir(resolveEnv(), TEST_KEY);
+      writeFileSync(join(dir, "llama-server.pid"), "4194305\n");
+
+      const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((() =>
+        Promise.resolve(new Response("occupied", { status: 200 }))) as unknown as typeof fetch);
+      const spawnSpy = spyOn(childProcess, "spawn").mockImplementation(
+        mockSpawnImplementation(12345),
+      );
+
+      const extraArgs = second === null ? [first] : [first, second];
+      let result: Awaited<ReturnType<typeof startServer>>;
+      let fetchCalls = -1;
+      let spawnCalls = -1;
+      try {
+        result = await startServer({ key: TEST_KEY, target: "Demo/demo.gguf", extraArgs });
+      } finally {
+        // mockRestore() clears the recorded calls, so capture counts before restoring.
+        fetchCalls = fetchSpy.mock.calls.length;
+        spawnCalls = spawnSpy.mock.calls.length;
+        spawnSpy.mockRestore();
+        fetchSpy.mockRestore();
+      }
+      expect(result.ok).toBe(false);
+      expect(result.error).toMatch(/path escapes models dir/);
+      expect(fetchCalls).toBe(0);
+      expect(spawnCalls).toBe(0);
+      expect(readServerPid(TEST_KEY, resolveEnv())).toBe(4194305);
+    },
+  );
+
+  test("startServer refuses a sibling-prefix draft path that escapes the models dir", async () => {
+    const sibling = `../${basename(temp.modelsDir)}-evil/x.gguf`;
+    const { result, spawnCalls } = await startDraftWorkload(["--model-draft", sibling]);
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain(`--model-draft path escapes models dir: ${sibling}`);
     expect(spawnCalls).toBe(0);
   });
 
