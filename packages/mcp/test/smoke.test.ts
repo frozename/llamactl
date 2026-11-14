@@ -1,6 +1,10 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
-import { getResidencyLeaseRegistry } from "@llamactl/core/residency/leases";
+import {
+  createResidencyLeases,
+  getResidencyLeaseRegistry,
+  setResidencyLeaseRegistry,
+} from "@llamactl/core/residency/leases";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -20,6 +24,32 @@ import { PROFILE_ENUM } from "../src/tools/shared.js";
  * dry-run + wet-run case; the audit sink is scoped to a tempdir so
  * tests never touch `~/.llamactl/mcp/audit/*`.
  */
+
+type LeaseWorkloadRow = {
+  workload: string;
+  phase: "open" | "draining" | "unloaded";
+  epoch: number;
+  activeLeaseCount: number;
+  waiters: number;
+};
+
+type LeaseAuditRow = {
+  workload: string;
+  epoch: number;
+  forced: true;
+  revokedCount: number;
+  reason: string | null;
+};
+
+type LeasesSection =
+  | { status: "unavailable"; scope: "serving-process" }
+  | {
+      status: "available";
+      scope: "serving-process";
+      workloads: LeaseWorkloadRow[];
+      auditCount: number;
+      recentAudit: LeaseAuditRow[];
+    };
 
 let runtimeDir = "";
 let auditDir = "";
@@ -475,6 +505,7 @@ describe("@llamactl/mcp read surface", () => {
       policy: { present: boolean };
       budget: { memoryGiB: number; source: string };
       store: { path: string; present: boolean; scope: string };
+      leases?: { status: string };
     };
     expect(parsed).toEqual(await router.createCaller({}).residencyStatus({ node: "budget-node" }));
     expect(parsed.budget).toEqual({ memoryGiB: 24, source: "noderun" });
@@ -485,8 +516,61 @@ describe("@llamactl/mcp read surface", () => {
       present: false,
       scope: "serving-process",
     });
+    expect(parsed.leases?.status).toBe("unavailable");
     expect(existsSync(join(runtimeDir, "residency-state"))).toBe(false);
     expect(getResidencyLeaseRegistry()).toBeNull();
+  });
+
+  test("llamactl.residency.status reports the installed lease registry snapshot", async () => {
+    seedNodeBudgetFixtures();
+    seedModelHostFixture();
+    const reg = createResidencyLeases();
+    setResidencyLeaseRegistry(reg);
+    const lease = reg.acquire("gemma4-26b-a4b-mtp-local");
+    try {
+      const { client } = await connected();
+      const result = await client
+        .callTool({
+          name: "llamactl.residency.status",
+          arguments: { node: "budget-node" },
+        })
+        .catch((e: unknown) => ({
+          isError: true,
+          content: [{ type: "text", text: String(e) }],
+        }));
+      expect(result.isError).not.toBe(true);
+
+      const parsed = JSON.parse(textOf(result)) as {
+        nodeRun: { present: boolean };
+        policy: { present: boolean };
+        budget: { memoryGiB: number; source: string };
+        store: { path: string; present: boolean; scope: string };
+        leases?: LeasesSection;
+      };
+      expect(parsed.leases?.status).toBe("available");
+      const leases = parsed.leases;
+      if (leases?.status !== "available") {
+        throw new Error("expected an available leases section");
+      }
+      expect(leases.workloads.find((w) => w.workload === "mlx-host-a")).toEqual({
+        workload: "mlx-host-a",
+        phase: "open",
+        epoch: 0,
+        activeLeaseCount: 0,
+        waiters: 0,
+      });
+      expect(
+        leases.workloads.find((w) => w.workload === "gemma4-26b-a4b-mtp-local")?.activeLeaseCount,
+      ).toBe(1);
+      expect(parsed).toEqual(
+        await router.createCaller({}).residencyStatus({ node: "budget-node" }),
+      );
+    } finally {
+      if (lease.ok) {
+        lease.lease.release();
+      }
+      setResidencyLeaseRegistry(null);
+    }
   });
 
   test("llamactl.residency.status advertises read-only annotations", async () => {
