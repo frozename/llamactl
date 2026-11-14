@@ -716,6 +716,8 @@ describe("I1: clean install", () => {
       "init",
       "install-launchd",
       "install-systemd",
+      // #289 (this PR): `llamactl agent migrate-tunnel-bearer`, not the worker RPC.
+      "migrate-tunnel-bearer",
       "rollback",
       // `llamactl agent rotate-cert` (frozename/llamactl#209).
       "rotate-cert",
