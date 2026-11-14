@@ -185,6 +185,7 @@ function failExit(stderr: string): SpawnSyncReturns<string> {
 }
 
 const UNIT_NAME = "llamactl-agent.service";
+const TOKEN = "fixture-bearer-289-DO-NOT-ECHO";
 
 // -----------------------------------------------------------------------------
 // Pure unit template
@@ -439,6 +440,37 @@ describe("parseInstallSystemdFlags", () => {
     const parsed = parseInstallSystemdFlags(["--weird=foo"]);
     expect("error" in parsed).toBe(true);
     if ("error" in parsed) expect(parsed.error).toContain("agent install-systemd:");
+  });
+
+  test("--env rejects secret-looking keys (#289)", () => {
+    for (const key of ["LLAMACTL_TUNNEL_BEARER", "LLAMACTL_TUNNEL_CENTRAL_BEARER"]) {
+      const parsed = parseInstallSystemdFlags([`--env=${key}=${TOKEN}`]);
+      expect("error" in parsed).toBe(true);
+      if ("error" in parsed) {
+        expect(parsed.error).toContain(
+          `agent install-systemd: refusing to write secret-looking env key ${key}`,
+        );
+        expect(parsed.error).toContain("tunnel-bearer");
+        expect(parsed.error).not.toContain(TOKEN);
+      }
+    }
+  });
+
+  // Regression pin — passes at the base commit: the *_FILE path variant
+  // is not secret-looking (it ends in _FILE, not _BEARER), and ordinary
+  // keys are unaffected. Kills a guard regex missing the `$` anchor.
+  test("--env accepts *_FILE path vars and ordinary keys (#289 regression pin)", () => {
+    const parsed = parseInstallSystemdFlags([
+      "--env=LLAMACTL_TUNNEL_BEARER_FILE=/abs/p",
+      "--env=HF_HOME=/x",
+    ]);
+    expect("error" in parsed).toBe(false);
+    if (!("error" in parsed)) {
+      expect(parsed.envOverrides).toEqual({
+        LLAMACTL_TUNNEL_BEARER_FILE: "/abs/p",
+        HF_HOME: "/x",
+      });
+    }
   });
 });
 
