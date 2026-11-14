@@ -16,10 +16,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
-import type { ApplyEvent, WorkloadClient } from "../../src/workload/apply.js";
+import type { ApplyEvent, ApplyResult, WorkloadClient } from "../../src/workload/apply.js";
 import type { ModelHostManifest } from "../../src/workload/modelhost-schema.js";
 
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "../../src/safe-fs.js";
 import { applyOne } from "../../src/workload/apply.js";
 import { saveModelHost } from "../../src/workload/modelhost-store.js";
 import { reconcileOnce } from "../../src/workload/reconciler.js";
@@ -1237,5 +1244,147 @@ test("MK-R3 a live foreign hold on a ModelHost victim is respected", async () =>
     expect(annotations?.["llamactl.io/evicted-by"]).toBe("other");
   } finally {
     rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+// DF-02 AC4 (#275): failed replacement readiness never leaves both
+// or neither running silently — a readiness-failed start whose
+// process may still be alive is torn down before the victim's
+// eviction intent is released, a start-subscription error is
+// reported rather than thrown, and an unverified replacement
+// teardown keeps the victim held instead of releasing it.
+type ServerStartCallbacks = Parameters<WorkloadClient["serverStart"]["subscribe"]>[1];
+
+// Overrides only serverStart.subscribe for workload 'b': the attempt
+// is recorded, a live entry stays in the state map (the process
+// spawned but readiness never verified), then `script` drives the
+// outcome on a microtask like the makeClient subscribe does. Every
+// other verb keeps the shared fake's behaviour.
+function clientWithScriptedBStart(
+  client: WorkloadClient,
+  state: StateMap,
+  starts: string[],
+  script: (callbacks: ServerStartCallbacks) => void,
+): WorkloadClient {
+  return {
+    ...client,
+    serverStart: {
+      ...client.serverStart,
+      subscribe: (input, callbacks): ReturnType<WorkloadClient["serverStart"]["subscribe"]> => {
+        if (input.workload !== "b") return client.serverStart.subscribe(input, callbacks);
+        starts.push(input.workload);
+        state.set("b", upEntry(8090));
+        queueMicrotask(() => {
+          script(callbacks);
+        });
+        return { unsubscribe: () => undefined };
+      },
+    },
+  };
+}
+
+test("RB1 a readiness timeout that leaves the replacement alive is torn down before the victim is released", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "llamactl-df02-rb1-"));
+  const state: StateMap = new Map([["a", upEntry(8182)]]);
+  saveWorkload(mkManifest("a", { port: 8182, ram: 8 }), dir);
+  const before = loadWorkloadByName("a", dir);
+  const { client, stops, starts } = makeClient(state);
+  const wrapped = clientWithScriptedBStart(client, state, starts, (callbacks) => {
+    callbacks.onData({
+      type: "done",
+      result: {
+        ok: false,
+        pid: 4321,
+        error: "llama-server readiness check timed out after 60s",
+      },
+    });
+    callbacks.onComplete();
+  });
+  const b = mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090, ram: 8 });
+  try {
+    const result = await applyOne(b, () => wrapped, undefined, undefined, {
+      workloadsDir: dir,
+      getNodeBudgetGiB: () => 8,
+    });
+    expect(result.statusSection.phase).toBe("Failed");
+    expect(result.error).toContain("readiness check timed out");
+    expect(result.error).toContain("released eviction intent on 'a'");
+    expect(stops).toEqual(["a", "b"]);
+    expect(state.has("b")).toBe(false);
+    expect(loadWorkloadByName("a", dir)).toEqual(before);
+    expect(existsSync(join(dir, "b.yaml"))).toBe(false);
+    starts.length = 0;
+    await reconcileOnce({ workloadsDir: dir, getClient: () => wrapped });
+    expect(starts.filter((s) => s === "a")).toHaveLength(1);
+    expect([...state.keys()].sort()).toEqual(["a"]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("RB2 a readiness failure raised by the start subscription is reported, not thrown", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "llamactl-df02-rb2-"));
+  const state: StateMap = new Map([["a", upEntry(8182)]]);
+  saveWorkload(mkManifest("a", { port: 8182, ram: 8 }), dir);
+  const before = loadWorkloadByName("a", dir);
+  const { client, starts } = makeClient(state);
+  const wrapped = clientWithScriptedBStart(client, state, starts, (callbacks) => {
+    callbacks.onError(new Error("readiness probe failed: connection reset"));
+  });
+  const b = mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090, ram: 8 });
+  try {
+    const outcome = await applyOne(b, () => wrapped, undefined, undefined, {
+      workloadsDir: dir,
+      getNodeBudgetGiB: () => 8,
+    }).catch((err: unknown) => err);
+    expect(outcome).not.toBeInstanceOf(Error);
+    const result = outcome as ApplyResult;
+    expect(result.statusSection.phase).toBe("Failed");
+    expect(result.error).toContain("readiness probe failed: connection reset");
+    expect(result.error).toContain("released eviction intent on 'a'");
+    expect(state.has("b")).toBe(false);
+    expect(loadWorkloadByName("a", dir)).toEqual(before);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("RB3 an unverified replacement teardown keeps the victim held instead of releasing it", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "llamactl-df02-rb3-"));
+  const state: StateMap = new Map([["a", upEntry(8182)]]);
+  saveWorkload(mkManifest("a", { port: 8182, ram: 8 }), dir);
+  const { client, starts } = makeClient(state, {
+    stop: (workload) => (workload === "b" ? Promise.resolve({ stopped: false }) : undefined),
+  });
+  const wrapped = clientWithScriptedBStart(client, state, starts, (callbacks) => {
+    callbacks.onData({
+      type: "done",
+      result: {
+        ok: false,
+        pid: 4321,
+        error: "llama-server readiness check timed out after 60s",
+      },
+    });
+    callbacks.onComplete();
+  });
+  const b = mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090, ram: 8 });
+  try {
+    const result = await applyOne(b, () => wrapped, undefined, undefined, {
+      workloadsDir: dir,
+      getNodeBudgetGiB: () => 8,
+    });
+    expect(result.statusSection.phase).toBe("Failed");
+    expect(result.error).toContain(
+      "replacement 'b' teardown after failed start unverified (refused to stop)",
+    );
+    expect(result.error).toContain("eviction intent on 'a' kept");
+    expect(result.error).not.toContain("released eviction intent on 'a'");
+    expect(loadWorkloadByName("a", dir).metadata.annotations["llamactl.io/evicted-by"]).toBe("b");
+    starts.length = 0;
+    await reconcileOnce({ workloadsDir: dir, getClient: () => wrapped });
+    expect(starts).not.toContain("a");
+    expect([...state.keys()].sort()).toEqual(["b"]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });
