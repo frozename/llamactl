@@ -213,6 +213,53 @@ describe("doctor [units] probe (#196)", () => {
     expect(out).not.toContain("oom.conf)");
   });
 
+  test("a [Service] line without '=' is not an assignment", async () => {
+    writeUnit(
+      "llamactl-controller.service",
+      BARE.replace("KillMode=process\n", "KillMode=process\nOOMScoreAdjust=300\nOOMScoreAdjustX\n"),
+    );
+
+    const { result, out } = await runWithUnits([]);
+
+    expect(result).toBe(1);
+    expect(out).toContain(
+      "llamactl-controller.service OOMScoreAdjust=300 (llamactl-controller.service) is above 100",
+    );
+    expect(out).not.toContain("is not an integer");
+    expect(out).not.toContain("probe errored");
+  });
+
+  test.each(["1000", "-1000"])(
+    "a drop-in at the range bound %s is accepted as the effective value",
+    async (raw) => {
+      writeUnit(
+        "llamactl-controller.service",
+        BARE.replace("KillMode=process\n", "KillMode=process\nOOMScoreAdjust=300\n"),
+      );
+      writeDropIn("llamactl-controller.service", "oom.conf", `[Service]\nOOMScoreAdjust=${raw}\n`);
+
+      const { out } = await runWithUnits([]);
+
+      expect(out).toContain(
+        `llamactl-controller.service OOMScoreAdjust=${raw} (llamactl-controller.service.d/oom.conf)`,
+      );
+      expect(out).not.toContain("is outside -1000..1000 and ignored");
+      expect(out).not.toContain("(llamactl-controller.service) is above 100");
+    },
+  );
+
+  test("an unreadable drop-in reports a probe error instead of crashing", async () => {
+    writeUnit("llamactl-controller.service", BARE);
+    mkdirSync(join(unitDir, "llamactl-controller.service.d", "x.conf"), { recursive: true });
+
+    const { result, out } = await runWithUnits([]);
+
+    expect(result).toBe(1);
+    expect(out).toContain("[units]");
+    expect(out).toContain("✗");
+    expect(out).toContain("probe errored");
+  });
+
   test("an out-of-range drop-in is ignored and the earlier value stays", async () => {
     writeUnit(
       "llamactl-controller.service",
