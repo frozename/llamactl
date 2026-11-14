@@ -20,6 +20,7 @@ import {
 import {
   externalManagerOf,
   LOCAL_NODE_ID,
+  MANAGED_BY_LABEL,
   type ModelHostManifest,
 } from "@llamactl/remote/workload/modelhost-schema";
 import { join } from "node:path";
@@ -40,7 +41,9 @@ Flags:
   --interval=<s>   Seconds between reconcile passes (default 10).
   --once           Run one pass then exit (useful for cron-driven setups).
   --force          Start even when ModelHosts carry a llamactl.io/managed-by
-                   label. Labeled hosts stay skipped by the reconciler.
+                   label. Labeled hosts stay skipped by the reconciler; each
+                   pass logs them as skipped-external with the managing
+                   controller.
   --no-reload-on-source-change
                    Keep running even when the controller's own git HEAD
                    moves after startup. Default: exit on a debounced change
@@ -158,11 +161,17 @@ export interface ControllerLogLine {
 
 type ReportForLog = Pick<
   workloadReconciler.ReconcileNodeReport,
-  "action" | "error" | "foundDead" | "kind" | "name" | "node"
+  "action" | "error" | "foundDead" | "kind" | "managedBy" | "name" | "node"
 >;
 
 function reportLabel(r: ReportForLog): string {
   return `${r.kind === "ModelHost" ? "modelhost" : "modelrun"}/${r.name} on ${r.node}`;
+}
+
+/** The action, plus the managing controller on a `skipped-external` row. */
+function reportOutcome(r: ReportForLog): string {
+  if (r.action !== "skipped-external" || !r.managedBy) return r.action;
+  return `${r.action} (managed by ${r.managedBy} via ${MANAGED_BY_LABEL})`;
 }
 
 function stamp(nowMs: number): string {
@@ -174,7 +183,8 @@ function stamp(nowMs: number): string {
  * as a WARN the first time it is seen and whenever its message changes, is
  * repeated as a reminder at most every `reminderMs` while it persists, and is
  * closed by one recovery line; in between it is counted, not printed. Healthy
- * reports keep their per-pass stdout line. A workload missing from the pass
+ * reports keep their per-pass stdout line; a `skipped-external` row names the
+ * managing controller and the label. A workload missing from the pass
  * (deleted) drops out of the state silently.
  */
 export function reduceReconcileReportLog(
@@ -194,7 +204,7 @@ export function reduceReconcileReportLog(
         const text = `${ts} ${label}: recovered after ${String(prev.count)} failed pass(es)`;
         lines.push({ stream: "stderr", text });
       }
-      lines.push({ stream: "stdout", text: `${ts} ${label}: ${r.action}` });
+      lines.push({ stream: "stdout", text: `${ts} ${label}: ${reportOutcome(r)}` });
       continue;
     }
     if (prev?.message !== r.error) {

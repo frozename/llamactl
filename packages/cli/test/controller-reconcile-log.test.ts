@@ -132,6 +132,65 @@ describe("reduceReconcileReportLog", () => {
   });
 });
 
+describe("reduceReconcileReportLog skipped-external", () => {
+  const skippedExternal = {
+    kind: "ModelHost" as const,
+    name: "host-a",
+    node: "local",
+    action: "skipped-external" as const,
+    managedBy: "mac-mini",
+  };
+  const skippedExternalPlain = {
+    kind: "ModelHost" as const,
+    name: "host-a",
+    node: "local",
+    action: "skipped-external" as const,
+  };
+  const unchangedWithManager = {
+    kind: "ModelHost" as const,
+    name: "host-a",
+    node: "local",
+    action: "unchanged" as const,
+    managedBy: "mac-mini",
+  };
+
+  it("names the managing controller and the label on a skipped-external row", () => {
+    const step = reduceReconcileReportLog(new Map(), [skippedExternal], T0);
+    expect(step.lines).toEqual([
+      {
+        stream: "stdout",
+        text: "[2026-10-21T14:07:00.000Z] modelhost/host-a on local: skipped-external (managed by mac-mini via llamactl.io/managed-by)",
+      },
+    ]);
+    expect(step.nextState.size).toBe(0);
+  });
+
+  // Guard: passes before the fix — the suffix must not be appended
+  // unconditionally (which would print "managed by undefined").
+  it("a skipped-external row without managedBy keeps the plain line", () => {
+    const step = reduceReconcileReportLog(new Map(), [skippedExternalPlain], T0);
+    expect(step.lines).toEqual([
+      {
+        stream: "stdout",
+        text: "[2026-10-21T14:07:00.000Z] modelhost/host-a on local: skipped-external",
+      },
+    ]);
+  });
+
+  // Guard: passes before the fix — the suffix is keyed on
+  // action === "skipped-external", not on managedBy alone.
+  it("the managed-by suffix appears only on skipped-external rows", () => {
+    const step = reduceReconcileReportLog(new Map(), [unchangedWithManager], T0);
+    expect(step.lines).toEqual([
+      {
+        stream: "stdout",
+        text: "[2026-10-21T14:07:00.000Z] modelhost/host-a on local: unchanged",
+      },
+    ]);
+    expect(step.lines[0]?.text).not.toContain("managed by");
+  });
+});
+
 describe("advanceOomWatch", () => {
   const sample = (oomKill: number, cgroup = SERVICE): CgroupOomSample => ({ cgroup, oomKill });
 
