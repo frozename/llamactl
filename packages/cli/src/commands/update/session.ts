@@ -125,6 +125,8 @@ function unitName(
     : { name: DEFAULT_UNITS[kind][role], explicit: false };
 }
 
+const AGENT_ONLY_ACTIVE = "--agent-only: ";
+
 const UNIT_HELP =
   "configure the units with --controller-unit/--agent-unit (or LLAMACTL_UPDATE_CONTROLLER_UNIT / LLAMACTL_UPDATE_AGENT_UNIT), or run the services as the default units: see docs/self-update.md";
 
@@ -167,7 +169,7 @@ async function applyUnits(
       skippedControllerName = info.name;
       if (info.loaded && info.active) {
         state.problems.push(
-          `--agent-only: ${info.name} is active on this node; agent-only mode is for nodes whose controller is handed to a central one (stop and disable it, or drop --agent-only)`,
+          `${AGENT_ONLY_ACTIVE}${info.name} is active on this node; agent-only mode is for nodes whose controller is handed to a central one (stop and disable it, or drop --agent-only)`,
         );
       }
       state.controller = null;
@@ -215,7 +217,8 @@ async function resolveServices(
       ...(await leftBehindControlPlane(deps, manager, state, repo, skippedControllerName)),
     );
   }
-  if (state.problems.length > 0) state.problems.push(UNIT_HELP);
+  // The unit-naming help fits misconfigured units, not the agent-only refusal.
+  if (state.problems.some((p) => !p.startsWith(AGENT_ONLY_ACTIVE))) state.problems.push(UNIT_HELP);
   return state;
 }
 

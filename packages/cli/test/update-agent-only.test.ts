@@ -10,6 +10,7 @@ import { buildDeploySteps } from "../src/commands/update/procedure.js";
 import {
   AGENT_UNIT,
   CONTROLLER_UNIT,
+  ENV_FILE,
   fakeDeps,
   HISTORY,
   makeWorld,
@@ -42,6 +43,14 @@ async function run(
 
 /** Install events carry the full argv; these tests only care that one ran. */
 const eventLabel = (e: string): string => (e.startsWith("install ") ? "install" : e);
+
+const LOCK = "/h/.heavy.lock";
+
+function withHeavyLock(w: World): World {
+  const env = w.files.get(ENV_FILE) ?? "";
+  w.files.set(ENV_FILE, `${env}LLAMACTL_UPDATE_HEAVY_LOCK=${LOCK}\n`);
+  return w;
+}
 
 /** A worker node: the controller unit is installed but not running locally. */
 function agentOnlyWorld(over: Partial<World> = {}): World {
@@ -150,6 +159,48 @@ describe("--apply --agent-only", () => {
     expect(w.files.get(HISTORY) ?? "").toMatch(/rolled-back to feat\/strata-engine@1111111\n$/);
   });
 
+  test("a signal during the install still drops the heavy-job lock on the way out", async () => {
+    const w = withHeavyLock(
+      agentOnlyWorld({
+        onInstall: (world) => {
+          world.signalHandler?.("SIGINT");
+        },
+      }),
+    );
+    const { code, report } = await run(w, ["--apply", "--agent-only"]);
+    expect(code).toBe(130);
+    expect(report?.result).toBe("interrupted");
+    expect(report?.rollbackSteps).toEqual([]);
+    // The run stopped before its own unlock step: only the final guard drops the lock.
+    expect(report?.steps.some((s) => s.step === "unlock")).toBe(false);
+    expect(w.events.map(eventLabel)).toEqual([
+      `lock ${LOCK}`,
+      `switch -C main ${sha(4)}`,
+      "install",
+      `unlock ${LOCK}`,
+    ]);
+    expect(report?.finalStart).toBeNull();
+    expect(w.signalHandler).toBeNull();
+  });
+
+  test("a failed update and rollback still drop the heavy-job lock on the way out", async () => {
+    const w = withHeavyLock(agentOnlyWorld({ installExits: [1, 1] }));
+    const { code, report } = await run(w, ["--apply", "--agent-only"]);
+    expect(code).toBe(1);
+    expect(report?.result).toBe("failed");
+    expect(report?.rollbackSteps.at(-1)).toMatchObject({ step: "install", ok: false });
+    expect(w.events.map(eventLabel)).toEqual([
+      `lock ${LOCK}`,
+      `switch -C main ${sha(4)}`,
+      "install",
+      "switch feat/strata-engine",
+      "install",
+      `unlock ${LOCK}`,
+    ]);
+    expect(w.events.some((e) => e.includes(CONTROLLER_UNIT))).toBe(false);
+    expect(report?.finalStart).toBeNull();
+  });
+
   test("refuses while the local controller is active; a plain --apply still drives it", async () => {
     const w = makeWorld();
     const refused = await run(w, ["--apply", "--agent-only"]);
@@ -160,6 +211,8 @@ describe("--apply --agent-only", () => {
         (r) => r.includes("--agent-only") && r.includes(`${CONTROLLER_UNIT} is active`),
       ),
     ).toBe(true);
+    // The unit-naming help is about misconfigured units, not this refusal.
+    expect(refused.report?.refusals.some((r) => r.includes("--controller-unit"))).toBe(false);
     expect(w.events).toEqual([]);
 
     const w2 = makeWorld();
