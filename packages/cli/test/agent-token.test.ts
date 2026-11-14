@@ -12,7 +12,7 @@ import {
   statSync,
   writeFileSync,
 } from "../src/safe-fs.js";
-import { parseJsonArray, parseJsonRecord } from "./helpers.js";
+import { parseJsonArray, parseJsonRecord, requireRecord } from "./helpers.js";
 
 let stdoutBuf = "";
 let stderrBuf = "";
@@ -59,6 +59,19 @@ function bearerEntries(dir: string): agentConfigMod.AgentBearerToken[] {
   const block = agentConfigMod.loadAgentConfig(join(dir, "agent.yaml")).bearerTokens;
   return block === undefined ? [] : (block as agentConfigMod.AgentBearerToken[]);
 }
+
+type BearerReaderEntry = agentConfigMod.AgentBearerToken & { expiresAt?: string };
+
+/**
+ * #218 RED pin: the fix gives bearerTokensReader an injectable clock and
+ * expiresAt on entries. The declared signature still takes only the path,
+ * so the second argument is ignored at runtime and the schema strips
+ * expiresAt — the expiry assertions below fail until the fix lands.
+ */
+const bearerTokensReaderAt: (
+  path: string,
+  now: () => number,
+) => () => readonly BearerReaderEntry[] | undefined = agentConfigMod.bearerTokensReader;
 
 afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
@@ -623,6 +636,148 @@ describe("agent token", () => {
       expect(read).toHaveLength(1);
       expect(read?.[0]?.name).toBe("ci");
       expect(read?.[0]?.tokenHash).toBe(entry.tokenHash);
+    } finally {
+      restore();
+    }
+  });
+
+  test("bearerTokensReader filters expired entries against the injected clock", async () => {
+    // Kills: not filtering expired entries, filtering inside the cached
+    // select (the second call below would reuse the stale result), or
+    // dropping expiresAt from the schema.
+    capture();
+    try {
+      const dir = await seedAgent();
+      const configPath = join(dir, "agent.yaml");
+      const cfg = agentConfigMod.loadAgentConfig(configPath);
+      agentConfigMod.saveAgentConfig(
+        {
+          ...cfg,
+          bearerTokens: [
+            {
+              name: "live",
+              tokenHash: auth.hashToken("live-token"),
+              createdAt: "2026-01-01T00:00:00.000Z",
+              expiresAt: "2030-01-01T00:00:00.000Z",
+            },
+            {
+              name: "gone",
+              tokenHash: auth.hashToken("gone-token"),
+              createdAt: "2026-01-02T00:00:00.000Z",
+              expiresAt: "2020-01-01T00:00:00.000Z",
+            },
+            {
+              name: "plain",
+              tokenHash: auth.hashToken("plain-token"),
+              createdAt: "2026-01-03T00:00:00.000Z",
+            },
+          ],
+        },
+        configPath,
+      );
+
+      let nowMs = Date.parse("2025-01-01T00:00:00Z");
+      const read = bearerTokensReaderAt(configPath, () => nowMs);
+      const first = read();
+      expect(first?.map((e) => e.name)).toEqual(["live", "plain"]);
+      expect(first?.find((e) => e.name === "live")?.expiresAt).toBe("2030-01-01T00:00:00.000Z");
+
+      nowMs = Date.parse("2031-01-01T00:00:00Z");
+      expect(read()?.map((e) => e.name)).toEqual(["plain"]);
+    } finally {
+      restore();
+    }
+  });
+
+  test("bearerTokensReader rejects an entry whose expiresAt is not a date", async () => {
+    // Kills: dropping expiresAt validation — an unparseable expiry must
+    // invalidate the whole block, not be silently stripped.
+    capture();
+    try {
+      const dir = await seedAgent();
+      const configPath = join(dir, "agent.yaml");
+      const cfg = agentConfigMod.loadAgentConfig(configPath);
+      agentConfigMod.saveAgentConfig(
+        {
+          ...cfg,
+          bearerTokens: [
+            {
+              name: "bad",
+              tokenHash: auth.hashToken("bad-token"),
+              createdAt: "2026-01-01T00:00:00.000Z",
+              expiresAt: "not-a-date",
+            },
+          ],
+        },
+        configPath,
+      );
+
+      const read = agentConfigMod.bearerTokensReader(configPath);
+      expect(read()).toBeUndefined();
+      expect(stderrBuf).toContain("ignoring the bearerTokens block");
+    } finally {
+      restore();
+    }
+  });
+
+  test("token list annotates expiry in human and --json output without hashes", async () => {
+    // Kills: not surfacing expiry in list, not marking dead entries, or
+    // leaking tokenHash into either output.
+    capture();
+    try {
+      const dir = await seedAgent();
+      const configPath = join(dir, "agent.yaml");
+      const cfg = agentConfigMod.loadAgentConfig(configPath);
+      agentConfigMod.saveAgentConfig(
+        {
+          ...cfg,
+          bearerTokens: [
+            {
+              name: "plain",
+              tokenHash: auth.hashToken("plain-token"),
+              createdAt: "2026-01-01T00:00:00.000Z",
+            },
+            {
+              name: "rotated-1",
+              tokenHash: auth.hashToken("rotated-1-token"),
+              createdAt: "2026-02-02T00:00:00.000Z",
+              expiresAt: "2030-01-01T00:00:00.000Z",
+            },
+            {
+              name: "rotated-0",
+              tokenHash: auth.hashToken("rotated-0-token"),
+              createdAt: "2026-03-03T00:00:00.000Z",
+              expiresAt: "2020-01-01T00:00:00.000Z",
+            },
+          ],
+        },
+        configPath,
+      );
+
+      expect(await runAgent(["token", "list", `--dir=${dir}`])).toBe(0);
+      expect(stdoutBuf.trimEnd().split("\n")).toEqual([
+        "plain\t2026-01-01T00:00:00.000Z",
+        "rotated-1\t2026-02-02T00:00:00.000Z\texpires=2030-01-01T00:00:00.000Z",
+        "rotated-0\t2026-03-03T00:00:00.000Z\texpired=2020-01-01T00:00:00.000Z",
+      ]);
+
+      stdoutBuf = "";
+      expect(await runAgent(["token", "list", `--dir=${dir}`, "--json"])).toBe(0);
+      const listed = parseJsonArray(stdoutBuf.trim()).map(requireRecord);
+      const byName = new Map(listed.map((e) => [e["name"], e]));
+      const live = byName.get("rotated-1");
+      const dead = byName.get("rotated-0");
+      const plain = byName.get("plain");
+      expect(live?.["expiresAt"]).toBe("2030-01-01T00:00:00.000Z");
+      expect(live?.["expired"]).toBe(false);
+      expect(dead?.["expiresAt"]).toBe("2020-01-01T00:00:00.000Z");
+      expect(dead?.["expired"]).toBe(true);
+      expect(plain).toBeDefined();
+      if (plain !== undefined) {
+        expect("expiresAt" in plain).toBe(false);
+        expect("expired" in plain).toBe(false);
+      }
+      for (const e of listed) expect("tokenHash" in e).toBe(false);
     } finally {
       restore();
     }
