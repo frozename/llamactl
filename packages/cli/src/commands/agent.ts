@@ -288,6 +288,14 @@ ${DIR_FLAG_HELP}
 Environment:
   LLAMACTL_RESIDENCY_LEASES   "1"/"true" publishes one residency lease
                               registry at start (opt-in, off by default).
+  LLAMACTL_RESIDENCY_SESSION_IDLE_MS
+                              Session idle timeout in milliseconds: a
+                              positive integer up to
+                              Number.MAX_SAFE_INTEGER. Honored only when
+                              LLAMACTL_RESIDENCY_LEASES is on; publishes
+                              a session refcount registry beside the
+                              lease registry once the listener binds.
+                              Other values are ignored.
   LLAMACTL_AGENT_RUNTIME_ROLE Per-role runtime identity (env fallback for
                               --runtime-role).
   LLAMACTL_AGENT_MEMORY_BUDGET_BYTES
@@ -330,6 +338,19 @@ function parseBudgetBytes(raw: string): number | { error: string } {
 
 function isHelpFlag(arg: string): boolean {
   return arg === "-h" || arg === "--help";
+}
+
+/**
+ * Parse a positive integer from a string. Returns null for invalid values
+ * (non-numeric, zero, negative, floating point, whitespace-prefixed).
+ */
+function parsePositiveInteger(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (trimmed !== raw) return null;
+  const n = Number.parseInt(trimmed, 10);
+  if (!Number.isFinite(n) || n <= 0 || n > Number.MAX_SAFE_INTEGER) return null;
+  if (String(n) !== trimmed) return null;
+  return n;
 }
 
 // #210: a non-loopback advertised host on a loopback bind is unreachable remotely.
@@ -1586,6 +1607,16 @@ function residencyLeasesOptIn(env: Readonly<Record<string, string | undefined>>)
   return env["LLAMACTL_RESIDENCY_LEASES"] === "1" || env["LLAMACTL_RESIDENCY_LEASES"] === "true";
 }
 
+/** #520: LLAMACTL_RESIDENCY_SESSION_IDLE_MS (milliseconds) as a spreadable option. */
+function residencySessionIdleOption(env: Readonly<Record<string, string | undefined>>): {
+  residencySessionIdleMs?: number;
+} {
+  const raw = env["LLAMACTL_RESIDENCY_SESSION_IDLE_MS"];
+  if (raw === undefined) return {};
+  const ms = parsePositiveInteger(raw);
+  return ms === null ? {} : { residencySessionIdleMs: ms };
+}
+
 export function resolveServeRuntimeIdentity(
   flags: ServeFlags,
   env: Readonly<Record<string, string | undefined>>,
@@ -1701,6 +1732,8 @@ export function buildServeOptions(
       : {}),
     // #278 DF-05: opt-in residency lease registry, off unless the env says on.
     ...(residencyLeasesOptIn(env) ? { residencyLeases: true } : {}),
+    // #520: opt-in session idle timeout, honored only when residencyLeases is true.
+    ...residencySessionIdleOption(env),
     // #367: per-role runtime memory identity, flags override env vars.
     ...runtimeIdentitySpread(identity),
   } as Parameters<typeof startAgentServer>[0];

@@ -1,11 +1,20 @@
 /**
  * Active-session refcounts for residency (#520, #569). Pure and adapter-free:
- * no IO, no timers. This is a partial #520 slice: it layers on the DF-05
- * request leases (#278) rather than replacing them.
+ * no IO, no timers. proxyOpenAI (openaiProxy.ts) acquires a session per
+ * request carrying the session header while both this registry and the
+ * DF-05 lease registry (#278) are installed. `agent serve` installs one at
+ * start when LLAMACTL_RESIDENCY_LEASES is on and
+ * LLAMACTL_RESIDENCY_SESSION_IDLE_MS (milliseconds) is set.
  *
- * NON-FENCING: checkUnload does not block a concurrent acquire. This
- * slice only makes checkUnload report SessionActive; refusing an unload
- * while a session holds the workload is wired by a later slice.
+ * Eviction consults the installed registry before stopping a workload
+ * (workload/apply.ts, #631): a live session refuses it as
+ * EvictSessionActive, and a checkUnload that throws refuses it as
+ * EvictSessionUnknown. forceRelease and checkUnload({ force: true }) drop
+ * the sessions so a later eviction can proceed.
+ *
+ * NON-FENCING: checkUnload does not block a concurrent acquire. Eviction
+ * re-checks just before the stop, which narrows the race but does not
+ * close it; fencing is deferred to the #278 lease composition.
  *
  * Release is generation-aware (#520 follow-up from the #617 review): a
  * stale release carrying an old generation cannot drop a newer
