@@ -8,6 +8,8 @@ import {
   calibrateMeasuredEnvelope,
   type CalibrationSample,
   type MeasuredEnvelope,
+  memoryCalibrationKey,
+  type MemoryCalibrationKey,
 } from "@llamactl/core/resources/memory";
 import { expect, test } from "bun:test";
 import { tmpdir, totalmem } from "node:os";
@@ -840,7 +842,23 @@ type ModelHostAdmissionChargeInput = {
   estimateGiB: number | null;
   residencyPolicyPresent: boolean;
   envelope: MeasuredEnvelope | null | undefined;
+  candidateKey?: string;
+  nowMs?: number;
+  maxAgeMs?: number;
 };
+
+const ENVELOPE_KEY_INPUT: MemoryCalibrationKey = {
+  artifactRevision: "rev-a",
+  engine: "omlx",
+  engineBuild: "b1",
+  ctx: 8192,
+  kvType: "f16",
+  speculative: { mode: "none" },
+  prefillBatch: 512,
+  concurrency: 1,
+};
+const ENVELOPE_KEY = memoryCalibrationKey(ENVELOPE_KEY_INPUT)!;
+const ENVELOPE_NOW_MS = 1_700_000_000_000;
 
 const measuredEnvelopeGiB = (gib: number): MeasuredEnvelope => {
   const processBytes = gib * 1024 ** 3 - 1024 ** 3;
@@ -853,17 +871,8 @@ const measuredEnvelopeGiB = (gib: number): MeasuredEnvelope => {
     sharedDeviceBytes: null,
   });
   const envelope = calibrateMeasuredEnvelope({
-    key: {
-      artifactRevision: "rev-a",
-      engine: "omlx",
-      engineBuild: "b1",
-      ctx: 8192,
-      kvType: "f16",
-      speculative: { mode: "none" },
-      prefillBatch: 512,
-      concurrency: 1,
-    },
-    samples: [sample(1), sample(2), sample(3)],
+    key: ENVELOPE_KEY_INPUT,
+    samples: [sample(ENVELOPE_NOW_MS - 2), sample(ENVELOPE_NOW_MS - 1), sample(ENVELOPE_NOW_MS)],
     options: { minSamples: 3, overheadFraction: 0 },
   });
   expect(envelope.known).toBe(true);
@@ -880,6 +889,7 @@ const measuredEnvelopeLiteral = (envelopeBytes: number): MeasuredEnvelope => ({
   calibrationOverheadBytes: 0,
   envelopeBytes,
   attribution: "process",
+  measuredAtMs: ENVELOPE_NOW_MS,
 });
 
 test("modelHostAdmissionChargeGiB charges a measured envelope above the declared charge under a residency policy", () => {
@@ -891,6 +901,8 @@ test("modelHostAdmissionChargeGiB charges a measured envelope above the declared
       estimateGiB: 6,
       residencyPolicyPresent: true,
       envelope: measuredEnvelopeGiB(20),
+      candidateKey: ENVELOPE_KEY,
+      nowMs: ENVELOPE_NOW_MS,
     }),
   ).toBe(20);
 });
@@ -904,6 +916,8 @@ test("measured envelope never lowers the declared charge", () => {
       estimateGiB: 18,
       residencyPolicyPresent: true,
       envelope: measuredEnvelopeGiB(10),
+      candidateKey: ENVELOPE_KEY,
+      nowMs: ENVELOPE_NOW_MS,
     }),
   ).toBe(18);
 });
@@ -1014,6 +1028,242 @@ test("null estimate with a policy and a measurement charges the measurement", ()
       estimateGiB: null,
       residencyPolicyPresent: true,
       envelope: measuredEnvelopeGiB(8),
+      candidateKey: ENVELOPE_KEY,
+      nowMs: ENVELOPE_NOW_MS,
     }),
   ).toBe(8);
+});
+
+test("stale measured envelope falls back to the estimate", () => {
+  const charge = (admissionMod as Record<string, unknown>)["modelHostAdmissionChargeGiB"];
+  expect(typeof charge).toBe("function");
+  const chargeGiB = charge as (input: ModelHostAdmissionChargeInput) => number | null;
+  const input: ModelHostAdmissionChargeInput = {
+    estimateGiB: 6,
+    residencyPolicyPresent: true,
+    envelope: measuredEnvelopeGiB(20),
+    candidateKey: ENVELOPE_KEY,
+    maxAgeMs: 1000,
+  };
+  expect(chargeGiB({ ...input, nowMs: ENVELOPE_NOW_MS + 1000 })).toBe(20);
+  expect(chargeGiB({ ...input, nowMs: ENVELOPE_NOW_MS + 1001 })).toBe(6);
+});
+
+test("key-mismatched measured envelope falls back to the estimate", () => {
+  const charge = (admissionMod as Record<string, unknown>)["modelHostAdmissionChargeGiB"];
+  expect(typeof charge).toBe("function");
+  const chargeGiB = charge as (input: ModelHostAdmissionChargeInput) => number | null;
+  expect(
+    chargeGiB({
+      estimateGiB: 6,
+      residencyPolicyPresent: true,
+      envelope: measuredEnvelopeGiB(20),
+      candidateKey: "other-key",
+      nowMs: ENVELOPE_NOW_MS,
+      maxAgeMs: 1000,
+    }),
+  ).toBe(6);
+});
+
+test("envelope from an older producer without measuredAtMs is ignored", () => {
+  const charge = (admissionMod as Record<string, unknown>)["modelHostAdmissionChargeGiB"];
+  expect(typeof charge).toBe("function");
+  const chargeGiB = charge as (input: ModelHostAdmissionChargeInput) => number | null;
+  type LegacyKnownEnvelope = {
+    known: true;
+    key: string;
+    provenance: "measured";
+    sampleCount: number;
+    peakBytes: number;
+    calibrationOverheadBytes: number;
+    envelopeBytes: number;
+    attribution: "process";
+  };
+  const legacy: LegacyKnownEnvelope = {
+    known: true,
+    key: ENVELOPE_KEY,
+    provenance: "measured",
+    sampleCount: 3,
+    peakBytes: 20 * 1024 ** 3,
+    calibrationOverheadBytes: 0,
+    envelopeBytes: 20 * 1024 ** 3,
+    attribution: "process",
+  };
+  expect(
+    chargeGiB({
+      estimateGiB: 6,
+      residencyPolicyPresent: true,
+      envelope: legacy as unknown as MeasuredEnvelope,
+      candidateKey: ENVELOPE_KEY,
+      nowMs: ENVELOPE_NOW_MS,
+    }),
+  ).toBe(6);
+});
+
+test("measured envelope is ignored without a candidate calibration key", () => {
+  const charge = (admissionMod as Record<string, unknown>)["modelHostAdmissionChargeGiB"];
+  expect(typeof charge).toBe("function");
+  const chargeGiB = charge as (input: ModelHostAdmissionChargeInput) => number | null;
+  expect(
+    chargeGiB({
+      estimateGiB: 6,
+      residencyPolicyPresent: true,
+      envelope: measuredEnvelopeGiB(20),
+      nowMs: ENVELOPE_NOW_MS,
+    }),
+  ).toBe(6);
+});
+
+test("measuredEnvelopeAdmissibility names why an envelope is ignored", () => {
+  const fn = (admissionMod as Record<string, unknown>)["measuredEnvelopeAdmissibility"];
+  expect(typeof fn).toBe("function");
+  const admissibility = fn as (i: {
+    envelope: MeasuredEnvelope;
+    candidateKey?: string;
+    nowMs: number;
+    maxAgeMs: number;
+  }) => unknown;
+  const fresh = measuredEnvelopeGiB(20);
+  if (!fresh.known) throw new Error("expected a known measured envelope");
+  type LegacyKnownEnvelope = {
+    known: true;
+    key: string;
+    provenance: "measured";
+    sampleCount: number;
+    peakBytes: number;
+    calibrationOverheadBytes: number;
+    envelopeBytes: number;
+    attribution: "process";
+  };
+  const legacy: LegacyKnownEnvelope = {
+    known: true,
+    key: ENVELOPE_KEY,
+    provenance: "measured",
+    sampleCount: 3,
+    peakBytes: 20 * 1024 ** 3,
+    calibrationOverheadBytes: 0,
+    envelopeBytes: 20 * 1024 ** 3,
+    attribution: "process",
+  };
+  const defaults = { candidateKey: ENVELOPE_KEY, nowMs: ENVELOPE_NOW_MS, maxAgeMs: 1000 };
+  const cases: {
+    label: string;
+    input: {
+      envelope: MeasuredEnvelope;
+      candidateKey?: string;
+      nowMs: number;
+      maxAgeMs: number;
+    };
+    expected: unknown;
+  }[] = [
+    {
+      label: "fresh matching envelope is usable",
+      input: { envelope: fresh, ...defaults },
+      expected: { usable: true, envelopeBytes: 20 * 1024 ** 3 },
+    },
+    {
+      label: "not a measured envelope",
+      input: {
+        envelope: { known: false, reason: "insufficient-samples" },
+        ...defaults,
+      },
+      expected: { usable: false, reason: "not-measured" },
+    },
+    {
+      label: "NaN envelopeBytes",
+      input: { envelope: measuredEnvelopeLiteral(Number.NaN), ...defaults },
+      expected: { usable: false, reason: "invalid-bytes" },
+    },
+    {
+      label: "negative envelopeBytes",
+      input: { envelope: measuredEnvelopeLiteral(-1), ...defaults },
+      expected: { usable: false, reason: "invalid-bytes" },
+    },
+    {
+      label: "empty envelope key",
+      input: { envelope: { ...fresh, key: "" }, ...defaults },
+      expected: { usable: false, reason: "missing-key" },
+    },
+    {
+      label: "envelope without measuredAtMs",
+      input: { envelope: legacy as unknown as MeasuredEnvelope, ...defaults },
+      expected: { usable: false, reason: "missing-measured-at" },
+    },
+    {
+      label: "null measuredAtMs",
+      input: { envelope: { ...fresh, measuredAtMs: null }, ...defaults },
+      expected: { usable: false, reason: "missing-measured-at" },
+    },
+    {
+      label: "candidate key omitted",
+      input: { envelope: fresh, nowMs: ENVELOPE_NOW_MS, maxAgeMs: 1000 },
+      expected: { usable: false, reason: "missing-candidate-key" },
+    },
+    {
+      label: "empty candidate key",
+      input: { envelope: fresh, candidateKey: "", nowMs: ENVELOPE_NOW_MS, maxAgeMs: 1000 },
+      expected: { usable: false, reason: "missing-candidate-key" },
+    },
+    {
+      label: "key mismatch",
+      input: { envelope: fresh, candidateKey: "other-key", nowMs: ENVELOPE_NOW_MS, maxAgeMs: 1000 },
+      expected: { usable: false, reason: "key-mismatch" },
+    },
+    {
+      label: "zero maxAgeMs",
+      input: { envelope: fresh, candidateKey: ENVELOPE_KEY, nowMs: ENVELOPE_NOW_MS, maxAgeMs: 0 },
+      expected: { usable: false, reason: "invalid-freshness-input" },
+    },
+    {
+      label: "negative maxAgeMs",
+      input: {
+        envelope: fresh,
+        candidateKey: ENVELOPE_KEY,
+        nowMs: ENVELOPE_NOW_MS,
+        maxAgeMs: -1,
+      },
+      expected: { usable: false, reason: "invalid-freshness-input" },
+    },
+    {
+      label: "NaN maxAgeMs",
+      input: {
+        envelope: fresh,
+        candidateKey: ENVELOPE_KEY,
+        nowMs: ENVELOPE_NOW_MS,
+        maxAgeMs: Number.NaN,
+      },
+      expected: { usable: false, reason: "invalid-freshness-input" },
+    },
+    {
+      label: "NaN nowMs",
+      input: {
+        envelope: fresh,
+        candidateKey: ENVELOPE_KEY,
+        nowMs: Number.NaN,
+        maxAgeMs: 1000,
+      },
+      expected: { usable: false, reason: "invalid-freshness-input" },
+    },
+    {
+      label: "measuredAtMs in the future",
+      input: {
+        envelope: { ...fresh, measuredAtMs: ENVELOPE_NOW_MS + 1 },
+        ...defaults,
+      },
+      expected: { usable: false, reason: "future-measured-at" },
+    },
+    {
+      label: "stale envelope",
+      input: { envelope: fresh, ...defaults, nowMs: ENVELOPE_NOW_MS + 1001 },
+      expected: { usable: false, reason: "stale" },
+    },
+    {
+      label: "envelope exactly at maxAgeMs is still usable",
+      input: { envelope: fresh, ...defaults, nowMs: ENVELOPE_NOW_MS + 1000 },
+      expected: { usable: true, envelopeBytes: 20 * 1024 ** 3 },
+    },
+  ];
+  for (const c of cases) {
+    expect(admissibility(c.input)).toEqual(c.expected);
+  }
 });
