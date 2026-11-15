@@ -29,6 +29,7 @@ import {
   type WorkerRpcHostOptions,
 } from "../inference/procedures.js";
 import { dispatchProxyRequest, publishUnifiedPeerSnapshots } from "../proxy/create-proxy.js";
+import { runProfileSwitchBootRecovery } from "../residency/boot-recovery.js";
 import { listDeclaredModels } from "../residency/catalog.js";
 import { createResidencyLeaseAuditSink, defaultResidencyStorePath } from "../residency/store.js";
 import { type AgentRouterContext, router as appRouter } from "../router.js";
@@ -1469,6 +1470,20 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
   const early: EarlyStartup = { stopSearchIngest: null, stopPeerSnapshotPoller: null };
   try {
     runStartupMigration();
+    // #279 DF-06 boot recovery. Runs synchronously here, before
+    // startAgentServerAfterHandlers, so it completes before startAgentServer
+    // returns and no request can arrive first. It is inert unless leftover
+    // profile-switch rows exist (a read-only probe first, so no file is
+    // created), never blocks long (250ms busy timeout) and never crashes boot.
+    // It only terminalizes rows older than its staleness window, and claims
+    // the fence under the apply-profile owner identity, so the #284
+    // residencyApplyProfile mutation (#703), which runs executeProfileSwitch,
+    // is never left Busy by it. This is recovery, not activation: there is no
+    // opt-in flag.
+    runProfileSwitchBootRecovery({
+      path: defaultResidencyStorePath(),
+      incarnation: `agent-boot:${String(process.pid)}:${crypto.randomUUID()}`,
+    });
     if (noAuth) {
       warnNoAuthEnabled(allowPlainHttp);
     }

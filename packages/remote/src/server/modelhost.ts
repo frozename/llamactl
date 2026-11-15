@@ -3,6 +3,10 @@ import type {
   ModelHostReadiness,
   ModelHostSpecForEngine,
 } from "@llamactl/core/engines/types";
+import type {
+  LlamacppSleepController,
+  SleepResidency,
+} from "@llamactl/core/residency/llamacpp-sleep";
 import type { WorkloadKey } from "@llamactl/core/workloadRuntime";
 
 import { resolveSecret } from "@llamactl/core/config/secret";
@@ -38,6 +42,10 @@ import {
 import { type ChildProcess, spawn as nodeSpawn } from "node:child_process";
 import { basename, dirname, resolve, sep } from "node:path";
 
+import {
+  getNodeLlamacppSleepController,
+  readLlamacppSleepResidency,
+} from "../residency/llamacpp-sleep-status.js";
 import { existsSync, mkdirSync, openSync } from "../safe-fs.js";
 import {
   externalManagerOf,
@@ -143,6 +151,8 @@ export interface StatusModelHostOptions {
   env?: NodeJS.ProcessEnv;
   /** Identity resolver seams for tests; production uses the defaults. */
   identity?: PidIdentityDeps;
+  /** Test seam; undefined reads the node's published llama.cpp sleep controller (#283). */
+  sleepController?: LlamacppSleepController | null;
 }
 
 export interface StatusModelHostResult {
@@ -156,6 +166,9 @@ export interface StatusModelHostResult {
   /** Persistent conditions (reconcile errors, OOM kills) and restart count,
    *  recorded by the controller on this node; absent until one is recorded. */
   runtime?: ModelHostRuntimeStatus;
+  /** #283: present only for a live llama.cpp host its node's sleep controller
+   *  records as sleeping or sleep-pending; recorded state, never a live probe. */
+  sleep?: SleepResidency;
 }
 
 function toRuntimeEnv(env: NodeJS.ProcessEnv | undefined): NodeJS.ProcessEnv {
@@ -1290,10 +1303,19 @@ export function statusModelHost(opts: StatusModelHostOptions): StatusModelHostRe
       ...runtime,
     };
   }
+  const sleep =
+    state.engine === "llamacpp"
+      ? readLlamacppSleepResidency(
+          opts.sleepController === undefined
+            ? getNodeLlamacppSleepController()
+            : opts.sleepController,
+          opts.key.name,
+        )
+      : undefined;
   return {
     state: "Running",
     pid: state.pid,
-    ...omitUndefined({ specHash: state.specHash }),
+    ...omitUndefined({ specHash: state.specHash, sleep }),
     ...runtime,
   };
 }

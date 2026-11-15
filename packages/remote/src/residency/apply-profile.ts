@@ -51,7 +51,11 @@ import {
   type ResidencyOperationStore,
 } from "./store.js";
 
-const RESIDENCY_APPLY_PROFILE_FENCE_OWNER = "llamactl-residency-apply-profile";
+// The one owner identity every operation-fence claim on the node-local store
+// uses (only the incarnation differs). #279 DF-06 agent-boot recovery claims
+// with it too, so a recovery claim never turns later apply-profile calls into
+// a foreign-owner Busy.
+export const RESIDENCY_APPLY_PROFILE_FENCE_OWNER = "llamactl-residency-apply-profile";
 const RESIDENCY_APPLY_PROFILE_DESIRED_REVISION = 0;
 
 // Per-process registry (#693) of the AbortController behind each in-flight wet
@@ -373,11 +377,12 @@ async function runWet(
     // `profile-switch:<node>`, then B's claimOwnership bumps the token. A's
     // fenced finishOperation then fails stale-fence, A's stops/starts have
     // already run, and A's row is orphaned nonterminal — every later switch on
-    // the node is NodeBusy until #702's `recoverProfileSwitchOperations`
-    // terminalizes it (a row whose fence is not the current one is recovered,
-    // as `unknown`; no package source invokes that recovery yet, so wiring it
-    // into a startup path is what makes the bound automatic). The re-check
-    // below closes the snapshot-to-claim gap down to the synchronous
+    // the node is NodeBusy until #702's recovery terminalizes it (a row whose
+    // fence is not the current one is recovered, as `unknown`). The agent runs
+    // the synchronous variant at boot (#279 DF-06, boot-recovery.ts), so the
+    // bound is the next agent start once the row is older than the boot
+    // staleness window; nothing recovers it while the agent keeps running.
+    // The re-check below closes the snapshot-to-claim gap down to the synchronous
     // listNonterminal → claimOwnership pair; a claim landing between those two
     // calls, or between our claim and beginOperation, is not excluded. In the
     // latter order our beginOperation fails stale-fence and is reported refused

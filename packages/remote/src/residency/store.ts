@@ -22,6 +22,17 @@
 //
 // Operation phases remain caller-checked.
 //
+// touchOperation is a liveness heartbeat for a long-running operation (the
+// profile-switch executor calls it at every step boundary). It is one fenced
+// UPDATE of updated_at_ms only: it never bumps version, phase or ownership, so
+// a later finishOperation still matches the version the writer began with. It
+// never moves updated_at_ms backwards. A fence that is no longer current
+// returns stale-fence, and a missing or terminal row returns not-found.
+//
+// claimOwnershipWhen runs a caller's decision over the nonterminal rows and the
+// claim inside ONE IMMEDIATE transaction, so no other writer can begin an
+// operation or claim between the read the decision saw and the claim.
+//
 // reservationGiB is admitted against a caller-supplied nodeBudgetGiB on
 // beginOperation: the sum of pending and committed reservations, plus the new
 // one, must not exceed it, else the write is refused as
@@ -173,6 +184,14 @@ type MutationInput = {
   nowMs: number;
 };
 
+type TouchOperationInput = {
+  fenceToken: number;
+  operationId: string;
+  nowMs: number;
+};
+
+type ClaimWhenResult = { claimed: true; fence: Fence } | { claimed: false };
+
 type FinishOperationInput = MutationInput & {
   outcome: ResidencyOperationOutcome;
   detail?: string;
@@ -186,10 +205,15 @@ type MutationResult = { ok: true } | { ok: false; reason: ResidencyStoreFailure 
 
 export type ResidencyOperationStore = {
   claimOwnership: (input: ClaimInput) => Fence;
+  claimOwnershipWhen: (
+    input: ClaimInput,
+    decide: (nonterminal: ResidencyOperationRecord[]) => boolean,
+  ) => ClaimWhenResult;
   currentFence: () => Fence | null;
   beginOperation: (input: BeginOperationInput) => BeginOperationResult;
   commitReservation: (input: MutationInput) => MutationResult;
   finishOperation: (input: FinishOperationInput) => MutationResult;
+  touchOperation: (input: TouchOperationInput) => MutationResult;
   getOperation: (operationId: string) => ResidencyOperationRecord | null;
   listNonterminal: () => ResidencyOperationRecord[];
   close: () => void;
@@ -250,10 +274,22 @@ const RESIDENCY_STATE_COLUMNS =
 
 export function openResidencyOperationStore(input: {
   path: string;
+  busyTimeoutMs?: number;
 }): ResidencyOperationStore & ResidencyLifecycleStore {
-  const db = openDb(input.path);
+  const db = openDb(input.path, input.busyTimeoutMs ?? 15000);
   const claimTx = db.transaction(
     (claimInput: ClaimInput): Fence => claimOwnershipTx(db, claimInput),
+  );
+  const claimWhenTx = db.transaction(
+    (
+      claimInput: ClaimInput,
+      decide: (nonterminal: ResidencyOperationRecord[]) => boolean,
+    ): ClaimWhenResult => {
+      if (!decide(listNonterminalRows(db))) {
+        return { claimed: false };
+      }
+      return { claimed: true, fence: claimOwnershipTx(db, claimInput) };
+    },
   );
   const beginTx = db.transaction(
     (beginInput: BeginOperationInput): BeginOperationResult => beginOperationTx(db, beginInput),
@@ -281,6 +317,12 @@ export function openResidencyOperationStore(input: {
         throw new Error("claimOwnership requires a non-empty ownerId and incarnation");
       }
       return claimTx.immediate(claimInput);
+    },
+    claimOwnershipWhen: (claimInput, decide) => {
+      if (!isNonEmpty(claimInput.ownerId) || !isNonEmpty(claimInput.incarnation)) {
+        throw new Error("claimOwnershipWhen requires a non-empty ownerId and incarnation");
+      }
+      return claimWhenTx.immediate(claimInput, decide);
     },
     close: () => {
       db.close();
@@ -316,6 +358,16 @@ export function openResidencyOperationStore(input: {
     },
     listNonterminal: () => listNonterminalRows(db),
     listResidencyStates: () => listResidencyStateRows(db),
+    touchOperation: (touchInput) => {
+      if (
+        !isNonEmpty(touchInput.operationId) ||
+        !isFenceToken(touchInput.fenceToken) ||
+        !Number.isFinite(touchInput.nowMs)
+      ) {
+        return { ok: false, reason: "invalid-input" };
+      }
+      return touchOperationStmt(db, touchInput);
+    },
     transitionResidencyState: (transitionInput) => {
       const invalid = validateTransitionInput(transitionInput);
       if (invalid !== null) {
@@ -361,14 +413,18 @@ export type ResidencyStoreSnapshot =
 // never migrate, never claim ownership — a status read must leave the file
 // byte-identical. Opened readonly but NOT immutable: immutable=1 skips the
 // WAL, so rows a live writer has not checkpointed yet would go unseen.
-export function readResidencyStoreSnapshot(path: string): ResidencyStoreSnapshot {
+export function readResidencyStoreSnapshot(
+  path: string,
+  opts?: { busyTimeoutMs?: number },
+): ResidencyStoreSnapshot {
   if (!existsSync(path)) {
     return { path, present: false };
   }
+  const busyTimeoutMs = opts?.busyTimeoutMs ?? 15000;
   let db: Database | null = null;
   try {
     db = new Database(path, { readonly: true });
-    db.run("PRAGMA busy_timeout = 15000");
+    db.run(`PRAGMA busy_timeout = ${String(busyTimeoutMs)}`);
     return { path, present: true, nonterminal: listNonterminalRows(db) };
   } catch (error: unknown) {
     return { path, present: true, error: (error as Error).message };
@@ -710,6 +766,27 @@ function finishOperationTx(db: Database, input: FinishOperationInput): MutationR
     input.operationId,
   );
   return { ok: true };
+}
+
+// One statement, so it is atomic without an explicit transaction: the fence
+// comparison and the write happen together. The follow-up read only names the
+// refusal.
+function touchOperationStmt(db: Database, input: TouchOperationInput): MutationResult {
+  const changed = db
+    .query(
+      `UPDATE operations SET updated_at_ms = MAX(updated_at_ms, ?)
+       WHERE operation_id = ? AND phase != 'terminal'
+         AND EXISTS (SELECT 1 FROM authority WHERE id = 1 AND fence_token = ?)`,
+    )
+    .run(input.nowMs, input.operationId, input.fenceToken);
+  if (changed.changes > 0) {
+    return { ok: true };
+  }
+  const authority = readAuthority(db);
+  if (authority?.fenceToken !== input.fenceToken) {
+    return { ok: false, reason: "stale-fence" };
+  }
+  return { ok: false, reason: "not-found" };
 }
 
 function transitionResidencyStateTx(
