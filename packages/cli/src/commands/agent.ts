@@ -1,5 +1,12 @@
 import { findTcpListenerAddresses } from "@llamactl/core/probe";
-import { agentConfig as agentConfigMod, auth, startAgentServer, tls } from "@llamactl/remote";
+import {
+  agentConfig as agentConfigMod,
+  auth,
+  createChatCompletionsAdmission,
+  type RequestAdmission,
+  startAgentServer,
+  tls,
+} from "@llamactl/remote";
 import { hostname } from "node:os";
 import { join } from "node:path";
 
@@ -296,6 +303,21 @@ Environment:
                               a session refcount registry beside the
                               lease registry once the listener binds.
                               Other values are ignored.
+  LLAMACTL_CHAT_ADMISSION_MAX_EXECUTIONS
+                              Chat-completions admission concurrency cap: a
+                              positive integer (opt-in, off by default).
+                              Counts every POST /v1/chat/completions admitted
+                              at this agent, peer-routed and via/RAG
+                              included. When set, the agent holds one
+                              admission slot for the lifetime of every
+                              admitted request and refuses overload with
+                              429/503 instead. Absent or a non-positive
+                              integer disables the gate.
+  LLAMACTL_CHAT_ADMISSION_MAX_QUEUED
+                              Chat-completions admission queue cap: a
+                              positive integer, default 16. Read only when
+                              LLAMACTL_CHAT_ADMISSION_MAX_EXECUTIONS is
+                              valid; an invalid value falls back to 16.
   LLAMACTL_AGENT_RUNTIME_ROLE Per-role runtime identity (env fallback for
                               --runtime-role).
   LLAMACTL_AGENT_MEMORY_BUDGET_BYTES
@@ -1617,6 +1639,31 @@ function residencySessionIdleOption(env: Readonly<Record<string, string | undefi
   return ms === null ? {} : { residencySessionIdleMs: ms };
 }
 
+const CHAT_ADMISSION_DEFAULT_MAX_QUEUED = 16;
+
+/**
+ * #281 (DF-08): LLAMACTL_CHAT_ADMISSION_MAX_EXECUTIONS / MAX_QUEUED as a
+ * spreadable chatCompletionsAdmission option. Off unless MAX_EXECUTIONS is a
+ * valid positive integer; an invalid or absent MAX_QUEUED falls back to the
+ * default. MAX_QUEUED is read only once MAX_EXECUTIONS is valid.
+ */
+function chatAdmissionOption(env: Readonly<Record<string, string | undefined>>): {
+  chatCompletionsAdmission?: RequestAdmission;
+} {
+  const execRaw = env["LLAMACTL_CHAT_ADMISSION_MAX_EXECUTIONS"];
+  if (execRaw === undefined) return {};
+  const maxExecutions = parsePositiveInteger(execRaw);
+  if (maxExecutions === null) return {};
+  const queuedRaw = env["LLAMACTL_CHAT_ADMISSION_MAX_QUEUED"];
+  const maxQueued =
+    queuedRaw === undefined
+      ? CHAT_ADMISSION_DEFAULT_MAX_QUEUED
+      : (parsePositiveInteger(queuedRaw) ?? CHAT_ADMISSION_DEFAULT_MAX_QUEUED);
+  return {
+    chatCompletionsAdmission: createChatCompletionsAdmission({ maxExecutions, maxQueued }),
+  };
+}
+
 export function resolveServeRuntimeIdentity(
   flags: ServeFlags,
   env: Readonly<Record<string, string | undefined>>,
@@ -1734,6 +1781,8 @@ export function buildServeOptions(
     ...(residencyLeasesOptIn(env) ? { residencyLeases: true } : {}),
     // #520: opt-in session idle timeout, honored only when residencyLeases is true.
     ...residencySessionIdleOption(env),
+    // #281 (DF-08): opt-in chat-completions admission gate, off by default.
+    ...chatAdmissionOption(env),
     // #367: per-role runtime memory identity, flags override env vars.
     ...runtimeIdentitySpread(identity),
   } as Parameters<typeof startAgentServer>[0];

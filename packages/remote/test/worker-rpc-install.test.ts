@@ -770,6 +770,9 @@ describe("I1: clean install", () => {
     // #367: per-role runtime memory identity env fallbacks read by `agent serve`, not the worker RPC.
     BASELINE_ENV.add("LLAMACTL_AGENT_RUNTIME_ROLE");
     BASELINE_ENV.add("LLAMACTL_AGENT_MEMORY_BUDGET_BYTES");
+    // #281 (DF-08) chat-completions admission slice: opt-in execution/queue caps read by agent serve, not the worker RPC.
+    BASELINE_ENV.add("LLAMACTL_CHAT_ADMISSION_MAX_EXECUTIONS");
+    BASELINE_ENV.add("LLAMACTL_CHAT_ADMISSION_MAX_QUEUED");
     const sources = join(import.meta.dir, "..", "..");
     const read = new Map<string, string[]>();
     for (const pkg of readdirSync(sources)) {
