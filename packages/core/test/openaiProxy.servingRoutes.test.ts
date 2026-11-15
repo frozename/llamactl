@@ -1003,3 +1003,141 @@ test("a withdrawn non-default ModelRun route is rejected too", async () => {
     t.cleanup();
   }
 });
+
+test("a withdrawn default llama-server ModelRun refuses its default-target pin draining", async () => {
+  // Kills: the default-target fallthrough taken for every withdrawn
+  // default id (the pin would forward to the dying engine at the default
+  // endpoint and answer 200), and a flipped endpoint check.
+  const t = tempEnv({ LLAMA_CPP_SERVER_ALIAS: "default-run-alias" });
+  try {
+    writeLlamaServerWorkload(t.dir, "default-run", {
+      rel: "org/default-run.gguf",
+      port: DEFAULT_PORT,
+      extraArgs: ["--alias", "default-run-alias"],
+    });
+    const stub = installProxyFetchStub({});
+    const release = withdrawServingRoute?.("default-run");
+
+    const res = await pinModel("default-run-alias", t.env);
+
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as ProxyErrorBody;
+    expect(body.error.code).toBe("model_not_loaded");
+    expect(body.error.state).toBe("draining");
+    expect(body.error.reason).toBe("route-withdrawn");
+    expect(res.headers.get("retry-after")).toBeNull();
+    expect(stub.chatCalls()).toHaveLength(0);
+
+    release?.();
+    const again = await pinModel("default-run-alias", t.env);
+    expect(again.status).toBe(200);
+    expect(stub.chatCalls(DEFAULT_PORT)).toHaveLength(1);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a withdrawn default-target id off the default endpoint still falls through", async () => {
+  // Kills: rejecting every withdrawn default-target id. The withdrawn
+  // workload is not the engine behind the default endpoint, so the default
+  // endpoint stays the target and the withdrawn port is never called.
+  const t = tempEnv({ LLAMA_CPP_SERVER_ALIAS: "default-side-alias" });
+  try {
+    const sidePort = fixturePort();
+    writeLlamaServerWorkload(t.dir, "side-run", {
+      rel: "org/side-run.gguf",
+      port: sidePort,
+      extraArgs: ["--alias", "default-side-alias"],
+    });
+    const stub = installProxyFetchStub({});
+    const release = withdrawServingRoute?.("side-run");
+
+    const res = await pinModel("default-side-alias", t.env);
+
+    expect(res.status).toBe(200);
+    const chats = stub.chatCalls();
+    expect(chats).toHaveLength(1);
+    expect(chats[0]).toBe(`http://127.0.0.1:${String(DEFAULT_PORT)}/v1/chat/completions`);
+    expect(stub.chatCalls(sidePort)).toHaveLength(0);
+    release?.();
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a declared 'ready' entry never unlocks a withdrawn route", async () => {
+  // Kills: dropping the non-ready guard on the declared entry, which would
+  // answer with the stale declared state 'ready' instead of the synthesized
+  // 'route-withdrawn' draining body.
+  const t = tempEnv();
+  try {
+    const hostPort = fixturePort();
+    writeModelHost(t.env, "stale-ready-host", {
+      port: hostPort,
+      aliases: ["stale-ready-pin"],
+    });
+    const stub = installProxyFetchStub({});
+    const release = withdrawServingRoute?.("stale-ready-host");
+    openaiProxy.setDeclaredModelSource(() => [
+      {
+        id: "stale-ready-pin",
+        workload: "stale-ready-host",
+        kind: "ModelHost",
+        ownerNodeId: "local",
+        state: "ready",
+        autoLoadEligible: false,
+      },
+    ]);
+
+    const res = await pinModel("stale-ready-pin", t.env);
+
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as ProxyErrorBody;
+    expect(body.error.code).toBe("model_not_loaded");
+    expect(body.error.state).toBe("draining");
+    expect(body.error.state).not.toBe("ready");
+    expect(body.error.reason).toBe("route-withdrawn");
+    expect(body.error.auto_load_eligible).toBe(false);
+    expect(stub.chatCalls()).toHaveLength(0);
+    release?.();
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a peer route whose workload key matches a withdrawn local key still routes", async () => {
+  // Kills: dropping the peer exemption from the withdrawal filter. A peer
+  // route lives on another node's engine, so a local withdrawal of the same
+  // key must not pull it.
+  const t = tempEnv();
+  try {
+    const peerPort = fixturePort();
+    const peerEndpoint = `http://127.0.0.1:${String(peerPort)}`;
+    openaiProxy.__setOpenAIProxyClusterRoutingForTests({
+      clusterPeers: [{ id: "peer-w", endpoint: peerEndpoint }],
+      peerSnapshots: new Map([
+        [
+          "peer-w",
+          {
+            workloads: [{ modelId: "peer-withdraw/model.gguf", port: peerPort }],
+            pressure: "NORMAL" as const,
+            fetchedAt: Date.now(),
+          },
+        ],
+      ]),
+    });
+    const stub = installProxyFetchStub({});
+    // Peer routes are keyed `${peer.id}:${modelId}`.
+    const release = withdrawServingRoute?.("peer-w:peer-withdraw/model.gguf");
+    expect(servingWithdrawnWorkloads().has("peer-w:peer-withdraw/model.gguf")).toBe(true);
+
+    const res = await pinModel("peer-withdraw/model.gguf", t.env);
+
+    expect(res.status).toBe(200);
+    expect(stub.chatCalls(peerPort)).toHaveLength(1);
+    expect(stub.chatCalls(DEFAULT_PORT)).toHaveLength(0);
+    release?.();
+  } finally {
+    t.cleanup();
+  }
+});

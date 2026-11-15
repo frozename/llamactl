@@ -836,7 +836,7 @@ function servingReadinessVerdict(
 type ServingRouteOutcome =
   | { routed: RoutedEntry }
   | { warming: RouteEntry }
-  | { withdrawn: RouteEntry }
+  | { withdrawn: RouteEntry; withdrawnEntries: readonly RouteEntry[] }
   | null;
 
 /**
@@ -869,7 +869,10 @@ async function servingRouteForModel(
   if (live.length === 0) {
     const first = candidates[0];
     if (first === undefined) return null;
-    return { withdrawn: first.entry };
+    return {
+      withdrawn: first.entry,
+      withdrawnEntries: candidates.map((candidate) => candidate.entry),
+    };
   }
   const winner = live[0];
   if (winner === undefined) return null;
@@ -2676,6 +2679,24 @@ function servingNotReadyRejectionFor(
 }
 
 /**
+ * #280 DF-07: true when a withdrawn local route is the engine at the default
+ * endpoint. A llama-server workload launched without an endpoint override binds
+ * LLAMA_CPP_HOST:LLAMA_CPP_PORT and records that host and port, so an exact
+ * endpoint match identifies the default llama-server ModelRun under a stop.
+ * Peer routes are never withdrawn and never match.
+ */
+function withdrawnAtDefaultEndpoint(
+  entries: readonly RouteEntry[],
+  resolved: ResolvedEnv,
+): boolean {
+  const defaultEndpoint = llamaEndpoint(resolved);
+  return entries.some(
+    (entry) =>
+      entry.isPeer !== true && `http://${entry.host}:${String(entry.port)}` === defaultEndpoint,
+  );
+}
+
+/**
  * #280 DF-07: 503 for a pin whose only routes are withdrawn (the workload is
  * being stopped). The declared catalog state wins when it carries a non-ready
  * state; otherwise a `draining` entry with reason `route-withdrawn` is
@@ -2735,10 +2756,12 @@ function servingWithdrawnRejectionFor(
  * for the stop's duration; when every candidate for the id is withdrawn, the
  * pin is answered with a `model_not_loaded` 503 in state draining (the declared
  * catalog state when one exists, else a synthesized `route-withdrawn` entry).
- * A default-target id falls through to the default endpoint for a withdrawn id,
- * mirroring the warming path: a known AC4b gap means a withdrawn default
- * llama-server ModelRun is still reachable at the default endpoint during its
- * stop.
+ * A default-target id is rejected the same way when any withdrawn candidate
+ * serves at the default endpoint (LLAMA_CPP_HOST:LLAMA_CPP_PORT): that is the
+ * default llama-server ModelRun being stopped, so the fallthrough would forward
+ * to the dying engine. A default-target id whose withdrawn routes all live on
+ * other endpoints still falls through to the default endpoint, a distinct
+ * engine the stop does not touch, mirroring the warming path.
  *
  * Known limitation: when the operator's extraArgs already pass `--alias`
  * or `-a`, server.ts skips adding `--alias LLAMA_CPP_SERVER_ALIAS`, so the
@@ -2790,9 +2813,13 @@ async function applyBodyModelRoute(
     return context;
   }
   if (outcome !== null && "withdrawn" in outcome) {
-    // Known AC4b gap: a withdrawn default llama-server ModelRun stays reachable
-    // at the default endpoint during its stop, mirroring the warming path.
-    if (defaultTargetModelIds(context.resolved).has(model)) {
+    // A default-target id falls through to the default endpoint only when no
+    // withdrawn route is the engine behind it; a withdrawn default llama-server
+    // ModelRun (it binds LLAMA_CPP_HOST:LLAMA_CPP_PORT) is refused draining.
+    if (
+      defaultTargetModelIds(context.resolved).has(model) &&
+      !withdrawnAtDefaultEndpoint(outcome.withdrawnEntries, context.resolved)
+    ) {
       clearServingWarming(model);
       return context;
     }
