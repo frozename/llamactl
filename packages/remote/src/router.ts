@@ -70,6 +70,7 @@ import { dirname, join } from "node:path";
 import { z } from "zod";
 
 import type { CompositeApplyEvent } from "./composite/types.js";
+import type { Release, RequestAdmission } from "./residency/request-admission.js";
 import type { RuntimeBackend } from "./runtime/backend.js";
 import type { RuntimeKind } from "./runtime/factory.js";
 import type { NodeRunResidency } from "./workload/noderun-schema.js";
@@ -124,6 +125,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "./sa
 import { searchLogs } from "./search/logs.js";
 import { resolveDefaultRagNode } from "./search/rag-node.js";
 import { searchSessions } from "./search/sessions.js";
+import { acquireChatSlot, admissionTrpcError } from "./server/chat-admission.js";
 import {
   startModelHost,
   statusModelHost,
@@ -725,6 +727,11 @@ export interface AgentRouterContext {
    *  runPerfSuite bridge; the agent server leaves it unset so suite
    *  schedules record "no suite runner configured". */
   benchSuiteRunner?: benchScheduleLoopMod.BenchSuiteRunner;
+  /** #281 DF-08: the shared chat admission the local chatComplete/chatStream
+   *  branches count against. Set only by the agent's requestContext (reached
+   *  over /trpc and the tunnel); in-process callers such as the RAG via-forward
+   *  pass none because they already hold the outer HTTP slot. */
+  chatAdmission?: RequestAdmission;
 }
 
 const t = initTRPC.context<AgentRouterContext>().create();
@@ -928,6 +935,76 @@ async function* streamNodeChatEvents(
   for await (const ev of stream) {
     if (signal?.aborted) break;
     yield ev;
+  }
+}
+
+/**
+ * Drive the local inproc://local chat stream: the OpenAI-compat adapter
+ * pointed at the in-process llama-server's HTTP endpoint, with usage
+ * recorded under the "local" pricing key.
+ */
+async function* localNodeChatEvents(
+  request: UnifiedAiRequest,
+  usageRoute: string | undefined,
+  signal: AbortSignal | undefined,
+): AsyncGenerator<UnifiedStreamEvent> {
+  const { env: envMod } = await import("@llamactl/core");
+  const { createOpenAICompatProvider } = await import("@novaproto/contracts");
+  const rEnv = envMod.resolveEnv();
+  const provider = createOpenAICompatProvider({
+    name: "local",
+    baseUrl: `http://${rEnv.LLAMA_CPP_HOST}:${rEnv.LLAMA_CPP_PORT}/v1`,
+    apiKey: "local",
+    onUsageObservation: (snapshot) => {
+      recordChatUsageObservation(snapshot, "local", usageRoute);
+    },
+  });
+  yield* streamNodeChatEvents(provider, request, signal);
+}
+
+/**
+ * #281 DF-08: the admitted chatComplete path for the inproc://local
+ * branch. The slot spans dispatch through body consumption; a non-ok
+ * upstream body is cancelled so nothing streams after the throw, and a
+ * forward that rejects still releases exactly once through the finally.
+ */
+async function admittedLocalChatComplete(
+  admission: RequestAdmission,
+  body: string,
+  signal: AbortSignal | undefined,
+  usageRoute: string | undefined,
+): Promise<UnifiedAiResponse> {
+  const { dispatchProxyRequest } = await import("./proxy/create-proxy.js");
+  let release: Release;
+  try {
+    release = await acquireChatSlot(admission, {
+      bytes: Buffer.byteLength(body),
+      ...(signal !== undefined ? { signal } : {}),
+    });
+  } catch (err) {
+    throw admissionTrpcError(err);
+  }
+  try {
+    const res = await dispatchProxyRequest(
+      new Request("http://local/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body,
+        ...(signal !== undefined ? { signal } : {}),
+      }),
+    );
+    if (!res.ok) {
+      await res.body?.cancel().catch(() => undefined);
+      throw new TRPCError({
+        code: "INTERNAL_SERVER_ERROR",
+        message: `local chat ${String(res.status)}`,
+      });
+    }
+    const response = (await res.json()) as UnifiedAiResponse;
+    recordChatUsage(response, "local", usageRoute);
+    return response;
+  } finally {
+    release();
   }
 }
 
@@ -1604,7 +1681,7 @@ export const router = t.router({
         }),
       }),
     )
-    .mutation(async ({ input, signal }) => {
+    .mutation(async ({ ctx, input, signal }) => {
       const {
         resolveProjectNodeTarget,
         appendProjectRoutingJournal,
@@ -1625,7 +1702,21 @@ export const router = t.router({
       if (resolved.node.endpoint === "inproc://local") {
         // Local agent — short-circuit through the shared proxy dispatch;
         // it is the legacy openaiProxy call unless LLAMACTL_UNIFIED_PROXY=1.
+        // #281 DF-08: with a shared admission on the context (the agent's
+        // requestContext sets it for /trpc and tunnel-relayed calls) the
+        // dispatch is counted against the chat cap; a refusal is a typed
+        // TRPCError and never retries on another model. In-process callers
+        // like the RAG via-forward pass none: they hold the outer slot.
         const { dispatchProxyRequest } = await import("./proxy/create-proxy.js");
+        const admission = ctx.chatAdmission;
+        if (admission !== undefined) {
+          return await admittedLocalChatComplete(
+            admission,
+            JSON.stringify({ ...input.request, stream: false }),
+            signal,
+            usageRoute,
+          );
+        }
         const req = new Request("http://local/v1/chat/completions", {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -1679,7 +1770,7 @@ export const router = t.router({
         }),
       }),
     )
-    .subscription(async function* ({ input, signal }) {
+    .subscription(async function* ({ ctx, input, signal }) {
       const {
         resolveProjectNodeTarget,
         appendProjectRoutingJournal,
@@ -1702,18 +1793,30 @@ export const router = t.router({
       // the in-process llama-server's HTTP endpoint (not the
       // sentinel). resolveEnv() gives us LLAMA_CPP_HOST/PORT.
       if (resolved.node.endpoint === "inproc://local") {
-        const { env: envMod } = await import("@llamactl/core");
-        const { createOpenAICompatProvider } = await import("@novaproto/contracts");
-        const rEnv = envMod.resolveEnv();
-        const provider = createOpenAICompatProvider({
-          name: "local",
-          baseUrl: `http://${rEnv.LLAMA_CPP_HOST}:${rEnv.LLAMA_CPP_PORT}/v1`,
-          apiKey: "local",
-          onUsageObservation: (snapshot) => {
-            recordChatUsageObservation(snapshot, "local", usageRoute);
-          },
-        });
-        yield* streamNodeChatEvents(provider, input.request as UnifiedAiRequest, signal);
+        // #281 DF-08: with a shared admission on the context (the agent's
+        // requestContext sets it for /trpc and tunnel-relayed calls) the
+        // slot is held for the whole stream lifetime; a refusal is a typed
+        // TRPCError, never a retry on another model. In-process callers
+        // pass none: they hold the outer slot.
+        const admission = ctx.chatAdmission;
+        if (admission !== undefined) {
+          let release: Release;
+          try {
+            release = await acquireChatSlot(admission, {
+              bytes: Buffer.byteLength(JSON.stringify(input.request)),
+              ...(signal !== undefined ? { signal } : {}),
+            });
+          } catch (err) {
+            throw admissionTrpcError(err);
+          }
+          try {
+            yield* localNodeChatEvents(input.request as UnifiedAiRequest, usageRoute, signal);
+          } finally {
+            release();
+          }
+          return;
+        }
+        yield* localNodeChatEvents(input.request as UnifiedAiRequest, usageRoute, signal);
         return;
       }
 

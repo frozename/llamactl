@@ -270,12 +270,18 @@ export interface StartAgentOptions {
   /**
    * Opt-in request-admission gate (#281 DF-08), absent by default. When set,
    * `startAgentServer` holds an admission slot for the whole response lifetime
-   * of POST /v1/chat/completions, POST /v1/messages and POST /v1/responses and
-   * refuses overload instead of queueing unbounded work upstream. One shared
-   * instance and one limit cover all three ingresses admitted at this agent —
-   * peer-routed and via/RAG included — under one ingress key and one principal;
-   * physical per-node accounting comes later. Worker RPC and the unified proxy
-   * remain later slices.
+   * and refuses overload instead of queueing unbounded work upstream. Covered:
+   * POST /v1/chat/completions, POST /v1/messages, POST /v1/responses and
+   * generic POST /v1/completions, plus router chatComplete/chatStream on
+   * inproc://local — both over /trpc and relayed through the tunnel client's
+   * contextFor, which inject this instance into the router context. The
+   * in-process RAG via-forward is covered by its outer HTTP slot. Not
+   * counted: /v1/embeddings and RAG embedding (a nested embedder would
+   * self-deadlock), /v1/rerank and the other generic /v1/* POSTs, the planner
+   * local provider and Worker RPC, which are all deferred. One shared
+   * instance and one limit cover everything admitted at this agent —
+   * peer-routed and via/RAG included — under one ingress key and one
+   * principal; physical per-node accounting comes later.
    */
   chatCompletionsAdmission?: RequestAdmission;
   /**
@@ -675,10 +681,10 @@ function handleAuthedApiRoutes(
       ...(opts.fleetJournalPath !== undefined ? { journalPath: opts.fleetJournalPath } : {}),
     });
   }
-  // #281 DF-08: the Anthropic Messages and OpenAI Responses ingresses share the
-  // chat-completions admission instance. Exact pathname match, as core's
-  // parseIncoming does; when the option is absent these fall through to the
-  // generic proxy branch untouched.
+  // #281 DF-08: the Anthropic Messages, OpenAI Responses and generic
+  // completions ingresses share the chat-completions admission instance.
+  // Exact pathname match, as core's parseIncoming does; when the option is
+  // absent these fall through to the generic proxy branch untouched.
   const proxyAdmission = opts.chatCompletionsAdmission;
   if (isAdmittedProxyIngress(req, url, proxyAdmission)) {
     return handleAdmittedProxyRoute(req, url, clientAddress, opts, gate, server, proxyAdmission);
@@ -693,6 +699,11 @@ function handleAuthedApiRoutes(
   return null;
 }
 
+// #281 DF-08: the generic /v1/completions ingress shares the chat cap through
+// the same create-proxy dispatchProxyRequest branch every other /v1/* route
+// takes. /v1/embeddings is excluded on purpose: an embedder call nested inside
+// an admitted chat (RAG) would self-deadlock behind its own outer slot.
+// /v1/rerank and the other generic /v1/* POSTs are deferred.
 function isAdmittedProxyIngress(
   req: Request,
   url: URL,
@@ -701,7 +712,9 @@ function isAdmittedProxyIngress(
   return (
     admission !== undefined &&
     req.method === "POST" &&
-    (url.pathname === "/v1/messages" || url.pathname === "/v1/responses")
+    (url.pathname === "/v1/messages" ||
+      url.pathname === "/v1/responses" ||
+      url.pathname === "/v1/completions")
   );
 }
 
@@ -736,9 +749,10 @@ function handleChatCompletionsRoute(
   );
 }
 
-// #281 DF-08: /v1/messages and /v1/responses share the chat-completions
-// admission instance. Auth runs before any acquire; record=false so the bearer
-// use admitted here is not double-counted when handleOpenAIRoute re-checks it.
+// #281 DF-08: /v1/messages, /v1/responses and generic /v1/completions share
+// the chat-completions admission instance. Auth runs before any acquire;
+// record=false so the bearer use admitted here is not double-counted when
+// handleOpenAIRoute re-checks it.
 // A forward that rejects (a unified-proxy throw) has already released its slot
 // inside admitChatCompletions; surfacing it as a reset socket would let the
 // rejection escape Bun.serve unhandled, so it is collapsed to a 502.
@@ -820,6 +834,12 @@ function requestContext(
   // Assigned field by field so a renamed context field fails to compile.
   const context: AgentRouterContext & InferenceRpcContext = {};
   if (opts.fleetJournalPath !== undefined) context.fleetJournalPath = opts.fleetJournalPath;
+  // #281 DF-08: the shared chat admission reaches the router's local chat
+  // branches through both /trpc and the tunnel client's contextFor, since
+  // both build their context here.
+  if (opts.chatCompletionsAdmission !== undefined) {
+    context.chatAdmission = opts.chatCompletionsAdmission;
+  }
   if (claims !== null) context.inferenceClaims = claims;
   return context;
 }
