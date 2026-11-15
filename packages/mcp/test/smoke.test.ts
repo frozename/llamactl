@@ -298,6 +298,7 @@ describe("@llamactl/mcp read surface", () => {
       "llamactl.rag.store",
       "llamactl.reconciler.kick",
       "llamactl.residency.forceUnload",
+      "llamactl.residency.plan",
       "llamactl.residency.status",
       "llamactl.server.status",
       "llamactl.server.stop",
@@ -1213,14 +1214,15 @@ describe("@llamactl/mcp M.1 pipeline-tool pickup", () => {
     // surface-parity tool + 6 from the project surface-parity tools +
     // 2 from the server/reconciler control tools + 12 from the dotted
     // fleet/admit/supervisor/models surface + 1 from the #278 (DF-05)
-    // llamactl.residency.forceUnload operator tool; the retained underscore
+    // llamactl.residency.forceUnload operator tool + 1 from the #284
+    // (DF-11) llamactl.residency.plan read tool; the retained underscore
     // aliases use the `llamactl_` prefix and are not counted here).
     const { client } = await connected();
     const list = await client.listTools();
     const llamactlTools = list.tools
       .map((t) => t.name)
       .filter((n) => n.startsWith("llamactl.") && !n.startsWith("llamactl.pipeline."));
-    expect(llamactlTools.length).toBe(57);
+    expect(llamactlTools.length).toBe(58);
   });
 });
 

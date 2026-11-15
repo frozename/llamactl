@@ -18,6 +18,7 @@ import { listLocalRoutes, migrateLegacySingletonRuntime } from "@llamactl/core/w
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
 import { join } from "node:path";
 
+import type { RequestAdmission } from "../residency/request-admission.js";
 import type { ModelRun } from "../workload/schema.js";
 
 import {
@@ -62,6 +63,7 @@ import {
   type ServiceCredentialBinding,
   unauthorizedResponse,
 } from "./auth.js";
+import { admitChatCompletions } from "./chat-admission.js";
 import { handleInstallScript, type InstallScriptHandlerOptions } from "./install-script.js";
 import { publishAgentMdns, type PublishedAgent } from "./mdns.js";
 import {
@@ -264,6 +266,17 @@ export interface StartAgentOptions {
    * does not carry over to a restarted agent.
    */
   residencySessionIdleMs?: number;
+  /**
+   * Opt-in request-admission gate (#281 DF-08), absent by default. When set,
+   * `startAgentServer` holds an admission slot for the whole response lifetime
+   * of POST /v1/chat/completions and refuses overload instead of queueing
+   * unbounded work upstream. This slice counts every chat-completions request
+   * admitted at this agent — peer-routed and via/RAG included — under one
+   * ingress key and one principal; physical per-node accounting comes later.
+   * The other ingresses (/v1/messages, /v1/responses, Worker RPC, the
+   * unified proxy) are later slices.
+   */
+  chatCompletionsAdmission?: RequestAdmission;
   /**
    * Per-role runtime memory budget. Sets the identity (role + optional
    * memory budget) so the Prometheus gauges emit per-role series. When
@@ -652,14 +665,7 @@ function handleAuthedApiRoutes(
   // through to the legacy openai-proxy path below. Non-POST / other
   // paths under /v1/* fall straight through to handleOpenAIRoute.
   if (req.method === "POST" && url.pathname === "/v1/chat/completions") {
-    const denied = authGateReject(req, url.pathname, clientAddress, opts, gate);
-    if (denied) return denied;
-    server.timeout?.(req, proxiedRouteIdleSeconds());
-    return handleRagChatCompletions(req, {
-      appRouter,
-      fallback: (forwarded) =>
-        handleOpenAIRoute(forwarded, url, clientAddress, opts, gate, server, false),
-    });
+    return handleChatCompletionsRoute(req, url, clientAddress, opts, gate, server);
   }
   if (req.method === "GET" && url.pathname === "/v1/fleet/snapshot") {
     const denied = authGateReject(req, url.pathname, clientAddress, opts, gate);
@@ -676,6 +682,37 @@ function handleAuthedApiRoutes(
     return handleOpenAIRoute(req, url, clientAddress, opts, gate, server);
   }
   return null;
+}
+
+// #281 (DF-08): the chat-completions branch is split out so the admission
+// gate is opt-in with no closure or wrapper on the flag-off path — the
+// existing RAG/proxy call stays exactly as it was when no admission is set.
+function handleChatCompletionsRoute(
+  req: Request,
+  url: URL,
+  clientAddress: ClientAddress | null,
+  opts: StartAgentOptions,
+  gate: NoAuthGate,
+  server: AgentFetchServer,
+): Response | Promise<Response> {
+  const denied = authGateReject(req, url.pathname, clientAddress, opts, gate);
+  if (denied) return denied;
+  server.timeout?.(req, proxiedRouteIdleSeconds());
+  const admission = opts.chatCompletionsAdmission;
+  if (admission === undefined) {
+    return handleRagChatCompletions(req, {
+      appRouter,
+      fallback: (forwarded) =>
+        handleOpenAIRoute(forwarded, url, clientAddress, opts, gate, server, false),
+    });
+  }
+  return admitChatCompletions(req, admission, (admitted) =>
+    handleRagChatCompletions(admitted, {
+      appRouter,
+      fallback: (forwarded) =>
+        handleOpenAIRoute(forwarded, url, clientAddress, opts, gate, server, false),
+    }),
+  );
 }
 
 function handleMetricsRoute(

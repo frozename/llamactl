@@ -454,7 +454,7 @@ describe("llamactl residency status", () => {
 
     test("rejects unknown subcommands", async () => {
       const residency = await loadResidency();
-      await expectRefusal(residency, ["plan"], "Unknown residency subcommand: plan");
+      await expectRefusal(residency, ["bogus"], "Unknown residency subcommand: bogus");
     });
 
     test("prints usage with no arguments", async () => {
