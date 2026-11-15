@@ -780,8 +780,12 @@ describe("worker RPC admission (#281)", () => {
     }
   });
 
-  // Kills: acquire not given the stream's abort signal (orphan start or
-  // leaked slot); a grant arriving after abort not released.
+  // Kills: a stream abort not stopping the queued attempt — the stream's
+  // AbortSignal never reaching the attempt's controller, or acquire not
+  // given that controller's signal — so the waiter stays queued and the
+  // backend starts once the HTTP slot frees (orphan start, or a slot held
+  // by an attempt nobody reads). The waiter is dequeued Aborted, never
+  // granted, so no release is expected.
   test("(d) a stream abort while queued leaves no orphan", async () => {
     const adm = countedAdmission(
       createChatCompletionsAdmission({ maxExecutions: 1, maxQueued: 4 }),
@@ -818,6 +822,47 @@ describe("worker RPC admission (#281)", () => {
     } finally {
       await releaseSlot(httpReader);
     }
+  });
+
+  // Kills: the pending.then callback in acquireAdmission storing a grant
+  // without first checking whether the attempt already settled. A free
+  // slot is granted synchronously inside acquire(), but the callback that
+  // would store its release runs a microtask later; a host.cancel in that
+  // gap settles the attempt with no stored release, so only that callback
+  // can hand the slot back. Raw admission (no counting wrapper) keeps the
+  // grant synchronous, so the race is deterministic.
+  test("(d) host.cancel in the same tick as a free-slot grant releases the slot", async () => {
+    const adm = rawAdmission({ maxExecutions: 1 });
+    const { backend, runs } = controllableBackend();
+    const h = hostWith({ backend, admission: adm });
+    expect(submitTo(h, "att-d-race").outcome).toBe("accepted");
+    const it = streamIterator(h, "att-d-race");
+    // Starts the generator: acquire() runs and the free slot is granted
+    // before it.next() returns; the grant's .then has not run yet.
+    const first = it.next();
+    expect(adm.snapshot().executing).toBe(1);
+    expect(h.cancel(CLAIMS, { attemptId: "att-d-race" }).outcome).toBe("cancelled");
+    const opened = await awaitBounded(first, 2_000, "race attempt first frame");
+    expect(opened.done).toBe(false);
+    const frames = await collectFrames(it, 2_000);
+    expect(terminalOutcomeOf(frames)).toBe("cancelled");
+    const status = await waitForTerminal(h, "att-d-race");
+    expect(status.terminal).toMatchObject({ outcome: "cancelled", started: false });
+    expect(runs).toHaveLength(0);
+    expect(adm.snapshot()).toMatchObject({ executing: 0, queued: 0 });
+
+    // The cap is whole again: the next attempt is admitted straight to its
+    // backend instead of queueing behind a leaked slot.
+    expect(submitTo(h, "att-d-race-next").outcome).toBe("accepted");
+    const next = streamIterator(h, "att-d-race-next");
+    expectAcceptedFrame(await nextFrameWithin(next, 500));
+    const content = await nextFrameWithin(next, 500);
+    expect(content).toMatchObject({ frame: "event" });
+    if (content.frame === "event") expect(content.event.type).toBe("content");
+    expect(adm.snapshot()).toMatchObject({ executing: 1, queued: 0 });
+    onlyRun(runs).release();
+    expect(terminalOutcomeOf(await collectFrames(next))).toBe("completed");
+    expect(adm.snapshot().executing).toBe(0);
   });
 
   // Kills: refusal mapped to target-unavailable; retryAfterMs dropped or
