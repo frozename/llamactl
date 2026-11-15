@@ -7,7 +7,11 @@
 // residencyPlan.query and renders budget source, victims, replacements,
 // protected workloads or a refusal reason; a refusal is a successful dry-run
 // answer and exits 0, never starting, stopping, loading or writing the store.
-// force-unload is the one deliberate mutation here: it drives a workload through
+// apply-profile is the dry-run-by-default profile switch (wired: it records an
+// operation and stops/starts workloads when run with --execute --yes).
+// cancel-operation requests an abort of one of those in-flight switches by
+// operationId; it is process-local and destructive. force-unload is the other
+// deliberate mutation here: it drives a workload through
 // the lease fence, revoking active leases and auditing any revocation as an
 // operator override (an idle unload, with no leases held, writes no lease audit
 // row).
@@ -24,12 +28,14 @@ Subcommands:
   status --node <name> [--json]   Read-only residency status: NodeRun policy, memory budget, the serving process's residency store and its per-workload lease/drain state. Never wakes a model or mutates state.
   plan --node <name> --to <profile> [--from <profile>] [--json]   Read-only dry-run profile switch: budget source, victims, replacements, protected workloads or refusal. Never starts, stops, loads or writes the store.
   apply-profile --node <name> --to <profile> [--from <profile>] [--json]   Dry-run by default: plan and report the profile switch without touching the store. Add --execute --yes to run the switch for real (stops and starts workloads, records an operation).
+  cancel-operation <operationId> --yes [--node <name>] [--json]   Request an abort of an in-flight profile switch started by apply-profile --execute --yes in the process serving <node> (an agent serve process); it stops before its next step boundary. Process-local: a switch run in-process by a local-endpoint CLI invocation cannot be cancelled from another CLI invocation. Requires --yes.
   force-unload <workload> --reason <text> --yes [--node <name>] [--json]   Operator override of the stop fence: revoke active leases (audited as an operator override), then stop the workload. Destructive; requires --yes.
 
 Example:
   llamactl residency status --node <name> [--json]
   llamactl residency plan --node <name> --to <profile> [--json]
   llamactl residency apply-profile --node <name> --to <profile> [--from <profile>] [--execute --yes]
+  llamactl residency cancel-operation <operationId> --yes
   llamactl residency force-unload <workload> --reason <text> --yes
 `;
 
@@ -43,6 +49,10 @@ export type ResidencyForceUnloadView = Awaited<
 
 export type ResidencyApplyProfileView = Awaited<
   ReturnType<NodeClient["residencyApplyProfile"]["mutate"]>
+>;
+
+export type ResidencyCancelOperationView = Awaited<
+  ReturnType<NodeClient["residencyCancelOperation"]["mutate"]>
 >;
 
 export interface ResidencyDeps {
@@ -469,6 +479,129 @@ async function runResidencyApplyProfile(args: string[], deps: ResidencyDeps): Pr
   }
 }
 
+interface CancelOperationFlags {
+  operationId: string | undefined;
+  yes: boolean;
+  json: boolean;
+  node: string | undefined;
+}
+
+function applyCancelOperationArg(args: string[], i: number, flags: CancelOperationFlags): ArgStep {
+  const arg = required(args[i]);
+  if (arg === "--json") {
+    flags.json = true;
+    return { consumed: 1 };
+  }
+  if (arg === "--yes") {
+    flags.yes = true;
+    return { consumed: 1 };
+  }
+  if (arg === "-h" || arg === "--help") {
+    process.stdout.write(USAGE);
+    return { exit: 0 };
+  }
+  if (arg === "--node") {
+    const next = args[i + 1];
+    if (next === undefined) {
+      process.stderr.write("residency cancel-operation: --node requires a value\n");
+      return { exit: 1 };
+    }
+    flags.node = next;
+    return { consumed: 2 };
+  }
+  if (arg.startsWith("--node=")) {
+    flags.node = arg.slice("--node=".length);
+    return { consumed: 1 };
+  }
+  if (arg.startsWith("--")) {
+    process.stderr.write(`residency cancel-operation: unknown argument ${arg}\n`);
+    return { exit: 1 };
+  }
+  flags.operationId ??= arg;
+  return { consumed: 1 };
+}
+
+function parseCancelOperationArgs(args: string[]): CancelOperationFlags | { exit: number } {
+  const flags: CancelOperationFlags = {
+    operationId: undefined,
+    yes: false,
+    json: false,
+    node: undefined,
+  };
+  let i = 0;
+  while (i < args.length) {
+    const step = applyCancelOperationArg(args, i, flags);
+    if ("exit" in step) return step;
+    i += step.consumed;
+  }
+  return flags;
+}
+
+function cancelOperationUsageError(flags: CancelOperationFlags): string | null {
+  if ((flags.operationId ?? "") === "") {
+    return `an operation id is required: llamactl residency cancel-operation <operationId> --yes\n${USAGE}`;
+  }
+  if (!flags.yes) {
+    return "refusing without --yes (cancelling aborts an in-flight profile switch at its next step boundary)";
+  }
+  return null;
+}
+
+function renderCancelOperation(
+  json: boolean,
+  operationId: string,
+  result: ResidencyCancelOperationView,
+): number {
+  if (json) {
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return result.ok ? 0 : 1;
+  }
+  if (!result.ok) {
+    process.stderr.write(`residency cancel-operation: ${result.outcome}: ${result.detail}\n`);
+    return 1;
+  }
+  process.stdout.write(
+    `Cancel requested for operation ${operationId}: abort delivered; the profile switch stops before its next step boundary (a step already running completes; check residency status for the recorded outcome)\n`,
+  );
+  return 0;
+}
+
+async function runResidencyCancelOperation(args: string[], deps: ResidencyDeps): Promise<number> {
+  const parsed = parseCancelOperationArgs(args);
+  if ("exit" in parsed) return parsed.exit;
+
+  const usageError = cancelOperationUsageError(parsed);
+  if (usageError !== null) {
+    process.stderr.write(`residency cancel-operation: ${usageError}\n`);
+    return 1;
+  }
+  const operationId = parsed.operationId ?? "";
+
+  const node = parsed.node ?? getGlobals().nodeName ?? "";
+  if (node === "") {
+    process.stderr.write(`residency cancel-operation: --node <name> is required\n${USAGE}`);
+    return 1;
+  }
+  if (node === "all") {
+    process.stderr.write(
+      "residency cancel-operation: --node all is not supported; name one node\n",
+    );
+    return 1;
+  }
+
+  try {
+    const client = (deps.getNodeClientByName ?? getNodeClientByName)(node);
+    const result = await client.residencyCancelOperation.mutate({
+      operationId,
+      confirm: true,
+    });
+    return renderCancelOperation(parsed.json, operationId, result);
+  } catch (err) {
+    process.stderr.write(`residency cancel-operation: ${(err as Error).message}\n`);
+    return 1;
+  }
+}
+
 interface ForceUnloadFlags {
   workload: string | undefined;
   reason: string | undefined;
@@ -630,6 +763,9 @@ export async function runResidency(args: string[], deps: ResidencyDeps = {}): Pr
   }
   if (sub === "apply-profile") {
     return await runResidencyApplyProfile(rest, deps);
+  }
+  if (sub === "cancel-operation") {
+    return await runResidencyCancelOperation(rest, deps);
   }
   if (sub === "force-unload") {
     return await runResidencyForceUnload(rest, deps);

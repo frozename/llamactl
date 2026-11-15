@@ -10,6 +10,7 @@ export function registerResidencyTools(server: McpServer): void {
   registerResidencyStatus(server);
   registerResidencyPlan(server);
   registerResidencyApplyProfile(server);
+  registerResidencyCancelOperation(server);
   registerResidencyForceUnload(server);
 }
 
@@ -109,6 +110,46 @@ function registerResidencyApplyProfile(server: McpServer): void {
         tool: "llamactl.residency.applyProfile",
         input: { dryRun, node, to, ...(from !== undefined ? { from } : {}) },
         dryRun,
+        result,
+      });
+      return { ...toTextContent(result), ...(result.ok ? {} : { isError: true }) };
+    },
+  );
+}
+
+function registerResidencyCancelOperation(server: McpServer): void {
+  server.registerTool(
+    "llamactl.residency.cancelOperation",
+    {
+      title: "Cancel an in-flight residency profile switch",
+      description:
+        "Mirrors the remote residencyCancelOperation mutation. The id comes from llamactl.residency.applyProfile (operationId / busy.operationId / inFlightOperationId) or residency status. Returns cancel-requested / not-found / already-terminal / not-owned-by-this-process. cancel-requested means the abort was delivered and the switch stops at its next step boundary; the recorded outcome lives on the operation. It is process-local: it reaches only switches running in this MCP server process. `confirm: true` is required.",
+      inputSchema: {
+        operationId: z.string().min(1).describe("Id of the in-flight profile-switch operation."),
+        confirm: z.boolean().default(false).describe("Must be true to request the cancel."),
+      },
+      annotations: { destructiveHint: true, readOnlyHint: false },
+    },
+    async (input) => {
+      const { operationId, confirm } = input;
+      if (!confirm) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "refusing without confirm: true; cancelling aborts an in-flight profile switch",
+            },
+          ],
+        };
+      }
+      const caller = router.createCaller({});
+      const result = await caller.residencyCancelOperation({ operationId, confirm: true });
+      appendAudit({
+        server: SERVER_SLUG,
+        tool: "llamactl.residency.cancelOperation",
+        input: { operationId },
+        dryRun: false,
         result,
       });
       return { ...toTextContent(result), ...(result.ok ? {} : { isError: true }) };

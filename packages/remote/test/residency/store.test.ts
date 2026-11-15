@@ -77,6 +77,15 @@ type ResidencyOperationStore = {
   beginOperation: (input: BeginOperationInput) => BeginOperationResult;
   commitReservation: (input: MutationInput) => MutationResult;
   finishOperation: (input: FinishOperationInput) => MutationResult;
+  touchOperation: (input: {
+    fenceToken: number;
+    operationId: string;
+    nowMs: number;
+  }) => MutationResult;
+  claimOwnershipWhen: (
+    input: { ownerId: string; incarnation: string },
+    decide: (nonterminal: OperationRecord[]) => boolean,
+  ) => { claimed: true; fence: Fence } | { claimed: false };
   getOperation: (operationId: string) => OperationRecord | null;
   listNonterminal: () => OperationRecord[];
   close: () => void;
@@ -653,6 +662,135 @@ describe("reopen persistence and schema", () => {
       expect(reopened.getOperation("op-1")).toEqual(record);
     } finally {
       reopened.close();
+    }
+  });
+});
+
+// #279 DF-06: the step-boundary heartbeat and the atomic boot claim.
+describe("touchOperation and claimOwnershipWhen", () => {
+  test("S-T1 a current-fence touch refreshes updatedAtMs only, never backwards", async () => {
+    const mod = await load();
+    expect(typeof mod?.openResidencyOperationStore).toBe("function");
+    const store = openStore(mod!);
+    try {
+      store.claimOwnership({ ownerId: "owner-a", incarnation: "inc-a" });
+      requireOkRecord(store.beginOperation(beginInput({ nowMs: 1_000 })));
+
+      expect(store.touchOperation({ fenceToken: 1, operationId: "op-1", nowMs: 5_000 })).toEqual({
+        ok: true,
+      });
+      expect(store.getOperation("op-1")).toEqual(expectedRecord({ updatedAtMs: 5_000 }));
+
+      // an earlier clock reading never moves the row back in time
+      expect(store.touchOperation({ fenceToken: 1, operationId: "op-1", nowMs: 2_000 })).toEqual({
+        ok: true,
+      });
+      expect(store.getOperation("op-1")?.updatedAtMs).toBe(5_000);
+
+      // the version is untouched, so the writer's finish still matches it
+      expect(
+        store.finishOperation({
+          fenceToken: 1,
+          operationId: "op-1",
+          expectedVersion: 1,
+          nowMs: 6_000,
+          outcome: "succeeded",
+        }),
+      ).toEqual({ ok: true });
+    } finally {
+      store.close();
+    }
+  });
+
+  test("S-T2 a stale-fence touch is refused and writes nothing", async () => {
+    const mod = await load();
+    expect(typeof mod?.openResidencyOperationStore).toBe("function");
+    const store = openStore(mod!);
+    try {
+      store.claimOwnership({ ownerId: "owner-a", incarnation: "inc-a" });
+      const before = requireOkRecord(store.beginOperation(beginInput({ nowMs: 1_000 })));
+      store.claimOwnership({ ownerId: "owner-b", incarnation: "inc-b" });
+
+      expect(store.touchOperation({ fenceToken: 1, operationId: "op-1", nowMs: 9_000 })).toEqual({
+        ok: false,
+        reason: "stale-fence",
+      });
+      expect(store.getOperation("op-1")).toEqual(before);
+
+      expect(store.touchOperation({ fenceToken: 2, operationId: "nope", nowMs: 9_000 })).toEqual({
+        ok: false,
+        reason: "not-found",
+      });
+      expect(store.touchOperation({ fenceToken: 0, operationId: "op-1", nowMs: 9_000 })).toEqual({
+        ok: false,
+        reason: "invalid-input",
+      });
+
+      expect(
+        store.finishOperation({
+          fenceToken: 2,
+          operationId: "op-1",
+          expectedVersion: 1,
+          nowMs: 9_000,
+          outcome: "failed",
+        }),
+      ).toEqual({ ok: true });
+      // a terminal row is never touched
+      expect(store.touchOperation({ fenceToken: 2, operationId: "op-1", nowMs: 99_000 })).toEqual({
+        ok: false,
+        reason: "not-found",
+      });
+      expect(store.getOperation("op-1")?.updatedAtMs).toBe(9_000);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("S-T3 claimOwnershipWhen claims only on a yes, and holds the write lock while deciding", async () => {
+    const mod = await load();
+    expect(typeof mod?.openResidencyOperationStore).toBe("function");
+    const store = openStore(mod!);
+    try {
+      store.claimOwnership({ ownerId: "owner-a", incarnation: "inc-a" });
+      requireOkRecord(store.beginOperation(beginInput()));
+
+      const seen: string[][] = [];
+      expect(
+        store.claimOwnershipWhen({ ownerId: "owner-b", incarnation: "inc-b" }, (rows) => {
+          seen.push(rows.map((row) => row.operationId));
+          return false;
+        }),
+      ).toEqual({ claimed: false });
+      expect(store.currentFence()?.fenceToken).toBe(1);
+
+      const other = new Database(dbPath);
+      other.run("PRAGMA busy_timeout = 20");
+      let otherWrite = "not attempted";
+      try {
+        const claim = store.claimOwnershipWhen(
+          { ownerId: "owner-b", incarnation: "inc-b" },
+          (rows) => {
+            seen.push(rows.map((row) => row.operationId));
+            try {
+              other.run("UPDATE authority SET fence_token = fence_token + 100 WHERE id = 1");
+              otherWrite = "landed";
+            } catch (error: unknown) {
+              otherWrite = error instanceof Error ? error.message : String(error);
+            }
+            return true;
+          },
+        );
+        expect(claim).toEqual({
+          claimed: true,
+          fence: { ownerId: "owner-b", incarnation: "inc-b", fenceToken: 2 },
+        });
+      } finally {
+        other.close();
+      }
+      expect(otherWrite).toMatch(/locked|busy/i);
+      expect(seen).toEqual([["op-1"], ["op-1"]]);
+    } finally {
+      store.close();
     }
   });
 });

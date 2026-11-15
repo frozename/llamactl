@@ -24,6 +24,16 @@ import type { ResolvedEnv } from "@llamactl/core/types";
  * (after `fenceExecution`, before `admit`), released in `settle`, and
  * revoked when the lease is force-unloaded. Without it, behaviour is
  * unchanged.
+ *
+ * When `admission` is provided, Worker RPC streams count against the shared
+ * request-admission cap (the same instance as the HTTP chat/messages/responses
+ * ingresses, #281 DF-08): the 'accepted' event is emitted before the queue
+ * wait, and the execution slot is held for the stream's lifetime and released
+ * once on every terminal path. Embedded (in-process unified-proxy) attempts
+ * are exempt, so an admitted HTTP request is not counted a second time.
+ * Unified-proxy callers that were never admitted (the router.ts chat mutation
+ * and generic /v1/* proxying) stay uncounted until the create-proxy.ts slice.
+ * Without `admission`, nothing is called and behaviour is unchanged.
  */
 import { type inferenceContracts, inferenceRpc, routingCatalog } from "@llamactl/core";
 import { LOCAL_NODE_NAME } from "@llamactl/core/config/schema";
@@ -47,6 +57,13 @@ import {
 import { initTRPC } from "@trpc/server";
 import { createHash, randomUUID } from "node:crypto";
 
+import {
+  type Release,
+  type RequestAdmission,
+  RequestAdmissionError,
+} from "../residency/request-admission.js";
+import { CHAT_INGRESS_MODEL } from "../server/chat-admission.js";
+
 type Claims = inferenceRpc.InferenceServiceClaimsV1;
 type Deployment = routingCatalog.RouteAdvertisementV1;
 type Envelope = inferenceContracts.InferenceEnvelopeV1;
@@ -59,6 +76,12 @@ type AttemptStatus = inferenceRpc.InferenceRpcAttemptStatusV1;
 export interface InferenceRpcContext {
   /** Verified service claims; set server-side, never from client headers. */
   inferenceClaims?: Claims | undefined;
+  /**
+   * Set only in-process by `createEmbeddedInferenceRpcClient`, never from a
+   * request. An embedded unified-proxy attempt is exempt from the shared
+   * admission cap so an already-admitted HTTP request is not counted twice.
+   */
+  embeddedCaller?: boolean | undefined;
 }
 
 export type WorkerRpcBackendKind = Exclude<routingCatalog.BackendKind, "cloud-api">;
@@ -136,6 +159,13 @@ export interface WorkerRpcHostOptions {
    * and behaviour is unchanged.
    */
   residencyLeases?: ResidencyLeases;
+  /**
+   * Opt-in shared inference admission (#281 DF-08): the same
+   * `RequestAdmission` instance as the HTTP chat/messages/responses
+   * ingresses, so Worker RPC streams count against one cap. Unset means
+   * unchanged and nothing is called.
+   */
+  admission?: RequestAdmission;
 }
 
 export interface WorkerRpcHost {
@@ -152,6 +182,7 @@ export interface WorkerRpcHost {
     claims: Claims | undefined,
     input: inferenceRpc.InferenceRpcStreamRequestV1,
     signal: AbortSignal,
+    options?: { embedded?: boolean },
   ): AsyncIterable<StreamFrame>;
   status(
     claims: Claims | undefined,
@@ -198,6 +229,8 @@ interface AttemptRun {
   streamed: boolean;
   lease: Lease | undefined;
   onRevoke: (() => void) | undefined;
+  /** The shared admission slot for this stream, released once on settle (#281 DF-08). */
+  admissionRelease?: Release;
 }
 
 /**
@@ -262,6 +295,7 @@ interface HostState {
   streams: number;
   idle: (() => void)[];
   leases: ResidencyLeases | undefined;
+  admission: RequestAdmission | undefined;
 }
 
 interface WorkerCatalog {
@@ -756,12 +790,17 @@ function settle(
   const run = record.run;
   const lease = run?.lease;
   const onRevoke = run?.onRevoke;
+  const admissionRelease = run?.admissionRelease;
   if (lease !== undefined && onRevoke !== undefined) {
     lease.signal.removeEventListener("abort", onRevoke);
   }
   record.run = undefined;
   if (lease !== undefined) {
     lease.release();
+  }
+  if (admissionRelease !== undefined) {
+    if (run !== undefined) delete run.admissionRelease;
+    admissionRelease();
   }
   state.active -= 1;
   record.owner.active -= 1;
@@ -1087,14 +1126,118 @@ function startBackend(
   return run.backend.execute(run.deployment, run.envelope, run.controller.signal);
 }
 
+/** Runs `fn` at most once across every caller that shares the closure. */
+function once(fn: () => void): () => void {
+  let done = false;
+  return (): void => {
+    if (done) return;
+    done = true;
+    fn();
+  };
+}
+
+/**
+ * The first-frame typed rejection for an immediate admission refusal. It
+ * mirrors chat-admission's 429/503/504 split: QueueFull,
+ * PrincipalShareExceeded or QueueBytesExceeded with a retry hint is an
+ * `overloaded` (429) with `retryAfterMs`; a passed deadline is
+ * `deadline-exceeded` (504); everything else is `target-unavailable`. A
+ * QueueBytesExceeded with no retry hint is a 413 at the HTTP ingress but a
+ * 503 here, because the rejection protocol has no oversize code.
+ */
+function immediateRejection(err: RequestAdmissionError): Rejection {
+  const message = `worker admission refused: ${err.code}`;
+  const retryableOverload =
+    err.code === "QueueFull" ||
+    err.code === "PrincipalShareExceeded" ||
+    err.code === "QueueBytesExceeded";
+  if (retryableOverload && err.retryAfterMs !== null) {
+    return { code: "overloaded", message, retryAfterMs: err.retryAfterMs };
+  }
+  if (err.code === "DeadlineExceeded") return { code: "deadline-exceeded", message };
+  return { code: "target-unavailable", message };
+}
+
+interface AdmissionWait {
+  pending: Promise<Release>;
+  queued: boolean;
+}
+
+/**
+ * Settles the queue wait that follows 'accepted'. A grant (or an abort that
+ * already ended the attempt) returns null so the backend may start; a late
+ * QueueWaitExceeded or LoadFailed is a failed terminal (502 at the client),
+ * not the ingress's 503, and a non-admission rejection is a fault.
+ */
+async function lateRefusal(
+  state: HostState,
+  record: AttemptRecord,
+  admission: AdmissionWait | undefined,
+): Promise<ExecutionTerminal | null> {
+  if (admission === undefined) return null;
+  const refusal = await admission.pending.then(
+    () => null,
+    (e: unknown) => e,
+  );
+  if (refusal instanceof RequestAdmissionError) {
+    if (refusal.code === "Aborted" || record.terminal !== undefined) return null;
+    const hint =
+      refusal.retryAfterMs !== null ? `; retry after ${String(refusal.retryAfterMs)} ms` : "";
+    return settle(state, record, {
+      outcome: "failed",
+      started: false,
+      error: {
+        code: "target-unavailable",
+        message: `worker admission refused: ${refusal.code}${hint}`,
+        retryable: true,
+      },
+      usage: UNKNOWN_USAGE,
+    });
+  }
+  if (refusal === null) return null;
+  const message =
+    refusal instanceof Error
+      ? refusal.message
+      : typeof refusal === "string"
+        ? refusal
+        : "the shared admission rejected unexpectedly";
+  return settle(state, record, {
+    outcome: "failed",
+    started: false,
+    error: { code: "internal-error", message, retryable: false },
+    usage: UNKNOWN_USAGE,
+  });
+}
+
+type EventIdentity = Pick<ExecutionEventV1, "v" | "requestId" | "attemptId" | "sequence">;
+
+async function* emitBackend(
+  state: HostState,
+  record: AttemptRecord,
+  run: AttemptRun,
+  identity: () => EventIdentity,
+): AsyncGenerator<StreamFrame, ExecutionTerminal> {
+  for await (const out of startBackend(state, record, run)) {
+    if (record.terminal !== undefined) break;
+    if (out.type === "end") {
+      settle(state, record, endTerminal(run, out));
+      continue;
+    }
+    run.state = "emitting";
+    yield { frame: "event", event: { ...identity(), type: "content", payload: out.payload } };
+  }
+  return settle(state, record, failureTerminal(run, "no backend result", "internal-error"));
+}
+
 async function* runAttempt(
   state: HostState,
   record: AttemptRecord,
   run: AttemptRun,
   signal: AbortSignal,
+  admission?: AdmissionWait,
 ): AsyncGenerator<StreamFrame> {
   let sequence = 0;
-  const identity = (): Pick<ExecutionEventV1, "v" | "requestId" | "attemptId" | "sequence"> => ({
+  const identity = (): EventIdentity => ({
     v: 1,
     requestId: record.requestId,
     attemptId: record.attemptId,
@@ -1103,24 +1246,24 @@ async function* runAttempt(
   const onDisconnect = (): void => {
     stopAttempt(state, record, "disconnect");
   };
+  // Registered before the 'accepted' yield, so an abort while queued stops
+  // the attempt, which aborts the controller, which rejects the waiter Aborted.
   signal.addEventListener("abort", onDisconnect, { once: true });
   if (signal.aborted) onDisconnect();
   let terminal: ExecutionTerminal;
   try {
+    // 'accepted' precedes the queue wait: the remote client's first-frame
+    // timer (DEFAULT_CALL_TIMEOUT_MS, 10 s) is shorter than the chat queue
+    // wait (30 s), so a queued attempt must not look like a stalled stream.
     yield {
       frame: "event",
       event: { ...identity(), type: "accepted", acceptedAt: run.acceptedAt },
     };
-    for await (const out of startBackend(state, record, run)) {
-      if (record.terminal !== undefined) break;
-      if (out.type === "end") {
-        settle(state, record, endTerminal(run, out));
-        continue;
-      }
-      run.state = "emitting";
-      yield { frame: "event", event: { ...identity(), type: "content", payload: out.payload } };
-    }
-    terminal = settle(state, record, failureTerminal(run, "no backend result", "internal-error"));
+    // Never start the backend before pending has fulfilled: on 'Aborted'
+    // (or an already-terminal attempt) the aborted controller makes
+    // startBackend return [], so the recorded terminal is reported.
+    const refused = await lateRefusal(state, record, admission);
+    terminal = refused ?? (yield* emitBackend(state, record, run, identity));
   } catch (err) {
     terminal = settle(state, record, failureTerminal(run, err, "upstream-error"));
   } finally {
@@ -1159,6 +1302,7 @@ async function* streamAttempt(
   claimsIn: Claims | undefined,
   input: inferenceRpc.InferenceRpcStreamRequestV1,
   signal: AbortSignal,
+  options?: { embedded?: boolean },
 ): AsyncGenerator<StreamFrame> {
   const claims = authorized(claimsIn, "stream");
   if (claims === null) {
@@ -1178,11 +1322,78 @@ async function* streamAttempt(
   run.streamed = true;
   state.streams += 1;
   try {
-    yield* runAttempt(state, record, run, signal);
+    if (state.admission === undefined || options?.embedded === true) {
+      yield* runAttempt(state, record, run, signal);
+      return;
+    }
+    const wait = yield* acquireAdmission(state, state.admission, record, run);
+    if (wait === null) return;
+    yield* runAttempt(state, record, run, signal, wait);
   } finally {
     state.streams -= 1;
     notifyIdle(state);
   }
+}
+
+/**
+ * Reserves a shared-cap slot for a Worker RPC stream and reports an
+ * immediate refusal as a rejected frame. Returns null when a frame was
+ * already yielded and the attempt must not run the backend.
+ *
+ * Same key and principal as chat-admission, so Worker RPC and the HTTP
+ * ingresses share one cap.
+ */
+async function* acquireAdmission(
+  state: HostState,
+  admission: RequestAdmission,
+  record: AttemptRecord,
+  run: AttemptRun,
+): AsyncGenerator<StreamFrame, AdmissionWait | null> {
+  const pending = admission.acquire(
+    {
+      requestId: `worker-rpc:${record.attemptId}`,
+      principal: "agent",
+      priority: "interactive",
+      model: CHAT_INGRESS_MODEL,
+      bytes: Buffer.byteLength(JSON.stringify(run.envelope.nativeBody)),
+      promptTokens: 0,
+      maxCompletionTokens: 0,
+    },
+    { signal: run.controller.signal },
+  );
+  // Store or release the slot even if the generator never resumes.
+  pending.then(
+    (release) => {
+      if (record.terminal !== undefined || record.run !== run) release();
+      else run.admissionRelease = once(release);
+    },
+    () => undefined,
+  );
+  // Both an enqueue refusal (rejected promise) and a resident grant
+  // (resolved in pump) are already settled, so the race returns them
+  // before the sentinel.
+  const queuedProbe = Symbol("queued");
+  let first: unknown;
+  try {
+    first = await Promise.race([pending, Promise.resolve(queuedProbe)]);
+  } catch (err) {
+    first = err;
+  }
+  if (first instanceof RequestAdmissionError && first.code !== "Aborted") {
+    settle(state, record, {
+      outcome: "failed",
+      started: false,
+      error: {
+        code: "target-unavailable",
+        message: `worker admission refused: ${first.code}`,
+        retryable: true,
+      },
+      usage: UNKNOWN_USAGE,
+    });
+    yield { frame: "rejected", rejection: immediateRejection(first) };
+    return null;
+  }
+  return { pending, queued: first === queuedProbe };
 }
 
 // ---- status / cancel ------------------------------------------------------
@@ -1296,6 +1507,7 @@ export function createWorkerRpcHost(opts: WorkerRpcHostOptions): WorkerRpcHost {
     streams: 0,
     idle: [],
     leases: opts.residencyLeases,
+    admission: opts.admission,
   };
   const host: WorkerRpcHost = {
     workerId: state.workerId,
@@ -1304,7 +1516,8 @@ export function createWorkerRpcHost(opts: WorkerRpcHostOptions): WorkerRpcHost {
     negotiate: (claims, input) => negotiate(state, claims, input),
     catalog: (claims) => listCatalog(state, claims),
     submit: (claims, input) => submit(state, claims, input),
-    stream: (claims, input, signal) => streamAttempt(state, claims, input, signal),
+    stream: (claims, input, signal, options) =>
+      streamAttempt(state, claims, input, signal, options),
     status: (claims, input) => attemptStatus(state, claims, input),
     cancel: (claims, input) => cancelAttempt(state, claims, input),
     drain: (): Promise<void> => {
@@ -1371,7 +1584,9 @@ export const inferenceRpcRouter = t.router({
     .input(inferenceRpc.InferenceRpcStreamRequestV1Schema)
     .subscription(async function* ({ ctx, input, signal }) {
       const { host, claims } = served(ctx);
-      yield* host.stream(claims, input, signal ?? new AbortController().signal);
+      yield* host.stream(claims, input, signal ?? new AbortController().signal, {
+        embedded: ctx.embeddedCaller === true,
+      });
     }),
   status: t.procedure
     .input(inferenceRpc.InferenceRpcStatusRequestV1Schema)

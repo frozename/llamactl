@@ -17,6 +17,8 @@ import { afterEach, beforeEach, describe, expect, setSystemTime, test } from "bu
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { RESIDENCY_APPLY_PROFILE_FENCE_OWNER } from "../../src/residency/apply-profile.js";
+import { runProfileSwitchBootRecovery } from "../../src/residency/boot-recovery.js";
 import {
   buildResidencyPlan,
   collectResidencyObservations,
@@ -572,6 +574,120 @@ describe("residencyApplyProfile procedure", () => {
     const dry = await applyProfile({ node: "local", to: "code", from: "chat" });
     expect(dry.ok).toBe(true);
     expect(dry.outcome).toBe("dry-run");
+  });
+
+  // #279 DF-06 integration: agent-boot recovery must leave the wet mutation
+  // able to proceed. A boot claim under any owner but the apply-profile owner
+  // makes runWet's foreign-fence check report Busy "unknown" forever.
+  test("R8: after boot recovery of a crashed switch, a confirmed wet apply is not Busy", async () => {
+    seedRouterFixture();
+    await installStepsFake();
+    const crashed = withStore((store) => {
+      const fence = store.claimOwnership({
+        ownerId: RESIDENCY_APPLY_PROFILE_FENCE_OWNER,
+        incarnation: "crashed-cli",
+      });
+      return store.beginOperation({
+        fenceToken: fence.fenceToken,
+        operationId: "op-crashed",
+        model: "profile-switch:local",
+        targetState: "profile:code",
+        desiredRevision: 0,
+        reservationGiB: 0,
+        nowMs: Date.now() - 2 * 60 * 60_000,
+      });
+    });
+    expect(crashed.ok).toBe(true);
+
+    const summary = runProfileSwitchBootRecovery({
+      path: storePath,
+      incarnation: "agent-boot",
+      write: () => undefined,
+    });
+    expect(summary.status).toBe("recovered");
+    expect(summary.recovered).toBe(1);
+
+    const result = await applyProfile({
+      node: "local",
+      to: "code",
+      from: "chat",
+      dryRun: false,
+      confirm: true,
+    });
+
+    expect(result.busy).toBeUndefined();
+    expect(result.outcome).not.toBe("busy");
+    expect(result.ok).toBe(true);
+    expect(result.outcome).toBe("stops-and-starts-ran");
+    expect(stepCalls).toEqual([
+      ["stop", "chat-a"],
+      ["start", "code-b"],
+    ]);
+    const crashedRow = withStore((store) => store.getOperation("op-crashed"));
+    expect(crashedRow?.phase).toBe("terminal");
+    expect(crashedRow?.outcome).toBe("unknown");
+  });
+
+  // A store holding only an unrecognized switch row needs no finishing, so
+  // boot never claims: the row's own writer can still retire it under its
+  // fence, and the wet mutation that follows is not Busy. (While the row is
+  // nonterminal the planner refuses NodeBusy on its own.)
+  test("R9: boot recovery over only a malformed switch row never claims, so a wet apply is not Busy", async () => {
+    seedRouterFixture();
+    await installStepsFake();
+    const malformed = withStore((store) => {
+      const fence = store.claimOwnership({
+        ownerId: RESIDENCY_APPLY_PROFILE_FENCE_OWNER,
+        incarnation: "crashed-cli",
+      });
+      const begun = store.beginOperation({
+        fenceToken: fence.fenceToken,
+        operationId: "op-malformed",
+        model: "profile-switch:other-node",
+        targetState: "bogus",
+        desiredRevision: 0,
+        reservationGiB: 0,
+        nowMs: Date.now() - 2 * 60 * 60_000,
+      });
+      return { fence, begun };
+    });
+    expect(malformed.begun.ok).toBe(true);
+    const fenceBefore = withStore((store) => store.currentFence());
+
+    const summary = runProfileSwitchBootRecovery({
+      path: storePath,
+      incarnation: "agent-boot",
+      write: () => undefined,
+    });
+    expect(summary.status).toBe("deferred");
+    expect(summary.unrecognized).toBe(1);
+    expect(withStore((store) => store.currentFence())).toEqual(fenceBefore);
+
+    const retired = withStore((store) => {
+      const row = store.getOperation("op-malformed");
+      expect(row).not.toBeNull();
+      return store.finishOperation({
+        fenceToken: malformed.fence.fenceToken,
+        operationId: "op-malformed",
+        expectedVersion: row?.version ?? -1,
+        nowMs: Date.now(),
+        outcome: "unknown",
+        detail: "retired by its writer",
+      });
+    });
+    expect(retired).toEqual({ ok: true });
+
+    const result = await applyProfile({
+      node: "local",
+      to: "code",
+      from: "chat",
+      dryRun: false,
+      confirm: true,
+    });
+
+    expect(result.busy).toBeUndefined();
+    expect(result.ok).toBe(true);
+    expect(result.outcome).toBe("stops-and-starts-ran");
   });
 });
 
