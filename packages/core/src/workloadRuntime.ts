@@ -57,8 +57,9 @@ export interface LocalRoute {
    *  stages need no cast; catalog rows and advertisements validate the
    *  stage against QUALIFICATION_STAGES at their own boundaries. */
   qualificationStage?: string;
-  /** Declared serving probe (#220). ModelHost routes only, copied from the
-   *  sidecar when declared; consumed by partitionServingRoutes. */
+  /** Declared serving probe (#220). ModelHost routes copy it from the
+   *  modelhost sidecar, ModelRun routes from llama-server.state; both are
+   *  consumed by partitionServingRoutes and the openaiProxy routing gate. */
   readiness?: ModelHostReadiness;
 }
 
@@ -448,6 +449,7 @@ function modelRunRoutesForDir(
       engine: "llamacpp",
       kind: "ModelRun",
       pid: runPid,
+      ...(state.readiness !== undefined ? { readiness: state.readiness } : {}),
     });
   }
   return out;

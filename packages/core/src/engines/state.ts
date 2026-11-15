@@ -181,7 +181,7 @@ export function writeModelHostState(
   writeFileSync(modelhostStateFile(resolved, key), JSON.stringify(state, null, 2));
 }
 
-function validReadiness(readiness: unknown): readiness is ModelHostReadiness {
+export function isModelHostReadiness(readiness: unknown): readiness is ModelHostReadiness {
   if (
     typeof readiness !== "object" ||
     readiness === null ||
@@ -243,7 +243,7 @@ function validateModelHostState(parsed: Partial<ModelHostState>): ModelHostState
     slotSavePath: typeof parsed.slotSavePath === "string" ? parsed.slotSavePath : null,
     ...(typeof parsed.specHash === "string" ? { specHash: parsed.specHash } : {}),
     ...(validBinaryNames(binaryNames) ? { binaryNames: [...binaryNames] } : {}),
-    ...(validReadiness(parsed.readiness) ? { readiness: parsed.readiness } : {}),
+    ...(isModelHostReadiness(parsed.readiness) ? { readiness: parsed.readiness } : {}),
   };
 }
 

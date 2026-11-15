@@ -87,7 +87,8 @@ function writeManifest(options?: {
       `  binary: ${options?.binary ?? join(tmp, "omlx")}`,
       "  resources:",
       // Small reservation: the apply path admits against the default node
-      // budget (75% of the test machine's RAM), which is ~5 GiB on CI runners.
+      // budget (75% of the test machine's RAM) unless writeLocalNodeBudget
+      // pins it (see #274).
       `    expectedMemoryGiB: ${String(options?.expectedMemoryGiB ?? 1)}`,
       "  endpoint:",
       `    host: ${options?.host ?? "127.0.0.1"}`,
@@ -126,6 +127,28 @@ function writeNodeRun(memoryGiB?: number, safetyMarginRatio?: number): void {
       ...(safetyMarginRatio !== undefined
         ? ["  residency:", `    safetyMarginRatio: ${String(safetyMarginRatio)}`]
         : []),
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+}
+
+// #274: writeNodeRun only covers gpu1; in-process applies size the `local`
+// node from an explicit NodeRun budget, falling back to 75% of host RAM.
+// This pins the local budget so those tests do not depend on host RAM
+// (failed under LLAMACTL_TEST_TOTALMEM_GIB=<4|1>).
+function writeLocalNodeBudget(memoryGiB: number): void {
+  writeFileSync(
+    join(process.env["LLAMACTL_WORKLOADS_DIR"]!, "local.yaml"),
+    [
+      "apiVersion: llamactl/v1",
+      "kind: NodeRun",
+      "metadata:",
+      "  name: local",
+      "spec:",
+      "  node: local",
+      "  budget:",
+      `    memoryGiB: ${String(memoryGiB)}`,
       "",
     ].join("\n"),
     "utf8",
@@ -300,6 +323,7 @@ test("in-process apply validates a disabled local host before persisting", async
 
 test("an engine-refused in-process apply leaves the previously saved manifest unchanged", async () => {
   writeFileSync(join(tmp, "omlx"), "", "utf8");
+  writeLocalNodeBudget(64);
   const { startCalls } = stubStartClient();
 
   const firstPath = writeManifest();
@@ -320,6 +344,7 @@ test("an engine-refused in-process apply leaves the previously saved manifest un
 
 test("apply without a controller still starts in-process and warns about the cgroup", async () => {
   writeFileSync(join(tmp, "omlx"), "", "utf8");
+  writeLocalNodeBudget(64);
   const manifestPath = writeManifest();
   const { startCalls } = stubStartClient();
 
@@ -337,6 +362,7 @@ test("apply without a controller still starts in-process and warns about the cgr
 
 test("apply with a stale controller lock falls back to in-process start", async () => {
   writeFileSync(join(tmp, "omlx"), "", "utf8");
+  writeLocalNodeBudget(64);
   const manifestPath = writeManifest();
   writeLock(4_294_967_290);
   const { startCalls } = stubStartClient();
@@ -680,6 +706,7 @@ test("apply keeps the default 0.75 margin when the NodeRun sets no residency", a
 
 test("a successful in-process enable saves the desired manifest only after apply completes", async () => {
   writeFileSync(join(tmp, "omlx"), "", "utf8");
+  writeLocalNodeBudget(64);
   const manifestPath = writeManifest();
   let savedDuringStart: boolean | undefined;
   const { startCalls } = stubStartClient(() => {

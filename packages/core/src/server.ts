@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { basename, join } from "node:path";
 
+import type { ModelHostReadiness } from "./engines/types.js";
 import type { ResolvedEnv } from "./types.js";
 import type { WorkloadKey } from "./workloadRuntime.js";
 
@@ -15,6 +16,7 @@ import {
 import { resolveBuildId } from "./build.js";
 import { ctxForModel } from "./ctx.js";
 import { resolveDraftModelPathArgs } from "./engines/llamacpp.js";
+import { isModelHostReadiness } from "./engines/state.js";
 import { resolveEnv } from "./env.js";
 import {
   defaultReadProcessCommand,
@@ -244,6 +246,12 @@ export interface ServerState {
   pid: number;
   startedAt: string; // ISO 8601
   tunedProfile: string | null;
+  /**
+   * Declared serving probe copied from ModelRun spec.readiness (#220) and
+   * consumed by listLocalRoutes to gate the route's listing and routing.
+   * Absent keeps today's behaviour.
+   */
+  readiness?: ModelHostReadiness;
 }
 
 export interface ServerStatus {
@@ -343,6 +351,9 @@ export function readServerState(
     ) {
       if (typeof parsed.binary !== "string") parsed.binary = "";
       parsed.slotSavePath = typeof parsed.slotSavePath === "string" ? parsed.slotSavePath : null;
+      if (parsed.readiness !== undefined && !isModelHostReadiness(parsed.readiness)) {
+        delete parsed.readiness;
+      }
       return parsed;
     }
     return null;
@@ -535,6 +546,12 @@ export interface StartServerOptions {
   timeoutSeconds?: number;
   /** Skip tuned-profile arg lookup even when LLAMA_CPP_USE_TUNED_ARGS is on. */
   skipTuned?: boolean;
+  /**
+   * Declared serving probe (#220) persisted into the sidecar for
+   * readiness-gated listing and routing; startServer itself still waits
+   * on /health.
+   */
+  readiness?: ModelHostReadiness;
   onEvent?: (e: ServerEvent) => void;
   resolved?: ResolvedEnv;
   env?: NodeJS.ProcessEnv;
@@ -665,6 +682,7 @@ export async function tryAdoptExistingServer(args: {
   rel: string;
   extraArgs: string[];
   binary: string;
+  readiness?: ModelHostReadiness;
   deps?: Partial<AdoptDeps>;
 }): Promise<number | null> {
   const probe = args.deps?.probeModelIds ?? probeServerModelIds;
@@ -699,6 +717,7 @@ export async function tryAdoptExistingServer(args: {
     pid,
     startedAt: new Date().toISOString(),
     tunedProfile: null,
+    ...(args.readiness !== undefined ? { readiness: args.readiness } : {}),
   });
   return pid;
 }
@@ -1082,6 +1101,7 @@ function launchedServerState(
     pid,
     startedAt: new Date().toISOString(),
     tunedProfile: prepared.tunedProfile,
+    ...(opts.readiness !== undefined ? { readiness: opts.readiness } : {}),
   };
 }
 
@@ -1350,6 +1370,7 @@ async function handlePortConflict(
     rel: target.rel,
     extraArgs: opts.extraArgs ?? [],
     binary: target.bin,
+    ...(opts.readiness !== undefined ? { readiness: opts.readiness } : {}),
   });
   if (adoptedPid !== null) {
     return startServerSuccess(resolved, launchEndpoint, null, false, adoptedPid, opts.onEvent);

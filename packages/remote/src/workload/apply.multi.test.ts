@@ -3128,3 +3128,57 @@ test("#520: an installed registry whose checkUnload throws fails closed as Evict
     rmSync(workloadsDir, { recursive: true, force: true });
   }
 });
+
+test("ModelRun apply forwards spec.readiness to serverStart and omits it when undeclared", async () => {
+  // Kills: startCoordinator not forwarding manifest.spec.readiness — at
+  // base inputs[0].readiness is undefined.
+  const temp = makeTempRuntime();
+  const env = envForTemp(temp);
+  const workloadsDir = join(temp.devStorage, "workloads");
+  const state: WorkloadStateMap = new Map();
+  const inputs: Record<string, unknown>[] = [];
+  const base = makeClient(state);
+  const client: WorkloadClient = {
+    ...base,
+    serverStart: {
+      subscribe: (input, callbacks) => {
+        inputs.push(input);
+        return base.serverStart.subscribe(input, callbacks);
+      },
+    },
+  };
+  try {
+    const readyBase = mkManifest("ready-run", { port: 8183 });
+    const readyManifest = {
+      ...readyBase,
+      spec: {
+        ...readyBase.spec,
+        readiness: { path: "/ready", expectStatus: 200, expectJson: { status: "ready" } },
+      },
+    };
+    const result = await applyOne(readyManifest, () => client, undefined, undefined, {
+      env,
+      workloadsDir,
+      getNodeBudgetGiB: () => 24,
+    });
+    expect(result.action).toBe("started");
+    expect(inputs[0]?.["readiness"]).toEqual({
+      path: "/ready",
+      expectStatus: 200,
+      expectJson: { status: "ready" },
+    });
+
+    const plainResult = await applyOne(
+      mkManifest("plain-run", { port: 8184 }),
+      () => client,
+      undefined,
+      undefined,
+      { env, workloadsDir, getNodeBudgetGiB: () => 24 },
+    );
+    expect(plainResult.action).toBe("started");
+    expect(inputs).toHaveLength(2);
+    expect(inputs[1] !== undefined && "readiness" in inputs[1]).toBe(false);
+  } finally {
+    temp.cleanup();
+  }
+});

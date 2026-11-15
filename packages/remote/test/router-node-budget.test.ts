@@ -320,15 +320,24 @@ describe("workloadApply NodeRun budget", () => {
   });
 
   test("a NodeRun without spec.budget leaves the ModelRun unbounded", async () => {
+    // #274: pinned so admission does not depend on host RAM (failed under LLAMACTL_TEST_TOTALMEM_GIB=<4|1>).
+    // The probe sits below the 0.75 computed default, so it passes admission on any host.
     saveProbeNodeRun("local");
-    const message = await workloadApplyError(budgetProbeYaml("budget-probe-none"));
+    const message = await workloadApplyError(
+      budgetProbeYaml("budget-probe-none", Number(((totalmem() / 1024 ** 3) * 0.6).toFixed(3))),
+    );
     expect(message).not.toContain("Budget is");
     expect(message).toContain(BIND_REFUSAL);
   });
 
   test("a NodeRun budget for another node does not apply", async () => {
+    // #274: pinned so admission does not depend on host RAM (failed under LLAMACTL_TEST_TOTALMEM_GIB=<4|1>).
+    // 0.6 * host stays above the other node's 0.5 budget for any host over ~0.84 GiB, so a
+    // regression where another node's budget applies still produces "Budget is 0.5 GiB" and is killed.
     saveProbeNodeRun("other-node", { memoryGiB: 0.5 });
-    const message = await workloadApplyError(budgetProbeYaml("budget-probe-other"));
+    const message = await workloadApplyError(
+      budgetProbeYaml("budget-probe-other", Number(((totalmem() / 1024 ** 3) * 0.6).toFixed(3))),
+    );
     expect(message).not.toContain("Budget is");
     expect(message).toContain(BIND_REFUSAL);
   });

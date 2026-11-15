@@ -137,6 +137,8 @@ import {
   modelHostBindRefusal,
   type ModelHostManifest,
   ModelHostManifestSchema,
+  ModelHostReadinessSchema,
+  normalizeReadiness,
   specForEngine,
 } from "./workload/modelhost-schema.js";
 import * as modelHostStoreMod from "./workload/modelhost-store.js";
@@ -1200,6 +1202,28 @@ export function projectModelsBody(
     unavailable: Array.isArray(b["unavailable"]) ? b["unavailable"] : [],
   };
 }
+
+/**
+ * #220: serverStart's input. Hoisted from the inline object so the RPC
+ * surface keeps a declared `readiness` probe (the same strict ModelHost
+ * shape) and rejects a malformed one, instead of silently stripping it.
+ */
+export const ServerStartInputSchema = z.object({
+  workload: z.string().min(1),
+  target: z.string().min(1),
+  extraArgs: z.array(z.string()).optional(),
+  allowExternalBind: z.boolean().optional(),
+  endpoint: z
+    .object({
+      host: z.string().optional(),
+      port: z.number().int().min(1).max(65535).optional(),
+    })
+    .optional(),
+  binary: z.string().optional(),
+  timeoutSeconds: z.number().int().positive().max(600).optional(),
+  skipTuned: z.boolean().optional(),
+  readiness: ModelHostReadinessSchema.optional(),
+});
 
 export const router = t.router({
   env: t.procedure.query(() => envMod.resolveEnv()),
@@ -2764,50 +2788,37 @@ export const router = t.router({
       });
     }),
 
-  serverStart: t.procedure
-    .input(
-      z.object({
-        workload: z.string().min(1),
-        target: z.string().min(1),
-        extraArgs: z.array(z.string()).optional(),
-        allowExternalBind: z.boolean().optional(),
-        endpoint: z
-          .object({
-            host: z.string().optional(),
-            port: z.number().int().min(1).max(65535).optional(),
-          })
-          .optional(),
-        binary: z.string().optional(),
-        timeoutSeconds: z.number().int().positive().max(600).optional(),
-        skipTuned: z.boolean().optional(),
-      }),
-    )
-    .subscription(async function* ({ input, signal }) {
-      yield* bridgeEventStream<ServerStartEvent>(signal, async (emit, sig) => {
-        const result = await serverMod.startServer({
-          key: { name: input.workload },
-          target: input.target,
-          ...(input.extraArgs !== undefined ? { extraArgs: input.extraArgs } : {}),
-          ...(input.allowExternalBind !== undefined
-            ? { allowExternalBind: input.allowExternalBind }
-            : {}),
-          ...(input.endpoint !== undefined
-            ? {
-                endpoint: {
-                  ...(input.endpoint.host !== undefined ? { host: input.endpoint.host } : {}),
-                  ...(input.endpoint.port !== undefined ? { port: input.endpoint.port } : {}),
-                },
-              }
-            : {}),
-          ...(input.binary !== undefined ? { binary: input.binary } : {}),
-          ...(input.timeoutSeconds !== undefined ? { timeoutSeconds: input.timeoutSeconds } : {}),
-          ...(input.skipTuned !== undefined ? { skipTuned: input.skipTuned } : {}),
-          signal: sig,
-          onEvent: emit,
-        });
-        emit({ type: "done", result });
+  serverStart: t.procedure.input(ServerStartInputSchema).subscription(async function* ({
+    input,
+    signal,
+  }) {
+    yield* bridgeEventStream<ServerStartEvent>(signal, async (emit, sig) => {
+      const readiness = normalizeReadiness(input.readiness);
+      const result = await serverMod.startServer({
+        key: { name: input.workload },
+        target: input.target,
+        ...(input.extraArgs !== undefined ? { extraArgs: input.extraArgs } : {}),
+        ...(input.allowExternalBind !== undefined
+          ? { allowExternalBind: input.allowExternalBind }
+          : {}),
+        ...(input.endpoint !== undefined
+          ? {
+              endpoint: {
+                ...(input.endpoint.host !== undefined ? { host: input.endpoint.host } : {}),
+                ...(input.endpoint.port !== undefined ? { port: input.endpoint.port } : {}),
+              },
+            }
+          : {}),
+        ...(input.binary !== undefined ? { binary: input.binary } : {}),
+        ...(input.timeoutSeconds !== undefined ? { timeoutSeconds: input.timeoutSeconds } : {}),
+        ...(input.skipTuned !== undefined ? { skipTuned: input.skipTuned } : {}),
+        ...(readiness !== undefined ? { readiness } : {}),
+        signal: sig,
+        onEvent: emit,
       });
-    }),
+      emit({ type: "done", result });
+    });
+  }),
 
   lmstudioScan: t.procedure
     .input(z.object({ root: z.string().optional() }).optional())

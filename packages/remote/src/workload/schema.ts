@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { ModelHostReadinessSchema } from "./modelhost-schema.js";
+
 /**
  * ModelRun — declarative request for "this model should run on this
  * node with these args". Analogous to a Kubernetes Pod spec scoped to
@@ -125,6 +127,14 @@ export const ModelRunSpecSchema = z.object({
       everyNTicks: z.number().int().positive().max(240).default(4),
     })
     .optional(),
+  /**
+   * #220: optional declared serving probe, the same normalized shape as
+   * ModelHost spec.readiness. When set, this ModelRun's routes are hidden
+   * from /v1/models and pinned chat gets the typed model_not_loaded 503
+   * until the probe passes; startServer still waits on /health. Absent
+   * keeps today's behaviour.
+   */
+  readiness: ModelHostReadinessSchema.optional(),
 });
 
 export const ModelRunConditionSchema = z.object({
