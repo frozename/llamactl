@@ -716,6 +716,12 @@ const servingVerdictCache = new Map<string, { expiresAt: number; verdict: Promis
 // clock instant their record expires. Read fresh by serve-registered sources
 // via servingWarmingModelIds to project a 'loading' declared state.
 const servingWarmingRecords = new Map<string, number>();
+// #280 DF-07: per-workload refcount of active route withdrawals. A workload
+// under eviction has its local routes pulled from the serving gate for the
+// stop's duration, so a pin during the window is refused draining instead of
+// forwarded to a dying engine. The marker is set synchronously by
+// withdrawServingRoute, before the caller starts stop().
+const servingWithdrawnRoutes = new Map<string, number>();
 // #280 DF-07: test seam for the chat-routing readiness gate. Null uses Date.now,
 // SERVING_ROUTE_READINESS_TTL_MS and SERVING_MODELS_PROBE_TIMEOUT_MS, and reads
 // globalThis.fetch at call time (never captured at module load).
@@ -770,6 +776,47 @@ function clearServingWarming(model: string): void {
   servingWarmingRecords.delete(model);
 }
 
+// #280 DF-07: a workload is withdrawn only while its refcount is strictly
+// positive; never test map presence, so a stray non-positive entry can never
+// withdraw a route.
+function isRouteWithdrawn(workload: string): boolean {
+  return (servingWithdrawnRoutes.get(workload) ?? 0) > 0;
+}
+
+/**
+ * Withdraw a workload's local serving routes (#280 DF-07), returning an
+ * idempotent release. Refcounted so overlapping withdrawals (e.g. a fenced
+ * stop racing an eviction) each hold the route until they release. Synchronous:
+ * the marker is set before the caller begins the stop. Part of #280 DF-07.
+ */
+export function withdrawServingRoute(workload: string): () => void {
+  servingWithdrawnRoutes.set(workload, (servingWithdrawnRoutes.get(workload) ?? 0) + 1);
+  let released = false;
+  return (): void => {
+    if (released) return;
+    released = true;
+    const next = (servingWithdrawnRoutes.get(workload) ?? 0) - 1;
+    if (next <= 0) {
+      servingWithdrawnRoutes.delete(workload);
+    } else {
+      servingWithdrawnRoutes.set(workload, next);
+    }
+  };
+}
+
+/**
+ * Workloads whose route refcount is currently positive (#280 DF-07), as a
+ * fresh Set. A serve-registered declared-model source reads this fresh so a
+ * withdrawing workload projects 'draining' rather than 'ready'.
+ */
+export function servingWithdrawnWorkloads(): ReadonlySet<string> {
+  const live = new Set<string>();
+  for (const [workload, count] of servingWithdrawnRoutes) {
+    if (count > 0) live.add(workload);
+  }
+  return live;
+}
+
 function servingReadinessVerdict(
   entry: RouteEntry,
   readiness: ModelHostReadiness,
@@ -786,17 +833,25 @@ function servingReadinessVerdict(
   return verdict;
 }
 
-type ServingRouteOutcome = { routed: RoutedEntry } | { warming: RouteEntry } | null;
+type ServingRouteOutcome =
+  | { routed: RoutedEntry }
+  | { warming: RouteEntry }
+  | { withdrawn: RouteEntry }
+  | null;
 
 /**
  * Chat routing gate (#280 DF-07): pick a route candidate that passes declared
- * serving readiness. null means no route (the existing route-miss path). The
- * first candidate carrying no readiness wins untouched — no probe, no cache.
- * Otherwise the fallback set mirrors #518's selectCatalogCandidates: a
- * non-experimental candidate drops the experimental ones. Every candidate in
- * that set gets its cached-or-fresh verdict concurrently (each bounded by the
- * probe timeout, failing closed); the first in order with no readiness or a
- * true verdict is routed. When none qualifies, the winner is reported warming.
+ * serving readiness. null means no route (the existing route-miss path). A
+ * workload under eviction has its local (non-peer) routes withdrawn for the
+ * stop's duration; those candidates are dropped before selection, and when
+ * every candidate for the id is withdrawn the winner is reported withdrawn
+ * (the caller synthesizes a draining rejection). The first surviving candidate
+ * carrying no readiness wins untouched — no probe, no cache. Otherwise the
+ * fallback set mirrors #518's selectCatalogCandidates: a non-experimental
+ * candidate drops the experimental ones. Every candidate in that set gets its
+ * cached-or-fresh verdict concurrently (each bounded by the probe timeout,
+ * failing closed); the first in order with no readiness or a true verdict is
+ * routed. When none qualifies, the winner is reported warming.
  */
 async function servingRouteForModel(
   model: string,
@@ -806,15 +861,25 @@ async function servingRouteForModel(
 ): Promise<ServingRouteOutcome> {
   const candidates = getRouteMap(resolved).candidates.get(model);
   if (candidates === undefined || candidates.length === 0) return null;
-  const winner = candidates[0];
+  // Only local routes are ever withdrawn: a peer route lives on another node's
+  // engine and is never the subject of this node's stop fence.
+  const live = candidates.filter(
+    (candidate) => candidate.entry.isPeer === true || !isRouteWithdrawn(candidate.entry.workload),
+  );
+  if (live.length === 0) {
+    const first = candidates[0];
+    if (first === undefined) return null;
+    return { withdrawn: first.entry };
+  }
+  const winner = live[0];
   if (winner === undefined) return null;
   if (winner.readiness === undefined) {
     return { routed: { ...winner.entry, target: targetForEntry(winner.entry, pathname, search) } };
   }
-  const hasNonExperimental = candidates.some((candidate) => candidate.entry.experimental !== true);
+  const hasNonExperimental = live.some((candidate) => candidate.entry.experimental !== true);
   const fallback = hasNonExperimental
-    ? candidates.filter((candidate) => candidate.entry.experimental !== true)
-    : candidates;
+    ? live.filter((candidate) => candidate.entry.experimental !== true)
+    : live;
   const verdicts = await Promise.all(
     fallback.map((candidate) =>
       candidate.readiness === undefined || candidate.probeKey === undefined
@@ -985,6 +1050,7 @@ export function __resetOpenAIProxyRouteMapCacheForTests(): void {
   coldPinProbeSeq = 0;
   servingVerdictCache.clear();
   servingWarmingRecords.clear();
+  servingWithdrawnRoutes.clear();
   servingReadinessSeam = null;
   for (const runtime of kvRuntimeByDataRoot.values()) {
     runtime.storage.close();
@@ -2610,6 +2676,34 @@ function servingNotReadyRejectionFor(
 }
 
 /**
+ * #280 DF-07: 503 for a pin whose only routes are withdrawn (the workload is
+ * being stopped). The declared catalog state wins when it carries a non-ready
+ * state; otherwise a `draining` entry with reason `route-withdrawn` is
+ * synthesized and validated through DeclaredModelEntryV1Schema. The result is a
+ * `model_not_loaded` 503, state draining, no Retry-After.
+ */
+function servingWithdrawnRejectionFor(
+  model: string,
+  entry: RouteEntry,
+  bodyText: string | undefined,
+): Response {
+  const declared = declaredModelEntries().find((candidate) => candidate.id === model);
+  if (declared !== undefined && declared.state !== "ready") {
+    return declaredNotLoadedResponse(model, declared, bodyText);
+  }
+  const synthesized = DeclaredModelEntryV1Schema.parse({
+    id: model,
+    workload: entry.workload,
+    kind: entry.kind,
+    ownerNodeId: "local",
+    state: "draining",
+    autoLoadEligible: false,
+    reason: "route-withdrawn",
+  });
+  return declaredNotLoadedResponse(model, synthesized, bodyText);
+}
+
+/**
  * Route a JSON request by its body `model` field. Reads (and size-caps)
  * the body when it hasn't been read yet; leaves the default target in
  * place when the model is absent or empty.
@@ -2636,6 +2730,15 @@ function servingNotReadyRejectionFor(
  * `model_not_loaded` 503 (or the declared catalog state when one exists) —
  * never a forward to a warming host. Default-target ids instead fall through
  * to the default endpoint for a warming id, mirroring routeMissResponse.
+ *
+ * #280 DF-07 (AC4b): a workload being stopped has its local routes withdrawn
+ * for the stop's duration; when every candidate for the id is withdrawn, the
+ * pin is answered with a `model_not_loaded` 503 in state draining (the declared
+ * catalog state when one exists, else a synthesized `route-withdrawn` entry).
+ * A default-target id falls through to the default endpoint for a withdrawn id,
+ * mirroring the warming path: a known AC4b gap means a withdrawn default
+ * llama-server ModelRun is still reachable at the default endpoint during its
+ * stop.
  *
  * Known limitation: when the operator's extraArgs already pass `--alias`
  * or `-a`, server.ts skips adding `--alias LLAMA_CPP_SERVER_ALIAS`, so the
@@ -2685,6 +2788,15 @@ async function applyBodyModelRoute(
     context.route = outcome.routed;
     clearServingWarming(model);
     return context;
+  }
+  if (outcome !== null && "withdrawn" in outcome) {
+    // Known AC4b gap: a withdrawn default llama-server ModelRun stays reachable
+    // at the default endpoint during its stop, mirroring the warming path.
+    if (defaultTargetModelIds(context.resolved).has(model)) {
+      clearServingWarming(model);
+      return context;
+    }
+    return servingWithdrawnRejectionFor(model, outcome.withdrawn, bodyText);
   }
   if (outcome !== null && "warming" in outcome) {
     if (defaultTargetModelIds(context.resolved).has(model)) {

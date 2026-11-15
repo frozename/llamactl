@@ -196,6 +196,22 @@ function servingWarmingModelIds(): Set<string> {
   return new Set(fn());
 }
 
+// withdrawServingRoute / servingWithdrawnWorkloads land with the #280
+// DF-07 withdraw fix; the namespace lookups keep this file typechecking on
+// the base revision (undefined at runtime, so the withdrawn pins fall
+// through to the live route and fail by assertion — never by import or
+// type error).
+const withdrawServingRoute = (openaiProxy as unknown as Record<string, unknown>)[
+  "withdrawServingRoute"
+] as ((workload: string) => () => void) | undefined;
+
+const servingWithdrawnWorkloads = (): ReadonlySet<string> =>
+  (
+    (openaiProxy as unknown as Record<string, unknown>)["servingWithdrawnWorkloads"] as
+      | (() => ReadonlySet<string>)
+      | undefined
+  )?.() ?? new Set<string>();
+
 const chatCompletionsRequest = (model: string): Request =>
   new Request("http://x/v1/chat/completions", {
     method: "POST",
@@ -813,6 +829,176 @@ test("a default-target id falls through to the default endpoint while its route 
     expect(chats[0]).toBe(`http://127.0.0.1:${String(DEFAULT_PORT)}/v1/chat/completions`);
     expect(stub.chatCalls(dtPort)).toHaveLength(0);
     expect(servingWarmingModelIds().has("default-alias")).toBe(false);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a withdrawn workload's pin gets a typed draining 503 and the upstream is not called", async () => {
+  // Kills: servingRouteForModel ignoring the withdrawn set, and release()
+  // not deleting the marker (at base the pin forwards and answers 200).
+  const t = tempEnv();
+  try {
+    const hostPort = fixturePort();
+    writeModelHost(t.env, "withdrawn-host", {
+      port: hostPort,
+      aliases: ["withdrawn-pin"],
+    });
+    const stub = installProxyFetchStub({});
+    const release = withdrawServingRoute?.("withdrawn-host");
+
+    const res = await pinModel("withdrawn-pin", t.env);
+
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as ProxyErrorBody;
+    expect(body.error.code).toBe("model_not_loaded");
+    expect(body.error.type).toBe("model_not_loaded");
+    expect(body.error.state).toBe("draining");
+    expect(body.error.reason).toBe("route-withdrawn");
+    expect(body.error.auto_load_eligible).toBe(false);
+    expect(stub.chatCalls(hostPort)).toHaveLength(0);
+    expect(stub.chatCalls(DEFAULT_PORT)).toHaveLength(0);
+
+    release?.();
+    const again = await pinModel("withdrawn-pin", t.env);
+    expect(again.status).toBe(200);
+    expect(stub.chatCalls(hostPort)).toHaveLength(1);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a withdrawn candidate falls through to a non-withdrawn replica", async () => {
+  // Kills: rejecting the whole id when any candidate is withdrawn, instead
+  // of filtering candidates (at base the first-ordered host wins and gets
+  // the chat call).
+  const t = tempEnv();
+  try {
+    const aPort = fixturePort();
+    const bPort = fixturePort();
+    writeModelHost(t.env, "a-first-host", {
+      port: aPort,
+      aliases: ["replica-model"],
+    });
+    writeModelHost(t.env, "b-second-host", {
+      port: bPort,
+      aliases: ["replica-model"],
+    });
+    const stub = installProxyFetchStub({});
+    const release = withdrawServingRoute?.("a-first-host");
+
+    const res = await pinModel("replica-model", t.env);
+
+    expect(res.status).toBe(200);
+    expect(stub.chatCalls()).toHaveLength(1);
+    expect(stub.chatCalls(bPort)).toHaveLength(1);
+    expect(stub.chatCalls(aPort)).toHaveLength(0);
+    release?.();
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("servingWithdrawnWorkloads tracks overlapping withdrawals and release is idempotent", async () => {
+  // Kills: a plain Set with no refcount (the set empties on the first
+  // release), a non-idempotent release that decrements again while another
+  // withdrawal is outstanding, and a negative or zero count left in the
+  // map that a has()-based gate would still treat as withdrawn.
+  const t = tempEnv();
+  try {
+    const hostPort = fixturePort();
+    writeModelHost(t.env, "refcount-host", {
+      port: hostPort,
+      aliases: ["refcount-model"],
+    });
+    const stub = installProxyFetchStub({});
+    const r1 = withdrawServingRoute?.("refcount-host");
+    const r2 = withdrawServingRoute?.("refcount-host");
+
+    r1?.();
+    expect(servingWithdrawnWorkloads().has("refcount-host")).toBe(true);
+
+    r1?.();
+    expect(servingWithdrawnWorkloads().has("refcount-host")).toBe(true);
+
+    const during = await pinModel("refcount-model", t.env);
+    expect(during.status).toBe(503);
+
+    r2?.();
+    expect(servingWithdrawnWorkloads().has("refcount-host")).toBe(false);
+
+    r2?.();
+    expect(servingWithdrawnWorkloads().has("refcount-host")).toBe(false);
+
+    const after = await pinModel("refcount-model", t.env);
+    expect(after.status).toBe(200);
+    expect(stub.chatCalls(hostPort)).toHaveLength(1);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a declared draining entry wins over the synthesized withdrawn rejection", async () => {
+  // Kills: always synthesizing 'route-withdrawn' instead of preferring the
+  // non-ready declared entry (at base the pin forwards and answers 200).
+  const t = tempEnv();
+  try {
+    const hostPort = fixturePort();
+    writeModelHost(t.env, "declared-host", {
+      port: hostPort,
+      aliases: ["declared-pin"],
+    });
+    const stub = installProxyFetchStub({});
+    const release = withdrawServingRoute?.("declared-host");
+    openaiProxy.setDeclaredModelSource(() => [
+      {
+        id: "declared-pin",
+        workload: "declared-host",
+        kind: "ModelHost",
+        ownerNodeId: "local",
+        state: "draining",
+        autoLoadEligible: false,
+      },
+    ]);
+
+    const res = await pinModel("declared-pin", t.env);
+
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as ProxyErrorBody;
+    expect(body.error.code).toBe("model_not_loaded");
+    expect(body.error.state).toBe("draining");
+    expect(body.error.reason).toBeUndefined();
+    expect(stub.chatCalls()).toHaveLength(0);
+    release?.();
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a withdrawn non-default ModelRun route is rejected too", async () => {
+  // Kills: filtering only ModelHost-kind candidates (at base the pin
+  // forwards to the workload port and answers 200).
+  const t = tempEnv();
+  try {
+    const runPort = fixturePort();
+    writeLlamaServerWorkload(t.dir, "run-a", { rel: "org/run-a.gguf", port: runPort });
+    const stub = installProxyFetchStub({});
+    const release = withdrawServingRoute?.("run-a");
+
+    const res = await pinModel("org/run-a.gguf", t.env);
+
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as ProxyErrorBody;
+    expect(body.error.code).toBe("model_not_loaded");
+    expect(body.error.state).toBe("draining");
+    expect(body.error.reason).toBe("route-withdrawn");
+    expect(stub.chatCalls(runPort)).toHaveLength(0);
+    expect(stub.chatCalls(DEFAULT_PORT)).toHaveLength(0);
+
+    release?.();
+    const again = await pinModel("org/run-a.gguf", t.env);
+    expect(again.status).toBe(200);
+    expect(stub.chatCalls(runPort)).toHaveLength(1);
   } finally {
     t.cleanup();
   }

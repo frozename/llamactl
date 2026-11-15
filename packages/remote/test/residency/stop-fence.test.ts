@@ -502,7 +502,7 @@ describe("fenceWorkloadStop", () => {
     expect(reg.snapshot(W).phase).toBe("unloaded");
   });
 
-  test("inert without a registry returns the stop promise unwrapped", async () => {
+  test("without a registry the stop runs unfenced, withdrawing routes only for its duration", async () => {
     const fence = await requireFence();
     setResidencyLeaseRegistry(null);
     const obj = { ok: true };
@@ -528,7 +528,7 @@ describe("fenceWorkloadStop", () => {
         refuse,
       });
 
-      expect(result).toBe(p);
+      expect(await result).toBe(obj);
       expect(stopCalls).toBe(1);
       expect(verifiedCalls).toBe(0);
       expect(calls).toEqual([]);

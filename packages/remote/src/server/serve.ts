@@ -1033,12 +1033,16 @@ function maybeRegisterDeclaredModels(opts: StartAgentOptions): (() => void) | nu
   // claim for that model ready, and a name-keyed set would mark nothing. The
   // warming set is read fresh from the proxy's chat-routing gate (#280 DF-07)
   // so a live id whose route fails readiness projects 'loading', not 'ready'.
+  // The withdrawn set is read fresh from the same gate so a workload whose
+  // routes are pulled for the duration of a stop (#280 DF-07) projects
+  // 'draining', not 'ready'.
   openaiProxy.setDeclaredModelSource(() =>
     listDeclaredModels({
       nodeName: LOCAL_NODE_ID,
       liveModelIds: new Set(listLocalRoutes(resolveEnv()).map((route) => route.model)),
       workloadPhase: (workload) => getResidencyLeaseRegistry()?.snapshot(workload).phase,
       warmingModelIds: openaiProxy.servingWarmingModelIds(),
+      withdrawnWorkloads: openaiProxy.servingWithdrawnWorkloads(),
     }),
   );
   return (): void => {
