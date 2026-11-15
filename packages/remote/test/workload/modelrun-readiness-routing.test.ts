@@ -2,7 +2,7 @@ import type { ResolvedEnv } from "@llamactl/core";
 
 import { openaiProxy, server, workloadRuntime } from "@llamactl/core";
 import { resolveEnv } from "@llamactl/core/env";
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -349,4 +349,54 @@ test("the serverStart RPC input keeps a declared readiness and rejects a malform
       .success,
   ).toBe(false);
   expect("readiness" in schema.parse({ workload: "w", target: "t" })).toBe(false);
+});
+
+test("the serverStart subscription forwards the normalized readiness into startServer", async () => {
+  // Kills: the router's serverStart -> startServer call dropping
+  // `readiness` — the schema test above passes with it gone, and the
+  // spied startServer then sees no readiness key.
+  const seen: server.StartServerOptions[] = [];
+  const startSpy = spyOn(server, "startServer").mockImplementation((opts) => {
+    seen.push(opts);
+    return Promise.resolve({
+      ok: true,
+      pid: 4242,
+      endpoint: "http://127.0.0.1:18830",
+      advertisedEndpoint: "http://127.0.0.1:18830",
+      tunedProfile: null,
+      retried: false,
+    });
+  });
+  try {
+    const caller = routerMod.router.createCaller({});
+    const drain = async (input: Record<string, unknown>): Promise<string[]> => {
+      const types: string[] = [];
+      const stream = await caller.serverStart(input as Parameters<typeof caller.serverStart>[0]);
+      for await (const evt of stream) types.push(evt.type);
+      return types;
+    };
+
+    expect(
+      await drain({
+        workload: "rpc-run",
+        target: "readiness-rpc/run.gguf",
+        readiness: { path: "/ready", expectJson: { status: "ready" } },
+      }),
+    ).toEqual(["done"]);
+    expect(await drain({ workload: "rpc-plain", target: "readiness-rpc/plain.gguf" })).toEqual([
+      "done",
+    ]);
+
+    expect(seen).toHaveLength(2);
+    expect(seen[0]?.key).toEqual({ name: "rpc-run" });
+    expect(seen[0]?.readiness).toEqual({
+      path: "/ready",
+      expectStatus: 200,
+      expectJson: { status: "ready" },
+    });
+    expect(seen[1]?.key).toEqual({ name: "rpc-plain" });
+    expect(seen[1] !== undefined && "readiness" in seen[1]).toBe(false);
+  } finally {
+    startSpy.mockRestore();
+  }
 });
