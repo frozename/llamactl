@@ -27,6 +27,11 @@ import {
 } from "../../../cli/src/commands/workload.js";
 import { EMPTY_GLOBALS, setGlobals } from "../../../cli/src/dispatcher.js";
 import { captureProcessStreams } from "../../../cli/test/helpers.js";
+import {
+  readControllerHostHistory,
+  readModelHostRuntimeStatus,
+} from "../../../core/src/engines/conditions.js";
+import { resolveEnv } from "../../../core/src/env.js";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
 import { applyManifest } from "../../src/workload/apply.js";
 import { loadModelHostByName, saveModelHost } from "../../src/workload/modelhost-store.js";
@@ -89,7 +94,7 @@ const CALLERS: readonly CallerSpec[] = [
     entry: "reconcile",
     candidate: "ModelHost",
     label: "reconcileOnce(ModelHost candidate)",
-    mutations: ["M1", "M3"],
+    mutations: ["M1", "M3", "M7"],
   },
   {
     entry: "cli-apply",
@@ -399,6 +404,18 @@ interface ArmOutcome {
   message: string;
   /** Persisted spec.enabled after the call; only the enable caller reads it. */
   candidateEnabled?: boolean;
+  /** The recorded ReconcileError condition reason; only the reconcile caller
+   *  with a ModelHost candidate reads it (gpu1 is remote, so the condition
+   *  lives in the controller history under the workloads dir). */
+  conditionReason?: unknown;
+}
+
+/** The reason of the recorded ReconcileError condition, if any. */
+function reconcileErrorReason(
+  conditions: readonly { type: string; status: string; reason: string }[] | undefined,
+): string | undefined {
+  const condition = conditions?.find((c) => c.type === "ReconcileError" && c.status === "True");
+  return condition?.reason;
 }
 
 function candidateManifest(
@@ -453,6 +470,13 @@ async function runReconcileCaller(
       report === undefined ? undefined : (report as { admissionReason?: unknown }).admissionReason,
     starts: prepared.fake.starts.get(name) ?? 0,
     message: report?.error ?? "",
+    ...(candidate === "ModelHost"
+      ? {
+          conditionReason: reconcileErrorReason(
+            readControllerHostHistory(prepared.workloadsDir, NODE, name)?.conditions,
+          ),
+        }
+      : {}),
   };
 }
 
@@ -523,6 +547,9 @@ async function runCallerArm(
 //   M6 the remote budget falls back to
 //      defaultNodeBudgetGiB(totalmem) or nodeFacts x 0.75 when nodeFacts
 //      rejects                                      — arm (3), every caller
+//   M7 the reconciler records a refused ModelHost's
+//      ReconcileError as ApplyFailed instead of its
+//      typed reason                                 — reconcileOnce(ModelHost)
 describe("admission entrypoints (#274)", () => {
   for (const caller of CALLERS) {
     for (const resident of RESIDENT_KINDS) {
@@ -536,6 +563,9 @@ describe("admission entrypoints (#274)", () => {
         expect(arm1.message).toContain("Budget is 24.0 GiB");
         expect(arm1.message).toContain("would reserve 32.0 GiB");
         if (caller.entry === "enable") expect(arm1.candidateEnabled).toBe(false);
+        if (caller.entry === "reconcile" && caller.candidate === "ModelHost") {
+          expect(arm1.conditionReason).toBe("BudgetExceeded");
+        }
 
         const arm2 = await runCallerArm(caller, resident, 2);
         expect(arm2.admitted).toBe(true);
@@ -547,6 +577,9 @@ describe("admission entrypoints (#274)", () => {
         expect(arm3.message).toContain("node 'gpu1' memory budget is unknown");
         expect(arm3.starts).toBe(0);
         if (caller.entry === "enable") expect(arm3.candidateEnabled).toBe(false);
+        if (caller.entry === "reconcile" && caller.candidate === "ModelHost") {
+          expect(arm3.conditionReason).toBe("BudgetUnknown");
+        }
       });
     }
   }
@@ -569,5 +602,50 @@ describe("admission entrypoints (#274)", () => {
       }
     }
     expect(reasons).toEqual(Array(16).fill("BudgetUnknown"));
+  });
+
+  // Kills M7 on the local node: a refused local ModelHost records its
+  // ReconcileError in the local runtime conditions file, not the controller
+  // history. The NodeRun pins a 24 GiB budget, so the verdict does not
+  // depend on this machine's RAM.
+  test("reconcileOnce(local ModelHost candidate) records BudgetExceeded as the ReconcileError reason [kills M7]", async () => {
+    const workloadsDir = join(tmp, "local-arm", "workloads");
+    const runtimeDir = join(tmp, "local-arm", "runtime");
+    mkdirSync(workloadsDir, { recursive: true });
+    mkdirSync(runtimeDir, { recursive: true });
+    process.env["LLAMACTL_WORKLOADS_DIR"] = workloadsDir;
+    process.env["LOCAL_AI_RUNTIME_DIR"] = runtimeDir;
+    const resident = makeModelRun(RESIDENT_NAME.ModelRun, RESIDENT_MEMORY_GIB, true);
+    saveWorkload({ ...resident, spec: { ...resident.spec, node: "local" } }, workloadsDir);
+    const candidate = makeModelHost(
+      CANDIDATE_NAME.ModelHost,
+      CANDIDATE_MEMORY_GIB,
+      true,
+      CANDIDATE_PORT,
+    );
+    saveModelHost({ ...candidate, spec: { ...candidate.spec, node: "local" } }, workloadsDir);
+    const nodeRun = makeNodeRun(24);
+    saveNodeRun(
+      {
+        ...nodeRun,
+        metadata: { ...nodeRun.metadata, name: "local" },
+        spec: { ...nodeRun.spec, node: "local" },
+      },
+      workloadsDir,
+    );
+    const fake = makeAdmissionFake(false);
+
+    const result = await reconcileOnce({ workloadsDir, getClient: () => fake.client });
+
+    const report = result.reports.find((r) => r.name === CANDIDATE_NAME.ModelHost);
+    expect(report?.node).toBe("local");
+    expect(report?.admissionReason).toBe("BudgetExceeded");
+    expect(report?.error).toContain("Budget is 24.0 GiB");
+    expect(fake.starts.get(CANDIDATE_NAME.ModelHost) ?? 0).toBe(0);
+    const status = readModelHostRuntimeStatus(
+      { name: CANDIDATE_NAME.ModelHost },
+      resolveEnv(process.env),
+    );
+    expect(reconcileErrorReason(status?.conditions)).toBe("BudgetExceeded");
   });
 });
