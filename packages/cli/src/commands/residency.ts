@@ -23,11 +23,13 @@ const USAGE = `Usage: llamactl residency <subcommand>
 Subcommands:
   status --node <name> [--json]   Read-only residency status: NodeRun policy, memory budget, the serving process's residency store and its per-workload lease/drain state. Never wakes a model or mutates state.
   plan --node <name> --to <profile> [--from <profile>] [--json]   Read-only dry-run profile switch: budget source, victims, replacements, protected workloads or refusal. Never starts, stops, loads or writes the store.
+  apply-profile --node <name> --to <profile> [--from <profile>] [--json]   Dry-run by default: plan and report the profile switch without touching the store. Add --execute --yes to run the switch for real (stops and starts workloads, records an operation).
   force-unload <workload> --reason <text> --yes [--node <name>] [--json]   Operator override of the stop fence: revoke active leases (audited as an operator override), then stop the workload. Destructive; requires --yes.
 
 Example:
   llamactl residency status --node <name> [--json]
   llamactl residency plan --node <name> --to <profile> [--json]
+  llamactl residency apply-profile --node <name> --to <profile> [--from <profile>] [--execute --yes]
   llamactl residency force-unload <workload> --reason <text> --yes
 `;
 
@@ -37,6 +39,10 @@ export type ResidencyPlanView = Awaited<ReturnType<NodeClient["residencyPlan"]["
 
 export type ResidencyForceUnloadView = Awaited<
   ReturnType<NodeClient["residencyForceUnload"]["mutate"]>
+>;
+
+export type ResidencyApplyProfileView = Awaited<
+  ReturnType<NodeClient["residencyApplyProfile"]["mutate"]>
 >;
 
 export interface ResidencyDeps {
@@ -303,6 +309,166 @@ async function runResidencyPlan(args: string[], deps: ResidencyDeps): Promise<nu
   }
 }
 
+type ApplyProfileMutableFlags = {
+  json: boolean;
+  node: string | undefined;
+  to: string;
+  from: string | undefined;
+  execute: boolean;
+  yes: boolean;
+};
+
+type ApplyProfileFlags = ApplyProfileMutableFlags | { exit: number };
+
+function applyProfileArg(args: string[], i: number, flags: ApplyProfileMutableFlags): ArgStep {
+  const arg = required(args[i]);
+  if (arg === "--json") {
+    flags.json = true;
+    return { consumed: 1 };
+  }
+  if (arg === "--execute") {
+    flags.execute = true;
+    return { consumed: 1 };
+  }
+  if (arg === "--yes") {
+    flags.yes = true;
+    return { consumed: 1 };
+  }
+  if (arg === "-h" || arg === "--help") {
+    process.stdout.write(USAGE);
+    return { exit: 0 };
+  }
+  const eq = arg.indexOf("=");
+  const flag = eq === -1 ? arg : arg.slice(0, eq);
+  if (flag === "--node" || flag === "--to" || flag === "--from") {
+    const key = flag.slice(2) as "node" | "to" | "from";
+    if (eq !== -1) {
+      flags[key] = arg.slice(eq + 1);
+      return { consumed: 1 };
+    }
+    const next = args[i + 1];
+    if (next === undefined) {
+      process.stderr.write(`residency apply-profile: ${flag} requires a value\n`);
+      return { exit: 1 };
+    }
+    flags[key] = next;
+    return { consumed: 2 };
+  }
+  process.stderr.write(`residency apply-profile: unknown argument ${arg}\n`);
+  return { exit: 1 };
+}
+
+function parseApplyProfileArgs(args: string[]): ApplyProfileFlags {
+  const flags: ApplyProfileMutableFlags = {
+    json: false,
+    node: undefined,
+    to: "",
+    from: undefined,
+    execute: false,
+    yes: false,
+  };
+  let i = 0;
+  while (i < args.length) {
+    const step = applyProfileArg(args, i, flags);
+    if ("exit" in step) return step;
+    i += step.consumed;
+  }
+  return flags;
+}
+
+export function renderResidencyApplyProfile(
+  req: { node: string; to: string; from: string | null },
+  r: ResidencyApplyProfileView,
+): string {
+  const lines: string[] = [];
+  lines.push(renderResidencyPlanLabel("Node:", req.node));
+  lines.push(renderResidencyPlanLabel("Switch:", `${req.from ?? "(current)"} -> ${req.to}`));
+  lines.push(
+    renderResidencyPlanLabel(
+      "Mode:",
+      r.dryRun
+        ? "dry-run (no starts, stops, loads or store writes)"
+        : "execute (stops and starts run)",
+    ),
+  );
+  lines.push(renderResidencyPlanLabel("Outcome:", r.outcome));
+  if (r.operationId !== undefined && r.operationId !== null) {
+    lines.push(renderResidencyPlanLabel("Operation:", r.operationId));
+  }
+  if (r.inFlightOperationId !== undefined && r.inFlightOperationId !== null) {
+    lines.push(renderResidencyPlanLabel("InFlight:", r.inFlightOperationId));
+  }
+  for (const step of r.steps) {
+    lines.push(renderResidencyPlanLabel(`  ${step.action}:`, `${step.workload} (${step.status})`));
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+type ResidencyApplyProfileInput = Parameters<NodeClient["residencyApplyProfile"]["mutate"]>[0];
+
+async function callResidencyApplyProfile(
+  client: NodeClient,
+  node: string,
+  execute: boolean,
+  input: ResidencyApplyProfileInput,
+): Promise<ResidencyApplyProfileView> {
+  if (execute) {
+    return await client.residencyApplyProfile.mutate(input);
+  }
+  return await withNodeQueryDeadline(node, () => client.residencyApplyProfile.mutate(input));
+}
+
+function validateApplyProfileArgs(parsed: ApplyProfileMutableFlags): { node: string } | string {
+  const resolved = parsed.node ?? getGlobals().nodeName ?? "";
+  if (resolved === "") return `residency apply-profile: --node <name> is required\n${USAGE}`;
+  if (resolved === "all")
+    return "residency apply-profile: --node all is not supported; name one node";
+  if (parsed.to === "") return "residency apply-profile: --to <profile> is required";
+  if (parsed.execute && !parsed.yes) {
+    return "residency apply-profile: refusing --execute without --yes (a profile switch stops and starts workloads)";
+  }
+  return { node: resolved };
+}
+
+async function runResidencyApplyProfile(args: string[], deps: ResidencyDeps): Promise<number> {
+  const parsed = parseApplyProfileArgs(args);
+  if ("exit" in parsed) return parsed.exit;
+
+  const target = validateApplyProfileArgs(parsed);
+  if (typeof target === "string") {
+    process.stderr.write(`${target}\n`);
+    return 1;
+  }
+  const node = target.node;
+  const from = parsed.from;
+  const base = { node, to: parsed.to, ...(from !== undefined ? { from } : {}) };
+  const input: ResidencyApplyProfileInput = parsed.execute
+    ? { ...base, dryRun: false, confirm: true }
+    : { ...base, dryRun: true };
+
+  try {
+    const client = (deps.getNodeClientByName ?? getNodeClientByName)(node);
+    const result = await callResidencyApplyProfile(client, node, parsed.execute, input);
+    if (parsed.json) {
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      return result.ok ? 0 : 1;
+    }
+    if (!result.ok) {
+      const reason = result.refusal?.reason ?? result.outcome;
+      const detail = result.refusal?.detail ?? "";
+      process.stderr.write(`residency apply-profile: ${reason}: ${detail}\n`);
+      return 1;
+    }
+    process.stdout.write(
+      renderResidencyApplyProfile({ node, to: parsed.to, from: from ?? null }, result),
+    );
+    return 0;
+  } catch (err) {
+    process.stderr.write(`residency apply-profile: ${(err as Error).message}\n`);
+    return 1;
+  }
+}
+
 interface ForceUnloadFlags {
   workload: string | undefined;
   reason: string | undefined;
@@ -461,6 +627,9 @@ export async function runResidency(args: string[], deps: ResidencyDeps = {}): Pr
   }
   if (sub === "plan") {
     return await runResidencyPlan(rest, deps);
+  }
+  if (sub === "apply-profile") {
+    return await runResidencyApplyProfile(rest, deps);
   }
   if (sub === "force-unload") {
     return await runResidencyForceUnload(rest, deps);
