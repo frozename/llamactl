@@ -99,7 +99,10 @@ export interface InferenceRpcClient {
 /** In-process client for the local worker, presenting server-derived claims. */
 export function createEmbeddedInferenceRpcClient(claims: Claims): InferenceRpcClient {
   const caller = (signal?: AbortSignal): ReturnType<typeof inferenceRpcRouter.createCaller> =>
-    inferenceRpcRouter.createCaller({ inferenceClaims: claims }, signal ? { signal } : undefined);
+    inferenceRpcRouter.createCaller(
+      { inferenceClaims: claims, embeddedCaller: true },
+      signal ? { signal } : undefined,
+    );
   return {
     transport: "embedded",
     negotiate: async (input) => await caller().negotiate(input),

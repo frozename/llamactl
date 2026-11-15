@@ -28,6 +28,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { connect } from "node:tls";
 
+import type { RequestAdmission } from "../src/residency/request-admission.js";
 import type { ClientWebSocketConstructor } from "../src/tunnel/tunnel-client.js";
 
 import { envForTemp, makeTempRuntime } from "../../core/test/helpers.js";
@@ -73,6 +74,10 @@ import {
   statSync,
   writeFileSync,
 } from "../src/safe-fs.js";
+import {
+  CHAT_INGRESS_MODEL,
+  createChatCompletionsAdmission,
+} from "../src/server/chat-admission.js";
 import {
   createTunnelClient,
   createTunnelRouterHandler,
@@ -2834,7 +2839,7 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
   };
   type RemoteExtra = Pick<
     DirectInferenceRpcClientOptions,
-    "limits" | "onStreamQueue" | "serviceCredential"
+    "limits" | "onStreamQueue" | "serviceCredential" | "callTimeoutMs"
   >;
   const TRANSPORTS: ("direct" | "tunnel")[] = ["direct", "tunnel"];
 
@@ -2867,6 +2872,177 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
     const env = envelope(attemptId);
     return { res: await executorOver(client).execute(env, ctxFor(env)), env };
   }
+
+  describe("admission: a queued attempt outlives the client first-frame timeout (#281)", () => {
+    /**
+     * Wraps the shared admission so Worker RPC acquires and releases are
+     * counted by requestId; the 'http-hold' request is filtered out.
+     */
+    interface CountedAdmission extends RequestAdmission {
+      rpcAcquires(): string[];
+      rpcReleases(): string[];
+    }
+
+    function countedAdmission(inner: RequestAdmission): CountedAdmission {
+      const acquired: string[] = [];
+      const released: string[] = [];
+      return {
+        acquire: async (request, options) => {
+          acquired.push(request.requestId);
+          const release = await inner.acquire(request, options);
+          return () => {
+            released.push(request.requestId);
+            release();
+          };
+        },
+        snapshot: () => inner.snapshot(),
+        rpcAcquires: () => acquired.filter((id) => id.startsWith("worker-rpc:")),
+        rpcReleases: () => released.filter((id) => id.startsWith("worker-rpc:")),
+      };
+    }
+
+    /** The next frame, or a thrown bound — a missing frame fails the case, never hangs it. */
+    async function nextFrameWithin(
+      it: AsyncIterator<StreamFrame>,
+      boundMs: number,
+    ): Promise<StreamFrame> {
+      const next = it.next();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const bound = new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`no stream frame within ${String(boundMs)} ms`));
+        }, boundMs);
+      });
+      try {
+        const result = await Promise.race([next, bound]);
+        if (result.done) throw new Error("stream ended before the expected frame");
+        return result.value;
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
+      }
+    }
+
+    /** `pending` already settled inside the bound; still pending means false. */
+    async function settledWithin(pending: Promise<unknown>, boundMs: number): Promise<boolean> {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const elapsed = new Promise<false>((resolve) => {
+        timer = setTimeout(() => {
+          resolve(false);
+        }, boundMs);
+      });
+      try {
+        return await Promise.race([
+          pending.then(
+            () => true,
+            () => true,
+          ),
+          elapsed,
+        ]);
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
+      }
+    }
+
+    /** Awaits an already-created promise under a bound, so a stall fails the case. */
+    async function awaitBounded<T>(pending: Promise<T>, boundMs: number, what: string): Promise<T> {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const bound = new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`${what}: no result within ${String(boundMs)} ms`));
+        }, boundMs);
+      });
+      try {
+        return await Promise.race([pending, bound]);
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
+      }
+    }
+
+    async function collectFramesWithin(
+      it: AsyncIterator<StreamFrame>,
+      boundMs: number,
+    ): Promise<StreamFrame[]> {
+      const frames: StreamFrame[] = [];
+      const draining = (async (): Promise<StreamFrame[]> => {
+        for (;;) {
+          const next = await it.next();
+          if (next.done) return frames;
+          frames.push(next.value);
+        }
+      })();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const bound = new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error("stream did not reach its terminal"));
+        }, boundMs);
+      });
+      try {
+        return await Promise.race([draining, bound]);
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
+      }
+    }
+
+    // Kills: holding the first frame until a slot is granted, where the
+    // client's first-frame timer aborts the transport and the worker
+    // records 'cancelled'. Also kills a remote (HTTP or tunnel) request
+    // context treated as embedded and never queued.
+    test.each(TRANSPORTS)(
+      "the %s stream stays open while the attempt queues for a slot",
+      async (transport) => {
+        const inner = createChatCompletionsAdmission({ maxExecutions: 1, maxQueued: 4 });
+        const holdRelease = await inner.acquire({
+          requestId: "http-hold",
+          principal: "agent",
+          priority: "interactive",
+          model: CHAT_INGRESS_MODEL,
+          bytes: 0,
+          promptTokens: 0,
+          maxCompletionTokens: 0,
+        });
+        const adm = countedAdmission(inner);
+        useRemoteHost({ admission: adm });
+        const client = clientFor[transport]({ callTimeoutMs: 100 });
+        const ac = new AbortController();
+        const attemptId = `att-adm-${transport}`;
+        try {
+          const submitted = await submit(client, attemptId);
+          expect(submitted.outcome).toBe("accepted");
+          const it = client.stream({ attemptId }, ac.signal)[Symbol.asyncIterator]();
+          const first = await nextFrameWithin(it, 2_000);
+          expect(first).toMatchObject({ frame: "event" });
+          if (first.frame === "event") expect(first.event.type).toBe("accepted");
+          // No content for 4x callTimeoutMs: the attempt is queued, not dead.
+          const second = it.next();
+          expect(await settledWithin(second, 400)).toBe(false);
+          expect(statusNow(attemptId)).toMatchObject({ outcome: "status", state: "accepted" });
+          expect(inner.snapshot().queued).toBe(1);
+
+          holdRelease();
+          const granted = await awaitBounded(second, 5_000, "queued attempt content");
+          expect(granted.done).toBe(false);
+          if (!granted.done) {
+            expect(granted.value).toMatchObject({ frame: "event" });
+            if (granted.value.frame === "event") {
+              expect(granted.value.event.type).toBe("content");
+            }
+          }
+          const rest = await collectFramesWithin(it, 5_000);
+          expect(terminalOf(rest)).toMatchObject({ outcome: "completed" });
+          expect(adm.rpcAcquires()).toHaveLength(1);
+          expect(adm.rpcReleases()).toHaveLength(1);
+          expect(inner.snapshot().executing).toBe(0);
+        } finally {
+          ac.abort();
+          holdRelease();
+          host?.close();
+          host = undefined;
+          restore?.();
+          restore = undefined;
+        }
+      },
+    );
+  });
 
   describe("golden equivalence (A2)", () => {
     test.each(TRANSPORTS)("the %s exchanges match golden.json by value", async (transport) => {
