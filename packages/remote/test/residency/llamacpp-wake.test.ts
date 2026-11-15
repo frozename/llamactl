@@ -95,7 +95,9 @@ async function loadAgentWakeModule(): Promise<LlamacppWakeClientModule> {
 // ── fake llama-server ───────────────────────────────────────────────────
 
 type WakeMode = "ok" | number | "hang";
-type PropsEntry = number | { is_sleeping: boolean } | "hang";
+// An object entry is the 200 /props body verbatim, so a case can serve a
+// body with no is_sleeping field at all.
+type PropsEntry = number | Record<string, unknown> | "hang";
 type SlotMode = number | Record<string, unknown> | "hang";
 
 type SlotRequestRecord = {
@@ -109,6 +111,7 @@ type FakeLlamaState = {
   wakeMode: WakeMode;
   propsQueue: PropsEntry[];
   slotMode: SlotMode;
+  onWakePost?: (() => void) | undefined;
   onPropsGet?: (() => void) | undefined;
   onSlotPost?: (() => void) | undefined;
 };
@@ -158,7 +161,10 @@ function propsEvent(entry: PropsEntry): string {
   if (typeof entry === "number") {
     return `props:${String(entry)}`;
   }
-  return entry.is_sleeping ? "props:sleeping" : "props:ready";
+  if (!("is_sleeping" in entry)) {
+    return "props:no-is-sleeping";
+  }
+  return entry["is_sleeping"] === true ? "props:sleeping" : "props:ready";
 }
 
 function startFakeLlama(): FakeLlama {
@@ -186,6 +192,7 @@ function startFakeLlama(): FakeLlama {
     counts.wakePosts += 1;
     events.push("wake");
     auth.wake.push(req.headers.get("authorization"));
+    state.onWakePost?.();
     const mode = state.wakeMode;
     if (mode === "hang") {
       return await hangResponse();
@@ -418,10 +425,12 @@ describe("llama.cpp wake driver (DF-10 #283)", () => {
 
   test("readiness deadline settles readiness-failed and the shared claim stays uncertain", async () => {
     // Kills returning ready — or releasing the shared claim via
-    // observe('sleeping') — when the readiness deadline fires, and
-    // continuing on to a slot restore after a readiness failure.
+    // observe('sleeping') — when the readiness deadline fires, continuing
+    // on to a slot restore after a readiness failure, and counting a 200
+    // /props with no is_sleeping field (a populated body, then {}) as
+    // awake: only an explicit is_sleeping:false is ready.
     const fake = startFakeLlama();
-    fake.state.propsQueue = [503];
+    fake.state.propsQueue = [503, { total_slots: 1, model_path: "/m/b.gguf" }, {}];
     const authority = createTargetAdmissionAuthority();
     const controller = createSharedBudgetSleepController({
       authority,
@@ -437,6 +446,13 @@ describe("llama.cpp wake driver (DF-10 #283)", () => {
 
     expect(outcome).toEqual({ kind: "wake-failed", outcome: "readiness-failed" });
     expect(elapsed).toBeLessThan(2000);
+    expect(fake.events.slice(0, 4)).toEqual([
+      "wake",
+      "props:503",
+      "props:no-is-sleeping",
+      "props:no-is-sleeping",
+    ]);
+    expect(fake.events).not.toContain("props:ready");
     expect(snapshotMember(controller, "b")).toEqual({
       state: "unknown",
       reservation: "uncertain",
@@ -468,9 +484,40 @@ describe("llama.cpp wake driver (DF-10 #283)", () => {
     });
   });
 
+  test("a readiness deadline that fires during a poll sleep settles readiness-failed", async () => {
+    // Kills returning ready when the loop wakes from the poll sleep to
+    // find the readiness deadline already fired.
+    const fake = startFakeLlama();
+    fake.state.propsQueue = [503];
+    const controller = makeController();
+    const driver = await makeWakeDriver({
+      controller,
+      fake,
+      readinessPollMs: 3000,
+      readinessTimeoutMs: 100,
+    });
+
+    const started = Date.now();
+    const outcome = await driver.wake({});
+    const elapsed = Date.now() - started;
+
+    expect(outcome).toEqual({ kind: "wake-failed", outcome: "readiness-failed" });
+    expect(elapsed).toBeLessThan(1500);
+    expect(fake.counts.propsGets).toBe(1);
+    expect(fake.counts.slotPosts).toBe(0);
+    expect(snapshotMember(controller, "b")).toEqual({
+      state: "unknown",
+      reservation: "uncertain",
+    });
+  });
+
   test("abort mid-wake settles cancelled", async () => {
-    // Kills mapping an external abort to readiness-failed, and ignoring
-    // the signal in the poll sleep or the probe fetch.
+    // Kills mapping an abort that rejects an in-flight probe fetch to
+    // readiness-failed: the abort fires inside the second GET handler. A
+    // fetch that ignored the signal still gets its 503 and the 5 ms poll
+    // sleep ends on its own, so the probe-fetch signal, the poll-sleep
+    // abort listener and the loop-top abort check are pinned by the
+    // hanging-/props and long-poll abort cases instead.
     const fake = startFakeLlama();
     fake.state.propsQueue = [503];
     const controller = makeController();
@@ -499,6 +546,103 @@ describe("llama.cpp wake driver (DF-10 #283)", () => {
       reservation: "uncertain",
     });
     expect(fake.counts.slotPosts).toBe(0);
+  });
+
+  test("abort during a hanging /props probe settles cancelled well before the deadline", async () => {
+    // Kills dropping the external signal from the probe fetch (deadline
+    // only): the hung GET then holds the wake open until the 3 s
+    // readiness deadline instead of ending on the abort.
+    const fake = startFakeLlama();
+    fake.state.propsQueue = ["hang"];
+    const controller = makeController();
+    const driver = await makeWakeDriver({ controller, fake, readinessTimeoutMs: 3000 });
+    const aborter = new AbortController();
+    fake.state.onPropsGet = (): void => {
+      aborter.abort();
+    };
+
+    const started = Date.now();
+    const outcome = await driver.wake({ signal: aborter.signal });
+    const elapsed = Date.now() - started;
+
+    expect(outcome).toEqual({ kind: "wake-failed", outcome: "cancelled" });
+    expect(elapsed).toBeLessThan(1000);
+    expect(fake.counts.propsGets).toBe(1);
+    expect(fake.counts.slotPosts).toBe(0);
+    expect(snapshotMember(controller, "b")).toEqual({
+      state: "unknown",
+      reservation: "uncertain",
+    });
+  });
+
+  test("abort during a long poll sleep settles cancelled without waiting out the interval", async () => {
+    // Kills the poll sleep ignoring the external signal — whether the
+    // abort listener is dropped or the signal is not passed at all — since
+    // the 3 s sleep then runs to completion before the loop sees the abort,
+    // and mapping the abort seen at the top of the poll loop to
+    // readiness-failed.
+    const fake = startFakeLlama();
+    fake.state.propsQueue = [503];
+    const controller = makeController();
+    const driver = await makeWakeDriver({
+      controller,
+      fake,
+      readinessPollMs: 3000,
+      readinessTimeoutMs: 30000,
+    });
+    const aborter = new AbortController();
+    fake.state.onPropsGet = (): void => {
+      setTimeout(() => {
+        aborter.abort();
+      }, 200);
+    };
+
+    const started = Date.now();
+    const outcome = await driver.wake({ signal: aborter.signal });
+    const elapsed = Date.now() - started;
+
+    expect(outcome).toEqual({ kind: "wake-failed", outcome: "cancelled" });
+    expect(elapsed).toBeLessThan(1500);
+    expect(fake.counts.propsGets).toBe(1);
+    expect(snapshotMember(controller, "b")).toEqual({
+      state: "unknown",
+      reservation: "uncertain",
+    });
+  });
+
+  test("abort during a hanging wake POST settles cancelled and the shared claim stays uncertain", async () => {
+    // Kills mapping an abort of the in-flight wake POST to
+    // readiness-failed, and probing /props after the POST was cancelled.
+    const fake = startFakeLlama();
+    fake.state.wakeMode = "hang";
+    fake.state.propsQueue = [{ is_sleeping: false }];
+    const authority = createTargetAdmissionAuthority();
+    const controller = createSharedBudgetSleepController({
+      authority,
+      targetIdentity: "node-a",
+      budgetGiB: () => 16,
+    });
+    controller.register(memberB(), "sleeping");
+    const driver = await makeWakeDriver({ controller, fake });
+    const aborter = new AbortController();
+    fake.state.onWakePost = (): void => {
+      aborter.abort();
+    };
+
+    const outcome = await driver.wake({ signal: aborter.signal });
+
+    expect(outcome).toEqual({ kind: "wake-failed", outcome: "cancelled" });
+    expect(fake.counts.wakePosts).toBe(1);
+    expect(fake.counts.propsGets).toBe(0);
+    expect(fake.counts.slotPosts).toBe(0);
+    expect(snapshotMember(controller, "b")).toEqual({
+      state: "unknown",
+      reservation: "uncertain",
+    });
+    expect(authority.snapshot("node-a").find((c) => c.runtimeKey === "rk-b")).toMatchObject({
+      state: "uncertain",
+      allocationGiB: 8,
+    });
   });
 
   test("an already-aborted signal refuses with no IO and no charge", async () => {
@@ -573,6 +717,104 @@ describe("llama.cpp wake driver (DF-10 #283)", () => {
       slotRestore: { ok: false, reason: "SlotRestoreInvalidResponse" },
     });
     expect(fake.counts.slotPosts).toBe(1);
+    expect(snapshotMember(controller, "b")).toEqual({
+      state: "ready",
+      reservation: "resident",
+    });
+  });
+
+  test("the driver-level cacheIdentity alone selects the slot restore", async () => {
+    // Kills dropping the ctx.cacheIdentity fallback in wake(): with no
+    // per-call identity the controller would decide slots "discard" and
+    // the restore would never be posted.
+    const fake = startFakeLlama();
+    fake.state.propsQueue = [{ is_sleeping: false }];
+    fake.state.slotMode = { n_restored: 7 };
+    const controller = sleptController("kv-1");
+    const driver = await makeWakeDriver({
+      controller,
+      fake,
+      cacheIdentity: "kv-1",
+      slot: { id: 0, filename: "b.kvslot" },
+    });
+
+    const outcome = await driver.wake({});
+
+    expect(outcome).toEqual({ kind: "woke", slots: "restore", tokensRestored: 7 });
+    expect(fake.events).toEqual(["wake", "props:ready", "restore"]);
+    expect(snapshotMember(controller, "b")).toEqual({
+      state: "ready",
+      reservation: "resident",
+    });
+  });
+
+  test("a hanging slot restore past slotRestoreTimeoutMs is SlotRestoreTimedOut, member still ready", async () => {
+    // Kills swapping SlotRestoreTimedOut and SlotRestoreUnreachable: the
+    // restore deadline firing is a timeout, not an unreachable engine.
+    const fake = startFakeLlama();
+    fake.state.propsQueue = [{ is_sleeping: false }];
+    fake.state.slotMode = "hang";
+    const controller = sleptController("kv-1");
+    const driver = await makeWakeDriver({
+      controller,
+      fake,
+      cacheIdentity: "kv-1",
+      slot: { id: 0, filename: "b.kvslot" },
+      slotRestoreTimeoutMs: 50,
+    });
+
+    const started = Date.now();
+    const outcome = await driver.wake({ cacheIdentity: "kv-1" });
+    const elapsed = Date.now() - started;
+
+    expect(outcome).toEqual({
+      kind: "woke",
+      slots: "discard",
+      slotRestore: { ok: false, reason: "SlotRestoreTimedOut" },
+    });
+    expect(elapsed).toBeLessThan(2000);
+    expect(fake.counts.slotPosts).toBe(1);
+    expect(snapshotMember(controller, "b")).toEqual({
+      state: "ready",
+      reservation: "resident",
+    });
+  });
+
+  test("a restore fetch that rejects outright is SlotRestoreUnreachable, member still ready", async () => {
+    // Kills swapping SlotRestoreTimedOut and SlotRestoreUnreachable: a
+    // connection-level rejection with no deadline fired is unreachable.
+    const fake = startFakeLlama();
+    fake.state.propsQueue = [{ is_sleeping: false }];
+    fake.state.slotMode = { n_restored: 7 };
+    const controller = sleptController("kv-1");
+    const realFetch = globalThis.fetch;
+    const restoreUnreachableFetch = (
+      input: Parameters<typeof globalThis.fetch>[0],
+      init?: RequestInit,
+    ): Promise<Response> => {
+      const href = input instanceof Request ? input.url : String(input);
+      if (new URL(href).pathname.startsWith("/slots/")) {
+        return Promise.reject(new TypeError("fetch failed: connect ECONNREFUSED"));
+      }
+      return realFetch(input, init);
+    };
+    const driver = await makeWakeDriver({
+      controller,
+      fake,
+      cacheIdentity: "kv-1",
+      slot: { id: 0, filename: "b.kvslot" },
+      fetch: restoreUnreachableFetch as typeof globalThis.fetch,
+    });
+
+    const outcome = await driver.wake({ cacheIdentity: "kv-1" });
+
+    expect(outcome).toEqual({
+      kind: "woke",
+      slots: "discard",
+      slotRestore: { ok: false, reason: "SlotRestoreUnreachable" },
+    });
+    expect(fake.counts.wakePosts).toBe(1);
+    expect(fake.counts.slotPosts).toBe(0);
     expect(snapshotMember(controller, "b")).toEqual({
       state: "ready",
       reservation: "resident",
