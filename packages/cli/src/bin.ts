@@ -145,6 +145,8 @@ Declarative workloads (Kubernetes-style):
                                               (journaled; never wakes a model)
   llamactl residency status --node <name>     Read-only residency status
       [--json]                                (policy, budget, store; never wakes a model)
+  llamactl residency plan --node <name>       Read-only dry-run profile switch
+      --to <profile> [--from <profile>] [--json]  (victims, replacements, budget; never mutates)
   llamactl enable <workload>                  Flip spec.enabled=true and
                                               re-apply the manifest.
   llamactl disable <workload>                 Flip spec.enabled=false and
