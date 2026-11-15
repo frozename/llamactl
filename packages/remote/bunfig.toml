@@ -1,2 +1,2 @@
 [test]
-preload = ["./test/storage-sandbox.preload.ts"]
+preload = ["./test/host-memory-pin.preload.ts", "./test/storage-sandbox.preload.ts"]

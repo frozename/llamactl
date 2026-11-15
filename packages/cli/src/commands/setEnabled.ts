@@ -7,7 +7,11 @@ import {
   type workloadSchema,
   workloadStore,
 } from "@llamactl/remote";
-import { applyOneModelHost } from "@llamactl/remote/workload/apply";
+import {
+  type AdmissionRefusalReason,
+  admissionRefusalReason,
+  applyOneModelHost,
+} from "@llamactl/remote/workload/apply";
 import { loadModelHostByName, saveModelHost } from "@llamactl/remote/workload/modelhost-store";
 
 import { getNodeClientByName } from "../dispatcher.js";
@@ -16,19 +20,26 @@ import { nodeRunBudgetLookup, nodeRunResidencyLookup } from "./noderun-helpers.j
 export interface SetEnabledResult {
   code: number;
   message?: string;
+  /** #274: set when the apply failed on an admission refusal. */
+  reason?: AdmissionRefusalReason;
+}
+
+interface ApplyFailure {
+  error: string;
+  reason?: AdmissionRefusalReason;
 }
 
 export interface SetEnabledDeps {
-  loadWorkloadByName?: typeof workloadStore.loadWorkloadByName;
-  saveWorkload?: typeof workloadStore.saveWorkload;
-  applyOne?: typeof workloadApply.applyOne;
-  loadModelHostByName?: typeof loadModelHostByName;
-  saveModelHost?: typeof saveModelHost;
-  applyOneModelHost?: typeof applyOneModelHost;
-  loadConfig?: typeof kubecfg.loadConfig;
-  resolveNode?: typeof kubecfg.resolveNode;
-  getNodeClientByName?: typeof getNodeClientByName;
-  listNodeRuns?: typeof noderunStore.listNodeRuns;
+  loadWorkloadByName?: typeof workloadStore.loadWorkloadByName | undefined;
+  saveWorkload?: typeof workloadStore.saveWorkload | undefined;
+  applyOne?: typeof workloadApply.applyOne | undefined;
+  loadModelHostByName?: typeof loadModelHostByName | undefined;
+  saveModelHost?: typeof saveModelHost | undefined;
+  applyOneModelHost?: typeof applyOneModelHost | undefined;
+  loadConfig?: typeof kubecfg.loadConfig | undefined;
+  resolveNode?: typeof kubecfg.resolveNode | undefined;
+  getNodeClientByName?: typeof getNodeClientByName | undefined;
+  listNodeRuns?: typeof noderunStore.listNodeRuns | undefined;
 }
 
 function loadManifest(
@@ -50,7 +61,7 @@ function loadManifest(
 async function applyModelRunManifest(
   manifest: workloadSchema.ModelRun,
   deps: SetEnabledDeps,
-): Promise<string | null> {
+): Promise<ApplyFailure | null> {
   const applyOne = deps.applyOne ?? workloadApply.applyOne;
   const loadConfig = deps.loadConfig ?? kubecfg.loadConfig;
   const resolveNode = deps.resolveNode ?? kubecfg.resolveNode;
@@ -70,13 +81,15 @@ async function applyModelRunManifest(
     getNodeResidency: nodeRunResidencyLookup(deps.listNodeRuns),
   });
   if (manifest.spec.enabled && !result.error) save(manifest);
-  return result.error ?? null;
+  if (!result.error) return null;
+  const reason = admissionRefusalReason(result);
+  return { error: result.error, ...(reason !== undefined ? { reason } : {}) };
 }
 
 async function applyModelHostManifest(
   manifest: ModelHostManifest,
   deps: SetEnabledDeps,
-): Promise<string | null> {
+): Promise<ApplyFailure | null> {
   const getClient = deps.getNodeClientByName ?? getNodeClientByName;
   const save = deps.saveModelHost ?? saveModelHost;
   if (!manifest.spec.enabled) save(manifest);
@@ -90,7 +103,11 @@ async function applyModelHostManifest(
     },
   );
   if (manifest.spec.enabled && outcome.ok) save(manifest);
-  return outcome.ok ? null : outcome.error;
+  if (outcome.ok) return null;
+  return {
+    error: outcome.error,
+    ...(outcome.reason !== undefined ? { reason: outcome.reason } : {}),
+  };
 }
 
 export async function setWorkloadEnabledWithDeps(
@@ -108,13 +125,20 @@ export async function setWorkloadEnabledWithDeps(
 
   manifest.spec.enabled = enabled;
 
-  const errMsg =
+  const failure =
     manifest.kind === "ModelRun"
       ? await applyModelRunManifest(manifest, deps)
       : await applyModelHostManifest(manifest, deps);
 
-  if (errMsg) {
-    return { code: 1, message: `${enabled ? "enable" : "disable"}: ${errMsg}\n` };
+  if (failure) {
+    const verb = enabled ? "enable" : "disable";
+    const reasonLine =
+      failure.reason !== undefined ? `${verb}: admission refused: ${failure.reason}\n` : "";
+    return {
+      code: 1,
+      message: `${verb}: ${failure.error}\n${reasonLine}`,
+      ...(failure.reason !== undefined ? { reason: failure.reason } : {}),
+    };
   }
 
   return {
