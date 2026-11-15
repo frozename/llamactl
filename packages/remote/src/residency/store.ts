@@ -250,8 +250,9 @@ const RESIDENCY_STATE_COLUMNS =
 
 export function openResidencyOperationStore(input: {
   path: string;
+  busyTimeoutMs?: number;
 }): ResidencyOperationStore & ResidencyLifecycleStore {
-  const db = openDb(input.path);
+  const db = openDb(input.path, input.busyTimeoutMs ?? 15000);
   const claimTx = db.transaction(
     (claimInput: ClaimInput): Fence => claimOwnershipTx(db, claimInput),
   );
@@ -361,14 +362,18 @@ export type ResidencyStoreSnapshot =
 // never migrate, never claim ownership — a status read must leave the file
 // byte-identical. Opened readonly but NOT immutable: immutable=1 skips the
 // WAL, so rows a live writer has not checkpointed yet would go unseen.
-export function readResidencyStoreSnapshot(path: string): ResidencyStoreSnapshot {
+export function readResidencyStoreSnapshot(
+  path: string,
+  opts?: { busyTimeoutMs?: number },
+): ResidencyStoreSnapshot {
   if (!existsSync(path)) {
     return { path, present: false };
   }
+  const busyTimeoutMs = opts?.busyTimeoutMs ?? 15000;
   let db: Database | null = null;
   try {
     db = new Database(path, { readonly: true });
-    db.run("PRAGMA busy_timeout = 15000");
+    db.run(`PRAGMA busy_timeout = ${String(busyTimeoutMs)}`);
     return { path, present: true, nonterminal: listNonterminalRows(db) };
   } catch (error: unknown) {
     return { path, present: true, error: (error as Error).message };

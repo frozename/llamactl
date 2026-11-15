@@ -7,10 +7,28 @@
  * terminalizes them — either `unknown` (with a reason like
  * `interrupted-unverified` or `readiness-check-failed`) or `succeeded`
  * (when an optional readiness verifier confirms the target profile is ready).
+ * `recoverProfileSwitchOperationsUnverified` is the synchronous variant the
+ * agent boot path uses: no verifier, every stale row terminalized as
+ * `unknown`/`interrupted-unverified`.
  *
- * Rows owned by the current fence are skipped (not terminalized). Rows that
- * are not profile-switch operations are ignored. Already-terminal rows are
- * left untouched and recovery is idempotent.
+ * Every nonterminal row is run through one shared classifier, in this fixed
+ * order:
+ * 1. Already-terminal rows are skipped (recovery is idempotent).
+ * 2. Rows not prefixed `profile-switch:` are ignored, not reported.
+ * 3. An empty node (`profile-switch:`) is reported `unrecognized` as
+ *    `malformed-node`. This runs BEFORE the fence check, so an empty-node row
+ *    owned by the current fence is still reported, never skipped.
+ * 4. A row whose fenceToken equals the current fence is `skipped`
+ *    (`owned-by-current-fence`), not terminalized.
+ * 5. A `targetState` that is not `profile:<non-empty>` is reported
+ *    `unrecognized` as `malformed-target`.
+ * 6. Otherwise the row is stale and gets terminalized.
+ *
+ * An `unrecognized` row is never finished: it stays nonterminal so a later,
+ * better-informed writer can repair or retire it. A `finishOperation` that
+ * returns a refusal records `recorded: false` with the refusal reason; one
+ * that throws records `recorded: false` with `finish-threw: <message>`. In
+ * both cases the scan continues over the remaining rows.
  *
  * A verifier that throws (synchronously or asynchronously) or overruns
  * `verifyTimeoutMs` records the row as `unknown`/`readiness-check-failed`;
@@ -50,7 +68,17 @@ type SkippedOperation = {
   reason: "owned-by-current-fence";
 };
 
-type RecoverResult = { recovered: RecoveredOperation[]; skipped: SkippedOperation[] };
+type UnrecognizedOperation = {
+  operationId: string;
+  model: string;
+  reason: "malformed-node" | "malformed-target";
+};
+
+type RecoverResult = {
+  recovered: RecoveredOperation[];
+  skipped: SkippedOperation[];
+  unrecognized: UnrecognizedOperation[];
+};
 
 type RecoverOpts = {
   store: RecoverStore;
@@ -59,6 +87,46 @@ type RecoverOpts = {
   verifyTargetReady?: RecoverVerifier;
   verifyTimeoutMs?: number;
 };
+
+type UnverifiedRecoverOpts = {
+  store: RecoverStore;
+  fenceToken: number;
+  nowMs?: () => number;
+};
+
+const SWITCH_PREFIX = "profile-switch:";
+
+// The one shared classifier every scan (async and sync) routes rows through.
+// The order below is the contract; see the header comment.
+type RowClassification =
+  | { kind: "skip" }
+  | { kind: "stale"; node: string; profile: string }
+  | { kind: "owned-current-fence"; node: string }
+  | { kind: "unrecognized"; reason: "malformed-node" | "malformed-target" };
+
+function classifyRow(record: ResidencyOperationRecord, fenceToken: number): RowClassification {
+  // A row already terminal is never finished a second time.
+  if (record.phase === "terminal") {
+    return { kind: "skip" };
+  }
+  if (!record.model.startsWith(SWITCH_PREFIX)) {
+    return { kind: "skip" };
+  }
+  const node = record.model.slice(SWITCH_PREFIX.length);
+  // Empty-node rows are classified before the fence check, so one owned by the
+  // current fence is reported rather than skipped.
+  if (node.length === 0) {
+    return { kind: "unrecognized", reason: "malformed-node" };
+  }
+  if (record.fenceToken === fenceToken) {
+    return { kind: "owned-current-fence", node };
+  }
+  const profile = extractProfile(record.targetState);
+  if (profile === null) {
+    return { kind: "unrecognized", reason: "malformed-target" };
+  }
+  return { kind: "stale", node, profile };
+}
 
 export async function recoverProfileSwitchOperations(opts: RecoverOpts): Promise<RecoverResult> {
   const store = opts.store;
@@ -69,101 +137,173 @@ export async function recoverProfileSwitchOperations(opts: RecoverOpts): Promise
 
   const recovered: RecoveredOperation[] = [];
   const skipped: SkippedOperation[] = [];
+  const unrecognized: UnrecognizedOperation[] = [];
 
   for (const record of store.listNonterminal()) {
-    // A row already terminal is never finished a second time.
-    if (record.phase === "terminal") {
+    const classification = classifyRow(record, fenceToken);
+    if (classification.kind === "skip") {
       continue;
     }
-
-    const node = profileSwitchNode(record.model);
-    if (node === null) {
+    if (classification.kind !== "stale") {
+      collectNonStaleRow(classification, record, skipped, unrecognized);
       continue;
     }
-
-    if (record.fenceToken === fenceToken) {
-      skipped.push({ operationId: record.operationId, node, reason: "owned-by-current-fence" });
-      continue;
-    }
-
-    const result = await terminalizeRecord(
-      store,
-      record,
-      node,
-      fenceToken,
-      nowMs,
-      verifyTargetReady,
-      verifyTimeoutMs,
+    recovered.push(
+      await recoverStaleAsync(
+        store,
+        record,
+        classification.node,
+        classification.profile,
+        fenceToken,
+        nowMs(),
+        verifyTargetReady,
+        verifyTimeoutMs,
+      ),
     );
-    if (result !== null) {
-      recovered.push(result);
-    }
   }
 
-  return { recovered, skipped };
+  return { recovered, skipped, unrecognized };
 }
 
-function profileSwitchNode(model: string): string | null {
-  const prefix = "profile-switch:";
-  if (!model.startsWith(prefix)) {
-    return null;
+// Shared by both scans: routes an unrecognized or current-fence row into the
+// matching output list. Unrecognized rows are never finished: they stay
+// nonterminal for a later writer to repair.
+function collectNonStaleRow(
+  classification: Exclude<RowClassification, { kind: "skip" } | { kind: "stale" }>,
+  record: ResidencyOperationRecord,
+  skipped: SkippedOperation[],
+  unrecognized: UnrecognizedOperation[],
+): void {
+  if (classification.kind === "unrecognized") {
+    unrecognized.push({
+      operationId: record.operationId,
+      model: record.model,
+      reason: classification.reason,
+    });
+    return;
   }
-  const node = model.slice(prefix.length);
-  return node.length > 0 ? node : null;
+  skipped.push({
+    operationId: record.operationId,
+    node: classification.node,
+    reason: "owned-by-current-fence",
+  });
 }
 
-async function terminalizeRecord(
+async function recoverStaleAsync(
   store: RecoverStore,
   record: ResidencyOperationRecord,
   node: string,
+  profile: string,
   fenceToken: number,
-  nowMs: () => number,
+  nowMs: number,
   verifyTargetReady: RecoverVerifier | undefined,
   verifyTimeoutMs: number | undefined,
-): Promise<RecoveredOperation | null> {
-  const profile = extractProfile(record.targetState);
-  if (profile === null) {
-    return null;
-  }
-
-  const verificationOutcome = await runVerification(
+): Promise<RecoveredOperation> {
+  const verification = await runVerification(
     verifyTargetReady,
     { node, profile, operationId: record.operationId },
     verifyTimeoutMs,
   );
-
-  const outcome: "succeeded" | "unknown" = verificationOutcome.isReady ? "succeeded" : "unknown";
-
-  const reason = verificationOutcome.isReady
+  const outcome = verification.isReady ? "succeeded" : "unknown";
+  const reason: RecoveredOperation["reason"] = verification.isReady
     ? "target-verified-ready"
-    : verificationOutcome.checkFailed
+    : verification.checkFailed
       ? "readiness-check-failed"
       : "interrupted-unverified";
 
-  const detail = `recovered: ${reason} (was ${record.phase})`;
+  return finishStaleRow(store, record, node, profile, { fenceToken, nowMs, outcome, reason });
+}
 
-  const finished = store.finishOperation({
-    fenceToken,
+// The synchronous variant backing agent boot: no verifier, so every stale row
+// is terminalized as unknown/interrupted-unverified. It shares the classifier
+// and finish helper with the async path.
+export function recoverProfileSwitchOperationsUnverified(
+  opts: UnverifiedRecoverOpts,
+): RecoverResult {
+  const store = opts.store;
+  const fenceToken = opts.fenceToken;
+  const nowMs = opts.nowMs ?? Date.now;
+
+  const recovered: RecoveredOperation[] = [];
+  const skipped: SkippedOperation[] = [];
+  const unrecognized: UnrecognizedOperation[] = [];
+
+  for (const record of store.listNonterminal()) {
+    const classification = classifyRow(record, fenceToken);
+    if (classification.kind === "skip") {
+      continue;
+    }
+    if (classification.kind !== "stale") {
+      collectNonStaleRow(classification, record, skipped, unrecognized);
+      continue;
+    }
+
+    recovered.push(
+      finishStaleRow(store, record, classification.node, classification.profile, {
+        fenceToken,
+        nowMs: nowMs(),
+        outcome: "unknown",
+        reason: "interrupted-unverified",
+      }),
+    );
+  }
+
+  return { recovered, skipped, unrecognized };
+}
+
+type FinishArgs = {
+  fenceToken: number;
+  nowMs: number;
+  outcome: "succeeded" | "unknown";
+  reason: RecoveredOperation["reason"];
+};
+
+function finishStaleRow(
+  store: RecoverStore,
+  record: ResidencyOperationRecord,
+  node: string,
+  profile: string,
+  args: FinishArgs,
+): RecoveredOperation {
+  const detail = `recovered: ${args.reason} (was ${record.phase})`;
+
+  const finished = finishOperationSafe(store, {
+    fenceToken: args.fenceToken,
     operationId: record.operationId,
     expectedVersion: record.version,
-    nowMs: nowMs(),
-    outcome,
+    nowMs: args.nowMs,
+    outcome: args.outcome,
     detail,
   });
-
-  const recorded = finished.ok;
-  const recordFailure = finished.ok ? undefined : finished.reason;
 
   return {
     operationId: record.operationId,
     node,
     profile,
     priorPhase: record.phase,
-    outcome,
-    reason,
-    recorded,
-    ...(recordFailure !== undefined ? { recordFailure } : {}),
+    outcome: args.outcome,
+    reason: args.reason,
+    ...finished,
   };
+}
+
+// The one shared finish helper. A refusal records the reason; a throw is
+// contained as `finish-threw: <message>` so a locked store never escapes the
+// scan.
+function finishOperationSafe(
+  store: RecoverStore,
+  input: Parameters<RecoverStore["finishOperation"]>[0],
+): { recorded: true } | { recorded: false; recordFailure: string } {
+  try {
+    const finished = store.finishOperation(input);
+    if (finished.ok) {
+      return { recorded: true };
+    }
+    return { recorded: false, recordFailure: finished.reason };
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { recorded: false, recordFailure: `finish-threw: ${message}` };
+  }
 }
 
 function extractProfile(targetState: string): string | null {

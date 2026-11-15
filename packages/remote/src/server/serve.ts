@@ -29,6 +29,7 @@ import {
   type WorkerRpcHostOptions,
 } from "../inference/procedures.js";
 import { dispatchProxyRequest, publishUnifiedPeerSnapshots } from "../proxy/create-proxy.js";
+import { runProfileSwitchBootRecovery } from "../residency/boot-recovery.js";
 import { listDeclaredModels } from "../residency/catalog.js";
 import { createResidencyLeaseAuditSink, defaultResidencyStorePath } from "../residency/store.js";
 import { type AgentRouterContext, router as appRouter } from "../router.js";
@@ -1420,6 +1421,19 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
   const early: EarlyStartup = { stopSearchIngest: null, stopPeerSnapshotPoller: null };
   try {
     runStartupMigration();
+    // #279 DF-06 boot recovery. Runs synchronously here, before
+    // startAgentServerAfterHandlers, so it completes before startAgentServer
+    // returns and no request can arrive first. It is inert unless leftover
+    // profile-switch rows exist (a read-only probe first, so no file is
+    // created), never blocks long (250ms busy timeout) and never crashes boot.
+    // It deliberately does NOT wire executeProfileSwitch, which stays gated per
+    // the #625 note on #279: this is recovery, not activation, so there is no
+    // opt-in flag.
+    runProfileSwitchBootRecovery({
+      path: defaultResidencyStorePath(),
+      ownerId: `agent:${opts.nodeName ?? process.env["LLAMACTL_NODE_NAME"] ?? "agent"}`,
+      incarnation: `${String(process.pid)}:${crypto.randomUUID()}`,
+    });
     if (noAuth) {
       warnNoAuthEnabled(allowPlainHttp);
     }
