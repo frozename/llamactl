@@ -1,4 +1,5 @@
 // #284 (DF-11) residencyPlan, Part of #284
+// Part of #519: residencyPlan honours NodeRun residency (margin + planner policy)
 //
 // residencyPlan is a dry-run profile-switch plan surfaced through tRPC:
 // it gathers the node's declared workloads, observed residency state,
@@ -15,7 +16,7 @@
 // an unknown-procedure NOT_FOUND.
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { tmpdir } from "node:os";
+import { tmpdir, totalmem } from "node:os";
 import { dirname, join } from "node:path";
 
 import { router } from "../../src/router.js";
@@ -27,6 +28,7 @@ import {
   readFileSync,
   rmSync,
 } from "../../src/safe-fs.js";
+import { defaultNodeBudgetGiB } from "../../src/workload/admission.js";
 import {
   type ModelHostManifest,
   ModelHostManifestSchema,
@@ -134,6 +136,13 @@ type BuildResidencyPlanInput = {
   observed: ReadonlyMap<string, ObservedWorkloadState>;
   memoryGiB: ReadonlyMap<string, number | null>;
   store: StoreSnapshot;
+  residency?: {
+    safetyMarginRatio?: number;
+    minResidencySeconds?: number;
+    switchCooldownSeconds?: number;
+    idleEvictSeconds?: number;
+  } | null;
+  lastSwitchAtMs?: number | null;
 };
 
 type CollectResidencyObservationsInput = {
@@ -502,6 +511,39 @@ describe("buildResidencyPlan", () => {
     expect(plan.reason).toBe("UnknownMemory");
     expect(plan.workloads).toEqual(["embed"]);
   });
+
+  test("P13: NodeRun residency switchCooldownSeconds refuses Cooldown with retryAfterMs", async () => {
+    const { buildResidencyPlan } = await loadPlanMod();
+    const plan = buildResidencyPlan(
+      planInput({
+        residency: { switchCooldownSeconds: 60 },
+        lastSwitchAtMs: NOW_MS - 10_000,
+      }),
+    );
+    expect(plan.ok).toBe(false);
+    expect(plan.reason).toBe("Cooldown");
+    expect(plan.retryAfterMs).toBe(50_000);
+    expect(plan.detail).toBe("switch cooldown active (50000ms remaining)");
+  });
+
+  test("P14: an elapsed switch cooldown does not refuse", async () => {
+    const { buildResidencyPlan } = await loadPlanMod();
+    const plan = buildResidencyPlan(
+      planInput({
+        residency: { switchCooldownSeconds: 60 },
+        lastSwitchAtMs: NOW_MS - 120_000,
+      }),
+    );
+    expect(plan.ok).toBe(true);
+    expect(plan.victims).toEqual(["chat-a"]);
+    expect(plan.replacements).toEqual(["code-b"]);
+  });
+
+  test("P15: lastSwitchAtMs without residency keeps the default zero cooldown", async () => {
+    const { buildResidencyPlan } = await loadPlanMod();
+    const plan = buildResidencyPlan(planInput({ lastSwitchAtMs: NOW_MS - 10_000 }));
+    expect(plan.ok).toBe(true);
+  });
 });
 
 describe("observedFromModelRun / observedFromModelHostStatus", () => {
@@ -654,6 +696,49 @@ function seedRouterFixture(): void {
   );
 }
 
+function seedRouterFixtureResidency(input: {
+  residency: {
+    safetyMarginRatio?: number;
+    minResidencySeconds?: number;
+    switchCooldownSeconds?: number;
+    idleEvictSeconds?: number;
+  };
+  budget?: { memoryGiB: number };
+}): void {
+  saveWorkload(
+    runManifest("chat-a", {
+      node: "local",
+      profiles: "chat",
+      phase: "Running",
+      expectedMemoryGiB: 10,
+    }),
+    workloadsDir,
+  );
+  saveWorkload(
+    runManifest("code-b", {
+      node: "local",
+      profiles: "code",
+      phase: "Stopped",
+      expectedMemoryGiB: 12,
+    }),
+    workloadsDir,
+  );
+  saveNodeRun(
+    {
+      apiVersion: "llamactl/v1",
+      kind: "NodeRun",
+      metadata: { name: "local", labels: {} },
+      spec: {
+        node: "local",
+        ...(input.budget === undefined ? {} : { budget: input.budget }),
+        residency: input.residency,
+        infra: [],
+      },
+    },
+    workloadsDir,
+  );
+}
+
 function snapshotTree(dir: string, prefix = ""): Map<string, string> {
   const out = new Map<string, string>();
   if (!existsSync(dir)) return out;
@@ -758,5 +843,32 @@ describe("residencyPlan procedure", () => {
     expect(anonymousPlan.ok).toBe(true);
     expect(anonymousPlan.storeAppliesToNode).toBe(false);
     expect(anonymousPlan.servingNode).toBe(null);
+  });
+
+  test("R5: spec.residency.safetyMarginRatio sizes the computed budget", async () => {
+    seedRouterFixtureResidency({ residency: { safetyMarginRatio: 0.5 } });
+    const result = await plan({ node: "local", to: "code" });
+    expect(result.budget?.source).toBe("computed");
+    expect(result.budget?.memoryGiB).toBeCloseTo((totalmem() / 1024 ** 3) * 0.5, 6);
+    expect(result.budget?.memoryGiB).toBeCloseTo(defaultNodeBudgetGiB(undefined) * (0.5 / 0.75), 6);
+  });
+
+  test("R6: residency without safetyMarginRatio keeps the default computed budget", async () => {
+    seedRouterFixtureResidency({ residency: { idleEvictSeconds: 600 } });
+    const result = await plan({ node: "local", to: "code" });
+    expect(result.budget).toEqual({
+      memoryGiB: defaultNodeBudgetGiB(undefined),
+      source: "computed",
+    });
+  });
+
+  test("R7: switchCooldownSeconds cannot refuse — the router supplies no lastSwitchAtMs", async () => {
+    seedRouterFixtureResidency({
+      residency: { switchCooldownSeconds: 3600 },
+      budget: { memoryGiB: 24 },
+    });
+    const result = await plan({ node: "local", to: "code" });
+    expect(result.ok).toBe(true);
+    expect(result.victims).toEqual(["chat-a"]);
   });
 });

@@ -22,13 +22,24 @@
 //
 // Operation phases remain caller-checked.
 //
-// reservationGiB is recorded, not admitted: nothing here checks the value
-// against a node memory budget — that is the job of #274 and the #276
-// follow-ups.
+// reservationGiB is admitted against a caller-supplied nodeBudgetGiB on
+// beginOperation: the sum of pending and committed reservations, plus the new
+// one, must not exceed it, else the write is refused as
+// reservation-exceeds-budget. Terminal operations are not counted. A
+// same-operationId replay returns before admission and is not double-counted.
+// The check order is fence, then revision, then the per-model
+// reservation-conflict, then the budget; a refusal leaves rows unchanged. When
+// nodeBudgetGiB is absent the value is recorded but not admitted, preserving
+// earlier behaviour. The budget is not persisted, so admission holds only if
+// every writer passes the authoritative budget — the same caveat as group
+// declarations. transitionResidencyState records no reservation and is not
+// budget-gated. Wiring production callers to the #274 node budget is a
+// follow-up.
 //
 // A stale desiredRevision is refused as stale-revision by both writers. The
-// check runs after the fence and before CAS, lifecycle and reservation
-// checks, and the row is left unchanged. Equal revisions are accepted;
+// check runs after the fence and before CAS and lifecycle checks, and the row
+// is left unchanged. The reservation budget check runs after the revision and
+// per-model conflict checks. Equal revisions are accepted;
 // same-operationId replays stay idempotent even when the revision is older.
 // The revision is a high-water mark taken over every operation, including
 // terminal failed or cancelled ones, plus the residency rows. A terminal op
@@ -79,6 +90,7 @@ export type ResidencyStoreFailure =
   | "invalid-input"
   | "not-found"
   | "reservation-conflict"
+  | "reservation-exceeds-budget"
   | "stale-fence"
   | "stale-revision"
   | "version-conflict";
@@ -151,6 +163,7 @@ type BeginOperationInput = {
   desiredRevision: number;
   reservationGiB: number;
   nowMs: number;
+  nodeBudgetGiB?: number;
 };
 
 type MutationInput = {
@@ -631,6 +644,12 @@ function beginOperationTx(db: Database, input: BeginOperationInput): BeginOperat
   if (hasNonterminalForModel(db, input.model)) {
     return { ok: false, reason: "reservation-conflict" };
   }
+  if (
+    input.nodeBudgetGiB !== undefined &&
+    nonterminalReservationGiB(db) + input.reservationGiB > input.nodeBudgetGiB
+  ) {
+    return { ok: false, reason: "reservation-exceeds-budget" };
+  }
   insertPendingOperation(db, input, authority);
   return { ok: true, created: true, record: pendingRecord(input, authority) };
 }
@@ -880,6 +899,17 @@ function hasNonterminalForModel(db: Database, model: string): boolean {
   return hit !== null;
 }
 
+// The store is node-local, so this sum over nonterminal operations (pending
+// and committed, never terminal) is the node's held reservation.
+function nonterminalReservationGiB(db: Database): number {
+  const row = db
+    .query(
+      "SELECT COALESCE(SUM(reservation_gib), 0) AS total FROM operations WHERE phase != 'terminal'",
+    )
+    .get() as { total: number } | null;
+  return row?.total ?? 0;
+}
+
 // Shared desired-revision watermark: the max over every operation (all phases,
 // including terminal) and every residency row. Owner and fence are ignored.
 function storedDesiredRevision(db: Database): number | null {
@@ -1004,6 +1034,12 @@ function validateBeginInput(input: BeginOperationInput): ResidencyStoreFailure |
     return "invalid-input";
   }
   if (!isFenceToken(input.fenceToken)) {
+    return "invalid-input";
+  }
+  if (
+    input.nodeBudgetGiB !== undefined &&
+    !(Number.isFinite(input.nodeBudgetGiB) && input.nodeBudgetGiB >= 0)
+  ) {
     return "invalid-input";
   }
   return null;

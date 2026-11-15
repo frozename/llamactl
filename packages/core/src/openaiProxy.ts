@@ -77,6 +77,17 @@ import * as workloadRuntime from "./workloadRuntime.js";
 
 const anthropicStreamCompletionByResponse = new WeakMap<Response, Promise<boolean>>();
 
+/** Per-request budget for the `/v1/models` readiness gate (#220). */
+export const SERVING_MODELS_PROBE_TIMEOUT_MS = 1_000;
+
+// Winning LOCAL route per model id, keyed by the cached models response it was
+// built from (#220). Lets the async serving gate re-probe declared hosts
+// without recomputing the route map or mutating the cache.
+const servingModelWinners = new WeakMap<
+  OpenAIModelListResponse,
+  Map<string, workloadRuntime.LocalRoute>
+>();
+
 const MAX_JSON_BODY_BYTES = 10 * 1024 * 1024;
 const SESSION_HEADER = "x-llamactl-session";
 const MAX_SESSION_ID_LENGTH = 128;
@@ -302,9 +313,16 @@ function declaredUnavailableModels(resolved: ResolvedEnv): {
   return { byRel, relByCatalogId };
 }
 
+// Negated predicates do not narrow, so pin the local side of the union
+// explicitly (#220).
+const isLocalClusterRoute = (
+  route: workloadRuntime.ClusterRoute,
+): route is workloadRuntime.LocalRoute => !isPeerClusterRoute(route);
+
 function buildListOpenAIModels(resolved: ResolvedEnv): OpenAIModelListResponse {
   const data: (ModelInfo & { experimental?: true })[] = [];
   const winners = new Map<string, { kind: string; workload: string }>();
+  const localWinners = new Map<string, workloadRuntime.LocalRoute>();
   for (const route of orderedProxyRoutes(resolved)) {
     if (winners.has(route.model)) {
       const prior = winners.get(route.model);
@@ -315,6 +333,7 @@ function buildListOpenAIModels(resolved: ResolvedEnv): OpenAIModelListResponse {
       continue;
     }
     winners.set(route.model, { kind: route.kind, workload: route.workload });
+    if (isLocalClusterRoute(route)) localWinners.set(route.model, route);
     const entry: ModelInfo & { experimental?: true } = {
       id: route.model,
       object: "model",
@@ -325,12 +344,50 @@ function buildListOpenAIModels(resolved: ResolvedEnv): OpenAIModelListResponse {
     if (isExperimentalRoute(route)) entry.experimental = true;
     data.push(entry);
   }
-  return {
+  const response: OpenAIModelListResponse = {
     object: "list",
     data,
     unavailable: unavailableModelEntries(resolved, winners),
     declared: [],
   };
+  servingModelWinners.set(response, localWinners);
+  return response;
+}
+
+/**
+ * The `/v1/models` listing gated on declared ModelHost readiness (#220).
+ *
+ * This gates only the `/v1/models` publication: chat routing
+ * (buildRouteMap/orderedProxyRoutes/listLocalRoutes) and the sync
+ * listOpenAIModels are unchanged. Each call probes the declared hosts with no
+ * verdict cache, so a wedged host adds up to SERVING_MODELS_PROBE_TIMEOUT_MS
+ * of latency per request; probes run concurrently, so the bound does not grow
+ * with host count. Caching verdicts and gating chat routing are deferred to
+ * later slices of #220.
+ */
+export async function listServingOpenAIModels(
+  resolved: ResolvedEnv = resolveEnv(),
+  opts: { fetch?: typeof globalThis.fetch; timeoutMs?: number } = {},
+): Promise<OpenAIModelListResponse> {
+  const base = getCachedModelsResponse(resolved);
+  const full: OpenAIModelListResponse = {
+    ...base,
+    declared: declaredModelInfos(resolved, base),
+  };
+  const winners = servingModelWinners.get(base);
+  const gated: workloadRuntime.LocalRoute[] = [];
+  if (winners) {
+    for (const winner of winners.values()) {
+      if (winner.readiness !== undefined) gated.push(winner);
+    }
+  }
+  if (gated.length === 0) return full;
+  const { warming } = await workloadRuntime.partitionServingRoutes(gated, {
+    ...(opts.fetch !== undefined ? { fetch: opts.fetch } : {}),
+    timeoutMs: opts.timeoutMs ?? SERVING_MODELS_PROBE_TIMEOUT_MS,
+  });
+  const warmingIds = new Set(warming.map((route) => route.model));
+  return { ...full, data: full.data.filter((model) => !warmingIds.has(model.id)) };
 }
 
 /**
