@@ -70,13 +70,13 @@ function tempEnv(extra?: Record<string, string>): {
 function writeModelHost(
   resolved: ResolvedEnv,
   name: string,
-  spec: { port: number; aliases: string[]; readiness?: ModelHostReadiness },
+  spec: { port: number; aliases: string[]; readiness?: ModelHostReadiness; pid?: number },
 ): void {
   writeModelHostState(
     {
       kind: "ModelHost",
       engine: "llamacpp",
-      pid: process.pid,
+      pid: spec.pid ?? process.pid,
       host: "127.0.0.1",
       port: spec.port,
       modelAliases: spec.aliases,
@@ -530,6 +530,86 @@ test("servingWarmingModelIds records warming pins and clears them on ready", asy
     const second = await pinModel("warm-model-set", t.env);
     expect(second.status).toBe(200);
     expect(servingWarmingModelIds().has("warm-model-set")).toBe(false);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a ModelHost restart with a new pid re-probes within the verdict TTL", async () => {
+  // Kills: dropping the pid from the verdict probeKey — the restarted
+  // process would reuse the old process's cached ready verdict and the
+  // pin would forward to a warming host.
+  const t = tempEnv();
+  try {
+    const hostPort = fixturePort();
+    writeModelHost(t.env, "restart-host", {
+      port: hostPort,
+      aliases: ["restart-model"],
+      readiness: { path: "/ready" },
+    });
+    let ready = true;
+    const stub = installProxyFetchStub({
+      [`${String(hostPort)}/ready`]: () =>
+        ready
+          ? Response.json({ status: "ready" })
+          : Response.json({ status: "loading" }, { status: 503 }),
+    });
+    const ttlMs = servingRouteReadinessTtlMs();
+    let clock = 5_000;
+    setServingReadinessForTests({ now: () => clock });
+
+    const first = await pinModel("restart-model", t.env);
+    expect(first.status).toBe(200);
+    expect(stub.readyCalls(hostPort)).toHaveLength(1);
+    expect(stub.chatCalls(hostPort)).toHaveLength(1);
+
+    // Same workload/host/port, new live pid, still inside the TTL: the
+    // new process is warming and must get a fresh probe.
+    expect(process.ppid).not.toBe(process.pid);
+    writeModelHost(t.env, "restart-host", {
+      port: hostPort,
+      aliases: ["restart-model"],
+      readiness: { path: "/ready" },
+      pid: process.ppid,
+    });
+    ready = false;
+    clock += Math.floor(ttlMs / 2);
+
+    const second = await pinModel("restart-model", t.env);
+
+    await expectWarmingRejection(second, "restart-model");
+    expect(stub.readyCalls(hostPort)).toHaveLength(2);
+    expect(stub.chatCalls(hostPort)).toHaveLength(1);
+    expect(stub.chatCalls()).toHaveLength(1);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a warming record expires after its TTL with no later requests", async () => {
+  // Kills: servingWarmingModelIds returning every recorded id without the
+  // expiresAt > now check.
+  const t = tempEnv();
+  try {
+    const warmPort = fixturePort();
+    writeModelHost(t.env, "warm-host", {
+      port: warmPort,
+      aliases: ["warm-model-expiry"],
+      readiness: { path: "/ready" },
+    });
+    installProxyFetchStub({
+      [`${String(warmPort)}/ready`]: () => Response.json({ status: "loading" }, { status: 503 }),
+    });
+    const ttlMs = servingRouteReadinessTtlMs();
+    let clock = 0;
+    setServingReadinessForTests({ now: () => clock });
+
+    const res = await pinModel("warm-model-expiry", t.env);
+    expect(res.status).toBe(503);
+    expect(servingWarmingModelIds().has("warm-model-expiry")).toBe(true);
+
+    clock = ttlMs + 1;
+    expect(servingWarmingModelIds().has("warm-model-expiry")).toBe(false);
   } finally {
     t.cleanup();
   }

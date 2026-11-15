@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
 
+import { listDeclaredModels } from "../../src/residency/catalog.js";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
 import { generateToken } from "../../src/server/auth.js";
 import {
@@ -58,6 +59,7 @@ let defaultStub: ReturnType<typeof Bun.serve> | null = null;
 let hostStub: ReturnType<typeof Bun.serve> | null = null;
 let defaultCalls: string[] = [];
 let hostCalls: string[] = [];
+let hostReady = false;
 let agent: RunningAgent | null = null;
 
 beforeAll(() => {
@@ -87,6 +89,7 @@ afterEach(async () => {
   }
   defaultCalls = [];
   hostCalls = [];
+  hostReady = false;
   openaiProxy.__resetOpenAIProxyRouteMapCacheForTests();
   const seam = (openaiProxy as unknown as Record<string, unknown>)[
     "__setOpenAIProxyServingReadinessForTests"
@@ -133,7 +136,9 @@ function setupSandbox(): void {
       const path = new URL(req.url).pathname;
       hostCalls.push(`${req.method} ${path}`);
       if (path === "/ready") {
-        return Response.json({ status: "loading" }, { status: 503 });
+        return hostReady
+          ? Response.json({ status: "ready" })
+          : Response.json({ status: "loading" }, { status: 503 });
       }
       if (path === "/v1/chat/completions") {
         return Response.json({
@@ -261,5 +266,51 @@ describe("declared warming route (#280 DF-07)", () => {
     expect(body.error.reason).toBe("serving-readiness-pending");
     expect(chatCalls(hostCalls)).toHaveLength(0);
     expect(chatCalls(defaultCalls)).toHaveLength(0);
+  });
+  test("(c) a route that turns ready clears a re-recorded warming id before it expires", async () => {
+    // Kills: the routed branch of applyBodyModelRoute not clearing the
+    // warming record — the t=1500 re-record outlives the t=2001 serve, so
+    // the id stays warming and the declared catalog keeps projecting
+    // 'loading' for a host that is serving.
+    setupSandbox();
+    const seam = (openaiProxy as unknown as Record<string, unknown>)[
+      "__setOpenAIProxyServingReadinessForTests"
+    ] as (value: { now: () => number }) => void;
+    expect(typeof seam).toBe("function");
+    const ttlMs = openaiProxy.SERVING_ROUTE_READINESS_TTL_MS;
+    expect(ttlMs).toBe(2_000);
+    let clock = 0;
+    seam({ now: () => clock });
+    const running = startAgentServer(agentOptions(true));
+    agent = running;
+    const declaredState = (): string | undefined =>
+      listDeclaredModels({
+        nodeName: "local",
+        liveModelIds: new Set([WARM_PIN]),
+        warmingModelIds: openaiProxy.servingWarmingModelIds(),
+      }).find((entry) => entry.id === WARM_PIN)?.state;
+
+    // t=0: the probe fails and the pin is refused.
+    const first = await running.handleRequest!(postChatCompletions(WARM_PIN), LOOPBACK_CLIENT);
+    expect(first.status).toBe(503);
+    expect(openaiProxy.servingWarmingModelIds().has(WARM_PIN)).toBe(true);
+
+    // t=1500: the cached failing verdict re-records the id (expiry 3500).
+    clock = 1_500;
+    const second = await running.handleRequest!(postChatCompletions(WARM_PIN), LOOPBACK_CLIENT);
+    expect(second.status).toBe(503);
+    expect(declaredState()).toBe("loading");
+
+    // t=2001: the verdict expired, the fresh probe passes and the pin is served.
+    hostReady = true;
+    clock = ttlMs + 1;
+    const third = await running.handleRequest!(postChatCompletions(WARM_PIN), LOOPBACK_CLIENT);
+    expect(third.status).toBe(200);
+    expect(chatCalls(hostCalls)).toHaveLength(1);
+    expect(chatCalls(defaultCalls)).toHaveLength(0);
+
+    expect(openaiProxy.servingWarmingModelIds().has(WARM_PIN)).toBe(false);
+    expect(declaredState()).toBe("ready");
+    expect(declaredState()).not.toBe("loading");
   });
 });
