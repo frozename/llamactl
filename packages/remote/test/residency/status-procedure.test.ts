@@ -145,6 +145,16 @@ type ResidencyStatus = {
   budget: { memoryGiB: number; source: "noderun" | "computed" };
   store: StoreProbe & { scope: "serving-process" };
   leases?: LeasesSection;
+  omlxNative: {
+    scope: "serving-process";
+    workloads: {
+      workload: string;
+      endpoint: string;
+      mode: "native" | "process-fallback" | "unknown";
+      reason: string | null;
+      httpStatus: number | null;
+    }[];
+  };
 };
 
 type BuildInput = {
@@ -155,6 +165,7 @@ type BuildInput = {
   store: StoreProbe;
   leaseRegistry?: ResidencyLeases | null | undefined;
   leaseWorkloads?: readonly string[] | undefined;
+  omlxNative?: ResidencyStatus["omlxNative"]["workloads"];
 };
 
 type StoreModule = {
@@ -505,6 +516,7 @@ describe("buildResidencyStatus", () => {
       budget: { memoryGiB: 10, source: "computed" },
       store: { path: "/p", present: false, scope: "serving-process" },
       leases: { status: "unavailable", scope: "serving-process" },
+      omlxNative: { scope: "serving-process", workloads: [] },
     });
   });
 
@@ -576,6 +588,38 @@ describe("buildResidencyStatus", () => {
     } finally {
       reg.cancelDrain(drain.token);
     }
+  });
+
+  test("buildResidencyStatus passes oMLX rows through", async () => {
+    const proc = await requireProcModule();
+    const built = proc.buildResidencyStatus({
+      node: "n",
+      nodeRun: undefined,
+      budgetGiB: 10,
+      budgetSource: "computed",
+      store: { path: "/p", present: false },
+      omlxNative: [
+        {
+          workload: "h",
+          endpoint: "127.0.0.1:1",
+          mode: "process-fallback",
+          reason: "NativeStatusUnsupported",
+          httpStatus: 404,
+        },
+      ],
+    });
+    expect(built.omlxNative).toEqual({
+      scope: "serving-process",
+      workloads: [
+        {
+          workload: "h",
+          endpoint: "127.0.0.1:1",
+          mode: "process-fallback",
+          reason: "NativeStatusUnsupported",
+          httpStatus: 404,
+        },
+      ],
+    });
   });
 
   test("recentAudit keeps the last 20 entries and a missing reason is null", async () => {
