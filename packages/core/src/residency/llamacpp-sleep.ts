@@ -1,10 +1,15 @@
 /**
  * DF-10 (#283) pure, synchronous, no IO and no timers llama.cpp sleep / wake
  * residency controller with process fallback. Not wired into any ingress
- * yet; actual memory admission stays with evaluateManagedAdmission.
+ * yet; wake admission is injectable (`admitWake`) and the remote binder
+ * routes it through the shared TargetAdmissionAuthority.
  */
 
-import type { ManagedAdmissionClaim, ManagedClaimState } from "./admission.js";
+import type {
+  ManagedAdmissionClaim,
+  ManagedAdmissionDecision,
+  ManagedClaimState,
+} from "./admission.js";
 
 import { evaluateManagedAdmission, isFiniteBudgetGiB } from "./admission.js";
 
@@ -185,6 +190,21 @@ export function decideSleepReconcile(input: {
 }
 
 // ── createLlamacppSleepController ──────────────────────────────────────────
+
+// Wake admission delegate. The default charges the controller's private
+// budgetGiB through evaluateManagedAdmission; the remote binder injects a
+// delegate that routes the same question through the shared
+// TargetAdmissionAuthority so sleep wakes and ordinary workloads share one
+// node budget.
+export type SleepWakeAdmission = (input: {
+  memberId: string;
+  incoming: {
+    runtimeKey: string;
+    specDigest: string;
+    allocationGiB: number;
+  };
+  claims: readonly ManagedAdmissionClaim[];
+}) => ManagedAdmissionDecision;
 
 export interface LlamacppSleepController {
   register: (member: SleepMember, state: ObservedSleepState) => void;
@@ -439,11 +459,20 @@ function pendingObserveBlock(
 
 class LlamacppSleepControllerImpl implements LlamacppSleepController {
   private readonly budgetGiB: number | undefined;
+  private readonly admitWake: SleepWakeAdmission;
   private readonly members = new Map<string, ControllerMember>();
   private readonly audit: SleepAuditEntry[] = [];
 
-  constructor(opts: { budgetGiB?: number }) {
+  constructor(opts: { budgetGiB?: number; admitWake?: SleepWakeAdmission }) {
     this.budgetGiB = opts.budgetGiB;
+    this.admitWake =
+      opts.admitWake ??
+      ((i): ManagedAdmissionDecision =>
+        evaluateManagedAdmission({
+          budgetGiB: opts.budgetGiB,
+          claims: i.claims,
+          incoming: i.incoming,
+        }));
   }
 
   register(member: SleepMember, state: ObservedSleepState): void {
@@ -569,15 +598,16 @@ class LlamacppSleepControllerImpl implements LlamacppSleepController {
       return { kind: "join-wake", committedGiB: computeCommittedGiB(this.members) };
     }
 
-    // Guarded: attempt admission via evaluateManagedAdmission
-    const decision = evaluateManagedAdmission({
-      budgetGiB: this.budgetGiB,
-      claims: buildClaims(this.members),
+    // Guarded: attempt admission through the injected delegate — the
+    // private budget only feeds the default evaluateManagedAdmission path.
+    const decision = this.admitWake({
+      memberId: member.id,
       incoming: {
         runtimeKey: member.runtimeKey,
         specDigest: member.specDigest,
         allocationGiB: member.allocationGiB,
       },
+      claims: buildClaims(this.members),
     });
 
     switch (decision.kind) {
@@ -610,7 +640,10 @@ class LlamacppSleepControllerImpl implements LlamacppSleepController {
   // A sibling on the same runtime is already resident or mid-wake: the
   // member joins it and the group stays billed once at its largest member
   // allocation. A joiner above that bill adds only the difference to
-  // committedGiB, and the delta must fit the budget.
+  // committedGiB, and the delta must fit the budget. With an injected
+  // admitWake, this.budgetGiB is undefined, so joinDeltaOverBudget
+  // conservatively refuses a positive-delta join (BudgetExceeded);
+  // same-allocation sibling joins (delta 0) still proceed.
   private joinRuntimeGroup(
     member: ControllerMember,
     join: "already-resident" | "join-pending",
@@ -662,6 +695,7 @@ class LlamacppSleepControllerImpl implements LlamacppSleepController {
 
 export function createLlamacppSleepController(opts: {
   budgetGiB?: number;
+  admitWake?: SleepWakeAdmission;
 }): LlamacppSleepController {
   return new LlamacppSleepControllerImpl(opts);
 }

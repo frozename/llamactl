@@ -17,6 +17,8 @@ import {
   calibrateMeasuredEnvelope,
   type CalibrationSample,
   type MeasuredEnvelope,
+  memoryCalibrationKey,
+  type MemoryCalibrationKey,
 } from "../../../core/src/resources/memory.js";
 import * as fs from "../../src/safe-fs.js";
 import { mkdtempSync, rmSync } from "../../src/safe-fs.js";
@@ -1886,6 +1888,19 @@ describe("applyManifest — kind dispatch", () => {
     return { client, startSubscribes };
   }
 
+  const ENVELOPE_KEY_INPUT: MemoryCalibrationKey = {
+    artifactRevision: "rev-a",
+    engine: "omlx",
+    engineBuild: "b1",
+    ctx: 8192,
+    kvType: "f16",
+    speculative: { mode: "none" },
+    prefillBatch: 512,
+    concurrency: 1,
+  };
+  const ENVELOPE_KEY = memoryCalibrationKey(ENVELOPE_KEY_INPUT)!;
+  const ENVELOPE_NOW_MS = 1_700_000_000_000;
+
   const measuredEnvelopeGiB = (gib: number): MeasuredEnvelope => {
     const processBytes = gib * 1024 ** 3 - 1024 ** 3;
     const sample = (observedAtMs: number): CalibrationSample => ({
@@ -1897,17 +1912,8 @@ describe("applyManifest — kind dispatch", () => {
       sharedDeviceBytes: null,
     });
     const envelope = calibrateMeasuredEnvelope({
-      key: {
-        artifactRevision: "rev-a",
-        engine: "omlx",
-        engineBuild: "b1",
-        ctx: 8192,
-        kvType: "f16",
-        speculative: { mode: "none" },
-        prefillBatch: 512,
-        concurrency: 1,
-      },
-      samples: [sample(1), sample(2), sample(3)],
+      key: ENVELOPE_KEY_INPUT,
+      samples: [sample(ENVELOPE_NOW_MS - 2), sample(ENVELOPE_NOW_MS - 1), sample(ENVELOPE_NOW_MS)],
       options: { minSamples: 3, overheadFraction: 0 },
     });
     expect(envelope.known).toBe(true);
@@ -1929,6 +1935,8 @@ describe("applyManifest — kind dispatch", () => {
         residencyAdmission: {
           getNodeResidencyPolicy: () => ({}),
           getMeasuredEnvelope: () => measuredEnvelopeGiB(20),
+          getCandidateCalibrationKey: () => ENVELOPE_KEY,
+          nowMs: () => ENVELOPE_NOW_MS,
         },
       });
 
@@ -1961,6 +1969,8 @@ describe("applyManifest — kind dispatch", () => {
         residencyAdmission: {
           getNodeResidencyPolicy: () => ({}),
           getMeasuredEnvelope: envelopeSpy,
+          getCandidateCalibrationKey: () => ENVELOPE_KEY,
+          nowMs: () => ENVELOPE_NOW_MS,
         },
       });
 
@@ -1978,6 +1988,7 @@ describe("applyManifest — kind dispatch", () => {
     // charge and the envelope is never even read.
     const tmpNoPolicy = mkdtempSync(join(tmpdir(), "llamactl-modelhost-env-nopolicy-"));
     const noPolicyArm = makeResidencyAdmissionClient();
+    const keySpy = mock(() => ENVELOPE_KEY);
     let admittedShape: { ok: true; kind: "ModelHost"; pid: number | null } | null = null;
     try {
       const result = await applyManifest({
@@ -1990,6 +2001,8 @@ describe("applyManifest — kind dispatch", () => {
         residencyAdmission: {
           getNodeResidencyPolicy: () => null,
           getMeasuredEnvelope: envelopeSpy,
+          getCandidateCalibrationKey: keySpy,
+          nowMs: () => ENVELOPE_NOW_MS,
         },
       });
 
@@ -2001,6 +2014,7 @@ describe("applyManifest — kind dispatch", () => {
       expect(admittedShape).not.toBeNull();
       expect(noPolicyArm.startSubscribes.count).toBe(1);
       expect(envelopeSpy).toHaveBeenCalledTimes(1);
+      expect(keySpy).not.toHaveBeenCalled();
     } finally {
       rmSync(tmpNoPolicy, { recursive: true, force: true });
     }
@@ -2056,6 +2070,8 @@ describe("applyManifest — kind dispatch", () => {
         residencyAdmission: {
           getNodeResidencyPolicy: () => ({}),
           getMeasuredEnvelope: () => measuredEnvelopeGiB(20),
+          getCandidateCalibrationKey: () => ENVELOPE_KEY,
+          nowMs: () => ENVELOPE_NOW_MS,
         },
       });
 
@@ -2084,6 +2100,8 @@ describe("applyManifest — kind dispatch", () => {
         residencyAdmission: {
           getNodeResidencyPolicy: () => ({}),
           getMeasuredEnvelope: () => measuredEnvelopeGiB(4),
+          getCandidateCalibrationKey: () => ENVELOPE_KEY,
+          nowMs: () => ENVELOPE_NOW_MS,
         },
       });
 
@@ -2113,6 +2131,8 @@ describe("applyManifest — kind dispatch", () => {
           residencyAdmission: {
             getNodeResidencyPolicy: () => ({}),
             getMeasuredEnvelope: () => measuredEnvelopeGiB(20),
+            getCandidateCalibrationKey: () => ENVELOPE_KEY,
+            nowMs: () => ENVELOPE_NOW_MS,
           },
         },
       );
@@ -2124,6 +2144,119 @@ describe("applyManifest — kind dispatch", () => {
       expect(startSubscribes.count).toBe(0);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("ModelHost admission ignores a stale or key-mismatched measured envelope", async () => {
+    // Control — fresh envelope with a matching candidate key is still charged:
+    // the 20 GiB measurement refuses the apply past the 16 GiB budget, so the
+    // fallback arms below are not vacuous.
+    const tmpControl = mkdtempSync(join(tmpdir(), "llamactl-modelhost-env-control-"));
+    const controlArm = makeResidencyAdmissionClient();
+    try {
+      const result = await applyManifest({
+        manifest: makeModelHostManifest("mlx-host-env-control", 6),
+        workloadsDir: join(tmpControl, "workloads"),
+        getNodeBudgetGiB: () => 16,
+        getClient: () => controlArm.client,
+        spawn: spawnStub,
+        env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmpControl },
+        residencyAdmission: {
+          getNodeResidencyPolicy: () => ({}),
+          getMeasuredEnvelope: () => measuredEnvelopeGiB(20),
+          getCandidateCalibrationKey: () => ENVELOPE_KEY,
+          nowMs: () => ENVELOPE_NOW_MS,
+        },
+      });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toContain("(20.0 GiB)");
+      expect(controlArm.startSubscribes.count).toBe(0);
+    } finally {
+      rmSync(tmpControl, { recursive: true, force: true });
+    }
+
+    // Stale — measuredAtMs is ENVELOPE_NOW_MS and the injected clock is two
+    // days later, past the 24h default max age: the envelope is ignored and
+    // the declared 6 GiB estimate admits.
+    const tmpStale = mkdtempSync(join(tmpdir(), "llamactl-modelhost-env-stale-"));
+    const staleArm = makeResidencyAdmissionClient();
+    try {
+      const result = await applyManifest({
+        manifest: makeModelHostManifest("mlx-host-env-stale", 6),
+        workloadsDir: join(tmpStale, "workloads"),
+        getNodeBudgetGiB: () => 16,
+        getClient: () => staleArm.client,
+        spawn: spawnStub,
+        env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmpStale },
+        residencyAdmission: {
+          getNodeResidencyPolicy: () => ({}),
+          getMeasuredEnvelope: () => measuredEnvelopeGiB(20),
+          getCandidateCalibrationKey: () => ENVELOPE_KEY,
+          nowMs: () => ENVELOPE_NOW_MS + 2 * 24 * 60 * 60 * 1000,
+        },
+      });
+
+      if (!result.ok) console.error("ERROR:", result);
+      expect(result.ok).toBe(true);
+      expect(staleArm.startSubscribes.count).toBe(1);
+    } finally {
+      rmSync(tmpStale, { recursive: true, force: true });
+    }
+
+    // Mismatch — the candidate workload calibrates under a different key, so
+    // the measured envelope does not apply and admission falls back to the
+    // declared estimate.
+    const tmpMismatch = mkdtempSync(join(tmpdir(), "llamactl-modelhost-env-mismatch-"));
+    const mismatchArm = makeResidencyAdmissionClient();
+    try {
+      const result = await applyManifest({
+        manifest: makeModelHostManifest("mlx-host-env-mismatch", 6),
+        workloadsDir: join(tmpMismatch, "workloads"),
+        getNodeBudgetGiB: () => 16,
+        getClient: () => mismatchArm.client,
+        spawn: spawnStub,
+        env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmpMismatch },
+        residencyAdmission: {
+          getNodeResidencyPolicy: () => ({}),
+          getMeasuredEnvelope: () => measuredEnvelopeGiB(20),
+          getCandidateCalibrationKey: () => "other-key",
+          nowMs: () => ENVELOPE_NOW_MS,
+        },
+      });
+
+      if (!result.ok) console.error("ERROR:", result);
+      expect(result.ok).toBe(true);
+      expect(mismatchArm.startSubscribes.count).toBe(1);
+    } finally {
+      rmSync(tmpMismatch, { recursive: true, force: true });
+    }
+
+    // No key — the candidate reports no calibration key at all: the envelope
+    // cannot be attributed to this workload and is ignored.
+    const tmpNoKey = mkdtempSync(join(tmpdir(), "llamactl-modelhost-env-nokey-"));
+    const noKeyArm = makeResidencyAdmissionClient();
+    try {
+      const result = await applyManifest({
+        manifest: makeModelHostManifest("mlx-host-env-nokey", 6),
+        workloadsDir: join(tmpNoKey, "workloads"),
+        getNodeBudgetGiB: () => 16,
+        getClient: () => noKeyArm.client,
+        spawn: spawnStub,
+        env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmpNoKey },
+        residencyAdmission: {
+          getNodeResidencyPolicy: () => ({}),
+          getMeasuredEnvelope: () => measuredEnvelopeGiB(20),
+          getCandidateCalibrationKey: () => null,
+          nowMs: () => ENVELOPE_NOW_MS,
+        },
+      });
+
+      if (!result.ok) console.error("ERROR:", result);
+      expect(result.ok).toBe(true);
+      expect(noKeyArm.startSubscribes.count).toBe(1);
+    } finally {
+      rmSync(tmpNoKey, { recursive: true, force: true });
     }
   });
 });
