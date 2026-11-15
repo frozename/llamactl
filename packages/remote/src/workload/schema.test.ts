@@ -138,3 +138,60 @@ test("ModelHost accepts spec.useProxy=false", () => {
   });
   expect(m.spec.useProxy).toBe(false);
 });
+
+test("ModelRun accepts spec.readiness with the ModelHost probe shape", () => {
+  // Kills: readiness missing from ModelRunSpecSchema — zod strips the key
+  // at base, so spec.readiness parses back undefined.
+  const m = ModelRunSchema.parse({
+    apiVersion: "llamactl/v1",
+    kind: "ModelRun",
+    metadata: { name: "a" },
+    spec: {
+      node: "local",
+      target: { kind: "rel", value: "m.gguf" },
+      readiness: { path: "/ready", expectJson: { status: "ready" } },
+    },
+  });
+  expect((m.spec as { readiness?: unknown }).readiness).toEqual({
+    path: "/ready",
+    expectStatus: 200,
+    expectJson: { status: "ready" },
+  });
+  const plain = ModelRunSchema.parse({
+    apiVersion: "llamactl/v1",
+    kind: "ModelRun",
+    metadata: { name: "a" },
+    spec: { node: "local", target: { kind: "rel", value: "m.gguf" } },
+  });
+  expect("readiness" in plain.spec).toBe(false);
+});
+
+test("ModelRun rejects malformed spec.readiness", () => {
+  // Kills: readiness typed loosely (z.any, z.unknown, a passthrough or
+  // non-strict object) instead of reusing the strict
+  // ModelHostReadinessSchema — every case parses successfully at base.
+  const malformed: Record<string, unknown>[] = [
+    { path: "ready" },
+    { path: "/ready", bogus: true },
+    { path: "/ready", expectStatus: "200" },
+    { path: "/ready", expectJson: { status: { nested: true } } },
+  ];
+  for (const readiness of malformed) {
+    const parsed = ModelRunSchema.safeParse({
+      apiVersion: "llamactl/v1",
+      kind: "ModelRun",
+      metadata: { name: "a" },
+      spec: {
+        node: "local",
+        target: { kind: "rel", value: "m.gguf" },
+        readiness,
+      },
+    });
+    expect(parsed.success).toBe(false);
+    if (parsed.success) continue;
+    const underReadiness = parsed.error.issues.some(
+      (issue) => issue.path[0] === "spec" && issue.path[1] === "readiness",
+    );
+    expect(underReadiness).toBe(true);
+  }
+});

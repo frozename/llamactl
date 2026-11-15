@@ -1,3 +1,4 @@
+import type { ModelHostReadiness } from "@llamactl/core/engines/types";
 import type {
   ManagedAdmissionClaim,
   ManagedAdmissionDecision,
@@ -125,6 +126,7 @@ export interface WorkloadClient {
         endpoint?: { host?: string; port?: number };
         binary?: string;
         timeoutSeconds?: number;
+        readiness?: ModelHostReadiness;
       },
       callbacks: SubscribeCallbacks,
     ): Unsubscribable;
@@ -2370,6 +2372,7 @@ async function startCoordinator(
 ): Promise<StartDone | null> {
   let sub: Unsubscribable | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  const readiness = normalizeReadiness(manifest.spec.readiness);
   try {
     return await new Promise<StartDone | null>((resolve, reject) => {
       timer = setTimeout(
@@ -2399,6 +2402,7 @@ async function startCoordinator(
             : {}),
           ...(manifest.spec.binary ? { binary: manifest.spec.binary } : {}),
           timeoutSeconds: manifest.spec.timeoutSeconds,
+          ...(readiness !== undefined ? { readiness } : {}),
         },
         {
           onData: (evt: unknown) => {
