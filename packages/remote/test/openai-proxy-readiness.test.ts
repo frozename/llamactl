@@ -2,7 +2,9 @@ import { openaiProxy } from "@llamactl/core";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { stringify } from "yaml";
 
+import { router } from "../src/router.js";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 import { generateToken } from "../src/server/auth.js";
 import { type RunningAgent, startAgentServer } from "../src/server/serve.js";
@@ -37,6 +39,8 @@ type ModelHostReadinessFixture = {
   expectStatus?: number;
   expectJson?: Record<string, string | number | boolean>;
 };
+
+const DECLARED_COLD_ID = "cold/declared-model.gguf";
 
 let agent: RunningAgent | null = null;
 let devStorage = "";
@@ -131,7 +135,44 @@ beforeAll(async () => {
   writeHost("refused-host", refusedPort, "refused-model", { path: "/ready" });
   writeHost("plain-host", u200.port, "plain-model");
 
+  // nodeModels on an inproc:// node stands in for the agent's /v1/models,
+  // so it must apply the same gate (#220).
+  const configPath = join(devStorage, "kubeconfig.yaml");
+  writeFileSync(
+    configPath,
+    stringify({
+      apiVersion: "llamactl/v1",
+      kind: "Config",
+      currentContext: "default",
+      contexts: [{ name: "default", cluster: "home", user: "me", defaultNode: "local" }],
+      clusters: [{ name: "home", nodes: [{ name: "local", endpoint: "inproc://local" }] }],
+      users: [{ name: "me", token: "unused-inproc-token" }],
+    }),
+  );
+  process.env["LLAMACTL_CONFIG"] = configPath;
+
+  // Order matters: the reset nulls the declared source, so it must run
+  // before the setter re-installs it. The warming host also appears as a
+  // declared (loading) entry to pin how ?include=declared treats it.
   openaiProxy.__resetOpenAIProxyRouteMapCacheForTests();
+  openaiProxy.setDeclaredModelSource(() => [
+    {
+      id: "warming-model",
+      workload: "warming-host",
+      kind: "ModelHost",
+      ownerNodeId: "local",
+      state: "loading",
+      autoLoadEligible: true,
+    },
+    {
+      id: DECLARED_COLD_ID,
+      workload: "wl-cold",
+      kind: "ModelRun",
+      ownerNodeId: "local",
+      state: "cold",
+      autoLoadEligible: true,
+    },
+  ]);
 
   const cert = await generateSelfSignedCert({
     dir: join(devStorage, "agent"),
@@ -152,6 +193,8 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  openaiProxy.setDeclaredModelSource(null);
+  openaiProxy.__resetOpenAIProxyRouteMapCacheForTests();
   await agent?.stop();
   for (const upstream of upstreams) await upstream.server.stop(true);
   rmSync(devStorage, { recursive: true, force: true });
@@ -174,6 +217,7 @@ function pinnedFetch(path: string, init?: RequestInit): Promise<Response> {
 type ModelsBody = {
   object: string;
   data: { id: string }[];
+  declared?: { id: string }[];
 };
 
 describe("agent /v1/models serving readiness (#220)", () => {
@@ -205,4 +249,37 @@ describe("agent /v1/models serving readiness (#220)", () => {
     expect(ids).not.toContain("hung-model");
     expect(ids).not.toContain("refused-model");
   }, 10_000);
+
+  test("GET /v1/models?include=declared lists a warming host in neither data nor declared", async () => {
+    // Current behaviour, pinned: declared[] is derived from the ungated
+    // route set, so a host that is routed but warming is skipped there as
+    // "routed" while the gate drops it from data. It surfaces in neither.
+    const res = await pinnedFetch("/v1/models?include=declared");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as ModelsBody;
+    expect(body.data.map((entry) => entry.id)).not.toContain("warming-model");
+    expect(Array.isArray(body.declared)).toBe(true);
+    const declaredIds = (body.declared ?? []).map((entry) => entry.id);
+    expect(declaredIds).toContain(DECLARED_COLD_ID);
+    expect(declaredIds).not.toContain("warming-model");
+  }, 10_000);
+});
+
+describe("nodeModels inproc serving readiness (#220)", () => {
+  test("a local inproc node omits ModelHosts whose declared readiness fails", async () => {
+    const out = await router.createCaller({}).nodeModels({ name: "local" });
+    expect(out.node).toBe("local");
+    const ids = (out.models as { id: string }[]).map((entry) => entry.id);
+    expect(ids).toContain("ready-model");
+    expect(ids).toContain("plain-model");
+    expect(ids).not.toContain("warming-model");
+    expect(ids).not.toContain("hung-model");
+    expect(ids).not.toContain("refused-model");
+  }, 10_000);
+
+  test("chat routing still sees the warming host", () => {
+    const ids = openaiProxy.listOpenAIModels().data.map((entry) => entry.id);
+    expect(ids).toContain("warming-model");
+    expect(ids).toContain("ready-model");
+  });
 });

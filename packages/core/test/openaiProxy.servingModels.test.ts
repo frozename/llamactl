@@ -204,10 +204,24 @@ test("listServingOpenAIModels probes nothing when no host declares readiness", a
       aliases: ["plain-model"],
       engine: "omlx",
     });
+    openaiProxy.setDeclaredModelSource(() => [
+      {
+        id: "cold/declared-model.gguf",
+        workload: "wl-cold",
+        kind: "ModelRun",
+        ownerNodeId: "local",
+        state: "cold",
+        autoLoadEligible: true,
+      },
+    ]);
     const { stub, calls } = makeProbeStub({});
     const listServing = requireListServingOpenAIModels();
     const result = await listServing(t.env, { fetch: stub, timeoutMs: 2000 });
-    expect(result.data).toEqual(openaiProxy.listOpenAIModels(t.env).data);
+    const sync = openaiProxy.listOpenAIModels(t.env);
+    expect(result.data).toEqual(sync.data);
+    // The ungated early return must still carry the declared set.
+    expect(result.declared.map((model) => model.id)).toEqual(["cold/declared-model.gguf"]);
+    expect(result.declared).toEqual(sync.declared);
     expect(calls).toEqual([]);
     expect(tripwire.calls).toEqual([]);
   } finally {
