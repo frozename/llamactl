@@ -491,7 +491,7 @@ async function handleOpenAIRoute(
         .getAll("include")
         .flatMap((v) => v.split(","))
         .some((v) => v.trim() === "declared");
-      const full = openaiProxy.listOpenAIModels();
+      const full = await openaiProxy.listServingOpenAIModels();
       llamaServerUp.set(full.data.length > 0 ? 1 : 0);
       status = 200;
       return Response.json(openaiProxy.projectModelsResponseBody(full, includeDeclared));
