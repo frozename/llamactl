@@ -11,9 +11,14 @@
 // The leases section is the serving process's in-memory lease/drain registry:
 // per-workload phase, epoch, active lease count and waiters plus the recent
 // forced-unload audit, reported "unavailable" when no registry is installed.
+//
+// The NodeRun residency supplies the planner policy (Part of #519); switch/load
+// timing (lastSwitchAtMs, loadedAtMs) is not persisted yet, so those checks stay
+// inert unless a caller supplies them (#279).
 import type { ResidencyLeases } from "@llamactl/core/residency/leases";
 import type { PlannerWorkload, ProfileSwitchPlan } from "@llamactl/core/residency/planner";
 
+import { resolveResidencyPolicy } from "@llamactl/core/residency/admission";
 import { isOccupyingResidencyState } from "@llamactl/core/residency/lifecycle";
 import { planProfileSwitch } from "@llamactl/core/residency/planner";
 
@@ -286,6 +291,8 @@ export function buildResidencyPlan(input: {
   observed: ReadonlyMap<string, ObservedWorkloadState>;
   memoryGiB: ReadonlyMap<string, number | null>;
   store: ResidencyStoreSnapshot;
+  residency?: ResidencyPolicy | null | undefined;
+  lastSwitchAtMs?: number | null | undefined;
 }): ResidencyPlan {
   const store = storeWithScope(input.store);
   const applies = input.servingNode !== null && input.servingNode === input.node;
@@ -303,6 +310,15 @@ export function buildResidencyPlan(input: {
       ? (store.nonterminal[0]?.operationId ?? null)
       : null;
 
+  const resolvedPolicy = resolveResidencyPolicy({
+    ...(input.residency?.minResidencySeconds !== undefined
+      ? { minResidencySeconds: input.residency.minResidencySeconds }
+      : {}),
+    ...(input.residency?.switchCooldownSeconds !== undefined
+      ? { switchCooldownSeconds: input.residency.switchCooldownSeconds }
+      : {}),
+  });
+
   const built = buildProfileSwitchRequest({
     node: input.node,
     to: input.to,
@@ -313,6 +329,11 @@ export function buildResidencyPlan(input: {
     modelHosts: input.modelHosts,
     observed: input.observed,
     memoryGiBOf: (name) => input.memoryGiB.get(name) ?? Number.NaN,
+    policy: {
+      minResidencySeconds: resolvedPolicy.minResidencySeconds,
+      switchCooldownSeconds: resolvedPolicy.switchCooldownSeconds,
+    },
+    ...(input.lastSwitchAtMs !== undefined ? { lastSwitchAtMs: input.lastSwitchAtMs } : {}),
   });
   if (!built.ok) {
     return refusal(built.reason, `residency plan refused: ${built.reason}`, built.workloads);
