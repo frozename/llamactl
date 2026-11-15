@@ -166,6 +166,25 @@ const ARTIFACT_UNAVAILABLE: [string, OmlxCacheIdentityArtifact][] = [
   ["short sha256", { path: BASE_ARTIFACT_PATH, sha256: "a".repeat(63), sizeBytes: 1, mtimeMs: 1 }],
   // An empty sha256 falls back to sizeBytes/mtimeMs (T17); with neither it fails.
   ["empty sha256 only", { path: BASE_ARTIFACT_PATH, sha256: "" }],
+  // A present sha256 that is not a string fails even with a valid size and
+  // mtime: only the empty string falls back. The casts keep tsc happy while
+  // the runtime input stays invalid.
+  ...(
+    [
+      ["number", 123],
+      ["null", null],
+      ["boolean", true],
+      ["object", { hex: "a".repeat(64) }],
+    ] as [string, unknown][]
+  ).map(([kind, sha256]): [string, OmlxCacheIdentityArtifact] => [
+    `${kind} sha256 with size and mtime`,
+    {
+      path: BASE_ARTIFACT_PATH,
+      sha256,
+      sizeBytes: 1,
+      mtimeMs: 1,
+    } as unknown as OmlxCacheIdentityArtifact,
+  ]),
   ["artifact missing", undefined as unknown as OmlxCacheIdentityArtifact],
   ["artifact null", null as unknown as OmlxCacheIdentityArtifact],
   ["negative sizeBytes", { path: BASE_ARTIFACT_PATH, sizeBytes: -1, mtimeMs: 1 }],
@@ -211,9 +230,12 @@ const MODEL_ID_UNAVAILABLE: [string, OmlxCacheIdentityInput][] = [
   ["null", { ...BASE, modelId: null } as unknown as OmlxCacheIdentityInput],
 ];
 
-// Values that have no unambiguous canonical JSON form: NaN and Infinity both
-// stringify to null, a Date or Map stringifies to {} and undefined inside an
-// array becomes null, so hashing them would let distinct values collide.
+// Values that have no unambiguous canonical JSON form. NaN and Infinity both
+// stringify to null. sortObjectKeys rebuilds a Date or Map from its
+// Object.entries, which are empty, so either would hash as {}. -0 stringifies
+// to 0, and undefined
+// or a hole inside an array becomes null. Hashing any of them would let
+// distinct values collide.
 const INVALID_SETTINGS: [string, OmlxCacheIdentityInput][] = [
   ["unknown key NaN", withSettings({ future_kv_layout: Number.NaN })],
   ["unknown key Infinity", withSettings({ future_kv_layout: Number.POSITIVE_INFINITY })],
@@ -223,6 +245,10 @@ const INVALID_SETTINGS: [string, OmlxCacheIdentityInput][] = [
   ["unknown key bigint", withSettings({ future_kv_layout: 1n })],
   ["unknown key nested undefined", withSettings({ future_kv_layout: [1, undefined] })],
   ["unknown key nested NaN", withSettings({ future_kv_layout: { a: Number.NaN } })],
+  ["unknown key -0", withSettings({ future_kv_layout: -0 })],
+  ["unknown key nested -0", withSettings({ future_kv_layout: { a: [-0] } })],
+  // eslint-disable-next-line no-sparse-arrays
+  ["unknown key sparse array", withSettings({ future_kv_layout: [1, , 2] })],
   ["turboquant_kv_enabled string", withSettings({ turboquant_kv_enabled: "true" })],
   ["turboquant_kv_bits NaN", withSettings({ turboquant_kv_bits: Number.NaN })],
   ["turboquant_kv_bits string", withSettings({ turboquant_kv_bits: "8" })],

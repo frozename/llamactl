@@ -44,8 +44,10 @@ export const OMLX_CACHE_AFFECTING_SETTINGS_KEYS = [
 
 /**
  * The 15 managed keys that do not affect cache content. Each key is listed in
- * OMLX_MANAGED_MODEL_SETTINGS_KEYS order with a one-line reason. These are the
- * only settings keys left out of the identity; every other key is hashed.
+ * OMLX_MANAGED_MODEL_SETTINGS_KEYS order with a one-line reason. These keys are
+ * always left out of the identity. turboquant_kv_bits and turboquant_skip_last
+ * are also left out unless turboquant_kv_enabled is true. Every other key is
+ * hashed.
  */
 export const OMLX_CACHE_NEUTRAL_SETTINGS_KEYS = [
   "max_context_window", // context window size, not model weights
@@ -81,8 +83,9 @@ export interface OmlxCacheArtifact {
   mtimeMs?: number;
   /** Optional lowercase hex sha256 of the weights or a manifest of them.
    *  Preferred when available and takes precedence over sizeBytes/mtimeMs.
-   *  An empty string counts as absent and falls back to sizeBytes/mtimeMs;
-   *  any other value that is not 64 lowercase hex digits fails closed. */
+   *  undefined or an empty string counts as absent and falls back to
+   *  sizeBytes/mtimeMs. Any other value that is not a string of 64 lowercase
+   *  hex digits fails closed, including a non-string such as 123 or null. */
   sha256?: string;
 }
 
@@ -163,6 +166,9 @@ function normalizeArtifact(value: unknown): NormalizedArtifact | null {
     return null;
   }
   const sha256 = artifact.sha256;
+  if (sha256 !== undefined && typeof sha256 !== "string") {
+    return null;
+  }
   if (typeof sha256 === "string" && sha256.length > 0) {
     if (/^[0-9a-f]{64}$/.test(sha256)) {
       return { path, sha256 };
@@ -196,20 +202,30 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * True when JSON.stringify of the value is lossless: null, booleans, strings,
- * finite numbers, and arrays or plain objects of those. NaN and Infinity both
- * stringify to null, a Date or Map to {} and undefined inside an array to
- * null, so hashing them could make distinct values collide.
+ * True only for null, booleans, strings, finite numbers other than -0, and
+ * arrays without holes or plain objects whose values are all of those.
+ * Anything else could collide with a distinct value once hashed. NaN and
+ * Infinity stringify to null, and -0 to 0. undefined or a hole inside an
+ * array stringifies to null. sortObjectKeys rebuilds any other object from
+ * its Object.entries, which are empty for a Date or Map, so either would be
+ * hashed as {}.
  */
 function hasCanonicalJson(value: unknown): boolean {
   if (value === null || typeof value === "boolean" || typeof value === "string") {
     return true;
   }
   if (typeof value === "number") {
-    return Number.isFinite(value);
+    return Number.isFinite(value) && !Object.is(value, -0);
   }
   if (Array.isArray(value)) {
-    return value.every(hasCanonicalJson);
+    // for-of, unlike every(), visits holes: the iterator yields undefined for
+    // a hole, which fails like an explicit undefined.
+    for (const element of value as unknown[]) {
+      if (!hasCanonicalJson(element)) {
+        return false;
+      }
+    }
+    return true;
   }
   if (isPlainObject(value)) {
     return Object.values(value).every(hasCanonicalJson);
@@ -292,8 +308,33 @@ function sortObjectKeys(obj: unknown): unknown {
 
 /**
  * Derive the versioned cache identity, or the reason it cannot be derived.
- * Every field that is missing, mistyped or has no canonical form yields a
- * failure reason instead of an identity.
+ *
+ * These fail, in this order:
+ * - ModelIdUnavailable: modelId is not a string, or is empty after trimming.
+ * - ArtifactIdentityUnavailable: artifact is not an object; path is not a
+ *   non-empty string; sha256 is present (not undefined) and is not a string;
+ *   sha256 is a non-empty string that is not 64 lowercase hex digits; or,
+ *   with no usable sha256, sizeBytes or mtimeMs is not a non-negative safe
+ *   integer.
+ * - EngineBuildUnavailable: engineBuild is not a string, or is empty after
+ *   trimming.
+ * - CacheEpochInvalid: cacheEpoch is present and is not a non-negative safe
+ *   integer.
+ * - SettingsInvalid: settings is present and is not a plain object; a
+ *   TurboQuant key is present with the wrong type (turboquant_kv_enabled or
+ *   turboquant_skip_last not a boolean, turboquant_kv_bits not a finite
+ *   number), even when TurboQuant is disabled; or an unknown key's value has
+ *   no canonical JSON form (see hasCanonicalJson).
+ *
+ * These are defaulted or ignored instead:
+ * - An omitted cacheEpoch is 0. Omitted settings hash as no TurboQuant and
+ *   no unknown keys.
+ * - A neutral key is ignored whatever its value, even one that would fail
+ *   the canonical-JSON check.
+ * - turboquant_kv_bits and turboquant_skip_last are ignored unless
+ *   turboquant_kv_enabled is true; when it is, they default to 4 and true.
+ *   turboquant_kv_bits is not range-checked beyond being finite.
+ * - A settings key whose value is undefined is treated as absent.
  */
 export function deriveOmlxCacheIdentity(input: OmlxCacheIdentityInput): OmlxCacheIdentityResult {
   const modelId = normalizeNonEmptyString(input.modelId);
@@ -321,8 +362,14 @@ export function deriveOmlxCacheIdentity(input: OmlxCacheIdentityInput): OmlxCach
     return { ok: false, reason: "SettingsInvalid" };
   }
 
-  // unknownSettings is present only when there are unknown keys, so an input
-  // without any keeps the same identity it had before this field existed.
+  // unknownSettings is present only when there are unknown keys, so adding the
+  // field did not change identities without them. Other fail-closed changes
+  // did: modelId is now trimmed, so a modelId with surrounding whitespace
+  // hashes differently; and some inputs that used to derive an identity now
+  // fail (an empty or non-string modelId, a negative or fractional mtimeMs, a
+  // non-string sha256, a mistyped TurboQuant key, settings that are not a
+  // plain object).
+  // Nothing stores identities yet, so no stored identity is affected.
   const payload = {
     artifact,
     cacheEpoch,
