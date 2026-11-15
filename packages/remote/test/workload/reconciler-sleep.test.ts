@@ -145,10 +145,14 @@ test("#283 sleep-aware S1: a sleeping host is left alone over several reconcile 
       }
       expect(starts.get(name) ?? 0).toBe(0);
       expect(stops.get(name) ?? 0).toBe(0);
+      // The sleeping pass records the controller-history outcome exactly as a
+      // converged pass does: the record exists and marks the engine running.
       const history = readControllerHostHistory(workloadsDir, "mac-mini", name);
-      expect(history?.lastKnownRunning ?? true).toBe(true);
+      expect(history).not.toBeNull();
+      if (history === null) throw new Error("expected controller history for a sleeping host");
+      expect(history.lastKnownRunning).toBe(true);
       expect(
-        (history?.conditions ?? []).some(
+        history.conditions.some(
           (condition) => condition.type === "ReconcileError" && condition.status === "True",
         ),
       ).toBe(false);
@@ -246,6 +250,59 @@ test("#283 sleep-aware S3: a sleeping host that wakes reconciles normally", asyn
     ]);
     expect(starts.get(name) ?? 0).toBe(1);
     expect(stops.get(name) ?? 0).toBe(0);
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+// #283 sleep-aware — kills dropping the controller-history outcome for a
+// sleeping host (only "converged" recording it): a host whose previous pass
+// left ReconcileError=True must have that condition cleared to Recovered by
+// the next pass that finds it sleeping, with no start or stop.
+test("#283 sleep-aware S4: a sleeping pass clears a prior ReconcileError to Recovered", async () => {
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-reconcile-sleep-recover-"));
+  const name = "recovering-sleeper";
+  const manifest = makeHostManifest(name);
+  saveModelHost(manifest, workloadsDir);
+  const statuses = new Map<string, ScriptedHostStatus>();
+  statuses.set(name, { state: "Running", pid: 31, specHash: STALE_HASH, sleep: "sleeping" });
+  const { client, starts, stops } = makeSleepClient(statuses, desiredHashByName([manifest]));
+  const failingClient: WorkloadClient = {
+    ...client,
+    modelHostStatus: {
+      query: () => Promise.reject(new Error("status probe failed")),
+    },
+  };
+  try {
+    const failed = await reconcileOnce({ workloadsDir, getClient: () => failingClient });
+    expect(failed.errors).toBe(1);
+    const before = readControllerHostHistory(workloadsDir, "mac-mini", name);
+    expect(before).not.toBeNull();
+    if (before === null) throw new Error("expected controller history after a failed pass");
+    const prior = before.conditions.find((condition) => condition.type === "ReconcileError");
+    expect(prior?.status).toBe("True");
+
+    const result = await reconcileOnce({ workloadsDir, getClient: () => client });
+    expect(result.errors).toBe(0);
+    expect(result.reports as SleepAwareReport[]).toEqual([
+      {
+        kind: "ModelHost",
+        name,
+        node: "mac-mini",
+        action: "unchanged",
+        observed: "sleeping",
+      },
+    ]);
+    expect(starts.get(name) ?? 0).toBe(0);
+    expect(stops.get(name) ?? 0).toBe(0);
+
+    const after = readControllerHostHistory(workloadsDir, "mac-mini", name);
+    expect(after).not.toBeNull();
+    if (after === null) throw new Error("expected controller history after the sleeping pass");
+    expect(after.lastKnownRunning).toBe(true);
+    const cleared = after.conditions.find((condition) => condition.type === "ReconcileError");
+    expect(cleared?.status).toBe("False");
+    expect(cleared?.reason).toBe("Recovered");
   } finally {
     rmSync(workloadsDir, { recursive: true, force: true });
   }
