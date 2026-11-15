@@ -451,6 +451,10 @@ export type MeasuredEnvelope =
       calibrationOverheadBytes: number;
       envelopeBytes: number;
       attribution: "process" | "uncertain";
+      // Epoch ms of the latest usable calibration sample; null when no usable
+      // sample carried an observation. Admission treats null, and a missing
+      // field from older producers, as unusable.
+      measuredAtMs: number | null;
     }
   | {
       known: false;
@@ -600,6 +604,7 @@ function hasInvalidReading(sample: CalibrationSample): boolean {
 interface UsableCalibrationSample {
   processBytes: number;
   processDeviceBytes: number | null;
+  observedAtMs: number | null;
 }
 
 function isValidCalibrationOptions(options: CalibrationOptions): boolean {
@@ -626,6 +631,7 @@ function collectUsableSamples(
       usable.push({
         processBytes: sample.processBytes,
         processDeviceBytes: sample.processDeviceBytes,
+        observedAtMs: sample.observedAtMs,
       });
     }
   }
@@ -654,10 +660,16 @@ export function calibrateMeasuredEnvelope(input: {
   // so the envelope stays unknown-device rather than a lower-bound process
   // attribution. On Metal/AMD RSS understates GPU memory, so a device-blind
   // calibration is not a conservative admission envelope.
+  // measuredAtMs is the freshness stamp for admission: the latest usable
+  // sample observation, or null when no usable sample carries one.
   let peakBytes = 0;
-  for (const { processBytes, processDeviceBytes } of usableSamples) {
+  let measuredAtMs: number | null = null;
+  for (const { processBytes, processDeviceBytes, observedAtMs } of usableSamples) {
     if (processDeviceBytes === null) return { known: false, reason: "unknown-device" };
     peakBytes = Math.max(peakBytes, processBytes + processDeviceBytes);
+    if (observedAtMs !== null && (measuredAtMs === null || observedAtMs > measuredAtMs)) {
+      measuredAtMs = observedAtMs;
+    }
   }
 
   const calibrationOverheadBytes = Math.ceil(peakBytes * input.options.overheadFraction);
@@ -672,5 +684,6 @@ export function calibrateMeasuredEnvelope(input: {
     calibrationOverheadBytes,
     envelopeBytes,
     attribution: "process",
+    measuredAtMs,
   };
 }

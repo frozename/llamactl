@@ -235,6 +235,14 @@ export interface ApplyManifestOptions {
   residencyAdmission?: {
     getNodeResidencyPolicy: (nodeName: string) => NodeRunResidency | null | undefined;
     getMeasuredEnvelope: (manifest: ModelHostManifest) => MeasuredEnvelope | null | undefined;
+    /** The memoryCalibrationKey encoding of the candidate's calibration
+     *  inputs. The measured envelope is only charged when it matches; a null
+     *  key means the candidate is uncalibratable and the envelope is ignored. */
+    getCandidateCalibrationKey: (manifest: ModelHostManifest) => string | null | undefined;
+    /** Clock override for freshness checks; defaults to Date.now(). */
+    nowMs?: () => number;
+    /** Max envelope age in ms; defaults to DEFAULT_MEASURED_ENVELOPE_MAX_AGE_MS. */
+    maxAgeMs?: number;
   };
 }
 
@@ -528,10 +536,19 @@ function admitModelHostBudget(
     const envelope = policyPresent
       ? opts.residencyAdmission.getMeasuredEnvelope(manifest)
       : undefined;
+    const candidateKey = policyPresent
+      ? (opts.residencyAdmission.getCandidateCalibrationKey(manifest) ?? undefined)
+      : undefined;
+    const nowMs = policyPresent ? (opts.residencyAdmission.nowMs?.() ?? Date.now()) : undefined;
     expectedMemoryGiB = modelHostAdmissionChargeGiB({
       estimateGiB,
       residencyPolicyPresent: policyPresent,
       envelope,
+      candidateKey,
+      nowMs,
+      ...(opts.residencyAdmission.maxAgeMs !== undefined
+        ? { maxAgeMs: opts.residencyAdmission.maxAgeMs }
+        : {}),
     });
   }
   const admit = computeNodeBudget({
@@ -739,6 +756,14 @@ export async function applyOneModelHost(
     residencyAdmission?: {
       getNodeResidencyPolicy: (nodeName: string) => NodeRunResidency | null | undefined;
       getMeasuredEnvelope: (manifest: ModelHostManifest) => MeasuredEnvelope | null | undefined;
+      /** The memoryCalibrationKey encoding of the candidate's calibration
+       *  inputs. The measured envelope is only charged when it matches; a null
+       *  key means the candidate is uncalibratable and the envelope is ignored. */
+      getCandidateCalibrationKey: (manifest: ModelHostManifest) => string | null | undefined;
+      /** Clock override for freshness checks; defaults to Date.now(). */
+      nowMs?: () => number;
+      /** Max envelope age in ms; defaults to DEFAULT_MEASURED_ENVELOPE_MAX_AGE_MS. */
+      maxAgeMs?: number;
     };
   },
 ): Promise<ApplyManifestOutcome> {
@@ -2264,6 +2289,37 @@ interface ClaimLifecycle {
   startInvoked: boolean;
 }
 
+/**
+ * Failure-path result for a claimed start that did not reach Running:
+ * stops any partially-started workers, marks the claim uncertain, and
+ * tears down a half-started eviction replacement so its victims are not
+ * released beside a live process. An unverified teardown keeps the
+ * eviction intent held (see `teardownFailedReplacement`). That hold is
+ * bounded: a failed apply does not store the replacement manifest, so
+ * the kept marker suppresses the victim only for the eviction-intent
+ * grace window (`evictionGraceMs`, default EVICTION_INTENT_GRACE_MS),
+ * after which the reconciler releases it.
+ */
+async function failedStartResult(
+  ctx: ConvergeServerContext,
+  action: ApplyAction,
+  startError: string,
+  workers: readonly ModelRunWorker[],
+  getClient: (nodeName: string) => WorkloadClient,
+  handle: TargetAdmissionClaimHandle | null,
+): Promise<ApplyResult> {
+  let message = startError;
+  if (workers.length > 0) await stopWorkers(workers, getClient);
+  handle?.markUncertain();
+  const detail = await teardownFailedReplacement(ctx);
+  if (detail !== null) {
+    const victims = [...ctx.evictionClaims].map((n) => `'${n}'`).join(", ");
+    ctx.evictionClaims.clear();
+    message = `${message}; replacement '${ctx.manifest.metadata.name}' teardown after failed start unverified (${detail}); eviction intent on ${victims} kept`;
+  }
+  return failedApplyResult(action, message, ctx.now);
+}
+
 async function startClaimedServer(
   ctx: ConvergeServerContext,
   action: ApplyAction,
@@ -2290,28 +2346,34 @@ async function startClaimedServer(
     message: `${manifest.metadata.name}: starting ${manifest.spec.target.value}`,
   });
   lifecycle.startInvoked = true;
-  const startResult = await startCoordinator(client, manifest, desiredArgs);
-
-  if (!startResult?.ok) {
-    const err = startResult?.error ?? "serverStart failed";
-    if (workers.length > 0) await stopWorkers(workers, getClient);
-    handle?.markUncertain();
-    return failedApplyResult(action, err, now);
+  let startOutcome: { ok: true; result: StartDone } | { ok: false; error: string };
+  try {
+    const started = await startCoordinator(client, manifest, desiredArgs);
+    startOutcome = started?.ok
+      ? { ok: true, result: started }
+      : { ok: false, error: started?.error ?? "serverStart failed" };
+  } catch (err) {
+    startOutcome = { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 
+  if (!startOutcome.ok) {
+    return await failedStartResult(ctx, action, startOutcome.error, workers, getClient, handle);
+  }
+
+  const okResult = startOutcome.result;
   handle?.markResident();
 
   onEvent?.({
     type: "started",
-    message: `${manifest.metadata.name}: ready at ${startResult.endpoint} pid=${String(startResult.pid ?? "?")}`,
+    message: `${manifest.metadata.name}: ready at ${okResult.endpoint} pid=${String(okResult.pid ?? "?")}`,
   });
 
   return {
     action,
     statusSection: {
       phase: "Running",
-      serverPid: startResult.pid,
-      endpoint: startResult.endpoint,
+      serverPid: okResult.pid,
+      endpoint: okResult.endpoint,
       lastTransitionTime: now,
       conditions: [
         { type: "Applied", status: "True", reason: action, lastTransitionTime: now },
@@ -2324,6 +2386,50 @@ async function startClaimedServer(
       ],
     },
   };
+}
+
+/**
+ * Failure-path teardown for a replacement that failed to reach Running
+ * after this apply evicted victims for it (DF-02 AC4). Only eviction
+ * starts are touched: a non-eviction start leaves the claim set empty
+ * and returns null immediately, preserving the prior behaviour. The
+ * goal is to prove the half-started replacement is gone before the
+ * exit rollback releases the victims, so the reconciler never runs a
+ * victim beside a live replacement. Returns a human detail when the
+ * teardown could not be verified (so the caller keeps the eviction
+ * intent held — only for the EVICTION_INTENT_GRACE_MS grace window
+ * while the replacement manifest is not stored), and null when there
+ * was nothing to tear down or the replacement is confirmed down.
+ */
+async function teardownFailedReplacement(ctx: ConvergeServerContext): Promise<string | null> {
+  if (ctx.evictionClaims.size === 0) return null;
+  const { manifest, client, onEvent } = ctx;
+  const name = manifest.metadata.name;
+  const timeoutMs = ctx.opts?.evictStopTimeoutMs ?? DEFAULT_EVICT_STOP_TIMEOUT_MS;
+  const expires = Date.now() + timeoutMs;
+  const remainingMs = (): number => Math.max(0, expires - Date.now());
+  try {
+    const status = await withDeadline(client.serverStatus.query({ workload: name }), remainingMs());
+    if (status.state !== "up") return null;
+    if (status.foreign === true) {
+      return "the recorded server is foreign to this workload";
+    }
+    onEvent?.({ type: "stop", message: `${name}: stopping failed replacement` });
+    const stopResult = await withDeadline(
+      client.serverStop.mutate({ workload: name, graceSeconds: 5 }),
+      remainingMs(),
+    );
+    const stopped = (stopResult as { stopped?: boolean } | undefined)?.stopped;
+    if (stopped === false) return "refused to stop";
+    const postStatus = await withDeadline(
+      client.serverStatus.query({ workload: name }),
+      remainingMs(),
+    );
+    if (postStatus.state === "up") return "still up after stop";
+    return null;
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
+  }
 }
 
 async function convergeClaimedServer(

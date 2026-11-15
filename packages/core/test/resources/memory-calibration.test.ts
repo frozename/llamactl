@@ -72,6 +72,7 @@ type MeasuredEnvelope =
       calibrationOverheadBytes: number;
       envelopeBytes: number;
       attribution: "process" | "uncertain";
+      measuredAtMs: number | null;
     }
   | {
       known: false;
@@ -86,6 +87,7 @@ type MeasuredEnvelope =
       calibrationOverheadBytes: number;
       envelopeBytes: number;
       attribution: "process";
+      measuredAtMs: number | null;
     };
 
 type CalibrationApi = {
@@ -729,6 +731,7 @@ describe("calibrateMeasuredEnvelope", () => {
       calibrationOverheadBytes: 4.875 * GiB,
       envelopeBytes: 24.375 * GiB,
       attribution: "process",
+      measuredAtMs: NOW,
     });
   });
 
@@ -877,6 +880,7 @@ describe("calibrateMeasuredEnvelope", () => {
       calibrationOverheadBytes: 0,
       envelopeBytes: 19 * GiB,
       attribution: "process",
+      measuredAtMs: NOW,
     });
   });
 
@@ -972,6 +976,7 @@ describe("calibrateMeasuredEnvelope", () => {
       calibrationOverheadBytes: 2,
       envelopeBytes: 5,
       attribution: "process",
+      measuredAtMs: NOW,
     });
   });
 
@@ -994,7 +999,59 @@ describe("calibrateMeasuredEnvelope", () => {
       calibrationOverheadBytes: 1,
       envelopeBytes: 11,
       attribution: "process",
+      measuredAtMs: NOW,
     });
+  });
+
+  test("stamps measuredAtMs with the latest usable sample observation", () => {
+    const calibrate = api.calibrateMeasuredEnvelope;
+    expect(typeof calibrate).toBe("function");
+    const samples = [
+      calibrationSample({
+        observedAtMs: NOW - 2000,
+        processBytes: 1 * GiB,
+        processDeviceBytes: 0,
+      }),
+      calibrationSample({ processBytes: 2 * GiB, processDeviceBytes: 0 }),
+      calibrationSample({
+        observedAtMs: NOW - 1000,
+        processBytes: 1 * GiB,
+        processDeviceBytes: 0,
+      }),
+      calibrationSample({
+        status: "unavailable",
+        observedAtMs: NOW + 5000,
+        processBytes: null,
+      }),
+      calibrationSample({
+        observedAtMs: NOW + 3000,
+        processBytes: null,
+        processDeviceBytes: 0,
+      }),
+    ];
+    const r = calibrate!({
+      key: baseCalibrationKey(),
+      samples,
+      options: calibrationOptions({ minSamples: 3 }),
+    });
+    if (!r.known) throw new Error(`expected a known envelope, got ${JSON.stringify(r)}`);
+    expect(r.measuredAtMs).toBe(NOW);
+  });
+
+  test("measuredAtMs is null when no usable sample carries an observation", () => {
+    const calibrate = api.calibrateMeasuredEnvelope;
+    expect(typeof calibrate).toBe("function");
+    const samples = [
+      calibrationSample({ observedAtMs: null, processBytes: 1 * GiB, processDeviceBytes: 0 }),
+      calibrationSample({ observedAtMs: null, processBytes: 1 * GiB, processDeviceBytes: 0 }),
+    ];
+    const r = calibrate!({
+      key: baseCalibrationKey(),
+      samples,
+      options: calibrationOptions({ minSamples: 2 }),
+    });
+    if (!r.known) throw new Error(`expected a known envelope, got ${JSON.stringify(r)}`);
+    expect(r.measuredAtMs).toBeNull();
   });
 });
 
