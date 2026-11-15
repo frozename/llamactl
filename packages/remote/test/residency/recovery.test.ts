@@ -1042,3 +1042,87 @@ describe("recoverProfileSwitchOperations crash recovery (#279 DF-06)", () => {
     ]);
   });
 });
+
+// ── recoverProfileSwitchOperationsUnverified (the sync boot scan) ──────
+
+type PossiblyLiveOperation = { operationId: string; node: string; reason: "possibly-live" };
+
+type UnverifiedRecoverFn = (opts: {
+  store: RecoverStore;
+  fenceToken: number;
+  nowMs?: () => number;
+  minStaleAgeMs?: number;
+}) => RecoverResult & { possiblyLive: PossiblyLiveOperation[] };
+
+async function loadRecoverUnverified(): Promise<UnverifiedRecoverFn> {
+  const mod = (await import(RECOVERY_MODULE).catch(() => null)) as Record<string, unknown> | null;
+  expect(mod).not.toBeNull();
+  const fn = mod?.["recoverProfileSwitchOperationsUnverified"];
+  expect(typeof fn).toBe("function");
+  return fn as UnverifiedRecoverFn;
+}
+
+describe("recoverProfileSwitchOperationsUnverified (#279 DF-06 boot scan)", () => {
+  // Kills M9: a sync scan that stops at the first unrecorded row leaves op-2
+  // and op-3 unattempted. op-1's finish throws, op-2's is refused, op-3 lands.
+  test("a per-row finish throw or refusal is contained and later rows are still recovered", async () => {
+    const recoverSync = await loadRecoverUnverified();
+    beginPendingSwitchRows(storeA, fenceA, THREE_ROWS);
+    const store = restartStore();
+    const attempted: string[] = [];
+
+    const flaky: RecoverStore = {
+      listNonterminal: () => store.listNonterminal(),
+      finishOperation: (input) => {
+        attempted.push(input.operationId);
+        if (input.operationId === "op-1") {
+          throw new Error("SQLITE_BUSY: database is locked");
+        }
+        if (input.operationId === "op-2") {
+          return { ok: false, reason: "version-conflict" };
+        }
+        return store.finishOperation(input);
+      },
+    };
+
+    const result = recoverSync({ store: flaky, fenceToken: fenceB, nowMs: () => 5 });
+
+    expect(result instanceof Promise).toBe(false);
+    expect(attempted).toEqual(["op-1", "op-2", "op-3"]);
+    expect(result.recovered).toEqual([
+      {
+        ...recoveredRow("op-1", "n1", "unknown", "interrupted-unverified"),
+        recorded: false,
+        recordFailure: "finish-threw: SQLITE_BUSY: database is locked",
+      },
+      {
+        ...recoveredRow("op-2", "n2", "unknown", "interrupted-unverified"),
+        recorded: false,
+        recordFailure: "version-conflict",
+      },
+      recoveredRow("op-3", "n3", "unknown", "interrupted-unverified"),
+    ]);
+    expect(result.possiblyLive).toEqual([]);
+    expect(store.listNonterminal().map((record) => record.operationId)).toEqual(["op-1", "op-2"]);
+  });
+
+  // The live-switch guard: rows touched inside minStaleAgeMs are reported
+  // possibly-live and stay nonterminal; older rows are recovered.
+  test("rows inside minStaleAgeMs are possibly live; older rows are recovered", async () => {
+    const recoverSync = await loadRecoverUnverified();
+    // THREE_ROWS are stamped at 1, 2 and 3 ms.
+    beginPendingSwitchRows(storeA, fenceA, THREE_ROWS);
+    const store = restartStore();
+
+    const result = recoverSync({ store, fenceToken: fenceB, nowMs: () => 12, minStaleAgeMs: 10 });
+
+    expect(result.recovered).toEqual([
+      recoveredRow("op-1", "n1", "unknown", "interrupted-unverified"),
+      recoveredRow("op-2", "n2", "unknown", "interrupted-unverified"),
+    ]);
+    expect(result.possiblyLive).toEqual([
+      { operationId: "op-3", node: "n3", reason: "possibly-live" },
+    ]);
+    expect(store.listNonterminal().map((record) => record.operationId)).toEqual(["op-3"]);
+  });
+});

@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { RESIDENCY_APPLY_PROFILE_FENCE_OWNER } from "../src/residency/apply-profile.js";
 import { openResidencyOperationStore, readResidencyStoreSnapshot } from "../src/residency/store.js";
 import { mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 import { type RunningAgent, startAgentServer } from "../src/server/serve.js";
@@ -115,6 +116,14 @@ describe("agent boot profile-switch recovery (#279 DF-06)", () => {
       }
       expect(snap.nonterminal).toEqual([]);
       expect(stderrText()).toContain("[residency] profile-switch boot recovery ");
+      // The boot claim uses the apply-profile owner, so a later wet
+      // apply-profile is not refused Busy by a foreign fence.
+      const store = openResidencyOperationStore({ path: storePath });
+      try {
+        expect(store.currentFence()?.ownerId).toBe(RESIDENCY_APPLY_PROFILE_FENCE_OWNER);
+      } finally {
+        store.close();
+      }
     } finally {
       await running?.stop();
     }

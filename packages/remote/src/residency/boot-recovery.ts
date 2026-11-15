@@ -5,11 +5,44 @@
  * before it returns, so a leftover `profile-switch:<node>` row from a crashed
  * switch is terminalized before any request can be served. It probes the store
  * read-only first (short busy timeout, never creates a file) and only opens a
- * writable handle, claims a fence and terminalizes stale rows when such a row
- * actually exists. It logs exactly one line of counts and never throws: any
+ * writable handle when such a row actually exists.
+ *
+ * Fence identity. It claims the operation fence as
+ * `RESIDENCY_APPLY_PROFILE_FENCE_OWNER`, the owner every apply-profile call
+ * uses: apply-profile refuses Busy whenever the current fence has any other
+ * owner, so a recovery claim under its own identity would make every later
+ * wet apply-profile Busy until something else re-claimed.
+ *
+ * When it claims. Only when at least one recognized stale row needs finishing
+ * AND no profile-switch row looks possibly live. A store holding only
+ * unrecognized rows, or nothing to recover, is never claimed: the fence and
+ * every row stay exactly as they were.
+ *
+ * Live-switch guard. Boot cannot tell a crashed switch from one a CLI process
+ * is still running through its own router caller: a switch records only a
+ * begin and a finish, with no heartbeat or owner liveness. The rule is a fixed
+ * staleness window: a row whose `updatedAtMs` is less than
+ * `PROFILE_SWITCH_BOOT_RECOVERY_MIN_AGE_MS` (30 minutes) before boot, or is
+ * stamped in the future, is `possibly-live`. That is more than twice the
+ * planner's default per-workload budget (drain 30s + unload 60s + load 600s +
+ * ready 120s = 13.5 min). A possibly-live row is never finished, and because a
+ * claim would also stale-fence the live switch's own finishOperation, any
+ * possibly-live row makes the whole pass defer without claiming. The cost is
+ * that a genuinely crashed row younger than the window stays nonterminal (the
+ * node stays Busy) until an agent boot after the window has passed.
+ *
+ * Logging. An absent store or a store with no profile-switch row logs nothing.
+ * A deferred or recovered pass logs one line of counts only (no operation ids,
+ * no model or node names). A failure logs one `failed:` line with the first
+ * line of the error. A throwing write sink is swallowed. It never throws: any
  * failure is logged and boot continues.
  */
-import { recoverProfileSwitchOperationsUnverified } from "./recovery.js";
+import { RESIDENCY_APPLY_PROFILE_FENCE_OWNER } from "./apply-profile.js";
+import {
+  previewProfileSwitchRecovery,
+  type ProfileSwitchRecoveryPreview,
+  recoverProfileSwitchOperationsUnverified,
+} from "./recovery.js";
 import {
   openResidencyOperationStore,
   readResidencyStoreSnapshot,
@@ -17,92 +50,143 @@ import {
   type ResidencyOperationStore,
 } from "./store.js";
 
+export const PROFILE_SWITCH_BOOT_RECOVERY_MIN_AGE_MS = 30 * 60_000;
+
 export type BootRecoverySummary = {
-  status: "absent" | "clean" | "recovered" | "failed";
+  status: "absent" | "clean" | "deferred" | "recovered" | "failed";
   recovered: number;
   recordFailures: number;
   skipped: number;
   unrecognized: number;
+  possiblyLive: number;
 };
 
 type BootRecoveryStore = ResidencyOperationStore;
 
 export type BootRecoveryOpts = {
   path: string;
-  ownerId: string;
   incarnation: string;
   nowMs?: () => number;
+  minStaleAgeMs?: number;
   write?: (line: string) => void;
   openStore?: (storePath: string) => BootRecoveryStore;
 };
 
+type Counts = Omit<BootRecoverySummary, "status">;
+
 const SWITCH_PREFIX = "profile-switch:";
 const MAX_FAILURE_MESSAGE_CHARS = 200;
+const NO_COUNTS: Counts = {
+  recovered: 0,
+  recordFailures: 0,
+  skipped: 0,
+  unrecognized: 0,
+  possiblyLive: 0,
+};
 
 export function runProfileSwitchBootRecovery(opts: BootRecoveryOpts): BootRecoverySummary {
   const write = opts.write ?? defaultWrite;
   const openStore = opts.openStore ?? defaultOpenStore;
+  const nowMs = opts.nowMs ?? Date.now;
+  const minStaleAgeMs = opts.minStaleAgeMs ?? PROFILE_SWITCH_BOOT_RECOVERY_MIN_AGE_MS;
 
   try {
     const snapshot = readResidencyStoreSnapshot(opts.path, {
       busyTimeoutMs: RESIDENCY_LEASE_AUDIT_BUSY_TIMEOUT_MS,
     });
     if (!snapshot.present) {
-      return summary("absent", 0, 0, 0, 0);
+      return { status: "absent", ...NO_COUNTS };
     }
     if ("error" in snapshot) {
       throw new Error(snapshot.error);
     }
     if (!snapshot.nonterminal.some((record) => record.model.startsWith(SWITCH_PREFIX))) {
-      return summary("clean", 0, 0, 0, 0);
+      return { status: "clean", ...NO_COUNTS };
     }
 
-    const result = scanWithStore(openStore, opts);
-    const recovered = result.recovered.filter((row) => row.recorded).length;
-    const recordFailures = result.recovered.length - recovered;
-    const skipped = result.skipped.length;
-    const unrecognized = result.unrecognized.length;
+    const preview = previewProfileSwitchRecovery(snapshot.nonterminal, {
+      nowMs: nowMs(),
+      minStaleAgeMs,
+    });
+    const result = shouldClaim(preview)
+      ? scanWithStore(openStore, opts, nowMs, minStaleAgeMs)
+      : deferred(preview);
 
-    safeWrite(
-      write,
-      `[residency] profile-switch boot recovery ${JSON.stringify({ recovered, recordFailures, skipped, unrecognized })}\n`,
-    );
-    return summary("recovered", recovered, recordFailures, skipped, unrecognized);
+    safeWrite(write, `[residency] profile-switch boot recovery ${countsJson(result)}\n`);
+    return result;
   } catch (error: unknown) {
     safeWrite(write, `[residency] profile-switch boot recovery failed: ${failureMessage(error)}\n`);
-    return summary("failed", 0, 0, 0, 0);
+    return { status: "failed", ...NO_COUNTS };
   }
+}
+
+// Counts only, in a fixed key order: never an operation id, model or node.
+function countsJson(result: BootRecoverySummary): string {
+  return JSON.stringify({
+    recovered: result.recovered,
+    recordFailures: result.recordFailures,
+    skipped: result.skipped,
+    unrecognized: result.unrecognized,
+    possiblyLive: result.possiblyLive,
+  });
+}
+
+function shouldClaim(preview: ProfileSwitchRecoveryPreview): boolean {
+  return preview.stale > 0 && preview.possiblyLive === 0;
+}
+
+function deferred(preview: ProfileSwitchRecoveryPreview): BootRecoverySummary {
+  return {
+    status: "deferred",
+    ...NO_COUNTS,
+    unrecognized: preview.unrecognized,
+    possiblyLive: preview.possiblyLive,
+  };
 }
 
 function scanWithStore(
   openStore: (storePath: string) => BootRecoveryStore,
   opts: BootRecoveryOpts,
-): ReturnType<typeof recoverProfileSwitchOperationsUnverified> {
+  nowMs: () => number,
+  minStaleAgeMs: number,
+): BootRecoverySummary {
   const store = openStore(opts.path);
   try {
-    const fence = store.claimOwnership({ ownerId: opts.ownerId, incarnation: opts.incarnation });
-    return recoverProfileSwitchOperationsUnverified({
+    // Re-check on the writable handle: the snapshot may be stale by now, and a
+    // claim must never land while a possibly-live switch row exists.
+    const preview = previewProfileSwitchRecovery(store.listNonterminal(), {
+      nowMs: nowMs(),
+      minStaleAgeMs,
+    });
+    if (!shouldClaim(preview)) {
+      return deferred(preview);
+    }
+    const fence = store.claimOwnership({
+      ownerId: RESIDENCY_APPLY_PROFILE_FENCE_OWNER,
+      incarnation: opts.incarnation,
+    });
+    const result = recoverProfileSwitchOperationsUnverified({
       store,
       fenceToken: fence.fenceToken,
-      ...(opts.nowMs === undefined ? {} : { nowMs: opts.nowMs }),
+      nowMs,
+      minStaleAgeMs,
     });
+    const recovered = result.recovered.filter((row) => row.recorded).length;
+    return {
+      status: "recovered",
+      recovered,
+      recordFailures: result.recovered.length - recovered,
+      skipped: result.skipped.length,
+      unrecognized: result.unrecognized.length,
+      possiblyLive: result.possiblyLive.length,
+    };
   } finally {
     try {
       store.close();
     } catch {
-      /* never let a close failure crash boot */
+      /* the rows are already written: a close failure never fails recovery or boot */
     }
   }
-}
-
-function summary(
-  status: BootRecoverySummary["status"],
-  recovered: number,
-  recordFailures: number,
-  skipped: number,
-  unrecognized: number,
-): BootRecoverySummary {
-  return { status, recovered, recordFailures, skipped, unrecognized };
 }
 
 function failureMessage(error: unknown): string {

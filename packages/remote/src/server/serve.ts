@@ -1475,13 +1475,14 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     // returns and no request can arrive first. It is inert unless leftover
     // profile-switch rows exist (a read-only probe first, so no file is
     // created), never blocks long (250ms busy timeout) and never crashes boot.
-    // It deliberately does NOT wire executeProfileSwitch, which stays gated per
-    // the #625 note on #279: this is recovery, not activation, so there is no
+    // It only terminalizes rows older than its staleness window, and claims
+    // the fence under the apply-profile owner identity, so the #284
+    // residencyApplyProfile mutation (#703), which runs executeProfileSwitch,
+    // is never left Busy by it. This is recovery, not activation: there is no
     // opt-in flag.
     runProfileSwitchBootRecovery({
       path: defaultResidencyStorePath(),
-      ownerId: `agent:${opts.nodeName ?? process.env["LLAMACTL_NODE_NAME"] ?? "agent"}`,
-      incarnation: `${String(process.pid)}:${crypto.randomUUID()}`,
+      incarnation: `agent-boot:${String(process.pid)}:${crypto.randomUUID()}`,
     });
     if (noAuth) {
       warnNoAuthEnabled(allowPlainHttp);

@@ -12,6 +12,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { RESIDENCY_APPLY_PROFILE_FENCE_OWNER } from "../../src/residency/apply-profile.js";
+import { PROFILE_SWITCH_BOOT_RECOVERY_MIN_AGE_MS } from "../../src/residency/boot-recovery.js";
 import {
   openResidencyOperationStore,
   readResidencyStoreSnapshot,
@@ -23,20 +25,21 @@ const BOOT_MODULE = "../../src/residency/boot-recovery.js" as string;
 // ── runProfileSwitchBootRecovery contract (declared loose, RED) ────────
 
 type BootRecoverySummary = {
-  status: "absent" | "clean" | "recovered" | "failed";
+  status: "absent" | "clean" | "deferred" | "recovered" | "failed";
   recovered: number;
   recordFailures: number;
   skipped: number;
   unrecognized: number;
+  possiblyLive: number;
 };
 
 type BootRecoveryStore = ReturnType<typeof openResidencyOperationStore>;
 
 type BootRecoveryOpts = {
   path: string;
-  ownerId: string;
   incarnation: string;
   nowMs?: () => number;
+  minStaleAgeMs?: number;
   write?: (line: string) => void;
   openStore?: (storePath: string) => BootRecoveryStore;
 };
@@ -78,6 +81,7 @@ type SeedRow = {
   model?: string;
   targetState?: string;
   desiredRevision?: number;
+  nowMs?: number;
 };
 
 // Leaves the same pending `profile-switch:<node>` row a crashed switch
@@ -95,11 +99,20 @@ function seedCrashRow(row: SeedRow = {}): void {
       targetState: row.targetState ?? "profile:interactive",
       desiredRevision: row.desiredRevision ?? 1,
       reservationGiB: 0,
-      nowMs: 1,
+      nowMs: row.nowMs ?? 1,
     });
     if (!begun.ok) {
       throw new Error(`seed beginOperation(${operationId}) refused: ${begun.reason}`);
     }
+  } finally {
+    store.close();
+  }
+}
+
+function currentFence(): { ownerId: string; incarnation: string; fenceToken: number } | null {
+  const store = openResidencyOperationStore({ path });
+  try {
+    return store.currentFence();
   } finally {
     store.close();
   }
@@ -126,7 +139,6 @@ describe("runProfileSwitchBootRecovery (#279 DF-06)", () => {
     const writes: string[] = [];
     const ret = recover({
       path,
-      ownerId: "agent",
       incarnation: "i2",
       write: (line) => {
         writes.push(line);
@@ -140,6 +152,7 @@ describe("runProfileSwitchBootRecovery (#279 DF-06)", () => {
       recordFailures: 0,
       skipped: 0,
       unrecognized: 0,
+      possiblyLive: 0,
     });
 
     const store = openResidencyOperationStore({ path });
@@ -179,7 +192,6 @@ describe("runProfileSwitchBootRecovery (#279 DF-06)", () => {
 
     const summary = recover({
       path,
-      ownerId: "agent",
       incarnation: "i2",
       write: (line) => {
         writes.push(line);
@@ -205,7 +217,6 @@ describe("runProfileSwitchBootRecovery (#279 DF-06)", () => {
 
     const summary = recover({
       path,
-      ownerId: "agent",
       incarnation: "i2",
       write: () => undefined,
       openStore: (storePath) => {
@@ -241,7 +252,6 @@ describe("runProfileSwitchBootRecovery (#279 DF-06)", () => {
     const writes: string[] = [];
     const summary = recover({
       path,
-      ownerId: "agent",
       incarnation: "i2",
       write: (line) => {
         writes.push(line);
@@ -267,7 +277,6 @@ describe("runProfileSwitchBootRecovery (#279 DF-06)", () => {
     const writes: string[] = [];
     const summary = recover({
       path,
-      ownerId: "agent",
       incarnation: "i2",
       write: (line) => {
         writes.push(line);
@@ -275,9 +284,11 @@ describe("runProfileSwitchBootRecovery (#279 DF-06)", () => {
     });
 
     expect(summary.unrecognized).toBe(1);
-    expect(summary.status).toBe("recovered");
+    // Nothing recognized needs finishing, so the fence is never claimed.
+    expect(summary.status).toBe("deferred");
     expect(writes.some((line) => line.includes('"unrecognized":1'))).toBe(true);
     expect(nonterminalIds()).toEqual(["op-bad-target"]);
+    expect(currentFence()).toEqual({ ownerId: "agent", incarnation: "i1", fenceToken: 1 });
   });
 
   // Pins the snapshot gate's negative: openStore runs ONLY when a
@@ -308,7 +319,6 @@ describe("runProfileSwitchBootRecovery (#279 DF-06)", () => {
     let openStoreCalls = 0;
     const summary = recover({
       path,
-      ownerId: "agent",
       incarnation: "i2",
       write: () => undefined,
       openStore: (storePath) => {
@@ -320,5 +330,169 @@ describe("runProfileSwitchBootRecovery (#279 DF-06)", () => {
     expect(summary.status).toBe("clean");
     expect(openStoreCalls).toBe(0);
     expect(nonterminalIds()).toEqual(["op-model"]);
+  });
+
+  // Kills O1: a boot claim under any owner but the apply-profile owner turns
+  // every later wet apply-profile into a foreign-owner Busy.
+  test("the recovery claim uses the apply-profile fence owner", async () => {
+    const recover = await loadBootRecovery();
+    seedCrashRow();
+
+    const summary = recover({ path, incarnation: "i2", write: () => undefined });
+
+    expect(summary.status).toBe("recovered");
+    expect(currentFence()?.ownerId).toBe(RESIDENCY_APPLY_PROFILE_FENCE_OWNER);
+    expect(currentFence()?.incarnation).toBe("i2");
+  });
+
+  // Kills W1: without the live-switch guard a row a CLI switch is still
+  // running is terminalized. One ms inside the window is possibly live and
+  // nothing is claimed; at the window edge the same row is recovered.
+  test("a row younger than the staleness window is possibly live and left alone", async () => {
+    const recover = await loadBootRecovery();
+    const started = 1_000_000;
+    seedCrashRow({ nowMs: started });
+    let openStoreCalls = 0;
+    const writes: string[] = [];
+
+    const fresh = recover({
+      path,
+      incarnation: "i2",
+      nowMs: () => started + PROFILE_SWITCH_BOOT_RECOVERY_MIN_AGE_MS - 1,
+      write: (line) => {
+        writes.push(line);
+      },
+      openStore: (storePath) => {
+        openStoreCalls += 1;
+        return openResidencyOperationStore({ path: storePath });
+      },
+    });
+
+    expect(fresh).toEqual({
+      status: "deferred",
+      recovered: 0,
+      recordFailures: 0,
+      skipped: 0,
+      unrecognized: 0,
+      possiblyLive: 1,
+    });
+    expect(openStoreCalls).toBe(0);
+    expect(nonterminalIds()).toEqual(["op-crash"]);
+    expect(currentFence()).toEqual({ ownerId: "agent", incarnation: "i1", fenceToken: 1 });
+    expect(writes).toEqual([
+      '[residency] profile-switch boot recovery {"recovered":0,"recordFailures":0,"skipped":0,"unrecognized":0,"possiblyLive":1}\n',
+    ]);
+
+    const old = recover({
+      path,
+      incarnation: "i3",
+      nowMs: () => started + PROFILE_SWITCH_BOOT_RECOVERY_MIN_AGE_MS,
+      write: () => undefined,
+    });
+
+    expect(old.status).toBe("recovered");
+    expect(old.recovered).toBe(1);
+    expect(old.possiblyLive).toBe(0);
+    expect(nonterminalIds()).toEqual([]);
+  });
+
+  // The window defaults on: a row stamped now is possibly live under the
+  // real clock.
+  test("the default staleness window leaves a just-started row alone", async () => {
+    const recover = await loadBootRecovery();
+    seedCrashRow({ nowMs: Date.now() });
+
+    const summary = recover({ path, incarnation: "i2", write: () => undefined });
+
+    expect(summary.status).toBe("deferred");
+    expect(summary.possiblyLive).toBe(1);
+    expect(nonterminalIds()).toEqual(["op-crash"]);
+  });
+
+  // Kills M10: the log line carries counts only — never an operation id,
+  // a model, a node or a profile name.
+  test("the boot log line carries counts only", async () => {
+    const recover = await loadBootRecovery();
+    seedCrashRow({ operationId: "op-secret-id", model: "profile-switch:node-secret" });
+    seedCrashRow({
+      operationId: "op-secret-bad",
+      model: "profile-switch:node-other",
+      targetState: "bogus-target",
+    });
+
+    const writes: string[] = [];
+    const summary = recover({
+      path,
+      incarnation: "i2",
+      write: (line) => {
+        writes.push(line);
+      },
+    });
+
+    expect(summary.status).toBe("recovered");
+    expect(writes).toEqual([
+      '[residency] profile-switch boot recovery {"recovered":1,"recordFailures":0,"skipped":0,"unrecognized":1,"possiblyLive":0}\n',
+    ]);
+    for (const secret of ["op-secret", "node-secret", "node-other", "interactive", "bogus"]) {
+      expect(writes.join("")).not.toContain(secret);
+    }
+  });
+
+  // Kills M11: a write sink that throws must never escape boot, on the
+  // recovered path or the failure path.
+  test("a throwing write sink does not crash boot", async () => {
+    const recover = await loadBootRecovery();
+    seedCrashRow();
+    const throwingWrite = (): never => {
+      throw new Error("EPIPE");
+    };
+
+    const summary = recover({ path, incarnation: "i2", write: throwingWrite });
+
+    expect(summary.status).toBe("recovered");
+    expect(summary.recovered).toBe(1);
+    expect(nonterminalIds()).toEqual([]);
+
+    seedCrashRow({ operationId: "op-crash-2", desiredRevision: 2 });
+    const failed = recover({
+      path,
+      incarnation: "i3",
+      write: throwingWrite,
+      openStore: () => {
+        throw new Error("SQLITE_BUSY: database is locked");
+      },
+    });
+    expect(failed.status).toBe("failed");
+  });
+
+  // Kills M12: once the rows are written, a store.close throw is not a
+  // recovery failure.
+  test("a store.close throw after a successful recovery still reports recovered", async () => {
+    const recover = await loadBootRecovery();
+    seedCrashRow();
+
+    const writes: string[] = [];
+    const summary = recover({
+      path,
+      incarnation: "i2",
+      write: (line) => {
+        writes.push(line);
+      },
+      openStore: (storePath) => {
+        const real = openResidencyOperationStore({ path: storePath });
+        const realClose = real.close;
+        real.close = (): void => {
+          realClose();
+          throw new Error("close failed");
+        };
+        return real;
+      },
+    });
+
+    expect(summary.status).toBe("recovered");
+    expect(summary.recovered).toBe(1);
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).not.toContain("failed");
+    expect(nonterminalIds()).toEqual([]);
   });
 });
