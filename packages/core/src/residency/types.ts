@@ -46,6 +46,11 @@ export type ResidencyAuditEntry = {
   forced: true;
   revoked: string[];
   reason?: string;
+  // Id of the registry (one per serving process) that wrote the entry. Epochs
+  // and lease ids restart per process, so this is what tells a persisted row
+  // from an earlier process apart from a live entry with the same fields.
+  // Every live entry carries it; only legacy persisted rows lack it.
+  incarnation?: string;
 };
 
 export interface ResidencyLeases {
