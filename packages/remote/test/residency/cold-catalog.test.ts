@@ -713,6 +713,190 @@ describe("buildDeclaredModelEntries", () => {
       expect(schema!.safeParse(entry).success).toBe(true);
     }
   });
+
+  test("a live id in warmingModelIds is loading, not ready", async () => {
+    // Kills: the warmingModelIds input dropped or ignored in stateForClaim
+    // (at base the live id projects 'ready').
+    const mod = await residencyCatalog();
+    expect(typeof mod.buildDeclaredModelEntries).toBe("function");
+
+    const entries = mod.buildDeclaredModelEntries!({
+      nodeName: "local",
+      modelHosts: [hostManifest("host-a")],
+      modelRuns: [],
+      liveModelIds: new Set(["m.gguf"]),
+      warmingModelIds: new Set(["m.gguf"]),
+    });
+
+    expect(entries).toMatchObject([
+      {
+        id: "m.gguf",
+        workload: "host-a",
+        kind: "ModelHost",
+        ownerNodeId: "local",
+        state: "loading",
+        autoLoadEligible: false,
+      },
+      {
+        id: "org/repo/m.gguf",
+        workload: "host-a",
+        kind: "ModelHost",
+        ownerNodeId: "local",
+        state: "cold",
+        autoLoadEligible: true,
+      },
+    ]);
+
+    const schema = declaredEntrySchema.DeclaredModelEntryV1Schema;
+    expect(schema).toBeDefined();
+    for (const entry of entries) {
+      expect(schema!.safeParse(entry).success).toBe(true);
+    }
+  });
+
+  test("a warming id that is not live stays cold while a live warming id loads", async () => {
+    // Kills: applying warmingModelIds without intersecting liveModelIds
+    // (the non-live id would turn 'loading'), and dropping the input
+    // entirely (the live id stays 'ready' at base).
+    const mod = await residencyCatalog();
+    expect(typeof mod.buildDeclaredModelEntries).toBe("function");
+
+    const entries = mod.buildDeclaredModelEntries!({
+      nodeName: "local",
+      modelHosts: [hostManifest("host-a")],
+      modelRuns: [],
+      liveModelIds: new Set(["org/repo/m.gguf"]),
+      warmingModelIds: new Set(["m.gguf", "org/repo/m.gguf"]),
+    });
+
+    expect(entries).toMatchObject([
+      {
+        id: "m.gguf",
+        workload: "host-a",
+        kind: "ModelHost",
+        ownerNodeId: "local",
+        state: "cold",
+        autoLoadEligible: true,
+      },
+      {
+        id: "org/repo/m.gguf",
+        workload: "host-a",
+        kind: "ModelHost",
+        ownerNodeId: "local",
+        state: "loading",
+        autoLoadEligible: false,
+      },
+    ]);
+  });
+
+  test("collision, disabled and draining take precedence over warmingModelIds", async () => {
+    // Kills: ordering the warming check ahead of the collided / disabled /
+    // lease-phase checks in stateForClaim. The plain live+warming 'm.gguf'
+    // keeps the case RED at base, where the input is ignored and it stays
+    // 'ready'.
+    const mod = await residencyCatalog();
+    expect(typeof mod.buildDeclaredModelEntries).toBe("function");
+
+    const liveAndWarming = new Set([
+      "m.gguf",
+      "org/repo/m.gguf",
+      "org/repo/off.gguf",
+      "org/repo/drain.gguf",
+    ]);
+    const entries = mod.buildDeclaredModelEntries!({
+      nodeName: "local",
+      modelHosts: [hostManifest("host-a")],
+      modelRuns: [
+        runManifest("run-b", { target: { kind: "rel", value: "org/repo/m.gguf" } }),
+        runManifest("run-off", {
+          enabled: false,
+          target: { kind: "rel", value: "org/repo/off.gguf" },
+        }),
+        runManifest("run-drain", { target: { kind: "rel", value: "org/repo/drain.gguf" } }),
+      ],
+      liveModelIds: liveAndWarming,
+      warmingModelIds: liveAndWarming,
+      workloadPhase: leasePhaseOf({ "run-drain": "draining" }),
+    });
+
+    expect(entries).toMatchObject([
+      {
+        id: "m.gguf",
+        workload: "host-a",
+        kind: "ModelHost",
+        ownerNodeId: "local",
+        state: "loading",
+        autoLoadEligible: false,
+      },
+      {
+        id: "org/repo/drain.gguf",
+        workload: "run-drain",
+        kind: "ModelRun",
+        ownerNodeId: "local",
+        state: "draining",
+        autoLoadEligible: false,
+      },
+      {
+        id: "org/repo/m.gguf",
+        workload: "host-a",
+        kind: "ModelHost",
+        ownerNodeId: "local",
+        state: "unavailable",
+        autoLoadEligible: false,
+        reason: "alias-collision",
+      },
+      {
+        id: "org/repo/m.gguf",
+        workload: "run-b",
+        kind: "ModelRun",
+        ownerNodeId: "local",
+        state: "unavailable",
+        autoLoadEligible: false,
+        reason: "alias-collision",
+      },
+      {
+        id: "org/repo/off.gguf",
+        workload: "run-off",
+        kind: "ModelRun",
+        ownerNodeId: "local",
+        state: "disabled",
+        autoLoadEligible: false,
+      },
+    ]);
+  });
+
+  test("guard: omitting warmingModelIds keeps live ids ready", async () => {
+    // Guard: passes at base — no warming input means live→ready exactly as
+    // before the parameter existed.
+    const mod = await residencyCatalog();
+    expect(typeof mod.buildDeclaredModelEntries).toBe("function");
+
+    const entries = mod.buildDeclaredModelEntries!({
+      nodeName: "local",
+      modelHosts: [hostManifest("host-a")],
+      modelRuns: [],
+      liveModelIds: new Set(["m.gguf"]),
+    });
+
+    expect(entries).toMatchObject([
+      {
+        id: "m.gguf",
+        workload: "host-a",
+        kind: "ModelHost",
+        ownerNodeId: "local",
+        state: "ready",
+        autoLoadEligible: false,
+      },
+      {
+        id: "org/repo/m.gguf",
+        workload: "host-a",
+        kind: "ModelHost",
+        ownerNodeId: "local",
+        state: "cold",
+        autoLoadEligible: true,
+      },
+    ]);
+  });
 });
 
 describe("listDeclaredModels", () => {
@@ -793,6 +977,47 @@ describe("listDeclaredModels", () => {
           ownerNodeId: "local",
           state: "draining",
           autoLoadEligible: false,
+        },
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("listDeclaredModels forwards warmingModelIds", async () => {
+    // Kills: listDeclaredModels dropping the warmingModelIds input instead
+    // of threading it into buildDeclaredModelEntries (at base the live id
+    // stays 'ready').
+    const mod = await residencyCatalog();
+    expect(typeof mod.listDeclaredModels).toBe("function");
+
+    const dir = mkdtempSync(join(tmpdir(), "llamactl-declared-catalog-"));
+    try {
+      writeFileSync(join(dir, "host-a.yaml"), stringifyYaml(hostManifest("host-a")));
+
+      const entries = mod.listDeclaredModels!({
+        dir,
+        nodeName: "local",
+        liveModelIds: new Set(["m.gguf"]),
+        warmingModelIds: new Set(["m.gguf"]),
+      });
+
+      expect(entries).toMatchObject([
+        {
+          id: "m.gguf",
+          workload: "host-a",
+          kind: "ModelHost",
+          ownerNodeId: "local",
+          state: "loading",
+          autoLoadEligible: false,
+        },
+        {
+          id: "org/repo/m.gguf",
+          workload: "host-a",
+          kind: "ModelHost",
+          ownerNodeId: "local",
+          state: "cold",
+          autoLoadEligible: true,
         },
       ]);
     } finally {

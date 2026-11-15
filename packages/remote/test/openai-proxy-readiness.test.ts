@@ -277,7 +277,10 @@ describe("nodeModels inproc serving readiness (#220)", () => {
     expect(ids).not.toContain("refused-model");
   }, 10_000);
 
-  test("chat routing still sees the warming host", () => {
+  test("the sync listOpenAIModels still lists the warming host", () => {
+    // Chat routing now gates warming hosts via servingRouteForModel
+    // (covered by openaiProxy.servingRoutes.test.ts); this pins only the
+    // ungated sync listing.
     const ids = openaiProxy.listOpenAIModels().data.map((entry) => entry.id);
     expect(ids).toContain("warming-model");
     expect(ids).toContain("ready-model");
