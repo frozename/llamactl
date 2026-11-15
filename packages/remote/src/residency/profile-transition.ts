@@ -30,10 +30,11 @@
  * `opts.operation`, `complete` stays deferred. A refused or noop plan reports
  * an empty `deferred` either way.
  *
- * Crash recovery/rollback/persist-suppression/verify-release/reserve/
- * verify-ready/publish stay deferred. The planner's `request.timeouts.drainMs`
- * is not carried on `OkPlan`, so the executor uses `opts.drainTimeoutMs` or
- * the default; threading the resolved timeouts through is a later slice.
+ * Crash recovery (via `recovery.ts`) terminalizes stale profile-switch rows;
+ * rollback/persist-suppression/verify-release/reserve/verify-ready/publish
+ * stay deferred. The planner's `request.timeouts.drainMs` is not carried on
+ * `OkPlan`, so the executor uses `opts.drainTimeoutMs` or the default;
+ * threading the resolved timeouts through is a later slice.
  */
 import { getResidencyLeaseRegistry, type ResidencyLeases } from "@llamactl/core/residency/leases";
 import {
