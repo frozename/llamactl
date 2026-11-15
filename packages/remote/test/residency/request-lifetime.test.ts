@@ -19,10 +19,15 @@
  * The legacy-local-executor cases and the "nobody-reads-then-abort" case
  * drive `proxyOpenAI` without a socket; the abort case is what pins the
  * req.signal backstop in `attachLeaseAbortRelease` — the body is bound but
- * never read, so only that listener can release the lease.
+ * never read, so only that listener can release the lease. The buffered
+ * /v1/messages and /v1/responses bodies are drained server-side before the
+ * client can cancel them, so the body-cancel release path is pinned by the
+ * socketless `bindLeaseToBody` unit test, not by those HTTP cases.
  *
- * Every wait is bounded by `waitFor`, so a regression fails by assertion
- * rather than by a bun test timeout.
+ * Every lease-count, gate-count and engine-hit predicate is polled with
+ * `waitFor`, so a lease that never settles fails by assertion. The fetches,
+ * body reads and cancels themselves are awaited unbounded; a hang there
+ * surfaces as the per-test bun timeout instead.
  */
 import type { AcquireResult, Lease, ResidencyLeases } from "@llamactl/core/residency/leases";
 import type { ResolvedEnv } from "@llamactl/core/types";
@@ -453,7 +458,15 @@ describe("#278 DF-05: /v1/messages request-lifetime lease", () => {
     expect(counting.releases()).toBe(1);
   }, 15_000);
 
-  test("releases once when the response body is cancelled before reading", async () => {
+  // This does NOT pin the body-cancel release path. The agent writes the
+  // buffered JSON straight to the socket, so the bound body ends server-side
+  // and releases the lease before the client sees headers (the lease is
+  // already free here, so a held-after-headers assertion cannot be made
+  // deterministically). What it pins is that a client cancelling the unread
+  // body neither double-releases nor leaks the lease. The cancel path itself
+  // is pinned by the socketless "bindLeaseToBody cancel releases with no read
+  // in flight" unit test below.
+  test("releases exactly once when the client cancels the buffered body unread", async () => {
     const counting = startLeaseAgent();
     const pending = postMessages();
     expect(await waitFor((): boolean => counting.registry.active(workload).length === 1)).toBe(
@@ -544,7 +557,15 @@ describe("#278 DF-05: /v1/responses request-lifetime lease", () => {
     expect(counting.releases()).toBe(1);
   }, 15_000);
 
-  test("releases once when the response body is cancelled before reading", async () => {
+  // This does NOT pin the body-cancel release path. The agent writes the
+  // buffered JSON straight to the socket, so the bound body ends server-side
+  // and releases the lease before the client sees headers (the lease is
+  // already free here, so a held-after-headers assertion cannot be made
+  // deterministically). What it pins is that a client cancelling the unread
+  // body neither double-releases nor leaks the lease. The cancel path itself
+  // is pinned by the socketless "bindLeaseToBody cancel releases with no read
+  // in flight" unit test below.
+  test("releases exactly once when the client cancels the buffered body unread", async () => {
     const counting = startLeaseAgent();
     const pending = postResponses();
     expect(await waitFor((): boolean => counting.registry.active(workload).length === 1)).toBe(

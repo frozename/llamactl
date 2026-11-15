@@ -12,7 +12,10 @@
  *
  * Everything runs through `proxyOpenAI` / `forceUnloadWorkload` without a
  * socket, against a gated loopback fake engine, so each invariant is asserted
- * directly and bounded by `waitFor` (failures are assertions, never timeouts).
+ * directly. Lease-count predicates are polled with `waitFor` and the drain's
+ * idle promise is raced against a 1s timer, so a lease that never settles
+ * fails by assertion. The proxy calls and body reads are awaited unbounded;
+ * a hang there surfaces as the per-test timeout instead.
  * The fake engine parks a streaming response until released, which keeps a
  * lease observably held across the whole body lifetime.
  */
@@ -387,9 +390,15 @@ describe("#278 DF-05: unforced commitUnload refuses live leases", () => {
     if (!drain.ok) return;
 
     const refused = counting.registry.commitUnload(drain.token);
-    expect(refused.ok).toBe(false);
-    if (refused.ok || refused.reason !== "LeasesActive") return;
-    expect(refused.active).toHaveLength(1);
+    expect(refused).toMatchObject({ ok: false, reason: "LeasesActive" });
+    // Narrowing only: the assertion above already fails any other shape.
+    if (refused.ok || refused.reason !== "LeasesActive") {
+      throw new Error(`expected LeasesActive, got ${JSON.stringify(refused)}`);
+    }
+    expect(refused.active).toEqual([acquired.lease.id]);
+    // The refusal frees nothing: the lease is still held and the drain stands.
+    expect(counting.registry.active(workloadA)).toEqual([acquired.lease.id]);
+    expect(counting.registry.snapshot(workloadA).phase).toBe("draining");
   });
 });
 
