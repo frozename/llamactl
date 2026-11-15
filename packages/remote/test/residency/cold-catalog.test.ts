@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
 
+import type { buildDeclaredModelEntries, listDeclaredModels } from "../../src/residency/catalog.js";
 import type { ModelHostManifest } from "../../src/workload/modelhost-schema.js";
 import type { ModelRun } from "../../src/workload/schema.js";
 
@@ -36,6 +37,17 @@ async function residencyCatalog(): Promise<ResidencyCatalogModule> {
 }
 
 type DeclaredModelSource = (() => readonly unknown[]) | null;
+
+// #280 DF-07 withdraw: inputs that carry withdrawnWorkloads are typed as the
+// real parameter intersected with the not-yet-existing field, so they
+// typecheck at base and keep typechecking once the fix lands.
+type BuildDeclaredModelEntriesInput = Parameters<typeof buildDeclaredModelEntries>[0] & {
+  withdrawnWorkloads?: ReadonlySet<string>;
+};
+
+type ListDeclaredModelsInput = Parameters<typeof listDeclaredModels>[0] & {
+  withdrawnWorkloads?: ReadonlySet<string>;
+};
 
 const declaredSeam = openaiProxy as unknown as {
   setDeclaredModelSource?: (source: DeclaredModelSource) => void;
@@ -897,6 +909,107 @@ describe("buildDeclaredModelEntries", () => {
       },
     ]);
   });
+
+  test("a workload in withdrawnWorkloads is draining even with a live route and no lease phase", async () => {
+    // Kills: stateForClaim ignoring withdrawnWorkloads (at base the live ids
+    // project 'ready').
+    const mod = await residencyCatalog();
+    expect(typeof mod.buildDeclaredModelEntries).toBe("function");
+
+    const input: BuildDeclaredModelEntriesInput = {
+      nodeName: "local",
+      modelHosts: [hostManifest("host-a")],
+      modelRuns: [],
+      liveModelIds: new Set(["m.gguf", "org/repo/m.gguf"]),
+      withdrawnWorkloads: new Set(["host-a"]),
+    };
+    const entries = mod.buildDeclaredModelEntries!(input);
+
+    expect(entries).toMatchObject([
+      {
+        id: "m.gguf",
+        workload: "host-a",
+        kind: "ModelHost",
+        ownerNodeId: "local",
+        state: "draining",
+        autoLoadEligible: false,
+      },
+      {
+        id: "org/repo/m.gguf",
+        workload: "host-a",
+        kind: "ModelHost",
+        ownerNodeId: "local",
+        state: "draining",
+        autoLoadEligible: false,
+      },
+    ]);
+  });
+
+  test("collision and disabled take precedence over withdrawnWorkloads", async () => {
+    // Kills: placing the withdrawn check above the collided/disabled checks
+    // in stateForClaim. The plain withdrawn 'm.gguf' claim keeps the case
+    // RED at base, where the input is ignored and it stays 'cold'.
+    const mod = await residencyCatalog();
+    expect(typeof mod.buildDeclaredModelEntries).toBe("function");
+
+    const collidedInput: BuildDeclaredModelEntriesInput = {
+      nodeName: "local",
+      modelHosts: [hostManifest("host-a")],
+      modelRuns: [runManifest("run-b", { target: { kind: "rel", value: "org/repo/m.gguf" } })],
+      liveModelIds: new Set<string>(),
+      withdrawnWorkloads: new Set(["host-a", "run-b"]),
+    };
+    const collided = mod.buildDeclaredModelEntries!(collidedInput);
+
+    expect(collided).toMatchObject([
+      {
+        id: "m.gguf",
+        workload: "host-a",
+        kind: "ModelHost",
+        ownerNodeId: "local",
+        state: "draining",
+        autoLoadEligible: false,
+      },
+      {
+        id: "org/repo/m.gguf",
+        workload: "host-a",
+        kind: "ModelHost",
+        ownerNodeId: "local",
+        state: "unavailable",
+        autoLoadEligible: false,
+        reason: "alias-collision",
+      },
+      {
+        id: "org/repo/m.gguf",
+        workload: "run-b",
+        kind: "ModelRun",
+        ownerNodeId: "local",
+        state: "unavailable",
+        autoLoadEligible: false,
+        reason: "alias-collision",
+      },
+    ]);
+
+    const disabledInput: BuildDeclaredModelEntriesInput = {
+      nodeName: "local",
+      modelHosts: [],
+      modelRuns: [runManifest("run-off", { enabled: false })],
+      liveModelIds: new Set<string>(),
+      withdrawnWorkloads: new Set(["run-off"]),
+    };
+    const disabled = mod.buildDeclaredModelEntries!(disabledInput);
+
+    expect(disabled).toMatchObject([
+      {
+        id: "org/repo/run.gguf",
+        workload: "run-off",
+        kind: "ModelRun",
+        ownerNodeId: "local",
+        state: "disabled",
+        autoLoadEligible: false,
+      },
+    ]);
+  });
 });
 
 describe("listDeclaredModels", () => {
@@ -1018,6 +1131,42 @@ describe("listDeclaredModels", () => {
           ownerNodeId: "local",
           state: "cold",
           autoLoadEligible: true,
+        },
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("listDeclaredModels forwards withdrawnWorkloads", async () => {
+    // Kills: listDeclaredModels dropping the field instead of threading it
+    // into buildDeclaredModelEntries (at base the live id stays 'ready').
+    const mod = await residencyCatalog();
+    expect(typeof mod.listDeclaredModels).toBe("function");
+
+    const dir = mkdtempSync(join(tmpdir(), "llamactl-declared-catalog-"));
+    try {
+      writeFileSync(
+        join(dir, "run-a.yaml"),
+        stringifyYaml(runManifest("run-a", { target: { kind: "rel", value: "org/repo/a.gguf" } })),
+      );
+
+      const input: ListDeclaredModelsInput = {
+        dir,
+        nodeName: "local",
+        liveModelIds: new Set(["org/repo/a.gguf"]),
+        withdrawnWorkloads: new Set(["run-a"]),
+      };
+      const entries = mod.listDeclaredModels!(input);
+
+      expect(entries).toMatchObject([
+        {
+          id: "org/repo/a.gguf",
+          workload: "run-a",
+          kind: "ModelRun",
+          ownerNodeId: "local",
+          state: "draining",
+          autoLoadEligible: false,
         },
       ]);
     } finally {

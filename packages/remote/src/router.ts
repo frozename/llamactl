@@ -96,6 +96,12 @@ import { getSessionSummary, listSessions } from "./ops-chat/sessions/list.js";
 import { createRagAdapter } from "./rag/index.js";
 import { resolveRagNode } from "./rag/resolve.js";
 import {
+  type ForceUnloadKind,
+  type ForceUnloadResult,
+  type ForceUnloadStop,
+  forceUnloadWorkload,
+} from "./residency/force-unload.js";
+import {
   buildResidencyPlan,
   buildResidencyStatus,
   collectResidencyObservations,
@@ -2736,6 +2742,51 @@ export const router = t.router({
           refuse: (refused) => ({ stopped: false, pid: null, killed: false, refused }),
         }),
     ),
+
+  // DF-05 (#278): explicit operator override of the stop fence. Unlike
+  // serverStop/modelHostStop this never routes through fenceWorkloadStop: it
+  // revokes held leases via the fencing drain token instead of refusing.
+  // `confirm: true` is required (z.literal) and the unload is audited as
+  // "operator: <reason>". An idle unload (no leases held) writes no audit row.
+  residencyForceUnload: t.procedure
+    .input(
+      z.object({
+        workload: z.string().min(1),
+        reason: z.string().trim().min(1).max(200),
+        confirm: z.literal(true),
+      }),
+    )
+    .mutation(async ({ input }): Promise<ForceUnloadResult> => {
+      const name = input.workload;
+      const kind: ForceUnloadKind | null = workloadStoreMod
+        .listWorkloads()
+        .some((m) => m.metadata.name === name)
+        ? "modelrun"
+        : modelHostStoreMod.listModelHosts().some((h) => h.metadata.name === name)
+          ? "modelhost"
+          : null;
+      const registry = getResidencyLeaseRegistry();
+      const stop: ForceUnloadStop =
+        kind === "modelhost"
+          ? async (): Promise<{ stopped: boolean; detail?: string }> => {
+              const r = await stopModelHost({ key: { name } });
+              return {
+                stopped: r.ok,
+                ...(r.error !== undefined ? { detail: r.error } : {}),
+              };
+            }
+          : async (): Promise<{ stopped: boolean }> => {
+              const r = await serverMod.stopServer({ key: { name } });
+              return { stopped: r.stopped };
+            };
+      return await forceUnloadWorkload({
+        workload: name,
+        reason: input.reason,
+        kind,
+        registry,
+        stop,
+      });
+    }),
 
   serverStart: t.procedure.input(ServerStartInputSchema).subscription(async function* ({
     input,

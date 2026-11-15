@@ -77,6 +77,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  setResidencyLeaseRegistry(null);
   for (const k of Object.keys(process.env)) Reflect.deleteProperty(process.env, k);
   Object.assign(process.env, originalEnv);
   rmSync(runtimeDir, { recursive: true, force: true });
@@ -207,6 +208,8 @@ const MCP_ONLY_EXCLUDED = new Set([
   "llamactl.fleet.supervisor.audit",
   "llamactl.fleet.supervisor.status",
   "llamactl.models.leaderboard",
+  // operator-only destructive override (#278 DF-05); deliberately not in Ops Chat dispatch
+  "llamactl.residency.forceUnload",
   "llamactl.supervisor.execute",
   "llamactl_admit_measure",
   "llamactl_fleet_audit",
@@ -294,6 +297,7 @@ describe("@llamactl/mcp read surface", () => {
       "llamactl.rag.search",
       "llamactl.rag.store",
       "llamactl.reconciler.kick",
+      "llamactl.residency.forceUnload",
       "llamactl.residency.status",
       "llamactl.server.status",
       "llamactl.server.stop",
@@ -1022,6 +1026,106 @@ describe("@llamactl/mcp mutations", () => {
   });
 });
 
+describe("llamactl.residency.forceUnload", () => {
+  function seedLease(workload: string): {
+    reg: ReturnType<typeof createResidencyLeases>;
+    lease: { signal: AbortSignal };
+  } {
+    const reg = createResidencyLeases();
+    setResidencyLeaseRegistry(reg);
+    const got = reg.acquire(workload);
+    if (!got.ok) {
+      throw new Error(`acquire(${workload}) refused: ${got.reason}`);
+    }
+    return { reg, lease: got.lease };
+  }
+
+  test("dryRun previews the forced unload without revoking", async () => {
+    expect(await listMcpToolNames()).toContain("llamactl.residency.forceUnload");
+    seedModelRunFixture();
+    const { reg, lease } = seedLease("gemma4-run-a");
+    try {
+      const { client } = await connected();
+      const result = await client.callTool({
+        name: "llamactl.residency.forceUnload",
+        arguments: { workload: "gemma4-run-a", reason: "drill", dryRun: true },
+      });
+      expect(textOf(result).startsWith("{")).toBe(true);
+      expect(textOf(result)).toContain("wouldForceUnload");
+      const parsed = JSON.parse(textOf(result)) as { wouldForceUnload?: unknown };
+      expect(parsed.wouldForceUnload).toBeDefined();
+      expect(lease.signal.aborted).toBe(false);
+      expect(reg.snapshot("gemma4-run-a").phase).toBe("open");
+    } finally {
+      setResidencyLeaseRegistry(null);
+    }
+  });
+
+  test("confirm:false refuses and a blank reason fails schema validation", async () => {
+    expect(await listMcpToolNames()).toContain("llamactl.residency.forceUnload");
+    seedModelRunFixture();
+    const { reg, lease } = seedLease("gemma4-run-a");
+    try {
+      const { client } = await connected();
+
+      const refused = await client.callTool({
+        name: "llamactl.residency.forceUnload",
+        arguments: { workload: "gemma4-run-a", reason: "drill", confirm: false },
+      });
+      expect(refused.isError).toBe(true);
+      expect(textOf(refused)).toContain("refusing without confirm: true");
+      expect(lease.signal.aborted).toBe(false);
+
+      const blank = await client.callTool({
+        name: "llamactl.residency.forceUnload",
+        arguments: { workload: "gemma4-run-a", reason: "   ", confirm: true },
+      });
+      expect(blank.isError).toBe(true);
+      expect(lease.signal.aborted).toBe(false);
+      expect(reg.snapshot("gemma4-run-a").phase).toBe("open");
+    } finally {
+      setResidencyLeaseRegistry(null);
+    }
+  });
+
+  test("confirm:true force-unloads through the router and revokes the lease", async () => {
+    expect(await listMcpToolNames()).toContain("llamactl.residency.forceUnload");
+    seedModelRunFixture();
+    const { reg, lease } = seedLease("gemma4-run-a");
+    try {
+      const { client } = await connected();
+      const result = await client.callTool({
+        name: "llamactl.residency.forceUnload",
+        arguments: { workload: "gemma4-run-a", reason: "drill", confirm: true },
+      });
+      expect(textOf(result).startsWith("{")).toBe(true);
+      const parsed = JSON.parse(textOf(result)) as { ok?: boolean; source?: string };
+      expect(parsed.ok).toBe(true);
+      expect(parsed.source).toBe("operator");
+      expect(lease.signal.aborted).toBe(true);
+      expect(reg.snapshot("gemma4-run-a").phase).toBe("unloaded");
+    } finally {
+      setResidencyLeaseRegistry(null);
+    }
+  });
+
+  test("no registry reports Unavailable as an MCP error", async () => {
+    expect(await listMcpToolNames()).toContain("llamactl.residency.forceUnload");
+    seedModelRunFixture();
+    expect(getResidencyLeaseRegistry()).toBeNull();
+    const { client } = await connected();
+    const result = await client.callTool({
+      name: "llamactl.residency.forceUnload",
+      arguments: { workload: "gemma4-run-a", reason: "drill", confirm: true },
+    });
+    expect(textOf(result).startsWith("{")).toBe(true);
+    const parsed = JSON.parse(textOf(result)) as { ok?: boolean; reason?: string };
+    expect(parsed.ok).toBe(false);
+    expect(parsed.reason).toBe("Unavailable");
+    expect(result.isError).toBe(true);
+  });
+});
+
 describe("@llamactl/mcp M.1 pipeline-tool pickup", () => {
   test("registers a PipelineTool stub from the pipelines dir", async () => {
     // Write the stub the K.6 exporter produces directly into the
@@ -1108,14 +1212,15 @@ describe("@llamactl/mcp M.1 pipeline-tool pickup", () => {
     // the Aliveness-Slice-3 rag-bench tool + 1 from the workload.apply
     // surface-parity tool + 6 from the project surface-parity tools +
     // 2 from the server/reconciler control tools + 12 from the dotted
-    // fleet/admit/supervisor/models surface; the retained underscore
+    // fleet/admit/supervisor/models surface + 1 from the #278 (DF-05)
+    // llamactl.residency.forceUnload operator tool; the retained underscore
     // aliases use the `llamactl_` prefix and are not counted here).
     const { client } = await connected();
     const list = await client.listTools();
     const llamactlTools = list.tools
       .map((t) => t.name)
       .filter((n) => n.startsWith("llamactl.") && !n.startsWith("llamactl.pipeline."));
-    expect(llamactlTools.length).toBe(56);
+    expect(llamactlTools.length).toBe(57);
   });
 });
 
