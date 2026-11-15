@@ -15,6 +15,10 @@
  * an import, type or module-resolution error. Store reads are
  * assertion-first (`expect(rec).not.toBeNull()` then `rec?.field`); no
  * non-null assertions.
+ *
+ * Follow-up (#279 after #702): the module now exists, so the added cases
+ * fail by assertion on the missing `unrecognized` result field and on a
+ * finishOperation throw escaping `recover` instead of being contained.
  */
 import type { ResidencyLeases } from "@llamactl/core/residency/leases";
 import type {
@@ -66,7 +70,17 @@ type SkippedOperation = {
   reason: "owned-by-current-fence";
 };
 
-type RecoverResult = { recovered: RecoveredOperation[]; skipped: SkippedOperation[] };
+type UnrecognizedOperation = {
+  operationId: string;
+  model: string;
+  reason: "malformed-target" | "malformed-node";
+};
+
+type RecoverResult = {
+  recovered: RecoveredOperation[];
+  skipped: SkippedOperation[];
+  unrecognized: UnrecognizedOperation[];
+};
 
 type RecoverOpts = {
   store: RecoverStore;
@@ -382,6 +396,7 @@ function beginPendingSwitchRows(
   store: ResidencyOperationStore,
   fenceToken: number,
   rows: readonly { operationId: string; node: string }[],
+  desiredRevision = 0,
 ): void {
   for (const [index, row] of rows.entries()) {
     const begun = store.beginOperation({
@@ -389,7 +404,7 @@ function beginPendingSwitchRows(
       operationId: row.operationId,
       model: `profile-switch:${row.node}`,
       targetState: "profile:interactive",
-      desiredRevision: 0,
+      desiredRevision,
       reservationGiB: 0,
       nowMs: index + 1,
     });
@@ -404,6 +419,39 @@ const THREE_ROWS = [
   { operationId: "op-2", node: "n2" },
   { operationId: "op-3", node: "n3" },
 ] as const;
+
+const TWO_ROWS = [
+  { operationId: "op-1", node: "n1" },
+  { operationId: "op-2", node: "n2" },
+] as const;
+
+// Begins one operation row with caller-chosen model and targetState —
+// the malformed `profile-switch:` shapes recovery must report as
+// unrecognized rather than skip.
+function beginRawOperationRow(
+  store: ResidencyOperationStore,
+  fenceToken: number,
+  row: {
+    operationId: string;
+    model: string;
+    targetState: string;
+    desiredRevision?: number;
+    nowMs?: number;
+  },
+): void {
+  const begun = store.beginOperation({
+    fenceToken,
+    operationId: row.operationId,
+    model: row.model,
+    targetState: row.targetState,
+    desiredRevision: row.desiredRevision ?? 0,
+    reservationGiB: 0,
+    nowMs: row.nowMs ?? 1,
+  });
+  if (!begun.ok) {
+    throw new Error(`beginOperation(${row.operationId}) refused: ${begun.reason}`);
+  }
+}
 
 function recoveredRow(
   operationId: string,
@@ -739,11 +787,11 @@ describe("recoverProfileSwitchOperations crash recovery (#279 DF-06)", () => {
       finishOperation: (input) => store.finishOperation(input),
     };
     const second = await recover({ store: leaking, fenceToken: fenceB, nowMs: () => 5 });
-    expect(second).toEqual({ recovered: [], skipped: [] });
+    expect(second).toEqual({ recovered: [], skipped: [], unrecognized: [] });
     expect(store.getOperation("op-crash")).toEqual(snapshot);
 
     const third = await recover({ store, fenceToken: fenceB, nowMs: () => 5 });
-    expect(third).toEqual({ recovered: [], skipped: [] });
+    expect(third).toEqual({ recovered: [], skipped: [], unrecognized: [] });
   });
 
   test("the stale owner's late finish is refused by the fence after recovery", async () => {
@@ -857,6 +905,108 @@ describe("recoverProfileSwitchOperations crash recovery (#279 DF-06)", () => {
     expect(store.listNonterminal().map((record) => record.operationId)).toEqual(["op-1"]);
   });
 
+  // Kills M1: dropping the push into `unrecognized` — or leaving malformed
+  // profile-switch rows silently skipped — fails the toEquals below.
+  test("an unrecognized profile-switch row is reported, not silently skipped", async () => {
+    const recover = await loadRecover();
+    beginRawOperationRow(storeA, fenceA, {
+      operationId: "op-bad-target",
+      model: "profile-switch:n1",
+      targetState: "bogus",
+      nowMs: 1,
+    });
+    beginRawOperationRow(storeA, fenceA, {
+      operationId: "op-empty-node",
+      model: "profile-switch:",
+      targetState: "profile:interactive",
+      nowMs: 2,
+    });
+
+    const store = restartStore();
+    const badBefore = store.getOperation("op-bad-target");
+    const emptyBefore = store.getOperation("op-empty-node");
+    expect(badBefore).not.toBeNull();
+    expect(emptyBefore).not.toBeNull();
+
+    const result = await recover({ store, fenceToken: fenceB, nowMs: () => 5 });
+
+    expect(result.unrecognized).toEqual([
+      { operationId: "op-bad-target", model: "profile-switch:n1", reason: "malformed-target" },
+      { operationId: "op-empty-node", model: "profile-switch:", reason: "malformed-node" },
+    ]);
+    expect(result.recovered).toEqual([]);
+    expect(result.skipped).toEqual([]);
+    expect(store.getOperation("op-bad-target")).toEqual(badBefore);
+    expect(store.getOperation("op-empty-node")).toEqual(emptyBefore);
+  });
+
+  // Kills M1b: checking the fence before node validation would emit a
+  // skipped entry with node "" instead of reporting malformed-node.
+  test("an empty-node row owned by the current fence is unrecognized, never skipped", async () => {
+    const recover = await loadRecover();
+    beginRawOperationRow(storeA, fenceA, {
+      operationId: "op-empty-node",
+      model: "profile-switch:",
+      targetState: "profile:interactive",
+      nowMs: 1,
+    });
+
+    const result = await recover({ store: storeA, fenceToken: fenceA, nowMs: () => 5 });
+
+    expect(result.unrecognized).toEqual([
+      { operationId: "op-empty-node", model: "profile-switch:", reason: "malformed-node" },
+    ]);
+    expect(result.skipped).toEqual([]);
+    expect(result.recovered).toEqual([]);
+    const rec = storeA.getOperation("op-empty-node");
+    expect(rec).not.toBeNull();
+    expect(rec?.phase).toBe("pending");
+  });
+
+  // Kills M2: removing the per-row try/catch around finishOperation lets
+  // the SQLITE_BUSY rejection escape recover() before op-2 is scanned.
+  test("a finishOperation throw on one row is contained and the scan continues", async () => {
+    const recover = await loadRecover();
+    beginPendingSwitchRows(storeA, fenceA, TWO_ROWS, 1);
+    const store = restartStore();
+
+    const throwing: RecoverStore = {
+      listNonterminal: () => store.listNonterminal(),
+      finishOperation: (input) => {
+        if (input.operationId === "op-1") {
+          throw new Error("SQLITE_BUSY: database is locked");
+        }
+        return store.finishOperation(input);
+      },
+    };
+
+    const settled = await recover({
+      store: throwing,
+      fenceToken: fenceB,
+      nowMs: () => 5,
+    }).then(
+      (r) => ({ ok: true as const, r }),
+      (e: unknown) => ({ ok: false as const, e }),
+    );
+
+    expect(settled.ok).toBe(true);
+    if (!settled.ok) {
+      throw new Error(`recover rejected: ${String(settled.e)}`);
+    }
+    const result = settled.r;
+    expect(result.recovered).toEqual([
+      {
+        ...recoveredRow("op-1", "n1", "unknown", "interrupted-unverified"),
+        recorded: false,
+        recordFailure: "finish-threw: SQLITE_BUSY: database is locked",
+      },
+      recoveredRow("op-2", "n2", "unknown", "interrupted-unverified"),
+    ]);
+    expect(result.unrecognized).toEqual([]);
+    expect(result.skipped).toEqual([]);
+    expect(store.listNonterminal().map((record) => record.operationId)).toEqual(["op-1"]);
+  });
+
   test("the verifyTimeoutMs timer is cleared once the verifier settles", async () => {
     const recover = await loadRecover();
     beginPendingSwitchRows(storeA, fenceA, THREE_ROWS);
@@ -890,5 +1040,89 @@ describe("recoverProfileSwitchOperations crash recovery (#279 DF-06)", () => {
       "readiness-check-failed",
       "target-verified-ready",
     ]);
+  });
+});
+
+// ── recoverProfileSwitchOperationsUnverified (the sync boot scan) ──────
+
+type PossiblyLiveOperation = { operationId: string; node: string; reason: "possibly-live" };
+
+type UnverifiedRecoverFn = (opts: {
+  store: RecoverStore;
+  fenceToken: number;
+  nowMs?: () => number;
+  minStaleAgeMs?: number;
+}) => RecoverResult & { possiblyLive: PossiblyLiveOperation[] };
+
+async function loadRecoverUnverified(): Promise<UnverifiedRecoverFn> {
+  const mod = (await import(RECOVERY_MODULE).catch(() => null)) as Record<string, unknown> | null;
+  expect(mod).not.toBeNull();
+  const fn = mod?.["recoverProfileSwitchOperationsUnverified"];
+  expect(typeof fn).toBe("function");
+  return fn as UnverifiedRecoverFn;
+}
+
+describe("recoverProfileSwitchOperationsUnverified (#279 DF-06 boot scan)", () => {
+  // Kills M9: a sync scan that stops at the first unrecorded row leaves op-2
+  // and op-3 unattempted. op-1's finish throws, op-2's is refused, op-3 lands.
+  test("a per-row finish throw or refusal is contained and later rows are still recovered", async () => {
+    const recoverSync = await loadRecoverUnverified();
+    beginPendingSwitchRows(storeA, fenceA, THREE_ROWS);
+    const store = restartStore();
+    const attempted: string[] = [];
+
+    const flaky: RecoverStore = {
+      listNonterminal: () => store.listNonterminal(),
+      finishOperation: (input) => {
+        attempted.push(input.operationId);
+        if (input.operationId === "op-1") {
+          throw new Error("SQLITE_BUSY: database is locked");
+        }
+        if (input.operationId === "op-2") {
+          return { ok: false, reason: "version-conflict" };
+        }
+        return store.finishOperation(input);
+      },
+    };
+
+    const result = recoverSync({ store: flaky, fenceToken: fenceB, nowMs: () => 5 });
+
+    expect(result instanceof Promise).toBe(false);
+    expect(attempted).toEqual(["op-1", "op-2", "op-3"]);
+    expect(result.recovered).toEqual([
+      {
+        ...recoveredRow("op-1", "n1", "unknown", "interrupted-unverified"),
+        recorded: false,
+        recordFailure: "finish-threw: SQLITE_BUSY: database is locked",
+      },
+      {
+        ...recoveredRow("op-2", "n2", "unknown", "interrupted-unverified"),
+        recorded: false,
+        recordFailure: "version-conflict",
+      },
+      recoveredRow("op-3", "n3", "unknown", "interrupted-unverified"),
+    ]);
+    expect(result.possiblyLive).toEqual([]);
+    expect(store.listNonterminal().map((record) => record.operationId)).toEqual(["op-1", "op-2"]);
+  });
+
+  // The live-switch guard: rows touched inside minStaleAgeMs are reported
+  // possibly-live and stay nonterminal; older rows are recovered.
+  test("rows inside minStaleAgeMs are possibly live; older rows are recovered", async () => {
+    const recoverSync = await loadRecoverUnverified();
+    // THREE_ROWS are stamped at 1, 2 and 3 ms.
+    beginPendingSwitchRows(storeA, fenceA, THREE_ROWS);
+    const store = restartStore();
+
+    const result = recoverSync({ store, fenceToken: fenceB, nowMs: () => 12, minStaleAgeMs: 10 });
+
+    expect(result.recovered).toEqual([
+      recoveredRow("op-1", "n1", "unknown", "interrupted-unverified"),
+      recoveredRow("op-2", "n2", "unknown", "interrupted-unverified"),
+    ]);
+    expect(result.possiblyLive).toEqual([
+      { operationId: "op-3", node: "n3", reason: "possibly-live" },
+    ]);
+    expect(store.listNonterminal().map((record) => record.operationId)).toEqual(["op-3"]);
   });
 });

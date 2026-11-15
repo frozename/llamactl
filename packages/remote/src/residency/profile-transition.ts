@@ -30,6 +30,16 @@
  * `opts.operation`, `complete` stays deferred. A refused or noop plan reports
  * an empty `deferred` either way.
  *
+ * Heartbeat. With `opts.operation`, the executor refreshes the record's
+ * `updatedAtMs` at every step boundary: after each fence, after each drain
+ * settles, after each stop and after each start. The write is the store's
+ * fenced `touchOperation`, which never bumps the record's version. A refused
+ * or throwing heartbeat (a stale fence, a locked store) is logged through
+ * `opts.operation.log` (default stderr) and the switch carries on: a missed
+ * heartbeat must never abort a switch half way. The agent-boot recovery reads
+ * `updatedAtMs` as "last step progress", so a live switch whose steps each
+ * finish inside its staleness window is never terminalized under it.
+ *
  * Crash recovery (via `recovery.ts`) terminalizes stale profile-switch rows;
  * rollback/persist-suppression/verify-release/reserve/verify-ready/publish
  * stay deferred. The planner's `request.timeouts.drainMs` is not carried on
@@ -64,11 +74,16 @@ export type ProfileSwitchExecutionStep = {
   detail?: string;
 };
 export type ProfileSwitchOperationOpts = {
-  store: Pick<ResidencyOperationStore, "beginOperation" | "finishOperation" | "listNonterminal">;
+  store: Pick<
+    ResidencyOperationStore,
+    "beginOperation" | "finishOperation" | "listNonterminal" | "touchOperation"
+  >;
   fenceToken: number;
   operationId: string;
   desiredRevision: number;
   nowMs?: () => number;
+  // where a failed step-boundary heartbeat is reported; default stderr
+  log?: (line: string) => void;
 };
 export type ProfileSwitchExecutionReport = {
   dryRun: boolean;
@@ -134,6 +149,9 @@ type BeginSwitchResult =
     }
   | { ok: false; reason: string };
 type FinishInfo = { outcome: ResidencyOperationOutcome; detail?: string };
+// Called at every step boundary. It never throws.
+type Beat = () => void;
+const NO_BEAT: Beat = () => undefined;
 type FinishRecord = { recorded: boolean; recordFailure?: string };
 
 function messageOf(error: unknown): string {
@@ -248,6 +266,7 @@ async function runSteps(
   planned: PlannedStep[],
   deps: ProfileSwitchExecutorDeps,
   signal: AbortSignal | undefined,
+  beat: Beat,
 ): Promise<RunResult> {
   const steps: ProfileSwitchExecutionStep[] = [];
   let failedAt: StepFailure | null = null;
@@ -263,6 +282,7 @@ async function runSteps(
       continue;
     }
     const outcome = await runStep(step, deps);
+    beat();
     if (outcome.ok) {
       steps.push(stepRecord(step.action, step.workload, "ok"));
       continue;
@@ -293,6 +313,7 @@ function fencePhase(
   registry: ResidencyLeases,
   victims: string[],
   signal: AbortSignal | undefined,
+  beat: Beat,
 ): RunResult & { tokens: DrainToken[] } {
   const steps: ProfileSwitchExecutionStep[] = [];
   const tokens: DrainToken[] = [];
@@ -309,6 +330,7 @@ function fencePhase(
       continue;
     }
     const attempt = fenceOne(registry, workload);
+    beat();
     steps.push(attempt.step);
     if (attempt.token === undefined) {
       failedAt = failureOf(attempt.step);
@@ -323,11 +345,18 @@ function waitIdle(
   registry: ResidencyLeases,
   token: DrainToken,
   signal: AbortSignal,
+  beat: Beat,
 ): Promise<DrainSettle> {
   try {
     return registry.whenIdle(token, { signal }).then(
-      (result): DrainSettle => ({ kind: "ok", result }),
-      (error: unknown): DrainSettle => ({ kind: "err", error }),
+      (result): DrainSettle => {
+        beat();
+        return { kind: "ok", result };
+      },
+      (error: unknown): DrainSettle => {
+        beat();
+        return { kind: "err", error };
+      },
     );
   } catch (error: unknown) {
     return Promise.resolve({ kind: "err", error });
@@ -352,6 +381,7 @@ async function drainPhase(
   tokens: DrainToken[],
   drainTimeoutMs: number,
   signal: AbortSignal | undefined,
+  beat: Beat,
 ): Promise<DrainResult> {
   const controller = new AbortController();
   if (signal?.aborted === true) {
@@ -369,7 +399,9 @@ async function drainPhase(
   let settles: DrainSettle[];
   try {
     settles = await Promise.all(
-      tokens.map((token): Promise<DrainSettle> => waitIdle(registry, token, controller.signal)),
+      tokens.map(
+        (token): Promise<DrainSettle> => waitIdle(registry, token, controller.signal, beat),
+      ),
     );
   } finally {
     clearTimeout(timer);
@@ -423,6 +455,7 @@ async function stopPhase(
   replacements: string[],
   tokens: DrainToken[],
   signal: AbortSignal | undefined,
+  beat: Beat,
 ): Promise<RunResult> {
   const steps: ProfileSwitchExecutionStep[] = [];
   for (const [index, workload] of victims.entries()) {
@@ -438,6 +471,7 @@ async function stopPhase(
       return { steps, failedAt: null, cancelledAt: { action: "stop", workload } };
     }
     const outcome = await runStopOne(registry, deps, workload, token);
+    beat();
     if (outcome.ok) {
       steps.push(stepRecord("stop", workload, "ok"));
       continue;
@@ -456,6 +490,7 @@ async function startPhase(
   deps: ProfileSwitchExecutorDeps,
   replacements: string[],
   signal: AbortSignal | undefined,
+  beat: Beat,
 ): Promise<RunResult> {
   const steps: ProfileSwitchExecutionStep[] = [];
   let failedAt: StepFailure | null = null;
@@ -471,6 +506,7 @@ async function startPhase(
       continue;
     }
     const outcome = await runStep({ action: "start", workload }, deps);
+    beat();
     if (outcome.ok) {
       steps.push(stepRecord("start", workload, "ok"));
       continue;
@@ -493,8 +529,9 @@ async function runFenced(
   registry: ResidencyLeases,
   drainTimeoutMs: number,
   signal: AbortSignal | undefined,
+  beat: Beat,
 ): Promise<RunResult> {
-  const fence = fencePhase(registry, plan.victims, signal);
+  const fence = fencePhase(registry, plan.victims, signal, beat);
   const steps = fence.steps;
   if (fence.failedAt !== null) {
     cancelBestEffort(registry, fence.tokens);
@@ -512,7 +549,7 @@ async function runFenced(
     return { steps, failedAt: null, cancelledAt };
   }
 
-  const drain = await drainPhase(registry, fence.tokens, drainTimeoutMs, signal);
+  const drain = await drainPhase(registry, fence.tokens, drainTimeoutMs, signal, beat);
   steps.push(...drain.steps);
   if (drain.cancelled) {
     cancelBestEffort(registry, fence.tokens);
@@ -534,6 +571,7 @@ async function runFenced(
     plan.replacements,
     fence.tokens,
     signal,
+    beat,
   );
   steps.push(...stop.steps);
   if (stop.failedAt !== null) {
@@ -543,7 +581,7 @@ async function runFenced(
     return { steps, failedAt: null, cancelledAt: stop.cancelledAt };
   }
 
-  const start = await startPhase(deps, plan.replacements, signal);
+  const start = await startPhase(deps, plan.replacements, signal, beat);
   steps.push(...start.steps);
   return { steps, failedAt: start.failedAt, cancelledAt: start.cancelledAt };
 }
@@ -640,6 +678,38 @@ function finishSwitchOperation(
   }
 }
 
+function defaultLog(line: string): void {
+  process.stderr.write(line);
+}
+
+// The step-boundary heartbeat. A refusal or a throw is logged and swallowed:
+// a heartbeat failure must never abort the switch.
+function heartbeatFor(operation: ProfileSwitchOperationOpts): Beat {
+  const nowMs = operation.nowMs ?? Date.now;
+  const log = operation.log ?? defaultLog;
+  return () => {
+    let failure: string | null;
+    try {
+      const touched = operation.store.touchOperation({
+        fenceToken: operation.fenceToken,
+        operationId: operation.operationId,
+        nowMs: nowMs(),
+      });
+      failure = touched.ok ? null : touched.reason;
+    } catch (error: unknown) {
+      failure = `threw: ${messageOf(error).split("\n")[0] ?? ""}`;
+    }
+    if (failure === null) {
+      return;
+    }
+    try {
+      log(`[residency] profile-switch heartbeat failed: ${failure}\n`);
+    } catch {
+      // logging must never abort the switch either
+    }
+  };
+}
+
 function busyReport(
   plan: OkPlan,
   deferred: StepKind[],
@@ -675,7 +745,7 @@ async function executeWithOperation(
   plan: OkPlan,
   deferred: StepKind[],
   operation: ProfileSwitchOperationOpts,
-  run: () => Promise<RunResult>,
+  run: (beat: Beat) => Promise<RunResult>,
 ): Promise<ProfileSwitchExecutionReport> {
   const begun = beginSwitchOperation(plan, operation);
   if (!begun.ok) {
@@ -721,7 +791,7 @@ async function executeWithOperation(
 
   let result: RunResult;
   try {
-    result = await run();
+    result = await run(heartbeatFor(operation));
   } catch (error: unknown) {
     finishSwitchOperation(operation, begun.version, {
       outcome: "failed",
@@ -832,16 +902,16 @@ export async function executeProfileSwitch(
   const signal = opts.signal;
   const operation = opts.operation;
   if (operation !== undefined) {
-    return await executeWithOperation(plan, deferred, operation, async () =>
+    return await executeWithOperation(plan, deferred, operation, async (beat) =>
       fenced
-        ? await runFenced(plan, deps, registry, drainTimeoutMs, signal)
-        : await runSteps(planned, deps, signal),
+        ? await runFenced(plan, deps, registry, drainTimeoutMs, signal, beat)
+        : await runSteps(planned, deps, signal, beat),
     );
   }
 
   const result = fenced
-    ? await runFenced(plan, deps, registry, drainTimeoutMs, signal)
-    : await runSteps(planned, deps, signal);
+    ? await runFenced(plan, deps, registry, drainTimeoutMs, signal, NO_BEAT)
+    : await runSteps(planned, deps, signal, NO_BEAT);
   const outcome =
     result.cancelledAt !== null
       ? "cancelled"
