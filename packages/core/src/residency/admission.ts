@@ -19,11 +19,28 @@ export const MEMORY_BUDGET_HEADROOM_RATIO = 0.75;
  * read only by the dry-run planner (`planner.ts`), which `residencyPlan` feeds
  * the NodeRun policy; they refuse only when switch/load timing is supplied,
  * which no caller persists yet (#279).
- * `idleEvictSeconds`, `residentPreference` and `coldLoadPenaltyMs` are
- * reserved and not yet enforced.
+ *
+ * `idleEvictSeconds` is parse-only. It is validated as part of NodeRun
+ * spec.residency, stored with the NodeRun manifest, and echoed verbatim
+ * (unresolved) by residencyStatus. DEFAULT_RESIDENCY_POLICY sets it to 0 and
+ * resolveResidencyPolicy copies a non-negative override, but no production
+ * caller passes it to the resolver and nothing reads the resolved value: no
+ * reconciler, router, residencyPlan/planner or DF-10 llama.cpp sleep driver
+ * (packages/remote/src/residency/llamacpp-sleep-client.ts, which has no
+ * idle trigger) consults it. Every value therefore behaves like 0 today:
+ * residents are never evicted or slept for idleness. The inventory test
+ * packages/remote/test/workload/residency-idle-evict-parse-only.test.ts
+ * pins this.
+ *
+ * LLAMACTL_RESIDENCY_SESSION_IDLE_MS (sessions.ts, #520) is unrelated: it
+ * expires session refcounts that block an eviction and never starts one.
+ *
+ * `residentPreference` and `coldLoadPenaltyMs` are reserved and not yet
+ * enforced.
  */
 export interface ResidencyPolicy {
-  /** 0 = never evict idle residents. */
+  /** 0 = never evict idle residents. Parse-only (Part of #519): no
+   * idle-eviction path exists yet, so every value behaves like 0. */
   idleEvictSeconds: number;
   /** 0 = no minimum before eviction. */
   minResidencySeconds: number;

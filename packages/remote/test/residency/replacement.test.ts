@@ -1970,3 +1970,78 @@ test("MH11 a ModelHost replacement refuses to evict a victim with an active sess
   expect(victimAnnotations?.["llamactl.io/evicted-by"]).toBeUndefined();
   expect(victimAnnotations?.["llamactl.io/evicted-at"]).toBeUndefined();
 });
+
+// #274: an evict-annotated ModelHost refused at pre-teardown admission
+// returns through modelHostEvictionRollback, which must keep the typed
+// admission reason the refusal carries. Nothing was claimed yet, so the
+// refusal is final: no intent marker, no stop, no start. MH12 pins an
+// explicit 24 GiB local budget the 32 GiB replacement cannot fit even
+// with its 8 GiB victim credited; MH13 puts the pair on remote node
+// gpu1 with no NodeRun budget and no nodeFacts, so the budget is
+// unverifiable. Both kill a rollback that rebuilds the outcome as a bare
+// {ok:false,error} and drops `reason`.
+async function applyAdmissionRefusedHostReplacement(
+  label: string,
+  node: string,
+  getNodeBudgetGiB: ((nodeName: string) => number | undefined) | undefined,
+): Promise<{
+  outcome: Awaited<ReturnType<typeof applyOneModelHost>>;
+  stops: string[];
+  hostStops: string[];
+  starts: string[];
+  hostStarts: string[];
+  victimAnnotations: Record<string, string> | undefined;
+}> {
+  const tmp = mkdtempSync(join(tmpdir(), `llamactl-df02-${label}-`));
+  const dir = join(tmp, "workloads");
+  mkdirSync(dir, { recursive: true });
+  const fakeBinary = mkFakeOmlxBinary(tmp);
+  saveWorkload(mkManifest("a", { port: 8182, ram: 8, node }), dir);
+  const state: StateMap = new Map([["a", upEntry(8182)]]);
+  const { client, stops, starts, hostStops, hostStarts } = makeClient(state);
+  const hostB = hostReplacement("host-b", "a", { ram: 32, binary: fakeBinary, node });
+  const restoreRuntimeDir = pinLocalRuntimeDir(join(tmp, "runtime"));
+  try {
+    const outcome = await applyOneModelHost(hostB, () => client, undefined, {
+      workloadsDir: dir,
+      ...(getNodeBudgetGiB !== undefined ? { getNodeBudgetGiB } : {}),
+    });
+    const victimAnnotations = readWorkloadAnnotations(join(dir, "a.yaml"));
+    return { outcome, stops, hostStops, starts, hostStarts, victimAnnotations };
+  } finally {
+    restoreRuntimeDir();
+    rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+test("MH12 #274: an evict-annotated ModelHost over the local budget keeps BudgetExceeded through the rollback", async () => {
+  const { outcome, stops, hostStops, starts, hostStarts, victimAnnotations } =
+    await applyAdmissionRefusedHostReplacement("mh12", "local", () => 24);
+  expect(outcome.ok).toBe(false);
+  if (outcome.ok) return;
+  expect(outcome.reason).toBe("BudgetExceeded");
+  expect(outcome.error).toContain("Budget is 24.0 GiB");
+  expect(outcome.error).not.toContain("eviction intent");
+  expect(stops).toEqual([]);
+  expect(hostStops).toEqual([]);
+  expect(starts).toEqual([]);
+  expect(hostStarts).toEqual([]);
+  expect(victimAnnotations?.["llamactl.io/evicted-by"]).toBeUndefined();
+  expect(victimAnnotations?.["llamactl.io/evicted-at"]).toBeUndefined();
+});
+
+test("MH13 #274: an evict-annotated ModelHost on a remote node with no verifiable budget keeps BudgetUnknown through the rollback", async () => {
+  const { outcome, stops, hostStops, starts, hostStarts, victimAnnotations } =
+    await applyAdmissionRefusedHostReplacement("mh13", "gpu1", undefined);
+  expect(outcome.ok).toBe(false);
+  if (outcome.ok) return;
+  expect(outcome.reason).toBe("BudgetUnknown");
+  expect(outcome.error).toContain("node 'gpu1' memory budget is unknown");
+  expect(outcome.error).not.toContain("eviction intent");
+  expect(stops).toEqual([]);
+  expect(hostStops).toEqual([]);
+  expect(starts).toEqual([]);
+  expect(hostStarts).toEqual([]);
+  expect(victimAnnotations?.["llamactl.io/evicted-by"]).toBeUndefined();
+  expect(victimAnnotations?.["llamactl.io/evicted-at"]).toBeUndefined();
+});
