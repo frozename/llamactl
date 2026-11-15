@@ -386,6 +386,22 @@ describe("docs/dynamic-residency.md (#285)", () => {
     ]) {
       expect(section).toContain(needle);
     }
+    // Kills: rewriting the controller --force help so --force overrides the
+    // skip, or restoring the doc's old "overrides the skip" claim.
+    const controllerHelp =
+      /const USAGE = `([\s\S]*?)`;/.exec(
+        readOrEmpty(join(REPO, "packages/cli/src/commands/controller.ts")),
+      )?.[1] ?? "";
+    const helpForce = controllerHelp.replaceAll(/\s+/g, " ");
+    expect(helpForce).toContain(
+      "--force Start even when ModelHosts carry a llamactl.io/managed-by label.",
+    );
+    expect(helpForce).toContain("Labeled hosts stay skipped by the reconciler;");
+    expect(helpForce).toContain("logs them as skipped-external");
+    expect(section).toContain(
+      "`--force` only lets the controller start anyway; it does not override the skip, so labelled hosts stay skipped on every pass and are logged as `skipped-external`",
+    );
+    expect(section).not.toContain("overrides the skip");
     const router = readOrEmpty(join(REPO, "packages/remote/src/router.ts"));
     expect(router).toContain('reason: "ControllerActive"');
     expect(router).toContain("liveLockHolder(workloadsDir)");
