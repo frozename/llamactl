@@ -108,6 +108,7 @@ import {
   type ForceUnloadStop,
   forceUnloadWorkload,
 } from "./residency/force-unload.js";
+import { collectOmlxNativeStatus } from "./residency/omlx-capability.js";
 import {
   buildResidencyPlan,
   buildResidencyStatus,
@@ -2093,47 +2094,60 @@ export const router = t.router({
   // manifest matched by `node`; the store and leases sections are always this
   // serving process's own state (scope "serving-process"), never `node`'s
   // coordinator state. The lease registry is per serving process, so it is not
-  // filtered by node — the same scope as the store echo.
-  residencyStatus: t.procedure.input(z.object({ node: z.string().min(1) })).query(({ input }) => {
-    const nodeRuns = nodeRunStoreMod.listNodeRuns();
-    const node = nodeRuns.find((n: (typeof nodeRuns)[number]) => n.metadata.name === input.node);
-    const declared = node?.spec.budget?.memoryGiB;
-    const leaseRegistry = getResidencyLeaseRegistry();
-    // The store keeps the audit across a process restart, but a sink write can
-    // fail quietly (a locked store hits the short busy timeout and core swallows
-    // the error), so the live in-memory audit may hold entries the store lacks.
-    // Status therefore merges the two: persisted rows plus any live entries not
-    // already persisted, in chronological order; snapshot stays live.
-    // auditCount is the merged count. A null registry reads no store for audit:
-    // with no registry the leases section is "unavailable".
-    const auditSource =
-      leaseRegistry === null
-        ? null
-        : {
-            snapshot: (workload: string): ResidencySnapshot => leaseRegistry.snapshot(workload),
-            audit: (): ResidencyAuditEntry[] =>
-              mergeResidencyLeaseAudit(
-                readResidencyLeaseAudit(defaultResidencyStorePath()),
-                leaseRegistry.audit(),
-              ),
-          };
-    const leaseWorkloads =
-      leaseRegistry === null
-        ? []
-        : [
-            ...workloadStoreMod.listWorkloads().map((m) => m.metadata.name),
-            ...modelHostStoreMod.listModelHosts().map((h) => h.metadata.name),
-          ];
-    return buildResidencyStatus({
-      node: input.node,
-      nodeRun: node,
-      budgetGiB: defaultNodeBudgetGiB(declared, undefined, node?.spec.residency),
-      budgetSource: typeof declared === "number" ? "noderun" : "computed",
-      store: readResidencyStoreSnapshot(defaultResidencyStorePath()),
-      leaseRegistry: auditSource,
-      leaseWorkloads,
-    });
-  }),
+  // filtered by node — the same scope as the store echo. The omlxNative section
+  // probes each oMLX ModelHost on `node` only when `node` is this serving
+  // process's own identity; status latency on the serving node is bounded by
+  // OMLX_STATUS_PROBE_TIMEOUT_MS per call while a host's capability is still
+  // unknown, because unknown is not cached.
+  residencyStatus: t.procedure
+    .input(z.object({ node: z.string().min(1) }))
+    .query(async ({ input }) => {
+      const nodeRuns = nodeRunStoreMod.listNodeRuns();
+      const node = nodeRuns.find((n: (typeof nodeRuns)[number]) => n.metadata.name === input.node);
+      const declared = node?.spec.budget?.memoryGiB;
+      const leaseRegistry = getResidencyLeaseRegistry();
+      const rawNodeName = process.env["LLAMACTL_NODE_NAME"]?.trim() ?? "";
+      const servingNode = rawNodeName === "" ? null : rawNodeName;
+      // The store keeps the audit across a process restart, but a sink write can
+      // fail quietly (a locked store hits the short busy timeout and core swallows
+      // the error), so the live in-memory audit may hold entries the store lacks.
+      // Status therefore merges the two: persisted rows plus any live entries not
+      // already persisted, in chronological order; snapshot stays live.
+      // auditCount is the merged count. A null registry reads no store for audit:
+      // with no registry the leases section is "unavailable".
+      const auditSource =
+        leaseRegistry === null
+          ? null
+          : {
+              snapshot: (workload: string): ResidencySnapshot => leaseRegistry.snapshot(workload),
+              audit: (): ResidencyAuditEntry[] =>
+                mergeResidencyLeaseAudit(
+                  readResidencyLeaseAudit(defaultResidencyStorePath()),
+                  leaseRegistry.audit(),
+                ),
+            };
+      const leaseWorkloads =
+        leaseRegistry === null
+          ? []
+          : [
+              ...workloadStoreMod.listWorkloads().map((m) => m.metadata.name),
+              ...modelHostStoreMod.listModelHosts().map((h) => h.metadata.name),
+            ];
+      return buildResidencyStatus({
+        node: input.node,
+        nodeRun: node,
+        budgetGiB: defaultNodeBudgetGiB(declared, undefined, node?.spec.residency),
+        budgetSource: typeof declared === "number" ? "noderun" : "computed",
+        store: readResidencyStoreSnapshot(defaultResidencyStorePath()),
+        leaseRegistry: auditSource,
+        leaseWorkloads,
+        omlxNative: await collectOmlxNativeStatus({
+          node: input.node,
+          servingNode,
+          hosts: modelHostStoreMod.listModelHosts(),
+        }),
+      });
+    }),
 
   // Read-only residency plan: a dry-run profile switch, never a mutation.
   // ModelRun state is the recorded phase; ModelHost state is pid-level and
