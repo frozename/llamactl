@@ -304,17 +304,17 @@ Environment:
                               lease registry once the listener binds.
                               Other values are ignored.
   LLAMACTL_CHAT_ADMISSION_MAX_EXECUTIONS
-                              Chat-completions admission concurrency cap: a
-                              positive integer (opt-in, off by default).
-                              Counts every POST /v1/chat/completions admitted
-                              at this agent, peer-routed and via/RAG
-                              included. When set, the agent holds one
-                              admission slot for the lifetime of every
-                              admitted request and refuses overload with
-                              429/503 instead. Absent or a non-positive
-                              integer disables the gate.
+                              Inference admission concurrency cap: a positive
+                              integer (opt-in, off by default). One cap is
+                              shared by every POST /v1/chat/completions,
+                              /v1/messages and /v1/responses admitted at this
+                              agent, peer-routed and via/RAG included. When
+                              set, the agent holds one admission slot for the
+                              lifetime of every admitted request and refuses
+                              overload with 429/503 instead. Absent or a
+                              non-positive integer disables the gate.
   LLAMACTL_CHAT_ADMISSION_MAX_QUEUED
-                              Chat-completions admission queue cap: a
+                              Queue cap for that same shared admission: a
                               positive integer, default 16. Read only when
                               LLAMACTL_CHAT_ADMISSION_MAX_EXECUTIONS is
                               valid; an invalid value falls back to 16.
@@ -1781,7 +1781,8 @@ export function buildServeOptions(
     ...(residencyLeasesOptIn(env) ? { residencyLeases: true } : {}),
     // #520: opt-in session idle timeout, honored only when residencyLeases is true.
     ...residencySessionIdleOption(env),
-    // #281 (DF-08): opt-in chat-completions admission gate, off by default.
+    // #281 (DF-08): opt-in inference admission gate shared by
+    // /v1/chat/completions, /v1/messages and /v1/responses, off by default.
     ...chatAdmissionOption(env),
     // #367: per-role runtime memory identity, flags override env vars.
     ...runtimeIdentitySpread(identity),

@@ -96,6 +96,11 @@ import { getSessionSummary, listSessions } from "./ops-chat/sessions/list.js";
 import { createRagAdapter } from "./rag/index.js";
 import { resolveRagNode } from "./rag/resolve.js";
 import {
+  applyResidencyProfile,
+  residencyApplyProfileRefusal,
+  type ResidencyApplyProfileResult,
+} from "./residency/apply-profile.js";
+import {
   type ForceUnloadKind,
   type ForceUnloadResult,
   type ForceUnloadStop,
@@ -106,6 +111,7 @@ import {
   buildResidencyStatus,
   collectResidencyObservations,
   mergeResidencyLeaseAudit,
+  type ResidencyPlan,
 } from "./residency/procedures.js";
 import { fenceWorkloadStop, reopenWorkloadAfterLoad } from "./residency/stop-fence.js";
 import {
@@ -401,6 +407,44 @@ function nodeRunBudgetGiB(nodeName: string, workloadsDir: string): number | unde
 function nodeRunResidency(nodeName: string, workloadsDir: string): NodeRunResidency | undefined {
   const nodeRuns = nodeRunStoreMod.listNodeRuns(workloadsDir);
   return nodeRuns.find((n) => n.metadata.name === nodeName)?.spec.residency;
+}
+
+function residencyPlanFor(input: {
+  node: string;
+  to: string;
+  from?: string | undefined;
+}): ResidencyPlan {
+  const nodeRuns = nodeRunStoreMod.listNodeRuns();
+  const node = nodeRuns.find((n: (typeof nodeRuns)[number]) => n.metadata.name === input.node);
+  const declared = node?.spec.budget?.memoryGiB;
+  const rawNodeName = process.env["LLAMACTL_NODE_NAME"]?.trim() ?? "";
+  const servingNode = rawNodeName === "" ? null : rawNodeName;
+  const resolved = envMod.resolveEnv();
+  const modelHosts = modelHostStoreMod.listModelHosts();
+  const observations = collectResidencyObservations({
+    node: input.node,
+    servingNode,
+    modelRuns: workloadStoreMod.listWorkloads(),
+    modelHosts,
+    modelHostStatus: (name) => statusModelHost({ key: { name } }),
+    estimateModelRunGiB: (manifest) => estimateWorkloadMemoryGiB(manifest, resolved),
+    estimateModelHostGiB: (manifest) => estimateModelHostMemoryGiB(manifest, resolved),
+  });
+  return buildResidencyPlan({
+    node: input.node,
+    to: input.to,
+    from: input.from ?? null,
+    nowMs: Date.now(),
+    servingNode,
+    budgetGiB: defaultNodeBudgetGiB(declared, undefined, node?.spec.residency),
+    budgetSource: typeof declared === "number" ? "noderun" : "computed",
+    modelRuns: observations.modelRuns,
+    modelHosts,
+    observed: observations.observed,
+    memoryGiB: observations.memoryGiB,
+    store: readResidencyStoreSnapshot(defaultResidencyStorePath()),
+    residency: node?.spec.residency ?? null,
+  });
 }
 
 type ServerStopRefusalShape = { reason?: unknown; active?: unknown };
@@ -2103,37 +2147,78 @@ export const router = t.router({
         from: z.string().min(1).optional(),
       }),
     )
-    .query(({ input }) => {
-      const nodeRuns = nodeRunStoreMod.listNodeRuns();
-      const node = nodeRuns.find((n: (typeof nodeRuns)[number]) => n.metadata.name === input.node);
-      const declared = node?.spec.budget?.memoryGiB;
+    .query(({ input }) => residencyPlanFor(input)),
+
+  // #284 (DF-11): dry-run-by-default profile switch. A bare call plans and
+  // reports without opening the store; dryRun:false requires confirm:true,
+  // refuses NotServingNode off the serving process and ControllerActive while
+  // a live controller lock exists, then runs the fenced executor against the
+  // node-local operation store.
+  residencyApplyProfile: t.procedure
+    .input(
+      z.object({
+        node: z.string().min(1),
+        to: z.string().min(1),
+        from: z.string().min(1).optional(),
+        dryRun: z.boolean().default(true),
+        confirm: z.boolean().default(false),
+      }),
+    )
+    .mutation(async ({ input }): Promise<ResidencyApplyProfileResult> => {
+      const workloadsDir = workloadStoreMod.defaultWorkloadsDir();
       const rawNodeName = process.env["LLAMACTL_NODE_NAME"]?.trim() ?? "";
       const servingNode = rawNodeName === "" ? null : rawNodeName;
-      const resolved = envMod.resolveEnv();
-      const modelHosts = modelHostStoreMod.listModelHosts();
-      const observations = collectResidencyObservations({
+      if (!input.dryRun) {
+        if (!input.confirm) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "residency apply-profile: confirm: true is required when dryRun is false",
+          });
+        }
+        if (servingNode !== input.node) {
+          return residencyApplyProfileRefusal({
+            reason: "NotServingNode",
+            detail: `node ${input.node} is not served by this process (serving ${String(servingNode)})`,
+            node: input.node,
+            to: input.to,
+            from: input.from ?? null,
+          });
+        }
+        const controllerPid = liveLockHolder(workloadsDir);
+        if (controllerPid !== null) {
+          return residencyApplyProfileRefusal({
+            reason: "ControllerActive",
+            detail: `a residency controller is live on ${input.node} (pid ${String(controllerPid)}); persist-suppression is deferred to the controller`,
+            node: input.node,
+            to: input.to,
+            from: input.from ?? null,
+            controllerPid,
+          });
+        }
+      }
+      const plan = residencyPlanFor({
         node: input.node,
-        servingNode,
-        modelRuns: workloadStoreMod.listWorkloads(),
-        modelHosts,
-        modelHostStatus: (name) => statusModelHost({ key: { name } }),
-        estimateModelRunGiB: (manifest) => estimateWorkloadMemoryGiB(manifest, resolved),
-        estimateModelHostGiB: (manifest) => estimateModelHostMemoryGiB(manifest, resolved),
+        to: input.to,
+        ...(input.from === undefined ? {} : { from: input.from }),
       });
-      return buildResidencyPlan({
+      return await applyResidencyProfile({
+        plan,
+        dryRun: input.dryRun,
+        storePath: defaultResidencyStorePath(),
+        workloadsDir,
+        registry: getResidencyLeaseRegistry(),
         node: input.node,
         to: input.to,
         from: input.from ?? null,
-        nowMs: Date.now(),
-        servingNode,
-        budgetGiB: defaultNodeBudgetGiB(declared, undefined, node?.spec.residency),
-        budgetSource: typeof declared === "number" ? "noderun" : "computed",
-        modelRuns: observations.modelRuns,
-        modelHosts,
-        observed: observations.observed,
-        memoryGiB: observations.memoryGiB,
-        store: readResidencyStoreSnapshot(defaultResidencyStorePath()),
-        residency: node?.spec.residency ?? null,
+        applyModelRun: async (manifest: unknown): Promise<unknown> => {
+          const cfg = kubecfg.loadConfig();
+          return await workloadApplyMod.applyManifest({
+            manifest,
+            getClient: (nodeName: string) => clientForNode(cfg, nodeName),
+            getNodeBudgetGiB: (nodeName: string) => nodeRunBudgetGiB(nodeName, workloadsDir),
+            getNodeResidency: (nodeName: string) => nodeRunResidency(nodeName, workloadsDir),
+          });
+        },
       });
     }),
 
