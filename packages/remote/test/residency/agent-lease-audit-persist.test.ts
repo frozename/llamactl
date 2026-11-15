@@ -172,7 +172,14 @@ describe("#278 DF-05: the opt-in agent persists the forced-unload audit", () => 
     expect(typeof mod?.readResidencyLeaseAudit).toBe("function");
     const readAudit = mod!.readResidencyLeaseAudit;
     expect(readAudit(auditStorePath)).toEqual([
-      { workload: "wl-a", epoch: 1, forced: true, revoked: ["wl-a#1"], reason: "op-a" },
+      {
+        workload: "wl-a",
+        epoch: 1,
+        forced: true,
+        revoked: ["wl-a#1"],
+        reason: "op-a",
+        incarnation: regA.audit()[0]!.incarnation!,
+      },
     ]);
 
     await stopAgent(agentA);

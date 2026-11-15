@@ -14,6 +14,14 @@ function registryWithAuditSink(onAudit: (entry: ResidencyAuditEntry) => void): R
   return createResidencyLeases({ onAudit });
 }
 
+function mustIncarnation(entry: ResidencyAuditEntry | undefined): string {
+  const incarnation = entry?.incarnation;
+  if (typeof incarnation !== "string" || incarnation === "") {
+    throw new Error("expected an audit entry with an incarnation");
+  }
+  return incarnation;
+}
+
 function forceUnload(
   reg: ResidencyLeases,
   workload: string,
@@ -64,6 +72,7 @@ describe("residency lease audit sink", () => {
 
     expect(calls.map((c) => c.entry)).toEqual(reg.audit());
     expect(calls.map((c) => c.lenAtCall)).toEqual([1, 2]);
+    const incarnation = mustIncarnation(reg.audit()[0]);
     expect(reg.audit()).toEqual([
       {
         workload: "glm",
@@ -71,8 +80,9 @@ describe("residency lease audit sink", () => {
         forced: true,
         revoked: ["glm#1"],
         reason: "operator",
+        incarnation,
       },
-      { workload: "mimo", epoch: 1, forced: true, revoked: ["mimo#1"] },
+      { workload: "mimo", epoch: 1, forced: true, revoked: ["mimo#1"], incarnation },
     ]);
     expect("reason" in calls[1]!.entry).toBe(false);
   });
@@ -101,11 +111,36 @@ describe("residency lease audit sink", () => {
 
     expect(forceUnload(reg, "w")).toEqual({ ok: true, revoked: ["w#1"] });
     expect(calls).toHaveLength(1);
+    const incarnation = mustIncarnation(calls[0]);
     expect(reg.audit()[0]).toEqual({
       workload: "w",
       epoch: 1,
       forced: true,
       revoked: ["w#1"],
+      incarnation,
     });
+  });
+
+  test("one incarnation per registry: every entry shares it, another registry differs", () => {
+    const calls: ResidencyAuditEntry[] = [];
+    const reg = registryWithAuditSink((entry) => {
+      calls.push(entry);
+    });
+    expect(forceUnload(reg, "a")).toEqual({ ok: true, revoked: ["a#1"] });
+    expect(forceUnload(reg, "b")).toEqual({ ok: true, revoked: ["b#1"] });
+    expect(forceUnload(reg, "c")).toEqual({ ok: true, revoked: ["c#1"] });
+
+    const incarnations = reg.audit().map((entry) => entry.incarnation);
+    expect(incarnations).toHaveLength(3);
+    expect(typeof incarnations[0]).toBe("string");
+    expect(incarnations[0]).not.toBe("");
+    expect(new Set(incarnations).size).toBe(1);
+    expect(calls.map((entry) => entry.incarnation)).toEqual(incarnations);
+
+    const other = registryWithAuditSink(() => undefined);
+    expect(forceUnload(other, "a")).toEqual({ ok: true, revoked: ["a#1"] });
+    const otherIncarnation = other.audit()[0]?.incarnation;
+    expect(typeof otherIncarnation).toBe("string");
+    expect(otherIncarnation).not.toBe(incarnations[0]);
   });
 });

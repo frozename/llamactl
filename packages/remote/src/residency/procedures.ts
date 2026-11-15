@@ -68,15 +68,29 @@ export type ResidencyStatusLeases =
       recentAudit: ResidencyStatusLeaseAuditEntry[];
     };
 
-function auditEntryKey(entry: ResidencyAuditEntry): string {
-  return JSON.stringify([entry.workload, entry.epoch, entry.revoked, entry.reason ?? null]);
+// Epochs and lease ids restart per process, so (workload, epoch, revoked,
+// reason) alone collides across a restart: the incarnation of the registry that
+// wrote the entry is part of the key. An entry without one (a legacy row
+// persisted before the incarnation column) has no key and never matches, since
+// every live entry carries an incarnation.
+function auditEntryKey(entry: ResidencyAuditEntry): string | null {
+  if (entry.incarnation === undefined) {
+    return null;
+  }
+  return JSON.stringify([
+    entry.incarnation,
+    entry.workload,
+    entry.epoch,
+    entry.revoked,
+    entry.reason ?? null,
+  ]);
 }
 
 // Merge the persisted forced-unload audit with the live in-memory one. The
 // sink writes live entries in order, so the persisted copies of live entries
 // form a subsequence of the persisted rows. Live entries are matched to
-// persisted rows on their natural key (workload, epoch, revoked, reason),
-// newest first, each persisted row used at most once and match positions
+// persisted rows on (incarnation, workload, epoch, revoked, reason), newest
+// first, each persisted row used at most once and match positions
 // strictly decreasing. An unmatched live entry (its sink write failed) is
 // inserted just before the persisted row of the next later live entry that
 // did persist, or appended when none did, which keeps chronological order.
@@ -121,7 +135,11 @@ function matchLiveToPersisted(
     if (bound === 0) {
       break;
     }
-    const p = persistedKeys.lastIndexOf(auditEntryKey(entry), bound - 1);
+    const key = auditEntryKey(entry);
+    if (key === null) {
+      continue;
+    }
+    const p = persistedKeys.lastIndexOf(key, bound - 1);
     if (p !== -1) {
       matches[i] = p;
       bound = p;

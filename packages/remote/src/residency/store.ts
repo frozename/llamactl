@@ -371,17 +371,21 @@ interface LeaseAuditRow {
   epoch: number;
   revoked: string;
   reason: string | null;
+  incarnation: string | null;
 }
 
 // Append + trim run together inside one IMMEDIATE transaction (the caller wraps
 // this with db.transaction(...).immediate). Audit appends are observability, not
 // ownership-gated, so there is no fence check here.
 function appendLeaseAuditTx(db: Database, entry: ResidencyAuditEntry): void {
-  db.query("INSERT INTO lease_audit (workload, epoch, revoked, reason) VALUES (?, ?, ?, ?)").run(
+  db.query(
+    "INSERT INTO lease_audit (workload, epoch, revoked, reason, incarnation) VALUES (?, ?, ?, ?, ?)",
+  ).run(
     entry.workload,
     entry.epoch,
     JSON.stringify(entry.revoked),
     entry.reason ?? null,
+    entry.incarnation ?? null,
   );
   db.query(
     `DELETE FROM lease_audit
@@ -391,7 +395,8 @@ function appendLeaseAuditTx(db: Database, entry: ResidencyAuditEntry): void {
 
 // Defensive parse: revoked is trusted only as a JSON string array. Bad JSON or
 // a non-array yields []; within an array, only string elements survive. A NULL
-// reason keeps the key omitted (exactOptionalPropertyTypes).
+// reason or incarnation keeps the key omitted (exactOptionalPropertyTypes); a
+// legacy row written before the incarnation column has none.
 function rowToAuditEntry(row: LeaseAuditRow): ResidencyAuditEntry {
   let parsed: unknown;
   try {
@@ -408,12 +413,18 @@ function rowToAuditEntry(row: LeaseAuditRow): ResidencyAuditEntry {
     forced: true,
     revoked,
     ...(row.reason !== null ? { reason: row.reason } : {}),
+    ...(row.incarnation !== null ? { incarnation: row.incarnation } : {}),
   };
 }
 
+// The reader never migrates, so a store written before the incarnation column
+// existed is read as-is: its rows come back with a NULL incarnation.
 function listLeaseAuditRows(db: Database): ResidencyAuditEntry[] {
+  const incarnation = hasColumn(db, "lease_audit", "incarnation") ? "incarnation" : "NULL";
   const rows = db
-    .query("SELECT workload, epoch, revoked, reason FROM lease_audit ORDER BY seq ASC")
+    .query(
+      `SELECT workload, epoch, revoked, reason, ${incarnation} AS incarnation FROM lease_audit ORDER BY seq ASC`,
+    )
     .all() as LeaseAuditRow[];
   return rows.map((row) => rowToAuditEntry(row));
 }
@@ -556,19 +567,25 @@ function createTables(db: Database): void {
       workload TEXT NOT NULL,
       epoch INTEGER NOT NULL,
       revoked TEXT NOT NULL,
-      reason TEXT
+      reason TEXT,
+      incarnation TEXT
     )
   `);
+  addColumnIfMissing(db, "lease_audit", "incarnation", "TEXT");
 }
 
 // Additive, in-place migration: a #662-era residency_states table predates
-// desired_revision, so ALTER it in without bumping SCHEMA_VERSION.
+// desired_revision, and a first-cut lease_audit table predates incarnation, so
+// ALTER them in (nullable) without bumping SCHEMA_VERSION.
 function addColumnIfMissing(db: Database, table: string, column: string, decl: string): void {
-  const columns = db.query(`PRAGMA table_info('${table}')`).all() as { name: string }[];
-  const present = columns.some((entry) => entry.name === column);
-  if (!present) {
+  if (!hasColumn(db, table, column)) {
     db.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${decl}`);
   }
+}
+
+function hasColumn(db: Database, table: string, column: string): boolean {
+  const columns = db.query(`PRAGMA table_info('${table}')`).all() as { name: string }[];
+  return columns.some((entry) => entry.name === column);
 }
 
 function readAuthority(db: Database): Fence | null {

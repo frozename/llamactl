@@ -18,7 +18,9 @@
  * in-memory push. The sink runs synchronously inside commitUnload, so it must
  * be fast and bounded, and it cannot fail an unload: its errors are swallowed
  * and later unloads still call it. The in-memory audit stays authoritative for
- * the process lifetime; the sink only mirrors it outward.
+ * the process lifetime; the sink only mirrors it outward. Each registry stamps
+ * its entries with one incarnation id, generated when it is created, so a
+ * persisted entry from an earlier process never matches a live one.
  */
 
 import type {
@@ -369,6 +371,10 @@ export function createResidencyLeases(opts?: ResidencyLeasesOptions): ResidencyL
   const registries = new Map<string, WorkloadState>();
   const counters = new Map<string, number>();
   const auditLog: ResidencyAuditEntry[] = [];
+  // One id per registry (the serving process installs one), stamped on every
+  // audit entry it writes, so entries from different process lifetimes never
+  // share a (workload, epoch, revoked, reason) identity.
+  const incarnation = crypto.randomUUID();
 
   function notifyAuditSink(entry: ResidencyAuditEntry): void {
     const sink = opts?.onAudit;
@@ -433,6 +439,7 @@ export function createResidencyLeases(opts?: ResidencyLeasesOptions): ResidencyL
         forced: true,
         revoked,
         ...(unloadOpts.reason !== undefined ? { reason: unloadOpts.reason } : {}),
+        incarnation,
       };
       auditLog.push(entry);
       if (auditLog.length > 1024) {

@@ -102,6 +102,14 @@ function leasesWithAudit(onAudit: (entry: ResidencyAuditEntry) => void): Residen
   return createResidencyLeases({ onAudit });
 }
 
+function mustIncarnation(entry: ResidencyAuditEntry | undefined): string {
+  const incarnation = entry?.incarnation;
+  if (typeof incarnation !== "string" || incarnation === "") {
+    throw new Error("expected an audit entry with an incarnation");
+  }
+  return incarnation;
+}
+
 type Token = Parameters<ResidencyLeases["commitUnload"]>[0];
 
 function drainOnly(reg: ResidencyLeases, workload: string, leases = 1): Token {
@@ -138,6 +146,30 @@ async function leasesStatus(): Promise<LeasesSection> {
   };
   const r = await caller.residencyStatus({ node: "local" });
   return r.leases;
+}
+
+// Holds the store's write lock while fn runs, so every sink write inside it
+// fails on the short busy timeout (core swallows the error).
+function withLockedStore(fn: () => void): void {
+  const holder = new Database(storePath);
+  holder.run("BEGIN IMMEDIATE");
+  try {
+    fn();
+  } finally {
+    holder.run("ROLLBACK");
+    holder.close();
+  }
+}
+
+function auditColumns(): string[] {
+  const ro = new Database(storePath, { readonly: true });
+  try {
+    return (ro.query("PRAGMA table_info('lease_audit')").all() as { name: string }[]).map(
+      (column) => column.name,
+    );
+  } finally {
+    ro.close();
+  }
 }
 
 function expectAvailable(leases: LeasesSection): AvailableLeases {
@@ -394,15 +426,170 @@ describe("residency lease audit persistence", () => {
     ]);
     sink.close();
   });
+
+  test("restart collision: a live entry matching an earlier process's row on (workload, epoch, revoked, reason) still shows when its write failed", async () => {
+    const mod = await loadAuditStore();
+    expect(typeof mod?.createResidencyLeaseAuditSink).toBe("function");
+    expect(typeof mod?.readResidencyLeaseAudit).toBe("function");
+    const readAudit = mod!.readResidencyLeaseAudit;
+
+    const sinkA = mod!.createResidencyLeaseAuditSink({ path: storePath });
+    const regA = leasesWithAudit((entry) => {
+      sinkA.onAudit(entry);
+    });
+    expect(forceUnload(regA, "w", { reason: "evict" })).toEqual({ ok: true, revoked: ["w#1"] });
+    sinkA.close();
+
+    const sinkB = mod!.createResidencyLeaseAuditSink({ path: storePath });
+    const regB = leasesWithAudit((entry) => {
+      sinkB.onAudit(entry);
+    });
+    setResidencyLeaseRegistry(regB);
+    withLockedStore(() => {
+      expect(forceUnload(regB, "w", { reason: "evict" })).toEqual({ ok: true, revoked: ["w#1"] });
+    });
+
+    const persisted = readAudit(storePath);
+    expect(persisted).toHaveLength(1);
+    const live = regB.audit();
+    expect(live).toHaveLength(1);
+    expect(typeof persisted[0]?.incarnation).toBe("string");
+    expect(typeof live[0]?.incarnation).toBe("string");
+    expect(live[0]?.incarnation).not.toBe(persisted[0]?.incarnation);
+    expect({ ...live[0], incarnation: null }).toEqual({ ...persisted[0], incarnation: null });
+
+    const leases = expectAvailable(await leasesStatus());
+    expect(leases.auditCount).toBe(2);
+    expect(leases.recentAudit).toEqual([
+      { workload: "w", epoch: 1, forced: true, revokedCount: 1, reason: "evict" },
+      { workload: "w", epoch: 1, forced: true, revokedCount: 1, reason: "evict" },
+    ]);
+    sinkB.close();
+  }, 30_000);
+
+  test("migration: a lease_audit table without incarnation gains the column, and its legacy rows never match a live entry", async () => {
+    const mod = await loadAuditStore();
+    expect(typeof mod?.createResidencyLeaseAuditSink).toBe("function");
+    expect(typeof mod?.readResidencyLeaseAudit).toBe("function");
+    const readAudit = mod!.readResidencyLeaseAudit;
+
+    // Build the store with the current code, then put the first-cut lease_audit
+    // shape (no incarnation column) back with one legacy row in it.
+    const seed = mod!.createResidencyLeaseAuditSink({ path: storePath });
+    seed.onAudit({ workload: "seed", epoch: 9, forced: true, revoked: ["seed#1"] });
+    seed.close();
+    const raw = new Database(storePath);
+    try {
+      raw.run("DROP TABLE lease_audit");
+      raw.run(`
+        CREATE TABLE lease_audit (
+          seq INTEGER PRIMARY KEY AUTOINCREMENT,
+          workload TEXT NOT NULL,
+          epoch INTEGER NOT NULL,
+          revoked TEXT NOT NULL,
+          reason TEXT
+        )
+      `);
+      raw
+        .query("INSERT INTO lease_audit (workload, epoch, revoked, reason) VALUES (?, ?, ?, ?)")
+        .run("w", 1, JSON.stringify(["w#1"]), "evict");
+    } finally {
+      raw.close();
+    }
+    expect(auditColumns()).not.toContain("incarnation");
+    expect(readAudit(storePath)).toEqual([
+      { workload: "w", epoch: 1, forced: true, revoked: ["w#1"], reason: "evict" },
+    ]);
+    expect(auditColumns()).not.toContain("incarnation");
+
+    const sink = mod!.createResidencyLeaseAuditSink({ path: storePath });
+    const reg = leasesWithAudit((entry) => {
+      sink.onAudit(entry);
+    });
+    setResidencyLeaseRegistry(reg);
+    expect(forceUnload(reg, "ok", { reason: "fine" })).toEqual({ ok: true, revoked: ["ok#1"] });
+    expect(auditColumns()).toContain("incarnation");
+    withLockedStore(() => {
+      expect(forceUnload(reg, "w", { reason: "evict" })).toEqual({ ok: true, revoked: ["w#1"] });
+    });
+
+    const incarnation = mustIncarnation(reg.audit()[0]);
+    expect(readAudit(storePath)).toEqual([
+      { workload: "w", epoch: 1, forced: true, revoked: ["w#1"], reason: "evict" },
+      { workload: "ok", epoch: 1, forced: true, revoked: ["ok#1"], reason: "fine", incarnation },
+    ]);
+
+    const leases = expectAvailable(await leasesStatus());
+    expect(leases.auditCount).toBe(3);
+    expect(leases.recentAudit).toEqual([
+      { workload: "w", epoch: 1, forced: true, revokedCount: 1, reason: "evict" },
+      { workload: "ok", epoch: 1, forced: true, revokedCount: 1, reason: "fine" },
+      { workload: "w", epoch: 1, forced: true, revokedCount: 1, reason: "evict" },
+    ]);
+    sink.close();
+  }, 30_000);
+
+  test("status over more than 20 persisted rows plus a failed live write: auditCount is the merged total, recentAudit the last 20 in order", async () => {
+    const mod = await loadAuditStore();
+    expect(typeof mod?.createResidencyLeaseAuditSink).toBe("function");
+    expect(typeof mod?.readResidencyLeaseAudit).toBe("function");
+    const readAudit = mod!.readResidencyLeaseAudit;
+
+    const sinkA = mod!.createResidencyLeaseAuditSink({ path: storePath });
+    const regA = leasesWithAudit((entry) => {
+      sinkA.onAudit(entry);
+    });
+    const names = Array.from({ length: 24 }, (_, i) => `p${String(i).padStart(2, "0")}`);
+    for (const name of names) {
+      expect(forceUnload(regA, name, { reason: name })).toEqual({
+        ok: true,
+        revoked: [`${name}#1`],
+      });
+    }
+    sinkA.close();
+
+    const sinkB = mod!.createResidencyLeaseAuditSink({ path: storePath });
+    const regB = leasesWithAudit((entry) => {
+      sinkB.onAudit(entry);
+    });
+    setResidencyLeaseRegistry(regB);
+    expect(forceUnload(regB, "b1", { reason: "b1" })).toEqual({ ok: true, revoked: ["b1#1"] });
+    withLockedStore(() => {
+      expect(forceUnload(regB, "late", { reason: "late" })).toEqual({
+        ok: true,
+        revoked: ["late#1"],
+      });
+    });
+    expect(readAudit(storePath)).toHaveLength(25);
+    expect(regB.audit()).toHaveLength(2);
+
+    const leases = expectAvailable(await leasesStatus());
+    expect(leases.auditCount).toBe(26);
+    const expected = [...names.slice(-18), "b1", "late"].map((name) => ({
+      workload: name,
+      epoch: 1,
+      forced: true as const,
+      revokedCount: 1,
+      reason: name,
+    }));
+    expect(leases.recentAudit).toEqual(expected);
+    sinkB.close();
+  }, 30_000);
 });
 
 describe("mergeResidencyLeaseAudit", () => {
-  const e = (workload: string, epoch = 1, reason?: string): ResidencyAuditEntry => ({
+  const e = (
+    workload: string,
+    epoch = 1,
+    reason?: string,
+    incarnation: string | null = "inc-1",
+  ): ResidencyAuditEntry => ({
     workload,
     epoch,
     forced: true,
     revoked: [`${workload}#1`],
     ...(reason !== undefined ? { reason } : {}),
+    ...(incarnation !== null ? { incarnation } : {}),
   });
 
   test("either source alone passes through", () => {
@@ -446,5 +633,24 @@ describe("mergeResidencyLeaseAudit", () => {
       e("v"),
       e("w"),
     ]);
+  });
+
+  test("the key includes the incarnation: an earlier process's identical row never matches", () => {
+    const old = e("w", 1, "x", "inc-old");
+    const fresh = e("w", 1, "x", "inc-new");
+    expect(mergeResidencyLeaseAudit([old], [fresh])).toEqual([old, fresh]);
+    expect(mergeResidencyLeaseAudit([old, fresh], [fresh])).toEqual([old, fresh]);
+  });
+
+  test("a legacy row without an incarnation never matches a live entry", () => {
+    const legacy = e("w", 1, "x", null);
+    const fresh = e("w", 1, "x", "inc-new");
+    expect(mergeResidencyLeaseAudit([legacy], [fresh])).toEqual([legacy, fresh]);
+    expect(
+      mergeResidencyLeaseAudit(
+        [legacy, e("v", 1, "y", "inc-new")],
+        [e("v", 1, "y", "inc-new"), fresh],
+      ),
+    ).toEqual([legacy, e("v", 1, "y", "inc-new"), fresh]);
   });
 });
