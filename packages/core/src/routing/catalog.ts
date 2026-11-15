@@ -537,6 +537,16 @@ export const DeclaredModelStateSchema = z.enum([
 ]);
 export type DeclaredModelState = z.infer<typeof DeclaredModelStateSchema>;
 
+/** #280 DF-07: stale reasons that can be projected by declared binding. */
+export const DECLARED_STALE_REASONS = [
+  "stale-owner-epoch" as const,
+  "stale-artifact-revision" as const,
+];
+
+export function isDeclaredStaleReason(reason: string | undefined): boolean {
+  return (DECLARED_STALE_REASONS as readonly string[]).includes(reason ?? "");
+}
+
 /**
  * DeclaredModelEntryV1 — a workload-declared model id that is not (yet) a
  * route (#280 DF-07). Declared entries carry no endpoint, host, port or
@@ -566,3 +576,9 @@ export const DeclaredModelEntryV1Schema = z
     }
   });
 export type DeclaredModelEntryV1 = z.infer<typeof DeclaredModelEntryV1Schema>;
+
+/** Namespace for stale-reason helpers used by openaiProxy and tests. */
+export const routingCatalog = {
+  DECLARED_STALE_REASONS,
+  isDeclaredStaleReason,
+} as const;

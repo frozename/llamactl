@@ -1123,15 +1123,20 @@ function maybeRegisterDeclaredModels(opts: StartAgentOptions): (() => void) | nu
   // The withdrawn set is read fresh from the same gate so a workload whose
   // routes are pulled for the duration of a stop (#280 DF-07) projects
   // 'draining', not 'ready'.
-  openaiProxy.setDeclaredModelSource(() =>
-    listDeclaredModels({
+  openaiProxy.setDeclaredModelSource(() => {
+    const routes = listLocalRoutes(resolveEnv());
+    return listDeclaredModels({
       nodeName: LOCAL_NODE_ID,
-      liveModelIds: new Set(listLocalRoutes(resolveEnv()).map((route) => route.model)),
+      liveModelIds: new Set(routes.map((route) => route.model)),
+      liveRoutes: routes.map((route) => ({
+        workload: route.workload,
+        model: route.model,
+      })),
       workloadPhase: (workload) => getResidencyLeaseRegistry()?.snapshot(workload).phase,
       warmingModelIds: openaiProxy.servingWarmingModelIds(),
       withdrawnWorkloads: openaiProxy.servingWithdrawnWorkloads(),
-    }),
-  );
+    });
+  });
   return (): void => {
     openaiProxy.setDeclaredModelSource(null);
   };

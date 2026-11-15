@@ -32,6 +32,10 @@ interface DeclaredClaim {
   workload: string;
   kind: DeclaredKind;
   enabled: boolean;
+  /** The manifest's model (hostedModels[0].rel or target.value) for stale artifact comparison. */
+  manifestModel?: string;
+  /** The first route model for the claim's workload (used for stale-owner-epoch detection). */
+  artifact?: string;
 }
 
 // Separate-token `--alias`/`-a` values only — mirrors aliasesFromArgs in
@@ -57,8 +61,28 @@ function hostClaimIds(host: ModelHostManifest): string[] {
   return [...new Set([first.rel, basename(first.rel)])];
 }
 
-function hostClaims(host: ModelHostManifest, nodeName: string): DeclaredClaim[] {
+// First route model per workload: the model a live route reports as the
+// served artifact (the first route per workload, matching listLocalRoutes
+// ordering). Returns undefined when there are no routes for that workload.
+function firstRouteModelFor(
+  workload: string,
+  liveRoutes: readonly { workload: string; model: string }[] | undefined,
+): string | undefined {
+  if (liveRoutes === undefined || liveRoutes.length === 0) return undefined;
+  for (const route of liveRoutes) {
+    if (route.workload === workload) return route.model;
+  }
+  return undefined;
+}
+
+function hostClaims(
+  host: ModelHostManifest,
+  nodeName: string,
+  liveRoutes: readonly { workload: string; model: string }[] | undefined,
+): DeclaredClaim[] {
   if (host.spec.node !== nodeName) return [];
+  const manifestModel = host.spec.hostedModels[0]?.rel;
+  const artifact = firstRouteModelFor(host.metadata.name, liveRoutes);
   return hostClaimIds(host)
     .filter((id) => !isAbsolute(id))
     .map((id) => ({
@@ -66,12 +90,20 @@ function hostClaims(host: ModelHostManifest, nodeName: string): DeclaredClaim[] 
       workload: host.metadata.name,
       kind: "ModelHost" as const,
       enabled: host.spec.enabled,
+      ...(manifestModel !== undefined ? { manifestModel } : {}),
+      ...(artifact !== undefined ? { artifact } : {}),
     }));
 }
 
-function runClaims(run: ModelRun, nodeName: string): DeclaredClaim[] {
+function runClaims(
+  run: ModelRun,
+  nodeName: string,
+  liveRoutes: readonly { workload: string; model: string }[] | undefined,
+): DeclaredClaim[] {
   const spec = run.spec;
   if (spec.node !== nodeName || spec.target.kind !== "rel" || spec.gateway) return [];
+  const manifestModel = spec.target.value;
+  const artifact = firstRouteModelFor(run.metadata.name, liveRoutes);
   const ids = [...new Set([spec.target.value, ...aliasIdsFromExtraArgs(spec.extraArgs)])];
   return ids
     .filter((id) => !isAbsolute(id))
@@ -80,6 +112,8 @@ function runClaims(run: ModelRun, nodeName: string): DeclaredClaim[] {
       workload: run.metadata.name,
       kind: "ModelRun" as const,
       enabled: spec.enabled,
+      manifestModel,
+      ...(artifact !== undefined ? { artifact } : {}),
     }));
 }
 
@@ -131,13 +165,14 @@ export function buildDeclaredModelEntries(input: {
   modelHosts: readonly ModelHostManifest[];
   modelRuns: readonly ModelRun[];
   liveModelIds: ReadonlySet<string>;
+  liveRoutes?: readonly { workload: string; model: string }[];
   workloadPhase?: (workload: string) => DeclaredWorkloadPhase | undefined;
   warmingModelIds?: ReadonlySet<string>;
   withdrawnWorkloads?: ReadonlySet<string>;
 }): routingCatalog.DeclaredModelEntryV1[] {
   const claims = [
-    ...input.modelHosts.flatMap((host) => hostClaims(host, input.nodeName)),
-    ...input.modelRuns.flatMap((run) => runClaims(run, input.nodeName)),
+    ...input.modelHosts.flatMap((host) => hostClaims(host, input.nodeName, input.liveRoutes)),
+    ...input.modelRuns.flatMap((run) => runClaims(run, input.nodeName, input.liveRoutes)),
   ];
   const claimantsById = new Map<string, number>();
   for (const claim of claims) {
@@ -154,14 +189,21 @@ export function buildDeclaredModelEntries(input: {
       input.warmingModelIds,
       input.withdrawnWorkloads,
     );
+    // Stale reasons only override cold/ready/loading states — they yield to
+    // collision, disabled, and draining states.
+    const staleReason =
+      state === "cold" || state === "ready" || state === "loading"
+        ? staleReasonForClaim(claim, input.liveRoutes)
+        : undefined;
     return routingCatalog.DeclaredModelEntryV1Schema.parse({
       id: claim.id,
       workload: claim.workload,
       kind: claim.kind,
       ownerNodeId: input.nodeName,
-      state,
-      autoLoadEligible: state === "cold",
-      ...(collided ? { reason: "alias-collision" } : {}),
+      state: staleReason !== undefined ? "cold" : state,
+      autoLoadEligible: state === "cold" && staleReason === undefined,
+      ...(staleReason !== undefined ? { reason: staleReason } : {}),
+      ...(collided && staleReason === undefined ? { reason: "alias-collision" } : {}),
     });
   });
   entries.sort((a, b) => {
@@ -171,12 +213,45 @@ export function buildDeclaredModelEntries(input: {
   return entries;
 }
 
+// Compute a stale reason for a claim based on liveRoutes. Returns undefined
+// when there are no live routes (base behavior: no staleness) or when the
+// claim's artifact and owner epoch match the live route.
+function staleReasonForClaim(
+  claim: DeclaredClaim,
+  liveRoutes: readonly { workload: string; model: string }[] | undefined,
+): string | undefined {
+  // No live routes: no staleness (base behavior).
+  if (liveRoutes === undefined || liveRoutes.length === 0) return undefined;
+  // Check if the claim's id appears in any live route's model (i.e., the
+  // claim's model is live). If not, there's no staleness — the model
+  // simply isn't routed.
+  const isLiveModel = liveRoutes.some((route) => route.model === claim.id);
+  if (!isLiveModel) return undefined;
+  // Owner epoch mismatch: the claim's workload doesn't match any live route's
+  // workload. The model is live but under a different owner epoch.
+  const routeForClaim = liveRoutes.find((route) => route.workload === claim.workload);
+  if (routeForClaim === undefined) {
+    return "stale-owner-epoch";
+  }
+  // Artifact revision mismatch: the manifest's model doesn't match the live
+  // route model. Only check when we have the claim's manifest model info.
+  if (
+    claim.manifestModel !== undefined &&
+    claim.artifact !== undefined &&
+    claim.manifestModel !== claim.artifact
+  ) {
+    return "stale-artifact-revision";
+  }
+  return undefined;
+}
+
 const noopSkip = (): void => undefined;
 
 export function listDeclaredModels({
   dir = defaultWorkloadsDir(),
   nodeName,
   liveModelIds,
+  liveRoutes,
   workloadPhase,
   warmingModelIds,
   withdrawnWorkloads,
@@ -184,6 +259,7 @@ export function listDeclaredModels({
   dir?: string;
   nodeName: string;
   liveModelIds: ReadonlySet<string>;
+  liveRoutes?: readonly { workload: string; model: string }[];
   workloadPhase?: (workload: string) => DeclaredWorkloadPhase | undefined;
   warmingModelIds?: ReadonlySet<string>;
   withdrawnWorkloads?: ReadonlySet<string>;
@@ -193,6 +269,7 @@ export function listDeclaredModels({
     modelHosts: listModelHosts(dir, noopSkip),
     modelRuns: listWorkloads(dir, noopSkip),
     liveModelIds,
+    ...(liveRoutes !== undefined ? { liveRoutes } : {}),
     ...(workloadPhase !== undefined ? { workloadPhase } : {}),
     ...(warmingModelIds !== undefined ? { warmingModelIds } : {}),
     ...(withdrawnWorkloads !== undefined ? { withdrawnWorkloads } : {}),

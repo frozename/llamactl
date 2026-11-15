@@ -72,6 +72,7 @@ import {
   type DeclaredModelEntryV1,
   DeclaredModelEntryV1Schema,
   type DeclaredModelState,
+  routingCatalog,
 } from "./routing/catalog.js";
 import { mkdirSync, readdirSync, statSync } from "./safe-fs.js";
 import { endpoint as llamaEndpoint, readServerPid, readServerState } from "./server.js";
@@ -2650,6 +2651,22 @@ function declaredNotLoadedRejectionFor(
 }
 
 /**
+ * #280 DF-07: check if a model has a stale declared entry (owner epoch or
+ * artifact revision moved under a live route). Returns a 503 rejection when
+ * the entry is stale, null otherwise. Only checks entries with stale reasons
+ * (stale-owner-epoch or stale-artifact-revision).
+ */
+function staleDeclaredEntryRejectionFor(
+  model: string,
+  bodyText: string | undefined,
+): Response | null {
+  const entry = declaredModelEntries().find((candidate) => candidate.id === model);
+  if (entry === undefined) return null;
+  if (!routingCatalog.isDeclaredStaleReason(entry.reason)) return null;
+  return declaredNotLoadedResponse(model, entry, bodyText);
+}
+
+/**
  * #280 DF-07: 503 for a pin whose only routes are live but fail serving
  * readiness (a warming ModelHost). The declared catalog state wins when it
  * carries a stronger state than the synthesized warming; a stale `ready`
@@ -2693,6 +2710,16 @@ function withdrawnAtDefaultEndpoint(
   return entries.some(
     (entry) =>
       entry.isPeer !== true && `http://${entry.host}:${String(entry.port)}` === defaultEndpoint,
+  );
+}
+
+function withdrawnDefaultTargetFallsThrough(
+  model: string,
+  entries: readonly RouteEntry[],
+  resolved: ResolvedEnv,
+): boolean {
+  return (
+    defaultTargetModelIds(resolved).has(model) && !withdrawnAtDefaultEndpoint(entries, resolved)
   );
 }
 
@@ -2807,6 +2834,11 @@ async function applyBodyModelRoute(
     context.resolved,
   );
   if (outcome !== null && "routed" in outcome) {
+    // #280 DF-07: even when a model has a live route, check if the declared
+    // entry is stale (owner epoch or artifact revision moved). A stale
+    // declared entry is refused with 503 instead of forwarded to the engine.
+    const staleRejection = staleDeclaredEntryRejectionFor(model, bodyText);
+    if (staleRejection) return staleRejection;
     context.target = outcome.routed.target;
     context.route = outcome.routed;
     clearServingWarming(model);
@@ -2816,10 +2848,7 @@ async function applyBodyModelRoute(
     // A default-target id falls through to the default endpoint only when no
     // withdrawn route is the engine behind it; a withdrawn default llama-server
     // ModelRun (it binds LLAMA_CPP_HOST:LLAMA_CPP_PORT) is refused draining.
-    if (
-      defaultTargetModelIds(context.resolved).has(model) &&
-      !withdrawnAtDefaultEndpoint(outcome.withdrawnEntries, context.resolved)
-    ) {
+    if (withdrawnDefaultTargetFallsThrough(model, outcome.withdrawnEntries, context.resolved)) {
       clearServingWarming(model);
       return context;
     }
