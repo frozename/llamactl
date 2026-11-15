@@ -783,8 +783,13 @@ describe("applyManifest — kind dispatch", () => {
       if (!explicit.ok) console.error("ERROR:", explicit);
       expect(explicit.ok).toBe(true);
 
+      // #274: pinned so admission does not depend on host RAM (failed under LLAMACTL_TEST_TOTALMEM_GIB=<4|1>)
       const local = await applyManifest({
-        manifest: modelHostOnNode("mlx-host-nodemem-local", 1, "local"),
+        manifest: modelHostOnNode(
+          "mlx-host-nodemem-local",
+          Number((hostGiB * 0.5).toFixed(3)),
+          "local",
+        ),
         workloadsDir: join(tmp, "workloads"),
         getClient: () => client,
         spawn: spawnStub,
@@ -1090,6 +1095,8 @@ describe("applyManifest — kind dispatch", () => {
     try {
       const result = await applyManifest({
         manifest: makeModelHostManifest("mlx-host-pid", 4),
+        // #274: pinned so admission does not depend on host RAM (failed under LLAMACTL_TEST_TOTALMEM_GIB=<4|1>)
+        getNodeBudgetGiB: () => 64,
         getClient: () => client,
         spawn: spawnStub,
         env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp },
@@ -1176,6 +1183,8 @@ describe("applyManifest — kind dispatch", () => {
     try {
       const result = await applyManifest({
         manifest: makeGufoApplyManifest(["llama-server-fork-pristine"]),
+        // #274: pinned so admission does not depend on host RAM (failed under LLAMACTL_TEST_TOTALMEM_GIB=<4|1>)
+        getNodeBudgetGiB: () => 64,
         workloadsDir: tmp,
         getClient: () => makeGufoApplyClient(),
         spawn: spawnStub,
@@ -1202,6 +1211,8 @@ describe("applyManifest — kind dispatch", () => {
     try {
       const result = await applyManifest({
         manifest: makeGufoApplyManifest(),
+        // #274: pinned so admission does not depend on host RAM (failed under LLAMACTL_TEST_TOTALMEM_GIB=<4|1>)
+        getNodeBudgetGiB: () => 64,
         workloadsDir: tmp,
         getClient: () => makeGufoApplyClient(),
         spawn: spawnStub,
@@ -1226,6 +1237,8 @@ describe("applyManifest — kind dispatch", () => {
     try {
       const result = await applyManifest({
         manifest: makeGufoApplyManifest(undefined, READINESS),
+        // #274: pinned so admission does not depend on host RAM (failed under LLAMACTL_TEST_TOTALMEM_GIB=<4|1>)
+        getNodeBudgetGiB: () => 64,
         workloadsDir: tmp,
         getClient: () => makeGufoApplyClient(),
         spawn: spawnStub,
@@ -1250,6 +1263,8 @@ describe("applyManifest — kind dispatch", () => {
     try {
       const result = await applyManifest({
         manifest: makeGufoApplyManifest(),
+        // #274: pinned so admission does not depend on host RAM (failed under LLAMACTL_TEST_TOTALMEM_GIB=<4|1>)
+        getNodeBudgetGiB: () => 64,
         workloadsDir: tmp,
         getClient: () => makeGufoApplyClient(),
         spawn: spawnStub,
