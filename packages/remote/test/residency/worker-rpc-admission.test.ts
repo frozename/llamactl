@@ -780,11 +780,12 @@ describe("worker RPC admission (#281)", () => {
     }
   });
 
-  // Kills: a stream abort not stopping the queued attempt — the stream's
-  // AbortSignal never reaching the attempt's controller, or acquire not
-  // given that controller's signal — so the waiter stays queued and the
-  // backend starts once the HTTP slot frees (orphan start, or a slot held
-  // by an attempt nobody reads). The waiter is dequeued Aborted, never
+  // Kills: a stream abort not stopping the queued attempt. If the stream's
+  // AbortSignal never reaches the attempt's controller, the backend starts
+  // once the HTTP slot frees (an orphan start). If acquire is not given
+  // that controller's signal, the waiter stays queued (a dead waiter
+  // holding a queue slot) until the HTTP slot frees; the waitFor on
+  // queued === 0 catches that. The waiter is dequeued Aborted, never
   // granted, so no release is expected.
   test("(d) a stream abort while queued leaves no orphan", async () => {
     const adm = countedAdmission(
@@ -829,8 +830,9 @@ describe("worker RPC admission (#281)", () => {
   // slot is granted synchronously inside acquire(), but the callback that
   // would store its release runs a microtask later; a host.cancel in that
   // gap settles the attempt with no stored release, so only that callback
-  // can hand the slot back. Raw admission (no counting wrapper) keeps the
-  // grant synchronous, so the race is deterministic.
+  // can hand the slot back. The grant happens synchronously inside
+  // acquire() and its callback runs after the synchronous host.cancel, so
+  // the race is deterministic.
   test("(d) host.cancel in the same tick as a free-slot grant releases the slot", async () => {
     const adm = rawAdmission({ maxExecutions: 1 });
     const { backend, runs } = controllableBackend();
