@@ -1,0 +1,163 @@
+# Dynamic residency operator runbook
+
+Automatic residency is disabled by default. Nothing in this document turns a model on or off in production for you: this runbook is not deployment approval (Part of #285). Read [dynamic fleet models](dynamic-fleet-models.md) for the control-plane model, [self-update](self-update.md) for the controller update unit, and [deployment on the Mac mini](deployment-mac-mini.md) for the host layout. Every command below targets a node you have already decided to operate on.
+
+## Scope
+
+On `main`:
+
+- The residency store and its node-local SQLite state (`operations.sqlite`).
+- Desired-state ownership of `ModelRun`, `ModelHost` and `NodeRun` manifests.
+- The lease registry, drain and force-unload path (opt-in).
+- `residency status`, `residency plan` and `residency apply-profile`.
+- Profile-switch cancel and boot crash recovery.
+- Request admission caps and declared-model projection with readiness gates.
+
+Library-only (no production wiring):
+
+- The llama.cpp sleep/wake clients and the sleep-status recorder.
+- The managed oMLX residency and the oMLX cache-retention decision.
+- The memory-calibration artifact-revision gate.
+
+## Residency store and backups
+
+The store path comes from `defaultResidencyStorePath` (`packages/remote/src/residency/store.ts`). The `LLAMACTL_RESIDENCY_STORE` override wins outright. Otherwise the path is `llamactlHome + residency/operations.sqlite`, where `llamactlHome` is `$DEV_STORAGE` or `~/.llamactl` (`packages/core/src/config/env.ts`).
+
+The store is node-local SQLite in WAL mode: `openDb` sets `journal_mode = WAL`. Back up with `sqlite3` `.backup`, because the `-wal` and `-shm` sidecars hold uncheckpointed rows a plain file copy would drop, then verify the copy read-only with `file:<copy>?mode=ro&immutable=1`:
+
+```sh
+sqlite3 "$HOME/.llamactl/residency/operations.sqlite" ".backup $BACKUP_DIR/operations.sqlite"
+sqlite3 "file:$BACKUP_DIR/operations.sqlite?mode=ro&immutable=1" "PRAGMA integrity_check;"
+```
+
+Restore only with the agent stopped, and back up the workloads dir in the same breath. The store holds profile-switch ops (`profile-switch:<node>`), fenced eviction intent (#710, `packages/remote/src/residency/eviction-operation.ts`), lease audit (#686) and the `desiredRevision` watermark (#676). `residency status` reads it read-only via `readResidencyStoreSnapshot`.
+
+## Desired-state ownership
+
+`ModelRun`, `ModelHost` and `NodeRun` manifests live in `defaultWorkloadsDir`: `LLAMACTL_WORKLOADS_DIR`, else `<home>/workloads` (`packages/remote/src/workload/store.ts`). The manifest store is central to the control plane: every read and write of desired state flows through it (`packages/cli/src/commands/_workload-resolve.ts`).
+
+Writers are `llamactl apply -f`, `llamactl enable` and `llamactl disable`, and `llamactl controller serve`. The controller reconciles every manifest, so it owns `spec.enabled`. `.controller.lock` in the workloads dir (`packages/remote/src/workload/lock.ts`) blocks a second controller on the same dir; a stale lock is stolen when its pid is dead. Hosts labelled `llamactl.io/managed-by` are skipped (`MANAGED_BY_LABEL` in `packages/remote/src/workload/modelhost-schema.ts`; `llamactl controller serve --force` in `packages/cli/src/commands/controller.ts` overrides the skip):
+
+```sh
+llamactl controller serve --force
+```
+
+The ownership guard in `residencyApplyProfile` (`packages/remote/src/router.ts`) refuses a live write with `NotServingNode` when `LLAMACTL_NODE_NAME` does not equal the target node, and with `ControllerActive` when `liveLockHolder` of the workloads dir reports a live pid.
+
+What `apply-profile` persists matters for that guard. In `packages/remote/src/residency/apply-profile.ts` (`saveWorkload`) it writes the workload `status` section only, never `spec.enabled`. So a live controller would reconcile `spec.enabled` back and undo a manual switch on its next pass; that is why the guard rejects the write while a controller lock is live.
+
+## Lease registry, drain and force-unload
+
+The lease registry is opt-in via `LLAMACTL_RESIDENCY_LEASES` set to `1` or `true` (`packages/cli/src/commands/agent.ts`). `LLAMACTL_RESIDENCY_SESSION_IDLE_MS` is honored only with leases on. Unload a workload explicitly:
+
+```sh
+llamactl residency force-unload <workload> --reason <text> --yes
+```
+
+Results are `Unavailable` when there is no registry, plus `UnknownWorkload`, `DrainInProgress` and `AlreadyUnloaded` (`packages/remote/src/residency/force-unload.ts`). An idle unload writes no audit row.
+
+## Status, plan and apply-profile
+
+```sh
+llamactl residency status --node <node>
+llamactl residency plan --node <node> --to <profile>
+llamactl residency apply-profile --execute --yes
+```
+
+`apply-profile` is dry-run by default; `--execute --yes` runs it. It returns `Busy` when a switch is already in flight (`packages/cli/src/commands/residency.ts`). Profile membership comes from the annotations `llamactl.io/residency-profiles` and `llamactl.io/residency-protected`; a workload with no annotation is treated as protected (`packages/remote/src/residency/coordinator.ts`).
+
+## Cancel and crash recovery
+
+```sh
+llamactl residency cancel-operation <operationId> --yes
+```
+
+Cancel is process-local and aborts at the next step boundary (`packages/remote/src/residency/apply-profile.ts` header). Boot recovery is `runProfileSwitchBootRecovery` (`packages/remote/src/residency/boot-recovery.ts`), wired into the agent start in `packages/remote/src/server/serve.ts`. It terminalizes `profile-switch` rows with no step progress for 30 minutes (`PROFILE_SWITCH_BOOT_RECOVERY_MIN_AGE_MS`). A younger crashed row keeps the node `Busy` until a later boot. There is no opt-in flag.
+
+## Request admission
+
+`LLAMACTL_CHAT_ADMISSION_MAX_EXECUTIONS` is opt-in. `LLAMACTL_CHAT_ADMISSION_MAX_QUEUED` uses the literal default 16 (`CHAT_ADMISSION_DEFAULT_MAX_QUEUED`, `packages/cli/src/commands/agent.ts`). One cap is shared by `/v1/chat/completions`, `/v1/messages` and `/v1/responses`, and by worker RPC streams (#709). Overload gets `429`/`503`. To disable, unset the vars and restart the agent (`packages/cli/src/commands/agent.ts` help):
+
+```sh
+llamactl agent serve
+```
+
+## Declared models and readiness
+
+`LLAMACTL_DECLARED_MODELS` set to `1` turns on declared-model projection (`packages/cli/src/commands/agent.ts`). The states are `DeclaredModelStateSchema` (`packages/core/src/routing/catalog.ts`): `cold`, `loading`, `ready`, `draining`, `disabled` and `unavailable`. Ids are `rel` plus `basename(rel)`; a model is unavailable only on alias-collision (`packages/remote/src/residency/catalog.ts`).
+
+`spec.readiness { path, expectStatus, expectJson }` on `ModelHost` (`packages/remote/src/workload/modelhost-schema.ts`) and on `ModelRun` (#695, `packages/core/src/server.ts`) gates routes. When `apiKeyRef` is set, the readiness path is restricted to unauthenticated llama-server paths.
+
+## Model artifact and cache identity
+
+Artifact identity today is the manifest `rel` path only: identity keys off `rel` and its `basename`, nothing else (`packages/remote/src/residency/catalog.ts`). Nothing hashes model files or tracks their revision at readiness or at declared-model projection, so replacing weights in place is invisible; publish new weights under a new `rel`. `MemoryCalibrationKey.artifactRevision` (`packages/core/src/resources/memory.ts`) gates measured envelopes only through an injected hook, and `getCandidateCalibrationKey` has no production caller. For oMLX, the cache identity (modelId, `engineBuild`, `cacheEpoch`, the artifact `sha256` or size/mtime, and settings) lives in `packages/core/src/engines/omlx-cache-identity.ts`, and `decideOmlxCacheRetention` has no production caller. For native load/unload, `createManagedOmlxResidency` has no production caller (`packages/remote/src/residency/omlx-managed.ts`).
+
+## llama.cpp sleep and wake
+
+The library is in `packages/remote/src/residency/llamacpp-sleep-client.ts` and `packages/remote/src/residency/llamacpp-wake-client.ts`. `modelHostStatus` reports a recorded sleep (#706), and the reconciler leaves a sleeping host alone (#701). `setNodeLlamacppSleepController` has no production caller (`packages/remote/src/residency/llamacpp-sleep-status.ts`), so nothing puts a host to sleep in production and there is no idle trigger.
+
+## NodeRun residency policy knobs
+
+These keys come from `ResidencyPolicySchema` (`packages/remote/src/workload/noderun-schema.ts`) and are consumed by the admission logic in `packages/core/src/residency/admission.ts` (#690). The status column says whether a value is enforced at runtime, fed only to the planner, validated and persisted but ignored, or reserved for future use.
+
+| Key                     | Status       | Meaning                                                              |
+| ----------------------- | ------------ | -------------------------------------------------------------------- |
+| `safetyMarginRatio`     | enforced     | Applied to computed headroom when admitting a load.                  |
+| `minResidencySeconds`   | planner-only | Passed to the profile-switch planner only.                           |
+| `switchCooldownSeconds` | planner-only | Passed to the profile-switch planner only.                           |
+| `idleEvictSeconds`      | parse-only   | Validated and persisted, but there is no idle trigger to enforce it. |
+| `residentPreference`    | reserved     | Validated and persisted, not yet enforced.                           |
+| `coldLoadPenaltyMs`     | reserved     | Validated and persisted, not yet enforced.                           |
+
+## Cleanup of conflicting legacy launchers
+
+First run `git grep -n keepAlive packages/remote/src/workload`. It finds nothing, so the controller does not detect a keep-alive supervisor and you must inventory by hand. Inventory with `llamactl keep-alive status` and `llamactl server status`:
+
+```sh
+llamactl keep-alive status
+llamactl server status
+llamactl keep-alive stop
+llamactl server stop
+```
+
+Inventory the default agent label `com.llamactl.agent` (and `.daemon`) in `packages/cli/src/commands/agent-install/index.ts`, any second controller (the `.controller.lock` guard only protects the same dir), and any controller unit (`self-update.md`). The supervisor tooling lives in `packages/cli/src/commands/keepAlive.ts`.
+
+The operator removes them with `llamactl keep-alive stop` and `llamactl server stop` plus `launchctl bootout` and `systemctl disable`. Mark hosts owned elsewhere with `llamactl.io/managed-by` so the controller skips them.
+
+## Staged enable order and rollback
+
+### Stage 0 - inventory and dry-run
+
+Inventory the node, then read the plan. No writes.
+
+```sh
+llamactl residency status --node <node>
+llamactl residency plan --node <node> --to <profile>
+```
+
+Enable gate: the `residency plan` output is reviewed and the store is backed up. Rollback: none needed; nothing was written.
+
+### Stage 1 - manual switch
+
+Make a one-off switch and abort if it misbehaves. The controller lock must not be live (see the `ControllerActive` guard).
+
+```sh
+llamactl residency apply-profile --execute --yes
+llamactl residency cancel-operation <operationId> --yes
+```
+
+Enable gate: a single profile switch succeeds and `residency status` agrees. Rollback: run cancel-operation, then `llamactl apply -f` the prior manifest from the control plane.
+
+### Stage 2 - request-driven admission and declared models
+
+Turn on request admission and declared models, then restart the agent.
+
+```sh
+llamactl agent serve
+```
+
+Enable gate: 429 and 503 appear only under real overload and declared states match readiness. Rollback: unset `LLAMACTL_CHAT_ADMISSION_MAX_EXECUTIONS` and `LLAMACTL_DECLARED_MODELS` and restart the agent.
+
+### Stage 3 - native unload/wake
+
+BLOCKED: the sleep/wake controllers and managed oMLX residency have no production caller (see above), so there is nothing to enable here yet. Enable gate: blocked until a caller is wired. Rollback: blocked; nothing is on.
