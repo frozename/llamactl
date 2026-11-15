@@ -72,7 +72,7 @@ import {
   type DeclaredModelEntryV1,
   DeclaredModelEntryV1Schema,
   type DeclaredModelState,
-  routingCatalog,
+  isDeclaredStaleReason,
 } from "./routing/catalog.js";
 import { mkdirSync, readdirSync, statSync } from "./safe-fs.js";
 import { endpoint as llamaEndpoint, readServerPid, readServerState } from "./server.js";
@@ -913,6 +913,19 @@ let productionPeerSnapshots = new Map<string, workloadRuntime.PeerSnapshot>();
 // changes and in-place source mutations are observed without
 // re-registration.
 let declaredModelSource: (() => readonly unknown[]) | null = null;
+// #280 DF-07: optional change signature published with the declared source
+// (serve.ts passes a manifest stat signature). Folded into the stale-binding
+// projection key below; never consulted by the route-miss or listing paths.
+let declaredModelSourceSignature: (() => string) | null = null;
+// #280 DF-07: stale-binding projection for the routed hot path — the
+// declared entries carrying a stale reason, keyed on the route-map runtime
+// signature, the source's own signature and the withdrawn set. A routed
+// request consults this instead of evaluating the declared source, so the
+// happy path spawns no `ps` and parses no manifest while nothing changes.
+let staleDeclaredCache: {
+  key: string;
+  stale: ReadonlyMap<string, DeclaredModelEntryV1>;
+} | null = null;
 // #281 DF-08: opt-in cold-pin queue probe config and a monotonic id so every
 // probe carries a unique requestId/principal. Null (the default) keeps the
 // declared 503 byte-identical.
@@ -934,8 +947,13 @@ export function setColdPinQueueProbe(config: ColdPinQueueProbeConfig | null): vo
  * setPeerSnapshots: entries read through a stale route map would be
  * masked by cached state.
  */
-export function setDeclaredModelSource(source: (() => readonly unknown[]) | null): void {
+export function setDeclaredModelSource(
+  source: (() => readonly unknown[]) | null,
+  options: { signature?: () => string } = {},
+): void {
   declaredModelSource = source;
+  declaredModelSourceSignature = source === null ? null : (options.signature ?? null);
+  staleDeclaredCache = null;
   routeMapCache = null;
   modelsResponseCache = null;
 }
@@ -1050,6 +1068,8 @@ export function __resetOpenAIProxyRouteMapCacheForTests(): void {
   routeMapBuildCount = 0;
   clusterRoutingOverrideForTests = null;
   declaredModelSource = null;
+  declaredModelSourceSignature = null;
+  staleDeclaredCache = null;
   coldPinQueueProbe = null;
   coldPinProbeSeq = 0;
   servingVerdictCache.clear();
@@ -2650,19 +2670,51 @@ function declaredNotLoadedRejectionFor(
   return declaredNotLoadedResponse(model, entry, bodyText);
 }
 
+const NO_STALE_DECLARED_ENTRIES: ReadonlyMap<string, DeclaredModelEntryV1> = new Map();
+
+// Key for the stale-binding projection. The runtime signature is the one
+// getRouteMap keys on (the live routes the source projects against); the
+// source signature tracks manifest edits; the withdrawn set flips a claim to
+// 'draining', which suppresses its stale reason. Warming is not folded in:
+// it only moves a claim between ready/loading/cold, all of which keep the
+// stale reason. A throwing signature makes the projection uncacheable.
+function staleDeclaredCacheKey(resolved: ResolvedEnv): string | null {
+  try {
+    return [
+      workloadRuntimeCacheSignature(resolved),
+      declaredModelSourceSignature?.() ?? "",
+      [...servingWithdrawnWorkloads()].sort().join("\0"),
+    ].join("\n");
+  } catch {
+    return null;
+  }
+}
+
+function staleDeclaredEntries(resolved: ResolvedEnv): ReadonlyMap<string, DeclaredModelEntryV1> {
+  if (declaredModelSource === null) return NO_STALE_DECLARED_ENTRIES;
+  const key = staleDeclaredCacheKey(resolved);
+  if (key !== null && staleDeclaredCache?.key === key) return staleDeclaredCache.stale;
+  const stale = new Map<string, DeclaredModelEntryV1>();
+  for (const entry of declaredModelEntries()) {
+    if (isDeclaredStaleReason(entry.reason)) stale.set(entry.id, entry);
+  }
+  if (key !== null) staleDeclaredCache = { key, stale };
+  return stale;
+}
+
 /**
- * #280 DF-07: check if a model has a stale declared entry (owner epoch or
- * artifact revision moved under a live route). Returns a 503 rejection when
- * the entry is stale, null otherwise. Only checks entries with stale reasons
- * (stale-owner-epoch or stale-artifact-revision).
+ * #280 DF-07: 503 for a routed pin whose declared entry is stale (the owner
+ * or the artifact revision moved under a live route). Reads the cached
+ * stale-binding projection, so a routed request evaluates the declared
+ * source at most once per runtime/manifest signature.
  */
 function staleDeclaredEntryRejectionFor(
   model: string,
+  resolved: ResolvedEnv,
   bodyText: string | undefined,
 ): Response | null {
-  const entry = declaredModelEntries().find((candidate) => candidate.id === model);
+  const entry = staleDeclaredEntries(resolved).get(model);
   if (entry === undefined) return null;
-  if (!routingCatalog.isDeclaredStaleReason(entry.reason)) return null;
   return declaredNotLoadedResponse(model, entry, bodyText);
 }
 
@@ -2837,7 +2889,7 @@ async function applyBodyModelRoute(
     // #280 DF-07: even when a model has a live route, check if the declared
     // entry is stale (owner epoch or artifact revision moved). A stale
     // declared entry is refused with 503 instead of forwarded to the engine.
-    const staleRejection = staleDeclaredEntryRejectionFor(model, bodyText);
+    const staleRejection = staleDeclaredEntryRejectionFor(model, context.resolved, bodyText);
     if (staleRejection) return staleRejection;
     context.target = outcome.routed.target;
     context.route = outcome.routed;

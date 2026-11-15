@@ -30,7 +30,11 @@ import {
 } from "../inference/procedures.js";
 import { dispatchProxyRequest, publishUnifiedPeerSnapshots } from "../proxy/create-proxy.js";
 import { runProfileSwitchBootRecovery } from "../residency/boot-recovery.js";
-import { listDeclaredModels } from "../residency/catalog.js";
+import {
+  declaredManifestSignature,
+  type DeclaredWorkloadPhase,
+  listDeclaredModels,
+} from "../residency/catalog.js";
 import { createResidencyLeaseAuditSink, defaultResidencyStorePath } from "../residency/store.js";
 import { type AgentRouterContext, router as appRouter } from "../router.js";
 import { handleFleetSnapshotRoute } from "../routes/fleet.js";
@@ -1114,8 +1118,12 @@ function maybeRegisterDeclaredModels(opts: StartAgentOptions): (() => void) | nu
   // Project with LOCAL_NODE_ID, not the agent's nodeName: agent-local
   // manifests carry spec.node 'local' (router.ts:144, reconciler.ts:480),
   // while nodeName defaults to LLAMACTL_NODE_NAME or 'agent'. No `dir`:
-  // defaultWorkloadsDir() re-reads env on every call. No cache: in-place
-  // manifest edits do not bump the dir mtime. The live set is keyed by the
+  // defaultWorkloadsDir() re-reads env on every call. The source itself is
+  // uncached (in-place manifest edits do not bump the dir mtime); the proxy's
+  // routed-path stale check caches its projection on the route-map runtime
+  // signature plus declaredManifestSignature (per-file mtime/size and lease
+  // phase), so a routed request spawns no `ps` and parses no manifest while
+  // nothing changes. The live set is keyed by the
   // route's model, never its workload name: a live llama-server marks the
   // claim for that model ready, and a name-keyed set would mark nothing. The
   // warming set is read fresh from the proxy's chat-routing gate (#280 DF-07)
@@ -1123,20 +1131,25 @@ function maybeRegisterDeclaredModels(opts: StartAgentOptions): (() => void) | nu
   // The withdrawn set is read fresh from the same gate so a workload whose
   // routes are pulled for the duration of a stop (#280 DF-07) projects
   // 'draining', not 'ready'.
-  openaiProxy.setDeclaredModelSource(() => {
-    const routes = listLocalRoutes(resolveEnv());
-    return listDeclaredModels({
-      nodeName: LOCAL_NODE_ID,
-      liveModelIds: new Set(routes.map((route) => route.model)),
-      liveRoutes: routes.map((route) => ({
-        workload: route.workload,
-        model: route.model,
-      })),
-      workloadPhase: (workload) => getResidencyLeaseRegistry()?.snapshot(workload).phase,
-      warmingModelIds: openaiProxy.servingWarmingModelIds(),
-      withdrawnWorkloads: openaiProxy.servingWithdrawnWorkloads(),
-    });
-  });
+  const workloadPhase = (workload: string): DeclaredWorkloadPhase | undefined =>
+    getResidencyLeaseRegistry()?.snapshot(workload).phase;
+  openaiProxy.setDeclaredModelSource(
+    () => {
+      const routes = listLocalRoutes(resolveEnv());
+      return listDeclaredModels({
+        nodeName: LOCAL_NODE_ID,
+        liveModelIds: new Set(routes.map((route) => route.model)),
+        liveRoutes: routes.map((route) => ({
+          workload: route.workload,
+          model: route.model,
+        })),
+        workloadPhase,
+        warmingModelIds: openaiProxy.servingWarmingModelIds(),
+        withdrawnWorkloads: openaiProxy.servingWithdrawnWorkloads(),
+      });
+    },
+    { signature: () => declaredManifestSignature({ workloadPhase }) },
+  );
   return (): void => {
     openaiProxy.setDeclaredModelSource(null);
   };

@@ -10,16 +10,17 @@
  * proxy reports as warming 'loading' too. The optional withdrawnWorkloads set
  * marks a workload whose routes the proxy has pulled for the duration of a stop
  * (the #280 DF-07 stop fence), which projects its ids as 'draining' too. Pure
- * builder; the only I/O edge is
- * listDeclaredModels reading the workloads dir — no credentials, no
- * kubeconfig.
+ * builder; the only I/O edges are
+ * listDeclaredModels reading the workloads dir and declaredManifestSignature
+ * stat-ing it — no credentials, no kubeconfig.
  */
 import { routingCatalog } from "@llamactl/core";
-import { basename, isAbsolute } from "node:path";
+import { basename, isAbsolute, join } from "node:path";
 
 import type { ModelHostManifest } from "../workload/modelhost-schema.js";
 import type { ModelRun } from "../workload/schema.js";
 
+import { readdirSync, statSync } from "../safe-fs.js";
 import { listModelHosts } from "../workload/modelhost-store.js";
 import { defaultWorkloadsDir, listWorkloads } from "../workload/store.js";
 
@@ -34,7 +35,12 @@ interface DeclaredClaim {
   enabled: boolean;
   /** The manifest's model (hostedModels[0].rel or target.value) for stale artifact comparison. */
   manifestModel?: string;
-  /** The first route model for the claim's workload (used for stale-owner-epoch detection). */
+  /**
+   * The model the claim's workload's first live route reports as served, for
+   * artifact-revision comparison against manifestModel only. Owner detection
+   * does not read it: stale-owner-epoch compares the live route's
+   * route.workload against the claim's workload.
+   */
   artifact?: string;
 }
 
@@ -201,9 +207,12 @@ export function buildDeclaredModelEntries(input: {
       kind: claim.kind,
       ownerNodeId: input.nodeName,
       state: staleReason !== undefined ? "cold" : state,
-      autoLoadEligible: state === "cold" && staleReason === undefined,
+      // A stale claim always has a live id, so its pre-stale state is never
+      // 'cold'; a collided claim is always 'unavailable', so it never carries
+      // a stale reason. Neither conjunct needs the other's guard.
+      autoLoadEligible: state === "cold",
       ...(staleReason !== undefined ? { reason: staleReason } : {}),
-      ...(collided && staleReason === undefined ? { reason: "alias-collision" } : {}),
+      ...(collided ? { reason: "alias-collision" } : {}),
     });
   });
   entries.sort((a, b) => {
@@ -246,6 +255,48 @@ function staleReasonForClaim(
 }
 
 const noopSkip = (): void => undefined;
+
+function statSignature(path: string): string {
+  try {
+    const stat = statSync(path, { bigint: true });
+    return `${stat.mtimeNs.toString()}:${stat.size.toString()}`;
+  } catch {
+    return "-";
+  }
+}
+
+/**
+ * #280 DF-07: cheap change signature for listDeclaredModels' manifest input —
+ * the workloads dir stat plus each `*.yaml` manifest's mtime and size, with
+ * no YAML or schema parsing. The proxy folds it into the key of its
+ * stale-binding projection so a routed request re-evaluates the declared
+ * source only after a manifest edit (an in-place edit bumps the file, not
+ * the dir). The optional workloadPhase hook adds the lease phase of each
+ * manifest's file-stem workload name (manifests are written as
+ * `<metadata.name>.yaml`), since a draining lease suppresses a stale reason.
+ */
+export function declaredManifestSignature({
+  dir = defaultWorkloadsDir(),
+  workloadPhase,
+}: {
+  dir?: string;
+  workloadPhase?: (workload: string) => DeclaredWorkloadPhase | undefined;
+} = {}): string {
+  const parts: string[] = [dir, statSignature(dir)];
+  let manifests: string[] = [];
+  try {
+    manifests = readdirSync(dir)
+      .filter((entry) => entry.endsWith(".yaml"))
+      .sort();
+  } catch {
+    // Missing or unreadable dir — the dir stat alone is the signature.
+  }
+  for (const entry of manifests) {
+    const phase = phaseForWorkload(workloadPhase, entry.slice(0, -".yaml".length));
+    parts.push(entry, statSignature(join(dir, entry)), phase ?? "-");
+  }
+  return parts.join("|");
+}
 
 export function listDeclaredModels({
   dir = defaultWorkloadsDir(),
