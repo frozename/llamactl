@@ -19,6 +19,7 @@ import {
   writeModelHostStartAttempt,
 } from "@llamactl/core/engines/state";
 import { resolveEnv } from "@llamactl/core/env";
+import { isSleepResidency } from "@llamactl/core/residency/llamacpp-sleep";
 
 import type { NodeRunResidency } from "./noderun-schema.js";
 import type { ModelRun } from "./schema.js";
@@ -92,6 +93,9 @@ export interface ReconcileNodeReport {
    *  reason (BudgetExceeded / BudgetUnknown / ReservationInvalid) the apply
    *  surfaced on its result. */
   admissionReason?: AdmissionRefusalReason;
+  /** #283: set with action "unchanged" when the node reports the host sleeping
+   *  or sleep-pending; the pass did not restart, apply or wake it. */
+  observed?: "sleeping";
 }
 
 export interface ReconcileResult {
@@ -564,7 +568,12 @@ function localSpecChangedWhileDown(
   return typeof recordedHash === "string" && recordedHash !== desiredHash;
 }
 
-type HostReconcileDecision = "sweep-disabled" | "converged" | "never-stopped" | "apply";
+type HostReconcileDecision =
+  | "sweep-disabled"
+  | "converged"
+  | "never-stopped"
+  | "sleeping"
+  | "apply";
 
 /**
  * Decide what one ModelHost reconcile pass should do:
@@ -572,6 +581,10 @@ type HostReconcileDecision = "sweep-disabled" | "converged" | "never-stopped" | 
  *   sweep-disabled — host is disabled and not Running; clear any
  *                    stale sidecar and report unchanged.
  *   converged      — Running with a matching specHash; nothing to do.
+ *   sleeping       — enabled, Running, and the node reports the host
+ *                    sleeping or sleep-pending (#283); report unchanged
+ *                    and do not restart, apply or wake it, even if the
+ *                    specHash drifted.
  *   never-stopped  — enabled, restartPolicy Never, not Running, and remote
  *                    or with a local launch record (#332); report
  *                    unchanged and do not start it. Exception: a local
@@ -596,10 +609,18 @@ type HostReconcileDecision = "sweep-disabled" | "converged" | "never-stopped" | 
 function classifyHostReconcile(
   spec: ModelHostManifest["spec"],
   localState: ReturnType<typeof readModelHostState>,
-  current: { state: string; specHash?: string },
+  current: { state: string; specHash?: string; sleep?: unknown },
   startAttemptHash: string | null,
 ): HostReconcileDecision {
   if (!spec.enabled && current.state !== "Running") return "sweep-disabled";
+  // #283: a live, enabled host the node reports sleeping or sleep-pending is
+  // left alone even if the specHash drifted — a spec change is deferred until
+  // the host is awake, because restarting would wake it outside the shared
+  // reservation. A Stopped or disabled host is not covered, whatever stale
+  // sleep claim it carries.
+  if (spec.enabled && current.state === "Running" && isSleepResidency(current.sleep)) {
+    return "sleeping";
+  }
   const desiredHash = computeModelHostSpecHash(specForHash(spec));
   const observedHash = spec.node === LOCAL_NODE_ID ? localState?.specHash : current.specHash;
   if (current.state === "Running" && observedHash === desiredHash) return "converged";
@@ -689,6 +710,7 @@ interface HostReportExtra {
   foundDead?: boolean;
   reason?: "NodeUnreachable";
   admissionReason?: AdmissionRefusalReason;
+  observed?: "sleeping";
 }
 
 /**
@@ -740,6 +762,7 @@ function pushHostReport(
     ...(extra.foundDead === true ? { foundDead: true } : {}),
     ...(extra.reason !== undefined ? { reason: extra.reason } : {}),
     ...(extra.admissionReason !== undefined ? { admissionReason: extra.admissionReason } : {}),
+    ...(extra.observed !== undefined ? { observed: extra.observed } : {}),
   });
   if (extra.error === undefined) return 0;
   recordHostOutcome(spec, name, { kind: "error", ...extra.error }, ctx);
@@ -790,7 +813,7 @@ function settleHostWithoutApply(
   ctx: HostRecordContext,
 ): number {
   if (decision === "sweep-disabled") return sweepDisabledHost(spec, name, reports, ctx);
-  if (decision === "converged") {
+  if (decision === "converged" || decision === "sleeping") {
     recordHostOutcome(
       spec,
       name,
@@ -798,7 +821,10 @@ function settleHostWithoutApply(
       ctx,
     );
   }
-  return pushHostReport(reports, spec, name, "unchanged", {}, ctx);
+  // #283: a sleeping host is reported unchanged with observed "sleeping"; the
+  // converged path stays identical so existing report assertions hold.
+  const extra: HostReportExtra = decision === "sleeping" ? { observed: "sleeping" } : {};
+  return pushHostReport(reports, spec, name, "unchanged", extra, ctx);
 }
 
 /**

@@ -3,6 +3,7 @@ import type {
   ManagedAdmissionClaim,
   ManagedAdmissionDecision,
 } from "@llamactl/core/residency/admission";
+import type { SleepResidency } from "@llamactl/core/residency/llamacpp-sleep";
 import type { MeasuredEnvelope } from "@llamactl/core/resources/memory";
 import type { spawn as nodeSpawn } from "node:child_process";
 
@@ -146,6 +147,10 @@ export interface WorkloadClient {
       pid?: number | null;
       specHash?: string;
       identityUnknown?: boolean;
+      /** Set by a node whose llama.cpp sleep controller holds the member
+       *  sleeping or sleep-pending; the reconciler leaves such a host alone
+       *  (#283). Absent means the node makes no sleep claim. */
+      sleep?: SleepResidency;
     }>;
   };
   rpcServerStart: {
