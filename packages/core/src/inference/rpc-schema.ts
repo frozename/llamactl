@@ -98,12 +98,19 @@ export const InferenceRpcRejectionCodeSchema = z.enum([
 ]);
 export type InferenceRpcRejectionCode = z.infer<typeof InferenceRpcRejectionCodeSchema>;
 
+/**
+ * `retryAfterMs` is typed retry guidance on an `overloaded` rejection (#281):
+ * how long the worker asks the caller to wait before retrying. It types and
+ * pins the field; validation alone does not strip it today, so a caller can
+ * read it without guessing.
+ */
 export const InferenceRpcRejectionV1Schema = z.object({
   code: InferenceRpcRejectionCodeSchema,
   message: z.string(),
   supportedVersions: z.array(InferenceRpcVersionSchema).optional(),
   unsupportedFeatures: z.array(InferenceRpcFeatureSchema).optional(),
   catalogGeneration: z.string().min(1).optional(),
+  retryAfterMs: z.number().int().nonnegative().optional(),
 });
 export type InferenceRpcRejectionV1 = z.infer<typeof InferenceRpcRejectionV1Schema>;
 

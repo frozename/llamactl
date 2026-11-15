@@ -98,8 +98,10 @@ import { createRagAdapter } from "./rag/index.js";
 import { resolveRagNode } from "./rag/resolve.js";
 import {
   applyResidencyProfile,
+  cancelResidencyProfileOperation,
   residencyApplyProfileRefusal,
   type ResidencyApplyProfileResult,
+  type ResidencyCancelOperationResult,
 } from "./residency/apply-profile.js";
 import {
   type ForceUnloadKind,
@@ -2324,6 +2326,23 @@ export const router = t.router({
         },
       });
     }),
+
+  // #284 (DF-11): request cancellation of an in-flight profile switch by
+  // operationId. The id comes from residencyApplyProfile (operationId /
+  // busy.operationId / inFlightOperationId) or residency status. The cancel is
+  // process-local: it aborts only a switch whose controller is registered in
+  // this serving process. `cancel-requested` means the abort was delivered; it
+  // is not the recorded outcome, which the switch writes when it reaches a step
+  // boundary.
+  residencyCancelOperation: t.procedure
+    .input(z.object({ operationId: z.string().min(1), confirm: z.literal(true) }))
+    .mutation(
+      ({ input }): ResidencyCancelOperationResult =>
+        cancelResidencyProfileOperation({
+          operationId: input.operationId,
+          storePath: defaultResidencyStorePath(),
+        }),
+    ),
 
   workloadApply: t.procedure
     .input(z.object({ yaml: z.string().min(1) }))

@@ -33,10 +33,15 @@ import {
 } from "@llamactl/fleet-supervisor";
 import { basename } from "node:path";
 
+import type { BegunEvictionOps, EvictionOperationOpts } from "../residency/eviction-operation.js";
 import type { GatewayDispatch } from "./gateway-handlers/types.js";
 import type { NodeRunResidency } from "./noderun-schema.js";
 import type { ModelRun, ModelRunStatus, ModelRunWorker } from "./schema.js";
 
+import {
+  beginEvictionOperations,
+  finishEvictionOperations,
+} from "../residency/eviction-operation.js";
 import {
   type AdmissionResult,
   computeNodeBudget,
@@ -260,6 +265,11 @@ export interface ApplyManifestOptions {
    *  owning replacement is missing or not yet confirmed. Same contract
    *  as ApplyOneOpts.evictionGraceMs. */
   evictionGraceMs?: number;
+  /** DF-02 (#275): record each verified victim's eviction intent as a fenced
+   *  DF-03 residency-store operation, dual-written beside the manifest
+   *  markers. Inert unless supplied; see EvictionOperationOpts for the
+   *  revision-space, ownerId and fence coupling with profile switches. */
+  evictionOperation?: EvictionOperationOpts;
   supervisor?: {
     currentFreeGiB: number;
     headroomMinGiB: number;
@@ -940,6 +950,7 @@ async function convergeModelHostReplacement(
     if (detail !== null) {
       const victims = [...ctx.evictionClaims].map((n) => `'${n}'`).join(", ");
       ctx.evictionClaims.clear();
+      ctx.evictionIntentKept = true;
       message = `${message}; replacement '${manifest.metadata.name}' teardown after failed start unverified (${detail}); eviction intent on ${victims} kept`;
     }
     return { ok: false, error: message };
@@ -974,11 +985,14 @@ async function applyModelHostReplacement(
       sessionGate: opts.sessionGate,
       evictStopTimeoutMs: opts.evictStopTimeoutMs,
       evictionGraceMs: opts.evictionGraceMs,
+      evictionOperation: opts.evictionOperation,
     }),
     now: new Date().toISOString(),
     evictTargets: parseEvictTargets(manifest),
     evictKinds: new Map(),
     evictionClaims: new Set(),
+    evictionOps: new Map(),
+    evictionIntentKept: false,
   };
   let outcome: ApplyManifestOutcome;
   try {
@@ -992,10 +1006,20 @@ async function applyModelHostReplacement(
     );
   } catch (err) {
     clearEvictionMarkers(manifest, ctx.opts, ctx.evictionClaims);
+    finalizeEvictionOperations(
+      ctx,
+      false,
+      `threw ${err instanceof Error ? err.message : String(err)}`,
+    );
     throw err;
   }
-  if (outcome.ok) return outcome;
-  return modelHostEvictionRollback(outcome, ctx);
+  if (outcome.ok) {
+    finalizeEvictionOperations(ctx, true, undefined);
+    return outcome;
+  }
+  const rolled = modelHostEvictionRollback(outcome, ctx);
+  finalizeEvictionOperations(ctx, false, rolled.error);
+  return rolled;
 }
 
 export async function applyOneModelHost(
@@ -1039,6 +1063,9 @@ export async function applyOneModelHost(
     /** How long an evicted-by marker keeps its victim suppressed; same
      *  contract as ApplyOneOpts.evictionGraceMs. */
     evictionGraceMs?: number;
+    /** DF-02 (#275): record each verified victim's eviction intent as a fenced
+     *  DF-03 residency-store operation; see EvictionOperationOpts. */
+    evictionOperation?: EvictionOperationOpts;
   },
 ): Promise<ApplyManifestOutcome> {
   return await applyModelHostManifest(manifest, {
@@ -1060,6 +1087,7 @@ export async function applyOneModelHost(
       ? { evictStopTimeoutMs: opts.evictStopTimeoutMs }
       : {}),
     ...(opts?.evictionGraceMs !== undefined ? { evictionGraceMs: opts.evictionGraceMs } : {}),
+    ...(opts?.evictionOperation !== undefined ? { evictionOperation: opts.evictionOperation } : {}),
   });
 }
 
@@ -1296,6 +1324,11 @@ interface ApplyOneOpts {
    *  forwards its evictionGraceMs so the guard and this check share one
    *  rule. Defaults to EVICTION_INTENT_GRACE_MS. */
   evictionGraceMs?: number;
+  /** DF-02 (#275): record each verified victim's eviction intent as a fenced
+   *  DF-03 residency-store operation, dual-written beside the manifest
+   *  markers. Inert unless supplied; see EvictionOperationOpts for the
+   *  revision-space, ownerId and fence coupling with profile switches. */
+  evictionOperation?: EvictionOperationOpts;
 }
 
 interface SessionUnloadGate {
@@ -1534,6 +1567,12 @@ type EvictFailureReason =
   | "EvictReleaseUnverified"
   | "EvictIntentUnpersisted"
   | "EvictIntentHeld"
+  /**
+   * The residency store refused the eviction operation (another eviction
+   * owns the victim, a stale revision, or the budget); nothing was marked or
+   * stopped (#275 DF-02).
+   */
+  | "EvictOperationRefused"
   | "EvictCapacityUnverified";
 
 interface EvictStopFailure {
@@ -1822,6 +1861,32 @@ function persistEvictIntent(
   }
 }
 
+/**
+ * DF-02 (#275): open every victim's fenced store operation before the first
+ * marker write, probe or stop, so a refusal leaves nothing marked, stopped or
+ * begun. Already-down victims are still begun; they terminalize succeeded.
+ */
+function beginVictimOperations(
+  ctx: EvictionStageCtx,
+  verifiedTargets: readonly string[],
+): EvictStopFailure | null {
+  const operation = ctx.opts?.evictionOperation;
+  if (operation === undefined || verifiedTargets.length === 0) return null;
+  const begun = beginEvictionOperations(operation, ctx.manifest.metadata.name, verifiedTargets);
+  if (!begun.ok) {
+    return evictStopFailure(
+      ctx.manifest,
+      begun.victim,
+      "EvictOperationRefused",
+      `residency store refused eviction operation for '${begun.victim}': ${begun.reason}`,
+    );
+  }
+  for (const [victim, op] of begun.ops) {
+    ctx.evictionOps.set(victim, op);
+  }
+  return null;
+}
+
 async function stopEvictTargets(
   ctx: EvictionStageCtx,
   verifiedTargets: readonly string[],
@@ -1831,6 +1896,8 @@ async function stopEvictTargets(
   const { manifest, client, onEvent, opts, now, evictionClaims, evictKinds } = ctx;
   const workloadsDir = opts?.workloadsDir ?? defaultWorkloadsDir(opts?.env);
   const graceMs = opts?.evictionGraceMs ?? EVICTION_INTENT_GRACE_MS;
+  const beginRefusal = beginVictimOperations(ctx, verifiedTargets);
+  if (beginRefusal !== null) return beginRefusal;
   for (const target of verifiedTargets) {
     const intent = persistEvictIntent(manifest, target, workloadsDir, now, evictionClaims, graceMs);
     if (intent !== null) return intent;
@@ -1874,6 +1941,12 @@ interface EvictionStageCtx {
   /** Evict victims whose marker this apply persisted or reaffirmed;
    *  failure rollback releases exactly these holds. */
   evictionClaims: Set<string>;
+  /** DF-02 (#275): per-victim residency-store operations begun for this
+   *  apply, keyed by victim; terminalized on a settled outcome. */
+  evictionOps: BegunEvictionOps;
+  /** True when an unverified replacement teardown keeps the eviction intent
+   *  (and its store rows) held instead of rolled back. */
+  evictionIntentKept: boolean;
 }
 
 interface ConvergeServerContext extends EvictionStageCtx {
@@ -2624,6 +2697,7 @@ async function failedStartResult(
   if (detail !== null) {
     const victims = [...ctx.evictionClaims].map((n) => `'${n}'`).join(", ");
     ctx.evictionClaims.clear();
+    ctx.evictionIntentKept = true;
     message = `${message}; replacement '${ctx.manifest.metadata.name}' teardown after failed start unverified (${detail}); eviction intent on ${victims} kept`;
   }
   return failedApplyResult(action, message, ctx.now);
@@ -2924,6 +2998,35 @@ function applyEvictionRollback(
   return { ...result, error: result.error !== undefined ? `${result.error}; ${note}` : note };
 }
 
+/**
+ * Terminalize the residency-store eviction operations this apply opened
+ * (DF-02 #275). A successful replacement succeeds them; a rolled-back one
+ * fails them with a `rolled-back:` detail. An unverified teardown keeps the
+ * rows nonterminal so the store and the held marker agree on the single owner
+ * (`evict:` recovery is a follow-up). Never throws; the ops map is always
+ * cleared so a re-entry cannot double-terminalize.
+ */
+function finalizeEvictionOperations(
+  ctx: EvictionStageCtx,
+  succeeded: boolean,
+  error: string | undefined,
+): void {
+  const operation = ctx.opts?.evictionOperation;
+  if (operation === undefined || ctx.evictionOps.size === 0) return;
+  const name = ctx.manifest.metadata.name;
+  if (succeeded) {
+    finishEvictionOperations(operation, ctx.evictionOps, "succeeded", `evicted for ${name}`);
+  } else if (!ctx.evictionIntentKept) {
+    finishEvictionOperations(
+      operation,
+      ctx.evictionOps,
+      "failed",
+      `rolled-back: ${error ?? "replacement did not reach Running"}`,
+    );
+  }
+  ctx.evictionOps.clear();
+}
+
 async function convergeServerUnderLock(ctx: ConvergeServerContext): Promise<ApplyResult> {
   const admission = await admitServerBudget(ctx);
   if (!admission.ok) return admissionRejection(ctx, admission);
@@ -3031,18 +3134,28 @@ export async function applyOne(
       evictTargets,
       evictKinds: new Map(),
       evictionClaims,
+      evictionOps: new Map(),
+      evictionIntentKept: false,
     };
     let result: ApplyResult;
     try {
       result = await convergeServerUnderLock(ctx);
     } catch (err) {
       clearEvictionMarkers(manifest, opts, evictionClaims);
+      finalizeEvictionOperations(
+        ctx,
+        false,
+        `threw ${err instanceof Error ? err.message : String(err)}`,
+      );
       throw err;
     }
     if (result.error === undefined && result.statusSection.phase === "Running") {
+      finalizeEvictionOperations(ctx, true, undefined);
       return result;
     }
-    return applyEvictionRollback(result, manifest, opts, evictionClaims);
+    const rolled = applyEvictionRollback(result, manifest, opts, evictionClaims);
+    finalizeEvictionOperations(ctx, false, rolled.error);
+    return rolled;
   });
 }
 
@@ -3079,6 +3192,7 @@ async function applyModelRunManifest(opts: ApplyManifestOptions): Promise<ApplyM
       sessionGate: opts.sessionGate,
       evictStopTimeoutMs: opts.evictStopTimeoutMs,
       evictionGraceMs: opts.evictionGraceMs,
+      evictionOperation: opts.evictionOperation,
     }),
   });
   if (result.error) {
