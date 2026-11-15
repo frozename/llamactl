@@ -278,8 +278,8 @@ export interface StartAgentOptions {
    * refuses overload instead of queueing unbounded work upstream. One shared
    * instance and one limit cover all three ingresses admitted at this agent —
    * peer-routed and via/RAG included — under one ingress key and one principal;
-   * physical per-node accounting comes later. Worker RPC and the unified proxy
-   * remain later slices.
+   * physical per-node accounting comes later. Worker RPC streams share the cap;
+   * the create-proxy.ts / unified-proxy callers remain a later slice.
    */
   chatCompletionsAdmission?: RequestAdmission;
   /**
@@ -1379,6 +1379,9 @@ function maybePublishWorkerRpc(
     workerId: config.workerId,
     ...(config.backends !== undefined ? { backends: config.backends } : {}),
     ...(leases !== null ? { residencyLeases: leases } : {}),
+    ...(opts.chatCompletionsAdmission !== undefined
+      ? { admission: opts.chatCompletionsAdmission }
+      : {}),
     versions: () =>
       (config.settings()?.versions ?? []).filter((v) =>
         spoken.some((s) => inferenceRpc.compareInferenceRpcVersions(s, v) === 0),
