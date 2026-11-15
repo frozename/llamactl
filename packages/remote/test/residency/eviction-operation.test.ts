@@ -15,9 +15,10 @@ import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 
 import type { EvictionOperationOpts } from "../../src/residency/eviction-operation.js";
-import type { WorkloadClient } from "../../src/workload/apply.js";
+import type { ApplyEvent, WorkloadClient } from "../../src/workload/apply.js";
 import type { ModelHostManifest } from "../../src/workload/modelhost-schema.js";
 
+import { beginEvictionOperations } from "../../src/residency/eviction-operation.js";
 import {
   openResidencyOperationStore,
   readResidencyStoreSnapshot,
@@ -809,6 +810,225 @@ test("E8b an unverified ModelHost replacement teardown keeps the eviction operat
     expect(rows[0]?.phase).not.toBe("terminal");
   } finally {
     restoreRuntimeDir();
+    store.close();
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("E9 a successful ModelHost replacement of a ModelRun victim terminalizes the operation succeeded and frees the victim for a later eviction", async () => {
+  const tmp = mkdtempSync(join(tmpdir(), "llamactl-df02-e9-"));
+  const dir = join(tmp, "workloads");
+  mkdirSync(dir, { recursive: true });
+  const storePath = join(tmp, "residency", "operations.sqlite");
+  const fakeBinary = mkFakeOmlxBinary(tmp);
+  const state: StateMap = new Map([["a", upEntry(8182)]]);
+  saveWorkload(mkManifest("a", { port: 8182, ram: 8 }), dir);
+  const { store, fenceToken } = openClaimedStore(storePath);
+  let hostBStarted = false;
+  const { client, stops, hostStarts } = makeClient(state, {
+    hostStart: (workload) => {
+      if (workload === "host-b") hostBStarted = true;
+      return undefined;
+    },
+    hostStatus: (workload) =>
+      workload === "host-b" && hostBStarted ? { state: "Running", pid: 12345 } : undefined,
+  });
+  const hostB = hostReplacement("host-b", "a", { ram: 8, binary: fakeBinary });
+  const restoreRuntimeDir = pinLocalRuntimeDir(join(tmp, "runtime"));
+  try {
+    const outcome = await applyOneModelHost(hostB, () => client, undefined, {
+      workloadsDir: dir,
+      getNodeBudgetGiB: () => 8,
+      evictionOperation: mkEvictionOperation(store, fenceToken, 7),
+    });
+    expect(outcome.ok).toBe(true);
+    expect(stops).toEqual(["a"]);
+    expect(hostStarts).toEqual(["host-b"]);
+    expect(readWorkloadAnnotations(join(dir, "a.yaml"))?.["llamactl.io/evicted-by"]).toBe("host-b");
+    const op = store.getOperation("op-a");
+    expect(op?.model).toBe("evict:a");
+    expect(op?.phase).toBe("terminal");
+    expect(op?.outcome).toBe("succeeded");
+    expect(store.listNonterminal()).toEqual([]);
+    const later = beginEvictionOperations(
+      {
+        store,
+        fenceToken,
+        desiredRevision: 7,
+        nowMs: (): number => 2_000,
+        operationIdFor: (victim: string): string => `later-${victim}`,
+      },
+      "host-c",
+      ["a"],
+    );
+    expect(later).toEqual({
+      ok: true,
+      ops: new Map([["a", { operationId: "later-a", version: 1 }]]),
+    });
+    expect(store.listNonterminal().map((r) => r.operationId)).toEqual(["later-a"]);
+  } finally {
+    restoreRuntimeDir();
+    store.close();
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("E10a a ModelRun converge that throws after the begin terminalizes the operation as rolled back", async () => {
+  const tmp = mkdtempSync(join(tmpdir(), "llamactl-df02-e10a-"));
+  const dir = join(tmp, "workloads");
+  mkdirSync(dir, { recursive: true });
+  const storePath = join(tmp, "residency", "operations.sqlite");
+  const state: StateMap = new Map([["a", upEntry(8182)]]);
+  saveWorkload(mkManifest("a", { port: 8182 }), dir);
+  const { store, fenceToken } = openClaimedStore(storePath);
+  const { client, stops, starts } = makeClient(state);
+  let nonterminalAtThrow: ResidencyOperationRecord[] | undefined;
+  const onEvent = (e: ApplyEvent): void => {
+    if (e.type === "start") {
+      nonterminalAtThrow = store.listNonterminal();
+      throw new Error("simulated converge crash");
+    }
+  };
+  try {
+    let thrown: unknown;
+    try {
+      await applyOne(
+        mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090 }),
+        () => client,
+        onEvent,
+        undefined,
+        {
+          workloadsDir: dir,
+          getNodeBudgetGiB: () => 32,
+          evictionOperation: mkEvictionOperation(store, fenceToken, 7),
+        },
+      );
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toBe("simulated converge crash");
+    expect(nonterminalAtThrow?.map((r) => r.operationId)).toEqual(["op-a"]);
+    expect(stops).toEqual(["a"]);
+    expect(starts).toEqual([]);
+    const op = store.getOperation("op-a");
+    expect(op?.phase).toBe("terminal");
+    expect(op?.outcome).toBe("failed");
+    expect(op?.detail).toBe("rolled-back: threw simulated converge crash");
+    expect(store.listNonterminal()).toEqual([]);
+    expect(
+      readWorkloadAnnotations(join(dir, "a.yaml"))?.["llamactl.io/evicted-by"],
+    ).toBeUndefined();
+  } finally {
+    store.close();
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("E10b a ModelHost replacement converge that throws after the begin terminalizes the operation as rolled back", async () => {
+  const tmp = mkdtempSync(join(tmpdir(), "llamactl-df02-e10b-"));
+  const dir = join(tmp, "workloads");
+  mkdirSync(dir, { recursive: true });
+  const storePath = join(tmp, "residency", "operations.sqlite");
+  const fakeBinary = mkFakeOmlxBinary(tmp);
+  const state: StateMap = new Map([["a", upEntry(8182)]]);
+  saveWorkload(mkManifest("a", { port: 8182, ram: 8 }), dir);
+  const { store, fenceToken } = openClaimedStore(storePath);
+  const { client, hostStarts } = makeClient(state);
+  let nonterminalAtThrow: ResidencyOperationRecord[] | undefined;
+  const onEvent = (e: ApplyEvent): void => {
+    if (e.type === "stop" && e.message.includes("evicting a")) {
+      nonterminalAtThrow = store.listNonterminal();
+      throw new Error("simulated host converge crash");
+    }
+  };
+  const hostB = hostReplacement("host-b", "a", { ram: 8, binary: fakeBinary });
+  const restoreRuntimeDir = pinLocalRuntimeDir(join(tmp, "runtime"));
+  try {
+    let thrown: unknown;
+    try {
+      await applyOneModelHost(hostB, () => client, onEvent, {
+        workloadsDir: dir,
+        getNodeBudgetGiB: () => 8,
+        evictionOperation: mkEvictionOperation(store, fenceToken, 7),
+      });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toBe("simulated host converge crash");
+    expect(nonterminalAtThrow?.map((r) => r.operationId)).toEqual(["op-a"]);
+    expect(hostStarts).toEqual([]);
+    const op = store.getOperation("op-a");
+    expect(op?.phase).toBe("terminal");
+    expect(op?.outcome).toBe("failed");
+    expect(op?.detail).toBe("rolled-back: threw simulated host converge crash");
+    expect(store.listNonterminal()).toEqual([]);
+    expect(
+      readWorkloadAnnotations(join(dir, "a.yaml"))?.["llamactl.io/evicted-by"],
+    ).toBeUndefined();
+  } finally {
+    restoreRuntimeDir();
+    store.close();
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("E11 a store that throws partway through beginning victims cancels the rows already begun and refuses with a typed reason and zero stops", async () => {
+  const tmp = mkdtempSync(join(tmpdir(), "llamactl-df02-e11-"));
+  const dir = join(tmp, "workloads");
+  mkdirSync(dir, { recursive: true });
+  const storePath = join(tmp, "residency", "operations.sqlite");
+  const state: StateMap = new Map([
+    ["a", upEntry(8182)],
+    ["c", upEntry(8183)],
+  ]);
+  saveWorkload(mkManifest("a", { port: 8182 }), dir);
+  saveWorkload(mkManifest("c", { port: 8183 }), dir);
+  const { store, fenceToken } = openClaimedStore(storePath);
+  const throwingStore: EvictionOperationStore = {
+    beginOperation: (input) => {
+      if (input.model === "evict:c") throw new Error("simulated begin failure");
+      return store.beginOperation(input);
+    },
+    finishOperation: (input) => store.finishOperation(input),
+  };
+  const { client, stops, starts } = makeClient(state);
+  try {
+    const result = await applyOne(
+      mkManifest("b", { annotations: { "llamactl.io/evict": "a,c" }, port: 8090 }),
+      () => client,
+      undefined,
+      undefined,
+      {
+        workloadsDir: dir,
+        getNodeBudgetGiB: () => 64,
+        evictionOperation: mkEvictionOperation(throwingStore, fenceToken, 7),
+      },
+    );
+    expect(stops).toEqual([]);
+    expect(starts).toEqual([]);
+    expect(result.statusSection.phase).toBe("Failed");
+    expect(result.error).toContain("EvictOperationRefused");
+    expect(result.error).toContain("'c'");
+    expect(result.error).toContain("simulated begin failure");
+    const applied = result.statusSection.conditions.find((c) => c.type === "Applied");
+    expect(applied?.reason).toBe("EvictOperationRefused");
+    const opA = store.getOperation("op-a");
+    expect(opA?.phase).toBe("terminal");
+    expect(opA?.outcome).toBe("cancelled");
+    expect(opA?.detail).toBe("refused: 'c' simulated begin failure");
+    expect(store.getOperation("op-c")).toBeNull();
+    expect(store.listNonterminal()).toEqual([]);
+    expect(state.has("a")).toBe(true);
+    expect(state.has("c")).toBe(true);
+    expect(
+      readWorkloadAnnotations(join(dir, "a.yaml"))?.["llamactl.io/evicted-by"],
+    ).toBeUndefined();
+    expect(
+      readWorkloadAnnotations(join(dir, "c.yaml"))?.["llamactl.io/evicted-by"],
+    ).toBeUndefined();
+  } finally {
     store.close();
     rmSync(tmp, { recursive: true, force: true });
   }

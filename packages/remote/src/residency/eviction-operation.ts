@@ -24,6 +24,17 @@ import type { ResidencyOperationOutcome, ResidencyOperationStore } from "./store
  * A claimOwnership (fence bump) between begin and finish makes finishOperation
  * fail with stale-fence. That leaves the row nonterminal, and it blocks later
  * evictions of that victim until `evict:` recovery exists (follow-up).
+ *
+ * Known edge cases:
+ * - Rollback is not atomic across the two records. If clearEvictionMarkers
+ *   cannot save the victim's manifest, the store row is still finished as
+ *   failed (`rolled-back:`) while the manifest's evicted-by marker remains,
+ *   so the marker alone holds the victim until its grace window lapses.
+ * - beginOperation is idempotent on operationId. A deterministic
+ *   operationIdFor (as the tests inject) makes two applies of the same
+ *   replacement and victim replay the same row, so both would share
+ *   ownership of it. The default id carries a randomUUID, so each apply
+ *   opens its own row and the second is refused as reservation-conflict.
  */
 export type EvictionOperationOpts = {
   store: Pick<ResidencyOperationStore, "beginOperation" | "finishOperation">;
