@@ -22,13 +22,18 @@
  * crash-recovery path terminalizes it; serialization is therefore NOT
  * complete without recovery.
  *
- * With an operation record, finishing it terminal is the plan's `complete`
- * step, so `deferred` omits `complete`; without one, `complete` stays
- * deferred. crash recovery/rollback/persist-suppression/verify-release/
- * reserve/verify-ready/publish stay deferred. The planner's
- * `request.timeouts.drainMs` is not carried on `OkPlan`, so the executor
- * uses `opts.drainTimeoutMs` or the default; threading the resolved
- * timeouts through is a later slice.
+ * On an ok, non-noop plan, `deferred` omits `complete` whenever
+ * `opts.operation` is passed, because finishing that record terminal is the
+ * plan's `complete` step. The omission keys on the option alone, not on a
+ * record being finished, so it also holds for a dry run (which writes no
+ * record) and for a Busy, store-refused or replayed report. Without
+ * `opts.operation`, `complete` stays deferred. A refused or noop plan reports
+ * an empty `deferred` either way.
+ *
+ * Crash recovery/rollback/persist-suppression/verify-release/reserve/
+ * verify-ready/publish stay deferred. The planner's `request.timeouts.drainMs`
+ * is not carried on `OkPlan`, so the executor uses `opts.drainTimeoutMs` or
+ * the default; threading the resolved timeouts through is a later slice.
  */
 import { getResidencyLeaseRegistry, type ResidencyLeases } from "@llamactl/core/residency/leases";
 import {

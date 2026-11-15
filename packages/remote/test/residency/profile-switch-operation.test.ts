@@ -866,7 +866,7 @@ describe("executeProfileSwitch operation record + cancellation", () => {
     expect(rec?.detail).not.toContain("drain timeout");
   });
 
-  test("deferred omits complete only when an operation record terminalizes the switch", async () => {
+  test("deferred omits complete when an operation is passed and keeps it without one", async () => {
     const plan = okFleetPlan();
     const withRecord = await runSwitch(plan, makeDeps().deps, {
       dryRun: false,
