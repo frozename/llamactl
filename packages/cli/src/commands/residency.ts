@@ -1,11 +1,16 @@
-// #284 (DF-11): read-only `llamactl residency status`, plus the #278 (DF-05)
-// operator `residency force-unload`. Status routes one residencyStatus.query
-// through the dispatcher, bounded by the exported withNodeQueryDeadline helper,
-// and renders the serving process's NodeRun policy, memory budget and node-local
-// residency store; it never wakes a model and never mutates. force-unload is the
-// one deliberate mutation here: it drives a workload through the lease fence,
-// revoking active leases and auditing any revocation as an operator override
-// (an idle unload, with no leases held, writes no lease audit row).
+// #284 (DF-11): read-only `llamactl residency status` and `residency plan`,
+// plus the #278 (DF-05) operator `residency force-unload`. Status routes one
+// residencyStatus.query through the dispatcher, bounded by the exported
+// withNodeQueryDeadline helper, and renders the serving process's NodeRun policy,
+// memory budget and node-local residency store; it never wakes a model and never
+// mutates. plan is the read-only dry-run profile switch: it routes one
+// residencyPlan.query and renders budget source, victims, replacements,
+// protected workloads or a refusal reason; a refusal is a successful dry-run
+// answer and exits 0, never starting, stopping, loading or writing the store.
+// force-unload is the one deliberate mutation here: it drives a workload through
+// the lease fence, revoking active leases and auditing any revocation as an
+// operator override (an idle unload, with no leases held, writes no lease audit
+// row).
 
 import type { NodeClient, noderunSchema } from "@llamactl/remote";
 
@@ -17,14 +22,18 @@ const USAGE = `Usage: llamactl residency <subcommand>
 
 Subcommands:
   status --node <name> [--json]   Read-only residency status: NodeRun policy, memory budget, the serving process's residency store and its per-workload lease/drain state. Never wakes a model or mutates state.
+  plan --node <name> --to <profile> [--from <profile>] [--json]   Read-only dry-run profile switch: budget source, victims, replacements, protected workloads or refusal. Never starts, stops, loads or writes the store.
   force-unload <workload> --reason <text> --yes [--node <name>] [--json]   Operator override of the stop fence: revoke active leases (audited as an operator override), then stop the workload. Destructive; requires --yes.
 
 Example:
   llamactl residency status --node <name> [--json]
+  llamactl residency plan --node <name> --to <profile> [--json]
   llamactl residency force-unload <workload> --reason <text> --yes
 `;
 
 export type ResidencyStatusView = Awaited<ReturnType<NodeClient["residencyStatus"]["query"]>>;
+
+export type ResidencyPlanView = Awaited<ReturnType<NodeClient["residencyPlan"]["query"]>>;
 
 export type ResidencyForceUnloadView = Awaited<
   ReturnType<NodeClient["residencyForceUnload"]["mutate"]>
@@ -150,6 +159,146 @@ async function runResidencyStatus(args: string[], deps: ResidencyDeps): Promise<
     return 0;
   } catch (err) {
     process.stderr.write(`residency status: ${(err as Error).message}\n`);
+    return 1;
+  }
+}
+
+function renderResidencyPlanLabel(label: string, value: string): string {
+  return `${label.padEnd(14)}${value}`;
+}
+
+function joinPlanList(items: readonly string[]): string {
+  return items.length === 0 ? "none" : items.join(", ");
+}
+
+export function renderResidencyPlan(
+  req: { node: string; to: string; from: string | null },
+  plan: ResidencyPlanView,
+): string {
+  const lines: string[] = [];
+  lines.push(renderResidencyPlanLabel("Node:", req.node));
+  lines.push(renderResidencyPlanLabel("Switch:", `${req.from ?? "(current)"} -> ${req.to}`));
+  lines.push(
+    renderResidencyPlanLabel("Mode:", "dry-run (no starts, stops, loads or store writes)"),
+  );
+  if (plan.budget !== undefined) {
+    lines.push(
+      renderResidencyPlanLabel(
+        "Budget:",
+        `${plan.budget.memoryGiB.toFixed(1)} GiB (source: ${plan.budget.source})`,
+      ),
+    );
+  }
+  if (plan.ok) {
+    lines.push(renderResidencyPlanLabel("Result:", plan.noop ? "ok (noop)" : "ok"));
+    lines.push(renderResidencyPlanLabel("Victims:", joinPlanList(plan.victims)));
+    lines.push(renderResidencyPlanLabel("Replacements:", joinPlanList(plan.replacements)));
+    lines.push(renderResidencyPlanLabel("Protected:", joinPlanList(plan.protected)));
+    lines.push(renderResidencyPlanLabel("Retained:", joinPlanList(plan.retained)));
+    lines.push(renderResidencyPlanLabel("Skipped:", joinPlanList(plan.skipped)));
+    lines.push(renderResidencyPlanLabel("Before:", `${plan.beforeGiB.toFixed(1)} GiB`));
+    lines.push(renderResidencyPlanLabel("After:", `${plan.afterGiB.toFixed(1)} GiB`));
+    lines.push(renderResidencyPlanLabel("Peak:", `${plan.peakGiB.toFixed(1)} GiB`));
+    if (plan.storeAppliesToNode === false) {
+      lines.push(
+        renderResidencyPlanLabel(
+          "Note:",
+          `the in-flight store state for ${req.node} was not observed by this serving process`,
+        ),
+      );
+    }
+  } else {
+    lines.push(renderResidencyPlanLabel("Result:", `refused (${plan.reason})`));
+    lines.push(renderResidencyPlanLabel("Detail:", plan.detail));
+    lines.push(renderResidencyPlanLabel("Workloads:", joinPlanList(plan.workloads)));
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+type PlanFlagKey = "node" | "to" | "from";
+
+interface MutablePlanFlags {
+  json: boolean;
+  node: string | undefined;
+  to: string;
+  from: string | undefined;
+}
+
+type PlanFlags = MutablePlanFlags | { exit: number };
+
+function applyPlanArg(args: string[], i: number, flags: MutablePlanFlags): ArgStep {
+  const arg = required(args[i]);
+  if (arg === "--json") {
+    flags.json = true;
+    return { consumed: 1 };
+  }
+  if (arg === "-h" || arg === "--help") {
+    process.stdout.write(USAGE);
+    return { exit: 0 };
+  }
+  const eq = arg.indexOf("=");
+  const flag = eq === -1 ? arg : arg.slice(0, eq);
+  if (flag === "--node" || flag === "--to" || flag === "--from") {
+    const key = flag.slice(2) as PlanFlagKey;
+    if (eq !== -1) {
+      flags[key] = arg.slice(eq + 1);
+      return { consumed: 1 };
+    }
+    const next = args[i + 1];
+    if (next === undefined) {
+      process.stderr.write(`residency plan: ${flag} requires a value\n`);
+      return { exit: 1 };
+    }
+    flags[key] = next;
+    return { consumed: 2 };
+  }
+  process.stderr.write(`residency plan: unknown argument ${arg}\n`);
+  return { exit: 1 };
+}
+
+function parsePlanArgs(args: string[]): PlanFlags {
+  const flags: MutablePlanFlags = { json: false, node: undefined, to: "", from: undefined };
+  let i = 0;
+  while (i < args.length) {
+    const step = applyPlanArg(args, i, flags);
+    if ("exit" in step) return step;
+    i += step.consumed;
+  }
+  return flags;
+}
+
+async function runResidencyPlan(args: string[], deps: ResidencyDeps): Promise<number> {
+  const parsed = parsePlanArgs(args);
+  if ("exit" in parsed) return parsed.exit;
+
+  const node = parsed.node ?? getGlobals().nodeName ?? "";
+  if (node === "") {
+    process.stderr.write(`residency plan: --node <name> is required\n${USAGE}`);
+    return 1;
+  }
+  if (node === "all") {
+    process.stderr.write("residency plan: --node all is not supported; name one node\n");
+    return 1;
+  }
+  const to = parsed.to;
+  if (to === "") {
+    process.stderr.write("residency plan: --to <profile> is required\n");
+    return 1;
+  }
+  const from = parsed.from;
+
+  try {
+    const client = (deps.getNodeClientByName ?? getNodeClientByName)(node);
+    const input = { node, to, ...(from !== undefined ? { from } : {}) };
+    const plan = await withNodeQueryDeadline(node, () => client.residencyPlan.query(input));
+    if (parsed.json) {
+      process.stdout.write(`${JSON.stringify(plan, null, 2)}\n`);
+      return 0;
+    }
+    process.stdout.write(renderResidencyPlan({ node, to, from: from ?? null }, plan));
+    return 0;
+  } catch (err) {
+    process.stderr.write(`residency plan: ${(err as Error).message}\n`);
     return 1;
   }
 }
@@ -309,6 +458,9 @@ export async function runResidency(args: string[], deps: ResidencyDeps = {}): Pr
   }
   if (sub === "status") {
     return await runResidencyStatus(rest, deps);
+  }
+  if (sub === "plan") {
+    return await runResidencyPlan(rest, deps);
   }
   if (sub === "force-unload") {
     return await runResidencyForceUnload(rest, deps);

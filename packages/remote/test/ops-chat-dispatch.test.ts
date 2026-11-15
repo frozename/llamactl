@@ -1,5 +1,5 @@
 import { getResidencyLeaseRegistry } from "@llamactl/core/residency/leases";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, setSystemTime, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
@@ -14,8 +14,17 @@ import {
 } from "../src/ops-chat/dispatch.js";
 import { openResidencyOperationStore } from "../src/residency/store.js";
 import { router } from "../src/router.js";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "../src/safe-fs.js";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+} from "../src/safe-fs.js";
 import { saveNodeRun } from "../src/workload/noderun-store.js";
+import { type ModelRun, ModelRunSchema } from "../src/workload/schema.js";
+import { saveWorkload } from "../src/workload/store.js";
 
 /**
  * N.4.a — ops-chat tool dispatch. Every handler returns a
@@ -716,6 +725,175 @@ describe("Composite dispatch", () => {
     expect(res.error?.code).toBe("dispatch_error");
     expect(res.error?.message).toContain("name");
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe("residency.plan dispatch", () => {
+  /**
+   * #284 (DF-11) — `llamactl.residency.plan` is a read-tier ops-chat tool
+   * projecting the read-only `residencyPlan` query. Like residency.status
+   * it must stay inert: dispatching it never installs the process-wide
+   * lease registry and the plan read never creates the store.
+   */
+
+  type RunPhase = "Pending" | "Running" | "Failed" | "Stopped";
+
+  interface RunManifestOptions {
+    node?: string;
+    enabled?: boolean;
+    profiles?: string;
+    phase?: RunPhase;
+    expectedMemoryGiB?: number;
+  }
+
+  function runManifest(name: string, options: RunManifestOptions = {}): ModelRun {
+    const annotations =
+      options.profiles === undefined
+        ? undefined
+        : { ["llamactl.io/residency-profiles"]: options.profiles };
+    return ModelRunSchema.parse({
+      apiVersion: "llamactl/v1",
+      kind: "ModelRun",
+      metadata: {
+        name,
+        ...(annotations === undefined ? {} : { annotations }),
+      },
+      spec: {
+        node: options.node ?? "local",
+        enabled: options.enabled ?? true,
+        target: { kind: "rel", value: "org/repo/run.gguf" },
+        ...(options.expectedMemoryGiB === undefined
+          ? {}
+          : { resources: { expectedMemoryGiB: options.expectedMemoryGiB } }),
+      },
+      ...(options.phase === undefined
+        ? {}
+        : {
+            status: {
+              phase: options.phase,
+              lastTransitionTime: "2026-01-01T00:00:00.000Z",
+            },
+          }),
+    });
+  }
+
+  function seedResidencyPlanFixture(workloadsDir: string): void {
+    saveWorkload(
+      runManifest("chat-a", {
+        node: "local",
+        profiles: "chat",
+        phase: "Running",
+        expectedMemoryGiB: 10,
+      }),
+      workloadsDir,
+    );
+    saveWorkload(
+      runManifest("code-b", {
+        node: "local",
+        profiles: "code",
+        phase: "Stopped",
+        expectedMemoryGiB: 12,
+      }),
+      workloadsDir,
+    );
+    saveWorkload(
+      runManifest("embed", { node: "local", phase: "Running", expectedMemoryGiB: 1 }),
+      workloadsDir,
+    );
+    saveNodeRun(
+      {
+        apiVersion: "llamactl/v1",
+        kind: "NodeRun",
+        metadata: { name: "local", labels: {} },
+        spec: { node: "local", budget: { memoryGiB: 24 }, infra: [] },
+      },
+      workloadsDir,
+    );
+  }
+
+  function snapshotTree(dir: string, prefix = ""): Map<string, string> {
+    const out = new Map<string, string>();
+    if (!existsSync(dir)) return out;
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const rel = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        for (const [key, value] of snapshotTree(path, rel)) out.set(key, value);
+      } else if (entry.isFile()) {
+        out.set(rel, readFileSync(path).toString("base64"));
+      }
+    }
+    return out;
+  }
+
+  function stripClock(p: unknown): Record<string, unknown> {
+    const { deadlineMs, ...rest } = p as Record<string, unknown>;
+    return rest;
+  }
+
+  beforeEach(() => {
+    setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+  });
+
+  afterEach(() => {
+    setSystemTime();
+  });
+
+  test("registry advertises llamactl.residency.plan as a read tool on mcp + ops-chat", () => {
+    // Kills: re-tiering the entry as a mutation or dropping a surface.
+    expect((KNOWN_OPS_CHAT_TOOLS as readonly string[]).includes("llamactl.residency.plan")).toBe(
+      true,
+    );
+    const entry = OPS_CHAT_TOOLS.find((t) => (t.name as string) === "llamactl.residency.plan");
+    expect(entry).toBeDefined();
+    expect(entry?.tier).toBe("read");
+    expect(entry?.surfaces).toEqual(["mcp", "ops-chat"]);
+  });
+
+  test("dispatch round-trips residencyPlan against the seeded router fixture", async () => {
+    // Kills: a missing dispatch case or dropping the from argument.
+    const workloadsDir = join(runtimeDir, "workloads");
+    const storePath = join(runtimeDir, "residency-state", "operations.sqlite");
+    process.env["LLAMACTL_WORKLOADS_DIR"] = workloadsDir;
+    process.env["LLAMACTL_RESIDENCY_STORE"] = storePath;
+    process.env["LLAMACTL_NODE_NAME"] = "local";
+    seedResidencyPlanFixture(workloadsDir);
+
+    const caller = router.createCaller({});
+    const expected = await caller.residencyPlan({ node: "local", to: "code", from: "chat" });
+    const before = snapshotTree(workloadsDir);
+
+    const res = await caller.operatorRunTool({
+      name: "llamactl.residency.plan",
+      arguments: { node: "local", to: "code", from: "chat" },
+      dryRun: false,
+    });
+    expect(res.ok).toBe(true);
+    expect(res.tier).toBe("read");
+    expect(stripClock(res.result)).toEqual(stripClock(expected));
+    const result = res.result as Record<string, unknown>;
+    expect(result["from"]).toBe("chat");
+    expect(typeof result["deadlineMs"]).toBe("number");
+
+    const after = snapshotTree(workloadsDir);
+    expect([...after.entries()].sort()).toEqual([...before.entries()].sort());
+    expect(existsSync(join(runtimeDir, "residency-state"))).toBe(false);
+
+    const tail = readOpsChatAudit({ path: auditPath });
+    expect(tail.entries).toHaveLength(1);
+    expect(tail.entries[0]!.tool).toBe("llamactl.residency.plan");
+  });
+
+  test("missing to argument surfaces a dispatch error", async () => {
+    // Kills: a dispatch case that does not require the to profile.
+    const caller = router.createCaller({});
+    const res = await caller.operatorRunTool({
+      name: "llamactl.residency.plan",
+      arguments: { node: "local" },
+      dryRun: false,
+    });
+    expect(res.ok).toBe(false);
+    expect(res.error?.message).toContain("missing required argument: to");
   });
 });
 

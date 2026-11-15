@@ -27,6 +27,16 @@ export type ObservedSleepState =
   | "loading"
   | "unhealthy";
 
+// The residency a node's llama.cpp sleep controller reports while it holds a
+// member down (#283): the reconciler leaves such a host alone. "sleep-pending"
+// is a controller transition state, not an observed one, so it is a distinct
+// type from ObservedSleepState.
+export type SleepResidency = "sleeping" | "sleep-pending";
+
+export function isSleepResidency(value: unknown): value is SleepResidency {
+  return value === "sleeping" || value === "sleep-pending";
+}
+
 export type SleepReconcileAction =
   | { kind: "none" }
   | { kind: "request-wake" }
@@ -114,8 +124,9 @@ export function classifySleepObservation(
   }
   // Live process — check further signals
   if (capability.kind === "guarded-sleep") {
-    // Guarded: live + sleeping flag + healthy → sleeping
-    if (observation.isSleeping && observation.healthStatus === 200) {
+    // A sleeping llama.cpp host may fail /health; sleep is an observed
+    // residency state, not a health failure (#283).
+    if (observation.isSleeping === true) {
       return "sleeping";
     }
   }
