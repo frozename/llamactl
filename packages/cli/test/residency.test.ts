@@ -515,6 +515,161 @@ describe("llamactl residency status", () => {
   });
 });
 
+describe("residency force-unload", () => {
+  const FORCE_UNLOAD_OK = {
+    ok: true,
+    workload: "w1",
+    kind: "modelrun",
+    source: "operator",
+    reason: "drill",
+    revoked: ["w1#1"],
+    stopped: true,
+    epoch: 1,
+  };
+
+  function forceUnloadArgs(workload = "w1", extra: string[] = []): string[] {
+    return ["force-unload", workload, "--reason", "drill", "--node", "gpu1", "--yes", ...extra];
+  }
+
+  test("refuses without --yes before touching the node client", async () => {
+    const residency = await loadResidency();
+    const rec = setupResidency({});
+
+    const { result: code, stderr } = await withCapturedIo(() =>
+      residency.runResidency(
+        ["force-unload", "w1", "--reason", "drill", "--node", "gpu1"],
+        rec.deps,
+      ),
+    );
+
+    expect(code).toBe(1);
+    expect(stderr).toContain("residency force-unload: refusing without --yes");
+    expect(rec.calls).toEqual([]);
+    expect(rec.nodes).toEqual([]);
+  });
+
+  test("--yes mutates residencyForceUnload once and renders the operator result", async () => {
+    const residency = await loadResidency();
+    const rec = setupResidency({
+      "residencyForceUnload.mutate": (): Promise<unknown> => Promise.resolve(FORCE_UNLOAD_OK),
+    });
+
+    const {
+      result: code,
+      stdout,
+      stderr,
+    } = await withCapturedIo(() => residency.runResidency(forceUnloadArgs(), rec.deps));
+
+    expect(code).toBe(0);
+    expect(stderr).toBe("");
+    expect(rec.nodes).toEqual(["gpu1"]);
+    expect(rec.calls).toEqual(["residencyForceUnload.mutate"]);
+    expect(rec.inputs).toEqual([{ workload: "w1", reason: "drill", confirm: true }]);
+    expect(stdout).toContain("Forced unload: w1");
+    expect(stdout).toContain("source operator");
+    expect(stdout).toContain("reason drill");
+  });
+
+  test("--json prints the mutate result", async () => {
+    const residency = await loadResidency();
+    const rec = setupResidency({
+      "residencyForceUnload.mutate": (): Promise<unknown> => Promise.resolve(FORCE_UNLOAD_OK),
+    });
+
+    const {
+      result: code,
+      stdout,
+      stderr,
+    } = await withCapturedIo(() =>
+      residency.runResidency(forceUnloadArgs("w1", ["--json"]), rec.deps),
+    );
+
+    expect(code).toBe(0);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(FORCE_UNLOAD_OK);
+  });
+
+  test("typed refusals exit 1 with the reason on stderr", async () => {
+    const residency = await loadResidency();
+    for (const reason of ["UnknownWorkload", "Unavailable"]) {
+      const rec = setupResidency({
+        "residencyForceUnload.mutate": (): Promise<unknown> =>
+          Promise.resolve({ ok: false, reason, workload: "ghost", detail: "x" }),
+      });
+      const { result: code, stderr } = await withCapturedIo(() =>
+        residency.runResidency(forceUnloadArgs("ghost"), rec.deps),
+      );
+      expect(code).toBe(1);
+      expect(stderr).toContain(`residency force-unload: ${reason}`);
+    }
+  });
+
+  test("usage errors never reach the node client", async () => {
+    const residency = await loadResidency();
+
+    const missingReason = setupResidency({});
+    const r1 = await withCapturedIo(() =>
+      residency.runResidency(["force-unload", "w1", "--node", "gpu1", "--yes"], missingReason.deps),
+    );
+    expect(r1.result).toBe(1);
+    expect(r1.stderr).toContain("residency force-unload: --reason <text> is required");
+    expect(missingReason.calls).toEqual([]);
+    expect(missingReason.nodes).toEqual([]);
+
+    for (const blank of ["", "="]) {
+      const rec = setupResidency({});
+      const args =
+        blank === "="
+          ? ["force-unload", "w1", "--reason=", "--node", "gpu1", "--yes"]
+          : ["force-unload", "w1", "--reason", "", "--node", "gpu1", "--yes"];
+      const r = await withCapturedIo(() => residency.runResidency(args, rec.deps));
+      expect(r.result).toBe(1);
+      expect(r.stderr).toContain("residency force-unload: --reason <text> is required");
+      expect(rec.calls).toEqual([]);
+      expect(rec.nodes).toEqual([]);
+    }
+
+    const longReason = setupResidency({});
+    const r3 = await withCapturedIo(() =>
+      residency.runResidency(
+        ["force-unload", "w1", "--reason", "x".repeat(201), "--node", "gpu1", "--yes"],
+        longReason.deps,
+      ),
+    );
+    expect(r3.result).toBe(1);
+    expect(r3.stderr).toContain("residency force-unload: --reason must be at most 200 characters");
+    expect(longReason.calls).toEqual([]);
+    expect(longReason.nodes).toEqual([]);
+
+    const noWorkload = setupResidency({});
+    const r4 = await withCapturedIo(() =>
+      residency.runResidency(["force-unload"], noWorkload.deps),
+    );
+    expect(r4.result).toBe(1);
+    expect(r4.stderr).toContain("force-unload <workload>");
+    expect(noWorkload.calls).toEqual([]);
+    expect(noWorkload.nodes).toEqual([]);
+  });
+
+  test("an idle unload reports zero revocations and no audit row", async () => {
+    const residency = await loadResidency();
+    const rec = setupResidency({
+      "residencyForceUnload.mutate": (): Promise<unknown> =>
+        Promise.resolve({ ...FORCE_UNLOAD_OK, revoked: [] }),
+    });
+
+    const {
+      result: code,
+      stdout,
+      stderr,
+    } = await withCapturedIo(() => residency.runResidency(forceUnloadArgs(), rec.deps));
+
+    expect(code).toBe(0);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("revoked 0 lease(s); no lease audit row written");
+  });
+});
+
 describe("bin residency routing", () => {
   const BIN = join(import.meta.dir, "../src/bin.ts");
 
