@@ -1730,10 +1730,13 @@ export const router = t.router({
       // client via clientForNode, then call openaiProxy's /v1/models
       // through the agent's /v1 HTTP surface. For simplicity today,
       // inline a call through the pinned-fetch path when remote,
-      // and use the core listOpenAIModels directly when local.
+      // and use the core readiness-gated listing directly when local.
       if (resolved.node.endpoint.startsWith("inproc://")) {
+        // Stands in for the agent's /v1/models, so it must apply the same
+        // ModelHost readiness gate: a warming host is hidden here exactly
+        // as it is on a remote agent (#220). Chat routing is unchanged.
         const { openaiProxy } = await import("@llamactl/core");
-        const full = openaiProxy.listOpenAIModels();
+        const full = await openaiProxy.listServingOpenAIModels();
         return { node: input.name, kind, ...projectModelsBody(full, includeDeclared) };
       }
       // Remote agent: scrape its /v1/models endpoint via pinned fetch.
@@ -2065,13 +2068,14 @@ export const router = t.router({
         from: input.from ?? null,
         nowMs: Date.now(),
         servingNode,
-        budgetGiB: defaultNodeBudgetGiB(declared),
+        budgetGiB: defaultNodeBudgetGiB(declared, undefined, node?.spec.residency),
         budgetSource: typeof declared === "number" ? "noderun" : "computed",
         modelRuns: observations.modelRuns,
         modelHosts,
         observed: observations.observed,
         memoryGiB: observations.memoryGiB,
         store: readResidencyStoreSnapshot(defaultResidencyStorePath()),
+        residency: node?.spec.residency ?? null,
       });
     }),
 
