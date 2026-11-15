@@ -2065,13 +2065,14 @@ export const router = t.router({
         from: input.from ?? null,
         nowMs: Date.now(),
         servingNode,
-        budgetGiB: defaultNodeBudgetGiB(declared),
+        budgetGiB: defaultNodeBudgetGiB(declared, undefined, node?.spec.residency),
         budgetSource: typeof declared === "number" ? "noderun" : "computed",
         modelRuns: observations.modelRuns,
         modelHosts,
         observed: observations.observed,
         memoryGiB: observations.memoryGiB,
         store: readResidencyStoreSnapshot(defaultResidencyStorePath()),
+        residency: node?.spec.residency ?? null,
       });
     }),
 
