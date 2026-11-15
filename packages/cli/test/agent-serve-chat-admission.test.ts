@@ -104,6 +104,33 @@ function admRequest(id: string): Record<string, unknown> {
   };
 }
 
+/**
+ * With one execution held, exactly `capacity` acquires queue and the next
+ * one is refused QueueFull. Releases everything before returning.
+ */
+async function expectQueueCapacity(adm: ChatAdmission, capacity: number): Promise<void> {
+  const relA = await adm.acquire(admRequest("holder"), {});
+  expect(await waitFor(() => adm.snapshot().executing === 1)).toBe(true);
+  const pending: Promise<() => void>[] = [];
+  for (let i = 0; i < capacity; i++) {
+    const next = adm.acquire(admRequest(`queued-${String(i)}`), {});
+    void next.catch(() => undefined);
+    pending.push(next);
+  }
+  expect(await waitFor(() => adm.snapshot().queued === capacity)).toBe(true);
+  const err = await adm.acquire(admRequest("over"), {}).then(
+    () => null,
+    (e: unknown) => e,
+  );
+  expect((err as { code?: unknown } | null)?.code).toBe("QueueFull");
+  relA();
+  for (const next of pending) {
+    const release = await next;
+    release();
+  }
+  expect(await waitFor(() => adm.snapshot().executing === 0)).toBe(true);
+}
+
 describe("agent serve chat-completions admission env (#281)", () => {
   // Kills: the env ignored, or maxExecutions not taken from it.
   test("(c1) LLAMACTL_CHAT_ADMISSION_MAX_EXECUTIONS builds a working admission", async () => {
@@ -151,6 +178,24 @@ describe("agent serve chat-completions admission env (#281)", () => {
     relA();
     const relB = await pendingB;
     relB();
+  }, 10_000);
+
+  // Kills: a MAX_QUEUED default other than 16 (unset), and an invalid
+  // MAX_QUEUED falling back to anything but 16, per the help text.
+  test("(c3) MAX_QUEUED unset, '0' or 'abc' leaves a queue capacity of 16", async () => {
+    const dir = freshDir("serve-chat-admission-qd-");
+    const cfg = seedConfig(dir, "127.0.0.1", 7843);
+    const parsed = serveFlags([`--dir=${dir}`]);
+    const envs: Record<string, string | undefined>[] = [
+      { LLAMACTL_CHAT_ADMISSION_MAX_EXECUTIONS: "1" },
+      { LLAMACTL_CHAT_ADMISSION_MAX_EXECUTIONS: "1", LLAMACTL_CHAT_ADMISSION_MAX_QUEUED: "0" },
+      { LLAMACTL_CHAT_ADMISSION_MAX_EXECUTIONS: "1", LLAMACTL_CHAT_ADMISSION_MAX_QUEUED: "abc" },
+    ];
+    for (const env of envs) {
+      const options = build(parsed, cfg, idleWiring, "n", env);
+      expect(options.chatCompletionsAdmission).toBeDefined();
+      await expectQueueCapacity(options.chatCompletionsAdmission!, 16);
+    }
   }, 10_000);
 
   // Passes at base: unset env or a non-positive-integer MAX_EXECUTIONS

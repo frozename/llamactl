@@ -8,8 +8,14 @@
  * Integration cases (2) and (3) are end-to-end regression pins. On
  * Bun 1.4.3 the agent's req.signal fires on socket close (see the
  * openai-proxy.abort.test.ts header), so the req.signal backstop also
- * covers them; their release paths are pinned without a socket by
- * unit cases a6, a7 and a9.
+ * covers them. Their release paths are pinned without a socket by
+ * unit cases: a7 kills a pull read-error branch that never releases,
+ * a9 kills a missing req.signal backstop, and a10 kills a wrapped
+ * cancel() that never releases. a6 kills only a missing once-guard.
+ *
+ * Refusal mapping: QueueFull is 429 + Retry-After (the client is
+ * sending too much), QueueWaitExceeded is 503 + Retry-After (the agent
+ * is overloaded), and a single oversized request is 413.
  *
  * The wiring lands as src/server/chat-admission.ts plus a
  * chatCompletionsAdmission agent option; unit cases reach the module
@@ -17,17 +23,18 @@
  * assertion at base, never by a missing module or a type error.
  */
 import type { RequestQueueLimits } from "@llamactl/core/residency/queue-policy";
+import type { ReadableStreamDefaultReader as WebStreamReader } from "node:stream/web";
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
-  createRequestAdmission,
-  RequestAdmissionError,
   type AdmissionRejectCode,
   type AdmissionRequest,
+  createRequestAdmission,
   type RequestAdmission,
+  RequestAdmissionError,
 } from "../../src/residency/request-admission.js";
 import { mkdtempSync, rmSync } from "../../src/safe-fs.js";
 import { generateToken } from "../../src/server/auth.js";
@@ -115,7 +122,7 @@ function startFakeChatUpstream(): FakeChatUpstream {
       hits += 1;
       const cell: { gate: (ChatGate & { settled: boolean }) | null } = { gate: null };
       const body = new ReadableStream<Uint8Array>({
-        start(controller) {
+        start(controller): void {
           controller.enqueue(encoder.encode(FIRST_CHUNK));
           const gate: ChatGate & { settled: boolean } = {
             settled: false,
@@ -144,7 +151,7 @@ function startFakeChatUpstream(): FakeChatUpstream {
           cell.gate = gate;
           gates.push(gate);
         },
-        cancel() {
+        cancel(): void {
           const gate = cell.gate;
           if (gate === null) return;
           gate.settled = true;
@@ -193,7 +200,7 @@ async function loadChatAdmission(): Promise<ChatAdmissionModule | null> {
 }
 
 function unitAdmission(limits: RequestQueueLimits = ADMISSION_LIMITS): RequestAdmission {
-  return createRequestAdmission({ limits, load: async () => undefined });
+  return createRequestAdmission({ limits, load: () => Promise.resolve() });
 }
 
 function chatRequest(body: string, signal: AbortSignal): Request {
@@ -228,11 +235,9 @@ function countedAdmission(admission: RequestAdmission): {
 
 // ── Integration: real agent + real fake upstream ──────────────────────────
 
-type Opts = Parameters<typeof startAgentServer>[0] & {
-  chatCompletionsAdmission?: RequestAdmission;
-};
+type Opts = Parameters<typeof startAgentServer>[0];
 
-type AgentReader = import("node:stream/web").ReadableStreamDefaultReader;
+type AgentReader = WebStreamReader;
 
 describe("#281 DF-08: chat-completions admission at the agent ingress", () => {
   let dir: string;
@@ -250,7 +255,7 @@ describe("#281 DF-08: chat-completions admission at the agent ingress", () => {
       advertiseMdns: false,
       ...(withAdmission ? { chatCompletionsAdmission: admission } : {}),
     };
-    agent = (startAgentServer as unknown as (o: Opts) => RunningAgent)(options);
+    agent = startAgentServer(options);
     return agent;
   }
 
@@ -295,7 +300,7 @@ describe("#281 DF-08: chat-completions admission at the agent ingress", () => {
     tokenHash = generated.hash;
     admission = createRequestAdmission({
       limits: ADMISSION_LIMITS,
-      load: async () => undefined,
+      load: () => Promise.resolve(),
     });
   });
 
@@ -383,8 +388,9 @@ describe("#281 DF-08: chat-completions admission at the agent ingress", () => {
     const resC = await postChat();
     expect(resC.status).toBe(429);
     expect(resC.headers.get("retry-after")).toBe("3");
-    const errBody = (await resC.json()) as { error?: { code?: unknown } };
+    const errBody = (await resC.json()) as { error?: { code?: unknown; type?: unknown } };
     expect(errBody.error?.code).toBe("QueueFull");
+    expect(errBody.error?.type).toBe("overloaded_error");
     expect(upstream.hits()).toBe(1);
 
     latestGate(upstream).release();
@@ -395,6 +401,34 @@ describe("#281 DF-08: chat-completions admission at the agent ingress", () => {
     const readerB = await firstChunk(resB);
     latestGate(upstream).release();
     await drain(readerB);
+  }, 15_000);
+
+  // Kills: mapping QueueWaitExceeded to 429; a 503 error.type other than
+  // overloaded_error; dropping Retry-After on a queue-wait expiry.
+  test("(6) a queued request past the queue wait gets 503 + Retry-After; the holder streams on", async () => {
+    admission = createRequestAdmission({
+      limits: { ...ADMISSION_LIMITS, maxQueueWaitMs: 150 },
+      load: () => Promise.resolve(),
+    });
+    startAgent(true);
+    const resA = await postChat();
+    expect(resA.status).toBe(200);
+    const readerA = await firstChunk(resA);
+    expect(await waitFor(() => admission.snapshot().executing === 1)).toBe(true);
+
+    const resB = await postChat();
+    expect(resB.status).toBe(503);
+    expect(resB.headers.get("retry-after")).toBe("3");
+    const errBody = (await resB.json()) as { error?: { code?: unknown; type?: unknown } };
+    expect(errBody.error?.code).toBe("QueueWaitExceeded");
+    expect(errBody.error?.type).toBe("overloaded_error");
+    expect(upstream.hits()).toBe(1);
+    expect(admission.snapshot().executing).toBe(1);
+    expect(admission.snapshot().queued).toBe(0);
+
+    latestGate(upstream).release();
+    await drain(readerA);
+    expect(await waitFor(() => admission.snapshot().executing === 0)).toBe(true);
   }, 15_000);
 
   // Passes at base: with no chatCompletionsAdmission the proxy streams
@@ -419,12 +453,16 @@ describe("#281 DF-08: chat-admission module", () => {
     const admission = unitAdmission();
     const ac = new AbortController();
     let seen = -1;
-    await expect(
-      mod!.admitChatCompletions(chatRequest(CHAT_BODY, ac.signal), admission, async () => {
+    const caught = await mod!
+      .admitChatCompletions(chatRequest(CHAT_BODY, ac.signal), admission, () => {
         seen = admission.snapshot().executing;
-        throw new Error("forward boom");
-      }),
-    ).rejects.toThrow("forward boom");
+        return Promise.reject(new Error("forward boom"));
+      })
+      .then(
+        () => null,
+        (err: unknown) => err,
+      );
+    expect((caught as Error | null)?.message).toBe("forward boom");
     expect(seen).toBe(1);
     expect(await waitFor(() => admission.snapshot().executing === 0)).toBe(true);
   }, 10_000);
@@ -435,10 +473,8 @@ describe("#281 DF-08: chat-admission module", () => {
     expect(typeof mod?.admitChatCompletions).toBe("function");
     const admission = unitAdmission();
     const ac = new AbortController();
-    const res = await mod!.admitChatCompletions(
-      chatRequest(CHAT_BODY, ac.signal),
-      admission,
-      async () => new Response(null, { status: 204 }),
+    const res = await mod!.admitChatCompletions(chatRequest(CHAT_BODY, ac.signal), admission, () =>
+      Promise.resolve(new Response(null, { status: 204 })),
     );
     expect(res.status).toBe(204);
     expect(await waitFor(() => admission.snapshot().executing === 0)).toBe(true);
@@ -456,14 +492,10 @@ describe("#281 DF-08: chat-admission module", () => {
       messages: [{ role: "user", content: "x".repeat(100) }],
     });
     let forwarded = false;
-    const res = await mod!.admitChatCompletions(
-      chatRequest(bigBody, ac.signal),
-      admission,
-      async () => {
-        forwarded = true;
-        return new Response("ok");
-      },
-    );
+    const res = await mod!.admitChatCompletions(chatRequest(bigBody, ac.signal), admission, () => {
+      forwarded = true;
+      return Promise.resolve(new Response("ok"));
+    });
     expect(res.status).toBe(413);
     expect(res.headers.get("retry-after")).toBeNull();
     expect(forwarded).toBe(false);
@@ -513,9 +545,9 @@ describe("#281 DF-08: chat-admission module", () => {
     const res = await mod!.admitChatCompletions(
       chatRequest(CHAT_BODY, ac.signal),
       admission,
-      async (r) => {
+      (r) => {
         forwarded = r;
-        return new Response("ok", { status: 200 });
+        return Promise.resolve(new Response("ok", { status: 200 }));
       },
     );
     expect(res.status).toBe(200);
@@ -525,26 +557,26 @@ describe("#281 DF-08: chat-admission module", () => {
     await res.body?.cancel().catch(() => undefined);
   }, 10_000);
 
-  // Kills: a wrapped stream with no cancel() release; a missing
-  // once-guard (double release).
+  // Kills: a missing once-guard (double release). A pull is pending when
+  // the body is cancelled, so the source's done read also calls done();
+  // a cancel() that never releases survives here and is killed by a10.
   test("(a6) cancelling the response body releases the slot exactly once", async () => {
     const mod = await loadChatAdmission();
     expect(typeof mod?.admitChatCompletions).toBe("function");
     const { admission: counted, releases } = countedAdmission(unitAdmission());
     const ac = new AbortController();
     const enc = new TextEncoder();
-    const res = await mod!.admitChatCompletions(
-      chatRequest(CHAT_BODY, ac.signal),
-      counted,
-      async () =>
+    const res = await mod!.admitChatCompletions(chatRequest(CHAT_BODY, ac.signal), counted, () =>
+      Promise.resolve(
         new Response(
           new ReadableStream<Uint8Array>({
-            start(c) {
+            start(c): void {
               c.enqueue(enc.encode("x"));
             },
           }),
           { status: 200 },
         ),
+      ),
     );
     const rd = res.body!.getReader();
     await rd.read();
@@ -567,13 +599,11 @@ describe("#281 DF-08: chat-admission module", () => {
     const ac = new AbortController();
     const enc = new TextEncoder();
     let pulls = 0;
-    const res = await mod!.admitChatCompletions(
-      chatRequest(CHAT_BODY, ac.signal),
-      counted,
-      async () =>
+    const res = await mod!.admitChatCompletions(chatRequest(CHAT_BODY, ac.signal), counted, () =>
+      Promise.resolve(
         new Response(
           new ReadableStream<Uint8Array>({
-            pull(c) {
+            pull(c): void {
               pulls += 1;
               if (pulls === 1) c.enqueue(enc.encode("x"));
               else c.error(new Error("mid boom"));
@@ -581,6 +611,7 @@ describe("#281 DF-08: chat-admission module", () => {
           }),
           { status: 200 },
         ),
+      ),
     );
     const rd = res.body!.getReader();
     let caught: unknown = null;
@@ -633,10 +664,17 @@ describe("#281 DF-08: chat-admission module", () => {
     expect(typeof mod?.admitChatCompletions).toBe("function");
     const { admission: counted, releases } = countedAdmission(unitAdmission());
     const ac = new AbortController();
-    const res = await mod!.admitChatCompletions(
-      chatRequest(CHAT_BODY, ac.signal),
-      counted,
-      async () => new Response(new ReadableStream<Uint8Array>({ start() {} }), { status: 200 }),
+    const res = await mod!.admitChatCompletions(chatRequest(CHAT_BODY, ac.signal), counted, () =>
+      Promise.resolve(
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(): void {
+              // Never enqueues: nobody ever reads this stream.
+            },
+          }),
+          { status: 200 },
+        ),
+      ),
     );
     expect(await waitFor(() => counted.snapshot().executing === 1)).toBe(true);
 
@@ -645,6 +683,38 @@ describe("#281 DF-08: chat-admission module", () => {
     expect(releases()).toBe(1);
 
     await res.body?.cancel().catch(() => undefined);
+    expect(releases()).toBe(1);
+  }, 10_000);
+
+  // Kills: a wrapped stream whose cancel() never releases. The first
+  // chunk sits buffered with no pull pending, so nothing but cancel()
+  // can release the slot.
+  test("(a10) cancelling an unread body with a buffered chunk releases the slot", async () => {
+    const mod = await loadChatAdmission();
+    expect(typeof mod?.admitChatCompletions).toBe("function");
+    const { admission: counted, releases } = countedAdmission(unitAdmission());
+    const ac = new AbortController();
+    const enc = new TextEncoder();
+    let pulls = 0;
+    const res = await mod!.admitChatCompletions(chatRequest(CHAT_BODY, ac.signal), counted, () =>
+      Promise.resolve(
+        new Response(
+          new ReadableStream<Uint8Array>({
+            pull(c): void {
+              pulls += 1;
+              if (pulls === 1) c.enqueue(enc.encode("x"));
+            },
+          }),
+          { status: 200 },
+        ),
+      ),
+    );
+    expect(await waitFor(() => counted.snapshot().executing === 1)).toBe(true);
+    // Let the wrapped stream's start-up pull buffer the first chunk.
+    await Bun.sleep(20);
+
+    await res.body!.cancel("bye");
+    expect(await waitFor(() => counted.snapshot().executing === 0)).toBe(true);
     expect(releases()).toBe(1);
   }, 10_000);
 });

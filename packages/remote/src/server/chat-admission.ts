@@ -55,6 +55,15 @@ export function createChatCompletionsAdmission(caps: {
   });
 }
 
+/**
+ * Refusal status mapping. 429 means the client is sending too much; 503 means
+ * the agent is overloaded:
+ * - QueueFull (and PrincipalShareExceeded) is 429 + Retry-After;
+ * - QueueWaitExceeded is 503 + Retry-After: the request was admitted to the
+ *   queue but the agent could not start it within the queue wait;
+ * - a single oversized request (QueueBytesExceeded with no Retry-After) is 413.
+ * Every 429 and 503 carries error.type "overloaded_error".
+ */
 function admissionStatus(code: RequestAdmissionError["code"], retryAfterMs: number | null): number {
   switch (code) {
     case "QueueFull":
