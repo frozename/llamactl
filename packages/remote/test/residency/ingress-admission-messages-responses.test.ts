@@ -21,13 +21,12 @@
  * instead: the JSON translation buffers, and the slot is observed held
  * while the upstream body is parked.
  *
- * Runner note: the throwing-forward cases (m6, r6e) drive a rejecting
- * unified-proxy handler through the real Bun.serve agent, so the forward
- * error escapes as a socket reset. bun:test can then report the same
- * assertion failure a second time as "Unhandled error between tests" in
- * the RED run; that is the runner double-reporting one assertion, not a
- * second failure mode. Once the ingress admits these routes the asserts
- * pass and no rejection escapes, so the cases are clean when green.
+ * Throwing-forward note: the (m6, r6e) cases drive a rejecting unified-proxy
+ * handler through the real Bun.serve agent. The admitted route releases the
+ * slot inside admitChatCompletions and maps the rejection to a resolved 502
+ * whose body carries error.type "api_error", so the client fetch resolves and
+ * no rejection escapes Bun.serve. Both cases pin that exact status and body:
+ * without the mapping the rejection would reset the socket instead.
  */
 import type { RequestQueueLimits } from "@llamactl/core/residency/queue-policy";
 import type { ReadableStreamDefaultReader as WebStreamReader } from "node:stream/web";
@@ -410,10 +409,10 @@ describe("#281 DF-08: messages/responses admission at the agent ingress", () => 
 
   /**
    * Arms the unified-proxy seam for the throwing-forward cases: the first
-   * forward rejects, then `handler` is swapped to answer 204. A forward
-   * throw propagates out of the fetch handler and Bun.serve resets the
-   * socket, so the client sees either a resolved 5xx Response or a
-   * rejected fetch — both are the >=500 outcome.
+   * forward rejects, then `handler` is swapped to answer 204. The admitted
+   * route catches that rejection after admitChatCompletions has released the
+   * slot and answers a resolved 502 with error.type "api_error", so the
+   * client fetch resolves rather than seeing a reset socket.
    */
   function armThrowingForward(): {
     counted: ReturnType<typeof countedAdmission>;
@@ -581,13 +580,13 @@ describe("#281 DF-08: messages/responses admission at the agent ingress", () => 
   }, 15_000);
 
   // Kills: no release on the forward-throw path when the route bypasses
-  // admitChatCompletions.
+  // admitChatCompletions; dropping the .catch that maps the rejection to a
+  // 502 (the fetch then rejects); mapping it to any status other than 502.
   test("(m6) a throwing forward releases the /v1/messages slot", async () => {
     const { counted, setHandler } = armThrowingForward();
 
-    // The rejecting forward escapes Bun.serve and resets the socket, so the
-    // client fetch rejects rather than resolving a 5xx Response — accept
-    // either outcome as the >=500 signal.
+    // The admitted route maps the rejecting forward to a resolved 502 with
+    // error.type "api_error", so the client fetch resolves.
     let firstRes: Response | null = null;
     let firstErr: unknown = null;
     try {
@@ -595,11 +594,11 @@ describe("#281 DF-08: messages/responses admission at the agent ingress", () => 
     } catch (err) {
       firstErr = err;
     }
-    if (firstRes !== null) {
-      expect(firstRes.status).toBeGreaterThanOrEqual(500);
-    } else {
-      expect(firstErr).toBeInstanceOf(Error);
-    }
+    expect(firstErr).toBeNull();
+    expect(firstRes).not.toBeNull();
+    expect(firstRes!.status).toBe(502);
+    const firstBody = (await firstRes!.json()) as { error?: { type?: unknown } };
+    expect(firstBody.error?.type).toBe("api_error");
     expect(counted.acquires()).toBe(1);
     expect(counted.releases()).toBe(1);
     expect(await waitFor(() => admission.snapshot().executing === 0)).toBe(true);
@@ -731,12 +730,13 @@ describe("#281 DF-08: messages/responses admission at the agent ingress", () => 
   }, 15_000);
 
   // Kills: no release on the forward-throw path when the route bypasses
-  // admitChatCompletions.
+  // admitChatCompletions; dropping the .catch that maps the rejection to a
+  // 502 (the fetch then rejects); mapping it to any status other than 502.
   test("(r6e) a throwing forward releases the /v1/responses slot", async () => {
     const { counted, setHandler } = armThrowingForward();
 
-    // Same outcome shape as (m6): the rejecting forward resets the socket,
-    // so the client fetch rejects rather than resolving a 5xx Response.
+    // Same outcome as (m6): the rejecting forward is mapped to a resolved 502
+    // with error.type "api_error", so the client fetch resolves.
     let firstRes: Response | null = null;
     let firstErr: unknown = null;
     try {
@@ -744,11 +744,11 @@ describe("#281 DF-08: messages/responses admission at the agent ingress", () => 
     } catch (err) {
       firstErr = err;
     }
-    if (firstRes !== null) {
-      expect(firstRes.status).toBeGreaterThanOrEqual(500);
-    } else {
-      expect(firstErr).toBeInstanceOf(Error);
-    }
+    expect(firstErr).toBeNull();
+    expect(firstRes).not.toBeNull();
+    expect(firstRes!.status).toBe(502);
+    const firstBody = (await firstRes!.json()) as { error?: { type?: unknown } };
+    expect(firstBody.error?.type).toBe("api_error");
     expect(counted.acquires()).toBe(1);
     expect(counted.releases()).toBe(1);
     expect(await waitFor(() => admission.snapshot().executing === 0)).toBe(true);
@@ -841,29 +841,45 @@ describe("#281 DF-08: messages/responses admission at the agent ingress", () => 
   // ── pins (pass at base) ─────────────────────────────────────────────────
 
   // Pin: with no chatCompletionsAdmission the messages/responses proxy is
-  // exactly as before. Kills: an admitted branch that runs, or constructs a
-  // default admission, when the option is absent.
-  test("(p1) pin: with no chatCompletionsAdmission the proxy is unchanged", async () => {
-    const counted = countedAdmission(admission);
+  // exactly as before — unbounded. FLAG_OFF_CONCURRENCY requests (half
+  // /v1/messages streams, half parked /v1/responses) are all in flight at the
+  // upstream at once, and every one completes 200. Kills: constructing a
+  // default admission when the option is absent — any cap below
+  // FLAG_OFF_CONCURRENCY queues or refuses a request, so the upstream never
+  // sees them all concurrently.
+  test("(p1) pin: with no chatCompletionsAdmission the proxy is unbounded", async () => {
+    const FLAG_OFF_CONCURRENCY = 6;
     startAgent(false);
 
-    const resMessages = await postMessages(messagesBody());
-    expect(resMessages.status).toBe(200);
-    const readerMessages = await firstChunk(resMessages);
-    latestGate(upstream).release();
-    await drain(readerMessages);
+    // Nothing is awaited before the concurrency check, so a capped mutant
+    // fails on the assertion below rather than by a test timeout.
+    const pendingMessages: Promise<Response>[] = [];
+    const pendingResponses: Promise<Response>[] = [];
+    for (let i = 0; i < FLAG_OFF_CONCURRENCY / 2; i += 1) {
+      const message = postMessages(messagesBody());
+      void message.catch(() => undefined);
+      pendingMessages.push(message);
+      const response = postResponses(responsesBody());
+      void response.catch(() => undefined);
+      pendingResponses.push(response);
+    }
+    expect(await waitFor(() => upstream.gates.length === FLAG_OFF_CONCURRENCY)).toBe(true);
+    expect(upstream.hits()).toBe(FLAG_OFF_CONCURRENCY);
 
-    const pendingResponses = postResponses(responsesBody());
-    void pendingResponses.catch(() => undefined);
-    expect(await waitFor(() => upstream.gates.length > 0)).toBe(true);
-    latestGate(upstream).release();
-    const resResponses = await pendingResponses;
-    expect(resResponses.status).toBe(200);
-    const body = (await resResponses.json()) as { object?: unknown };
-    expect(body.object).toBe("response");
-
-    expect(counted.acquires()).toBe(0);
-    expect(counted.releases()).toBe(0);
+    const messageReaders: AgentReader[] = [];
+    for (const pending of pendingMessages) {
+      const res = await pending;
+      expect(res.status).toBe(200);
+      messageReaders.push(await firstChunk(res));
+    }
+    for (const gate of [...upstream.gates]) gate.release();
+    for (const reader of messageReaders) await drain(reader);
+    for (const pending of pendingResponses) {
+      const res = await pending;
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { object?: unknown };
+      expect(body.object).toBe("response");
+    }
   }, 15_000);
 
   // Pin: auth runs before admission on this ingress. Kills: admitting before

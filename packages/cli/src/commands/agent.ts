@@ -1781,7 +1781,8 @@ export function buildServeOptions(
     ...(residencyLeasesOptIn(env) ? { residencyLeases: true } : {}),
     // #520: opt-in session idle timeout, honored only when residencyLeases is true.
     ...residencySessionIdleOption(env),
-    // #281 (DF-08): opt-in chat-completions admission gate, off by default.
+    // #281 (DF-08): opt-in inference admission gate shared by
+    // /v1/chat/completions, /v1/messages and /v1/responses, off by default.
     ...chatAdmissionOption(env),
     // #367: per-role runtime memory identity, flags override env vars.
     ...runtimeIdentitySpread(identity),

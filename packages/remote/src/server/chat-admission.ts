@@ -12,8 +12,9 @@
  * - per-model keys with real load coalescing (composing with the #278 leases);
  * - per-principal shares, which is why maxPerPrincipal is unbounded here;
  * - a total request deadline;
- * - Worker RPC (inference/procedures.ts), create-proxy.ts, and a mixed-ingress
- *   cap and fairness;
+ * - Worker RPC (inference/procedures.ts) and create-proxy.ts ingress, which
+ *   do not count against the shared cap yet;
+ * - fairness between the ingresses that share the cap;
  * - Anthropic-shaped error bodies.
  */
 
