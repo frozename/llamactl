@@ -26,7 +26,10 @@ import type { ModelRun } from "./schema.js";
 import { existsSync } from "../safe-fs.js";
 import { defaultNodeBudgetGiB } from "./admission.js";
 import {
+  admissionRefusalReason,
+  type AdmissionRefusalReason,
   type ApplyEvent,
+  type ApplyManifestOutcome,
   applyOne,
   applyOneModelHost,
   type ApplyResult,
@@ -85,6 +88,10 @@ export interface ReconcileNodeReport {
    *  a per-pass skip after one (NodeRpcTimeoutError / NodeRpcSkippedError).
    *  The error message itself is unchanged. */
   reason?: "NodeUnreachable";
+  /** #274: set when this report's error is an admission refusal — the typed
+   *  reason (BudgetExceeded / BudgetUnknown / ReservationInvalid) the apply
+   *  surfaced on its result. */
+  admissionReason?: AdmissionRefusalReason;
 }
 
 export interface ReconcileResult {
@@ -491,12 +498,14 @@ async function reconcileModelRun(
       },
     );
     if (result.error) errors++;
+    const admissionReason = admissionRefusalReason(result);
     reports.push({
       kind: "ModelRun",
       name,
       node: spec.node,
       action: result.action,
       ...(result.error ? { error: result.error } : {}),
+      ...(admissionReason !== undefined ? { admissionReason } : {}),
     });
     if (!existsSync(manifestPath)) {
       reports[reports.length - 1] = {
@@ -679,6 +688,7 @@ interface HostReportExtra {
   error?: { reason: string; message: string };
   foundDead?: boolean;
   reason?: "NodeUnreachable";
+  admissionReason?: AdmissionRefusalReason;
 }
 
 /**
@@ -692,6 +702,25 @@ function caughtHostError(err: unknown): HostReportExtra {
   return isNodeUnreachableError(err)
     ? { error: { reason: "NodeUnreachable", message }, reason: "NodeUnreachable" }
     : { error: { reason: "ReconcileFailed", message } };
+}
+
+/**
+ * #274: the pushHostReport extra for a failed ModelHost apply outcome. An
+ * admission refusal records its typed reason both on the report and as the
+ * ReconcileError reason; anything else stays ApplyFailed.
+ */
+function hostApplyFailureExtra(result: ApplyManifestOutcome, foundDead: boolean): HostReportExtra {
+  if (result.ok) {
+    return {
+      error: { reason: "ApplyFailed", message: "unexpected non-ModelHost outcome" },
+      foundDead,
+    };
+  }
+  return {
+    error: { reason: result.reason ?? "ApplyFailed", message: result.error },
+    foundDead,
+    ...(result.reason !== undefined ? { admissionReason: result.reason } : {}),
+  };
 }
 
 function pushHostReport(
@@ -710,6 +739,7 @@ function pushHostReport(
     ...(extra.error !== undefined ? { error: extra.error.message } : {}),
     ...(extra.foundDead === true ? { foundDead: true } : {}),
     ...(extra.reason !== undefined ? { reason: extra.reason } : {}),
+    ...(extra.admissionReason !== undefined ? { admissionReason: extra.admissionReason } : {}),
   });
   if (extra.error === undefined) return 0;
   recordHostOutcome(spec, name, { kind: "error", ...extra.error }, ctx);
@@ -992,16 +1022,12 @@ async function reconcileUnmanagedModelHost(
     // applyOneModelHost only emits {ok:true, kind:'ModelHost'} or
     // {ok:false, error}; the ModelRun shape can't arrive here, but
     // narrow defensively for TS.
-    const errMsg = result.ok ? "unexpected non-ModelHost outcome" : result.error;
     return pushHostReport(
       reports,
       spec,
       name,
       "unchanged",
-      {
-        error: { reason: "ApplyFailed", message: errMsg },
-        foundDead,
-      },
+      hostApplyFailureExtra(result, foundDead),
       ctx,
     );
   } catch (err) {

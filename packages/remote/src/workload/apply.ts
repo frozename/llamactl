@@ -201,6 +201,31 @@ export interface ApplyResult {
   error?: string;
 }
 
+/** The typed reasons an admission check can refuse a workload (#274). */
+export type AdmissionRefusalReason = "BudgetExceeded" | "BudgetUnknown" | "ReservationInvalid";
+
+const ADMISSION_REFUSAL_REASONS: ReadonlySet<string> = new Set([
+  "BudgetExceeded",
+  "BudgetUnknown",
+  "ReservationInvalid",
+]);
+
+/**
+ * The refusal reason carried by a failed admission, read off the
+ * "Applied"/"False" condition an admission failure stamps on the result.
+ * The preserved-running BudgetRefused condition is not a refusal: the
+ * workload stays Applied/"True", so this returns undefined for it.
+ */
+export function admissionRefusalReason(result: ApplyResult): AdmissionRefusalReason | undefined {
+  for (const condition of result.statusSection.conditions) {
+    if (condition.type !== "Applied" || condition.status !== "False") continue;
+    if (condition.reason !== undefined && ADMISSION_REFUSAL_REASONS.has(condition.reason)) {
+      return condition.reason as AdmissionRefusalReason;
+    }
+  }
+  return undefined;
+}
+
 export interface ApplyManifestOptions {
   manifest: unknown;
   getClient?: (nodeName: string) => WorkloadClient;
@@ -355,7 +380,7 @@ export type ApplyManifestOutcome =
       pid: number | null;
       endpoint: string;
     }
-  | { ok: false; error: string };
+  | { ok: false; error: string; reason?: AdmissionRefusalReason };
 
 function sameExtraArgs(a: readonly string[], b: readonly string[]): boolean {
   if (a.length !== b.length) return false;
@@ -541,7 +566,7 @@ function admitModelHostBudget(
   firstHostedModel: ModelHostManifest["spec"]["hostedModels"][number],
   budget: number | null,
   verified: ReadonlySet<string>,
-): { ok: false; error: string } | null {
+): { ok: false; error: string; reason: AdmissionRefusalReason } | null {
   const workloadsDir = opts.workloadsDir ?? defaultWorkloadsDir(opts.env);
   const livingManifests = listAnyWorkloadsForAdmission(workloadsDir, resolved)
     .filter((m) => m.metadata.name !== manifest.metadata.name)
@@ -596,7 +621,7 @@ function admitModelHostBudget(
     supportsForceAdmit: false,
   });
   if (!admit.ok) {
-    return { ok: false, error: admit.reason };
+    return { ok: false, error: admit.reason, reason: admissionConditionReason(admit.kind) };
   }
   return null;
 }
@@ -782,14 +807,14 @@ async function applyModelHostManifest(
  * ModelRun ApplyResult, folded into the bare {ok:false,error} outcome.
  */
 function modelHostEvictionRollback(
-  outcome: { ok: false; error: string },
+  outcome: { ok: false; error: string; reason?: AdmissionRefusalReason },
   ctx: EvictionStageCtx,
-): { ok: false; error: string } {
+): { ok: false; error: string; reason?: AdmissionRefusalReason } {
   const note = evictionRollbackNote(
     clearEvictionMarkers(ctx.manifest, ctx.opts, ctx.evictionClaims),
   );
   if (note === null) return outcome;
-  return { ok: false, error: `${outcome.error}; ${note}` };
+  return { ...outcome, error: `${outcome.error}; ${note}` };
 }
 
 /**
@@ -2184,7 +2209,7 @@ function evictFailureResult(
 
 function admissionConditionReason(
   kind: "unknown-budget" | "over-budget" | "invalid-reservation",
-): string {
+): AdmissionRefusalReason {
   if (kind === "unknown-budget") return "BudgetUnknown";
   if (kind === "invalid-reservation") return "ReservationInvalid";
   return "BudgetExceeded";
@@ -3052,7 +3077,8 @@ async function applyModelRunManifest(opts: ApplyManifestOptions): Promise<ApplyM
     }),
   });
   if (result.error) {
-    return { ok: false, error: result.error };
+    const reason = admissionRefusalReason(result);
+    return { ok: false, error: result.error, ...(reason !== undefined ? { reason } : {}) };
   }
   return { ok: true, kind: "ModelRun", manifest, result };
 }
