@@ -1,18 +1,20 @@
 /**
  * #281 (DF-08) wires the #683 RequestAdmission into POST
- * /v1/chat/completions only, opt-in.
+ * /v1/chat/completions, opt-in.
  *
- * Accounting: this slice counts every POST /v1/chat/completions admitted at
- * this agent — peer-routed and via/RAG included — under ONE constant ingress
- * key and one constant principal.
+ * Accounting: the same instance and wrapper also cover POST /v1/messages and
+ * POST /v1/responses at the agent, under the same constant ingress key and
+ * principal. Every request admitted at this agent — peer-routed and via/RAG
+ * included — counts against ONE limit.
  *
  * Deferred:
  * - physical per-node accounting;
  * - per-model keys with real load coalescing (composing with the #278 leases);
  * - per-principal shares, which is why maxPerPrincipal is unbounded here;
  * - a total request deadline;
- * - /v1/messages, /v1/responses, Worker RPC (inference/procedures.ts),
- *   create-proxy.ts, and a mixed-ingress cap and fairness.
+ * - Worker RPC (inference/procedures.ts), create-proxy.ts, and a mixed-ingress
+ *   cap and fairness;
+ * - Anthropic-shaped error bodies.
  */
 
 import { modelKeyOf } from "@llamactl/core/residency/queue-policy";
