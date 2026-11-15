@@ -8,12 +8,21 @@
  * module-resolution error. All state lives in mkdtemp dirs; the `openStore`
  * fakes keep the writable-handle boundary observable.
  */
+import type { ResidencyLeases } from "@llamactl/core/residency/leases";
+import type { OkPlan, PlannerWorkload } from "@llamactl/core/residency/planner";
+
+import { createResidencyLeases } from "@llamactl/core/residency/leases";
+import { planProfileSwitch } from "@llamactl/core/residency/planner";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { RESIDENCY_APPLY_PROFILE_FENCE_OWNER } from "../../src/residency/apply-profile.js";
 import { PROFILE_SWITCH_BOOT_RECOVERY_MIN_AGE_MS } from "../../src/residency/boot-recovery.js";
+import {
+  executeProfileSwitch,
+  type ProfileSwitchOperationOpts,
+} from "../../src/residency/profile-transition.js";
 import {
   openResidencyOperationStore,
   readResidencyStoreSnapshot,
@@ -493,6 +502,335 @@ describe("runProfileSwitchBootRecovery (#279 DF-06)", () => {
     expect(summary.recovered).toBe(1);
     expect(writes).toHaveLength(1);
     expect(writes[0]).not.toContain("failed");
+    expect(nonterminalIds()).toEqual([]);
+  });
+});
+
+// ── step-boundary heartbeat and the atomic boot claim (#279 DF-06) ──────
+
+const WINDOW_MS = PROFILE_SWITCH_BOOT_RECOVERY_MIN_AGE_MS;
+const SWITCH_START_MS = 10 * WINDOW_MS;
+
+function plannerWorkload(
+  id: string,
+  profiles: string[],
+  state: PlannerWorkload["state"],
+): PlannerWorkload {
+  return { id, profiles, state, expectedMemoryGiB: 16 };
+}
+
+// Three victims and two replacements: five stop/start steps, plus three
+// fences and three drains when a lease registry is in play.
+function multiStepPlan(): OkPlan {
+  const plan = planProfileSwitch({
+    node: "n1",
+    to: "interactive",
+    budgetGiB: 64,
+    groups: [],
+    workloads: [
+      plannerWorkload("v-a", ["maintenance"], "ready"),
+      plannerWorkload("v-b", ["maintenance"], "ready"),
+      plannerWorkload("v-c", ["maintenance"], "ready"),
+      plannerWorkload("r-x", ["interactive"], "downloaded"),
+      plannerWorkload("r-y", ["interactive"], "downloaded"),
+    ],
+    nowMs: SWITCH_START_MS,
+  });
+  expect(plan.ok).toBe(true);
+  if (!plan.ok || plan.noop) {
+    throw new Error("expected an ok, non-noop plan");
+  }
+  expect(plan.victims).toHaveLength(3);
+  expect(plan.replacements).toHaveLength(2);
+  return plan;
+}
+
+type LiveSwitch = {
+  store: BootRecoveryStore;
+  operation: ProfileSwitchOperationOpts;
+  logs: string[];
+};
+
+// A switch as a CLI apply-profile runs it: its own handle, claimed under the
+// apply-profile owner, with a fake clock.
+function liveSwitch(clock: { now: number }): LiveSwitch {
+  const store = openResidencyOperationStore({ path });
+  trackedStores.push(store);
+  const fence = store.claimOwnership({
+    ownerId: RESIDENCY_APPLY_PROFILE_FENCE_OWNER,
+    incarnation: "cli",
+  });
+  const logs: string[] = [];
+  return {
+    store,
+    logs,
+    operation: {
+      store,
+      fenceToken: fence.fenceToken,
+      operationId: "op-live",
+      desiredRevision: 1,
+      nowMs: () => clock.now,
+      log: (line): void => {
+        logs.push(line);
+      },
+    },
+  };
+}
+
+const REGISTRY_CASES: [string, () => ResidencyLeases | null][] = [
+  ["stop/start only", (): ResidencyLeases | null => null],
+  ["fenced with a lease registry", (): ResidencyLeases | null => createResidencyLeases()],
+];
+
+describe("profile-switch step heartbeat against boot recovery (#279 DF-06)", () => {
+  // Kills H1: without a heartbeat the row keeps its begin stamp, so the boot
+  // run inside the second step (40 minutes after begin) sees no progress for
+  // longer than the window and terminalizes the live switch.
+  for (const [label, makeRegistry] of REGISTRY_CASES) {
+    test(`a long switch of short steps is never recovered by a boot between steps (${label})`, async () => {
+      const recover = await loadBootRecovery();
+      const clock = { now: SWITCH_START_MS };
+      const live = liveSwitch(clock);
+      const stepMs = Math.floor((WINDOW_MS * 2) / 3);
+      const boots: BootRecoverySummary[] = [];
+      const step = (): Promise<{ ok: true }> => {
+        clock.now += stepMs;
+        boots.push(
+          recover({
+            path,
+            incarnation: `boot-${String(boots.length)}`,
+            nowMs: () => clock.now,
+            write: () => undefined,
+          }),
+        );
+        return Promise.resolve({ ok: true });
+      };
+
+      const report = await executeProfileSwitch(
+        multiStepPlan(),
+        { stop: step, start: step },
+        { dryRun: false, registry: makeRegistry(), operation: live.operation },
+      );
+
+      expect(clock.now - SWITCH_START_MS).toBeGreaterThan(3 * WINDOW_MS);
+      expect(boots.map((boot) => boot.status)).toEqual(
+        Array<BootRecoverySummary["status"]>(5).fill("deferred"),
+      );
+      expect(boots.map((boot) => boot.possiblyLive)).toEqual(Array<number>(5).fill(1));
+      expect(report.outcome).toBe("stops-and-starts-ran");
+      expect(report.operation).toEqual({ id: "op-live", outcome: "succeeded", recorded: true });
+      expect(currentFence()?.incarnation).toBe("cli");
+      expect(live.logs).toEqual([]);
+    });
+  }
+
+  // The remaining limit, pinned: one step longer than the window leaves no
+  // boundary to heartbeat at, so a boot inside it recovers the row.
+  test("a row with no step progress past the window is recovered", async () => {
+    const recover = await loadBootRecovery();
+    const clock = { now: SWITCH_START_MS };
+    const live = liveSwitch(clock);
+    const boots: BootRecoverySummary[] = [];
+    let first = true;
+    const step = (): Promise<{ ok: true }> => {
+      if (first) {
+        first = false;
+        clock.now += WINDOW_MS + 60_000;
+        boots.push(
+          recover({ path, incarnation: "boot", nowMs: () => clock.now, write: () => undefined }),
+        );
+      }
+      return Promise.resolve({ ok: true });
+    };
+
+    const report = await executeProfileSwitch(
+      multiStepPlan(),
+      { stop: step, start: step },
+      { dryRun: false, registry: null, operation: live.operation },
+    );
+
+    expect(boots).toEqual([
+      {
+        status: "recovered",
+        recovered: 1,
+        recordFailures: 0,
+        skipped: 0,
+        unrecognized: 0,
+        possiblyLive: 0,
+      },
+    ]);
+    expect(currentFence()).toMatchObject({
+      ownerId: RESIDENCY_APPLY_PROFILE_FENCE_OWNER,
+      incarnation: "boot",
+    });
+    expect(report.outcome).toBe("stops-and-starts-ran");
+    expect(report.operation).toEqual({
+      id: "op-live",
+      outcome: "succeeded",
+      recorded: false,
+      recordFailure: "stale-fence",
+    });
+    expect(live.store.getOperation("op-live")?.detail).toBe(
+      "recovered: interrupted-unverified (was pending)",
+    );
+  });
+
+  // Kills H2: a heartbeat that ignores the fence refreshes the row after a
+  // newer owner claimed, and reports nothing.
+  test("a heartbeat under a stale fence fails quietly and the switch carries on", async () => {
+    const clock = { now: SWITCH_START_MS };
+    const live = liveSwitch(clock);
+    const calls: string[] = [];
+    let claimed = false;
+    const step =
+      (label: string) =>
+      (workload: string): Promise<{ ok: true }> => {
+        calls.push(`${label}:${workload}`);
+        clock.now += 1_000;
+        if (!claimed) {
+          claimed = true;
+          const other = openResidencyOperationStore({ path });
+          try {
+            other.claimOwnership({ ownerId: "someone-else", incarnation: "x" });
+          } finally {
+            other.close();
+          }
+        }
+        return Promise.resolve({ ok: true });
+      };
+
+    const report = await executeProfileSwitch(
+      multiStepPlan(),
+      { stop: step("stop"), start: step("start") },
+      { dryRun: false, registry: null, operation: live.operation },
+    );
+
+    expect(calls).toEqual(["stop:v-a", "stop:v-b", "stop:v-c", "start:r-x", "start:r-y"]);
+    expect(report.outcome).toBe("stops-and-starts-ran");
+    expect(report.ok).toBe(true);
+    expect(report.operation).toEqual({
+      id: "op-live",
+      outcome: "succeeded",
+      recorded: false,
+      recordFailure: "stale-fence",
+    });
+    expect(live.logs).toEqual(
+      Array<string>(5).fill("[residency] profile-switch heartbeat failed: stale-fence\n"),
+    );
+    const row = live.store.getOperation("op-live");
+    expect(row?.phase).toBe("pending");
+    expect(row?.updatedAtMs).toBe(SWITCH_START_MS);
+  });
+
+  test("a throwing heartbeat is logged and never aborts the switch", async () => {
+    const clock = { now: SWITCH_START_MS };
+    const live = liveSwitch(clock);
+    const operation: ProfileSwitchOperationOpts = {
+      ...live.operation,
+      store: {
+        beginOperation: (input) => live.store.beginOperation(input),
+        finishOperation: (input) => live.store.finishOperation(input),
+        listNonterminal: () => live.store.listNonterminal(),
+        touchOperation: () => {
+          throw new Error("SQLITE_BUSY: database is locked\nsecond line");
+        },
+      },
+      log: (line) => {
+        live.logs.push(line);
+        throw new Error("log sink down");
+      },
+    };
+    const step = (): Promise<{ ok: true }> => Promise.resolve({ ok: true });
+
+    const report = await executeProfileSwitch(
+      multiStepPlan(),
+      { stop: step, start: step },
+      { dryRun: false, registry: null, operation },
+    );
+
+    expect(report.outcome).toBe("stops-and-starts-ran");
+    expect(report.operation).toEqual({ id: "op-live", outcome: "succeeded", recorded: true });
+    expect(live.logs).toEqual(
+      Array<string>(5).fill(
+        "[residency] profile-switch heartbeat failed: threw: SQLITE_BUSY: database is locked\n",
+      ),
+    );
+  });
+});
+
+describe("boot recovery claim atomicity (#279 DF-06)", () => {
+  // Kills T1: with the re-check and the claim as separate statements, a CLI
+  // can claim and begin a switch between them. Boot then claims over it and
+  // stale-fences the live switch. Inside one IMMEDIATE transaction the CLI's
+  // write is held off until boot is done.
+  test("a CLI claim cannot slip in between the boot re-check and its claim", async () => {
+    const recover = await loadBootRecovery();
+    seedCrashRow();
+
+    const cli: { attempted: boolean; fence: number | null; error: string } = {
+      attempted: false,
+      fence: null,
+      error: "",
+    };
+    const cliClaimsAndBegins = (storePath: string): void => {
+      if (cli.attempted) {
+        return;
+      }
+      cli.attempted = true;
+      try {
+        const cliStore = openResidencyOperationStore({ path: storePath, busyTimeoutMs: 20 });
+        try {
+          const fence = cliStore.claimOwnership({ ownerId: "cli", incarnation: "c1" });
+          const begun = cliStore.beginOperation({
+            fenceToken: fence.fenceToken,
+            operationId: "op-cli",
+            model: "profile-switch:n2",
+            targetState: "profile:interactive",
+            desiredRevision: 1,
+            reservationGiB: 0,
+            nowMs: Date.now(),
+          });
+          expect(begun.ok).toBe(true);
+          cli.fence = fence.fenceToken;
+        } finally {
+          cliStore.close();
+        }
+      } catch (error: unknown) {
+        cli.error = error instanceof Error ? error.message : String(error);
+      }
+    };
+
+    const summary = recover({
+      path,
+      incarnation: "i2",
+      write: () => undefined,
+      openStore: (storePath) => {
+        const real = openResidencyOperationStore({ path: storePath });
+        const realClaim = real.claimOwnership;
+        real.claimOwnership = (input): ReturnType<typeof realClaim> => {
+          cliClaimsAndBegins(storePath);
+          return realClaim(input);
+        };
+        const realClaimWhen = real.claimOwnershipWhen;
+        real.claimOwnershipWhen = (input, decide): ReturnType<typeof realClaimWhen> =>
+          realClaimWhen(input, (rows) => {
+            const yes = decide(rows);
+            cliClaimsAndBegins(storePath);
+            return yes;
+          });
+        return real;
+      },
+    });
+
+    expect(cli.attempted).toBe(true);
+    // Either the CLI was held off, or (had it got in first) boot must have
+    // seen its fresh row and left its fence alone.
+    if (cli.fence !== null) {
+      expect(currentFence()?.fenceToken).toBe(cli.fence);
+    } else {
+      expect(cli.error).toMatch(/locked|busy/i);
+    }
+    expect(summary.status).toBe("recovered");
     expect(nonterminalIds()).toEqual([]);
   });
 });

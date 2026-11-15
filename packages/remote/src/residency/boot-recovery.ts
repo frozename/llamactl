@@ -19,17 +19,36 @@
  * every row stay exactly as they were.
  *
  * Live-switch guard. Boot cannot tell a crashed switch from one a CLI process
- * is still running through its own router caller: a switch records only a
- * begin and a finish, with no heartbeat or owner liveness. The rule is a fixed
- * staleness window: a row whose `updatedAtMs` is less than
+ * is still running through its own router caller: there is no owner liveness
+ * check. What it has is step progress: the executor refreshes the row's
+ * `updatedAtMs` through a fenced heartbeat at every step boundary (each fence,
+ * each drain settle, each stop, each start). So the rule is a fixed staleness
+ * window over step progress: a row whose `updatedAtMs` is less than
  * `PROFILE_SWITCH_BOOT_RECOVERY_MIN_AGE_MS` (30 minutes) before boot, or is
- * stamped in the future, is `possibly-live`. That is more than twice the
- * planner's default per-workload budget (drain 30s + unload 60s + load 600s +
- * ready 120s = 13.5 min). A possibly-live row is never finished, and because a
- * claim would also stale-fence the live switch's own finishOperation, any
+ * stamped in the future, is `possibly-live`. In words, a row is recovered only
+ * when its switch has made no step progress for 30 minutes. A switch whose
+ * total run is longer than the window is safe as long as each step finishes
+ * inside it. The window is more than twice the planner's default per-workload
+ * budget (drain 30s + unload 60s + load 600s + ready 120s = 13.5 min).
+ *
+ * The remaining limit: a single step that runs longer than the window (a stop
+ * or start the executor does not bound, since per-step timeouts are a later
+ * slice) leaves no boundary to heartbeat at, so a boot during that step can
+ * terminalize the live switch and claim the fence. That switch's finish then
+ * fails stale-fence and is reported unrecorded.
+ *
+ * A possibly-live row is never finished, and because a claim would also
+ * stale-fence the live switch's own heartbeat and finishOperation, any
  * possibly-live row makes the whole pass defer without claiming. The cost is
  * that a genuinely crashed row younger than the window stays nonterminal (the
  * node stays Busy) until an agent boot after the window has passed.
+ *
+ * Claim atomicity. The writable-handle re-check and the claim run as ONE
+ * IMMEDIATE store transaction (`claimOwnershipWhen`): the decision is taken
+ * over the nonterminal rows read inside that transaction, so a CLI cannot
+ * claim or begin a switch between the re-check and the claim. The recovery
+ * finishes run afterwards under the claimed fence; a CLI claim after it only
+ * makes those finishes fail stale-fence, which never touches a live switch.
  *
  * Logging. An absent store or a store with no profile-switch row logs nothing.
  * A deferred or recovered pass logs one line of counts only (no operation ids,
@@ -153,18 +172,20 @@ function scanWithStore(
   const store = openStore(opts.path);
   try {
     // Re-check on the writable handle: the snapshot may be stale by now, and a
-    // claim must never land while a possibly-live switch row exists.
-    const preview = previewProfileSwitchRecovery(store.listNonterminal(), {
-      nowMs: nowMs(),
-      minStaleAgeMs,
-    });
-    if (!shouldClaim(preview)) {
+    // claim must never land while a possibly-live switch row exists. The
+    // re-check and the claim share one IMMEDIATE transaction.
+    let preview: ProfileSwitchRecoveryPreview = { stale: 0, possiblyLive: 0, unrecognized: 0 };
+    const claim = store.claimOwnershipWhen(
+      { ownerId: RESIDENCY_APPLY_PROFILE_FENCE_OWNER, incarnation: opts.incarnation },
+      (nonterminal) => {
+        preview = previewProfileSwitchRecovery(nonterminal, { nowMs: nowMs(), minStaleAgeMs });
+        return shouldClaim(preview);
+      },
+    );
+    if (!claim.claimed) {
       return deferred(preview);
     }
-    const fence = store.claimOwnership({
-      ownerId: RESIDENCY_APPLY_PROFILE_FENCE_OWNER,
-      incarnation: opts.incarnation,
-    });
+    const fence = claim.fence;
     const result = recoverProfileSwitchOperationsUnverified({
       store,
       fenceToken: fence.fenceToken,
