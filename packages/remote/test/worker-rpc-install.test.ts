@@ -690,8 +690,10 @@ describe("I1: clean install", () => {
       "pull",
       "rag",
       "recommendations",
-      // #614 (#284): read-only `llamactl residency status`; this PR (#278, DF-05):
-      // `llamactl residency force-unload` operator forced unload. Neither is the worker RPC.
+      // #614 (#284): read-only `llamactl residency status`; #278 (DF-05):
+      // `llamactl residency force-unload` operator forced unload; #284 (DF-11,
+      // this PR): `llamactl residency apply-profile` operator profile-switch
+      // mutation. None is the worker RPC.
       "residency",
       "runbook",
       "server",
