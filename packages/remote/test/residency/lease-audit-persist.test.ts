@@ -1,6 +1,7 @@
 // #278 (DF-05): the forced-unload lease audit persists into the node-local
 // residency store so the history survives a serving-process restart, and
-// residencyStatus reports store rows ahead of the live in-memory audit.
+// residencyStatus merges the store rows with any live in-memory entries the
+// store is missing, so a quietly failed sink write never hides an entry.
 // The store module gains RESIDENCY_LEASE_AUDIT_RETENTION,
 // RESIDENCY_LEASE_AUDIT_BUSY_TIMEOUT_MS, createResidencyLeaseAuditSink and
 // readResidencyLeaseAudit with the fix; at the pinned base the exports are
@@ -17,6 +18,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { mergeResidencyLeaseAudit } from "../../src/residency/procedures.js";
 import { router } from "../../src/router.js";
 import { existsSync, mkdtempSync, rmSync } from "../../src/safe-fs.js";
 
@@ -210,7 +212,7 @@ describe("residency lease audit persistence", () => {
     }
   });
 
-  test("restart: store rows take precedence over the live audit, so pre-restart entries survive the next forced unload", async () => {
+  test("restart: status merges store rows with the live audit, so pre-restart entries survive the next forced unload", async () => {
     const mod = await loadAuditStore();
     expect(typeof mod?.createResidencyLeaseAuditSink).toBe("function");
     expect(typeof mod?.readResidencyLeaseAudit).toBe("function");
@@ -328,4 +330,121 @@ describe("residency lease audit persistence", () => {
     expect(rows[0]?.workload).toBe("w1");
     sink.close();
   }, 30_000);
+
+  test("status shows a live entry whose sink write failed on a locked store, in order", async () => {
+    const mod = await loadAuditStore();
+    expect(typeof mod?.createResidencyLeaseAuditSink).toBe("function");
+    expect(typeof mod?.readResidencyLeaseAudit).toBe("function");
+    const readAudit = mod!.readResidencyLeaseAudit;
+
+    const sink = mod!.createResidencyLeaseAuditSink({ path: storePath });
+    const reg = leasesWithAudit((entry) => {
+      sink.onAudit(entry);
+    });
+    setResidencyLeaseRegistry(reg);
+    expect(forceUnload(reg, "w1", { reason: "first" })).toEqual({
+      ok: true,
+      revoked: ["w1#1"],
+    });
+
+    const holder = new Database(storePath);
+    holder.run("BEGIN IMMEDIATE");
+    try {
+      expect(forceUnload(reg, "w2", { reason: "locked" })).toEqual({
+        ok: true,
+        revoked: ["w2#1"],
+      });
+    } finally {
+      holder.run("ROLLBACK");
+      holder.close();
+    }
+
+    expect(reg.audit()).toHaveLength(2);
+    expect(readAudit(storePath)).toHaveLength(1);
+
+    const leases = expectAvailable(await leasesStatus());
+    expect(leases.auditCount).toBe(2);
+    expect(leases.recentAudit).toEqual([
+      { workload: "w1", epoch: 1, forced: true, revokedCount: 1, reason: "first" },
+      { workload: "w2", epoch: 1, forced: true, revokedCount: 1, reason: "locked" },
+    ]);
+    sink.close();
+  }, 30_000);
+
+  test("status lists an entry held by both the store and the live audit once", async () => {
+    const mod = await loadAuditStore();
+    expect(typeof mod?.createResidencyLeaseAuditSink).toBe("function");
+    expect(typeof mod?.readResidencyLeaseAudit).toBe("function");
+
+    const sink = mod!.createResidencyLeaseAuditSink({ path: storePath });
+    const reg = leasesWithAudit((entry) => {
+      sink.onAudit(entry);
+    });
+    setResidencyLeaseRegistry(reg);
+    expect(forceUnload(reg, "dup", { reason: "both" })).toEqual({
+      ok: true,
+      revoked: ["dup#1"],
+    });
+    expect(mod!.readResidencyLeaseAudit(storePath)).toEqual(reg.audit());
+
+    const leases = expectAvailable(await leasesStatus());
+    expect(leases.auditCount).toBe(1);
+    expect(leases.recentAudit).toEqual([
+      { workload: "dup", epoch: 1, forced: true, revokedCount: 1, reason: "both" },
+    ]);
+    sink.close();
+  });
+});
+
+describe("mergeResidencyLeaseAudit", () => {
+  const e = (workload: string, epoch = 1, reason?: string): ResidencyAuditEntry => ({
+    workload,
+    epoch,
+    forced: true,
+    revoked: [`${workload}#1`],
+    ...(reason !== undefined ? { reason } : {}),
+  });
+
+  test("either source alone passes through", () => {
+    expect(mergeResidencyLeaseAudit([], [e("a")])).toEqual([e("a")]);
+    expect(mergeResidencyLeaseAudit([e("a")], [])).toEqual([e("a")]);
+    expect(mergeResidencyLeaseAudit([], [])).toEqual([]);
+  });
+
+  test("dedupes shared entries and slots unpersisted live entries chronologically", () => {
+    const persisted = [e("old"), e("a"), e("c")];
+    const live = [e("a"), e("b"), e("c"), e("d")];
+    expect(mergeResidencyLeaseAudit(persisted, live)).toEqual([
+      e("old"),
+      e("a"),
+      e("b"),
+      e("c"),
+      e("d"),
+    ]);
+  });
+
+  test("an unpersisted live entry before every persisted live entry lands ahead of it", () => {
+    expect(mergeResidencyLeaseAudit([e("old"), e("b")], [e("a"), e("b")])).toEqual([
+      e("old"),
+      e("a"),
+      e("b"),
+    ]);
+  });
+
+  test("the key includes epoch and reason; a pre-restart duplicate is matched newest first", () => {
+    expect(mergeResidencyLeaseAudit([e("w", 1, "x")], [e("w", 2, "x")])).toEqual([
+      e("w", 1, "x"),
+      e("w", 2, "x"),
+    ]);
+    expect(mergeResidencyLeaseAudit([e("w", 1, "x")], [e("w", 1, "y")])).toEqual([
+      e("w", 1, "x"),
+      e("w", 1, "y"),
+    ]);
+    expect(mergeResidencyLeaseAudit([e("w")], [e("w"), e("w")])).toEqual([e("w"), e("w")]);
+    expect(mergeResidencyLeaseAudit([e("w"), e("v"), e("w")], [e("w")])).toEqual([
+      e("w"),
+      e("v"),
+      e("w"),
+    ]);
+  });
 });

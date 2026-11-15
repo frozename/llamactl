@@ -1,15 +1,14 @@
 // #278 (DF-05): durability extension of AC3 — the lease registry gains an
 // optional onAudit sink invoked once per forced-unload audit entry, after
-// the in-memory auditLog push. At the pinned base createResidencyLeases
-// ignores the option, so the sink is never called and every case fails by
-// assertion. The not-yet-typed option is reached through an
-// `as unknown as` cast so the file typechecks at base.
+// the in-memory auditLog push. The sink receives a copy, and a throwing sink
+// never fails commitUnload.
+import { describe, expect, test } from "bun:test";
+
 import {
   createResidencyLeases,
   type ResidencyAuditEntry,
   type ResidencyLeases,
-} from "@llamactl/core/residency/leases";
-import { describe, expect, test } from "bun:test";
+} from "../src/residency/leases.js";
 
 function registryWithAuditSink(onAudit: (entry: ResidencyAuditEntry) => void): ResidencyLeases {
   return createResidencyLeases({ onAudit });
