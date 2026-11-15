@@ -470,10 +470,11 @@ describe("residencyApplyProfile procedure", () => {
     expect(fence).toEqual(seededFence);
   });
 
-  test("R5: an executor reservation conflict reports busy with the in-flight id", async () => {
-    // kills: not mapping the executor busy report.
+  test("R5: a same-owner in-flight switch reports busy without staling its fence", async () => {
+    // kills: claiming over a same-owner in-flight row, which bumps the fence and
+    // orphans that switch's record (its finishOperation fails stale-fence).
     seedRouterFixture();
-    seedInflight({ ownerId: "t", incarnation: "t1" });
+    const seededFence = seedInflight({ ownerId: "t", incarnation: "t0" });
     await installStepsFake();
     const plan = await buildOkPlan();
     const mod = await applyProfileModule();
@@ -494,6 +495,8 @@ describe("residencyApplyProfile procedure", () => {
     expect(result.refusal?.reason).toBe("Busy");
     expect(result.operationId ?? null).toBeNull();
     expect(stepCalls).toEqual([]);
+    const fenceAfter = withStore((store) => store.currentFence());
+    expect(fenceAfter).toEqual(seededFence);
   });
 
   test("R6: a non-serving node refuses NotServingNode before any step or store", async () => {

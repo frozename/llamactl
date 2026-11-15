@@ -5,8 +5,10 @@
  * router procedure, the CLI verb and the MCP tool. A dry run builds a report
  * from the plan alone and never opens the operation store; a wet run claims
  * the node-local operation fence, records the switch under model
- * `profile-switch:<node>` and runs the fenced executor. A foreign fence is
- * never claimed over — it reports busy without touching authority.
+ * `profile-switch:<node>` and runs the fenced executor. A foreign fence, or
+ * any fence with a nonterminal `profile-switch:<node>` row, is never claimed
+ * over — it reports busy without touching authority (see `runWet` for the
+ * cross-process window that remains).
  */
 import type { ResidencyLeases } from "@llamactl/core/residency/leases";
 import type { OkPlan } from "@llamactl/core/residency/planner";
@@ -295,16 +297,12 @@ function plannerRefusal(
   };
 }
 
-function inFlightOperationId(store: ResidencyOperationStore, node: string): string {
+function nonterminalSwitchId(store: ResidencyOperationStore, node: string): string | null {
   const key = profileSwitchOperationKey(node);
-  return store.listNonterminal().find((record) => record.model === key)?.operationId ?? "unknown";
+  return store.listNonterminal().find((record) => record.model === key)?.operationId ?? null;
 }
 
-function foreignFenceBusy(
-  plan: OkPlan,
-  store: ResidencyOperationStore,
-): ResidencyApplyProfileResult {
-  const operationId = inFlightOperationId(store, plan.node);
+function inFlightBusy(plan: OkPlan, operationId: string): ResidencyApplyProfileResult {
   const detail = `profile switch already in flight on node ${plan.node}: operation ${operationId}`;
   return {
     ok: false,
@@ -328,9 +326,33 @@ async function runWet(
   const store = openResidencyOperationStore({ path: args.storePath });
   try {
     const identity = args.fenceIdentity ?? defaultFenceIdentity();
+    // Cross-process race. Every apply-profile caller shares one ownerId (only
+    // the incarnation differs), so the foreign-owner check below never stops a
+    // second apply-profile process serving the same node. The planner's
+    // in-flight refusal comes from `readResidencyStoreSnapshot`, taken before
+    // observation collection, so it can be stale by the time we get here: call
+    // B snapshots (no row yet), call A claims and begins
+    // `profile-switch:<node>`, then B's claimOwnership bumps the token. A's
+    // fenced finishOperation then fails stale-fence, A's stops/starts have
+    // already run, and A's row is orphaned nonterminal — every later switch on
+    // the node is NodeBusy until #702's `recoverProfileSwitchOperations`
+    // terminalizes it (a row whose fence is not the current one is recovered,
+    // as `unknown`; no package source invokes that recovery yet, so wiring it
+    // into a startup path is what makes the bound automatic). The re-check
+    // below closes the snapshot-to-claim gap down to the synchronous
+    // listNonterminal → claimOwnership pair; a claim landing between those two
+    // calls, or between our claim and beginOperation, is not excluded. In the
+    // latter order our beginOperation fails stale-fence and is reported refused
+    // before any step runs; in the former, #702 recovery is what bounds the
+    // damage. Closing it fully needs a check-and-claim inside one IMMEDIATE
+    // store transaction.
+    const inFlight = nonterminalSwitchId(store, plan.node);
+    if (inFlight !== null) {
+      return inFlightBusy(plan, inFlight);
+    }
     const current = store.currentFence();
     if (current !== null && current.ownerId !== identity.ownerId) {
-      return foreignFenceBusy(plan, store);
+      return inFlightBusy(plan, "unknown");
     }
     const fence = store.claimOwnership(identity);
     return mapReport(
