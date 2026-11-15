@@ -437,6 +437,10 @@ async function applyModelRunFromRaw(
   }
   if (result.error) {
     process.stderr.write(`apply: ${result.error}\n`);
+    const reason = workloadApply.admissionRefusalReason(result);
+    if (reason !== undefined) {
+      process.stderr.write(`apply: admission refused: ${reason}\n`);
+    }
     return 1;
   }
 
@@ -745,6 +749,9 @@ async function applyModelHostFromRaw(
     });
     if (!outcome.ok) {
       process.stderr.write(`apply: ${outcome.error}\n`);
+      if (outcome.reason !== undefined) {
+        process.stderr.write(`apply: admission refused: ${outcome.reason}\n`);
+      }
       return 1;
     }
     if (outcome.kind !== "ModelHost") {

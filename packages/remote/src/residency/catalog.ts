@@ -6,7 +6,8 @@
  * rejection instead of the default endpoint. The optional workloadPhase
  * hook feeds the residency lease phase into that state — a draining
  * lease projects 'draining', and a live id under an unloaded lease
- * projects 'loading'. Pure builder; the only I/O edge is
+ * projects 'loading'. The optional warmingModelIds set marks a live id the
+ * proxy reports as warming 'loading' too. Pure builder; the only I/O edge is
  * listDeclaredModels reading the workloads dir — no credentials, no
  * kubeconfig.
  */
@@ -98,14 +99,23 @@ function stateForClaim(
   collided: boolean,
   liveModelIds: ReadonlySet<string>,
   phase: DeclaredWorkloadPhase | undefined,
+  warmingModelIds: ReadonlySet<string> | undefined,
 ): DeclaredState {
   if (collided) return "unavailable";
   if (!claim.enabled) return "disabled";
   if (phase === "draining") return "draining";
-  // Not observable through the current proxy consumers: both the 503
-  // pin rejection and the `declared` model list skip ids with a live
-  // route, so a 'loading' entry here is only seen by direct callers.
   if (phase === "unloaded" && liveModelIds.has(claim.id)) return "loading";
+  // A live id the proxy currently reports warming projects 'loading': a
+  // 'loading' entry is now seen by the proxy's warming-only pin 503, whose
+  // routing gate runs before the rejection, while the `declared` model list
+  // still skips ids that are live in `data`.
+  if (
+    warmingModelIds !== undefined &&
+    warmingModelIds.has(claim.id) &&
+    liveModelIds.has(claim.id)
+  ) {
+    return "loading";
+  }
   if (liveModelIds.has(claim.id)) return "ready";
   return "cold";
 }
@@ -116,6 +126,7 @@ export function buildDeclaredModelEntries(input: {
   modelRuns: readonly ModelRun[];
   liveModelIds: ReadonlySet<string>;
   workloadPhase?: (workload: string) => DeclaredWorkloadPhase | undefined;
+  warmingModelIds?: ReadonlySet<string>;
 }): routingCatalog.DeclaredModelEntryV1[] {
   const claims = [
     ...input.modelHosts.flatMap((host) => hostClaims(host, input.nodeName)),
@@ -128,7 +139,7 @@ export function buildDeclaredModelEntries(input: {
   const entries = claims.map((claim) => {
     const collided = (claimantsById.get(claim.id) ?? 0) > 1;
     const phase = phaseForWorkload(input.workloadPhase, claim.workload);
-    const state = stateForClaim(claim, collided, input.liveModelIds, phase);
+    const state = stateForClaim(claim, collided, input.liveModelIds, phase, input.warmingModelIds);
     return routingCatalog.DeclaredModelEntryV1Schema.parse({
       id: claim.id,
       workload: claim.workload,
@@ -153,11 +164,13 @@ export function listDeclaredModels({
   nodeName,
   liveModelIds,
   workloadPhase,
+  warmingModelIds,
 }: {
   dir?: string;
   nodeName: string;
   liveModelIds: ReadonlySet<string>;
   workloadPhase?: (workload: string) => DeclaredWorkloadPhase | undefined;
+  warmingModelIds?: ReadonlySet<string>;
 }): routingCatalog.DeclaredModelEntryV1[] {
   return buildDeclaredModelEntries({
     nodeName,
@@ -165,5 +178,6 @@ export function listDeclaredModels({
     modelRuns: listWorkloads(dir, noopSkip),
     liveModelIds,
     ...(workloadPhase !== undefined ? { workloadPhase } : {}),
+    ...(warmingModelIds !== undefined ? { warmingModelIds } : {}),
   });
 }

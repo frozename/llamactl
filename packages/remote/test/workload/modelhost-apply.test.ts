@@ -2147,6 +2147,148 @@ describe("applyManifest — kind dispatch", () => {
     }
   });
 
+  // #277 DF-04: the ModelHost budget check must forward the
+  // residencyAdmission.maxAgeMs override into the measured-envelope freshness
+  // check. Dropping the override (or hard-coding the 24h default) charges the
+  // 2h-old envelope and wrongly refuses arm 1 (maxAgeMs 1h). Arm 2 (maxAgeMs
+  // 3h) proves arm 1 is not vacuous: a forwarded wrong or zero value, or
+  // ignoring the envelope whenever an override is present, fails it.
+  test("applyOneModelHost forwards the residencyAdmission maxAgeMs override to the measured-envelope freshness check (#277)", async () => {
+    const HOUR_MS = 60 * 60 * 1000;
+
+    // Arm 1 — 2h-old envelope, 1h max age: the envelope is IGNORED and the
+    // declared 6 GiB estimate admits.
+    const tmpIgnored = mkdtempSync(join(tmpdir(), "llamactl-modelhost-maxage-ignored-"));
+    const ignoredArm = makeResidencyAdmissionClient();
+    try {
+      const result = await applyOneModelHost(
+        makeModelHostManifest("mlx-host-maxage-ignored", 6),
+        () => ignoredArm.client,
+        undefined,
+        {
+          workloadsDir: join(tmpIgnored, "workloads"),
+          env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmpIgnored },
+          getNodeBudgetGiB: () => 16,
+          residencyAdmission: {
+            getNodeResidencyPolicy: () => ({}),
+            getMeasuredEnvelope: () => measuredEnvelopeGiB(20),
+            getCandidateCalibrationKey: () => ENVELOPE_KEY,
+            nowMs: () => ENVELOPE_NOW_MS + 2 * HOUR_MS,
+            maxAgeMs: HOUR_MS,
+          },
+        },
+      );
+
+      if (!result.ok) console.error("ERROR:", result);
+      expect(result.ok).toBe(true);
+      expect(ignoredArm.startSubscribes.count).toBe(1);
+    } finally {
+      rmSync(tmpIgnored, { recursive: true, force: true });
+    }
+
+    // Arm 2 — 2h-old envelope, 3h max age: the envelope is USED and refused at
+    // the measured 20 GiB, proving arm 1 was not vacuous.
+    const tmpUsed = mkdtempSync(join(tmpdir(), "llamactl-modelhost-maxage-used-"));
+    const usedArm = makeResidencyAdmissionClient();
+    try {
+      const result = await applyOneModelHost(
+        makeModelHostManifest("mlx-host-maxage-used", 6),
+        () => usedArm.client,
+        undefined,
+        {
+          workloadsDir: join(tmpUsed, "workloads"),
+          env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmpUsed },
+          getNodeBudgetGiB: () => 16,
+          residencyAdmission: {
+            getNodeResidencyPolicy: () => ({}),
+            getMeasuredEnvelope: () => measuredEnvelopeGiB(20),
+            getCandidateCalibrationKey: () => ENVELOPE_KEY,
+            nowMs: () => ENVELOPE_NOW_MS + 2 * HOUR_MS,
+            maxAgeMs: 3 * HOUR_MS,
+          },
+        },
+      );
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toContain("'mlx-host-maxage-used' (20.0 GiB)");
+        expect(result.error).toContain("Budget is 16.0 GiB");
+      }
+      expect(usedArm.startSubscribes.count).toBe(0);
+    } finally {
+      rmSync(tmpUsed, { recursive: true, force: true });
+    }
+  });
+
+  // #277 DF-04: with no maxAgeMs override, admission falls back to the 24h
+  // DEFAULT_MEASURED_ENVELOPE_MAX_AGE_MS with a strict `>` staleness test.
+  // Arm 1 (exactly 24h old) fails if the test becomes `>=` or the default
+  // drops below 24h; arm 2 (24h+1ms old) fails if the default grows past 24h.
+  test("applyOneModelHost applies the 24h default max age at the boundary when no maxAgeMs override is set (#277)", async () => {
+    const HOUR_MS = 60 * 60 * 1000;
+
+    // Arm 1 — exactly 24h old: still within the default, so USED and refused at
+    // the measured 20 GiB.
+    const tmpUsed = mkdtempSync(join(tmpdir(), "llamactl-modelhost-default-boundary-used-"));
+    const usedArm = makeResidencyAdmissionClient();
+    try {
+      const result = await applyOneModelHost(
+        makeModelHostManifest("mlx-host-default-boundary-used", 6),
+        () => usedArm.client,
+        undefined,
+        {
+          workloadsDir: join(tmpUsed, "workloads"),
+          env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmpUsed },
+          getNodeBudgetGiB: () => 16,
+          residencyAdmission: {
+            getNodeResidencyPolicy: () => ({}),
+            getMeasuredEnvelope: () => measuredEnvelopeGiB(20),
+            getCandidateCalibrationKey: () => ENVELOPE_KEY,
+            nowMs: () => ENVELOPE_NOW_MS + 24 * HOUR_MS,
+          },
+        },
+      );
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toContain("'mlx-host-default-boundary-used' (20.0 GiB)");
+        expect(result.error).toContain("Budget is 16.0 GiB");
+      }
+      expect(usedArm.startSubscribes.count).toBe(0);
+    } finally {
+      rmSync(tmpUsed, { recursive: true, force: true });
+    }
+
+    // Arm 2 — 24h+1ms old: past the default, so IGNORED and the declared 6 GiB
+    // estimate admits.
+    const tmpIgnored = mkdtempSync(join(tmpdir(), "llamactl-modelhost-default-boundary-ignored-"));
+    const ignoredArm = makeResidencyAdmissionClient();
+    try {
+      const result = await applyOneModelHost(
+        makeModelHostManifest("mlx-host-default-boundary-ignored", 6),
+        () => ignoredArm.client,
+        undefined,
+        {
+          workloadsDir: join(tmpIgnored, "workloads"),
+          env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmpIgnored },
+          getNodeBudgetGiB: () => 16,
+          residencyAdmission: {
+            getNodeResidencyPolicy: () => ({}),
+            getMeasuredEnvelope: () => measuredEnvelopeGiB(20),
+            getCandidateCalibrationKey: () => ENVELOPE_KEY,
+            nowMs: () => ENVELOPE_NOW_MS + 24 * HOUR_MS + 1,
+          },
+        },
+      );
+
+      if (!result.ok) console.error("ERROR:", result);
+      expect(result.ok).toBe(true);
+      expect(ignoredArm.startSubscribes.count).toBe(1);
+    } finally {
+      rmSync(tmpIgnored, { recursive: true, force: true });
+    }
+  });
+
   test("ModelHost admission ignores a stale or key-mismatched measured envelope", async () => {
     // Control — fresh envelope with a matching candidate key is still charged:
     // the 20 GiB measurement refuses the apply past the 16 GiB budget, so the

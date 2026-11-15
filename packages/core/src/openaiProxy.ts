@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { basename, join } from "node:path";
 
 import type { AnthropicMessagesRequest } from "./anthropic/types.js";
+import type { ModelHostReadiness } from "./engines/types.js";
 import type { ResponsesApiRequest } from "./responses/index.js";
 import type { ResolvedEnv } from "./types.js";
 import type { WorkloadKey } from "./workloadRuntime.js";
@@ -19,6 +20,7 @@ import { listCatalog } from "./catalog.js";
 import { listPeers, type PeerNode } from "./config/peers.js";
 import { ctxForModel } from "./ctx.js";
 import { sanitizeLibosmosGreedyBody } from "./engines/libosmos.js";
+import { checkServingReadiness } from "./engines/lifecycle.js";
 import { readModelHostState } from "./engines/state.js";
 import { resolveEnv } from "./env.js";
 import {
@@ -79,6 +81,9 @@ const anthropicStreamCompletionByResponse = new WeakMap<Response, Promise<boolea
 
 /** Per-request budget for the `/v1/models` readiness gate (#220). */
 export const SERVING_MODELS_PROBE_TIMEOUT_MS = 1_000;
+
+/** Verdict TTL for the chat-routing serving-readiness gate (#280 DF-07). */
+export const SERVING_ROUTE_READINESS_TTL_MS = 2_000;
 
 // Winning LOCAL route per model id, keyed by the cached models response it was
 // built from (#220). Lets the async serving gate re-probe declared hosts
@@ -357,13 +362,13 @@ function buildListOpenAIModels(resolved: ResolvedEnv): OpenAIModelListResponse {
 /**
  * The `/v1/models` listing gated on declared ModelHost readiness (#220).
  *
- * This gates only the `/v1/models` publication: chat routing
- * (buildRouteMap/orderedProxyRoutes/listLocalRoutes) and the sync
- * listOpenAIModels are unchanged. Each call probes the declared hosts with no
+ * This gates only the `/v1/models` publication: chat routing is now gated
+ * separately by servingRouteForModel, which caches its readiness verdicts for
+ * SERVING_ROUTE_READINESS_TTL_MS (#280 DF-07). The sync listOpenAIModels is
+ * unchanged. This listing still probes every declared host per call with no
  * verdict cache, so a wedged host adds up to SERVING_MODELS_PROBE_TIMEOUT_MS
  * of latency per request; probes run concurrently, so the bound does not grow
- * with host count. Caching verdicts and gating chat routing are deferred to
- * later slices of #220.
+ * with host count.
  */
 export async function listServingOpenAIModels(
   resolved: ResolvedEnv = resolveEnv(),
@@ -598,23 +603,10 @@ function modelUnavailableResponse(
   );
 }
 
-function routedEndpointForModel(
-  model: string,
-  pathname: string,
-  search: string,
-  resolved: ResolvedEnv,
-): RoutedEntry | null {
-  const routeMap = getRouteMap(resolved);
-  const entry = routeMap.get(model);
-  if (!entry) return null;
-  const target =
-    entry.isPeer && entry.peerEndpoint
-      ? `${entry.peerEndpoint}${pathname}${search}`
-      : `http://${entry.host}:${String(entry.port)}${pathname}${search}`;
-  return {
-    ...entry,
-    target,
-  };
+function targetForEntry(entry: RouteEntry, pathname: string, search: string): string {
+  return entry.isPeer && entry.peerEndpoint
+    ? `${entry.peerEndpoint}${pathname}${search}`
+    : `http://${entry.host}:${String(entry.port)}${pathname}${search}`;
 }
 
 type RouteEntry = {
@@ -713,8 +705,132 @@ type ProxyContext = {
   clientRequestedStream?: boolean;
 };
 
-let routeMapCache: { sig: string; map: Map<string, RouteEntry> } | null = null;
+let routeMapCache: { sig: string; map: RouteMap } | null = null;
 let routeMapBuildCount = 0;
+// #280 DF-07: serving-readiness verdict cache for chat routing. Keyed
+// `${workload}\0${host}\0${port}\0${pid}\0${path}` so a restart (new pid)
+// re-probes; the stored promise gives in-flight dedupe. TTL
+// SERVING_ROUTE_READINESS_TTL_MS unless the test seam overrides it.
+const servingVerdictCache = new Map<string, { expiresAt: number; verdict: Promise<boolean> }>();
+// #280 DF-07: ids whose last routing outcome was warming, mapped to the
+// clock instant their record expires. Read fresh by serve-registered sources
+// via servingWarmingModelIds to project a 'loading' declared state.
+const servingWarmingRecords = new Map<string, number>();
+// #280 DF-07: test seam for the chat-routing readiness gate. Null uses Date.now,
+// SERVING_ROUTE_READINESS_TTL_MS and SERVING_MODELS_PROBE_TIMEOUT_MS, and reads
+// globalThis.fetch at call time (never captured at module load).
+let servingReadinessSeam: {
+  timeoutMs?: number;
+  ttlMs?: number;
+  now?: () => number;
+  fetch?: typeof fetch;
+} | null = null;
+
+const servingReadinessNow = (): number => servingReadinessSeam?.now?.() ?? Date.now();
+const servingReadinessTtlMs = (): number =>
+  servingReadinessSeam?.ttlMs ?? SERVING_ROUTE_READINESS_TTL_MS;
+const servingReadinessTimeoutMs = (): number =>
+  servingReadinessSeam?.timeoutMs ?? SERVING_MODELS_PROBE_TIMEOUT_MS;
+
+/**
+ * Install the chat-routing serving-readiness test seam (#280 DF-07). Null
+ * restores production defaults (Date.now, SERVING_ROUTE_READINESS_TTL_MS,
+ * SERVING_MODELS_PROBE_TIMEOUT_MS, and a call-time read of globalThis.fetch).
+ */
+export function __setOpenAIProxyServingReadinessForTests(
+  opts: {
+    timeoutMs?: number;
+    ttlMs?: number;
+    now?: () => number;
+    fetch?: typeof fetch;
+  } | null,
+): void {
+  servingReadinessSeam = opts;
+}
+
+/**
+ * Non-expired warming model ids (#280 DF-07), evaluated with the seam clock.
+ * A serve-registered declared-model source reads this fresh so a warming pin
+ * projects 'loading' rather than 'ready'.
+ */
+export function servingWarmingModelIds(): ReadonlySet<string> {
+  const now = servingReadinessNow();
+  const live = new Set<string>();
+  for (const [model, expiresAt] of servingWarmingRecords) {
+    if (expiresAt > now) live.add(model);
+  }
+  return live;
+}
+
+function recordServingWarming(model: string): void {
+  servingWarmingRecords.set(model, servingReadinessNow() + servingReadinessTtlMs());
+}
+
+function clearServingWarming(model: string): void {
+  servingWarmingRecords.delete(model);
+}
+
+function servingReadinessVerdict(
+  entry: RouteEntry,
+  readiness: ModelHostReadiness,
+  probeKey: string,
+): Promise<boolean> {
+  const now = servingReadinessNow();
+  const cached = servingVerdictCache.get(probeKey);
+  if (cached !== undefined && cached.expiresAt > now) return cached.verdict;
+  const verdict = checkServingReadiness({ host: entry.host, port: entry.port }, readiness, {
+    ...(servingReadinessSeam?.fetch !== undefined ? { fetch: servingReadinessSeam.fetch } : {}),
+    timeoutMs: servingReadinessTimeoutMs(),
+  }).catch(() => false);
+  servingVerdictCache.set(probeKey, { expiresAt: now + servingReadinessTtlMs(), verdict });
+  return verdict;
+}
+
+type ServingRouteOutcome = { routed: RoutedEntry } | { warming: RouteEntry } | null;
+
+/**
+ * Chat routing gate (#280 DF-07): pick a route candidate that passes declared
+ * serving readiness. null means no route (the existing route-miss path). The
+ * first candidate carrying no readiness wins untouched — no probe, no cache.
+ * Otherwise the fallback set mirrors #518's selectCatalogCandidates: a
+ * non-experimental candidate drops the experimental ones. Every candidate in
+ * that set gets its cached-or-fresh verdict concurrently (each bounded by the
+ * probe timeout, failing closed); the first in order with no readiness or a
+ * true verdict is routed. When none qualifies, the winner is reported warming.
+ */
+async function servingRouteForModel(
+  model: string,
+  pathname: string,
+  search: string,
+  resolved: ResolvedEnv,
+): Promise<ServingRouteOutcome> {
+  const candidates = getRouteMap(resolved).candidates.get(model);
+  if (candidates === undefined || candidates.length === 0) return null;
+  const winner = candidates[0];
+  if (winner === undefined) return null;
+  if (winner.readiness === undefined) {
+    return { routed: { ...winner.entry, target: targetForEntry(winner.entry, pathname, search) } };
+  }
+  const hasNonExperimental = candidates.some((candidate) => candidate.entry.experimental !== true);
+  const fallback = hasNonExperimental
+    ? candidates.filter((candidate) => candidate.entry.experimental !== true)
+    : candidates;
+  const verdicts = await Promise.all(
+    fallback.map((candidate) =>
+      candidate.readiness === undefined || candidate.probeKey === undefined
+        ? Promise.resolve(true)
+        : servingReadinessVerdict(candidate.entry, candidate.readiness, candidate.probeKey),
+    ),
+  );
+  for (const [index, candidate] of fallback.entries()) {
+    if (candidate.readiness === undefined || (verdicts[index] ?? false)) {
+      return {
+        routed: { ...candidate.entry, target: targetForEntry(candidate.entry, pathname, search) },
+      };
+    }
+  }
+  return { warming: winner.entry };
+}
 let clusterRoutingOverrideForTests: {
   clusterPeers?: PeerNode[];
   peerSnapshots?: Map<string, workloadRuntime.PeerSnapshot>;
@@ -769,51 +885,85 @@ export function setPeerSnapshots(snapshots: Map<string, workloadRuntime.PeerSnap
 }
 function invalidateRouteCacheEntry(model: string): void {
   if (routeMapCache) {
-    routeMapCache.map.delete(model);
+    routeMapCache.map.winner.delete(model);
   }
   routeMapCache = null;
   modelsResponseCache = null;
 }
 
-function buildRouteMap(resolved: ResolvedEnv): Map<string, RouteEntry> {
+type RouteCandidate = {
+  entry: RouteEntry;
+  readiness?: ModelHostReadiness;
+  probeKey?: string;
+};
+
+type RouteMap = {
+  winner: Map<string, RouteEntry>;
+  candidates: Map<string, RouteCandidate[]>;
+};
+
+function routeEntryFor(route: workloadRuntime.ClusterRoute): RouteEntry {
+  const peerFields = isPeerClusterRoute(route)
+    ? {
+        isPeer: true as const,
+        peerEndpoint: route.peerEndpoint,
+        ...omitUndefined({ certificate: route.certificate }),
+        ...omitUndefined({ tlsServerName: route.tlsServerName }),
+        ...omitUndefined({ token: route.token }),
+        targetNodeId: route.targetNodeId,
+        ...omitUndefined({ revision: route.revision }),
+      }
+    : {};
+  return {
+    host: route.host,
+    port: route.port,
+    workload: route.workload,
+    kind: route.kind,
+    engine: route.engine,
+    model: route.model,
+    ...(isExperimentalRoute(route) ? { experimental: true as const } : {}),
+    ...peerFields,
+  };
+}
+
+function readinessProbeFieldsFor(
+  route: workloadRuntime.ClusterRoute,
+): { readiness: ModelHostReadiness; probeKey: string } | Record<never, never> {
+  if (isPeerClusterRoute(route) || route.readiness === undefined) return {};
+  return {
+    readiness: route.readiness,
+    probeKey: `${route.workload}\0${route.host}\0${String(route.port)}\0${String(route.pid)}\0${route.readiness.path}`,
+  };
+}
+
+function buildRouteMap(resolved: ResolvedEnv): RouteMap {
   routeMapBuildCount += 1;
-  const out = new Map<string, RouteEntry>();
+  const winner = new Map<string, RouteEntry>();
+  const candidates = new Map<string, RouteCandidate[]>();
   const winners = new Map<string, { kind: string; workload: string }>();
   for (const route of orderedProxyRoutes(resolved)) {
-    const prior = winners.get(route.model);
-    if (prior) {
+    const entry = routeEntryFor(route);
+    const candidate: RouteCandidate = { entry, ...readinessProbeFieldsFor(route) };
+    const prior = candidates.get(route.model);
+    if (prior === undefined) {
+      candidates.set(route.model, [candidate]);
+    } else {
+      prior.push(candidate);
+    }
+    const priorWinner = winners.get(route.model);
+    if (priorWinner) {
       console.warn(
-        `[openaiProxy] route-map collision on model='${route.model}': keeping ${prior.kind}:${prior.workload}, ignoring ${route.kind}:${route.workload}`,
+        `[openaiProxy] route-map collision on model='${route.model}': keeping ${priorWinner.kind}:${priorWinner.workload}, ignoring ${route.kind}:${route.workload}`,
       );
       continue;
     }
-    const peerFields = isPeerClusterRoute(route)
-      ? {
-          isPeer: true as const,
-          peerEndpoint: route.peerEndpoint,
-          ...omitUndefined({ certificate: route.certificate }),
-          ...omitUndefined({ tlsServerName: route.tlsServerName }),
-          ...omitUndefined({ token: route.token }),
-          targetNodeId: route.targetNodeId,
-          ...omitUndefined({ revision: route.revision }),
-        }
-      : {};
     winners.set(route.model, { kind: route.kind, workload: route.workload });
-    out.set(route.model, {
-      host: route.host,
-      port: route.port,
-      workload: route.workload,
-      kind: route.kind,
-      engine: route.engine,
-      model: route.model,
-      ...(isExperimentalRoute(route) ? { experimental: true as const } : {}),
-      ...peerFields,
-    });
+    winner.set(route.model, entry);
   }
-  return out;
+  return { winner, candidates };
 }
 
-function getRouteMap(resolved: ResolvedEnv): Map<string, RouteEntry> {
+function getRouteMap(resolved: ResolvedEnv): RouteMap {
   try {
     const sig = workloadRuntimeCacheSignature(resolved);
     if (routeMapCache?.sig === sig) return routeMapCache.map;
@@ -833,6 +983,9 @@ export function __resetOpenAIProxyRouteMapCacheForTests(): void {
   declaredModelSource = null;
   coldPinQueueProbe = null;
   coldPinProbeSeq = 0;
+  servingVerdictCache.clear();
+  servingWarmingRecords.clear();
+  servingReadinessSeam = null;
   for (const runtime of kvRuntimeByDataRoot.values()) {
     runtime.storage.close();
   }
@@ -2267,7 +2420,7 @@ function declaredUnavailableRejectionFor(model: string, resolved: ResolvedEnv): 
   const { byRel, relByCatalogId } = declaredUnavailableModels(resolved);
   const rel = byRel.has(model) ? model : relByCatalogId.get(model);
   if (rel === undefined || defaults.has(rel)) return null;
-  if (getRouteMap(resolved).has(rel)) return null;
+  if (getRouteMap(resolved).winner.has(rel)) return null;
   const entry = byRel.get(rel);
   if (!entry) return null;
   return modelUnavailableResponse(model, {
@@ -2364,6 +2517,40 @@ function queueProbeFieldFor(
 }
 
 /**
+ * #280 DF-07: the declared-not-loaded 503 body. Shared by the route-miss
+ * rejection and the warming-only rejection. `disabled`/`unavailable` map to
+ * `model_unavailable`, the same never-loadable class as the #549 catalog
+ * rejections; `cold`/`loading`/`draining` map to `model_not_loaded`. No
+ * Retry-After: readiness changes when the declaration or readiness changes,
+ * not on a timer.
+ */
+function declaredNotLoadedResponse(
+  model: string,
+  entry: DeclaredModelEntryV1,
+  bodyText: string | undefined,
+): Response {
+  const type =
+    entry.state === "disabled" || entry.state === "unavailable"
+      ? "model_unavailable"
+      : "model_not_loaded";
+  return Response.json(
+    {
+      error: {
+        message: `model '${model}' is declared but not loaded (state: ${entry.state})`,
+        type,
+        code: type,
+        param: "model",
+        state: entry.state,
+        auto_load_eligible: entry.autoLoadEligible,
+        ...(entry.reason !== undefined ? { reason: entry.reason } : {}),
+        ...queueProbeFieldFor(entry, bodyText),
+      },
+    },
+    { status: 503 },
+  );
+}
+
+/**
  * #280 DF-07: 503 for an exact pin of a declared model that is not
  * loaded, or null when the request keeps the #306 / default-endpoint
  * paths. Default-target ids, ids with a live route, undeclared models
@@ -2387,28 +2574,39 @@ function declaredNotLoadedRejectionFor(
   bodyText: string | undefined,
 ): Response | null {
   if (defaultTargetModelIds(resolved).has(model)) return null;
-  if (getRouteMap(resolved).has(model)) return null;
+  if (getRouteMap(resolved).winner.has(model)) return null;
   const entry = declaredModelEntries().find((candidate) => candidate.id === model);
   if (entry === undefined || entry.state === "ready") return null;
-  const type =
-    entry.state === "disabled" || entry.state === "unavailable"
-      ? "model_unavailable"
-      : "model_not_loaded";
-  return Response.json(
-    {
-      error: {
-        message: `model '${model}' is declared but not loaded (state: ${entry.state})`,
-        type,
-        code: type,
-        param: "model",
-        state: entry.state,
-        auto_load_eligible: entry.autoLoadEligible,
-        ...(entry.reason !== undefined ? { reason: entry.reason } : {}),
-        ...queueProbeFieldFor(entry, bodyText),
-      },
-    },
-    { status: 503 },
-  );
+  return declaredNotLoadedResponse(model, entry, bodyText);
+}
+
+/**
+ * #280 DF-07: 503 for a pin whose only routes are live but fail serving
+ * readiness (a warming ModelHost). The declared catalog state wins when it
+ * carries a stronger state than the synthesized warming; a stale `ready`
+ * declaration never unlocks a warming route. Otherwise a `loading` entry is
+ * synthesized and validated through DeclaredModelEntryV1Schema. No
+ * Retry-After.
+ */
+function servingNotReadyRejectionFor(
+  model: string,
+  entry: RouteEntry,
+  bodyText: string | undefined,
+): Response {
+  const declared = declaredModelEntries().find((candidate) => candidate.id === model);
+  if (declared !== undefined && declared.state !== "ready") {
+    return declaredNotLoadedResponse(model, declared, bodyText);
+  }
+  const synthesized = DeclaredModelEntryV1Schema.parse({
+    id: model,
+    workload: entry.workload,
+    kind: entry.kind,
+    ownerNodeId: "local",
+    state: "loading",
+    autoLoadEligible: false,
+    reason: "serving-readiness-pending",
+  });
+  return declaredNotLoadedResponse(model, synthesized, bodyText);
 }
 
 /**
@@ -2430,6 +2628,14 @@ function declaredNotLoadedRejectionFor(
  * endpoint. Default-target ids are exempt by rel, and so is a catalog id
  * whose rel is a default-target id, keeping parity with the `unavailable`
  * list in listOpenAIModels.
+ *
+ * #280 DF-07: routing goes through servingRouteForModel, which gates a live
+ * route on declared serving readiness. When every candidate for the id is
+ * live but warming (and, per #518, an experimental candidate never falls back
+ * ahead of a non-experimental one), the pin is answered with a warming-only
+ * `model_not_loaded` 503 (or the declared catalog state when one exists) —
+ * never a forward to a warming host. Default-target ids instead fall through
+ * to the default endpoint for a warming id, mirroring routeMissResponse.
  *
  * Known limitation: when the operator's extraArgs already pass `--alias`
  * or `-a`, server.ts skips adding `--alias LLAMA_CPP_SERVER_ALIAS`, so the
@@ -2458,20 +2664,37 @@ async function resolveJsonBodyRoute(context: ProxyContext): Promise<ProxyContext
   const bodyText = context.bodyText;
   const model = bodyText ? requestedModelFromBody(bodyText) : undefined;
   if (model) {
-    const routedTarget = routedEndpointForModel(
-      model,
-      context.pathname,
-      context.search,
-      context.resolved,
-    );
-    if (routedTarget) {
-      context.target = routedTarget.target;
-      context.route = routedTarget;
-      return context;
-    }
-    return routeMissResponse(context, model);
+    return await applyBodyModelRoute(context, model, bodyText);
   }
   return context;
+}
+
+async function applyBodyModelRoute(
+  context: ProxyContext,
+  model: string,
+  bodyText: string | undefined,
+): Promise<ProxyContext | Response> {
+  const outcome = await servingRouteForModel(
+    model,
+    context.pathname,
+    context.search,
+    context.resolved,
+  );
+  if (outcome !== null && "routed" in outcome) {
+    context.target = outcome.routed.target;
+    context.route = outcome.routed;
+    clearServingWarming(model);
+    return context;
+  }
+  if (outcome !== null && "warming" in outcome) {
+    if (defaultTargetModelIds(context.resolved).has(model)) {
+      clearServingWarming(model);
+      return context;
+    }
+    recordServingWarming(model);
+    return servingNotReadyRejectionFor(model, outcome.warming, bodyText);
+  }
+  return routeMissResponse(context, model);
 }
 
 /** Rejection chain for a body model that matched no route (#306 + #280). */
@@ -2484,7 +2707,7 @@ function routeMissResponse(context: ProxyContext, model: string): ProxyContext |
     context.bodyText,
   );
   if (notLoadedRejection) return notLoadedRejection;
-  const routeMap = getRouteMap(context.resolved);
+  const routeMap = getRouteMap(context.resolved).winner;
   if (routeMap.size > 0 && !defaultTargetModelIds(context.resolved).has(model)) {
     return modelNotRoutedResponse(model, [...routeMap.keys()].sort());
   }
