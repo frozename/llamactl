@@ -21,6 +21,8 @@ const DOC = join(REPO, "docs/dynamic-residency.md");
 const INSTALL_TEST = join(REPO, "packages/remote/test/worker-rpc-install.test.ts");
 const CLI_BIN = join(REPO, "packages/cli/src/bin.ts");
 const AGENT_CLI = join(REPO, "packages/cli/src/commands/agent.ts");
+const RESIDENCY_CLI = join(REPO, "packages/cli/src/commands/residency.ts");
+const CHAT_ADMISSION = join(REPO, "packages/remote/src/server/chat-admission.ts");
 
 function readOrEmpty(path: string): string {
   return existsSync(path) ? readFileSync(path, "utf8") : "";
@@ -195,6 +197,57 @@ function unknownCommands(md: string): string[] {
   return [...reports].sort();
 }
 
+// Required flags per residency subcommand, parsed from the Subcommands lines
+// of USAGE in residency.ts: the synopsis is everything before the first run
+// of 2+ spaces, and any [bracketed] group in it is optional.
+function residencyRequiredFlags(): Map<string, string[]> {
+  const usage = /const USAGE = `([\s\S]*?)`;/.exec(readOrEmpty(RESIDENCY_CLI))?.[1] ?? "";
+  const subcommands = /Subcommands:\n([\s\S]*?)\n\n/.exec(usage)?.[1] ?? "";
+  const required = new Map<string, string[]>();
+  for (const line of subcommands.split("\n")) {
+    const m = /^ {2}([a-z][a-z-]*)((?: \S+)*?) {2,}/.exec(line);
+    const sub = m?.[1];
+    if (sub === undefined) continue;
+    const synopsis = (m?.[2] ?? "").replaceAll(/\[[^\]]*\]/g, " ");
+    required.set(
+      sub,
+      [...synopsis.matchAll(/--[a-z][a-z-]*/g)].map((f) => f[0]),
+    );
+  }
+  return required;
+}
+
+// Every `llamactl residency <sub> ...` command in a code span or a code-block
+// line, as the text to the end of that line.
+function residencyCommands(md: string): { sub: string; command: string }[] {
+  const commands: { sub: string; command: string }[] = [];
+  for (const span of codeSpans(md)) {
+    for (const m of span.matchAll(/\bllamactl residency ([a-z][a-z-]*)[^\n`]*/g)) {
+      const sub = m[1];
+      if (sub !== undefined) commands.push({ sub, command: m[0] });
+    }
+  }
+  return commands;
+}
+
+function missingRequiredFlags(md: string, required: Map<string, string[]>): string[] {
+  const reports: string[] = [];
+  for (const { sub, command } of residencyCommands(md)) {
+    const tokens = new Set(command.split(/\s+/));
+    for (const flag of required.get(sub) ?? []) {
+      if (!tokens.has(flag)) reports.push(`${command.trim()}: missing ${flag}`);
+    }
+  }
+  return reports.sort();
+}
+
+// The bullets of the "Deferred:" block in the chat-admission.ts header.
+function chatAdmissionDeferred(): string {
+  const header = /^\/\*\*([\s\S]*?)\*\//.exec(readOrEmpty(CHAT_ADMISSION))?.[1] ?? "";
+  const block = /Deferred:\n([\s\S]*?)\n \*\n/.exec(header)?.[1] ?? "";
+  return block.replaceAll(/\n \* +/g, " ");
+}
+
 function productionRefs(symbol: string, definingFile: string): string[] {
   const refs: string[] = [];
   for (const file of srcFiles()) {
@@ -257,6 +310,28 @@ describe("docs/dynamic-residency.md (#285)", () => {
     expect(doc).toContain("--execute --yes");
     expect(unknownCommands(doc)).toEqual([]);
 
+    // Every residency command the doc shows carries the flags USAGE marks
+    // required. Kills: dropping --to from a documented apply-profile.
+    const required = residencyRequiredFlags();
+    for (const [sub, flags] of [
+      ["plan", ["--node", "--to"]],
+      ["apply-profile", ["--node", "--to"]],
+      ["status", ["--node"]],
+    ] as const) {
+      for (const flag of flags) {
+        expect(required.get(sub) ?? [], `USAGE required flags for ${sub}`).toContain(flag);
+      }
+    }
+    const shown = new Set(residencyCommands(doc).map((c) => c.sub));
+    for (const sub of shown) expect(required.has(sub), `USAGE line for ${sub}`).toBe(true);
+    for (const sub of ["plan", "apply-profile", "cancel-operation", "force-unload"]) {
+      expect(shown.has(sub), `doc shows residency ${sub}`).toBe(true);
+    }
+    expect(missingRequiredFlags(doc, required)).toEqual([]);
+    expect(
+      missingRequiredFlags("`llamactl residency apply-profile --node n --execute --yes`", required),
+    ).toEqual(["llamactl residency apply-profile --node n --execute --yes: missing --to"]);
+
     expect(unknownCommands("`llamactl residency evict-all`")).toEqual(["residency evict-all"]);
     expect(unknownCommands("`llamactl frobnicate`")).toEqual(["frobnicate"]);
     expect(unknownCommands("`llamactl enable foo` `llamactl residency`")).toEqual([]);
@@ -280,6 +355,14 @@ describe("docs/dynamic-residency.md (#285)", () => {
       "packages/remote/src/residency/store.ts",
     ]) {
       expect(section).toContain(needle);
+    }
+    // The backup snippet resolves the path like defaultResidencyStorePath
+    // and backs up through that variable, never a hardcoded store path.
+    const resolver = `STORE="\${LLAMACTL_RESIDENCY_STORE:-\${DEV_STORAGE:-$HOME/.llamactl}/${storeRel}}"`;
+    expect(section).toContain(resolver);
+    expect(section).toContain('sqlite3 "$STORE" ".backup ');
+    for (const line of section.split("\n")) {
+      if (line.startsWith("sqlite3 ")) expect(line).not.toContain(storeRel);
     }
   });
 
@@ -435,12 +518,43 @@ describe("docs/dynamic-residency.md (#285)", () => {
     for (const state of routingCatalog.DeclaredModelStateSchema.options) {
       expect(declared).toContain(`\`${state}\``);
     }
+
+    // The uncounted list mirrors the chat-admission.ts Deferred block in both
+    // directions, so counting a deferred ingress forces a doc update.
+    const deferred = chatAdmissionDeferred();
+    expect(deferred).toContain("physical per-node accounting");
+    const uncounted = /Not counted yet[\s\S]*/.exec(admission)?.[0] ?? "";
+    expect(uncounted).toContain("packages/remote/src/server/chat-admission.ts");
+    for (const item of [
+      "/v1/completions",
+      "tRPC chat mutation",
+      "physical per-node accounting",
+      "per-model keys",
+      "per-principal shares",
+      "total request deadline",
+      "fairness",
+      "Anthropic-shaped error bodies",
+    ]) {
+      expect(uncounted.includes(item), `uncounted list vs Deferred block: ${item}`).toBe(
+        deferred.includes(item),
+      );
+    }
   });
 
   // Kills: renaming cacheEpoch in omlx-cache-identity.ts, or dropping the
   // packages/core/src/resources/memory.ts citation.
   test("case 10: artifact identity", () => {
     const section = sectionBody(SECTIONS.artifact) ?? "";
+    // Declared stale reasons match DECLARED_STALE_REASONS exactly in both the
+    // artifact-identity and declared-models sections. Kills: renaming a
+    // reason in packages/core/src/routing/catalog.ts.
+    const reasons = [...routingCatalog.DECLARED_STALE_REASONS].sort();
+    expect(reasons.length).toBeGreaterThan(0);
+    for (const body of [section, sectionBody(SECTIONS.declared) ?? ""]) {
+      expect(body).toContain("DECLARED_STALE_REASONS");
+      const named = [...new Set([...body.matchAll(/`(stale-[a-z-]+)`/g)].map((m) => m[1]))].sort();
+      expect(named).toEqual(reasons);
+    }
     for (const needle of [
       "`rel`",
       "basename",
@@ -501,8 +615,17 @@ describe("docs/dynamic-residency.md (#285)", () => {
     expect(stage(0)).toContain("residency plan");
     expect(stage(1)).toContain("--execute --yes");
     expect(stage(1)).toContain("cancel-operation");
-    expect(stage(2)).toContain("LLAMACTL_CHAT_ADMISSION_MAX_EXECUTIONS");
-    expect(stage(2)).toContain("LLAMACTL_DECLARED_MODELS");
+    // Stage 1 shows the dry run before the wet run.
+    const stage1Applies = residencyCommands(stage(1)).filter((c) => c.sub === "apply-profile");
+    const dryIdx = stage1Applies.findIndex((c) => !c.command.includes("--execute"));
+    const wetIdx = stage1Applies.findIndex((c) => c.command.includes("--execute --yes"));
+    expect(dryIdx).toBeGreaterThanOrEqual(0);
+    expect(wetIdx).toBeGreaterThan(dryIdx);
+    // Stage 2 actually sets both vars for the agent, not just names them.
+    expect(stage(2)).toMatch(/^export LLAMACTL_CHAT_ADMISSION_MAX_EXECUTIONS=\S+$/m);
+    expect(stage(2)).toMatch(/^export LLAMACTL_DECLARED_MODELS=1$/m);
+    expect(stage(2)).toContain("EnvironmentVariables.LLAMACTL_CHAT_ADMISSION_MAX_EXECUTIONS");
+    expect(stage(2)).toMatch(/EnvironmentVariables\.LLAMACTL_DECLARED_MODELS -string 1 /);
     expect(stage(3)).toContain("BLOCKED");
     expect(doc).toContain("disabled by default");
     expect(doc).toContain("not deployment approval");
