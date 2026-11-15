@@ -22,8 +22,10 @@
  * crash-recovery path terminalizes it; serialization is therefore NOT
  * complete without recovery.
  *
- * crash recovery/rollback/persist-suppression/verify-release/reserve/
- * verify-ready/publish stay deferred. The planner's
+ * With an operation record, finishing it terminal is the plan's `complete`
+ * step, so `deferred` omits `complete`; without one, `complete` stays
+ * deferred. crash recovery/rollback/persist-suppression/verify-release/
+ * reserve/verify-ready/publish stay deferred. The planner's
  * `request.timeouts.drainMs` is not carried on `OkPlan`, so the executor
  * uses `opts.drainTimeoutMs` or the default; threading the resolved
  * timeouts through is a later slice.
@@ -186,13 +188,16 @@ function classifyDrain(settle: DrainSettle): string | undefined {
   return `drain ${settle.result.reason}`;
 }
 
-function deferredKinds(plan: ProfileSwitchPlan, fenced: boolean): StepKind[] {
+function deferredKinds(plan: ProfileSwitchPlan, fenced: boolean, recorded: boolean): StepKind[] {
   if (!plan.ok) {
     return [];
   }
   const executed: StepKind[] = fenced
     ? ["fence-admission", "drain", "unload", "start"]
     : ["unload", "start"];
+  if (recorded) {
+    executed.push("complete");
+  }
   return plan.steps.map((step) => step.kind).filter((kind) => !executed.includes(kind));
 }
 
@@ -663,7 +668,6 @@ function inFlightOperationId(operation: ProfileSwitchOperationOpts, plan: OkPlan
 async function executeWithOperation(
   plan: OkPlan,
   deferred: StepKind[],
-  signal: AbortSignal | undefined,
   operation: ProfileSwitchOperationOpts,
   run: () => Promise<RunResult>,
 ): Promise<ProfileSwitchExecutionReport> {
@@ -799,7 +803,7 @@ export async function executeProfileSwitch(
   const registry = opts?.registry === undefined ? getResidencyLeaseRegistry() : opts.registry;
   const drainTimeoutMs = drainTimeoutMsFrom(opts?.drainTimeoutMs);
   const fenced = registry !== null;
-  const deferred = deferredKinds(plan, fenced);
+  const deferred = deferredKinds(plan, fenced, opts?.operation !== undefined);
   const planned = plannedSteps(plan.victims, plan.replacements, fenced);
 
   if (dryRun) {
@@ -822,7 +826,7 @@ export async function executeProfileSwitch(
   const signal = opts.signal;
   const operation = opts.operation;
   if (operation !== undefined) {
-    return await executeWithOperation(plan, deferred, signal, operation, async () =>
+    return await executeWithOperation(plan, deferred, operation, async () =>
       fenced
         ? await runFenced(plan, deps, registry, drainTimeoutMs, signal)
         : await runSteps(planned, deps, signal),

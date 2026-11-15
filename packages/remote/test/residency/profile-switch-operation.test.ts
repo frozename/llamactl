@@ -559,4 +559,328 @@ describe("executeProfileSwitch operation record + cancellation", () => {
     expect(rec?.outcome).toBe("cancelled");
     expect(rec?.detail).toContain("cancelled before stop v-a");
   });
+
+  test("a run that throws still records the operation failed and releases the node", async () => {
+    const plan = okFleetPlan();
+    const fx = makeDeps({
+      "stop:v-b": () => {
+        throw new Error("stop exploded");
+      },
+    });
+    const thrown = await runSwitch(plan, fx.deps, {
+      dryRun: false,
+      registry: null,
+      operation: operationOpts("op-throw-step"),
+    });
+    expect(thrown.outcome).toBe("failed");
+    expect(thrown.failedAt).toEqual({ action: "stop", workload: "v-b", detail: "stop exploded" });
+    const recStep = store.getOperation("op-throw-step");
+    expect(recStep).not.toBeNull();
+    expect(recStep?.phase).toBe("terminal");
+    expect(recStep?.outcome).toBe("failed");
+
+    // A run-level throw (here the caller's signal getter) escapes every step
+    // guard; the executor must still terminalize the record before rethrowing.
+    let reads = 0;
+    const explodingSignal = {
+      get aborted(): boolean {
+        reads += 1;
+        if (reads >= 2) {
+          throw new Error("signal exploded");
+        }
+        return false;
+      },
+    } as unknown as AbortSignal;
+    const fxThrow = makeDeps();
+    const rejected = await run(plan, fxThrow.deps, {
+      dryRun: false,
+      registry: null,
+      signal: explodingSignal,
+      operation: operationOpts("op-throw-run"),
+    }).then(
+      () => null,
+      (error: unknown) => messageOfTest(error),
+    );
+    expect(rejected).toBe("signal exploded");
+    expect(fxThrow.calls).toEqual(["stop:v-a"]);
+    const recRun = store.getOperation("op-throw-run");
+    expect(recRun).not.toBeNull();
+    expect(recRun?.phase).toBe("terminal");
+    expect(recRun?.outcome).toBe("failed");
+    expect(recRun?.detail).toContain("signal exploded");
+    expect(store.listNonterminal()).toEqual([]);
+
+    const fxNext = makeDeps();
+    const next = await runSwitch(plan, fxNext.deps, {
+      dryRun: false,
+      registry: null,
+      operation: operationOpts("op-after-throw"),
+    });
+    expect(next.outcome).toBe("stops-and-starts-ran");
+    expect(next.busy).toBeUndefined();
+    expect(fxNext.calls).toEqual(["stop:v-a", "stop:v-b", "stop:v-c", "start:r-x", "start:r-y"]);
+  });
+
+  test("replaying an in-flight operation id is Busy with its own id and never re-runs the steps", async () => {
+    const plan = okFleetPlan();
+    const entered = deferred();
+    const hold = deferred();
+    const fxA = makeDeps({
+      "stop:v-a": async () => {
+        entered.release();
+        await hold.promise;
+        return { ok: true };
+      },
+    });
+    const pA = runSwitch(plan, fxA.deps, {
+      dryRun: false,
+      registry: null,
+      operation: operationOpts("op-inflight"),
+    });
+    await entered.promise;
+
+    try {
+      const fxReplay = makeDeps();
+      const replay = await runSwitch(plan, fxReplay.deps, {
+        dryRun: false,
+        registry: null,
+        operation: operationOpts("op-inflight"),
+      });
+      expect(replay.outcome).toBe("busy");
+      expect(replay.ok).toBe(false);
+      expect(replay.busy?.operationId).toBe("op-inflight");
+      expect(replay.busy?.node).toBe(NODE);
+      expect(replay.steps).toEqual([]);
+      expect(fxReplay.calls).toEqual([]);
+    } finally {
+      hold.release();
+    }
+
+    const a = await pA;
+    expect(a.outcome).toBe("stops-and-starts-ran");
+    expect(a.operation).toEqual({ id: "op-inflight", outcome: "succeeded", recorded: true });
+    expect(fxA.calls).toEqual(["stop:v-a", "stop:v-b", "stop:v-c", "start:r-x", "start:r-y"]);
+  });
+
+  test("replaying a terminal failed or cancelled operation reports the recorded outcome, not ok", async () => {
+    const plan = okFleetPlan();
+    const fxFail = makeDeps({ "start:r-x": () => ({ ok: false, detail: "admission refused" }) });
+    const failed = await runSwitch(plan, fxFail.deps, {
+      dryRun: false,
+      registry: null,
+      operation: operationOpts("op-replay-failed"),
+    });
+    expect(failed.outcome).toBe("failed");
+
+    const controller = new AbortController();
+    controller.abort();
+    const cancelled = await runSwitch(plan, makeDeps().deps, {
+      dryRun: false,
+      registry: null,
+      signal: controller.signal,
+      operation: operationOpts("op-replay-cancelled"),
+    });
+    expect(cancelled.outcome).toBe("cancelled");
+
+    for (const [id, recorded] of [
+      ["op-replay-failed", "failed"],
+      ["op-replay-cancelled", "cancelled"],
+    ] as const) {
+      const fxReplay = makeDeps();
+      const replay = await runSwitch(plan, fxReplay.deps, {
+        dryRun: false,
+        registry: null,
+        operation: operationOpts(id),
+      });
+      expect(replay.outcome).toBe("replayed");
+      expect(replay.ok).toBe(false);
+      expect(replay.operation).toEqual({ id, outcome: recorded, recorded: true });
+      expect(fxReplay.calls).toEqual([]);
+    }
+  });
+
+  test("abort during the fence phase fences no further victim and releases the owned fence", async () => {
+    const plan = okFleetPlan();
+    const controller = new AbortController();
+    const inner = createResidencyLeases();
+    const fx = makeDeps();
+    const base = recordingRegistry(inner, fx.calls);
+    const registry: ResidencyLeases = {
+      ...base,
+      beginDrain: (workload) => {
+        const begun = base.beginDrain(workload);
+        if (workload === "v-a") {
+          controller.abort();
+        }
+        return begun;
+      },
+    };
+
+    const report = await runSwitch(plan, fx.deps, {
+      dryRun: false,
+      registry,
+      drainTimeoutMs: 1_000,
+      signal: controller.signal,
+      operation: operationOpts("op-fence-abort"),
+    });
+
+    expect(fx.calls).toEqual(["beginDrain:v-a", "cancelDrain:v-a"]);
+    expect(report.outcome).toBe("cancelled");
+    expect(report.failedAt).toBeNull();
+    expect(report.cancelledAt).toEqual({ action: "fence", workload: "v-b" });
+    expect(report.steps).toEqual([
+      step("fence", "v-a", "ok"),
+      step("fence", "v-b", "not-run"),
+      step("fence", "v-c", "not-run"),
+      step("drain", "v-a", "not-run"),
+      step("drain", "v-b", "not-run"),
+      step("drain", "v-c", "not-run"),
+      step("stop", "v-a", "not-run"),
+      step("stop", "v-b", "not-run"),
+      step("stop", "v-c", "not-run"),
+      step("start", "r-x", "not-run"),
+      step("start", "r-y", "not-run"),
+    ]);
+    // the cancelled fence is released: v-a admits leases again
+    expect(inner.acquire("v-a").ok).toBe(true);
+    expect(store.getOperation("op-fence-abort")?.outcome).toBe("cancelled");
+  });
+
+  test("abort during the stop phase stops no further victim and cancels the rest of the drains", async () => {
+    const plan = okFleetPlan();
+    const controller = new AbortController();
+    const inner = createResidencyLeases();
+    const fx = makeDeps({
+      "stop:v-a": () => {
+        controller.abort();
+        return { ok: true };
+      },
+    });
+    const registry = recordingRegistry(inner, fx.calls);
+
+    const report = await runSwitch(plan, fx.deps, {
+      dryRun: false,
+      registry,
+      drainTimeoutMs: 1_000,
+      signal: controller.signal,
+      operation: operationOpts("op-stop-abort"),
+    });
+
+    expect(fx.calls).toEqual([
+      "beginDrain:v-a",
+      "beginDrain:v-b",
+      "beginDrain:v-c",
+      "whenIdle:v-a",
+      "whenIdle:v-b",
+      "whenIdle:v-c",
+      "stop:v-a",
+      "commitUnload:v-a",
+      "cancelDrain:v-b",
+      "cancelDrain:v-c",
+    ]);
+    expect(report.outcome).toBe("cancelled");
+    expect(report.failedAt).toBeNull();
+    expect(report.cancelledAt).toEqual({ action: "stop", workload: "v-b" });
+    expect(report.steps.filter((s) => s.action === "stop" || s.action === "start")).toEqual([
+      step("stop", "v-a", "ok"),
+      step("stop", "v-b", "not-run"),
+      step("stop", "v-c", "not-run"),
+      step("start", "r-x", "not-run"),
+      step("start", "r-y", "not-run"),
+    ]);
+    expect(inner.acquire("v-b").ok).toBe(true);
+    expect(inner.acquire("v-c").ok).toBe(true);
+  });
+
+  test("abort during the start phase starts no replacement", async () => {
+    const plan = okFleetPlan();
+    const controller = new AbortController();
+    const inner = createResidencyLeases();
+    const fx = makeDeps({
+      "stop:v-c": () => {
+        controller.abort();
+        return { ok: true };
+      },
+    });
+    const registry = recordingRegistry(inner, fx.calls);
+
+    const report = await runSwitch(plan, fx.deps, {
+      dryRun: false,
+      registry,
+      drainTimeoutMs: 1_000,
+      signal: controller.signal,
+      operation: operationOpts("op-start-abort"),
+    });
+
+    expect(fx.calls.filter((c) => c.startsWith("start:"))).toEqual([]);
+    expect(fx.calls.filter((c) => c.startsWith("stop:"))).toEqual([
+      "stop:v-a",
+      "stop:v-b",
+      "stop:v-c",
+    ]);
+    expect(report.outcome).toBe("cancelled");
+    expect(report.failedAt).toBeNull();
+    expect(report.cancelledAt).toEqual({ action: "start", workload: "r-x" });
+    expect(report.steps.filter((s) => s.action === "start")).toEqual([
+      step("start", "r-x", "not-run"),
+      step("start", "r-y", "not-run"),
+    ]);
+    expect(store.getOperation("op-start-abort")?.detail).toContain("cancelled before start r-x");
+  });
+
+  test("abort during a drain wait ends the wait promptly, well before the drain timeout", async () => {
+    const plan = okFleetPlan();
+    const controller = new AbortController();
+    const inner = createResidencyLeases();
+    const fx = makeDeps();
+    const registry = recordingRegistry(inner, fx.calls);
+    const held = inner.acquire("v-b");
+    expect(held.ok).toBe(true);
+
+    const started = performance.now();
+    setTimeout(() => {
+      controller.abort();
+    }, 20);
+    const report = await runSwitch(plan, fx.deps, {
+      dryRun: false,
+      registry,
+      drainTimeoutMs: 3_000,
+      signal: controller.signal,
+      operation: operationOpts("op-drain-prompt"),
+    });
+    const elapsed = performance.now() - started;
+
+    expect(elapsed).toBeLessThan(500);
+    expect(report.outcome).toBe("cancelled");
+    // a cancelled drain is not a failure: no failedAt, no failed step
+    expect(report.failedAt).toBeNull();
+    expect(report.steps.filter((s) => s.status === "failed")).toEqual([]);
+    expect(report.steps.filter((s) => s.action === "drain")).toEqual([
+      step("drain", "v-a", "ok"),
+      step("drain", "v-b", "not-run"),
+      step("drain", "v-c", "ok"),
+    ]);
+    expect(fx.calls.filter((c) => c.startsWith("stop:") || c.startsWith("start:"))).toEqual([]);
+    const rec = store.getOperation("op-drain-prompt");
+    expect(rec?.outcome).toBe("cancelled");
+    expect(rec?.detail).not.toContain("drain timeout");
+  });
+
+  test("deferred omits complete only when an operation record terminalizes the switch", async () => {
+    const plan = okFleetPlan();
+    const withRecord = await runSwitch(plan, makeDeps().deps, {
+      dryRun: false,
+      registry: null,
+      operation: operationOpts("op-deferred"),
+    });
+    expect(withRecord.deferred).not.toContain("complete");
+    expect(store.getOperation("op-deferred")?.outcome).toBe("succeeded");
+
+    const without = await runSwitch(plan, makeDeps().deps, { dryRun: false, registry: null });
+    expect(without.deferred).toContain("complete");
+  });
 });
+
+function messageOfTest(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
