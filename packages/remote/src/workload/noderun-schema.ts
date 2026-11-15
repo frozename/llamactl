@@ -53,12 +53,16 @@ export type NodeRunInfraItem = z.infer<typeof NodeRunInfraItemSchema>;
  * admission budgets by apply, the reconciler, the router views and apply, and
  * the residencyPlan budget (Part of #519). `minResidencySeconds` and
  * `switchCooldownSeconds` are passed to the profile-switch planner by
- * residencyPlan. The remaining fields are validated and persisted but not yet
- * enforced. budget.memoryGiB overrides any computed budget.
+ * residencyPlan. `idleEvictSeconds` is validated, persisted and echoed by
+ * residencyStatus, but no idle-eviction path reads it (the DF-10 sleep driver
+ * has no idle trigger), so any value behaves like 0. `residentPreference` and
+ * `coldLoadPenaltyMs` are validated and persisted but not yet enforced.
+ * budget.memoryGiB overrides any computed budget.
  */
 export const ResidencyPolicySchema = z
   .object({
-    /** reserved; not yet enforced */
+    /** parse-only: validated and persisted; no idle-eviction path reads it,
+     * so any value behaves like 0 (Part of #519) */
     idleEvictSeconds: z.number().int().nonnegative().optional(),
     /** read by the profile-switch planner; refuses only when load timing is
      *  supplied, which no caller persists yet (#279) */
