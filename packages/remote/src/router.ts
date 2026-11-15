@@ -1734,7 +1734,8 @@ export const router = t.router({
       if (resolved.node.endpoint.startsWith("inproc://")) {
         // Stands in for the agent's /v1/models, so it must apply the same
         // ModelHost readiness gate: a warming host is hidden here exactly
-        // as it is on a remote agent (#220). Chat routing is unchanged.
+        // as it is on a remote agent (#220). Chat routing applies its own
+        // cached readiness gate in openaiProxy's servingRouteForModel (#280).
         const { openaiProxy } = await import("@llamactl/core");
         const full = await openaiProxy.listServingOpenAIModels();
         return { node: input.name, kind, ...projectModelsBody(full, includeDeclared) };

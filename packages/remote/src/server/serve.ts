@@ -1029,12 +1029,15 @@ function maybeRegisterDeclaredModels(opts: StartAgentOptions): (() => void) | nu
   // defaultWorkloadsDir() re-reads env on every call. No cache: in-place
   // manifest edits do not bump the dir mtime. The live set is keyed by the
   // route's model, never its workload name: a live llama-server marks the
-  // claim for that model ready, and a name-keyed set would mark nothing.
+  // claim for that model ready, and a name-keyed set would mark nothing. The
+  // warming set is read fresh from the proxy's chat-routing gate (#280 DF-07)
+  // so a live id whose route fails readiness projects 'loading', not 'ready'.
   openaiProxy.setDeclaredModelSource(() =>
     listDeclaredModels({
       nodeName: LOCAL_NODE_ID,
       liveModelIds: new Set(listLocalRoutes(resolveEnv()).map((route) => route.model)),
       workloadPhase: (workload) => getResidencyLeaseRegistry()?.snapshot(workload).phase,
+      warmingModelIds: openaiProxy.servingWarmingModelIds(),
     }),
   );
   return (): void => {
