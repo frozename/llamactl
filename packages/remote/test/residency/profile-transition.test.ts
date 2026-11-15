@@ -427,7 +427,7 @@ describe("executeProfileSwitch", () => {
     expect(report.ran).toEqual([]);
   });
 
-  test("no package source imports the transition module", async () => {
+  test("no package source but the #284 apply-profile caller imports the transition module", async () => {
     const fn = (await transition()).executeProfileSwitch;
     expect(typeof fn).toBe("function");
     if (fn === undefined) {
@@ -438,7 +438,12 @@ describe("executeProfileSwitch", () => {
     const offenders: string[] = [];
     const glob = new Bun.Glob("packages/*/src/**/*.{ts,tsx}");
     for (const rel of glob.scanSync({ cwd: repoRoot, onlyFiles: true })) {
-      if (rel === "packages/remote/src/residency/profile-transition.ts") {
+      // #284 (DF-11): apply-profile.ts is the one sanctioned live caller; any
+      // other importer must be reviewed and added here deliberately.
+      if (
+        rel === "packages/remote/src/residency/profile-transition.ts" ||
+        rel === "packages/remote/src/residency/apply-profile.ts"
+      ) {
         continue;
       }
       const source = await Bun.file(join(repoRoot, rel)).text();
