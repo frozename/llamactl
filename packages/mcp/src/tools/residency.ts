@@ -8,6 +8,7 @@ import { SERVER_SLUG } from "./shared.js";
 
 export function registerResidencyTools(server: McpServer): void {
   registerResidencyStatus(server);
+  registerResidencyPlan(server);
   registerResidencyForceUnload(server);
 }
 
@@ -26,6 +27,37 @@ function registerResidencyStatus(server: McpServer): void {
     async (input) => {
       const caller = router.createCaller({});
       return toTextContent(await caller.residencyStatus({ node: input.node }));
+    },
+  );
+}
+
+function registerResidencyPlan(server: McpServer): void {
+  server.registerTool(
+    "llamactl.residency.plan",
+    {
+      title: "Node residency plan (dry run)",
+      description:
+        "Read-only. Mirrors the remote residencyPlan query: a dry-run profile switch that returns the budget source, victims, replacements and protected workloads, or a refusal reason. It never starts, stops or loads a workload and never writes the residency store.",
+      inputSchema: {
+        node: z.string().min(1).describe("Name of the NodeRun to plan against."),
+        to: z.string().min(1).describe("Target residency profile to switch to."),
+        from: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("Current residency profile; inferred when omitted."),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async (input) => {
+      const caller = router.createCaller({});
+      const { node, to, from } = input;
+      const result = await caller.residencyPlan({
+        node,
+        to,
+        ...(from !== undefined ? { from } : {}),
+      });
+      return toTextContent(result);
     },
   );
 }
