@@ -12,10 +12,18 @@
  * - per-model keys with real load coalescing (composing with the #278 leases);
  * - per-principal shares, which is why maxPerPrincipal is unbounded here;
  * - a total request deadline;
- * - Worker RPC (inference/procedures.ts) and create-proxy.ts ingress, which
- *   do not count against the shared cap yet;
+ * - the create-proxy.ts ingress, which does not count against the shared cap
+ *   yet: the router.ts tRPC chat mutation for inproc nodes and generic /v1/*
+ *   proxying (for example /v1/completions) via dispatchProxyRequest;
  * - fairness between the ingresses that share the cap;
  * - Anthropic-shaped error bodies.
+ *
+ * Worker RPC (inference/procedures.ts) now shares this cap. Two differences
+ * from the HTTP ingresses are deliberate: the embedded (in-process
+ * unified-proxy) attempt is exempt so an already-admitted HTTP request is not
+ * counted twice; and a refusal that lands after the RPC's 'accepted' event is
+ * a failed terminal (502 at the client), not the 503 this ingress returns
+ * before anything is accepted.
  */
 
 import { modelKeyOf } from "@llamactl/core/residency/queue-policy";
