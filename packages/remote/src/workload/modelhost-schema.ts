@@ -327,10 +327,11 @@ export const ModelHostManifestSchema = z
   .superRefine((manifest, ctx) => {
     const annotations = manifest.metadata.annotations;
     if (annotations === undefined) return;
-    // The replacement-control keys stay ModelRun-only until the
-    // ModelHost-as-replacement follow-up lifts this rejection; the
-    // evicted-by / evicted-at markers and other keys are allowed.
-    for (const key of ["llamactl.io/evict", "llamactl.io/force-admit"] as const) {
+    // llamactl.io/evict is legal ModelHost metadata (DF-02): a ModelHost can
+    // name eviction victims. force-admit stays ModelRun-only because
+    // ModelHost admission has no force override path. The evicted-by /
+    // evicted-at markers and other keys are allowed.
+    for (const key of ["llamactl.io/force-admit"] as const) {
       if (annotations[key] !== undefined) {
         ctx.addIssue({
           code: "custom",

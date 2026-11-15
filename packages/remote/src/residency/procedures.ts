@@ -11,11 +11,14 @@
 // The leases section is the serving process's in-memory lease/drain registry:
 // per-workload phase, epoch, active lease count and waiters plus the recent
 // forced-unload audit, reported "unavailable" when no registry is installed.
+// recentAudit merges the node-local store rows (which survive a restart) with
+// any live in-memory entries the store is missing (a sink write that failed
+// quietly), so neither source can hide an entry the other holds.
 //
 // The NodeRun residency supplies the planner policy (Part of #519); switch/load
 // timing (lastSwitchAtMs, loadedAtMs) is not persisted yet, so those checks stay
 // inert unless a caller supplies them (#279).
-import type { ResidencyLeases } from "@llamactl/core/residency/leases";
+import type { ResidencyAuditEntry, ResidencyLeases } from "@llamactl/core/residency/leases";
 import type { PlannerWorkload, ProfileSwitchPlan } from "@llamactl/core/residency/planner";
 
 import { resolveResidencyPolicy } from "@llamactl/core/residency/admission";
@@ -69,6 +72,86 @@ export type ResidencyStatusLeases =
       auditCount: number;
       recentAudit: ResidencyStatusLeaseAuditEntry[];
     };
+
+// Epochs and lease ids restart per process, so (workload, epoch, revoked,
+// reason) alone collides across a restart: the incarnation of the registry that
+// wrote the entry is part of the key. An entry without one (a legacy row
+// persisted before the incarnation column) has no key and never matches, since
+// every live entry carries an incarnation.
+function auditEntryKey(entry: ResidencyAuditEntry): string | null {
+  if (entry.incarnation === undefined) {
+    return null;
+  }
+  return JSON.stringify([
+    entry.incarnation,
+    entry.workload,
+    entry.epoch,
+    entry.revoked,
+    entry.reason ?? null,
+  ]);
+}
+
+// Merge the persisted forced-unload audit with the live in-memory one. The
+// sink writes live entries in order, so the persisted copies of live entries
+// form a subsequence of the persisted rows. Live entries are matched to
+// persisted rows on (incarnation, workload, epoch, revoked, reason), newest
+// first, each persisted row used at most once and match positions
+// strictly decreasing. An unmatched live entry (its sink write failed) is
+// inserted just before the persisted row of the next later live entry that
+// did persist, or appended when none did, which keeps chronological order.
+// An entry held by both sources appears once.
+export function mergeResidencyLeaseAudit(
+  persisted: readonly ResidencyAuditEntry[],
+  live: readonly ResidencyAuditEntry[],
+): ResidencyAuditEntry[] {
+  if (persisted.length === 0 || live.length === 0) {
+    return [...persisted, ...live];
+  }
+  const matches = matchLiveToPersisted(persisted, live);
+  const insertBefore = new Map<number, ResidencyAuditEntry[]>();
+  let pending: ResidencyAuditEntry[] = [];
+  for (const [i, entry] of live.entries()) {
+    const p = matches[i] ?? -1;
+    if (p === -1) {
+      pending.push(entry);
+    } else if (pending.length > 0) {
+      insertBefore.set(p, pending);
+      pending = [];
+    }
+  }
+  const merged: ResidencyAuditEntry[] = [];
+  for (const [p, row] of persisted.entries()) {
+    merged.push(...(insertBefore.get(p) ?? []), row);
+  }
+  merged.push(...pending);
+  return merged;
+}
+
+// For each live entry, the index of the persisted row it matched, or -1.
+// Newest first, so match positions strictly decrease.
+function matchLiveToPersisted(
+  persisted: readonly ResidencyAuditEntry[],
+  live: readonly ResidencyAuditEntry[],
+): number[] {
+  const persistedKeys = persisted.map(auditEntryKey);
+  const matches = live.map(() => -1);
+  let bound = persisted.length;
+  for (const [i, entry] of [...live.entries()].reverse()) {
+    if (bound === 0) {
+      break;
+    }
+    const key = auditEntryKey(entry);
+    if (key === null) {
+      continue;
+    }
+    const p = persistedKeys.lastIndexOf(key, bound - 1);
+    if (p !== -1) {
+      matches[i] = p;
+      bound = p;
+    }
+  }
+  return matches;
+}
 
 export function buildResidencyLeaseSnapshot(
   registry: Pick<ResidencyLeases, "snapshot" | "audit"> | null,

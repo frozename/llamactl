@@ -389,8 +389,8 @@ function clearStaleHostEvictionMarker(manifest: ModelHostManifest, dir: string):
  * the victim before the stop RPC. While that intent is live the
  * reconciler must not restart the victim underneath its replacement —
  * the caller reports the hold with no status RPC and no apply. The hold
- * owner must be a ModelRun naming this victim, exactly as the apply-side
- * liveEvictionOwner check requires.
+ * owner must be a ModelRun or ModelHost naming this victim, exactly as
+ * the apply-side liveEvictionOwner check requires.
  */
 function evictionDecision(
   name: string,
@@ -411,8 +411,7 @@ function evictionDecision(
   } catch {
     replacement = undefined;
   }
-  const namesVictim =
-    replacement?.kind === "ModelRun" && parseEvictTargets(replacement).includes(name);
+  const namesVictim = replacement !== undefined && parseEvictTargets(replacement).includes(name);
   if (replacementHoldsEviction(replacement, withinGrace, namesVictim)) {
     return { kind: "hold", evictedBy };
   }
@@ -486,8 +485,7 @@ async function reconcileModelRun(
       undefined,
       {
         workloadsDir: dir,
-        ...(opts.resolveNodeIdentity && { resolveNodeIdentity: opts.resolveNodeIdentity }),
-        ...(opts.evictionGraceMs !== undefined ? { evictionGraceMs: opts.evictionGraceMs } : {}),
+        ...evictionApplyOptions(opts),
         getNodeBudgetGiB: (nodeName) =>
           resolveModelRunBudgetGiB(nodeName, nodeBudget, nodeMemBytesByName, opts.getClient),
       },
@@ -889,6 +887,31 @@ function markNeverHostStartAttempt(
   }
 }
 
+/**
+ * #308: whether a host that is not running now was last known up. Locally a
+ * launch record proves the engine was up; for a remote host the controller's
+ * own history carries that signal instead.
+ */
+function hostWasLastKnownRunning(
+  spec: ModelHostManifest["spec"],
+  name: string,
+  localState: ReturnType<typeof readModelHostState>,
+  dir: string,
+): boolean {
+  if (spec.node === LOCAL_NODE_ID) return localState !== null;
+  return readControllerHostHistory(dir, spec.node, name)?.lastKnownRunning === true;
+}
+
+/** Eviction-pipeline options the reconciler forwards to an apply, when set. */
+function evictionApplyOptions(
+  opts: ReconcileOptions,
+): Pick<ReconcileOptions, "resolveNodeIdentity" | "evictionGraceMs"> {
+  return {
+    ...(opts.resolveNodeIdentity && { resolveNodeIdentity: opts.resolveNodeIdentity }),
+    ...(opts.evictionGraceMs !== undefined ? { evictionGraceMs: opts.evictionGraceMs } : {}),
+  };
+}
+
 async function reconcileUnmanagedModelHost(
   manifest: ModelHostManifest,
   opts: ReconcileOptions,
@@ -931,13 +954,7 @@ async function reconcileUnmanagedModelHost(
     );
     if (decision !== "apply") return settleHostWithoutApply(decision, spec, name, reports, ctx);
     const wasRunning = current.state === "Running";
-    // #308: locally a launch record proves the engine was up; for a remote
-    // host the controller's own history carries that signal instead.
-    const foundDead =
-      !wasRunning &&
-      (spec.node === LOCAL_NODE_ID
-        ? localState !== null
-        : readControllerHostHistory(ctx.dir, spec.node, name)?.lastKnownRunning === true);
+    const foundDead = !wasRunning && hostWasLastKnownRunning(spec, name, localState, ctx.dir);
     markNeverHostStartAttempt(spec, name, localState);
     const result = await applyOneModelHost(
       manifest,
@@ -950,6 +967,7 @@ async function reconcileUnmanagedModelHost(
         workloadsDir: dir,
         getNodeBudgetGiB: (nodeName) => nodeBudget.budgetByName.get(nodeName),
         getNodeResidency: (nodeName) => nodeBudget.residencyByName.get(nodeName),
+        ...evictionApplyOptions(opts),
       },
     );
     const action = wasRunning ? "restarted" : "started";

@@ -362,8 +362,17 @@ test("#278: a forced commit revokes leases and audits the unload", async () => {
   // eslint-disable-next-line @typescript-eslint/await-thenable, @typescript-eslint/no-confusing-void-expression -- Bun's rejects matcher is typed as void.
   await expect(reader.read()).rejects.toThrow();
   expect(reg.active("glm")).toEqual([]);
+  const incarnation = reg.audit()[0]?.incarnation;
+  expect(typeof incarnation).toBe("string");
   const glmAudit: ResidencyAuditEntryType[] = [
-    { workload: "glm", epoch: 1, forced: true, revoked: [lease.id], reason: "operator" },
+    {
+      workload: "glm",
+      epoch: 1,
+      forced: true,
+      revoked: [lease.id],
+      reason: "operator",
+      ...(incarnation !== undefined ? { incarnation } : {}),
+    },
   ];
   expect(reg.audit()).toEqual(glmAudit);
 
