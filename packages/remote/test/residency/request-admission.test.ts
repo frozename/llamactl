@@ -509,4 +509,104 @@ describe("createRequestAdmission (#281 DF-08)", () => {
     expect(Math.max(...clock.requested)).toBeLessThanOrEqual(2_147_483_647);
     expect(clock.requested.length).toBeGreaterThan(0);
   });
+
+  // Kills M13: settle() not calling clearTimer(waiter.timer). With real timers
+  // every granted or aborted waiter would leave a timer pending for up to
+  // maxQueueWaitMs.
+  test("settling a waiter by grant, release hand-off or abort clears its wait timer", async () => {
+    const mod = await loadAdmission();
+    expect(typeof mod?.createRequestAdmission).toBe("function");
+    const create = mod!.createRequestAdmission;
+    const clock = new FakeClock();
+    const adm = create(admissionOptions(clock));
+    const cc = new AbortController();
+    const { errors, grants, releases, track } = tracker();
+
+    track("a", adm.acquire(req("a")));
+    await flush();
+    expect(grants).toEqual(["a"]);
+    expect(clock.timers).toHaveLength(0);
+
+    track("b", adm.acquire(req("b")));
+    await flush();
+    expect(clock.timers).toHaveLength(1);
+
+    releases["a"]?.();
+    await flush();
+    expect(grants).toEqual(["a", "b"]);
+    expect(clock.timers).toHaveLength(0);
+
+    track("c", adm.acquire(req("c"), { signal: cc.signal }));
+    await flush();
+    expect(clock.timers).toHaveLength(1);
+
+    cc.abort();
+    await flush();
+    expect(errors["c"]?.code).toBe("Aborted");
+    expect(clock.timers).toHaveLength(0);
+  });
+
+  // Kills M12: settle() not calling waiter.detachAbort(). A long-lived shared
+  // AbortSignal would then keep one abort listener per request it ever covered.
+  test("a shared AbortSignal has every abort listener removed once each waiter settles", async () => {
+    const mod = await loadAdmission();
+    expect(typeof mod?.createRequestAdmission).toBe("function");
+    const create = mod!.createRequestAdmission;
+    const clock = new FakeClock();
+    const adm = create(admissionOptions(clock));
+    const shared = new AbortController();
+    const sharedCounts = countAbortListeners(shared.signal);
+    const { errors, grants, releases, track } = tracker();
+
+    track("a", adm.acquire(req("a"), { signal: shared.signal }));
+    track("b", adm.acquire(req("b"), { signal: shared.signal }));
+    track("c", adm.acquire(req("c"), { signal: shared.signal }));
+    await flush();
+    expect(grants).toEqual(["a"]);
+    expect(sharedCounts).toEqual({ added: 3, removed: 1 });
+
+    releases["a"]?.();
+    await flush();
+    releases["b"]?.();
+    await flush();
+    expect(grants).toEqual(["a", "b", "c"]);
+    expect(sharedCounts).toEqual({ added: 3, removed: 3 });
+
+    const aborting = new AbortController();
+    const abortingCounts = countAbortListeners(aborting.signal);
+    track("d", adm.acquire(req("d"), { signal: aborting.signal }));
+    track("e", adm.acquire(req("e"), { signal: aborting.signal }));
+    await flush();
+    expect(abortingCounts).toEqual({ added: 2, removed: 0 });
+
+    aborting.abort();
+    await flush();
+    expect(errors["d"]?.code).toBe("Aborted");
+    expect(errors["e"]?.code).toBe("Aborted");
+    expect(abortingCounts).toEqual({ added: 2, removed: 2 });
+  });
 });
+
+type ListenerCounts = { added: number; removed: number };
+
+// Counts "abort" add/removeEventListener calls on one signal instance.
+function countAbortListeners(signal: AbortSignal): ListenerCounts {
+  const counts: ListenerCounts = { added: 0, removed: 0 };
+  const add = signal.addEventListener.bind(signal);
+  const remove = signal.removeEventListener.bind(signal);
+  Object.assign(signal, {
+    addEventListener: (...args: Parameters<typeof add>): void => {
+      if (args[0] === "abort") {
+        counts.added += 1;
+      }
+      add(...args);
+    },
+    removeEventListener: (...args: Parameters<typeof remove>): void => {
+      if (args[0] === "abort") {
+        counts.removed += 1;
+      }
+      remove(...args);
+    },
+  });
+  return counts;
+}
