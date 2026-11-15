@@ -415,6 +415,32 @@ describe("llamactl residency plan", () => {
     expect(stdout).toContain("Victims:      chat-a");
     expect(stdout).toContain("Replacements: code-b");
     expect(stdout).toContain("Protected:    embed");
+    // storeAppliesToNode is true here, so the store-scope Note must not render.
+    expect(stdout).not.toContain("Note:");
+    expect(stdout).not.toContain("was not observed by this serving process");
+  });
+
+  test("plan renders the store-scope Note when storeAppliesToNode is false", async () => {
+    // Kills: dropping the storeAppliesToNode === false Note branch, or inverting it.
+    const { run } = await loadResidency();
+    const rec = setupResidency({
+      "residencyPlan.query": (): Promise<unknown> =>
+        Promise.resolve({ ...CANNED_PLAN, storeAppliesToNode: false, servingNode: "local" }),
+    });
+
+    const {
+      result: code,
+      stdout,
+      stderr,
+    } = await withCapturedIo(() => run(["plan", "--node", "gpu1", "--to", "code"], rec.deps));
+
+    expect(code).toBe(0);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("Result:       ok");
+    expect(stdout).toContain(
+      "Note:         the in-flight store state for gpu1 was not observed by this serving process\n",
+    );
+    expect(rec.calls).toEqual(["residencyPlan.query"]);
   });
 
   test("plan renders a NotOptedIn refusal with exit 0 on both surfaces", async () => {
