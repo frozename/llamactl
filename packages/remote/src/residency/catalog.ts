@@ -7,7 +7,10 @@
  * hook feeds the residency lease phase into that state — a draining
  * lease projects 'draining', and a live id under an unloaded lease
  * projects 'loading'. The optional warmingModelIds set marks a live id the
- * proxy reports as warming 'loading' too. Pure builder; the only I/O edge is
+ * proxy reports as warming 'loading' too. The optional withdrawnWorkloads set
+ * marks a workload whose routes the proxy has pulled for the duration of a stop
+ * (the #280 DF-07 stop fence), which projects its ids as 'draining' too. Pure
+ * builder; the only I/O edge is
  * listDeclaredModels reading the workloads dir — no credentials, no
  * kubeconfig.
  */
@@ -100,10 +103,13 @@ function stateForClaim(
   liveModelIds: ReadonlySet<string>,
   phase: DeclaredWorkloadPhase | undefined,
   warmingModelIds: ReadonlySet<string> | undefined,
+  withdrawnWorkloads: ReadonlySet<string> | undefined,
 ): DeclaredState {
   if (collided) return "unavailable";
   if (!claim.enabled) return "disabled";
-  if (phase === "draining") return "draining";
+  // A withdrawing workload (stop fence, #280 DF-07) projects 'draining' just
+  // like a draining lease phase, even with a live route and no lease phase.
+  if (phase === "draining" || withdrawnWorkloads?.has(claim.workload) === true) return "draining";
   if (phase === "unloaded" && liveModelIds.has(claim.id)) return "loading";
   // A live id the proxy currently reports warming projects 'loading': a
   // 'loading' entry is now seen by the proxy's warming-only pin 503, whose
@@ -127,6 +133,7 @@ export function buildDeclaredModelEntries(input: {
   liveModelIds: ReadonlySet<string>;
   workloadPhase?: (workload: string) => DeclaredWorkloadPhase | undefined;
   warmingModelIds?: ReadonlySet<string>;
+  withdrawnWorkloads?: ReadonlySet<string>;
 }): routingCatalog.DeclaredModelEntryV1[] {
   const claims = [
     ...input.modelHosts.flatMap((host) => hostClaims(host, input.nodeName)),
@@ -139,7 +146,14 @@ export function buildDeclaredModelEntries(input: {
   const entries = claims.map((claim) => {
     const collided = (claimantsById.get(claim.id) ?? 0) > 1;
     const phase = phaseForWorkload(input.workloadPhase, claim.workload);
-    const state = stateForClaim(claim, collided, input.liveModelIds, phase, input.warmingModelIds);
+    const state = stateForClaim(
+      claim,
+      collided,
+      input.liveModelIds,
+      phase,
+      input.warmingModelIds,
+      input.withdrawnWorkloads,
+    );
     return routingCatalog.DeclaredModelEntryV1Schema.parse({
       id: claim.id,
       workload: claim.workload,
@@ -165,12 +179,14 @@ export function listDeclaredModels({
   liveModelIds,
   workloadPhase,
   warmingModelIds,
+  withdrawnWorkloads,
 }: {
   dir?: string;
   nodeName: string;
   liveModelIds: ReadonlySet<string>;
   workloadPhase?: (workload: string) => DeclaredWorkloadPhase | undefined;
   warmingModelIds?: ReadonlySet<string>;
+  withdrawnWorkloads?: ReadonlySet<string>;
 }): routingCatalog.DeclaredModelEntryV1[] {
   return buildDeclaredModelEntries({
     nodeName,
@@ -179,5 +195,6 @@ export function listDeclaredModels({
     liveModelIds,
     ...(workloadPhase !== undefined ? { workloadPhase } : {}),
     ...(warmingModelIds !== undefined ? { warmingModelIds } : {}),
+    ...(withdrawnWorkloads !== undefined ? { withdrawnWorkloads } : {}),
   });
 }
