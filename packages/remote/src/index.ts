@@ -183,6 +183,15 @@ export {
   removePipeline,
   writeLastRun,
 } from "./rag/pipeline/store.js";
+export {
+  type AdmissionRejectCode,
+  type AdmissionRequest,
+  createRequestAdmission,
+  type Release,
+  type RequestAdmission,
+  RequestAdmissionError,
+  type RequestAdmissionOptions,
+} from "./residency/request-admission.js";
 export { type AppRouter, BUILT_IN_PLANNER_TOOLS, mergePlannerTools, router } from "./router.js";
 export type {
   RemoveServiceOptions,
@@ -209,6 +218,12 @@ export {
   type KubernetesClientOptions,
 } from "./runtime/kubernetes/client.js";
 export * as auth from "./server/auth.js";
+export {
+  admissionErrorResponse,
+  admitChatCompletions,
+  CHAT_INGRESS_MODEL,
+  createChatCompletionsAdmission,
+} from "./server/chat-admission.js";
 export { type RunningAgent, type StartAgentOptions, startAgentServer } from "./server/serve.js";
 export * as tls from "./server/tls.js";
 export * as tunnel from "./tunnel/index.js";

@@ -239,6 +239,26 @@ export default tseslint.config(
     },
   },
   {
+    // #281: the chat-admission ingress contract test is a frozen test file
+    // (the task brief forbids editing it), so its lint debt is settled here
+    // instead of inline: Bun's rejects/resolves matchers are typed as void
+    // (same reason ops-chat-schemas.test.ts carries an inline disable), and
+    // the file's RED-safe stubs (dynamic-import casts, await-less async
+    // callbacks, typed stream start/cancel shims) trip the typed stylistic
+    // rules. Scoped to this one file; every other file keeps the full gate.
+    files: ["packages/remote/test/residency/chat-admission-ingress.test.ts"],
+    rules: {
+      "@typescript-eslint/await-thenable": "off",
+      "@typescript-eslint/consistent-type-imports": "off",
+      "@typescript-eslint/explicit-function-return-type": "off",
+      "@typescript-eslint/no-confusing-void-expression": "off",
+      "@typescript-eslint/no-empty-function": "off",
+      "@typescript-eslint/no-unnecessary-type-assertion": "off",
+      "@typescript-eslint/require-await": "off",
+      "perfectionist/sort-named-imports": "off",
+    },
+  },
+  {
     // #410 P5a-3a: console sources reach the tab's tRPC client only
     // through console/node-trpc's hooks. Patterns only, no `paths`
     // entry: eslint 9.39.4 reports twice when both match one specifier.
