@@ -134,6 +134,11 @@ function defaultFenceIdentity(): FenceIdentity {
   return { ownerId: RESIDENCY_APPLY_PROFILE_FENCE_OWNER, incarnation: randomUUID() };
 }
 
+/**
+ * A workload the profile switch stopped is recorded the way `workload/apply.ts`
+ * records a stopped/disabled ModelRun: an `Applied`/`True` condition (the
+ * stop was applied), never `Ready`/`True` — a stopped server is not ready.
+ */
 function stoppedStatus(iso: string): ModelRunStatus {
   return {
     phase: "Stopped",
@@ -142,7 +147,7 @@ function stoppedStatus(iso: string): ModelRunStatus {
     lastTransitionTime: iso,
     conditions: [
       {
-        type: "Ready",
+        type: "Applied",
         status: "True",
         reason: "ResidencyProfileSwitch",
         lastTransitionTime: iso,

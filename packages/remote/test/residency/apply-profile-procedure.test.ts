@@ -631,7 +631,15 @@ describe("defaultResidencyApplyProfileSteps", () => {
     expect(stored.status?.phase).toBe("Stopped");
     expect(stored.status?.serverPid ?? null).toBeNull();
     expect(stored.status?.endpoint ?? null).toBeNull();
+    // kills: a Ready/True condition written onto a Stopped workload; the repo
+    // convention (workload/apply.ts stopDisabledWorkload) is Applied/True.
+    expect(stored.status?.conditions).toHaveLength(1);
+    expect(stored.status?.conditions[0]?.type).toBe("Applied");
+    expect(stored.status?.conditions[0]?.status).toBe("True");
     expect(stored.status?.conditions[0]?.reason).toBe("ResidencyProfileSwitch");
+    expect(stored.status?.conditions.some((c) => c.type === "Ready" && c.status === "True")).toBe(
+      false,
+    );
 
     const plan = await residencyPlan({ node: "local", to: "chat", from: "code" });
     expect(plan.ok).toBe(true);
