@@ -164,12 +164,71 @@ const ARTIFACT_UNAVAILABLE: [string, OmlxCacheIdentityArtifact][] = [
     { path: BASE_ARTIFACT_PATH, sha256: "A".repeat(64), sizeBytes: 1, mtimeMs: 1 },
   ],
   ["short sha256", { path: BASE_ARTIFACT_PATH, sha256: "a".repeat(63), sizeBytes: 1, mtimeMs: 1 }],
+  // An empty sha256 falls back to sizeBytes/mtimeMs (T17); with neither it fails.
+  ["empty sha256 only", { path: BASE_ARTIFACT_PATH, sha256: "" }],
+  ["artifact missing", undefined as unknown as OmlxCacheIdentityArtifact],
+  ["artifact null", null as unknown as OmlxCacheIdentityArtifact],
+  ["negative sizeBytes", { path: BASE_ARTIFACT_PATH, sizeBytes: -1, mtimeMs: 1 }],
+  ["fractional sizeBytes", { path: BASE_ARTIFACT_PATH, sizeBytes: 1.5, mtimeMs: 1 }],
+  ["NaN sizeBytes", { path: BASE_ARTIFACT_PATH, sizeBytes: Number.NaN, mtimeMs: 1 }],
+  [
+    "Infinity sizeBytes",
+    { path: BASE_ARTIFACT_PATH, sizeBytes: Number.POSITIVE_INFINITY, mtimeMs: 1 },
+  ],
+  ["negative mtimeMs", { path: BASE_ARTIFACT_PATH, sizeBytes: 1, mtimeMs: -1 }],
+  ["fractional mtimeMs", { path: BASE_ARTIFACT_PATH, sizeBytes: 1, mtimeMs: 1.5 }],
+  ["NaN mtimeMs", { path: BASE_ARTIFACT_PATH, sizeBytes: 1, mtimeMs: Number.NaN }],
+  [
+    "Infinity mtimeMs",
+    { path: BASE_ARTIFACT_PATH, sizeBytes: 1, mtimeMs: Number.POSITIVE_INFINITY },
+  ],
+  [
+    "-Infinity mtimeMs",
+    { path: BASE_ARTIFACT_PATH, sizeBytes: 1, mtimeMs: Number.NEGATIVE_INFINITY },
+  ],
 ];
 
 const ENGINE_BUILD_UNAVAILABLE: [string, OmlxCacheIdentityInput][] = [
   ["empty string", { ...BASE, engineBuild: "" }],
   ["whitespace", { ...BASE, engineBuild: "   " }],
   ["deleted", INPUT_WITHOUT_ENGINE_BUILD],
+];
+
+// modelId is deliberately absent or non-string; the casts keep tsc happy while
+// the runtime input stays invalid.
+const MODEL_ID_UNAVAILABLE: [string, OmlxCacheIdentityInput][] = [
+  ["empty string", { ...BASE, modelId: "" }],
+  ["whitespace", { ...BASE, modelId: "  \t" }],
+  [
+    "deleted",
+    {
+      engineBuild: BASE.engineBuild,
+      artifact: BASE.artifact,
+      settings: BASE.settings,
+    } as unknown as OmlxCacheIdentityInput,
+  ],
+  ["number", { ...BASE, modelId: 42 } as unknown as OmlxCacheIdentityInput],
+  ["null", { ...BASE, modelId: null } as unknown as OmlxCacheIdentityInput],
+];
+
+// Values that have no unambiguous canonical JSON form: NaN and Infinity both
+// stringify to null, a Date or Map stringifies to {} and undefined inside an
+// array becomes null, so hashing them would let distinct values collide.
+const INVALID_SETTINGS: [string, OmlxCacheIdentityInput][] = [
+  ["unknown key NaN", withSettings({ future_kv_layout: Number.NaN })],
+  ["unknown key Infinity", withSettings({ future_kv_layout: Number.POSITIVE_INFINITY })],
+  ["unknown key Date", withSettings({ future_kv_layout: new Date(0) })],
+  ["unknown key Map", withSettings({ future_kv_layout: new Map([["a", 1]]) })],
+  ["unknown key function", withSettings({ future_kv_layout: () => 1 })],
+  ["unknown key bigint", withSettings({ future_kv_layout: 1n })],
+  ["unknown key nested undefined", withSettings({ future_kv_layout: [1, undefined] })],
+  ["unknown key nested NaN", withSettings({ future_kv_layout: { a: Number.NaN } })],
+  ["turboquant_kv_enabled string", withSettings({ turboquant_kv_enabled: "true" })],
+  ["turboquant_kv_bits NaN", withSettings({ turboquant_kv_bits: Number.NaN })],
+  ["turboquant_kv_bits string", withSettings({ turboquant_kv_bits: "8" })],
+  ["turboquant_skip_last string", withSettings({ turboquant_skip_last: "false" })],
+  ["settings null", { ...BASE, settings: null } as unknown as OmlxCacheIdentityInput],
+  ["settings array", { ...BASE, settings: [] } as unknown as OmlxCacheIdentityInput],
 ];
 
 const INVALID_CACHE_EPOCHS: [string, number][] = [
@@ -503,6 +562,44 @@ describe("#282 DF-09 oMLX cache identity", () => {
     });
   });
 
+  test("T11 surrounding whitespace in engineBuild does not change the identity", async () => {
+    const mod = await loadModule();
+    const derive = requireDerive(mod);
+    const identity = identityOf(derive, BASE);
+
+    // Kills: hashing the untrimmed build string.
+    expect(derive({ ...BASE, engineBuild: `  ${OMLX_MODEL_SETTINGS_REVISION}\n` })).toEqual({
+      ok: true,
+      identity,
+    });
+  });
+
+  for (const [name, input] of MODEL_ID_UNAVAILABLE) {
+    test(`T14 unavailable modelId fails closed: ${name}`, async () => {
+      const mod = await loadModule();
+      const derive = requireDerive(mod);
+      const decide = requireDecide(mod);
+      const previousIdentity = identityOf(derive, BASE);
+
+      // Kills: hashing a missing or non-string modelId.
+      expect(derive(input)).toMatchObject({ ok: false, reason: "ModelIdUnavailable" });
+      expect(decide(previousIdentity, input)).toEqual({
+        action: "invalidate",
+        reason: "ModelIdUnavailable",
+        identity: null,
+      });
+    });
+  }
+
+  test("T14 surrounding whitespace in modelId does not change the identity", async () => {
+    const mod = await loadModule();
+    const derive = requireDerive(mod);
+    const identity = identityOf(derive, BASE);
+
+    // Kills: hashing the untrimmed model id.
+    expect(derive({ ...BASE, modelId: ` ${BASE.modelId}  ` })).toEqual({ ok: true, identity });
+  });
+
   test("T15 derive does not mutate its input", async () => {
     const mod = await loadModule();
     const derive = requireDerive(mod);
@@ -512,5 +609,152 @@ describe("#282 DF-09 oMLX cache identity", () => {
     // Kills: in-place normalisation of the input.
     expect(derive(input).ok).toBe(true);
     expect(input).toEqual(before);
+  });
+
+  test("T16 a fractional stat mtimeMs must be truncated by the caller", async () => {
+    const mod = await loadModule();
+    const derive = requireDerive(mod);
+    const decide = requireDecide(mod);
+    const previousIdentity = identityOf(derive, BASE);
+    const statMtimeMs = 1767225600000.75;
+    const input: OmlxCacheIdentityInput = {
+      ...BASE,
+      artifact: { ...BASE.artifact, mtimeMs: statMtimeMs },
+    };
+
+    // Kills: accepting a fractional mtimeMs, or rounding it internally.
+    expect(decide(previousIdentity, input)).toEqual({
+      action: "invalidate",
+      reason: "ArtifactIdentityUnavailable",
+      identity: null,
+    });
+    expect(
+      identityOf(derive, {
+        ...BASE,
+        artifact: { ...BASE.artifact, mtimeMs: Math.trunc(statMtimeMs) },
+      }),
+    ).toBe(previousIdentity);
+  });
+
+  test("T17 an empty sha256 falls back to sizeBytes and mtimeMs", async () => {
+    const mod = await loadModule();
+    const derive = requireDerive(mod);
+    const decide = requireDecide(mod);
+    const identity = identityOf(derive, BASE);
+    const input: OmlxCacheIdentityInput = {
+      ...BASE,
+      artifact: { ...BASE.artifact, sha256: "" },
+    };
+
+    // Kills: failing on an empty sha256, or hashing the empty sha256 alongside
+    // size/mtime. A size or mtime change must still invalidate.
+    expect(decide(identity, input)).toEqual({
+      action: "retain",
+      reason: "IdentityMatch",
+      identity,
+    });
+    expect(
+      decide(identity, { ...input, artifact: { ...input.artifact, mtimeMs: 1767225600001 } }),
+    ).toMatchObject({ action: "invalidate", reason: "IdentityChanged" });
+  });
+
+  test("T18 an unknown settings key is part of the identity", async () => {
+    const mod = await loadModule();
+    const derive = requireDerive(mod);
+    const decide = requireDecide(mod);
+    const baseIdentity = identityOf(derive, BASE);
+    const layoutOne = withSettings({ future_kv_layout: 1 });
+    const layoutTwo = withSettings({ future_kv_layout: 2 });
+    const layoutOneIdentity = identityOf(derive, layoutOne);
+    const layoutTwoIdentity = identityOf(derive, layoutTwo);
+
+    // Kills: reading only the TurboQuant allow-list, which would retain a
+    // cache across a change to a key this module does not know about.
+    expect(layoutOneIdentity).not.toBe(baseIdentity);
+    expect(layoutTwoIdentity).not.toBe(layoutOneIdentity);
+    expect(decide(layoutOneIdentity, layoutTwo)).toEqual({
+      action: "invalidate",
+      reason: "IdentityChanged",
+      identity: layoutTwoIdentity,
+    });
+    expect(decide(baseIdentity, layoutOne)).toEqual({
+      action: "invalidate",
+      reason: "IdentityChanged",
+      identity: layoutOneIdentity,
+    });
+
+    // Kills: a non-canonical encoding of unknown values.
+    expect(derive(layoutOne)).toEqual({
+      ok: true,
+      identity: "omlx-cache-v1:92784acf47173de837a6f1e769b8d73b511e43c4c18eaec040d1c97e939c2dcc",
+    });
+  });
+
+  test("T18 unknown settings are hashed in canonical key order", async () => {
+    const mod = await loadModule();
+    const derive = requireDerive(mod);
+    const forward = withSettings({ future_a: { y: 1, x: [true, null] }, future_b: "z" });
+    const reversed = withSettings({ future_b: "z", future_a: { x: [true, null], y: 1 } });
+
+    // Kills: hashing unknown keys in insertion order.
+    expect(identityOf(derive, reversed)).toBe(identityOf(derive, forward));
+    // An undefined top-level value is an absent key, as for every optional key.
+    expect(identityOf(derive, withSettings({ future_kv_layout: undefined }))).toBe(
+      identityOf(derive, BASE),
+    );
+  });
+
+  test("T18 an unknown key is not mistaken for a neutral key", async () => {
+    const mod = await loadModule();
+    const derive = requireDerive(mod);
+    const baseIdentity = identityOf(derive, BASE);
+
+    // Kills: a prefix or case-insensitive match against the neutral list.
+    for (const key of ["max_tokens_v2", "MAX_TOKENS", "mtp", "turboquant_kv_layout"]) {
+      expect(identityOf(derive, withSettings({ [key]: 1 }))).not.toBe(baseIdentity);
+    }
+  });
+
+  test("T18 a __proto__ settings key from JSON is hashed like any other key", async () => {
+    const mod = await loadModule();
+    const derive = requireDerive(mod);
+    const baseIdentity = identityOf(derive, BASE);
+    const parsed = (text: string): OmlxCacheIdentityInput =>
+      withSettings(JSON.parse(text) as Record<string, unknown>);
+    const one = identityOf(derive, parsed('{"__proto__": {"future_kv_layout": 1}}'));
+    const two = identityOf(derive, parsed('{"__proto__": {"future_kv_layout": 2}}'));
+
+    // Kills: copying keys into a plain {} whose __proto__ setter swallows the
+    // key, so the value never reaches the hash.
+    expect(one).not.toBe(baseIdentity);
+    expect(two).not.toBe(one);
+  });
+
+  for (const [name, input] of INVALID_SETTINGS) {
+    test(`T19 settings without a canonical form fail closed: ${name}`, async () => {
+      const mod = await loadModule();
+      const derive = requireDerive(mod);
+      const decide = requireDecide(mod);
+      const previousIdentity = identityOf(derive, BASE);
+
+      // Kills: hashing a value whose JSON form collides with another value.
+      expect(derive(input)).toMatchObject({ ok: false, reason: "SettingsInvalid" });
+      expect(decide(previousIdentity, input)).toEqual({
+        action: "invalidate",
+        reason: "SettingsInvalid",
+        identity: null,
+      });
+    });
+  }
+
+  test("T19 neutral keys are ignored whatever their value", async () => {
+    const mod = await loadModule();
+    const derive = requireDerive(mod);
+
+    // Kills: canonicalising neutral values, which would fail closed on a key
+    // that cannot change cache content.
+    expect(identityOf(derive, withSettings({ max_tokens: Number.NaN }))).toBe(
+      identityOf(derive, BASE),
+    );
   });
 });

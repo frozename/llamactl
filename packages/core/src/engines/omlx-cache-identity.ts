@@ -23,6 +23,12 @@
 //
 // Getting engineBuild from the installed oMLX, and storing the previous
 // identity, belong to the later modelhost wiring slice.
+//
+// Fail-closed contract: an input that cannot be derived exactly yields a
+// failure reason, and decideOmlxCacheRetention maps every failure to
+// invalidate. A settings key outside OMLX_CACHE_AFFECTING_SETTINGS_KEYS and
+// OMLX_CACHE_NEUTRAL_SETTINGS_KEYS is unknown to this module, so its value is
+// hashed into the identity rather than ignored: a change to it invalidates.
 
 import { createHash } from "node:crypto";
 
@@ -38,7 +44,8 @@ export const OMLX_CACHE_AFFECTING_SETTINGS_KEYS = [
 
 /**
  * The 15 managed keys that do not affect cache content. Each key is listed in
- * OMLX_MANAGED_MODEL_SETTINGS_KEYS order with a one-line reason.
+ * OMLX_MANAGED_MODEL_SETTINGS_KEYS order with a one-line reason. These are the
+ * only settings keys left out of the identity; every other key is hashed.
  */
 export const OMLX_CACHE_NEUTRAL_SETTINGS_KEYS = [
   "max_context_window", // context window size, not model weights
@@ -64,33 +71,45 @@ export interface OmlxCacheArtifact {
   path: string;
   /** Optional size in bytes of the weight files (sum of *.safetensors shards
    *  plus config.json / model.safetensors.index.json). Must not come from
-   *  the directory's own stat, because replacing a shard does not change it. */
+   *  the directory's own stat, because replacing a shard does not change it.
+   *  Must be a non-negative safe integer. */
   sizeBytes?: number;
   /** Optional max mtimeMs of the weight files (max over the *.safetensors
-   *  shards plus config.json / model.safetensors.index.json). */
+   *  shards plus config.json / model.safetensors.index.json). Must be a
+   *  non-negative safe integer: truncate fs.Stats#mtimeMs with Math.trunc.
+   *  A negative, fractional, NaN or infinite value fails closed. */
   mtimeMs?: number;
-  /** Optional sha256 of the weights or a manifest of them. Preferred when
-   *  available and takes precedence over sizeBytes/mtimeMs. */
+  /** Optional lowercase hex sha256 of the weights or a manifest of them.
+   *  Preferred when available and takes precedence over sizeBytes/mtimeMs.
+   *  An empty string counts as absent and falls back to sizeBytes/mtimeMs;
+   *  any other value that is not 64 lowercase hex digits fails closed. */
   sha256?: string;
 }
 
 export interface OmlxCacheIdentityInput {
-  /** Model identifier string. */
+  /** Model identifier string. Surrounding whitespace is ignored; an empty or
+   *  non-string value fails closed with ModelIdUnavailable. */
   modelId: string;
-  /** The oMLX build/revision string (git SHA or version). */
+  /** The oMLX build/revision string (git SHA or version). Surrounding
+   *  whitespace is ignored; an empty or non-string value fails closed with
+   *  EngineBuildUnavailable. */
   engineBuild: string;
   /** An operator bump that forces invalidation. Default 0. */
   cacheEpoch?: number;
   /** Model artifact identity. */
   artifact: OmlxCacheArtifact;
-  /** Optional TurboQuant and other managed model settings. */
+  /** Optional model settings. Neutral keys are ignored, the TurboQuant keys
+   *  are normalised, and any other key is hashed canonically. A value with no
+   *  canonical JSON form fails closed with SettingsInvalid. */
   settings?: OmlxManagedModelSettings;
 }
 
 export type OmlxCacheIdentityFailure =
+  | "ModelIdUnavailable"
   | "ArtifactIdentityUnavailable"
   | "EngineBuildUnavailable"
-  | "CacheEpochInvalid";
+  | "CacheEpochInvalid"
+  | "SettingsInvalid";
 
 export type OmlxCacheIdentityResult =
   | { ok: true; identity: string }
@@ -107,7 +126,38 @@ type NormalizedArtifact =
 
 type NormalizedTurboQuant = { bits: number; skipLast: boolean } | null;
 
-function normalizeArtifact(artifact: OmlxCacheArtifact): NormalizedArtifact | null {
+type NormalizedSettings = {
+  turboquant: NormalizedTurboQuant;
+  /** Non-neutral, non-TurboQuant keys; null when there are none. */
+  unknown: Record<string, unknown> | null;
+};
+
+const AFFECTING_KEYS: ReadonlySet<string> = new Set(OMLX_CACHE_AFFECTING_SETTINGS_KEYS);
+const NEUTRAL_KEYS: ReadonlySet<string> = new Set(OMLX_CACHE_NEUTRAL_SETTINGS_KEYS);
+
+/** A prototype-less record, so that an own "__proto__" key (JSON.parse makes
+ *  one) is stored as data instead of hitting the Object.prototype setter. */
+function createRecord(): Record<string, unknown> {
+  return Object.create(null) as Record<string, unknown>;
+}
+
+function isNonNegativeSafeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function normalizeNonEmptyString(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function normalizeArtifact(value: unknown): NormalizedArtifact | null {
+  if (typeof value !== "object" || value === null) {
+    return null;
+  }
+  const artifact = value as Partial<Record<keyof OmlxCacheArtifact, unknown>>;
   const path = artifact.path;
   if (typeof path !== "string" || path.length === 0) {
     return null;
@@ -121,19 +171,10 @@ function normalizeArtifact(artifact: OmlxCacheArtifact): NormalizedArtifact | nu
   }
   const sizeBytes = artifact.sizeBytes;
   const mtimeMs = artifact.mtimeMs;
-  if (typeof sizeBytes === "number" && Number.isSafeInteger(sizeBytes) && sizeBytes >= 0) {
-    if (typeof mtimeMs === "number" && Number.isFinite(mtimeMs)) {
-      return { path, sizeBytes, mtimeMs };
-    }
+  if (isNonNegativeSafeInteger(sizeBytes) && isNonNegativeSafeInteger(mtimeMs)) {
+    return { path, sizeBytes, mtimeMs };
   }
   return null;
-}
-
-function normalizeEngineBuild(engineBuild: string | undefined): string | null {
-  if (typeof engineBuild !== "string") {
-    return null;
-  }
-  return engineBuild.trim().length > 0 ? engineBuild.trim() : null;
 }
 
 function normalizeCacheEpoch(cacheEpoch: number | undefined): number | null {
@@ -146,14 +187,86 @@ function normalizeCacheEpoch(cacheEpoch: number | undefined): number | null {
   return null;
 }
 
-function normalizeTurboQuant(settings: OmlxManagedModelSettings | undefined): NormalizedTurboQuant {
-  if (settings?.turboquant_kv_enabled === true) {
-    return {
-      bits: settings.turboquant_kv_bits ?? 4,
-      skipLast: settings.turboquant_skip_last ?? true,
-    };
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null) {
+    return false;
   }
-  return null;
+  const proto: unknown = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+/**
+ * True when JSON.stringify of the value is lossless: null, booleans, strings,
+ * finite numbers, and arrays or plain objects of those. NaN and Infinity both
+ * stringify to null, a Date or Map to {} and undefined inside an array to
+ * null, so hashing them could make distinct values collide.
+ */
+function hasCanonicalJson(value: unknown): boolean {
+  if (value === null || typeof value === "boolean" || typeof value === "string") {
+    return true;
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value);
+  }
+  if (Array.isArray(value)) {
+    return value.every(hasCanonicalJson);
+  }
+  if (isPlainObject(value)) {
+    return Object.values(value).every(hasCanonicalJson);
+  }
+  return false;
+}
+
+/** undefined when a present TurboQuant key has the wrong type. */
+function normalizeTurboQuant(settings: Record<string, unknown>): NormalizedTurboQuant | undefined {
+  const enabled = settings["turboquant_kv_enabled"];
+  const bits = settings["turboquant_kv_bits"];
+  const skipLast = settings["turboquant_skip_last"];
+  if (enabled !== undefined && typeof enabled !== "boolean") {
+    return undefined;
+  }
+  if (bits !== undefined && (typeof bits !== "number" || !Number.isFinite(bits))) {
+    return undefined;
+  }
+  if (skipLast !== undefined && typeof skipLast !== "boolean") {
+    return undefined;
+  }
+  return enabled === true ? { bits: bits ?? 4, skipLast: skipLast ?? true } : null;
+}
+
+/** The non-neutral, non-TurboQuant keys; undefined when a value has no
+ *  canonical JSON form, null when there are no such keys. */
+function collectUnknownSettings(
+  settings: Record<string, unknown>,
+): Record<string, unknown> | null | undefined {
+  const unknown = createRecord();
+  let unknownCount = 0;
+  for (const [key, value] of Object.entries(settings)) {
+    if (AFFECTING_KEYS.has(key) || NEUTRAL_KEYS.has(key) || value === undefined) {
+      continue;
+    }
+    if (!hasCanonicalJson(value)) {
+      return undefined;
+    }
+    unknown[key] = value;
+    unknownCount += 1;
+  }
+  return unknownCount > 0 ? unknown : null;
+}
+
+function normalizeSettings(settings: unknown): NormalizedSettings | null {
+  if (settings === undefined) {
+    return { turboquant: null, unknown: null };
+  }
+  if (!isPlainObject(settings)) {
+    return null;
+  }
+  const turboquant = normalizeTurboQuant(settings);
+  const unknown = collectUnknownSettings(settings);
+  if (turboquant === undefined || unknown === undefined) {
+    return null;
+  }
+  return { turboquant, unknown };
 }
 
 function canonicalString(value: unknown): string {
@@ -168,7 +281,7 @@ function sortObjectKeys(obj: unknown): unknown {
     const entries = Object.entries(obj).sort(function (a, b) {
       return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0;
     });
-    const result: Record<string, unknown> = {};
+    const result = createRecord();
     for (const [key, value] of entries) {
       result[key] = sortObjectKeys(value);
     }
@@ -177,13 +290,23 @@ function sortObjectKeys(obj: unknown): unknown {
   return obj;
 }
 
+/**
+ * Derive the versioned cache identity, or the reason it cannot be derived.
+ * Every field that is missing, mistyped or has no canonical form yields a
+ * failure reason instead of an identity.
+ */
 export function deriveOmlxCacheIdentity(input: OmlxCacheIdentityInput): OmlxCacheIdentityResult {
+  const modelId = normalizeNonEmptyString(input.modelId);
+  if (modelId === null) {
+    return { ok: false, reason: "ModelIdUnavailable" };
+  }
+
   const artifact = normalizeArtifact(input.artifact);
   if (artifact === null) {
     return { ok: false, reason: "ArtifactIdentityUnavailable" };
   }
 
-  const engineBuild = normalizeEngineBuild(input.engineBuild);
+  const engineBuild = normalizeNonEmptyString(input.engineBuild);
   if (engineBuild === null) {
     return { ok: false, reason: "EngineBuildUnavailable" };
   }
@@ -193,14 +316,20 @@ export function deriveOmlxCacheIdentity(input: OmlxCacheIdentityInput): OmlxCach
     return { ok: false, reason: "CacheEpochInvalid" };
   }
 
-  const turboquant = normalizeTurboQuant(input.settings);
+  const settings = normalizeSettings(input.settings);
+  if (settings === null) {
+    return { ok: false, reason: "SettingsInvalid" };
+  }
 
+  // unknownSettings is present only when there are unknown keys, so an input
+  // without any keeps the same identity it had before this field existed.
   const payload = {
     artifact,
     cacheEpoch,
     engineBuild,
-    modelId: input.modelId,
-    turboquant,
+    modelId,
+    turboquant: settings.turboquant,
+    ...(settings.unknown === null ? {} : { unknownSettings: settings.unknown }),
     v: OMLX_CACHE_IDENTITY_VERSION,
   };
 
@@ -211,6 +340,11 @@ export function deriveOmlxCacheIdentity(input: OmlxCacheIdentityInput): OmlxCach
   return { ok: true, identity };
 }
 
+/**
+ * Retain the cache only when the derived identity exactly matches the
+ * previous one. A missing previous identity, a changed identity and every
+ * derivation failure invalidate.
+ */
 export function decideOmlxCacheRetention(
   previousIdentity: string | null | undefined,
   input: OmlxCacheIdentityInput,
