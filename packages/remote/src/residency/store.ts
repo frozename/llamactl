@@ -40,6 +40,8 @@
 // accepts a write that carries no desiredRevision, for backward compatibility;
 // that write keeps the stored revision, so the stale-writer gap is closed only
 // for writers that pass a revision. Making the field mandatory is a follow-up.
+import type { ResidencyAuditEntry } from "@llamactl/core/residency/leases";
+
 import { llamactlHome } from "@llamactl/core/config/env";
 import {
   evaluateResidencyTransition,
@@ -57,6 +59,12 @@ import { dirname, join } from "node:path";
 import { existsSync, mkdirSync } from "../safe-fs.js";
 
 const SCHEMA_VERSION = 1;
+
+// Forced-unload lease audit (#278, DF-05). Newest rows win: the sink trims to
+// this many after every append, and the busy timeout is short so a locked store
+// costs an observability write at most this long (never an unload).
+export const RESIDENCY_LEASE_AUDIT_RETENTION = 500;
+export const RESIDENCY_LEASE_AUDIT_BUSY_TIMEOUT_MS = 250;
 
 const PHASES = ["pending", "committed", "terminal"] as const;
 const OUTCOMES = ["succeeded", "failed", "cancelled", "unknown"] as const;
@@ -306,12 +314,12 @@ export function openResidencyOperationStore(input: {
   return store;
 }
 
-function openDb(path: string): Database {
+function openDb(path: string, busyTimeoutMs = 15000): Database {
   mkdirSync(dirname(path), { recursive: true });
   const db = new Database(path);
   try {
     db.run("PRAGMA journal_mode = WAL");
-    db.run("PRAGMA busy_timeout = 15000");
+    db.run(`PRAGMA busy_timeout = ${String(busyTimeoutMs)}`);
     migrate(db);
   } catch (error: unknown) {
     db.close();
@@ -351,6 +359,129 @@ export function readResidencyStoreSnapshot(path: string): ResidencyStoreSnapshot
     return { path, present: true, nonterminal: listNonterminalRows(db) };
   } catch (error: unknown) {
     return { path, present: true, error: (error as Error).message };
+  } finally {
+    db?.close();
+  }
+}
+
+// ── Forced-unload lease audit persistence (#278, DF-05) ─────────────────
+
+interface LeaseAuditRow {
+  workload: string;
+  epoch: number;
+  revoked: string;
+  reason: string | null;
+}
+
+// Append + trim run together inside one IMMEDIATE transaction (the caller wraps
+// this with db.transaction(...).immediate). Audit appends are observability, not
+// ownership-gated, so there is no fence check here.
+function appendLeaseAuditTx(db: Database, entry: ResidencyAuditEntry): void {
+  db.query("INSERT INTO lease_audit (workload, epoch, revoked, reason) VALUES (?, ?, ?, ?)").run(
+    entry.workload,
+    entry.epoch,
+    JSON.stringify(entry.revoked),
+    entry.reason ?? null,
+  );
+  db.query(
+    `DELETE FROM lease_audit
+     WHERE seq NOT IN (SELECT seq FROM lease_audit ORDER BY seq DESC LIMIT ?)`,
+  ).run(RESIDENCY_LEASE_AUDIT_RETENTION);
+}
+
+// Defensive parse: revoked is trusted only as a JSON string array. Bad JSON or
+// a non-array yields []; within an array, only string elements survive. A NULL
+// reason keeps the key omitted (exactOptionalPropertyTypes).
+function rowToAuditEntry(row: LeaseAuditRow): ResidencyAuditEntry {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(row.revoked) as unknown;
+  } catch {
+    parsed = null;
+  }
+  const revoked = Array.isArray(parsed)
+    ? parsed.filter((element): element is string => typeof element === "string")
+    : [];
+  return {
+    workload: row.workload,
+    epoch: row.epoch,
+    forced: true,
+    revoked,
+    ...(row.reason !== null ? { reason: row.reason } : {}),
+  };
+}
+
+function listLeaseAuditRows(db: Database): ResidencyAuditEntry[] {
+  const rows = db
+    .query("SELECT workload, epoch, revoked, reason FROM lease_audit ORDER BY seq ASC")
+    .all() as LeaseAuditRow[];
+  return rows.map((row) => rowToAuditEntry(row));
+}
+
+export type ResidencyLeaseAuditSink = {
+  onAudit: (entry: ResidencyAuditEntry) => void;
+  close: () => void;
+};
+
+// Node-local durability mirror of core's in-memory forced-unload audit. Opens
+// its OWN connection lazily on the first write, so an agent that never forces
+// an unload never touches the store file (the migrate step also runs under the
+// short audit busy timeout). A failed open is not cached, so the next call
+// retries. close() is idempotent and makes every later onAudit a permanent
+// no-op. Open and write errors propagate to core's try/catch, never an unload.
+export function createResidencyLeaseAuditSink(opts: {
+  path: string;
+  busyTimeoutMs?: number;
+}): ResidencyLeaseAuditSink {
+  const busyTimeoutMs = opts.busyTimeoutMs ?? RESIDENCY_LEASE_AUDIT_BUSY_TIMEOUT_MS;
+  let db: Database | null = null;
+  let appendAudit: ((entry: ResidencyAuditEntry) => void) | null = null;
+  let closed = false;
+
+  return {
+    onAudit: (entry): void => {
+      if (closed) {
+        return;
+      }
+      if (db === null) {
+        const opened = openDb(opts.path, busyTimeoutMs);
+        const appendImmediate = opened.transaction((auditEntry: ResidencyAuditEntry): void => {
+          appendLeaseAuditTx(opened, auditEntry);
+        });
+        db = opened;
+        appendAudit = (auditEntry): void => {
+          appendImmediate.immediate(auditEntry);
+        };
+      }
+      appendAudit?.(entry);
+    },
+    close: (): void => {
+      if (closed) {
+        return;
+      }
+      closed = true;
+      db?.close();
+      db = null;
+      appendAudit = null;
+    },
+  };
+}
+
+// Read-only view of the persisted audit, mirroring readResidencyStoreSnapshot:
+// no mkdir, no journal_mode, no migrate, no ownership. A missing file, a missing
+// table, or any read error returns an empty list, so status never fails on the
+// audit section.
+export function readResidencyLeaseAudit(path: string): ResidencyAuditEntry[] {
+  if (!existsSync(path)) {
+    return [];
+  }
+  let db: Database | null = null;
+  try {
+    db = new Database(path, { readonly: true });
+    db.run(`PRAGMA busy_timeout = ${String(RESIDENCY_LEASE_AUDIT_BUSY_TIMEOUT_MS)}`);
+    return listLeaseAuditRows(db);
+  } catch {
+    return [];
   } finally {
     db?.close();
   }
@@ -419,6 +550,15 @@ function createTables(db: Database): void {
     )
   `);
   addColumnIfMissing(db, "residency_states", "desired_revision", "INTEGER");
+  db.run(`
+    CREATE TABLE IF NOT EXISTS lease_audit (
+      seq INTEGER PRIMARY KEY AUTOINCREMENT,
+      workload TEXT NOT NULL,
+      epoch INTEGER NOT NULL,
+      revoked TEXT NOT NULL,
+      reason TEXT
+    )
+  `);
 }
 
 // Additive, in-place migration: a #662-era residency_states table predates

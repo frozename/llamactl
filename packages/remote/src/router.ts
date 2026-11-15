@@ -30,7 +30,11 @@ import * as kubecfg from "@llamactl/core/config/kubeconfig";
 import { ENGINES } from "@llamactl/core/engines";
 import { readModelHostState } from "@llamactl/core/engines/state";
 import { probeEndpointOwnership } from "@llamactl/core/probe";
-import { getResidencyLeaseRegistry } from "@llamactl/core/residency/leases";
+import {
+  getResidencyLeaseRegistry,
+  type ResidencyAuditEntry,
+  type ResidencySnapshot,
+} from "@llamactl/core/residency/leases";
 import {
   type CostJournalEntry,
   decideGuardianAction,
@@ -97,7 +101,11 @@ import {
   collectResidencyObservations,
 } from "./residency/procedures.js";
 import { fenceWorkloadStop, reopenWorkloadAfterLoad } from "./residency/stop-fence.js";
-import { defaultResidencyStorePath, readResidencyStoreSnapshot } from "./residency/store.js";
+import {
+  defaultResidencyStorePath,
+  readResidencyLeaseAudit,
+  readResidencyStoreSnapshot,
+} from "./residency/store.js";
 import { readFleetSnapshotOrLocalRoutes } from "./routes/fleet.js";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "./safe-fs.js";
 import { searchLogs } from "./search/logs.js";
@@ -2010,6 +2018,21 @@ export const router = t.router({
     const node = nodeRuns.find((n: (typeof nodeRuns)[number]) => n.metadata.name === input.node);
     const declared = node?.spec.budget?.memoryGiB;
     const leaseRegistry = getResidencyLeaseRegistry();
+    // Once the serving registry persists through the store sink, the store is
+    // the superset that survives a process restart, so it wins whenever it has
+    // rows; snapshot stays live. The live in-memory audit is the fallback when
+    // the store is absent or empty. auditCount is then the persisted count,
+    // bounded by RESIDENCY_LEASE_AUDIT_RETENTION. A null registry reads no store
+    // for audit: with no registry the leases section is "unavailable".
+    const persistedAudit =
+      leaseRegistry === null ? [] : readResidencyLeaseAudit(defaultResidencyStorePath());
+    const auditSource =
+      leaseRegistry !== null && persistedAudit.length > 0
+        ? {
+            snapshot: (workload: string): ResidencySnapshot => leaseRegistry.snapshot(workload),
+            audit: (): ResidencyAuditEntry[] => persistedAudit,
+          }
+        : leaseRegistry;
     const leaseWorkloads =
       leaseRegistry === null
         ? []
@@ -2023,7 +2046,7 @@ export const router = t.router({
       budgetGiB: defaultNodeBudgetGiB(declared, undefined, node?.spec.residency),
       budgetSource: typeof declared === "number" ? "noderun" : "computed",
       store: readResidencyStoreSnapshot(defaultResidencyStorePath()),
-      leaseRegistry,
+      leaseRegistry: auditSource,
       leaseWorkloads,
     });
   }),

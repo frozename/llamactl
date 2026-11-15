@@ -29,6 +29,7 @@ import {
 } from "../inference/procedures.js";
 import { dispatchProxyRequest, publishUnifiedPeerSnapshots } from "../proxy/create-proxy.js";
 import { listDeclaredModels } from "../residency/catalog.js";
+import { createResidencyLeaseAuditSink, defaultResidencyStorePath } from "../residency/store.js";
 import { type AgentRouterContext, router as appRouter } from "../router.js";
 import { handleFleetSnapshotRoute } from "../routes/fleet.js";
 import { existsSync, readFileSync } from "../safe-fs.js";
@@ -1206,12 +1207,15 @@ function defaultActiveShare(bindings: readonly ServiceCredentialBinding[]): numb
 /**
  * Prepares the one opt-in residency lease registry (DF-05, #278). Returns
  * null unless `opts.residencyLeases` is true, so the default path only does a
- * null check and never reads or writes the process-wide seam. Otherwise it
- * captures the seam's previous value and builds a fresh registry, but does NOT
- * install it: `publish` installs the registry and `restore` puts the captured
- * previous value back. The caller publishes only once the listener is up (next
- * to maybeRegisterDeclaredModels), so a failed bind (a missing cert, a port in
- * use) never leaves an orphan registry in the seam for a later start to
+ * null check, opens nothing and never reads or writes the process-wide seam.
+ * Otherwise it captures the seam's previous value, wires the registry's
+ * onAudit sink to the node-local residency store (the forced-unload audit
+ * survives a restart; the sink opens lazily on the first write and its close
+ * runs on both the stop and rollback paths), and builds a fresh registry — but
+ * does NOT install it: `publish` installs the registry and `restore` puts the
+ * captured previous value back. The caller publishes only once the listener is
+ * up (next to maybeRegisterDeclaredModels), so a failed bind (a missing cert, a
+ * port in use) never leaves an orphan registry in the seam for a later start to
  * capture as its previous value.
  */
 function maybePublishResidencyLeases(
@@ -1220,7 +1224,8 @@ function maybePublishResidencyLeases(
   if (opts.residencyLeases !== true) return null;
   const previous = getResidencyLeaseRegistry();
   const previousSession = currentSessionRefcounts();
-  const registry = createResidencyLeases();
+  const auditSink = createResidencyLeaseAuditSink({ path: defaultResidencyStorePath() });
+  const registry = createResidencyLeases({ onAudit: auditSink.onAudit });
   let sessionRefcounts: SessionRefcounts | null = null;
   if (opts.residencySessionIdleMs !== undefined) {
     sessionRefcounts = createSessionRefcounts({
@@ -1238,6 +1243,7 @@ function maybePublishResidencyLeases(
     if (sessionRefcounts !== null) {
       setSessionRefcountRegistry(previousSession);
     }
+    auditSink.close();
   };
   return { registry, publish, restore };
 }

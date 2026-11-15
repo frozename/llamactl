@@ -11,6 +11,9 @@
 // The leases section is the serving process's in-memory lease/drain registry:
 // per-workload phase, epoch, active lease count and waiters plus the recent
 // forced-unload audit, reported "unavailable" when no registry is installed.
+// recentAudit comes from the node-local store when it has rows (the persisted
+// superset that survives a restart); the live in-memory audit is the fallback
+// when the store is absent or empty.
 import type { ResidencyLeases } from "@llamactl/core/residency/leases";
 import type { PlannerWorkload, ProfileSwitchPlan } from "@llamactl/core/residency/planner";
 

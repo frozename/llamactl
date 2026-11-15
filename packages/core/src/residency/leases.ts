@@ -12,6 +12,13 @@
  * every ingress unchanged; a host installs a registry to activate
  * lease-checked admission. The same seam drives the `withReopenAfterLoad` /
  * `reopenWorkloadAfterLoad` helpers at the bottom of this module.
+ *
+ * Durability extension of AC3 (#278, DF-05): `createResidencyLeases` takes an
+ * optional `onAudit` sink called once per forced-unload audit entry, after the
+ * in-memory push. The sink runs synchronously inside commitUnload, so it must
+ * be fast and bounded, and it cannot fail an unload: its errors are swallowed
+ * and later unloads still call it. The in-memory audit stays authoritative for
+ * the process lifetime; the sink only mirrors it outward.
  */
 
 import type {
@@ -236,6 +243,17 @@ function bindLeaseToBody(
 
 // ── Exposed boundary ────────────────────────────────────────────────────
 
+/**
+ * Optional durability seam for the forced-unload audit (Part of #278, DF-05).
+ * `onAudit` runs synchronously inside `commitUnload`, once per forced entry
+ * with a fresh copy, after the in-memory push. It must be fast and bounded, and
+ * it cannot fail an unload: errors are swallowed and later unloads still call
+ * it. The in-memory audit stays authoritative for the process lifetime.
+ */
+export type ResidencyLeasesOptions = {
+  onAudit?: (entry: ResidencyAuditEntry) => void;
+};
+
 function makeLease(state: WorkloadState, workload: string, n: number): AcquireResult {
   const id = `${workload}#${String(n)}`;
   const abort = new AbortController();
@@ -347,10 +365,24 @@ function whenIdleImpl(
   });
 }
 
-export function createResidencyLeases(): ResidencyLeases {
+export function createResidencyLeases(opts?: ResidencyLeasesOptions): ResidencyLeases {
   const registries = new Map<string, WorkloadState>();
   const counters = new Map<string, number>();
   const auditLog: ResidencyAuditEntry[] = [];
+
+  function notifyAuditSink(entry: ResidencyAuditEntry): void {
+    const sink = opts?.onAudit;
+    if (sink === undefined) {
+      return;
+    }
+    const copy: ResidencyAuditEntry = { ...entry, revoked: [...entry.revoked] };
+    try {
+      sink(copy);
+    } catch {
+      // The sink is observability only: a failing sink never fails an unload
+      // and is retried on every later forced commitUnload.
+    }
+  }
 
   function acquire(workload: string): AcquireResult {
     return acquireLease(registries, counters, workload);
@@ -381,30 +413,32 @@ export function createResidencyLeases(): ResidencyLeases {
 
   function commitUnload(
     token: DrainToken,
-    opts?: { force?: boolean; reason?: string },
+    unloadOpts?: { force?: boolean; reason?: string },
   ): CommitUnloadResult {
     const state = registries.get(token.workload);
     if (token.epoch !== state?.epoch || state.phase !== "draining") {
       return { ok: false, reason: "StaleDrainToken" };
     }
 
-    if (state.leases.size > 0 && opts?.force !== true) {
+    if (state.leases.size > 0 && unloadOpts?.force !== true) {
       return { ok: false, reason: "LeasesActive", active: activeIds(state) };
     }
 
     let revoked: string[] = [];
-    if (opts?.force === true && state.leases.size > 0) {
+    if (unloadOpts?.force === true && state.leases.size > 0) {
       revoked = revokeAll(state, new Error("lease revoked: forced unload"));
-      auditLog.push({
+      const entry: ResidencyAuditEntry = {
         workload: token.workload,
         epoch: state.epoch,
         forced: true,
         revoked,
-        ...(opts.reason !== undefined ? { reason: opts.reason } : {}),
-      });
+        ...(unloadOpts.reason !== undefined ? { reason: unloadOpts.reason } : {}),
+      };
+      auditLog.push(entry);
       if (auditLog.length > 1024) {
         auditLog.splice(0, auditLog.length - 1024);
       }
+      notifyAuditSink(entry);
     }
 
     state.phase = "unloaded";
