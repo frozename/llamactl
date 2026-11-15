@@ -270,12 +270,12 @@ export interface StartAgentOptions {
   /**
    * Opt-in request-admission gate (#281 DF-08), absent by default. When set,
    * `startAgentServer` holds an admission slot for the whole response lifetime
-   * of POST /v1/chat/completions and refuses overload instead of queueing
-   * unbounded work upstream. This slice counts every chat-completions request
-   * admitted at this agent — peer-routed and via/RAG included — under one
-   * ingress key and one principal; physical per-node accounting comes later.
-   * The other ingresses (/v1/messages, /v1/responses, Worker RPC, the
-   * unified proxy) are later slices.
+   * of POST /v1/chat/completions, POST /v1/messages and POST /v1/responses and
+   * refuses overload instead of queueing unbounded work upstream. One shared
+   * instance and one limit cover all three ingresses admitted at this agent —
+   * peer-routed and via/RAG included — under one ingress key and one principal;
+   * physical per-node accounting comes later. Worker RPC and the unified proxy
+   * remain later slices.
    */
   chatCompletionsAdmission?: RequestAdmission;
   /**
@@ -675,6 +675,14 @@ function handleAuthedApiRoutes(
       ...(opts.fleetJournalPath !== undefined ? { journalPath: opts.fleetJournalPath } : {}),
     });
   }
+  // #281 DF-08: the Anthropic Messages and OpenAI Responses ingresses share the
+  // chat-completions admission instance. Exact pathname match, as core's
+  // parseIncoming does; when the option is absent these fall through to the
+  // generic proxy branch untouched.
+  const proxyAdmission = opts.chatCompletionsAdmission;
+  if (isAdmittedProxyIngress(req, url, proxyAdmission)) {
+    return handleAdmittedProxyRoute(req, url, clientAddress, opts, gate, server, proxyAdmission);
+  }
   // OpenAI-compatible gateway. Anything under /v1/* is bearer-auth'd
   // then either listed (GET /v1/models — static, no upstream call)
   // or proxied straight to the local llama-server so external tools
@@ -683,6 +691,18 @@ function handleAuthedApiRoutes(
     return handleOpenAIRoute(req, url, clientAddress, opts, gate, server);
   }
   return null;
+}
+
+function isAdmittedProxyIngress(
+  req: Request,
+  url: URL,
+  admission: RequestAdmission | undefined,
+): admission is RequestAdmission {
+  return (
+    admission !== undefined &&
+    req.method === "POST" &&
+    (url.pathname === "/v1/messages" || url.pathname === "/v1/responses")
+  );
 }
 
 // #281 (DF-08): the chat-completions branch is split out so the admission
@@ -714,6 +734,35 @@ function handleChatCompletionsRoute(
         handleOpenAIRoute(forwarded, url, clientAddress, opts, gate, server, false),
     }),
   );
+}
+
+// #281 DF-08: /v1/messages and /v1/responses share the chat-completions
+// admission instance. Auth runs before any acquire; record=false so the bearer
+// use admitted here is not double-counted when handleOpenAIRoute re-checks it.
+// A forward that rejects (a unified-proxy throw) has already released its slot
+// inside admitChatCompletions; surfacing it as a reset socket would let the
+// rejection escape Bun.serve unhandled, so it is collapsed to a 502.
+function handleAdmittedProxyRoute(
+  req: Request,
+  url: URL,
+  clientAddress: ClientAddress | null,
+  opts: StartAgentOptions,
+  gate: NoAuthGate,
+  server: AgentFetchServer,
+  admission: RequestAdmission,
+): Response | Promise<Response> {
+  const denied = authGateReject(req, url.pathname, clientAddress, opts, gate);
+  if (denied) return denied;
+  server.timeout?.(req, proxiedRouteIdleSeconds());
+  return admitChatCompletions(req, admission, (admitted) =>
+    handleOpenAIRoute(admitted, url, clientAddress, opts, gate, server, false),
+  ).catch((err: unknown) => {
+    console.warn("admitted proxy route forward failed", { path: url.pathname, error: err });
+    return new Response(JSON.stringify({ error: { type: "api_error" } }), {
+      status: 502,
+      headers: { "content-type": "application/json" },
+    });
+  });
 }
 
 function handleMetricsRoute(

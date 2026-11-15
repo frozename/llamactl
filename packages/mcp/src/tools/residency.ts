@@ -9,6 +9,7 @@ import { SERVER_SLUG } from "./shared.js";
 export function registerResidencyTools(server: McpServer): void {
   registerResidencyStatus(server);
   registerResidencyPlan(server);
+  registerResidencyApplyProfile(server);
   registerResidencyForceUnload(server);
 }
 
@@ -58,6 +59,59 @@ function registerResidencyPlan(server: McpServer): void {
         ...(from !== undefined ? { from } : {}),
       });
       return toTextContent(result);
+    },
+  );
+}
+
+function registerResidencyApplyProfile(server: McpServer): void {
+  server.registerTool(
+    "llamactl.residency.applyProfile",
+    {
+      title: "Apply a residency profile switch (dry-run by default)",
+      description:
+        "Mirrors the remote residencyApplyProfile mutation. Dry-run by default: plans and reports the profile switch without touching the store. Set `dryRun: false` to run it for real, which stops the victim workloads and starts the replacements and records a terminal operation under `profile-switch:<node>`; `confirm: true` is then required. Refuses NotServingNode off the serving process, ControllerActive while a live controller lock exists and NodeBusy while a profile switch is already in flight.",
+      inputSchema: {
+        node: z.string().min(1).describe("Name of the NodeRun to switch."),
+        to: z.string().min(1).describe("Target residency profile to switch to."),
+        from: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("Current residency profile; reported as null when omitted."),
+        dryRun: z.boolean().default(true).describe("Preview only when true (default)."),
+        confirm: z.boolean().default(false).describe("Must be true to run the switch for real."),
+      },
+      annotations: { destructiveHint: true, readOnlyHint: false },
+    },
+    async (input) => {
+      const { node, to, from, dryRun, confirm } = input;
+      if (!dryRun && !confirm) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "refusing without confirm: true; a profile switch stops and starts workloads",
+            },
+          ],
+        };
+      }
+      const caller = router.createCaller({});
+      const result = await caller.residencyApplyProfile({
+        node,
+        to,
+        ...(from !== undefined ? { from } : {}),
+        dryRun,
+        confirm,
+      });
+      appendAudit({
+        server: SERVER_SLUG,
+        tool: "llamactl.residency.applyProfile",
+        input: { dryRun, node, to, ...(from !== undefined ? { from } : {}) },
+        dryRun,
+        result,
+      });
+      return { ...toTextContent(result), ...(result.ok ? {} : { isError: true }) };
     },
   );
 }
