@@ -9,6 +9,13 @@
  * any fence with a nonterminal `profile-switch:<node>` row, is never claimed
  * over — it reports busy without touching authority (see `runWet` for the
  * cross-process window that remains).
+ *
+ * `applyResidencyProfile` is wired (router procedure, CLI verb, MCP tool).
+ * `cancelResidencyProfileOperation` aborts a switch this process owns at its
+ * next step boundary; the abort is observed only at a boundary, so the switch
+ * is recorded as `cancelled` only when it reaches one (a step already running
+ * completes and can still succeed). The cancel is process-local: it reaches
+ * only switches whose AbortController is registered in this serving process.
  */
 import type { ResidencyLeases } from "@llamactl/core/residency/leases";
 import type { OkPlan } from "@llamactl/core/residency/planner";
@@ -18,6 +25,7 @@ import { randomUUID } from "node:crypto";
 
 import type { ResidencyPlan } from "./procedures.js";
 
+import { existsSync } from "../safe-fs.js";
 import { startModelHost, stopModelHost } from "../server/modelhost.js";
 import { ModelRunSchema, type ModelRunStatus } from "../workload/schema.js";
 import {
@@ -36,10 +44,26 @@ import {
   type ProfileSwitchStepOutcome,
 } from "./profile-transition.js";
 import { reopenWorkloadAfterLoad } from "./stop-fence.js";
-import { openResidencyOperationStore, type ResidencyOperationStore } from "./store.js";
+import {
+  openResidencyOperationStore,
+  type ResidencyOperationOutcome,
+  type ResidencyOperationRecord,
+  type ResidencyOperationStore,
+} from "./store.js";
 
 const RESIDENCY_APPLY_PROFILE_FENCE_OWNER = "llamactl-residency-apply-profile";
 const RESIDENCY_APPLY_PROFILE_DESIRED_REVISION = 0;
+
+// Per-process registry (#693) of the AbortController behind each in-flight wet
+// profile switch, keyed by the operationId recorded in the node-local store.
+// `cancelResidencyProfileOperation` aborts through it; the entry is removed in
+// the switch's finally. It is process-local: a switch begun by another serving
+// process shares the store but not this map.
+const inFlightSwitchControllers = new Map<string, AbortController>();
+
+export function __residencyInFlightSwitchIdsForTests(): string[] {
+  return [...inFlightSwitchControllers.keys()];
+}
 
 export type FenceIdentity = { ownerId: string; incarnation: string };
 
@@ -73,6 +97,20 @@ export type ResidencyApplyProfileResult = {
   operationId?: string | null;
   inFlightOperationId?: string | null;
   controllerPid?: number;
+};
+
+export type ResidencyCancelOperationOutcome =
+  | "cancel-requested"
+  | "not-found"
+  | "already-terminal"
+  | "not-owned-by-this-process";
+
+export type ResidencyCancelOperationResult = {
+  ok: boolean;
+  outcome: ResidencyCancelOperationOutcome;
+  operationId: string;
+  detail: string;
+  recordedOutcome?: ResidencyOperationOutcome | null;
 };
 
 export type ApplyResidencyProfileArgs = {
@@ -355,20 +393,38 @@ async function runWet(
       return inFlightBusy(plan, "unknown");
     }
     const fence = store.claimOwnership(identity);
+    return await runFencedSwitch(plan, steps, args, store, fence.fenceToken);
+  } finally {
+    store.close();
+  }
+}
+
+async function runFencedSwitch(
+  plan: OkPlan,
+  steps: ProfileSwitchExecutorDeps,
+  args: ApplyResidencyProfileArgs,
+  store: ResidencyOperationStore,
+  fenceToken: number,
+): Promise<ResidencyApplyProfileResult> {
+  const operationId = randomUUID();
+  const controller = new AbortController();
+  inFlightSwitchControllers.set(operationId, controller);
+  try {
     return mapReport(
       await executeProfileSwitch(plan, steps, {
         dryRun: false,
         registry: args.registry,
+        signal: controller.signal,
         operation: {
           store,
-          fenceToken: fence.fenceToken,
-          operationId: randomUUID(),
+          fenceToken,
+          operationId,
           desiredRevision: RESIDENCY_APPLY_PROFILE_DESIRED_REVISION,
         },
       }),
     );
   } finally {
-    store.close();
+    inFlightSwitchControllers.delete(operationId);
   }
 }
 
@@ -395,4 +451,78 @@ export async function applyResidencyProfile(
     );
   }
   return await runWet(plan, steps, args);
+}
+
+type CancelStoreLookup = { absent: boolean; record: ResidencyOperationRecord | null };
+
+function readCancelStoreRecord(storePath: string, operationId: string): CancelStoreLookup {
+  if (!existsSync(storePath)) {
+    return { absent: true, record: null };
+  }
+  const store = openResidencyOperationStore({ path: storePath });
+  try {
+    return { absent: false, record: store.getOperation(operationId) };
+  } finally {
+    store.close();
+  }
+}
+
+function alreadyTerminalResult(
+  operationId: string,
+  record: ResidencyOperationRecord,
+): ResidencyCancelOperationResult {
+  return {
+    ok: false,
+    outcome: "already-terminal",
+    operationId,
+    ...(record.outcome === null ? {} : { recordedOutcome: record.outcome }),
+    detail: `operation ${operationId} is already terminal (outcome ${record.outcome ?? "unknown"})`,
+  };
+}
+
+function cancelRequestedResult(operationId: string): ResidencyCancelOperationResult {
+  return {
+    ok: true,
+    outcome: "cancel-requested",
+    operationId,
+    detail: `abort delivered to profile switch ${operationId}; it stops before its next step boundary (a step already running completes). The recorded outcome is on the operation: see residency status or the apply-profile result`,
+  };
+}
+
+function notFoundResult(operationId: string): ResidencyCancelOperationResult {
+  return {
+    ok: false,
+    outcome: "not-found",
+    operationId,
+    detail: `no residency operation ${operationId} in the node-local store`,
+  };
+}
+
+function notOwnedResult(operationId: string): ResidencyCancelOperationResult {
+  return {
+    ok: false,
+    outcome: "not-owned-by-this-process",
+    operationId,
+    detail: `operation ${operationId} is in flight but not owned by this serving process; cancel reaches only profile switches running in the process that serves this request (an agent serve process or one MCP server), so a switch run in-process by another CLI invocation cannot be cancelled here`,
+  };
+}
+
+export function cancelResidencyProfileOperation(args: {
+  operationId: string;
+  storePath: string;
+}): ResidencyCancelOperationResult {
+  const { operationId, storePath } = args;
+  const lookup = readCancelStoreRecord(storePath, operationId);
+  if (lookup.record !== null && lookup.record.phase === "terminal") {
+    return alreadyTerminalResult(operationId, lookup.record);
+  }
+  const controller = inFlightSwitchControllers.get(operationId);
+  if (controller !== undefined) {
+    controller.abort();
+    return cancelRequestedResult(operationId);
+  }
+  if (lookup.absent || lookup.record === null) {
+    return notFoundResult(operationId);
+  }
+  return notOwnedResult(operationId);
 }
