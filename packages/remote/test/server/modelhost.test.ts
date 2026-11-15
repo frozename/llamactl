@@ -2055,29 +2055,46 @@ describe("server/modelhost", () => {
     }
   });
 
-  // The evict/force-admit annotations are ModelRun-only: a ModelHost
-  // carrying either must fail validation with a message that names the
-  // offending annotation, not a bare unrecognized-key error.
-  test("DF-02 slice 3: ModelHost rejects ModelRun-only evict/force-admit annotations by name", () => {
-    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-evict-reject-"));
+  // DF-02 (#275): llamactl.io/evict is now legal ModelHost metadata — a
+  // ModelHost may act as an eviction replacement. force-admit stays
+  // ModelRun-only and must still fail validation with a message that
+  // names the offending annotation.
+  test('DF-02 slice 3: llamactl.io/evict="x" parses on a ModelHost manifest', () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-evict-allow-"));
     try {
       const { manifest } = makeManifest(tmp);
-      for (const [annotation, value] of [
-        ["llamactl.io/evict", "x"],
-        ["llamactl.io/force-admit", "true"],
-      ] as const) {
-        const parsed = ModelHostManifestSchema.safeParse({
-          ...manifest,
-          metadata: { name: "mlx-host-server", annotations: { [annotation]: value } },
-        });
-        expect(parsed.success).toBe(false);
-        if (parsed.success) continue;
-        expect(
-          parsed.error.issues.some(
-            (issue) => issue.message.includes(annotation) && issue.message.includes("ModelHost"),
-          ),
-        ).toBe(true);
-      }
+      const parsed = ModelHostManifestSchema.safeParse({
+        ...manifest,
+        metadata: { name: "mlx-host-server", annotations: { "llamactl.io/evict": "x" } },
+      });
+      expect(parsed.success).toBe(true);
+      if (!parsed.success) return;
+      expect(parsed.data.metadata.annotations?.["llamactl.io/evict"]).toBe("x");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('DF-02 slice 3: llamactl.io/force-admit="true" still fails on a ModelHost manifest', () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-force-reject-"));
+    try {
+      const { manifest } = makeManifest(tmp);
+      const parsed = ModelHostManifestSchema.safeParse({
+        ...manifest,
+        metadata: {
+          name: "mlx-host-server",
+          annotations: { "llamactl.io/force-admit": "true" },
+        },
+      });
+      expect(parsed.success).toBe(false);
+      if (parsed.success) return;
+      expect(
+        parsed.error.issues.some(
+          (issue) =>
+            issue.message.includes("llamactl.io/force-admit") &&
+            issue.message.includes("ModelHost"),
+        ),
+      ).toBe(true);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

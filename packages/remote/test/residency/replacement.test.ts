@@ -20,6 +20,7 @@ import type { ApplyEvent, ApplyResult, WorkloadClient } from "../../src/workload
 import type { ModelHostManifest } from "../../src/workload/modelhost-schema.js";
 
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -27,7 +28,7 @@ import {
   rmSync,
   writeFileSync,
 } from "../../src/safe-fs.js";
-import { applyOne } from "../../src/workload/apply.js";
+import { applyOne, applyOneModelHost } from "../../src/workload/apply.js";
 import { saveModelHost } from "../../src/workload/modelhost-store.js";
 import { reconcileOnce } from "../../src/workload/reconciler.js";
 import { loadWorkloadByName, saveWorkload } from "../../src/workload/store.js";
@@ -49,6 +50,7 @@ type Faults = {
     workload: string,
   ) => ModelHostStatusReply | Promise<ModelHostStatusReply> | undefined;
   hostStop?: (workload: string) => unknown;
+  hostStart?: (workload: string) => { ok: false; error: string } | undefined;
 };
 
 type ModelHostStatusReply = {
@@ -95,11 +97,13 @@ function makeClient(
   starts: string[];
   hostStops: string[];
   hostStarts: string[];
+  callLog: string[];
 } {
   const stops: string[] = [];
   const starts: string[] = [];
   const hostStops: string[] = [];
   const hostStarts: string[] = [];
+  const callLog: string[] = [];
   const upReply = (s: RecordedState): StatusReply => ({
     state: "up",
     pid: 100,
@@ -133,6 +137,7 @@ function makeClient(
     serverStop: {
       mutate: (input) => {
         stops.push(input.workload);
+        callLog.push(`stop:${input.workload}`);
         const delegate = (): Promise<unknown> => {
           state.delete(input.workload);
           return Promise.resolve({ stopped: true });
@@ -143,6 +148,7 @@ function makeClient(
     serverStart: {
       subscribe: (input, callbacks) => {
         starts.push(input.workload);
+        callLog.push(`start:${input.workload}`);
         if (faults.start?.(input.workload) === true) {
           queueMicrotask(() => {
             callbacks.onData({ type: "done", result: { ok: false, error: "boom" } });
@@ -175,10 +181,12 @@ function makeClient(
     modelHostStart: {
       subscribe: (input, callbacks) => {
         hostStarts.push(input.workload);
+        callLog.push(`hostStart:${input.workload}`);
+        const scripted = faults.hostStart?.(input.workload);
         queueMicrotask(() => {
           callbacks.onData({
             type: "done",
-            result: { ok: true, pid: 12345, state: "Running" },
+            result: scripted ?? { ok: true, pid: 12345, state: "Running" },
           });
           callbacks.onComplete();
         });
@@ -188,6 +196,7 @@ function makeClient(
     modelHostStop: {
       mutate: (input) => {
         hostStops.push(input.workload);
+        callLog.push(`hostStop:${input.workload}`);
         const scripted = faults.hostStop?.(input.workload);
         return Promise.resolve(scripted ?? { ok: true, pid: null });
       },
@@ -202,7 +211,7 @@ function makeClient(
     rpcServerStop: { mutate: () => Promise.resolve({ stopped: true }) },
     rpcServerDoctor: { query: () => Promise.resolve({ ok: true, path: "", llamaCppBin: "" }) },
   };
-  return { client, stops, starts, hostStops, hostStarts };
+  return { client, stops, starts, hostStops, hostStarts, callLog };
 }
 
 function upEntry(port: number): RecordedState {
@@ -214,8 +223,8 @@ function reportEvictedBy(report: unknown): unknown {
 }
 
 // DF-02 slice 3 (#275): ModelHost victims. An un-annotated victim may go
-// through saveModelHost; an annotated one cannot at the pinned base
-// (metadata is strict), so those are seeded as raw YAML instead.
+// through saveModelHost; an annotated one is seeded as raw YAML by
+// writeAnnotatedModelHost instead.
 type HostOverrides = Partial<{
   enabled: boolean;
   node: string;
@@ -262,6 +271,30 @@ function readWorkloadAnnotations(path: string): Record<string, string> | undefin
     metadata?: { annotations?: Record<string, string> };
   } | null;
   return raw?.metadata?.annotations;
+}
+
+// DF-02 (#275): ModelHost replacements. The replacement is passed to
+// applyOneModelHost as a typed manifest carrying llamactl.io/evict, which
+// the ModelHost schema accepts (only force-admit is still refused). Hosts
+// seeded on disk with annotations go through writeAnnotatedModelHost, which
+// writes the YAML directly rather than through saveModelHost. The fake omlx
+// binary satisfies validateSpec's existsSync check without touching PATH.
+function mkFakeOmlxBinary(dir: string): string {
+  const binary = join(dir, "omlx");
+  writeFileSync(binary, "#!/bin/sh\nexit 0\n");
+  chmodSync(binary, 0o755);
+  return binary;
+}
+
+function hostReplacement(
+  name: string,
+  evict: string,
+  overrides: HostOverrides = {},
+): ModelHostManifest {
+  return {
+    ...mkModelHostManifest(name, overrides),
+    metadata: { name, annotations: { "llamactl.io/evict": evict } },
+  };
 }
 
 // reconcileOnce resolves the ModelHost runtime dir from process.env, so a
@@ -1503,4 +1536,437 @@ test("RB6 an RPC error during the replacement teardown keeps the victim held", a
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// DF-02 (#275): ModelHost replacements. A ModelHost manifest carrying
+// llamactl.io/evict follows the same verified-eviction contract a
+// ModelRun replacement does — the victim's intent marker lands before
+// its stop RPC, capacity is re-checked after release, and a failed
+// replacement start tears the half-started host down before the
+// markers are released or kept. Every case is wrapped in
+// pinLocalRuntimeDir because applyOneModelHost / reconcileOnce reach
+// readModelHostState and writeModelHostSidecar.
+test("MH1 a ModelHost replacement evicts a running ModelRun victim, then starts", async () => {
+  const tmp = mkdtempSync(join(tmpdir(), "llamactl-df02-mh1-"));
+  const dir = join(tmp, "workloads");
+  mkdirSync(dir, { recursive: true });
+  const fakeBinary = mkFakeOmlxBinary(tmp);
+  const state: StateMap = new Map([["a", upEntry(8182)]]);
+  saveWorkload(mkManifest("a", { port: 8182, ram: 8 }), dir);
+  const { client, stops, starts, hostStops, hostStarts, callLog } = makeClient(state);
+  const hostB = hostReplacement("host-b", "a", { ram: 8, binary: fakeBinary });
+  const restoreRuntimeDir = pinLocalRuntimeDir(join(tmp, "runtime"));
+  try {
+    const outcome = await applyOneModelHost(hostB, () => client, undefined, {
+      workloadsDir: dir,
+      getNodeBudgetGiB: () => 8,
+    });
+    expect(outcome.ok).toBe(true);
+    expect(stops).toEqual(["a"]);
+    expect(hostStops).toEqual([]);
+    expect(starts).toEqual([]);
+    expect(hostStarts).toEqual(["host-b"]);
+    expect(callLog.indexOf("stop:a")).toBeLessThan(callLog.indexOf("hostStart:host-b"));
+    expect(readWorkloadAnnotations(join(dir, "a.yaml"))?.["llamactl.io/evicted-by"]).toBe("host-b");
+  } finally {
+    restoreRuntimeDir();
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("MH2 a ModelHost replacement evicts a running ModelHost victim, then starts", async () => {
+  const tmp = mkdtempSync(join(tmpdir(), "llamactl-df02-mh2-"));
+  const dir = join(tmp, "workloads");
+  mkdirSync(dir, { recursive: true });
+  const fakeBinary = mkFakeOmlxBinary(tmp);
+  saveModelHost(mkModelHostManifest("resident-host", { ram: 8, binary: fakeBinary }), dir);
+  let victimDown = false;
+  const state: StateMap = new Map();
+  const { client, stops, starts, hostStops, hostStarts, callLog } = makeClient(state, {
+    hostStatus: (workload) => {
+      if (workload !== "resident-host") return undefined;
+      return victimDown ? { state: "Stopped", pid: null } : { state: "Running", pid: 4242 };
+    },
+    hostStop: (workload) => {
+      if (workload !== "resident-host") return undefined;
+      victimDown = true;
+      return { ok: true, pid: 4242 };
+    },
+  });
+  const hostB = hostReplacement("host-b", "resident-host", {
+    ram: 8,
+    binary: fakeBinary,
+  });
+  const restoreRuntimeDir = pinLocalRuntimeDir(join(tmp, "runtime"));
+  try {
+    const outcome = await applyOneModelHost(hostB, () => client, undefined, {
+      workloadsDir: dir,
+      getNodeBudgetGiB: () => 8,
+    });
+    expect(outcome.ok).toBe(true);
+    expect(hostStops).toEqual(["resident-host"]);
+    expect(stops).toEqual([]);
+    expect(starts).toEqual([]);
+    expect(hostStarts).toEqual(["host-b"]);
+    expect(callLog.indexOf("hostStop:resident-host")).toBeLessThan(
+      callLog.indexOf("hostStart:host-b"),
+    );
+    expect(
+      readWorkloadAnnotations(join(dir, "resident-host.yaml"))?.["llamactl.io/evicted-by"],
+    ).toBe("host-b");
+  } finally {
+    restoreRuntimeDir();
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("MH3 #677: a ModelHost replacement readiness failure whose teardown is unverified keeps the victim held", async () => {
+  const tmp = mkdtempSync(join(tmpdir(), "llamactl-df02-mh3-"));
+  const dir = join(tmp, "workloads");
+  mkdirSync(dir, { recursive: true });
+  const fakeBinary = mkFakeOmlxBinary(tmp);
+  const state: StateMap = new Map([["a", upEntry(8182)]]);
+  saveWorkload(mkManifest("a", { port: 8182, ram: 8 }), dir);
+  const { client, stops, hostStops, hostStarts } = makeClient(state, {
+    hostStart: (workload) =>
+      workload === "host-b" ? { ok: false, error: "readiness timeout" } : undefined,
+    hostStatus: (workload) =>
+      workload === "host-b" ? { state: "Running", pid: 12345 } : undefined,
+  });
+  const hostB = hostReplacement("host-b", "a", { ram: 8, binary: fakeBinary });
+  const restoreRuntimeDir = pinLocalRuntimeDir(join(tmp, "runtime"));
+  try {
+    const outcome = await applyOneModelHost(hostB, () => client, undefined, {
+      workloadsDir: dir,
+      getNodeBudgetGiB: () => 8,
+    });
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.error).toContain("readiness timeout");
+    expect(outcome.error).toContain("teardown after failed start unverified");
+    expect(outcome.error).toContain("eviction intent on 'a' kept");
+    expect(stops).toEqual(["a"]);
+    expect(hostStarts).toEqual(["host-b"]);
+    expect(hostStops).toContain("host-b");
+    expect(readWorkloadAnnotations(join(dir, "a.yaml"))?.["llamactl.io/evicted-by"]).toBe("host-b");
+  } finally {
+    restoreRuntimeDir();
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("MH4 #677: a ModelHost replacement readiness failure with a verified teardown releases the victim", async () => {
+  const tmp = mkdtempSync(join(tmpdir(), "llamactl-df02-mh4-"));
+  const dir = join(tmp, "workloads");
+  mkdirSync(dir, { recursive: true });
+  const fakeBinary = mkFakeOmlxBinary(tmp);
+  const state: StateMap = new Map([["a", upEntry(8182)]]);
+  saveWorkload(mkManifest("a", { port: 8182, ram: 8 }), dir);
+  let hostBDown = false;
+  const { client, stops, hostStops, hostStarts } = makeClient(state, {
+    hostStart: (workload) =>
+      workload === "host-b" ? { ok: false, error: "readiness timeout" } : undefined,
+    hostStatus: (workload) => {
+      if (workload !== "host-b") return undefined;
+      return hostBDown ? { state: "Stopped", pid: null } : { state: "Running", pid: 12345 };
+    },
+    hostStop: (workload) => {
+      if (workload !== "host-b") return undefined;
+      hostBDown = true;
+      return { ok: true, pid: 12345 };
+    },
+  });
+  const hostB = hostReplacement("host-b", "a", { ram: 8, binary: fakeBinary });
+  const restoreRuntimeDir = pinLocalRuntimeDir(join(tmp, "runtime"));
+  try {
+    const outcome = await applyOneModelHost(hostB, () => client, undefined, {
+      workloadsDir: dir,
+      getNodeBudgetGiB: () => 8,
+    });
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.error).toContain("readiness timeout");
+    expect(outcome.error).toContain("released eviction intent on 'a'");
+    expect(stops).toEqual(["a"]);
+    expect(hostStarts).toEqual(["host-b"]);
+    expect(hostStops).toContain("host-b");
+    expect(
+      readWorkloadAnnotations(join(dir, "a.yaml"))?.["llamactl.io/evicted-by"],
+    ).toBeUndefined();
+  } finally {
+    restoreRuntimeDir();
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("MH5 #678: a lease-fenced victim stop refuses the ModelHost replacement as EvictVictimBusy", async () => {
+  const tmp = mkdtempSync(join(tmpdir(), "llamactl-df02-mh5-"));
+  const dir = join(tmp, "workloads");
+  mkdirSync(dir, { recursive: true });
+  const fakeBinary = mkFakeOmlxBinary(tmp);
+  const state: StateMap = new Map([["a", upEntry(8182)]]);
+  saveWorkload(mkManifest("a", { port: 8182, ram: 8 }), dir);
+  const { client, stops, hostStarts } = makeClient(state, {
+    stop: (workload) =>
+      workload === "a"
+        ? Promise.resolve({
+            stopped: false,
+            refused: { reason: "LeasesActive", active: ["r1"] },
+          })
+        : undefined,
+  });
+  const hostB = hostReplacement("host-b", "a", { ram: 8, binary: fakeBinary });
+  const restoreRuntimeDir = pinLocalRuntimeDir(join(tmp, "runtime"));
+  try {
+    const outcome = await applyOneModelHost(hostB, () => client, undefined, {
+      workloadsDir: dir,
+      getNodeBudgetGiB: () => 8,
+    });
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.error).toContain("(EvictVictimBusy)");
+    expect(outcome.error).toContain("LeasesActive: r1");
+    expect(outcome.error).toContain("replacement was not started");
+    expect(stops).toEqual(["a"]);
+    expect(hostStarts).toEqual([]);
+    expect(
+      readWorkloadAnnotations(join(dir, "a.yaml"))?.["llamactl.io/evicted-by"],
+    ).toBeUndefined();
+  } finally {
+    restoreRuntimeDir();
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("MH6 #671: an identity-unknown ModelRun victim blocks the ModelHost replacement before any stop", async () => {
+  const tmp = mkdtempSync(join(tmpdir(), "llamactl-df02-mh6-"));
+  const dir = join(tmp, "workloads");
+  mkdirSync(dir, { recursive: true });
+  const fakeBinary = mkFakeOmlxBinary(tmp);
+  const state: StateMap = new Map([["a", upEntry(8182)]]);
+  saveWorkload(mkManifest("a", { port: 8182, ram: 8 }), dir);
+  const { client, stops, hostStarts } = makeClient(state, {
+    status: (workload, delegate) =>
+      workload === "a"
+        ? delegate().then((reply) => ({ ...reply, identityUnknown: true }))
+        : undefined,
+  });
+  const hostB = hostReplacement("host-b", "a", { ram: 8, binary: fakeBinary });
+  const restoreRuntimeDir = pinLocalRuntimeDir(join(tmp, "runtime"));
+  try {
+    const outcome = await applyOneModelHost(hostB, () => client, undefined, {
+      workloadsDir: dir,
+      getNodeBudgetGiB: () => 8,
+    });
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.error).toContain("EvictStatusUnknown");
+    expect(stops).toEqual([]);
+    expect(hostStarts).toEqual([]);
+  } finally {
+    restoreRuntimeDir();
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("MH7 a ModelHost replacement holds its ModelRun victim across a reconcile tick past the grace", async () => {
+  const tmp = mkdtempSync(join(tmpdir(), "llamactl-df02-mh7-"));
+  const dir = join(tmp, "workloads");
+  mkdirSync(dir, { recursive: true });
+  const fakeBinary = mkFakeOmlxBinary(tmp);
+  writeLocalNodeBudget(dir, 8);
+  const evictedAt = new Date(Date.now() - 3600_000).toISOString();
+  saveWorkload(
+    mkManifest("a", {
+      port: 8182,
+      annotations: {
+        "llamactl.io/evicted-by": "host-b",
+        "llamactl.io/evicted-at": evictedAt,
+      },
+    }),
+    dir,
+  );
+  writeAnnotatedModelHost(dir, "host-b", { "llamactl.io/evict": "a" }, { binary: fakeBinary });
+  const state: StateMap = new Map();
+  const { client, starts } = makeClient(state);
+  const restoreRuntimeDir = pinLocalRuntimeDir(join(tmp, "runtime"));
+  try {
+    const tick = await reconcileOnce({
+      workloadsDir: dir,
+      getClient: () => client,
+      evictionGraceMs: 1000,
+    });
+    expect(starts).not.toContain("a");
+    expect(readWorkloadAnnotations(join(dir, "a.yaml"))?.["llamactl.io/evicted-by"]).toBe("host-b");
+    const reportA = tick.reports.find((r) => r.name === "a");
+    expect(reportA).toBeDefined();
+    expect(reportEvictedBy(reportA)).toBe("host-b");
+  } finally {
+    restoreRuntimeDir();
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("MH8 an apply does not take over a hold owned by a live ModelHost replacement", async () => {
+  const tmp = mkdtempSync(join(tmpdir(), "llamactl-df02-mh8-"));
+  const dir = join(tmp, "workloads");
+  mkdirSync(dir, { recursive: true });
+  const fakeBinary = mkFakeOmlxBinary(tmp);
+  const evictedAt = new Date(Date.now() - 3600_000).toISOString();
+  saveWorkload(
+    mkManifest("a", {
+      port: 8182,
+      annotations: {
+        "llamactl.io/evicted-by": "host-b",
+        "llamactl.io/evicted-at": evictedAt,
+      },
+    }),
+    dir,
+  );
+  writeAnnotatedModelHost(dir, "host-b", { "llamactl.io/evict": "a" }, { binary: fakeBinary });
+  const state: StateMap = new Map();
+  const { client, stops, starts } = makeClient(state);
+  const restoreRuntimeDir = pinLocalRuntimeDir(join(tmp, "runtime"));
+  try {
+    const result = await applyOne(
+      mkManifest("c", { annotations: { "llamactl.io/evict": "a" }, port: 8090 }),
+      () => client,
+      undefined,
+      undefined,
+      { workloadsDir: dir, getNodeBudgetGiB: () => 32, evictionGraceMs: 1000 },
+    );
+    expect(result.statusSection.conditions[0]?.reason).toBe("EvictIntentHeld");
+    expect(result.error).toContain("EvictIntentHeld");
+    expect(stops).toEqual([]);
+    expect(starts).toEqual([]);
+    expect(readWorkloadAnnotations(join(dir, "a.yaml"))?.["llamactl.io/evicted-by"]).toBe("host-b");
+  } finally {
+    restoreRuntimeDir();
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+// DF-02 (#275): ModelHost replacement eviction authorization. Each case
+// seeds a victim that authorizeEvictTargets must refuse and pins that the
+// refusal is final: no budget credit, no intent marker, no stop, no
+// start. MH9 and MH10 kill a mutant that skips authorization (R1): the
+// node-ownership and manifest-read checks run only in authorization. All
+// three kill a mutant that ignores its refusal and treats every target as
+// verified (R1b). MH11 covers the session refusal but cannot tell
+// authorization from the pre-stop session re-check: its gate refuses only
+// the first call, so with authorization skipped the re-check refuses
+// instead, with the same error and before anything destructive.
+async function applyRefusedHostReplacement(
+  label: string,
+  seed: (dir: string) => void,
+  sessionGate?: NonNullable<Parameters<typeof applyOneModelHost>[3]>["sessionGate"],
+): Promise<{
+  outcome: Awaited<ReturnType<typeof applyOneModelHost>>;
+  stops: string[];
+  hostStops: string[];
+  starts: string[];
+  hostStarts: string[];
+  victimAnnotations: Record<string, string> | undefined;
+}> {
+  const tmp = mkdtempSync(join(tmpdir(), `llamactl-df02-${label}-`));
+  const dir = join(tmp, "workloads");
+  mkdirSync(dir, { recursive: true });
+  const fakeBinary = mkFakeOmlxBinary(tmp);
+  seed(dir);
+  const state: StateMap = new Map([["a", upEntry(8182)]]);
+  const { client, stops, starts, hostStops, hostStarts } = makeClient(state);
+  const hostB = hostReplacement("host-b", "a", { ram: 8, binary: fakeBinary });
+  const restoreRuntimeDir = pinLocalRuntimeDir(join(tmp, "runtime"));
+  try {
+    const outcome = await applyOneModelHost(hostB, () => client, undefined, {
+      workloadsDir: dir,
+      getNodeBudgetGiB: () => 8,
+      ...(sessionGate !== undefined ? { sessionGate } : {}),
+    });
+    const victimAnnotations = existsSync(join(dir, "a.yaml"))
+      ? readWorkloadAnnotations(join(dir, "a.yaml"))
+      : undefined;
+    return { outcome, stops, hostStops, starts, hostStarts, victimAnnotations };
+  } finally {
+    restoreRuntimeDir();
+    rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+test("MH9 a ModelHost replacement refuses to evict a victim owned by a different node", async () => {
+  const { outcome, stops, hostStops, starts, hostStarts, victimAnnotations } =
+    await applyRefusedHostReplacement("mh9", (dir) => {
+      saveWorkload(mkManifest("a", { port: 8182, ram: 8, node: "other-node" }), dir);
+    });
+  expect(outcome.ok).toBe(false);
+  if (outcome.ok) return;
+  expect(outcome.error).toBe(
+    "refusing to evict 'a': it is owned by node 'other-node', which is not verifiably the incoming manifest's node 'local'; no eviction, stop, or start was attempted",
+  );
+  expect(stops).toEqual([]);
+  expect(hostStops).toEqual([]);
+  expect(starts).toEqual([]);
+  expect(hostStarts).toEqual([]);
+  expect(victimAnnotations?.["llamactl.io/evicted-by"]).toBeUndefined();
+  expect(victimAnnotations?.["llamactl.io/evicted-at"]).toBeUndefined();
+});
+
+test("MH10 a ModelHost replacement refuses to evict a victim whose manifest cannot be read", async () => {
+  const { outcome, stops, hostStops, starts, hostStarts, victimAnnotations } =
+    await applyRefusedHostReplacement("mh10", (dir) => {
+      // Parses as YAML but fails the ModelRun schema: its kind cannot be confirmed.
+      writeFileSync(
+        join(dir, "a.yaml"),
+        stringifyYaml({
+          apiVersion: "llamactl/v1",
+          kind: "ModelRun",
+          metadata: { name: "a" },
+          spec: { node: "local" },
+        }),
+      );
+    });
+  expect(outcome.ok).toBe(false);
+  if (outcome.ok) return;
+  expect(outcome.error).toStartWith(
+    "refusing to evict 'a': it could not be read to confirm its kind (",
+  );
+  expect(outcome.error).toEndWith("; no eviction, stop, or start was attempted");
+  expect(stops).toEqual([]);
+  expect(hostStops).toEqual([]);
+  expect(starts).toEqual([]);
+  expect(hostStarts).toEqual([]);
+  expect(victimAnnotations?.["llamactl.io/evicted-by"]).toBeUndefined();
+  expect(victimAnnotations?.["llamactl.io/evicted-at"]).toBeUndefined();
+});
+
+test("MH11 a ModelHost replacement refuses to evict a victim with an active session at authorization", async () => {
+  // The session is active when authorization checks it and gone by the
+  // pre-stop re-check: authorization's refusal must stand on its own.
+  const gateCalls: string[] = [];
+  const sessionGate = {
+    checkUnload: (workload: string): { ok: true } | { ok: false; sessions?: readonly string[] } => {
+      gateCalls.push(workload);
+      return gateCalls.length === 1 ? { ok: false, sessions: ["s1"] } : { ok: true };
+    },
+  };
+  const { outcome, stops, hostStops, starts, hostStarts, victimAnnotations } =
+    await applyRefusedHostReplacement(
+      "mh11",
+      (dir) => {
+        saveWorkload(mkManifest("a", { port: 8182, ram: 8 }), dir);
+      },
+      sessionGate,
+    );
+  expect(outcome.ok).toBe(false);
+  if (outcome.ok) return;
+  expect(outcome.error).toBe(
+    "refusing to evict 'a': sessions s1 are still active; no eviction, stop, or start was attempted",
+  );
+  expect(gateCalls).toEqual(["a"]);
+  expect(stops).toEqual([]);
+  expect(hostStops).toEqual([]);
+  expect(starts).toEqual([]);
+  expect(hostStarts).toEqual([]);
+  expect(victimAnnotations?.["llamactl.io/evicted-by"]).toBeUndefined();
+  expect(victimAnnotations?.["llamactl.io/evicted-at"]).toBeUndefined();
 });

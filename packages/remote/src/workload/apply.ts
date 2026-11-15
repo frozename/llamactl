@@ -216,6 +216,18 @@ export interface ApplyManifestOptions {
   onEvent?: (event: ApplyEvent) => void;
   /** Map a node name to a stable identity for port-collision detection across node aliases. */
   resolveNodeIdentity?: (nodeName: string) => string | null;
+  /** #520 active-session protection for eviction replacements; forwarded
+   *  to the shared eviction stages (same contract as
+   *  ApplyOneOpts.sessionGate). */
+  sessionGate?: SessionUnloadGate;
+  /** Shared deadline per verified evict victim covering its status read,
+   *  stop and release check before the apply fails. Same contract as
+   *  ApplyOneOpts.evictStopTimeoutMs. */
+  evictStopTimeoutMs?: number;
+  /** How long an evicted-by marker keeps its victim suppressed while the
+   *  owning replacement is missing or not yet confirmed. Same contract
+   *  as ApplyOneOpts.evictionGraceMs. */
+  evictionGraceMs?: number;
   supervisor?: {
     currentFreeGiB: number;
     headroomMinGiB: number;
@@ -516,16 +528,22 @@ async function resolveModelHostBudgetGiB(
   }
 }
 
+/** admitModelHostBudget's verified-victim set for the plain (non-eviction)
+ *  ModelHost apply path — nothing was evicted, so nothing is excluded. */
+const NO_VERIFIED_EVICT_VICTIMS: ReadonlySet<string> = new Set();
+
 function admitModelHostBudget(
   manifest: ModelHostManifest,
   opts: Omit<ApplyManifestOptions, "manifest">,
   resolved: ReturnType<typeof resolveEnv>,
   firstHostedModel: ModelHostManifest["spec"]["hostedModels"][number],
   budget: number | null,
+  verified: ReadonlySet<string>,
 ): { ok: false; error: string } | null {
   const workloadsDir = opts.workloadsDir ?? defaultWorkloadsDir(opts.env);
   const livingManifests = listAnyWorkloadsForAdmission(workloadsDir, resolved)
     .filter((m) => m.metadata.name !== manifest.metadata.name)
+    .filter((m) => !verified.has(m.metadata.name))
     .filter((m) => m.spec.node === manifest.spec.node)
     .filter((m) => m.spec.enabled);
   const estimateGiB = estimateModelHostMemoryGiB(manifest, resolved);
@@ -719,8 +737,26 @@ async function applyModelHostManifest(
   if (!firstHostedModel) {
     return { ok: false, error: `ModelHost ${manifest.metadata.name} has no hosted models` };
   }
+
+  // DF-02 (#275): a ModelHost carrying llamactl.io/evict runs the same
+  // verified-eviction pipeline a ModelRun replacement does. The whole
+  // pass runs under the node lock; the reconciler never holds that lock,
+  // so nothing nests.
+  if (parseEvictTargets(manifest).length > 0) {
+    return await withNodeLock(manifest.spec.node, () =>
+      applyModelHostReplacement(manifest, opts, client, resolved, firstHostedModel),
+    );
+  }
+
   const budget = await resolveModelHostBudgetGiB(manifest, opts, client);
-  const rejected = admitModelHostBudget(manifest, opts, resolved, firstHostedModel, budget);
+  const rejected = admitModelHostBudget(
+    manifest,
+    opts,
+    resolved,
+    firstHostedModel,
+    budget,
+    NO_VERIFIED_EVICT_VICTIMS,
+  );
   if (rejected) return rejected;
 
   const started = await startModelHostProcess(client, manifest);
@@ -735,6 +771,199 @@ async function applyModelHostManifest(
     pid: started.status.pid ?? null,
     endpoint: `http://${formatHostForUrl(manifest.spec.endpoint.host)}:${String(manifest.spec.endpoint.port)}`,
   };
+}
+
+/**
+ * Render a failed ModelHost replacement outcome through the shared
+ * eviction-marker rollback — the same "released eviction intent on ..."
+ * / "failed to release ..." notes applyEvictionRollback appends to a
+ * ModelRun ApplyResult, folded into the bare {ok:false,error} outcome.
+ */
+function modelHostEvictionRollback(
+  outcome: { ok: false; error: string },
+  ctx: EvictionStageCtx,
+): { ok: false; error: string } {
+  const note = evictionRollbackNote(
+    clearEvictionMarkers(ctx.manifest, ctx.opts, ctx.evictionClaims),
+  );
+  if (note === null) return outcome;
+  return { ok: false, error: `${outcome.error}; ${note}` };
+}
+
+/**
+ * Failure-path teardown for a ModelHost replacement that failed to start
+ * after this apply evicted victims for it (DF-02 AC4, mirroring #677's
+ * teardownFailedReplacement). Only eviction replacements are touched:
+ * an empty claim set returns null immediately, preserving the prior
+ * behaviour. Goes through the shared EVICT_VICTIM_OPS.ModelHost adapter
+ * with the replacement's own name as target. Returns a human detail
+ * when the teardown could not be verified (so the caller keeps the
+ * eviction intent held), or null when there was nothing to tear down or
+ * the half-started host is confirmed down.
+ */
+async function teardownFailedModelHost(ctx: EvictionStageCtx): Promise<string | null> {
+  if (ctx.evictionClaims.size === 0) return null;
+  const { manifest, client } = ctx;
+  const timeoutMs = ctx.opts?.evictStopTimeoutMs ?? DEFAULT_EVICT_STOP_TIMEOUT_MS;
+  const expires = Date.now() + timeoutMs;
+  const remainingMs = (): number => Math.max(0, expires - Date.now());
+  const failure = await stopAndVerifyEvictTarget(
+    manifest,
+    client,
+    manifest.metadata.name,
+    "ModelHost",
+    remainingMs,
+  );
+  return failure?.message ?? null;
+}
+
+/**
+ * DF-02 (#275): the verified-eviction pass for a ModelHost replacement —
+ * authorize victims, admit budget with their capacity credited, persist
+ * each victim's intent marker before its stop, re-check capacity after
+ * release, then start. Every non-ok exit releases exactly the markers
+ * this pass claimed; a failed start whose half-started host cannot be
+ * proven down keeps them held instead. Success leaves the markers in
+ * place and returns the manifest for the caller to persist.
+ */
+async function convergeModelHostReplacement(
+  manifest: ModelHostManifest,
+  ctx: EvictionStageCtx,
+  opts: Omit<ApplyManifestOptions, "manifest">,
+  resolved: ReturnType<typeof resolveEnv>,
+  firstHostedModel: ModelHostManifest["spec"]["hostedModels"][number],
+  lifecycle: ClaimLifecycle,
+): Promise<ApplyManifestOutcome> {
+  const { client, onEvent } = ctx;
+  const workloadsDir = ctx.opts?.workloadsDir ?? defaultWorkloadsDir(ctx.opts?.env);
+
+  // Authorize evict targets before any budget credit or stop.
+  const eviction = authorizeEvictTargets(ctx, workloadsDir);
+  if (!eviction.ok) {
+    return { ok: false, error: evictRefusalMessage(eviction.refusal) };
+  }
+  const verified = eviction.verified;
+  const verifiedTargets = ctx.evictTargets.filter((t) => verified.has(t));
+
+  // Admit the replacement budget with verified victims' capacity credited.
+  const budget = await resolveModelHostBudgetGiB(manifest, opts, client);
+  const rejected = admitModelHostBudget(
+    manifest,
+    opts,
+    resolved,
+    firstHostedModel,
+    budget,
+    verified,
+  );
+  if (rejected) return rejected;
+
+  // A session can appear between authorization and teardown, so re-check
+  // the gates before anything destructive runs. The re-check is not atomic
+  // with the stops: stopEvictTargets awaits each victim's status probe
+  // before stopping it, so a session that opens during that await is not
+  // caught here.
+  const gateRefusal = recheckEvictSessionGates(ctx, verifiedTargets);
+  if (gateRefusal !== null) {
+    return { ok: false, error: evictRefusalMessage(gateRefusal) };
+  }
+
+  const timeoutMs = ctx.opts?.evictStopTimeoutMs ?? DEFAULT_EVICT_STOP_TIMEOUT_MS;
+  const evictFailure = await stopEvictTargets(ctx, verifiedTargets, lifecycle, timeoutMs);
+  if (evictFailure !== null && !evictFailure.ok) {
+    onEvent?.({ type: "evict-failed", message: evictFailure.message });
+    return {
+      ok: false,
+      error: evictFailureMessage(evictFailure.target, evictFailure.reason, evictFailure.message),
+    };
+  }
+
+  // Capacity re-check: the victims are down, so their freed space is
+  // real now — re-run admission before starting the replacement.
+  const capacityError = admitModelHostBudget(
+    manifest,
+    opts,
+    resolved,
+    firstHostedModel,
+    budget,
+    verified,
+  );
+  if (capacityError !== null) {
+    const message = `capacity re-check after evicting ${verifiedTargets.join(", ")} failed: ${capacityError.error}`;
+    onEvent?.({ type: "evict-failed", message });
+    return {
+      ok: false,
+      error: evictFailureMessage(
+        verifiedTargets.join(", "),
+        "EvictCapacityUnverified",
+        capacityError.error,
+      ),
+    };
+  }
+
+  lifecycle.startInvoked = true;
+  const started = await startModelHostProcess(client, manifest);
+  if (!started.ok) {
+    let message = started.error;
+    const detail = await teardownFailedModelHost(ctx);
+    if (detail !== null) {
+      const victims = [...ctx.evictionClaims].map((n) => `'${n}'`).join(", ");
+      ctx.evictionClaims.clear();
+      message = `${message}; replacement '${manifest.metadata.name}' teardown after failed start unverified (${detail}); eviction intent on ${victims} kept`;
+    }
+    return { ok: false, error: message };
+  }
+
+  writeModelHostSidecar(manifest, started.status, resolved, firstHostedModel.rel);
+  return {
+    ok: true,
+    kind: "ModelHost",
+    manifest,
+    pid: started.status.pid ?? null,
+    endpoint: `http://${formatHostForUrl(manifest.spec.endpoint.host)}:${String(manifest.spec.endpoint.port)}`,
+  };
+}
+
+async function applyModelHostReplacement(
+  manifest: ModelHostManifest,
+  opts: Omit<ApplyManifestOptions, "manifest">,
+  client: WorkloadClient,
+  resolved: ReturnType<typeof resolveEnv>,
+  firstHostedModel: ModelHostManifest["spec"]["hostedModels"][number],
+): Promise<ApplyManifestOutcome> {
+  const lifecycle: ClaimLifecycle = { destructive: false, startInvoked: false };
+  const ctx: EvictionStageCtx = {
+    manifest,
+    client,
+    onEvent: opts.onEvent,
+    opts: omitUndefined({
+      workloadsDir: opts.workloadsDir,
+      env: opts.env,
+      resolveNodeIdentity: opts.resolveNodeIdentity,
+      sessionGate: opts.sessionGate,
+      evictStopTimeoutMs: opts.evictStopTimeoutMs,
+      evictionGraceMs: opts.evictionGraceMs,
+    }),
+    now: new Date().toISOString(),
+    evictTargets: parseEvictTargets(manifest),
+    evictKinds: new Map(),
+    evictionClaims: new Set(),
+  };
+  let outcome: ApplyManifestOutcome;
+  try {
+    outcome = await convergeModelHostReplacement(
+      manifest,
+      ctx,
+      opts,
+      resolved,
+      firstHostedModel,
+      lifecycle,
+    );
+  } catch (err) {
+    clearEvictionMarkers(manifest, ctx.opts, ctx.evictionClaims);
+    throw err;
+  }
+  if (outcome.ok) return outcome;
+  return modelHostEvictionRollback(outcome, ctx);
 }
 
 export async function applyOneModelHost(
@@ -765,6 +994,19 @@ export async function applyOneModelHost(
       /** Max envelope age in ms; defaults to DEFAULT_MEASURED_ENVELOPE_MAX_AGE_MS. */
       maxAgeMs?: number;
     };
+    /** Map a node name to a stable identity across node aliases. Feeds the
+     *  victim same-node check (nodeIdentityMatcher in authorizeEvictTargets);
+     *  the ModelHost path runs no port-collision detection. */
+    resolveNodeIdentity?: (nodeName: string) => string | null;
+    /** #520 active-session protection for eviction replacements; forwarded
+     *  to the shared eviction stages (same contract as ApplyOneOpts.sessionGate). */
+    sessionGate?: SessionUnloadGate;
+    /** Shared deadline per verified evict victim; same contract as
+     *  ApplyOneOpts.evictStopTimeoutMs. */
+    evictStopTimeoutMs?: number;
+    /** How long an evicted-by marker keeps its victim suppressed; same
+     *  contract as ApplyOneOpts.evictionGraceMs. */
+    evictionGraceMs?: number;
   },
 ): Promise<ApplyManifestOutcome> {
   return await applyModelHostManifest(manifest, {
@@ -778,6 +1020,14 @@ export async function applyOneModelHost(
     ...(opts?.residencyAdmission !== undefined
       ? { residencyAdmission: opts.residencyAdmission }
       : {}),
+    ...(opts?.resolveNodeIdentity !== undefined
+      ? { resolveNodeIdentity: opts.resolveNodeIdentity }
+      : {}),
+    ...(opts?.sessionGate !== undefined ? { sessionGate: opts.sessionGate } : {}),
+    ...(opts?.evictStopTimeoutMs !== undefined
+      ? { evictStopTimeoutMs: opts.evictStopTimeoutMs }
+      : {}),
+    ...(opts?.evictionGraceMs !== undefined ? { evictionGraceMs: opts.evictionGraceMs } : {}),
   });
 }
 
@@ -1161,8 +1411,12 @@ export const EVICTED_BY_ANNOTATION = "llamactl.io/evicted-by";
 export const EVICTED_AT_ANNOTATION = "llamactl.io/evicted-at";
 export const EVICTION_INTENT_GRACE_MS = 15 * 60_000;
 
-export function parseEvictTargets(manifest: ModelRun): string[] {
-  return (manifest.metadata.annotations["llamactl.io/evict"] ?? "")
+/** A manifest that can name eviction victims: ModelRun replacements and,
+ *  since DF-02 (#275), ModelHost replacements. */
+type EvictOwner = ModelRun | ModelHostManifest;
+
+export function parseEvictTargets(manifest: EvictOwner): string[] {
+  return (manifest.metadata.annotations?.["llamactl.io/evict"] ?? "")
     .split(",")
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
@@ -1211,7 +1465,7 @@ function liveEvictionOwner(
     owner = undefined;
   }
   const namesVictim =
-    owner?.kind === "ModelRun" && parseEvictTargets(owner).includes(victim.metadata.name);
+    owner !== undefined && parseEvictTargets(owner).includes(victim.metadata.name);
   return replacementHoldsEviction(owner, withinGrace, namesVictim) ? ownerName : null;
 }
 
@@ -1260,7 +1514,7 @@ interface EvictStopFailure {
 type EvictStopResult = { ok: true } | EvictStopFailure;
 
 function evictStopFailure(
-  manifest: ModelRun,
+  manifest: EvictOwner,
   target: string,
   reason: EvictFailureReason,
   detail: string,
@@ -1302,19 +1556,19 @@ const EVICT_VICTIM_OPS: Record<
   EvictVictimKind,
   {
     probe(
-      manifest: ModelRun,
+      manifest: EvictOwner,
       client: WorkloadClient,
       target: string,
       remainingMs: () => number,
     ): Promise<EvictVictimProbe>;
     stop(
-      manifest: ModelRun,
+      manifest: EvictOwner,
       client: WorkloadClient,
       target: string,
       remainingMs: () => number,
     ): Promise<EvictStopFailure | null>;
     verify(
-      manifest: ModelRun,
+      manifest: EvictOwner,
       client: WorkloadClient,
       target: string,
       remainingMs: () => number,
@@ -1460,7 +1714,7 @@ const EVICT_VICTIM_OPS: Record<
 /** Stops one victim that was observed up and verifies its release.
  * Returns null once the victim is confirmed down. */
 async function stopAndVerifyEvictTarget(
-  manifest: ModelRun,
+  manifest: EvictOwner,
   client: WorkloadClient,
   target: string,
   kind: EvictVictimKind,
@@ -1492,7 +1746,7 @@ async function stopAndVerifyEvictTarget(
  * underneath the replacement.
  */
 function persistEvictIntent(
-  manifest: ModelRun,
+  manifest: EvictOwner,
   target: string,
   workloadsDir: string,
   now: string,
@@ -1537,7 +1791,7 @@ function persistEvictIntent(
 }
 
 async function stopEvictTargets(
-  ctx: ConvergeServerContext,
+  ctx: EvictionStageCtx,
   verifiedTargets: readonly string[],
   lifecycle: ClaimLifecycle,
   timeoutMs: number,
@@ -1569,24 +1823,33 @@ async function stopEvictTargets(
   return null;
 }
 
-interface ConvergeServerContext {
-  manifest: ModelRun;
+/**
+ * The state the verified-eviction stages share, kind-agnostic so both
+ * the ModelRun converge path and the ModelHost replacement path run the
+ * same authorize → admit → gate → stop → recheck → start pipeline.
+ */
+interface EvictionStageCtx {
+  manifest: EvictOwner;
   client: WorkloadClient;
-  getClient: (nodeName: string) => WorkloadClient;
   onEvent: ((e: ApplyEvent) => void) | undefined;
   opts: ApplyOneOpts | undefined;
   now: string;
-  status: ServerStatusSnapshot;
-  matches: boolean;
-  desiredArgs: string[];
   evictTargets: string[];
   /** Verified kind of each evict victim, recorded by
    *  authorizeEvictTargets so the teardown adapter picks the right
    *  status/stop procedures. */
-  evictKinds: Map<string, "ModelRun" | "ModelHost">;
+  evictKinds: Map<string, EvictVictimKind>;
   /** Evict victims whose marker this apply persisted or reaffirmed;
    *  failure rollback releases exactly these holds. */
   evictionClaims: Set<string>;
+}
+
+interface ConvergeServerContext extends EvictionStageCtx {
+  manifest: ModelRun;
+  getClient: (nodeName: string) => WorkloadClient;
+  status: ServerStatusSnapshot;
+  matches: boolean;
+  desiredArgs: string[];
 }
 
 /** Map a node name to a stable physical identity when a resolver is
@@ -1650,6 +1913,22 @@ function isMissingManifestError(err: unknown): boolean {
 }
 
 /**
+ * Neutral eviction refusal shared by the ModelRun and ModelHost
+ * replacement paths: the producing stage stays kind-agnostic and each
+ * caller renders it into its own result shape (ApplyResult conditions
+ * vs a bare apply error).
+ */
+interface EvictStageRefusal {
+  target: string;
+  why: string;
+  reason: string;
+}
+
+function evictRefusalMessage(refusal: EvictStageRefusal): string {
+  return `refusing to evict '${refusal.target}': ${refusal.why}; no eviction, stop, or start was attempted`;
+}
+
+/**
  * An evict target frees capacity only when it is a *verified* ModelRun or
  * ModelHost in the store (DF-01A / DF-02 slice 3). An unreadable manifest
  * could be either kind — it may not be credited as freed capacity or
@@ -1668,9 +1947,9 @@ function isMissingManifestError(err: unknown): boolean {
  * teardown stage picks the matching status/stop procedures.
  */
 function authorizeEvictTargets(
-  ctx: ConvergeServerContext,
+  ctx: EvictionStageCtx,
   workloadsDir: string,
-): { ok: true; verified: Set<string> } | { ok: false; result: ApplyResult } {
+): { ok: true; verified: Set<string> } | { ok: false; refusal: EvictStageRefusal } {
   const { manifest, opts, evictTargets, now } = ctx;
   const verified = new Set<string>();
   const claimCounts = new Map<string, number>();
@@ -1686,7 +1965,7 @@ function authorizeEvictTargets(
       claimCounts.get(target) ?? 0,
       sameNode,
     );
-    if (check.status === "refused") return { ok: false, result: check.result };
+    if (check.status === "refused") return { ok: false, refusal: check.refusal };
     if (check.status === "verified") {
       verified.add(target);
       ctx.evictKinds.set(target, check.kind);
@@ -1704,7 +1983,7 @@ function authorizeEvictTargets(
  * procedures. Anything unreadable keeps EvictKindUnsupported.
  */
 function checkEvictTarget(
-  ctx: ConvergeServerContext,
+  ctx: EvictionStageCtx,
   target: string,
   workloadsDir: string,
   claimCount: number,
@@ -1712,17 +1991,16 @@ function checkEvictTarget(
 ):
   | { status: "verified"; kind: "ModelRun" | "ModelHost" }
   | { status: "skip" }
-  | { status: "refused"; result: ApplyResult } {
+  | { status: "refused"; refusal: EvictStageRefusal } {
   const { manifest } = ctx;
   if (claimCount > 1) {
     return {
       status: "refused",
-      result: evictRefusalResult(
-        ctx,
+      refusal: {
         target,
-        "more than one stored manifest claims this name, so the freed capacity cannot be attributed to a single victim",
-        "EvictAmbiguousIdentity",
-      ),
+        why: "more than one stored manifest claims this name, so the freed capacity cannot be attributed to a single victim",
+        reason: "EvictAmbiguousIdentity",
+      },
     };
   }
   let loaded: ModelRun | ModelHostManifest;
@@ -1733,42 +2011,39 @@ function checkEvictTarget(
     const message = err instanceof Error ? err.message : String(err);
     return {
       status: "refused",
-      result: evictRefusalResult(
-        ctx,
+      refusal: {
         target,
-        `it could not be read to confirm its kind (${message})`,
-        "EvictKindUnsupported",
-      ),
+        why: `it could not be read to confirm its kind (${message})`,
+        reason: "EvictKindUnsupported",
+      },
     };
   }
   if (loaded.metadata.name !== target) {
     return {
       status: "refused",
-      result: evictRefusalResult(
-        ctx,
+      refusal: {
         target,
-        `the canonical '${target}.yaml' manifest declares metadata.name '${loaded.metadata.name}'`,
-        "EvictAmbiguousIdentity",
-      ),
+        why: `the canonical '${target}.yaml' manifest declares metadata.name '${loaded.metadata.name}'`,
+        reason: "EvictAmbiguousIdentity",
+      },
     };
   }
   if (!sameNode(loaded.spec.node)) {
     return {
       status: "refused",
-      result: evictRefusalResult(
-        ctx,
+      refusal: {
         target,
-        `it is owned by node '${loaded.spec.node}', which is not verifiably the incoming manifest's node '${manifest.spec.node}'`,
-        "EvictNodeUnverified",
-      ),
+        why: `it is owned by node '${loaded.spec.node}', which is not verifiably the incoming manifest's node '${manifest.spec.node}'`,
+        reason: "EvictNodeUnverified",
+      },
     };
   }
   const gated = checkEvictSessionGate(ctx, target);
-  if (gated) return { status: "refused", result: gated };
+  if (gated !== null) return { status: "refused", refusal: gated };
   return { status: "verified", kind: loaded.kind };
 }
 
-function checkEvictSessionGate(ctx: ConvergeServerContext, target: string): ApplyResult | null {
+function checkEvictSessionGate(ctx: EvictionStageCtx, target: string): EvictStageRefusal | null {
   const gate = resolveEvictSessionGate(ctx.opts);
   if (gate === null) return null;
   let check: { ok: true } | { ok: false; sessions?: readonly string[] };
@@ -1776,12 +2051,11 @@ function checkEvictSessionGate(ctx: ConvergeServerContext, target: string): Appl
     check = gate.checkUnload(target);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return evictRefusalResult(
-      ctx,
+    return {
       target,
-      `session ownership could not be verified (${message})`,
-      "EvictSessionUnknown",
-    );
+      why: `session ownership could not be verified (${message})`,
+      reason: "EvictSessionUnknown",
+    };
   }
   if (!check.ok) {
     const sessions = check.sessions ?? [];
@@ -1789,15 +2063,15 @@ function checkEvictSessionGate(ctx: ConvergeServerContext, target: string): Appl
       sessions.length > 0
         ? `sessions ${sessions.join(", ")} are still active`
         : "an active session";
-    return evictRefusalResult(ctx, target, why, "EvictSessionActive");
+    return { target, why, reason: "EvictSessionActive" };
   }
   return null;
 }
 
 function recheckEvictSessionGates(
-  ctx: ConvergeServerContext,
+  ctx: EvictionStageCtx,
   verifiedTargets: readonly string[],
-): ApplyResult | null {
+): EvictStageRefusal | null {
   for (const target of verifiedTargets) {
     const refusal = checkEvictSessionGate(ctx, target);
     if (refusal !== null) return refusal;
@@ -1805,14 +2079,9 @@ function recheckEvictSessionGates(
   return null;
 }
 
-function evictRefusalResult(
-  ctx: ConvergeServerContext,
-  target: string,
-  why: string,
-  reason: string,
-): ApplyResult {
+function evictRefusalResult(ctx: ConvergeServerContext, refusal: EvictStageRefusal): ApplyResult {
   const { now, status } = ctx;
-  const error = `refusing to evict '${target}': ${why}; no eviction, stop, or start was attempted`;
+  const error = evictRefusalMessage(refusal);
   if (ctx.matches) {
     return {
       action: "unchanged",
@@ -1827,7 +2096,7 @@ function evictRefusalResult(
           {
             type: "EvictRefused",
             status: "False",
-            reason,
+            reason: refusal.reason,
             message: error,
             lastTransitionTime: now,
           },
@@ -1847,13 +2116,17 @@ function evictRefusalResult(
         {
           type: "Applied",
           status: "False",
-          reason,
+          reason: refusal.reason,
           message: error,
           lastTransitionTime: now,
         },
       ],
     },
   };
+}
+
+function evictFailureMessage(target: string, reason: string, message: string): string {
+  return `eviction of '${target}' did not complete (${reason}): ${message}; replacement was not started`;
 }
 
 function evictFailureResult(
@@ -1863,7 +2136,7 @@ function evictFailureResult(
   reason: string,
 ): ApplyResult {
   const { now, status, matches } = ctx;
-  const error = `eviction of '${target}' did not complete (${reason}): ${message}; replacement was not started`;
+  const error = evictFailureMessage(target, reason, message);
   if (ctx.matches) {
     return {
       action: "unchanged",
@@ -2038,7 +2311,9 @@ async function admitServerBudget(ctx: ConvergeServerContext): Promise<
   const { manifest, opts, now } = ctx;
   const workloadsDir = opts?.workloadsDir ?? defaultWorkloadsDir(opts?.env);
   const eviction = authorizeEvictTargets(ctx, workloadsDir);
-  if (!eviction.ok) return { ok: false, result: eviction.result };
+  if (!eviction.ok) {
+    return { ok: false, result: evictRefusalResult(ctx, eviction.refusal) };
+  }
   const verified = eviction.verified;
   const { living, sameNode } = admissionLivingManifests(ctx, verified);
   const incomingMemory = manifest.spec.resources?.expectedMemoryGiB ?? 0;
@@ -2448,10 +2723,12 @@ async function convergeClaimedServer(
   // admitted workload has accounted for the freed capacity here.
   const verifiedTargets = evictTargets.filter((t) => verified.has(t));
   // #520: a session can appear between authorization and teardown. This
-  // re-check is synchronous — no await between it and the first stop —
-  // so nothing destructive has run yet and the finally releases the claim.
+  // re-check runs before anything destructive, so on refusal the finally
+  // releases the claim. It is not atomic with the stops: stopEvictTargets
+  // awaits each victim's status probe before stopping it, so a session that
+  // opens during that await is not caught here.
   const gateRefusal = recheckEvictSessionGates(ctx, verifiedTargets);
-  if (gateRefusal !== null) return gateRefusal;
+  if (gateRefusal !== null) return evictRefusalResult(ctx, gateRefusal);
   const timeoutMs = ctx.opts?.evictStopTimeoutMs ?? DEFAULT_EVICT_STOP_TIMEOUT_MS;
   const evictFailure = await stopEvictTargets(ctx, verifiedTargets, lifecycle, timeoutMs);
   if (evictFailure !== null && !evictFailure.ok) {
@@ -2523,7 +2800,7 @@ async function convergeClaimedServer(
  * clear itself never throws.
  */
 function clearEvictionMarkers(
-  manifest: ModelRun,
+  manifest: EvictOwner,
   opts: ApplyOneOpts | undefined,
   claimedTargets: ReadonlySet<string>,
 ): { released: string[]; problems: string[] } {
@@ -2588,22 +2865,28 @@ function releaseClaimedMarker(
   }
 }
 
+/** Render the rollback notes for a clearEvictionMarkers pass, or null
+ *  when nothing was released and no release failed. Shared by the
+ *  ModelRun ApplyResult rollback and the ModelHost outcome rollback. */
+function evictionRollbackNote(cleared: { released: string[]; problems: string[] }): string | null {
+  const notes: string[] = [];
+  if (cleared.released.length > 0) {
+    notes.push(`released eviction intent on ${cleared.released.map((n) => `'${n}'`).join(", ")}`);
+  }
+  for (const problem of cleared.problems) {
+    notes.push(`failed to release eviction intent on ${problem}`);
+  }
+  return notes.length === 0 ? null : notes.join("; ");
+}
+
 function applyEvictionRollback(
   result: ApplyResult,
-  manifest: ModelRun,
+  manifest: EvictOwner,
   opts: ApplyOneOpts | undefined,
   claimedTargets: ReadonlySet<string>,
 ): ApplyResult {
-  const { released, problems } = clearEvictionMarkers(manifest, opts, claimedTargets);
-  const notes: string[] = [];
-  if (released.length > 0) {
-    notes.push(`released eviction intent on ${released.map((n) => `'${n}'`).join(", ")}`);
-  }
-  for (const problem of problems) {
-    notes.push(`failed to release eviction intent on ${problem}`);
-  }
-  if (notes.length === 0) return result;
-  const note = notes.join("; ");
+  const note = evictionRollbackNote(clearEvictionMarkers(manifest, opts, claimedTargets));
+  if (note === null) return result;
   return { ...result, error: result.error !== undefined ? `${result.error}; ${note}` : note };
 }
 
@@ -2753,13 +3036,16 @@ async function applyModelRunManifest(opts: ApplyManifestOptions): Promise<ApplyM
     return { ok: false, error: "applyManifest requires getClient for ModelRun manifests" };
   }
   const result = await applyOne(manifest, opts.getClient, opts.onEvent, undefined, {
-    ...omitUndefined({ workloadsDir: opts.workloadsDir }),
-    ...omitUndefined({ env: opts.env }),
-    ...omitUndefined({ getNodeBudgetGiB: opts.getNodeBudgetGiB }),
-    ...omitUndefined({ getNodeResidency: opts.getNodeResidency }),
-    ...(opts.resolveNodeIdentity !== undefined
-      ? { resolveNodeIdentity: opts.resolveNodeIdentity }
-      : {}),
+    ...omitUndefined({
+      workloadsDir: opts.workloadsDir,
+      env: opts.env,
+      getNodeBudgetGiB: opts.getNodeBudgetGiB,
+      getNodeResidency: opts.getNodeResidency,
+      resolveNodeIdentity: opts.resolveNodeIdentity,
+      sessionGate: opts.sessionGate,
+      evictStopTimeoutMs: opts.evictStopTimeoutMs,
+      evictionGraceMs: opts.evictionGraceMs,
+    }),
   });
   if (result.error) {
     return { ok: false, error: result.error };

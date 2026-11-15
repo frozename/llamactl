@@ -65,6 +65,8 @@ Reconcile a ModelRun manifest against the target node:
 The accepted manifest is persisted under $DEV_STORAGE/workloads/<name>.yaml
 so 'llamactl get workloads' can list it afterwards.
 
+--evict also applies to ModelHost manifests; --force is ModelRun-only.
+
 For a ModelHost with node: local while the controller service holds the
 workloads lock, apply only validates the manifest and hands the start off
 to the controller's next reconcile pass, so the engine runs under the
@@ -313,10 +315,32 @@ function parseApplyFlags(args: string[]): ApplyFlags | { error: string } {
 }
 
 export function stampApplyAnnotations(
-  manifest: workloadSchema.ModelRun,
+  manifest: workloadSchema.ModelRun | ModelHostManifest,
   flags: Pick<ApplyFlags, "evict" | "force">,
-): workloadSchema.ModelRun {
+): workloadSchema.ModelRun | ModelHostManifest {
   if (flags.evict.length === 0 && !flags.force) return manifest;
+  if (manifest.kind === "ModelHost") {
+    // --force never reaches a ModelHost (runApply refuses it by name),
+    // so only the eviction annotation is stamped. The ModelHost schema
+    // makes annotations optional — create the record when absent. This
+    // branch runs on the raw parsed YAML before schema validation, so a
+    // present annotations value that is not a plain object (a string, null,
+    // an array) is left untouched for the schema to reject rather than
+    // spread into a record that would mask it.
+    if (flags.evict.length === 0) return manifest;
+    const rawAnnotations: unknown = manifest.metadata.annotations;
+    const stampable =
+      rawAnnotations === undefined ||
+      (typeof rawAnnotations === "object" &&
+        rawAnnotations !== null &&
+        !Array.isArray(rawAnnotations));
+    if (!stampable) return manifest;
+    manifest.metadata.annotations = {
+      ...manifest.metadata.annotations,
+      "llamactl.io/evict": flags.evict.join(","),
+    };
+    return manifest;
+  }
   const annotations = manifest.metadata.annotations;
   if (flags.evict.length > 0) {
     annotations["llamactl.io/evict"] = flags.evict.join(",");
@@ -358,7 +382,7 @@ export async function runApply(args: string[]): Promise<number> {
       process.stderr.write(flagRefusal);
       return 1;
     }
-    return await applyModelHostFromRaw(raw, parsed.json);
+    return await applyModelHostFromRaw(raw, parsed.json, parsed);
   }
   return await applyModelRunFromRaw(raw, parsed.json, parsed);
 }
@@ -618,16 +642,22 @@ function preserveDisabledModelHostIntent(manifest: ModelHostManifest): void {
   if (!manifest.spec.enabled) saveModelHost(manifest);
 }
 
-// --evict/--force only have meaning on the ModelRun admission path; a
-// ModelHost apply has no eviction target to honour them against, so they
-// are refused outright rather than silently dropped.
+// DF-02 (#275): --evict is meaningful on a ModelHost apply — the manifest
+// may act as an eviction replacement, so it is stamped onto the manifest
+// and honoured by the shared eviction pipeline. --force stays
+// ModelRun-only: a ModelHost has no force-admit admission path, so it is
+// refused by name before anything is stamped or applied.
 function modelHostApplyFlagsRefusal(flags: Pick<ApplyFlags, "evict" | "force">): string | null {
-  return flags.evict.length > 0 || flags.force
-    ? "apply: --evict and --force are not supported for ModelHost manifests\n"
-    : null;
+  return flags.force ? "apply: --force is not supported for ModelHost manifests\n" : null;
 }
 
-async function applyModelHostFromRaw(raw: string, json: boolean): Promise<number> {
+// Parse a raw ModelHost YAML document, stamp --evict onto it and validate
+// it against the schema. Writes the refusal to stderr and returns null when
+// the YAML or the schema rejects it.
+function parseModelHostApplyInput(
+  raw: string,
+  flags: Pick<ApplyFlags, "evict" | "force">,
+): ModelHostManifest | null {
   let manifest: unknown;
   try {
     manifest = parseYaml(raw);
@@ -635,17 +665,58 @@ async function applyModelHostFromRaw(raw: string, json: boolean): Promise<number
     process.stderr.write(
       `apply: ModelHost manifest YAML parse failed: ${(err as Error).message}\n`,
     );
-    return 1;
+    return null;
   }
 
-  const parsedHost = ((): ModelHostManifest | null => {
-    try {
-      return ModelHostManifestSchema.parse(manifest);
-    } catch (err) {
-      process.stderr.write(`apply: ModelHost manifest rejected: ${(err as Error).message}\n`);
-      return null;
-    }
-  })();
+  // --evict is legal ModelHost metadata: stamp it onto the raw parsed
+  // object before schema validation so the annotation is validated,
+  // persisted by the disabled/handoff paths, and sent to applyManifest
+  // with the manifest. A manifest whose metadata is not an object is
+  // left untouched for the schema to reject.
+  const rawMetadata = (manifest as { metadata?: unknown } | null)?.metadata;
+  if (flags.evict.length > 0 && typeof rawMetadata === "object" && rawMetadata !== null) {
+    stampApplyAnnotations(manifest as ModelHostManifest, flags);
+  }
+
+  try {
+    return ModelHostManifestSchema.parse(manifest);
+  } catch (err) {
+    process.stderr.write(`apply: ModelHost manifest rejected: ${(err as Error).message}\n`);
+    return null;
+  }
+}
+
+function writeModelHostStarted(
+  outcome: { manifest: ModelHostManifest; pid: number | null; endpoint: string },
+  json: boolean,
+): void {
+  if (json) {
+    process.stdout.write(
+      `${JSON.stringify(
+        {
+          action: "started",
+          kind: "ModelHost",
+          name: outcome.manifest.metadata.name,
+          pid: outcome.pid,
+          endpoint: outcome.endpoint,
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    return;
+  }
+  process.stdout.write(
+    `modelhost/${outcome.manifest.metadata.name}: ModelHost ready at ${outcome.endpoint}${typeof outcome.pid === "number" ? ` pid=${String(outcome.pid)}` : " pid=remote"}\n`,
+  );
+}
+
+async function applyModelHostFromRaw(
+  raw: string,
+  json: boolean,
+  flags: Pick<ApplyFlags, "evict" | "force">,
+): Promise<number> {
+  const parsedHost = parseModelHostApplyInput(raw, flags);
   if (!parsedHost) return 1;
 
   // #214: refuse an exposed bind before anything is persisted, so a refused
@@ -681,25 +752,7 @@ async function applyModelHostFromRaw(raw: string, json: boolean): Promise<number
       return 1;
     }
     saveModelHost(outcome.manifest);
-    if (json) {
-      process.stdout.write(
-        `${JSON.stringify(
-          {
-            action: "started",
-            kind: "ModelHost",
-            name: outcome.manifest.metadata.name,
-            pid: outcome.pid,
-            endpoint: outcome.endpoint,
-          },
-          null,
-          2,
-        )}\n`,
-      );
-    } else {
-      process.stdout.write(
-        `modelhost/${outcome.manifest.metadata.name}: ModelHost ready at ${outcome.endpoint}${typeof outcome.pid === "number" ? ` pid=${String(outcome.pid)}` : " pid=remote"}\n`,
-      );
-    }
+    writeModelHostStarted(outcome, json);
     return 0;
   } catch (err) {
     process.stderr.write(`apply: ${(err as Error).message}\n`);
