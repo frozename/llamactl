@@ -56,7 +56,10 @@ export type NodeRunInfraItem = z.infer<typeof NodeRunInfraItemSchema>;
  * residencyPlan. `idleEvictSeconds` is validated, persisted and echoed by
  * residencyStatus, but no idle-eviction path reads it (the DF-10 sleep driver
  * has no idle trigger), so any value behaves like 0. `residentPreference` and
- * `coldLoadPenaltyMs` are validated and persisted but not yet enforced.
+ * `coldLoadPenaltyMs` are ranking-only (Part of #519): rankRouteCandidates
+ * (packages/core/src/routing/ranking.ts) applies them when the unified proxy
+ * is given its `residencyPolicy` option, but no production caller wires them
+ * yet, so NodeRun values for these two keys have no runtime effect.
  * budget.memoryGiB overrides any computed budget.
  */
 export const ResidencyPolicySchema = z
@@ -73,9 +76,11 @@ export const ResidencyPolicySchema = z
     /** defaults to 0.75; sizes the computed admission budget when
      *  spec.budget is unset */
     safetyMarginRatio: z.number().gt(0).lte(1).optional(),
-    /** reserved; not yet enforced */
+    /** ranking-only: applied by rankRouteCandidates via the unified proxy's
+     *  residencyPolicy option; no production caller wires it yet */
     residentPreference: z.number().nonnegative().optional(),
-    /** reserved; not yet enforced */
+    /** ranking-only: applied by rankRouteCandidates via the unified proxy's
+     *  residencyPolicy option; no production caller wires it yet */
     coldLoadPenaltyMs: z.number().int().nonnegative().optional(),
   })
   .strict();
