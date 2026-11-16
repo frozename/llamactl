@@ -14,9 +14,13 @@
  *
  * Per-node serialization rides the DF-03 operations table, keyed
  * `profile-switch:<node>`, through the partial unique nonterminal index.
- * Cancellation is checked at step boundaries and ends a drain wait. The
- * record is opt-in until a live caller exists, which must pass it. The op's
- * desiredRevision participates in the store's shared watermark. A crash
+ * The switch reserves its replacements' memory at begin (the plan's `reserve`
+ * step, or 0 when there is none) and is budget-admitted against the caller's
+ * `nodeBudgetGiB` when one is passed; a store refusal surfaces as
+ * `operation-record-refused`. Cancellation is checked at step boundaries and
+ * ends a drain wait. The record is opt-in; the live caller (apply-profile)
+ * passes it. The op's desiredRevision participates in the store's shared
+ * watermark. A crash
  * between begin and finish leaves a nonterminal profile-switch row that
  * blocks the node (every later switch is Busy) until the deferred
  * crash-recovery path terminalizes it; serialization is therefore NOT
@@ -42,9 +46,20 @@
  *
  * Crash recovery (via `recovery.ts`) terminalizes stale profile-switch rows;
  * rollback/persist-suppression/verify-release/reserve/verify-ready/publish
- * stay deferred. The planner's `request.timeouts.drainMs` is not carried on
- * `OkPlan`, so the executor uses `opts.drainTimeoutMs` or the default;
- * threading the resolved timeouts through is a later slice.
+ * stay deferred. Per-action step budgets ride `opts.stepTimeouts`: `unloadMs`
+ * bounds each `stop` and `loadMs` each `start`, armed through the injectable
+ * `opts.stepTimer`; absent, zero or non-finite budgets leave that action
+ * unbounded (the same rule as `opts.drainTimeoutMs`, with no default). A
+ * timed-out step fails with reason `StepTimedOut`, aborts the per-step signal
+ * handed to the dep, and stops the switch and records it failed. That abort
+ * signal is ADVISORY: no live dep honours it yet, so a timed-out dep may still
+ * be running after the record goes terminal and the per-node lock is released,
+ * letting a later switch on the node overlap it. A timed-out fenced stop
+ * therefore leaves that victim's drain fenced (a later `beginDrain` gets
+ * `AlreadyDraining`) and does not reopen admission; only the untouched later
+ * victims are cancelled. The planner's resolved `request.timeouts` are still
+ * not carried on `OkPlan`, so `apply-profile` runs unbounded until a later
+ * slice threads them through.
  */
 import { getResidencyLeaseRegistry, type ResidencyLeases } from "@llamactl/core/residency/leases";
 import {
@@ -57,13 +72,22 @@ import {
 import type { ResidencyOperationOutcome, ResidencyOperationStore } from "./store.js";
 
 export type ProfileSwitchStepOutcome = { ok: true } | { ok: false; detail: string };
+// Per-action budgets for the stop/start steps. `unloadMs` bounds each `stop`
+// dep call and `loadMs` each `start` dep call. `readyMs` is not here: it belongs
+// to the still-deferred verify-ready step, and `drainMs` stays the drain-phase
+// `drainTimeoutMs`, not a per-step budget.
+export type ProfileSwitchStepTimeouts = { unloadMs?: number; loadMs?: number };
+// Arms a one-shot timeout for `ms` and returns a cancel function. Injected so
+// tests drive timeouts deterministically.
+export type ProfileSwitchStepTimer = (ms: number, onTimeout: () => void) => () => void;
 export type ProfileSwitchExecutorDeps = {
   // caller wires the verified stop procedures; with a lease registry in play the
   // executor holds the drain token, so the caller must wire the unfenced verified
-  // stop: the #613 fenceWorkloadStop would refuse it with DrainInProgress
-  stop: (workload: string) => Promise<ProfileSwitchStepOutcome>;
+  // stop: the #613 fenceWorkloadStop would refuse it with DrainInProgress. The
+  // optional ctx carries an ADVISORY abort signal handed to a budgeted step.
+  stop: (workload: string, ctx?: { signal?: AbortSignal }) => Promise<ProfileSwitchStepOutcome>;
   // caller wires the admission-gated start
-  start: (workload: string) => Promise<ProfileSwitchStepOutcome>;
+  start: (workload: string, ctx?: { signal?: AbortSignal }) => Promise<ProfileSwitchStepOutcome>;
 };
 export type ProfileSwitchExecutionStatus = "planned" | "ok" | "failed" | "not-run";
 export type ProfileSwitchStepAction = "fence" | "drain" | "stop" | "start";
@@ -72,6 +96,8 @@ export type ProfileSwitchExecutionStep = {
   workload: string;
   status: ProfileSwitchExecutionStatus;
   detail?: string;
+  reason?: "StepTimedOut";
+  timeoutMs?: number;
 };
 export type ProfileSwitchOperationOpts = {
   store: Pick<
@@ -82,6 +108,9 @@ export type ProfileSwitchOperationOpts = {
   operationId: string;
   desiredRevision: number;
   nowMs?: () => number;
+  // the resolved node budget the reservation is admitted against; absent =
+  // recorded but not admitted (store opt-in, #685)
+  nodeBudgetGiB?: number;
   // where a failed step-boundary heartbeat is reported; default stderr
   log?: (line: string) => void;
 };
@@ -102,7 +131,13 @@ export type ProfileSwitchExecutionReport = {
   to: string | null;
   steps: ProfileSwitchExecutionStep[];
   ran: ProfileSwitchExecutionStep[];
-  failedAt: { action: ProfileSwitchStepAction; workload: string; detail: string } | null;
+  failedAt: {
+    action: ProfileSwitchStepAction;
+    workload: string;
+    detail: string;
+    reason?: "StepTimedOut";
+    timeoutMs?: number;
+  } | null;
   deferred: StepKind[];
   busy?: { reason: "Busy"; node: string; operationId: string; detail: string };
   cancelledAt?: { action: ProfileSwitchStepAction; workload: string } | null;
@@ -116,7 +151,21 @@ export type ProfileSwitchExecutionReport = {
 };
 
 type PlannedStep = { action: ProfileSwitchStepAction; workload: string };
-type StepFailure = { action: ProfileSwitchStepAction; workload: string; detail: string };
+type StepFailure = {
+  action: ProfileSwitchStepAction;
+  workload: string;
+  detail: string;
+  reason?: "StepTimedOut";
+  timeoutMs?: number;
+};
+// A step outcome carrying the budget that timed out (ms), set only on a
+// StepTimedOut failure, so the step record and failedAt can stamp reason/timeoutMs.
+type StepOutcome = ProfileSwitchStepOutcome & { timedOut?: number };
+type StepBudget = {
+  stopMs: number | null;
+  startMs: number | null;
+  timer: ProfileSwitchStepTimer;
+};
 type CancelledAt = { action: ProfileSwitchStepAction; workload: string };
 type RunResult = {
   steps: ProfileSwitchExecutionStep[];
@@ -163,18 +212,26 @@ function stepRecord(
   workload: string,
   status: ProfileSwitchExecutionStatus,
   detail?: string,
+  timedOutMs?: number,
 ): ProfileSwitchExecutionStep {
   return {
     action,
     workload,
     status,
     ...(detail === undefined ? {} : { detail }),
+    ...(timedOutMs === undefined ? {} : { reason: "StepTimedOut", timeoutMs: timedOutMs }),
   };
 }
 
 function failureOf(step: ProfileSwitchExecutionStep): StepFailure | null {
   if (step.status === "failed" && step.detail !== undefined) {
-    return { action: step.action, workload: step.workload, detail: step.detail };
+    return {
+      action: step.action,
+      workload: step.workload,
+      detail: step.detail,
+      ...(step.reason === undefined ? {} : { reason: step.reason }),
+      ...(step.timeoutMs === undefined ? {} : { timeoutMs: step.timeoutMs }),
+    };
   }
   return null;
 }
@@ -240,25 +297,65 @@ function plannedSteps(victims: string[], replacements: string[], fenced: boolean
   ];
 }
 
+function normalizeOutcome(raw: unknown): StepOutcome {
+  if (typeof raw === "object" && raw !== null && "ok" in raw) {
+    if (raw.ok === true) {
+      return { ok: true };
+    }
+    if (raw.ok === false && "detail" in raw && typeof raw.detail === "string") {
+      const detail: string = raw.detail;
+      return { ok: false, detail };
+    }
+  }
+  return { ok: false, detail: "invalid step outcome" };
+}
+
 async function runStep(
   step: PlannedStep,
   deps: ProfileSwitchExecutorDeps,
-): Promise<ProfileSwitchStepOutcome> {
-  try {
-    const pending = step.action === "start" ? deps.start(step.workload) : deps.stop(step.workload);
-    const outcome: unknown = await pending;
-    if (typeof outcome === "object" && outcome !== null && "ok" in outcome) {
-      if (outcome.ok === true) {
-        return { ok: true };
-      }
-      if (outcome.ok === false && "detail" in outcome && typeof outcome.detail === "string") {
-        const detail: string = outcome.detail;
-        return { ok: false, detail };
-      }
+  budget: StepBudget,
+): Promise<StepOutcome> {
+  const budgetMs = step.action === "start" ? budget.startMs : budget.stopMs;
+  if (budgetMs === null) {
+    try {
+      const pending =
+        step.action === "start" ? deps.start(step.workload) : deps.stop(step.workload);
+      return normalizeOutcome(await pending);
+    } catch (error: unknown) {
+      return { ok: false, detail: messageOf(error) };
     }
-    return { ok: false, detail: "invalid step outcome" };
-  } catch (error: unknown) {
-    return { ok: false, detail: messageOf(error) };
+  }
+  const controller = new AbortController();
+  // The dep promise is normalized before the race so a late resolve or reject
+  // is already handled and never unhandled once the timer wins. The dep is
+  // invoked inside a then callback so a synchronous throw or a non-promise
+  // return is normalized exactly like the unbudgeted path, never escaping
+  // runStep (which would skip cancelBestEffort on the fenced path).
+  const depSettled: Promise<StepOutcome> = Promise.resolve()
+    .then(() =>
+      step.action === "start"
+        ? deps.start(step.workload, { signal: controller.signal })
+        : deps.stop(step.workload, { signal: controller.signal }),
+    )
+    .then(
+      normalizeOutcome,
+      (error: unknown): StepOutcome => ({ ok: false, detail: messageOf(error) }),
+    );
+  let cancel: () => void = () => undefined;
+  const timedOut = new Promise<StepOutcome>((resolve) => {
+    cancel = budget.timer(budgetMs, () => {
+      controller.abort();
+      resolve({
+        ok: false,
+        detail: `StepTimedOut: ${step.action} exceeded ${String(budgetMs)}ms`,
+        timedOut: budgetMs,
+      });
+    });
+  });
+  try {
+    return await Promise.race([depSettled, timedOut]);
+  } finally {
+    cancel();
   }
 }
 
@@ -267,6 +364,7 @@ async function runSteps(
   deps: ProfileSwitchExecutorDeps,
   signal: AbortSignal | undefined,
   beat: Beat,
+  budget: StepBudget,
 ): Promise<RunResult> {
   const steps: ProfileSwitchExecutionStep[] = [];
   let failedAt: StepFailure | null = null;
@@ -281,13 +379,19 @@ async function runSteps(
       steps.push(stepRecord(step.action, step.workload, "not-run"));
       continue;
     }
-    const outcome = await runStep(step, deps);
+    const outcome = await runStep(step, deps, budget);
     beat();
     if (outcome.ok) {
       steps.push(stepRecord(step.action, step.workload, "ok"));
       continue;
     }
-    const failed = stepRecord(step.action, step.workload, "failed", outcome.detail);
+    const failed = stepRecord(
+      step.action,
+      step.workload,
+      "failed",
+      outcome.detail,
+      outcome.timedOut,
+    );
     steps.push(failed);
     failedAt = failureOf(failed);
   }
@@ -432,8 +536,9 @@ async function runStopOne(
   deps: ProfileSwitchExecutorDeps,
   workload: string,
   token: DrainToken,
-): Promise<ProfileSwitchStepOutcome> {
-  const stopped = await runStep({ action: "stop", workload }, deps);
+  budget: StepBudget,
+): Promise<StepOutcome> {
+  const stopped = await runStep({ action: "stop", workload }, deps, budget);
   if (!stopped.ok) {
     return stopped;
   }
@@ -456,6 +561,7 @@ async function stopPhase(
   tokens: DrainToken[],
   signal: AbortSignal | undefined,
   beat: Beat,
+  budget: StepBudget,
 ): Promise<RunResult> {
   const steps: ProfileSwitchExecutionStep[] = [];
   for (const [index, workload] of victims.entries()) {
@@ -470,17 +576,22 @@ async function stopPhase(
       cancelBestEffort(registry, tokens.slice(index));
       return { steps, failedAt: null, cancelledAt: { action: "stop", workload } };
     }
-    const outcome = await runStopOne(registry, deps, workload, token);
+    const outcome = await runStopOne(registry, deps, workload, token, budget);
     beat();
     if (outcome.ok) {
       steps.push(stepRecord("stop", workload, "ok"));
       continue;
     }
-    const failed = stepRecord("stop", workload, "failed", outcome.detail);
+    const failed = stepRecord("stop", workload, "failed", outcome.detail, outcome.timedOut);
     steps.push(failed);
     appendNotRun(steps, "stop", victims.slice(index + 1));
     appendNotRun(steps, "start", replacements);
-    cancelBestEffort(registry, tokens.slice(index));
+    // A timed-out victim's stop may still be in flight, so leave its drain
+    // fenced (admission stays closed) and release only the untouched later
+    // victims. A non-timeout failure has no in-flight dep, so release from
+    // this victim too.
+    const releaseFrom = outcome.timedOut === undefined ? index : index + 1;
+    cancelBestEffort(registry, tokens.slice(releaseFrom));
     return { steps, failedAt: failureOf(failed), cancelledAt: null };
   }
   return { steps, failedAt: null, cancelledAt: null };
@@ -491,6 +602,7 @@ async function startPhase(
   replacements: string[],
   signal: AbortSignal | undefined,
   beat: Beat,
+  budget: StepBudget,
 ): Promise<RunResult> {
   const steps: ProfileSwitchExecutionStep[] = [];
   let failedAt: StepFailure | null = null;
@@ -505,13 +617,13 @@ async function startPhase(
       steps.push(stepRecord("start", workload, "not-run"));
       continue;
     }
-    const outcome = await runStep({ action: "start", workload }, deps);
+    const outcome = await runStep({ action: "start", workload }, deps, budget);
     beat();
     if (outcome.ok) {
       steps.push(stepRecord("start", workload, "ok"));
       continue;
     }
-    const failed = stepRecord("start", workload, "failed", outcome.detail);
+    const failed = stepRecord("start", workload, "failed", outcome.detail, outcome.timedOut);
     steps.push(failed);
     failedAt = failureOf(failed);
   }
@@ -530,6 +642,7 @@ async function runFenced(
   drainTimeoutMs: number,
   signal: AbortSignal | undefined,
   beat: Beat,
+  budget: StepBudget,
 ): Promise<RunResult> {
   const fence = fencePhase(registry, plan.victims, signal, beat);
   const steps = fence.steps;
@@ -572,6 +685,7 @@ async function runFenced(
     fence.tokens,
     signal,
     beat,
+    budget,
   );
   steps.push(...stop.steps);
   if (stop.failedAt !== null) {
@@ -581,7 +695,7 @@ async function runFenced(
     return { steps, failedAt: null, cancelledAt: stop.cancelledAt };
   }
 
-  const start = await startPhase(deps, plan.replacements, signal, beat);
+  const start = await startPhase(deps, plan.replacements, signal, beat, budget);
   steps.push(...start.steps);
   return { steps, failedAt: start.failedAt, cancelledAt: start.cancelledAt };
 }
@@ -608,6 +722,17 @@ export function profileSwitchOperationKey(node: string): string {
   return `profile-switch:${node}`;
 }
 
+// The reservation the switch records at begin: the plan's `reserve` step, or 0
+// when there is none or it is not a finite non-negative number.
+export function profileSwitchReservationGiB(plan: OkPlan): number {
+  const reserve = plan.steps.find((step) => step.kind === "reserve");
+  const giB = reserve?.reservationGiB;
+  if (giB === undefined || !Number.isFinite(giB) || giB < 0) {
+    return 0;
+  }
+  return giB;
+}
+
 function beginSwitchOperation(
   plan: OkPlan,
   operation: ProfileSwitchOperationOpts,
@@ -620,8 +745,9 @@ function beginSwitchOperation(
       model: profileSwitchOperationKey(plan.node),
       targetState: `profile:${plan.to}`,
       desiredRevision: operation.desiredRevision,
-      reservationGiB: 0,
+      reservationGiB: profileSwitchReservationGiB(plan),
       nowMs: nowMs(),
+      ...(operation.nodeBudgetGiB === undefined ? {} : { nodeBudgetGiB: operation.nodeBudgetGiB }),
     });
     if (!begun.ok) {
       return { ok: false, reason: begun.reason };
@@ -832,6 +958,30 @@ function drainTimeoutMsFrom(customTimeout: number | undefined): number {
     : DEFAULT_PROFILE_SWITCH_TIMEOUTS.drainMs;
 }
 
+const defaultStepTimer: ProfileSwitchStepTimer = (ms, onTimeout) => {
+  const timer = setTimeout(onTimeout, ms);
+  return () => {
+    clearTimeout(timer);
+  };
+};
+
+// A budget is honoured only when finite and > 0; otherwise that action is
+// unbounded (the same rule as drainTimeoutMsFrom, with no default).
+function finiteBudgetMs(ms: number | undefined): number | null {
+  return ms !== undefined && Number.isFinite(ms) && ms > 0 ? ms : null;
+}
+
+function stepBudgetFrom(
+  stepTimeouts: ProfileSwitchStepTimeouts | undefined,
+  stepTimer: ProfileSwitchStepTimer | undefined,
+): StepBudget {
+  return {
+    stopMs: finiteBudgetMs(stepTimeouts?.unloadMs),
+    startMs: finiteBudgetMs(stepTimeouts?.loadMs),
+    timer: stepTimer ?? defaultStepTimer,
+  };
+}
+
 export async function executeProfileSwitch(
   plan: ProfileSwitchPlan,
   deps: ProfileSwitchExecutorDeps,
@@ -841,6 +991,8 @@ export async function executeProfileSwitch(
     drainTimeoutMs?: number;
     signal?: AbortSignal;
     operation?: ProfileSwitchOperationOpts;
+    stepTimeouts?: ProfileSwitchStepTimeouts;
+    stepTimer?: ProfileSwitchStepTimer;
   },
 ): Promise<ProfileSwitchExecutionReport> {
   const dryRun = opts?.dryRun !== false;
@@ -901,17 +1053,18 @@ export async function executeProfileSwitch(
 
   const signal = opts.signal;
   const operation = opts.operation;
+  const budget = stepBudgetFrom(opts.stepTimeouts, opts.stepTimer);
   if (operation !== undefined) {
     return await executeWithOperation(plan, deferred, operation, async (beat) =>
       fenced
-        ? await runFenced(plan, deps, registry, drainTimeoutMs, signal, beat)
-        : await runSteps(planned, deps, signal, beat),
+        ? await runFenced(plan, deps, registry, drainTimeoutMs, signal, beat, budget)
+        : await runSteps(planned, deps, signal, beat, budget),
     );
   }
 
   const result = fenced
-    ? await runFenced(plan, deps, registry, drainTimeoutMs, signal, NO_BEAT)
-    : await runSteps(planned, deps, signal, NO_BEAT);
+    ? await runFenced(plan, deps, registry, drainTimeoutMs, signal, NO_BEAT, budget)
+    : await runSteps(planned, deps, signal, NO_BEAT, budget);
   const outcome =
     result.cancelledAt !== null
       ? "cancelled"

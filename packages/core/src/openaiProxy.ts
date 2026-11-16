@@ -2718,6 +2718,15 @@ function staleDeclaredEntryRejectionFor(
   return declaredNotLoadedResponse(model, entry, bodyText);
 }
 
+/** #280 DF-07: shared cached stale-binding refusal for ingress paths that bypass applyBodyModelRoute (unified createProxy). */
+export function staleDeclaredModelRejection(
+  model: string,
+  resolved: ResolvedEnv,
+  bodyText?: string,
+): Response | null {
+  return staleDeclaredEntryRejectionFor(model, resolved, bodyText);
+}
+
 /**
  * #280 DF-07: 503 for a pin whose only routes are live but fail serving
  * readiness (a warming ModelHost). The declared catalog state wins when it

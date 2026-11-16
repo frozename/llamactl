@@ -14,6 +14,10 @@
 // recentAudit merges the node-local store rows (which survive a restart) with
 // any live in-memory entries the store is missing (a sink write that failed
 // quietly), so neither source can hide an entry the other holds.
+// The omlxNative section (scope "serving-process") is the serving process's
+// oMLX native residency capability probe, per oMLX ModelHost on `node`:
+// native, a declared process-fallback, or unknown with a reason. It is only
+// probed on the serving process; off it every row is unknown/NotServingNode.
 //
 // The NodeRun residency supplies the planner policy (Part of #519); switch/load
 // timing (lastSwitchAtMs, loadedAtMs) is not persisted yet, so those checks stay
@@ -28,6 +32,7 @@ import { planProfileSwitch } from "@llamactl/core/residency/planner";
 import type { ModelHostManifest } from "../workload/modelhost-schema.js";
 import type { NodeRun } from "../workload/noderun-schema.js";
 import type { ModelRun } from "../workload/schema.js";
+import type { OmlxNativeStatusRow } from "./omlx-capability.js";
 import type { ResidencyStoreSnapshot } from "./store.js";
 
 import { buildProfileSwitchRequest, type ObservedWorkloadState } from "./coordinator.js";
@@ -207,6 +212,7 @@ export type ResidencyStatus = {
         scope: "serving-process";
       };
   leases: ResidencyStatusLeases;
+  omlxNative?: { scope: "serving-process"; workloads: OmlxNativeStatusRow[] };
 };
 
 export function buildResidencyStatus(input: {
@@ -217,6 +223,7 @@ export function buildResidencyStatus(input: {
   store: ResidencyStoreSnapshot;
   leaseRegistry?: Pick<ResidencyLeases, "snapshot" | "audit"> | null | undefined;
   leaseWorkloads?: readonly string[] | undefined;
+  omlxNative?: readonly OmlxNativeStatusRow[] | undefined;
 }): ResidencyStatus {
   const residency = input.nodeRun?.spec.residency;
   return {
@@ -226,6 +233,7 @@ export function buildResidencyStatus(input: {
     budget: { memoryGiB: input.budgetGiB, source: input.budgetSource },
     store: storeWithScope(input.store),
     leases: buildResidencyLeaseSnapshot(input.leaseRegistry ?? null, input.leaseWorkloads ?? []),
+    omlxNative: { scope: "serving-process", workloads: [...(input.omlxNative ?? [])] },
   };
 }
 
