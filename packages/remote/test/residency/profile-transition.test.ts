@@ -439,10 +439,13 @@ describe("executeProfileSwitch", () => {
     const glob = new Bun.Glob("packages/*/src/**/*.{ts,tsx}");
     for (const rel of glob.scanSync({ cwd: repoRoot, onlyFiles: true })) {
       // #284 (DF-11): apply-profile.ts is the one sanctioned live caller; any
-      // other importer must be reviewed and added here deliberately.
+      // other importer must be reviewed and added here deliberately. #517:
+      // lifecycle-steps.ts is a pure decorator over the executor deps, reached
+      // only through apply-profile.
       if (
         rel === "packages/remote/src/residency/profile-transition.ts" ||
-        rel === "packages/remote/src/residency/apply-profile.ts"
+        rel === "packages/remote/src/residency/apply-profile.ts" ||
+        rel === "packages/remote/src/residency/lifecycle-steps.ts"
       ) {
         continue;
       }
