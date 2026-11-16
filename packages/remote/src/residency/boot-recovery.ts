@@ -31,11 +31,15 @@
  * inside it. The window is more than twice the planner's default per-workload
  * budget (drain 30s + unload 60s + load 600s + ready 120s = 13.5 min).
  *
- * The remaining limit: a single step that runs longer than the window (a stop
- * or start the executor does not bound, since per-step timeouts are a later
- * slice) leaves no boundary to heartbeat at, so a boot during that step can
- * terminalize the live switch and claim the fence. That switch's finish then
- * fails stale-fence and is reported unrecorded.
+ * The remaining limit: a single step's duration is now bounded by its budget
+ * when the caller sets `stepTimeouts` — a stop by `unloadMs`, a start by
+ * `loadMs`. The staleness guard above holds only if that budget sits below
+ * `PROFILE_SWITCH_BOOT_RECOVERY_MIN_AGE_MS`; the executor does not validate
+ * this, and a later wiring slice should clamp or validate it. The residual risk
+ * is any unbudgeted step: a caller with no `stepTimeouts` (today including
+ * apply-profile), a budget at or above the window, or a deferred step. A
+ * timed-out dep can also keep running after its row goes terminal, because the
+ * abort signal handed to it is advisory.
  *
  * A possibly-live row is never finished, and because a claim would also
  * stale-fence the live switch's own heartbeat and finishOperation, any
