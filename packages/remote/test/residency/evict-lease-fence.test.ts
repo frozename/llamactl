@@ -619,6 +619,58 @@ describe("applyOne evict lease fence (#278 DF-05)", () => {
     expect(rig.starts).toEqual([]);
   });
 
+  test.each(["SessionsActive", "SessionsUnknown"])(
+    "a ModelHost stop error that only mentions %s mid-string stays EvictStopRefused",
+    async (token) => {
+      // Kills the session-regex unanchor mutants — drops the ^ from
+      // /^SessionsActive(?::|$)/ or /^SessionsUnknown(?::|$)/, so an error
+      // that embeds "<token>:" after other text is misclassified as
+      // EvictSessionActive / EvictSessionUnknown. The token is followed by
+      // ":" so only the ^ anchor rejects it.
+      saveModelHost(
+        mkModelHostManifest("resident-host", { resources: { expectedMemoryGiB: 24 } }),
+        workloadsDir,
+      );
+      const rig = makeEvictClient({
+        name: "resident-host",
+        kind: "ModelHost",
+        rel: "resident-host.gguf",
+        port: 18094,
+      });
+      const stopCalls: string[] = [];
+      const client: WorkloadClient = {
+        ...rig.client,
+        modelHostStop: {
+          mutate: (input): Promise<unknown> => {
+            stopCalls.push(input.workload);
+            return Promise.resolve({
+              ok: false,
+              pid: null,
+              error: `stop failed: upstream ${token}: x`,
+            });
+          },
+        },
+      };
+      const { onEvent } = makeEventRecorder();
+      const incoming = mkManifest("incoming-run", {
+        ram: 8,
+        annotations: { "llamactl.io/evict": "resident-host" },
+      });
+
+      const result = await applyOne(incoming, () => client, onEvent, undefined, {
+        workloadsDir,
+        env,
+        getNodeBudgetGiB: () => 24,
+      });
+
+      expect(result.statusSection.conditions[0]?.reason).toBe("EvictStopRefused");
+      expect(result.error).toContain(`(EvictStopRefused): stop failed: upstream ${token}: x`);
+      expect(result.action).toBe("pending");
+      expect(stopCalls).toEqual(["resident-host"]);
+      expect(rig.starts).toEqual([]);
+    },
+  );
+
   test("a ModelRun refusal whose active list holds a non-string entry surfaces only the string lease ids", async () => {
     // Kills P11 — drops the typeof-string filter on refused.active, so the
     // busy detail renders the bogus entry ("LeasesActive: 42, lease-a").
