@@ -14,9 +14,13 @@
  *
  * Per-node serialization rides the DF-03 operations table, keyed
  * `profile-switch:<node>`, through the partial unique nonterminal index.
- * Cancellation is checked at step boundaries and ends a drain wait. The
- * record is opt-in until a live caller exists, which must pass it. The op's
- * desiredRevision participates in the store's shared watermark. A crash
+ * The switch reserves its replacements' memory at begin (the plan's `reserve`
+ * step, or 0 when there is none) and is budget-admitted against the caller's
+ * `nodeBudgetGiB` when one is passed; a store refusal surfaces as
+ * `operation-record-refused`. Cancellation is checked at step boundaries and
+ * ends a drain wait. The record is opt-in; the live caller (apply-profile)
+ * passes it. The op's desiredRevision participates in the store's shared
+ * watermark. A crash
  * between begin and finish leaves a nonterminal profile-switch row that
  * blocks the node (every later switch is Busy) until the deferred
  * crash-recovery path terminalizes it; serialization is therefore NOT
@@ -104,6 +108,9 @@ export type ProfileSwitchOperationOpts = {
   operationId: string;
   desiredRevision: number;
   nowMs?: () => number;
+  // the resolved node budget the reservation is admitted against; absent =
+  // recorded but not admitted (store opt-in, #685)
+  nodeBudgetGiB?: number;
   // where a failed step-boundary heartbeat is reported; default stderr
   log?: (line: string) => void;
 };
@@ -715,6 +722,17 @@ export function profileSwitchOperationKey(node: string): string {
   return `profile-switch:${node}`;
 }
 
+// The reservation the switch records at begin: the plan's `reserve` step, or 0
+// when there is none or it is not a finite non-negative number.
+export function profileSwitchReservationGiB(plan: OkPlan): number {
+  const reserve = plan.steps.find((step) => step.kind === "reserve");
+  const giB = reserve?.reservationGiB;
+  if (giB === undefined || !Number.isFinite(giB) || giB < 0) {
+    return 0;
+  }
+  return giB;
+}
+
 function beginSwitchOperation(
   plan: OkPlan,
   operation: ProfileSwitchOperationOpts,
@@ -727,8 +745,9 @@ function beginSwitchOperation(
       model: profileSwitchOperationKey(plan.node),
       targetState: `profile:${plan.to}`,
       desiredRevision: operation.desiredRevision,
-      reservationGiB: 0,
+      reservationGiB: profileSwitchReservationGiB(plan),
       nowMs: nowMs(),
+      ...(operation.nodeBudgetGiB === undefined ? {} : { nodeBudgetGiB: operation.nodeBudgetGiB }),
     });
     if (!begun.ok) {
       return { ok: false, reason: begun.reason };
