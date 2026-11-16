@@ -71,6 +71,10 @@ FLAGS:
   --log-slot-progress         Read-only: poll each workload's /slots per tick and
                               journal a fleet-slot-progress entry (busy-aware-probing
                               data collection; drives nothing). Default off.
+  --record-engine-throughput  Read-only: sample each reachable ModelHost's /metrics +
+                              /slots per tick and carry windowed decode/prefill rates and
+                              slot occupancy on the fleet-snapshot (engineThroughput).
+                              Direct llama-server endpoints only. Default off.
   --quiet                     Suppress per-tick stderr summary.
   --no-reload-on-source-change Do not auto-exit (→ launchd reload) when the running
                               git source changes after startup. Warning still logs.
@@ -885,6 +889,7 @@ function buildSupervisorLoopOptions(
     },
     migrationController,
     logSlotProgress: flags.logSlotProgress,
+    recordEngineThroughput: flags.recordEngineThroughput,
     ...(executorEnabled
       ? {
           onTick: async (): Promise<void> => {
@@ -940,6 +945,11 @@ function printLoopBanner(
       `supervisor: node=${flags.node} interval=${String(flags.intervalMs)}ms once=${String(once)} workloads=${wlSummary}\n`,
     );
     process.stderr.write(`supervisor: journal=${journalPath}\n`);
+    if (loopOpts.recordEngineThroughput === true) {
+      process.stderr.write(
+        "supervisor: engine-throughput=on (read-only /metrics + /slots per ModelHost; direct endpoints only)\n",
+      );
+    }
     if (loopOpts.onTick !== undefined) {
       process.stderr.write(
         `supervisor: executor=on auto=${String(flags.auto)} threshold=${String(flags.severityThreshold)}${flags.executeId ? ` executeId=${flags.executeId}` : ""}\n`,
@@ -1031,6 +1041,7 @@ interface Flags {
   quiet: boolean;
   auto: boolean;
   logSlotProgress: boolean;
+  recordEngineThroughput: boolean;
   reloadOnSourceChange: boolean;
   severityThreshold: 1 | 2 | 3;
   executeId?: string;
@@ -1333,6 +1344,7 @@ interface ToggleFlags {
   quiet: boolean;
   auto: boolean;
   logSlotProgress: boolean;
+  recordEngineThroughput: boolean;
   reloadOnSourceChange: boolean;
 }
 
@@ -1352,6 +1364,9 @@ function parseToggleFlags(raw: string, toggles: ToggleFlags, audit: AuditFlags):
       return true;
     case "--log-slot-progress":
       toggles.logSlotProgress = true;
+      return true;
+    case "--record-engine-throughput":
+      toggles.recordEngineThroughput = true;
       return true;
     case "--no-reload-on-source-change":
       toggles.reloadOnSourceChange = false;
@@ -1405,6 +1420,7 @@ function parseFlags(argv: string[]): Flags {
     quiet: false,
     auto: false,
     logSlotProgress: false,
+    recordEngineThroughput: false,
     reloadOnSourceChange: true,
   };
   const executor: { severityThreshold: 1 | 2 | 3; executeId?: string } = { severityThreshold: 2 };
@@ -1467,6 +1483,7 @@ function parseFlags(argv: string[]): Flags {
     quiet: toggles.quiet,
     auto: toggles.auto,
     logSlotProgress: toggles.logSlotProgress,
+    recordEngineThroughput: toggles.recordEngineThroughput,
     reloadOnSourceChange: toggles.reloadOnSourceChange,
     severityThreshold: executor.severityThreshold,
 
