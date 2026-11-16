@@ -468,7 +468,7 @@ export async function handleRagChatCompletions(
   const fields = validateForwardFields(body);
   if (!fields.ok) return fields.response;
 
-  const caller = resolveCaller(ctx);
+  const caller = resolveCaller(ctx, req.signal);
 
   // ---- retrieval (optional) --------------------------------------------
   let retrievedCount = 0;
@@ -607,11 +607,12 @@ function validateExtensionRequest(
 
 /**
  * Resolve the caller — tests inject a fake; production builds one
- * from the shared appRouter.
+ * from the shared appRouter. #316: the client's abort must reach
+ * chatComplete, and through it the engine or peer.
  */
-function resolveCaller(ctx: RagChatEndpointContext): RagChatCaller {
+function resolveCaller(ctx: RagChatEndpointContext, signal: AbortSignal): RagChatCaller {
   if (ctx.caller) return ctx.caller;
-  const c = ctx.appRouter.createCaller({}) as {
+  const c = ctx.appRouter.createCaller({}, { signal }) as {
     ragSearch: (input: RagSearchInput) => Promise<RagSearchResponse>;
     chatComplete: (input: ChatCompleteInput) => Promise<unknown>;
   };
