@@ -30,6 +30,9 @@ beforeEach(() => {
   process.env["DEV_STORAGE"] = tmp;
   process.env["LLAMACTL_CONFIG"] = join(tmp, "kubeconfig");
   process.env["LLAMACTL_SIRIUS_PROVIDERS"] = join(tmp, "sirius-providers.yaml");
+  process.env["LOCAL_AI_RUNTIME_DIR"] = join(tmp, "runtime");
+  process.env["LOCAL_AI_CUSTOM_CATALOG_FILE"] = join(tmp, "absent-catalog.tsv");
+  process.env["LOCAL_AI_QUALIFICATION_OVERRIDES_FILE"] = join(tmp, "absent-overrides.tsv");
 });
 
 afterEach(() => {
@@ -75,6 +78,20 @@ function row(
   };
 }
 
+// #518: `qualificationStages` lands with the fix. The widened opts view lets
+// `gen` inject an empty stage map — and the new cases pass real ones — before
+// the option exists; the unknown key is ignored at runtime on the base rev.
+type GenEmbersynthOpts = NonNullable<Parameters<typeof generateEmbersynthConfig>[0]> & {
+  qualificationStages?: ReadonlyMap<string, string>;
+};
+
+const generateWithStages = generateEmbersynthConfig as unknown as (
+  opts: GenEmbersynthOpts,
+) => EmbersynthConfig;
+
+const gen = (o: GenEmbersynthOpts): EmbersynthConfig =>
+  generateWithStages({ qualificationStages: new Map<string, string>(), ...o });
+
 function agentNode(out: EmbersynthConfig, id: string): EmbersynthNode | undefined {
   return out.nodes.find((n) => n.id === id);
 }
@@ -108,7 +125,7 @@ describe("bench-driven priority", () => {
     ["5", 6],
     ["4.9", 8],
   ])('band edge gen_ts "%s" -> priority %s', (gen_ts, expectedPriority) => {
-    const out = generateEmbersynthConfig({
+    const out = gen({
       cfg: cfgWith(),
       benchHistory: [row("gpu1", gen_ts)],
       env: {},
@@ -117,7 +134,7 @@ describe("bench-driven priority", () => {
   });
 
   test.each(["n/a", "0", "-5", "Infinity"])("invalid gen_ts '%s' is skipped", (gen_ts) => {
-    const out = generateEmbersynthConfig({
+    const out = gen({
       cfg: cfgWith(),
       benchHistory: [row("gpu1", gen_ts)],
       env: {},
@@ -129,7 +146,7 @@ describe("bench-driven priority", () => {
   });
 
   test("only rows whose machine equals the node name count", () => {
-    const out = generateEmbersynthConfig({
+    const out = gen({
       cfg: cfgWith([
         { name: "gpu1", endpoint: "https://gpu1.lan:7843" },
         { name: "gpu2", endpoint: "https://gpu2.lan:7843" },
@@ -146,7 +163,7 @@ describe("bench-driven priority", () => {
   });
 
   test("the highest gen_ts wins regardless of position", () => {
-    const out = generateEmbersynthConfig({
+    const out = gen({
       cfg: cfgWith(),
       benchHistory: [
         row("gpu1", "20", "a.gguf", "4096"),
@@ -162,7 +179,7 @@ describe("bench-driven priority", () => {
   });
 
   test("a tie keeps the first row", () => {
-    const out = generateEmbersynthConfig({
+    const out = gen({
       cfg: cfgWith(),
       benchHistory: [
         row("gpu1", "30", "first.gguf", "4096"),
@@ -178,7 +195,7 @@ describe("bench-driven priority", () => {
   test.each(["auto", "0", "-5"])(
     "non-positive or non-numeric ctx '%s' drops optimization",
     (ctx) => {
-      const out = generateEmbersynthConfig({
+      const out = gen({
         cfg: cfgWith(),
         benchHistory: [row("gpu1", "72", "m.gguf", ctx)],
         env: {},
@@ -542,5 +559,87 @@ describe("storage", () => {
       saveEmbersynthConfig(bad, path);
     }).toThrow();
     expect(existsSync(path)).toBe(false);
+  });
+});
+
+describe("experimental bench rows (#518)", () => {
+  test("an experimental bench row never wins the agent's model", () => {
+    // Kills: removing the experimental skip in summarizeBenchForMachine — on
+    // base the gen-90 experimental row wins with priority 1.
+    const out = gen({
+      cfg: cfgWith(),
+      benchHistory: [
+        row("gpu1", "90", "exp.gguf", "16384"),
+        row("gpu1", "20", "stable.gguf", "4096"),
+      ],
+      env: {},
+      qualificationStages: new Map([["exp.gguf", "experimental"]]),
+    });
+    const gpu1 = agentNode(out, "agent-gpu1");
+    expect(gpu1?.modelId).toBe("stable.gguf");
+    expect(gpu1?.priority).toBe(4);
+    expect(gpu1?.optimization?.contextWindow).toBe(4096);
+  });
+
+  test("an agent whose bench rows are all experimental falls back to defaults", () => {
+    // Kills: the same summarizeBenchForMachine skip — with every row
+    // experimental the summary must be empty, not the fastest row.
+    const out = gen({
+      cfg: cfgWith(),
+      benchHistory: [
+        row("gpu1", "90", "exp.gguf", "16384"),
+        row("gpu1", "80", "exp2.gguf", "8192"),
+      ],
+      env: {},
+      qualificationStages: new Map([
+        ["exp.gguf", "experimental"],
+        ["exp2.gguf", "experimental"],
+      ]),
+    });
+    const gpu1 = agentNode(out, "agent-gpu1");
+    expect(gpu1?.modelId).toBe("default");
+    expect(gpu1?.priority).toBe(5);
+    expect(gpu1?.optimization).toBeUndefined();
+  });
+
+  test("the default stage reader marks the builtin experimental rel", () => {
+    // Kills: a default reader that ignores the builtin catalog — the GLM AJ
+    // rel is staged experimental in BUILTIN_CATALOG, so the gen-20 stable
+    // row must win even with no qualificationStages injection. The
+    // beforeEach LOCAL_AI_* paths keep custom catalog and overrides reads
+    // inside tmp.
+    const GLM_REL = "GLM-5.3-Flash-AJ-GGUF/AJ-IQ2_XXS/GLM-5.3-Flash-AJ-IQ2_XXS-00001-of-00002.gguf";
+    const glmRows = [row("gpu1", "90", GLM_REL, "16384"), row("gpu1", "20", "stable.gguf", "4096")];
+    const out = generateEmbersynthConfig({
+      cfg: cfgWith(),
+      benchHistory: glmRows,
+      env: {
+        DEV_STORAGE: tmp,
+        LOCAL_AI_RUNTIME_DIR: join(tmp, "runtime"),
+        LOCAL_AI_CUSTOM_CATALOG_FILE: join(tmp, "absent.tsv"),
+      },
+    });
+    expect(agentNode(out, "agent-gpu1")?.modelId).toBe("stable.gguf");
+  });
+
+  test("a non-experimental staged row still wins on gen_ts", () => {
+    // Guard, not RED: kills "skip every staged row" — only the experimental
+    // stage excludes a bench row; validated stays eligible.
+    const out = gen({
+      cfg: cfgWith(),
+      benchHistory: [
+        row("gpu1", "90", "val.gguf", "16384"),
+        row("gpu1", "20", "stable.gguf", "4096"),
+      ],
+      env: {},
+      qualificationStages: new Map([
+        ["val.gguf", "validated"],
+        ["stable.gguf", "experimental"],
+      ]),
+    });
+    const gpu1 = agentNode(out, "agent-gpu1");
+    expect(gpu1?.modelId).toBe("val.gguf");
+    expect(gpu1?.priority).toBe(1);
+    expect(gpu1?.optimization?.contextWindow).toBe(16384);
   });
 });

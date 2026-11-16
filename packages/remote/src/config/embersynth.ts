@@ -7,6 +7,7 @@ import {
   LOCAL_NODE_ENDPOINT,
   resolveNodeKind,
 } from "@llamactl/core/config/schema";
+import { catalogQualificationStages } from "@llamactl/core/workloadRuntime";
 import { dirname, join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { z } from "zod";
@@ -180,10 +181,14 @@ interface BenchSummary {
 function summarizeBenchForMachine(
   rows: readonly BenchHistoryEntry[],
   machine: string,
+  stages: ReadonlyMap<string, string>,
 ): BenchSummary | null {
   let best: BenchSummary | null = null;
   for (const r of rows) {
-    if (r.machine !== machine) continue;
+    // #518: the bench scorer must never pick an experimental rel as a fusion
+    // node's modelId, because that becomes an implicit pin under every
+    // fusion-* profile, including the private-first task-kind fallback.
+    if (r.machine !== machine || stages.get(r.rel) === "experimental") continue;
     const gen = Number.parseFloat(r.gen_ts);
     if (!Number.isFinite(gen) || gen <= 0) continue;
     if (best && gen <= best.genTps) continue;
@@ -323,11 +328,29 @@ function readLocalBenchRows(env: NodeJS.ProcessEnv): readonly BenchHistoryEntry[
   }
 }
 
+/**
+ * Single reader for the qualification stage of each catalog rel (#518).
+ * Returns the catalog's stage map (custom catalog rows, builtin rows and
+ * qualification pin overrides all applied) so the bench scorer and the CLI
+ * agree on which rels are experimental. Degrades to an empty map when the
+ * environment cannot be resolved.
+ */
+export function embersynthQualificationStages(
+  env: NodeJS.ProcessEnv = process.env,
+): ReadonlyMap<string, string> {
+  try {
+    return catalogQualificationStages(envMod.resolveEnv(env));
+  } catch {
+    return new Map<string, string>();
+  }
+}
+
 function collectAgentEmbersynthNodes(
   cluster: Config["clusters"][number] | undefined,
   user: Config["users"][number] | undefined,
   env: NodeJS.ProcessEnv,
   benchRows: readonly BenchHistoryEntry[],
+  stages: ReadonlyMap<string, string>,
 ): EmbersynthNode[] {
   const nodes: EmbersynthNode[] = [];
   for (const n of cluster?.nodes ?? []) {
@@ -343,7 +366,7 @@ function collectAgentEmbersynthNodes(
     } catch {
       continue;
     }
-    const summary = summarizeBenchForMachine(benchRows, n.name);
+    const summary = summarizeBenchForMachine(benchRows, n.name, stages);
     nodes.push(agentToEmbersynthNode(n, token, summary));
   }
   return nodes;
@@ -377,6 +400,13 @@ export function generateEmbersynthConfig(opts?: {
    * deterministic.
    */
   benchHistory?: readonly BenchHistoryEntry[];
+  /**
+   * Test seam (#518): qualification stage per rel. When omitted, the
+   * generator reads it from the environment via
+   * {@link embersynthQualificationStages}, and only when there are bench
+   * rows to score.
+   */
+  qualificationStages?: ReadonlyMap<string, string>;
 }): EmbersynthConfig {
   const cfg = opts?.cfg ?? loadConfig();
   const env = opts?.env ?? process.env;
@@ -391,9 +421,16 @@ export function generateEmbersynthConfig(opts?: {
   // initiated locally or in-proc, plus any records a user copied in.
   const benchRows: readonly BenchHistoryEntry[] = opts?.benchHistory ?? readLocalBenchRows(env);
 
+  // #518: qualification stages gate which bench rels may become a fusion
+  // node's modelId. Read lazily, and only when there are bench rows to
+  // score, so an empty history never touches catalog files.
+  const qualificationStages: ReadonlyMap<string, string> =
+    opts?.qualificationStages ??
+    (benchRows.length > 0 ? embersynthQualificationStages(env) : new Map<string, string>());
+
   // Agents first, then sirius-provider entries.
   const nodes: EmbersynthNode[] = [
-    ...collectAgentEmbersynthNodes(cluster, user, env, benchRows),
+    ...collectAgentEmbersynthNodes(cluster, user, env, benchRows, qualificationStages),
     ...collectSiriusEmbersynthNodes(),
   ];
 

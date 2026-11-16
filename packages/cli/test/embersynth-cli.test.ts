@@ -41,6 +41,9 @@ beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), "llamactl-embersynth-cli-"));
   originalEnv = { ...process.env };
   process.env["DEV_STORAGE"] = tmp;
+  process.env["LOCAL_AI_RUNTIME_DIR"] = join(tmp, "runtime");
+  process.env["LOCAL_AI_CUSTOM_CATALOG_FILE"] = join(tmp, "absent-catalog.tsv");
+  process.env["LOCAL_AI_QUALIFICATION_OVERRIDES_FILE"] = join(tmp, "absent-overrides.tsv");
   Reflect.deleteProperty(process.env, "LLAMACTL_CONFIG");
   Reflect.deleteProperty(process.env, "LLAMACTL_EMBERSYNTH_CONFIG");
   Reflect.deleteProperty(process.env, "LLAMACTL_SIRIUS_PROVIDERS");
@@ -245,6 +248,32 @@ describe("embersynth promote-private", () => {
     expect(stdout).toContain("eligible private-tagged nodes (1):");
     expect(stdout).toContain("    - mac-a → https://mac-a:7843/v1");
     expect(stdout.includes("cloud-b")).toBe(false);
+  });
+
+  test("exits 1 for a builtin experimental rel", async () => {
+    // Kills: removing the experimental gate in runPromotePrivate — on base
+    // the builtin GLM AJ rel (staged experimental in BUILTIN_CATALOG) prints
+    // the routable text and exits 0.
+    const file = join(tmp, "embersynth.yaml");
+    writeEmbersynthFixture(file, {
+      profiles: [PRIVATE_FIRST_PROFILE],
+      nodes: [
+        { id: "mac-a", label: "mac-a", endpoint: "https://mac-a:7843/v1", tags: ["private"] },
+        { id: "cloud-b", label: "cloud-b", endpoint: "https://cloud-b/v1", tags: ["cloud"] },
+      ],
+    });
+    const { result, stdout, stderr } = await captureProcessStreams(() =>
+      runEmbersynth([
+        "promote-private",
+        "GLM-5.3-Flash-AJ-GGUF/AJ-IQ2_XXS/GLM-5.3-Flash-AJ-IQ2_XXS-00001-of-00002.gguf",
+        "--path",
+        file,
+      ]),
+    );
+    expect(result).toBe(1);
+    expect(stderr).toContain("is experimental");
+    expect(stderr).toContain("exact model pin");
+    expect(stdout).not.toContain("routable under fusion-private-first");
   });
 });
 
