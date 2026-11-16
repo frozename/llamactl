@@ -132,11 +132,11 @@ interface RankedOutcome {
   acquired: string[];
 }
 
-async function serveRanked(
+function rankedProxy(
   ads: readonly routingCatalog.RouteAdvertisementV1[],
   signals?: RankingSignals,
   residencyPolicy?: ProxyResidencyPolicy,
-): Promise<RankedOutcome> {
+): { proxy: ReturnType<typeof createProxy>; acquired: string[] } {
   const cat = routingCatalog.buildRouteCatalog({
     routes: [],
     nodeId: "local",
@@ -161,6 +161,15 @@ async function serveRanked(
     ...(signals !== undefined ? { rankingSignals: signals } : {}),
     ...(residencyPolicy !== undefined ? { residencyPolicy } : {}),
   });
+  return { proxy, acquired };
+}
+
+async function serveRanked(
+  ads: readonly routingCatalog.RouteAdvertisementV1[],
+  signals?: RankingSignals,
+  residencyPolicy?: ProxyResidencyPolicy,
+): Promise<RankedOutcome> {
+  const { proxy, acquired } = rankedProxy(ads, signals, residencyPolicy);
   const response = await proxy.handleRequest(chatReq());
   return { status: response.status, acquired };
 }
@@ -339,6 +348,30 @@ describe("unified proxy residency policy ranking knobs (Part of #519)", () => {
       coldLoadPenaltyMs: 40_000,
     });
     expect(status).toBe(200);
+    expect(acquired.at(-1)).toBe("node-b");
+  });
+
+  test("a residencyPolicy getter supplies the knobs to ranking", async () => {
+    // Kills: ignoring the getter form of residencyPolicy, or treating it as
+    // () => null (F7 would stay on node-a).
+    const { status, acquired } = await serveRanked(F7.ads, F7.signals, () => ({
+      coldLoadPenaltyMs: 40_000,
+    }));
+    expect(status).toBe(200);
+    expect(acquired.at(-1)).toBe("node-b");
+  });
+
+  test("the residencyPolicy getter is re-read on every request", async () => {
+    // Kills: reading the getter once at createProxy time and caching the
+    // result (the second request would stay on node-a).
+    let policy: PolicyKnobs | null = null;
+    const { proxy, acquired } = rankedProxy(F7.ads, F7.signals, () => policy);
+    const first = await proxy.handleRequest(chatReq());
+    expect(first.status).toBe(200);
+    expect(acquired.at(-1)).toBe("node-a");
+    policy = { coldLoadPenaltyMs: 40_000 };
+    const second = await proxy.handleRequest(chatReq());
+    expect(second.status).toBe(200);
     expect(acquired.at(-1)).toBe("node-b");
   });
 

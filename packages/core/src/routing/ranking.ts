@@ -143,10 +143,9 @@ export function rankRouteCandidates(
       const ad = candidate.advertisement;
       const qualityPoints = qualityPointsOf(ad);
       const switchCost = switchCostMs(ad, opts.now, signals, weights, policy);
-      const residentBonus =
-        signals.resident !== undefined && isResident(ad, signals)
-          ? policy.residentPreference * weights.msPerQualityPoint
-          : 0;
+      const residentBonus = isResident(ad, signals)
+        ? policy.residentPreference * weights.msPerQualityPoint
+        : 0;
       return {
         candidate,
         index,
