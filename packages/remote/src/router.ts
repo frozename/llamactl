@@ -1724,9 +1724,11 @@ export const router = t.router({
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ ...input.request, stream: false }),
+          ...(signal !== undefined ? { signal } : {}),
         });
         const res = await dispatchProxyRequest(req);
         if (!res.ok) {
+          await res.body?.cancel().catch(() => undefined);
           throw new TRPCError({
             code: "INTERNAL_SERVER_ERROR",
             message: `local chat ${String(res.status)}`,
