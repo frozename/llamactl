@@ -1707,11 +1707,14 @@ export interface StopServerResult {
    */
   killed: boolean;
   /**
-   * Set only by the node-side residency lease fence (#278), never by
-   * `stopServer` itself: which lease-backed refusal blocked the stop and the
-   * lease ids that were active at refusal time.
+   * Set only by the node-side residency fence (#278 leases, #520 sessions),
+   * never by `stopServer` itself: which registry refusal blocked the stop
+   * and the lease or session ids that were active at refusal time.
    */
-  refused?: { reason: "LeasesActive" | "DrainInProgress"; active: string[] };
+  refused?: {
+    reason: "LeasesActive" | "DrainInProgress" | "SessionsActive" | "SessionsUnknown";
+    active: string[];
+  };
 }
 
 /**

@@ -17,13 +17,26 @@
  * #677 rollback). The stop RESULT is still byte-identical when no registry is
  * published; the only addition is that the workload's local routes are withdrawn
  * for the stop's duration.
+ *
+ * #520: the session-refcount registry composes the same way — sessions refuse
+ * like leases. After a successful beginDrain and the LeasesActive check (which
+ * keeps precedence), checkUnload runs in the same synchronous tick; a live
+ * session refuses SessionsActive and a throwing registry SessionsUnknown, and
+ * the drain is cancelled either way — before any route withdrawal or stop. The
+ * fence never releases sessions; the explicit override is
+ * `residency force-unload`.
  */
 
 import { openaiProxy } from "@llamactl/core";
 import { getResidencyLeaseRegistry, type ResidencyLeases } from "@llamactl/core/residency/leases";
+import {
+  currentSessionRefcounts,
+  type SessionRefcounts,
+  type SessionUnloadCheck,
+} from "@llamactl/core/residency/sessions";
 
 export type StopFenceRefusal = {
-  reason: "LeasesActive" | "DrainInProgress";
+  reason: "LeasesActive" | "DrainInProgress" | "SessionsActive" | "SessionsUnknown";
   active: string[];
 };
 
@@ -33,6 +46,7 @@ export interface FenceWorkloadStopOptions<R> {
   isVerifiedStop: (r: R) => boolean;
   refuse: (f: StopFenceRefusal) => R;
   registry?: ResidencyLeases | null;
+  sessions?: SessionRefcounts | null;
 }
 
 async function withRouteWithdrawn<R>(workload: string, run: () => Promise<R>): Promise<R> {
@@ -58,6 +72,20 @@ async function runFenced<R>(
   if (d.active.length > 0) {
     registry.cancelDrain(d.token);
     return opts.refuse({ reason: "LeasesActive", active: d.active });
+  }
+  const sessions = opts.sessions === undefined ? currentSessionRefcounts() : opts.sessions;
+  if (sessions !== null) {
+    let check: SessionUnloadCheck;
+    try {
+      check = sessions.checkUnload(opts.workload);
+    } catch {
+      registry.cancelDrain(d.token);
+      return opts.refuse({ reason: "SessionsUnknown", active: [] });
+    }
+    if (!check.ok) {
+      registry.cancelDrain(d.token);
+      return opts.refuse({ reason: "SessionsActive", active: [...check.sessions] });
+    }
   }
   return await withRouteWithdrawn(opts.workload, async () => {
     let r: R;

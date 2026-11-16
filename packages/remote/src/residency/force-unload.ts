@@ -7,8 +7,16 @@
 // sink persists the entry. Note that core audits only revocations, so an idle
 // force-unload (no leases held) writes no lease-audit row; a typed `source`
 // column on the audit and an idle-unload audit record are follow-ups.
+//
+// #520: the same drain also drops the workload's session refcounts — the
+// explicit force is the override for the stop fence's SessionsActive
+// refusal. forceRelease runs under the drain before commitUnload, and a
+// failed stop leaves the sessions dropped, like the revoked leases staying
+// revoked.
 
 import type { ResidencyLeases } from "@llamactl/core/residency/leases";
+
+import { currentSessionRefcounts, type SessionRefcounts } from "@llamactl/core/residency/sessions";
 
 export const OPERATOR_FORCE_UNLOAD_SOURCE = "operator" as const;
 
@@ -22,6 +30,7 @@ export type ForceUnloadWorkloadOptions = {
   kind: ForceUnloadKind | null;
   registry: ResidencyLeases | null;
   stop: ForceUnloadStop;
+  sessions?: SessionRefcounts | null;
 };
 
 export type ForceUnloadResult =
@@ -31,6 +40,7 @@ export type ForceUnloadResult =
       kind: ForceUnloadKind;
       epoch: number;
       revoked: string[];
+      releasedSessions: string[];
       stopped: true;
       source: typeof OPERATOR_FORCE_UNLOAD_SOURCE;
       reason: string;
@@ -44,8 +54,25 @@ export type ForceUnloadResult =
       reason: "StopFailed";
       workload: string;
       revoked: string[];
+      releasedSessions: string[];
       detail: string;
     };
+
+/** Drops the workload's session refcounts under the caller's drain. An
+ * explicit `null` skips the release; `undefined` resolves the installed
+ * process-wide registry. A throwing registry is reported, never swallowed. */
+function forceReleaseSessions(
+  sessions: SessionRefcounts | null | undefined,
+  workload: string,
+): { ok: true; sessions: string[] } | { ok: false; error: string } {
+  const registry = sessions === undefined ? currentSessionRefcounts() : sessions;
+  if (registry === null) return { ok: true, sessions: [] };
+  try {
+    return { ok: true, sessions: registry.forceRelease(workload) };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
 
 export async function forceUnloadWorkload(
   opts: ForceUnloadWorkloadOptions,
@@ -88,11 +115,24 @@ export async function forceUnloadWorkload(
     };
   }
 
+  const released = forceReleaseSessions(opts.sessions, workload);
+  if (!released.ok) {
+    registry.cancelDrain(d.token);
+    return {
+      ok: false,
+      reason: "Unavailable",
+      workload,
+      detail: `session registry could not release ${workload} (${released.error}); nothing was unloaded or stopped`,
+    };
+  }
+  const releasedSessions = released.sessions;
+
   const c = registry.commitUnload(d.token, { force: true, reason: `operator: ${reason}` });
   if (!c.ok) {
-    // A forced commit refuses only a stale token (the epoch moved or the
-    // phase left draining). cancelDrain is then a no-op that releases nothing
-    // it does not own; the engine is not stopped.
+    // Unreachable in-tick: nothing between beginDrain and commitUnload
+    // yields, so the drain token cannot go stale. Kept as a guard —
+    // cancelDrain is then a no-op that releases nothing it does not own;
+    // the engine is not stopped.
     registry.cancelDrain(d.token);
     return {
       ok: false,
@@ -120,6 +160,7 @@ export async function forceUnloadWorkload(
       kind,
       epoch: d.token.epoch,
       revoked: c.revoked,
+      releasedSessions,
       stopped: true,
       source: OPERATOR_FORCE_UNLOAD_SOURCE,
       reason,
@@ -127,13 +168,15 @@ export async function forceUnloadWorkload(
   }
 
   // The stop failed or was unverified: the engine may still be serving, so
-  // reopen admission at the committed epoch. The revoked leases stay revoked.
+  // reopen admission at the committed epoch. The revoked leases and the
+  // released sessions stay released.
   registry.reopen(d.token);
   return {
     ok: false,
     reason: "StopFailed",
     workload,
     revoked: c.revoked,
+    releasedSessions,
     detail: detail ?? "stop not verified",
   };
 }

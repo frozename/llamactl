@@ -21,6 +21,11 @@ import {
   type ResidencyLeases,
   setResidencyLeaseRegistry,
 } from "@llamactl/core/residency/leases";
+import {
+  createSessionRefcounts,
+  type SessionRefcounts,
+  setSessionRefcountRegistry,
+} from "@llamactl/core/residency/sessions";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 
@@ -144,6 +149,14 @@ function acquireHeldLease(reg: ResidencyLeases, workload: string): Lease {
   return acquired.lease;
 }
 
+function idleLiveSession(sessions: SessionRefcounts, id: string, workload: string): void {
+  const acquired = sessions.acquire(id, workload);
+  if (!acquired.ok) {
+    throw new Error(`session acquire(${id} on ${workload}) refused`);
+  }
+  sessions.release(id, acquired.generation);
+}
+
 /**
  * Hybrid WorkloadClient for the evict-lease fence: status queries are
  * scripted per workload (the victim reports up until its fenced stop
@@ -152,7 +165,10 @@ function acquireHeldLease(reg: ResidencyLeases, workload: string): Lease {
  * verified stop flips victimDown; a refused result never does. Any stop
  * aimed at a workload other than the victim throws.
  */
-function makeEvictClient(victim: EvictVictimSpec): EvictClientRig {
+function makeEvictClient(
+  victim: EvictVictimSpec,
+  hooks?: { onVictimStatus?: () => void },
+): EvictClientRig {
   const caller = router.createCaller({}) as unknown as LeaseStopCaller;
   const state = { victimDown: false };
   const starts: string[] = [];
@@ -167,6 +183,7 @@ function makeEvictClient(victim: EvictVictimSpec): EvictClientRig {
   const client: WorkloadClient = {
     serverStatus: {
       query: (input): ReturnType<WorkloadClient["serverStatus"]["query"]> => {
+        if (input.workload === victim.name) hooks?.onVictimStatus?.();
         count(serverStatusCalls, input.workload);
         if (victim.kind === "ModelRun" && input.workload === victim.name && !state.victimDown) {
           return Promise.resolve({
@@ -248,6 +265,7 @@ function makeEvictClient(victim: EvictVictimSpec): EvictClientRig {
     },
     modelHostStatus: {
       query: (input): ReturnType<WorkloadClient["modelHostStatus"]["query"]> => {
+        if (input.workload === victim.name) hooks?.onVictimStatus?.();
         count(modelHostStatusCalls, input.workload);
         if (victim.kind === "ModelHost" && input.workload === victim.name && !state.victimDown) {
           return Promise.resolve({ state: "Running", pid: 4242 });
@@ -298,6 +316,7 @@ beforeEach(() => {
 
 afterEach(() => {
   setResidencyLeaseRegistry(null);
+  setSessionRefcountRegistry(null);
   for (const key of Object.keys(process.env)) Reflect.deleteProperty(process.env, key);
   Object.assign(process.env, savedEnv);
   temp.cleanup();
@@ -646,5 +665,183 @@ describe("applyOne evict lease fence (#278 DF-05)", () => {
     expect(result.action).toBe("pending");
     expect(stopCalls).toEqual(["victim"]);
     expect(rig.starts).toEqual([]);
+  });
+});
+
+describe("#520 session fence on eviction (DF-05 composition)", () => {
+  test("E1: a session arriving between the gate re-check and the fenced ModelRun stop refuses the eviction until it idles out", async () => {
+    // Kills: no session check inside the DF-05 stop fence (the fenced
+    // serverStop proceeds and the apply starts the replacement), or no
+    // SessionsActive classification in EVICT_VICTIM_OPS.ModelRun.stop
+    // (the refusal degrades to EvictStopRefused).
+    saveWorkload(mkManifest("victim", { port: 8182 }), workloadsDir);
+    const leases = createResidencyLeases();
+    setResidencyLeaseRegistry(leases);
+    let clock = 0;
+    const sessions = createSessionRefcounts({ idleTimeoutMs: 1000, now: () => clock });
+    setSessionRefcountRegistry(sessions);
+    let sessionArrived = false;
+    const rig = makeEvictClient(
+      { name: "victim", kind: "ModelRun", rel: "victim.gguf", port: 8182 },
+      {
+        onVictimStatus: () => {
+          if (sessionArrived) return;
+          sessionArrived = true;
+          idleLiveSession(sessions, "sess-late", "victim");
+        },
+      },
+    );
+    const { events, onEvent } = makeEventRecorder();
+    const incoming = mkManifest("replacement", {
+      annotations: { "llamactl.io/evict": "victim" },
+      port: 8090,
+    });
+    const opts = { workloadsDir, env, getNodeBudgetGiB: (): number => 32 };
+
+    const result = await applyOne(incoming, () => rig.client, onEvent, undefined, opts);
+
+    expect(result.statusSection.conditions[0]?.reason).toBe("EvictSessionActive");
+    expect(result.error).toContain("(EvictSessionActive): SessionsActive: sess-late");
+    expect(result.action).toBe("pending");
+    expect(rig.starts).toEqual([]);
+    expect(rig.victimDown).toBe(false);
+    expect(rig.serverStops).toHaveLength(1);
+    expect(rig.serverStops[0]?.result.refused).toEqual({
+      reason: "SessionsActive",
+      active: ["sess-late"],
+    });
+    expect(leases.snapshot("victim")).toEqual({
+      workload: "victim",
+      phase: "open",
+      epoch: 1,
+      active: [],
+      waiters: 0,
+    });
+    expect(
+      loadWorkloadByNameAny("victim", workloadsDir).metadata.annotations?.[
+        "llamactl.io/evicted-by"
+      ],
+    ).toBeUndefined();
+    expect(sessions.activeSessions("victim")).toEqual(["sess-late"]);
+    const evictFailed = events.find((e) => e.type === "evict-failed");
+    expect(evictFailed?.message).toContain("SessionsActive");
+
+    clock += 1000;
+    const retry = await applyOne(incoming, () => rig.client, onEvent, undefined, opts);
+
+    expect(retry.action).toBe("started");
+    expect(rig.victimDown).toBe(true);
+    expect(leases.snapshot("victim")).toEqual({
+      workload: "victim",
+      phase: "unloaded",
+      epoch: 2,
+      active: [],
+      waiters: 0,
+    });
+  });
+
+  test("E2: a session arriving before a ModelHost victim's fenced stop refuses the eviction as EvictSessionActive", async () => {
+    // Kills: a missing SessionsActive classification in the ModelHost
+    // stop-error mapping (the refusal degrades to EvictStopRefused).
+    saveModelHost(
+      mkModelHostManifest("resident-host", { resources: { expectedMemoryGiB: 24 } }),
+      workloadsDir,
+    );
+    const leases = createResidencyLeases();
+    setResidencyLeaseRegistry(leases);
+    const sessions = createSessionRefcounts({ idleTimeoutMs: 1000, now: () => 0 });
+    setSessionRefcountRegistry(sessions);
+    let sessionArrived = false;
+    const rig = makeEvictClient(
+      { name: "resident-host", kind: "ModelHost", rel: "resident-host.gguf", port: 18094 },
+      {
+        onVictimStatus: () => {
+          if (sessionArrived) return;
+          sessionArrived = true;
+          idleLiveSession(sessions, "sess-late", "resident-host");
+        },
+      },
+    );
+    const { onEvent } = makeEventRecorder();
+    const incoming = mkManifest("incoming-run", {
+      ram: 8,
+      annotations: { "llamactl.io/evict": "resident-host" },
+    });
+
+    const result = await applyOne(incoming, () => rig.client, onEvent, undefined, {
+      workloadsDir,
+      env,
+      getNodeBudgetGiB: (): number => 24,
+    });
+
+    expect(result.statusSection.conditions[0]?.reason).toBe("EvictSessionActive");
+    expect(result.error).toContain("(EvictSessionActive): SessionsActive: sess-late");
+    expect(result.action).toBe("pending");
+    expect(rig.starts).toEqual([]);
+    expect(rig.victimDown).toBe(false);
+    expect(rig.modelHostStops).toHaveLength(1);
+    expect(rig.modelHostStops[0]?.result.ok).toBe(false);
+    expect(leases.snapshot("resident-host")).toMatchObject({
+      phase: "open",
+      epoch: 1,
+      active: [],
+    });
+    expect(sessions.activeSessions("resident-host")).toEqual(["sess-late"]);
+  });
+
+  test("E3: a session registry whose checkUnload throws at the fenced stop refuses the eviction as EvictSessionUnknown", async () => {
+    // Kills: an unmapped SessionsUnknown refusal (degrades to
+    // EvictStopRefused) or a fence that fails open on a throwing
+    // registry.
+    saveWorkload(mkManifest("victim", { port: 8182 }), workloadsDir);
+    const leases = createResidencyLeases();
+    setResidencyLeaseRegistry(leases);
+    const real = createSessionRefcounts({ idleTimeoutMs: 1000, now: () => 0 });
+    let broken = false;
+    const wrapped: SessionRefcounts = {
+      ...real,
+      checkUnload: (w: string, o?: { force?: boolean }) => {
+        if (broken) {
+          throw new Error("registry offline");
+        }
+        return real.checkUnload(w, o);
+      },
+    };
+    setSessionRefcountRegistry(wrapped);
+    const rig = makeEvictClient(
+      { name: "victim", kind: "ModelRun", rel: "victim.gguf", port: 8182 },
+      {
+        onVictimStatus: () => {
+          broken = true;
+        },
+      },
+    );
+    const { onEvent } = makeEventRecorder();
+    const incoming = mkManifest("replacement", {
+      annotations: { "llamactl.io/evict": "victim" },
+      port: 8090,
+    });
+
+    const result = await applyOne(incoming, () => rig.client, onEvent, undefined, {
+      workloadsDir,
+      env,
+      getNodeBudgetGiB: (): number => 32,
+    });
+
+    expect(result.statusSection.conditions[0]?.reason).toBe("EvictSessionUnknown");
+    expect(result.error).toContain("(EvictSessionUnknown): SessionsUnknown");
+    expect(result.action).toBe("pending");
+    expect(rig.starts).toEqual([]);
+    expect(rig.victimDown).toBe(false);
+    expect(rig.serverStops).toHaveLength(1);
+    expect(rig.serverStops[0]?.result.refused).toEqual({
+      reason: "SessionsUnknown",
+      active: [],
+    });
+    expect(leases.snapshot("victim")).toMatchObject({
+      phase: "open",
+      epoch: 1,
+      active: [],
+    });
   });
 });

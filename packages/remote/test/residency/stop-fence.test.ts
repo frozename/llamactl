@@ -18,6 +18,11 @@ import {
   type ResidencyLeases,
   setResidencyLeaseRegistry,
 } from "@llamactl/core/residency/leases";
+import {
+  createSessionRefcounts,
+  type SessionRefcounts,
+  setSessionRefcountRegistry,
+} from "@llamactl/core/residency/sessions";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -128,6 +133,7 @@ beforeEach(() => {
 afterEach(() => {
   killSpawnedServers();
   setResidencyLeaseRegistry(null);
+  setSessionRefcountRegistry(null);
   rmSync(tmp, { recursive: true, force: true });
   for (const k of Object.keys(process.env)) Reflect.deleteProperty(process.env, k);
   Object.assign(process.env, originalEnv);
@@ -971,5 +977,163 @@ spec:
       workload: HOST_REOPEN,
       epoch: 1,
     });
+  });
+});
+
+describe("#520 session refcounts under the DF-05 stop fence", () => {
+  function idleLiveSession(sessions: SessionRefcounts, id: string, workload: string): void {
+    const acquired = sessions.acquire(id, workload);
+    if (!acquired.ok) {
+      throw new Error(`session acquire(${id} on ${workload}) refused`);
+    }
+    sessions.release(id, acquired.generation);
+  }
+
+  function countingStop(): { stop: () => Promise<{ stopped: boolean }>; calls: () => number } {
+    let calls = 0;
+    return {
+      calls: (): number => calls,
+      stop: (): Promise<{ stopped: boolean }> => {
+        calls += 1;
+        return Promise.resolve({ stopped: true });
+      },
+    };
+  }
+
+  function runSessionFence(
+    fence: FenceModule,
+    leases: ResidencyLeases,
+    stop: () => Promise<{ stopped: boolean }>,
+  ): Promise<{ stopped: boolean } | { refused: FenceRefusal }> {
+    return fence.fenceWorkloadStop({
+      workload: "w",
+      registry: leases,
+      stop,
+      isVerifiedStop: () => true,
+      refuse: (f: FenceRefusal) => ({ refused: f }),
+    });
+  }
+
+  test("S1: an idle-live session refuses the stop as SessionsActive and cancels the drain", async () => {
+    // Kills: the fence ignoring the installed session registry (the stop
+    // runs and commits the unload), force-releasing sessions instead of
+    // refusing, or a missing cancelDrain (the workload stays draining).
+    const fence = await requireFence();
+    const leases = createResidencyLeases();
+    const clock = 0;
+    const sessions = createSessionRefcounts({ idleTimeoutMs: 1000, now: () => clock });
+    setSessionRefcountRegistry(sessions);
+    idleLiveSession(sessions, "sess-1", "w");
+    const counter = countingStop();
+
+    const result = await runSessionFence(fence, leases, counter.stop);
+
+    expect(result).toEqual({ refused: { reason: "SessionsActive", active: ["sess-1"] } });
+    expect(counter.calls()).toBe(0);
+    expect(leases.snapshot("w")).toMatchObject({ phase: "open", epoch: 1, active: [] });
+    expect(sessions.activeSessions("w")).toEqual(["sess-1"]);
+  });
+
+  test("S2: a session registry whose checkUnload throws refuses as SessionsUnknown without stopping", async () => {
+    // Kills: swallowing the checkUnload throw (the stop proceeds to
+    // unload) or treating the throw as an empty-ok check.
+    const fence = await requireFence();
+    const leases = createResidencyLeases();
+    const real = createSessionRefcounts({ idleTimeoutMs: 1000 });
+    let broken = false;
+    const wrapped: SessionRefcounts = {
+      ...real,
+      checkUnload: (w: string, o?: { force?: boolean }) => {
+        if (broken) {
+          throw new Error("registry offline");
+        }
+        return real.checkUnload(w, o);
+      },
+    };
+    setSessionRefcountRegistry(wrapped);
+    broken = true;
+    const counter = countingStop();
+
+    const result = await runSessionFence(fence, leases, counter.stop);
+
+    expect(result).toEqual({ refused: { reason: "SessionsUnknown", active: [] } });
+    expect(counter.calls()).toBe(0);
+    expect(leases.snapshot("w")).toMatchObject({ phase: "open", epoch: 1, active: [] });
+  });
+
+  test("S3: the same fence stops once the idle-live session has expired", async () => {
+    // Kills: a fence keyed on raw session entries rather than
+    // checkUnload's idle prune — an expired session must not keep
+    // refusing the stop.
+    const fence = await requireFence();
+    const leases = createResidencyLeases();
+    let clock = 0;
+    const sessions = createSessionRefcounts({ idleTimeoutMs: 1000, now: () => clock });
+    setSessionRefcountRegistry(sessions);
+    idleLiveSession(sessions, "sess-1", "w");
+    const counter = countingStop();
+
+    const refused = await runSessionFence(fence, leases, counter.stop);
+    expect(refused).toEqual({ refused: { reason: "SessionsActive", active: ["sess-1"] } });
+    expect(counter.calls()).toBe(0);
+
+    clock += 1000;
+    const stopped = await runSessionFence(fence, leases, counter.stop);
+
+    expect(stopped).toEqual({ stopped: true });
+    expect(counter.calls()).toBe(1);
+    expect(leases.snapshot("w")).toEqual({
+      workload: "w",
+      phase: "unloaded",
+      epoch: 2,
+      active: [],
+      waiters: 0,
+    });
+    expect(sessions.activeSessions("w")).toEqual([]);
+  });
+
+  test("S4: a session on another workload does not block the stop", async () => {
+    // GUARD — passes at base: pins that the session check (and any
+    // release) is scoped to the stopped workload, killing a mutant that
+    // checks or releases the wrong workload.
+    const fence = await requireFence();
+    const leases = createResidencyLeases();
+    const clock = 0;
+    const sessions = createSessionRefcounts({ idleTimeoutMs: 1000, now: () => clock });
+    setSessionRefcountRegistry(sessions);
+    idleLiveSession(sessions, "sess-1", "other");
+    const counter = countingStop();
+
+    const result = await runSessionFence(fence, leases, counter.stop);
+
+    expect(result).toEqual({ stopped: true });
+    expect(counter.calls()).toBe(1);
+    expect(leases.snapshot("w")).toMatchObject({ phase: "unloaded", epoch: 1, active: [] });
+    expect(sessions.activeSessions("other")).toEqual(["sess-1"]);
+  });
+
+  test("S5: a held lease still refuses as LeasesActive ahead of the session check", async () => {
+    // GUARD — passes at base: pins the refusal order — the lease drain
+    // refusal must pre-empt the session refusal, killing a mutant that
+    // checks sessions before leases.
+    const fence = await requireFence();
+    const leases = createResidencyLeases();
+    const clock = 0;
+    const sessions = createSessionRefcounts({ idleTimeoutMs: 1000, now: () => clock });
+    setSessionRefcountRegistry(sessions);
+    idleLiveSession(sessions, "sess-1", "w");
+    const acquired = leases.acquire("w");
+    if (!acquired.ok) {
+      throw new Error("expected lease acquire to succeed");
+    }
+    const counter = countingStop();
+
+    const result = await runSessionFence(fence, leases, counter.stop);
+
+    expect(result).toEqual({ refused: { reason: "LeasesActive", active: ["w#1"] } });
+    expect(counter.calls()).toBe(0);
+    expect(leases.snapshot("w")).toMatchObject({ phase: "open", epoch: 1, active: ["w#1"] });
+    expect(sessions.activeSessions("w")).toEqual(["sess-1"]);
+    expect(acquired.lease.release()).toBe(true);
   });
 });
