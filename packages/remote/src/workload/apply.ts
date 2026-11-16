@@ -538,19 +538,18 @@ async function disableModelHost(
 
 const NODE_FACTS_TIMEOUT_MS = 10_000;
 
-async function resolveModelHostBudgetGiB(
-  manifest: ModelHostManifest,
-  opts: Omit<ApplyManifestOptions, "manifest">,
+/**
+ * Query a remote node's live hardware memory and convert it to a budget
+ * envelope, returning null when the node is absent, rejects, or times out.
+ * A black-holed node must not stall admission: null resolves to an unknown
+ * budget (BudgetUnknown), because the controller's own RAM is never
+ * authoritative for a remote node (#274).
+ */
+async function verifiedNodeFactsBudgetGiB(
   client: WorkloadClient,
+  residency: ReturnType<NonNullable<ApplyOneOpts["getNodeResidency"]>> | undefined,
 ): Promise<number | null> {
-  const explicit = opts.getNodeBudgetGiB?.(manifest.spec.node);
-  if (explicit !== undefined) return explicit;
-  const residency = opts.getNodeResidency?.(manifest.spec.node);
-  if (manifest.spec.node === LOCAL_NODE_ID)
-    return defaultNodeBudgetGiB(undefined, undefined, residency);
-  // A black-holed node must not stall admission: absent, rejected or timed-out
-  // facts resolve to an unknown budget (BudgetUnknown), because the
-  // controller's own RAM is not authoritative for a remote node (#274).
+  if (!client.nodeFacts) return null;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const timeout = new Promise<null>((resolve) => {
@@ -558,8 +557,7 @@ async function resolveModelHostBudgetGiB(
         resolve(null);
       }, NODE_FACTS_TIMEOUT_MS);
     });
-    const query = client.nodeFacts?.query() ?? Promise.resolve(null);
-    const facts = await Promise.race([query.catch(() => null), timeout]);
+    const facts = await Promise.race([client.nodeFacts.query().catch(() => null), timeout]);
     const memBytes = facts?.memBytes;
     if (typeof memBytes === "number" && Number.isFinite(memBytes) && memBytes > 0) {
       return defaultNodeBudgetGiB(undefined, memBytes, residency);
@@ -570,9 +568,65 @@ async function resolveModelHostBudgetGiB(
   }
 }
 
+async function resolveModelHostBudgetGiB(
+  manifest: ModelHostManifest,
+  opts: Omit<ApplyManifestOptions, "manifest">,
+  client: WorkloadClient,
+): Promise<number | null> {
+  const explicit = opts.getNodeBudgetGiB?.(manifest.spec.node);
+  const residency = opts.getNodeResidency?.(manifest.spec.node);
+  // A non-local node whose identity does not resolve could alias a machine we
+  // are counting under another name. Its per-name budget is only trusted when
+  // nodeFacts independently confirms a live, addressable node; otherwise the
+  // charge fails closed rather than double-counting a shared physical node
+  // (#274). An explicit NodeRun budget still wins once the node is verified.
+  if (nodeIdentityUnresolved(opts, manifest.spec.node)) {
+    const verified = await verifiedNodeFactsBudgetGiB(client, residency);
+    if (verified === null) return null;
+    return explicit ?? verified;
+  }
+  if (explicit !== undefined) return explicit;
+  if (manifest.spec.node === LOCAL_NODE_ID)
+    return defaultNodeBudgetGiB(undefined, undefined, residency);
+  return await verifiedNodeFactsBudgetGiB(client, residency);
+}
+
 /** admitModelHostBudget's verified-victim set for the plain (non-eviction)
  *  ModelHost apply path — nothing was evicted, so nothing is excluded. */
 const NO_VERIFIED_EVICT_VICTIMS: ReadonlySet<string> = new Set();
+
+/**
+ * The memory charge a ModelHost contributes to node admission: the static
+ * estimate, upgraded to a measured-residency charge when the caller supplied
+ * a residency-admission seam with a policy for the target node.
+ */
+function modelHostExpectedMemoryGiB(
+  manifest: ModelHostManifest,
+  opts: Omit<ApplyManifestOptions, "manifest">,
+  resolved: ReturnType<typeof resolveEnv>,
+  estimateGiB: number | null,
+): number | null {
+  if (opts.residencyAdmission === undefined) return estimateGiB;
+  const policy = opts.residencyAdmission.getNodeResidencyPolicy(manifest.spec.node);
+  const policyPresent = policy !== null && policy !== undefined;
+  const envelope = policyPresent
+    ? opts.residencyAdmission.getMeasuredEnvelope(manifest)
+    : undefined;
+  const candidateKey = policyPresent
+    ? (opts.residencyAdmission.getCandidateCalibrationKey(manifest) ?? undefined)
+    : undefined;
+  const nowMs = policyPresent ? (opts.residencyAdmission.nowMs?.() ?? Date.now()) : undefined;
+  return modelHostAdmissionChargeGiB({
+    estimateGiB,
+    residencyPolicyPresent: policyPresent,
+    envelope,
+    candidateKey,
+    nowMs,
+    ...(opts.residencyAdmission.maxAgeMs !== undefined
+      ? { maxAgeMs: opts.residencyAdmission.maxAgeMs }
+      : {}),
+  });
+}
 
 function admitModelHostBudget(
   manifest: ModelHostManifest,
@@ -583,34 +637,14 @@ function admitModelHostBudget(
   verified: ReadonlySet<string>,
 ): { ok: false; error: string; reason: AdmissionRefusalReason } | null {
   const workloadsDir = opts.workloadsDir ?? defaultWorkloadsDir(opts.env);
+  const sameNode = nodeIdentityMatcher(opts, manifest.spec.node);
   const livingManifests = listAnyWorkloadsForAdmission(workloadsDir, resolved)
     .filter((m) => m.metadata.name !== manifest.metadata.name)
     .filter((m) => !verified.has(m.metadata.name))
-    .filter((m) => m.spec.node === manifest.spec.node)
+    .filter((m) => sameNode(m.spec.node))
     .filter((m) => m.spec.enabled);
   const estimateGiB = estimateModelHostMemoryGiB(manifest, resolved);
-  let expectedMemoryGiB = estimateGiB;
-  if (opts.residencyAdmission !== undefined) {
-    const policy = opts.residencyAdmission.getNodeResidencyPolicy(manifest.spec.node);
-    const policyPresent = policy !== null && policy !== undefined;
-    const envelope = policyPresent
-      ? opts.residencyAdmission.getMeasuredEnvelope(manifest)
-      : undefined;
-    const candidateKey = policyPresent
-      ? (opts.residencyAdmission.getCandidateCalibrationKey(manifest) ?? undefined)
-      : undefined;
-    const nowMs = policyPresent ? (opts.residencyAdmission.nowMs?.() ?? Date.now()) : undefined;
-    expectedMemoryGiB = modelHostAdmissionChargeGiB({
-      estimateGiB,
-      residencyPolicyPresent: policyPresent,
-      envelope,
-      candidateKey,
-      nowMs,
-      ...(opts.residencyAdmission.maxAgeMs !== undefined
-        ? { maxAgeMs: opts.residencyAdmission.maxAgeMs }
-        : {}),
-    });
-  }
+  const expectedMemoryGiB = modelHostExpectedMemoryGiB(manifest, opts, resolved, estimateGiB);
   const admit = computeNodeBudget({
     nodeName: manifest.spec.node,
     nodeBudgetGiB: budget,
@@ -634,9 +668,15 @@ function admitModelHostBudget(
     },
     forceAdmit: false,
     supportsForceAdmit: false,
+    sameNode,
   });
   if (!admit.ok) {
-    return { ok: false, error: admit.reason, reason: admissionConditionReason(admit.kind) };
+    const unresolved = nodeIdentityUnresolved(opts, manifest.spec.node);
+    const error =
+      admit.kind === "unknown-budget" && unresolved
+        ? `${unresolvedIdentityReason(manifest.spec.node)}; ${admit.reason}`
+        : admit.reason;
+    return { ok: false, error, reason: admissionConditionReason(admit.kind) };
   }
   return null;
 }
@@ -785,34 +825,40 @@ async function applyModelHostManifest(
   // pass runs under the node lock; the reconciler never holds that lock,
   // so nothing nests.
   if (parseEvictTargets(manifest).length > 0) {
-    return await withNodeLock(manifest.spec.node, () =>
+    return await withAdmissionLock(opts, manifest.spec.node, () =>
       applyModelHostReplacement(manifest, opts, client, resolved, firstHostedModel),
     );
   }
 
-  const budget = await resolveModelHostBudgetGiB(manifest, opts, client);
-  const rejected = admitModelHostBudget(
-    manifest,
-    opts,
-    resolved,
-    firstHostedModel,
-    budget,
-    NO_VERIFIED_EVICT_VICTIMS,
-  );
-  if (rejected) return rejected;
+  // The plain path runs from budget resolution through admission, start and
+  // the sidecar write under the identity-aware admission lock, so an alias of
+  // the same physical node serializes here (DF-01 #274). The start keeps the
+  // lock for up to its start timeout.
+  return await withAdmissionLock(opts, manifest.spec.node, async () => {
+    const budget = await resolveModelHostBudgetGiB(manifest, opts, client);
+    const rejected = admitModelHostBudget(
+      manifest,
+      opts,
+      resolved,
+      firstHostedModel,
+      budget,
+      NO_VERIFIED_EVICT_VICTIMS,
+    );
+    if (rejected) return rejected;
 
-  const started = await startModelHostProcess(client, manifest);
-  if (!started.ok) return { ok: false, error: started.error };
+    const started = await startModelHostProcess(client, manifest);
+    if (!started.ok) return { ok: false, error: started.error };
 
-  writeModelHostSidecar(manifest, started.status, resolved, firstHostedModel.rel);
+    writeModelHostSidecar(manifest, started.status, resolved, firstHostedModel.rel);
 
-  return {
-    ok: true,
-    kind: "ModelHost",
-    manifest,
-    pid: started.status.pid ?? null,
-    endpoint: `http://${formatHostForUrl(manifest.spec.endpoint.host)}:${String(manifest.spec.endpoint.port)}`,
-  };
+    return {
+      ok: true,
+      kind: "ModelHost",
+      manifest,
+      pid: started.status.pid ?? null,
+      endpoint: `http://${formatHostForUrl(manifest.spec.endpoint.host)}:${String(manifest.spec.endpoint.port)}`,
+    };
+  });
 }
 
 /**
@@ -1277,12 +1323,21 @@ interface ApplyOneOpts {
   env?: NodeJS.ProcessEnv;
   /**
    * Map a manifest's `spec.node` name to a stable identity (typically
-   * the node's endpoint URL) so the port-collision preflight can
-   * detect aliases — e.g. two manifests on `local` vs `mac-mini`
-   * resolving to the same physical agent. Return `null` when the
-   * name can't be resolved (e.g. operator typo'd the node); the
-   * filter falls back to name-equality so a missing resolution
-   * doesn't accidentally relax the check.
+   * the node's endpoint URL) so aliases of one physical node collapse.
+   * A `null` return falls back to name equality for the port-collision
+   * preflight and the victim same-node check.
+   *
+   * When supplied, admission additionally (DF-01 #274):
+   *  - refuses a non-local node whose identity does not resolve and that
+   *    carries declared reservations, failing closed with BudgetUnknown
+   *    (the local node is exempt — kubeconfig gives it endpoint "");
+   *  - counts committed workloads on other aliases of the same node
+   *    against this node's budget.
+   *
+   * The node lock gains an identity level (taken before the raw name
+   * lock) whenever the resolver resolves the name, so in-flight applies
+   * across aliases serialize; a resolver-less caller still takes just the
+   * raw name lock and serializes by name with resolver-supplying callers.
    */
   resolveNodeIdentity?: (nodeName: string) => string | null;
   listManifests?: (dir?: string) => ModelRun[];
@@ -1957,11 +2012,20 @@ interface ConvergeServerContext extends EvictionStageCtx {
   desiredArgs: string[];
 }
 
+/** The opts slice the identity helpers read: an optional node-identity
+ *  resolver. Declared as a bare optional-property shape so both the
+ *  ModelRun `ApplyOneOpts` and the ModelHost `applyOneModelHost` options
+ *  (built with conditional spreads) are assignable under
+ *  exactOptionalPropertyTypes. */
+type NodeIdentityOpts = {
+  resolveNodeIdentity?: (nodeName: string) => string | null;
+};
+
 /** Map a node name to a stable physical identity when a resolver is
  *  supplied, so admission counts aliases of the same node consistently
  *  with the port-collision preflight. Falls back to name equality. */
 function nodeIdentityMatcher(
-  opts: ApplyOneOpts | undefined,
+  opts: NodeIdentityOpts | undefined,
   nodeName: string,
 ): (otherNode: string) => boolean {
   const resolveIdent = opts?.resolveNodeIdentity;
@@ -1972,6 +2036,65 @@ function nodeIdentityMatcher(
     const otherIdentity = resolveIdent(otherNode);
     return otherIdentity !== null && otherIdentity === desiredIdentity;
   };
+}
+
+/**
+ * Serialize an admission-and-start body against one physical node,
+ * collapsing aliases (#274). When the resolver maps `nodeName` to a
+ * stable identity, the body takes an identity-keyed lock (prefix
+ * `node-identity:`, disjoint from every raw node name) before the raw
+ * name lock, so two manifests naming the same node differently share
+ * one in-flight section. The fixed order — identity key first, then name
+ * key — is what keeps the two-level lock acyclic: no caller ever holds a
+ * name lock while waiting on an identity lock, so no cycle forms.
+ *
+ * A resolver-less caller (router workloadApply, residencyApplyProfile),
+ * or a resolver answering null or "", takes exactly the raw name lock it took
+ * before, so it keeps serializing with resolver-supplying callers (the
+ * reconciler, composite) on the same raw name.
+ *
+ * NON-REENTRANT: `withNodeLock` chains on the pending promise, so this
+ * helper must never be entered from inside a body that already holds the
+ * identity or name lock for the same node — re-entering would self-deadlock.
+ */
+async function withAdmissionLock<T>(
+  opts: NodeIdentityOpts | undefined,
+  nodeName: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  // An empty identity (the CLI resolver's answer for `local`) is no
+  // identity, matching nodeIdentityMatcher: it must not collapse every
+  // empty-resolving node onto one shared `node-identity:` key.
+  const identity = opts?.resolveNodeIdentity?.(nodeName) ?? null;
+  if (identity === null || identity === "") {
+    return await withNodeLock(nodeName, fn);
+  }
+  return await withNodeLock(`node-identity:${identity}`, () => withNodeLock(nodeName, fn));
+}
+
+/**
+ * True only when a resolver is supplied, the node is not the local node,
+ * and the resolver returns null for it: a non-local node whose physical
+ * identity cannot be established. The local node is exempt because
+ * kubeconfig gives it endpoint "", so its budget is always its own RAM
+ * rather than an unresolvable remote read. This exemption leaves the
+ * local-versus-named-alias gap open under #274: a manifest naming the
+ * local machine by an alias is not folded onto `local`.
+ */
+function nodeIdentityUnresolved(opts: NodeIdentityOpts | undefined, nodeName: string): boolean {
+  const resolveIdent = opts?.resolveNodeIdentity;
+  if (resolveIdent === undefined) return false;
+  if (nodeName === LOCAL_NODE_ID) return false;
+  return resolveIdent(nodeName) === null;
+}
+
+/** The refusal detail prepended when a non-local, identity-unresolvable
+ *  node carries declared reservations and admission fails closed (#274). */
+function unresolvedIdentityReason(node: string): string {
+  return (
+    `node '${node}' does not resolve to a node identity, so admission cannot ` +
+    `account the budget it shares with other aliases of the same node`
+  );
 }
 
 /**
@@ -1988,29 +2111,24 @@ async function resolveAdmissionBudgetGiB(
   getNodeBudgetGiB: ApplyOneOpts["getNodeBudgetGiB"],
   getNodeResidency: ApplyOneOpts["getNodeResidency"],
   hasDeclaredReservations: boolean,
+  unresolved: boolean,
 ): Promise<number | null> {
   const explicit = await getNodeBudgetGiB?.(nodeName);
-  if (explicit !== undefined) return explicit;
   const residency = getNodeResidency?.(nodeName);
+  // A non-local node whose identity does not resolve could alias a machine we
+  // are already counting under another name. Its per-name budget is only
+  // trusted when nodeFacts independently confirms a live node; a workload with
+  // declared reservations on an unverifiable node fails closed instead of
+  // double-counting a shared physical node (#274).
+  if (unresolved && hasDeclaredReservations) {
+    const verified = await verifiedNodeFactsBudgetGiB(client, residency);
+    if (verified === null) return null;
+    return explicit ?? verified;
+  }
+  if (explicit !== undefined) return explicit;
   if (nodeName === LOCAL_NODE_ID) return defaultNodeBudgetGiB(undefined, undefined, residency);
   if (!hasDeclaredReservations) return null;
-  if (!client.nodeFacts) return null;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    const timeout = new Promise<null>((resolve) => {
-      timer = setTimeout(() => {
-        resolve(null);
-      }, NODE_FACTS_TIMEOUT_MS);
-    });
-    const facts = await Promise.race([client.nodeFacts.query().catch(() => null), timeout]);
-    const memBytes = facts?.memBytes;
-    if (typeof memBytes === "number" && Number.isFinite(memBytes) && memBytes > 0) {
-      return defaultNodeBudgetGiB(undefined, memBytes, residency);
-    }
-    return null;
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-  }
+  return await verifiedNodeFactsBudgetGiB(client, residency);
 }
 
 function isMissingManifestError(err: unknown): boolean {
@@ -2424,12 +2542,14 @@ async function admitServerBudget(ctx: ConvergeServerContext): Promise<
   const incomingMemory = manifest.spec.resources?.expectedMemoryGiB ?? 0;
   const hasDeclaredReservations =
     incomingMemory > 0 || living.some((m) => (m.spec.resources?.expectedMemoryGiB ?? 0) > 0);
+  const unresolved = nodeIdentityUnresolved(opts, manifest.spec.node);
   const budget = await resolveAdmissionBudgetGiB(
     manifest.spec.node,
     ctx.client,
     opts?.getNodeBudgetGiB,
     opts?.getNodeResidency,
     hasDeclaredReservations,
+    unresolved,
   );
   const forceAdmit = manifest.metadata.annotations["llamactl.io/force-admit"] === "true";
   const adm = computeNodeBudget({
@@ -2441,6 +2561,12 @@ async function admitServerBudget(ctx: ConvergeServerContext): Promise<
     sameNode,
   });
   if (!adm.ok) {
+    // A provable over-budget refusal stands even on an unresolved node; only an
+    // unknown budget on an unresolved node gains the identity explanation,
+    // because the budget could not be attributed to one physical machine.
+    if (adm.kind === "unknown-budget" && unresolved) {
+      adm.reason = `${unresolvedIdentityReason(manifest.spec.node)}; ${adm.reason}`;
+    }
     return { ok: false, adm, result: admissionFailureResult(adm, now) };
   }
   return { ok: true, adm, verified, living };
@@ -3120,7 +3246,7 @@ export async function applyOne(
   const evictTargets = parseEvictTargets(manifest);
   const evictionClaims = new Set<string>();
 
-  return await withNodeLock(manifest.spec.node, async () => {
+  return await withAdmissionLock(opts, manifest.spec.node, async () => {
     const ctx: ConvergeServerContext = {
       manifest,
       client,

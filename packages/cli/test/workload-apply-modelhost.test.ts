@@ -564,12 +564,19 @@ test("apply refuses a remote ModelRun past its NodeRun budget", async () => {
             throw new Error("serverStart must not be called");
           },
         },
+        // #274: gpu1 does not resolve to a node identity here, so its explicit
+        // NodeRun budget is only honoured once nodeFacts verifies a live node;
+        // without this answer admission fails closed with BudgetUnknown.
+        nodeFacts: {
+          query: () => Promise.resolve({ memBytes: 64 * 1024 ** 3 }),
+        },
       }) as unknown as NodeClient,
   });
 
   const { result: code, stderr } = await withCapturedIo(() => runApply(["-f", manifestPath]));
 
   expect(code).toBe(1);
+  expect(stderr).not.toContain("BudgetUnknown");
   expect(stderr).toContain("Budget is 0.5 GiB");
   expect(startCalls).toBe(0);
   expect(existsSync(join(process.env["LLAMACTL_WORKLOADS_DIR"]!, "gemma-qa.yaml"))).toBe(false);
