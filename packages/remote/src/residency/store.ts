@@ -44,8 +44,9 @@
 // earlier behaviour. The budget is not persisted, so admission holds only if
 // every writer passes the authoritative budget — the same caveat as group
 // declarations. transitionResidencyState records no reservation and is not
-// budget-gated. Wiring production callers to the #274 node budget is a
-// follow-up.
+// budget-gated. The profile-switch executor (apply-profile) passes the plan's
+// resolved node budget; eviction rows reserve 0 GiB and are deliberately not
+// budget-gated.
 //
 // A stale desiredRevision is refused as stale-revision by both writers. The
 // check runs after the fence and before CAS and lifecycle checks, and the row

@@ -5,10 +5,13 @@
  * router procedure, the CLI verb and the MCP tool. A dry run builds a report
  * from the plan alone and never opens the operation store; a wet run claims
  * the node-local operation fence, records the switch under model
- * `profile-switch:<node>` and runs the fenced executor. A foreign fence, or
- * any fence with a nonterminal `profile-switch:<node>` row, is never claimed
- * over — it reports busy without touching authority (see `runWet` for the
- * cross-process window that remains).
+ * `profile-switch:<node>` and runs the fenced executor. The wet run passes the
+ * plan's resolved node budget (`plan.budgetGiB`, from the router's
+ * `residencyPlanFor`) into the store so the reservation is budget-admitted; an
+ * unknown budget keeps the pre-#276 behaviour and logs once to `args.log`. A
+ * foreign fence, or any fence with a nonterminal `profile-switch:<node>` row,
+ * is never claimed over — it reports busy without touching authority (see
+ * `runWet` for the cross-process window that remains).
  *
  * `applyResidencyProfile` is wired (router procedure, CLI verb, MCP tool).
  * `cancelResidencyProfileOperation` aborts a switch this process owns at its
@@ -41,6 +44,7 @@ import {
   type ProfileSwitchExecutionStep,
   type ProfileSwitchExecutorDeps,
   profileSwitchOperationKey,
+  profileSwitchReservationGiB,
   type ProfileSwitchStepOutcome,
 } from "./profile-transition.js";
 import { reopenWorkloadAfterLoad } from "./stop-fence.js";
@@ -128,6 +132,8 @@ export type ApplyResidencyProfileArgs = {
   to?: string | null;
   from?: string | null;
   applyModelRun?: (manifest: unknown) => Promise<unknown>;
+  // sink for a missing node budget and heartbeat failures; default stderr
+  log?: (line: string) => void;
 };
 
 let stepsSeam: ProfileSwitchExecutorDeps | null = null;
@@ -404,6 +410,14 @@ async function runWet(
   }
 }
 
+function defaultApplyProfileLog(line: string): void {
+  process.stderr.write(line);
+}
+
+function applyProfileLog(args: ApplyResidencyProfileArgs): (line: string) => void {
+  return args.log ?? defaultApplyProfileLog;
+}
+
 async function runFencedSwitch(
   plan: OkPlan,
   steps: ProfileSwitchExecutorDeps,
@@ -413,6 +427,15 @@ async function runFencedSwitch(
 ): Promise<ResidencyApplyProfileResult> {
   const operationId = randomUUID();
   const controller = new AbortController();
+  const log = applyProfileLog(args);
+  const budgetGiB = plan.budgetGiB;
+  const nodeBudgetGiB =
+    budgetGiB !== null && Number.isFinite(budgetGiB) && budgetGiB >= 0 ? budgetGiB : undefined;
+  if (nodeBudgetGiB === undefined) {
+    log(
+      `[residency] profile-switch node budget unknown on node ${plan.node}; reservation of ${String(profileSwitchReservationGiB(plan))} GiB recorded without a budget check\n`,
+    );
+  }
   inFlightSwitchControllers.set(operationId, controller);
   try {
     return mapReport(
@@ -425,6 +448,8 @@ async function runFencedSwitch(
           fenceToken,
           operationId,
           desiredRevision: RESIDENCY_APPLY_PROFILE_DESIRED_REVISION,
+          ...(nodeBudgetGiB === undefined ? {} : { nodeBudgetGiB }),
+          log,
         },
       }),
     );
