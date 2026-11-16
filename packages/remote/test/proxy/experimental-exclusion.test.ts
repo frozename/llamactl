@@ -2,7 +2,7 @@ import type { PeerNode } from "@llamactl/core/config/peers";
 import type { ResolvedEnv } from "@llamactl/core/types";
 import type { PeerSnapshot } from "@llamactl/core/workloadRuntime";
 
-import { openaiProxy, routingCapabilities } from "@llamactl/core";
+import { openaiProxy, routingCapabilities, routingCatalog } from "@llamactl/core";
 import { resolveEnv } from "@llamactl/core/env";
 /**
  * #518 B-4b — experimental exclusion on the unified production proxy
@@ -54,6 +54,7 @@ interface Fixture {
 }
 
 let fixture: Fixture | undefined;
+let savedOverridesFile: string | undefined;
 
 function fx(): Fixture {
   if (fixture === undefined) throw new Error("experimental-exclusion fixture not started");
@@ -180,6 +181,30 @@ const scenarioF = (): Scenario => ({
   peerSnapshots: peerSnapshotsFor({ "peer-stable": [{ modelId: "stable/model.gguf" }] }),
 });
 
+// #518 advertised admission: an experimental peer route holds "late/model.gguf"
+// while a fully pinned stable advertisement challenges the alias.
+const scenarioG = (): Scenario => ({
+  resolved: resolvedFor({}),
+  peers: [peerNode("peer-exp", fx().peerExpEngine.port)],
+  peerSnapshots: peerSnapshotsFor({
+    "peer-exp": [{ modelId: "late/model.gguf", labels: { [QUALIFICATION_LABEL]: "experimental" } }],
+  }),
+});
+
+// Two peers serve the same id; the experimental one is listed first so peer
+// admission order is exercised, not snapshot ordering.
+const scenarioH = (): Scenario => ({
+  resolved: resolvedFor({}),
+  peers: [
+    peerNode("peer-exp", fx().peerExpEngine.port),
+    peerNode("peer-stable", fx().peerStableEngine.port),
+  ],
+  peerSnapshots: peerSnapshotsFor({
+    "peer-exp": [{ modelId: "late/model.gguf", labels: { [QUALIFICATION_LABEL]: "experimental" } }],
+    "peer-stable": [{ modelId: "late/model.gguf" }],
+  }),
+});
+
 function chatReq(body: Record<string, unknown>): Request {
   return new Request("http://agent.test/v1/chat/completions", {
     method: "POST",
@@ -215,6 +240,7 @@ async function unifiedServe(
   scenario: () => Scenario,
   body: Record<string, unknown>,
   acquired: string[] = [],
+  advertisements?: readonly routingCatalog.RouteAdvertisementV1[],
 ): Promise<UnifiedOutcome> {
   const s = scenario();
   const defaultCalls: string[] = [];
@@ -229,6 +255,7 @@ async function unifiedServe(
       acquired.push(owner);
       return recordingExecutor(owner);
     },
+    ...(advertisements !== undefined ? { advertisements } : {}),
   });
   const response = await proxy.handleRequest(chatReq(body));
   expect(response.status).toBe(200);
@@ -240,8 +267,9 @@ async function unifiedServedBy(
   scenario: () => Scenario,
   body: Record<string, unknown>,
   acquired: string[] = [],
+  advertisements?: readonly routingCatalog.RouteAdvertisementV1[],
 ): Promise<string> {
-  const outcome = await unifiedServe(scenario, body, acquired);
+  const outcome = await unifiedServe(scenario, body, acquired, advertisements);
   return outcome.servedBy;
 }
 
@@ -275,6 +303,8 @@ async function legacyServedBy(
 
 beforeAll(() => {
   const sandbox = mkdtempSync(join(tmpdir(), "llamactl-exp-exclusion-"));
+  savedOverridesFile = process.env["LOCAL_AI_QUALIFICATION_OVERRIDES_FILE"];
+  process.env["LOCAL_AI_QUALIFICATION_OVERRIDES_FILE"] = join(sandbox, "absent-overrides.tsv");
   const runtimeDir = join(sandbox, "runtime");
   mkdirSync(runtimeDir, { recursive: true });
   const relocatedDir = join(sandbox, "relocated");
@@ -308,6 +338,11 @@ afterAll(async () => {
     await fixture.peerStableEngine.stop();
     rmSync(fixture.sandbox, { recursive: true, force: true });
   } finally {
+    if (savedOverridesFile === undefined) {
+      Reflect.deleteProperty(process.env, "LOCAL_AI_QUALIFICATION_OVERRIDES_FILE");
+    } else {
+      process.env["LOCAL_AI_QUALIFICATION_OVERRIDES_FILE"] = savedOverridesFile;
+    }
     fixture = undefined;
   }
 });
@@ -421,4 +456,104 @@ describe("experimental exclusion parity, legacy vs unified (#518)", () => {
       }
     });
   }
+});
+
+// Fully pinned stable advertisement: no priority, no replicaGroup, no
+// credentials. LEGACY_PROXY_CAPABILITIES covers openai-chat generate, so
+// filterCandidatesByCapabilities cannot drop it — any admission failure
+// stays about admissionConflict, not capabilities.
+const stableAd: routingCatalog.RouteAdvertisementV1 = {
+  schemaVersion: 1,
+  routeId: "route/worker-stable",
+  deploymentId: "deploy/worker-stable",
+  backendId: "backend/worker-stable",
+  ownerNodeId: "worker-stable",
+  publicModelIds: ["late/model.gguf"],
+  upstreamModelId: "late/model.gguf",
+  backendKind: "local-model",
+  transport: "worker-rpc",
+  endpoint: "http://127.0.0.1:1/v1",
+  capabilities: routingCapabilities.LEGACY_PROXY_CAPABILITIES,
+  modelRevision: routingCatalog.knownRevision("rev-1"),
+  deploymentEpoch: routingCatalog.knownRevision("epoch-1"),
+  adapterRevision: routingCatalog.UNKNOWN_REVISION,
+  policyRevision: routingCatalog.UNKNOWN_REVISION,
+  weight: 1,
+  draining: false,
+  qualification: { stage: "production" },
+};
+
+describe("advertised admission (#518)", () => {
+  test("a pinned request is acquired by the stable advertisement, not the experimental peer", async () => {
+    // Kills: the admissionConflict mutation — on base the stable ad is
+    // rejected alias-conflict and the experimental peer acquires the pin.
+    const acquired: string[] = [];
+    const outcome = await unifiedServe(scenarioG, { model: "late/model.gguf" }, acquired, [
+      stableAd,
+    ]);
+    expect(outcome.status).toBe(200);
+    expect(outcome.servedBy).toBe("worker-stable");
+    expect(acquired).toEqual(["worker-stable"]);
+  });
+
+  test("the shadow catalog admits the stable advertisement conflict-free", async () => {
+    // Kills: the same admissionConflict mutation — on base shadowCatalog
+    // records the alias-conflict rejection and peer-exp stays sole candidate.
+    const s = scenarioG();
+    const proxy = createProxy({
+      env: { LLAMACTL_UNIFIED_PROXY: "1" },
+      resolved: () => s.resolved,
+      peers: s.peers,
+      peerSnapshots: s.peerSnapshots,
+      executor: recordingExecutor("default"),
+      advertisements: [stableAd],
+    });
+    const catalog = await proxy.shadowCatalog();
+    expect(catalog.conflicts).toEqual([]);
+    expect(
+      routingCatalog.catalogCandidatesFor(catalog, "late/model.gguf")[0]?.advertisement.ownerNodeId,
+    ).toBe("worker-stable");
+  });
+
+  test("legacy peer admission and unified advertised admission both prefer the stable backend", async () => {
+    // The halves exercise different admission paths by construction: peer
+    // routes go through admitPeerRoute, advertisements through
+    // admissionConflict — this is not a same-input parity test.
+    expect(await legacyServedBy(scenarioH, { model: "late/model.gguf" })).toBe("peer-stable");
+    const acquired: string[] = [];
+    const outcome = await unifiedServe(scenarioG, { model: "late/model.gguf" }, acquired, [
+      stableAd,
+    ]);
+    expect(outcome.status).toBe(200);
+    expect(outcome.servedBy).toBe("worker-stable");
+  });
+
+  test("/v1/models regression guard: experimental flag only when every route for the id is experimental", () => {
+    // Guard, not RED: pins the listOpenAIModels experimental flag — removing
+    // `if (isExperimentalRoute(route)) entry.experimental = true` flips the
+    // second half, and dropping the stable-first ordering flips the first.
+    const pair = scenarioH();
+    openaiProxy.__resetOpenAIProxyRouteMapCacheForTests();
+    openaiProxy.__setOpenAIProxyClusterRoutingForTests({
+      clusterPeers: pair.peers,
+      peerSnapshots: pair.peerSnapshots,
+    });
+    const pairModels = openaiProxy.listOpenAIModels(pair.resolved);
+    const pairById = new Map(
+      pairModels.data.map((m) => [m.id, m as unknown as Record<string, unknown>]),
+    );
+    expect("experimental" in (pairById.get("late/model.gguf") ?? {})).toBe(false);
+
+    const solo = scenarioG();
+    openaiProxy.__resetOpenAIProxyRouteMapCacheForTests();
+    openaiProxy.__setOpenAIProxyClusterRoutingForTests({
+      clusterPeers: solo.peers,
+      peerSnapshots: solo.peerSnapshots,
+    });
+    const soloModels = openaiProxy.listOpenAIModels(solo.resolved);
+    const soloById = new Map(
+      soloModels.data.map((m) => [m.id, m as unknown as Record<string, unknown>]),
+    );
+    expect(soloById.get("late/model.gguf")?.["experimental"]).toBe(true);
+  });
 });

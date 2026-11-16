@@ -27,6 +27,10 @@ const originalEnv = { ...process.env };
 
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), "llamactl-embersynth-"));
+  process.env["DEV_STORAGE"] = tmp;
+  process.env["LOCAL_AI_RUNTIME_DIR"] = join(tmp, "runtime");
+  process.env["LOCAL_AI_CUSTOM_CATALOG_FILE"] = join(tmp, "absent-catalog.tsv");
+  process.env["LOCAL_AI_QUALIFICATION_OVERRIDES_FILE"] = join(tmp, "absent-overrides.tsv");
 });
 
 afterEach(() => {
@@ -168,7 +172,11 @@ describe("embersynth config bridge", () => {
         launch_args: "--flash-attn",
       },
     ];
-    const out = generateEmbersynthConfig({ cfg, benchHistory: history });
+    const out = generateEmbersynthConfig({
+      cfg,
+      benchHistory: history,
+      qualificationStages: new Map(),
+    });
     const gpu1 = out.nodes.find((n) => n.id === "agent-gpu1");
     expect(gpu1).toBeTruthy();
     expect(gpu1!.priority).toBe(1);
@@ -202,11 +210,23 @@ describe("embersynth config bridge", () => {
         launch_args: "",
       },
     ];
-    const slow = generateEmbersynthConfig({ cfg: base, benchHistory: makeHistory("3.0") });
+    const slow = generateEmbersynthConfig({
+      cfg: base,
+      benchHistory: makeHistory("3.0"),
+      qualificationStages: new Map(),
+    });
     expect(slow.nodes.find((n) => n.id === "agent-gpu1")?.priority).toBe(8);
-    const mid = generateEmbersynthConfig({ cfg: base, benchHistory: makeHistory("20.0") });
+    const mid = generateEmbersynthConfig({
+      cfg: base,
+      benchHistory: makeHistory("20.0"),
+      qualificationStages: new Map(),
+    });
     expect(mid.nodes.find((n) => n.id === "agent-gpu1")?.priority).toBe(4);
-    const fast = generateEmbersynthConfig({ cfg: base, benchHistory: makeHistory("45.0") });
+    const fast = generateEmbersynthConfig({
+      cfg: base,
+      benchHistory: makeHistory("45.0"),
+      qualificationStages: new Map(),
+    });
     expect(fast.nodes.find((n) => n.id === "agent-gpu1")?.priority).toBe(2);
   });
 

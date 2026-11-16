@@ -46,7 +46,8 @@ promote-private — confirm that a model rel is routable under the
   YAML exists, that the \`private-first\` profile is present with a
   \`private\` preferred tag, and that at least one agent node in the
   current cluster carries the \`private\` tag. Prints the resolved
-  routing — read-only, does not mutate.
+  routing — read-only, does not mutate. Refuses an experimental rel:
+  experimental models are served only on an exact model pin.
 
 OPTIONS:
   --path <file>   Override the default path
@@ -216,6 +217,15 @@ async function runPromotePrivate(argv: string[]): Promise<number> {
   const parsed = parseCommonOpts(argv.slice(1));
   if ("exit" in parsed) return parsed.exit;
   const { path } = parsed.opts;
+
+  // #518: experimental models are served only on an exact model pin, so they
+  // are never routable under fusion-private-first.
+  if (embersynthMod.embersynthQualificationStages(process.env).get(rel) === "experimental") {
+    process.stderr.write(
+      `embersynth promote-private: model '${rel}' is experimental (#518): experimental models are served only on an exact model pin and never under fusion-private-first\n`,
+    );
+    return 1;
+  }
 
   const existing = embersynthMod.loadEmbersynthConfig(path);
   if (!existing) {
