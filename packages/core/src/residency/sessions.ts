@@ -12,9 +12,10 @@
  * EvictSessionUnknown. forceRelease and checkUnload({ force: true }) drop
  * the sessions so a later eviction can proceed.
  *
- * NON-FENCING: checkUnload does not block a concurrent acquire. Eviction
- * re-checks just before the stop, which narrows the race but does not
- * close it; fencing is deferred to the #278 lease composition.
+ * checkUnload itself does not fence, but the node stop fence
+ * (remote residency/stop-fence.ts) consults it under the DF-05 drain,
+ * which closes the window; residency force-unload calls forceRelease
+ * under its drain.
  *
  * Release is generation-aware (#520 follow-up from the #617 review): a
  * stale release carrying an old generation cannot drop a newer

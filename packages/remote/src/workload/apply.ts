@@ -1364,11 +1364,13 @@ interface ApplyOneOpts {
   targetAdmission?: TargetAdmissionAuthority;
   /**
    * #520 active-session protection: consulted before any eviction stops a
-   * workload. Opt-in and inert unless supplied. NON-FENCING: it narrows
-   * but does not close the race with a concurrent acquire; fencing is
-   * deferred to the #278 lease composition. When omitted, the installed
-   * process-wide registry (via currentSessionRefcounts()) is consulted;
-   * if no registry is installed, eviction proceeds as before. */
+   * workload. Opt-in and inert unless supplied. This apply-side gate is an
+   * early, NON-FENCING pre-check — it narrows but does not close the race
+   * with a concurrent acquire; the fencing check runs inside the node's
+   * stop fence under the DF-05 drain (residency/stop-fence.ts). When
+   * omitted, the installed process-wide registry (via
+   * currentSessionRefcounts()) is consulted; if no registry is installed,
+   * eviction proceeds as before. */
   sessionGate?: SessionUnloadGate;
   /** Shared deadline per verified evict victim covering its status read,
    * stop and release check before the apply fails. Default 15_000
@@ -1386,6 +1388,10 @@ interface ApplyOneOpts {
   evictionOperation?: EvictionOperationOpts;
 }
 
+/** Apply-side session gate for #520 eviction protection: an early,
+ * NON-FENCING pre-check consulted before teardown. The fencing check runs
+ * inside the node's stop fence under the DF-05 drain
+ * (residency/stop-fence.ts), which is what actually closes the race. */
 interface SessionUnloadGate {
   checkUnload(workload: string): { ok: true } | { ok: false; sessions?: readonly string[] };
 }
@@ -1617,6 +1623,15 @@ type EvictFailureReason =
    * stopped; retry after the leases drain; eviction never force-revokes leases.
    */
   | "EvictVictimBusy"
+  /**
+   * The node's stop fence (#520 DF-05 composition) refused the victim's
+   * stop on session-refcount grounds — live sessions
+   * (EvictSessionActive) or a registry whose checkUnload threw
+   * (EvictSessionUnknown). Nothing was stopped; eviction never
+   * force-releases — `residency force-unload` is the override.
+   */
+  | "EvictSessionActive"
+  | "EvictSessionUnknown"
   | "EvictStopFailed"
   | "EvictStopTimedOut"
   | "EvictReleaseUnverified"
@@ -1748,11 +1763,19 @@ const EVICT_VICTIM_OPS: Record<
         | undefined;
       if (refusal?.stopped === false) {
         const reason = refusal.refused?.reason;
+        const active = Array.isArray(refusal.refused?.active)
+          ? refusal.refused.active.filter((x): x is string => typeof x === "string")
+          : [];
         if (reason === "LeasesActive" || reason === "DrainInProgress") {
-          const active = Array.isArray(refusal.refused?.active)
-            ? refusal.refused.active.filter((x): x is string => typeof x === "string")
-            : [];
           return evictStopFailure(manifest, target, "EvictVictimBusy", busyDetail(reason, active));
+        }
+        if (reason === "SessionsActive" || reason === "SessionsUnknown") {
+          return evictStopFailure(
+            manifest,
+            target,
+            reason === "SessionsActive" ? "EvictSessionActive" : "EvictSessionUnknown",
+            busyDetail(reason, active),
+          );
         }
         return evictStopFailure(manifest, target, "EvictStopRefused", "refused to stop");
       }
@@ -1814,6 +1837,14 @@ const EVICT_VICTIM_OPS: Record<
           // dangling ": " so the detail matches ModelRun's busyDetail.
           const detail = refused.replace(/:\s*$/, "");
           return evictStopFailure(manifest, target, "EvictVictimBusy", detail);
+        }
+        if (/^SessionsActive(?::|$)/.test(refused)) {
+          const detail = refused.replace(/:\s*$/, "");
+          return evictStopFailure(manifest, target, "EvictSessionActive", detail);
+        }
+        if (/^SessionsUnknown(?::|$)/.test(refused)) {
+          const detail = refused.replace(/:\s*$/, "");
+          return evictStopFailure(manifest, target, "EvictSessionUnknown", detail);
         }
         return evictStopFailure(manifest, target, "EvictStopRefused", refused);
       }

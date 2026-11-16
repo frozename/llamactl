@@ -14,6 +14,11 @@ import {
   type ResidencyLeases,
   setResidencyLeaseRegistry,
 } from "@llamactl/core/residency/leases";
+import {
+  createSessionRefcounts,
+  type SessionRefcounts,
+  setSessionRefcountRegistry,
+} from "@llamactl/core/residency/sessions";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -39,6 +44,7 @@ type ForceUnloadResult = {
   reason?: string;
   detail?: string;
   revoked?: string[];
+  releasedSessions?: string[];
   stopped?: boolean;
   epoch?: number;
 };
@@ -92,6 +98,7 @@ beforeEach(() => {
 
 afterEach(() => {
   setResidencyLeaseRegistry(null);
+  setSessionRefcountRegistry(null);
   rmSync(tmp, { recursive: true, force: true });
   for (const k of Object.keys(process.env)) Reflect.deleteProperty(process.env, k);
   Object.assign(process.env, originalEnv);
@@ -333,6 +340,118 @@ describe("forceUnloadWorkload", () => {
     expect(reg.audit()).toHaveLength(0);
     expect(onAudit).not.toHaveBeenCalled();
   });
+
+  test("#520 F1: force unload releases the workload's sessions and reports them", async () => {
+    // Kills: no session release on the force path (releasedSessions stays
+    // absent and the sessions survive the unload), or a release scoped to
+    // every workload instead of the unloaded one.
+    const { forceUnloadWorkload } = await loadForceUnload();
+    const sessions = createSessionRefcounts({ idleTimeoutMs: 1000, now: () => 0 });
+    setSessionRefcountRegistry(sessions);
+    const reg = createResidencyLeases();
+    sessions.acquire("sess-1", "w1");
+    sessions.acquire("sess-2", "w1");
+    sessions.acquire("sess-3", "other");
+
+    const result = await forceUnloadWorkload({
+      workload: "w1",
+      reason: "r",
+      kind: "modelrun",
+      registry: reg,
+      stop: okStop(),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.releasedSessions).toEqual(["sess-1", "sess-2"]);
+    expect(sessions.activeSessions("w1")).toEqual([]);
+    expect(sessions.activeSessions("other")).toEqual(["sess-3"]);
+  });
+
+  test("#520 F2: a failed stop keeps the released sessions released", async () => {
+    // Kills: releasing sessions only on a verified stop — a StopFailed
+    // result must still carry releasedSessions and leave the registry
+    // empty, like revoked leases staying revoked.
+    const { forceUnloadWorkload } = await loadForceUnload();
+    const sessions = createSessionRefcounts({ idleTimeoutMs: 1000, now: () => 0 });
+    setSessionRefcountRegistry(sessions);
+    const reg = createResidencyLeases();
+    sessions.acquire("sess-1", "w1");
+
+    const result = await forceUnloadWorkload({
+      workload: "w1",
+      reason: "r",
+      kind: "modelrun",
+      registry: reg,
+      stop: () => Promise.resolve({ stopped: false }),
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: "StopFailed",
+      releasedSessions: ["sess-1"],
+    });
+    expect(sessions.activeSessions("w1")).toEqual([]);
+  });
+
+  test("#520 F3: a throwing session forceRelease refuses Unavailable before the stop", async () => {
+    // Kills: swallowing the forceRelease throw (the unload proceeds) or
+    // reporting it as anything but Unavailable.
+    const { forceUnloadWorkload } = await loadForceUnload();
+    const real = createSessionRefcounts({ idleTimeoutMs: 1000, now: () => 0 });
+    const wrapped: SessionRefcounts = {
+      ...real,
+      forceRelease: (w: string): string[] => {
+        throw new Error(`registry offline for ${w}`);
+      },
+    };
+    setSessionRefcountRegistry(wrapped);
+    const reg = createResidencyLeases();
+    real.acquire("sess-1", "w1");
+    let stopCalls = 0;
+
+    const result = await forceUnloadWorkload({
+      workload: "w1",
+      reason: "r",
+      kind: "modelrun",
+      registry: reg,
+      stop: () => {
+        stopCalls += 1;
+        return okStop()();
+      },
+    });
+
+    expect(result).toMatchObject({ ok: false, reason: "Unavailable", workload: "w1" });
+    expect(result.detail).toMatch(/registry offline/);
+    expect(stopCalls).toBe(0);
+    expect(reg.snapshot("w1").phase).toBe("open");
+  });
+
+  test("#520 F4: a drain already in progress refuses before any session is released", async () => {
+    // GUARD — passes at base: pins that the session release happens only
+    // after beginDrain succeeds, killing a mutant that releases first.
+    const { forceUnloadWorkload } = await loadForceUnload();
+    const sessions = createSessionRefcounts({ idleTimeoutMs: 1000, now: () => 0 });
+    setSessionRefcountRegistry(sessions);
+    const reg = createResidencyLeases();
+    sessions.acquire("sess-1", "w1");
+    const drain = reg.beginDrain("w1");
+    if (!drain.ok) {
+      throw new Error(`beginDrain(w1) refused: ${drain.reason}`);
+    }
+    const stop = mock(okStop());
+
+    const result = await forceUnloadWorkload({
+      workload: "w1",
+      reason: "r",
+      kind: "modelrun",
+      registry: reg,
+      stop,
+    });
+
+    expect(result).toMatchObject({ ok: false, reason: "DrainInProgress", workload: "w1" });
+    expect(stop).not.toHaveBeenCalled();
+    expect(sessions.activeSessions("w1")).toEqual(["sess-1"]);
+  });
 });
 
 describe("residencyForceUnload procedure", () => {
@@ -477,5 +596,39 @@ describe("residencyForceUnload procedure", () => {
 
     expect(result).toMatchObject({ ok: true, kind: "modelhost", source: "operator" });
     expect(reg.snapshot("mh1").phase).toBe("unloaded");
+  });
+
+  test("#520 F5: the mutation releases the workload's sessions and reports releasedSessions", async () => {
+    // Kills: router/default wiring that never resolves the installed
+    // session registry — the unload succeeds but the sessions survive
+    // and releasedSessions stays absent.
+    saveWorkload(modelRunManifest("w1"), tmp);
+    const sink = createResidencyLeaseAuditSink({ path: storePath });
+    try {
+      const reg = createResidencyLeases({ onAudit: sink.onAudit });
+      setResidencyLeaseRegistry(reg);
+      const sessions = createSessionRefcounts({ idleTimeoutMs: 1000, now: () => 0 });
+      setSessionRefcountRegistry(sessions);
+      const lease = acquireLease(reg, "w1");
+      sessions.acquire("sess-1", "w1");
+
+      const result = await forceUnload({
+        workload: "w1",
+        reason: "operator drill",
+        confirm: true,
+      });
+
+      expect(result).toMatchObject({
+        ok: true,
+        workload: "w1",
+        kind: "modelrun",
+        source: "operator",
+      });
+      expect(result.releasedSessions).toEqual(["sess-1"]);
+      expect(sessions.activeSessions("w1")).toEqual([]);
+      expect(lease.signal.aborted).toBe(true);
+    } finally {
+      sink.close();
+    }
   });
 });
