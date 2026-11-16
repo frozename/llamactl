@@ -326,10 +326,18 @@ function admissionConflict(
   alias: string,
   existing: readonly RouteCandidate[],
 ): AliasConflict | null {
-  const first = existing.at(0);
+  // #518: a stable advertisement is judged only against stable peers, mirroring
+  // admitPeerRoute in workloadRuntime.ts, so the advertised (unified) path
+  // matches legacy peer admission and never intrudes on an experimental route.
+  // An experimental advertisement is still judged against all candidates so it
+  // can neither shadow nor intrude on a stable alias or replica group.
+  const peers = isExperimentalAdvertisement(ad)
+    ? existing
+    : existing.filter((c) => !isExperimentalAdvertisement(c.advertisement));
+  const first = peers.at(0);
   if (first === undefined) return null;
   if (ad.replicaGroup !== undefined) {
-    const member = existing.find((c) => c.advertisement.replicaGroup === ad.replicaGroup);
+    const member = peers.find((c) => c.advertisement.replicaGroup === ad.replicaGroup);
     if (member !== undefined) {
       return sameServingIdentity(member.advertisement, ad)
         ? null
