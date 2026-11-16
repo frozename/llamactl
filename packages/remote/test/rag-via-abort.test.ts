@@ -125,6 +125,15 @@ interface EngineRequestRecord {
 
 interface FakeEngine {
   readonly port: number;
+  /**
+   * When true, every POST /v1/chat/completions answers 500 at once with a
+   * text/plain body that sends one chunk and then stays open. The engine
+   * stamps errorBodyReleasedAtMs when that body is cancelled or the
+   * request signal aborts — the connection being let go.
+   */
+  errorStream: boolean;
+  /** Set once an errorStream body is released by the caller (cancel / disconnect). */
+  readonly errorBodyReleasedAtMs: number | null;
   /** One record per POST /v1/chat/completions the engine has seen, oldest first. */
   readonly requests: readonly EngineRequestRecord[];
   /** Live per-request gates, oldest first; settled ones drop out. */
@@ -177,6 +186,7 @@ function startFakeEngine(): FakeEngine {
         settled: false,
       };
       requests.push(record);
+      if (engine.errorStream) return errorStreamResponse(req);
       return new Promise<Response>((resolve) => {
         const finish = (res: Response): void => {
           if (record.settled) return;
@@ -210,8 +220,45 @@ function startFakeEngine(): FakeEngine {
     },
   });
 
-  return {
+  let errorBodyReleasedAtMs: number | null = null;
+  const errorTimers = new Set<ReturnType<typeof setInterval>>();
+  function errorStreamResponse(req: Request): Response {
+    let timer: ReturnType<typeof setInterval> | undefined;
+    const released = (): void => {
+      if (timer !== undefined) {
+        clearInterval(timer);
+        errorTimers.delete(timer);
+      }
+      errorBodyReleasedAtMs ??= Date.now();
+    };
+    req.signal.addEventListener("abort", released, { once: true });
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller): void {
+        controller.enqueue(encoder.encode("engine error: "));
+        // Keep trickling so a body nobody cancels stays open indefinitely.
+        timer = setInterval(() => {
+          try {
+            controller.enqueue(encoder.encode("."));
+          } catch {
+            // enqueue after cancel — the interval is cleared on release
+          }
+        }, 20);
+        errorTimers.add(timer);
+      },
+      cancel(): void {
+        released();
+      },
+    });
+    return new Response(body, { status: 500, headers: { "content-type": "text/plain" } });
+  }
+
+  const engine: FakeEngine = {
     port: server.port ?? 0,
+    errorStream: false,
+    get errorBodyReleasedAtMs(): number | null {
+      return errorBodyReleasedAtMs;
+    },
     requests,
     gates,
     hits: () => requests.length,
@@ -220,8 +267,13 @@ function startFakeEngine(): FakeEngine {
       const aborted = requests.filter((r) => r.abortedAtMs !== null);
       return aborted.at(-1)?.abortedAtMs ?? null;
     },
-    stop: () => server.stop(true),
+    stop: async (): Promise<void> => {
+      for (const t of [...errorTimers]) clearInterval(t);
+      errorTimers.clear();
+      await server.stop(true);
+    },
   };
+  return engine;
 }
 
 function latestGate(engine: FakeEngine): EngineGate {
@@ -401,6 +453,30 @@ describe("#316: a client abort on via:local chat reaches the engine", () => {
       (e: unknown) => e,
     );
     expect(outcome).not.toBeNull();
+  }, 15_000);
+
+  // Kills M3: the `res.body?.cancel()` deleted from chatComplete's
+  // inproc://local branch before it throws on a non-OK dispatch. The
+  // engine answers 500 with a body that stays open; without the cancel
+  // nothing reads or releases it, so the engine never sees the
+  // connection let go and errorBodyReleasedAtMs stays null.
+  test("router chatComplete inproc://local releases a non-OK engine body before throwing", async () => {
+    engine.errorStream = true;
+    const caller = appRouter.createCaller({});
+    const t0 = Date.now();
+    const outcome = await caller.chatComplete({ node: "local", request: chatRequest() }).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(outcome).toBeInstanceOf(Error);
+    expect((outcome as Error).message).toBe("local chat 500");
+    expect(engine.hits()).toBe(1);
+    expect(await waitFor(() => engine.errorBodyReleasedAtMs !== null, ABORT_BUDGET_MS)).toBe(true);
+    const releasedAt = engine.errorBodyReleasedAtMs;
+    expect(releasedAt).not.toBeNull();
+    if (releasedAt !== null) {
+      expect(releasedAt - t0).toBeLessThanOrEqual(ABORT_BUDGET_MS * 2);
+    }
   }, 15_000);
 
   // ── guards (pass at base and after the fix) ────────────────────────────

@@ -1,8 +1,17 @@
+import type { RequestQueueLimits } from "@llamactl/core/residency/queue-policy";
+
 import { openaiProxy } from "@llamactl/core";
+import { saveConfig } from "@llamactl/core/config/kubeconfig";
+import { freshConfig } from "@llamactl/core/config/schema";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { __setSharedUnifiedProxyForTests } from "../src/proxy/create-proxy.js";
+import {
+  createRequestAdmission,
+  type RequestAdmission,
+} from "../src/residency/request-admission.js";
 import { mkdirSync, mkdtempSync, rmSync } from "../src/safe-fs.js";
 import { generateToken } from "../src/server/auth.js";
 import { type RunningAgent, startAgentServer } from "../src/server/serve.js";
@@ -66,6 +75,18 @@ import { type ControllerClosedGuard, installControllerClosedGuard } from "./help
  *     pass even then, and fail only when #602 is removed and the wrapper's
  *     cancel() is a no-op. They are regression pins for the end-to-end
  *     behavior, not discriminators.
+ *   - Case F is the non-aborted control: a finite stream reaches the client
+ *     byte-for-byte through both hops and the engine never sees an abort.
+ *   - Case G runs agent A with the chat-completions admission. The abort
+ *     must reach the engine and release the ingress slot exactly once
+ *     (admitChatCompletions → responseHoldingSlot plus the signal listener
+ *     in acquireChatSlot must not double-fire).
+ *   - Case U runs agent A on the unified ingress (LLAMACTL_UNIFIED_PROXY=1):
+ *     create-proxy's rebuildRequest carries req.signal, and the legacy local
+ *     executor composes it into the Request it hands proxyOpenAI, whose
+ *     forward() composes it into the peer fetch. The catalog has no entry
+ *     for PEER_MODEL here, so gatedExecute falls through to the default
+ *     executor — the same executor a selected local-http candidate uses.
  *   - Case 2 is the /v1/completions control. handleOpenAIRoute →
  *     dispatchProxyRequest hands proxyOpenAI the original request, so
  *     req.signal reaches forward() without the RAG endpoint's rebuild.
@@ -97,7 +118,48 @@ const ENV_KEYS = [
   "LOCAL_AI_RUNTIME_DIR",
   "LLAMA_CPP_HOST",
   "LLAMA_CPP_PORT",
+  "LLAMACTL_UNIFIED_PROXY",
+  "LLAMACTL_CONFIG",
 ] as const;
+
+/** Chunks a finite (case F) engine stream emits before `data: [DONE]`. */
+const FINITE_STREAM_CHUNKS = 5;
+
+const ADMISSION_LIMITS: RequestQueueLimits = {
+  maxExecutions: 1,
+  maxQueued: 1,
+  maxQueuedBytes: 1_048_576,
+  maxQueueWaitMs: 30_000,
+  maxPerPrincipal: 10,
+  starvationBoundMs: 30_000,
+  maxContextTokens: Number.MAX_SAFE_INTEGER,
+  retryAfterMs: 2_500,
+};
+
+/** Wraps an admission so every acquire() and release() invocation is counted. */
+function countedAdmission(admission: RequestAdmission): {
+  admission: RequestAdmission;
+  acquires: () => number;
+  releases: () => number;
+} {
+  let acquires = 0;
+  let releases = 0;
+  return {
+    acquires: () => acquires,
+    releases: () => releases,
+    admission: {
+      acquire: async (request, options) => {
+        acquires += 1;
+        const release = await admission.acquire(request, options);
+        return () => {
+          releases += 1;
+          release();
+        };
+      },
+      snapshot: () => admission.snapshot(),
+    },
+  };
+}
 
 /**
  * Gate for case 1 only. On Bun < 1.4 a fetch client's `reader.cancel()`
@@ -134,6 +196,11 @@ interface AbortEngine {
    * engine's request signal aborts. Reset to 0 between cases.
    */
   holdFirstByteMs: number;
+  /**
+   * When > 0, stream this many chunks then `data: [DONE]` and close
+   * (case F). 0 streams forever. Reset to 0 between cases.
+   */
+  finiteChunks: number;
   nextAbort(timeoutMs: number): Promise<boolean>;
   reset(): void;
   stop(): Promise<void>;
@@ -236,6 +303,12 @@ function startAbortEngine(): AbortEngine {
               // enqueue after close/cancel — the interval is cleared on cancel
             }
           };
+          if (engine.finiteChunks > 0) {
+            for (let i = 0; i < engine.finiteChunks; i += 1) push();
+            controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+            controller.close();
+            return;
+          }
           push();
           timer = setInterval(push, ENGINE_CHUNK_INTERVAL_MS);
           timers.add(timer);
@@ -257,6 +330,7 @@ function startAbortEngine(): AbortEngine {
     port,
     stats,
     holdFirstByteMs: 0,
+    finiteChunks: 0,
     nextAbort(timeoutMs: number): Promise<boolean> {
       if (stats.abortedAtMs !== null) return Promise.resolve(true);
       return new Promise<boolean>((resolve) => {
@@ -274,6 +348,7 @@ function startAbortEngine(): AbortEngine {
     reset(): void {
       for (const t of [...timers]) clearTimer(t);
       engine.holdFirstByteMs = 0;
+      engine.finiteChunks = 0;
       stats.requests = 0;
       stats.chunksEnqueued = 0;
       stats.abortedAtMs = null;
@@ -300,6 +375,7 @@ let agentTlsKeyPath = "";
 /** Throwaway loopback cert shared by both agents, generated per run in the sandbox. */
 let testCertPem = "";
 let agentAToken = "";
+let agentAHash = "";
 let agentBToken = "";
 let agentBHash = "";
 let peerAgentUrl = "";
@@ -438,10 +514,10 @@ async function waitForEngineRequests(count: number, timeoutMs: number): Promise<
   return true;
 }
 
-function agentFetch(path: string, init: RequestInit): Promise<Response> {
+function agentFetch(path: string, init: RequestInit, target?: RunningAgent): Promise<Response> {
   const headers = new Headers(init.headers);
   headers.set("authorization", `Bearer ${agentAToken}`);
-  return fetch(`${agent!.url}${path}`, {
+  return fetch(`${(target ?? agent)!.url}${path}`, {
     ...init,
     headers,
     ...({ tls: { ca: testCertPem } } as Record<string, unknown>),
@@ -466,6 +542,12 @@ beforeAll(async () => {
   process.env["LOCAL_AI_RUNTIME_DIR"] = join(sandbox, "agent-a-runtime");
   process.env["LLAMA_CPP_HOST"] = "127.0.0.1";
   process.env["LLAMA_CPP_PORT"] = "1";
+  // Agent A's kubeconfig: a fresh sandboxed one, so the unified catalog
+  // (case U) never discovers peers from the operator's real config.
+  Reflect.deleteProperty(process.env, "LLAMACTL_UNIFIED_PROXY");
+  const configPath = join(sandbox, "agent-a-config.yaml");
+  saveConfig(freshConfig(), configPath);
+  process.env["LLAMACTL_CONFIG"] = configPath;
 
   engine = startAbortEngine();
   enginePort = engine.port;
@@ -481,6 +563,7 @@ beforeAll(async () => {
 
   const tokenA = generateToken();
   agentAToken = tokenA.token;
+  agentAHash = tokenA.hash;
   const tokenB = generateToken();
   agentBToken = tokenB.token;
   agentBHash = tokenB.hash;
@@ -508,6 +591,7 @@ afterAll(async () => {
     await agentBStderrDone;
     await agent?.stop();
     await engine?.stop();
+    __setSharedUnifiedProxyForTests(null);
     if (sandbox !== "") rmSync(sandbox, { recursive: true, force: true });
   } finally {
     for (const key of ENV_KEYS) {
@@ -750,6 +834,204 @@ describe("client abort propagates through a real two-agent TLS chain to the engi
       expect(engine!.stats.paths).toEqual(["/v1/chat/completions"]);
       expect(engine!.stats.models).toEqual([PEER_MODEL]);
       expect(engine!.stats.requests).toBe(1);
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  // Control: a stream nobody aborts is unchanged through both hops — every
+  // chunk and the [DONE] sentinel reach the client and the engine never
+  // records an abort.
+  test(
+    "case F: a non-aborted POST /v1/chat/completions stream is delivered intact (any Bun)",
+    async () => {
+      await ensurePeerAgent();
+      advertisePeerModel();
+      engine!.finiteChunks = FINITE_STREAM_CHUNKS;
+      const res = await agentFetch("/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: PEER_MODEL,
+          stream: true,
+          messages: [{ role: "user", content: "read to the end" }],
+        }),
+      });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toContain("text/event-stream");
+      const text = await res.text();
+      for (let i = 1; i <= FINITE_STREAM_CHUNKS; i += 1) {
+        expect(text).toContain(`chunk-${String(i)}"`);
+      }
+      expect(text).toContain("data: [DONE]");
+      await Bun.sleep(100);
+      expect(engine!.stats.abortedAtMs).toBeNull();
+      expect(engine!.stats.chunksEnqueued).toBe(FINITE_STREAM_CHUNKS);
+      expect(engine!.stats.requests).toBe(1);
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  // Admission: agent A holds a chat-completions slot for the streamed body.
+  // A client abort mid-stream must reach the engine within the budget and
+  // release that slot exactly once — the body-cancel path
+  // (responseHoldingSlot) and the req.signal listener (acquireChatSlot)
+  // both fire on a hangup and must not double-release.
+  test(
+    "case G: an admitted POST /v1/chat/completions abort reaches the engine and releases the slot once",
+    async () => {
+      await ensurePeerAgent();
+      advertisePeerModel();
+      const inner = createRequestAdmission({
+        limits: ADMISSION_LIMITS,
+        load: () => Promise.resolve(),
+      });
+      const counted = countedAdmission(inner);
+      const admitted = startAgentServer({
+        bindHost: "127.0.0.1",
+        port: 0,
+        tokenHash: agentAHash,
+        tls: { certPath: agentTlsCertPath, keyPath: agentTlsKeyPath },
+        advertiseMdns: false,
+        chatCompletionsAdmission: counted.admission,
+      });
+      try {
+        const controller = new AbortController();
+        const res = await agentFetch(
+          "/v1/chat/completions",
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              model: PEER_MODEL,
+              stream: true,
+              messages: [{ role: "user", content: "hang up while admitted" }],
+            }),
+            signal: controller.signal,
+          },
+          admitted,
+        );
+        expect(res.status).toBe(200);
+        const reader = res.body!.getReader();
+        const first = await reader.read();
+        expect(first.done).toBe(false);
+        expect(counted.acquires()).toBe(1);
+        expect(inner.snapshot().executing).toBe(1);
+        expect(counted.releases()).toBe(0);
+
+        const chunksBeforeAbort = engine!.stats.chunksEnqueued;
+        const cancelAtMs = performance.now();
+        controller.abort();
+
+        expect(await engine!.nextAbort(ABORT_OBSERVE_TIMEOUT_MS)).toBe(true);
+        expect(engine!.stats.abortedAtMs! - cancelAtMs).toBeLessThan(ABORT_PROPAGATION_BUDGET_MS);
+        expect(engine!.stats.chunksAtAbort - chunksBeforeAbort).toBeLessThanOrEqual(
+          MAX_ENGINE_CHUNKS_DURING_ABORT,
+        );
+        const deadline = performance.now() + ABORT_OBSERVE_TIMEOUT_MS;
+        while (counted.releases() === 0 && performance.now() < deadline) await Bun.sleep(5);
+        expect(counted.releases()).toBe(1);
+        expect(inner.snapshot().executing).toBe(0);
+        await Bun.sleep(200);
+        expect(counted.releases()).toBe(1);
+        expect(counted.acquires()).toBe(1);
+        expect(engine!.stats.requests).toBe(1);
+      } finally {
+        await admitted.stop();
+      }
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  // Unified ingress: the same hangup with LLAMACTL_UNIFIED_PROXY=1 on agent A
+  // (dispatchProxyRequest reads the flag per request). Agent B stays on the
+  // legacy dispatch, which the cases above already pin.
+  test(
+    "case U: POST /v1/chat/completions on the unified ingress aborts the peer engine (any Bun)",
+    async () => {
+      await ensurePeerAgent();
+      advertisePeerModel();
+      process.env["LLAMACTL_UNIFIED_PROXY"] = "1";
+      __setSharedUnifiedProxyForTests(null);
+      try {
+        const controller = new AbortController();
+        const res = await agentFetch("/v1/chat/completions", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            model: PEER_MODEL,
+            stream: true,
+            messages: [{ role: "user", content: "hang up on the unified ingress" }],
+          }),
+          signal: controller.signal,
+        });
+        expect(res.status).toBe(200);
+        expect(res.headers.get("content-type")).toContain("text/event-stream");
+        const reader = res.body!.getReader();
+        const first = await reader.read();
+        expect(first.done).toBe(false);
+        expect(new TextDecoder().decode(first.value)).toContain("chunk-");
+
+        const chunksBeforeAbort = engine!.stats.chunksEnqueued;
+        const cancelAtMs = performance.now();
+        controller.abort();
+
+        expect(await engine!.nextAbort(ABORT_OBSERVE_TIMEOUT_MS)).toBe(true);
+        expect(engine!.stats.abortedAtMs! - cancelAtMs).toBeLessThan(ABORT_PROPAGATION_BUDGET_MS);
+        expect(engine!.stats.chunksAtAbort - chunksBeforeAbort).toBeLessThanOrEqual(
+          MAX_ENGINE_CHUNKS_DURING_ABORT,
+        );
+        expect(engine!.stats.paths).toEqual(["/v1/chat/completions"]);
+        expect(engine!.stats.models).toEqual([PEER_MODEL]);
+        expect(engine!.stats.requests).toBe(1);
+      } finally {
+        Reflect.deleteProperty(process.env, "LLAMACTL_UNIFIED_PROXY");
+        __setSharedUnifiedProxyForTests(null);
+      }
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  // Unified ingress, held prefill: no response headers exist at any hop, so
+  // only req.signal — through rebuildRequest and the legacy executor's
+  // composed Request — can tear the chain down inside the budget.
+  test(
+    "case UD: the unified ingress aborts the peer engine on a hangup during a held prefill (any Bun)",
+    async () => {
+      await ensurePeerAgent();
+      advertisePeerModel();
+      engine!.holdFirstByteMs = ENGINE_PREFILL_HOLD_MS;
+      process.env["LLAMACTL_UNIFIED_PROXY"] = "1";
+      __setSharedUnifiedProxyForTests(null);
+      try {
+        const controller = new AbortController();
+        const pending = agentFetch("/v1/chat/completions", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            model: PEER_MODEL,
+            stream: true,
+            messages: [{ role: "user", content: "hang up during a unified prefill" }],
+          }),
+          signal: controller.signal,
+        });
+        const settled = pending.then(
+          () => "resolved" as const,
+          (error: unknown) => (error instanceof Error ? error.name : "rejected"),
+        );
+        expect(await waitForEngineRequests(1, AGENT_B_URL_TIMEOUT_MS)).toBe(true);
+
+        const cancelAtMs = performance.now();
+        controller.abort();
+
+        expect(await settled).toBe("AbortError");
+        expect(await engine!.nextAbort(ABORT_OBSERVE_TIMEOUT_MS)).toBe(true);
+        expect(engine!.stats.abortedAtMs! - cancelAtMs).toBeLessThan(ABORT_PROPAGATION_BUDGET_MS);
+        expect(engine!.stats.chunksAtAbort).toBe(0);
+        expect(engine!.stats.requests).toBe(1);
+      } finally {
+        Reflect.deleteProperty(process.env, "LLAMACTL_UNIFIED_PROXY");
+        __setSharedUnifiedProxyForTests(null);
+      }
     },
     TEST_TIMEOUT_MS,
   );
