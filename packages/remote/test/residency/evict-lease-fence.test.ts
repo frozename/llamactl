@@ -844,4 +844,63 @@ describe("#520 session fence on eviction (DF-05 composition)", () => {
       active: [],
     });
   });
+
+  test("E4: a session registry whose checkUnload throws at a ModelHost victim's fenced stop refuses the eviction as EvictSessionUnknown", async () => {
+    // Kills: a missing SessionsUnknown classification in the ModelHost
+    // stop-error mapping (the refusal degrades to EvictStopRefused), or a
+    // detail that keeps the fence's dangling ": " separator.
+    saveModelHost(
+      mkModelHostManifest("resident-host", { resources: { expectedMemoryGiB: 24 } }),
+      workloadsDir,
+    );
+    const leases = createResidencyLeases();
+    setResidencyLeaseRegistry(leases);
+    const real = createSessionRefcounts({ idleTimeoutMs: 1000, now: () => 0 });
+    let broken = false;
+    const wrapped: SessionRefcounts = {
+      ...real,
+      checkUnload: (w: string, o?: { force?: boolean }) => {
+        if (broken) {
+          throw new Error("registry offline");
+        }
+        return real.checkUnload(w, o);
+      },
+    };
+    setSessionRefcountRegistry(wrapped);
+    const rig = makeEvictClient(
+      { name: "resident-host", kind: "ModelHost", rel: "resident-host.gguf", port: 18094 },
+      {
+        onVictimStatus: () => {
+          broken = true;
+        },
+      },
+    );
+    const { onEvent } = makeEventRecorder();
+    const incoming = mkManifest("incoming-run", {
+      ram: 8,
+      annotations: { "llamactl.io/evict": "resident-host" },
+    });
+
+    const result = await applyOne(incoming, () => rig.client, onEvent, undefined, {
+      workloadsDir,
+      env,
+      getNodeBudgetGiB: (): number => 24,
+    });
+
+    expect(result.statusSection.conditions[0]?.reason).toBe("EvictSessionUnknown");
+    expect(result.error).toContain("(EvictSessionUnknown): SessionsUnknown");
+    expect(result.error).not.toContain("SessionsUnknown:");
+    expect(result.action).toBe("pending");
+    expect(rig.starts).toEqual([]);
+    expect(rig.victimDown).toBe(false);
+    expect(rig.modelHostStops).toHaveLength(1);
+    expect(rig.modelHostStops[0]?.workload).toBe("resident-host");
+    expect(rig.modelHostStops[0]?.result.ok).toBe(false);
+    expect(rig.modelHostStops[0]?.result.error).toBe("SessionsUnknown: ");
+    expect(leases.snapshot("resident-host")).toMatchObject({
+      phase: "open",
+      epoch: 1,
+      active: [],
+    });
+  });
 });
