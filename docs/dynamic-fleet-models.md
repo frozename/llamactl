@@ -212,11 +212,58 @@ zod):
 `none` decision, returns `proposed` unless `autoApply` is set AND a
 writer is injected; `autoApply` without a writer writes nothing.
 
-Effective status at this commit: `effectiveStage`,
-`proposePromotion` and `applyPromotion` are library-only — no router,
-catalog, lifecycle or CLI code calls them. Consumers are pending
-E-14 / #284. The overrides reader has one consumer: routing applies
-its pin rows (see Overrides).
+### Demotion
+
+The optional `demotion` block on the promotion policy carries the floors
+that open the entry path into `degraded`
+(`packages/core/src/qualification/demotion.ts`). `minEvaluatedTasks` is
+the shared evidence gate; every other key is an optional floor, so a
+policy checks only the floors it configures. No demotion defaults ship.
+
+| key                           | comparison               |
+| ----------------------------- | ------------------------ |
+| `minEvaluatedTasks`           | evidence gate, inclusive |
+| `minFirstAttemptSuccess`      | demote below             |
+| `minRepairSuccess`            | demote below             |
+| `minToolCallCorrectness`      | demote below             |
+| `minStructuredOutputValidity` | demote below             |
+| `maxRegression`               | demote above             |
+| `minImprovement`              | demote below             |
+| `minMemoryStability`          | demote below             |
+| `minRuntimeReliability`       | demote below             |
+
+`proposeDemotion` applies the first matching check, in source order:
+`frozen`, `pinned`, `already-degraded`, `not-demotable`,
+`no-thresholds`, `insufficient-evidence`, `within-tolerance`. A `freeze`
+or `pin` override blocks demotion just as it blocks promotion (freeze
+wins). A declared `degraded` stage is already demoted
+(`already-degraded`); a declared `experimental` stage never reached a
+demotable rung (`not-demotable`). A missing `demotion` block, or one with
+only `minEvaluatedTasks` and no floor, reports `no-thresholds`; evidence
+below `minEvaluatedTasks`, or a configured floor whose metric is absent
+or non-finite, reports `insufficient-evidence`; otherwise, if no
+configured floor is breached, `within-tolerance`.
+
+Breach comparisons are strict: value above `maxRegression`, or value
+below a min floor — a metric sitting exactly on its floor stays within
+tolerance. Breaches report in `PROMOTION_METRICS` order and a demotion
+proposal moves the rel from `candidate`, `validated` or `production` to
+`degraded`.
+
+`evaluateQualification` runs the demotion path before promotion: a
+demotable stage past a floor returns a demotion, and everything else
+falls through to the untouched `proposePromotion` decision.
+`applyQualification` gates either decision kind through the same
+`autoApply` flag (default off): a `none` decision is `skipped`,
+`autoApply` without an injected writer stays `proposed`, and only
+`autoApply` with a writer applies. `health` stays the runtime overlay in
+`effectiveStage` and never triggers a persisted demotion here.
+
+Effective status at this commit: `effectiveStage`, `proposePromotion`,
+`applyPromotion`, `proposeDemotion`, `evaluateQualification` and
+`applyQualification` are library-only — no router, catalog, lifecycle or
+CLI code calls them. Consumers are pending E-14 / #284. The overrides
+reader has one consumer: routing applies its pin rows (see Overrides).
 
 ## Overrides
 
