@@ -193,6 +193,13 @@ const mkModelHostManifest = (
 const ALIAS_RESOLVER = (n: string): string | null =>
   n === "mac-mini" || n === "mac-mini.local" ? "mac-mini" : null;
 
+/** Attach a nodeFacts stub reporting `memBytes` to a fake client. */
+function withNodeFacts(client: WorkloadClient, memBytes: number | null): WorkloadClient {
+  return { ...client, nodeFacts: { query: () => Promise.resolve({ memBytes }) } };
+}
+
+const GIB = 1024 ** 3;
+
 function budgetSpy(): { budgetCalls: string[]; getNodeBudgetGiB: (n: string) => number } {
   const budgetCalls: string[] = [];
   return {
@@ -557,6 +564,181 @@ describe("DF-01 #274 node-alias admission identity", () => {
       expect(result.action).toBe("started");
       expect(starts).toEqual(["ghost-zero"]);
     } finally {
+      temp.cleanup();
+    }
+  });
+
+  test("ModelRun on an unresolved node verified by nodeFacts admits on the verified budget", async () => {
+    const temp = makeTempRuntime();
+    const env = envForTemp(temp);
+    const workloadsDir = join(temp.devStorage, "workloads");
+    const held = makeHeldClient(false);
+    const client = withNodeFacts(held.client, 64 * GIB);
+    try {
+      const result = await applyOne(
+        mkManifest("ghost-verified", { node: "ghost", ram: 8, port: 8130 }),
+        () => client,
+        undefined,
+        undefined,
+        { env, workloadsDir, resolveNodeIdentity: ALIAS_RESOLVER },
+      );
+      expect(result.action).toBe("started");
+      expect(held.starts).toEqual(["ghost-verified"]);
+    } finally {
+      temp.cleanup();
+    }
+  });
+
+  test("ModelRun on an unresolved node verified by nodeFacts refuses on a smaller explicit budget", async () => {
+    const temp = makeTempRuntime();
+    const env = envForTemp(temp);
+    const workloadsDir = join(temp.devStorage, "workloads");
+    const held = makeHeldClient(false);
+    const client = withNodeFacts(held.client, 64 * GIB);
+    try {
+      const result = await applyOne(
+        mkManifest("ghost-explicit", { node: "ghost", ram: 8, port: 8131 }),
+        () => client,
+        undefined,
+        undefined,
+        {
+          env,
+          workloadsDir,
+          getNodeBudgetGiB: () => 4,
+          resolveNodeIdentity: ALIAS_RESOLVER,
+        },
+      );
+      expect(result.action).toBe("pending");
+      expect(result.statusSection.conditions[0]?.reason).toBe("BudgetExceeded");
+      expect(result.error).toContain("Budget is 4.0 GiB");
+      expect(held.starts).toEqual([]);
+    } finally {
+      temp.cleanup();
+    }
+  });
+
+  test("ModelRun on an unresolved node whose nodeFacts reports no memory fails closed", async () => {
+    const temp = makeTempRuntime();
+    const env = envForTemp(temp);
+    const workloadsDir = join(temp.devStorage, "workloads");
+    const held = makeHeldClient(false);
+    const client = withNodeFacts(held.client, null);
+    try {
+      const result = await applyOne(
+        mkManifest("ghost-nofacts", { node: "ghost", ram: 8, port: 8132 }),
+        () => client,
+        undefined,
+        undefined,
+        {
+          env,
+          workloadsDir,
+          getNodeBudgetGiB: () => 24,
+          resolveNodeIdentity: ALIAS_RESOLVER,
+        },
+      );
+      expect(result.action).toBe("pending");
+      expect(result.statusSection.conditions[0]?.reason).toBe("BudgetUnknown");
+      expect(held.starts).toEqual([]);
+    } finally {
+      temp.cleanup();
+    }
+  });
+
+  test("ModelHost on an unresolved node verified by nodeFacts admits on the verified budget", async () => {
+    const temp = makeTempRuntime();
+    const env = envForTemp(temp);
+    const workloadsDir = join(temp.devStorage, "workloads");
+    const held = makeHeldClient(false);
+    const client = withNodeFacts(held.client, 64 * GIB);
+    try {
+      const result = await applyOneModelHost(
+        mkModelHostManifest("ghost-host-verified", {
+          node: "ghost",
+          resources: { expectedMemoryGiB: 8 },
+        }),
+        () => client,
+        undefined,
+        { env, workloadsDir, resolveNodeIdentity: ALIAS_RESOLVER },
+      );
+      expect(result.ok).toBe(true);
+      expect(held.hostStarts).toEqual(["ghost-host-verified"]);
+    } finally {
+      temp.cleanup();
+    }
+  });
+
+  test("ModelHost on an unresolved node verified by nodeFacts refuses on a smaller explicit budget", async () => {
+    const temp = makeTempRuntime();
+    const env = envForTemp(temp);
+    const workloadsDir = join(temp.devStorage, "workloads");
+    const held = makeHeldClient(false);
+    const client = withNodeFacts(held.client, 64 * GIB);
+    try {
+      const result = await applyOneModelHost(
+        mkModelHostManifest("ghost-host-explicit", {
+          node: "ghost",
+          resources: { expectedMemoryGiB: 8 },
+        }),
+        () => client,
+        undefined,
+        {
+          env,
+          workloadsDir,
+          getNodeBudgetGiB: () => 4,
+          resolveNodeIdentity: ALIAS_RESOLVER,
+        },
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.reason).toBe("BudgetExceeded");
+      expect(result.error).toContain("Budget is 4.0 GiB");
+      expect(held.hostStarts).toEqual([]);
+    } finally {
+      temp.cleanup();
+    }
+  });
+
+  test("an empty-string identity does not collapse distinct nodes onto one admission lock", async () => {
+    const temp = makeTempRuntime();
+    const env = envForTemp(temp);
+    const workloadsDir = join(temp.devStorage, "workloads");
+    const { client, starts, releaseAll, drain } = makeHeldClient(true);
+    const { getNodeBudgetGiB } = budgetSpy();
+    const opts = {
+      env,
+      workloadsDir,
+      getNodeBudgetGiB,
+      resolveNodeIdentity: (): string | null => "",
+    };
+    let pa: Promise<ApplyResult> | undefined;
+    let pb: Promise<ApplyResult> | undefined;
+    try {
+      pa = applyOne(
+        mkManifest("empty-id-a", { node: "gpu-a", ram: 8, port: 8140 }),
+        () => client,
+        undefined,
+        undefined,
+        opts,
+      );
+      pb = applyOne(
+        mkManifest("empty-id-b", { node: "gpu-b", ram: 8, port: 8141 }),
+        () => client,
+        undefined,
+        undefined,
+        opts,
+      );
+
+      await poll(() => starts.length === 2);
+      expect(starts).toHaveLength(2);
+
+      await drain([pa, pb]);
+      const [resultA, resultB] = await Promise.all([pa, pb]);
+      expect(resultA.action).toBe("started");
+      expect(resultB.action).toBe("started");
+    } finally {
+      releaseAll();
+      await sleep(10);
+      releaseAll();
       temp.cleanup();
     }
   });

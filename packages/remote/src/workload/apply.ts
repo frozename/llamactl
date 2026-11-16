@@ -2048,8 +2048,8 @@ function nodeIdentityMatcher(
  * key — is what keeps the two-level lock acyclic: no caller ever holds a
  * name lock while waiting on an identity lock, so no cycle forms.
  *
- * A resolver-less caller (router workloadApply, residencyApplyProfile)
- * resolves to null and therefore takes exactly the raw name lock it took
+ * A resolver-less caller (router workloadApply, residencyApplyProfile),
+ * or a resolver answering null or "", takes exactly the raw name lock it took
  * before, so it keeps serializing with resolver-supplying callers (the
  * reconciler, composite) on the same raw name.
  *
@@ -2062,8 +2062,11 @@ async function withAdmissionLock<T>(
   nodeName: string,
   fn: () => Promise<T>,
 ): Promise<T> {
+  // An empty identity (the CLI resolver's answer for `local`) is no
+  // identity, matching nodeIdentityMatcher: it must not collapse every
+  // empty-resolving node onto one shared `node-identity:` key.
   const identity = opts?.resolveNodeIdentity?.(nodeName) ?? null;
-  if (identity === null) {
+  if (identity === null || identity === "") {
     return await withNodeLock(nodeName, fn);
   }
   return await withNodeLock(`node-identity:${identity}`, () => withNodeLock(nodeName, fn));
