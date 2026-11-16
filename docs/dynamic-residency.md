@@ -80,16 +80,23 @@ Cancel is process-local and aborts at the next step boundary (`packages/remote/s
 
 ## Request admission
 
-`LLAMACTL_CHAT_ADMISSION_MAX_EXECUTIONS` is opt-in. `LLAMACTL_CHAT_ADMISSION_MAX_QUEUED` uses the literal default 16 (`CHAT_ADMISSION_DEFAULT_MAX_QUEUED`, `packages/cli/src/commands/agent.ts`). One cap is shared by the agent's `/v1/chat/completions`, `/v1/messages` and `/v1/responses`, and by worker RPC streams (#709). Overload gets `429`/`503`.
+`LLAMACTL_CHAT_ADMISSION_MAX_EXECUTIONS` is opt-in. `LLAMACTL_CHAT_ADMISSION_MAX_QUEUED` uses the literal default 16 (`CHAT_ADMISSION_DEFAULT_MAX_QUEUED`, `packages/cli/src/commands/agent.ts`). One cap is shared by the agent's `/v1/chat/completions`, `/v1/messages`, `/v1/responses` and generic `/v1/completions` (#712), by worker RPC streams (#709), and by the router's local chat: `chatComplete`/`chatStream` on `inproc://local`, whether reached over `/trpc` or relayed through the tunnel client (#712). The in-process RAG via-forward is covered by its outer HTTP slot. Overload gets `429`/`503`.
 
-Not counted yet: the `Deferred` list in `packages/remote/src/server/chat-admission.ts` names what the cap does not cover:
+Not counted yet: the `UNCOUNTED BY DESIGN` and `DEFERRED` blocks in `packages/remote/src/server/chat-admission.ts` name what the cap does not cover.
 
-- the create-proxy.ts ingress: the router.ts tRPC chat mutation for inproc nodes and generic /v1/\* proxying (for example /v1/completions) via dispatchProxyRequest;
+Uncounted by design:
+
+- /v1/embeddings and RAG embedding, because an embedder call nested inside an admitted chat would self-deadlock.
+
+Deferred:
+
+- /v1/rerank and other generic /v1/\* POSTs;
+- the planner local provider (router.ts resolvePlannerProvider);
+- fairness between the ingresses that share the cap;
 - physical per-node accounting;
 - per-model keys with real load coalescing;
 - per-principal shares;
 - a total request deadline;
-- fairness between the ingresses that share the cap;
 - Anthropic-shaped error bodies.
 
 To disable, unset the vars and restart the agent (`packages/cli/src/commands/agent.ts` help):

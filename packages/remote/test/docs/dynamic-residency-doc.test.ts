@@ -241,11 +241,24 @@ function missingRequiredFlags(md: string, required: Map<string, string[]>): stri
   return reports.sort();
 }
 
-// The bullets of the "Deferred:" block in the chat-admission.ts header.
-function chatAdmissionDeferred(): string {
+// The "UNCOUNTED BY DESIGN:" and "DEFERRED:" blocks of the chat-admission.ts
+// header, each as a list of bullets with comment continuations joined.
+function chatAdmissionUncountedBullets(): string[] {
   const header = /^\/\*\*([\s\S]*?)\*\//.exec(readOrEmpty(CHAT_ADMISSION))?.[1] ?? "";
-  const block = /Deferred:\n([\s\S]*?)\n \*\n/.exec(header)?.[1] ?? "";
-  return block.replaceAll(/\n \* +/g, " ");
+  const bullets: string[] = [];
+  for (const m of header.matchAll(/(?:UNCOUNTED BY DESIGN|DEFERRED):([\s\S]*?)\n \*\n/g)) {
+    const block = (m[1] ?? "").replaceAll(/\n \* */g, " ");
+    for (const part of ` ${block}`.split(/\s+-\s+/)) {
+      const text = part.trim();
+      if (text !== "") bullets.push(text);
+    }
+  }
+  return bullets;
+}
+
+// A bullet's lead: its first three words, cut at the first , ; ( or final dot.
+function bulletLead(bullet: string): string {
+  return bullet.split(/\s+/).slice(0, 3).join(" ").split(/[,;(]/)[0]!.replace(/\.$/, "").trim();
 }
 
 function productionRefs(symbol: string, definingFile: string): string[] {
@@ -535,15 +548,38 @@ describe("docs/dynamic-residency.md (#285)", () => {
       expect(declared).toContain(`\`${state}\``);
     }
 
-    // The uncounted list mirrors the chat-admission.ts Deferred block in both
-    // directions, so counting a deferred ingress forces a doc update.
-    const deferred = chatAdmissionDeferred();
+    // The counted ingresses (#709, #712) sit before the uncounted list.
+    const counted = admission.split("Not counted yet")[0] ?? "";
+    for (const needle of ["/v1/completions", "worker RPC", "inproc://local", "/trpc"]) {
+      expect(counted).toContain(needle);
+    }
+
+    // The uncounted list mirrors the chat-admission.ts UNCOUNTED BY DESIGN and
+    // DEFERRED blocks in both directions, so counting an uncounted ingress, or
+    // adding one, forces a doc update.
+    const bullets = chatAdmissionUncountedBullets();
+    const deferred = bullets.join("\n");
     expect(deferred).toContain("physical per-node accounting");
     const uncounted = /Not counted yet[\s\S]*/.exec(admission)?.[0] ?? "";
     expect(uncounted).toContain("packages/remote/src/server/chat-admission.ts");
+    const docBullets = [...uncounted.matchAll(/^- (.+)$/gm)].map((m) => m[1] ?? "");
+    expect(docBullets.length, "doc uncounted bullets vs source bullets").toBe(bullets.length);
+    for (const bullet of bullets) {
+      const lead = bulletLead(bullet);
+      expect(
+        docBullets.some((b) => b.startsWith(lead)),
+        `source bullet missing from doc: ${lead}`,
+      ).toBe(true);
+    }
     for (const item of [
       "/v1/completions",
       "tRPC chat mutation",
+      "/v1/embeddings",
+      "RAG embedding",
+      "self-deadlock",
+      "/v1/rerank",
+      "planner local provider",
+      "resolvePlannerProvider",
       "physical per-node accounting",
       "per-model keys",
       "per-principal shares",
