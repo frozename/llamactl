@@ -457,16 +457,16 @@ describe("docs/dynamic-residency.md (#285)", () => {
     );
   });
 
-  // Kills: adding a knob to ResidencyPolicySchema, or marking
-  // idleEvictSeconds enforced in the doc.
+  // Kills: reverting a ranking knob row to reserved, or dropping the
+  // production-gap sentence.
   test("case 7: NodeRun knobs table matches ResidencyPolicySchema", () => {
     const KNOB_STATUS = {
       safetyMarginRatio: "enforced",
       minResidencySeconds: "planner-only",
       switchCooldownSeconds: "planner-only",
       idleEvictSeconds: "parse-only",
-      residentPreference: "reserved",
-      coldLoadPenaltyMs: "reserved",
+      residentPreference: "ranking-only",
+      coldLoadPenaltyMs: "ranking-only",
     } as const;
     expect(Object.keys(ResidencyPolicySchema.shape).sort()).toEqual(
       Object.keys(KNOB_STATUS).sort(),
@@ -482,6 +482,9 @@ describe("docs/dynamic-residency.md (#285)", () => {
     for (const [key, status] of Object.entries(KNOB_STATUS)) {
       expect(rows.get(key), `knob table row for ${key}`).toBe(status);
     }
+    expect(section).toContain("rankRouteCandidates");
+    expect(section).toContain("residencyPolicy");
+    expect(section).toContain("no runtime effect until");
     expect(section).toContain("#690");
   });
 

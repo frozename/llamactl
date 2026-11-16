@@ -1,4 +1,5 @@
 import type { PeerNode } from "@llamactl/core/config/peers";
+import type { ResidencyPolicy } from "@llamactl/core/residency/admission";
 import type { ResolvedEnv } from "@llamactl/core/types";
 
 /**
@@ -72,6 +73,10 @@ export interface UnifiedProxyOptions {
   nodeId?: string;
   now?: () => number;
   rankingSignals?: routingRanking.RankingSignals | (() => routingRanking.RankingSignals);
+  residencyPolicy?:
+    | Partial<ResidencyPolicy>
+    | null
+    | (() => Partial<ResidencyPolicy> | null | undefined);
 }
 
 export interface UnifiedProxy {
@@ -185,6 +190,7 @@ interface UnifiedDeps {
   resolveCredentials?: UnifiedProxyOptions["resolveCredentials"];
   acquireExecutor?: UnifiedProxyOptions["acquireExecutor"];
   rankingSignals: () => routingRanking.RankingSignals;
+  residencyPolicy: () => Partial<ResidencyPolicy> | null | undefined;
 }
 
 function makeEnvelope(input: {
@@ -241,6 +247,7 @@ async function gatedExecute(
   const candidate = routingRanking.pickRouteCandidate(eligible, {
     now: deps.now(),
     signals: deps.rankingSignals(),
+    policy: deps.residencyPolicy(),
   });
   if (candidate === undefined) {
     const rejection = rejected.at(0)?.rejection;
@@ -378,6 +385,11 @@ export function createProxy(opts: UnifiedProxyOptions = {}): UnifiedProxy {
     typeof rankingSignalsOpt === "function"
       ? rankingSignalsOpt
       : (): routingRanking.RankingSignals => rankingSignalsOpt ?? {};
+  const residencyPolicyOpt = opts.residencyPolicy;
+  const residencyPolicy: () => Partial<ResidencyPolicy> | null | undefined =
+    typeof residencyPolicyOpt === "function"
+      ? residencyPolicyOpt
+      : (): Partial<ResidencyPolicy> | null | undefined => residencyPolicyOpt ?? null;
   // worker-rpc candidates run on the worker RPC, over the transport their
   // declared owner's kubeconfig node selects; everything else keeps the
   // default executor.
@@ -429,6 +441,7 @@ export function createProxy(opts: UnifiedProxyOptions = {}): UnifiedProxy {
       : {}),
     acquireExecutor,
     rankingSignals,
+    residencyPolicy,
   };
 
   return {

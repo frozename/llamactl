@@ -9,7 +9,13 @@
  */
 import type { ResolvedEnv } from "@llamactl/core/types";
 
-import { openaiProxy, routingCapabilities, routingCatalog } from "@llamactl/core";
+import {
+  openaiProxy,
+  residencyAdmission,
+  routingCapabilities,
+  routingCatalog,
+  routingRanking,
+} from "@llamactl/core";
 import { resolveEnv } from "@llamactl/core/env";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
@@ -36,6 +42,12 @@ interface RankingSignals {
   drainMs?: (ad: routingCatalog.RouteAdvertisementV1) => number | undefined;
   cooldownUntil?: (ad: routingCatalog.RouteAdvertisementV1) => number | undefined;
 }
+
+/** ResidencyPolicy knobs the #519 fix threads into candidate ranking. */
+type PolicyKnobs = Partial<residencyAdmission.ResidencyPolicy>;
+
+/** Shape of the residencyPolicy option the fix adds to UnifiedProxyOptions. */
+type ProxyResidencyPolicy = PolicyKnobs | null | (() => PolicyKnobs | null | undefined);
 
 let sandbox: string | undefined;
 
@@ -123,6 +135,7 @@ interface RankedOutcome {
 async function serveRanked(
   ads: readonly routingCatalog.RouteAdvertisementV1[],
   signals?: RankingSignals,
+  residencyPolicy?: ProxyResidencyPolicy,
 ): Promise<RankedOutcome> {
   const cat = routingCatalog.buildRouteCatalog({
     routes: [],
@@ -146,10 +159,261 @@ async function serveRanked(
       return recordingExecutor(owner);
     },
     ...(signals !== undefined ? { rankingSignals: signals } : {}),
+    ...(residencyPolicy !== undefined ? { residencyPolicy } : {}),
   });
   const response = await proxy.handleRequest(chatReq());
   return { status: response.status, acquired };
 }
+
+interface RankedRow {
+  owner: string;
+  switchCostMs: number;
+  score: number;
+}
+
+interface RankFixture {
+  name: string;
+  ads: routingCatalog.RouteAdvertisementV1[];
+  signals: RankingSignals | undefined;
+  owner: string;
+  table: RankedRow[];
+}
+
+const F1: RankFixture = {
+  name: "production outranks candidate",
+  ads: [
+    rankAd("node-a", 0, { qualification: { stage: "candidate" } }),
+    rankAd("node-b", 1, { qualification: { stage: "production" } }),
+  ],
+  signals: undefined,
+  owner: "node-b",
+  table: [
+    { owner: "node-b", switchCostMs: 0, score: 90_000 },
+    { owner: "node-a", switchCostMs: 0, score: 30_000 },
+  ],
+};
+
+const F2: RankFixture = {
+  name: "degraded below unstaged",
+  ads: [rankAd("node-a", 0, { qualification: { stage: "degraded" } }), rankAd("node-b", 1)],
+  signals: undefined,
+  owner: "node-b",
+  table: [
+    { owner: "node-b", switchCostMs: 0, score: 90_000 },
+    { owner: "node-a", switchCostMs: 0, score: 0 },
+  ],
+};
+
+const F3: RankFixture = {
+  name: "default expected-load fallback",
+  ads: [
+    rankAd("node-a", 0, { qualification: { stage: "production" } }),
+    rankAd("node-b", 1, { qualification: { stage: "validated" } }),
+  ],
+  signals: { resident: new Set(["deploy/node-b/w"]) },
+  owner: "node-b",
+  table: [
+    { owner: "node-b", switchCostMs: 0, score: 60_000 },
+    { owner: "node-a", switchCostMs: 60_000, score: 30_000 },
+  ],
+};
+
+const F4: RankFixture = {
+  name: "drain",
+  ads: [
+    rankAd("node-a", 0, { qualification: { stage: "production" } }),
+    rankAd("node-b", 1, { qualification: { stage: "candidate" } }),
+  ],
+  signals: {
+    resident: new Set(["deploy/node-b/w"]),
+    expectedLoadMs: () => 0,
+    drainMs: (ad) => (ad.ownerNodeId === "node-a" ? 100_000 : undefined),
+  },
+  owner: "node-b",
+  table: [
+    { owner: "node-b", switchCostMs: 0, score: 30_000 },
+    { owner: "node-a", switchCostMs: 100_000, score: -10_000 },
+  ],
+};
+
+const F5: RankFixture = {
+  name: "cooldown",
+  ads: [rankAd("node-a", 0), rankAd("node-b", 1)],
+  signals: {
+    resident: new Set(["deploy/node-a/w", "deploy/node-b/w"]),
+    cooldownUntil: (ad) => (ad.ownerNodeId === "node-a" ? 1_120_000 : undefined),
+  },
+  owner: "node-b",
+  table: [
+    { owner: "node-b", switchCostMs: 0, score: 90_000 },
+    { owner: "node-a", switchCostMs: 120_000, score: -30_000 },
+  ],
+};
+
+const F6: RankFixture = {
+  name: "equal stage",
+  ads: [
+    rankAd("node-a", 0, { qualification: { stage: "validated" } }),
+    rankAd("node-b", 1, { qualification: { stage: "validated" } }),
+  ],
+  signals: { expectedLoadMs: () => 1_000 },
+  owner: "node-a",
+  table: [
+    { owner: "node-a", switchCostMs: 0, score: 60_000 },
+    { owner: "node-b", switchCostMs: 0, score: 60_000 },
+  ],
+};
+
+const F7: RankFixture = {
+  name: "resident flip fixture",
+  ads: [
+    rankAd("node-a", 0, { qualification: { stage: "production" } }),
+    rankAd("node-b", 1, { qualification: { stage: "validated" } }),
+  ],
+  signals: {
+    resident: new Set(["deploy/node-b/w"]),
+    expectedLoadMs: () => 0,
+  },
+  owner: "node-a",
+  table: [
+    { owner: "node-a", switchCostMs: 0, score: 90_000 },
+    { owner: "node-b", switchCostMs: 0, score: 60_000 },
+  ],
+};
+
+const FIXTURES: readonly RankFixture[] = [F1, F2, F3, F4, F5, F6, F7];
+
+const PROXY_VARIANTS: readonly (ProxyResidencyPolicy | undefined)[] = [
+  undefined,
+  {},
+  { ...residencyAdmission.DEFAULT_RESIDENCY_POLICY },
+  null,
+  (): null => null,
+  (): undefined => undefined,
+  { coldLoadPenaltyMs: -1_000_000 },
+  { residentPreference: -5 },
+];
+
+const CORE_VARIANTS: readonly (PolicyKnobs | null | undefined)[] = [
+  undefined,
+  {},
+  { ...residencyAdmission.DEFAULT_RESIDENCY_POLICY },
+  null,
+  { coldLoadPenaltyMs: -1_000_000 },
+  { residentPreference: -5 },
+  { coldLoadPenaltyMs: Number.NaN, residentPreference: Number.NaN },
+  { coldLoadPenaltyMs: Number.POSITIVE_INFINITY },
+];
+
+function rankCore(
+  ads: readonly routingCatalog.RouteAdvertisementV1[],
+  signals: RankingSignals | undefined,
+  policy?: PolicyKnobs | null,
+): RankedRow[] {
+  const cat = routingCatalog.buildRouteCatalog({
+    routes: [],
+    nodeId: "local",
+    now: NOW,
+    advertisements: ads,
+  });
+  const ranked = routingRanking.rankRouteCandidates(
+    routingCatalog.catalogCandidatesFor(cat, MODEL),
+    {
+      now: NOW,
+      ...(signals !== undefined ? { signals } : {}),
+      ...(policy !== undefined ? { policy } : {}),
+    },
+  );
+  return ranked.map((entry) => ({
+    owner: entry.candidate.advertisement.ownerNodeId,
+    switchCostMs: entry.switchCostMs + 0,
+    score: entry.score + 0,
+  }));
+}
+
+describe("unified proxy residency policy ranking knobs (Part of #519)", () => {
+  test("coldLoadPenaltyMs charges a non-resident candidate when residency is known", async () => {
+    // Kills: not adding the penalty to loadCostMs, or also charging it to
+    // the resident candidate (a 50000 vs b 20000, so node-a still wins).
+    const { status, acquired } = await serveRanked(F7.ads, F7.signals, {
+      coldLoadPenaltyMs: 40_000,
+    });
+    expect(status).toBe(200);
+    expect(acquired.at(-1)).toBe("node-b");
+  });
+
+  test("residentPreference rewards a resident candidate in quality points", async () => {
+    // Kills: dropping the resident bonus, or applying it to every candidate
+    // (a 135000 > 105000).
+    const { status, acquired } = await serveRanked(F7.ads, F7.signals, {
+      residentPreference: 1.5,
+    });
+    expect(status).toBe(200);
+    expect(acquired.at(-1)).toBe("node-b");
+  });
+
+  test("core ranking carries the penalty in switchCostMs and the bonus in score", () => {
+    // Kills: the penalty in score but not in switchCostMs, or the bonus in
+    // ms rather than quality points (1.5 instead of 45000).
+    expect(
+      rankCore(F7.ads, F7.signals, { coldLoadPenaltyMs: 40_000, residentPreference: 1.5 }),
+    ).toEqual([
+      { owner: "node-b", switchCostMs: 0, score: 105_000 },
+      { owner: "node-a", switchCostMs: 40_000, score: 50_000 },
+    ]);
+  });
+
+  test("the default policy yields the #518 decisions (proxy)", async () => {
+    // Kills: ranking merging opts.policy without resolveResidencyPolicy
+    // validation. An unvalidated -1_000_000 penalty flips F3 and F4 to
+    // node-a, and an unvalidated -5 preference flips F3 and F4 to node-a.
+    // Also kills a default large enough to flip F7: DEFAULT
+    // coldLoadPenaltyMs > 30000, or residentPreference > 1.
+    for (const fixture of FIXTURES) {
+      for (const [i, variant] of PROXY_VARIANTS.entries()) {
+        const { acquired } = await serveRanked(fixture.ads, fixture.signals, variant);
+        expect(acquired.at(-1), `${fixture.name} variant ${String(i)}`).toBe(fixture.owner);
+      }
+    }
+    const { acquired } = await serveRanked(F7.ads, F7.signals, { coldLoadPenaltyMs: 40_000 });
+    expect(acquired.at(-1)).toBe("node-b");
+  });
+
+  test("the default policy yields the #518 scores (core table)", () => {
+    // Kills: ANY nonzero default for either knob, in DEFAULT_RESIDENCY_POLICY
+    // or as a fallback inside ranking.ts. Even 1 shifts F3's node-a
+    // switchCostMs or node-b's score. Also kills skipped validation: NaN,
+    // Infinity or a negative value would appear in switchCostMs or score.
+    for (const fixture of FIXTURES) {
+      for (const [i, variant] of CORE_VARIANTS.entries()) {
+        expect(
+          rankCore(fixture.ads, fixture.signals, variant),
+          `${fixture.name} variant ${String(i)}`,
+        ).toEqual(fixture.table);
+      }
+    }
+    expect(rankCore(F7.ads, F7.signals, { coldLoadPenaltyMs: 40_000 })).toEqual([
+      { owner: "node-b", switchCostMs: 0, score: 60_000 },
+      { owner: "node-a", switchCostMs: 40_000, score: 50_000 },
+    ]);
+  });
+
+  test("guard: neither knob applies when residency is unknown", async () => {
+    // guard: passes at base. Kills: charging coldLoadPenaltyMs when
+    // signals.resident is undefined (switchCostMs 40000), or granting
+    // residentPreference without a resident set (scores 240000/210000).
+    const policy: PolicyKnobs = { coldLoadPenaltyMs: 40_000, residentPreference: 5 };
+    const table: RankedRow[] = [
+      { owner: "node-a", switchCostMs: 0, score: 90_000 },
+      { owner: "node-b", switchCostMs: 0, score: 60_000 },
+    ];
+    expect(rankCore(F7.ads, { expectedLoadMs: () => 0 }, policy)).toEqual(table);
+    expect(rankCore(F7.ads, undefined, policy)).toEqual(table);
+    const { status, acquired } = await serveRanked(F7.ads, { expectedLoadMs: () => 0 }, policy);
+    expect(status).toBe(200);
+    expect(acquired.at(-1)).toBe("node-a");
+  });
+});
 
 describe("unified proxy candidate ranking (#518)", () => {
   test("a production stage outranks a candidate stage", async () => {

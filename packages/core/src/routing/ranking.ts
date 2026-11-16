@@ -12,8 +12,18 @@
  * now rank below unstaged peers on the unified path, because an unstaged
  * advertisement scores as production (3) while a declared lower stage scores
  * less. The legacy (flag-off) path ignores stages entirely.
+ *
+ * Part of #519: the ResidencyPolicy knobs residentPreference and
+ * coldLoadPenaltyMs apply here too, resolved through opts.policy.
+ * coldLoadPenaltyMs adds ms to a non-resident candidate's load cost when
+ * residency is known; residentPreference adds quality points (multiplied by
+ * msPerQualityPoint) to a resident candidate's score. Both are inert at 0
+ * and while residency is unknown (signals.resident === undefined); the
+ * defaults reproduce the #518 decisions and scores exactly.
  */
 import type { RouteAdvertisementV1, RouteCandidate } from "./catalog.js";
+
+import { type ResidencyPolicy, resolveResidencyPolicy } from "../residency/admission.js";
 
 export interface RankingSignals {
   /** deploymentIds currently resident on their owner node; absent = unknown. */
@@ -69,9 +79,10 @@ function loadCostMs(
   ad: RouteAdvertisementV1,
   signals: RankingSignals,
   weights: RankingWeights,
+  policy: ResidencyPolicy,
 ): number {
   if (signals.resident === undefined || isResident(ad, signals)) return 0;
-  return signals.expectedLoadMs?.(ad) ?? weights.defaultExpectedLoadMs;
+  return (signals.expectedLoadMs?.(ad) ?? weights.defaultExpectedLoadMs) + policy.coldLoadPenaltyMs;
 }
 
 function drainCostMs(ad: RouteAdvertisementV1, signals: RankingSignals): number {
@@ -90,8 +101,9 @@ function switchCostMs(
   now: number,
   signals: RankingSignals,
   weights: RankingWeights,
+  policy: ResidencyPolicy,
 ): number {
-  const load = loadCostMs(ad, signals, weights);
+  const load = loadCostMs(ad, signals, weights, policy);
   const drain = drainCostMs(ad, signals);
   const cooldown = cooldownCostMs(ad, now, signals);
   return load + drain + cooldown;
@@ -112,24 +124,36 @@ function compareRanked(a: RankedCandidate, b: RankedCandidate): number {
   return a.index - b.index;
 }
 
+export interface RankingOptions {
+  now: number;
+  signals?: RankingSignals;
+  weights?: Partial<RankingWeights>;
+  policy?: Partial<ResidencyPolicy> | null | undefined;
+}
+
 export function rankRouteCandidates(
   candidates: readonly RouteCandidate[],
-  opts: { now: number; signals?: RankingSignals; weights?: Partial<RankingWeights> },
+  opts: RankingOptions,
 ): RankedCandidate[] {
   const weights: RankingWeights = { ...DEFAULT_RANKING_WEIGHTS, ...opts.weights };
   const signals: RankingSignals = opts.signals ?? {};
+  const policy = resolveResidencyPolicy(opts.policy ?? null);
   const ranked: RankedCandidate[] = candidates.map(
     (candidate: RouteCandidate, index: number): RankedCandidate => {
       const ad = candidate.advertisement;
       const qualityPoints = qualityPointsOf(ad);
-      const switchCost = switchCostMs(ad, opts.now, signals, weights);
+      const switchCost = switchCostMs(ad, opts.now, signals, weights, policy);
+      const residentBonus =
+        signals.resident !== undefined && isResident(ad, signals)
+          ? policy.residentPreference * weights.msPerQualityPoint
+          : 0;
       return {
         candidate,
         index,
         tier: tierOf(ad),
         qualityPoints,
         switchCostMs: switchCost,
-        score: qualityPoints * weights.msPerQualityPoint - switchCost,
+        score: qualityPoints * weights.msPerQualityPoint - switchCost + residentBonus,
       };
     },
   );
@@ -138,7 +162,7 @@ export function rankRouteCandidates(
 
 export function pickRouteCandidate(
   candidates: readonly RouteCandidate[],
-  opts: { now: number; signals?: RankingSignals; weights?: Partial<RankingWeights> },
+  opts: RankingOptions,
 ): RouteCandidate | undefined {
   return rankRouteCandidates(candidates, opts).at(0)?.candidate;
 }

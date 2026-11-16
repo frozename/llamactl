@@ -35,8 +35,14 @@ export const MEMORY_BUDGET_HEADROOM_RATIO = 0.75;
  * LLAMACTL_RESIDENCY_SESSION_IDLE_MS (sessions.ts, #520) is unrelated: it
  * expires session refcounts that block an eviction and never starts one.
  *
- * `residentPreference` and `coldLoadPenaltyMs` are reserved and not yet
- * enforced.
+ * `residentPreference` and `coldLoadPenaltyMs` are consumed by
+ * rankRouteCandidates (packages/core/src/routing/ranking.ts) through the
+ * unified proxy's `residencyPolicy` option (Part of #519).
+ * coldLoadPenaltyMs adds ms to a non-resident candidate's load cost when
+ * residency is known. residentPreference adds quality points to a resident
+ * candidate. Both are inert at 0 and while residency is unknown. The
+ * production shared proxy supplies neither a policy nor resident signals
+ * yet.
  */
 export interface ResidencyPolicy {
   /** 0 = never evict idle residents. Parse-only (Part of #519): no
@@ -49,9 +55,15 @@ export interface ResidencyPolicy {
   /** The fraction of node memory admission may commit; defaults to
    *  MEMORY_BUDGET_HEADROOM_RATIO. */
   safetyMarginRatio: number;
-  /** 0 = no bias toward already-resident models. */
+  /** Quality points added to a resident candidate's ranking score; 0 = no
+   * bias toward already-resident models. Consumed by rankRouteCandidates
+   * through the unified proxy's residencyPolicy option; inert at 0 and
+   * while residency is unknown. */
   residentPreference: number;
-  /** 0 = no cold-load penalty in scoring. */
+  /** Milliseconds added to a non-resident candidate's load cost when
+   * residency is known; 0 = no cold-load penalty. Consumed by
+   * rankRouteCandidates through the unified proxy's residencyPolicy
+   * option; inert at 0 and while residency is unknown. */
   coldLoadPenaltyMs: number;
 }
 
