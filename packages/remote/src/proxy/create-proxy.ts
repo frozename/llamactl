@@ -289,6 +289,15 @@ async function handleUnifiedRequest(deps: UnifiedDeps, req: Request): Promise<Re
     deadline,
   };
   if (gate.model === null) return await deps.executor.execute(envelope, ctx);
+  // #280 DF-07: under unified ingress, a worker-rpc / acquired / fall-through
+  // executor never reaches proxyOpenAI's routed stale check, so refuse a stale
+  // declared pin here, before catalog, credential and executor work.
+  const stale = openaiProxy.staleDeclaredModelRejection(
+    gate.model,
+    ctx.resolved,
+    gate.bodyText ?? undefined,
+  );
+  if (stale !== null) return stale;
   return await gatedExecute(deps, gate.model, features, envelope, ctx);
 }
 
