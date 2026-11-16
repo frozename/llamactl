@@ -925,9 +925,10 @@ describe("experimental qualification (#518)", () => {
   });
 
   test("a stable replica is admitted when its replica group holds only a divergent experimental member", () => {
-    // Kills: the replica-identity check running against experimental members
-    // when the incoming advertisement is stable — on base the stable ad is
-    // rejected incompatible-replica against the experimental member.
+    // RED on base: the stable ad is rejected incompatible-replica against the
+    // experimental member. With the fix it is admitted via the empty-stable-peer
+    // early return, so this case does not exercise the replica-group lookup
+    // itself; the next case covers that with a stable peer outside the group.
     const expAd = {
       ...advertised({
         routeId: "route/ext-exp",
@@ -956,6 +957,81 @@ describe("experimental qualification (#518)", () => {
     expect(
       catalog.conflicts.filter((conflict) => conflict.reason === "incompatible-replica"),
     ).toEqual([]);
+  });
+
+  test("a stable replica with a priority is admitted past a divergent experimental member when a stable peer sits outside its group", () => {
+    // Kills: the replica-group lookup searching all candidates instead of
+    // the stable peers. A stable peer outside group g keeps the stable peer
+    // list non-empty, so the empty-list early return is not taken; the only
+    // member of g is experimental with a divergent revision. Searching all
+    // candidates (as on base) finds it and rejects incompatible-replica.
+    const catalog = buildRouteCatalog({ routes: [], nodeId: "node1" });
+    expect(
+      addCatalogAdvertisement(
+        catalog,
+        advertised({
+          routeId: "route/ext-outside",
+          deploymentId: "deploy/ext-outside",
+          backendId: "backend/ext-outside",
+          publicModelIds: ["g-model"],
+        }),
+      ).accepted,
+    ).toBe(true);
+    const expMember = {
+      ...advertised({
+        routeId: "route/ext-exp",
+        deploymentId: "deploy/ext-exp",
+        backendId: "backend/ext-exp",
+        publicModelIds: ["g-model"],
+        replicaGroup: "g",
+        modelRevision: knownRevision("rev-1"),
+        priority: 3,
+      }),
+      qualification: { stage: "experimental" },
+    };
+    expect(addCatalogAdvertisement(catalog, expMember).accepted).toBe(true);
+    const result = addCatalogAdvertisement(
+      catalog,
+      advertised({
+        routeId: "route/ext-stable",
+        deploymentId: "deploy/ext-stable",
+        backendId: "backend/ext-stable",
+        publicModelIds: ["g-model"],
+        replicaGroup: "g",
+        modelRevision: knownRevision("rev-2"),
+        priority: 5,
+      }),
+    );
+    expect(result).toEqual({ accepted: true });
+    expect(catalog.conflicts).toEqual([]);
+  });
+
+  test("an experimental advertisement without a priority is rejected against an experimental-only alias", () => {
+    // Kills: an experimental advertisement being judged only against stable
+    // peers — the experimental-only alias would leave no peers and admit it.
+    const catalog = buildRouteCatalog({
+      routes: [
+        {
+          ...localRoute({ workload: "a-exp", model: "late.gguf" }),
+          qualificationStage: "experimental",
+        },
+      ],
+    });
+    const expAd = {
+      ...advertised({
+        routeId: "route/ext-exp",
+        deploymentId: "deploy/ext-exp",
+        backendId: "backend/ext-exp",
+        publicModelIds: ["late.gguf"],
+      }),
+      qualification: { stage: "experimental" },
+    };
+    const result = addCatalogAdvertisement(catalog, expAd);
+    expect(result.accepted).toBe(false);
+    if (!result.accepted) {
+      expect(result.rejection.reason).toBe("alias-conflict");
+      expect(result.rejection.existingRouteId).toBe("route/local/a-exp");
+    }
   });
 
   test("addCatalogAdvertisement admits a stable ad over an experimental-only alias", () => {

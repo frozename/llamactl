@@ -22,17 +22,6 @@ import { mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
  *   * `syntheticModels` seeds the synth-node fanout.
  */
 
-// #518: `qualificationStages` lands with the fix. The widened view lets the
-// non-empty-history calls pass an empty stage map before the option exists;
-// the unknown key is ignored at runtime on the base rev.
-type GenerateEmbersynthOpts = NonNullable<Parameters<typeof generateEmbersynthConfig>[0]> & {
-  qualificationStages?: ReadonlyMap<string, string>;
-};
-
-const gen = generateEmbersynthConfig as unknown as (
-  opts: GenerateEmbersynthOpts,
-) => ReturnType<typeof generateEmbersynthConfig>;
-
 let tmp = "";
 const originalEnv = { ...process.env };
 
@@ -183,7 +172,11 @@ describe("embersynth config bridge", () => {
         launch_args: "--flash-attn",
       },
     ];
-    const out = gen({ cfg, benchHistory: history, qualificationStages: new Map() });
+    const out = generateEmbersynthConfig({
+      cfg,
+      benchHistory: history,
+      qualificationStages: new Map(),
+    });
     const gpu1 = out.nodes.find((n) => n.id === "agent-gpu1");
     expect(gpu1).toBeTruthy();
     expect(gpu1!.priority).toBe(1);
@@ -217,19 +210,19 @@ describe("embersynth config bridge", () => {
         launch_args: "",
       },
     ];
-    const slow = gen({
+    const slow = generateEmbersynthConfig({
       cfg: base,
       benchHistory: makeHistory("3.0"),
       qualificationStages: new Map(),
     });
     expect(slow.nodes.find((n) => n.id === "agent-gpu1")?.priority).toBe(8);
-    const mid = gen({
+    const mid = generateEmbersynthConfig({
       cfg: base,
       benchHistory: makeHistory("20.0"),
       qualificationStages: new Map(),
     });
     expect(mid.nodes.find((n) => n.id === "agent-gpu1")?.priority).toBe(4);
-    const fast = gen({
+    const fast = generateEmbersynthConfig({
       cfg: base,
       benchHistory: makeHistory("45.0"),
       qualificationStages: new Map(),

@@ -78,19 +78,10 @@ function row(
   };
 }
 
-// #518: `qualificationStages` lands with the fix. The widened opts view lets
-// `gen` inject an empty stage map — and the new cases pass real ones — before
-// the option exists; the unknown key is ignored at runtime on the base rev.
-type GenEmbersynthOpts = NonNullable<Parameters<typeof generateEmbersynthConfig>[0]> & {
-  qualificationStages?: ReadonlyMap<string, string>;
-};
-
-const generateWithStages = generateEmbersynthConfig as unknown as (
-  opts: GenEmbersynthOpts,
-) => EmbersynthConfig;
+type GenEmbersynthOpts = NonNullable<Parameters<typeof generateEmbersynthConfig>[0]>;
 
 const gen = (o: GenEmbersynthOpts): EmbersynthConfig =>
-  generateWithStages({ qualificationStages: new Map<string, string>(), ...o });
+  generateEmbersynthConfig({ qualificationStages: new Map<string, string>(), ...o });
 
 function agentNode(out: EmbersynthConfig, id: string): EmbersynthNode | undefined {
   return out.nodes.find((n) => n.id === id);
