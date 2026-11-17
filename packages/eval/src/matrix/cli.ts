@@ -1,9 +1,16 @@
 import { Database } from "bun:sqlite";
 
+import { defaultProvenanceReaders } from "../perf/provenance.js";
 import { renderCsvReport, renderMarkdownReport } from "./report.js";
 import { runMatrix } from "./runner.js";
 import { listCellRows } from "./store.js";
-import { EVAL_ENGINES, type EvalEngine, type ModelSpec, type WorkloadEval } from "./types.js";
+import {
+  EVAL_ENGINES,
+  type EvalEngine,
+  isExternalOnlyEngine,
+  type ModelSpec,
+  type WorkloadEval,
+} from "./types.js";
 import { codeHumanevalWorkload } from "./workloads/code-humaneval.js";
 import { codeMbppWorkload } from "./workloads/code-mbpp.js";
 import {
@@ -150,7 +157,7 @@ function parseEngine(value: unknown): EvalEngine {
 }
 
 function assertEngineNotManaged(engine: EvalEngine, managed: unknown): void {
-  if ((engine === "gufo" || engine === "kapitsa") && managed === true) {
+  if (isExternalOnlyEngine(engine) && managed === true) {
     throw new Error(
       `invalid ModelSpec: engine ${engine} is not managed by eval; set managed=false and run the server externally`,
     );
@@ -337,6 +344,7 @@ async function main(): Promise<void> {
     workloads,
     db,
     concurrency,
+    provenanceReaders: defaultProvenanceReaders(),
     ...(runId !== undefined ? { runId } : {}),
     ...(corpusOverrides !== undefined ? { corpusOverrides } : {}),
   });
