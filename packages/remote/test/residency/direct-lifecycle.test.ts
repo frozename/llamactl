@@ -345,6 +345,7 @@ describe("direct residency lifecycle (injected deps)", () => {
 
     expect(readState("z13-a")?.state).toBe("failed");
     expect(readFence()?.incarnation).not.toBe("intruder");
+    expect(lines.join("")).not.toContain("release not recorded");
   });
 
   test("DL10d: a release refused under an in-flight switch is logged, not dropped", async () => {
@@ -469,6 +470,37 @@ describe("direct residency lifecycle (injected deps)", () => {
     expect(startError).toBeInstanceOf(Error);
     expect((startError as Error).message).toBe("spawn exploded");
     expect(readState("z13-a")).toMatchObject({ state: "failed", group: GROUP });
+
+    const peer = countingDep({ ok: true });
+    const outcome = await mod.runDirectResidencyStart("z13-b", peer.dep, lifecycleOpts(lines));
+
+    expect(outcome).toEqual({ ran: true, result: { ok: true } });
+    expect(peer.calls()).toBe(1);
+    expect(readState("z13-b")?.state).toBe("ready");
+  });
+
+  test("DL12c: a start dep that steals the fence and throws still records failed", async () => {
+    // kills: dropping the re-claim in the dep's catch path — the stolen
+    // fence would make the failed post-walk stale-fence, leaving the row
+    // loading with its group and refusing every exclusive peer start.
+    const mod = await loadDirectLifecycle();
+    seed([]);
+    const lines: string[] = [];
+    const throwing: DirectDep = () => {
+      stealFence();
+      throw new Error("spawn exploded");
+    };
+
+    const startError = await mod
+      .runDirectResidencyStart("z13-a", throwing, lifecycleOpts(lines))
+      .then(
+        () => null,
+        (error: unknown) => error,
+      );
+    expect(startError).toBeInstanceOf(Error);
+    expect((startError as Error).message).toBe("spawn exploded");
+    expect(readState("z13-a")).toMatchObject({ state: "failed", group: GROUP });
+    expect(readFence()?.incarnation).not.toBe("intruder");
 
     const peer = countingDep({ ok: true });
     const outcome = await mod.runDirectResidencyStart("z13-b", peer.dep, lifecycleOpts(lines));
