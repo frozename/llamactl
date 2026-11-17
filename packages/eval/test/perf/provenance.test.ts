@@ -396,6 +396,37 @@ describe("defaultProvenanceReaders", () => {
   });
 });
 
+describe("defaultProvenanceReaders --version timeout", () => {
+  test("passes a 5000ms timeout to spawnVersion when versionTimeoutMs is omitted", async () => {
+    const mod = await load();
+    const timeouts: number[] = [];
+    const readers = mod.defaultProvenanceReaders({
+      spawnVersion: (_argv, timeoutMs) => {
+        timeouts.push(timeoutMs);
+        return Promise.resolve({ stdout: "version: 4567 (1a2b3c4d)\n", stderr: "", exitCode: 0 });
+      },
+    });
+
+    await readers.engineVersion("/x/engine");
+    expect(timeouts).toEqual([5000]);
+  });
+
+  test("passes an explicit versionTimeoutMs through to spawnVersion", async () => {
+    const mod = await load();
+    const timeouts: number[] = [];
+    const readers = mod.defaultProvenanceReaders({
+      versionTimeoutMs: 1234,
+      spawnVersion: (_argv, timeoutMs) => {
+        timeouts.push(timeoutMs);
+        return Promise.resolve({ stdout: "version: 4567 (1a2b3c4d)\n", stderr: "", exitCode: 0 });
+      },
+    });
+
+    await readers.engineVersion("/x/engine");
+    expect(timeouts).toEqual([1234]);
+  });
+});
+
 function isAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
