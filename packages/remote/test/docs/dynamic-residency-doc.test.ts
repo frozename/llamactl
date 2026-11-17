@@ -720,15 +720,21 @@ describe("docs/dynamic-residency.md (#285)", () => {
     }
     const createProxySrc = readOrEmpty(join(REPO, "packages/remote/src/proxy/create-proxy.ts"));
     expect(createProxySrc).toContain("sharedProxy ??= createProxy();");
-    expect(createProxySrc).toContain("preferredLocalWorkload");
+    // The wiring itself, not the interface field or helper name: gatedExecute
+    // sets the hint on ctx and the legacy executor forwards it to proxyOpenAI.
+    expect(createProxySrc).toContain("preferredLocalWorkload: hint");
+    expect(
+      readOrEmpty(join(REPO, "packages/remote/src/inference/legacy-local-executor.ts")),
+    ).toContain("preferredWorkload: hint");
     expect(readOrEmpty(join(REPO, "packages/core/src/openaiProxy.ts"))).toContain(
       "preferredWorkload?: string",
     );
   });
 
   // Part of #522
-  // Kills: renaming SESSION_HEADER or the 409 AffinityConflict code, or
-  // deleting the section.
+  // Kills: renaming SESSION_HEADER or the 409 AffinityConflict code,
+  // deleting the section, documenting the 400 as unconditional, or making
+  // session acquisition unconditional in source.
   test("case 15: session affinity (#729) and session-aware stop fence (#722)", () => {
     const a = (sectionBody(sectionRe("session affinity")) ?? "").replaceAll(/\s+/g, " ");
     const proxySrc = readOrEmpty(join(REPO, "packages/core/src/openaiProxy.ts"));
@@ -754,6 +760,18 @@ describe("docs/dynamic-residency.md (#285)", () => {
     }
     expect(proxySrc).toContain('code: "AffinityConflict"');
     expect(proxySrc).toContain('code: "InvalidSessionId"');
+    // The 400 sits under the same condition as affinity, and the doc says so.
+    const only = a.indexOf("applies only when");
+    expect(only, "only-when condition").toBeGreaterThanOrEqual(0);
+    expect(a.indexOf("`InvalidSessionId`")).toBeGreaterThan(only);
+    expect(a).toContain("Session handling (affinity and id validation) applies only when");
+    expect(proxySrc).toContain(
+      "trimmedSessionId !== null && sessionRegistry !== null && leaseRegistry !== null",
+    );
+    expect(proxySrc).toContain("acquireProxySession(sessionRegistry, trimmedSessionId");
+    const serveSrc = readOrEmpty(join(REPO, "packages/remote/src/server/serve.ts"));
+    expect(serveSrc).toContain("if (opts.residencyLeases !== true) return null;");
+    expect(serveSrc).toContain("if (opts.residencySessionIdleMs !== undefined) {");
     expect(readOrEmpty(join(REPO, "packages/remote/src/residency/stop-fence.ts"))).toContain(
       '"SessionsActive"',
     );
