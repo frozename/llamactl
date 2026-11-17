@@ -232,9 +232,11 @@ function serveCurrentBuild(
   }
   const name = current.name;
   const binary = agentBuildBinaryPath(platform, name, dir);
-  let bytes: Uint8Array;
+  let bytes: Uint8Array<ArrayBuffer>;
   try {
-    bytes = readFileSync(binary);
+    // Copy into an ArrayBuffer-backed view: Response's BodyInit does not accept
+    // a Buffer typed over ArrayBufferLike under typecheck:strict.
+    bytes = new Uint8Array(readFileSync(binary));
   } catch {
     return new Response(`current pointer names ${name} but ${binary} is missing`, { status: 500 });
   }
