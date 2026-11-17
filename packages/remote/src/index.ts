@@ -217,6 +217,7 @@ export {
   type KubernetesClient,
   type KubernetesClientOptions,
 } from "./runtime/kubernetes/client.js";
+export type { AgentBuildManifest } from "./server/artifacts.js";
 export * as auth from "./server/auth.js";
 export {
   admissionErrorResponse,
