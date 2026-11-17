@@ -61,9 +61,31 @@ type LifecycleSection =
       reason: "StoreUnreadable" | "LifecycleUnreadable";
     };
 
-type StatusFixture = Omit<ResidencyStatus, "lifecycle"> & {
+type SessionSnapshotRow = {
+  sessionId: string;
+  workload: string;
+  refs: number;
+  idleMs: number;
+  expiresInMs: number | null;
+};
+
+type SessionsSection =
+  | {
+      status: "unavailable";
+      scope: "serving-process";
+      reason: "NoRegistry" | "SessionsUnknown" | "SnapshotUnsupported";
+    }
+  | {
+      status: "available";
+      scope: "serving-process";
+      idleTimeoutMs: number;
+      sessions: SessionSnapshotRow[];
+    };
+
+type StatusFixture = Omit<ResidencyStatus, "lifecycle" | "sessions"> & {
   leases: LeasesSection;
   lifecycle?: LifecycleSection;
+  sessions?: SessionsSection;
 };
 
 const RESIDENCY_STORE_PATH = "/tmp/rs/operations.sqlite";
@@ -914,5 +936,134 @@ describe("inert default", () => {
       expect(call.endsWith(".mutate")).toBe(false);
       expect(call.endsWith(".subscribe")).toBe(false);
     }
+  });
+});
+
+describe("residency sessions surface", () => {
+  const SESSIONS_OK_STATUS: StatusFixture = {
+    ...OK_STATUS,
+    sessions: {
+      status: "available",
+      scope: "serving-process",
+      idleTimeoutMs: 600000,
+      sessions: [
+        { sessionId: "sess-1", workload: "wl-a", refs: 1, idleMs: 10, expiresInMs: null },
+        { sessionId: "sess-2", workload: "wl-a", refs: 0, idleMs: 500, expiresInMs: 1500 },
+      ],
+    },
+  };
+
+  test("renders the bound sessions section", async () => {
+    // Kills: sessions section not rendered.
+    const residency = await loadResidency();
+    const fixture: StatusFixture = SESSIONS_OK_STATUS;
+    const rendered = residency.renderResidencyStatus(fixture);
+    expect(rendered).toContain("Sessions:   2 bound (idle timeout 10m 0s; scope: serving-process)");
+    expect(rendered).toContain("  wl-a  sess-1  refs 1  in flight");
+    expect(rendered).toContain("  wl-a  sess-2  refs 0  expires in 1s");
+  });
+
+  test("renders a distinct line per unavailable reason", async () => {
+    // Kills: one generic message for every reason.
+    const residency = await loadResidency();
+    const render = (reason: "NoRegistry" | "SessionsUnknown" | "SnapshotUnsupported"): string => {
+      const fixture: StatusFixture = {
+        ...OK_STATUS,
+        sessions: { status: "unavailable", scope: "serving-process", reason },
+      };
+      return residency.renderResidencyStatus(fixture);
+    };
+    expect(render("NoRegistry")).toContain(
+      "Sessions:   unavailable (no session registry installed; scope: serving-process)",
+    );
+    expect(render("SessionsUnknown")).toContain(
+      "Sessions:   unavailable (session registry unreadable; scope: serving-process)",
+    );
+    expect(render("SnapshotUnsupported")).toContain(
+      "Sessions:   unavailable (session registry has no snapshot; scope: serving-process)",
+    );
+  });
+
+  test("renders no Sessions line when the payload has no sessions key", async () => {
+    // GUARD — passes at base: pins that payloads without the section (older
+    // agents, the no-registry-key builder path) render unchanged.
+    const residency = await loadResidency();
+    const rendered = residency.renderResidencyStatus(OK_STATUS);
+    expect(rendered).not.toContain("Sessions:");
+  });
+
+  test("force-unload prints the released session ids", async () => {
+    // Kills: renderForceUnload dropping releasedSessions.
+    const residency = await loadResidency();
+    const rec = setupResidency({
+      "residencyForceUnload.mutate": (): Promise<unknown> =>
+        Promise.resolve({
+          ok: true,
+          workload: "w1",
+          kind: "modelrun",
+          source: "operator",
+          reason: "drill",
+          revoked: ["w1#1"],
+          releasedSessions: ["s1", "s2"],
+          stopped: true,
+          epoch: 1,
+        }),
+    });
+    const {
+      result: code,
+      stdout,
+      stderr,
+    } = await withCapturedIo(() =>
+      residency.runResidency(
+        ["force-unload", "w1", "--reason", "drill", "--node", "gpu1", "--yes"],
+        rec.deps,
+      ),
+    );
+    expect(code).toBe(0);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("Forced unload: released 2 session(s): s1, s2");
+  });
+
+  test("force-unload prints no session line when nothing was released", async () => {
+    // GUARD — passes at base: pins that an empty or absent releasedSessions
+    // never prints a session(s) line.
+    const residency = await loadResidency();
+    const base = {
+      ok: true,
+      workload: "w1",
+      kind: "modelrun",
+      source: "operator",
+      reason: "drill",
+      revoked: ["w1#1"],
+      stopped: true,
+      epoch: 1,
+    };
+    for (const payload of [{ ...base, releasedSessions: [] }, { ...base }]) {
+      const rec = setupResidency({
+        "residencyForceUnload.mutate": (): Promise<unknown> => Promise.resolve(payload),
+      });
+      const { result: code, stdout } = await withCapturedIo(() =>
+        residency.runResidency(
+          ["force-unload", "w1", "--reason", "drill", "--node", "gpu1", "--yes"],
+          rec.deps,
+        ),
+      );
+      expect(code).toBe(0);
+      expect(stdout).not.toContain("session(s)");
+    }
+  });
+
+  test("help names the sessions section", async () => {
+    // Kills: USAGE status line not naming the sessions section.
+    const residency = await loadResidency();
+    const rec = setupResidency({});
+    const {
+      result: code,
+      stdout,
+      stderr,
+    } = await withCapturedIo(() => residency.runResidency(["--help"], rec.deps));
+    expect(code).toBe(0);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("bound sessions (refs, idle-timeout expiry)");
   });
 });
