@@ -189,6 +189,94 @@ describe("llamactl --version", () => {
   });
 });
 
+// #743: VersionDeps gains `buildStamp`; a compiled stamp wins over any
+// checkout probe and short-circuits git entirely.
+interface StampVersionDeps {
+  version: string;
+  moduleDir: string;
+  exec: (file: string, args: string[]) => string;
+  existsFn: (p: string) => boolean;
+  buildStamp: { commit: string; dirty: boolean; builtAt: string };
+}
+
+const BUILD_STAMP = {
+  commit: "0123456789abcdef0123456789abcdef01234567",
+  dirty: false,
+  builtAt: "2026-11-17T10:00:00.000Z",
+};
+
+function stampDeps(
+  exec: (file: string, args: string[]) => string,
+  existsFn: (p: string) => boolean,
+  buildStamp: { commit: string; dirty: boolean; builtAt: string },
+): StampVersionDeps {
+  return { version: "0.0.0", moduleDir: FAKE_MODULE_DIR, exec, existsFn, buildStamp };
+}
+
+describe("llamactl --version (compiled build stamp)", () => {
+  test("compiled stamp prints short commit, build time and install kind", async () => {
+    const { calls, exec } = stubExec("ok");
+    const { result, stdout, stderr } = await captureProcessStreams(() =>
+      runVersion(
+        [],
+        stampDeps(exec, () => false, BUILD_STAMP),
+      ),
+    );
+    expect(result).toBe(0);
+    expect(stdout).toBe(
+      "llamactl 0.0.0 (0123456789ab, built 2026-11-17T10:00:00.000Z, compiled)\n",
+    );
+    expect(stderr).toBe("");
+    expect(calls).toHaveLength(0);
+  });
+
+  test("dirty compiled stamp marks the commit -dirty", async () => {
+    const { calls, exec } = stubExec("ok");
+    const { result, stdout } = await captureProcessStreams(() =>
+      runVersion(
+        [],
+        stampDeps(exec, () => false, { ...BUILD_STAMP, dirty: true }),
+      ),
+    );
+    expect(result).toBe(0);
+    expect(stdout).toBe(
+      "llamactl 0.0.0 (0123456789ab-dirty, built 2026-11-17T10:00:00.000Z, compiled)\n",
+    );
+    expect(calls).toHaveLength(0);
+  });
+
+  test("--json emits the compiled stamp fields", async () => {
+    const { exec } = stubExec("ok");
+    const { result, stdout } = await captureProcessStreams(() =>
+      runVersion(
+        ["--json"],
+        stampDeps(exec, () => false, BUILD_STAMP),
+      ),
+    );
+    expect(result).toBe(0);
+    expect(JSON.parse(stdout)).toEqual({
+      version: "0.0.0",
+      source: false,
+      commit: "0123456789abcdef0123456789abcdef01234567",
+      commitDate: null,
+      dirty: false,
+      builtAt: "2026-11-17T10:00:00.000Z",
+    });
+  });
+
+  test("compiled stamp wins even when a checkout is present", async () => {
+    const { calls, exec } = stubExec("ok");
+    const { result, stdout } = await captureProcessStreams(() =>
+      runVersion([], stampDeps(exec, FAKE_EXISTS_FN, BUILD_STAMP)),
+    );
+    expect(result).toBe(0);
+    expect(stdout).toBe(
+      "llamactl 0.0.0 (0123456789ab, built 2026-11-17T10:00:00.000Z, compiled)\n",
+    );
+    expect(calls).toHaveLength(0);
+  });
+});
+
 describe("llamactl --version (e2e)", () => {
   let temp: ReturnType<typeof makeTempRuntime>;
   beforeEach(() => {

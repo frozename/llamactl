@@ -8,6 +8,11 @@ export interface VersionDeps {
   moduleDir: string;
   exec: sourceRevision.ExecFn;
   existsFn?: (p: string) => boolean;
+  /**
+   * A compiled build stamp (#743). When present it wins over any checkout
+   * probe and short-circuits git entirely.
+   */
+  buildStamp?: nodeFacts.CompiledBuildStamp | null;
 }
 
 export interface VersionInfo {
@@ -15,9 +20,21 @@ export interface VersionInfo {
   source: boolean;
   commit: string | null;
   commitDate: string | null;
+  dirty?: boolean;
+  builtAt?: string;
 }
 
 export function resolveVersionInfo(deps: VersionDeps): VersionInfo {
+  if (deps.buildStamp) {
+    return {
+      version: deps.version,
+      source: false,
+      commit: deps.buildStamp.commit,
+      commitDate: null,
+      dirty: deps.buildStamp.dirty,
+      builtAt: deps.buildStamp.builtAt,
+    };
+  }
   // The repo root is resolved from the module location, not the cwd, so
   // the answer follows the running code. Compiled binaries resolve to no
   // checkout and report source:false.
@@ -44,6 +61,11 @@ export function resolveVersionInfo(deps: VersionDeps): VersionInfo {
 }
 
 export function formatVersion(info: VersionInfo): string {
+  if (info.builtAt !== undefined) {
+    const dirty = info.dirty === true ? "-dirty" : "";
+    const short = info.commit?.slice(0, 12) ?? "";
+    return `llamactl ${info.version} (${short}${dirty}, built ${info.builtAt}, compiled)`;
+  }
   if (info.commit !== null && info.commitDate !== null) {
     return `llamactl ${info.version} (${info.commit}, ${info.commitDate}, source)`;
   }
@@ -55,6 +77,7 @@ export function defaultVersionDeps(): VersionDeps {
   return {
     version: nodeFacts.LLAMACTL_VERSION,
     moduleDir: dirname(fileURLToPath(import.meta.url)),
+    buildStamp: nodeFacts.compiledBuildStamp(),
     exec: (file, args) =>
       execFileSync(file, args, {
         stdio: ["ignore", "pipe", "ignore"],
