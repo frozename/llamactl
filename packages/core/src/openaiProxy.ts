@@ -48,7 +48,12 @@ import {
   type ColdPinQueueProbeConfig,
   probeColdPinQueue,
 } from "./residency/cold-pin-admission.js";
-import { bindLeaseToBody, getResidencyLeaseRegistry, type Lease } from "./residency/leases.js";
+import {
+  bindLeaseToBody,
+  getResidencyLeaseRegistry,
+  type Lease,
+  type ResidencyLeases,
+} from "./residency/leases.js";
 import { currentSessionRefcounts, type SessionRefcounts } from "./residency/sessions.js";
 import {
   isDeterministic,
@@ -716,6 +721,13 @@ type ProxyContext = {
    * SDK does not crash parsing JSON when it expected events.
    */
   clientRequestedStream?: boolean;
+  /**
+   * #520: predicate over local workload names reporting whether the request's
+   * session is already bound to that workload. Set only when the session id is
+   * valid and both the session and lease registries are installed; consulted by
+   * servingRouteForModel to prefer the bound workload among route candidates.
+   */
+  sessionAffinity?: (workload: string) => boolean;
 };
 
 let routeMapCache: { sig: string; map: RouteMap } | null = null;
@@ -853,6 +865,33 @@ type ServingRouteOutcome =
   | null;
 
 /**
+ * #520: pick the live candidate a session's id is already bound to, scanned in
+ * route order. Peer candidates are never consulted (short-circuit on
+ * `isPeer !== true`) so a peer whose workload id equals a bound name is never
+ * preferred. A bound candidate with no readiness is routed untouched; one with
+ * readiness is routed only when its cached verdict passes, otherwise null so
+ * selection continues unchanged (acquisition then refuses with 409).
+ */
+async function boundSessionRoute(
+  live: readonly RouteCandidate[],
+  pathname: string,
+  search: string,
+  sessionAffinity: ((workload: string) => boolean) | undefined,
+): Promise<RoutedEntry | null> {
+  if (sessionAffinity === undefined) return null;
+  const affinity = sessionAffinity;
+  const bound = live.find(
+    (candidate) => candidate.entry.isPeer !== true && affinity(candidate.entry.workload),
+  );
+  if (bound === undefined) return null;
+  if (bound.readiness !== undefined && bound.probeKey !== undefined) {
+    const ready = await servingReadinessVerdict(bound.entry, bound.readiness, bound.probeKey);
+    if (!ready) return null;
+  }
+  return { ...bound.entry, target: targetForEntry(bound.entry, pathname, search) };
+}
+
+/**
  * Lift a preferred local replica to the head of the live candidate set
  * (#518 (c)), leaving alias order untouched on a miss. Peers never match — a
  * peer's workload key can collide with a local one — and an experimental match
@@ -895,6 +934,28 @@ function applyPreferredWorkload(
  * failing closed); the first in order with no readiness or a true verdict is
  * routed. When none qualifies, the winner is reported warming.
  *
+ * #520 session affinity: `sessionAffinity` is consulted only when both the
+ * session and lease seams are installed and the session id is valid (the
+ * caller sets it once per request from the registries it captured before route
+ * resolution). When present, the first live candidate that is local
+ * (`isPeer !== true`, so peer candidates are never queried and a peer whose
+ * workload id equals a bound name is never preferred — peer routes hold no
+ * session refcount) and reports a binding wins, scanned in route order and
+ * ahead of the winner shortcut and the #518 experimental fallback. A withdrawn
+ * bound workload is not a candidate. A bound candidate must still pass its
+ * readiness verdict; if that verdict is false selection proceeds unchanged and
+ * session acquisition refuses with 409 (not a warming 503). A bound session
+ * stays on its experimental workload: affinity wins over #518 experimental
+ * ordering and fallback exclusion, but cannot resurrect routes that
+ * orderedProxyRoutes dropped. The binding is also evaluated ahead of the #518
+ * (c) `preferredWorkload` hint: the hint only reorders the live set that the
+ * binding scan walks, so a session bound to one replica stays there even when
+ * the ranker prefers another. Latency note: a bound candidate carrying
+ * readiness has its verdict awaited on its own before the fallback probe set
+ * is started, so a cold verdict for the bound workload adds one probe round
+ * trip ahead of the fallback; the verdict is cached afterwards (TTL), so later
+ * requests pay nothing extra.
+ *
  * #518 (c): after the withdrawn filter and before the winner is read, a
  * preferred local workload (the unified ranker's pick) is lifted to the head
  * of the live set, so an alias pin is served by that replica. Peers never match
@@ -912,6 +973,7 @@ async function servingRouteForModel(
   search: string,
   resolved: ResolvedEnv,
   preferredWorkload?: string,
+  sessionAffinity?: (workload: string) => boolean,
 ): Promise<ServingRouteOutcome> {
   const candidates = getRouteMap(resolved).candidates.get(model);
   if (candidates === undefined || candidates.length === 0) return null;
@@ -929,6 +991,11 @@ async function servingRouteForModel(
     };
   }
   const live = applyPreferredWorkload(filtered, preferredWorkload);
+  // #520: session binding is evaluated ahead of the ranked hint's winner and
+  // the #518 fallback; scanning the hint-reordered live set is fine because
+  // the binding, not position, decides.
+  const boundRoute = await boundSessionRoute(live, pathname, search, sessionAffinity);
+  if (boundRoute !== null) return { routed: boundRoute };
   const winner = live[0];
   if (winner === undefined) return null;
   if (winner.readiness === undefined) {
@@ -2948,6 +3015,7 @@ async function applyBodyModelRoute(
     context.search,
     context.resolved,
     context.preferredWorkload,
+    context.sessionAffinity,
   );
   if (outcome !== null && "routed" in outcome) {
     // #280 DF-07: even when a model has a live route, check if the declared
@@ -3654,12 +3722,17 @@ function warnResponseCacheStageFailure(stage: "lookup" | "persist", error: unkno
 
 /**
  * #278 (DF-05): opt-in residency-lease admission for a locally routed
- * request. `null` means "not applicable" (no installed registry, no route,
- * or a peer route) and the request proceeds lease-free; a `Response` is the
- * 503 refusal for a draining or unloaded workload.
+ * request. The registry is passed in by the caller (proxyOpenAI reads it once
+ * per request, before route resolution) so a mid-request registry swap cannot
+ * split the lease seam across two registries. `null` means "not applicable" (no
+ * installed registry, no route, or a peer route) and the request proceeds
+ * lease-free; a `Response` is the 503 refusal for a draining or unloaded
+ * workload.
  */
-function acquireProxyResidencyLease(route: RoutedEntry | undefined): Lease | Response | null {
-  const registry = getResidencyLeaseRegistry();
+function acquireProxyResidencyLease(
+  registry: ResidencyLeases | null,
+  route: RoutedEntry | undefined,
+): Lease | Response | null {
   if (registry === null || route === undefined || route.isPeer === true) return null;
   const acquired = registry.acquire(route.workload);
   if (acquired.ok) return acquired.lease;
@@ -3851,19 +3924,68 @@ function applyProxyOptions(context: ProxyContext, opts: ProxyOpenAIOptions): voi
 }
 
 /**
+ * #520: attach the session-affinity predicate to a parsed request context. Set
+ * only when the session id is valid and both the session and lease registries
+ * are installed; an invalid or absent id leaves no affinity (the 400 path in
+ * acquireProxySession still runs for a non-null id).
+ */
+function attachSessionAffinity(
+  context: ProxyContext,
+  trimmedSessionId: string | null,
+  sessionRegistry: SessionRefcounts | null,
+  leaseRegistry: ResidencyLeases | null,
+): void {
+  if (
+    trimmedSessionId === null ||
+    trimmedSessionId.length > MAX_SESSION_ID_LENGTH ||
+    !SESSION_ID_PATTERN.test(trimmedSessionId) ||
+    sessionRegistry === null ||
+    leaseRegistry === null
+  ) {
+    return;
+  }
+  const boundSessionId = trimmedSessionId;
+  const affinityRegistry = sessionRegistry;
+  context.sessionAffinity = (workload: string): boolean =>
+    affinityRegistry.activeSessions(workload).includes(boundSessionId);
+}
+
+/**
  * Proxy an OpenAI-style request (chat/completions, completions,
  * embeddings, etc.) to the local llama-server. JSON bodies can route
  * by `model` across live workloads, and Bun/Node fetch responses are
  * returned as a fresh ReadableStream so SSE streams work out of the box.
+ *
+ * #520 session affinity: the session header and both residency seams (the
+ * session-refcount and DF-05 lease registries) are read once per request,
+ * before route resolution, and the same snapshot drives session-affinity
+ * routing, session acquisition and lease acquisition. Affinity applies only
+ * when both seams are installed and the session id is valid; an invalid id
+ * gets no affinity and still hits the 400 in acquireProxySession. Only local
+ * candidates are consulted: peer candidates are never queried, and a peer
+ * whose workload id equals a bound name is never preferred (peer routes hold
+ * no session refcount). A withdrawn bound workload is not a candidate; a bound
+ * candidate must pass its readiness verdict, otherwise selection is unchanged
+ * and acquisition refuses with 409 (not a warming 503). Bound sessions stay on
+ * their experimental workload: affinity wins over #518 experimental ordering
+ * and fallback exclusion, but cannot resurrect routes that orderedProxyRoutes
+ * dropped.
  */
 export async function proxyOpenAI(
   req: Request,
   resolved: ResolvedEnv = resolveEnv(),
   opts: ProxyOpenAIOptions = {},
 ): Promise<Response> {
+  const sessionHeader = req.headers.get(SESSION_HEADER);
+  const trimmedSessionId =
+    sessionHeader === null || sessionHeader.trim() === "" ? null : sessionHeader.trim();
+  const sessionRegistry = currentSessionRefcounts();
+  const leaseRegistry = getResidencyLeaseRegistry();
+
   const parsed = await parseIncoming(req, resolved);
   if (parsed instanceof Response) return parsed;
   applyProxyOptions(parsed, opts);
+  attachSessionAffinity(parsed, trimmedSessionId, sessionRegistry, leaseRegistry);
   const routed = await resolveRoute(parsed);
   if (routed instanceof Response) return routed;
   if (routed.route?.isPeer && requestBodyContainsOmlxRequestHandle(routed.bodyText)) {
@@ -3883,12 +4005,6 @@ export async function proxyOpenAI(
     return withResponseCacheLookup.responseCacheHit;
   }
 
-  const sessionHeader = req.headers.get(SESSION_HEADER);
-  const trimmedSessionId =
-    sessionHeader === null || sessionHeader.trim() === "" ? null : sessionHeader.trim();
-  const sessionRegistry = currentSessionRefcounts();
-  const leaseRegistry = getResidencyLeaseRegistry();
-
   const sessionResult =
     trimmedSessionId !== null && sessionRegistry !== null && leaseRegistry !== null
       ? acquireProxySession(sessionRegistry, trimmedSessionId, withResponseCacheLookup.route)
@@ -3900,6 +4016,7 @@ export async function proxyOpenAI(
     withResponseCacheLookup,
     sessionResult,
     sessionRegistry,
+    leaseRegistry,
     trimmedSessionId,
   );
   if (prepared instanceof Response) return prepared;
@@ -3938,6 +4055,7 @@ function prepareSessionAndLease(
   routed: ProxyContext,
   sessionResult: { ok: true; release: (() => void) | null } | null,
   sessionRegistry: SessionRefcounts | null,
+  leaseRegistry: ResidencyLeases | null,
   trimmedSessionId: string | null,
 ):
   | Response
@@ -3952,7 +4070,7 @@ function prepareSessionAndLease(
   // #278 (DF-05): acquire before maybeKvLookup so a refused or draining
   // request never runs applyWarmKvHit (slot restore, KV row reserve, slot
   // allocator), and cache hits never need a lease.
-  const admission = acquireProxyResidencyLease(routed.route);
+  const admission = acquireProxyResidencyLease(leaseRegistry, routed.route);
   if (admission instanceof Response) {
     if (hasBothSeams) {
       sessionResult.release?.();
