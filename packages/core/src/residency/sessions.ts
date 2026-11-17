@@ -4,7 +4,9 @@
  * request carrying the session header while both this registry and the
  * DF-05 lease registry (#278) are installed. `agent serve` installs one at
  * start when LLAMACTL_RESIDENCY_LEASES is on and
- * LLAMACTL_RESIDENCY_SESSION_IDLE_MS (milliseconds) is set.
+ * LLAMACTL_RESIDENCY_SESSION_IDLE_MS (milliseconds) is set. proxyOpenAI reads
+ * activeSessions to prefer a session's already-bound local workload among the
+ * route candidates for a request (affinity across tool calls, #520).
  *
  * Eviction consults the installed registry before stopping a workload
  * (workload/apply.ts, #631): a live session refuses it as
