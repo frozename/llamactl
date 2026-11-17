@@ -29,11 +29,14 @@
 // turns the store section into an error.
 //
 // The NodeRun residency supplies the planner policy (Part of #519).
-// switchCooldownSeconds is now measured from the last succeeded
+// switchCooldownSeconds is measured from the last succeeded
 // `profile-switch:<node>` operation recorded in the serving node's store
 // snapshot (input.store.lastSucceededAtMs); an explicit lastSwitchAtMs from the
-// caller, including null, still wins. loadedAtMs (minResidencySeconds) is still
-// not persisted, so that check stays inert unless a caller supplies it (#279).
+// caller, including null, still wins. minResidencySeconds is measured from the
+// time the victim's residency_states row entered `ready` in the serving node's
+// store, under the same serving-node and clean-store scoping as the cooldown.
+// Loads made outside the fenced profile-switch executor write no lifecycle row
+// and are not protected.
 import type { ResidencyAuditEntry, ResidencyLeases } from "@llamactl/core/residency/leases";
 import type { ResidencyState } from "@llamactl/core/residency/lifecycle";
 import type { PlannerWorkload, ProfileSwitchPlan } from "@llamactl/core/residency/planner";
@@ -469,6 +472,26 @@ function recordedSwitchAtMs(
   return recorded !== undefined && Number.isFinite(recorded) ? recorded : undefined;
 }
 
+// The time each model's residency_states row entered `ready`, read from the
+// unscoped snapshot. Defined only when the store applies to this node, reads
+// cleanly and carries lifecycle rows; a model maps only when its row is `ready`
+// with a finite updatedAtMs (Part of #519).
+function recordedReadySinceMs(
+  store: ResidencyStoreSnapshot,
+  applies: boolean,
+): ReadonlyMap<string, number> | undefined {
+  if (!applies || !store.present || "error" in store || store.lifecycle === undefined) {
+    return undefined;
+  }
+  const readySince = new Map<string, number>();
+  for (const row of store.lifecycle) {
+    if (row.state === "ready" && Number.isFinite(row.updatedAtMs)) {
+      readySince.set(row.model, row.updatedAtMs);
+    }
+  }
+  return readySince;
+}
+
 export function buildResidencyPlan(input: {
   node: string;
   to: string;
@@ -550,10 +573,25 @@ export function buildResidencyPlan(input: {
 
   // The planner's checkInvalidMemory validates all workloads, so an uncounted
   // workload with unknown memory is charged 0 rather than refused: it is
-  // neither retained nor loaded by this switch.
-  const patched = built.request.workloads.map((w) =>
-    counted(w) || Number.isFinite(w.expectedMemoryGiB) ? w : { ...w, expectedMemoryGiB: 0 },
-  );
+  // neither retained nor loaded by this switch. An occupying workload with no
+  // loadedAtMs is stamped with the ready-since of its lifecycle row, clamped to
+  // nowMs so a future-dated row never yields retryAfterMs above the minimum.
+  const readySince = recordedReadySinceMs(input.store, applies);
+  const patched = built.request.workloads.map((w) => {
+    const memoryPatched =
+      counted(w) || Number.isFinite(w.expectedMemoryGiB) ? w : { ...w, expectedMemoryGiB: 0 };
+    if (
+      readySince === undefined ||
+      memoryPatched.loadedAtMs !== undefined ||
+      !isOccupyingResidencyState(memoryPatched.state)
+    ) {
+      return memoryPatched;
+    }
+    const since = readySince.get(memoryPatched.id);
+    return since === undefined
+      ? memoryPatched
+      : { ...memoryPatched, loadedAtMs: Math.min(since, input.nowMs) };
+  });
 
   const plan = planProfileSwitch({
     ...built.request,
