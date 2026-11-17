@@ -858,8 +858,10 @@ describe("docs/dynamic-residency.md (#285)", () => {
   // tail; making fencedStop consult sessions without a lease registry; not
   // installing the session registry in serve.ts; adding or removing a state
   // in INTERRUPTED_LIFECYCLE_STATES without updating the doc; making the
-  // lifecycle sweep run outside a claimed pass, i.e. removing the
-  // shouldClaim gate, without updating the doc; renaming
+  // lifecycle sweep run outside a claimed pass without updating the doc,
+  // i.e. removing either shouldClaim gate: the outer snapshot gate in
+  // runProfileSwitchBootRecovery that decides whether scanWithStore runs,
+  // or the inner writable-handle re-check inside claimOwnershipWhen; renaming
   // failInterruptedLifecycleRows or the lifecycle log line.
   test("case 17: stop-before-start session refusal (#734) and lifecycle boot recovery (#736)", () => {
     const r = (sectionBody(sectionRe("stop-before-start")) ?? "").replaceAll(/\s+/g, " ");
@@ -926,7 +928,8 @@ describe("docs/dynamic-residency.md (#285)", () => {
     const bootRecovery = readOrEmpty(join(REPO, "packages/remote/src/residency/boot-recovery.ts"));
     for (const pin of [
       "function failInterruptedLifecycleRows(",
-      "shouldClaim(preview)",
+      "const result = shouldClaim(preview)\n      ? scanWithStore(openStore, opts, nowMs, minStaleAgeMs, lifecycle)\n      : deferred(preview);",
+      "preview = previewProfileSwitchRecovery(nonterminal, { nowMs: nowMs(), minStaleAgeMs });\n        return shouldClaim(preview);",
       "[residency] lifecycle boot recovery ${lifecycleCountsJson(lifecycle.counts)}",
       'to: "failed"',
     ]) {
