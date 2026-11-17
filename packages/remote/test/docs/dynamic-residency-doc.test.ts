@@ -780,4 +780,61 @@ describe("docs/dynamic-residency.md (#285)", () => {
       "releasedSessions",
     );
   });
+
+  // Part of #522
+  // Kills: dropping the sessions argument from runFenced/fencePhase in
+  // profile-transition.ts, renaming the SessionsActive step detail, removing
+  // the lifecycle section from buildResidencyStatus or its LifecycleUnreadable
+  // reason, removing the Lifecycle:/Exclusive: lines from renderResidencyStatus,
+  // or removing the planner's Cooldown refusal, any of these without updating
+  // the doc. The force-unload needle pins the whole inline-code command span,
+  // so split or misplaced backticks in that sentence fail it.
+  test("case 16: apply-profile session refusal (#730), status lifecycle read-out (#731) and cooldown (#732)", () => {
+    const s = (sectionBody(SECTIONS.statusPlanApply) ?? "").replaceAll(/\s+/g, " ");
+    for (const needle of [
+      "`SessionsActive: <ids>`",
+      "`SessionsUnknown`",
+      "fence",
+      "drain",
+      "never releases sessions",
+      "needs the override `llamactl residency force-unload <workload> --reason <text> --yes --node <name>` (see Session affinity)",
+      "#730",
+      "`residency_states`",
+      "`findExclusiveGroupViolations`",
+      "`StoreUnreadable`",
+      "`LifecycleUnreadable`",
+      "`Lifecycle:`",
+      "`Exclusive:`",
+      "#731",
+      "`Cooldown`",
+      "#732",
+      "`llamactl residency status --node <name>`",
+    ]) {
+      expect(s, needle).toContain(needle);
+    }
+    const profileTransition = readOrEmpty(
+      join(REPO, "packages/remote/src/residency/profile-transition.ts"),
+    );
+    for (const pin of [
+      'return `SessionsActive: ${check.sessions.join(",")}`;',
+      'return "SessionsUnknown";',
+      "fencePhase(registry, plan.victims, sessions, signal, beat)",
+    ]) {
+      expect(profileTransition, pin).toContain(pin);
+    }
+    const procedures = readOrEmpty(join(REPO, "packages/remote/src/residency/procedures.ts"));
+    for (const pin of [
+      "lifecycle: buildResidencyLifecycleSnapshot(input.store)",
+      '"LifecycleUnreadable"',
+    ]) {
+      expect(procedures, pin).toContain(pin);
+    }
+    const residencyCli = readOrEmpty(RESIDENCY_CLI);
+    for (const pin of ["Lifecycle:  ", "Exclusive:  violation in "]) {
+      expect(residencyCli, pin).toContain(pin);
+    }
+    expect(readOrEmpty(join(REPO, "packages/core/src/residency/planner.ts"))).toContain(
+      '"Cooldown"',
+    );
+  });
 });

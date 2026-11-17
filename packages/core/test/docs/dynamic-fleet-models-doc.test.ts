@@ -417,4 +417,21 @@ describe("docs/dynamic-fleet-models.md (#522)", () => {
       expect(r, needle).toContain(needle);
     }
   });
+
+  // Part of #522
+  // Kills: restoring 'a status read-out' to the lifecycle still-pending list,
+  // or unwiring findExclusiveGroupViolations from residency status.
+  test("case 21: lifecycle status read-out no longer pending (#731)", () => {
+    const s = (sectionBody(/^#{2,} .*residency lifecycle states/i) ?? "").replaceAll(/\s+/g, " ");
+    expect(s).not.toContain("a status read-out");
+    for (const n of ["`llamactl residency status`", "#731", "#730"]) {
+      expect(s, n).toContain(n);
+    }
+    expect(readOrEmpty(join(REPO, "packages/remote/src/residency/procedures.ts"))).toContain(
+      "findExclusiveGroupViolations(",
+    );
+    expect(
+      readOrEmpty(join(REPO, "packages/remote/src/residency/profile-transition.ts")),
+    ).toContain("SessionsActive: ");
+  });
 });
