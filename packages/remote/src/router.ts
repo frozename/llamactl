@@ -103,6 +103,12 @@ import {
   type ResidencyApplyProfileResult,
   type ResidencyCancelOperationResult,
 } from "./residency/apply-profile.js";
+import { residencyGroupLabelOf } from "./residency/coordinator.js";
+import {
+  type DirectLifecycleOpts,
+  runDirectResidencyStart,
+  runDirectResidencyStop,
+} from "./residency/direct-lifecycle.js";
 import {
   type ForceUnloadKind,
   type ForceUnloadResult,
@@ -131,6 +137,7 @@ import { searchSessions } from "./search/sessions.js";
 import { acquireChatSlot, admissionTrpcError } from "./server/chat-admission.js";
 import {
   startModelHost,
+  type StartModelHostResult,
   statusModelHost,
   stopModelHost,
   type StopModelHostResult,
@@ -450,6 +457,50 @@ function residencyPlanFor(input: {
     store: readResidencyStoreSnapshot(defaultResidencyStorePath()),
     residency: node?.spec.residency ?? null,
   });
+}
+
+// Resolves the direct-start/stop residency group: an inline manifest's label
+// wins (it may differ from the store), else the stored ModelHost's label. A
+// load failure means no group, so a deleted manifest never aborts the dep.
+function directResidencyGroup(
+  workload: string,
+  labels: Readonly<Record<string, string>> | undefined,
+): string | undefined {
+  const fromInput = labels !== undefined ? residencyGroupLabelOf(labels) : undefined;
+  if (fromInput !== undefined) {
+    return fromInput;
+  }
+  try {
+    return residencyGroupLabelOf(modelHostStoreMod.loadModelHostByName(workload).metadata.labels);
+  } catch {
+    return undefined;
+  }
+}
+
+// A peer is proven down only when it is a known ModelHost whose recorded-pid
+// status reads Stopped without an unresolved identity; an unknown host or an
+// unresolvable pid never clears a stale ready row.
+function directModelHostProvenDown(model: string): boolean {
+  if (!modelHostStoreMod.listModelHosts().some((host) => host.metadata.name === model)) {
+    return false;
+  }
+  const status = statusModelHost({ key: { name: model } });
+  return status.state === "Stopped" && status.identityUnknown !== true;
+}
+
+function directResidencyOpts(
+  workload: string,
+  labels: Readonly<Record<string, string>> | undefined,
+): DirectLifecycleOpts {
+  return {
+    storePath: defaultResidencyStorePath(),
+    group: directResidencyGroup(workload, labels),
+    isProvenDown: directModelHostProvenDown,
+    isRunning: (model) => statusModelHost({ key: { name: model } }).state === "Running",
+    log: (line): void => {
+      process.stderr.write(line);
+    },
+  };
 }
 
 type ServerStopRefusalShape = { reason?: unknown; active?: unknown };
@@ -2447,11 +2498,18 @@ export const router = t.router({
     async ({ input }) =>
       await fenceWorkloadStop<StopModelHostResult>({
         workload: input.workload,
-        stop: () =>
-          stopModelHost({
-            key: { name: input.workload },
-            ...(input.graceSeconds !== undefined ? { graceSeconds: input.graceSeconds } : {}),
-          }),
+        stop: async () => {
+          const outcome = await runDirectResidencyStop<StopModelHostResult>(
+            input.workload,
+            () =>
+              stopModelHost({
+                key: { name: input.workload },
+                ...(input.graceSeconds !== undefined ? { graceSeconds: input.graceSeconds } : {}),
+              }),
+            directResidencyOpts(input.workload, undefined),
+          );
+          return outcome.ran ? outcome.result : { ok: false, pid: null, error: outcome.detail };
+        },
         isVerifiedStop: (r) => r.ok,
         refuse: (f) => ({ ok: false, pid: null, error: `${f.reason}: ${f.active.join(", ")}` }),
       }),
@@ -2462,14 +2520,23 @@ export const router = t.router({
     signal,
   }) {
     yield* bridgeEventStream(signal ?? new AbortController().signal, async (emit, subSignal) => {
-      const result = await startModelHost({
-        key: { name: input.workload },
-        ...(input.timeoutSeconds !== undefined ? { timeoutSeconds: input.timeoutSeconds } : {}),
-        ...(input.manifest !== undefined ? { manifest: input.manifest } : {}),
-        signal: subSignal,
-        onEvent: emit,
-      });
-      reopenWorkloadAfterLoad(input.workload, result.ok);
+      const outcome = await runDirectResidencyStart<StartModelHostResult>(
+        input.workload,
+        () =>
+          startModelHost({
+            key: { name: input.workload },
+            ...(input.timeoutSeconds !== undefined ? { timeoutSeconds: input.timeoutSeconds } : {}),
+            ...(input.manifest !== undefined ? { manifest: input.manifest } : {}),
+            signal: subSignal,
+            onEvent: emit,
+          }),
+        directResidencyOpts(input.workload, input.manifest?.metadata.labels),
+      );
+      if (outcome.ran) {
+        reopenWorkloadAfterLoad(input.workload, outcome.result.ok);
+      } else {
+        emit({ type: "done", result: { ok: false, pid: null, error: outcome.detail } });
+      }
     });
   }),
 

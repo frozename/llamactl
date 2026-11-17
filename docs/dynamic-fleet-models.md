@@ -26,9 +26,12 @@ Open items:
   `residencyStatus` procedure and the MCP tool now report the serving
   process's `residency_states` rows and any exclusive-group violation
   (`findExclusiveGroupViolations`, previously used only by the planner).
-  Lifecycle-row boot recovery has landed (see Residency lifecycle states).
-  Still pending: direct workload start/stop writers and reconciliation
-  outside a switch.
+  Lifecycle-row boot recovery has landed, and direct ModelHost
+  `modelHostStart`/`modelHostStop` now drive their `residency_states` rows
+  through the same fenced walks (`direct-lifecycle.ts`), reconciling
+  proven-down same-group peers and refusing an occupied exclusive group or
+  an in-flight switch. Still pending: the direct ModelRun
+  (`serverStart`/`serverStop`) writers and reconciliation outside a switch.
 - Real GLM-5.3-Flash z13 measurements are not yet committed (see the
   eval record at the bottom).
 
@@ -100,9 +103,11 @@ persists per-model states in its `residency_states` table:
   `llamactl residency status`, the `residencyStatus` procedure and the MCP
   tool now report the serving process's `residency_states` rows and any
   exclusive-group violation (`findExclusiveGroupViolations`, previously
-  used only by the planner). Lifecycle-row boot recovery has landed (see
-  Residency lifecycle states). Still pending: direct workload start/stop
-  writers and reconciliation outside a switch.
+  used only by the planner). Lifecycle-row boot recovery has landed, and
+  direct ModelHost `modelHostStart`/`modelHostStop` now drive their
+  `residency_states` rows (see Residency lifecycle states). Still pending:
+  the direct ModelRun (`serverStart`/`serverStop`) writers and
+  reconciliation outside a switch.
 - Group declarations are not persisted. They come from the caller
   (default `RESIDENCY_GROUPS`).
 
@@ -158,8 +163,13 @@ in `withResidencyLifecycle`
 `RESIDENCY_TRANSITIONS` edge: a victim walks `ready` → `draining` →
 `unloading` → `downloaded`|`failed`; a replacement walks → `loading` →
 `warming` → `ready`|`failed`; an observed same-group occupant refuses
-with `ExclusiveGroupOccupied` before the engine runs. Still pending:
-direct start/stop writers, reconciliation outside a switch, and #276.
+with `ExclusiveGroupOccupied` before the engine runs. Since #517 the
+direct ModelHost writers `modelHostStart`/`modelHostStop` route through
+`packages/remote/src/residency/direct-lifecycle.ts`: they claim the shared
+apply-profile fence, walk the row the same way, reconcile proven-down
+same-group peers, and refuse while a profile switch is in flight. Still
+pending: the direct ModelRun (`serverStart`/`serverStop`) writers,
+reconciliation outside these paths, and #276.
 `llamactl residency status` reports these rows and any exclusive-group
 violation (#731), and a wet switch refuses to unload a session-bound victim
 with `SessionsActive` (#730; see [dynamic-residency.md](dynamic-residency.md)).
