@@ -1,8 +1,16 @@
 /**
  * Request-lifetime residency leases with a fencing drain token (Refs #278,
- * DF-05). Pure and adapter-free: no IO, no timers, no Date.now, no TTL
- * expiry. A lease is freed only by release, bound-body settlement, or an
- * explicit forced commitUnload.
+ * DF-05). Pure and adapter-free: no IO, no timers, no TTL expiry. A lease is
+ * freed only by release, bound-body settlement, or an explicit forced
+ * commitUnload.
+ *
+ * The clock is injectable (Part of #519): `ResidencyLeasesOptions.now`
+ * defaults to `Date.now` and is read only to stamp per-workload activity —
+ * once at registry creation (the seed returned by `lastActivityAtMs` for a
+ * workload never touched) and on a successful acquire or a release that
+ * actually removes a lease. Nothing here schedules a timer or expires a lease
+ * on idle; `lastActivityAtMs` is a read-out for the residency status
+ * advisory, not a trigger.
  *
  * This module composes with sessions.ts (#569) as the fencing drain token
  * required before ingress wiring.
@@ -251,12 +259,22 @@ function bindLeaseToBody(
  * with a fresh copy, after the in-memory push. It must be fast and bounded, and
  * it cannot fail an unload: errors are swallowed and later unloads still call
  * it. The in-memory audit stays authoritative for the process lifetime.
+ *
+ * `now` (Part of #519) is the injectable clock used to stamp per-workload
+ * activity, defaulting to `Date.now`. It is read only to stamp; it never
+ * schedules anything.
  */
 export type ResidencyLeasesOptions = {
   onAudit?: (entry: ResidencyAuditEntry) => void;
+  now?: () => number;
 };
 
-function makeLease(state: WorkloadState, workload: string, n: number): AcquireResult {
+function makeLease(
+  state: WorkloadState,
+  workload: string,
+  n: number,
+  onActivity: (workload: string) => void,
+): AcquireResult {
   const id = `${workload}#${String(n)}`;
   const abort = new AbortController();
 
@@ -272,11 +290,13 @@ function makeLease(state: WorkloadState, workload: string, n: number): AcquireRe
       if (state.leases.size === 0 && state.phase === "draining") {
         settleWaiters(state, { idle: true });
       }
+      onActivity(workload);
       return true;
     },
   };
 
   state.leases.set(id, { lease, abort });
+  onActivity(workload);
   return { ok: true, lease };
 }
 
@@ -284,6 +304,7 @@ function acquireLease(
   registries: Map<string, WorkloadState>,
   counters: Map<string, number>,
   workload: string,
+  onActivity: (workload: string) => void,
 ): AcquireResult {
   const state = registryFor(registries, workload);
   if (state.phase === "draining" || state.phase === "unloaded") {
@@ -298,7 +319,7 @@ function acquireLease(
   }
   const n = (counters.get(workload) ?? 0) + 1;
   counters.set(workload, n);
-  return makeLease(state, workload, n);
+  return makeLease(state, workload, n, onActivity);
 }
 
 function whenIdleImpl(
@@ -367,6 +388,33 @@ function whenIdleImpl(
   });
 }
 
+// Per-workload activity read-out (Part of #519). Seeded with the creation time
+// so an untouched workload reports the registry's own creation time, not 0 or
+// the first query time. Stamped on a successful acquire and on a release that
+// removed a lease; never on a refused acquire, a no-op release or a forced
+// revoke. Extracted to keep createResidencyLeases under the function length cap.
+function createActivityTracker(now: () => number): {
+  stampActivity: (workload: string) => void;
+  lastActivityAtMs: (workload: string) => number;
+} {
+  const createdAtMs = now();
+  const lastActivity = new Map<string, number>();
+  return {
+    stampActivity: (workload: string): void => {
+      lastActivity.set(workload, now());
+    },
+    lastActivityAtMs: (workload: string): number => lastActivity.get(workload) ?? createdAtMs,
+  };
+}
+
+// Append a forced-unload audit entry, trimming the ring to the newest 1024.
+function pushAuditEntry(auditLog: ResidencyAuditEntry[], entry: ResidencyAuditEntry): void {
+  auditLog.push(entry);
+  if (auditLog.length > 1024) {
+    auditLog.splice(0, auditLog.length - 1024);
+  }
+}
+
 export function createResidencyLeases(opts?: ResidencyLeasesOptions): ResidencyLeases {
   const registries = new Map<string, WorkloadState>();
   const counters = new Map<string, number>();
@@ -375,6 +423,10 @@ export function createResidencyLeases(opts?: ResidencyLeasesOptions): ResidencyL
   // audit entry it writes, so entries from different process lifetimes never
   // share a (workload, epoch, revoked, reason) identity.
   const incarnation = crypto.randomUUID();
+  // Injectable clock (Part of #519): read only to stamp per-workload activity,
+  // never to schedule.
+  const now = opts?.now ?? Date.now;
+  const activity = createActivityTracker(now);
 
   function notifyAuditSink(entry: ResidencyAuditEntry): void {
     const sink = opts?.onAudit;
@@ -391,7 +443,7 @@ export function createResidencyLeases(opts?: ResidencyLeasesOptions): ResidencyL
   }
 
   function acquire(workload: string): AcquireResult {
-    return acquireLease(registries, counters, workload);
+    return acquireLease(registries, counters, workload, activity.stampActivity);
   }
 
   function active(workload: string): string[] {
@@ -441,10 +493,7 @@ export function createResidencyLeases(opts?: ResidencyLeasesOptions): ResidencyL
         ...(unloadOpts.reason !== undefined ? { reason: unloadOpts.reason } : {}),
         incarnation,
       };
-      auditLog.push(entry);
-      if (auditLog.length > 1024) {
-        auditLog.splice(0, auditLog.length - 1024);
-      }
+      pushAuditEntry(auditLog, entry);
       notifyAuditSink(entry);
     }
 
@@ -505,6 +554,7 @@ export function createResidencyLeases(opts?: ResidencyLeasesOptions): ResidencyL
     snapshot,
     waiterCount,
     audit,
+    lastActivityAtMs: activity.lastActivityAtMs,
   };
 }
 
