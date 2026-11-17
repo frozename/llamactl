@@ -1,3 +1,5 @@
+import type { nodeFacts } from "@llamactl/core";
+
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
@@ -22,6 +24,12 @@ import {
 
 const BEARER = "agt_rules_token_90210";
 const TOKEN_HASH = createHash("sha256").update(BEARER).digest("hex");
+const STAMPED: nodeFacts.BuildStamp = {
+  commit: "e".repeat(40),
+  dirty: false,
+  builtAt: "2026-11-01T00:00:00.000Z",
+  installKind: "compiled",
+};
 const ORIGINAL_BYTES = Buffer.from("#!/bin/sh\necho v1\n");
 const WD_HOST = "10.0.0.5";
 const WD_PORT = 7843;
@@ -59,8 +67,13 @@ function postReq(
   });
 }
 
-function updateOpts(): { tokenHash: string; selfPath: string; exitAfter: false } {
-  return { tokenHash: TOKEN_HASH, selfPath, exitAfter: false };
+function updateOpts(): {
+  tokenHash: string;
+  selfPath: string;
+  exitAfter: false;
+  buildStamp: nodeFacts.BuildStamp;
+} {
+  return { tokenHash: TOKEN_HASH, selfPath, exitAfter: false, buildStamp: STAMPED };
 }
 
 // ---------------------------------------------------------------------------

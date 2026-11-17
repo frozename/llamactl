@@ -1,5 +1,7 @@
+import type { nodeFacts } from "@llamactl/core";
+
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { createHash, createHash as cryptoHash } from "node:crypto";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -27,7 +29,14 @@ import {
  */
 
 const BEARER = "agt_test_token_12345";
-const TOKEN_HASH = cryptoHash("sha256").update(BEARER).digest("hex");
+const TOKEN_HASH = createHash("sha256").update(BEARER).digest("hex");
+
+const STAMPED: nodeFacts.BuildStamp = {
+  commit: "e".repeat(40),
+  dirty: false,
+  builtAt: "2026-11-01T00:00:00.000Z",
+  installKind: "compiled",
+};
 
 let tmp = "";
 let selfPath = "";
@@ -68,6 +77,7 @@ describe("handleAgentUpdate — happy path", () => {
       tokenHash: TOKEN_HASH,
       selfPath,
       exitAfter: false,
+      buildStamp: STAMPED,
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -99,6 +109,7 @@ describe("handleAgentUpdate — happy path", () => {
       tokenHash: TOKEN_HASH,
       selfPath,
       exitAfter: false,
+      buildStamp: STAMPED,
     });
     expect(res.status).toBe(200);
   });
@@ -111,14 +122,19 @@ describe("handleAgentUpdate — auth + integrity", () => {
       headers: { "x-sha256": createHash("sha256").update("x").digest("hex") },
       body: Buffer.from("x"),
     });
-    const res = await handleAgentUpdate(req, { tokenHash: TOKEN_HASH, selfPath, exitAfter: false });
+    const res = await handleAgentUpdate(req, {
+      tokenHash: TOKEN_HASH,
+      selfPath,
+      exitAfter: false,
+      buildStamp: STAMPED,
+    });
     expect(res.status).toBe(401);
   });
 
   test("rejects wrong bearer with 401", async () => {
     const res = await handleAgentUpdate(
       postReq(new Uint8Array(Buffer.from("x")), { bearer: "wrong" }),
-      { tokenHash: TOKEN_HASH, selfPath, exitAfter: false },
+      { tokenHash: TOKEN_HASH, selfPath, exitAfter: false, buildStamp: STAMPED },
     );
     expect(res.status).toBe(401);
   });
@@ -129,7 +145,12 @@ describe("handleAgentUpdate — auth + integrity", () => {
       headers: { authorization: `Bearer ${BEARER}` },
       body: Buffer.from("x"),
     });
-    const res = await handleAgentUpdate(req, { tokenHash: TOKEN_HASH, selfPath, exitAfter: false });
+    const res = await handleAgentUpdate(req, {
+      tokenHash: TOKEN_HASH,
+      selfPath,
+      exitAfter: false,
+      buildStamp: STAMPED,
+    });
     expect(res.status).toBe(400);
     const body = (await res.json()) as { message: string };
     expect(body.message).toContain("x-sha256");
@@ -142,6 +163,7 @@ describe("handleAgentUpdate — auth + integrity", () => {
       tokenHash: TOKEN_HASH,
       selfPath,
       exitAfter: false,
+      buildStamp: STAMPED,
     });
     expect(res.status).toBe(400);
     const body = (await res.json()) as { message: string };
@@ -159,13 +181,19 @@ describe("handleAgentUpdate — auth + integrity", () => {
       tokenHash: TOKEN_HASH,
       selfPath,
       exitAfter: false,
+      buildStamp: STAMPED,
     });
     expect(res.status).toBe(400);
   });
 
   test("rejects non-POST methods with 405", async () => {
     const req = new Request("http://test/agent/update", { method: "GET" });
-    const res = await handleAgentUpdate(req, { tokenHash: TOKEN_HASH, selfPath, exitAfter: false });
+    const res = await handleAgentUpdate(req, {
+      tokenHash: TOKEN_HASH,
+      selfPath,
+      exitAfter: false,
+      buildStamp: STAMPED,
+    });
     expect(res.status).toBe(405);
   });
 });
@@ -177,6 +205,7 @@ describe("handleAgentUpdate — selfPath errors", () => {
       tokenHash: TOKEN_HASH,
       selfPath: join(tmp, "does-not-exist"),
       exitAfter: false,
+      buildStamp: STAMPED,
     });
     expect(res.status).toBe(500);
     const body = (await res.json()) as { message: string };
@@ -189,12 +218,14 @@ describe("handleAgentUpdate — selfPath errors", () => {
       tokenHash: TOKEN_HASH,
       selfPath,
       exitAfter: false,
+      buildStamp: STAMPED,
     });
     const v3 = new Uint8Array(Buffer.from("binary-v3-bigger"));
     const res = await handleAgentUpdate(postReq(v3), {
       tokenHash: TOKEN_HASH,
       selfPath,
       exitAfter: false,
+      buildStamp: STAMPED,
     });
     const body = (await res.json()) as { oldSha256: string; newSha256: string };
     expect(body.oldSha256).toBe(createHash("sha256").update(v2).digest("hex"));
@@ -289,6 +320,7 @@ describe("handleAgentUpdate — watchdog spawn integration", () => {
       tokenHash: TOKEN_HASH,
       selfPath,
       exitAfter: false,
+      buildStamp: STAMPED,
       watchdog: { host: "127.0.0.1", port: 7843 },
       _spawnWatchdog: (cfg) => {
         spawnedConfig = cfg;
@@ -309,6 +341,7 @@ describe("handleAgentUpdate — watchdog spawn integration", () => {
       tokenHash: TOKEN_HASH,
       selfPath,
       exitAfter: false,
+      buildStamp: STAMPED,
       _spawnWatchdog: () => {
         spawnCalled = true;
       },
