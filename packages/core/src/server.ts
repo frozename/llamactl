@@ -37,6 +37,7 @@ import {
   type ResidencyLeases,
   withReopenAfterLoad,
 } from "./residency/leases.js";
+import { currentSessionRefcounts, type SessionRefcounts } from "./residency/sessions.js";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "./safe-fs.js";
 import { resolveTarget } from "./target.js";
 import { ensureWorkloadRuntimeDir, workloadRuntimeDir } from "./workloadRuntime.js";
@@ -576,18 +577,27 @@ export interface StartServerResult {
   retried: boolean;
   error?: string;
   /**
-   * Set only when a published residency lease registry refused the
-   * stop-before-start or the mmproj retry: `LeasesActive` while a lease
-   * is held, `DrainInProgress` when a foreign drain already owns the
-   * workload (Part of #278). `startServer` never reopens a workload whose
+   * Set only when the stop-before-start was refused: by a published
+   * residency lease registry — `LeasesActive` while a lease is held,
+   * `DrainInProgress` when a foreign drain already owns the workload
+   * (Part of #278) — or by a published session refcount registry —
+   * `SessionsActive` while a session is bound to the tracked running
+   * instance, `SessionsUnknown` when the session registry could not
+   * answer (Part of #520). `startServer` never reopens a workload whose
    * unload has been committed; reopening is the router's job.
    */
   refused?: StartResidencyRefusal;
 }
 
-/** A residency refusal raised by a published lease registry (Part of #278). */
+/**
+ * A residency refusal raised during stop-before-start by a published lease
+ * registry (`LeasesActive` / `DrainInProgress`, Part of #278) or by a
+ * published session refcount registry (`SessionsActive` while a session is
+ * bound to the tracked running instance, `SessionsUnknown` when the session
+ * check threw; Part of #520).
+ */
 export interface StartResidencyRefusal {
-  reason: "LeasesActive" | "DrainInProgress";
+  reason: "LeasesActive" | "DrainInProgress" | "SessionsActive" | "SessionsUnknown";
   active: string[];
 }
 
@@ -1139,6 +1149,54 @@ type FencedStopResult =
   | { refused: null; stopResult: StopServerResult };
 
 /**
+ * Whether the tracked instance is still worth protecting: "alive" and
+ * "unknown" count as live (fail closed), while "dead" and "reused" do not.
+ * A crashed or recycled instance has nothing to unload, so a session bound
+ * to it must not block a restart.
+ */
+function trackedInstanceLive(
+  opts: StartServerOptions,
+  resolved: ResolvedEnv,
+  key: WorkloadKey,
+): boolean {
+  const pid = readServerPid(key, resolved);
+  if (pid === null) return false;
+  const verdict = verifyPidFile(
+    pidFile(resolved, key),
+    pid,
+    trackedStopIdentity(resolved, key, opts.identity),
+  );
+  return !isRecordedPidGone(verdict);
+}
+
+/**
+ * Consult the session refcount registry under the DF-05 drain: a session
+ * bound to the running instance refuses the restart, and a registry that
+ * throws fails closed. Never passes `force` and never releases a session.
+ * When no sessions are bound the refusal is skipped before any liveness
+ * probe; when sessions are bound the objection is returned only while the
+ * tracked instance is live, so a crashed instance never waits out the idle
+ * window (Part of #520).
+ */
+function checkStartSessions(
+  opts: StartServerOptions,
+  resolved: ResolvedEnv,
+  key: WorkloadKey,
+): StartResidencyRefusal | null {
+  const sessions: SessionRefcounts | null = currentSessionRefcounts();
+  if (sessions === null) return null;
+  let objection: StartResidencyRefusal;
+  try {
+    const check = sessions.checkUnload(key.name);
+    if (check.ok) return null;
+    objection = { reason: "SessionsActive", active: [...check.sessions] };
+  } catch {
+    objection = { reason: "SessionsUnknown", active: [] };
+  }
+  return trackedInstanceLive(opts, resolved, key) ? objection : null;
+}
+
+/**
  * Run `stopServer` under the residency fence: with no registry, or for an
  * unfenced (unloaded) workload, stop as before; otherwise hold a drain for the
  * stop's duration and reopen admission in a finally, before the port probe and
@@ -1156,6 +1214,13 @@ async function fencedStop(
   const decision = beginStartDrain(registry, key.name);
   if (decision.kind === "refused") return { refused: decision.refused };
   if (decision.kind === "unfenced") return { refused: null, stopResult: await stop() };
+  // Session fence (#520): consulted in the same synchronous tick the drain was
+  // acquired, so a bound session cannot slip in between the drain and the stop.
+  const sessionRefusal = checkStartSessions(opts, resolved, key);
+  if (sessionRefusal !== null) {
+    registry.cancelDrain(decision.token);
+    return { refused: sessionRefusal };
+  }
   try {
     return { refused: null, stopResult: await stop() };
   } finally {
@@ -1165,9 +1230,12 @@ async function fencedStop(
 
 /**
  * Stop-before-start: bring down any previous instance under the residency
- * fence. Returns a refusal result when a published registry declined the drain
- * (`LeasesActive` / `DrainInProgress`), the existing identity-unknown refusal
- * when the tracked pid could not be verified, or null to proceed with the start.
+ * fence. Returns a refusal result when a published lease registry declined the
+ * drain (`LeasesActive` / `DrainInProgress`), when a published session
+ * refcount registry objected under that drain (`SessionsActive` while a session
+ * is bound to the live tracked instance, `SessionsUnknown` when its check
+ * threw; Part of #520), the existing identity-unknown refusal when the tracked
+ * pid could not be verified, or null to proceed with the start.
  */
 async function stopBeforeStart(
   opts: StartServerOptions,
@@ -1177,12 +1245,17 @@ async function stopBeforeStart(
 ): Promise<StartServerResult | null> {
   const fenced = await fencedStop(opts, resolved, key, getResidencyLeaseRegistry());
   if (fenced.refused !== null) {
+    const sessionBound =
+      fenced.refused.reason === "SessionsActive" || fenced.refused.reason === "SessionsUnknown";
+    const tail = sessionBound
+      ? "while a session is bound to its running instance"
+      : "while residency leases are held";
     return startServerError(
       resolved,
       launchEndpoint,
       null,
       false,
-      `${fenced.refused.reason}: ${fenced.refused.active.join(", ")} — refusing to start ${key.name} while residency leases are held`,
+      `${fenced.refused.reason}: ${fenced.refused.active.join(", ")} — refusing to start ${key.name} ${tail}`,
       null,
       fenced.refused,
     );
@@ -1718,6 +1791,28 @@ export interface StopServerResult {
 }
 
 /**
+ * Build the pid-identity expectation for stopping the tracked instance: the
+ * sidecar's binary/rel (or the default `llama-server` name) merged over the
+ * caller-supplied identity deps. Shared by the verified stop and the
+ * session-fence liveness probe so both agree on what "our instance" means.
+ */
+function trackedStopIdentity(
+  resolved: ResolvedEnv,
+  key: WorkloadKey,
+  identity: PidIdentityDeps | undefined,
+): PidIdentityDeps {
+  const sidecar = readServerState(key, resolved);
+  return {
+    ...identity,
+    expectCommand: {
+      binary: sidecar !== null && sidecar.binary !== "" ? basename(sidecar.binary) : "llama-server",
+      ...(sidecar !== null && sidecar.binary !== "" ? { path: sidecar.binary } : {}),
+      ...(sidecar !== null ? { args: [sidecar.rel] } : {}),
+    },
+  };
+}
+
+/**
  * Stop a tracked llama-server and return a `StopServerResult`. No readable record, or a "dead" or
  * "reused" record, is cleared without signalling. An "unknown" record returns `stopped: false`
  * with tracking files retained. An "alive" record receives SIGTERM; SIGKILL follows only if its
@@ -1739,15 +1834,7 @@ export async function stopServer(opts: StopServerOptions): Promise<StopServerRes
   // A live pid is not enough to signal: the command line must still be the
   // llama-server this record describes — its binary (from the sidecar, or the
   // default name) and the model it was launched with.
-  const sidecar = readServerState(key, resolved);
-  const identity: PidIdentityDeps = {
-    ...opts.identity,
-    expectCommand: {
-      binary: sidecar !== null && sidecar.binary !== "" ? basename(sidecar.binary) : "llama-server",
-      ...(sidecar !== null && sidecar.binary !== "" ? { path: sidecar.binary } : {}),
-      ...(sidecar !== null ? { args: [sidecar.rel] } : {}),
-    },
-  };
+  const identity = trackedStopIdentity(resolved, key, opts.identity);
   const verdict = verifyPidFile(recordPath, pid, identity);
   if (isRecordedPidGone(verdict)) {
     removeServerPid(resolved, key);
