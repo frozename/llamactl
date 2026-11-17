@@ -678,6 +678,17 @@ interface ResponseCacheRequestState {
   requestBodyBytes: number;
 }
 
+/**
+ * Per-request options for {@link proxyOpenAI}. #518 (c): `preferredWorkload`
+ * carries the unified ranker's local-http replica pick so an alias pin can be
+ * served by that workload ahead of alias order, without lifting experimental
+ * or withdrawn candidates or skipping the preferred candidate's readiness
+ * verdict.
+ */
+export interface ProxyOpenAIOptions {
+  preferredWorkload?: string;
+}
+
 type ProxyContext = {
   req: Request;
   resolved: ResolvedEnv;
@@ -686,6 +697,7 @@ type ProxyContext = {
   search: string;
   init: RequestInit;
   bodyText?: string;
+  preferredWorkload?: string;
   isAnthropic?: boolean;
   anthropicModel?: string;
   anthropicRequest?: AnthropicMessagesRequest;
@@ -841,6 +853,35 @@ type ServingRouteOutcome =
   | null;
 
 /**
+ * Lift a preferred local replica to the head of the live candidate set
+ * (#518 (c)), leaving alias order untouched on a miss. Peers never match — a
+ * peer's workload key can collide with a local one — and an experimental match
+ * does not lead while any live candidate is non-experimental (#518 (a)).
+ */
+function applyPreferredWorkload(
+  live: readonly RouteCandidate[],
+  preferredWorkload: string | undefined,
+): RouteCandidate[] {
+  if (preferredWorkload === undefined || preferredWorkload.length === 0) {
+    return [...live];
+  }
+  const matchIndex = live.findIndex(
+    (candidate) =>
+      candidate.entry.isPeer !== true && candidate.entry.workload === preferredWorkload,
+  );
+  const match = matchIndex < 0 ? undefined : live[matchIndex];
+  if (match === undefined) return [...live];
+  if (
+    match.entry.experimental === true &&
+    live.some((candidate) => candidate.entry.experimental !== true)
+  ) {
+    return [...live];
+  }
+  const rest = live.filter((_candidate, index) => index !== matchIndex);
+  return [match, ...rest];
+}
+
+/**
  * Chat routing gate (#280 DF-07): pick a route candidate that passes declared
  * serving readiness. null means no route (the existing route-miss path). A
  * workload under eviction has its local (non-peer) routes withdrawn for the
@@ -853,21 +894,33 @@ type ServingRouteOutcome =
  * cached-or-fresh verdict concurrently (each bounded by the probe timeout,
  * failing closed); the first in order with no readiness or a true verdict is
  * routed. When none qualifies, the winner is reported warming.
+ *
+ * #518 (c): after the withdrawn filter and before the winner is read, a
+ * preferred local workload (the unified ranker's pick) is lifted to the head
+ * of the live set, so an alias pin is served by that replica. Peers never match
+ * (a peer's workload key can collide with a local one); the hint is ignored —
+ * leaving alias order — when it names no live candidate, when the match is
+ * experimental while any live candidate is non-experimental (#518 (a):
+ * experimental never wins an alias), or when no hint was supplied. The
+ * readiness/fallback logic then runs on the reordered set unchanged, so a
+ * warming preferred host still falls back in alias order and is never
+ * forwarded to without its verdict.
  */
 async function servingRouteForModel(
   model: string,
   pathname: string,
   search: string,
   resolved: ResolvedEnv,
+  preferredWorkload?: string,
 ): Promise<ServingRouteOutcome> {
   const candidates = getRouteMap(resolved).candidates.get(model);
   if (candidates === undefined || candidates.length === 0) return null;
   // Only local routes are ever withdrawn: a peer route lives on another node's
   // engine and is never the subject of this node's stop fence.
-  const live = candidates.filter(
+  const filtered = candidates.filter(
     (candidate) => candidate.entry.isPeer === true || !isRouteWithdrawn(candidate.entry.workload),
   );
-  if (live.length === 0) {
+  if (filtered.length === 0) {
     const first = candidates[0];
     if (first === undefined) return null;
     return {
@@ -875,6 +928,7 @@ async function servingRouteForModel(
       withdrawnEntries: candidates.map((candidate) => candidate.entry),
     };
   }
+  const live = applyPreferredWorkload(filtered, preferredWorkload);
   const winner = live[0];
   if (winner === undefined) return null;
   if (winner.readiness === undefined) {
@@ -2893,6 +2947,7 @@ async function applyBodyModelRoute(
     context.pathname,
     context.search,
     context.resolved,
+    context.preferredWorkload,
   );
   if (outcome !== null && "routed" in outcome) {
     // #280 DF-07: even when a model has a live route, check if the declared
@@ -3788,6 +3843,13 @@ function acquireProxySession(
   return { ok: true, release };
 }
 
+function applyProxyOptions(context: ProxyContext, opts: ProxyOpenAIOptions): void {
+  const preferred = opts.preferredWorkload;
+  if (preferred !== undefined && preferred.length > 0) {
+    context.preferredWorkload = preferred;
+  }
+}
+
 /**
  * Proxy an OpenAI-style request (chat/completions, completions,
  * embeddings, etc.) to the local llama-server. JSON bodies can route
@@ -3797,9 +3859,11 @@ function acquireProxySession(
 export async function proxyOpenAI(
   req: Request,
   resolved: ResolvedEnv = resolveEnv(),
+  opts: ProxyOpenAIOptions = {},
 ): Promise<Response> {
   const parsed = await parseIncoming(req, resolved);
   if (parsed instanceof Response) return parsed;
+  applyProxyOptions(parsed, opts);
   const routed = await resolveRoute(parsed);
   if (routed instanceof Response) return routed;
   if (routed.route?.isPeer && requestBodyContainsOmlxRequestHandle(routed.bodyText)) {
