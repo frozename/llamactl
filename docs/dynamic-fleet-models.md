@@ -22,9 +22,12 @@ Open items:
   in the reconciler and ModelHost is still pending
   #276. What enforces today is the
   finite-budget admission math plus the per-node residency-group start
-  guard described below. Still pending: direct workload start/stop writers,
-  reconciliation outside a switch, lifecycle-row boot recovery, and a status
-  read-out.
+  guard described below. `llamactl residency status`, the
+  `residencyStatus` procedure and the MCP tool now report the serving
+  process's `residency_states` rows and any exclusive-group violation
+  (`findExclusiveGroupViolations`, previously used only by the planner).
+  Still pending: direct workload start/stop writers, reconciliation outside
+  a switch, and lifecycle-row boot recovery.
 - Real GLM-5.3-Flash z13 measurements are not yet committed (see the
   eval record at the bottom).
 
@@ -92,9 +95,13 @@ persists per-model states in its `residency_states` table:
   `residency_states` for its victims and replacements. A same-group occupant
   that the plan observed occupying refuses the start with
   `ExclusiveGroupOccupied` before the engine runs. A same-group occupying row
-  the plan did not observe is reconciled to downloaded and logged. Still
-  pending: direct workload start/stop writers, reconciliation outside a
-  switch, lifecycle-row boot recovery, and a status read-out.
+  the plan did not observe is reconciled to downloaded and logged.
+  `llamactl residency status`, the `residencyStatus` procedure and the MCP
+  tool now report the serving process's `residency_states` rows and any
+  exclusive-group violation (`findExclusiveGroupViolations`, previously
+  used only by the planner). Still pending: direct workload start/stop
+  writers, reconciliation outside a switch, and lifecycle-row boot
+  recovery.
 - Group declarations are not persisted. They come from the caller
   (default `RESIDENCY_GROUPS`).
 

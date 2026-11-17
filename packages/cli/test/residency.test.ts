@@ -1,3 +1,4 @@
+import type { ResidencyState } from "@llamactl/core/residency/lifecycle";
 import type { NodeClient } from "@llamactl/remote";
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -38,7 +39,32 @@ type LeasesSection =
       recentAudit: LeaseAuditRow[];
     };
 
-type StatusFixture = ResidencyStatus & { leases: LeasesSection };
+type LifecycleWorkloadRow = {
+  model: string;
+  group: string | null;
+  state: ResidencyState;
+  occupying: boolean;
+  version: number;
+  updatedAtMs: number;
+};
+
+type LifecycleSection =
+  | {
+      status: "available";
+      scope: "serving-process";
+      workloads: LifecycleWorkloadRow[];
+      exclusiveViolations: { group: string; members: string[] }[];
+    }
+  | {
+      status: "unavailable";
+      scope: "serving-process";
+      reason: "StoreUnreadable" | "LifecycleUnreadable";
+    };
+
+type StatusFixture = Omit<ResidencyStatus, "lifecycle"> & {
+  leases: LeasesSection;
+  lifecycle?: LifecycleSection;
+};
 
 const RESIDENCY_STORE_PATH = "/tmp/rs/operations.sqlite";
 const SPAWN_TIMEOUT_MS = 10_000;
@@ -101,6 +127,59 @@ const ERROR_STATUS: StatusFixture = {
     present: true,
     error: "no such table: operations",
     scope: "serving-process",
+  },
+};
+
+const LIFECYCLE_WORKLOADS: LifecycleWorkloadRow[] = [
+  {
+    model: "a-glm",
+    group: "z13-large-gpu",
+    state: "ready",
+    occupying: true,
+    version: 4,
+    updatedAtMs: 1,
+  },
+  {
+    model: "b-run",
+    group: null,
+    state: "downloaded",
+    occupying: false,
+    version: 1,
+    updatedAtMs: 1,
+  },
+];
+
+const LIFECYCLE_OK_STATUS: StatusFixture = {
+  ...OK_STATUS,
+  lifecycle: {
+    status: "available",
+    scope: "serving-process",
+    workloads: LIFECYCLE_WORKLOADS,
+    exclusiveViolations: [],
+  },
+};
+
+const LIFECYCLE_VIOLATION_STATUS: StatusFixture = {
+  ...OK_STATUS,
+  lifecycle: {
+    status: "available",
+    scope: "serving-process",
+    workloads: LIFECYCLE_WORKLOADS,
+    exclusiveViolations: [{ group: "z13-large-gpu", members: ["deepseek", "glm"] }],
+  },
+};
+
+const LIFECYCLE_STORE_UNREADABLE_STATUS: StatusFixture = {
+  ...OK_STATUS,
+  lifecycle: { status: "unavailable", scope: "serving-process", reason: "StoreUnreadable" },
+};
+
+const LIFECYCLE_ROWS_UNREADABLE_STATUS: StatusFixture = {
+  ...OK_STATUS,
+  lifecycle: {
+    status: "unavailable",
+    scope: "serving-process",
+    reason: "LifecycleUnreadable",
   },
 };
 
@@ -366,6 +445,63 @@ describe("llamactl residency status", () => {
     expect(leases).toContain("Audit:      1 of 1 forced unload(s)");
     expect(leases).toMatch(/old-model\s+epoch 2\s+revoked 1\s+reason operator/);
     expect(stdout.indexOf("Leases:")).toBeLessThan(stdout.indexOf("Note:"));
+  });
+
+  describe("lifecycle section", () => {
+    test("CL1 renders workloads and no violations between the store block and leases", async () => {
+      const residency = await loadResidency();
+      const rendered = residency.renderResidencyStatus(LIFECYCLE_OK_STATUS);
+
+      expect(rendered).toContain("Lifecycle:  2 workload(s) (scope: serving-process)");
+      expect(rendered).toMatch(/a-glm\s+ready\s+group z13-large-gpu\s+version 4/);
+      expect(rendered).toMatch(/b-run\s+downloaded\s+group -\s+version 1/);
+      expect(rendered).toContain("Exclusive:  no violations");
+
+      const storeIdx = rendered.indexOf("Store:");
+      const nonterminalIdx = rendered.indexOf("Nonterminal:");
+      const opIdx = rendered.indexOf("op-1");
+      const lifecycleIdx = rendered.indexOf("Lifecycle:");
+      const exclusiveIdx = rendered.indexOf("Exclusive:");
+      const leasesIdx = rendered.indexOf("Leases:");
+      expect(storeIdx).toBeGreaterThanOrEqual(0);
+      expect(nonterminalIdx).toBeGreaterThan(storeIdx);
+      expect(opIdx).toBeGreaterThan(nonterminalIdx);
+      expect(lifecycleIdx).toBeGreaterThan(opIdx);
+      expect(exclusiveIdx).toBeGreaterThan(lifecycleIdx);
+      expect(leasesIdx).toBeGreaterThan(exclusiveIdx);
+    });
+
+    test("CL2 renders an exclusive-group violation with its members", async () => {
+      const residency = await loadResidency();
+      const rendered = residency.renderResidencyStatus(LIFECYCLE_VIOLATION_STATUS);
+
+      expect(rendered).toContain("Exclusive:  violation in z13-large-gpu: deepseek, glm");
+    });
+
+    test("CL3 renders an unavailable lifecycle when the store is unreadable", async () => {
+      const residency = await loadResidency();
+      const rendered = residency.renderResidencyStatus(LIFECYCLE_STORE_UNREADABLE_STATUS);
+
+      expect(rendered).toContain(
+        "Lifecycle:  unavailable (store unreadable; scope: serving-process)",
+      );
+    });
+
+    test("CL3b renders an unavailable lifecycle when the lifecycle rows are unreadable", async () => {
+      const residency = await loadResidency();
+      const rendered = residency.renderResidencyStatus(LIFECYCLE_ROWS_UNREADABLE_STATUS);
+
+      expect(rendered).toContain(
+        "Lifecycle:  unavailable (lifecycle rows unreadable; scope: serving-process)",
+      );
+    });
+
+    test("CL4 renders no Lifecycle line for a payload without the key", async () => {
+      const residency = await loadResidency();
+      const rendered = residency.renderResidencyStatus(OK_STATUS);
+
+      expect(rendered).not.toContain("Lifecycle:");
+    });
   });
 
   test("renderResidencyStatus covers absent policy and store error states", async () => {

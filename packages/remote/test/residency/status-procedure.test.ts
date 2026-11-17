@@ -138,12 +138,29 @@ type LeasesSection =
       recentAudit: LeaseAuditRow[];
     };
 
+type LifecycleSection =
+  | {
+      status: "available";
+      scope: "serving-process";
+      workloads: {
+        model: string;
+        group: string | null;
+        state: string;
+        occupying: boolean;
+        version: number;
+        updatedAtMs: number;
+      }[];
+      exclusiveViolations: { group: string; members: string[] }[];
+    }
+  | { status: "unavailable"; scope: "serving-process"; reason: string };
+
 type ResidencyStatus = {
   node: string;
   nodeRun: { present: boolean };
   policy: { present: false } | { present: true; residency: unknown };
   budget: { memoryGiB: number; source: "noderun" | "computed" };
   store: StoreProbe & { scope: "serving-process" };
+  lifecycle?: LifecycleSection;
   leases?: LeasesSection;
   omlxNative: {
     scope: "serving-process";
@@ -515,6 +532,12 @@ describe("buildResidencyStatus", () => {
       policy: { present: false },
       budget: { memoryGiB: 10, source: "computed" },
       store: { path: "/p", present: false, scope: "serving-process" },
+      lifecycle: {
+        status: "available",
+        scope: "serving-process",
+        workloads: [],
+        exclusiveViolations: [],
+      },
       leases: { status: "unavailable", scope: "serving-process" },
       omlxNative: { scope: "serving-process", workloads: [] },
     });
