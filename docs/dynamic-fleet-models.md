@@ -160,6 +160,9 @@ in `withResidencyLifecycle`
 `warming` → `ready`|`failed`; an observed same-group occupant refuses
 with `ExclusiveGroupOccupied` before the engine runs. Still pending:
 direct start/stop writers, reconciliation outside a switch, and #276.
+`llamactl residency status` reports these rows and any exclusive-group
+violation (#731), and a wet switch refuses to unload a session-bound victim
+with `SessionsActive` (#730; see [dynamic-residency.md](dynamic-residency.md)).
 
 | state         | legal next states                | occupying |
 | ------------- | -------------------------------- | --------- |
