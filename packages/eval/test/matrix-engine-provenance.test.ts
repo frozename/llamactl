@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/await-thenable, @typescript-eslint/no-confusing-void-expression -- Bun's rejects/resolves matchers are typed as void. */
 import { Database } from "bun:sqlite";
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +9,7 @@ import {
   buildBootCommandForModelSpec,
   buildJsonClassifierWorkload,
   ensureModelServing,
+  isExternalOnlyEngine,
   type ModelSpec,
   type ProvenanceReaders,
   runMatrix,
@@ -204,8 +205,13 @@ describe("matrix engine provenance (#521)", () => {
     ).toThrow(/engine kapitsa is not managed by eval/);
   });
 
-  // Kills: removing the guard in ensureModelServing.
+  // Kills: removing the isExternalOnlyEngine guard in ensureModelServing.
+  // Without it, managed:true falls through to buildBootCommandForModelSpec
+  // (whose message lacks "is not reachable at") and managed:false falls
+  // through to the generic "is not reachable and managed=false" error, so
+  // both cases pin the guard-specific message.
   test("ensureModelServing never spawns a gufo/kapitsa binary, even with managed:true", async () => {
+    const guardMessage = /is not reachable at .*; run the server externally/;
     const port = await stoppedServerPort();
     const dir = tempDir();
     const marker = join(dir, "spawned");
@@ -218,8 +224,71 @@ describe("matrix engine provenance (#521)", () => {
       binary: script,
     };
     await expect(ensureModelServing(spec)).rejects.toThrow(/engine kapitsa is not managed by eval/);
+    await expect(ensureModelServing(spec)).rejects.toThrow(guardMessage);
+    expect(existsSync(marker)).toBe(false);
+
+    const unmanaged: ModelSpec = { ...spec, name: "kapitsa-down", managed: false };
+    await expect(ensureModelServing(unmanaged)).rejects.toThrow(guardMessage);
+
+    const warnings: string[] = [];
+    const warnSpy = spyOn(console, "warn").mockImplementation((...args: unknown[]) => {
+      warnings.push(args.map(String).join(" "));
+    });
+    try {
+      await runModelMatrix(unmanaged, new Database(":memory:"), "run-guard-warn");
+    } finally {
+      warnSpy.mockRestore();
+    }
+    const bootWarnings = warnings.filter((w) => w.includes("failed to boot kapitsa-down"));
+    expect(bootWarnings).toHaveLength(1);
+    expect(bootWarnings[0]).toMatch(guardMessage);
     expect(existsSync(marker)).toBe(false);
   });
+
+  test("isExternalOnlyEngine is true only for gufo and kapitsa", () => {
+    expect(isExternalOnlyEngine("gufo")).toBe(true);
+    expect(isExternalOnlyEngine("kapitsa")).toBe(true);
+    expect(isExternalOnlyEngine("llamacpp")).toBe(false);
+    expect(isExternalOnlyEngine("omlx")).toBe(false);
+  });
+
+  // Kills: scanning start_args/extra_args separately or first-occurrence-wins;
+  // dropping the -c or --ctx-size=N forms; changing the non-numeric
+  // fall-through or the non-positive terminal null documented on lastCtxSize.
+  test.each([
+    { start: ["-c", "4096"], extra: ["--ctx-size=8192"], ctx: 8192 },
+    { start: ["--ctx-size=8192"], extra: ["-c", "4096"], ctx: 4096 },
+    { start: ["--ctx-size", "2048"], extra: ["--jinja", "-c", "16384"], ctx: 16384 },
+    { start: ["-c", "4096"], extra: ["-c", "auto"], ctx: 4096 },
+    { start: ["-c", "4096"], extra: ["--ctx-size"], ctx: 4096 },
+    { start: ["-c", "4096"], extra: ["-c", "0"], ctx: null },
+    { start: ["-c", "4096"], extra: ["--ctx-size=0"], ctx: null },
+  ])(
+    "lastCtxSize: start_args $start + extra_args $extra -> ctx $ctx",
+    async ({ start, extra, ctx }) => {
+      const port = startStubServer();
+      const model: ModelSpec = {
+        name: "glm-gufo-ctx",
+        engine: "gufo",
+        managed: false,
+        gguf_path: "/models/glm/Q4_K_M.gguf",
+        quant: "Q4_K_M",
+        family: "glm",
+        size_params: "30b",
+        host: "127.0.0.1",
+        port,
+        start_args: start,
+        extra_args: extra,
+      };
+      const db = new Database(":memory:");
+      await runModelMatrix(model, db, "run-ctx");
+      const rows = provenanceRows(db);
+      expect(rows).toHaveLength(1);
+      const prov = parseProvenance(rows[0]!.provenance_json);
+      expect(prov.ctx).toBe(ctx);
+      expect(prov.flags).toEqual([...start, ...extra]);
+    },
+  );
 
   // Kills: the runner skipping the insert; hardcoding engine "llamacpp";
   // dropping flags; dropping the ctx parse.

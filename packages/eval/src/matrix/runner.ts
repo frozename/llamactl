@@ -18,6 +18,7 @@ import {
   insertCellRowDetail,
   insertMatrixProvenance,
 } from "./store.js";
+import { isExternalOnlyEngine } from "./types.js";
 
 type WorkloadAggregate = { primary_metric_value: number; per_class_metrics_json: string };
 
@@ -300,10 +301,6 @@ function aggregateWorkloadMetrics(
   };
 }
 
-function isExternalOnlyEngine(engine: EvalEngine): boolean {
-  return engine === "gufo" || engine === "kapitsa";
-}
-
 const CTX_SIZE_INLINE_RE = /^--ctx-size(?:\s+|=)(\d+)$/;
 const CTX_SIZE_VALUE_RE = /^\d+$/;
 
@@ -313,8 +310,14 @@ function positiveIntOrNull(raw: string | undefined): number | null {
   return Number.isInteger(n) && n > 0 ? n : null;
 }
 
-/** Last `--ctx-size N` / `--ctx-size=N` / `-c N` occurrence wins; a matched
- *  flag with a non-positive value still counts as the last occurrence. */
+/** Scans `flags` (start_args then extra_args) from the end, so the last
+ *  `--ctx-size N` / `--ctx-size=N` / `-c N` occurrence wins.
+ *  - An inline `--ctx-size=N` match, or a `--ctx-size`/`-c` followed by an
+ *    all-digit argument, ends the scan: N if it is a positive integer,
+ *    otherwise null (e.g. `-c 0` yields null, not an earlier value).
+ *  - A `--ctx-size`/`-c` with no following argument, or one that is not
+ *    all digits (e.g. `-c auto`), is not a match: the scan falls through
+ *    to earlier occurrences. */
 function lastCtxSize(flags: readonly string[]): number | null {
   for (let i = flags.length - 1; i >= 0; i -= 1) {
     const flag = flags[i];

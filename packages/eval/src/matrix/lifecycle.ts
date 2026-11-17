@@ -6,15 +6,10 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { basename } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
-import type { EvalEngine, ModelSpec } from "./types.js";
+import type { ModelSpec } from "./types.js";
 
 import { existsSync } from "../safe-fs.js";
-
-const EXTERNAL_ONLY_ENGINES = new Set<EvalEngine>(["gufo", "kapitsa"]);
-
-function isExternalOnlyEngine(engine: EvalEngine): boolean {
-  return EXTERNAL_ONLY_ENGINES.has(engine);
-}
+import { isExternalOnlyEngine } from "./types.js";
 
 const HEALTH_POLL_INTERVAL_MS = 1000;
 const HEALTH_TIMEOUT_MS = 120_000;
