@@ -20,14 +20,8 @@ import { mkdtempSync, rmSync } from "../../src/safe-fs.js";
 
 type BuildInput = Parameters<typeof buildResidencyStatus>[0];
 
-// sessionRegistry is not in the base input type; the Record half keeps the
-// key writable without a cast while BuildInput keeps every required prop
-// checked. StatusInput stays assignable to the procedure's parameter both
-// before and after the fix adds the typed key.
-type StatusInput = BuildInput & Record<string, unknown>;
-
-function statusInput(sessionRegistry?: unknown): StatusInput {
-  const input: StatusInput = {
+function statusInput(sessionRegistry?: BuildInput["sessionRegistry"]): BuildInput {
+  const input: BuildInput = {
     node: "n",
     nodeRun: undefined,
     budgetGiB: 10,
@@ -35,7 +29,7 @@ function statusInput(sessionRegistry?: unknown): StatusInput {
     store: { path: "/p", present: false },
   };
   if (sessionRegistry !== undefined) {
-    input["sessionRegistry"] = sessionRegistry;
+    input.sessionRegistry = sessionRegistry;
   }
   return input;
 }
@@ -122,8 +116,12 @@ describe("buildResidencyStatus sessions section", () => {
     const real = createSessionRefcounts({ idleTimeoutMs: 1000, now: () => 0 });
     const bare: SessionRefcounts = {
       acquire: (sessionId, workload) => real.acquire(sessionId, workload),
-      release: (sessionId, generation) => real.release(sessionId, generation),
-      touch: (sessionId) => real.touch(sessionId),
+      release: (sessionId, generation) => {
+        real.release(sessionId, generation);
+      },
+      touch: (sessionId) => {
+        real.touch(sessionId);
+      },
       forceRelease: (workload) => real.forceRelease(workload),
       activeSessions: (workload) => real.activeSessions(workload),
       checkUnload: (workload, opts) => real.checkUnload(workload, opts),

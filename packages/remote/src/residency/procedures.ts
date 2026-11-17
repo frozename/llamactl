@@ -40,7 +40,7 @@
 import type { ResidencyAuditEntry, ResidencyLeases } from "@llamactl/core/residency/leases";
 import type { ResidencyState } from "@llamactl/core/residency/lifecycle";
 import type { PlannerWorkload, ProfileSwitchPlan } from "@llamactl/core/residency/planner";
-import type { SessionSnapshot } from "@llamactl/core/residency/sessions";
+import type { SessionRefcounts } from "@llamactl/core/residency/sessions";
 
 import { resolveResidencyPolicy } from "@llamactl/core/residency/admission";
 import {
@@ -108,10 +108,17 @@ export type ResidencyStatusSessionRow = {
   expiresInMs: number | null;
 };
 
+export type ResidencyStatusSessionsUnavailableReason =
+  | "NoRegistry"
+  | "SessionsUnknown"
+  | "SnapshotUnsupported";
+
 export type ResidencyStatusSessions =
-  | { status: "unavailable"; scope: "serving-process"; reason: string }
-  | { status: "unsupported"; scope: "serving-process"; reason: string }
-  | { status: "unknown"; scope: "serving-process"; reason: string }
+  | {
+      status: "unavailable";
+      scope: "serving-process";
+      reason: ResidencyStatusSessionsUnavailableReason;
+    }
   | {
       status: "available";
       scope: "serving-process";
@@ -237,12 +244,10 @@ export function buildResidencyLeaseSnapshot(
   };
 }
 
-export type SessionRegistry = {
-  snapshot?: () => SessionSnapshot | { status: "NoRegistry" } | { status: "SnapshotUnsupported" };
-};
-
+// null: no session registry installed in the serving process. undefined:
+// the caller did not ask for the section, so it is omitted.
 export function buildResidencySessionSnapshot(
-  registry: SessionRegistry | null | undefined,
+  registry: Pick<SessionRefcounts, "snapshot"> | null | undefined,
 ): ResidencyStatusSessions | undefined {
   if (registry === undefined) {
     return undefined;
@@ -255,12 +260,6 @@ export function buildResidencySessionSnapshot(
   }
   try {
     const snap = registry.snapshot();
-    if ("status" in snap) {
-      if (snap.status === "NoRegistry") {
-        return { status: "unavailable", scope: "serving-process", reason: "SessionsUnknown" };
-      }
-      return { status: "unavailable", scope: "serving-process", reason: "SnapshotUnsupported" };
-    }
     const sessions = snap.sessions.map(
       (r): ResidencyStatusSessionRow => ({
         sessionId: r.sessionId,
@@ -338,7 +337,7 @@ export function buildResidencyStatus(input: {
   leaseRegistry?: Pick<ResidencyLeases, "snapshot" | "audit"> | null | undefined;
   leaseWorkloads?: readonly string[] | undefined;
   omlxNative?: readonly OmlxNativeStatusRow[] | undefined;
-  sessionRegistry?: SessionRegistry | null | undefined;
+  sessionRegistry?: Pick<SessionRefcounts, "snapshot"> | null | undefined;
 }): ResidencyStatus {
   const residency = input.nodeRun?.spec.residency;
   const sessions = buildResidencySessionSnapshot(input.sessionRegistry);

@@ -54,11 +54,6 @@ export type SessionUnloadCheck =
   | { ok: true; released: string[] }
   | { ok: false; reason: "SessionActive"; sessions: string[] };
 
-export interface SessionRefcountOptions {
-  idleTimeoutMs: number;
-  now?: () => number;
-}
-
 export type SessionSnapshotRow = {
   sessionId: string;
   workload: string;
@@ -233,25 +228,27 @@ export function createSessionRefcounts(opts: SessionRefcountOptions): SessionRef
     },
     snapshot(): SessionSnapshot {
       prune();
-      const rows: SessionSnapshotRow[] = [];
-      for (const [sessionId, entry] of sessions) {
-        const idleMs = now() - entry.lastActivityMs;
-        const expiresInMs = entry.refs > 0 ? null : Math.max(0, idleTimeoutMs - idleMs);
-        rows.push({
-          sessionId,
-          workload: entry.workload,
-          refs: entry.refs,
-          idleMs,
-          expiresInMs,
-        });
-      }
-      rows.sort(
-        (a, b) =>
-          a.idleMs - b.idleMs ||
-          a.workload.localeCompare(b.workload) ||
-          a.sessionId.localeCompare(b.sessionId),
-      );
-      return { idleTimeoutMs, sessions: rows };
+      return buildSessionSnapshot(sessions, now(), idleTimeoutMs);
     },
   };
+}
+
+function buildSessionSnapshot(
+  sessions: ReadonlyMap<string, SessionEntry>,
+  nowMs: number,
+  idleTimeoutMs: number,
+): SessionSnapshot {
+  const rows: SessionSnapshotRow[] = [];
+  for (const [sessionId, entry] of sessions) {
+    const idleMs = nowMs - entry.lastActivityMs;
+    const expiresInMs = entry.refs > 0 ? null : Math.max(0, idleTimeoutMs - idleMs);
+    rows.push({ sessionId, workload: entry.workload, refs: entry.refs, idleMs, expiresInMs });
+  }
+  rows.sort(
+    (a, b) =>
+      a.idleMs - b.idleMs ||
+      a.workload.localeCompare(b.workload) ||
+      a.sessionId.localeCompare(b.sessionId),
+  );
+  return { idleTimeoutMs, sessions: rows };
 }

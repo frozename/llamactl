@@ -958,11 +958,9 @@ describe("residency sessions surface", () => {
     const residency = await loadResidency();
     const fixture: StatusFixture = SESSIONS_OK_STATUS;
     const rendered = residency.renderResidencyStatus(fixture);
-    expect(rendered).toContain(
-      "Sessions:   2 bound (idle timeout 600000 ms; scope: serving-process)",
-    );
+    expect(rendered).toContain("Sessions:   2 bound (idle timeout 10m 0s; scope: serving-process)");
     expect(rendered).toContain("  wl-a  sess-1  refs 1  in flight");
-    expect(rendered).toContain("  wl-a  sess-2  refs 0  expires in 1500 ms");
+    expect(rendered).toContain("  wl-a  sess-2  refs 0  expires in 1s");
   });
 
   test("renders a distinct line per unavailable reason", async () => {

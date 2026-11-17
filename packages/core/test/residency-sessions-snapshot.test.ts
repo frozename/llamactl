@@ -53,7 +53,7 @@ test("#520 snapshot: bound sessions report refs, idle time and expiry", () => {
 test("#520 snapshot: sessionId breaks ties within a workload", () => {
   // Kills: rows ordered by insertion or sorted by sessionId across
   // workloads instead of (workload, sessionId).
-  let t = 0;
+  const t = 0;
   const reg = registry(() => t);
   reg.acquire("s-z", "wl-a");
   reg.acquire("s-a", "wl-a");
@@ -110,7 +110,7 @@ test("#520 snapshot: never refreshes lastActivityMs", () => {
 
 test("#520 snapshot: returns a read-only copy of the live entries", () => {
   // Kills: returning internal entries or arrays by reference.
-  let t = 0;
+  const t = 0;
   const reg = registry(() => t);
   const acq = reg.acquire("s-a", "wl-a");
   if (!acq.ok) throw new Error("acquire(s-a) refused");
@@ -144,7 +144,7 @@ test("#520 snapshot: returns a read-only copy of the live entries", () => {
 test("#520 snapshot: preserves lastAcquire so cancelAcquire undoes a created binding", () => {
   // Kills: snapshot setting entry.lastAcquire = null, which leaves a
   // phantom refs 1 binding after a refused admission.
-  let t = 0;
+  const t = 0;
   const reg = registry(() => t);
   const acq = reg.acquire("s-x", "wl-x");
   if (!acq.ok) throw new Error("acquire(s-x) refused");
