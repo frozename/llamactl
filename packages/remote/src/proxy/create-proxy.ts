@@ -512,10 +512,14 @@ export function createSharedUnifiedProxy(
     ...(residencyTtlMs !== undefined ? { ttlMs: residencyTtlMs } : {}),
     ...(proxyOpts.now !== undefined ? { now: proxyOpts.now } : {}),
   });
+  // An explicit caller `residencyPolicy: null` means "no policy" and must
+  // not fall through to the NodeRun source, so test `undefined`, not `??`.
   return createProxy({
     ...proxyOpts,
     residencyPolicy:
-      proxyOpts.residencyPolicy ?? ((): Partial<ResidencyPolicy> | null => source.policy()),
+      proxyOpts.residencyPolicy !== undefined
+        ? proxyOpts.residencyPolicy
+        : (): Partial<ResidencyPolicy> | null => source.policy(),
     rankingSignals:
       proxyOpts.rankingSignals ?? ((): routingRanking.RankingSignals => source.signals()),
   });

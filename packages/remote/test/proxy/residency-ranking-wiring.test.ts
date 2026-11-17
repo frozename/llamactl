@@ -5,7 +5,7 @@
  * -> the ranking policy and the resident deploymentIds) and
  * createSharedUnifiedProxy (the factory dispatchProxyRequest builds instead
  * of bare createProxy, wiring LLAMACTL_NODE_NAME -> NodeRun lookup, a
- * ttlMs-cached store read, and both ranking inputs into createProxy). Neither
+ * residencyTtlMs-cached store read, and both ranking inputs into createProxy). Neither
  * exists at the pinned base, so every case fails by assertion on
  * `typeof fn`, never by a link error; once the wiring lands these pins hold
  * the ready-only resident set, unknown-store inertness, node-identity
@@ -28,6 +28,7 @@ import { join, resolve } from "node:path";
 import type { ResidencyStateRecord, ResidencyStoreSnapshot } from "../../src/residency/store.js";
 
 import * as proxyMod from "../../src/proxy/create-proxy.js";
+import { createResidencyRankingSource } from "../../src/proxy/residency-ranking.js";
 import { mkdtempSync, readFileSync, rmSync } from "../../src/safe-fs.js";
 import {
   type NodeRun,
@@ -60,7 +61,7 @@ type ResidencyRankingInputsFn = (input: {
 type SharedUnifiedProxyOptions = proxyMod.UnifiedProxyOptions & {
   listNodeRuns?: () => NodeRun[];
   readStore?: () => ResidencyStoreSnapshot;
-  ttlMs?: number;
+  residencyTtlMs?: number;
 };
 
 type SharedUnifiedProxyFactory = (opts?: SharedUnifiedProxyOptions) => proxyMod.UnifiedProxy;
@@ -170,13 +171,13 @@ function storeWithLifecycle(lifecycle: ResidencyStateRecord[]): ResidencyStoreSn
   };
 }
 
-function nodeRun(name: string, residency?: NodeRunResidency): NodeRun {
+function nodeRun(name: string, residency?: NodeRunResidency, specNode = name): NodeRun {
   return NodeRunSchema.parse({
     apiVersion: "llamactl/v1",
     kind: "NodeRun",
     metadata: { name },
     spec: {
-      node: name,
+      node: specNode,
       ...(residency === undefined ? {} : { residency }),
       infra: [],
     },
@@ -217,6 +218,8 @@ function sharedRig(
     store: ResidencyStoreSnapshot;
     now?: () => number;
     reads?: RigReads;
+    throwOn?: keyof RigReads;
+    extra?: Partial<SharedUnifiedProxyOptions>;
   },
 ): SharedRig {
   const cat = wiringCatalog();
@@ -234,13 +237,16 @@ function sharedRig(
     },
     listNodeRuns: () => {
       if (input.reads !== undefined) input.reads.listNodeRuns += 1;
+      if (input.throwOn === "listNodeRuns") throw new Error("noderun read failed");
       return input.nodeRuns;
     },
     readStore: () => {
       if (input.reads !== undefined) input.reads.readStore += 1;
+      if (input.throwOn === "readStore") throw new Error("store read failed");
       return input.store;
     },
     now: input.now ?? ((): number => NOW),
+    ...input.extra,
   });
   return { proxy, picked };
 }
@@ -449,6 +455,7 @@ describe("createSharedUnifiedProxy (#519)", () => {
     for (const env of [
       { LLAMACTL_UNIFIED_PROXY: "1" },
       { LLAMACTL_UNIFIED_PROXY: "1", LLAMACTL_NODE_NAME: "" },
+      { LLAMACTL_UNIFIED_PROXY: "1", LLAMACTL_NODE_NAME: "  " },
     ]) {
       const reads: RigReads = { listNodeRuns: 0, readStore: 0 };
       const rig = sharedRig(createSharedUnifiedProxy, {
@@ -461,13 +468,15 @@ describe("createSharedUnifiedProxy (#519)", () => {
       expect(res.status).toBe(200);
       expect(rig.picked).toEqual(["deploy/local/w1"]);
       expect(reads.readStore).toBe(0);
+      expect(reads.listNodeRuns).toBe(0);
     }
   });
 
   test("residency inputs are cached for the ttl and re-read after it", async () => {
     // Kills: per-request reads, or a cache that never refreshes — two
     // requests inside the default 5000ms ttl share one NodeRun/store read,
-    // and a request past the ttl re-reads both.
+    // and a request exactly one ttl later re-reads both (a `>` refresh
+    // rule would keep the stale snapshot at the boundary).
     const createSharedUnifiedProxy = exported("createSharedUnifiedProxy") as
       | SharedUnifiedProxyFactory
       | undefined;
@@ -489,11 +498,167 @@ describe("createSharedUnifiedProxy (#519)", () => {
     const second = await rig.proxy.handleRequest(chatReq());
     expect(second.status).toBe(200);
     expect(reads).toEqual({ listNodeRuns: 1, readStore: 1 });
-    clock += RESIDENCY_TTL_MS + 1;
+    // Exactly one ttl after the first read: the refresh rule is
+    // `now - loadedAt >= ttl`, so this boundary request re-reads.
+    clock = NOW + RESIDENCY_TTL_MS;
     const third = await rig.proxy.handleRequest(chatReq());
     expect(third.status).toBe(200);
     expect(reads).toEqual({ listNodeRuns: 2, readStore: 2 });
     expect(rig.picked).toEqual(["deploy/local/w2", "deploy/local/w2", "deploy/local/w2"]);
+  });
+
+  test("residencyTtlMs overrides the default ttl", async () => {
+    // Kills: ignoring the residencyTtlMs option (the default 5000ms ttl would
+    // keep the 100ms request cached) or forwarding it under the wrong key.
+    const createSharedUnifiedProxy = exported("createSharedUnifiedProxy") as
+      | SharedUnifiedProxyFactory
+      | undefined;
+    expect(typeof createSharedUnifiedProxy).toBe("function");
+    if (createSharedUnifiedProxy === undefined) return;
+    let clock = NOW;
+    const reads: RigReads = { listNodeRuns: 0, readStore: 0 };
+    const rig = sharedRig(createSharedUnifiedProxy, {
+      env: { LLAMACTL_UNIFIED_PROXY: "1", LLAMACTL_NODE_NAME: "n1" },
+      nodeRuns: [nodeRun("n1", { coldLoadPenaltyMs: 120_000 })],
+      store: storeWithLifecycle([lifecycleRow("w2", "ready")]),
+      now: () => clock,
+      reads,
+      extra: { residencyTtlMs: 100 },
+    });
+    expect((await rig.proxy.handleRequest(chatReq())).status).toBe(200);
+    clock = NOW + 99;
+    expect((await rig.proxy.handleRequest(chatReq())).status).toBe(200);
+    expect(reads).toEqual({ listNodeRuns: 1, readStore: 1 });
+    clock = NOW + 100;
+    expect((await rig.proxy.handleRequest(chatReq())).status).toBe(200);
+    expect(reads).toEqual({ listNodeRuns: 2, readStore: 2 });
+  });
+
+  test("the NodeRun is selected by metadata.name matching LLAMACTL_NODE_NAME", async () => {
+    // Kills: taking the first NodeRun (n0's cold-load penalty would pick w2)
+    // and matching on spec.node instead of metadata.name.
+    const createSharedUnifiedProxy = exported("createSharedUnifiedProxy") as
+      | SharedUnifiedProxyFactory
+      | undefined;
+    expect(typeof createSharedUnifiedProxy).toBe("function");
+    if (createSharedUnifiedProxy === undefined) return;
+    const store = storeWithLifecycle([lifecycleRow("w2", "ready")]);
+    const env = { LLAMACTL_UNIFIED_PROXY: "1", LLAMACTL_NODE_NAME: "n1" };
+
+    const byName = sharedRig(createSharedUnifiedProxy, {
+      env,
+      nodeRuns: [nodeRun("n0", { coldLoadPenaltyMs: 120_000 }), nodeRun("n1")],
+      store,
+    });
+    expect((await byName.proxy.handleRequest(chatReq())).status).toBe(200);
+    expect(byName.picked).toEqual(["deploy/local/w1"]);
+
+    const specNodeDiffers = sharedRig(createSharedUnifiedProxy, {
+      env,
+      nodeRuns: [nodeRun("n1", { coldLoadPenaltyMs: 120_000 }, "other")],
+      store,
+    });
+    expect((await specNodeDiffers.proxy.handleRequest(chatReq())).status).toBe(200);
+    expect(specNodeDiffers.picked).toEqual(["deploy/local/w2"]);
+  });
+
+  test("both ranking knobs at 0 read the NodeRun but never the store", async () => {
+    // Kills: reading the store unconditionally once a NodeRun is selected.
+    const createSharedUnifiedProxy = exported("createSharedUnifiedProxy") as
+      | SharedUnifiedProxyFactory
+      | undefined;
+    expect(typeof createSharedUnifiedProxy).toBe("function");
+    if (createSharedUnifiedProxy === undefined) return;
+    const reads: RigReads = { listNodeRuns: 0, readStore: 0 };
+    const rig = sharedRig(createSharedUnifiedProxy, {
+      env: { LLAMACTL_UNIFIED_PROXY: "1", LLAMACTL_NODE_NAME: "n1" },
+      nodeRuns: [nodeRun("n1", { residentPreference: 0, coldLoadPenaltyMs: 0 })],
+      store: storeWithLifecycle([lifecycleRow("w2", "ready")]),
+      reads,
+    });
+    expect((await rig.proxy.handleRequest(chatReq())).status).toBe(200);
+    expect(rig.picked).toEqual(["deploy/local/w1"]);
+    expect(reads.readStore).toBe(0);
+    expect(reads.listNodeRuns).toBe(1);
+  });
+
+  test("a throwing reader degrades to a null policy and empty signals", async () => {
+    // Kills: letting a reader error escape (the request would fail) or
+    // keeping a partial policy when the store read throws.
+    const createSharedUnifiedProxy = exported("createSharedUnifiedProxy") as
+      | SharedUnifiedProxyFactory
+      | undefined;
+    expect(typeof createSharedUnifiedProxy).toBe("function");
+    if (createSharedUnifiedProxy === undefined) return;
+    const store = storeWithLifecycle([lifecycleRow("w2", "ready")]);
+    const env = { LLAMACTL_UNIFIED_PROXY: "1", LLAMACTL_NODE_NAME: "n1" };
+    const nodeRuns = [nodeRun("n1", { coldLoadPenaltyMs: 120_000 })];
+    const failures: { listNodeRuns: () => NodeRun[]; readStore: () => ResidencyStoreSnapshot }[] = [
+      {
+        listNodeRuns: (): NodeRun[] => {
+          throw new Error("noderun read failed");
+        },
+        readStore: () => store,
+      },
+      {
+        listNodeRuns: () => nodeRuns,
+        readStore: (): ResidencyStoreSnapshot => {
+          throw new Error("store read failed");
+        },
+      },
+    ];
+    for (const readers of failures) {
+      const source = createResidencyRankingSource({
+        env,
+        nodeId: "local",
+        ...readers,
+        now: () => NOW,
+      });
+      expect(source.policy()).toBeNull();
+      expect(source.signals()).toEqual({});
+    }
+    for (const throwOn of ["listNodeRuns", "readStore"] as const) {
+      const rig = sharedRig(createSharedUnifiedProxy, { env, nodeRuns, store, throwOn });
+      const res = await rig.proxy.handleRequest(chatReq());
+      expect(res.status).toBe(200);
+      expect(rig.picked).toEqual(["deploy/local/w1"]);
+    }
+  });
+
+  test("caller-supplied ranking inputs take precedence over the NodeRun source", async () => {
+    // Kills: overwriting caller residencyPolicy/rankingSignals with the
+    // NodeRun-derived source (n1's cold-load penalty plus the w2 resident
+    // row would pick w2) and eagerly reading through the unused source.
+    const createSharedUnifiedProxy = exported("createSharedUnifiedProxy") as
+      | SharedUnifiedProxyFactory
+      | undefined;
+    expect(typeof createSharedUnifiedProxy).toBe("function");
+    if (createSharedUnifiedProxy === undefined) return;
+    const env = { LLAMACTL_UNIFIED_PROXY: "1", LLAMACTL_NODE_NAME: "n1" };
+
+    const overridden = { listNodeRuns: 0, readStore: 0 };
+    const callerNeutral = sharedRig(createSharedUnifiedProxy, {
+      env,
+      nodeRuns: [nodeRun("n1", { coldLoadPenaltyMs: 120_000 })],
+      store: storeWithLifecycle([lifecycleRow("w2", "ready")]),
+      reads: overridden,
+      extra: { residencyPolicy: null, rankingSignals: {} },
+    });
+    expect((await callerNeutral.proxy.handleRequest(chatReq())).status).toBe(200);
+    expect(callerNeutral.picked).toEqual(["deploy/local/w1"]);
+    expect(overridden).toEqual({ listNodeRuns: 0, readStore: 0 });
+
+    const callerRanked = sharedRig(createSharedUnifiedProxy, {
+      env,
+      nodeRuns: [nodeRun("n1")],
+      store: storeWithLifecycle([]),
+      extra: {
+        residencyPolicy: { coldLoadPenaltyMs: 120_000 },
+        rankingSignals: { resident: new Set(["deploy/local/w2"]) },
+      },
+    });
+    expect((await callerRanked.proxy.handleRequest(chatReq())).status).toBe(200);
+    expect(callerRanked.picked).toEqual(["deploy/local/w2"]);
   });
 
   test("dispatchProxyRequest builds the shared unified proxy", () => {
