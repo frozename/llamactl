@@ -330,6 +330,7 @@ describe("docs/dynamic-residency.md (#285)", () => {
       ["plan", ["--node", "--to"]],
       ["apply-profile", ["--node", "--to"]],
       ["status", ["--node"]],
+      ["force-unload", ["--reason", "--yes"]],
     ] as const) {
       for (const flag of flags) {
         expect(required.get(sub) ?? [], `USAGE required flags for ${sub}`).toContain(flag);
@@ -796,8 +797,8 @@ describe("docs/dynamic-residency.md (#285)", () => {
     for (const needle of [
       "`SessionsActive: <ids>`",
       "`SessionsUnknown`",
-      "fence",
-      "drain",
+      "at fence time",
+      "after the drain window",
       "never releases sessions",
       "needs the override `llamactl residency force-unload <workload> --reason <text> --yes --node <name>` (see Session affinity)",
       "#730",
@@ -811,9 +812,16 @@ describe("docs/dynamic-residency.md (#285)", () => {
       "`Cooldown`",
       "#732",
       "`llamactl residency status --node <name>`",
+      "[NodeRun residency policy knobs](#noderun-residency-policy-knobs)",
     ]) {
       expect(s, needle).toContain(needle);
     }
+    // The cooldown link's anchor resolves to a real heading in the doc.
+    expect(doc.split("\n")).toContain("## NodeRun residency policy knobs");
+    // The force-unload synopsis the doc shows marks --reason and --yes
+    // required in USAGE, and --node optional.
+    const forceUnload = residencyRequiredFlags().get("force-unload") ?? [];
+    expect(forceUnload).toEqual(["--reason", "--yes"]);
     const profileTransition = readOrEmpty(
       join(REPO, "packages/remote/src/residency/profile-transition.ts"),
     );
