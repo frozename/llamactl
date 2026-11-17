@@ -9,6 +9,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   utimesSync,
@@ -434,6 +435,55 @@ describe("publish/serve never pair new bytes with an old x-sha256 (#744)", () =>
     expect(status).toBe(200);
     expect(body).toBe("new-bytes");
     expect(headers.get("x-sha256")).toBe(sha256hex("new-bytes"));
+  });
+
+  function snapshotTree(root: string): Record<string, string> {
+    const out: Record<string, string> = {};
+    const walk = (abs: string, rel: string): void => {
+      for (const entry of readdirSync(abs, { withFileTypes: true })) {
+        const childAbs = join(abs, entry.name);
+        const childRel = rel === "" ? entry.name : `${rel}/${entry.name}`;
+        if (entry.isDirectory()) {
+          out[`${childRel}/`] = "<dir>";
+          walk(childAbs, childRel);
+        } else {
+          out[childRel] = readFileSync(childAbs, "utf8");
+        }
+      }
+    };
+    walk(root, "");
+    return out;
+  }
+
+  test("an invalid build name is refused before anything is written", () => {
+    // Pre-create every directory an unguarded publish would resolve the
+    // name into, so a missing name guard would succeed and write there
+    // instead of failing on a missing parent dir.
+    mkdirSync(join(dir, "agent", "evil"), { recursive: true });
+    mkdirSync(join(platformDir(), "ZZZ"), { recursive: true });
+    const stagingDir = join(dir, "staging");
+    mkdirSync(stagingDir, { recursive: true });
+
+    for (const name of ["../evil", "ZZZ", ""]) {
+      const staged = join(stagingDir, "llamactl-agent.partial-test");
+      writeFileSync(staged, "evil-bytes");
+      const before = snapshotTree(dir);
+
+      const published = publishApi.publishAgentBuild({
+        artifactsDir: dir,
+        platform: PLATFORM,
+        name,
+        manifest: manifestFor("evil-bytes"),
+        stagedBinary: staged,
+      });
+
+      expect(published.ok).toBe(false);
+      expect(existsSync(currentPath())).toBe(false);
+      expect(existsSync(staged)).toBe(true);
+      const after = snapshotTree(dir);
+      expect(Object.keys(after).filter((p) => p.endsWith("manifest.json"))).toEqual([]);
+      expect(after).toEqual(before);
+    }
   });
 
   test("a missing staged binary publishes nothing", async () => {
