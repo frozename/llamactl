@@ -15,10 +15,11 @@ export const MEMORY_BUDGET_HEADROOM_RATIO = 0.75;
 /**
  * Residency tuning knobs (Refs #519). `safetyMarginRatio` sizes every
  * computed admission budget via `defaultNodeBudgetGiB` (controller, router
- * and CLI apply paths). `minResidencySeconds` and `switchCooldownSeconds` are
- * read only by the dry-run planner (`planner.ts`), which `residencyPlan` feeds
- * the NodeRun policy; they refuse only when switch/load timing is supplied,
- * which no caller persists yet (#279).
+ * and CLI apply paths). `switchCooldownSeconds` is enforced: `residencyPlan`
+ * and `residencyApplyProfile` refuse with `Cooldown` within that many seconds
+ * of the node's last succeeded profile switch recorded in the node-local
+ * residency store. `minResidencySeconds` stays inert until a trustworthy
+ * per-workload load time is supplied (#279).
  *
  * `idleEvictSeconds` is parse-only. It is validated as part of NodeRun
  * spec.residency, stored with the NodeRun manifest, and echoed verbatim

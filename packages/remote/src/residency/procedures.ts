@@ -19,9 +19,12 @@
 // native, a declared process-fallback, or unknown with a reason. It is only
 // probed on the serving process; off it every row is unknown/NotServingNode.
 //
-// The NodeRun residency supplies the planner policy (Part of #519); switch/load
-// timing (lastSwitchAtMs, loadedAtMs) is not persisted yet, so those checks stay
-// inert unless a caller supplies them (#279).
+// The NodeRun residency supplies the planner policy (Part of #519).
+// switchCooldownSeconds is now measured from the last succeeded
+// `profile-switch:<node>` operation recorded in the serving node's store
+// snapshot (input.store.lastSucceededAtMs); an explicit lastSwitchAtMs from the
+// caller, including null, still wins. loadedAtMs (minResidencySeconds) is still
+// not persisted, so that check stays inert unless a caller supplies it (#279).
 import type { ResidencyAuditEntry, ResidencyLeases } from "@llamactl/core/residency/leases";
 import type { PlannerWorkload, ProfileSwitchPlan } from "@llamactl/core/residency/planner";
 
@@ -36,6 +39,7 @@ import type { OmlxNativeStatusRow } from "./omlx-capability.js";
 import type { ResidencyStoreSnapshot } from "./store.js";
 
 import { buildProfileSwitchRequest, type ObservedWorkloadState } from "./coordinator.js";
+import { profileSwitchOperationKey } from "./profile-transition.js";
 
 type ResidencyPolicy = NonNullable<NodeRun["spec"]["residency"]>;
 
@@ -369,6 +373,21 @@ function refusal(
   };
 }
 
+// The last succeeded profile switch recorded in the serving node's store, read
+// from the unscoped snapshot. Defined only when the store applies to this node
+// and reads cleanly; the value is kept only when finite (Part of #519).
+function recordedSwitchAtMs(
+  store: ResidencyStoreSnapshot,
+  applies: boolean,
+  operationKey: string,
+): number | undefined {
+  if (!applies || !store.present || "error" in store) {
+    return undefined;
+  }
+  const recorded = store.lastSucceededAtMs?.[operationKey];
+  return recorded !== undefined && Number.isFinite(recorded) ? recorded : undefined;
+}
+
 export function buildResidencyPlan(input: {
   node: string;
   to: string;
@@ -401,6 +420,9 @@ export function buildResidencyPlan(input: {
       ? (store.nonterminal[0]?.operationId ?? null)
       : null;
 
+  const recorded = recordedSwitchAtMs(input.store, applies, profileSwitchOperationKey(input.node));
+  const lastSwitchAtMs = input.lastSwitchAtMs !== undefined ? input.lastSwitchAtMs : recorded;
+
   const resolvedPolicy = resolveResidencyPolicy({
     ...(input.residency?.minResidencySeconds !== undefined
       ? { minResidencySeconds: input.residency.minResidencySeconds }
@@ -424,7 +446,7 @@ export function buildResidencyPlan(input: {
       minResidencySeconds: resolvedPolicy.minResidencySeconds,
       switchCooldownSeconds: resolvedPolicy.switchCooldownSeconds,
     },
-    ...(input.lastSwitchAtMs !== undefined ? { lastSwitchAtMs: input.lastSwitchAtMs } : {}),
+    ...(lastSwitchAtMs !== undefined ? { lastSwitchAtMs } : {}),
   });
   if (!built.ok) {
     return refusal(built.reason, `residency plan refused: ${built.reason}`, built.workloads);
