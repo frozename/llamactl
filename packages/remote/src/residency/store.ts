@@ -407,13 +407,23 @@ export function defaultResidencyStorePath(env: NodeJS.ProcessEnv = process.env):
 
 export type ResidencyStoreSnapshot =
   | { path: string; present: false }
-  | { path: string; present: true; nonterminal: ResidencyOperationRecord[] }
+  | {
+      path: string;
+      present: true;
+      nonterminal: ResidencyOperationRecord[];
+      lifecycle?: ResidencyStateRecord[];
+      lifecycleError?: string;
+    }
   | { path: string; present: true; error: string };
 
 // Read-only view of an existing store. Never mkdir, never set journal_mode,
 // never migrate, never claim ownership — a status read must leave the file
 // byte-identical. Opened readonly but NOT immutable: immutable=1 skips the
 // WAL, so rows a live writer has not checkpointed yet would go unseen.
+// The snapshot now carries the per-model lifecycle rows too (Part of #517);
+// a lifecycle-row read failure is isolated into lifecycleError so the
+// operations section stays an ok snapshot — only an operations-table failure
+// produces the whole-store error variant.
 export function readResidencyStoreSnapshot(
   path: string,
   opts?: { busyTimeoutMs?: number },
@@ -426,7 +436,12 @@ export function readResidencyStoreSnapshot(
   try {
     db = new Database(path, { readonly: true });
     db.run(`PRAGMA busy_timeout = ${String(busyTimeoutMs)}`);
-    return { path, present: true, nonterminal: listNonterminalRows(db) };
+    const nonterminal = listNonterminalRows(db);
+    try {
+      return { path, present: true, nonterminal, lifecycle: listResidencyStateRowsReadOnly(db) };
+    } catch (error: unknown) {
+      return { path, present: true, nonterminal, lifecycleError: (error as Error).message };
+    }
   } catch (error: unknown) {
     return { path, present: true, error: (error as Error).message };
   } finally {
@@ -901,6 +916,28 @@ function upsertState(
 function listResidencyStateRows(db: Database): ResidencyStateRecord[] {
   const rows = db
     .query(`SELECT ${RESIDENCY_STATE_COLUMNS} FROM residency_states ORDER BY model ASC`)
+    .all() as ResidencyStateRow[];
+  return rows.map((row) => parseResidencyStateRow(row));
+}
+
+// Read-only twin of listResidencyStateRows for the status snapshot (#517).
+// Never migrates: a pre-#662 file has no residency_states table at all (read
+// as empty), and a #662-era table predates desired_revision, so that column is
+// selected only when present — the same shape listLeaseAuditRows uses.
+function listResidencyStateRowsReadOnly(db: Database): ResidencyStateRecord[] {
+  const table = db
+    .query("SELECT 1 AS hit FROM sqlite_master WHERE type = 'table' AND name = 'residency_states'")
+    .get() as { hit: number } | null;
+  if (table === null) {
+    return [];
+  }
+  const desiredRevision = hasColumn(db, "residency_states", "desired_revision")
+    ? "desired_revision"
+    : "NULL";
+  const rows = db
+    .query(
+      `SELECT model, residency_group, state, owner_id, incarnation, fence_token, version, updated_at_ms, ${desiredRevision} AS desired_revision FROM residency_states ORDER BY model ASC`,
+    )
     .all() as ResidencyStateRow[];
   return rows.map((row) => parseResidencyStateRow(row));
 }

@@ -25,7 +25,7 @@ import { withNodeQueryDeadline } from "./workload.js";
 const USAGE = `Usage: llamactl residency <subcommand>
 
 Subcommands:
-  status --node <name> [--json]   Read-only residency status: NodeRun policy, memory budget, the serving process's residency store and its per-workload lease/drain state. Never wakes a model or mutates state.
+  status --node <name> [--json]   Read-only residency status: NodeRun policy, memory budget, the serving process's residency store, its per-model lifecycle rows and exclusive-group violations, and its per-workload lease/drain state. Never wakes a model or mutates state.
   plan --node <name> --to <profile> [--from <profile>] [--json]   Read-only dry-run profile switch: budget source, victims, replacements, protected workloads or refusal. Never starts, stops, loads or writes the store.
   apply-profile --node <name> --to <profile> [--from <profile>] [--json]   Dry-run by default: plan and report the profile switch without touching the store. Add --execute --yes to run the switch for real (stops and starts workloads, records an operation).
   cancel-operation <operationId> --yes [--node <name>] [--json]   Request an abort of an in-flight profile switch started by apply-profile --execute --yes in the process serving <node> (an agent serve process); it stops before its next step boundary. Process-local: a switch run in-process by a local-endpoint CLI invocation cannot be cancelled from another CLI invocation. Requires --yes.
@@ -86,11 +86,37 @@ export function renderResidencyStatus(s: ResidencyRenderInput): string {
       );
     }
   }
+  pushLifecycleLines(lines, s.lifecycle);
   pushLeaseLines(lines, s.leases);
   lines.push(
     `Note:       store is the serving process's node-local store, not ${s.node}'s coordinator state`,
   );
   return lines.join("\n") + "\n";
+}
+
+function pushLifecycleLines(lines: string[], lifecycle: ResidencyRenderInput["lifecycle"]): void {
+  if (lifecycle === undefined) {
+    return;
+  }
+  if (lifecycle.status === "unavailable") {
+    const detail =
+      lifecycle.reason === "StoreUnreadable" ? "store unreadable" : "lifecycle rows unreadable";
+    lines.push(`Lifecycle:  unavailable (${detail}; scope: serving-process)`);
+    return;
+  }
+  lines.push(
+    `Lifecycle:  ${String(lifecycle.workloads.length)} workload(s) (scope: serving-process)`,
+  );
+  for (const w of lifecycle.workloads) {
+    lines.push(`  ${w.model}  ${w.state}  group ${w.group ?? "-"}  version ${String(w.version)}`);
+  }
+  if (lifecycle.exclusiveViolations.length === 0) {
+    lines.push("Exclusive:  no violations");
+    return;
+  }
+  for (const v of lifecycle.exclusiveViolations) {
+    lines.push(`Exclusive:  violation in ${v.group}: ${v.members.join(", ")}`);
+  }
 }
 
 function pushLeaseLines(lines: string[], leases: ResidencyRenderInput["leases"]): void {
