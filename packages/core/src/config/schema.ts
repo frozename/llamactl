@@ -16,10 +16,19 @@ export const NodeFactsSchema = z.object({
   platform: z.string(),
   llamaCppBuildId: z.string().nullable(),
   gpu: GpuFactsSchema.nullable(),
+  // #743/#745: commit / dirty / builtAt / installKind mirror the Versions
+  // interface in nodeFacts.ts so zod does not strip them; nullable +
+  // optional lets legacy versions objects (without these fields) still parse.
   versions: z.object({
     llamactl: z.string(),
     bun: z.string(),
     llamaCppSrcRev: z.string().nullable(),
+    commit: z.string().nullable().optional(),
+    dirty: z.boolean().nullable().optional(),
+    builtAt: z.string().nullable().optional(),
+    // Mirrors nodeFacts.InstallKind: a new InstallKind must be added to this
+    // enum at the same time, or facts reporting it stop parsing.
+    installKind: z.enum(["compiled", "source"]).nullable().optional(),
   }),
   startedAt: z.string(),
 });
