@@ -701,4 +701,64 @@ describe("docs/dynamic-residency.md (#285)", () => {
       expect(existsSync(resolved), `relative link target missing: ${target}`).toBe(true);
     }
   });
+
+  // Part of #522
+  // Kills: passing residencyPolicy into the shared createProxy() (the
+  // no-runtime-effect claim goes stale), or reverting the doc's wrong
+  // serve.ts attribution.
+  test("case 14: ranked replica serving (#728) and shared proxy location", () => {
+    const k = (sectionBody(SECTIONS.knobs) ?? "").replaceAll(/\s+/g, " ");
+    expect(k).not.toContain("`serve.ts` builds `sharedProxy`");
+    for (const needle of [
+      "`dispatchProxyRequest`",
+      "`LLAMACTL_UNIFIED_PROXY`",
+      "`preferredLocalWorkload`",
+      "`preferredWorkload`",
+      "#728",
+    ]) {
+      expect(k, needle).toContain(needle);
+    }
+    const createProxySrc = readOrEmpty(join(REPO, "packages/remote/src/proxy/create-proxy.ts"));
+    expect(createProxySrc).toContain("sharedProxy ??= createProxy();");
+    expect(createProxySrc).toContain("preferredLocalWorkload");
+    expect(readOrEmpty(join(REPO, "packages/core/src/openaiProxy.ts"))).toContain(
+      "preferredWorkload?: string",
+    );
+  });
+
+  // Part of #522
+  // Kills: renaming SESSION_HEADER or the 409 AffinityConflict code, or
+  // deleting the section.
+  test("case 15: session affinity (#729) and session-aware stop fence (#722)", () => {
+    const a = (sectionBody(sectionRe("session affinity")) ?? "").replaceAll(/\s+/g, " ");
+    const proxySrc = readOrEmpty(join(REPO, "packages/core/src/openaiProxy.ts"));
+    const header = /const SESSION_HEADER = "([^"]+)"/.exec(proxySrc)?.[1] ?? "";
+    const max = /const MAX_SESSION_ID_LENGTH = (\d+)/.exec(proxySrc)?.[1] ?? "";
+    expect(header).toBe("x-llamactl-session");
+    for (const needle of [
+      `\`${header}\``,
+      max,
+      "`InvalidSessionId`",
+      "`AffinityConflict`",
+      "409",
+      "400",
+      "`LLAMACTL_RESIDENCY_LEASES`",
+      "`LLAMACTL_RESIDENCY_SESSION_IDLE_MS`",
+      "`SessionsActive`",
+      "`SessionsUnknown`",
+      "`releasedSessions`",
+      "#729",
+      "#722",
+    ]) {
+      expect(a, needle).toContain(needle);
+    }
+    expect(proxySrc).toContain('code: "AffinityConflict"');
+    expect(proxySrc).toContain('code: "InvalidSessionId"');
+    expect(readOrEmpty(join(REPO, "packages/remote/src/residency/stop-fence.ts"))).toContain(
+      '"SessionsActive"',
+    );
+    expect(readOrEmpty(join(REPO, "packages/remote/src/residency/force-unload.ts"))).toContain(
+      "releasedSessions",
+    );
+  });
 });
