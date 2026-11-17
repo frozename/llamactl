@@ -16,7 +16,9 @@ import type { ResidencyState } from "@llamactl/core/residency/lifecycle";
  * every case fails BY ASSERTION on the rows, fence, result text or
  * stderr — never by import, type or exit code.
  */
-import { server } from "@llamactl/core";
+import { env as coreEnv, server } from "@llamactl/core";
+import { saveConfig } from "@llamactl/core/config/kubeconfig";
+import { freshConfig } from "@llamactl/core/config/schema";
 import { setResidencyLeaseRegistry } from "@llamactl/core/residency/leases";
 import { setSessionRefcountRegistry } from "@llamactl/core/residency/sessions";
 import { Database } from "bun:sqlite";
@@ -224,10 +226,13 @@ spec:
 
 // serverStart is a subscription: collect the stream and take the done
 // event's result (the last one wins if a wrapper ever emits its own).
-async function startRun(name: string): Promise<RunStartResult> {
+async function startRun(
+  name: string,
+  extra?: { endpoint?: { host?: string; port?: number } },
+): Promise<RunStartResult> {
   const stream = await router
     .createCaller({})
-    .serverStart({ workload: name, target: `${name}/missing.gguf` });
+    .serverStart({ workload: name, target: `${name}/missing.gguf`, ...extra });
   let result: RunStartResult | undefined;
   for await (const event of stream) {
     const done = event as { type?: string; result?: RunStartResult } | null;
@@ -259,6 +264,51 @@ async function startHost(name: string): Promise<HostResult> {
     throw new Error(`modelHostStart(${name}) stream ended without a done event`);
   }
   return result;
+}
+
+// A chat -> code wet switch on the serving node: chat-x Running, code-y
+// Stopped in one exclusive group, under a 24 GiB NodeRun budget. code-y's
+// target is a missing .gguf, so the switch's own start step fails with the
+// model-file error whenever it reaches the engine.
+async function wetSwitchChatToCode(): Promise<{
+  operationId?: string | null;
+  steps: { action: string; workload: string; status: string; detail?: string | null }[];
+}> {
+  writeProfileRun("chat-x", "chat", "Running", 10);
+  writeProfileRun("code-y", "code", "Stopped", 12);
+  saveNodeRun(
+    {
+      apiVersion: "llamactl/v1",
+      kind: "NodeRun",
+      metadata: { name: "local", labels: {} },
+      spec: { node: "local", budget: { memoryGiB: 24 }, infra: [] },
+    },
+    workloadsDir,
+  );
+  return await router.createCaller({}).residencyApplyProfile({
+    node: "local",
+    to: "code",
+    from: "chat",
+    dryRun: false,
+    confirm: true,
+  });
+}
+
+// A loopback port nothing listens on: bind an ephemeral port, then release
+// it. Any HTTP hop to it is refused locally; nothing off this host is dialled.
+function closedLoopbackPort(): number {
+  const listener = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      data(socket): void {
+        socket.end();
+      },
+    },
+  });
+  const { port } = listener;
+  listener.stop(true);
+  return port;
 }
 
 function captureStderr(): { text: () => string; restore: () => void } {
@@ -571,28 +621,12 @@ describe("serverStart/serverStop direct residency lifecycle", () => {
 
   test("MS1: a real wet switch runs its own start past the in-flight gate, then an external start walks the row", async () => {
     // kills: no in-switch bypass in serverStart / applyModelRun not
-    // running in the scope / getClient not forced in-process. The last
-    // assertion (the external start's version bump) is the one that
-    // fails at base by assertion.
-    writeProfileRun("chat-x", "chat", "Running", 10);
-    writeProfileRun("code-y", "code", "Stopped", 12);
-    saveNodeRun(
-      {
-        apiVersion: "llamactl/v1",
-        kind: "NodeRun",
-        metadata: { name: "local", labels: {} },
-        spec: { node: "local", budget: { memoryGiB: 24 }, infra: [] },
-      },
-      workloadsDir,
-    );
-
-    const applied = await router.createCaller({}).residencyApplyProfile({
-      node: "local",
-      to: "code",
-      from: "chat",
-      dryRun: false,
-      confirm: true,
-    });
+    // running in the scope. The last assertion (the external start's
+    // version bump) is the one that fails at base by assertion. With no
+    // config file the serving node resolves to inproc://local, so
+    // clientForNode already returns the in-process caller here: this case
+    // does NOT cover the forced-local getClient; MS2 does.
+    const applied = await wetSwitchChatToCode();
 
     const startStep = applied.steps.find((s) => s.action === "start" && s.workload === "code-y");
     expect(startStep?.status).toBe("failed");
@@ -613,5 +647,77 @@ describe("serverStart/serverStop direct residency lifecycle", () => {
     expect(external.error ?? "").toMatch(/^Model file not found:/);
     expect(readState("code-y")?.state).toBe("failed");
     expect(readState("code-y")?.version ?? 0).toBeGreaterThan(settledVersion);
+  });
+
+  test("MS2: the switch forces its serving node in-process even when the config names a remote endpoint", async () => {
+    // kills: applyModelRun.getClient using clientForNode for input.node.
+    // The serving node's configured endpoint is a non-inproc https URL on a
+    // closed loopback port, so a cross-hop serverStart would lose the
+    // switch scope (and fail the hop) instead of reaching the engine's
+    // model-file error.
+    const config = freshConfig();
+    const cluster = config.clusters[0];
+    const localNode = cluster?.nodes[0];
+    if (cluster === undefined || localNode?.name !== "local") {
+      throw new Error("freshConfig no longer seeds a local node");
+    }
+    localNode.endpoint = `https://127.0.0.1:${String(closedLoopbackPort())}`;
+    const configPath = join(root, "config");
+    saveConfig(config, configPath);
+    process.env["LLAMACTL_CONFIG"] = configPath;
+
+    const applied = await wetSwitchChatToCode();
+
+    const startStep = applied.steps.find((s) => s.action === "start" && s.workload === "code-y");
+    expect(startStep?.status).toBe("failed");
+    const detail = startStep?.detail ?? "";
+    expect(detail).not.toContain("profile switch in flight");
+    expect(detail).toBe(`Model file not found: ${join(modelsDir, "code-y/missing.gguf")}`);
+    expect(readState("code-y")).toMatchObject({ state: "failed", group: GROUP });
+  });
+
+  test("MR13: a stop that does not confirm removal records the row failed, not downloaded", async () => {
+    // kills: serverStop dep mapping ok to anything but stop.stopped. The
+    // recorded pid is this test process (alive, but not a llama-server),
+    // so stopServer's identity check reads unknown: no signal is sent and
+    // it returns stopped:false with the pid file retained.
+    writeRun("run-a", GROUP);
+    seed([{ model: "run-a", target: "ready", group: GROUP }]);
+    const seededVersion = readState("run-a")?.version ?? 0;
+    const pidDir = join(runtimeDir, "workloads", "run-a");
+    mkdirSync(pidDir, { recursive: true });
+    writeFileSync(join(pidDir, "llama-server.pid"), `${String(process.pid)}\n`);
+
+    const result = await stopRun("run-a");
+
+    expect(result).toEqual({ stopped: false, pid: process.pid, killed: false });
+    expect(server.readServerPid({ name: "run-a" })).toBe(process.pid);
+    // ready -> draining -> unloading, then the not-ok post-walk to failed.
+    expect(readState("run-a")).toMatchObject({
+      state: "failed",
+      group: GROUP,
+      version: seededVersion + 3,
+    });
+    expect(readState("run-a")?.state).not.toBe("downloaded");
+  });
+
+  test("MR14: a refused start honours the endpoint override in its StartServerResult", async () => {
+    // kills: serverStartRefusal ignoring input.endpoint (env-default
+    // endpoints on the refusal done event).
+    writeRun("run-a", GROUP);
+    writeRun("run-b", GROUP);
+    seed([{ model: "run-b", target: "loading", group: GROUP }]);
+    const override = { host: "127.0.0.9", port: 18555 };
+
+    const result = await startRun("run-a", { endpoint: override });
+
+    expect(result.ok).toBe(false);
+    expect(result.error ?? "").toContain("ExclusiveGroupOccupied");
+    const resolved = coreEnv.resolveEnv();
+    expect(result.endpoint).toBe("http://127.0.0.9:18555");
+    expect(result.endpoint).toBe(server.endpoint(resolved, override));
+    expect(result.advertisedEndpoint).toBe(server.advertisedEndpoint(resolved, override));
+    expect(result.advertisedEndpoint).toMatch(/:18555$/);
+    expect(result.endpoint).not.toBe(server.endpoint(resolved));
   });
 });
