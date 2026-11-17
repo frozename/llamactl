@@ -54,8 +54,10 @@ export type NodeRunInfraItem = z.infer<typeof NodeRunInfraItemSchema>;
  * the residencyPlan budget (Part of #519). `switchCooldownSeconds` is enforced:
  * residencyPlan and residencyApplyProfile refuse with `Cooldown` within that
  * many seconds of the node's last succeeded profile switch recorded in the
- * node-local residency store. `minResidencySeconds` stays inert until a
- * trustworthy per-workload load time is supplied. `idleEvictSeconds` is
+ * node-local residency store. `minResidencySeconds` is enforced: residencyPlan
+ * and residencyApplyProfile refuse with `MinResidency` while a victim's
+ * node-local residency_states row has been `ready` for fewer than that many
+ * seconds; 0 disables. `idleEvictSeconds` is
  * validated, persisted and echoed by residencyStatus, but no idle-eviction path
  * reads it (the DF-10 sleep driver has no idle trigger), so any value behaves
  * like 0. `residentPreference` and `coldLoadPenaltyMs` are ranking-only (Part of
@@ -70,8 +72,9 @@ export const ResidencyPolicySchema = z
     /** parse-only: validated and persisted; no idle-eviction path reads it,
      * so any value behaves like 0 (Part of #519) */
     idleEvictSeconds: z.number().int().nonnegative().optional(),
-    /** read by the profile-switch planner; refuses only when load timing is
-     *  supplied, which no caller persists yet (#279) */
+    /** enforced: refuses residencyPlan and residencyApplyProfile with
+     *  MinResidency while a victim's ready lifecycle row is younger than this;
+     *  0 disables (Part of #519) */
     minResidencySeconds: z.number().int().nonnegative().optional(),
     /** enforced: refuses residencyPlan and residencyApplyProfile with Cooldown
      *  within this many seconds of the node's last succeeded profile switch
