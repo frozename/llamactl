@@ -1,5 +1,8 @@
 /**
  * #279 DF-06: agent-startup crash recovery for profile-switch operations.
+ * #517: lifecycle-row boot recovery — terminalizes interrupted residency
+ * states (loading / warming / draining / unloading) under the same claimed
+ * fence.
  *
  * `runProfileSwitchBootRecovery` runs synchronously inside `startAgentServer`,
  * before it returns, so a leftover `profile-switch:<node>` row from a crashed
@@ -54,11 +57,49 @@
  * finishes run afterwards under the claimed fence; a CLI claim after it only
  * makes those finishes fail stale-fence, which never touches a live switch.
  *
+ * Lifecycle-row sweep (Part of #517). After the profile-switch operations are
+ * terminalized, the same claimed pass walks every residency_states row stuck
+ * in an interrupted transient state (`loading`, `warming`, `draining`,
+ * `unloading`) and transitions it to `failed`, releasing the exclusive-group
+ * occupancy a crashed switch left behind. Per-row write failures or refusals
+ * are contained and counted without stopping the sweep. The sweep runs under
+ * the same fence token as the operation recovery, so a concurrent CLI
+ * apply-profile will stale-fence the sweep — this is the desired safety
+ * property: the CLI owns the fence, not boot recovery.
+ *
+ * Safety. The sweep touches only transient states; stable states
+ * (`unavailable`, `downloaded`, `ready`, `failed`) are never modified. A
+ * per-row refusal (e.g., `version-conflict`) is counted as a record failure
+ * but does not abort the sweep. A per-row throw is caught and counted as a
+ * record failure, then the sweep continues to the next row. A throw while
+ * listing the rows is contained and counted as one record failure; the
+ * profile-switch recovery has already run and still reports `recovered`.
+ *
+ * Reasoning. A crashed switch can leave residency rows in any transient state,
+ * holding exclusive-group capacity and preventing new models from loading.
+ * Boot recovery must release these rows so the node can accept new workloads.
+ * The sweep uses the same fence as the operation recovery, ensuring that a
+ * concurrent CLI apply-profile (which holds the fence) is not interfered with.
+ *
+ * Caveats. The sweep is a best-effort cleanup: when no row is in an
+ * interrupted transient state it changes nothing and writes no lifecycle line.
+ * It runs only on a claimed pass, i.e. only when a stale profile-switch row
+ * exists: lifecycle rows interrupted outside a switch are not swept. It does
+ * not validate group consistency — it only transitions states. Group cleanup
+ * is the responsibility of the normal executor path.
+ *
  * Logging. An absent store or a store with no profile-switch row logs nothing.
  * A deferred or recovered pass logs one line of counts only (no operation ids,
  * no model or node names). A failure logs one `failed:` line with the first
  * line of the error. A throwing write sink is swallowed. It never throws: any
- * failure is logged and boot continues.
+ * failure is logged and boot continues. A recovered pass whose lifecycle
+ * sweep moved at least one row to `failed` or recorded at least one failure
+ * (N + M > 0) logs a second line
+ * `[residency] lifecycle boot recovery {"failed":N,"recordFailures":M}\n`
+ * after the profile-switch recovery line, with the same counts-only constraint
+ * (no model or group names). The two lines' `recordFailures` are separate:
+ * the profile-switch line counts operation rows only, the lifecycle line
+ * counts lifecycle rows only.
  */
 import { RESIDENCY_APPLY_PROFILE_FENCE_OWNER } from "./apply-profile.js";
 import {
@@ -70,10 +111,18 @@ import {
   openResidencyOperationStore,
   readResidencyStoreSnapshot,
   RESIDENCY_LEASE_AUDIT_BUSY_TIMEOUT_MS,
+  type ResidencyLifecycleStore,
   type ResidencyOperationStore,
 } from "./store.js";
 
 export const PROFILE_SWITCH_BOOT_RECOVERY_MIN_AGE_MS = 30 * 60_000;
+
+export const INTERRUPTED_LIFECYCLE_STATES: ReadonlySet<string> = new Set([
+  "loading",
+  "warming",
+  "draining",
+  "unloading",
+]);
 
 export type BootRecoverySummary = {
   status: "absent" | "clean" | "deferred" | "recovered" | "failed";
@@ -84,7 +133,7 @@ export type BootRecoverySummary = {
   possiblyLive: number;
 };
 
-type BootRecoveryStore = ResidencyOperationStore;
+type BootRecoveryStore = ResidencyOperationStore & ResidencyLifecycleStore;
 
 export type BootRecoveryOpts = {
   path: string;
@@ -106,6 +155,8 @@ const NO_COUNTS: Counts = {
   unrecognized: 0,
   possiblyLive: 0,
 };
+
+type LifecycleContext = { counts: LifecycleCounts | undefined };
 
 export function runProfileSwitchBootRecovery(opts: BootRecoveryOpts): BootRecoverySummary {
   const write = opts.write ?? defaultWrite;
@@ -131,11 +182,22 @@ export function runProfileSwitchBootRecovery(opts: BootRecoveryOpts): BootRecove
       nowMs: nowMs(),
       minStaleAgeMs,
     });
+    const lifecycle: LifecycleContext = { counts: undefined };
     const result = shouldClaim(preview)
-      ? scanWithStore(openStore, opts, nowMs, minStaleAgeMs)
+      ? scanWithStore(openStore, opts, nowMs, minStaleAgeMs, lifecycle)
       : deferred(preview);
 
     safeWrite(write, `[residency] profile-switch boot recovery ${countsJson(result)}\n`);
+    if (
+      result.status === "recovered" &&
+      lifecycle.counts &&
+      lifecycle.counts.failed + lifecycle.counts.recordFailures > 0
+    ) {
+      safeWrite(
+        write,
+        `[residency] lifecycle boot recovery ${lifecycleCountsJson(lifecycle.counts)}\n`,
+      );
+    }
     return result;
   } catch (error: unknown) {
     safeWrite(write, `[residency] profile-switch boot recovery failed: ${failureMessage(error)}\n`);
@@ -152,6 +214,47 @@ function countsJson(result: BootRecoverySummary): string {
     unrecognized: result.unrecognized,
     possiblyLive: result.possiblyLive,
   });
+}
+
+interface LifecycleCounts {
+  failed: number;
+  recordFailures: number;
+}
+
+function lifecycleCountsJson(counts: LifecycleCounts): string {
+  return JSON.stringify({ failed: counts.failed, recordFailures: counts.recordFailures });
+}
+
+function failInterruptedLifecycleRows(
+  store: BootRecoveryStore,
+  fenceToken: number,
+  nowMs: number,
+): LifecycleCounts {
+  const states = store.listResidencyStates();
+  let failed = 0;
+  let recordFailures = 0;
+  for (const stateRecord of states) {
+    if (!INTERRUPTED_LIFECYCLE_STATES.has(stateRecord.state)) {
+      continue;
+    }
+    try {
+      const result = store.transitionResidencyState({
+        fenceToken,
+        model: stateRecord.model,
+        to: "failed",
+        expectedVersion: stateRecord.version,
+        nowMs,
+      });
+      if (result.ok) {
+        failed++;
+      } else {
+        recordFailures++;
+      }
+    } catch {
+      recordFailures++;
+    }
+  }
+  return { failed, recordFailures };
 }
 
 function shouldClaim(preview: ProfileSwitchRecoveryPreview): boolean {
@@ -172,6 +275,7 @@ function scanWithStore(
   opts: BootRecoveryOpts,
   nowMs: () => number,
   minStaleAgeMs: number,
+  lifecycle: LifecycleContext,
 ): BootRecoverySummary {
   const store = openStore(opts.path);
   try {
@@ -197,6 +301,17 @@ function scanWithStore(
       minStaleAgeMs,
     });
     const recovered = result.recovered.filter((row) => row.recorded).length;
+    let lifecycleCounts: LifecycleCounts;
+    try {
+      lifecycleCounts = failInterruptedLifecycleRows(store, fence.fenceToken, nowMs());
+    } catch {
+      /* per-row throws are caught inside the sweep, so this is a failure to
+         list the rows: it is contained (the profile-switch recovery already
+         ran) and counted as one lifecycle record failure, so the lifecycle
+         line surfaces it */
+      lifecycleCounts = { failed: 0, recordFailures: 1 };
+    }
+    lifecycle.counts = lifecycleCounts;
     return {
       status: "recovered",
       recovered,

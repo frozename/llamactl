@@ -26,8 +26,9 @@ Open items:
   `residencyStatus` procedure and the MCP tool now report the serving
   process's `residency_states` rows and any exclusive-group violation
   (`findExclusiveGroupViolations`, previously used only by the planner).
-  Still pending: direct workload start/stop writers, reconciliation outside
-  a switch, and lifecycle-row boot recovery.
+  Lifecycle-row boot recovery has landed (see Residency lifecycle states).
+  Still pending: direct workload start/stop writers and reconciliation
+  outside a switch.
 - Real GLM-5.3-Flash z13 measurements are not yet committed (see the
   eval record at the bottom).
 
@@ -99,9 +100,9 @@ persists per-model states in its `residency_states` table:
   `llamactl residency status`, the `residencyStatus` procedure and the MCP
   tool now report the serving process's `residency_states` rows and any
   exclusive-group violation (`findExclusiveGroupViolations`, previously
-  used only by the planner). Still pending: direct workload start/stop
-  writers, reconciliation outside a switch, and lifecycle-row boot
-  recovery.
+  used only by the planner). Lifecycle-row boot recovery has landed (see
+  Residency lifecycle states). Still pending: direct workload start/stop
+  writers and reconciliation outside a switch.
 - Group declarations are not persisted. They come from the caller
   (default `RESIDENCY_GROUPS`).
 
@@ -158,11 +159,10 @@ in `withResidencyLifecycle`
 `unloading` → `downloaded`|`failed`; a replacement walks → `loading` →
 `warming` → `ready`|`failed`; an observed same-group occupant refuses
 with `ExclusiveGroupOccupied` before the engine runs. Still pending:
-direct start/stop writers, reconciliation outside a switch, boot recovery
-of lifecycle rows, and #276. `llamactl residency status` reports these rows
-and any exclusive-group violation (#731), and a wet switch refuses to unload
-a session-bound victim with `SessionsActive` (#730; see
-[dynamic-residency.md](dynamic-residency.md)).
+direct start/stop writers, reconciliation outside a switch, and #276.
+`llamactl residency status` reports these rows and any exclusive-group
+violation (#731), and a wet switch refuses to unload a session-bound victim
+with `SessionsActive` (#730; see [dynamic-residency.md](dynamic-residency.md)).
 
 | state         | legal next states                | occupying |
 | ------------- | -------------------------------- | --------- |
@@ -195,6 +195,20 @@ comes from the catalog `residencyGroup` field and the
 
 `findExclusiveGroupViolations` reports every exclusive group with two or
 more occupying members.
+
+Lifecycle-row boot recovery (Part of #517) sweeps interrupted transient
+states (`loading`, `warming`, `draining`, `unloading`) to `failed` under
+the same claimed fence as the profile-switch operation recovery, releasing
+exclusive-group capacity. It is implemented in
+`runProfileSwitchBootRecovery` (`packages/remote/src/residency/boot-recovery.ts`)
+with `failInterruptedLifecycleRows`. Per-row write failures and refusals
+are contained and counted without stopping the sweep; a failed row
+listing counts as one record failure. When the sweep moved at least one
+row or recorded at least one failure, the agent logs one counts-only line
+after the profile-switch line:
+`[residency] lifecycle boot recovery {"failed":N,"recordFailures":M}`.
+Its `recordFailures` counts lifecycle rows only; the profile-switch line's
+`recordFailures` counts operation rows only.
 
 ## Qualification and promotion
 
