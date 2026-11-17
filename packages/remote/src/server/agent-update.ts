@@ -1,3 +1,4 @@
+import { nodeFacts } from "@llamactl/core";
 import { omitUndefined } from "@llamactl/core/object";
 import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
@@ -36,6 +37,11 @@ import { unauthorizedResponse, verifyBearer } from "./auth.js";
  * process re-spawns. If the new binary fails to start, launchd's
  * KeepAlive flips it back into a respawn loop and the operator can
  * `agent rollback` (separate command) to restore `.previous`.
+ *
+ * #745: `selfUpdateRefusal` checks `buildStamp.installKind !== "compiled"`
+ * (refuse 409) or missing/invalid `commit`/`dirty` (refuse 409) before
+ * any body is touched. Source-checkouts and unstamped fallbacks are
+ * refused; only a build-stamped compiled binary is accepted.
  */
 
 // ---------------------------------------------------------------------------
@@ -192,6 +198,13 @@ export interface AgentUpdateOptions {
    * when `watchdog` is also set.
    */
   _spawnWatchdog?: (config: WatchdogConfig) => void;
+  /**
+   * Build stamp carried by the running agent. When absent,
+   * `resolveBuildStamp()` is called to read the stamp from the
+   * binary. Refuses with 409 when the stamp indicates a
+   * non-compiled install or missing stamp fields.
+   */
+  buildStamp?: nodeFacts.BuildStamp;
 }
 
 export interface AgentUpdateResult {
@@ -218,6 +231,26 @@ function sha256OfBytes(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
+/**
+ * #745: Refuse self-update when the running agent is a source checkout
+ * (`installKind !== "compiled"`) or carries an incomplete / fallback
+ * build stamp (missing `commit`, `dirty`, `builtAt`).
+ *
+ * Returns a refusal reason string, or `null` when the stamp is valid.
+ */
+function selfUpdateRefusal(opts: AgentUpdateOptions): string | null {
+  const stamp = opts.buildStamp ?? nodeFacts.resolveBuildStamp();
+  if (stamp.installKind !== "compiled")
+    return `refusing-update: agent is not a compiled binary (installKind=${stamp.installKind})`;
+  const commit = stamp.commit;
+  const dirty = stamp.dirty;
+  const builtAt = stamp.builtAt;
+  if (commit === null || dirty === null || builtAt === null)
+    return "refusing-update: compiled agent has no build stamp";
+  if (!/^[0-9a-f]{40}$/.test(commit)) return "refusing-update: compiled agent has no build stamp";
+  return null;
+}
+
 export async function handleAgentUpdate(req: Request, opts: AgentUpdateOptions): Promise<Response> {
   if (req.method !== "POST") {
     return new Response("method not allowed", { status: 405 });
@@ -225,6 +258,13 @@ export async function handleAgentUpdate(req: Request, opts: AgentUpdateOptions):
   if (!verifyBearer(req, opts.tokenHash)) {
     return unauthorizedResponse();
   }
+
+  // #745: refuse self-update unless the agent is a compiled, build-stamped binary.
+  const refusal = selfUpdateRefusal(opts);
+  if (refusal) {
+    return jsonError(409, refusal);
+  }
+
   const expectedSha = req.headers.get("x-sha256")?.trim().toLowerCase();
   if (!expectedSha || !/^[0-9a-f]{64}$/.test(expectedSha)) {
     return jsonError(400, "missing-or-invalid-x-sha256-header");
