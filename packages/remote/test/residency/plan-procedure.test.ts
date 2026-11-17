@@ -1018,6 +1018,31 @@ describe("residencyPlan procedure", () => {
     expect(result.retryAfterMs).toBeLessThanOrEqual(3_590_000);
   });
 
+  test("R8b: a lifecycle read failure still enforces the recorded switch cooldown", async () => {
+    // kills: the snapshot's lifecycleError branch dropping lastSucceededAtMs.
+    seedRouterFixtureResidency({
+      residency: { switchCooldownSeconds: 3600 },
+      budget: { memoryGiB: 24 },
+    });
+    seedSucceededProfileSwitch();
+    // An unknown lifecycle state makes the lifecycle-row read fail.
+    const raw = new Database(storePath);
+    try {
+      raw.run("PRAGMA ignore_check_constraints = ON");
+      raw.run(
+        "INSERT INTO residency_states (model, residency_group, state, owner_id, incarnation, fence_token, version, updated_at_ms, desired_revision) VALUES ('m-new', NULL, 'hibernating', 'o', 'i', 1, 1, 5, NULL)",
+      );
+    } finally {
+      raw.close();
+    }
+    const result = await plan({ node: "local", to: "code" });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("Cooldown");
+    expect(result.detail).toMatch(/^switch cooldown active \(\d+ms remaining\)$/);
+    expect(result.retryAfterMs).toBeGreaterThan(3_500_000);
+    expect(result.retryAfterMs).toBeLessThanOrEqual(3_590_000);
+  });
+
   test("R9: a recorded switch does not gate a node the store does not serve", async () => {
     // kills: deriving the switch time when the store does not apply to the node.
     seedRouterFixtureResidency({

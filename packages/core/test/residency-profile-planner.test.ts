@@ -417,6 +417,34 @@ test("#279 P11: switch inside the cooldown window refuses with the remaining ret
   expect(plan.steps).toEqual([]);
 });
 
+test("#519 P11b: a switch exactly when the cooldown has elapsed is allowed", () => {
+  // kills: `nowMs - lastSwitchAtMs < cooldownMs` -> `<=` (the boundary is open).
+  const plan = planProfileSwitch(
+    req({
+      from: "interactive",
+      policy: { switchCooldownSeconds: 300 },
+      lastSwitchAtMs: NOW_MS - 300_000,
+    }),
+  );
+  expectOk(plan);
+  expect(plan.noop).toBe(false);
+});
+
+test("#519 P11c: a switch 1 ms before the cooldown elapses refuses with 1 ms remaining", () => {
+  // kills: `<` -> `<=` together with P11b, and an off-by-one retryAfterMs.
+  const plan = planProfileSwitch(
+    req({
+      from: "interactive",
+      policy: { switchCooldownSeconds: 300 },
+      lastSwitchAtMs: NOW_MS - 299_999,
+    }),
+  );
+  expectRefused(plan);
+  expect(plan.reason).toBe("Cooldown");
+  expect(plan.retryAfterMs).toBe(1);
+  expect(plan.steps).toEqual([]);
+});
+
 test("#279 P12: victim inside minResidency refuses with the remaining retryAfterMs", () => {
   const plan = planProfileSwitch(
     req({

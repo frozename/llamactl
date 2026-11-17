@@ -4,6 +4,7 @@
 // node-local store. At the pinned base readResidencyStoreSnapshot returns no
 // lastSucceededAtMs, so the map assertions fail by assertion — never by
 // import, type or missing-export error.
+import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -28,6 +29,11 @@ type StoreSnapshot =
   | { path: string; present: false }
   | { path: string; present: true; error: string }
   | ReadableStoreSnapshot;
+
+type LifecycleErrorSnapshot = ReadableStoreSnapshot & {
+  lifecycle?: unknown;
+  lifecycleError?: string;
+};
 
 let dir = "";
 let dbPath = "";
@@ -190,5 +196,68 @@ describe("readResidencyStoreSnapshot lastSucceededAtMs (#519)", () => {
 
     const snapshot = readableSnapshot(dbPath);
     expect(snapshot.lastSucceededAtMs).toEqual({});
+  });
+
+  test("S4: a lifecycle read failure still carries lastSucceededAtMs", () => {
+    // kills: dropping lastSucceededAtMs from the lifecycleError branch.
+    const store = openResidencyOperationStore({ path: dbPath });
+    try {
+      const fence = store.claimOwnership({ ownerId: "seed", incarnation: "seed" });
+      seedOperation(store, fence.fenceToken, {
+        operationId: "op-n1-a",
+        model: "profile-switch:n1",
+        beginMs: 900,
+        finishMs: 1000,
+        outcome: "succeeded",
+      });
+    } finally {
+      store.close();
+    }
+    // An unknown lifecycle state makes the lifecycle-row read throw.
+    const raw = new Database(dbPath);
+    try {
+      raw.run("PRAGMA ignore_check_constraints = ON");
+      raw.run(
+        "INSERT INTO residency_states (model, residency_group, state, owner_id, incarnation, fence_token, version, updated_at_ms, desired_revision) VALUES ('m-new', NULL, 'hibernating', 'o', 'i', 1, 1, 5, NULL)",
+      );
+    } finally {
+      raw.close();
+    }
+
+    const snapshot = readableSnapshot(dbPath) as LifecycleErrorSnapshot;
+    expect(snapshot).not.toHaveProperty("lifecycle");
+    expect(snapshot.lifecycleError).toContain("unknown state hibernating");
+    expect(snapshot.lastSucceededAtMs).toEqual({ "profile-switch:n1": 1000 });
+  });
+
+  test("S5: a failing last-succeeded read makes the whole snapshot an error", () => {
+    // kills: swallowing a lastSucceededAtMs / operations read failure into an
+    // empty map or into lifecycleError instead of the whole-store error.
+    // `operations` is a view whose outcome column raises only when evaluated
+    // for a terminal row, so the nonterminal read (which filters terminal rows
+    // out first) succeeds and only the succeeded-finish read fails.
+    const raw = new Database(dbPath);
+    try {
+      raw.run(
+        "CREATE TABLE ops_raw (operation_id TEXT PRIMARY KEY, model TEXT NOT NULL, target_state TEXT NOT NULL, desired_revision INTEGER NOT NULL, reservation_gib REAL NOT NULL, phase TEXT NOT NULL, outcome TEXT, detail TEXT, owner_id TEXT NOT NULL, incarnation TEXT NOT NULL, fence_token INTEGER NOT NULL, version INTEGER NOT NULL, created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL)",
+      );
+      raw.run(
+        "INSERT INTO ops_raw VALUES ('op-n1-a', 'profile-switch:n1', 'ready', 0, 0, 'terminal', 'succeeded', NULL, 'o', 'i', 1, 2, 900, 1000)",
+      );
+      raw.run(
+        "CREATE VIEW operations AS SELECT operation_id, model, target_state, desired_revision, reservation_gib, phase, CASE WHEN phase = 'terminal' THEN abs(-9223372036854775807 - 1) ELSE outcome END AS outcome, detail, owner_id, incarnation, fence_token, version, created_at_ms, updated_at_ms FROM ops_raw",
+      );
+    } finally {
+      raw.close();
+    }
+
+    const snapshot: StoreSnapshot = readResidencyStoreSnapshot(dbPath);
+    expect(snapshot.present).toBe(true);
+    expect("error" in snapshot).toBe(true);
+    expect(snapshot).not.toHaveProperty("nonterminal");
+    expect(snapshot).not.toHaveProperty("lastSucceededAtMs");
+    if (snapshot.present && "error" in snapshot) {
+      expect(snapshot.error).toContain("integer overflow");
+    }
   });
 });
