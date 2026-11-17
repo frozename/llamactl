@@ -23,6 +23,12 @@
  * drain window, refusing SessionsActive/SessionsUnknown without ever
  * releasing sessions; the override is `residency force-unload`.
  *
+ * Core `startServer`'s stop-before-start (`server.ts` fencedStop) also
+ * consults checkUnload under its DF-05 drain (#520): a session bound to the
+ * tracked instance refuses the restart as SessionsActive, and a throwing
+ * checkUnload as SessionsUnknown, but only while the tracked instance is
+ * live — a crashed instance never blocks — and it never releases sessions.
+ *
  * Release is generation-aware (#520 follow-up from the #617 review): a
  * stale release carrying an old generation cannot drop a newer
  * acquisition of the same session ID.
