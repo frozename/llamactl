@@ -9,7 +9,10 @@
  * the loading hop refuse before the dep runs; an uncorroborated occupying
  * peer is walked down to downloaded first. The decorator never throws: every
  * store call is guarded, and a failed post write is logged, leaving the dep's
- * own outcome unchanged.
+ * own outcome unchanged. `fenceTokenOf` is an optional live fence reader: a
+ * caller that may re-claim the fence across the dep (the direct ModelHost
+ * start/stop wrapper) passes it so the post-walk rides the re-acquired token;
+ * a profile switch passes nothing and keeps using the fixed `fenceToken`.
  */
 import {
   isOccupyingResidencyState,
@@ -40,6 +43,7 @@ type LifecycleCtx = {
   deps: ProfileSwitchExecutorDeps;
   lifecycle: ProfileSwitchLifecycleOpts;
   fenceToken: number;
+  fenceTokenOf?: () => number;
   occupiedAtPlan: ReadonlySet<string>;
   nowMs: () => number;
   log: (line: string) => void;
@@ -127,7 +131,7 @@ function transitionOne(
 ): HopResult {
   try {
     const result: TransitionResidencyStateResult = ctx.lifecycle.store.transitionResidencyState({
-      fenceToken: ctx.fenceToken,
+      fenceToken: ctx.fenceTokenOf?.() ?? ctx.fenceToken,
       model,
       to,
       expectedVersion,
@@ -328,6 +332,7 @@ export function withResidencyLifecycle(
   ctx: {
     lifecycle: ProfileSwitchLifecycleOpts;
     fenceToken: number;
+    fenceTokenOf?: () => number;
     occupiedAtPlan: ReadonlySet<string>;
     nowMs: () => number;
     log: (line: string) => void;
