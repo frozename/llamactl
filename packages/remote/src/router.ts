@@ -35,6 +35,7 @@ import {
   type ResidencyAuditEntry,
   type ResidencySnapshot,
 } from "@llamactl/core/residency/leases";
+import { currentSessionRefcounts } from "@llamactl/core/residency/sessions";
 import {
   type CostJournalEntry,
   decideGuardianAction,
@@ -2317,6 +2318,7 @@ export const router = t.router({
           servingNode,
           hosts: modelHostStoreMod.listModelHosts(),
         }),
+        sessionRegistry: currentSessionRefcounts(),
       });
     }),
 

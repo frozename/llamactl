@@ -47,6 +47,7 @@
 import type { ResidencyAuditEntry, ResidencyLeases } from "@llamactl/core/residency/leases";
 import type { ResidencyState } from "@llamactl/core/residency/lifecycle";
 import type { PlannerWorkload, ProfileSwitchPlan } from "@llamactl/core/residency/planner";
+import type { SessionRefcounts } from "@llamactl/core/residency/sessions";
 
 import { resolveResidencyPolicy } from "@llamactl/core/residency/admission";
 import {
@@ -104,6 +105,32 @@ export type ResidencyStatusLeases =
       workloads: ResidencyStatusLeaseWorkload[];
       auditCount: number;
       recentAudit: ResidencyStatusLeaseAuditEntry[];
+    };
+
+export type ResidencyStatusSessionRow = {
+  sessionId: string;
+  workload: string;
+  refs: number;
+  idleMs: number;
+  expiresInMs: number | null;
+};
+
+export type ResidencyStatusSessionsUnavailableReason =
+  | "NoRegistry"
+  | "SessionsUnknown"
+  | "SnapshotUnsupported";
+
+export type ResidencyStatusSessions =
+  | {
+      status: "unavailable";
+      scope: "serving-process";
+      reason: ResidencyStatusSessionsUnavailableReason;
+    }
+  | {
+      status: "available";
+      scope: "serving-process";
+      idleTimeoutMs: number;
+      sessions: ResidencyStatusSessionRow[];
     };
 
 // The lease-registry surface the status builder reads (Part of #519): the
@@ -233,6 +260,42 @@ export function buildResidencyLeaseSnapshot(
   };
 }
 
+// null: no session registry installed in the serving process. undefined:
+// the caller did not ask for the section, so it is omitted.
+export function buildResidencySessionSnapshot(
+  registry: Pick<SessionRefcounts, "snapshot"> | null | undefined,
+): ResidencyStatusSessions | undefined {
+  if (registry === undefined) {
+    return undefined;
+  }
+  if (registry === null) {
+    return { status: "unavailable", scope: "serving-process", reason: "NoRegistry" };
+  }
+  if (registry.snapshot === undefined) {
+    return { status: "unavailable", scope: "serving-process", reason: "SnapshotUnsupported" };
+  }
+  try {
+    const snap = registry.snapshot();
+    const sessions = snap.sessions.map(
+      (r): ResidencyStatusSessionRow => ({
+        sessionId: r.sessionId,
+        workload: r.workload,
+        refs: r.refs,
+        idleMs: r.idleMs,
+        expiresInMs: r.expiresInMs,
+      }),
+    );
+    return {
+      status: "available",
+      scope: "serving-process",
+      idleTimeoutMs: snap.idleTimeoutMs,
+      sessions,
+    };
+  } catch {
+    return { status: "unavailable", scope: "serving-process", reason: "SessionsUnknown" };
+  }
+}
+
 // Public lifecycle projection of one residency_states row. Fence identity
 // (ownerId, incarnation, fenceToken) is deliberately excluded: status is a
 // read-out, not an authority claim.
@@ -312,6 +375,7 @@ export type ResidencyStatus = {
   idleEviction?: ResidencyStatusIdleEviction;
   leases: ResidencyStatusLeases;
   omlxNative?: { scope: "serving-process"; workloads: OmlxNativeStatusRow[] };
+  sessions?: ResidencyStatusSessions;
 };
 
 export function buildResidencyStatus(input: {
@@ -323,10 +387,12 @@ export function buildResidencyStatus(input: {
   leaseRegistry?: ResidencyStatusLeaseRegistry | null | undefined;
   leaseWorkloads?: readonly string[] | undefined;
   omlxNative?: readonly OmlxNativeStatusRow[] | undefined;
+  sessionRegistry?: Pick<SessionRefcounts, "snapshot"> | null | undefined;
   nowMs?: number | undefined;
   servingNode?: string | null | undefined;
 }): ResidencyStatus {
   const residency = input.nodeRun?.spec.residency;
+  const sessions = buildResidencySessionSnapshot(input.sessionRegistry);
   return {
     node: input.node,
     nodeRun: { present: input.nodeRun !== undefined },
@@ -344,6 +410,7 @@ export function buildResidencyStatus(input: {
     }),
     leases: buildResidencyLeaseSnapshot(input.leaseRegistry ?? null, input.leaseWorkloads ?? []),
     omlxNative: { scope: "serving-process", workloads: [...(input.omlxNative ?? [])] },
+    ...(sessions !== undefined ? { sessions } : {}),
   };
 }
 
