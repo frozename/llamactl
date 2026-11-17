@@ -37,6 +37,13 @@
 // store, under the same serving-node and clean-store scoping as the cooldown.
 // Loads made outside the fenced profile-switch executor write no lifecycle row
 // and are not protected.
+//
+// The idleEviction section (scope "serving-process", Part of #519) is an
+// advisory read-out of the NodeRun idle-evict window against the serving
+// process's ready lifecycle rows and serving-process lease activity, only when
+// `node` is the serving node. It never evicts, sleeps or schedules anything; a
+// 0 knob (or no policy) reports disabled without reading the registry or the
+// lifecycle, and lease activity resets when the serving process restarts.
 import type { ResidencyAuditEntry, ResidencyLeases } from "@llamactl/core/residency/leases";
 import type { ResidencyState } from "@llamactl/core/residency/lifecycle";
 import type { PlannerWorkload, ProfileSwitchPlan } from "@llamactl/core/residency/planner";
@@ -54,7 +61,7 @@ import type { ModelHostManifest } from "../workload/modelhost-schema.js";
 import type { NodeRun } from "../workload/noderun-schema.js";
 import type { ModelRun } from "../workload/schema.js";
 import type { OmlxNativeStatusRow } from "./omlx-capability.js";
-import type { ResidencyStoreSnapshot } from "./store.js";
+import type { ResidencyStateRecord, ResidencyStoreSnapshot } from "./store.js";
 
 import { buildProfileSwitchRequest, type ObservedWorkloadState } from "./coordinator.js";
 import { profileSwitchOperationKey } from "./profile-transition.js";
@@ -125,6 +132,15 @@ export type ResidencyStatusSessions =
       idleTimeoutMs: number;
       sessions: ResidencyStatusSessionRow[];
     };
+
+// The lease-registry surface the status builder reads (Part of #519): the
+// snapshot/audit pair the leases section needs, plus the optional
+// `lastActivityAtMs` read-out the idleEviction advisory consults. Optional so a
+// registry (or fake) without it still type-checks.
+export type ResidencyStatusLeaseRegistry = Pick<
+  ResidencyLeases,
+  "snapshot" | "audit" | "lastActivityAtMs"
+>;
 
 // Epochs and lease ids restart per process, so (workload, epoch, revoked,
 // reason) alone collides across a restart: the incarnation of the registry that
@@ -305,6 +321,37 @@ export type ResidencyStatusLifecycle =
       reason: "StoreUnreadable" | "LifecycleUnreadable";
     };
 
+export type ResidencyStatusIdleEvictionRow = {
+  workload: string;
+  readySinceMs: number;
+  lastActivityAtMs: number | null;
+  idleSinceMs: number | null;
+  activeLeaseCount: number;
+  dueAtMs: number | null;
+  due: boolean;
+};
+
+// Advisory read-out of NodeRun `idleEvictSeconds` (Part of #519): for each
+// `ready` lifecycle row on the serving node, when it last went idle and whether
+// it would now be due for an idle eviction. Nothing evicts here — this is a
+// status, never a trigger. `scope` is always "serving-process": it reflects
+// this process's lifecycle rows and lease activity, never `node`'s coordinator
+// state.
+export type ResidencyStatusIdleEviction =
+  | { status: "disabled"; scope: "serving-process" }
+  | {
+      status: "unavailable";
+      scope: "serving-process";
+      reason: "NotServingNode" | "LeasesUnavailable" | "StoreUnreadable" | "LifecycleUnreadable";
+    }
+  | {
+      status: "available";
+      scope: "serving-process";
+      advisory: true;
+      idleEvictSeconds: number;
+      workloads: ResidencyStatusIdleEvictionRow[];
+    };
+
 export type ResidencyStatus = {
   node: string;
   nodeRun: { present: boolean };
@@ -323,6 +370,9 @@ export type ResidencyStatus = {
   // Optional like omlxNative so older payloads and fixtures still type;
   // buildResidencyStatus always sets it.
   lifecycle?: ResidencyStatusLifecycle;
+  // Optional like lifecycle so older payloads and fixtures still type;
+  // buildResidencyStatus always sets it (Part of #519).
+  idleEviction?: ResidencyStatusIdleEviction;
   leases: ResidencyStatusLeases;
   omlxNative?: { scope: "serving-process"; workloads: OmlxNativeStatusRow[] };
   sessions?: ResidencyStatusSessions;
@@ -334,10 +384,12 @@ export function buildResidencyStatus(input: {
   budgetGiB: number;
   budgetSource: "noderun" | "computed";
   store: ResidencyStoreSnapshot;
-  leaseRegistry?: Pick<ResidencyLeases, "snapshot" | "audit"> | null | undefined;
+  leaseRegistry?: ResidencyStatusLeaseRegistry | null | undefined;
   leaseWorkloads?: readonly string[] | undefined;
   omlxNative?: readonly OmlxNativeStatusRow[] | undefined;
   sessionRegistry?: Pick<SessionRefcounts, "snapshot"> | null | undefined;
+  nowMs?: number | undefined;
+  servingNode?: string | null | undefined;
 }): ResidencyStatus {
   const residency = input.nodeRun?.spec.residency;
   const sessions = buildResidencySessionSnapshot(input.sessionRegistry);
@@ -348,6 +400,14 @@ export function buildResidencyStatus(input: {
     budget: { memoryGiB: input.budgetGiB, source: input.budgetSource },
     store: storeWithScope(input.store),
     lifecycle: buildResidencyLifecycleSnapshot(input.store),
+    idleEviction: buildIdleEvictionSnapshot({
+      residency,
+      servingNode: input.servingNode ?? null,
+      node: input.node,
+      store: input.store,
+      leaseRegistry: input.leaseRegistry ?? null,
+      nowMs: input.nowMs ?? Date.now(),
+    }),
     leases: buildResidencyLeaseSnapshot(input.leaseRegistry ?? null, input.leaseWorkloads ?? []),
     omlxNative: { scope: "serving-process", workloads: [...(input.omlxNative ?? [])] },
     ...(sessions !== undefined ? { sessions } : {}),
@@ -390,6 +450,105 @@ export function buildResidencyLifecycleSnapshot(
     })),
   );
   return { status: "available", scope, workloads, exclusiveViolations };
+}
+
+// One advisory row per ready lifecycle record, or null when the record is not a
+// ready row with a finite timestamp. Idle-since is the later of ready-since and
+// lease activity, clamped to nowMs; a registry without `lastActivityAtMs`, or
+// one returning a non-finite value, yields null time fields and due false.
+function idleEvictionRowFor(
+  row: ResidencyStateRecord,
+  registry: ResidencyStatusLeaseRegistry,
+  idleEvictSeconds: number,
+  nowMs: number,
+): ResidencyStatusIdleEvictionRow | null {
+  if (row.state !== "ready" || !Number.isFinite(row.updatedAtMs)) {
+    return null;
+  }
+  const snap = registry.snapshot(row.model);
+  const activeLeaseCount = snap.active.length;
+  const activityOf = registry.lastActivityAtMs;
+  const lastActivityMs = activityOf === undefined ? undefined : activityOf(row.model);
+  if (lastActivityMs === undefined || !Number.isFinite(lastActivityMs)) {
+    return {
+      workload: row.model,
+      readySinceMs: row.updatedAtMs,
+      lastActivityAtMs: null,
+      idleSinceMs: null,
+      activeLeaseCount,
+      dueAtMs: null,
+      due: false,
+    };
+  }
+  const idleSinceMs = Math.min(nowMs, Math.max(row.updatedAtMs, lastActivityMs));
+  const dueAtMs = idleSinceMs + idleEvictSeconds * 1000;
+  return {
+    workload: row.model,
+    readySinceMs: row.updatedAtMs,
+    lastActivityAtMs: lastActivityMs,
+    idleSinceMs,
+    activeLeaseCount,
+    dueAtMs,
+    due: snap.phase === "open" && activeLeaseCount === 0 && nowMs >= dueAtMs,
+  };
+}
+
+// Advisory idle-eviction read-out (Part of #519). Resolves the NodeRun policy
+// then checks, in a fixed order, why it cannot answer: 0 disables (reads
+// neither the registry nor the lifecycle); off the serving node is
+// NotServingNode (the same `applies` gate the omlxNative/store sections use — a
+// peer's policy is not a policy here); a missing registry is LeasesUnavailable;
+// an unreadable store is StoreUnreadable; a lifecycle read failure is
+// LifecycleUnreadable; an absent store is an empty healthy listing. Otherwise
+// one row per `ready` lifecycle row with a finite updatedAtMs, sorted by model,
+// reporting when it went idle (the later of ready-since and lease activity,
+// clamped to nowMs) and whether it is due. due requires the lease phase to be
+// open with no active leases and nowMs at or past dueAtMs. A registry without
+// `lastActivityAtMs`, or one returning a non-finite value, yields null time
+// fields and due false. This module never evicts, sleeps or schedules anything.
+export function buildIdleEvictionSnapshot(input: {
+  residency: ResidencyPolicy | null | undefined;
+  servingNode: string | null;
+  node: string;
+  store: ResidencyStoreSnapshot;
+  leaseRegistry: ResidencyStatusLeaseRegistry | null;
+  nowMs: number;
+}): ResidencyStatusIdleEviction {
+  const scope = "serving-process" as const;
+  const idleEvictSeconds = resolveResidencyPolicy(
+    input.residency?.idleEvictSeconds === undefined
+      ? null
+      : { idleEvictSeconds: input.residency.idleEvictSeconds },
+  ).idleEvictSeconds;
+  if (idleEvictSeconds === 0) {
+    return { status: "disabled", scope };
+  }
+  if (input.servingNode === null || input.servingNode !== input.node) {
+    return { status: "unavailable", scope, reason: "NotServingNode" };
+  }
+  const registry = input.leaseRegistry;
+  if (registry === null) {
+    return { status: "unavailable", scope, reason: "LeasesUnavailable" };
+  }
+  const store = input.store;
+  if (!store.present) {
+    return { status: "available", scope, advisory: true, idleEvictSeconds, workloads: [] };
+  }
+  if ("error" in store) {
+    return { status: "unavailable", scope, reason: "StoreUnreadable" };
+  }
+  if (store.lifecycleError !== undefined) {
+    return { status: "unavailable", scope, reason: "LifecycleUnreadable" };
+  }
+  const workloads: ResidencyStatusIdleEvictionRow[] = [];
+  for (const row of store.lifecycle ?? []) {
+    const mapped = idleEvictionRowFor(row, registry, idleEvictSeconds, input.nowMs);
+    if (mapped !== null) {
+      workloads.push(mapped);
+    }
+  }
+  workloads.sort((a, b) => compareStrings(a.workload, b.workload));
+  return { status: "available", scope, advisory: true, idleEvictSeconds, workloads };
 }
 
 function storeWithScope(store: ResidencyStoreSnapshot): ResidencyStatus["store"] {
