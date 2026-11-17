@@ -3854,18 +3854,23 @@ function releaseUnhandedResidency(
   }
 }
 
+type ProxySessionHandle = { ok: true; release: (() => void) | null; cancel: (() => void) | null };
+
 /**
  * #278 (DF-05): validate and acquire a session, returning a 400 on
- * validation failure, a 409 on affinity conflict, or a `{ ok, release }`
- * handle for successful acquires. Returns `null` when the route is
- * peer-routed or has no workload — peer routes bypass session tracking,
- * and workload-less requests bypass residency entirely.
+ * validation failure, a 409 on affinity conflict, or a `{ ok, release,
+ * cancel }` handle for successful acquires. `release` ends the acquire
+ * once the request is done; `cancel` undoes the acquire when residency
+ * admission refuses the request, so a refused request neither binds a
+ * fresh session nor extends an idle binding. Returns `null` when the
+ * route is peer-routed or has no workload — peer routes bypass session
+ * tracking, and workload-less requests bypass residency entirely.
  */
 function acquireProxySession(
   sessionRegistry: SessionRefcounts,
   sessionId: string,
   route: RoutedEntry | undefined,
-): Response | { ok: true; release: (() => void) | null } | null {
+): Response | ProxySessionHandle | null {
   if (route?.isPeer === true) return null;
   if (sessionId.length > MAX_SESSION_ID_LENGTH) {
     return Response.json(
@@ -3892,7 +3897,7 @@ function acquireProxySession(
     );
   }
   const workload = route?.workload;
-  if (workload === undefined) return { ok: true, release: null };
+  if (workload === undefined) return { ok: true, release: null, cancel: null };
   const sessionAcquireResult = sessionRegistry.acquire(sessionId, workload);
   if (!sessionAcquireResult.ok) {
     return Response.json(
@@ -3913,7 +3918,16 @@ function acquireProxySession(
     released = true;
     sessionRegistry.release(sessionId, generation);
   };
-  return { ok: true, release };
+  const cancel = (): void => {
+    if (released) return;
+    released = true;
+    if (sessionRegistry.cancelAcquire !== undefined) {
+      sessionRegistry.cancelAcquire(sessionId, generation);
+    } else {
+      sessionRegistry.release(sessionId, generation);
+    }
+  };
+  return { ok: true, release, cancel };
 }
 
 function applyProxyOptions(context: ProxyContext, opts: ProxyOpenAIOptions): void {
@@ -4048,12 +4062,15 @@ async function withKvFallback(routed: ProxyContext): Promise<ProxyContext> {
 /**
  * #278 (DF-05): prepare session acquisition and residency lease for a
  * request that has passed cache lookup. Returns a 409/503 refusal or a
- * prepared context with lease, abort handler, and session release callback.
+ * prepared context with lease, abort handler, and session release
+ * callback. An admission refusal undoes the session acquire (cancel)
+ * rather than releasing it, so a refused request neither binds a fresh
+ * session nor extends an idle binding.
  */
 function prepareSessionAndLease(
   req: Request,
   routed: ProxyContext,
-  sessionResult: { ok: true; release: (() => void) | null } | null,
+  sessionResult: ProxySessionHandle | null,
   sessionRegistry: SessionRefcounts | null,
   leaseRegistry: ResidencyLeases | null,
   trimmedSessionId: string | null,
@@ -4073,7 +4090,7 @@ function prepareSessionAndLease(
   const admission = acquireProxyResidencyLease(leaseRegistry, routed.route);
   if (admission instanceof Response) {
     if (hasBothSeams) {
-      sessionResult.release?.();
+      sessionResult.cancel?.();
     }
     return admission;
   }

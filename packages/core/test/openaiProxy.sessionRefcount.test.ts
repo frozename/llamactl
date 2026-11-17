@@ -65,6 +65,7 @@ type SessionAcquireResult =
 type SessionRefcountsV2 = Omit<SessionRefcounts, "acquire" | "release"> & {
   acquire: (sessionId: string, workload: string) => SessionAcquireResult;
   release: (sessionId: string, generation?: number) => void;
+  cancelAcquire?: (sessionId: string, generation: number) => void;
 };
 
 type SessionsModule = {
@@ -1336,6 +1337,158 @@ test("#520: a lease revoked between forward and bind releases the session ref ex
     });
     expect(sessions.releaseCalls).toEqual(["s1"]);
     expect(leases.active("wl-a")).toEqual([]);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("#520: a fresh session refused while its workload drains leaves no binding", async () => {
+  const t = tempKvEnv();
+  try {
+    const sessionsMod = await loadSessionsModule();
+    const leasesMod = await loadLeaseModule();
+    writeLocalModelRunWorkload(t.root, "wl-a", WL_A_PORT);
+    installFetchStub(
+      () =>
+        new Response(UPSTREAM_TEXT, {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    const nowMs = 1_000;
+    const sessions = sessionsMod.createSessionRefcounts({
+      idleTimeoutMs: 1_000,
+      now: () => nowMs,
+    });
+    sessionsMod.setSessionRefcountRegistry(sessions);
+    const { real: leases } = installSpyRegistry(leasesMod);
+
+    const drain = leases.beginDrain("wl-a");
+    expect(drain.ok).toBe(true);
+
+    const res = await openaiProxy.proxyOpenAI(
+      embeddingsRequest(KV_MODEL, { [SESSION_HEADER]: "s1" }),
+      t.env,
+    );
+    expect(res.status).toBe(503);
+    const error = await readProxyError(res);
+    expect(error.code).toBe("Draining");
+    // The admission refusal must undo the acquire, not release it: release
+    // leaves a refs-0 entry that still answers activeSessions and blocks
+    // checkUnload until the idle timeout. Kills a prepareSessionAndLease
+    // that calls release instead of cancelAcquire on refusal.
+    expect(sessions.activeSessions("wl-a")).toEqual([]);
+    expect(sessions.checkUnload("wl-a")).toEqual({ ok: true, released: [] });
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("#520: a session refused as Unloaded can still be served by another workload (no 409)", async () => {
+  const t = tempKvEnv();
+  try {
+    const sessionsMod = await loadSessionsModule();
+    const leasesMod = await loadLeaseModule();
+    writeLocalModelRunWorkload(t.root, "wl-a", WL_A_PORT);
+    writeLocalModelRunWorkload(t.root, "wl-b", WL_B_PORT, OTHER_MODEL);
+    installFetchStub(
+      () =>
+        new Response(UPSTREAM_TEXT, {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    const nowMs = 1_000;
+    const sessions = sessionsMod.createSessionRefcounts({
+      idleTimeoutMs: 1_000,
+      now: () => nowMs,
+    });
+    sessionsMod.setSessionRefcountRegistry(sessions);
+    const { real: leases } = installSpyRegistry(leasesMod);
+
+    const drain = leases.beginDrain("wl-a");
+    expect(drain.ok).toBe(true);
+    if (!drain.ok) {
+      throw new Error("beginDrain(wl-a) refused");
+    }
+    const unload = leases.commitUnload(drain.token);
+    expect(unload.ok).toBe(true);
+
+    const refused = await openaiProxy.proxyOpenAI(
+      embeddingsRequest(KV_MODEL, { [SESSION_HEADER]: "s1" }),
+      t.env,
+    );
+    expect(refused.status).toBe(503);
+    const error = await readProxyError(refused);
+    expect(error.code).toBe("Unloaded");
+
+    // The refused acquire must not leave s1 bound to wl-a: a surviving
+    // binding turns this request into a 409 AffinityConflict. Kills a
+    // cancelAcquire that decrements refs without deleting the entry its
+    // own acquire created.
+    const res = await openaiProxy.proxyOpenAI(
+      embeddingsRequest(OTHER_MODEL, { [SESSION_HEADER]: "s1" }),
+      t.env,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe(UPSTREAM_TEXT);
+    expect(sessions.activeSessions("wl-b")).toEqual(["s1"]);
+    expect(sessions.activeSessions("wl-a")).toEqual([]);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("#520: a refused request does not extend an existing idle binding", async () => {
+  const t = tempKvEnv();
+  try {
+    const sessionsMod = await loadSessionsModule();
+    const leasesMod = await loadLeaseModule();
+    writeLocalModelRunWorkload(t.root, "wl-a", WL_A_PORT);
+    installFetchStub(
+      () =>
+        new Response(UPSTREAM_TEXT, {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    let nowMs = 1_000;
+    const sessions = sessionsMod.createSessionRefcounts({
+      idleTimeoutMs: 1_000,
+      now: () => nowMs,
+    });
+    sessionsMod.setSessionRefcountRegistry(sessions);
+    const { real: leases } = installSpyRegistry(leasesMod);
+
+    // s1 sits in its idle window on wl-a: refs 0, deadline now + 1_000.
+    const bound = sessions.acquire("s1", "wl-a");
+    expect(bound.ok).toBe(true);
+    if (bound.ok) {
+      sessions.release("s1", bound.generation);
+    }
+
+    nowMs = 1_500;
+    const drain = leases.beginDrain("wl-a");
+    expect(drain.ok).toBe(true);
+
+    const res = await openaiProxy.proxyOpenAI(
+      embeddingsRequest(KV_MODEL, { [SESSION_HEADER]: "s1" }),
+      t.env,
+    );
+    expect(res.status).toBe(503);
+    const error = await readProxyError(res);
+    expect(error.code).toBe("Draining");
+
+    // The undo must restore the pre-acquire deadline, not refresh it: the
+    // binding still expires at the original 2_000 boundary. Kills a
+    // cancelAcquire that refreshes lastActivityMs or delegates to release
+    // (the 2_000 assertion), and one that deletes a joined entry when refs
+    // reaches 0 (the 1_500 assertion).
+    expect(sessions.activeSessions("wl-a")).toEqual(["s1"]);
+
+    nowMs = 2_000;
+    expect(sessions.activeSessions("wl-a")).toEqual([]);
+    expect(sessions.checkUnload("wl-a")).toEqual({ ok: true, released: [] });
   } finally {
     t.cleanup();
   }

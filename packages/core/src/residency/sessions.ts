@@ -32,6 +32,13 @@
  * Release is generation-aware (#520 follow-up from the #617 review): a
  * stale release carrying an old generation cannot drop a newer
  * acquisition of the same session ID.
+ *
+ * A request refused by DF-05 admission (Draining/Unloaded) undoes its
+ * session acquire (cancelAcquire) instead of releasing it, so a refused
+ * request neither binds a fresh session nor extends an idle binding.
+ * This makes the profile-switch post-drain re-check (#730) defence in
+ * depth rather than the only thing standing between a refused request
+ * and a phantom binding.
  */
 
 export interface SessionRefcountOptions {
@@ -57,6 +64,16 @@ export interface SessionRefcounts {
    * omitted, the legacy by-id decrement is kept unchanged.
    */
   release(sessionId: string, generation?: number): void;
+  /**
+   * Undo the acquire that returned `generation`. It must be called
+   * synchronously after that acquire, before any other call for that
+   * session. It is used when residency admission refuses the request.
+   * It decrements refs without refreshing lastActivityMs, and restores
+   * the pre-acquire lastActivityMs. It deletes the entry when that
+   * acquire created it and refs reaches 0. It is a no-op when there is
+   * no entry, the generation mismatches, or there is no recorded undo.
+   */
+  cancelAcquire?(sessionId: string, generation: number): void;
   touch(sessionId: string): void;
   forceRelease(workload: string): string[];
   activeSessions(workload: string): string[];
@@ -80,6 +97,7 @@ interface SessionEntry {
   refs: number;
   generation: number;
   lastActivityMs: number;
+  lastAcquire: { created: boolean; priorActivityMs: number } | null;
 }
 
 function requireNonEmpty(value: string, what: string): void {
@@ -122,14 +140,23 @@ export function createSessionRefcounts(opts: SessionRefcountOptions): SessionRef
       const entry = sessions.get(sessionId);
       if (entry === undefined) {
         const generation = ++nextGeneration;
-        sessions.set(sessionId, { workload, refs: 1, generation, lastActivityMs: now() });
+        const activityMs = now();
+        sessions.set(sessionId, {
+          workload,
+          refs: 1,
+          generation,
+          lastActivityMs: activityMs,
+          lastAcquire: { created: true, priorActivityMs: activityMs },
+        });
         return { ok: true, workload, refs: 1, generation };
       }
       if (entry.workload !== workload) {
         return { ok: false, reason: "AffinityConflict", boundWorkload: entry.workload };
       }
+      const priorActivityMs = entry.lastActivityMs;
       entry.refs += 1;
       entry.lastActivityMs = now();
+      entry.lastAcquire = { created: false, priorActivityMs };
       return { ok: true, workload, refs: entry.refs, generation: entry.generation };
     },
     release(sessionId, generation): void {
@@ -139,6 +166,22 @@ export function createSessionRefcounts(opts: SessionRefcountOptions): SessionRef
       if (generation !== undefined && entry.generation !== generation) return;
       entry.refs = Math.max(0, entry.refs - 1);
       entry.lastActivityMs = now();
+      entry.lastAcquire = null;
+    },
+    cancelAcquire(sessionId, generation): void {
+      prune();
+      const entry = sessions.get(sessionId);
+      if (entry === undefined) return;
+      if (entry.generation !== generation) return;
+      if (entry.lastAcquire === null) return;
+      const undo = entry.lastAcquire;
+      entry.refs = Math.max(0, entry.refs - 1);
+      entry.lastAcquire = null;
+      if (undo.created && entry.refs === 0) {
+        sessions.delete(sessionId);
+      } else {
+        entry.lastActivityMs = undo.priorActivityMs;
+      }
     },
     touch(sessionId): void {
       requireNonEmpty(sessionId, "sessionId");
@@ -146,6 +189,7 @@ export function createSessionRefcounts(opts: SessionRefcountOptions): SessionRef
       const entry = sessions.get(sessionId);
       if (entry === undefined) return;
       entry.lastActivityMs = now();
+      entry.lastAcquire = null;
     },
     forceRelease(workload): string[] {
       prune();
