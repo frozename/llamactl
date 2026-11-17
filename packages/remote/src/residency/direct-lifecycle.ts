@@ -1,9 +1,10 @@
 /**
- * #517: fenced residency lifecycle for the direct ModelHost start/stop
- * writers. `runDirectResidencyStart`/`runDirectResidencyStop` wrap an
- * injected start/stop dep in the same `withResidencyLifecycle` walks the
+ * #517: fenced residency lifecycle for the direct ModelHost and ModelRun
+ * start/stop writers. `runDirectResidencyStart`/`runDirectResidencyStop` wrap
+ * an injected start/stop dep in the same `withResidencyLifecycle` walks the
  * profile-switch decorator uses, claimed under the shared apply-profile fence
- * owner, so a direct start/stop drives its `residency_states` row and honours
+ * owner, so a direct start/stop (`modelHostStart`/`modelHostStop` and
+ * `serverStart`/`serverStop`) drives its `residency_states` row and honours
  * exclusive-group refusals through the fenced store without a new registry.
  *
  * The wrapper never creates the store: a node with no store file runs the dep
@@ -11,12 +12,21 @@
  * conjures one. A label that names no declared group is recorded without a
  * group, so an undeclared group is never refused as `UnknownGroup`.
  *
+ * The switch scope is the escape hatch for the profile switch's own writers.
+ * `runInResidencySwitchScope` runs a callback in an `AsyncLocalStorage` scope;
+ * while a caller is inside it, `inResidencySwitchScope` is true and the direct
+ * wrapper neither records nor refuses: it runs the dep directly and returns,
+ * because the switch's lifecycle walk already owns that row. This keeps the
+ * switch's `applyManifest` start/stop off the fence it already holds and off
+ * the in-flight gate it itself trips.
+ *
  * Known limits this slice accepts:
- * - A stale `ready` row for a non-ModelHost (for example a ModelRun stopped
- *   with `serverStop`, which is still unwrapped) fails closed and refuses
- *   direct ModelHost starts in that group until a profile switch, a stop or
- *   boot recovery clears it: `isProvenDown` only corroborates a ModelHost that
- *   is known to the workloads store and provably Stopped.
+ * - A `ready` row for any workload that still has a recorded pid file —
+ *   including a stale or reused one — fails closed and refuses direct starts
+ *   in that group until a status read or a stop reaps it: `isProvenDown` only
+ *   clears a ModelHost proven Stopped with a resolved identity, and a ModelRun
+ *   only when it has no recorded pid at all. Identity-based proof for ModelRun
+ *   is remaining scope.
  * - A switch that claims the fence between our claim and its beginOperation is
  *   refused by its own stale-fence check, not by us; we only refuse to claim
  *   while a `profile-switch:` operation is already nonterminal.
@@ -29,6 +39,7 @@ import {
   RESIDENCY_GROUPS,
   type ResidencyGroupDeclaration,
 } from "@llamactl/core/residency/lifecycle";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 
 import { existsSync } from "../safe-fs.js";
@@ -46,6 +57,20 @@ import {
 // direct claim must refuse to step over. Inlined to keep this module off the
 // profile-transition import edge (the live-caller guard pins that edge).
 const PROFILE_SWITCH_PREFIX = "profile-switch:";
+
+// The profile switch's own scope: while a callback runs inside it, a direct
+// writer must neither record nor refuse, because the switch's lifecycle walk
+// already owns that row. In-process only (the switch forces its applyManifest
+// client local so the scope survives to serverStart/serverStop).
+const switchScope = new AsyncLocalStorage<true>();
+
+export function runInResidencySwitchScope<T>(fn: () => Promise<T>): Promise<T> {
+  return switchScope.run(true, fn);
+}
+
+export function inResidencySwitchScope(): boolean {
+  return switchScope.getStore() === true;
+}
 
 type Store = ResidencyOperationStore & ResidencyLifecycleStore;
 type DirectAction = "start" | "stop";
@@ -428,6 +453,11 @@ async function runDirect<T extends DepResult>(
   opts: DirectLifecycleOpts,
   dep: (workload: string) => T | Promise<T>,
 ): Promise<DirectLifecycleOutcome<T>> {
+  // The switch's lifecycle walk owns this row: a direct writer inside the
+  // switch scope records nothing and refuses nothing.
+  if (inResidencySwitchScope()) {
+    return { ran: true, result: await dep(workload) };
+  }
   if (!existsSync(opts.storePath)) {
     return { ran: true, result: await dep(workload) };
   }

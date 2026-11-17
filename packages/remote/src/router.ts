@@ -108,6 +108,7 @@ import {
   type DirectLifecycleOpts,
   runDirectResidencyStart,
   runDirectResidencyStop,
+  runInResidencySwitchScope,
 } from "./residency/direct-lifecycle.js";
 import {
   type ForceUnloadKind,
@@ -477,15 +478,32 @@ function directResidencyGroup(
   }
 }
 
-// A peer is proven down only when it is a known ModelHost whose recorded-pid
-// status reads Stopped without an unresolved identity; an unknown host or an
-// unresolvable pid never clears a stale ready row.
-function directModelHostProvenDown(model: string): boolean {
-  if (!modelHostStoreMod.listModelHosts().some((host) => host.metadata.name === model)) {
-    return false;
+// Resolves the direct ModelRun residency group from the stored ModelRun's
+// label (the agent-side `llamactl.io/residency-group`); a load failure means
+// no group, so a deleted manifest never aborts the dep.
+function directModelRunGroup(workload: string): string | undefined {
+  try {
+    return residencyGroupLabelOf(workloadStoreMod.loadWorkloadByName(workload).metadata.labels);
+  } catch {
+    return undefined;
   }
-  const status = statusModelHost({ key: { name: model } });
-  return status.state === "Stopped" && status.identityUnknown !== true;
+}
+
+// A peer is proven down only when it is a known ModelHost whose recorded-pid
+// status reads Stopped without an unresolved identity, or a known ModelRun
+// that has no recorded pid file at all; anything else fails closed. An unknown
+// workload, an unresolvable ModelHost pid, or a ModelRun with any pid (stale or
+// reused) never clears a stale ready row. Identity-based ModelRun proof is
+// remaining scope.
+function directWorkloadProvenDown(model: string): boolean {
+  if (modelHostStoreMod.listModelHosts().some((host) => host.metadata.name === model)) {
+    const status = statusModelHost({ key: { name: model } });
+    return status.state === "Stopped" && status.identityUnknown !== true;
+  }
+  if (workloadStoreMod.listWorkloads().some((run) => run.metadata.name === model)) {
+    return serverMod.readServerPid({ name: model }) === null;
+  }
+  return false;
 }
 
 function directResidencyOpts(
@@ -495,11 +513,81 @@ function directResidencyOpts(
   return {
     storePath: defaultResidencyStorePath(),
     group: directResidencyGroup(workload, labels),
-    isProvenDown: directModelHostProvenDown,
+    isProvenDown: directWorkloadProvenDown,
     isRunning: (model) => statusModelHost({ key: { name: model } }).state === "Running",
     log: (line): void => {
       process.stderr.write(line);
     },
+  };
+}
+
+function directModelRunOpts(workload: string): DirectLifecycleOpts {
+  return {
+    storePath: defaultResidencyStorePath(),
+    group: directModelRunGroup(workload),
+    isProvenDown: directWorkloadProvenDown,
+    isRunning: (model) => serverMod.readServerPid({ name: model }) !== null,
+    log: (line): void => {
+      process.stderr.write(line);
+    },
+  };
+}
+
+type ServerStartInput = z.infer<typeof ServerStartInputSchema>;
+
+// Builds the optional endpoint override field by field (exactOptionalProperty-
+// Types): only host/port that the caller actually set are present, matching the
+// shape startServer expects at the live serverStart call.
+function serverStartEndpointOverride(
+  endpoint: ServerStartInput["endpoint"],
+): { host?: string; port?: number } | undefined {
+  if (endpoint === undefined) {
+    return undefined;
+  }
+  return {
+    ...(endpoint.host !== undefined ? { host: endpoint.host } : {}),
+    ...(endpoint.port !== undefined ? { port: endpoint.port } : {}),
+  };
+}
+
+function serverStartOptions(
+  input: ServerStartInput,
+  sig: AbortSignal,
+  emit: (e: serverMod.ServerEvent) => void,
+): serverMod.StartServerOptions {
+  const readiness = normalizeReadiness(input.readiness);
+  const endpointOverride = serverStartEndpointOverride(input.endpoint);
+  return {
+    key: { name: input.workload },
+    target: input.target,
+    ...(input.extraArgs !== undefined ? { extraArgs: input.extraArgs } : {}),
+    ...(input.allowExternalBind !== undefined
+      ? { allowExternalBind: input.allowExternalBind }
+      : {}),
+    ...(endpointOverride !== undefined ? { endpoint: endpointOverride } : {}),
+    ...(input.binary !== undefined ? { binary: input.binary } : {}),
+    ...(input.timeoutSeconds !== undefined ? { timeoutSeconds: input.timeoutSeconds } : {}),
+    ...(input.skipTuned !== undefined ? { skipTuned: input.skipTuned } : {}),
+    ...(readiness !== undefined ? { readiness } : {}),
+    signal: sig,
+    onEvent: emit,
+  };
+}
+
+// A lifecycle refusal never ran the engine, so the done event still carries a
+// full StartServerResult shape: ok false, null pid, the env-derived endpoints
+// (honouring the endpoint override), no tuned profile, no retry, and the
+// refusal detail as the error.
+function serverStartRefusal(input: ServerStartInput, detail: string): serverMod.StartServerResult {
+  const override = serverStartEndpointOverride(input.endpoint);
+  return {
+    ok: false,
+    pid: null,
+    endpoint: serverMod.endpoint(envMod.resolveEnv(), override),
+    advertisedEndpoint: serverMod.advertisedEndpoint(envMod.resolveEnv(), override),
+    tunedProfile: null,
+    retried: false,
+    error: detail,
   };
 }
 
@@ -2384,12 +2472,25 @@ export const router = t.router({
         from: input.from ?? null,
         applyModelRun: async (manifest: unknown): Promise<unknown> => {
           const cfg = kubecfg.loadConfig();
-          return await workloadApplyMod.applyManifest({
-            manifest,
-            getClient: (nodeName: string) => clientForNode(cfg, nodeName),
-            getNodeBudgetGiB: (nodeName: string) => nodeRunBudgetGiB(nodeName, workloadsDir),
-            getNodeResidency: (nodeName: string) => nodeRunResidency(nodeName, workloadsDir),
-          });
+          // The switch executor already owns this row through its own fenced
+          // lifecycle walk, so its nested start/stop must not double-record or
+          // get refused by the direct wrapper: run the apply inside the switch
+          // scope. The scope is in-process AsyncLocalStorage, so the apply's
+          // serverStart/serverStop must not cross a loopback HTTP hop — hence
+          // getClient is forced local for this node. That is safe: the wet path
+          // already requires servingNode === input.node, and planned ModelRuns
+          // have spec.node === input.node, so the only node the switch applies
+          // against is this one.
+          return await runInResidencySwitchScope(
+            async () =>
+              await workloadApplyMod.applyManifest({
+                manifest,
+                getClient: (nodeName: string) =>
+                  nodeName === input.node ? localCallerProxy() : clientForNode(cfg, nodeName),
+                getNodeBudgetGiB: (nodeName: string) => nodeRunBudgetGiB(nodeName, workloadsDir),
+                getNodeResidency: (nodeName: string) => nodeRunResidency(nodeName, workloadsDir),
+              }),
+          );
         },
       });
     }),
@@ -3023,11 +3124,28 @@ export const router = t.router({
       async ({ input }) =>
         await fenceWorkloadStop<serverMod.StopServerResult>({
           workload: input.workload,
-          stop: () =>
-            serverMod.stopServer({
-              key: { name: input.workload },
-              ...(input.graceSeconds !== undefined ? { graceSeconds: input.graceSeconds } : {}),
-            }),
+          stop: async () => {
+            const outcome = await runDirectResidencyStop<{
+              ok: boolean;
+              error?: string;
+              stop: serverMod.StopServerResult;
+            }>(
+              input.workload,
+              async () => {
+                const stop = await serverMod.stopServer({
+                  key: { name: input.workload },
+                  ...(input.graceSeconds !== undefined ? { graceSeconds: input.graceSeconds } : {}),
+                });
+                return {
+                  ok: stop.stopped,
+                  ...(stop.stopped ? {} : { error: "stop did not confirm process removal" }),
+                  stop,
+                };
+              },
+              directModelRunOpts(input.workload),
+            );
+            return outcome.ran ? outcome.result.stop : { stopped: false, pid: null, killed: false };
+          },
           isVerifiedStop: (r) => r.stopped,
           refuse: (refused) => ({ stopped: false, pid: null, killed: false, refused }),
         }),
@@ -3083,30 +3201,15 @@ export const router = t.router({
     signal,
   }) {
     yield* bridgeEventStream<ServerStartEvent>(signal, async (emit, sig) => {
-      const readiness = normalizeReadiness(input.readiness);
-      const result = await serverMod.startServer({
-        key: { name: input.workload },
-        target: input.target,
-        ...(input.extraArgs !== undefined ? { extraArgs: input.extraArgs } : {}),
-        ...(input.allowExternalBind !== undefined
-          ? { allowExternalBind: input.allowExternalBind }
-          : {}),
-        ...(input.endpoint !== undefined
-          ? {
-              endpoint: {
-                ...(input.endpoint.host !== undefined ? { host: input.endpoint.host } : {}),
-                ...(input.endpoint.port !== undefined ? { port: input.endpoint.port } : {}),
-              },
-            }
-          : {}),
-        ...(input.binary !== undefined ? { binary: input.binary } : {}),
-        ...(input.timeoutSeconds !== undefined ? { timeoutSeconds: input.timeoutSeconds } : {}),
-        ...(input.skipTuned !== undefined ? { skipTuned: input.skipTuned } : {}),
-        ...(readiness !== undefined ? { readiness } : {}),
-        signal: sig,
-        onEvent: emit,
+      const outcome = await runDirectResidencyStart<serverMod.StartServerResult>(
+        input.workload,
+        () => serverMod.startServer(serverStartOptions(input, sig, emit)),
+        directModelRunOpts(input.workload),
+      );
+      emit({
+        type: "done",
+        result: outcome.ran ? outcome.result : serverStartRefusal(input, outcome.detail),
       });
-      emit({ type: "done", result });
     });
   }),
 
