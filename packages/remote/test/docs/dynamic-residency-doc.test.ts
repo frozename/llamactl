@@ -940,4 +940,107 @@ describe("docs/dynamic-residency.md (#285)", () => {
       expect(bootRecovery, pin).toContain(pin);
     }
   });
+
+  // Part of #522
+  // Kills: reverting prepareSessionAndLease to sessionResult.release?.()
+  // on an admission refusal, dropping the priorActivityMs restore or the
+  // created-entry delete in cancelAcquire, or deleting the #740 doc
+  // sentence.
+  test("case 18: session acquire undo on admission refusal (#740)", () => {
+    const a = (sectionBody(sectionRe("session affinity")) ?? "").replaceAll(/\s+/g, " ");
+    for (const needle of [
+      "`cancelAcquire`",
+      "`packages/core/src/residency/sessions.ts`",
+      "503",
+      "`model_draining`",
+      "`model_not_loaded`",
+      "`Draining`",
+      "`Unloaded`",
+      "neither binds a fresh session nor extends an idle binding",
+      "`lastActivityMs`",
+      "#740",
+      "#730",
+    ]) {
+      expect(a, needle).toContain(needle);
+    }
+    const proxySrc = readOrEmpty(join(REPO, "packages/core/src/openaiProxy.ts"));
+    for (const pin of [
+      "sessionResult.cancel?.();",
+      'type: draining ? "model_draining" : "model_not_loaded"',
+      "{ status: 503 }",
+    ]) {
+      expect(proxySrc, pin).toContain(pin);
+    }
+    const sessionsSrc = readOrEmpty(join(REPO, "packages/core/src/residency/sessions.ts"));
+    for (const pin of [
+      "cancelAcquire(sessionId, generation): void {",
+      "entry.lastActivityMs = undo.priorActivityMs;",
+      "if (undo.created && entry.refs === 0) {",
+    ]) {
+      expect(sessionsSrc, pin).toContain(pin);
+    }
+  });
+
+  // Part of #522
+  // Kills: unwiring runDirectResidencyStart/Stop from router.ts,
+  // rewording the in-flight start refusal, making the no-store path
+  // create or require a store, making a failed claim block a stop, or
+  // wrapping force-unload without updating the doc.
+  test("case 19: direct ModelHost start/stop lifecycle (#741)", () => {
+    const d = (sectionBody(sectionRe("direct modelhost start and stop")) ?? "").replaceAll(
+      /\s+/g,
+      " ",
+    );
+    expect(sectionBody(sectionRe("direct modelhost start and stop"))).toBeDefined();
+    for (const needle of [
+      "`modelHostStart`",
+      "`modelHostStop`",
+      "`packages/remote/src/residency/direct-lifecycle.ts`",
+      "`packages/remote/src/router.ts`",
+      "`residency_states`",
+      "`llamactl apply -f`",
+      "`llamactl enable`",
+      "no store file",
+      "`ExclusiveGroupOccupied`",
+      "`residency lifecycle refused <name>: profile switch in flight on this node; retry after it settles`",
+      "store unavailable",
+      "Bookkeeping never blocks a stop",
+      "not recorded",
+      "proven down",
+      "`serverStart`",
+      "`serverStop`",
+      "`llamactl residency force-unload <workload> --reason <text> --yes --node <name>`",
+      "`llamactl residency status --node <name>`",
+      "#741",
+    ]) {
+      expect(d, needle).toContain(needle);
+    }
+    const directLifecycle = readOrEmpty(
+      join(REPO, "packages/remote/src/residency/direct-lifecycle.ts"),
+    );
+    for (const pin of [
+      "profile switch in flight on this node; retry after it settles",
+      ": store unavailable (",
+      "stop not recorded: ",
+      "if (!existsSync(opts.storePath)) {",
+      "start kept ready: host already running",
+    ]) {
+      expect(directLifecycle, pin).toContain(pin);
+    }
+    expect(readOrEmpty(join(REPO, "packages/remote/src/residency/lifecycle-steps.ts"))).toContain(
+      "residency lifecycle refused ${workload} ${from} -> ${to}: ${decision.reason}: ${decision.detail}",
+    );
+    const routerSrc = readOrEmpty(join(REPO, "packages/remote/src/router.ts"));
+    for (const pin of [
+      "runDirectResidencyStart<StartModelHostResult>(",
+      "runDirectResidencyStop<StopModelHostResult>(",
+      'return status.state === "Stopped" && status.identityUnknown !== true;',
+      "const r = await stopModelHost({ key: { name } });",
+    ]) {
+      expect(routerSrc, pin).toContain(pin);
+    }
+    expect(readOrEmpty(join(REPO, "packages/remote/src/workload/apply.ts"))).toContain(
+      "client.modelHostStart.subscribe(",
+    );
+  });
 });

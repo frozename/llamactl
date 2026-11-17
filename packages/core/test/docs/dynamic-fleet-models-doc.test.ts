@@ -448,4 +448,30 @@ describe("docs/dynamic-fleet-models.md (#522)", () => {
       expect(s, n).toContain(n);
     }
   });
+
+  // Part of #522
+  // Kills: unwiring the direct start wrapper, or reverting the runbook
+  // step 6 refusal list or the #517 miscitation.
+  test("case 23: exclusive-window runbook names direct-lifecycle start refusals (#741)", () => {
+    const r = (sectionBody(/^## Exclusive-window runbook/) ?? "").replaceAll(/\s+/g, " ");
+    for (const needle of [
+      "residency lifecycle refused",
+      "profile switch in flight on this node",
+      "`ExclusiveGroupOccupied`",
+      "`llamactl residency status --node <name>`",
+      "not recorded",
+      "#741",
+    ]) {
+      expect(r, needle).toContain(needle);
+    }
+    const s = (sectionBody(/^#{2,} .*residency lifecycle states/i) ?? "").replaceAll(/\s+/g, " ");
+    expect(s).not.toContain("Since #517 the direct");
+    expect(s).toContain("#741");
+    expect(readOrEmpty(join(REPO, "packages/remote/src/router.ts"))).toContain(
+      "runDirectResidencyStart<StartModelHostResult>(",
+    );
+    expect(readOrEmpty(join(REPO, "packages/remote/src/workload/apply.ts"))).toContain(
+      "client.modelHostStart.subscribe(",
+    );
+  });
 });
