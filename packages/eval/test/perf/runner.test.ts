@@ -188,6 +188,33 @@ describe("runPerfSuite", () => {
     expect(metricOf(rows, "peak_gtt_bytes")).toEqual({ value: 3000, status: "ok" });
   });
 
+  test("stores provenance with its unavailable reasons intact on every row", async () => {
+    const clock = createManualClock();
+    const fake = startEngine(engineOpts(clock));
+    const client = createHttpPerfEngineClient(fake.url, { clock });
+    const partialProvenance: EvalProvenance = {
+      ...PROVENANCE,
+      quant: null,
+      engine_commit: null,
+      unavailable: {
+        quant: "quant could not be read from the gguf header",
+        engine_commit: "engine --version printed no commit",
+      },
+    };
+
+    await runPerfSuite(db, suiteOpts({ client, clock, provenance: partialProvenance }));
+
+    const rows = listPerfRuns(db, { run_id: RUN_ID });
+    expectMetricNames(rows);
+    for (const row of rows) {
+      expect(row.provenance).toEqual(partialProvenance);
+      expect(row.provenance.unavailable).toEqual({
+        quant: "quant could not be read from the gguf header",
+        engine_commit: "engine --version printed no commit",
+      });
+    }
+  });
+
   test("samples GTT across phases and records the true peak", async () => {
     const clock = createManualClock();
     const fake = startEngine(engineOpts(clock));
