@@ -27,6 +27,13 @@ async function rejectionOf(promise: PromiseLike<unknown>): Promise<unknown> {
   throw new Error("expected rejection");
 }
 
+// #743: the JSON health body reports the running source checkout's HEAD.
+function repoHead(): string {
+  const root = join(import.meta.dir, "..", "..", "..");
+  const proc = Bun.spawnSync(["git", "-C", root, "rev-parse", "HEAD"]);
+  return new TextDecoder().decode(proc.stdout).trim();
+}
+
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "llamactl-serve-"));
 });
@@ -49,6 +56,40 @@ describe("startAgentServer (plain HTTP, for test isolation)", () => {
     const resp = await fetch(`${server.url}/healthz`);
     expect(resp.status).toBe(200);
     expect(await resp.text()).toBe("ok");
+  });
+
+  test("/healthz with Accept: application/json reports the build stamp", async () => {
+    const resp = await fetch(`${server.url}/healthz`, {
+      headers: { accept: "application/json" },
+    });
+    expect(resp.status).toBe(200);
+    expect(resp.headers.get("content-type")).toContain("application/json");
+    const body = (await resp.json()) as {
+      status?: unknown;
+      build?: { installKind?: unknown; commit?: unknown; dirty?: unknown; builtAt?: unknown };
+    } | null;
+    expect(body).toMatchObject({
+      status: "ok",
+      build: { installKind: "source", dirty: null, builtAt: null },
+    });
+    expect(body?.build?.commit).toBe(repoHead());
+  });
+
+  test("/health with Accept: application/json reports the build stamp", async () => {
+    const resp = await fetch(`${server.url}/health`, {
+      headers: { accept: "application/json" },
+    });
+    expect(resp.status).toBe(200);
+    expect(resp.headers.get("content-type")).toContain("application/json");
+    const body = (await resp.json()) as {
+      status?: unknown;
+      build?: { installKind?: unknown; commit?: unknown; dirty?: unknown; builtAt?: unknown };
+    } | null;
+    expect(body).toMatchObject({
+      status: "ok",
+      build: { installKind: "source", dirty: null, builtAt: null },
+    });
+    expect(body?.build?.commit).toBe(repoHead());
   });
 
   test("unknown path responds 404", async () => {

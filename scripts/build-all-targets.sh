@@ -6,7 +6,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 for target in darwin-arm64 darwin-x64 linux-x64 linux-arm64; do
   echo "=== Building llamactl-agent for $target ==="
-  bun run "$REPO_ROOT/packages/cli/src/bin.ts" artifacts build-agent --target="$target"
+  bun run "$REPO_ROOT/packages/cli/src/bin.ts" artifacts build-agent --target="$target" "$@"
 done
 
 echo ""

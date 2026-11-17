@@ -1,6 +1,6 @@
 import type { AgentWorkerRpc, AgentWorkerRpcRelay } from "@llamactl/core/config/agent-config";
 
-import { inferenceRpc, openaiProxy } from "@llamactl/core";
+import { inferenceRpc, nodeFacts, openaiProxy } from "@llamactl/core";
 import { resolveEnv } from "@llamactl/core/env";
 import {
   createResidencyLeases,
@@ -568,6 +568,12 @@ function handleInfraRoutes(
   tunnelServer: TunnelServer | null,
 ): Response | Promise<Response> | null {
   if (url.pathname === "/health" || url.pathname === "/healthz") {
+    // The JSON build object is returned only with Accept: application/json;
+    // the plain-text "ok" stays for update/probes.ts agentHealthy and older
+    // CLIs. Fleet deploy verifiers must send that header (#743).
+    if (req.headers.get("accept")?.includes("application/json")) {
+      return Response.json({ status: "ok", build: nodeFacts.resolveBuildStamp() });
+    }
     return new Response("ok", { status: 200 });
   }
   // Reverse-tunnel endpoints — gated on opts.tunnelCentral. Both
