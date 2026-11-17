@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 
@@ -274,6 +274,53 @@ describe("bench schedule suite dispatch (CLI-side runner)", () => {
     expect(typeof clock["now"]).toBe("function");
     expect(provenance["engine"]).toBe("llamacpp");
     expect(storedLastError("router-suite")).toBeNull();
+  });
+
+  test("kick records provenance fields it cannot determine as unavailable with reasons, not guesses", async () => {
+    writeStore();
+    const endpoint = fakeEndpoint("http://fake-engine.invalid");
+    const run = fakeRunPerfSuite();
+    setSeams({
+      perfSuite: {
+        runPerfSuite: run.runPerfSuite,
+        resolveEndpoint: endpoint.resolveEndpoint,
+        openDb: () => new Database(":memory:"),
+      },
+    });
+
+    const { result } = await captureProcessStreams(() => runBenchSchedule(["kick"]));
+
+    expect(result).toBe(0);
+    expect(run.calls).toHaveLength(1);
+    const provenance = runOpts(run.calls[0])["provenance"];
+    if (!isPlainRecord(provenance)) throw new Error("expected a provenance record");
+    const FIELDS = [
+      "engine_version",
+      "engine_commit",
+      "binary_sha256",
+      "gguf_sha256",
+      "hf_revision",
+      "quant",
+      "ctx",
+    ] as const;
+    expect(provenance["quant"]).toBeNull();
+    for (const field of FIELDS) {
+      expect(provenance[field]).toBeNull();
+    }
+    const unavailable = provenance["unavailable"];
+    if (!isPlainRecord(unavailable)) {
+      throw new Error("expected provenance.unavailable to be a record");
+    }
+    for (const field of FIELDS) {
+      const reason: unknown = unavailable[field];
+      expect(typeof reason).toBe("string");
+      expect(typeof reason === "string" ? reason.trim() : "").not.toBe("");
+      // The reason names the schedule's model, not a literal placeholder.
+      expect(reason).toContain("org/repo/m.gguf");
+      expect(reason).not.toContain("<rel>");
+    }
+    expect(unavailable["binary_sha256"]).toMatch(/agent/i);
+    expect(provenance["host"]).toBe(hostname());
   });
 
   test("run dispatches due suite schedules on timer ticks", async () => {
