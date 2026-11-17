@@ -17,7 +17,11 @@
  * checkUnload itself does not fence, but the node stop fence
  * (remote residency/stop-fence.ts) consults it under the DF-05 drain,
  * which closes the window; residency force-unload calls forceRelease
- * under its drain.
+ * under its drain. The profile-switch executor (remote residency/profile-
+ * transition.ts) also consults checkUnload under its drain (#520): it
+ * checks every victim at fence time and re-checks idle victims after the
+ * drain window, refusing SessionsActive/SessionsUnknown without ever
+ * releasing sessions; the override is `residency force-unload`.
  *
  * Release is generation-aware (#520 follow-up from the #617 review): a
  * stale release carrying an old generation cannot drop a newer

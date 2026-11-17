@@ -12,6 +12,13 @@
  * failure cancels the outstanding drains. Without a registry the run is the
  * stop/start-only fail-fast loop.
  *
+ * When `opts.sessions` is provided (or defaults to the installed seam), the
+ * session registry composes with the switch's own drain: every victim is
+ * checked at fence time (in `fenceOne`, same synchronous tick as
+ * `beginDrain.ok`) and re-checked after the drain window settles (per-victim
+ * in `drainPhase` before any stop runs), refusing `SessionsActive` /
+ * `SessionsUnknown` before any stop. The override is `residency force-unload`.
+ *
  * Per-node serialization rides the DF-03 operations table, keyed
  * `profile-switch:<node>`, through the partial unique nonterminal index.
  * The switch reserves its replacements' memory at begin (the plan's `reserve`
@@ -80,6 +87,11 @@ import {
   type ProfileSwitchPlan,
   type StepKind,
 } from "@llamactl/core/residency/planner";
+import {
+  currentSessionRefcounts,
+  type SessionRefcounts,
+  type SessionUnloadCheck,
+} from "@llamactl/core/residency/sessions";
 
 import type { ResidencyOperationOutcome, ResidencyOperationStore } from "./store.js";
 
@@ -99,6 +111,9 @@ export type ProfileSwitchExecutorDeps = {
   // executor holds the drain token, so the caller must wire the unfenced verified
   // stop: the #613 fenceWorkloadStop would refuse it with DrainInProgress. The
   // optional ctx carries an ADVISORY abort signal handed to a budgeted step.
+  // The session registry composes with the switch's own drain: checked at fence
+  // and re-checked after the drain, refusing SessionsActive/SessionsUnknown,
+  // never releasing sessions; the override is `residency force-unload`.
   stop: (workload: string, ctx?: { signal?: AbortSignal }) => Promise<ProfileSwitchStepOutcome>;
   // caller wires the admission-gated start
   start: (workload: string, ctx?: { signal?: AbortSignal }) => Promise<ProfileSwitchStepOutcome>;
@@ -222,6 +237,22 @@ type FinishRecord = { recorded: boolean; recordFailure?: string };
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function sessionRefusal(sessions: SessionRefcounts | null, workload: string): string | null {
+  if (sessions === null) {
+    return null;
+  }
+  let check: SessionUnloadCheck;
+  try {
+    check = sessions.checkUnload(workload);
+  } catch {
+    return "SessionsUnknown";
+  }
+  if (!check.ok) {
+    return `SessionsActive: ${check.sessions.join(",")}`;
+  }
+  return null;
 }
 
 function stepRecord(
@@ -418,10 +449,20 @@ async function runSteps(
 function fenceOne(
   registry: ResidencyLeases,
   workload: string,
+  sessions: SessionRefcounts | null,
 ): { step: ProfileSwitchExecutionStep; token?: DrainToken } {
   try {
     const begun = registry.beginDrain(workload);
     if (begun.ok) {
+      const refusal = sessionRefusal(sessions, workload);
+      if (refusal !== null) {
+        try {
+          registry.cancelDrain(begun.token);
+        } catch {
+          // best-effort: a failed cancel must not mask the refusal
+        }
+        return { step: stepRecord("fence", workload, "failed", refusal) };
+      }
       return { step: stepRecord("fence", workload, "ok"), token: begun.token };
     }
     return { step: stepRecord("fence", workload, "failed", begun.reason) };
@@ -433,6 +474,7 @@ function fenceOne(
 function fencePhase(
   registry: ResidencyLeases,
   victims: string[],
+  sessions: SessionRefcounts | null,
   signal: AbortSignal | undefined,
   beat: Beat,
 ): RunResult & { tokens: DrainToken[] } {
@@ -450,7 +492,7 @@ function fencePhase(
       steps.push(stepRecord("fence", workload, "not-run"));
       continue;
     }
-    const attempt = fenceOne(registry, workload);
+    const attempt = fenceOne(registry, workload, sessions);
     beat();
     steps.push(attempt.step);
     if (attempt.token === undefined) {
@@ -503,6 +545,7 @@ async function drainPhase(
   drainTimeoutMs: number,
   signal: AbortSignal | undefined,
   beat: Beat,
+  sessions: SessionRefcounts | null,
 ): Promise<DrainResult> {
   const controller = new AbortController();
   if (signal?.aborted === true) {
@@ -532,8 +575,23 @@ async function drainPhase(
   }
 
   const cancelled = signal?.aborted === true;
+  const steps = buildDrainSteps(cancelled, settles, tokens);
+  const postDrain = cancelled ? null : applySessionChecks(settles, tokens, sessions);
+  const finalSteps = postDrain ?? steps;
+  return {
+    steps: finalSteps,
+    failedAt: cancelled ? null : firstFailure(finalSteps),
+    cancelledAt: null,
+    cancelled,
+  };
+}
+
+function buildDrainSteps(
+  cancelled: boolean,
+  settles: DrainSettle[],
+  tokens: DrainToken[],
+): ProfileSwitchExecutionStep[] {
   const steps: ProfileSwitchExecutionStep[] = [];
-  let failedAt: StepFailure | null = null;
   for (const [index, token] of tokens.entries()) {
     const settle = settles[index];
     if (settle === undefined) {
@@ -543,9 +601,41 @@ async function drainPhase(
       ? cancelledDrainStepFor(settle, token.workload)
       : drainStepFor(settle, token.workload);
     steps.push(drainStep);
-    failedAt ??= failureOf(drainStep);
   }
-  return { steps, failedAt: cancelled ? null : failedAt, cancelledAt: null, cancelled };
+  return steps;
+}
+
+function firstFailure(steps: ProfileSwitchExecutionStep[]): StepFailure | null {
+  for (const step of steps) {
+    const f = failureOf(step);
+    if (f !== null) {
+      return f;
+    }
+  }
+  return null;
+}
+
+function applySessionChecks(
+  settles: DrainSettle[],
+  tokens: DrainToken[],
+  sessions: SessionRefcounts | null,
+): ProfileSwitchExecutionStep[] | null {
+  const steps = buildDrainSteps(false, settles, tokens);
+  for (const [index, token] of tokens.entries()) {
+    const settle = settles[index];
+    if (settle === undefined) {
+      continue;
+    }
+    const idle = settle.kind === "ok" && settle.result.idle;
+    if (!idle) {
+      continue;
+    }
+    const refusal = sessionRefusal(sessions, token.workload);
+    if (refusal !== null) {
+      steps[index] = stepRecord("drain", token.workload, "failed", refusal);
+    }
+  }
+  return steps;
 }
 
 async function runStopOne(
@@ -660,8 +750,9 @@ async function runFenced(
   signal: AbortSignal | undefined,
   beat: Beat,
   budget: StepBudget,
+  sessions: SessionRefcounts | null,
 ): Promise<RunResult> {
-  const fence = fencePhase(registry, plan.victims, signal, beat);
+  const fence = fencePhase(registry, plan.victims, sessions, signal, beat);
   const steps = fence.steps;
   if (fence.failedAt !== null) {
     cancelBestEffort(registry, fence.tokens);
@@ -679,7 +770,7 @@ async function runFenced(
     return { steps, failedAt: null, cancelledAt };
   }
 
-  const drain = await drainPhase(registry, fence.tokens, drainTimeoutMs, signal, beat);
+  const drain = await drainPhase(registry, fence.tokens, drainTimeoutMs, signal, beat, sessions);
   steps.push(...drain.steps);
   if (drain.cancelled) {
     cancelBestEffort(registry, fence.tokens);
@@ -1030,6 +1121,7 @@ export async function executeProfileSwitch(
     operation?: ProfileSwitchOperationOpts;
     stepTimeouts?: ProfileSwitchStepTimeouts;
     stepTimer?: ProfileSwitchStepTimer;
+    sessions?: SessionRefcounts | null;
   },
 ): Promise<ProfileSwitchExecutionReport> {
   const dryRun = opts?.dryRun !== false;
@@ -1066,6 +1158,7 @@ export async function executeProfileSwitch(
   }
 
   const registry = opts?.registry === undefined ? getResidencyLeaseRegistry() : opts.registry;
+  const sessions = opts?.sessions === undefined ? currentSessionRefcounts() : opts.sessions;
   const drainTimeoutMs = drainTimeoutMsFrom(opts?.drainTimeoutMs);
   const fenced = registry !== null;
   const deferred = deferredKinds(plan, fenced, opts?.operation !== undefined);
@@ -1095,13 +1188,31 @@ export async function executeProfileSwitch(
   if (operation !== undefined) {
     return await executeWithOperation(plan, deferred, operation, async (beat) =>
       fenced
-        ? await runFenced(plan, executorDeps, registry, drainTimeoutMs, signal, beat, budget)
+        ? await runFenced(
+            plan,
+            executorDeps,
+            registry,
+            drainTimeoutMs,
+            signal,
+            beat,
+            budget,
+            sessions,
+          )
         : await runSteps(planned, executorDeps, signal, beat, budget),
     );
   }
 
   const result = fenced
-    ? await runFenced(plan, executorDeps, registry, drainTimeoutMs, signal, NO_BEAT, budget)
+    ? await runFenced(
+        plan,
+        executorDeps,
+        registry,
+        drainTimeoutMs,
+        signal,
+        NO_BEAT,
+        budget,
+        sessions,
+      )
     : await runSteps(planned, executorDeps, signal, NO_BEAT, budget);
   const outcome =
     result.cancelledAt !== null
