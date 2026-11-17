@@ -74,6 +74,24 @@ const SECTIONS = {
   stagedEnable: sectionRe("staged enable order and rollback"),
 } as const;
 
+function flat(text: string): string {
+  return text.replaceAll(/\s+/g, " ");
+}
+
+// The text of the function or method that `signature` opens, up to its
+// closing brace at the signature's indent. A signature that is missing or
+// not unique yields "", so a pin can never match a second site.
+function enclosingBody(src: string, signature: string): string {
+  const start = src.indexOf(signature);
+  if (start === -1 || src.includes(signature, start + 1)) return "";
+  const lineStart = src.lastIndexOf("\n", start) + 1;
+  const indent = /^[ \t]*/.exec(src.slice(lineStart))?.[0] ?? "";
+  const closers = new Set([`${indent}}`, `${indent}},`, `${indent}};`]);
+  const lines = src.slice(start).split("\n");
+  const end = lines.findIndex((line, i) => i > 0 && closers.has(line));
+  return lines.slice(0, end === -1 ? lines.length : end + 1).join("\n");
+}
+
 interface SrcFile {
   path: string;
   rel: string;
@@ -944,6 +962,203 @@ describe("docs/dynamic-residency.md (#285)", () => {
       'to: "failed"',
     ]) {
       expect(bootRecovery, pin).toContain(pin);
+    }
+  });
+
+  // Part of #522
+  // Kills: reverting prepareSessionAndLease to sessionResult.release?.()
+  // on an admission refusal, dropping the priorActivityMs restore or the
+  // created-entry delete in cancelAcquire, changing the lease-refusal
+  // status or type mapping, or rewording any claim of the #740 paragraph.
+  test("case 18: session acquire undo on admission refusal (#740)", () => {
+    const a = (sectionBody(sectionRe("session affinity")) ?? "").replaceAll(/\s+/g, " ");
+    // Full phrases, so a swapped mapping, a changed status or a dropped
+    // clause fails even though each token also appears elsewhere.
+    for (const needle of [
+      "A request whose residency lease admission refuses gets `503` (`model_draining` for `Draining`, `model_not_loaded` for `Unloaded`)",
+      "undoes its session acquire through `cancelAcquire` (`packages/core/src/residency/sessions.ts`) instead of releasing it (`prepareSessionAndLease`/`acquireProxyResidencyLease` in `packages/core/src/openaiProxy.ts`).",
+      "The refused request therefore neither binds a fresh session nor extends an idle binding: a session the refused acquire created is deleted when its refs reach 0, and otherwise the pre-acquire `lastActivityMs` is restored.",
+      "That makes the post-drain session re-check of a wet switch (#730) defence in depth (#740).",
+    ]) {
+      expect(a, needle).toContain(needle);
+    }
+    const proxySrc = readOrEmpty(join(REPO, "packages/core/src/openaiProxy.ts"));
+    // `{ status: 503 }` appears at several sites; pin it inside the lease
+    // refusal body only.
+    const acquireBody = enclosingBody(proxySrc, "function acquireProxyResidencyLease(");
+    for (const pin of [
+      'const draining = acquired.reason === "Draining";',
+      'type: draining ? "model_draining" : "model_not_loaded",',
+      "{ status: 503 },",
+    ]) {
+      expect(acquireBody, pin).toContain(pin);
+    }
+    const prepareBody = flat(enclosingBody(proxySrc, "function prepareSessionAndLease("));
+    for (const pin of [
+      "const admission = acquireProxyResidencyLease(leaseRegistry, routed.route);",
+      "if (admission instanceof Response) { if (hasBothSeams) { sessionResult.cancel?.(); } return admission; }",
+    ]) {
+      expect(prepareBody, pin).toContain(pin);
+    }
+    const sessionsSrc = readOrEmpty(join(REPO, "packages/core/src/residency/sessions.ts"));
+    const cancelBody = enclosingBody(sessionsSrc, "cancelAcquire(sessionId, generation): void {");
+    for (const pin of [
+      "entry.lastActivityMs = undo.priorActivityMs;",
+      "if (undo.created && entry.refs === 0) {\n        sessions.delete(sessionId);",
+    ]) {
+      expect(cancelBody, pin).toContain(pin);
+    }
+  });
+
+  // Part of #522
+  // Kills: unwiring runDirectResidencyStart/Stop from router.ts,
+  // rewording the in-flight start refusal, making the no-store path
+  // create or require a store, making a failed claim block a stop,
+  // wrapping force-unload without updating the doc, dropping either
+  // startModelHostProcess call site or the disable/delete modelHostStop
+  // call, or rewording any claim of the #741 section.
+  test("case 19: direct ModelHost start/stop lifecycle (#741)", () => {
+    expect(sectionBody(sectionRe("direct modelhost start and stop"))).toBeDefined();
+    const d = flat(sectionBody(sectionRe("direct modelhost start and stop")) ?? "");
+    // One needle per claim, as a full phrase.
+    for (const needle of [
+      "The agent's `modelHostStart` and `modelHostStop` procedures (`packages/remote/src/router.ts`) wrap `startModelHost`/`stopModelHost` in `runDirectResidencyStart`/`runDirectResidencyStop` (`packages/remote/src/residency/direct-lifecycle.ts`).",
+      "`llamactl apply -f` and `llamactl enable` of a ModelHost reach `modelHostStart` (`startModelHostProcess` in `packages/remote/src/workload/apply.ts`), and `llamactl disable` (`disableModelHost`) or deleting a ModelHost reaches `modelHostStop`.",
+      "A node with no store file runs the start or stop unrecorded and never creates the store.",
+      "Otherwise the wrapper claims the shared apply-profile fence and walks the `residency_states` row through the same `withResidencyLifecycle` hops as a profile switch (`packages/remote/src/residency/lifecycle-steps.ts`).",
+      "A label naming an undeclared group records no group.",
+      "A same-group `ready` peer is reconciled to downloaded only when it is a known ModelHost proven down (Stopped, identity resolved).",
+      "Any other occupying same-group row refuses the start with `ExclusiveGroupOccupied`, as `residency lifecycle refused <name> <from> -> <to>: ExclusiveGroupOccupied: <detail>`, before the engine runs.",
+      "A nonterminal profile switch refuses a start with `residency lifecycle refused <name>: profile switch in flight on this node; retry after it settles`.",
+      "A grouped start whose store cannot be opened or claimed refuses with `store unavailable (<message>)`.",
+      "A host already running with a `ready` row is adopted and kept ready.",
+      "Bookkeeping never blocks a stop: a stop whose claim or walk fails still runs and logs `[residency] lifecycle <name> stop not recorded: …` on the agent's stderr.",
+      "Known limits: the ModelRun `serverStart`/`serverStop` writers are still unwrapped, so a stale `ready` ModelRun row fails closed and refuses same-group ModelHost starts until a switch, a stop or boot recovery clears it.",
+      "`llamactl residency force-unload <workload> --reason <text> --yes --node <name>` calls `stopModelHost` outside the wrapper, so it leaves the row unchanged; read rows with `llamactl residency status --node <name>` (#741).",
+    ]) {
+      expect(d, needle).toContain(needle);
+    }
+    const directLifecycle = readOrEmpty(
+      join(REPO, "packages/remote/src/residency/direct-lifecycle.ts"),
+    );
+    // Each source pin is anchored to its enclosing function, so a site that
+    // shares text with another (two `stop not recorded:` logs, a start
+    // refusal and a stop log that both say `store unavailable (`) is
+    // pinned on its own.
+    const bodyPins: [string, string[]][] = [
+      [
+        "async function unrecordedOrFail<",
+        [
+          'if (action === "start" && lifecycleGroup !== undefined) {',
+          "detail: `residency lifecycle refused ${workload}: store unavailable (${message})`,",
+          "`[residency] lifecycle ${workload} ${action} not recorded: store unavailable (${message})\\n`,",
+          "return { ran: true, result: await env.dep(workload) };",
+        ],
+      ],
+      [
+        "async function initialClaim<",
+        [
+          "detail: `residency lifecycle refused ${workload}: profile switch in flight on this node; retry after it settles`,",
+          "`[residency] lifecycle ${workload} stop not recorded: profile switch in flight\\n`,",
+          "return { ran: true, result: await env.dep(workload) };",
+        ],
+      ],
+      [
+        "async function walkWithDep<",
+        [
+          "`[residency] lifecycle ${workload} stop not recorded: ${stepRefusalDetail(step)}\\n`,",
+          "return { ran: true, result: await env.dep(workload) };",
+        ],
+      ],
+      [
+        "async function adoptReadyStart<",
+        [
+          'if (own?.state !== "ready" || !isRunningSafe(opts, workload)) {',
+          "`[residency] lifecycle ${workload} start kept ready: host already running\\n`",
+        ],
+      ],
+      [
+        "function declaredGroup(",
+        ["return groups.some((declared) => declared.name === group) ? group : undefined;"],
+      ],
+    ];
+    for (const [signature, pins] of bodyPins) {
+      const body = enclosingBody(directLifecycle, signature);
+      expect(body, signature).not.toBe("");
+      for (const pin of pins) {
+        expect(body, `${signature} ${pin}`).toContain(pin);
+      }
+    }
+    for (const pin of [
+      "if (!existsSync(opts.storePath)) {",
+      // only a ready row proven down is left for reconcile
+      'return !(row.state === "ready" && isProvenDownSafe(opts, row.model));',
+    ]) {
+      expect(directLifecycle, pin).toContain(pin);
+    }
+    const stepsSrc = readOrEmpty(join(REPO, "packages/remote/src/residency/lifecycle-steps.ts"));
+    for (const pin of [
+      "residency lifecycle refused ${workload} ${from} -> ${to}: ${decision.reason}: ${decision.detail}",
+      // the refusal returns before the engine (deps.start) runs
+      "if (!walkToLoading.ok) {\n    return { ok: false, detail: describeRefusal(workload, walkToLoading) };\n  }\n  const outcome = await ctx.deps.start(workload, stepCtx);",
+      "-> downloaded in group ${group}: ",
+    ]) {
+      expect(stepsSrc, pin).toContain(pin);
+    }
+    const routerSrc = readOrEmpty(join(REPO, "packages/remote/src/router.ts"));
+    for (const pin of [
+      "runDirectResidencyStart<StartModelHostResult>(",
+      "runDirectResidencyStop<StopModelHostResult>(",
+      // deleting a ModelHost reaches modelHostStop
+      "? await stopModelHostForDelete(manifest, stops)",
+    ]) {
+      expect(routerSrc, pin).toContain(pin);
+    }
+    // the wrapper's log is the agent's stderr
+    expect(
+      flat(enclosingBody(routerSrc, "function directResidencyOpts(")),
+      "agent stderr log",
+    ).toContain("log: (line): void => { process.stderr.write(line); },");
+    expect(
+      enclosingBody(routerSrc, "function directModelHostProvenDown("),
+      "proven down predicate",
+    ).toContain('return status.state === "Stopped" && status.identityUnknown !== true;');
+    expect(enclosingBody(routerSrc, "async function stopModelHostForDelete("), "delete").toContain(
+      "const outcome = (await client.modelHostStop.mutate({",
+    );
+    // force-unload calls stopModelHost directly, outside the wrapper
+    expect(routerSrc).toContain(
+      'kind === "modelhost"\n          ? async (): Promise<{ stopped: boolean; detail?: string }> => {\n              const r = await stopModelHost({ key: { name } });',
+    );
+    const applySrc = readOrEmpty(join(REPO, "packages/remote/src/workload/apply.ts"));
+    const applyPins: [string, string[]][] = [
+      ["async function startModelHostProcess(", ["client.modelHostStart.subscribe("]],
+      [
+        "async function applyModelHostManifest(",
+        [
+          "if (!manifest.spec.enabled) { return await disableModelHost(manifest, client, resolved); }",
+          "const started = await startModelHostProcess(client, manifest);",
+        ],
+      ],
+      [
+        "async function convergeModelHostReplacement(",
+        [
+          "lifecycle.startInvoked = true; const started = await startModelHostProcess(client, manifest);",
+        ],
+      ],
+      [
+        "async function disableModelHost(",
+        [
+          "const outcome = await client.modelHostStop.mutate({ workload: manifest.metadata.name });",
+        ],
+      ],
+    ];
+    for (const [signature, pins] of applyPins) {
+      const body = flat(enclosingBody(applySrc, signature));
+      expect(body, signature).not.toBe("");
+      for (const pin of pins) {
+        expect(body, `${signature} ${pin}`).toContain(pin);
+      }
     }
   });
 });

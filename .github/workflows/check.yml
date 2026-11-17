@@ -25,7 +25,9 @@ jobs:
       matrix:
         os: [macos-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    # The macOS leg takes 13-15 min as of 2026-11-17 and was hitting a 15 min
+    # limit (cancelled runs on main and on PRs), so it has headroom here.
+    timeout-minutes: 25
     steps:
       - name: Checkout llamactl
         uses: actions/checkout@v4

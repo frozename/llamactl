@@ -168,7 +168,8 @@ in `withResidencyLifecycle`
 `RESIDENCY_TRANSITIONS` edge: a victim walks `ready` → `draining` →
 `unloading` → `downloaded`|`failed`; a replacement walks → `loading` →
 `warming` → `ready`|`failed`; an observed same-group occupant refuses
-with `ExclusiveGroupOccupied` before the engine runs. Since #517 the
+with `ExclusiveGroupOccupied` before the engine runs. Since #741 (Part
+of #517) the
 direct ModelHost writers `modelHostStart`/`modelHostStop` route through
 `packages/remote/src/residency/direct-lifecycle.ts`: they claim the shared
 apply-profile fence, walk the row the same way, reconcile proven-down
@@ -425,12 +426,19 @@ Steps:
    `spec.enabled=true` and re-applies. `enable` fails with
    "workload not found" for a name that was never applied. If the
    start is refused with "already has … ModelHost …", stop that peer
-   first.
+   first. When the agent's residency store exists, the start can also
+   be refused with "residency lifecycle refused <name> …:
+   `ExclusiveGroupOccupied` …" (a same-group row still occupying;
+   inspect with `llamactl residency status --node <name>`), or with
+   "residency lifecycle refused <name>: profile switch in flight on
+   this node; retry after it settles" (#741; see
+   [dynamic-residency.md](dynamic-residency.md#direct-modelhost-start-and-stop)).
 7. Wait for the readiness probe, then `llamactl describe workload <name>`.
 8. Run the eval.
 9. Exit the window: `llamactl disable <name>`, then
    `llamactl enable <production-workload>`, then verify Running and
-   readiness.
+   readiness. A disable is never blocked by this bookkeeping and at
+   worst logs "not recorded" (#741).
 
 Never run two group members at once, given the two-process race in
 the guard.
