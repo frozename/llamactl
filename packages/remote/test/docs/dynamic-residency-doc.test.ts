@@ -5,7 +5,10 @@ import { routingCatalog } from "@llamactl/core";
 import { describe, expect, test } from "bun:test";
 import { basename, join, relative, resolve } from "node:path";
 
-import { PROFILE_SWITCH_BOOT_RECOVERY_MIN_AGE_MS } from "../../src/residency/boot-recovery.js";
+import {
+  INTERRUPTED_LIFECYCLE_STATES,
+  PROFILE_SWITCH_BOOT_RECOVERY_MIN_AGE_MS,
+} from "../../src/residency/boot-recovery.js";
 import {
   RESIDENCY_PROFILES_ANNOTATION,
   RESIDENCY_PROTECTED_ANNOTATION,
@@ -846,5 +849,91 @@ describe("docs/dynamic-residency.md (#285)", () => {
     expect(readOrEmpty(join(REPO, "packages/core/src/residency/planner.ts"))).toContain(
       '"Cooldown"',
     );
+  });
+
+  // Part of #522
+  // Kills: removing the session check from fencedStop, or removing the
+  // trackedInstanceLive gate that makes a crashed instance never block;
+  // renaming the "while a session is bound to its running instance" error
+  // tail; making fencedStop consult sessions without a lease registry; not
+  // installing the session registry in serve.ts; adding or removing a state
+  // in INTERRUPTED_LIFECYCLE_STATES without updating the doc; making the
+  // lifecycle sweep run outside a claimed pass without updating the doc,
+  // i.e. removing either shouldClaim gate: the outer snapshot gate in
+  // runProfileSwitchBootRecovery that decides whether scanWithStore runs,
+  // or the inner writable-handle re-check inside claimOwnershipWhen; renaming
+  // failInterruptedLifecycleRows or the lifecycle log line.
+  test("case 17: stop-before-start session refusal (#734) and lifecycle boot recovery (#736)", () => {
+    const r = (sectionBody(sectionRe("stop-before-start")) ?? "").replaceAll(/\s+/g, " ");
+    expect(sectionBody(sectionRe("stop-before-start"))).toBeDefined();
+    for (const needle of [
+      "`startServer`",
+      "`packages/core/src/server.ts`",
+      "`LeasesActive`",
+      "`DrainInProgress`",
+      "`SessionsActive`",
+      "`SessionsUnknown`",
+      "`LLAMACTL_RESIDENCY_LEASES`",
+      "`LLAMACTL_RESIDENCY_SESSION_IDLE_MS`",
+      "while a session is bound to its running instance",
+      "crashed",
+      "never releases sessions",
+      "`serverStart`",
+      "`packages/remote/src/router.ts`",
+      "`llamactl residency force-unload <workload> --reason <text> --yes --node <name>`",
+      "#734",
+    ]) {
+      expect(r, needle).toContain(needle);
+    }
+    const serverSrc = readOrEmpty(join(REPO, "packages/core/src/server.ts"));
+    for (const pin of [
+      'reason: "SessionsActive"',
+      'reason: "SessionsUnknown"',
+      '"while a session is bound to its running instance"',
+      "return trackedInstanceLive(opts, resolved, key) ? objection : null;",
+      "if (registry === null) return { refused: null, stopResult: await stop() };",
+      "const sessionRefusal = checkStartSessions(opts, resolved, key);",
+    ]) {
+      expect(serverSrc, pin).toContain(pin);
+    }
+    expect(readOrEmpty(join(REPO, "packages/remote/src/server/serve.ts"))).toContain(
+      "setSessionRefcountRegistry(sessionRefcounts)",
+    );
+    expect(readOrEmpty(join(REPO, "packages/remote/src/router.ts"))).toContain(
+      "serverMod.startServer(",
+    );
+
+    const c = (sectionBody(SECTIONS.cancelRecovery) ?? "").replaceAll(/\s+/g, " ");
+    for (const needle of [
+      "`failInterruptedLifecycleRows`",
+      "`residency_states`",
+      "`failed`",
+      "claimed pass",
+      "a stale profile-switch row",
+      "outside a switch are not swept",
+      '`[residency] lifecycle boot recovery {"failed":N,"recordFailures":M}`',
+      "#736",
+    ]) {
+      expect(c, needle).toContain(needle);
+    }
+    for (const state of INTERRUPTED_LIFECYCLE_STATES) {
+      expect(c, state).toContain(`\`${state}\``);
+    }
+    expect([...INTERRUPTED_LIFECYCLE_STATES].sort()).toEqual([
+      "draining",
+      "loading",
+      "unloading",
+      "warming",
+    ]);
+    const bootRecovery = readOrEmpty(join(REPO, "packages/remote/src/residency/boot-recovery.ts"));
+    for (const pin of [
+      "function failInterruptedLifecycleRows(",
+      "const result = shouldClaim(preview)\n      ? scanWithStore(openStore, opts, nowMs, minStaleAgeMs, lifecycle)\n      : deferred(preview);",
+      "preview = previewProfileSwitchRecovery(nonterminal, { nowMs: nowMs(), minStaleAgeMs });\n        return shouldClaim(preview);",
+      "[residency] lifecycle boot recovery ${lifecycleCountsJson(lifecycle.counts)}",
+      'to: "failed"',
+    ]) {
+      expect(bootRecovery, pin).toContain(pin);
+    }
   });
 });
