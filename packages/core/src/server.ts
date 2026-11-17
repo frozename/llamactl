@@ -1230,9 +1230,12 @@ async function fencedStop(
 
 /**
  * Stop-before-start: bring down any previous instance under the residency
- * fence. Returns a refusal result when a published registry declined the drain
- * (`LeasesActive` / `DrainInProgress`), the existing identity-unknown refusal
- * when the tracked pid could not be verified, or null to proceed with the start.
+ * fence. Returns a refusal result when a published lease registry declined the
+ * drain (`LeasesActive` / `DrainInProgress`), when a published session
+ * refcount registry objected under that drain (`SessionsActive` while a session
+ * is bound to the live tracked instance, `SessionsUnknown` when its check
+ * threw; Part of #520), the existing identity-unknown refusal when the tracked
+ * pid could not be verified, or null to proceed with the start.
  */
 async function stopBeforeStart(
   opts: StartServerOptions,

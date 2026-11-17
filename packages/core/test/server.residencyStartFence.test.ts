@@ -145,6 +145,7 @@ describe("server.startServer residency start fence (#278)", () => {
 
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/LeasesActive/);
+    expect(result.error).toMatch(/while residency leases are held$/);
     expect((result as { refused?: unknown }).refused).toEqual({
       reason: "LeasesActive",
       active: [lease.id],
@@ -171,6 +172,8 @@ describe("server.startServer residency start fence (#278)", () => {
     );
 
     expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/^DrainInProgress: /);
+    expect(result.error).toMatch(/while residency leases are held$/);
     expect((result as { refused?: unknown }).refused).toMatchObject({
       reason: "DrainInProgress",
     });
@@ -300,6 +303,7 @@ describe("server.startServer residency start fence (#278)", () => {
     expect(spawnCalls).toBe(1);
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/LeasesActive/);
+    expect(result.error).toMatch(/while residency leases are held$/);
     expect((result as { refused?: unknown }).refused).toEqual({
       reason: "LeasesActive",
       active: [leaseId],
@@ -393,6 +397,8 @@ describe("server.startServer residency start fence (#278)", () => {
 
     expect(spawnCalls).toBe(1);
     expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/^DrainInProgress: /);
+    expect(result.error).toMatch(/while residency leases are held$/);
     expect((result as { refused?: unknown }).refused).toMatchObject({
       reason: "DrainInProgress",
     });

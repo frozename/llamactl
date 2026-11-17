@@ -19,7 +19,7 @@ import {
   setSessionRefcountRegistry,
 } from "../src/residency/sessions.js";
 import { mkdirSync, writeFileSync } from "../src/safe-fs.js";
-import { readServerPid, startServer } from "../src/server.js";
+import { readServerPid, readServerState, startServer, stopServer } from "../src/server.js";
 import { ensureWorkloadRuntimeDir } from "../src/workloadRuntime.js";
 import { envForTemp, makeTempRuntime } from "./helpers.js";
 
@@ -139,6 +139,27 @@ describe("server.startServer residency session start fence (#520)", () => {
   function writeTrackedPid(pid: number): void {
     const dir = ensureWorkloadRuntimeDir(resolveEnv(), TEST_KEY);
     writeFileSync(join(dir, "llama-server.pid"), `${String(pid)}\n`);
+  }
+
+  function writeSidecar(rel: string, binary: string): void {
+    const dir = ensureWorkloadRuntimeDir(resolveEnv(), TEST_KEY);
+    writeFileSync(
+      join(dir, "llama-server.state"),
+      JSON.stringify({
+        rel,
+        extraArgs: [],
+        host: "127.0.0.1",
+        port: "65534",
+        binary,
+        pid: 4194305,
+        startedAt: new Date().toISOString(),
+        tunedProfile: null,
+      }),
+    );
+  }
+
+  function sigtermCalls(): number {
+    return killSpy.mock.calls.filter(([, signal]) => signal === "SIGTERM").length;
   }
 
   function aliveIdentity(): NonNullable<Parameters<typeof startServer>[0]["identity"]> {
@@ -293,7 +314,9 @@ describe("server.startServer residency session start fence (#520)", () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(result.error).toMatch(/SessionsUnknown/);
+    expect(result.error).toMatch(/^SessionsUnknown: /);
+    expect(result.error).toMatch(/while a session is bound to its running instance$/);
+    expect(result.error).not.toMatch(/leases are held/);
     expect((result as { refused?: unknown }).refused).toEqual({
       reason: "SessionsUnknown",
       active: [],
@@ -361,5 +384,155 @@ describe("server.startServer residency session start fence (#520)", () => {
     expect(restarted.spawnCalls).toBe(1);
     expect((restarted.result as { refused?: unknown }).refused).toBeUndefined();
     expect(sessions.activeSessions("test-wl")).toEqual([]);
+  });
+
+  // Kills (N3): trackedStopIdentity dropping expectCommand.args — a live
+  // pid whose command line runs a different model than the sidecar's rel
+  // would read "alive" and be signalled.
+  test("stopServer does not signal a live pid whose command runs a different model than the sidecar rel", async () => {
+    const binDir = join(temp.devStorage, "fake-bin");
+    writeTrackedPid(4194305);
+    writeSidecar("Demo/demo.gguf", `${binDir}/llama-server`);
+    expect(readServerState(TEST_KEY)?.rel).toBe("Demo/demo.gguf");
+
+    const result = await stopServer({
+      key: TEST_KEY,
+      graceSeconds: 1,
+      identity: {
+        probe: () => undefined,
+        processStartMs: () => Date.now() - 1000,
+        processCommand: () => `${binDir}/llama-server -m Other/other.gguf`,
+      },
+    });
+
+    expect(result).toEqual({ stopped: false, pid: 4194305, killed: false });
+    expect(sigtermCalls()).toBe(0);
+    expect(readServerPid(TEST_KEY)).toBe(4194305);
+    expect(readServerState(TEST_KEY)).not.toBeNull();
+  });
+
+  // Kills (N3b): trackedStopIdentity dropping expectCommand.binary or
+  // .path. A different binary must never be signalled; a sidecar binary
+  // whose path contains a space only matches through `path`, so dropping
+  // it would refuse to stop our own instance.
+  test("stopServer refuses a different binary and signals a matching spaced binary path", async () => {
+    writeTrackedPid(4194305);
+    writeSidecar("Demo/demo.gguf", "/opt/llama a/llama-server");
+
+    const otherBinary = await stopServer({
+      key: TEST_KEY,
+      graceSeconds: 1,
+      identity: {
+        probe: () => undefined,
+        processStartMs: () => Date.now() - 1000,
+        processCommand: () => "/opt/other/other-server -m Demo/demo.gguf",
+      },
+    });
+    expect(otherBinary).toEqual({ stopped: false, pid: 4194305, killed: false });
+    expect(sigtermCalls()).toBe(0);
+    expect(readServerPid(TEST_KEY)).toBe(4194305);
+
+    const ours = await stopServer({
+      key: TEST_KEY,
+      graceSeconds: 1,
+      identity: {
+        probe: () => undefined,
+        processStartMs: () => Date.now() - 1000,
+        processCommand: () => "/opt/llama a/llama-server -m Demo/demo.gguf",
+      },
+    });
+    expect(ours.stopped).toBe(true);
+    expect(sigtermCalls()).toBe(1);
+    expect(killSpy.mock.calls.find(([, signal]) => signal === "SIGTERM")?.[0]).toBe(4194305);
+    expect(readServerPid(TEST_KEY)).toBeNull();
+  });
+
+  // Kills: the session-fence liveness probe and stopServer disagreeing on
+  // the tracked instance (e.g. the probe ignoring the caller's identity
+  // deps, or treating a reused/dead record as live). For each identity,
+  // stopServer alone either treats the record as gone (cleared, never
+  // signalled) or as ours (signalled or kept); with a bound session the
+  // fence must refuse exactly when stopServer treats it as ours.
+  test("the session-fence liveness probe and stopServer agree on the same identity", async () => {
+    standUpModelAndBin();
+    const binDir = join(temp.devStorage, "fake-bin");
+    const ours = `${binDir}/llama-server -m Demo/demo.gguf`;
+    const cases: {
+      name: string;
+      identity: () => NonNullable<Parameters<typeof stopServer>[0]["identity"]>;
+      live: boolean;
+    }[] = [
+      {
+        name: "alive",
+        identity: () => ({
+          probe: () => undefined,
+          processStartMs: () => Date.now() - 1000,
+          processCommand: () => ours,
+        }),
+        live: true,
+      },
+      {
+        name: "rel mismatch",
+        identity: () => ({
+          probe: () => undefined,
+          processStartMs: () => Date.now() - 1000,
+          processCommand: () => `${binDir}/llama-server -m Other/other.gguf`,
+        }),
+        live: true,
+      },
+      {
+        name: "reused",
+        identity: () => ({
+          probe: () => undefined,
+          processStartMs: () => Date.now() + 600_000,
+          processCommand: () => ours,
+        }),
+        live: false,
+      },
+      {
+        name: "dead",
+        identity: () => ({
+          probe: (): never => {
+            throw Object.assign(new Error("gone"), { code: "ESRCH" });
+          },
+        }),
+        live: false,
+      },
+    ];
+
+    for (const c of cases) {
+      // stopServer alone, no session registry consulted.
+      killSpy.mockClear();
+      writeTrackedPid(4194305);
+      writeSidecar("Demo/demo.gguf", `${binDir}/llama-server`);
+      const stop = await stopServer({ key: TEST_KEY, graceSeconds: 1, identity: c.identity() });
+      const goneWithoutSignal = stop.stopped && sigtermCalls() === 0;
+      expect({ name: c.name, live: !goneWithoutSignal }).toEqual({ name: c.name, live: c.live });
+
+      // Same identity, a session bound: the fence must reach the same verdict.
+      killSpy.mockClear();
+      const sessionId = `s-${c.name}`;
+      acquireSession(sessionId, "test-wl");
+      writeTrackedPid(4194305);
+      writeSidecar("Demo/demo.gguf", `${binDir}/llama-server`);
+      const run = await startWithMockedIo(
+        { key: TEST_KEY, target: "Demo/demo.gguf", identity: c.identity() },
+        c.live ? 4194306 : process.pid,
+        c.live ? "rejecting" : "readiness",
+      );
+      const refusal = (run.result as { refused?: { reason: string } }).refused;
+      expect({ name: c.name, refused: refusal?.reason === "SessionsActive" }).toEqual({
+        name: c.name,
+        refused: c.live,
+      });
+      if (c.live) {
+        expect(run.spawnCalls).toBe(0);
+        expect(sigtermCalls()).toBe(0);
+      } else {
+        expect(run.result.ok).toBe(true);
+        expect(run.spawnCalls).toBe(1);
+      }
+      sessions.forceRelease("test-wl");
+    }
   });
 });
