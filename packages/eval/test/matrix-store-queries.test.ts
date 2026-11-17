@@ -14,6 +14,7 @@ import {
   listCellRowDetails,
   listCellRows,
 } from "../src/matrix/store.js";
+import { collectEvalProvenance } from "../src/perf/provenance.js";
 import { mkdtempSync, rmSync } from "../src/safe-fs.js";
 
 function cell(overrides: Partial<CellRow> = {}): CellRow {
@@ -292,6 +293,66 @@ describe("perf_runs", () => {
     expect(byMetric.get("m-full")?.ctx).toBe(32768);
     expect(byMetric.get("m-no-commit")?.engine_commit).toBeNull();
     expect(byMetric.get("m-full")?.hf_revision).toBe("main@deadbeef");
+  });
+
+  test("provenance.unavailable with quant:null and its reasons survives provenance_json readback", async () => {
+    const collected = await collectEvalProvenance(
+      {
+        engine: "llamacpp",
+        quant: null,
+        ctx: null,
+        flags: ["--slots", "2"],
+        reasons: {
+          binary_path: "scheduled suites reach org/repo/m.gguf through the agent gateway",
+          gguf_path: "gguf hidden behind the gateway",
+        },
+      },
+      {
+        sha256File: () => {
+          throw new Error("no file reads expected");
+        },
+        engineVersion: () => {
+          throw new Error("no version probe expected");
+        },
+        hostname: () => "z13",
+      },
+    );
+    expect(collected.quant).toBeNull();
+    expect(collected.unavailable.quant).toBe("no quant label supplied");
+    expect(Object.keys(collected.unavailable).sort()).toEqual(
+      [
+        "binary_sha256",
+        "ctx",
+        "engine_commit",
+        "engine_version",
+        "gguf_sha256",
+        "hf_revision",
+        "quant",
+      ].sort(),
+    );
+
+    store.insertPerfRun(db, perfRow({ run_id: "run-unavail", provenance: collected }));
+    store.insertPerfRun(db, perfRow({ run_id: "run-other" }));
+
+    const raw = db
+      .query("SELECT provenance_json FROM perf_runs WHERE run_id = ?")
+      .get("run-unavail") as { provenance_json: string } | null;
+    expect(raw).not.toBeNull();
+    const stored = JSON.parse(raw!.provenance_json) as types.EvalProvenance;
+    expect(stored.quant).toBeNull();
+    expect(stored.unavailable).toEqual(collected.unavailable);
+
+    const rows = store.listPerfRuns(db, { run_id: "run-unavail" });
+    expect(rows).toHaveLength(1);
+    const readBack = rows[0]!.provenance;
+    expect(readBack).toEqual(collected);
+    expect(readBack.quant).toBeNull();
+    expect(readBack.ctx).toBeNull();
+    expect(readBack.unavailable?.quant).toBe("no quant label supplied");
+    expect(readBack.unavailable?.engine_version).toBe(
+      "scheduled suites reach org/repo/m.gguf through the agent gateway",
+    );
+    expect(readBack.unavailable?.gguf_sha256).toBe("gguf hidden behind the gateway");
   });
 
   test("insertPerfRun rejects an unavailable metric with an empty or whitespace reason", () => {
