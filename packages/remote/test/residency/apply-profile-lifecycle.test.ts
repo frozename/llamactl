@@ -53,13 +53,13 @@ let workloadsDir = "";
 let storePath = "";
 let stepCalls: [string, string][] = [];
 
-function runManifest(name: string, profiles: string): ModelRun {
+function runManifest(name: string, profiles: string, groupLabel: string = GROUP): ModelRun {
   return ModelRunSchema.parse({
     apiVersion: "llamactl/v1",
     kind: "ModelRun",
     metadata: {
       name,
-      labels: { [GROUP_LABEL]: GROUP },
+      labels: { [GROUP_LABEL]: groupLabel },
       annotations: { [PROFILES_ANNOTATION]: profiles },
     },
     spec: {
@@ -207,6 +207,18 @@ describe("applyResidencyProfile residency lifecycle", () => {
       state: "ready",
       group: GROUP,
     });
+  });
+
+  test("AP1b: a whitespace-padded group label lands the row in the trimmed group", async () => {
+    // kills: groupOf and the planner's buildWorkload normalizing the
+    // residency-group label differently.
+    saveWorkload(runManifest("code-b", "code", `  ${GROUP} `), workloadsDir);
+    const logs: string[] = [];
+    const result = await apply(planFor(), logs);
+
+    expect(result.ok).toBe(true);
+    const row = withStore((store) => store.getResidencyState("code-b"));
+    expect(row).toMatchObject({ state: "ready", group: GROUP });
   });
 
   test("AP2: a stale uncorroborated peer is reconciled through the live path", async () => {

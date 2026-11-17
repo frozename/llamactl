@@ -42,7 +42,7 @@ import {
   saveWorkload,
   withWorkloadsMutex,
 } from "../workload/store.js";
-import { RESIDENCY_GROUP_LABEL } from "./coordinator.js";
+import { residencyGroupLabelOf } from "./coordinator.js";
 import {
   executeProfileSwitch,
   type ProfileSwitchExecutionReport,
@@ -426,9 +426,7 @@ function defaultApplyProfileLog(line: string): void {
 // hop.
 function residencyGroupOf(workloadsDir: string, workload: string): string | undefined {
   try {
-    const labels = loadWorkloadByNameAny(workload, workloadsDir).metadata.labels;
-    const group = labels?.[RESIDENCY_GROUP_LABEL]?.trim();
-    return group !== undefined && group.length > 0 ? group : undefined;
+    return residencyGroupLabelOf(loadWorkloadByNameAny(workload, workloadsDir).metadata.labels);
   } catch {
     return undefined;
   }

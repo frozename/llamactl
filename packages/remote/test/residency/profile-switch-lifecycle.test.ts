@@ -40,6 +40,7 @@ import {
   openResidencyOperationStore,
   type ResidencyLifecycleStore,
   type ResidencyOperationStore,
+  type TransitionResidencyStateResult,
 } from "../../src/residency/store.js";
 import { mkdtempSync, rmSync } from "../../src/safe-fs.js";
 
@@ -193,12 +194,18 @@ type LifecycleOperationOpts = {
   desiredRevision: number;
   nowMs: () => number;
   log: (line: string) => void;
-  lifecycle: { store: Store; groupOf: (workload: string) => string | undefined };
+  lifecycle: { store: LifecycleStore; groupOf: (workload: string) => string | undefined };
 };
+
+type LifecycleStore = Pick<
+  ResidencyLifecycleStore,
+  "getResidencyState" | "listResidencyStates" | "transitionResidencyState"
+>;
 
 type ExecuteExtra = {
   stepTimeouts?: ProfileSwitchStepTimeouts;
   stepTimer?: ProfileSwitchStepTimer;
+  lifecycleStore?: LifecycleStore;
 };
 
 async function execute(
@@ -214,7 +221,10 @@ async function execute(
     desiredRevision: 0,
     nowMs: () => NOW,
     log: (line) => logs.push(line),
-    lifecycle: { store, groupOf: (workload) => GROUP_OF[workload] },
+    lifecycle: {
+      store: extra.lifecycleStore ?? store,
+      groupOf: (workload) => GROUP_OF[workload],
+    },
   };
   const report = await executeProfileSwitch(plan, deps, {
     dryRun: false,
@@ -224,6 +234,24 @@ async function execute(
     ...(extra.stepTimer === undefined ? {} : { stepTimer: extra.stepTimer }),
   });
   return { report, logs };
+}
+
+// A lifecycle store that runs `interpose` once, immediately before the first
+// write of `model` -> `to`, so a case can race that write (a concurrent
+// version bump or a stolen fence) through the real store.
+function interposedStore(model: string, to: ResidencyState, interpose: () => void): LifecycleStore {
+  let fired = false;
+  return {
+    getResidencyState: (name) => store.getResidencyState(name),
+    listResidencyStates: () => store.listResidencyStates(),
+    transitionResidencyState: (input): TransitionResidencyStateResult => {
+      if (!fired && input.model === model && input.to === to) {
+        fired = true;
+        interpose();
+      }
+      return store.transitionResidencyState(input);
+    },
+  };
 }
 
 function exclusiveViolations(): ReturnType<typeof findExclusiveGroupViolations> {
@@ -475,5 +503,85 @@ describe("executeProfileSwitch residency lifecycle", () => {
     resolveStart({ ok: true });
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(store.getResidencyState("glm")?.state).toBe("failed");
+  });
+
+  test("LC12: a version conflict on the pre-stop write fails the stop closed before its dep", async () => {
+    // kills: stopWrapped calling the stop dep after a failed pre-stop walk.
+    seed("qwen-prod", "ready", GROUP);
+    const plan = planFor([QWEN_PROD, GLM]);
+    const fx = makeDeps();
+    const racing = interposedStore("qwen-prod", "draining", () => {
+      const raced = store.transitionResidencyState({
+        fenceToken: fence,
+        model: "qwen-prod",
+        to: "draining",
+        expectedVersion: store.getResidencyState("qwen-prod")?.version ?? 0,
+        nowMs: NOW,
+      });
+      expect(raced.ok).toBe(true);
+    });
+
+    const { report } = await execute(plan, fx.deps, { lifecycleStore: racing });
+
+    expect(fx.calls).toEqual([]);
+    expect(report.ok).toBe(false);
+    expect(report.failedAt?.action).toBe("stop");
+    expect(report.failedAt?.workload).toBe("qwen-prod");
+    expect(report.failedAt?.detail ?? "").toContain("qwen-prod ready -> draining");
+    expect(store.getResidencyState("qwen-prod")).toMatchObject({ state: "draining", version: 5 });
+  });
+
+  test("LC13: a fence stolen before the pre-stop write fails the stop closed before its dep", async () => {
+    // kills: stopWrapped calling the stop dep after a stale-fence pre-stop write.
+    seed("qwen-prod", "ready", GROUP);
+    const plan = planFor([QWEN_PROD, GLM]);
+    const fx = makeDeps();
+    const racing = interposedStore("qwen-prod", "draining", () => {
+      store.claimOwnership({ ownerId: "intruder", incarnation: "z" });
+    });
+
+    const { report } = await execute(plan, fx.deps, { lifecycleStore: racing });
+
+    expect(fx.calls).toEqual([]);
+    expect(report.ok).toBe(false);
+    expect(report.failedAt?.action).toBe("stop");
+    expect(report.failedAt?.workload).toBe("qwen-prod");
+    expect(report.failedAt?.detail ?? "").toContain("stale-fence");
+    expect(store.getResidencyState("qwen-prod")).toMatchObject({ state: "ready", version: 4 });
+  });
+
+  test("LC14: a stop that resolves ok after StepTimedOut leaves the victim failed", async () => {
+    // kills: the post-stop write ignoring ctx.signal.aborted (walking the
+    // timed-out victim unloading -> downloaded).
+    seed("qwen-prod", "ready", GROUP);
+    const plan = planFor([QWEN_PROD, GLM]);
+    let fire: () => void = () => undefined;
+    let resolveStop: (outcome: ProfileSwitchStepOutcome) => void = () => undefined;
+    const stopGate = new Promise<ProfileSwitchStepOutcome>((resolve) => {
+      resolveStop = resolve;
+    });
+    const fx = makeDeps({
+      stop: () => {
+        fire();
+        return stopGate;
+      },
+    });
+
+    const { report } = await execute(plan, fx.deps, {
+      stepTimeouts: { unloadMs: 1000 },
+      stepTimer: (_ms, onTimeout) => {
+        fire = onTimeout;
+        return (): void => undefined;
+      },
+    });
+
+    expect(report.failedAt?.reason).toBe("StepTimedOut");
+    expect(report.failedAt?.action).toBe("stop");
+    expect(report.failedAt?.workload).toBe("qwen-prod");
+    expect(fx.calls.filter((call) => call[0] === "start")).toEqual([]);
+
+    resolveStop({ ok: true });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(store.getResidencyState("qwen-prod")?.state).toBe("failed");
   });
 });
