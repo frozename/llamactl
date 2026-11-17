@@ -178,6 +178,31 @@ function seedRouterFixtureWithSwitchCooldown(): void {
   );
 }
 
+function seedRouterFixtureWithMinResidency(): void {
+  saveWorkload(
+    runManifest("chat-a", { profiles: "chat", phase: "Running", expectedMemoryGiB: 10 }),
+    workloadsDir,
+  );
+  saveWorkload(
+    runManifest("code-b", { profiles: "code", phase: "Stopped", expectedMemoryGiB: 12 }),
+    workloadsDir,
+  );
+  saveNodeRun(
+    {
+      apiVersion: "llamactl/v1",
+      kind: "NodeRun",
+      metadata: { name: "local", labels: {} },
+      spec: {
+        node: "local",
+        budget: { memoryGiB: 24 },
+        residency: { minResidencySeconds: 3600 },
+        infra: [],
+      },
+    },
+    workloadsDir,
+  );
+}
+
 function seedInflight(fenceIdentity?: FenceIdentity): Fence {
   const store = openResidencyOperationStore({ path: storePath });
   try {
@@ -204,6 +229,32 @@ function withStore<T>(fn: (store: StoreHandle) => T): T {
   const store = openResidencyOperationStore({ path: storePath });
   try {
     return fn(store);
+  } finally {
+    store.close();
+  }
+}
+
+// Walks a residency_states row unavailable -> downloaded -> loading -> warming
+// -> ready, every hop stamped readyAtMs, so the ready row's updatedAtMs is the
+// load time minResidencySeconds measures against.
+function seedReadyLifecycle(model: string, readyAtMs: number): void {
+  const store = openResidencyOperationStore({ path: storePath });
+  try {
+    const fence = store.claimOwnership({ ownerId: "seed", incarnation: "seed" });
+    let expectedVersion = 0;
+    for (const to of ["downloaded", "loading", "warming", "ready"] as const) {
+      const result = store.transitionResidencyState({
+        fenceToken: fence.fenceToken,
+        model,
+        to,
+        expectedVersion,
+        nowMs: readyAtMs,
+      });
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expectedVersion = result.record.version;
+      }
+    }
   } finally {
     store.close();
   }
@@ -783,6 +834,27 @@ describe("residencyApplyProfile procedure", () => {
       ["stop", "chat-a"],
       ["start", "code-b"],
     ]);
+  });
+
+  test("A12: a young ready lifecycle row refuses the wet apply with MinResidency", async () => {
+    // kills: minResidencySeconds not reaching the wet apply path.
+    seedRouterFixtureWithMinResidency();
+    seedReadyLifecycle("chat-a", Date.now() - 10_000);
+    await installStepsFake();
+
+    const result = await applyProfile({
+      node: "local",
+      to: "code",
+      from: "chat",
+      dryRun: false,
+      confirm: true,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.outcome).toBe("refused");
+    expect(result.refusal?.reason).toBe("MinResidency");
+    expect(result.refusal?.detail).toBe("1 victim(s) have not met minimum residency");
+    expect(stepCalls).toEqual([]);
   });
 });
 

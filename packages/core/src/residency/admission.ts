@@ -18,8 +18,10 @@ export const MEMORY_BUDGET_HEADROOM_RATIO = 0.75;
  * and CLI apply paths). `switchCooldownSeconds` is enforced: `residencyPlan`
  * and `residencyApplyProfile` refuse with `Cooldown` within that many seconds
  * of the node's last succeeded profile switch recorded in the node-local
- * residency store. `minResidencySeconds` stays inert until a trustworthy
- * per-workload load time is supplied (#279).
+ * residency store. `minResidencySeconds` is enforced: `residencyPlan` and
+ * `residencyApplyProfile` refuse with `MinResidency` while a victim's
+ * node-local `residency_states` row has been `ready` for fewer than that many
+ * seconds; 0 disables.
  *
  * `idleEvictSeconds` is parse-only. It is validated as part of NodeRun
  * spec.residency, stored with the NodeRun manifest, and echoed verbatim
