@@ -54,6 +54,24 @@ export type SessionUnloadCheck =
   | { ok: true; released: string[] }
   | { ok: false; reason: "SessionActive"; sessions: string[] };
 
+export interface SessionRefcountOptions {
+  idleTimeoutMs: number;
+  now?: () => number;
+}
+
+export type SessionSnapshotRow = {
+  sessionId: string;
+  workload: string;
+  refs: number;
+  idleMs: number;
+  expiresInMs: number | null;
+};
+
+export type SessionSnapshot = {
+  idleTimeoutMs: number;
+  sessions: SessionSnapshotRow[];
+};
+
 export interface SessionRefcounts {
   acquire(sessionId: string, workload: string): SessionAcquireResult;
   /**
@@ -78,6 +96,8 @@ export interface SessionRefcounts {
   forceRelease(workload: string): string[];
   activeSessions(workload: string): string[];
   checkUnload(workload: string, opts?: { force?: boolean }): SessionUnloadCheck;
+  /** Return a snapshot of all live sessions, sorted by last activity. */
+  snapshot?(): SessionSnapshot;
 }
 
 // ── Process-wide registry seam ──────────────────────────────────────────
@@ -210,6 +230,28 @@ export function createSessionRefcounts(opts: SessionRefcountOptions): SessionRef
       }
       for (const id of ids) sessions.delete(id);
       return { ok: true, released: ids };
+    },
+    snapshot(): SessionSnapshot {
+      prune();
+      const rows: SessionSnapshotRow[] = [];
+      for (const [sessionId, entry] of sessions) {
+        const idleMs = now() - entry.lastActivityMs;
+        const expiresInMs = entry.refs > 0 ? null : Math.max(0, idleTimeoutMs - idleMs);
+        rows.push({
+          sessionId,
+          workload: entry.workload,
+          refs: entry.refs,
+          idleMs,
+          expiresInMs,
+        });
+      }
+      rows.sort(
+        (a, b) =>
+          a.idleMs - b.idleMs ||
+          a.workload.localeCompare(b.workload) ||
+          a.sessionId.localeCompare(b.sessionId),
+      );
+      return { idleTimeoutMs, sessions: rows };
     },
   };
 }

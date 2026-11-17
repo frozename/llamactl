@@ -29,7 +29,7 @@ Subcommands:
   plan --node <name> --to <profile> [--from <profile>] [--json]   Read-only dry-run profile switch: budget source, victims, replacements, protected workloads or refusal. Never starts, stops, loads or writes the store.
   apply-profile --node <name> --to <profile> [--from <profile>] [--json]   Dry-run by default: plan and report the profile switch without touching the store. Add --execute --yes to run the switch for real (stops and starts workloads, records an operation).
   cancel-operation <operationId> --yes [--node <name>] [--json]   Request an abort of an in-flight profile switch started by apply-profile --execute --yes in the process serving <node> (an agent serve process); it stops before its next step boundary. Process-local: a switch run in-process by a local-endpoint CLI invocation cannot be cancelled from another CLI invocation. Requires --yes.
-  force-unload <workload> --reason <text> --yes [--node <name>] [--json]   Operator override of the stop fence: revoke active leases (audited as an operator override), then stop the workload. Destructive; requires --yes.
+  force-unload <workload> --reason <text> --yes [--node <name>] [--json]   Operator override of the stop fence: revoke active leases (audited as an operator override), then stop the workload. Destructive; requires --yes. Reports released session counts when a session registry is installed. Shows bound sessions (refs, idle-timeout expiry) in status output.
 
 Example:
   llamactl residency status --node <name> [--json]
@@ -88,6 +88,7 @@ export function renderResidencyStatus(s: ResidencyRenderInput): string {
   }
   pushLifecycleLines(lines, s.lifecycle);
   pushLeaseLines(lines, s.leases);
+  pushSessionLines(lines, s.sessions);
   lines.push(
     `Note:       store is the serving process's node-local store, not ${s.node}'s coordinator state`,
   );
@@ -138,6 +139,55 @@ function pushLeaseLines(lines: string[], leases: ResidencyRenderInput["leases"])
       `  ${a.workload}  epoch ${String(a.epoch)}  revoked ${String(a.revokedCount)}  reason ${a.reason ?? "-"}`,
     );
   }
+}
+
+function pushSessionLines(lines: string[], sessions: ResidencyRenderInput["sessions"]): void {
+  if (sessions === undefined) {
+    return;
+  }
+  if (sessions.status !== "available") {
+    if (sessions.reason === "NoRegistry") {
+      lines.push(`Sessions:   unavailable (no session registry installed; scope: serving-process)`);
+      return;
+    }
+    if (sessions.reason === "SessionsUnknown") {
+      lines.push(`Sessions:   unavailable (session registry unreadable; scope: serving-process)`);
+      return;
+    }
+    if (sessions.reason === "SnapshotUnsupported") {
+      lines.push(
+        `Sessions:   unavailable (session registry has no snapshot; scope: serving-process)`,
+      );
+      return;
+    }
+    lines.push(`Sessions:   unsupported (scope: serving-process)`);
+    return;
+  }
+  const header = `Sessions:   ${String(sessions.sessions.length)} bound (idle timeout ${sessions.idleTimeoutMs} ms; scope: ${sessions.scope})`;
+  lines.push(header);
+  for (const s of sessions.sessions) {
+    if (s.expiresInMs !== null) {
+      lines.push(
+        `  ${s.workload}  ${s.sessionId}  refs ${String(s.refs)}  expires in ${s.expiresInMs} ms`,
+      );
+    } else if (s.refs > 0) {
+      lines.push(`  ${s.workload}  ${s.sessionId}  refs ${String(s.refs)}  in flight`);
+    } else {
+      lines.push(
+        `  ${s.workload}  ${s.sessionId}  refs ${String(s.refs)}  idle ${formatMs(s.idleMs)}`,
+      );
+    }
+  }
+}
+
+function formatMs(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ${minutes % 60}m`;
 }
 
 type StatusFlags = { json: boolean; node: string | undefined } | { exit: number };
@@ -726,6 +776,11 @@ function renderForceUnload(r: ResidencyForceUnloadView): string {
   const lines = [head];
   if (r.revoked.length === 0) {
     lines.push("Forced unload: revoked 0 lease(s); no lease audit row written");
+  }
+  if (r.releasedSessions !== undefined && r.releasedSessions.length > 0) {
+    lines.push(
+      `Forced unload: released ${String(r.releasedSessions.length)} session(s): ${r.releasedSessions.join(", ")}`,
+    );
   }
   return `${lines.join("\n")}\n`;
 }
