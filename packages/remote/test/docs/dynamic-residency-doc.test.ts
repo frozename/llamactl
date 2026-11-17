@@ -965,6 +965,9 @@ describe("docs/dynamic-residency.md (#285)", () => {
     }
     const proxySrc = readOrEmpty(join(REPO, "packages/core/src/openaiProxy.ts"));
     for (const pin of [
+      "function prepareSessionAndLease(",
+      "function acquireProxyResidencyLease(",
+      'const draining = acquired.reason === "Draining";',
       "sessionResult.cancel?.();",
       'type: draining ? "model_draining" : "model_not_loaded"',
       "{ status: 503 }",
@@ -1024,23 +1027,47 @@ describe("docs/dynamic-residency.md (#285)", () => {
       "stop not recorded: ",
       "if (!existsSync(opts.storePath)) {",
       "start kept ready: host already running",
+      // undeclared label records no group
+      "return groups.some((declared) => declared.name === group) ? group : undefined;",
+      // only a ready row proven down is left for reconcile
+      'return !(row.state === "ready" && isProvenDownSafe(opts, row.model));',
     ]) {
       expect(directLifecycle, pin).toContain(pin);
     }
-    expect(readOrEmpty(join(REPO, "packages/remote/src/residency/lifecycle-steps.ts"))).toContain(
+    const stepsSrc = readOrEmpty(join(REPO, "packages/remote/src/residency/lifecycle-steps.ts"));
+    for (const pin of [
       "residency lifecycle refused ${workload} ${from} -> ${to}: ${decision.reason}: ${decision.detail}",
-    );
+      // the refusal returns before the engine (deps.start) runs
+      "if (!walkToLoading.ok) {\n    return { ok: false, detail: describeRefusal(workload, walkToLoading) };\n  }\n  const outcome = await ctx.deps.start(workload, stepCtx);",
+      "-> downloaded in group ${group}: ",
+    ]) {
+      expect(stepsSrc, pin).toContain(pin);
+    }
+    for (const needle of [
+      "reconciled to downloaded",
+      "before the engine runs",
+      "records no group",
+    ]) {
+      expect(d, needle).toContain(needle);
+    }
     const routerSrc = readOrEmpty(join(REPO, "packages/remote/src/router.ts"));
     for (const pin of [
       "runDirectResidencyStart<StartModelHostResult>(",
       "runDirectResidencyStop<StopModelHostResult>(",
       'return status.state === "Stopped" && status.identityUnknown !== true;',
       "const r = await stopModelHost({ key: { name } });",
+      // deleting a ModelHost reaches modelHostStop
+      "? await stopModelHostForDelete(manifest, stops)",
+      "const outcome = (await client.modelHostStop.mutate({",
     ]) {
       expect(routerSrc, pin).toContain(pin);
     }
-    expect(readOrEmpty(join(REPO, "packages/remote/src/workload/apply.ts"))).toContain(
+    const applySrc = readOrEmpty(join(REPO, "packages/remote/src/workload/apply.ts"));
+    for (const pin of [
       "client.modelHostStart.subscribe(",
-    );
+      "const started = await startModelHostProcess(client, manifest);",
+    ]) {
+      expect(applySrc, pin).toContain(pin);
+    }
   });
 });
