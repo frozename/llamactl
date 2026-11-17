@@ -434,4 +434,18 @@ describe("docs/dynamic-fleet-models.md (#522)", () => {
       readOrEmpty(join(REPO, "packages/remote/src/residency/profile-transition.ts")),
     ).toContain("SessionsActive: ");
   });
+
+  // Part of #522
+  // Kills: dropping or rewording the claimed-pass-only scope of the
+  // lifecycle-row boot recovery paragraph.
+  test("case 22: lifecycle boot recovery runs only on a claimed pass", () => {
+    const s = (sectionBody(/^#{2,} .*residency lifecycle states/i) ?? "").replaceAll(/\s+/g, " ");
+    for (const n of [
+      "It runs only on a claimed pass, i.e. only when a stale profile-switch row exists, so lifecycle rows interrupted outside a switch are not swept.",
+      "`failInterruptedLifecycleRows`",
+      "#517",
+    ]) {
+      expect(s, n).toContain(n);
+    }
+  });
 });

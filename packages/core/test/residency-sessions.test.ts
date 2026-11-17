@@ -16,6 +16,7 @@ type CheckUnloadResult =
 type SessionRefcounts = {
   acquire: (sessionId: string, workload: string) => AcquireResult;
   release: (sessionId: string, generation?: number) => unknown;
+  cancelAcquire?: (sessionId: string, generation: number) => unknown;
   touch: (sessionId: string) => unknown;
   checkUnload: (workload: string, opts?: { force?: boolean }) => CheckUnloadResult;
   forceRelease: (workload: string) => string[];
@@ -276,4 +277,189 @@ test("#520: a stale release does not refresh lastActivityMs, so idle expiry proc
   expect(rc.activeSessions("glm")).toEqual(["s1"]);
   t += idleTimeoutMs / 2;
   expect(rc.activeSessions("glm")).toEqual([]);
+});
+
+test("#520: cancelAcquire drops a binding its own acquire created", async () => {
+  const mod = await load();
+  const rc = mod.createSessionRefcounts({ idleTimeoutMs: 60_000, now: () => 1_000 });
+  expect(typeof rc.cancelAcquire).toBe("function");
+  const created = rc.acquire("s1", "glm");
+  expect(created.ok).toBe(true);
+  const gen = generationOf(created);
+  expect(typeof gen).toBe("number");
+  // Kills a cancelAcquire that only decrements refs: the entry its own
+  // acquire created must be deleted, or s1 stays bound to glm and the
+  // re-acquire on "other" conflicts.
+  rc.cancelAcquire!("s1", gen!);
+  expect(rc.activeSessions("glm")).toEqual([]);
+  expect(rc.acquire("s1", "other")).toMatchObject({ ok: true, workload: "other" });
+});
+
+test("#520: cancelAcquire of a joined acquire restores refs and the idle deadline", async () => {
+  const mod = await load();
+  let t = 1_000;
+  const idleTimeoutMs = 5_000;
+  const rc = mod.createSessionRefcounts({ idleTimeoutMs, now: (): number => t });
+  expect(typeof rc.cancelAcquire).toBe("function");
+
+  const first = rc.acquire("s1", "glm");
+  const gen = generationOf(first);
+  expect(typeof gen).toBe("number");
+  rc.release("s1", gen);
+  // Idle binding: refs 0, lastActivity 1_000, expires at 6_000.
+  t = 3_000;
+  const joined = rc.acquire("s1", "glm");
+  expect(joined).toMatchObject({ ok: true, refs: 1, generation: gen });
+  // Kills a cancelAcquire that delegates to release or refreshes
+  // lastActivityMs: the undo must restore the pre-acquire deadline (1_000),
+  // so the session still expires at 6_000 rather than 3_000 + 5_000.
+  rc.cancelAcquire!("s1", gen!);
+
+  t = 5_999;
+  expect(rc.checkUnload("glm")).toEqual({
+    ok: false,
+    reason: "SessionActive",
+    sessions: ["s1"],
+  });
+  t = 6_000;
+  expect(rc.checkUnload("glm")).toEqual({ ok: true, released: [] });
+  expect(rc.activeSessions("glm")).toEqual([]);
+
+  // Refs restoration: cancel the latest of two joins, then one release
+  // must bring refs to 0 so the session expires idleTimeoutMs later.
+  t = 10_000;
+  const s2first = rc.acquire("s2", "glm");
+  const gen2 = generationOf(s2first);
+  rc.release("s2", gen2);
+  rc.acquire("s2", "glm");
+  const s2second = rc.acquire("s2", "glm");
+  expect(s2second).toMatchObject({ ok: true, refs: 2, generation: gen2 });
+  rc.cancelAcquire!("s2", gen2!);
+  rc.release("s2", gen2);
+  t = 14_999;
+  expect(rc.checkUnload("glm")).toEqual({
+    ok: false,
+    reason: "SessionActive",
+    sessions: ["s2"],
+  });
+  t = 15_000;
+  expect(rc.checkUnload("glm")).toEqual({ ok: true, released: [] });
+});
+
+test("#520: a stale-generation cancelAcquire is a no-op", async () => {
+  const mod = await load();
+  let t = 1_000;
+  const idleTimeoutMs = 1_000;
+  const rc = mod.createSessionRefcounts({ idleTimeoutMs, now: (): number => t });
+  expect(typeof rc.cancelAcquire).toBe("function");
+
+  const stale = rc.acquire("s1", "glm");
+  const gen1 = generationOf(stale);
+  expect(typeof gen1).toBe("number");
+  expect(rc.forceRelease("glm")).toEqual(["s1"]);
+  const live = rc.acquire("s1", "glm");
+  expect(live).toMatchObject({ ok: true, workload: "glm", refs: 1 });
+  const gen2 = generationOf(live);
+  expect(gen2).not.toBe(gen1);
+  // Kills a cancelAcquire that drops the generation check: g1 is stale, so
+  // the live refs-1 binding must survive untouched.
+  rc.cancelAcquire!("s1", gen1!);
+
+  expect(rc.activeSessions("glm")).toEqual(["s1"]);
+  t += 10 * idleTimeoutMs;
+  expect(rc.checkUnload("glm")).toEqual({
+    ok: false,
+    reason: "SessionActive",
+    sessions: ["s1"],
+  });
+});
+
+test("#520: cancelAcquire after release is a no-op", async () => {
+  const mod = await load();
+  let t = 1_000;
+  const idleTimeoutMs = 5_000;
+  const rc = mod.createSessionRefcounts({ idleTimeoutMs, now: (): number => t });
+  expect(typeof rc.cancelAcquire).toBe("function");
+
+  // refs 0: the release consumed the acquire's undo record.
+  const created = rc.acquire("s1", "glm");
+  const gen = generationOf(created);
+  expect(typeof gen).toBe("number");
+  t = 3_000;
+  rc.release("s1", gen);
+  // Kills a cancelAcquire without the lastAcquire === null guard (it throws
+  // on the null undo) and a release that leaves lastAcquire set (the stale
+  // created-undo deletes the idle binding).
+  expect(() => rc.cancelAcquire!("s1", gen!)).not.toThrow();
+  expect(rc.activeSessions("glm")).toEqual(["s1"]);
+  expect(rc.acquire("s1", "other")).toEqual({
+    ok: false,
+    reason: "AffinityConflict",
+    boundWorkload: "glm",
+  });
+  // lastActivityMs is still the release time (3_000), so expiry is at 8_000.
+  t = 7_999;
+  expect(rc.checkUnload("glm")).toEqual({
+    ok: false,
+    reason: "SessionActive",
+    sessions: ["s1"],
+  });
+  t = 8_000;
+  expect(rc.checkUnload("glm")).toEqual({ ok: true, released: [] });
+
+  // refs 1: two joins then one release; the cancel must not drop the
+  // remaining ref or rewind the idle deadline.
+  t = 20_000;
+  const first = rc.acquire("s2", "glm");
+  const gen2 = generationOf(first);
+  t = 21_000;
+  expect(rc.acquire("s2", "glm")).toMatchObject({ ok: true, refs: 2, generation: gen2 });
+  t = 22_000;
+  rc.release("s2", gen2);
+  expect(() => rc.cancelAcquire!("s2", gen2!)).not.toThrow();
+  t = 22_000 + 10 * idleTimeoutMs;
+  expect(rc.checkUnload("glm")).toEqual({
+    ok: false,
+    reason: "SessionActive",
+    sessions: ["s2"],
+  });
+  expect(rc.acquire("s2", "glm")).toMatchObject({ ok: true, refs: 2, generation: gen2 });
+});
+
+test("#520: cancelAcquire after touch is a no-op", async () => {
+  const mod = await load();
+  let t = 1_000;
+  const idleTimeoutMs = 5_000;
+  const rc = mod.createSessionRefcounts({ idleTimeoutMs, now: (): number => t });
+  expect(typeof rc.cancelAcquire).toBe("function");
+
+  const created = rc.acquire("s1", "glm");
+  const gen = generationOf(created);
+  expect(typeof gen).toBe("number");
+  t = 2_000;
+  rc.touch("s1");
+  // Kills a cancelAcquire without the lastAcquire === null guard: touch
+  // cleared the undo record, so the cancel must neither throw nor drop the
+  // binding its acquire created.
+  expect(() => rc.cancelAcquire!("s1", gen!)).not.toThrow();
+  expect(rc.activeSessions("glm")).toEqual(["s1"]);
+  expect(rc.acquire("s1", "other")).toEqual({
+    ok: false,
+    reason: "AffinityConflict",
+    boundWorkload: "glm",
+  });
+  // refs is still 1: a join reports 2, and two releases bring it to 0.
+  t = 3_000;
+  expect(rc.acquire("s1", "glm")).toMatchObject({ ok: true, refs: 2, generation: gen });
+  rc.release("s1", gen);
+  t = 4_000;
+  rc.release("s1", gen);
+  t = 4_000 + idleTimeoutMs - 1;
+  expect(rc.checkUnload("glm")).toEqual({
+    ok: false,
+    reason: "SessionActive",
+    sessions: ["s1"],
+  });
+  t = 4_000 + idleTimeoutMs;
+  expect(rc.checkUnload("glm")).toEqual({ ok: true, released: [] });
 });
