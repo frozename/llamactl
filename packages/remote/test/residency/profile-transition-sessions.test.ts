@@ -32,8 +32,15 @@ import {
   setSessionRefcountRegistry,
 } from "@llamactl/core/residency/sessions";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { executeProfileSwitch } from "../../src/residency/profile-transition.js";
+import {
+  openResidencyOperationStore,
+  type ResidencyOperationStore,
+} from "../../src/residency/store.js";
+import { mkdtempSync, rmSync } from "../../src/safe-fs.js";
 
 let clock = 0;
 
@@ -86,13 +93,23 @@ interface Report {
   ran: SwitchStep[];
   failedAt: StepFailure | null;
   deferred: StepKind[];
+  operation?: { id: string; outcome: string; recorded: boolean; recordFailure?: string };
 }
+
+type SwitchOperation = {
+  store: ResidencyOperationStore;
+  fenceToken: number;
+  operationId: string;
+  desiredRevision: number;
+  nowMs?: () => number;
+};
 
 type ExecuteOpts = {
   dryRun?: boolean;
   registry?: ResidencyLeases | null;
   sessions?: SessionRefcounts | null;
   drainTimeoutMs?: number;
+  operation?: SwitchOperation;
 };
 
 type LooseDeps = {
@@ -604,5 +621,216 @@ describe("executeProfileSwitch session protection", () => {
     for (const id of VICTIM_IDS) {
       expect(fx.inner.snapshot(id).phase).toBe("open");
     }
+  });
+});
+
+function throwingSessions(): SessionRefcounts {
+  const real = createSessionRefcounts({ idleTimeoutMs: 1000, now: () => clock });
+  const throwing: SessionRefcounts = {
+    acquire: (sessionId, workload) => real.acquire(sessionId, workload),
+    release: (sessionId, generation) => {
+      real.release(sessionId, generation);
+    },
+    touch: (sessionId) => {
+      real.touch(sessionId);
+    },
+    forceRelease: (workload) => real.forceRelease(workload),
+    activeSessions: (workload) => real.activeSessions(workload),
+    checkUnload: () => {
+      throw new Error("session registry unavailable");
+    },
+  };
+  return throwing;
+}
+
+// The production caller (apply-profile.ts runFencedSwitch) always passes an
+// operation, so the session checks must hold on the executeWithOperation
+// branch too, not only on the bare runFenced call site.
+describe("executeProfileSwitch session protection with an operation record", () => {
+  let dir = "";
+  let store: ResidencyOperationStore;
+  let fenceToken = 0;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "llamactl-profile-sessions-op-"));
+    store = openResidencyOperationStore({ path: join(dir, "operations.sqlite") });
+    fenceToken = store.claimOwnership({ ownerId: "test", incarnation: "i1" }).fenceToken;
+  });
+
+  afterEach(() => {
+    store.close();
+    if (dir !== "") {
+      rmSync(dir, { recursive: true, force: true });
+      dir = "";
+    }
+  });
+
+  function operationOpts(operationId: string): SwitchOperation {
+    return { store, fenceToken, operationId, desiredRevision: 0, nowMs: () => 1_000 };
+  }
+
+  function expectFailedRecord(operationId: string, detail: string): void {
+    const rec = store.getOperation(operationId);
+    expect(rec).not.toBeNull();
+    expect(rec?.phase).toBe("terminal");
+    expect(rec?.outcome).toBe("failed");
+    expect(rec?.detail).toContain(detail);
+    expect(store.listNonterminal()).toEqual([]);
+  }
+
+  test("a fence-time SessionsActive refusal fails the operation before any stop", async () => {
+    // Kills: passing sessions:null (or omitting it) on the operation-backed
+    // runFenced call site — the base runs every stop and records succeeded.
+    const plan = okFleetPlan();
+    const fx = makeFixture();
+    const sessions = createSessionRefcounts({ idleTimeoutMs: 1000, now: () => clock });
+    idleSession(sessions, "s1", "v-b");
+
+    const report = await runSwitch(plan, fx.deps, {
+      dryRun: false,
+      registry: fx.registry,
+      sessions,
+      drainTimeoutMs: DRAIN_TIMEOUT_MS,
+      operation: operationOpts("op-sess-active"),
+    });
+
+    expect(report.outcome).toBe("failed");
+    expect(report.ok).toBe(false);
+    expect(report.failedAt).toEqual({
+      action: "fence",
+      workload: "v-b",
+      detail: "SessionsActive: s1",
+    });
+    expect(report.steps).toEqual([
+      step("fence", "v-a", "ok"),
+      step("fence", "v-b", "failed", "SessionsActive: s1"),
+      step("fence", "v-c", "not-run"),
+      ...DRAIN_NOT_RUN,
+      ...STOP_NOT_RUN,
+      ...START_NOT_RUN,
+    ]);
+    expect(report.operation).toEqual({
+      id: "op-sess-active",
+      outcome: "failed",
+      recorded: true,
+    });
+    noStopStartWhenIdle(fx.calls);
+    expect(fx.calls).toContain("cancelDrain:v-a");
+    expect(fx.calls).toContain("cancelDrain:v-b");
+    for (const id of VICTIM_IDS) {
+      expect(fx.inner.snapshot(id).phase).toBe("open");
+    }
+    expect(sessions.activeSessions("v-b")).toEqual(["s1"]);
+    expectFailedRecord("op-sess-active", "SessionsActive: s1");
+  });
+
+  test("a throwing session registry fails the operation closed as SessionsUnknown", async () => {
+    // Kills: a fail-open catch, or a null sessions handle, on the
+    // operation-backed path.
+    const plan = okFleetPlan();
+    const fx = makeFixture();
+
+    const report = await runSwitch(plan, fx.deps, {
+      dryRun: false,
+      registry: fx.registry,
+      sessions: throwingSessions(),
+      drainTimeoutMs: DRAIN_TIMEOUT_MS,
+      operation: operationOpts("op-sess-unknown"),
+    });
+
+    expect(report.outcome).toBe("failed");
+    expect(report.ok).toBe(false);
+    expect(report.failedAt).toEqual({
+      action: "fence",
+      workload: "v-a",
+      detail: "SessionsUnknown",
+    });
+    expect(report.steps).toEqual([
+      step("fence", "v-a", "failed", "SessionsUnknown"),
+      step("fence", "v-b", "not-run"),
+      step("fence", "v-c", "not-run"),
+      ...DRAIN_NOT_RUN,
+      ...STOP_NOT_RUN,
+      ...START_NOT_RUN,
+    ]);
+    expect(report.operation).toEqual({
+      id: "op-sess-unknown",
+      outcome: "failed",
+      recorded: true,
+    });
+    noStopStartWhenIdle(fx.calls);
+    for (const id of VICTIM_IDS) {
+      expect(fx.inner.snapshot(id).phase).toBe("open");
+    }
+    expectFailedRecord("op-sess-unknown", "SessionsUnknown");
+  });
+
+  test("a session arriving during the drain window fails the operation before any stop", async () => {
+    // Kills: dropping the post-drain re-check on the operation-backed path.
+    const plan = okFleetPlan();
+    const fx = makeFixture();
+    const sessions = createSessionRefcounts({ idleTimeoutMs: 1000, now: () => clock });
+    const held = fx.inner.acquire("v-c");
+    expect(held.ok).toBe(true);
+    if (!held.ok) {
+      throw new Error("acquire refused");
+    }
+
+    const pending = run(plan, fx.deps, {
+      dryRun: false,
+      registry: fx.registry,
+      sessions,
+      drainTimeoutMs: DRAIN_TIMEOUT_MS,
+      operation: operationOpts("op-sess-drain"),
+    });
+    const generation = acquireSession(sessions, "s2", "v-c");
+    sessions.release("s2", generation);
+    held.lease.release();
+
+    const report = await reportOf(pending);
+
+    expect(report.outcome).toBe("failed");
+    expect(report.failedAt).toEqual({
+      action: "drain",
+      workload: "v-c",
+      detail: "SessionsActive: s2",
+    });
+    expect(report.operation).toEqual({
+      id: "op-sess-drain",
+      outcome: "failed",
+      recorded: true,
+    });
+    expect(fx.calls.some((entry) => entry.startsWith("stop:"))).toBe(false);
+    expect(fx.calls.some((entry) => entry.startsWith("start:"))).toBe(false);
+    for (const id of VICTIM_IDS) {
+      expect(fx.inner.snapshot(id).phase).toBe("open");
+    }
+    expectFailedRecord("op-sess-drain", "SessionsActive: s2");
+  });
+
+  test("the installed seam is the default on the operation-backed path", async () => {
+    // Kills: the operation branch resolving sessions differently from the
+    // bare branch — apply-profile passes no sessions key and relies on it.
+    const plan = okFleetPlan();
+    const fx = makeFixture();
+    const sessions = createSessionRefcounts({ idleTimeoutMs: 1000, now: () => clock });
+    idleSession(sessions, "s1", "v-a");
+    setSessionRefcountRegistry(sessions);
+
+    const report = await runSwitch(plan, fx.deps, {
+      dryRun: false,
+      registry: fx.registry,
+      drainTimeoutMs: DRAIN_TIMEOUT_MS,
+      operation: operationOpts("op-sess-seam"),
+    });
+
+    expect(report.outcome).toBe("failed");
+    expect(report.failedAt).toEqual({
+      action: "fence",
+      workload: "v-a",
+      detail: "SessionsActive: s1",
+    });
+    noStopStartWhenIdle(fx.calls);
+    expectFailedRecord("op-sess-seam", "SessionsActive: s1");
   });
 });
