@@ -88,7 +88,7 @@ With the lease registry on (`LLAMACTL_RESIDENCY_LEASES`), a wet `apply-profile` 
 
 ## Direct ModelHost start and stop
 
-The agent's `modelHostStart` and `modelHostStop` procedures (`packages/remote/src/router.ts`) wrap `startModelHost`/`stopModelHost` in `runDirectResidencyStart`/`runDirectResidencyStop` (`packages/remote/src/residency/direct-lifecycle.ts`). `llamactl apply -f` and `llamactl enable` of a ModelHost reach `modelHostStart` (`startModelHostProcess` in `packages/remote/src/workload/apply.ts`), and deleting a ModelHost reaches `modelHostStop`.
+The agent's `modelHostStart` and `modelHostStop` procedures (`packages/remote/src/router.ts`) wrap `startModelHost`/`stopModelHost` in `runDirectResidencyStart`/`runDirectResidencyStop` (`packages/remote/src/residency/direct-lifecycle.ts`). `llamactl apply -f` and `llamactl enable` of a ModelHost reach `modelHostStart` (`startModelHostProcess` in `packages/remote/src/workload/apply.ts`), and `llamactl disable` (`disableModelHost`) or deleting a ModelHost reaches `modelHostStop`.
 
 A node with no store file runs the start or stop unrecorded and never creates the store. Otherwise the wrapper claims the shared apply-profile fence and walks the `residency_states` row through the same `withResidencyLifecycle` hops as a profile switch (`packages/remote/src/residency/lifecycle-steps.ts`). A label naming an undeclared group records no group.
 

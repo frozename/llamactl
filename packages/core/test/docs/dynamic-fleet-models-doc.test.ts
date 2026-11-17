@@ -92,6 +92,23 @@ function sectionBody(heading: RegExp): string | undefined {
   return lines.slice(start + 1, end === -1 ? lines.length : end).join("\n");
 }
 
+function flat(text: string): string {
+  return text.replaceAll(/\s+/g, " ");
+}
+
+// The text of the function that `signature` opens, up to its closing brace
+// at the signature's indent; "" when the signature is missing or not unique.
+function enclosingBody(src: string, signature: string): string {
+  const start = src.indexOf(signature);
+  if (start === -1 || src.includes(signature, start + 1)) return "";
+  const lineStart = src.lastIndexOf("\n", start) + 1;
+  const indent = /^[ \t]*/.exec(src.slice(lineStart))?.[0] ?? "";
+  const closers = new Set([`${indent}}`, `${indent}},`, `${indent}};`]);
+  const lines = src.slice(start).split("\n");
+  const end = lines.findIndex((line, i) => i > 0 && closers.has(line));
+  return lines.slice(0, end === -1 ? lines.length : end + 1).join("\n");
+}
+
 function runbookRows(section: string): Map<string, RunbookRow> {
   const rows = new Map<string, RunbookRow>();
   for (const line of section.split("\n")) {
@@ -450,28 +467,51 @@ describe("docs/dynamic-fleet-models.md (#522)", () => {
   });
 
   // Part of #522
-  // Kills: unwiring the direct start wrapper, or reverting the runbook
-  // step 6 refusal list or the #517 miscitation.
+  // Kills: unwiring the direct start wrapper or the disable stop call,
+  // dropping a step 6 or step 9 qualifier, breaking the dynamic-residency
+  // link anchor, or reverting the #517 miscitation.
   test("case 23: exclusive-window runbook names direct-lifecycle start refusals (#741)", () => {
-    const r = (sectionBody(/^## Exclusive-window runbook/) ?? "").replaceAll(/\s+/g, " ");
+    const r = flat(sectionBody(/^## Exclusive-window runbook/) ?? "");
+    // Full phrases, so dropping a qualifier (store exists, never blocked)
+    // or breaking the link anchor fails.
     for (const needle of [
-      "residency lifecycle refused",
-      "profile switch in flight on this node",
-      "`ExclusiveGroupOccupied`",
-      "`llamactl residency status --node <name>`",
-      "not recorded",
-      "#741",
+      'When the agent\'s residency store exists, the start can also be refused with "residency lifecycle refused <name> …: `ExclusiveGroupOccupied` …" (a same-group row still occupying; inspect with `llamactl residency status --node <name>`), or with "residency lifecycle refused <name>: profile switch in flight on this node; retry after it settles" (#741; see [dynamic-residency.md](dynamic-residency.md#direct-modelhost-start-and-stop)).',
+      'A disable is never blocked by this bookkeeping and at worst logs "not recorded" (#741).',
     ]) {
       expect(r, needle).toContain(needle);
     }
-    const s = (sectionBody(/^#{2,} .*residency lifecycle states/i) ?? "").replaceAll(/\s+/g, " ");
+    // the anchor resolves to a heading in dynamic-residency.md
+    const residencyHeadings = readOrEmpty(join(REPO, "docs/dynamic-residency.md"))
+      .split("\n")
+      .filter((line) => /^#{1,6} /.test(line))
+      .map((line) =>
+        line
+          .replace(/^#+ /, "")
+          .trim()
+          .toLowerCase()
+          .replaceAll(/[^a-z0-9 -]/g, "")
+          .replaceAll(" ", "-"),
+      );
+    expect(residencyHeadings).toContain("direct-modelhost-start-and-stop");
+    const s = flat(sectionBody(/^#{2,} .*residency lifecycle states/i) ?? "");
     expect(s).not.toContain("Since #517 the direct");
-    expect(s).toContain("#741");
+    expect(s).toContain("Since #741 (Part of #517) the direct ModelHost writers");
+    expect(s).toContain(
+      "Bookkeeping never blocks a stop: a stop whose claim or walk fails still runs and logs `not recorded`.",
+    );
     expect(readOrEmpty(join(REPO, "packages/remote/src/router.ts"))).toContain(
       "runDirectResidencyStart<StartModelHostResult>(",
     );
-    expect(readOrEmpty(join(REPO, "packages/remote/src/workload/apply.ts"))).toContain(
+    const applySrc = readOrEmpty(join(REPO, "packages/remote/src/workload/apply.ts"));
+    // enable reaches modelHostStart, disable reaches modelHostStop
+    expect(flat(enclosingBody(applySrc, "async function startModelHostProcess("))).toContain(
       "client.modelHostStart.subscribe(",
+    );
+    expect(flat(enclosingBody(applySrc, "async function applyModelHostManifest("))).toContain(
+      "if (!manifest.spec.enabled) { return await disableModelHost(manifest, client, resolved); }",
+    );
+    expect(flat(enclosingBody(applySrc, "async function disableModelHost("))).toContain(
+      "const outcome = await client.modelHostStop.mutate({ workload: manifest.metadata.name });",
     );
   });
 });
