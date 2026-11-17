@@ -19,14 +19,28 @@
 // native, a declared process-fallback, or unknown with a reason. It is only
 // probed on the serving process; off it every row is unknown/NotServingNode.
 //
+// The lifecycle section (scope "serving-process", Part of #517) is the serving
+// process's node-local residency_states rows: per-model state, group, whether
+// the state occupies capacity, and any exclusive-group violation computed with
+// findExclusiveGroupViolations. It is attributed to `node` under the same
+// serving-process caveat as the store: for any other `node` these are the
+// serving process's rows, never `node`'s coordinator state. A lifecycle-row
+// read failure is isolated here as unavailable/LifecycleUnreadable and never
+// turns the store section into an error.
+//
 // The NodeRun residency supplies the planner policy (Part of #519); switch/load
 // timing (lastSwitchAtMs, loadedAtMs) is not persisted yet, so those checks stay
 // inert unless a caller supplies them (#279).
 import type { ResidencyAuditEntry, ResidencyLeases } from "@llamactl/core/residency/leases";
+import type { ResidencyState } from "@llamactl/core/residency/lifecycle";
 import type { PlannerWorkload, ProfileSwitchPlan } from "@llamactl/core/residency/planner";
 
 import { resolveResidencyPolicy } from "@llamactl/core/residency/admission";
-import { isOccupyingResidencyState } from "@llamactl/core/residency/lifecycle";
+import {
+  findExclusiveGroupViolations,
+  isOccupyingResidencyState,
+  RESIDENCY_GROUPS,
+} from "@llamactl/core/residency/lifecycle";
 import { planProfileSwitch } from "@llamactl/core/residency/planner";
 
 import type { ModelHostManifest } from "../workload/modelhost-schema.js";
@@ -196,6 +210,31 @@ export function buildResidencyLeaseSnapshot(
   };
 }
 
+// Public lifecycle projection of one residency_states row. Fence identity
+// (ownerId, incarnation, fenceToken) is deliberately excluded: status is a
+// read-out, not an authority claim.
+export type ResidencyStatusLifecycleRow = {
+  model: string;
+  group: string | null;
+  state: ResidencyState;
+  occupying: boolean;
+  version: number;
+  updatedAtMs: number;
+};
+
+export type ResidencyStatusLifecycle =
+  | {
+      status: "available";
+      scope: "serving-process";
+      workloads: ResidencyStatusLifecycleRow[];
+      exclusiveViolations: { group: string; members: string[] }[];
+    }
+  | {
+      status: "unavailable";
+      scope: "serving-process";
+      reason: "StoreUnreadable" | "LifecycleUnreadable";
+    };
+
 export type ResidencyStatus = {
   node: string;
   nodeRun: { present: boolean };
@@ -211,6 +250,9 @@ export type ResidencyStatus = {
         nonterminal: ResidencyStatusNonterminalOperation[];
         scope: "serving-process";
       };
+  // Optional like omlxNative so older payloads and fixtures still type;
+  // buildResidencyStatus always sets it.
+  lifecycle?: ResidencyStatusLifecycle;
   leases: ResidencyStatusLeases;
   omlxNative?: { scope: "serving-process"; workloads: OmlxNativeStatusRow[] };
 };
@@ -232,9 +274,48 @@ export function buildResidencyStatus(input: {
     policy: residency !== undefined ? { present: true, residency } : { present: false },
     budget: { memoryGiB: input.budgetGiB, source: input.budgetSource },
     store: storeWithScope(input.store),
+    lifecycle: buildResidencyLifecycleSnapshot(input.store),
     leases: buildResidencyLeaseSnapshot(input.leaseRegistry ?? null, input.leaseWorkloads ?? []),
     omlxNative: { scope: "serving-process", workloads: [...(input.omlxNative ?? [])] },
   };
+}
+
+// Pure projection of the store snapshot's lifecycle rows (Part of #517). An
+// absent store is an empty healthy lifecycle; an unreadable store or a
+// lifecycle read failure degrades only this section, never the store section.
+export function buildResidencyLifecycleSnapshot(
+  store: ResidencyStoreSnapshot,
+): ResidencyStatusLifecycle {
+  const scope = "serving-process" as const;
+  if (!store.present) {
+    return { status: "available", scope, workloads: [], exclusiveViolations: [] };
+  }
+  if ("error" in store) {
+    return { status: "unavailable", scope, reason: "StoreUnreadable" };
+  }
+  if (store.lifecycleError !== undefined) {
+    return { status: "unavailable", scope, reason: "LifecycleUnreadable" };
+  }
+  const rows = [...(store.lifecycle ?? [])].sort((a, b) => compareStrings(a.model, b.model));
+  const workloads = rows.map(
+    (row): ResidencyStatusLifecycleRow => ({
+      model: row.model,
+      group: row.group,
+      state: row.state,
+      occupying: isOccupyingResidencyState(row.state),
+      version: row.version,
+      updatedAtMs: row.updatedAtMs,
+    }),
+  );
+  const exclusiveViolations = findExclusiveGroupViolations(
+    RESIDENCY_GROUPS,
+    rows.map((row) => ({
+      id: row.model,
+      ...(row.group === null ? {} : { group: row.group }),
+      state: row.state,
+    })),
+  );
+  return { status: "available", scope, workloads, exclusiveViolations };
 }
 
 function storeWithScope(store: ResidencyStoreSnapshot): ResidencyStatus["store"] {
