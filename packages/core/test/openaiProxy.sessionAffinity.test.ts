@@ -643,3 +643,170 @@ test("#520 A9(b): the sessions seam is read once per request, before route resol
     t.cleanup();
   }
 });
+
+test("#520 C1: a session binding wins over the ranked preferredWorkload hint", async () => {
+  // Kills: the binding evaluated after the #518 (c) hint's winner (or the
+  // hint applied after the binding scan) — the s1 request would go to the
+  // hinted wl-a and conflict 409 instead of staying on its bound wl-b.
+  const t = tempKvEnv();
+  try {
+    writeModelRun(t.root, "wl-0", PORT_C, AFF_MODEL);
+    writeModelRun(t.root, "wl-a", PORT_A, AFF_MODEL);
+    writeModelRun(t.root, "wl-b", PORT_B, AFF_MODEL);
+    const counts = installFetchStub(okUpstream);
+    const { real: sessionsReal } = installSessionSpy(() => 1_000);
+    bindSession(sessionsReal, "s1", "wl-b");
+    installLeaseSpy();
+
+    const bound = await openaiProxy.proxyOpenAI(
+      embeddingsRequest(AFF_MODEL, { [SESSION_HEADER]: "s1" }),
+      t.env,
+      { preferredWorkload: "wl-a" },
+    );
+    expect(bound.status).toBe(200);
+    expect(await bound.text()).toBe(UPSTREAM_TEXT);
+    expect(counts.byPort.get(PORT_B) ?? 0).toBe(1);
+    expect(counts.byPort.get(PORT_A) ?? 0).toBe(0);
+    expect(sessionsReal.activeSessions("wl-b")).toEqual(["s1"]);
+
+    const hinted = await openaiProxy.proxyOpenAI(embeddingsRequest(AFF_MODEL), t.env, {
+      preferredWorkload: "wl-a",
+    });
+    expect(hinted.status).toBe(200);
+    expect(await hinted.text()).toBe(UPSTREAM_TEXT);
+    expect(counts.byPort.get(PORT_A) ?? 0).toBe(1);
+    expect(counts.byPort.get(PORT_C) ?? 0).toBe(0);
+    expect(counts.byPort.get(PORT_B) ?? 0).toBe(1);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("#520 M04: a withdrawn bound workload is never routed to or leased", async () => {
+  // Kills: the binding scan run over the unfiltered candidates — it would
+  // forward the s1 request to the withdrawn wl-b instead of resolving to the
+  // live wl-a and refusing with 409.
+  const t = tempKvEnv();
+  const release = openaiProxy.withdrawServingRoute("wl-b");
+  try {
+    writeModelRun(t.root, "wl-a", PORT_A, AFF_MODEL);
+    writeModelRun(t.root, "wl-b", PORT_B, AFF_MODEL);
+    const counts = installFetchStub(okUpstream);
+    const { real: sessionsReal } = installSessionSpy(() => 1_000);
+    bindSession(sessionsReal, "s1", "wl-b");
+    const { real: leases, acquireCalls } = installLeaseSpy();
+
+    const res = await openaiProxy.proxyOpenAI(
+      embeddingsRequest(AFF_MODEL, { [SESSION_HEADER]: "s1" }),
+      t.env,
+    );
+    expect(res.status).toBe(409);
+    const error = await readProxyError(res);
+    expect(error.code).toBe("AffinityConflict");
+    expect(counts.byPort.get(PORT_B) ?? 0).toBe(0);
+    expect(counts.byPort.get(PORT_A) ?? 0).toBe(0);
+    expect(acquireCalls).not.toContain("wl-b");
+    expect(leases.active("wl-b")).toEqual([]);
+  } finally {
+    release();
+    t.cleanup();
+  }
+});
+
+test("#520 M07: the affinity predicate uses the sessions seam captured before the body await", async () => {
+  // Kills: the attachSessionAffinity predicate re-reading
+  // currentSessionRefcounts() — a throwing registry installed while the
+  // request body is read would be consulted during route resolution.
+  const t = tempKvEnv();
+  try {
+    writeModelRun(t.root, "wl-a", PORT_A, AFF_MODEL);
+    writeModelRun(t.root, "wl-b", PORT_B, AFF_MODEL);
+    const counts = installFetchStub(okUpstream);
+    setResidencyLeaseRegistry(createResidencyLeases());
+    const { real: sessionsReal } = installSessionSpy(() => 1_000);
+    bindSession(sessionsReal, "s1", "wl-b");
+    const throwing = throwingSessions();
+    const payload = new TextEncoder().encode(JSON.stringify({ model: AFF_MODEL, input: "x" }));
+    let sent = false;
+    const body = new ReadableStream<Uint8Array>(
+      {
+        pull(controller): void {
+          if (!sent) {
+            sent = true;
+            setSessionRefcountRegistry(throwing);
+            controller.enqueue(payload);
+            return;
+          }
+          controller.close();
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    const req = new Request("http://localhost/v1/embeddings", {
+      method: "POST",
+      headers: { "content-type": "application/json", [SESSION_HEADER]: "s1" },
+      body,
+      duplex: "half",
+    } as RequestInit);
+
+    let res: Response;
+    try {
+      res = await openaiProxy.proxyOpenAI(req, t.env);
+    } catch {
+      res = new Response("proxyOpenAI threw", { status: 500 });
+    }
+    expect(sent).toBe(true);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe(UPSTREAM_TEXT);
+    expect(counts.byPort.get(PORT_B) ?? 0).toBe(1);
+    expect(throwing.calls).toEqual([]);
+    expect(sessionsReal.activeSessions("wl-b")).toEqual(["s1"]);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("#520 M17: an invalid session id never consults the binding lookup", async () => {
+  // Kills: the session-id validation dropped from attachSessionAffinity —
+  // the local wl-x candidate would be queried for a binding.
+  const t = tempKvEnv();
+  try {
+    writeExperimentalCatalog(t.root);
+    openaiProxy.__setOpenAIProxyClusterRoutingForTests({
+      clusterPeers: [{ id: "peer-a", endpoint: `https://peer-a.local:${String(PEER_PORT)}` }],
+      peerSnapshots: new Map<string, PeerSnapshot>([
+        [
+          "peer-a",
+          {
+            workloads: [
+              {
+                modelId: "exp/model.gguf",
+                port: 9333,
+                labels: { "llamactl.io/qualification": "validated" },
+              },
+            ],
+            pressure: "NORMAL",
+            fetchedAt: Date.now(),
+          },
+        ],
+      ]),
+    });
+    writeModelRun(t.root, "wl-x", PORT_C, "exp/model.gguf");
+    const counts = installFetchStub(okUpstream);
+    const { spy: sessions } = installSessionSpy(() => 1_000);
+    installLeaseSpy();
+
+    const res = await openaiProxy.proxyOpenAI(
+      embeddingsRequest("exp/model.gguf", { [SESSION_HEADER]: "bad id!" }),
+      t.env,
+    );
+    // Peer routes take no session refcount, so the request is forwarded.
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe(UPSTREAM_TEXT);
+    expect(sessions.activeSessionsCalls).toEqual([]);
+    expect(counts.byPort.get(PEER_PORT) ?? 0).toBe(1);
+    expect(counts.byPort.get(PORT_C) ?? 0).toBe(0);
+  } finally {
+    t.cleanup();
+  }
+});
