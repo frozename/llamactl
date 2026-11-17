@@ -342,6 +342,16 @@ function blockResidencyWrites(): void {
   }
 }
 
+// Records this test process as the ModelRun's llama-server pid: alive, so
+// readServerPid returns it, but not a llama-server, so stopServer's identity
+// check reads unknown and refuses to signal it.
+function writePidFile(name: string): void {
+  const pidDir = join(runtimeDir, "workloads", name);
+  mkdirSync(pidDir, { recursive: true });
+  writeFileSync(join(pidDir, "llama-server.pid"), `${String(process.pid)}\n`);
+  expect(server.readServerPid({ name })).toBe(process.pid);
+}
+
 async function directLifecycleModule(): Promise<Record<string, unknown>> {
   return await import("../../src/residency/direct-lifecycle.js");
 }
@@ -676,29 +686,52 @@ describe("serverStart/serverStop direct residency lifecycle", () => {
     expect(readState("code-y")).toMatchObject({ state: "failed", group: GROUP });
   });
 
-  test("MR13: a stop that does not confirm removal records the row failed, not downloaded", async () => {
-    // kills: serverStop dep mapping ok to anything but stop.stopped. The
-    // recorded pid is this test process (alive, but not a llama-server),
-    // so stopServer's identity check reads unknown: no signal is sent and
-    // it returns stopped:false with the pid file retained.
+  test("MR13: a stop that does not confirm removal leaves the row occupying and logs it unrecorded", async () => {
+    // kills: an unconfirmed stop walking the row to failed or downloaded
+    // (both non-occupying, freeing the exclusive group while the process may
+    // still be alive); serverStop mapping ok to anything but stop.stopped.
+    // The recorded pid is this test process (alive, but not a llama-server),
+    // so stopServer's identity check reads unknown: no signal is sent and it
+    // returns stopped:false with the pid file retained.
     writeRun("run-a", GROUP);
     seed([{ model: "run-a", target: "ready", group: GROUP }]);
-    const seededVersion = readState("run-a")?.version ?? 0;
-    const pidDir = join(runtimeDir, "workloads", "run-a");
-    mkdirSync(pidDir, { recursive: true });
-    writeFileSync(join(pidDir, "llama-server.pid"), `${String(process.pid)}\n`);
+    const seeded = readState("run-a");
+    writePidFile("run-a");
+    const stderr = captureStderr();
+    try {
+      const result = await stopRun("run-a");
 
-    const result = await stopRun("run-a");
+      expect(result).toEqual({ stopped: false, pid: process.pid, killed: false });
+      expect(server.readServerPid({ name: "run-a" })).toBe(process.pid);
+      expect(readState("run-a")).toEqual(seeded);
+      expect(stderr.text()).toContain(
+        "[residency] lifecycle run-a stop not recorded: unconfirmed stop (process may be alive)",
+      );
+    } finally {
+      stderr.restore();
+    }
+  });
 
-    expect(result).toEqual({ stopped: false, pid: process.pid, killed: false });
-    expect(server.readServerPid({ name: "run-a" })).toBe(process.pid);
-    // ready -> draining -> unloading, then the not-ok post-walk to failed.
-    expect(readState("run-a")).toMatchObject({
-      state: "failed",
-      group: GROUP,
-      version: seededVersion + 3,
-    });
-    expect(readState("run-a")?.state).not.toBe("downloaded");
+  test("MR13b: a same-group peer start is still refused after an unconfirmed stop", async () => {
+    // kills: an unconfirmed stop freeing the exclusive group (a failed or
+    // downloaded row lets a peer load beside a process that may be alive).
+    writeRun("run-a", GROUP);
+    writeRun("run-b", GROUP);
+    seed([{ model: "run-a", target: "ready", group: GROUP }]);
+    writePidFile("run-a");
+
+    const stopped = await stopRun("run-a");
+    expect(stopped.stopped).toBe(false);
+
+    const result = await startRun("run-b");
+
+    expect(result.ok).toBe(false);
+    expect(result.pid).toBeNull();
+    expect(result.error).toBe(
+      "residency lifecycle refused run-b downloaded -> loading: ExclusiveGroupOccupied: exclusive group z13-large-gpu is held by run-a in state ready",
+    );
+    expect(readState("run-a")?.state).toBe("ready");
+    expect(readState("run-b")?.state).toBe("downloaded");
   });
 
   test("MR14: a refused start honours the endpoint override in its StartServerResult", async () => {
@@ -719,5 +752,51 @@ describe("serverStart/serverStop direct residency lifecycle", () => {
     expect(result.advertisedEndpoint).toBe(server.advertisedEndpoint(resolved, override));
     expect(result.advertisedEndpoint).toMatch(/:18555$/);
     expect(result.endpoint).not.toBe(server.endpoint(resolved));
+  });
+
+  test("MR15: a start of a ModelRun whose own ready row has a live pid file adopts the row", async () => {
+    // kills: directModelRunOpts.isRunning not reading the ModelRun pid file
+    // (e.g. reusing the ModelHost status probe, which reads Stopped for a
+    // ModelRun): the start would walk its own ready row down instead of
+    // adopting it.
+    writeRun("run-a", GROUP);
+    seed([{ model: "run-a", target: "ready", group: GROUP }]);
+    const seeded = readState("run-a");
+    writePidFile("run-a");
+    const stderr = captureStderr();
+    try {
+      await startRun("run-a");
+
+      expect(readState("run-a")).toEqual(seeded);
+      expect(stderr.text()).toContain(
+        "[residency] lifecycle run-a start kept ready: host already running",
+      );
+    } finally {
+      stderr.restore();
+    }
+  });
+
+  test("MR15b: a start of a ModelRun whose own ready row has no pid file walks the row", async () => {
+    // kills: directModelRunOpts.isRunning reading true without a pid file
+    // (adopting a stale ready row for a ModelRun that is not running).
+    writeRun("run-a", GROUP);
+    seed([{ model: "run-a", target: "ready", group: GROUP }]);
+    const seededVersion = readState("run-a")?.version ?? 0;
+    const stderr = captureStderr();
+    try {
+      const result = await startRun("run-a");
+
+      expect(result.ok).toBe(false);
+      expect(result.error ?? "").toMatch(/^Model file not found:/);
+      // ready -> draining -> unloading -> downloaded -> loading -> failed.
+      expect(readState("run-a")).toMatchObject({
+        state: "failed",
+        group: GROUP,
+        version: seededVersion + 5,
+      });
+      expect(stderr.text()).not.toContain("start kept ready");
+    } finally {
+      stderr.restore();
+    }
   });
 });

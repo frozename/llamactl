@@ -20,6 +20,11 @@
  * switch's `applyManifest` start/stop off the fence it already holds and off
  * the in-flight gate it itself trips.
  *
+ * A direct stop runs its dep before the row moves, so an occupying row keeps
+ * its exclusive group held for the whole stop. Only a confirmed stop walks the
+ * row down to downloaded; an unconfirmed one (the process may still be alive)
+ * is never recorded and leaves the row occupying, so the group is not freed.
+ *
  * Known limits this slice accepts:
  * - A `ready` row for any workload that still has a recorded pid file —
  *   including a stale or reused one — fails closed and refuses direct starts
@@ -308,14 +313,12 @@ function stepRefusalDetail(step: StepOutcome): string {
   return step.ok ? "residency lifecycle refused" : step.detail;
 }
 
-// (g) runs the dep under the lifecycle walk: the row walks to loading /
-// unloading, the caller's dep runs, the fence is re-claimed, then the row walks
-// to its terminal. A pre-walk refusal means a start never ran; a stop still
-// runs, unrecorded, because bookkeeping never blocks a stop. A dep that throws
-// is recorded failed (so its row never keeps the group occupied) and the error
-// is rethrown once the post-walk has run.
-async function walkWithDep<T extends DepResult>(
-  action: DirectAction,
+// (g) runs a start under the lifecycle walk: the row walks to loading, the
+// caller's dep runs, the fence is re-claimed, then the row walks to its
+// terminal. A pre-walk refusal means the start never ran. A dep that throws is
+// recorded failed (so its row never keeps the group occupied) and the error is
+// rethrown once the post-walk has run.
+async function walkStartWithDep<T extends DepResult>(
   workload: string,
   store: Store,
   initialToken: number,
@@ -331,11 +334,11 @@ async function walkWithDep<T extends DepResult>(
       result = await env.dep(workload);
     } catch (error: unknown) {
       thrown = { error };
-      token = refence(store, action, workload, env.incarnation, env.log, token);
+      token = refence(store, "start", workload, env.incarnation, env.log, token);
       return { ok: false, detail: messageOf(error) };
     }
     capture.push(result);
-    token = refence(store, action, workload, env.incarnation, env.log, token);
+    token = refence(store, "start", workload, env.incarnation, env.log, token);
     return { ok: result.ok, detail: result.error ?? "" };
   };
   const wrapped = withResidencyLifecycle(
@@ -353,10 +356,7 @@ async function walkWithDep<T extends DepResult>(
       log: env.log,
     },
   );
-  const step =
-    action === "start"
-      ? await wrapped.start(workload, undefined)
-      : await wrapped.stop(workload, undefined);
+  const step = await wrapped.start(workload, undefined);
   if (thrown !== undefined) {
     throw thrown.error;
   }
@@ -364,14 +364,86 @@ async function walkWithDep<T extends DepResult>(
   if (result !== undefined) {
     return { ran: true, result };
   }
-  if (action === "start") {
-    return { ran: false, detail: stepRefusalDetail(step) };
+  return { ran: false, detail: stepRefusalDetail(step) };
+}
+
+// (h) a stop runs its dep FIRST, with the row untouched, so an occupying row
+// keeps the exclusive group held until the stop is confirmed (fail closed,
+// as #741's proven-down rule). Only a confirmed stop (ok) walks the row
+// ready -> draining -> unloading -> downloaded; a dep that throws walks it to
+// failed and rethrows. An unconfirmed stop (not ok: the process may still be
+// alive) is never recorded, so the row stays occupying and a same-group peer
+// start is still refused. A refused walk is logged; bookkeeping never blocks
+// or reruns a stop.
+async function walkStopAfterDep<T extends DepResult>(
+  workload: string,
+  store: Store,
+  initialToken: number,
+  env: DepEnv<T>,
+): Promise<DirectLifecycleOutcome<T>> {
+  let settled: { result: T } | { thrown: unknown };
+  try {
+    settled = { result: await env.dep(workload) };
+  } catch (error: unknown) {
+    settled = { thrown: error };
   }
-  logSafe(
-    env.log,
-    `[residency] lifecycle ${workload} stop not recorded: ${stepRefusalDetail(step)}\n`,
+  if ("result" in settled && !settled.result.ok) {
+    logSafe(
+      env.log,
+      `[residency] lifecycle ${workload} stop not recorded: unconfirmed stop (process may be alive)\n`,
+    );
+    return { ran: true, result: settled.result };
+  }
+  const token = refence(store, "stop", workload, env.incarnation, env.log, initialToken);
+  await recordSettledStop(
+    workload,
+    store,
+    token,
+    env,
+    "thrown" in settled ? messageOf(settled.thrown) : undefined,
   );
-  return { ran: true, result: await env.dep(workload) };
+  if ("thrown" in settled) {
+    throw settled.thrown;
+  }
+  return { ran: true, result: settled.result };
+}
+
+// Walks a settled stop's row: ready -> draining -> unloading, then downloaded
+// for a confirmed stop or failed for a thrown one (`failure`). A refused
+// pre-walk never reaches the settled dep and is logged `not recorded`.
+async function recordSettledStop<T extends DepResult>(
+  workload: string,
+  store: Store,
+  token: number,
+  env: DepEnv<T>,
+  failure: string | undefined,
+): Promise<void> {
+  const reached = { value: false };
+  const settledDep = (): Promise<StepOutcome> => {
+    reached.value = true;
+    return Promise.resolve(failure === undefined ? { ok: true } : { ok: false, detail: failure });
+  };
+  const wrapped = withResidencyLifecycle(
+    { start: settledDep, stop: settledDep },
+    {
+      lifecycle: {
+        store,
+        groupOf: (candidate) => (candidate === workload ? env.lifecycleGroup : undefined),
+        groups: env.groups,
+      },
+      fenceToken: token,
+      occupiedAtPlan: new Set<string>(),
+      nowMs: env.nowMs,
+      log: env.log,
+    },
+  );
+  const step = await wrapped.stop(workload, undefined);
+  if (!reached.value) {
+    logSafe(
+      env.log,
+      `[residency] lifecycle ${workload} stop not recorded: ${stepRefusalDetail(step)}\n`,
+    );
+  }
 }
 
 // (d) a store-open or claim failure: a grouped start refuses, anything else
@@ -443,8 +515,11 @@ async function runRecorded<T extends DepResult>(
       return adopted;
     }
   }
+  if (action === "stop") {
+    return await walkStopAfterDep(workload, store, claimed, env);
+  }
   const occupiedAtPlan = occupyingPeers(store, workload, lifecycleGroup, opts);
-  return await walkWithDep(action, workload, store, claimed, env, occupiedAtPlan);
+  return await walkStartWithDep(workload, store, claimed, env, occupiedAtPlan);
 }
 
 async function runDirect<T extends DepResult>(

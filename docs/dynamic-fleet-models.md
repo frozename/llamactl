@@ -176,7 +176,11 @@ same-group peers, and refuse a start while a profile switch is in flight.
 The direct ModelRun writers `serverStart`/`serverStop` route through the same
 wrapper, recording the group from the agent-side ModelRun
 `llamactl.io/residency-group` label. Bookkeeping never blocks a stop: a stop
-whose claim or walk fails still runs and logs `not recorded`. The profile
+whose claim or walk fails still runs and logs `not recorded`. A direct stop
+runs before its row moves and walks it to `downloaded` only once the stop is
+confirmed; an unconfirmed stop (the process may still be alive) leaves the row
+occupying, so its exclusive group is not freed, and logs `not recorded:
+unconfirmed stop (process may be alive)`. The profile
 switch's own `applyManifest` calls run in a switch scope
 (`runInResidencySwitchScope`) and are walked only by the switch. Still
 pending: reconciliation outside these paths, and #276.

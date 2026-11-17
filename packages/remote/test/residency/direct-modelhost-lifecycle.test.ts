@@ -439,4 +439,33 @@ describe("modelHostStart/modelHostStop direct residency lifecycle", () => {
       stderr.restore();
     }
   });
+
+  test("DL11: an unconfirmed modelHostStop leaves the row occupying and a peer start refused", async () => {
+    // kills: an unconfirmed stop (pid identity unknown, the process may be
+    // alive) walking the row to failed, which is non-occupying and frees the
+    // exclusive group for a same-group peer.
+    seed([{ model: "z13-a", target: "ready", group: GROUP }]);
+    const seeded = readState("z13-a");
+    writeUnverifiableSidecar("z13-a", 18094);
+    const stderr = captureStderr();
+    try {
+      const stopped = await stopWorkload("z13-a");
+
+      expect(stopped).toMatchObject({ ok: false, error: "pid identity unknown" });
+      expect(readState("z13-a")).toEqual(seeded);
+      expect(stderr.text()).toContain(
+        "[residency] lifecycle z13-a stop not recorded: unconfirmed stop (process may be alive)",
+      );
+    } finally {
+      stderr.restore();
+    }
+
+    const peer = await startWorkload("z13-b");
+
+    expect(peer.ok).toBe(false);
+    expect(peer.error).toBe(
+      "residency lifecycle refused z13-b downloaded -> loading: ExclusiveGroupOccupied: exclusive group z13-large-gpu is held by z13-a in state ready",
+    );
+    expect(readState("z13-a")?.state).toBe("ready");
+  });
 });
