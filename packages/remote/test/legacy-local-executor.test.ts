@@ -302,3 +302,43 @@ describe("drain vs close", () => {
     await executePromise;
   });
 });
+
+describe("preferredLocalWorkload hint (#518)", () => {
+  test("ctx.preferredLocalWorkload is forwarded as the proxy preferredWorkload option", async () => {
+    // Kills: dropping the hint in execute — the proxy is invoked without
+    // the opts bag (at base rest[0] is undefined).
+    const restCalls: unknown[][] = [];
+    const executor = createLegacyLocalExecutor({
+      resolved: ENV,
+      proxy: (req: Request, resolved: ResolvedEnv, ...rest: unknown[]): Promise<Response> => {
+        restCalls.push(rest);
+        return Promise.resolve(new Response("ok"));
+      },
+    });
+    const env = makeEnvelope("att-hint");
+    const ctx = {
+      ...makeCtx({ attemptId: "att-hint" }),
+      preferredLocalWorkload: "b-host",
+    } as BackendExecutionContext;
+    await executor.execute(env, ctx);
+    expect(restCalls).toHaveLength(1);
+    expect(restCalls[0]?.[0]).toEqual({ preferredWorkload: "b-host" });
+  });
+
+  test("guard (passes on base): without a hint the proxy is called with exactly two arguments", async () => {
+    // Kills: always passing an opts object, which would change the legacy
+    // call shape for every request.
+    const restCalls: unknown[][] = [];
+    const executor = createLegacyLocalExecutor({
+      resolved: ENV,
+      proxy: (req: Request, resolved: ResolvedEnv, ...rest: unknown[]): Promise<Response> => {
+        restCalls.push(rest);
+        return Promise.resolve(new Response("ok"));
+      },
+    });
+    const env = makeEnvelope("att-nohint");
+    await executor.execute(env, makeCtx({ attemptId: "att-nohint" }));
+    expect(restCalls).toHaveLength(1);
+    expect(restCalls[0]).toHaveLength(0);
+  });
+});

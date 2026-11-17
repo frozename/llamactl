@@ -222,6 +222,25 @@ const chatCompletionsRequest = (model: string): Request =>
 const pinModel = (model: string, env: ResolvedEnv): Promise<Response> =>
   openaiProxy.proxyOpenAI(chatCompletionsRequest(model), env);
 
+// #518 (c): proxyOpenAI gains an opts bag carrying the unified ranker's
+// preferredWorkload hint. The cast keeps this file typechecking on the
+// base revision, where the parameter does not exist yet — the hint is
+// ignored there, so the RED pins fail by assertion, never by type error.
+type ProxyOpenAIWithOptions = (
+  req: Request,
+  env: ResolvedEnv,
+  opts?: { preferredWorkload?: string },
+) => Promise<Response>;
+
+const proxyOpenAIWithOptions = openaiProxy.proxyOpenAI as unknown as ProxyOpenAIWithOptions;
+
+const pinModelWithHint = (
+  model: string,
+  env: ResolvedEnv,
+  preferredWorkload: string,
+): Promise<Response> =>
+  proxyOpenAIWithOptions(chatCompletionsRequest(model), env, { preferredWorkload });
+
 type ProxyErrorBody = {
   error: {
     message: string;
@@ -1137,6 +1156,195 @@ test("a peer route whose workload key matches a withdrawn local key still routes
     expect(stub.chatCalls(peerPort)).toHaveLength(1);
     expect(stub.chatCalls(DEFAULT_PORT)).toHaveLength(0);
     release?.();
+  } finally {
+    t.cleanup();
+  }
+});
+
+// #518 (c) RED pins: proxyOpenAI's opts.preferredWorkload lets the unified
+// ranker name the replica that should serve an alias. servingRouteForModel
+// must honor the hint without lifting experimental or withdrawn candidates
+// and without skipping the hinted candidate's own readiness verdict.
+
+test("a preferredWorkload hint routes to that replica ahead of alias order", async () => {
+  // Kills: servingRouteForModel ignoring the hint, or proxyOpenAI not
+  // threading opts onto the context (at base the request forwards to
+  // a-host's port).
+  const t = tempEnv();
+  try {
+    const aPort = fixturePort();
+    const bPort = fixturePort();
+    writeModelHost(t.env, "a-host", { port: aPort, aliases: ["hint-shared-model"] });
+    writeModelHost(t.env, "b-host", { port: bPort, aliases: ["hint-shared-model"] });
+    const stub = installProxyFetchStub({});
+
+    const res = await pinModelWithHint("hint-shared-model", t.env, "b-host");
+
+    expect(res.status).toBe(200);
+    const chats = stub.chatCalls();
+    expect(chats).toHaveLength(1);
+    expect(chats[0]).toBe(`http://127.0.0.1:${String(bPort)}/v1/chat/completions`);
+    expect(stub.chatCalls(aPort)).toHaveLength(0);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a hint applies past a warming first candidate", async () => {
+  // Kills: applying the hint only when the winner has no readiness — at
+  // base a-host's warming verdict drops it and b-host, the first ready
+  // candidate in alias order, takes the chat call.
+  const t = tempEnv();
+  try {
+    const aPort = fixturePort();
+    const bPort = fixturePort();
+    const cPort = fixturePort();
+    writeModelHost(t.env, "a-host", {
+      port: aPort,
+      aliases: ["hint-warm-model"],
+      readiness: { path: "/ready" },
+    });
+    writeModelHost(t.env, "b-host", {
+      port: bPort,
+      aliases: ["hint-warm-model"],
+      readiness: { path: "/ready", expectJson: { status: "ready" } },
+    });
+    writeModelHost(t.env, "c-host", {
+      port: cPort,
+      aliases: ["hint-warm-model"],
+      readiness: { path: "/ready", expectJson: { status: "ready" } },
+    });
+    const stub = installProxyFetchStub({
+      [`${String(aPort)}/ready`]: () => Response.json({ status: "loading" }, { status: 503 }),
+      [`${String(bPort)}/ready`]: () => Response.json({ status: "ready" }),
+      [`${String(cPort)}/ready`]: () => Response.json({ status: "ready" }),
+    });
+
+    const res = await pinModelWithHint("hint-warm-model", t.env, "c-host");
+
+    expect(res.status).toBe(200);
+    const chats = stub.chatCalls();
+    expect(chats).toHaveLength(1);
+    expect(chats[0]).toBe(`http://127.0.0.1:${String(cPort)}/v1/chat/completions`);
+    expect(stub.chatCalls(aPort)).toHaveLength(0);
+    expect(stub.chatCalls(bPort)).toHaveLength(0);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("guard (passes on base): a warming preferred workload falls back in alias order", async () => {
+  // Kills: routing the preferred candidate without its readiness verdict —
+  // the hint must not forward to a warming host.
+  const t = tempEnv();
+  try {
+    const aPort = fixturePort();
+    const bPort = fixturePort();
+    const cPort = fixturePort();
+    writeModelHost(t.env, "a-host", { port: aPort, aliases: ["hint-warm-fallback"] });
+    writeModelHost(t.env, "b-host", {
+      port: bPort,
+      aliases: ["hint-warm-fallback"],
+      readiness: { path: "/ready" },
+    });
+    writeModelHost(t.env, "c-host", { port: cPort, aliases: ["hint-warm-fallback"] });
+    const stub = installProxyFetchStub({
+      [`${String(bPort)}/ready`]: () => Response.json({ status: "loading" }, { status: 503 }),
+    });
+
+    const res = await pinModelWithHint("hint-warm-fallback", t.env, "b-host");
+
+    expect(res.status).toBe(200);
+    const chats = stub.chatCalls();
+    expect(chats).toHaveLength(1);
+    expect(chats[0]).toBe(`http://127.0.0.1:${String(aPort)}/v1/chat/completions`);
+    expect(stub.chatCalls(bPort)).toHaveLength(0);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("guard (passes on base): a hint never lifts an experimental route over a stable one", async () => {
+  // Kills: reordering before the experimental fallback filter — the hint
+  // names the experimental workload yet the stable host must still serve.
+  const t = tempEnv();
+  try {
+    writeExperimentalCatalog(t.dir);
+    const stablePort = fixturePort();
+    const expPort = fixturePort();
+    writeModelHost(t.env, "stable-host", {
+      port: stablePort,
+      aliases: ["hint-exp-alias"],
+      readiness: { path: "/ready", expectJson: { status: "ready" } },
+    });
+    writeLlamaServerWorkload(t.dir, "a-exp", {
+      rel: "exp/model.gguf",
+      port: expPort,
+      extraArgs: ["--alias", "hint-exp-alias"],
+    });
+    const stub = installProxyFetchStub({
+      [`${String(stablePort)}/ready`]: () => Response.json({ status: "ready" }),
+    });
+
+    const res = await pinModelWithHint("hint-exp-alias", t.env, "a-exp");
+
+    expect(res.status).toBe(200);
+    const chats = stub.chatCalls();
+    expect(chats).toHaveLength(1);
+    expect(chats[0]).toBe(`http://127.0.0.1:${String(stablePort)}/v1/chat/completions`);
+    expect(stub.chatCalls(expPort)).toHaveLength(0);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("guard (passes on base): a hint naming a withdrawn workload keeps alias order", async () => {
+  // Kills: the hint resurrecting a withdrawn candidate — the withdrawal
+  // filter runs before any preference is applied.
+  const t = tempEnv();
+  try {
+    const aPort = fixturePort();
+    const bPort = fixturePort();
+    writeModelHost(t.env, "a-host", { port: aPort, aliases: ["hint-withdrawn-model"] });
+    writeModelHost(t.env, "b-host", { port: bPort, aliases: ["hint-withdrawn-model"] });
+    const stub = installProxyFetchStub({});
+    const release = withdrawServingRoute?.("b-host");
+
+    const res = await pinModelWithHint("hint-withdrawn-model", t.env, "b-host");
+
+    expect(res.status).toBe(200);
+    const chats = stub.chatCalls();
+    expect(chats).toHaveLength(1);
+    expect(chats[0]).toBe(`http://127.0.0.1:${String(aPort)}/v1/chat/completions`);
+    expect(stub.chatCalls(bPort)).toHaveLength(0);
+
+    release?.();
+    const again = await pinModel("hint-withdrawn-model", t.env);
+    expect(again.status).toBe(200);
+    expect(stub.chatCalls(aPort)).toHaveLength(2);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("guard (passes on base): an unknown hint keeps alias order", async () => {
+  // Kills: a hint miss throwing or dropping candidates — an unmatched
+  // preferredWorkload is ignored and alias order decides.
+  const t = tempEnv();
+  try {
+    const aPort = fixturePort();
+    const bPort = fixturePort();
+    writeModelHost(t.env, "a-host", { port: aPort, aliases: ["hint-unknown-model"] });
+    writeModelHost(t.env, "b-host", { port: bPort, aliases: ["hint-unknown-model"] });
+    const stub = installProxyFetchStub({});
+
+    const res = await pinModelWithHint("hint-unknown-model", t.env, "nope");
+
+    expect(res.status).toBe(200);
+    const chats = stub.chatCalls();
+    expect(chats).toHaveLength(1);
+    expect(chats[0]).toBe(`http://127.0.0.1:${String(aPort)}/v1/chat/completions`);
+    expect(stub.chatCalls(bPort)).toHaveLength(0);
   } finally {
     t.cleanup();
   }

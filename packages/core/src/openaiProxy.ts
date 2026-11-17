@@ -683,6 +683,17 @@ interface ResponseCacheRequestState {
   requestBodyBytes: number;
 }
 
+/**
+ * Per-request options for {@link proxyOpenAI}. #518 (c): `preferredWorkload`
+ * carries the unified ranker's local-http replica pick so an alias pin can be
+ * served by that workload ahead of alias order, without lifting experimental
+ * or withdrawn candidates or skipping the preferred candidate's readiness
+ * verdict.
+ */
+export interface ProxyOpenAIOptions {
+  preferredWorkload?: string;
+}
+
 type ProxyContext = {
   req: Request;
   resolved: ResolvedEnv;
@@ -691,6 +702,7 @@ type ProxyContext = {
   search: string;
   init: RequestInit;
   bodyText?: string;
+  preferredWorkload?: string;
   isAnthropic?: boolean;
   anthropicModel?: string;
   anthropicRequest?: AnthropicMessagesRequest;
@@ -880,6 +892,35 @@ async function boundSessionRoute(
 }
 
 /**
+ * Lift a preferred local replica to the head of the live candidate set
+ * (#518 (c)), leaving alias order untouched on a miss. Peers never match — a
+ * peer's workload key can collide with a local one — and an experimental match
+ * does not lead while any live candidate is non-experimental (#518 (a)).
+ */
+function applyPreferredWorkload(
+  live: readonly RouteCandidate[],
+  preferredWorkload: string | undefined,
+): RouteCandidate[] {
+  if (preferredWorkload === undefined || preferredWorkload.length === 0) {
+    return [...live];
+  }
+  const matchIndex = live.findIndex(
+    (candidate) =>
+      candidate.entry.isPeer !== true && candidate.entry.workload === preferredWorkload,
+  );
+  const match = matchIndex < 0 ? undefined : live[matchIndex];
+  if (match === undefined) return [...live];
+  if (
+    match.entry.experimental === true &&
+    live.some((candidate) => candidate.entry.experimental !== true)
+  ) {
+    return [...live];
+  }
+  const rest = live.filter((_candidate, index) => index !== matchIndex);
+  return [match, ...rest];
+}
+
+/**
  * Chat routing gate (#280 DF-07): pick a route candidate that passes declared
  * serving readiness. null means no route (the existing route-miss path). A
  * workload under eviction has its local (non-peer) routes withdrawn for the
@@ -906,23 +947,42 @@ async function boundSessionRoute(
  * session acquisition refuses with 409 (not a warming 503). A bound session
  * stays on its experimental workload: affinity wins over #518 experimental
  * ordering and fallback exclusion, but cannot resurrect routes that
- * orderedProxyRoutes dropped.
+ * orderedProxyRoutes dropped. The binding is also evaluated ahead of the #518
+ * (c) `preferredWorkload` hint: the hint only reorders the live set that the
+ * binding scan walks, so a session bound to one replica stays there even when
+ * the ranker prefers another. Latency note: a bound candidate carrying
+ * readiness has its verdict awaited on its own before the fallback probe set
+ * is started, so a cold verdict for the bound workload adds one probe round
+ * trip ahead of the fallback; the verdict is cached afterwards (TTL), so later
+ * requests pay nothing extra.
+ *
+ * #518 (c): after the withdrawn filter and before the winner is read, a
+ * preferred local workload (the unified ranker's pick) is lifted to the head
+ * of the live set, so an alias pin is served by that replica. Peers never match
+ * (a peer's workload key can collide with a local one); the hint is ignored —
+ * leaving alias order — when it names no live candidate, when the match is
+ * experimental while any live candidate is non-experimental (#518 (a):
+ * experimental never wins an alias), or when no hint was supplied. The
+ * readiness/fallback logic then runs on the reordered set unchanged, so a
+ * warming preferred host still falls back in alias order and is never
+ * forwarded to without its verdict.
  */
 async function servingRouteForModel(
   model: string,
   pathname: string,
   search: string,
   resolved: ResolvedEnv,
+  preferredWorkload?: string,
   sessionAffinity?: (workload: string) => boolean,
 ): Promise<ServingRouteOutcome> {
   const candidates = getRouteMap(resolved).candidates.get(model);
   if (candidates === undefined || candidates.length === 0) return null;
   // Only local routes are ever withdrawn: a peer route lives on another node's
   // engine and is never the subject of this node's stop fence.
-  const live = candidates.filter(
+  const filtered = candidates.filter(
     (candidate) => candidate.entry.isPeer === true || !isRouteWithdrawn(candidate.entry.workload),
   );
-  if (live.length === 0) {
+  if (filtered.length === 0) {
     const first = candidates[0];
     if (first === undefined) return null;
     return {
@@ -930,6 +990,10 @@ async function servingRouteForModel(
       withdrawnEntries: candidates.map((candidate) => candidate.entry),
     };
   }
+  const live = applyPreferredWorkload(filtered, preferredWorkload);
+  // #520: session binding is evaluated ahead of the ranked hint's winner and
+  // the #518 fallback; scanning the hint-reordered live set is fine because
+  // the binding, not position, decides.
   const boundRoute = await boundSessionRoute(live, pathname, search, sessionAffinity);
   if (boundRoute !== null) return { routed: boundRoute };
   const winner = live[0];
@@ -2950,6 +3014,7 @@ async function applyBodyModelRoute(
     context.pathname,
     context.search,
     context.resolved,
+    context.preferredWorkload,
     context.sessionAffinity,
   );
   if (outcome !== null && "routed" in outcome) {
@@ -3851,6 +3916,13 @@ function acquireProxySession(
   return { ok: true, release };
 }
 
+function applyProxyOptions(context: ProxyContext, opts: ProxyOpenAIOptions): void {
+  const preferred = opts.preferredWorkload;
+  if (preferred !== undefined && preferred.length > 0) {
+    context.preferredWorkload = preferred;
+  }
+}
+
 /**
  * #520: attach the session-affinity predicate to a parsed request context. Set
  * only when the session id is valid and both the session and lease registries
@@ -3902,6 +3974,7 @@ function attachSessionAffinity(
 export async function proxyOpenAI(
   req: Request,
   resolved: ResolvedEnv = resolveEnv(),
+  opts: ProxyOpenAIOptions = {},
 ): Promise<Response> {
   const sessionHeader = req.headers.get(SESSION_HEADER);
   const trimmedSessionId =
@@ -3911,6 +3984,7 @@ export async function proxyOpenAI(
 
   const parsed = await parseIncoming(req, resolved);
   if (parsed instanceof Response) return parsed;
+  applyProxyOptions(parsed, opts);
   attachSessionAffinity(parsed, trimmedSessionId, sessionRegistry, leaseRegistry);
   const routed = await resolveRoute(parsed);
   if (routed instanceof Response) return routed;

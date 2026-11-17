@@ -35,7 +35,11 @@ function composeSignals(signals: readonly AbortSignal[]): AbortSignal | undefine
 export function createLegacyLocalExecutor(
   opts: {
     resolved?: ResolvedEnv | (() => ResolvedEnv);
-    proxy?: (req: Request, resolved: ResolvedEnv) => Promise<Response>;
+    proxy?: (
+      req: Request,
+      resolved: ResolvedEnv,
+      opts?: openaiProxy.ProxyOpenAIOptions,
+    ) => Promise<Response>;
   } = {},
 ): BackendExecutor {
   const inFlight = new Map<string, AbortController>();
@@ -46,7 +50,14 @@ export function createLegacyLocalExecutor(
       : (): ResolvedEnv => resolvedOpt ?? resolveEnv();
   const proxy =
     opts.proxy ??
-    ((req: Request, res: ResolvedEnv): Promise<Response> => openaiProxy.proxyOpenAI(req, res));
+    ((
+      req: Request,
+      res: ResolvedEnv,
+      proxyOpts?: openaiProxy.ProxyOpenAIOptions,
+    ): Promise<Response> =>
+      proxyOpts === undefined
+        ? openaiProxy.proxyOpenAI(req, res)
+        : openaiProxy.proxyOpenAI(req, res, proxyOpts));
 
   const abortAll = (): void => {
     for (const controller of inFlight.values()) controller.abort();
@@ -73,7 +84,12 @@ export function createLegacyLocalExecutor(
           [ctx.req.signal, controller.signal].concat(ctx.signal ? [ctx.signal] : []),
         );
         const forwarded = new Request(ctx.req, { signal: signal ?? ctx.req.signal });
-        return await proxy(forwarded, resolve());
+        const hint = ctx.preferredLocalWorkload;
+        return await proxy(
+          forwarded,
+          resolve(),
+          ...(hint === undefined ? [] : [{ preferredWorkload: hint }]),
+        );
       } finally {
         inFlight.delete(envelope.attemptId);
       }

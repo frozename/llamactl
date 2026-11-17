@@ -44,6 +44,13 @@ export interface BackendExecutionContext {
   attemptId: string;
   deadline: number;
   signal?: AbortSignal;
+  /**
+   * #518 (c): the ranked local-http replica the unified ranker picked over
+   * catalog order, so the legacy executor can forward it to `proxyOpenAI` as
+   * `preferredWorkload`. Absent for the default pick, a single candidate, a
+   * non-local transport, a remote owner or absent ranking signals.
+   */
+  preferredLocalWorkload?: string;
 }
 
 export interface BackendExecutor {
@@ -186,6 +193,7 @@ interface UnifiedDeps {
   executor: BackendExecutor;
   resolve: () => ResolvedEnv;
   now: () => number;
+  nodeId: string;
   catalogForGate: () => Promise<routingCatalog.RouteCatalog | null>;
   resolveCredentials?: UnifiedProxyOptions["resolveCredentials"];
   acquireExecutor?: UnifiedProxyOptions["acquireExecutor"];
@@ -219,6 +227,25 @@ function makeEnvelope(input: {
     nativeBody: input.body ?? {},
     headerFingerprint: headerFingerprint(input.req),
   });
+}
+
+/**
+ * #518 (c): the local workload the ranked pick names, or null when the pick
+ * needs no preference. The hint is computed only when the winner differs from
+ * catalog order (`eligible.at(0)`) — so the default choice, a single candidate
+ * and absent signals all leave everything byte-identical — and only for a
+ * local-http replica owned by this node whose deployment id names a workload.
+ */
+function preferredLocalWorkloadHint(
+  candidate: routingCatalog.RouteCandidate,
+  eligible: readonly routingCatalog.RouteCandidate[],
+  nodeId: string,
+): string | null {
+  if (candidate === eligible.at(0)) return null;
+  const advertisement = candidate.advertisement;
+  if (advertisement.transport !== "local-http") return null;
+  if (advertisement.ownerNodeId !== nodeId) return null;
+  return routingCatalog.workloadOfDeployment(advertisement.deploymentId, nodeId);
 }
 
 async function gatedExecute(
@@ -260,7 +287,11 @@ async function gatedExecute(
   if (deps.resolveCredentials !== undefined) await deps.resolveCredentials(candidate);
   const selected =
     deps.acquireExecutor !== undefined ? await deps.acquireExecutor(candidate) : deps.executor;
-  return await selected.execute(envelope, ctx);
+  const hint = preferredLocalWorkloadHint(candidate, eligible, deps.nodeId);
+  return await selected.execute(
+    envelope,
+    hint === null ? ctx : { ...ctx, preferredLocalWorkload: hint },
+  );
 }
 
 async function handleUnifiedRequest(deps: UnifiedDeps, req: Request): Promise<Response> {
@@ -429,6 +460,7 @@ export function createProxy(opts: UnifiedProxyOptions = {}): UnifiedProxy {
     executor,
     resolve,
     now,
+    nodeId,
     catalogForGate: async () => {
       try {
         return opts.catalog !== undefined ? await opts.catalog() : buildShadowCatalog();

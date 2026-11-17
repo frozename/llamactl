@@ -45,6 +45,27 @@ export const PromotionThresholdsSchema = z
   .strict();
 export type PromotionThresholds = z.infer<typeof PromotionThresholdsSchema>;
 
+/**
+ * Optional demotion floors for the entry path into `degraded`
+ * (frozename/llamactl#518 routing (b)). Every metric floor is optional so
+ * a policy checks only the floors it configures; `minEvaluatedTasks` is
+ * the shared evidence gate, never itself a floor.
+ */
+export const DemotionThresholdsSchema = z
+  .object({
+    minEvaluatedTasks: z.number().int().nonnegative(),
+    maxRegression: ratio.optional(),
+    minFirstAttemptSuccess: ratio.optional(),
+    minRepairSuccess: ratio.optional(),
+    minToolCallCorrectness: ratio.optional(),
+    minStructuredOutputValidity: ratio.optional(),
+    minImprovement: z.number().min(-1).max(1).optional(),
+    minMemoryStability: ratio.optional(),
+    minRuntimeReliability: ratio.optional(),
+  })
+  .strict();
+export type DemotionThresholds = z.infer<typeof DemotionThresholdsSchema>;
+
 export const PromotionPolicySchema = z.object({
   thresholds: z.object({
     candidate: PromotionThresholdsSchema.optional(),
@@ -52,6 +73,7 @@ export const PromotionPolicySchema = z.object({
     production: PromotionThresholdsSchema.optional(),
   }),
   autoApply: z.boolean().default(false),
+  demotion: DemotionThresholdsSchema.optional(),
 });
 export type PromotionPolicy = z.infer<typeof PromotionPolicySchema>;
 export type PromotionPolicyInput = z.input<typeof PromotionPolicySchema>;
