@@ -30,8 +30,11 @@ Open items:
   `modelHostStart`/`modelHostStop` now drive their `residency_states` rows
   through the same fenced walks (`direct-lifecycle.ts`), reconciling
   proven-down same-group peers and refusing an occupied exclusive group or
-  an in-flight switch. Still pending: the direct ModelRun
-  (`serverStart`/`serverStop`) writers and reconciliation outside a switch.
+  an in-flight switch. The direct ModelRun `serverStart`/`serverStop` writers
+  now do the same, recording the group from the agent-side ModelRun
+  `llamactl.io/residency-group` label; the switch's own `applyManifest` calls
+  run in a switch scope and are walked only by the switch. Still pending:
+  reconciliation outside a switch.
 - Real GLM-5.3-Flash z13 measurements are not yet committed (see the
   eval record at the bottom).
 
@@ -105,9 +108,11 @@ persists per-model states in its `residency_states` table:
   exclusive-group violation (`findExclusiveGroupViolations`, previously
   used only by the planner). Lifecycle-row boot recovery has landed, and
   direct ModelHost `modelHostStart`/`modelHostStop` now drive their
-  `residency_states` rows (see Residency lifecycle states). Still pending:
-  the direct ModelRun (`serverStart`/`serverStop`) writers and
-  reconciliation outside a switch.
+  `residency_states` rows (see Residency lifecycle states), as do the direct
+  ModelRun `serverStart`/`serverStop` writers, recording the group from the
+  agent-side ModelRun `llamactl.io/residency-group` label; the switch's own
+  `applyManifest` calls run in a switch scope and are walked only by the
+  switch. Still pending: reconciliation outside a switch.
 - Group declarations are not persisted. They come from the caller
   (default `RESIDENCY_GROUPS`).
 
@@ -169,9 +174,17 @@ direct ModelHost writers `modelHostStart`/`modelHostStop` route through
 `packages/remote/src/residency/direct-lifecycle.ts`: they claim the shared
 apply-profile fence, walk the row the same way, reconcile proven-down
 same-group peers, and refuse a start while a profile switch is in flight.
-Bookkeeping never blocks a stop: a stop whose claim or walk fails still
-runs and logs `not recorded`. Still pending: the direct ModelRun (`serverStart`/`serverStop`) writers,
-reconciliation outside these paths, and #276.
+The direct ModelRun writers `serverStart`/`serverStop` route through the same
+wrapper, recording the group from the agent-side ModelRun
+`llamactl.io/residency-group` label. Bookkeeping never blocks a stop: a stop
+whose claim or walk fails still runs and logs `not recorded`. A direct stop
+runs before its row moves and walks it to `downloaded` only once the stop is
+confirmed; an unconfirmed stop (the process may still be alive) leaves the row
+occupying, so its exclusive group is not freed, and logs `not recorded:
+unconfirmed stop (process may be alive)`. The profile
+switch's own `applyManifest` calls run in a switch scope
+(`runInResidencySwitchScope`) and are walked only by the switch. Still
+pending: reconciliation outside these paths, and #276.
 `llamactl residency status` reports these rows and any exclusive-group
 violation (#731), and a wet switch refuses to unload a session-bound victim
 with `SessionsActive` (#730; see [dynamic-residency.md](dynamic-residency.md)).

@@ -1,9 +1,10 @@
 /**
- * #517: fenced residency lifecycle for the direct ModelHost start/stop
- * writers. `runDirectResidencyStart`/`runDirectResidencyStop` wrap an
- * injected start/stop dep in the same `withResidencyLifecycle` walks the
+ * #517: fenced residency lifecycle for the direct ModelHost and ModelRun
+ * start/stop writers. `runDirectResidencyStart`/`runDirectResidencyStop` wrap
+ * an injected start/stop dep in the same `withResidencyLifecycle` walks the
  * profile-switch decorator uses, claimed under the shared apply-profile fence
- * owner, so a direct start/stop drives its `residency_states` row and honours
+ * owner, so a direct start/stop (`modelHostStart`/`modelHostStop` and
+ * `serverStart`/`serverStop`) drives its `residency_states` row and honours
  * exclusive-group refusals through the fenced store without a new registry.
  *
  * The wrapper never creates the store: a node with no store file runs the dep
@@ -11,12 +12,26 @@
  * conjures one. A label that names no declared group is recorded without a
  * group, so an undeclared group is never refused as `UnknownGroup`.
  *
+ * The switch scope is the escape hatch for the profile switch's own writers.
+ * `runInResidencySwitchScope` runs a callback in an `AsyncLocalStorage` scope;
+ * while a caller is inside it, `inResidencySwitchScope` is true and the direct
+ * wrapper neither records nor refuses: it runs the dep directly and returns,
+ * because the switch's lifecycle walk already owns that row. This keeps the
+ * switch's `applyManifest` start/stop off the fence it already holds and off
+ * the in-flight gate it itself trips.
+ *
+ * A direct stop runs its dep before the row moves, so an occupying row keeps
+ * its exclusive group held for the whole stop. Only a confirmed stop walks the
+ * row down to downloaded; an unconfirmed one (the process may still be alive)
+ * is never recorded and leaves the row occupying, so the group is not freed.
+ *
  * Known limits this slice accepts:
- * - A stale `ready` row for a non-ModelHost (for example a ModelRun stopped
- *   with `serverStop`, which is still unwrapped) fails closed and refuses
- *   direct ModelHost starts in that group until a profile switch, a stop or
- *   boot recovery clears it: `isProvenDown` only corroborates a ModelHost that
- *   is known to the workloads store and provably Stopped.
+ * - A `ready` row for any workload that still has a recorded pid file —
+ *   including a stale or reused one — fails closed and refuses direct starts
+ *   in that group until a status read or a stop reaps it: `isProvenDown` only
+ *   clears a ModelHost proven Stopped with a resolved identity, and a ModelRun
+ *   only when it has no recorded pid at all. Identity-based proof for ModelRun
+ *   is remaining scope.
  * - A switch that claims the fence between our claim and its beginOperation is
  *   refused by its own stale-fence check, not by us; we only refuse to claim
  *   while a `profile-switch:` operation is already nonterminal.
@@ -29,6 +44,7 @@ import {
   RESIDENCY_GROUPS,
   type ResidencyGroupDeclaration,
 } from "@llamactl/core/residency/lifecycle";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 
 import { existsSync } from "../safe-fs.js";
@@ -46,6 +62,20 @@ import {
 // direct claim must refuse to step over. Inlined to keep this module off the
 // profile-transition import edge (the live-caller guard pins that edge).
 const PROFILE_SWITCH_PREFIX = "profile-switch:";
+
+// The profile switch's own scope: while a callback runs inside it, a direct
+// writer must neither record nor refuse, because the switch's lifecycle walk
+// already owns that row. In-process only (the switch forces its applyManifest
+// client local so the scope survives to serverStart/serverStop).
+const switchScope = new AsyncLocalStorage<true>();
+
+export function runInResidencySwitchScope<T>(fn: () => Promise<T>): Promise<T> {
+  return switchScope.run(true, fn);
+}
+
+export function inResidencySwitchScope(): boolean {
+  return switchScope.getStore() === true;
+}
 
 type Store = ResidencyOperationStore & ResidencyLifecycleStore;
 type DirectAction = "start" | "stop";
@@ -283,14 +313,12 @@ function stepRefusalDetail(step: StepOutcome): string {
   return step.ok ? "residency lifecycle refused" : step.detail;
 }
 
-// (g) runs the dep under the lifecycle walk: the row walks to loading /
-// unloading, the caller's dep runs, the fence is re-claimed, then the row walks
-// to its terminal. A pre-walk refusal means a start never ran; a stop still
-// runs, unrecorded, because bookkeeping never blocks a stop. A dep that throws
-// is recorded failed (so its row never keeps the group occupied) and the error
-// is rethrown once the post-walk has run.
-async function walkWithDep<T extends DepResult>(
-  action: DirectAction,
+// (g) runs a start under the lifecycle walk: the row walks to loading, the
+// caller's dep runs, the fence is re-claimed, then the row walks to its
+// terminal. A pre-walk refusal means the start never ran. A dep that throws is
+// recorded failed (so its row never keeps the group occupied) and the error is
+// rethrown once the post-walk has run.
+async function walkStartWithDep<T extends DepResult>(
   workload: string,
   store: Store,
   initialToken: number,
@@ -306,11 +334,11 @@ async function walkWithDep<T extends DepResult>(
       result = await env.dep(workload);
     } catch (error: unknown) {
       thrown = { error };
-      token = refence(store, action, workload, env.incarnation, env.log, token);
+      token = refence(store, "start", workload, env.incarnation, env.log, token);
       return { ok: false, detail: messageOf(error) };
     }
     capture.push(result);
-    token = refence(store, action, workload, env.incarnation, env.log, token);
+    token = refence(store, "start", workload, env.incarnation, env.log, token);
     return { ok: result.ok, detail: result.error ?? "" };
   };
   const wrapped = withResidencyLifecycle(
@@ -328,10 +356,7 @@ async function walkWithDep<T extends DepResult>(
       log: env.log,
     },
   );
-  const step =
-    action === "start"
-      ? await wrapped.start(workload, undefined)
-      : await wrapped.stop(workload, undefined);
+  const step = await wrapped.start(workload, undefined);
   if (thrown !== undefined) {
     throw thrown.error;
   }
@@ -339,14 +364,86 @@ async function walkWithDep<T extends DepResult>(
   if (result !== undefined) {
     return { ran: true, result };
   }
-  if (action === "start") {
-    return { ran: false, detail: stepRefusalDetail(step) };
+  return { ran: false, detail: stepRefusalDetail(step) };
+}
+
+// (h) a stop runs its dep FIRST, with the row untouched, so an occupying row
+// keeps the exclusive group held until the stop is confirmed (fail closed,
+// as #741's proven-down rule). Only a confirmed stop (ok) walks the row
+// ready -> draining -> unloading -> downloaded; a dep that throws walks it to
+// failed and rethrows. An unconfirmed stop (not ok: the process may still be
+// alive) is never recorded, so the row stays occupying and a same-group peer
+// start is still refused. A refused walk is logged; bookkeeping never blocks
+// or reruns a stop.
+async function walkStopAfterDep<T extends DepResult>(
+  workload: string,
+  store: Store,
+  initialToken: number,
+  env: DepEnv<T>,
+): Promise<DirectLifecycleOutcome<T>> {
+  let settled: { result: T } | { thrown: unknown };
+  try {
+    settled = { result: await env.dep(workload) };
+  } catch (error: unknown) {
+    settled = { thrown: error };
   }
-  logSafe(
-    env.log,
-    `[residency] lifecycle ${workload} stop not recorded: ${stepRefusalDetail(step)}\n`,
+  if ("result" in settled && !settled.result.ok) {
+    logSafe(
+      env.log,
+      `[residency] lifecycle ${workload} stop not recorded: unconfirmed stop (process may be alive)\n`,
+    );
+    return { ran: true, result: settled.result };
+  }
+  const token = refence(store, "stop", workload, env.incarnation, env.log, initialToken);
+  await recordSettledStop(
+    workload,
+    store,
+    token,
+    env,
+    "thrown" in settled ? messageOf(settled.thrown) : undefined,
   );
-  return { ran: true, result: await env.dep(workload) };
+  if ("thrown" in settled) {
+    throw settled.thrown;
+  }
+  return { ran: true, result: settled.result };
+}
+
+// Walks a settled stop's row: ready -> draining -> unloading, then downloaded
+// for a confirmed stop or failed for a thrown one (`failure`). A refused
+// pre-walk never reaches the settled dep and is logged `not recorded`.
+async function recordSettledStop<T extends DepResult>(
+  workload: string,
+  store: Store,
+  token: number,
+  env: DepEnv<T>,
+  failure: string | undefined,
+): Promise<void> {
+  const reached = { value: false };
+  const settledDep = (): Promise<StepOutcome> => {
+    reached.value = true;
+    return Promise.resolve(failure === undefined ? { ok: true } : { ok: false, detail: failure });
+  };
+  const wrapped = withResidencyLifecycle(
+    { start: settledDep, stop: settledDep },
+    {
+      lifecycle: {
+        store,
+        groupOf: (candidate) => (candidate === workload ? env.lifecycleGroup : undefined),
+        groups: env.groups,
+      },
+      fenceToken: token,
+      occupiedAtPlan: new Set<string>(),
+      nowMs: env.nowMs,
+      log: env.log,
+    },
+  );
+  const step = await wrapped.stop(workload, undefined);
+  if (!reached.value) {
+    logSafe(
+      env.log,
+      `[residency] lifecycle ${workload} stop not recorded: ${stepRefusalDetail(step)}\n`,
+    );
+  }
 }
 
 // (d) a store-open or claim failure: a grouped start refuses, anything else
@@ -418,8 +515,11 @@ async function runRecorded<T extends DepResult>(
       return adopted;
     }
   }
+  if (action === "stop") {
+    return await walkStopAfterDep(workload, store, claimed, env);
+  }
   const occupiedAtPlan = occupyingPeers(store, workload, lifecycleGroup, opts);
-  return await walkWithDep(action, workload, store, claimed, env, occupiedAtPlan);
+  return await walkStartWithDep(workload, store, claimed, env, occupiedAtPlan);
 }
 
 async function runDirect<T extends DepResult>(
@@ -428,6 +528,11 @@ async function runDirect<T extends DepResult>(
   opts: DirectLifecycleOpts,
   dep: (workload: string) => T | Promise<T>,
 ): Promise<DirectLifecycleOutcome<T>> {
+  // The switch's lifecycle walk owns this row: a direct writer inside the
+  // switch scope records nothing and refuses nothing.
+  if (inResidencySwitchScope()) {
+    return { ran: true, result: await dep(workload) };
+  }
   if (!existsSync(opts.storePath)) {
     return { ran: true, result: await dep(workload) };
   }

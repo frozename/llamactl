@@ -560,4 +560,54 @@ describe("direct residency lifecycle (injected deps)", () => {
       "[residency] lifecycle z13-a stop not recorded: store unavailable (disk gone)",
     );
   });
+
+  test("DL14a: an unconfirmed stop leaves the ready row occupying and refuses a peer start", async () => {
+    // kills: a not-ok stop dep walking the row to failed (non-occupying), so
+    // an exclusive peer could load beside a process that may still be alive.
+    const mod = await loadDirectLifecycle();
+    seed([{ model: "z13-a", target: "ready", group: GROUP }]);
+    const seeded = readState("z13-a");
+    const lines: string[] = [];
+    const stop = countingDep({ ok: false, error: "process still alive after teardown" });
+
+    const outcome = await mod.runDirectResidencyStop("z13-a", stop.dep, lifecycleOpts(lines));
+
+    expect(outcome).toEqual({
+      ran: true,
+      result: { ok: false, error: "process still alive after teardown" },
+    });
+    expect(stop.calls()).toBe(1);
+    expect(readState("z13-a")).toEqual(seeded);
+    expect(lines.join("")).toContain(
+      "[residency] lifecycle z13-a stop not recorded: unconfirmed stop (process may be alive)",
+    );
+
+    const peer = countingDep({ ok: true });
+    const started = await mod.runDirectResidencyStart("z13-b", peer.dep, lifecycleOpts(lines));
+
+    expect(started).toEqual({
+      ran: false,
+      detail:
+        "residency lifecycle refused z13-b downloaded -> loading: ExclusiveGroupOccupied: exclusive group z13-large-gpu is held by z13-a in state ready",
+    });
+    expect(peer.calls()).toBe(0);
+  });
+
+  test("DL14b: the row keeps occupying the group while the stop dep runs", async () => {
+    // kills: pre-walking the row to draining/unloading (both non-occupying)
+    // before the stop is confirmed: the group would be free mid-stop.
+    const mod = await loadDirectLifecycle();
+    seed([{ model: "z13-a", target: "ready", group: GROUP }]);
+    const lines: string[] = [];
+    const seen: (string | undefined)[] = [];
+    const dep: DirectDep = () => {
+      seen.push(readState("z13-a")?.state);
+      return { ok: true };
+    };
+
+    await mod.runDirectResidencyStop("z13-a", dep, lifecycleOpts(lines));
+
+    expect(seen).toEqual(["ready"]);
+    expect(readState("z13-a")?.state).toBe("downloaded");
+  });
 });
