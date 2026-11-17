@@ -9,6 +9,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import type { ModelSpec } from "./types.js";
 
 import { existsSync } from "../safe-fs.js";
+import { isExternalOnlyEngine } from "./types.js";
 
 const HEALTH_POLL_INTERVAL_MS = 1000;
 const HEALTH_TIMEOUT_MS = 120_000;
@@ -189,7 +190,13 @@ function buildOmlxLaunch(model: ModelSpec): { spec: ModelHostSpecForEngine; env:
 }
 
 export function buildBootCommandForModelSpec(model: ModelSpec): { binary: string; args: string[] } {
-  if ((model.engine ?? "llamacpp") === "omlx") {
+  const engine = model.engine ?? "llamacpp";
+  if (isExternalOnlyEngine(engine)) {
+    throw new Error(
+      `model ${model.name}: engine ${engine} is not managed by eval; set managed=false and run the server externally`,
+    );
+  }
+  if (engine === "omlx") {
     const { spec, env } = buildOmlxLaunch(model);
     return ENGINES.omlx.buildBootCommand(spec, env);
   }
@@ -199,6 +206,12 @@ export function buildBootCommandForModelSpec(model: ModelSpec): { binary: string
 export async function ensureModelServing(model: ModelSpec): Promise<BootResult> {
   if (await pingHealth(model.host, model.port)) {
     return { owned: false, proc: null };
+  }
+  const engine = model.engine ?? "llamacpp";
+  if (isExternalOnlyEngine(engine)) {
+    throw new Error(
+      `model ${model.name}: engine ${engine} is not managed by eval and is not reachable at ${model.host}:${String(model.port)}; run the server externally`,
+    );
   }
   if (!model.managed) {
     throw new Error(

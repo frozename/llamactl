@@ -3,6 +3,12 @@ import type { ResponseFormat } from "../client.js";
 export const EVAL_ENGINES = ["llamacpp", "omlx", "gufo", "kapitsa"] as const;
 export type EvalEngine = (typeof EVAL_ENGINES)[number];
 
+/** Engines eval only targets when they are already running externally:
+ *  it never boots, spawns or tears down a server for them. */
+export function isExternalOnlyEngine(engine: EvalEngine): boolean {
+  return engine === "gufo" || engine === "kapitsa";
+}
+
 export interface ModelSpec {
   name: string;
   /** `gufo` and `kapitsa` are OpenAI-compatible servers that eval only
