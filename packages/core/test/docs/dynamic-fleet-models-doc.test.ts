@@ -345,4 +345,20 @@ describe("docs/dynamic-fleet-models.md (#522)", () => {
     );
     expect(doc).toContain("#517");
   });
+
+  test("case 17: degraded demotion path (#518)", () => {
+    // kills: an undocumented demotion path — the doc must name the
+    // demotion entry points and the none-reasons they can return.
+    for (const needle of [
+      "proposeDemotion",
+      "evaluateQualification",
+      "applyQualification",
+      "`demotion`",
+      "`already-degraded`",
+      "`not-demotable`",
+      "`within-tolerance`",
+    ]) {
+      expect(doc, needle).toContain(needle);
+    }
+  });
 });
