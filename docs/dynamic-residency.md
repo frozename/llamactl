@@ -129,14 +129,14 @@ The library is in `packages/remote/src/residency/llamacpp-sleep-client.ts` and `
 
 These keys come from `ResidencyPolicySchema` (`packages/remote/src/workload/noderun-schema.ts`) and are consumed by the admission logic in `packages/core/src/residency/admission.ts` (#690). The status column says whether a value is enforced at runtime, fed only to the planner, applied only at candidate ranking, validated and persisted but ignored, or reserved for future use. `ranking-only` means `rankRouteCandidates` (`packages/core/src/routing/ranking.ts`) applies the knob when the unified proxy is given its `residencyPolicy` option (`createProxy` in `packages/remote/src/proxy/create-proxy.ts`) and resident ranking signals. No production caller supplies `residencyPolicy` or resident signals yet: `dispatchProxyRequest` in `packages/remote/src/proxy/create-proxy.ts` builds `sharedProxy` with `createProxy()` only when `LLAMACTL_UNIFIED_PROXY` is set to `1`, and passes no `residencyPolicy`, so NodeRun values for these two keys have no runtime effect until that wiring lands.
 
-| Key                     | Status       | Meaning                                                                                                      |
-| ----------------------- | ------------ | ------------------------------------------------------------------------------------------------------------ |
-| `safetyMarginRatio`     | enforced     | Applied to computed headroom when admitting a load.                                                          |
-| `minResidencySeconds`   | planner-only | Passed to the profile-switch planner only.                                                                   |
-| `switchCooldownSeconds` | planner-only | Passed to the profile-switch planner only.                                                                   |
-| `idleEvictSeconds`      | parse-only   | Validated and persisted, but there is no idle trigger to enforce it.                                         |
-| `residentPreference`    | ranking-only | Applied by `rankRouteCandidates` when the proxy is given `residencyPolicy` and resident signals; inert at 0. |
-| `coldLoadPenaltyMs`     | ranking-only | Applied by `rankRouteCandidates` when the proxy is given `residencyPolicy` and resident signals; inert at 0. |
+| Key                     | Status       | Meaning                                                                                                                                                                       |
+| ----------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `safetyMarginRatio`     | enforced     | Applied to computed headroom when admitting a load.                                                                                                                           |
+| `minResidencySeconds`   | planner-only | Passed to the profile-switch planner only.                                                                                                                                    |
+| `switchCooldownSeconds` | enforced     | Refuses `residencyPlan` / `apply-profile` with `Cooldown` until this many seconds after the node's last succeeded profile switch recorded in the residency store; 0 disables. |
+| `idleEvictSeconds`      | parse-only   | Validated and persisted, but there is no idle trigger to enforce it.                                                                                                          |
+| `residentPreference`    | ranking-only | Applied by `rankRouteCandidates` when the proxy is given `residencyPolicy` and resident signals; inert at 0.                                                                  |
+| `coldLoadPenaltyMs`     | ranking-only | Applied by `rankRouteCandidates` when the proxy is given `residencyPolicy` and resident signals; inert at 0.                                                                  |
 
 When the unified ranker's pick differs from catalog order and is a local-http replica owned by this node, `gatedExecute` sets `preferredLocalWorkload`. The legacy local executor forwards it to `proxyOpenAI` as the `preferredWorkload` option (#728). `servingRouteForModel` lifts that workload to the head of the live candidates after the withdrawn filter; readiness still applies. Peers never match, and an experimental match does not lead while any non-experimental candidate is live.
 

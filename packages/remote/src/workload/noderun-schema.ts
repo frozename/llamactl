@@ -51,15 +51,18 @@ export type NodeRunInfraItem = z.infer<typeof NodeRunInfraItemSchema>;
 /**
  * Residency tuning for a NodeRun. `safetyMarginRatio` is applied to computed
  * admission budgets by apply, the reconciler, the router views and apply, and
- * the residencyPlan budget (Part of #519). `minResidencySeconds` and
- * `switchCooldownSeconds` are passed to the profile-switch planner by
- * residencyPlan. `idleEvictSeconds` is validated, persisted and echoed by
- * residencyStatus, but no idle-eviction path reads it (the DF-10 sleep driver
- * has no idle trigger), so any value behaves like 0. `residentPreference` and
- * `coldLoadPenaltyMs` are ranking-only (Part of #519): rankRouteCandidates
- * (packages/core/src/routing/ranking.ts) applies them when the unified proxy
- * is given its `residencyPolicy` option, but no production caller wires them
- * yet, so NodeRun values for these two keys have no runtime effect.
+ * the residencyPlan budget (Part of #519). `switchCooldownSeconds` is enforced:
+ * residencyPlan and residencyApplyProfile refuse with `Cooldown` within that
+ * many seconds of the node's last succeeded profile switch recorded in the
+ * node-local residency store. `minResidencySeconds` stays inert until a
+ * trustworthy per-workload load time is supplied. `idleEvictSeconds` is
+ * validated, persisted and echoed by residencyStatus, but no idle-eviction path
+ * reads it (the DF-10 sleep driver has no idle trigger), so any value behaves
+ * like 0. `residentPreference` and `coldLoadPenaltyMs` are ranking-only (Part of
+ * #519): rankRouteCandidates (packages/core/src/routing/ranking.ts) applies them
+ * when the unified proxy is given its `residencyPolicy` option, but no
+ * production caller wires them yet, so NodeRun values for these two keys have no
+ * runtime effect.
  * budget.memoryGiB overrides any computed budget.
  */
 export const ResidencyPolicySchema = z
@@ -70,8 +73,9 @@ export const ResidencyPolicySchema = z
     /** read by the profile-switch planner; refuses only when load timing is
      *  supplied, which no caller persists yet (#279) */
     minResidencySeconds: z.number().int().nonnegative().optional(),
-    /** read by the profile-switch planner; refuses only when switch timing is
-     *  supplied, which no caller persists yet (#279) */
+    /** enforced: refuses residencyPlan and residencyApplyProfile with Cooldown
+     *  within this many seconds of the node's last succeeded profile switch
+     *  recorded in the node-local residency store; 0 disables (Part of #519) */
     switchCooldownSeconds: z.number().int().nonnegative().optional(),
     /** defaults to 0.75; sizes the computed admission budget when
      *  spec.budget is unset */

@@ -19,6 +19,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir, totalmem } from "node:os";
 import { dirname, join } from "node:path";
 
+import { openResidencyOperationStore } from "../../src/residency/store.js";
 import { router } from "../../src/router.js";
 import {
   existsSync,
@@ -121,7 +122,12 @@ type OperationRecord = {
 type StoreSnapshot =
   | { path: string; present: false }
   | { path: string; present: true; error: string }
-  | { path: string; present: true; nonterminal: OperationRecord[] };
+  | {
+      path: string;
+      present: true;
+      nonterminal: OperationRecord[];
+      lastSucceededAtMs?: Record<string, number>;
+    };
 
 type BuildResidencyPlanInput = {
   node: string;
@@ -544,6 +550,96 @@ describe("buildResidencyPlan", () => {
     const plan = buildResidencyPlan(planInput({ lastSwitchAtMs: NOW_MS - 10_000 }));
     expect(plan.ok).toBe(true);
   });
+
+  test("P16: a store-recorded switch on the serving node feeds the cooldown", async () => {
+    // kills: buildResidencyPlan ignoring the store-recorded switch.
+    const { buildResidencyPlan } = await loadPlanMod();
+    const plan = buildResidencyPlan(
+      planInput({
+        residency: { switchCooldownSeconds: 60 },
+        store: {
+          path: STORE_PATH,
+          present: true,
+          nonterminal: [],
+          lastSucceededAtMs: { "profile-switch:gpu1": NOW_MS - 10_000 },
+        },
+      }),
+    );
+    expect(plan.ok).toBe(false);
+    expect(plan.reason).toBe("Cooldown");
+    expect(plan.retryAfterMs).toBe(50_000);
+    expect(plan.detail).toBe("switch cooldown active (50000ms remaining)");
+  });
+
+  test("P17: a store-recorded switch does not gate a node the store does not serve", async () => {
+    // kills: deriving the switch time when the store does not apply to the node.
+    const { buildResidencyPlan } = await loadPlanMod();
+    const plan = buildResidencyPlan(
+      planInput({
+        residency: { switchCooldownSeconds: 60 },
+        servingNode: "cp",
+        store: {
+          path: STORE_PATH,
+          present: true,
+          nonterminal: [],
+          lastSucceededAtMs: { "profile-switch:gpu1": NOW_MS - 10_000 },
+        },
+      }),
+    );
+    expect(plan.ok).toBe(true);
+    expect(plan.victims).toEqual(["chat-a"]);
+  });
+
+  test("P18: a recorded switch under another model key does not gate this node", async () => {
+    // kills: the wrong key, or any-model max.
+    const { buildResidencyPlan } = await loadPlanMod();
+    const plan = buildResidencyPlan(
+      planInput({
+        residency: { switchCooldownSeconds: 60 },
+        store: {
+          path: STORE_PATH,
+          present: true,
+          nonterminal: [],
+          lastSucceededAtMs: { "profile-switch:other": NOW_MS - 10_000 },
+        },
+      }),
+    );
+    expect(plan.ok).toBe(true);
+  });
+
+  test("P19: a recorded switch without residency keeps the default zero cooldown", async () => {
+    // kills: enforcing the cooldown when the NodeRun sets no policy.
+    const { buildResidencyPlan } = await loadPlanMod();
+    const plan = buildResidencyPlan(
+      planInput({
+        store: {
+          path: STORE_PATH,
+          present: true,
+          nonterminal: [],
+          lastSucceededAtMs: { "profile-switch:gpu1": NOW_MS - 10_000 },
+        },
+      }),
+    );
+    expect(plan.ok).toBe(true);
+  });
+
+  test("P20: an explicit lastSwitchAtMs wins over the store-recorded switch", async () => {
+    // kills: letting the store override an explicit caller value.
+    const { buildResidencyPlan } = await loadPlanMod();
+    const plan = buildResidencyPlan(
+      planInput({
+        residency: { switchCooldownSeconds: 60 },
+        lastSwitchAtMs: NOW_MS - 120_000,
+        store: {
+          path: STORE_PATH,
+          present: true,
+          nonterminal: [],
+          lastSucceededAtMs: { "profile-switch:gpu1": NOW_MS - 10_000 },
+        },
+      }),
+    );
+    expect(plan.ok).toBe(true);
+  });
 });
 
 describe("observedFromModelRun / observedFromModelHostStatus", () => {
@@ -739,6 +835,40 @@ function seedRouterFixtureResidency(input: {
   );
 }
 
+// Seeds one terminal succeeded profile-switch operation for `local`, finished
+// 10s ago, so the store snapshot carries a lastSucceededAtMs the planner can
+// enforce switchCooldownSeconds against.
+function seedSucceededProfileSwitch(): void {
+  const finishedAtMs = Date.now() - 10_000;
+  const store = openResidencyOperationStore({ path: storePath });
+  try {
+    const fence = store.claimOwnership({ ownerId: "seed", incarnation: "seed" });
+    const begun = store.beginOperation({
+      fenceToken: fence.fenceToken,
+      operationId: "op-seeded-switch",
+      model: "profile-switch:local",
+      targetState: "profile:code",
+      desiredRevision: 0,
+      reservationGiB: 0,
+      nowMs: finishedAtMs,
+    });
+    expect(begun.ok).toBe(true);
+    if (!begun.ok) {
+      return;
+    }
+    const finished = store.finishOperation({
+      fenceToken: fence.fenceToken,
+      operationId: "op-seeded-switch",
+      expectedVersion: begun.record.version,
+      nowMs: finishedAtMs,
+      outcome: "succeeded",
+    });
+    expect(finished).toEqual({ ok: true });
+  } finally {
+    store.close();
+  }
+}
+
 function snapshotTree(dir: string, prefix = ""): Map<string, string> {
   const out = new Map<string, string>();
   if (!existsSync(dir)) return out;
@@ -862,11 +992,65 @@ describe("residencyPlan procedure", () => {
     });
   });
 
-  test("R7: switchCooldownSeconds cannot refuse — the router supplies no lastSwitchAtMs", async () => {
+  test("R7: with no recorded switch, switchCooldownSeconds does not refuse", async () => {
+    // kills: refusing on a cooldown with no recorded switch to measure from.
     seedRouterFixtureResidency({
       residency: { switchCooldownSeconds: 3600 },
       budget: { memoryGiB: 24 },
     });
+    const result = await plan({ node: "local", to: "code" });
+    expect(result.ok).toBe(true);
+    expect(result.victims).toEqual(["chat-a"]);
+  });
+
+  test("R8: a succeeded switch recorded in the store feeds the router's cooldown", async () => {
+    // kills: the router path not threading the snapshot's last switch.
+    seedRouterFixtureResidency({
+      residency: { switchCooldownSeconds: 3600 },
+      budget: { memoryGiB: 24 },
+    });
+    seedSucceededProfileSwitch();
+    const result = await plan({ node: "local", to: "code" });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("Cooldown");
+    expect(result.detail).toMatch(/^switch cooldown active \(\d+ms remaining\)$/);
+    expect(result.retryAfterMs).toBeGreaterThan(3_500_000);
+    expect(result.retryAfterMs).toBeLessThanOrEqual(3_590_000);
+  });
+
+  test("R8b: a lifecycle read failure still enforces the recorded switch cooldown", async () => {
+    // kills: the snapshot's lifecycleError branch dropping lastSucceededAtMs.
+    seedRouterFixtureResidency({
+      residency: { switchCooldownSeconds: 3600 },
+      budget: { memoryGiB: 24 },
+    });
+    seedSucceededProfileSwitch();
+    // An unknown lifecycle state makes the lifecycle-row read fail.
+    const raw = new Database(storePath);
+    try {
+      raw.run("PRAGMA ignore_check_constraints = ON");
+      raw.run(
+        "INSERT INTO residency_states (model, residency_group, state, owner_id, incarnation, fence_token, version, updated_at_ms, desired_revision) VALUES ('m-new', NULL, 'hibernating', 'o', 'i', 1, 1, 5, NULL)",
+      );
+    } finally {
+      raw.close();
+    }
+    const result = await plan({ node: "local", to: "code" });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("Cooldown");
+    expect(result.detail).toMatch(/^switch cooldown active \(\d+ms remaining\)$/);
+    expect(result.retryAfterMs).toBeGreaterThan(3_500_000);
+    expect(result.retryAfterMs).toBeLessThanOrEqual(3_590_000);
+  });
+
+  test("R9: a recorded switch does not gate a node the store does not serve", async () => {
+    // kills: deriving the switch time when the store does not apply to the node.
+    seedRouterFixtureResidency({
+      residency: { switchCooldownSeconds: 3600 },
+      budget: { memoryGiB: 24 },
+    });
+    seedSucceededProfileSwitch();
+    process.env["LLAMACTL_NODE_NAME"] = "cp";
     const result = await plan({ node: "local", to: "code" });
     expect(result.ok).toBe(true);
     expect(result.victims).toEqual(["chat-a"]);

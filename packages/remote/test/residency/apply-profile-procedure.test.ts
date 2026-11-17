@@ -153,6 +153,31 @@ function seedRouterFixture(): void {
   );
 }
 
+function seedRouterFixtureWithSwitchCooldown(): void {
+  saveWorkload(
+    runManifest("chat-a", { profiles: "chat", phase: "Running", expectedMemoryGiB: 10 }),
+    workloadsDir,
+  );
+  saveWorkload(
+    runManifest("code-b", { profiles: "code", phase: "Stopped", expectedMemoryGiB: 12 }),
+    workloadsDir,
+  );
+  saveNodeRun(
+    {
+      apiVersion: "llamactl/v1",
+      kind: "NodeRun",
+      metadata: { name: "local", labels: {} },
+      spec: {
+        node: "local",
+        budget: { memoryGiB: 24 },
+        residency: { switchCooldownSeconds: 3600 },
+        infra: [],
+      },
+    },
+    workloadsDir,
+  );
+}
+
 function seedInflight(fenceIdentity?: FenceIdentity): Fence {
   const store = openResidencyOperationStore({ path: storePath });
   try {
@@ -688,6 +713,76 @@ describe("residencyApplyProfile procedure", () => {
     expect(result.busy).toBeUndefined();
     expect(result.ok).toBe(true);
     expect(result.outcome).toBe("stops-and-starts-ran");
+  });
+
+  test("A10: a recorded succeeded switch refuses the next wet apply inside the cooldown", async () => {
+    // kills: cooldown not reaching the wet apply path.
+    seedRouterFixtureWithSwitchCooldown();
+    await installStepsFake();
+
+    const first = await applyProfile({
+      node: "local",
+      to: "code",
+      from: "chat",
+      dryRun: false,
+      confirm: true,
+    });
+
+    expect(first.ok).toBe(true);
+    expect(first.outcome).toBe("stops-and-starts-ran");
+    expect(stepCalls).toEqual([
+      ["stop", "chat-a"],
+      ["start", "code-b"],
+    ]);
+
+    const second = await applyProfile({
+      node: "local",
+      to: "code",
+      from: "chat",
+      dryRun: false,
+      confirm: true,
+    });
+
+    expect(second.ok).toBe(false);
+    expect(second.outcome).toBe("refused");
+    expect(second.refusal?.reason).toBe("Cooldown");
+    expect(second.refusal?.detail ?? "").toMatch(/^switch cooldown active \(\d+ms remaining\)$/);
+    expect(stepCalls).toEqual([
+      ["stop", "chat-a"],
+      ["start", "code-b"],
+    ]);
+  });
+
+  test("A11: with no residency policy two wet applies both run", async () => {
+    // kills: enforcing a cooldown the NodeRun never configured.
+    seedRouterFixture();
+    await installStepsFake();
+
+    const first = await applyProfile({
+      node: "local",
+      to: "code",
+      from: "chat",
+      dryRun: false,
+      confirm: true,
+    });
+    const second = await applyProfile({
+      node: "local",
+      to: "code",
+      from: "chat",
+      dryRun: false,
+      confirm: true,
+    });
+
+    expect(first.ok).toBe(true);
+    expect(first.outcome).toBe("stops-and-starts-ran");
+    expect(second.ok).toBe(true);
+    expect(second.outcome).toBe("stops-and-starts-ran");
+    expect(stepCalls).toEqual([
+      ["stop", "chat-a"],
+      ["start", "code-b"],
+      ["stop", "chat-a"],
+      ["start", "code-b"],
+    ]);
   });
 });
 

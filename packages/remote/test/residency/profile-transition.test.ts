@@ -441,11 +441,15 @@ describe("executeProfileSwitch", () => {
       // #284 (DF-11): apply-profile.ts is the one sanctioned live caller; any
       // other importer must be reviewed and added here deliberately. #517:
       // lifecycle-steps.ts is a pure decorator over the executor deps, reached
-      // only through apply-profile.
+      // only through apply-profile. #519: procedures.ts reads only the
+      // profileSwitchOperationKey export to thread the store-recorded switch into
+      // the cooldown; profile-transition imports neither procedures nor
+      // coordinator, so there is no cycle.
       if (
         rel === "packages/remote/src/residency/profile-transition.ts" ||
         rel === "packages/remote/src/residency/apply-profile.ts" ||
-        rel === "packages/remote/src/residency/lifecycle-steps.ts"
+        rel === "packages/remote/src/residency/lifecycle-steps.ts" ||
+        rel === "packages/remote/src/residency/procedures.ts"
       ) {
         continue;
       }

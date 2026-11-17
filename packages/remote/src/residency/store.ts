@@ -63,6 +63,10 @@
 // accepts a write that carries no desiredRevision, for backward compatibility;
 // that write keeps the stored revision, so the stale-writer gap is closed only
 // for writers that pass a revision. Making the field mandatory is a follow-up.
+//
+// readResidencyStoreSnapshot reports lastSucceededAtMs, the newest succeeded
+// terminal finish per model, so the switchCooldownSeconds profile-switch
+// cooldown can measure the node's last switch from this store (Part of #519).
 import type { ResidencyAuditEntry } from "@llamactl/core/residency/leases";
 
 import { llamactlHome } from "@llamactl/core/config/env";
@@ -411,10 +415,23 @@ export type ResidencyStoreSnapshot =
       path: string;
       present: true;
       nonterminal: ResidencyOperationRecord[];
+      lastSucceededAtMs?: Readonly<Record<string, number>>;
       lifecycle?: ResidencyStateRecord[];
       lifecycleError?: string;
     }
   | { path: string; present: true; error: string };
+
+// Newest terminal finish per model among operations that ended `succeeded`.
+// Failed, cancelled, unknown and nonterminal rows are ignored, so this is the
+// last *successful* switch the cooldown must measure against (Part of #519).
+function lastSucceededAtMsByModel(db: Database): Record<string, number> {
+  const rows = db
+    .query(
+      "SELECT model, MAX(updated_at_ms) AS at FROM operations WHERE phase = 'terminal' AND outcome = 'succeeded' GROUP BY model ORDER BY model",
+    )
+    .all() as { model: string; at: number }[];
+  return Object.fromEntries(rows.map((row): [string, number] => [row.model, row.at]));
+}
 
 // Read-only view of an existing store. Never mkdir, never set journal_mode,
 // never migrate, never claim ownership — a status read must leave the file
@@ -437,10 +454,23 @@ export function readResidencyStoreSnapshot(
     db = new Database(path, { readonly: true });
     db.run(`PRAGMA busy_timeout = ${String(busyTimeoutMs)}`);
     const nonterminal = listNonterminalRows(db);
+    const lastSucceededAtMs = lastSucceededAtMsByModel(db);
     try {
-      return { path, present: true, nonterminal, lifecycle: listResidencyStateRowsReadOnly(db) };
+      return {
+        path,
+        present: true,
+        nonterminal,
+        lastSucceededAtMs,
+        lifecycle: listResidencyStateRowsReadOnly(db),
+      };
     } catch (error: unknown) {
-      return { path, present: true, nonterminal, lifecycleError: (error as Error).message };
+      return {
+        path,
+        present: true,
+        nonterminal,
+        lastSucceededAtMs,
+        lifecycleError: (error as Error).message,
+      };
     }
   } catch (error: unknown) {
     return { path, present: true, error: (error as Error).message };

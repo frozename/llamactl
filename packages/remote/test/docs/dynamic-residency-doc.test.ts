@@ -463,7 +463,7 @@ describe("docs/dynamic-residency.md (#285)", () => {
     const KNOB_STATUS = {
       safetyMarginRatio: "enforced",
       minResidencySeconds: "planner-only",
-      switchCooldownSeconds: "planner-only",
+      switchCooldownSeconds: "enforced",
       idleEvictSeconds: "parse-only",
       residentPreference: "ranking-only",
       coldLoadPenaltyMs: "ranking-only",
@@ -486,6 +486,7 @@ describe("docs/dynamic-residency.md (#285)", () => {
     expect(section).toContain("residencyPolicy");
     expect(section).toContain("no runtime effect until");
     expect(section).toContain("#690");
+    expect(section).toContain("last succeeded profile switch");
   });
 
   // Kills: calling setNodeLlamacppSleepController from serve.ts (the doc
