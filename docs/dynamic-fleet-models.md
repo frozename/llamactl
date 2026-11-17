@@ -210,7 +210,9 @@ more occupying members.
 Lifecycle-row boot recovery (Part of #517) sweeps interrupted transient
 states (`loading`, `warming`, `draining`, `unloading`) to `failed` under
 the same claimed fence as the profile-switch operation recovery, releasing
-exclusive-group capacity. It is implemented in
+exclusive-group capacity. It runs only on a claimed pass, i.e. only when a
+stale profile-switch row exists, so lifecycle rows interrupted outside a
+switch are not swept. It is implemented in
 `runProfileSwitchBootRecovery` (`packages/remote/src/residency/boot-recovery.ts`)
 with `failInterruptedLifecycleRows`. Per-row write failures and refusals
 are contained and counted without stopping the sweep; a failed row
