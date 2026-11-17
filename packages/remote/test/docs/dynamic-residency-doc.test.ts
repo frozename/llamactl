@@ -463,14 +463,15 @@ describe("docs/dynamic-residency.md (#285)", () => {
 
   // Kills: reverting a ranking knob row to reserved, leaving the
   // minResidencySeconds row planner-only, dropping the production-gap
-  // sentence, restoring the no-runtime-effect claim, or omitting the
-  // factory/node-identity wiring from the doc.
+  // sentence, restoring the no-runtime-effect claim, a stale
+  // idleEvictSeconds status, or omitting the factory/node-identity
+  // wiring from the doc.
   test("case 7: NodeRun knobs table matches ResidencyPolicySchema", () => {
     const KNOB_STATUS = {
       safetyMarginRatio: "enforced",
       minResidencySeconds: "enforced",
       switchCooldownSeconds: "enforced",
-      idleEvictSeconds: "parse-only",
+      idleEvictSeconds: "status-only",
       residentPreference: "ranking-only",
       coldLoadPenaltyMs: "ranking-only",
     } as const;
@@ -491,6 +492,11 @@ describe("docs/dynamic-residency.md (#285)", () => {
     expect(section).toContain("MinResidency");
     expect(section).toContain("rankRouteCandidates");
     expect(section).toContain("residencyPolicy");
+    expect(section).toContain("idleEviction");
+    expect(section).toContain("advisory");
+    const preambleLine = section.split("\n").find((line) => line.includes("status column")) ?? "";
+    const statusSentence = /[^.]*status column[^.]*\./.exec(preambleLine)?.[0] ?? "";
+    expect(statusSentence).toContain("status-only");
     expect(section).not.toContain("no runtime effect until");
     expect(section).toContain("createSharedUnifiedProxy");
     expect(section).toContain("LLAMACTL_NODE_NAME");

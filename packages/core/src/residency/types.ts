@@ -67,4 +67,9 @@ export interface ResidencyLeases {
   snapshot: (workload: string) => ResidencySnapshot;
   waiterCount: (workload: string) => number;
   audit: () => ResidencyAuditEntry[];
+  // Optional read-out (Part of #519): the last time this workload saw lease
+  // activity (a successful acquire, or a release that removed a lease), or the
+  // registry's creation time when never touched. Advisory only: nothing here
+  // acts on it, and existing fakes need not implement it.
+  lastActivityAtMs?: (workload: string) => number;
 }

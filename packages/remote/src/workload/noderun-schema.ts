@@ -58,9 +58,10 @@ export type NodeRunInfraItem = z.infer<typeof NodeRunInfraItemSchema>;
  * and residencyApplyProfile refuse with `MinResidency` while a victim's
  * node-local residency_states row has been `ready` for fewer than that many
  * seconds; 0 disables. `idleEvictSeconds` is
- * validated, persisted and echoed by residencyStatus, but no idle-eviction path
- * reads it (the DF-10 sleep driver has no idle trigger), so any value behaves
- * like 0. `residentPreference` and `coldLoadPenaltyMs` are ranking-only (Part of
+ * status-only: validated, persisted and reported advisory by the residencyStatus
+ * idleEviction section (only on the serving node), but no idle-eviction path
+ * reads it (the DF-10 sleep driver has no idle trigger), so nothing evicts.
+ * `residentPreference` and `coldLoadPenaltyMs` are ranking-only (Part of
  * #519): rankRouteCandidates (packages/core/src/routing/ranking.ts) applies them
  * through the unified proxy's `residencyPolicy` option. createSharedUnifiedProxy
  * (packages/remote/src/proxy/create-proxy.ts) passes the serving node's NodeRun
@@ -71,8 +72,9 @@ export type NodeRunInfraItem = z.infer<typeof NodeRunInfraItemSchema>;
  */
 export const ResidencyPolicySchema = z
   .object({
-    /** parse-only: validated and persisted; no idle-eviction path reads it,
-     * so any value behaves like 0 (Part of #519) */
+    /** status-only: validated and persisted, and reported advisory by the
+     * residencyStatus idleEviction section; no idle-eviction path reads it, so
+     * nothing evicts (Part of #519) */
     idleEvictSeconds: z.number().int().nonnegative().optional(),
     /** enforced: refuses residencyPlan and residencyApplyProfile with
      *  MinResidency while a victim's ready lifecycle row is younger than this;
