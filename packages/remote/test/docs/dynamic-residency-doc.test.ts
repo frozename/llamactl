@@ -459,8 +459,9 @@ describe("docs/dynamic-residency.md (#285)", () => {
   });
 
   // Kills: reverting a ranking knob row to reserved, leaving the
-  // minResidencySeconds row planner-only, or dropping the production-gap
-  // sentence.
+  // minResidencySeconds row planner-only, dropping the production-gap
+  // sentence, restoring the no-runtime-effect claim, or omitting the
+  // factory/node-identity wiring from the doc.
   test("case 7: NodeRun knobs table matches ResidencyPolicySchema", () => {
     const KNOB_STATUS = {
       safetyMarginRatio: "enforced",
@@ -487,7 +488,9 @@ describe("docs/dynamic-residency.md (#285)", () => {
     expect(section).toContain("MinResidency");
     expect(section).toContain("rankRouteCandidates");
     expect(section).toContain("residencyPolicy");
-    expect(section).toContain("no runtime effect until");
+    expect(section).not.toContain("no runtime effect until");
+    expect(section).toContain("createSharedUnifiedProxy");
+    expect(section).toContain("LLAMACTL_NODE_NAME");
     expect(section).toContain("#690");
     expect(section).toContain("last succeeded profile switch");
   });
@@ -707,9 +710,9 @@ describe("docs/dynamic-residency.md (#285)", () => {
   });
 
   // Part of #522
-  // Kills: passing residencyPolicy into the shared createProxy() (the
-  // no-runtime-effect claim goes stale), or reverting the doc's wrong
-  // serve.ts attribution.
+  // Kills: reverting dispatchProxyRequest to a bare createProxy() (drops
+  // the NodeRun ranking wiring), or reverting the doc's wrong serve.ts
+  // attribution.
   test("case 14: ranked replica serving (#728) and shared proxy location", () => {
     const k = (sectionBody(SECTIONS.knobs) ?? "").replaceAll(/\s+/g, " ");
     expect(k).not.toContain("`serve.ts` builds `sharedProxy`");
@@ -723,7 +726,8 @@ describe("docs/dynamic-residency.md (#285)", () => {
       expect(k, needle).toContain(needle);
     }
     const createProxySrc = readOrEmpty(join(REPO, "packages/remote/src/proxy/create-proxy.ts"));
-    expect(createProxySrc).toContain("sharedProxy ??= createProxy();");
+    expect(createProxySrc).toContain("sharedProxy ??= createSharedUnifiedProxy();");
+    expect(createProxySrc).not.toContain("sharedProxy ??= createProxy();");
     // The wiring itself, not the interface field or helper name: gatedExecute
     // sets the hint on ctx and the legacy executor forwards it to proxyOpenAI.
     expect(createProxySrc).toContain("preferredLocalWorkload: hint");

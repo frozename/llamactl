@@ -62,9 +62,11 @@ export type NodeRunInfraItem = z.infer<typeof NodeRunInfraItemSchema>;
  * reads it (the DF-10 sleep driver has no idle trigger), so any value behaves
  * like 0. `residentPreference` and `coldLoadPenaltyMs` are ranking-only (Part of
  * #519): rankRouteCandidates (packages/core/src/routing/ranking.ts) applies them
- * when the unified proxy is given its `residencyPolicy` option, but no
- * production caller wires them yet, so NodeRun values for these two keys have no
- * runtime effect.
+ * through the unified proxy's `residencyPolicy` option. createSharedUnifiedProxy
+ * (packages/remote/src/proxy/create-proxy.ts) passes the serving node's NodeRun
+ * policy (selected by LLAMACTL_NODE_NAME) and a resident set built from ready
+ * residency_states rows; this applies under LLAMACTL_UNIFIED_PROXY=1 and both
+ * keys are inert at 0.
  * budget.memoryGiB overrides any computed budget.
  */
 export const ResidencyPolicySchema = z
@@ -83,11 +85,13 @@ export const ResidencyPolicySchema = z
     /** defaults to 0.75; sizes the computed admission budget when
      *  spec.budget is unset */
     safetyMarginRatio: z.number().gt(0).lte(1).optional(),
-    /** ranking-only: applied by rankRouteCandidates via the unified proxy's
-     *  residencyPolicy option; no production caller wires it yet */
+    /** #519: wired by createSharedUnifiedProxy into
+     *  rankRouteCandidates via the unified proxy's residencyPolicy option;
+     *  ready residency-store rows feed the resident deploymentIds */
     residentPreference: z.number().nonnegative().optional(),
-    /** ranking-only: applied by rankRouteCandidates via the unified proxy's
-     *  residencyPolicy option; no production caller wires it yet */
+    /** #519: wired by createSharedUnifiedProxy into
+     *  rankRouteCandidates via the unified proxy's residencyPolicy option;
+     *  ready residency-store rows feed the resident deploymentIds */
     coldLoadPenaltyMs: z.number().int().nonnegative().optional(),
   })
   .strict();

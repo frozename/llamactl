@@ -43,9 +43,11 @@ export const MEMORY_BUDGET_HEADROOM_RATIO = 0.75;
  * unified proxy's `residencyPolicy` option (Part of #519).
  * coldLoadPenaltyMs adds ms to a non-resident candidate's load cost when
  * residency is known. residentPreference adds quality points to a resident
- * candidate. Both are inert at 0 and while residency is unknown. The
- * production shared proxy supplies neither a policy nor resident signals
- * yet.
+ * candidate. Both are inert at 0 and while residency is unknown. The shared
+ * proxy (createSharedUnifiedProxy in
+ * packages/remote/src/proxy/create-proxy.ts) supplies the serving node's
+ * NodeRun policy and resident signals from ready lifecycle rows under
+ * LLAMACTL_UNIFIED_PROXY=1.
  */
 export interface ResidencyPolicy {
   /** 0 = never evict idle residents. Parse-only (Part of #519): no
