@@ -1831,15 +1831,7 @@ export async function stopServer(opts: StopServerOptions): Promise<StopServerRes
   // A live pid is not enough to signal: the command line must still be the
   // llama-server this record describes — its binary (from the sidecar, or the
   // default name) and the model it was launched with.
-  const sidecar = readServerState(key, resolved);
-  const identity: PidIdentityDeps = {
-    ...opts.identity,
-    expectCommand: {
-      binary: sidecar !== null && sidecar.binary !== "" ? basename(sidecar.binary) : "llama-server",
-      ...(sidecar !== null && sidecar.binary !== "" ? { path: sidecar.binary } : {}),
-      ...(sidecar !== null ? { args: [sidecar.rel] } : {}),
-    },
-  };
+  const identity = trackedStopIdentity(resolved, key, opts.identity);
   const verdict = verifyPidFile(recordPath, pid, identity);
   if (isRecordedPidGone(verdict)) {
     removeServerPid(resolved, key);

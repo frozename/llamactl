@@ -180,7 +180,8 @@ describe("server.startServer residency session start fence (#520)", () => {
 
     expect(refusedRun.result.ok).toBe(false);
     expect(refusedRun.result.error).toMatch(/SessionsActive: s1/);
-    expect(refusedRun.result.error).toMatch(/session/i);
+    expect(refusedRun.result.error).toMatch(/while a session is bound to its running instance$/);
+    expect(refusedRun.result.error).not.toMatch(/leases are held/);
     expect((refusedRun.result as { refused?: unknown }).refused).toEqual({
       reason: "SessionsActive",
       active: ["s1"],
@@ -216,6 +217,26 @@ describe("server.startServer residency session start fence (#520)", () => {
 
     expect(restarted.result.ok).toBe(true);
     expect(restarted.spawnCalls).toBe(1);
+    expect(sessions.activeSessions("test-wl")).toEqual(["s1"]);
+  });
+
+  // Kills: treating a missing pid file as a live instance in the session
+  // liveness probe (the bound session would block a start with nothing
+  // to stop).
+  test("a bound session with no tracked pid file does not block the start", async () => {
+    standUpModelAndBin();
+    acquireSession("s1", "test-wl");
+    expect(readServerPid(TEST_KEY)).toBeNull();
+
+    const { result, spawnCalls } = await startWithMockedIo(
+      { key: TEST_KEY, target: "Demo/demo.gguf", identity: aliveIdentity() },
+      process.pid,
+      "readiness",
+    );
+
+    expect(result.ok).toBe(true);
+    expect(spawnCalls).toBe(1);
+    expect((result as { refused?: unknown }).refused).toBeUndefined();
     expect(sessions.activeSessions("test-wl")).toEqual(["s1"]);
   });
 
