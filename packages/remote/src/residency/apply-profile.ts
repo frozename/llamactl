@@ -11,7 +11,11 @@
  * unknown budget keeps the pre-#276 behaviour and logs once to `args.log`. A
  * foreign fence, or any fence with a nonterminal `profile-switch:<node>` row,
  * is never claimed over — it reports busy without touching authority (see
- * `runWet` for the cross-process window that remains).
+ * `runWet` for the cross-process window that remains). The wet run also passes
+ * `operation.lifecycle` (the operation store plus a `groupOf` that reads the
+ * `llamactl.io/residency-group` manifest label) into the executor, so each stop
+ * and start drives its `residency_states` row, a corroborated exclusive-group
+ * occupant refuses the start, and a stale same-group occupant is reconciled.
  *
  * `applyResidencyProfile` is wired (router procedure, CLI verb, MCP tool).
  * `cancelResidencyProfileOperation` aborts a switch this process owns at its
@@ -38,6 +42,7 @@ import {
   saveWorkload,
   withWorkloadsMutex,
 } from "../workload/store.js";
+import { residencyGroupLabelOf } from "./coordinator.js";
 import {
   executeProfileSwitch,
   type ProfileSwitchExecutionReport,
@@ -50,6 +55,7 @@ import {
 import { reopenWorkloadAfterLoad } from "./stop-fence.js";
 import {
   openResidencyOperationStore,
+  type ResidencyLifecycleStore,
   type ResidencyOperationOutcome,
   type ResidencyOperationRecord,
   type ResidencyOperationStore,
@@ -414,6 +420,18 @@ function defaultApplyProfileLog(line: string): void {
   process.stderr.write(line);
 }
 
+// The exclusive residency group a workload belongs to, read from its manifest's
+// `llamactl.io/residency-group` label. A missing manifest or an empty label is
+// no group; the decorator then reconciles nothing and never passes group on a
+// hop.
+function residencyGroupOf(workloadsDir: string, workload: string): string | undefined {
+  try {
+    return residencyGroupLabelOf(loadWorkloadByNameAny(workload, workloadsDir).metadata.labels);
+  } catch {
+    return undefined;
+  }
+}
+
 function applyProfileLog(args: ApplyResidencyProfileArgs): (line: string) => void {
   return args.log ?? defaultApplyProfileLog;
 }
@@ -422,7 +440,7 @@ async function runFencedSwitch(
   plan: OkPlan,
   steps: ProfileSwitchExecutorDeps,
   args: ApplyResidencyProfileArgs,
-  store: ResidencyOperationStore,
+  store: ResidencyOperationStore & ResidencyLifecycleStore,
   fenceToken: number,
 ): Promise<ResidencyApplyProfileResult> {
   const operationId = randomUUID();
@@ -450,6 +468,10 @@ async function runFencedSwitch(
           desiredRevision: RESIDENCY_APPLY_PROFILE_DESIRED_REVISION,
           ...(nodeBudgetGiB === undefined ? {} : { nodeBudgetGiB }),
           log,
+          lifecycle: {
+            store,
+            groupOf: (workload) => residencyGroupOf(args.workloadsDir, workload),
+          },
         },
       }),
     );

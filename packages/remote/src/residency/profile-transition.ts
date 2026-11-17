@@ -59,7 +59,19 @@
  * `AlreadyDraining`) and does not reopen admission; only the untouched later
  * victims are cancelled. The planner's resolved `request.timeouts` are still
  * not carried on `OkPlan`, so `apply-profile` runs unbounded until a later
- * slice threads them through.
+ * slice threads them through. A `StepTimedOut` start or stop whose dep later
+ * resolves is recorded `failed` via that aborted signal, and its row can still
+ * be written after the operation is terminal.
+ *
+ * Residency lifecycle states. When `opts.operation.lifecycle` is passed, the
+ * executor decorates its stop/start deps so each victim walks
+ * ready -> draining -> unloading -> downloaded (or `failed`) and each
+ * replacement walks down to loaded then -> loading -> warming -> ready (or
+ * `failed`), refusing before the dep runs on a corroborated exclusive-group
+ * occupant or any failed write. Corroboration: `victims ∪ retained` is what
+ * the planner observed occupying, and `buildResidencyPlan` refuses
+ * `UnknownState` unless every on-node workload was observed, so a same-group
+ * occupying row outside that set is stale and is reconciled to downloaded.
  */
 import { getResidencyLeaseRegistry, type ResidencyLeases } from "@llamactl/core/residency/leases";
 import {
@@ -70,6 +82,8 @@ import {
 } from "@llamactl/core/residency/planner";
 
 import type { ResidencyOperationOutcome, ResidencyOperationStore } from "./store.js";
+
+import { type ProfileSwitchLifecycleOpts, withResidencyLifecycle } from "./lifecycle-steps.js";
 
 export type ProfileSwitchStepOutcome = { ok: true } | { ok: false; detail: string };
 // Per-action budgets for the stop/start steps. `unloadMs` bounds each `stop`
@@ -113,6 +127,9 @@ export type ProfileSwitchOperationOpts = {
   nodeBudgetGiB?: number;
   // where a failed step-boundary heartbeat is reported; default stderr
   log?: (line: string) => void;
+  // per-model residency lifecycle wiring; when set the executor drives the
+  // residency_states rows around each fenced stop/start
+  lifecycle?: ProfileSwitchLifecycleOpts;
 };
 export type ProfileSwitchExecutionReport = {
   dryRun: boolean;
@@ -982,6 +999,26 @@ function stepBudgetFrom(
   };
 }
 
+// The executor deps, wrapped in the residency-lifecycle decorator only when
+// the operation opts carry `lifecycle`. Without it the deps pass through
+// untouched, so the switch behaves byte-identically to a no-lifecycle run.
+function executorDepsFor(
+  plan: OkPlan,
+  deps: ProfileSwitchExecutorDeps,
+  operation: ProfileSwitchOperationOpts | undefined,
+): ProfileSwitchExecutorDeps {
+  if (operation?.lifecycle === undefined) {
+    return deps;
+  }
+  return withResidencyLifecycle(deps, {
+    lifecycle: operation.lifecycle,
+    fenceToken: operation.fenceToken,
+    occupiedAtPlan: new Set([...plan.victims, ...plan.retained]),
+    nowMs: operation.nowMs ?? Date.now,
+    log: operation.log ?? defaultLog,
+  });
+}
+
 export async function executeProfileSwitch(
   plan: ProfileSwitchPlan,
   deps: ProfileSwitchExecutorDeps,
@@ -1054,17 +1091,18 @@ export async function executeProfileSwitch(
   const signal = opts.signal;
   const operation = opts.operation;
   const budget = stepBudgetFrom(opts.stepTimeouts, opts.stepTimer);
+  const executorDeps = executorDepsFor(plan, deps, operation);
   if (operation !== undefined) {
     return await executeWithOperation(plan, deferred, operation, async (beat) =>
       fenced
-        ? await runFenced(plan, deps, registry, drainTimeoutMs, signal, beat, budget)
-        : await runSteps(planned, deps, signal, beat, budget),
+        ? await runFenced(plan, executorDeps, registry, drainTimeoutMs, signal, beat, budget)
+        : await runSteps(planned, executorDeps, signal, beat, budget),
     );
   }
 
   const result = fenced
-    ? await runFenced(plan, deps, registry, drainTimeoutMs, signal, NO_BEAT, budget)
-    : await runSteps(planned, deps, signal, NO_BEAT, budget);
+    ? await runFenced(plan, executorDeps, registry, drainTimeoutMs, signal, NO_BEAT, budget)
+    : await runSteps(planned, executorDeps, signal, NO_BEAT, budget);
   const outcome =
     result.cancelledAt !== null
       ? "cancelled"

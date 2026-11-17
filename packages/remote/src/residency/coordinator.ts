@@ -30,6 +30,17 @@ export const RESIDENCY_PROTECTED_ANNOTATION = "llamactl.io/residency-protected";
 // is re-declared and the contract test pins the two for parity.
 export const RESIDENCY_GROUP_LABEL = "llamactl.io/residency-group";
 
+// The single normalizer for the residency-group label: the planner
+// (buildWorkload) and the lifecycle decorator's groupOf (apply-profile) both
+// read membership through it, so a whitespace-padded label names the same
+// group on both sides. A missing or blank label is no group.
+export function residencyGroupLabelOf(
+  labels: Readonly<Record<string, string>> | undefined,
+): string | undefined {
+  const group = labels?.[RESIDENCY_GROUP_LABEL]?.trim();
+  return group !== undefined && group.length > 0 ? group : undefined;
+}
+
 export type ObservedWorkloadState = "running" | "starting" | "stopped" | "unknown";
 
 export type ProfileWorkloadSource =
@@ -100,7 +111,7 @@ function buildWorkload(
 ): PlannerWorkload {
   const annotations = src.manifest.metadata.annotations;
   const profiles = parseProfiles(annotations?.[RESIDENCY_PROFILES_ANNOTATION]);
-  const groupLabel = src.manifest.metadata.labels?.[RESIDENCY_GROUP_LABEL];
+  const groupLabel = residencyGroupLabelOf(src.manifest.metadata.labels);
   const protectedAnnotated = annotations?.[RESIDENCY_PROTECTED_ANNOTATION] === "true";
   const protectedWorkload = profiles.length === 0 ? true : protectedAnnotated;
   return {
@@ -108,7 +119,7 @@ function buildWorkload(
     profiles,
     state: mapState(state),
     expectedMemoryGiB: input.memoryGiBOf(nameOf(src)),
-    ...(typeof groupLabel === "string" && groupLabel.length > 0 ? { group: groupLabel } : {}),
+    ...(groupLabel === undefined ? {} : { group: groupLabel }),
     ...(protectedWorkload ? { protected: true } : {}),
     ...(src.manifest.spec.enabled ? {} : { disabled: true }),
   };

@@ -13,11 +13,18 @@ Open items:
   Persistence landed in #662: the fenced residency store
   (`packages/remote/src/residency/store.ts`) writes per-model states to
   its `residency_states` table. Writing is opt-in through
-  `transitionResidencyState`, and no production caller writes states
-  yet. Enforcement in the reconciler and ModelHost is still pending
+  `transitionResidencyState`, and the profile-switch executor
+  (`applyResidencyProfile`: router procedure, CLI verb, MCP tool) now writes
+  `residency_states` for its victims and replacements. A same-group occupant
+  that the plan observed occupying refuses the start with
+  `ExclusiveGroupOccupied` before the engine runs. A same-group occupying row
+  the plan did not observe is reconciled to downloaded and logged. Enforcement
+  in the reconciler and ModelHost is still pending
   #276. What enforces today is the
   finite-budget admission math plus the per-node residency-group start
-  guard described below.
+  guard described below. Still pending: direct workload start/stop writers,
+  reconciliation outside a switch, lifecycle-row boot recovery, and a status
+  read-out.
 - Real GLM-5.3-Flash z13 measurements are not yet committed (see the
   eval record at the bottom).
 
@@ -80,8 +87,14 @@ persists per-model states in its `residency_states` table:
   version, and checked against the lifecycle edges and exclusive-group
   occupancy over all persisted rows in one IMMEDIATE transaction.
 - Writing is opt-in: only a caller that opens the store and calls
-  `transitionResidencyState` writes rows, and no production caller does
-  yet.
+  `transitionResidencyState` writes rows. The profile-switch executor
+  (`applyResidencyProfile`: router procedure, CLI verb, MCP tool) now writes
+  `residency_states` for its victims and replacements. A same-group occupant
+  that the plan observed occupying refuses the start with
+  `ExclusiveGroupOccupied` before the engine runs. A same-group occupying row
+  the plan did not observe is reconciled to downloaded and logged. Still
+  pending: direct workload start/stop writers, reconciliation outside a
+  switch, lifecycle-row boot recovery, and a status read-out.
 - Group declarations are not persisted. They come from the caller
   (default `RESIDENCY_GROUPS`).
 
