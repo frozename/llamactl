@@ -167,8 +167,9 @@ with `ExclusiveGroupOccupied` before the engine runs. Since #517 the
 direct ModelHost writers `modelHostStart`/`modelHostStop` route through
 `packages/remote/src/residency/direct-lifecycle.ts`: they claim the shared
 apply-profile fence, walk the row the same way, reconcile proven-down
-same-group peers, and refuse while a profile switch is in flight. Still
-pending: the direct ModelRun (`serverStart`/`serverStop`) writers,
+same-group peers, and refuse a start while a profile switch is in flight.
+Bookkeeping never blocks a stop: a stop whose claim or walk fails still
+runs and logs `not recorded`. Still pending: the direct ModelRun (`serverStart`/`serverStop`) writers,
 reconciliation outside these paths, and #276.
 `llamactl residency status` reports these rows and any exclusive-group
 violation (#731), and a wet switch refuses to unload a session-bound victim

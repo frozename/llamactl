@@ -14,8 +14,10 @@ import type { ResidencyState } from "@llamactl/core/residency/lifecycle";
  * residency store, so every case fails BY ASSERTION on the rows, fence
  * or stderr — never by import, type or exit code.
  */
+import { writeModelHostState } from "@llamactl/core/engines/state";
 import { setResidencyLeaseRegistry } from "@llamactl/core/residency/leases";
 import { setSessionRefcountRegistry } from "@llamactl/core/residency/sessions";
+import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -30,6 +32,7 @@ import {
 } from "../../src/residency/store.js";
 import { router } from "../../src/router.js";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
+import { statusModelHost } from "../../src/server/modelhost.js";
 import { parseModelHost, saveModelHost } from "../../src/workload/modelhost-store.js";
 
 const GROUP = "z13-large-gpu";
@@ -190,6 +193,40 @@ function captureStderr(): { text: () => string; restore: () => void } {
       process.stderr.write = original;
     },
   };
+}
+
+// Makes every residency_states write abort, standing in for a store that
+// cannot record (disk full, a corrupt page) while the fence stays claimable.
+function blockResidencyWrites(): void {
+  const db = new Database(storePath());
+  try {
+    db.run(
+      "CREATE TRIGGER block_residency_update BEFORE UPDATE ON residency_states BEGIN SELECT RAISE(ABORT, 'disk full'); END",
+    );
+    db.run(
+      "CREATE TRIGGER block_residency_insert BEFORE INSERT ON residency_states BEGIN SELECT RAISE(ABORT, 'disk full'); END",
+    );
+  } finally {
+    db.close();
+  }
+}
+
+// Leaves a ModelHost sidecar whose recorded pid is alive (this test process)
+// but is not the engine binary, so statusModelHost reads Stopped with
+// identityUnknown: the host cannot be proven down.
+function writeUnverifiableSidecar(name: string, port: number): void {
+  writeModelHostState(
+    {
+      kind: "ModelHost",
+      engine: "omlx",
+      pid: process.pid,
+      host: "127.0.0.1",
+      port,
+      modelAliases: [name],
+      startedAt: new Date().toISOString(),
+    },
+    { name },
+  );
 }
 
 beforeEach(() => {
@@ -359,6 +396,45 @@ describe("modelHostStart/modelHostStop direct residency lifecycle", () => {
       expect(stderr.text()).toContain(
         "[residency] lifecycle z13-a stop not recorded: profile switch in flight",
       );
+    } finally {
+      stderr.restore();
+    }
+  });
+
+  test("DL9: an identity-unknown ready peer is not proven down and still refuses", async () => {
+    // kills: treating a Stopped status with identityUnknown as proven down —
+    // an unverifiable recorded pid must keep the peer's ready row occupying.
+    seed([{ model: "z13-b", target: "ready", group: GROUP }]);
+    writeUnverifiableSidecar("z13-b", 18095);
+    expect(statusModelHost({ key: { name: "z13-b" } })).toMatchObject({
+      state: "Stopped",
+      identityUnknown: true,
+    });
+
+    const result = await startWorkload("z13-a");
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe(
+      "residency lifecycle refused z13-a downloaded -> loading: ExclusiveGroupOccupied: exclusive group z13-large-gpu is held by z13-b in state ready",
+    );
+    expect(readState("z13-b")?.state).toBe("ready");
+  });
+
+  test("DL10: a stop whose residency writes fail still runs and returns the stop result", async () => {
+    // kills: mapping a refused pre-stop walk to ok:false — bookkeeping never
+    // blocks a stop, so the router returns the dep's own result.
+    seed([{ model: "z13-a", target: "ready", group: GROUP }]);
+    const seeded = readState("z13-a");
+    blockResidencyWrites();
+    const stderr = captureStderr();
+    try {
+      const result = await stopWorkload("z13-a");
+
+      expect(result).toMatchObject({ ok: true });
+      expect(result.error).toBeUndefined();
+      expect(readState("z13-a")).toEqual(seeded);
+      expect(stderr.text()).toContain("[residency] lifecycle z13-a stop not recorded:");
+      expect(stderr.text()).toContain("disk full");
     } finally {
       stderr.restore();
     }

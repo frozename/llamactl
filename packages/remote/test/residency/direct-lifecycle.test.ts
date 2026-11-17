@@ -11,7 +11,7 @@
  * `tsc` cannot resolve the not-yet-existing module — a literal specifier
  * would be a resolution error, not an assertion failure.
  */
-import type { ResidencyState } from "@llamactl/core/residency/lifecycle";
+import type { ResidencyGroupDeclaration, ResidencyState } from "@llamactl/core/residency/lifecycle";
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
@@ -42,8 +42,9 @@ type DirectLifecycleOpts = {
   isProvenDown: (model: string) => boolean;
   isRunning: (model: string) => boolean;
   log: (line: string) => void;
+  openStore?: (path: string) => Store;
 };
-type DirectRunOutcome = { ran: boolean; error?: string };
+type DirectRunOutcome = { ran: boolean; detail?: string; result?: DirectDepResult };
 type DirectLifecycleModule = {
   runDirectResidencyStart: (
     model: string,
@@ -92,7 +93,7 @@ function seedPathTo(target: ResidencyState): ResidencyState[] {
 // Same seeding rule as the router-level file: claim under the
 // apply-profile owner with incarnation 'seed' and walk each row along
 // legal edges, passing the group only on the 'loading' hop.
-function seed(rows: readonly SeedRow[]): Fence {
+function seed(rows: readonly SeedRow[], groups?: readonly ResidencyGroupDeclaration[]): Fence {
   const store = openResidencyOperationStore({ path: storePath() });
   try {
     const fence = store.claimOwnership({
@@ -108,6 +109,7 @@ function seed(rows: readonly SeedRow[]): Fence {
           to,
           expectedVersion: store.getResidencyState(row.model)?.version ?? 0,
           nowMs: NOW,
+          ...(groups === undefined ? {} : { groups }),
         });
         expect(result.ok).toBe(true);
       }
@@ -185,6 +187,29 @@ function beginIntruderSwitchOp(): void {
   } finally {
     intruder.close();
   }
+}
+
+// A store handle whose every residency transition throws, standing in for a
+// store write that fails mid-walk (disk full, a locked database).
+function throwingTransitionsStore(path: string): Store {
+  const real = openResidencyOperationStore({ path });
+  return {
+    ...real,
+    transitionResidencyState: (): never => {
+      throw new Error("disk full");
+    },
+  };
+}
+
+function countingDep(result: DirectDepResult): { dep: DirectDep; calls: () => number } {
+  let calls = 0;
+  return {
+    dep: (): DirectDepResult => {
+      calls += 1;
+      return result;
+    },
+    calls: () => calls,
+  };
 }
 
 beforeEach(() => {
@@ -296,5 +321,211 @@ describe("direct residency lifecycle (injected deps)", () => {
     );
 
     expect(readState("z13-a")?.state).toBe("failed");
+  });
+
+  test("DL10c: a re-start that steals the fence and kills the host still records failed", async () => {
+    // kills: releasing the adopted ready row under the pre-dep token — the
+    // stolen fence makes every release hop stale-fence and the row would
+    // stay ready.
+    const mod = await loadDirectLifecycle();
+    seed([{ model: "z13-a", target: "ready", group: GROUP }]);
+    const lines: string[] = [];
+    let running = true;
+    const dep: DirectDep = () => {
+      stealFence();
+      running = false;
+      return { ok: false, error: "boom" };
+    };
+
+    await mod.runDirectResidencyStart(
+      "z13-a",
+      dep,
+      lifecycleOpts(lines, { isRunning: () => running }),
+    );
+
+    expect(readState("z13-a")?.state).toBe("failed");
+    expect(readFence()?.incarnation).not.toBe("intruder");
+  });
+
+  test("DL10d: a release refused under an in-flight switch is logged, not dropped", async () => {
+    // kills: discarding the release outcome — the refused pre-walk must
+    // surface as a `release not recorded` line.
+    const mod = await loadDirectLifecycle();
+    seed([{ model: "z13-a", target: "ready", group: GROUP }]);
+    const lines: string[] = [];
+    let running = true;
+    const dep: DirectDep = () => {
+      beginIntruderSwitchOp();
+      running = false;
+      return { ok: false, error: "boom" };
+    };
+
+    await mod.runDirectResidencyStart(
+      "z13-a",
+      dep,
+      lifecycleOpts(lines, { isRunning: () => running }),
+    );
+
+    expect(readState("z13-a")?.state).toBe("ready");
+    expect(readFence()?.incarnation).toBe("intruder");
+    expect(lines.join("")).toContain(
+      "[residency] lifecycle z13-a start release not recorded: residency lifecycle z13-a ready -> draining failed: stale-fence",
+    );
+  });
+
+  test("DL10e: an ok re-start keeps the ready row even when the host reads down afterwards", async () => {
+    // kills: requiring both an ok dep and a still-running host before
+    // keeping the row — an ok dep alone keeps it ready.
+    const mod = await loadDirectLifecycle();
+    seed([{ model: "z13-a", target: "ready", group: GROUP }]);
+    const seededVersion = readState("z13-a")?.version ?? 0;
+    const lines: string[] = [];
+    let running = true;
+    const dep: DirectDep = () => {
+      running = false;
+      return { ok: true };
+    };
+
+    const outcome = await mod.runDirectResidencyStart(
+      "z13-a",
+      dep,
+      lifecycleOpts(lines, { isRunning: () => running }),
+    );
+
+    expect(outcome).toMatchObject({ ran: true, result: { ok: true } });
+    expect(readState("z13-a")).toMatchObject({ state: "ready", version: seededVersion });
+    expect(lines.join("")).toContain(
+      "[residency] lifecycle z13-a start kept ready: host already running",
+    );
+  });
+
+  test("DL10f: a stale ready row for a host that is not running is never adopted", async () => {
+    // kills: an adopt gate that skips isRunning — the stale ready row would
+    // adopt and run the dep past a loading exclusive-group peer.
+    const mod = await loadDirectLifecycle();
+    // Seeded under a non-exclusive declaration so both rows can coexist;
+    // the wrapper itself checks against the default (exclusive) group.
+    seed(
+      [
+        { model: "z13-a", target: "ready", group: GROUP },
+        { model: "z13-b", target: "loading", group: GROUP },
+      ],
+      [{ name: GROUP, exclusive: false }],
+    );
+    const lines: string[] = [];
+    const counted = countingDep({ ok: true });
+
+    const outcome = await mod.runDirectResidencyStart(
+      "z13-a",
+      counted.dep,
+      lifecycleOpts(lines, { isRunning: () => false }),
+    );
+
+    expect(outcome.ran).toBe(false);
+    expect(outcome.detail ?? "").toContain("ExclusiveGroupOccupied");
+    expect(counted.calls()).toBe(0);
+    expect(readState("z13-b")?.state).toBe("loading");
+  });
+
+  test("DL11: a stop whose pre-walk write throws still runs, unrecorded", async () => {
+    // kills: refusing the stop when bookkeeping fails — a stop must never be
+    // blocked by the residency store.
+    const mod = await loadDirectLifecycle();
+    seed([{ model: "z13-a", target: "ready", group: GROUP }]);
+    const seeded = readState("z13-a");
+    const lines: string[] = [];
+    const counted = countingDep({ ok: true });
+
+    const outcome = await mod.runDirectResidencyStop(
+      "z13-a",
+      counted.dep,
+      lifecycleOpts(lines, { openStore: throwingTransitionsStore }),
+    );
+
+    expect(outcome).toEqual({ ran: true, result: { ok: true } });
+    expect(counted.calls()).toBe(1);
+    expect(readState("z13-a")).toEqual(seeded);
+    expect(lines.join("")).toContain(
+      "[residency] lifecycle z13-a stop not recorded: residency lifecycle z13-a ready -> draining failed: disk full",
+    );
+  });
+
+  test("DL12a: a throwing start dep records failed and frees the group", async () => {
+    // kills: an uncaught dep throw leaving the row loading with its group —
+    // every exclusive peer start would then refuse.
+    const mod = await loadDirectLifecycle();
+    seed([]);
+    const lines: string[] = [];
+    const throwing: DirectDep = () => {
+      throw new Error("spawn exploded");
+    };
+
+    const startError = await mod
+      .runDirectResidencyStart("z13-a", throwing, lifecycleOpts(lines))
+      .then(
+        () => null,
+        (error: unknown) => error,
+      );
+    expect(startError).toBeInstanceOf(Error);
+    expect((startError as Error).message).toBe("spawn exploded");
+    expect(readState("z13-a")).toMatchObject({ state: "failed", group: GROUP });
+
+    const peer = countingDep({ ok: true });
+    const outcome = await mod.runDirectResidencyStart("z13-b", peer.dep, lifecycleOpts(lines));
+
+    expect(outcome).toEqual({ ran: true, result: { ok: true } });
+    expect(peer.calls()).toBe(1);
+    expect(readState("z13-b")?.state).toBe("ready");
+  });
+
+  test("DL12b: a throwing stop dep records failed and rethrows", async () => {
+    // kills: an uncaught stop-dep throw leaving the row unloading.
+    const mod = await loadDirectLifecycle();
+    seed([{ model: "z13-a", target: "ready", group: GROUP }]);
+    const lines: string[] = [];
+    const throwing: DirectDep = () => {
+      throw new Error("teardown exploded");
+    };
+
+    const stopError = await mod
+      .runDirectResidencyStop("z13-a", throwing, lifecycleOpts(lines))
+      .then(
+        () => null,
+        (error: unknown) => error,
+      );
+    expect(stopError).toBeInstanceOf(Error);
+    expect((stopError as Error).message).toBe("teardown exploded");
+    expect(readState("z13-a")?.state).toBe("failed");
+  });
+
+  test("DL13: an unopenable store refuses a grouped start but still runs a stop", async () => {
+    // kills: a grouped start that runs past a store-open failure, and a
+    // stop that is blocked by it.
+    const mod = await loadDirectLifecycle();
+    seed([]);
+    const lines: string[] = [];
+    const opts = lifecycleOpts(lines, {
+      openStore: () => {
+        throw new Error("disk gone");
+      },
+    });
+    const startDep = countingDep({ ok: true });
+
+    const started = await mod.runDirectResidencyStart("z13-a", startDep.dep, opts);
+
+    expect(started).toEqual({
+      ran: false,
+      detail: "residency lifecycle refused z13-a: store unavailable (disk gone)",
+    });
+    expect(startDep.calls()).toBe(0);
+
+    const stopDep = countingDep({ ok: true });
+    const stopped = await mod.runDirectResidencyStop("z13-a", stopDep.dep, opts);
+
+    expect(stopped).toEqual({ ran: true, result: { ok: true } });
+    expect(stopDep.calls()).toBe(1);
+    expect(lines.join("")).toContain(
+      "[residency] lifecycle z13-a stop not recorded: store unavailable (disk gone)",
+    );
   });
 });

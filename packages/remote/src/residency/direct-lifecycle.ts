@@ -191,15 +191,22 @@ function occupyingPeers(
 
 // Releases an adopted `ready` row whose re-start left the host dead: a no-op
 // start and a not-ok stop walk it ready -> draining -> unloading -> failed.
+// The fence is re-claimed first (the dep may have outlived the held token),
+// and a release whose pre-walk refused is logged rather than dropped.
 async function releaseReadyRow<T extends DepResult>(
   store: Store,
-  token: number,
+  heldToken: number,
   workload: string,
   env: DepEnv<T>,
   detail: string,
 ): Promise<void> {
+  const token = refence(store, "start", workload, env.incarnation, env.log, heldToken);
+  const release = { reached: false };
   const noop = (): Promise<StepOutcome> => Promise.resolve({ ok: true });
-  const dead = (): Promise<StepOutcome> => Promise.resolve({ ok: false, detail });
+  const dead = (): Promise<StepOutcome> => {
+    release.reached = true;
+    return Promise.resolve({ ok: false, detail });
+  };
   const wrapped = withResidencyLifecycle(
     { start: noop, stop: dead },
     {
@@ -214,7 +221,13 @@ async function releaseReadyRow<T extends DepResult>(
       log: env.log,
     },
   );
-  await wrapped.stop(workload, undefined);
+  const step = await wrapped.stop(workload, undefined);
+  if (!release.reached) {
+    logSafe(
+      env.log,
+      `[residency] lifecycle ${workload} start release not recorded: ${stepRefusalDetail(step)}\n`,
+    );
+  }
 }
 
 // Adopts a `ready` row for an already-running host (start only): run the dep
@@ -272,7 +285,10 @@ function stepRefusalDetail(step: StepOutcome): string {
 
 // (g) runs the dep under the lifecycle walk: the row walks to loading /
 // unloading, the caller's dep runs, the fence is re-claimed, then the row walks
-// to its terminal. A pre-walk refusal means the dep never ran.
+// to its terminal. A pre-walk refusal means a start never ran; a stop still
+// runs, unrecorded, because bookkeeping never blocks a stop. A dep that throws
+// is recorded failed (so its row never keeps the group occupied) and the error
+// is rethrown once the post-walk has run.
 async function walkWithDep<T extends DepResult>(
   action: DirectAction,
   workload: string,
@@ -283,8 +299,16 @@ async function walkWithDep<T extends DepResult>(
 ): Promise<DirectLifecycleOutcome<T>> {
   let token = initialToken;
   const capture: T[] = [];
+  let thrown: { error: unknown } | undefined;
   const runDep = async (): Promise<StepOutcome> => {
-    const result = await env.dep(workload);
+    let result: T;
+    try {
+      result = await env.dep(workload);
+    } catch (error: unknown) {
+      thrown = { error };
+      token = refence(store, action, workload, env.incarnation, env.log, token);
+      return { ok: false, detail: messageOf(error) };
+    }
     capture.push(result);
     token = refence(store, action, workload, env.incarnation, env.log, token);
     return { ok: result.ok, detail: result.error ?? "" };
@@ -308,11 +332,21 @@ async function walkWithDep<T extends DepResult>(
     action === "start"
       ? await wrapped.start(workload, undefined)
       : await wrapped.stop(workload, undefined);
+  if (thrown !== undefined) {
+    throw thrown.error;
+  }
   const result = capture[0];
-  if (result === undefined) {
+  if (result !== undefined) {
+    return { ran: true, result };
+  }
+  if (action === "start") {
     return { ran: false, detail: stepRefusalDetail(step) };
   }
-  return { ran: true, result };
+  logSafe(
+    env.log,
+    `[residency] lifecycle ${workload} stop not recorded: ${stepRefusalDetail(step)}\n`,
+  );
+  return { ran: true, result: await env.dep(workload) };
 }
 
 // (d) a store-open or claim failure: a grouped start refuses, anything else
