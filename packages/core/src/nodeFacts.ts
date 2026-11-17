@@ -1,5 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { hostname } from "node:os";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import type { MachineProfile, ResolvedEnv } from "./types.js";
 import type { LocalRoute } from "./workloadRuntime.js";
@@ -9,7 +11,16 @@ import { formatHostForUrl } from "./engines/lifecycle.js";
 import { resolveEnv } from "./env.js";
 import { detectMemoryBytes, resolveProfile } from "./profile.js";
 import { advertisedEndpoint, dialableHost } from "./server.js";
+import { getSourceRevision } from "./sourceRevision.js";
 import { listLocalRoutes } from "./workloadRuntime.js";
+
+// Compile-time build stamp (#743). `bun build --compile` injects these via
+// --define; Bun substitutes the identifier even inside `typeof`, so the
+// guards below read the defines in compiled binaries and fall through to
+// "undefined" (never a ReferenceError) in source checkouts.
+declare const __BUILD_STAMP_COMMIT__: unknown;
+declare const __BUILD_STAMP_DIRTY__: unknown;
+declare const __BUILD_STAMP_BUILT_AT__: unknown;
 
 export type GpuKind = "metal" | "cuda" | "rocm" | "vulkan" | "cpu";
 
@@ -19,10 +30,87 @@ export interface GpuInfo {
   memoryMB?: number;
 }
 
+/** The stamp baked into a compiled binary via `buildStampDefines`. */
+export interface CompiledBuildStamp {
+  commit: string;
+  dirty: boolean;
+  builtAt: string;
+}
+
+export type InstallKind = "compiled" | "source";
+
+export interface BuildStamp {
+  commit: string | null;
+  dirty: boolean | null;
+  builtAt: string | null;
+  installKind: InstallKind;
+}
+
+export interface ResolveBuildStampDeps {
+  compiled?: CompiledBuildStamp | null;
+  moduleDir?: string;
+  readSourceRevision?: () => string | null;
+}
+
 export interface Versions {
   llamactl: string;
   bun: string;
   llamaCppSrcRev: string | null;
+  commit?: string | null;
+  dirty?: boolean | null;
+  builtAt?: string | null;
+  installKind?: InstallKind;
+}
+
+/**
+ * The stamp baked into this process by `bun build --compile --define`, or
+ * null when running from source. The typeof guards are load-bearing:
+ * without the defines the identifiers are undeclared, and `typeof` is the
+ * only safe read.
+ */
+export function compiledBuildStamp(): CompiledBuildStamp | null {
+  if (typeof __BUILD_STAMP_COMMIT__ !== "string") return null;
+  const dirty = typeof __BUILD_STAMP_DIRTY__ === "boolean" && __BUILD_STAMP_DIRTY__;
+  const builtAt = typeof __BUILD_STAMP_BUILT_AT__ === "string" ? __BUILD_STAMP_BUILT_AT__ : "";
+  return { commit: __BUILD_STAMP_COMMIT__, dirty, builtAt };
+}
+
+export function buildStampDefines(stamp: CompiledBuildStamp): Record<string, string> {
+  return {
+    __BUILD_STAMP_COMMIT__: JSON.stringify(stamp.commit),
+    __BUILD_STAMP_DIRTY__: String(stamp.dirty),
+    __BUILD_STAMP_BUILT_AT__: JSON.stringify(stamp.builtAt),
+  };
+}
+
+let memoizedBuildStamp: BuildStamp | null = null;
+
+/**
+ * Prefer the compiled stamp; otherwise report the source checkout's HEAD
+ * (null when there is no checkout or git fails — never a sentinel).
+ * installKind is "compiled" for bun-compiled binaries (their module dir
+ * lives under /$bunfs/). The zero-arg call is memoized once per process;
+ * injected deps bypass the memo.
+ */
+export function resolveBuildStamp(deps: ResolveBuildStampDeps = {}): BuildStamp {
+  const injected =
+    deps.compiled !== undefined ||
+    deps.moduleDir !== undefined ||
+    deps.readSourceRevision !== undefined;
+  if (!injected && memoizedBuildStamp !== null) return memoizedBuildStamp;
+  const stamp = computeBuildStamp(deps);
+  if (!injected) memoizedBuildStamp = stamp;
+  return stamp;
+}
+
+function computeBuildStamp(deps: ResolveBuildStampDeps): BuildStamp {
+  const compiled = deps.compiled ?? compiledBuildStamp();
+  if (compiled !== null) return { ...compiled, installKind: "compiled" };
+  const moduleDir = deps.moduleDir ?? dirname(fileURLToPath(import.meta.url));
+  const installKind: InstallKind = moduleDir.startsWith("/$bunfs/") ? "compiled" : "source";
+  const commit =
+    deps.readSourceRevision !== undefined ? deps.readSourceRevision() : getSourceRevision();
+  return { commit, dirty: null, builtAt: null, installKind };
 }
 
 export interface NodeFacts {
@@ -105,11 +193,18 @@ export function resolveNodeAdvertisedEndpoint(
   return advertisedEndpoint(resolved);
 }
 
-export function resolveVersions(_env: NodeJS.ProcessEnv = process.env): Versions {
+export function resolveVersions(
+  _env: NodeJS.ProcessEnv = process.env,
+  stamp: BuildStamp = resolveBuildStamp(),
+): Versions {
   return {
     llamactl: LLAMACTL_VERSION,
     bun: resolveBunVersion(),
     llamaCppSrcRev: detectLlamaCppRev(_env),
+    commit: stamp.commit,
+    dirty: stamp.dirty,
+    builtAt: stamp.builtAt,
+    installKind: stamp.installKind,
   };
 }
 
