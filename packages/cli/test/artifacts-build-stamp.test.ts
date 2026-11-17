@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import * as artifacts from "../src/commands/artifacts.js";
-import { mkdtempSync, rmSync } from "../src/safe-fs.js";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 /**
  * #743 — RED tests for `artifacts build-agent` stamping compiled
@@ -98,7 +98,16 @@ function makeDeps(status: string, opts?: { failRevParse?: boolean }): FakeDeps {
     },
     spawn: (cmd: string[]): Promise<number> => {
       spawnCalls.push(cmd);
-      return Promise.resolve(0);
+      const outfile = cmd[cmd.indexOf("--outfile") + 1];
+      try {
+        if (typeof outfile === "string") {
+          mkdirSync(dirname(outfile), { recursive: true });
+          writeFileSync(outfile, "compiled-bytes");
+        }
+        return Promise.resolve(0);
+      } catch {
+        return Promise.resolve(1);
+      }
     },
     now: (): Date => new Date(BUILT_AT),
   };
@@ -169,7 +178,11 @@ describe("artifacts build-agent build stamp (#743)", () => {
     expect(defines).toContain(`__BUILD_STAMP_BUILT_AT__="${BUILT_AT}"`);
     expect(cmd).toContain(src());
     expect(cmd).toContain("--outfile");
-    expect(cmd).toContain(artifacts.agentBinaryPath("linux-x64", tmp));
+    const outfile = cmd[cmd.indexOf("--outfile") + 1] ?? "";
+    expect(dirname(outfile)).toBe(join(tmp, "agent", "linux-x64", `${COMMIT.slice(0, 12)}-dirty`));
+    expect(result.outPath).toBe(
+      join(tmp, "agent", "linux-x64", `${COMMIT.slice(0, 12)}-dirty`, "llamactl-agent"),
+    );
     expect(result.stamp).toEqual({ commit: COMMIT, dirty: true, builtAt: BUILT_AT });
   });
 

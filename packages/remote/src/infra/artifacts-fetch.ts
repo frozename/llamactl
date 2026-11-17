@@ -9,13 +9,38 @@ import {
   readdirSync,
   readFileSync,
   readlinkSync,
+  renameSync,
   rmSync,
   statSync,
   symlinkSync,
   unlinkSync,
   writeFileSync,
 } from "../safe-fs.js";
-import { agentBinaryPath, defaultArtifactsDir } from "../server/artifacts.js";
+import {
+  AGENT_BUILD_NAME_RE,
+  agentBinaryPath,
+  agentBuildBinaryPath,
+  agentBuildDir,
+  type AgentBuildManifest,
+  agentBuildName,
+  agentCurrentPointerPath,
+  defaultArtifactsDir,
+  readAgentBuildManifest,
+  readCurrentAgentBuild,
+} from "../server/artifacts.js";
+
+// Re-export the #744 versioned-build helpers: the CLI reaches remote
+// only via the infraArtifactsFetch namespace.
+export {
+  AGENT_BUILD_NAME_RE,
+  agentBuildBinaryPath,
+  agentBuildDir,
+  agentBuildName,
+  agentCurrentPointerPath,
+  readAgentBuildManifest,
+  readCurrentAgentBuild,
+};
+export type { AgentBuildManifest };
 
 /**
  * Download an agent binary from a GitHub Release, verify its
@@ -411,6 +436,9 @@ export async function fetchAgentRelease(
       detail: { topLevelPath, versionedBin },
     };
   }
+  // A fetched release is the served entrypoint now; a stale `current`
+  // pointer from an older build must not shadow it (#744).
+  rmSync(agentCurrentPointerPath(opts.target, artifactsDir), { force: true });
 
   return {
     ok: true,
@@ -492,6 +520,75 @@ function lstatSafe(path: string): ReturnType<typeof lstatSync> | null {
   }
 }
 
+export interface PublishAgentBuildInput {
+  artifactsDir: string;
+  platform: string;
+  /** `<commit12>[-dirty]` — must match AGENT_BUILD_NAME_RE. */
+  name: string;
+  manifest: AgentBuildManifest;
+  /**
+   * A freshly-compiled binary sitting outside its final path (a temp
+   * file in the build dir). When set, the manifest is staged under a
+   * temp name first and the two renames run back to back: binary,
+   * then manifest. Omit when the binary already sits at
+   * `<name>/llamactl-agent`.
+   */
+  stagedBinary?: string;
+}
+
+export type PublishAgentBuildResult = { ok: true } | { ok: false; message: string };
+
+/**
+ * Publish a compiled build into `agent/<platform>/<name>/`: stage
+ * `manifest.json` under a temp name, rename the staged binary (if any)
+ * and then the manifest into place, flip the top-level binary link,
+ * then write the `current` pointer last (also atomically) so a reader
+ * can never observe a pointer naming an incompletely published build.
+ * A failed relink leaves `current` untouched (#744).
+ *
+ * A same-name rebuild replaces a binary that may be served right now;
+ * the GET handler hashes the bytes it serves and refuses to pair them
+ * with a manifest whose sha256 differs, so the two-rename gap can
+ * never yield new bytes with an old `x-sha256`.
+ */
+export function publishAgentBuild(input: PublishAgentBuildInput): PublishAgentBuildResult {
+  if (!AGENT_BUILD_NAME_RE.test(input.name)) {
+    return {
+      ok: false,
+      message: `invalid build name ${input.name} — expected <commit12> or <commit12>-dirty`,
+    };
+  }
+  const buildBinary = agentBuildBinaryPath(input.platform, input.name, input.artifactsDir);
+  const source = input.stagedBinary ?? buildBinary;
+  if (!existsSync(source)) {
+    return { ok: false, message: `build binary is missing at ${source}` };
+  }
+  const buildDirectory = agentBuildDir(input.platform, input.name, input.artifactsDir);
+  const manifestTmp = join(
+    buildDirectory,
+    `manifest.json.partial-${String(process.pid)}-${String(Date.now())}`,
+  );
+  writeFileSync(manifestTmp, `${JSON.stringify(input.manifest, null, 2)}\n`);
+  if (input.stagedBinary !== undefined) {
+    renameSync(input.stagedBinary, buildBinary);
+  }
+  renameSync(manifestTmp, join(buildDirectory, "manifest.json"));
+  const linked = linkCurrentVersion(
+    agentBinaryPath(input.platform, input.artifactsDir),
+    buildBinary,
+  );
+  if (!linked.ok) {
+    return { ok: false, message: linked.message };
+  }
+  const pointerTmp = join(
+    agentPlatformDir(input.platform, input.artifactsDir),
+    `current.partial-${String(process.pid)}-${String(Date.now())}`,
+  );
+  writeFileSync(pointerTmp, `${input.name}\n`);
+  renameSync(pointerTmp, agentCurrentPointerPath(input.platform, input.artifactsDir));
+  return { ok: true };
+}
+
 interface MaybeVerifyOptions {
   mode: "skip" | "best-effort" | "require";
   repo: string;
@@ -554,10 +651,17 @@ export interface InstalledAgentVersion {
   bytes: number;
   /** Filesystem mtime, ms since epoch. */
   mtimeMs: number;
-  /** `true` when the top-level `<platform>/llamactl-agent` symlink
-   *  currently points at this version. Pruning never deletes the
-   *  active version. */
+  /** `true` when this version is the served one: the build named by
+   *  the `current` pointer, or — without a pointer — the version the
+   *  top-level symlink resolves to. Pruning never deletes it. */
   active: boolean;
+  /** `"release"` = fetched under `versions/<tag>/`; `"build"` = a
+   *  per-commit compile at `<platform>/<commit12>[-dirty]/` (#744). */
+  kind: "release" | "build";
+  /** Full 40-hex commit — builds whose manifest is valid only. */
+  commit?: string;
+  /** Hex sha256 — builds whose manifest is valid only. */
+  sha256?: string;
 }
 
 export interface ListAgentVersionsOptions {
@@ -568,35 +672,96 @@ export interface ListAgentVersionsOptions {
 }
 
 /**
- * Enumerate every versioned agent binary under
- * `<artifactsDir>/agent/<platform>/versions/`. Omits the legacy
- * top-level `<platform>/llamactl-agent` path — that's tracked via
- * `active` on the matching version entry when the symlink resolves
- * into `versions/`.
+ * Enumerate every versioned agent binary per platform: fetched
+ * releases under `versions/<tag>/` plus per-commit build dirs matching
+ * AGENT_BUILD_NAME_RE (#744). Omits the legacy top-level
+ * `<platform>/llamactl-agent` path — that's tracked via `active` on
+ * the matching entry. Sorted by kind, then tag.
  */
 export function listAgentVersions(opts: ListAgentVersionsOptions = {}): InstalledAgentVersion[] {
   const artifactsDir = opts.artifactsDir ?? defaultArtifactsDir();
   const platforms = opts.target ? [opts.target] : Array.from(ALLOWED_TARGETS).sort();
   const out: InstalledAgentVersion[] = [];
   for (const target of platforms) {
-    const versionsRoot = agentVersionsRoot(target, artifactsDir);
-    if (!existsSync(versionsRoot)) continue;
-    const activeTarget = resolveActiveVersionTag(target, artifactsDir);
-    for (const tag of readdirSync(versionsRoot).sort()) {
-      const bin = join(versionsRoot, tag, "llamactl-agent");
-      if (!existsSync(bin)) continue;
-      const stat = statSync(bin);
-      out.push({
-        target,
-        tag,
-        path: bin,
-        bytes: stat.size,
-        mtimeMs: stat.mtimeMs,
-        active: activeTarget === tag,
-      });
-    }
+    const entries = [
+      ...collectReleaseVersions(target, artifactsDir),
+      ...collectBuildVersions(target, artifactsDir),
+    ];
+    markActiveVersions(entries, target, artifactsDir);
+    entries.sort((a, b) =>
+      a.kind === b.kind ? a.tag.localeCompare(b.tag) : a.kind.localeCompare(b.kind),
+    );
+    out.push(...entries);
   }
   return out;
+}
+
+function collectReleaseVersions(target: string, artifactsDir: string): InstalledAgentVersion[] {
+  const versionsRoot = agentVersionsRoot(target, artifactsDir);
+  if (!existsSync(versionsRoot)) return [];
+  const out: InstalledAgentVersion[] = [];
+  for (const tag of readdirSync(versionsRoot)) {
+    const bin = join(versionsRoot, tag, "llamactl-agent");
+    if (!existsSync(bin)) continue;
+    const stat = statSync(bin);
+    out.push({
+      target,
+      tag,
+      path: bin,
+      bytes: stat.size,
+      mtimeMs: stat.mtimeMs,
+      active: false,
+      kind: "release",
+    });
+  }
+  return out;
+}
+
+function collectBuildVersions(target: string, artifactsDir: string): InstalledAgentVersion[] {
+  const root = agentPlatformDir(target, artifactsDir);
+  if (!existsSync(root)) return [];
+  const out: InstalledAgentVersion[] = [];
+  for (const name of readdirSync(root)) {
+    if (!AGENT_BUILD_NAME_RE.test(name)) continue;
+    const bin = agentBuildBinaryPath(target, name, artifactsDir);
+    if (!existsSync(bin)) continue;
+    const stat = statSync(bin);
+    const manifest = readAgentBuildManifest(target, name, artifactsDir);
+    out.push({
+      target,
+      tag: name,
+      path: bin,
+      bytes: stat.size,
+      mtimeMs: stat.mtimeMs,
+      active: false,
+      kind: "build",
+      ...(manifest ? { commit: manifest.commit, sha256: manifest.sha256 } : {}),
+    });
+  }
+  return out;
+}
+
+/**
+ * Active rule (#744): a valid `current` pointer names a build and
+ * marks exactly that entry active; without one, the top-level
+ * symlink's tag decides, for both kinds.
+ */
+function markActiveVersions(
+  entries: InstalledAgentVersion[],
+  target: string,
+  artifactsDir: string,
+): void {
+  const current = readCurrentAgentBuild(target, artifactsDir);
+  if (current?.ok === true) {
+    for (const entry of entries) {
+      entry.active = entry.kind === "build" && entry.tag === current.name;
+    }
+    return;
+  }
+  const activeTag = resolveActiveVersionTag(target, artifactsDir);
+  for (const entry of entries) {
+    entry.active = entry.tag === activeTag;
+  }
 }
 
 /** Resolve the top-level symlink back to its tag, or null if the

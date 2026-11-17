@@ -1,10 +1,11 @@
 import { nodeFacts } from "@llamactl/core";
-import { infraArtifactsFetch } from "@llamactl/remote";
+import { type AgentBuildManifest, infraArtifactsFetch } from "@llamactl/remote";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { homedir, arch as nodeArch, platform as nodePlatform } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
-import { existsSync, mkdirSync } from "../safe-fs.js";
+import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync } from "../safe-fs.js";
 
 const USAGE = `llamactl artifacts — manage pre-built llamactl-agent binaries
 
@@ -18,6 +19,11 @@ USAGE:
 Pre-built binaries live under <LLAMACTL_ARTIFACTS_DIR or
 $DEV_STORAGE/artifacts or ~/.llamactl/artifacts>/agent/<platform>/
 and are served by central's /artifacts/agent/<platform> endpoint.
+build-agent lands each compile in <commit12>[-dirty]/ alongside a
+manifest.json (platform, commit, dirty, sha256, builtAt, bun,
+signIdentity); the \`current\` pointer file selects the served build
+and the top-level llamactl-agent symlink follows it. fetch puts
+GitHub releases under versions/<tag>/.
 
 build-agent runs \`bun build --compile\` against packages/cli/src/bin.ts
 to produce a self-contained binary. Works only from a source checkout;
@@ -122,6 +128,8 @@ export interface BuildAgentBinaryDeps {
   exec?: (file: string, args: string[]) => string;
   spawn?: (cmd: string[]) => Promise<number>;
   now?: () => Date;
+  /** Test seam for the codesign invocation (#744). */
+  codesign?: (binaryPath: string, identity: string) => Promise<number>;
 }
 
 export interface BuildAgentBinaryOptions {
@@ -167,6 +175,13 @@ export interface BuildAgentBinaryResult {
    * commit + build time a binary carries.
    */
   stamp?: nodeFacts.CompiledBuildStamp;
+  /**
+   * The manifest written next to the versioned binary (#744). Present
+   * once the compile succeeded and the manifest was published.
+   */
+  manifest?: AgentBuildManifest;
+  /** `<commit12>[-dirty]` build dir name (#744). */
+  buildName?: string;
 }
 
 const defaultBuildExec = (file: string, args: string[]): string =>
@@ -245,11 +260,11 @@ function probeSourceStamp(
 export async function buildAgentBinary(
   opts: BuildAgentBinaryOptions,
 ): Promise<BuildAgentBinaryResult> {
-  const outPath = agentBinaryPath(opts.target, opts.dir);
+  const legacyPath = agentBinaryPath(opts.target, opts.dir);
   if (!opts.src) {
     return {
       ok: false,
-      outPath,
+      outPath: legacyPath,
       code: 1,
       reason:
         "could not locate packages/cli/src/bin.ts — pass --src=<path-to-source-repo>/packages/cli/src/bin.ts or re-run from a source checkout",
@@ -263,7 +278,7 @@ export async function buildAgentBinary(
 
   const probed = probeSourceStamp(sourceDir, exec, opts.allowDirty === true);
   if (!probed.ok) {
-    return { ok: false, outPath, code: 1, reason: probed.reason };
+    return { ok: false, outPath: legacyPath, code: 1, reason: probed.reason };
   }
 
   const stamp: nodeFacts.CompiledBuildStamp = {
@@ -272,7 +287,16 @@ export async function buildAgentBinary(
     builtAt: now().toISOString(),
   };
 
-  mkdirSync(dirname(outPath), { recursive: true });
+  const buildName = infraArtifactsFetch.agentBuildName(probed.commit, probed.dirty);
+  const buildDir = infraArtifactsFetch.agentBuildDir(opts.target, buildName, opts.dir);
+  const finalPath = infraArtifactsFetch.agentBuildBinaryPath(opts.target, buildName, opts.dir);
+  mkdirSync(buildDir, { recursive: true });
+  // Compile into a sibling temp file: a crashed or interrupted bun build
+  // never leaves half-written bytes at the final path (#744).
+  const tmpOut = join(
+    buildDir,
+    `llamactl-agent.partial-${String(process.pid)}-${String(Date.now())}`,
+  );
   const cmd = [
     "bun",
     "build",
@@ -284,35 +308,110 @@ export async function buildAgentBinary(
     ]),
     opts.src,
     "--outfile",
-    outPath,
+    tmpOut,
   ];
   const code = await spawn(cmd);
-  if (code !== 0) return { ok: false, outPath, code };
-  return await signIfRequested(opts, outPath, code, stamp);
+  if (code !== 0) {
+    rmSync(tmpOut, { force: true });
+    return { ok: false, outPath: finalPath, code };
+  }
+  if (!existsSync(tmpOut)) {
+    return {
+      ok: false,
+      outPath: finalPath,
+      code,
+      reason: `bun build exited 0 but produced no binary at ${tmpOut}`,
+    };
+  }
+  return await signAndPublish(opts, exec, tmpOut, finalPath, code, stamp, buildName);
 }
 
-async function signIfRequested(
+/**
+ * Sign the freshly-compiled temp binary (darwin + identity only), hash
+ * the final bytes, rename it into the versioned build dir, then
+ * publish manifest.json + the `current` pointer. Signing failures are
+ * non-fatal (the bun ad-hoc signature survives); publish failures are
+ * returned with the publish reason (#744).
+ */
+async function signAndPublish(
   opts: BuildAgentBinaryOptions,
-  outPath: string,
+  exec: (file: string, args: string[]) => string,
+  tmpOut: string,
+  finalPath: string,
   code: number,
   stamp: nodeFacts.CompiledBuildStamp,
+  buildName: string,
 ): Promise<BuildAgentBinaryResult> {
   const identity = opts.signIdentity ?? process.env["LLAMACTL_SIGN_IDENTITY"] ?? "";
-  if (!identity || !opts.target.startsWith("darwin")) {
-    return { ok: true, outPath, code, stamp };
+  const signer = opts.deps?.codesign ?? codesignBinary;
+  const signCode =
+    identity && opts.target.startsWith("darwin") ? await signer(tmpOut, identity) : undefined;
+  const sha256 = createHash("sha256").update(readFileSync(tmpOut)).digest("hex");
+  const manifest: AgentBuildManifest = {
+    platform: opts.target,
+    commit: stamp.commit,
+    dirty: stamp.dirty,
+    sha256,
+    builtAt: stamp.builtAt,
+    bun: resolveBunVersion(exec),
+    signIdentity: signCode === 0 ? identity : null,
+  };
+  const published = infraArtifactsFetch.publishAgentBuild({
+    artifactsDir: opts.dir,
+    platform: opts.target,
+    name: buildName,
+    manifest,
+    // publishAgentBuild stages the manifest before it renames the
+    // binary into place, so the two land back to back (#744).
+    stagedBinary: tmpOut,
+  });
+  if (!published.ok) {
+    // No-op once the binary was renamed into place; drops the temp
+    // file when publish refused before getting that far.
+    rmSync(tmpOut, { force: true });
+    return {
+      ok: false,
+      outPath: finalPath,
+      code,
+      ...(signCode !== undefined ? { signCode } : {}),
+      reason: published.message,
+      stamp,
+      manifest,
+      buildName,
+    };
   }
-  const signCode = await codesignBinary(outPath, identity);
-  if (signCode !== 0) {
+  if (signCode !== undefined && signCode !== 0) {
     return {
       ok: true,
-      outPath,
+      outPath: finalPath,
       code,
       stamp,
+      manifest,
+      buildName,
       signCode,
       reason: `codesign exited ${String(signCode)} — binary still produced with bun ad-hoc signature`,
     };
   }
-  return { ok: true, outPath, code, stamp, signCode: 0 };
+  return {
+    ok: true,
+    outPath: finalPath,
+    code,
+    stamp,
+    manifest,
+    buildName,
+    ...(signCode !== undefined ? { signCode } : {}),
+  };
+}
+
+function resolveBunVersion(exec: (file: string, args: string[]) => string): string {
+  try {
+    const probed = exec("bun", ["--version"]).trim();
+    if (/^\d+\.\d+\.\d+/.test(probed)) return probed;
+  } catch {
+    // bun not on PATH (e.g. running from a compiled binary) — fall
+    // through to the version of the runtime executing this code.
+  }
+  return Bun.version;
 }
 
 /**
@@ -329,12 +428,35 @@ async function signIfRequested(
  * (where `codesign` doesn't exist) will return a non-zero spawn-error
  * code rather than throwing.
  */
-export async function codesignBinary(binaryPath: string, identity: string): Promise<number> {
-  const proc = Bun.spawn({
-    cmd: ["codesign", "--force", "--sign", identity, "--timestamp=none", binaryPath],
-    stdout: "inherit",
-    stderr: "inherit",
-  });
+export async function codesignBinary(
+  binaryPath: string,
+  identity: string,
+  run: (cmd: string[]) => Promise<number> = defaultCodesignRun,
+): Promise<number> {
+  return await run(codesignCommand(binaryPath, identity));
+}
+
+/**
+ * The codesign argv. `--identifier llamactl-agent` is explicit so the
+ * designated requirement (and with it TCC grant continuity) never
+ * depends on the file name being signed — build-agent signs a
+ * `llamactl-agent.partial-*` temp file before renaming it (#744).
+ */
+export function codesignCommand(binaryPath: string, identity: string): string[] {
+  return [
+    "codesign",
+    "--force",
+    "--sign",
+    identity,
+    "--identifier",
+    "llamactl-agent",
+    "--timestamp=none",
+    binaryPath,
+  ];
+}
+
+async function defaultCodesignRun(cmd: string[]): Promise<number> {
+  const proc = Bun.spawn({ cmd, stdout: "inherit", stderr: "inherit" });
   return await proc.exited;
 }
 
@@ -423,10 +545,9 @@ async function runBuildAgent(argv: string[]): Promise<number> {
     );
     return 1;
   }
-  const outPath = agentBinaryPath(parsed.target, parsed.dir);
   process.stderr.write(
     `artifacts build-agent: bun build --compile --target=bun-${parsed.target}\n` +
-      `  src: ${parsed.src}\n  out: ${outPath}\n`,
+      `  src: ${parsed.src}\n  dir: ${join(parsed.dir, "agent", parsed.target)}\n`,
   );
   const result = await buildAgentBinary({
     target: parsed.target,
@@ -443,6 +564,12 @@ async function runBuildAgent(argv: string[]): Promise<number> {
     writeStampLog(result.stamp);
   }
   process.stderr.write(`artifacts build-agent: wrote ${result.outPath}\n`);
+  if (result.manifest) {
+    process.stderr.write(`artifacts build-agent: sha256 ${result.manifest.sha256}\n`);
+  }
+  if (result.buildName) {
+    process.stderr.write(`artifacts build-agent: current -> ${result.buildName}\n`);
+  }
   if (result.signCode === 0) {
     const identity = parsed.signIdentity ?? process.env["LLAMACTL_SIGN_IDENTITY"];
     process.stderr.write(
@@ -472,23 +599,62 @@ function runList(argv: string[]): number {
     process.stderr.write(`artifacts list: unknown arg ${arg}\n`);
     return 1;
   }
-  const rows: { platform: Platform; path: string; sizeBytes: number }[] = [];
-  for (const platform of ALLOWED_PLATFORMS) {
-    const path = agentBinaryPath(platform, dir);
-    if (!existsSync(path)) continue;
-    const size = Bun.file(path).size;
-    rows.push({ platform, path, sizeBytes: size });
-  }
+  const versions = infraArtifactsFetch.listAgentVersions({ artifactsDir: dir });
+  const rows: string[] = versions.map((v) =>
+    formatListRow(v.target, v.tag, v.commit, v.bytes, v.path, v.active),
+  );
+  rows.push(
+    ...collectLegacyRows(
+      dir,
+      versions.map((v) => v.target),
+    ),
+  );
   if (rows.length === 0) {
     process.stdout.write(`no agent binaries under ${dir}/agent/\n`);
     return 0;
   }
   for (const row of rows) {
-    process.stdout.write(
-      `${row.platform}\t${(row.sizeBytes / (1024 * 1024)).toFixed(1)} MB\t${row.path}\n`,
-    );
+    process.stdout.write(row);
   }
   return 0;
+}
+
+function formatListRow(
+  target: string,
+  tag: string,
+  commit: string | undefined,
+  bytes: number,
+  path: string,
+  active: boolean,
+): string {
+  const mb = (bytes / (1024 * 1024)).toFixed(1);
+  const shortCommit = commit?.slice(0, 12) ?? "-";
+  return `${active ? "*" : " "} ${target}\t${tag}\t${shortCommit}\t${mb} MB\t${path}\n`;
+}
+
+/** Rows for platforms with no versioned entries but a plain legacy
+ *  top-level file (pre-#744 hosts). */
+function collectLegacyRows(dir: string, coveredTargets: string[]): string[] {
+  const covered = new Set(coveredTargets);
+  const rows: string[] = [];
+  for (const platform of ALLOWED_PLATFORMS) {
+    if (covered.has(platform)) continue;
+    const legacy = legacyTopLevelRow(platform, dir);
+    if (legacy !== null) rows.push(legacy);
+  }
+  return rows;
+}
+
+/** A pre-#744 host may keep a plain (non-symlink) file at the
+ *  top-level path; surface it as a `legacy` row so it's not invisible. */
+function legacyTopLevelRow(platform: Platform, dir: string): string | null {
+  const path = agentBinaryPath(platform, dir);
+  try {
+    if (lstatSync(path).isSymbolicLink()) return null;
+  } catch {
+    return null;
+  }
+  return formatListRow(platform, "legacy", undefined, Bun.file(path).size, path, false);
 }
 
 interface ShowPathState {
