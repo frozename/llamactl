@@ -119,6 +119,25 @@ type OperationRecord = {
   updatedAtMs: number;
 };
 
+type LifecycleRow = {
+  model: string;
+  group: string | null;
+  state:
+    | "unavailable"
+    | "downloaded"
+    | "loading"
+    | "warming"
+    | "ready"
+    | "draining"
+    | "unloading"
+    | "failed";
+  ownerId: string;
+  incarnation: string;
+  fenceToken: number;
+  version: number;
+  updatedAtMs: number;
+};
+
 type StoreSnapshot =
   | { path: string; present: false }
   | { path: string; present: true; error: string }
@@ -127,6 +146,8 @@ type StoreSnapshot =
       present: true;
       nonterminal: OperationRecord[];
       lastSucceededAtMs?: Record<string, number>;
+      lifecycle?: LifecycleRow[];
+      lifecycleError?: string;
     };
 
 type BuildResidencyPlanInput = {
@@ -330,6 +351,27 @@ function planInput(overrides: Partial<BuildResidencyPlanInput> = {}): BuildResid
     memoryGiB: p1Memory(),
     store: { path: STORE_PATH, present: false },
     ...overrides,
+  };
+}
+
+function lifecycleStore(rows: LifecycleRow[]): StoreSnapshot {
+  return { path: STORE_PATH, present: true, nonterminal: [], lifecycle: rows };
+}
+
+function readyRow(
+  model: string,
+  atMs: number,
+  state: LifecycleRow["state"] = "ready",
+): LifecycleRow {
+  return {
+    model,
+    group: null,
+    state,
+    ownerId: "seed",
+    incarnation: "seed",
+    fenceToken: 1,
+    version: 1,
+    updatedAtMs: atMs,
   };
 }
 
@@ -640,6 +682,146 @@ describe("buildResidencyPlan", () => {
     );
     expect(plan.ok).toBe(true);
   });
+
+  test("P21: a ready lifecycle row younger than minResidencySeconds refuses MinResidency", async () => {
+    // kills: buildResidencyPlan not deriving loadedAtMs from lifecycle rows; seconds/ms unit slip.
+    const { buildResidencyPlan } = await loadPlanMod();
+    const plan = buildResidencyPlan(
+      planInput({
+        residency: { minResidencySeconds: 300 },
+        store: lifecycleStore([readyRow("chat-a", NOW_MS - 60_000)]),
+      }),
+    );
+    expect(plan.ok).toBe(false);
+    expect(plan.reason).toBe("MinResidency");
+    expect(plan.workloads).toEqual(["chat-a"]);
+    expect(plan.retryAfterMs).toBe(240_000);
+    expect(plan.detail).toBe("1 victim(s) have not met minimum residency");
+  });
+
+  test("P22: the minResidencySeconds boundary refuses at 299s and plans at 300s", async () => {
+    // kills: off-by-one or over-refusal at the boundary.
+    const { buildResidencyPlan } = await loadPlanMod();
+    const young = buildResidencyPlan(
+      planInput({
+        residency: { minResidencySeconds: 300 },
+        store: lifecycleStore([readyRow("chat-a", NOW_MS - 299_000)]),
+      }),
+    );
+    expect(young.retryAfterMs).toBe(1_000);
+    expect(young.ok).toBe(false);
+    expect(young.reason).toBe("MinResidency");
+    const boundary = buildResidencyPlan(
+      planInput({
+        residency: { minResidencySeconds: 300 },
+        store: lifecycleStore([readyRow("chat-a", NOW_MS - 300_000)]),
+      }),
+    );
+    expect(boundary.ok).toBe(true);
+    expect(boundary.victims).toEqual(["chat-a"]);
+  });
+
+  test("P23: only ready lifecycle rows count toward minResidencySeconds", async () => {
+    // kills: using a lifecycle row regardless of state.
+    const { buildResidencyPlan } = await loadPlanMod();
+    const control = buildResidencyPlan(
+      planInput({
+        residency: { minResidencySeconds: 300 },
+        store: lifecycleStore([readyRow("chat-a", NOW_MS - 60_000)]),
+      }),
+    );
+    expect(control.ok).toBe(false);
+    expect(control.reason).toBe("MinResidency");
+    for (const state of ["warming", "draining"] as const) {
+      const plan = buildResidencyPlan(
+        planInput({
+          residency: { minResidencySeconds: 300 },
+          store: lifecycleStore([readyRow("chat-a", NOW_MS - 60_000, state)]),
+        }),
+      );
+      expect(plan.ok).toBe(true);
+      expect(plan.victims).toEqual(["chat-a"]);
+    }
+  });
+
+  test("P24: minResidencySeconds needs the store on the serving node and a set policy", async () => {
+    // kills: deriving loadedAtMs when the store does not apply to the node; enforcing at the default policy.
+    const { buildResidencyPlan } = await loadPlanMod();
+    const control = buildResidencyPlan(
+      planInput({
+        residency: { minResidencySeconds: 300 },
+        store: lifecycleStore([readyRow("chat-a", NOW_MS - 60_000)]),
+      }),
+    );
+    expect(control.ok).toBe(false);
+    expect(control.reason).toBe("MinResidency");
+
+    const foreign = buildResidencyPlan(
+      planInput({
+        residency: { minResidencySeconds: 300 },
+        servingNode: "cp",
+        store: lifecycleStore([readyRow("chat-a", NOW_MS - 60_000)]),
+      }),
+    );
+    expect(foreign.ok).toBe(true);
+    expect(foreign.victims).toEqual(["chat-a"]);
+
+    const unreadableLifecycle = buildResidencyPlan(
+      planInput({
+        residency: { minResidencySeconds: 300 },
+        store: { path: STORE_PATH, present: true, nonterminal: [], lifecycleError: "boom" },
+      }),
+    );
+    expect(unreadableLifecycle.ok).toBe(true);
+    expect(unreadableLifecycle.victims).toEqual(["chat-a"]);
+
+    const defaultPolicy = buildResidencyPlan(
+      planInput({
+        store: lifecycleStore([readyRow("chat-a", NOW_MS - 60_000)]),
+      }),
+    );
+    expect(defaultPolicy.ok).toBe(true);
+    expect(defaultPolicy.victims).toEqual(["chat-a"]);
+  });
+
+  test("P25: loadedAtMs is keyed per workload, not any lifecycle row", async () => {
+    // kills: applying another model's age, or any-row max.
+    const { buildResidencyPlan } = await loadPlanMod();
+    const control = buildResidencyPlan(
+      planInput({
+        residency: { minResidencySeconds: 300 },
+        store: lifecycleStore([readyRow("chat-a", NOW_MS - 60_000)]),
+      }),
+    );
+    expect(control.ok).toBe(false);
+    expect(control.reason).toBe("MinResidency");
+    const plan = buildResidencyPlan(
+      planInput({
+        residency: { minResidencySeconds: 300 },
+        store: lifecycleStore([
+          readyRow("embed", NOW_MS - 60_000),
+          readyRow("chat-a", NOW_MS - 900_000),
+        ]),
+      }),
+    );
+    expect(plan.ok).toBe(true);
+    expect(plan.victims).toEqual(["chat-a"]);
+  });
+
+  test("P26: a future-dated ready row clamps retryAfterMs to the minimum", async () => {
+    // kills: an unclamped future timestamp yielding retryAfterMs above the minimum.
+    const { buildResidencyPlan } = await loadPlanMod();
+    const plan = buildResidencyPlan(
+      planInput({
+        residency: { minResidencySeconds: 300 },
+        store: lifecycleStore([readyRow("chat-a", NOW_MS + 50_000)]),
+      }),
+    );
+    expect(plan.ok).toBe(false);
+    expect(plan.reason).toBe("MinResidency");
+    expect(plan.workloads).toEqual(["chat-a"]);
+    expect(plan.retryAfterMs).toBe(300_000);
+  });
 });
 
 describe("observedFromModelRun / observedFromModelHostStatus", () => {
@@ -869,6 +1051,32 @@ function seedSucceededProfileSwitch(): void {
   }
 }
 
+// Walks a residency_states row unavailable -> downloaded -> loading -> warming
+// -> ready, every hop stamped readyAtMs, so the ready row's updatedAtMs is the
+// load time minResidencySeconds measures against.
+function seedReadyLifecycle(model: string, readyAtMs: number): void {
+  const store = openResidencyOperationStore({ path: storePath });
+  try {
+    const fence = store.claimOwnership({ ownerId: "seed", incarnation: "seed" });
+    let expectedVersion = 0;
+    for (const to of ["downloaded", "loading", "warming", "ready"] as const) {
+      const result = store.transitionResidencyState({
+        fenceToken: fence.fenceToken,
+        model,
+        to,
+        expectedVersion,
+        nowMs: readyAtMs,
+      });
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expectedVersion = result.record.version;
+      }
+    }
+  } finally {
+    store.close();
+  }
+}
+
 function snapshotTree(dir: string, prefix = ""): Map<string, string> {
   const out = new Map<string, string>();
   if (!existsSync(dir)) return out;
@@ -1054,5 +1262,21 @@ describe("residencyPlan procedure", () => {
     const result = await plan({ node: "local", to: "code" });
     expect(result.ok).toBe(true);
     expect(result.victims).toEqual(["chat-a"]);
+  });
+
+  test("R10: a ready lifecycle row feeds the router's minResidencySeconds refusal", async () => {
+    // kills: the router path not threading the snapshot's lifecycle rows into the plan.
+    seedRouterFixtureResidency({
+      residency: { minResidencySeconds: 3600 },
+      budget: { memoryGiB: 24 },
+    });
+    seedReadyLifecycle("chat-a", Date.now() - 10_000);
+    const result = await plan({ node: "local", to: "code" });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("MinResidency");
+    expect(result.workloads).toEqual(["chat-a"]);
+    expect(result.detail).toBe("1 victim(s) have not met minimum residency");
+    expect(result.retryAfterMs).toBeGreaterThan(3_500_000);
+    expect(result.retryAfterMs).toBeLessThanOrEqual(3_590_000);
   });
 });
