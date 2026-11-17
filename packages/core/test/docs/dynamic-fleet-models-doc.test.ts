@@ -361,4 +361,60 @@ describe("docs/dynamic-fleet-models.md (#522)", () => {
       expect(doc, needle).toContain(needle);
     }
   });
+
+  // Part of #522: post-#725..#729 freshness slice
+  // Kills: restoring the "neither has a live caller yet" claim, or
+  // unwiring withResidencyLifecycle from profile-transition.ts.
+  test("case 18: lifecycle consumers are live (#726)", () => {
+    const s = (sectionBody(/^#{2,} .*residency lifecycle states/i) ?? "").replaceAll(/\s+/g, " ");
+    expect(s).not.toContain("neither has a live caller");
+    for (const needle of [
+      "`planProfileSwitch`",
+      "packages/remote/src/residency/procedures.ts",
+      "`withResidencyLifecycle`",
+      "packages/remote/src/residency/lifecycle-steps.ts",
+      "#726",
+    ]) {
+      expect(s, needle).toContain(needle);
+    }
+    expect(readOrEmpty(join(REPO, "packages/remote/src/residency/procedures.ts"))).toContain(
+      "planProfileSwitch(",
+    );
+    expect(
+      readOrEmpty(join(REPO, "packages/remote/src/residency/profile-transition.ts")),
+    ).toContain("withResidencyLifecycle(");
+  });
+
+  // Kills: rewording the promote-private stderr refusal in embersynth.ts
+  // without updating the doc, or dropping the #725 paragraph.
+  test("case 19: experimental exclusion surfaces (#725)", () => {
+    const embersynthCli = readOrEmpty(join(REPO, "packages/cli/src/commands/embersynth.ts"));
+    const phrase = /is experimental \(#518\): ([^\\`\n]+?)\\n/.exec(embersynthCli)?.[1] ?? "";
+    expect(phrase.length).toBeGreaterThan(0);
+    const q = (sectionBody(/^## Qualification and promotion/) ?? "").replaceAll(/\s+/g, " ");
+    for (const needle of [
+      phrase,
+      "`embersynthQualificationStages`",
+      "packages/remote/src/config/embersynth.ts",
+      "`llamactl embersynth promote-private",
+      "`admissionConflict`",
+      "#725",
+    ]) {
+      expect(q, needle).toContain(needle);
+    }
+    expect(readOrEmpty(join(REPO, "packages/core/src/routing/catalog.ts"))).toContain(
+      "function admissionConflict(",
+    );
+  });
+
+  // Kills: restoring the stale no-runtime-effect claim that contradicts
+  // the Overrides section.
+  test("case 20: rollback levers match override routing", () => {
+    const flat = doc.replaceAll(/\s+/g, " ");
+    expect(flat).not.toContain("Override rows have no runtime effect yet");
+    const r = (sectionBody(/^## Download, checksum and rollback/) ?? "").replaceAll(/\s+/g, " ");
+    for (const needle of ["`pin`", "`freeze`", "`catalogQualificationStages`"]) {
+      expect(r, needle).toContain(needle);
+    }
+  });
 });
