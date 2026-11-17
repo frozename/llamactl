@@ -29,8 +29,12 @@ import {
 } from "@llamactl/core/workloadRuntime";
 import { createHash, randomUUID } from "node:crypto";
 
+import type { ResidencyStoreSnapshot } from "../residency/store.js";
+import type { NodeRun } from "../workload/noderun-schema.js";
+
 import { acquireWorkerRpcExecutor } from "../inference/client.js";
 import { createLegacyLocalExecutor } from "../inference/legacy-local-executor.js";
+import { createResidencyRankingSource } from "./residency-ranking.js";
 
 export interface BackendExecutorDescription {
   id: string;
@@ -485,6 +489,44 @@ export function createProxy(opts: UnifiedProxyOptions = {}): UnifiedProxy {
   };
 }
 
+/**
+ * #519: the shared composition factory `dispatchProxyRequest` builds.
+ * Wraps `createProxy` with a cached `createResidencyRankingSource` for
+ * the serving node (`LLAMACTL_NODE_NAME`-selected NodeRun policy, ready
+ * lifecycle rows as the resident deploymentIds), unless the caller
+ * already supplies the ranking inputs.
+ */
+export function createSharedUnifiedProxy(
+  opts: UnifiedProxyOptions & {
+    listNodeRuns?: () => NodeRun[];
+    readStore?: () => ResidencyStoreSnapshot;
+    residencyTtlMs?: number;
+  } = {},
+): UnifiedProxy {
+  const { listNodeRuns, readStore, residencyTtlMs, ...proxyOpts } = opts;
+  const source = createResidencyRankingSource({
+    env: proxyOpts.env ?? process.env,
+    nodeId: proxyOpts.nodeId ?? LOCAL_NODE_NAME,
+    ...(listNodeRuns !== undefined ? { listNodeRuns } : {}),
+    ...(readStore !== undefined ? { readStore } : {}),
+    ...(residencyTtlMs !== undefined ? { ttlMs: residencyTtlMs } : {}),
+    ...(proxyOpts.now !== undefined ? { now: proxyOpts.now } : {}),
+  });
+  // An explicit caller `residencyPolicy: null` means "no policy" and must
+  // not fall through to the NodeRun source, so test `undefined`, not `??`.
+  return createProxy({
+    ...proxyOpts,
+    residencyPolicy:
+      proxyOpts.residencyPolicy !== undefined
+        ? proxyOpts.residencyPolicy
+        : (): Partial<ResidencyPolicy> | null => source.policy(),
+    rankingSignals:
+      proxyOpts.rankingSignals ?? ((): routingRanking.RankingSignals => source.signals()),
+  });
+}
+
+export { residencyRankingInputs } from "./residency-ranking.js";
+
 let sharedProxy: UnifiedProxy | null = null;
 
 /**
@@ -496,7 +538,7 @@ let sharedProxy: UnifiedProxy | null = null;
  */
 export function dispatchProxyRequest(req: Request): Promise<Response> {
   if (!unifiedProxyEnabled()) return openaiProxy.proxyOpenAI(req);
-  sharedProxy ??= createProxy();
+  sharedProxy ??= createSharedUnifiedProxy();
   return sharedProxy.handleRequest(req);
 }
 
