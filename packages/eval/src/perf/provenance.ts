@@ -283,8 +283,11 @@ export type SpawnEngineVersion = (
 
 export interface ProvenanceReaderOptions {
   spawnVersion?: SpawnEngineVersion;
+  /** Timeout for the `--version` probe; defaults to 5000ms. */
+  versionTimeoutMs?: number;
 }
 
+/** Spawns `argv`, killing the child and rejecting if it outlives `timeoutMs`. */
 async function defaultSpawnVersion(
   argv: string[],
   timeoutMs: number,
@@ -314,6 +317,7 @@ async function defaultSpawnVersion(
 
 export function defaultProvenanceReaders(opts: ProvenanceReaderOptions = {}): ProvenanceReaders {
   const spawnVersion = opts.spawnVersion ?? defaultSpawnVersion;
+  const timeoutMs = opts.versionTimeoutMs ?? VERSION_TIMEOUT_MS;
   return {
     sha256File: async (path: string): Promise<string> => {
       const hash = createHash("sha256");
@@ -324,7 +328,14 @@ export function defaultProvenanceReaders(opts: ProvenanceReaderOptions = {}): Pr
       return hash.digest("hex");
     },
     engineVersion: async (binaryPath: string): Promise<EngineVersionInfo> => {
-      const spawned = await spawnVersion([binaryPath, "--version"], VERSION_TIMEOUT_MS);
+      const spawned = await spawnVersion([binaryPath, "--version"], timeoutMs);
+      if (spawned.exitCode !== 0) {
+        const detail = trimOrNull(spawned.stderr);
+        throw new Error(
+          `engine --version exited with code ${String(spawned.exitCode)}` +
+            (detail === null ? "" : `: ${detail.slice(0, 200)}`),
+        );
+      }
       return parseEngineVersionOutput(`${spawned.stdout}\n${spawned.stderr}`);
     },
     hostname,

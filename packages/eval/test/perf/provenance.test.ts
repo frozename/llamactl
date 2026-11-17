@@ -4,15 +4,19 @@ import { join } from "node:path";
 
 import type * as Prov from "../../src/perf/provenance.js";
 
-import { mkdtempSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "../../src/safe-fs.js";
 
 /**
- * RED pins for #521 (provenance slice): `src/perf/provenance.ts` does not
- * exist yet, so every case loads it through a guarded dynamic import — a
- * missing module resolves to an empty namespace and the load() assertion
- * fails, never the file load. `src/perf/provenance.d.ts` is a type-only
- * stub that keeps `import type` + tsc happy until the fix lands the real
- * module (a `.ts` shadows the stub for `.js` specifiers).
+ * #521 provenance slice. Every case loads `src/perf/provenance.ts` through
+ * load(), which asserts the collector export exists before the case runs.
+ * Collected outputs are pooled so the invariant suite can check them all.
  */
 
 const FIELDS = [
@@ -304,6 +308,7 @@ describe("provenance invariants", () => {
   test("every null field has a non-blank unavailable reason and every ok field has none", async () => {
     await load();
 
+    expect(collectedOutputs.length).toBeGreaterThan(0);
     for (const p of collectedOutputs) {
       for (const field of FIELDS) {
         const value: unknown = p[field];
@@ -388,5 +393,94 @@ describe("defaultProvenanceReaders", () => {
       version: null,
       commit: null,
     });
+  });
+});
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitFor(check: () => boolean, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (check()) return true;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return check();
+}
+
+describe("defaultProvenanceReaders --version failures", () => {
+  test("a non-zero --version exit is a probe failure recorded as unavailable", async () => {
+    const mod = await load();
+    const readers = mod.defaultProvenanceReaders({
+      spawnVersion: () =>
+        Promise.resolve({ stdout: "version: 4567 (1a2b3c4d)\n", stderr: "boom\n", exitCode: 3 }),
+    });
+
+    let probeError: unknown = null;
+    try {
+      await readers.engineVersion("/x/engine");
+    } catch (err) {
+      probeError = err;
+    }
+    expect(probeError).toBeInstanceOf(Error);
+    expect((probeError as Error).message).toBe("engine --version exited with code 3: boom");
+
+    const p = await mod.collectEvalProvenance(
+      { ...BASE_INPUT, binary_path: "/x/engine" },
+      {
+        ...readers,
+        sha256File: () => BINARY_DIGEST,
+      },
+    );
+    collectedOutputs.push(p);
+    expect(p.engine_version).toBeNull();
+    expect(p.engine_commit).toBeNull();
+    expect(unavailableReason(p, "engine_version")).toContain("exited with code 3");
+    expect(unavailableReason(p, "engine_commit")).toContain("exited with code 3");
+  });
+
+  test("a --version probe that outlives the timeout kills the child and records unavailable", async () => {
+    const mod = await load();
+    const pidFile = join(tmp, "engine.pid");
+    const engine = join(tmp, "sleepy-engine");
+    const child = `require("fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setTimeout(() => {}, 60000);`;
+    writeFileSync(
+      engine,
+      `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} -e ${JSON.stringify(child)}\n`,
+      "utf8",
+    );
+    chmodSync(engine, 0o755);
+
+    let pid = 0;
+    try {
+      const readers = mod.defaultProvenanceReaders({ versionTimeoutMs: 1500 });
+      const started = Date.now();
+      const p = await mod.collectEvalProvenance(
+        { ...BASE_INPUT, binary_path: engine },
+        {
+          ...readers,
+          sha256File: () => BINARY_DIGEST,
+        },
+      );
+      collectedOutputs.push(p);
+      expect(Date.now() - started).toBeLessThan(10_000);
+
+      expect(p.engine_version).toBeNull();
+      expect(unavailableReason(p, "engine_version")).toMatch(/timed out after 1500ms/);
+      expect(unavailableReason(p, "engine_commit")).toMatch(/timed out/);
+
+      expect(existsSync(pidFile)).toBe(true);
+      pid = Number(readFileSync(pidFile, "utf8"));
+      expect(Number.isInteger(pid) && pid > 0).toBe(true);
+      expect(await waitFor(() => !isAlive(pid), 3000)).toBe(true);
+    } finally {
+      if (pid > 0 && isAlive(pid)) process.kill(pid, "SIGKILL");
+    }
   });
 });
