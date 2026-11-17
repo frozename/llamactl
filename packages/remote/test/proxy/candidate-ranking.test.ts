@@ -8,6 +8,7 @@
  * eligible.at(0) in catalog order, so node-a always wins.
  */
 import type { ResolvedEnv } from "@llamactl/core/types";
+import type { LocalRoute } from "@llamactl/core/workloadRuntime";
 
 import {
   openaiProxy,
@@ -22,6 +23,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  type BackendExecutionContext,
   type BackendExecutor,
   type BackendExecutorDescription,
   createProxy,
@@ -136,6 +138,7 @@ function rankedProxy(
   ads: readonly routingCatalog.RouteAdvertisementV1[],
   signals?: RankingSignals,
   residencyPolicy?: ProxyResidencyPolicy,
+  executorFor: (id: string) => BackendExecutor = (id) => recordingExecutor(id),
 ): { proxy: ReturnType<typeof createProxy>; acquired: string[] } {
   const cat = routingCatalog.buildRouteCatalog({
     routes: [],
@@ -152,11 +155,11 @@ function rankedProxy(
     now: () => NOW,
     resolved: () => resolved,
     catalog: () => cat,
-    executor: recordingExecutor("default"),
+    executor: executorFor("default"),
     acquireExecutor: (candidate) => {
       const owner = candidate.advertisement.ownerNodeId;
       acquired.push(owner);
-      return recordingExecutor(owner);
+      return executorFor(owner);
     },
     ...(signals !== undefined ? { rankingSignals: signals } : {}),
     ...(residencyPolicy !== undefined ? { residencyPolicy } : {}),
@@ -627,5 +630,131 @@ describe("unified proxy candidate ranking guards (#518)", () => {
     );
     expect(status).toBe(200);
     expect(acquired.at(-1)).toBe("node-a");
+  });
+});
+
+// #518 (c) local-http hint pins: when the unified ranker picks a local
+// candidate other than catalog order, gatedExecute records the winner's
+// workload on ctx.preferredLocalWorkload so the legacy executor can pass
+// it to proxyOpenAI as preferredWorkload. The field does not exist at
+// base, so the reads go through a cast and the RED case fails by
+// assertion ([undefined] where ["b-host"] is expected).
+
+function localHostRoute(workload: string, port: number, qualificationStage?: string): LocalRoute {
+  return {
+    workload,
+    model: MODEL,
+    host: "127.0.0.1",
+    port,
+    engine: "llamacpp",
+    kind: "ModelHost",
+    pid: 4242,
+    ...(qualificationStage !== undefined ? { qualificationStage } : {}),
+  };
+}
+
+function preferredCapturingExecutor(id: string, sink: (string | undefined)[]): BackendExecutor {
+  return {
+    describe: (): BackendExecutorDescription => ({
+      id,
+      backendKinds: [],
+      transports: [],
+    }),
+    execute: (_envelope, ctx): Promise<Response> => {
+      sink.push(
+        (ctx as BackendExecutionContext & { preferredLocalWorkload?: string })
+          .preferredLocalWorkload,
+      );
+      return Promise.resolve(Response.json({ ok: true, executor: id }));
+    },
+    cancel: (): boolean => false,
+    drain: (): Promise<void> => Promise.resolve(),
+    close: (): Promise<void> => Promise.resolve(),
+  };
+}
+
+function localRankedProxy(
+  routes: readonly LocalRoute[],
+  nodeId: string,
+): {
+  proxy: ReturnType<typeof createProxy>;
+  cat: routingCatalog.RouteCatalog;
+  preferred: (string | undefined)[];
+} {
+  const cat = routingCatalog.buildRouteCatalog({ routes, nodeId, now: NOW });
+  const candidates = routingCatalog.catalogCandidatesFor(cat, MODEL);
+  expect(candidates).toHaveLength(routes.length);
+  expect(candidates.at(0)?.advertisement.deploymentId).toBe(`deploy/${nodeId}/a-host`);
+  for (const candidate of candidates) {
+    expect(candidate.advertisement.transport).toBe("local-http");
+  }
+  const resolved = freshResolved();
+  expect(openaiProxy.defaultTargetModelIds(resolved).has(MODEL)).toBe(false);
+  const preferred: (string | undefined)[] = [];
+  const proxy = createProxy({
+    env: { LLAMACTL_UNIFIED_PROXY: "1" },
+    now: () => NOW,
+    resolved: () => resolved,
+    nodeId,
+    peers: [],
+    catalog: () => cat,
+    executor: preferredCapturingExecutor("local-ranked", preferred),
+  });
+  return { proxy, cat, preferred };
+}
+
+describe("unified proxy preferredLocalWorkload hint (#518)", () => {
+  test("a ranked local-http winner other than catalog order is passed as preferredLocalWorkload", async () => {
+    // Kills: gatedExecute not setting the hint — the legacy executor would
+    // fall back to alias order and serve a-host. nodeId "mini" also kills
+    // hard-coding "local" in workloadOfDeployment.
+    const { proxy, preferred } = localRankedProxy(
+      [localHostRoute("a-host", 19_101, "validated"), localHostRoute("b-host", 19_102)],
+      "mini",
+    );
+    const res = await proxy.handleRequest(chatReq());
+    expect(res.status).toBe(200);
+    expect(preferred).toEqual(["b-host"]);
+  });
+
+  test("guard (passes on base): no hint when ranking keeps catalog order", async () => {
+    // Kills: always setting the hint, which would break the
+    // default-weights-reproduce-today invariant.
+    const { proxy, preferred } = localRankedProxy(
+      [localHostRoute("a-host", 19_111), localHostRoute("b-host", 19_112)],
+      "mini",
+    );
+    const res = await proxy.handleRequest(chatReq());
+    expect(res.status).toBe(200);
+    expect(preferred).toEqual([undefined]);
+  });
+
+  test("guard (passes on base): no hint for a worker-rpc winner", async () => {
+    // Kills: setting the hint for non-local transports — a worker-rpc
+    // winner picked over catalog order must reach its executor with
+    // preferredLocalWorkload unset.
+    const preferred: (string | undefined)[] = [];
+    const { proxy, acquired } = rankedProxy(
+      [
+        rankAd("node-a", 0, { qualification: { stage: "candidate" } }),
+        rankAd("node-b", 1, { qualification: { stage: "production" } }),
+      ],
+      undefined,
+      undefined,
+      (id) => preferredCapturingExecutor(id, preferred),
+    );
+    const res = await proxy.handleRequest(chatReq());
+    expect(res.status).toBe(200);
+    expect(acquired.at(-1)).toBe("node-b");
+    expect(preferred).toEqual([undefined]);
+  });
+
+  test("guard (passes on base): single eligible local candidate gets no hint", async () => {
+    // Kills: setting the hint even when the ranked pick is the only
+    // candidate — there is nothing to prefer.
+    const { proxy, preferred } = localRankedProxy([localHostRoute("a-host", 19_121)], "mini");
+    const res = await proxy.handleRequest(chatReq());
+    expect(res.status).toBe(200);
+    expect(preferred).toEqual([undefined]);
   });
 });
