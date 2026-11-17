@@ -130,6 +130,70 @@ describe("qualification.promotion.PromotionPolicySchema demotion block", () => {
     ).toBe(true);
     expect(typeof PX["DemotionThresholdsSchema"]).toBe("object");
   });
+
+  test("minEvaluatedTasks is required and a nonnegative integer", () => {
+    // kills: making minEvaluatedTasks optional, dropping .nonnegative(),
+    // or dropping .int() on the shared evidence gate.
+    expect(
+      P.PromotionPolicySchema.safeParse({ thresholds: {}, demotion: { maxRegression: 0.1 } })
+        .success,
+    ).toBe(false);
+    expect(
+      P.PromotionPolicySchema.safeParse({
+        thresholds: {},
+        demotion: { ...D, minEvaluatedTasks: -1 },
+      }).success,
+    ).toBe(false);
+    expect(
+      P.PromotionPolicySchema.safeParse({
+        thresholds: {},
+        demotion: { ...D, minEvaluatedTasks: 1.5 },
+      }).success,
+    ).toBe(false);
+    expect(
+      P.PromotionPolicySchema.safeParse({
+        thresholds: {},
+        demotion: { ...D, minEvaluatedTasks: 0 },
+      }).success,
+    ).toBe(true);
+  });
+
+  for (const key of [
+    "minFirstAttemptSuccess",
+    "minRepairSuccess",
+    "minToolCallCorrectness",
+    "minStructuredOutputValidity",
+    "minMemoryStability",
+    "minRuntimeReliability",
+  ] as const) {
+    test(`${key} is bounded to [0, 1]`, () => {
+      // kills: replacing the ratio bound on this min floor.
+      for (const bad of [1.5, -0.1]) {
+        expect(
+          P.PromotionPolicySchema.safeParse({
+            thresholds: {},
+            demotion: { ...D, [key]: bad },
+          }).success,
+        ).toBe(false);
+      }
+    });
+  }
+
+  test("minImprovement is bounded above by 1", () => {
+    // kills: dropping max(1) on minImprovement.
+    expect(
+      P.PromotionPolicySchema.safeParse({
+        thresholds: {},
+        demotion: { ...D, minImprovement: 1.5 },
+      }).success,
+    ).toBe(false);
+    expect(
+      P.PromotionPolicySchema.safeParse({
+        thresholds: {},
+        demotion: { ...D, minImprovement: 1 },
+      }).success,
+    ).toBe(true);
+  });
 });
 
 describe("qualification.demotion.proposeDemotion", () => {
@@ -296,6 +360,32 @@ describe("qualification.demotion.proposeDemotion", () => {
       policy: { thresholds: {}, demotion: { minEvaluatedTasks: 10 } },
     });
     expect(decision).toEqual({ kind: "none", reason: "no-thresholds" });
+  });
+
+  test("no-thresholds is checked before insufficient evidence", async () => {
+    // kills: testing the task gate before the floor-less check.
+    const { proposeDemotion } = await loadDemotion();
+    const decision = proposeDemotion({
+      rel: "m.gguf",
+      declared: "production",
+      evidence: { ...BREACHING, evaluatedTasks: 9 },
+      policy: { thresholds: {}, demotion: { minEvaluatedTasks: 10 } },
+    });
+    expect(decision).toEqual({ kind: "none", reason: "no-thresholds" });
+  });
+
+  test("a proposal reports only the configured floors' metrics", async () => {
+    // kills: copying every evidence metric into proposal.metrics.
+    const { proposeDemotion } = await loadDemotion();
+    const decision = proposeDemotion({
+      rel: "m.gguf",
+      declared: "production",
+      evidence: BREACHING,
+      policy: { thresholds: {}, demotion: { minEvaluatedTasks: 10, maxRegression: 0.1 } },
+    });
+    expect(decision.kind).toBe("demotion");
+    if (decision.kind !== "demotion") throw new Error("expected a demotion");
+    expect(decision.proposal.metrics).toEqual({ regression: 0.2 });
   });
 
   test("a freeze override blocks demotion", async () => {
