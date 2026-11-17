@@ -121,6 +121,19 @@ export type MetricValue =
   | { value: number; status: "ok" }
   | { value: null; status: "unavailable"; reason: string };
 
+/** Provenance fields that can be individually unavailable, each carrying its
+ *  own reason instead of a guessed value. */
+export const PROVENANCE_UNAVAILABLE_FIELDS = [
+  "engine_version",
+  "engine_commit",
+  "binary_sha256",
+  "gguf_sha256",
+  "hf_revision",
+  "quant",
+  "ctx",
+] as const;
+export type ProvenanceField = (typeof PROVENANCE_UNAVAILABLE_FIELDS)[number];
+
 export interface EvalProvenance {
   engine: EvalEngine;
   engine_version: string | null;
@@ -128,10 +141,15 @@ export interface EvalProvenance {
   binary_sha256: string | null;
   gguf_sha256: string | null;
   hf_revision: string | null;
-  quant: string;
+  quant: string | null;
   ctx: number | null;
   flags: string[];
   host: string;
+  /** Per-field reasons a value could not be determined. The invariant is
+   *  strict: a field is null <=> this map holds a non-blank reason for it.
+   *  Values are never guessed and never coerced; the map rides along inside
+   *  provenance_json, so the store schema does not change. */
+  unavailable?: Partial<Record<ProvenanceField, string>>;
 }
 
 export interface PerfRunRow {
