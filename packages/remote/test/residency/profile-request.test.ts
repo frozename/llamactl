@@ -511,6 +511,35 @@ describe("buildProfileSwitchRequest", () => {
     expect(result).toEqual({ ok: false, reason: "NotOptedIn", workloads: [] });
   });
 
+  test("trims a whitespace-padded residency-group label and drops a blank one", async () => {
+    // kills: buildWorkload reading the raw label while apply-profile's
+    // groupOf trims it (the planner and the lifecycle rows would name
+    // different groups for the same manifest).
+    const mod = await residencyCoordinator();
+    expect(typeof mod.buildProfileSwitchRequest).toBe("function");
+
+    const result = mod.buildProfileSwitchRequest!(
+      profileSwitchInput({
+        modelHosts: [
+          hostManifest("padded", {
+            labels: { [RESIDENCY_GROUP_LABEL]: `  ${GROUP}\t` },
+            annotations: { [PROFILES_ANNOTATION]: "chat" },
+          }),
+          hostManifest("blank", {
+            labels: { [RESIDENCY_GROUP_LABEL]: "   " },
+            annotations: { [PROFILES_ANNOTATION]: "code" },
+          }),
+        ],
+        observed: observedOf({ padded: "running", blank: "stopped" }),
+        memory: { padded: 10, blank: 10 },
+      }),
+    );
+
+    const request = okRequest(result);
+    expect(plannerWorkload(request.workloads, "padded").group).toBe(GROUP);
+    expect(plannerWorkload(request.workloads, "blank").group).toBeUndefined();
+  });
+
   test("exports the residency annotation and group-label constants", async () => {
     const mod = await residencyCoordinator();
     expect(typeof mod.buildProfileSwitchRequest).toBe("function");
