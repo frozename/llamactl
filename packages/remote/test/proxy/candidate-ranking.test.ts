@@ -703,6 +703,44 @@ function localRankedProxy(
   return { proxy, cat, preferred };
 }
 
+function advertisedRankedProxy(
+  ads: readonly routingCatalog.RouteAdvertisementV1[],
+  nodeId: string,
+): {
+  proxy: ReturnType<typeof createProxy>;
+  acquired: string[];
+  preferred: (string | undefined)[];
+} {
+  const cat = routingCatalog.buildRouteCatalog({
+    routes: [],
+    nodeId,
+    now: NOW,
+    advertisements: ads,
+  });
+  const candidates = routingCatalog.catalogCandidatesFor(cat, MODEL);
+  expect(candidates).toHaveLength(2);
+  expect(candidates.at(0)?.advertisement.ownerNodeId).toBe("node-a");
+  const resolved = freshResolved();
+  expect(openaiProxy.defaultTargetModelIds(resolved).has(MODEL)).toBe(false);
+  const acquired: string[] = [];
+  const preferred: (string | undefined)[] = [];
+  const proxy = createProxy({
+    env: { LLAMACTL_UNIFIED_PROXY: "1" },
+    now: () => NOW,
+    resolved: () => resolved,
+    nodeId,
+    peers: [],
+    catalog: () => cat,
+    executor: preferredCapturingExecutor("default", preferred),
+    acquireExecutor: (candidate) => {
+      const owner = candidate.advertisement.ownerNodeId;
+      acquired.push(owner);
+      return preferredCapturingExecutor(owner, preferred);
+    },
+  });
+  return { proxy, acquired, preferred };
+}
+
 describe("unified proxy preferredLocalWorkload hint (#518)", () => {
   test("a ranked local-http winner other than catalog order is passed as preferredLocalWorkload", async () => {
     // Kills: gatedExecute not setting the hint — the legacy executor would
@@ -729,10 +767,12 @@ describe("unified proxy preferredLocalWorkload hint (#518)", () => {
     expect(preferred).toEqual([undefined]);
   });
 
-  test("guard (passes on base): no hint for a worker-rpc winner", async () => {
-    // Kills: setting the hint for non-local transports — a worker-rpc
-    // winner picked over catalog order must reach its executor with
-    // preferredLocalWorkload unset.
+  test("guard (passes on base): no hint for a worker-rpc winner owned by another node", async () => {
+    // Guards the remote-owner case end to end: node-b's worker-rpc winner,
+    // picked over catalog order, reaches its executor with
+    // preferredLocalWorkload unset. It does not isolate the transport check
+    // (node-b is not this node, so the owner check also rejects it) — the
+    // owned worker-rpc test below does.
     const preferred: (string | undefined)[] = [];
     const { proxy, acquired } = rankedProxy(
       [
@@ -747,6 +787,77 @@ describe("unified proxy preferredLocalWorkload hint (#518)", () => {
     expect(res.status).toBe(200);
     expect(acquired.at(-1)).toBe("node-b");
     expect(preferred).toEqual([undefined]);
+  });
+
+  test("guard: no hint for a worker-rpc winner owned by this node", async () => {
+    // Kills: dropping the transport !== 'local-http' check. The winner is
+    // owned by this node and its deploymentId names a workload under this
+    // node's prefix, so only the transport check keeps the hint unset.
+    const { proxy, acquired, preferred } = advertisedRankedProxy(
+      [
+        rankAd("node-a", 0, { qualification: { stage: "candidate" } }),
+        rankAd("node-b", 1, {
+          ownerNodeId: "mini",
+          deploymentId: "deploy/mini/b-host",
+          routeId: "route/mini/b-host",
+          backendId: "backend/mini/b-host",
+          transport: "worker-rpc",
+          qualification: { stage: "production" },
+        }),
+      ],
+      "mini",
+    );
+    const res = await proxy.handleRequest(chatReq());
+    expect(res.status).toBe(200);
+    expect(acquired.at(-1)).toBe("mini");
+    expect(preferred).toEqual([undefined]);
+  });
+
+  test("guard: no hint for a local-http winner owned by another node", async () => {
+    // Kills: dropping the ownerNodeId !== nodeId check. The winner is
+    // local-http and its deploymentId carries this node's prefix, so only
+    // the owner check keeps the hint unset.
+    const { proxy, acquired, preferred } = advertisedRankedProxy(
+      [
+        rankAd("node-a", 0, { qualification: { stage: "candidate" } }),
+        rankAd("node-b", 1, {
+          deploymentId: "deploy/mini/b-host",
+          routeId: "route/mini/b-host",
+          backendId: "backend/mini/b-host",
+          transport: "local-http",
+          qualification: { stage: "production" },
+        }),
+      ],
+      "mini",
+    );
+    const res = await proxy.handleRequest(chatReq());
+    expect(res.status).toBe(200);
+    expect(acquired.at(-1)).toBe("node-b");
+    expect(preferred).toEqual([undefined]);
+  });
+
+  test("guard: a local-http winner owned by this node gets the hint via advertisements", async () => {
+    // Positive control for the two guards above: with both the transport
+    // and the owner matching, the same advertisement shape does carry the
+    // hint, so their [undefined] is not an artifact of the fixture.
+    const { proxy, acquired, preferred } = advertisedRankedProxy(
+      [
+        rankAd("node-a", 0, { qualification: { stage: "candidate" } }),
+        rankAd("node-b", 1, {
+          ownerNodeId: "mini",
+          deploymentId: "deploy/mini/b-host",
+          routeId: "route/mini/b-host",
+          backendId: "backend/mini/b-host",
+          transport: "local-http",
+          qualification: { stage: "production" },
+        }),
+      ],
+      "mini",
+    );
+    const res = await proxy.handleRequest(chatReq());
+    expect(res.status).toBe(200);
+    expect(acquired.at(-1)).toBe("mini");
+    expect(preferred).toEqual(["b-host"]);
   });
 
   test("guard (passes on base): single eligible local candidate gets no hint", async () => {
