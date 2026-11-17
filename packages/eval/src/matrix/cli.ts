@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 
+import { defaultProvenanceReaders } from "../perf/provenance.js";
 import { renderCsvReport, renderMarkdownReport } from "./report.js";
 import { runMatrix } from "./runner.js";
 import { listCellRows } from "./store.js";
@@ -337,6 +338,7 @@ async function main(): Promise<void> {
     workloads,
     db,
     concurrency,
+    provenanceReaders: defaultProvenanceReaders(),
     ...(runId !== undefined ? { runId } : {}),
     ...(corpusOverrides !== undefined ? { corpusOverrides } : {}),
   });

@@ -58,6 +58,14 @@ export function ensureMatrixSchema(db: Database): void {
       PRIMARY KEY (run_id, model_name, suite_name, metric_name)
     )
   `);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS matrix_provenance (
+      run_id TEXT NOT NULL,
+      model_name TEXT NOT NULL,
+      provenance_json TEXT NOT NULL,
+      PRIMARY KEY (run_id, model_name)
+    )
+  `);
 }
 
 export function insertCellRow(db: Database, row: CellRow): void {
@@ -311,5 +319,60 @@ export function listPerfRuns(
     provenance: JSON.parse(record.provenance_json) as EvalProvenance,
     started_at: record.started_at,
     host_machine: record.host_machine,
+  }));
+}
+
+export interface MatrixProvenanceRow {
+  run_id: string;
+  model_name: string;
+  provenance: EvalProvenance;
+}
+
+export function insertMatrixProvenance(
+  db: Database,
+  row: { run_id: string; model_name: string; provenance: EvalProvenance },
+): MatrixProvenanceRow {
+  ensureMatrixSchema(db);
+  db.query(
+    `
+      INSERT INTO matrix_provenance (run_id, model_name, provenance_json)
+      VALUES ($run_id, $model_name, $provenance_json)
+      ON CONFLICT(run_id, model_name) DO UPDATE SET provenance_json=excluded.provenance_json
+    `,
+  ).run({
+    $run_id: row.run_id,
+    $model_name: row.model_name,
+    $provenance_json: JSON.stringify(row.provenance),
+  });
+  return { run_id: row.run_id, model_name: row.model_name, provenance: row.provenance };
+}
+
+export function listMatrixProvenance(
+  db: Database,
+  filter: { run_id?: string; model_name?: string } = {},
+): MatrixProvenanceRow[] {
+  ensureMatrixSchema(db);
+  const clauses: string[] = [];
+  const params: SQLQueryBindings[] = [];
+  if (filter.run_id) {
+    clauses.push("run_id = ?");
+    params.push(filter.run_id);
+  }
+  if (filter.model_name) {
+    clauses.push("model_name = ?");
+    params.push(filter.model_name);
+  }
+  const rawRows = db
+    .query(
+      `SELECT run_id, model_name, provenance_json
+     FROM matrix_provenance
+     ${clauses.length ? `WHERE ${clauses.join(" AND ")}` : ""}
+     ORDER BY run_id ASC, model_name ASC`,
+    )
+    .all(...params) as { run_id: string; model_name: string; provenance_json: string }[];
+  return rawRows.map((record) => ({
+    run_id: record.run_id,
+    model_name: record.model_name,
+    provenance: JSON.parse(record.provenance_json) as EvalProvenance,
   }));
 }
