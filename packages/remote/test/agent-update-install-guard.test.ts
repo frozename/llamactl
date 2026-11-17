@@ -46,6 +46,12 @@ const STAMPED_COMPILED: nodeFacts.BuildStamp = {
   builtAt: "2026-11-01T00:00:00.000Z",
   installKind: "compiled",
 };
+const COMPILED_NON_HEX_COMMIT: nodeFacts.BuildStamp = {
+  commit: "unknown",
+  dirty: false,
+  builtAt: "2026-11-01T00:00:00.000Z",
+  installKind: "compiled",
+};
 const SOURCE_WITH_FIELDS: nodeFacts.BuildStamp = {
   commit: "c".repeat(40),
   dirty: false,
@@ -129,6 +135,14 @@ describe("handleAgentUpdate — install-kind guard (#745)", () => {
     const res = await handleAgentUpdate(
       postReq(new Uint8Array(Buffer.from("#!/bin/sh\necho v2\n"))),
       updateOpts(COMPILED_HEAD_ONLY),
+    );
+    await expectInstallRefusal(res, "refusing-update: compiled agent has no build stamp");
+  });
+
+  test("refuses a compiled stamp whose commit is set but not a 40-hex SHA", async () => {
+    const res = await handleAgentUpdate(
+      postReq(new Uint8Array(Buffer.from("#!/bin/sh\necho v2\n"))),
+      updateOpts(COMPILED_NON_HEX_COMMIT),
     );
     await expectInstallRefusal(res, "refusing-update: compiled agent has no build stamp");
   });

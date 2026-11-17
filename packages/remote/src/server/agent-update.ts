@@ -38,10 +38,11 @@ import { unauthorizedResponse, verifyBearer } from "./auth.js";
  * KeepAlive flips it back into a respawn loop and the operator can
  * `agent rollback` (separate command) to restore `.previous`.
  *
- * #745: `selfUpdateRefusal` checks `buildStamp.installKind !== "compiled"`
- * (refuse 409) or missing/invalid `commit`/`dirty` (refuse 409) before
- * any body is touched. Source-checkouts and unstamped fallbacks are
- * refused; only a build-stamped compiled binary is accepted.
+ * #745: before any header or body is touched, `selfUpdateRefusal`
+ * refuses with 409 when `buildStamp.installKind !== "compiled"`, when any
+ * of `commit`/`dirty`/`builtAt` is null, or when `commit` is not a 40-hex
+ * SHA. Source checkouts and unstamped fallbacks are refused; only a
+ * build-stamped compiled binary is accepted.
  */
 
 // ---------------------------------------------------------------------------
