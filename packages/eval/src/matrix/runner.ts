@@ -4,23 +4,32 @@ import { randomUUID } from "node:crypto";
 import os from "node:os";
 
 import type { ChatMessage, ToolDef } from "../client.js";
-import type { ModelSpec, WorkloadEval } from "./types.js";
+import type { ProvenanceInput, ProvenanceReaders } from "../perf/provenance.js";
+import type { EvalEngine, ModelSpec, WorkloadEval } from "./types.js";
 
 import { buildCompletionRequest, completeChat } from "../client.js";
+import { collectEvalProvenance } from "../perf/provenance.js";
 import { ensureModelServing, teardownIfOwned } from "./lifecycle.js";
 import { resolveCorpusPath } from "./repo-root.js";
 import { aggregateMetrics, percentile } from "./scoring.js";
-import { ensureMatrixSchema, insertCellRow, insertCellRowDetail } from "./store.js";
+import {
+  ensureMatrixSchema,
+  insertCellRow,
+  insertCellRowDetail,
+  insertMatrixProvenance,
+} from "./store.js";
+import { isExternalOnlyEngine } from "./types.js";
 
 type WorkloadAggregate = { primary_metric_value: number; per_class_metrics_json: string };
 
-interface RunMatrixOpts {
+export interface RunMatrixOpts {
   models: ModelSpec[];
   workloads: WorkloadEval[];
   db: Database;
   runId?: string;
   corpusOverrides?: Map<string, string>;
   concurrency?: number;
+  provenanceReaders?: ProvenanceReaders;
 }
 
 async function loadCorpusRows(
@@ -292,6 +301,73 @@ function aggregateWorkloadMetrics(
   };
 }
 
+const CTX_SIZE_INLINE_RE = /^--ctx-size(?:\s+|=)(\d+)$/;
+const CTX_SIZE_VALUE_RE = /^\d+$/;
+
+function positiveIntOrNull(raw: string | undefined): number | null {
+  if (raw === undefined) return null;
+  const n = Number.parseInt(raw, 10);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+/** Scans `flags` (start_args then extra_args) from the end, so the last
+ *  `--ctx-size N` / `--ctx-size=N` / `-c N` occurrence wins.
+ *  - An inline `--ctx-size=N` match, or a `--ctx-size`/`-c` followed by an
+ *    all-digit argument, ends the scan: N if it is a positive integer,
+ *    otherwise null (e.g. `-c 0` yields null, not an earlier value).
+ *  - A `--ctx-size`/`-c` with no following argument, or one that is not
+ *    all digits (e.g. `-c auto`), is not a match: the scan falls through
+ *    to earlier occurrences. */
+function lastCtxSize(flags: readonly string[]): number | null {
+  for (let i = flags.length - 1; i >= 0; i -= 1) {
+    const flag = flags[i];
+    if (flag === undefined) continue;
+    const inline = CTX_SIZE_INLINE_RE.exec(flag);
+    if (inline !== null) return positiveIntOrNull(inline[1]);
+    if (flag !== "--ctx-size" && flag !== "-c") continue;
+    const next = flags[i + 1];
+    if (next !== undefined && CTX_SIZE_VALUE_RE.test(next)) {
+      return positiveIntOrNull(next);
+    }
+  }
+  return null;
+}
+
+function binaryPathReason(model: ModelSpec, engine: EvalEngine): string | null {
+  if (model.binary) return null;
+  const suffix = isExternalOnlyEngine(engine) ? ` (engine ${engine} runs outside eval)` : "";
+  return `ModelSpec ${model.name} declares no engine binary${suffix}`;
+}
+
+function ctxUnavailableReason(model: ModelSpec, engine: EvalEngine): string {
+  if (engine === "llamacpp" || engine === "gufo") {
+    return `ModelSpec ${model.name} flags declare no --ctx-size/-c`;
+  }
+  return `engine ${engine} context size is not declared in ModelSpec flags; no --ctx-size`;
+}
+
+function matrixProvenanceInput(model: ModelSpec): ProvenanceInput {
+  const engine = model.engine ?? "llamacpp";
+  const flags = [...(model.start_args ?? []), ...(model.extra_args ?? [])];
+  const reasons: NonNullable<ProvenanceInput["reasons"]> = {};
+  const binaryReason = binaryPathReason(model, engine);
+  if (binaryReason !== null) reasons.binary_path = binaryReason;
+  if (engine === "omlx") {
+    reasons.gguf_path = `engine omlx serves an MLX model directory, not a GGUF file`;
+  }
+  const ctx = engine === "llamacpp" || engine === "gufo" ? lastCtxSize(flags) : null;
+  if (ctx === null) reasons.ctx = ctxUnavailableReason(model, engine);
+  return {
+    engine,
+    binary_path: model.binary ?? null,
+    gguf_path: engine === "omlx" ? null : model.gguf_path,
+    quant: model.quant,
+    flags,
+    ctx,
+    ...(Object.keys(reasons).length > 0 ? { reasons } : {}),
+  };
+}
+
 function recordBootError(
   model: ModelSpec,
   workloads: WorkloadEval[],
@@ -411,6 +487,18 @@ async function runModelCells(
   runId: string,
   concurrency: number,
 ): Promise<number> {
+  if (opts.provenanceReaders) {
+    try {
+      const provenance = await collectEvalProvenance(
+        matrixProvenanceInput(model),
+        opts.provenanceReaders,
+      );
+      insertMatrixProvenance(opts.db, { run_id: runId, model_name: model.name, provenance });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(`[matrix] provenance collection failed for ${model.name}: ${message}`);
+    }
+  }
   let boot: Awaited<ReturnType<typeof ensureModelServing>> | undefined;
   try {
     boot = await ensureModelServing(model);
