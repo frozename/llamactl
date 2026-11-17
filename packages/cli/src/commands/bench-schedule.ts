@@ -1,14 +1,8 @@
-import type {
-  EvalProvenance,
-  PerfEngineClient,
-  PerfEngineClock,
-  PerfSuiteOptions,
-} from "@llamactl/eval";
+import type { PerfEngineClient, PerfEngineClock, PerfSuiteOptions } from "@llamactl/eval";
 import type { router } from "@llamactl/remote";
 
 import { llamactlHome } from "@llamactl/core/config/env";
 import { Database } from "bun:sqlite";
-import { hostname } from "node:os";
 import { join } from "node:path";
 
 import { getGlobals } from "../dispatcher.js";
@@ -146,21 +140,6 @@ interface SuiteRunRequest {
 type PerfBenchSuiteRunner = (req: SuiteRunRequest) => Promise<void>;
 type ResolvedEndpoint = { baseUrl: string; fetchImpl?: typeof fetch };
 
-function buildProvenance(): EvalProvenance {
-  return {
-    engine: "llamacpp",
-    engine_version: null,
-    engine_commit: null,
-    binary_sha256: null,
-    gguf_sha256: null,
-    hf_revision: null,
-    quant: "unknown",
-    ctx: null,
-    flags: [],
-    host: hostname(),
-  };
-}
-
 function defaultOpenDb(): Database {
   const dir = join(llamactlHome(), "eval");
   mkdirSync(dir, { recursive: true });
@@ -240,6 +219,25 @@ export function createPerfBenchSuiteRunner(
       ...(ep.fetchImpl ? { fetchImpl: ep.fetchImpl } : {}),
     });
     await assertServesModel(client, req);
+    // Scheduled runs only reach the engine through the agent gateway, so the
+    // binary, GGUF, quant, ctx and HF revision are genuinely unknown; each
+    // lands as null with its own unavailable reason instead of a guess.
+    const provenance = await ev.collectEvalProvenance(
+      {
+        engine: "llamacpp",
+        quant: null,
+        ctx: null,
+        flags: [],
+        reasons: {
+          binary_path: `scheduled suites reach ${req.rel} through the agent gateway; the engine binary path is not known`,
+          gguf_path: `scheduled suites reach ${req.rel} through the agent gateway; the GGUF path is not known`,
+          quant: `scheduled suites reach ${req.rel} through the agent gateway; the quant label is not known`,
+          ctx: `scheduled suites reach ${req.rel} through the agent gateway; the context size is not known`,
+          hf_revision: `scheduled suites reach ${req.rel} through the agent gateway; no GGUF path to derive an HF revision from`,
+        },
+      },
+      ev.defaultProvenanceReaders(),
+    );
     const db = (overrides.openDb ?? defaultOpenDb)();
     try {
       await (overrides.runPerfSuite ?? ev.runPerfSuite)(db, {
@@ -248,7 +246,7 @@ export function createPerfBenchSuiteRunner(
         model_name: req.rel,
         client,
         clock,
-        provenance: buildProvenance(),
+        provenance,
       });
     } finally {
       db.close();
