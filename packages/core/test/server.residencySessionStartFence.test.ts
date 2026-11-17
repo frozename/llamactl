@@ -411,10 +411,12 @@ describe("server.startServer residency session start fence (#520)", () => {
     expect(readServerState(TEST_KEY)).not.toBeNull();
   });
 
-  // Kills (N3b): trackedStopIdentity dropping expectCommand.binary or
-  // .path. A different binary must never be signalled; a sidecar binary
-  // whose path contains a space only matches through `path`, so dropping
-  // it would refuse to stop our own instance.
+  // Kills (N3b): trackedStopIdentity dropping expectCommand.binary
+  // entirely (with no basename to check, the other binary would match) or
+  // dropping .path (a sidecar binary whose path contains a space only
+  // matches through `path`, so our own instance would be refused). Both
+  // binaries here end in llama-server, so this case does not pin the
+  // basename's value; the next case does.
   test("stopServer refuses a different binary and signals a matching spaced binary path", async () => {
     writeTrackedPid(4194305);
     writeSidecar("Demo/demo.gguf", "/opt/llama a/llama-server");
@@ -442,6 +444,44 @@ describe("server.startServer residency session start fence (#520)", () => {
       },
     });
     expect(ours.stopped).toBe(true);
+    expect(sigtermCalls()).toBe(1);
+    expect(killSpy.mock.calls.find(([, signal]) => signal === "SIGTERM")?.[0]).toBe(4194305);
+    expect(readServerPid(TEST_KEY)).toBeNull();
+  });
+
+  // Kills (T3): trackedStopIdentity deriving expectCommand.binary from a
+  // constant "llama-server" instead of the sidecar binary's basename. With
+  // a llamafile sidecar, a live llama-server pid at another path must not
+  // be signalled, and a llamafile at another path must still be matched
+  // by basename and signalled.
+  test("stopServer matches the basename of a non-llama-server sidecar binary", async () => {
+    writeTrackedPid(4194305);
+    writeSidecar("Demo/demo.gguf", "/opt/x/llamafile");
+
+    const llamaServer = await stopServer({
+      key: TEST_KEY,
+      graceSeconds: 1,
+      identity: {
+        probe: () => undefined,
+        processStartMs: () => Date.now() - 1000,
+        processCommand: () => "/usr/bin/llama-server -m Demo/demo.gguf",
+      },
+    });
+    expect(llamaServer).toEqual({ stopped: false, pid: 4194305, killed: false });
+    expect(sigtermCalls()).toBe(0);
+    expect(readServerPid(TEST_KEY)).toBe(4194305);
+    expect(readServerState(TEST_KEY)?.binary).toBe("/opt/x/llamafile");
+
+    const llamafile = await stopServer({
+      key: TEST_KEY,
+      graceSeconds: 1,
+      identity: {
+        probe: () => undefined,
+        processStartMs: () => Date.now() - 1000,
+        processCommand: () => "/usr/local/bin/llamafile -m Demo/demo.gguf",
+      },
+    });
+    expect(llamafile.stopped).toBe(true);
     expect(sigtermCalls()).toBe(1);
     expect(killSpy.mock.calls.find(([, signal]) => signal === "SIGTERM")?.[0]).toBe(4194305);
     expect(readServerPid(TEST_KEY)).toBeNull();
