@@ -325,8 +325,36 @@ describe("matrix engine provenance (#521)", () => {
     expect(prov.binary_sha256).toBeNull();
     expect(prov.engine_version).toBeNull();
     expect(prov.engine_commit).toBeNull();
-    expect(prov.unavailable?.binary_sha256).toMatch(/declares no engine binary/);
+    expect(prov.unavailable?.binary_sha256).toBe(
+      "ModelSpec glm-gufo declares no engine binary (engine gufo runs outside eval)",
+    );
     expect(fake.engineVersionCalls).toEqual([]);
+  });
+
+  // Kills: the external-only suffix applied to every engine, not just gufo/kapitsa.
+  test("runMatrix records a llamacpp no-binary reason without the external-only suffix", async () => {
+    const port = startStubServer();
+    const model: ModelSpec = {
+      name: "glm-llamacpp-nobin",
+      engine: "llamacpp",
+      managed: false,
+      gguf_path: "/models/glm/Q4_K_M.gguf",
+      quant: "Q4_K_M",
+      family: "glm",
+      size_params: "30b",
+      host: "127.0.0.1",
+      port,
+      extra_args: ["--ctx-size", "4096"],
+    };
+    const db = new Database(":memory:");
+    await runModelMatrix(model, db, "run-llamacpp-nobin");
+    const rows = provenanceRows(db);
+    expect(rows).toHaveLength(1);
+    const prov = parseProvenance(rows[0]!.provenance_json);
+    expect(prov.engine).toBe("llamacpp");
+    expect(prov.unavailable?.binary_sha256).toBe(
+      "ModelSpec glm-llamacpp-nobin declares no engine binary",
+    );
   });
 
   // Kills: collecting provenance only after a successful boot.
