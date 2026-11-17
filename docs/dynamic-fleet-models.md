@@ -147,10 +147,19 @@ Observable signals operators use today:
 ### Residency lifecycle states
 
 `packages/core/src/residency/lifecycle.ts` is pure and synchronous:
-states in, decisions out. Its consumers are the residency planner and
-the remote profile-switch coordinator
-(`packages/remote/src/residency/coordinator.ts`); neither has a live
-caller yet (DF-06 #279).
+states in, decisions out. `planProfileSwitch`
+(`packages/core/src/residency/planner.ts`) is called by
+`packages/remote/src/residency/procedures.ts` behind `llamactl residency
+plan` and `apply-profile`. Since #726, `applyResidencyProfile` passes
+`operation.lifecycle`, so `profile-transition.ts` wraps the executor deps
+in `withResidencyLifecycle`
+(`packages/remote/src/residency/lifecycle-steps.ts`). Each hop is a
+`RESIDENCY_TRANSITIONS` edge: a victim walks `ready` → `draining` →
+`unloading` → `downloaded`|`failed`; a replacement walks → `loading` →
+`warming` → `ready`|`failed`; an observed same-group occupant refuses
+with `ExclusiveGroupOccupied` before the engine runs. Still pending:
+direct start/stop writers, reconciliation outside a switch, boot recovery
+of lifecycle rows, a status read-out, and #276.
 
 | state         | legal next states                | occupying |
 | ------------- | -------------------------------- | --------- |
@@ -200,6 +209,20 @@ Routing (`packages/core/src/routing/catalog.ts`): an experimental
 candidate is eligible only when the client pins the exact id and no
 non-experimental candidate exists; otherwise it is rejected with
 `experimental-excluded`.
+
+`admissionConflict` (`packages/core/src/routing/catalog.ts`) judges a
+stable advertisement only against stable peers; an experimental
+advertisement is judged against all candidates, so it can neither shadow
+nor intrude on a stable alias or replica group. The embersynth bench
+scorer never picks an experimental rel as a fusion node's `modelId`: it
+reads stages through `embersynthQualificationStages`
+(`packages/remote/src/config/embersynth.ts`), which is
+`catalogQualificationStages` with pin overrides applied. `llamactl
+embersynth promote-private <rel>` exits 1 for an experimental rel, with
+stderr "experimental models are served only on an exact model pin and
+never under fusion-private-first" (#725). Under #728/#729 the ranked
+replica hint never lifts an experimental replica over a non-experimental
+one, and a session already bound to an experimental workload stays on it.
 
 `proposePromotion` (`packages/core/src/qualification/promotion.ts`)
 applies the first matching check, in source order: `frozen`, `pinned`,
@@ -393,10 +416,13 @@ Procedure: download the pinned revision into the rel path, verify
 each shard's sha256 against the HF LFS oid at that revision manually,
 then change availability via the catalog-PR path above.
 
-Rollback: delete partial shards and run the runbook exit step.
-Override rows have no runtime effect yet — do not list them as a
-rollback lever. TTM/GTT kernel-parameter rollback is not covered by
-repo code and is out of scope.
+Rollback: delete partial shards and run the runbook exit step. A `pin`
+override row is a routing lever: `catalogQualificationStages` applies its
+stage, so pinning a rel to `experimental` keeps it out of alias,
+advertised and fusion picks (it stays reachable only on an exact model
+pin when no non-experimental candidate exists). A `freeze` row has no
+runtime effect and is not a rollback lever. TTM/GTT kernel-parameter
+rollback is not covered by repo code and is out of scope.
 
 ## GLM-5.3-Flash z13 eval record
 
