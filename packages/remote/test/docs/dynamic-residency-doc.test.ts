@@ -92,6 +92,13 @@ function enclosingBody(src: string, signature: string): string {
   return lines.slice(0, end === -1 ? lines.length : end + 1).join("\n");
 }
 
+// Every pin must appear in `text`; the label names the failing pin.
+function expectPins(text: string, label: string, pins: readonly string[]): void {
+  for (const pin of pins) {
+    expect(text, `${label} ${pin}`).toContain(pin);
+  }
+}
+
 interface SrcFile {
   path: string;
   rel: string;
@@ -1016,7 +1023,10 @@ describe("docs/dynamic-residency.md (#285)", () => {
   // create or require a store, making a failed claim block a stop,
   // wrapping force-unload without updating the doc, dropping either
   // startModelHostProcess call site or the disable/delete modelHostStop
-  // call, or rewording any claim of the #741 section.
+  // call, or rewording any claim of the #741 section. Part of #517 also
+  // kills: unwiring serverStart/serverStop, dropping the switch scope or the
+  // ModelRun label group, recording an unconfirmed stop, walking the row
+  // before the stop dep runs, or reverting the ModelRun proven-down rule.
   test("case 19: direct ModelHost start/stop lifecycle (#741)", () => {
     expect(sectionBody(sectionRe("direct modelhost start and stop"))).toBeDefined();
     const d = flat(sectionBody(sectionRe("direct modelhost start and stop")) ?? "");
@@ -1024,17 +1034,23 @@ describe("docs/dynamic-residency.md (#285)", () => {
     for (const needle of [
       "The agent's `modelHostStart` and `modelHostStop` procedures (`packages/remote/src/router.ts`) wrap `startModelHost`/`stopModelHost` in `runDirectResidencyStart`/`runDirectResidencyStop` (`packages/remote/src/residency/direct-lifecycle.ts`).",
       "`llamactl apply -f` and `llamactl enable` of a ModelHost reach `modelHostStart` (`startModelHostProcess` in `packages/remote/src/workload/apply.ts`), and `llamactl disable` (`disableModelHost`) or deleting a ModelHost reaches `modelHostStop`.",
+      "The agent's ModelRun `serverStart` and `serverStop` procedures wrap `startServer`/`stopServer` the same way (#517), recording the group from the agent-side ModelRun `llamactl.io/residency-group` label, and deleting a ModelRun reaches `serverStop` (`stopWorkloadForDelete`).",
+      "A profile switch's own `applyManifest` calls run inside `runInResidencySwitchScope`, where the wrapper neither records nor refuses, because the switch's walk owns the row.",
       "A node with no store file runs the start or stop unrecorded and never creates the store.",
       "Otherwise the wrapper claims the shared apply-profile fence and walks the `residency_states` row through the same `withResidencyLifecycle` hops as a profile switch (`packages/remote/src/residency/lifecycle-steps.ts`).",
       "A label naming an undeclared group records no group.",
-      "A same-group `ready` peer is reconciled to downloaded only when it is a known ModelHost proven down (Stopped, identity resolved).",
+      "A same-group `ready` peer is reconciled to downloaded only when it is proven down: a known ModelHost that reads Stopped with its identity resolved, or a known ModelRun with no recorded pid file.",
       "Any other occupying same-group row refuses the start with `ExclusiveGroupOccupied`, as `residency lifecycle refused <name> <from> -> <to>: ExclusiveGroupOccupied: <detail>`, before the engine runs.",
       "A nonterminal profile switch refuses a start with `residency lifecycle refused <name>: profile switch in flight on this node; retry after it settles`.",
       "A grouped start whose store cannot be opened or claimed refuses with `store unavailable (<message>)`.",
-      "A host already running with a `ready` row is adopted and kept ready.",
+      "A workload already running with a `ready` row is adopted and kept ready.",
+      "A direct stop runs its stop before the row moves, so an occupying row keeps its exclusive group held for the whole stop.",
+      "A confirmed stop walks the row `ready` -> `draining` -> `unloading` -> `downloaded`.",
+      "An unconfirmed stop (the process may still be alive) is not recorded: the row stays occupying, so a same-group start is still refused, and the agent logs `[residency] lifecycle <name> stop not recorded: unconfirmed stop (process may be alive)`.",
+      "A stop that throws is recorded `failed` and the error is rethrown.",
       "Bookkeeping never blocks a stop: a stop whose claim or walk fails still runs and logs `[residency] lifecycle <name> stop not recorded: …` on the agent's stderr.",
-      "Known limits: the ModelRun `serverStart`/`serverStop` writers are still unwrapped, so a stale `ready` ModelRun row fails closed and refuses same-group ModelHost starts until a switch, a stop or boot recovery clears it.",
-      "`llamactl residency force-unload <workload> --reason <text> --yes --node <name>` calls `stopModelHost` outside the wrapper, so it leaves the row unchanged; read rows with `llamactl residency status --node <name>` (#741).",
+      "Known limits: a `ready` ModelRun row with any recorded pid file, stale or reused, is never proven down, so it fails closed and refuses same-group starts; identity-based ModelRun proof is remaining scope.",
+      "`llamactl residency force-unload <workload> --reason <text> --yes --node <name>` calls `stopModelHost` or `stopServer` outside the wrapper, so it leaves the row unchanged; read rows with `llamactl residency status --node <name>` (#741).",
     ]) {
       expect(d, needle).toContain(needle);
     }
@@ -1064,10 +1080,36 @@ describe("docs/dynamic-residency.md (#285)", () => {
         ],
       ],
       [
-        "async function walkWithDep<",
+        // the stop dep runs before any walk; an unconfirmed stop returns
+        // unrecorded; only a settled stop is recorded, a thrown one rethrown
+        "async function walkStopAfterDep<",
         [
+          '  try {\n    settled = { result: await env.dep(workload) };\n  } catch (error: unknown) {\n    settled = { thrown: error };\n  }\n  if ("result" in settled && !settled.result.ok) {',
+          "`[residency] lifecycle ${workload} stop not recorded: unconfirmed stop (process may be alive)\\n`,",
+          "    return { ran: true, result: settled.result };\n  }\n  const token = refence(",
+          "await recordSettledStop(",
+          '"thrown" in settled ? messageOf(settled.thrown) : undefined,',
+          'if ("thrown" in settled) {\n    throw settled.thrown;\n  }',
+        ],
+      ],
+      [
+        "async function recordSettledStop<",
+        [
+          "return Promise.resolve(failure === undefined ? { ok: true } : { ok: false, detail: failure });",
+          "const step = await wrapped.stop(workload, undefined);",
           "`[residency] lifecycle ${workload} stop not recorded: ${stepRefusalDetail(step)}\\n`,",
-          "return { ran: true, result: await env.dep(workload) };",
+        ],
+      ],
+      [
+        "async function runRecorded<",
+        [
+          'if (action === "stop") {\n    return await walkStopAfterDep(workload, store, claimed, env);\n  }',
+        ],
+      ],
+      [
+        "async function runDirect<",
+        [
+          "if (inResidencySwitchScope()) {\n    return { ran: true, result: await dep(workload) };\n  }",
         ],
       ],
       [
@@ -1119,16 +1161,52 @@ describe("docs/dynamic-residency.md (#285)", () => {
       flat(enclosingBody(routerSrc, "function directResidencyOpts(")),
       "agent stderr log",
     ).toContain("log: (line): void => { process.stderr.write(line); },");
-    expect(
-      enclosingBody(routerSrc, "function directModelHostProvenDown("),
+    expectPins(
+      enclosingBody(routerSrc, "function directWorkloadProvenDown("),
       "proven down predicate",
-    ).toContain('return status.state === "Stopped" && status.identityUnknown !== true;');
+      [
+        'return status.state === "Stopped" && status.identityUnknown !== true;',
+        "return serverMod.readServerPid({ name: model }) === null;",
+      ],
+    );
+    expect(
+      enclosingBody(routerSrc, "function directModelRunGroup("),
+      "ModelRun label group",
+    ).toContain(
+      "return residencyGroupLabelOf(workloadStoreMod.loadWorkloadByName(workload).metadata.labels);",
+    );
+    const modelRunOpts = enclosingBody(routerSrc, "function directModelRunOpts(");
+    expectPins(modelRunOpts, "directModelRunOpts", [
+      "group: directModelRunGroup(workload),",
+      "isProvenDown: directWorkloadProvenDown,",
+    ]);
+    expect(flat(modelRunOpts), "ModelRun agent stderr log").toContain(
+      "log: (line): void => { process.stderr.write(line); },",
+    );
+    // each ModelRun call site, pinned on its own
+    expectPins(routerSrc, "ModelRun call site", [
+      "const outcome = await runDirectResidencyStart<serverMod.StartServerResult>(\n        input.workload,\n        () => serverMod.startServer(serverStartOptions(input, sig, emit)),\n        directModelRunOpts(input.workload),\n      );",
+      "const outcome = await runDirectResidencyStop<{",
+      "              directModelRunOpts(input.workload),\n            );\n            return outcome.ran ? outcome.result.stop",
+      '...(stop.stopped ? {} : { error: "stop did not confirm process removal" }),',
+      // deleting a ModelRun reaches serverStop
+      ": await stopWorkloadForDelete(manifest, stops);",
+      // the switch's applyManifest runs in the switch scope
+      "return await runInResidencySwitchScope(\n            async () =>\n              await workloadApplyMod.applyManifest({",
+    ]);
+    expect(
+      enclosingBody(routerSrc, "async function stopWorkloadForDelete("),
+      "delete run",
+    ).toContain("const stopOutcome = (await client.serverStop.mutate({");
     expect(enclosingBody(routerSrc, "async function stopModelHostForDelete("), "delete").toContain(
       "const outcome = (await client.modelHostStop.mutate({",
     );
     // force-unload calls stopModelHost directly, outside the wrapper
     expect(routerSrc).toContain(
       'kind === "modelhost"\n          ? async (): Promise<{ stopped: boolean; detail?: string }> => {\n              const r = await stopModelHost({ key: { name } });',
+    );
+    expect(routerSrc).toContain(
+      ": async (): Promise<{ stopped: boolean }> => {\n              const r = await serverMod.stopServer({ key: { name } });",
     );
     const applySrc = readOrEmpty(join(REPO, "packages/remote/src/workload/apply.ts"));
     const applyPins: [string, string[]][] = [
