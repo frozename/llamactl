@@ -2342,7 +2342,11 @@ export const router = t.router({
   // probes each oMLX ModelHost on `node` only when `node` is this serving
   // process's own identity; status latency on the serving node is bounded by
   // OMLX_STATUS_PROBE_TIMEOUT_MS per call while a host's capability is still
-  // unknown, because unknown is not cached.
+  // unknown, because unknown is not cached. The idleEviction section is an
+  // advisory read-out of the NodeRun idle-evict window against this serving
+  // process's ready lifecycle rows and lease activity (forwarded through the
+  // registry's lastActivityAtMs read-out), only when `node` is the serving node;
+  // nothing is evicted or slept.
   residencyStatus: t.procedure
     .input(z.object({ node: z.string().min(1) }))
     .query(async ({ input }) => {
@@ -2358,7 +2362,11 @@ export const router = t.router({
       // Status therefore merges the two: persisted rows plus any live entries not
       // already persisted, in chronological order; snapshot stays live.
       // auditCount is the merged count. A null registry reads no store for audit:
-      // with no registry the leases section is "unavailable".
+      // with no registry the leases section is "unavailable". The
+      // `lastActivityAtMs` read-out is forwarded only when the installed registry
+      // has it, so a registry without the method yields an audit source without it
+      // and the idleEviction section reports unknown activity.
+      const activityRead = leaseRegistry?.lastActivityAtMs;
       const auditSource =
         leaseRegistry === null
           ? null
@@ -2369,6 +2377,12 @@ export const router = t.router({
                   readResidencyLeaseAudit(defaultResidencyStorePath()),
                   leaseRegistry.audit(),
                 ),
+              ...(activityRead !== undefined
+                ? {
+                    lastActivityAtMs: (workload: string): number =>
+                      activityRead.call(leaseRegistry, workload),
+                  }
+                : {}),
             };
       const leaseWorkloads =
         leaseRegistry === null
@@ -2385,6 +2399,7 @@ export const router = t.router({
         store: readResidencyStoreSnapshot(defaultResidencyStorePath()),
         leaseRegistry: auditSource,
         leaseWorkloads,
+        servingNode,
         omlxNative: await collectOmlxNativeStatus({
           node: input.node,
           servingNode,

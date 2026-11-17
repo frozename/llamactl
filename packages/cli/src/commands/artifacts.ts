@@ -1,4 +1,6 @@
+import { nodeFacts } from "@llamactl/core";
 import { infraArtifactsFetch } from "@llamactl/remote";
+import { execFileSync } from "node:child_process";
 import { homedir, arch as nodeArch, platform as nodePlatform } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
@@ -8,7 +10,7 @@ const USAGE = `llamactl artifacts — manage pre-built llamactl-agent binaries
 
 USAGE:
   llamactl artifacts list
-  llamactl artifacts build-agent [--target=<platform>] [--src=<path>] [--dir=<path>] [--sign=<identity>]
+  llamactl artifacts build-agent [--target=<platform>] [--src=<path>] [--dir=<path>] [--sign=<identity>] [--allow-dirty]
   llamactl artifacts fetch [--version=<v>] [--target=<p>] [--repo=<owner/repo>] [--dir=<path>] [--verify-sig[=mode]]
   llamactl artifacts prune [--target=<p>] [--keep=<N>] [--dir=<path>] [--execute]
   llamactl artifacts show-path [--target=<platform>] [--dir=<path>]
@@ -39,6 +41,10 @@ FLAGS:
                         linux-arm64. Default: the current host.
   --src=<path>          Path to packages/cli/src/bin.ts. Default: auto.
   --dir=<path>          Override the artifacts directory.
+  --allow-dirty         build-agent only. Build from a tree with tracked
+                        changes. Off by default: a stamped binary must map
+                        to a known commit. Untracked files never count as
+                        dirty (same as \`git describe --dirty\`).
   --sign=<identity>     macOS only: re-sign the produced binary with
                         \`codesign -s <identity>\`. Same value as
                         codesign's \`-s\` flag. Defaults from env
@@ -112,6 +118,12 @@ export function resolveSourceDefault(): string | null {
   return existsSync(candidate) ? candidate : null;
 }
 
+export interface BuildAgentBinaryDeps {
+  exec?: (file: string, args: string[]) => string;
+  spawn?: (cmd: string[]) => Promise<number>;
+  now?: () => Date;
+}
+
 export interface BuildAgentBinaryOptions {
   target: Platform;
   /** Path to packages/cli/src/bin.ts. null → no source checkout available. */
@@ -125,6 +137,14 @@ export interface BuildAgentBinaryOptions {
    * env. Silently no-op on non-darwin targets (codesign is macOS-only).
    */
   signIdentity?: string;
+  /**
+   * Build from a dirty tree (tracked changes). Off by default: a stamped
+   * binary must map to a known commit. Untracked files never count as
+   * dirty (same as `git describe --dirty` and update/git.ts).
+   */
+  allowDirty?: boolean;
+  /** Test seams for the git probes, the compile spawn and the build clock. */
+  deps?: BuildAgentBinaryDeps;
 }
 
 export interface BuildAgentBinaryResult {
@@ -141,6 +161,69 @@ export interface BuildAgentBinaryResult {
    * place with its bun ad-hoc signature; the build is still ok.
    */
   signCode?: number;
+  /**
+   * The build stamp baked into the binary via --define (#743). Present on
+   * every ok result so callers (install-launchd, logs) can report which
+   * commit + build time a binary carries.
+   */
+  stamp?: nodeFacts.CompiledBuildStamp;
+}
+
+const defaultBuildExec = (file: string, args: string[]): string =>
+  execFileSync(file, args, {
+    stdio: ["ignore", "pipe", "ignore"],
+    encoding: "utf8",
+    timeout: 5000,
+  });
+
+const defaultBuildSpawn = (cmd: string[]): Promise<number> =>
+  Bun.spawn({ cmd, stdout: "inherit", stderr: "inherit" }).exited;
+
+type StampProbe = { ok: true; commit: string; dirty: boolean } | { ok: false; reason: string };
+
+/**
+ * Resolve the git commit + tracked-changes dirty flag for a source dir.
+ * Untracked files never count as dirty (`--untracked-files=no`), matching
+ * `git describe --dirty` and update/git.ts. A dirty tree is a refusal
+ * unless `allowDirty` is set.
+ */
+function probeSourceStamp(
+  sourceDir: string,
+  exec: (file: string, args: string[]) => string,
+  allowDirty: boolean,
+): StampProbe {
+  let commit = "";
+  try {
+    commit = exec("git", ["-C", sourceDir, "rev-parse", "HEAD"]).trim();
+  } catch {
+    return {
+      ok: false,
+      reason: `could not resolve the git commit of ${sourceDir} — build-agent stamps compiled binaries with the source commit; run from a git checkout or pass --src inside one`,
+    };
+  }
+  if (!/^[0-9a-f]{40}$/.test(commit)) {
+    return {
+      ok: false,
+      reason: `could not resolve the git commit of ${sourceDir} — build-agent stamps compiled binaries with the source commit; run from a git checkout or pass --src inside one`,
+    };
+  }
+  const porcelain = exec("git", ["-C", sourceDir, "status", "--porcelain", "--untracked-files=no"]);
+  const dirty = porcelain.trim() !== "";
+  if (dirty && !allowDirty) {
+    const preview = porcelain
+      .split("\n")
+      .filter((line) => line.trim() !== "")
+      .slice(0, 5)
+      .join("\n");
+    return {
+      ok: false,
+      reason:
+        `refusing to build llamactl-agent from a dirty tree at ${sourceDir} (tracked changes: ${preview}): ` +
+        "commit or stash them, or build with `llamactl artifacts build-agent --allow-dirty` " +
+        "and install that binary with `llamactl agent install-launchd --binary <outPath>`",
+    };
+  }
+  return { ok: true, commit, dirty };
 }
 
 /**
@@ -148,6 +231,12 @@ export interface BuildAgentBinaryResult {
  * llamactl agent binary for `opts.target`. Extracted from the
  * `artifacts build-agent` CLI handler so Phase 3's `install-launchd`
  * can invoke the same build path without duplicating the flag surface.
+ *
+ * The binary is stamped with the source commit, a dirty flag (tracked
+ * changes only) and the build time via `--define` (#743). A dirty tree is
+ * refused unless `allowDirty` is set, so a stamped binary always maps to
+ * a known commit — and the escape hatch is explicit at the call site
+ * that installs it.
  *
  * Returns a structured result instead of writing to stderr; callers
  * decide how to surface failures. The bun subprocess still inherits
@@ -166,38 +255,64 @@ export async function buildAgentBinary(
         "could not locate packages/cli/src/bin.ts — pass --src=<path-to-source-repo>/packages/cli/src/bin.ts or re-run from a source checkout",
     };
   }
-  mkdirSync(dirname(outPath), { recursive: true });
-  const proc = Bun.spawn({
-    cmd: [
-      "bun",
-      "build",
-      "--compile",
-      `--target=bun-${opts.target}`,
-      opts.src,
-      "--outfile",
-      outPath,
-    ],
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-  const code = await proc.exited;
-  if (code !== 0) return { ok: false, outPath, code };
 
-  const identity = opts.signIdentity ?? process.env["LLAMACTL_SIGN_IDENTITY"] ?? "";
-  if (identity && opts.target.startsWith("darwin")) {
-    const signCode = await codesignBinary(outPath, identity);
-    if (signCode !== 0) {
-      return {
-        ok: true,
-        outPath,
-        code,
-        signCode,
-        reason: `codesign exited ${String(signCode)} — binary still produced with bun ad-hoc signature`,
-      };
-    }
-    return { ok: true, outPath, code, signCode: 0 };
+  const exec = opts.deps?.exec ?? defaultBuildExec;
+  const spawn = opts.deps?.spawn ?? defaultBuildSpawn;
+  const now = opts.deps?.now ?? ((): Date => new Date());
+  const sourceDir = dirname(opts.src);
+
+  const probed = probeSourceStamp(sourceDir, exec, opts.allowDirty === true);
+  if (!probed.ok) {
+    return { ok: false, outPath, code: 1, reason: probed.reason };
   }
-  return { ok: true, outPath, code };
+
+  const stamp: nodeFacts.CompiledBuildStamp = {
+    commit: probed.commit,
+    dirty: probed.dirty,
+    builtAt: now().toISOString(),
+  };
+
+  mkdirSync(dirname(outPath), { recursive: true });
+  const cmd = [
+    "bun",
+    "build",
+    "--compile",
+    `--target=bun-${opts.target}`,
+    ...Object.entries(nodeFacts.buildStampDefines(stamp)).flatMap(([key, value]) => [
+      "--define",
+      `${key}=${value}`,
+    ]),
+    opts.src,
+    "--outfile",
+    outPath,
+  ];
+  const code = await spawn(cmd);
+  if (code !== 0) return { ok: false, outPath, code };
+  return await signIfRequested(opts, outPath, code, stamp);
+}
+
+async function signIfRequested(
+  opts: BuildAgentBinaryOptions,
+  outPath: string,
+  code: number,
+  stamp: nodeFacts.CompiledBuildStamp,
+): Promise<BuildAgentBinaryResult> {
+  const identity = opts.signIdentity ?? process.env["LLAMACTL_SIGN_IDENTITY"] ?? "";
+  if (!identity || !opts.target.startsWith("darwin")) {
+    return { ok: true, outPath, code, stamp };
+  }
+  const signCode = await codesignBinary(outPath, identity);
+  if (signCode !== 0) {
+    return {
+      ok: true,
+      outPath,
+      code,
+      stamp,
+      signCode,
+      reason: `codesign exited ${String(signCode)} — binary still produced with bun ad-hoc signature`,
+    };
+  }
+  return { ok: true, outPath, code, stamp, signCode: 0 };
 }
 
 /**
@@ -227,10 +342,11 @@ interface BuildFlags {
   target: Platform;
   src: string | null;
   dir: string;
+  allowDirty?: boolean;
   signIdentity?: string;
 }
 
-function parseBuildFlags(argv: string[]): BuildFlags | { error: string } {
+export function parseBuildFlags(argv: string[]): BuildFlags | { error: string } {
   const current = currentPlatform();
   const flags: BuildFlags = {
     target: current ?? "darwin-arm64",
@@ -239,6 +355,10 @@ function parseBuildFlags(argv: string[]): BuildFlags | { error: string } {
   };
   for (const arg of argv) {
     if (arg === "--help" || arg === "-h") return { error: "__help" };
+    if (arg === "--allow-dirty") {
+      flags.allowDirty = true;
+      continue;
+    }
     const eq = arg.indexOf("=");
     if (!arg.startsWith("--") || eq < 0) {
       return { error: `artifacts build-agent: flags must be --key=value (${arg})` };
@@ -270,6 +390,21 @@ function parseBuildFlags(argv: string[]): BuildFlags | { error: string } {
   return flags;
 }
 
+function writeStampLog(stamp: nodeFacts.CompiledBuildStamp): void {
+  const short = stamp.commit.slice(0, 12);
+  process.stderr.write(
+    `artifacts build-agent: stamped ${short}${stamp.dirty ? "-dirty" : ""} built ${stamp.builtAt}\n`,
+  );
+}
+
+function reportBuildFailure(result: BuildAgentBinaryResult): void {
+  if (result.reason) {
+    process.stderr.write(`artifacts build-agent: ${result.reason}\n`);
+  } else {
+    process.stderr.write(`artifacts build-agent: bun build exited ${String(result.code)}\n`);
+  }
+}
+
 async function runBuildAgent(argv: string[]): Promise<number> {
   const parsed = parseBuildFlags(argv);
   if ("error" in parsed) {
@@ -297,15 +432,15 @@ async function runBuildAgent(argv: string[]): Promise<number> {
     target: parsed.target,
     src: parsed.src,
     dir: parsed.dir,
+    ...(parsed.allowDirty === true ? { allowDirty: true } : {}),
     ...(parsed.signIdentity !== undefined ? { signIdentity: parsed.signIdentity } : {}),
   });
   if (!result.ok) {
-    if (result.reason) {
-      process.stderr.write(`artifacts build-agent: ${result.reason}\n`);
-    } else {
-      process.stderr.write(`artifacts build-agent: bun build exited ${String(result.code)}\n`);
-    }
+    reportBuildFailure(result);
     return 1;
+  }
+  if (result.stamp) {
+    writeStampLog(result.stamp);
   }
   process.stderr.write(`artifacts build-agent: wrote ${result.outPath}\n`);
   if (result.signCode === 0) {

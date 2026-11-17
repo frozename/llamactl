@@ -161,6 +161,16 @@ type ResidencyStatus = {
   budget: { memoryGiB: number; source: "noderun" | "computed" };
   store: StoreProbe & { scope: "serving-process" };
   lifecycle?: LifecycleSection;
+  idleEviction:
+    | { status: "disabled"; scope: "serving-process" }
+    | { status: "unavailable"; scope: "serving-process"; reason: string }
+    | {
+        status: "available";
+        scope: "serving-process";
+        advisory: true;
+        idleEvictSeconds: number;
+        workloads: unknown[];
+      };
   leases?: LeasesSection;
   omlxNative: {
     scope: "serving-process";
@@ -538,6 +548,7 @@ describe("buildResidencyStatus", () => {
         workloads: [],
         exclusiveViolations: [],
       },
+      idleEviction: { status: "disabled", scope: "serving-process" },
       leases: { status: "unavailable", scope: "serving-process" },
       omlxNative: { scope: "serving-process", workloads: [] },
     });

@@ -23,15 +23,17 @@ export const MEMORY_BUDGET_HEADROOM_RATIO = 0.75;
  * node-local `residency_states` row has been `ready` for fewer than that many
  * seconds; 0 disables.
  *
- * `idleEvictSeconds` is parse-only. It is validated as part of NodeRun
- * spec.residency, stored with the NodeRun manifest, and echoed verbatim
- * (unresolved) by residencyStatus. DEFAULT_RESIDENCY_POLICY sets it to 0 and
- * resolveResidencyPolicy copies a non-negative override, but no production
- * caller passes it to the resolver and nothing reads the resolved value: no
- * reconciler, router, residencyPlan/planner or DF-10 llama.cpp sleep driver
- * (packages/remote/src/residency/llamacpp-sleep-client.ts, which has no
- * idle trigger) consults it. Every value therefore behaves like 0 today:
- * residents are never evicted or slept for idleness. The inventory test
+ * `idleEvictSeconds` is status-only. It is validated as part of NodeRun
+ * spec.residency, stored with the NodeRun manifest, resolved by
+ * resolveResidencyPolicy and reported (advisory) by the residencyStatus
+ * idleEviction section: a read-out of the idle-evict window against the serving
+ * process's ready lifecycle rows and serving-process lease activity, only when
+ * the queried node is the serving node. DEFAULT_RESIDENCY_POLICY sets it to 0
+ * and resolveResidencyPolicy copies a non-negative override; a 0 reports the
+ * section disabled. No reconciler, router, residencyPlan/planner or DF-10
+ * llama.cpp sleep driver (packages/remote/src/residency/llamacpp-sleep-client.ts,
+ * which has no idle trigger) consults it to evict or sleep: residents are never
+ * evicted or slept for idleness. The inventory test
  * packages/remote/test/workload/residency-idle-evict-parse-only.test.ts
  * pins this.
  *
@@ -50,8 +52,9 @@ export const MEMORY_BUDGET_HEADROOM_RATIO = 0.75;
  * LLAMACTL_UNIFIED_PROXY=1.
  */
 export interface ResidencyPolicy {
-  /** 0 = never evict idle residents. Parse-only (Part of #519): no
-   * idle-eviction path exists yet, so every value behaves like 0. */
+  /** 0 = never evict idle residents. Status-only (Part of #519): reported
+   * advisory by residencyStatus, but no idle-eviction path exists yet, so no
+   * value ever evicts. */
   idleEvictSeconds: number;
   /** 0 = no minimum before eviction. */
   minResidencySeconds: number;

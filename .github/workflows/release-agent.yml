@@ -23,6 +23,10 @@ name: release-agent
 #     to confirm provenance. No long-lived keys.
 #   * Environment scrubbed before the build step so no repo secret
 #     leaks into a compiled binary.
+#   * Each binary is stamped with its commit and build time via bun
+#     `--define` (#743). The tree must be clean: a dirty checkout fails
+#     the build, and native targets self-verify `--version` against the
+#     stamped commit.
 
 on:
   push:
@@ -78,13 +82,38 @@ jobs:
           set -eu
           PLATFORM="${{ matrix.target }}"
           PLATFORM_SLUG="${PLATFORM#bun-}"
+
+          # Refuse a dirty tree: every released binary must map to a known
+          # commit (#743). Same tracked-changes-only rule as update/git.ts.
+          if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+            git status --porcelain --untracked-files=no
+            exit 1
+          fi
+          COMMIT="$(git rev-parse HEAD)"
+          # Matches Date.toISOString(): UTC with millisecond precision.
+          BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
+
           mkdir -p dist
           OUT="dist/llamactl-agent-${PLATFORM_SLUG}"
 
           bun build --compile \
             --target="${PLATFORM}" \
+            --define "__BUILD_STAMP_COMMIT__=\"${COMMIT}\"" \
+            --define "__BUILD_STAMP_DIRTY__=false" \
+            --define "__BUILD_STAMP_BUILT_AT__=\"${BUILT_AT}\"" \
             packages/cli/src/bin.ts \
             --outfile "${OUT}"
+
+          # Native targets: run the binary and confirm it reports the commit.
+          NATIVE=""
+          if [ "${PLATFORM_SLUG}" = "linux-x64" ] && [ "${RUNNER_OS:-}" = "Linux" ]; then
+            NATIVE="yes"
+          elif [ "${PLATFORM_SLUG}" = "darwin-arm64" ] && [ "${RUNNER_OS:-}" = "macOS" ]; then
+            NATIVE="yes"
+          fi
+          if [ -n "${NATIVE}" ]; then
+            "${OUT}" --version | grep -F "${COMMIT:0:12}"
+          fi
 
           # SHA-256 — the basename-only variant lets operators
           # `shasum -a 256 -c llamactl-agent-<p>.sha256` from any dir.
