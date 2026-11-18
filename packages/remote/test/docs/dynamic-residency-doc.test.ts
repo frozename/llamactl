@@ -901,7 +901,10 @@ describe("docs/dynamic-residency.md (#285)", () => {
   // lifecycle sweep run outside a claimed pass without updating the doc,
   // i.e. removing either shouldClaim gate: the outer snapshot gate in
   // runProfileSwitchBootRecovery that decides whether scanWithStore runs,
-  // or the inner writable-handle re-check inside claimOwnershipWhen; renaming
+  // or the inner writable-handle re-check inside claimOwnershipWhen;
+  // dropping the orphan sweep, its no-nonterminal gate, its age gate or its
+  // proven-down wiring without updating the doc should fail; dropping the
+  // fail-closed `evict:` consequence and its operator remedy; renaming
   // failInterruptedLifecycleRows or the lifecycle log line.
   test("case 17: stop-before-start session refusal (#734) and lifecycle boot recovery (#736)", () => {
     const r = (sectionBody(sectionRe("stop-before-start")) ?? "").replaceAll(/\s+/g, " ");
@@ -950,12 +953,14 @@ describe("docs/dynamic-residency.md (#285)", () => {
       "`failed`",
       "claimed pass",
       "a stale profile-switch row",
-      "outside a switch are not swept",
+      "When the store holds no nonterminal operation row, boot recovery also sweeps lifecycle rows interrupted outside a switch (for example a direct start whose agent died in `loading`) once they have made no progress for 30 minutes and their workload is proven down by `directWorkloadProvenDown`; a younger row, a workload not proven down, or any nonterminal operation row leaves them untouched.",
+      "This gate fails closed: `evict:` operation rows have no boot recovery yet, so a crashed eviction's nonterminal `evict:` row keeps the outside-a-switch sweep off on every later boot until that row is terminalized. Meanwhile clear a stuck interrupted row by hand with an operator stop or `llamactl residency force-unload <workload> --reason <text> --yes --node <name>`, which an `evict:` row does not block.",
       '`[residency] lifecycle boot recovery {"failed":N,"recordFailures":M}`',
       "#736",
     ]) {
       expect(c, needle).toContain(needle);
     }
+    expect(c).not.toContain("outside a switch are not swept");
     for (const state of INTERRUPTED_LIFECYCLE_STATES) {
       expect(c, state).toContain(`\`${state}\``);
     }
@@ -968,13 +973,23 @@ describe("docs/dynamic-residency.md (#285)", () => {
     const bootRecovery = readOrEmpty(join(REPO, "packages/remote/src/residency/boot-recovery.ts"));
     for (const pin of [
       "function failInterruptedLifecycleRows(",
+      "function sweepOrphanedLifecycleRows(",
+      "nonterminal.length === 0",
       "const result = shouldClaim(preview)\n      ? scanWithStore(openStore, opts, nowMs, minStaleAgeMs, lifecycle)\n      : deferred(preview);",
       "preview = previewProfileSwitchRecovery(nonterminal, { nowMs: nowMs(), minStaleAgeMs });\n        return shouldClaim(preview);",
       "[residency] lifecycle boot recovery ${lifecycleCountsJson(lifecycle.counts)}",
+      "[residency] lifecycle boot recovery failed: ",
       'to: "failed"',
+      "isProvenDown?: (model: string) => boolean",
     ]) {
       expect(bootRecovery, pin).toContain(pin);
     }
+    expect(readOrEmpty(join(REPO, "packages/remote/src/server/serve.ts"))).toContain(
+      "isProvenDown: directWorkloadProvenDown",
+    );
+    expect(readOrEmpty(join(REPO, "packages/remote/src/router.ts"))).toContain(
+      "export function directWorkloadProvenDown(",
+    );
   });
 
   // Part of #522

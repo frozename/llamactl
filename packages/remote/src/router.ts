@@ -503,8 +503,9 @@ function directModelRunGroup(workload: string): string | undefined {
 // that has no recorded pid file at all; anything else fails closed. An unknown
 // workload, an unresolvable ModelHost pid, or a ModelRun with any pid (stale or
 // reused) never clears a stale ready row. Identity-based ModelRun proof is
-// remaining scope.
-function directWorkloadProvenDown(model: string): boolean {
+// remaining scope. Also used by agent boot recovery for the orphan lifecycle
+// sweep (Part of #517).
+export function directWorkloadProvenDown(model: string): boolean {
   if (modelHostStoreMod.listModelHosts().some((host) => host.metadata.name === model)) {
     const status = statusModelHost({ key: { name: model } });
     return status.state === "Stopped" && status.identityUnknown !== true;
