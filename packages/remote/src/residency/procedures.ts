@@ -44,6 +44,11 @@
 // `node` is the serving node. It never evicts, sleeps or schedules anything; a
 // 0 knob (or no policy) reports disabled without reading the registry or the
 // lifecycle, and lease activity resets when the serving process restarts.
+//
+// `runIdleEviction` (Part of #519) is the operator-triggered mutation built on
+// that same snapshot: a dry run reports would-evict rows, a targeted run re-checks
+// against the live registry and stops each target through the fenced stop the
+// router supplies. It evicts only on an explicit call, never on a timer.
 import type { ResidencyAuditEntry, ResidencyLeases } from "@llamactl/core/residency/leases";
 import type { ResidencyState } from "@llamactl/core/residency/lifecycle";
 import type { PlannerWorkload, ProfileSwitchPlan } from "@llamactl/core/residency/planner";
@@ -549,6 +554,168 @@ export function buildIdleEvictionSnapshot(input: {
   }
   workloads.sort((a, b) => compareStrings(a.workload, b.workload));
   return { status: "available", scope, advisory: true, idleEvictSeconds, workloads };
+}
+
+// Operator-triggered idle eviction (Part of #519). Where the idleEviction status
+// section above is an advisory read-out, this is the mutation entry point. It is
+// pure: the router hands in the idleEviction snapshot it built, the live lease
+// registry (or null), a clock, the targets (null = dry run) and a `stop` closure
+// that runs the fenced ModelRun/ModelHost stop. `targets: null` reports
+// would-evict/NotDue without stopping; a target array restricts a wet run to
+// those workloads, iterated in snapshot order with each stop awaited before the
+// next. A wet target is re-checked against the live registry immediately before
+// its stop: any activity the snapshot could not see (a fresh lease, a drain, a
+// clock that has not reached dueAtMs, a registry that cannot confirm idle) reports
+// NoLongerIdle instead of stopping. A refused stop reports StopRefused with the
+// fence detail; a throwing stop reports StopFailed, and later targets still run.
+export type IdleEvictKind = "modelrun" | "modelhost";
+
+export type IdleEvictTarget = { workload: string; kind: IdleEvictKind };
+
+export type IdleEvictStopResult = { stopped: boolean; detail?: string };
+
+export type IdleEvictRow = {
+  workload: string;
+  action: "would-evict" | "evicted" | "skipped";
+  kind?: IdleEvictKind;
+  idleSinceMs?: number;
+  dueAtMs?: number;
+  reason?: string;
+  detail?: string;
+};
+
+export type IdleEvictResult =
+  | { ok: false; reason: string }
+  | { ok: true; dryRun: boolean; windowSeconds: number; rows: IdleEvictRow[] };
+
+// The lease-registry surface the pre-stop re-check reads: the per-workload
+// phase/active snapshot plus the optional last-activity read-out. Optional so a
+// registry (or fake) without it can never confirm idle and is held.
+type IdleEvictLeaseProbe = Pick<ResidencyLeases, "snapshot" | "lastActivityAtMs">;
+
+function idleEvictSkipped(workload: string, reason: string, detail?: string): IdleEvictRow {
+  return { workload, action: "skipped", reason, ...(detail !== undefined ? { detail } : {}) };
+}
+
+function idleEvictWouldEvict(row: ResidencyStatusIdleEvictionRow): IdleEvictRow {
+  return {
+    workload: row.workload,
+    action: "would-evict",
+    ...(row.idleSinceMs !== null ? { idleSinceMs: row.idleSinceMs } : {}),
+    ...(row.dueAtMs !== null ? { dueAtMs: row.dueAtMs } : {}),
+  };
+}
+
+// Re-reads the live registry to confirm the row is still idle at `nowMs` before
+// its stop. Any condition the snapshot could not have captured — no registry, a
+// registry that cannot report activity, a clock that has not reached dueAtMs, a
+// non-open phase or active lease, or activity newer than the snapshot idle-since
+// — returns false so the target is held rather than evicted on stale evidence.
+function idleStillConfirmed(
+  row: ResidencyStatusIdleEvictionRow,
+  registry: IdleEvictLeaseProbe | null,
+  nowMs: number,
+): boolean {
+  if (registry === null) {
+    return false;
+  }
+  const activityOf = registry.lastActivityAtMs;
+  if (activityOf === undefined) {
+    return false;
+  }
+  if (row.idleSinceMs === null || row.dueAtMs === null) {
+    return false;
+  }
+  if (nowMs < row.dueAtMs) {
+    return false;
+  }
+  const snap = registry.snapshot(row.workload);
+  if (snap.phase !== "open" || snap.active.length > 0) {
+    return false;
+  }
+  const lastActivity = activityOf(row.workload);
+  if (!Number.isFinite(lastActivity) || lastActivity > row.idleSinceMs) {
+    return false;
+  }
+  return true;
+}
+
+async function idleEvictTarget(
+  row: ResidencyStatusIdleEvictionRow,
+  kind: IdleEvictKind,
+  input: {
+    leaseRegistry: IdleEvictLeaseProbe | null;
+    nowMs: number;
+    stop: (workload: string, kind: IdleEvictKind) => Promise<IdleEvictStopResult>;
+  },
+): Promise<IdleEvictRow> {
+  if (!row.due) {
+    return idleEvictSkipped(row.workload, "NotDue");
+  }
+  if (!idleStillConfirmed(row, input.leaseRegistry, input.nowMs)) {
+    return idleEvictSkipped(row.workload, "NoLongerIdle");
+  }
+  try {
+    const outcome = await input.stop(row.workload, kind);
+    return outcome.stopped
+      ? { workload: row.workload, action: "evicted", kind }
+      : idleEvictSkipped(row.workload, "StopRefused", outcome.detail);
+  } catch (err) {
+    return idleEvictSkipped(
+      row.workload,
+      "StopFailed",
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+}
+
+export async function runIdleEviction(input: {
+  idleEviction: ResidencyStatusIdleEviction;
+  leaseRegistry: IdleEvictLeaseProbe | null;
+  nowMs: number;
+  targets: readonly IdleEvictTarget[] | null;
+  stop: (workload: string, kind: IdleEvictKind) => Promise<IdleEvictStopResult>;
+}): Promise<IdleEvictResult> {
+  const snapshot = input.idleEviction;
+  if (snapshot.status === "disabled") {
+    return { ok: false, reason: "Disabled" };
+  }
+  if (snapshot.status === "unavailable") {
+    return { ok: false, reason: snapshot.reason };
+  }
+  if (input.targets === null) {
+    return {
+      ok: true,
+      dryRun: true,
+      windowSeconds: snapshot.idleEvictSeconds,
+      rows: snapshot.workloads.map((row) =>
+        row.due ? idleEvictWouldEvict(row) : idleEvictSkipped(row.workload, "NotDue"),
+      ),
+    };
+  }
+  const kindByWorkload = new Map(input.targets.map((t) => [t.workload, t.kind] as const));
+  const rows: IdleEvictRow[] = [];
+  const handled = new Set<string>();
+  for (const row of snapshot.workloads) {
+    const kind = kindByWorkload.get(row.workload);
+    if (kind === undefined) {
+      continue;
+    }
+    handled.add(row.workload);
+    rows.push(
+      await idleEvictTarget(row, kind, {
+        leaseRegistry: input.leaseRegistry,
+        nowMs: input.nowMs,
+        stop: input.stop,
+      }),
+    );
+  }
+  for (const target of input.targets) {
+    if (!handled.has(target.workload)) {
+      rows.push(idleEvictSkipped(target.workload, "NotReady"));
+    }
+  }
+  return { ok: true, dryRun: false, windowSeconds: snapshot.idleEvictSeconds, rows };
 }
 
 function storeWithScope(store: ResidencyStoreSnapshot): ResidencyStatus["store"] {

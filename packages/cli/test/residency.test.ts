@@ -1,6 +1,7 @@
 import type { ResidencyState } from "@llamactl/core/residency/lifecycle";
 import type { NodeClient } from "@llamactl/remote";
 
+import { workloadSchema, workloadStore } from "@llamactl/remote";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -11,7 +12,7 @@ import type * as ResidencyModule from "../src/commands/residency.js";
 
 import * as workloadMod from "../src/commands/workload.js";
 import { EMPTY_GLOBALS, resetGlobals, setGlobals } from "../src/dispatcher.js";
-import { mkdtempSync, rmSync } from "../src/safe-fs.js";
+import { mkdtempSync, readFileSync, rmSync } from "../src/safe-fs.js";
 
 type LeaseWorkloadRow = {
   workload: string;
@@ -1065,5 +1066,429 @@ describe("residency sessions surface", () => {
     expect(code).toBe(0);
     expect(stderr).toBe("");
     expect(stdout).toContain("bound sessions (refs, idle-timeout expiry)");
+  });
+});
+
+// #519: `llamactl residency evict-idle` / `release-idle` — RED tests pinning
+// the operator-enforced idle eviction CLI. evict-idle is dry-run by default:
+// one residencyEvictIdle.mutate { node } reports the window and rows; --yes
+// stamps each targeted LOCAL manifest with the durable idle-evicted-at hold
+// (deps.now) BEFORE the wet mutate, then keeps the hold only on rows that
+// come back "evicted" — a skipped/refused/failed row or a thrown mutate
+// clears it. Workloads without a local manifest are never targeted and
+// render "skipped NotHeld". release-idle clears the hold through the
+// reconciler's clearIdleEvictionHold. At the pinned base the residency
+// command knows neither subcommand, so every case fails BY ASSERTION on the
+// recorded calls, stdout/stderr text or the on-disk annotation — never by
+// import, type or exit-code error.
+describe("residency evict-idle / release-idle", () => {
+  const IDLE_EVICTED_AT = "llamactl.io/idle-evicted-at";
+  const STAMP_ISO = "1970-01-12T13:46:40.000Z";
+  const NOW_MS = 1_000_000_000;
+
+  type EvictIdleKind = "modelrun" | "modelhost";
+  type EvictIdleRow = {
+    workload: string;
+    action: "would-evict" | "evicted" | "skipped";
+    kind?: EvictIdleKind;
+    idleSinceMs?: number;
+    dueAtMs?: number;
+    reason?: string;
+    detail?: string;
+  };
+  type EvictIdleResult =
+    | { ok: false; reason: string }
+    | { ok: true; dryRun: boolean; windowSeconds: number; rows: EvictIdleRow[] };
+
+  type EvictIdleDeps = ResidencyDeps & {
+    workloadsDir?: string;
+    now?: () => Date;
+  };
+
+  let evictDir = "";
+  let savedEnv: Record<string, string | undefined> = {};
+
+  const ENV_KEYS = ["LLAMACTL_WORKLOADS_DIR", "LLAMACTL_CONFIG", "DEV_STORAGE"] as const;
+
+  beforeEach(() => {
+    evictDir = join(tmp, "workloads");
+    savedEnv = {};
+    for (const key of ENV_KEYS) savedEnv[key] = process.env[key];
+    Object.assign(process.env, {
+      LLAMACTL_WORKLOADS_DIR: evictDir,
+      LLAMACTL_CONFIG: join(tmp, "config-missing"),
+      DEV_STORAGE: join(tmp, "dev"),
+    });
+  });
+
+  afterEach(() => {
+    for (const key of ENV_KEYS) {
+      const value = savedEnv[key];
+      if (value === undefined) {
+        Reflect.deleteProperty(process.env, key);
+      } else {
+        process.env[key] = value;
+      }
+    }
+  });
+
+  function writeRun(name: string, annotations?: Record<string, string>): void {
+    workloadStore.saveWorkload(
+      workloadSchema.ModelRunSchema.parse({
+        apiVersion: "llamactl/v1",
+        kind: "ModelRun",
+        metadata: {
+          name,
+          ...(annotations === undefined ? {} : { annotations }),
+        },
+        spec: {
+          node: "local",
+          enabled: true,
+          restartPolicy: "Always",
+          target: { kind: "rel", value: `${name}/missing.gguf` },
+        },
+      }),
+      evictDir,
+    );
+  }
+
+  function idleAnnotation(name: string): string | undefined {
+    try {
+      return workloadStore.loadWorkloadByName(name, evictDir).metadata.annotations[IDLE_EVICTED_AT];
+    } catch {
+      return undefined;
+    }
+  }
+
+  function dryResult(rows: EvictIdleRow[]): EvictIdleResult {
+    return { ok: true, dryRun: true, windowSeconds: 600, rows };
+  }
+
+  function wetResult(rows: EvictIdleRow[]): EvictIdleResult {
+    return { ok: true, dryRun: false, windowSeconds: 600, rows };
+  }
+
+  function wouldEvict(workload: string): EvictIdleRow {
+    return {
+      workload,
+      action: "would-evict",
+      kind: "modelrun",
+      idleSinceMs: NOW_MS - 660_000,
+      dueAtMs: NOW_MS - 60_000,
+    };
+  }
+
+  interface EvictIdleRecording extends ResidencyRecording {
+    deps: EvictIdleDeps;
+  }
+
+  function evictIdleSetup(
+    handlers: Record<string, (input: unknown) => Promise<unknown>>,
+  ): EvictIdleRecording {
+    const rec = setupResidency(handlers);
+    const deps: EvictIdleDeps = {
+      getNodeClientByName: rec.deps.getNodeClientByName,
+      workloadsDir: evictDir,
+      now: () => new Date(NOW_MS),
+    };
+    return { ...rec, deps };
+  }
+
+  function evictIdleMutate(script: {
+    dry: EvictIdleResult;
+    wet?: EvictIdleResult | Error;
+    onWet?: (input: { node: string; targets?: unknown }) => void;
+  }): Record<string, (input: unknown) => Promise<unknown>> {
+    return {
+      "residencyEvictIdle.mutate": (input: unknown): Promise<unknown> => {
+        const i = input as { node: string; targets?: unknown };
+        if (i.targets === undefined) return Promise.resolve(script.dry);
+        script.onWet?.(i);
+        if (script.wet instanceof Error) return Promise.reject(script.wet);
+        return Promise.resolve(script.wet ?? wetResult([]));
+      },
+    };
+  }
+
+  test("C1: evict-idle without --yes makes one dry mutate and stamps nothing", async () => {
+    // kills: defaulting to wet, calling mutate twice, or stamping on dry run.
+    writeRun("w1");
+    const residency = await loadResidency();
+    const rec = evictIdleSetup(evictIdleMutate({ dry: dryResult([wouldEvict("w1")]) }));
+
+    const {
+      result: code,
+      stdout,
+      stderr,
+    } = await withCapturedIo(() =>
+      residency.runResidency(["evict-idle", "--node", "gpu1"], rec.deps),
+    );
+
+    expect(code).toBe(0);
+    expect(stderr).toBe("");
+    expect(stderr).not.toContain("Unknown residency subcommand");
+    expect(rec.calls).toEqual(["residencyEvictIdle.mutate"]);
+    expect(rec.inputs).toEqual([{ node: "gpu1" }]);
+    expect(stdout).toContain("Idle eviction (dry run): window 600s");
+    expect(stdout).toContain("  w1  would-evict  modelrun");
+    expect(idleAnnotation("w1")).toBeUndefined();
+  });
+
+  test("C2: --yes stamps the hold before the wet mutate and keeps it on evicted", async () => {
+    // kills: stamping after the mutate, clearing on success, or skipping the
+    // dry preview call.
+    writeRun("w1");
+    let stampSeenInWet: string | undefined;
+    const residency = await loadResidency();
+    const rec = evictIdleSetup(
+      evictIdleMutate({
+        dry: dryResult([wouldEvict("w1")]),
+        wet: wetResult([{ workload: "w1", action: "evicted", kind: "modelrun" }]),
+        onWet: () => {
+          stampSeenInWet = idleAnnotation("w1");
+        },
+      }),
+    );
+
+    const {
+      result: code,
+      stdout,
+      stderr,
+    } = await withCapturedIo(() =>
+      residency.runResidency(["evict-idle", "--node", "gpu1", "--yes"], rec.deps),
+    );
+
+    expect(code).toBe(0);
+    expect(stderr).toBe("");
+    expect(stderr).not.toContain("Unknown residency subcommand");
+    expect(rec.calls).toEqual(["residencyEvictIdle.mutate", "residencyEvictIdle.mutate"]);
+    expect(rec.inputs).toEqual([
+      { node: "gpu1" },
+      { node: "gpu1", targets: [{ workload: "w1", kind: "modelrun" }] },
+    ]);
+    expect(stampSeenInWet).toBe(STAMP_ISO);
+    expect(idleAnnotation("w1")).toBe(STAMP_ISO);
+    expect(stdout).toContain("Idle eviction: window 600s");
+    expect(stdout).toContain("  w1  evicted  modelrun");
+  });
+
+  test("C3: a StopRefused wet row clears the stamped hold afterwards", async () => {
+    // kills: keeping the hold on a refused stop (the workload still runs).
+    writeRun("w1");
+    const residency = await loadResidency();
+    const rec = evictIdleSetup(
+      evictIdleMutate({
+        dry: dryResult([wouldEvict("w1")]),
+        wet: wetResult([
+          {
+            workload: "w1",
+            action: "skipped",
+            reason: "StopRefused",
+            detail: "SessionsActive: s1",
+          },
+        ]),
+      }),
+    );
+
+    const {
+      result: code,
+      stdout,
+      stderr,
+    } = await withCapturedIo(() =>
+      residency.runResidency(["evict-idle", "--node", "gpu1", "--yes"], rec.deps),
+    );
+
+    expect(code).toBe(0);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("  w1  skipped  StopRefused  SessionsActive: s1");
+    expect(idleAnnotation("w1")).toBeUndefined();
+  });
+
+  test("C4: a throwing wet mutate clears the stamped hold and exits 1", async () => {
+    // kills: leaving the hold stamped when the stop never completed.
+    writeRun("w1");
+    const residency = await loadResidency();
+    const rec = evictIdleSetup(
+      evictIdleMutate({
+        dry: dryResult([wouldEvict("w1")]),
+        wet: new Error("boom"),
+      }),
+    );
+
+    const { result: code, stderr } = await withCapturedIo(() =>
+      residency.runResidency(["evict-idle", "--node", "gpu1", "--yes"], rec.deps),
+    );
+
+    expect(code).toBe(1);
+    expect(stderr).toContain("residency evict-idle: boom");
+    expect(idleAnnotation("w1")).toBeUndefined();
+  });
+
+  test("C5: a would-evict workload with no local manifest is never targeted", async () => {
+    // kills: targeting remote/absent manifests, or rendering would-evict for
+    // a workload the CLI cannot hold.
+    writeRun("w1");
+    const residency = await loadResidency();
+    const rec = evictIdleSetup(
+      evictIdleMutate({
+        dry: dryResult([wouldEvict("w1"), wouldEvict("w3")]),
+        wet: wetResult([{ workload: "w1", action: "evicted", kind: "modelrun" }]),
+      }),
+    );
+
+    const wet = await withCapturedIo(() =>
+      residency.runResidency(["evict-idle", "--node", "gpu1", "--yes"], rec.deps),
+    );
+    expect(wet.result).toBe(0);
+    expect(wet.stdout).toContain("w3  skipped  NotHeld");
+    expect(rec.inputs[1]).toEqual({
+      node: "gpu1",
+      targets: [{ workload: "w1", kind: "modelrun" }],
+    });
+
+    // Dry mode renders the same NotHeld row and never mutates.
+    const dryRec = evictIdleSetup(
+      evictIdleMutate({ dry: dryResult([wouldEvict("w1"), wouldEvict("w3")]) }),
+    );
+    const dry = await withCapturedIo(() =>
+      residency.runResidency(["evict-idle", "--node", "gpu1"], dryRec.deps),
+    );
+    expect(dry.result).toBe(0);
+    expect(dry.stdout).toContain("w3  skipped  NotHeld");
+    expect(dryRec.calls).toEqual(["residencyEvictIdle.mutate"]);
+
+    // No local target left: the wet mutate is never called.
+    const noneRec = evictIdleSetup(evictIdleMutate({ dry: dryResult([wouldEvict("w3")]) }));
+    const none = await withCapturedIo(() =>
+      residency.runResidency(["evict-idle", "--node", "gpu1", "--yes"], noneRec.deps),
+    );
+    expect(none.result).toBe(0);
+    expect(none.stdout).toContain("w3  skipped  NotHeld");
+    expect(noneRec.calls).toEqual(["residencyEvictIdle.mutate"]);
+    expect(noneRec.inputs).toEqual([{ node: "gpu1" }]);
+  });
+
+  test("C6: an ok:false dry result exits 1 and writes nothing to disk", async () => {
+    // kills: exiting 0 on a refused run, or stamping before the dry answer.
+    writeRun("w1");
+    const before = readFileSync(join(evictDir, "w1.yaml"), "utf8");
+    const residency = await loadResidency();
+    const rec = evictIdleSetup(evictIdleMutate({ dry: { ok: false, reason: "Disabled" } }));
+
+    const { result: code, stderr } = await withCapturedIo(() =>
+      residency.runResidency(["evict-idle", "--node", "gpu1"], rec.deps),
+    );
+
+    expect(code).toBe(1);
+    expect(stderr).toContain("residency evict-idle: Disabled\n");
+    expect(stderr).not.toContain("Disabled:");
+    expect(readFileSync(join(evictDir, "w1.yaml"), "utf8")).toBe(before);
+  });
+
+  test("C7: any StopFailed wet row makes the exit 1", async () => {
+    // kills: exiting 0 when a stop attempt failed.
+    writeRun("w1");
+    const residency = await loadResidency();
+    const rec = evictIdleSetup(
+      evictIdleMutate({
+        dry: dryResult([wouldEvict("w1")]),
+        wet: wetResult([
+          { workload: "w1", action: "skipped", reason: "StopFailed", detail: "boom" },
+        ]),
+      }),
+    );
+
+    const {
+      result: code,
+      stdout,
+      stderr,
+    } = await withCapturedIo(() =>
+      residency.runResidency(["evict-idle", "--node", "gpu1", "--yes"], rec.deps),
+    );
+
+    expect(code).toBe(1);
+    expect(`${stdout}\n${stderr}`).toContain("StopFailed");
+  });
+
+  test("C8: --json prints the dry-run payload", async () => {
+    // kills: printing the rendered text under --json.
+    writeRun("w1");
+    const payload = dryResult([wouldEvict("w1")]);
+    const residency = await loadResidency();
+    const rec = evictIdleSetup(evictIdleMutate({ dry: payload }));
+
+    const {
+      result: code,
+      stdout,
+      stderr,
+    } = await withCapturedIo(() =>
+      residency.runResidency(["evict-idle", "--node", "gpu1", "--json"], rec.deps),
+    );
+
+    expect(code).toBe(0);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(payload);
+  });
+
+  test("C9: --node is required and --node all is refused", async () => {
+    // kills: falling back to a default node or fanning out to all.
+    const residency = await loadResidency();
+
+    const missing = evictIdleSetup({});
+    const m = await withCapturedIo(() => residency.runResidency(["evict-idle"], missing.deps));
+    expect(m.result).toBe(1);
+    expect(m.stderr).toContain("residency evict-idle: --node <name> is required");
+    expect(missing.calls).toEqual([]);
+
+    const all = evictIdleSetup({});
+    const a = await withCapturedIo(() =>
+      residency.runResidency(["evict-idle", "--node", "all"], all.deps),
+    );
+    expect(a.result).toBe(1);
+    expect(a.stderr).toContain("residency evict-idle: --node all is not supported; name one node");
+    expect(all.calls).toEqual([]);
+  });
+
+  test("C10: help names both new subcommands", async () => {
+    // kills: USAGE not documenting the new verbs.
+    const residency = await loadResidency();
+    const rec = setupResidency({});
+    const {
+      result: code,
+      stdout,
+      stderr,
+    } = await withCapturedIo(() => residency.runResidency(["--help"], rec.deps));
+    expect(code).toBe(0);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("evict-idle --node <name> [--yes] [--json]");
+    expect(stdout).toContain("release-idle <workload> [--json]");
+  });
+
+  test("C11: release-idle clears a held manifest and reports the outcomes", async () => {
+    // kills: release-idle not clearing the annotation, or misreporting a
+    // manifest that was never held / never existed.
+    writeRun("w1", { [IDLE_EVICTED_AT]: STAMP_ISO });
+    const residency = await loadResidency();
+    const rec = evictIdleSetup({});
+
+    const first = await withCapturedIo(() =>
+      residency.runResidency(["release-idle", "w1"], rec.deps),
+    );
+    expect(first.result).toBe(0);
+    expect(first.stderr).toBe("");
+    expect(first.stdout).toContain("released idle hold on w1");
+    expect(idleAnnotation("w1")).toBeUndefined();
+
+    const second = await withCapturedIo(() =>
+      residency.runResidency(["release-idle", "w1"], rec.deps),
+    );
+    expect(second.result).toBe(0);
+    expect(second.stdout).toContain("w1 has no idle hold");
+
+    const missing = await withCapturedIo(() =>
+      residency.runResidency(["release-idle", "nope"], rec.deps),
+    );
+    expect(missing.result).toBe(1);
+    expect(missing.stderr).toContain("residency release-idle: no ModelRun or ModelHost named nope");
   });
 });

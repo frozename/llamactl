@@ -119,11 +119,17 @@ import {
 } from "./residency/force-unload.js";
 import { collectOmlxNativeStatus } from "./residency/omlx-capability.js";
 import {
+  buildIdleEvictionSnapshot,
   buildResidencyPlan,
   buildResidencyStatus,
   collectResidencyObservations,
+  type IdleEvictKind,
+  type IdleEvictResult,
+  type IdleEvictRow,
+  type IdleEvictStopResult,
   mergeResidencyLeaseAudit,
   type ResidencyPlan,
+  runIdleEviction,
 } from "./residency/procedures.js";
 import { fenceWorkloadStop, reopenWorkloadAfterLoad } from "./residency/stop-fence.js";
 import {
@@ -532,6 +538,123 @@ function directModelRunOpts(workload: string): DirectLifecycleOpts {
       process.stderr.write(line);
     },
   };
+}
+
+// The fenced ModelRun/ModelHost stop the idle-evict mutation drives (#519): a
+// verified stop commits the unload, an active lease or session refuses before any
+// process is touched. It mirrors the fence the serverStop/modelHostStop operator
+// procedures run (the lifecycle walk plus lease drain) so an eviction cannot drift
+// from an operator stop; those procedures keep their own inline call sites because
+// the #741 lifecycle contract pins them.
+async function fencedModelRunStop(workload: string): Promise<serverMod.StopServerResult> {
+  return await fenceWorkloadStop<serverMod.StopServerResult>({
+    workload,
+    stop: async () => {
+      const outcome = await runDirectResidencyStop<{
+        ok: boolean;
+        error?: string;
+        stop: serverMod.StopServerResult;
+      }>(
+        workload,
+        async () => {
+          const stop = await serverMod.stopServer({ key: { name: workload } });
+          return {
+            ok: stop.stopped,
+            ...(stop.stopped ? {} : { error: "stop did not confirm process removal" }),
+            stop,
+          };
+        },
+        directModelRunOpts(workload),
+      );
+      return outcome.ran ? outcome.result.stop : { stopped: false, pid: null, killed: false };
+    },
+    isVerifiedStop: (r) => r.stopped,
+    refuse: (refused) => ({ stopped: false, pid: null, killed: false, refused }),
+  });
+}
+
+async function fencedModelHostStop(workload: string): Promise<StopModelHostResult> {
+  return await fenceWorkloadStop<StopModelHostResult>({
+    workload,
+    stop: async () => {
+      const outcome = await runDirectResidencyStop<StopModelHostResult>(
+        workload,
+        () => stopModelHost({ key: { name: workload } }),
+        directResidencyOpts(workload, undefined),
+      );
+      return outcome.ran ? outcome.result : { ok: false, pid: null, error: outcome.detail };
+    },
+    isVerifiedStop: (r) => r.ok,
+    refuse: (f) => ({ ok: false, pid: null, error: `${f.reason}: ${f.active.join(", ")}` }),
+  });
+}
+
+// Projects a fenced stop result into the idle-evict `stop` closure contract
+// (#519): the refused fence detail becomes the StopRefused reason so the operator
+// row carries why the stop was refused (e.g. "SessionsActive: s1").
+function modelRunStopOutcome(result: serverMod.StopServerResult): IdleEvictStopResult {
+  if (result.stopped) {
+    return { stopped: true };
+  }
+  const refused = result.refused;
+  if (refused !== undefined) {
+    return { stopped: false, detail: `${refused.reason}: ${refused.active.join(", ")}` };
+  }
+  return { stopped: false, detail: "stop did not confirm process removal" };
+}
+
+function modelHostStopOutcome(result: StopModelHostResult): IdleEvictStopResult {
+  return result.ok
+    ? { stopped: true }
+    : { stopped: false, ...(result.error !== undefined ? { detail: result.error } : {}) };
+}
+
+// The lease probe the idle-evict snapshot and pre-stop re-check read (#519). It
+// carries `audit` only so buildIdleEvictionSnapshot's registry type is satisfied;
+// neither the snapshot builder nor runIdleEviction calls it. A null registry is
+// passed through so the section reports the eviction cannot confirm idle.
+type IdleEvictLeaseProbe = Pick<
+  NonNullable<ReturnType<typeof getResidencyLeaseRegistry>>,
+  "snapshot" | "lastActivityAtMs" | "audit"
+>;
+
+function idleEvictLeaseProbe(): IdleEvictLeaseProbe | null {
+  const registry = getResidencyLeaseRegistry();
+  if (registry === null) {
+    return null;
+  }
+  const activityRead = registry.lastActivityAtMs;
+  return {
+    snapshot: (workload: string) => registry.snapshot(workload),
+    audit: () => registry.audit(),
+    ...(activityRead !== undefined
+      ? { lastActivityAtMs: (workload: string): number => activityRead.call(registry, workload) }
+      : {}),
+  };
+}
+
+async function evictIdleStop(workload: string, kind: IdleEvictKind): Promise<IdleEvictStopResult> {
+  return kind === "modelhost"
+    ? modelHostStopOutcome(await fencedModelHostStop(workload))
+    : modelRunStopOutcome(await fencedModelRunStop(workload));
+}
+
+function idleEvictKindMap(): Map<string, IdleEvictKind> {
+  const kinds = new Map<string, IdleEvictKind>();
+  for (const host of modelHostStoreMod.listModelHosts()) {
+    kinds.set(host.metadata.name, "modelhost");
+  }
+  for (const run of workloadStoreMod.listWorkloads()) {
+    kinds.set(run.metadata.name, "modelrun");
+  }
+  return kinds;
+}
+
+// A dry run reports would-evict rows without a kind (the snapshot has none); the
+// operator output labels them, so the kind is attached from the node manifests.
+function attachIdleEvictKind(row: IdleEvictRow, kinds: Map<string, IdleEvictKind>): IdleEvictRow {
+  const kind = kinds.get(row.workload);
+  return kind === undefined ? row : { ...row, kind };
 }
 
 type ServerStartInput = z.infer<typeof ServerStartInputSchema>;
@@ -2528,6 +2651,56 @@ export const router = t.router({
           storePath: defaultResidencyStorePath(),
         }),
     ),
+
+  // #519: operator-triggered idle eviction on the serving node. A bare { node }
+  // call is a dry run reporting the idle-evict window and the would-evict rows
+  // without touching anything; { node, targets } re-checks each target against
+  // the live lease registry and stops it through the same fenced path serverStop/
+  // modelHostStop use (lifecycle walk plus lease drain), reporting skipped rather
+  // than throwing when the stop cannot complete. Disabled/off-node/unavailable
+  // snapshots come back ok:false and stop nothing. The durable idle hold is
+  // stamped and released by the CLI around this call.
+  residencyEvictIdle: t.procedure
+    .input(
+      z.object({
+        node: z.string().min(1),
+        targets: z
+          .array(z.object({ workload: z.string().min(1), kind: z.enum(["modelrun", "modelhost"]) }))
+          .optional(),
+      }),
+    )
+    .mutation(async ({ input }): Promise<IdleEvictResult> => {
+      const rawNodeName = process.env["LLAMACTL_NODE_NAME"]?.trim() ?? "";
+      const servingNode = rawNodeName === "" ? null : rawNodeName;
+      const nodeRun = nodeRunStoreMod.listNodeRuns().find((n) => n.metadata.name === input.node);
+      const leaseProbe = idleEvictLeaseProbe();
+      const nowMs = Date.now();
+      const idleEviction = buildIdleEvictionSnapshot({
+        residency: nodeRun?.spec.residency,
+        servingNode,
+        node: input.node,
+        store: readResidencyStoreSnapshot(defaultResidencyStorePath()),
+        leaseRegistry: leaseProbe,
+        nowMs,
+      });
+      const result = await runIdleEviction({
+        idleEviction,
+        leaseRegistry: leaseProbe,
+        nowMs,
+        targets: input.targets ?? null,
+        stop: (workload, kind) => evictIdleStop(workload, kind),
+      });
+      if (!result.ok || !result.dryRun) {
+        return result;
+      }
+      const kinds = idleEvictKindMap();
+      return {
+        ...result,
+        rows: result.rows.map((row) =>
+          row.action === "would-evict" ? attachIdleEvictKind(row, kinds) : row,
+        ),
+      };
+    }),
 
   workloadApply: t.procedure
     .input(z.object({ yaml: z.string().min(1) }))
