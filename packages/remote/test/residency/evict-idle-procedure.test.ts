@@ -12,6 +12,7 @@
 // by import, type or caller error.
 import type { ResidencyState } from "@llamactl/core/residency/lifecycle";
 
+import { readModelHostState, writeModelHostState } from "@llamactl/core/engines/state";
 import {
   createResidencyLeases,
   type ResidencyLeases,
@@ -34,7 +35,8 @@ import {
   type ResidencyStateRecord,
 } from "../../src/residency/store.js";
 import { router } from "../../src/router.js";
-import { mkdirSync, mkdtempSync, rmSync } from "../../src/safe-fs.js";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
+import { parseModelHost, saveModelHost } from "../../src/workload/modelhost-store.js";
 import { saveNodeRun } from "../../src/workload/noderun-store.js";
 import { ModelRunSchema } from "../../src/workload/schema.js";
 import { loadWorkloadByName, saveWorkload } from "../../src/workload/store.js";
@@ -162,6 +164,63 @@ function writeRun(name: string): void {
     }),
     workloadsDir,
   );
+}
+
+function writeHost(name: string): void {
+  const binary = join(root, "fake-omlx");
+  writeFileSync(binary, "");
+  saveModelHost(
+    parseModelHost(`
+apiVersion: llamactl/v1
+kind: ModelHost
+metadata:
+  name: ${name}
+  labels:
+    ${GROUP_LABEL}: ${GROUP}
+spec:
+  engine: omlx
+  node: ${NODE}
+  enabled: true
+  binary: ${binary}
+  endpoint:
+    host: 127.0.0.1
+    port: 18097
+  hostedModels:
+    - rel: ${name}.gguf
+`),
+    workloadsDir,
+  );
+}
+
+// A ModelHost sidecar whose recorded pid is this test process: alive, but not
+// the engine binary, so stopModelHost's identity check reads unknown and it
+// returns ok:false with "pid identity unknown", keeping the sidecar. The
+// ModelRun stopServer path finds no llama-server pid for the same name and
+// reports stopped:true, so the two paths are distinguishable.
+function writeUnverifiableHostSidecar(name: string): void {
+  writeModelHostState(
+    {
+      kind: "ModelHost",
+      engine: "omlx",
+      pid: process.pid,
+      host: "127.0.0.1",
+      port: 18097,
+      modelAliases: [name],
+      startedAt: new Date().toISOString(),
+    },
+    { name },
+  );
+}
+
+// Records this test process as the ModelRun's llama-server pid: alive, so
+// stopServer reads it, but not a llama-server, so its identity check reads
+// unknown and it returns stopped:false (not refused) with the pid kept.
+function writeUnverifiableRunPid(name: string): string {
+  const pidDir = join(runtimeDir, "workloads", name);
+  mkdirSync(pidDir, { recursive: true });
+  const pidPath = join(pidDir, "llama-server.pid");
+  writeFileSync(pidPath, `${String(process.pid)}\n`);
+  return pidPath;
 }
 
 // Every router case opens with the registration probe: the procedure must
@@ -319,6 +378,54 @@ describe("residencyEvictIdle", () => {
       action: "skipped",
       reason: "NotReady",
     });
+    expect(readState("w1")?.state).toBe("ready");
+  });
+
+  test("R8: a modelhost target is stopped through the ModelHost stop path", async () => {
+    // kills: dispatching a modelhost target to stopServer (or swapping the
+    // kind dispatch) — stopServer finds no llama-server pid for h1 and would
+    // report a verified stop, whereas stopModelHost refuses the unverifiable
+    // sidecar and keeps it.
+    writeHost("h1");
+    writeUnverifiableHostSidecar("h1");
+    seed([{ model: "h1", target: "ready" }]);
+
+    const evict = evictIdleCaller();
+    const result = await evict({
+      node: NODE,
+      targets: [{ workload: "h1", kind: "modelhost" }],
+    });
+    expect(result).toMatchObject({ ok: true, dryRun: false });
+    expect(rowFor(result, "h1")).toEqual({
+      workload: "h1",
+      action: "skipped",
+      reason: "StopRefused",
+      detail: "pid identity unknown",
+    });
+    expect(readModelHostState({ name: "h1" })).not.toBeNull();
+    expect(leases.snapshot("h1").phase).toBe("open");
+    expect(readState("h1")?.state).toBe("ready");
+  });
+
+  test("R9: an unconfirmed ModelRun stop reopens the fence and never commits the unload", async () => {
+    // kills: treating any ModelRun stop result as verified — a stopped:false
+    // (not refused) stop must reopen the lease fence, not commit unloaded.
+    const pidPath = writeUnverifiableRunPid("w1");
+
+    const evict = evictIdleCaller();
+    const result = await evict({
+      node: NODE,
+      targets: [{ workload: "w1", kind: "modelrun" }],
+    });
+    expect(result).toMatchObject({ ok: true, dryRun: false });
+    expect(rowFor(result, "w1")).toEqual({
+      workload: "w1",
+      action: "skipped",
+      reason: "StopRefused",
+      detail: "stop did not confirm process removal",
+    });
+    expect(leases.snapshot("w1").phase).toBe("open");
+    expect(readFileSync(pidPath, "utf8").trim()).toBe(String(process.pid));
     expect(readState("w1")?.state).toBe("ready");
   });
 });

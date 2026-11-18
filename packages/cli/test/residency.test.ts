@@ -1,7 +1,7 @@
 import type { ResidencyState } from "@llamactl/core/residency/lifecycle";
 import type { NodeClient } from "@llamactl/remote";
 
-import { workloadSchema, workloadStore } from "@llamactl/remote";
+import { modelHostStore, workloadSchema, workloadStore } from "@llamactl/remote";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -1160,6 +1160,38 @@ describe("residency evict-idle / release-idle", () => {
     }
   }
 
+  function writeHost(name: string): void {
+    modelHostStore.saveModelHost(
+      modelHostStore.parseModelHost(`
+apiVersion: llamactl/v1
+kind: ModelHost
+metadata:
+  name: ${name}
+spec:
+  engine: llamacpp
+  node: local
+  enabled: true
+  binary: /usr/bin/true
+  endpoint:
+    host: 127.0.0.1
+    port: 18094
+  hostedModels:
+    - rel: ${name}.gguf
+`),
+      evictDir,
+    );
+  }
+
+  function hostIdleAnnotation(name: string): string | undefined {
+    try {
+      return modelHostStore.loadModelHostByName(name, evictDir).metadata.annotations?.[
+        IDLE_EVICTED_AT
+      ];
+    } catch {
+      return undefined;
+    }
+  }
+
   function dryResult(rows: EvictIdleRow[]): EvictIdleResult {
     return { ok: true, dryRun: true, windowSeconds: 600, rows };
   }
@@ -1272,6 +1304,42 @@ describe("residency evict-idle / release-idle", () => {
     expect(stdout).toContain("  w1  evicted  modelrun");
   });
 
+  test("C2b: the wet targets carry each candidate's manifest kind", async () => {
+    // kills: sending kind "modelrun" for every candidate — a ModelHost must be
+    // targeted as modelhost so the node stops it through the ModelHost path.
+    writeRun("w1");
+    writeHost("h1");
+    const residency = await loadResidency();
+    const rec = evictIdleSetup(
+      evictIdleMutate({
+        dry: dryResult([wouldEvict("w1"), { ...wouldEvict("h1"), kind: "modelhost" }]),
+        wet: wetResult([
+          { workload: "w1", action: "evicted", kind: "modelrun" },
+          { workload: "h1", action: "evicted", kind: "modelhost" },
+        ]),
+      }),
+    );
+
+    const { result: code, stderr } = await withCapturedIo(() =>
+      residency.runResidency(["evict-idle", "--node", "gpu1", "--yes"], rec.deps),
+    );
+
+    expect(code).toBe(0);
+    expect(stderr).toBe("");
+    expect(rec.inputs).toEqual([
+      { node: "gpu1" },
+      {
+        node: "gpu1",
+        targets: [
+          { workload: "w1", kind: "modelrun" },
+          { workload: "h1", kind: "modelhost" },
+        ],
+      },
+    ]);
+    expect(idleAnnotation("w1")).toBe(STAMP_ISO);
+    expect(hostIdleAnnotation("h1")).toBe(STAMP_ISO);
+  });
+
   test("C3: a StopRefused wet row clears the stamped hold afterwards", async () => {
     // kills: keeping the hold on a refused stop (the workload still runs).
     writeRun("w1");
@@ -1322,6 +1390,42 @@ describe("residency evict-idle / release-idle", () => {
     expect(code).toBe(1);
     expect(stderr).toContain("residency evict-idle: boom");
     expect(idleAnnotation("w1")).toBeUndefined();
+  });
+
+  test("C4b: an ok:false wet result after a good dry run clears the stamped hold and exits 1", async () => {
+    // kills: keeping the hold when the wet mutate refuses (policy flipped to
+    // Disabled, not the serving node, store unreadable) — nothing was stopped,
+    // so the workload must not stay held.
+    writeRun("w1");
+    let stampSeenInWet: string | undefined;
+    const residency = await loadResidency();
+    const rec = evictIdleSetup(
+      evictIdleMutate({
+        dry: dryResult([wouldEvict("w1")]),
+        wet: { ok: false, reason: "Disabled" },
+        onWet: () => {
+          stampSeenInWet = idleAnnotation("w1");
+        },
+      }),
+    );
+
+    const {
+      result: code,
+      stdout,
+      stderr,
+    } = await withCapturedIo(() =>
+      residency.runResidency(["evict-idle", "--node", "gpu1", "--yes"], rec.deps),
+    );
+
+    expect(code).toBe(1);
+    expect(stderr).toContain("residency evict-idle: Disabled");
+    expect(stdout).toBe("");
+    expect(rec.calls).toEqual(["residencyEvictIdle.mutate", "residencyEvictIdle.mutate"]);
+    expect(stampSeenInWet).toBe(STAMP_ISO);
+    expect(idleAnnotation("w1")).toBeUndefined();
+    expect(
+      workloadStore.loadWorkloadByName("w1", evictDir).metadata.annotations,
+    ).not.toHaveProperty(IDLE_EVICTED_AT);
   });
 
   test("C5: a would-evict workload with no local manifest is never targeted", async () => {

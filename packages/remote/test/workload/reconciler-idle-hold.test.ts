@@ -2,8 +2,9 @@ import { readModelHostRuntimeStatus } from "@llamactl/core/engines/conditions";
 import { resolveEnv } from "@llamactl/core/env";
 // #519: the durable idle hold. idleEvictSeconds becomes operator-enforced:
 // a wet `residency evict-idle` stamps llamactl.io/idle-evicted-at on the
-// victim before the fenced stop, clears it on a verified stop, and leaves
-// it on a refused/failed stop so the reconciler keeps the workload down.
+// victim before the fenced stop, keeps it only on a verified eviction (the
+// row comes back evicted) so the reconciler keeps the workload down until
+// release-idle, and clears it when the stop is refused, fails or never ran.
 // The reconciler therefore skips any enabled manifest carrying the
 // annotation — reporting action "unchanged" with the stamped timestamp —
 // while disabled manifests still take the ordinary disable path.
@@ -413,6 +414,117 @@ test("H6c: clearIdleEvictionHold clears once, reports not-held, and reports miss
     expect(host.metadata.annotations).toBeUndefined();
 
     expect(clearIdleEvictionHold!("ghost", dir)).toBe("missing");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("H7: a disabled ModelHost carrying the hold still takes its ordinary disable path", async () => {
+  // kills: holding disabled ModelHosts — enabled:false must still query the
+  // host status like any disabled host and report no idleEvictedAt.
+  expect(typeof stampIdleEvictionHold).toBe("function");
+  const dir = mkdtempSync(join(tmpdir(), "llamactl-idle-hold-host-disabled-"));
+  try {
+    saveModelHost(
+      {
+        ...makeHostManifest("held-host-disabled", { enabled: false }),
+        metadata: {
+          name: "held-host-disabled",
+          annotations: { [HELD_AT_ANNOTATION]: HELD_AT_ISO },
+        },
+      },
+      dir,
+    );
+    const calls: string[] = [];
+    const result = await withRuntimeDir(dir, () =>
+      reconcile({ workloadsDir: dir, getClient: () => makeRecordingClient(calls) }),
+    );
+    const reports = result.reports as IdleAwareReport[];
+    expect(reports).toHaveLength(1);
+    expect(reports[0]).toMatchObject({ kind: "ModelHost", name: "held-host-disabled" });
+    expect(reports[0]?.idleEvictedAt).toBeUndefined();
+    expect(calls).toContain("modelHostStatus:held-host-disabled");
+    expect(calls).not.toContain("modelHostStart:held-host-disabled");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("H8: a hold stamped on disk after the pass-start snapshot keeps the ModelRun down", async () => {
+  // kills: deciding the idle hold on the pass-start snapshot's annotations —
+  // the CLI stamps the hold mid-pass, so the guard must read it from disk.
+  // The filter runs after listWorkloads took the snapshot, standing in for a
+  // stamp that lands between the snapshot and this workload's turn.
+  expect(typeof stampIdleEvictionHold).toBe("function");
+  const dir = mkdtempSync(join(tmpdir(), "llamactl-idle-hold-midpass-"));
+  try {
+    saveWorkload(makeRunManifest("late-held", { restartPolicy: "Always" }), dir);
+    const calls: string[] = [];
+    const result = await withRuntimeDir(dir, () =>
+      reconcile({
+        workloadsDir: dir,
+        getClient: () => makeRecordingClient(calls),
+        filter: (m) => {
+          expect(m.metadata.annotations[HELD_AT_ANNOTATION]).toBeUndefined();
+          expect(stampIdleEvictionHold!(m.metadata.name, HELD_AT_ISO, dir)).toBe("ModelRun");
+          return true;
+        },
+      }),
+    );
+    expect(result.errors).toBe(0);
+    expect(result.reports as IdleAwareReport[]).toEqual([
+      {
+        kind: "ModelRun",
+        name: "late-held",
+        node: "local",
+        action: "unchanged",
+        idleEvictedAt: HELD_AT_ISO,
+      },
+    ]);
+    expect(calls).toEqual([]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("H9: an enable plus hold written after the pass-start snapshot is decided on the fresh enabled", async () => {
+  // kills: deciding the idle hold on the pass-start snapshot's spec.enabled —
+  // the snapshot is disabled, but the on-disk manifest is enabled and held by
+  // the time the guard runs, so it must report the hold and touch nothing
+  // (a snapshot-enabled guard would take the disable path and query status).
+  expect(typeof stampIdleEvictionHold).toBe("function");
+  const dir = mkdtempSync(join(tmpdir(), "llamactl-idle-hold-midpass-enabled-"));
+  try {
+    saveWorkload(makeRunManifest("late-enabled", { enabled: false }), dir);
+    const calls: string[] = [];
+    const result = await withRuntimeDir(dir, () =>
+      reconcile({
+        workloadsDir: dir,
+        getClient: () => makeRecordingClient(calls, "up"),
+        filter: (m) => {
+          expect(m.spec.enabled).toBe(false);
+          saveWorkload(
+            makeRunManifest(m.metadata.name, {
+              enabled: true,
+              annotations: { [HELD_AT_ANNOTATION]: HELD_AT_ISO },
+            }),
+            dir,
+          );
+          return true;
+        },
+      }),
+    );
+    expect(result.errors).toBe(0);
+    expect(result.reports as IdleAwareReport[]).toEqual([
+      {
+        kind: "ModelRun",
+        name: "late-enabled",
+        node: "local",
+        action: "unchanged",
+        idleEvictedAt: HELD_AT_ISO,
+      },
+    ]);
+    expect(calls).toEqual([]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
