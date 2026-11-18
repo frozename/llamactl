@@ -14,7 +14,10 @@
 // deliberate mutation here: it drives a workload through
 // the lease fence, revoking active leases and auditing any revocation as an
 // operator override (an idle unload, with no leases held, writes no lease audit
-// row).
+// row). release-session (#520) is the per-session counterpart: it drops one
+// session binding by id through residencyReleaseSession — never draining,
+// revoking leases or stopping the workload — so the DF-05 leases of in-flight
+// requests stay held and LeasesActive still fences their stop.
 
 import type { NodeClient, noderunSchema } from "@llamactl/remote";
 
@@ -30,6 +33,7 @@ Subcommands:
   apply-profile --node <name> --to <profile> [--from <profile>] [--json]   Dry-run by default: plan and report the profile switch without touching the store. Add --execute --yes to run the switch for real (stops and starts workloads, records an operation).
   cancel-operation <operationId> --yes [--node <name>] [--json]   Request an abort of an in-flight profile switch started by apply-profile --execute --yes in the process serving <node> (an agent serve process); it stops before its next step boundary. Process-local: a switch run in-process by a local-endpoint CLI invocation cannot be cancelled from another CLI invocation. Requires --yes.
   force-unload <workload> --reason <text> --yes [--node <name>] [--json]   Operator override of the stop fence: revoke active leases (audited as an operator override), then stop the workload. Destructive; requires --yes. Reports the released session ids when a session registry is installed.
+  release-session <sessionId> --yes [--force] [--node <name>] [--json]   Operator release of one session binding by id: drops only the binding; the DF-05 leases of in-flight requests stay held, so LeasesActive still fences their stop. An idle binding drops; an in-flight binding refuses unless --force is given. Requires --yes.
 
 Example:
   llamactl residency status --node <name> [--json]
@@ -37,6 +41,7 @@ Example:
   llamactl residency apply-profile --node <name> --to <profile> [--from <profile>] [--execute --yes]
   llamactl residency cancel-operation <operationId> --yes
   llamactl residency force-unload <workload> --reason <text> --yes
+  llamactl residency release-session <sessionId> --yes [--node <name>]
 `;
 
 export type ResidencyStatusView = Awaited<ReturnType<NodeClient["residencyStatus"]["query"]>>;
@@ -53,6 +58,10 @@ export type ResidencyApplyProfileView = Awaited<
 
 export type ResidencyCancelOperationView = Awaited<
   ReturnType<NodeClient["residencyCancelOperation"]["mutate"]>
+>;
+
+export type ResidencyReleaseSessionView = Awaited<
+  ReturnType<NodeClient["residencyReleaseSession"]["mutate"]>
 >;
 
 export interface ResidencyDeps {
@@ -822,6 +831,131 @@ async function runResidencyForceUnload(args: string[], deps: ResidencyDeps): Pro
   }
 }
 
+interface ReleaseSessionFlags {
+  sessionId: string | undefined;
+  force: boolean;
+  yes: boolean;
+  json: boolean;
+  node: string | undefined;
+}
+
+function applyReleaseSessionArg(args: string[], i: number, flags: ReleaseSessionFlags): ArgStep {
+  const arg = required(args[i]);
+  const next = args[i + 1];
+  if (arg === "--json") {
+    flags.json = true;
+    return { consumed: 1 };
+  }
+  if (arg === "--yes") {
+    flags.yes = true;
+    return { consumed: 1 };
+  }
+  if (arg === "--force") {
+    flags.force = true;
+    return { consumed: 1 };
+  }
+  if (arg === "-h" || arg === "--help") {
+    process.stdout.write(USAGE);
+    return { exit: 0 };
+  }
+  if (arg === "--node") {
+    if (next === undefined) {
+      process.stderr.write("residency release-session: --node requires a value\n");
+      return { exit: 1 };
+    }
+    flags.node = next;
+    return { consumed: 2 };
+  }
+  if (arg.startsWith("--node=")) {
+    flags.node = arg.slice("--node=".length);
+    return { consumed: 1 };
+  }
+  if (arg.startsWith("--")) {
+    process.stderr.write(`residency release-session: unknown argument ${arg}\n`);
+    return { exit: 1 };
+  }
+  flags.sessionId ??= arg;
+  return { consumed: 1 };
+}
+
+function parseReleaseSessionArgs(args: string[]): ReleaseSessionFlags | { exit: number } {
+  const flags: ReleaseSessionFlags = {
+    sessionId: undefined,
+    force: false,
+    yes: false,
+    json: false,
+    node: undefined,
+  };
+  let i = 0;
+  while (i < args.length) {
+    const step = applyReleaseSessionArg(args, i, flags);
+    if ("exit" in step) return step;
+    i += step.consumed;
+  }
+  return flags;
+}
+
+function releaseSessionUsageError(flags: ReleaseSessionFlags): string | null {
+  const sessionId = flags.sessionId ?? "";
+  if (sessionId === "") {
+    return `a session id is required: llamactl residency release-session <sessionId> --yes\n${USAGE}`;
+  }
+  if (!flags.yes) {
+    return `refusing without --yes (releasing session ${sessionId} lets its workload be unloaded)`;
+  }
+  return null;
+}
+
+function renderReleaseSession(r: Extract<ResidencyReleaseSessionView, { ok: true }>): string {
+  const inFlight = `${String(r.refs)} in-flight request(s)`;
+  const forced = r.forced ? ", forced; their leases stay held" : "";
+  return `Released session ${r.sessionId} (workload ${r.workload}, ${inFlight}${forced})\n`;
+}
+
+async function runResidencyReleaseSession(args: string[], deps: ResidencyDeps): Promise<number> {
+  const parsed = parseReleaseSessionArgs(args);
+  if ("exit" in parsed) return parsed.exit;
+
+  const usageError = releaseSessionUsageError(parsed);
+  if (usageError !== null) {
+    process.stderr.write(`residency release-session: ${usageError}\n`);
+    return 1;
+  }
+  const sessionId = parsed.sessionId ?? "";
+
+  const node = parsed.node ?? getGlobals().nodeName ?? "";
+  if (node === "") {
+    process.stderr.write(`residency release-session: --node <name> is required\n${USAGE}`);
+    return 1;
+  }
+  if (node === "all") {
+    process.stderr.write("residency release-session: --node all is not supported; name one node\n");
+    return 1;
+  }
+
+  try {
+    const client = (deps.getNodeClientByName ?? getNodeClientByName)(node);
+    const result = await client.residencyReleaseSession.mutate({
+      sessionId,
+      force: parsed.force,
+      confirm: true,
+    });
+    if (parsed.json) {
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      return result.ok ? 0 : 1;
+    }
+    if (!result.ok) {
+      process.stderr.write(`residency release-session: ${result.reason}: ${result.detail}\n`);
+      return 1;
+    }
+    process.stdout.write(renderReleaseSession(result));
+    return 0;
+  } catch (err) {
+    process.stderr.write(`residency release-session: ${(err as Error).message}\n`);
+    return 1;
+  }
+}
+
 export async function runResidency(args: string[], deps: ResidencyDeps = {}): Promise<number> {
   const [sub, ...rest] = args;
   if (sub === undefined) {
@@ -846,6 +980,9 @@ export async function runResidency(args: string[], deps: ResidencyDeps = {}): Pr
   }
   if (sub === "force-unload") {
     return await runResidencyForceUnload(rest, deps);
+  }
+  if (sub === "release-session") {
+    return await runResidencyReleaseSession(rest, deps);
   }
   process.stderr.write(`Unknown residency subcommand: ${sub}\n${USAGE}`);
   return 1;

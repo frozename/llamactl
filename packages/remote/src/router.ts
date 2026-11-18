@@ -116,6 +116,8 @@ import {
   type ForceUnloadResult,
   type ForceUnloadStop,
   forceUnloadWorkload,
+  releaseResidencySession,
+  type ReleaseSessionResult,
 } from "./residency/force-unload.js";
 import { collectOmlxNativeStatus } from "./residency/omlx-capability.js";
 import {
@@ -3212,6 +3214,28 @@ export const router = t.router({
         stop,
       });
     }),
+
+  // #520: per-session explicit release. Unlike residencyForceUnload this
+  // never drains, revokes leases or stops anything — it drops only the
+  // session binding, so the DF-05 leases of in-flight requests stay held.
+  // The sessionId bounds match openaiProxy's MAX_SESSION_ID_LENGTH /
+  // SESSION_ID_PATTERN.
+  residencyReleaseSession: t.procedure
+    .input(
+      z.object({
+        sessionId: z
+          .string()
+          .min(1)
+          .max(128)
+          .regex(/^[A-Za-z0-9._:-]+$/),
+        force: z.boolean().optional(),
+        confirm: z.literal(true),
+      }),
+    )
+    .mutation(
+      ({ input }): ReleaseSessionResult =>
+        releaseResidencySession({ sessionId: input.sessionId, force: input.force === true }),
+    ),
 
   serverStart: t.procedure.input(ServerStartInputSchema).subscription(async function* ({
     input,
