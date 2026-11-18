@@ -87,6 +87,13 @@ function expectUnavailable(metric: MetricValue, pattern: RegExp): void {
   expect(metric.reason).toMatch(pattern);
 }
 
+function unavailableReason(metric: MetricValue): string {
+  expect(metric.status).toBe("unavailable");
+  if (metric.status !== "unavailable") throw new Error("expected an unavailable metric");
+  expect(metric.value).toBeNull();
+  return metric.reason;
+}
+
 function expectMetricNames(rows: PerfRunRow[]): void {
   const names = rows.map((row) => row.metric_name).sort();
   expect(names).toEqual([...PERF_METRIC_NAMES].sort());
@@ -462,5 +469,56 @@ describe("runPerfSuite", () => {
     const rows = listPerfRuns(db, { run_id: RUN_ID });
     expectMetricNames(rows);
     expect(metricOf(rows, "peak_gtt_bytes")).toEqual({ value: 9000, status: "ok" });
+  });
+
+  test("records caller-supplied reasons when a reader is absent", async () => {
+    // Kills: runPerfSuite ignoring PerfSuiteOptions.readerReasons and
+    //        falling back to the hardcoded platform strings.
+    const clock = createManualClock();
+    const fake = startEngine(engineOpts(clock));
+    const client = createHttpPerfEngineClient(fake.url, { clock });
+    const opts = {
+      ...suiteOpts({ client, clock, slots: null }),
+      readerReasons: {
+        io: "io-reason-X",
+        peakRss: "rss-reason-Y",
+        gtt: "gtt-reason-Z",
+      },
+    } as PerfSuiteOptions;
+
+    await runPerfSuite(db, opts);
+
+    const rows = listPerfRuns(db, { run_id: RUN_ID });
+    expectMetricNames(rows);
+    expect(unavailableReason(metricOf(rows, "ssd_read_bytes"))).toBe("io-reason-X");
+    expect(unavailableReason(metricOf(rows, "ssd_write_bytes"))).toBe("io-reason-X");
+    expect(unavailableReason(metricOf(rows, "peak_rss_bytes"))).toBe("rss-reason-Y");
+    expect(unavailableReason(metricOf(rows, "peak_gtt_bytes"))).toBe("gtt-reason-Z");
+  });
+
+  test("a present reader that returns no sample is not reported as a missing reader", async () => {
+    // Kills: collapsing absent-reader and failed-reader into the same
+    //        'for this platform' / hardcoded reason.
+    const clock = createManualClock();
+    const fake = startEngine(engineOpts(clock));
+    const client = createHttpPerfEngineClient(fake.url, { clock });
+    const readers: PerfSuiteReaders = {
+      io: () => null,
+      peakRss: () => null,
+      gtt: () => null,
+    };
+
+    await runPerfSuite(db, suiteOpts({ client, clock, readers }));
+
+    const rows = listPerfRuns(db, { run_id: RUN_ID });
+    expectMetricNames(rows);
+    const ssdRead = metricOf(rows, "ssd_read_bytes");
+    expectUnavailable(ssdRead, /I\/O reader returned no sample/i);
+    expect(unavailableReason(ssdRead)).not.toMatch(/for this platform/);
+    expectUnavailable(
+      metricOf(rows, "peak_rss_bytes"),
+      /peak-RSS \(VmHWM\) reader returned no sample/i,
+    );
+    expectUnavailable(metricOf(rows, "peak_gtt_bytes"), /GTT reader returned no sample/i);
   });
 });

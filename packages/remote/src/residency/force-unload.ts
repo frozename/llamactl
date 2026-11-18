@@ -13,6 +13,11 @@
 // refusal. forceRelease runs under the drain before commitUnload, and a
 // failed stop leaves the sessions dropped, like the revoked leases staying
 // revoked.
+//
+// #520 also adds releaseResidencySession, the per-session explicit release:
+// it drops one session binding by id and nothing else — it never drains,
+// revokes leases or stops a workload, and a forced release leaves the DF-05
+// leases of in-flight requests held, so LeasesActive still fences their stop.
 
 import type { ResidencyLeases } from "@llamactl/core/residency/leases";
 
@@ -71,6 +76,86 @@ function forceReleaseSessions(
     return { ok: true, sessions: registry.forceRelease(workload) };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+export type ReleaseSessionResult =
+  | {
+      ok: true;
+      sessionId: string;
+      workload: string;
+      refs: number;
+      forced: boolean;
+      source: typeof OPERATOR_FORCE_UNLOAD_SOURCE;
+    }
+  | { ok: false; reason: "Unavailable"; sessionId: string; detail: string }
+  | { ok: false; reason: "SessionNotFound"; sessionId: string; detail: string }
+  | {
+      ok: false;
+      reason: "SessionInFlight";
+      sessionId: string;
+      workload: string;
+      refs: number;
+      detail: string;
+    }
+  | { ok: false; reason: "SessionsUnknown"; sessionId: string; detail: string };
+
+/** Releases a single session binding by id through the session registry. An
+ * explicit `null` resolves typed Unavailable; `undefined` resolves the
+ * installed process-wide registry. A throwing registry is reported as
+ * SessionsUnknown, never swallowed. The lease registry is never touched. */
+export function releaseResidencySession(opts: {
+  sessionId: string;
+  force?: boolean;
+  sessions?: SessionRefcounts | null;
+}): ReleaseSessionResult {
+  const { sessionId, sessions, force } = opts;
+  const registry = sessions === undefined ? currentSessionRefcounts() : sessions;
+  if (registry === null) {
+    return {
+      ok: false,
+      reason: "Unavailable",
+      sessionId,
+      detail: "no session registry installed; nothing to release",
+    };
+  }
+  try {
+    if (registry.releaseSession === undefined) {
+      return {
+        ok: false,
+        reason: "Unavailable",
+        sessionId,
+        detail: "the installed session registry does not support per-session release",
+      };
+    }
+    const result = registry.releaseSession(sessionId, force === true ? { force: true } : undefined);
+    if (result.ok) {
+      return { ...result, source: OPERATOR_FORCE_UNLOAD_SOURCE };
+    }
+    if (result.reason === "SessionInFlight") {
+      return {
+        ok: false,
+        reason: "SessionInFlight",
+        sessionId: result.sessionId,
+        workload: result.workload,
+        refs: result.refs,
+        detail: `session ${result.sessionId} has ${String(result.refs)} in-flight request(s) on ${result.workload}; retry once they settle or pass force`,
+      };
+    }
+    return {
+      ok: false,
+      reason: "SessionNotFound",
+      sessionId: result.sessionId,
+      detail: `no live session ${result.sessionId} (unknown or idled out)`,
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return {
+      ok: false,
+      reason: "SessionsUnknown",
+      sessionId,
+      detail: `session registry could not release ${sessionId} (${msg})`,
+    };
   }
 }
 
