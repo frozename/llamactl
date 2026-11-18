@@ -176,7 +176,9 @@ apply-profile fence, walk the row the same way, reconcile proven-down
 same-group peers, and refuse a start while a profile switch is in flight.
 The direct ModelRun writers `serverStart`/`serverStop` route through the same
 wrapper, recording the group from the agent-side ModelRun
-`llamactl.io/residency-group` label. Bookkeeping never blocks a stop: a stop
+`llamactl.io/residency-group` label, and operator force-unload
+(`residencyForceUnload`) routes its stop through the same wrapper after the
+lease drain commits. Bookkeeping never blocks a stop: a stop
 whose claim or walk fails still runs and logs `not recorded`. A direct stop
 runs before its row moves and walks it to `downloaded` only once the stop is
 confirmed; an unconfirmed stop (the process may still be alive) leaves the row
