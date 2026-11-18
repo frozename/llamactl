@@ -384,38 +384,44 @@ test("--pid with a non-loopback --url is refused (kills: removing the loopback g
   expect(run.calls).toHaveLength(0);
 });
 
-test('--pid with a 127.-prefixed DNS name is refused (kills: hostname.startsWith("127.") loopback check)', async () => {
-  const run = fakeRunPerfSuite();
-  perfSeams()({
-    platform: "linux",
-    fetchImpl: fakeEngineFetch(["m"]),
-    readFile: fakeProcFs().readFile,
-    runPerfSuite: run.runPerfSuite,
+for (const [host, kills] of [
+  ["127.evil.example", 'hostname.startsWith("127.") loopback check'],
+  ["127.0.0.1.evil.example", "dropping the loopback regex end anchor"],
+  ["127.evil.example.com", "widening the loopback regex \\d+ to \\w+"],
+] as const) {
+  test(`--pid with the 127.-prefixed DNS name ${host} is refused (kills: ${kills})`, async () => {
+    const run = fakeRunPerfSuite();
+    perfSeams()({
+      platform: "linux",
+      fetchImpl: fakeEngineFetch(["m"]),
+      readFile: fakeProcFs().readFile,
+      runPerfSuite: run.runPerfSuite,
+    });
+    const dbPath = join(tmp, "perf.sqlite");
+
+    const { result, stderr } = await captureProcessStreams(() =>
+      runEval(
+        perfArgv(dbPath, [
+          "--url",
+          `http://${host}:80`,
+          "--engine",
+          "llamacpp",
+          "--model",
+          "m",
+          "--pid",
+          "4242",
+        ]),
+      ),
+    );
+
+    expect(result).toBe(1);
+    expect(stderr).toContain(
+      `eval perf: --pid needs a loopback --url (got ${host}); ` +
+        "host counters are read on this machine",
+    );
+    expect(run.calls).toHaveLength(0);
   });
-  const dbPath = join(tmp, "perf.sqlite");
-
-  const { result, stderr } = await captureProcessStreams(() =>
-    runEval(
-      perfArgv(dbPath, [
-        "--url",
-        "http://127.evil.example:80",
-        "--engine",
-        "llamacpp",
-        "--model",
-        "m",
-        "--pid",
-        "4242",
-      ]),
-    ),
-  );
-
-  expect(result).toBe(1);
-  expect(stderr).toContain(
-    "eval perf: --pid needs a loopback --url (got 127.evil.example); " +
-      "host counters are read on this machine",
-  );
-  expect(run.calls).toHaveLength(0);
-});
+}
 
 for (const [url, kills] of [
   ["http://127.1:18080", "rejecting WHATWG-normalized IPv4 shorthand"],
