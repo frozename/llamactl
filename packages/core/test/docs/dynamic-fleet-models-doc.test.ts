@@ -453,17 +453,19 @@ describe("docs/dynamic-fleet-models.md (#522)", () => {
   });
 
   // Part of #522
-  // Kills: dropping or rewording the claimed-pass-only scope of the
-  // lifecycle-row boot recovery paragraph.
-  test("case 22: lifecycle boot recovery runs only on a claimed pass", () => {
+  // Kills: dropping or rewording the claimed-pass and orphan-sweep scope of
+  // the lifecycle-row boot recovery paragraph.
+  test("case 22: lifecycle boot recovery scope (claimed pass and outside a switch)", () => {
     const s = (sectionBody(/^#{2,} .*residency lifecycle states/i) ?? "").replaceAll(/\s+/g, " ");
     for (const n of [
-      "It runs only on a claimed pass, i.e. only when a stale profile-switch row exists, so lifecycle rows interrupted outside a switch are not swept.",
+      "On a claimed pass, i.e. when a stale profile-switch row exists, it sweeps every interrupted row. When the store holds no nonterminal operation row, it also sweeps lifecycle rows interrupted outside a switch, such as a direct start whose agent died in `loading`, once they have made no progress for 30 minutes and their workload is proven down, under its own claim of the apply-profile fence.",
+      "A workload that is not proven down, for example an engine that outlived its agent, keeps its row.",
       "`failInterruptedLifecycleRows`",
       "#517",
     ]) {
       expect(s, n).toContain(n);
     }
+    expect(s).not.toContain("outside a switch are not swept");
   });
 
   // Part of #522

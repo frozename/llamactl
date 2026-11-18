@@ -226,17 +226,24 @@ more occupying members.
 Lifecycle-row boot recovery (Part of #517) sweeps interrupted transient
 states (`loading`, `warming`, `draining`, `unloading`) to `failed` under
 the same claimed fence as the profile-switch operation recovery, releasing
-exclusive-group capacity. It runs only on a claimed pass, i.e. only when a
-stale profile-switch row exists, so lifecycle rows interrupted outside a
-switch are not swept. It is implemented in
+exclusive-group capacity. On a claimed pass, i.e. when a stale profile-switch
+row exists, it sweeps every interrupted row. When the store holds no
+nonterminal operation row, it also sweeps lifecycle rows interrupted outside a
+switch, such as a direct start whose agent died in `loading`, once they have
+made no progress for 30 minutes and their workload is proven down, under its
+own claim of the apply-profile fence. A workload that is not proven down, for
+example an engine that outlived its agent, keeps its row. The group is not
+wedged forever: before the window elapses an operator stop or
+`llamactl residency force-unload` also clears it. It is implemented in
 `runProfileSwitchBootRecovery` (`packages/remote/src/residency/boot-recovery.ts`)
 with `failInterruptedLifecycleRows`. Per-row write failures and refusals
 are contained and counted without stopping the sweep; a failed row
 listing counts as one record failure. When the sweep moved at least one
-row or recorded at least one failure, the agent logs one counts-only line
-after the profile-switch line:
-`[residency] lifecycle boot recovery {"failed":N,"recordFailures":M}`.
-Its `recordFailures` counts lifecycle rows only; the profile-switch line's
+row or recorded at least one failure, the agent logs one counts-only line:
+`[residency] lifecycle boot recovery {"failed":N,"recordFailures":M}`. A
+claimed pass logs it after the profile-switch line; the outside-a-switch pass
+logs only this lifecycle line, with no profile-switch line. Its
+`recordFailures` counts lifecycle rows only; the profile-switch line's
 `recordFailures` counts operation rows only.
 
 ## Qualification and promotion
