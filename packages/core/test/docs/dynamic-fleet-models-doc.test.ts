@@ -514,4 +514,30 @@ describe("docs/dynamic-fleet-models.md (#522)", () => {
       "const outcome = await client.modelHostStop.mutate({ workload: manifest.metadata.name });",
     );
   });
+
+  // Part of #518
+  // Kills: rewording or dropping the Overrides doc paragraph, leaving the
+  // stale "library-only" effectiveStage claim, or unwiring the CLI from
+  // the core writer/deleter.
+  test("case 24: operator override CLI (#518)", () => {
+    const overrides = flat(sectionBody(/^## Overrides/) ?? "");
+    for (const needle of [
+      "`llamactl qualification pin",
+      "`llamactl qualification freeze",
+      "`llamactl qualification status",
+      "qualificationOverridesFileFor",
+    ]) {
+      expect(overrides, needle).toContain(needle);
+    }
+    const q = flat(sectionBody(/^## Qualification and promotion/) ?? "");
+    expect(q).not.toContain("Effective status at this commit: `effectiveStage`");
+    const cli = readOrEmpty(join(REPO, "packages/cli/src/commands/qualification.ts"));
+    for (const needle of [
+      "writeQualificationOverride(",
+      "deleteQualificationOverride(",
+      "effectiveStage(",
+    ]) {
+      expect(cli, needle).toContain(needle);
+    }
+  });
 });
