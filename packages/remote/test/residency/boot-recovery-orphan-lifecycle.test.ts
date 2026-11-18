@@ -497,6 +497,102 @@ describe("lifecycle rows interrupted outside a switch (Part of #517)", () => {
     expect(readState("stale-a")).toMatchObject({ state: "failed" });
   });
 
+  // kills: removing the in-transaction `nonterminal.length === 0` re-check in
+  // claimAndFailOrphans — an evict: op begun between the read-only snapshot
+  // and the claim must refuse the claim, so stale-a stays loading, the fence
+  // stays agent/i1 and nothing is logged.
+  test("OL10: an operation begun before the claim refuses the orphan claim", () => {
+    const seeded = seedOrphanRows([LOADING_SPEC("stale-a", STALE_AT)]);
+    const writes: string[] = [];
+    let openStoreCalls = 0;
+
+    const summary = runProfileSwitchBootRecovery(
+      recoveryOpts({
+        writes,
+        isProvenDown: down,
+        openStore: (storePath) => {
+          openStoreCalls += 1;
+          const real = openResidencyOperationStore({ path: storePath });
+          trackedStores.push(real);
+          const realClaimWhen = real.claimOwnershipWhen;
+          real.claimOwnershipWhen = (input, decide): ReturnType<Store["claimOwnershipWhen"]> => {
+            const other = openResidencyOperationStore({ path: storePath });
+            try {
+              const fence = other.currentFence();
+              if (fence === null) {
+                throw new Error("seed guard: expected the agent/i1 fence");
+              }
+              const begun = other.beginOperation({
+                fenceToken: fence.fenceToken,
+                operationId: "op-evict-race",
+                model: "evict:x",
+                targetState: "evicted",
+                desiredRevision: 1,
+                reservationGiB: 0,
+                nowMs: NOW,
+              });
+              if (!begun.ok) {
+                throw new Error(`seed guard: beginOperation(evict:x) refused: ${begun.reason}`);
+              }
+            } finally {
+              other.close();
+            }
+            return realClaimWhen(input, decide);
+          };
+          return real;
+        },
+      }),
+    );
+
+    expect(summary).toEqual(CLEAN_SUMMARY);
+    expect(openStoreCalls).toBe(1);
+    expect(readState("stale-a")).toEqual(seeded.get("stale-a")!);
+    expect(currentFence()).toMatchObject({ ownerId: "agent", incarnation: "i1" });
+    expect(writes).toEqual([]);
+  });
+
+  // kills: removing the catch around failInterruptedLifecycleRows in
+  // claimAndFailOrphans — a throw while listing the rows after the claim
+  // must be counted as one record failure on the counts line, not escape to
+  // the generic 'lifecycle boot recovery failed:' line.
+  test("OL11: a failed row listing after the claim counts as one record failure", () => {
+    const seeded = seedOrphanRows([LOADING_SPEC("stale-a", STALE_AT)]);
+    const writes: string[] = [];
+    let listCalls = 0;
+
+    const summary = runProfileSwitchBootRecovery(
+      recoveryOpts({
+        writes,
+        isProvenDown: down,
+        openStore: (storePath) => {
+          const real = openResidencyOperationStore({ path: storePath });
+          trackedStores.push(real);
+          const realList = real.listResidencyStates;
+          real.listResidencyStates = (): ResidencyStateRecord[] => {
+            listCalls += 1;
+            if (listCalls === 2) {
+              throw new Error("listing gone");
+            }
+            return realList();
+          };
+          return real;
+        },
+      }),
+    );
+
+    expect(summary).toEqual(CLEAN_SUMMARY);
+    expect(listCalls).toBe(2);
+    expect(writes).toEqual([
+      '[residency] lifecycle boot recovery {"failed":0,"recordFailures":1}\n',
+    ]);
+    expect(writes.join("")).not.toContain("listing gone");
+    expect(readState("stale-a")).toEqual(seeded.get("stale-a")!);
+    expect(currentFence()).toMatchObject({
+      ownerId: RESIDENCY_APPLY_PROFILE_FENCE_OWNER,
+      incarnation: "i2",
+    });
+  });
+
   // kills: dropping the proven-down filter (alive-b and throws-c would
   // fail too), treating a predicate throw as proven down (throws-c would
   // fail), or evaluating the predicate inside the claim transaction

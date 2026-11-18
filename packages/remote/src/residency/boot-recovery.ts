@@ -99,6 +99,12 @@
  * failed:` line. Without `isProvenDown` it fails closed: the predicate defaults
  * to false, the proven-down set stays empty, and the pass never opens the store.
  *
+ * Fail-closed consequence. `evict:` rows have no boot recovery yet, so a
+ * crashed eviction's nonterminal `evict:` row disables this pass on every later
+ * boot until that row is terminalized. The operator remedy for a stuck
+ * interrupted row meanwhile is a direct stop or `residency force-unload`; the
+ * direct stop path refuses only on `profile-switch:` rows, not `evict:` rows.
+ *
  * Why the liveness gate. `llama-server` is spawned detached and unref'd
  * (`packages/core/src/server.ts`), so an engine can outlive its agent. Age alone
  * would free an exclusive group while the engine still runs; only a workload the

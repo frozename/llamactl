@@ -902,7 +902,8 @@ describe("docs/dynamic-residency.md (#285)", () => {
   // runProfileSwitchBootRecovery that decides whether scanWithStore runs,
   // or the inner writable-handle re-check inside claimOwnershipWhen;
   // dropping the orphan sweep, its no-nonterminal gate, its age gate or its
-  // proven-down wiring without updating the doc should fail; renaming
+  // proven-down wiring without updating the doc should fail; dropping the
+  // fail-closed `evict:` consequence and its operator remedy; renaming
   // failInterruptedLifecycleRows or the lifecycle log line.
   test("case 17: stop-before-start session refusal (#734) and lifecycle boot recovery (#736)", () => {
     const r = (sectionBody(sectionRe("stop-before-start")) ?? "").replaceAll(/\s+/g, " ");
@@ -952,6 +953,7 @@ describe("docs/dynamic-residency.md (#285)", () => {
       "claimed pass",
       "a stale profile-switch row",
       "When the store holds no nonterminal operation row, boot recovery also sweeps lifecycle rows interrupted outside a switch (for example a direct start whose agent died in `loading`) once they have made no progress for 30 minutes and their workload is proven down by `directWorkloadProvenDown`; a younger row, a workload not proven down, or any nonterminal operation row leaves them untouched.",
+      "This gate fails closed: `evict:` operation rows have no boot recovery yet, so a crashed eviction's nonterminal `evict:` row keeps the outside-a-switch sweep off on every later boot until that row is terminalized. Meanwhile clear a stuck interrupted row by hand with an operator stop or `llamactl residency force-unload <workload> --reason <text> --yes --node <name>`, which an `evict:` row does not block.",
       '`[residency] lifecycle boot recovery {"failed":N,"recordFailures":M}`',
       "#736",
     ]) {
