@@ -238,6 +238,17 @@ export function createPerfBenchSuiteRunner(
       },
       ev.defaultProvenanceReaders(),
     );
+    // The CLI bench-schedule runner cannot build per-engine host readers
+    // because the engine process lives on a remote node behind the agent
+    // gateway — the CLI host's own /proc and GTT counters are not the
+    // remote engine's, so `readers` stays unset. Instead pass perf-suite
+    // readerReasons that name the node and model so every unavailable
+    // metric explains why.
+    const readerReasons = {
+      io: `disk I/O for ${req.rel} lives on node '${req.node}'; scheduled suites reach it through the agent gateway, which exposes no engine process counters`,
+      peakRss: `peak RSS (VmHWM) for ${req.rel} lives on node '${req.node}'; scheduled suites reach it through the agent gateway, which exposes no engine process counters`,
+      gtt: `GTT usage for ${req.rel} lives on node '${req.node}'; scheduled suites reach it through the agent gateway, which exposes no engine process counters`,
+    };
     const db = (overrides.openDb ?? defaultOpenDb)();
     try {
       await (overrides.runPerfSuite ?? ev.runPerfSuite)(db, {
@@ -247,6 +258,7 @@ export function createPerfBenchSuiteRunner(
         client,
         clock,
         provenance,
+        readerReasons,
       });
     } finally {
       db.close();

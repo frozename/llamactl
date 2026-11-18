@@ -276,6 +276,42 @@ describe("bench schedule suite dispatch (CLI-side runner)", () => {
     expect(storedLastError("router-suite")).toBeNull();
   });
 
+  test("kick passes gateway reader reasons naming the node for io, peak RSS and GTT", async () => {
+    // Kills: createPerfBenchSuiteRunner dropping readerReasons, or
+    //        injecting the CLI host's own readers for a remote engine.
+    writeStore();
+    const endpoint = fakeEndpoint("http://fake-engine.invalid");
+    const run = fakeRunPerfSuite();
+    setSeams({
+      perfSuite: {
+        runPerfSuite: run.runPerfSuite,
+        resolveEndpoint: endpoint.resolveEndpoint,
+        openDb: () => new Database(":memory:"),
+      },
+    });
+
+    const { result } = await captureProcessStreams(() => runBenchSchedule(["kick"]));
+
+    expect(result).toBe(0);
+    expect(run.calls).toHaveLength(1);
+    const opts = runOpts(run.calls[0]);
+    const readerReasons: unknown = opts["readerReasons"];
+    expect(isPlainRecord(readerReasons)).toBe(true);
+    if (!isPlainRecord(readerReasons)) {
+      throw new Error("expected runPerfSuite opts.readerReasons to be a record");
+    }
+    for (const key of ["io", "peakRss", "gtt"] as const) {
+      const reason: unknown = readerReasons[key];
+      expect(typeof reason).toBe("string");
+      const text = typeof reason === "string" ? reason : "";
+      expect(text.trim()).not.toBe("");
+      expect(text).toContain("node 'fake-node'");
+      expect(text).toContain("org/repo/m.gguf");
+      expect(text).toMatch(/agent gateway/i);
+    }
+    expect(opts["readers"]).toBeUndefined();
+  });
+
   test("kick records provenance fields it cannot determine as unavailable with reasons, not guesses", async () => {
     writeStore();
     const endpoint = fakeEndpoint("http://fake-engine.invalid");

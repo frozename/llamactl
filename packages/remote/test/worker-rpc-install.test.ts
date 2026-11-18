@@ -694,7 +694,9 @@ describe("I1: clean install", () => {
       // `llamactl residency force-unload` operator forced unload; #284 (DF-11,
       // this PR): `llamactl residency apply-profile` operator profile-switch
       // mutation and `llamactl residency cancel-operation` (#284 DF-11, this
-      // PR) operator cancel of an in-flight switch. None is the worker RPC.
+      // PR) operator cancel of an in-flight switch. #520 (this PR):
+      // `llamactl residency release-session` operator per-session release.
+      // None is the worker RPC.
       "residency",
       "runbook",
       "server",

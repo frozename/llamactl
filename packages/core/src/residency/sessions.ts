@@ -33,6 +33,13 @@
  * stale release carrying an old generation cannot drop a newer
  * acquisition of the same session ID.
  *
+ * releaseSession is the explicit per-session release (#520): it drops one
+ * session binding by id — an idle binding outright, an in-flight binding
+ * only under force — deleting the entry so a stale release(id, gen) or
+ * cancelAcquire turns into a no-op and a re-acquire gets a new generation.
+ * A forced release drops only the binding: the DF-05 leases of in-flight
+ * requests stay held, so LeasesActive still fences their stop.
+ *
  * A request refused by DF-05 admission (Draining/Unloaded) undoes its
  * session acquire (cancelAcquire) instead of releasing it, so a refused
  * request neither binds a fresh session nor extends an idle binding.
@@ -67,6 +74,17 @@ export type SessionSnapshot = {
   sessions: SessionSnapshotRow[];
 };
 
+export type SessionReleaseResult =
+  | { ok: true; sessionId: string; workload: string; refs: number; forced: boolean }
+  | { ok: false; reason: "SessionNotFound"; sessionId: string }
+  | {
+      ok: false;
+      reason: "SessionInFlight";
+      sessionId: string;
+      workload: string;
+      refs: number;
+    };
+
 export interface SessionRefcounts {
   acquire(sessionId: string, workload: string): SessionAcquireResult;
   /**
@@ -93,6 +111,14 @@ export interface SessionRefcounts {
   checkUnload(workload: string, opts?: { force?: boolean }): SessionUnloadCheck;
   /** Return a snapshot of all live sessions, sorted by last activity. */
   snapshot?(): SessionSnapshot;
+  /**
+   * Release one session binding by id. An idle binding (refs === 0) drops and
+   * deletes the entry; an in-flight binding (refs > 0) refuses. With
+   * `force: true`, in-flight bindings are dropped and the entry is deleted
+   * (refs reported at the point of force). Returns SessionNotFound when the
+   * session is not live (unknown or pruned). Throws when sessionId is empty.
+   */
+  releaseSession?(sessionId: string, opts?: { force?: boolean }): SessionReleaseResult;
 }
 
 // ── Process-wide registry seam ──────────────────────────────────────────
@@ -230,6 +256,51 @@ export function createSessionRefcounts(opts: SessionRefcountOptions): SessionRef
       prune();
       return buildSessionSnapshot(sessions, now(), idleTimeoutMs);
     },
+    releaseSession(sessionId, opts): SessionReleaseResult {
+      requireNonEmpty(sessionId, "sessionId");
+      prune();
+      return releaseSessionFrom(sessions, sessionId, opts, now);
+    },
+  };
+}
+
+function releaseSessionFrom(
+  sessions: Map<string, SessionEntry>,
+  sessionId: string,
+  opts: { force?: boolean } | undefined,
+  now: () => number,
+): SessionReleaseResult {
+  const entry = sessions.get(sessionId);
+  if (entry === undefined) {
+    return { ok: false, reason: "SessionNotFound", sessionId };
+  }
+  if (entry.refs > 0) {
+    if (opts?.force !== true) {
+      return {
+        ok: false,
+        reason: "SessionInFlight",
+        sessionId,
+        workload: entry.workload,
+        refs: entry.refs,
+      };
+    }
+    const refsBefore = entry.refs;
+    sessions.delete(sessionId);
+    return {
+      ok: true,
+      sessionId,
+      workload: entry.workload,
+      refs: refsBefore,
+      forced: true,
+    };
+  }
+  sessions.delete(sessionId);
+  return {
+    ok: true,
+    sessionId,
+    workload: entry.workload,
+    refs: 0,
+    forced: false,
   };
 }
 
