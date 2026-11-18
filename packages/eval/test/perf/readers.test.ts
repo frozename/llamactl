@@ -133,16 +133,19 @@ describe("createPerfHostReaders", () => {
   });
 
   test("unknown pid yields no readers with an engine-PID reason", () => {
-    // Kills: falling back to /proc/self when the engine pid is unknown.
-    const { readers, reasons } = hostReaders()({
-      pid: null,
-      platform: "linux",
-      readFile: () => Promise.resolve(""),
-    });
-    expect(readers.io).toBeUndefined();
-    expect(readers.peakRss).toBeUndefined();
-    expect(reasons.io).toMatch(/engine PID unknown/i);
-    expect(reasons.peakRss).toMatch(/engine PID unknown/i);
+    // Kills: falling back to /proc/self when the engine pid is unknown,
+    //        and accepting 0, negative or non-integer pids as valid.
+    for (const pid of [null, 0, -1, 1.5]) {
+      const { readers, reasons } = hostReaders()({
+        pid,
+        platform: "linux",
+        readFile: () => Promise.resolve(""),
+      });
+      expect(readers.io).toBeUndefined();
+      expect(readers.peakRss).toBeUndefined();
+      expect(reasons.io).toMatch(/engine PID unknown/i);
+      expect(reasons.peakRss).toMatch(/engine PID unknown/i);
+    }
   });
 
   test("a failed read yields null, not a throw and not 0", async () => {
