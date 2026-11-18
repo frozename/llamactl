@@ -334,6 +334,9 @@ export type ResidencyStatusIdleEvictionRow = {
   activeLeaseCount: number;
   dueAtMs: number | null;
   due: boolean;
+  // Present only while the row is idle-due but held short of eviction because
+  // its resident has not yet been ready for `minResidencySeconds` (Part of #519).
+  minResidencyUntilMs?: number;
 };
 
 // Advisory read-out of NodeRun `idleEvictSeconds` (Part of #519): for each
@@ -460,11 +463,18 @@ export function buildResidencyLifecycleSnapshot(
 // One advisory row per ready lifecycle record, or null when the record is not a
 // ready row with a finite timestamp. Idle-since is the later of ready-since and
 // lease activity, clamped to nowMs; a registry without `lastActivityAtMs`, or
-// one returning a non-finite value, yields null time fields and due false.
+// one returning a non-finite value, yields null time fields and due false. When
+// `minResidencySeconds` is positive it also holds an idle-due resident: the
+// ready-since (clamped to nowMs, as the planner does, Part of #735) plus the
+// window is `minResidencyUntilMs`, and `dueAtMs` becomes the later of the idle
+// window and that hold, so a resident still inside its minimum residency reports
+// due false with the hold field set. With 0 or absent min-residency the row is
+// byte-identical to the idle-only computation.
 function idleEvictionRowFor(
   row: ResidencyStateRecord,
   registry: ResidencyStatusLeaseRegistry,
   idleEvictSeconds: number,
+  minResidencySeconds: number,
   nowMs: number,
 ): ResidencyStatusIdleEvictionRow | null {
   if (row.state !== "ready" || !Number.isFinite(row.updatedAtMs)) {
@@ -486,7 +496,13 @@ function idleEvictionRowFor(
     };
   }
   const idleSinceMs = Math.min(nowMs, Math.max(row.updatedAtMs, lastActivityMs));
-  const dueAtMs = idleSinceMs + idleEvictSeconds * 1000;
+  const idleDueAtMs = idleSinceMs + idleEvictSeconds * 1000;
+  const minResidencyUntilMs =
+    minResidencySeconds > 0 ? Math.min(nowMs, row.updatedAtMs) + minResidencySeconds * 1000 : 0;
+  const dueAtMs =
+    minResidencySeconds > 0 ? Math.max(idleDueAtMs, minResidencyUntilMs) : idleDueAtMs;
+  const idleDue = snap.phase === "open" && activeLeaseCount === 0 && nowMs >= idleDueAtMs;
+  const held = minResidencySeconds > 0 && idleDue && nowMs < minResidencyUntilMs;
   return {
     workload: row.model,
     readySinceMs: row.updatedAtMs,
@@ -494,7 +510,8 @@ function idleEvictionRowFor(
     idleSinceMs,
     activeLeaseCount,
     dueAtMs,
-    due: snap.phase === "open" && activeLeaseCount === 0 && nowMs >= dueAtMs,
+    due: idleDue && !held,
+    ...(held ? { minResidencyUntilMs } : {}),
   };
 }
 
@@ -508,9 +525,13 @@ function idleEvictionRowFor(
 // one row per `ready` lifecycle row with a finite updatedAtMs, sorted by model,
 // reporting when it went idle (the later of ready-since and lease activity,
 // clamped to nowMs) and whether it is due. due requires the lease phase to be
-// open with no active leases and nowMs at or past dueAtMs. A registry without
-// `lastActivityAtMs`, or one returning a non-finite value, yields null time
-// fields and due false. This module never evicts, sleeps or schedules anything.
+// open with no active leases and nowMs at or past dueAtMs. `minResidencySeconds`
+// is resolved alongside `idleEvictSeconds` and holds an idle-due resident short
+// of eviction: while the resident has not yet been ready for the window the row
+// reports due false with `minResidencyUntilMs` set and a `dueAtMs` that is the
+// later of the idle window and the hold. A registry without `lastActivityAtMs`,
+// or one returning a non-finite value, yields null time fields and due false.
+// This module never evicts, sleeps or schedules anything.
 export function buildIdleEvictionSnapshot(input: {
   residency: ResidencyPolicy | null | undefined;
   servingNode: string | null;
@@ -520,11 +541,16 @@ export function buildIdleEvictionSnapshot(input: {
   nowMs: number;
 }): ResidencyStatusIdleEviction {
   const scope = "serving-process" as const;
-  const idleEvictSeconds = resolveResidencyPolicy(
-    input.residency?.idleEvictSeconds === undefined
-      ? null
-      : { idleEvictSeconds: input.residency.idleEvictSeconds },
-  ).idleEvictSeconds;
+  const policy = resolveResidencyPolicy({
+    ...(input.residency?.idleEvictSeconds !== undefined
+      ? { idleEvictSeconds: input.residency.idleEvictSeconds }
+      : {}),
+    ...(input.residency?.minResidencySeconds !== undefined
+      ? { minResidencySeconds: input.residency.minResidencySeconds }
+      : {}),
+  });
+  const idleEvictSeconds = policy.idleEvictSeconds;
+  const minResidencySeconds = policy.minResidencySeconds;
   if (idleEvictSeconds === 0) {
     return { status: "disabled", scope };
   }
@@ -547,7 +573,13 @@ export function buildIdleEvictionSnapshot(input: {
   }
   const workloads: ResidencyStatusIdleEvictionRow[] = [];
   for (const row of store.lifecycle ?? []) {
-    const mapped = idleEvictionRowFor(row, registry, idleEvictSeconds, input.nowMs);
+    const mapped = idleEvictionRowFor(
+      row,
+      registry,
+      idleEvictSeconds,
+      minResidencySeconds,
+      input.nowMs,
+    );
     if (mapped !== null) {
       workloads.push(mapped);
     }
@@ -563,7 +595,11 @@ export function buildIdleEvictionSnapshot(input: {
 // that runs the fenced ModelRun/ModelHost stop. `targets: null` reports
 // would-evict/NotDue without stopping; a target array restricts a wet run to
 // those workloads, iterated in snapshot order with each stop awaited before the
-// next. A wet target is re-checked against the live registry immediately before
+// next. A row the snapshot marks not-due but still inside its minimum residency
+// (its `minResidencyUntilMs` is set) is skipped `MinResidency` rather than
+// `NotDue`, in both the dry run and a targeted wet run, so a resident that is
+// idle-due but has not yet been ready for `minResidencySeconds` is never
+// stopped. A wet target is re-checked against the live registry immediately before
 // its stop: any activity the snapshot could not see (a fresh lease, a drain, a
 // clock that has not reached dueAtMs, a registry that cannot confirm idle) reports
 // NoLongerIdle instead of stopping. A refused stop reports StopRefused with the
@@ -650,7 +686,10 @@ async function idleEvictTarget(
   },
 ): Promise<IdleEvictRow> {
   if (!row.due) {
-    return idleEvictSkipped(row.workload, "NotDue");
+    return idleEvictSkipped(
+      row.workload,
+      row.minResidencyUntilMs !== undefined ? "MinResidency" : "NotDue",
+    );
   }
   if (!idleStillConfirmed(row, input.leaseRegistry, input.nowMs)) {
     return idleEvictSkipped(row.workload, "NoLongerIdle");
@@ -689,7 +728,12 @@ export async function runIdleEviction(input: {
       dryRun: true,
       windowSeconds: snapshot.idleEvictSeconds,
       rows: snapshot.workloads.map((row) =>
-        row.due ? idleEvictWouldEvict(row) : idleEvictSkipped(row.workload, "NotDue"),
+        row.due
+          ? idleEvictWouldEvict(row)
+          : idleEvictSkipped(
+              row.workload,
+              row.minResidencyUntilMs !== undefined ? "MinResidency" : "NotDue",
+            ),
       ),
     };
   }
