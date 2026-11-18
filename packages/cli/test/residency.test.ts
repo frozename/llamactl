@@ -1067,3 +1067,165 @@ describe("residency sessions surface", () => {
     expect(stdout).toContain("bound sessions (refs, idle-timeout expiry)");
   });
 });
+
+describe("residency release-session", () => {
+  const RELEASE_OK = {
+    ok: true,
+    sessionId: "s1",
+    workload: "wl-a",
+    refs: 0,
+    forced: false,
+    source: "operator",
+  };
+
+  function releaseArgs(extra: string[] = []): string[] {
+    return ["release-session", "s1", "--node", "gpu1", "--yes", ...extra];
+  }
+
+  test("#520 L1: refuses without --yes before any RPC", async () => {
+    const residency = await loadResidency();
+    const rec = setupResidency({});
+
+    const { result: code, stderr } = await withCapturedIo(() =>
+      residency.runResidency(["release-session", "s1", "--node", "gpu1"], rec.deps),
+    );
+
+    expect(code).toBe(1);
+    expect(stderr).toContain("residency release-session: refusing without --yes");
+    expect(rec.calls).toEqual([]);
+  });
+
+  test("#520 L2: requires a session id", async () => {
+    const residency = await loadResidency();
+    const rec = setupResidency({});
+
+    const { result: code, stderr } = await withCapturedIo(() =>
+      residency.runResidency(["release-session", "--node", "gpu1", "--yes"], rec.deps),
+    );
+
+    expect(code).toBe(1);
+    expect(stderr).toContain(
+      "residency release-session: a session id is required: llamactl residency release-session <sessionId> --yes",
+    );
+    expect(rec.calls).toEqual([]);
+  });
+
+  test("#520 L3: --yes mutates residencyReleaseSession once and renders the release", async () => {
+    const residency = await loadResidency();
+    const rec = setupResidency({
+      "residencyReleaseSession.mutate": (): Promise<unknown> => Promise.resolve(RELEASE_OK),
+    });
+
+    const {
+      result: code,
+      stdout,
+      stderr,
+    } = await withCapturedIo(() => residency.runResidency(releaseArgs(), rec.deps));
+
+    expect(code).toBe(0);
+    expect(stderr).toBe("");
+    expect(rec.nodes).toEqual(["gpu1"]);
+    expect(rec.calls).toEqual(["residencyReleaseSession.mutate"]);
+    expect(rec.inputs).toEqual([{ sessionId: "s1", force: false, confirm: true }]);
+    expect(stdout).toBe("Released session s1 (workload wl-a, 0 in-flight request(s))\n");
+  });
+
+  test("#520 L4: --force forwards force and renders the forced line", async () => {
+    const residency = await loadResidency();
+    const rec = setupResidency({
+      "residencyReleaseSession.mutate": (): Promise<unknown> =>
+        Promise.resolve({ ...RELEASE_OK, refs: 2, forced: true }),
+    });
+
+    const {
+      result: code,
+      stdout,
+      stderr,
+    } = await withCapturedIo(() => residency.runResidency(releaseArgs(["--force"]), rec.deps));
+
+    expect(code).toBe(0);
+    expect(stderr).toBe("");
+    expect(rec.calls).toEqual(["residencyReleaseSession.mutate"]);
+    expect(rec.inputs).toEqual([{ sessionId: "s1", force: true, confirm: true }]);
+    expect(stdout).toBe(
+      "Released session s1 (workload wl-a, 2 in-flight request(s), forced; their leases stay held)\n",
+    );
+  });
+
+  test("#520 L5: typed refusals exit 1 with the reason on stderr", async () => {
+    const residency = await loadResidency();
+    const rec = setupResidency({
+      "residencyReleaseSession.mutate": (): Promise<unknown> =>
+        Promise.resolve({
+          ok: false,
+          reason: "SessionInFlight",
+          sessionId: "s1",
+          workload: "wl-a",
+          refs: 1,
+          detail: "D",
+        }),
+    });
+
+    const { result: code, stderr } = await withCapturedIo(() =>
+      residency.runResidency(releaseArgs(), rec.deps),
+    );
+
+    expect(code).toBe(1);
+    expect(stderr).toContain("residency release-session: SessionInFlight: D");
+  });
+
+  test("#520 L6: --json prints the mutate result and exits by ok", async () => {
+    const residency = await loadResidency();
+
+    const okRec = setupResidency({
+      "residencyReleaseSession.mutate": (): Promise<unknown> => Promise.resolve(RELEASE_OK),
+    });
+    const okRun = await withCapturedIo(() =>
+      residency.runResidency(releaseArgs(["--json"]), okRec.deps),
+    );
+    expect(okRun.result).toBe(0);
+    expect(okRun.stderr).toBe("");
+    expect(okRun.stdout).toBe(`${JSON.stringify(RELEASE_OK, null, 2)}\n`);
+
+    const refused = { ok: false, reason: "SessionNotFound", sessionId: "zz", detail: "gone" };
+    const badRec = setupResidency({
+      "residencyReleaseSession.mutate": (): Promise<unknown> => Promise.resolve(refused),
+    });
+    const badRun = await withCapturedIo(() =>
+      residency.runResidency(releaseArgs(["--json"]), badRec.deps),
+    );
+    expect(badRun.result).toBe(1);
+    expect(badRun.stdout).toBe(`${JSON.stringify(refused, null, 2)}\n`);
+  });
+
+  test("#520 L7: refuses --node all", async () => {
+    const residency = await loadResidency();
+    const rec = setupResidency({});
+
+    const { result: code, stderr } = await withCapturedIo(() =>
+      residency.runResidency(["release-session", "s1", "--node", "all", "--yes"], rec.deps),
+    );
+
+    expect(code).toBe(1);
+    expect(stderr).toContain(
+      "residency release-session: --node all is not supported; name one node",
+    );
+    expect(rec.calls).toEqual([]);
+  });
+
+  test("#520 L8: help names the release-session subcommand", async () => {
+    const residency = await loadResidency();
+    const rec = setupResidency({});
+
+    const {
+      result: code,
+      stdout,
+      stderr,
+    } = await withCapturedIo(() => residency.runResidency(["release-session", "--help"], rec.deps));
+
+    expect(code).toBe(0);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("release-session <sessionId> --yes [--force]");
+    expect(rec.calls).toEqual([]);
+  });
+});
