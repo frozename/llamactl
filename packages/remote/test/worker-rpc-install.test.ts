@@ -688,6 +688,8 @@ describe("I1: clean install", () => {
       "plan",
       "project",
       "pull",
+      // Part of #518 (this PR): llamactl qualification list/status/pin/unpin/freeze/unfreeze operator overrides of the node-local qualification-overrides.tsv; not the worker RPC.
+      "qualification",
       "rag",
       "recommendations",
       // #614 (#284): read-only `llamactl residency status`; #278 (DF-05):

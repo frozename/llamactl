@@ -348,9 +348,10 @@ falls through to the untouched `proposePromotion` decision.
 `autoApply` with a writer applies. `health` stays the runtime overlay in
 `effectiveStage` and never triggers a persisted demotion here.
 
-Effective status at this commit: `effectiveStage`, `proposePromotion`,
+Effective status at this commit: `llamactl qualification status` and `list`
+call `effectiveStage` (see Overrides). `proposePromotion`,
 `applyPromotion`, `proposeDemotion`, `evaluateQualification` and
-`applyQualification` are library-only — no router, catalog, lifecycle or
+`applyQualification` remain library-only — no router, catalog, lifecycle or
 CLI code calls them. Consumers are pending E-14 / #284. The overrides
 reader has one consumer: routing applies its pin rows (see Overrides).
 
@@ -381,6 +382,18 @@ effect: it leaves the stage unchanged, and only the library-only
 `proposePromotion` check (`frozen`) consults it. The OpenAI proxy's
 `/v1/models` cache signature stats the same resolved file, so an edit
 takes effect without a workload restart.
+
+Operator surface (Part of #518): `llamactl qualification` writes these rows
+through `writeQualificationOverride` and `deleteQualificationOverride`,
+always to the file `qualificationOverridesFileFor` resolves — the same file
+`catalogQualificationStages` and the `/v1/models` cache signature read.
+`llamactl qualification pin <rel> <stage> --reason` writes a pin row;
+`llamactl qualification unpin <rel>` removes it. `llamactl qualification
+freeze <rel> --reason` writes a stageless freeze row; `llamactl
+qualification unfreeze <rel>` removes it. `llamactl qualification status
+<rel>` and `llamactl qualification list` report the catalog stage, the pin,
+the freeze, `effectiveStage` and the routing stage. The overrides file is
+node-local, so every subcommand refuses a non-local `--node` target.
 
 ## Exclusive-window runbook
 
