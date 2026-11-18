@@ -96,6 +96,10 @@ export interface ReconcileNodeReport {
   /** #283: set with action "unchanged" when the node reports the host sleeping
    *  or sleep-pending; the pass did not restart, apply or wake it. */
   observed?: "sleeping";
+  /** #519: set with action "unchanged" when a durable idle hold
+   *  (llamactl.io/idle-evicted-at) suppressed this pass: the stamped instant the
+   *  operator evicted the resident. */
+  idleEvictedAt?: string;
 }
 
 export interface ReconcileResult {
@@ -346,7 +350,10 @@ export async function reconcileOnce(opts: ReconcileOptions): Promise<ReconcileRe
 
 type EvictionDecision = { kind: "none" } | { kind: "hold"; evictedBy: string } | { kind: "stale" };
 
-type EvictionGuard = { kind: "hold"; evictedBy: string } | { kind: "apply"; manifest: ModelRun };
+type EvictionGuard =
+  | { kind: "idle-hold"; idleEvictedAt: string }
+  | { kind: "hold"; evictedBy: string }
+  | { kind: "apply"; manifest: ModelRun };
 
 /** Clear a stale eviction marker from disk; fall back to the snapshot. */
 function clearStaleEvictionMarker(manifest: ModelRun, dir: string): ModelRun {
@@ -392,6 +399,78 @@ function clearStaleHostEvictionMarker(manifest: ModelHostManifest, dir: string):
     // pass-start snapshot and let a later pass retry the removal.
     return manifest;
   }
+}
+
+/**
+ * #519: the durable idle hold annotation key. A wet `residency evict-idle`
+ * stamps it (the ISO instant of the eviction) on each candidate before the
+ * fenced stop, so the reconciler cannot restart the workload mid-stop; the
+ * reconciler skips any enabled manifest carrying it. The hold is kept only on
+ * a verified eviction (the row comes back `evicted`), which keeps the workload
+ * down until `release-idle`. It is cleared when the stop is refused, fails, or
+ * never ran (no longer idle, a disabled/failed procedure, or a thrown call),
+ * so the reconciler resumes managing that workload.
+ */
+export const IDLE_EVICTED_AT_ANNOTATION = "llamactl.io/idle-evicted-at";
+
+/**
+ * Stamp the idle hold on an existing manifest (#519). Preserves every other
+ * annotation, returns the manifest kind stamped, or null when no ModelRun or
+ * ModelHost with that name exists (creating no file).
+ */
+export function stampIdleEvictionHold(
+  name: string,
+  atIso: string,
+  dir: string = defaultWorkloadsDir(),
+): "ModelRun" | "ModelHost" | null {
+  let manifest: ModelRun | ModelHostManifest;
+  try {
+    manifest = loadWorkloadByNameAny(name, dir);
+  } catch {
+    return null;
+  }
+  const annotations = { ...manifest.metadata.annotations, [IDLE_EVICTED_AT_ANNOTATION]: atIso };
+  if (manifest.kind === "ModelRun") {
+    saveWorkload({ ...manifest, metadata: { ...manifest.metadata, annotations } }, dir);
+    return "ModelRun";
+  }
+  saveModelHost({ ...manifest, metadata: { ...manifest.metadata, annotations } }, dir);
+  return "ModelHost";
+}
+
+/**
+ * Clear the idle hold from an existing manifest (#519). Distinguishes cleared,
+ * not-held (manifest present without the stamp) and missing (no manifest). On a
+ * ModelHost the annotation key is dropped entirely when nothing remains.
+ */
+export function clearIdleEvictionHold(
+  name: string,
+  dir: string = defaultWorkloadsDir(),
+): "cleared" | "not-held" | "missing" {
+  let manifest: ModelRun | ModelHostManifest;
+  try {
+    manifest = loadWorkloadByNameAny(name, dir);
+  } catch {
+    return "missing";
+  }
+  const annotations = manifest.metadata.annotations ?? {};
+  if (!(IDLE_EVICTED_AT_ANNOTATION in annotations)) {
+    return "not-held";
+  }
+  const { [IDLE_EVICTED_AT_ANNOTATION]: _dropped, ...rest } = annotations;
+  if (manifest.kind === "ModelRun") {
+    saveWorkload({ ...manifest, metadata: { ...manifest.metadata, annotations: rest } }, dir);
+    return "cleared";
+  }
+  const { annotations: _all, ...metadata } = manifest.metadata;
+  saveModelHost(
+    {
+      ...manifest,
+      metadata: Object.keys(rest).length > 0 ? { ...metadata, annotations: rest } : metadata,
+    },
+    dir,
+  );
+  return "cleared";
 }
 
 /**
@@ -441,11 +520,21 @@ function evictionGuard(manifest: ModelRun, opts: ReconcileOptions, dir: string):
   // eviction) or a failed replacement's rollback can clear one, so the
   // guard decides on the on-disk annotations, not the snapshot.
   let annotations = manifest.metadata.annotations;
+  let enabled = manifest.spec.enabled;
   try {
     const fresh = loadWorkloadByName(name, dir);
-    if (fresh.metadata.name === name) annotations = fresh.metadata.annotations;
+    if (fresh.metadata.name === name) {
+      annotations = fresh.metadata.annotations;
+      enabled = fresh.spec.enabled;
+    }
   } catch {
     // Vanished or unreadable mid-pass; the snapshot still decides.
+  }
+  // #519: an enabled manifest carrying the durable idle hold is kept down ahead
+  // of the DF-02 check; a disabled one falls through to the ordinary disable path.
+  const idleEvictedAt = enabled ? annotations[IDLE_EVICTED_AT_ANNOTATION] : undefined;
+  if (idleEvictedAt !== undefined) {
+    return { kind: "idle-hold", idleEvictedAt };
   }
   const decision = evictionDecision(name, annotations, opts, dir);
   if (decision.kind === "hold") return { kind: "hold", evictedBy: decision.evictedBy };
@@ -477,6 +566,16 @@ async function reconcileModelRun(
       return 0;
     }
     const guard = evictionGuard(manifest, opts, dir);
+    if (guard.kind === "idle-hold") {
+      reports.push({
+        kind: "ModelRun",
+        name,
+        node: spec.node,
+        action: "unchanged",
+        idleEvictedAt: guard.idleEvictedAt,
+      });
+      return 0;
+    }
     if (guard.kind === "hold") {
       reports.push({
         kind: "ModelRun",
@@ -868,6 +967,22 @@ async function reconcileModelHost(
   // access and no apply; a lapsed marker is cleared on disk and the pass
   // continues with the cleared manifest.
   const name = current.metadata.name;
+  // #519: an enabled host carrying the durable idle hold is kept down with no
+  // client access, no apply and no conditions write; a disabled host keeps its
+  // ordinary disable path. Checked before the DF-02 decision.
+  const hostIdleHold = current.spec.enabled
+    ? current.metadata.annotations?.[IDLE_EVICTED_AT_ANNOTATION]
+    : undefined;
+  if (hostIdleHold !== undefined) {
+    reports.push({
+      kind: "ModelHost",
+      name,
+      node: current.spec.node,
+      action: "unchanged",
+      idleEvictedAt: hostIdleHold,
+    });
+    return 0;
+  }
   const decision = evictionDecision(name, current.metadata.annotations, opts, dir);
   if (decision.kind === "hold") {
     reports.push({

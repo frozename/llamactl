@@ -496,7 +496,7 @@ describe("docs/dynamic-residency.md (#285)", () => {
       safetyMarginRatio: "enforced",
       minResidencySeconds: "enforced",
       switchCooldownSeconds: "enforced",
-      idleEvictSeconds: "status-only",
+      idleEvictSeconds: "operator-only",
       residentPreference: "ranking-only",
       coldLoadPenaltyMs: "ranking-only",
     } as const;
@@ -519,9 +519,13 @@ describe("docs/dynamic-residency.md (#285)", () => {
     expect(section).toContain("residencyPolicy");
     expect(section).toContain("idleEviction");
     expect(section).toContain("advisory");
+    expect(section).toContain("residency evict-idle");
+    expect(section).toContain("idle-evicted-at");
+    expect(section).toContain("release-idle");
+    expect(section).toContain("NoLongerIdle");
     const preambleLine = section.split("\n").find((line) => line.includes("status column")) ?? "";
     const statusSentence = /[^.]*status column[^.]*\./.exec(preambleLine)?.[0] ?? "";
-    expect(statusSentence).toContain("status-only");
+    expect(statusSentence).toContain("operator-only");
     expect(section).not.toContain("no runtime effect until");
     expect(section).toContain("createSharedUnifiedProxy");
     expect(section).toContain("LLAMACTL_NODE_NAME");

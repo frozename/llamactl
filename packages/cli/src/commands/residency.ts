@@ -14,12 +14,19 @@
 // deliberate mutation here: it drives a workload through
 // the lease fence, revoking active leases and auditing any revocation as an
 // operator override (an idle unload, with no leases held, writes no lease audit
-// row). release-session (#520) is the per-session counterpart: it drops one
-// session binding by id through residencyReleaseSession — never draining,
-// revoking leases or stopping the workload — so the DF-05 leases of in-flight
-// requests stay held and LeasesActive still fences their stop.
+// row). evict-idle is the operator-initiated idle eviction (#519): dry by
+// default (one residencyEvictIdle query), and with --yes it stamps the durable
+// idle hold on each targeted LOCAL manifest before the fenced stop, keeping it
+// only on rows that come back evicted; release-idle clears that hold. Workloads
+// with no local manifest are never targeted (there is nothing to hold).
+// release-session (#520) is the per-session counterpart of force-unload: it
+// drops one session binding by id through residencyReleaseSession — never
+// draining, revoking leases or stopping the workload — so the DF-05 leases of
+// in-flight requests stay held and LeasesActive still fences their stop.
 
 import type { NodeClient, noderunSchema } from "@llamactl/remote";
+
+import { workloadReconciler, workloadStore } from "@llamactl/remote";
 
 import { getGlobals, getNodeClientByName } from "../dispatcher.js";
 import { required } from "../required.js";
@@ -33,6 +40,8 @@ Subcommands:
   apply-profile --node <name> --to <profile> [--from <profile>] [--json]   Dry-run by default: plan and report the profile switch without touching the store. Add --execute --yes to run the switch for real (stops and starts workloads, records an operation).
   cancel-operation <operationId> --yes [--node <name>] [--json]   Request an abort of an in-flight profile switch started by apply-profile --execute --yes in the process serving <node> (an agent serve process); it stops before its next step boundary. Process-local: a switch run in-process by a local-endpoint CLI invocation cannot be cancelled from another CLI invocation. Requires --yes.
   force-unload <workload> --reason <text> --yes [--node <name>] [--json]   Operator override of the stop fence: revoke active leases (audited as an operator override), then stop the workload. Destructive; requires --yes. Reports the released session ids when a session registry is installed.
+  evict-idle --node <name> [--yes] [--json]   Operator-initiated idle eviction: dry by default (one residencyEvictIdle query reports the window and which residents would be evicted). Add --yes to stamp the durable idle hold on each targeted local manifest and run the fenced stop, keeping the hold only on workloads that come back evicted. Workloads with no local manifest are reported skipped (NotHeld) and never targeted. Destructive with --yes.
+  release-idle <workload> [--json]   Clear the durable idle hold from a local ModelRun or ModelHost manifest so the reconciler may start it again. Reports whether the hold was released, absent, or the manifest does not exist.
   release-session <sessionId> --yes [--force] [--node <name>] [--json]   Operator release of one session binding by id: drops only the binding; the DF-05 leases of in-flight requests stay held, so LeasesActive still fences their stop. An idle binding drops; an in-flight binding refuses unless --force is given. Requires --yes.
 
 Example:
@@ -41,6 +50,8 @@ Example:
   llamactl residency apply-profile --node <name> --to <profile> [--from <profile>] [--execute --yes]
   llamactl residency cancel-operation <operationId> --yes
   llamactl residency force-unload <workload> --reason <text> --yes
+  llamactl residency evict-idle --node <name> [--yes] [--json]
+  llamactl residency release-idle <workload> [--json]
   llamactl residency release-session <sessionId> --yes [--node <name>]
 `;
 
@@ -60,12 +71,32 @@ export type ResidencyCancelOperationView = Awaited<
   ReturnType<NodeClient["residencyCancelOperation"]["mutate"]>
 >;
 
+// #519 evict-idle view: tRPC strips `| undefined` from optional row fields, so
+// the schema-authored result is not assignable to the client view under
+// exactOptionalPropertyTypes. Re-declare the widened row/result locally; the
+// runtime payload always carries the same keys.
+type EvictIdleKind = "modelrun" | "modelhost";
+type EvictIdleRow = {
+  workload: string;
+  action: "would-evict" | "evicted" | "skipped";
+  kind?: EvictIdleKind;
+  idleSinceMs?: number;
+  dueAtMs?: number;
+  reason?: string;
+  detail?: string;
+};
+type EvictIdleResult =
+  | { ok: false; reason: string }
+  | { ok: true; dryRun: boolean; windowSeconds: number; rows: EvictIdleRow[] };
+
 export type ResidencyReleaseSessionView = Awaited<
   ReturnType<NodeClient["residencyReleaseSession"]["mutate"]>
 >;
 
 export interface ResidencyDeps {
   getNodeClientByName?: typeof getNodeClientByName;
+  workloadsDir?: string;
+  now?: () => Date;
 }
 
 // tRPC output typing strips `| undefined` from optional properties, so the
@@ -831,6 +862,323 @@ async function runResidencyForceUnload(args: string[], deps: ResidencyDeps): Pro
   }
 }
 
+interface EvictIdleFlags {
+  yes: boolean;
+  json: boolean;
+  node: string | undefined;
+}
+
+function applyEvictIdleArg(args: string[], i: number, flags: EvictIdleFlags): ArgStep {
+  const arg = required(args[i]);
+  if (arg === "--json") {
+    flags.json = true;
+    return { consumed: 1 };
+  }
+  if (arg === "--yes") {
+    flags.yes = true;
+    return { consumed: 1 };
+  }
+  if (arg === "-h" || arg === "--help") {
+    process.stdout.write(USAGE);
+    return { exit: 0 };
+  }
+  if (arg === "--node") {
+    const next = args[i + 1];
+    if (next === undefined) {
+      process.stderr.write("residency evict-idle: --node requires a value\n");
+      return { exit: 1 };
+    }
+    flags.node = next;
+    return { consumed: 2 };
+  }
+  if (arg.startsWith("--node=")) {
+    flags.node = arg.slice("--node=".length);
+    return { consumed: 1 };
+  }
+  process.stderr.write(`residency evict-idle: unknown argument ${arg}\n`);
+  return { exit: 1 };
+}
+
+function parseEvictIdleArgs(args: string[]): EvictIdleFlags | { exit: number } {
+  const flags: EvictIdleFlags = { yes: false, json: false, node: undefined };
+  let i = 0;
+  while (i < args.length) {
+    const step = applyEvictIdleArg(args, i, flags);
+    if ("exit" in step) return step;
+    i += step.consumed;
+  }
+  return flags;
+}
+
+function localManifestKind(name: string, dir: string): EvictIdleKind | null {
+  try {
+    return workloadStore.loadWorkloadByNameAny(name, dir).kind === "ModelHost"
+      ? "modelhost"
+      : "modelrun";
+  } catch {
+    return null;
+  }
+}
+
+function notHeldRow(workload: string, dir: string): EvictIdleRow {
+  return {
+    workload,
+    action: "skipped",
+    reason: "NotHeld",
+    detail: `no ModelRun or ModelHost manifest named ${workload} in ${dir}; run evict-idle where the controller's store lives`,
+  };
+}
+
+function renderEvictIdleRow(row: EvictIdleRow): string {
+  const cols = [row.workload];
+  if (row.action === "skipped") {
+    cols.push("skipped");
+    if (row.reason !== undefined) cols.push(row.reason);
+    if (row.detail !== undefined) cols.push(row.detail);
+  } else {
+    cols.push(row.action);
+    if (row.kind !== undefined) cols.push(row.kind);
+  }
+  return `  ${cols.join("  ")}`;
+}
+
+function renderEvictIdle(
+  dryRun: boolean,
+  windowSeconds: number,
+  rows: readonly EvictIdleRow[],
+): string {
+  const head = dryRun
+    ? `Idle eviction (dry run): window ${String(windowSeconds)}s`
+    : `Idle eviction: window ${String(windowSeconds)}s`;
+  const lines = [head];
+  if (rows.length === 0) {
+    lines.push("  no ready workloads");
+  } else {
+    for (const row of rows) lines.push(renderEvictIdleRow(row));
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+type EvictCandidate = { workload: string; kind: EvictIdleKind };
+
+// Split the dry rows into local targets (a manifest the controller's store can
+// hold) and NotHeld rows (no local manifest, so eviction cannot take). The
+// display rows keep would-evict rows verbatim and substitute NotHeld.
+function classifyEvictRows(
+  rows: readonly EvictIdleRow[],
+  dir: string,
+): { display: EvictIdleRow[]; notHeld: EvictIdleRow[]; candidates: EvictCandidate[] } {
+  const display: EvictIdleRow[] = [];
+  const notHeld: EvictIdleRow[] = [];
+  const candidates: EvictCandidate[] = [];
+  for (const row of rows) {
+    if (row.action !== "would-evict") {
+      display.push(row);
+      continue;
+    }
+    const kind = localManifestKind(row.workload, dir);
+    if (kind === null) {
+      const skipped = notHeldRow(row.workload, dir);
+      notHeld.push(skipped);
+      display.push(skipped);
+      continue;
+    }
+    candidates.push({ workload: row.workload, kind });
+    display.push(row);
+  }
+  return { display, notHeld, candidates };
+}
+
+function emitEvictView(
+  json: boolean,
+  dryRun: boolean,
+  windowSeconds: number,
+  rows: readonly EvictIdleRow[],
+): void {
+  if (json) {
+    process.stdout.write(`${JSON.stringify({ ok: true, dryRun, windowSeconds, rows }, null, 2)}\n`);
+    return;
+  }
+  process.stdout.write(renderEvictIdle(dryRun, windowSeconds, rows));
+}
+
+function stampEvictHolds(
+  candidates: readonly EvictCandidate[],
+  stampIso: string,
+  dir: string,
+): string[] {
+  const stamped: string[] = [];
+  for (const candidate of candidates) {
+    if (workloadReconciler.stampIdleEvictionHold(candidate.workload, stampIso, dir) !== null) {
+      stamped.push(candidate.workload);
+    }
+  }
+  return stamped;
+}
+
+function clearEvictHolds(workloads: readonly string[], dir: string): void {
+  for (const workload of workloads) workloadReconciler.clearIdleEvictionHold(workload, dir);
+}
+
+// Keep the hold only on rows that came back evicted; a skipped/refused/failed
+// stop means the workload still runs, so its stamp is rolled back.
+function keepOnlyEvictedHolds(
+  candidates: readonly EvictCandidate[],
+  rows: readonly EvictIdleRow[],
+  dir: string,
+): void {
+  const byWorkload = new Map(rows.map((row) => [row.workload, row] as const));
+  for (const candidate of candidates) {
+    if (byWorkload.get(candidate.workload)?.action !== "evicted") {
+      workloadReconciler.clearIdleEvictionHold(candidate.workload, dir);
+    }
+  }
+}
+
+async function runWetEvict(
+  client: NodeClient,
+  node: string,
+  dir: string,
+  stampIso: string,
+  candidates: readonly EvictCandidate[],
+  notHeld: readonly EvictIdleRow[],
+  json: boolean,
+): Promise<number> {
+  const stamped = stampEvictHolds(candidates, stampIso, dir);
+  let wet: EvictIdleResult;
+  try {
+    wet = await client.residencyEvictIdle.mutate({
+      node,
+      targets: candidates.map((candidate) => ({
+        workload: candidate.workload,
+        kind: candidate.kind,
+      })),
+    });
+  } catch (err) {
+    clearEvictHolds(stamped, dir);
+    process.stderr.write(`residency evict-idle: ${(err as Error).message}\n`);
+    return 1;
+  }
+  if (!wet.ok) {
+    clearEvictHolds(stamped, dir);
+    process.stderr.write(`residency evict-idle: ${wet.reason}\n`);
+    return 1;
+  }
+  keepOnlyEvictedHolds(candidates, wet.rows, dir);
+  emitEvictView(json, false, wet.windowSeconds, [...wet.rows, ...notHeld]);
+  return wet.rows.some((row) => row.reason === "StopFailed") ? 1 : 0;
+}
+
+async function runResidencyEvictIdle(args: string[], deps: ResidencyDeps): Promise<number> {
+  const parsed = parseEvictIdleArgs(args);
+  if ("exit" in parsed) return parsed.exit;
+
+  const node = parsed.node ?? getGlobals().nodeName ?? "";
+  if (node === "") {
+    process.stderr.write(`residency evict-idle: --node <name> is required\n${USAGE}`);
+    return 1;
+  }
+  if (node === "all") {
+    process.stderr.write("residency evict-idle: --node all is not supported; name one node\n");
+    return 1;
+  }
+  const dir = deps.workloadsDir ?? workloadStore.defaultWorkloadsDir();
+  const now = deps.now ?? ((): Date => new Date());
+  const client = (deps.getNodeClientByName ?? getNodeClientByName)(node);
+
+  let dry: EvictIdleResult;
+  try {
+    dry = await withNodeQueryDeadline(node, () => client.residencyEvictIdle.mutate({ node }));
+  } catch (err) {
+    process.stderr.write(`residency evict-idle: ${(err as Error).message}\n`);
+    return 1;
+  }
+  if (!dry.ok) {
+    process.stderr.write(`residency evict-idle: ${dry.reason}\n`);
+    return 1;
+  }
+
+  const { display, notHeld, candidates } = classifyEvictRows(dry.rows, dir);
+  if (!parsed.yes || candidates.length === 0) {
+    emitEvictView(parsed.json, true, dry.windowSeconds, display);
+    return 0;
+  }
+  return await runWetEvict(
+    client,
+    node,
+    dir,
+    now().toISOString(),
+    candidates,
+    notHeld,
+    parsed.json,
+  );
+}
+
+interface ReleaseIdleFlags {
+  workload: string | undefined;
+  json: boolean;
+}
+
+function applyReleaseIdleArg(args: string[], i: number, flags: ReleaseIdleFlags): ArgStep {
+  const arg = required(args[i]);
+  if (arg === "--json") {
+    flags.json = true;
+    return { consumed: 1 };
+  }
+  if (arg === "-h" || arg === "--help") {
+    process.stdout.write(USAGE);
+    return { exit: 0 };
+  }
+  if (arg.startsWith("--")) {
+    process.stderr.write(`residency release-idle: unknown argument ${arg}\n`);
+    return { exit: 1 };
+  }
+  flags.workload ??= arg;
+  return { consumed: 1 };
+}
+
+function parseReleaseIdleArgs(args: string[]): ReleaseIdleFlags | { exit: number } {
+  const flags: ReleaseIdleFlags = { workload: undefined, json: false };
+  let i = 0;
+  while (i < args.length) {
+    const step = applyReleaseIdleArg(args, i, flags);
+    if ("exit" in step) return step;
+    i += step.consumed;
+  }
+  return flags;
+}
+
+function renderReleaseIdle(workload: string, outcome: "cleared" | "not-held"): string {
+  return outcome === "cleared"
+    ? `released idle hold on ${workload}\n`
+    : `${workload} has no idle hold\n`;
+}
+
+function runResidencyReleaseIdle(args: string[], deps: ResidencyDeps): number {
+  const parsed = parseReleaseIdleArgs(args);
+  if ("exit" in parsed) return parsed.exit;
+
+  const workload = parsed.workload ?? "";
+  if (workload === "") {
+    process.stderr.write(
+      `residency release-idle: a workload is required: llamactl residency release-idle <workload>\n${USAGE}`,
+    );
+    return 1;
+  }
+  const dir = deps.workloadsDir ?? workloadStore.defaultWorkloadsDir();
+  const outcome = workloadReconciler.clearIdleEvictionHold(workload, dir);
+  if (outcome === "missing") {
+    process.stderr.write(`residency release-idle: no ModelRun or ModelHost named ${workload}\n`);
+    return 1;
+  }
+  if (parsed.json) {
+    process.stdout.write(`${JSON.stringify({ workload, outcome }, null, 2)}\n`);
+    return 0;
+  }
+  process.stdout.write(renderReleaseIdle(workload, outcome));
+  return 0;
+}
+
 interface ReleaseSessionFlags {
   sessionId: string | undefined;
   force: boolean;
@@ -980,6 +1328,12 @@ export async function runResidency(args: string[], deps: ResidencyDeps = {}): Pr
   }
   if (sub === "force-unload") {
     return await runResidencyForceUnload(rest, deps);
+  }
+  if (sub === "evict-idle") {
+    return await runResidencyEvictIdle(rest, deps);
+  }
+  if (sub === "release-idle") {
+    return runResidencyReleaseIdle(rest, deps);
   }
   if (sub === "release-session") {
     return await runResidencyReleaseSession(rest, deps);
