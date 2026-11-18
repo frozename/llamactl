@@ -64,6 +64,7 @@ const SECTIONS = {
   ownership: sectionRe("desired-state ownership"),
   leases: sectionRe("lease registry, drain and force-unload"),
   statusPlanApply: sectionRe("status, plan and apply-profile"),
+  operatorIdleEviction: sectionRe("operator-initiated idle eviction"),
   cancelRecovery: sectionRe("cancel and crash recovery"),
   admission: sectionRe("request admission"),
   declared: sectionRe("declared models and readiness"),
@@ -1415,5 +1416,33 @@ describe("docs/dynamic-residency.md (#285)", () => {
       "if (Array.isArray(released) && released.length > 0) {",
       '`Forced unload: released ${String(released.length)} session(s): ${released.join(", ")}`,',
     ]);
+  });
+
+  // Part of #519
+  // Kills: dropping the min-residency idle-eviction claims from the knobs
+  // table or the Operator-initiated idle eviction section, or removing the
+  // minResidencySeconds read from idleEvictionRowFor.
+  test("case 21: minResidencySeconds holds an idle-due resident from evict-idle (#519)", () => {
+    const knobs = sectionBody(SECTIONS.knobs) ?? "";
+    const minRow = knobs.split("\n").find((line) => line.includes("| `minResidencySeconds`")) ?? "";
+    expect(minRow).toContain(
+      "holds an idle-due resident in `residency evict-idle` as `MinResidency`",
+    );
+    const idleEvict = flat(sectionBody(sectionRe("operator-initiated idle eviction")) ?? "");
+    expect(idleEvict).toContain(
+      "skipped `MinResidency` until it has been ready for `minResidencySeconds`",
+    );
+    const procSrc = readOrEmpty(join(REPO, "packages/remote/src/residency/procedures.ts"));
+    expect(enclosingBody(procSrc, "function idleEvictionRowFor(")).toContain("minResidencySeconds");
+  });
+
+  // Part of #520
+  // Kills: shipping the session-aware idle-eviction skip reasons without
+  // documenting them in the operator runbook section.
+  test("case 22: idle eviction session skip reasons (#520)", () => {
+    const section = sectionBody(SECTIONS.operatorIdleEviction) ?? "";
+    for (const needle of ["skipped `SessionsActive`", "`SessionsUnknown`"]) {
+      expect(section, needle).toContain(needle);
+    }
   });
 });
