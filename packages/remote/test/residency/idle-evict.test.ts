@@ -8,6 +8,7 @@
 // error.
 import type { ResidencySnapshot } from "@llamactl/core/residency/leases";
 
+import { createSessionRefcounts } from "@llamactl/core/residency/sessions";
 import { describe, expect, test } from "bun:test";
 
 import * as procedures from "../../src/residency/procedures.js";
@@ -60,9 +61,18 @@ type LeaseRegistryProbe = {
   lastActivityAtMs?: (workload: string) => number;
 };
 
+type IdleEvictSessionCheck =
+  | { ok: true; released: string[] }
+  | { ok: false; reason: "SessionActive"; sessions: string[] };
+
+type IdleEvictSessions = {
+  checkUnload(workload: string, opts?: { force?: boolean }): IdleEvictSessionCheck;
+};
+
 type RunIdleEviction = (input: {
   idleEviction: IdleEvictionSnapshot;
   leaseRegistry: LeaseRegistryProbe | null;
+  sessions?: IdleEvictSessions | null;
   nowMs: number;
   targets: readonly IdleEvictTarget[] | null;
   stop: (workload: string, kind: IdleEvictKind) => Promise<IdleEvictStopResult>;
@@ -146,6 +156,37 @@ function recordingStop(
   return async (workload, kind) => {
     calls.push([workload, kind]);
     return typeof outcome === "function" ? await outcome(workload, kind) : outcome;
+  };
+}
+
+type SessionCheckCall = {
+  workload: string;
+  opts: { force?: boolean } | undefined;
+};
+
+type FakeSessionRegistry = IdleEvictSessions & { calls: SessionCheckCall[] };
+
+// `bound` maps a workload to the session ids checkUnload reports as active;
+// a workload absent from the map checks clean. `throws` makes every call
+// raise "registry down" so fail-open paths are observable.
+function fakeSessions(
+  bound: Record<string, string[]>,
+  opts?: { throws?: boolean },
+): FakeSessionRegistry {
+  const calls: SessionCheckCall[] = [];
+  return {
+    calls,
+    checkUnload(workload, checkOpts): IdleEvictSessionCheck {
+      calls.push({ workload, opts: checkOpts });
+      if (opts?.throws === true) {
+        throw new Error("registry down");
+      }
+      const ids = bound[workload] ?? [];
+      if (ids.length === 0) {
+        return { ok: true, released: [] };
+      }
+      return { ok: false, reason: "SessionActive", sessions: ids };
+    },
   };
 }
 
@@ -535,5 +576,215 @@ describe("runIdleEviction (#519)", () => {
     ]);
     expect(rowFor(result, "w1")?.action).toBe("evicted");
     expect(rowFor(result, "w2")?.action).toBe("evicted");
+  });
+});
+
+describe("#520 session-bound workloads", () => {
+  test("E13: a dry run skips a session-bound due row as SessionsActive", async () => {
+    // kills: the dry-run branch ignoring the session registry (row.due -> would-evict unconditionally).
+    const run = requireRun();
+    const stops: [string, IdleEvictKind][] = [];
+    const sessions = fakeSessions({ w1: ["s1"] });
+    const result = await run({
+      idleEviction: availableSnapshot([snapshotRow("w1"), snapshotRow("w2")]),
+      leaseRegistry: fakeRegistry(),
+      nowMs: NOW_MS,
+      targets: null,
+      stop: recordingStop(stops),
+      sessions,
+    });
+    expect(result).toMatchObject({ ok: true, dryRun: true });
+    expect(rowFor(result, "w1")).toMatchObject({
+      workload: "w1",
+      action: "skipped",
+      reason: "SessionsActive",
+      detail: "s1",
+    });
+    expect(rowFor(result, "w2")).toMatchObject({ workload: "w2", action: "would-evict" });
+    expect(stops).toEqual([]);
+  });
+
+  test("E14: a wet run skips a session-bound row before stopping and never forces the release", async () => {
+    // kills: the wet pre-stop path not consulting sessions; also checkUnload called with { force: true } (which would release s1).
+    const run = requireRun();
+    const sessions = createSessionRefcounts({ idleTimeoutMs: 60_000, now: () => 0 });
+    const acquired = sessions.acquire("s1", "w1");
+    expect(acquired.ok).toBe(true);
+    if (acquired.ok) {
+      sessions.release("s1", acquired.generation);
+    }
+    const stops: [string, IdleEvictKind][] = [];
+    const result = await run({
+      idleEviction: availableSnapshot([snapshotRow("w1"), snapshotRow("w2")]),
+      leaseRegistry: fakeRegistry(),
+      nowMs: NOW_MS,
+      targets: [
+        { workload: "w1", kind: "modelrun" },
+        { workload: "w2", kind: "modelrun" },
+      ],
+      stop: recordingStop(stops),
+      sessions,
+    });
+    expect(stops).toEqual([["w2", "modelrun"]]);
+    expect(rowFor(result, "w1")).toMatchObject({
+      workload: "w1",
+      action: "skipped",
+      reason: "SessionsActive",
+      detail: "s1",
+    });
+    expect(rowFor(result, "w2")).toMatchObject({ workload: "w2", action: "evicted" });
+    expect(sessions.activeSessions("w1")).toEqual(["s1"]);
+  });
+
+  test("E15: a throwing session registry reports SessionsUnknown, never fail-open", async () => {
+    // kills: a catch that treats a throwing registry as no sessions (fail-open).
+    const run = requireRun();
+    const sessions = fakeSessions({ w1: ["s1"] }, { throws: true });
+
+    const dryStops: [string, IdleEvictKind][] = [];
+    const dry = await run({
+      idleEviction: availableSnapshot([snapshotRow("w1")]),
+      leaseRegistry: fakeRegistry(),
+      nowMs: NOW_MS,
+      targets: null,
+      stop: recordingStop(dryStops),
+      sessions,
+    });
+    expect(rowFor(dry, "w1")).toMatchObject({
+      workload: "w1",
+      action: "skipped",
+      reason: "SessionsUnknown",
+    });
+    expect(rowFor(dry, "w1")?.detail ?? "").toContain("registry down");
+
+    const wetStops: [string, IdleEvictKind][] = [];
+    const wet = await run({
+      idleEviction: availableSnapshot([snapshotRow("w1")]),
+      leaseRegistry: fakeRegistry(),
+      nowMs: NOW_MS,
+      targets: [{ workload: "w1", kind: "modelrun" }],
+      stop: recordingStop(wetStops),
+      sessions,
+    });
+    expect(wetStops).toEqual([]);
+    expect(rowFor(wet, "w1")).toMatchObject({
+      workload: "w1",
+      action: "skipped",
+      reason: "SessionsUnknown",
+    });
+  });
+
+  test("E16: the session check runs once per wet target and is never forced", async () => {
+    // kills: forcing the session check or checking twice.
+    const run = requireRun();
+    const sessions = fakeSessions({ w1: ["s1"] });
+    const stops: [string, IdleEvictKind][] = [];
+    await run({
+      idleEviction: availableSnapshot([snapshotRow("w1")]),
+      leaseRegistry: fakeRegistry(),
+      nowMs: NOW_MS,
+      targets: [{ workload: "w1", kind: "modelrun" }],
+      stop: recordingStop(stops),
+      sessions,
+    });
+    expect(sessions.calls.length).toBe(1);
+    expect(sessions.calls[0]?.workload).toBe("w1");
+    expect(sessions.calls[0]?.opts?.force).not.toBe(true);
+  });
+
+  test("G1: a not-due session-bound row reports NotDue and never consults sessions", async () => {
+    // kills: moving the session check ahead of NotDue.
+    const run = requireRun();
+    const sessions = fakeSessions({ w1: ["s1"] });
+    const dryStops: [string, IdleEvictKind][] = [];
+    const dry = await run({
+      idleEviction: availableSnapshot([snapshotRow("w1", { due: false, dueAtMs: 120_000 })]),
+      leaseRegistry: fakeRegistry(),
+      nowMs: NOW_MS,
+      targets: null,
+      stop: recordingStop(dryStops),
+      sessions,
+    });
+    expect(rowFor(dry, "w1")).toMatchObject({
+      workload: "w1",
+      action: "skipped",
+      reason: "NotDue",
+    });
+
+    const wetStops: [string, IdleEvictKind][] = [];
+    const wet = await run({
+      idleEviction: availableSnapshot([snapshotRow("w1", { due: false, dueAtMs: 120_000 })]),
+      leaseRegistry: fakeRegistry(),
+      nowMs: NOW_MS,
+      targets: [{ workload: "w1", kind: "modelrun" }],
+      stop: recordingStop(wetStops),
+      sessions,
+    });
+    expect(rowFor(wet, "w1")).toMatchObject({
+      workload: "w1",
+      action: "skipped",
+      reason: "NotDue",
+    });
+    expect(wetStops).toEqual([]);
+    expect(sessions.calls).toEqual([]);
+  });
+
+  test("G2: sessions null or omitted leaves the #519 rows unchanged", async () => {
+    // kills: requiring the sessions argument, or letting its absence change rows.
+    const run = requireRun();
+    const variants: readonly { sessions?: null }[] = [{ sessions: null }, {}];
+    for (const extra of variants) {
+      const dryStops: [string, IdleEvictKind][] = [];
+      const dry = await run({
+        idleEviction: availableSnapshot([snapshotRow("w1")]),
+        leaseRegistry: fakeRegistry(),
+        nowMs: NOW_MS,
+        targets: null,
+        stop: recordingStop(dryStops),
+        ...extra,
+      });
+      expect(rowFor(dry, "w1")).toMatchObject({ workload: "w1", action: "would-evict" });
+      expect(dryStops).toEqual([]);
+
+      const wetStops: [string, IdleEvictKind][] = [];
+      const wet = await run({
+        idleEviction: availableSnapshot([snapshotRow("w1")]),
+        leaseRegistry: fakeRegistry(),
+        nowMs: NOW_MS,
+        targets: [{ workload: "w1", kind: "modelrun" }],
+        stop: recordingStop(wetStops),
+        ...extra,
+      });
+      expect(wetStops).toEqual([["w1", "modelrun"]]);
+      expect(rowFor(wet, "w1")).toMatchObject({ workload: "w1", action: "evicted" });
+    }
+  });
+
+  test("G3: an expired idle session binding does not hold the eviction", async () => {
+    // kills: holding on a session the registry would prune as expired.
+    const run = requireRun();
+    let registryNowMs = 0;
+    const sessions = createSessionRefcounts({
+      idleTimeoutMs: 60_000,
+      now: () => registryNowMs,
+    });
+    const acquired = sessions.acquire("s1", "w1");
+    expect(acquired.ok).toBe(true);
+    if (acquired.ok) {
+      sessions.release("s1", acquired.generation);
+    }
+    registryNowMs = 61_000;
+
+    const stops: [string, IdleEvictKind][] = [];
+    const result = await run({
+      idleEviction: availableSnapshot([snapshotRow("w1")]),
+      leaseRegistry: fakeRegistry(),
+      nowMs: NOW_MS,
+      targets: [{ workload: "w1", kind: "modelrun" }],
+      stop: recordingStop(stops),
+      sessions,
+    });
+    expect(stops).toEqual([["w1", "modelrun"]]);
+    expect(rowFor(result, "w1")).toMatchObject({ workload: "w1", action: "evicted" });
   });
 });

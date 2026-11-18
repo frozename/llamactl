@@ -64,6 +64,7 @@ const SECTIONS = {
   ownership: sectionRe("desired-state ownership"),
   leases: sectionRe("lease registry, drain and force-unload"),
   statusPlanApply: sectionRe("status, plan and apply-profile"),
+  operatorIdleEviction: sectionRe("operator-initiated idle eviction"),
   cancelRecovery: sectionRe("cancel and crash recovery"),
   admission: sectionRe("request admission"),
   declared: sectionRe("declared models and readiness"),
@@ -1418,5 +1419,15 @@ describe("docs/dynamic-residency.md (#285)", () => {
     );
     const procSrc = readOrEmpty(join(REPO, "packages/remote/src/residency/procedures.ts"));
     expect(enclosingBody(procSrc, "function idleEvictionRowFor(")).toContain("minResidencySeconds");
+  });
+
+  // Part of #520
+  // Kills: shipping the session-aware idle-eviction skip reasons without
+  // documenting them in the operator runbook section.
+  test("case 22: idle eviction session skip reasons (#520)", () => {
+    const section = sectionBody(SECTIONS.operatorIdleEviction) ?? "";
+    for (const needle of ["skipped `SessionsActive`", "`SessionsUnknown`"]) {
+      expect(section, needle).toContain(needle);
+    }
   });
 });

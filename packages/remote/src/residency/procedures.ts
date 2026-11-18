@@ -48,11 +48,17 @@
 // `runIdleEviction` (Part of #519) is the operator-triggered mutation built on
 // that same snapshot: a dry run reports would-evict rows, a targeted run re-checks
 // against the live registry and stops each target through the fenced stop the
-// router supplies. It evicts only on an explicit call, never on a timer.
+// router supplies. It evicts only on an explicit call, never on a timer. The dry
+// run and the pre-stop re-check also consult the installed session registry
+// (#520): a workload bound to a session, idle within its timeout or in flight,
+// is skipped SessionsActive with the ids as detail; a throwing registry is
+// SessionsUnknown (fail closed); sessions are never released. The node stop
+// fence's own SessionsActive check (stop-fence.ts) remains as defence in depth
+// for a session that arrives between the re-check and the drain.
 import type { ResidencyAuditEntry, ResidencyLeases } from "@llamactl/core/residency/leases";
 import type { ResidencyState } from "@llamactl/core/residency/lifecycle";
 import type { PlannerWorkload, ProfileSwitchPlan } from "@llamactl/core/residency/planner";
-import type { SessionRefcounts } from "@llamactl/core/residency/sessions";
+import type { SessionRefcounts, SessionUnloadCheck } from "@llamactl/core/residency/sessions";
 
 import { resolveResidencyPolicy } from "@llamactl/core/residency/admission";
 import {
@@ -591,19 +597,25 @@ export function buildIdleEvictionSnapshot(input: {
 // Operator-triggered idle eviction (Part of #519). Where the idleEviction status
 // section above is an advisory read-out, this is the mutation entry point. It is
 // pure: the router hands in the idleEviction snapshot it built, the live lease
-// registry (or null), a clock, the targets (null = dry run) and a `stop` closure
-// that runs the fenced ModelRun/ModelHost stop. `targets: null` reports
-// would-evict/NotDue without stopping; a target array restricts a wet run to
-// those workloads, iterated in snapshot order with each stop awaited before the
-// next. A row the snapshot marks not-due but still inside its minimum residency
-// (its `minResidencyUntilMs` is set) is skipped `MinResidency` rather than
-// `NotDue`, in both the dry run and a targeted wet run, so a resident that is
-// idle-due but has not yet been ready for `minResidencySeconds` is never
-// stopped. A wet target is re-checked against the live registry immediately before
+// registry (or null), the installed session registry (or null), a clock, the
+// targets (null = dry run) and a `stop` closure that runs the fenced
+// ModelRun/ModelHost stop. `targets: null` reports would-evict/NotDue without
+// stopping; a target array restricts a wet run to those workloads, iterated in
+// snapshot order with each stop awaited before the next. A row the snapshot
+// marks not-due but still inside its minimum residency (its
+// `minResidencyUntilMs` is set) is skipped `MinResidency` rather than `NotDue`,
+// in both the dry run and a targeted wet run, so a resident that is idle-due
+// but has not yet been ready for `minResidencySeconds` is never stopped. Both
+// the dry run and the wet pre-stop re-check consult the session registry
+// (#520): a bound session, idle within its timeout or in flight, is skipped
+// SessionsActive with the ids as detail, a registry whose checkUnload throws is
+// skipped SessionsUnknown (fail closed), and sessions are never released. A wet
+// target is also re-checked against the live lease registry immediately before
 // its stop: any activity the snapshot could not see (a fresh lease, a drain, a
-// clock that has not reached dueAtMs, a registry that cannot confirm idle) reports
-// NoLongerIdle instead of stopping. A refused stop reports StopRefused with the
-// fence detail; a throwing stop reports StopFailed, and later targets still run.
+// clock that has not reached dueAtMs, a registry that cannot confirm idle)
+// reports NoLongerIdle instead of stopping. A refused stop reports StopRefused
+// with the fence detail; a throwing stop reports StopFailed, and later targets
+// still run.
 export type IdleEvictKind = "modelrun" | "modelhost";
 
 export type IdleEvictTarget = { workload: string; kind: IdleEvictKind };
@@ -629,6 +641,11 @@ export type IdleEvictResult =
 // registry (or fake) without it can never confirm idle and is held.
 type IdleEvictLeaseProbe = Pick<ResidencyLeases, "snapshot" | "lastActivityAtMs">;
 
+// The session-registry surface the dry run and the pre-stop re-check read
+// (#520): checkUnload alone, called without force so a bound session is
+// reported and never released.
+type IdleEvictSessionProbe = Pick<SessionRefcounts, "checkUnload">;
+
 function idleEvictSkipped(workload: string, reason: string, detail?: string): IdleEvictRow {
   return { workload, action: "skipped", reason, ...(detail !== undefined ? { detail } : {}) };
 }
@@ -640,6 +657,34 @@ function idleEvictWouldEvict(row: ResidencyStatusIdleEvictionRow): IdleEvictRow 
     ...(row.idleSinceMs !== null ? { idleSinceMs: row.idleSinceMs } : {}),
     ...(row.dueAtMs !== null ? { dueAtMs: row.dueAtMs } : {}),
   };
+}
+
+// Consults the session registry for one workload (#520). A bound session —
+// idle within its timeout or in flight — holds the row as SessionsActive with
+// the ids as detail; a registry whose checkUnload throws holds it as
+// SessionsUnknown (fail closed). Sessions are never released here: the
+// overrides are `residency release-session` and `residency force-unload`.
+function idleEvictSessionHold(
+  workload: string,
+  sessions: IdleEvictSessionProbe | null | undefined,
+): IdleEvictRow | null {
+  if (sessions === null || sessions === undefined) {
+    return null;
+  }
+  let check: SessionUnloadCheck;
+  try {
+    check = sessions.checkUnload(workload);
+  } catch (err) {
+    return idleEvictSkipped(
+      workload,
+      "SessionsUnknown",
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+  if (!check.ok) {
+    return idleEvictSkipped(workload, "SessionsActive", check.sessions.join(", "));
+  }
+  return null;
 }
 
 // Re-reads the live registry to confirm the row is still idle at `nowMs` before
@@ -681,6 +726,7 @@ async function idleEvictTarget(
   kind: IdleEvictKind,
   input: {
     leaseRegistry: IdleEvictLeaseProbe | null;
+    sessions?: IdleEvictSessionProbe | null;
     nowMs: number;
     stop: (workload: string, kind: IdleEvictKind) => Promise<IdleEvictStopResult>;
   },
@@ -693,6 +739,10 @@ async function idleEvictTarget(
   }
   if (!idleStillConfirmed(row, input.leaseRegistry, input.nowMs)) {
     return idleEvictSkipped(row.workload, "NoLongerIdle");
+  }
+  const sessionHold = idleEvictSessionHold(row.workload, input.sessions);
+  if (sessionHold !== null) {
+    return sessionHold;
   }
   try {
     const outcome = await input.stop(row.workload, kind);
@@ -711,6 +761,7 @@ async function idleEvictTarget(
 export async function runIdleEviction(input: {
   idleEviction: ResidencyStatusIdleEviction;
   leaseRegistry: IdleEvictLeaseProbe | null;
+  sessions?: IdleEvictSessionProbe | null;
   nowMs: number;
   targets: readonly IdleEvictTarget[] | null;
   stop: (workload: string, kind: IdleEvictKind) => Promise<IdleEvictStopResult>;
@@ -729,7 +780,7 @@ export async function runIdleEviction(input: {
       windowSeconds: snapshot.idleEvictSeconds,
       rows: snapshot.workloads.map((row) =>
         row.due
-          ? idleEvictWouldEvict(row)
+          ? (idleEvictSessionHold(row.workload, input.sessions) ?? idleEvictWouldEvict(row))
           : idleEvictSkipped(
               row.workload,
               row.minResidencyUntilMs !== undefined ? "MinResidency" : "NotDue",
@@ -749,6 +800,7 @@ export async function runIdleEviction(input: {
     rows.push(
       await idleEvictTarget(row, kind, {
         leaseRegistry: input.leaseRegistry,
+        sessions: input.sessions ?? null,
         nowMs: input.nowMs,
         stop: input.stop,
       }),
