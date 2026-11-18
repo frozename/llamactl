@@ -1564,8 +1564,15 @@ spec:
     } = await withCapturedIo(() => residency.runResidency(["--help"], rec.deps));
     expect(code).toBe(0);
     expect(stderr).toBe("");
-    expect(stdout).toContain("evict-idle --node <name> [--yes] [--json]");
-    expect(stdout).toContain("release-idle <workload> [--json]");
+    // Pin the subcommand help lines and the example lines separately: the
+    // synopsis text appears in both, so a bare synopsis needle would let either
+    // one be deleted unnoticed.
+    expect(stdout).toContain(
+      "evict-idle --node <name> [--yes] [--json]   Operator-initiated idle eviction",
+    );
+    expect(stdout).toContain("release-idle <workload> [--json]   Clear the durable idle hold");
+    expect(stdout).toContain("llamactl residency evict-idle --node <name> [--yes] [--json]");
+    expect(stdout).toContain("llamactl residency release-idle <workload> [--json]");
   });
 
   test("C11: release-idle clears a held manifest and reports the outcomes", async () => {
