@@ -15,6 +15,7 @@ export * from "./matrix/workloads/tool-call-grammar.js";
 export * from "./perf/client.js";
 export * from "./perf/diff.js";
 export * from "./perf/provenance.js";
+export * from "./perf/readers.js";
 export * from "./perf/runner.js";
 export * from "./perf/suites.js";
 export * from "./report/render-card.js";
