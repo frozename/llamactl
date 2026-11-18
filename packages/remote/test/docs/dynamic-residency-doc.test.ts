@@ -1412,6 +1412,24 @@ describe("docs/dynamic-residency.md (#285)", () => {
     ]);
   });
 
+  // Part of #519
+  // Kills: dropping the min-residency idle-eviction claims from the knobs
+  // table or the Operator-initiated idle eviction section, or removing the
+  // minResidencySeconds read from idleEvictionRowFor.
+  test("case 21: minResidencySeconds holds an idle-due resident from evict-idle (#519)", () => {
+    const knobs = sectionBody(SECTIONS.knobs) ?? "";
+    const minRow = knobs.split("\n").find((line) => line.includes("| `minResidencySeconds`")) ?? "";
+    expect(minRow).toContain(
+      "holds an idle-due resident in `residency evict-idle` as `MinResidency`",
+    );
+    const idleEvict = flat(sectionBody(sectionRe("operator-initiated idle eviction")) ?? "");
+    expect(idleEvict).toContain(
+      "skipped `MinResidency` until it has been ready for `minResidencySeconds`",
+    );
+    const procSrc = readOrEmpty(join(REPO, "packages/remote/src/residency/procedures.ts"));
+    expect(enclosingBody(procSrc, "function idleEvictionRowFor(")).toContain("minResidencySeconds");
+  });
+
   // Part of #522
   // Kills: making --yes optional in the USAGE release-session synopsis, or
   // documenting release-session without --yes; dropping or renaming a
@@ -1423,7 +1441,7 @@ describe("docs/dynamic-residency.md (#285)", () => {
   // changing the success or forced line text, contacting the node before
   // the --yes check, or allowing --node all; adding an MCP tool without
   // updating the doc sentence.
-  test("case 21: operator per-session release-session (#755)", () => {
+  test("case 23: operator per-session release-session (#755)", () => {
     const aff = flat(sectionBody(sectionRe("session affinity")) ?? "");
     const para = flat(
       (sectionBody(sectionRe("session affinity")) ?? "")

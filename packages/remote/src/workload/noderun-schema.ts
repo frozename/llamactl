@@ -58,9 +58,10 @@ export type NodeRunInfraItem = z.infer<typeof NodeRunInfraItemSchema>;
  * and residencyApplyProfile refuse with `MinResidency` while a victim's
  * node-local residency_states row has been `ready` for fewer than that many
  * seconds; 0 disables. `idleEvictSeconds` is
- * status-only: validated, persisted and reported advisory by the residencyStatus
- * idleEviction section (only on the serving node), but no idle-eviction path
- * reads it (the DF-10 sleep driver has no idle trigger), so nothing evicts.
+ * operator-only: validated, persisted and reported advisory by the residencyStatus
+ * idleEviction section (only on the serving node), and acted on only when the
+ * operator runs `residency evict-idle`, which stops a still-idle resident behind
+ * the `llamactl.io/idle-evicted-at` hold; the runtime never evicts on its own.
  * `residentPreference` and `coldLoadPenaltyMs` are ranking-only (Part of
  * #519): rankRouteCandidates (packages/core/src/routing/ranking.ts) applies them
  * through the unified proxy's `residencyPolicy` option. createSharedUnifiedProxy
@@ -72,9 +73,11 @@ export type NodeRunInfraItem = z.infer<typeof NodeRunInfraItemSchema>;
  */
 export const ResidencyPolicySchema = z
   .object({
-    /** status-only: validated and persisted, and reported advisory by the
-     * residencyStatus idleEviction section; no idle-eviction path reads it, so
-     * nothing evicts (Part of #519) */
+    /** operator-only: validated, persisted and reported advisory by the
+     * residencyStatus idleEviction section; acted on only when the operator runs
+     * residency evict-idle, which stops a still-idle resident behind the
+     * llamactl.io/idle-evicted-at hold; the runtime never evicts on its own
+     * (Part of #519) */
     idleEvictSeconds: z.number().int().nonnegative().optional(),
     /** enforced: refuses residencyPlan and residencyApplyProfile with
      *  MinResidency while a victim's ready lifecycle row is younger than this;

@@ -29,6 +29,7 @@ import { runNode } from "./commands/node.js";
 import { runPlan } from "./commands/plan.js";
 import { runProject } from "./commands/project.js";
 import { runPull } from "./commands/pull.js";
+import { runQualification } from "./commands/qualification.js";
 import { runRag } from "./commands/rag.js";
 import { runRecommendations } from "./commands/recommendations.js";
 import { runResidency } from "./commands/residency.js";
@@ -147,6 +148,7 @@ Declarative workloads (Kubernetes-style):
       [--json]                                (policy, budget, store; never wakes a model)
   llamactl residency plan --node <name>       Read-only dry-run profile switch
       --to <profile> [--from <profile>] [--json]  (victims, replacements, budget; never mutates)
+  llamactl qualification <list|status|pin|unpin|freeze|unfreeze>  Node-local qualification pin/freeze overrides
   llamactl enable <workload>                  Flip spec.enabled=true and
                                               re-apply the manifest.
   llamactl disable <workload>                 Flip spec.enabled=false and
@@ -304,6 +306,8 @@ async function main(argv: string[]): Promise<number> {
       return await runWorkload(rest);
     case "residency":
       return await runResidency(rest);
+    case "qualification":
+      return await runQualification(rest);
     case "enable":
       return await runEnable(rest);
     case "disable":
