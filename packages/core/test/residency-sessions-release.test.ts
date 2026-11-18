@@ -54,7 +54,7 @@ test("#520 C1: releaseSession drops an idle binding and frees the workload", () 
   });
   expect(reg.checkUnload("wl-a")).toEqual({ ok: true, released: [] });
   expect(reg.activeSessions("wl-a")).toEqual([]);
-  expect(reg.snapshot?.()?.sessions).toEqual([]);
+  expect(reg.snapshot?.().sessions).toEqual([]);
 });
 
 test("#520 C2: releaseSession frees the affinity binding for a new workload", () => {
@@ -112,7 +112,7 @@ test("#520 C4: force drops an in-flight binding; a stale release stays a no-op",
   expect(rebound).toMatchObject({ ok: true, workload: "wl-b", refs: 1 });
 
   reg.release("s1", generation);
-  const rows = reg.snapshot?.()?.sessions ?? [];
+  const rows = reg.snapshot?.().sessions ?? [];
   expect(rows).toHaveLength(1);
   expect(rows[0]).toMatchObject({
     sessionId: "s1",

@@ -110,14 +110,7 @@ export interface SessionRefcounts {
   activeSessions(workload: string): string[];
   checkUnload(workload: string, opts?: { force?: boolean }): SessionUnloadCheck;
   /** Return a snapshot of all live sessions, sorted by last activity. */
-  // The second signature is unreachable — calls resolve the first — but it
-  // keeps `registry.snapshot?.()` chains nullable to
-  // @typescript-eslint/no-unnecessary-condition, which spares an optional
-  // call only when some signature can return nullish.
-  snapshot?: {
-    (): SessionSnapshot;
-    (): SessionSnapshot | undefined;
-  };
+  snapshot?(): SessionSnapshot;
   /**
    * Release one session binding by id. An idle binding (refs === 0) drops and
    * deletes the entry; an in-flight binding (refs > 0) refuses. With

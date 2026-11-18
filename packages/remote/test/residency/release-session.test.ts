@@ -151,6 +151,23 @@ describe("releaseResidencySession", () => {
     });
   });
 
+  test("#520 H1b: an explicit null registry is Unavailable even when one is installed", async () => {
+    const { releaseResidencySession } = await loadRelease();
+    const reg = createSessionRefcounts({ idleTimeoutMs: 1000, now: () => 0 });
+    bindIdle(reg, "s1", "w1");
+    setSessionRefcountRegistry(reg);
+
+    const result = await releaseResidencySession({ sessionId: "s1", sessions: null });
+
+    expect(result).toEqual({
+      ok: false,
+      reason: "Unavailable",
+      sessionId: "s1",
+      detail: "no session registry installed; nothing to release",
+    });
+    expect(reg.snapshot?.().sessions.map((r) => r.sessionId)).toEqual(["s1"]);
+  });
+
   test("#520 H2: a registry without releaseSession resolves typed Unavailable", async () => {
     const { releaseResidencySession } = await loadRelease();
 
