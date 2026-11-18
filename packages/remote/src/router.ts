@@ -3175,6 +3175,9 @@ export const router = t.router({
   // revokes held leases via the fencing drain token instead of refusing.
   // `confirm: true` is required (z.literal) and the unload is audited as
   // "operator: <reason>". An idle unload (no leases held) writes no audit row.
+  // #517: the engine stop now rides runDirectResidencyStop, so a confirmed
+  // force-unload drives its residency_states row down the fenced walk after
+  // commitUnload; an unconfirmed one keeps the row occupying.
   residencyForceUnload: t.procedure
     .input(
       z.object({
@@ -3193,18 +3196,54 @@ export const router = t.router({
           ? "modelhost"
           : null;
       const registry = getResidencyLeaseRegistry();
+      // The wrapper never refuses a stop: forceUnloadWorkload calls stop() only
+      // after commitUnload, so the engine still stops while the fence drains and
+      // the row is recorded (a store-less node runs unrecorded, never creating
+      // the store). A thrown dep is recorded failed and rethrown here; the
+      // existing try/catch in forceUnloadWorkload maps it to StopFailed. An
+      // unconfirmed stop keeps the row occupying and is logged by the wrapper.
       const stop: ForceUnloadStop =
         kind === "modelhost"
           ? async (): Promise<{ stopped: boolean; detail?: string }> => {
-              const r = await stopModelHost({ key: { name } });
+              const outcome = await runDirectResidencyStop<StopModelHostResult>(
+                name,
+                () => stopModelHost({ key: { name } }),
+                directResidencyOpts(name, undefined),
+              );
+              const r = outcome.ran
+                ? outcome.result
+                : { ok: false, pid: null, error: outcome.detail };
               return {
                 stopped: r.ok,
                 ...(r.error !== undefined ? { detail: r.error } : {}),
               };
             }
-          : async (): Promise<{ stopped: boolean }> => {
-              const r = await serverMod.stopServer({ key: { name } });
-              return { stopped: r.stopped };
+          : async (): Promise<{ stopped: boolean; detail?: string }> => {
+              const outcome = await runDirectResidencyStop<{
+                ok: boolean;
+                error?: string;
+                stop: serverMod.StopServerResult;
+              }>(
+                name,
+                async () => {
+                  const s = await serverMod.stopServer({ key: { name } });
+                  return {
+                    ok: s.stopped,
+                    ...(s.stopped ? {} : { error: "stop did not confirm process removal" }),
+                    stop: s,
+                  };
+                },
+                directModelRunOpts(name),
+              );
+              const stopped = outcome.ran && outcome.result.ok;
+              return stopped
+                ? { stopped }
+                : {
+                    stopped,
+                    ...(outcome.ran && outcome.result.error !== undefined
+                      ? { detail: outcome.result.error }
+                      : {}),
+                  };
             };
       return await forceUnloadWorkload({
         workload: name,
