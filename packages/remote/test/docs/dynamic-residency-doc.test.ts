@@ -329,8 +329,10 @@ describe("docs/dynamic-residency.md (#285)", () => {
     expect(unknownEnv(docVars)).toEqual([]);
   });
 
-  // Kills: renaming `sub === "cancel-operation"` in residency.ts, or adding
-  // `llamactl residency evict-all` to the doc.
+  // Kills: renaming `sub === "cancel-operation"` in residency.ts, adding
+  // `llamactl residency evict-all` to the doc, making --yes optional in the
+  // USAGE release-session synopsis, or documenting release-session without
+  // --yes.
   test("case 3: every llamactl command in code spans is a real verb/subcommand", () => {
     const spans = codeSpans(doc).join("\n");
     for (const command of [
@@ -339,6 +341,7 @@ describe("docs/dynamic-residency.md (#285)", () => {
       "llamactl residency apply-profile",
       "llamactl residency cancel-operation",
       "llamactl residency force-unload",
+      "llamactl residency release-session",
       "llamactl controller serve",
       "llamactl agent serve",
       "llamactl apply -f",
@@ -359,6 +362,7 @@ describe("docs/dynamic-residency.md (#285)", () => {
       ["apply-profile", ["--node", "--to"]],
       ["status", ["--node"]],
       ["force-unload", ["--reason", "--yes"]],
+      ["release-session", ["--yes"]],
     ] as const) {
       for (const flag of flags) {
         expect(required.get(sub) ?? [], `USAGE required flags for ${sub}`).toContain(flag);
@@ -366,7 +370,13 @@ describe("docs/dynamic-residency.md (#285)", () => {
     }
     const shown = new Set(residencyCommands(doc).map((c) => c.sub));
     for (const sub of shown) expect(required.has(sub), `USAGE line for ${sub}`).toBe(true);
-    for (const sub of ["plan", "apply-profile", "cancel-operation", "force-unload"]) {
+    for (const sub of [
+      "plan",
+      "apply-profile",
+      "cancel-operation",
+      "force-unload",
+      "release-session",
+    ]) {
       expect(shown.has(sub), `doc shows residency ${sub}`).toBe(true);
     }
     expect(missingRequiredFlags(doc, required)).toEqual([]);
@@ -1400,5 +1410,146 @@ describe("docs/dynamic-residency.md (#285)", () => {
       "if (Array.isArray(released) && released.length > 0) {",
       '`Forced unload: released ${String(released.length)} session(s): ${released.join(", ")}`,',
     ]);
+  });
+
+  // Part of #522
+  // Kills: making --yes optional in the USAGE release-session synopsis, or
+  // documenting release-session without --yes; dropping or renaming a
+  // ReleaseSessionResult refusal reason without a doc update; making the
+  // release drain, revoke leases or stop a workload; changing the session
+  // id bound, or dropping confirm or force passthrough in the router;
+  // removing the generation guard in release, keeping the entry instead of
+  // deleting it on an idle or forced release, or flipping the force check;
+  // changing the success or forced line text, contacting the node before
+  // the --yes check, or allowing --node all; adding an MCP tool without
+  // updating the doc sentence.
+  test("case 21: operator per-session release-session (#755)", () => {
+    const aff = flat(sectionBody(sectionRe("session affinity")) ?? "");
+    const para = flat(
+      (sectionBody(sectionRe("session affinity")) ?? "")
+        .split(/\n\s*\n/)
+        .find((p) => p.includes("`llamactl residency release-session")) ?? "",
+    );
+    expect(para).not.toBe("");
+    expect(aff).toContain(para);
+
+    const cliSrc = readOrEmpty(RESIDENCY_CLI);
+    const fuSrc = readOrEmpty(join(REPO, "packages/remote/src/residency/force-unload.ts"));
+    const sessSrc = readOrEmpty(join(REPO, "packages/core/src/residency/sessions.ts"));
+    const routerSrc = readOrEmpty(join(REPO, "packages/remote/src/router.ts"));
+    const proxySrc = readOrEmpty(join(REPO, "packages/core/src/openaiProxy.ts"));
+    const mcpSrc = readOrEmpty(join(REPO, "packages/mcp/src/tools/residency.ts"));
+
+    // (1) The #755 paragraph in Session affinity, as full phrases.
+    expectPins(para, "#755", [
+      "To drop one session binding without unloading anything, run `llamactl residency release-session <sessionId> --yes --node <name>` (#755).",
+      "It sends one `residencyReleaseSession` mutation (`packages/remote/src/router.ts`) to the serving process, which calls `releaseResidencySession` (`packages/remote/src/residency/force-unload.ts`); the release never drains, revokes leases or stops a workload.",
+      "The id follows the same bounds as the session header: at most 128 chars matching `[A-Za-z0-9._:-]`.",
+      "An idle binding (refs 0) is dropped.",
+      "A binding with in-flight requests refuses as `SessionInFlight` unless `--force` is given; a forced release drops only the binding, so the DF-05 leases of its in-flight requests stay held and `LeasesActive` still fences their stop.",
+      "A dropped entry is deleted from the registry (`releaseSession` in `packages/core/src/residency/sessions.ts`): the late release of a force-released request is a no-op, and the next request carrying that id binds afresh with a new generation.",
+      'The other refusals are `Unavailable` when no session registry is installed ("no session registry installed; nothing to release") or the registry has no per-session release, `SessionNotFound` for an unknown or idled-out id, and `SessionsUnknown` when the registry throws.',
+      "Without `--yes` the CLI refuses before contacting the node, and `--node all` is refused.",
+      "Success prints `Released session <id> (workload <workload>, <n> in-flight request(s))`, with `, forced; their leases stay held` appended inside the parentheses after a forced release; a refusal prints `residency release-session: <reason>: <detail>` and exits 1.",
+      "No MCP tool exposes the release.",
+    ]);
+
+    // (2) The refusal reasons the doc must name, read from the
+    // ReleaseSessionResult union up to the next export.
+    const typeStart = fuSrc.indexOf("export type ReleaseSessionResult =");
+    const typeSlice = fuSrc.slice(typeStart, fuSrc.indexOf("export function", typeStart));
+    const reasons = [...typeSlice.matchAll(/reason: "([A-Za-z]+)"/g)].map((m) => m[1] ?? "").sort();
+    expect(reasons).toEqual([
+      "SessionInFlight",
+      "SessionNotFound",
+      "SessionsUnknown",
+      "Unavailable",
+    ]);
+
+    // (3) releaseResidencySession maps the registry result and never
+    // drains, revokes leases or stops anything.
+    const releaseBody = enclosingBody(fuSrc, "export function releaseResidencySession(");
+    expectPins(releaseBody, "releaseResidencySession", [
+      'detail: "no session registry installed; nothing to release",',
+      'detail: "the installed session registry does not support per-session release",',
+      'reason: "SessionInFlight",',
+      'reason: "SessionNotFound",',
+      'reason: "SessionsUnknown",',
+      "const result = registry.releaseSession(sessionId, force === true ? { force: true } : undefined);",
+    ]);
+    for (const banned of ["beginDrain", "commitUnload", "cancelDrain", "stop("]) {
+      expect(releaseBody, banned).not.toContain(banned);
+    }
+
+    // (4) The router procedure bounds the id like the session header and
+    // passes force through behind confirm.
+    const routerStart = routerSrc.indexOf("  residencyReleaseSession: t.procedure");
+    const routerSlice =
+      routerStart === -1
+        ? ""
+        : routerSrc.slice(
+            routerStart,
+            routerSrc.indexOf("  serverStart: t.procedure", routerStart),
+          );
+    expectPins(routerSlice, "residencyReleaseSession procedure", [
+      ".max(128)",
+      ".regex(/^[A-Za-z0-9._:-]+$/)",
+      "confirm: z.literal(true),",
+      "releaseResidencySession({ sessionId: input.sessionId, force: input.force === true })",
+    ]);
+
+    // (5) The core registry: generation-guarded release, and per-session
+    // release deleting the entry on idle and forced drops.
+    const releaseFromBody = enclosingBody(sessSrc, "function releaseSessionFrom(");
+    expectPins(releaseFromBody, "releaseSessionFrom", [
+      'reason: "SessionInFlight",',
+      "if (opts?.force !== true) {",
+      "forced: true,",
+      "forced: false,",
+    ]);
+    expect(
+      releaseFromBody.split("sessions.delete(sessionId);").length - 1,
+      "releaseSessionFrom sessions.delete count",
+    ).toBeGreaterThanOrEqual(2);
+    expectPins(
+      enclosingBody(sessSrc, "    release(sessionId, generation): void {"),
+      "session release",
+      [
+        "if (entry === undefined) return;",
+        "if (generation !== undefined && entry.generation !== generation) return;",
+      ],
+    );
+    expectPins(
+      enclosingBody(sessSrc, "    acquire(sessionId, workload): SessionAcquireResult {"),
+      "session acquire",
+      ["const generation = ++nextGeneration;"],
+    );
+    expect(proxySrc).toContain("sessionRegistry.release(sessionId, generation);");
+
+    // (6) The CLI: the --yes and single-node checks run before the node is
+    // contacted, and the output lines match the doc.
+    expectPins(enclosingBody(cliSrc, "function renderReleaseSession("), "renderReleaseSession", [
+      "const inFlight = `${String(r.refs)} in-flight request(s)`;",
+      'const forced = r.forced ? ", forced; their leases stay held" : "";',
+      "return `Released session ${r.sessionId} (workload ${r.workload}, ${inFlight}${forced})\\n`;",
+    ]);
+    const runBody = enclosingBody(cliSrc, "async function runResidencyReleaseSession(");
+    expectPins(runBody, "runResidencyReleaseSession", [
+      '"residency release-session: --node all is not supported; name one node\\n"',
+      "`residency release-session: ${result.reason}: ${result.detail}\\n`",
+      "force: parsed.force,",
+      "confirm: true,",
+    ]);
+    const usageCheck = runBody.indexOf("releaseSessionUsageError(parsed)");
+    const clientCheck = runBody.indexOf("getNodeClientByName");
+    expect(usageCheck, "releaseSessionUsageError call").toBeGreaterThanOrEqual(0);
+    expect(usageCheck, "--yes check before node contact").toBeLessThan(clientCheck);
+    expect(enclosingBody(cliSrc, "function releaseSessionUsageError(")).toContain(
+      "if (!flags.yes) {",
+    );
+
+    // (7) No MCP tool exposes the release.
+    expect(mcpSrc).not.toContain("residencyReleaseSession");
+    expect(mcpSrc).toContain("llamactl.residency.forceUnload");
   });
 });
