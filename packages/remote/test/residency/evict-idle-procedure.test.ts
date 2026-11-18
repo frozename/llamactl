@@ -323,8 +323,9 @@ describe("residencyEvictIdle", () => {
     expect(leases.snapshot("w1").phase).toBe("unloaded");
   });
 
-  test("R4: a live session refuses the stop and the row stays ready", async () => {
-    // kills: bypassing the session checkUnload inside the stop fence.
+  test("R4: a live session refuses the eviction before the stop and the row stays ready", async () => {
+    // kills: bypassing the session checkUnload inside the stop fence; the
+    // router not passing currentSessionRefcounts() to runIdleEviction.
     const sessions = createSessionRefcounts({ idleTimeoutMs: 60_000, now: () => NOW });
     const acquired = sessions.acquire("s1", "w1");
     expect(acquired.ok).toBe(true);
@@ -337,8 +338,12 @@ describe("residencyEvictIdle", () => {
     });
     expect(result.ok).toBe(true);
     const row = rowFor(result, "w1");
-    expect(row).toMatchObject({ workload: "w1", action: "skipped", reason: "StopRefused" });
-    expect(row?.detail ?? "").toContain("SessionsActive");
+    expect(row).toMatchObject({
+      workload: "w1",
+      action: "skipped",
+      reason: "SessionsActive",
+      detail: "s1",
+    });
     expect(readState("w1")?.state).toBe("ready");
     expect(leases.snapshot("w1").phase).toBe("open");
   });
@@ -427,5 +432,47 @@ describe("residencyEvictIdle", () => {
     expect(leases.snapshot("w1").phase).toBe("open");
     expect(readFileSync(pidPath, "utf8").trim()).toBe(String(process.pid));
     expect(readState("w1")?.state).toBe("ready");
+  });
+
+  test("R10: a dry run reports a session-bound row as skipped SessionsActive", async () => {
+    // kills: the router passing `sessions: null`, or omitting it.
+    const sessions = createSessionRefcounts({ idleTimeoutMs: 60_000, now: () => NOW });
+    const acquired = sessions.acquire("s1", "w1");
+    expect(acquired.ok).toBe(true);
+    if (acquired.ok) {
+      sessions.release("s1", acquired.generation);
+    }
+    setSessionRefcountRegistry(sessions);
+
+    const evict = evictIdleCaller();
+    const result = await evict({ node: NODE });
+    expect(result).toMatchObject({ ok: true, dryRun: true });
+    expect(rowFor(result, "w1")).toMatchObject({
+      workload: "w1",
+      action: "skipped",
+      reason: "SessionsActive",
+      detail: "s1",
+    });
+    expect(readState("w1")?.state).toBe("ready");
+    expect(
+      loadWorkloadByName("w1", workloadsDir).metadata.annotations[IDLE_EVICTED_AT],
+    ).toBeUndefined();
+  });
+
+  test("R11: a session bound to another workload leaves w1 would-evict", async () => {
+    // kills: a session check that is not scoped to the targeted workload.
+    const sessions = createSessionRefcounts({ idleTimeoutMs: 60_000, now: () => NOW });
+    const acquired = sessions.acquire("s1", "other");
+    expect(acquired.ok).toBe(true);
+    setSessionRefcountRegistry(sessions);
+
+    const evict = evictIdleCaller();
+    const result = await evict({ node: NODE });
+    expect(result).toMatchObject({ ok: true, dryRun: true });
+    expect(rowFor(result, "w1")).toMatchObject({
+      workload: "w1",
+      action: "would-evict",
+      kind: "modelrun",
+    });
   });
 });
