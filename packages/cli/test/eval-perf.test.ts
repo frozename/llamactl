@@ -384,6 +384,111 @@ test("--pid with a non-loopback --url is refused (kills: removing the loopback g
   expect(run.calls).toHaveLength(0);
 });
 
+test('--pid with a 127.-prefixed DNS name is refused (kills: hostname.startsWith("127.") loopback check)', async () => {
+  const run = fakeRunPerfSuite();
+  perfSeams()({
+    platform: "linux",
+    fetchImpl: fakeEngineFetch(["m"]),
+    readFile: fakeProcFs().readFile,
+    runPerfSuite: run.runPerfSuite,
+  });
+  const dbPath = join(tmp, "perf.sqlite");
+
+  const { result, stderr } = await captureProcessStreams(() =>
+    runEval(
+      perfArgv(dbPath, [
+        "--url",
+        "http://127.evil.example:80",
+        "--engine",
+        "llamacpp",
+        "--model",
+        "m",
+        "--pid",
+        "4242",
+      ]),
+    ),
+  );
+
+  expect(result).toBe(1);
+  expect(stderr).toContain(
+    "eval perf: --pid needs a loopback --url (got 127.evil.example); " +
+      "host counters are read on this machine",
+  );
+  expect(run.calls).toHaveLength(0);
+});
+
+for (const [url, kills] of [
+  ["http://127.1:18080", "rejecting WHATWG-normalized IPv4 shorthand"],
+  ["http://127.0.0.5:18080", "narrowing loopback to 127.0.0.1 only"],
+  ["http://localhost:18080", "dropping the localhost branch"],
+  ["http://[::1]:18080", "dropping the [::1] branch"],
+] as const) {
+  test(`--pid with loopback --url ${url} wires host readers (kills: ${kills})`, async () => {
+    const proc = fakeProcFs();
+    const run = fakeRunPerfSuite();
+    perfSeams()({
+      platform: "linux",
+      fetchImpl: fakeEngineFetch(["m"]),
+      readFile: proc.readFile,
+      probeGtt: () => Promise.resolve(GTT_OK),
+      runPerfSuite: run.runPerfSuite,
+    });
+    const dbPath = join(tmp, "perf.sqlite");
+
+    const { result, stderr } = await captureProcessStreams(() =>
+      runEval(
+        perfArgv(dbPath, ["--url", url, "--engine", "llamacpp", "--model", "m", "--pid", "4242"]),
+      ),
+    );
+
+    expect(stderr).not.toContain("--pid needs a loopback --url");
+    expect(result).toBe(0);
+    expect(run.calls).toHaveLength(1);
+    const opts = runOpts(run.calls[0]);
+    const io = readerFn(opts, "io");
+    expect(typeof io).toBe("function");
+    expect(typeof readerFn(opts, "gtt")).toBe("function");
+  });
+}
+
+test("--hf-revision is recorded verbatim in provenance (kills: dropping the hf_revision spread in buildProvenance)", async () => {
+  const rev = "fedcba9876543210fedcba9876543210fedcba98";
+  const prov = provenanceFakes({});
+  const run = fakeRunPerfSuite();
+  perfSeams()({
+    platform: "darwin",
+    fetchImpl: fakeEngineFetch(["m"]),
+    provenanceReaders: prov.readers,
+    runPerfSuite: run.runPerfSuite,
+  });
+  const dbPath = join(tmp, "perf.sqlite");
+
+  const { result } = await captureProcessStreams(() =>
+    runEval(
+      perfArgv(dbPath, [
+        "--url",
+        LOOPBACK_URL,
+        "--engine",
+        "llamacpp",
+        "--model",
+        "m",
+        "--hf-revision",
+        rev,
+      ]),
+    ),
+  );
+
+  expect(result).toBe(0);
+  expect(run.calls).toHaveLength(1);
+  const provenance = recordField(runOpts(run.calls[0]), "provenance");
+  expect(provenance["hf_revision"]).toBe(rev);
+  const unavailable: unknown = provenance["unavailable"];
+  if (!isPlainRecord(unavailable)) {
+    throw new Error("expected provenance.unavailable to be a record");
+  }
+  expect("hf_revision" in unavailable).toBe(false);
+});
+
 test("non-loopback --url without --pid sets no host readers and names the remote host (kills: reading this host's GTT for a remote engine)", async () => {
   const run = fakeRunPerfSuite();
   perfSeams()({

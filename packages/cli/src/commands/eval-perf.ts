@@ -131,12 +131,13 @@ function loopbackFor(url: string): { hostname: string; loopback: boolean } | nul
   } catch {
     return null;
   }
+  // WHATWG URL parsing normalizes IPv4 shorthand ('127.1' -> '127.0.0.1')
+  // and brackets IPv6 ('[::1]'), so a literal dotted-quad match is the only
+  // 127/8 form left; a prefix match would also accept DNS names such as
+  // '127.evil.example'.
   const hostname = parsed.hostname;
   const loopback =
-    hostname === "localhost" ||
-    hostname === "::1" ||
-    hostname === "[::1]" ||
-    hostname.startsWith("127.");
+    hostname === "localhost" || hostname === "[::1]" || /^127\.\d+\.\d+\.\d+$/.test(hostname);
   return { hostname, loopback };
 }
 
