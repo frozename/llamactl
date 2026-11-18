@@ -23,19 +23,21 @@ export const MEMORY_BUDGET_HEADROOM_RATIO = 0.75;
  * node-local `residency_states` row has been `ready` for fewer than that many
  * seconds; 0 disables.
  *
- * `idleEvictSeconds` is status-only. It is validated as part of NodeRun
+ * `idleEvictSeconds` is operator-only. It is validated as part of NodeRun
  * spec.residency, stored with the NodeRun manifest, resolved by
  * resolveResidencyPolicy and reported (advisory) by the residencyStatus
  * idleEviction section: a read-out of the idle-evict window against the serving
  * process's ready lifecycle rows and serving-process lease activity, only when
  * the queried node is the serving node. DEFAULT_RESIDENCY_POLICY sets it to 0
  * and resolveResidencyPolicy copies a non-negative override; a 0 reports the
- * section disabled. No reconciler, router, residencyPlan/planner or DF-10
- * llama.cpp sleep driver (packages/remote/src/residency/llamacpp-sleep-client.ts,
- * which has no idle trigger) consults it to evict or sleep: residents are never
- * evicted or slept for idleness. The inventory test
+ * section disabled. No reconciler, scheduler or timer evicts on its own: the
+ * operator drives eviction with `residency evict-idle`, which stops a still-idle
+ * resident behind the durable `llamactl.io/idle-evicted-at` hold the reconciler
+ * honours. `minResidencySeconds` also holds an idle-due resident there: a
+ * resident still inside its minimum residency is skipped `MinResidency` rather
+ * than evicted. The inventory test
  * packages/remote/test/workload/residency-idle-evict-parse-only.test.ts
- * pins this.
+ * pins that the knob never leaks into an automatic enforcement path.
  *
  * LLAMACTL_RESIDENCY_SESSION_IDLE_MS (sessions.ts, #520) is unrelated: it
  * expires session refcounts that block an eviction and never starts one.
@@ -52,9 +54,11 @@ export const MEMORY_BUDGET_HEADROOM_RATIO = 0.75;
  * LLAMACTL_UNIFIED_PROXY=1.
  */
 export interface ResidencyPolicy {
-  /** 0 = never evict idle residents. Status-only (Part of #519): reported
-   * advisory by residencyStatus, but no idle-eviction path exists yet, so no
-   * value ever evicts. */
+  /** 0 = the idleEviction section reports disabled. Operator-only (Part of
+   * #519): reported advisory by residencyStatus and acted on only when the
+   * operator runs `residency evict-idle`, which stops a still-idle resident
+   * behind the `llamactl.io/idle-evicted-at` hold; the runtime never evicts on
+   * its own. */
   idleEvictSeconds: number;
   /** 0 = no minimum before eviction. */
   minResidencySeconds: number;
