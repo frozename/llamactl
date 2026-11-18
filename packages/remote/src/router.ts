@@ -503,8 +503,9 @@ function directModelRunGroup(workload: string): string | undefined {
 // that has no recorded pid file at all; anything else fails closed. An unknown
 // workload, an unresolvable ModelHost pid, or a ModelRun with any pid (stale or
 // reused) never clears a stale ready row. Identity-based ModelRun proof is
-// remaining scope.
-function directWorkloadProvenDown(model: string): boolean {
+// remaining scope. Also used by agent boot recovery for the orphan lifecycle
+// sweep (Part of #517).
+export function directWorkloadProvenDown(model: string): boolean {
   if (modelHostStoreMod.listModelHosts().some((host) => host.metadata.name === model)) {
     const status = statusModelHost({ key: { name: model } });
     return status.state === "Stopped" && status.identityUnknown !== true;
@@ -2659,7 +2660,9 @@ export const router = t.router({
   // without touching anything; { node, targets } re-checks each target against
   // the live lease registry and stops it through the same fenced path serverStop/
   // modelHostStop use (lifecycle walk plus lease drain), reporting skipped rather
-  // than throwing when the stop cannot complete. Disabled/off-node/unavailable
+  // than throwing when the stop cannot complete. With the session registry
+  // installed, a session-bound workload is skipped SessionsActive in both runs
+  // and a throwing registry SessionsUnknown (#520). Disabled/off-node/unavailable
   // snapshots come back ok:false and stop nothing. The durable idle hold is
   // stamped and released by the CLI around this call.
   residencyEvictIdle: t.procedure
@@ -2688,6 +2691,7 @@ export const router = t.router({
       const result = await runIdleEviction({
         idleEviction,
         leaseRegistry: leaseProbe,
+        sessions: currentSessionRefcounts(),
         nowMs,
         targets: input.targets ?? null,
         stop: (workload, kind) => evictIdleStop(workload, kind),

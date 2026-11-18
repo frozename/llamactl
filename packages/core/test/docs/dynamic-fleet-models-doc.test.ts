@@ -453,17 +453,21 @@ describe("docs/dynamic-fleet-models.md (#522)", () => {
   });
 
   // Part of #522
-  // Kills: dropping or rewording the claimed-pass-only scope of the
-  // lifecycle-row boot recovery paragraph.
-  test("case 22: lifecycle boot recovery runs only on a claimed pass", () => {
+  // Kills: dropping or rewording the claimed-pass and orphan-sweep scope of
+  // the lifecycle-row boot recovery paragraph, or its fail-closed `evict:`
+  // consequence and operator remedy.
+  test("case 22: lifecycle boot recovery scope (claimed pass and outside a switch)", () => {
     const s = (sectionBody(/^#{2,} .*residency lifecycle states/i) ?? "").replaceAll(/\s+/g, " ");
     for (const n of [
-      "It runs only on a claimed pass, i.e. only when a stale profile-switch row exists, so lifecycle rows interrupted outside a switch are not swept.",
+      "On a claimed pass, i.e. when a stale profile-switch row exists, it sweeps every interrupted row. When the store holds no nonterminal operation row, it also sweeps lifecycle rows interrupted outside a switch, such as a direct start whose agent died in `loading`, once they have made no progress for 30 minutes and their workload is proven down, under its own claim of the apply-profile fence.",
+      "A workload that is not proven down, for example an engine that outlived its agent, keeps its row.",
+      "Any nonterminal operation row keeps this sweep off, and it fails closed: `evict:` rows have no boot recovery yet, so a crashed eviction's nonterminal `evict:` row disables the outside-a-switch sweep on every later boot until that row is terminalized; until then an operator stop or `llamactl residency force-unload` clears a stuck interrupted row, and an `evict:` row does not block either.",
       "`failInterruptedLifecycleRows`",
       "#517",
     ]) {
       expect(s, n).toContain(n);
     }
+    expect(s).not.toContain("outside a switch are not swept");
   });
 
   // Part of #522
@@ -513,5 +517,31 @@ describe("docs/dynamic-fleet-models.md (#522)", () => {
     expect(flat(enclosingBody(applySrc, "async function disableModelHost("))).toContain(
       "const outcome = await client.modelHostStop.mutate({ workload: manifest.metadata.name });",
     );
+  });
+
+  // Part of #518
+  // Kills: rewording or dropping the Overrides doc paragraph, leaving the
+  // stale "library-only" effectiveStage claim, or unwiring the CLI from
+  // the core writer/deleter.
+  test("case 24: operator override CLI (#518)", () => {
+    const overrides = flat(sectionBody(/^## Overrides/) ?? "");
+    for (const needle of [
+      "`llamactl qualification pin",
+      "`llamactl qualification freeze",
+      "`llamactl qualification status",
+      "qualificationOverridesFileFor",
+    ]) {
+      expect(overrides, needle).toContain(needle);
+    }
+    const q = flat(sectionBody(/^## Qualification and promotion/) ?? "");
+    expect(q).not.toContain("Effective status at this commit: `effectiveStage`");
+    const cli = readOrEmpty(join(REPO, "packages/cli/src/commands/qualification.ts"));
+    for (const needle of [
+      "writeQualificationOverride(",
+      "deleteQualificationOverride(",
+      "effectiveStage(",
+    ]) {
+      expect(cli, needle).toContain(needle);
+    }
   });
 });

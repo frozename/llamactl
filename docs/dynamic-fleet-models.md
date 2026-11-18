@@ -226,17 +226,29 @@ more occupying members.
 Lifecycle-row boot recovery (Part of #517) sweeps interrupted transient
 states (`loading`, `warming`, `draining`, `unloading`) to `failed` under
 the same claimed fence as the profile-switch operation recovery, releasing
-exclusive-group capacity. It runs only on a claimed pass, i.e. only when a
-stale profile-switch row exists, so lifecycle rows interrupted outside a
-switch are not swept. It is implemented in
+exclusive-group capacity. On a claimed pass, i.e. when a stale profile-switch
+row exists, it sweeps every interrupted row. When the store holds no
+nonterminal operation row, it also sweeps lifecycle rows interrupted outside a
+switch, such as a direct start whose agent died in `loading`, once they have
+made no progress for 30 minutes and their workload is proven down, under its
+own claim of the apply-profile fence. A workload that is not proven down, for
+example an engine that outlived its agent, keeps its row. The group is not
+wedged forever: before the window elapses an operator stop or
+`llamactl residency force-unload` also clears it. Any nonterminal operation row keeps
+this sweep off, and it fails closed: `evict:` rows have no boot recovery
+yet, so a crashed eviction's nonterminal `evict:` row disables the
+outside-a-switch sweep on every later boot until that row is terminalized;
+until then an operator stop or `llamactl residency force-unload` clears a
+stuck interrupted row, and an `evict:` row does not block either. It is implemented in
 `runProfileSwitchBootRecovery` (`packages/remote/src/residency/boot-recovery.ts`)
 with `failInterruptedLifecycleRows`. Per-row write failures and refusals
 are contained and counted without stopping the sweep; a failed row
 listing counts as one record failure. When the sweep moved at least one
-row or recorded at least one failure, the agent logs one counts-only line
-after the profile-switch line:
-`[residency] lifecycle boot recovery {"failed":N,"recordFailures":M}`.
-Its `recordFailures` counts lifecycle rows only; the profile-switch line's
+row or recorded at least one failure, the agent logs one counts-only line:
+`[residency] lifecycle boot recovery {"failed":N,"recordFailures":M}`. A
+claimed pass logs it after the profile-switch line; the outside-a-switch pass
+logs only this lifecycle line, with no profile-switch line. Its
+`recordFailures` counts lifecycle rows only; the profile-switch line's
 `recordFailures` counts operation rows only.
 
 ## Qualification and promotion
@@ -348,9 +360,10 @@ falls through to the untouched `proposePromotion` decision.
 `autoApply` with a writer applies. `health` stays the runtime overlay in
 `effectiveStage` and never triggers a persisted demotion here.
 
-Effective status at this commit: `effectiveStage`, `proposePromotion`,
+Effective status at this commit: `llamactl qualification status` and `list`
+call `effectiveStage` (see Overrides). `proposePromotion`,
 `applyPromotion`, `proposeDemotion`, `evaluateQualification` and
-`applyQualification` are library-only — no router, catalog, lifecycle or
+`applyQualification` remain library-only — no router, catalog, lifecycle or
 CLI code calls them. Consumers are pending E-14 / #284. The overrides
 reader has one consumer: routing applies its pin rows (see Overrides).
 
@@ -381,6 +394,18 @@ effect: it leaves the stage unchanged, and only the library-only
 `proposePromotion` check (`frozen`) consults it. The OpenAI proxy's
 `/v1/models` cache signature stats the same resolved file, so an edit
 takes effect without a workload restart.
+
+Operator surface (Part of #518): `llamactl qualification` writes these rows
+through `writeQualificationOverride` and `deleteQualificationOverride`,
+always to the file `qualificationOverridesFileFor` resolves — the same file
+`catalogQualificationStages` and the `/v1/models` cache signature read.
+`llamactl qualification pin <rel> <stage> --reason` writes a pin row;
+`llamactl qualification unpin <rel>` removes it. `llamactl qualification
+freeze <rel> --reason` writes a stageless freeze row; `llamactl
+qualification unfreeze <rel>` removes it. `llamactl qualification status
+<rel>` and `llamactl qualification list` report the catalog stage, the pin,
+the freeze, `effectiveStage` and the routing stage. The overrides file is
+node-local, so every subcommand refuses a non-local `--node` target.
 
 ## Exclusive-window runbook
 

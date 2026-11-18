@@ -20,6 +20,8 @@ export * as presets from "./presets.js";
 export * as probe from "./probe.js";
 export * as profile from "./profile.js";
 export * as pull from "./pull.js";
+export * as qualificationOverrides from "./qualification/overrides.js";
+export * as qualificationStages from "./qualification/stages.js";
 export * as quant from "./quant.js";
 export * as recommendations from "./recommendations.js";
 export * as residencyAdmission from "./residency/admission.js";

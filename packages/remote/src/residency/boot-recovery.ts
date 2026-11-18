@@ -83,10 +83,39 @@
  *
  * Caveats. The sweep is a best-effort cleanup: when no row is in an
  * interrupted transient state it changes nothing and writes no lifecycle line.
- * It runs only on a claimed pass, i.e. only when a stale profile-switch row
- * exists: lifecycle rows interrupted outside a switch are not swept. It does
- * not validate group consistency — it only transitions states. Group cleanup
- * is the responsibility of the normal executor path.
+ * It does not validate group consistency — it only transitions states. Group
+ * cleanup is the responsibility of the normal executor path.
+ *
+ * The orphan pass (Part of #517). A crashed direct start or stop leaves its
+ * `residency_states` row interrupted with no operation row at all, so the
+ * claimed profile-switch pass never sees it. `sweepOrphanedLifecycleRows` runs
+ * only when the store holds no nonterminal operation row of any kind (neither
+ * a `profile-switch:` nor an `evict:` row), sweeps only rows that have made no
+ * progress for `PROFILE_SWITCH_BOOT_RECOVERY_MIN_AGE_MS` and whose workload the
+ * injected `isProvenDown` proves down, and claims the apply-profile fence via
+ * `claimOwnershipWhen` (with an in-transaction re-check over the live rows, so
+ * a row moved underneath the snapshot is not swept). It logs only the lifecycle
+ * line — there is no profile-switch line — or one `lifecycle boot recovery
+ * failed:` line. Without `isProvenDown` it fails closed: the predicate defaults
+ * to false, the proven-down set stays empty, and the pass never opens the store.
+ *
+ * Fail-closed consequence. `evict:` rows have no boot recovery yet, so a
+ * crashed eviction's nonterminal `evict:` row disables this pass on every later
+ * boot until that row is terminalized. The operator remedy for a stuck
+ * interrupted row meanwhile is a direct stop or `residency force-unload`; the
+ * direct stop path refuses only on `profile-switch:` rows, not `evict:` rows.
+ *
+ * Why the liveness gate. `llama-server` is spawned detached and unref'd
+ * (`packages/core/src/server.ts`), so an engine can outlive its agent. Age alone
+ * would free an exclusive group while the engine still runs; only a workload the
+ * predicate proves down is safe to terminalize.
+ *
+ * Known limits. The predicate is the same one direct starts use, so a ModelRun
+ * killed between spawn and its pid write reads as proven down; identity-based
+ * ModelRun proof is remaining scope. A CLI in-process direct start whose loading
+ * row made no progress for 30 minutes, and whose workload reads proven down, is
+ * failed; its post-walk then logs `not recorded`. Still remaining: `ready` rows
+ * of dead processes outside a switch.
  *
  * Logging. An absent store or a store with no profile-switch row logs nothing.
  * A deferred or recovered pass logs one line of counts only (no operation ids,
@@ -96,10 +125,11 @@
  * sweep moved at least one row to `failed` or recorded at least one failure
  * (N + M > 0) logs a second line
  * `[residency] lifecycle boot recovery {"failed":N,"recordFailures":M}\n`
- * after the profile-switch recovery line, with the same counts-only constraint
- * (no model or group names). The two lines' `recordFailures` are separate:
- * the profile-switch line counts operation rows only, the lifecycle line
- * counts lifecycle rows only.
+ * after the profile-switch recovery line. The orphan pass writes that same
+ * lifecycle line, and only that line, with no profile-switch line before it.
+ * Every lifecycle line carries counts only (no model or group names); the two
+ * lines' `recordFailures` are separate, the profile-switch line counts operation
+ * rows only and the lifecycle line counts lifecycle rows only.
  */
 import { RESIDENCY_APPLY_PROFILE_FENCE_OWNER } from "./apply-profile.js";
 import {
@@ -113,6 +143,7 @@ import {
   RESIDENCY_LEASE_AUDIT_BUSY_TIMEOUT_MS,
   type ResidencyLifecycleStore,
   type ResidencyOperationStore,
+  type ResidencyStateRecord,
 } from "./store.js";
 
 export const PROFILE_SWITCH_BOOT_RECOVERY_MIN_AGE_MS = 30 * 60_000;
@@ -142,6 +173,7 @@ export type BootRecoveryOpts = {
   minStaleAgeMs?: number;
   write?: (line: string) => void;
   openStore?: (storePath: string) => BootRecoveryStore;
+  isProvenDown?: (model: string) => boolean;
 };
 
 type Counts = Omit<BootRecoverySummary, "status">;
@@ -163,6 +195,7 @@ export function runProfileSwitchBootRecovery(opts: BootRecoveryOpts): BootRecove
   const openStore = opts.openStore ?? defaultOpenStore;
   const nowMs = opts.nowMs ?? Date.now;
   const minStaleAgeMs = opts.minStaleAgeMs ?? PROFILE_SWITCH_BOOT_RECOVERY_MIN_AGE_MS;
+  const isProvenDown = opts.isProvenDown ?? ((): boolean => false);
 
   try {
     const snapshot = readResidencyStoreSnapshot(opts.path, {
@@ -175,6 +208,14 @@ export function runProfileSwitchBootRecovery(opts: BootRecoveryOpts): BootRecove
       throw new Error(snapshot.error);
     }
     if (!snapshot.nonterminal.some((record) => record.model.startsWith(SWITCH_PREFIX))) {
+      sweepOrphanedLifecycleRows(snapshot.nonterminal, snapshot.lifecycle, {
+        openStore,
+        opts,
+        nowMs,
+        minStaleAgeMs,
+        isProvenDown,
+        write,
+      });
       return { status: "clean", ...NO_COUNTS };
     }
 
@@ -229,12 +270,16 @@ function failInterruptedLifecycleRows(
   store: BootRecoveryStore,
   fenceToken: number,
   nowMs: number,
+  include: (row: ResidencyStateRecord) => boolean = () => true,
 ): LifecycleCounts {
   const states = store.listResidencyStates();
   let failed = 0;
   let recordFailures = 0;
   for (const stateRecord of states) {
     if (!INTERRUPTED_LIFECYCLE_STATES.has(stateRecord.state)) {
+      continue;
+    }
+    if (!include(stateRecord)) {
       continue;
     }
     try {
@@ -255,6 +300,133 @@ function failInterruptedLifecycleRows(
     }
   }
   return { failed, recordFailures };
+}
+
+type OrphanSweepContext = {
+  openStore: (storePath: string) => BootRecoveryStore;
+  opts: BootRecoveryOpts;
+  now: number;
+  minStaleAgeMs: number;
+  provenDown: ReadonlySet<string>;
+  write: (line: string) => void;
+};
+
+type OrphanGate = {
+  openStore: (storePath: string) => BootRecoveryStore;
+  opts: BootRecoveryOpts;
+  nowMs: () => number;
+  minStaleAgeMs: number;
+  isProvenDown: (model: string) => boolean;
+  write: (line: string) => void;
+};
+
+// A row is stale when it sits in an interrupted state and has made no progress
+// for the window. A future stamp is never stale; the window edge counts as
+// stale, matching the switch guard.
+function isStaleInterrupted(
+  row: ResidencyStateRecord,
+  now: number,
+  minStaleAgeMs: number,
+): boolean {
+  return INTERRUPTED_LIFECYCLE_STATES.has(row.state) && now - row.updatedAtMs >= minStaleAgeMs;
+}
+
+// Calls the predicate once per distinct stale interrupted model, outside any
+// transaction, so no process or pid identity work runs under the IMMEDIATE lock.
+// A throw is treated as not proven down and never logged.
+function provenDownModels(
+  rows: readonly ResidencyStateRecord[],
+  now: number,
+  minStaleAgeMs: number,
+  isProvenDown: (model: string) => boolean,
+): Set<string> {
+  const proven = new Set<string>();
+  const asked = new Set<string>();
+  for (const row of rows) {
+    if (!isStaleInterrupted(row, now, minStaleAgeMs) || asked.has(row.model)) {
+      continue;
+    }
+    asked.add(row.model);
+    try {
+      if (isProvenDown(row.model)) {
+        proven.add(row.model);
+      }
+    } catch {
+      /* a throwing liveness probe is not proof of liveness: leave it out */
+    }
+  }
+  return proven;
+}
+
+function isOrphanCandidate(row: ResidencyStateRecord, ctx: OrphanSweepContext): boolean {
+  return isStaleInterrupted(row, ctx.now, ctx.minStaleAgeMs) && ctx.provenDown.has(row.model);
+}
+
+// The gate: only a store with no nonterminal operation row, a readable
+// lifecycle listing and a non-empty proven-down set is worth opening.
+function sweepOrphanedLifecycleRows(
+  nonterminal: readonly { model: string }[],
+  lifecycle: readonly ResidencyStateRecord[] | undefined,
+  gate: OrphanGate,
+): void {
+  if (nonterminal.length !== 0 || lifecycle === undefined) {
+    return;
+  }
+  const now = gate.nowMs();
+  const provenDown = provenDownModels(lifecycle, now, gate.minStaleAgeMs, gate.isProvenDown);
+  if (provenDown.size === 0) {
+    return;
+  }
+  const ctx: OrphanSweepContext = {
+    openStore: gate.openStore,
+    opts: gate.opts,
+    now,
+    minStaleAgeMs: gate.minStaleAgeMs,
+    provenDown,
+    write: gate.write,
+  };
+  let store: BootRecoveryStore | undefined;
+  try {
+    store = gate.openStore(gate.opts.path);
+    claimAndFailOrphans(store, ctx);
+  } catch (error: unknown) {
+    safeWrite(gate.write, `[residency] lifecycle boot recovery failed: ${failureMessage(error)}\n`);
+  } finally {
+    if (store !== undefined) {
+      try {
+        store.close();
+      } catch {
+        /* the rows are already written: a close failure never fails boot */
+      }
+    }
+  }
+}
+
+// The body, run once the gate is satisfied. The claim re-checks the live rows
+// inside the IMMEDIATE transaction, using only the precomputed proven-down set,
+// so a row moved underneath the snapshot refuses the claim.
+function claimAndFailOrphans(store: BootRecoveryStore, ctx: OrphanSweepContext): void {
+  const claim = store.claimOwnershipWhen(
+    { ownerId: RESIDENCY_APPLY_PROFILE_FENCE_OWNER, incarnation: ctx.opts.incarnation },
+    (nonterminal) =>
+      nonterminal.length === 0 &&
+      store.listResidencyStates().some((row) => isOrphanCandidate(row, ctx)),
+  );
+  if (!claim.claimed) {
+    return;
+  }
+  let counts: LifecycleCounts;
+  try {
+    counts = failInterruptedLifecycleRows(store, claim.fence.fenceToken, ctx.now, (row) =>
+      isOrphanCandidate(row, ctx),
+    );
+  } catch {
+    /* a failure to list the rows is contained and counted as one record failure */
+    counts = { failed: 0, recordFailures: 1 };
+  }
+  if (counts.failed + counts.recordFailures > 0) {
+    safeWrite(ctx.write, `[residency] lifecycle boot recovery ${lifecycleCountsJson(counts)}\n`);
+  }
 }
 
 function shouldClaim(preview: ProfileSwitchRecoveryPreview): boolean {
