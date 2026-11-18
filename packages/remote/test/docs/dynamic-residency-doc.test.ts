@@ -1265,4 +1265,136 @@ describe("docs/dynamic-residency.md (#285)", () => {
       }
     }
   });
+
+  // Part of #522
+  // Kills: M1 deleting or truncating the #750 paragraph; M2 adding or
+  // renaming a ResidencyStatusSessionsUnavailableReason without updating
+  // the doc; M3 changing a SESSIONS_UNAVAILABLE human string or pairing it
+  // with another reason; M4 dropping sessionRegistry from the router's
+  // residencyStatus input or the sessions section from buildResidencyStatus;
+  // M5 changing the force-unload released-sessions line text or printing it
+  // for an empty or missing releasedSessions list; M6 changing the snapshot
+  // sort order, the in-flight expiry rule or dropping prune() from
+  // snapshot(); M7 changing the Sessions header or row format; M8 limiting
+  // the sessions section to the serving node (or lifting that limit from
+  // idleEviction) while the doc still contrasts them.
+  test("case 20: bound sessions in residency status and force-unload output (#750)", () => {
+    const s = sectionBody(SECTIONS.statusPlanApply) ?? "";
+    const para = flat(s.split(/\n\s*\n/).find((p) => p.includes("`Sessions:")) ?? "");
+    const aff = flat(sectionBody(sectionRe("session affinity")) ?? "");
+    const cliSrc = readOrEmpty(RESIDENCY_CLI);
+    const procSrc = readOrEmpty(join(REPO, "packages/remote/src/residency/procedures.ts"));
+    const sessSrc = readOrEmpty(join(REPO, "packages/core/src/residency/sessions.ts"));
+    const routerSrc = readOrEmpty(join(REPO, "packages/remote/src/router.ts"));
+    const mcpSrc = readOrEmpty(join(REPO, "packages/mcp/src/tools/residency.ts"));
+
+    // (1) The #750 paragraph in the status section, as full phrases.
+    expect(para).not.toBe("");
+    expect(flat(s)).toContain(para);
+    expectPins(para, "#750 status", [
+      "`llamactl residency status --node <name>` also prints a `Sessions:` section from the serving process's session registry (`pushSessionLines` in `packages/cli/src/commands/residency.ts`, #750).",
+      "The header reads `Sessions: <n> bound (idle timeout <t>; scope: serving-process)`, followed by one `<workload> <sessionId> refs <n> in flight|expires in <t>` line per session:",
+      "a session with refs above 0 is `in flight` and has no expiry, while a session at refs 0 shows the rest of its idle-timeout window.",
+      "Only live sessions are listed (expired ones are pruned first), most recently active first.",
+      "The `residencyStatus` procedure, and the MCP tool that returns its result, carry the same data as a `sessions` section built by `buildResidencySessionSnapshot` in `packages/remote/src/residency/procedures.ts`: `status`, `scope` `serving-process`, `idleTimeoutMs`, and per session `sessionId`, `workload`, `refs`, `idleMs` and `expiresInMs` (`null` while in flight).",
+      "The registry is installed only when `LLAMACTL_RESIDENCY_LEASES` is on AND `LLAMACTL_RESIDENCY_SESSION_IDLE_MS` is set (see Session affinity);",
+      "Unlike `idleEviction`, the section is not limited to the serving node: whatever `--node` names, it shows the serving process's registry.",
+    ]);
+
+    // (2) The unavailable-reason codes the doc must name, read from source.
+    const reasonDecl =
+      /export type ResidencyStatusSessionsUnavailableReason =([^;]*);/.exec(procSrc)?.[1] ?? "";
+    const reasonCodes = [...reasonDecl.matchAll(/"([A-Za-z]+)"/g)].map((m) => m[1] ?? "").sort();
+    expect(reasonCodes).toEqual(["NoRegistry", "SessionsUnknown", "SnapshotUnsupported"]);
+
+    // (3) Each reason paired with the human string the CLI prints for it,
+    // read from the SESSIONS_UNAVAILABLE map; the doc must keep the pairs.
+    const unavailableBody = enclosingBody(cliSrc, "const SESSIONS_UNAVAILABLE");
+    const pairs = [...unavailableBody.matchAll(/^\s+(\w+): "([^"]+)",$/gm)].map(
+      (m): [string, string] => [m[1] ?? "", m[2] ?? ""],
+    );
+    expect(pairs.map(([code]) => code).sort()).toEqual(reasonCodes);
+    const phrase = new Map(pairs);
+    expectPins(para, "#750 unavailable", [
+      `without it the section reads \`unavailable\` with \`NoRegistry\` ("${phrase.get("NoRegistry") ?? "?"}"),`,
+      `a snapshot that throws reports \`SessionsUnknown\` ("${phrase.get("SessionsUnknown") ?? "?"}"),`,
+      `and a registry without a snapshot reports \`SnapshotUnsupported\` ("${phrase.get("SnapshotUnsupported") ?? "?"}").`,
+    ]);
+
+    // (4) Source pins for the CLI rendering.
+    expectPins(enclosingBody(cliSrc, "function pushSessionLines("), "pushSessionLines", [
+      "`Sessions:   ${String(sessions.sessions.length)} bound (idle timeout ${formatMs(sessions.idleTimeoutMs)}; scope: ${sessions.scope})`,",
+      'const state = s.expiresInMs === null ? "in flight" : `expires in ${formatMs(s.expiresInMs)}`;',
+      "lines.push(`  ${s.workload}  ${s.sessionId}  refs ${String(s.refs)}  ${state}`);",
+    ]);
+    expect(enclosingBody(cliSrc, "function renderResidencyStatus(")).toContain(
+      "pushSessionLines(lines, s.sessions);",
+    );
+
+    // (5) Source pins for the procedure section and its reasons.
+    expectPins(
+      enclosingBody(procSrc, "export function buildResidencySessionSnapshot("),
+      "buildResidencySessionSnapshot",
+      [
+        'if (registry === null) {\n    return { status: "unavailable", scope: "serving-process", reason: "NoRegistry" };',
+        'if (registry.snapshot === undefined) {\n    return { status: "unavailable", scope: "serving-process", reason: "SnapshotUnsupported" };',
+        '} catch {\n    return { status: "unavailable", scope: "serving-process", reason: "SessionsUnknown" };',
+        "idleTimeoutMs: snap.idleTimeoutMs,",
+        "expiresInMs: r.expiresInMs,",
+      ],
+    );
+    expectPins(
+      enclosingBody(procSrc, "export function buildResidencyStatus("),
+      "buildResidencyStatus",
+      [
+        "const sessions = buildResidencySessionSnapshot(input.sessionRegistry);",
+        "...(sessions !== undefined ? { sessions } : {}),",
+      ],
+    );
+    // idleEviction is gated on the serving node; sessions is not.
+    expect(enclosingBody(procSrc, "export function buildIdleEvictionSnapshot(")).toContain(
+      'if (input.servingNode === null || input.servingNode !== input.node) {\n    return { status: "unavailable", scope, reason: "NotServingNode" };',
+    );
+    expect(enclosingBody(procSrc, "export function buildResidencySessionSnapshot(")).not.toContain(
+      "servingNode",
+    );
+
+    // (6) The router always passes the process registry; the MCP tool
+    // returns the procedure's result.
+    const statusStart = routerSrc.indexOf("  residencyStatus: t.procedure");
+    const statusProc =
+      statusStart === -1
+        ? ""
+        : routerSrc.slice(
+            statusStart,
+            routerSrc.indexOf("  residencyPlan: t.procedure", statusStart),
+          );
+    expect(statusProc).toContain("sessionRegistry: currentSessionRefcounts(),");
+    expect(enclosingBody(mcpSrc, "function registerResidencyStatus(")).toContain(
+      "return toTextContent(await caller.residencyStatus({ node: input.node }));",
+    );
+
+    // (7) The registry snapshot: pruned, most recently active first, and
+    // no expiry while refs > 0.
+    expect(enclosingBody(sessSrc, "snapshot(): SessionSnapshot {")).toContain(
+      "prune();\n      return buildSessionSnapshot(sessions, now(), idleTimeoutMs);",
+    );
+    expectPins(enclosingBody(sessSrc, "function buildSessionSnapshot("), "buildSessionSnapshot", [
+      "const expiresInMs = entry.refs > 0 ? null : Math.max(0, idleTimeoutMs - idleMs);",
+      "(a, b) =>\n      a.idleMs - b.idleMs ||",
+    ]);
+    expect(sessSrc).toContain(
+      "const isExpired = (entry: SessionEntry): boolean =>\n    entry.refs === 0 && now() - entry.lastActivityMs >= idleTimeoutMs;",
+    );
+
+    // (8) Force-unload released-session output, documented in Session affinity.
+    expect(aff).toContain(
+      "The human output adds `Forced unload: released <n> session(s): <ids>` only when sessions were released; an agent older than #722 omits `releasedSessions`, so the line is skipped (#750).",
+    );
+    expectPins(enclosingBody(cliSrc, "function renderForceUnload("), "renderForceUnload", [
+      "const released: unknown = r.releasedSessions;",
+      "if (Array.isArray(released) && released.length > 0) {",
+      '`Forced unload: released ${String(released.length)} session(s): ${released.join(", ")}`,',
+    ]);
+  });
 });
