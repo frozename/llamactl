@@ -26,6 +26,9 @@ import { basename, join } from "node:path";
 import { getGlobals } from "../dispatcher.js";
 import { required } from "../required.js";
 import { existsSync, mkdirSync } from "../safe-fs.js";
+import { runEvalPerf } from "./eval-perf.js";
+
+export { __resetEvalPerfTestSeams, __setEvalPerfTestSeams } from "./eval-perf.js";
 
 const USAGE = `Usage: llamactl eval <subcommand>
 
@@ -40,6 +43,10 @@ Subcommands:
       Regenerate the markdown report card for <model> from SQLite.
   leaderboard [--node <name>] [--sort-by <field>]
       Print the eval leaderboard table to stdout.
+  perf --url <http://...> --engine <llamacpp|omlx|gufo|kapitsa> --model <id> [--suite perf-quick|perf-full] [--pid <n>] [--binary <path>] [--gguf <path>] [--quant <q>] [--ctx <n>] [--slots <n>] [--flags=<args>] [--db <path>] [--run-id <id>]
+      A direct perf run against a locally reachable engine. It records SSD
+      I/O, VmHWM and GTT when --pid names a local engine. Rows go to the
+      same perf.sqlite as bench schedule suites.
 `;
 
 function envValue(name: string): string {
@@ -429,6 +436,8 @@ export async function runEval(argv: string[]): Promise<number> {
       return await runEvalReport(rest);
     case "leaderboard":
       return await runEvalLeaderboard(rest);
+    case "perf":
+      return await runEvalPerf(rest);
     case undefined:
     case "-h":
     case "--help":

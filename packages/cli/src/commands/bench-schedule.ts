@@ -140,13 +140,17 @@ interface SuiteRunRequest {
 type PerfBenchSuiteRunner = (req: SuiteRunRequest) => Promise<void>;
 type ResolvedEndpoint = { baseUrl: string; fetchImpl?: typeof fetch };
 
-function defaultOpenDb(): Database {
+export function defaultPerfDbPath(): string {
   const dir = join(llamactlHome(), "eval");
   mkdirSync(dir, { recursive: true });
-  return new Database(join(dir, "perf.sqlite"));
+  return join(dir, "perf.sqlite");
 }
 
-function servedModelIds(payload: unknown): string[] {
+function defaultOpenDb(): Database {
+  return new Database(defaultPerfDbPath());
+}
+
+export function servedModelIds(payload: unknown): string[] {
   if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
     return [];
   }
