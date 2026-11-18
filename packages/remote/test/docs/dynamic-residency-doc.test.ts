@@ -1025,12 +1025,15 @@ describe("docs/dynamic-residency.md (#285)", () => {
   // Kills: unwiring runDirectResidencyStart/Stop from router.ts,
   // rewording the in-flight start refusal, making the no-store path
   // create or require a store, making a failed claim block a stop,
-  // wrapping force-unload without updating the doc, dropping either
-  // startModelHostProcess call site or the disable/delete modelHostStop
-  // call, or rewording any claim of the #741 section. Part of #517 also
-  // kills: unwiring serverStart/serverStop, dropping the switch scope or the
-  // ModelRun label group, recording an unconfirmed stop, walking the row
-  // before the stop dep runs, or reverting the ModelRun proven-down rule.
+  // dropping either startModelHostProcess call site or the
+  // disable/delete modelHostStop call, or rewording any claim of the
+  // #741 section. Part of #517 also kills: unwiring
+  // serverStart/serverStop, dropping the switch scope or the ModelRun
+  // label group, recording an unconfirmed stop, walking the row before
+  // the stop dep runs, reverting the ModelRun proven-down rule, and —
+  // for the force-unload slice — leaving either kind's stop outside
+  // runDirectResidencyStop, pairing it with the wrong opts factory, or
+  // keeping the doc's force-unload bypass claim.
   test("case 19: direct ModelHost start/stop lifecycle (#741)", () => {
     expect(sectionBody(sectionRe("direct modelhost start and stop"))).toBeDefined();
     const d = flat(sectionBody(sectionRe("direct modelhost start and stop")) ?? "");
@@ -1054,7 +1057,7 @@ describe("docs/dynamic-residency.md (#285)", () => {
       "A stop that throws is recorded `failed` and the error is rethrown.",
       "Bookkeeping never blocks a stop: a stop whose claim or walk fails still runs and logs `[residency] lifecycle <name> stop not recorded: …` on the agent's stderr.",
       "Known limits: a `ready` ModelRun row with any recorded pid file, stale or reused, is never proven down, so it fails closed and refuses same-group starts; identity-based ModelRun proof is remaining scope.",
-      "`llamactl residency force-unload <workload> --reason <text> --yes --node <name>` calls `stopModelHost` or `stopServer` outside the wrapper, so it leaves the row unchanged; read rows with `llamactl residency status --node <name>` (#741).",
+      "`llamactl residency force-unload <workload> --reason <text> --yes --node <name>` routes its `stopModelHost`/`stopServer` through `runDirectResidencyStop` after the lease drain commits, so a confirmed force-unload walks the row to `downloaded` and an unconfirmed one leaves it occupying (#517).",
     ]) {
       expect(d, needle).toContain(needle);
     }
@@ -1205,13 +1208,36 @@ describe("docs/dynamic-residency.md (#285)", () => {
     expect(enclosingBody(routerSrc, "async function stopModelHostForDelete("), "delete").toContain(
       "const outcome = (await client.modelHostStop.mutate({",
     );
-    // force-unload calls stopModelHost directly, outside the wrapper
-    expect(routerSrc).toContain(
-      'kind === "modelhost"\n          ? async (): Promise<{ stopped: boolean; detail?: string }> => {\n              const r = await stopModelHost({ key: { name } });',
-    );
-    expect(routerSrc).toContain(
-      ": async (): Promise<{ stopped: boolean }> => {\n              const r = await serverMod.stopServer({ key: { name } });",
-    );
+    // force-unload routes each kind's stop through runDirectResidencyStop
+    // after the lease drain commits — one call site per branch, in
+    // ternary order: the modelhost dep then directResidencyOpts(name,
+    // undefined), then the modelrun dep then directModelRunOpts(name).
+    // dep is the call's second arg and opts the third, so each opts
+    // factory follows its own dep inside the same runDirectResidencyStop
+    // call.
+    const forceUnloadBody = flat(enclosingBody(routerSrc, "residencyForceUnload: t.procedure"));
+    expect(forceUnloadBody, "residencyForceUnload body").not.toBe("");
+    expect(
+      forceUnloadBody.split("await runDirectResidencyStop").length - 1,
+      "force-unload wrapped stops",
+    ).toBe(2);
+    const hostDep = forceUnloadBody.indexOf("stopModelHost({ key:");
+    const hostOpts = forceUnloadBody.indexOf("directResidencyOpts(name, undefined)");
+    const runDep = forceUnloadBody.indexOf("serverMod.stopServer({ key:");
+    const runOpts = forceUnloadBody.indexOf("directModelRunOpts(name)");
+    expect(hostDep, "modelhost force-unload dep").toBeGreaterThanOrEqual(0);
+    expect(hostOpts, "modelhost force-unload opts").toBeGreaterThan(hostDep);
+    expect(runDep, "modelrun force-unload dep").toBeGreaterThan(hostOpts);
+    expect(runOpts, "modelrun force-unload opts").toBeGreaterThan(runDep);
+    for (const [dep, opts] of [
+      [hostDep, hostOpts],
+      [runDep, runOpts],
+    ] as const) {
+      expect(
+        forceUnloadBody.slice(Math.max(0, dep - 400), opts),
+        "runDirectResidencyStop call site",
+      ).toContain("await runDirectResidencyStop");
+    }
     const applySrc = readOrEmpty(join(REPO, "packages/remote/src/workload/apply.ts"));
     const applyPins: [string, string[]][] = [
       ["async function startModelHostProcess(", ["client.modelHostStart.subscribe("]],
