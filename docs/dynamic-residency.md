@@ -116,7 +116,11 @@ With `--yes` the CLI first stamps the durable `llamactl.io/idle-evicted-at` hold
 llamactl residency evict-idle --node <name> --yes [--json]
 ```
 
-A workload that resumed activity before its stop is skipped `NoLongerIdle`; a stop the fence refuses is skipped `StopRefused` and its hold is cleared, so the running workload stays up; a stop that throws is skipped `StopFailed`. Only rows that come back `evicted` keep the hold, and workloads with no local manifest are reported `NotHeld` and never targeted. To let a held workload load again, clear the hold:
+A workload that resumed activity before its stop is skipped `NoLongerIdle`; a stop the fence refuses is skipped `StopRefused` and its hold is cleared, so the running workload stays up; a stop that throws is skipped `StopFailed`. Only rows that come back `evicted` keep the hold, and workloads with no local manifest are reported `NotHeld` and never targeted.
+
+With the session registry installed (#520), a workload bound to a session — idle within its timeout or in flight — is skipped `SessionsActive` with the session ids as detail in both the dry run and the wet run, so no idle hold is stamped and no drain starts; a registry whose session check throws is skipped `SessionsUnknown`. Eviction never releases sessions — the overrides are `residency release-session` and `residency force-unload`.
+
+To let a held workload load again, clear the hold:
 
 ```sh
 llamactl residency release-idle <workload> [--json]
