@@ -200,6 +200,8 @@ These keys come from `ResidencyPolicySchema` (`packages/remote/src/workload/node
 
 When the unified ranker's pick differs from catalog order and is a local-http replica owned by this node, `gatedExecute` sets `preferredLocalWorkload`. The legacy local executor forwards it to `proxyOpenAI` as the `preferredWorkload` option (#728). `servingRouteForModel` lifts that workload to the head of the live candidates after the withdrawn filter; readiness still applies. Peers never match, and an experimental match does not lead while any non-experimental candidate is live.
 
+A verified `--evict` victim (or one named by the `llamactl.io/evict` annotation) whose node-local `residency_states` row has been `ready` for fewer than `minResidencySeconds` is refused `EvictMinResidency` before any intent marker, stop or start; an unreadable residency store or lifecycle read refuses `EvictMinResidencyUnknown` rather than evicting blind. The store counts only when `LLAMACTL_NODE_NAME` names the victim's node, so a CLI or controller evicting on another node gets no protection yet (remaining scope). `minResidencySeconds` of 0 disables the gate.
+
 ## Cleanup of conflicting legacy launchers
 
 First run `git grep -n keepAlive packages/remote/src/workload`. It finds nothing, so the controller does not detect a keep-alive supervisor and you must inventory by hand. Inventory with `llamactl keep-alive status` and `llamactl server status`:

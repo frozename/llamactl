@@ -52,6 +52,8 @@ export interface BenchSuiteRequest {
   suite: string;
   node: string;
   rel: string;
+  // #521: eval engine recorded in perf provenance; absent on legacy schedules
+  engine?: string;
 }
 
 export type BenchSuiteRunner = (req: BenchSuiteRequest) => Promise<void>;
@@ -262,7 +264,13 @@ async function runWithOutcome(
         throw new Error(`no suite runner configured for suite '${suite}'`);
       }
       await runSuiteWithCap(
-        { scheduleId: schedule.id, suite, node: schedule.node, rel: schedule.rel },
+        {
+          scheduleId: schedule.id,
+          suite,
+          node: schedule.node,
+          rel: schedule.rel,
+          ...(schedule.engine !== undefined ? { engine: schedule.engine } : {}),
+        },
         runSuite,
       );
     } else {
