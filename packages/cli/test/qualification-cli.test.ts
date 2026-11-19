@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 
 import { readQualificationOverrides } from "../../core/src/qualification/overrides.js";
+import { PromotionThresholdsSchema } from "../../core/src/qualification/promotion.js";
 import { existsSync, writeFileSync } from "../src/safe-fs.js";
 import {
   makeTempRuntime,
@@ -338,5 +339,306 @@ describe("llamactl qualification (#518)", () => {
     const r = runCli(["qualification", "frob"], qual.env);
     expect(r.code).toBe(1);
     expect(r.stderr).toContain("Unknown qualification subcommand: frob");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #518 slice: read-only evidence-based `qualification propose`. Every case
+// spawns the real CLI; on the base the subcommand does not exist, so each
+// case fails by assertion on exit code/stdout/stderr, never by import.
+// ---------------------------------------------------------------------------
+
+function fullEvidence(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    evaluatedTasks: 50,
+    evidenceRef: "eval://run-1",
+    firstAttemptSuccess: 0.9,
+    repairSuccess: 0.9,
+    toolCallCorrectness: 0.95,
+    structuredOutputValidity: 0.97,
+    regression: 0.01,
+    improvement: 0.05,
+    memoryStability: 0.99,
+    runtimeReliability: 0.99,
+    ...overrides,
+  };
+}
+
+function thresholds(): Record<string, number> {
+  const floors: Record<string, number> = {};
+  for (const key of Object.keys(PromotionThresholdsSchema.shape)) {
+    if (key === "minEvaluatedTasks") floors[key] = 20;
+    else if (key === "maxRegression") floors[key] = 0.05;
+    else if (key === "minImprovement") floors[key] = 0;
+    else floors[key] = 0.8;
+  }
+  return floors;
+}
+
+function writeJsonFile(dir: string, name: string, value: unknown): string {
+  const file = join(dir, name);
+  writeFileSync(file, `${JSON.stringify(value)}\n`);
+  return file;
+}
+
+describe("#518 qualification propose", () => {
+  let qual: QualRuntime;
+
+  beforeEach(() => {
+    qual = makeQualRuntime();
+  });
+
+  afterEach(() => {
+    qual.cleanup();
+  });
+
+  // Kills: dropping the propose case / wrong ladder target.
+  test("propose reports a promotion proposal for a staged rel", () => {
+    const { exp } = qualFixtures();
+    const evidenceFile = writeJsonFile(qual.devStorage, "evidence.json", fullEvidence());
+    const policyFile = writeJsonFile(qual.devStorage, "policy.json", {
+      thresholds: { candidate: thresholds() },
+    });
+    const r = runCli(
+      ["qualification", "propose", exp, "--evidence", evidenceFile, "--policy", policyFile],
+      qual.env,
+    );
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain(`proposal ${exp} experimental -> candidate`);
+  });
+
+  // Kills: JSON shape drift / writing an override.
+  test("propose --json reports rel, declared, decision and apply without writing", () => {
+    const { exp } = qualFixtures();
+    const evidenceFile = writeJsonFile(qual.devStorage, "evidence.json", fullEvidence());
+    const policyFile = writeJsonFile(qual.devStorage, "policy.json", {
+      thresholds: { candidate: thresholds() },
+    });
+    const r = runCli(
+      [
+        "qualification",
+        "propose",
+        exp,
+        "--evidence",
+        evidenceFile,
+        "--policy",
+        policyFile,
+        "--json",
+      ],
+      qual.env,
+    );
+    expect(r.code).toBe(0);
+    const parsed = parseJsonRecord(r.stdout);
+    expect(parsed["rel"]).toBe(exp);
+    expect(parsed["declared"]).toBe("experimental");
+    const decision = requireRecordField(parsed, "decision");
+    expect(decision["kind"]).toBe("proposal");
+    const proposal = requireRecordField(decision, "proposal");
+    expect(proposal["to"]).toBe("candidate");
+    expect(proposal["evidenceRef"]).toBe("eval://run-1");
+    const apply = requireRecordField(parsed, "apply");
+    expect(apply["status"]).toBe("proposed");
+    expect(existsSync(qual.overridesFile)).toBe(false);
+  });
+
+  // Kills: injecting a writer into applyQualification.
+  test("propose honors autoApply only as a gate — still proposed, still read-only", () => {
+    const { exp } = qualFixtures();
+    const evidenceFile = writeJsonFile(qual.devStorage, "evidence.json", fullEvidence());
+    const policyFile = writeJsonFile(qual.devStorage, "policy.json", {
+      thresholds: { candidate: thresholds() },
+      autoApply: true,
+    });
+    const r = runCli(
+      [
+        "qualification",
+        "propose",
+        exp,
+        "--evidence",
+        evidenceFile,
+        "--policy",
+        policyFile,
+        "--json",
+      ],
+      qual.env,
+    );
+    expect(r.code).toBe(0);
+    const apply = requireRecordField(parseJsonRecord(r.stdout), "apply");
+    expect(apply["status"]).toBe("proposed");
+    expect(existsSync(qual.overridesFile)).toBe(false);
+    expect(existsSync(qual.env["LOCAL_AI_CUSTOM_CATALOG_FILE"] ?? "")).toBe(false);
+  });
+
+  // Kills: dropping the failed list.
+  test("propose reports below-threshold with the failed metrics", () => {
+    const { exp } = qualFixtures();
+    const evidenceFile = writeJsonFile(
+      qual.devStorage,
+      "evidence.json",
+      fullEvidence({ toolCallCorrectness: 0.5 }),
+    );
+    const policyFile = writeJsonFile(qual.devStorage, "policy.json", {
+      thresholds: { candidate: thresholds() },
+    });
+    const args = [
+      "qualification",
+      "propose",
+      exp,
+      "--evidence",
+      evidenceFile,
+      "--policy",
+      policyFile,
+    ];
+    const r = runCli(args, qual.env);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain("below-threshold");
+    expect(r.stdout).toContain("toolCallCorrectness");
+
+    const j = runCli([...args, "--json"], qual.env);
+    expect(j.code).toBe(0);
+    const decision = requireRecordField(parseJsonRecord(j.stdout), "decision");
+    expect(decision["reason"]).toBe("below-threshold");
+    const failed = decision["failed"];
+    expect(Array.isArray(failed) && failed.includes("toolCallCorrectness")).toBe(true);
+  });
+
+  // Kills: not passing overridesFor(...) from the shared overrides file.
+  test("propose reports frozen when a freeze override exists", () => {
+    const { exp } = qualFixtures();
+    const freeze = runCli(["qualification", "freeze", exp, "--reason", "r"], qual.env);
+    expect(freeze.code).toBe(0);
+    const evidenceFile = writeJsonFile(qual.devStorage, "evidence.json", fullEvidence());
+    const policyFile = writeJsonFile(qual.devStorage, "policy.json", {
+      thresholds: { candidate: thresholds() },
+    });
+    const args = [
+      "qualification",
+      "propose",
+      exp,
+      "--evidence",
+      evidenceFile,
+      "--policy",
+      policyFile,
+    ];
+    const j = runCli([...args, "--json"], qual.env);
+    expect(j.code).toBe(0);
+    const decision = requireRecordField(parseJsonRecord(j.stdout), "decision");
+    expect(decision["reason"]).toBe("frozen");
+
+    const r = runCli(args, qual.env);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain("frozen");
+  });
+
+  // Kills: calling proposePromotion instead of evaluateQualification.
+  test("propose demotes a production rel past a demotion floor", () => {
+    const catalogFile = qual.env["LOCAL_AI_CUSTOM_CATALOG_FILE"]!;
+    writeFileSync(
+      catalogFile,
+      "prod-model\tProd test\tprod\tcustom\tcustom\tprod/model.gguf\torg/prod-model\tgguf\t" +
+        '{"qualification":{"stage":"production"}}\n',
+    );
+    const evidenceFile = writeJsonFile(
+      qual.devStorage,
+      "evidence.json",
+      fullEvidence({ runtimeReliability: 0.5 }),
+    );
+    const policyFile = writeJsonFile(qual.devStorage, "policy.json", {
+      thresholds: {},
+      demotion: { minEvaluatedTasks: 20, minRuntimeReliability: 0.9 },
+    });
+    const args = [
+      "qualification",
+      "propose",
+      "prod/model.gguf",
+      "--evidence",
+      evidenceFile,
+      "--policy",
+      policyFile,
+    ];
+    const r = runCli(args, qual.env);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain("demotion prod/model.gguf production -> degraded");
+    expect(r.stdout).toContain("runtimeReliability");
+
+    const j = runCli([...args, "--json"], qual.env);
+    expect(j.code).toBe(0);
+    const decision = requireRecordField(parseJsonRecord(j.stdout), "decision");
+    expect(decision["kind"]).toBe("demotion");
+  });
+
+  // Kills: defaulting an unstaged rel to a stage.
+  test("propose refuses a rel with no qualification stage", () => {
+    const { plain } = qualFixtures();
+    const evidenceFile = writeJsonFile(qual.devStorage, "evidence.json", fullEvidence());
+    const policyFile = writeJsonFile(qual.devStorage, "policy.json", {
+      thresholds: { candidate: thresholds() },
+    });
+    const r = runCli(
+      ["qualification", "propose", plain, "--evidence", evidenceFile, "--policy", policyFile],
+      qual.env,
+    );
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain(`qualification propose: '${plain}' has no qualification stage`);
+  });
+
+  // Kills: skipping flag validation.
+  test("propose requires --evidence and --policy", () => {
+    const { exp } = qualFixtures();
+    const evidenceFile = writeJsonFile(qual.devStorage, "evidence.json", fullEvidence());
+    const policyFile = writeJsonFile(qual.devStorage, "policy.json", {
+      thresholds: { candidate: thresholds() },
+    });
+    const noEvidence = runCli(["qualification", "propose", exp, "--policy", policyFile], qual.env);
+    expect(noEvidence.code).toBe(1);
+    expect(noEvidence.stderr).toContain("qualification propose: --evidence is required");
+
+    const noPolicy = runCli(
+      ["qualification", "propose", exp, "--evidence", evidenceFile],
+      qual.env,
+    );
+    expect(noPolicy.code).toBe(1);
+    expect(noPolicy.stderr).toContain("qualification propose: --policy is required");
+  });
+
+  // Kills: a non-strict PromotionEvidenceSchema.
+  test("propose rejects evidence with an unrecognized key", () => {
+    const { exp } = qualFixtures();
+    const typo = fullEvidence();
+    delete typo["toolCallCorrectness"];
+    typo["toolCallCorectness"] = 0.95;
+    const evidenceFile = writeJsonFile(qual.devStorage, "evidence.json", typo);
+    const policyFile = writeJsonFile(qual.devStorage, "policy.json", {
+      thresholds: { candidate: thresholds() },
+    });
+    const r = runCli(
+      ["qualification", "propose", exp, "--evidence", evidenceFile, "--policy", policyFile],
+      qual.env,
+    );
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("qualification propose: ");
+    expect(r.stderr).toMatch(/toolCallCorectness|Unrecognized key/);
+  });
+
+  // Kills: an unguarded read.
+  test("propose reports an unreadable evidence file", () => {
+    const { exp } = qualFixtures();
+    const policyFile = writeJsonFile(qual.devStorage, "policy.json", {
+      thresholds: { candidate: thresholds() },
+    });
+    const r = runCli(
+      [
+        "qualification",
+        "propose",
+        exp,
+        "--evidence",
+        join(qual.devStorage, "absent-evidence.json"),
+        "--policy",
+        policyFile,
+      ],
+      qual.env,
+    );
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("qualification propose: cannot read evidence file");
   });
 });

@@ -3,13 +3,18 @@
 // shared `qualification-overrides.tsv` that `catalogQualificationStages` and
 // the `/v1/models` cache signature read; this command writes it through
 // `writeQualificationOverride` / `deleteQualificationOverride` and reports the
-// catalog stage, the overrides, `effectiveStage` and the routing stage. Because
+// catalog stage, the overrides, `effectiveStage` and the routing stage. The
+// read-only `propose` consumer runs `evaluateQualification` over an evidence
+// file (`parsePromotionEvidence`) and a policy file, then `applyQualification`
+// without a writer, so it never writes the overrides file or the catalog. Because
 // the file is node-local, every subcommand refuses a non-local `--node` target.
 
 import {
   catalog,
   env as envMod,
+  qualificationDemotion,
   qualificationOverrides,
+  qualificationPromotion,
   qualificationStages,
   schemas,
   workloadRuntime,
@@ -17,11 +22,13 @@ import {
 import { userInfo } from "node:os";
 
 import { isLocalDispatch, resolveEffectiveNodeName } from "../dispatcher.js";
+import { readFileSync } from "../safe-fs.js";
 
 type Stage = qualificationStages.QualificationStage;
 type QualificationOverride = qualificationOverrides.QualificationOverride;
 type NewOverride = Omit<QualificationOverride, "updated_at">;
 type EffectiveStage = qualificationStages.EffectiveStage;
+type QualificationDecision = qualificationDemotion.QualificationDecision;
 
 const USAGE = `Usage: llamactl qualification <subcommand>
 
@@ -36,13 +43,15 @@ Subcommands:
   unpin <rel>                         Remove a rel's pin override.
   freeze <rel> --reason <text> [--author <name>]        Block promotion for a rel (no stage).
   unfreeze <rel>                      Remove a rel's freeze override.
+  propose <rel> --evidence <file.json> --policy <file.json> [--json]   Read-only promotion/demotion proposal.
 
 Example:
   llamactl qualification pin <rel> production --reason "w4 bench passed"
   llamactl qualification status <rel> --json
+  llamactl qualification propose <rel> --evidence evidence.json --policy policy.json
 `;
 
-const VALUE_FLAGS = new Set(["--reason", "--author"]);
+const VALUE_FLAGS = new Set(["--reason", "--author", "--evidence", "--policy"]);
 
 interface ParsedArgs {
   positional: string[];
@@ -309,6 +318,108 @@ function removalCommand(verb: "unpin" | "unfreeze", rest: string[]): number {
   return 0;
 }
 
+type ReadResult = { ok: true; json: unknown } | { ok: false; message: string };
+
+function readJsonFile(label: "evidence" | "policy", path: string): ReadResult {
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch {
+    return { ok: false, message: `cannot read ${label} file '${path}'` };
+  }
+  try {
+    return { ok: true, json: JSON.parse(raw) };
+  } catch {
+    return { ok: false, message: `invalid JSON in ${label} file '${path}'` };
+  }
+}
+
+function decisionLine(rel: string, decision: QualificationDecision): string {
+  switch (decision.kind) {
+    case "proposal":
+      return `proposal ${rel} ${decision.proposal.from} -> ${decision.proposal.to}`;
+    case "demotion":
+      return `demotion ${rel} ${decision.proposal.from} -> ${decision.proposal.to} (breached: ${decision.proposal.breached.join(", ")})`;
+    case "none": {
+      const base = `none ${rel}: ${decision.reason}`;
+      if (decision.reason === "below-threshold") {
+        return `${base} (failed: ${decision.failed.join(", ")})`;
+      }
+      return base;
+    }
+  }
+}
+
+function proposeCommand(rest: string[]): number {
+  const { positional, flags, json } = parseArgs(rest);
+  const rel = positional[0];
+  if (rel === undefined) {
+    process.stderr.write(`qualification propose: <rel> is required\n\n${USAGE}`);
+    return 1;
+  }
+  const evidencePath = flags.get("--evidence");
+  if (evidencePath === undefined || evidencePath === "") {
+    process.stderr.write("qualification propose: --evidence is required\n");
+    return 1;
+  }
+  const policyPath = flags.get("--policy");
+  if (policyPath === undefined || policyPath === "") {
+    process.stderr.write("qualification propose: --policy is required\n");
+    return 1;
+  }
+
+  const evidenceRead = readJsonFile("evidence", evidencePath);
+  if (!evidenceRead.ok) {
+    process.stderr.write(`qualification propose: ${evidenceRead.message}\n`);
+    return 1;
+  }
+  const policyRead = readJsonFile("policy", policyPath);
+  if (!policyRead.ok) {
+    process.stderr.write(`qualification propose: ${policyRead.message}\n`);
+    return 1;
+  }
+
+  let evidence: qualificationPromotion.PromotionEvidence;
+  let policy: qualificationPromotion.PromotionPolicy;
+  try {
+    evidence = qualificationPromotion.parsePromotionEvidence(evidenceRead.json);
+    policy = qualificationPromotion.PromotionPolicySchema.parse(policyRead.json);
+  } catch (err) {
+    const messages = zodIssueMessages(err);
+    if (messages === null) throw err;
+    process.stderr.write(`qualification propose: ${messages.join("; ")}\n`);
+    return 1;
+  }
+
+  const ctx = buildContext();
+  const grouped = qualificationOverrides.overridesFor(ctx.overrideRows, rel);
+  const pinStage =
+    grouped.pin !== undefined && grouped.pin.stage !== "" ? grouped.pin.stage : undefined;
+  const declared = ctx.catalogStageByRel.get(rel) ?? pinStage;
+  if (declared === undefined) {
+    process.stderr.write(`qualification propose: '${rel}' has no qualification stage\n`);
+    return 1;
+  }
+
+  const decision = qualificationDemotion.evaluateQualification({
+    rel,
+    declared,
+    evidence,
+    policy,
+    overrides: grouped,
+  });
+  const apply = qualificationDemotion.applyQualification(decision, { policy });
+
+  if (json) {
+    const view = { rel, declared, overridesFile: ctx.file, decision, apply };
+    process.stdout.write(`${JSON.stringify(view)}\n`);
+    return 0;
+  }
+  process.stdout.write(`${decisionLine(rel, decision)}\n`);
+  process.stdout.write(`apply: ${apply.status} (nothing written; autoApply has no writer here)\n`);
+  return 0;
+}
+
 function dispatchQualification(argv: string[]): number {
   if (!isLocalDispatch()) {
     const node = resolveEffectiveNodeName();
@@ -331,6 +442,8 @@ function dispatchQualification(argv: string[]): number {
       return removalCommand("unpin", rest);
     case "unfreeze":
       return removalCommand("unfreeze", rest);
+    case "propose":
+      return proposeCommand(rest);
     case undefined:
     case "help":
     case "--help":

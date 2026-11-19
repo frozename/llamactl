@@ -88,6 +88,42 @@ export type PromotionEvidence = {
   evidenceRef?: string;
 } & Partial<Record<PromotionMetric, number>>;
 
+/**
+ * Strict validation boundary for an evidence aggregate (frozename/llamactl#518
+ * routing quality signals). Plain `z.number()` already rejects NaN and
+ * Infinity under zod v4, so no `.finite()` is used (deprecated). Unknown
+ * keys are refused by `.strict()`.
+ */
+export const PromotionEvidenceSchema = z
+  .object({
+    evaluatedTasks: z.number().int().nonnegative(),
+    evidenceRef: z.string().min(1).optional(),
+    firstAttemptSuccess: z.number().optional(),
+    repairSuccess: z.number().optional(),
+    toolCallCorrectness: z.number().optional(),
+    structuredOutputValidity: z.number().optional(),
+    regression: z.number().optional(),
+    improvement: z.number().optional(),
+    memoryStability: z.number().optional(),
+    runtimeReliability: z.number().optional(),
+  })
+  .strict();
+
+/**
+ * Parse and validate an unknown evidence input, stripping undefined optional
+ * keys so the result is assignable under `exactOptionalPropertyTypes`.
+ */
+export function parsePromotionEvidence(input: unknown): PromotionEvidence {
+  const parsed = PromotionEvidenceSchema.parse(input);
+  const evidence: PromotionEvidence = { evaluatedTasks: parsed.evaluatedTasks };
+  if (parsed.evidenceRef !== undefined) evidence.evidenceRef = parsed.evidenceRef;
+  for (const metric of PROMOTION_METRICS) {
+    const value = parsed[metric];
+    if (value !== undefined) evidence[metric] = value;
+  }
+  return evidence;
+}
+
 export interface PromotionProposal {
   rel: string;
   from: QualificationStage;

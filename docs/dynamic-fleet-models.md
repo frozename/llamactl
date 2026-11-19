@@ -361,11 +361,23 @@ falls through to the untouched `proposePromotion` decision.
 `effectiveStage` and never triggers a persisted demotion here.
 
 Effective status at this commit: `llamactl qualification status` and `list`
-call `effectiveStage` (see Overrides). `proposePromotion`,
-`applyPromotion`, `proposeDemotion`, `evaluateQualification` and
-`applyQualification` remain library-only — no router, catalog, lifecycle or
-CLI code calls them. Consumers are pending E-14 / #284. The overrides
-reader has one consumer: routing applies its pin rows (see Overrides).
+call `effectiveStage` (see Overrides). `llamactl qualification propose` is
+the read-only consumer of `evaluateQualification` and `applyQualification`.
+`proposePromotion`, `applyPromotion`, `proposeDemotion` and the writer path
+of `applyQualification` remain library-only; the writer consumers of the
+apply path are pending E-14 / #284. The overrides reader has one consumer:
+routing applies its pin rows (see Overrides).
+
+`llamactl qualification propose <rel> --evidence <file> --policy <file>
+[--json]` reads an evidence file and a policy file and reports a promotion,
+a demotion or a refusal without writing anything. The evidence file is
+validated by `parsePromotionEvidence` against the strict
+`PromotionEvidenceSchema`, so unknown keys are refused; the policy file is
+validated by `PromotionPolicySchema`. The declared stage is the catalog
+stage, falling back to the pin stage, and an unstaged rel is refused. The
+freeze and pin rows come from the shared overrides file. `applyQualification`
+is called without a writer, so `autoApply: true` still reports `proposed`
+and nothing is written.
 
 ## Overrides
 
