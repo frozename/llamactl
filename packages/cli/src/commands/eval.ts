@@ -43,10 +43,11 @@ Subcommands:
       Regenerate the markdown report card for <model> from SQLite.
   leaderboard [--node <name>] [--sort-by <field>]
       Print the eval leaderboard table to stdout.
-  perf --url <http://...> --engine <llamacpp|omlx|gufo|kapitsa> --model <id> [--suite perf-quick|perf-full] [--pid <n>] [--binary <path>] [--gguf <path>] [--quant <q>] [--ctx <n>] [--slots <n>] [--flags=<args>] [--db <path>] [--run-id <id>]
+  perf --url <http://...> --engine <llamacpp|omlx|gufo|kapitsa> --model <id> [--suite perf-quick|perf-full] [--pid <n>] [--binary <path>] [--gguf <path>] [--hf-revision <rev>] [--quant <q>] [--ctx <n>] [--slots <n>] [--flags=<args>] [--db <path>] [--run-id <id>]
       A direct perf run against a locally reachable engine. It records SSD
-      I/O, VmHWM and GTT when --pid names a local engine. Rows go to the
-      same perf.sqlite as bench schedule suites.
+      I/O and VmHWM when --pid names a local engine, and GTT on any
+      loopback Linux run, with or without --pid. Rows go to the same
+      perf.sqlite as bench schedule suites.
 `;
 
 function envValue(name: string): string {
