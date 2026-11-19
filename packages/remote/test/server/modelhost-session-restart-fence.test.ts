@@ -9,8 +9,6 @@
  * helpers below are copied from modelhost.test.ts rather than imported so
  * this file stays self-contained.
  */
-import type { spawn as nodeSpawn } from "node:child_process";
-
 import {
   createResidencyLeases,
   getResidencyLeaseRegistry,
@@ -24,6 +22,7 @@ import {
   setSessionRefcountRegistry,
 } from "@llamactl/core/residency/sessions";
 import { describe, expect, mock, test } from "bun:test";
+import { spawn as nodeSpawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -205,6 +204,20 @@ function stubOmxTeardown(tornDown: number[], release?: () => void): () => void {
   return (): void => {
     engine.teardown = originalTeardown;
   };
+}
+
+// A spawn stand-in typed as node's spawn without a cast: the Proxy keeps
+// nodeSpawn's type while its apply trap records the call and returns a fake
+// child instead of launching anything.
+function recordingSpawn(): { spawn: typeof nodeSpawn; calls: unknown[][] } {
+  const calls: unknown[][] = [];
+  const spawn = new Proxy(nodeSpawn, {
+    apply: (_target, _thisArg, args: unknown[]): { pid: number } => {
+      calls.push(args);
+      return { pid: 4321 };
+    },
+  });
+  return { spawn, calls };
 }
 
 describe("server/modelhost restart session fence (#520)", () => {
@@ -605,6 +618,91 @@ describe("server/modelhost restart session fence (#520)", () => {
       restoreTeardown();
       setResidencyLeaseRegistry(previousLeases);
       setSessionRefcountRegistry(previousSessions);
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+  test("guard: a lease registry without a session registry does not block", async () => {
+    // GUARD — passes at base: serve.ts installs only the lease registry when
+    // LLAMACTL_RESIDENCY_LEASES is on and the session idle timeout is unset.
+    // Kills M13: mutating `if (sessions === null) return null;` in
+    // restartSessionRefusal to a SessionsUnknown refusal — the restart would
+    // be refused instead of tearing down and spawning.
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-fence-nosessions-"));
+    const { workloadsDir, runtimeDir } = makeManifest(tmp);
+    const previousLeases = getResidencyLeaseRegistry();
+    const previousSessions = currentSessionRefcounts();
+    const leases = createResidencyLeases();
+    setResidencyLeaseRegistry(leases);
+    setSessionRefcountRegistry(null);
+    const { identity, release } = releasableSelfIdentity("omlx");
+    const tornDown: number[] = [];
+    const restoreTeardown = stubOmxTeardown(tornDown, release);
+    const { spawn, calls } = recordingSpawn();
+    seedLiveSelfHost(runtimeDir);
+    try {
+      const result = await startModelHost({
+        key: { name: "mlx-host-server" },
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        identity,
+        spawn,
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
+      });
+
+      expect(result.refused).toBeUndefined();
+      expect(result.ok).toBe(true);
+      expect(tornDown).toEqual([process.pid]);
+      expect(calls).toHaveLength(1);
+      expect(leases.snapshot("mlx-host-server").phase).toBe("open");
+    } finally {
+      restoreTeardown();
+      setResidencyLeaseRegistry(previousLeases);
+      setSessionRefcountRegistry(previousSessions);
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("guard: an unloaded workload restarts unfenced, as core does", async () => {
+    // GUARD — passes at base: a beginDrain refused as Unloaded (not
+    // AlreadyDraining) runs the teardown unfenced. Kills M12: replacing the
+    // non-AlreadyDraining `return await run();` in fencePriorHostTeardown
+    // with a DrainInProgress refusal — nothing would be torn down or spawned.
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-fence-unloaded-"));
+    const { workloadsDir, runtimeDir } = makeManifest(tmp);
+    const clock = 0;
+    const { leases, restore } = installRegistries(() => clock);
+    const drain = leases.beginDrain("mlx-host-server");
+    if (!drain.ok) {
+      throw new Error("expected beginDrain to succeed");
+    }
+    const committed = leases.commitUnload(drain.token);
+    if (!committed.ok) {
+      throw new Error("expected commitUnload to succeed");
+    }
+    expect(leases.snapshot("mlx-host-server").phase).toBe("unloaded");
+    const { identity, release } = releasableSelfIdentity("omlx");
+    const tornDown: number[] = [];
+    const restoreTeardown = stubOmxTeardown(tornDown, release);
+    const { spawn, calls } = recordingSpawn();
+    seedLiveSelfHost(runtimeDir);
+    try {
+      const result = await startModelHost({
+        key: { name: "mlx-host-server" },
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        identity,
+        spawn,
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
+      });
+
+      expect(result.refused).toBeUndefined();
+      expect(tornDown).toEqual([process.pid]);
+      expect(calls).toHaveLength(1);
+    } finally {
+      restoreTeardown();
+      restore();
       rmSync(tmp, { recursive: true, force: true });
     }
   });
