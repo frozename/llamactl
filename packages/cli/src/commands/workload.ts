@@ -1493,6 +1493,19 @@ async function deleteModelHost(
   return 0;
 }
 
+function modelRunStopRefusalLine(node: string, refused: unknown): string {
+  if (refused !== null && typeof refused === "object") {
+    const r = refused as { reason?: unknown; active?: unknown };
+    if (typeof r.reason === "string") {
+      const ids = Array.isArray(r.active)
+        ? r.active.filter((x): x is string => typeof x === "string")
+        : [];
+      return `delete: node ${node} refused to stop (${r.reason}${ids.length > 0 ? `: ${ids.join(", ")}` : ""}); manifest preserved\n`;
+    }
+  }
+  return `delete: node ${node} refused to stop (pid identity unverifiable); manifest preserved\n`;
+}
+
 async function stopModelRunServer(
   manifest: workloadSchema.ModelRun,
   force: boolean,
@@ -1509,13 +1522,12 @@ async function stopModelRunServer(
       const outcome = (await client.serverStop.mutate({
         workload: manifest.metadata.name,
         graceSeconds: 5,
-      })) as { stopped?: unknown } | null;
-      // A refused stop keeps the manifest: the remote could not prove the
-      // recorded pid's identity, and deleting would orphan it.
+      })) as { stopped?: unknown; refused?: unknown } | null;
+      // A refused stop keeps the manifest: the refusal is either an
+      // unverifiable pid identity or a residency stop-fence refusal (leases,
+      // drain or bound sessions, #520), and deleting would orphan it.
       if (outcome !== null && outcome.stopped === false) {
-        process.stderr.write(
-          `delete: node ${manifest.spec.node} refused to stop (pid identity unverifiable); manifest preserved\n`,
-        );
+        process.stderr.write(modelRunStopRefusalLine(manifest.spec.node, outcome.refused));
         return false;
       }
       process.stdout.write(`stopped server on node ${manifest.spec.node}\n`);
