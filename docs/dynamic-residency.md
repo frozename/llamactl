@@ -208,6 +208,8 @@ A verified `--evict` victim (or one named by the `llamactl.io/evict` annotation)
 
 Under `createSharedUnifiedProxy` (Part of #518), `switchCooldownSeconds` also feeds the ranker's `cooldownUntil` signal. The signal is measured from the residency store's `lastSucceededAtMs` entry for `profile-switch:<node>`, where `<node>` is `LLAMACTL_NODE_NAME`: a local candidate without a `ready` lifecycle row is charged the remaining cooldown against its stage-quality score, while peers and resident candidates are not charged. An absent, errored or lifecycle-unreadable store charges nothing. The NodeRun and store reads keep the 5-second cache.
 
+Under `createSharedUnifiedProxy` (Part of #518), the residency store's lifecycle rows also feed the ranker's `operationalState` signal: a local candidate whose row is `draining` or `unloading` ranks in the drain tier, and one whose row is `failed` ranks in the degraded tier with zero quality points, mirroring the `effectiveStage` health overlay. Ranking only orders candidates; eligibility and experimental exclusion are unchanged and no candidate is dropped. Peers are never marked, an absent or errored store marks nothing, and the signal is emitted only when a ranking knob is nonzero (the store is not read otherwise).
+
 ## Cleanup of conflicting legacy launchers
 
 First run `git grep -n keepAlive packages/remote/src/workload`. It finds nothing, so the controller does not detect a keep-alive supervisor and you must inventory by hand. Inventory with `llamactl keep-alive status` and `llamactl server status`:
