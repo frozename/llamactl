@@ -608,3 +608,65 @@ lifecycle refuses with "... run the server externally"
 (`buildBootCommandForModelSpec` and `ensureModelServing`,
 `packages/eval/src/matrix/lifecycle.ts`). The `gufo-glm53-exp`
 template is a `ModelHost` with `engine: llamacpp`, not the `gufo` engine.
+
+### Scheduled perf suites for an arm
+
+A schedule is the recurring alternative to `eval perf` for an arm that is
+already serving on an HTTP agent node. The `add` synopsis below is copied
+verbatim from the USAGE text (`packages/cli/src/commands/bench-schedule.ts`):
+
+```text
+  llamactl bench schedule add <id> --node <node> --rel <rel>
+      [--mode auto|text|vision] --every <duration>
+      [--kind suite --suite <perf-quick|perf-full> [--engine <llamacpp|omlx|gufo|kapitsa>]]
+```
+
+So `llamactl bench schedule add <id> --node <node> --rel <rel>` takes an
+optional `--mode`, and `--every <duration>` is required: without it the CLI
+refuses with `--every is required` (`planAddArgs`,
+`packages/cli/src/commands/bench-schedule.ts`).
+
+```sh
+llamactl bench schedule add glm53-gufo-perf --node <node> --rel <rel> \
+  --every 6h --kind suite --suite perf-quick --engine gufo
+```
+
+`--engine` is accepted only with `--kind suite`; otherwise the CLI refuses with
+`--engine is only valid when kind is 'suite'`, and the schedule schema
+(`BenchScheduleSchema`, `packages/remote/src/bench/schedule.ts`) refuses the
+same combination. A CLI `add` refuses an unknown engine id up front with
+`unknown engine '<id>' (expected one of llamacpp, omlx, gufo, kapitsa)`
+(`validateSuiteArgs`, `packages/cli/src/commands/bench-schedule.ts`); only a
+schedule saved another way reaches the suite runner, where an unknown engine id
+is refused before any endpoint work and lands in the schedule's `lastError`.
+Separately, a suite schedule without `--engine`, including one saved before
+#768, records `llamacpp` (`createPerfBenchSuiteRunner`,
+`packages/cli/src/commands/bench-schedule.ts`). At fire time the tick loop
+forwards the schedule's engine to the suite runner (`runWithOutcome`,
+`packages/remote/src/bench/scheduleLoop.ts`).
+
+The node must be an HTTP agent, otherwise the run refuses with
+`perf suite runs need an HTTP agent endpoint` (`defaultEndpoint`,
+`packages/cli/src/commands/bench-schedule.ts`). The rel must already be listed in
+the node's `/v1/models`, otherwise the run refuses with
+`node '<node>' is not serving '<rel>' (serving: ...)` (`assertServesModel`,
+`packages/cli/src/commands/bench-schedule.ts`): a schedule never starts or stops
+the engine; if <rel> is not served when the tick fires, the run fails into
+`lastError`, so for exclusive-group arms, schedule it to fire inside the
+exclusive window.
+
+Rows land in the same `perf.sqlite` as `llamactl eval perf` (`defaultPerfDbPath`,
+`packages/cli/src/commands/bench-schedule.ts`), with run id
+`<id>-<ISO timestamp>`. Provenance records the engine, while `engine_version`,
+`engine_commit`, `binary_sha256`, `gguf_sha256`, `hf_revision`, `quant` and `ctx`
+are recorded null, each with an unavailable reason stating that scheduled suites
+reach <rel> through the agent gateway. SSD I/O, peak RSS and GTT are recorded
+`unavailable` with a reason naming the node. So an eval-record arm that needs
+binary or GGUF provenance should use `llamactl eval perf` with `--binary` or
+`--gguf` on the engine host instead. The provenance `host` is the machine running
+`llamactl bench schedule run` or `kick`, not <node> (`collectEvalProvenance` with
+`defaultProvenanceReaders`, `packages/eval/src/perf/provenance.ts`).
+
+Note that schedules fire only while `llamactl bench schedule run` is alive;
+`llamactl bench schedule kick` runs one tick now. As with `eval perf`, the
+promotion cells stay `unavailable`.
