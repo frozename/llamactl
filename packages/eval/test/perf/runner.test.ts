@@ -521,4 +521,55 @@ describe("runPerfSuite", () => {
     );
     expectUnavailable(metricOf(rows, "peak_gtt_bytes"), /GTT reader returned no sample/i);
   });
+
+  describe("#521 slotsReason", () => {
+    test("uses opts.slotsReason for the unknown-slots concurrency reason (kills: the runner ignoring slotsReason)", async () => {
+      const clock = createManualClock();
+      const fake = startEngine(engineOpts(clock));
+      const client = createHttpPerfEngineClient(fake.url, { clock });
+      const opts = {
+        ...suiteOpts({ client, clock, slots: null }),
+        slotsReason: "slots-reason-Q",
+      } as PerfSuiteOptions;
+
+      await runPerfSuite(db, opts);
+
+      const rows = listPerfRuns(db, { run_id: RUN_ID });
+      expectMetricNames(rows);
+      expect(unavailableReason(metricOf(rows, "c2_tps"))).toBe("slots-reason-Q");
+      expect(unavailableReason(metricOf(rows, "c4_tps"))).toBe("slots-reason-Q");
+      expect(metricOf(rows, "c1_tps").status).toBe("ok");
+    });
+
+    test("guard: without slotsReason the unknown-slots reason stays the legacy text", async () => {
+      const clock = createManualClock();
+      const fake = startEngine(engineOpts(clock));
+      const client = createHttpPerfEngineClient(fake.url, { clock });
+
+      await runPerfSuite(db, suiteOpts({ client, clock, slots: null }));
+
+      const rows = listPerfRuns(db, { run_id: RUN_ID });
+      expectMetricNames(rows);
+      expect(unavailableReason(metricOf(rows, "c2_tps"))).toBe(
+        "engine slots unknown (slot count not provided)",
+      );
+    });
+
+    test("guard: a numeric slots wins over slotsReason", async () => {
+      const clock = createManualClock();
+      const fake = startEngine(engineOpts(clock));
+      const client = createHttpPerfEngineClient(fake.url, { clock });
+      const opts = {
+        ...suiteOpts({ client, clock, slots: 2 }),
+        slotsReason: "ignored",
+      } as PerfSuiteOptions;
+
+      await runPerfSuite(db, opts);
+
+      const rows = listPerfRuns(db, { run_id: RUN_ID });
+      expectMetricNames(rows);
+      expect(metricOf(rows, "c2_tps").status).toBe("ok");
+      expect(unavailableReason(metricOf(rows, "c4_tps"))).toBe("engine slots 2 < concurrency 4");
+    });
+  });
 });

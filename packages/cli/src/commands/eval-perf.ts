@@ -18,6 +18,7 @@ import {
   defaultProvenanceReaders,
   EVAL_ENGINES,
   listPerfRuns,
+  probeEngineSlots,
   resolvePerfSuite,
   runPerfSuite,
 } from "@llamactl/eval";
@@ -30,7 +31,9 @@ import { defaultPerfDbPath, servedModelIds } from "./bench-schedule.js";
  * at --url. On a loopback URL it wires the engine PID's /proc I/O and VmHWM
  * readers (Linux) plus a GTT probe into runPerfSuite, fills provenance from
  * --binary/--gguf/--quant/--ctx/--flags/--slots, refuses --pid off loopback,
- * and records per-reader unavailable reasons everywhere else.
+ * and records per-reader unavailable reasons everywhere else. The c2/c4 slot
+ * count comes from --slots, else (for llamacpp) from `GET /props` total_slots;
+ * when neither yields a count the run records an engine-named slotsReason.
  * `__setEvalPerfTestSeams` narrows every side effect so the command stays
  * hermetic under test.
  */
@@ -282,8 +285,11 @@ function buildOpts(args: {
   provenance: PerfSuiteOptions["provenance"];
   readers: PerfSuiteReaders | undefined;
   readerReasons: PerfSuiteReaderReasons;
+  slots: number | null;
+  slotsReason: string | undefined;
 }): PerfSuiteOptions {
-  const { input, runId, client, clock, provenance, readers, readerReasons } = args;
+  const { input, runId, client, clock, provenance, readers, readerReasons, slots, slotsReason } =
+    args;
   return {
     ...input.preset,
     run_id: runId,
@@ -294,7 +300,28 @@ function buildOpts(args: {
     readerReasons,
     ...(readers !== undefined ? { readers } : {}),
     ...(input.ctx !== null ? { ctx: input.ctx } : {}),
-    ...(input.slots !== null ? { slots: input.slots } : {}),
+    ...(slots !== null ? { slots } : {}),
+    ...(slotsReason !== undefined ? { slotsReason } : {}),
+  };
+}
+
+type SlotResolution = { slots: number | null; slotsReason: string | undefined };
+
+async function resolveSlots(input: RunInput): Promise<SlotResolution> {
+  if (input.slots !== null) return { slots: input.slots, slotsReason: undefined };
+  if (input.engine !== "llamacpp") {
+    return {
+      slots: null,
+      slotsReason: `engine '${input.engine}' does not advertise a llama-server GET /props slot count; pass --slots <n> to measure c2/c4`,
+    };
+  }
+  const probe = await probeEngineSlots(input.url, {
+    ...(seams.fetchImpl !== undefined ? { fetchImpl: seams.fetchImpl } : {}),
+  });
+  if (probe.slots !== null) return { slots: probe.slots, slotsReason: undefined };
+  return {
+    slots: null,
+    slotsReason: `${probe.reason}; pass --slots <n> to measure c2/c4`,
   };
 }
 
@@ -321,6 +348,7 @@ export async function runEvalPerf(argv: string[]): Promise<number> {
   }
 
   const provenance = await buildProvenance(values, resolved);
+  const { slots, slotsReason } = await resolveSlots(resolved);
   const { readers, reasons: readerReasons } = hostReaders(
     resolved.url,
     resolved.loopback,
@@ -333,7 +361,17 @@ export async function runEvalPerf(argv: string[]): Promise<number> {
     const runner = seams.runPerfSuite ?? runPerfSuite;
     await runner(
       db,
-      buildOpts({ input: resolved, runId, client, clock, provenance, readers, readerReasons }),
+      buildOpts({
+        input: resolved,
+        runId,
+        client,
+        clock,
+        provenance,
+        readers,
+        readerReasons,
+        slots,
+        slotsReason,
+      }),
     );
     process.stdout.write(`run_id: ${runId}\n`);
     printPerfTable(listPerfRuns(db, { run_id: runId }));

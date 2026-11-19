@@ -26,12 +26,11 @@
  * is never recorded and leaves the row occupying, so the group is not freed.
  *
  * Known limits this slice accepts:
- * - A `ready` row for any workload that still has a recorded pid file —
- *   including a stale or reused one — fails closed and refuses direct starts
- *   in that group until a status read or a stop reaps it: `isProvenDown` only
- *   clears a ModelHost proven Stopped with a resolved identity, and a ModelRun
- *   only when it has no recorded pid at all. Identity-based proof for ModelRun
- *   is remaining scope.
+ * - A `ready` row fails closed and refuses direct starts in that group when a
+ *   recorded pid is still alive or its identity cannot be verified
+ *   (`unknown`): `isProvenDown` clears a ModelHost proven Stopped with a
+ *   resolved identity, and a ModelRun only when it has no recorded pid or its
+ *   recorded pid verifies `dead` or `reused` against the pid file.
  * - A switch that claims the fence between our claim and its beginOperation is
  *   refused by its own stale-fence check, not by us; we only refuse to claim
  *   while a `profile-switch:` operation is already nonterminal.
