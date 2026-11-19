@@ -8,7 +8,7 @@
 // assertion while the guard cases (disabled knob, no ready row, foreign
 // serving node) already pass.
 import { Database } from "bun:sqlite";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, setSystemTime, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -572,6 +572,55 @@ describe("#519 apply --evict minResidencySeconds", () => {
         Reflect.deleteProperty(process.env, "LLAMACTL_RESIDENCY_STORE");
       }
     });
+  });
+
+  // Mutation pinned (M20): changing `ageMs < min * 1000` to `<=` in
+  // checkEvictMinResidency (apply.ts) refuses a victim ready for exactly
+  // minResidencySeconds, so this fails. The docs say "fewer than".
+  test("E14: a victim ready for exactly minResidencySeconds is evicted", async () => {
+    const FIXED_MS = Date.parse("2026-01-01T00:00:00.000Z");
+    setSystemTime(new Date(FIXED_MS));
+    try {
+      await inTempDir(async (tmp) => {
+        const { workloadsDir, client, stops, starts } = seedVictim(tmp);
+        const result = await applyEvictingB(
+          client,
+          evictOpts(workloadsDir, () => FIXED_MS - 3_600_000),
+        );
+        expect(result.action).toBe("started");
+        expect(stops).toEqual(["a"]);
+        expect(starts).toEqual(["b"]);
+      });
+    } finally {
+      setSystemTime();
+    }
+  });
+
+  // Mutation pinned (M19): replacing `Math.min(readySinceMs, nowMs)` with
+  // `readySinceMs` in checkEvictMinResidency (apply.ts) lets a future
+  // ready-since produce a negative age, so the message reports -60s and
+  // retry in 3660s and this fails.
+  test("E15: a future ready-since timestamp is clamped to now", async () => {
+    const FIXED_MS = Date.parse("2026-01-01T00:00:00.000Z");
+    setSystemTime(new Date(FIXED_MS));
+    try {
+      await inTempDir(async (tmp) => {
+        const { workloadsDir, client, stops, starts } = seedVictim(tmp);
+        const result = await applyEvictingB(
+          client,
+          evictOpts(workloadsDir, () => FIXED_MS + 60_000),
+        );
+        expect(result.action).toBe("pending");
+        expect(result.statusSection.conditions[0]?.reason).toBe("EvictMinResidency");
+        expect(result.error).toContain(
+          "it has been ready for 0s, under the node's minResidencySeconds of 3600; retry in 3600s",
+        );
+        expect(stops).toEqual([]);
+        expect(starts).toEqual([]);
+      });
+    } finally {
+      setSystemTime();
+    }
   });
 
   test("M1: a ModelHost replacement refuses to evict a victim younger than minResidencySeconds", async () => {
