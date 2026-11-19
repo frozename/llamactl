@@ -479,6 +479,37 @@ describe("#519 apply --evict minResidencySeconds on another node", () => {
     });
   });
 
+  // Mutation pinned: making readinessFromReadOutcome's
+  // `outcome.kind === "timeout"` arm return { ok: true, readySinceMs: new
+  // Map() } treats a black-holed residencyStatus read as "no ready row" and
+  // evicts blind (action 'started', stop and start recorded) instead of
+  // refusing EvictMinResidencyUnknown. The evictReadinessTimeoutMs seam
+  // keeps the race short; dropping the seam waits out the 10 s default.
+  test("X10: a residencyStatus read that never settles times out and refuses EvictMinResidencyUnknown", async () => {
+    await inTempDir(async (tmp) => {
+      const { workloadsDir, client, stops, starts } = seedVictim(tmp);
+      const storePath = join(tmp, "residency-state", "operations.sqlite");
+      process.env["LLAMACTL_NODE_NAME"] = "other";
+      process.env["LLAMACTL_RESIDENCY_STORE"] = storePath;
+      const { client: remote, calls } = withRemoteStatus(
+        client,
+        () => new Promise<unknown>(() => undefined),
+      );
+      const result = await applyEvictingB(remote, {
+        ...evictOpts(workloadsDir),
+        evictReadinessTimeoutMs: 25,
+      });
+      expect(result.action).toBe("pending");
+      expect(result.statusSection.phase).toBe("Failed");
+      expect(result.statusSection.conditions[0]?.reason).toBe("EvictMinResidencyUnknown");
+      expect(result.error).toContain("its residency readiness could not be verified");
+      expect(result.error).toContain("timed out after 25ms");
+      expect(stops).toEqual([]);
+      expect(starts).toEqual([]);
+      expect(calls).toEqual([{ node: "local" }]);
+    });
+  }, 5_000);
+
   // Mutation pinned: dropping the `state === 'ready'` filter or the
   // `model === target` match in the remote lifecycle mapping protects the
   // wrong rows; here 'a' is only 'loading' and 'zz' holds the ready row,

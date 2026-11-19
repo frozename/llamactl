@@ -290,6 +290,9 @@ export interface ApplyManifestOptions {
    *  means "no ready row, not protected". Same contract as
    *  ApplyOneOpts.evictReadySinceMs. */
   evictReadySinceMs?: (workload: string) => number | null | undefined;
+  /** #519: deadline for the victim node's residencyStatus readiness read.
+   *  Same contract as ApplyOneOpts.evictReadinessTimeoutMs. */
+  evictReadinessTimeoutMs?: number;
   /** Shared deadline per verified evict victim covering its status read,
    *  stop and release check before the apply fails. Same contract as
    *  ApplyOneOpts.evictStopTimeoutMs. */
@@ -1066,6 +1069,7 @@ async function applyModelHostReplacement(
       resolveNodeIdentity: opts.resolveNodeIdentity,
       sessionGate: opts.sessionGate,
       evictReadySinceMs: opts.evictReadySinceMs,
+      evictReadinessTimeoutMs: opts.evictReadinessTimeoutMs,
       evictStopTimeoutMs: opts.evictStopTimeoutMs,
       evictionGraceMs: opts.evictionGraceMs,
       evictionOperation: opts.evictionOperation,
@@ -1143,6 +1147,9 @@ export async function applyOneModelHost(
     /** #519: explicit readiness source for the minResidencySeconds evict gate;
      *  same contract as ApplyOneOpts.evictReadySinceMs. */
     evictReadySinceMs?: (workload: string) => number | null | undefined;
+    /** #519: deadline for the victim node's residencyStatus readiness read;
+     *  same contract as ApplyOneOpts.evictReadinessTimeoutMs. */
+    evictReadinessTimeoutMs?: number;
     /** Shared deadline per verified evict victim; same contract as
      *  ApplyOneOpts.evictStopTimeoutMs. */
     evictStopTimeoutMs?: number;
@@ -1169,12 +1176,13 @@ export async function applyOneModelHost(
       ? { resolveNodeIdentity: opts.resolveNodeIdentity }
       : {}),
     ...(opts?.sessionGate !== undefined ? { sessionGate: opts.sessionGate } : {}),
-    ...(opts?.evictReadySinceMs !== undefined ? { evictReadySinceMs: opts.evictReadySinceMs } : {}),
-    ...(opts?.evictStopTimeoutMs !== undefined
-      ? { evictStopTimeoutMs: opts.evictStopTimeoutMs }
-      : {}),
-    ...(opts?.evictionGraceMs !== undefined ? { evictionGraceMs: opts.evictionGraceMs } : {}),
-    ...(opts?.evictionOperation !== undefined ? { evictionOperation: opts.evictionOperation } : {}),
+    ...omitUndefined({
+      evictReadySinceMs: opts?.evictReadySinceMs,
+      evictReadinessTimeoutMs: opts?.evictReadinessTimeoutMs,
+      evictStopTimeoutMs: opts?.evictStopTimeoutMs,
+      evictionGraceMs: opts?.evictionGraceMs,
+      evictionOperation: opts?.evictionOperation,
+    }),
   });
 }
 
@@ -1419,6 +1427,11 @@ interface ApplyOneOpts {
    * serving node's residency store, and only when `LLAMACTL_NODE_NAME` names
    * the victim's node. */
   evictReadySinceMs?: (workload: string) => number | null | undefined;
+  /** #519: deadline for the victim node's residencyStatus readiness read
+   * when the min-residency gate consults a foreign node; a read that has
+   * not settled by then fails closed with EvictMinResidencyUnknown.
+   * Default EVICT_READINESS_TIMEOUT_MS (10 seconds). */
+  evictReadinessTimeoutMs?: number;
   /** Shared deadline per verified evict victim covering its status read,
    * stop and release check before the apply fails. Default 15_000
    * (15 seconds). */
@@ -2083,9 +2096,7 @@ interface EvictionStageCtx {
   /** Cross-node evict readiness for the #519 minResidencySeconds gate,
    *  prefetched from the victim node when this process's own store does not
    *  apply: the model→ready-since map, or the failure to read it. */
-  remoteEvictReadiness?:
-    | { ok: true; readySinceMs: Map<string, number> }
-    | { ok: false; error: string };
+  remoteEvictReadiness?: RemoteEvictReadiness;
 }
 
 interface ConvergeServerContext extends EvictionStageCtx {
@@ -2450,11 +2461,14 @@ function evictReadinessPrefetchSkipped(ctx: EvictionStageCtx): boolean {
  *  agent that predates lifecycle rows) reports no ready row, an unavailable
  *  section fails closed, and otherwise only `ready` rows with a finite
  *  timestamp count. */
-function readinessFromReadOutcome(outcome: EvictReadinessOutcome): RemoteEvictReadiness {
+function readinessFromReadOutcome(
+  outcome: EvictReadinessOutcome,
+  timeoutMs: number,
+): RemoteEvictReadiness {
   if (outcome.kind === "timeout") {
     return {
       ok: false,
-      error: `residencyStatus timed out after ${String(EVICT_READINESS_TIMEOUT_MS)}ms`,
+      error: `residencyStatus timed out after ${String(timeoutMs)}ms`,
     };
   }
   if (outcome.kind === "rejected") {
@@ -2481,7 +2495,8 @@ function readinessFromReadOutcome(outcome: EvictReadinessOutcome): RemoteEvictRe
  * Prefetch the victim node's cross-node evict readiness for the #519
  * minResidencySeconds gate once per apply, writing it to
  * `ctx.remoteEvictReadiness`. Returns without reading when the gate has
- * nothing to decide. The read races an EVICT_READINESS_TIMEOUT_MS timer and
+ * nothing to decide. The read races an `opts.evictReadinessTimeoutMs` timer
+ * (default EVICT_READINESS_TIMEOUT_MS) and
  * records the outcome (failure closed on rejection or timeout) so
  * `resolveEvictReadySinceMs` fails closed for a foreign serving node.
  */
@@ -2489,12 +2504,13 @@ async function prefetchEvictReadiness(ctx: EvictionStageCtx): Promise<void> {
   if (evictReadinessPrefetchSkipped(ctx)) return;
   const residencyStatus = ctx.client.residencyStatus;
   if (residencyStatus === undefined) return;
+  const timeoutMs = ctx.opts?.evictReadinessTimeoutMs ?? EVICT_READINESS_TIMEOUT_MS;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const timeout = new Promise<EvictReadinessOutcome>((resolve) => {
       timer = setTimeout(() => {
         resolve({ kind: "timeout" });
-      }, EVICT_READINESS_TIMEOUT_MS);
+      }, timeoutMs);
     });
     const read: Promise<EvictReadinessOutcome> = residencyStatus
       .query({ node: ctx.manifest.spec.node })
@@ -2506,7 +2522,7 @@ async function prefetchEvictReadiness(ctx: EvictionStageCtx): Promise<void> {
         }),
       );
     const outcome = await Promise.race([read, timeout]);
-    ctx.remoteEvictReadiness = readinessFromReadOutcome(outcome);
+    ctx.remoteEvictReadiness = readinessFromReadOutcome(outcome, timeoutMs);
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
@@ -3582,6 +3598,7 @@ async function applyModelRunManifest(opts: ApplyManifestOptions): Promise<ApplyM
       resolveNodeIdentity: opts.resolveNodeIdentity,
       sessionGate: opts.sessionGate,
       evictReadySinceMs: opts.evictReadySinceMs,
+      evictReadinessTimeoutMs: opts.evictReadinessTimeoutMs,
       evictStopTimeoutMs: opts.evictStopTimeoutMs,
       evictionGraceMs: opts.evictionGraceMs,
       evictionOperation: opts.evictionOperation,
