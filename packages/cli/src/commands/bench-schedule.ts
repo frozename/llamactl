@@ -271,6 +271,9 @@ export function createPerfBenchSuiteRunner(
       peakRss: `peak RSS (VmHWM) for ${req.rel} lives on node '${req.node}'; scheduled suites reach it through the agent gateway, which exposes no engine process counters`,
       gtt: `GTT usage for ${req.rel} lives on node '${req.node}'; scheduled suites reach it through the agent gateway, which exposes no engine process counters`,
     };
+    // The gateway forwards only /v1/*, so the engine's GET /props slot count
+    // is unreachable; c2/c4 record this reason instead of a probe result.
+    const slotsReason = `slot count for ${req.rel} on node '${req.node}' is unknown; scheduled suites reach the engine through the agent gateway, which forwards only /v1/* and not the engine's /props`;
     const db = (overrides.openDb ?? defaultOpenDb)();
     try {
       await (overrides.runPerfSuite ?? ev.runPerfSuite)(db, {
@@ -281,6 +284,7 @@ export function createPerfBenchSuiteRunner(
         clock,
         provenance,
         readerReasons,
+        slotsReason,
       });
     } finally {
       db.close();
