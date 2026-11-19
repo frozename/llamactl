@@ -623,6 +623,33 @@ describe("#519 apply --evict minResidencySeconds", () => {
     }
   });
 
+  // Kills, all at once: `ageMs < min * 1000` -> `ageMs < min * 1000 - 1000` (evicts at
+  // 3599.999s); readyForS Math.floor -> Math.ceil (3600s); retryInS Math.ceil -> Math.floor
+  // (0s); retryInS `min*1000 - ageMs` -> `+ ageMs` (7200s); retryInS -> String(min) (3600s);
+  // readyForS -> "0".
+  test("E16: a victim 1 ms short of minResidencySeconds is refused with exact ready/retry text", async () => {
+    const FIXED_MS = Date.parse("2026-01-01T00:00:00.000Z");
+    setSystemTime(new Date(FIXED_MS));
+    try {
+      await inTempDir(async (tmp) => {
+        const { workloadsDir, client, stops, starts } = seedVictim(tmp);
+        const result = await applyEvictingB(
+          client,
+          evictOpts(workloadsDir, () => FIXED_MS - 3_599_999),
+        );
+        expect(result.action).toBe("pending");
+        expect(result.statusSection.conditions[0]?.reason).toBe("EvictMinResidency");
+        expect(result.error).toContain(
+          "it has been ready for 3599s, under the node's minResidencySeconds of 3600; retry in 1s",
+        );
+        expect(stops).toEqual([]);
+        expect(starts).toEqual([]);
+      });
+    } finally {
+      setSystemTime();
+    }
+  });
+
   test("M1: a ModelHost replacement refuses to evict a victim younger than minResidencySeconds", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "llamactl-evict-min-residency-m1-"));
     const prevRuntimeDir = process.env["LOCAL_AI_RUNTIME_DIR"];
