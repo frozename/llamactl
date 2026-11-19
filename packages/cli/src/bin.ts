@@ -148,7 +148,7 @@ Declarative workloads (Kubernetes-style):
       [--json]                                (policy, budget, store; never wakes a model)
   llamactl residency plan --node <name>       Read-only dry-run profile switch
       --to <profile> [--from <profile>] [--json]  (victims, replacements, budget; never mutates)
-  llamactl qualification <list|status|pin|unpin|freeze|unfreeze>  Node-local qualification pin/freeze overrides
+  llamactl qualification <list|status|propose|pin|unpin|freeze|unfreeze>  Node-local qualification overrides and proposals
   llamactl enable <workload>                  Flip spec.enabled=true and
                                               re-apply the manifest.
   llamactl disable <workload>                 Flip spec.enabled=false and
