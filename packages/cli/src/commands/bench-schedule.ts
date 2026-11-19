@@ -274,6 +274,7 @@ export function createPerfBenchSuiteRunner(
     // The gateway forwards only /v1/*, so the engine's GET /props slot count
     // is unreachable; c2/c4 record this reason instead of a probe result.
     const slotsReason = `slot count for ${req.rel} on node '${req.node}' is unknown; scheduled suites reach the engine through the agent gateway, which forwards only /v1/* and not the engine's /props`;
+    const loadReason = `model load for ${req.rel} happens on node '${req.node}'; scheduled suites reach an already-serving engine through the agent gateway and do not load or reload it, so cold/warm load time is not measured`;
     const db = (overrides.openDb ?? defaultOpenDb)();
     try {
       await (overrides.runPerfSuite ?? ev.runPerfSuite)(db, {
@@ -285,6 +286,7 @@ export function createPerfBenchSuiteRunner(
         provenance,
         readerReasons,
         slotsReason,
+        loadReason,
       });
     } finally {
       db.close();

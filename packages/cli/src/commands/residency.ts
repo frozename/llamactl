@@ -2,8 +2,9 @@
 // plus the #278 (DF-05) operator `residency force-unload`. Status routes one
 // residencyStatus.query through the dispatcher, bounded by the exported
 // withNodeQueryDeadline helper, and renders the serving process's NodeRun policy,
-// memory budget and node-local residency store; it never wakes a model and never
-// mutates. plan is the read-only dry-run profile switch: it routes one
+// memory budget, node-local residency store, lifecycle rows, lease/drain state,
+// bound sessions and the advisory idle-eviction window; it never wakes a model
+// and never mutates. plan is the read-only dry-run profile switch: it routes one
 // residencyPlan.query and renders budget source, victims, replacements,
 // protected workloads or a refusal reason; a refusal is a successful dry-run
 // answer and exits 0, never starting, stopping, loading or writing the store.
@@ -35,7 +36,7 @@ import { withNodeQueryDeadline } from "./workload.js";
 const USAGE = `Usage: llamactl residency <subcommand>
 
 Subcommands:
-  status --node <name> [--json]   Read-only residency status: NodeRun policy, memory budget, the serving process's residency store, its per-model lifecycle rows and exclusive-group violations, its per-workload lease/drain state, and its bound sessions (refs, idle-timeout expiry). Never wakes a model or mutates state.
+  status --node <name> [--json]   Read-only residency status: NodeRun policy, memory budget, the serving process's residency store, its per-model lifecycle rows and exclusive-group violations, its per-workload lease/drain state, its bound sessions (refs, idle-timeout expiry), and the advisory idle-eviction window. Never wakes a model or mutates state.
   plan --node <name> --to <profile> [--from <profile>] [--json]   Read-only dry-run profile switch: budget source, victims, replacements, protected workloads or refusal. Never starts, stops, loads or writes the store.
   apply-profile --node <name> --to <profile> [--from <profile>] [--json]   Dry-run by default: plan and report the profile switch without touching the store. Add --execute --yes to run the switch for real (stops and starts workloads, records an operation).
   cancel-operation <operationId> --yes [--node <name>] [--json]   Request an abort of an in-flight profile switch started by apply-profile --execute --yes in the process serving <node> (an agent serve process); it stops before its next step boundary. Process-local: a switch run in-process by a local-endpoint CLI invocation cannot be cancelled from another CLI invocation. Requires --yes.
@@ -107,7 +108,7 @@ type ResidencyRenderInput = Omit<ResidencyStatusView, "policy"> & {
   policy: { present: false } | { present: true; residency: noderunSchema.NodeRunResidency };
 };
 
-export function renderResidencyStatus(s: ResidencyRenderInput): string {
+export function renderResidencyStatus(s: ResidencyRenderInput, nowMs: number = Date.now()): string {
   const lines: string[] = [];
   lines.push(`Node:       ${s.node}`);
   lines.push(`NodeRun:    ${s.nodeRun.present ? "present" : "absent"}`);
@@ -127,6 +128,7 @@ export function renderResidencyStatus(s: ResidencyRenderInput): string {
     }
   }
   pushLifecycleLines(lines, s.lifecycle);
+  pushIdleEvictionLines(lines, s.idleEviction, nowMs);
   pushLeaseLines(lines, s.leases);
   pushSessionLines(lines, s.sessions);
   lines.push(
@@ -213,6 +215,56 @@ const SESSIONS_UNAVAILABLE: Record<SessionsUnavailableReason, string> = {
   SnapshotUnsupported: "session registry has no snapshot",
 };
 
+function pushIdleEvictionLines(
+  lines: string[],
+  idle: ResidencyRenderInput["idleEviction"],
+  nowMs: number,
+): void {
+  if (idle === undefined) {
+    return;
+  }
+  if (idle.status === "disabled") {
+    lines.push(`Idle evict: disabled (scope: ${idle.scope})`);
+    return;
+  }
+  if (idle.status === "unavailable") {
+    lines.push(
+      `Idle evict: unavailable (${IDLE_EVICTION_UNAVAILABLE[idle.reason]}; scope: ${idle.scope})`,
+    );
+    return;
+  }
+  lines.push(
+    `Idle evict: window ${String(idle.idleEvictSeconds)}s, ${String(idle.workloads.length)} ready workload(s) (advisory; scope: ${idle.scope})`,
+  );
+  for (const w of idle.workloads) {
+    let state: string;
+    if (w.due) {
+      state = "due";
+    } else if (w.minResidencyUntilMs !== undefined) {
+      state = `held MinResidency for ${formatMs(Math.max(0, w.minResidencyUntilMs - nowMs))}`;
+    } else if (w.dueAtMs === null) {
+      state = "not due (activity unknown)";
+    } else if (w.dueAtMs > nowMs) {
+      state = `not due (due in ${formatMs(w.dueAtMs - nowMs)})`;
+    } else {
+      state = "not due (leased or draining)";
+    }
+    lines.push(`  ${w.workload}  ${state}  leases ${String(w.activeLeaseCount)}`);
+  }
+}
+
+type IdleEvictionUnavailableReason = Extract<
+  NonNullable<ResidencyRenderInput["idleEviction"]>,
+  { status: "unavailable" }
+>["reason"];
+
+const IDLE_EVICTION_UNAVAILABLE: Record<IdleEvictionUnavailableReason, string> = {
+  NotServingNode: "not the serving node",
+  LeasesUnavailable: "no lease registry installed",
+  StoreUnreadable: "store unreadable",
+  LifecycleUnreadable: "lifecycle rows unreadable",
+};
+
 function formatMs(ms: number): string {
   if (ms < 1000) return `${String(ms)}ms`;
   const seconds = Math.floor(ms / 1000);
@@ -280,7 +332,7 @@ async function runResidencyStatus(args: string[], deps: ResidencyDeps): Promise<
       process.stdout.write(`${JSON.stringify(status, null, 2)}\n`);
       return 0;
     }
-    process.stdout.write(renderResidencyStatus(status));
+    process.stdout.write(renderResidencyStatus(status, (deps.now?.() ?? new Date()).getTime()));
     return 0;
   } catch (err) {
     process.stderr.write(`residency status: ${(err as Error).message}\n`);
