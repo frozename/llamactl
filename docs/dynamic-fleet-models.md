@@ -539,3 +539,72 @@ Notes:
   convention in `packages/eval/src/matrix/types.ts`. Template headers
   carry self-reported figures; they are not committed evidence and are
   not repeated here.
+
+### Capturing evidence for an arm
+
+The synopsis is
+`llamactl eval perf --url <http://...> --engine <llamacpp|omlx|gufo|kapitsa> --model <id>`,
+followed by the optional flags
+`[--suite perf-quick|perf-full] [--pid <n>] [--binary <path>] [--gguf <path>] [--hf-revision <rev>] [--quant <q>] [--ctx <n>] [--slots <n>] [--flags=<args>] [--db <path>] [--run-id <id>]`.
+Both are copied verbatim from the USAGE text (`USAGE`,
+`packages/cli/src/commands/eval.ts`), and every valued flag in it is in
+`VALUED_FLAGS` (`packages/cli/src/commands/eval-perf.ts`).
+
+The command runs the perf suite against an engine that is already serving at
+`--url`. It never starts or stops the engine, so the operator runs it inside
+the exclusive window after step 7 of the runbook. `--engine` defaults to
+`llamacpp`. `--suite` defaults to `perf-quick`; the other choice is
+`perf-full`. It reads `/v1/models` first, and when `--model` is not listed it
+exits 1 with `engine at <url> is not serving '<model>' (serving: ...)`
+(`runEvalPerf`, `packages/cli/src/commands/eval-perf.ts`).
+
+Rows go to `perf.sqlite` under `eval/` in the llamactl home, which is
+`$DEV_STORAGE` or `~/.llamactl` (`defaultPerfDbPath`,
+`packages/cli/src/commands/bench-schedule.ts`), or to `--db`. It is
+the same `perf.sqlite` as `bench schedule` suites. The run prints
+`run_id: <id>` and then a `| metric | status | value | reason |` table
+(`runEvalPerf` and `printPerfTable`,
+`packages/cli/src/commands/eval-perf.ts`). `--run-id <id>` overrides the
+id; otherwise it is generated from the model and the run timestamp.
+
+Because host counters are read on this machine, `--pid` needs a loopback
+`--url` (`resolveRunInput`, `packages/cli/src/commands/eval-perf.ts`). On Linux with `--pid`,
+SSD read and write bytes come from `/proc/<pid>/io` and peak RSS comes from
+`VmHWM` in `/proc/<pid>/status`. Without `--pid`, those counters are recorded
+`unavailable` with a reason naming the unknown engine PID
+(`createPerfHostReaders`, `packages/eval/src/perf/readers.ts`). GTT comes from the GTT probe on
+any loopback Linux run, with or without `--pid`
+(`hostReaders`, `packages/cli/src/commands/eval-perf.ts`). These counters are
+Linux-only; on macOS each is recorded `unavailable` with a named reason
+(`createPerfHostReaders`, `packages/eval/src/perf/readers.ts`, and
+`hostReaders`, `packages/cli/src/commands/eval-perf.ts`). With a non-loopback URL, every
+host counter is recorded `unavailable`, with a reason naming the remote engine
+(`remoteReasons`, `packages/cli/src/commands/eval-perf.ts`).
+
+The 16 `PERF_METRIC_NAMES` (`packages/eval/src/perf/metrics.ts`) are
+`load_cold_ms`, `load_warm_ms`, `prefill_4k_tps`, `prefill_16k_tps`,
+`prefill_32k_tps`, `prefill_64k_tps`, `decode_tps`, `ttft_ms`,
+`spec_acceptance`, `c1_tps`, `c2_tps`, `c4_tps`, `ssd_read_bytes`,
+`ssd_write_bytes`, `peak_rss_bytes` and `peak_gtt_bytes`. `eval perf` records
+perf metrics, not promotion metrics, so it does not fill the table above. The
+promotion cells stay `unavailable` until promotion evidence is committed.
+
+`--binary` gives the engine version, the engine commit and the `binary_sha256`.
+`--gguf` gives `gguf_sha256`. `hf_revision` is derived from an HF
+`snapshots/<rev>/` path unless `--hf-revision` is given. `--quant`, `--ctx`
+and `--flags` fill their fields. Each `PROVENANCE_UNAVAILABLE_FIELDS` field
+(`packages/eval/src/matrix/types.ts`) — `engine_version`,
+`engine_commit`, `binary_sha256`, `gguf_sha256`, `hf_revision`, `quant` and
+`ctx` — is either a value or null with a reason in `provenance.unavailable`.
+For example, "gguf path is not under an HF snapshots/<rev>/ directory"
+(`collectHfRevision`, `packages/eval/src/perf/provenance.ts`). `gguf_sha256` hashes only the
+file passed as `--gguf`. Per-shard verification against the HF LFS oid stays
+the manual step in
+[Download, checksum and rollback](#download-checksum-and-rollback).
+
+`gufo` and `kapitsa` are external-only eval engines (`isExternalOnlyEngine`,
+`packages/eval/src/matrix/types.ts`). Eval never boots them; the matrix
+lifecycle refuses with "... run the server externally"
+(`buildBootCommandForModelSpec` and `ensureModelServing`,
+`packages/eval/src/matrix/lifecycle.ts`). The `gufo-glm53-exp`
+template is a `ModelHost` with `engine: llamacpp`, not the `gufo` engine.

@@ -706,3 +706,24 @@ test("eval --help lists the perf subcommand (kills: usage not updated)", async (
     "perf --url <http://...> --engine <llamacpp|omlx|gufo|kapitsa> --model <id>",
   );
 });
+
+test("eval --help lists --hf-revision for perf (kills: dropping [--hf-revision <rev>] from USAGE)", async () => {
+  perfSeams()({});
+
+  const { result, stdout } = await captureProcessStreams(() => runEval(["--help"]));
+
+  expect(result).toBe(0);
+  expect(stdout).toContain("[--gguf <path>] [--hf-revision <rev>] [--quant <q>]");
+});
+
+test("eval --help says GTT is read on any loopback Linux run (kills: USAGE gating GTT on --pid)", async () => {
+  perfSeams()({});
+
+  const { result, stdout } = await captureProcessStreams(() => runEval(["--help"]));
+
+  expect(result).toBe(0);
+  expect(stdout).toContain(
+    "It records SSD\n      I/O and VmHWM when --pid names a local engine, and GTT on any\n      loopback Linux run, with or without --pid.",
+  );
+  expect(stdout).not.toContain("VmHWM and GTT when --pid");
+});
