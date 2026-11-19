@@ -299,6 +299,85 @@ function withRemoteStatus(
   return { client: wrapped as unknown as WorkloadClient, calls };
 }
 
+type ModelHostEvictRun = {
+  outcome: Awaited<ReturnType<typeof applyOneModelHost>>;
+  hostStops: string[];
+  hostStarts: string[];
+  stops: string[];
+  starts: string[];
+  calls: { node: string }[];
+};
+
+type ModelHostEvictOpts = NonNullable<Parameters<typeof applyOneModelHost>[3]>;
+
+// Applies ModelHost host-b with llamactl.io/evict: a from a serving node
+// named 'other' against a victim 'a' up on 'local', with residencyStatus
+// answered by `respond`, then hands the outcome and recorded calls to
+// `check` before the temp dir and env are restored.
+async function inModelHostEvict(
+  respond: (input: { node: string }) => Promise<unknown>,
+  extraOpts: Partial<ModelHostEvictOpts>,
+  check: (run: ModelHostEvictRun) => void,
+): Promise<void> {
+  const tmp = mkdtempSync(join(tmpdir(), "llamactl-evict-min-residency-remote-m1-"));
+  const prevRuntimeDir = process.env["LOCAL_AI_RUNTIME_DIR"];
+  process.env["LOCAL_AI_RUNTIME_DIR"] = join(tmp, "runtime");
+  process.env["LLAMACTL_NODE_NAME"] = "other";
+  process.env["LLAMACTL_RESIDENCY_STORE"] = join(tmp, "residency-state", "operations.sqlite");
+  try {
+    const workloadsDir = join(tmp, "workloads");
+    saveWorkload(mkManifest("a"), workloadsDir);
+    const fakeBinary = join(tmp, "omlx");
+    writeFileSync(fakeBinary, "#!/bin/sh\nexit 0\n");
+    const state: WorkloadStateMap = new Map([["a", { up: true, rel: "a.gguf", args: [] }]]);
+    const { client: rec, stops, starts } = makeRecordingClient(state);
+    const hostStops: string[] = [];
+    const hostStarts: string[] = [];
+    const client: WorkloadClient = {
+      ...rec,
+      modelHostStop: {
+        mutate: (input): Promise<unknown> => {
+          hostStops.push(input.workload);
+          return rec.modelHostStop.mutate(input);
+        },
+      },
+      modelHostStart: {
+        subscribe: (input, callbacks): UnsubscribableLike => {
+          hostStarts.push(input.workload);
+          queueMicrotask(() => {
+            callbacks.onData({
+              type: "done",
+              result: { ok: true, pid: 12345, state: "Running" },
+            });
+            callbacks.onComplete();
+          });
+          return { unsubscribe: () => undefined };
+        },
+      },
+    };
+    const { client: remote, calls } = withRemoteStatus(client, respond);
+    const outcome = await applyOneModelHost(
+      mkModelHostManifest("host-b", "a", fakeBinary),
+      () => remote,
+      undefined,
+      {
+        workloadsDir,
+        getNodeBudgetGiB: () => 32,
+        getNodeResidency: () => ({ minResidencySeconds: 3600 }),
+        ...extraOpts,
+      },
+    );
+    check({ outcome, hostStops, hostStarts, stops, starts, calls });
+  } finally {
+    if (prevRuntimeDir === undefined) {
+      Reflect.deleteProperty(process.env, "LOCAL_AI_RUNTIME_DIR");
+    } else {
+      process.env["LOCAL_AI_RUNTIME_DIR"] = prevRuntimeDir;
+    }
+    rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
 describe("#519 apply --evict minResidencySeconds on another node", () => {
   const RESIDENCY_ENV_KEYS = ["LLAMACTL_NODE_NAME", "LLAMACTL_RESIDENCY_STORE"] as const;
   let savedEnv: Record<string, string | undefined> = {};
@@ -578,74 +657,52 @@ describe("#519 apply --evict minResidencySeconds on another node", () => {
   // reads no victim-node lifecycle on the ModelHost replacement path, so
   // the foreign node's young 'a' is evicted and host-b starts.
   test("X8: a ModelHost replacement is gated by the victim node's residencyStatus lifecycle", async () => {
-    const tmp = mkdtempSync(join(tmpdir(), "llamactl-evict-min-residency-remote-m1-"));
-    const prevRuntimeDir = process.env["LOCAL_AI_RUNTIME_DIR"];
-    process.env["LOCAL_AI_RUNTIME_DIR"] = join(tmp, "runtime");
-    process.env["LLAMACTL_NODE_NAME"] = "other";
-    process.env["LLAMACTL_RESIDENCY_STORE"] = join(tmp, "residency-state", "operations.sqlite");
-    try {
-      const workloadsDir = join(tmp, "workloads");
-      saveWorkload(mkManifest("a"), workloadsDir);
-      const fakeBinary = join(tmp, "omlx");
-      writeFileSync(fakeBinary, "#!/bin/sh\nexit 0\n");
-      const state: WorkloadStateMap = new Map([["a", { up: true, rel: "a.gguf", args: [] }]]);
-      const { client: rec, stops, starts } = makeRecordingClient(state);
-      const hostStops: string[] = [];
-      const hostStarts: string[] = [];
-      const client: WorkloadClient = {
-        ...rec,
-        modelHostStop: {
-          mutate: (input): Promise<unknown> => {
-            hostStops.push(input.workload);
-            return rec.modelHostStop.mutate(input);
-          },
-        },
-        modelHostStart: {
-          subscribe: (input, callbacks): UnsubscribableLike => {
-            hostStarts.push(input.workload);
-            queueMicrotask(() => {
-              callbacks.onData({
-                type: "done",
-                result: { ok: true, pid: 12345, state: "Running" },
-              });
-              callbacks.onComplete();
-            });
-            return { unsubscribe: () => undefined };
-          },
-        },
-      };
-      const { client: remote, calls } = withRemoteStatus(client, () =>
+    await inModelHostEvict(
+      () =>
         Promise.resolve(
           lifecycleOf([{ model: "a", state: "ready", updatedAtMs: Date.now() - 10_000 }]),
         ),
-      );
-      const outcome = await applyOneModelHost(
-        mkModelHostManifest("host-b", "a", fakeBinary),
-        () => remote,
-        undefined,
-        {
-          workloadsDir,
-          getNodeBudgetGiB: () => 32,
-          getNodeResidency: () => ({ minResidencySeconds: 3600 }),
-        },
-      );
-      expect(outcome.ok).toBe(false);
-      if (outcome.ok) return;
-      expect(outcome.error).toContain("under the node's minResidencySeconds of 3600");
-      expect(hostStops).toEqual([]);
-      expect(hostStarts).toEqual([]);
-      expect(stops).toEqual([]);
-      expect(starts).toEqual([]);
-      expect(calls).toEqual([{ node: "local" }]);
-    } finally {
-      if (prevRuntimeDir === undefined) {
-        Reflect.deleteProperty(process.env, "LOCAL_AI_RUNTIME_DIR");
-      } else {
-        process.env["LOCAL_AI_RUNTIME_DIR"] = prevRuntimeDir;
-      }
-      rmSync(tmp, { recursive: true, force: true });
-    }
+      {},
+      ({ outcome, hostStops, hostStarts, stops, starts, calls }) => {
+        expect(outcome.ok).toBe(false);
+        if (outcome.ok) return;
+        expect(outcome.error).toContain("under the node's minResidencySeconds of 3600");
+        expect(hostStops).toEqual([]);
+        expect(hostStarts).toEqual([]);
+        expect(stops).toEqual([]);
+        expect(starts).toEqual([]);
+        expect(calls).toEqual([{ node: "local" }]);
+      },
+    );
   });
+
+  // Mutations pinned: M8 (dropping `evictReadinessTimeoutMs:
+  // opts?.evictReadinessTimeoutMs` from the applyOneModelHost omitUndefined
+  // fold) and M9 (dropping `evictReadinessTimeoutMs:
+  // opts.evictReadinessTimeoutMs` from the applyModelHostReplacement ctx)
+  // both lose the 25 ms seam on the ModelHost replacement path, so the
+  // black-holed read waits out the 10 s default and the refusal reads
+  // 'timed out after 10000ms' — this fails by assertion inside the 30 s
+  // test budget.
+  test("X8t: a ModelHost replacement whose residencyStatus never settles times out after the seam", async () => {
+    await inModelHostEvict(
+      () => new Promise<unknown>(() => undefined),
+      { evictReadinessTimeoutMs: 25 },
+      ({ outcome, hostStops, hostStarts, stops, starts, calls }) => {
+        expect(outcome.ok).toBe(false);
+        if (outcome.ok) return;
+        // applyOneModelHost carries no refusal reason on its outcome; the
+        // EvictMinResidencyUnknown refusal is identified by its message.
+        expect(outcome.error).toContain("its residency readiness could not be verified");
+        expect(outcome.error).toContain("timed out after 25ms");
+        expect(hostStops).toEqual([]);
+        expect(hostStarts).toEqual([]);
+        expect(stops).toEqual([]);
+        expect(starts).toEqual([]);
+        expect(calls).toEqual([{ node: "local" }]);
+      },
+    );
+  }, 30_000);
 
   // Mutation pinned: applyManifest must carry the remote readiness read
   // into the ModelRun applyOne options — dropping the residencyStatus
@@ -676,4 +733,40 @@ describe("#519 apply --evict minResidencySeconds on another node", () => {
       expect(calls).toEqual([{ node: "local" }]);
     });
   });
+
+  // Mutation pinned: M7 (dropping `evictReadinessTimeoutMs:
+  // opts.evictReadinessTimeoutMs` from applyManifest's ModelRun applyOne
+  // options) loses the 25 ms seam, so the black-holed read waits out the
+  // 10 s default and the refusal reads 'timed out after 10000ms' — this
+  // fails by assertion inside the 30 s test budget.
+  test("X9t: applyManifest bounds a never-settling ModelRun residencyStatus read by the seam", async () => {
+    await inTempDir(async (tmp) => {
+      const { workloadsDir, client, stops, starts } = seedVictim(tmp);
+      const storePath = join(tmp, "residency-state", "operations.sqlite");
+      process.env["LLAMACTL_NODE_NAME"] = "other";
+      process.env["LLAMACTL_RESIDENCY_STORE"] = storePath;
+      const { client: remote, calls } = withRemoteStatus(
+        client,
+        () => new Promise<unknown>(() => undefined),
+      );
+      const outcome = await applyManifest({
+        manifest: mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090 }),
+        getClient: () => remote,
+        workloadsDir,
+        getNodeBudgetGiB: () => 32,
+        getNodeResidency: () => ({ minResidencySeconds: 3600 }),
+        evictReadinessTimeoutMs: 25,
+      });
+      expect(outcome.ok).toBe(false);
+      if (outcome.ok) return;
+      // applyManifest surfaces only admission reasons on its outcome; the
+      // EvictMinResidencyUnknown refusal is identified by its message.
+      expect(outcome.reason).toBeUndefined();
+      expect(outcome.error).toContain("its residency readiness could not be verified");
+      expect(outcome.error).toContain("timed out after 25ms");
+      expect(stops).toEqual([]);
+      expect(starts).toEqual([]);
+      expect(calls).toEqual([{ node: "local" }]);
+    });
+  }, 30_000);
 });

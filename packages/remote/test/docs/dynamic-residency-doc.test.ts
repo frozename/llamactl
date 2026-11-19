@@ -1675,5 +1675,15 @@ describe("#519 cross-node apply --evict minResidencySeconds", () => {
     for (const pin of ["residencyStatus", "EVICT_READINESS_TIMEOUT_MS"]) {
       expect(body, `prefetchEvictReadiness pin ${pin}`).toContain(pin);
     }
+    // Mutation pinned: M10 (changing the EVICT_READINESS_TIMEOUT_MS default)
+    // drifts from the doc's 'bounded at 10 seconds' remote readiness read.
+    expect(
+      readOrEmpty(join(REPO, "packages/remote/src/workload/apply.ts")),
+      "apply.ts pins the 10 s evict readiness default",
+    ).toContain("const EVICT_READINESS_TIMEOUT_MS = 10_000;");
+    expect(
+      readOrEmpty(join(REPO, "docs/dynamic-residency.md")),
+      "the doc states the 10 s evict readiness bound",
+    ).toContain("bounded at 10 seconds");
   });
 });
