@@ -885,3 +885,121 @@ describe("#521 eval perf slot discovery", () => {
     expect(reason).toContain("--slots");
   });
 });
+
+describe("#521 eval perf load reason", () => {
+  test("forwards a loadReason naming --url, --model and eval perf (kills: buildOpts dropping loadReason)", async () => {
+    const run = fakeRunPerfSuite();
+    perfSeams()({
+      platform: "darwin",
+      fetchImpl: fakeEngineFetch(["m"]),
+      runPerfSuite: run.runPerfSuite,
+    });
+    const dbPath = join(tmp, "perf.sqlite");
+
+    const { result } = await captureProcessStreams(() =>
+      runEval(
+        perfArgv(dbPath, [
+          "--url",
+          LOOPBACK_URL,
+          "--engine",
+          "llamacpp",
+          "--model",
+          "m",
+          "--slots",
+          "1",
+        ]),
+      ),
+    );
+
+    expect(result).toBe(0);
+    expect(run.calls).toHaveLength(1);
+    const reason: unknown = runOpts(run.calls[0])["loadReason"];
+    expect(typeof reason).toBe("string");
+    if (typeof reason !== "string") throw new Error("expected loadReason to be a string");
+    expect(reason).toContain(LOOPBACK_URL);
+    expect(reason).toContain("'m'");
+    expect(reason).toContain("eval perf");
+    expect(reason).toMatch(/does not (launch|load|reload)/);
+  });
+
+  test("names the remote --url in loadReason without a loopback constant (kills: a hard-coded loopback URL in the reason)", async () => {
+    const run = fakeRunPerfSuite();
+    perfSeams()({
+      platform: "darwin",
+      fetchImpl: fakeEngineFetch(["m"]),
+      runPerfSuite: run.runPerfSuite,
+    });
+    const dbPath = join(tmp, "perf.sqlite");
+
+    const { result } = await captureProcessStreams(() =>
+      runEval(
+        perfArgv(dbPath, [
+          "--url",
+          REMOTE_URL,
+          "--engine",
+          "llamacpp",
+          "--model",
+          "m",
+          "--slots",
+          "1",
+        ]),
+      ),
+    );
+
+    expect(result).toBe(0);
+    expect(run.calls).toHaveLength(1);
+    const reason: unknown = runOpts(run.calls[0])["loadReason"];
+    expect(typeof reason).toBe("string");
+    if (typeof reason !== "string") throw new Error("expected loadReason to be a string");
+    expect(reason).toContain(REMOTE_URL);
+    expect(reason).not.toContain("127.0.0.1");
+    expect(reason).toContain("'m'");
+    expect(reason).toContain("eval perf");
+    expect(reason).toMatch(/does not (launch|load|reload)/);
+  });
+
+  test("end-to-end: the loadReason reaches the recorded load metric reasons (kills: the reason not reaching runPerfSuite)", async () => {
+    const prov = provenanceFakes({});
+    perfSeams()({
+      platform: "darwin",
+      fetchImpl: failingEngineFetch(["m"]),
+      provenanceReaders: prov.readers,
+      clock: { now: () => 0 },
+    });
+    const dbPath = join(tmp, "perf.sqlite");
+
+    const { result } = await captureProcessStreams(() =>
+      runEval(
+        perfArgv(dbPath, [
+          "--url",
+          LOOPBACK_URL,
+          "--engine",
+          "llamacpp",
+          "--model",
+          "m",
+          "--slots",
+          "1",
+        ]),
+      ),
+    );
+
+    expect(result).toBe(0);
+    const db = new Database(dbPath, { readonly: true });
+    try {
+      const rows = listPerfRuns(db, { run_id: "r1" });
+      const byName = new Map(rows.map((row) => [row.metric_name, row.metric]));
+      for (const name of ["load_cold_ms", "load_warm_ms"] as const) {
+        const m = byName.get(name);
+        expect(m?.status).toBe("unavailable");
+        if (m?.status !== "unavailable") {
+          throw new Error(`expected ${name} to be an unavailable metric`);
+        }
+        expect(m.reason).toContain("eval perf");
+        expect(m.reason).toContain("'m'");
+        expect(m.reason).not.toContain("no load hooks injected");
+      }
+    } finally {
+      db.close();
+    }
+  });
+});

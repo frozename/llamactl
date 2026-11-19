@@ -572,4 +572,96 @@ describe("runPerfSuite", () => {
       expect(unavailableReason(metricOf(rows, "c4_tps"))).toBe("engine slots 2 < concurrency 4");
     });
   });
+
+  describe("#521 loadReason", () => {
+    test("uses opts.loadReason for missing load hooks (kills: the runner ignoring opts.loadReason)", async () => {
+      const clock = createManualClock();
+      const fake = startEngine(engineOpts(clock));
+      const client = createHttpPerfEngineClient(fake.url, { clock });
+      const opts = {
+        ...suiteOpts({ client, clock }),
+        loadReason: "load-reason-Q",
+      } as PerfSuiteOptions;
+
+      await runPerfSuite(db, opts);
+
+      const rows = listPerfRuns(db, { run_id: RUN_ID });
+      expectMetricNames(rows);
+      expect(unavailableReason(metricOf(rows, "load_cold_ms"))).toBe("load-reason-Q");
+      expect(unavailableReason(metricOf(rows, "load_warm_ms"))).toBe("load-reason-Q");
+    });
+
+    test("applies loadReason per missing hook (kills: applying loadReason only when the whole load object is absent)", async () => {
+      const clock = createManualClock();
+      const fake = startEngine(engineOpts(clock));
+      const client = createHttpPerfEngineClient(fake.url, { clock });
+      const opts = {
+        ...suiteOpts({
+          client,
+          clock,
+          load: {
+            cold: () => {
+              clock.advance(9000);
+              return Promise.resolve();
+            },
+          },
+        }),
+        loadReason: "load-reason-W",
+      } as PerfSuiteOptions;
+
+      await runPerfSuite(db, opts);
+
+      const rows = listPerfRuns(db, { run_id: RUN_ID });
+      expectMetricNames(rows);
+      expect(metricOf(rows, "load_cold_ms")).toEqual({ value: 9000, status: "ok" });
+      expect(unavailableReason(metricOf(rows, "load_warm_ms"))).toBe("load-reason-W");
+    });
+
+    test("guard: without loadReason the missing-hook reasons stay the legacy text", async () => {
+      const clock = createManualClock();
+      const fake = startEngine(engineOpts(clock));
+      const client = createHttpPerfEngineClient(fake.url, { clock });
+
+      await runPerfSuite(db, suiteOpts({ client, clock }));
+
+      const rows = listPerfRuns(db, { run_id: RUN_ID });
+      expectMetricNames(rows);
+      expect(unavailableReason(metricOf(rows, "load_cold_ms"))).toBe(
+        "no load hooks injected (engine not managed by the suite)",
+      );
+      expect(unavailableReason(metricOf(rows, "load_warm_ms"))).toBe(
+        "no load hooks injected (engine not managed by the suite)",
+      );
+    });
+
+    test("guard: a present load hook wins over loadReason", async () => {
+      const clock = createManualClock();
+      const fake = startEngine(engineOpts(clock));
+      const client = createHttpPerfEngineClient(fake.url, { clock });
+      const opts = {
+        ...suiteOpts({
+          client,
+          clock,
+          load: {
+            cold: () => {
+              clock.advance(9000);
+              return Promise.resolve();
+            },
+            warm: () => {
+              clock.advance(1500);
+              return Promise.resolve();
+            },
+          },
+        }),
+        loadReason: "ignored-load-reason",
+      } as PerfSuiteOptions;
+
+      await runPerfSuite(db, opts);
+
+      const rows = listPerfRuns(db, { run_id: RUN_ID });
+      expectMetricNames(rows);
+      expect(metricOf(rows, "load_cold_ms")).toEqual({ value: 9000, status: "ok" });
+      expect(metricOf(rows, "load_warm_ms")).toEqual({ value: 1500, status: "ok" });
+    });
+  });
 });

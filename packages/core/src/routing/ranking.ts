@@ -20,10 +20,19 @@
  * msPerQualityPoint) to a resident candidate's score. Both are inert at 0
  * and while residency is unknown (signals.resident === undefined); the
  * defaults reproduce the #518 decisions and scores exactly.
+ *
+ * Part of #518: operational availability (lifecycle draining/unloading/
+ * failed) orders candidates but never changes eligibility. The optional
+ * signals.operationalState callback folds a node-local lifecycle state into
+ * the drain/degraded tiers and zeroes a failed candidate's quality points
+ * (the effectiveStage health overlay); without it scores and order stay
+ * byte-identical.
  */
 import type { RouteAdvertisementV1, RouteCandidate } from "./catalog.js";
 
 import { type ResidencyPolicy, resolveResidencyPolicy } from "../residency/admission.js";
+
+export type OperationalState = "draining" | "failed";
 
 export interface RankingSignals {
   /** deploymentIds currently resident on their owner node; absent = unknown. */
@@ -31,6 +40,10 @@ export interface RankingSignals {
   expectedLoadMs?: (ad: RouteAdvertisementV1) => number | undefined;
   drainMs?: (ad: RouteAdvertisementV1) => number | undefined;
   cooldownUntil?: (ad: RouteAdvertisementV1) => number | undefined;
+  /** node-local lifecycle state of a candidate's workload; absent means
+   *  unknown. It only orders candidates (drain/degraded tiers, quality
+   *  overlay) and never changes eligibility. */
+  operationalState?: (ad: RouteAdvertisementV1) => OperationalState | undefined;
 }
 
 export interface RankingWeights {
@@ -53,19 +66,20 @@ const QUALITY_POINTS: Record<string, number> = {
 
 const UNSTAGED_QUALITY_POINTS = QUALITY_POINTS["production"] ?? 0;
 
-function drainTier(ad: RouteAdvertisementV1): number {
-  return ad.draining ? 2 : 0;
+function drainTier(ad: RouteAdvertisementV1, op: OperationalState | undefined): number {
+  return ad.draining || op === "draining" ? 2 : 0;
 }
 
-function degradedTier(ad: RouteAdvertisementV1): number {
-  return ad.qualification?.stage === "degraded" ? 1 : 0;
+function degradedTier(ad: RouteAdvertisementV1, op: OperationalState | undefined): number {
+  return ad.qualification?.stage === "degraded" || op === "failed" ? 1 : 0;
 }
 
-function tierOf(ad: RouteAdvertisementV1): number {
-  return drainTier(ad) + degradedTier(ad);
+function tierOf(ad: RouteAdvertisementV1, op: OperationalState | undefined): number {
+  return drainTier(ad, op) + degradedTier(ad, op);
 }
 
-function qualityPointsOf(ad: RouteAdvertisementV1): number {
+function qualityPointsOf(ad: RouteAdvertisementV1, op: OperationalState | undefined): number {
+  if (op === "failed") return QUALITY_POINTS["degraded"] ?? 0;
   const stage = ad.qualification?.stage;
   if (stage === undefined) return UNSTAGED_QUALITY_POINTS;
   return QUALITY_POINTS[stage] ?? 0;
@@ -141,7 +155,8 @@ export function rankRouteCandidates(
   const ranked: RankedCandidate[] = candidates.map(
     (candidate: RouteCandidate, index: number): RankedCandidate => {
       const ad = candidate.advertisement;
-      const qualityPoints = qualityPointsOf(ad);
+      const op = signals.operationalState?.(ad);
+      const qualityPoints = qualityPointsOf(ad, op);
       const switchCost = switchCostMs(ad, opts.now, signals, weights, policy);
       const residentBonus = isResident(ad, signals)
         ? policy.residentPreference * weights.msPerQualityPoint
@@ -149,7 +164,7 @@ export function rankRouteCandidates(
       return {
         candidate,
         index,
-        tier: tierOf(ad),
+        tier: tierOf(ad, op),
         qualityPoints,
         switchCostMs: switchCost,
         score: qualityPoints * weights.msPerQualityPoint - switchCost + residentBonus,

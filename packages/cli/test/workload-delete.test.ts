@@ -311,3 +311,78 @@ test("delete workload: an unreachable ModelRun node (query rejects) is still rem
   expect(stdout).toBe("deleted modelrun/z13-run\n");
   expect(() => readFileSync(manifestPath, "utf8")).toThrow();
 });
+
+// #520: the node reports WHY it refused the stop (session/lease fence) in
+// `refused`; delete must name that reason instead of the generic
+// pid-identity text, and still keep the manifest.
+// Kills: ignoring `refused` (base prints the pid-identity text), dropping
+// the active-id join, or deleting the manifest on a fence refusal.
+function z13NodeWithStopResult(stopResult: unknown): void {
+  __setWorkloadTestSeams({
+    getNodeClientByName: (): NodeClient =>
+      ({
+        serverStatus: {
+          query: (): Promise<HungServerReply> =>
+            Promise.resolve({ state: "up", rel: "models/demo.gguf", pid: 99 }),
+        },
+        serverStop: {
+          mutate: (): Promise<unknown> => Promise.resolve(stopResult),
+        },
+      }) as unknown as NodeClient,
+  });
+}
+
+test("delete workload names the SessionsActive stop-fence refusal and keeps the manifest (#520)", async () => {
+  const manifestPath = writeZ13RunManifest();
+  z13NodeWithStopResult({
+    stopped: false,
+    pid: 99,
+    killed: false,
+    refused: { reason: "SessionsActive", active: ["s1"] },
+  });
+
+  const {
+    result: code,
+    stdout,
+    stderr,
+  } = await withCapturedIo(() => runDelete(["workload", "z13-run"]));
+
+  expect(code).toBe(1);
+  expect(stderr).toBe(
+    "delete: node z13 refused to stop (SessionsActive: s1); manifest preserved\n",
+  );
+  expect(stderr).not.toContain("pid identity unverifiable");
+  expect(readFileSync(manifestPath, "utf8")).toContain("z13-run");
+  expect(stdout).not.toContain("deleted modelrun/z13-run");
+});
+
+test("delete workload joins the refused lease ids in the LeasesActive line (#520)", async () => {
+  const manifestPath = writeZ13RunManifest();
+  z13NodeWithStopResult({
+    stopped: false,
+    pid: 99,
+    killed: false,
+    refused: { reason: "LeasesActive", active: ["l1", "l2"] },
+  });
+
+  const { result: code, stderr } = await withCapturedIo(() => runDelete(["workload", "z13-run"]));
+
+  expect(code).toBe(1);
+  expect(stderr).toBe(
+    "delete: node z13 refused to stop (LeasesActive: l1, l2); manifest preserved\n",
+  );
+  expect(readFileSync(manifestPath, "utf8")).toContain("z13-run");
+});
+
+test("delete workload keeps the pid-identity refusal when the stop reports no fence reason (#520)", async () => {
+  const manifestPath = writeZ13RunManifest();
+  z13NodeWithStopResult({ stopped: false, pid: 99, killed: false });
+
+  const { result: code, stderr } = await withCapturedIo(() => runDelete(["workload", "z13-run"]));
+
+  expect(code).toBe(1);
+  expect(stderr).toBe(
+    "delete: node z13 refused to stop (pid identity unverifiable); manifest preserved\n",
+  );
+  expect(readFileSync(manifestPath, "utf8")).toContain("z13-run");
+});
