@@ -18,8 +18,8 @@ import { existsSync, mkdirSync, readFileSync } from "../safe-fs.js";
  * A schedule carrying `kind: "suite"` + `suite: "<name>"` dispatches
  * a named perf suite through an injected runner instead of
  * `benchPresetRun.subscribe`. The scheduler never resolves the suite
- * id itself: an unknown id is the runner's to reject, and the
- * rejection lands in `lastError`.
+ * id or the engine id itself: an unknown id is the runner's to
+ * reject, and the rejection lands in `lastError`.
  */
 
 export const BENCH_SCHEDULE_KINDS = ["preset", "suite"] as const;
@@ -42,6 +42,10 @@ const benchScheduleBase = z.object({
     .string()
     .regex(/^[a-z0-9][a-z0-9._-]*$/)
     .optional(),
+  engine: z
+    .string()
+    .regex(/^[a-z0-9][a-z0-9._-]*$/)
+    .optional(),
 });
 
 export const BenchScheduleSchema = benchScheduleBase.superRefine((data, ctx) => {
@@ -57,6 +61,13 @@ export const BenchScheduleSchema = benchScheduleBase.superRefine((data, ctx) => 
       code: "custom",
       message: "suite is only valid with kind 'suite'",
       path: ["suite"],
+    });
+  }
+  if (data.kind !== "suite" && data.engine !== undefined) {
+    ctx.addIssue({
+      code: "custom",
+      message: "engine is only valid with kind 'suite'",
+      path: ["engine"],
     });
   }
 });

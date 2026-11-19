@@ -1,7 +1,13 @@
-import type { PerfEngineClient, PerfEngineClock, PerfSuiteOptions } from "@llamactl/eval";
 import type { router } from "@llamactl/remote";
 
 import { llamactlHome } from "@llamactl/core/config/env";
+import {
+  EVAL_ENGINES,
+  type EvalEngine,
+  type PerfEngineClient,
+  type PerfEngineClock,
+  type PerfSuiteOptions,
+} from "@llamactl/eval";
 import { Database } from "bun:sqlite";
 import { join } from "node:path";
 
@@ -62,7 +68,7 @@ USAGE:
   llamactl bench schedule list [--json]
   llamactl bench schedule add <id> --node <node> --rel <rel>
       [--mode auto|text|vision] --every <duration>
-      [--kind suite --suite <perf-quick|perf-full>]
+      [--kind suite --suite <perf-quick|perf-full> [--engine <llamacpp|omlx|gufo|kapitsa>]]
   llamactl bench schedule rm <id>
   llamactl bench schedule toggle <id> on|off
   llamactl bench schedule status [--json]
@@ -86,6 +92,8 @@ SUBCOMMANDS:
             named perf suite instead of a bench preset; it needs an
             HTTP agent node already serving <rel>, and perf rows go to
             $DEV_STORAGE/eval/perf.sqlite (or ~/.llamactl/eval/perf.sqlite).
+            --engine records the eval engine in perf provenance
+            (llamacpp, omlx, gufo or kapitsa; default llamacpp).
   rm        Remove a schedule by id.
   toggle    Enable or disable a schedule: \`toggle <id> on|off\`.
   status    The schedules plus this process's loop state (running, tick
@@ -135,6 +143,7 @@ interface SuiteRunRequest {
   suite: string;
   node: string;
   rel: string;
+  engine?: string;
 }
 
 type PerfBenchSuiteRunner = (req: SuiteRunRequest) => Promise<void>;
@@ -211,6 +220,15 @@ export function createPerfBenchSuiteRunner(
 ): PerfBenchSuiteRunner {
   return async (req) => {
     const ev = await import("@llamactl/eval");
+    // #521: schedules saved before engine existed carry none; they keep
+    // the pre-#521 llamacpp default. An id outside EVAL_ENGINES is the
+    // runner's to reject, before any endpoint work, into lastError.
+    const engine = req.engine ?? "llamacpp";
+    if (!(EVAL_ENGINES as readonly string[]).includes(engine)) {
+      throw new Error(
+        `unknown engine '${engine}' for schedule '${req.scheduleId}' (expected one of ${EVAL_ENGINES.join(", ")})`,
+      );
+    }
     const preset = ev.resolvePerfSuite(req.suite);
     const ep = await suiteEndpoint(req.node, overrides.resolveEndpoint);
     const clock: PerfEngineClock = overrides.clock ?? { now: () => performance.now() };
@@ -228,7 +246,7 @@ export function createPerfBenchSuiteRunner(
     // lands as null with its own unavailable reason instead of a guess.
     const provenance = await ev.collectEvalProvenance(
       {
-        engine: "llamacpp",
+        engine: engine as EvalEngine,
         quant: null,
         ctx: null,
         flags: [],
@@ -418,6 +436,7 @@ interface AddArgs {
   every: string | undefined;
   kind: string | undefined;
   suite: string | undefined;
+  engine: string | undefined;
 }
 
 type AddParse =
@@ -431,6 +450,7 @@ const VALUED_ADD_FLAGS: ReadonlySet<string> = new Set([
   "--rel",
   "--kind",
   "--suite",
+  "--engine",
 ]);
 
 function flagName(arg: string): string {
@@ -448,6 +468,7 @@ function assignAddFlag(args: AddArgs, name: string, value: string): void {
   else if (name === "--mode") args.mode = value;
   else if (name === "--kind") args.kind = value;
   else if (name === "--suite") args.suite = value;
+  else if (name === "--engine") args.engine = value;
   else args.every = value;
 }
 
@@ -459,6 +480,7 @@ function parseAddArgs(argv: string[]): AddParse {
     every: undefined,
     kind: undefined,
     suite: undefined,
+    engine: undefined,
   };
   const rest = [...argv];
   let arg = rest.shift();
@@ -501,6 +523,7 @@ type AddPlan =
         intervalSeconds: number;
         kind?: "preset" | "suite";
         suite?: string;
+        engine?: string;
       };
     }
   | { error: string };
@@ -508,12 +531,19 @@ type AddPlan =
 function validateSuiteArgs(
   kind: "preset" | "suite" | undefined,
   suite: string | undefined,
+  engine: string | undefined,
 ): string | null {
   if (kind === "suite" && !suite) {
     return "--suite is required when kind is 'suite'";
   }
   if (kind !== "suite" && suite) {
     return "--suite is only valid when kind is 'suite'";
+  }
+  if (engine !== undefined && kind !== "suite") {
+    return "--engine is only valid when kind is 'suite'";
+  }
+  if (engine !== undefined && !(EVAL_ENGINES as readonly string[]).includes(engine)) {
+    return `unknown engine '${engine}' (expected one of ${EVAL_ENGINES.join(", ")})`;
   }
   return null;
 }
@@ -532,8 +562,8 @@ function planAddArgs(args: AddArgs): AddPlan {
     return { error: "--mode must be one of auto, text, vision" };
   }
   const kind = args.kind ? (args.kind as "preset" | "suite") : undefined;
-  const suiteError = validateSuiteArgs(kind, args.suite);
-  if (suiteError) return { error: suiteError };
+  const kindError = validateSuiteArgs(kind, args.suite, args.engine);
+  if (kindError) return { error: kindError };
   const input: {
     id: string;
     node: string;
@@ -542,6 +572,7 @@ function planAddArgs(args: AddArgs): AddPlan {
     intervalSeconds: number;
     kind?: "preset" | "suite";
     suite?: string;
+    engine?: string;
   } = {
     id,
     node,
@@ -551,6 +582,7 @@ function planAddArgs(args: AddArgs): AddPlan {
   };
   if (kind !== undefined) input.kind = kind;
   if (args.suite !== undefined) input.suite = args.suite;
+  if (args.engine !== undefined) input.engine = args.engine;
   return { input };
 }
 
