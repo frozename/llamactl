@@ -690,3 +690,49 @@ describe("#521 scheduled suite slots", () => {
     expect(runOpts(run.calls[0])["slots"]).toBeUndefined();
   });
 });
+
+describe("#521 scheduled suite load reason", () => {
+  test("kick passes a loadReason naming the rel, node and agent gateway (kills: createPerfBenchSuiteRunner dropping loadReason, or a literal '<rel>' placeholder)", async () => {
+    writeStore();
+    const endpoint = fakeEndpoint("http://fake-engine.invalid");
+    const run = fakeRunPerfSuite();
+    setSeams({
+      perfSuite: {
+        runPerfSuite: run.runPerfSuite,
+        resolveEndpoint: endpoint.resolveEndpoint,
+        openDb: () => new Database(":memory:"),
+      },
+    });
+
+    const { result } = await captureProcessStreams(() => runBenchSchedule(["kick"]));
+
+    expect(result).toBe(0);
+    expect(run.calls).toHaveLength(1);
+    const reason: unknown = runOpts(run.calls[0])["loadReason"];
+    expect(typeof reason).toBe("string");
+    if (typeof reason !== "string") throw new Error("expected loadReason to be a string");
+    expect(reason).toContain("org/repo/m.gguf");
+    expect(reason).toContain("node 'fake-node'");
+    expect(reason).toContain("agent gateway");
+    expect(reason).not.toContain("<rel>");
+  });
+
+  test("guard: the scheduled path never sets load hooks", async () => {
+    writeStore();
+    const endpoint = fakeEndpoint("http://fake-engine.invalid");
+    const run = fakeRunPerfSuite();
+    setSeams({
+      perfSuite: {
+        runPerfSuite: run.runPerfSuite,
+        resolveEndpoint: endpoint.resolveEndpoint,
+        openDb: () => new Database(":memory:"),
+      },
+    });
+
+    const { result } = await captureProcessStreams(() => runBenchSchedule(["kick"]));
+
+    expect(result).toBe(0);
+    expect(run.calls).toHaveLength(1);
+    expect(runOpts(run.calls[0])["load"]).toBeUndefined();
+  });
+});

@@ -298,6 +298,7 @@ function buildOpts(args: {
     clock,
     provenance,
     readerReasons,
+    loadReason: `eval perf runs against an engine already serving '${input.model}' at ${input.url}; it does not launch or reload the engine, so cold/warm model-load time is not measured`,
     ...(readers !== undefined ? { readers } : {}),
     ...(input.ctx !== null ? { ctx: input.ctx } : {}),
     ...(slots !== null ? { slots } : {}),
