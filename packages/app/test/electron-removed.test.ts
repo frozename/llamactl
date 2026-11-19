@@ -8,6 +8,9 @@
 // #410 decision record gains the measured before/after table plus the
 // remaining-costs section. Every case fails by assertion at the base
 // commit — never by import error.
+// Issue #777: RED 2a captures the tsc listing through a file sink
+// (test/support/program-listing.ts) and reports the captured line count and
+// tail on failure.
 
 import { describe, expect, test } from "bun:test";
 import { createRequire } from "node:module";
@@ -15,10 +18,17 @@ import { join } from "node:path";
 import { parse } from "yaml";
 
 import { readdirSync, readFileSync } from "../src/safe-fs.js";
+import { captureStdoutToFile, describeListing, splitListing } from "./support/program-listing.js";
 
 const APP = join(import.meta.dir, "..");
 const ROOT = join(APP, "..", "..");
 const SUBPROCESS_TIMEOUT_MS = 60_000;
+
+// Source-pin delimiters for the RED 2a block (#777); the escaped newlines keep
+// these needles from matching their own declaration.
+const RED_2A_BLOCK_START = '\n    "RED 2a: tsc -p tsconfig.json program includes';
+const RED_2A_BLOCK_END = "\n  );\n";
+const STDOUT_PIPE = /stdout:\s*["']pipe["']/;
 
 const DEPENDENCY_FIELDS = [
   "dependencies",
@@ -178,22 +188,37 @@ describe("Electron removal (#410 P7-A)", () => {
     "RED 2a: tsc -p tsconfig.json program includes src/main.web.tsx and no electron dir",
     () => {
       const tsc = createRequire(import.meta.url).resolve("typescript/bin/tsc");
-      const proc = Bun.spawnSync({
+      const proc = captureStdoutToFile({
         cmd: [process.execPath, tsc, "-p", "tsconfig.json", "--listFilesOnly"],
         cwd: APP,
-        stdout: "pipe",
-        stderr: "pipe",
       });
-      expect(proc.exitCode).toBe(0);
-      const files = proc.stdout
-        .toString()
-        .split("\n")
-        .filter((line) => line.length > 0);
-      expect(files.some((line) => line.endsWith("packages/app/src/main.web.tsx"))).toBe(true);
-      expect(files.filter((line) => line.includes("/packages/app/electron/"))).toEqual([]);
+      expect(proc.exitCode, proc.stderr).toBe(0);
+      const files = splitListing(proc.stdout);
+      expect(
+        files.some((line) => line.endsWith("packages/app/src/main.web.tsx")),
+        describeListing(files),
+      ).toBe(true);
+      expect(
+        files.filter((line) => line.includes("/packages/app/electron/")),
+        describeListing(files),
+      ).toEqual([]);
     },
     SUBPROCESS_TIMEOUT_MS,
   );
+
+  // Kills mutation "RED 2a back on Bun.spawnSync with stdout: \"pipe\"" (#777):
+  // the listing must go through the file-sink helper.
+  test("RED 2a pin: RED 2a captures the tsc listing through the file-sink helper", () => {
+    const source = readFileSync(import.meta.path, "utf8");
+    const start = source.indexOf(RED_2A_BLOCK_START);
+    expect(start, "RED 2a block not found").toBeGreaterThan(-1);
+    const end = source.indexOf(RED_2A_BLOCK_END, start);
+    expect(end, "RED 2a block end not found").toBeGreaterThan(start);
+    const block = source.slice(start, end);
+    expect(block).toContain("captureStdoutToFile({");
+    const spawnCalls = block.split("Bun.spawnSync(").slice(1);
+    expect(spawnCalls.filter((call) => STDOUT_PIPE.test(call))).toEqual([]);
+  });
 
   test(
     "RED 2b: no tracked packages/app file reaches the electron bridge outside the guards",
