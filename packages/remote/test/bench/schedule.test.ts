@@ -271,3 +271,71 @@ describe("bench schedule suite dispatch", () => {
     }
   });
 });
+
+type EngineScheduleRow = BenchSchedule & { engine?: string };
+
+describe("#521 scheduled suite engine", () => {
+  test("a suite schedule with engine round-trips through save/load", () => {
+    // Kills: dropping `engine` from benchScheduleBase (zod strips it).
+    const schedule: BenchSchedule & { engine?: string } = {
+      ...suiteSchedule("engine-persist"),
+      engine: "gufo",
+    };
+    saveSchedules([schedule], schedulePath);
+
+    const entry = loadSchedules(schedulePath)[0] as EngineScheduleRow;
+    expect(entry.engine).toBe("gufo");
+  });
+
+  test("schema rejects engine on kind 'preset' and kindless schedules", () => {
+    // Kills: removing the engine branch of the kind/suite superRefine.
+    const preset = BenchScheduleSchema.safeParse({
+      ...baseSchedule("engine-preset"),
+      kind: "preset",
+      engine: "gufo",
+    });
+    expect(preset.success).toBe(false);
+    if (!preset.success) {
+      expect(preset.error.issues.map((issue) => issue.message).join("; ")).toContain(
+        "engine is only valid with kind 'suite'",
+      );
+    }
+
+    const kindless = BenchScheduleSchema.safeParse({
+      ...baseSchedule("engine-kindless"),
+      engine: "gufo",
+    });
+    expect(kindless.success).toBe(false);
+    if (!kindless.success) {
+      expect(kindless.error.issues.map((issue) => issue.message).join("; ")).toContain(
+        "engine is only valid with kind 'suite'",
+      );
+    }
+  });
+
+  test("a legacy suite schedule without engine persists no engine key", () => {
+    // Back-compat guard: engine stays absent — never written as null or "".
+    saveSchedules([suiteSchedule("engine-legacy")], schedulePath);
+
+    const entry = loadSchedules(schedulePath)[0] as EngineScheduleRow;
+    expect("engine" in entry).toBe(false);
+
+    const doc = parseYaml(readFileSync(schedulePath, "utf8")) as Record<string, unknown>;
+    const list = Object.values(doc).find((value): value is Record<string, unknown>[] =>
+      Array.isArray(value),
+    );
+    const saved: Record<string, unknown> = list?.[0] ?? {};
+    expect("engine" in saved).toBe(false);
+  });
+
+  test("schema rejects a malformed engine string", () => {
+    // Kills: an unvalidated z.string() for engine — it shares suite's slug regex.
+    const result = BenchScheduleSchema.safeParse({
+      ...baseSchedule("engine-bad"),
+      kind: "suite",
+      suite: "perf",
+      engine: "Bad Engine!",
+    });
+    expect(result.success).toBe(false);
+  });
+});

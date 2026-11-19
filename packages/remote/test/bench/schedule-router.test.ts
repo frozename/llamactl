@@ -119,3 +119,44 @@ describe("bench scheduler router suite dispatch", () => {
     expect(suiteEntry()?.lastError).toBe("no suite runner configured for suite 'perf-quick'");
   });
 });
+
+describe("#521 scheduled suite engine", () => {
+  test("benchScheduleAdd persists engine on a kind 'suite' schedule", async () => {
+    // Kills: the router input schema stripping engine, or addSchedule dropping it.
+    const caller = router.createCaller({});
+    const input = {
+      id: "router-engine",
+      node: "fake-node",
+      rel: "org/repo/m.gguf",
+      intervalSeconds: 3600,
+      kind: "suite" as const,
+      suite: "perf-quick",
+      engine: "gufo",
+    };
+    await caller.benchScheduleAdd(input);
+
+    const row = loadSchedules(schedulePath).find((s) => s.id === "router-engine")!;
+    const withEngine = row as BenchSchedule & { engine?: string };
+    expect(withEngine.engine).toBe("gufo");
+  });
+
+  test("benchScheduleAdd rejects engine unless kind is 'suite'", async () => {
+    // Kills: the router/schema not gating engine to kind 'suite'.
+    const caller = router.createCaller({});
+    const input = {
+      id: "router-engine-bad",
+      node: "fake-node",
+      rel: "org/repo/m.gguf",
+      intervalSeconds: 3600,
+      kind: "preset" as const,
+      engine: "gufo",
+    };
+    let message = "";
+    try {
+      await caller.benchScheduleAdd(input);
+    } catch (err) {
+      message = err instanceof Error ? err.message : String(err);
+    }
+    expect(message).toContain("engine is only valid with kind 'suite'");
+  });
+});

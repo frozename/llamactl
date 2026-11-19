@@ -400,3 +400,62 @@ describe("qualification.promotion.schemas", () => {
     );
   });
 });
+
+// Part of #518: boundary review of the propose evidence/policy schemas.
+describe("qualification.promotion evidence and policy bounds (#518)", () => {
+  // Kills: dropping .strict() from PromotionPolicySchema (a typo such as
+  // `autoapply` would be stripped and autoApply silently default off).
+  test("PromotionPolicySchema refuses an unknown top-level key", async () => {
+    const { PromotionPolicySchema } = await loadPromotion();
+    expect(PromotionPolicySchema.safeParse({ thresholds: {}, autoApply: true }).success).toBe(true);
+    const typo = PromotionPolicySchema.safeParse({ thresholds: {}, autoapply: true });
+    expect(typo.success).toBe(false);
+    if (!typo.success) {
+      expect(JSON.stringify(typo.error.issues)).toContain("autoapply");
+    }
+  });
+
+  // Kills: leaving evidence metrics as bare z.number() (percent-scaled
+  // evidence would compare 95 against a 0.9 floor and always pass).
+  test("parsePromotionEvidence refuses ratio metrics outside [0, 1]", async () => {
+    const { parsePromotionEvidence, PROMOTION_METRICS } = await loadPromotion();
+    expect(parsePromotionEvidence(E).toolCallCorrectness).toBe(0.95);
+    expect(() => parsePromotionEvidence({ ...E, toolCallCorrectness: 95 })).toThrow();
+    for (const metric of PROMOTION_METRICS) {
+      if (metric === "improvement") continue;
+      expect(() => parsePromotionEvidence({ ...E, [metric]: 1.01 }), metric).toThrow();
+      expect(() => parsePromotionEvidence({ ...E, [metric]: -0.01 }), metric).toThrow();
+      expect(parsePromotionEvidence({ ...E, [metric]: 1 })[metric], metric).toBe(1);
+      expect(parsePromotionEvidence({ ...E, [metric]: 0 })[metric], metric).toBe(0);
+    }
+  });
+
+  // Kills: bounding improvement to [0, 1] (a regression in improvement is
+  // legitimately negative) or leaving it unbounded.
+  test("parsePromotionEvidence bounds improvement to [-1, 1]", async () => {
+    const { PromotionEvidenceSchema } = await loadPromotion();
+    for (const value of [-0.5, -1, 1]) {
+      const accepted = PromotionEvidenceSchema.safeParse({ ...E, improvement: value });
+      expect(accepted.success, String(value)).toBe(true);
+    }
+    for (const value of [5, -1.5]) {
+      const refused = PromotionEvidenceSchema.safeParse({ ...E, improvement: value });
+      expect(refused.success, String(value)).toBe(false);
+    }
+  });
+
+  // Kills: dropping .int() or .nonnegative() from evaluatedTasks.
+  test("parsePromotionEvidence requires a non-negative integer evaluatedTasks", async () => {
+    const { parsePromotionEvidence } = await loadPromotion();
+    expect(parsePromotionEvidence({ ...E, evaluatedTasks: 0 }).evaluatedTasks).toBe(0);
+    expect(() => parsePromotionEvidence({ ...E, evaluatedTasks: 2.5 })).toThrow();
+    expect(() => parsePromotionEvidence({ ...E, evaluatedTasks: -1 })).toThrow();
+  });
+
+  // Kills: dropping .min(1) from evidenceRef.
+  test("parsePromotionEvidence refuses an empty evidenceRef", async () => {
+    const { parsePromotionEvidence } = await loadPromotion();
+    expect(parsePromotionEvidence({ ...E, evidenceRef: "r" }).evidenceRef).toBe("r");
+    expect(() => parsePromotionEvidence({ ...E, evidenceRef: "" })).toThrow();
+  });
+});

@@ -7,6 +7,7 @@ import { parse as parseYaml } from "yaml";
 import {
   __resetBenchScheduleTestSeams,
   __setBenchScheduleTestSeams,
+  createPerfBenchSuiteRunner,
   runBenchSchedule,
 } from "../src/commands/bench-schedule.js";
 import { resetGlobals } from "../src/dispatcher.js";
@@ -545,5 +546,98 @@ describe("bench schedule suite dispatch (CLI-side runner)", () => {
     expect(result).toBe(0);
     expect(calls.list).toBe(1);
     expect(stdout).toContain("router-suite");
+  });
+});
+
+describe("#521 scheduled suite engine", () => {
+  function writeEngineStore(engine: string | undefined): void {
+    const engineLine = engine === undefined ? "" : `    engine: ${engine}\n`;
+    writeFileSync(
+      schedulePath,
+      `schedules:
+  - id: router-suite
+    node: fake-node
+    rel: org/repo/m.gguf
+    mode: auto
+    intervalSeconds: 86400
+    enabled: true
+    lastRunAt: "2000-01-01T00:00:00.000Z"
+    lastError: null
+    kind: suite
+    suite: perf-quick
+${engineLine}`,
+      "utf8",
+    );
+  }
+
+  function perfSeams(run: ReturnType<typeof fakeRunPerfSuite>): void {
+    const endpoint = fakeEndpoint("http://fake-engine.invalid");
+    setSeams({
+      perfSuite: {
+        runPerfSuite: run.runPerfSuite,
+        resolveEndpoint: endpoint.resolveEndpoint,
+        openDb: () => new Database(":memory:"),
+      },
+    });
+  }
+
+  test("kick forwards the schedule engine into provenance.engine", async () => {
+    // Kills: the hard-coded engine: "llamacpp" in createPerfBenchSuiteRunner.
+    writeEngineStore("kapitsa");
+    const run = fakeRunPerfSuite();
+    perfSeams(run);
+
+    const { result } = await captureProcessStreams(() => runBenchSchedule(["kick"]));
+
+    expect(result).toBe(0);
+    expect(run.calls).toHaveLength(1);
+    const provenance = runOpts(run.calls[0])["provenance"];
+    if (!isPlainRecord(provenance)) throw new Error("expected a provenance record");
+    expect(provenance["engine"]).toBe("kapitsa");
+    expect(storedLastError("router-suite")).toBeNull();
+  });
+
+  test("a legacy suite schedule without engine still records llamacpp", async () => {
+    // Back-compat pin: absent engine means llamacpp, the pre-#521 default.
+    writeStore();
+    const run = fakeRunPerfSuite();
+    perfSeams(run);
+
+    const { result } = await captureProcessStreams(() => runBenchSchedule(["kick"]));
+
+    expect(result).toBe(0);
+    expect(run.calls).toHaveLength(1);
+    const provenance = runOpts(run.calls[0])["provenance"];
+    if (!isPlainRecord(provenance)) throw new Error("expected a provenance record");
+    expect(provenance["engine"]).toBe("llamacpp");
+  });
+
+  test("the runner rejects an engine outside EVAL_ENGINES before any endpoint work", async () => {
+    // Kills: casting req.engine to EvalEngine without validating it.
+    const endpoint = fakeEndpoint("http://fake-engine.invalid");
+    const run = fakeRunPerfSuite();
+    const runner = createPerfBenchSuiteRunner({
+      runPerfSuite: run.runPerfSuite,
+      resolveEndpoint: endpoint.resolveEndpoint,
+      openDb: () => new Database(":memory:"),
+    });
+    const req = {
+      scheduleId: "x",
+      suite: "perf-quick",
+      node: "n",
+      rel: "org/repo/m.gguf",
+      engine: "vllm",
+    } as Parameters<ReturnType<typeof createPerfBenchSuiteRunner>>[0];
+
+    let message = "";
+    try {
+      await runner(req);
+    } catch (err) {
+      message = err instanceof Error ? err.message : String(err);
+    }
+
+    expect(message).toContain("unknown engine 'vllm' for schedule 'x'");
+    expect(endpoint.calls).toEqual([]);
+    expect(run.calls).toEqual([]);
   });
 });

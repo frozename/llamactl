@@ -1058,3 +1058,83 @@ describe("llamactl bench schedule — in-process seams", () => {
     expect(stderr).toContain("already holds the run lock (pid 4242");
   });
 });
+
+describe("#521 scheduled suite engine", () => {
+  afterEach(() => {
+    resetGlobals();
+    resetBenchScheduleSeams();
+  });
+
+  function installEngineAddCaller(): CallerCalls {
+    const { caller, calls } = installFakeCaller({});
+    setBenchScheduleSeams({ caller });
+    setGlobals({ ...getGlobals(), nodeName: "gpu1" });
+    return calls;
+  }
+
+  const ADD_PREFIX = ["schedule", "add", "s1", "--rel", "r", "--every", "1h"];
+
+  test("add forwards --engine to benchScheduleAdd for kind suite", async () => {
+    // Kills: --engine missing from VALUED_ADD_FLAGS, or not forwarded to the caller.
+    const calls = installEngineAddCaller();
+    const { result } = await captureProcessStreams(() =>
+      benchCmd.runBench([
+        ...ADD_PREFIX,
+        "--kind",
+        "suite",
+        "--suite",
+        "perf-quick",
+        "--engine",
+        "gufo",
+      ]),
+    );
+    expect(result).toBe(0);
+    expect(calls.add).toHaveLength(1);
+    const input = requireRecord(calls.add[0]);
+    expect(input["id"]).toBe("s1");
+    expect(input["kind"]).toBe("suite");
+    expect(input["suite"]).toBe("perf-quick");
+    expect(input["engine"]).toBe("gufo");
+  });
+
+  test("add refuses --engine unless kind is 'suite'", async () => {
+    // Kills: missing kind gating for --engine.
+    const calls = installEngineAddCaller();
+    const { result, stderr } = await captureProcessStreams(() =>
+      benchCmd.runBench([...ADD_PREFIX, "--engine", "gufo"]),
+    );
+    expect(result).toBe(1);
+    expect(stderr).toContain("bench schedule add: --engine is only valid when kind is 'suite'");
+    expect(calls.add).toHaveLength(0);
+  });
+
+  test("add refuses an engine outside the eval engine set", async () => {
+    // Kills: missing EVAL_ENGINES validation for --engine.
+    const calls = installEngineAddCaller();
+    const { result, stderr } = await captureProcessStreams(() =>
+      benchCmd.runBench([
+        ...ADD_PREFIX,
+        "--kind",
+        "suite",
+        "--suite",
+        "perf-quick",
+        "--engine",
+        "vllm",
+      ]),
+    );
+    expect(result).toBe(1);
+    expect(stderr).toContain(
+      "bench schedule add: unknown engine 'vllm' (expected one of llamacpp, omlx, gufo, kapitsa)",
+    );
+    expect(calls.add).toHaveLength(0);
+  });
+
+  test("add --help documents the --engine flag", async () => {
+    // Kills: USAGE not listing --engine.
+    const { result, stdout } = await captureProcessStreams(() =>
+      benchCmd.runBench(["schedule", "add", "--help"]),
+    );
+    expect(result).toBe(0);
+    expect(stdout).toContain("--engine <llamacpp|omlx|gufo|kapitsa>");
+  });
+});
