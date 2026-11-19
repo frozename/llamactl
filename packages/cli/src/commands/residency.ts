@@ -518,7 +518,10 @@ export function renderResidencyApplyProfile(
     lines.push(renderResidencyPlanLabel("InFlight:", r.inFlightOperationId));
   }
   for (const step of r.steps) {
-    lines.push(renderResidencyPlanLabel(`  ${step.action}:`, `${step.workload} (${step.status})`));
+    const detail = step.detail !== undefined ? `; ${step.detail}` : "";
+    lines.push(
+      renderResidencyPlanLabel(`  ${step.action}:`, `${step.workload} (${step.status}${detail})`),
+    );
   }
   return `${lines.join("\n")}\n`;
 }
@@ -549,6 +552,22 @@ function validateApplyProfileArgs(parsed: ApplyProfileMutableFlags): { node: str
   return { node: resolved };
 }
 
+// A wet switch that failed on a session-bound victim carries the refusal in the
+// failed step's detail rather than a top-level refusal; surface that line. A
+// refusal, when present, always takes precedence over a failed step detail.
+function applyProfileFailureLine(result: ResidencyApplyProfileView): string {
+  if (result.refusal === undefined) {
+    for (const step of result.steps) {
+      if (step.status === "failed" && step.detail !== undefined) {
+        return `residency apply-profile: ${result.outcome}: ${step.action} ${step.workload}: ${step.detail}\n`;
+      }
+    }
+  }
+  const reason = result.refusal?.reason ?? result.outcome;
+  const detail = result.refusal?.detail ?? "";
+  return `residency apply-profile: ${reason}: ${detail}\n`;
+}
+
 async function runResidencyApplyProfile(args: string[], deps: ResidencyDeps): Promise<number> {
   const parsed = parseApplyProfileArgs(args);
   if ("exit" in parsed) return parsed.exit;
@@ -573,9 +592,7 @@ async function runResidencyApplyProfile(args: string[], deps: ResidencyDeps): Pr
       return result.ok ? 0 : 1;
     }
     if (!result.ok) {
-      const reason = result.refusal?.reason ?? result.outcome;
-      const detail = result.refusal?.detail ?? "";
-      process.stderr.write(`residency apply-profile: ${reason}: ${detail}\n`);
+      process.stderr.write(applyProfileFailureLine(result));
       return 1;
     }
     process.stdout.write(

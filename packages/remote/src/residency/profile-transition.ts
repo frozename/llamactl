@@ -18,6 +18,9 @@
  * `beginDrain.ok`) and re-checked after the drain window settles (per-victim
  * in `drainPhase` before any stop runs), refusing `SessionsActive` /
  * `SessionsUnknown` before any stop. The override is `residency force-unload`.
+ * A dry run (no drain, no stop) reports the same session refusals as advisory
+ * `detail` on each session-bound victim's planned `fence` step, leaving the
+ * outcome `dry-run` and ok true.
  *
  * Per-node serialization rides the DF-03 operations table, keyed
  * `profile-switch:<node>`, through the partial unique nonterminal index.
@@ -113,7 +116,9 @@ export type ProfileSwitchExecutorDeps = {
   // optional ctx carries an ADVISORY abort signal handed to a budgeted step.
   // The session registry composes with the switch's own drain: checked at fence
   // and re-checked after the drain, refusing SessionsActive/SessionsUnknown,
-  // never releasing sessions; the override is `residency force-unload`.
+  // never releasing sessions; the override is `residency force-unload`. A dry
+  // run reports the same session refusals as advisory detail on the bound
+  // victim's planned fence step.
   stop: (workload: string, ctx?: { signal?: AbortSignal }) => Promise<ProfileSwitchStepOutcome>;
   // caller wires the admission-gated start
   start: (workload: string, ctx?: { signal?: AbortSignal }) => Promise<ProfileSwitchStepOutcome>;
@@ -253,6 +258,24 @@ function sessionRefusal(sessions: SessionRefcounts | null, workload: string): st
     return `SessionsActive: ${check.sessions.join(",")}`;
   }
   return null;
+}
+
+function dryRunSteps(
+  planned: PlannedStep[],
+  fenced: boolean,
+  sessions: SessionRefcounts | null,
+): ProfileSwitchExecutionStep[] {
+  return planned.map((step): ProfileSwitchExecutionStep => {
+    const refusal =
+      fenced && sessions !== null && step.action === "fence"
+        ? sessionRefusal(sessions, step.workload)
+        : null;
+    return {
+      ...step,
+      status: "planned",
+      ...(refusal !== null ? { detail: refusal } : {}),
+    };
+  });
 }
 
 function stepRecord(
@@ -1165,9 +1188,7 @@ export async function executeProfileSwitch(
   const planned = plannedSteps(plan.victims, plan.replacements, fenced);
 
   if (dryRun) {
-    const steps = planned.map(
-      (step): ProfileSwitchExecutionStep => ({ ...step, status: "planned" }),
-    );
+    const steps = dryRunSteps(planned, fenced, sessions);
     return buildReport({
       dryRun,
       node: plan.node,
