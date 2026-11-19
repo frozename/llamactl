@@ -1170,6 +1170,25 @@ function trackedInstanceLive(
 }
 
 /**
+ * Read-only identity proof that a tracked ModelRun is down: a workload with no
+ * recorded pid file, or whose recorded pid verifies `dead` or `reused` against
+ * its pid file, is proven down. A live pid, or one whose identity cannot be
+ * verified (`unknown`), fails closed. The predicate never deletes tracking
+ * files, so it is safe to call outside a transaction and from boot recovery.
+ */
+export function isServerProvenDown(
+  key: WorkloadKey,
+  resolved: ResolvedEnv = resolveEnv(),
+  identity?: PidIdentityDeps,
+): boolean {
+  const pid = readServerPid(key, resolved);
+  if (pid === null) return true;
+  return isRecordedPidGone(
+    verifyPidFile(pidFile(resolved, key), pid, trackedStopIdentity(resolved, key, identity)),
+  );
+}
+
+/**
  * Consult the session refcount registry under the DF-05 drain: a session
  * bound to the running instance refuses the restart, and a registry that
  * throws fails closed. Never passes `force` and never releases a session.
