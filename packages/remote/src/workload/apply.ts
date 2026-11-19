@@ -1,8 +1,4 @@
 import type { ModelHostReadiness } from "@llamactl/core/engines/types";
-import type {
-  ManagedAdmissionClaim,
-  ManagedAdmissionDecision,
-} from "@llamactl/core/residency/admission";
 import type { SleepResidency } from "@llamactl/core/residency/llamacpp-sleep";
 import type { MeasuredEnvelope } from "@llamactl/core/resources/memory";
 import type { spawn as nodeSpawn } from "node:child_process";
@@ -17,6 +13,11 @@ import {
 } from "@llamactl/core/engines/state";
 import { resolveEnv } from "@llamactl/core/env";
 import { omitUndefined } from "@llamactl/core/object";
+import {
+  type ManagedAdmissionClaim,
+  type ManagedAdmissionDecision,
+  resolveResidencyPolicy,
+} from "@llamactl/core/residency/admission";
 import { currentSessionRefcounts } from "@llamactl/core/residency/sessions";
 import {
   appendFleetJournal,
@@ -42,6 +43,7 @@ import {
   beginEvictionOperations,
   finishEvictionOperations,
 } from "../residency/eviction-operation.js";
+import { defaultResidencyStorePath, readResidencyStoreSnapshot } from "../residency/store.js";
 import {
   type AdmissionResult,
   computeNodeBudget,
@@ -257,6 +259,11 @@ export interface ApplyManifestOptions {
    *  to the shared eviction stages (same contract as
    *  ApplyOneOpts.sessionGate). */
   sessionGate?: SessionUnloadGate;
+  /** #519: an explicit readiness source for the minResidencySeconds evict gate
+   *  that takes precedence over the serving-process store, where null/undefined
+   *  means "no ready row, not protected". Same contract as
+   *  ApplyOneOpts.evictReadySinceMs. */
+  evictReadySinceMs?: (workload: string) => number | null | undefined;
   /** Shared deadline per verified evict victim covering its status read,
    *  stop and release check before the apply fails. Same contract as
    *  ApplyOneOpts.evictStopTimeoutMs. */
@@ -1027,8 +1034,10 @@ async function applyModelHostReplacement(
     opts: omitUndefined({
       workloadsDir: opts.workloadsDir,
       env: opts.env,
+      getNodeResidency: opts.getNodeResidency,
       resolveNodeIdentity: opts.resolveNodeIdentity,
       sessionGate: opts.sessionGate,
+      evictReadySinceMs: opts.evictReadySinceMs,
       evictStopTimeoutMs: opts.evictStopTimeoutMs,
       evictionGraceMs: opts.evictionGraceMs,
       evictionOperation: opts.evictionOperation,
@@ -1103,6 +1112,9 @@ export async function applyOneModelHost(
     /** #520 active-session protection for eviction replacements; forwarded
      *  to the shared eviction stages (same contract as ApplyOneOpts.sessionGate). */
     sessionGate?: SessionUnloadGate;
+    /** #519: explicit readiness source for the minResidencySeconds evict gate;
+     *  same contract as ApplyOneOpts.evictReadySinceMs. */
+    evictReadySinceMs?: (workload: string) => number | null | undefined;
     /** Shared deadline per verified evict victim; same contract as
      *  ApplyOneOpts.evictStopTimeoutMs. */
     evictStopTimeoutMs?: number;
@@ -1129,6 +1141,7 @@ export async function applyOneModelHost(
       ? { resolveNodeIdentity: opts.resolveNodeIdentity }
       : {}),
     ...(opts?.sessionGate !== undefined ? { sessionGate: opts.sessionGate } : {}),
+    ...(opts?.evictReadySinceMs !== undefined ? { evictReadySinceMs: opts.evictReadySinceMs } : {}),
     ...(opts?.evictStopTimeoutMs !== undefined
       ? { evictStopTimeoutMs: opts.evictStopTimeoutMs }
       : {}),
@@ -1372,6 +1385,12 @@ interface ApplyOneOpts {
    * currentSessionRefcounts()) is consulted; if no registry is installed,
    * eviction proceeds as before. */
   sessionGate?: SessionUnloadGate;
+  /** #519: an explicit readiness source for the minResidencySeconds evict gate
+   * that takes precedence over the serving-process store, where null/undefined
+   * means "no ready row, not protected". When omitted the gate reads the
+   * serving node's residency store, and only when `LLAMACTL_NODE_NAME` names
+   * the victim's node. */
+  evictReadySinceMs?: (workload: string) => number | null | undefined;
   /** Shared deadline per verified evict victim covering its status read,
    * stop and release check before the apply fails. Default 15_000
    * (15 seconds). */
@@ -2294,6 +2313,8 @@ function checkEvictTarget(
   }
   const gated = checkEvictSessionGate(ctx, target);
   if (gated !== null) return { status: "refused", refusal: gated };
+  const young = checkEvictMinResidency(ctx, target, sameNode);
+  if (young !== null) return { status: "refused", refusal: young };
   return { status: "verified", kind: loaded.kind };
 }
 
@@ -2318,6 +2339,85 @@ function checkEvictSessionGate(ctx: EvictionStageCtx, target: string): EvictStag
         ? `sessions ${sessions.join(", ")} are still active`
         : "an active session";
     return { target, why, reason: "EvictSessionActive" };
+  }
+  return null;
+}
+
+/** Resolve a verified evict victim's ready-since timestamp (ms epoch) for the
+ *  #519 minResidencySeconds gate. An explicit `opts.evictReadySinceMs` seam
+ *  wins. Otherwise the default reads the serving node's residency store, and
+ *  only when `LLAMACTL_NODE_NAME` names the victim's node (the same rule as
+ *  router.ts residencyPlanFor); an anonymous or foreign serving node reports
+ *  no readiness. A store read failure throws so the caller can fail closed. */
+function resolveEvictReadySinceMs(
+  ctx: EvictionStageCtx,
+  target: string,
+  sameNode: (node: string) => boolean,
+): number | null | undefined {
+  const explicit = ctx.opts?.evictReadySinceMs;
+  if (explicit !== undefined) return explicit(target);
+  const serving = process.env["LLAMACTL_NODE_NAME"]?.trim() ?? "";
+  if (serving === "" || !sameNode(serving)) return null;
+  const snap = readResidencyStoreSnapshot(defaultResidencyStorePath());
+  if (!snap.present) return null;
+  if ("error" in snap) throw new Error(snap.error);
+  if (snap.lifecycleError !== undefined) throw new Error(snap.lifecycleError);
+  if (snap.lifecycle === undefined) return null;
+  for (const row of snap.lifecycle) {
+    if (row.model === target && row.state === "ready" && Number.isFinite(row.updatedAtMs)) {
+      return row.updatedAtMs;
+    }
+  }
+  return null;
+}
+
+/** #519: a verified evict victim whose node-local residency lifecycle row has
+ *  been `ready` for fewer than the node's minResidencySeconds is refused
+ *  before any marker, stop or start; an unreadable readiness source fails
+ *  closed with EvictMinResidencyUnknown. Disabled (no read, no refusal) when
+ *  minResidencySeconds is absent or 0. */
+function checkEvictMinResidency(
+  ctx: EvictionStageCtx,
+  target: string,
+  sameNode: (node: string) => boolean,
+): EvictStageRefusal | null {
+  const residency = ctx.opts?.getNodeResidency?.(ctx.manifest.spec.node) ?? null;
+  // Pass only the resolved field as a literal: NodeRunResidency carries explicit
+  // `| undefined` optionals from z.infer, which exactOptionalPropertyTypes
+  // rejects against Partial<ResidencyPolicy> (same seam as defaultNodeBudgetGiB).
+  const min = resolveResidencyPolicy(
+    residency?.minResidencySeconds === undefined
+      ? null
+      : { minResidencySeconds: residency.minResidencySeconds },
+  ).minResidencySeconds;
+  if (min <= 0) return null;
+  let readySinceMs: number | null | undefined;
+  try {
+    readySinceMs = resolveEvictReadySinceMs(ctx, target, sameNode);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      target,
+      why: `its residency readiness could not be verified (${message})`,
+      reason: "EvictMinResidencyUnknown",
+    };
+  }
+  if (readySinceMs === null || readySinceMs === undefined || !Number.isFinite(readySinceMs)) {
+    return null;
+  }
+  const nowMs = Date.parse(ctx.now);
+  const since = Math.min(readySinceMs, nowMs);
+  const ageMs = nowMs - since;
+  if (ageMs < min * 1000) {
+    const readyForS = String(Math.floor(ageMs / 1000));
+    const retryInS = String(Math.ceil((min * 1000 - ageMs) / 1000));
+    return {
+      target,
+      why:
+        `it has been ready for ${readyForS}s, under the node's minResidencySeconds of ` +
+        `${String(min)}; retry in ${retryInS}s`,
+      reason: "EvictMinResidency",
+    };
   }
   return null;
 }
@@ -3347,6 +3447,7 @@ async function applyModelRunManifest(opts: ApplyManifestOptions): Promise<ApplyM
       getNodeResidency: opts.getNodeResidency,
       resolveNodeIdentity: opts.resolveNodeIdentity,
       sessionGate: opts.sessionGate,
+      evictReadySinceMs: opts.evictReadySinceMs,
       evictStopTimeoutMs: opts.evictStopTimeoutMs,
       evictionGraceMs: opts.evictionGraceMs,
       evictionOperation: opts.evictionOperation,
