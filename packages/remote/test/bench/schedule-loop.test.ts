@@ -15,6 +15,7 @@ import {
   type BenchClient,
   type BenchLoopStatus,
   benchSchedulerStatus,
+  type BenchSuiteRequest,
   kickBenchScheduler,
   startBenchScheduler,
   stopBenchScheduler,
@@ -676,5 +677,53 @@ describe("bench scheduler loop", () => {
     const recentEntry = recentFor("suite-norun");
     expect(recentEntry?.ok).toBe(false);
     expect(recentEntry?.message).toBe("no suite runner configured for suite 'missing-suite'");
+  });
+});
+
+describe("#521 scheduled suite engine", () => {
+  test("a due suite schedule forwards schedule.engine on the runSuite request", async () => {
+    // Kills: the loop dropping schedule.engine, or always writing engine: undefined.
+    const calls: BenchSuiteRequest[] = [];
+    const runSuite = (req: BenchSuiteRequest): Promise<void> => {
+      calls.push(req);
+      return Promise.resolve();
+    };
+    const schedule: BenchSchedule & { engine?: string } = {
+      ...dueSchedule("suite-engine", { kind: "suite", suite: "perf" }),
+      engine: "kapitsa",
+    };
+    saveSchedules([schedule], schedulePath);
+
+    await kickBenchScheduler(autoCompleting().getClient, { runSuite });
+
+    expect(calls).toHaveLength(1);
+    const req = calls[0] as BenchSuiteRequest & { engine?: string };
+    expect(req).toEqual({
+      scheduleId: "suite-engine",
+      suite: "perf",
+      node: "fake-node",
+      rel: "org/repo/suite-engine.gguf",
+      engine: "kapitsa",
+    });
+    expect(req.engine).toBe("kapitsa");
+
+    const entry = loadSchedules(schedulePath).find((s) => s.id === "suite-engine")!;
+    expect(entry.lastRunAt).not.toBe("2000-01-01T00:00:00.000Z");
+    expect(entry.lastError).toBeNull();
+  });
+
+  test("a due suite schedule without engine sends no engine key", async () => {
+    // Back-compat guard: the request omits engine entirely — never engine: undefined.
+    const calls: BenchSuiteRequest[] = [];
+    const runSuite = (req: BenchSuiteRequest): Promise<void> => {
+      calls.push(req);
+      return Promise.resolve();
+    };
+    saveSchedules([dueSchedule("suite-noengine", { kind: "suite", suite: "perf" })], schedulePath);
+
+    await kickBenchScheduler(autoCompleting().getClient, { runSuite });
+
+    expect(calls).toHaveLength(1);
+    expect("engine" in calls[0]!).toBe(false);
   });
 });
