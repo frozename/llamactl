@@ -2,16 +2,26 @@
  * #519 — residency ranking inputs for the shared unified proxy.
  * `residencyRankingInputs` is the pure mapping from a NodeRun's
  * spec.residency plus the node-local residency-store snapshot to the
- * ranking policy and the resident deploymentIds `rankRouteCandidates`
+ * ranking policy and the ranking signals `rankRouteCandidates`
  * consumes; `createResidencyRankingSource` caches that mapping for
  * `LLAMACTL_NODE_NAME`-selected NodeRuns behind a ttl.
+ *
+ * Part of #518 (c): `switchCooldownSeconds` also feeds the ranker's
+ * `cooldownUntil` signal — the absolute expiry instant of this node's
+ * last succeeded profile switch (`lastSucceededAtMs` keyed by
+ * `profile-switch:<nodeName>`) plus the cooldown. Its limits:
+ * - peers are never charged (only ads owned by `nodeId` qualify);
+ * - unknown residency — an absent, errored or lifecycle-unreadable
+ *   store — charges nothing;
+ * - a local workload with no `ready` lifecycle row counts as
+ *   non-resident and is charged, the same limit as the resident set.
  */
 import type { routingRanking } from "@llamactl/core";
 import type { ResidencyPolicy } from "@llamactl/core/residency/admission";
 
 import { resolveResidencyPolicy } from "@llamactl/core/residency/admission";
 
-import type { ResidencyStoreSnapshot } from "../residency/store.js";
+import type { ResidencyStateRecord, ResidencyStoreSnapshot } from "../residency/store.js";
 import type { NodeRun, NodeRunResidency } from "../workload/noderun-schema.js";
 
 import { defaultResidencyStorePath, readResidencyStoreSnapshot } from "../residency/store.js";
@@ -24,6 +34,52 @@ function residentDeploymentId(nodeId: string, model: string): string {
   return `deploy/${nodeId}/${model}`;
 }
 
+// profileSwitchOperationKey (profile-transition.ts:829) owns the
+// `profile-switch:<node>` store key; inlined because the #284 importer
+// allowlist in profile-transition.test.ts reserves that module for the
+// apply-profile caller chain.
+function profileSwitchStoreKey(nodeName: string): string {
+  return `profile-switch:${nodeName}`;
+}
+
+function readyDeploymentIds(
+  lifecycle: readonly ResidencyStateRecord[],
+  nodeId: string,
+): Set<string> {
+  const ready = new Set<string>();
+  for (const row of lifecycle) {
+    if (row.state === "ready") {
+      ready.add(residentDeploymentId(nodeId, row.model));
+    }
+  }
+  return ready;
+}
+
+function rankingKnobsActive(resolved: ResidencyPolicy): boolean {
+  return (
+    resolved.residentPreference !== 0 ||
+    resolved.coldLoadPenaltyMs !== 0 ||
+    resolved.switchCooldownSeconds !== 0
+  );
+}
+
+function switchCooldownSignal(input: {
+  cooldownMs: number;
+  nodeName: string | undefined;
+  lastSucceededAtMs: Readonly<Record<string, number>> | undefined;
+  nodeId: string;
+  ready: ReadonlySet<string>;
+}): routingRanking.RankingSignals["cooldownUntil"] {
+  const nodeName = input.nodeName?.trim() ?? "";
+  if (input.cooldownMs <= 0 || nodeName === "") return undefined;
+  const recorded = input.lastSucceededAtMs?.[profileSwitchStoreKey(nodeName)];
+  if (recorded === undefined || !Number.isFinite(recorded)) return undefined;
+  const until = recorded + input.cooldownMs;
+  const cooldownUntil: NonNullable<routingRanking.RankingSignals["cooldownUntil"]> = (ad) =>
+    ad.ownerNodeId === input.nodeId && !input.ready.has(ad.deploymentId) ? until : undefined;
+  return cooldownUntil;
+}
+
 export interface ResidencyRankingInputsResult {
   policy: NodeRunResidency | null;
   signals: routingRanking.RankingSignals;
@@ -31,40 +87,53 @@ export interface ResidencyRankingInputsResult {
 
 /**
  * Map a NodeRun's spec.residency plus a residency-store snapshot to the
- * ranking policy and resident set. The policy is the raw NodeRun value
- * (null when absent); both ranking knobs resolve to 0 there, or the store
- * is absent/errored/lifecycle-undefined, signals stay `{}` with no
- * `resident` key so ranking keeps its unknown-residency behaviour.
+ * ranking policy and ranking signals. The policy is the raw NodeRun value
+ * (null when absent); every knob resolves to its default there. With all
+ * ranking knobs at 0, or the store absent/errored/lifecycle-undefined,
+ * signals stay `{}` so ranking keeps its unknown-residency behaviour.
  *
- * Two limits of the resident set:
- * - Only workloads with a `ready` residency_states row count as resident.
- *   Lifecycle rows exist only for workloads moved through profile
- *   switches, so a local workload started by a plain apply with no row
- *   ranks as non-resident when a knob is nonzero.
- * - Peers are never in the set, so they also rank as non-resident.
+ * The resident set (residentPreference or coldLoadPenaltyMs nonzero)
+ * counts only `ready` residency_states rows as resident — lifecycle rows
+ * exist only for workloads moved through profile switches, so a local
+ * workload started by a plain apply with no row ranks as non-resident
+ * when a knob is nonzero, and peers are never in the set.
+ *
+ * The cooldown signal (switchCooldownSeconds nonzero, a non-blank
+ * `nodeName`, a clean store and a finite recorded switch) reports the
+ * absolute expiry instant for this node's last succeeded profile
+ * switch; it charges only local ads outside the ready set — peers and
+ * ready rows are never charged, and a missing recorded switch charges
+ * nothing.
  */
 export function residencyRankingInputs(input: {
   residency: NodeRunResidency | null | undefined;
   store: ResidencyStoreSnapshot;
   nodeId: string;
+  nodeName?: string;
 }): ResidencyRankingInputsResult {
   const policy = input.residency ?? null;
-  const resolved = resolveResidencyPolicy(
-    policy === null ? null : toPartialResidencyPolicy(policy),
-  );
-  if (resolved.residentPreference === 0 && resolved.coldLoadPenaltyMs === 0) {
+  const partial = policy === null ? null : toPartialResidencyPolicy(policy);
+  const resolved = resolveResidencyPolicy(partial);
+  const store = input.store.present && !("error" in input.store) ? input.store : undefined;
+  const lifecycle = store?.lifecycle;
+  if (!rankingKnobsActive(resolved) || lifecycle === undefined) {
     return { policy, signals: {} };
   }
-  if (!input.store.present || "error" in input.store || input.store.lifecycle === undefined) {
-    return { policy, signals: {} };
-  }
-  const resident = new Set<string>();
-  for (const row of input.store.lifecycle) {
-    if (row.state === "ready") {
-      resident.add(residentDeploymentId(input.nodeId, row.model));
-    }
-  }
-  return { policy, signals: { resident } };
+  const ready = readyDeploymentIds(lifecycle, input.nodeId);
+  const cooldownUntil = switchCooldownSignal({
+    cooldownMs: resolved.switchCooldownSeconds * 1000,
+    nodeName: input.nodeName,
+    lastSucceededAtMs: store?.lastSucceededAtMs,
+    nodeId: input.nodeId,
+    ready,
+  });
+  const signals: routingRanking.RankingSignals = {
+    ...(resolved.residentPreference !== 0 || resolved.coldLoadPenaltyMs !== 0
+      ? { resident: ready }
+      : {}),
+    ...(cooldownUntil === undefined ? {} : { cooldownUntil }),
+  };
+  return { policy, signals };
 }
 
 /**
@@ -139,13 +208,18 @@ export function createResidencyRankingSource(input: {
       const residency = nodeRun?.spec.residency ?? null;
       const partial = residency === null ? null : toPartialResidencyPolicy(residency);
       const resolved = resolveResidencyPolicy(partial);
-      if (resolved.residentPreference === 0 && resolved.coldLoadPenaltyMs === 0) {
+      if (
+        resolved.residentPreference === 0 &&
+        resolved.coldLoadPenaltyMs === 0 &&
+        resolved.switchCooldownSeconds === 0
+      ) {
         return { policy: residency, signals: {} };
       }
       return residencyRankingInputs({
         residency,
         store: readStore(),
         nodeId: input.nodeId,
+        nodeName,
       });
     } catch {
       return { policy: null, signals: {} };
