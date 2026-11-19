@@ -8,8 +8,11 @@
  * the signal entirely, so every case fails by assertion — never by a
  * link or type error — and holds once the ranking consumes it.
  */
-import { routingCapabilities, routingCatalog, routingRanking } from "@llamactl/core";
 import { describe, expect, test } from "bun:test";
+
+import * as routingCapabilities from "../../src/routing/capabilities.js";
+import * as routingCatalog from "../../src/routing/catalog.js";
+import * as routingRanking from "../../src/routing/ranking.js";
 
 const MODEL = "rank/model";
 const NOW = 1_000_000;
