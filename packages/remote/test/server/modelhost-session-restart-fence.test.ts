@@ -304,8 +304,10 @@ describe("server/modelhost restart session fence (#520)", () => {
   });
 
   test("keeps LeasesActive precedence over a bound session", async () => {
-    // Kills: dropping the active-lease check, swapped refusal tails, or
-    // consulting sessions before leases (the session would win instead).
+    // Kills: dropping the active-lease check, swapped refusal tails,
+    // consulting sessions before leases (the session would win instead), or
+    // deleting registry.cancelDrain(drain.token) in the LeasesActive branch
+    // of fencePriorHostTeardown (the workload is left draining forever).
     const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-fence-leases-"));
     const { workloadsDir, runtimeDir } = makeManifest(tmp);
     const clock = 0;
@@ -340,8 +342,65 @@ describe("server/modelhost restart session fence (#520)", () => {
       expect(tornDown).toEqual([]);
       expect(spawn).not.toHaveBeenCalled();
       expect(leases.active("mlx-host-server")).toContain(lease.id);
+      // The refusal cancelled its drain: the workload is open again while
+      // the lease is still held, and stays open once the lease is released.
+      expect(leases.snapshot("mlx-host-server").phase).toBe("open");
+      lease.release();
+      expect(leases.snapshot("mlx-host-server").phase).toBe("open");
     } finally {
       restoreTeardown();
+      restore();
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("holds the DF-05 drain while the prior host is torn down", async () => {
+    // Kills: running the teardown outside the drain (cancelling it before
+    // run(), or skipping beginDrain once the fence checks pass) — the
+    // in-teardown acquire would succeed — and deleting the finally
+    // registry.cancelDrain(drain.token) in fencePriorHostTeardown (the
+    // workload stays draining after startModelHost returns).
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-fence-held-"));
+    const { workloadsDir, runtimeDir } = makeManifest(tmp);
+    const clock = 0;
+    const { leases, restore } = installRegistries(() => clock);
+    const { identity } = releasableSelfIdentity("omlx");
+    const duringTeardown: { ok: boolean; reason?: string; phase: string }[] = [];
+    const engine = ENGINES.omlx;
+    const originalTeardown = engine.teardown.bind(engine);
+    // The stub never releases the self pid, so the prior host survives
+    // teardown and the restart defers without spawning a replacement.
+    engine.teardown = mock(() => {
+      const attempt = leases.acquire("mlx-host-server");
+      if (attempt.ok) {
+        attempt.lease.release();
+        duringTeardown.push({ ok: true, phase: leases.snapshot("mlx-host-server").phase });
+      } else {
+        duringTeardown.push({
+          ok: false,
+          reason: attempt.reason,
+          phase: leases.snapshot("mlx-host-server").phase,
+        });
+      }
+      return Promise.resolve();
+    });
+    seedLiveSelfHost(runtimeDir);
+    try {
+      const result = await startModelHost({
+        key: { name: "mlx-host-server" },
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        identity,
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
+      });
+
+      expect(duringTeardown).toEqual([{ ok: false, reason: "Draining", phase: "draining" }]);
+      expect(result.ok).toBe(false);
+      expect(result.refused).toBeUndefined();
+      expect(leases.snapshot("mlx-host-server").phase).toBe("open");
+    } finally {
+      engine.teardown = originalTeardown;
       restore();
       rmSync(tmp, { recursive: true, force: true });
     }
