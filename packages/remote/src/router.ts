@@ -2972,6 +2972,10 @@ export const router = t.router({
           .string()
           .regex(/^[a-z0-9][a-z0-9._-]*$/)
           .optional(),
+        engine: z
+          .string()
+          .regex(/^[a-z0-9][a-z0-9._-]*$/)
+          .optional(),
       }),
     )
     .mutation(({ input }) => {
@@ -2986,6 +2990,7 @@ export const router = t.router({
         enabled: true,
         kind: input.kind,
         suite: input.suite,
+        ...(input.engine !== undefined ? { engine: input.engine } : {}),
       });
       benchScheduleMod.saveSchedules(next, path);
       return next;
