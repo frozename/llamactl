@@ -19,7 +19,7 @@ import {
   openResidencyOperationStore,
   readResidencyStoreSnapshot,
 } from "../../src/residency/store.js";
-import { mkdtempSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
 import {
   applyManifest,
   applyOne,
@@ -520,6 +520,57 @@ describe("#519 apply --evict minResidencySeconds", () => {
       expect(seamCalls).toEqual(["a"]);
       expect(stops).toEqual([]);
       expect(starts).toEqual([]);
+    });
+  });
+
+  // Mutation pinned (M14): dropping `row.model === target` from the filter in
+  // resolveEvictReadySinceMs (apply.ts) lets another model's fresh ready row
+  // ('c') stand in for the victim, so the eviction is refused
+  // EvictMinResidency and this fails.
+  test("E12: a fresh ready row for a different model does not gate the victim", async () => {
+    await inTempDir(async (tmp) => {
+      const { workloadsDir, client, stops, starts } = seedVictim(tmp);
+      const storePath = join(tmp, "residency-state", "operations.sqlite");
+      try {
+        process.env["LLAMACTL_NODE_NAME"] = "local";
+        process.env["LLAMACTL_RESIDENCY_STORE"] = storePath;
+        seedReadyLifecycle(storePath, "c", Date.now() - 10_000);
+        const snap = readResidencyStoreSnapshot(storePath);
+        const rows = snap.present && !("error" in snap) ? (snap.lifecycle ?? []) : [];
+        expect(rows.map((row) => [row.model, row.state])).toEqual([["c", "ready"]]);
+        const result = await applyEvictingB(client, evictOpts(workloadsDir));
+        expect(result.action).toBe("started");
+        expect(stops).toEqual(["a"]);
+        expect(starts).toEqual(["b"]);
+      } finally {
+        Reflect.deleteProperty(process.env, "LLAMACTL_NODE_NAME");
+        Reflect.deleteProperty(process.env, "LLAMACTL_RESIDENCY_STORE");
+      }
+    });
+  });
+
+  // Mutation pinned (M15): changing `if (!snap.present) return null` in
+  // resolveEvictReadySinceMs (apply.ts) to fail closed refuses this eviction
+  // EvictMinResidencyUnknown even though the serving node simply has no
+  // residency store yet, so this fails.
+  test("E13: an absent residency store on the victim's serving node does not block eviction", async () => {
+    await inTempDir(async (tmp) => {
+      const { workloadsDir, client, stops, starts } = seedVictim(tmp);
+      const storePath = join(tmp, "missing", "operations.sqlite");
+      try {
+        process.env["LLAMACTL_NODE_NAME"] = "local";
+        process.env["LLAMACTL_RESIDENCY_STORE"] = storePath;
+        expect(existsSync(storePath)).toBe(false);
+        expect(readResidencyStoreSnapshot(storePath).present).toBe(false);
+        const result = await applyEvictingB(client, evictOpts(workloadsDir));
+        expect(result.action).toBe("started");
+        expect(result.error).toBeUndefined();
+        expect(stops).toEqual(["a"]);
+        expect(starts).toEqual(["b"]);
+      } finally {
+        Reflect.deleteProperty(process.env, "LLAMACTL_NODE_NAME");
+        Reflect.deleteProperty(process.env, "LLAMACTL_RESIDENCY_STORE");
+      }
     });
   });
 
