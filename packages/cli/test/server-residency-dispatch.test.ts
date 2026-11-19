@@ -352,6 +352,29 @@ describe("#517 local server start/stop residency dispatch", () => {
     expect(stdoutChunks.join("")).toBe("");
   });
 
+  // Kills: a lower bound of `n < 0` (or none), which forwards graceSeconds 0
+  // and fails in serverStop's positive() check with a raw zod dump; and
+  // dropping the Number.isInteger check, which forwards 1.5 and fails .int().
+  for (const grace of ["0", "1.5", "abc"]) {
+    test(`S6b local stop rejects --grace=${grace} before any dispatch`, async () => {
+      const inputs: unknown[] = [];
+      __setTestSeams({ config: configSchema.freshConfig(), nodeClient: stopClient(inputs) });
+      const code = await runServer(["stop", "--name", "w", `--grace=${grace}`]);
+      expect(code).toBe(1);
+      expect(stderrChunks.join("")).toBe("server stop: --grace must be between 1 and 60\n");
+      expect(inputs).toEqual([]);
+      expect(stdoutChunks.join("")).toBe("");
+    });
+  }
+
+  // Kills: dropping the documented 1-60 range from the server USAGE text.
+  test("S6c server stop --help documents the 1-60 grace range", async () => {
+    __setTestSeams({ config: configSchema.freshConfig(), nodeClient: stopClient([]) });
+    const code = await runServer(["stop", "--help"]);
+    expect(code).toBe(0);
+    expect(stdoutChunks.join("").replaceAll(/\s+/g, " ")).toContain("(default 5, allowed 1-60)");
+  });
+
   // Kills: an off-by-one upper bound (n >= 60 rejected) that refuses the
   // largest grace serverStop accepts.
   test("S7 local stop accepts --grace=60 and forwards it", async () => {
