@@ -7,7 +7,11 @@ import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { ResidencyStatus } from "../../remote/src/residency/procedures.js";
+import type {
+  ResidencyStatus,
+  ResidencyStatusIdleEviction,
+  ResidencyStatusIdleEvictionRow,
+} from "../../remote/src/residency/procedures.js";
 import type * as ResidencyModule from "../src/commands/residency.js";
 
 import * as workloadMod from "../src/commands/workload.js";
@@ -1763,5 +1767,177 @@ describe("residency release-session", () => {
     expect(stderr).toBe("");
     expect(stdout).toContain("release-session <sessionId> --yes [--force]");
     expect(rec.calls).toEqual([]);
+  });
+});
+
+// #519: the `idleEviction` advisory section of the residencyStatus payload
+// rendered as an `Idle evict:` block. The remote side already reports
+// per-workload due/held/unknown rows; the CLI must print the window header,
+// one line per ready resident and the disabled/unavailable variants, with
+// held-until and due-in computed from the clock it is handed. At the pinned
+// base renderResidencyStatus has no idle-eviction branch, so every case
+// fails BY ASSERTION on the missing lines — never by import, type or
+// exit-code error.
+describe("#519 residency status idle-eviction section", () => {
+  const NOW = 1_000_000;
+
+  const IDLE_ROW_BUSY: ResidencyStatusIdleEvictionRow = {
+    workload: "wl-busy",
+    readySinceMs: 100_000,
+    lastActivityAtMs: 300_000,
+    idleSinceMs: 300_000,
+    activeLeaseCount: 2,
+    dueAtMs: 900_000,
+    due: false,
+  };
+  const IDLE_ROW_DUE: ResidencyStatusIdleEvictionRow = {
+    workload: "wl-due",
+    readySinceMs: 100_000,
+    lastActivityAtMs: 300_000,
+    idleSinceMs: 300_000,
+    activeLeaseCount: 0,
+    dueAtMs: 900_000,
+    due: true,
+  };
+  const IDLE_ROW_HELD: ResidencyStatusIdleEvictionRow = {
+    workload: "wl-held",
+    readySinceMs: 430_000,
+    lastActivityAtMs: 430_000,
+    idleSinceMs: 430_000,
+    activeLeaseCount: 0,
+    dueAtMs: 1_030_000,
+    due: false,
+    minResidencyUntilMs: 1_030_000,
+  };
+  const IDLE_ROW_SOON: ResidencyStatusIdleEvictionRow = {
+    workload: "wl-soon",
+    readySinceMs: 100_000,
+    lastActivityAtMs: 490_000,
+    idleSinceMs: 490_000,
+    activeLeaseCount: 0,
+    dueAtMs: 1_090_000,
+    due: false,
+  };
+  const IDLE_ROW_UNKNOWN: ResidencyStatusIdleEvictionRow = {
+    workload: "wl-unknown",
+    readySinceMs: 100_000,
+    lastActivityAtMs: null,
+    idleSinceMs: null,
+    activeLeaseCount: 0,
+    dueAtMs: null,
+    due: false,
+  };
+
+  const IDLE_AVAILABLE: ResidencyStatusIdleEviction = {
+    status: "available",
+    scope: "serving-process",
+    advisory: true,
+    idleEvictSeconds: 600,
+    workloads: [IDLE_ROW_BUSY, IDLE_ROW_DUE, IDLE_ROW_HELD, IDLE_ROW_SOON, IDLE_ROW_UNKNOWN],
+  };
+
+  type IdleUnavailableReason = Extract<
+    ResidencyStatusIdleEviction,
+    { status: "unavailable" }
+  >["reason"];
+
+  function idleFixture(idleEviction: ResidencyStatusIdleEviction): StatusFixture {
+    return { ...OK_STATUS, idleEviction };
+  }
+
+  // renderResidencyStatus takes the status clock as its second parameter.
+  function renderIdleStatus(residency: typeof ResidencyModule, fixture: StatusFixture): string {
+    return residency.renderResidencyStatus(fixture, NOW);
+  }
+
+  test("renders the available window and one line per ready resident", async () => {
+    // Kills: section not rendered / held shown as due / due-in not computed
+    // from the passed clock.
+    const residency = await loadResidency();
+    const rendered = renderIdleStatus(residency, idleFixture(IDLE_AVAILABLE));
+
+    expect(rendered).toContain(
+      "Idle evict: window 600s, 5 ready workload(s) (advisory; scope: serving-process)",
+    );
+    expect(rendered).toContain("  wl-due  due  leases 0");
+    expect(rendered).toContain("  wl-held  held MinResidency for 30s  leases 0");
+    expect(rendered).toContain("  wl-soon  not due (due in 1m 30s)  leases 0");
+    expect(rendered).toContain("  wl-busy  not due (leased or draining)  leases 2");
+    expect(rendered).toContain("  wl-unknown  not due (activity unknown)  leases 0");
+
+    const idleIdx = rendered.indexOf("Idle evict:");
+    const leasesIdx = rendered.indexOf("Leases:");
+    expect(idleIdx).toBeGreaterThanOrEqual(0);
+    expect(leasesIdx).toBeGreaterThan(idleIdx);
+    const lifecycleIdx = rendered.indexOf("Lifecycle:");
+    if (lifecycleIdx >= 0) {
+      expect(idleIdx).toBeGreaterThan(lifecycleIdx);
+    }
+  });
+
+  test("renders a disabled window", async () => {
+    // Kills: disabled rendered as available or as nothing.
+    const residency = await loadResidency();
+    const rendered = renderIdleStatus(
+      residency,
+      idleFixture({ status: "disabled", scope: "serving-process" }),
+    );
+    expect(rendered).toContain("Idle evict: disabled (scope: serving-process)");
+  });
+
+  test("renders a distinct line per unavailable reason", async () => {
+    // Kills: one generic message for every reason.
+    const residency = await loadResidency();
+    const render = (reason: IdleUnavailableReason): string =>
+      renderIdleStatus(
+        residency,
+        idleFixture({ status: "unavailable", scope: "serving-process", reason }),
+      );
+    expect(render("NotServingNode")).toContain(
+      "Idle evict: unavailable (not the serving node; scope: serving-process)",
+    );
+    expect(render("LeasesUnavailable")).toContain(
+      "Idle evict: unavailable (no lease registry installed; scope: serving-process)",
+    );
+    expect(render("StoreUnreadable")).toContain(
+      "Idle evict: unavailable (store unreadable; scope: serving-process)",
+    );
+    expect(render("LifecycleUnreadable")).toContain(
+      "Idle evict: unavailable (lifecycle rows unreadable; scope: serving-process)",
+    );
+  });
+
+  test("status threads deps.now into the idle-eviction read-out", async () => {
+    // Kills: runResidencyStatus rendering with the real clock instead of
+    // deps.now.
+    const residency = await loadResidency();
+    const fixture = idleFixture({
+      status: "available",
+      scope: "serving-process",
+      advisory: true,
+      idleEvictSeconds: 600,
+      workloads: [IDLE_ROW_SOON],
+    });
+    const rec = setupResidency({
+      "residencyStatus.query": (): Promise<unknown> => Promise.resolve(fixture),
+    });
+
+    const { result: code, stdout } = await withCapturedIo(() =>
+      residency.runResidency(["status", "--node", "gpu1"], {
+        ...rec.deps,
+        now: () => new Date(NOW),
+      }),
+    );
+
+    expect(code).toBe(0);
+    expect(stdout).toContain("  wl-soon  not due (due in 1m 30s)  leases 0");
+  });
+
+  test("renders no Idle evict line when the payload has no idleEviction key", async () => {
+    // GUARD — passes at base: pins that payloads without the section (older
+    // agents) render unchanged.
+    const residency = await loadResidency();
+    const rendered = residency.renderResidencyStatus(OK_STATUS);
+    expect(rendered).not.toContain("Idle evict:");
   });
 });
