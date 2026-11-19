@@ -127,6 +127,28 @@ function zodIssueMessages(err: unknown): string[] | null {
     .filter((message) => message !== "");
 }
 
+/**
+ * Like zodIssueMessages, but prefixes each message with its issue path
+ * (e.g. `toolCallCorrectness: Too big ...`) so an operator can find the
+ * offending key in an evidence or policy file.
+ */
+function zodIssueMessagesWithPath(err: unknown): string[] | null {
+  if (typeof err !== "object" || err === null) return null;
+  const issues = (err as { issues?: unknown }).issues;
+  if (!Array.isArray(issues)) return null;
+  return issues
+    .map((issue): string => {
+      if (typeof issue !== "object" || issue === null) return "";
+      const { message, path } = issue as { message?: unknown; path?: unknown };
+      if (typeof message !== "string") return "";
+      const keys = Array.isArray(path)
+        ? path.filter((key) => typeof key === "string" || typeof key === "number")
+        : [];
+      return keys.length > 0 ? `${keys.join(".")}: ${message}` : message;
+    })
+    .filter((message) => message !== "");
+}
+
 interface OverrideView {
   stage: string;
   author: string;
@@ -350,6 +372,63 @@ function decisionLine(rel: string, decision: QualificationDecision): string {
   }
 }
 
+type Outcome<T> = { ok: true; value: T } | { ok: false; message: string };
+
+/**
+ * Read and validate one propose input file. Every failure — unreadable,
+ * malformed JSON or a schema refusal — comes back as a clean message, so
+ * a bad input never escapes as a stack trace.
+ */
+function parseProposeFile<T>(
+  label: "evidence" | "policy",
+  path: string,
+  parse: (json: unknown) => T,
+): Outcome<T> {
+  const read = readJsonFile(label, path);
+  if (!read.ok) return read;
+  try {
+    return { ok: true, value: parse(read.json) };
+  } catch (err) {
+    const messages = zodIssueMessagesWithPath(err);
+    if (messages === null) throw err;
+    return { ok: false, message: `invalid ${label} file '${path}': ${messages.join("; ")}` };
+  }
+}
+
+interface ProposeResult {
+  decision: QualificationDecision;
+  apply: qualificationDemotion.ApplyQualificationResult;
+}
+
+/**
+ * Evaluate and gate the decision without a writer. applyQualification
+ * re-parses the policy, so its Zod refusal is reported like any other.
+ */
+function evaluateProposal(
+  input: qualificationPromotion.ProposePromotionInput & {
+    policy: qualificationPromotion.PromotionPolicy;
+  },
+): Outcome<ProposeResult> {
+  try {
+    const decision = qualificationDemotion.evaluateQualification(input);
+    const apply = qualificationDemotion.applyQualification(decision, { policy: input.policy });
+    return { ok: true, value: { decision, apply } };
+  } catch (err) {
+    const messages = zodIssueMessagesWithPath(err);
+    if (messages === null) throw err;
+    return { ok: false, message: `invalid policy: ${messages.join("; ")}` };
+  }
+}
+
+function requiredFlag(flags: Map<string, string>, name: string): string | undefined {
+  const value = flags.get(name);
+  if (value === undefined || value === "") {
+    process.stderr.write(`qualification propose: ${name} is required\n`);
+    return undefined;
+  }
+  return value;
+}
+
 function proposeCommand(rest: string[]): number {
   const { positional, flags, json } = parseArgs(rest);
   const rel = positional[0];
@@ -357,37 +436,23 @@ function proposeCommand(rest: string[]): number {
     process.stderr.write(`qualification propose: <rel> is required\n\n${USAGE}`);
     return 1;
   }
-  const evidencePath = flags.get("--evidence");
-  if (evidencePath === undefined || evidencePath === "") {
-    process.stderr.write("qualification propose: --evidence is required\n");
-    return 1;
-  }
-  const policyPath = flags.get("--policy");
-  if (policyPath === undefined || policyPath === "") {
-    process.stderr.write("qualification propose: --policy is required\n");
-    return 1;
-  }
+  const evidencePath = requiredFlag(flags, "--evidence");
+  if (evidencePath === undefined) return 1;
+  const policyPath = requiredFlag(flags, "--policy");
+  if (policyPath === undefined) return 1;
 
-  const evidenceRead = readJsonFile("evidence", evidencePath);
-  if (!evidenceRead.ok) {
-    process.stderr.write(`qualification propose: ${evidenceRead.message}\n`);
+  const evidence = parseProposeFile("evidence", evidencePath, (raw) =>
+    qualificationPromotion.parsePromotionEvidence(raw),
+  );
+  if (!evidence.ok) {
+    process.stderr.write(`qualification propose: ${evidence.message}\n`);
     return 1;
   }
-  const policyRead = readJsonFile("policy", policyPath);
-  if (!policyRead.ok) {
-    process.stderr.write(`qualification propose: ${policyRead.message}\n`);
-    return 1;
-  }
-
-  let evidence: qualificationPromotion.PromotionEvidence;
-  let policy: qualificationPromotion.PromotionPolicy;
-  try {
-    evidence = qualificationPromotion.parsePromotionEvidence(evidenceRead.json);
-    policy = qualificationPromotion.PromotionPolicySchema.parse(policyRead.json);
-  } catch (err) {
-    const messages = zodIssueMessages(err);
-    if (messages === null) throw err;
-    process.stderr.write(`qualification propose: ${messages.join("; ")}\n`);
+  const policy = parseProposeFile("policy", policyPath, (raw) =>
+    qualificationPromotion.PromotionPolicySchema.parse(raw),
+  );
+  if (!policy.ok) {
+    process.stderr.write(`qualification propose: ${policy.message}\n`);
     return 1;
   }
 
@@ -401,14 +466,18 @@ function proposeCommand(rest: string[]): number {
     return 1;
   }
 
-  const decision = qualificationDemotion.evaluateQualification({
+  const result = evaluateProposal({
     rel,
     declared,
-    evidence,
-    policy,
+    evidence: evidence.value,
+    policy: policy.value,
     overrides: grouped,
   });
-  const apply = qualificationDemotion.applyQualification(decision, { policy });
+  if (!result.ok) {
+    process.stderr.write(`qualification propose: ${result.message}\n`);
+    return 1;
+  }
+  const { decision, apply } = result.value;
 
   if (json) {
     const view = { rel, declared, overridesFile: ctx.file, decision, apply };

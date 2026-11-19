@@ -372,8 +372,11 @@ routing applies its pin rows (see Overrides).
 [--json]` reads an evidence file and a policy file and reports a promotion,
 a demotion or a refusal without writing anything. The evidence file is
 validated by `parsePromotionEvidence` against the strict
-`PromotionEvidenceSchema`, so unknown keys are refused; the policy file is
-validated by `PromotionPolicySchema`. The declared stage is the catalog
+`PromotionEvidenceSchema`, so unknown keys are refused and each metric
+carries its threshold's bound (ratios in [0, 1], `improvement` in [-1, 1]),
+which refuses percent-scaled evidence; the policy file is validated by
+`PromotionPolicySchema`, which also refuses unknown top-level keys such as
+an `autoapply` typo. The declared stage is the catalog
 stage, falling back to the pin stage, and an unstaged rel is refused. The
 freeze and pin rows come from the shared overrides file. `applyQualification`
 is called without a writer, so `autoApply: true` still reports `proposed`

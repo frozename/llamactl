@@ -29,6 +29,7 @@ export const PROMOTION_METRICS = [
 export type PromotionMetric = (typeof PROMOTION_METRICS)[number];
 
 const ratio = z.number().min(0).max(1);
+const signedRatio = z.number().min(-1).max(1);
 
 export const PromotionThresholdsSchema = z
   .object({
@@ -38,7 +39,7 @@ export const PromotionThresholdsSchema = z
     minToolCallCorrectness: ratio,
     minStructuredOutputValidity: ratio,
     maxRegression: ratio,
-    minImprovement: z.number().min(-1).max(1),
+    minImprovement: signedRatio,
     minMemoryStability: ratio,
     minRuntimeReliability: ratio,
   })
@@ -59,22 +60,28 @@ export const DemotionThresholdsSchema = z
     minRepairSuccess: ratio.optional(),
     minToolCallCorrectness: ratio.optional(),
     minStructuredOutputValidity: ratio.optional(),
-    minImprovement: z.number().min(-1).max(1).optional(),
+    minImprovement: signedRatio.optional(),
     minMemoryStability: ratio.optional(),
     minRuntimeReliability: ratio.optional(),
   })
   .strict();
 export type DemotionThresholds = z.infer<typeof DemotionThresholdsSchema>;
 
-export const PromotionPolicySchema = z.object({
-  thresholds: z.object({
-    candidate: PromotionThresholdsSchema.optional(),
-    validated: PromotionThresholdsSchema.optional(),
-    production: PromotionThresholdsSchema.optional(),
-  }),
-  autoApply: z.boolean().default(false),
-  demotion: DemotionThresholdsSchema.optional(),
-});
+/**
+ * Strict at the top level (frozename/llamactl#518 review): a typo such as
+ * `autoapply` is refused rather than silently defaulting `autoApply` off.
+ */
+export const PromotionPolicySchema = z
+  .object({
+    thresholds: z.object({
+      candidate: PromotionThresholdsSchema.optional(),
+      validated: PromotionThresholdsSchema.optional(),
+      production: PromotionThresholdsSchema.optional(),
+    }),
+    autoApply: z.boolean().default(false),
+    demotion: DemotionThresholdsSchema.optional(),
+  })
+  .strict();
 export type PromotionPolicy = z.infer<typeof PromotionPolicySchema>;
 export type PromotionPolicyInput = z.input<typeof PromotionPolicySchema>;
 
@@ -92,20 +99,22 @@ export type PromotionEvidence = {
  * Strict validation boundary for an evidence aggregate (frozename/llamactl#518
  * routing quality signals). Plain `z.number()` already rejects NaN and
  * Infinity under zod v4, so no `.finite()` is used (deprecated). Unknown
- * keys are refused by `.strict()`.
+ * keys are refused by `.strict()`. Metrics carry the same bounds as the
+ * policy thresholds they are compared against: ratios in [0, 1] and
+ * `improvement` in [-1, 1], so percent-scaled evidence is refused.
  */
 export const PromotionEvidenceSchema = z
   .object({
     evaluatedTasks: z.number().int().nonnegative(),
     evidenceRef: z.string().min(1).optional(),
-    firstAttemptSuccess: z.number().optional(),
-    repairSuccess: z.number().optional(),
-    toolCallCorrectness: z.number().optional(),
-    structuredOutputValidity: z.number().optional(),
-    regression: z.number().optional(),
-    improvement: z.number().optional(),
-    memoryStability: z.number().optional(),
-    runtimeReliability: z.number().optional(),
+    firstAttemptSuccess: ratio.optional(),
+    repairSuccess: ratio.optional(),
+    toolCallCorrectness: ratio.optional(),
+    structuredOutputValidity: ratio.optional(),
+    regression: ratio.optional(),
+    improvement: signedRatio.optional(),
+    memoryStability: ratio.optional(),
+    runtimeReliability: ratio.optional(),
   })
   .strict();
 
