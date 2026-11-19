@@ -15,6 +15,13 @@
  *   store — charges nothing;
  * - a local workload with no `ready` lifecycle row counts as
  *   non-resident and is charged, the same limit as the resident set.
+ *
+ * The operational signal (Part of #518) maps `draining`/`unloading`
+ * lifecycle rows to "draining" and `failed` rows to "failed" on the
+ * ranker's `operationalState` callback. Its limits:
+ * - peers are never marked (only ads owned by `nodeId` qualify);
+ * - an unknown or errored store marks nothing;
+ * - the store is read only when a ranking knob is nonzero.
  */
 import type { routingRanking } from "@llamactl/core";
 import type { ResidencyPolicy } from "@llamactl/core/residency/admission";
@@ -53,6 +60,21 @@ function readyDeploymentIds(
     }
   }
   return ready;
+}
+
+function operationalStates(
+  lifecycle: readonly ResidencyStateRecord[],
+  nodeId: string,
+): Map<string, routingRanking.OperationalState> {
+  const states = new Map<string, routingRanking.OperationalState>();
+  for (const row of lifecycle) {
+    if (row.state === "draining" || row.state === "unloading") {
+      states.set(residentDeploymentId(nodeId, row.model), "draining");
+    } else if (row.state === "failed") {
+      states.set(residentDeploymentId(nodeId, row.model), "failed");
+    }
+  }
+  return states;
 }
 
 function rankingKnobsActive(resolved: ResidencyPolicy): boolean {
@@ -104,6 +126,14 @@ export interface ResidencyRankingInputsResult {
  * switch; it charges only local ads outside the ready set — peers and
  * ready rows are never charged, and a missing recorded switch charges
  * nothing.
+ *
+ * The operational signal (Part of #518) reports the node-local lifecycle
+ * state of a local candidate's workload: `draining`/`unloading` rows map
+ * to "draining" and `failed` rows map to "failed"; every other state and
+ * every peer report undefined. The key is emitted only when at least one
+ * row is marked, so unknown inputs keep `{}` signals. Peers are never
+ * marked, an absent or errored store marks nothing, and the store is read
+ * only when a ranking knob is nonzero.
  */
 export function residencyRankingInputs(input: {
   residency: NodeRunResidency | null | undefined;
@@ -127,11 +157,18 @@ export function residencyRankingInputs(input: {
     nodeId: input.nodeId,
     ready,
   });
+  const states = operationalStates(lifecycle, input.nodeId);
+  const operationalState: routingRanking.RankingSignals["operationalState"] =
+    states.size === 0
+      ? undefined
+      : (ad): routingRanking.OperationalState | undefined =>
+          ad.ownerNodeId === input.nodeId ? states.get(ad.deploymentId) : undefined;
   const signals: routingRanking.RankingSignals = {
     ...(resolved.residentPreference !== 0 || resolved.coldLoadPenaltyMs !== 0
       ? { resident: ready }
       : {}),
     ...(cooldownUntil === undefined ? {} : { cooldownUntil }),
+    ...(operationalState === undefined ? {} : { operationalState }),
   };
   return { policy, signals };
 }
