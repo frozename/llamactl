@@ -202,6 +202,8 @@ When the unified ranker's pick differs from catalog order and is a local-http re
 
 A verified `--evict` victim (or one named by the `llamactl.io/evict` annotation) whose node-local `residency_states` row has been `ready` for fewer than `minResidencySeconds` is refused `EvictMinResidency` before any intent marker, stop or start; an unreadable residency store or lifecycle read refuses `EvictMinResidencyUnknown` rather than evicting blind. The store counts only when `LLAMACTL_NODE_NAME` names the victim's node, so a CLI or controller evicting on another node gets no protection yet (remaining scope). `minResidencySeconds` of 0 disables the gate.
 
+Under `createSharedUnifiedProxy` (Part of #518), `switchCooldownSeconds` also feeds the ranker's `cooldownUntil` signal. The signal is measured from the residency store's `lastSucceededAtMs` entry for `profile-switch:<node>`, where `<node>` is `LLAMACTL_NODE_NAME`: a local candidate without a `ready` lifecycle row is charged the remaining cooldown against its stage-quality score, while peers and resident candidates are not charged. An absent, errored or lifecycle-unreadable store charges nothing. The NodeRun and store reads keep the 5-second cache.
+
 ## Cleanup of conflicting legacy launchers
 
 First run `git grep -n keepAlive packages/remote/src/workload`. It finds nothing, so the controller does not detect a keep-alive supervisor and you must inventory by hand. Inventory with `llamactl keep-alive status` and `llamactl server status`:
