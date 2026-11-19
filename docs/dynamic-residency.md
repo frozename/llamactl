@@ -90,6 +90,8 @@ llamactl residency apply-profile --node <name> --to <profile> [--from <profile>]
 
 With the lease registry on (`LLAMACTL_RESIDENCY_LEASES`), a wet `apply-profile` checks each victim against the installed session registry at fence time, and it checks idle victims again after the drain window, before any stop runs (`packages/remote/src/residency/profile-transition.ts`). A victim with a bound session fails the fence or drain step with detail `SessionsActive: <ids>`; if the registry throws, the detail is `SessionsUnknown`. The operation is recorded `failed`, and no stop or start runs. The switch never releases sessions, so unloading a session-bound victim needs the override `llamactl residency force-unload <workload> --reason <text> --yes --node <name>` (see Session affinity). The session registry is installed only when `LLAMACTL_RESIDENCY_SESSION_IDLE_MS` is also set; without it, no session check runs (#730).
 
+With the lease registry on, a dry run (`apply-profile` without `--execute`) checks each victim against the installed session registry without draining. A session-bound victim's planned fence step then carries detail `SessionsActive: <ids>` (`SessionsUnknown` if the registry throws). This is advisory: the outcome stays `dry-run`, and nothing drains, stops or starts. The human output prints `<workload> (planned; <detail>)`, and a failed wet switch prints `residency apply-profile: failed: <action> <workload>: <detail>` (#520).
+
 `plan` and `apply-profile` also refuse with `Cooldown` within `switchCooldownSeconds` of the node's last succeeded switch recorded in the residency store; see the [NodeRun residency policy knobs](#noderun-residency-policy-knobs) table (#732).
 
 ## Direct ModelHost start and stop
