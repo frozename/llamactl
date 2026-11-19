@@ -1750,6 +1750,31 @@ describe("#517 identity-based ModelRun proof", () => {
   });
 });
 
+// Part of #518
+// Kills: shipping the operational-state ranking signal undocumented, or
+// documenting operationalState/effectiveStage without the
+// residency-ranking.ts and ranking.ts wiring.
+describe("#518 ranking operational state", () => {
+  test("knobs section documents the operationalState signal and the source wires it", () => {
+    const knobs = flat(sectionBody(SECTIONS.knobs) ?? "");
+    for (const pin of [
+      "`operationalState`",
+      "`draining`",
+      "`unloading`",
+      "`failed`",
+      "effectiveStage",
+    ]) {
+      expect(knobs, `knobs section pin ${pin}`).toContain(pin);
+    }
+    expect(readOrEmpty(join(REPO, "packages/remote/src/proxy/residency-ranking.ts"))).toContain(
+      "operationalState",
+    );
+    expect(readOrEmpty(join(REPO, "packages/core/src/routing/ranking.ts"))).toContain(
+      "operationalState",
+    );
+  });
+});
+
 // Part of #519
 // Kills: the docs not describing the status read-out, or the CLI renderer
 // being renamed or removed.
