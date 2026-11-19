@@ -140,6 +140,8 @@ A disabled residency, a non-serving node or an unreadable store reports `ok: fal
 
 A resident that is idle-due but has not yet been ready for `minResidencySeconds` is skipped `MinResidency` until it has been ready for `minResidencySeconds`; the status `dueAtMs` is the later of the two windows.
 
+`llamactl residency status --node <name>` prints the `idleEviction` section as an `Idle evict:` block (`pushIdleEvictionLines` in `packages/cli/src/commands/residency.ts`, Part of #519). The header reads `Idle evict: window <n>s, <k> ready workload(s) (advisory; scope: serving-process)`, followed by one `<workload>  <state>  leases <n>` line per ready resident, where `<state>` is `due`, `held MinResidency for <t>`, `not due (due in <t>)`, `not due (leased or draining)` or `not due (activity unknown)`. A disabled window prints `Idle evict: disabled (scope: serving-process)`, and an unavailable one prints `Idle evict: unavailable (<detail>; scope: serving-process)` with detail `not the serving node`, `no lease registry installed`, `store unreadable` or `lifecycle rows unreadable`. A payload without the section (an agent that predates it) prints no `Idle evict:` line. The read-out never evicts.
+
 ## Cancel and crash recovery
 
 ```sh
