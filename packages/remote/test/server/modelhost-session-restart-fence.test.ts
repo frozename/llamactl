@@ -459,6 +459,57 @@ describe("server/modelhost restart session fence (#520)", () => {
     }
   });
 
+  test("a foreign drain over held leases reports those lease ids", async () => {
+    // Kills: building the DrainInProgress refusal's active list from [] instead
+    // of registry.active(workload). beginDrain succeeds while leases are held, so
+    // a foreign drain can own a workload that still has in-flight leases.
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-fence-drain-leases-"));
+    const { workloadsDir, runtimeDir } = makeManifest(tmp);
+    const clock = 0;
+    const { leases, restore } = installRegistries(() => clock);
+    const acquired = leases.acquire("mlx-host-server");
+    if (!acquired.ok) {
+      throw new Error("expected lease acquire to succeed");
+    }
+    const lease = acquired.lease;
+    const foreign = leases.beginDrain("mlx-host-server");
+    if (!foreign.ok) {
+      throw new Error("expected foreign beginDrain to succeed");
+    }
+    const { identity, release } = releasableSelfIdentity("omlx");
+    const tornDown: number[] = [];
+    const restoreTeardown = stubOmxTeardown(tornDown, release);
+    const spawn = mock(() => ({ pid: 4321 }));
+    seedLiveSelfHost(runtimeDir);
+    try {
+      const result = await startModelHost({
+        key: { name: "mlx-host-server" },
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        identity,
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.refused).toEqual({ reason: "DrainInProgress", active: [lease.id] });
+      expect(
+        result.error?.startsWith(
+          `DrainInProgress: ${lease.id} — refusing to restart ModelHost mlx-host-server`,
+        ),
+      ).toBe(true);
+      expect(tornDown).toEqual([]);
+      expect(spawn).not.toHaveBeenCalled();
+    } finally {
+      leases.cancelDrain(foreign.token);
+      lease.release();
+      restoreTeardown();
+      restore();
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   test("fences the spec-drift adopt branch before any teardown", async () => {
     // Kills: fencing only the recorded-pid branch — the drift path finds a
     // live listener via findListenerPid and would tear it down with a
