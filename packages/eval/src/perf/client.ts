@@ -298,6 +298,67 @@ async function httpStreamChat(
   });
 }
 
+export interface EngineSlotsProbeOptions {
+  fetchImpl?: typeof fetch;
+  timeoutMs?: number;
+}
+
+export type EngineSlotsProbeResult =
+  | { readonly slots: number; readonly reason: null }
+  | { readonly slots: null; readonly reason: string };
+
+export type EngineSlotsProbe = (
+  baseUrl: string,
+  opts?: EngineSlotsProbeOptions,
+) => Promise<EngineSlotsProbeResult>;
+
+function positiveSafeInteger(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : null;
+}
+
+/** Reads a llama-server engine's advertised slot count from `GET /props`.
+ *  Resolves (never rejects): on any failure it returns `slots: null` with a
+ *  reason naming the GET, so `runPerfSuite` can turn it into the c2/c4
+ *  unavailable text rather than aborting the whole suite. */
+export async function probeEngineSlots(
+  baseUrl: string,
+  opts: EngineSlotsProbeOptions = {},
+): Promise<EngineSlotsProbeResult> {
+  const root = baseUrl.replace(/\/+$/u, "");
+  const url = `${root}/props`;
+  const doFetch = opts.fetchImpl ?? fetch;
+  let resp: Response;
+  try {
+    resp = await doFetch(url, {
+      method: "GET",
+      signal: AbortSignal.timeout(opts.timeoutMs ?? 5000),
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { slots: null, reason: `GET ${url} failed: ${message}; engine slot count unknown` };
+  }
+  if (!resp.ok) {
+    return {
+      slots: null,
+      reason: `GET ${url} returned HTTP ${String(resp.status)}; engine slot count unknown`,
+    };
+  }
+  let slots: number | null = null;
+  try {
+    const parsed: unknown = await resp.json();
+    slots = positiveSafeInteger(asRecord(parsed)?.["total_slots"]);
+  } catch {
+    slots = null;
+  }
+  if (slots === null) {
+    return {
+      slots: null,
+      reason: `GET ${url} carried no positive integer total_slots; engine slot count unknown`,
+    };
+  }
+  return { slots, reason: null };
+}
+
 export function createHttpPerfEngineClient(
   baseUrl: string,
   options: PerfEngineClientOptions,

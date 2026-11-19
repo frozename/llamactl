@@ -2,7 +2,7 @@ import type { GttObservation } from "@llamactl/core/resources/memory";
 
 import { type EngineVersionInfo, listPerfRuns } from "@llamactl/eval";
 import { Database } from "bun:sqlite";
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -726,4 +726,162 @@ test("eval --help says GTT is read on any loopback Linux run (kills: USAGE gatin
     "It records SSD\n      I/O and VmHWM when --pid names a local engine, and GTT on any\n      loopback Linux run, with or without --pid.",
   );
   expect(stdout).not.toContain("VmHWM and GTT when --pid");
+});
+
+describe("#521 eval perf slot discovery", () => {
+  function slotFetch(respond: () => Response): {
+    fetchImpl: typeof fetch;
+    propsCalls: () => number;
+  } {
+    let calls = 0;
+    const fetchImpl = engineFetchWith(["m"], (url) => {
+      if (!url.endsWith("/props")) {
+        return Promise.reject(new Error(`unexpected engine request: ${url}`));
+      }
+      calls += 1;
+      return Promise.resolve(respond());
+    });
+    return { fetchImpl, propsCalls: () => calls };
+  }
+
+  test("llamacpp without --slots probes GET /props and forwards total_slots (kills: the probe result not reaching runPerfSuite)", async () => {
+    const probe = slotFetch(() => Response.json({ total_slots: 4 }));
+    const run = fakeRunPerfSuite();
+    perfSeams()({
+      platform: "darwin",
+      fetchImpl: probe.fetchImpl,
+      runPerfSuite: run.runPerfSuite,
+    });
+    const dbPath = join(tmp, "perf.sqlite");
+
+    const { result } = await captureProcessStreams(() =>
+      runEval(perfArgv(dbPath, ["--url", LOOPBACK_URL, "--engine", "llamacpp", "--model", "m"])),
+    );
+
+    expect(result).toBe(0);
+    expect(run.calls).toHaveLength(1);
+    const opts = runOpts(run.calls[0]);
+    expect(opts["slots"]).toBe(4);
+    expect(opts["slotsReason"]).toBeUndefined();
+    expect(probe.propsCalls()).toBe(1);
+  });
+
+  test("a failed /props probe forwards slotsReason naming the GET and --slots (kills: dropping the probe reason)", async () => {
+    const probe = slotFetch(() => new Response("nope", { status: 404 }));
+    const run = fakeRunPerfSuite();
+    perfSeams()({
+      platform: "darwin",
+      fetchImpl: probe.fetchImpl,
+      runPerfSuite: run.runPerfSuite,
+    });
+    const dbPath = join(tmp, "perf.sqlite");
+
+    const { result } = await captureProcessStreams(() =>
+      runEval(perfArgv(dbPath, ["--url", LOOPBACK_URL, "--engine", "llamacpp", "--model", "m"])),
+    );
+
+    expect(result).toBe(0);
+    expect(run.calls).toHaveLength(1);
+    const opts = runOpts(run.calls[0]);
+    expect(opts["slots"]).toBeUndefined();
+    const reason: unknown = opts["slotsReason"];
+    expect(typeof reason).toBe("string");
+    if (typeof reason !== "string") throw new Error("expected slotsReason to be a string");
+    expect(reason).toContain("GET http://127.0.0.1:18080/props returned HTTP 404");
+    expect(reason).toContain("--slots");
+  });
+
+  test("guard: --slots wins and /props is never probed", async () => {
+    const probe = slotFetch(() => Response.json({ total_slots: 8 }));
+    const run = fakeRunPerfSuite();
+    perfSeams()({
+      platform: "darwin",
+      fetchImpl: probe.fetchImpl,
+      runPerfSuite: run.runPerfSuite,
+    });
+    const dbPath = join(tmp, "perf.sqlite");
+
+    const { result } = await captureProcessStreams(() =>
+      runEval(
+        perfArgv(dbPath, [
+          "--url",
+          LOOPBACK_URL,
+          "--engine",
+          "llamacpp",
+          "--model",
+          "m",
+          "--slots",
+          "2",
+        ]),
+      ),
+    );
+
+    expect(result).toBe(0);
+    expect(run.calls).toHaveLength(1);
+    const opts = runOpts(run.calls[0]);
+    expect(opts["slots"]).toBe(2);
+    expect(probe.propsCalls()).toBe(0);
+  });
+
+  test("discovered slots reach the real runPerfSuite concurrency gate", async () => {
+    const fetchImpl = engineFetchWith(["m"], (url) => {
+      if (url.endsWith("/props")) {
+        return Promise.resolve(Response.json({ total_slots: 1 }));
+      }
+      return Promise.resolve(new Response("engine unavailable", { status: 503 }));
+    });
+    const prov = provenanceFakes({});
+    perfSeams()({
+      platform: "linux",
+      fetchImpl,
+      probeGtt: () => Promise.resolve(GTT_OK),
+      provenanceReaders: prov.readers,
+      clock: { now: () => 0 },
+    });
+    const dbPath = join(tmp, "perf.sqlite");
+
+    const { result } = await captureProcessStreams(() =>
+      runEval(perfArgv(dbPath, ["--url", LOOPBACK_URL, "--engine", "llamacpp", "--model", "m"])),
+    );
+
+    expect(result).toBe(0);
+    const db = new Database(dbPath, { readonly: true });
+    try {
+      const rows = listPerfRuns(db, { run_id: "r1" });
+      const byName = new Map(rows.map((row) => [row.metric_name, row.metric]));
+      expect(byName.get("c2_tps")).toEqual({
+        status: "unavailable",
+        value: null,
+        reason: "engine slots 1 < concurrency 2",
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  test("omlx without --slots never probes /props and points at --slots (kills: probing llama-server /props for non-llamacpp engines)", async () => {
+    const probe = slotFetch(() => Response.json({ total_slots: 4 }));
+    const run = fakeRunPerfSuite();
+    perfSeams()({
+      platform: "darwin",
+      fetchImpl: probe.fetchImpl,
+      runPerfSuite: run.runPerfSuite,
+    });
+    const dbPath = join(tmp, "perf.sqlite");
+
+    const { result } = await captureProcessStreams(() =>
+      runEval(perfArgv(dbPath, ["--url", LOOPBACK_URL, "--engine", "omlx", "--model", "m"])),
+    );
+
+    expect(result).toBe(0);
+    expect(run.calls).toHaveLength(1);
+    const opts = runOpts(run.calls[0]);
+    expect(opts["slots"]).toBeUndefined();
+    expect(probe.propsCalls()).toBe(0);
+    const reason: unknown = opts["slotsReason"];
+    expect(typeof reason).toBe("string");
+    if (typeof reason !== "string") throw new Error("expected slotsReason to be a string");
+    expect(reason).toContain("engine 'omlx'");
+    expect(reason).toContain("--slots");
+  });
 });

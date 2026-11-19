@@ -568,3 +568,132 @@ describe("llamactl residency apply-profile", () => {
     expect(stderr).not.toContain("Unknown residency subcommand");
   });
 });
+
+function craftedApplyProfileDeps(result: unknown): {
+  calls: string[];
+  inputs: unknown[];
+  deps: ResidencyDeps;
+} {
+  const calls: string[] = [];
+  const inputs: unknown[] = [];
+  const client = recordingClient(calls, inputs, {
+    "residencyApplyProfile.mutate": () => Promise.resolve(result),
+  });
+  return {
+    calls,
+    inputs,
+    deps: { getNodeClientByName: () => client },
+  };
+}
+
+describe("#520 apply-profile session detail", () => {
+  test("C6: dry-run renders optional step detail for the bound victim only", async () => {
+    // kills: dropping step.detail from the dry-run renderer.
+    const { run } = await loadResidency();
+    const rec = craftedApplyProfileDeps({
+      ok: true,
+      dryRun: true,
+      outcome: "dry-run",
+      node: "local",
+      from: "chat",
+      to: "code",
+      deferred: [],
+      steps: [
+        { action: "fence", workload: "v-a", status: "planned", detail: "SessionsActive: s1" },
+        { action: "fence", workload: "v-b", status: "planned" },
+      ],
+    });
+
+    const {
+      result: code,
+      stdout,
+      stderr,
+    } = await withCapturedIo(() =>
+      run(["apply-profile", "--node", "local", "--to", "code", "--from", "chat"], rec.deps),
+    );
+
+    expect(code).toBe(0);
+    expect(stderr).toBe("");
+    expect(rec.calls).toEqual(["residencyApplyProfile.mutate"]);
+    expect(stdout).toContain("v-a (planned; SessionsActive: s1)");
+    expect(stdout).toContain("v-b (planned)\n");
+  });
+
+  test("C7: a failed step detail surfaces in the refusal/error text", async () => {
+    // kills: printing an empty detail on a failed (non-refusal) result.
+    const { run } = await loadResidency();
+    const rec = craftedApplyProfileDeps({
+      ok: false,
+      dryRun: false,
+      outcome: "failed",
+      node: "local",
+      from: "chat",
+      to: "code",
+      deferred: [],
+      steps: [
+        { action: "fence", workload: "v-a", status: "failed", detail: "SessionsActive: s1" },
+        { action: "drain", workload: "v-a", status: "not-run" },
+      ],
+    });
+
+    const { result: code, stderr } = await withCapturedIo(() =>
+      run(
+        [
+          "apply-profile",
+          "--node",
+          "local",
+          "--to",
+          "code",
+          "--from",
+          "chat",
+          "--execute",
+          "--yes",
+        ],
+        rec.deps,
+      ),
+    );
+
+    expect(code).toBe(1);
+    expect(rec.calls).toEqual(["residencyApplyProfile.mutate"]);
+    expect(stderr).toContain("residency apply-profile: failed: fence v-a: SessionsActive: s1");
+    expect(stderr).not.toMatch(/failed: \n/);
+  });
+
+  test("C8: refusal text takes precedence over a failed step detail", async () => {
+    // guard: a refusal result still reports the refusal, not the step detail.
+    const { run } = await loadResidency();
+    const rec = craftedApplyProfileDeps({
+      ok: false,
+      dryRun: false,
+      outcome: "failed",
+      node: "local",
+      from: "chat",
+      to: "code",
+      deferred: [],
+      refusal: { reason: "ControllerActive", detail: "x" },
+      steps: [{ action: "fence", workload: "v-a", status: "failed", detail: "SessionsActive: s1" }],
+    });
+
+    const { result: code, stderr } = await withCapturedIo(() =>
+      run(
+        [
+          "apply-profile",
+          "--node",
+          "local",
+          "--to",
+          "code",
+          "--from",
+          "chat",
+          "--execute",
+          "--yes",
+        ],
+        rec.deps,
+      ),
+    );
+
+    expect(code).toBe(1);
+    expect(rec.calls).toEqual(["residencyApplyProfile.mutate"]);
+    expect(stderr).toContain("residency apply-profile: ControllerActive: x");
+    expect(stderr).not.toContain("Unknown residency subcommand");
+  });
+});

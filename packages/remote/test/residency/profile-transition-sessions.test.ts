@@ -598,7 +598,7 @@ describe("executeProfileSwitch session protection", () => {
     }
   });
 
-  test("guard: dry-run with an active session plans steps and calls nothing", async () => {
+  test("guard: dry-run with an active session calls nothing and annotates the bound victim", async () => {
     const plan = okFleetPlan();
     const fx = makeFixture();
     const sessions = createSessionRefcounts({ idleTimeoutMs: 1000, now: () => clock });
@@ -617,7 +617,14 @@ describe("executeProfileSwitch session protection", () => {
     expect(report.ok).toBe(true);
     expect(report.failedAt).toBeNull();
     expect(report.ran).toEqual([]);
-    expect(report.steps).toEqual(plannedSteps());
+    expect(report.steps).toEqual([
+      step("fence", "v-a", "planned", "SessionsActive: s1"),
+      step("fence", "v-b", "planned"),
+      step("fence", "v-c", "planned"),
+      ...VICTIM_IDS.map((id) => step("drain", id, "planned")),
+      ...VICTIM_IDS.map((id) => step("stop", id, "planned")),
+      ...REPLACEMENT_IDS.map((id) => step("start", id, "planned")),
+    ]);
     for (const id of VICTIM_IDS) {
       expect(fx.inner.snapshot(id).phase).toBe("open");
     }
@@ -832,5 +839,164 @@ describe("executeProfileSwitch session protection with an operation record", () 
     });
     noStopStartWhenIdle(fx.calls);
     expectFailedRecord("op-sess-seam", "SessionsActive: s1");
+  });
+});
+
+describe("#520 apply-profile dry run reports session-bound victims", () => {
+  test("D1: an idle session annotates only its victim's fence step", async () => {
+    // Kills: a dry run that ignores the session registry (no detail on any
+    // step), and a dry run that takes a real drain — fx.calls must stay [].
+    const plan = okFleetPlan();
+    const fx = makeFixture();
+    const sessions = createSessionRefcounts({ idleTimeoutMs: 1000, now: () => clock });
+    idleSession(sessions, "s1", "v-a");
+
+    const report = await runSwitch(plan, fx.deps, {
+      dryRun: true,
+      registry: fx.registry,
+      sessions,
+      drainTimeoutMs: DRAIN_TIMEOUT_MS,
+    });
+
+    expect(report.dryRun).toBe(true);
+    expect(report.outcome).toBe("dry-run");
+    expect(report.ok).toBe(true);
+    expect(report.failedAt).toBeNull();
+    expect(report.ran).toEqual([]);
+    expect(fx.calls).toEqual([]);
+    expect(report.steps).toEqual([
+      step("fence", "v-a", "planned", "SessionsActive: s1"),
+      step("fence", "v-b", "planned"),
+      step("fence", "v-c", "planned"),
+      ...VICTIM_IDS.map((id) => step("drain", id, "planned")),
+      ...VICTIM_IDS.map((id) => step("stop", id, "planned")),
+      ...REPLACEMENT_IDS.map((id) => step("start", id, "planned")),
+    ]);
+    for (const id of VICTIM_IDS) {
+      expect(fx.inner.snapshot(id).phase).toBe("open");
+    }
+  });
+
+  test("D2: every session-bound victim's fence step carries its own detail", async () => {
+    // Kills: annotating only the first victim, or only idle (refs-0)
+    // sessions — s9 holds a ref on v-b and must annotate v-b too.
+    const plan = okFleetPlan();
+    const fx = makeFixture();
+    const sessions = createSessionRefcounts({ idleTimeoutMs: 1000, now: () => clock });
+    idleSession(sessions, "s1", "v-a");
+    acquireSession(sessions, "s9", "v-b");
+
+    const report = await runSwitch(plan, fx.deps, {
+      dryRun: true,
+      registry: fx.registry,
+      sessions,
+      drainTimeoutMs: DRAIN_TIMEOUT_MS,
+    });
+
+    expect(report.dryRun).toBe(true);
+    expect(report.outcome).toBe("dry-run");
+    expect(report.ok).toBe(true);
+    expect(report.failedAt).toBeNull();
+    expect(report.ran).toEqual([]);
+    expect(fx.calls).toEqual([]);
+    expect(report.steps).toEqual([
+      step("fence", "v-a", "planned", "SessionsActive: s1"),
+      step("fence", "v-b", "planned", "SessionsActive: s9"),
+      step("fence", "v-c", "planned"),
+      ...VICTIM_IDS.map((id) => step("drain", id, "planned")),
+      ...VICTIM_IDS.map((id) => step("stop", id, "planned")),
+      ...REPLACEMENT_IDS.map((id) => step("start", id, "planned")),
+    ]);
+    for (const id of VICTIM_IDS) {
+      expect(fx.inner.snapshot(id).phase).toBe("open");
+    }
+  });
+
+  test("D3: a throwing session registry annotates every victim as SessionsUnknown", async () => {
+    // Kills: a throwing checkUnload crashing or rejecting the dry run, or
+    // being reported as clean — the run stays ok and annotates all victims.
+    const plan = okFleetPlan();
+    const fx = makeFixture();
+
+    const report = await runSwitch(plan, fx.deps, {
+      dryRun: true,
+      registry: fx.registry,
+      sessions: throwingSessions(),
+      drainTimeoutMs: DRAIN_TIMEOUT_MS,
+    });
+
+    expect(report.dryRun).toBe(true);
+    expect(report.outcome).toBe("dry-run");
+    expect(report.ok).toBe(true);
+    expect(report.failedAt).toBeNull();
+    expect(report.ran).toEqual([]);
+    expect(fx.calls).toEqual([]);
+    expect(report.steps).toEqual([
+      ...VICTIM_IDS.map((id) => step("fence", id, "planned", "SessionsUnknown")),
+      ...VICTIM_IDS.map((id) => step("drain", id, "planned")),
+      ...VICTIM_IDS.map((id) => step("stop", id, "planned")),
+      ...REPLACEMENT_IDS.map((id) => step("start", id, "planned")),
+    ]);
+    for (const id of VICTIM_IDS) {
+      expect(fx.inner.snapshot(id).phase).toBe("open");
+    }
+  });
+
+  test("guard D4: an unfenced dry run annotates nothing", async () => {
+    // Kills: annotating sessions when there is no lease registry — the
+    // unfenced plan has no fence steps and no session check runs.
+    const plan = okFleetPlan();
+    const fx = makeFixture();
+    const sessions = createSessionRefcounts({ idleTimeoutMs: 1000, now: () => clock });
+    idleSession(sessions, "s1", "v-a");
+
+    const report = await runSwitch(plan, fx.deps, {
+      dryRun: true,
+      registry: null,
+      sessions,
+      drainTimeoutMs: DRAIN_TIMEOUT_MS,
+    });
+
+    expect(report.dryRun).toBe(true);
+    expect(report.outcome).toBe("dry-run");
+    expect(report.ok).toBe(true);
+    expect(report.failedAt).toBeNull();
+    expect(report.ran).toEqual([]);
+    expect(fx.calls).toEqual([]);
+    expect(report.steps).toEqual([
+      ...VICTIM_IDS.map((id) => step("stop", id, "planned")),
+      ...REPLACEMENT_IDS.map((id) => step("start", id, "planned")),
+    ]);
+    for (const id of VICTIM_IDS) {
+      expect(fx.inner.snapshot(id).phase).toBe("open");
+    }
+  });
+
+  test("guard D5: an expired session adds no detail", async () => {
+    // Kills: counting expired (past idleTimeoutMs) sessions as active —
+    // s1 aged out, so the fence steps carry no detail.
+    const plan = okFleetPlan();
+    const fx = makeFixture();
+    const sessions = createSessionRefcounts({ idleTimeoutMs: 1000, now: () => clock });
+    idleSession(sessions, "s1", "v-a");
+    clock += 1000;
+
+    const report = await runSwitch(plan, fx.deps, {
+      dryRun: true,
+      registry: fx.registry,
+      sessions,
+      drainTimeoutMs: DRAIN_TIMEOUT_MS,
+    });
+
+    expect(report.dryRun).toBe(true);
+    expect(report.outcome).toBe("dry-run");
+    expect(report.ok).toBe(true);
+    expect(report.failedAt).toBeNull();
+    expect(report.ran).toEqual([]);
+    expect(fx.calls).toEqual([]);
+    expect(report.steps).toEqual(plannedSteps());
+    for (const id of VICTIM_IDS) {
+      expect(fx.inner.snapshot(id).phase).toBe("open");
+    }
   });
 });
