@@ -7,6 +7,7 @@
 // pipeline has no min-residency check, so the refusal cases fail by
 // assertion while the guard cases (disabled knob, no ready row, foreign
 // serving node) already pass.
+import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,6 +21,7 @@ import {
 } from "../../src/residency/store.js";
 import { mkdtempSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
 import {
+  applyManifest,
   applyOne,
   applyOneModelHost,
   type ApplyResult,
@@ -144,10 +146,8 @@ const mkManifest = (
   },
 });
 
-// The seam the fix adds to the evict options: the workload's ready-since
-// timestamp in ms, or null when no ready lifecycle row exists. It is typed
-// structurally and passed through a cast so this file typechecks on the
-// base, where the option does not exist yet.
+// The evictReadySinceMs seam on the evict options: the workload's
+// ready-since timestamp in ms, or null when no ready lifecycle row exists.
 type EvictReadySinceMs = (workload: string) => number | null;
 
 function evictOpts(
@@ -203,17 +203,30 @@ async function inTempDir(fn: (tmp: string) => Promise<void>): Promise<void> {
 // warming -> ready, every hop stamped readyAtMs, so the ready row's
 // updatedAtMs is the load time minResidencySeconds measures against.
 function seedReadyLifecycle(storePath: string, model: string, readyAtMs: number): void {
+  seedLifecycle(storePath, model, readyAtMs, ["downloaded", "loading", "warming", "ready"]);
+}
+
+type LifecycleHop = "downloaded" | "loading" | "warming" | "ready";
+
+// Walks a residency_states row from unavailable through `hops`, every hop
+// stamped atMs.
+function seedLifecycle(
+  storePath: string,
+  model: string,
+  atMs: number,
+  hops: readonly LifecycleHop[],
+): void {
   const store = openResidencyOperationStore({ path: storePath });
   try {
     const fence = store.claimOwnership({ ownerId: "seed", incarnation: "seed" });
     let expectedVersion = 0;
-    for (const to of ["downloaded", "loading", "warming", "ready"] as const) {
+    for (const to of hops) {
       const result = store.transitionResidencyState({
         fenceToken: fence.fenceToken,
         model,
         to,
         expectedVersion,
-        nowMs: readyAtMs,
+        nowMs: atMs,
       });
       expect(result.ok).toBe(true);
       if (result.ok) {
@@ -426,6 +439,85 @@ describe("#519 apply --evict minResidencySeconds", () => {
       const result = await applyEvictingB(client, evictOpts(workloadsDir));
       expect(result.action).toBe("pending");
       expect(result.statusSection.conditions[0]?.reason).toBe("EvictMinResidencyUnknown");
+      expect(stops).toEqual([]);
+      expect(starts).toEqual([]);
+    });
+  });
+
+  // Mutation pinned: dropping `row.state === "ready"` from the filter in
+  // resolveEvictReadySinceMs (apply.ts) treats this fresh 'loading' row as
+  // ready, so the eviction is refused EvictMinResidency and this fails.
+  test("E9: a victim whose lifecycle row is not ready is evicted normally", async () => {
+    await inTempDir(async (tmp) => {
+      const { workloadsDir, client, stops, starts } = seedVictim(tmp);
+      const storePath = join(tmp, "residency-state", "operations.sqlite");
+      process.env["LLAMACTL_NODE_NAME"] = "local";
+      process.env["LLAMACTL_RESIDENCY_STORE"] = storePath;
+      seedLifecycle(storePath, "a", Date.now() - 10_000, ["downloaded", "loading"]);
+      const snap = readResidencyStoreSnapshot(storePath);
+      const rows = snap.present && !("error" in snap) ? (snap.lifecycle ?? []) : [];
+      expect(rows.map((row) => [row.model, row.state])).toEqual([["a", "loading"]]);
+      const result = await applyEvictingB(client, evictOpts(workloadsDir));
+      expect(result.action).toBe("started");
+      expect(stops).toEqual(["a"]);
+      expect(starts).toEqual(["b"]);
+    });
+  });
+
+  // Mutation pinned: deleting the `snap.lifecycleError` throw in
+  // resolveEvictReadySinceMs (apply.ts) makes an unreadable lifecycle read
+  // look like "no ready row", so the eviction proceeds and this fails.
+  test("E10: a residency store whose lifecycle read fails refuses the eviction", async () => {
+    await inTempDir(async (tmp) => {
+      const { workloadsDir, client, stops, starts } = seedVictim(tmp);
+      const storePath = join(tmp, "residency-state", "operations.sqlite");
+      process.env["LLAMACTL_NODE_NAME"] = "local";
+      process.env["LLAMACTL_RESIDENCY_STORE"] = storePath;
+      seedReadyLifecycle(storePath, "a", Date.now() - 10_000);
+      // Keep the operations table intact but replace residency_states with a
+      // table missing its columns, so only the lifecycle read fails.
+      const db = new Database(storePath);
+      try {
+        db.run("DROP TABLE residency_states");
+        db.run("CREATE TABLE residency_states (model TEXT PRIMARY KEY)");
+      } finally {
+        db.close();
+      }
+      const snap = readResidencyStoreSnapshot(storePath);
+      expect(snap.present && !("error" in snap) && snap.lifecycleError !== undefined).toBe(true);
+      const result = await applyEvictingB(client, evictOpts(workloadsDir));
+      expect(result.action).toBe("pending");
+      expect(result.statusSection.phase).toBe("Failed");
+      expect(result.statusSection.conditions[0]?.reason).toBe("EvictMinResidencyUnknown");
+      expect(result.error).toMatch(/readiness could not be verified/);
+      expect(stops).toEqual([]);
+      expect(starts).toEqual([]);
+    });
+  });
+
+  // Mutation pinned: dropping `evictReadySinceMs: opts.evictReadySinceMs`
+  // from applyModelRunManifest's applyOne options (apply.ts) loses the seam;
+  // with no serving node set the default source reports no readiness, so the
+  // eviction proceeds and this fails.
+  test("E11: applyManifest forwards the readiness seam for a ModelRun", async () => {
+    await inTempDir(async (tmp) => {
+      const { workloadsDir, client, stops, starts } = seedVictim(tmp);
+      const seamCalls: string[] = [];
+      const outcome = await applyManifest({
+        manifest: mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090 }),
+        getClient: () => client,
+        workloadsDir,
+        getNodeBudgetGiB: () => 32,
+        getNodeResidency: () => ({ minResidencySeconds: 3600 }),
+        evictReadySinceMs: (workload: string) => {
+          seamCalls.push(workload);
+          return Date.now() - 10_000;
+        },
+      });
+      expect(outcome.ok).toBe(false);
+      if (outcome.ok) return;
+      expect(outcome.error).toContain("under the node's minResidencySeconds of 3600");
+      expect(seamCalls).toEqual(["a"]);
       expect(stops).toEqual([]);
       expect(starts).toEqual([]);
     });
