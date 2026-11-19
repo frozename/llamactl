@@ -48,6 +48,8 @@ export interface PerfSuiteOptions {
   readerReasons?: PerfSuiteReaderReasons;
   /** The reason recorded for c2/c4 when slots is unknown. */
   slotsReason?: string;
+  /** The reason recorded for load_cold_ms/load_warm_ms when that load hook is absent. */
+  loadReason?: string;
   decodeTokens?: number;
   concurrencyPromptWords?: number;
   started_at?: string;
@@ -180,7 +182,9 @@ async function runLoadHook(
     if (hook === undefined) {
       run.record(
         metricName,
-        unavailableMetric("no load hooks injected (engine not managed by the suite)"),
+        unavailableMetric(
+          run.opts.loadReason ?? "no load hooks injected (engine not managed by the suite)",
+        ),
       );
       return;
     }
