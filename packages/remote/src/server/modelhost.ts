@@ -39,8 +39,12 @@ import {
   type SignalIdentity,
   verifyPidFile,
 } from "@llamactl/core/pidIdentity";
+import { getResidencyLeaseRegistry } from "@llamactl/core/residency/leases";
+import { currentSessionRefcounts } from "@llamactl/core/residency/sessions";
 import { type ChildProcess, spawn as nodeSpawn } from "node:child_process";
 import { basename, dirname, resolve, sep } from "node:path";
+
+import type { StopFenceRefusal } from "../residency/stop-fence.js";
 
 import {
   getNodeLlamacppSleepController,
@@ -127,6 +131,10 @@ export interface StartModelHostResult {
     host: string;
     state: "Running" | "Starting" | "Unknown";
   };
+  /** Present only when the residency lease or session registry refused the
+   *  stop-before-start teardown of a live prior host (Part of #520);
+   *  never set on success. */
+  refused?: StopFenceRefusal;
 }
 
 export interface StopModelHostOptions {
@@ -374,6 +382,77 @@ function readinessField(readiness: ModelHostReadiness | undefined): {
   return readiness === undefined ? {} : { readiness };
 }
 
+function restartFenceRefusal(workload: string, refusal: StopFenceRefusal): StartModelHostResult {
+  const sessionBound = refusal.reason === "SessionsActive" || refusal.reason === "SessionsUnknown";
+  const tail = sessionBound
+    ? "while a session is bound to its running instance"
+    : "while residency leases are held";
+  return {
+    ok: false,
+    pid: null,
+    error: `${refusal.reason}: ${refusal.active.join(", ")} — refusing to restart ModelHost ${workload} ${tail}`,
+    refused: refusal,
+  };
+}
+
+function restartSessionRefusal(workload: string): StopFenceRefusal | null {
+  const sessions = currentSessionRefcounts();
+  if (sessions === null) return null;
+  try {
+    const check = sessions.checkUnload(workload);
+    if (check.ok) return null;
+    return { reason: "SessionsActive", active: [...check.sessions] };
+  } catch {
+    return { reason: "SessionsUnknown", active: [] };
+  }
+}
+
+/**
+ * #520, mirroring core's #734 startServer fence: run a live prior host's
+ * teardown under the DF-05 drain. LeasesActive keeps precedence over a
+ * bound session; a foreign drain refuses DrainInProgress without touching
+ * its token; an unloaded workload runs unfenced, as core does. The session
+ * check runs in the same synchronous tick as the drain — SessionsActive
+ * while a session is bound, SessionsUnknown when the registry throws — and
+ * the drain is cancelled on every refusal so the workload returns to open.
+ * The fence never releases sessions; the override is
+ * `llamactl residency force-unload <workload> --reason <text> --yes --node <name>`.
+ * Both call sites reach this only after liveness is established — a
+ * verified-alive recorded pid, or a live adopted listener confirmed as ours —
+ * matching core's trackedInstanceLive gating.
+ */
+async function fencePriorHostTeardown<T>(
+  workload: string,
+  run: () => Promise<T>,
+): Promise<T | StartModelHostResult> {
+  const registry = getResidencyLeaseRegistry();
+  if (registry === null) return await run();
+  const drain = registry.beginDrain(workload);
+  if (!drain.ok) {
+    if (drain.reason === "AlreadyDraining") {
+      return restartFenceRefusal(workload, {
+        reason: "DrainInProgress",
+        active: registry.active(workload),
+      });
+    }
+    return await run();
+  }
+  if (drain.active.length > 0) {
+    registry.cancelDrain(drain.token);
+    return restartFenceRefusal(workload, { reason: "LeasesActive", active: drain.active });
+  }
+  const sessionRefusal = restartSessionRefusal(workload);
+  if (sessionRefusal !== null) {
+    registry.cancelDrain(drain.token);
+    return restartFenceRefusal(workload, sessionRefusal);
+  }
+  try {
+    return await run();
+  } finally {
+    registry.cancelDrain(drain.token);
+  }
+}
+
 // Given a live process (`livePid`) already bound to the endpoint, adopt it iff
 // it is serving OUR model: re-record its pid so the proxy route recovers,
 // rather than spawning a competitor that could not bind the held port. Returns
@@ -422,20 +501,25 @@ async function tryAdoptLiveHost(
     // is the only available proof of release. A resolved teardown is not
     // proof the port was freed: respawn only once the pid is actually gone,
     // otherwise the replacement cannot bind and we defer the restart.
-    try {
-      await engine.teardown(livePid);
-    } catch {
-      // A thrown teardown is not proof either way; the liveness re-check below
-      // decides.
-    }
-    if (isProcessAlive(livePid)) {
-      return {
-        ok: false,
-        pid: null,
-        error: `live pid ${String(livePid)} survived teardown on spec drift; deferring restart`,
-      };
-    }
-    return "relaunch";
+    return await fencePriorHostTeardown(
+      opts.key.name,
+      async (): Promise<StartModelHostResult | "relaunch"> => {
+        try {
+          await engine.teardown(livePid);
+        } catch {
+          // A thrown teardown is not proof either way; the liveness re-check below
+          // decides.
+        }
+        if (isProcessAlive(livePid)) {
+          return {
+            ok: false,
+            pid: null,
+            error: `live pid ${String(livePid)} survived teardown on spec drift; deferring restart`,
+          };
+        }
+        return "relaunch";
+      },
+    );
   }
   const readProcessCommand = opts.readProcessCommand ?? defaultReadProcessCommand;
   const cmdline = await Promise.resolve(readProcessCommand(livePid)).catch(() => null);
@@ -591,15 +675,17 @@ async function reapOrAdoptPriorHost(
     // A resolved teardown is not proof the prior host released the port; only
     // a confirmed-gone re-check lets the replacement spawn. On failure the
     // state sidecar and recorded pid are left intact for a later reconcile.
-    return await confirmRecordedTeardown(
-      () =>
-        engine.teardown(
-          priorState.pid,
-          teardownIdentity(recordPath, opts.identity, identity.expectCommand),
-        ),
-      recordPath,
-      priorState.pid,
-      identity,
+    return await fencePriorHostTeardown(opts.key.name, () =>
+      confirmRecordedTeardown(
+        () =>
+          engine.teardown(
+            priorState.pid,
+            teardownIdentity(recordPath, opts.identity, identity.expectCommand),
+          ),
+        recordPath,
+        priorState.pid,
+        identity,
+      ),
     );
   }
   if (priorVerdict === "unknown") {
