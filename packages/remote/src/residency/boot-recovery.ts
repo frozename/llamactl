@@ -111,10 +111,9 @@
  * predicate proves down is safe to terminalize.
  *
  * Known limits. The predicate is the same one direct starts use, so a ModelRun
- * killed between spawn and its pid write reads as proven down; identity-based
- * ModelRun proof is remaining scope. A CLI in-process direct start whose loading
- * row made no progress for 30 minutes, and whose workload reads proven down, is
- * failed; its post-walk then logs `not recorded`. Still remaining: `ready` rows
+ * killed between spawn and its pid write reads as proven down. A CLI in-process
+ * direct start whose loading row made no progress for 30 minutes, and whose
+ * workload reads proven down, is failed; its post-walk then logs `not recorded`. Still remaining: `ready` rows
  * of dead processes outside a switch.
  *
  * Logging. An absent store or a store with no profile-switch row logs nothing.

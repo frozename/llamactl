@@ -1072,7 +1072,7 @@ describe("docs/dynamic-residency.md (#285)", () => {
       "A node with no store file runs the start or stop unrecorded and never creates the store.",
       "Otherwise the wrapper claims the shared apply-profile fence and walks the `residency_states` row through the same `withResidencyLifecycle` hops as a profile switch (`packages/remote/src/residency/lifecycle-steps.ts`).",
       "A label naming an undeclared group records no group.",
-      "A same-group `ready` peer is reconciled to downloaded only when it is proven down: a known ModelHost that reads Stopped with its identity resolved, or a known ModelRun with no recorded pid file.",
+      "A same-group `ready` peer is reconciled to downloaded only when it is proven down: a known ModelHost that reads Stopped with its identity resolved, or a known ModelRun with no recorded pid file or whose recorded pid is provably gone (`dead` or `reused`).",
       "Any other occupying same-group row refuses the start with `ExclusiveGroupOccupied`, as `residency lifecycle refused <name> <from> -> <to>: ExclusiveGroupOccupied: <detail>`, before the engine runs.",
       "A nonterminal profile switch refuses a start with `residency lifecycle refused <name>: profile switch in flight on this node; retry after it settles`.",
       "A grouped start whose store cannot be opened or claimed refuses with `store unavailable (<message>)`.",
@@ -1082,7 +1082,7 @@ describe("docs/dynamic-residency.md (#285)", () => {
       "An unconfirmed stop (the process may still be alive) is not recorded: the row stays occupying, so a same-group start is still refused, and the agent logs `[residency] lifecycle <name> stop not recorded: unconfirmed stop (process may be alive)`.",
       "A stop that throws is recorded `failed` and the error is rethrown.",
       "Bookkeeping never blocks a stop: a stop whose claim or walk fails still runs and logs `[residency] lifecycle <name> stop not recorded: …` on the agent's stderr.",
-      "Known limits: a `ready` ModelRun row with any recorded pid file, stale or reused, is never proven down, so it fails closed and refuses same-group starts; identity-based ModelRun proof is remaining scope.",
+      "Known limits: a `ready` ModelRun row whose recorded pid is still alive, or whose identity cannot be verified (`unknown`), is never proven down, so it fails closed and refuses same-group starts.",
       "`llamactl residency force-unload <workload> --reason <text> --yes --node <name>` routes its `stopModelHost`/`stopServer` through `runDirectResidencyStop` after the lease drain commits, so a confirmed force-unload walks the row to `downloaded` and an unconfirmed one leaves it occupying (#517).",
     ]) {
       expect(d, needle).toContain(needle);
@@ -1199,7 +1199,7 @@ describe("docs/dynamic-residency.md (#285)", () => {
       "proven down predicate",
       [
         'return status.state === "Stopped" && status.identityUnknown !== true;',
-        "return serverMod.readServerPid({ name: model }) === null;",
+        "return serverMod.isServerProvenDown({ name: model });",
       ],
     );
     expect(
@@ -1651,5 +1651,50 @@ describe("#519 apply --evict minResidencySeconds", () => {
     for (const pin of ["minResidencySeconds", "EvictMinResidency"]) {
       expect(gate, `checkEvictMinResidency pin ${pin}`).toContain(pin);
     }
+  });
+});
+
+// Part of #518
+// Kills: shipping the ranking switch-cooldown signal undocumented, or
+// documenting cooldownUntil without the residency-ranking.ts wiring.
+describe("#518 ranking switch cooldown", () => {
+  test("knobs section documents the signal and residency-ranking.ts wires it", () => {
+    const knobs = flat(sectionBody(SECTIONS.knobs) ?? "");
+    for (const pin of [
+      "`cooldownUntil`",
+      "`switchCooldownSeconds`",
+      "`lastSucceededAtMs`",
+      "`profile-switch:<node>`",
+    ]) {
+      expect(knobs, `knobs section pin ${pin}`).toContain(pin);
+    }
+    const src = readOrEmpty(join(REPO, "packages/remote/src/proxy/residency-ranking.ts"));
+    for (const pin of ["cooldownUntil", "profileSwitchOperationKey"]) {
+      expect(src, `residency-ranking.ts pin ${pin}`).toContain(pin);
+    }
+  });
+});
+
+// Part of #517
+// Kills: documenting the pid-file-only rule or keeping the 'remaining
+// scope' claim; isServerProvenDown that reaps the pid file, drops the
+// trackedStopIdentity expectation, or counts 'unknown' as proven down.
+describe("#517 identity-based ModelRun proof", () => {
+  test("doc and source pin the identity-based ModelRun proof", () => {
+    const section = flat(sectionBody(sectionRe("direct modelhost start and stop")) ?? "");
+    expect(section).toContain(
+      "ModelRun proof uses `isServerProvenDown` (`packages/core/src/server.ts`), which checks the recorded pid against its pid file with the same identity check `stopServer` uses and never deletes the pid file; agent boot recovery uses the same predicate through `directWorkloadProvenDown`.",
+    );
+    expect(section).not.toContain("identity-based ModelRun proof is remaining scope");
+
+    const body = enclosingBody(
+      readOrEmpty(join(REPO, "packages/core/src/server.ts")),
+      "export function isServerProvenDown(",
+    );
+    expect(body, "isServerProvenDown").not.toBe("");
+    for (const pin of ["isRecordedPidGone(", "trackedStopIdentity(resolved, key, identity)"]) {
+      expect(body, `isServerProvenDown ${pin}`).toContain(pin);
+    }
+    expect(body).not.toContain("removeServerPid(");
   });
 });

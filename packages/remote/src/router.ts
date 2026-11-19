@@ -499,19 +499,18 @@ function directModelRunGroup(workload: string): string | undefined {
 }
 
 // A peer is proven down only when it is a known ModelHost whose recorded-pid
-// status reads Stopped without an unresolved identity, or a known ModelRun
-// that has no recorded pid file at all; anything else fails closed. An unknown
-// workload, an unresolvable ModelHost pid, or a ModelRun with any pid (stale or
-// reused) never clears a stale ready row. Identity-based ModelRun proof is
-// remaining scope. Also used by agent boot recovery for the orphan lifecycle
-// sweep (Part of #517).
+// status reads Stopped without an unresolved identity, or a known ModelRun that
+// has no recorded pid file or whose recorded pid verifies `dead` or `reused`
+// against its pid file using the stopServer identity check. A live pid, or an
+// unverifiable one, fails closed. Also used by agent boot recovery for the
+// orphan lifecycle sweep (Part of #517).
 export function directWorkloadProvenDown(model: string): boolean {
   if (modelHostStoreMod.listModelHosts().some((host) => host.metadata.name === model)) {
     const status = statusModelHost({ key: { name: model } });
     return status.state === "Stopped" && status.identityUnknown !== true;
   }
   if (workloadStoreMod.listWorkloads().some((run) => run.metadata.name === model)) {
-    return serverMod.readServerPid({ name: model }) === null;
+    return serverMod.isServerProvenDown({ name: model });
   }
   return false;
 }
