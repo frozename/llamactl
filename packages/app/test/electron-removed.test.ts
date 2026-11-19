@@ -24,6 +24,12 @@ const APP = join(import.meta.dir, "..");
 const ROOT = join(APP, "..", "..");
 const SUBPROCESS_TIMEOUT_MS = 60_000;
 
+// Source-pin delimiters for the RED 2a block (#777); the escaped newlines keep
+// these needles from matching their own declaration.
+const RED_2A_BLOCK_START = '\n    "RED 2a: tsc -p tsconfig.json program includes';
+const RED_2A_BLOCK_END = "\n  );\n";
+const STDOUT_PIPE = /stdout:\s*["']pipe["']/;
+
 const DEPENDENCY_FIELDS = [
   "dependencies",
   "devDependencies",
@@ -199,6 +205,20 @@ describe("Electron removal (#410 P7-A)", () => {
     },
     SUBPROCESS_TIMEOUT_MS,
   );
+
+  // Kills mutation "RED 2a back on Bun.spawnSync with stdout: \"pipe\"" (#777):
+  // the listing must go through the file-sink helper.
+  test("RED 2a pin: RED 2a captures the tsc listing through the file-sink helper", () => {
+    const source = readFileSync(import.meta.path, "utf8");
+    const start = source.indexOf(RED_2A_BLOCK_START);
+    expect(start, "RED 2a block not found").toBeGreaterThan(-1);
+    const end = source.indexOf(RED_2A_BLOCK_END, start);
+    expect(end, "RED 2a block end not found").toBeGreaterThan(start);
+    const block = source.slice(start, end);
+    expect(block).toContain("captureStdoutToFile({");
+    const spawnCalls = block.split("Bun.spawnSync(").slice(1);
+    expect(spawnCalls.filter((call) => STDOUT_PIPE.test(call))).toEqual([]);
+  });
 
   test(
     "RED 2b: no tracked packages/app file reaches the electron bridge outside the guards",

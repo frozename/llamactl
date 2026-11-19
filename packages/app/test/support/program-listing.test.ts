@@ -4,7 +4,7 @@
 // still buffered when stdout is a pipe (measured: 535 of 1667 lines through a
 // slow pipe), so the helper must capture to a regular file (synchronous
 // writes), report the child's exit code and stderr, and remove its temp dir.
-// Cases A-E pin the helper surface; case F pins the RED 2a content contract
+// Cases A-E and G pin the helper surface; case F pins the RED 2a content contract
 // through the same capture. The support module is imported dynamically with a
 // fallback so every case fails by assertion at the base commit — never by
 // import error.
@@ -14,7 +14,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
+import { mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "../../src/safe-fs.js";
 
 type CaptureOptions = { cmd: string[]; cwd?: string; tmpRoot?: string };
 type CaptureResult = { exitCode: number | null; stdout: string; stderr: string };
@@ -28,6 +28,7 @@ const APP = join(import.meta.dir, "..", "..");
 const TSC = createRequire(import.meta.url).resolve("typescript/bin/tsc");
 
 const PROBE_BODY_LINES = 5_000;
+const SUBPROCESS_TIMEOUT_MS = 60_000;
 
 const SINK_PROBE_SOURCE = `
 import { fstatSync } from "node:fs";
@@ -102,13 +103,28 @@ describe("program listing capture (#777)", () => {
     }
   });
 
-  test("B: removes the temp directory it created under tmpRoot", () => {
+  // Kills mutations "always tmpdir()" (the child sees an empty root) and
+  // "no rmSync" (root is not empty afterwards).
+  test("B: creates its temp directory under tmpRoot and removes it afterwards", () => {
     expect(support.captureStdoutToFile).toBeFunction();
     const root = mkdtempSync(join(tmpdir(), "llamactl-tmproot-"));
     try {
-      const result = capture({ cmd: [process.execPath, "-e", 'console.log("ok")'], tmpRoot: root });
+      const script = [
+        'const { readdirSync } = require("node:fs");',
+        'console.log("ok");',
+        `process.stderr.write(JSON.stringify(readdirSync(${JSON.stringify(root)})));`,
+      ].join(" ");
+      const result = capture({ cmd: [process.execPath, "-e", script], tmpRoot: root });
       expect(result.exitCode, result.stderr).toBe(0);
       expect(result.stdout).toBe("ok\n");
+      const during: unknown = JSON.parse(result.stderr);
+      expect(Array.isArray(during), result.stderr).toBe(true);
+      const entries = Array.isArray(during) ? during.map(String) : [];
+      expect(entries.length, result.stderr).toBe(1);
+      expect(
+        entries.every((entry) => entry.startsWith("llamactl-listing-")),
+        result.stderr,
+      ).toBe(true);
       expect(readdirSync(root)).toEqual([]);
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -143,15 +159,47 @@ describe("program listing capture (#777)", () => {
     expect(describeLines(["only"])).toBe("captured 1 lines; last 1:\nonly");
   });
 
-  test("F: the tsc program listing reaches main.web.tsx and no electron dir", () => {
-    const files = capturedListing();
-    expect(
-      files.some((line) => line.endsWith("packages/app/src/main.web.tsx")),
-      listingReport(files),
-    ).toBe(true);
-    expect(
-      files.filter((line) => line.includes("/packages/app/electron/")),
-      listingReport(files),
-    ).toEqual([]);
+  test(
+    "F: the tsc program listing reaches main.web.tsx and no electron dir",
+    () => {
+      const files = capturedListing();
+      expect(
+        files.some((line) => line.endsWith("packages/app/src/main.web.tsx")),
+        listingReport(files),
+      ).toBe(true);
+      expect(
+        files.filter((line) => line.includes("/packages/app/electron/")),
+        listingReport(files),
+      ).toEqual([]);
+    },
+    SUBPROCESS_TIMEOUT_MS,
+  );
+
+  // Kills mutation "drop cwd forwarding" (the child inherits the test's cwd).
+  test("G: runs the child in the given cwd", () => {
+    expect(support.captureStdoutToFile).toBeFunction();
+    const dir = mkdtempSync(join(tmpdir(), "llamactl-cwd-probe-"));
+    try {
+      const script = [
+        'const { realpathSync } = require("node:fs");',
+        "process.stdout.write(JSON.stringify({",
+        "cwd: realpathSync(process.cwd()),",
+        `dir: realpathSync(${JSON.stringify(dir)}),`,
+        "}));",
+      ].join(" ");
+      const result = capture({ cmd: [process.execPath, "-e", script], cwd: dir });
+      expect(result.exitCode, result.stderr).toBe(0);
+      const reported: unknown = JSON.parse(result.stdout);
+      const paths =
+        typeof reported === "object" && reported !== null && "cwd" in reported && "dir" in reported
+          ? { cwd: String(reported.cwd), dir: String(reported.dir) }
+          : { cwd: "", dir: "missing" };
+      expect(paths.cwd, result.stdout).toBe(paths.dir);
+      const childCwd = statSync(paths.cwd);
+      const expected = statSync(dir);
+      expect([childCwd.dev, childCwd.ino]).toEqual([expected.dev, expected.ino]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
