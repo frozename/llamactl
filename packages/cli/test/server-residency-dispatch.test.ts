@@ -216,12 +216,17 @@ const START_DONE_RESULT = {
 // The done event is deferred to a microtask so the subscribeRemote
 // Promise constructor finishes and its locals are initialized before any
 // handler fires — mirrors the serverLogs mock in server.test.ts.
-function startClient(inputs: unknown[]): NodeClient {
+// With failWith set, the subscription errors instead of emitting done.
+function startClient(inputs: unknown[], failWith?: Error): NodeClient {
   return {
     serverStart: {
       subscribe: (input: unknown, handlers: SubscribeHandlers) => {
         inputs.push(input);
         queueMicrotask(() => {
+          if (failWith !== undefined) {
+            handlers.onError(failWith);
+            return;
+          }
           handlers.onData({ type: "done", result: START_DONE_RESULT });
           handlers.onComplete();
         });
@@ -232,11 +237,13 @@ function startClient(inputs: unknown[]): NodeClient {
   } as unknown as NodeClient;
 }
 
-function stopClient(inputs: unknown[]): NodeClient {
+// With failWith set, the mutation rejects instead of resolving.
+function stopClient(inputs: unknown[], failWith?: Error): NodeClient {
   return {
     serverStop: {
       mutate: (input: unknown) => {
         inputs.push(input);
+        if (failWith !== undefined) return Promise.reject(failWith);
         return Promise.resolve({ stopped: true, pid: 4242, killed: false });
       },
     },
@@ -330,5 +337,58 @@ describe("#517 local server start/stop residency dispatch", () => {
     const after = readState("w");
     expect(after?.state).toBe("downloaded");
     expect(after !== null && before !== null && after.version > before.version).toBe(true);
+  });
+
+  // Kills: applyGraceFlag accepting any positive grace (the base
+  // behaviour), which forwards graceSeconds: 120 to serverStop and fails
+  // there with a raw zod too_big dump instead of a clear CLI error.
+  test("S6 local stop rejects --grace above 60 before any dispatch", async () => {
+    const inputs: unknown[] = [];
+    __setTestSeams({ config: configSchema.freshConfig(), nodeClient: stopClient(inputs) });
+    const code = await runServer(["stop", "--name", "w", "--grace=120"]);
+    expect(code).toBe(1);
+    expect(stderrChunks.join("")).toBe("server stop: --grace must be between 1 and 60\n");
+    expect(inputs).toEqual([]);
+    expect(stdoutChunks.join("")).toBe("");
+  });
+
+  // Kills: an off-by-one upper bound (n >= 60 rejected) that refuses the
+  // largest grace serverStop accepts.
+  test("S7 local stop accepts --grace=60 and forwards it", async () => {
+    const inputs: unknown[] = [];
+    __setTestSeams({ config: configSchema.freshConfig(), nodeClient: stopClient(inputs) });
+    const code = await runServer(["stop", "--name", "w", "--grace=60"]);
+    expect(code).toBe(0);
+    expect(inputs).toEqual([{ workload: "w", graceSeconds: 60 }]);
+    expect(stdoutChunks.join("")).toContain("stopped pid=4242");
+  });
+
+  // Kills: dispatchFailureLabel's in-process branch reverting to the
+  // remote wording ("remote call to 'local'") or to an empty node label
+  // ("call to ''") for a local stop with no --node.
+  test("S8 local stop failure names the in-process node without 'remote'", async () => {
+    const inputs: unknown[] = [];
+    __setTestSeams({
+      config: configSchema.freshConfig(),
+      nodeClient: stopClient(inputs, new Error("boom-stop")),
+    });
+    const code = await runServer(["stop", "--name", "w"]);
+    expect(code).toBe(1);
+    expect(stderrChunks.join("")).toBe("server stop: call to 'local' failed: boom-stop\n");
+    expect(stdoutChunks.join("")).toBe("");
+  });
+
+  // Kills: the same label mutations on the start path, where the
+  // serverStart subscription errors with no --node.
+  test("S9 local start failure names the in-process node without 'remote'", async () => {
+    const inputs: unknown[] = [];
+    __setTestSeams({
+      config: configSchema.freshConfig(),
+      nodeClient: startClient(inputs, new Error("boom-start")),
+    });
+    const code = await runServer(["start", "--name", "w", "w/missing.gguf"]);
+    expect(code).toBe(1);
+    expect(stderrChunks.join("")).toBe("server start: call to 'local' failed: boom-start\n");
+    expect(stdoutChunks.join("")).toBe("");
   });
 });
