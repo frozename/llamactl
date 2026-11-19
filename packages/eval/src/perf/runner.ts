@@ -46,6 +46,8 @@ export interface PerfSuiteOptions {
   load?: PerfSuiteLoadHooks;
   readers?: PerfSuiteReaders;
   readerReasons?: PerfSuiteReaderReasons;
+  /** The reason recorded for c2/c4 when slots is unknown. */
+  slotsReason?: string;
   decodeTokens?: number;
   concurrencyPromptWords?: number;
   started_at?: string;
@@ -328,7 +330,10 @@ async function runConcurrencyLevel(run: PerfSuiteRun, level: number): Promise<vo
   await run.step([metricName], async () => {
     const slots = run.opts.slots ?? null;
     if (level > 1 && slots === null) {
-      run.record(metricName, unavailableMetric("engine slots unknown (slot count not provided)"));
+      run.record(
+        metricName,
+        unavailableMetric(run.opts.slotsReason ?? "engine slots unknown (slot count not provided)"),
+      );
       return;
     }
     if (slots !== null && slots < level) {
