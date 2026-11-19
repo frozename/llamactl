@@ -670,3 +670,30 @@ binary or GGUF provenance should use `llamactl eval perf` with `--binary` or
 Note that schedules fire only while `llamactl bench schedule run` is alive;
 `llamactl bench schedule kick` runs one tick now. As with `eval perf`, the
 promotion cells stay `unavailable`.
+
+### Concurrency slots for c2 and c4
+
+`c1_tps` needs no slot count; `c2_tps` and `c4_tps` need the engine's
+slot count (`CONCURRENCY_LEVELS`, `packages/eval/src/perf/metrics.ts`).
+`llamactl eval perf` takes the count from `--slots <n>` when given.
+Otherwise only the `llamacpp` engine (the `--engine` default) is probed
+(`resolveSlots`, `packages/cli/src/commands/eval-perf.ts`): the command
+reads `total_slots` from `GET <url>/props` with a 5-second timeout
+(`probeEngineSlots`, `packages/eval/src/perf/client.ts`). The probe never
+fails the run: an HTTP error, a fetch failure or a body without a
+positive integer `total_slots` leaves the count unknown, and c2 and c4
+are recorded `unavailable` with the probe's reason followed by `; pass
+--slots <n> to measure c2/c4`. For `omlx`, `gufo` and `kapitsa` the
+reason is `engine '<engine>' does not advertise a llama-server GET /props
+slot count; pass --slots <n> to measure c2/c4`. With a known count below
+a level, that level is recorded `unavailable` as `engine slots <n> <
+concurrency <level>` (`runConcurrencyLevel`,
+`packages/eval/src/perf/runner.ts`).
+
+Scheduled suite runs never set a slot count: the agent gateway forwards
+only `/v1/*`, so the engine's `/props` is unreachable, and c2 and c4 are
+recorded `unavailable` with a reason naming the rel, the node and the
+gateway (`createPerfBenchSuiteRunner`,
+`packages/cli/src/commands/bench-schedule.ts`). For c2/c4 evidence on an
+arm, run `llamactl eval perf` against the engine's own URL with `--slots
+<n>`, or with the default `llamacpp` engine so `/props` is probed.
