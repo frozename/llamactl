@@ -23,8 +23,8 @@ Subcommands:
 
   stop [--name <workload>] [--grace=<s>] [--json]
       SIGTERM is sent only if the tracked PID verifies as the recorded
-      llama-server. If it remains after <grace> seconds (default 5) and
-      re-verifies, SIGKILL is sent. A gone or recycled PID is cleared
+      llama-server. If it remains after <grace> seconds (default 5,
+      allowed 1-60) and re-verifies, SIGKILL is sent. A gone or recycled PID is cleared
       without a signal. An unverifiable PID is not signalled; if identity
       becomes unverifiable after the grace period, SIGTERM was already sent
       but SIGKILL is not. Its tracking is kept, and --json reports stopped: false.
@@ -205,10 +205,22 @@ function buildStartManifest(
 ): workloadSchema.ModelRun {
   const workloadKind: "rel" | "alias" =
     parsed.target.includes("/") || parsed.target.endsWith(".gguf") ? "rel" : "alias";
+  // The stored manifest's labels/annotations carry the residency-group the
+  // in-process procedures read; the rewrite must keep them.
+  let stored: workloadSchema.ModelRun | null;
+  try {
+    stored = workloadStore.loadWorkloadByName(workload);
+  } catch {
+    stored = null;
+  }
   return {
     apiVersion: "llamactl/v1",
     kind: "ModelRun",
-    metadata: { name: workload, labels: {}, annotations: {} },
+    metadata: {
+      name: workload,
+      labels: { ...(stored?.metadata.labels ?? {}) },
+      annotations: { ...(stored?.metadata.annotations ?? {}) },
+    },
     spec: {
       node,
       enabled: true,
@@ -223,22 +235,19 @@ function buildStartManifest(
   };
 }
 
+// Local dispatch carries no --node flag, so the globals label is empty;
+// name the in-process node 'local' and drop 'remote' from its failures,
+// which never left this process. Real remote targets keep the remote wording.
+function dispatchFailureLabel(): string {
+  const nodeName = getGlobals().nodeName;
+  if (isLocalDispatch()) return `call to '${nodeName ?? "local"}'`;
+  return `remote call to '${nodeName ?? ""}'`;
+}
+
 async function fetchStartResult(
   workload: string,
   parsed: StartFlags,
-  resolved: ReturnType<typeof envMod.resolveEnv>,
 ): Promise<Awaited<ReturnType<typeof server.startServer>> | null> {
-  if (isLocalDispatch()) {
-    return await server.startServer({
-      key: { name: workload },
-      target: parsed.target,
-      extraArgs: parsed.extra,
-      timeoutSeconds: parsed.timeoutSeconds,
-      skipTuned: parsed.skipTuned,
-      onEvent: forwardEvent,
-      resolved,
-    });
-  }
   const input: {
     workload: string;
     target: string;
@@ -263,7 +272,7 @@ async function fetchStartResult(
     });
   } catch (err) {
     process.stderr.write(
-      `server start: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
+      `server start: ${dispatchFailureLabel()} failed: ${(err as Error).message}\n`,
     );
     return null;
   }
@@ -309,16 +318,27 @@ async function runStart(args: string[]): Promise<number> {
 
   workloadStore.saveWorkload(buildStartManifest(workload, node, parsed));
 
-  const result = await fetchStartResult(workload, parsed, resolved);
+  const result = await fetchStartResult(workload, parsed);
   if (!result) return 1;
 
   renderStartResult(result, parsed.json);
   return result.ok ? 0 : 1;
 }
 
-function applyGraceFlag(draft: { graceSeconds: number }, arg: string): void {
-  const n = Number.parseInt(arg.slice("--grace=".length), 10);
-  if (Number.isFinite(n) && n > 0) draft.graceSeconds = n;
+// The serverStop procedure caps graceSeconds at MAX_GRACE_SECONDS; reject
+// anything outside 1..MAX here so the user gets a clear error before any
+// dispatch instead of a raw schema dump and a server left running.
+const MAX_GRACE_SECONDS = 60;
+const GRACE_RANGE_ERROR = `server stop: --grace must be between 1 and ${String(MAX_GRACE_SECONDS)}`;
+
+function applyGraceFlag(draft: { graceSeconds: number }, arg: string): string | null {
+  const raw = arg.slice("--grace=".length);
+  const n = Number(raw);
+  if (raw.trim() === "" || !Number.isInteger(n) || n < 1 || n > MAX_GRACE_SECONDS) {
+    return GRACE_RANGE_ERROR;
+  }
+  draft.graceSeconds = n;
+  return null;
 }
 
 function consumeStopArg(
@@ -332,7 +352,11 @@ function consumeStopArg(
     return { next: i + 1 };
   }
   if (arg.startsWith("--grace=")) {
-    applyGraceFlag(draft, arg);
+    const graceError = applyGraceFlag(draft, arg);
+    if (graceError !== null) {
+      process.stderr.write(`${graceError}\n`);
+      return { exit: 1 };
+    }
     return { next: i + 1 };
   }
   const nameFlag = takeNameFlag(args, i, arg, "server stop");
@@ -360,9 +384,6 @@ async function fetchStopResult(
   workload: string,
   graceSeconds: number,
 ): Promise<Awaited<ReturnType<typeof server.stopServer>> | null> {
-  if (isLocalDispatch()) {
-    return await server.stopServer({ key: { name: workload }, graceSeconds });
-  }
   try {
     return await getNodeClient().serverStop.mutate({
       workload,
@@ -370,7 +391,7 @@ async function fetchStopResult(
     });
   } catch (err) {
     process.stderr.write(
-      `server stop: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
+      `server stop: ${dispatchFailureLabel()} failed: ${(err as Error).message}\n`,
     );
     return null;
   }

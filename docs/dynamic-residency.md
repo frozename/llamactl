@@ -112,6 +112,8 @@ Known limits: a `ready` ModelRun row whose recorded pid is still alive, or whose
 
 ModelRun proof uses `isServerProvenDown` (`packages/core/src/server.ts`), which checks the recorded pid against its pid file with the same identity check `stopServer` uses and never deletes the pid file; agent boot recovery uses the same predicate through `directWorkloadProvenDown`.
 
+`llamactl server start` and `llamactl server stop` against the local node dispatch through the in-process `serverStart`/`serverStop` procedures instead of calling `startServer`/`stopServer` in the CLI process, so they record the `residency_states` row and refuse an occupied exclusive group exactly as the agent procedures do (#517). When `llamactl server start` rewrites the ModelRun manifest it keeps the stored ModelRun's labels and annotations, including `llamactl.io/residency-group`.
+
 ## Operator-initiated idle eviction
 
 `idleEvictSeconds` is advisory: `residencyStatus` reports the `idleEviction` window, but the runtime never evicts or sleeps a resident on its own. The operator drives eviction (#519). A dry run routes one `residencyEvictIdle` query on the serving node, reports the window and the would-evict rows, and touches nothing:
