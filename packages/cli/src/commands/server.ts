@@ -28,6 +28,12 @@ Subcommands:
       without a signal. An unverifiable PID is not signalled; if identity
       becomes unverifiable after the grace period, SIGTERM was already sent
       but SIGKILL is not. Its tracking is kept, and --json reports stopped: false.
+      A residency stop-fence refusal on the node (LeasesActive,
+      DrainInProgress, SessionsActive, SessionsUnknown) prints
+      \`server stop: node <node> refused to stop <workload> (<reason>: <ids>);
+      nothing was stopped\` to stderr and exits 1; --json prints the result
+      and also exits 1. The overrides are \`llamactl residency
+      release-session\` and \`llamactl residency force-unload\`.
 
   status [--name <workload>] [--json]
       Report whether llama-server is reachable at the configured
@@ -370,6 +376,14 @@ async function fetchStopResult(
   }
 }
 
+function stopRefusalLine(
+  node: string,
+  workload: string,
+  refused: { reason: string; active: readonly string[] },
+): string {
+  return `server stop: node ${node} refused to stop ${workload} (${refused.reason}${refused.active.length > 0 ? `: ${refused.active.join(", ")}` : ""}); nothing was stopped\n`;
+}
+
 async function runStop(args: string[]): Promise<number> {
   const draft: { json: boolean; graceSeconds: number; name?: string } = {
     json: false,
@@ -390,13 +404,18 @@ async function runStop(args: string[]): Promise<number> {
   }
   const result = await fetchStopResult(workload, draft.graceSeconds);
   if (!result) return 1;
+  const refused = result.refused;
   if (draft.json) {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-  } else {
-    process.stdout.write(
-      `stopped pid=${String(result.pid ?? "none")}${result.killed ? " (SIGKILL)" : ""}\n`,
-    );
+    return refused !== undefined ? 1 : 0;
   }
+  if (refused !== undefined) {
+    process.stderr.write(stopRefusalLine(resolveEffectiveNodeName(), workload, refused));
+    return 1;
+  }
+  process.stdout.write(
+    `stopped pid=${String(result.pid ?? "none")}${result.killed ? " (SIGKILL)" : ""}\n`,
+  );
   return 0;
 }
 
