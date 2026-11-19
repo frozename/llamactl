@@ -199,10 +199,22 @@ function buildStartManifest(
 ): workloadSchema.ModelRun {
   const workloadKind: "rel" | "alias" =
     parsed.target.includes("/") || parsed.target.endsWith(".gguf") ? "rel" : "alias";
+  // The stored manifest's labels/annotations carry the residency-group the
+  // in-process procedures read; the rewrite must keep them.
+  let stored: workloadSchema.ModelRun | null;
+  try {
+    stored = workloadStore.loadWorkloadByName(workload);
+  } catch {
+    stored = null;
+  }
   return {
     apiVersion: "llamactl/v1",
     kind: "ModelRun",
-    metadata: { name: workload, labels: {}, annotations: {} },
+    metadata: {
+      name: workload,
+      labels: { ...(stored?.metadata.labels ?? {}) },
+      annotations: { ...(stored?.metadata.annotations ?? {}) },
+    },
     spec: {
       node,
       enabled: true,
@@ -217,22 +229,16 @@ function buildStartManifest(
   };
 }
 
+// Local dispatch carries no --node flag, so the globals label is empty;
+// name the in-process node 'local' in remote-call failures.
+function dispatchNodeLabel(): string {
+  return getGlobals().nodeName ?? (isLocalDispatch() ? "local" : "");
+}
+
 async function fetchStartResult(
   workload: string,
   parsed: StartFlags,
-  resolved: ReturnType<typeof envMod.resolveEnv>,
 ): Promise<Awaited<ReturnType<typeof server.startServer>> | null> {
-  if (isLocalDispatch()) {
-    return await server.startServer({
-      key: { name: workload },
-      target: parsed.target,
-      extraArgs: parsed.extra,
-      timeoutSeconds: parsed.timeoutSeconds,
-      skipTuned: parsed.skipTuned,
-      onEvent: forwardEvent,
-      resolved,
-    });
-  }
   const input: {
     workload: string;
     target: string;
@@ -257,7 +263,7 @@ async function fetchStartResult(
     });
   } catch (err) {
     process.stderr.write(
-      `server start: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
+      `server start: remote call to '${dispatchNodeLabel()}' failed: ${(err as Error).message}\n`,
     );
     return null;
   }
@@ -303,7 +309,7 @@ async function runStart(args: string[]): Promise<number> {
 
   workloadStore.saveWorkload(buildStartManifest(workload, node, parsed));
 
-  const result = await fetchStartResult(workload, parsed, resolved);
+  const result = await fetchStartResult(workload, parsed);
   if (!result) return 1;
 
   renderStartResult(result, parsed.json);
@@ -354,9 +360,6 @@ async function fetchStopResult(
   workload: string,
   graceSeconds: number,
 ): Promise<Awaited<ReturnType<typeof server.stopServer>> | null> {
-  if (isLocalDispatch()) {
-    return await server.stopServer({ key: { name: workload }, graceSeconds });
-  }
   try {
     return await getNodeClient().serverStop.mutate({
       workload,
@@ -364,7 +367,7 @@ async function fetchStopResult(
     });
   } catch (err) {
     process.stderr.write(
-      `server stop: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
+      `server stop: remote call to '${dispatchNodeLabel()}' failed: ${(err as Error).message}\n`,
     );
     return null;
   }
