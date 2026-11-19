@@ -102,6 +102,25 @@ const CHILD_ENV_ALLOWLIST = [
   "LLAMA_CPP_BIN",
 ];
 
+type ResidencyLifecycleRow = { model: string; state: string; updatedAtMs: number };
+
+type ResidencyLifecycleSection = {
+  status: string;
+  reason?: string;
+  workloads?: readonly ResidencyLifecycleRow[];
+};
+
+type ResidencyStatusRead = { lifecycle?: ResidencyLifecycleSection };
+
+type EvictReadinessOutcome =
+  | { kind: "payload"; payload: ResidencyStatusRead }
+  | { kind: "rejected"; message: string }
+  | { kind: "timeout" };
+
+type RemoteEvictReadiness =
+  | { ok: true; readySinceMs: Map<string, number> }
+  | { ok: false; error: string };
+
 export interface WorkloadClient {
   serverStatus: {
     query(input: { workload: string }): Promise<{
@@ -188,6 +207,13 @@ export interface WorkloadClient {
    *  real client through the router's nodeFacts procedure. */
   nodeFacts?: {
     query(): Promise<{ memBytes: number | null }>;
+  };
+  /** The victim node's own `residency_states` read-out, used by the #519
+   *  cross-node `minResidencySeconds` evict gate when this process's own
+   *  store does not apply. Served by every real client through the router's
+   *  residencyStatus procedure. */
+  residencyStatus?: {
+    query(input: { node: string }): Promise<ResidencyStatusRead>;
   };
 }
 
@@ -544,6 +570,7 @@ async function disableModelHost(
 }
 
 const NODE_FACTS_TIMEOUT_MS = 10_000;
+const EVICT_READINESS_TIMEOUT_MS = 10_000;
 
 /**
  * Query a remote node's live hardware memory and convert it to a budget
@@ -933,6 +960,7 @@ async function convergeModelHostReplacement(
   const workloadsDir = ctx.opts?.workloadsDir ?? defaultWorkloadsDir(ctx.opts?.env);
 
   // Authorize evict targets before any budget credit or stop.
+  await prefetchEvictReadiness(ctx);
   const eviction = authorizeEvictTargets(ctx, workloadsDir);
   if (!eviction.ok) {
     return { ok: false, error: evictRefusalMessage(eviction.refusal) };
@@ -2052,6 +2080,12 @@ interface EvictionStageCtx {
   /** True when an unverified replacement teardown keeps the eviction intent
    *  (and its store rows) held instead of rolled back. */
   evictionIntentKept: boolean;
+  /** Cross-node evict readiness for the #519 minResidencySeconds gate,
+   *  prefetched from the victim node when this process's own store does not
+   *  apply: the model→ready-since map, or the failure to read it. */
+  remoteEvictReadiness?:
+    | { ok: true; readySinceMs: Map<string, number> }
+    | { ok: false; error: string };
 }
 
 interface ConvergeServerContext extends EvictionStageCtx {
@@ -2345,10 +2379,13 @@ function checkEvictSessionGate(ctx: EvictionStageCtx, target: string): EvictStag
 
 /** Resolve a verified evict victim's ready-since timestamp (ms epoch) for the
  *  #519 minResidencySeconds gate. An explicit `opts.evictReadySinceMs` seam
- *  wins. Otherwise the default reads the serving node's residency store, and
- *  only when `LLAMACTL_NODE_NAME` names the victim's node (the same rule as
- *  router.ts residencyPlanFor); an anonymous or foreign serving node reports
- *  no readiness. A store read failure throws so the caller can fail closed. */
+ *  wins. Otherwise, when `LLAMACTL_NODE_NAME` names the victim's node (the
+ *  same rule as router.ts residencyPlanFor), the serving node's own residency
+ *  store counts. For an empty or foreign serving node, the cross-node read
+ *  that `prefetchEvictReadiness` wrote to `ctx.remoteEvictReadiness` stands in:
+ *  a failed or timed-out read throws so the caller fails closed, a read success
+ *  reports the victim's ready-since row (null when it has none). A store read
+ *  failure throws so the caller can fail closed. */
 function resolveEvictReadySinceMs(
   ctx: EvictionStageCtx,
   target: string,
@@ -2357,7 +2394,7 @@ function resolveEvictReadySinceMs(
   const explicit = ctx.opts?.evictReadySinceMs;
   if (explicit !== undefined) return explicit(target);
   const serving = process.env["LLAMACTL_NODE_NAME"]?.trim() ?? "";
-  if (serving === "" || !sameNode(serving)) return null;
+  if (serving === "" || !sameNode(serving)) return remoteReadySinceMs(ctx, target);
   const snap = readResidencyStoreSnapshot(defaultResidencyStorePath());
   if (!snap.present) return null;
   if ("error" in snap) throw new Error(snap.error);
@@ -2371,6 +2408,110 @@ function resolveEvictReadySinceMs(
   return null;
 }
 
+/** The cross-node branch of `resolveEvictReadySinceMs`: the prefetched victim
+ *  read, throwing on a failed read so the caller fails closed, or reporting no
+ *  readiness when this process prefetched nothing. */
+function remoteReadySinceMs(ctx: EvictionStageCtx, target: string): number | null {
+  const remote = ctx.remoteEvictReadiness;
+  if (remote === undefined) return null;
+  if (!remote.ok) throw new Error(remote.error);
+  return remote.readySinceMs.get(target) ?? null;
+}
+
+/** Resolve the victim node's `minResidencySeconds` (the #519 evict gate's
+ *  threshold, in seconds; 0 when absent or disabled). */
+function evictMinResidencySeconds(ctx: EvictionStageCtx): number {
+  const residency = ctx.opts?.getNodeResidency?.(ctx.manifest.spec.node) ?? null;
+  // Pass only the resolved field as a literal: NodeRunResidency carries explicit
+  // `| undefined` optionals from z.infer, which exactOptionalPropertyTypes
+  // rejects against Partial<ResidencyPolicy> (same seam as defaultNodeBudgetGiB).
+  return resolveResidencyPolicy(
+    residency?.minResidencySeconds === undefined
+      ? null
+      : { minResidencySeconds: residency.minResidencySeconds },
+  ).minResidencySeconds;
+}
+
+/** True when the cross-node evict readiness read has nothing to decide: no
+ *  evict targets, a disabled gate, an explicit readiness seam, a serving node
+ *  that verifiably owns the victim (its own store applies), or a client that
+ *  does not serve residencyStatus. */
+function evictReadinessPrefetchSkipped(ctx: EvictionStageCtx): boolean {
+  if (ctx.evictTargets.length === 0) return true;
+  if (evictMinResidencySeconds(ctx) <= 0) return true;
+  if (ctx.opts?.evictReadySinceMs !== undefined) return true;
+  const serving = process.env["LLAMACTL_NODE_NAME"]?.trim() ?? "";
+  if (serving !== "" && nodeIdentityMatcher(ctx.opts, ctx.manifest.spec.node)(serving)) return true;
+  return ctx.client.residencyStatus === undefined;
+}
+
+/** Map the raced residencyStatus read to the cached cross-node readiness: a
+ *  timeout or rejection fails closed, a payload with no lifecycle section (an
+ *  agent that predates lifecycle rows) reports no ready row, an unavailable
+ *  section fails closed, and otherwise only `ready` rows with a finite
+ *  timestamp count. */
+function readinessFromReadOutcome(outcome: EvictReadinessOutcome): RemoteEvictReadiness {
+  if (outcome.kind === "timeout") {
+    return {
+      ok: false,
+      error: `residencyStatus timed out after ${String(EVICT_READINESS_TIMEOUT_MS)}ms`,
+    };
+  }
+  if (outcome.kind === "rejected") {
+    return { ok: false, error: outcome.message };
+  }
+  const lifecycle = outcome.payload.lifecycle;
+  if (lifecycle === undefined) return { ok: true, readySinceMs: new Map() };
+  if (lifecycle.status !== "available") {
+    return {
+      ok: false,
+      error: `victim node lifecycle unavailable (${lifecycle.reason ?? "unknown"})`,
+    };
+  }
+  const readySinceMs = new Map<string, number>();
+  for (const row of lifecycle.workloads ?? []) {
+    if (row.state === "ready" && Number.isFinite(row.updatedAtMs)) {
+      readySinceMs.set(row.model, row.updatedAtMs);
+    }
+  }
+  return { ok: true, readySinceMs };
+}
+
+/**
+ * Prefetch the victim node's cross-node evict readiness for the #519
+ * minResidencySeconds gate once per apply, writing it to
+ * `ctx.remoteEvictReadiness`. Returns without reading when the gate has
+ * nothing to decide. The read races an EVICT_READINESS_TIMEOUT_MS timer and
+ * records the outcome (failure closed on rejection or timeout) so
+ * `resolveEvictReadySinceMs` fails closed for a foreign serving node.
+ */
+async function prefetchEvictReadiness(ctx: EvictionStageCtx): Promise<void> {
+  if (evictReadinessPrefetchSkipped(ctx)) return;
+  const residencyStatus = ctx.client.residencyStatus;
+  if (residencyStatus === undefined) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const timeout = new Promise<EvictReadinessOutcome>((resolve) => {
+      timer = setTimeout(() => {
+        resolve({ kind: "timeout" });
+      }, EVICT_READINESS_TIMEOUT_MS);
+    });
+    const read: Promise<EvictReadinessOutcome> = residencyStatus
+      .query({ node: ctx.manifest.spec.node })
+      .then(
+        (payload): EvictReadinessOutcome => ({ kind: "payload", payload }),
+        (err: unknown): EvictReadinessOutcome => ({
+          kind: "rejected",
+          message: err instanceof Error ? err.message : String(err),
+        }),
+      );
+    const outcome = await Promise.race([read, timeout]);
+    ctx.remoteEvictReadiness = readinessFromReadOutcome(outcome);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 /** #519: a verified evict victim whose node-local residency lifecycle row has
  *  been `ready` for fewer than the node's minResidencySeconds is refused
  *  before any marker, stop or start; an unreadable readiness source fails
@@ -2381,15 +2522,7 @@ function checkEvictMinResidency(
   target: string,
   sameNode: (node: string) => boolean,
 ): EvictStageRefusal | null {
-  const residency = ctx.opts?.getNodeResidency?.(ctx.manifest.spec.node) ?? null;
-  // Pass only the resolved field as a literal: NodeRunResidency carries explicit
-  // `| undefined` optionals from z.infer, which exactOptionalPropertyTypes
-  // rejects against Partial<ResidencyPolicy> (same seam as defaultNodeBudgetGiB).
-  const min = resolveResidencyPolicy(
-    residency?.minResidencySeconds === undefined
-      ? null
-      : { minResidencySeconds: residency.minResidencySeconds },
-  ).minResidencySeconds;
+  const min = evictMinResidencySeconds(ctx);
   if (min <= 0) return null;
   let readySinceMs: number | null | undefined;
   try {
@@ -2664,6 +2797,7 @@ async function admitServerBudget(ctx: ConvergeServerContext): Promise<
 > {
   const { manifest, opts, now } = ctx;
   const workloadsDir = opts?.workloadsDir ?? defaultWorkloadsDir(opts?.env);
+  await prefetchEvictReadiness(ctx);
   const eviction = authorizeEvictTargets(ctx, workloadsDir);
   if (!eviction.ok) {
     return { ok: false, result: evictRefusalResult(ctx, eviction.refusal) };

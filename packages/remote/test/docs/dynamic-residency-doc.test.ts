@@ -1653,3 +1653,27 @@ describe("#519 apply --evict minResidencySeconds", () => {
     }
   });
 });
+
+// Part of #519
+// Kills: shipping the cross-node evict readiness read undocumented, or
+// leaving the stale "gets no protection yet" sentence, or dropping the
+// prefetchEvictReadiness residencyStatus call from apply.ts.
+describe("#519 cross-node apply --evict minResidencySeconds", () => {
+  test("knobs section documents the victim-node residencyStatus read", () => {
+    const knobs = flat(sectionBody(SECTIONS.knobs) ?? "");
+    for (const pin of ["`residencyStatus`", "`lifecycle`", "victim node"]) {
+      expect(knobs, `knobs pin ${pin}`).toContain(pin);
+    }
+    expect(knobs).not.toContain("gets no protection yet");
+  });
+
+  test("apply.ts prefetches evict readiness through residencyStatus", () => {
+    const body = enclosingBody(
+      readOrEmpty(join(REPO, "packages/remote/src/workload/apply.ts")),
+      "async function prefetchEvictReadiness(",
+    );
+    for (const pin of ["residencyStatus", "EVICT_READINESS_TIMEOUT_MS"]) {
+      expect(body, `prefetchEvictReadiness pin ${pin}`).toContain(pin);
+    }
+  });
+});
