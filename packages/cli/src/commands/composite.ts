@@ -230,14 +230,21 @@ function printDestroyDryRun(result: unknown): number {
   return 0;
 }
 
-function printDestroyResult(result: unknown, name: string): number {
+export function printDestroyResult(result: unknown, name: string): number {
   const r = result as {
     dryRun: false;
     ok: boolean;
     removed: { kind: string; name: string }[];
     errors: { ref: { kind: string; name: string }; message: string }[];
+    manifestPreserved?: boolean;
   };
-  process.stdout.write(`destroyed composite/${name}\n`);
+  if (r.manifestPreserved === true) {
+    process.stdout.write(
+      `composite/${name} not destroyed: a workload stop was refused; manifest preserved\n`,
+    );
+  } else {
+    process.stdout.write(`destroyed composite/${name}\n`);
+  }
   if (r.removed.length > 0) {
     process.stdout.write(`  removed (${String(r.removed.length)}):\n`);
     for (const ref of r.removed) {
