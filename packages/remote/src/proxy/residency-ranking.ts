@@ -37,6 +37,13 @@
  * - nothing is charged on an absent or errored store;
  * - it is emitted only alongside the resident set, since the ranker's
  *   `drainCostMs` is inert without `signals.resident`.
+ *
+ * Part of #519: `residencyRankingReadout` is the status read-out of the
+ * resident set and the drain charges `residencyRankingInputs` feeds the
+ * ranker, derived from the same ready, occupying and charged helpers, so
+ * the read-out cannot diverge from the live signals. It applies only when
+ * `residentPreference` or `coldLoadPenaltyMs` is nonzero and never ranks
+ * or mutates anything.
  */
 import type { routingRanking } from "@llamactl/core";
 import type { ResidencyPolicy } from "@llamactl/core/residency/admission";
@@ -188,6 +195,13 @@ export interface ResidencyRankingInputsResult {
   signals: routingRanking.RankingSignals;
 }
 
+export interface ResidencyRankingReadout {
+  residentPreference: number;
+  coldLoadPenaltyMs: number;
+  resident: string[];
+  drainCharged: string[];
+}
+
 function operationalStateSignal(
   lifecycle: readonly ResidencyStateRecord[],
   nodeId: string,
@@ -275,6 +289,60 @@ export function residencyRankingInputs(input: {
     ...(drainMs === undefined ? {} : { drainMs }),
   };
   return { policy, signals };
+}
+
+// The read-out matches lifecycle rows against deployment ids built for a fixed
+// node id, because the read-out carries no serving-node identity.
+const READOUT_NODE_ID = "readout";
+
+function sortedReadoutModels(
+  lifecycle: readonly ResidencyStateRecord[],
+  deploymentIds: ReadonlySet<string>,
+): string[] {
+  const models: string[] = [];
+  for (const row of lifecycle) {
+    if (deploymentIds.has(residentDeploymentId(READOUT_NODE_ID, row.model))) {
+      models.push(row.model);
+    }
+  }
+  return models.sort();
+}
+
+/**
+ * The resident set and drain charges `residencyRankingInputs` would emit,
+ * read at model level. The policy resolves exactly as in
+ * `residencyRankingInputs`; both knobs at 0 (the same condition as the
+ * resident-set emission there) yields null. `resident` lists the sorted
+ * models of the `ready` lifecycle rows and `drainCharged` the sorted
+ * models charged the drain budget, derived from the same
+ * `readyDeploymentIds`, `occupyingModelsByGroup` and `chargedDeploymentIds`
+ * helpers the live signals use, so the read-out cannot diverge from them.
+ * This is a status read-out: it never ranks or mutates anything.
+ */
+export function residencyRankingReadout(input: {
+  residency: NodeRunResidency | null | undefined;
+  lifecycle: readonly ResidencyStateRecord[];
+}): ResidencyRankingReadout | null {
+  const policy = input.residency ?? null;
+  const partial = policy === null ? null : toPartialResidencyPolicy(policy);
+  const resolved = resolveResidencyPolicy(partial);
+  if (resolved.residentPreference === 0 && resolved.coldLoadPenaltyMs === 0) {
+    return null;
+  }
+  const ready = readyDeploymentIds(input.lifecycle, READOUT_NODE_ID);
+  const occupantsByGroup = occupyingModelsByGroup(input.lifecycle);
+  const charged = chargedDeploymentIds({
+    lifecycle: input.lifecycle,
+    nodeId: READOUT_NODE_ID,
+    ready,
+    occupantsByGroup,
+  });
+  return {
+    residentPreference: resolved.residentPreference,
+    coldLoadPenaltyMs: resolved.coldLoadPenaltyMs,
+    resident: sortedReadoutModels(input.lifecycle, ready),
+    drainCharged: sortedReadoutModels(input.lifecycle, charged),
+  };
 }
 
 /**
