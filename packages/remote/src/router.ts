@@ -5066,14 +5066,17 @@ export const router = t.router({
       });
       // Best-effort cleanup of the on-disk YAML. Destroy is the only
       // place the file gets removed; apply-failures leave a status-
-      // tagged record so operators can investigate.
-      deleteComposite(input.name);
+      // tagged record so operators can investigate. A stop-fence
+      // refusal keeps the YAML so the destroy can be retried after
+      // `residency release-session` or `residency force-unload` (#520).
+      if (!result.manifestPreserved) deleteComposite(input.name);
       return {
         dryRun: false as const,
         ok: result.ok,
         removed: result.removed,
         errors: result.errors,
         purgedVolumes: input.purgeVolumes,
+        manifestPreserved: result.manifestPreserved,
       };
     }),
 
