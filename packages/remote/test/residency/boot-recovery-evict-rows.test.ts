@@ -31,6 +31,7 @@ import {
   runProfileSwitchBootRecovery,
 } from "../../src/residency/boot-recovery.js";
 import { beginEvictionOperations } from "../../src/residency/eviction-operation.js";
+import { recoverEvictionOperationsUnverified } from "../../src/residency/recovery.js";
 import {
   openResidencyOperationStore,
   type ResidencyOperationRecord,
@@ -526,5 +527,106 @@ describe("crashed evict: operation rows at boot (Part of #517)", () => {
     expect(readOperation("op-evict-victim-a")).toMatchObject({ phase: "pending" });
     expect(currentFence()).toMatchObject({ ownerId: "agent", incarnation: "i1" });
     expect(writes).toEqual([]);
+  });
+
+  // kills: removing both possiblyLive gates (the `|| preview.possiblyLive > 0`
+  // early return in recoverCrashedEvictionRows AND `&& live.possiblyLive === 0`
+  // in shouldClaimEviction) — the store would be opened, the fence claimed by
+  // apply-profile/i2, the stale row finished and the eviction line logged.
+  test("ER9: a younger evict: row defers the whole eviction pass", () => {
+    withCrashedClaim((store, fenceToken) => {
+      seedEvictRow(store, fenceToken, "victim-a", STALE_AT);
+      seedEvictRow(store, fenceToken, "victim-b", STALE_AT + 1);
+    });
+    let openStoreCalls = 0;
+    const writes: string[] = [];
+    const openStore = (storePath: string): Store => {
+      openStoreCalls += 1;
+      const real = openResidencyOperationStore({ path: storePath });
+      trackedStores.push(real);
+      return real;
+    };
+
+    runProfileSwitchBootRecovery(recoveryOpts({ writes, openStore }));
+
+    expect(readOperation("op-evict-victim-a")).toMatchObject({ phase: "pending" });
+    expect(readOperation("op-evict-victim-b")).toMatchObject({ phase: "pending" });
+    expect(openStoreCalls).toBe(0);
+    expect(currentFence()).toMatchObject({ ownerId: "agent", incarnation: "i1" });
+    expect(writes).toEqual([]);
+  });
+
+  // kills: removing `&& live.possiblyLive === 0` from shouldClaimEviction —
+  // a young evict: row begun between the read-only snapshot and the claim
+  // must refuse the claim, so the stale row stays pending, the fence stays
+  // agent/i1 and nothing is logged.
+  test("ER10: an evict: row begun before the claim refuses the eviction claim", () => {
+    withCrashedClaim((store, fenceToken) => {
+      seedEvictRow(store, fenceToken, "victim-a", STALE_AT);
+    });
+    const writes: string[] = [];
+    let openStoreCalls = 0;
+
+    runProfileSwitchBootRecovery(
+      recoveryOpts({
+        writes,
+        openStore: (storePath) => {
+          openStoreCalls += 1;
+          const real = openResidencyOperationStore({ path: storePath });
+          trackedStores.push(real);
+          const realClaimWhen = real.claimOwnershipWhen;
+          real.claimOwnershipWhen = (input, decide): ReturnType<Store["claimOwnershipWhen"]> => {
+            const other = openResidencyOperationStore({ path: storePath });
+            try {
+              const fence = other.currentFence();
+              if (fence === null) {
+                throw new Error("seed guard: expected the agent/i1 fence");
+              }
+              seedEvictRow(other, fence.fenceToken, "victim-b", NOW);
+            } finally {
+              other.close();
+            }
+            return realClaimWhen(input, decide);
+          };
+          return real;
+        },
+      }),
+    );
+
+    expect(openStoreCalls).toBe(1);
+    expect(readOperation("op-evict-victim-a")).toMatchObject({ phase: "pending" });
+    expect(readOperation("op-evict-victim-b")).toMatchObject({ phase: "pending" });
+    expect(currentFence()).toMatchObject({ ownerId: "agent", incarnation: "i1" });
+    expect(writes).toEqual([]);
+  });
+});
+
+describe("recoverEvictionOperationsUnverified (Part of #517)", () => {
+  // kills: removing the per-row isPossiblyLive skip in
+  // recoverEvictionOperationsUnverified — the young row would be finished
+  // unknown too and `recovered` would read 2.
+  test("EU1: a mixed-age store finishes only the stale evict: row", () => {
+    const fenceToken = withCrashedClaim((store, crashedFence) => {
+      seedEvictRow(store, crashedFence, "victim-a", STALE_AT);
+      seedEvictRow(store, crashedFence, "victim-b", STALE_AT + 1);
+      return store.claimOwnership({ ownerId: "test", incarnation: "t1" }).fenceToken;
+    });
+
+    const result = withStore((store) =>
+      recoverEvictionOperationsUnverified({
+        store,
+        fenceToken,
+        nowMs: (): number => NOW,
+        minStaleAgeMs: MIN_AGE,
+      }),
+    );
+
+    expect(result).toEqual({ recovered: 1, recordFailures: 0 });
+    expect(readOperation("op-evict-victim-a")).toMatchObject({
+      phase: "terminal",
+      outcome: "unknown",
+      detail: "recovered: interrupted-unverified (was pending)",
+    });
+    expect(readOperation("op-evict-victim-b")).toMatchObject({ phase: "pending" });
   });
 });
