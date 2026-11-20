@@ -172,17 +172,21 @@ describe("#521 llamactl eval perf-diff", () => {
 
   // Kills: removing the help intercept, which lets --help fall through to
   // perfDiffMain's usage error.
-  test("perf-diff --help prints the subcommand usage", async () => {
-    const { result, stdout, stderr } = await captureProcessStreams(() =>
-      runEval(["perf-diff", "--help"]),
-    );
+  // Kills: dropping either help flag (`--help` or `-h`) from the perf-diff
+  // help check, which falls through to the --base/--candidate refusal.
+  for (const flag of ["--help", "-h"]) {
+    test(`perf-diff ${flag} prints the subcommand usage`, async () => {
+      const { result, stdout, stderr } = await captureProcessStreams(() =>
+        runEval(["perf-diff", flag]),
+      );
 
-    expect(result).toBe(0);
-    expect(stdout).toContain(
-      "Usage: llamactl eval perf-diff --base <run_id> --candidate <run_id> [--db <path>] [--model <name>] [--format md|json] [--tolerance <fraction>]",
-    );
-    expect(stderr).not.toContain("--base and --candidate are required");
-  });
+      expect(result).toBe(0);
+      expect(stdout).toContain(
+        "Usage: llamactl eval perf-diff --base <run_id> --candidate <run_id> [--db <path>] [--model <name>] [--format md|json] [--tolerance <fraction>]",
+      );
+      expect(stderr).not.toContain("--base and --candidate are required");
+    });
+  }
 
   // Kills: matching the bare word `help` anywhere in argv as a help request
   // (`argv.includes("help")`), which prints usage and exits 0 instead.
