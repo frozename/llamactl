@@ -6,7 +6,9 @@
  * start when LLAMACTL_RESIDENCY_LEASES is on and
  * LLAMACTL_RESIDENCY_SESSION_IDLE_MS (milliseconds) is set. proxyOpenAI reads
  * activeSessions to prefer a session's already-bound local workload among the
- * route candidates for a request (affinity across tool calls, #520).
+ * route candidates for a request (affinity across tool calls, #520), and calls
+ * touch to refresh a bound session's idle clock when a response-cache hit
+ * serves it (#520).
  *
  * Eviction consults the installed registry before stopping a workload
  * (workload/apply.ts, #631): a live session refuses it as
