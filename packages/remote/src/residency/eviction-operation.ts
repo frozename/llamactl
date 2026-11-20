@@ -23,7 +23,8 @@ import type { ResidencyOperationOutcome, ResidencyOperationStore } from "./store
  *
  * A claimOwnership (fence bump) between begin and finish makes finishOperation
  * fail with stale-fence. That leaves the row nonterminal, and it blocks later
- * evictions of that victim until `evict:` recovery exists (follow-up).
+ * evictions of that victim until agent boot recovery finishes the stale row
+ * `unknown` (Part of #517).
  *
  * Known edge cases:
  * - Rollback is not atomic across the two records. If clearEvictionMarkers
