@@ -3,11 +3,13 @@
 // residencyStatus.query through the dispatcher, bounded by the exported
 // withNodeQueryDeadline helper, and renders the serving process's NodeRun policy,
 // memory budget, node-local residency store, lifecycle rows, lease/drain state,
-// bound sessions and the advisory idle-eviction window; it never wakes a model
-// and never mutates. plan is the read-only dry-run profile switch: it routes one
-// residencyPlan.query and renders budget source, victims, replacements,
-// protected workloads or a refusal reason; a refusal is a successful dry-run
-// answer and exits 0, never starting, stopping, loading or writing the store.
+// bound sessions, the advisory idle-eviction window and the read-only ranking
+// read-out (resident set and drain charges as the unified proxy's ranker sees
+// them); it never wakes a model and never mutates. plan is the read-only
+// dry-run profile switch: it routes one residencyPlan.query and renders budget
+// source, victims, replacements, protected workloads or a refusal reason; a
+// refusal is a successful dry-run answer and exits 0, never starting, stopping,
+// loading or writing the store.
 // apply-profile is the dry-run-by-default profile switch (wired: it records an
 // operation and stops/starts workloads when run with --execute --yes).
 // cancel-operation requests an abort of one of those in-flight switches by
@@ -36,7 +38,7 @@ import { withNodeQueryDeadline } from "./workload.js";
 const USAGE = `Usage: llamactl residency <subcommand>
 
 Subcommands:
-  status --node <name> [--json]   Read-only residency status: NodeRun policy, memory budget, the serving process's residency store, its per-model lifecycle rows and exclusive-group violations, its per-workload lease/drain state, its bound sessions (refs, idle-timeout expiry), and the advisory idle-eviction window. Never wakes a model or mutates state.
+  status --node <name> [--json]   Read-only residency status: NodeRun policy, memory budget, the serving process's residency store, its per-model lifecycle rows and exclusive-group violations, its per-workload lease/drain state, its bound sessions (refs, idle-timeout expiry), the advisory idle-eviction window, and the read-only ranking read-out (resident preference, resident set and drain charges). Never wakes a model or mutates state.
   plan --node <name> --to <profile> [--from <profile>] [--json]   Read-only dry-run profile switch: budget source, victims, replacements, protected workloads or refusal. Never starts, stops, loads or writes the store.
   apply-profile --node <name> --to <profile> [--from <profile>] [--json]   Dry-run by default: plan and report the profile switch without touching the store. Add --execute --yes to run the switch for real (stops and starts workloads, records an operation).
   cancel-operation <operationId> --yes [--node <name>] [--json]   Request an abort of an in-flight profile switch started by apply-profile --execute --yes in the process serving <node> (an agent serve process); it stops before its next step boundary. Process-local: a switch run in-process by a local-endpoint CLI invocation cannot be cancelled from another CLI invocation. Requires --yes.
@@ -130,6 +132,7 @@ export function renderResidencyStatus(s: ResidencyRenderInput, nowMs: number = D
   pushLifecycleLines(lines, s.lifecycle);
   pushIdleEvictionLines(lines, s.idleEviction, nowMs);
   pushSwitchGateLines(lines, s.switchGates, nowMs);
+  pushRankingLines(lines, s.ranking);
   pushLeaseLines(lines, s.leases);
   pushSessionLines(lines, s.sessions);
   lines.push(
@@ -320,6 +323,42 @@ type SwitchGatesUnavailableReason = Extract<
 
 const SWITCH_GATES_UNAVAILABLE: Record<SwitchGatesUnavailableReason, string> = {
   NotServingNode: "not the serving node",
+  StoreUnreadable: "store unreadable",
+  LifecycleUnreadable: "lifecycle rows unreadable",
+};
+
+function pushRankingLines(lines: string[], ranking: ResidencyRenderInput["ranking"]): void {
+  if (ranking === undefined) {
+    return;
+  }
+  if (ranking.status === "disabled") {
+    lines.push(`Ranking: disabled (scope: ${ranking.scope})`);
+    return;
+  }
+  if (ranking.status === "unavailable") {
+    lines.push(
+      `Ranking: unavailable (${RANKING_UNAVAILABLE[ranking.reason]}; scope: ${ranking.scope})`,
+    );
+    return;
+  }
+  lines.push(
+    `Ranking: resident preference ${String(ranking.residentPreference)}, cold-load penalty ${String(ranking.coldLoadPenaltyMs)}ms (advisory; scope: ${ranking.scope})`,
+  );
+  lines.push(`  resident: ${ranking.resident.length === 0 ? "none" : ranking.resident.join(", ")}`);
+  if (ranking.drainCharged.length > 0) {
+    lines.push(`  drain charged: ${ranking.drainCharged.join(", ")}`);
+  }
+}
+
+type RankingUnavailableReason = Extract<
+  NonNullable<ResidencyRenderInput["ranking"]>,
+  { status: "unavailable" }
+>["reason"];
+
+const RANKING_UNAVAILABLE: Record<RankingUnavailableReason, string> = {
+  NotServingNode: "not the serving node",
+  UnifiedProxyOff: "unified proxy off",
+  StoreAbsent: "no residency store",
   StoreUnreadable: "store unreadable",
   LifecycleUnreadable: "lifecycle rows unreadable",
 };
