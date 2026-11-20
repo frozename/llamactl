@@ -3462,9 +3462,10 @@ function applyEvictionRollback(
  * Terminalize the residency-store eviction operations this apply opened
  * (DF-02 #275). A successful replacement succeeds them; a rolled-back one
  * fails them with a `rolled-back:` detail. An unverified teardown keeps the
- * rows nonterminal so the store and the held marker agree on the single owner
- * (`evict:` recovery is a follow-up). Never throws; the ops map is always
- * cleared so a re-entry cannot double-terminalize.
+ * rows nonterminal so the store and the held marker agree on the single owner,
+ * until agent boot recovery finishes the stale row `unknown` (Part of #517).
+ * Never throws; the ops map is always cleared so a re-entry cannot
+ * double-terminalize.
  */
 function finalizeEvictionOperations(
   ctx: EvictionStageCtx,

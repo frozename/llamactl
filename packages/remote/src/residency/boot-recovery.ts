@@ -101,11 +101,18 @@
  * failed:` line. Without `isProvenDown` it fails closed: the predicate defaults
  * to false, the proven-down set stays empty, and the pass never opens the store.
  *
- * Fail-closed consequence. `evict:` rows have no boot recovery yet, so a
- * crashed eviction's nonterminal `evict:` row disables this pass on every later
- * boot until that row is terminalized. The operator remedy for a stuck
- * interrupted row meanwhile is a direct stop or `residency force-unload`; the
- * direct stop path refuses only on `profile-switch:` rows, not `evict:` rows.
+ * Eviction-row recovery (Part of #517). `recoverCrashedEvictionRows` runs only
+ * when no profile-switch row is nonterminal, finishing a crashed eviction's
+ * stale `evict:<victim>` row `unknown` under the apply-profile fence before the
+ * orphan sweep, so a crashed eviction no longer disables that sweep forever. A
+ * possibly-live `evict:` row defers the whole pass, and a malformed one is
+ * never finished, so either still keeps the orphan sweep off. The victim's
+ * `llamactl.io/evicted-by` manifest marker is left in place untouched. An
+ * `evict:` row beside a nonterminal profile-switch row is not reached here and
+ * waits for a later boot. `evict:` rows get no heartbeat, so an apply whose
+ * eviction ran longer than the staleness window is treated as crashed, and its
+ * later finish fails stale-fence, which `finishEvictionOperations` already
+ * contains.
  *
  * Why the liveness gate. `llama-server` is spawned detached and unref'd
  * (`packages/core/src/server.ts`), so an engine can outlive its agent. Age alone
@@ -137,8 +144,10 @@
  */
 import { RESIDENCY_APPLY_PROFILE_FENCE_OWNER } from "./apply-profile.js";
 import {
+  previewEvictionRecovery,
   previewProfileSwitchRecovery,
   type ProfileSwitchRecoveryPreview,
+  recoverEvictionOperationsUnverified,
   recoverProfileSwitchOperationsUnverified,
 } from "./recovery.js";
 import {
@@ -146,6 +155,7 @@ import {
   readResidencyStoreSnapshot,
   RESIDENCY_LEASE_AUDIT_BUSY_TIMEOUT_MS,
   type ResidencyLifecycleStore,
+  type ResidencyOperationRecord,
   type ResidencyOperationStore,
   type ResidencyStateRecord,
 } from "./store.js";
@@ -218,7 +228,9 @@ export function runProfileSwitchBootRecovery(opts: BootRecoveryOpts): BootRecove
       throw new Error(snapshot.error);
     }
     if (!snapshot.nonterminal.some((record) => record.model.startsWith(SWITCH_PREFIX))) {
-      sweepOrphanedLifecycleRows(snapshot.nonterminal, snapshot.lifecycle, {
+      const evictionGate: EvictionGate = { openStore, opts, nowMs, minStaleAgeMs, write };
+      const remaining = recoverCrashedEvictionRows(snapshot.nonterminal, evictionGate);
+      sweepOrphanedLifecycleRows(remaining, snapshot.lifecycle, {
         openStore,
         opts,
         nowMs,
@@ -330,6 +342,85 @@ type OrphanGate = {
   isProvenDown: (model: string) => boolean;
   write: (line: string) => void;
 };
+
+type EvictionGate = {
+  openStore: (storePath: string) => BootRecoveryStore;
+  opts: BootRecoveryOpts;
+  nowMs: () => number;
+  minStaleAgeMs: number;
+  write: (line: string) => void;
+};
+
+// Part of #517: finish crashed `evict:` rows before the outside-a-switch sweep,
+// so a crashed eviction no longer wedges the orphan sweep forever. It returns
+// the nonterminal list the orphan sweep should see. If nothing is recognized
+// stale, or any row looks possibly live, it returns the input unchanged and
+// never opens the store or writes anything (this keeps OL4/OL10 green, whose
+// malformed `evict:` rows use the targetState `evicted`).
+function recoverCrashedEvictionRows(
+  nonterminal: readonly ResidencyOperationRecord[],
+  gate: EvictionGate,
+): readonly ResidencyOperationRecord[] {
+  const preview = previewEvictionRecovery(nonterminal, {
+    nowMs: gate.nowMs(),
+    minStaleAgeMs: gate.minStaleAgeMs,
+  });
+  if (preview.stale === 0 || preview.possiblyLive > 0) {
+    return nonterminal;
+  }
+  let store: BootRecoveryStore | undefined;
+  try {
+    store = gate.openStore(gate.opts.path);
+    const claim = store.claimOwnershipWhen(
+      { ownerId: RESIDENCY_APPLY_PROFILE_FENCE_OWNER, incarnation: gate.opts.incarnation },
+      (rows) =>
+        !rows.some((row) => row.model.startsWith(SWITCH_PREFIX)) && shouldClaimEviction(rows, gate),
+    );
+    if (!claim.claimed) {
+      return nonterminal;
+    }
+    const result = recoverEvictionOperationsUnverified({
+      store,
+      fenceToken: claim.fence.fenceToken,
+      nowMs: gate.nowMs,
+      minStaleAgeMs: gate.minStaleAgeMs,
+    });
+    safeWrite(
+      gate.write,
+      `[residency] eviction boot recovery ${evictionCountsJson(result.recovered, result.recordFailures)}\n`,
+    );
+    return store.listNonterminal();
+  } catch (error: unknown) {
+    safeWrite(gate.write, `[residency] eviction boot recovery failed: ${failureMessage(error)}\n`);
+    return nonterminal;
+  } finally {
+    if (store !== undefined) {
+      try {
+        store.close();
+      } catch {
+        /* the rows are already written: a close failure never fails boot */
+      }
+    }
+  }
+}
+
+// The claim decision, taken over the live rows inside the IMMEDIATE
+// transaction: only claim when stale rows remain and none looks possibly live.
+function shouldClaimEviction(
+  rows: readonly ResidencyOperationRecord[],
+  gate: EvictionGate,
+): boolean {
+  const live = previewEvictionRecovery(rows, {
+    nowMs: gate.nowMs(),
+    minStaleAgeMs: gate.minStaleAgeMs,
+  });
+  return live.stale > 0 && live.possiblyLive === 0;
+}
+
+// Counts only, in a fixed key order: never a victim or replacement name.
+function evictionCountsJson(recovered: number, recordFailures: number): string {
+  return JSON.stringify({ recovered, recordFailures });
+}
 
 // Orphan-only staleness: a row is stale when it sits in an orphan-swept state
 // (interrupted transient or `ready`) and has made no progress for the window.
