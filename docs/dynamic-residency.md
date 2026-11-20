@@ -69,6 +69,8 @@ A request whose residency lease admission refuses gets `503` (`model_draining` f
 
 `llamactl server stop` and `llamactl delete workload` report a node stop-fence refusal instead of a stop (#520). When the agent's `serverStop` returns `refused`, `server stop` prints `server stop: node <node> refused to stop <workload> (<reason>: <ids>); nothing was stopped` to stderr and exits 1; `--json` prints the result and also exits 1. A ModelRun `delete workload` prints `delete: node <node> refused to stop (<reason>: <ids>); manifest preserved` and keeps the manifest. `<reason>` is `LeasesActive`, `DrainInProgress`, `SessionsActive` or `SessionsUnknown`. Neither command releases sessions; the overrides are `llamactl residency release-session <sessionId> --yes --node <name>` and `llamactl residency force-unload <workload> --reason <text> --yes --node <name>`.
 
+`llamactl disable <workload>` reports the same refusal: it exits 1 with `disable: serverStop refused: <reason>: <ids>` for a ModelRun (the `: <ids>` part is left out when no ids are reported) or `disable: modelHostStop refused: <reason>: <ids>` for a ModelHost, nothing is stopped, and the manifest stays stored with `spec.enabled: false` (Part of #522).
+
 A response-cache hit served for a session's bound local workload refreshes the binding through `touch` (`touchSessionOnCacheHit` in `packages/core/src/openaiProxy.ts`, #520), so a session answered from a warm cache does not idle-expire: it takes no ref and no lease, a session bound to another workload or a peer route is left untouched, and a registry that throws on `touch` still serves the cached response.
 
 ### Stop-before-start refusals
