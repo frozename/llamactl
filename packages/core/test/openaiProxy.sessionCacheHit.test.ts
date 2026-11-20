@@ -2,12 +2,14 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { PeerNode } from "../src/config/peers.js";
 import type {
   SessionRefcounts,
   SessionReleaseResult,
   SessionSnapshot,
 } from "../src/residency/sessions.js";
 import type { ResolvedEnv } from "../src/types.js";
+import type { PeerSnapshot } from "../src/workloadRuntime.js";
 import type { ConditionalUpstream } from "./conditionalUpstream.js";
 
 import { resolveEnv } from "../src/env.js";
@@ -29,6 +31,11 @@ const OTHER_MODEL = "Other-GGUF/other-Q4_K_M.gguf";
 const IDLE_TIMEOUT_MS = 10_000;
 const WL_A_PORT = 19731;
 const WL_B_PORT = 19732;
+const PEER_NODE_ID = "mac-mini";
+const PEER_MODEL = "peer/granite-3b.gguf";
+const PEER_PORT = 19733;
+// listClusterRoutes synthesises a peer route's workload as `<node>:<model>`.
+const PEER_WORKLOAD = `${PEER_NODE_ID}:${PEER_MODEL}`;
 
 const originalFetch = globalThis.fetch;
 
@@ -148,6 +155,31 @@ function touchThrowingRegistry(real: SessionRefcounts): SessionRefcounts {
       },
   };
 }
+
+function peerClusterRouting(): {
+  clusterPeers: PeerNode[];
+  peerSnapshots: Map<string, PeerSnapshot>;
+} {
+  const clusterPeers: PeerNode[] = [
+    { id: PEER_NODE_ID, endpoint: `http://127.0.0.1:${String(PEER_PORT)}` },
+  ];
+  const snapshot: PeerSnapshot = {
+    workloads: [{ modelId: PEER_MODEL, port: PEER_PORT, revision: null }],
+    pressure: "NORMAL",
+    fetchedAt: Date.now(),
+  };
+  return { clusterPeers, peerSnapshots: new Map([[PEER_NODE_ID, snapshot]]) };
+}
+
+// Guard notes for touchSessionOnCacheHit (P5, P7): no behavioural tests, as
+// both guards are equivalent to proxyOpenAI's acquire gate for every
+// proxy-reachable state.
+// - `leaseRegistry === null`: the acquire gate skips session acquisition on
+//   the same null check, so with no lease registry the proxy never binds a
+//   session and the hit has no proxy-made binding to refresh.
+// - session-id validation: an id that fails the length/pattern check is
+//   refused (400) by acquireProxySession, so it is never bound and
+//   activeSessions(...).includes(id) is already false for it.
 
 describe("#520 response-cache hit session refresh", () => {
   test("C1: a warm hit refreshes the binding so it survives the idle timeout", async () => {
@@ -325,6 +357,56 @@ describe("#520 response-cache hit session refresh", () => {
       expect(hit.status).toBe(200);
       expect(await hit.text()).toBe(missText);
       expect(chatCompletionCalls(upstream)).toBe(1);
+    } finally {
+      runtime.cleanup();
+    }
+  });
+  test("G4: a warm hit served via a peer route does not refresh a local binding (mutation: drop the isPeer guard)", async () => {
+    const runtime = makeTempRuntime();
+    try {
+      const upstream = installConditionalChatUpstream();
+      openaiProxy.__setOpenAIProxyClusterRoutingForTests(peerClusterRouting());
+      let nowMs = 0;
+      const sessions = createSessionRefcounts({
+        idleTimeoutMs: IDLE_TIMEOUT_MS,
+        now: () => nowMs,
+      });
+      setSessionRefcountRegistry(sessions);
+      setResidencyLeaseRegistry(createResidencyLeases());
+      const body = chatBody(PEER_MODEL);
+
+      // A local binding whose workload id equals the peer route's workload,
+      // so only the isPeer guard keeps the peer-served hit from touching it.
+      const bound = sessions.acquire("s1", PEER_WORKLOAD);
+      expect(bound.ok).toBe(true);
+      if (bound.ok) {
+        sessions.release("s1", bound.generation);
+      }
+
+      const seed = await openaiProxy.proxyOpenAI(chatRequest(body), runtime.env);
+      expect(seed.status).toBe(200);
+      const seedText = await seed.text();
+      expect(chatCompletionCalls(upstream)).toBe(1);
+
+      nowMs = 8_000;
+      const hit = await openaiProxy.proxyOpenAI(chatRequest(body, "s1"), runtime.env);
+      expect(hit.status).toBe(200);
+      expect(await hit.text()).toBe(seedText);
+      expect(chatCompletionCalls(upstream)).toBe(1);
+      expect(openaiProxy.__getOpenAIProxyResponseCacheHitTotalForTests(runtime.env)).toBe(1);
+
+      expect(sessionSnapshot(sessions).sessions).toEqual([
+        {
+          sessionId: "s1",
+          workload: PEER_WORKLOAD,
+          refs: 0,
+          idleMs: 8_000,
+          expiresInMs: IDLE_TIMEOUT_MS - 8_000,
+        },
+      ]);
+
+      nowMs = 15_000;
+      expect(sessions.activeSessions(PEER_WORKLOAD)).toEqual([]);
     } finally {
       runtime.cleanup();
     }
