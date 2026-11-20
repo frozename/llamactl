@@ -706,3 +706,56 @@ gateway (`createPerfBenchSuiteRunner`,
 `packages/cli/src/commands/bench-schedule.ts`). For c2/c4 evidence on an
 arm, run `llamactl eval perf` against the engine's own URL with `--slots
 <n>`, or with the default `llamacpp` engine so `/props` is probed.
+
+### Comparing perf runs for an arm
+
+`perf.sqlite` rows from `llamactl eval perf` and from scheduled suites can
+be compared run against run with the perf diff script (`perfDiffMain`,
+`packages/eval/src/perf/diff.ts`, #663). There is no `llamactl` verb for
+it: `llamactl eval` has only the `run`, `report`, `leaderboard` and `perf`
+subcommands (`runEval`, `packages/cli/src/commands/eval.ts`). Run it from
+the repo root. The synopsis is copied verbatim from the script's header
+comment:
+
+```text
+bun packages/eval/src/perf/diff.ts --base <run_id> --candidate <run_id> \
+  [--db <path>] [--model <name>] [--format md|json] [--tolerance <fraction>]
+```
+
+`--base` and `--candidate` are required; without either the script exits 1
+with `perf-diff: --base and --candidate are required`. `--db` defaults to
+`perf.sqlite` under `eval/` in the llamactl home (`defaultPerfDbPath`,
+`packages/eval/src/perf/diff.ts`), the same file `eval perf` and `bench
+schedule` suites write. The store is opened read-only, so a diff never
+writes to it, and a missing file exits 1 with `perf-diff: db not found at
+<path>`. A run id with no rows exits 2 with `perf-diff: no perf rows for
+run '<id>'`. A run that holds more than one model exits 1 with
+`perf-diff: run '<id>' holds more than one model; pass --model <name>`,
+and `--model` then filters both runs. Base and candidate may be different
+arms or engines. The Markdown output starts with `baseline: <run_id>
+(<model>, <engine>)` and `candidate: <run_id> (<model>, <engine>)` lines
+(`renderPerfDiffMd`), and `--format json` prints `baseline`, `candidate`
+and `diffs` (`renderPerfDiffJson`).
+
+Rows are matched on suite and metric name (`diffPerfRuns`,
+`packages/eval/src/perf/diff.ts`). Each metric's direction comes from
+`PERF_METRIC_HIGHER_IS_BETTER`: higher is better for `prefill_4k_tps`,
+`prefill_16k_tps`, `prefill_32k_tps`, `prefill_64k_tps`, `decode_tps`,
+`spec_acceptance`, `c1_tps`, `c2_tps` and `c4_tps`; lower is better for
+`load_cold_ms`, `load_warm_ms`, `ttft_ms`, `ssd_read_bytes`,
+`ssd_write_bytes`, `peak_rss_bytes` and `peak_gtt_bytes`. A metric with no
+direction is reported `unavailable` with `no direction for metric <name>`.
+The verdicts are `improved`, `regressed`, `unchanged` and `unavailable`.
+
+`--tolerance <fraction>` defaults to 0 and must be a finite number >= 0.
+It is a fraction of the baseline value, not an absolute delta: a change no
+larger than `abs(baseline) * <fraction>` is `unchanged` (`compareMetric`,
+`packages/eval/src/matrix/diff.ts`). When either side is `unavailable`,
+including a metric missing from one run (`missing in baseline` or `missing
+in candidate`), the verdict is `unavailable` with both sides' reasons,
+never `regressed`.
+
+The script exits 3 when any metric is `regressed` and 0 otherwise. An
+`unavailable` metric never counts as a regression, so exit 0 does not mean
+every metric was measured: read the verdict column. The diff compares perf
+metrics only, so the promotion cells in the table above stay `unavailable`.
