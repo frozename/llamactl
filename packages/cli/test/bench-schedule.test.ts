@@ -1186,7 +1186,7 @@ describe("#521 scheduled suite slots", () => {
 
   test("add refuses --slots values that are not positive integers", async () => {
     // Kills: missing positive-integer validation for --slots.
-    for (const bad of ["0", "abc", "1.5"]) {
+    for (const bad of ["0", "abc", "1.5", "1e2", "0x4", "4.0"]) {
       const calls = installSlotsAddCaller();
       const { result, stderr } = await captureProcessStreams(() =>
         benchCmd.runBench([
