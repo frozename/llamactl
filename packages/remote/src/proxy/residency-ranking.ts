@@ -22,11 +22,26 @@
  * - peers are never marked (only ads owned by `nodeId` qualify);
  * - an unknown or errored store marks nothing;
  * - the store is read only when a ranking knob is nonzero.
+ *
+ * Part of #518 (c): the drain signal folds the profile-switch drain budget
+ * (`DEFAULT_PROFILE_SWITCH_TIMEOUTS.drainMs`) into the ranker's `drainMs`
+ * callback — a local candidate without a `ready` lifecycle row whose
+ * declared-exclusive residency group is held by another member in an
+ * occupying state is charged the switch cost once. Its limits:
+ * - peers are never charged (only ads owned by `nodeId` qualify);
+ * - only `RESIDENCY_GROUPS` groups declared `exclusive: true` count;
+ * - only `loading`, `warming` or `ready` occupants hold a group
+ *   (`isOccupyingResidencyState`);
+ * - nothing is charged on an absent or errored store;
+ * - it is emitted only alongside the resident set, since the ranker's
+ *   `drainCostMs` is inert without `signals.resident`.
  */
 import type { routingRanking } from "@llamactl/core";
 import type { ResidencyPolicy } from "@llamactl/core/residency/admission";
 
 import { resolveResidencyPolicy } from "@llamactl/core/residency/admission";
+import { isOccupyingResidencyState, RESIDENCY_GROUPS } from "@llamactl/core/residency/lifecycle";
+import { DEFAULT_PROFILE_SWITCH_TIMEOUTS } from "@llamactl/core/residency/planner";
 
 import type { ResidencyStateRecord, ResidencyStoreSnapshot } from "../residency/store.js";
 import type { NodeRun, NodeRunResidency } from "../workload/noderun-schema.js";
@@ -77,6 +92,70 @@ function operationalStates(
   return states;
 }
 
+const EXCLUSIVE_RESIDENCY_GROUPS: ReadonlySet<string> = new Set(
+  RESIDENCY_GROUPS.filter((group) => group.exclusive).map((group) => group.name),
+);
+
+function exclusiveGroup(group: string | null): string | undefined {
+  return group !== null && EXCLUSIVE_RESIDENCY_GROUPS.has(group) ? group : undefined;
+}
+
+function occupyingModelsByGroup(
+  lifecycle: readonly ResidencyStateRecord[],
+): Map<string, Set<string>> {
+  const byGroup = new Map<string, Set<string>>();
+  for (const row of lifecycle) {
+    const group = exclusiveGroup(row.group);
+    if (group === undefined || !isOccupyingResidencyState(row.state)) continue;
+    const models = byGroup.get(group) ?? new Set<string>();
+    models.add(row.model);
+    byGroup.set(group, models);
+  }
+  return byGroup;
+}
+
+function heldByOtherMember(occupants: ReadonlySet<string> | undefined, model: string): boolean {
+  if (occupants === undefined) return false;
+  for (const occupant of occupants) {
+    if (occupant !== model) return true;
+  }
+  return false;
+}
+
+function chargedDeploymentIds(input: {
+  lifecycle: readonly ResidencyStateRecord[];
+  nodeId: string;
+  ready: ReadonlySet<string>;
+  occupantsByGroup: ReadonlyMap<string, ReadonlySet<string>>;
+}): Set<string> {
+  const charged = new Set<string>();
+  for (const row of input.lifecycle) {
+    const group = exclusiveGroup(row.group);
+    if (group === undefined) continue;
+    const deploymentId = residentDeploymentId(input.nodeId, row.model);
+    if (input.ready.has(deploymentId)) continue;
+    if (heldByOtherMember(input.occupantsByGroup.get(group), row.model)) {
+      charged.add(deploymentId);
+    }
+  }
+  return charged;
+}
+
+function exclusiveDrainSignal(input: {
+  lifecycle: readonly ResidencyStateRecord[];
+  nodeId: string;
+  ready: ReadonlySet<string>;
+}): routingRanking.RankingSignals["drainMs"] {
+  const occupantsByGroup = occupyingModelsByGroup(input.lifecycle);
+  const charged = chargedDeploymentIds({ ...input, occupantsByGroup });
+  if (charged.size === 0) return undefined;
+  const drainMs: NonNullable<routingRanking.RankingSignals["drainMs"]> = (ad) =>
+    ad.ownerNodeId === input.nodeId && charged.has(ad.deploymentId)
+      ? DEFAULT_PROFILE_SWITCH_TIMEOUTS.drainMs
+      : undefined;
+  return drainMs;
+}
+
 function rankingKnobsActive(resolved: ResidencyPolicy): boolean {
   return (
     resolved.residentPreference !== 0 ||
@@ -107,6 +186,16 @@ export interface ResidencyRankingInputsResult {
   signals: routingRanking.RankingSignals;
 }
 
+function operationalStateSignal(
+  lifecycle: readonly ResidencyStateRecord[],
+  nodeId: string,
+): routingRanking.RankingSignals["operationalState"] {
+  const states = operationalStates(lifecycle, nodeId);
+  if (states.size === 0) return undefined;
+  return (ad): routingRanking.OperationalState | undefined =>
+    ad.ownerNodeId === nodeId ? states.get(ad.deploymentId) : undefined;
+}
+
 /**
  * Map a NodeRun's spec.residency plus a residency-store snapshot to the
  * ranking policy and ranking signals. The policy is the raw NodeRun value
@@ -134,6 +223,15 @@ export interface ResidencyRankingInputsResult {
  * row is marked, so unknown inputs keep `{}` signals. Peers are never
  * marked, an absent or errored store marks nothing, and the store is read
  * only when a ranking knob is nonzero.
+ *
+ * The drain signal (Part of #518 (c)) charges `DEFAULT_PROFILE_SWITCH_TIMEOUTS.drainMs`
+ * once to a local candidate without a `ready` lifecycle row whose
+ * declared-exclusive residency group is held by another member in an
+ * occupying state (`loading`/`warming`/`ready`). It is emitted only
+ * alongside the resident set (residentPreference or coldLoadPenaltyMs
+ * nonzero), since the ranker's `drainCostMs` is inert without
+ * `signals.resident`; peers are never charged, an absent or errored store
+ * charges nothing, and a candidate is never dropped — ranking only orders.
  */
 export function residencyRankingInputs(input: {
   residency: NodeRunResidency | null | undefined;
@@ -150,6 +248,10 @@ export function residencyRankingInputs(input: {
     return { policy, signals: {} };
   }
   const ready = readyDeploymentIds(lifecycle, input.nodeId);
+  const residentSetEmitted = resolved.residentPreference !== 0 || resolved.coldLoadPenaltyMs !== 0;
+  const drainMs = residentSetEmitted
+    ? exclusiveDrainSignal({ lifecycle, nodeId: input.nodeId, ready })
+    : undefined;
   const cooldownUntil = switchCooldownSignal({
     cooldownMs: resolved.switchCooldownSeconds * 1000,
     nodeName: input.nodeName,
@@ -157,18 +259,12 @@ export function residencyRankingInputs(input: {
     nodeId: input.nodeId,
     ready,
   });
-  const states = operationalStates(lifecycle, input.nodeId);
-  const operationalState: routingRanking.RankingSignals["operationalState"] =
-    states.size === 0
-      ? undefined
-      : (ad): routingRanking.OperationalState | undefined =>
-          ad.ownerNodeId === input.nodeId ? states.get(ad.deploymentId) : undefined;
+  const operationalState = operationalStateSignal(lifecycle, input.nodeId);
   const signals: routingRanking.RankingSignals = {
-    ...(resolved.residentPreference !== 0 || resolved.coldLoadPenaltyMs !== 0
-      ? { resident: ready }
-      : {}),
+    ...(residentSetEmitted ? { resident: ready } : {}),
     ...(cooldownUntil === undefined ? {} : { cooldownUntil }),
     ...(operationalState === undefined ? {} : { operationalState }),
+    ...(drainMs === undefined ? {} : { drainMs }),
   };
   return { policy, signals };
 }
