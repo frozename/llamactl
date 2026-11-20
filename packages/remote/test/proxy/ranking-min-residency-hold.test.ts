@@ -369,6 +369,66 @@ describe("#518 min-residency hold in unified ranking", () => {
     expect(cooldownFor(1_550_000, 0)).toBe(1_610_000);
   });
 
+  test("minResidencySeconds 0 means the hold is absent even when the switch cooldown already ended", () => {
+    // Kills: dropping `if (input.minMs <= 0) return undefined;` from
+    // minResidencyHoldSignal — a zero-length hold would report the
+    // occupant's ready time (NOW) and outrank the expired switch
+    // cooldown instant L + 60_000 = 960_000.
+    const residencyRankingInputs = rankingInputsFn();
+    expect(typeof residencyRankingInputs).toBe("function");
+    if (residencyRankingInputs === undefined) return;
+    expect(RESIDENCY_GROUPS.find((g) => g.name === GROUP)?.exclusive).toBe(true);
+    const L = 900_000;
+    const { signals } = residencyRankingInputs({
+      residency: { minResidencySeconds: 0, switchCooldownSeconds: 60 },
+      nodeId: "local",
+      nodeName: "n1",
+      store: opsStore(
+        [lifecycleRow("w-occ", "ready", GROUP, NOW), lifecycleRow("w-cand", "downloaded", GROUP)],
+        { [profileSwitchOperationKey("n1")]: L },
+      ),
+    });
+    expect(L + 60_000).toBeLessThan(NOW);
+    expect(signals.cooldownUntil?.(wiringAd("w-cand", 0))).toBe(960_000);
+  });
+
+  test("two ready members of one exclusive group never charge each other", () => {
+    // Kills: deleting `if (input.ready.has(deploymentId)) continue;` from
+    // minResidencyHoldSignal — each ready member would be held by the
+    // other's ready time (NOW + 600_000).
+    const residencyRankingInputs = rankingInputsFn();
+    expect(typeof residencyRankingInputs).toBe("function");
+    if (residencyRankingInputs === undefined) return;
+    expect(RESIDENCY_GROUPS.find((g) => g.name === GROUP)?.exclusive).toBe(true);
+    const { signals } = residencyRankingInputs({
+      residency: { minResidencySeconds: 600 },
+      nodeId: "local",
+      nodeName: "n1",
+      store: opsStore([
+        lifecycleRow("w-ready-a", "ready", GROUP, NOW),
+        lifecycleRow("w-ready-b", "ready", GROUP, NOW),
+      ]),
+    });
+    const adA = wiringAd("w-ready-a", 0);
+    const adB = wiringAd("w-ready-b", 1);
+    expect(signals.cooldownUntil?.(adA)).toBeUndefined();
+    expect(signals.cooldownUntil?.(adB)).toBeUndefined();
+
+    const cat = routingCatalog.buildRouteCatalog({
+      routes: [],
+      nodeId: "local",
+      now: NOW,
+      advertisements: [adA, adB],
+    });
+    const candidates = routingCatalog.catalogCandidatesFor(cat, MODEL);
+    expect(candidates).toHaveLength(2);
+    const ranked = routingRanking.rankRouteCandidates(candidates, { now: NOW, signals });
+    expect(ranked).toHaveLength(2);
+    for (const r of ranked) {
+      expect(r.switchCostMs, r.candidate.advertisement.deploymentId).toBe(0);
+    }
+  });
+
   test("the latest-ready occupant sets the hold, and an expired hold still reports its past instant", () => {
     // Kills: taking the first or minimum occupant; clamping the expired
     // hold to now or dropping it.

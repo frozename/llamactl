@@ -82,8 +82,8 @@ export const ResidencyPolicySchema = z
     idleEvictSeconds: z.number().int().nonnegative().optional(),
     /** enforced: refuses residencyPlan and residencyApplyProfile with
      *  MinResidency while a victim's ready lifecycle row is younger than this;
-     *  0 disables. Also feeds the ranker's `cooldownUntil` signal through
-     *  createSharedUnifiedProxy when nonzero (Part of #518) */
+     *  0 disables (Part of #519). Also feeds the ranker's `cooldownUntil`
+     *  signal through createSharedUnifiedProxy when nonzero (Part of #518) */
     minResidencySeconds: z.number().int().nonnegative().optional(),
     /** enforced: refuses residencyPlan and residencyApplyProfile with Cooldown
      *  within this many seconds of the node's last succeeded profile switch
