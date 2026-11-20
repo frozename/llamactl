@@ -297,31 +297,82 @@ function registerCatalogPromote(server: McpServer): void {
       const file = resolved.LOCAL_AI_PRESET_OVERRIDES_FILE;
       const before = presets.readPresetOverrides(file);
       if (dryRun) {
-        const prior = before.find((r) => r.profile === profile && r.preset === preset);
-        const payload = {
-          dryRun: true,
-          file,
-          prior: prior ?? null,
-          next: { profile, preset, rel },
-          message: prior
-            ? `would replace ${prior.rel} with ${rel} for (${profile}, ${preset})`
-            : `would add (${profile}, ${preset}) → ${rel}`,
-        };
+        const payload = promoteDryRunPayload(file, before, profile, preset, rel);
         appendAudit({ server: SERVER_SLUG, tool: "llamactl.catalog.promote", input, dryRun: true });
         return toTextContent(payload);
       }
-      presets.writePresetOverride(profile, preset, rel);
-      const after = presets.readPresetOverrides(file);
+      return promoteWet(input, profile, preset, rel, file);
+    },
+  );
+}
+
+function promoteDryRunPayload(
+  file: string,
+  before: ReturnType<typeof presets.readPresetOverrides>,
+  profile: z.infer<typeof PROFILE_ENUM>,
+  preset: z.infer<typeof PRESET_ENUM>,
+  rel: string,
+): Record<string, unknown> {
+  const prior = before.find((r) => r.profile === profile && r.preset === preset);
+  const refused = presets.presetPromotionRefusal(rel);
+  if (refused !== null) {
+    return {
+      dryRun: true,
+      file,
+      prior: prior ?? null,
+      next: { profile, preset, rel },
+      refused,
+      message: `would refuse (${profile}, ${preset}) → ${rel}: ${refused}`,
+    };
+  }
+  return {
+    dryRun: true,
+    file,
+    prior: prior ?? null,
+    next: { profile, preset, rel },
+    message: prior
+      ? `would replace ${prior.rel} with ${rel} for (${profile}, ${preset})`
+      : `would add (${profile}, ${preset}) → ${rel}`,
+  };
+}
+
+function promoteWet(
+  input: {
+    profile: z.infer<typeof PROFILE_ENUM>;
+    preset: z.infer<typeof PRESET_ENUM>;
+    rel: string;
+    dryRun: boolean;
+  },
+  profile: z.infer<typeof PROFILE_ENUM>,
+  preset: z.infer<typeof PRESET_ENUM>,
+  rel: string,
+  file: string,
+): ReturnType<typeof toTextContent> {
+  try {
+    presets.writePresetOverride(profile, preset, rel);
+  } catch (err) {
+    if (err instanceof presets.ExperimentalPresetPromotionError) {
+      const message = err.message;
       appendAudit({
         server: SERVER_SLUG,
         tool: "llamactl.catalog.promote",
         input,
         dryRun: false,
-        result: { ok: true, rows: after.length },
+        result: { ok: false, error: message },
       });
-      return toTextContent({ ok: true, promotions: after });
-    },
-  );
+      return toTextContent({ ok: false, error: message });
+    }
+    throw err;
+  }
+  const after = presets.readPresetOverrides(file);
+  appendAudit({
+    server: SERVER_SLUG,
+    tool: "llamactl.catalog.promote",
+    input,
+    dryRun: false,
+    result: { ok: true, rows: after.length },
+  });
+  return toTextContent({ ok: true, promotions: after });
 }
 
 function registerCatalogPromoteDelete(server: McpServer): void {
