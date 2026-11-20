@@ -235,11 +235,12 @@ own claim of the apply-profile fence. A workload that is not proven down, for
 example an engine that outlived its agent, keeps its row. The group is not
 wedged forever: before the window elapses an operator stop or
 `llamactl residency force-unload` also clears it. Any nonterminal operation row keeps
-this sweep off, and it fails closed: `evict:` rows have no boot recovery
-yet, so a crashed eviction's nonterminal `evict:` row disables the
-outside-a-switch sweep on every later boot until that row is terminalized;
-until then an operator stop or `llamactl residency force-unload` clears a
-stuck interrupted row, and an `evict:` row does not block either. It is implemented in
+this sweep off. When no profile-switch row is nonterminal, boot recovery first
+finishes `evict:` rows that have made no progress for 30 minutes as `unknown`,
+so a crashed eviction no longer disables the outside-a-switch sweep; a younger
+or malformed `evict:` row still keeps it off, and until then an operator stop or
+`llamactl residency force-unload` clears a stuck interrupted row, and an
+`evict:` row does not block either. It is implemented in
 `runProfileSwitchBootRecovery` (`packages/remote/src/residency/boot-recovery.ts`)
 with `failInterruptedLifecycleRows`. Per-row write failures and refusals
 are contained and counted without stopping the sweep; a failed row
