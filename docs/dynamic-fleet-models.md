@@ -724,9 +724,12 @@ concurrency <level>` for that level (`runConcurrencyLevel`,
 
 `perf.sqlite` rows from `llamactl eval perf` and from scheduled suites can
 be compared run against run with the perf diff script (`perfDiffMain`,
-`packages/eval/src/perf/diff.ts`, #663). There is no `llamactl` verb for
-it: `llamactl eval` has only the `run`, `report`, `leaderboard` and `perf`
-subcommands (`runEval`, `packages/cli/src/commands/eval.ts`). Run it from
+`packages/eval/src/perf/diff.ts`, #663). `llamactl eval perf-diff` exposes it
+on an installed CLI: `llamactl eval` has the `run`, `report`, `leaderboard`,
+`perf` and `perf-diff` subcommands (`runEval`,
+`packages/cli/src/commands/eval.ts`), and `perf-diff` delegates to
+`perfDiffMain`, so it takes the same flags and gives the same exit codes and
+`perf-diff:` messages as the script below. Run it from
 the repo root. The synopsis is copied verbatim from the script's header
 comment:
 
