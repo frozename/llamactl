@@ -3857,6 +3857,33 @@ function releaseUnhandedResidency(
 type ProxySessionHandle = { ok: true; release: (() => void) | null; cancel: (() => void) | null };
 
 /**
+ * #520: a response-cache hit returns before session acquisition; refresh the
+ * binding it served so a warm cache does not idle-expire it. Takes no ref and
+ * no lease; only a session already bound to the hit's local workload is
+ * touched; a peer route or a throwing registry is a no-op. Mirrors the
+ * acquire-path gate (trimmedSessionId && sessionRegistry && leaseRegistry).
+ */
+function touchSessionOnCacheHit(
+  sessionRegistry: SessionRefcounts | null,
+  leaseRegistry: ResidencyLeases | null,
+  sessionId: string | null,
+  route: RoutedEntry | undefined,
+): void {
+  if (sessionId === null || sessionRegistry === null || leaseRegistry === null) return;
+  if (route === undefined || route.isPeer === true) return;
+  if (sessionId.length > MAX_SESSION_ID_LENGTH || !SESSION_ID_PATTERN.test(sessionId)) return;
+  try {
+    if (sessionRegistry.activeSessions(route.workload).includes(sessionId)) {
+      sessionRegistry.touch(sessionId);
+    }
+  } catch (error: unknown) {
+    console.warn(
+      `[openaiProxy] session touch on response-cache hit failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+/**
  * #278 (DF-05): validate and acquire a session, returning a 400 on
  * validation failure, a 409 on affinity conflict, or a `{ ok, release,
  * cancel }` handle for successful acquires. `release` ends the acquire
@@ -3983,7 +4010,9 @@ function attachSessionAffinity(
  * and acquisition refuses with 409 (not a warming 503). Bound sessions stay on
  * their experimental workload: affinity wins over #518 experimental ordering
  * and fallback exclusion, but cannot resurrect routes that orderedProxyRoutes
- * dropped.
+ * dropped. A response-cache hit returns before acquisition; it refreshes the
+ * binding it served through touchSessionOnCacheHit so a warm cache does not
+ * idle-expire the session, taking no ref and no lease.
  */
 export async function proxyOpenAI(
   req: Request,
@@ -4016,6 +4045,12 @@ export async function proxyOpenAI(
     warnResponseCacheStageFailure("lookup", error);
   }
   if (withResponseCacheLookup.responseCacheHit) {
+    touchSessionOnCacheHit(
+      sessionRegistry,
+      leaseRegistry,
+      trimmedSessionId,
+      withResponseCacheLookup.route,
+    );
     return withResponseCacheLookup.responseCacheHit;
   }
 
