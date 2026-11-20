@@ -5042,7 +5042,8 @@ export const router = t.router({
       }),
     )
     .mutation(async ({ input }) => {
-      const { loadComposite, deleteComposite } = await import("./composite/store.js");
+      const { loadComposite, deleteComposite, saveComposite } =
+        await import("./composite/store.js");
       const { topologicalOrder, reverseOrder } = await import("./composite/dag.js");
       const manifest = loadComposite(input.name);
       if (!manifest) {
@@ -5071,14 +5072,36 @@ export const router = t.router({
       });
       // Best-effort cleanup of the on-disk YAML. Destroy is the only
       // place the file gets removed; apply-failures leave a status-
-      // tagged record so operators can investigate.
-      deleteComposite(input.name);
+      // tagged record so operators can investigate. A stop-fence
+      // refusal keeps the YAML so the destroy can be retried after
+      // `residency release-session` or `residency force-unload` (#520).
+      // The kept YAML records the partial destroy in its status: phase
+      // Degraded, one Failed component per destroy error, so a retry is
+      // explainable from `composite get`.
+      if (result.manifestPreserved) {
+        const appliedAt = manifest.status?.appliedAt;
+        saveComposite({
+          ...manifest,
+          status: {
+            phase: "Degraded",
+            ...(appliedAt !== undefined ? { appliedAt } : {}),
+            components: result.errors.map((e) => ({
+              ref: e.ref,
+              state: "Failed" as const,
+              message: e.message,
+            })),
+          },
+        });
+      } else {
+        deleteComposite(input.name);
+      }
       return {
         dryRun: false as const,
         ok: result.ok,
         removed: result.removed,
         errors: result.errors,
         purgedVolumes: input.purgeVolumes,
+        manifestPreserved: result.manifestPreserved,
       };
     }),
 

@@ -723,12 +723,22 @@ export interface CompositeDestroyResult {
   ok: boolean;
   removed: ComponentRef[];
   errors: { ref: ComponentRef; message: string }[];
+  /**
+   * True when at least one workload component's node stop fence refused
+   * the stop (#520). The caller must then keep the composite manifest on
+   * disk so the destroy can be retried after the fence is released.
+   */
+  manifestPreserved: boolean;
 }
 
 /**
  * Tear down every component of a composite. Walks the DAG in
  * reverse order. Continues on error — the goal is to remove as
  * much as possible so a second destroy attempt isn't needed.
+ * When a workload's node stop fence refuses the stop, the refusal is
+ * recorded as that component's error, `manifestPreserved` comes back
+ * true so the caller keeps the composite YAML for a retry, and the
+ * remaining components are still torn down (#520).
  */
 export async function destroyComposite(
   opts: CompositeDestroyOptions,
@@ -736,6 +746,7 @@ export async function destroyComposite(
   const order = reverseOrder(topologicalOrder(opts.manifest.spec));
   const removed: ComponentRef[] = [];
   const errors: { ref: ComponentRef; message: string }[] = [];
+  const state = { manifestPreserved: false };
 
   // If the backend owns a composite-level boundary (k8s namespace,
   // future resource group, ...), prefer that — a single call lets
@@ -747,11 +758,11 @@ export async function destroyComposite(
   if (hasBoundary) {
     await destroyServicesViaBoundary(opts, order, removed, errors);
   }
-  await destroyComponentsInOrder(order, opts, removed, errors, hasBoundary);
+  await destroyComponentsInOrder(order, opts, removed, errors, hasBoundary, state);
 
   await cleanupGatewayCatalogs(opts.manifest.metadata.name);
 
-  return { ok: errors.length === 0, removed, errors };
+  return { ok: errors.length === 0, removed, errors, manifestPreserved: state.manifestPreserved };
 }
 
 async function destroyServicesViaBoundary(
@@ -785,6 +796,7 @@ async function destroyComponentsInOrder(
   removed: ComponentRef[],
   errors: { ref: ComponentRef; message: string }[],
   skipServices: boolean,
+  state: { manifestPreserved: boolean },
 ): Promise<void> {
   for (const ref of order) {
     if (skipServices && ref.kind === "service") continue;
@@ -793,6 +805,9 @@ async function destroyComponentsInOrder(
       removed.push(ref);
     } catch (err) {
       errors.push({ ref, message: toErrorMessage(err) });
+      if (err instanceof CompositeWorkloadStopRefused) {
+        state.manifestPreserved = true;
+      }
     }
   }
 }
@@ -882,8 +897,32 @@ async function destroyWorkloadComponent(
   // metadata.name = spec.node, so the running llama-server is keyed by the
   // node, not the composite name. `manifest.metadata.name` would target a
   // nonexistent key (core stopServer no-ops) and orphan the GPU process.
-  await client.serverStop.mutate({ workload: manifestWorkload.node, graceSeconds: 10 });
+  const outcome = await client.serverStop.mutate({
+    workload: manifestWorkload.node,
+    graceSeconds: 10,
+  });
+  const refusal = compositeStopRefusal(manifestWorkload.node, outcome);
+  if (refusal !== null) throw new CompositeWorkloadStopRefused(refusal);
 }
+
+// A stop fence refuses with `stopped: false` plus a structured `refused`
+// detail (#520). A bare `stopped: false` without `refused` is NOT a fence
+// refusal — remaining scope. Formatting mirrors modelRunStopRefusalLine
+// (cli workload.ts) and serverStopDeleteRefusal (router.ts).
+function compositeStopRefusal(node: string, outcome: unknown): string | null {
+  if (outcome === null || typeof outcome !== "object") return null;
+  const o = outcome as { stopped?: unknown; refused?: unknown };
+  if (o.stopped !== false) return null;
+  if (o.refused === null || typeof o.refused !== "object") return null;
+  const refused = o.refused as { reason?: unknown; active?: unknown };
+  if (typeof refused.reason !== "string") return null;
+  const ids = Array.isArray(refused.active)
+    ? refused.active.filter((x): x is string => typeof x === "string")
+    : [];
+  return `serverStop on ${node} refused (${refused.reason}${ids.length > 0 ? `: ${ids.join(", ")}` : ""}); composite manifest preserved`;
+}
+
+class CompositeWorkloadStopRefused extends Error {}
 
 function destroyRagComponent(ref: ComponentRef, opts: CompositeDestroyOptions): void {
   const cfg = loadConfig(opts.configPath);
