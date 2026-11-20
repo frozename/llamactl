@@ -30,6 +30,8 @@
  * occupying state is charged the switch cost once. Its limits:
  * - peers are never charged (only ads owned by `nodeId` qualify);
  * - only `RESIDENCY_GROUPS` groups declared `exclusive: true` count;
+ * - only a candidate with a lifecycle row tagged with the group is
+ *   charged; a candidate with no lifecycle row is never charged;
  * - only `loading`, `warming` or `ready` occupants hold a group
  *   (`isOccupyingResidencyState`);
  * - nothing is charged on an absent or errored store;
@@ -230,8 +232,10 @@ function operationalStateSignal(
  * occupying state (`loading`/`warming`/`ready`). It is emitted only
  * alongside the resident set (residentPreference or coldLoadPenaltyMs
  * nonzero), since the ranker's `drainCostMs` is inert without
- * `signals.resident`; peers are never charged, an absent or errored store
- * charges nothing, and a candidate is never dropped — ranking only orders.
+ * `signals.resident`; only a candidate with a lifecycle row tagged with the
+ * group is charged (a candidate with no lifecycle row is never charged),
+ * peers are never charged, an absent or errored store charges nothing, and
+ * a candidate is never dropped — ranking only orders.
  */
 export function residencyRankingInputs(input: {
   residency: NodeRunResidency | null | undefined;

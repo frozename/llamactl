@@ -282,8 +282,7 @@ function sharedRig(
 
 describe("#518 exclusive-group drain in unified ranking", () => {
   test("charges the drain budget to a cold local member of an occupied exclusive group", () => {
-    // Kills: no drainMs producer; charging the resident occupant; charging
-    // ungrouped rows; skipping the ownerNodeId check.
+    // Kills: no drainMs producer; charging ungrouped rows.
     const residencyRankingInputs = rankingInputsFn();
     expect(typeof residencyRankingInputs).toBe("function");
     if (residencyRankingInputs === undefined) return;
@@ -311,9 +310,78 @@ describe("#518 exclusive-group drain in unified ranking", () => {
     ).toBeUndefined();
   });
 
+  test("a ready member is never charged even when another member occupies its group", () => {
+    // Kills: charging the resident occupant (dropping the ready-set skip in
+    // chargedDeploymentIds) — w-ready is held by the loading w-load and is
+    // charged unless ready rows are skipped.
+    const residencyRankingInputs = rankingInputsFn();
+    expect(typeof residencyRankingInputs).toBe("function");
+    if (residencyRankingInputs === undefined) return;
+    expect(RESIDENCY_GROUPS.find((g) => g.name === GROUP)?.exclusive).toBe(true);
+    const { signals } = residencyRankingInputs({
+      residency: { coldLoadPenaltyMs: 1 },
+      nodeId: "local",
+      nodeName: "n1",
+      store: opsStore([
+        lifecycleRow("w-ready", "ready", GROUP),
+        lifecycleRow("w-load", "loading", GROUP),
+        lifecycleRow("w-warm", "warming", GROUP),
+      ]),
+    });
+    const drainMs = signals.drainMs;
+    expect(typeof drainMs).toBe("function");
+    if (drainMs === undefined) return;
+    expect(drainMs(wiringAd("w-load", 0))).toBe(DEFAULT_PROFILE_SWITCH_TIMEOUTS.drainMs);
+    expect(drainMs(wiringAd("w-warm", 0))).toBe(DEFAULT_PROFILE_SWITCH_TIMEOUTS.drainMs);
+    expect(drainMs(wiringAd("w-ready", 0))).toBeUndefined();
+  });
+
+  test("a peer ad whose deploymentId collides with a charged local id is not charged", () => {
+    // Kills: skipping the ownerNodeId check in the drainMs callback — the
+    // peer ad carries the charged local id deploy/local/w1.
+    const residencyRankingInputs = rankingInputsFn();
+    expect(typeof residencyRankingInputs).toBe("function");
+    if (residencyRankingInputs === undefined) return;
+    expect(RESIDENCY_GROUPS.find((g) => g.name === GROUP)?.exclusive).toBe(true);
+    const { signals } = residencyRankingInputs({
+      residency: { coldLoadPenaltyMs: 1 },
+      nodeId: "local",
+      nodeName: "n1",
+      store: opsStore([
+        lifecycleRow("w-big", "ready", GROUP),
+        lifecycleRow("w1", "downloaded", GROUP),
+      ]),
+    });
+    const drainMs = signals.drainMs;
+    expect(typeof drainMs).toBe("function");
+    if (drainMs === undefined) return;
+    expect(drainMs(wiringAd("w1", 0))).toBe(DEFAULT_PROFILE_SWITCH_TIMEOUTS.drainMs);
+    const peer = wiringAd("w1", 0, { ownerNodeId: "peer-a" });
+    expect(peer.deploymentId).toBe("deploy/local/w1");
+    expect(drainMs(peer)).toBeUndefined();
+  });
+
+  test("the only occupant of its group is never charged for holding it", () => {
+    // Kills: heldByOtherMember counting the candidate itself (replacing
+    // `if (occupant !== model) return true;` with `return true`) — a lone
+    // loading w1 would be charged a drain against itself.
+    const residencyRankingInputs = rankingInputsFn();
+    expect(typeof residencyRankingInputs).toBe("function");
+    if (residencyRankingInputs === undefined) return;
+    expect(RESIDENCY_GROUPS.find((g) => g.name === GROUP)?.exclusive).toBe(true);
+    const { signals } = residencyRankingInputs({
+      residency: { coldLoadPenaltyMs: 1 },
+      nodeId: "local",
+      nodeName: "n1",
+      store: opsStore([lifecycleRow("w1", "loading", GROUP)]),
+    });
+    expect(signals.drainMs?.(wiringAd("w1", 0))).toBeUndefined();
+    expect("drainMs" in signals).toBe(false);
+  });
+
   test("occupancy follows isOccupyingResidencyState and exclusivity follows RESIDENCY_GROUPS", () => {
-    // Kills: treating any non-downloaded state as occupying; ignoring the
-    // `exclusive` flag or undeclared groups; emitting the key when nothing
+    // Kills: treating any non-downloaded state as occupying; counting
+    // groups undeclared in RESIDENCY_GROUPS; emitting the key when nothing
     // is charged, which would break the toEqual({}) pins in
     // residency-ranking-wiring.test.ts:293.
     const residencyRankingInputs = rankingInputsFn();
@@ -359,8 +427,7 @@ describe("#518 exclusive-group drain in unified ranking", () => {
   });
 
   test("drain is emitted only alongside the resident set", () => {
-    // Kills: emitting drain without the resident set; reading the store
-    // with no knob.
+    // Kills: emitting drain without the resident set.
     const residencyRankingInputs = rankingInputsFn();
     expect(typeof residencyRankingInputs).toBe("function");
     if (residencyRankingInputs === undefined) return;
