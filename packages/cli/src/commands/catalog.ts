@@ -390,7 +390,15 @@ async function executePromote(
   rel: string,
 ): Promise<boolean> {
   if (isLocalDispatch()) {
-    presets.writePresetOverride(normalized, preset, rel);
+    try {
+      presets.writePresetOverride(normalized, preset, rel);
+    } catch (err) {
+      if (err instanceof presets.ExperimentalPresetPromotionError) {
+        process.stderr.write(`catalog promote: ${err.message}\n`);
+        return false;
+      }
+      throw err;
+    }
     return true;
   }
   try {
