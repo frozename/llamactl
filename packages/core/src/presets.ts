@@ -5,6 +5,10 @@ import { atomicWriteFile } from "./fsAtomic.js";
 import { normalizeProfile } from "./profile.js";
 import { readFileSync, unlinkSync } from "./safe-fs.js";
 import { PresetOverride, presetOverrideFields, splitTsvRow } from "./schemas.js";
+// Import cycle: presets → workloadRuntime → server → target → presets. It is
+// safe only because catalogQualificationStages is used inside function bodies,
+// never at import time. Part of #518.
+import { catalogQualificationStages } from "./workloadRuntime.js";
 
 export type PresetName = "best" | "vision" | "balanced" | "fast";
 
@@ -148,10 +152,40 @@ function formatIso(date: Date = new Date()): string {
 }
 
 /**
+ * Refusal message when `rel` is staged experimental in the catalog
+ * (builtin rows, custom rows overriding builtins, and pin overrides all
+ * flow through `catalogQualificationStages`), or `null` when the rel may
+ * be promoted. Part of #518.
+ */
+export function presetPromotionRefusal(
+  rel: string,
+  env: NodeJS.ProcessEnv = process.env,
+  resolved = resolveEnv(env),
+): string | null {
+  if (catalogQualificationStages(resolved).get(rel) === "experimental") {
+    return `model '${rel}' is experimental (#518): experimental models are served only on an exact model pin and never as a preset default`;
+  }
+  return null;
+}
+
+/** Thrown by `writePresetOverride` when the rel is experimental. Part of #518. */
+export class ExperimentalPresetPromotionError extends Error {
+  readonly rel: string;
+  constructor(message: string, rel: string) {
+    super(message);
+    this.name = "ExperimentalPresetPromotionError";
+    this.rel = rel;
+  }
+}
+
+/**
  * Write a preset override row. If an existing row matches
  * `(profile, preset)` it is replaced in-place; otherwise the row is
  * appended. File write is atomic via `atomicWriteFile` so concurrent
  * readers never see a partial update.
+ *
+ * Refuses an experimental rel before touching disk, throwing
+ * `ExperimentalPresetPromotionError`. Part of #518.
  */
 export function writePresetOverride(
   profile: MachineProfile,
@@ -160,6 +194,10 @@ export function writePresetOverride(
   env: NodeJS.ProcessEnv = process.env,
 ): void {
   const resolved = resolveEnv(env);
+  const refusal = presetPromotionRefusal(rel, env, resolved);
+  if (refusal !== null) {
+    throw new ExperimentalPresetPromotionError(refusal, rel);
+  }
   const file = resolved.LOCAL_AI_PRESET_OVERRIDES_FILE;
   const existing = readPresetOverrides(file);
   const updatedAt = formatIso();

@@ -3271,7 +3271,14 @@ export const router = t.router({
       }),
     )
     .mutation(({ input }) => {
-      presets.writePresetOverride(input.profile, input.preset, input.rel);
+      try {
+        presets.writePresetOverride(input.profile, input.preset, input.rel);
+      } catch (err) {
+        if (err instanceof presets.ExperimentalPresetPromotionError) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: err.message });
+        }
+        throw err;
+      }
       const resolved = envMod.resolveEnv();
       return presets.readPresetOverrides(resolved.LOCAL_AI_PRESET_OVERRIDES_FILE);
     }),
