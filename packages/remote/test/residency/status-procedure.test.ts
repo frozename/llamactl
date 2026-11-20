@@ -185,6 +185,18 @@ type ResidencyStatus = {
         cooldownActive: boolean;
         workloads: unknown[];
       };
+  ranking?:
+    | { status: "disabled"; scope: "serving-process" }
+    | { status: "unavailable"; scope: "serving-process"; reason: string }
+    | {
+        status: "available";
+        scope: "serving-process";
+        advisory: true;
+        residentPreference: number;
+        coldLoadPenaltyMs: number;
+        resident: string[];
+        drainCharged: string[];
+      };
   leases?: LeasesSection;
   omlxNative: {
     scope: "serving-process";
@@ -564,6 +576,7 @@ describe("buildResidencyStatus", () => {
       },
       idleEviction: { status: "disabled", scope: "serving-process" },
       switchGates: { status: "disabled", scope: "serving-process" },
+      ranking: { status: "disabled", scope: "serving-process" },
       leases: { status: "unavailable", scope: "serving-process" },
       omlxNative: { scope: "serving-process", workloads: [] },
     });
