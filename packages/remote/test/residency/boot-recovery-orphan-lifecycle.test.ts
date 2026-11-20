@@ -200,15 +200,17 @@ describe("lifecycle rows interrupted outside a switch (Part of #517)", () => {
       { model: "w-failed", states: ["downloaded", "loading", "failed"], atMs: STALE_AT },
     ];
     const seeded = seedOrphanRows(specs);
-    const interrupted = ["qwen-prod", "w-warming", "w-draining", "w-unloading"] as const;
-    const stable = ["w-ready", "w-downloaded", "w-failed"] as const;
+    // #517 ready-row slice: w-ready is stale and proven down, so the
+    // outside-a-switch sweep now fails it alongside the interrupted rows.
+    const swept = ["qwen-prod", "w-warming", "w-draining", "w-unloading", "w-ready"] as const;
+    const stable = ["w-downloaded", "w-failed"] as const;
     const writes: string[] = [];
 
     const summary = runProfileSwitchBootRecovery(recoveryOpts({ writes, isProvenDown: down }));
 
     expect(summary).toEqual(CLEAN_SUMMARY);
-    const rows = readRows([...interrupted, ...stable]);
-    for (const model of interrupted) {
+    const rows = readRows([...swept, ...stable]);
+    for (const model of swept) {
       expect(rows.get(model)).toMatchObject({
         state: "failed",
         version: seeded.get(model)!.version + 1,
@@ -221,7 +223,7 @@ describe("lifecycle rows interrupted outside a switch (Part of #517)", () => {
       expect(rows.get(model)).toEqual(seeded.get(model));
     }
     expect(writes).toEqual([
-      '[residency] lifecycle boot recovery {"failed":4,"recordFailures":0}\n',
+      '[residency] lifecycle boot recovery {"failed":5,"recordFailures":0}\n',
     ]);
     const all = writes.join("");
     for (const name of ["qwen", "z13"]) {
