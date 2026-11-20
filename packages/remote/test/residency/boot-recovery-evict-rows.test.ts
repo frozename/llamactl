@@ -599,6 +599,56 @@ describe("crashed evict: operation rows at boot (Part of #517)", () => {
     expect(currentFence()).toMatchObject({ ownerId: "agent", incarnation: "i1" });
     expect(writes).toEqual([]);
   });
+
+  // kills: dropping `live.stale > 0 &&` from shouldClaimEviction — if another
+  // writer finishes the last stale evict: row between the read-only snapshot
+  // and the in-transaction claim, the claim must be refused: the fence stays
+  // agent/i1 (no bump to the apply-profile owner) and no zero-count eviction
+  // line is logged.
+  test("ER11: a stale evict: row finished before the claim refuses the eviction claim", () => {
+    withCrashedClaim((store, fenceToken) => {
+      seedEvictRow(store, fenceToken, "victim-a", STALE_AT);
+    });
+    const writes: string[] = [];
+
+    runProfileSwitchBootRecovery(
+      recoveryOpts({
+        writes,
+        openStore: (storePath) => {
+          const real = openResidencyOperationStore({ path: storePath });
+          trackedStores.push(real);
+          const realClaimWhen = real.claimOwnershipWhen;
+          real.claimOwnershipWhen = (input, decide): ReturnType<Store["claimOwnershipWhen"]> => {
+            const other = openResidencyOperationStore({ path: storePath });
+            try {
+              const fence = other.currentFence();
+              const op = other.getOperation("op-evict-victim-a");
+              if (fence === null || op === null) {
+                throw new Error("seed guard: expected the agent/i1 fence and the stale row");
+              }
+              const finished = other.finishOperation({
+                fenceToken: fence.fenceToken,
+                operationId: op.operationId,
+                expectedVersion: op.version,
+                nowMs: NOW,
+                outcome: "succeeded",
+              });
+              if (!finished.ok) {
+                throw new Error(`seed guard: finishing the stale row failed: ${finished.reason}`);
+              }
+            } finally {
+              other.close();
+            }
+            return realClaimWhen(input, decide);
+          };
+          return real;
+        },
+      }),
+    );
+
+    expect(currentFence()).toMatchObject({ ownerId: "agent", incarnation: "i1" });
+    expect(writes).toEqual([]);
+  });
 });
 
 describe("recoverEvictionOperationsUnverified (Part of #517)", () => {
