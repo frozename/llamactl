@@ -8,6 +8,7 @@ import {
   type SpawnFn,
   type SpawnStreamFn,
 } from "../../../../packages/remote/src/index.ts";
+import { parsePidLine, pidAlive, readPid } from "../../../../packages/remote/test/pid-file.ts";
 import { librarySpawn, librarySpawnStream } from "../src/library-spawn.ts";
 
 type CliProviderOptions = Parameters<typeof createCliSubprocessProvider>[0];
@@ -36,19 +37,12 @@ function sleepyScript(pidFile: string): string {
   return `echo $$ > ${pidFile}; exec sleep 30`;
 }
 
-function pidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function waitFor(cond: () => boolean, ms = 5_000): Promise<void> {
+async function waitFor(cond: () => boolean, ms = 5_000, label = "condition"): Promise<void> {
   const start = Date.now();
   while (!cond()) {
-    if (Date.now() - start > ms) throw new Error("waitFor: condition not met");
+    if (Date.now() - start > ms) {
+      throw new Error(`waitFor: ${label} not met after ${String(Date.now() - start)} ms`);
+    }
     await new Promise((r) => setTimeout(r, 10));
   }
 }
@@ -144,8 +138,7 @@ describe("createResponse — ProviderExecutionContext", () => {
     const provider = sleepyProvider(pidFile, entries);
     const caller = new AbortController();
     const pending = provider.createResponse(minimalReq, { signal: caller.signal });
-    await waitFor(() => existsSync(pidFile));
-    const pid = Number(readFileSync(pidFile, "utf8").trim());
+    const pid = await readPid(pidFile);
     expect(pidAlive(pid)).toBe(true);
 
     caller.abort();
@@ -167,8 +160,7 @@ describe("createResponse — ProviderExecutionContext", () => {
     const entries: unknown[] = [];
     const provider = sleepyProvider(pidFile, entries);
     const pending = provider.createResponse(minimalReq, { deadline: Date.now() + 150 });
-    await waitFor(() => existsSync(pidFile));
-    const pid = Number(readFileSync(pidFile, "utf8").trim());
+    const pid = await readPid(pidFile);
 
     let thrown: unknown;
     try {
@@ -247,8 +239,7 @@ describe("createResponse — ProviderExecutionContext", () => {
     const entries: unknown[] = [];
     const provider = sleepyProvider(pidFile, entries, { timeoutMs: 150 });
     const pending = provider.createResponse(minimalReq);
-    await waitFor(() => existsSync(pidFile));
-    const pid = Number(readFileSync(pidFile, "utf8").trim());
+    const pid = await readPid(pidFile);
 
     let thrown: unknown;
     try {
@@ -274,8 +265,13 @@ describe("library spawners — pre-aborted signals", () => {
     });
     expect(res.aborted).toBe(true);
     if (existsSync(pidFile)) {
-      const pid = Number(readFileSync(pidFile, "utf8").trim());
-      await waitFor(() => !pidAlive(pid));
+      // The child has exited, so the file is final. It is empty when the kill landed
+      // between the shell's truncating `>` and the echo; then there is no pid to reap.
+      const text = readFileSync(pidFile, "utf8");
+      if (text !== "") {
+        const pid = parsePidLine(text);
+        await waitFor(() => !pidAlive(pid));
+      }
     }
   });
 
@@ -298,101 +294,128 @@ describe("library spawners — pre-aborted signals", () => {
     expect(exited).not.toBeNull();
     expect(exited!.aborted).toBe(true);
     if (existsSync(pidFile)) {
-      const pid = Number(readFileSync(pidFile, "utf8").trim());
-      await waitFor(() => !pidAlive(pid));
+      // The child has exited, so the file is final. It is empty when the kill landed
+      // between the shell's truncating `>` and the echo; then there is no pid to reap.
+      const text = readFileSync(pidFile, "utf8");
+      if (text !== "") {
+        const pid = parsePidLine(text);
+        await waitFor(() => !pidAlive(pid));
+      }
     }
   });
 });
 
 describe("SIGKILL escalation — a child that ignores SIGTERM still dies", () => {
   const GRACE_MS = 40;
+  const HANG_GUARD_MS = 8_000;
+  const REAP_WAIT_MS = 5_000;
+  const ESCALATION_TEST_TIMEOUT_MS = 30_000;
+  // Worst-case budget: readPid 2_000 + hang guard 8_000 + reap 5_000 = 15_000 ms,
+  // 2x headroom under the 30_000 ms test budget; the hang guard is 200x GRACE_MS.
   function trapScript(pidFile: string): string {
     return `trap '' TERM; echo $$ > ${pidFile}; exec sleep 30`;
   }
 
-  test("createResponse: SIGKILL lands within grace; the promise settles", async () => {
-    const pidFile = join(tmp, "pid-sigkill-nonstream");
-    const entries: unknown[] = [];
-    const provider = createCliSubprocessProvider({
-      agentName: "mac-mini",
-      binding: makeBinding({ args: ["-c", trapScript(pidFile)], timeoutMs: 60_000 }),
-      spawn: (argv, o) => librarySpawn(argv, { ...o, killGraceMs: GRACE_MS }),
-      journalWrite: async (e) => {
-        await Promise.resolve();
-        entries.push(e);
-      },
-    });
-    const caller = new AbortController();
-    const pending = provider.createResponse(minimalReq, { signal: caller.signal });
-    await waitFor(() => existsSync(pidFile));
-    const pid = Number(readFileSync(pidFile, "utf8").trim());
-    expect(pidAlive(pid)).toBe(true);
+  test(
+    "createResponse: SIGKILL lands within grace; the promise settles",
+    async () => {
+      const pidFile = join(tmp, "pid-sigkill-nonstream");
+      const entries: unknown[] = [];
+      const provider = createCliSubprocessProvider({
+        agentName: "mac-mini",
+        binding: makeBinding({ args: ["-c", trapScript(pidFile)], timeoutMs: 60_000 }),
+        spawn: (argv, o) => librarySpawn(argv, { ...o, killGraceMs: GRACE_MS }),
+        journalWrite: async (e) => {
+          await Promise.resolve();
+          entries.push(e);
+        },
+      });
+      const caller = new AbortController();
+      const pending = provider.createResponse(minimalReq, { signal: caller.signal });
+      const pid = await readPid(pidFile);
+      expect(pidAlive(pid)).toBe(true);
 
-    caller.abort();
-    const outcome = await Promise.race([
-      pending.then(
-        () => "resolved",
-        (e: unknown) => `rejected:${(e as Error).name}`,
-      ),
-      new Promise<string>((r) => {
-        setTimeout(() => {
-          r("hung");
-        }, 8_000);
-      }),
-    ]);
-    expect(outcome).toBe("rejected:AbortError");
-    await waitFor(() => !pidAlive(pid));
-    expect(entries).toHaveLength(1);
-    expect((entries[0] as Record<string, unknown>)["error_code"]).toBe("aborted");
-  });
-
-  test("streamResponse: SIGKILL lands within grace; the stream settles", async () => {
-    const pidFile = join(tmp, "pid-sigkill-stream");
-    const entries: unknown[] = [];
-    const provider = createCliSubprocessProvider({
-      agentName: "mac-mini",
-      binding: {
-        name: "claude-pro",
-        preset: "claude",
-        command: "/bin/sh",
-        args: ["-c", trapScript(pidFile)],
-        format: "text",
-        timeoutMs: 60_000,
-        advertisedModels: [],
-        capabilities: ["reasoning"],
-      },
-      spawnStream: (argv, o) => librarySpawnStream(argv, { ...o, killGraceMs: GRACE_MS }),
-      journalWrite: async (e) => {
-        await Promise.resolve();
-        entries.push(e);
-      },
-    });
-    const caller = new AbortController();
-    const events: UnifiedStreamEvent[] = [];
-    let thrown: unknown;
-    const consume = (async (): Promise<void> => {
-      try {
-        for await (const e of provider.streamResponse!(minimalReq, caller.signal)) events.push(e);
-      } catch (err) {
-        thrown = err;
+      const abortedAt = performance.now();
+      caller.abort();
+      const outcome = await Promise.race([
+        pending.then(
+          () => "resolved",
+          (e: unknown) => `rejected:${(e as Error).name}`,
+        ),
+        new Promise<string>((r) => {
+          setTimeout(() => {
+            r("hung");
+          }, HANG_GUARD_MS);
+        }),
+      ]);
+      const escalationMs = Math.round(performance.now() - abortedAt);
+      if (outcome !== "rejected:AbortError") {
+        throw new Error(
+          `SIGKILL escalation: outcome ${outcome} after ${String(escalationMs)} ms (grace ${String(GRACE_MS)} ms, guard ${String(HANG_GUARD_MS)} ms)`,
+        );
       }
-    })();
-    await waitFor(() => existsSync(pidFile));
-    const pid = Number(readFileSync(pidFile, "utf8").trim());
+      expect(outcome).toBe("rejected:AbortError");
+      await waitFor(() => !pidAlive(pid), REAP_WAIT_MS, `pid ${String(pid)} reaped`);
+      expect(entries).toHaveLength(1);
+      expect((entries[0] as Record<string, unknown>)["error_code"]).toBe("aborted");
+    },
+    ESCALATION_TEST_TIMEOUT_MS,
+  );
 
-    caller.abort();
-    await Promise.race([
-      consume,
-      new Promise((_r, rej) => {
-        setTimeout(() => {
-          rej(new Error("stream hung — SIGKILL never landed"));
-        }, 8_000);
-      }),
-    ]);
-    expect((thrown as Error).name).toBe("AbortError");
-    await waitFor(() => !pidAlive(pid));
-    expect((entries[0] as Record<string, unknown>)["error_code"]).toBe("aborted");
-  });
+  test(
+    "streamResponse: SIGKILL lands within grace; the stream settles",
+    async () => {
+      const pidFile = join(tmp, "pid-sigkill-stream");
+      const entries: unknown[] = [];
+      const provider = createCliSubprocessProvider({
+        agentName: "mac-mini",
+        binding: {
+          name: "claude-pro",
+          preset: "claude",
+          command: "/bin/sh",
+          args: ["-c", trapScript(pidFile)],
+          format: "text",
+          timeoutMs: 60_000,
+          advertisedModels: [],
+          capabilities: ["reasoning"],
+        },
+        spawnStream: (argv, o) => librarySpawnStream(argv, { ...o, killGraceMs: GRACE_MS }),
+        journalWrite: async (e) => {
+          await Promise.resolve();
+          entries.push(e);
+        },
+      });
+      const caller = new AbortController();
+      const events: UnifiedStreamEvent[] = [];
+      let thrown: unknown;
+      const consume = (async (): Promise<void> => {
+        try {
+          for await (const e of provider.streamResponse!(minimalReq, caller.signal)) events.push(e);
+        } catch (err) {
+          thrown = err;
+        }
+      })();
+      const pid = await readPid(pidFile);
+
+      caller.abort();
+      await Promise.race([
+        consume,
+        new Promise((_r, rej) => {
+          setTimeout(() => {
+            rej(
+              new Error(
+                `stream hung — SIGKILL never landed (waited ${String(HANG_GUARD_MS)} ms, grace ${String(GRACE_MS)} ms)`,
+              ),
+            );
+          }, HANG_GUARD_MS);
+        }),
+      ]);
+      expect((thrown as Error).name).toBe("AbortError");
+      await waitFor(() => !pidAlive(pid));
+      expect((entries[0] as Record<string, unknown>)["error_code"]).toBe("aborted");
+    },
+    ESCALATION_TEST_TIMEOUT_MS,
+  );
 });
 
 describe("streamResponse — real subprocess", () => {
@@ -429,8 +452,7 @@ describe("streamResponse — real subprocess", () => {
     const entries: unknown[] = [];
     const provider = streamProvider(sleepyScript(pidFile), entries, 150);
     const collectP = collect(provider.streamResponse!(minimalReq));
-    await waitFor(() => existsSync(pidFile));
-    const pid = Number(readFileSync(pidFile, "utf8").trim());
+    const pid = await readPid(pidFile);
     const events = await collectP;
     const errors = events.filter(
       (e): e is Extract<UnifiedStreamEvent, { type: "error" }> => e.type === "error",
@@ -458,8 +480,7 @@ describe("streamResponse — real subprocess", () => {
         thrown = err;
       }
     })();
-    await waitFor(() => existsSync(pidFile));
-    const pid = Number(readFileSync(pidFile, "utf8").trim());
+    const pid = await readPid(pidFile);
     caller.abort();
     await consume;
     expect((thrown as Error).name).toBe("AbortError");
@@ -547,7 +568,7 @@ describe("streamResponse — real subprocess", () => {
     expect(errors[0]!.error.code).toBe("truncated");
     expect(errors[0]!.error.retryable).toBe(false);
     expect(events.some((e) => e.type === "done")).toBe(false);
-    const pid = Number(readFileSync(pidFile, "utf8").trim());
+    const pid = await readPid(pidFile);
     await waitFor(() => !pidAlive(pid));
     expect(entries).toHaveLength(1);
     const e = entries[0] as Record<string, unknown>;
@@ -745,8 +766,7 @@ describe("differential — default vs library spawner", () => {
     ): Promise<{ err: unknown; pid: number }> {
       const caller = new AbortController();
       const pending = provider.createResponse(minimalReq, { signal: caller.signal });
-      await waitFor(() => existsSync(pidFile));
-      const pid = Number(readFileSync(pidFile, "utf8").trim());
+      const pid = await readPid(pidFile);
       caller.abort();
       let err: unknown;
       try {
