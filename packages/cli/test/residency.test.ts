@@ -1941,3 +1941,192 @@ describe("#519 residency status idle-eviction section", () => {
     expect(rendered).not.toContain("Idle evict:");
   });
 });
+
+// #519: the `switchGates` section of the residencyStatus payload rendered as a
+// `Switch gates:` block. The remote side reports the switch-cooldown countdown
+// against the last succeeded profile switch and, when minResidencySeconds is
+// set, per ready resident whether it is still held inside its minimum
+// residency; the CLI prints the knobs header, the cooldown line and one line
+// per resident, with the disabled/unavailable variants. At the pinned base
+// renderResidencyStatus has no switch-gates branch, so every case fails BY
+// ASSERTION on the missing lines — never by import, type or exit-code error.
+describe("#519 residency status switch-gates lines", () => {
+  const NOW = 1_000_000;
+
+  type SwitchGatesRow = {
+    workload: string;
+    readySinceMs: number;
+    minResidencyUntilMs: number;
+    held: boolean;
+  };
+
+  type SwitchGatesSection =
+    | { status: "disabled"; scope: "serving-process" }
+    | {
+        status: "unavailable";
+        scope: "serving-process";
+        reason: "NotServingNode" | "StoreUnreadable" | "LifecycleUnreadable";
+      }
+    | {
+        status: "available";
+        scope: "serving-process";
+        advisory: true;
+        switchCooldownSeconds: number;
+        minResidencySeconds: number;
+        lastSwitchAtMs: number | null;
+        cooldownUntilMs: number | null;
+        cooldownActive: boolean;
+        workloads: SwitchGatesRow[];
+      };
+
+  type GatesFixture = StatusFixture & { switchGates: SwitchGatesSection };
+
+  function gatesFixture(switchGates: SwitchGatesSection): GatesFixture {
+    return { ...OK_STATUS, switchGates };
+  }
+
+  test("renders the available gates header, cooldown countdown and hold rows", async () => {
+    // Kills: section not rendered / cooldown not computed from the passed
+    // clock / held shown as met or vice versa.
+    const residency = await loadResidency();
+    const rendered = residency.renderResidencyStatus(
+      gatesFixture({
+        status: "available",
+        scope: "serving-process",
+        advisory: true,
+        switchCooldownSeconds: 600,
+        minResidencySeconds: 300,
+        lastSwitchAtMs: 400_000,
+        cooldownUntilMs: 1_500_000,
+        cooldownActive: true,
+        workloads: [
+          { workload: "a", readySinceMs: 800_000, minResidencyUntilMs: 1_100_000, held: true },
+          { workload: "b", readySinceMs: 600_000, minResidencyUntilMs: 900_000, held: false },
+        ],
+      }),
+      NOW,
+    );
+    const lines = rendered.split("\n");
+    expect(lines).toContain(
+      "Switch gates: cooldown 600s, min residency 300s (advisory; scope: serving-process)",
+    );
+    expect(lines).toContain("  cooldown: active for 8m 20s");
+    expect(lines).toContain("  a  held MinResidency for 1m 40s");
+    expect(lines).toContain("  b  min residency met");
+  });
+
+  test("renders cooldown: off when switchCooldownSeconds is 0", async () => {
+    // Kills: a zero cooldown rendered as active or clear instead of off.
+    const residency = await loadResidency();
+    const rendered = residency.renderResidencyStatus(
+      gatesFixture({
+        status: "available",
+        scope: "serving-process",
+        advisory: true,
+        switchCooldownSeconds: 0,
+        minResidencySeconds: 0,
+        lastSwitchAtMs: null,
+        cooldownUntilMs: null,
+        cooldownActive: false,
+        workloads: [],
+      }),
+      NOW,
+    );
+    expect(rendered.split("\n")).toContain("  cooldown: off");
+  });
+
+  test("renders cooldown: clear with and without a recorded switch", async () => {
+    // Kills: the no-recorded-switch detail dropped, or the parenthetical shown
+    // for a recorded switch (exact-line match keeps the two apart).
+    const residency = await loadResidency();
+    const noSwitch = residency.renderResidencyStatus(
+      gatesFixture({
+        status: "available",
+        scope: "serving-process",
+        advisory: true,
+        switchCooldownSeconds: 600,
+        minResidencySeconds: 0,
+        lastSwitchAtMs: null,
+        cooldownUntilMs: null,
+        cooldownActive: false,
+        workloads: [],
+      }),
+      NOW,
+    );
+    expect(noSwitch.split("\n")).toContain("  cooldown: clear (no recorded switch)");
+
+    const pastSwitch = residency.renderResidencyStatus(
+      gatesFixture({
+        status: "available",
+        scope: "serving-process",
+        advisory: true,
+        switchCooldownSeconds: 600,
+        minResidencySeconds: 0,
+        lastSwitchAtMs: 400_000,
+        cooldownUntilMs: 1_000_000,
+        cooldownActive: false,
+        workloads: [],
+      }),
+      NOW,
+    );
+    const pastLines = pastSwitch.split("\n");
+    expect(pastLines).toContain("  cooldown: clear");
+    expect(pastLines).not.toContain("  cooldown: clear (no recorded switch)");
+  });
+
+  test("renders a disabled section", async () => {
+    // Kills: disabled rendered as available or as nothing.
+    const residency = await loadResidency();
+    const rendered = residency.renderResidencyStatus(
+      gatesFixture({ status: "disabled", scope: "serving-process" }),
+      NOW,
+    );
+    expect(rendered.split("\n")).toContain("Switch gates: disabled (scope: serving-process)");
+  });
+
+  test("renders a distinct line per unavailable reason", async () => {
+    // Kills: one generic message for every reason.
+    const residency = await loadResidency();
+    const render = (reason: "NotServingNode" | "StoreUnreadable" | "LifecycleUnreadable"): string =>
+      residency.renderResidencyStatus(
+        gatesFixture({ status: "unavailable", scope: "serving-process", reason }),
+        NOW,
+      );
+    expect(render("NotServingNode").split("\n")).toContain(
+      "Switch gates: unavailable (not the serving node; scope: serving-process)",
+    );
+    expect(render("StoreUnreadable").split("\n")).toContain(
+      "Switch gates: unavailable (store unreadable; scope: serving-process)",
+    );
+    expect(render("LifecycleUnreadable").split("\n")).toContain(
+      "Switch gates: unavailable (lifecycle rows unreadable; scope: serving-process)",
+    );
+  });
+
+  test("renders no Switch gates line when the payload has no switchGates key", async () => {
+    // GUARD — passes at base: pins that payloads without the section (older
+    // agents) render unchanged.
+    const residency = await loadResidency();
+    const rendered = residency.renderResidencyStatus(OK_STATUS, NOW);
+    expect(rendered).not.toContain("Switch gates:");
+  });
+
+  test("renders Switch gates between the Idle evict and Leases blocks", async () => {
+    // Kills: the section emitted out of order — before idleEviction or after
+    // the lease block.
+    const residency = await loadResidency();
+    const fixture: GatesFixture = {
+      ...OK_STATUS,
+      idleEviction: { status: "disabled", scope: "serving-process" },
+      switchGates: { status: "disabled", scope: "serving-process" },
+    };
+    const rendered = residency.renderResidencyStatus(fixture, NOW);
+    const idleIdx = rendered.indexOf("Idle evict:");
+    const gatesIdx = rendered.indexOf("Switch gates:");
+    const leasesIdx = rendered.indexOf("Leases:");
+    expect(idleIdx).toBeGreaterThanOrEqual(0);
+    expect(gatesIdx).toBeGreaterThan(idleIdx);
+    expect(leasesIdx).toBeGreaterThanOrEqual(0);
+    expect(gatesIdx).toBeLessThan(leasesIdx);
+  });
+});

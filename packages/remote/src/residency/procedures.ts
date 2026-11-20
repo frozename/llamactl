@@ -45,6 +45,16 @@
 // 0 knob (or no policy) reports disabled without reading the registry or the
 // lifecycle, and lease activity resets when the serving process restarts.
 //
+// The switchGates section (scope "serving-process", Part of #519) is an
+// advisory read-out of the enforced NodeRun switch gates against the serving
+// process's store, only when `node` is the serving node: the
+// switchCooldownSeconds countdown from the last succeeded `profile-switch:<node>`
+// operation, and — when minResidencySeconds is set — one row per ready lifecycle
+// row that is still inside its minimum residency. A 0 on both knobs (or no
+// policy) reports disabled; `held` is advisory for each resident — the resident
+// blocks a switch only if the target profile would evict it, so it is not a
+// prediction for a specific profile. Nothing is refused, switched or scheduled.
+//
 // `runIdleEviction` (Part of #519) is the operator-triggered mutation built on
 // that same snapshot: a dry run reports would-evict rows, a targeted run re-checks
 // against the live registry and stops each target through the fenced stop the
@@ -366,6 +376,40 @@ export type ResidencyStatusIdleEviction =
       workloads: ResidencyStatusIdleEvictionRow[];
     };
 
+export type ResidencyStatusSwitchGateRow = {
+  workload: string;
+  readySinceMs: number;
+  minResidencyUntilMs: number;
+  held: boolean;
+};
+
+// Advisory read-out of the enforced NodeRun switch gates (Part of #519): the
+// switchCooldownSeconds countdown from the last succeeded `profile-switch:<node>`
+// operation in the serving node's store, and — when minResidencySeconds is set —
+// one row per `ready` lifecycle row still inside its minimum residency. Nothing
+// is refused, switched or scheduled here — this is a status, never enforcement.
+// `scope` is always "serving-process". `held` is advisory for each resident: the
+// resident blocks a switch only if the target profile would evict it, so it is
+// not a prediction for a specific profile.
+export type ResidencyStatusSwitchGates =
+  | { status: "disabled"; scope: "serving-process" }
+  | {
+      status: "unavailable";
+      scope: "serving-process";
+      reason: "NotServingNode" | "StoreUnreadable" | "LifecycleUnreadable";
+    }
+  | {
+      status: "available";
+      scope: "serving-process";
+      advisory: true;
+      switchCooldownSeconds: number;
+      minResidencySeconds: number;
+      lastSwitchAtMs: number | null;
+      cooldownUntilMs: number | null;
+      cooldownActive: boolean;
+      workloads: ResidencyStatusSwitchGateRow[];
+    };
+
 export type ResidencyStatus = {
   node: string;
   nodeRun: { present: boolean };
@@ -387,6 +431,9 @@ export type ResidencyStatus = {
   // Optional like lifecycle so older payloads and fixtures still type;
   // buildResidencyStatus always sets it (Part of #519).
   idleEviction?: ResidencyStatusIdleEviction;
+  // Optional like idleEviction so older payloads and fixtures still type;
+  // buildResidencyStatus always sets it (Part of #519).
+  switchGates?: ResidencyStatusSwitchGates;
   leases: ResidencyStatusLeases;
   omlxNative?: { scope: "serving-process"; workloads: OmlxNativeStatusRow[] };
   sessions?: ResidencyStatusSessions;
@@ -420,6 +467,13 @@ export function buildResidencyStatus(input: {
       node: input.node,
       store: input.store,
       leaseRegistry: input.leaseRegistry ?? null,
+      nowMs: input.nowMs ?? Date.now(),
+    }),
+    switchGates: buildSwitchGatesSnapshot({
+      residency,
+      servingNode: input.servingNode ?? null,
+      node: input.node,
+      store: input.store,
       nowMs: input.nowMs ?? Date.now(),
     }),
     leases: buildResidencyLeaseSnapshot(input.leaseRegistry ?? null, input.leaseWorkloads ?? []),
@@ -592,6 +646,121 @@ export function buildIdleEvictionSnapshot(input: {
   }
   workloads.sort((a, b) => compareStrings(a.workload, b.workload));
   return { status: "available", scope, advisory: true, idleEvictSeconds, workloads };
+}
+
+// One advisory row per ready lifecycle record still inside its minimum residency,
+// or nothing when the knob is off. A row maps only when it is `ready` with a
+// finite updatedAtMs; `readySinceMs` is that raw timestamp, `minResidencyUntilMs`
+// the ready-since clamped to nowMs (as the planner does, Part of #519) plus the
+// window, and `held` says nowMs has not yet reached it.
+function switchGateRows(
+  lifecycle: readonly ResidencyStateRecord[] | undefined,
+  minResidencySeconds: number,
+  nowMs: number,
+): ResidencyStatusSwitchGateRow[] {
+  if (minResidencySeconds === 0) {
+    return [];
+  }
+  const rows = [...(lifecycle ?? [])]
+    .filter((row) => row.state === "ready" && Number.isFinite(row.updatedAtMs))
+    .sort((a, b) => compareStrings(a.model, b.model));
+  const workloads: ResidencyStatusSwitchGateRow[] = [];
+  for (const row of rows) {
+    const minResidencyUntilMs = Math.min(nowMs, row.updatedAtMs) + minResidencySeconds * 1000;
+    workloads.push({
+      workload: row.model,
+      readySinceMs: row.updatedAtMs,
+      minResidencyUntilMs,
+      held: nowMs < minResidencyUntilMs,
+    });
+  }
+  return workloads;
+}
+
+// The cooldown triple for one switch-gates report. `lastSwitchAtMs` is the last
+// succeeded `profile-switch:<node>` operation (a missing or non-finite record is
+// null); `cooldownUntilMs` is that plus the window only when both a window and a
+// switch exist; `cooldownActive` matches the planner's checkCooldown,
+// `nowMs - lastSwitchAtMs < switchCooldownSeconds * 1000`.
+function switchCooldownFields(
+  store: ResidencyStoreSnapshot,
+  node: string,
+  switchCooldownSeconds: number,
+  nowMs: number,
+): { lastSwitchAtMs: number | null; cooldownUntilMs: number | null; cooldownActive: boolean } {
+  const lastSwitchAtMs = recordedSwitchAtMs(store, true, profileSwitchOperationKey(node)) ?? null;
+  const cooldownMs = switchCooldownSeconds * 1000;
+  const cooldownUntilMs =
+    cooldownMs > 0 && lastSwitchAtMs !== null ? lastSwitchAtMs + cooldownMs : null;
+  const cooldownActive =
+    lastSwitchAtMs !== null && cooldownMs > 0 && nowMs - lastSwitchAtMs < cooldownMs;
+  return { lastSwitchAtMs, cooldownUntilMs, cooldownActive };
+}
+
+// Advisory switch-gate read-out (Part of #519). Resolves the NodeRun policy then
+// checks, in a fixed order, why it cannot answer: both knobs 0 disables; off the
+// serving node is NotServingNode (the same `applies` gate the idleEviction,
+// omlxNative and store sections use — a peer's policy is not a policy here); an
+// absent store is available with null switch fields and no rows; an unreadable
+// store is StoreUnreadable; a lifecycle read failure is LifecycleUnreadable only
+// when minResidencySeconds reads those rows (a cooldown-only report never does).
+// Otherwise the cooldown fields come from `switchCooldownFields` and one row is
+// built per ready lifecycle row when minResidencySeconds is positive. This module
+// never refuses, switches or schedules anything.
+export function buildSwitchGatesSnapshot(input: {
+  residency: ResidencyPolicy | null | undefined;
+  servingNode: string | null;
+  node: string;
+  store: ResidencyStoreSnapshot;
+  nowMs: number;
+}): ResidencyStatusSwitchGates {
+  const scope = "serving-process" as const;
+  const policy = resolveResidencyPolicy({
+    ...(input.residency?.switchCooldownSeconds !== undefined
+      ? { switchCooldownSeconds: input.residency.switchCooldownSeconds }
+      : {}),
+    ...(input.residency?.minResidencySeconds !== undefined
+      ? { minResidencySeconds: input.residency.minResidencySeconds }
+      : {}),
+  });
+  const switchCooldownSeconds = policy.switchCooldownSeconds;
+  const minResidencySeconds = policy.minResidencySeconds;
+  if (switchCooldownSeconds === 0 && minResidencySeconds === 0) {
+    return { status: "disabled", scope };
+  }
+  if (input.servingNode === null || input.servingNode !== input.node) {
+    return { status: "unavailable", scope, reason: "NotServingNode" };
+  }
+  const store = input.store;
+  if (!store.present) {
+    return {
+      status: "available",
+      scope,
+      advisory: true,
+      switchCooldownSeconds,
+      minResidencySeconds,
+      lastSwitchAtMs: null,
+      cooldownUntilMs: null,
+      cooldownActive: false,
+      workloads: [],
+    };
+  }
+  if ("error" in store) {
+    return { status: "unavailable", scope, reason: "StoreUnreadable" };
+  }
+  if (minResidencySeconds > 0 && store.lifecycleError !== undefined) {
+    return { status: "unavailable", scope, reason: "LifecycleUnreadable" };
+  }
+  const cooldown = switchCooldownFields(store, input.node, switchCooldownSeconds, input.nowMs);
+  return {
+    status: "available",
+    scope,
+    advisory: true,
+    switchCooldownSeconds,
+    minResidencySeconds,
+    ...cooldown,
+    workloads: switchGateRows(store.lifecycle, minResidencySeconds, input.nowMs),
+  };
 }
 
 // Operator-triggered idle eviction (Part of #519). Where the idleEviction status

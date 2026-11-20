@@ -171,6 +171,20 @@ type ResidencyStatus = {
         idleEvictSeconds: number;
         workloads: unknown[];
       };
+  switchGates?:
+    | { status: "disabled"; scope: "serving-process" }
+    | { status: "unavailable"; scope: "serving-process"; reason: string }
+    | {
+        status: "available";
+        scope: "serving-process";
+        advisory: true;
+        switchCooldownSeconds: number;
+        minResidencySeconds: number;
+        lastSwitchAtMs: number | null;
+        cooldownUntilMs: number | null;
+        cooldownActive: boolean;
+        workloads: unknown[];
+      };
   leases?: LeasesSection;
   omlxNative: {
     scope: "serving-process";
@@ -549,6 +563,7 @@ describe("buildResidencyStatus", () => {
         exclusiveViolations: [],
       },
       idleEviction: { status: "disabled", scope: "serving-process" },
+      switchGates: { status: "disabled", scope: "serving-process" },
       leases: { status: "unavailable", scope: "serving-process" },
       omlxNative: { scope: "serving-process", workloads: [] },
     });
