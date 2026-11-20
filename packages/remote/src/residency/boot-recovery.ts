@@ -67,13 +67,15 @@
  * apply-profile will stale-fence the sweep — this is the desired safety
  * property: the CLI owns the fence, not boot recovery.
  *
- * Safety. The sweep touches only transient states; stable states
- * (`unavailable`, `downloaded`, `ready`, `failed`) are never modified. A
- * per-row refusal (e.g., `version-conflict`) is counted as a record failure
- * but does not abort the sweep. A per-row throw is caught and counted as a
- * record failure, then the sweep continues to the next row. A throw while
- * listing the rows is contained and counted as one record failure; the
- * profile-switch recovery has already run and still reports `recovered`.
+ * Safety. The claimed pass touches only transient states; the orphan pass also
+ * fails a proven-down stale `ready` row (`ready` -> `failed` is a legal edge,
+ * packages/core/src/residency/lifecycle.ts, and exit transitions are never
+ * group-refused). Stable states (`unavailable`, `downloaded`, `failed`) are
+ * never modified. A per-row refusal (e.g., `version-conflict`) is counted as a
+ * record failure but does not abort the sweep. A per-row throw is caught and
+ * counted as a record failure, then the sweep continues to the next row. A
+ * throw while listing the rows is contained and counted as one record failure;
+ * the profile-switch recovery has already run and still reports `recovered`.
  *
  * Reasoning. A crashed switch can leave residency rows in any transient state,
  * holding exclusive-group capacity and preventing new models from loading.
@@ -113,8 +115,11 @@
  * Known limits. The predicate is the same one direct starts use, so a ModelRun
  * killed between spawn and its pid write reads as proven down. A CLI in-process
  * direct start whose loading row made no progress for 30 minutes, and whose
- * workload reads proven down, is failed; its post-walk then logs `not recorded`. Still remaining: `ready` rows
- * of dead processes outside a switch.
+ * workload reads proven down, is failed; its post-walk then logs `not recorded`.
+ * The orphan pass now also fails a stale, proven-down `ready` row of a dead
+ * process outside a switch. Its residual limit: a `ready` row of a dead process
+ * younger than the window, or one sitting beside any nonterminal operation row,
+ * stays `ready` until a later boot.
  *
  * Logging. An absent store or a store with no profile-switch row logs nothing.
  * A deferred or recovered pass logs one line of counts only (no operation ids,
@@ -152,6 +157,12 @@ export const INTERRUPTED_LIFECYCLE_STATES: ReadonlySet<string> = new Set([
   "warming",
   "draining",
   "unloading",
+]);
+
+// The orphan pass only: a ready row also needs the proven-down gate.
+export const ORPHAN_LIFECYCLE_STATES: ReadonlySet<string> = new Set([
+  ...INTERRUPTED_LIFECYCLE_STATES,
+  "ready",
 ]);
 
 export type BootRecoverySummary = {
@@ -270,12 +281,13 @@ function failInterruptedLifecycleRows(
   fenceToken: number,
   nowMs: number,
   include: (row: ResidencyStateRecord) => boolean = () => true,
+  states: ReadonlySet<string> = INTERRUPTED_LIFECYCLE_STATES,
 ): LifecycleCounts {
-  const states = store.listResidencyStates();
+  const rows = store.listResidencyStates();
   let failed = 0;
   let recordFailures = 0;
-  for (const stateRecord of states) {
-    if (!INTERRUPTED_LIFECYCLE_STATES.has(stateRecord.state)) {
+  for (const stateRecord of rows) {
+    if (!states.has(stateRecord.state)) {
       continue;
     }
     if (!include(stateRecord)) {
@@ -319,15 +331,12 @@ type OrphanGate = {
   write: (line: string) => void;
 };
 
-// A row is stale when it sits in an interrupted state and has made no progress
-// for the window. A future stamp is never stale; the window edge counts as
-// stale, matching the switch guard.
-function isStaleInterrupted(
-  row: ResidencyStateRecord,
-  now: number,
-  minStaleAgeMs: number,
-): boolean {
-  return INTERRUPTED_LIFECYCLE_STATES.has(row.state) && now - row.updatedAtMs >= minStaleAgeMs;
+// Orphan-only staleness: a row is stale when it sits in an orphan-swept state
+// (interrupted transient or `ready`) and has made no progress for the window.
+// A future stamp is never stale; the window edge counts as stale, matching the
+// switch guard. A stale ready row still needs the proven-down gate.
+function isStaleOrphan(row: ResidencyStateRecord, now: number, minStaleAgeMs: number): boolean {
+  return ORPHAN_LIFECYCLE_STATES.has(row.state) && now - row.updatedAtMs >= minStaleAgeMs;
 }
 
 // Calls the predicate once per distinct stale interrupted model, outside any
@@ -342,7 +351,7 @@ function provenDownModels(
   const proven = new Set<string>();
   const asked = new Set<string>();
   for (const row of rows) {
-    if (!isStaleInterrupted(row, now, minStaleAgeMs) || asked.has(row.model)) {
+    if (!isStaleOrphan(row, now, minStaleAgeMs) || asked.has(row.model)) {
       continue;
     }
     asked.add(row.model);
@@ -358,7 +367,7 @@ function provenDownModels(
 }
 
 function isOrphanCandidate(row: ResidencyStateRecord, ctx: OrphanSweepContext): boolean {
-  return isStaleInterrupted(row, ctx.now, ctx.minStaleAgeMs) && ctx.provenDown.has(row.model);
+  return isStaleOrphan(row, ctx.now, ctx.minStaleAgeMs) && ctx.provenDown.has(row.model);
 }
 
 // The gate: only a store with no nonterminal operation row, a readable
@@ -416,8 +425,12 @@ function claimAndFailOrphans(store: BootRecoveryStore, ctx: OrphanSweepContext):
   }
   let counts: LifecycleCounts;
   try {
-    counts = failInterruptedLifecycleRows(store, claim.fence.fenceToken, ctx.now, (row) =>
-      isOrphanCandidate(row, ctx),
+    counts = failInterruptedLifecycleRows(
+      store,
+      claim.fence.fenceToken,
+      ctx.now,
+      (row) => isOrphanCandidate(row, ctx),
+      ORPHAN_LIFECYCLE_STATES,
     );
   } catch {
     /* a failure to list the rows is contained and counted as one record failure */

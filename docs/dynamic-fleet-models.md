@@ -313,6 +313,15 @@ zod):
 `none` decision, returns `proposed` unless `autoApply` is set AND a
 writer is injected; `autoApply` without a writer writes nothing.
 
+`writePresetOverride` (`packages/core/src/presets.ts`) refuses to promote a
+rel whose stage is `experimental`, read through `catalogQualificationStages`,
+so a later pin to a non-experimental stage lifts the refusal; experimental
+models are served only on an exact model pin and never as a preset default.
+Every promotion surface enforces it: `llamactl catalog promote` exits 1 with
+the refusal on stderr, the `promote` procedure rejects with `BAD_REQUEST`, and
+the MCP `llamactl.catalog.promote` tool returns `ok: false` (a dry run reports
+`refused` instead of previewing a write).
+
 ### Demotion
 
 The optional `demotion` block on the promotion policy carries the floors
