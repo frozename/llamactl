@@ -1,3 +1,4 @@
+import { createResidencyLeases, setResidencyLeaseRegistry } from "@llamactl/core/residency/leases";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,9 +11,10 @@ import {
   compositeEvents,
   _resetForTests as resetCompositeEvents,
 } from "../src/composite/event-bus.js";
-import { saveComposite } from "../src/composite/store.js";
+import { CompositeSchema } from "../src/composite/schema.js";
+import { compositePath, loadComposite, saveComposite } from "../src/composite/store.js";
 import { router } from "../src/router.js";
-import { mkdtempSync, rmSync } from "../src/safe-fs.js";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "../src/safe-fs.js";
 
 /**
  * Phase 5 of composite-infra.md — router-level coverage for the
@@ -235,6 +237,96 @@ describe("router compositeDestroy — dry-run", () => {
     expect(res.dryRun).toBe(true);
     if (!res.dryRun) throw new Error("type narrowing failed");
     expect(res.wouldPurgeVolumes).toBe(false);
+  });
+});
+
+// Part of #520: the router keeps the composite YAML only when
+// destroyComposite reports a stop-fence refusal. A workload-only composite
+// on the in-proc `local` node drives the real serverStop fence: a held
+// lease on the node key refuses before any process is touched, and with no
+// lease the stop no-ops on the temp runtime dir. No docker is touched
+// (no services, and the docker backend has no composite boundary).
+describe("router compositeDestroy — stop-fence refusal (#520)", () => {
+  beforeEach(() => {
+    const localRuntime = join(runtimeDir, "local-ai");
+    mkdirSync(localRuntime, { recursive: true });
+    Object.assign(process.env, {
+      LOCAL_AI_RUNTIME_DIR: localRuntime,
+      LLAMACTL_RESIDENCY_STORE: join(runtimeDir, "residency.sqlite"),
+      LLAMACTL_SIRIUS_PROVIDERS: join(runtimeDir, "sirius-providers.yaml"),
+      LLAMACTL_EMBERSYNTH_CONFIG: join(runtimeDir, "embersynth.yaml"),
+      LLAMACTL_RUNTIME_BACKEND: "docker",
+    });
+  });
+
+  afterEach(() => {
+    setResidencyLeaseRegistry(null);
+  });
+
+  function workloadComposite(): Composite {
+    return CompositeSchema.parse({
+      apiVersion: "llamactl/v1",
+      kind: "Composite",
+      metadata: { name: "wl-stack" },
+      spec: {
+        services: [],
+        workloads: [{ node: "local", target: { kind: "rel", value: "m.gguf" } }],
+        ragNodes: [],
+        gateways: [],
+        pipelines: [],
+        dependencies: [],
+        onFailure: "rollback",
+      },
+      status: { phase: "Ready", appliedAt: "2026-11-01T00:00:00.000Z", components: [] },
+    });
+  }
+
+  test("RT1: a refused workload stop keeps the YAML, returns manifestPreserved true, and records the partial destroy", async () => {
+    // Kills: reverting the guard to an unconditional deleteComposite
+    // (router.ts compositeDestroy), inverting it to `if
+    // (result.manifestPreserved) deleteComposite`, dropping the
+    // manifestPreserved field from the returned object, and not
+    // recording the Degraded/Failed status on the kept manifest.
+    const registry = createResidencyLeases();
+    setResidencyLeaseRegistry(registry);
+    const acquired = registry.acquire("local");
+    if (!acquired.ok) throw new Error("expected lease acquire to succeed");
+    saveComposite(workloadComposite(), compositesDir);
+
+    const res = await router.createCaller({}).compositeDestroy({ name: "wl-stack" });
+
+    if (res.dryRun) throw new Error("expected a wet destroy");
+    expect(res.ok).toBe(false);
+    expect(res.manifestPreserved).toBe(true);
+    expect(res.errors).toHaveLength(1);
+    expect(res.errors[0]?.ref).toEqual({ kind: "workload", name: "local" });
+    expect(res.errors[0]?.message).toContain("serverStop on local refused (LeasesActive");
+    expect(existsSync(compositePath("wl-stack", compositesDir))).toBe(true);
+    const kept = loadComposite("wl-stack", compositesDir);
+    expect(kept?.status?.phase).toBe("Degraded");
+    expect(kept?.status?.appliedAt).toBe("2026-11-01T00:00:00.000Z");
+    expect(kept?.status?.components).toEqual([
+      {
+        ref: { kind: "workload", name: "local" },
+        state: "Failed",
+        message: res.errors[0]?.message,
+      },
+    ]);
+  });
+
+  test("RT2: a clean workload stop deletes the YAML and returns manifestPreserved false", async () => {
+    // Kills: inverting the guard (`if (result.manifestPreserved)
+    // deleteComposite`) — a clean stop must still remove the YAML — and
+    // returning a hard-coded `manifestPreserved: true`.
+    saveComposite(workloadComposite(), compositesDir);
+
+    const res = await router.createCaller({}).compositeDestroy({ name: "wl-stack" });
+
+    if (res.dryRun) throw new Error("expected a wet destroy");
+    expect(res.manifestPreserved).toBe(false);
+    expect(res.errors).toEqual([]);
+    expect(res.ok).toBe(true);
+    expect(existsSync(compositePath("wl-stack", compositesDir))).toBe(false);
   });
 });
 
