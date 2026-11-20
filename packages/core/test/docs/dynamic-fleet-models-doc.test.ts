@@ -2046,6 +2046,19 @@ describe("#522 load and prefill metrics (#781)", () => {
     }
   });
 
+  // Kills: adding `|| url.pathname === "/tokenize"` to the gateway's /v1
+  // guard in serve.ts (P9), or a separate /tokenize route in
+  // handleOpenAIRoute (P13). Either makes the doc's "/tokenize is not
+  // routed by the agent gateway" claim false.
+  test("agent gateway routes no /tokenize path", () => {
+    expect(serveSrc).toContain('url.pathname.startsWith("/v1/") || url.pathname === "/v1"');
+    expect(serveSrc).not.toMatch(/["'`]\/tokenize/);
+    expect(serveSrc).not.toContain("tokenize");
+    const routeBody = enclosingBody(serveSrc, "async function handleOpenAIRoute(");
+    expect(routeBody.length).toBeGreaterThan(0);
+    expect(routeBody).not.toContain("tokenize");
+  });
+
   // Kills: a moved or renamed file, or a line-number citation.
   test("citations exist, never file:line", () => {
     const cited = [...sec.matchAll(/`(packages\/[^`]+\.ts)`/g)].flatMap((m) =>
