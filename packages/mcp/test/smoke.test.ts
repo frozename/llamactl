@@ -1240,3 +1240,72 @@ describe("@llamactl/mcp profile enum", () => {
     expect(PROFILE_ENUM.parse("macbook-pro-48g")).toBe("macbook-pro-48g");
   });
 });
+
+// Part of #518 slice (a): llamactl.catalog.promote refuses experimental
+// rels on both the wet and dry paths. On the base the wet run writes the
+// preset row (ok:true) and the dry run previews a write, so each case
+// fails by assertion, never by import.
+describe("#518 catalog.promote refuses experimental rels", () => {
+  // The builtin GLM row staged experimental in packages/core/src/catalog.ts.
+  const EXP_REL = "GLM-5.3-Flash-AJ-GGUF/AJ-IQ2_XXS/GLM-5.3-Flash-AJ-IQ2_XXS-00001-of-00002.gguf";
+  // The refusal text every #518 preset-promotion surface must carry.
+  const REFUSAL =
+    "is experimental (#518): experimental models are served only on an exact model pin and never as a preset default";
+
+  beforeEach(() => {
+    // Pin the catalog + qualification-override reads inside the sandbox:
+    // process.env may carry the operator's real paths otherwise.
+    process.env["LOCAL_AI_CUSTOM_CATALOG_FILE"] = join(runtimeDir, "curated-models.tsv");
+    process.env["LOCAL_AI_QUALIFICATION_OVERRIDES_FILE"] = join(
+      runtimeDir,
+      "qualification-overrides.tsv",
+    );
+  });
+
+  const presetFile = (): string => join(runtimeDir, "preset-overrides.tsv");
+
+  test("wet run refuses an experimental rel, audits the refusal and writes nothing", async () => {
+    const { client } = await connected();
+    const result = await client.callTool({
+      name: "llamactl.catalog.promote",
+      arguments: {
+        profile: "macbook-pro-48g",
+        preset: "best",
+        rel: EXP_REL,
+        dryRun: false,
+      },
+    });
+    const parsed = JSON.parse(textOf(result)) as { ok?: boolean; error?: string };
+    expect(parsed.ok).toBe(false);
+    expect(parsed.error ?? "").toContain(REFUSAL);
+
+    expect(existsSync(presetFile())).toBe(false);
+    const audits = auditLines("llamactl");
+    expect(audits).toHaveLength(1);
+    expect(audits[0]!["dryRun"]).toBe(false);
+    expect((audits[0]!["result"] as { ok: boolean }).ok).toBe(false);
+  });
+
+  test("dry run reports the refusal instead of previewing a write", async () => {
+    const { client } = await connected();
+    const result = await client.callTool({
+      name: "llamactl.catalog.promote",
+      arguments: {
+        profile: "macbook-pro-48g",
+        preset: "best",
+        rel: EXP_REL,
+        dryRun: true,
+      },
+    });
+    const parsed = JSON.parse(textOf(result)) as {
+      dryRun?: boolean;
+      refused?: string;
+      message?: string;
+    };
+    expect(parsed.dryRun).toBe(true);
+    expect(parsed.refused ?? "").toContain(REFUSAL);
+    expect((parsed.message ?? "").startsWith("would refuse")).toBe(true);
+
+    expect(existsSync(presetFile())).toBe(false);
+  });
+});
