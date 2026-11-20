@@ -209,7 +209,9 @@ function operationalStateSignal(
  * counts only `ready` residency_states rows as resident — lifecycle rows
  * exist only for workloads moved through profile switches, so a local
  * workload started by a plain apply with no row ranks as non-resident
- * when a knob is nonzero, and peers are never in the set.
+ * when a knob is nonzero, and peers fall outside `residencyKnown`, so
+ * they are neither charged nor rewarded. A local workload with no ready
+ * row is still charged, so a peer outranks it.
  *
  * The cooldown signal (switchCooldownSeconds nonzero, a non-blank
  * `nodeName`, a clean store and a finite recorded switch) reports the
@@ -264,8 +266,10 @@ export function residencyRankingInputs(input: {
     ready,
   });
   const operationalState = operationalStateSignal(lifecycle, input.nodeId);
+  const residencyKnown: NonNullable<routingRanking.RankingSignals["residencyKnown"]> = (ad) =>
+    ad.ownerNodeId === input.nodeId;
   const signals: routingRanking.RankingSignals = {
-    ...(residentSetEmitted ? { resident: ready } : {}),
+    ...(residentSetEmitted ? { resident: ready, residencyKnown } : {}),
     ...(cooldownUntil === undefined ? {} : { cooldownUntil }),
     ...(operationalState === undefined ? {} : { operationalState }),
     ...(drainMs === undefined ? {} : { drainMs }),
