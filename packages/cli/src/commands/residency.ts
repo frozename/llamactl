@@ -129,6 +129,7 @@ export function renderResidencyStatus(s: ResidencyRenderInput, nowMs: number = D
   }
   pushLifecycleLines(lines, s.lifecycle);
   pushIdleEvictionLines(lines, s.idleEviction, nowMs);
+  pushSwitchGateLines(lines, s.switchGates, nowMs);
   pushLeaseLines(lines, s.leases);
   pushSessionLines(lines, s.sessions);
   lines.push(
@@ -261,6 +262,64 @@ type IdleEvictionUnavailableReason = Extract<
 const IDLE_EVICTION_UNAVAILABLE: Record<IdleEvictionUnavailableReason, string> = {
   NotServingNode: "not the serving node",
   LeasesUnavailable: "no lease registry installed",
+  StoreUnreadable: "store unreadable",
+  LifecycleUnreadable: "lifecycle rows unreadable",
+};
+
+function pushSwitchGateLines(
+  lines: string[],
+  gates: ResidencyRenderInput["switchGates"],
+  nowMs: number,
+): void {
+  if (gates === undefined) {
+    return;
+  }
+  if (gates.status === "disabled") {
+    lines.push(`Switch gates: disabled (scope: ${gates.scope})`);
+    return;
+  }
+  if (gates.status === "unavailable") {
+    lines.push(
+      `Switch gates: unavailable (${SWITCH_GATES_UNAVAILABLE[gates.reason]}; scope: ${gates.scope})`,
+    );
+    return;
+  }
+  lines.push(
+    `Switch gates: cooldown ${String(gates.switchCooldownSeconds)}s, min residency ${String(gates.minResidencySeconds)}s (advisory; scope: ${gates.scope})`,
+  );
+  pushSwitchCooldownLine(lines, gates, nowMs);
+  for (const w of gates.workloads) {
+    const state = w.held
+      ? `held MinResidency for ${formatMs(Math.max(0, w.minResidencyUntilMs - nowMs))}`
+      : "min residency met";
+    lines.push(`  ${w.workload}  ${state}`);
+  }
+}
+
+type SwitchGatesAvailable = Extract<
+  NonNullable<ResidencyRenderInput["switchGates"]>,
+  { status: "available" }
+>;
+
+function pushSwitchCooldownLine(lines: string[], gates: SwitchGatesAvailable, nowMs: number): void {
+  if (gates.switchCooldownSeconds === 0) {
+    lines.push("  cooldown: off");
+  } else if (gates.cooldownActive && gates.cooldownUntilMs !== null) {
+    lines.push(`  cooldown: active for ${formatMs(Math.max(0, gates.cooldownUntilMs - nowMs))}`);
+  } else if (gates.lastSwitchAtMs === null) {
+    lines.push("  cooldown: clear (no recorded switch)");
+  } else {
+    lines.push("  cooldown: clear");
+  }
+}
+
+type SwitchGatesUnavailableReason = Extract<
+  NonNullable<ResidencyRenderInput["switchGates"]>,
+  { status: "unavailable" }
+>["reason"];
+
+const SWITCH_GATES_UNAVAILABLE: Record<SwitchGatesUnavailableReason, string> = {
+  NotServingNode: "not the serving node",
   StoreUnreadable: "store unreadable",
   LifecycleUnreadable: "lifecycle rows unreadable",
 };
