@@ -19,7 +19,10 @@
  * residency is known; residentPreference adds quality points (multiplied by
  * msPerQualityPoint) to a resident candidate's score. Both are inert at 0
  * and while residency is unknown (signals.resident === undefined); the
- * defaults reproduce the #518 decisions and scores exactly.
+ * defaults reproduce the #518 decisions and scores exactly. With
+ * signals.residencyKnown, an ad outside it (a peer, under the shared proxy)
+ * is neither charged nor rewarded; without it the resident set speaks for
+ * every candidate.
  *
  * Part of #518: operational availability (lifecycle draining/unloading/
  * failed) orders candidates but never changes eligibility. The optional
@@ -37,6 +40,10 @@ export type OperationalState = "draining" | "failed";
 export interface RankingSignals {
   /** deploymentIds currently resident on their owner node; absent = unknown. */
   resident?: ReadonlySet<string>;
+  /** whether `resident` speaks for this candidate; absent = it speaks for
+   *  every candidate (the #518/#519 behaviour). A candidate outside it has
+   *  unknown residency: no load or drain cost and no resident bonus. */
+  residencyKnown?: (ad: RouteAdvertisementV1) => boolean;
   expectedLoadMs?: (ad: RouteAdvertisementV1) => number | undefined;
   drainMs?: (ad: RouteAdvertisementV1) => number | undefined;
   cooldownUntil?: (ad: RouteAdvertisementV1) => number | undefined;
@@ -89,18 +96,22 @@ function isResident(ad: RouteAdvertisementV1, signals: RankingSignals): boolean 
   return signals.resident?.has(ad.deploymentId) ?? false;
 }
 
+function residencyKnownFor(ad: RouteAdvertisementV1, signals: RankingSignals): boolean {
+  return signals.resident !== undefined && (signals.residencyKnown?.(ad) ?? true);
+}
+
 function loadCostMs(
   ad: RouteAdvertisementV1,
   signals: RankingSignals,
   weights: RankingWeights,
   policy: ResidencyPolicy,
 ): number {
-  if (signals.resident === undefined || isResident(ad, signals)) return 0;
+  if (!residencyKnownFor(ad, signals) || isResident(ad, signals)) return 0;
   return (signals.expectedLoadMs?.(ad) ?? weights.defaultExpectedLoadMs) + policy.coldLoadPenaltyMs;
 }
 
 function drainCostMs(ad: RouteAdvertisementV1, signals: RankingSignals): number {
-  if (signals.resident === undefined || isResident(ad, signals)) return 0;
+  if (!residencyKnownFor(ad, signals) || isResident(ad, signals)) return 0;
   return signals.drainMs?.(ad) ?? 0;
 }
 
@@ -158,9 +169,10 @@ export function rankRouteCandidates(
       const op = signals.operationalState?.(ad);
       const qualityPoints = qualityPointsOf(ad, op);
       const switchCost = switchCostMs(ad, opts.now, signals, weights, policy);
-      const residentBonus = isResident(ad, signals)
-        ? policy.residentPreference * weights.msPerQualityPoint
-        : 0;
+      const residentBonus =
+        residencyKnownFor(ad, signals) && isResident(ad, signals)
+          ? policy.residentPreference * weights.msPerQualityPoint
+          : 0;
       return {
         candidate,
         index,

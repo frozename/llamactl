@@ -775,3 +775,59 @@ The script exits 3 when any metric is `regressed` and 0 otherwise. An
 `unavailable` metric never counts as a regression, so exit 0 does not mean
 every metric was measured: read the verdict column. The diff compares perf
 metrics only, so the promotion cells in the table above stay `unavailable`.
+
+### Load and prefill metrics for an arm
+
+`load_cold_ms` and `load_warm_ms` are measured only when the caller injects
+load hooks (`PerfSuiteLoadHooks` and `runLoadHook`,
+`packages/eval/src/perf/runner.ts`). The runner times each hook and trusts
+it to resolve only once the engine can serve; it performs no readiness
+probe of its own. Neither `llamactl eval perf` nor a scheduled suite
+injects load hooks, so from both commands the two load metrics are always
+recorded `unavailable`, each with a reason naming the caller. `eval perf`
+records `eval perf runs against an engine already serving '<model>' at
+<url>; it does not launch or reload the engine, so cold/warm model-load
+time is not measured` (`buildOpts`, `packages/cli/src/commands/eval-perf.ts`).
+A scheduled suite records `model load for <rel> happens on node '<node>';
+scheduled suites reach an already-serving engine through the agent gateway
+and do not load or reload it, so cold/warm load time is not measured`
+(`createPerfBenchSuiteRunner`, `packages/cli/src/commands/bench-schedule.ts`).
+A caller that passes neither hooks nor a reason gets `no load hooks
+injected (engine not managed by the suite)`. A hook that throws records
+`<metric> failed: <message>`, and a non-finite or negative elapsed time
+records `non-finite load time`. Because an `unavailable` metric never
+counts as a regression, the perf diff reports both load metrics
+`unavailable` for runs from these commands, never `regressed`.
+
+Prefill runs after the load phase. The model context comes from the
+suite's `ctx` option (`--ctx` on `eval perf`), then the provenance `ctx`,
+then the first `/v1/models` entry's `context_length`, `max_model_len`,
+`meta.n_ctx` or `meta.n_ctx_train` (`resolveModelCtx`,
+`packages/eval/src/perf/runner.ts`). With no context, each of
+`prefill_4k_tps`, `prefill_16k_tps`, `prefill_32k_tps` and
+`prefill_64k_tps` is recorded `unavailable` with `model context unknown`.
+Otherwise each size builds a token-exact prompt through the engine's
+`/tokenize` endpoint (the `tokenizePath` default in
+`createHttpPerfEngineClient`, `packages/eval/src/perf/client.ts`) before
+the context guard, so a missing tokenize endpoint is reported the same way
+at every size. An HTTP error records
+`<metric> failed: tokenize HTTP <status> at /tokenize`, and a prompt that
+cannot be matched to the target count records
+`could not build a token-exact prompt`. A size whose tokens plus the
+suite's decode tokens (16 for `perf-quick`, 64 for `perf-full`;
+`PERF_SUITES`, `packages/eval/src/perf/suites.ts`) exceed the context
+records `prefill <n> tokens exceeds model context <ctx>`. An engine whose
+own prompt-token count is more than 8 off the target records
+`engine counted <n> prompt tokens for target <target>` (`runPrefillSize`,
+`packages/eval/src/perf/runner.ts`).
+
+A scheduled suite sets no model context: its provenance `ctx` is null and
+it passes no `ctx` option (`createPerfBenchSuiteRunner`,
+`packages/cli/src/commands/bench-schedule.ts`), and the gateway's
+`/v1/models` entries carry no `context_length`, `max_model_len` or `meta`
+(`buildListOpenAIModels`, `packages/core/src/openaiProxy.ts`), so every
+prefill size records `model context unknown` and `/tokenize` is never
+called. Even with a context, prefill would still fail through the gateway,
+because the agent gateway routes only `/v1/*` paths, and `/tokenize` is not
+one of them. For prefill evidence on an arm, run `llamactl eval perf`
+against the engine's own URL.
