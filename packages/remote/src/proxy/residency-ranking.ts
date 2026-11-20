@@ -16,6 +16,28 @@
  * - a local workload with no `ready` lifecycle row counts as
  *   non-resident and is charged, the same limit as the resident set.
  *
+ * Part of #518: `minResidencySeconds` also feeds the ranker's
+ * `cooldownUntil` signal — a local candidate without a `ready`
+ * lifecycle row whose exclusive residency group is held by another
+ * member in `ready` is charged until that member has been `ready` for
+ * `minResidencySeconds`, composed with the switch cooldown as the later
+ * instant. Its limits:
+ * - peers are never charged (only ads owned by `nodeId` qualify);
+ * - unknown residency — an absent, errored or lifecycle-unreadable
+ *   store — charges nothing;
+ * - only `ready` occupants of a declared-exclusive group hold
+ *   (`state === "ready"`, not `isOccupyingResidencyState`);
+ * - only a candidate with a lifecycle row tagged with the group is
+ *   charged; a candidate with no lifecycle row is never charged;
+ * - the latest-ready occupant sets the hold (max `updatedAtMs` per
+ *   model within the group);
+ * - an expired hold still reports its past instant (not clamped to now);
+ * - when `minResidencySeconds` is 0, the hold is absent and the switch
+ *   cooldown value stands alone;
+ * - it is emitted only when a ranking knob is nonzero (the store is not
+ *   read otherwise) and does not need the resident set, since the
+ *   ranker's cooldown charge does not consult `signals.resident`.
+ *
  * The operational signal (Part of #518) maps `draining`/`unloading`
  * lifecycle rows to "draining" and `failed` rows to "failed" on the
  * ranker's `operationalState` callback. Its limits:
@@ -169,8 +191,15 @@ function rankingKnobsActive(resolved: ResidencyPolicy): boolean {
   return (
     resolved.residentPreference !== 0 ||
     resolved.coldLoadPenaltyMs !== 0 ||
-    resolved.switchCooldownSeconds !== 0
+    resolved.switchCooldownSeconds !== 0 ||
+    resolved.minResidencySeconds !== 0
   );
+}
+
+function maxDefined(a: number | undefined, b: number | undefined): number | undefined {
+  if (a === undefined) return b;
+  if (b === undefined) return a;
+  return a > b ? a : b;
 }
 
 function switchCooldownSignal(input: {
@@ -193,6 +222,66 @@ function switchCooldownSignal(input: {
 export interface ResidencyRankingInputsResult {
   policy: NodeRunResidency | null;
   signals: routingRanking.RankingSignals;
+}
+
+function latestReadyByGroup(
+  lifecycle: readonly ResidencyStateRecord[],
+): Map<string, Map<string, number>> {
+  const readyByGroup = new Map<string, Map<string, number>>();
+  for (const row of lifecycle) {
+    const group = row.state === "ready" ? exclusiveGroup(row.group) : undefined;
+    if (group === undefined) continue;
+    const byModel = readyByGroup.get(group) ?? new Map<string, number>();
+    byModel.set(row.model, Math.max(byModel.get(row.model) ?? row.updatedAtMs, row.updatedAtMs));
+    readyByGroup.set(group, byModel);
+  }
+  return readyByGroup;
+}
+
+function latestOtherReadyAtMs(
+  byModel: ReadonlyMap<string, number> | undefined,
+  model: string,
+): number | undefined {
+  let latest: number | undefined;
+  for (const [occupant, updatedAtMs] of byModel ?? []) {
+    if (occupant !== model) latest = maxDefined(latest, updatedAtMs);
+  }
+  return latest;
+}
+
+function minResidencyHoldSignal(input: {
+  lifecycle: readonly ResidencyStateRecord[];
+  nodeId: string;
+  ready: ReadonlySet<string>;
+  minMs: number;
+}): Map<string, number> | undefined {
+  if (input.minMs <= 0) return undefined;
+  const readyByGroup = latestReadyByGroup(input.lifecycle);
+  const holdUntil = new Map<string, number>();
+  for (const row of input.lifecycle) {
+    const group = exclusiveGroup(row.group);
+    if (group === undefined) continue;
+    const deploymentId = residentDeploymentId(input.nodeId, row.model);
+    if (input.ready.has(deploymentId)) continue;
+    const readyAtMs = latestOtherReadyAtMs(readyByGroup.get(group), row.model);
+    if (readyAtMs === undefined) continue;
+    const until = maxDefined(holdUntil.get(deploymentId), readyAtMs + input.minMs);
+    if (until !== undefined) holdUntil.set(deploymentId, until);
+  }
+  return holdUntil.size === 0 ? undefined : holdUntil;
+}
+
+function composedCooldownSignal(input: {
+  switchCooldownUntil: routingRanking.RankingSignals["cooldownUntil"];
+  holdUntil: ReadonlyMap<string, number> | undefined;
+  nodeId: string;
+}): routingRanking.RankingSignals["cooldownUntil"] {
+  const { switchCooldownUntil, holdUntil, nodeId } = input;
+  if (switchCooldownUntil === undefined && holdUntil === undefined) return undefined;
+  return (ad): number | undefined =>
+    ad.ownerNodeId === nodeId
+      ? maxDefined(switchCooldownUntil?.(ad), holdUntil?.get(ad.deploymentId))
+      : undefined;
 }
 
 export interface ResidencyRankingReadout {
@@ -234,6 +323,16 @@ function operationalStateSignal(
  * ready rows are never charged, and a missing recorded switch charges
  * nothing.
  *
+ * The hold signal (minResidencySeconds nonzero, a clean store) reports
+ * the absolute expiry instant for local candidates without a `ready`
+ * lifecycle row whose exclusive residency group is held by another
+ * member in `ready` — the latest-ready occupant (max `updatedAtMs` per
+ * model) sets the hold; peers are never charged, an absent or errored
+ * store charges nothing, and a candidate with no lifecycle row is never
+ * charged. When both hold and switch cooldown exist, the later instant
+ * is used; when `minResidencySeconds` is 0, the hold is absent and the
+ * switch cooldown value stands alone.
+ *
  * The operational signal (Part of #518) reports the node-local lifecycle
  * state of a local candidate's workload: `draining`/`unloading` rows map
  * to "draining" and `failed` rows map to "failed"; every other state and
@@ -272,12 +371,22 @@ export function residencyRankingInputs(input: {
   const drainMs = residentSetEmitted
     ? exclusiveDrainSignal({ lifecycle, nodeId: input.nodeId, ready })
     : undefined;
-  const cooldownUntil = switchCooldownSignal({
+  const switchCooldownUntil = switchCooldownSignal({
     cooldownMs: resolved.switchCooldownSeconds * 1000,
     nodeName: input.nodeName,
     lastSucceededAtMs: store?.lastSucceededAtMs,
     nodeId: input.nodeId,
     ready,
+  });
+  const cooldownUntil = composedCooldownSignal({
+    switchCooldownUntil,
+    holdUntil: minResidencyHoldSignal({
+      lifecycle,
+      nodeId: input.nodeId,
+      ready,
+      minMs: resolved.minResidencySeconds * 1000,
+    }),
+    nodeId: input.nodeId,
   });
   const operationalState = operationalStateSignal(lifecycle, input.nodeId);
   const residencyKnown: NonNullable<routingRanking.RankingSignals["residencyKnown"]> = (ad) =>
@@ -417,11 +526,7 @@ export function createResidencyRankingSource(input: {
       const residency = nodeRun?.spec.residency ?? null;
       const partial = residency === null ? null : toPartialResidencyPolicy(residency);
       const resolved = resolveResidencyPolicy(partial);
-      if (
-        resolved.residentPreference === 0 &&
-        resolved.coldLoadPenaltyMs === 0 &&
-        resolved.switchCooldownSeconds === 0
-      ) {
+      if (!rankingKnobsActive(resolved)) {
         return { policy: residency, signals: {} };
       }
       return residencyRankingInputs({

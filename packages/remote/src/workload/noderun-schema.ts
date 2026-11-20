@@ -57,7 +57,8 @@ export type NodeRunInfraItem = z.infer<typeof NodeRunInfraItemSchema>;
  * node-local residency store. `minResidencySeconds` is enforced: residencyPlan
  * and residencyApplyProfile refuse with `MinResidency` while a victim's
  * node-local residency_states row has been `ready` for fewer than that many
- * seconds; 0 disables. `idleEvictSeconds` is
+ * seconds; 0 disables. It also feeds the ranker's `cooldownUntil` signal
+ * through createSharedUnifiedProxy when nonzero (Part of #518). `idleEvictSeconds` is
  * operator-only: validated, persisted and reported advisory by the residencyStatus
  * idleEviction section (only on the serving node), and acted on only when the
  * operator runs `residency evict-idle`, which stops a still-idle resident behind
@@ -81,7 +82,8 @@ export const ResidencyPolicySchema = z
     idleEvictSeconds: z.number().int().nonnegative().optional(),
     /** enforced: refuses residencyPlan and residencyApplyProfile with
      *  MinResidency while a victim's ready lifecycle row is younger than this;
-     *  0 disables (Part of #519) */
+     *  0 disables (Part of #519). Also feeds the ranker's `cooldownUntil`
+     *  signal through createSharedUnifiedProxy when nonzero (Part of #518) */
     minResidencySeconds: z.number().int().nonnegative().optional(),
     /** enforced: refuses residencyPlan and residencyApplyProfile with Cooldown
      *  within this many seconds of the node's last succeeded profile switch
