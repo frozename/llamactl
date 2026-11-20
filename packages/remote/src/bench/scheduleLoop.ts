@@ -54,6 +54,8 @@ export interface BenchSuiteRequest {
   rel: string;
   // #521: eval engine recorded in perf provenance; absent on legacy schedules
   engine?: string;
+  // #521: operator-declared engine slot count for c2/c4; absent on legacy schedules
+  slots?: number;
 }
 
 export type BenchSuiteRunner = (req: BenchSuiteRequest) => Promise<void>;
@@ -270,6 +272,7 @@ async function runWithOutcome(
           node: schedule.node,
           rel: schedule.rel,
           ...(schedule.engine !== undefined ? { engine: schedule.engine } : {}),
+          ...(schedule.slots !== undefined ? { slots: schedule.slots } : {}),
         },
         runSuite,
       );

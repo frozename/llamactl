@@ -339,3 +339,54 @@ describe("#521 scheduled suite engine", () => {
     expect(result.success).toBe(false);
   });
 });
+
+describe("#521 scheduled suite slots", () => {
+  test("a suite schedule with slots round-trips through save/load", () => {
+    // Kills: dropping `slots` from benchScheduleBase (zod strips it).
+    const schedule: BenchSchedule & { slots?: number } = {
+      ...suiteSchedule("slots-persist"),
+      slots: 4,
+    };
+    saveSchedules([schedule], schedulePath);
+
+    const entry = loadSchedules(schedulePath)[0] as BenchSchedule & { slots?: number };
+    expect(entry.slots).toBe(4);
+  });
+
+  test("schema rejects slots unless kind is 'suite'", () => {
+    // Kills: the missing superRefine branch for slots.
+    for (const fixture of [
+      { ...baseSchedule("slots-preset"), kind: "preset" as const, slots: 4 },
+      { ...baseSchedule("slots-kindless"), slots: 4 },
+    ]) {
+      const result = BenchScheduleSchema.safeParse(fixture);
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues.map((issue) => issue.message).join("; ")).toContain(
+          "slots is only valid with kind 'suite'",
+        );
+      }
+    }
+  });
+
+  test("schema rejects non-positive or non-integer slots on suite schedules", () => {
+    // Kills: dropping .int().positive() from the slots field.
+    for (const slots of [0, -1, 1.5]) {
+      const result = BenchScheduleSchema.safeParse({
+        ...suiteSchedule(`slots-bad-${String(slots)}`),
+        slots,
+      });
+      expect(result.success).toBe(false);
+    }
+  });
+
+  test("guard: a legacy suite schedule persists no slots key", () => {
+    // Back-compat guard: slots stays absent — never written as null or 0.
+    saveSchedules([suiteSchedule("slots-legacy")], schedulePath);
+
+    const entry = loadSchedules(schedulePath)[0] as BenchSchedule & { slots?: number };
+    expect("slots" in entry).toBe(false);
+
+    expect(readFileSync(schedulePath, "utf8")).not.toContain("slots:");
+  });
+});

@@ -19,7 +19,8 @@ import { existsSync, mkdirSync, readFileSync } from "../safe-fs.js";
  * a named perf suite through an injected runner instead of
  * `benchPresetRun.subscribe`. The scheduler never resolves the suite
  * id or the engine id itself: an unknown id is the runner's to
- * reject, and the rejection lands in `lastError`.
+ * reject, and the rejection lands in `lastError`. A suite schedule
+ * may also declare the engine slot count (`slots`) used for c2/c4.
  */
 
 export const BENCH_SCHEDULE_KINDS = ["preset", "suite"] as const;
@@ -46,6 +47,7 @@ const benchScheduleBase = z.object({
     .string()
     .regex(/^[a-z0-9][a-z0-9._-]*$/)
     .optional(),
+  slots: z.number().int().positive().optional(),
 });
 
 export const BenchScheduleSchema = benchScheduleBase.superRefine((data, ctx) => {
@@ -68,6 +70,13 @@ export const BenchScheduleSchema = benchScheduleBase.superRefine((data, ctx) => 
       code: "custom",
       message: "engine is only valid with kind 'suite'",
       path: ["engine"],
+    });
+  }
+  if (data.kind !== "suite" && data.slots !== undefined) {
+    ctx.addIssue({
+      code: "custom",
+      message: "slots is only valid with kind 'suite'",
+      path: ["slots"],
     });
   }
 });

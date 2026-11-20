@@ -1059,6 +1059,8 @@ describe("llamactl bench schedule — in-process seams", () => {
   });
 });
 
+const ADD_PREFIX = ["schedule", "add", "s1", "--rel", "r", "--every", "1h"];
+
 describe("#521 scheduled suite engine", () => {
   afterEach(() => {
     resetGlobals();
@@ -1071,8 +1073,6 @@ describe("#521 scheduled suite engine", () => {
     setGlobals({ ...getGlobals(), nodeName: "gpu1" });
     return calls;
   }
-
-  const ADD_PREFIX = ["schedule", "add", "s1", "--rel", "r", "--every", "1h"];
 
   test("add forwards --engine to benchScheduleAdd for kind suite", async () => {
     // Kills: --engine missing from VALUED_ADD_FLAGS, or not forwarded to the caller.
@@ -1136,5 +1136,81 @@ describe("#521 scheduled suite engine", () => {
     );
     expect(result).toBe(0);
     expect(stdout).toContain("--engine <llamacpp|omlx|gufo|kapitsa>");
+  });
+});
+
+describe("#521 scheduled suite slots", () => {
+  afterEach(() => {
+    resetGlobals();
+    resetBenchScheduleSeams();
+  });
+
+  function installSlotsAddCaller(): CallerCalls {
+    const { caller, calls } = installFakeCaller({});
+    setBenchScheduleSeams({ caller });
+    setGlobals({ ...getGlobals(), nodeName: "gpu1" });
+    return calls;
+  }
+
+  test("add forwards --slots to benchScheduleAdd for kind suite", async () => {
+    // Kills: --slots missing from VALUED_ADD_FLAGS, or forwarded as a string.
+    const calls = installSlotsAddCaller();
+    const { result } = await captureProcessStreams(() =>
+      benchCmd.runBench([
+        ...ADD_PREFIX,
+        "--kind",
+        "suite",
+        "--suite",
+        "perf-quick",
+        "--slots",
+        "4",
+      ]),
+    );
+    expect(result).toBe(0);
+    expect(calls.add).toHaveLength(1);
+    const input = requireRecord(calls.add[0]);
+    expect(input["slots"]).toBe(4);
+    expect(typeof input["slots"]).toBe("number");
+  });
+
+  test("add refuses --slots unless kind is 'suite'", async () => {
+    // Kills: missing kind gating for --slots.
+    const calls = installSlotsAddCaller();
+    const { result, stderr } = await captureProcessStreams(() =>
+      benchCmd.runBench([...ADD_PREFIX, "--slots", "4"]),
+    );
+    expect(result).toBe(1);
+    expect(stderr).toContain("bench schedule add: --slots is only valid when kind is 'suite'");
+    expect(calls.add).toHaveLength(0);
+  });
+
+  test("add refuses --slots values that are not positive integers", async () => {
+    // Kills: missing positive-integer validation for --slots.
+    for (const bad of ["0", "abc", "1.5"]) {
+      const calls = installSlotsAddCaller();
+      const { result, stderr } = await captureProcessStreams(() =>
+        benchCmd.runBench([
+          ...ADD_PREFIX,
+          "--kind",
+          "suite",
+          "--suite",
+          "perf-quick",
+          "--slots",
+          bad,
+        ]),
+      );
+      expect(result).toBe(1);
+      expect(stderr).toContain("bench schedule add: --slots must be a positive integer");
+      expect(calls.add).toHaveLength(0);
+    }
+  });
+
+  test("add --help documents the --slots flag", async () => {
+    // Kills: USAGE not listing --slots.
+    const { result, stdout } = await captureProcessStreams(() =>
+      benchCmd.runBench(["schedule", "add", "--help"]),
+    );
+    expect(result).toBe(0);
+    expect(stdout).toContain("[--engine <llamacpp|omlx|gufo|kapitsa>] [--slots <n>]]");
   });
 });
