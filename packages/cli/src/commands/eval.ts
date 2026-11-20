@@ -10,6 +10,7 @@ import type {
 import {
   composite,
   killServer,
+  perfDiffMain,
   queryRows,
   renderCard,
   runContextRetrieval,
@@ -48,7 +49,14 @@ Subcommands:
       I/O and VmHWM when --pid names a local engine, and GTT on any
       loopback Linux run, with or without --pid. Rows go to the same
       perf.sqlite as bench schedule suites.
+  perf-diff --base <run_id> --candidate <run_id> [--db <path>] [--model <name>] [--format md|json] [--tolerance <fraction>]
+      Compare two perf runs in perf.sqlite metric by metric (default db: the
+      shared eval/perf.sqlite). An unavailable metric is never a regression;
+      exits 3 on any regressed metric.
 `;
+
+const PERF_DIFF_USAGE =
+  "Usage: llamactl eval perf-diff --base <run_id> --candidate <run_id> [--db <path>] [--model <name>] [--format md|json] [--tolerance <fraction>]\n";
 
 function envValue(name: string): string {
   return process.env[name] ?? "";
@@ -428,6 +436,14 @@ function parseLeaderboardSort(value: string): keyof LeaderboardRow {
     : "composite";
 }
 
+function runEvalPerfDiff(argv: string[]): number {
+  if (argv.includes("-h") || argv.includes("--help")) {
+    process.stdout.write(PERF_DIFF_USAGE);
+    return 0;
+  }
+  return perfDiffMain(argv, process.env);
+}
+
 export async function runEval(argv: string[]): Promise<number> {
   const [sub, ...rest] = argv;
   switch (sub) {
@@ -439,6 +455,8 @@ export async function runEval(argv: string[]): Promise<number> {
       return await runEvalLeaderboard(rest);
     case "perf":
       return await runEvalPerf(rest);
+    case "perf-diff":
+      return runEvalPerfDiff(rest);
     case undefined:
     case "-h":
     case "--help":
