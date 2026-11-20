@@ -2472,7 +2472,10 @@ export const router = t.router({
   // advisory read-out of the NodeRun idle-evict window against this serving
   // process's ready lifecycle rows and lease activity (forwarded through the
   // registry's lastActivityAtMs read-out), only when `node` is the serving node;
-  // nothing is evicted or slept.
+  // nothing is evicted or slept. The ranking section is a read-only read-out of
+  // the residentPreference and cold-load ranking inputs (the resident set and
+  // drain charges as the unified proxy's ranker sees them), reported only on
+  // the serving node with the unified proxy on; it never ranks anything.
   residencyStatus: t.procedure
     .input(z.object({ node: z.string().min(1) }))
     .query(async ({ input }) => {
@@ -2517,6 +2520,7 @@ export const router = t.router({
               ...workloadStoreMod.listWorkloads().map((m) => m.metadata.name),
               ...modelHostStoreMod.listModelHosts().map((h) => h.metadata.name),
             ];
+      const { unifiedProxyEnabled } = await import("./proxy/create-proxy.js");
       return buildResidencyStatus({
         node: input.node,
         nodeRun: node,
@@ -2526,6 +2530,7 @@ export const router = t.router({
         leaseRegistry: auditSource,
         leaseWorkloads,
         servingNode,
+        unifiedProxy: unifiedProxyEnabled(),
         omlxNative: await collectOmlxNativeStatus({
           node: input.node,
           servingNode,

@@ -850,3 +850,42 @@ called. Even with a context, prefill would still fail through the gateway,
 because the agent gateway routes only `/v1/*` paths, and `/tokenize` is not
 one of them. For prefill evidence on an arm, run `llamactl eval perf`
 against the engine's own URL.
+
+### Host reader failures for an arm
+
+When a host reader is present but produces no sample, `runPerfSuite`
+(packages/eval/src/perf/runner.ts) records why, and the metric is never
+recorded as 0. The I/O reasons live in `runIoPhase`
+(`packages/eval/src/perf/runner.ts`): a reader that throws at the start or
+the end sample records `I/O reader failed: <message>` (the start sample
+wins), and a present reader that returns null or an invalid sample at
+either point records `I/O reader returned no sample`. Peak RSS works the
+same way through `readPeakRss` and `runMemoryPhase`: a throwing VmHWM
+reader records `peak-RSS (VmHWM) reader failed: <message>`, and a present
+reader returning null or a non-positive number records
+`peak-RSS (VmHWM) reader returned no sample`. For GTT, `readPeakGtt`
+records `GTT reader failed: <message>` for a throw and `GTT reader
+returned no sample` for a null observation, and `gttObservationReason`
+names a non-ok observation `GTT reader returned no sample (status:
+<status>)`, or `GTT reader returned no sample
+(status: <status>, source: <source>)` when the observation names a source;
+an observation with status ok and an invalid `usedBytes` is named with its
+`usedBytes` value. The
+first failure message comes from `readerErrorMessage`, which passes a
+thrown `Error`'s message through and stringifies anything else. An ok GTT
+sample from any phase still wins over a failed one (`peakGttMetric`,
+`packages/eval/src/perf/runner.ts`). Absent readers keep their
+caller-named reasons, as described in Capturing evidence for an arm.
+
+The shipped `createPerfHostReaders` (packages/eval/src/perf/readers.ts)
+turns a failed /proc read into null. So `eval perf` records `I/O reader
+returned no sample` and `peak-RSS (VmHWM) reader returned no sample`, and
+the `... reader failed: <message>` reasons apply only to an injected
+reader that throws. The GTT probe `probeGpuGtt`
+(packages/fleet-supervisor/src/node-probe.ts) reports `denied` when the
+counters are not readable, `unavailable` when no card exposes them, and
+`unsupported` off Linux, and reports an empty source for each of them. On
+a loopback Linux `eval perf` run, the stored `peak_gtt_bytes` reason is
+therefore the status-only form, for example `GTT reader returned no sample
+(status: denied)`. The source clause appears only for an injected reader
+that names a source.
