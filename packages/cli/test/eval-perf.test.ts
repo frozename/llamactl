@@ -1003,3 +1003,59 @@ describe("#521 eval perf load reason", () => {
     }
   });
 });
+
+describe("#521 eval perf GTT reader status", () => {
+  test("a denied GTT probe is stored and printed with its status (kills: eval perf dropping the probe status between probeGpuGtt and the stored row)", async () => {
+    const proc = fakeProcFs();
+    const prov = provenanceFakes({});
+    perfSeams()({
+      platform: "linux",
+      fetchImpl: failingEngineFetch(["m"]),
+      readFile: proc.readFile,
+      probeGtt: () =>
+        Promise.resolve({
+          status: "denied",
+          totalBytes: null,
+          usedBytes: null,
+          observedAtMs: null,
+          source: "",
+          scope: "shared",
+        }),
+      provenanceReaders: prov.readers,
+      clock: { now: () => 0 },
+    });
+    const dbPath = join(tmp, "perf.sqlite");
+
+    const { result, stdout } = await captureProcessStreams(() =>
+      runEval(
+        perfArgv(dbPath, [
+          "--url",
+          LOOPBACK_URL,
+          "--engine",
+          "llamacpp",
+          "--model",
+          "m",
+          "--pid",
+          "4242",
+        ]),
+      ),
+    );
+
+    expect(result).toBe(0);
+    expect(stdout).toContain(
+      "| peak_gtt_bytes | unavailable | unavailable | GTT reader returned no sample (status: denied) |",
+    );
+    const db = new Database(dbPath, { readonly: true });
+    try {
+      const rows = listPerfRuns(db, { run_id: "r1" });
+      const byName = new Map(rows.map((row) => [row.metric_name, row.metric]));
+      expect(byName.get("peak_gtt_bytes")).toEqual({
+        value: null,
+        status: "unavailable",
+        reason: "GTT reader returned no sample (status: denied)",
+      });
+    } finally {
+      db.close();
+    }
+  });
+});

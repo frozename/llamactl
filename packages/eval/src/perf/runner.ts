@@ -65,7 +65,7 @@ interface PerfSuiteRun {
   readonly rows: PerfRunRow[];
   record(name: string, metric: MetricValue): void;
   step(names: readonly string[], fn: () => Promise<void>): Promise<void>;
-  sampleIo(): Promise<IoByteCounts | null>;
+  sampleIo(): Promise<IoSample>;
   sampleIoReason(): string | undefined;
   /** Fold one GTT sample into the in-memory peak (recorded once, at the end). */
   observeGtt(sample: MetricValue): void;
@@ -97,6 +97,26 @@ function validIoSample(sample: IoByteCounts | null): sample is IoByteCounts {
     sample.readBytes >= 0 &&
     sample.writeBytes >= 0
   );
+}
+
+type IoSample =
+  | { readonly kind: "absent" }
+  | { readonly kind: "empty" }
+  | { readonly kind: "failed"; readonly message: string }
+  | { readonly kind: "sample"; readonly value: IoByteCounts };
+
+function readerErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function gttObservationReason(obs: GttObservation): string {
+  if (obs.status === "ok") {
+    return `GTT reader returned no sample (status: ok, usedBytes: ${String(obs.usedBytes)})`;
+  }
+  if (obs.source.trim() !== "") {
+    return `GTT reader returned no sample (status: ${obs.status}, source: ${obs.source})`;
+  }
+  return `GTT reader returned no sample (status: ${obs.status})`;
 }
 
 function createPerfSuiteRun(db: Database, opts: PerfSuiteOptions): PerfSuiteRun {
@@ -135,14 +155,14 @@ function createPerfSuiteRun(db: Database, opts: PerfSuiteOptions): PerfSuiteRun 
     }
   };
 
-  const sampleIo = async (): Promise<IoByteCounts | null> => {
+  const sampleIo = async (): Promise<IoSample> => {
     const io = opts.readers?.io;
-    if (io === undefined) return null;
+    if (io === undefined) return { kind: "absent" };
     try {
       const sample = await io();
-      return validIoSample(sample) ? sample : null;
-    } catch {
-      return null;
+      return validIoSample(sample) ? { kind: "sample", value: sample } : { kind: "empty" };
+    } catch (err) {
+      return { kind: "failed", message: readerErrorMessage(err) };
     }
   };
 
@@ -376,26 +396,41 @@ async function runConcurrencyPhase(run: PerfSuiteRun): Promise<void> {
   }
 }
 
-async function runIoPhase(run: PerfSuiteRun, io0: IoByteCounts | null): Promise<void> {
+async function runIoPhase(run: PerfSuiteRun, io0: IoSample): Promise<void> {
   await run.step(["ssd_read_bytes", "ssd_write_bytes"], async () => {
     const io1 = await run.sampleIo();
-    if (io0 === null || io1 === null) {
-      const readerPresent = run.opts.readers?.io !== undefined;
-      const reason = readerPresent
-        ? "I/O reader returned no sample"
-        : (run.sampleIoReason() ?? "no I/O reader for this platform");
-      run.record("ssd_read_bytes", unavailableMetric(reason));
-      run.record("ssd_write_bytes", unavailableMetric(reason));
+    if (io0.kind === "sample" && io1.kind === "sample") {
+      run.record(
+        "ssd_read_bytes",
+        okMetric(Math.max(0, io1.value.readBytes - io0.value.readBytes)),
+      );
+      run.record(
+        "ssd_write_bytes",
+        okMetric(Math.max(0, io1.value.writeBytes - io0.value.writeBytes)),
+      );
       return;
     }
-    run.record("ssd_read_bytes", okMetric(Math.max(0, io1.readBytes - io0.readBytes)));
-    run.record("ssd_write_bytes", okMetric(Math.max(0, io1.writeBytes - io0.writeBytes)));
+    let failureMessage: string | undefined;
+    for (const sample of [io0, io1]) {
+      if (sample.kind === "failed") {
+        failureMessage = sample.message;
+        break;
+      }
+    }
+    const reason = failureMessage
+      ? `I/O reader failed: ${failureMessage}`
+      : io0.kind !== "absent"
+        ? "I/O reader returned no sample"
+        : (run.sampleIoReason() ?? "no I/O reader for this platform");
+    run.record("ssd_read_bytes", unavailableMetric(reason));
+    run.record("ssd_write_bytes", unavailableMetric(reason));
   });
 }
 
 type PeakRssSample =
   | { readonly kind: "absent" }
   | { readonly kind: "empty" }
+  | { readonly kind: "failed"; readonly message: string }
   | { readonly kind: "sample"; readonly value: number };
 
 async function readPeakRss(readers: PerfSuiteReaders | undefined): Promise<PeakRssSample> {
@@ -406,8 +441,8 @@ async function readPeakRss(readers: PerfSuiteReaders | undefined): Promise<PeakR
     return value !== null && Number.isFinite(value) && value > 0
       ? { kind: "sample", value }
       : { kind: "empty" };
-  } catch {
-    return { kind: "empty" };
+  } catch (err) {
+    return { kind: "failed", message: readerErrorMessage(err) };
   }
 }
 
@@ -431,9 +466,12 @@ async function readPeakGtt(
     ) {
       return okMetric(obs.usedBytes);
     }
-    return unavailableMetric("GTT reader returned no sample");
-  } catch {
-    return unavailableMetric("GTT reader returned no sample");
+    if (obs === null) {
+      return unavailableMetric("GTT reader returned no sample");
+    }
+    return unavailableMetric(gttObservationReason(obs));
+  } catch (err) {
+    return unavailableMetric(`GTT reader failed: ${readerErrorMessage(err)}`);
   }
 }
 
@@ -442,6 +480,13 @@ async function runMemoryPhase(run: PerfSuiteRun): Promise<void> {
     const sample = await readPeakRss(run.opts.readers);
     if (sample.kind === "sample") {
       run.record("peak_rss_bytes", okMetric(sample.value));
+      return;
+    }
+    if (sample.kind === "failed") {
+      run.record(
+        "peak_rss_bytes",
+        unavailableMetric(`peak-RSS (VmHWM) reader failed: ${sample.message}`),
+      );
       return;
     }
     run.record(

@@ -664,4 +664,198 @@ describe("runPerfSuite", () => {
       expect(metricOf(rows, "load_warm_ms")).toEqual({ value: 1500, status: "ok" });
     });
   });
+
+  describe("#521 host reader failure reasons", () => {
+    async function runWithReaders(readers: PerfSuiteReaders): Promise<PerfRunRow[]> {
+      const clock = createManualClock();
+      const fake = startEngine(engineOpts(clock));
+      const client = createHttpPerfEngineClient(fake.url, { clock });
+      await runPerfSuite(db, suiteOpts({ client, clock, readers }));
+      return listPerfRuns(db, { run_id: RUN_ID });
+    }
+
+    test("a denied GTT observation records its status (kills: the bare 'returned no sample' string for every non-ok observation)", async () => {
+      const rows = await runWithReaders({
+        gtt: () => ({
+          status: "denied",
+          totalBytes: null,
+          usedBytes: null,
+          observedAtMs: null,
+          source: "",
+          scope: "shared",
+        }),
+      });
+
+      expectMetricNames(rows);
+      expect(unavailableReason(metricOf(rows, "peak_gtt_bytes"))).toBe(
+        "GTT reader returned no sample (status: denied)",
+      );
+    });
+
+    test("a non-ok GTT observation with a source records status and source (kills: dropping the source clause)", async () => {
+      const rows = await runWithReaders({
+        gtt: () => ({
+          status: "unavailable",
+          totalBytes: null,
+          usedBytes: null,
+          observedAtMs: null,
+          source: "/sys/class/drm/card1/device",
+          scope: "shared",
+        }),
+      });
+
+      expectMetricNames(rows);
+      expect(unavailableReason(metricOf(rows, "peak_gtt_bytes"))).toBe(
+        "GTT reader returned no sample (status: unavailable, source: /sys/class/drm/card1/device)",
+      );
+    });
+
+    test("a throwing GTT reader records the failure message (kills: mapping a GTT throw back to 'returned no sample')", async () => {
+      const rows = await runWithReaders({
+        gtt: () => {
+          throw new Error("gtt-boom");
+        },
+      });
+
+      expectMetricNames(rows);
+      expect(unavailableReason(metricOf(rows, "peak_gtt_bytes"))).toBe(
+        "GTT reader failed: gtt-boom",
+      );
+    });
+
+    test("an ok GTT observation without usedBytes records status and usedBytes (kills: the bare string for an ok observation with no bytes)", async () => {
+      const rows = await runWithReaders({
+        gtt: () => ({
+          status: "ok",
+          totalBytes: 8000,
+          usedBytes: null,
+          observedAtMs: 0,
+          source: "fixture",
+          scope: "shared",
+        }),
+      });
+
+      expectMetricNames(rows);
+      expect(unavailableReason(metricOf(rows, "peak_gtt_bytes"))).toBe(
+        "GTT reader returned no sample (status: ok, usedBytes: null)",
+      );
+    });
+
+    test("guard: an ok GTT sample still wins the peak fold over an earlier non-ok sample", async () => {
+      let gttCalls = 0;
+      const rows = await runWithReaders({
+        gtt: () => {
+          gttCalls += 1;
+          return gttCalls === 1
+            ? {
+                status: "denied",
+                totalBytes: null,
+                usedBytes: null,
+                observedAtMs: null,
+                source: "",
+                scope: "shared",
+              }
+            : {
+                status: "ok",
+                totalBytes: 8000,
+                usedBytes: 777,
+                observedAtMs: 0,
+                source: "fixture",
+                scope: "shared",
+              };
+        },
+      });
+
+      expectMetricNames(rows);
+      expect(metricOf(rows, "peak_gtt_bytes")).toEqual({ value: 777, status: "ok" });
+    });
+
+    test("a throwing I/O reader records the failure message on both ssd metrics (kills: swallowing the I/O throw)", async () => {
+      const rows = await runWithReaders({
+        io: () => {
+          throw new Error("io-boom");
+        },
+      });
+
+      expectMetricNames(rows);
+      expect(unavailableReason(metricOf(rows, "ssd_read_bytes"))).toBe(
+        "I/O reader failed: io-boom",
+      );
+      expect(unavailableReason(metricOf(rows, "ssd_write_bytes"))).toBe(
+        "I/O reader failed: io-boom",
+      );
+    });
+
+    test("an I/O throw at the end sample records the failure message (kills: checking only the start sample's failure)", async () => {
+      let ioCalls = 0;
+      const rows = await runWithReaders({
+        io: () => {
+          ioCalls += 1;
+          if (ioCalls === 1) return { readBytes: 1, writeBytes: 1 };
+          throw new Error("io-end-boom");
+        },
+      });
+
+      expectMetricNames(rows);
+      expect(unavailableReason(metricOf(rows, "ssd_read_bytes"))).toBe(
+        "I/O reader failed: io-end-boom",
+      );
+      expect(unavailableReason(metricOf(rows, "ssd_write_bytes"))).toBe(
+        "I/O reader failed: io-end-boom",
+      );
+    });
+
+    test("when both I/O samples throw the start sample's message wins (kills: preferring io1's failure over io0's)", async () => {
+      let ioCalls = 0;
+      const rows = await runWithReaders({
+        io: () => {
+          ioCalls += 1;
+          throw new Error(ioCalls === 1 ? "io-start" : "io-end");
+        },
+      });
+
+      expectMetricNames(rows);
+      expect(unavailableReason(metricOf(rows, "ssd_read_bytes"))).toBe(
+        "I/O reader failed: io-start",
+      );
+      expect(unavailableReason(metricOf(rows, "ssd_write_bytes"))).toBe(
+        "I/O reader failed: io-start",
+      );
+    });
+
+    test("a throwing peak-RSS reader records the failure message (kills: mapping a peak-RSS throw back to 'returned no sample')", async () => {
+      const rows = await runWithReaders({
+        peakRss: () => {
+          throw new Error("rss-boom");
+        },
+      });
+
+      expectMetricNames(rows);
+      expect(unavailableReason(metricOf(rows, "peak_rss_bytes"))).toBe(
+        "peak-RSS (VmHWM) reader failed: rss-boom",
+      );
+    });
+
+    test("guard: readers that resolve null keep the exact legacy no-sample strings", async () => {
+      const rows = await runWithReaders({
+        io: () => null,
+        peakRss: () => null,
+        gtt: () => null,
+      });
+
+      expectMetricNames(rows);
+      expect(unavailableReason(metricOf(rows, "ssd_read_bytes"))).toBe(
+        "I/O reader returned no sample",
+      );
+      expect(unavailableReason(metricOf(rows, "ssd_write_bytes"))).toBe(
+        "I/O reader returned no sample",
+      );
+      expect(unavailableReason(metricOf(rows, "peak_rss_bytes"))).toBe(
+        "peak-RSS (VmHWM) reader returned no sample",
+      );
+      expect(unavailableReason(metricOf(rows, "peak_gtt_bytes"))).toBe(
+        "GTT reader returned no sample",
+      );
+    });
+  });
 });
