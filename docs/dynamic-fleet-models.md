@@ -468,7 +468,24 @@ Steps:
 2. Record the current state with `llamactl get workloads`.
 3. Stop production: `llamactl disable <production-workload>` (the
    node-local production workload name; it is not in this repo).
-   Confirm it reads Stopped in `llamactl get workloads`.
+   Confirm it reads Stopped in `llamactl get workloads`. With the lease
+   registry on (`LLAMACTL_RESIDENCY_LEASES`), the node stop fence can
+   refuse a disable: `llamactl disable` exits 1 with `disable:
+serverStop refused: <reason>: <ids>` for a ModelRun (the `: <ids>`
+   part is left out when no ids are reported) or `disable:
+modelHostStop refused: <reason>: <ids>` for a ModelHost, where
+   `<reason>` is `LeasesActive`, `DrainInProgress`, `SessionsActive` or
+   `SessionsUnknown`. The manifest is already stored with `spec.enabled:
+false`, but nothing was stopped and the engine keeps serving. Before
+   the window, check the `Sessions:` section of `llamactl residency
+status --node <name>`; the disable never releases sessions, so the
+   overrides are `llamactl residency release-session <sessionId> --yes
+--node <name>` for an idle binding and `llamactl residency
+force-unload <workload> --reason <text> --yes --node <name>`, after
+   which run the disable again. An in-flight binding refuses the release
+   as `SessionInFlight` unless `--force` is given, and a forced release
+   leaves its leases held, so the stop still refuses as
+   `LeasesActive`; force-unload is the override then.
 4. Diff the template against the z13 state copy, as the
    `gufo-glm53-exp` header and the GLM HIP `TODO(#557)` require.
 5. `llamactl apply -f templates/workloads/<file>`. The template is
@@ -490,7 +507,9 @@ Steps:
 9. Exit the window: `llamactl disable <name>`, then
    `llamactl enable <production-workload>`, then verify Running and
    readiness. A disable is never blocked by this bookkeeping and at
-   worst logs "not recorded" (#741).
+   worst logs "not recorded" (#741). The stop fence is separate from
+   this bookkeeping and can refuse the exit-step disable the same way
+   (see step 3).
 
 Never run two group members at once, given the two-process race in
 the guard.

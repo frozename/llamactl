@@ -543,6 +543,30 @@ function refusedStopReason(outcome: unknown): string | null {
   return typeof error === "string" ? error : "stop refused";
 }
 
+/**
+ * Extract a stop-fence refusal from a `serverStop` outcome — when the stop
+ * mutation resolved with `stopped: false` and a `refused` object carrying
+ * a string `reason`, returns `<reason>` optionally followed by `: <ids>`.
+ * The active ids are filtered to strings; when the list is empty no
+ * trailing colon is appended.  Returns null when the outcome is not an
+ * object, when `stopped` is not `false`, or when `refused` is not an
+ * object with a string `reason`.
+ */
+function serverStopFenceRefusal(outcome: unknown): string | null {
+  if (typeof outcome !== "object" || outcome === null) return null;
+  const stopped = (outcome as { stopped?: unknown }).stopped;
+  if (stopped !== false) return null;
+  const refused = (outcome as { refused?: unknown }).refused;
+  if (typeof refused !== "object" || refused === null) return null;
+  const reason = (refused as { reason?: unknown }).reason;
+  if (typeof reason !== "string") return null;
+  const active = (refused as { active?: unknown }).active;
+  const ids = Array.isArray(active)
+    ? (active as unknown[]).filter((x): x is string => typeof x === "string")
+    : ([] as string[]);
+  return ids.length > 0 ? `${reason}: ${ids.join(", ")}` : reason;
+}
+
 async function disableModelHost(
   manifest: ModelHostManifest,
   client: WorkloadClient,
@@ -1514,7 +1538,36 @@ async function stopDisabledWorkload(
   const status = await client.serverStatus.query({ workload: manifest.metadata.name });
   if (status.state === "up") {
     onEvent?.({ type: "stop", message: `${manifest.metadata.name}: stopping disabled server` });
-    await client.serverStop.mutate({ workload: manifest.metadata.name, graceSeconds: 5 });
+    const outcome = await client.serverStop.mutate({
+      workload: manifest.metadata.name,
+      graceSeconds: 5,
+    });
+    // A refused stop leaves the server live: report it Running with the
+    // single Applied=False/StopRefused condition, the same shape for every
+    // refusal reason whether or not the fence listed active ids.
+    const detail = serverStopFenceRefusal(outcome);
+    if (detail !== null) {
+      const message = `serverStop refused: ${detail}`;
+      return {
+        action: "unchanged",
+        error: message,
+        statusSection: {
+          phase: "Running",
+          serverPid: status.pid,
+          endpoint: status.endpoint,
+          lastTransitionTime: now,
+          conditions: [
+            {
+              type: "Applied",
+              status: "False",
+              reason: "StopRefused",
+              message,
+              lastTransitionTime: now,
+            },
+          ],
+        },
+      };
+    }
   }
   return {
     action: "unchanged",
