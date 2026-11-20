@@ -1255,11 +1255,11 @@ describe("#522 scheduled perf suite capture (#768)", () => {
     expect(evidence).toBeGreaterThanOrEqual(0);
   });
 
-  // Kills: removing `--engine` from USAGE or changing the engine list
-  // without a doc update.
+  // Kills: removing `--engine` or `--slots` from USAGE or changing the engine
+  // list without a doc update.
   test("add synopsis copied verbatim from USAGE", () => {
     const span =
-      "[--kind suite --suite <perf-quick|perf-full> [--engine <llamacpp|omlx|gufo|kapitsa>]]";
+      "[--kind suite --suite <perf-quick|perf-full> [--engine <llamacpp|omlx|gufo|kapitsa>] [--slots <n>]]";
     expect(benchScheduleSrc).toContain(span);
     expect(sec).toContain(span);
     expect(sec).toContain("`llamactl bench schedule add <id> --node <node> --rel <rel>`");
@@ -1524,15 +1524,14 @@ describe("#522 c2/c4 slot discovery (#775)", () => {
     }
   });
 
-  // Kills: the scheduled path gaining a slots value, or the doc claiming
-  // schedules probe /props.
-  test("scheduled suites never set slots", () => {
+  // Kills: the runner dropping the /props unreachability reason or
+  // slotsReason, or the doc claiming scheduled suites set a slot count
+  // unconditionally.
+  test("scheduled suites set slots only from the schedule", () => {
     const body = enclosingBody(benchScheduleSrc, "export function createPerfBenchSuiteRunner(");
     expect(body).toContain("which forwards only /v1/* and not the engine's /props");
-    expect(body).toContain("slotsReason,");
-    expect(/[{,\s]slots\s*:/.test(body)).toBe(false);
+    expect(body).toContain("slotsReason");
     for (const needle of [
-      "Scheduled suite runs never set a slot count",
       "the agent gateway forwards only `/v1/*`",
       "with a reason naming the rel, the node and the gateway",
       "(`createPerfBenchSuiteRunner`, `packages/cli/src/commands/bench-schedule.ts`)",
@@ -1774,6 +1773,43 @@ describe("#522 comparing perf runs (#663)", () => {
       expect(cited, p).toContain(p);
     }
     expect(/\.ts:\d/.test(sec)).toBe(false);
+  });
+});
+
+// Part of #521: declared suite slots slice (#521 `--slots` on
+// `bench schedule add`, the schedule schema's slots field, the loop's
+// slots forwarding, the CLI-side runner's slots/slotsReason split).
+// Source pins run before doc pins so a source mutant surfaces its own
+// needle; the doc subsection does not exist at base, so the doc
+// assertions fail.
+describe("#521 scheduled suite declared slots", () => {
+  const benchScheduleSrc = readOrEmpty(join(REPO, "packages/cli/src/commands/bench-schedule.ts"));
+
+  const sec = flat(sectionBody(/^### Concurrency slots for c2 and c4/) ?? "");
+
+  // Kills: deleting or misplacing the declared-slots doc text.
+  test("doc pins the declared-slots contract", () => {
+    for (const needle of [
+      "A suite schedule can declare the slot count with `--slots <n>`",
+      "`--slots is only valid when kind is 'suite'`",
+      "`--slots must be a positive integer`",
+      "without `--slots`, scheduled suite runs set no slot count",
+    ]) {
+      expect(sec, needle).toContain(needle);
+    }
+  });
+
+  // Kills: the runner passing req.slots through unvalidated, or
+  // planAddArgs skipping the --slots gate.
+  test("source pins slots validation in the runner and add planning", () => {
+    expect(
+      enclosingBody(benchScheduleSrc, "export function createPerfBenchSuiteRunner("),
+      "runner validates slots",
+    ).toContain("invalid slots");
+    expect(
+      enclosingBody(benchScheduleSrc, "function planAddArgs("),
+      "planAddArgs validates --slots",
+    ).toContain("validateSlotsArg(");
   });
 });
 

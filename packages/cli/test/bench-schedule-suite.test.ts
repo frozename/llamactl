@@ -183,9 +183,10 @@ function restoreEnv(key: string, prior: string | undefined): void {
   else process.env[key] = prior;
 }
 
-function writeStore(opts: { node?: string; suite?: string } = {}): void {
+function writeStore(opts: { node?: string; suite?: string; slots?: number } = {}): void {
   const node = opts.node ?? "fake-node";
   const suite = opts.suite ?? "perf-quick";
+  const slotsLine = opts.slots === undefined ? "" : `    slots: ${String(opts.slots)}\n`;
   writeFileSync(
     schedulePath,
     `schedules:
@@ -199,7 +200,7 @@ function writeStore(opts: { node?: string; suite?: string } = {}): void {
     lastError: null
     kind: suite
     suite: ${suite}
-`,
+${slotsLine}`,
     "utf8",
   );
 }
@@ -671,7 +672,7 @@ describe("#521 scheduled suite slots", () => {
     expect(reason).not.toContain("<rel>");
   });
 
-  test("guard: the scheduled path never sets slots", async () => {
+  test("guard: the scheduled path never sets slots without declared slots", async () => {
     writeStore();
     const endpoint = fakeEndpoint("http://fake-engine.invalid");
     const run = fakeRunPerfSuite();
@@ -734,5 +735,59 @@ describe("#521 scheduled suite load reason", () => {
     expect(result).toBe(0);
     expect(run.calls).toHaveLength(1);
     expect(runOpts(run.calls[0])["load"]).toBeUndefined();
+  });
+});
+
+describe("#521 scheduled suite declared slots", () => {
+  test("kick passes the declared slots to runPerfSuite without a slotsReason", async () => {
+    // Kills: createPerfBenchSuiteRunner ignoring req.slots, or still sending
+    //        the gateway reason when slots is known.
+    writeStore({ slots: 4 });
+    const endpoint = fakeEndpoint("http://fake-engine.invalid");
+    const run = fakeRunPerfSuite();
+    setSeams({
+      perfSuite: {
+        runPerfSuite: run.runPerfSuite,
+        resolveEndpoint: endpoint.resolveEndpoint,
+        openDb: () => new Database(":memory:"),
+      },
+    });
+
+    const { result } = await captureProcessStreams(() => runBenchSchedule(["kick"]));
+
+    expect(result).toBe(0);
+    expect(run.calls).toHaveLength(1);
+    const opts = runOpts(run.calls[0]);
+    expect(opts["slots"]).toBe(4);
+    expect(opts["slotsReason"]).toBeUndefined();
+  });
+
+  test("the runner rejects invalid slots before any endpoint work", async () => {
+    // Kills: passing req.slots through unvalidated.
+    const endpoint = fakeEndpoint("http://fake-engine.invalid");
+    const run = fakeRunPerfSuite();
+    const runner = createPerfBenchSuiteRunner({
+      runPerfSuite: run.runPerfSuite,
+      resolveEndpoint: endpoint.resolveEndpoint,
+      openDb: () => new Database(":memory:"),
+    });
+    const req = {
+      scheduleId: "x",
+      suite: "perf-quick",
+      node: "n",
+      rel: "org/repo/m.gguf",
+      slots: 0,
+    } as Parameters<ReturnType<typeof createPerfBenchSuiteRunner>>[0];
+
+    let message = "";
+    try {
+      await runner(req);
+    } catch (err) {
+      message = err instanceof Error ? err.message : String(err);
+    }
+
+    expect(message).toContain("invalid slots 0 for schedule 'x'");
+    expect(endpoint.calls).toEqual([]);
+    expect(run.calls).toEqual([]);
   });
 });

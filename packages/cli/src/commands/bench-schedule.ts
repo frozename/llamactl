@@ -68,7 +68,7 @@ USAGE:
   llamactl bench schedule list [--json]
   llamactl bench schedule add <id> --node <node> --rel <rel>
       [--mode auto|text|vision] --every <duration>
-      [--kind suite --suite <perf-quick|perf-full> [--engine <llamacpp|omlx|gufo|kapitsa>]]
+      [--kind suite --suite <perf-quick|perf-full> [--engine <llamacpp|omlx|gufo|kapitsa>] [--slots <n>]]
   llamactl bench schedule rm <id>
   llamactl bench schedule toggle <id> on|off
   llamactl bench schedule status [--json]
@@ -94,6 +94,10 @@ SUBCOMMANDS:
             $DEV_STORAGE/eval/perf.sqlite (or ~/.llamactl/eval/perf.sqlite).
             --engine records the eval engine in perf provenance
             (llamacpp, omlx, gufo or kapitsa; default llamacpp).
+            --slots declares the engine's slot count so c2_tps/c4_tps
+            are measured through the agent gateway, which cannot reach
+            /props; it must be a positive integer, and without it c2/c4
+            record unavailable.
   rm        Remove a schedule by id.
   toggle    Enable or disable a schedule: \`toggle <id> on|off\`.
   status    The schedules plus this process's loop state (running, tick
@@ -144,6 +148,7 @@ interface SuiteRunRequest {
   node: string;
   rel: string;
   engine?: string;
+  slots?: number;
 }
 
 type PerfBenchSuiteRunner = (req: SuiteRunRequest) => Promise<void>;
@@ -229,6 +234,11 @@ export function createPerfBenchSuiteRunner(
         `unknown engine '${engine}' for schedule '${req.scheduleId}' (expected one of ${EVAL_ENGINES.join(", ")})`,
       );
     }
+    if (req.slots !== undefined && (!Number.isSafeInteger(req.slots) || req.slots <= 0)) {
+      throw new Error(
+        `invalid slots ${String(req.slots)} for schedule '${req.scheduleId}' (expected a positive integer)`,
+      );
+    }
     const preset = ev.resolvePerfSuite(req.suite);
     const ep = await suiteEndpoint(req.node, overrides.resolveEndpoint);
     const clock: PerfEngineClock = overrides.clock ?? { now: () => performance.now() };
@@ -285,7 +295,7 @@ export function createPerfBenchSuiteRunner(
         clock,
         provenance,
         readerReasons,
-        slotsReason,
+        ...(req.slots !== undefined ? { slots: req.slots } : { slotsReason }),
         loadReason,
       });
     } finally {
@@ -443,6 +453,7 @@ interface AddArgs {
   kind: string | undefined;
   suite: string | undefined;
   engine: string | undefined;
+  slots: string | undefined;
 }
 
 type AddParse =
@@ -457,6 +468,7 @@ const VALUED_ADD_FLAGS: ReadonlySet<string> = new Set([
   "--kind",
   "--suite",
   "--engine",
+  "--slots",
 ]);
 
 function flagName(arg: string): string {
@@ -475,6 +487,7 @@ function assignAddFlag(args: AddArgs, name: string, value: string): void {
   else if (name === "--kind") args.kind = value;
   else if (name === "--suite") args.suite = value;
   else if (name === "--engine") args.engine = value;
+  else if (name === "--slots") args.slots = value;
   else args.every = value;
 }
 
@@ -487,6 +500,7 @@ function parseAddArgs(argv: string[]): AddParse {
     kind: undefined,
     suite: undefined,
     engine: undefined,
+    slots: undefined,
   };
   const rest = [...argv];
   let arg = rest.shift();
@@ -530,6 +544,7 @@ type AddPlan =
         kind?: "preset" | "suite";
         suite?: string;
         engine?: string;
+        slots?: number;
       };
     }
   | { error: string };
@@ -554,6 +569,41 @@ function validateSuiteArgs(
   return null;
 }
 
+function validateSlotsArg(
+  kind: "preset" | "suite" | undefined,
+  slots: string | undefined,
+): { slots?: number; error?: string } {
+  if (slots === undefined) return {};
+  if (kind !== "suite") {
+    return { error: "--slots is only valid when kind is 'suite'" };
+  }
+  if (!/^\d+$/.test(slots)) return { error: "--slots must be a positive integer" };
+  const n = Number(slots);
+  if (!Number.isSafeInteger(n) || n <= 0) {
+    return { error: "--slots must be a positive integer" };
+  }
+  return { slots: n };
+}
+
+function optionalAddFields(
+  kind: "preset" | "suite" | undefined,
+  suite: string | undefined,
+  engine: string | undefined,
+  slots: number | undefined,
+): {
+  kind?: "preset" | "suite";
+  suite?: string;
+  engine?: string;
+  slots?: number;
+} {
+  return {
+    ...(kind !== undefined ? { kind } : {}),
+    ...(suite !== undefined ? { suite } : {}),
+    ...(engine !== undefined ? { engine } : {}),
+    ...(slots !== undefined ? { slots } : {}),
+  };
+}
+
 function planAddArgs(args: AddArgs): AddPlan {
   const id = args.positional[0];
   if (!id) return { error: "id is required" };
@@ -570,6 +620,8 @@ function planAddArgs(args: AddArgs): AddPlan {
   const kind = args.kind ? (args.kind as "preset" | "suite") : undefined;
   const kindError = validateSuiteArgs(kind, args.suite, args.engine);
   if (kindError) return { error: kindError };
+  const slotsResult = validateSlotsArg(kind, args.slots);
+  if (slotsResult.error) return { error: slotsResult.error };
   const input: {
     id: string;
     node: string;
@@ -579,16 +631,15 @@ function planAddArgs(args: AddArgs): AddPlan {
     kind?: "preset" | "suite";
     suite?: string;
     engine?: string;
+    slots?: number;
   } = {
     id,
     node,
     rel: args.rel,
     mode,
     intervalSeconds,
+    ...optionalAddFields(kind, args.suite, args.engine, slotsResult.slots),
   };
-  if (kind !== undefined) input.kind = kind;
-  if (args.suite !== undefined) input.suite = args.suite;
-  if (args.engine !== undefined) input.engine = args.engine;
   return { input };
 }
 

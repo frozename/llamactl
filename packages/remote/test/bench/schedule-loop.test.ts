@@ -727,3 +727,46 @@ describe("#521 scheduled suite engine", () => {
     expect("engine" in calls[0]!).toBe(false);
   });
 });
+
+describe("#521 scheduled suite slots", () => {
+  test("a due suite schedule forwards schedule.slots on the runSuite request", async () => {
+    // Kills: runWithOutcome dropping schedule.slots.
+    const calls: BenchSuiteRequest[] = [];
+    const runSuite = (req: BenchSuiteRequest): Promise<void> => {
+      calls.push(req);
+      return Promise.resolve();
+    };
+    const schedule: BenchSchedule & { slots?: number } = {
+      ...dueSchedule("suite-slots", { kind: "suite", suite: "perf" }),
+      slots: 4,
+    };
+    saveSchedules([schedule], schedulePath);
+
+    await kickBenchScheduler(autoCompleting().getClient, { runSuite });
+
+    expect(calls).toEqual([
+      {
+        scheduleId: "suite-slots",
+        suite: "perf",
+        node: "fake-node",
+        rel: "org/repo/suite-slots.gguf",
+        slots: 4,
+      },
+    ]);
+  });
+
+  test("guard: a due suite schedule without slots sends no slots key", async () => {
+    // Back-compat guard: the request omits slots entirely — never slots: undefined.
+    const calls: BenchSuiteRequest[] = [];
+    const runSuite = (req: BenchSuiteRequest): Promise<void> => {
+      calls.push(req);
+      return Promise.resolve();
+    };
+    saveSchedules([dueSchedule("suite-noslots", { kind: "suite", suite: "perf" })], schedulePath);
+
+    await kickBenchScheduler(autoCompleting().getClient, { runSuite });
+
+    expect(calls).toHaveLength(1);
+    expect("slots" in calls[0]!).toBe(false);
+  });
+});

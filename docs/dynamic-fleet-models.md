@@ -627,7 +627,7 @@ verbatim from the USAGE text (`packages/cli/src/commands/bench-schedule.ts`):
 ```text
   llamactl bench schedule add <id> --node <node> --rel <rel>
       [--mode auto|text|vision] --every <duration>
-      [--kind suite --suite <perf-quick|perf-full> [--engine <llamacpp|omlx|gufo|kapitsa>]]
+      [--kind suite --suite <perf-quick|perf-full> [--engine <llamacpp|omlx|gufo|kapitsa>] [--slots <n>]]
 ```
 
 So `llamactl bench schedule add <id> --node <node> --rel <rel>` takes an
@@ -699,13 +699,26 @@ a level, that level is recorded `unavailable` as `engine slots <n> <
 concurrency <level>` (`runConcurrencyLevel`,
 `packages/eval/src/perf/runner.ts`).
 
-Scheduled suite runs never set a slot count: the agent gateway forwards
-only `/v1/*`, so the engine's `/props` is unreachable, and c2 and c4 are
-recorded `unavailable` with a reason naming the rel, the node and the
-gateway (`createPerfBenchSuiteRunner`,
+Without a declared count — that is, without `--slots`, scheduled suite
+runs set no slot count: the agent gateway forwards only `/v1/*`, so the
+engine's `/props` is unreachable, and c2 and c4 are recorded
+`unavailable` with a reason naming the rel, the node and the gateway
+(`createPerfBenchSuiteRunner`,
 `packages/cli/src/commands/bench-schedule.ts`). For c2/c4 evidence on an
 arm, run `llamactl eval perf` against the engine's own URL with `--slots
 <n>`, or with the default `llamacpp` engine so `/props` is probed.
+
+A suite schedule can declare the slot count with `--slots <n>` on
+`llamactl bench schedule add`: the CLI refuses it unless `--kind suite`
+was given (`--slots is only valid when kind is 'suite'`) and refuses a
+value that is not a positive integer (`--slots must be a positive
+integer`) (`validateSlotsArg`, `packages/cli/src/commands/bench-schedule.ts`).
+The tick loop forwards the count to the suite runner (`runWithOutcome`,
+`packages/remote/src/bench/scheduleLoop.ts`), which passes it to the perf
+suite as the slot count instead of the gateway reason. A declared count
+below a concurrency level still records `engine slots <n> <
+concurrency <level>` for that level (`runConcurrencyLevel`,
+`packages/eval/src/perf/runner.ts`).
 
 ### Comparing perf runs for an arm
 
