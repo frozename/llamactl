@@ -184,6 +184,20 @@ describe("#521 llamactl eval perf-diff", () => {
     expect(stderr).not.toContain("--base and --candidate are required");
   });
 
+  // Kills: matching the bare word `help` anywhere in argv as a help request
+  // (`argv.includes("help")`), which prints usage and exits 0 instead.
+  test("a flag value equal to help is not a help request", async () => {
+    const missing = join(tmpDir, "absent", "perf.sqlite");
+
+    const { result, stdout, stderr } = await captureProcessStreams(() =>
+      runEval(["perf-diff", "--base", "help", "--candidate", "cand", "--db", missing]),
+    );
+
+    expect(result).toBe(1);
+    expect(stderr).toBe(`perf-diff: db not found at ${missing}\n`);
+    expect(stdout).not.toContain("Usage: llamactl eval perf-diff");
+  });
+
   // Kills: the USAGE line for the new subcommand being missing.
   test("eval --help lists the perf-diff subcommand", async () => {
     const { result, stdout } = await captureProcessStreams(() => runEval(["--help"]));

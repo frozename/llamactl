@@ -437,7 +437,7 @@ function parseLeaderboardSort(value: string): keyof LeaderboardRow {
 }
 
 function runEvalPerfDiff(argv: string[]): number {
-  if (argv.includes("-h") || argv.includes("--help") || argv.includes("help")) {
+  if (argv.includes("-h") || argv.includes("--help")) {
     process.stdout.write(PERF_DIFF_USAGE);
     return 0;
   }
