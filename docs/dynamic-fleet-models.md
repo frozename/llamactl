@@ -85,6 +85,34 @@ Changing availability:
   builtin rows. There are no override semantics — a custom row with a
   builtin's id is a second row, not a replacement.
 
+### Adding custom candidate rows
+
+`llamactl catalog add <hf-repo> <gguf-file-or-relpath> [label] [family] [class] [scope] [--meta <json>]`
+appends a custom row.
+
+`--meta` takes a JSON object of the keys in the table above.
+
+`addCurated` (`packages/core/src/catalogWriter.ts`) validates it against
+`CuratedMeta` in strict mode (`.strict()`). An unknown key is refused with
+`invalid catalog meta: unrecognized key(s): <keys>`, and nothing is written.
+
+The CLI (`packages/cli/src/commands/catalog.ts`) refuses with exit 1 on
+`catalog add: --meta is not valid JSON` and `catalog add: unknown flag <flag>`.
+A missing value after `--meta` produces
+`catalog add: --meta requires a JSON value`.
+
+`--meta` always consumes the next token as its value, and that value is
+never counted as a positional argument. A bare `--` ends flag
+parsing, so a label starting with `--` goes after `--`.
+
+The keys are written as compact JSON in column 9 (see [tsv-schemas.md](tsv-schemas.md)).
+
+A row added with `qualification.stage` reports that stage as `catalogStage`
+in `llamactl qualification status <rel>` (`packages/cli/src/commands/qualification.ts`).
+
+`catalog add` cannot change an existing row: it refuses a rel already in any
+catalog with `Catalog already contains <rel>`.
+
 ## Residency states and exclusion
 
 The residency state model exists as a library (#517). Since #662 the

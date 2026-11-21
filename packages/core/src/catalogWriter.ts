@@ -100,7 +100,7 @@ export async function addCurated(input: AddCuratedInput): Promise<AddCuratedResu
     return {
       ok: false,
       error:
-        "Usage: llamactl catalog add <hf-repo> <gguf-file-or-relpath> [label] [family] [class] [scope]",
+        "Usage: llamactl catalog add <hf-repo> <gguf-file-or-relpath> [label] [family] [class] [scope] [--meta <json>]",
     };
   }
 
