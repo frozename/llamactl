@@ -7,6 +7,7 @@ import type {
   ToolCallingFailure,
 } from "@llamactl/eval";
 
+import { catalog } from "@llamactl/core";
 import {
   composite,
   killServer,
@@ -21,6 +22,7 @@ import {
   upsertRow,
   waitForHealth,
 } from "@llamactl/eval";
+import { defaultResidencyStorePath, exclusiveGroupLaunchRefusal } from "@llamactl/remote";
 import { Database } from "bun:sqlite";
 import { basename, join } from "node:path";
 
@@ -263,6 +265,12 @@ async function runSingleUb(opts: {
   }
 }
 
+// #517: a local `eval run` launch takes its residency group from the catalog
+// row whose rel is the model arg; a `--url` run spawns nothing, so no group.
+function evalSandboxLaunchGroup(model: string, remoteUrl: string | null): string | undefined {
+  return remoteUrl ? undefined : catalog.findByRel(model)?.residencyGroup;
+}
+
 async function runEvalRun(args: string[]): Promise<number> {
   const model = args[0];
   if (!model) {
@@ -280,6 +288,16 @@ async function runEvalRun(args: string[]): Promise<number> {
   if ("help" in parsed) {
     process.stdout.write(USAGE);
     return 0;
+  }
+
+  const refusal = exclusiveGroupLaunchRefusal({
+    id: model,
+    group: evalSandboxLaunchGroup(model, parsed.remoteUrl),
+    storePath: defaultResidencyStorePath(),
+  });
+  if (refusal !== null) {
+    process.stderr.write(`eval run: ${refusal}\n`);
+    return 1;
   }
 
   const evalRoot = ensureEvalRoot();
