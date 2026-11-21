@@ -3,7 +3,9 @@ import type { ChildProcess } from "node:child_process";
 
 // Relative import so the worktree's measured-memory module is used directly,
 // bypassing the node_modules symlink that points at the main checkout.
+import { catalog } from "@llamactl/core";
 import { writeMeasuredMemoryCache } from "@llamactl/fleet-supervisor/measured-memory";
+import { defaultResidencyStorePath, exclusiveGroupLaunchRefusal } from "@llamactl/remote";
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:net";
 import yaml from "yaml";
@@ -137,6 +139,19 @@ interface LaunchConfig {
   healthPath: string;
   timeoutSecs: number;
   workloadName: string;
+  residencyGroup?: string;
+}
+
+function resolveResidencyGroup(
+  meta: Record<string, unknown>,
+  modelRel: string,
+): string | undefined {
+  const labels = meta["labels"] as Record<string, unknown> | undefined;
+  const label = labels?.["llamactl.io/residency-group"];
+  if (typeof label === "string" && label.length > 0) {
+    return label;
+  }
+  return catalog.findByRel(modelRel)?.residencyGroup;
 }
 
 function readLaunchConfig(target: string, manifestPath: string): LaunchConfig | { error: string } {
@@ -159,6 +174,7 @@ function readLaunchConfig(target: string, manifestPath: string): LaunchConfig | 
   let modelKey: string;
   let healthPath: string;
   let timeoutSecs: number;
+  let residencyGroup: string | undefined;
 
   if (kind === "ModelRun") {
     engineKind = "llama.cpp";
@@ -172,6 +188,7 @@ function readLaunchConfig(target: string, manifestPath: string): LaunchConfig | 
     launchArgs = ["--model", resolvedModel, ...extraArgs];
     healthPath = "/health";
     timeoutSecs = (spec["timeoutSeconds"] as number | undefined) ?? 60;
+    residencyGroup = resolveResidencyGroup(meta, modelRel);
   } else if (kind === "ModelHost") {
     const engine = spec["engine"] as string | undefined;
     if (engine !== "omlx") {
@@ -189,11 +206,21 @@ function readLaunchConfig(target: string, manifestPath: string): LaunchConfig | 
     launchArgs = ["serve", modelRel, ...extraArgs];
     healthPath = "/v1/models";
     timeoutSecs = (spec["timeoutSeconds"] as number | undefined) ?? 60;
+    residencyGroup = resolveResidencyGroup(meta, modelRel);
   } else {
     return { error: `admit measure: unsupported manifest kind '${kind ?? "none"}'` };
   }
 
-  return { engineKind, binary, launchArgs, modelKey, healthPath, timeoutSecs, workloadName };
+  return {
+    engineKind,
+    binary,
+    launchArgs,
+    modelKey,
+    healthPath,
+    timeoutSecs,
+    workloadName,
+    ...(residencyGroup !== undefined ? { residencyGroup } : {}),
+  };
 }
 
 function isValidPort(port: number | undefined): boolean {
@@ -405,6 +432,16 @@ export async function runAdmitMeasure(args: string[]): Promise<number> {
   if ("error" in config) {
     console.error(config.error);
     return 2;
+  }
+
+  const refusal = exclusiveGroupLaunchRefusal({
+    id: config.workloadName,
+    group: config.residencyGroup,
+    storePath: defaultResidencyStorePath(),
+  });
+  if (refusal !== null) {
+    console.error(`admit measure: ${refusal}`);
+    return 1;
   }
 
   const maxAttempts = overridePort === undefined ? MAX_ADMIT_MEASURE_ATTEMPTS : 1;

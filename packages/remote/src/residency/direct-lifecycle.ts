@@ -37,6 +37,15 @@
  * - A row left `loading` because the post-dep refence was refused (a switch
  *   began mid-dep) is reconciled by that switch or by boot recovery, not here;
  *   the post-walk rides the stolen-fence rejection and logs `not recorded`.
+ *
+ * `exclusiveGroupLaunchRefusal` is the read-only, unfenced sandbox-launch
+ * refusal (#517) that `llamactl eval run` and `llamactl admit measure` consult
+ * before spawning. Unlike `isCorroboratedOccupant`/`runDirectResidencyStart`,
+ * which exclude the starting workload's own row, it deliberately counts
+ * self-occupancy (a row for the same id): a sandbox copy runs beside any
+ * existing engine and so doubles GPU memory. Note that eval's id is a catalog
+ * rel while admit measure's is a workload name, so the self-row case triggers
+ * only when a store row's model happens to match that name.
  */
 import {
   isOccupyingResidencyState,
@@ -51,9 +60,11 @@ import { RESIDENCY_APPLY_PROFILE_FENCE_OWNER } from "./apply-profile.js";
 import { withResidencyLifecycle } from "./lifecycle-steps.js";
 import {
   openResidencyOperationStore,
+  readResidencyStoreSnapshot,
   type ResidencyLifecycleStore,
   type ResidencyOperationStore,
   type ResidencyStateRecord,
+  type ResidencyStoreSnapshot,
 } from "./store.js";
 
 // The profile-switch operation key is `profile-switch:<node>` (see
@@ -573,4 +584,57 @@ export async function runDirectResidencyStop<T extends DepResult>(
   opts: DirectLifecycleOpts,
 ): Promise<DirectLifecycleOutcome<T>> {
   return await runDirect("stop", workload, opts, dep);
+}
+
+export type ExclusiveGroupLaunchRefusalOpts = {
+  id: string;
+  group: string | undefined;
+  storePath: string;
+  groups?: readonly ResidencyGroupDeclaration[];
+  readSnapshot?: (path: string) => ResidencyStoreSnapshot;
+};
+
+// The read-only, unfenced pre-spawn gate for a sandbox launch (#517). It never
+// claims the fence and never opens the store for write: it resolves the
+// declared-exclusive group, reads a snapshot, and returns the refusal string
+// the caller prints or null when the launch may proceed. Unlike a fenced start
+// it counts self-occupancy, because a sandbox copy runs beside any engine the
+// row records and doubles GPU memory.
+export function exclusiveGroupLaunchRefusal(opts: ExclusiveGroupLaunchRefusalOpts): string | null {
+  const group = opts.group;
+  if (group === undefined) {
+    return null;
+  }
+  const groups = opts.groups ?? RESIDENCY_GROUPS;
+  const declared = groups.find((candidate) => candidate.name === group);
+  if (!declared?.exclusive) {
+    return null;
+  }
+  const read = opts.readSnapshot ?? readResidencyStoreSnapshot;
+  const snapshot = read(opts.storePath);
+  if (!snapshot.present) {
+    return null;
+  }
+  if ("error" in snapshot) {
+    return `residency lifecycle refused ${opts.id}: store unavailable (${snapshot.error})`;
+  }
+  if (snapshot.lifecycleError !== undefined) {
+    return `residency lifecycle refused ${opts.id}: store unavailable (${snapshot.lifecycleError})`;
+  }
+  if (snapshot.nonterminal.some((row) => row.model.startsWith(PROFILE_SWITCH_PREFIX))) {
+    return `residency lifecycle refused ${opts.id}: profile switch in flight on this node; retry after it settles`;
+  }
+  const occupants = (snapshot.lifecycle ?? [])
+    .filter((row) => row.group === group && isOccupyingResidencyState(row.state))
+    .sort((a, b) => {
+      if (a.model < b.model) {
+        return -1;
+      }
+      return a.model > b.model ? 1 : 0;
+    });
+  const holder = occupants[0];
+  if (holder === undefined) {
+    return null;
+  }
+  return `residency lifecycle refused ${opts.id} downloaded -> loading: ExclusiveGroupOccupied: exclusive group ${group} is held by ${holder.model} in state ${holder.state}`;
 }

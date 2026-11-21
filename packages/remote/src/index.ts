@@ -183,6 +183,7 @@ export {
   removePipeline,
   writeLastRun,
 } from "./rag/pipeline/store.js";
+export { exclusiveGroupLaunchRefusal } from "./residency/direct-lifecycle.js";
 export {
   type AdmissionRejectCode,
   type AdmissionRequest,
@@ -192,6 +193,7 @@ export {
   RequestAdmissionError,
   type RequestAdmissionOptions,
 } from "./residency/request-admission.js";
+export { defaultResidencyStorePath } from "./residency/store.js";
 export { type AppRouter, BUILT_IN_PLANNER_TOOLS, mergePlannerTools, router } from "./router.js";
 export type {
   RemoveServiceOptions,
