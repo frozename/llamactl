@@ -68,7 +68,7 @@ USAGE:
   llamactl bench schedule list [--json]
   llamactl bench schedule add <id> --node <node> --rel <rel>
       [--mode auto|text|vision] --every <duration>
-      [--kind suite --suite <perf-quick|perf-full> [--engine <llamacpp|omlx|gufo|kapitsa>] [--slots <n>]]
+      [--kind suite --suite <perf-quick|perf-full> [--engine <llamacpp|omlx|gufo|kapitsa>] [--slots <n>] [--quant <label>] [--ctx <n>]]
   llamactl bench schedule rm <id>
   llamactl bench schedule toggle <id> on|off
   llamactl bench schedule status [--json]
@@ -98,6 +98,9 @@ SUBCOMMANDS:
             are measured through the agent gateway, which cannot reach
             /props; it must be a positive integer, and without it c2/c4
             record unavailable.
+            --quant and --ctx record the quant label and context size
+            in perf provenance (the gateway cannot report them);
+            without them both fields record unavailable.
   rm        Remove a schedule by id.
   toggle    Enable or disable a schedule: \`toggle <id> on|off\`.
   status    The schedules plus this process's loop state (running, tick
@@ -149,6 +152,8 @@ interface SuiteRunRequest {
   rel: string;
   engine?: string;
   slots?: number;
+  quant?: string;
+  ctx?: number;
 }
 
 type PerfBenchSuiteRunner = (req: SuiteRunRequest) => Promise<void>;
@@ -239,6 +244,16 @@ export function createPerfBenchSuiteRunner(
         `invalid slots ${String(req.slots)} for schedule '${req.scheduleId}' (expected a positive integer)`,
       );
     }
+    if (req.ctx !== undefined && (!Number.isSafeInteger(req.ctx) || req.ctx <= 0)) {
+      throw new Error(
+        `invalid ctx ${String(req.ctx)} for schedule '${req.scheduleId}' (expected a positive integer)`,
+      );
+    }
+    if (req.quant !== undefined && !QUANT_LABEL_RE.test(req.quant)) {
+      throw new Error(
+        `invalid quant '${req.quant}' for schedule '${req.scheduleId}' (expected a non-blank quant label)`,
+      );
+    }
     const preset = ev.resolvePerfSuite(req.suite);
     const ep = await suiteEndpoint(req.node, overrides.resolveEndpoint);
     const clock: PerfEngineClock = overrides.clock ?? { now: () => performance.now() };
@@ -253,7 +268,9 @@ export function createPerfBenchSuiteRunner(
     await assertServesModel(client, req);
     // Scheduled runs only reach the engine through the agent gateway, so the
     // binary, GGUF, quant, ctx and HF revision are genuinely unknown; each
-    // lands as null with its own unavailable reason instead of a guess.
+    // lands as null with its own unavailable reason instead of a guess. A
+    // schedule that declares quant or ctx overrides the null with the
+    // declared value, and the gateway reason then goes unused.
     const provenance = await ev.collectEvalProvenance(
       {
         engine: engine as EvalEngine,
@@ -267,6 +284,8 @@ export function createPerfBenchSuiteRunner(
           ctx: `scheduled suites reach ${req.rel} through the agent gateway; the context size is not known`,
           hf_revision: `scheduled suites reach ${req.rel} through the agent gateway; no GGUF path to derive an HF revision from`,
         },
+        ...(req.quant !== undefined ? { quant: req.quant } : {}),
+        ...(req.ctx !== undefined ? { ctx: req.ctx } : {}),
       },
       ev.defaultProvenanceReaders(),
     );
@@ -297,6 +316,7 @@ export function createPerfBenchSuiteRunner(
         readerReasons,
         ...(req.slots !== undefined ? { slots: req.slots } : { slotsReason }),
         loadReason,
+        ...(req.ctx !== undefined ? { ctx: req.ctx } : {}),
       });
     } finally {
       db.close();
@@ -454,6 +474,8 @@ interface AddArgs {
   suite: string | undefined;
   engine: string | undefined;
   slots: string | undefined;
+  quant: string | undefined;
+  ctx: string | undefined;
 }
 
 type AddParse =
@@ -469,6 +491,8 @@ const VALUED_ADD_FLAGS: ReadonlySet<string> = new Set([
   "--suite",
   "--engine",
   "--slots",
+  "--quant",
+  "--ctx",
 ]);
 
 function flagName(arg: string): string {
@@ -488,6 +512,8 @@ function assignAddFlag(args: AddArgs, name: string, value: string): void {
   else if (name === "--suite") args.suite = value;
   else if (name === "--engine") args.engine = value;
   else if (name === "--slots") args.slots = value;
+  else if (name === "--quant") args.quant = value;
+  else if (name === "--ctx") args.ctx = value;
   else args.every = value;
 }
 
@@ -501,6 +527,8 @@ function parseAddArgs(argv: string[]): AddParse {
     suite: undefined,
     engine: undefined,
     slots: undefined,
+    quant: undefined,
+    ctx: undefined,
   };
   const rest = [...argv];
   let arg = rest.shift();
@@ -545,6 +573,8 @@ type AddPlan =
         suite?: string;
         engine?: string;
         slots?: number;
+        quant?: string;
+        ctx?: number;
       };
     }
   | { error: string };
@@ -585,22 +615,57 @@ function validateSlotsArg(
   return { slots: n };
 }
 
+const QUANT_LABEL_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/;
+
+function validateProvenanceArgs(
+  kind: "preset" | "suite" | undefined,
+  quant: string | undefined,
+  ctx: string | undefined,
+): { quant?: string; ctx?: number; error?: string } {
+  if (quant !== undefined && kind !== "suite") {
+    return { error: "--quant is only valid when kind is 'suite'" };
+  }
+  if (ctx !== undefined && kind !== "suite") {
+    return { error: "--ctx is only valid when kind is 'suite'" };
+  }
+  if (quant !== undefined && !QUANT_LABEL_RE.test(quant)) {
+    return { error: "--quant must be a non-blank quant label" };
+  }
+  if (ctx === undefined) {
+    return quant !== undefined ? { quant } : {};
+  }
+  const n = Number(ctx);
+  if (!/^\d+$/.test(ctx) || !Number.isSafeInteger(n) || n <= 0) {
+    return { error: "--ctx must be a positive integer" };
+  }
+  return {
+    ...(quant !== undefined ? { quant } : {}),
+    ctx: n,
+  };
+}
+
 function optionalAddFields(
   kind: "preset" | "suite" | undefined,
   suite: string | undefined,
   engine: string | undefined,
   slots: number | undefined,
+  quant: string | undefined,
+  ctx: number | undefined,
 ): {
   kind?: "preset" | "suite";
   suite?: string;
   engine?: string;
   slots?: number;
+  quant?: string;
+  ctx?: number;
 } {
   return {
     ...(kind !== undefined ? { kind } : {}),
     ...(suite !== undefined ? { suite } : {}),
     ...(engine !== undefined ? { engine } : {}),
     ...(slots !== undefined ? { slots } : {}),
+    ...(quant !== undefined ? { quant } : {}),
+    ...(ctx !== undefined ? { ctx } : {}),
   };
 }
 
@@ -622,6 +687,8 @@ function planAddArgs(args: AddArgs): AddPlan {
   if (kindError) return { error: kindError };
   const slotsResult = validateSlotsArg(kind, args.slots);
   if (slotsResult.error) return { error: slotsResult.error };
+  const provenance = validateProvenanceArgs(kind, args.quant, args.ctx);
+  if (provenance.error) return { error: provenance.error };
   const input: {
     id: string;
     node: string;
@@ -632,13 +699,22 @@ function planAddArgs(args: AddArgs): AddPlan {
     suite?: string;
     engine?: string;
     slots?: number;
+    quant?: string;
+    ctx?: number;
   } = {
     id,
     node,
     rel: args.rel,
     mode,
     intervalSeconds,
-    ...optionalAddFields(kind, args.suite, args.engine, slotsResult.slots),
+    ...optionalAddFields(
+      kind,
+      args.suite,
+      args.engine,
+      slotsResult.slots,
+      provenance.quant,
+      provenance.ctx,
+    ),
   };
   return { input };
 }
