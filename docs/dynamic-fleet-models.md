@@ -533,7 +533,25 @@ force-unload <workload> --reason <text> --yes --node <name>`, after
    this node; retry after it settles" (#741; see
    [dynamic-residency.md](dynamic-residency.md#direct-modelhost-start-and-stop)).
 7. Wait for the readiness probe, then `llamactl describe workload <name>`.
-8. Run the eval.
+8. Run the eval against the engine the window started, with `--url`
+   pointing at it: `llamactl eval perf --url <http://...> --engine
+<llamacpp|omlx|gufo|kapitsa> --model <id>` for perf evidence (see
+   [Capturing evidence for an arm](#capturing-evidence-for-an-arm)), or
+   `llamactl eval run <model> --url <http://...>` for the four
+   sub-benches, where `<model>` is only the leaderboard tag and nothing
+   is spawned or killed. Without `--url`, `llamactl eval run <model>`
+   spawns its own sandbox engine in the CLI process, beside the
+   window's engine, so when the local residency store exists on the
+   host running the eval and the catalog row for `<model>` declares
+   `z13-large-gpu`, it reads that store read-only and exits 1 without
+   spawning: `eval run: residency lifecycle refused <model> downloaded
+-> loading: ExclusiveGroupOccupied: exclusive group z13-large-gpu is
+held by <member> in state <state>`. On the agent host the window's
+   own workload is such a holder: `llamactl enable` in step 6 records
+   its `loading`, `warming` or `ready` row in `z13-large-gpu`, and the
+   check counts every occupying row, so an in-window `eval run` without
+   `--url` refuses there (see
+   [dynamic-residency.md](dynamic-residency.md#direct-modelhost-start-and-stop)).
 9. Exit the window: `llamactl disable <name>`, then
    `llamactl enable <production-workload>`, then verify Running and
    readiness. A disable is never blocked by this bookkeeping and at
