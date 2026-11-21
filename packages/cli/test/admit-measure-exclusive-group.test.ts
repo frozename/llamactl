@@ -113,6 +113,28 @@ function buildWorkloadYaml(labelsYaml: string, modelRel: string): string {
   ].join("\n");
 }
 
+function buildModelHostYaml(labelsYaml: string, modelRel: string): string {
+  return [
+    "apiVersion: llamactl/v1",
+    "kind: ModelHost",
+    "metadata:",
+    "  name: test-measure-host",
+    "  labels:",
+    labelsYaml,
+    "spec:",
+    "  engine: omlx",
+    "  node: local",
+    "  enabled: true",
+    `  binary: "${binaryPath}"`,
+    "  timeoutSeconds: 1",
+    "  resources:",
+    "    expectedMemoryGiB: 2",
+    "  hostedModels:",
+    `    - rel: ${modelRel}`,
+    "  extraArgs: []",
+  ].join("\n");
+}
+
 async function freePort(): Promise<number> {
   return await new Promise<number>((resolve, reject) => {
     const server = createServer();
@@ -195,6 +217,45 @@ describe("#517 admit measure exclusive-group refusal", () => {
     expect(r.status).toBe(1);
     expect(r.stderr).toContain(
       "admit measure: residency lifecycle refused test-measure-workload downloaded -> loading: ExclusiveGroupOccupied: exclusive group z13-large-gpu is held by qwen-prod in state ready",
+    );
+    expect(existsSync(markerPath)).toBe(false);
+    expect(existsSync(cachePath)).toBe(false);
+  }, 20_000);
+  // Kills M18: the ModelHost (omlx) branch of readLaunchConfig dropping
+  // `residencyGroup = resolveResidencyGroup(meta, modelRel);` — the group
+  // is then undefined, the guard never fires, and the marker binary runs.
+  test("A3: a ModelHost residency-group label refuses before any spawn", async () => {
+    seedReady("qwen-prod");
+    const yamlPath = join(yamlDir, "a3.yaml");
+    writeFileSync(
+      yamlPath,
+      buildModelHostYaml("    llamactl.io/residency-group: z13-large-gpu", "test/fake-mlx-model"),
+    );
+    const port = await freePort();
+    const r = runMeasure(yamlPath, port);
+    expect(r.error).toBeUndefined();
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain(
+      "admit measure: residency lifecycle refused test-measure-host downloaded -> loading: ExclusiveGroupOccupied: exclusive group z13-large-gpu is held by qwen-prod in state ready",
+    );
+    expect(existsSync(markerPath)).toBe(false);
+    expect(existsSync(cachePath)).toBe(false);
+  }, 20_000);
+
+  // Kills M18 via the catalog fallback: with no label, the ModelHost group
+  // must come from the catalog row of hostedModels[0].rel (GLM, in
+  // z13-large-gpu); deleting the omlx-branch resolveResidencyGroup call
+  // lets the marker binary run instead.
+  test("A3b: a ModelHost hostedModels[0].rel catalog row refuses with empty labels", async () => {
+    seedReady("qwen-prod");
+    const yamlPath = join(yamlDir, "a3b.yaml");
+    writeFileSync(yamlPath, buildModelHostYaml("    {}", GLM_REL));
+    const port = await freePort();
+    const r = runMeasure(yamlPath, port);
+    expect(r.error).toBeUndefined();
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain(
+      "admit measure: residency lifecycle refused test-measure-host downloaded -> loading: ExclusiveGroupOccupied: exclusive group z13-large-gpu is held by qwen-prod in state ready",
     );
     expect(existsSync(markerPath)).toBe(false);
     expect(existsSync(cachePath)).toBe(false);
