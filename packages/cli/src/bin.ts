@@ -63,7 +63,7 @@ Usage:
                                               scored for fit on the chosen profile
 
 Write commands:
-  llamactl catalog add <repo> <file> [label] [family] [class] [scope]
+  llamactl catalog add <repo> <file> [label] [family] [class] [scope] [--meta <json>]
                                               Append a custom catalog entry
   llamactl catalog promote <profile> <preset> <rel-or-alias>
                                               Write a preset override
