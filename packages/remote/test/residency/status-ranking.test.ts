@@ -1,17 +1,22 @@
 // #519: the ranking status read-out (Part of #519).
 // `buildResidencyStatus` gains a `ranking` section that reports the serving
-// node's resident set and exclusive-group drain charges exactly as the
-// unified proxy's ranker sees them. Only `residentPreference` and
-// `coldLoadPenaltyMs` gate the section (both 0, or no residency, reports
-// disabled); off the serving node it is unavailable NotServingNode, while
-// the unified proxy is off it is unavailable UnifiedProxyOff, and an
-// absent, unreadable or lifecycle-unreadable store maps to StoreAbsent,
-// StoreUnreadable or LifecycleUnreadable. When available it carries the
-// resolved knobs plus the resident and drain-charged model lists, computed
-// by `residencyRankingReadout` in residency-ranking.ts — the same mapping
-// the live ranker consumes, so the read-out cannot diverge from it. At the
-// pinned base the section and the readout do not exist, so every case
-// fails BY ASSERTION — never by an import or type error.
+// node's resident set, exclusive-group drain charges, cooldown charges and
+// operational tiers exactly as the unified proxy's ranker sees them. Any
+// nonzero ranking knob — `residentPreference`, `coldLoadPenaltyMs`,
+// `switchCooldownSeconds` or `minResidencySeconds` — opens the section
+// (every knob 0, or no residency, reports disabled), while `resident` and
+// `drainCharged` stay empty when both resident knobs are 0. Off the
+// serving node it is unavailable NotServingNode, while the unified proxy
+// is off it is unavailable UnifiedProxyOff, and an absent, unreadable or
+// lifecycle-unreadable store maps to StoreAbsent, StoreUnreadable or
+// LifecycleUnreadable. When available it carries the resolved knobs plus
+// the resident, drain-charged (`drainCharged`), cooldown-charged
+// (`cooldownCharged`), drain-tier (`drainTier`) and degraded-tier
+// (`degradedTier`) model lists, computed by `residencyRankingReadout` in
+// residency-ranking.ts — the same mapping the live ranker consumes, so
+// the read-out cannot diverge from it. At the pinned base the
+// cooldown/tier fields and the widened gate do not exist, so the updated
+// cases fail BY ASSERTION — never by an import or type error.
 import { routingCapabilities, routingCatalog } from "@llamactl/core";
 import { RESIDENCY_GROUPS, type ResidencyState } from "@llamactl/core/residency/lifecycle";
 import { DEFAULT_PROFILE_SWITCH_TIMEOUTS } from "@llamactl/core/residency/planner";
@@ -45,6 +50,9 @@ type RankingSection =
       coldLoadPenaltyMs: number;
       resident: string[];
       drainCharged: string[];
+      cooldownCharged: { model: string; untilMs: number }[];
+      drainTier: string[];
+      degradedTier: string[];
     };
 
 // The read-out residencyRankingReadout returns for an applicable policy:
@@ -217,14 +225,14 @@ function seedReadyLifecycleRow(
 describe("buildResidencyStatus ranking (#519)", () => {
   test("K1: no NodeRun or only non-ranking knobs reports ranking disabled", () => {
     // Kills: the ranking section being omitted entirely, or the disabled
-    // check removed (idleEvict/minResidency/switchCooldown alone must not
-    // enable it — only residentPreference and coldLoadPenaltyMs gate it).
+    // check removed (idleEvictSeconds is not a ranking knob and must not
+    // enable it — any of residentPreference, coldLoadPenaltyMs,
+    // switchCooldownSeconds or minResidencySeconds does).
     for (const nodeRun of [
       undefined,
       nodeRunManifest(),
       nodeRunManifest({}),
-      nodeRunManifest({ switchCooldownSeconds: 60 }),
-      nodeRunManifest({ idleEvictSeconds: 300, minResidencySeconds: 60 }),
+      nodeRunManifest({ idleEvictSeconds: 300 }),
     ]) {
       const built = buildStatus({ nodeRun, nowMs: NOW_MS });
       expect(rankingOf(built)).toEqual({ status: "disabled", scope: "serving-process" });
@@ -333,6 +341,9 @@ describe("buildResidencyStatus ranking (#519)", () => {
       coldLoadPenaltyMs: 500,
       resident: ["a", "b"],
       drainCharged: ["c"],
+      cooldownCharged: [],
+      drainTier: [],
+      degradedTier: ["d"],
     });
   });
 
@@ -363,11 +374,11 @@ describe("buildResidencyStatus ranking (#519)", () => {
       );
     }
 
-    // The pure readout applies only when a ranking knob is nonzero.
+    // The pure readout applies when any ranking knob is nonzero.
     expect(readoutFn({ residency: {}, lifecycle: K7_LIFECYCLE })).toBeNull();
     expect(
       readoutFn({ residency: { switchCooldownSeconds: 60 }, lifecycle: K7_LIFECYCLE }),
-    ).toBeNull();
+    ).not.toBeNull();
   });
 });
 

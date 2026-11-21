@@ -61,11 +61,12 @@
  *   `drainCostMs` is inert without `signals.resident`.
  *
  * Part of #519: `residencyRankingReadout` is the status read-out of the
- * resident set and the drain charges `residencyRankingInputs` feeds the
- * ranker, derived from the same ready, occupying and charged helpers, so
- * the read-out cannot diverge from the live signals. It applies only when
- * `residentPreference` or `coldLoadPenaltyMs` is nonzero and never ranks
- * or mutates anything.
+ * ranking signals `residencyRankingInputs` feeds the ranker — the resident
+ * set, drain charges, the active composed switch-cooldown/min-residency
+ * charges and the operational drain and degraded tiers — derived from the
+ * same ready, occupying, charged, switch-cooldown and operational helpers, so
+ * the read-out cannot diverge from the live signals. It applies when any
+ * ranking knob is nonzero and never ranks or mutates anything.
  */
 import type { routingRanking } from "@llamactl/core";
 import type { ResidencyPolicy } from "@llamactl/core/residency/admission";
@@ -202,6 +203,18 @@ function maxDefined(a: number | undefined, b: number | undefined): number | unde
   return a > b ? a : b;
 }
 
+function switchCooldownUntilMs(input: {
+  cooldownMs: number;
+  nodeName: string | undefined;
+  lastSucceededAtMs: Readonly<Record<string, number>> | undefined;
+}): number | undefined {
+  const nodeName = input.nodeName?.trim() ?? "";
+  if (input.cooldownMs <= 0 || nodeName === "") return undefined;
+  const recorded = input.lastSucceededAtMs?.[profileSwitchStoreKey(nodeName)];
+  if (recorded === undefined || !Number.isFinite(recorded)) return undefined;
+  return recorded + input.cooldownMs;
+}
+
 function switchCooldownSignal(input: {
   cooldownMs: number;
   nodeName: string | undefined;
@@ -209,11 +222,8 @@ function switchCooldownSignal(input: {
   nodeId: string;
   ready: ReadonlySet<string>;
 }): routingRanking.RankingSignals["cooldownUntil"] {
-  const nodeName = input.nodeName?.trim() ?? "";
-  if (input.cooldownMs <= 0 || nodeName === "") return undefined;
-  const recorded = input.lastSucceededAtMs?.[profileSwitchStoreKey(nodeName)];
-  if (recorded === undefined || !Number.isFinite(recorded)) return undefined;
-  const until = recorded + input.cooldownMs;
+  const until = switchCooldownUntilMs(input);
+  if (until === undefined) return undefined;
   const cooldownUntil: NonNullable<routingRanking.RankingSignals["cooldownUntil"]> = (ad) =>
     ad.ownerNodeId === input.nodeId && !input.ready.has(ad.deploymentId) ? until : undefined;
   return cooldownUntil;
@@ -289,6 +299,9 @@ export interface ResidencyRankingReadout {
   coldLoadPenaltyMs: number;
   resident: string[];
   drainCharged: string[];
+  cooldownCharged: { model: string; untilMs: number }[];
+  drainTier: string[];
+  degradedTier: string[];
 }
 
 function operationalStateSignal(
@@ -417,40 +430,111 @@ function sortedReadoutModels(
   return models.sort();
 }
 
+function readoutCooldownCharged(input: {
+  lifecycle: readonly ResidencyStateRecord[];
+  ready: ReadonlySet<string>;
+  switchCooldownMs: number;
+  minResidencyMs: number;
+  nodeName: string | undefined;
+  lastSucceededAtMs: Readonly<Record<string, number>> | undefined;
+  nowMs: number;
+}): { model: string; untilMs: number }[] {
+  const switchUntil = switchCooldownUntilMs({
+    cooldownMs: input.switchCooldownMs,
+    nodeName: input.nodeName,
+    lastSucceededAtMs: input.lastSucceededAtMs,
+  });
+  const holdUntil = minResidencyHoldSignal({
+    lifecycle: input.lifecycle,
+    nodeId: READOUT_NODE_ID,
+    ready: input.ready,
+    minMs: input.minResidencyMs,
+  });
+  const charges: { model: string; untilMs: number }[] = [];
+  const seen = new Set<string>();
+  for (const row of input.lifecycle) {
+    if (seen.has(row.model)) continue;
+    seen.add(row.model);
+    const deploymentId = residentDeploymentId(READOUT_NODE_ID, row.model);
+    if (input.ready.has(deploymentId)) continue;
+    const until = maxDefined(switchUntil, holdUntil?.get(deploymentId));
+    if (until !== undefined && until > input.nowMs) {
+      charges.push({ model: row.model, untilMs: until });
+    }
+  }
+  return charges.sort((a, b) => (a.model < b.model ? -1 : a.model > b.model ? 1 : 0));
+}
+
+function readoutTierModels(
+  lifecycle: readonly ResidencyStateRecord[],
+  tier: routingRanking.OperationalState,
+): string[] {
+  const states = operationalStates(lifecycle, READOUT_NODE_ID);
+  const models: string[] = [];
+  for (const row of lifecycle) {
+    if (states.get(residentDeploymentId(READOUT_NODE_ID, row.model)) === tier) {
+      models.push(row.model);
+    }
+  }
+  return models.sort();
+}
+
 /**
- * The resident set and drain charges `residencyRankingInputs` would emit,
- * read at model level. The policy resolves exactly as in
- * `residencyRankingInputs`; both knobs at 0 (the same condition as the
- * resident-set emission there) yields null. `resident` lists the sorted
- * models of the `ready` lifecycle rows and `drainCharged` the sorted
- * models charged the drain budget, derived from the same
- * `readyDeploymentIds`, `occupyingModelsByGroup` and `chargedDeploymentIds`
- * helpers the live signals use, so the read-out cannot diverge from them.
- * This is a status read-out: it never ranks or mutates anything.
+ * The ranking signals `residencyRankingInputs` feeds the ranker, read at model
+ * level. The policy resolves exactly as in `residencyRankingInputs`; every
+ * ranking knob at 0 (or no policy) yields null. `resident` lists the sorted
+ * `ready` models and `drainCharged` the sorted drain-budget models, derived from
+ * the same `readyDeploymentIds`, `occupyingModelsByGroup` and
+ * `chargedDeploymentIds` helpers; `cooldownCharged` lists the still-active
+ * composed switch-cooldown/min-residency instants per non-ready lifecycle-row
+ * model via `switchCooldownUntilMs` and `minResidencyHoldSignal`; `drainTier`
+ * and `degradedTier` list the sorted operational-state marks via
+ * `operationalStates`. When `residentPreference` and `coldLoadPenaltyMs` are
+ * both 0 the ranker emits no `resident`, `residencyKnown` or `drainMs`, so
+ * `resident` and `drainCharged` are empty while the cooldown and tier fields
+ * still report. A local workload with no lifecycle row is never listed, but the
+ * live ranker still charges it the switch cooldown (which `switchGates`
+ * reports). This is a status read-out: it never ranks or mutates anything.
  */
 export function residencyRankingReadout(input: {
   residency: NodeRunResidency | null | undefined;
   lifecycle: readonly ResidencyStateRecord[];
+  nodeName?: string;
+  lastSucceededAtMs?: Readonly<Record<string, number>>;
+  nowMs?: number;
 }): ResidencyRankingReadout | null {
   const policy = input.residency ?? null;
   const partial = policy === null ? null : toPartialResidencyPolicy(policy);
   const resolved = resolveResidencyPolicy(partial);
-  if (resolved.residentPreference === 0 && resolved.coldLoadPenaltyMs === 0) {
+  if (!rankingKnobsActive(resolved)) {
     return null;
   }
   const ready = readyDeploymentIds(input.lifecycle, READOUT_NODE_ID);
-  const occupantsByGroup = occupyingModelsByGroup(input.lifecycle);
-  const charged = chargedDeploymentIds({
-    lifecycle: input.lifecycle,
-    nodeId: READOUT_NODE_ID,
-    ready,
-    occupantsByGroup,
-  });
+  const residentSetEmitted = resolved.residentPreference !== 0 || resolved.coldLoadPenaltyMs !== 0;
+  const charged = residentSetEmitted
+    ? chargedDeploymentIds({
+        lifecycle: input.lifecycle,
+        nodeId: READOUT_NODE_ID,
+        ready,
+        occupantsByGroup: occupyingModelsByGroup(input.lifecycle),
+      })
+    : new Set<string>();
   return {
     residentPreference: resolved.residentPreference,
     coldLoadPenaltyMs: resolved.coldLoadPenaltyMs,
-    resident: sortedReadoutModels(input.lifecycle, ready),
-    drainCharged: sortedReadoutModels(input.lifecycle, charged),
+    resident: residentSetEmitted ? sortedReadoutModels(input.lifecycle, ready) : [],
+    drainCharged: residentSetEmitted ? sortedReadoutModels(input.lifecycle, charged) : [],
+    cooldownCharged: readoutCooldownCharged({
+      lifecycle: input.lifecycle,
+      ready,
+      switchCooldownMs: resolved.switchCooldownSeconds * 1000,
+      minResidencyMs: resolved.minResidencySeconds * 1000,
+      nodeName: input.nodeName,
+      lastSucceededAtMs: input.lastSucceededAtMs,
+      nowMs: input.nowMs ?? Date.now(),
+    }),
+    drainTier: readoutTierModels(input.lifecycle, "draining"),
+    degradedTier: readoutTierModels(input.lifecycle, "failed"),
   };
 }
 

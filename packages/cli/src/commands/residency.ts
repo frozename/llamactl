@@ -92,6 +92,34 @@ type EvictIdleResult =
   | { ok: false; reason: string }
   | { ok: true; dryRun: boolean; windowSeconds: number; rows: EvictIdleRow[] };
 
+// #519 ranking view: an agent older than the cooldown/tier read-out omits
+// cooldownCharged/drainTier/degradedTier even though the current schema always
+// carries them. Re-declare the ranking section locally with those fields
+// optional (the same way the evict-idle row above is re-declared), so the
+// renderer reads them without tripping no-unnecessary-condition.
+type RankingCharge = { model: string; untilMs: number };
+type RankingUnavailableReason =
+  | "NotServingNode"
+  | "UnifiedProxyOff"
+  | "StoreAbsent"
+  | "StoreUnreadable"
+  | "LifecycleUnreadable";
+type RankingSectionRender =
+  | { status: "disabled"; scope: "serving-process" }
+  | { status: "unavailable"; scope: "serving-process"; reason: RankingUnavailableReason }
+  | {
+      status: "available";
+      scope: "serving-process";
+      advisory: true;
+      residentPreference: number;
+      coldLoadPenaltyMs: number;
+      resident: string[];
+      drainCharged: string[];
+      cooldownCharged?: RankingCharge[];
+      drainTier?: string[];
+      degradedTier?: string[];
+    };
+
 export type ResidencyReleaseSessionView = Awaited<
   ReturnType<NodeClient["residencyReleaseSession"]["mutate"]>
 >;
@@ -106,8 +134,9 @@ export interface ResidencyDeps {
 // schema-authored ResidencyStatus is not assignable to ResidencyStatusView
 // under exactOptionalPropertyTypes. Re-widen policy.residency from the NodeRun
 // schema so both the client view and the assembled payload render.
-type ResidencyRenderInput = Omit<ResidencyStatusView, "policy"> & {
+type ResidencyRenderInput = Omit<ResidencyStatusView, "policy" | "ranking"> & {
   policy: { present: false } | { present: true; residency: noderunSchema.NodeRunResidency };
+  ranking?: RankingSectionRender;
 };
 
 export function renderResidencyStatus(s: ResidencyRenderInput, nowMs: number = Date.now()): string {
@@ -132,7 +161,7 @@ export function renderResidencyStatus(s: ResidencyRenderInput, nowMs: number = D
   pushLifecycleLines(lines, s.lifecycle);
   pushIdleEvictionLines(lines, s.idleEviction, nowMs);
   pushSwitchGateLines(lines, s.switchGates, nowMs);
-  pushRankingLines(lines, s.ranking);
+  pushRankingLines(lines, s.ranking, nowMs);
   pushLeaseLines(lines, s.leases);
   pushSessionLines(lines, s.sessions);
   lines.push(
@@ -327,7 +356,11 @@ const SWITCH_GATES_UNAVAILABLE: Record<SwitchGatesUnavailableReason, string> = {
   LifecycleUnreadable: "lifecycle rows unreadable",
 };
 
-function pushRankingLines(lines: string[], ranking: ResidencyRenderInput["ranking"]): void {
+function pushRankingLines(
+  lines: string[],
+  ranking: ResidencyRenderInput["ranking"],
+  nowMs: number,
+): void {
   if (ranking === undefined) {
     return;
   }
@@ -348,12 +381,22 @@ function pushRankingLines(lines: string[], ranking: ResidencyRenderInput["rankin
   if (ranking.drainCharged.length > 0) {
     lines.push(`  drain charged: ${ranking.drainCharged.join(", ")}`);
   }
+  const cooldownCharged = ranking.cooldownCharged ?? [];
+  if (cooldownCharged.length > 0) {
+    const entries = cooldownCharged.map(
+      (e) => `${e.model} for ${formatMs(Math.max(0, e.untilMs - nowMs))}`,
+    );
+    lines.push(`  cooldown charged: ${entries.join(", ")}`);
+  }
+  const drainTier = ranking.drainTier ?? [];
+  if (drainTier.length > 0) {
+    lines.push(`  drain tier: ${drainTier.join(", ")}`);
+  }
+  const degradedTier = ranking.degradedTier ?? [];
+  if (degradedTier.length > 0) {
+    lines.push(`  degraded tier: ${degradedTier.join(", ")}`);
+  }
 }
-
-type RankingUnavailableReason = Extract<
-  NonNullable<ResidencyRenderInput["ranking"]>,
-  { status: "unavailable" }
->["reason"];
 
 const RANKING_UNAVAILABLE: Record<RankingUnavailableReason, string> = {
   NotServingNode: "not the serving node",

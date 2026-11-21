@@ -12,6 +12,15 @@ export interface StopServerResult {
   stopped: boolean;
   pid: number | null;
   killed: boolean;
+  refused?: {
+    reason:
+      | "LeasesActive"
+      | "DrainInProgress"
+      | "SessionsActive"
+      | "SessionsUnknown"
+      | (string & {});
+    active: readonly unknown[];
+  };
 }
 
 export type StopOutcome = { ok: true; result: StopServerResult } | { ok: false; error: unknown };
@@ -152,11 +161,38 @@ const REFUSAL_MESSAGES: Record<string, (workload: string) => string> = {
     `This is a multi-node workload. Use \`llamactl delete workload ${workload}\` for a full ordered stop.`,
 };
 
-function stopExecutedMessage(result: StopServerResult): {
+function stopFenceRefusalMessage(
+  refused: { reason: string; active: readonly unknown[] },
+  workload: string | undefined,
+): { kind: "refusal"; code: string; text: string; invalidate: false } {
+  const ids = refused.active.filter((x): x is string => typeof x === "string");
+  const reason = refused.reason;
+  const base = `Stop refused by the node's stop fence (${reason}${
+    ids.length > 0 ? `: ${ids.join(", ")}` : ""
+  }); nothing was stopped.`;
+  const sessionReasons = new Set(["SessionsActive", "SessionsUnknown"]);
+  const overrideText = sessionReasons.has(reason)
+    ? ` Release a bound session with \`llamactl residency release-session <sessionId> --yes --node <node>\`, or override with \`llamactl residency force-unload ${workload ?? "<workload>"} --reason <text> --yes --node <node>\`.`
+    : ` Override with \`llamactl residency force-unload ${workload ?? "<workload>"} --reason <text> --yes --node <node>\`.`;
+  return {
+    kind: "refusal",
+    code: reason,
+    text: base + overrideText,
+    invalidate: false,
+  };
+}
+
+function stopExecutedMessage(
+  result: StopServerResult,
+  workload?: string,
+): {
   kind: "success" | "refusal";
   text: string;
   invalidate: boolean;
 } {
+  if (result.refused !== undefined) {
+    return stopFenceRefusalMessage(result.refused, workload);
+  }
   const { stopped, pid, killed } = result;
   if (stopped) {
     return {
@@ -188,7 +224,7 @@ export function stopResultMessage(
   invalidate: boolean;
 } {
   if (outcome.ok) {
-    return stopExecutedMessage(outcome.result);
+    return stopExecutedMessage(outcome.result, workload);
   }
 
   const c = classifyTransportError(outcome.error);
