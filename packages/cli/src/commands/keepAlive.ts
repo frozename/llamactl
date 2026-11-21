@@ -1,4 +1,5 @@
-import { env as envMod, keepAlive } from "@llamactl/core";
+import { catalog, env as envMod, keepAlive, target as targetMod } from "@llamactl/core";
+import { defaultResidencyStorePath, exclusiveGroupLaunchRefusal } from "@llamactl/remote";
 import { spawn } from "node:child_process";
 
 import { getGlobals, getNodeClient, isLocalDispatch } from "../dispatcher.js";
@@ -132,6 +133,23 @@ function duplicateStartRefusal(): { msg: string; pid: number } | null {
   return { msg, pid: existing.pid };
 }
 
+/**
+ * Read-only exclusive-group gate for a resolved catalog rel (#517). Reads the rel's
+ * `residencyGroup` and delegates to `exclusiveGroupLaunchRefusal` with the local store, using the
+ * rel as the refusal id. Returns null when the launch may proceed. `runStart` calls it before the
+ * detached spawn with the target resolved by `resolveTarget`; the worker passes it as `beforeStart`,
+ * which receives the rel the loop already resolved. A node with no store file launches as before.
+ */
+function keepAliveLaunchRefusal(rel: string): string | null {
+  const entry = catalog.findByRel(rel);
+  if (!entry) return null;
+  return exclusiveGroupLaunchRefusal({
+    id: rel,
+    group: entry.residencyGroup,
+    storePath: defaultResidencyStorePath(),
+  });
+}
+
 async function runStart(args: string[]): Promise<number> {
   const parsed = parseJsonPositionalArgs(args);
   if ("exit" in parsed) return parsed.exit;
@@ -149,6 +167,15 @@ async function runStart(args: string[]): Promise<number> {
         `${JSON.stringify({ error: refusal.msg, pid: refusal.pid }, null, 2)}\n`,
       );
     else process.stderr.write(`${refusal.msg}\n`);
+    return 1;
+  }
+
+  // Gate on the resolved rel, as the worker does. An unresolvable target
+  // skips the gate and spawns as before; the worker records resolve-failed.
+  const resolvedRel = targetMod.resolveTarget(target);
+  const groupRefusal = resolvedRel === null ? null : keepAliveLaunchRefusal(resolvedRel);
+  if (groupRefusal !== null) {
+    process.stderr.write(`keep-alive start: ${groupRefusal}\n`);
     return 1;
   }
 
@@ -375,6 +402,7 @@ async function runWorker(args: string[]): Promise<number> {
       ...(intervalSeconds !== undefined ? { intervalSeconds } : {}),
       ...(maxBackoff !== undefined ? { maxBackoff } : {}),
       signal: controller.signal,
+      beforeStart: keepAliveLaunchRefusal,
     });
     return 0;
   } finally {
