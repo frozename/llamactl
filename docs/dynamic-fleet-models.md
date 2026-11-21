@@ -311,6 +311,13 @@ never under fusion-private-first" (#725). Under #728/#729 the ranked
 replica hint never lifts an experimental replica over a non-experimental
 one, and a session already bound to an experimental workload stays on it.
 
+`/v1/models?include=declared` reads the same stages: each `unavailable`
+entry's `qualification.stage` is the routing stage from
+`catalogQualificationStages` (so a pin replaces the catalog stage), and a
+`declared` entry whose id's routing stage is experimental carries
+`experimental: true`, the same flag a `data` entry carries. Neither array
+is routable, so the flags only report; they change no routing decision.
+
 `proposePromotion` (`packages/core/src/qualification/promotion.ts`)
 applies the first matching check, in source order: `frozen`, `pinned`,
 `degraded`, `terminal-stage`, `no-thresholds`,
