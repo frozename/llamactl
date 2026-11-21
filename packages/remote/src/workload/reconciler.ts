@@ -162,6 +162,9 @@ async function queryNodeMemBytes(client: WorkloadClient): Promise<number | null>
  * The per-pass view of every NodeRun's admission sizing knobs, keyed by
  * node name: the explicit `spec.budget.memoryGiB` and the `spec.residency`
  * whose safetyMarginRatio sizes the computed fallback budget (Part of #519).
+ * The residency map also supplies minResidencySeconds to the apply --evict /
+ * llamactl.io/evict gate for both the ModelRun and ModelHost reconcile paths
+ * (Part of #519).
  */
 interface NodeBudgetContext {
   budgetByName: Map<string, number | undefined>;
@@ -598,6 +601,7 @@ async function reconcileModelRun(
         ...evictionApplyOptions(opts),
         getNodeBudgetGiB: (nodeName) =>
           resolveModelRunBudgetGiB(nodeName, nodeBudget, nodeMemBytesByName, opts.getClient),
+        getNodeResidency: (nodeName) => nodeBudget.residencyByName.get(nodeName),
       },
     );
     if (result.error) errors++;
