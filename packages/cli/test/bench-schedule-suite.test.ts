@@ -791,3 +791,156 @@ describe("#521 scheduled suite declared slots", () => {
     expect(run.calls).toEqual([]);
   });
 });
+
+describe("#521 scheduled suite declared provenance", () => {
+  function writeDeclaredStore(declared: { quant?: string; ctx?: number } = {}): void {
+    const quantLine = declared.quant === undefined ? "" : `    quant: ${declared.quant}\n`;
+    const ctxLine = declared.ctx === undefined ? "" : `    ctx: ${String(declared.ctx)}\n`;
+    writeFileSync(
+      schedulePath,
+      `schedules:
+  - id: router-suite
+    node: fake-node
+    rel: org/repo/m.gguf
+    mode: auto
+    intervalSeconds: 86400
+    enabled: true
+    lastRunAt: "2000-01-01T00:00:00.000Z"
+    lastError: null
+    kind: suite
+    suite: perf-quick
+${quantLine}${ctxLine}`,
+      "utf8",
+    );
+  }
+
+  function provenanceSeams(run: ReturnType<typeof fakeRunPerfSuite>): {
+    endpoint: ReturnType<typeof fakeEndpoint>;
+  } {
+    const endpoint = fakeEndpoint("http://fake-engine.invalid");
+    setSeams({
+      perfSuite: {
+        runPerfSuite: run.runPerfSuite,
+        resolveEndpoint: endpoint.resolveEndpoint,
+        openDb: () => new Database(":memory:"),
+      },
+    });
+    return { endpoint };
+  }
+
+  test("kick records declared quant and ctx in provenance and passes ctx to the suite", async () => {
+    // Kills: the hard-coded `quant: null` / `ctx: null` provenance inputs,
+    //        and ctx not reaching runPerfSuite opts.
+    writeDeclaredStore({ quant: "Q4_K_M", ctx: 32768 });
+    const run = fakeRunPerfSuite();
+    provenanceSeams(run);
+
+    const { result } = await captureProcessStreams(() => runBenchSchedule(["kick"]));
+
+    expect(result).toBe(0);
+    expect(run.calls).toHaveLength(1);
+    const opts = runOpts(run.calls[0]);
+    const provenance = opts["provenance"];
+    if (!isPlainRecord(provenance)) throw new Error("expected a provenance record");
+    expect(provenance["quant"]).toBe("Q4_K_M");
+    expect(provenance["ctx"]).toBe(32768);
+    const unavailable = provenance["unavailable"];
+    if (!isPlainRecord(unavailable)) {
+      throw new Error("expected provenance.unavailable to be a record");
+    }
+    expect("quant" in unavailable).toBe(false);
+    expect("ctx" in unavailable).toBe(false);
+    for (const field of ["binary_sha256", "gguf_sha256"] as const) {
+      const reason: unknown = unavailable[field];
+      expect(typeof reason).toBe("string");
+      expect(reason).toContain("org/repo/m.gguf");
+      expect(reason).toContain("agent gateway");
+    }
+    expect(opts["ctx"]).toBe(32768);
+  });
+
+  test("the runner rejects a non-positive ctx before any endpoint work", async () => {
+    // Kills: the runner passing an unvalidated ctx into provenance/opts.
+    const endpoint = fakeEndpoint("http://fake-engine.invalid");
+    const run = fakeRunPerfSuite();
+    const runner = createPerfBenchSuiteRunner({
+      runPerfSuite: run.runPerfSuite,
+      resolveEndpoint: endpoint.resolveEndpoint,
+      openDb: () => new Database(":memory:"),
+    });
+    const req = {
+      scheduleId: "x",
+      suite: "perf-quick",
+      node: "n",
+      rel: "org/repo/m.gguf",
+      ctx: 0,
+    } as Parameters<ReturnType<typeof createPerfBenchSuiteRunner>>[0];
+
+    let message = "";
+    try {
+      await runner(req);
+    } catch (err) {
+      message = err instanceof Error ? err.message : String(err);
+    }
+
+    expect(message).toContain("invalid ctx 0 for schedule 'x' (expected a positive integer)");
+    expect(endpoint.calls).toEqual([]);
+    expect(run.calls).toEqual([]);
+  });
+
+  test("the runner rejects a blank quant before any endpoint work", async () => {
+    // Kills: the runner passing an unvalidated quant into provenance.
+    const endpoint = fakeEndpoint("http://fake-engine.invalid");
+    const run = fakeRunPerfSuite();
+    const runner = createPerfBenchSuiteRunner({
+      runPerfSuite: run.runPerfSuite,
+      resolveEndpoint: endpoint.resolveEndpoint,
+      openDb: () => new Database(":memory:"),
+    });
+    const req = {
+      scheduleId: "x",
+      suite: "perf-quick",
+      node: "n",
+      rel: "org/repo/m.gguf",
+      quant: "  ",
+    } as Parameters<ReturnType<typeof createPerfBenchSuiteRunner>>[0];
+
+    let message = "";
+    try {
+      await runner(req);
+    } catch (err) {
+      message = err instanceof Error ? err.message : String(err);
+    }
+
+    expect(message).toContain(
+      "invalid quant '  ' for schedule 'x' (expected a non-blank quant label)",
+    );
+    expect(endpoint.calls).toEqual([]);
+    expect(run.calls).toEqual([]);
+  });
+
+  test("guard: undeclared quant/ctx keep the gateway reasons and send no ctx opt", async () => {
+    writeStore();
+    const run = fakeRunPerfSuite();
+    provenanceSeams(run);
+
+    const { result } = await captureProcessStreams(() => runBenchSchedule(["kick"]));
+
+    expect(result).toBe(0);
+    expect(run.calls).toHaveLength(1);
+    const opts = runOpts(run.calls[0]);
+    expect("ctx" in opts).toBe(false);
+    const provenance = opts["provenance"];
+    if (!isPlainRecord(provenance)) throw new Error("expected a provenance record");
+    const unavailable = provenance["unavailable"];
+    if (!isPlainRecord(unavailable)) {
+      throw new Error("expected provenance.unavailable to be a record");
+    }
+    expect(unavailable["quant"]).toBe(
+      "scheduled suites reach org/repo/m.gguf through the agent gateway; the quant label is not known",
+    );
+    expect(unavailable["ctx"]).toBe(
+      "scheduled suites reach org/repo/m.gguf through the agent gateway; the context size is not known",
+    );
+  });
+});

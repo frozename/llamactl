@@ -52,7 +52,7 @@ describe("catalog add --meta (#522)", () => {
   // positional (the meta value must not count as one) or none, the command
   // prints the catalog USAGE on stdout, exits 1 and writes no catalog row.
   for (const argv of [
-    [POSITIONALS[0], "--meta", '{"qualification":{"stage":"experimental"}}'],
+    ["unsloth/Meta-E2E-GGUF", "--meta", '{"qualification":{"stage":"experimental"}}'],
     [],
   ] as const) {
     test(`catalog add with ${String(argv.length === 0 ? 0 : 1)} positional(s) prints usage`, () => {
