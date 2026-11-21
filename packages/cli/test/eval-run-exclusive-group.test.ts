@@ -11,7 +11,7 @@
 import type { ResidencyState } from "@llamactl/core/residency/lifecycle";
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { connect } from "node:net";
+import { connect, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -214,4 +214,40 @@ describe("#517 eval run exclusive-group refusal", () => {
     expect(existsSync(markerPath)).toBe(false);
     expect(existsSync(join(devStorage, "eval"))).toBe(false);
   }, 20_000);
+
+  // Kills: evalSandboxLaunchGroup ignoring remoteUrl — a `--url` run spawns
+  // no engine, so an occupied exclusive group must not refuse it. The URL
+  // points at a just-closed loopback port, so the run proceeds past the gate
+  // (creating $DEV_STORAGE/eval) and then rejects on the refused connection
+  // without spawning the marker server.
+  test("E3: a --url run is not refused when the model's exclusive group is occupied", async () => {
+    seedReady("qwen-prod");
+    const url = `http://127.0.0.1:${String(await closedLoopbackPort())}`;
+    const { result, stderr } = await captureProcessStreams(() =>
+      runEval(["run", GLM_REL, "--url", url]).catch((error: unknown) => `threw: ${String(error)}`),
+    );
+    expect(stderr).not.toContain("residency lifecycle refused");
+    expect(result).not.toBe(1);
+    expect(existsSync(join(devStorage, "eval"))).toBe(true);
+    expect(existsSync(markerPath)).toBe(false);
+  }, 20_000);
 });
+
+// Binds an ephemeral loopback port and releases it, so a connect to it is
+// refused immediately rather than reaching any live server.
+async function closedLoopbackPort(): Promise<number> {
+  const server = createServer();
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  await new Promise<void>((resolve) => {
+    server.close(() => {
+      resolve();
+    });
+  });
+  if (address === null || typeof address === "string") {
+    throw new Error("no ephemeral loopback port");
+  }
+  return address.port;
+}

@@ -132,10 +132,14 @@ function seedSwitchOp(path: string): void {
   }
 }
 
-function lifecycleRow(model: string, state: ResidencyState): ResidencyStateRecord {
+function lifecycleRow(
+  model: string,
+  state: ResidencyState,
+  group: string | null = GROUP,
+): ResidencyStateRecord {
   return {
     model,
-    group: GROUP,
+    group,
     state,
     ownerId: "seed",
     incarnation: "seed",
@@ -301,5 +305,43 @@ describe("#517 exclusiveGroupLaunchRefusal", () => {
     ).toBe(
       "residency lifecycle refused glm downloaded -> loading: ExclusiveGroupOccupied: exclusive group z13-large-gpu is held by a-peer in state ready",
     );
+  });
+
+  // Kills: dropping `row.group === group` from the occupant filter — an
+  // occupying row recorded under a different group holds none of
+  // z13-large-gpu's capacity and must not refuse the launch.
+  test("X9: ready and loading rows in a different group never refuse", async () => {
+    const refusal = await loadRefusal();
+    const path = storePath();
+    for (const state of ["ready", "loading"] as const) {
+      const snapshot: ResidencyStoreSnapshot = {
+        path,
+        present: true,
+        nonterminal: [],
+        lifecycle: [lifecycleRow("other-peer", state, "other-group")],
+      };
+      expect(
+        refusal({ id: "glm", group: GROUP, storePath: path, readSnapshot: () => snapshot }),
+      ).toBeNull();
+    }
+  });
+
+  // Kills: dropping `row.group === group` from the occupant filter — an
+  // occupying row with no recorded group is outside every exclusive group
+  // and must not refuse the launch.
+  test("X10: ready and loading rows with no group never refuse", async () => {
+    const refusal = await loadRefusal();
+    const path = storePath();
+    for (const state of ["ready", "loading"] as const) {
+      const snapshot: ResidencyStoreSnapshot = {
+        path,
+        present: true,
+        nonterminal: [],
+        lifecycle: [lifecycleRow("ungrouped-peer", state, null)],
+      };
+      expect(
+        refusal({ id: "glm", group: GROUP, storePath: path, readSnapshot: () => snapshot }),
+      ).toBeNull();
+    }
   });
 });
