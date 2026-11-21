@@ -163,6 +163,8 @@ export interface DeclaredModelInfo {
   auto_load_eligible: boolean;
   routable: false;
   reason?: string;
+  /** #518: routing stage experimental, pins applied; report-only. */
+  experimental?: true;
 }
 
 export type OpenAIModelListResponse = ModelListResponse & {
@@ -281,7 +283,6 @@ function orderedProxyRoutes(resolved: ResolvedEnv): workloadRuntime.ClusterRoute
 type DeclaredUnavailableEntry = {
   catalogId: string;
   reason: string;
-  stage?: QualificationStage;
 };
 
 /**
@@ -304,11 +305,9 @@ function declaredUnavailableModels(resolved: ResolvedEnv): {
       byRel.delete(row.rel);
       continue;
     }
-    const stage = row.qualification?.stage;
     byRel.set(row.rel, {
       catalogId: row.id,
       reason: availability.reason,
-      ...(stage === undefined ? {} : { stage }),
     });
   }
   // Every row's id maps to its rel, whatever that row declares: a builtin
@@ -411,12 +410,14 @@ function unavailableModelEntries(
   winners: ReadonlyMap<string, unknown>,
 ): UnavailableModelInfo[] {
   const { byRel } = declaredUnavailableModels(resolved);
+  const stages = workloadRuntime.catalogQualificationStages(resolved);
   const defaultTargets = defaultTargetModelIds(resolved);
   const unavailable: UnavailableModelInfo[] = [];
   for (const rel of [...byRel.keys()].sort()) {
     if (winners.has(rel) || defaultTargets.has(rel)) continue;
     const entry = byRel.get(rel);
     if (!entry) continue;
+    const stage = stages.get(rel);
     unavailable.push({
       id: rel,
       object: "model",
@@ -425,7 +426,7 @@ function unavailableModelEntries(
       catalogId: entry.catalogId,
       status: "unavailable",
       reason: entry.reason,
-      ...(entry.stage === undefined ? {} : { qualification: { stage: entry.stage } }),
+      ...(stage === undefined ? {} : { qualification: { stage } }),
       routable: false,
     });
   }
@@ -446,6 +447,9 @@ function declaredModelInfos(
   const routedIds = new Set(base.data.map((model) => model.id));
   const unavailableIds = new Set(base.unavailable.map((entry) => entry.id));
   const defaultTargets = defaultTargetModelIds(resolved);
+  let stages: Map<string, QualificationStage> | undefined;
+  const stageOf = (id: string): QualificationStage | undefined =>
+    (stages ??= workloadRuntime.catalogQualificationStages(resolved)).get(id);
   const declared: DeclaredModelInfo[] = [];
   for (const entry of declaredModelEntries()) {
     if (entry.state === "ready") continue;
@@ -463,6 +467,7 @@ function declaredModelInfos(
       auto_load_eligible: entry.autoLoadEligible,
       routable: false,
       ...(entry.reason !== undefined ? { reason: entry.reason } : {}),
+      ...(stageOf(entry.id) === "experimental" ? { experimental: true as const } : {}),
     });
   }
   return declared;
