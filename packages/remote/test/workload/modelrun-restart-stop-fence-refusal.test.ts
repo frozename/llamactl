@@ -14,8 +14,9 @@ import type { ModelRun } from "../../src/workload/schema.js";
 
 import { envForTemp, makeTempRuntime } from "../../../core/test/helpers.js";
 import { mkdirSync } from "../../src/safe-fs.js";
+import { createTargetAdmissionAuthority } from "../../src/workload/admission.js";
 import { applyOne, type WorkloadClient } from "../../src/workload/apply.js";
-import { parseWorkload } from "../../src/workload/store.js";
+import { loadWorkloadByNameAny, parseWorkload, saveWorkload } from "../../src/workload/store.js";
 
 type StatusResult = Awaited<ReturnType<WorkloadClient["serverStatus"]["query"]>>;
 
@@ -43,19 +44,31 @@ const STATUS_DOWN: StatusResult = {
   endpoint: "",
 };
 
-function manifestYaml(opts: { workers?: boolean } = {}): string {
+function manifestYaml(
+  opts: {
+    evict?: string;
+    memory?: number;
+    name?: string;
+    rel?: string;
+    workers?: boolean;
+  } = {},
+): string {
   const lines = [
     "apiVersion: llamactl/v1",
     "kind: ModelRun",
     "metadata:",
-    "  name: chat-a",
+    `  name: ${opts.name ?? "chat-a"}`,
+    ...(opts.evict !== undefined ? ["  annotations:", `    llamactl.io/evict: ${opts.evict}`] : []),
     "spec:",
     "  node: gpu1",
     "  enabled: true",
     "  target:",
     "    kind: rel",
-    "    value: fake-org/new.gguf",
+    `    value: ${opts.rel ?? "fake-org/new.gguf"}`,
     "  restartPolicy: Always",
+    ...(opts.memory !== undefined
+      ? ["  resources:", `    expectedMemoryGiB: ${String(opts.memory)}`]
+      : []),
   ];
   if (opts.workers === true) {
     lines.push(
@@ -152,6 +165,86 @@ function makeFleet(opts: { status?: StatusResult; stopOutcome?: unknown }): {
       ...(opts.stopOutcome !== undefined ? { stopOutcome: opts.stopOutcome } : {}),
     });
   return { getClient, trace };
+}
+
+const STATUS_VICTIM_UP: StatusResult = {
+  state: "up",
+  rel: "fake-org/victim.gguf",
+  extraArgs: [],
+  pid: 777,
+  host: "127.0.0.1",
+  port: 8090,
+  binary: null,
+  endpoint: "http://127.0.0.1:8090",
+};
+
+// Workload-aware client for the admission-claim tests: the victim reports
+// up until its evict stop, chat-a always reports the mismatched running
+// server and any stop aimed at it answers with the scripted refusal.
+function makeAdmissionClient(opts: { refusal: unknown; trace: Trace }): WorkloadClient {
+  const state = { victimDown: false };
+  return {
+    serverStatus: {
+      query: (input): Promise<StatusResult> => {
+        if (input.workload === "victim" && !state.victimDown) {
+          return Promise.resolve(STATUS_VICTIM_UP);
+        }
+        if (input.workload === "chat-a") {
+          return Promise.resolve(STATUS_UP_MISMATCH);
+        }
+        return Promise.resolve(STATUS_DOWN);
+      },
+    },
+    serverStop: {
+      mutate: (input: StopCall): Promise<unknown> => {
+        opts.trace.serverStops.push(input);
+        if (input.workload === "victim") {
+          state.victimDown = true;
+          return Promise.resolve({ stopped: true, pid: 777, killed: false });
+        }
+        return Promise.resolve(opts.refusal);
+      },
+    },
+    serverStart: {
+      subscribe: (_input, callbacks): { unsubscribe(): undefined } => {
+        opts.trace.serverStarts.push(_input);
+        queueMicrotask(() => {
+          callbacks.onData({ type: "done", result: SERVER_DONE });
+          callbacks.onComplete();
+        });
+        return noopSubscription();
+      },
+    },
+    modelHostStart: { subscribe: () => noopSubscription() },
+    modelHostStop: { mutate: () => Promise.resolve({}) },
+    modelHostStatus: { query: () => Promise.resolve({ state: "Stopped", pid: null }) },
+    rpcServerStart: {
+      subscribe: (_input, callbacks): { unsubscribe(): undefined } => {
+        opts.trace.rpcServerStarts.push(_input);
+        queueMicrotask(() => {
+          callbacks.onData({ type: "done", result: RPC_DONE });
+          callbacks.onComplete();
+        });
+        return noopSubscription();
+      },
+    },
+    rpcServerStop: { mutate: () => Promise.resolve({}) },
+    rpcServerDoctor: {
+      query: () =>
+        Promise.resolve({ ok: true, path: "/fake/bin/rpc-server", llamaCppBin: "/fake/bin" }),
+    },
+  };
+}
+
+function makeAdmissionFleet(refusal: unknown): {
+  getClient: (nodeName: string) => WorkloadClient;
+  trace: Trace;
+} {
+  const trace: Trace = { serverStops: [], serverStarts: [], rpcServerStarts: [] };
+  return {
+    getClient: (): WorkloadClient => makeAdmissionClient({ refusal, trace }),
+    trace,
+  };
 }
 
 // Each applyOne needs its own scoped store + env so a seeded ambient store
@@ -332,6 +425,95 @@ describe("#520 ModelRun apply restart stop-fence refusal", () => {
       expect(trace.serverStarts).toEqual([]);
     } finally {
       cleanup();
+    }
+  });
+
+  // Kills: dropping, forcing true or forcing false the
+  // `lifecycle.destructive = wasDestructive;` restore in
+  // convergeClaimedServer — with no prior evictions the refused restart ran
+  // nothing destructive, so the pending target-admission claim must be
+  // released rather than marked uncertain.
+  test("R4: a refused restart with no evictions releases the admission claim", async () => {
+    const authority = createTargetAdmissionAuthority();
+    const { getClient, trace } = makeAdmissionFleet({
+      stopped: false,
+      pid: null,
+      killed: false,
+      refused: { reason: "SessionsActive", active: ["s1"] },
+    });
+    const store = scopedStore();
+    try {
+      const result = await applyOne(
+        parseWorkload(manifestYaml({ memory: 8 })),
+        getClient,
+        undefined,
+        undefined,
+        {
+          ...store.opts,
+          getNodeBudgetGiB: (): number => 24,
+          targetAdmission: authority,
+        },
+      );
+      expect(result.error).toBe("serverStop refused: SessionsActive: s1");
+      expect(result.action).toBe("unchanged");
+      expect(result.statusSection.phase).toBe("Running");
+      expect(trace.serverStops).toEqual([{ workload: "chat-a", graceSeconds: 5 }]);
+      expect(trace.serverStarts).toEqual([]);
+      const snapshot = authority.snapshot("gpu1");
+      expect(snapshot.filter((c) => c.state === "pending" || c.state === "uncertain")).toEqual([]);
+      expect(snapshot).toEqual([]);
+    } finally {
+      store.cleanup();
+    }
+  });
+
+  // Kills: forcing the restore to false — after verified evictions the
+  // apply already tore victims down, so a refused restart leaves the claim
+  // uncertain while the DF-02 rollback releases the eviction markers.
+  test("R5: a refused restart after verified evictions marks the claim uncertain and rolls back markers", async () => {
+    const authority = createTargetAdmissionAuthority();
+    const { getClient, trace } = makeAdmissionFleet({
+      stopped: false,
+      pid: null,
+      killed: false,
+      refused: { reason: "SessionsActive", active: ["s1"] },
+    });
+    const store = scopedStore();
+    try {
+      saveWorkload(
+        parseWorkload(manifestYaml({ name: "victim", rel: "fake-org/victim.gguf", memory: 8 })),
+        store.opts.workloadsDir,
+      );
+      const result = await applyOne(
+        parseWorkload(manifestYaml({ memory: 8, evict: "victim" })),
+        getClient,
+        undefined,
+        undefined,
+        {
+          ...store.opts,
+          getNodeBudgetGiB: (): number => 24,
+          targetAdmission: authority,
+        },
+      );
+      expect(result.error, result.error ?? "no error").toContain(
+        "serverStop refused: SessionsActive: s1",
+      );
+      expect(result.error).toContain("released eviction intent on 'victim'");
+      expect(result.action).toBe("unchanged");
+      expect(result.statusSection.phase).toBe("Running");
+      expect(trace.serverStops).toEqual([
+        { workload: "victim", graceSeconds: 5 },
+        { workload: "chat-a", graceSeconds: 5 },
+      ]);
+      expect(trace.serverStarts).toEqual([]);
+      const snapshot = authority.snapshot("gpu1");
+      expect(snapshot.map((c) => c.state)).toEqual(["uncertain"]);
+      expect(snapshot[0]?.runtimeKey).toBe("chat-a");
+      const victim = loadWorkloadByNameAny("victim", store.opts.workloadsDir);
+      expect(victim.metadata.annotations?.["llamactl.io/evicted-by"]).toBeUndefined();
+      expect(victim.metadata.annotations?.["llamactl.io/evicted-at"]).toBeUndefined();
+    } finally {
+      store.cleanup();
     }
   });
 });

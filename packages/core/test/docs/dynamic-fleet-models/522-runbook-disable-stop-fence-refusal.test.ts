@@ -78,13 +78,19 @@ describe("#522 runbook disable stop-fence refusal", () => {
     expect(at, "missing step-9 sentence").toBeGreaterThan(exitIdx);
   });
 
-  // Kills: unwiring the fix — stopDisabledWorkload must translate a
-  // refused serverStop into the StopRefused condition and error string.
+  // Kills: unwiring the fix — stopDisabledWorkload must still translate a
+  // refused serverStop through the shared stopRefusedResult helper, which
+  // carries the StopRefused condition and the serverStop refused error
+  // string (#815: the wording moved out of the disable body, so the pin
+  // follows it into the helper and keeps the call-site wiring).
   test("source: stopDisabledWorkload surfaces serverStop refusals", () => {
     const body = enclosingBody(applySrc, "async function stopDisabledWorkload(");
     expect(body, "stopDisabledWorkload signature").not.toBe("");
-    expect(body, "serverStop refused prefix").toContain("serverStop refused: ");
-    expect(body, "StopRefused condition").toContain("StopRefused");
+    expect(body, "stopDisabledWorkload calls stopRefusedResult").toContain("stopRefusedResult(");
+    const helper = enclosingBody(applySrc, "function stopRefusedResult(");
+    expect(helper, "stopRefusedResult signature").not.toBe("");
+    expect(helper, "serverStop refused prefix").toContain("serverStop refused: ");
+    expect(helper, "StopRefused condition").toContain("StopRefused");
   });
 
   // Guard: the ModelHost sibling already maps a refused modelHostStop.
