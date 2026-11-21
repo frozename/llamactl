@@ -142,12 +142,17 @@ Subcommands:
       (catalog -> HF pipeline -> path pattern), quant, scope, family,
       and whether the file is installed on disk.
 
-  add <hf-repo> <gguf-file-or-relpath> [label] [family] [class] [scope]
+  add <hf-repo> <gguf-file-or-relpath> [label] [family] [class] [scope] [--meta <json>]
       Append an entry to the custom catalog. Missing fields are
       derived: label from the GGUF basename, family from the repo
       substring, class from the HF pipeline_tag (falls back to
       path-pattern classifier), scope defaults to 'candidate'.
       Refuses to add a rel that's already in any catalog.
+      --meta takes a JSON object of candidate keys (availability,
+      qualification, runtime, contextMax, params, memory,
+      residencyGroup, license), validated strictly and written as
+      catalog column 9.
+      A bare -- ends flag parsing.
 
   promote <profile> <best|vision|balanced|fast> <rel-or-alias>
       Write a preset override so <profile>:<preset> resolves to the
@@ -311,11 +316,36 @@ function printStatusReport(report: StatusReport): void {
 }
 
 async function runAdd(args: string[]): Promise<number> {
-  if (args.length < 2 || args.includes("-h") || args.includes("--help")) {
+  const parsed = parseAddArgs(args);
+  if (parsed.kind === "help") {
     process.stdout.write(USAGE);
-    return args.length < 2 ? 1 : 0;
+    return 0;
   }
-  const [repo, fileOrRel, label, family, klass, scope] = args;
+  if (parsed.kind === "error") {
+    process.stderr.write(parsed.message);
+    return 1;
+  }
+  if (parsed.positionals.length < 2) {
+    process.stdout.write(USAGE);
+    return 1;
+  }
+  return await writeCuratedEntry(parsed);
+}
+
+async function writeCuratedEntry(parsed: Extract<ParsedAddArgs, { kind: "ok" }>): Promise<number> {
+  const { positionals, meta: metaStr } = parsed;
+  const [repo, fileOrRel, label, family, klass, scope] = positionals;
+
+  let metaParsed: unknown = undefined;
+  if (metaStr !== undefined) {
+    try {
+      metaParsed = JSON.parse(metaStr);
+    } catch {
+      process.stderr.write("catalog add: --meta is not valid JSON\n");
+      return 1;
+    }
+  }
+
   const result = await catalogWriter.addCurated({
     repo: repo ?? "",
     fileOrRel: fileOrRel ?? "",
@@ -323,6 +353,7 @@ async function runAdd(args: string[]): Promise<number> {
     ...(family !== undefined ? { family } : {}),
     ...(klass !== undefined ? { class: klass } : {}),
     ...(scope !== undefined ? { scope } : {}),
+    ...(metaParsed !== undefined ? { meta: metaParsed } : {}),
   });
   if (!result.ok) {
     process.stderr.write(`${result.error}\n`);
@@ -337,6 +368,80 @@ async function runAdd(args: string[]): Promise<number> {
     ].join("\n"),
   );
   return 0;
+}
+
+const META_VALUE_REQUIRED = "catalog add: --meta requires a JSON value\n";
+
+export type ParsedAddArgs =
+  | { kind: "help" }
+  | { kind: "error"; message: string }
+  | { kind: "ok"; positionals: string[]; meta: string | undefined };
+
+type AddArgState = "flags" | "metaValue" | "positionals";
+
+interface AddArgAcc {
+  positionals: string[];
+  meta: string | undefined;
+  state: AddArgState;
+}
+
+/**
+ * Parse `catalog add` argv with one explicit state:
+ * - "flags": flags are recognised, other tokens are positionals;
+ * - "metaValue": the previous token was `--meta`, so this token is its
+ *   value (always, even `--` or `--help`) and never a positional;
+ * - "positionals": a bare `--` was seen, so every later token is a
+ *   positional.
+ * The positional count is checked by the caller.
+ */
+export function parseAddArgs(args: readonly string[]): ParsedAddArgs {
+  const acc: AddArgAcc = { positionals: [], meta: undefined, state: "flags" };
+  for (const arg of args) {
+    const stop = stepAddArg(acc, arg);
+    if (stop !== undefined) return stop;
+  }
+  if (acc.state === "metaValue") {
+    return { kind: "error", message: META_VALUE_REQUIRED };
+  }
+  return { kind: "ok", positionals: acc.positionals, meta: acc.meta };
+}
+
+/** Consume one token; returns a result only when parsing stops early. */
+function stepAddArg(acc: AddArgAcc, arg: string): ParsedAddArgs | undefined {
+  if (acc.state === "metaValue") {
+    acc.meta = arg;
+    acc.state = "flags";
+    return undefined;
+  }
+  if (acc.state === "positionals") {
+    acc.positionals.push(arg);
+    return undefined;
+  }
+  return stepAddFlag(acc, arg);
+}
+
+/** One token in the "flags" state. */
+function stepAddFlag(acc: AddArgAcc, arg: string): ParsedAddArgs | undefined {
+  if (arg === "--") {
+    acc.state = "positionals";
+    return undefined;
+  }
+  if (arg === "-h" || arg === "--help") return { kind: "help" };
+  if (arg === "--meta") {
+    acc.state = "metaValue";
+    return undefined;
+  }
+  if (arg.startsWith("--meta=")) {
+    const value = arg.slice("--meta=".length);
+    if (value.length === 0) return { kind: "error", message: META_VALUE_REQUIRED };
+    acc.meta = value;
+    return undefined;
+  }
+  if (arg.startsWith("--")) {
+    return { kind: "error", message: `catalog add: unknown flag ${arg}\n` };
+  }
+  acc.positionals.push(arg);
+  return undefined;
 }
 
 async function runPromote(args: string[]): Promise<number> {

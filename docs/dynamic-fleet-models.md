@@ -85,6 +85,34 @@ Changing availability:
   builtin rows. There are no override semantics — a custom row with a
   builtin's id is a second row, not a replacement.
 
+### Adding custom candidate rows
+
+`llamactl catalog add <hf-repo> <gguf-file-or-relpath> [label] [family] [class] [scope] [--meta <json>]`
+appends a custom row.
+
+`--meta` takes a JSON object of the keys in the table above.
+
+`addCurated` (`packages/core/src/catalogWriter.ts`) validates it against
+`CuratedMeta` in strict mode (`.strict()`). An unknown key is refused with
+`invalid catalog meta: unrecognized key(s): <keys>`, and nothing is written.
+
+The CLI (`packages/cli/src/commands/catalog.ts`) refuses with exit 1 on
+`catalog add: --meta is not valid JSON` and `catalog add: unknown flag <flag>`.
+A missing value after `--meta` produces
+`catalog add: --meta requires a JSON value`.
+
+`--meta` always consumes the next token as its value, and that value is
+never counted as a positional argument. A bare `--` ends flag
+parsing, so a label starting with `--` goes after `--`.
+
+The keys are written as compact JSON in column 9 (see [tsv-schemas.md](tsv-schemas.md)).
+
+A row added with `qualification.stage` reports that stage as `catalogStage`
+in `llamactl qualification status <rel>` (`packages/cli/src/commands/qualification.ts`).
+
+`catalog add` cannot change an existing row: it refuses a rel already in any
+catalog with `Catalog already contains <rel>`.
+
 ## Residency states and exclusion
 
 The residency state model exists as a library (#517). Since #662 the
@@ -322,6 +350,8 @@ Every promotion surface enforces it: `llamactl catalog promote` exits 1 with
 the refusal on stderr, the `promote` procedure rejects with `BAD_REQUEST`, and
 the MCP `llamactl.catalog.promote` tool returns `ok: false` (a dry run reports
 `refused` instead of previewing a write).
+
+`resolvePreset` skips an env or file preset override whose rel is experimental, read through `catalogQualificationStages` (so pins count), and falls through to the next layer. Each skip is reported on `skippedExperimental` in layer order. This covers a row written before the rel was pinned experimental, and every `resolveTarget` caller (server start, keepAlive, bench, workload apply) and `recommendationsForProfile`. When the builtin itself is pinned experimental (a pin row set after the rel was promoted), no lower layer exists to fall back to, so the builtin default is returned even when it is pinned experimental.
 
 ### Demotion
 
@@ -647,7 +677,7 @@ verbatim from the USAGE text (`packages/cli/src/commands/bench-schedule.ts`):
 ```text
   llamactl bench schedule add <id> --node <node> --rel <rel>
       [--mode auto|text|vision] --every <duration>
-      [--kind suite --suite <perf-quick|perf-full> [--engine <llamacpp|omlx|gufo|kapitsa>] [--slots <n>]]
+      [--kind suite --suite <perf-quick|perf-full> [--engine <llamacpp|omlx|gufo|kapitsa>] [--slots <n>] [--quant <label>] [--ctx <n>]]
 ```
 
 So `llamactl bench schedule add <id> --node <node> --rel <rel>` takes an
@@ -688,8 +718,9 @@ Rows land in the same `perf.sqlite` as `llamactl eval perf` (`defaultPerfDbPath`
 `packages/cli/src/commands/bench-schedule.ts`), with run id
 `<id>-<ISO timestamp>`. Provenance records the engine, while `engine_version`,
 `engine_commit`, `binary_sha256`, `gguf_sha256`, `hf_revision`, `quant` and `ctx`
-are recorded null, each with an unavailable reason stating that scheduled suites
-reach <rel> through the agent gateway. SSD I/O, peak RSS and GTT are recorded
+are recorded null unless the schedule declares them (see below), each with an
+unavailable reason stating that scheduled suites reach <rel> through the agent
+gateway. SSD I/O, peak RSS and GTT are recorded
 `unavailable` with a reason naming the node. So an eval-record arm that needs
 binary or GGUF provenance should use `llamactl eval perf` with `--binary` or
 `--gguf` on the engine host instead. The provenance `host` is the machine running
@@ -739,6 +770,27 @@ suite as the slot count instead of the gateway reason. A declared count
 below a concurrency level still records `engine slots <n> <
 concurrency <level>` for that level (`runConcurrencyLevel`,
 `packages/eval/src/perf/runner.ts`).
+
+### Declared quant and context for a suite schedule
+
+A suite schedule can declare the quant label with `--quant <label>` and
+the context size with `--ctx <n>` on `llamactl bench schedule add`: the
+CLI refuses either flag unless `--kind suite` was given
+(`--quant is only valid when kind is 'suite'`,
+`--ctx is only valid when kind is 'suite'`), refuses a blank or
+malformed label (`--quant must be a non-blank quant label`) and refuses
+a value that is not a positive integer (`--ctx must be a positive
+integer`) (`validateProvenanceArgs`,
+`packages/cli/src/commands/bench-schedule.ts`). The tick loop forwards
+both to the suite runner (`runWithOutcome`,
+`packages/remote/src/bench/scheduleLoop.ts`), which records them in perf
+provenance (`collectEvalProvenance`,
+`packages/eval/src/perf/provenance.ts`) instead of the gateway reasons;
+a declared `--ctx` also bounds the prefill sizes (`resolveModelCtx`,
+`packages/eval/src/perf/runner.ts`). So without a declared `--quant` or
+`--ctx`, that field is recorded null with the gateway reason
+(`createPerfBenchSuiteRunner`,
+`packages/cli/src/commands/bench-schedule.ts`).
 
 ### Comparing perf runs for an arm
 

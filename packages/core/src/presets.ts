@@ -75,6 +75,7 @@ export type PresetOverrideSource = "env" | "file" | null;
 export interface PresetResolution {
   rel: string;
   source: PresetOverrideSource;
+  skippedExperimental?: { source: "env" | "file"; rel: string }[];
 }
 
 /**
@@ -110,6 +111,15 @@ export function readPresetOverrides(file: string): PresetOverride[] {
  * overrides first, then the on-disk override file, then the built-in
  * defaults. The `source` field reflects which layer won and is used by
  * `llama-recommendations` to annotate rows with `promoted=env|file`.
+ *
+ * Part of #518: when an env or file override names a rel whose stage is
+ * `experimental` (as reported by `catalogQualificationStages`), that layer
+ * is skipped and the override is recorded on `skippedExperimental`;
+ * resolution continues to the next layer.  Each skip is reported in layer
+ * order (env before file).  When the builtin itself is pinned experimental
+ * (a pin row set after the rel was promoted), no lower layer exists to
+ * fall back to, so the builtin default is returned even when it is pinned
+ * experimental — this is a known limit.
  */
 export function resolvePreset(
   profile: MachineProfile,
@@ -117,20 +127,50 @@ export function resolvePreset(
   env: NodeJS.ProcessEnv = process.env,
   resolved = resolveEnv(env),
 ): PresetResolution {
+  const skipped: { source: "env" | "file"; rel: string }[] = [];
+
+  // Lazily build the stages map: only when an env override is non-empty or
+  // a matching file row exists (builtin-only path does no extra IO).
+  let stagesCache: Map<string, string> | undefined = undefined;
+  function getStages(): Map<string, string> {
+    stagesCache ??= catalogQualificationStages(resolved);
+    return stagesCache;
+  }
+
   const envOverride = env[envVarName(profile, preset)];
   if (envOverride && envOverride.length > 0) {
-    return { rel: envOverride, source: "env" };
+    const stages = getStages();
+    if (stages.get(envOverride) === "experimental") {
+      skipped.push({ source: "env", rel: envOverride });
+    } else {
+      return { rel: envOverride, source: "env" };
+    }
   }
 
   const fileOverride = readPresetOverrides(resolved.LOCAL_AI_PRESET_OVERRIDES_FILE).find(
     (row) => row.profile === profile && row.preset === preset,
   );
   if (fileOverride) {
-    return { rel: fileOverride.rel, source: "file" };
+    const stages = getStages();
+    if (stages.get(fileOverride.rel) === "experimental") {
+      skipped.push({ source: "file", rel: fileOverride.rel });
+    } else {
+      const result: PresetResolution = {
+        rel: fileOverride.rel,
+        source: "file",
+        ...(skipped.length > 0 && { skippedExperimental: skipped }),
+      };
+      return result;
+    }
   }
 
   const normalized = normalizeProfile(profile) ?? "macbook-pro-48g";
-  return { rel: BUILTIN_PRESETS[normalized][preset], source: null };
+  const result: PresetResolution = {
+    rel: BUILTIN_PRESETS[normalized][preset],
+    source: null,
+    ...(skipped.length > 0 && { skippedExperimental: skipped }),
+  };
+  return result;
 }
 
 function formatIso(date: Date = new Date()): string {

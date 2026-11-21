@@ -200,3 +200,47 @@ describe("#521 scheduled suite slots", () => {
     expect(message).toContain("slots is only valid with kind 'suite'");
   });
 });
+
+describe("#521 scheduled suite declared provenance", () => {
+  test("benchScheduleAdd persists quant and ctx on a kind 'suite' schedule", async () => {
+    // Kills: the router input schema stripping quant/ctx, or addSchedule dropping them.
+    const caller = router.createCaller({});
+    const input = {
+      id: "router-provenance",
+      node: "fake-node",
+      rel: "org/repo/m.gguf",
+      intervalSeconds: 3600,
+      kind: "suite" as const,
+      suite: "perf-quick",
+      quant: "Q4_K_M",
+      ctx: 32768,
+    };
+    await caller.benchScheduleAdd(input);
+
+    const row = loadSchedules(schedulePath).find((s) => s.id === "router-provenance")!;
+    const declared = row as BenchSchedule & { quant?: string; ctx?: number };
+    expect(declared.quant).toBe("Q4_K_M");
+    expect(declared.ctx).toBe(32768);
+  });
+
+  test("benchScheduleAdd rejects ctx unless kind is 'suite'", async () => {
+    // Kills: the router/schema not gating ctx to kind 'suite'.
+    const caller = router.createCaller({});
+    const input = {
+      id: "router-ctx-bad",
+      node: "fake-node",
+      rel: "org/repo/m.gguf",
+      intervalSeconds: 3600,
+      kind: "preset" as const,
+      ctx: 32768,
+    };
+    let message = "";
+    try {
+      await caller.benchScheduleAdd(input);
+    } catch (err) {
+      message = err instanceof Error ? err.message : String(err);
+    }
+    expect(message).toContain("ctx is only valid with kind 'suite'");
+    expect(loadSchedules(schedulePath).some((s) => s.id === "router-ctx-bad")).toBe(false);
+  });
+});
