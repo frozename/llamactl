@@ -58,12 +58,15 @@
 // The ranking section (scope "serving-process", Part of #519) is a read-only
 // read-out of the NodeRun ranking knobs against the serving node's lifecycle
 // rows: the resolved residentPreference and coldLoadPenaltyMs plus the resident
-// (ready lifecycle rows) and drain-charged (exclusive-group drain) model lists,
-// computed by the same residencyRankingReadout the unified proxy's ranking
-// signals derive from. Both knobs 0 (or no policy) reports disabled without
-// reading the store; off the serving node, with the unified proxy off, or with
-// an absent, unreadable or lifecycle-unreadable store it reports unavailable.
-// It never ranks or mutates anything.
+// (ready lifecycle rows), drain-charged (exclusive-group drain), cooldown-charged
+// (active switch-cooldown/min-residency instants per non-ready row) and the
+// operational drain and degraded tier model lists, computed by the same
+// residencyRankingReadout the unified proxy's ranking signals derive from. Every
+// ranking knob 0 (residentPreference, coldLoadPenaltyMs, switchCooldownSeconds,
+// minResidencySeconds), or no policy, reports disabled without reading the store;
+// off the serving node, with the unified proxy off, or with an absent,
+// unreadable or lifecycle-unreadable store it reports unavailable. It never
+// ranks or mutates anything.
 //
 // `runIdleEviction` (Part of #519) is the operator-triggered mutation built on
 // that same snapshot: a dry run reports would-evict rows, a targeted run re-checks
@@ -423,9 +426,10 @@ export type ResidencyStatusSwitchGates =
     };
 
 // Read-only ranking-knob read-out (Part of #519): the resolved
-// `residentPreference` and `coldLoadPenaltyMs`, plus the resident and
-// drain-charged model lists exactly as the unified proxy's ranker sees
-// them, computed by `residencyRankingReadout`. It mirrors the gating of
+// `residentPreference` and `coldLoadPenaltyMs`, plus the resident,
+// drain-charged, cooldown-charged, drain-tier and degraded-tier model lists
+// exactly as the unified proxy's ranker sees them, computed by
+// `residencyRankingReadout`. It mirrors the gating of
 // `createResidencyRankingSource`/`residencyRankingInputs` and never ranks
 // or mutates anything. `scope` is always "serving-process".
 export type ResidencyStatusRanking =
@@ -448,6 +452,9 @@ export type ResidencyStatusRanking =
       coldLoadPenaltyMs: number;
       resident: string[];
       drainCharged: string[];
+      cooldownCharged: { model: string; untilMs: number }[];
+      drainTier: string[];
+      degradedTier: string[];
     };
 
 export type ResidencyStatus = {
@@ -526,6 +533,7 @@ export function buildResidencyStatus(input: {
       node: input.node,
       store: input.store,
       unifiedProxy: input.unifiedProxy ?? false,
+      nowMs: input.nowMs ?? Date.now(),
     }),
     leases: buildResidencyLeaseSnapshot(input.leaseRegistry ?? null, input.leaseWorkloads ?? []),
     omlxNative: { scope: "serving-process", workloads: [...(input.omlxNative ?? [])] },
@@ -823,28 +831,33 @@ function rankingAvailable(readout: ResidencyRankingReadout): ResidencyStatusRank
     coldLoadPenaltyMs: readout.coldLoadPenaltyMs,
     resident: readout.resident,
     drainCharged: readout.drainCharged,
+    cooldownCharged: readout.cooldownCharged,
+    drainTier: readout.drainTier,
+    degradedTier: readout.degradedTier,
   };
 }
 
 // Advisory ranking-knob read-out (Part of #519). It mirrors the gating of
 // `createResidencyRankingSource`/`residencyRankingInputs` and never ranks or
 // mutates anything. Resolves the NodeRun policy then checks, in a fixed
-// order, why it cannot answer: a null read-out on an empty lifecycle (both
-// ranking knobs 0, or no policy) disables without reading the store; off
-// the serving node is NotServingNode (the same `applies` gate the
-// idleEviction, switchGates, omlxNative and store sections use); the
-// unified proxy off is UnifiedProxyOff (the ranker consumes these signals
-// only under LLAMACTL_UNIFIED_PROXY=1); an absent store is StoreAbsent (the
-// ranker emits {} signals there, so residency is unknown); an unreadable
+// order, why it cannot answer: every ranking knob 0 (or no policy) disables
+// without reading the store; off the serving node is NotServingNode (the same
+// `applies` gate the idleEviction, switchGates, omlxNative and store sections
+// use); the unified proxy off is UnifiedProxyOff (the ranker consumes these
+// signals only under LLAMACTL_UNIFIED_PROXY=1); an absent store is StoreAbsent
+// (the ranker emits {} signals there, so residency is unknown); an unreadable
 // store is StoreUnreadable; a lifecycle read failure (or an undefined
 // lifecycle) is LifecycleUnreadable. Otherwise available, from the same
-// `residencyRankingReadout` mapping the live ranker's signals come from.
+// `residencyRankingReadout` mapping the live ranker's signals come from, with
+// the node name, the store's last succeeded switches and the clock handed in
+// so the cooldown charges resolve exactly as the live ranker prices them.
 export function buildRankingSnapshot(input: {
   residency: ResidencyPolicy | null | undefined;
   servingNode: string | null;
   node: string;
   store: ResidencyStoreSnapshot;
   unifiedProxy: boolean;
+  nowMs: number;
 }): ResidencyStatusRanking {
   const scope = "serving-process" as const;
   if (residencyRankingReadout({ residency: input.residency, lifecycle: [] }) === null) {
@@ -869,6 +882,11 @@ export function buildRankingSnapshot(input: {
   const readout = residencyRankingReadout({
     residency: input.residency,
     lifecycle: store.lifecycle,
+    nodeName: input.node,
+    ...(store.lastSucceededAtMs !== undefined
+      ? { lastSucceededAtMs: store.lastSucceededAtMs }
+      : {}),
+    nowMs: input.nowMs,
   });
   return readout === null ? { status: "disabled", scope } : rankingAvailable(readout);
 }
