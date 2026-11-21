@@ -390,3 +390,83 @@ describe("#521 scheduled suite slots", () => {
     expect(readFileSync(schedulePath, "utf8")).not.toContain("slots:");
   });
 });
+
+type DeclaredSchedule = BenchSchedule & { quant?: string; ctx?: number };
+
+describe("#521 scheduled suite declared provenance", () => {
+  test("a suite schedule with quant and ctx round-trips through save/load", () => {
+    // Kills: dropping `quant`/`ctx` from benchScheduleBase (zod strips them).
+    const schedule: DeclaredSchedule = {
+      ...suiteSchedule("provenance-persist"),
+      quant: "Q4_K_M",
+      ctx: 32768,
+    };
+    saveSchedules([schedule], schedulePath);
+
+    const entry = loadSchedules(schedulePath)[0] as DeclaredSchedule;
+    expect({ quant: entry.quant, ctx: entry.ctx }).toEqual({
+      quant: "Q4_K_M",
+      ctx: 32768,
+    });
+  });
+
+  test("schema rejects quant and ctx on preset or kindless schedules", () => {
+    // Kills: dropping the quant/ctx branches of the kind/suite superRefine.
+    const gated: { fixture: Record<string, unknown>; message: string }[] = [
+      {
+        fixture: { ...baseSchedule("prov-quant-preset"), kind: "preset", quant: "Q4_K_M" },
+        message: "quant is only valid with kind 'suite'",
+      },
+      {
+        fixture: { ...baseSchedule("prov-quant-kindless"), quant: "Q4_K_M" },
+        message: "quant is only valid with kind 'suite'",
+      },
+      {
+        fixture: { ...baseSchedule("prov-ctx-preset"), kind: "preset", ctx: 32768 },
+        message: "ctx is only valid with kind 'suite'",
+      },
+      {
+        fixture: { ...baseSchedule("prov-ctx-kindless"), ctx: 32768 },
+        message: "ctx is only valid with kind 'suite'",
+      },
+    ];
+    for (const { fixture, message } of gated) {
+      const result = BenchScheduleSchema.safeParse(fixture);
+      expect(result.success, message).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues.map((issue) => issue.message)).toContain(message);
+      }
+    }
+  });
+
+  test("schema rejects non-positive ctx and blank or whitespace quant", () => {
+    // Kills: missing .int().positive() on ctx or a missing label regex on quant.
+    for (const ctx of [0, -1, 1.5]) {
+      const result = BenchScheduleSchema.safeParse({
+        ...suiteSchedule(`prov-ctx-bad-${String(ctx)}`),
+        ctx,
+      });
+      expect(result.success).toBe(false);
+    }
+    for (const quant of ["", "Q4 K M"]) {
+      const result = BenchScheduleSchema.safeParse({
+        ...suiteSchedule(`prov-quant-bad-${quant === "" ? "empty" : "space"}`),
+        quant,
+      });
+      expect(result.success).toBe(false);
+    }
+  });
+
+  test("guard: a legacy suite schedule persists no quant or ctx key", () => {
+    // Back-compat guard: declared provenance stays absent — never null or "".
+    saveSchedules([suiteSchedule("provenance-legacy")], schedulePath);
+
+    const entry = loadSchedules(schedulePath)[0] as DeclaredSchedule;
+    expect("quant" in entry).toBe(false);
+    expect("ctx" in entry).toBe(false);
+
+    const raw = readFileSync(schedulePath, "utf8");
+    expect(raw).not.toContain("quant:");
+    expect(raw).not.toContain("ctx:");
+  });
+});

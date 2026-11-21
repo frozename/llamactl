@@ -2981,6 +2981,12 @@ export const router = t.router({
           .regex(/^[a-z0-9][a-z0-9._-]*$/)
           .optional(),
         slots: z.number().int().positive().optional(),
+        quant: z
+          .string()
+          .regex(/^[A-Za-z0-9][A-Za-z0-9._+-]*$/)
+          .max(64)
+          .optional(),
+        ctx: z.number().int().positive().optional(),
       }),
     )
     .mutation(({ input }) => {
@@ -2997,6 +3003,8 @@ export const router = t.router({
         suite: input.suite,
         ...(input.engine !== undefined ? { engine: input.engine } : {}),
         ...(input.slots !== undefined ? { slots: input.slots } : {}),
+        ...(input.quant !== undefined ? { quant: input.quant } : {}),
+        ...(input.ctx !== undefined ? { ctx: input.ctx } : {}),
       });
       benchScheduleMod.saveSchedules(next, path);
       return next;
