@@ -351,6 +351,8 @@ the refusal on stderr, the `promote` procedure rejects with `BAD_REQUEST`, and
 the MCP `llamactl.catalog.promote` tool returns `ok: false` (a dry run reports
 `refused` instead of previewing a write).
 
+`resolvePreset` skips an env or file preset override whose rel is experimental, read through `catalogQualificationStages` (so pins count), and falls through to the next layer. Each skip is reported on `skippedExperimental` in layer order. This covers a row written before the rel was pinned experimental, and every `resolveTarget` caller (server start, keepAlive, bench, workload apply) and `recommendationsForProfile`. When the builtin itself is pinned experimental (a pin row set after the rel was promoted), no lower layer exists to fall back to, so the builtin default is returned even when it is pinned experimental.
+
 ### Demotion
 
 The optional `demotion` block on the promotion policy carries the floors
