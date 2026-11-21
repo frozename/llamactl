@@ -20,7 +20,9 @@ import { existsSync, mkdirSync, readFileSync } from "../safe-fs.js";
  * `benchPresetRun.subscribe`. The scheduler never resolves the suite
  * id or the engine id itself: an unknown id is the runner's to
  * reject, and the rejection lands in `lastError`. A suite schedule
- * may also declare the engine slot count (`slots`) used for c2/c4.
+ * may also declare the engine slot count (`slots`) used for c2/c4,
+ * and the quant label (`quant`) and context size (`ctx`) recorded
+ * in perf provenance, which the agent gateway cannot report.
  */
 
 export const BENCH_SCHEDULE_KINDS = ["preset", "suite"] as const;
@@ -48,6 +50,12 @@ const benchScheduleBase = z.object({
     .regex(/^[a-z0-9][a-z0-9._-]*$/)
     .optional(),
   slots: z.number().int().positive().optional(),
+  quant: z
+    .string()
+    .regex(/^[A-Za-z0-9][A-Za-z0-9._+-]*$/)
+    .max(64)
+    .optional(),
+  ctx: z.number().int().positive().optional(),
 });
 
 export const BenchScheduleSchema = benchScheduleBase.superRefine((data, ctx) => {
@@ -77,6 +85,20 @@ export const BenchScheduleSchema = benchScheduleBase.superRefine((data, ctx) => 
       code: "custom",
       message: "slots is only valid with kind 'suite'",
       path: ["slots"],
+    });
+  }
+  if (data.kind !== "suite" && data.quant !== undefined) {
+    ctx.addIssue({
+      code: "custom",
+      message: "quant is only valid with kind 'suite'",
+      path: ["quant"],
+    });
+  }
+  if (data.kind !== "suite" && data.ctx !== undefined) {
+    ctx.addIssue({
+      code: "custom",
+      message: "ctx is only valid with kind 'suite'",
+      path: ["ctx"],
     });
   }
 });

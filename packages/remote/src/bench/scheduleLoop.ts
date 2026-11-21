@@ -56,6 +56,10 @@ export interface BenchSuiteRequest {
   engine?: string;
   // #521: operator-declared engine slot count for c2/c4; absent on legacy schedules
   slots?: number;
+  // #521: operator-declared quant label recorded in perf provenance; absent on legacy schedules
+  quant?: string;
+  // #521: operator-declared context size recorded in perf provenance; absent on legacy schedules
+  ctx?: number;
 }
 
 export type BenchSuiteRunner = (req: BenchSuiteRequest) => Promise<void>;
@@ -252,6 +256,13 @@ interface RunOutcome {
   patch: { lastRunAt: string; lastError: string | null };
 }
 
+function declaredProvenanceFields(schedule: BenchSchedule): { quant?: string; ctx?: number } {
+  return {
+    ...(schedule.quant !== undefined ? { quant: schedule.quant } : {}),
+    ...(schedule.ctx !== undefined ? { ctx: schedule.ctx } : {}),
+  };
+}
+
 async function runWithOutcome(
   schedule: BenchSchedule,
   getClient: (nodeName: string) => BenchClient,
@@ -273,6 +284,7 @@ async function runWithOutcome(
           rel: schedule.rel,
           ...(schedule.engine !== undefined ? { engine: schedule.engine } : {}),
           ...(schedule.slots !== undefined ? { slots: schedule.slots } : {}),
+          ...declaredProvenanceFields(schedule),
         },
         runSuite,
       );

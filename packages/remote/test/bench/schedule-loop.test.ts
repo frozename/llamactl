@@ -770,3 +770,46 @@ describe("#521 scheduled suite slots", () => {
     expect("slots" in calls[0]!).toBe(false);
   });
 });
+
+describe("#521 scheduled suite declared provenance", () => {
+  test("a due suite schedule forwards quant and ctx on the runSuite request", async () => {
+    // Kills: runWithOutcome not forwarding schedule.quant/schedule.ctx.
+    const calls: BenchSuiteRequest[] = [];
+    const runSuite = (req: BenchSuiteRequest): Promise<void> => {
+      calls.push(req);
+      return Promise.resolve();
+    };
+    const schedule: BenchSchedule & { quant?: string; ctx?: number } = {
+      ...dueSchedule("suite-provenance", { kind: "suite", suite: "perf" }),
+      quant: "Q4_K_M",
+      ctx: 32768,
+    };
+    saveSchedules([schedule], schedulePath);
+
+    await kickBenchScheduler(autoCompleting().getClient, { runSuite });
+
+    expect(calls).toHaveLength(1);
+    const req = calls[0] as BenchSuiteRequest & { quant?: string; ctx?: number };
+    expect(req.quant).toBe("Q4_K_M");
+    expect(req.ctx).toBe(32768);
+  });
+
+  test("guard: a due suite schedule without quant/ctx sends neither key", async () => {
+    // Back-compat guard: the request omits quant and ctx entirely.
+    const calls: BenchSuiteRequest[] = [];
+    const runSuite = (req: BenchSuiteRequest): Promise<void> => {
+      calls.push(req);
+      return Promise.resolve();
+    };
+    saveSchedules(
+      [dueSchedule("suite-noprovenance", { kind: "suite", suite: "perf" })],
+      schedulePath,
+    );
+
+    await kickBenchScheduler(autoCompleting().getClient, { runSuite });
+
+    expect(calls).toHaveLength(1);
+    expect("quant" in calls[0]!).toBe(false);
+    expect("ctx" in calls[0]!).toBe(false);
+  });
+});

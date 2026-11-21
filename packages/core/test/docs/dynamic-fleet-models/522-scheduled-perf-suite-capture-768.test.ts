@@ -32,7 +32,7 @@ describe("#522 scheduled perf suite capture (#768)", () => {
   // list without a doc update.
   test("add synopsis copied verbatim from USAGE", () => {
     const span =
-      "[--kind suite --suite <perf-quick|perf-full> [--engine <llamacpp|omlx|gufo|kapitsa>] [--slots <n>]]";
+      "[--kind suite --suite <perf-quick|perf-full> [--engine <llamacpp|omlx|gufo|kapitsa>] [--slots <n>] [--quant <label>] [--ctx <n>]]";
     expect(benchScheduleSrc).toContain(span);
     expect(sec).toContain(span);
     expect(sec).toContain("`llamactl bench schedule add <id> --node <node> --rel <rel>`");

@@ -1211,6 +1211,110 @@ describe("#521 scheduled suite slots", () => {
       benchCmd.runBench(["schedule", "add", "--help"]),
     );
     expect(result).toBe(0);
-    expect(stdout).toContain("[--engine <llamacpp|omlx|gufo|kapitsa>] [--slots <n>]]");
+    expect(stdout).toContain(
+      "[--engine <llamacpp|omlx|gufo|kapitsa>] [--slots <n>] [--quant <label>] [--ctx <n>]]",
+    );
+  });
+});
+
+describe("#521 scheduled suite declared provenance", () => {
+  afterEach(() => {
+    resetGlobals();
+    resetBenchScheduleSeams();
+  });
+
+  function installProvenanceAddCaller(): CallerCalls {
+    const { caller, calls } = installFakeCaller({});
+    setBenchScheduleSeams({ caller });
+    setGlobals({ ...getGlobals(), nodeName: "n" });
+    return calls;
+  }
+
+  test("add forwards --quant and --ctx to benchScheduleAdd for kind suite", async () => {
+    // Kills: --quant/--ctx missing from VALUED_ADD_FLAGS, or not forwarded to the caller.
+    const calls = installProvenanceAddCaller();
+    const { result } = await captureProcessStreams(() =>
+      benchCmd.runBench([
+        "schedule",
+        "add",
+        "x",
+        "--rel",
+        "r",
+        "--every",
+        "6h",
+        "--kind",
+        "suite",
+        "--suite",
+        "perf-quick",
+        "--quant",
+        "Q4_K_M",
+        "--ctx",
+        "32768",
+      ]),
+    );
+    expect(result).toBe(0);
+    expect(calls.add).toHaveLength(1);
+    const input = requireRecord(calls.add[0]);
+    expect(input["id"]).toBe("x");
+    expect(input["node"]).toBe("n");
+    expect(input["quant"]).toBe("Q4_K_M");
+    expect(input["ctx"]).toBe(32768);
+  });
+
+  test("add refuses --quant unless kind is 'suite'", async () => {
+    // Kills: missing kind gating for --quant.
+    const calls = installProvenanceAddCaller();
+    const { result, stderr } = await captureProcessStreams(() =>
+      benchCmd.runBench([...ADD_PREFIX, "--quant", "Q4_K_M"]),
+    );
+    expect(result).toBe(1);
+    expect(stderr).toContain("bench schedule add: --quant is only valid when kind is 'suite'");
+    expect(calls.add).toHaveLength(0);
+  });
+
+  test("add refuses --ctx unless kind is 'suite'", async () => {
+    // Kills: missing kind gating for --ctx.
+    const calls = installProvenanceAddCaller();
+    const { result, stderr } = await captureProcessStreams(() =>
+      benchCmd.runBench([...ADD_PREFIX, "--ctx", "32768"]),
+    );
+    expect(result).toBe(1);
+    expect(stderr).toContain("bench schedule add: --ctx is only valid when kind is 'suite'");
+    expect(calls.add).toHaveLength(0);
+  });
+
+  test("add refuses --ctx values that are not positive integers", async () => {
+    // Kills: missing positive-integer validation for --ctx.
+    for (const tail of [["--ctx", "0"], ["--ctx", "abc"], ["--ctx", "1.5"], ["--ctx=-4"]]) {
+      const calls = installProvenanceAddCaller();
+      const { result, stderr } = await captureProcessStreams(() =>
+        benchCmd.runBench([...ADD_PREFIX, "--kind", "suite", "--suite", "perf-quick", ...tail]),
+      );
+      expect(result).toBe(1);
+      expect(stderr).toContain("bench schedule add: --ctx must be a positive integer");
+      expect(calls.add).toHaveLength(0);
+    }
+  });
+
+  test("add refuses a blank or whitespace --quant label", async () => {
+    // Kills: missing non-blank validation for --quant.
+    for (const tail of [["--quant="], ["--quant", "Q4 K"]]) {
+      const calls = installProvenanceAddCaller();
+      const { result, stderr } = await captureProcessStreams(() =>
+        benchCmd.runBench([...ADD_PREFIX, "--kind", "suite", "--suite", "perf-quick", ...tail]),
+      );
+      expect(result).toBe(1);
+      expect(stderr).toContain("bench schedule add: --quant must be a non-blank quant label");
+      expect(calls.add).toHaveLength(0);
+    }
+  });
+
+  test("add --help documents the --quant and --ctx flags", async () => {
+    // Kills: USAGE not listing --quant/--ctx.
+    const { result, stdout } = await captureProcessStreams(() =>
+      benchCmd.runBench(["schedule", "add", "--help"]),
+    );
+    expect(result).toBe(0);
+    expect(stdout).toContain("[--slots <n>] [--quant <label>] [--ctx <n>]]");
   });
 });
