@@ -48,6 +48,7 @@ export type KeepAliveState =
   | "ready"
   | "restart-pending"
   | "start-failed"
+  | "start-refused"
   | "stopped";
 
 interface StateSnapshot {
@@ -323,6 +324,10 @@ export interface RunKeepAliveWorkerOptions {
   maxBackoff?: number;
   /** Cooperative abort handle — tests can trip this to break the loop. */
   signal?: AbortSignal;
+  /** Optional pre-start gate called with the resolved rel before `startServer`. Returns a refusal
+   * string (or throws) to record `start-refused`, or `null` to fall through to the normal start
+   * path. The gate is consulted on every loop iteration, including restarts. */
+  beforeStart?: (rel: string) => string | null;
 }
 
 function logLine(resolved: ResolvedEnv, line: string): void {
@@ -474,6 +479,26 @@ export async function runKeepAliveWorker(opts: RunKeepAliveWorkerOptions): Promi
         continue;
       }
       lastRel = rel;
+
+      let refusal: string | null | undefined = undefined;
+      try {
+        refusal = opts.beforeStart?.(rel);
+      } catch (err) {
+        refusal = `pre-start gate failed (${(err as Error).message})`;
+      }
+      if (typeof refusal === "string") {
+        logLine(resolved, `start-refused rel=${rel} reason=${refusal}`);
+        writeState(resolved, {
+          target: opts.target,
+          model: rel,
+          state: "start-refused",
+          restarts,
+          backoff_seconds: backoff,
+        });
+        await sleepWithAbort(backoff, opts.signal);
+        backoff = Math.min(backoff * 2, maxBackoff);
+        continue;
+      }
 
       writeState(resolved, {
         target: opts.target,
