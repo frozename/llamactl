@@ -238,8 +238,13 @@ describe("applyComposite — NodeRun budget/residency forwarding (#519)", () => 
   });
 
   test("CA4 guard: explicit budget beats residency margin", async () => {
-    // Guard (passes on the base and after the fix): getNodeBudgetGiB=100
-    // wins over the computed budget, so the 40 GiB workload is admitted.
+    // Kills apply.ts resolveAdmissionBudgetGiB `return explicit ?? verified;`
+    // degraded to `return residency ? verified : (explicit ?? verified);`.
+    // safetyMarginRatio 0.5 sizes the verified-nodeFacts budget to 32 GiB,
+    // below the 40 GiB charge, so the residency margin alone would REFUSE it;
+    // only the explicit getNodeBudgetGiB=100 can admit. Under the mutant the
+    // truthy residency discards the explicit budget and the 32 GiB verified
+    // budget refuses, failing these ok/started assertions.
     const { client, started } = makeWorkloadClient();
     const opts: Opts = {
       manifest: admissionComposite(),
@@ -248,7 +253,7 @@ describe("applyComposite — NodeRun budget/residency forwarding (#519)", () => 
       configPath,
       compositesDir,
       getNodeResidency: (n: string): NodeRunResidency | undefined =>
-        n === "gpu1" ? { safetyMarginRatio: 0.75 } : undefined,
+        n === "gpu1" ? { safetyMarginRatio: 0.5 } : undefined,
       getNodeBudgetGiB: (n: string): number | undefined => (n === "gpu1" ? 100 : undefined),
     };
 
