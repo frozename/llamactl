@@ -811,7 +811,8 @@ both to the suite runner (`runWithOutcome`,
 `packages/remote/src/bench/scheduleLoop.ts`), which records them in perf
 provenance (`collectEvalProvenance`,
 `packages/eval/src/perf/provenance.ts`) instead of the gateway reasons;
-a declared `--ctx` also bounds the prefill sizes (`resolveModelCtx`,
+a scheduled suite still records the gateway prefill reason for every
+prefill size (`runPrefillSize`,
 `packages/eval/src/perf/runner.ts`). So without a declared `--quant` or
 `--ctx`, that field is recorded null with the gateway reason
 (`createPerfBenchSuiteRunner`,
@@ -896,6 +897,20 @@ records `non-finite load time`. Because an `unavailable` metric never
 counts as a regression, the perf diff reports both load metrics
 `unavailable` for runs from these commands, never `regressed`.
 
+A scheduled suite never measures prefill, even when the schedule declares
+`--ctx`. The suite runner sets `prefillReason` to
+`prefill for <rel> on node '<node>' is not measured; scheduled suites
+reach the engine through the agent gateway, which forwards only /v1/* and
+not the engine's /tokenize` (`createPerfBenchSuiteRunner`,
+`packages/cli/src/commands/bench-schedule.ts`). `runPrefillSize` records
+that reason for every prefill size before any context check and without
+calling `/tokenize` (`runPrefillSize`, `packages/eval/src/perf/runner.ts`).
+For background, the gateway's `/v1/models` entries carry no
+`context_length`, `max_model_len` or `meta` (`buildListOpenAIModels`,
+`packages/core/src/openaiProxy.ts`). The gateway routes only `/v1/*` paths,
+and `/tokenize` is not one of them. For prefill evidence on an arm, run
+`llamactl eval perf` against the engine's own URL.
+
 Prefill runs after the load phase. The model context comes from the
 suite's `ctx` option (`--ctx` on `eval perf`), then the provenance `ctx`,
 then the first `/v1/models` entry's `context_length`, `max_model_len`,
@@ -917,17 +932,6 @@ records `prefill <n> tokens exceeds model context <ctx>`. An engine whose
 own prompt-token count is more than 8 off the target records
 `engine counted <n> prompt tokens for target <target>` (`runPrefillSize`,
 `packages/eval/src/perf/runner.ts`).
-
-A scheduled suite sets no model context: its provenance `ctx` is null and
-it passes no `ctx` option (`createPerfBenchSuiteRunner`,
-`packages/cli/src/commands/bench-schedule.ts`), and the gateway's
-`/v1/models` entries carry no `context_length`, `max_model_len` or `meta`
-(`buildListOpenAIModels`, `packages/core/src/openaiProxy.ts`), so every
-prefill size records `model context unknown` and `/tokenize` is never
-called. Even with a context, prefill would still fail through the gateway,
-because the agent gateway routes only `/v1/*` paths, and `/tokenize` is not
-one of them. For prefill evidence on an arm, run `llamactl eval perf`
-against the engine's own URL.
 
 ### Host reader failures for an arm
 

@@ -50,6 +50,8 @@ export interface PerfSuiteOptions {
   slotsReason?: string;
   /** The reason recorded for load_cold_ms/load_warm_ms when that load hook is absent. */
   loadReason?: string;
+  /** The reason recorded for every prefill metric when the suite cannot run prefill. */
+  prefillReason?: string;
   decodeTokens?: number;
   concurrencyPromptWords?: number;
   started_at?: string;
@@ -289,6 +291,11 @@ async function runPrefillSize(
   // `tokens` counts content tokens only; BOS/special tokens are excluded
   // (the engine's own prompt_tokens count may differ by a few).
   await run.step([metricName], async () => {
+    const reason = run.opts.prefillReason;
+    if (reason !== undefined) {
+      run.record(metricName, unavailableMetric(reason));
+      return;
+    }
     if (ctx === null) {
       run.record(metricName, unavailableMetric("model context unknown"));
       return;

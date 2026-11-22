@@ -175,10 +175,10 @@ describe("#522 load and prefill metrics (#781)", () => {
   });
 
   // Kills: changing the tokenize default path or error text; a caller
-  // overriding tokenizePath; a scheduled suite starting to set a ctx; the
-  // gateway's /v1/models entries gaining a context field; the gateway
-  // routing non-/v1 paths; or the doc blaming /tokenize instead of the
-  // unknown context.
+  // overriding tokenizePath; a scheduled suite starting to set a ctx or
+  // dropping its prefill reason; the gateway's /v1/models entries gaining
+  // a context field; the gateway routing non-/v1 paths; or the doc
+  // blaming /tokenize instead of the unknown context.
   test("tokenize endpoint and scheduled-suite prefill", () => {
     expect(clientSrc).toContain('tokenizePath: options.tokenizePath ?? "/tokenize"');
     expect(clientSrc).toContain("tokenize HTTP ${String(resp.status)} at ${ctx.tokenizePath}");
@@ -204,15 +204,16 @@ describe("#522 load and prefill metrics (#781)", () => {
     for (const needle of [
       "(the `tokenizePath` default in `createHttpPerfEngineClient`, `packages/eval/src/perf/client.ts`)",
       "records `<metric> failed: tokenize HTTP <status> at /tokenize`",
-      "A scheduled suite sets no model context",
-      "its provenance `ctx` is null and it passes no `ctx` option",
+      "A scheduled suite never measures prefill",
       "the gateway's `/v1/models` entries carry no `context_length`, `max_model_len` or `meta` (`buildListOpenAIModels`, `packages/core/src/openaiProxy.ts`)",
-      "so every prefill size records `model context unknown` and `/tokenize` is never called",
-      "routes only `/v1/*` paths, and `/tokenize` is not one of them",
+      "`runPrefillSize` records that reason for every prefill size before any context check and without calling `/tokenize`",
+      "The gateway routes only `/v1/*` paths, and `/tokenize` is not one of them",
       "run `llamactl eval perf` against the engine's own URL",
     ]) {
       expect(sec, needle).toContain(needle);
     }
+    // The perf runner records the reason; the gateway records nothing (#521).
+    expect(sec, "gateway credited as the recorder").not.toContain("gateway records");
   });
 
   // Kills: adding `|| url.pathname === "/tokenize"` to the gateway's /v1
