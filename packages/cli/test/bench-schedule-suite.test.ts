@@ -738,6 +738,35 @@ describe("#521 scheduled suite load reason", () => {
   });
 });
 
+describe("#521 scheduled suite prefill reason", () => {
+  test("kick passes a prefillReason naming the rel, node, agent gateway and /tokenize", async () => {
+    // Kills: createPerfBenchSuiteRunner dropping prefillReason, passing a
+    //        literal placeholder, or changing the text.
+    writeStore();
+    const endpoint = fakeEndpoint("http://fake-engine.invalid");
+    const run = fakeRunPerfSuite();
+    setSeams({
+      perfSuite: {
+        runPerfSuite: run.runPerfSuite,
+        resolveEndpoint: endpoint.resolveEndpoint,
+        openDb: () => new Database(":memory:"),
+      },
+    });
+
+    const { result } = await captureProcessStreams(() => runBenchSchedule(["kick"]));
+
+    expect(result).toBe(0);
+    expect(run.calls).toHaveLength(1);
+    const reason: unknown = runOpts(run.calls[0])["prefillReason"];
+    expect(reason).toBe(
+      "prefill for org/repo/m.gguf on node 'fake-node' is not measured; scheduled suites reach the engine through the agent gateway, which forwards only /v1/* and not the engine's /tokenize",
+    );
+    expect(typeof reason).toBe("string");
+    if (typeof reason !== "string") throw new Error("expected prefillReason to be a string");
+    expect(reason).not.toContain("<rel>");
+  });
+});
+
 describe("#521 scheduled suite declared slots", () => {
   test("kick passes the declared slots to runPerfSuite without a slotsReason", async () => {
     // Kills: createPerfBenchSuiteRunner ignoring req.slots, or still sending
@@ -857,6 +886,24 @@ ${quantLine}${ctxLine}`,
       expect(reason).toContain("agent gateway");
     }
     expect(opts["ctx"]).toBe(32768);
+  });
+
+  test("a declared ctx still passes the prefillReason", async () => {
+    // Kills: gating prefillReason on ctx being undeclared.
+    writeDeclaredStore({ quant: "Q4_K_M", ctx: 32768 });
+    const run = fakeRunPerfSuite();
+    provenanceSeams(run);
+
+    const { result } = await captureProcessStreams(() => runBenchSchedule(["kick"]));
+
+    expect(result).toBe(0);
+    expect(run.calls).toHaveLength(1);
+    const opts = runOpts(run.calls[0]);
+    expect(opts["ctx"]).toBe(32768);
+    const reason: unknown = opts["prefillReason"];
+    expect(typeof reason).toBe("string");
+    if (typeof reason !== "string") throw new Error("expected prefillReason to be a string");
+    expect(reason).toContain("/tokenize");
   });
 
   test("the runner rejects a non-positive ctx before any endpoint work", async () => {

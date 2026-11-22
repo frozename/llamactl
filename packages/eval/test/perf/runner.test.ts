@@ -3,7 +3,7 @@ import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import type { EvalProvenance, MetricValue, PerfRunRow } from "../../src/matrix/types.js";
-import type { PerfEngineClient } from "../../src/perf/client.js";
+import type { PerfEngineClient, PerfToken } from "../../src/perf/client.js";
 import type {
   PerfSuiteLoadHooks,
   PerfSuiteOptions,
@@ -570,6 +570,94 @@ describe("runPerfSuite", () => {
       expectMetricNames(rows);
       expect(metricOf(rows, "c2_tps").status).toBe("ok");
       expect(unavailableReason(metricOf(rows, "c4_tps"))).toBe("engine slots 2 < concurrency 4");
+    });
+  });
+
+  describe("#521 prefillReason", () => {
+    test("records opts.prefillReason for every prefill size without calling tokenize", async () => {
+      // Kills: the runner ignoring prefillReason, or checking it only
+      //        after buildTokenExactPrompt.
+      const clock = createManualClock();
+      const fake = startEngine(engineOpts(clock));
+      const client = createHttpPerfEngineClient(fake.url, { clock });
+      let tokenizeCalls = 0;
+      const counted = {
+        ...client,
+        tokenize: (c: string): Promise<PerfToken[]> => {
+          tokenizeCalls += 1;
+          return client.tokenize(c);
+        },
+      };
+      const opts = {
+        ...suiteOpts({ client: counted, clock }),
+        prefillReason: "prefill-reason-Q",
+      } as PerfSuiteOptions;
+
+      await runPerfSuite(db, opts);
+
+      const rows = listPerfRuns(db, { run_id: RUN_ID });
+      expectMetricNames(rows);
+      for (const name of [
+        "prefill_4k_tps",
+        "prefill_16k_tps",
+        "prefill_32k_tps",
+        "prefill_64k_tps",
+      ]) {
+        expect(unavailableReason(metricOf(rows, name))).toBe("prefill-reason-Q");
+      }
+      expect(tokenizeCalls).toBe(0);
+      expect(metricOf(rows, "decode_tps").status).toBe("ok");
+      expect(metricOf(rows, "c1_tps").status).toBe("ok");
+    });
+
+    test("prefillReason wins over an unknown model context", async () => {
+      // Kills: placing the prefillReason check after the `ctx === null` check.
+      const clock = createManualClock();
+      const fake = startEngine(engineOpts(clock, { ctx: 0, noCtxFields: true }));
+      const client = createHttpPerfEngineClient(fake.url, { clock });
+      const emptyProvenance: EvalProvenance = {
+        engine: "llamacpp",
+        engine_version: "v1",
+        engine_commit: "aaaa1111",
+        binary_sha256: "ff".repeat(32),
+        gguf_sha256: "ee".repeat(32),
+        hf_revision: "main@00000000",
+        quant: "Q8_0",
+        ctx: null,
+        flags: [],
+        host: "test-host",
+      };
+      const opts = {
+        ...suiteOpts({ client, clock, provenance: emptyProvenance }),
+        prefillReason: "prefill-reason-Q",
+      } as PerfSuiteOptions;
+
+      await runPerfSuite(db, opts);
+
+      const rows = listPerfRuns(db, { run_id: RUN_ID });
+      expectMetricNames(rows);
+      for (const name of [
+        "prefill_4k_tps",
+        "prefill_16k_tps",
+        "prefill_32k_tps",
+        "prefill_64k_tps",
+      ]) {
+        const reason = unavailableReason(metricOf(rows, name));
+        expect(reason).toBe("prefill-reason-Q");
+        expect(reason).not.toBe("model context unknown");
+      }
+    });
+
+    test("guard: without prefillReason a normal engine still records prefill ok", async () => {
+      const clock = createManualClock();
+      const fake = startEngine(engineOpts(clock));
+      const client = createHttpPerfEngineClient(fake.url, { clock });
+
+      await runPerfSuite(db, suiteOpts({ client, clock }));
+
+      const rows = listPerfRuns(db, { run_id: RUN_ID });
+      expectMetricNames(rows);
+      expect(metricOf(rows, "prefill_4k_tps").status).toBe("ok");
     });
   });
 

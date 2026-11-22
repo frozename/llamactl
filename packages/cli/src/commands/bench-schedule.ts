@@ -258,8 +258,9 @@ export function createPerfBenchSuiteRunner(
     const ep = await suiteEndpoint(req.node, overrides.resolveEndpoint);
     const clock: PerfEngineClock = overrides.clock ?? { now: () => performance.now() };
     // Through the agent gateway only /v1/* is forwarded and /tokenize is
-    // not routed, so prefill_*_tps records 'unavailable'. Direct
-    // llama-server resolution is a follow-up.
+    // not routed, so every prefill_*_tps records 'unavailable' with this
+    // reason. Direct llama-server resolution is a follow-up.
+    const prefillReason = `prefill for ${req.rel} on node '${req.node}' is not measured; scheduled suites reach the engine through the agent gateway, which forwards only /v1/* and not the engine's /tokenize`;
     const client = ev.createHttpPerfEngineClient(ep.baseUrl, {
       clock,
       model: req.rel,
@@ -316,6 +317,7 @@ export function createPerfBenchSuiteRunner(
         readerReasons,
         ...(req.slots !== undefined ? { slots: req.slots } : { slotsReason }),
         loadReason,
+        prefillReason,
         ...(req.ctx !== undefined ? { ctx: req.ctx } : {}),
       });
     } finally {

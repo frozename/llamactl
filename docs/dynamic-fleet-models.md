@@ -601,6 +601,26 @@ pin when no non-experimental candidate exists). A `freeze` row has no
 runtime effect and is not a rollback lever. TTM/GTT kernel-parameter
 rollback is not covered by repo code and is out of scope.
 
+### What `llamactl pull` does with a candidate row
+
+`llamactl pull file` and `llamactl pull candidate` run `hf download <repo> <file> [<mmproj>] --local-dir <target>` with `<target>` defaulting to `$LLAMA_CPP_MODELS/<repo-basename>` (`pullRepoFile`, `packages/core/src/pull.ts`), adding the `<mmproj>` argument when the repo's model info lists one, and the argv never carries `--revision`, so the fetch tracks the repo's current default head rather than the catalog row's pinned revision.
+
+Every `.gguf` rel in the candidate set names only the first shard of its multi-part file — `...-00001-of-NNNNN.gguf` — and `llamactl pull` fetches the file it is given (plus the repo's mmproj file when its model info lists one), so pulling a candidate rel lands shard 1 alone; the remaining shards are not fetched.
+
+`relFromRepoAndFile` (`packages/core/src/catalog.ts`) does not learn the `<repo>-<owner>/<rev8>/...` models-root layout, so `llamactl pull` cannot reproduce the catalog rel of `glm53-flash-a4e3s`, `deepseek41-flash-1017-ud-iq1s`, `deepseek41-flash-1017-ud-iq1m` or `mimo26-flash-mopd-bpw25` from a plain file argument.
+
+A file argument that already contains `/` is kept as the rel verbatim — `UD-IQ1_S/X-00001-of-00005.gguf` stays `UD-IQ1_S/X-00001-of-00005.gguf` — while the download still targets `$LLAMA_CPP_MODELS/<repo-basename>` (`pullRepoFile`, `packages/core/src/pull.ts`).
+
+`maybeTuneAfterPull` (`packages/core/src/autotune.ts`) runs the post-pull bench only when the file was absent before the pull — a re-pull skips with `Model was already on disk` — and only while `LLAMA_CPP_AUTO_TUNE_ON_PULL` is enabled, otherwise it skips with `LLAMA_CPP_AUTO_TUNE_ON_PULL=off`; `--no-tune` skips the call entirely (`packages/cli/src/commands/pull.ts`).
+
+The bulk form `llamactl pull <hf-repo> [target-dir]` runs `hf download <repo> --local-dir <target>` through `pullRepo` (`packages/core/src/pull.ts`) with no auto-tune — the usage string says `(No auto-tune.)` — and `runPullRepo` (`packages/cli/src/commands/pull.ts`) invokes it in-process with no node-client dispatch, so the bulk pull never fans out to `--node`.
+
+`llamactl pull candidate <hf-repo> [gguf-file] [profile]` auto-picks only when no file is given: it reads HF model-info, keeps the `eligibleGgufSiblings` set (`packages/core/src/discovery.ts`) — which drops mmproj sidecars, bf16/fp16/f16 directories and every `-NNNNN-of-NNNNN.gguf` shard — and walks the profile's quant ladder, while an explicit file argument short-circuits the HF lookup and is pulled verbatim with `source: "requested"` (`pickCandidateFile`, `packages/core/src/pull.ts`).
+
+`packages/core/src/pull.ts` carries no checksum code — no `sha256`, no `createHash` — so `llamactl pull` stores whatever `hf download` writes without verifying it, and per-shard sha256 verification against the HF LFS oid stays the manual step above.
+
+The `hf` binary resolves through `resolveHfBin` (`packages/core/src/pull.ts`): `LOCAL_AI_HF_BIN` wins when set, then `hf` or `huggingface-cli` on `PATH`, then the literal `hf`; the token resolves from `HF_TOKEN`, then `HUGGING_FACE_HUB_TOKEN`, then `$HF_HOME/token` (default `~/.cache/huggingface/token`).
+
 ## GLM-5.3-Flash z13 eval record
 
 One row per GLM template arm; one column per promotion metric.
@@ -811,7 +831,8 @@ both to the suite runner (`runWithOutcome`,
 `packages/remote/src/bench/scheduleLoop.ts`), which records them in perf
 provenance (`collectEvalProvenance`,
 `packages/eval/src/perf/provenance.ts`) instead of the gateway reasons;
-a declared `--ctx` also bounds the prefill sizes (`resolveModelCtx`,
+a scheduled suite still records the gateway prefill reason for every
+prefill size (`runPrefillSize`,
 `packages/eval/src/perf/runner.ts`). So without a declared `--quant` or
 `--ctx`, that field is recorded null with the gateway reason
 (`createPerfBenchSuiteRunner`,
@@ -896,6 +917,20 @@ records `non-finite load time`. Because an `unavailable` metric never
 counts as a regression, the perf diff reports both load metrics
 `unavailable` for runs from these commands, never `regressed`.
 
+A scheduled suite never measures prefill, even when the schedule declares
+`--ctx`. The suite runner sets `prefillReason` to
+`prefill for <rel> on node '<node>' is not measured; scheduled suites
+reach the engine through the agent gateway, which forwards only /v1/* and
+not the engine's /tokenize` (`createPerfBenchSuiteRunner`,
+`packages/cli/src/commands/bench-schedule.ts`). `runPrefillSize` records
+that reason for every prefill size before any context check and without
+calling `/tokenize` (`runPrefillSize`, `packages/eval/src/perf/runner.ts`).
+For background, the gateway's `/v1/models` entries carry no
+`context_length`, `max_model_len` or `meta` (`buildListOpenAIModels`,
+`packages/core/src/openaiProxy.ts`). The gateway routes only `/v1/*` paths,
+and `/tokenize` is not one of them. For prefill evidence on an arm, run
+`llamactl eval perf` against the engine's own URL.
+
 Prefill runs after the load phase. The model context comes from the
 suite's `ctx` option (`--ctx` on `eval perf`), then the provenance `ctx`,
 then the first `/v1/models` entry's `context_length`, `max_model_len`,
@@ -917,17 +952,6 @@ records `prefill <n> tokens exceeds model context <ctx>`. An engine whose
 own prompt-token count is more than 8 off the target records
 `engine counted <n> prompt tokens for target <target>` (`runPrefillSize`,
 `packages/eval/src/perf/runner.ts`).
-
-A scheduled suite sets no model context: its provenance `ctx` is null and
-it passes no `ctx` option (`createPerfBenchSuiteRunner`,
-`packages/cli/src/commands/bench-schedule.ts`), and the gateway's
-`/v1/models` entries carry no `context_length`, `max_model_len` or `meta`
-(`buildListOpenAIModels`, `packages/core/src/openaiProxy.ts`), so every
-prefill size records `model context unknown` and `/tokenize` is never
-called. Even with a context, prefill would still fail through the gateway,
-because the agent gateway routes only `/v1/*` paths, and `/tokenize` is not
-one of them. For prefill evidence on an arm, run `llamactl eval perf`
-against the engine's own URL.
 
 ### Host reader failures for an arm
 
