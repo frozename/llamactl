@@ -1,6 +1,7 @@
 import type { ModelClass } from "@llamactl/core";
 
-import { bench, build, ctx, env as envMod, target as targetMod } from "@llamactl/core";
+import { bench, build, catalog, ctx, env as envMod, target as targetMod } from "@llamactl/core";
+import { defaultResidencyStorePath, exclusiveGroupLaunchRefusal } from "@llamactl/remote";
 
 import {
   getGlobals,
@@ -353,6 +354,25 @@ function parseBenchRunArgs(args: string[]): BenchRunArgs | { exit: number } {
   return { positional, json };
 }
 
+/**
+ * Read-only exclusive-group gate for a bench launch (#517). Resolves `<target>`
+ * with `resolveTarget`, reads the rel's `residencyGroup` and delegates to
+ * `exclusiveGroupLaunchRefusal` with the local store, using the rel as the
+ * refusal id. An unresolvable target or a rel with no catalog row returns null,
+ * so the bench launches as before; a node with no store file launches as before.
+ */
+function benchLaunchRefusal(target: string): string | null {
+  const rel = targetMod.resolveTarget(target);
+  if (rel === null) return null;
+  const entry = catalog.findByRel(rel);
+  if (!entry) return null;
+  return exclusiveGroupLaunchRefusal({
+    id: rel,
+    group: entry.residencyGroup,
+    storePath: defaultResidencyStorePath(),
+  });
+}
+
 async function runPresetRemote(
   target: string,
   modeRaw: "auto" | "text" | "vision",
@@ -408,6 +428,11 @@ async function runPreset(args: string[]): Promise<number> {
 
   let result: Awaited<ReturnType<typeof bench.benchPreset>>;
   if (isLocalDispatch()) {
+    const refusal = benchLaunchRefusal(target);
+    if (refusal !== null) {
+      process.stderr.write(`bench preset: ${refusal}\n`);
+      return 1;
+    }
     result = await bench.benchPreset({
       target,
       mode: modeRaw,
@@ -468,6 +493,11 @@ async function runVision(args: string[]): Promise<number> {
 
   let result: Awaited<ReturnType<typeof bench.benchVision>>;
   if (isLocalDispatch()) {
+    const refusal = benchLaunchRefusal(target);
+    if (refusal !== null) {
+      process.stderr.write(`bench vision: ${refusal}\n`);
+      return 1;
+    }
     result = await bench.benchVision({ target, onEvent: forwardBenchEvent });
   } else {
     const remote = await runVisionRemote(target);

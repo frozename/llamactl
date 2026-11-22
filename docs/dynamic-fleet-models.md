@@ -601,6 +601,26 @@ pin when no non-experimental candidate exists). A `freeze` row has no
 runtime effect and is not a rollback lever. TTM/GTT kernel-parameter
 rollback is not covered by repo code and is out of scope.
 
+### What `llamactl pull` does with a candidate row
+
+`llamactl pull file` and `llamactl pull candidate` run `hf download <repo> <file> [<mmproj>] --local-dir <target>` with `<target>` defaulting to `$LLAMA_CPP_MODELS/<repo-basename>` (`pullRepoFile`, `packages/core/src/pull.ts`), adding the `<mmproj>` argument when the repo's model info lists one, and the argv never carries `--revision`, so the fetch tracks the repo's current default head rather than the catalog row's pinned revision.
+
+Every `.gguf` rel in the candidate set names only the first shard of its multi-part file — `...-00001-of-NNNNN.gguf` — and `llamactl pull` fetches the file it is given (plus the repo's mmproj file when its model info lists one), so pulling a candidate rel lands shard 1 alone; the remaining shards are not fetched.
+
+`relFromRepoAndFile` (`packages/core/src/catalog.ts`) does not learn the `<repo>-<owner>/<rev8>/...` models-root layout, so `llamactl pull` cannot reproduce the catalog rel of `glm53-flash-a4e3s`, `deepseek41-flash-1017-ud-iq1s`, `deepseek41-flash-1017-ud-iq1m` or `mimo26-flash-mopd-bpw25` from a plain file argument.
+
+A file argument that already contains `/` is kept as the rel verbatim — `UD-IQ1_S/X-00001-of-00005.gguf` stays `UD-IQ1_S/X-00001-of-00005.gguf` — while the download still targets `$LLAMA_CPP_MODELS/<repo-basename>` (`pullRepoFile`, `packages/core/src/pull.ts`).
+
+`maybeTuneAfterPull` (`packages/core/src/autotune.ts`) runs the post-pull bench only when the file was absent before the pull — a re-pull skips with `Model was already on disk` — and only while `LLAMA_CPP_AUTO_TUNE_ON_PULL` is enabled, otherwise it skips with `LLAMA_CPP_AUTO_TUNE_ON_PULL=off`; `--no-tune` skips the call entirely (`packages/cli/src/commands/pull.ts`).
+
+The bulk form `llamactl pull <hf-repo> [target-dir]` runs `hf download <repo> --local-dir <target>` through `pullRepo` (`packages/core/src/pull.ts`) with no auto-tune — the usage string says `(No auto-tune.)` — and `runPullRepo` (`packages/cli/src/commands/pull.ts`) invokes it in-process with no node-client dispatch, so the bulk pull never fans out to `--node`.
+
+`llamactl pull candidate <hf-repo> [gguf-file] [profile]` auto-picks only when no file is given: it reads HF model-info, keeps the `eligibleGgufSiblings` set (`packages/core/src/discovery.ts`) — which drops mmproj sidecars, bf16/fp16/f16 directories and every `-NNNNN-of-NNNNN.gguf` shard — and walks the profile's quant ladder, while an explicit file argument short-circuits the HF lookup and is pulled verbatim with `source: "requested"` (`pickCandidateFile`, `packages/core/src/pull.ts`).
+
+`packages/core/src/pull.ts` carries no checksum code — no `sha256`, no `createHash` — so `llamactl pull` stores whatever `hf download` writes without verifying it, and per-shard sha256 verification against the HF LFS oid stays the manual step above.
+
+The `hf` binary resolves through `resolveHfBin` (`packages/core/src/pull.ts`): `LOCAL_AI_HF_BIN` wins when set, then `hf` or `huggingface-cli` on `PATH`, then the literal `hf`; the token resolves from `HF_TOKEN`, then `HUGGING_FACE_HUB_TOKEN`, then `$HF_HOME/token` (default `~/.cache/huggingface/token`).
+
 ## GLM-5.3-Flash z13 eval record
 
 One row per GLM template arm; one column per promotion metric.
