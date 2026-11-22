@@ -1500,6 +1500,39 @@ function resolveEvictSessionGate(opts: ApplyOneOpts | undefined): SessionUnloadG
 
 type ServerStatusSnapshot = Awaited<ReturnType<WorkloadClient["serverStatus"]["query"]>>;
 
+/**
+ * The refused-stop ApplyResult shared by `disable` and the apply restart:
+ * a stop-fence refusal leaves the server live, so the status keeps phase
+ * Running with the live pid and endpoint and stamps the single
+ * Applied=False/StopRefused condition.
+ */
+function stopRefusedResult(
+  status: Pick<ServerStatusSnapshot, "pid" | "endpoint">,
+  detail: string,
+  now: string,
+): ApplyResult {
+  const message = `serverStop refused: ${detail}`;
+  return {
+    action: "unchanged",
+    error: message,
+    statusSection: {
+      phase: "Running",
+      serverPid: status.pid,
+      endpoint: status.endpoint,
+      lastTransitionTime: now,
+      conditions: [
+        {
+          type: "Applied",
+          status: "False",
+          reason: "StopRefused",
+          message,
+          lastTransitionTime: now,
+        },
+      ],
+    },
+  };
+}
+
 function gatewayPendingResult(
   manifest: ModelRun,
   onEvent: ((e: ApplyEvent) => void) | undefined,
@@ -1546,28 +1579,7 @@ async function stopDisabledWorkload(
     // single Applied=False/StopRefused condition, the same shape for every
     // refusal reason whether or not the fence listed active ids.
     const detail = serverStopFenceRefusal(outcome);
-    if (detail !== null) {
-      const message = `serverStop refused: ${detail}`;
-      return {
-        action: "unchanged",
-        error: message,
-        statusSection: {
-          phase: "Running",
-          serverPid: status.pid,
-          endpoint: status.endpoint,
-          lastTransitionTime: now,
-          conditions: [
-            {
-              type: "Applied",
-              status: "False",
-              reason: "StopRefused",
-              message,
-              lastTransitionTime: now,
-            },
-          ],
-        },
-      };
-    }
+    if (detail !== null) return stopRefusedResult(status, detail, now);
   }
   return {
     action: "unchanged",
@@ -3345,8 +3357,24 @@ async function convergeClaimedServer(
   let action: ApplyAction;
   if (status.state === "up") {
     onEvent?.({ type: "stop", message: `${manifest.metadata.name}: stopping mismatched server` });
+    // #520: the restart never releases sessions. A node stop-fence refusal
+    // (LeasesActive, DrainInProgress, SessionsActive or SessionsUnknown)
+    // stops nothing, so return before startClaimedServer starts any worker
+    // or replacement; the overrides are `llamactl residency release-session`
+    // and `llamactl residency force-unload`.
+    const wasDestructive = lifecycle.destructive;
     lifecycle.destructive = true;
-    await client.serverStop.mutate({ workload: manifest.metadata.name, graceSeconds: 5 });
+    const outcome = await client.serverStop.mutate({
+      workload: manifest.metadata.name,
+      graceSeconds: 5,
+    });
+    const detail = serverStopFenceRefusal(outcome);
+    if (detail !== null) {
+      // Nothing destructive happened, so a claim with no prior evictions is
+      // released rather than marked uncertain. A throw keeps the flag true.
+      lifecycle.destructive = wasDestructive;
+      return stopRefusedResult(status, detail, now);
+    }
     action = "restarted";
   } else {
     action = "started";
