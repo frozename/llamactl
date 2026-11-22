@@ -6,6 +6,7 @@ import { maybeTuneAfterPull } from "../../../src/autotune.js";
 import { relFromRepoAndFile } from "../../../src/catalog.js";
 import { eligibleGgufSiblings } from "../../../src/discovery.js";
 import { resolveEnv } from "../../../src/env.js";
+import { modelInfoCacheFile } from "../../../src/hf.js";
 import {
   pickCandidateFile,
   pullRepo,
@@ -13,7 +14,7 @@ import {
   resolveHfBin,
   type RunHf,
 } from "../../../src/pull.js";
-import { existsSync, mkdtempSync, rmSync } from "../../../src/safe-fs.js";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "../../../src/safe-fs.js";
 import {
   doc,
   enclosingBody,
@@ -87,7 +88,7 @@ describe("#522 download/checksum/rollback candidate rows", () => {
 
   // Kills: adding --revision to the hf argv or changing the default target
   // dir; the doc must state both.
-  test("T2: pull file argv is hf download <repo> <file> --local-dir <models>/<repo-basename>", async () => {
+  test("T2: pull file argv is hf download <repo> <file> [<mmproj>] --local-dir <models>/<repo-basename>", async () => {
     const repo = "j2ipper/GLM-5.3-Flash-a4e3s";
     const file = "GLM-5.3-Flash-a4e3s-00001-of-00004.gguf";
     const calls: string[][] = [];
@@ -131,6 +132,46 @@ describe("#522 download/checksum/rollback candidate rows", () => {
     // Pins the mmproj sidecar append: if pull.ts drops to
     // `const requestedFiles = [opts.file];` this source pin fails.
     expect(pullSrc).toContain("const requestedFiles = mmproj ? [opts.file, mmproj] : [opts.file];");
+  });
+
+  // Kills, by behaviour, the three mutants that leave the documented
+  // `[<mmproj>]` slot unfetched without touching the argv shape: inverting
+  // the `!opts.skipMmproj` guard, nulling the model-info lookup, and making
+  // mmprojFileForRepo's regex never match. The repo's model info is primed
+  // into the on-disk cache fetchWithCache reads on its fresh path, so there
+  // is no network call.
+  test("T3b: a pull without skipMmproj appends the model info's mmproj sibling", async () => {
+    const repo = "j2ipper/GLM-5.3-Flash-a4e3s";
+    const file = "GLM-5.3-Flash-a4e3s-00001-of-00004.gguf";
+    const modelInfo = {
+      id: repo,
+      siblings: [{ rfilename: file }, { rfilename: "mmproj-F16.gguf" }],
+    };
+    writeFileSync(modelInfoCacheFile(tmp, repo), JSON.stringify(modelInfo));
+    const saved = new Map([
+      ["LOCAL_AI_RECOMMENDATIONS_SOURCE", process.env["LOCAL_AI_RECOMMENDATIONS_SOURCE"]],
+      ["LOCAL_AI_HF_CACHE_TTL_SECONDS", process.env["LOCAL_AI_HF_CACHE_TTL_SECONDS"]],
+    ]);
+    process.env["LOCAL_AI_RECOMMENDATIONS_SOURCE"] = "hf";
+    process.env["LOCAL_AI_HF_CACHE_TTL_SECONDS"] = "3600";
+    try {
+      const calls: string[][] = [];
+      const result = await pullRepoFile({
+        repo,
+        file,
+        resolved: { ...resolved, LOCAL_AI_RUNTIME_DIR: tmp },
+        runHf: recordingRunHf(calls),
+      });
+      const target = join(tmp, "GLM-5.3-Flash-a4e3s");
+      expect(calls).toEqual([["download", repo, file, "mmproj-F16.gguf", "--local-dir", target]]);
+      expect(result.mmproj).toBe("mmproj-F16.gguf");
+      expect(result.requestedFiles).toEqual([file, "mmproj-F16.gguf"]);
+    } finally {
+      for (const [key, value] of saved) {
+        if (value === undefined) Reflect.deleteProperty(process.env, key);
+        else process.env[key] = value;
+      }
+    }
   });
 
   // Kills: relFromRepoAndFile silently learning the pinned
