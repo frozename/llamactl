@@ -107,6 +107,7 @@ import {
 import { residencyGroupLabelOf } from "./residency/coordinator.js";
 import {
   type DirectLifecycleOpts,
+  exclusiveGroupLaunchRefusal,
   runDirectResidencyStart,
   runDirectResidencyStop,
   runInResidencySwitchScope,
@@ -540,6 +541,25 @@ function directModelRunOpts(workload: string): DirectLifecycleOpts {
       process.stderr.write(line);
     },
   };
+}
+
+/**
+ * Read-only exclusive-group gate for an agent-side bench launch (#517). Resolves
+ * `<target>` with `resolveTarget`, reads the rel's `residencyGroup` and delegates
+ * to `exclusiveGroupLaunchRefusal` with the local store, using the rel as the
+ * refusal id. An unresolvable target or a rel with no catalog row returns null, so
+ * the bench launches as before; a node with no store file launches as before.
+ */
+function benchLaunchRefusal(target: string): string | null {
+  const rel = targetMod.resolveTarget(target);
+  if (rel === null) return null;
+  const entry = catalog.findByRel(rel);
+  if (!entry) return null;
+  return exclusiveGroupLaunchRefusal({
+    id: rel,
+    group: entry.residencyGroup,
+    storePath: defaultResidencyStorePath(),
+  });
 }
 
 // The fenced ModelRun/ModelHost stop the idle-evict mutation drives (#519): a
@@ -3795,6 +3815,8 @@ export const router = t.router({
     )
     .subscription(async function* ({ input, signal }) {
       yield* bridgeEventStream<BenchStreamEvent>(signal, async (emit, sig) => {
+        const refusal = benchLaunchRefusal(input.target);
+        if (refusal !== null) throw new Error(refusal);
         const result = await bench.benchPreset({
           target: input.target,
           ...(input.mode !== undefined ? { mode: input.mode } : {}),
@@ -3810,6 +3832,8 @@ export const router = t.router({
     .input(z.object({ target: z.string().min(1) }))
     .subscription(async function* ({ input, signal }) {
       yield* bridgeEventStream<BenchStreamEvent>(signal, async (emit, sig) => {
+        const refusal = benchLaunchRefusal(input.target);
+        if (refusal !== null) throw new Error(refusal);
         const result = await bench.benchVision({
           target: input.target,
           signal: sig,
