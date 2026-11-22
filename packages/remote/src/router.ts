@@ -897,6 +897,36 @@ async function getCompositeRuntime(kind: RuntimeKind = "docker"): Promise<Runtim
 }
 
 /**
+ * #519 review seam for the compositeApply wet run: a router-level test needs a
+ * controlled composite runtime and node client (nodeFacts memory is what sizes
+ * the residency budget) to assert NodeRun budget/residency admission without a
+ * Docker daemon or a live agent. `null` is the production default, so the wet
+ * block resolves to `getCompositeRuntime` / `clientForNode` verbatim unless a
+ * test installs overrides.
+ */
+type CompositeApplyTargets = {
+  runtime?: RuntimeBackend;
+  workloadClient?: (nodeName: string) => workloadApplyMod.WorkloadClient;
+};
+let _compositeApplyTargets: CompositeApplyTargets | null = null;
+
+export function __setCompositeApplyTargetsForTests(targets: CompositeApplyTargets | null): void {
+  _compositeApplyTargets = targets;
+}
+
+async function compositeRuntimeForApply(kind: RuntimeKind): Promise<RuntimeBackend> {
+  const override = _compositeApplyTargets?.runtime;
+  if (override !== undefined) return override;
+  return await getCompositeRuntime(kind);
+}
+
+function compositeWorkloadClientForApply(): (nodeName: string) => workloadApplyMod.WorkloadClient {
+  const override = _compositeApplyTargets?.workloadClient;
+  if (override !== undefined) return override;
+  return (nodeName) => clientForNode(kubecfg.loadConfig(), nodeName);
+}
+
+/**
  * Planner tool descriptors the server always advertises, regardless of
  * what the caller (UI, CLI, MCP client) supplies via `input.tools`.
  * These are tools whose "reach" spans multiple individual procedures —
@@ -5043,14 +5073,17 @@ export const router = t.router({
       compositeEvents.startRun(name);
       try {
         const kind = resolveCompositeRuntimeKind(manifest.spec.runtime);
-        const backend = await getCompositeRuntime(kind);
+        const backend = await compositeRuntimeForApply(kind);
+        const workloadsDir = workloadStoreMod.defaultWorkloadsDir();
         const result = await applyComposite({
           manifest,
           backend,
-          getWorkloadClient: (nodeName) => clientForNode(kubecfg.loadConfig(), nodeName),
+          getWorkloadClient: compositeWorkloadClientForApply(),
           onEvent: (e) => {
             compositeEvents.emit(name, e);
           },
+          getNodeBudgetGiB: (nodeName) => nodeRunBudgetGiB(nodeName, workloadsDir),
+          getNodeResidency: (nodeName) => nodeRunResidency(nodeName, workloadsDir),
         });
         return { dryRun: false as const, ...result };
       } catch (err) {
