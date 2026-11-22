@@ -603,9 +603,9 @@ rollback is not covered by repo code and is out of scope.
 
 ### What `llamactl pull` does with a candidate row
 
-`llamactl pull file` and `llamactl pull candidate` run `hf download <repo> <file> --local-dir <target>` with `<target>` defaulting to `$LLAMA_CPP_MODELS/<repo-basename>` (`pullRepoFile`, `packages/core/src/pull.ts`), and the argv never carries `--revision`, so the fetch tracks the repo's current default head rather than the catalog row's pinned revision.
+`llamactl pull file` and `llamactl pull candidate` run `hf download <repo> <file> [<mmproj>] --local-dir <target>` with `<target>` defaulting to `$LLAMA_CPP_MODELS/<repo-basename>` (`pullRepoFile`, `packages/core/src/pull.ts`), adding the `<mmproj>` argument when the repo's model info lists one, and the argv never carries `--revision`, so the fetch tracks the repo's current default head rather than the catalog row's pinned revision.
 
-Every `.gguf` rel in the candidate set names only the first shard of its multi-part file — `...-00001-of-NNNNN.gguf` — and `llamactl pull` fetches exactly the file it is given, so pulling a candidate rel lands shard 1 alone; the remaining shards are not fetched.
+Every `.gguf` rel in the candidate set names only the first shard of its multi-part file — `...-00001-of-NNNNN.gguf` — and `llamactl pull` fetches the file it is given (plus the repo's mmproj file when its model info lists one), so pulling a candidate rel lands shard 1 alone; the remaining shards are not fetched.
 
 `relFromRepoAndFile` (`packages/core/src/catalog.ts`) does not learn the `<repo>-<owner>/<rev8>/...` models-root layout, so `llamactl pull` cannot reproduce the catalog rel of `glm53-flash-a4e3s`, `deepseek41-flash-1017-ud-iq1s`, `deepseek41-flash-1017-ud-iq1m` or `mimo26-flash-mopd-bpw25` from a plain file argument.
 

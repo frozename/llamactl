@@ -110,13 +110,14 @@ describe("#522 download/checksum/rollback candidate rows", () => {
     expect(result.rel).toBe("GLM-5.3-Flash-a4e3s/GLM-5.3-Flash-a4e3s-00001-of-00004.gguf");
     const s = section();
     expect(s).toContain(
-      "`llamactl pull file` and `llamactl pull candidate` run `hf download <repo> <file> --local-dir <target>` with `<target>` defaulting to `$LLAMA_CPP_MODELS/<repo-basename>` (`pullRepoFile`, `packages/core/src/pull.ts`), and the argv never carries `--revision`, so the fetch tracks the repo's current default head rather than the catalog row's pinned revision.",
+      "`llamactl pull file` and `llamactl pull candidate` run `hf download <repo> <file> [<mmproj>] --local-dir <target>` with `<target>` defaulting to `$LLAMA_CPP_MODELS/<repo-basename>` (`pullRepoFile`, `packages/core/src/pull.ts`), adding the `<mmproj>` argument when the repo's model info lists one, and the argv never carries `--revision`, so the fetch tracks the repo's current default head rather than the catalog row's pinned revision.",
     );
   });
 
-  // Kills: a doc claiming all shards are fetched, or a catalog rel change
-  // away from the -00001-of-NNNNN.gguf first-shard layout without a doc
-  // update.
+  // Kills: a doc claiming all shards are fetched, a doc that drops the
+  // mmproj sidecar the pull adds, a catalog rel change away from the
+  // -00001-of-NNNNN.gguf first-shard layout without a doc update, or a
+  // pull.ts regression that stops appending the mmproj sibling to the argv.
   test("T3: every .gguf exclusive rel names only the first shard", () => {
     const ggufRows = exclusiveRows.filter((row) => row.rel.endsWith(".gguf"));
     expect(ggufRows.length).toBeGreaterThan(0);
@@ -125,8 +126,11 @@ describe("#522 download/checksum/rollback candidate rows", () => {
     }
     const s = section();
     expect(s).toContain(
-      "Every `.gguf` rel in the candidate set names only the first shard of its multi-part file — `...-00001-of-NNNNN.gguf` — and `llamactl pull` fetches exactly the file it is given, so pulling a candidate rel lands shard 1 alone; the remaining shards are not fetched.",
+      "Every `.gguf` rel in the candidate set names only the first shard of its multi-part file — `...-00001-of-NNNNN.gguf` — and `llamactl pull` fetches the file it is given (plus the repo's mmproj file when its model info lists one), so pulling a candidate rel lands shard 1 alone; the remaining shards are not fetched.",
     );
+    // Pins the mmproj sidecar append: if pull.ts drops to
+    // `const requestedFiles = [opts.file];` this source pin fails.
+    expect(pullSrc).toContain("const requestedFiles = mmproj ? [opts.file, mmproj] : [opts.file];");
   });
 
   // Kills: relFromRepoAndFile silently learning the pinned
