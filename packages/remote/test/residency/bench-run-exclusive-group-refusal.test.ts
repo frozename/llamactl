@@ -234,4 +234,39 @@ describe("#517 bench run exclusive-group refusal", () => {
     expect(fellThrough.error?.message ?? "").toContain("No successful benchmark profiles");
     expect(existsSync(benchMarker)).toBe(true);
   }, 20_000);
+
+  // Kills: gating the raw target instead of the resolveTarget rel — "current"
+  // is not a catalog rel, so the gate would miss (findByRel("current") is
+  // undefined) and the bench would launch beside the occupied group; and
+  // naming the raw target in the refusal would print `refused current`.
+  test("R4: target current resolves to the occupied rel and refuses naming the rel", async () => {
+    process.env["LOCAL_AI_SOURCE_MODEL"] = GLM_REL;
+    seedReady("peer-qwen");
+    const { error } = await drain(await presetRun("current"));
+    expect(error?.message ?? "").toContain(OCCUPIED_REFUSAL);
+    expect(error?.message ?? "").not.toContain("refused current");
+    expect(existsSync(benchMarker)).toBe(false);
+  }, 20_000);
+
+  // Kills the same two mutations on a catalog preset alias: `best` resolves
+  // through resolvePreset to the occupied rel (a qualification pin un-experimental
+  // -pins it so the env preset override is not skipped), so the gate must fire
+  // and the refusal must name the resolved rel, never the alias `best`.
+  test("R5: a catalog alias resolving to the occupied rel refuses naming the rel", async () => {
+    const overrideFile = join(root, "qualification-overrides.tsv");
+    writeFileSync(
+      overrideFile,
+      `${GLM_REL}\tpin\tvalidated\ttest\talias-resolution\t2026-01-01T00:00:00Z\n`,
+    );
+    Object.assign(process.env, {
+      LOCAL_AI_QUALIFICATION_OVERRIDES_FILE: overrideFile,
+      LOCAL_AI_PRESET_MACBOOK_PRO_48G_BEST_MODEL: GLM_REL,
+      LOCAL_AI_PRESET_OVERRIDES_FILE: join(root, "missing-preset-overrides.tsv"),
+    });
+    seedReady("peer-qwen");
+    const { error } = await drain(await presetRun("best"));
+    expect(error?.message ?? "").toContain(OCCUPIED_REFUSAL);
+    expect(error?.message ?? "").not.toContain("refused best");
+    expect(existsSync(benchMarker)).toBe(false);
+  }, 20_000);
 });
