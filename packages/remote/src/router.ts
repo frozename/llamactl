@@ -5020,6 +5020,7 @@ export const router = t.router({
       try {
         const kind = resolveCompositeRuntimeKind(manifest.spec.runtime);
         const backend = await getCompositeRuntime(kind);
+        const workloadsDir = workloadStoreMod.defaultWorkloadsDir();
         const result = await applyComposite({
           manifest,
           backend,
@@ -5027,6 +5028,8 @@ export const router = t.router({
           onEvent: (e) => {
             compositeEvents.emit(name, e);
           },
+          getNodeBudgetGiB: (nodeName) => nodeRunBudgetGiB(nodeName, workloadsDir),
+          getNodeResidency: (nodeName) => nodeRunResidency(nodeName, workloadsDir),
         });
         return { dryRun: false as const, ...result };
       } catch (err) {

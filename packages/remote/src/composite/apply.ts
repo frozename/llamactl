@@ -12,6 +12,7 @@ import { resolveInternalProxyEndpoint } from "@llamactl/core/env";
 import type { RuntimeBackend, ServiceInstance, ServiceRef } from "../runtime/backend.js";
 import type { ApplyEvent, WorkloadClient } from "../workload/apply.js";
 import type { GatewayHandler } from "../workload/gateway-handlers/types.js";
+import type { NodeRunResidency } from "../workload/noderun-schema.js";
 import type { ModelRun, ModelRunSpec } from "../workload/schema.js";
 import type {
   ComponentRef,
@@ -73,6 +74,12 @@ export interface CompositeApplyOptions {
   onEvent?: (e: CompositeApplyEvent) => void;
   /** Override gateway handlers. Tests inject; production uses defaults. */
   gatewayHandlers?: readonly GatewayHandler[];
+  /** The NodeRun spec.budget.memoryGiB for a node; undefined means no
+   *  explicit budget, so admission keeps its computed fallback. */
+  getNodeBudgetGiB?: (nodeName: string) => number | undefined;
+  /** The NodeRun spec.residency for a node, whose safetyMarginRatio sizes
+   *  the computed fallback budget (Part of #519). */
+  getNodeResidency?: (nodeName: string) => NodeRunResidency | null | undefined;
 }
 
 /**
@@ -390,6 +397,8 @@ async function applyWorkloadComponent(
           return null;
         }
       },
+      ...(opts.getNodeBudgetGiB !== undefined ? { getNodeBudgetGiB: opts.getNodeBudgetGiB } : {}),
+      ...(opts.getNodeResidency !== undefined ? { getNodeResidency: opts.getNodeResidency } : {}),
     },
   );
   if (result.action === "pending") {
