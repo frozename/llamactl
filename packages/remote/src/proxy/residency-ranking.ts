@@ -60,6 +60,25 @@
  * - it is emitted only alongside the resident set, since the ranker's
  *   `drainCostMs` is inert without `signals.resident`.
  *
+ * Part of #518 (c): the in-flight load signal gives the ranker's
+ * `expectedLoadMs` a live producer — a local candidate whose lifecycle row is
+ * `loading` or `warming` is charged only the remaining expected load
+ * (`routingRanking.DEFAULT_RANKING_WEIGHTS.defaultExpectedLoadMs` minus the
+ * time since the row's `updatedAtMs`, capped at the default). Its limits:
+ * - peers are never credited (only ads owned by `nodeId` qualify);
+ * - only `loading`/`warming` rows count; every other state keeps the default;
+ * - elapsed time is measured from the row's last transition (`updatedAtMs`),
+ *   so a freshly entered `warming` row is charged up to the full default;
+ * - overdue rows (elapsed >= default) keep the default;
+ * - a future timestamp is capped at the default;
+ * - an absent or errored store, or every ranking knob at 0, emits nothing;
+ * - it is emitted only alongside the resident set, since the ranker's
+ *   `loadCostMs` is inert without `signals.resident`;
+ * - the clock is read inside the callback at rank time, so the 5s snapshot
+ *   cache cannot freeze it;
+ * - the readout does not list the credit yet;
+ * - ranking only orders candidates.
+ *
  * Part of #519: `residencyRankingReadout` is the status read-out of the
  * ranking signals `residencyRankingInputs` feeds the ranker — the resident
  * set, drain charges, the active composed switch-cooldown/min-residency
@@ -68,9 +87,9 @@
  * the read-out cannot diverge from the live signals. It applies when any
  * ranking knob is nonzero and never ranks or mutates anything.
  */
-import type { routingRanking } from "@llamactl/core";
 import type { ResidencyPolicy } from "@llamactl/core/residency/admission";
 
+import { routingRanking } from "@llamactl/core";
 import { resolveResidencyPolicy } from "@llamactl/core/residency/admission";
 import { isOccupyingResidencyState, RESIDENCY_GROUPS } from "@llamactl/core/residency/lifecycle";
 import { DEFAULT_PROFILE_SWITCH_TIMEOUTS } from "@llamactl/core/residency/planner";
@@ -314,6 +333,36 @@ function operationalStateSignal(
     ad.ownerNodeId === nodeId ? states.get(ad.deploymentId) : undefined;
 }
 
+function inFlightUpdatedAtByDeployment(
+  lifecycle: readonly ResidencyStateRecord[],
+  nodeId: string,
+): Map<string, number> {
+  const inFlight = new Map<string, number>();
+  for (const row of lifecycle) {
+    if (row.state !== "loading" && row.state !== "warming") continue;
+    inFlight.set(residentDeploymentId(nodeId, row.model), row.updatedAtMs);
+  }
+  return inFlight;
+}
+
+function inFlightLoadSignal(input: {
+  lifecycle: readonly ResidencyStateRecord[];
+  nodeId: string;
+  now: () => number;
+}): routingRanking.RankingSignals["expectedLoadMs"] {
+  const inFlight = inFlightUpdatedAtByDeployment(input.lifecycle, input.nodeId);
+  if (inFlight.size === 0) return undefined;
+  const defaultExpectedLoadMs = routingRanking.DEFAULT_RANKING_WEIGHTS.defaultExpectedLoadMs;
+  return (ad): number | undefined => {
+    if (ad.ownerNodeId !== input.nodeId) return undefined;
+    const since = inFlight.get(ad.deploymentId);
+    if (since === undefined) return undefined;
+    const elapsed = input.now() - since;
+    if (elapsed >= defaultExpectedLoadMs) return undefined;
+    return Math.min(defaultExpectedLoadMs, defaultExpectedLoadMs - elapsed);
+  };
+}
+
 /**
  * Map a NodeRun's spec.residency plus a residency-store snapshot to the
  * ranking policy and ranking signals. The policy is the raw NodeRun value
@@ -370,6 +419,7 @@ export function residencyRankingInputs(input: {
   store: ResidencyStoreSnapshot;
   nodeId: string;
   nodeName?: string;
+  now?: () => number;
 }): ResidencyRankingInputsResult {
   const policy = input.residency ?? null;
   const partial = policy === null ? null : toPartialResidencyPolicy(policy);
@@ -379,10 +429,14 @@ export function residencyRankingInputs(input: {
   if (!rankingKnobsActive(resolved) || lifecycle === undefined) {
     return { policy, signals: {} };
   }
+  const now: () => number = input.now ?? ((): number => Date.now());
   const ready = readyDeploymentIds(lifecycle, input.nodeId);
   const residentSetEmitted = resolved.residentPreference !== 0 || resolved.coldLoadPenaltyMs !== 0;
   const drainMs = residentSetEmitted
     ? exclusiveDrainSignal({ lifecycle, nodeId: input.nodeId, ready })
+    : undefined;
+  const expectedLoadMs = residentSetEmitted
+    ? inFlightLoadSignal({ lifecycle, nodeId: input.nodeId, now })
     : undefined;
   const switchCooldownUntil = switchCooldownSignal({
     cooldownMs: resolved.switchCooldownSeconds * 1000,
@@ -409,6 +463,7 @@ export function residencyRankingInputs(input: {
     ...(cooldownUntil === undefined ? {} : { cooldownUntil }),
     ...(operationalState === undefined ? {} : { operationalState }),
     ...(drainMs === undefined ? {} : { drainMs }),
+    ...(expectedLoadMs === undefined ? {} : { expectedLoadMs }),
   };
   return { policy, signals };
 }
@@ -618,6 +673,7 @@ export function createResidencyRankingSource(input: {
         store: readStore(),
         nodeId: input.nodeId,
         nodeName,
+        now,
       });
     } catch {
       return { policy: null, signals: {} };
