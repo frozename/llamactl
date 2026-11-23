@@ -3720,6 +3720,7 @@ export const router = t.router({
           ...(input.profile !== undefined ? { profile: input.profile } : {}),
           signal: sig,
           onEvent: emit,
+          launchRefusal: benchLaunchRefusal,
         });
         if ("error" in result) throw new Error(result.error);
         emit({ type: "done-candidate-test", result });
@@ -3760,6 +3761,7 @@ export const router = t.router({
           wasMissing: input.wasMissing,
           signal: sig,
           onEvent: emit,
+          launchRefusal: benchLaunchRefusal,
         });
         emit({ type: "done-tune", result });
       });
