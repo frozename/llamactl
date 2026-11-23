@@ -16,6 +16,12 @@
  * and DFlashEngine has no _engine attribute). Callers therefore pass
  * `hostedModel.dflash?.enabled !== true` for activityObservable, so a false
  * value makes unload fail closed.
+ *
+ * Session fence (#520): with leases, a bound session (in flight or idle within
+ * its timeout) refuses the unload as SessionsActive, and a registry whose
+ * checkUnload throws refuses it as SessionsUnknown. Both refusals run after the
+ * LeasesActive check, cancel the drain and send no unload request. The unload
+ * never releases sessions.
  */
 import type {
   ModelHostReadiness,
@@ -23,6 +29,7 @@ import type {
   NativeModelStatusObservation,
 } from "@llamactl/core/engines";
 import type { ResidencyLeases } from "@llamactl/core/residency/leases";
+import type { SessionRefcounts } from "@llamactl/core/residency/sessions";
 
 import {
   checkServingReadiness,
@@ -35,6 +42,7 @@ import {
   parseOmlxModelsStatus,
 } from "@llamactl/core/engines";
 import { getResidencyLeaseRegistry } from "@llamactl/core/residency/leases";
+import { currentSessionRefcounts } from "@llamactl/core/residency/sessions";
 
 const OBSERVABLE_ENGINES = new Set(["batched"]);
 
@@ -91,7 +99,7 @@ export type NativeUnloadResult =
     }
   | {
       kind: "refused";
-      reason: "LeasesActive";
+      reason: "LeasesActive" | "SessionsActive" | "SessionsUnknown";
       reservation: "held";
       active: string[];
     }
@@ -113,6 +121,13 @@ export type NativeUnloadResult =
       reservation: "uncertain";
     };
 
+type NativeLeasesOption = {
+  registry: ResidencyLeases;
+  workload: string;
+  /** undefined: resolve the installed session registry at unload time; null: opt out (#520). */
+  sessions?: SessionRefcounts | null;
+};
+
 export type OmlxNativeClientOptions = {
   endpoint: { host: string; port: number };
   hostedRel: string;
@@ -128,7 +143,7 @@ export type OmlxNativeClientOptions = {
   statusTimeoutMs?: number;
   fetch?: typeof globalThis.fetch;
   /** ModelHost workload key for residency lease fencing. */
-  leases?: { registry: ResidencyLeases; workload: string };
+  leases?: NativeLeasesOption;
 };
 
 export type OmlxNativeClient = {
@@ -149,7 +164,7 @@ type ClientCtx = {
   requestTimeoutMs: number;
   statusTimeoutMs: number;
   base: typeof globalThis.fetch;
-  leases: { registry: ResidencyLeases; workload: string } | undefined;
+  leases: NativeLeasesOption | undefined;
 };
 
 type SendResult =
@@ -514,6 +529,27 @@ async function runUnload(ctx: ClientCtx): Promise<NativeUnloadResult> {
   return { kind: "refused", reason: "StatusUnavailable", reservation: "held" };
 }
 
+function sessionUnloadRefusal(
+  sessions: SessionRefcounts | null | undefined,
+  workload: string,
+): NativeUnloadResult | null {
+  const resolved = sessions === undefined ? currentSessionRefcounts() : sessions;
+  if (resolved === null) return null;
+  let check;
+  try {
+    check = resolved.checkUnload(workload);
+  } catch {
+    return { kind: "refused", reason: "SessionsUnknown", reservation: "held", active: [] };
+  }
+  if (check.ok) return null;
+  return {
+    kind: "refused",
+    reason: "SessionsActive",
+    reservation: "held",
+    active: [...check.sessions],
+  };
+}
+
 async function runUnloadWithLeases(ctx: ClientCtx): Promise<NativeUnloadResult> {
   const leases = ctx.leases;
   if (leases === undefined) {
@@ -545,6 +581,12 @@ async function runUnloadWithLeases(ctx: ClientCtx): Promise<NativeUnloadResult> 
       reservation: "held",
       active: activeLeases,
     };
+  }
+
+  const sessionRefusal = sessionUnloadRefusal(leases.sessions, workload);
+  if (sessionRefusal !== null) {
+    registry.cancelDrain(token);
+    return sessionRefusal;
   }
 
   let result: NativeUnloadResult;
@@ -643,6 +685,9 @@ export type AgentOmlxNativeClientOptions = Omit<OmlxNativeClientOptions, "leases
  *
  * The registry is captured once at construction, so unload's commitUnload and
  * load's reopen always hit one ledger even if the seam is cleared afterwards.
+ * The session registry (#520) is captured the same way, next to the lease
+ * registry, and sessions are fenced only when a lease registry is published:
+ * a captured null session registry opts out.
  *
  * Callers MUST construct per operation, not once per process: a client built
  * before the registry was published is not fenced by it. That is a known
@@ -657,5 +702,6 @@ export function createAgentOmlxNativeClient(opts: AgentOmlxNativeClientOptions):
   if (registry === null) {
     return createOmlxNativeClient(rest);
   }
-  return createOmlxNativeClient({ ...rest, leases: { registry, workload } });
+  const sessions = currentSessionRefcounts();
+  return createOmlxNativeClient({ ...rest, leases: { registry, workload, sessions } });
 }

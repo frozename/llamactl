@@ -236,6 +236,17 @@ function storedLastError(id: string): string | null {
   return typeof err === "string" ? err : null;
 }
 
+function storedRel(id: string): string | null {
+  const parsed = parseYaml(readFileSync(schedulePath, "utf8")) as unknown;
+  const doc = isPlainRecord(parsed) ? parsed : {};
+  const schedules: unknown = doc["schedules"];
+  const rows = Array.isArray(schedules) ? (schedules as unknown[]) : [];
+  const row = rows.find((s) => isPlainRecord(s) && s["id"] === id);
+  if (!isPlainRecord(row)) return null;
+  const rel: unknown = row["rel"];
+  return typeof rel === "string" ? rel : null;
+}
+
 function runOpts(call: RunCall | undefined): Record<string, unknown> {
   if (call === undefined) throw new Error("expected a recorded runPerfSuite call");
   if (!isPlainRecord(call.opts)) throw new Error("expected runPerfSuite opts to be a record");
@@ -988,6 +999,39 @@ ${quantLine}${ctxLine}`,
     );
     expect(unavailable["ctx"]).toBe(
       "scheduled suites reach org/repo/m.gguf through the agent gateway; the context size is not known",
+    );
+  });
+});
+
+describe("#521 scheduled suite launch flags", () => {
+  test("kick records launch flags null with the agent-gateway reason naming the rel", async () => {
+    // Kills: the runner's hard-coded `flags: []`.
+    writeStore();
+    const endpoint = fakeEndpoint("http://fake-engine.invalid");
+    const run = fakeRunPerfSuite();
+    setSeams({
+      perfSuite: {
+        runPerfSuite: run.runPerfSuite,
+        resolveEndpoint: endpoint.resolveEndpoint,
+        openDb: () => new Database(":memory:"),
+      },
+    });
+
+    const { result } = await captureProcessStreams(() => runBenchSchedule(["kick"]));
+
+    expect(result).toBe(0);
+    expect(run.calls).toHaveLength(1);
+    const rel = storedRel("router-suite");
+    if (rel === null) throw new Error("expected the schedule fixture to store a rel");
+    const provenance = runOpts(run.calls[0])["provenance"];
+    if (!isPlainRecord(provenance)) throw new Error("expected a provenance record");
+    expect(provenance["flags"]).toBeNull();
+    const unavailable = provenance["unavailable"];
+    if (!isPlainRecord(unavailable)) {
+      throw new Error("expected provenance.unavailable to be a record");
+    }
+    expect(unavailable["flags"]).toBe(
+      `scheduled suites reach ${rel} through the agent gateway; the engine launch flags are not known`,
     );
   });
 });

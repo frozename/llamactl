@@ -22,7 +22,14 @@ import {
   unlinkSync,
   writeFileSync,
 } from "./safe-fs.js";
-import { endpoint, readServerPid, startServer, stopServer } from "./server.js";
+import {
+  endpoint,
+  readServerPid,
+  startServer,
+  type StartServerOptions,
+  type StartServerResult,
+  stopServer,
+} from "./server.js";
 import { resolveTarget } from "./target.js";
 
 export function keepAlivePidFile(resolved: ResolvedEnv = resolveEnv()): string {
@@ -58,6 +65,7 @@ interface StateSnapshot {
   state: KeepAliveState;
   restarts: number;
   backoff_seconds: number;
+  force_restart?: boolean;
   log: string;
 }
 
@@ -75,6 +83,9 @@ function writeState(
       `state=${snapshot.state}`,
       `restarts=${String(snapshot.restarts)}`,
       `backoff_seconds=${String(snapshot.backoff_seconds)}`,
+      ...(snapshot.force_restart !== undefined
+        ? [`force_restart=${String(snapshot.force_restart)}`]
+        : []),
       `log=${keepAliveLogFile(resolved)}`,
     ].join("\n") + "\n";
   writeFileSync(keepAliveStateFile(resolved), body);
@@ -105,6 +116,9 @@ function parseState(raw: string): Partial<StateSnapshot> {
         break;
       case "backoff_seconds":
         out.backoff_seconds = Number.parseInt(value, 10) || 0;
+        break;
+      case "force_restart":
+        out.force_restart = value === "true";
         break;
       case "log":
         out.log = value;
@@ -328,6 +342,9 @@ export interface RunKeepAliveWorkerOptions {
    * string (or throws) to record `start-refused`, or `null` to fall through to the normal start
    * path. The gate is consulted on every loop iteration, including restarts. */
   beforeStart?: (rel: string) => string | null;
+  /** Test seam replacing the `startServer` call so latch behaviour can be driven
+   * without spawning an engine. Production leaves it unset. */
+  start?: (opts: StartServerOptions) => Promise<StartServerResult>;
 }
 
 function logLine(resolved: ResolvedEnv, line: string): void {
@@ -462,18 +479,25 @@ export async function runKeepAliveWorker(opts: RunKeepAliveWorkerOptions): Promi
   let restarts = 0;
   let backoff = 1;
   let lastRel = "";
+  // #806 phase 2: after a health drop, force the next start to replace the
+  // engine even if /health recovered; the adopt path would otherwise keep it.
+  let forceRestart = false;
+  const emitState = (model: string, state: KeepAliveState): void => {
+    writeState(resolved, {
+      target: opts.target,
+      model,
+      state,
+      restarts,
+      backoff_seconds: backoff,
+      force_restart: forceRestart,
+    });
+  };
   try {
     while (!shouldStop(resolved, opts.signal)) {
       const rel = resolveTarget(opts.target, env);
       if (!rel) {
         logLine(resolved, `target=${opts.target} resolve-failed`);
-        writeState(resolved, {
-          target: opts.target,
-          model: "unresolved",
-          state: "resolve-failed",
-          restarts,
-          backoff_seconds: backoff,
-        });
+        emitState("unresolved", "resolve-failed");
         await sleepWithAbort(backoff, opts.signal);
         backoff = Math.min(backoff * 2, maxBackoff);
         continue;
@@ -488,70 +512,46 @@ export async function runKeepAliveWorker(opts: RunKeepAliveWorkerOptions): Promi
       }
       if (typeof refusal === "string") {
         logLine(resolved, `start-refused rel=${rel} reason=${refusal}`);
-        writeState(resolved, {
-          target: opts.target,
-          model: rel,
-          state: "start-refused",
-          restarts,
-          backoff_seconds: backoff,
-        });
+        emitState(rel, "start-refused");
         await sleepWithAbort(backoff, opts.signal);
         backoff = Math.min(backoff * 2, maxBackoff);
         continue;
       }
 
-      writeState(resolved, {
-        target: opts.target,
-        model: rel,
-        state: "starting",
-        restarts,
-        backoff_seconds: backoff,
-      });
+      emitState(rel, "starting");
       logLine(resolved, `starting server for rel=${rel}`);
 
-      const startRes = await startServer({
+      const startRes = await (opts.start ?? startServer)({
         key,
         target: rel,
         timeoutSeconds: 60,
         resolved,
         env,
+        restart: forceRestart,
       });
       if (!startRes.ok) {
         restarts += 1;
         logLine(resolved, `start-failed rel=${rel} error=${startRes.error ?? "unknown"}`);
-        writeState(resolved, {
-          target: opts.target,
-          model: rel,
-          state: "start-failed",
-          restarts,
-          backoff_seconds: backoff,
-        });
+        emitState(rel, "start-failed");
         await sleepWithAbort(backoff, opts.signal);
         backoff = Math.min(backoff * 2, maxBackoff);
         continue;
       }
 
+      // Only a successful start disarms the forced restart; a failed or
+      // refused attempt keeps it armed so the next pass cannot adopt the
+      // engine whose health dropped.
+      forceRestart = false;
       backoff = 1;
-      writeState(resolved, {
-        target: opts.target,
-        model: rel,
-        state: "ready",
-        restarts,
-        backoff_seconds: backoff,
-      });
+      emitState(rel, "ready");
       logLine(resolved, `ready rel=${rel} pid=${String(startRes.pid)}`);
 
       await pollHealthUntilDown(resolved, key, intervalSeconds, opts.signal, rel);
       if (shouldStop(resolved, opts.signal)) break;
 
+      forceRestart = true;
       restarts += 1;
-      writeState(resolved, {
-        target: opts.target,
-        model: rel,
-        state: "restart-pending",
-        restarts,
-        backoff_seconds: backoff,
-      });
+      emitState(rel, "restart-pending");
       await sleepWithAbort(backoff, opts.signal);
       backoff = Math.min(backoff * 2, maxBackoff);
     }

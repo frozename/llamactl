@@ -240,6 +240,7 @@ describe("llamactl qualification (#518)", () => {
       freeze: null,
       effective: { stage: "production", source: "pin", baseStage: "production", degraded: false },
       routingStage: "production",
+      applied: null,
     });
     expect(parsed["routingStage"]).toBe(routingStages(qual.env).get(exp) ?? null);
   });
@@ -256,6 +257,7 @@ describe("llamactl qualification (#518)", () => {
       freeze: null,
       effective: null,
       routingStage: null,
+      applied: null,
     });
 
     const text = runCli(["qualification", "status", plain], qual.env);

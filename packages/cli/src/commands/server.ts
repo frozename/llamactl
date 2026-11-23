@@ -15,11 +15,12 @@ import { resolveWorkloadName } from "./_workload-resolve.js";
 const USAGE = `Usage: llamactl server <subcommand>
 
 Subcommands:
-  start <target> [--name <workload>] [--timeout=<s>] [--no-tuned] [--json] [-- extra-args]
+  start <target> [--name <workload>] [--timeout=<s>] [--no-tuned] [--restart] [--json] [-- extra-args]
       Launch llama-server in the background with the tuned profile
       args (when available), wait for /health=200 up to <timeout>
       seconds (default 60), and record the PID. Everything after \`--\`
-      is forwarded to llama-server as-is.
+      is forwarded to llama-server as-is. A healthy, unchanged engine is
+      adopted instead of restarted; \`--restart\` forces a fresh launch.
 
   stop [--name <workload>] [--grace=<s>] [--json]
       SIGTERM is sent only if the tracked PID verifies as the recorded
@@ -81,6 +82,7 @@ interface StartFlags {
   extra: string[];
   json: boolean;
   skipTuned: boolean;
+  restart: boolean;
   timeoutSeconds: number;
   workloadExplicit?: string;
 }
@@ -113,6 +115,7 @@ interface StartDraft {
   extra: string[];
   json: boolean;
   skipTuned: boolean;
+  restart: boolean;
   timeoutSeconds: number;
   sawDashDash: boolean;
   workloadExplicit?: string;
@@ -129,6 +132,10 @@ function applyStartBooleanFlag(draft: StartDraft, arg: string): boolean {
   }
   if (arg === "--no-tuned") {
     draft.skipTuned = true;
+    return true;
+  }
+  if (arg === "--restart") {
+    draft.restart = true;
     return true;
   }
   return false;
@@ -172,6 +179,7 @@ function parseStartFlags(args: string[]): StartFlags | { error: string } | { hel
     extra: [],
     json: false,
     skipTuned: false,
+    restart: false,
     timeoutSeconds: 60,
     sawDashDash: false,
   };
@@ -193,6 +201,7 @@ function parseStartFlags(args: string[]): StartFlags | { error: string } | { hel
     extra: draft.extra,
     json: draft.json,
     skipTuned: draft.skipTuned,
+    restart: draft.restart,
     timeoutSeconds: draft.timeoutSeconds,
     ...(draft.workloadExplicit !== undefined ? { workloadExplicit: draft.workloadExplicit } : {}),
   };
@@ -254,6 +263,7 @@ async function fetchStartResult(
     extraArgs?: string[];
     timeoutSeconds?: number;
     skipTuned?: boolean;
+    restart?: boolean;
   } = {
     workload,
     target: parsed.target,
@@ -262,6 +272,7 @@ async function fetchStartResult(
     if (parsed.extra.length > 0) input.extraArgs = parsed.extra;
     if (parsed.timeoutSeconds !== 60) input.timeoutSeconds = parsed.timeoutSeconds;
     if (parsed.skipTuned) input.skipTuned = parsed.skipTuned;
+    if (parsed.restart) input.restart = parsed.restart;
     return await subscribeRemote<
       server.ServerEvent,
       Awaited<ReturnType<typeof server.startServer>>
@@ -288,7 +299,7 @@ function renderStartResult(
     process.stderr.write(`${result.error ?? "server failed to start"}\n`);
   } else {
     process.stdout.write(
-      `llama-server up pid=${String(result.pid)} endpoint=${result.endpoint}${result.tunedProfile ? ` tuned=${result.tunedProfile}` : ""}${result.retried ? " (retried)" : ""}\n`,
+      `llama-server up pid=${String(result.pid)} endpoint=${result.endpoint}${result.tunedProfile ? ` tuned=${result.tunedProfile}` : ""}${result.adopted ? " (adopted)" : ""}${result.retried ? " (retried)" : ""}\n`,
     );
   }
 }

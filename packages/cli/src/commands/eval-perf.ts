@@ -144,8 +144,8 @@ function loopbackFor(url: string): { hostname: string; loopback: boolean } | nul
   return { hostname, loopback };
 }
 
-function splitFlags(raw: string | undefined): string[] {
-  if (raw === undefined) return [];
+function splitFlags(raw: string | undefined): string[] | null {
+  if (raw === undefined) return null;
   return raw.split(/\s+/).filter((token) => token !== "");
 }
 
@@ -158,7 +158,7 @@ interface RunInput {
   ctx: number | null;
   slots: number | null;
   loopback: boolean;
-  flags: string[];
+  flags: string[] | null;
 }
 
 type ResolveResult = RunInput | { error: string };
@@ -215,6 +215,13 @@ function buildProvenance(values: Record<string, string>, input: RunInput): Promi
       ctx: input.ctx,
       flags: input.flags,
       ...(values["--hf-revision"] !== undefined ? { hf_revision: values["--hf-revision"] } : {}),
+      ...(input.flags === null
+        ? {
+            reasons: {
+              flags: `no --flags given; the launch flags of the engine at ${input.url} are not known`,
+            },
+          }
+        : {}),
     },
     seams.provenanceReaders ?? defaultProvenanceReaders(),
   );

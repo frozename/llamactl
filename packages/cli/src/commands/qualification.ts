@@ -1,12 +1,15 @@
-// Part of #518: the operator surface for the pin/freeze overrides, node-local,
-// the same file routing reads. `qualificationOverridesFileFor` resolves the
-// shared `qualification-overrides.tsv` that `catalogQualificationStages` and
-// the `/v1/models` cache signature read; this command writes it through
-// `writeQualificationOverride` / `deleteQualificationOverride` and reports the
-// catalog stage, the overrides, `effectiveStage` and the routing stage. The
-// read-only `propose` consumer runs `evaluateQualification` over an evidence
-// file (`parsePromotionEvidence`) and a policy file, then `applyQualification`
-// without a writer, so it never writes the overrides file or the catalog. Because
+// Part of #518: the operator surface for the pin/freeze/applied overrides,
+// node-local, the same file routing reads. `qualificationOverridesFileFor`
+// resolves the shared `qualification-overrides.tsv` that
+// `catalogQualificationStages` and the `/v1/models` cache signature read; this
+// command writes it through `writeQualificationOverride` /
+// `deleteQualificationOverride` / `writeAppliedStage` and reports the catalog
+// stage, the overrides, `effectiveStage` and the routing stage. The read-only
+// `propose` consumer runs `evaluateQualification` over an evidence file
+// (`parsePromotionEvidence`) and a policy file, then `applyQualification`
+// without a writer, so it never writes the overrides file or the catalog.
+// `apply` is the same runner with `writeAppliedStage` injected: the policy's
+// `autoApply` gates the write, `unapply` removes the applied row. Because
 // the file is node-local, every subcommand refuses a non-local `--node` target.
 
 import {
@@ -29,12 +32,17 @@ type QualificationOverride = qualificationOverrides.QualificationOverride;
 type NewOverride = Omit<QualificationOverride, "updated_at">;
 type EffectiveStage = qualificationStages.EffectiveStage;
 type QualificationDecision = qualificationDemotion.QualificationDecision;
+type ApplyQualificationResult = qualificationDemotion.ApplyQualificationResult;
+type AnyProposal =
+  | qualificationPromotion.PromotionProposal
+  | qualificationDemotion.DemotionProposal;
 
 const USAGE = `Usage: llamactl qualification <subcommand>
 
-Node-local qualification pin/freeze overrides. The overrides file is resolved
-by qualificationOverridesFileFor (LOCAL_AI_QUALIFICATION_OVERRIDES_FILE, else
-qualification-overrides.tsv under the runtime dir) — the same file routing reads.
+Node-local qualification pin/freeze/applied overrides. The overrides file is
+resolved by qualificationOverridesFileFor (LOCAL_AI_QUALIFICATION_OVERRIDES_FILE,
+else qualification-overrides.tsv under the runtime dir) — the same file routing
+reads.
 
 Subcommands:
   list [--json]                       Catalog stage, pin, freeze, effective stage and routing stage per rel.
@@ -44,11 +52,14 @@ Subcommands:
   freeze <rel> --reason <text> [--author <name>]        Block promotion for a rel (no stage).
   unfreeze <rel>                      Remove a rel's freeze override.
   propose <rel> --evidence <file.json> --policy <file.json> [--json]   Read-only promotion/demotion proposal.
+  apply <rel> --evidence <file.json> --policy <file.json> [--author <name>] [--json]   Record the applied stage when the policy's autoApply is on.
+  unapply <rel>                       Remove a rel's applied override row.
 
 Example:
   llamactl qualification pin <rel> production --reason "w4 bench passed"
   llamactl qualification status <rel> --json
   llamactl qualification propose <rel> --evidence evidence.json --policy policy.json
+  llamactl qualification apply <rel> --evidence evidence.json --policy policy.json
 `;
 
 const VALUE_FLAGS = new Set(["--reason", "--author", "--evidence", "--policy"]);
@@ -163,6 +174,13 @@ interface StatusView {
   freeze: OverrideView | null;
   effective: EffectiveStage | null;
   routingStage: string | null;
+  applied: OverrideView | null;
+}
+
+interface GroupedOverrides {
+  pin?: QualificationOverride;
+  freeze?: QualificationOverride;
+  applied?: QualificationOverride;
 }
 
 interface QualContext {
@@ -201,13 +219,27 @@ function overrideView(row: QualificationOverride): OverrideView {
   };
 }
 
+/**
+ * The declared stage shared by propose, apply and status: the applied
+ * row's stage first (a completed apply re-baselines the rel), then the
+ * catalog stage, then the pin stage (#518). Empty stages read as absent.
+ */
+function declaredFor(ctx: QualContext, rel: string, grouped: GroupedOverrides): Stage | undefined {
+  const appliedStage = grouped.applied?.stage;
+  const pinStage = grouped.pin?.stage;
+  return (
+    (appliedStage !== undefined && appliedStage !== "" ? appliedStage : undefined) ??
+    ctx.catalogStageByRel.get(rel) ??
+    (pinStage !== undefined && pinStage !== "" ? pinStage : undefined)
+  );
+}
+
 function computeEffective(
-  catalogStage: Stage | null,
+  declared: Stage | undefined,
   pin: QualificationOverride | undefined,
 ): EffectiveStage | null {
-  const pinStage = pin !== undefined && pin.stage !== "" ? pin.stage : undefined;
-  const declared = catalogStage ?? pinStage;
   if (declared === undefined) return null;
+  const pinStage = pin !== undefined && pin.stage !== "" ? pin.stage : undefined;
   return qualificationStages.effectiveStage({
     declared,
     ...(pinStage === undefined ? {} : { pin: { stage: pinStage } }),
@@ -222,8 +254,9 @@ function statusFor(ctx: QualContext, rel: string): StatusView {
     catalogStage,
     pin: grouped.pin === undefined ? null : overrideView(grouped.pin),
     freeze: grouped.freeze === undefined ? null : overrideView(grouped.freeze),
-    effective: computeEffective(catalogStage, grouped.pin),
+    effective: computeEffective(declaredFor(ctx, rel, grouped), grouped.pin),
     routingStage: ctx.routingStages.get(rel) ?? null,
+    applied: grouped.applied === undefined ? null : overrideView(grouped.applied),
   };
 }
 
@@ -263,10 +296,15 @@ function statusCommand(rest: string[]): number {
   const pin =
     status.pin === null ? "-" : `${status.pin.stage} (${status.pin.author}): ${status.pin.reason}`;
   const freeze = status.freeze === null ? "-" : `${status.freeze.author}: ${status.freeze.reason}`;
+  const applied =
+    status.applied === null
+      ? "-"
+      : `${status.applied.stage} (${status.applied.author}): ${status.applied.reason}`;
   process.stdout.write(`${rel}\t${status.effective?.stage ?? "unstaged"}\n`);
   process.stdout.write(`catalog\t${status.catalogStage ?? "-"}\n`);
   process.stdout.write(`pin\t${pin}\n`);
   process.stdout.write(`freeze\t${freeze}\n`);
+  process.stdout.write(`applied\t${applied}\n`);
   return 0;
 }
 
@@ -322,20 +360,28 @@ function mutationCommand(action: QualificationOverride["action"], rest: string[]
   return 0;
 }
 
-function removalCommand(verb: "unpin" | "unfreeze", rest: string[]): number {
+function removalCommand(verb: "unpin" | "unfreeze" | "unapply", rest: string[]): number {
   const { positional } = parseArgs(rest);
   const rel = positional[0];
   if (rel === undefined) {
     process.stderr.write(`qualification ${verb}: <rel> is required\n\n${USAGE}`);
     return 1;
   }
-  const action: QualificationOverride["action"] = verb === "unpin" ? "pin" : "freeze";
+  const action: QualificationOverride["action"] =
+    verb === "unpin" ? "pin" : verb === "unfreeze" ? "freeze" : "applied";
   const ctx = buildContext();
   if (!qualificationOverrides.deleteQualificationOverride(ctx.file, rel, action)) {
-    process.stderr.write(`qualification ${verb}: no ${action} override for '${rel}'\n`);
+    const missing =
+      verb === "unapply" ? `no applied stage for '${rel}'` : `no ${action} override for '${rel}'`;
+    process.stderr.write(`qualification ${verb}: ${missing}\n`);
     return 1;
   }
-  const line = verb === "unpin" ? `unpinned ${rel}` : `unfroze ${rel}`;
+  const line =
+    verb === "unpin"
+      ? `unpinned ${rel}`
+      : verb === "unfreeze"
+        ? `unfroze ${rel}`
+        : `unapplied ${rel}`;
   process.stdout.write(`${line}\noverrides: ${ctx.file}\n`);
   return 0;
 }
@@ -401,17 +447,23 @@ interface ProposeResult {
 }
 
 /**
- * Evaluate and gate the decision without a writer. applyQualification
- * re-parses the policy, so its Zod refusal is reported like any other.
+ * Evaluate and gate the decision. With a writer injected, the policy's
+ * autoApply lets it record the applied stage; without one the result
+ * stays `proposed`. applyQualification re-parses the policy, so its Zod
+ * refusal is reported like any other input error.
  */
 function evaluateProposal(
   input: qualificationPromotion.ProposePromotionInput & {
     policy: qualificationPromotion.PromotionPolicy;
   },
+  writer?: (proposal: AnyProposal) => void,
 ): Outcome<ProposeResult> {
   try {
     const decision = qualificationDemotion.evaluateQualification(input);
-    const apply = qualificationDemotion.applyQualification(decision, { policy: input.policy });
+    const apply = qualificationDemotion.applyQualification(decision, {
+      policy: input.policy,
+      ...(writer === undefined ? {} : { apply: writer }),
+    });
     return { ok: true, value: { decision, apply } };
   } catch (err) {
     const messages = zodIssueMessagesWithPath(err);
@@ -420,64 +472,162 @@ function evaluateProposal(
   }
 }
 
-function requiredFlag(flags: Map<string, string>, name: string): string | undefined {
+function requiredFlag(
+  verb: ProposalVerb,
+  flags: Map<string, string>,
+  name: string,
+): string | undefined {
   const value = flags.get(name);
   if (value === undefined || value === "") {
-    process.stderr.write(`qualification propose: ${name} is required\n`);
+    process.stderr.write(`qualification ${verb}: ${name} is required\n`);
     return undefined;
   }
   return value;
 }
 
-function proposeCommand(rest: string[]): number {
+type ProposalVerb = "propose" | "apply";
+
+interface ApplyOutcome {
+  decision: QualificationDecision;
+  apply: ApplyQualificationResult;
+  recordFailure: string[] | undefined;
+}
+
+/**
+ * Detail for a non-Zod error escaping the writer: an IO failure on the
+ * overrides path (ENOTDIR under a regular file, an unwritable dir), not
+ * a validation refusal.
+ */
+function writeFailureDetail(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  return typeof err === "string" ? err : "unknown write failure";
+}
+
+/**
+ * Run the evidence/policy evaluation for one verb. `apply` injects
+ * `writeAppliedStage`, whose Zod refusal is recorded here rather than
+ * escaping as (or being mistaken for) a policy error: the writer
+ * validates before any IO, so a recorded failure means nothing was
+ * written (#518). The rethrown non-Zod write errors are handled here
+ * too: they become a clean `cannot record applied stage` message
+ * instead of a stack trace, so an IO failure never reads as a
+ * successful apply (#518 review).
+ */
+function runEvaluation(
+  verb: ProposalVerb,
+  input: qualificationPromotion.ProposePromotionInput & {
+    policy: qualificationPromotion.PromotionPolicy;
+  },
+  file: string,
+  author: string,
+): Outcome<ApplyOutcome> {
+  let recordFailure: string[] | undefined;
+  const writer =
+    verb === "apply"
+      ? (proposal: AnyProposal): void => {
+          try {
+            qualificationOverrides.writeAppliedStage(file, proposal, author);
+          } catch (err) {
+            const messages = zodIssueMessages(err);
+            if (messages === null) throw err;
+            recordFailure = messages;
+          }
+        }
+      : undefined;
+  let result: Outcome<ProposeResult>;
+  try {
+    result = evaluateProposal(input, writer);
+  } catch (err) {
+    return { ok: false, message: `cannot record applied stage: ${writeFailureDetail(err)}` };
+  }
+  if (!result.ok) return result;
+  return { ok: true, value: { ...result.value, recordFailure } };
+}
+
+function applyResultLine(
+  verb: ProposalVerb,
+  rel: string,
+  decision: QualificationDecision,
+  apply: ApplyQualificationResult,
+  file: string,
+): void {
+  if (verb === "propose") {
+    process.stdout.write(
+      `apply: ${apply.status} (nothing written; autoApply has no writer here)\n`,
+    );
+    return;
+  }
+  if (apply.status === "applied" && decision.kind !== "none") {
+    process.stdout.write(
+      `apply: applied ${rel} ${decision.proposal.from} -> ${decision.proposal.to}\noverrides: ${file}\n`,
+    );
+    return;
+  }
+  if (apply.status === "proposed") {
+    process.stdout.write("apply: proposed (nothing written; policy autoApply is off)\n");
+    return;
+  }
+  process.stdout.write("apply: skipped (nothing written)\n");
+}
+
+/**
+ * Shared runner behind `propose` (read-only) and `apply` (writes the
+ * applied row through `writeAppliedStage` when the policy's autoApply
+ * is on). Every error prefix is `qualification <verb>:`.
+ */
+function proposalCommand(verb: ProposalVerb, rest: string[]): number {
   const { positional, flags, json } = parseArgs(rest);
   const rel = positional[0];
   if (rel === undefined) {
-    process.stderr.write(`qualification propose: <rel> is required\n\n${USAGE}`);
+    process.stderr.write(`qualification ${verb}: <rel> is required\n\n${USAGE}`);
     return 1;
   }
-  const evidencePath = requiredFlag(flags, "--evidence");
+  const evidencePath = requiredFlag(verb, flags, "--evidence");
   if (evidencePath === undefined) return 1;
-  const policyPath = requiredFlag(flags, "--policy");
+  const policyPath = requiredFlag(verb, flags, "--policy");
   if (policyPath === undefined) return 1;
 
   const evidence = parseProposeFile("evidence", evidencePath, (raw) =>
     qualificationPromotion.parsePromotionEvidence(raw),
   );
   if (!evidence.ok) {
-    process.stderr.write(`qualification propose: ${evidence.message}\n`);
+    process.stderr.write(`qualification ${verb}: ${evidence.message}\n`);
     return 1;
   }
   const policy = parseProposeFile("policy", policyPath, (raw) =>
     qualificationPromotion.PromotionPolicySchema.parse(raw),
   );
   if (!policy.ok) {
-    process.stderr.write(`qualification propose: ${policy.message}\n`);
+    process.stderr.write(`qualification ${verb}: ${policy.message}\n`);
     return 1;
   }
 
   const ctx = buildContext();
   const grouped = qualificationOverrides.overridesFor(ctx.overrideRows, rel);
-  const pinStage =
-    grouped.pin !== undefined && grouped.pin.stage !== "" ? grouped.pin.stage : undefined;
-  const declared = ctx.catalogStageByRel.get(rel) ?? pinStage;
+  const declared = declaredFor(ctx, rel, grouped);
   if (declared === undefined) {
-    process.stderr.write(`qualification propose: '${rel}' has no qualification stage\n`);
+    process.stderr.write(`qualification ${verb}: '${rel}' has no qualification stage\n`);
     return 1;
   }
 
-  const result = evaluateProposal({
-    rel,
-    declared,
-    evidence: evidence.value,
-    policy: policy.value,
-    overrides: grouped,
-  });
+  const author = flags.get("--author") ?? defaultAuthor();
+  const result = runEvaluation(
+    verb,
+    { rel, declared, evidence: evidence.value, policy: policy.value, overrides: grouped },
+    ctx.file,
+    author,
+  );
   if (!result.ok) {
-    process.stderr.write(`qualification propose: ${result.message}\n`);
+    process.stderr.write(`qualification ${verb}: ${result.message}\n`);
     return 1;
   }
-  const { decision, apply } = result.value;
+  const { decision, apply, recordFailure } = result.value;
+  if (recordFailure !== undefined) {
+    process.stderr.write(
+      `qualification ${verb}: cannot record applied stage: ${recordFailure.join("; ")}\n`,
+    );
+    return 1;
+  }
 
   if (json) {
     const view = { rel, declared, overridesFile: ctx.file, decision, apply };
@@ -485,7 +635,7 @@ function proposeCommand(rest: string[]): number {
     return 0;
   }
   process.stdout.write(`${decisionLine(rel, decision)}\n`);
-  process.stdout.write(`apply: ${apply.status} (nothing written; autoApply has no writer here)\n`);
+  applyResultLine(verb, rel, decision, apply, ctx.file);
   return 0;
 }
 
@@ -512,7 +662,11 @@ function dispatchQualification(argv: string[]): number {
     case "unfreeze":
       return removalCommand("unfreeze", rest);
     case "propose":
-      return proposeCommand(rest);
+      return proposalCommand("propose", rest);
+    case "apply":
+      return proposalCommand("apply", rest);
+    case "unapply":
+      return removalCommand("unapply", rest);
     case undefined:
     case "help":
     case "--help":

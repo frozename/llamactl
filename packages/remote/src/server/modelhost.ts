@@ -19,6 +19,8 @@ import {
   computeModelHostSpecHash,
   modelhostPidFile,
   modelhostStartingFile,
+  type ModelHostState,
+  modelhostStateFile,
   readModelHostStarting,
   readModelHostState,
   removeModelHostStarting,
@@ -50,7 +52,7 @@ import {
   getNodeLlamacppSleepController,
   readLlamacppSleepResidency,
 } from "../residency/llamacpp-sleep-status.js";
-import { existsSync, mkdirSync, openSync } from "../safe-fs.js";
+import { existsSync, mkdirSync, openSync, writeFileSync } from "../safe-fs.js";
 import {
   externalManagerOf,
   MANAGED_BY_LABEL,
@@ -113,6 +115,11 @@ export interface StartModelHostOptions {
   /** Sink for the external-bind warning; injectable for tests. Defaults to
    *  writing the message plus a newline to process.stderr. */
   warn?: (message: string) => void;
+  /** #806 phase 2: skip the unchanged-spec adopt (both the state-sidecar and
+   *  the starting-record paths) and force the teardown + respawn. Mirrors
+   *  StartServerOptions.restart on the ModelRun path; set by callers that
+   *  know the running engine must be replaced (e.g. after a health loss). */
+  restart?: boolean;
 }
 
 export interface StartModelHostResult {
@@ -135,6 +142,10 @@ export interface StartModelHostResult {
    *  stop-before-start teardown of a live prior host (Part of #520);
    *  never set on success. */
   refused?: StopFenceRefusal;
+  /** Present and true only when a live, healthy engine with an unchanged spec
+   *  hash was adopted instead of torn down and respawned (#806 phase 2); a
+   *  fresh or drifted start leaves it absent. */
+  adopted?: boolean;
 }
 
 export interface StopModelHostOptions {
@@ -230,6 +241,24 @@ function reapBinaryNames(
     return [...new Set([...ENGINE_BINARY_BASENAMES[engine], ...declared])];
   }
   return undefined;
+}
+
+// Separate-token `--alias`/`-a` values — mirrors aliasesFromArgs in
+// core/server.ts (remote/residency/catalog.ts keeps the same copy): core's
+// exports map does not expose that module, so the adoption ownership checks
+// keep their own copy (#806). llama.cpp advertises the alias, not the model
+// rel, on /v1/models.
+function aliasesFromExtraArgs(extraArgs: readonly string[]): string[] {
+  const out: string[] = [];
+  let index = 0;
+  for (const arg of extraArgs) {
+    const next = extraArgs[index + 1];
+    index += 1;
+    if ((arg === "--alias" || arg === "-a") && next !== undefined) {
+      out.push(next);
+    }
+  }
+  return out;
 }
 
 const CHILD_ENV_ALLOWLIST = [
@@ -479,7 +508,7 @@ async function tryAdoptLiveHost(
   const firstHostedModel = manifest.spec.hostedModels[0];
   if (!firstHostedModel) return null;
   const rel = firstHostedModel.rel;
-  const aliases = new Set([rel, basename(rel)]);
+  const aliases = new Set([rel, basename(rel), ...aliasesFromExtraArgs(manifest.spec.extraArgs)]);
   // Only adopt a process that advertises OUR model. Empty modelIds means we
   // cannot confirm ownership — refuse (the caller defers) rather than adopt an
   // unrelated squatter that happened to grab the freed port.
@@ -588,16 +617,102 @@ async function confirmRecordedTeardown(
   };
 }
 
+// Ownership gate for the starting-record promote: the engine must advertise
+// the hosted model by rel, basename, or a declared --alias (#806) — the same
+// gate adoptUnchangedHost applies to a state-sidecar host.
+function servesHostedModel(manifest: ModelHostManifest, modelIds: readonly string[]): boolean {
+  const firstHostedModel = manifest.spec.hostedModels[0];
+  if (!firstHostedModel) return false;
+  const aliases = new Set([
+    firstHostedModel.rel,
+    basename(firstHostedModel.rel),
+    ...aliasesFromExtraArgs(manifest.spec.extraArgs),
+  ]);
+  return modelIds.length > 0 && modelIds.some((id) => aliases.has(id) || aliases.has(basename(id)));
+}
+
+// #806 phase 2: an engine caught mid-load (only its starting record exists,
+// because the prior agent died before readiness) must survive an unchanged
+// re-apply instead of being bounced. When the record's hash matches the
+// applied spec: promote it to a full state sidecar once readiness passes and
+// it serves our model; while it is still loading (the probe refuses), defer
+// rather than kill — the load needs its full timeout budget. A record older
+// than that budget is a failed start, and a live process on a same-hash
+// record that answers with a different model is a squatter; both fall through
+// to the reap path below. Returns null to fall through.
+async function adoptOrDeferStartingHost(
+  manifest: ModelHostManifest,
+  opts: StartModelHostOptions,
+  resolved: ReturnType<typeof resolveEnv>,
+  engine: (typeof ENGINES)[keyof typeof ENGINES],
+  starting: NonNullable<ReturnType<typeof readModelHostStarting>>,
+): Promise<StartModelHostResult | null> {
+  // A published residency registry that is not open must not get an adopted
+  // engine back: a promote would hand withReopenAfterLoad an "unchanged" result
+  // for a workload whose admission is closed. Decline so the start falls
+  // through to the fenced teardown/respawn, mirroring core's adoptTrackedServer.
+  const residency = getResidencyLeaseRegistry();
+  if (residency !== null && residency.snapshot(opts.key.name).phase !== "open") return null;
+  if (opts.restart === true) return null;
+  const currentHash = computeModelHostSpecHash(specForHash(manifest.spec));
+  if (starting.specHash === undefined || starting.specHash !== currentHash) return null;
+  const endpoint = manifest.spec.endpoint;
+  const declaredReadiness = normalizeReadiness(manifest.spec.readiness);
+  const readiness = await (
+    opts.probeReady !== undefined
+      ? opts.probeReady(endpoint, ADOPT_PROBE_TIMEOUT_MS, declaredReadiness)
+      : engine.probeReady(endpoint, ADOPT_PROBE_TIMEOUT_MS, declaredReadiness)
+  ).catch(() => ({ ready: false, modelIds: [] as string[] }));
+  if (readiness.ready && servesHostedModel(manifest, readiness.modelIds)) {
+    // writeModelHostState refreshes the modelhost.pid anchor to now, which is
+    // after the promoted process started — a valid anchor for later identity
+    // checks; the starting record's own mtime must not leak into the state.
+    writeModelHostState(
+      {
+        kind: "ModelHost",
+        engine: starting.engine,
+        pid: starting.pid,
+        host: endpoint.host,
+        port: endpoint.port,
+        modelAliases: resolveModelAliases(manifest),
+        startedAt: starting.startedAt,
+        slotSavePath: resolveSlotSavePathArgs(
+          manifest.spec.extraArgs,
+          resolved.LOCAL_AI_RUNTIME_DIR,
+          opts.key.name,
+        ).slotSavePath,
+        specHash: currentHash,
+        ...binaryNamesField(starting.binaryNames),
+        ...readinessField(declaredReadiness),
+      },
+      opts.key,
+      resolved,
+    );
+    removeModelHostStarting(opts.key, resolved);
+    return { ok: true, pid: starting.pid, adopted: true };
+  }
+  if (readiness.ready) return null;
+  const budgetMs = (opts.timeoutSeconds ?? manifest.spec.timeoutSeconds) * 1000;
+  if (Date.now() - Date.parse(starting.startedAt) >= budgetMs) return null;
+  return {
+    ok: false,
+    pid: null,
+    error: `engine pid ${String(starting.pid)} from the starting record is still loading; deferring restart`,
+  };
+}
+
 // #317: a child spawned by a previous agent that died before readiness leaves
 // only its starting record. Verify its identity against the record (the mtime
 // anchor plus the engine argv0), reap it when it is provably ours, and defer
 // the whole start when it is not — spawning over an unverifiable live pid is
-// how #317 got a second engine on one port.
+// how #317 got a second engine on one port. An alive, same-hash record is
+// first offered to the promote/defer path (#806) so a reload of an unchanged
+// spec never kills an engine that is merely still loading.
 async function reapStartingOrphan(
+  manifest: ModelHostManifest,
   opts: StartModelHostOptions,
   resolved: ReturnType<typeof resolveEnv>,
   engine: (typeof ENGINES)[keyof typeof ENGINES],
-  declaredBinaryNames: readonly string[] | undefined,
 ): Promise<StartModelHostResult | null> {
   const starting = readModelHostStarting(opts.key, resolved);
   if (!starting) return null;
@@ -605,13 +720,15 @@ async function reapStartingOrphan(
   const identity = hostIdentityDeps(
     starting.engine,
     opts.identity,
-    reapBinaryNames(starting.engine, starting.binaryNames, declaredBinaryNames),
+    reapBinaryNames(starting.engine, starting.binaryNames, manifest.spec.binaryNames),
   );
   const verdict = verifyPidFile(recordPath, starting.pid, identity);
   if (verdict === "unknown") {
     return { ok: false, pid: null, error: "pid identity unknown; deferring restart" };
   }
   if (verdict === "alive") {
+    const adopted = await adoptOrDeferStartingHost(manifest, opts, resolved, engine, starting);
+    if (adopted !== null) return adopted;
     const failure = await confirmRecordedTeardown(
       () =>
         engine.teardown(
@@ -641,6 +758,95 @@ function clearStartingRecordIfOwned(
   }
 }
 
+// llama.cpp advertises the model under its --alias name when the spec
+// declares one; fold declared aliases back onto the hosted rel so the
+// ownership check sees our model and an aliased engine is not bounced on
+// every unchanged re-apply (#806).
+function foldDeclaredAliases(
+  extraArgs: readonly string[],
+  readiness: { ready: boolean; modelIds: string[] },
+  hostedRel: string,
+): void {
+  const declared = aliasesFromExtraArgs(extraArgs);
+  if (declared.length === 0) return;
+  readiness.modelIds = readiness.modelIds.map((id) =>
+    declared.some((alias) => alias === id || basename(alias) === basename(id)) ? hostedRel : id,
+  );
+}
+
+// #806 phase 2: a live, identity-verified prior host whose recorded spec hash
+// matches the applied spec is adopted rather than torn down and respawned. The
+// engine must also answer its readiness probe now (a same-hash-but-crashed-into
+// a zombie, or an OOM-parked process, is replaced), and it must still advertise
+// our model — the same ownership gate `tryAdoptLiveHost` applies to an
+// out-of-band listener, so an unrelated process that grabbed a freed port is
+// never adopted. Out-of-hash fields (the readiness probe, the binaryNames) are
+// refreshed onto the sidecar; the launch-affecting fields, the recorded pid and
+// startedAt are left exactly as they are, and the pid file is never rewritten
+// (its mtime is the identity anchor). Returns null to fall through to the
+// teardown/restart path: a missing hash (legacy record), a drifted hash, a
+// failed probe, a model mismatch, or a pid that died between discovery and now.
+async function adoptUnchangedHost(
+  manifest: ModelHostManifest,
+  opts: StartModelHostOptions,
+  resolved: ReturnType<typeof resolveEnv>,
+  engine: (typeof ENGINES)[keyof typeof ENGINES],
+  priorState: ModelHostState,
+): Promise<StartModelHostResult | null> {
+  // A published residency registry that is not open must not get an adopted
+  // engine back: adoption would hand withReopenAfterLoad an "unchanged" result
+  // for a workload whose admission is closed. Decline so the start falls
+  // through to the fenced teardown/respawn, mirroring core's adoptTrackedServer.
+  const residency = getResidencyLeaseRegistry();
+  if (residency !== null && residency.snapshot(opts.key.name).phase !== "open") return null;
+  if (opts.restart === true) return null;
+  const currentHash = computeModelHostSpecHash(specForHash(manifest.spec));
+  if (priorState.specHash === undefined || priorState.specHash !== currentHash) return null;
+  const endpoint = manifest.spec.endpoint;
+  const declaredReadiness = normalizeReadiness(manifest.spec.readiness);
+  const readiness = await (
+    opts.probeReady !== undefined
+      ? opts.probeReady(endpoint, ADOPT_PROBE_TIMEOUT_MS, declaredReadiness)
+      : engine.probeReady(endpoint, ADOPT_PROBE_TIMEOUT_MS, declaredReadiness)
+  ).catch(() => ({ ready: false, modelIds: [] as string[] }));
+  if (!readiness.ready) return null;
+  const firstHostedModel = manifest.spec.hostedModels[0];
+  if (!firstHostedModel) return null;
+  foldDeclaredAliases(manifest.spec.extraArgs, readiness, firstHostedModel.rel);
+  const aliases = new Set([firstHostedModel.rel, basename(firstHostedModel.rel)]);
+  if (
+    readiness.modelIds.length === 0 ||
+    !readiness.modelIds.some((id) => aliases.has(id) || aliases.has(basename(id)))
+  ) {
+    return null;
+  }
+  if (!isProcessAlive(priorState.pid)) return null;
+  const refreshed: ModelHostState = {
+    kind: "ModelHost",
+    engine: priorState.engine,
+    pid: priorState.pid,
+    host: priorState.host,
+    port: priorState.port,
+    modelAliases: priorState.modelAliases,
+    startedAt: priorState.startedAt,
+    slotSavePath: priorState.slotSavePath ?? null,
+    specHash: priorState.specHash,
+    // Legacy records predate binaryNames; an adopt must fold the manifest's
+    // declared names in, or status/stop re-derive engine defaults and the
+    // real argv0 fails identity (#806).
+    ...binaryNamesField(
+      reapBinaryNames(priorState.engine, priorState.binaryNames, manifest.spec.binaryNames),
+    ),
+    ...readinessField(declaredReadiness),
+  };
+  // Only rewrite the sidecar when an out-of-hash field actually changed, so a
+  // same-spec adopt leaves the state file byte-for-byte untouched.
+  if (JSON.stringify(refreshed) !== JSON.stringify(priorState)) {
+    writeFileSync(modelhostStateFile(resolved, opts.key), JSON.stringify(refreshed, null, 2));
+  }
+  return { ok: true, pid: priorState.pid, adopted: true };
+}
+
 // Reap a prior live ModelHost for this workload before spawning a new one.
 // Without this, applying over a still-running host leaves the old process
 // holding the endpoint port: the new omlx fails to bind and exits, yet
@@ -656,7 +862,7 @@ async function reapOrAdoptPriorHost(
 ): Promise<StartModelHostResult | null> {
   const priorState = readModelHostState(opts.key, resolved);
   if (!priorState) {
-    return await reapStartingOrphan(opts, resolved, engine, manifest.spec.binaryNames);
+    return await reapStartingOrphan(manifest, opts, resolved, engine);
   }
   // The recorded pid is verified against the pid file it was recorded in
   // (written before the sidecar, so its mtime is the right identity anchor)
@@ -672,6 +878,12 @@ async function reapOrAdoptPriorHost(
   );
   const priorVerdict = verifyPidFile(recordPath, priorState.pid, identity);
   if (priorVerdict === "alive") {
+    // #806 phase 2: before disturbing a verified-alive host, check whether it
+    // can be adopted (unchanged spec hash, healthy probe, still our model). A
+    // live adopt never touches the residency/session fence — the running engine
+    // is not being torn down — so it runs ahead of `fencePriorHostTeardown`.
+    const adopted = await adoptUnchangedHost(manifest, opts, resolved, engine, priorState);
+    if (adopted !== null) return adopted;
     // A resolved teardown is not proof the prior host released the port; only
     // a confirmed-gone re-check lets the replacement spawn. On failure the
     // state sidecar and recorded pid are left intact for a later reconcile.
@@ -725,7 +937,7 @@ async function reapOrAdoptPriorHost(
   }
   // No live listener — the port is free; fall through to a normal spawn,
   // after reaping any starting orphan a crashed agent left for this workload.
-  return await reapStartingOrphan(opts, resolved, engine, manifest.spec.binaryNames);
+  return await reapStartingOrphan(manifest, opts, resolved, engine);
 }
 
 /**

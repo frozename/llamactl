@@ -268,21 +268,21 @@ export function createPerfBenchSuiteRunner(
     });
     await assertServesModel(client, req);
     // Scheduled runs only reach the engine through the agent gateway, so the
-    // binary, GGUF, quant, ctx and HF revision are genuinely unknown; each
-    // lands as null with its own unavailable reason instead of a guess. A
-    // schedule that declares quant or ctx overrides the null with the
+    // binary, GGUF, quant, ctx, launch flags and HF revision are genuinely
+    // unknown; each lands as null with its own unavailable reason instead of a
+    // guess. A schedule that declares quant or ctx overrides the null with the
     // declared value, and the gateway reason then goes unused.
     const provenance = await ev.collectEvalProvenance(
       {
         engine: engine as EvalEngine,
         quant: null,
         ctx: null,
-        flags: [],
         reasons: {
           binary_path: `scheduled suites reach ${req.rel} through the agent gateway; the engine binary path is not known`,
           gguf_path: `scheduled suites reach ${req.rel} through the agent gateway; the GGUF path is not known`,
           quant: `scheduled suites reach ${req.rel} through the agent gateway; the quant label is not known`,
           ctx: `scheduled suites reach ${req.rel} through the agent gateway; the context size is not known`,
+          flags: `scheduled suites reach ${req.rel} through the agent gateway; the engine launch flags are not known`,
           hf_revision: `scheduled suites reach ${req.rel} through the agent gateway; no GGUF path to derive an HF revision from`,
         },
         ...(req.quant !== undefined ? { quant: req.quant } : {}),

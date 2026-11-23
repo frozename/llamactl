@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 
@@ -13,6 +14,11 @@ import {
   specForEngine,
   specForHash,
 } from "../../src/workload/modelhost-schema.js";
+// Side-effect import: the #806 phase-3 mutant gate enumerates only this file
+// (plus engine-survival/modelhost.test) under packages/remote, so the
+// unchanged-spec adopt gates in engine-adopt-modelhost.test.ts must register
+// from here for the mutants to be killed.
+import "../server/engine-adopt-modelhost.test.js";
 
 function hostWithLabels(labels?: Record<string, string>): ModelHostManifest {
   return ModelHostManifestSchema.parse({
@@ -674,6 +680,154 @@ describe("engine=libosmos (#557)", () => {
     expect(computeModelHostSpecHash(specForHash(manifest.spec))).toBe(
       '{"engine":"llamacpp","binary":"/home/alex/strix-halo-bench/gufo/bin/llama-server-fork-pristine","endpoint":{"host":"127.0.0.1","port":8080},"hostedModels":[{"rel":"Qwen3.8-Flash-Next-GGUF/Qwen3.8-Flash-Next-Q4_K_M.gguf"}],"extraArgs":["--served-model-name","Qwen3.8-Flash-Next-Q4_K_M.gguf","--context","131072"],"resources":{"expectedMemoryGiB":60},"restartPolicy":"Always","timeoutSeconds":600,"env":{"ROCBLAS_USE_HIPBLASLT":"1"}}',
     );
+  });
+});
+
+// #806 phase 2: adopt-instead-of-restart keys on this hash, so pin the full
+// manifest pipeline — ModelHostManifestSchema.parse -> specForHash ->
+// computeModelHostSpecHash -> sha256 — end to end. The literals below were
+// generated at base 273437d9; they complement (not duplicate) the spec-level
+// pins in packages/core/test/engines/state-records.test.ts (:353 BASE_SPEC,
+// :375 Gufo) and the manifest-level Gufo pin directly above.
+describe("spec-hash golden pins (#806)", () => {
+  const GOLDEN_BIN = "/opt/llamactl-golden/bin/llama-server";
+
+  const goldenHash = (manifest: unknown): { hash: string; sha256: string } => {
+    const parsed = ModelHostManifestSchema.parse(manifest);
+    const hash = computeModelHostSpecHash(specForHash(parsed.spec));
+    return { hash, sha256: createHash("sha256").update(hash).digest("hex") };
+  };
+
+  const minimal = {
+    ...valid,
+    spec: {
+      engine: "llamacpp",
+      node: "local",
+      binary: GOLDEN_BIN,
+      endpoint: { host: "127.0.0.1", port: 18080 },
+      hostedModels: [{ rel: "golden/model.gguf" }],
+    },
+  };
+
+  const omlx = {
+    ...valid,
+    spec: {
+      engine: "omlx",
+      node: "local",
+      binary: "/opt/llamactl-golden/bin/omlx",
+      resources: { expectedMemoryGiB: 24, residentGiB: 20 },
+      endpoint: { host: "127.0.0.1", port: 18081 },
+      hostedModels: [{ rel: "mlx-community/Qwen3-8B-MLX-4bit" }],
+      extraArgs: ["--max-concurrent-requests", "4"],
+      env: { MLX_METAL_MAX_INFLIGHT_PER_STREAM: "1" },
+      restartPolicy: "OnFailure",
+      timeoutSeconds: 120,
+    },
+  };
+
+  // apiKeyRef is a ref name (env:GOLDEN_KEY), never a secret value; readiness
+  // must be /health because apiKeyRef restricts the probe to unauthenticated
+  // llama-server endpoints.
+  const full = {
+    ...valid,
+    metadata: { ...valid.metadata, labels: { tier: "golden" } },
+    spec: {
+      engine: "llamacpp",
+      node: "local",
+      binary: GOLDEN_BIN,
+      endpoint: { host: "127.0.0.1", port: 18082 },
+      hostedModels: [{ rel: "golden/model.gguf", lora_path: "golden/adapters/lora.gguf" }],
+      extraArgs: [],
+      restartPolicy: "Never",
+      timeoutSeconds: 45,
+      apiKeyRef: "env:GOLDEN_KEY",
+      binaryNames: ["llama-server"],
+      readiness: { path: "/health" },
+      priority: 10,
+    },
+  };
+
+  const MINIMAL_HASH =
+    '{"engine":"llamacpp","binary":"/opt/llamactl-golden/bin/llama-server","endpoint":{"host":"127.0.0.1","port":18080},"hostedModels":[{"rel":"golden/model.gguf"}],"extraArgs":[],"resources":null,"restartPolicy":"Always","timeoutSeconds":60,"env":null}';
+  const MINIMAL_SHA256 = "5620982787fd8a1673a6431a85d4d6749951416135fb1bf5c86272494c4aa53f";
+  const OMLX_HASH =
+    '{"engine":"omlx","binary":"/opt/llamactl-golden/bin/omlx","endpoint":{"host":"127.0.0.1","port":18081},"hostedModels":[{"rel":"mlx-community/Qwen3-8B-MLX-4bit"}],"extraArgs":["--max-concurrent-requests","4"],"resources":{"expectedMemoryGiB":24},"restartPolicy":"OnFailure","timeoutSeconds":120,"env":{"MLX_METAL_MAX_INFLIGHT_PER_STREAM":"1"}}';
+  const OMLX_SHA256 = "f6ae90d7ccaf6cc73ed4ee197ddf1d65572a43e0583276d6d981533ef9db73ea";
+  const FULL_HASH =
+    '{"engine":"llamacpp","binary":"/opt/llamactl-golden/bin/llama-server","endpoint":{"host":"127.0.0.1","port":18082},"hostedModels":[{"rel":"golden/model.gguf","lora_path":"golden/adapters/lora.gguf"}],"extraArgs":[],"resources":null,"restartPolicy":"Never","timeoutSeconds":45,"env":null,"apiKeyRef":"env:GOLDEN_KEY"}';
+  const FULL_SHA256 = "eab7ca3a18c7ee8eea0306ebe315a0713efe76742a0a965ed97bdc5f67fbf6e9";
+
+  test.each([
+    ["minimal llamacpp", minimal, MINIMAL_HASH, MINIMAL_SHA256],
+    ["omlx", omlx, OMLX_HASH, OMLX_SHA256],
+    ["hosted llamacpp", full, FULL_HASH, FULL_SHA256],
+  ] as const)(
+    "hashes the %s manifest to the golden literal",
+    (_label, manifest, expectedHash, expectedSha256) => {
+      // Kills: adding a field to the hash object, reordering its keys,
+      // hashing the unparsed spec, or switching the stored value to a
+      // digest instead of canonical JSON.
+      const parsed = ModelHostManifestSchema.safeParse(manifest);
+      expect(parsed.success).toBe(true);
+      if (!parsed.success) return;
+      const { hash, sha256 } = goldenHash(manifest);
+      expect(hash).toBe(expectedHash);
+      expect(hash.startsWith("{")).toBe(true);
+      expect(sha256).toBe(expectedSha256);
+      expect(sha256).toHaveLength(64);
+    },
+  );
+
+  test("explicit defaults hash identically to omitted defaults", () => {
+    // Kills: hashing the raw spec instead of the parsed one — `minimal`
+    // omits extraArgs/restartPolicy/timeoutSeconds, so a raw hash diverges
+    // from the explicit-defaults manifest and this direct comparison fails;
+    // comparing against a golden literal here could not (the literal already
+    // carries the parsed-in defaults).
+    const explicit = {
+      ...minimal,
+      spec: {
+        ...minimal.spec,
+        enabled: true,
+        extraArgs: [],
+        restartPolicy: "Always",
+        timeoutSeconds: 60,
+      },
+    };
+    expect(goldenHash(explicit).hash).toBe(goldenHash(minimal).hash);
+  });
+
+  test("readiness, priority, labels and binaryNames stay outside the hash", () => {
+    // Kills: folding readiness/priority/labels/binaryNames into the hash —
+    // `full` carries all of them, `stripped` omits them, so a hash that
+    // included any of the two-out-of-hash fields would make the direct
+    // comparison fail on its own.
+    const stripped = {
+      ...valid,
+      spec: {
+        engine: "llamacpp",
+        node: "local",
+        binary: GOLDEN_BIN,
+        endpoint: { host: "127.0.0.1", port: 18082 },
+        hostedModels: [{ rel: "golden/model.gguf", lora_path: "golden/adapters/lora.gguf" }],
+        extraArgs: [],
+        restartPolicy: "Never",
+        timeoutSeconds: 45,
+        apiKeyRef: "env:GOLDEN_KEY",
+      },
+    };
+    expect(goldenHash(full).hash).toBe(goldenHash(stripped).hash);
+  });
+
+  test("resources.residentGiB stays outside the hash", () => {
+    // Kills: hashing spec.resources verbatim instead of reshaping it to
+    // expectedMemoryGiB only — `omlx` declares residentGiB, `withoutResident`
+    // omits it, so only the direct comparison distinguishes the two.
+    const withoutResident = {
+      ...omlx,
+      spec: { ...omlx.spec, resources: { expectedMemoryGiB: 24 } },
+    };
+    expect(goldenHash(omlx).hash).toBe(goldenHash(withoutResident).hash);
   });
 });
 
