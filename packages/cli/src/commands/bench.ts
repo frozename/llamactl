@@ -361,7 +361,7 @@ function parseBenchRunArgs(args: string[]): BenchRunArgs | { exit: number } {
  * refusal id. An unresolvable target or a rel with no catalog row returns null,
  * so the bench launches as before; a node with no store file launches as before.
  */
-function benchLaunchRefusal(target: string): string | null {
+export function benchLaunchRefusal(target: string): string | null {
   const rel = targetMod.resolveTarget(target);
   if (rel === null) return null;
   const entry = catalog.findByRel(rel);

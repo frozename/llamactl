@@ -143,4 +143,75 @@ describe("tryAdoptExistingServer", () => {
     expect(pid).toBe(process.pid);
     expect(readServerState(KEY, resolved)?.slotSavePath).toBe("/tmp/live-slots");
   });
+
+  test("records specHash and tunedProfile so a same-spec re-start can adopt", async () => {
+    const pid = await tryAdoptExistingServer({
+      ...base(),
+      tunedProfile: "granite-4b-q4",
+      specHash: '{"rel":"x"}',
+      deps: {
+        probeModelIds: () => Promise.resolve(["granite-mini-3b"]),
+        findListenerPid: () => Promise.resolve(process.pid),
+      },
+    });
+    expect(pid).toBe(process.pid);
+    const state = readServerState(KEY, resolved);
+    expect(state?.specHash).toBe('{"rel":"x"}');
+    expect(state?.tunedProfile).toBe("granite-4b-q4");
+  });
+
+  // #806: the convergence hash is stamped only when the listener's argv is the
+  // desired launch. A wrapper prefix may precede it; extra flags may not, on
+  // either side of the desired argv.
+  const EXPECTED = ["-m", "/models/x.gguf", "--host", "127.0.0.1", "--port", "8086", ...EXTRA];
+  const adoptWithCmdline = async (cmdline: string): Promise<string | undefined> => {
+    const pid = await tryAdoptExistingServer({
+      ...base(),
+      specHash: '{"rel":"x"}',
+      expectedLaunchArgs: EXPECTED,
+      deps: {
+        probeModelIds: () => Promise.resolve(["granite-mini-3b"]),
+        findListenerPid: () => Promise.resolve(process.pid),
+        readProcessCommand: () => Promise.resolve(cmdline),
+      },
+    });
+    expect(pid).toBe(process.pid);
+    return readServerState(KEY, resolved)?.specHash;
+  };
+
+  test("stamps specHash when the listener argv is exactly the desired launch", async () => {
+    expect(await adoptWithCmdline(EXPECTED.join(" "))).toBe('{"rel":"x"}');
+  });
+
+  test("stamps specHash when only a wrapper prefix precedes the desired launch", async () => {
+    expect(await adoptWithCmdline(`llama-server /opt/wrapper.ts ${EXPECTED.join(" ")}`)).toBe(
+      '{"rel":"x"}',
+    );
+  });
+
+  test("omits specHash when the listener adds trailing flags to the desired launch", async () => {
+    expect(
+      await adoptWithCmdline(`/bin/llama-server ${EXPECTED.join(" ")} --ctx-size 4096`),
+    ).toBeUndefined();
+  });
+
+  test("omits specHash when a flag precedes the desired launch", async () => {
+    expect(
+      await adoptWithCmdline(`/bin/llama-server -fa on ${EXPECTED.join(" ")}`),
+    ).toBeUndefined();
+  });
+
+  test("omits specHash when the caller cannot supply the launch spec", async () => {
+    const pid = await tryAdoptExistingServer({
+      ...base(),
+      deps: {
+        probeModelIds: () => Promise.resolve(["granite-mini-3b"]),
+        findListenerPid: () => Promise.resolve(process.pid),
+      },
+    });
+    expect(pid).toBe(process.pid);
+    const state = readServerState(KEY, resolved);
+    expect(state?.specHash).toBeUndefined();
+    expect(state?.tunedProfile).toBeNull();
+  });
 });

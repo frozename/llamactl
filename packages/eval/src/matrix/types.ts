@@ -137,6 +137,7 @@ export const PROVENANCE_UNAVAILABLE_FIELDS = [
   "hf_revision",
   "quant",
   "ctx",
+  "flags",
 ] as const;
 export type ProvenanceField = (typeof PROVENANCE_UNAVAILABLE_FIELDS)[number];
 
@@ -149,7 +150,7 @@ export interface EvalProvenance {
   hf_revision: string | null;
   quant: string | null;
   ctx: number | null;
-  flags: string[];
+  flags: string[] | null;
   host: string;
   /** Per-field reasons a value could not be determined. The invariant is
    *  strict: a field is null <=> this map holds a non-blank reason for it.

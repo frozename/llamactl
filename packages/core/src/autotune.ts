@@ -63,10 +63,22 @@ export interface MaybeTuneAfterPullOptions {
   resolved?: ResolvedEnv;
   env?: NodeJS.ProcessEnv;
   signal?: AbortSignal;
+  /**
+   * Read-only exclusive-group launch gate (#517), injected by callers because
+   * core cannot read the residency store. Returns a refusal string when the
+   * rel's declared-exclusive residency group is occupied, or null to launch.
+   */
+  launchRefusal?: (rel: string) => string | null;
 }
 
 export interface MaybeTuneSkipReason {
-  kind: "not-missing" | "auto-tune-disabled" | "bench-binary-missing" | "profile-exists" | "error";
+  kind:
+    | "not-missing"
+    | "auto-tune-disabled"
+    | "bench-binary-missing"
+    | "profile-exists"
+    | "exclusive-group-occupied"
+    | "error";
   message: string;
 }
 
@@ -77,6 +89,7 @@ export interface MaybeVisionSkipReason {
     | "not-multimodal"
     | "no-mmproj"
     | "record-exists"
+    | "exclusive-group-occupied"
     | "error";
   message: string;
 }
@@ -169,6 +182,14 @@ export async function maybeTuneAfterPull(
     };
   }
 
+  const refusal = opts.launchRefusal?.(opts.rel) ?? null;
+  if (refusal !== null) {
+    return {
+      preset: { ran: false, reason: { kind: "exclusive-group-occupied", message: refusal } },
+      vision: { ran: false, reason: { kind: "auto-vision-disabled", message: "Not evaluated" } },
+    };
+  }
+
   const presetOut = await benchPreset({
     target: opts.rel,
     mode,
@@ -199,6 +220,7 @@ export async function maybeTuneAfterPull(
     ...(opts.runCli !== undefined ? { runCli: opts.runCli } : {}),
     resolved,
     env,
+    launchRefusal: opts.launchRefusal,
     ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
   });
 
@@ -217,6 +239,7 @@ interface MaybeVisionArgs {
   resolved: ResolvedEnv;
   env: NodeJS.ProcessEnv;
   signal?: AbortSignal;
+  launchRefusal?: ((rel: string) => string | null) | undefined;
 }
 
 async function maybeVisionBenchAfterPull(
@@ -272,6 +295,11 @@ async function maybeVisionBenchAfterPull(
         message: `Vision bench record already exists for ${args.rel} (machine=${args.machine} build=${args.build})`,
       },
     };
+  }
+
+  const refusal = args.launchRefusal?.(args.rel) ?? null;
+  if (refusal !== null) {
+    return { ran: false, reason: { kind: "exclusive-group-occupied", message: refusal } };
   }
 
   const out = await benchVision({

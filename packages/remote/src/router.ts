@@ -714,6 +714,7 @@ function serverStartOptions(
     ...(input.binary !== undefined ? { binary: input.binary } : {}),
     ...(input.timeoutSeconds !== undefined ? { timeoutSeconds: input.timeoutSeconds } : {}),
     ...(input.skipTuned !== undefined ? { skipTuned: input.skipTuned } : {}),
+    ...(input.restart !== undefined ? { restart: input.restart } : {}),
     ...(readiness !== undefined ? { readiness } : {}),
     signal: sig,
     onEvent: emit,
@@ -1076,6 +1077,7 @@ const modelHostStartInput = z.object({
   workload: z.string().min(1),
   timeoutSeconds: z.number().int().positive().max(600).optional(),
   manifest: ModelHostManifestSchema.optional(),
+  restart: z.boolean().optional(),
 });
 
 /**
@@ -1661,6 +1663,7 @@ export const ServerStartInputSchema = z.object({
   binary: z.string().optional(),
   timeoutSeconds: z.number().int().positive().max(600).optional(),
   skipTuned: z.boolean().optional(),
+  restart: z.boolean().optional(),
   readiness: ModelHostReadinessSchema.optional(),
 });
 
@@ -2878,6 +2881,7 @@ export const router = t.router({
             key: { name: input.workload },
             ...(input.timeoutSeconds !== undefined ? { timeoutSeconds: input.timeoutSeconds } : {}),
             ...(input.manifest !== undefined ? { manifest: input.manifest } : {}),
+            ...(input.restart !== undefined ? { restart: input.restart } : {}),
             signal: subSignal,
             onEvent: emit,
           }),
@@ -3720,6 +3724,7 @@ export const router = t.router({
           ...(input.profile !== undefined ? { profile: input.profile } : {}),
           signal: sig,
           onEvent: emit,
+          launchRefusal: benchLaunchRefusal,
         });
         if ("error" in result) throw new Error(result.error);
         emit({ type: "done-candidate-test", result });
@@ -3760,6 +3765,7 @@ export const router = t.router({
           wasMissing: input.wasMissing,
           signal: sig,
           onEvent: emit,
+          launchRefusal: benchLaunchRefusal,
         });
         emit({ type: "done-tune", result });
       });

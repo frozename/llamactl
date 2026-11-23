@@ -205,9 +205,14 @@ const waitForExit = async (pid: number, timeoutMs = 3000): Promise<boolean> => {
   return true;
 };
 
-const withoutStartedAt = (state: ServerState | null): Omit<ServerState, "startedAt"> | null => {
+// Retry bookkeeping asserts pid/argv/profile, not the launch-metadata fields
+// that vary per start: `startedAt` always, and `specHash` which is asserted
+// separately for equality between the first launch and the retry (T1).
+const withoutStartedAt = (
+  state: ServerState | null,
+): Omit<ServerState, "startedAt" | "specHash"> | null => {
   if (state === null) return null;
-  const { startedAt: _startedAt, ...rest } = state;
+  const { startedAt: _startedAt, specHash: _specHash, ...rest } = state;
   return rest;
 };
 
@@ -588,6 +593,11 @@ describe("startServer mmproj safe-flag retry bookkeeping", () => {
       const state = readServerState(KEY, resolved);
       expect(withoutStartedAt(state)).toEqual(expectedState(retryPid));
       expect(Date.parse(state!.startedAt)).toBeGreaterThan(Date.parse(firstState!.startedAt));
+      // The retry relaunches the same spec, so its sidecar must carry the
+      // first launch's specHash — a drifted or missing hash would make the
+      // next same-spec start restart the engine instead of adopting it.
+      expect(firstState?.specHash).toBeDefined();
+      expect(state?.specHash).toBe(firstState?.specHash);
 
       const status = await serverStatus(KEY, resolved);
       expect(status.state).toBe("up");

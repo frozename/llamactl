@@ -716,13 +716,12 @@ promotion cells stay `unavailable` until promotion evidence is committed.
 `snapshots/<rev>/` path unless `--hf-revision` is given. `--quant`, `--ctx`
 and `--flags` fill their fields. Each `PROVENANCE_UNAVAILABLE_FIELDS` field
 (`packages/eval/src/matrix/types.ts`) — `engine_version`,
-`engine_commit`, `binary_sha256`, `gguf_sha256`, `hf_revision`, `quant` and
-`ctx` — is either a value or null with a reason in `provenance.unavailable`.
+`engine_commit`, `binary_sha256`, `gguf_sha256`, `hf_revision`, `quant`, `ctx` and `flags` — is either a value or null with a reason in `provenance.unavailable`.
 For example, "gguf path is not under an HF snapshots/<rev>/ directory"
 (`collectHfRevision`, `packages/eval/src/perf/provenance.ts`). `gguf_sha256` hashes only the
 file passed as `--gguf`. Per-shard verification against the HF LFS oid stays
 the manual step in
-[Download, checksum and rollback](#download-checksum-and-rollback).
+[Download, checksum and rollback](#download-checksum-and-rollback). Without `--flags`, `flags` is recorded null with the reason "no --flags given; the launch flags of the engine at <url> are not known".
 
 `gufo` and `kapitsa` are external-only eval engines (`isExternalOnlyEngine`,
 `packages/eval/src/matrix/types.ts`). Eval never boots them; the matrix
@@ -783,7 +782,7 @@ Rows land in the same `perf.sqlite` as `llamactl eval perf` (`defaultPerfDbPath`
 `engine_commit`, `binary_sha256`, `gguf_sha256`, `hf_revision`, `quant` and `ctx`
 are recorded null unless the schedule declares them (see below), each with an
 unavailable reason stating that scheduled suites reach <rel> through the agent
-gateway. SSD I/O, peak RSS and GTT are recorded
+gateway. The launch `flags` are recorded null as well, with the reason `scheduled suites reach <rel> through the agent gateway; the engine launch flags are not known`. SSD I/O, peak RSS and GTT are recorded
 `unavailable` with a reason naming the node. So an eval-record arm that needs
 binary or GGUF provenance should use `llamactl eval perf` with `--binary` or
 `--gguf` on the engine host instead. The provenance `host` is the machine running
