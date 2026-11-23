@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import * as childProcess from "node:child_process";
 import { join } from "node:path";
 
+import type { StartServerResult } from "../src/server.js";
+
+import { resolveEnv } from "../src/env.js";
 import {
   keepAliveLogFile,
   keepAlivePidFile,
@@ -15,6 +18,7 @@ import {
   stopKeepAlive,
 } from "../src/keepAlive.js";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "../src/safe-fs.js";
+import { workloadRuntimeDir } from "../src/workloadRuntime.js";
 import { envForTemp, makeTempRuntime } from "./helpers.js";
 
 describe("keepAlive path helpers", () => {
@@ -255,4 +259,130 @@ describe("runKeepAliveWorker", () => {
     );
     expect(spawnCalls).toBe(0);
   });
+});
+
+describe("runKeepAliveWorker restart latch (#806 phase 2)", () => {
+  let temp: ReturnType<typeof makeTempRuntime>;
+  let originalEnv: NodeJS.ProcessEnv;
+  let env: NodeJS.ProcessEnv;
+  let resolved: ReturnType<typeof resolveEnv>;
+  let fetchSpy: { mockRestore: () => void };
+  const key = { name: "latch-wl" };
+  const target = "Demo/demo.gguf";
+  let healthUp = false;
+
+  const okResult = (): StartServerResult => ({
+    ok: true,
+    pid: 4242,
+    endpoint: "http://127.0.0.1:8080",
+    advertisedEndpoint: "http://127.0.0.1:8080",
+    tunedProfile: null,
+    retried: false,
+  });
+  const failResult = (error: string): StartServerResult => ({
+    ok: false,
+    pid: null,
+    endpoint: "http://127.0.0.1:8080",
+    advertisedEndpoint: "http://127.0.0.1:8080",
+    tunedProfile: null,
+    retried: false,
+    error,
+  });
+
+  beforeEach(() => {
+    temp = makeTempRuntime();
+    originalEnv = { ...process.env };
+    env = envForTemp(temp);
+    for (const [k, v] of Object.entries(env)) {
+      if (v !== undefined) process.env[k] = v;
+    }
+    resolved = resolveEnv(env);
+    healthUp = false;
+    mkdirSync(temp.runtimeDir, { recursive: true });
+    const runtimeDir = workloadRuntimeDir(resolved, key);
+    mkdirSync(runtimeDir, { recursive: true });
+    writeFileSync(join(runtimeDir, "llama-server.pid"), String(process.pid));
+    const healthFetch: typeof fetch = Object.assign(
+      (): Promise<Response> =>
+        healthUp
+          ? Promise.resolve(new Response("ok", { status: 200 }))
+          : Promise.reject(new Error("connection refused")),
+      { preconnect: globalThis.fetch.preconnect },
+    );
+    fetchSpy = spyOn(globalThis, "fetch").mockImplementation(healthFetch);
+  });
+  afterEach(() => {
+    fetchSpy.mockRestore();
+    process.env = originalEnv;
+    temp.cleanup();
+  });
+
+  test("restart stays armed across a failed start and clears only on success", async () => {
+    const seen: (boolean | undefined)[] = [];
+    let call = 0;
+    const controller = new AbortController();
+    const worker = runKeepAliveWorker({
+      key,
+      target,
+      env,
+      resolved,
+      intervalSeconds: 0.02,
+      maxBackoff: 0.05,
+      signal: controller.signal,
+      start: (opts) => {
+        seen.push(opts.restart);
+        call += 1;
+        if (call === 2) return Promise.resolve(failResult("refused by residency fence"));
+        if (call === 3) healthUp = true;
+        return Promise.resolve(okResult());
+      },
+    });
+    let state = readKeepAliveState(resolved);
+    for (let i = 0; i < 500 && !(state?.state === "ready" && (state.restarts ?? 0) >= 2); i += 1) {
+      await sleepWithAbort(0.01);
+      state = readKeepAliveState(resolved);
+    }
+    controller.abort();
+    await worker;
+    // First start is unforced; the drop arms restart; the failed start keeps it
+    // armed; only the successful start clears it (observed via force_restart).
+    expect(seen).toEqual([false, true, true]);
+    expect(state?.force_restart).toBe(false);
+  }, 15000);
+
+  test("a refused forced start keeps restart armed for the next attempt", async () => {
+    const seen: (boolean | undefined)[] = [];
+    let call = 0;
+    const controller = new AbortController();
+    const worker = runKeepAliveWorker({
+      key,
+      target,
+      env,
+      resolved,
+      intervalSeconds: 0.02,
+      maxBackoff: 0.05,
+      signal: controller.signal,
+      start: (opts) => {
+        seen.push(opts.restart);
+        call += 1;
+        if (call === 2) {
+          return Promise.resolve({
+            ...failResult("refused"),
+            refused: { reason: "LeasesActive", active: ["sess-1"] },
+          });
+        }
+        if (call === 3) healthUp = true;
+        return Promise.resolve(okResult());
+      },
+    });
+    let state = readKeepAliveState(resolved);
+    for (let i = 0; i < 500 && !(state?.state === "ready" && (state.restarts ?? 0) >= 2); i += 1) {
+      await sleepWithAbort(0.01);
+      state = readKeepAliveState(resolved);
+    }
+    controller.abort();
+    await worker;
+    expect(seen).toEqual([false, true, true]);
+    expect(state?.force_restart).toBe(false);
+  }, 15000);
 });

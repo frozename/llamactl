@@ -253,6 +253,12 @@ export interface ServerState {
    * Absent keeps today's behaviour.
    */
   readiness?: ModelHostReadiness;
+  /**
+   * Hash of the launch-affecting fields at the time the sidecar was written
+   * (#806 phase 2). A re-start with an unchanged hash adopts the live engine
+   * instead of restarting it; a legacy sidecar without it restarts.
+   */
+  specHash?: string;
 }
 
 export interface ServerStatus {
@@ -563,6 +569,13 @@ export interface StartServerOptions {
    * both files and its refused result even when aborted. The listener is removed before resolving.
    */
   signal?: AbortSignal;
+  /**
+   * Force a replacement even when a live, healthy engine with a matching spec
+   * hash could be adopted (#806 phase 2). Set by the keepAlive worker on the
+   * iteration after it saw the engine's health drop, so a process that answers
+   * /health again before the restart is still replaced rather than adopted.
+   */
+  restart?: boolean;
 }
 
 export interface StartServerResult {
@@ -587,6 +600,12 @@ export interface StartServerResult {
    * unload has been committed; reopening is the router's job.
    */
   refused?: StartResidencyRefusal;
+  /**
+   * Present and true only when a live, healthy engine with an unchanged spec
+   * hash was adopted instead of stopped and respawned (#806 phase 2); a fresh
+   * or drifted start leaves it absent.
+   */
+  adopted?: boolean;
 }
 
 /**
@@ -692,6 +711,17 @@ export async function tryAdoptExistingServer(args: {
   rel: string;
   extraArgs: string[];
   binary: string;
+  tunedProfile?: string | null;
+  specHash?: string;
+  /**
+   * The argv tail (`assembleServerLaunchArgs`, everything after the binary) a
+   * fresh launch of THIS spec would spawn. When supplied, `specHash` is stamped
+   * only if the adopted listener's own command line matches it: a foreign engine
+   * already bound to the port with different argv is recorded WITHOUT a
+   * convergence hash, so the next same-manifest start replaces it instead of
+   * adopting the stale launch (#806). Omit to stamp `specHash` unconditionally.
+   */
+  expectedLaunchArgs?: readonly string[];
   readiness?: ModelHostReadiness;
   deps?: Partial<AdoptDeps>;
 }): Promise<number | null> {
@@ -716,6 +746,10 @@ export async function tryAdoptExistingServer(args: {
   // TOCTOU: the listener may have exited between probe and now.
   if (pid === null || !isProcessAlive(pid)) return null;
   const cmdline = await Promise.resolve(readProcessCommand(pid)).catch(() => null);
+  const argvMatches =
+    args.expectedLaunchArgs === undefined ||
+    launchArgvMatchesLaunchArgs(cmdline, args.expectedLaunchArgs);
+  const adoptedSpecHash = args.specHash !== undefined && argvMatches ? args.specHash : undefined;
   writeServerPid(args.resolved, args.key, pid);
   writeServerState(args.resolved, args.key, {
     rel: args.rel,
@@ -726,7 +760,8 @@ export async function tryAdoptExistingServer(args: {
     binary: args.binary,
     pid,
     startedAt: new Date().toISOString(),
-    tunedProfile: null,
+    tunedProfile: args.tunedProfile ?? null,
+    ...(adoptedSpecHash !== undefined ? { specHash: adoptedSpecHash } : {}),
     ...(args.readiness !== undefined ? { readiness: args.readiness } : {}),
   });
   return pid;
@@ -891,6 +926,26 @@ function startServerError(
   };
 }
 
+/** Build the success result for an adopted (#806 phase 2) `startServer`. */
+function startServerAdopted(
+  resolved: ResolvedEnv,
+  launchEndpoint: StartServerOptions["endpoint"],
+  tunedProfile: string | null,
+  pid: number,
+  onEvent?: (e: ServerEvent) => void,
+): StartServerResult {
+  onEvent?.({ type: "ready", pid, endpoint: endpoint(resolved, launchEndpoint) });
+  return {
+    ok: true,
+    pid,
+    endpoint: endpoint(resolved, launchEndpoint),
+    advertisedEndpoint: advertisedEndpoint(resolved, launchEndpoint),
+    tunedProfile,
+    retried: false,
+    adopted: true,
+  };
+}
+
 interface ResolvedLaunchTarget {
   rel: string;
   modelPath: string;
@@ -973,6 +1028,57 @@ interface PreparedLaunchArgs {
 }
 
 /**
+ * The bench-profile name a launch would resolve, or null when tuned args are
+ * skipped/disabled or no row matches. Shared by `buildLaunchArgs` (which turns
+ * it into argv) and the spec-hash inputs (which hash the resolved name, not
+ * the request), so launch and adoption always agree on the profile.
+ */
+function resolvedTunedProfile(
+  opts: StartServerOptions,
+  rel: string,
+  resolved: ResolvedEnv,
+  env: NodeJS.ProcessEnv,
+  draftResolvedExtraArgs: readonly string[],
+): string | null {
+  if (opts.skipTuned || !useTunedArgsEnabled(env)) return null;
+  const mode = hasMmprojArg(draftResolvedExtraArgs) ? "vision" : defaultModeForRel(rel, resolved);
+  const ctx = ctxForModel(rel, resolved);
+  const build = resolveBuildId(resolved);
+  const machine = machineLabel(resolved);
+  const rows = readBenchProfiles(benchProfileFile(resolved));
+  const hit = findLatestProfile(rows, { machine, rel, mode, ctx, build });
+  return hit === null ? null : hit.profile;
+}
+
+/**
+ * Pure launch-args assembly: profile args (filtered against the user's
+ * extraArgs), then the slot-save-path-resolved extraArgs. No filesystem
+ * writes — `prepareLaunchArgs` adds the slot-dir mkdir on top.
+ */
+function buildLaunchArgs(
+  opts: StartServerOptions,
+  rel: string,
+  resolved: ResolvedEnv,
+  env: NodeJS.ProcessEnv,
+  key: WorkloadKey,
+  draftResolvedExtraArgs: readonly string[],
+): PreparedLaunchArgs {
+  const tunedProfile = resolvedTunedProfile(opts, rel, resolved, env, draftResolvedExtraArgs);
+  const slotPathResolved = resolveSlotSavePathArgs(
+    draftResolvedExtraArgs,
+    resolved.LOCAL_AI_RUNTIME_DIR,
+    key.name,
+  );
+  const profileArgs = serverProfileArgs(tunedProfile ?? "default")
+    .split(/\s+/)
+    .filter(Boolean);
+  const launchArgs: string[] = [];
+  launchArgs.push(...filterProfileArgs(profileArgs, slotPathResolved.args));
+  launchArgs.push(...slotPathResolved.args);
+  return { launchArgs, tunedProfile, slotPathResolved };
+}
+
+/**
  * Tuned-profile lookup. Profile args are skipped when the user has
  * already specified the same flag in extraArgs, so a manifest that
  * sets e.g. `-ub 1024` isn't doubled up with the profile's `-ub 512`.
@@ -985,36 +1091,11 @@ function prepareLaunchArgs(
   key: WorkloadKey,
   draftResolvedExtraArgs: readonly string[],
 ): PreparedLaunchArgs {
-  let tunedProfile: string | null = null;
-  const slotPathResolved = resolveSlotSavePathArgs(
-    draftResolvedExtraArgs,
-    resolved.LOCAL_AI_RUNTIME_DIR,
-    key.name,
-  );
-  if (slotPathResolved.slotSavePath !== null) {
-    mkdirSync(slotPathResolved.slotSavePath, { recursive: true });
+  const prepared = buildLaunchArgs(opts, rel, resolved, env, key, draftResolvedExtraArgs);
+  if (prepared.slotPathResolved.slotSavePath !== null) {
+    mkdirSync(prepared.slotPathResolved.slotSavePath, { recursive: true });
   }
-  const launchArgs: string[] = [];
-  let profileArgs: string[] = [];
-  if (!opts.skipTuned && useTunedArgsEnabled(env)) {
-    const mode = hasMmprojArg(draftResolvedExtraArgs) ? "vision" : defaultModeForRel(rel, resolved);
-    const ctx = ctxForModel(rel, resolved);
-    const build = resolveBuildId(resolved);
-    const machine = machineLabel(resolved);
-    const rows = readBenchProfiles(benchProfileFile(resolved));
-    const hit = findLatestProfile(rows, { machine, rel, mode, ctx, build });
-    if (hit) {
-      tunedProfile = hit.profile;
-      profileArgs = serverProfileArgs(hit.profile).split(/\s+/).filter(Boolean);
-    } else {
-      profileArgs = serverProfileArgs("default").split(/\s+/).filter(Boolean);
-    }
-  } else {
-    profileArgs = serverProfileArgs("default").split(/\s+/).filter(Boolean);
-  }
-  launchArgs.push(...filterProfileArgs(profileArgs, slotPathResolved.args));
-  launchArgs.push(...slotPathResolved.args);
-  return { launchArgs, tunedProfile, slotPathResolved };
+  return prepared;
 }
 
 interface MmprojRetryContext {
@@ -1093,10 +1174,105 @@ function abortedStartResult(
  * ServerState sidecar for a launch startServer performed. Shared by the first launch
  * and the mmproj retry so a new sidecar field is set in exactly one place.
  */
+/**
+ * Hash of the launch-affecting ModelRun fields (#806 phase 2), computed the same
+ * way at launch (`launchedServerState`), at re-start (`adoptTrackedServer`) and
+ * at port-conflict adoption (`handlePortConflict`) so a re-start can tell an
+ * unchanged launch from a drifted one. Covers every input that moves the spawned
+ * argv: the rel, the absolute model path, skipTuned, the resolved tuned profile,
+ * the alias launchBackground injects when extraArgs has none, the raw
+ * extraArgs, the bind host/port and the binary. Deliberately excludes the
+ * readiness probe (out-of-hash, like ModelHost) and env/apiKeyRef, which the
+ * sidecar does not fully capture. Consumers compare the string; they never
+ * inspect its shape.
+ */
+interface ServerSpecHashInput {
+  rel: string;
+  modelPath: string;
+  skipTuned: boolean;
+  tunedProfile: string | null;
+  alias: string | null;
+  extraArgs: readonly string[];
+  host: string;
+  port: string;
+  binary: string;
+}
+
+function computeServerSpecHash(spec: ServerSpecHashInput): string {
+  return JSON.stringify({
+    rel: spec.rel,
+    modelPath: spec.modelPath,
+    skipTuned: spec.skipTuned,
+    tunedProfile: spec.tunedProfile,
+    alias: spec.alias,
+    extraArgs: [...spec.extraArgs],
+    host: spec.host,
+    port: spec.port,
+    binary: spec.binary,
+  });
+}
+
+/**
+ * Every hash input except `rel`, shared by the launch sidecar write and the
+ * adoption/port-conflict hash so the three sites can never drift apart. `alias`
+ * mirrors launchBackground: the configured alias is injected only when the
+ * final argv carries no --alias/-a of its own.
+ */
+function launchSpecHashFields(
+  opts: StartServerOptions,
+  target: ResolvedLaunchTarget,
+  prepared: PreparedLaunchArgs,
+  resolved: ResolvedEnv,
+  launchHost: string,
+  launchPort: number | string,
+): Omit<ServerSpecHashInput, "rel"> {
+  return {
+    modelPath: target.modelPath,
+    skipTuned: opts.skipTuned === true,
+    tunedProfile: prepared.tunedProfile,
+    alias: hasFlag(prepared.launchArgs, "--alias", "-a") ? null : resolved.LLAMA_CPP_SERVER_ALIAS,
+    extraArgs: opts.extraArgs ?? [],
+    host: launchHost,
+    port: String(launchPort),
+    binary: target.bin,
+  };
+}
+
+/**
+ * The spec hash plus the resolved tuned profile for a launch shape, computed
+ * without the slot-dir mkdir side effect of `prepareLaunchArgs`. Used by the
+ * adoption check and the port-conflict adopt, which run before (and instead
+ * of) a real launch.
+ */
+function launchSpecParts(
+  opts: StartServerOptions,
+  target: ResolvedLaunchTarget,
+  resolved: ResolvedEnv,
+  env: NodeJS.ProcessEnv,
+  key: WorkloadKey,
+  launchHost: string,
+  launchPort: number | string,
+): { specHash: string; tunedProfile: string | null; launchArgs: string[] } {
+  const prepared = buildLaunchArgs(
+    opts,
+    target.rel,
+    resolved,
+    env,
+    key,
+    target.draftResolvedExtraArgs,
+  );
+  const specHash = computeServerSpecHash({
+    rel: target.rel,
+    ...launchSpecHashFields(opts, target, prepared, resolved, launchHost, launchPort),
+  });
+  return { specHash, tunedProfile: prepared.tunedProfile, launchArgs: prepared.launchArgs };
+}
+
 function launchedServerState(
   opts: StartServerOptions,
   target: ResolvedLaunchTarget,
   prepared: PreparedLaunchArgs,
+  resolved: ResolvedEnv,
   launchHost: string,
   launchPort: number | string,
   pid: number,
@@ -1112,6 +1288,10 @@ function launchedServerState(
     startedAt: new Date().toISOString(),
     tunedProfile: prepared.tunedProfile,
     ...(opts.readiness !== undefined ? { readiness: opts.readiness } : {}),
+    specHash: computeServerSpecHash({
+      rel: target.rel,
+      ...launchSpecHashFields(opts, target, prepared, resolved, launchHost, launchPort),
+    }),
   };
 }
 
@@ -1397,7 +1577,7 @@ async function retryWithMmprojSafeFlags(
   writeServerState(
     resolved,
     key,
-    launchedServerState(opts, target, prepared, ctx.launchHost, ctx.launchPort, retryPid),
+    launchedServerState(opts, target, prepared, resolved, ctx.launchHost, ctx.launchPort, retryPid),
   );
   const readyResult = await pollReady(
     retryPid,
@@ -1430,6 +1610,97 @@ async function retryWithMmprojSafeFlags(
 }
 
 /**
+ * #806 phase 2: adopt the tracked ModelRun instead of restarting it. A re-start
+ * whose desired launch matches the recorded spec hash, whose tracked pid verifies
+ * `alive` against its pid file, and whose /health answers 200 leaves the running
+ * engine untouched: same pid, the pid and sidecar files left byte-for-byte
+ * intact, `adopted: true`. Ownership is proven by the pid identity check (the
+ * recorded pid must match our binary and rel on argv, so a foreign squatter on
+ * the port is never adopted) rather than an HTTP model probe, which can lag the
+ * launch spec. Returns null to fall through to the normal stop-then-spawn path
+ * on any of: an explicit `restart: true`, a missing sidecar, a legacy sidecar
+ * without a hash, a drifted hash, a pid that is dead or whose identity cannot be
+ * proven (fail closed), or a /health miss (the G8 unhealthy case). Mirrors
+ * ModelHost `adoptUnchangedHost`.
+ */
+async function adoptTrackedServer(
+  opts: StartServerOptions,
+  resolved: ResolvedEnv,
+  key: WorkloadKey,
+  launchEndpoint: StartServerOptions["endpoint"],
+  target: ResolvedLaunchTarget,
+  launchHost: string,
+  launchPort: number | string,
+): Promise<StartServerResult | null> {
+  if (opts.restart === true) return null;
+  // A published registry that is not open (draining or committed-unloaded)
+  // must not get an adopted engine back: adoption would hand
+  // withReopenAfterLoad an "unchanged" result for a workload whose admission
+  // is closed. Decline so the start falls through to the fenced stop/start,
+  // which reopens admission only through a real load.
+  const registry = getResidencyLeaseRegistry();
+  if (registry !== null && registry.snapshot(key.name).phase !== "open") return null;
+  const sidecar = readServerState(key, resolved);
+  if (sidecar === null) return null;
+  const { specHash: currentHash } = launchSpecParts(
+    opts,
+    target,
+    resolved,
+    opts.env ?? process.env,
+    key,
+    launchHost,
+    launchPort,
+  );
+  if (sidecar.specHash === undefined || sidecar.specHash !== currentHash) return null;
+  const verdict = verifyPidFile(
+    pidFile(resolved, key),
+    sidecar.pid,
+    trackedStopIdentity(resolved, key, opts.identity),
+  );
+  if (verdict !== "alive") return null;
+  const health = await probeHealthEndpoint(launchHost, Number(launchPort), {
+    timeoutMs: ADOPT_PROBE_TIMEOUT_MS,
+  });
+  if (!health.reachable) return null;
+  if (!isProcessAlive(sidecar.pid)) return null;
+  return startServerAdopted(
+    resolved,
+    launchEndpoint,
+    sidecar.tunedProfile,
+    sidecar.pid,
+    opts.onEvent,
+  );
+}
+
+/**
+ * Pre-start gate: adopt the tracked engine when its spec is unchanged and it is
+ * healthy (#806 phase 2), otherwise stop any prior instance under the residency
+ * lease fence. Returns a result the caller returns verbatim (an adopted result,
+ * or a stop refusal) or null to proceed to spawn.
+ */
+async function stopOrAdoptBeforeStart(
+  opts: StartServerOptions,
+  resolved: ResolvedEnv,
+  key: WorkloadKey,
+  launchEndpoint: StartServerOptions["endpoint"],
+  target: ResolvedLaunchTarget,
+  launchHost: string,
+  launchPort: number | string,
+): Promise<StartServerResult | null> {
+  const adopted = await adoptTrackedServer(
+    opts,
+    resolved,
+    key,
+    launchEndpoint,
+    target,
+    launchHost,
+    launchPort,
+  );
+  if (adopted !== null) return adopted;
+  return await stopBeforeStart(opts, resolved, key, launchEndpoint);
+}
+
+/**
  * Pre-flight port-collision check. After our own stopServer, the
  * configured port should be free. If something still answers on
  * /health, it's a foreign process (Colima docker forwards, an old
@@ -1452,7 +1723,25 @@ async function handlePortConflict(
   // Something already answers on our endpoint. If it's serving OUR model,
   // adopt it (record pid + state so it's managed + routable) instead of
   // failing — a spawn could not win the held port anyway. Only a genuine
-  // foreign listener falls through to the error.
+  // foreign listener falls through to the error. The sidecar must carry the
+  // same specHash a fresh launch would write, or the next same-spec start
+  // would bounce this engine instead of adopting it.
+  const specParts = launchSpecParts(
+    opts,
+    target,
+    resolved,
+    opts.env ?? process.env,
+    opts.key,
+    launchHost,
+    launchPort,
+  );
+  const expectedLaunchArgs = assembleServerLaunchArgs(
+    target.modelPath,
+    resolved,
+    specParts.launchArgs,
+    launchHost,
+    launchPort,
+  );
   const adoptedPid = await tryAdoptExistingServer({
     resolved,
     key: opts.key,
@@ -1462,6 +1751,9 @@ async function handlePortConflict(
     rel: target.rel,
     extraArgs: opts.extraArgs ?? [],
     binary: target.bin,
+    tunedProfile: specParts.tunedProfile,
+    specHash: specParts.specHash,
+    expectedLaunchArgs,
     ...(opts.readiness !== undefined ? { readiness: opts.readiness } : {}),
   });
   if (adoptedPid !== null) {
@@ -1494,7 +1786,7 @@ async function launchAndRecordServer(
   writeServerState(
     resolved,
     opts.key,
-    launchedServerState(opts, target, prepared, launchHost, launchPort, pid),
+    launchedServerState(opts, target, prepared, resolved, launchHost, launchPort, pid),
   );
   return pid;
 }
@@ -1553,9 +1845,18 @@ async function startServerUnwrapped(opts: StartServerOptions): Promise<StartServ
   if ("result" in validation) return validation.result;
   const { rel } = validation;
 
-  // Stop any existing instance under the residency lease fence (see stopBeforeStart).
-  const stopRefusal = await stopBeforeStart(opts, resolved, key, launchEndpoint);
-  if (stopRefusal) return stopRefusal;
+  // #806 phase 2: try to adopt a live, healthy, same-spec tracked engine before
+  // any teardown, then fall through to the lease-fenced stop (see stopBeforeStart).
+  const preflight = await stopOrAdoptBeforeStart(
+    opts,
+    resolved,
+    key,
+    launchEndpoint,
+    validation,
+    launchHost,
+    launchPort,
+  );
+  if (preflight !== null) return preflight;
 
   const conflictResult = await handlePortConflict(
     opts,
@@ -1731,29 +2032,60 @@ export function hostBindRefusal(
   return refuseHostBind(args, allowExternalBind);
 }
 
+// Daemon-injected defaults: only prepended when the caller's args don't already
+// specify them, so a manifest's `--host 0.0.0.0` overrides the env-default
+// `--host 127.0.0.1` instead of producing a duplicate that some llama-server
+// versions reject. `-m` is always set from the resolved model path; user-side
+// overrides for the model path aren't a supported pattern. Extracted so the
+// port-conflict adopt can reproduce the exact argv a fresh launch would spawn.
+function assembleServerLaunchArgs(
+  modelPath: string,
+  resolved: ResolvedEnv,
+  args: readonly string[],
+  host: string | undefined,
+  port: string | number | undefined,
+): string[] {
+  return [
+    "-m",
+    modelPath,
+    ...(hasFlag(args, "--alias", "-a") ? [] : ["--alias", resolved.LLAMA_CPP_SERVER_ALIAS]),
+    ...(hasFlag(args, "--host") ? [] : ["--host", host ?? resolved.LLAMA_CPP_HOST]),
+    ...(hasFlag(args, "--port") ? [] : ["--port", String(port ?? resolved.LLAMA_CPP_PORT)]),
+    ...(hasFlag(args, "-ngl", "--n-gpu-layers", "--gpu-layers") ? [] : ["-ngl", "999"]),
+    ...args,
+  ];
+}
+
+// True when a live listener's command line is the tail of the argv a fresh
+// launch of THIS spec would spawn. The engine is exec'd through a wrapper (argv0
+// `llama-server` + the resolved script path), so the desired token sequence only
+// has to match a trailing window of the reported command line, not its prefix.
+function launchArgvMatchesLaunchArgs(
+  cmdline: string | null | undefined,
+  expectedArgs: readonly string[],
+): boolean {
+  if (typeof cmdline !== "string") return false;
+  const normalized = cmdline.split(/\s+/).join(" ").trim();
+  const expected = expectedArgs.join(" ");
+  if (normalized === expected) return true;
+  if (!normalized.endsWith(" " + expected)) return false;
+  // Only a wrapper prefix (argv0, a script path) may precede the daemon argv. A
+  // flag token there would change the launch, so the listener is not ours.
+  const prefix = normalized.slice(0, normalized.length - expected.length - 1).split(" ");
+  return !prefix.some((token) => token.startsWith("-"));
+}
+
 async function launchBackground(opts: LaunchArgs): Promise<number> {
   const { openSync, closeSync } = await import("node:fs");
   ensureWorkloadRuntimeDir(opts.resolved, opts.key);
   const logFd = openSync(serverLog(opts.resolved, opts.key), "a");
-  // Daemon-injected defaults: only prepended when the user's args don't
-  // already specify them, so a manifest's `--host 0.0.0.0` overrides the
-  // env-default `--host 127.0.0.1` instead of producing a duplicate that
-  // some llama-server versions reject. `-m` is always set from the
-  // resolved model path; user-side overrides for the model path aren't
-  // a supported pattern.
-  const fullArgs: string[] = [
-    "-m",
+  const fullArgs = assembleServerLaunchArgs(
     opts.modelPath,
-    ...(hasFlag(opts.args, "--alias", "-a")
-      ? []
-      : ["--alias", opts.resolved.LLAMA_CPP_SERVER_ALIAS]),
-    ...(hasFlag(opts.args, "--host") ? [] : ["--host", opts.host ?? opts.resolved.LLAMA_CPP_HOST]),
-    ...(hasFlag(opts.args, "--port")
-      ? []
-      : ["--port", String(opts.port ?? opts.resolved.LLAMA_CPP_PORT)]),
-    ...(hasFlag(opts.args, "-ngl", "--n-gpu-layers", "--gpu-layers") ? [] : ["-ngl", "999"]),
-    ...opts.args,
-  ];
+    opts.resolved,
+    opts.args,
+    opts.host,
+    opts.port,
+  );
   validateHostBind(fullArgs, opts.allowExternalBind);
   const child = spawn(opts.bin, fullArgs, {
     stdio: ["ignore", logFd, logFd],
