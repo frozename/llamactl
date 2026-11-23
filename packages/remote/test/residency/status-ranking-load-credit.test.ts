@@ -155,8 +155,11 @@ function rankingReadoutExport(): ResidencyRankingReadoutFn | undefined {
 
 // One row per case the credit rule separates: a loading 20s ago (the
 // only credited row), b warming 70s ago (overdue), c ready, d warming
-// 5s in the future, e downloaded and f loading exactly one default
-// expected load ago — the window's upper bound, which gets no credit.
+// 5s in the future, e downloaded, f loading exactly one default expected
+// load ago — the window's upper bound, which gets no credit — and g
+// warming stamped exactly at nowMs, the window's lower bound: the
+// read-out must not list it (elapsed is not strictly positive) while the
+// live signal still charges it the full default.
 const LOAD_LIFECYCLE: ResidencyStateRecord[] = [
   lifecycleRow("a", "loading", null, NOW_MS - 20_000),
   lifecycleRow("b", "warming", null, NOW_MS - 70_000),
@@ -164,6 +167,7 @@ const LOAD_LIFECYCLE: ResidencyStateRecord[] = [
   lifecycleRow("d", "warming", null, NOW_MS + 5_000),
   lifecycleRow("e", "downloaded"),
   lifecycleRow("f", "loading", null, NOW_MS - DEFAULT_LOAD_MS),
+  lifecycleRow("g", "warming", null, NOW_MS),
 ];
 
 const LOAD_STORE: ResidencyStoreSnapshot = {
@@ -183,8 +187,10 @@ const A_LOADING_STORE: ResidencyStoreSnapshot = {
 describe("residency ranking load-credit read-out (#519)", () => {
   test("LC1: only rows the live signal credits are listed", () => {
     // Kills: the loadCredited field missing; overdue, future,
-    // fully-elapsed (upper bound) or other-state rows being listed;
-    // expectedReadyAtMs not being updatedAtMs + defaultExpectedLoadMs.
+    // fully-elapsed (upper bound) or other-state rows being listed; the
+    // lower-bound row g stamped exactly at nowMs being listed (elapsed
+    // <= 0 must reject it); expectedReadyAtMs not being updatedAtMs +
+    // defaultExpectedLoadMs.
     const readoutFn = rankingReadoutExport();
     expect(typeof readoutFn).toBe("function");
     if (readoutFn === undefined) return;
@@ -196,6 +202,8 @@ describe("residency ranking load-credit read-out (#519)", () => {
     expect(readout).not.toBeNull();
     if (readout === null) return;
     expect(readout.loadCredited).toEqual([{ model: "a", expectedReadyAtMs: NOW_MS + 40_000 }]);
+    const creditedModels = (readout.loadCredited ?? []).map((entry) => entry.model);
+    expect(creditedModels).not.toContain("g");
   });
 
   test("LC2: loadCredited sorts by model and keeps warming rows", () => {
@@ -223,10 +231,12 @@ describe("residency ranking load-credit read-out (#519)", () => {
   test("LC3: loadCredited matches the live inFlightLoadSignal exactly", () => {
     // Kills: the read-out diverging from inFlightLoadSignal — a listed
     // entry whose remaining load differs from the signal, an unlisted
-    // row the signal still credits below the default, or the window's
-    // upper bound loosened (`elapsed >= default` mutated to `>`), which
-    // would credit the fully-elapsed row f zero on the live path and
-    // list it in the read-out.
+    // row the signal still credits below the default, the window's upper
+    // bound loosened (`elapsed >= default` mutated to `>`), which would
+    // credit the fully-elapsed row f zero on the live path and list it
+    // in the read-out, and the lower bound loosened (`since >= nowMs`
+    // mutated to `>`), which drops the row g stamped exactly at nowMs to
+    // no charge instead of the full default.
     const readoutFn = rankingReadoutExport();
     expect(typeof readoutFn).toBe("function");
     if (readoutFn === undefined) return;
@@ -253,6 +263,11 @@ describe("residency ranking load-credit read-out (#519)", () => {
     const expectedLoadMs = signals.expectedLoadMs;
     expect(typeof expectedLoadMs).toBe("function");
     if (expectedLoadMs === undefined) return;
+    // The lower-bound row g (stamped exactly at nowMs) is not listed, but
+    // the live signal must still charge it the full default. A strict
+    // equality is required: the lenient check below would accept the
+    // mutant's undefined.
+    expect(expectedLoadMs(rankingAd("g"))).toBe(DEFAULT_LOAD_MS);
     for (const entry of credited) {
       expect(expectedLoadMs(rankingAd(entry.model))).toBe(entry.expectedReadyAtMs - NOW_MS);
     }
