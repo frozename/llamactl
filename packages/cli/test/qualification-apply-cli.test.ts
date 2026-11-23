@@ -262,6 +262,23 @@ describe("#518 qualification apply", () => {
     expect(plainParsed["applied"]).toBeNull();
   });
 
+  // Kills: statusCommand dropping the `applied` line from the text output that
+  // docs/dynamic-fleet-models.md (Overrides) says `status <rel>` prints.
+  test("status text prints the applied row, and '-' when there is none", () => {
+    const { exp, plain } = qualFixtures();
+    const { evidenceFile, policyFile } = inputs(fullEvidence(), autoApplyPolicy());
+    const applied = applyRel(exp, evidenceFile, policyFile, ["--author", "ops"]);
+    expect(applied.code).toBe(0);
+
+    const r = runCli(["qualification", "status", exp], qual.env);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toMatch(/^applied\tcandidate \(ops\): \S/m);
+
+    const plainStatus = runCli(["qualification", "status", plain], qual.env);
+    expect(plainStatus.code).toBe(0);
+    expect(plainStatus.stdout).toMatch(/^applied\t-$/m);
+  });
+
   // Kills: unapply deleting the wrong action.
   test("unapply removes the applied row and a second unapply fails", () => {
     const { exp } = qualFixtures();
