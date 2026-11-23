@@ -51,6 +51,12 @@ export interface CandidateTestOptions {
   resolved?: ResolvedEnv;
   env?: NodeJS.ProcessEnv;
   signal?: AbortSignal;
+  /**
+   * Read-only exclusive-group launch gate (#517), injected by callers because
+   * core cannot read the residency store. Returns a refusal string when the
+   * rel's declared-exclusive residency group is occupied, or null to launch.
+   */
+  launchRefusal?: (rel: string) => string | null;
 }
 
 export interface CandidateTestStep<T> {
@@ -105,6 +111,9 @@ async function runPresetStep(
       reason: `Reusing tuned profile for ${key.rel} (mode=${key.mode} ctx=${key.ctx} build=${key.build})`,
     };
   }
+
+  const refusal = opts.launchRefusal?.(key.rel) ?? null;
+  if (refusal !== null) return { ran: false, reason: refusal };
 
   const out = await benchPreset({
     target: key.rel,
@@ -170,6 +179,9 @@ async function runVisionStep(
   if (existing) {
     return { ran: false, reason: `Reusing vision bench record for ${ctx.rel}` };
   }
+
+  const refusal = opts.launchRefusal?.(ctx.rel) ?? null;
+  if (refusal !== null) return { ran: false, reason: refusal };
 
   const out = await benchVision({
     target: ctx.rel,
