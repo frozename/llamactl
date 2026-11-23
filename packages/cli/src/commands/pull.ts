@@ -7,6 +7,7 @@ import {
   matchDoneEvent,
   subscribeRemote,
 } from "../dispatcher.js";
+import { benchLaunchRefusal } from "./bench.js";
 
 const USAGE = `Usage: llamactl pull <subcommand>
 
@@ -161,6 +162,7 @@ async function runAutotuneAfterPull(
       rel,
       wasMissing,
       onEvent: forwardStream,
+      launchRefusal: benchLaunchRefusal,
     });
   }
   try {
