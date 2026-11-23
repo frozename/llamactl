@@ -76,7 +76,8 @@
  *   `loadCostMs` is inert without `signals.resident`;
  * - the clock is read inside the callback at rank time, so the 5s snapshot
  *   cache cannot freeze it;
- * - the readout does not list the credit yet;
+ * - the ranking status read-out lists each still-credited row as a
+ *   `loadCredited` entry (Part of #519);
  * - ranking only orders candidates.
  *
  * Part of #519: `residencyRankingReadout` is the status read-out of the
@@ -321,6 +322,7 @@ export interface ResidencyRankingReadout {
   cooldownCharged: { model: string; untilMs: number }[];
   drainTier: string[];
   degradedTier: string[];
+  loadCredited: { model: string; expectedReadyAtMs: number }[];
 }
 
 function operationalStateSignal(
@@ -345,6 +347,17 @@ function inFlightUpdatedAtByDeployment(
   return inFlight;
 }
 
+// The strict credited condition the status read-out reports: the remaining
+// expected load only while the row is strictly inside its credit window. The
+// live signal also charges the full default for a future timestamp
+// (elapsed <= 0), which the read-out does not list.
+function inFlightCreditMs(sinceMs: number, nowMs: number): number | undefined {
+  const defaultExpectedLoadMs = routingRanking.DEFAULT_RANKING_WEIGHTS.defaultExpectedLoadMs;
+  const elapsed = nowMs - sinceMs;
+  if (elapsed <= 0 || elapsed >= defaultExpectedLoadMs) return undefined;
+  return defaultExpectedLoadMs - elapsed;
+}
+
 function inFlightLoadSignal(input: {
   lifecycle: readonly ResidencyStateRecord[];
   nodeId: string;
@@ -357,9 +370,9 @@ function inFlightLoadSignal(input: {
     if (ad.ownerNodeId !== input.nodeId) return undefined;
     const since = inFlight.get(ad.deploymentId);
     if (since === undefined) return undefined;
-    const elapsed = input.now() - since;
-    if (elapsed >= defaultExpectedLoadMs) return undefined;
-    return Math.min(defaultExpectedLoadMs, defaultExpectedLoadMs - elapsed);
+    const nowMs = input.now();
+    if (since >= nowMs) return defaultExpectedLoadMs;
+    return inFlightCreditMs(since, nowMs);
   };
 }
 
@@ -534,6 +547,31 @@ function readoutTierModels(
   return models.sort();
 }
 
+// One entry per model whose in-flight row the live `expectedLoadMs` signal
+// still credits at `nowMs` — the same `inFlightUpdatedAtByDeployment` map and
+// `inFlightCreditMs` window the signal reads, so the two cannot diverge.
+// `expectedReadyAtMs` is the row's `updatedAtMs` plus the default expected
+// load: the instant the remaining credit reaches zero.
+function readoutLoadCredited(input: {
+  lifecycle: readonly ResidencyStateRecord[];
+  nowMs: number;
+}): { model: string; expectedReadyAtMs: number }[] {
+  const inFlight = inFlightUpdatedAtByDeployment(input.lifecycle, READOUT_NODE_ID);
+  if (inFlight.size === 0) return [];
+  const defaultExpectedLoadMs = routingRanking.DEFAULT_RANKING_WEIGHTS.defaultExpectedLoadMs;
+  const credited: { model: string; expectedReadyAtMs: number }[] = [];
+  const seen = new Set<string>();
+  for (const row of input.lifecycle) {
+    if (seen.has(row.model)) continue;
+    const since = inFlight.get(residentDeploymentId(READOUT_NODE_ID, row.model));
+    if (since === undefined) continue;
+    seen.add(row.model);
+    if (inFlightCreditMs(since, input.nowMs) === undefined) continue;
+    credited.push({ model: row.model, expectedReadyAtMs: since + defaultExpectedLoadMs });
+  }
+  return credited.sort((a, b) => (a.model < b.model ? -1 : a.model > b.model ? 1 : 0));
+}
+
 /**
  * The ranking signals `residencyRankingInputs` feeds the ranker, read at model
  * level. The policy resolves exactly as in `residencyRankingInputs`; every
@@ -544,12 +582,17 @@ function readoutTierModels(
  * composed switch-cooldown/min-residency instants per non-ready lifecycle-row
  * model via `switchCooldownUntilMs` and `minResidencyHoldSignal`; `drainTier`
  * and `degradedTier` list the sorted operational-state marks via
- * `operationalStates`. When `residentPreference` and `coldLoadPenaltyMs` are
- * both 0 the ranker emits no `resident`, `residencyKnown` or `drainMs`, so
- * `resident` and `drainCharged` are empty while the cooldown and tier fields
- * still report. A local workload with no lifecycle row is never listed, but the
- * live ranker still charges it the switch cooldown (which `switchGates`
- * reports). This is a status read-out: it never ranks or mutates anything.
+ * `operationalStates`; `loadCredited` lists the sorted `{ model,
+ * expectedReadyAtMs }` entries for `loading`/`warming` rows the live
+ * `expectedLoadMs` signal still credits at `nowMs`, via
+ * `inFlightUpdatedAtByDeployment` and `inFlightCreditMs`. When
+ * `residentPreference` and `coldLoadPenaltyMs` are both 0 the ranker emits no
+ * `resident`, `residencyKnown`, `drainMs` or `expectedLoadMs`, so `resident`,
+ * `drainCharged` and `loadCredited` are empty while the cooldown and tier
+ * fields still report. A local workload with no lifecycle row is never
+ * listed, but the live ranker still charges it the switch cooldown (which
+ * `switchGates` reports). This is a status read-out: it never ranks or
+ * mutates anything.
  */
 export function residencyRankingReadout(input: {
   residency: NodeRunResidency | null | undefined;
@@ -574,6 +617,7 @@ export function residencyRankingReadout(input: {
         occupantsByGroup: occupyingModelsByGroup(input.lifecycle),
       })
     : new Set<string>();
+  const nowMs = input.nowMs ?? Date.now();
   return {
     residentPreference: resolved.residentPreference,
     coldLoadPenaltyMs: resolved.coldLoadPenaltyMs,
@@ -586,10 +630,13 @@ export function residencyRankingReadout(input: {
       minResidencyMs: resolved.minResidencySeconds * 1000,
       nodeName: input.nodeName,
       lastSucceededAtMs: input.lastSucceededAtMs,
-      nowMs: input.nowMs ?? Date.now(),
+      nowMs,
     }),
     drainTier: readoutTierModels(input.lifecycle, "draining"),
     degradedTier: readoutTierModels(input.lifecycle, "failed"),
+    loadCredited: residentSetEmitted
+      ? readoutLoadCredited({ lifecycle: input.lifecycle, nowMs })
+      : [],
   };
 }
 
