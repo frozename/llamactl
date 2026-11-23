@@ -479,11 +479,13 @@ evidence against the policy and records the transition as an `applied` row
 through `writeAppliedStage`, gated by the policy's `autoApply`: without it
 apply reports `proposed` and writes nothing, and a `none` decision is
 `skipped`, also writing nothing; `llamactl qualification unapply <rel>`
-removes the applied row. `llamactl qualification status <rel>` and
-`llamactl qualification list` report the catalog stage, the pin, the
-freeze, the applied row, `effectiveStage` and the routing stage. The
-overrides file is node-local, so every subcommand refuses a non-local
-`--node` target.
+removes the applied row. `llamactl qualification status <rel>` prints the
+effective, catalog, pin, freeze and applied rows; `llamactl qualification
+status <rel> --json` and `llamactl qualification list --json` report the
+catalog stage, the pin, the freeze, the applied row (`null` when absent,
+consistent with pin and freeze), `effectiveStage` and the routing stage;
+the `list` text output omits the applied row. The overrides file is
+node-local, so every subcommand refuses a non-local `--node` target.
 
 ## Exclusive-window runbook
 

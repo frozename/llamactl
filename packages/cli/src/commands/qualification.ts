@@ -174,7 +174,7 @@ interface StatusView {
   freeze: OverrideView | null;
   effective: EffectiveStage | null;
   routingStage: string | null;
-  applied?: OverrideView;
+  applied: OverrideView | null;
 }
 
 interface GroupedOverrides {
@@ -256,7 +256,7 @@ function statusFor(ctx: QualContext, rel: string): StatusView {
     freeze: grouped.freeze === undefined ? null : overrideView(grouped.freeze),
     effective: computeEffective(declaredFor(ctx, rel, grouped), grouped.pin),
     routingStage: ctx.routingStages.get(rel) ?? null,
-    ...(grouped.applied === undefined ? {} : { applied: overrideView(grouped.applied) }),
+    applied: grouped.applied === undefined ? null : overrideView(grouped.applied),
   };
 }
 
@@ -297,7 +297,7 @@ function statusCommand(rest: string[]): number {
     status.pin === null ? "-" : `${status.pin.stage} (${status.pin.author}): ${status.pin.reason}`;
   const freeze = status.freeze === null ? "-" : `${status.freeze.author}: ${status.freeze.reason}`;
   const applied =
-    status.applied === undefined
+    status.applied === null
       ? "-"
       : `${status.applied.stage} (${status.applied.author}): ${status.applied.reason}`;
   process.stdout.write(`${rel}\t${status.effective?.stage ?? "unstaged"}\n`);
@@ -494,11 +494,24 @@ interface ApplyOutcome {
 }
 
 /**
+ * Detail for a non-Zod error escaping the writer: an IO failure on the
+ * overrides path (ENOTDIR under a regular file, an unwritable dir), not
+ * a validation refusal.
+ */
+function writeFailureDetail(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  return typeof err === "string" ? err : "unknown write failure";
+}
+
+/**
  * Run the evidence/policy evaluation for one verb. `apply` injects
  * `writeAppliedStage`, whose Zod refusal is recorded here rather than
  * escaping as (or being mistaken for) a policy error: the writer
  * validates before any IO, so a recorded failure means nothing was
- * written (#518).
+ * written (#518). The rethrown non-Zod write errors are handled here
+ * too: they become a clean `cannot record applied stage` message
+ * instead of a stack trace, so an IO failure never reads as a
+ * successful apply (#518 review).
  */
 function runEvaluation(
   verb: ProposalVerb,
@@ -521,7 +534,12 @@ function runEvaluation(
           }
         }
       : undefined;
-  const result = evaluateProposal(input, writer);
+  let result: Outcome<ProposeResult>;
+  try {
+    result = evaluateProposal(input, writer);
+  } catch (err) {
+    return { ok: false, message: `cannot record applied stage: ${writeFailureDetail(err)}` };
+  }
   if (!result.ok) return result;
   return { ok: true, value: { ...result.value, recordFailure } };
 }

@@ -237,7 +237,9 @@ describe("#518 qualification apply", () => {
     expect(rows[0]!.stage).toBe("degraded");
   });
 
-  // Kills: computeEffective/statusFor ignoring the applied row.
+  // Kills: computeEffective/statusFor ignoring the applied row, and
+  // status --json dropping the applied key when absent (pin and freeze
+  // emit null there, so applied must too).
   test("status --json reports the applied row, effective and routing stages", () => {
     const { exp, plain } = qualFixtures();
     const { evidenceFile, policyFile } = inputs(fullEvidence(), autoApplyPolicy());
@@ -255,7 +257,9 @@ describe("#518 qualification apply", () => {
 
     const plainStatus = runCli(["qualification", "status", plain, "--json"], qual.env);
     expect(plainStatus.code).toBe(0);
-    expect("applied" in parseJsonRecord(plainStatus.stdout)).toBe(false);
+    const plainParsed = parseJsonRecord(plainStatus.stdout);
+    expect("applied" in plainParsed).toBe(true);
+    expect(plainParsed["applied"]).toBeNull();
   });
 
   // Kills: unapply deleting the wrong action.
@@ -308,5 +312,29 @@ describe("#518 qualification apply", () => {
     expect(r.stderr).not.toContain("invalid policy");
     expect(r.stderr).not.toContain("    at ");
     expect(existsSync(qual.overridesFile)).toBe(false);
+  });
+
+  // Kills (P8): the writer swallowing a non-Zod write error. A blocked
+  // overrides path (a path component under a regular file) must exit
+  // nonzero with a clean `qualification apply:` line, never an
+  // 'applied' claim with exit 0 and no row.
+  test("apply reports a blocked overrides path without claiming an apply", () => {
+    const { exp } = qualFixtures();
+    const blockedDir = join(qual.devStorage, "blocker.tsv");
+    writeFileSync(blockedDir, "");
+    const blockedEnv: NodeJS.ProcessEnv = {
+      ...qual.env,
+      [OVERRIDES_FILE_ENV]: join(blockedDir, "q.tsv"),
+    };
+    const { evidenceFile, policyFile } = inputs(fullEvidence(), autoApplyPolicy());
+    const r = runCli(
+      ["qualification", "apply", exp, "--evidence", evidenceFile, "--policy", policyFile],
+      blockedEnv,
+    );
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("qualification apply: cannot record applied stage:");
+    expect(r.stderr).not.toContain("    at ");
+    expect(r.stdout).not.toContain("apply: applied");
+    expect(existsSync(join(blockedDir, "q.tsv"))).toBe(false);
   });
 });
