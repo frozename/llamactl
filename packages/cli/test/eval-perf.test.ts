@@ -1059,3 +1059,64 @@ describe("#521 eval perf GTT reader status", () => {
     }
   });
 });
+
+describe("#521 eval perf launch flags", () => {
+  test("no --flags records provenance.flags null with the engine-url reason", async () => {
+    // Kills: splitFlags returning [] for an absent --flags.
+    const prov = provenanceFakes({});
+    const run = fakeRunPerfSuite();
+    perfSeams()({
+      platform: "darwin",
+      fetchImpl: fakeEngineFetch(["m"]),
+      provenanceReaders: prov.readers,
+      runPerfSuite: run.runPerfSuite,
+    });
+    const dbPath = join(tmp, "perf.sqlite");
+
+    const { result } = await captureProcessStreams(() =>
+      runEval(perfArgv(dbPath, ["--url", LOOPBACK_URL, "--engine", "llamacpp", "--model", "m"])),
+    );
+
+    expect(result).toBe(0);
+    expect(run.calls).toHaveLength(1);
+    const provenance = recordField(runOpts(run.calls[0]), "provenance");
+    expect(provenance["flags"]).toBeNull();
+    const unavailable = recordField(provenance, "unavailable");
+    expect(unavailable["flags"]).toBe(
+      `no --flags given; the launch flags of the engine at ${LOOPBACK_URL} are not known`,
+    );
+  });
+
+  test("guard: --flags records the split list with no unavailable entry", async () => {
+    const prov = provenanceFakes({});
+    const run = fakeRunPerfSuite();
+    perfSeams()({
+      platform: "darwin",
+      fetchImpl: fakeEngineFetch(["m"]),
+      provenanceReaders: prov.readers,
+      runPerfSuite: run.runPerfSuite,
+    });
+    const dbPath = join(tmp, "perf.sqlite");
+
+    const { result } = await captureProcessStreams(() =>
+      runEval(
+        perfArgv(dbPath, [
+          "--url",
+          LOOPBACK_URL,
+          "--engine",
+          "llamacpp",
+          "--model",
+          "m",
+          "--flags=-ngl 99",
+        ]),
+      ),
+    );
+
+    expect(result).toBe(0);
+    expect(run.calls).toHaveLength(1);
+    const provenance = recordField(runOpts(run.calls[0]), "provenance");
+    expect(provenance["flags"]).toEqual(["-ngl", "99"]);
+    const unavailable = recordField(provenance, "unavailable");
+    expect("flags" in unavailable).toBe(false);
+  });
+});
