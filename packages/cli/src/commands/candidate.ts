@@ -9,6 +9,7 @@ import {
   subscribeRemote,
 } from "../dispatcher.js";
 import { required } from "../required.js";
+import { benchLaunchRefusal } from "./bench.js";
 
 const USAGE = `Usage: llamactl candidate <subcommand>
 
@@ -151,6 +152,7 @@ async function runTest(args: string[]): Promise<number> {
       repo,
       ...omitUndefined({ file, profile }),
       onEvent: forwardStream,
+      launchRefusal: benchLaunchRefusal,
     });
   } else {
     const remote = await runCandidateTestRemote(repo, file, profile);
