@@ -371,8 +371,8 @@ function inFlightLoadSignal(input: {
     const since = inFlight.get(ad.deploymentId);
     if (since === undefined) return undefined;
     const nowMs = input.now();
-    if (nowMs - since >= defaultExpectedLoadMs) return undefined;
-    return inFlightCreditMs(since, nowMs) ?? defaultExpectedLoadMs;
+    if (since >= nowMs) return defaultExpectedLoadMs;
+    return inFlightCreditMs(since, nowMs);
   };
 }
 

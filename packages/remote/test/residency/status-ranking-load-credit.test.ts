@@ -155,13 +155,15 @@ function rankingReadoutExport(): ResidencyRankingReadoutFn | undefined {
 
 // One row per case the credit rule separates: a loading 20s ago (the
 // only credited row), b warming 70s ago (overdue), c ready, d warming
-// 5s in the future and e downloaded.
+// 5s in the future, e downloaded and f loading exactly one default
+// expected load ago — the window's upper bound, which gets no credit.
 const LOAD_LIFECYCLE: ResidencyStateRecord[] = [
   lifecycleRow("a", "loading", null, NOW_MS - 20_000),
   lifecycleRow("b", "warming", null, NOW_MS - 70_000),
   lifecycleRow("c", "ready"),
   lifecycleRow("d", "warming", null, NOW_MS + 5_000),
   lifecycleRow("e", "downloaded"),
+  lifecycleRow("f", "loading", null, NOW_MS - DEFAULT_LOAD_MS),
 ];
 
 const LOAD_STORE: ResidencyStoreSnapshot = {
@@ -180,9 +182,9 @@ const A_LOADING_STORE: ResidencyStoreSnapshot = {
 
 describe("residency ranking load-credit read-out (#519)", () => {
   test("LC1: only rows the live signal credits are listed", () => {
-    // Kills: the loadCredited field missing; overdue, future or
-    // other-state rows being listed; expectedReadyAtMs not being
-    // updatedAtMs + defaultExpectedLoadMs.
+    // Kills: the loadCredited field missing; overdue, future,
+    // fully-elapsed (upper bound) or other-state rows being listed;
+    // expectedReadyAtMs not being updatedAtMs + defaultExpectedLoadMs.
     const readoutFn = rankingReadoutExport();
     expect(typeof readoutFn).toBe("function");
     if (readoutFn === undefined) return;
@@ -220,8 +222,11 @@ describe("residency ranking load-credit read-out (#519)", () => {
 
   test("LC3: loadCredited matches the live inFlightLoadSignal exactly", () => {
     // Kills: the read-out diverging from inFlightLoadSignal — a listed
-    // entry whose remaining load differs from the signal, or an
-    // unlisted row the signal still credits below the default.
+    // entry whose remaining load differs from the signal, an unlisted
+    // row the signal still credits below the default, or the window's
+    // upper bound loosened (`elapsed >= default` mutated to `>`), which
+    // would credit the fully-elapsed row f zero on the live path and
+    // list it in the read-out.
     const readoutFn = rankingReadoutExport();
     expect(typeof readoutFn).toBe("function");
     if (readoutFn === undefined) return;
@@ -251,7 +256,7 @@ describe("residency ranking load-credit read-out (#519)", () => {
     for (const entry of credited) {
       expect(expectedLoadMs(rankingAd(entry.model))).toBe(entry.expectedReadyAtMs - NOW_MS);
     }
-    for (const model of ["b", "c", "d", "e"]) {
+    for (const model of ["b", "c", "d", "e", "f"]) {
       const result = expectedLoadMs(rankingAd(model));
       expect(result === undefined || result === DEFAULT_LOAD_MS, model).toBe(true);
     }
