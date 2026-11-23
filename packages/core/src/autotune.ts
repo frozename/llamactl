@@ -63,10 +63,22 @@ export interface MaybeTuneAfterPullOptions {
   resolved?: ResolvedEnv;
   env?: NodeJS.ProcessEnv;
   signal?: AbortSignal;
+  /**
+   * Read-only pre-spawn exclusive-group gate injected by callers (core cannot
+   * import remote). Consulted with the pulled rel immediately before
+   * `benchPreset`; a refusal string skips the tune as `launch-refused`.
+   */
+  launchRefusal?: (rel: string) => string | null;
 }
 
 export interface MaybeTuneSkipReason {
-  kind: "not-missing" | "auto-tune-disabled" | "bench-binary-missing" | "profile-exists" | "error";
+  kind:
+    | "not-missing"
+    | "auto-tune-disabled"
+    | "bench-binary-missing"
+    | "profile-exists"
+    | "launch-refused"
+    | "error";
   message: string;
 }
 
@@ -95,7 +107,9 @@ export interface MaybeTuneAfterPullResult {
  *   3. Skip when `llama-bench` is missing.
  *   4. Skip when a tuned record already exists for (machine, rel, mode,
  *      ctx, build).
- *   5. Otherwise run `benchPreset` and, when the model is multimodal
+ *   5. Skip when the caller's `launchRefusal` gate refuses the rel, before
+ *      anything is spawned.
+ *   6. Otherwise run `benchPreset` and, when the model is multimodal
  *      with a local mmproj and `llama-mtmd-cli` is available, run
  *      `benchVision` too (unless auto-vision is disabled or a record
  *      already exists).
@@ -165,6 +179,14 @@ export async function maybeTuneAfterPull(
           message: `Tuned launch profile already exists for ${opts.rel} (mode=${mode} ctx=${ctx} build=${build})`,
         },
       },
+      vision: { ran: false, reason: { kind: "auto-vision-disabled", message: "Not evaluated" } },
+    };
+  }
+
+  const refusal = opts.launchRefusal?.(opts.rel) ?? null;
+  if (refusal !== null) {
+    return {
+      preset: { ran: false, reason: { kind: "launch-refused", message: refusal } },
       vision: { ran: false, reason: { kind: "auto-vision-disabled", message: "Not evaluated" } },
     };
   }

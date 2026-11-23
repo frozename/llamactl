@@ -3760,6 +3760,7 @@ export const router = t.router({
           wasMissing: input.wasMissing,
           signal: sig,
           onEvent: emit,
+          launchRefusal: benchLaunchRefusal,
         });
         emit({ type: "done-tune", result });
       });
