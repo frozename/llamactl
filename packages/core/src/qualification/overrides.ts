@@ -1,11 +1,15 @@
-// Pin/freeze override rows for the qualification lifecycle
+// Pin/freeze/applied override rows for the qualification lifecycle
 // (frozename/llamactl#518). Mirrors the preset-overrides TSV pattern in
-// presets.ts, keyed on (rel, action) instead of (profile, preset).
+// presets.ts, keyed on (rel, action) instead of (profile, preset). A
+// `pin` holds a rel at a stage, a `freeze` blocks promotion with no
+// stage, and an `applied` records the stage a gated apply actually
+// reached, written by writeAppliedStage.
 
 import { join } from "node:path";
 import { z } from "zod";
 
 import type { ResolvedEnv } from "../types.js";
+import type { QualificationStage } from "./stages.js";
 
 import { resolveRuntimeDir } from "../env.js";
 import { atomicWriteFile } from "../fsAtomic.js";
@@ -26,12 +30,14 @@ const TSV_UNSAFE = /[\t\n\r]/;
 /**
  * One override row. `pin` freezes promotion while declaring the stage
  * the model is held at; `freeze` blocks promotion and must carry no
- * stage. Tab/newline-free keys keep the TSV wire format parseable.
+ * stage; `applied` records the stage a gated apply reached and requires
+ * a stage like `pin`. Tab/newline-free keys keep the TSV wire format
+ * parseable.
  */
 export const QualificationOverride = z
   .object({
     rel: z.string().min(1),
-    action: z.enum(["pin", "freeze"]),
+    action: z.enum(["pin", "freeze", "applied"]),
     stage: z.union([z.enum(QUALIFICATION_STAGES), z.literal("")]),
     author: z.string().min(1),
     reason: z.string().min(1),
@@ -47,8 +53,12 @@ export const QualificationOverride = z
         });
       }
     }
-    if (row.action === "pin" && row.stage === "") {
-      ctx.addIssue({ code: "custom", message: "pin requires a non-empty stage", path: ["stage"] });
+    if ((row.action === "pin" || row.action === "applied") && row.stage === "") {
+      ctx.addIssue({
+        code: "custom",
+        message: `${row.action} requires a non-empty stage`,
+        path: ["stage"],
+      });
     }
     if (row.action === "freeze" && row.stage !== "") {
       ctx.addIssue({ code: "custom", message: "freeze must not carry a stage", path: ["stage"] });
@@ -113,6 +123,34 @@ export function writeQualificationOverride(
 }
 
 /**
+ * Record an applied stage transition as the `(rel, "applied")` row.
+ * Structurally typed on the proposal shape shared by promotion and
+ * demotion, so nothing is imported from those modules and no cycle is
+ * created (frozename/llamactl#518). Validation still runs before any IO:
+ * an unsafe evidenceRef (or any invalid field) throws without touching
+ * the file.
+ */
+export function writeAppliedStage(
+  file: string,
+  applied: { rel: string; from: QualificationStage; to: QualificationStage; evidenceRef?: string },
+  author: string,
+  updatedAt: string = new Date().toISOString(),
+): QualificationOverride {
+  const evidence = applied.evidenceRef === undefined ? "" : ` (evidence: ${applied.evidenceRef})`;
+  return writeQualificationOverride(
+    file,
+    {
+      rel: applied.rel,
+      action: "applied",
+      stage: applied.to,
+      author,
+      reason: `applied ${applied.from} -> ${applied.to}${evidence}`,
+    },
+    updatedAt,
+  );
+}
+
+/**
  * Remove the `(rel, action)` row if present. Returns `true` only when
  * a row was actually removed. Deletes the file entirely when no rows
  * remain, mirroring deletePresetOverride. Like
@@ -140,16 +178,33 @@ export function deleteQualificationOverride(
   return true;
 }
 
-/** Group a rel's rows into its optional pin and freeze overrides. */
+/** Group a rel's rows into its optional pin, freeze and applied overrides. */
 export function overridesFor(
   rows: readonly QualificationOverride[],
   rel: string,
-): { pin?: QualificationOverride; freeze?: QualificationOverride } {
-  const grouped: { pin?: QualificationOverride; freeze?: QualificationOverride } = {};
+): {
+  pin?: QualificationOverride;
+  freeze?: QualificationOverride;
+  applied?: QualificationOverride;
+} {
+  const grouped: {
+    pin?: QualificationOverride;
+    freeze?: QualificationOverride;
+    applied?: QualificationOverride;
+  } = {};
   for (const row of rows) {
     if (row.rel !== rel) continue;
-    if (row.action === "pin") grouped.pin = row;
-    else grouped.freeze = row;
+    switch (row.action) {
+      case "pin":
+        grouped.pin = row;
+        break;
+      case "freeze":
+        grouped.freeze = row;
+        break;
+      case "applied":
+        grouped.applied = row;
+        break;
+    }
   }
   return grouped;
 }

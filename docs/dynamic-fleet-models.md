@@ -409,11 +409,15 @@ falls through to the untouched `proposePromotion` decision.
 
 Effective status at this commit: `llamactl qualification status` and `list`
 call `effectiveStage` (see Overrides). `llamactl qualification propose` is
-the read-only consumer of `evaluateQualification` and `applyQualification`.
-`proposePromotion`, `applyPromotion`, `proposeDemotion` and the writer path
-of `applyQualification` remain library-only; the writer consumers of the
-apply path are pending E-14 / #284. The overrides reader has one consumer:
-routing applies its pin rows (see Overrides).
+the read-only consumer of `evaluateQualification` and `applyQualification`,
+and `llamactl qualification apply <rel> --evidence <file> --policy <file>
+[--author <name>]` is the writer consumer: with `autoApply: true` it records
+the transition through `writeAppliedStage`, and `llamactl qualification
+unapply <rel>` removes the row (see Overrides). `proposePromotion`,
+`applyPromotion` and `proposeDemotion` remain library-only; the remaining
+apply-path surfaces — tRPC/MCP/ops-chat projection and scheduled triggers —
+are pending DF-11 / #284. The overrides reader has one consumer: routing
+applies its applied and pin rows (see Overrides).
 
 `llamactl qualification propose <rel> --evidence <file> --policy <file>
 [--json]` reads an evidence file and a policy file and reports a promotion,
@@ -423,21 +427,24 @@ validated by `parsePromotionEvidence` against the strict
 carries its threshold's bound (ratios in [0, 1], `improvement` in [-1, 1]),
 which refuses percent-scaled evidence; the policy file is validated by
 `PromotionPolicySchema`, which also refuses unknown top-level keys such as
-an `autoapply` typo. The declared stage is the catalog
-stage, falling back to the pin stage, and an unstaged rel is refused. The
-freeze and pin rows come from the shared overrides file. `applyQualification`
-is called without a writer, so `autoApply: true` still reports `proposed`
-and nothing is written.
+an `autoapply` typo. The declared stage is the applied
+stage, falling back to the catalog stage, then the pin stage, and an
+unstaged rel is refused. The freeze, pin and applied rows come from the
+shared overrides file. `applyQualification` is called without a writer, so
+`autoApply: true` still reports `proposed` and nothing is written.
 
 ## Overrides
 
-Pin/freeze override rows live in `qualification-overrides.tsv`
+Pin/freeze/applied override rows live in `qualification-overrides.tsv`
 (`packages/core/src/qualification/overrides.ts`), keyed on
 `(rel, action)`:
 
 - `pin` freezes promotion while declaring the stage the model is held
   at — it requires a stage.
 - `freeze` blocks promotion and must carry an empty stage.
+- `applied` records the stage a gated promotion or demotion actually
+  reached — it requires a stage like `pin`, and `llamactl qualification
+apply` writes it through `writeAppliedStage`.
 
 Columns: `rel`, `action`, `stage`, `author`, `reason`, `updated_at`.
 
@@ -449,9 +456,11 @@ Writer semantics: a write replaces the `(rel, action)` row and drops
 removes the file entirely when it empties.
 
 Routing reads this one shared file. `catalogQualificationStages`
-applies each `pin` row's stage over the catalog stage for its `rel`
-(also for a rel the catalog never staged), so a pin changes the stage
-the route builders and `/v1/models` see. A `freeze` row has no routing
+overlays the overrides in two passes: every `applied` row's stage
+first, then every `pin` row's, over the catalog stage for its `rel`
+(also for a rel the catalog never staged), so a pin wins over an
+applied stage whatever the file order, and both change the stage the
+route builders and `/v1/models` see. A `freeze` row has no routing
 effect: it leaves the stage unchanged, and only the library-only
 `proposePromotion` check (`frozen`) consults it. The OpenAI proxy's
 `/v1/models` cache signature stats the same resolved file, so an edit
@@ -464,9 +473,18 @@ always to the file `qualificationOverridesFileFor` resolves — the same file
 `llamactl qualification pin <rel> <stage> --reason` writes a pin row;
 `llamactl qualification unpin <rel>` removes it. `llamactl qualification
 freeze <rel> --reason` writes a stageless freeze row; `llamactl
-qualification unfreeze <rel>` removes it. `llamactl qualification status
-<rel>` and `llamactl qualification list` report the catalog stage, the pin,
-the freeze, `effectiveStage` and the routing stage. The overrides file is
+qualification unfreeze <rel>` removes it. `llamactl qualification apply
+<rel> --evidence <file> --policy <file> [--author <name>]` evaluates the
+evidence against the policy and records the transition as an `applied` row
+through `writeAppliedStage`, gated by the policy's `autoApply`: without it
+apply reports `proposed` and writes nothing, and a `none` decision is
+`skipped`, also writing nothing; `llamactl qualification unapply <rel>`
+removes the applied row. `llamactl qualification status <rel>` prints the
+effective, catalog, pin, freeze and applied rows; `llamactl qualification
+status <rel> --json` and `llamactl qualification list --json` report the
+catalog stage, the pin, the freeze, the applied row (`null` when absent,
+consistent with pin and freeze), `effectiveStage` and the routing stage;
+the `list` text output omits the applied row. The overrides file is
 node-local, so every subcommand refuses a non-local `--node` target.
 
 ## Exclusive-window runbook
