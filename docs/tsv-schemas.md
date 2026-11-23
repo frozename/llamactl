@@ -81,16 +81,16 @@ At most one row per `(profile, preset)`. Writers replace the matching row; there
 
 ## `qualification-overrides.tsv`
 
-Pin/freeze rows for the model-qualification lifecycle (`packages/core/src/qualification/overrides.ts`), keyed on `(rel, action)`. Resolved from `LOCAL_AI_QUALIFICATION_OVERRIDES_FILE`, otherwise `qualification-overrides.tsv` under `$LOCAL_AI_RUNTIME_DIR`. A `pin` row requires a non-empty `stage`; a `freeze` row must carry an empty `stage`. Writers replace the matching `(rel, action)` row; `#` comments and invalid rows do not survive a write; a delete removes the file when it empties. Routing reads this one shared file: a `pin` row replaces the catalog qualification stage for its `rel` (`catalogQualificationStages`), and a `freeze` row has no routing effect, leaving the stage unchanged. Both `pin` and `freeze` rows are consulted by the library-only `proposePromotion` and `proposeDemotion` checks. The `/v1/models` cache signature stats the same resolved file, so an edit applies without a workload restart.
+Pin/freeze/applied rows for the model-qualification lifecycle (`packages/core/src/qualification/overrides.ts`), keyed on `(rel, action)`. Resolved from `LOCAL_AI_QUALIFICATION_OVERRIDES_FILE`, otherwise `qualification-overrides.tsv` under `$LOCAL_AI_RUNTIME_DIR`. A `pin` or `applied` row requires a non-empty `stage`; a `freeze` row must carry an empty `stage`. Writers replace the matching `(rel, action)` row; `#` comments and invalid rows do not survive a write; a delete removes the file when it empties. `llamactl qualification apply` writes the `applied` row (via `writeAppliedStage`) when the policy's `autoApply` is on; `unapply` removes it. Routing reads this one shared file: `catalogQualificationStages` overlays every `applied` row's stage first, then every `pin` row's, over the catalog stage for its `rel`, so a pin wins over an applied stage whatever the file order; a `freeze` row has no routing effect, leaving the stage unchanged. All three actions are consulted by the library-only `proposePromotion` and `proposeDemotion` checks. The `/v1/models` cache signature stats the same resolved file, so an edit applies without a workload restart.
 
-| col | field        | type   | notes                                             |
-| --- | ------------ | ------ | ------------------------------------------------- |
-| 1   | `rel`        | string | model rel path, tab/newline-free                  |
-| 2   | `action`     | enum   | `pin` \| `freeze`                                 |
-| 3   | `stage`      | enum   | qualification stage for `pin`; empty for `freeze` |
-| 4   | `author`     | string | who set the override, tab/newline-free            |
-| 5   | `reason`     | string | why, tab/newline-free                             |
-| 6   | `updated_at` | string | optional; missing pads to empty                   |
+| col | field        | type   | notes                                                           |
+| --- | ------------ | ------ | --------------------------------------------------------------- |
+| 1   | `rel`        | string | model rel path, tab/newline-free                                |
+| 2   | `action`     | enum   | `pin` \| `freeze` \| `applied`                                  |
+| 3   | `stage`      | enum   | qualification stage for `pin` and `applied`; empty for `freeze` |
+| 4   | `author`     | string | who set the override, tab/newline-free                          |
+| 5   | `reason`     | string | why, tab/newline-free                                           |
+| 6   | `updated_at` | string | optional; missing pads to empty                                 |
 
 ## `bench-profiles.tsv`
 
