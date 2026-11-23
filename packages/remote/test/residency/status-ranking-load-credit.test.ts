@@ -168,6 +168,16 @@ const LOAD_LIFECYCLE: ResidencyStateRecord[] = [
   lifecycleRow("e", "downloaded"),
   lifecycleRow("f", "loading", null, NOW_MS - DEFAULT_LOAD_MS),
   lifecycleRow("g", "warming", null, NOW_MS),
+  // One millisecond inside each edge of the window: h loaded 1 ms ago and
+  // i with 1 ms left must both still be credited.
+  lifecycleRow("h", "loading", null, NOW_MS - 1),
+  lifecycleRow("i", "warming", null, NOW_MS - DEFAULT_LOAD_MS + 1),
+];
+
+const CREDITED_AT_NOW = [
+  { model: "a", expectedReadyAtMs: NOW_MS + 40_000 },
+  { model: "h", expectedReadyAtMs: NOW_MS - 1 + DEFAULT_LOAD_MS },
+  { model: "i", expectedReadyAtMs: NOW_MS + 1 },
 ];
 
 const LOAD_STORE: ResidencyStoreSnapshot = {
@@ -189,8 +199,9 @@ describe("residency ranking load-credit read-out (#519)", () => {
     // Kills: the loadCredited field missing; overdue, future,
     // fully-elapsed (upper bound) or other-state rows being listed; the
     // lower-bound row g stamped exactly at nowMs being listed (elapsed
-    // <= 0 must reject it); expectedReadyAtMs not being updatedAtMs +
-    // defaultExpectedLoadMs.
+    // <= 0 must reject it); the rows 1 ms inside each edge (h, i) being
+    // dropped by an off-by-one window; expectedReadyAtMs not being
+    // updatedAtMs + defaultExpectedLoadMs.
     const readoutFn = rankingReadoutExport();
     expect(typeof readoutFn).toBe("function");
     if (readoutFn === undefined) return;
@@ -201,7 +212,7 @@ describe("residency ranking load-credit read-out (#519)", () => {
     });
     expect(readout).not.toBeNull();
     if (readout === null) return;
-    expect(readout.loadCredited).toEqual([{ model: "a", expectedReadyAtMs: NOW_MS + 40_000 }]);
+    expect(readout.loadCredited).toEqual(CREDITED_AT_NOW);
     const creditedModels = (readout.loadCredited ?? []).map((entry) => entry.model);
     expect(creditedModels).not.toContain("g");
   });
@@ -234,9 +245,12 @@ describe("residency ranking load-credit read-out (#519)", () => {
     // row the signal still credits below the default, the window's upper
     // bound loosened (`elapsed >= default` mutated to `>`), which would
     // credit the fully-elapsed row f zero on the live path and list it
-    // in the read-out, and the lower bound loosened (`since >= nowMs`
-    // mutated to `>`), which drops the row g stamped exactly at nowMs to
-    // no charge instead of the full default.
+    // in the read-out, the lower bound loosened (`since >= nowMs` mutated
+    // to `>`), which makes the signal return undefined for the row g
+    // stamped exactly at nowMs instead of the full default (the ranker
+    // then falls back to the default itself, so only the signal's return
+    // value changes), and an off-by-one window that drops the rows 1 ms
+    // inside either edge (h, i).
     const readoutFn = rankingReadoutExport();
     expect(typeof readoutFn).toBe("function");
     if (readoutFn === undefined) return;
@@ -258,7 +272,7 @@ describe("residency ranking load-credit read-out (#519)", () => {
     expect(credited).toBeDefined();
     if (credited === undefined) return;
     expect(credited.length).toBeGreaterThan(0);
-    expect(credited).toEqual([{ model: "a", expectedReadyAtMs: NOW_MS + 40_000 }]);
+    expect(credited).toEqual(CREDITED_AT_NOW);
 
     const expectedLoadMs = signals.expectedLoadMs;
     expect(typeof expectedLoadMs).toBe("function");
@@ -268,6 +282,8 @@ describe("residency ranking load-credit read-out (#519)", () => {
     // equality is required: the lenient check below would accept the
     // mutant's undefined.
     expect(expectedLoadMs(rankingAd("g"))).toBe(DEFAULT_LOAD_MS);
+    expect(expectedLoadMs(rankingAd("h"))).toBe(DEFAULT_LOAD_MS - 1);
+    expect(expectedLoadMs(rankingAd("i"))).toBe(1);
     for (const entry of credited) {
       expect(expectedLoadMs(rankingAd(entry.model))).toBe(entry.expectedReadyAtMs - NOW_MS);
     }
