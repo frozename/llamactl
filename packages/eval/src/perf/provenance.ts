@@ -8,7 +8,9 @@ import { createReadStream } from "../safe-fs.js";
 /**
  * Run provenance collection (#521): every field is either a real value or
  * null paired with a non-blank reason. Nothing is ever guessed, defaulted to
- * a placeholder like "unknown", or coerced.
+ * a placeholder like "unknown", or coerced. The launch `flags` follow the
+ * same rule: an omitted or null list records null with a reason, while an
+ * explicit (even empty) list is a declaration copied verbatim.
  */
 
 export interface EngineVersionInfo {
@@ -22,7 +24,7 @@ export interface ProvenanceReaders {
   hostname(): string;
 }
 
-type InputReasonKey = "binary_path" | "gguf_path" | "quant" | "ctx" | "hf_revision";
+type InputReasonKey = "binary_path" | "gguf_path" | "quant" | "ctx" | "hf_revision" | "flags";
 
 export interface ProvenanceInput {
   engine: EvalEngine;
@@ -31,7 +33,7 @@ export interface ProvenanceInput {
   hf_revision?: string | null;
   quant?: string | null;
   ctx?: number | null;
-  flags?: readonly string[];
+  flags?: readonly string[] | null;
   reasons?: Partial<Record<InputReasonKey, string>>;
 }
 
@@ -48,6 +50,7 @@ interface Draft {
   hf_revision: string | null;
   quant: string | null;
   ctx: number | null;
+  flags: string[] | null;
   unavailable: Partial<Record<ProvenanceField, string>>;
 }
 
@@ -218,6 +221,16 @@ function collectCtx(input: ProvenanceInput, draft: Draft): void {
   draft.unavailable.ctx = reasonFor(input, "ctx", "no positive integer context size supplied");
 }
 
+function collectFlags(input: ProvenanceInput, draft: Draft): void {
+  const flags = input.flags;
+  if (flags === undefined || flags === null) {
+    draft.flags = null;
+    draft.unavailable.flags = reasonFor(input, "flags", "no engine launch flags supplied");
+    return;
+  }
+  draft.flags = [...flags];
+}
+
 /** What `collectEvalProvenance` returns: always emits `unavailable` (possibly
  *  empty) and keeps it string-indexable so callers can probe fields by name
  *  without a cast. Still structurally an EvalProvenance. */
@@ -237,6 +250,7 @@ export async function collectEvalProvenance(
     hf_revision: null,
     quant: null,
     ctx: null,
+    flags: null,
     unavailable: {},
   };
   await collectBinarySection(input, readers, draft);
@@ -244,6 +258,7 @@ export async function collectEvalProvenance(
   collectHfRevision(input, gguf, draft);
   collectQuant(input, draft);
   collectCtx(input, draft);
+  collectFlags(input, draft);
   return {
     engine: input.engine,
     engine_version: draft.engine_version,
@@ -253,7 +268,7 @@ export async function collectEvalProvenance(
     hf_revision: draft.hf_revision,
     quant: draft.quant,
     ctx: draft.ctx,
-    flags: [...(input.flags ?? [])],
+    flags: draft.flags,
     host: readers.hostname(),
     unavailable: draft.unavailable,
   };

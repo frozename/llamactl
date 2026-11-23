@@ -27,6 +27,7 @@ const FIELDS = [
   "hf_revision",
   "quant",
   "ctx",
+  "flags",
 ] as const;
 
 type CollectEvalProvenance = typeof Prov.collectEvalProvenance;
@@ -301,6 +302,77 @@ describe("hf_revision precedence", () => {
 
     expect(p.hf_revision).toBeNull();
     expect(unavailableReason(p, "hf_revision")).toMatch(/gguf/i);
+  });
+});
+
+describe("#521 launch flags provenance", () => {
+  const NO_FLAGS: ProvenanceInput = {
+    engine: BASE_INPUT.engine,
+    binary_path: BASE_INPUT.binary_path ?? null,
+    gguf_path: BASE_INPUT.gguf_path ?? null,
+    quant: BASE_INPUT.quant ?? null,
+    ctx: BASE_INPUT.ctx ?? null,
+  };
+
+  test("omitted flags record null with the no-flags-supplied reason", async () => {
+    // Kills: collectEvalProvenance defaulting omitted flags to [].
+    const mod = await load();
+    const { readers } = makeReaders({
+      digests: { [BINARY]: BINARY_DIGEST, [GGUF_SNAPSHOT]: GGUF_DIGEST },
+    });
+
+    const p = await mod.collectEvalProvenance(NO_FLAGS, readers);
+    collectedOutputs.push(p);
+
+    expect(p.flags).toBeNull();
+    expect(p.unavailable.flags).toBe("no engine launch flags supplied");
+  });
+
+  test("a caller reasons.flags overrides the default flags reason", async () => {
+    // Kills: ignoring reasons.flags.
+    const mod = await load();
+    const { readers } = makeReaders({
+      digests: { [BINARY]: BINARY_DIGEST, [GGUF_SNAPSHOT]: GGUF_DIGEST },
+    });
+    const input = {
+      ...NO_FLAGS,
+      reasons: { flags: "custom flags reason" },
+    } as unknown as ProvenanceInput;
+
+    const p = await mod.collectEvalProvenance(input, readers);
+    collectedOutputs.push(p);
+
+    expect(p.flags).toBeNull();
+    expect(p.unavailable.flags).toBe("custom flags reason");
+  });
+
+  test("explicit flags null records like an omitted flags", async () => {
+    // Kills: treating flags: null as a declared empty list.
+    const mod = await load();
+    const { readers } = makeReaders({
+      digests: { [BINARY]: BINARY_DIGEST, [GGUF_SNAPSHOT]: GGUF_DIGEST },
+    });
+    const input = { ...NO_FLAGS, flags: null } as unknown as ProvenanceInput;
+
+    const p = await mod.collectEvalProvenance(input, readers);
+    collectedOutputs.push(p);
+
+    expect(p.flags).toBeNull();
+    expect(p.unavailable.flags).toBe("no engine launch flags supplied");
+  });
+
+  test("guard: an explicit empty flags list is a declaration, not unknown", async () => {
+    const mod = await load();
+    const { readers } = makeReaders({
+      digests: { [BINARY]: BINARY_DIGEST, [GGUF_SNAPSHOT]: GGUF_DIGEST },
+    });
+    const input: ProvenanceInput = { ...NO_FLAGS, flags: [] };
+
+    const p = await mod.collectEvalProvenance(input, readers);
+    collectedOutputs.push(p);
+
+    expect(p.flags).toEqual([]);
+    expect("flags" in p.unavailable).toBe(false);
   });
 });
 
