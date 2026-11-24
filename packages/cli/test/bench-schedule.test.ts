@@ -1212,7 +1212,7 @@ describe("#521 scheduled suite slots", () => {
     );
     expect(result).toBe(0);
     expect(stdout).toContain(
-      "[--engine <llamacpp|omlx|gufo|kapitsa>] [--slots <n>] [--quant <label>] [--ctx <n>]]",
+      "[--engine <llamacpp|omlx|gufo|kapitsa>] [--slots <n>] [--quant <label>] [--ctx <n>] [--flags=<args>]]",
     );
   });
 });
@@ -1315,6 +1315,138 @@ describe("#521 scheduled suite declared provenance", () => {
       benchCmd.runBench(["schedule", "add", "--help"]),
     );
     expect(result).toBe(0);
-    expect(stdout).toContain("[--slots <n>] [--quant <label>] [--ctx <n>]]");
+    expect(stdout).toContain("[--slots <n>] [--quant <label>] [--ctx <n>] [--flags=<args>]]");
+  });
+});
+
+describe("#521 scheduled suite declared launch flags", () => {
+  afterEach(() => {
+    resetGlobals();
+    resetBenchScheduleSeams();
+  });
+
+  function installFlagsAddCaller(): CallerCalls {
+    const { caller, calls } = installFakeCaller({});
+    setBenchScheduleSeams({ caller });
+    setGlobals({ ...getGlobals(), nodeName: "gpu1" });
+    return calls;
+  }
+
+  test("add forwards --flags to benchScheduleAdd for kind suite", async () => {
+    // Kills: --flags missing from VALUED_ADD_FLAGS, or not forwarded to the caller.
+    const calls = installFlagsAddCaller();
+    const { result } = await captureProcessStreams(() =>
+      benchCmd.runBench([
+        ...ADD_PREFIX,
+        "--kind",
+        "suite",
+        "--suite",
+        "perf-quick",
+        "--flags=-ngl  99 -fa on",
+      ]),
+    );
+    expect(result).toBe(0);
+    expect(calls.add).toHaveLength(1);
+    const input = requireRecord(calls.add[0]);
+    expect(input["id"]).toBe("s1");
+    expect(input["kind"]).toBe("suite");
+    expect(input["suite"]).toBe("perf-quick");
+    expect(input["flags"]).toEqual(["-ngl", "99", "-fa", "on"]);
+  });
+
+  test("add refuses --flags unless kind is 'suite'", async () => {
+    // Kills: missing kind gating for --flags.
+    const calls = installFlagsAddCaller();
+    const { result, stderr } = await captureProcessStreams(() =>
+      benchCmd.runBench([...ADD_PREFIX, "--flags=-ngl 99"]),
+    );
+    expect(result).toBe(1);
+    expect(stderr).toContain("bench schedule add: --flags is only valid when kind is 'suite'");
+    expect(calls.add).toHaveLength(0);
+  });
+
+  test("add refuses a blank --flags value", async () => {
+    // Kills: missing blank refusal for --flags.
+    for (const tail of [["--flags="], ["--flags=   "]]) {
+      const calls = installFlagsAddCaller();
+      const { result, stderr } = await captureProcessStreams(() =>
+        benchCmd.runBench([...ADD_PREFIX, "--kind", "suite", "--suite", "perf-quick", ...tail]),
+      );
+      expect(result).toBe(1);
+      expect(stderr).toContain("bench schedule add: --flags must list at least one launch flag");
+      expect(calls.add).toHaveLength(0);
+    }
+  });
+
+  test("add refuses a space-separated --flags value that starts with a dash", async () => {
+    // Kills: `--flags -ngl 99 -fa on` recording only `-ngl` and exiting 0.
+    const calls = installFlagsAddCaller();
+    const { result, stderr } = await captureProcessStreams(() =>
+      benchCmd.runBench([
+        ...ADD_PREFIX,
+        "--kind",
+        "suite",
+        "--suite",
+        "perf-quick",
+        "--flags",
+        "-ngl",
+        "99",
+        "-fa",
+        "on",
+      ]),
+    );
+    expect(result).toBe(1);
+    expect(stderr).toContain(
+      `bench schedule add: --flags must be attached with '=' when its value starts with '-'; use --flags="..."`,
+    );
+    expect(calls.add).toHaveLength(0);
+  });
+
+  test("add accepts an attached --flags value followed by another dash flag", async () => {
+    // Kills: dropping the `!arg.includes("=")` exemption, which would refuse an
+    // attached --flags=... whenever the next argument is another flag.
+    const calls = installFlagsAddCaller();
+    const { result } = await captureProcessStreams(() =>
+      benchCmd.runBench([
+        ...ADD_PREFIX,
+        "--kind",
+        "suite",
+        "--suite",
+        "perf-quick",
+        "--flags=-ngl 99",
+        "--quant",
+        "Q4_K_M",
+      ]),
+    );
+    expect(result).toBe(0);
+    expect(calls.add).toHaveLength(1);
+    const input = requireRecord(calls.add[0]);
+    expect(input["flags"]).toEqual(["-ngl", "99"]);
+    expect(input["quant"]).toBe("Q4_K_M");
+  });
+
+  test("add reports a missing value for a bare trailing --flags", async () => {
+    // Kills: the `?? false` fallback becoming `?? true`, which would report the
+    // attach message instead of the missing value.
+    const calls = installFlagsAddCaller();
+    const { result, stderr } = await captureProcessStreams(() =>
+      benchCmd.runBench([...ADD_PREFIX, "--kind", "suite", "--suite", "perf-quick", "--flags"]),
+    );
+    expect(result).toBe(1);
+    expect(stderr).toContain("bench schedule add: Missing value for --flags");
+    expect(stderr).not.toContain("must be attached with '='");
+    expect(calls.add).toHaveLength(0);
+  });
+
+  test("add --help documents the --flags flag", async () => {
+    // Kills: USAGE not listing --flags.
+    const { result, stdout } = await captureProcessStreams(() =>
+      benchCmd.runBench(["schedule", "add", "--help"]),
+    );
+    expect(result).toBe(0);
+    expect(stdout).toContain("[--ctx <n>] [--flags=<args>]]");
+    expect(stdout.replaceAll(/\s+/g, " ")).toMatch(
+      /--flags(?:=<args>)? records the (?:engine(?:'s)? )?launch flags in perf provenance/,
+    );
   });
 });

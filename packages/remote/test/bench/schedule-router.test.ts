@@ -244,3 +244,45 @@ describe("#521 scheduled suite declared provenance", () => {
     expect(loadSchedules(schedulePath).some((s) => s.id === "router-ctx-bad")).toBe(false);
   });
 });
+
+describe("#521 scheduled suite declared launch flags", () => {
+  test("benchScheduleAdd persists flags on a kind 'suite' schedule", async () => {
+    // Kills: the router input schema stripping flags, or addSchedule dropping it.
+    const caller = router.createCaller({});
+    const input = {
+      id: "router-flags",
+      node: "fake-node",
+      rel: "org/repo/m.gguf",
+      intervalSeconds: 3600,
+      kind: "suite" as const,
+      suite: "perf-quick",
+      flags: ["-ngl", "99", "-fa", "on"],
+    };
+    await caller.benchScheduleAdd(input);
+
+    const row = loadSchedules(schedulePath).find((s) => s.id === "router-flags")!;
+    const withFlags = row as BenchSchedule & { flags?: string[] };
+    expect(withFlags.flags).toEqual(["-ngl", "99", "-fa", "on"]);
+  });
+
+  test("benchScheduleAdd rejects flags unless kind is 'suite'", async () => {
+    // Kills: the router/schema not gating flags to kind 'suite'.
+    const caller = router.createCaller({});
+    const input = {
+      id: "router-flags-bad",
+      node: "fake-node",
+      rel: "org/repo/m.gguf",
+      intervalSeconds: 3600,
+      kind: "preset" as const,
+      flags: ["-ngl", "99"],
+    };
+    let message = "";
+    try {
+      await caller.benchScheduleAdd(input);
+    } catch (err) {
+      message = err instanceof Error ? err.message : String(err);
+    }
+    expect(message).toContain("flags is only valid with kind 'suite'");
+    expect(loadSchedules(schedulePath).some((s) => s.id === "router-flags-bad")).toBe(false);
+  });
+});

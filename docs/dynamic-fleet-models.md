@@ -753,7 +753,7 @@ verbatim from the USAGE text (`packages/cli/src/commands/bench-schedule.ts`):
 ```text
   llamactl bench schedule add <id> --node <node> --rel <rel>
       [--mode auto|text|vision] --every <duration>
-      [--kind suite --suite <perf-quick|perf-full> [--engine <llamacpp|omlx|gufo|kapitsa>] [--slots <n>] [--quant <label>] [--ctx <n>]]
+      [--kind suite --suite <perf-quick|perf-full> [--engine <llamacpp|omlx|gufo|kapitsa>] [--slots <n>] [--quant <label>] [--ctx <n>] [--flags=<args>]]
 ```
 
 So `llamactl bench schedule add <id> --node <node> --rel <rel>` takes an
@@ -796,7 +796,7 @@ Rows land in the same `perf.sqlite` as `llamactl eval perf` (`defaultPerfDbPath`
 `engine_commit`, `binary_sha256`, `gguf_sha256`, `hf_revision`, `quant` and `ctx`
 are recorded null unless the schedule declares them (see below), each with an
 unavailable reason stating that scheduled suites reach <rel> through the agent
-gateway. The launch `flags` are recorded null as well, with the reason `scheduled suites reach <rel> through the agent gateway; the engine launch flags are not known`. SSD I/O, peak RSS and GTT are recorded
+gateway. The launch `flags` are recorded null as well, with the reason `scheduled suites reach <rel> through the agent gateway; the engine launch flags are not known`. A schedule that declares `--flags=<args>` records that list instead (see Declared launch flags for a suite schedule). SSD I/O, peak RSS and GTT are recorded
 `unavailable` with a reason naming the node. So an eval-record arm that needs
 binary or GGUF provenance should use `llamactl eval perf` with `--binary` or
 `--gguf` on the engine host instead. The provenance `host` is the machine running
@@ -867,6 +867,34 @@ prefill size (`runPrefillSize`,
 `packages/eval/src/perf/runner.ts`). So without a declared `--quant` or
 `--ctx`, that field is recorded null with the gateway reason
 (`createPerfBenchSuiteRunner`,
+`packages/cli/src/commands/bench-schedule.ts`).
+
+### Declared launch flags for a suite schedule
+
+A suite schedule can declare the engine launch flags with `--flags=<args>`
+on `llamactl bench schedule add`: the CLI refuses the flag unless
+`--kind suite` was given (`--flags is only valid when kind is 'suite'`)
+and refuses a value that lists no flag (`--flags must list at least one
+launch flag`) (`validateFlagsArg`,
+`packages/cli/src/commands/bench-schedule.ts`). A space-separated `--flags`
+value is refused when it starts with a dash (`--flags must be attached with
+'=' when its value starts with '-'; use --flags="..."`, `parseAddArgs`,
+`packages/cli/src/commands/bench-schedule.ts`), because a bare
+`--flags -ngl 99` would otherwise read `-ngl` as the next token rather than
+the flag value. The schedule schema
+(`BenchScheduleSchema`, `packages/remote/src/bench/schedule.ts`) refuses
+the same combination with `flags is only valid with kind 'suite'`. The
+tick loop forwards the list to the suite runner (`runWithOutcome`,
+`packages/remote/src/bench/scheduleLoop.ts`), which re-checks a list on a
+schedule saved another way and refuses a malformed one naming the schedule
+(`invalid flags for schedule '<id>' (expected a non-empty list of
+launch-flag tokens)`) before any endpoint work
+(`assertDeclaredLaunchFlags`,
+`packages/cli/src/commands/bench-schedule.ts`), then records the list in
+perf provenance (`collectEvalProvenance`,
+`packages/eval/src/perf/provenance.ts`) instead of the gateway reason. So
+without a declared `--flags`, `flags` is recorded null with the gateway
+reason (`createPerfBenchSuiteRunner`,
 `packages/cli/src/commands/bench-schedule.ts`).
 
 ### Comparing perf runs for an arm

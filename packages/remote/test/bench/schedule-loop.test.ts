@@ -813,3 +813,46 @@ describe("#521 scheduled suite declared provenance", () => {
     expect("ctx" in calls[0]!).toBe(false);
   });
 });
+
+describe("#521 scheduled suite declared launch flags", () => {
+  test("a due suite schedule forwards flags on the runSuite request", async () => {
+    // Kills: declaredProvenanceFields not forwarding schedule.flags.
+    const calls: BenchSuiteRequest[] = [];
+    const runSuite = (req: BenchSuiteRequest): Promise<void> => {
+      calls.push(req);
+      return Promise.resolve();
+    };
+    const schedule: BenchSchedule & { flags?: string[] } = {
+      ...dueSchedule("suite-flags", { kind: "suite", suite: "perf" }),
+      flags: ["-ngl", "99", "-fa", "on"],
+    };
+    saveSchedules([schedule], schedulePath);
+
+    await kickBenchScheduler(autoCompleting().getClient, { runSuite });
+
+    expect(calls).toEqual([
+      {
+        scheduleId: "suite-flags",
+        suite: "perf",
+        node: "fake-node",
+        rel: "org/repo/suite-flags.gguf",
+        flags: ["-ngl", "99", "-fa", "on"],
+      },
+    ]);
+  });
+
+  test("guard: a due suite schedule without flags sends no flags key", async () => {
+    // Back-compat guard: the request omits flags entirely — never flags: undefined.
+    const calls: BenchSuiteRequest[] = [];
+    const runSuite = (req: BenchSuiteRequest): Promise<void> => {
+      calls.push(req);
+      return Promise.resolve();
+    };
+    saveSchedules([dueSchedule("suite-noflags", { kind: "suite", suite: "perf" })], schedulePath);
+
+    await kickBenchScheduler(autoCompleting().getClient, { runSuite });
+
+    expect(calls).toHaveLength(1);
+    expect("flags" in calls[0]!).toBe(false);
+  });
+});

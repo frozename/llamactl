@@ -470,3 +470,58 @@ describe("#521 scheduled suite declared provenance", () => {
     expect(raw).not.toContain("ctx:");
   });
 });
+
+type FlagsScheduleRow = BenchSchedule & { flags?: string[] };
+
+describe("#521 scheduled suite declared launch flags", () => {
+  test("a suite schedule with flags round-trips through save/load", () => {
+    // Kills: flags missing from benchScheduleBase, which makes zod strip the key.
+    const schedule: FlagsScheduleRow = {
+      ...suiteSchedule("flags-persist"),
+      flags: ["-ngl", "99", "-fa", "on"],
+    };
+    saveSchedules([schedule], schedulePath);
+
+    const entry = loadSchedules(schedulePath)[0] as FlagsScheduleRow;
+    expect(entry.flags).toEqual(["-ngl", "99", "-fa", "on"]);
+  });
+
+  test("schema rejects flags on preset or kindless schedules", () => {
+    // Kills: dropping the flags superRefine gate.
+    for (const fixture of [
+      { ...baseSchedule("flags-preset"), kind: "preset" as const, flags: ["-ngl", "99"] },
+      { ...baseSchedule("flags-kindless"), flags: ["-ngl", "99"] },
+    ]) {
+      const result = BenchScheduleSchema.safeParse(fixture);
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        const issue = result.error.issues.find(
+          (i) => i.message === "flags is only valid with kind 'suite'",
+        );
+        expect(issue).toBeDefined();
+        expect(issue?.path).toEqual(["flags"]);
+      }
+    }
+  });
+
+  test("schema rejects an empty flags list and a token containing whitespace", () => {
+    // Kills: dropping .min(1) on flags or the /^\S+$/ per-token regex.
+    for (const flags of [[], ["-ngl 99"]]) {
+      const result = BenchScheduleSchema.safeParse({
+        ...suiteSchedule(`flags-bad-${flags.length === 0 ? "empty" : "space"}`),
+        flags,
+      });
+      expect(result.success).toBe(false);
+    }
+  });
+
+  test("guard: a legacy suite schedule persists no flags key", () => {
+    // Back-compat guard — passes on base: flags stays absent on schedules
+    // that never declared it, never written as null or [].
+    saveSchedules([suiteSchedule("flags-legacy")], schedulePath);
+
+    const entry = loadSchedules(schedulePath)[0] as FlagsScheduleRow;
+    expect("flags" in entry).toBe(false);
+    expect(readFileSync(schedulePath, "utf8")).not.toContain("flags:");
+  });
+});
