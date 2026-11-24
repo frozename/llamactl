@@ -52,7 +52,9 @@ function parseWorkloadPort(endpoint: string | undefined): number {
 // #518: forward only the experimental qualification label onto a peer model
 // row. A peer can add exclusion but never lift a locally inherited stage, so
 // any other label, value or shape is dropped. The plain-object check rejects
-// null, strings and arrays that a malformed snapshot could carry.
+// null, strings and arrays that a malformed snapshot could carry; the
+// Array.isArray and getPrototypeOf guards are defence in depth with no
+// observable effect on JSON-parsed input, which never yields those shapes.
 function peerExperimentalLabels(labels: unknown): Record<string, string> | undefined {
   if (labels === null || typeof labels !== "object" || Array.isArray(labels)) return undefined;
   if (Object.getPrototypeOf(labels) !== Object.prototype) return undefined;

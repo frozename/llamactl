@@ -118,6 +118,42 @@ describe("peer snapshot qualification label forwarding (#518)", () => {
     }
   });
 
+  test("P2b: extra labels alongside experimental are dropped, only the qualification key survives", async () => {
+    // Kills: returning the raw peer record instead of the rebuilt single-key
+    // object. A peer that sends the qualification label plus any other label,
+    // value or shape must still yield EXACTLY the qualification key.
+    const variants: Record<string, unknown>[] = [
+      { [QUALIFICATION]: "experimental", team: "eval" },
+      { team: "eval", [QUALIFICATION]: "experimental" },
+      { [QUALIFICATION]: "experimental", stage: "prod", owner: "u1" },
+    ];
+    for (const labels of variants) {
+      const snapshot = await snapshotFor(
+        localRoutesPayload([
+          {
+            name: "w1",
+            models: ["m1"],
+            endpoint: "http://127.0.0.1:8080",
+            reachable: true,
+            revision: "rev-1",
+            labels,
+          },
+        ]),
+      );
+      expect(snapshot?.workloads).toEqual([
+        {
+          modelId: "m1",
+          port: 8080,
+          revision: "rev-1",
+          labels: { [QUALIFICATION]: "experimental" },
+        },
+      ]);
+      const row = snapshot?.workloads[0];
+      if (row === undefined) throw new Error("expected a workload row");
+      expect(row.labels).toEqual({ [QUALIFICATION]: "experimental" });
+    }
+  });
+
   test("P3: an unreachable experimental workload contributes no rows", async () => {
     // Guard: reachable:false is skipped before labels are read.
     const snapshot = await snapshotFor(
