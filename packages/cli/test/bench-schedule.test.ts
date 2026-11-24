@@ -1402,6 +1402,42 @@ describe("#521 scheduled suite declared launch flags", () => {
     expect(calls.add).toHaveLength(0);
   });
 
+  test("add accepts an attached --flags value followed by another dash flag", async () => {
+    // Kills: dropping the `!arg.includes("=")` exemption, which would refuse an
+    // attached --flags=... whenever the next argument is another flag.
+    const calls = installFlagsAddCaller();
+    const { result } = await captureProcessStreams(() =>
+      benchCmd.runBench([
+        ...ADD_PREFIX,
+        "--kind",
+        "suite",
+        "--suite",
+        "perf-quick",
+        "--flags=-ngl 99",
+        "--quant",
+        "Q4_K_M",
+      ]),
+    );
+    expect(result).toBe(0);
+    expect(calls.add).toHaveLength(1);
+    const input = requireRecord(calls.add[0]);
+    expect(input["flags"]).toEqual(["-ngl", "99"]);
+    expect(input["quant"]).toBe("Q4_K_M");
+  });
+
+  test("add reports a missing value for a bare trailing --flags", async () => {
+    // Kills: the `?? false` fallback becoming `?? true`, which would report the
+    // attach message instead of the missing value.
+    const calls = installFlagsAddCaller();
+    const { result, stderr } = await captureProcessStreams(() =>
+      benchCmd.runBench([...ADD_PREFIX, "--kind", "suite", "--suite", "perf-quick", "--flags"]),
+    );
+    expect(result).toBe(1);
+    expect(stderr).toContain("bench schedule add: Missing value for --flags");
+    expect(stderr).not.toContain("must be attached with '='");
+    expect(calls.add).toHaveLength(0);
+  });
+
   test("add --help documents the --flags flag", async () => {
     // Kills: USAGE not listing --flags.
     const { result, stdout } = await captureProcessStreams(() =>
