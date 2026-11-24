@@ -36,6 +36,7 @@ type RankingSection =
       cooldownCharged: { model: string; untilMs: number }[];
       drainTier: string[];
       degradedTier: string[];
+      loadCredited: { model: string; expectedReadyAtMs: number }[];
     };
 
 // The read-out residencyRankingReadout returns for an applicable policy:
@@ -236,6 +237,7 @@ describe("buildResidencyStatus ranking cooldown and tiers (#519)", () => {
       cooldownCharged: [{ model: "c", untilMs: NOW_MS + 50_000 }],
       drainTier: [],
       degradedTier: [],
+      loadCredited: [],
     });
   });
 
