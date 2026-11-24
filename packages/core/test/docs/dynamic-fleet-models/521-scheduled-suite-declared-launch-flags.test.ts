@@ -54,7 +54,8 @@ describe("#521 scheduled suite declared launch flags", () => {
       "`flags is only valid with kind 'suite'`",
       "`invalid flags for schedule '<id>' (expected a non-empty list of launch-flag tokens)`",
       "without a declared `--flags`, `flags` is recorded null with the gateway reason",
-      "the value must be attached with `=`",
+      "A space-separated `--flags` value is refused when it starts with a dash",
+      "--flags must be attached with '=' when its value starts with '-'; use --flags=\"...\"",
     ]) {
       expect(sec, needle).toContain(needle);
     }
@@ -72,7 +73,7 @@ describe("#521 scheduled suite declared launch flags", () => {
     expect(compareIdx).toBeGreaterThan(quantIdx);
     expect(flagsIdx).toBeGreaterThan(quantIdx);
     expect(flagsIdx).toBeLessThan(compareIdx);
-    expect(lines.slice(quantIdx, compareIdx).some((line) => /^## /.test(line))).toBe(false);
+    expect(lines.slice(quantIdx, compareIdx).some((line) => line.startsWith("## "))).toBe(false);
   });
 
   // Kills: doc error strings drifting from the code strings — every

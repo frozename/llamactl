@@ -1378,6 +1378,30 @@ describe("#521 scheduled suite declared launch flags", () => {
     }
   });
 
+  test("add refuses a space-separated --flags value that starts with a dash", async () => {
+    // Kills: `--flags -ngl 99 -fa on` recording only `-ngl` and exiting 0.
+    const calls = installFlagsAddCaller();
+    const { result, stderr } = await captureProcessStreams(() =>
+      benchCmd.runBench([
+        ...ADD_PREFIX,
+        "--kind",
+        "suite",
+        "--suite",
+        "perf-quick",
+        "--flags",
+        "-ngl",
+        "99",
+        "-fa",
+        "on",
+      ]),
+    );
+    expect(result).toBe(1);
+    expect(stderr).toContain(
+      `bench schedule add: --flags must be attached with '=' when its value starts with '-'; use --flags="..."`,
+    );
+    expect(calls.add).toHaveLength(0);
+  });
+
   test("add --help documents the --flags flag", async () => {
     // Kills: USAGE not listing --flags.
     const { result, stdout } = await captureProcessStreams(() =>

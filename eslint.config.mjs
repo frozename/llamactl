@@ -239,15 +239,6 @@ export default tseslint.config(
     },
   },
   {
-    // Doc contract tests quote source/doc text verbatim; a literal-prefix
-    // regex .test() is the natural predicate and rewriting it to startsWith
-    // would mean editing pinned contract files.
-    files: ["packages/*/test/docs/**/*.ts"],
-    rules: {
-      "@typescript-eslint/prefer-string-starts-ends-with": "off",
-    },
-  },
-  {
     // #410 P5a-3a: console sources reach the tab's tRPC client only
     // through console/node-trpc's hooks. Patterns only, no `paths`
     // entry: eslint 9.39.4 reports twice when both match one specifier.

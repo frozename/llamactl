@@ -515,6 +515,10 @@ function flagInlineValue(arg: string, queue: string[]): string | undefined {
   return eq >= 0 ? arg.slice(eq + 1) : queue.shift();
 }
 
+// A space-separated `--flags` value that begins with a dash would swallow the
+// first launch flag as the flag value and drop the rest, so require `=` there.
+const FLAGS_ATTACH_REQUIRED = `--flags must be attached with '=' when its value starts with '-'; use --flags="..."`;
+
 function assignAddFlag(args: AddArgs, name: string, value: string): void {
   if (name === "--rel") args.rel = value;
   else if (name === "--mode") args.mode = value;
@@ -554,6 +558,9 @@ function parseAddArgs(argv: string[]): AddParse {
     const name = flagName(arg);
     if (!VALUED_ADD_FLAGS.has(name)) {
       return { kind: "error", message: `Unknown flag: ${arg}` };
+    }
+    if (name === "--flags" && !arg.includes("=") && (rest[0]?.startsWith("-") ?? false)) {
+      return { kind: "error", message: FLAGS_ATTACH_REQUIRED };
     }
     const value = flagInlineValue(arg, rest);
     if (value === undefined) return { kind: "error", message: `Missing value for ${name}` };

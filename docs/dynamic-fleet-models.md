@@ -862,9 +862,12 @@ on `llamactl bench schedule add`: the CLI refuses the flag unless
 `--kind suite` was given (`--flags is only valid when kind is 'suite'`)
 and refuses a value that lists no flag (`--flags must list at least one
 launch flag`) (`validateFlagsArg`,
-`packages/cli/src/commands/bench-schedule.ts`); the value must be attached
-with `=` because a bare `--flags -ngl 99` would otherwise read `-ngl` as
-the next token rather than the flag value. The schedule schema
+`packages/cli/src/commands/bench-schedule.ts`). A space-separated `--flags`
+value is refused when it starts with a dash (`--flags must be attached with
+'=' when its value starts with '-'; use --flags="..."`, `parseAddArgs`,
+`packages/cli/src/commands/bench-schedule.ts`), because a bare
+`--flags -ngl 99` would otherwise read `-ngl` as the next token rather than
+the flag value. The schedule schema
 (`BenchScheduleSchema`, `packages/remote/src/bench/schedule.ts`) refuses
 the same combination with `flags is only valid with kind 'suite'`. The
 tick loop forwards the list to the suite runner (`runWithOutcome`,
