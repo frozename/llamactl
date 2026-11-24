@@ -60,6 +60,8 @@ export interface BenchSuiteRequest {
   quant?: string;
   // #521: operator-declared context size recorded in perf provenance; absent on legacy schedules
   ctx?: number;
+  // #521: operator-declared engine launch flags recorded in perf provenance; absent on legacy schedules
+  flags?: string[];
 }
 
 export type BenchSuiteRunner = (req: BenchSuiteRequest) => Promise<void>;
@@ -256,10 +258,15 @@ interface RunOutcome {
   patch: { lastRunAt: string; lastError: string | null };
 }
 
-function declaredProvenanceFields(schedule: BenchSchedule): { quant?: string; ctx?: number } {
+function declaredProvenanceFields(schedule: BenchSchedule): {
+  quant?: string;
+  ctx?: number;
+  flags?: string[];
+} {
   return {
     ...(schedule.quant !== undefined ? { quant: schedule.quant } : {}),
     ...(schedule.ctx !== undefined ? { ctx: schedule.ctx } : {}),
+    ...(schedule.flags !== undefined ? { flags: [...schedule.flags] } : {}),
   };
 }
 

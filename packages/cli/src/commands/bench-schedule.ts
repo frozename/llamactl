@@ -68,7 +68,7 @@ USAGE:
   llamactl bench schedule list [--json]
   llamactl bench schedule add <id> --node <node> --rel <rel>
       [--mode auto|text|vision] --every <duration>
-      [--kind suite --suite <perf-quick|perf-full> [--engine <llamacpp|omlx|gufo|kapitsa>] [--slots <n>] [--quant <label>] [--ctx <n>]]
+      [--kind suite --suite <perf-quick|perf-full> [--engine <llamacpp|omlx|gufo|kapitsa>] [--slots <n>] [--quant <label>] [--ctx <n>] [--flags=<args>]]
   llamactl bench schedule rm <id>
   llamactl bench schedule toggle <id> on|off
   llamactl bench schedule status [--json]
@@ -101,6 +101,9 @@ SUBCOMMANDS:
             --quant and --ctx record the quant label and context size
             in perf provenance (the gateway cannot report them);
             without them both fields record unavailable.
+            --flags=<args> records the engine launch flags in perf
+            provenance (the gateway cannot report them); the value is
+            split on whitespace, and without it flags record unavailable.
   rm        Remove a schedule by id.
   toggle    Enable or disable a schedule: \`toggle <id> on|off\`.
   status    The schedules plus this process's loop state (running, tick
@@ -154,6 +157,7 @@ interface SuiteRunRequest {
   slots?: number;
   quant?: string;
   ctx?: number;
+  flags?: string[];
 }
 
 type PerfBenchSuiteRunner = (req: SuiteRunRequest) => Promise<void>;
@@ -254,6 +258,7 @@ export function createPerfBenchSuiteRunner(
         `invalid quant '${req.quant}' for schedule '${req.scheduleId}' (expected a non-blank quant label)`,
       );
     }
+    assertDeclaredLaunchFlags(req);
     const preset = ev.resolvePerfSuite(req.suite);
     const ep = await suiteEndpoint(req.node, overrides.resolveEndpoint);
     const clock: PerfEngineClock = overrides.clock ?? { now: () => performance.now() };
@@ -270,13 +275,14 @@ export function createPerfBenchSuiteRunner(
     // Scheduled runs only reach the engine through the agent gateway, so the
     // binary, GGUF, quant, ctx, launch flags and HF revision are genuinely
     // unknown; each lands as null with its own unavailable reason instead of a
-    // guess. A schedule that declares quant or ctx overrides the null with the
-    // declared value, and the gateway reason then goes unused.
+    // guess. A schedule that declares quant, ctx or launch flags overrides the
+    // null with the declared value, and the gateway reason then goes unused.
     const provenance = await ev.collectEvalProvenance(
       {
         engine: engine as EvalEngine,
         quant: null,
         ctx: null,
+        flags: req.flags ?? null,
         reasons: {
           binary_path: `scheduled suites reach ${req.rel} through the agent gateway; the engine binary path is not known`,
           gguf_path: `scheduled suites reach ${req.rel} through the agent gateway; the GGUF path is not known`,
@@ -478,6 +484,7 @@ interface AddArgs {
   slots: string | undefined;
   quant: string | undefined;
   ctx: string | undefined;
+  flags: string | undefined;
 }
 
 type AddParse =
@@ -495,6 +502,7 @@ const VALUED_ADD_FLAGS: ReadonlySet<string> = new Set([
   "--slots",
   "--quant",
   "--ctx",
+  "--flags",
 ]);
 
 function flagName(arg: string): string {
@@ -516,6 +524,7 @@ function assignAddFlag(args: AddArgs, name: string, value: string): void {
   else if (name === "--slots") args.slots = value;
   else if (name === "--quant") args.quant = value;
   else if (name === "--ctx") args.ctx = value;
+  else if (name === "--flags") args.flags = value;
   else args.every = value;
 }
 
@@ -531,6 +540,7 @@ function parseAddArgs(argv: string[]): AddParse {
     slots: undefined,
     quant: undefined,
     ctx: undefined,
+    flags: undefined,
   };
   const rest = [...argv];
   let arg = rest.shift();
@@ -577,6 +587,7 @@ type AddPlan =
         slots?: number;
         quant?: string;
         ctx?: number;
+        flags?: string[];
       };
     }
   | { error: string };
@@ -619,6 +630,22 @@ function validateSlotsArg(
 
 const QUANT_LABEL_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/;
 
+const LAUNCH_FLAG_TOKEN_RE = /^\S+$/;
+
+function assertDeclaredLaunchFlags(req: { scheduleId: string; flags?: unknown }): void {
+  const flags = req.flags;
+  if (flags === undefined) return;
+  if (
+    !Array.isArray(flags) ||
+    flags.length === 0 ||
+    flags.some((t: unknown) => typeof t !== "string" || !LAUNCH_FLAG_TOKEN_RE.test(t))
+  ) {
+    throw new Error(
+      `invalid flags for schedule '${req.scheduleId}' (expected a non-empty list of launch-flag tokens)`,
+    );
+  }
+}
+
 function validateProvenanceArgs(
   kind: "preset" | "suite" | undefined,
   quant: string | undefined,
@@ -646,6 +673,21 @@ function validateProvenanceArgs(
   };
 }
 
+function validateFlagsArg(
+  kind: "preset" | "suite" | undefined,
+  flags: string | undefined,
+): { flags?: string[]; error?: string } {
+  if (flags === undefined) return {};
+  if (kind !== "suite") {
+    return { error: "--flags is only valid when kind is 'suite'" };
+  }
+  const tokens = flags.split(/\s+/).filter((t) => t !== "");
+  if (tokens.length === 0) {
+    return { error: "--flags must list at least one launch flag" };
+  }
+  return { flags: tokens };
+}
+
 function optionalAddFields(
   kind: "preset" | "suite" | undefined,
   suite: string | undefined,
@@ -653,6 +695,7 @@ function optionalAddFields(
   slots: number | undefined,
   quant: string | undefined,
   ctx: number | undefined,
+  flags: string[] | undefined,
 ): {
   kind?: "preset" | "suite";
   suite?: string;
@@ -660,6 +703,7 @@ function optionalAddFields(
   slots?: number;
   quant?: string;
   ctx?: number;
+  flags?: string[];
 } {
   return {
     ...(kind !== undefined ? { kind } : {}),
@@ -668,6 +712,7 @@ function optionalAddFields(
     ...(slots !== undefined ? { slots } : {}),
     ...(quant !== undefined ? { quant } : {}),
     ...(ctx !== undefined ? { ctx } : {}),
+    ...(flags !== undefined ? { flags } : {}),
   };
 }
 
@@ -691,6 +736,8 @@ function planAddArgs(args: AddArgs): AddPlan {
   if (slotsResult.error) return { error: slotsResult.error };
   const provenance = validateProvenanceArgs(kind, args.quant, args.ctx);
   if (provenance.error) return { error: provenance.error };
+  const flagsResult = validateFlagsArg(kind, args.flags);
+  if (flagsResult.error) return { error: flagsResult.error };
   const input: {
     id: string;
     node: string;
@@ -703,6 +750,7 @@ function planAddArgs(args: AddArgs): AddPlan {
     slots?: number;
     quant?: string;
     ctx?: number;
+    flags?: string[];
   } = {
     id,
     node,
@@ -716,6 +764,7 @@ function planAddArgs(args: AddArgs): AddPlan {
       slotsResult.slots,
       provenance.quant,
       provenance.ctx,
+      flagsResult.flags,
     ),
   };
   return { input };

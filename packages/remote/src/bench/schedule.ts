@@ -21,8 +21,9 @@ import { existsSync, mkdirSync, readFileSync } from "../safe-fs.js";
  * id or the engine id itself: an unknown id is the runner's to
  * reject, and the rejection lands in `lastError`. A suite schedule
  * may also declare the engine slot count (`slots`) used for c2/c4,
- * and the quant label (`quant`) and context size (`ctx`) recorded
- * in perf provenance, which the agent gateway cannot report.
+ * the quant label (`quant`), the context size (`ctx`) and the engine
+ * launch flags (`flags`) recorded in perf provenance, which the agent
+ * gateway cannot report.
  */
 
 export const BENCH_SCHEDULE_KINDS = ["preset", "suite"] as const;
@@ -56,52 +57,63 @@ const benchScheduleBase = z.object({
     .max(64)
     .optional(),
   ctx: z.number().int().positive().optional(),
+  flags: z.array(z.string().regex(/^\S+$/)).min(1).max(256).optional(),
 });
 
-export const BenchScheduleSchema = benchScheduleBase.superRefine((data, ctx) => {
-  if (data.kind === "suite" && !data.suite) {
-    ctx.addIssue({
-      code: "custom",
-      message: "suite id is required for kind 'suite'",
-      path: ["suite"],
-    });
-  }
-  if (data.kind !== "suite" && data.suite !== undefined) {
-    ctx.addIssue({
-      code: "custom",
-      message: "suite is only valid with kind 'suite'",
-      path: ["suite"],
-    });
-  }
-  if (data.kind !== "suite" && data.engine !== undefined) {
-    ctx.addIssue({
-      code: "custom",
-      message: "engine is only valid with kind 'suite'",
-      path: ["engine"],
-    });
-  }
-  if (data.kind !== "suite" && data.slots !== undefined) {
-    ctx.addIssue({
-      code: "custom",
-      message: "slots is only valid with kind 'suite'",
-      path: ["slots"],
-    });
-  }
-  if (data.kind !== "suite" && data.quant !== undefined) {
-    ctx.addIssue({
-      code: "custom",
-      message: "quant is only valid with kind 'suite'",
-      path: ["quant"],
-    });
-  }
-  if (data.kind !== "suite" && data.ctx !== undefined) {
-    ctx.addIssue({
-      code: "custom",
-      message: "ctx is only valid with kind 'suite'",
-      path: ["ctx"],
-    });
-  }
-});
+export const BenchScheduleSchema = benchScheduleBase
+  .superRefine((data, ctx) => {
+    if (data.kind === "suite" && !data.suite) {
+      ctx.addIssue({
+        code: "custom",
+        message: "suite id is required for kind 'suite'",
+        path: ["suite"],
+      });
+    }
+    if (data.kind !== "suite" && data.suite !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        message: "suite is only valid with kind 'suite'",
+        path: ["suite"],
+      });
+    }
+    if (data.kind !== "suite" && data.engine !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        message: "engine is only valid with kind 'suite'",
+        path: ["engine"],
+      });
+    }
+    if (data.kind !== "suite" && data.slots !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        message: "slots is only valid with kind 'suite'",
+        path: ["slots"],
+      });
+    }
+    if (data.kind !== "suite" && data.quant !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        message: "quant is only valid with kind 'suite'",
+        path: ["quant"],
+      });
+    }
+    if (data.kind !== "suite" && data.ctx !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        message: "ctx is only valid with kind 'suite'",
+        path: ["ctx"],
+      });
+    }
+  })
+  .superRefine((data, ctx) => {
+    if (data.kind !== "suite" && data.flags !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        message: "flags is only valid with kind 'suite'",
+        path: ["flags"],
+      });
+    }
+  });
 export type BenchSchedule = z.infer<typeof BenchScheduleSchema>;
 
 export function scheduleKind(s: Pick<BenchSchedule, "kind">): "preset" | "suite" {

@@ -832,13 +832,16 @@ describe("#521 scheduled suite declared slots", () => {
   });
 });
 
-describe("#521 scheduled suite declared provenance", () => {
-  function writeDeclaredStore(declared: { quant?: string; ctx?: number } = {}): void {
-    const quantLine = declared.quant === undefined ? "" : `    quant: ${declared.quant}\n`;
-    const ctxLine = declared.ctx === undefined ? "" : `    ctx: ${String(declared.ctx)}\n`;
-    writeFileSync(
-      schedulePath,
-      `schedules:
+function writeDeclaredStore(
+  declared: { quant?: string; ctx?: number; flags?: string[] } = {},
+): void {
+  const quantLine = declared.quant === undefined ? "" : `    quant: ${declared.quant}\n`;
+  const ctxLine = declared.ctx === undefined ? "" : `    ctx: ${String(declared.ctx)}\n`;
+  const flagsLine =
+    declared.flags === undefined ? "" : `    flags: ${JSON.stringify(declared.flags)}\n`;
+  writeFileSync(
+    schedulePath,
+    `schedules:
   - id: router-suite
     node: fake-node
     rel: org/repo/m.gguf
@@ -849,25 +852,26 @@ describe("#521 scheduled suite declared provenance", () => {
     lastError: null
     kind: suite
     suite: perf-quick
-${quantLine}${ctxLine}`,
-      "utf8",
-    );
-  }
+${quantLine}${ctxLine}${flagsLine}`,
+    "utf8",
+  );
+}
 
-  function provenanceSeams(run: ReturnType<typeof fakeRunPerfSuite>): {
-    endpoint: ReturnType<typeof fakeEndpoint>;
-  } {
-    const endpoint = fakeEndpoint("http://fake-engine.invalid");
-    setSeams({
-      perfSuite: {
-        runPerfSuite: run.runPerfSuite,
-        resolveEndpoint: endpoint.resolveEndpoint,
-        openDb: () => new Database(":memory:"),
-      },
-    });
-    return { endpoint };
-  }
+function provenanceSeams(run: ReturnType<typeof fakeRunPerfSuite>): {
+  endpoint: ReturnType<typeof fakeEndpoint>;
+} {
+  const endpoint = fakeEndpoint("http://fake-engine.invalid");
+  setSeams({
+    perfSuite: {
+      runPerfSuite: run.runPerfSuite,
+      resolveEndpoint: endpoint.resolveEndpoint,
+      openDb: () => new Database(":memory:"),
+    },
+  });
+  return { endpoint };
+}
 
+describe("#521 scheduled suite declared provenance", () => {
   test("kick records declared quant and ctx in provenance and passes ctx to the suite", async () => {
     // Kills: the hard-coded `quant: null` / `ctx: null` provenance inputs,
     //        and ctx not reaching runPerfSuite opts.
@@ -1032,6 +1036,83 @@ describe("#521 scheduled suite launch flags", () => {
     }
     expect(unavailable["flags"]).toBe(
       `scheduled suites reach ${rel} through the agent gateway; the engine launch flags are not known`,
+    );
+  });
+});
+
+describe("#521 scheduled suite declared launch flags", () => {
+  test("kick records declared launch flags in provenance.flags", async () => {
+    // Kills: the runner not passing req.flags to collectEvalProvenance.
+    writeDeclaredStore({ flags: ["-ngl", "99", "--n-cpu-moe", "30"] });
+    const run = fakeRunPerfSuite();
+    provenanceSeams(run);
+
+    const { result } = await captureProcessStreams(() => runBenchSchedule(["kick"]));
+
+    expect(result).toBe(0);
+    expect(run.calls).toHaveLength(1);
+    const provenance = runOpts(run.calls[0])["provenance"];
+    if (!isPlainRecord(provenance)) throw new Error("expected a provenance record");
+    expect(provenance["flags"]).toEqual(["-ngl", "99", "--n-cpu-moe", "30"]);
+    const unavailable = provenance["unavailable"];
+    if (!isPlainRecord(unavailable)) {
+      throw new Error("expected provenance.unavailable to be a record");
+    }
+    expect(unavailable["flags"]).toBeUndefined();
+  });
+
+  test("the runner rejects invalid flags before any endpoint work", async () => {
+    // Kills: assertDeclaredLaunchFlags missing or not called before endpoint work.
+    for (const flags of [[], ["a b"]]) {
+      const endpoint = fakeEndpoint("http://fake-engine.invalid");
+      const run = fakeRunPerfSuite();
+      const runner = createPerfBenchSuiteRunner({
+        runPerfSuite: run.runPerfSuite,
+        resolveEndpoint: endpoint.resolveEndpoint,
+        openDb: () => new Database(":memory:"),
+      });
+      const req = {
+        scheduleId: "x",
+        suite: "perf-quick",
+        node: "n",
+        rel: "org/repo/m.gguf",
+        flags,
+      } as Parameters<ReturnType<typeof createPerfBenchSuiteRunner>>[0];
+
+      let message = "";
+      try {
+        await runner(req);
+      } catch (err) {
+        message = err instanceof Error ? err.message : String(err);
+      }
+
+      expect(message).toContain(
+        "invalid flags for schedule 'x' (expected a non-empty list of launch-flag tokens)",
+      );
+      expect(endpoint.calls).toEqual([]);
+      expect(run.calls).toEqual([]);
+    }
+  });
+
+  test("guard: undeclared flags keep the gateway reason", async () => {
+    // Back-compat guard — passes on base: flags stays null with the gateway reason.
+    writeDeclaredStore();
+    const run = fakeRunPerfSuite();
+    provenanceSeams(run);
+
+    const { result } = await captureProcessStreams(() => runBenchSchedule(["kick"]));
+
+    expect(result).toBe(0);
+    expect(run.calls).toHaveLength(1);
+    const provenance = runOpts(run.calls[0])["provenance"];
+    if (!isPlainRecord(provenance)) throw new Error("expected a provenance record");
+    expect(provenance["flags"]).toBeNull();
+    const unavailable = provenance["unavailable"];
+    if (!isPlainRecord(unavailable)) {
+      throw new Error("expected provenance.unavailable to be a record");
+    }
+    expect(unavailable["flags"]).toBe(
+      "scheduled suites reach org/repo/m.gguf through the agent gateway; the engine launch flags are not known",
     );
   });
 });
