@@ -5,7 +5,7 @@ import type { PeerSnapshot } from "@llamactl/core/workloadRuntime";
 // package path and the relative path are distinct module instances, so a
 // relative import would publish to a productionPeerSnapshots the proxy never
 // reads (routes silently never appear).
-import { openaiProxy } from "@llamactl/core";
+import { openaiProxy, routingCapabilities } from "@llamactl/core";
 import { resolveToken } from "@llamactl/core/config/kubeconfig";
 import { listPeers, type PeerNode } from "@llamactl/core/config/peers";
 import { callViaTunnelRelay } from "@llamactl/core/tunnel-relay";
@@ -29,6 +29,7 @@ interface RawFleetSnapshot {
     endpoint?: string;
     reachable?: boolean;
     revision?: string | null;
+    labels?: unknown;
   }[];
 }
 
@@ -48,20 +49,40 @@ function parseWorkloadPort(endpoint: string | undefined): number {
   }
 }
 
+// #518: forward only the experimental qualification label onto a peer model
+// row. A peer can add exclusion but never lift a locally inherited stage, so
+// any other label, value or shape is dropped. The plain-object check rejects
+// null, strings and arrays that a malformed snapshot could carry; the
+// Array.isArray and getPrototypeOf guards are defence in depth with no
+// observable effect on JSON-parsed input, which never yields those shapes.
+function peerExperimentalLabels(labels: unknown): Record<string, string> | undefined {
+  if (labels === null || typeof labels !== "object" || Array.isArray(labels)) return undefined;
+  if (Object.getPrototypeOf(labels) !== Object.prototype) return undefined;
+  const record = labels as Record<string, unknown>;
+  if (record[routingCapabilities.QUALIFICATION_LABEL] !== "experimental") return undefined;
+  return { [routingCapabilities.QUALIFICATION_LABEL]: "experimental" };
+}
+
 /** Flatten reachable workloads into deduped { modelId, port, revision } rows. */
 function collectPeerWorkloads(
   rawWorkloads: NonNullable<RawFleetSnapshot["workloads"]>,
 ): PeerSnapshot["workloads"] {
   const seen = new Set<string>();
-  const workloads: { modelId: string; port: number; revision?: string | null }[] = [];
+  const workloads: PeerSnapshot["workloads"] = [];
   for (const w of rawWorkloads) {
     if (w.reachable === false) continue;
     const port = parseWorkloadPort(w.endpoint);
     const revision = w.revision ?? null;
+    const labels = peerExperimentalLabels(w.labels);
     for (const modelId of w.models ?? []) {
       if (!modelId || seen.has(modelId)) continue;
       seen.add(modelId);
-      workloads.push({ modelId, port, revision });
+      workloads.push({
+        modelId,
+        port,
+        revision,
+        ...(labels !== undefined ? { labels } : {}),
+      });
     }
   }
   return workloads;
