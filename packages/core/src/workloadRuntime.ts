@@ -296,7 +296,9 @@ function appendPeerRoutes(
  *
  * `opts.stageByModel` is keyed by the exact model id only — there is no
  * basename(rel) alias matching, so a peer advertising a basename alias of a
- * locally experimental rel does not inherit the stage. Known limitation
+ * locally experimental rel does not inherit the stage; it is instead flagged
+ * experimental by the peer's own `llamactl.io/qualification` label, which the
+ * peer's local-routes snapshot now carries (#518). Known limitation
  * tracked by the #518 follow-up (create-proxy) alongside the legacyWinner
  * divergence documented on RouteCandidate in routing/catalog.ts.
  */

@@ -191,6 +191,12 @@ function workloadDeployYaml(
   });
 }
 
+function workloadDeleteRefusal(result: unknown): string | null {
+  if (!isRecord(result) || result["ok"] !== false) return null;
+  const error = result["error"];
+  return typeof error === "string" ? error : null;
+}
+
 export function buildMigrationWorkloadOps(opts: MigrationWorkloadOpsOptions): MigrationWorkloadOps {
   const loadManifestByName = opts.loadManifestByName ?? workloadStore.loadWorkloadByNameAny;
   const relayCall = opts.callViaTunnelRelay ?? callViaTunnelRelay;
@@ -280,15 +286,31 @@ export function buildMigrationWorkloadOps(opts: MigrationWorkloadOpsOptions): Mi
       if (peer.tunnelCentralFingerprint !== undefined)
         callOpts.expectedFingerprint = peer.tunnelCentralFingerprint;
       if (allowInsecureTunnelRelay) callOpts.insecure = true;
-      await withTimeout(relayCall(callOpts), `workloadDelete on ${node}`);
+      // #520: the agent's workloadDelete (packages/remote/src/router.ts)
+      // resolves { ok:false, error } and keeps the manifest when the node
+      // stop fence refuses (SessionsActive/SessionsUnknown/LeasesActive/
+      // DrainInProgress) or pid identity is unverifiable.  Throwing lets
+      // MigrationController.completeMoveBySourceRemoval journal `remove
+      // failed: …; will retry` and keep the pending poll, where it would
+      // otherwise journal the move `executed` while the source is still
+      // loaded.  ok:false with no error string (manifest already gone)
+      // still resolves.  The move never releases sessions.
+      const result = await withTimeout(relayCall(callOpts), `workloadDelete on ${node}`);
+      const refusal = workloadDeleteRefusal(result);
+      if (refusal !== null)
+        throw new Error(`workloadDelete on ${node} did not remove ${workloadName}: ${refusal}`);
       return;
     }
 
     const signal = AbortSignal.timeout(callTimeoutMs);
-    await withTimeout(
+    // #520: same check on the direct-client path.
+    const result = await withTimeout(
       directClient(node).workloadDelete.mutate({ name: workloadName }, { signal }),
       `workloadDelete on ${node}`,
     );
+    const refusal = workloadDeleteRefusal(result);
+    if (refusal !== null)
+      throw new Error(`workloadDelete on ${node} did not remove ${workloadName}: ${refusal}`);
   };
 
   return {

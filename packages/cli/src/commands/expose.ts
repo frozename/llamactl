@@ -1,5 +1,6 @@
 import {
   config as kubecfg,
+  type noderunStore,
   workloadApply,
   type workloadSchema,
   workloadStore,
@@ -7,6 +8,7 @@ import {
 
 import { getNodeClientByName, resolveEffectiveNodeName } from "../dispatcher.js";
 import { required } from "../required.js";
+import { nodeRunBudgetLookup, nodeRunResidencyLookup } from "./noderun-helpers.js";
 
 const USAGE = `Usage: llamactl expose <target> [--node <name>]
                       [--name <workload>] [--extra-args="..."]
@@ -62,6 +64,15 @@ interface ExposeParseState {
 }
 
 type ExposeArgStep = { next: number } | { error: string };
+
+export interface ExposeDeps {
+  applyOne?: typeof workloadApply.applyOne | undefined;
+  listNodeRuns?: typeof noderunStore.listNodeRuns | undefined;
+  getNodeClientByName?: typeof getNodeClientByName | undefined;
+  loadConfig?: typeof kubecfg.loadConfig | undefined;
+  resolveNode?: typeof kubecfg.resolveNode | undefined;
+  saveWorkload?: typeof workloadStore.saveWorkload | undefined;
+}
 
 function splitExtraArgs(raw: string): string[] {
   return raw.trim().length > 0 ? raw.trim().split(/\s+/) : [];
@@ -172,7 +183,7 @@ function parseFlags(args: string[]): ExposeFlags | { error: string } {
   };
 }
 
-export async function runExpose(args: string[]): Promise<number> {
+export async function runExpose(args: string[], deps: ExposeDeps = {}): Promise<number> {
   const parsed = parseFlags(args);
   if ("error" in parsed) {
     const stream = parsed.error === "help" ? process.stdout : process.stderr;
@@ -204,7 +215,7 @@ export async function runExpose(args: string[]): Promise<number> {
     },
   };
 
-  const result = await applyExposeManifest(manifest);
+  const result = await applyExposeManifest(manifest, deps);
   if (result === null) return 1;
   if (result.error) {
     process.stderr.write(`expose: ${result.error}\n`);
@@ -212,15 +223,18 @@ export async function runExpose(args: string[]): Promise<number> {
   }
 
   const persisted: workloadSchema.ModelRun = { ...manifest, status: result.statusSection };
-  const savedPath = workloadStore.saveWorkload(persisted);
+  const save = deps.saveWorkload ?? workloadStore.saveWorkload;
+  const savedPath = save(persisted);
 
   // Pull the advertisedEndpoint off the live node for the printed URL.
   // applyOne populated statusSection.endpoint from the startServer
   // result, but that's the bind URL; we specifically want the
   // advertised one for ember synth.
+  const getClient = deps.getNodeClientByName ?? getNodeClientByName;
   const advertised = await fetchAdvertisedEndpoint(
     node,
     workloadName,
+    getClient,
     result.statusSection.endpoint ?? null,
   );
   const openaiUrl = advertised ? `${advertised}/v1` : null;
@@ -249,24 +263,25 @@ export async function runExpose(args: string[]): Promise<number> {
 
 async function applyExposeManifest(
   manifest: workloadSchema.ModelRun,
+  deps: ExposeDeps,
 ): Promise<workloadApply.ApplyResult | null> {
   try {
-    const cfg = kubecfg.loadConfig();
-    return await workloadApply.applyOne(
-      manifest,
-      (n) => getNodeClientByName(n),
-      undefined,
-      undefined,
-      {
-        resolveNodeIdentity: (n) => {
-          try {
-            return kubecfg.resolveNode(cfg, n).node.endpoint || null;
-          } catch {
-            return null;
-          }
-        },
+    const applyOne = deps.applyOne ?? workloadApply.applyOne;
+    const loadConfig = deps.loadConfig ?? kubecfg.loadConfig;
+    const resolveNode = deps.resolveNode ?? kubecfg.resolveNode;
+    const getClient = deps.getNodeClientByName ?? getNodeClientByName;
+    const cfg = loadConfig();
+    return await applyOne(manifest, (n) => getClient(n), undefined, undefined, {
+      resolveNodeIdentity: (n) => {
+        try {
+          return resolveNode(cfg, n).node.endpoint || null;
+        } catch {
+          return null;
+        }
       },
-    );
+      getNodeBudgetGiB: nodeRunBudgetLookup(deps.listNodeRuns),
+      getNodeResidency: nodeRunResidencyLookup(deps.listNodeRuns),
+    });
   } catch (err) {
     process.stderr.write(`expose: apply failed: ${(err as Error).message}\n`);
     return null;
@@ -276,14 +291,15 @@ async function applyExposeManifest(
 async function fetchAdvertisedEndpoint(
   node: string,
   workloadName: string,
+  getClient: typeof getNodeClientByName,
   fallback: string | null,
 ): Promise<string | null> {
   try {
     // A version-skewed agent can omit the field over the wire despite the
     // non-optional static type; never clear the endpoint we already have.
-    const status: { advertisedEndpoint?: string | null } = await getNodeClientByName(
-      node,
-    ).serverStatus.query({ workload: workloadName });
+    const status: { advertisedEndpoint?: string | null } = await getClient(node).serverStatus.query(
+      { workload: workloadName },
+    );
     return status.advertisedEndpoint ?? fallback;
   } catch {
     // Not fatal — fall back to whatever applyOne recorded.

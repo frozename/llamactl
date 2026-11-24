@@ -93,11 +93,13 @@ type EvictIdleResult =
   | { ok: true; dryRun: boolean; windowSeconds: number; rows: EvictIdleRow[] };
 
 // #519 ranking view: an agent older than the cooldown/tier read-out omits
-// cooldownCharged/drainTier/degradedTier even though the current schema always
-// carries them. Re-declare the ranking section locally with those fields
-// optional (the same way the evict-idle row above is re-declared), so the
-// renderer reads them without tripping no-unnecessary-condition.
+// cooldownCharged/drainTier/degradedTier/loadCredited even though the
+// current schema always carries them. Re-declare the ranking section
+// locally with those fields optional (the same way the evict-idle row
+// above is re-declared), so the renderer reads them without tripping
+// no-unnecessary-condition.
 type RankingCharge = { model: string; untilMs: number };
+type RankingLoadCredit = { model: string; expectedReadyAtMs: number };
 type RankingUnavailableReason =
   | "NotServingNode"
   | "UnifiedProxyOff"
@@ -118,6 +120,7 @@ type RankingSectionRender =
       cooldownCharged?: RankingCharge[];
       drainTier?: string[];
       degradedTier?: string[];
+      loadCredited?: RankingLoadCredit[];
     };
 
 export type ResidencyReleaseSessionView = Awaited<
@@ -380,6 +383,13 @@ function pushRankingLines(
   lines.push(`  resident: ${ranking.resident.length === 0 ? "none" : ranking.resident.join(", ")}`);
   if (ranking.drainCharged.length > 0) {
     lines.push(`  drain charged: ${ranking.drainCharged.join(", ")}`);
+  }
+  const loadCredited = ranking.loadCredited ?? [];
+  if (loadCredited.length > 0) {
+    const entries = loadCredited.map(
+      (e) => `${e.model} ready in ${formatMs(Math.max(0, e.expectedReadyAtMs - nowMs))}`,
+    );
+    lines.push(`  load credited: ${entries.join(", ")}`);
   }
   const cooldownCharged = ranking.cooldownCharged ?? [];
   if (cooldownCharged.length > 0) {

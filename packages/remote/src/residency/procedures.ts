@@ -59,9 +59,10 @@
 // read-out of the NodeRun ranking knobs against the serving node's lifecycle
 // rows: the resolved residentPreference and coldLoadPenaltyMs plus the resident
 // (ready lifecycle rows), drain-charged (exclusive-group drain), cooldown-charged
-// (active switch-cooldown/min-residency instants per non-ready row) and the
-// operational drain and degraded tier model lists, computed by the same
-// residencyRankingReadout the unified proxy's ranking signals derive from. Every
+// (active switch-cooldown/min-residency instants per non-ready row), the
+// in-flight load credits and the operational drain and degraded tier model
+// lists, computed by the same residencyRankingReadout the unified proxy's
+// ranking signals derive from. Every
 // ranking knob 0 (residentPreference, coldLoadPenaltyMs, switchCooldownSeconds,
 // minResidencySeconds), or no policy, reports disabled without reading the store;
 // off the serving node, with the unified proxy off, or with an absent,
@@ -427,9 +428,9 @@ export type ResidencyStatusSwitchGates =
 
 // Read-only ranking-knob read-out (Part of #519): the resolved
 // `residentPreference` and `coldLoadPenaltyMs`, plus the resident,
-// drain-charged, cooldown-charged, drain-tier and degraded-tier model lists
-// exactly as the unified proxy's ranker sees them, computed by
-// `residencyRankingReadout`. It mirrors the gating of
+// drain-charged, cooldown-charged, drain-tier, degraded-tier and
+// load-credited model lists exactly as the unified proxy's ranker sees
+// them, computed by `residencyRankingReadout`. It mirrors the gating of
 // `createResidencyRankingSource`/`residencyRankingInputs` and never ranks
 // or mutates anything. `scope` is always "serving-process".
 export type ResidencyStatusRanking =
@@ -455,6 +456,7 @@ export type ResidencyStatusRanking =
       cooldownCharged: { model: string; untilMs: number }[];
       drainTier: string[];
       degradedTier: string[];
+      loadCredited: { model: string; expectedReadyAtMs: number }[];
     };
 
 export type ResidencyStatus = {
@@ -834,6 +836,7 @@ function rankingAvailable(readout: ResidencyRankingReadout): ResidencyStatusRank
     cooldownCharged: readout.cooldownCharged,
     drainTier: readout.drainTier,
     degradedTier: readout.degradedTier,
+    loadCredited: readout.loadCredited,
   };
 }
 
