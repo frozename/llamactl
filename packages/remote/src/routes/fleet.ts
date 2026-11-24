@@ -1,3 +1,4 @@
+import { routingCapabilities } from "@llamactl/core";
 import { resolveEnv } from "@llamactl/core/env";
 import { readWorkloadEpoch } from "@llamactl/core/kvstore";
 import { listLocalRoutes, type LocalRoute } from "@llamactl/core/workloadRuntime";
@@ -24,6 +25,9 @@ export interface LocalRoutesSnapshotWorkload {
   endpoint: string;
   reachable: true;
   revision: string | null;
+  /** Part of #518: present only when a route is experimental, carrying
+   *  `llamactl.io/qualification: experimental` so a peer can exclude it. */
+  labels?: Record<string, string>;
 }
 
 /** #306: no node_mem (the peer poller then rates pressure NORMAL) and no metrics. */
@@ -62,6 +66,9 @@ export function buildLocalRoutesSnapshot(
         revision: revisionOf(route.workload),
       };
       byWorkload.set(route.workload, entry);
+    }
+    if (routingCapabilities.isExperimentalRoute(route)) {
+      entry.labels = { [routingCapabilities.QUALIFICATION_LABEL]: "experimental" };
     }
     if (!entry.models.includes(route.model)) {
       entry.models.push(route.model);

@@ -318,6 +318,20 @@ entry's `qualification.stage` is the routing stage from
 `experimental: true`, the same flag a `data` entry carries. Neither array
 is routable, so the flags only report; they change no routing decision.
 
+Peer-advertised experimental stage (#518): the `include=local-routes` fleet
+snapshot (`buildLocalRoutesSnapshot`, `packages/remote/src/routes/fleet.ts`)
+labels a workload `llamactl.io/qualification: experimental` when any of its
+routes is experimental — a catalog row, an applied or pin override, or an
+explicit label. The peer poller (`collectPeerWorkloads`,
+`packages/remote/src/server/peer-snapshot-poller.ts`) forwards only that
+experimental label onto each model id, so the existing peer admission and
+catalog exclusion apply on other nodes, including a peer's `ModelHost` alias
+ids and node-local pins. Limits: the poller forwards only the experimental
+stage and advertises no other (a non-experimental peer stage is not
+propagated, so a peer route still inherits this node's stage by exact id);
+fleet-supervisor journal snapshots, served in preference to the fallback,
+carry no label yet; and ranking order is unchanged.
+
 `proposePromotion` (`packages/core/src/qualification/promotion.ts`)
 applies the first matching check, in source order: `frozen`, `pinned`,
 `degraded`, `terminal-stage`, `no-thresholds`,
