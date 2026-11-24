@@ -562,6 +562,26 @@ function benchLaunchRefusal(target: string): string | null {
   });
 }
 
+/**
+ * Read-only, unfenced pre-spawn gate for the agent keep-alive supervisor launch
+ * (#517), mirroring the CLI's `keepAliveLaunchRefusal` (#813). Resolves
+ * `<target>` with `resolveTarget`, reads the rel's `residencyGroup` and delegates
+ * to `exclusiveGroupLaunchRefusal` with the local store, using the rel as the
+ * refusal id. An unresolvable target, an uncatalogued rel, or a missing store
+ * file returns null, so the supervisor spawns as before.
+ */
+function keepAliveStartRefusal(target: string): string | null {
+  const rel = targetMod.resolveTarget(target);
+  if (rel === null) return null;
+  const entry = catalog.findByRel(rel);
+  if (!entry) return null;
+  return exclusiveGroupLaunchRefusal({
+    id: rel,
+    group: entry.residencyGroup,
+    storePath: defaultResidencyStorePath(),
+  });
+}
+
 // The fenced ModelRun/ModelHost stop the idle-evict mutation drives (#519): a
 // verified stop commits the unload, an active lease or session refuses before any
 // process is touched. It mirrors the fence the serverStop/modelHostStop operator
@@ -3684,6 +3704,10 @@ export const router = t.router({
           pid: existing.pid,
           error: `pid identity unknown for recorded keep-alive pid ${String(existing.pid)} — refusing to start a duplicate`,
         };
+      }
+      const groupRefusal = keepAliveStartRefusal(input.target);
+      if (groupRefusal !== null) {
+        return { ok: false, pid: null, error: `keep-alive start: ${groupRefusal}` };
       }
       const llamactlHome =
         process.env["LLAMACTL_HOME"] ?? join(resolved.DEV_STORAGE, "repos", "personal", "llamactl");
