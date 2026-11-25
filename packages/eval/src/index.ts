@@ -18,6 +18,7 @@ export * from "./perf/provenance.js";
 export * from "./perf/readers.js";
 export * from "./perf/runner.js";
 export * from "./perf/suites.js";
+export * from "./qualification/evidence.js";
 export * from "./report/render-card.js";
 export * from "./runners/context-retrieval.js";
 export * from "./runners/json-output.js";
