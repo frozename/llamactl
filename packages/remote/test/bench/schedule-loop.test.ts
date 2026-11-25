@@ -856,3 +856,54 @@ describe("#521 scheduled suite declared launch flags", () => {
     expect("flags" in calls[0]!).toBe(false);
   });
 });
+
+const HF_REVISION = "0123456789abcdef0123456789abcdef01234567";
+
+describe("#521 scheduled suite declared hf revision", () => {
+  test("a due suite schedule forwards hfRevision on the runSuite request", async () => {
+    // Kills: declaredProvenanceFields not forwarding schedule.hfRevision.
+    const calls: BenchSuiteRequest[] = [];
+    const runSuite = (req: BenchSuiteRequest): Promise<void> => {
+      calls.push(req);
+      return Promise.resolve();
+    };
+    const schedule: BenchSchedule & { hfRevision?: string } = {
+      ...dueSchedule("suite-hf-revision", { kind: "suite", suite: "perf" }),
+      hfRevision: HF_REVISION,
+    };
+    saveSchedules([schedule], schedulePath);
+
+    await kickBenchScheduler(autoCompleting().getClient, { runSuite });
+
+    expect(calls).toEqual([
+      {
+        scheduleId: "suite-hf-revision",
+        suite: "perf",
+        node: "fake-node",
+        rel: "org/repo/suite-hf-revision.gguf",
+        hfRevision: HF_REVISION,
+      },
+    ]);
+    const req = calls[0] as BenchSuiteRequest & { hfRevision?: string };
+    expect(req.hfRevision).toBe(HF_REVISION);
+  });
+
+  test("guard: a due suite schedule without hfRevision sends no hfRevision key", async () => {
+    // Back-compat guard — passes on base: the request omits hfRevision entirely,
+    // protecting against forwarding hfRevision: undefined.
+    const calls: BenchSuiteRequest[] = [];
+    const runSuite = (req: BenchSuiteRequest): Promise<void> => {
+      calls.push(req);
+      return Promise.resolve();
+    };
+    saveSchedules(
+      [dueSchedule("suite-no-hf-revision", { kind: "suite", suite: "perf" })],
+      schedulePath,
+    );
+
+    await kickBenchScheduler(autoCompleting().getClient, { runSuite });
+
+    expect(calls).toHaveLength(1);
+    expect("hfRevision" in calls[0]!).toBe(false);
+  });
+});

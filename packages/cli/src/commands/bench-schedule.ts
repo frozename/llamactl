@@ -68,7 +68,7 @@ USAGE:
   llamactl bench schedule list [--json]
   llamactl bench schedule add <id> --node <node> --rel <rel>
       [--mode auto|text|vision] --every <duration>
-      [--kind suite --suite <perf-quick|perf-full> [--engine <llamacpp|omlx|gufo|kapitsa>] [--slots <n>] [--quant <label>] [--ctx <n>] [--flags=<args>]]
+      [--kind suite --suite <perf-quick|perf-full> [--engine <llamacpp|omlx|gufo|kapitsa>] [--slots <n>] [--quant <label>] [--ctx <n>] [--flags=<args>] [--hf-revision <rev>]]
   llamactl bench schedule rm <id>
   llamactl bench schedule toggle <id> on|off
   llamactl bench schedule status [--json]
@@ -104,6 +104,9 @@ SUBCOMMANDS:
             --flags=<args> records the engine launch flags in perf
             provenance (the gateway cannot report them); the value is
             split on whitespace, and without it flags record unavailable.
+            --hf-revision <rev> records the HF commit (40 lowercase hex
+            characters) in perf provenance (the gateway cannot report it);
+            without it hf_revision records unavailable.
   rm        Remove a schedule by id.
   toggle    Enable or disable a schedule: \`toggle <id> on|off\`.
   status    The schedules plus this process's loop state (running, tick
@@ -158,6 +161,7 @@ interface SuiteRunRequest {
   quant?: string;
   ctx?: number;
   flags?: string[];
+  hfRevision?: string;
 }
 
 type PerfBenchSuiteRunner = (req: SuiteRunRequest) => Promise<void>;
@@ -243,6 +247,7 @@ export function createPerfBenchSuiteRunner(
         `unknown engine '${engine}' for schedule '${req.scheduleId}' (expected one of ${EVAL_ENGINES.join(", ")})`,
       );
     }
+    assertDeclaredHfRevision(req);
     if (req.slots !== undefined && (!Number.isSafeInteger(req.slots) || req.slots <= 0)) {
       throw new Error(
         `invalid slots ${String(req.slots)} for schedule '${req.scheduleId}' (expected a positive integer)`,
@@ -275,14 +280,16 @@ export function createPerfBenchSuiteRunner(
     // Scheduled runs only reach the engine through the agent gateway, so the
     // binary, GGUF, quant, ctx, launch flags and HF revision are genuinely
     // unknown; each lands as null with its own unavailable reason instead of a
-    // guess. A schedule that declares quant, ctx or launch flags overrides the
-    // null with the declared value, and the gateway reason then goes unused.
+    // guess. A schedule that declares quant, ctx, launch flags or HF revision
+    // overrides the null with the declared value, and the gateway reason then
+    // goes unused.
     const provenance = await ev.collectEvalProvenance(
       {
         engine: engine as EvalEngine,
         quant: null,
         ctx: null,
         flags: req.flags ?? null,
+        hf_revision: req.hfRevision ?? null,
         reasons: {
           binary_path: `scheduled suites reach ${req.rel} through the agent gateway; the engine binary path is not known`,
           gguf_path: `scheduled suites reach ${req.rel} through the agent gateway; the GGUF path is not known`,
@@ -485,6 +492,7 @@ interface AddArgs {
   quant: string | undefined;
   ctx: string | undefined;
   flags: string | undefined;
+  hfRevision: string | undefined;
 }
 
 type AddParse =
@@ -503,6 +511,7 @@ const VALUED_ADD_FLAGS: ReadonlySet<string> = new Set([
   "--quant",
   "--ctx",
   "--flags",
+  "--hf-revision",
 ]);
 
 function flagName(arg: string): string {
@@ -529,6 +538,7 @@ function assignAddFlag(args: AddArgs, name: string, value: string): void {
   else if (name === "--quant") args.quant = value;
   else if (name === "--ctx") args.ctx = value;
   else if (name === "--flags") args.flags = value;
+  else if (name === "--hf-revision") args.hfRevision = value;
   else args.every = value;
 }
 
@@ -545,6 +555,7 @@ function parseAddArgs(argv: string[]): AddParse {
     quant: undefined,
     ctx: undefined,
     flags: undefined,
+    hfRevision: undefined,
   };
   const rest = [...argv];
   let arg = rest.shift();
@@ -637,6 +648,16 @@ function validateSlotsArg(
 
 const QUANT_LABEL_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/;
 
+const HF_COMMIT_RE = /^[0-9a-f]{40}$/;
+
+function assertDeclaredHfRevision(req: { scheduleId: string; hfRevision?: string }): void {
+  if (req.hfRevision !== undefined && !HF_COMMIT_RE.test(req.hfRevision)) {
+    throw new Error(
+      `invalid hfRevision '${req.hfRevision}' for schedule '${req.scheduleId}' (expected a 40-character lowercase hex commit hash)`,
+    );
+  }
+}
+
 const LAUNCH_FLAG_TOKEN_RE = /^\S+$/;
 
 function assertDeclaredLaunchFlags(req: { scheduleId: string; flags?: unknown }): void {
@@ -695,6 +716,38 @@ function validateFlagsArg(
   return { flags: tokens };
 }
 
+function validateHfRevisionArg(
+  kind: "preset" | "suite" | undefined,
+  raw: string | undefined,
+): { hfRevision?: string; error?: string } {
+  if (raw === undefined) return {};
+  if (kind !== "suite") {
+    return { error: "--hf-revision is only valid when kind is 'suite'" };
+  }
+  if (!HF_COMMIT_RE.test(raw)) {
+    return { error: "--hf-revision must be a 40-character lowercase hex commit hash" };
+  }
+  return { hfRevision: raw };
+}
+
+// Flags first, then HF revision: the first failing validator's error wins.
+function validateLaunchArgs(
+  kind: "preset" | "suite" | undefined,
+  flags: string | undefined,
+  hfRevision: string | undefined,
+): { flags?: string[]; hfRevision?: string; error?: string } {
+  const flagsResult = validateFlagsArg(kind, flags);
+  if (flagsResult.error) return { error: flagsResult.error };
+  const hfRevisionResult = validateHfRevisionArg(kind, hfRevision);
+  if (hfRevisionResult.error) return { error: hfRevisionResult.error };
+  return {
+    ...(flagsResult.flags !== undefined ? { flags: flagsResult.flags } : {}),
+    ...(hfRevisionResult.hfRevision !== undefined
+      ? { hfRevision: hfRevisionResult.hfRevision }
+      : {}),
+  };
+}
+
 function optionalAddFields(
   kind: "preset" | "suite" | undefined,
   suite: string | undefined,
@@ -703,6 +756,7 @@ function optionalAddFields(
   quant: string | undefined,
   ctx: number | undefined,
   flags: string[] | undefined,
+  hfRevision: string | undefined,
 ): {
   kind?: "preset" | "suite";
   suite?: string;
@@ -711,6 +765,7 @@ function optionalAddFields(
   quant?: string;
   ctx?: number;
   flags?: string[];
+  hfRevision?: string;
 } {
   return {
     ...(kind !== undefined ? { kind } : {}),
@@ -720,6 +775,7 @@ function optionalAddFields(
     ...(quant !== undefined ? { quant } : {}),
     ...(ctx !== undefined ? { ctx } : {}),
     ...(flags !== undefined ? { flags } : {}),
+    ...(hfRevision !== undefined ? { hfRevision } : {}),
   };
 }
 
@@ -743,8 +799,8 @@ function planAddArgs(args: AddArgs): AddPlan {
   if (slotsResult.error) return { error: slotsResult.error };
   const provenance = validateProvenanceArgs(kind, args.quant, args.ctx);
   if (provenance.error) return { error: provenance.error };
-  const flagsResult = validateFlagsArg(kind, args.flags);
-  if (flagsResult.error) return { error: flagsResult.error };
+  const launch = validateLaunchArgs(kind, args.flags, args.hfRevision);
+  if (launch.error) return { error: launch.error };
   const input: {
     id: string;
     node: string;
@@ -758,6 +814,7 @@ function planAddArgs(args: AddArgs): AddPlan {
     quant?: string;
     ctx?: number;
     flags?: string[];
+    hfRevision?: string;
   } = {
     id,
     node,
@@ -771,7 +828,8 @@ function planAddArgs(args: AddArgs): AddPlan {
       slotsResult.slots,
       provenance.quant,
       provenance.ctx,
-      flagsResult.flags,
+      launch.flags,
+      launch.hfRevision,
     ),
   };
   return { input };

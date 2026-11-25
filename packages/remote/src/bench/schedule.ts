@@ -21,9 +21,9 @@ import { existsSync, mkdirSync, readFileSync } from "../safe-fs.js";
  * id or the engine id itself: an unknown id is the runner's to
  * reject, and the rejection lands in `lastError`. A suite schedule
  * may also declare the engine slot count (`slots`) used for c2/c4,
- * the quant label (`quant`), the context size (`ctx`) and the engine
- * launch flags (`flags`) recorded in perf provenance, which the agent
- * gateway cannot report.
+ * the quant label (`quant`), the context size (`ctx`), the engine
+ * launch flags (`flags`) and the HF commit hash (`hfRevision`)
+ * recorded in perf provenance, which the agent gateway cannot report.
  */
 
 export const BENCH_SCHEDULE_KINDS = ["preset", "suite"] as const;
@@ -58,6 +58,10 @@ const benchScheduleBase = z.object({
     .optional(),
   ctx: z.number().int().positive().optional(),
   flags: z.array(z.string().regex(/^\S+$/)).min(1).max(256).optional(),
+  hfRevision: z
+    .string()
+    .regex(/^[0-9a-f]{40}$/)
+    .optional(),
 });
 
 export const BenchScheduleSchema = benchScheduleBase
@@ -111,6 +115,13 @@ export const BenchScheduleSchema = benchScheduleBase
         code: "custom",
         message: "flags is only valid with kind 'suite'",
         path: ["flags"],
+      });
+    }
+    if (data.kind !== "suite" && data.hfRevision !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        message: "hfRevision is only valid with kind 'suite'",
+        path: ["hfRevision"],
       });
     }
   });

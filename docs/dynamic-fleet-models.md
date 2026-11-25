@@ -760,7 +760,7 @@ verbatim from the USAGE text (`packages/cli/src/commands/bench-schedule.ts`):
 ```text
   llamactl bench schedule add <id> --node <node> --rel <rel>
       [--mode auto|text|vision] --every <duration>
-      [--kind suite --suite <perf-quick|perf-full> [--engine <llamacpp|omlx|gufo|kapitsa>] [--slots <n>] [--quant <label>] [--ctx <n>] [--flags=<args>]]
+      [--kind suite --suite <perf-quick|perf-full> [--engine <llamacpp|omlx|gufo|kapitsa>] [--slots <n>] [--quant <label>] [--ctx <n>] [--flags=<args>] [--hf-revision <rev>]]
 ```
 
 So `llamactl bench schedule add <id> --node <node> --rel <rel>` takes an
@@ -902,6 +902,31 @@ perf provenance (`collectEvalProvenance`,
 `packages/eval/src/perf/provenance.ts`) instead of the gateway reason. So
 without a declared `--flags`, `flags` is recorded null with the gateway
 reason (`createPerfBenchSuiteRunner`,
+`packages/cli/src/commands/bench-schedule.ts`).
+
+### Declared HF revision for a suite schedule
+
+A suite schedule can declare the HF commit hash with `--hf-revision <rev>`
+on `llamactl bench schedule add`: the CLI refuses the flag unless
+`--kind suite` was given (`--hf-revision is only valid when kind is 'suite'`,
+`validateHfRevisionArg`,
+`packages/cli/src/commands/bench-schedule.ts`), and refuses a value that is
+not a 40-character lowercase hex commit hash (`--hf-revision must be a
+40-character lowercase hex commit hash`). The schedule schema
+(`BenchScheduleSchema`, `packages/remote/src/bench/schedule.ts`) refuses
+the same combination with `hfRevision is only valid with kind 'suite'`. The
+tick loop forwards the hash to the suite runner (`runWithOutcome`,
+`packages/remote/src/bench/scheduleLoop.ts`), which re-checks a value on a
+schedule saved another way and refuses a malformed one naming the schedule
+(`invalid hfRevision '<value>' for schedule '<id>' (expected a 40-character
+lowercase hex commit hash)`) before any endpoint work
+(`createPerfBenchSuiteRunner`,
+`packages/cli/src/commands/bench-schedule.ts`), then records the hash in
+perf provenance (`collectEvalProvenance`,
+`packages/eval/src/perf/provenance.ts`) instead of the gateway reason. So
+without a declared `--hf-revision`, `hf_revision` is recorded null with the
+gateway reason (`scheduled suites reach <rel> through the agent gateway; no GGUF path to derive an HF revision from`,
+`createPerfBenchSuiteRunner`,
 `packages/cli/src/commands/bench-schedule.ts`).
 
 ### Comparing perf runs for an arm

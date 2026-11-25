@@ -525,3 +525,56 @@ describe("#521 scheduled suite declared launch flags", () => {
     expect(readFileSync(schedulePath, "utf8")).not.toContain("flags:");
   });
 });
+
+const HF_REVISION = "0123456789abcdef0123456789abcdef01234567";
+
+type HfRevisionScheduleRow = BenchSchedule & { hfRevision?: string };
+
+describe("#521 scheduled suite declared hf revision", () => {
+  test("a suite schedule with hfRevision round-trips through save/load", () => {
+    // Kills: dropping hfRevision from benchScheduleBase.
+    const schedule: HfRevisionScheduleRow = {
+      ...suiteSchedule("hf-revision-persist"),
+      hfRevision: HF_REVISION,
+    };
+    saveSchedules([schedule], schedulePath);
+
+    const entry = loadSchedules(schedulePath)[0] as HfRevisionScheduleRow;
+    expect(entry.hfRevision).toBe(HF_REVISION);
+  });
+
+  test("schema rejects hfRevision on preset or kindless schedules", () => {
+    // Kills: dropping the superRefine gate.
+    for (const fixture of [
+      { ...baseSchedule("hf-revision-preset"), kind: "preset" as const, hfRevision: HF_REVISION },
+      { ...baseSchedule("hf-revision-kindless"), hfRevision: HF_REVISION },
+    ]) {
+      const result = BenchScheduleSchema.safeParse(fixture);
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(
+          result.error.issues.some(
+            (issue) => issue.message === "hfRevision is only valid with kind 'suite'",
+          ),
+        ).toBe(true);
+      }
+    }
+  });
+
+  test("schema rejects malformed hfRevision values", () => {
+    // Kills: loosening the /^[0-9a-f]{40}$/ regex.
+    for (const hfRevision of [
+      "main",
+      HF_REVISION.toUpperCase(),
+      HF_REVISION.slice(1),
+      `${HF_REVISION}0`,
+      `${HF_REVISION} `,
+    ]) {
+      const result = BenchScheduleSchema.safeParse({
+        ...suiteSchedule("hf-revision-malformed"),
+        hfRevision,
+      });
+      expect(result.success).toBe(false);
+    }
+  });
+});
