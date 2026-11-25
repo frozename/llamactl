@@ -20,11 +20,12 @@ import { llamactlHome } from "@llamactl/core/config/env";
 import { Database } from "bun:sqlite";
 import { join } from "node:path";
 
-import type { MetricValue, PerfRunRow } from "../matrix/types.js";
+import type { EvalProvenance, MetricValue, PerfRunRow, ProvenanceField } from "../matrix/types.js";
 import type { PERF_METRIC_NAMES } from "./metrics.js";
 
 import { compareMetric, formatMetric } from "../matrix/diff.js";
 import { listPerfRuns } from "../matrix/store.js";
+import { PROVENANCE_UNAVAILABLE_FIELDS } from "../matrix/types.js";
 import { existsSync } from "../safe-fs.js";
 
 export const PERF_METRIC_HIGHER_IS_BETTER: Record<(typeof PERF_METRIC_NAMES)[number], boolean> = {
@@ -60,6 +61,34 @@ export interface PerfMetricDiff {
   reason: string | null;
 }
 
+// Provenance rides every perf row, so a metric delta can be read against the
+// launch that produced it. The order is the render order of the md table.
+export const PERF_PROVENANCE_DIFF_FIELDS = [
+  "engine",
+  "engine_version",
+  "engine_commit",
+  "binary_sha256",
+  "gguf_sha256",
+  "hf_revision",
+  "quant",
+  "ctx",
+  "flags",
+  "host",
+] as const satisfies readonly Exclude<keyof EvalProvenance, "unavailable">[];
+
+export type PerfProvenanceDiffField = (typeof PERF_PROVENANCE_DIFF_FIELDS)[number];
+
+type UncoveredField = Exclude<ProvenanceField, PerfProvenanceDiffField>;
+export const ALL_PROVENANCE_FIELDS_DIFFED: [UncoveredField] extends [never] ? true : false = true;
+
+export interface PerfProvenanceDiff {
+  field: PerfProvenanceDiffField;
+  baseline: string | number | string[] | null;
+  candidate: string | number | string[] | null;
+  verdict: "same" | "differs" | "unavailable";
+  reason: string | null;
+}
+
 export interface PerfDiffMeta {
   base: string;
   cand: string;
@@ -67,6 +96,7 @@ export interface PerfDiffMeta {
   baseEngine: string;
   candModel: string;
   candEngine: string;
+  provenance: PerfProvenanceDiff[];
 }
 
 function missingMetricValue(reason: string): MetricValue {
@@ -134,8 +164,77 @@ export function diffPerfRuns(
   return out;
 }
 
+type ProvenanceLeaf = string | number | string[];
+type ProvenanceValue = ProvenanceLeaf | null;
+
+function isProvenanceField(field: string): field is ProvenanceField {
+  return (PROVENANCE_UNAVAILABLE_FIELDS as readonly string[]).includes(field);
+}
+
+function sideReason(provenance: EvalProvenance, field: string, fallback: string): string {
+  const recorded = isProvenanceField(field) ? provenance.unavailable?.[field] : undefined;
+  return recorded !== undefined && recorded.trim() !== "" ? recorded : fallback;
+}
+
+// A row written before a field shipped misses the key entirely, so a missing
+// key reads as unavailable exactly like a recorded null.
+function sideValue(provenance: EvalProvenance, field: string): ProvenanceValue {
+  const value = (provenance as unknown as Record<string, unknown>)[field];
+  if (value === null || value === undefined) return null;
+  return value as string | number | string[];
+}
+
+function sameValue(a: ProvenanceLeaf, b: ProvenanceLeaf): boolean {
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b)) return false;
+    if (a.length !== b.length) return false;
+    return !a.some((token, index) => token !== b[index]);
+  }
+  return a === b;
+}
+
+export function diffPerfProvenance(
+  base: EvalProvenance,
+  cand: EvalProvenance,
+): PerfProvenanceDiff[] {
+  const fallback = "not recorded";
+  const out: PerfProvenanceDiff[] = [];
+  for (const field of PERF_PROVENANCE_DIFF_FIELDS) {
+    const baseline = sideValue(base, field);
+    const candidate = sideValue(cand, field);
+    if (baseline === null || candidate === null) {
+      const reasons: string[] = [];
+      if (baseline === null) reasons.push(`baseline: ${sideReason(base, field, fallback)}`);
+      if (candidate === null) reasons.push(`candidate: ${sideReason(cand, field, fallback)}`);
+      out.push({
+        field,
+        baseline,
+        candidate,
+        verdict: "unavailable",
+        reason: reasons.join("; "),
+      });
+      continue;
+    }
+    out.push({
+      field,
+      baseline,
+      candidate,
+      verdict: sameValue(baseline, candidate) ? "same" : "differs",
+      reason: null,
+    });
+  }
+  return out;
+}
+
 function mdField(value: string): string {
   return value.replaceAll("|", "\\|");
+}
+
+function provenanceCell(value: ProvenanceValue): string {
+  if (value === null) return mdField("unavailable");
+  if (typeof value === "number") return mdField(String(value));
+  if (Array.isArray(value)) return mdField(value.length === 0 ? "(none)" : value.join(" "));
+  return mdField(value);
 }
 
 export function renderPerfDiffMd(diffs: PerfMetricDiff[], meta: PerfDiffMeta): string {
@@ -158,11 +257,19 @@ export function renderPerfDiffMd(diffs: PerfMetricDiff[], meta: PerfDiffMeta): s
       ].join(" | ")} |`,
     );
   }
+  if (meta.provenance.length > 0) {
+    lines.push("", "| Provenance | Baseline | Candidate | Verdict |", "|---|---|---|---|");
+    for (const p of meta.provenance) {
+      const cells = [p.field, provenanceCell(p.baseline), provenanceCell(p.candidate), p.verdict];
+      lines.push(`| ${cells.join(" | ")} |`);
+    }
+  }
   return lines.join("\n") + "\n";
 }
 
 export function renderPerfDiffJson(diffs: PerfMetricDiff[], meta: PerfDiffMeta): string {
-  return JSON.stringify({ baseline: meta.base, candidate: meta.cand, diffs }, null, 2) + "\n";
+  const doc = { baseline: meta.base, candidate: meta.cand, diffs, provenance: meta.provenance };
+  return JSON.stringify(doc, null, 2) + "\n";
 }
 
 interface PerfDiffArgs {
@@ -295,6 +402,7 @@ export function perfDiffMain(
       baseEngine: baseFirst.provenance.engine,
       candModel: candFirst.model_name,
       candEngine: candFirst.provenance.engine,
+      provenance: diffPerfProvenance(baseFirst.provenance, candFirst.provenance),
     };
     const out =
       args.format === "json" ? renderPerfDiffJson(diffs, meta) : renderPerfDiffMd(diffs, meta);

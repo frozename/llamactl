@@ -3666,6 +3666,14 @@ export const router = t.router({
       });
     }),
 
+  // #520: `llamactl keep-alive stop` on remote dispatch now runs through the
+  // same node stop fence as serverStop. A held lease refuses first
+  // (LeasesActive/DrainInProgress), then a bound session refuses
+  // (SessionsActive/SessionsUnknown), and the refusal applies whether or not
+  // a supervisor is tracked, so stale tracking files are not cleaned while a
+  // session is bound. The fence never releases sessions; the override is
+  // `residency force-unload`. With no lease registry installed the result is
+  // byte-identical to the unfenced call.
   keepAliveStop: t.procedure
     .input(
       z.object({
@@ -3675,9 +3683,18 @@ export const router = t.router({
     )
     .mutation(
       async ({ input }) =>
-        await keepAliveMod.stopKeepAlive({
-          key: { name: input.workload },
-          ...(input.graceSeconds !== undefined ? { graceSeconds: input.graceSeconds } : {}),
+        await fenceWorkloadStop<keepAliveMod.StopKeepAliveResult>({
+          workload: input.workload,
+          stop: () =>
+            keepAliveMod.stopKeepAlive({
+              key: { name: input.workload },
+              ...(input.graceSeconds !== undefined ? { graceSeconds: input.graceSeconds } : {}),
+            }),
+          // A null pid means no supervisor was tracked and stopKeepAlive
+          // never ran stopServer, so committing the unload would mark a
+          // separately started live server unloaded.
+          isVerifiedStop: (r) => r.stopped && r.pid !== null,
+          refuse: (refused) => ({ stopped: false, pid: null, killed: false, refused }),
         }),
     ),
 

@@ -2,7 +2,12 @@ import { catalog, env as envMod, keepAlive, target as targetMod } from "@llamact
 import { defaultResidencyStorePath, exclusiveGroupLaunchRefusal } from "@llamactl/remote";
 import { spawn } from "node:child_process";
 
-import { getGlobals, getNodeClient, isLocalDispatch } from "../dispatcher.js";
+import {
+  getGlobals,
+  getNodeClient,
+  isLocalDispatch,
+  resolveEffectiveNodeName,
+} from "../dispatcher.js";
 import { required } from "../required.js";
 import { resolveWorkloadName } from "./_workload-resolve.js";
 
@@ -277,6 +282,16 @@ async function executeStop(
   }
 }
 
+// #520: mirrors stopRefusalLine in the server command — the node stop fence
+// reports which registry refused and the ids that were active.
+function keepAliveStopRefusalLine(
+  node: string,
+  workload: string,
+  refused: { reason: string; active: readonly string[] },
+): string {
+  return `keep-alive stop: node ${node} refused to stop ${workload} (${refused.reason}${refused.active.length > 0 ? `: ${refused.active.join(", ")}` : ""}); nothing was stopped\n`;
+}
+
 async function runStop(args: string[]): Promise<number> {
   const flags: StopFlags = { json: false, graceSeconds: 10, name: undefined };
   let i = 0;
@@ -299,11 +314,17 @@ async function runStop(args: string[]): Promise<number> {
 
   if (flags.json) {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-  } else {
-    process.stdout.write(
-      `stopped pid=${String(result.pid ?? "none")}${result.killed ? " (SIGTERM)" : ""}\n`,
-    );
+    return result.refused !== undefined ? 1 : 0;
   }
+  if (result.refused !== undefined) {
+    process.stderr.write(
+      keepAliveStopRefusalLine(resolveEffectiveNodeName(), workload, result.refused),
+    );
+    return 1;
+  }
+  process.stdout.write(
+    `stopped pid=${String(result.pid ?? "none")}${result.killed ? " (SIGTERM)" : ""}\n`,
+  );
   return 0;
 }
 
