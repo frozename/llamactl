@@ -252,6 +252,16 @@ function preferredLocalWorkloadHint(
   return routingCatalog.workloadOfDeployment(advertisement.deploymentId, nodeId);
 }
 
+/**
+ * #520: whether the request carries a session id. The rule matches the one
+ * `proxyOpenAI` uses (openaiProxy.ts): the header must be present and
+ * non-blank once trimmed, so an empty or whitespace-only value is not a session.
+ */
+function carriesSessionHeader(req: Request): boolean {
+  const header = req.headers.get(openaiProxy.SESSION_HEADER);
+  return header !== null && header.trim() !== "";
+}
+
 async function gatedExecute(
   deps: UnifiedDeps,
   model: string,
@@ -289,8 +299,22 @@ async function gatedExecute(
   }
 
   if (deps.resolveCredentials !== undefined) await deps.resolveCredentials(candidate);
+  // #520: the worker RPC is sessionless — `fenceFeatures` in
+  // packages/remote/src/inference/procedures.ts refuses `envelope.session` and
+  // `makeEnvelope` does not carry the header — so a session request sent there
+  // would take a lease on the owner, this node or a peer, but bind no session:
+  // the owner's stop fence and eviction could unload it mid-session and affinity
+  // is lost. The legacy executor runs `proxyOpenAI`, which binds the session
+  // locally or forwards the header to the peer, whose own `proxyOpenAI` binds
+  // it. The ranked pick is discarded on this path: the legacy route map, with
+  // its session affinity, picks the replica. A request without the header keeps
+  // the worker RPC.
+  const sessionOnWorkerRpc =
+    candidate.advertisement.transport === "worker-rpc" && carriesSessionHeader(ctx.req);
   const selected =
-    deps.acquireExecutor !== undefined ? await deps.acquireExecutor(candidate) : deps.executor;
+    sessionOnWorkerRpc || deps.acquireExecutor === undefined
+      ? deps.executor
+      : await deps.acquireExecutor(candidate);
   const hint = preferredLocalWorkloadHint(candidate, eligible, deps.nodeId);
   return await selected.execute(
     envelope,
