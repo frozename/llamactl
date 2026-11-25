@@ -34,8 +34,11 @@ export interface ValidateLaunchInput {
 
 export type LaunchValidationResult = { spec: ModelSpec } | { error: string };
 
+// IPv6 loopback is not a launch target: the matrix lifecycle puts spec.host
+// both in `http://${host}:${port}` probe URLs and in llama-server --host, so
+// neither the bracketed nor the bare form of ::1 works for both.
 function isLoopback(hostname: string): boolean {
-  return hostname === "localhost" || hostname === "[::1]" || /^127\.\d+\.\d+\.\d+$/.test(hostname);
+  return hostname === "localhost" || /^127\.\d+\.\d+\.\d+$/.test(hostname);
 }
 
 export function validateLaunch(
@@ -50,6 +53,11 @@ export function validateLaunch(
   }
 
   const hostname = input.hostname;
+  if (hostname.startsWith("[")) {
+    return {
+      error: `--launch does not support an IPv6 --url (got ${hostname}); use 127.0.0.1 or localhost`,
+    };
+  }
   if (!isLoopback(hostname)) {
     return {
       error: `--launch needs a loopback --url (got ${hostname}); the engine is started on this machine`,
@@ -161,15 +169,6 @@ export function createLaunchLoadHooks(
     await ensure();
   };
 
-  const warm = async (): Promise<void> => {
-    const current = boot;
-    boot = null;
-    if (current !== null) {
-      await deps.teardown(current);
-    }
-    await ensure();
-  };
-
   const teardown = async (): Promise<void> => {
     const current = boot;
     boot = null;
@@ -178,8 +177,16 @@ export function createLaunchLoadHooks(
     }
   };
 
+  // The runner calls beforeWarm untimed, so tearing the cold boot down stays
+  // outside load_warm_ms and the warm hook brackets only the relaunch.
+  const beforeWarm = teardown;
+
+  const warm = async (): Promise<void> => {
+    await ensure();
+  };
+
   return {
-    hooks: { cold, warm },
+    hooks: { cold, beforeWarm, warm },
     foreign: () => isForeign,
     failure: () => failureMessage,
     teardown,

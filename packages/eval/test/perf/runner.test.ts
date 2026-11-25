@@ -258,6 +258,62 @@ describe("runPerfSuite", () => {
     expect(row!.metric_status).toBe("unavailable");
   });
 
+  test("#521 beforeWarm runs untimed between cold and warm (kills: timing beforeWarm into load_warm_ms)", async () => {
+    const clock = createManualClock();
+    const fake = startEngine(engineOpts(clock));
+    const client = createHttpPerfEngineClient(fake.url, { clock });
+    const order: string[] = [];
+    const load: PerfSuiteLoadHooks = {
+      cold: () => {
+        order.push("cold");
+        clock.advance(9000);
+      },
+      beforeWarm: async () => {
+        order.push("beforeWarm");
+        await Promise.resolve();
+        clock.advance(700);
+      },
+      warm: () => {
+        order.push("warm");
+        clock.advance(1500);
+      },
+    };
+
+    await runPerfSuite(db, suiteOpts({ client, clock, slots: 2, load }));
+
+    const rows = listPerfRuns(db, { run_id: RUN_ID });
+    expect(order).toEqual(["cold", "beforeWarm", "warm"]);
+    expect(metricOf(rows, "load_cold_ms")).toEqual({ value: 9000, status: "ok" });
+    expect(metricOf(rows, "load_warm_ms")).toEqual({ value: 1500, status: "ok" });
+  });
+
+  test("#521 a throwing beforeWarm fails load_warm_ms without running warm", async () => {
+    const clock = createManualClock();
+    const fake = startEngine(engineOpts(clock));
+    const client = createHttpPerfEngineClient(fake.url, { clock });
+    let warmCalls = 0;
+    const load: PerfSuiteLoadHooks = {
+      cold: () => {
+        clock.advance(9000);
+      },
+      beforeWarm: () => {
+        throw new Error("teardown exploded");
+      },
+      warm: () => {
+        warmCalls += 1;
+      },
+    };
+
+    await runPerfSuite(db, suiteOpts({ client, clock, slots: 2, load }));
+
+    const rows = listPerfRuns(db, { run_id: RUN_ID });
+    expect(warmCalls).toBe(0);
+    expect(metricOf(rows, "load_cold_ms")).toEqual({ value: 9000, status: "ok" });
+    expect(unavailableReason(metricOf(rows, "load_warm_ms"))).toBe(
+      "load_warm_ms failed: teardown exploded",
+    );
+  });
+
   test("marks load, io, memory and multi-slot metrics unavailable without hooks, readers or slots", async () => {
     const clock = createManualClock();
     const fake = startEngine(engineOpts(clock));

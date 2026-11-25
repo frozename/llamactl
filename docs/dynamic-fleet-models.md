@@ -1062,7 +1062,8 @@ explains a metric change but is not a regression.
 load hooks (`PerfSuiteLoadHooks` and `runLoadHook`,
 `packages/eval/src/perf/runner.ts`). The runner times each hook and trusts it
 to resolve only once the engine can serve; it performs no readiness probe of
-its own. A scheduled suite never injects load hooks, and `llamactl eval perf`
+its own. An optional `beforeWarm` hook runs untimed before the warm hook's
+clock starts. A scheduled suite never injects load hooks, and `llamactl eval perf`
 injects them only with `--launch`, so from a scheduled suite, and from
 `eval perf` without `--launch`, the two load metrics are always recorded
 `unavailable`, each with a reason naming the caller. `eval perf` records
@@ -1115,10 +1116,12 @@ prompt-token count is more than 8 off the target records
 
 With `--launch`, `eval perf` starts llama-server itself through the eval
 matrix lifecycle. In order, the cold hook calls `ensureModelServing`, the
-warm hook calls `teardownIfOwned` and then `ensureModelServing` again, and a
-final `teardownIfOwned` runs in `finally` even when the suite throws. Cold is
-the first launch and warm is a teardown and relaunch; each is timed until
-`/health` and the `/v1` boot probe pass (`ensureModelServing`,
+untimed `beforeWarm` hook calls `teardownIfOwned`, the warm hook calls
+`ensureModelServing` again, and a final `teardownIfOwned` runs in `finally`
+even when the suite throws. Cold is the first launch and warm is the relaunch
+after that teardown; the runner calls `beforeWarm` before it starts the warm
+clock, so `load_warm_ms` excludes tearing the cold boot down. Each load is
+timed until `/health` and the `/v1` boot probe pass (`ensureModelServing`,
 `packages/eval/src/matrix/lifecycle.ts`). `load_cold_ms` and `load_warm_ms`
 are measured only for an engine eval perf starts. The OS page cache is not
 dropped, so warm load includes whatever cache the cold boot left behind.
@@ -1132,6 +1135,7 @@ than the not-known reason used for an externally launched engine.
 
 Validation refuses, in order, with
 `--launch starts llama-server through the eval matrix lifecycle and supports only --engine llamacpp (got <engine>)`,
+`--launch does not support an IPv6 --url (got <host>); use 127.0.0.1 or localhost`,
 `--launch needs a loopback --url (got <host>); the engine is started on this machine`,
 `--launch needs an explicit port in --url`,
 `--launch needs --binary <path> and --gguf <path>`,

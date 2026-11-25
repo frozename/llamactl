@@ -431,10 +431,6 @@ function provenanceRunInput(input: RunInput, spec: ModelSpec | null): RunInput {
   return { ...input, flags: spec.extra_args ?? [] };
 }
 
-async function slotsForRun(input: RunInput, launch: boolean): Promise<SlotResolution> {
-  return launch ? resolveLaunchSlots(input) : await resolveSlots(input);
-}
-
 function pidForRun(input: RunInput, launch: boolean): number | null {
   return launch ? null : input.pid;
 }
@@ -485,7 +481,9 @@ export async function runEvalPerf(argv: string[]): Promise<number> {
     values,
     provenanceRunInput(resolved, launchContext.spec),
   );
-  const { slots, slotsReason } = await slotsForRun(resolved, parsed.launch);
+  const { slots, slotsReason } = parsed.launch
+    ? resolveLaunchSlots(resolved)
+    : await resolveSlots(resolved);
   const { readers, reasons: readerReasons } = hostReaders(
     resolved.url,
     resolved.loopback,

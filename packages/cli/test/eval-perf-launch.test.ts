@@ -64,6 +64,7 @@ interface HarnessOptions {
   initiallyUp?: boolean;
   owned?: boolean;
   ensureError?: Error;
+  teardownMs?: number;
   healthStatus?: number;
   modelsStatus?: number;
   runPerfSuite?: (db: Database, opts: unknown) => Promise<unknown>;
@@ -200,6 +201,7 @@ function installHarness(options: HarnessOptions = {}): LaunchHarness {
   const teardown = (): Promise<void> => {
     calls.push(["teardown"]);
     up = false;
+    clock.advance(options.teardownMs ?? 0);
     return Promise.resolve();
   };
 
@@ -352,6 +354,20 @@ describe("#521 eval perf --launch", () => {
     );
 
     expect(result).toBe(0);
+    const byName = metricsByName(dbPath(), "r1");
+    expect(byName.get("load_cold_ms")).toEqual({ status: "ok", value: 1500 });
+    expect(byName.get("load_warm_ms")).toEqual({ status: "ok", value: 400 });
+  });
+
+  test("(a2) load_warm_ms excludes the cold boot's teardown (kills: tearing down inside the timed warm hook)", async () => {
+    const harness = installHarness({ teardownMs: 250 });
+
+    const { result } = await captureProcessStreams(() =>
+      runEval(perfArgv({ dbPath: dbPath(), launch: true })),
+    );
+
+    expect(result).toBe(0);
+    expect(callKinds(harness.calls)).toEqual(["ensure", "teardown", "ensure", "teardown"]);
     const byName = metricsByName(dbPath(), "r1");
     expect(byName.get("load_cold_ms")).toEqual({ status: "ok", value: 1500 });
     expect(byName.get("load_warm_ms")).toEqual({ status: "ok", value: 400 });
@@ -561,6 +577,12 @@ describe("#521 eval perf --launch", () => {
       args: () => perfArgv({ dbPath: dbPath(), launch: true, url: "http://10.0.0.5:8080" }),
       stderr: () =>
         "eval perf: --launch needs a loopback --url (got 10.0.0.5); the engine is started on this machine\n",
+    },
+    {
+      name: "IPv6 loopback --url",
+      args: () => perfArgv({ dbPath: dbPath(), launch: true, url: "http://[::1]:18080" }),
+      stderr: () =>
+        "eval perf: --launch does not support an IPv6 --url (got [::1]); use 127.0.0.1 or localhost\n",
     },
     {
       name: "--url without a port",

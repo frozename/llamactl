@@ -26,6 +26,12 @@ describe("#521 eval perf launch load", () => {
       doc: "--launch needs a loopback --url (got <host>); the engine is started on this machine",
     },
     {
+      name: "IPv6 refusal",
+      source:
+        "--launch does not support an IPv6 --url (got ${hostname}); use 127.0.0.1 or localhost",
+      doc: "--launch does not support an IPv6 --url (got <host>); use 127.0.0.1 or localhost",
+    },
+    {
       name: "explicit-port refusal",
       source: "--launch needs an explicit port in --url",
       doc: "--launch needs an explicit port in --url",
@@ -108,6 +114,24 @@ describe("#521 eval perf launch load", () => {
     expect(launchSrc).not.toContain("spawnServer");
   });
 
+  // Kills: timing the cold boot's teardown into load_warm_ms, either by the
+  // launch warm hook tearing down itself or by the runner starting the warm
+  // clock before beforeWarm runs.
+  test("source pins teardown outside the timed warm window", () => {
+    const hooks = enclosingBody(launchSrc, "export function createLaunchLoadHooks(");
+    expect(hooks).toContain("const beforeWarm = teardown;");
+    expect(hooks).toContain("hooks: { cold, beforeWarm, warm },");
+    const warm = enclosingBody(hooks, "const warm = async (): Promise<void> =>");
+    expect(warm, "warm hook body").not.toBe("");
+    expect(warm).not.toContain("teardown");
+    const runnerSrc = readOrEmpty(join(REPO, "packages/eval/src/perf/runner.ts"));
+    const hook = enclosingBody(runnerSrc, "async function runLoadHook(");
+    const prepareIdx = hook.indexOf("if (prepare !== undefined) await prepare();");
+    const t0Idx = hook.indexOf("const t0 = run.clock.now();");
+    expect(prepareIdx).toBeGreaterThanOrEqual(0);
+    expect(t0Idx).toBeGreaterThan(prepareIdx);
+  });
+
   // Kills: dropping the exclusive-group gate, or keying it only on --model
   // without resolving a gguf path inside LLAMA_CPP_MODELS back to its rel.
   test("source pins the residency gate and models-dir group derivation", () => {
@@ -146,7 +170,8 @@ describe("#521 eval perf launch load", () => {
   test("doc pins the measured-load lifecycle semantics", () => {
     for (const needle of [
       "the cold hook calls `ensureModelServing`",
-      "the warm hook calls `teardownIfOwned` and then `ensureModelServing` again",
+      "the untimed `beforeWarm` hook calls `teardownIfOwned`, the warm hook calls `ensureModelServing` again",
+      "the runner calls `beforeWarm` before it starts the warm clock, so `load_warm_ms` excludes tearing the cold boot down",
       "a final `teardownIfOwned` runs in `finally` even when the suite throws",
       "`load_cold_ms` and `load_warm_ms` are measured only for an engine eval perf starts",
       "a boot that is not `owned` means another engine won the port race",
