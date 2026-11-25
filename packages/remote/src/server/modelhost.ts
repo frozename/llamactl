@@ -7,7 +7,6 @@ import type {
   LlamacppSleepController,
   SleepResidency,
 } from "@llamactl/core/residency/llamacpp-sleep";
-import type { WorkloadKey } from "@llamactl/core/workloadRuntime";
 
 import { resolveSecret } from "@llamactl/core/config/secret";
 import { type EngineName, ENGINES } from "@llamactl/core/engines";
@@ -15,6 +14,21 @@ import {
   type ModelHostRuntimeStatus,
   readModelHostRuntimeStatus,
 } from "@llamactl/core/engines/conditions";
+import {
+  awaitScopeExec,
+  buildScopeArgv,
+  describeScopeOutcome,
+  type EngineScopeLauncher,
+  getEngineScopeLauncher,
+  isScopeFallback,
+  type ScopeOutcome,
+  type ScopeResolveResult,
+  scopeStopNames,
+  scopeUnitBase,
+  scopeWrapperExpectation,
+  shapeScopeEnv,
+  writeScopeStop,
+} from "@llamactl/core/engines/scope";
 import {
   computeModelHostSpecHash,
   modelhostPidFile,
@@ -43,6 +57,7 @@ import {
 } from "@llamactl/core/pidIdentity";
 import { getResidencyLeaseRegistry } from "@llamactl/core/residency/leases";
 import { currentSessionRefcounts } from "@llamactl/core/residency/sessions";
+import { type WorkloadKey, workloadRuntimeDir } from "@llamactl/core/workloadRuntime";
 import { type ChildProcess, spawn as nodeSpawn } from "node:child_process";
 import { basename, dirname, resolve, sep } from "node:path";
 
@@ -52,7 +67,7 @@ import {
   getNodeLlamacppSleepController,
   readLlamacppSleepResidency,
 } from "../residency/llamacpp-sleep-status.js";
-import { existsSync, mkdirSync, openSync, writeFileSync } from "../safe-fs.js";
+import { existsSync, fstatSync, mkdirSync, openSync, writeFileSync } from "../safe-fs.js";
 import {
   externalManagerOf,
   MANAGED_BY_LABEL,
@@ -120,6 +135,10 @@ export interface StartModelHostOptions {
    *  StartServerOptions.restart on the ModelRun path; set by callers that
    *  know the running engine must be replaced (e.g. after a health loss). */
   restart?: boolean;
+  /** #806 phase 3: engine-scope launcher for Linux scoped launches. `undefined`
+   *  means the process-wide launcher (`getEngineScopeLauncher()`); an explicit
+   *  null, or a launcher whose resolve fails, keeps the direct spawn. */
+  engineScope?: EngineScopeLauncher | null;
 }
 
 export interface StartModelHostResult {
@@ -221,6 +240,26 @@ function hostIdentityDeps(
   };
 }
 
+// #806 phase 3: a starting record that names a scope unit may still be holding
+// the systemd-run wrapper (pre-exec), so the starting-record verify sites also
+// accept the wrapper argv. State-sidecar sites keep engine-only identity, so a
+// wrapper pid can never be promoted into modelhost.state.
+function startingIdentityDeps(
+  record: { engine: EngineName; scopeUnit?: string },
+  deps: PidIdentityDeps | undefined,
+  binaryNames: readonly string[] | undefined,
+): PidIdentityDeps {
+  const identity = hostIdentityDeps(record.engine, deps, binaryNames);
+  if (record.scopeUnit === undefined) return identity;
+  return {
+    ...identity,
+    expectCommand: {
+      ...identity.expectCommand,
+      alternatives: [scopeWrapperExpectation(record.scopeUnit)],
+    },
+  };
+}
+
 // Reap-path argv0 names (#516). The record's `binaryNames` are used
 // exclusively when present; the manifest's declared names are unioned with
 // the engine default only when the record predates #516 and carries none —
@@ -261,6 +300,13 @@ function aliasesFromExtraArgs(extraArgs: readonly string[]): string[] {
   return out;
 }
 
+// #806 phase 3: a scoped launch additionally hands the engine the two systemd
+// user-bus locators (XDG_RUNTIME_DIR, DBUS_SESSION_BUS_ADDRESS) after exec —
+// non-secret socket paths under the owner-only /run/user/<uid>, granting the
+// same-uid engine no new authority. They are deliberately NOT allowlisted
+// here: only shapeScopeEnv adds them, so direct and macOS children keep this
+// exact list. An env/sh shim that stripped them would add a third argv0
+// window to the pid-identity checks.
 const CHILD_ENV_ALLOWLIST = [
   "PATH",
   "HOME",
@@ -409,6 +455,12 @@ function readinessField(readiness: ModelHostReadiness | undefined): {
   readiness?: ModelHostReadiness;
 } {
   return readiness === undefined ? {} : { readiness };
+}
+
+// #806 phase 3: absent key, never explicit undefined, so unscoped records stay
+// byte-identical to pre-phase-3 sidecars.
+function scopeUnitField(scopeUnit: string | undefined): { scopeUnit?: string } {
+  return scopeUnit === undefined ? {} : { scopeUnit };
 }
 
 function restartFenceRefusal(workload: string, refusal: StopFenceRefusal): StartModelHostResult {
@@ -663,7 +715,20 @@ async function adoptOrDeferStartingHost(
       ? opts.probeReady(endpoint, ADOPT_PROBE_TIMEOUT_MS, declaredReadiness)
       : engine.probeReady(endpoint, ADOPT_PROBE_TIMEOUT_MS, declaredReadiness)
   ).catch(() => ({ ready: false, modelIds: [] as string[] }));
-  if (readiness.ready && servesHostedModel(manifest, readiness.modelIds)) {
+  // #806 phase 3: the caller's verify accepted the wrapper argv for a scoped
+  // record, but the promote requires ENGINE-only identity — a systemd-run
+  // wrapper that has not exec'd yet defers within the budget and is reaped
+  // after it; it is never promoted into modelhost.state.
+  const engineIdentity = hostIdentityDeps(
+    starting.engine,
+    opts.identity,
+    reapBinaryNames(starting.engine, starting.binaryNames, manifest.spec.binaryNames),
+  );
+  const engineVerified =
+    starting.scopeUnit === undefined ||
+    verifyPidFile(modelhostStartingFile(resolved, opts.key), starting.pid, engineIdentity) ===
+      "alive";
+  if (engineVerified && readiness.ready && servesHostedModel(manifest, readiness.modelIds)) {
     // writeModelHostState refreshes the modelhost.pid anchor to now, which is
     // after the promoted process started — a valid anchor for later identity
     // checks; the starting record's own mtime must not leak into the state.
@@ -684,6 +749,7 @@ async function adoptOrDeferStartingHost(
         specHash: currentHash,
         ...binaryNamesField(starting.binaryNames),
         ...readinessField(declaredReadiness),
+        ...scopeUnitField(starting.scopeUnit),
       },
       opts.key,
       resolved,
@@ -691,7 +757,7 @@ async function adoptOrDeferStartingHost(
     removeModelHostStarting(opts.key, resolved);
     return { ok: true, pid: starting.pid, adopted: true };
   }
-  if (readiness.ready) return null;
+  if (engineVerified && readiness.ready) return null;
   const budgetMs = (opts.timeoutSeconds ?? manifest.spec.timeoutSeconds) * 1000;
   if (Date.now() - Date.parse(starting.startedAt) >= budgetMs) return null;
   return {
@@ -717,8 +783,8 @@ async function reapStartingOrphan(
   const starting = readModelHostStarting(opts.key, resolved);
   if (!starting) return null;
   const recordPath = modelhostStartingFile(resolved, opts.key);
-  const identity = hostIdentityDeps(
-    starting.engine,
+  const identity = startingIdentityDeps(
+    starting,
     opts.identity,
     reapBinaryNames(starting.engine, starting.binaryNames, manifest.spec.binaryNames),
   );
@@ -729,6 +795,12 @@ async function reapStartingOrphan(
   if (verdict === "alive") {
     const adopted = await adoptOrDeferStartingHost(manifest, opts, resolved, engine, starting);
     if (adopted !== null) return adopted;
+    // #806 phase 3: tombstone the scope unit before teardown so an in-flight
+    // scoped launch whose wrapper exits here can never fall back to a direct
+    // spawn behind this reap's back.
+    if (starting.scopeUnit !== undefined) {
+      writeScopeStop(workloadRuntimeDir(resolved, opts.key), "modelhost", starting.scopeUnit);
+    }
     const failure = await confirmRecordedTeardown(
       () =>
         engine.teardown(
@@ -741,7 +813,7 @@ async function reapStartingOrphan(
     );
     if (failure !== null) return failure;
   }
-  removeModelHostStarting(opts.key, resolved);
+  clearStartingRecordIfOwned(opts.key, resolved, starting.pid);
   return null;
 }
 
@@ -838,6 +910,7 @@ async function adoptUnchangedHost(
       reapBinaryNames(priorState.engine, priorState.binaryNames, manifest.spec.binaryNames),
     ),
     ...readinessField(declaredReadiness),
+    ...scopeUnitField(priorState.scopeUnit),
   };
   // Only rewrite the sidecar when an out-of-hash field actually changed, so a
   // same-spec adopt leaves the state file byte-for-byte untouched.
@@ -984,9 +1057,13 @@ function resolveModelAliases(manifest: ModelHostManifest): string[] {
  * logging must never break a launch, and the workload name (which feeds
  * the path) ultimately comes from a user-supplied manifest.
  */
+function modelHostBootLogPath(runtimeDir: string, workloadName: string): string {
+  return resolve(runtimeDir, "workloads", workloadName, "modelhost.boot.log");
+}
+
 function openBootLogFd(workloadName: string, runtimeDir: string): "ignore" | number {
   const baseDir = resolve(runtimeDir, "workloads");
-  const bootLogPath = resolve(baseDir, workloadName, "modelhost.boot.log");
+  const bootLogPath = modelHostBootLogPath(runtimeDir, workloadName);
   const allowedPrefix = `${baseDir}${sep}`;
   if (bootLogPath !== baseDir && !bootLogPath.startsWith(allowedPrefix)) {
     // Escaped the runtime tree; degrade to no boot log rather than fail.
@@ -1007,11 +1084,13 @@ function teardownChildSilently(
   child: ChildProcess | null,
   engine: (typeof ENGINES)[keyof typeof ENGINES],
 ): Promise<void> {
-  const pid = child?.pid ?? null;
-  if (pid !== null) {
-    return engine.teardown(pid).catch(() => undefined);
+  if (child === null) return Promise.resolve();
+  const pid = child.pid ?? null;
+  // An exited child's pid may already be recycled; never signal it.
+  if (pid === null || typeof child.exitCode === "number" || typeof child.signalCode === "string") {
+    return Promise.resolve();
   }
-  return Promise.resolve();
+  return engine.teardown(pid).catch(() => undefined);
 }
 
 // #318: the caller's AbortSignal must be able to settle a start while the
@@ -1046,6 +1125,36 @@ async function raceModelHostAbort<T>(
   });
 }
 
+// #806 phase 3: a scoped engine can die during the readiness wait; racing the
+// probe against the child's exit settles the wait immediately instead of
+// polling out the full budget. Never rejects.
+function watchChildExit(
+  child: ChildProcess,
+): Promise<{ exited: true; code: number | null; signal: NodeJS.Signals | null }> {
+  return new Promise((resolve) => {
+    if (typeof child.exitCode === "number" || typeof child.signalCode === "string") {
+      resolve({
+        exited: true,
+        code: child.exitCode ?? null,
+        signal: child.signalCode ?? null,
+      });
+      return;
+    }
+    child.once("exit", (code, signal) => {
+      resolve({ exited: true, code, signal });
+    });
+  });
+}
+
+// The engine-exited outcome gets the same message the readiness race throws,
+// so a scoped engine that dies before readiness reads identically either way.
+function scopeLaunchErrorMessage(outcome: ScopeOutcome, pid: number, scopeUnit: string): string {
+  if (outcome.kind === "engine-exited") {
+    return `engine pid ${String(pid)} exited before readiness (code ${String(outcome.code)}, signal ${String(outcome.signal)}) in scope ${scopeUnit}`;
+  }
+  return describeScopeOutcome(outcome, scopeUnit);
+}
+
 /**
  * A pushed inline manifest (e.g. from the central controller's apply) must
  * not erase a managed-by marker already on disk for the same name. A label
@@ -1078,14 +1187,19 @@ function mergeDiskManagedByLabel(
 // should still see it in the agent log.  When spec.apiKeyRef is present the
 // child is authenticated but the operator still needs to see the warning:
 // the key lives in a secret store, not on this node.
-function warnExternalBind(manifest: ModelHostManifest, opts: StartModelHostOptions): void {
-  const externalHost = modelHostExternalBindHost(manifest.spec);
-  if (externalHost === null || manifest.spec.allowExternalBind !== true) return;
-  const warn =
+function modelHostWarn(opts: StartModelHostOptions): (message: string) => void {
+  return (
     opts.warn ??
     ((message: string): void => {
       process.stderr.write(`${message}\n`);
-    });
+    })
+  );
+}
+
+function warnExternalBind(manifest: ModelHostManifest, opts: StartModelHostOptions): void {
+  const externalHost = modelHostExternalBindHost(manifest.spec);
+  if (externalHost === null || manifest.spec.allowExternalBind !== true) return;
+  const warn = modelHostWarn(opts);
   const endpoint = `${externalHost}:${String(manifest.spec.endpoint.port)}`;
   const prefix = `[agent] WARNING: ModelHost ${manifest.metadata.name} (${manifest.spec.engine})`;
   warn(
@@ -1137,6 +1251,66 @@ interface ModelHostLaunchContext {
   apiKey?: string;
 }
 
+// #806 phase 3: everything a scoped ModelHost launch needs, resolved before
+// the wrapper spawn. `scopeUnit` is fixed here so the starting record, the
+// exec handshake and the fallback gate all name the same unit.
+interface ModelHostScopeLaunch {
+  launcher: EngineScopeLauncher;
+  plan: {
+    systemdRunPath: string;
+    base: string;
+    env: NodeJS.ProcessEnv;
+    bootFd: number;
+  };
+  scopeUnit: string;
+}
+
+// Every precondition failure — no boot-log evidence channel, an explicit null
+// launcher, an env conflict, a failed capability resolve — returns null and
+// the caller takes the byte-identical direct spawn.
+async function resolveModelHostScopePlan(
+  opts: StartModelHostOptions,
+  manifest: ModelHostManifest,
+  launch: { binary: string; args: string[]; envOverrides?: Record<string, string> },
+  childEnv: NodeJS.ProcessEnv,
+  runtimeEnv: NodeJS.ProcessEnv,
+  bootStdio: "ignore" | number,
+): Promise<ModelHostScopeLaunch | null> {
+  if (bootStdio === "ignore") return null;
+  const launcher = opts.engineScope !== undefined ? opts.engineScope : getEngineScopeLauncher();
+  if (launcher === null) return null;
+  const declaredKeys = [
+    ...Object.keys(launch.envOverrides ?? {}),
+    ...Object.keys(manifest.spec.env ?? {}),
+  ];
+  const shaped = shapeScopeEnv(childEnv, runtimeEnv, declaredKeys);
+  if ("conflict" in shaped) {
+    modelHostWarn(opts)(
+      `ModelHost ${opts.key.name}: engine scope env-conflict (${shaped.conflict}); spawning directly`,
+    );
+    return null;
+  }
+  let resolution: ScopeResolveResult;
+  try {
+    resolution = await launcher.resolve(runtimeEnv);
+  } catch {
+    // A throwing resolve is a failed capability probe: stay direct.
+    resolution = { ok: false, reason: "probe-failed" };
+  }
+  if (!resolution.ok) return null;
+  const base = scopeUnitBase(opts.key.name, launcher.unitSuffix());
+  return {
+    launcher,
+    plan: {
+      systemdRunPath: resolution.systemdRunPath,
+      base,
+      env: shaped.env,
+      bootFd: bootStdio,
+    },
+    scopeUnit: `${base}.scope`,
+  };
+}
+
 // Scheme prefixes resolveSecret routes on (mirrors its classify()). A ref
 // with none of them is a legacy bare file path — or a key pasted where a
 // ref belongs — so it is never echoed into an error.
@@ -1176,6 +1350,283 @@ function resolveModelHostApiKey(
   }
 }
 
+// #806 phase 3: the scoped half of a ModelHost spawn — plan, wrapper spawn,
+// starting record and the exec handshake — without the fallback decision, so
+// launchModelHost stays inside the function-size lint budget. "pre-exec"
+// covers every non-established, non-aborted outcome; the caller's gate decides
+// whether it may fall back to a direct spawn.
+type ScopedSpawnAttempt =
+  | { kind: "established"; child: ChildProcess; pid: number; scope: ModelHostScopeLaunch }
+  | {
+      kind: "pre-exec";
+      child: ChildProcess;
+      pid: number;
+      scope: ModelHostScopeLaunch;
+      outcome: ScopeOutcome;
+    }
+  | { kind: "aborted"; child: ChildProcess; pid: number; scope: ModelHostScopeLaunch }
+  | { kind: "none" };
+
+async function attemptScopedModelHostSpawn(
+  opts: StartModelHostOptions,
+  manifest: ModelHostManifest,
+  launch: { binary: string; args: string[]; envOverrides?: Record<string, string> },
+  childEnv: NodeJS.ProcessEnv,
+  runtimeEnv: NodeJS.ProcessEnv,
+  bootStdio: "ignore" | number,
+  resolved: ReturnType<typeof resolveEnv>,
+  startSpecHash: string,
+  onSpawned?: (child: ChildProcess, pid: number, scope: ModelHostScopeLaunch) => void,
+): Promise<ScopedSpawnAttempt> {
+  const spawn = opts.spawn ?? nodeSpawn;
+  const scoped = await resolveModelHostScopePlan(
+    opts,
+    manifest,
+    launch,
+    childEnv,
+    runtimeEnv,
+    bootStdio,
+  );
+  if (scoped === null) return { kind: "none" };
+  const offset = fstatSync(scoped.plan.bootFd).size;
+  const child = spawn(
+    scoped.plan.systemdRunPath,
+    buildScopeArgv(scoped.plan.base, opts.key.name, launch.binary, launch.args),
+    {
+      detached: true,
+      stdio: ["ignore", scoped.plan.bootFd, scoped.plan.bootFd],
+      env: scoped.plan.env,
+    },
+  );
+  const pid = child.pid ?? null;
+  if (pid === null) {
+    // No process exists to handshake; the capability just proved flaky.
+    scoped.launcher.noteFailure();
+    return { kind: "none" };
+  }
+  detachChild(child);
+  onSpawned?.(child, pid, scoped);
+  // #317: track the child at spawn, before readiness. An agent that dies
+  // during the wait below must leave a record a restarted agent can reap.
+  writeModelHostStarting(
+    {
+      kind: "ModelHostStarting",
+      engine: manifest.spec.engine,
+      pid,
+      startedAt: new Date().toISOString(),
+      specHash: startSpecHash,
+      ...binaryNamesField(manifest.spec.binaryNames),
+      ...scopeUnitField(scoped.scopeUnit),
+    },
+    opts.key,
+    resolved,
+  );
+  const outcome = await awaitScopeExec({
+    child,
+    pid,
+    logPath: modelHostBootLogPath(resolved.LOCAL_AI_RUNTIME_DIR, opts.key.name),
+    offset,
+    base: scoped.plan.base,
+    timeoutMs: scoped.launcher.establishTimeoutMs,
+    ...omitUndefined({ signal: opts.signal }),
+  });
+  if (outcome.kind === "aborted") {
+    return { kind: "aborted", child, pid, scope: scoped };
+  }
+  if (outcome.kind === "established") {
+    return { kind: "established", child, pid, scope: scoped };
+  }
+  return { kind: "pre-exec", child, pid, scope: scoped, outcome };
+}
+
+// The direct spawn — also the scoped path's single fallback target. Writes the
+// same starting record minus scopeUnit so pre-#806 records stay byte-identical.
+function spawnDirectModelHostChild(
+  launch: { binary: string; args: string[] },
+  childEnv: NodeJS.ProcessEnv,
+  bootStdio: "ignore" | number,
+  opts: StartModelHostOptions,
+  manifest: ModelHostManifest,
+  resolved: ReturnType<typeof resolveEnv>,
+  startSpecHash: string,
+  onSpawned?: (child: ChildProcess, pid: number) => void,
+): { child: ChildProcess; pid: number } {
+  const spawn = opts.spawn ?? nodeSpawn;
+  const child = spawn(launch.binary, launch.args, {
+    detached: true,
+    stdio: bootStdio === "ignore" ? "ignore" : ["ignore", bootStdio, bootStdio],
+    env: childEnv,
+  });
+  const pid = child.pid ?? null;
+  if (pid === null) {
+    throw new Error("failed to spawn modelhost process");
+  }
+  detachChild(child);
+  onSpawned?.(child, pid);
+
+  // #317: track the child at spawn, before readiness. An agent that dies
+  // during the wait below must leave a record a restarted agent can reap.
+  writeModelHostStarting(
+    {
+      kind: "ModelHostStarting",
+      engine: manifest.spec.engine,
+      pid,
+      startedAt: new Date().toISOString(),
+      specHash: startSpecHash,
+      ...binaryNamesField(manifest.spec.binaryNames),
+    },
+    opts.key,
+    resolved,
+  );
+  return { child, pid };
+}
+
+// #318: the readiness wait is where a slow start outlives its caller. Racing
+// the signal here means an abort lands on the child we just spawned (torn
+// down by the caller's catch, starting record included), not after the
+// probe's full timeout budget. #806 phase 3: a scoped engine can die during
+// the wait; the probe races the child's exit so the failure surfaces
+// immediately with the scope named.
+async function awaitModelHostReadiness(
+  opts: StartModelHostOptions,
+  engine: (typeof ENGINES)[keyof typeof ENGINES],
+  manifest: ModelHostManifest,
+  spec: ModelHostSpecForEngine,
+  child: ChildProcess,
+  pid: number,
+  scoped: ModelHostScopeLaunch | null,
+): Promise<void> {
+  const endpoint = manifest.spec.endpoint;
+  const exitWatch = scoped === null ? null : watchChildExit(child);
+  const readinessWork = (opts.probeReady ?? engine.probeReady)(
+    endpoint,
+    (opts.timeoutSeconds ?? manifest.spec.timeoutSeconds) * 1000,
+    spec.readiness,
+  );
+  const readiness = await raceModelHostAbort(
+    exitWatch === null ? readinessWork : Promise.race([readinessWork, exitWatch]),
+    opts.signal,
+  );
+  if (readiness === MODEL_HOST_ABORTED) {
+    throw new Error(MODEL_HOST_ABORT_MESSAGE);
+  }
+  if ("exited" in readiness) {
+    // exitWatch is armed only for a scoped launch, so scoped is set here.
+    const scopeUnit = scoped?.scopeUnit ?? "unknown";
+    throw new Error(
+      `engine pid ${String(pid)} exited before readiness (code ${String(readiness.code)}, signal ${String(readiness.signal)}) in scope ${scopeUnit}`,
+    );
+  }
+  if (!readiness.ready) {
+    throw new Error("modelhost failed readiness probe");
+  }
+}
+
+// The single direct-spawn fallback gate (#806 phase 3): allowed only for a
+// fallback-eligible outcome while OUR starting record still names this unit
+// and no stop tombstone does — a mid-handshake stop must never be
+// double-booted by a direct spawn. Throws the scope outcome's message when
+// the gate refuses; otherwise clears the record, notes the capability failure
+// and warns before the caller re-spawns directly.
+function scopedLaunchFallback(
+  opts: StartModelHostOptions,
+  resolved: ReturnType<typeof resolveEnv>,
+  scoped: ModelHostScopeLaunch,
+  outcome: ScopeOutcome,
+  pid: number,
+): void {
+  const workloadDir = workloadRuntimeDir(resolved, opts.key);
+  const mayFallback =
+    isScopeFallback(outcome) &&
+    readModelHostStarting(opts.key, resolved)?.scopeUnit === scoped.scopeUnit &&
+    !scopeStopNames(workloadDir, "modelhost", scoped.scopeUnit) &&
+    opts.signal?.aborted !== true;
+  if (!mayFallback) {
+    throw new Error(scopeLaunchErrorMessage(outcome, pid, scoped.scopeUnit));
+  }
+  clearStartingRecordIfOwned(opts.key, resolved, pid);
+  scoped.launcher.noteFailure();
+  modelHostWarn(opts)(
+    `ModelHost ${opts.key.name}: engine scope ${scoped.scopeUnit} ${describeScopeOutcome(outcome)}; falling back to direct spawn`,
+  );
+}
+
+// Kapitsa keeps KAPITSA_HOME and libosmos its .osmos/osmos.json beside the
+// workload's pid/state/boot log, so their boot envs always see the resolved
+// launch root. Other engines keep an operator-set LLAMACTL_RUNTIME_DIR (it
+// still redirects e.g. oMLX's .omlx) and otherwise fall back to the resolved
+// runtime dir, never to a bare resolveEnv() inside the engine: an injected
+// runtimeDir (tests, scoped agents) must reroot their boot writes too.
+function modelHostBootEnv(
+  env: NodeJS.ProcessEnv,
+  resolved: ReturnType<typeof resolveEnv>,
+  spec: ModelHostSpecForEngine,
+  workloadName: string,
+): EngineBootEnv {
+  return {
+    ...omitUndefined({
+      LLAMACTL_MODELS_DIR: env["LLAMACTL_MODELS_DIR"],
+      LLAMA_CPP_MODELS: env["LLAMA_CPP_MODELS"],
+      LLAMACTL_RUNTIME_DIR:
+        spec.engine === "kapitsa" || spec.engine === "libosmos"
+          ? resolved.LOCAL_AI_RUNTIME_DIR
+          : (env["LLAMACTL_RUNTIME_DIR"] ?? resolved.LOCAL_AI_RUNTIME_DIR),
+    }),
+    workloadName,
+    machineProfile: resolved.LLAMA_CPP_MACHINE_PROFILE,
+  };
+}
+
+function writeReadyModelHostState(
+  opts: StartModelHostOptions,
+  manifest: ModelHostManifest,
+  resolved: ReturnType<typeof resolveEnv>,
+  spec: ModelHostSpecForEngine,
+  pid: number,
+  scoped: ModelHostScopeLaunch | null,
+  startSpecHash: string,
+  slotSavePath: string | null,
+): void {
+  const endpoint = manifest.spec.endpoint;
+  writeModelHostState(
+    {
+      kind: "ModelHost",
+      engine: manifest.spec.engine,
+      pid,
+      host: endpoint.host,
+      port: endpoint.port,
+      modelAliases: resolveModelAliases(manifest),
+      startedAt: new Date().toISOString(),
+      slotSavePath,
+      specHash: startSpecHash,
+      ...binaryNamesField(manifest.spec.binaryNames),
+      ...readinessField(spec.readiness),
+      ...scopeUnitField(scoped?.scopeUnit),
+    },
+    opts.key,
+    resolved,
+  );
+}
+
+// #806 phase 3: a scoped child that never exited (hung-unreaped) may still be
+// alive inside its scope; keep the starting record so a later reap can find
+// it. Every other failure clears the record as before.
+async function teardownFailedModelHostLaunch(
+  child: ChildProcess | null,
+  engine: (typeof ENGINES)[keyof typeof ENGINES],
+  scoped: ModelHostScopeLaunch | null,
+  startingPid: number | null,
+  opts: StartModelHostOptions,
+  resolved: ReturnType<typeof resolveEnv>,
+): Promise<void> {
+  await teardownChildSilently(child, engine);
+  const keepStartingRecord =
+    scoped !== null && child !== null && child.exitCode === null && child.signalCode === null;
+  if (startingPid !== null && !keepStartingRecord) {
+    clearStartingRecordIfOwned(opts.key, resolved, startingPid);
+  }
+}
+
 async function launchModelHost(
   manifest: ModelHostManifest,
   opts: StartModelHostOptions,
@@ -1195,27 +1646,8 @@ async function launchModelHost(
 
   warnExternalBind(manifest, opts);
 
-  const bootEnv: EngineBootEnv = {
-    ...omitUndefined({
-      LLAMACTL_MODELS_DIR: env["LLAMACTL_MODELS_DIR"],
-      LLAMA_CPP_MODELS: env["LLAMA_CPP_MODELS"],
-      // Kapitsa keeps KAPITSA_HOME and libosmos its .osmos/osmos.json beside
-      // the workload's pid/state/boot log, so their boot envs always see the
-      // resolved launch root. Other engines
-      // keep an operator-set LLAMACTL_RUNTIME_DIR (it still redirects e.g.
-      // oMLX's .omlx) and otherwise fall back to the resolved runtime dir,
-      // never to a bare resolveEnv() inside the engine: an injected
-      // runtimeDir (tests, scoped agents) must reroot their boot writes too.
-      LLAMACTL_RUNTIME_DIR:
-        spec.engine === "kapitsa" || spec.engine === "libosmos"
-          ? resolved.LOCAL_AI_RUNTIME_DIR
-          : (env["LLAMACTL_RUNTIME_DIR"] ?? resolved.LOCAL_AI_RUNTIME_DIR),
-    }),
-    workloadName: opts.key.name,
-    machineProfile: resolved.LLAMA_CPP_MACHINE_PROFILE,
-  };
+  const bootEnv = modelHostBootEnv(env, resolved, spec, opts.key.name);
 
-  const spawn = opts.spawn ?? nodeSpawn;
   const extraArgsResolved = resolveSlotSavePathArgs(
     manifest.spec.extraArgs,
     resolved.LOCAL_AI_RUNTIME_DIR,
@@ -1224,6 +1656,7 @@ async function launchModelHost(
   spec.extraArgs = extraArgsResolved.args;
   let child: ChildProcess | null = null;
   let startingPid: number | null = null;
+  let scoped: ModelHostScopeLaunch | null = null;
   const startSpecHash = computeModelHostSpecHash(specForHash(manifest.spec));
   try {
     await engine.prepareLaunch?.(spec, bootEnv);
@@ -1233,72 +1666,78 @@ async function launchModelHost(
     // then polled the whole budget, and the caller reported a bare
     // "modelHostStart timed out". Persist the child's output beside its state.
     const bootStdio = openBootLogFd(opts.key.name, resolved.LOCAL_AI_RUNTIME_DIR);
-    child = spawn(launch.binary, launch.args, {
-      detached: true,
-      stdio: bootStdio === "ignore" ? "ignore" : ["ignore", bootStdio, bootStdio],
-      env: sanitizeChildEnv(runtimeEnv, launch.envOverrides, manifest.spec.env, apiKey),
-    });
-    const pid = child.pid ?? null;
+    const childEnv = sanitizeChildEnv(runtimeEnv, launch.envOverrides, manifest.spec.env, apiKey);
+    // #806 phase 3: with a published launcher (Linux agents), try the scoped
+    // launch first; every precondition failure falls through to the direct
+    // spawn below unchanged.
+    const attempt = await attemptScopedModelHostSpawn(
+      opts,
+      manifest,
+      launch,
+      childEnv,
+      runtimeEnv,
+      bootStdio,
+      resolved,
+      startSpecHash,
+      (spawnedChild, spawnedPid, scope) => {
+        child = spawnedChild;
+        startingPid = spawnedPid;
+        scoped = scope;
+      },
+    );
+    if (attempt.kind === "established") {
+      child = attempt.child;
+      startingPid = attempt.pid;
+      scoped = attempt.scope;
+    } else if (attempt.kind === "aborted") {
+      child = attempt.child;
+      startingPid = attempt.pid;
+      scoped = attempt.scope;
+      throw new Error(MODEL_HOST_ABORT_MESSAGE);
+    } else if (attempt.kind === "pre-exec") {
+      child = attempt.child;
+      startingPid = attempt.pid;
+      scoped = attempt.scope;
+      scopedLaunchFallback(opts, resolved, scoped, attempt.outcome, attempt.pid);
+      child = null;
+      scoped = null;
+      startingPid = null;
+    }
+    if (child === null) {
+      const direct = spawnDirectModelHostChild(
+        launch,
+        childEnv,
+        bootStdio,
+        opts,
+        manifest,
+        resolved,
+        startSpecHash,
+        (spawnedChild, spawnedPid) => {
+          child = spawnedChild;
+          startingPid = spawnedPid;
+        },
+      );
+      child = direct.child;
+      startingPid = direct.pid;
+    }
+
+    const pid = startingPid;
     if (pid === null) {
       throw new Error("failed to spawn modelhost process");
     }
-    detachChild(child);
+    await awaitModelHostReadiness(opts, engine, manifest, spec, child, pid, scoped);
 
-    // #317: track the child at spawn, before readiness. An agent that dies
-    // during the wait below must leave a record a restarted agent can reap.
-    startingPid = pid;
-    writeModelHostStarting(
-      {
-        kind: "ModelHostStarting",
-        engine: manifest.spec.engine,
-        pid,
-        startedAt: new Date().toISOString(),
-        specHash: startSpecHash,
-        ...binaryNamesField(manifest.spec.binaryNames),
-      },
-      opts.key,
-      resolved,
-    );
-
-    // #318: the readiness wait is where a slow start outlives its caller.
-    // Racing the signal here means an abort lands on the child we just spawned
-    // (torn down by the catch below, starting record included), not after the
-    // probe's full timeout budget.
     const endpoint = manifest.spec.endpoint;
-    const readiness = await raceModelHostAbort(
-      (opts.probeReady ?? engine.probeReady)(
-        endpoint,
-        (opts.timeoutSeconds ?? manifest.spec.timeoutSeconds) * 1000,
-        spec.readiness,
-      ),
-      opts.signal,
-    );
-    if (readiness === MODEL_HOST_ABORTED) {
-      throw new Error(MODEL_HOST_ABORT_MESSAGE);
-    }
-    if (!readiness.ready) {
-      throw new Error("modelhost failed readiness probe");
-    }
-
     ensureSpawnedChildStillRunning(child, pid, endpoint);
-
-    const modelAliases = resolveModelAliases(manifest);
-    writeModelHostState(
-      {
-        kind: "ModelHost",
-        engine: manifest.spec.engine,
-        pid,
-        host: endpoint.host,
-        port: endpoint.port,
-        modelAliases,
-        startedAt: new Date().toISOString(),
-        slotSavePath: extraArgsResolved.slotSavePath,
-        specHash: startSpecHash,
-        ...binaryNamesField(manifest.spec.binaryNames),
-        ...readinessField(spec.readiness),
-      },
-      opts.key,
+    writeReadyModelHostState(
+      opts,
+      manifest,
       resolved,
+      spec,
+      pid,
+      scoped,
+      startSpecHash,
+      extraArgsResolved.slotSavePath,
     );
     clearStartingRecordIfOwned(opts.key, resolved, pid);
     const result = { ok: true, pid };
@@ -1306,8 +1745,7 @@ async function launchModelHost(
     return result;
   } catch (error) {
     const spawnedPid = child?.pid;
-    await teardownChildSilently(child, engine);
-    if (startingPid !== null) clearStartingRecordIfOwned(opts.key, resolved, startingPid);
+    await teardownFailedModelHostLaunch(child, engine, scoped, startingPid, opts, resolved);
     const message = error instanceof Error ? error.message : "modelhost start failed";
     const result = {
       ok: false,
@@ -1338,7 +1776,7 @@ function residencyPeerState(
     const verdict = verifyPidFile(
       modelhostStartingFile(resolved, peerKey),
       starting.pid,
-      hostIdentityDeps(starting.engine, opts.identity, starting.binaryNames),
+      startingIdentityDeps(starting, opts.identity, starting.binaryNames),
     );
     if (verdict === "alive" || verdict === "unknown") return "Starting";
   }
@@ -1498,7 +1936,13 @@ async function stopStartingRecord(
   const starting = readModelHostStarting(opts.key, resolved);
   if (!starting) return { ok: true, pid: null };
   const recordPath = modelhostStartingFile(resolved, opts.key);
-  const identity = hostIdentityDeps(starting.engine, opts.identity, starting.binaryNames);
+  // #806 phase 3: tombstone the scope unit before verifying, so an in-flight
+  // scoped launch that sees its wrapper exit cannot fall back to a direct
+  // spawn behind this stop's back.
+  if (starting.scopeUnit !== undefined) {
+    writeScopeStop(workloadRuntimeDir(resolved, opts.key), "modelhost", starting.scopeUnit);
+  }
+  const identity = startingIdentityDeps(starting, opts.identity, starting.binaryNames);
   const verdict = verifyPidFile(recordPath, starting.pid, identity);
   if (verdict === "unknown") {
     return { ok: false, pid: starting.pid, error: "pid identity unknown" };
@@ -1529,7 +1973,7 @@ async function stopStartingRecord(
       };
     }
   }
-  removeModelHostStarting(opts.key, resolved);
+  clearStartingRecordIfOwned(opts.key, resolved, starting.pid);
   return { ok: true, pid: starting.pid };
 }
 

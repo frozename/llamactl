@@ -782,6 +782,8 @@ describe("I1: clean install", () => {
     // #281 (DF-08) chat-completions admission slice: opt-in execution/queue caps read by agent serve, not the worker RPC.
     BASELINE_ENV.add("LLAMACTL_CHAT_ADMISSION_MAX_EXECUTIONS");
     BASELINE_ENV.add("LLAMACTL_CHAT_ADMISSION_MAX_QUEUED");
+    // #806 phase 3: engine scope kill switch, read by the CLI agent.
+    BASELINE_ENV.add("LLAMACTL_ENGINE_SCOPE");
     const sources = join(import.meta.dir, "..", "..");
     const read = new Map<string, string[]>();
     for (const pkg of readdirSync(sources)) {

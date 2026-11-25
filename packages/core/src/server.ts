@@ -1,3 +1,5 @@
+import type { ChildProcess } from "node:child_process";
+
 import { spawn } from "node:child_process";
 import { basename, join } from "node:path";
 
@@ -16,6 +18,23 @@ import {
 import { resolveBuildId } from "./build.js";
 import { ctxForModel } from "./ctx.js";
 import { resolveDraftModelPathArgs } from "./engines/llamacpp.js";
+import {
+  awaitScopeExec,
+  buildScopeArgv,
+  describeScopeOutcome,
+  type EngineScopeLauncher,
+  getEngineScopeLauncher,
+  isScopeFallback,
+  isScopeUnit,
+  readScopePending,
+  removeScopePendingIfOwned,
+  scopeStopNames,
+  scopeUnitBase,
+  scopeWrapperExpectation,
+  shapeScopeEnv,
+  writeScopePending,
+  writeScopeStop,
+} from "./engines/scope.js";
 import { isModelHostReadiness } from "./engines/state.js";
 import { resolveEnv } from "./env.js";
 import {
@@ -25,6 +44,7 @@ import {
 } from "./kvstore/index.js";
 import { omitUndefined } from "./object.js";
 import {
+  type CommandExpectation,
   isRecordedPidGone,
   type PidIdentityDeps,
   terminateVerifiedPid,
@@ -259,6 +279,12 @@ export interface ServerState {
    * instead of restarting it; a legacy sidecar without it restarts.
    */
   specHash?: string;
+  /**
+   * Transient systemd user-scope unit a scoped ModelRun launch recorded
+   * (#806 phase 3). Informational: status and stop act on the pid. Absent on
+   * direct (macOS, unpublished launcher, or fallback) launches.
+   */
+  scopeUnit?: string;
 }
 
 export interface ServerStatus {
@@ -323,6 +349,26 @@ function portParsesFinite(value: unknown): boolean {
 }
 
 /**
+ * Validate the load-bearing sidecar fields. Each element of `extraArgs` must be
+ * a string (consumers call `startsWith` on them); `port` may be a string or a
+ * JSON number but must parse to a finite number (the consumer runs
+ * `Number.parseInt`), so a corrupt sidecar fails closed rather than flowing a
+ * NaN into the health-probe URL.
+ */
+function serverStateShapeOk(parsed: ServerState): boolean {
+  return (
+    typeof parsed.rel === "string" &&
+    Array.isArray(parsed.extraArgs) &&
+    parsed.extraArgs.every((a) => typeof a === "string") &&
+    typeof parsed.pid === "number" &&
+    typeof parsed.startedAt === "string" &&
+    typeof parsed.host === "string" &&
+    parsed.host.length > 0 &&
+    portParsesFinite(parsed.port)
+  );
+}
+
+/**
  * Read the sidecar state file written at startServer time. Returns
  * null when absent or malformed — callers should treat that as "no
  * live server metadata available", which is the same user experience
@@ -337,33 +383,16 @@ export function readServerState(
   try {
     const raw = readFileSync(file, "utf8");
     const parsed = JSON.parse(raw) as ServerState;
-    if (
-      typeof parsed.rel === "string" &&
-      Array.isArray(parsed.extraArgs) &&
-      // Each element must be a string: ServerState types extraArgs as
-      // string[], and consumers call token.startsWith(...) on them. A
-      // foreign/corrupt sidecar with a non-string element would otherwise
-      // pass the guard and throw a TypeError downstream.
-      parsed.extraArgs.every((a) => typeof a === "string") &&
-      typeof parsed.pid === "number" &&
-      typeof parsed.startedAt === "string" &&
-      typeof parsed.host === "string" &&
-      parsed.host.length > 0 &&
-      // port is persisted as a numeric string but legacy/foreign writers may
-      // emit a JSON number; accept either and reject anything that does not
-      // parse to a finite number, matching the consumer at sidecarStatusFields
-      // (Number.parseInt(sidecar.port, 10)). A missing or NaN port would
-      // otherwise flow into the health-probe URL as NaN.
-      portParsesFinite(parsed.port)
-    ) {
-      if (typeof parsed.binary !== "string") parsed.binary = "";
-      parsed.slotSavePath = typeof parsed.slotSavePath === "string" ? parsed.slotSavePath : null;
-      if (parsed.readiness !== undefined && !isModelHostReadiness(parsed.readiness)) {
-        delete parsed.readiness;
-      }
-      return parsed;
+    if (!serverStateShapeOk(parsed)) return null;
+    if (typeof parsed.binary !== "string") parsed.binary = "";
+    parsed.slotSavePath = typeof parsed.slotSavePath === "string" ? parsed.slotSavePath : null;
+    if (parsed.readiness !== undefined && !isModelHostReadiness(parsed.readiness)) {
+      delete parsed.readiness;
     }
-    return null;
+    if (!isScopeUnit(parsed.scopeUnit)) {
+      delete parsed.scopeUnit;
+    }
+    return parsed;
   } catch {
     return null;
   }
@@ -576,6 +605,17 @@ export interface StartServerOptions {
    * /health again before the restart is still replaced rather than adopted.
    */
   restart?: boolean;
+  /**
+   * Spawn seam for the engine (or the systemd-run wrapper). Defaults to
+   * `node:child_process.spawn`. Tests inject a spy to observe the argv.
+   */
+  spawn?: typeof spawn;
+  /**
+   * Engine-scope launcher for Linux scoped launches (#806 phase 3). `undefined`
+   * means the process-wide launcher (`getEngineScopeLauncher()`); an explicit
+   * `null` forces a direct spawn.
+   */
+  engineScope?: EngineScopeLauncher | null;
 }
 
 export interface StartServerResult {
@@ -1127,12 +1167,13 @@ interface AbortKiller {
 
 /**
  * Per-start abort handler. `kill` SIGTERMs `targetPid` if it is still alive. A null target
- * (disarmed, or a launch pid <= 0) signals nothing. startServer re-points `targetPid` as
+ * (disarmed, a launch pid <= 0, or a scope child already reaped) signals nothing.
+ * startServer re-points `targetPid` as
  * ownership moves from the first launch to the retry.
  */
-function createAbortKiller(pid: number): AbortKiller {
+function createAbortKiller(pid: number | null): AbortKiller {
   const killer: AbortKiller = {
-    targetPid: pid > 0 ? pid : null,
+    targetPid: pid !== null && pid > 0 ? pid : null,
     kill: (): void => {
       const targetPid = killer.targetPid;
       if (targetPid === null) return;
@@ -1276,6 +1317,7 @@ function launchedServerState(
   launchHost: string,
   launchPort: number | string,
   pid: number,
+  scopeUnit?: string,
 ): ServerState {
   return {
     rel: target.rel,
@@ -1292,6 +1334,7 @@ function launchedServerState(
       rel: target.rel,
       ...launchSpecHashFields(opts, target, prepared, resolved, launchHost, launchPort),
     }),
+    ...(scopeUnit !== undefined ? { scopeUnit } : {}),
   };
 }
 
@@ -1561,24 +1604,17 @@ async function retryWithMmprojSafeFlags(
     };
   }
   const retryArgs = [...prepared.launchArgs, ...safeRetryArgs()];
-  const retryPid = await launchBackground({
-    bin: target.bin,
-    modelPath: target.modelPath,
-    args: retryArgs,
+  const retryLaunch = await launchAndRecordServer(
+    opts,
     resolved,
-    key,
-    ...omitUndefined({ allowExternalBind: opts.allowExternalBind }),
-    host: ctx.launchHost,
-    port: ctx.launchPort,
-    ...omitUndefined({ onEvent: opts.onEvent }),
-  });
-  ctx.abortKiller.targetPid = retryPid > 0 ? retryPid : null;
-  writeServerPid(resolved, key, retryPid);
-  writeServerState(
-    resolved,
-    key,
-    launchedServerState(opts, target, prepared, resolved, ctx.launchHost, ctx.launchPort, retryPid),
+    target,
+    prepared,
+    ctx.launchHost,
+    ctx.launchPort,
+    retryArgs,
   );
+  const retryPid = retryLaunch.pid;
+  ctx.abortKiller.targetPid = signalableLaunchPid(retryLaunch);
   const readyResult = await pollReady(
     retryPid,
     ctx.healthUrl,
@@ -1588,7 +1624,7 @@ async function retryWithMmprojSafeFlags(
   );
   if (readyResult.outcome === "aborted") {
     return {
-      result: abortedStartResult(opts, ctx, true, retryPid),
+      result: abortedStartResult(opts, ctx, true, signalableLaunchPid(retryLaunch)),
       readyResult,
     };
   }
@@ -1762,6 +1798,65 @@ async function handlePortConflict(
   return startServerError(resolved, launchEndpoint, null, false, portConflictHint);
 }
 
+/** Remove the pid, state and pending records only if `pid` is still the tracked one. */
+function removeServerRecordIfOwned(resolved: ResolvedEnv, key: WorkloadKey, pid: number): void {
+  if (readServerPid(key, resolved) !== pid) return;
+  removeServerPid(resolved, key);
+  removeServerState(resolved, key);
+  try {
+    unlinkSync(join(workloadRuntimeDir(resolved, key), "llama-server.scope-pending"));
+  } catch {
+    // no-op
+  }
+}
+
+interface ScopePlan {
+  systemdRunPath: string;
+  base: string;
+  env: NodeJS.ProcessEnv;
+}
+
+// Resolve whether this ModelRun launch runs in its own systemd user scope. A
+// null launcher, a null override, an env-conflict, or a failed capability
+// resolve all mean a direct spawn; the direct argv stays byte-identical.
+async function resolveScopePlan(
+  opts: StartServerOptions,
+  forceDirect: boolean,
+): Promise<{ launcher: EngineScopeLauncher; plan: ScopePlan } | null> {
+  if (forceDirect) return null;
+  const launcher = opts.engineScope !== undefined ? opts.engineScope : getEngineScopeLauncher();
+  if (launcher === null) return null;
+  const shaped = shapeScopeEnv({ ...process.env }, process.env, []);
+  if ("conflict" in shaped) {
+    opts.onEvent?.({
+      type: "retry",
+      reason: `engine scope env-conflict (${shaped.conflict}); spawning directly`,
+    });
+    return null;
+  }
+  const resolved = await launcher.resolve(process.env);
+  if (!resolved.ok) return null;
+  return {
+    launcher,
+    plan: {
+      systemdRunPath: resolved.systemdRunPath,
+      base: scopeUnitBase(opts.key.name, launcher.unitSuffix()),
+      env: shaped.env,
+    },
+  };
+}
+
+interface RecordedServerLaunch {
+  pid: number;
+  /** True once the child has been reaped, so its pid must never be signalled. */
+  reaped: boolean;
+}
+
+function signalableLaunchPid(launch: RecordedServerLaunch): number | null {
+  if (launch.reaped || launch.pid <= 0) return null;
+  return launch.pid;
+}
+
 /** Spawn llama-server detached and record the pid + state sidecars. */
 async function launchAndRecordServer(
   opts: StartServerOptions,
@@ -1770,25 +1865,128 @@ async function launchAndRecordServer(
   prepared: PreparedLaunchArgs,
   launchHost: string,
   launchPort: number | string,
-): Promise<number> {
-  const pid = await launchBackground({
+  args: string[],
+  forceDirect = false,
+): Promise<RecordedServerLaunch> {
+  const scoped = await resolveScopePlan(opts, forceDirect);
+  const launched = await launchBackground({
     bin: target.bin,
     modelPath: target.modelPath,
-    args: prepared.launchArgs,
+    args,
     resolved,
     key: opts.key,
     ...omitUndefined({ allowExternalBind: opts.allowExternalBind }),
     host: launchHost,
     port: launchPort,
     ...omitUndefined({ onEvent: opts.onEvent }),
+    ...omitUndefined({ spawn: opts.spawn }),
+    scope: scoped?.plan ?? null,
   });
-  writeServerPid(resolved, opts.key, pid);
+  if (scoped === null || launched.scope === null) {
+    writeServerPid(resolved, opts.key, launched.pid);
+    writeServerState(
+      resolved,
+      opts.key,
+      launchedServerState(opts, target, prepared, resolved, launchHost, launchPort, launched.pid),
+    );
+    return { pid: launched.pid, reaped: false };
+  }
+  return await recordScopedLaunch(
+    opts,
+    resolved,
+    target,
+    prepared,
+    launchHost,
+    launchPort,
+    args,
+    launched,
+    scoped,
+  );
+}
+
+// Scoped launch: write pid + state + pending, run the exec handshake, then the
+// gated direct fallback (once) or return the wrapper pid. A non-established
+// outcome that is not fallback-eligible leaves the (dead) pid recorded so
+// pollReady reports the exit.
+async function recordScopedLaunch(
+  opts: StartServerOptions,
+  resolved: ResolvedEnv,
+  target: ResolvedLaunchTarget,
+  prepared: PreparedLaunchArgs,
+  launchHost: string,
+  launchPort: number | string,
+  args: string[],
+  launched: LaunchResult,
+  scoped: { launcher: EngineScopeLauncher; plan: ScopePlan },
+): Promise<RecordedServerLaunch> {
+  const dir = workloadRuntimeDir(resolved, opts.key);
+  const scopeUnit = launched.scope?.scopeUnit ?? "";
+  if (launched.pid <= 0) {
+    scoped.launcher.noteFailure();
+    return await launchAndRecordServer(
+      opts,
+      resolved,
+      target,
+      prepared,
+      launchHost,
+      launchPort,
+      args,
+      true,
+    );
+  }
+  writeServerPid(resolved, opts.key, launched.pid);
   writeServerState(
     resolved,
     opts.key,
-    launchedServerState(opts, target, prepared, resolved, launchHost, launchPort, pid),
+    launchedServerState(
+      opts,
+      target,
+      prepared,
+      resolved,
+      launchHost,
+      launchPort,
+      launched.pid,
+      scopeUnit,
+    ),
   );
-  return pid;
+  writeScopePending(dir, "llama-server", launched.pid, scopeUnit);
+  const outcome = await awaitScopeExec({
+    child: launched.child,
+    pid: launched.pid,
+    logPath: serverLog(resolved, opts.key),
+    offset: launched.scope?.offset ?? 0,
+    base: launched.scope?.base ?? "",
+    timeoutMs: scoped.launcher.establishTimeoutMs,
+    ...omitUndefined({ signal: opts.signal }),
+  });
+  removeScopePendingIfOwned(dir, "llama-server", launched.pid);
+  const mayFallback =
+    isScopeFallback(outcome) &&
+    readServerPid(opts.key, resolved) === launched.pid &&
+    !scopeStopNames(dir, "llama-server", scopeUnit) &&
+    opts.signal?.aborted !== true;
+  if (!mayFallback) {
+    return {
+      pid: launched.pid,
+      reaped: launched.child.exitCode !== null || launched.child.signalCode !== null,
+    };
+  }
+  removeServerRecordIfOwned(resolved, opts.key, launched.pid);
+  scoped.launcher.noteFailure();
+  opts.onEvent?.({
+    type: "retry",
+    reason: `engine scope ${scopeUnit} ${describeScopeOutcome(outcome)}; falling back to direct spawn`,
+  });
+  return await launchAndRecordServer(
+    opts,
+    resolved,
+    target,
+    prepared,
+    launchHost,
+    launchPort,
+    args,
+    true,
+  );
 }
 
 /**
@@ -1882,17 +2080,19 @@ async function startServerUnwrapped(opts: StartServerOptions): Promise<StartServ
   );
   const { launchArgs, tunedProfile } = prepared;
 
-  const pid = await launchAndRecordServer(
+  const launch = await launchAndRecordServer(
     opts,
     resolved,
     validation,
     prepared,
     launchHost,
     launchPort,
+    launchArgs,
   );
+  const pid = launch.pid;
 
   // The per-call target follows ownership: first pid, no pid while stopping, then retry pid.
-  const abortKiller = createAbortKiller(pid);
+  const abortKiller = createAbortKiller(signalableLaunchPid(launch));
   wireAbortToKill(opts.signal, abortKiller.kill);
 
   const timeoutSeconds = opts.timeoutSeconds ?? 60;
@@ -1904,7 +2104,7 @@ async function startServerUnwrapped(opts: StartServerOptions): Promise<StartServ
       opts,
       { resolved, key, launchEndpoint, prepared, abortKiller },
       false,
-      pid,
+      signalableLaunchPid(launch),
     );
   }
   if (outcome === "ready") {
@@ -1979,6 +2179,14 @@ interface LaunchArgs {
   port?: number | string;
   binary?: string;
   onEvent?: (e: ServerEvent) => void;
+  spawn?: typeof spawn;
+  scope?: { systemdRunPath: string; base: string; env: NodeJS.ProcessEnv } | null;
+}
+
+interface LaunchResult {
+  pid: number;
+  child: ChildProcess;
+  scope: { base: string; scopeUnit: string; offset: number } | null;
 }
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
@@ -2075,10 +2283,12 @@ function launchArgvMatchesLaunchArgs(
   return !prefix.some((token) => token.startsWith("-"));
 }
 
-async function launchBackground(opts: LaunchArgs): Promise<number> {
-  const { openSync, closeSync } = await import("node:fs");
+async function launchBackground(opts: LaunchArgs): Promise<LaunchResult> {
+  const { openSync, closeSync, fstatSync } = await import("node:fs");
   ensureWorkloadRuntimeDir(opts.resolved, opts.key);
-  const logFd = openSync(serverLog(opts.resolved, opts.key), "a");
+  const logPath = serverLog(opts.resolved, opts.key);
+  const logFd = openSync(logPath, "a");
+  const offset = fstatSync(logFd).size;
   const fullArgs = assembleServerLaunchArgs(
     opts.modelPath,
     opts.resolved,
@@ -2087,15 +2297,30 @@ async function launchBackground(opts: LaunchArgs): Promise<number> {
     opts.port,
   );
   validateHostBind(fullArgs, opts.allowExternalBind);
-  const child = spawn(opts.bin, fullArgs, {
-    stdio: ["ignore", logFd, logFd],
-    detached: true,
-  });
+  const doSpawn = opts.spawn ?? spawn;
+  const scoped = opts.scope ?? null;
+  const child =
+    scoped === null
+      ? doSpawn(opts.bin, fullArgs, { stdio: ["ignore", logFd, logFd], detached: true })
+      : doSpawn(
+          scoped.systemdRunPath,
+          buildScopeArgv(scoped.base, opts.key.name, opts.bin, fullArgs),
+          {
+            stdio: ["ignore", logFd, logFd],
+            detached: true,
+            env: scoped.env,
+          },
+        );
   child.unref();
   closeSync(logFd);
   const pid = child.pid ?? 0;
   opts.onEvent?.({ type: "launch", pid, command: opts.bin, args: fullArgs });
-  return pid;
+  return {
+    pid,
+    child,
+    scope:
+      scoped === null ? null : { base: scoped.base, scopeUnit: `${scoped.base}.scope`, offset },
+  };
 }
 
 // ---- stop --------------------------------------------------------------
@@ -2151,16 +2376,25 @@ function trackedStopIdentity(
   resolved: ResolvedEnv,
   key: WorkloadKey,
   identity: PidIdentityDeps | undefined,
+  acceptScopeWrapper = false,
 ): PidIdentityDeps {
   const sidecar = readServerState(key, resolved);
-  return {
-    ...identity,
-    expectCommand: {
-      binary: sidecar !== null && sidecar.binary !== "" ? basename(sidecar.binary) : "llama-server",
-      ...(sidecar !== null && sidecar.binary !== "" ? { path: sidecar.binary } : {}),
-      ...(sidecar !== null ? { args: [sidecar.rel] } : {}),
-    },
+  const expectCommand: CommandExpectation = {
+    binary: sidecar !== null && sidecar.binary !== "" ? basename(sidecar.binary) : "llama-server",
+    ...(sidecar !== null && sidecar.binary !== "" ? { path: sidecar.binary } : {}),
+    ...(sidecar !== null ? { args: [sidecar.rel] } : {}),
   };
+  if (acceptScopeWrapper) {
+    const pending = readScopePending(workloadRuntimeDir(resolved, key), "llama-server");
+    if (
+      pending !== null &&
+      pending.pid === readServerPid(key, resolved) &&
+      sidecar?.scopeUnit === pending.scopeUnit
+    ) {
+      expectCommand.alternatives = [scopeWrapperExpectation(pending.scopeUnit)];
+    }
+  }
+  return { ...identity, expectCommand };
 }
 
 /**
@@ -2184,21 +2418,27 @@ export async function stopServer(opts: StopServerOptions): Promise<StopServerRes
   const recordPath = pidFile(resolved, key);
   // A live pid is not enough to signal: the command line must still be the
   // llama-server this record describes — its binary (from the sidecar, or the
-  // default name) and the model it was launched with.
-  const identity = trackedStopIdentity(resolved, key, opts.identity);
+  // default name) and the model it was launched with. A scoped launch whose
+  // wrapper has not exec'd yet presents as systemd-run, so only the verified
+  // stop accepts the wrapper expectation (via the pending record).
+  const identity = trackedStopIdentity(resolved, key, opts.identity, true);
   const verdict = verifyPidFile(recordPath, pid, identity);
   if (isRecordedPidGone(verdict)) {
-    removeServerPid(resolved, key);
-    removeServerState(resolved, key);
+    removeServerRecordIfOwned(resolved, key, pid);
     return { stopped: true, pid, killed: false };
   }
   // Only positive identity authorizes signalling; unknown and future verdicts
   // keep the tracking files so a later attempt can still find the process.
   if (verdict !== "alive") return { stopped: false, pid, killed: false };
 
+  // A stop during the pre-exec handshake must tombstone the unit first, so the
+  // in-flight scoped launch sees it and never falls back to a direct spawn.
+  const pending = readScopePending(workloadRuntimeDir(resolved, key), "llama-server");
+  if (pending !== null && pending.pid === pid) {
+    writeScopeStop(workloadRuntimeDir(resolved, key), "llama-server", pending.scopeUnit);
+  }
   const terminated = await terminateVerifiedPid(recordPath, pid, identity, grace);
   if (!terminated.stopped) return { stopped: false, pid, killed: false };
-  removeServerPid(resolved, key);
-  removeServerState(resolved, key);
+  removeServerRecordIfOwned(resolved, key, pid);
   return { stopped: true, pid, killed: terminated.killed };
 }

@@ -1,6 +1,12 @@
 import type { AgentWorkerRpc, AgentWorkerRpcRelay } from "@llamactl/core/config/agent-config";
 
 import { inferenceRpc, nodeFacts, openaiProxy } from "@llamactl/core";
+import {
+  createEngineScopeLauncher,
+  type EngineScopeLauncher,
+  getEngineScopeLauncher,
+  setEngineScopeLauncher,
+} from "@llamactl/core/engines/scope";
 import { resolveEnv } from "@llamactl/core/env";
 import {
   createResidencyLeases,
@@ -275,6 +281,15 @@ export interface StartAgentOptions {
    * does not carry over to a restarted agent.
    */
   residencySessionIdleMs?: number;
+  /**
+   * Opt-in engine scopes (#806 phase 3): `agent serve` sets it unless
+   * LLAMACTL_ENGINE_SCOPE=off. When true on linux, `startAgentServer`
+   * publishes a systemd user-scope launcher so agent-launched ModelHost and
+   * ModelRun engines each run in their own transient scope; `stop()` and
+   * startup rollback restore the seam's previous value. On other platforms
+   * the handle is null and every launch stays a direct spawn.
+   */
+  engineScope?: boolean;
   /**
    * Opt-in request-admission gate (#281 DF-08), absent by default. When set,
    * `startAgentServer` holds an admission slot for the whole response lifetime
@@ -1209,6 +1224,7 @@ function rollbackStartupResources(
   },
   workerRpc: WorkerRpcServing | null,
   leases: ReturnType<typeof maybePublishResidencyLeases> | null,
+  engineScope: ReturnType<typeof maybePublishEngineScope> | null,
 ): void {
   try {
     started.tunnelClient?.stop();
@@ -1240,6 +1256,11 @@ function rollbackStartupResources(
   } catch {
     /* ignore */
   }
+  try {
+    engineScope?.restore();
+  } catch {
+    /* ignore */
+  }
 }
 
 // stop() body extracted to reduce cognitive complexity: drain worker-RPC,
@@ -1256,6 +1277,7 @@ async function stopAgentServerResources(
   servedRequests: ReturnType<typeof trackServedRequests> | null,
   mdns: ReturnType<typeof maybePublishAgentMdns>,
   leases: ReturnType<typeof maybePublishResidencyLeases> | null,
+  engineScope: ReturnType<typeof maybePublishEngineScope> | null,
   unregisterDeclaredModels: (() => void) | null,
   stopIngest: SearchIngestStop,
 ): Promise<void> {
@@ -1303,6 +1325,9 @@ async function stopAgentServerResources(
     // served requests, so in-flight bodies (which may hold leases) settle
     // against the published registry before the seam reverts (#278 DF-05).
     leases?.restore();
+    // Same seam discipline for the engine-scope launcher (#806 phase 3):
+    // restore only after every in-flight engine launch has settled.
+    engineScope?.restore();
     // Unregister the declared-model source only once the HTTP server, the
     // tunnel client and every request that could still read it are done:
     // while any of them is up, a cold pin must still get its declared
@@ -1388,6 +1413,34 @@ function maybePublishResidencyLeases(
     auditSink.close();
   };
   return { registry, publish, restore };
+}
+
+/**
+ * Prepares the opt-in engine-scope launcher (#806 phase 3). Returns null
+ * unless `opts.engineScope` is true AND the platform is linux, so macOS
+ * agents, tests and in-process applies never install a launcher and every
+ * launch stays a byte-identical direct spawn. Like the residency seam,
+ * `publish` installs the launcher only once the listener is up and `restore`
+ * puts the previous value back on stop/rollback.
+ */
+export function maybePublishEngineScope(
+  opts: Pick<StartAgentOptions, "engineScope">,
+  platform: NodeJS.Platform = process.platform,
+): { publish: () => void; restore: () => void } | null {
+  if (opts.engineScope !== true || platform !== "linux") return null;
+  // Captured at creation AND re-captured at publish: a rollback that runs
+  // before publish must restore the pre-handle value, not a hard null that
+  // would wipe a launcher another in-process agent already installed.
+  let previous: EngineScopeLauncher | null = getEngineScopeLauncher();
+  return {
+    publish: (): void => {
+      previous = getEngineScopeLauncher();
+      setEngineScopeLauncher(createEngineScopeLauncher());
+    },
+    restore: (): void => {
+      setEngineScopeLauncher(previous);
+    },
+  };
 }
 
 /**
@@ -1584,6 +1637,17 @@ function rollbackEarlyStartupSteps(
   process.off("unhandledRejection", onUnhandledRejection);
 }
 
+// Wire runtime role + memory budget into the metrics identity.
+function applyAgentRuntimeIdentity(opts: StartAgentOptions): void {
+  if (opts.runtimeRole === undefined && opts.runtimeMemoryBudgetBytes === undefined) return;
+  setAgentRuntimeIdentity({
+    role: opts.runtimeRole ?? "agent",
+    ...(opts.runtimeMemoryBudgetBytes !== undefined
+      ? { memoryBudgetBytes: opts.runtimeMemoryBudgetBytes }
+      : {}),
+  });
+}
+
 function startAgentServerAfterHandlers(
   opts: StartAgentOptions,
   bind: {
@@ -1624,6 +1688,7 @@ function startAgentServerAfterHandlers(
   const gate = makeNoAuthGate(noAuth, bindHost);
 
   const leases = maybePublishResidencyLeases(opts);
+  const engineScope = maybePublishEngineScope(opts);
   const workerRpc = maybePublishWorkerRpc(opts, leases?.registry ?? null);
 
   const started: {
@@ -1633,16 +1698,7 @@ function startAgentServerAfterHandlers(
     tunnelClient?: ReturnType<typeof maybeStartTunnelClient>;
   } = {};
   try {
-    // Wire runtime role + memory budget into the metrics identity.
-    const runtimeIdentity: { role: string; memoryBudgetBytes?: number } = {
-      role: opts.runtimeRole ?? "agent",
-    };
-    if (opts.runtimeMemoryBudgetBytes !== undefined) {
-      runtimeIdentity.memoryBudgetBytes = opts.runtimeMemoryBudgetBytes;
-    }
-    if (opts.runtimeRole !== undefined || opts.runtimeMemoryBudgetBytes !== undefined) {
-      setAgentRuntimeIdentity(runtimeIdentity);
-    }
+    applyAgentRuntimeIdentity(opts);
 
     const baseFetchHandler = createAgentFetchHandler({
       opts,
@@ -1678,6 +1734,7 @@ function startAgentServerAfterHandlers(
     // the Worker RPC host is published now unpublishes it, restores the seam
     // and stops the bound server (#278 DF-05).
     leases?.publish();
+    engineScope?.publish();
     const unregisterDeclaredModels = maybeRegisterDeclaredModels(opts);
     started.unregisterDeclaredModels = unregisterDeclaredModels;
 
@@ -1716,6 +1773,7 @@ function startAgentServerAfterHandlers(
           servedRequests,
           mdns,
           leases,
+          engineScope,
           unregisterDeclaredModels,
           stopOwnIngest,
         );
@@ -1728,7 +1786,7 @@ function startAgentServerAfterHandlers(
     // so one failure cannot mask the original error or skip the others. The
     // rethrow reaches startAgentServer's early-step rollback, which stops
     // this agent's own search ingest through its handle (#634).
-    rollbackStartupResources(started, workerRpc, leases);
+    rollbackStartupResources(started, workerRpc, leases, engineScope);
     throw err;
   }
 }
