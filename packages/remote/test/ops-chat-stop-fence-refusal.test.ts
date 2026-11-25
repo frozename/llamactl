@@ -106,6 +106,32 @@ describe("#520 ops-chat stop-fence refusal", () => {
     expect(calls).toEqual([{ method: "serverStop", input: { workload: "w1" } }]);
   });
 
+  // Kills: dropping the non-string filter on refused.active entries.
+  test("R6 server.stop refusal ignores non-string active entries", async () => {
+    const payload = {
+      stopped: false,
+      pid: null,
+      killed: false,
+      refused: { reason: "SessionsActive", active: ["s1", 7, null] },
+    };
+    const calls: RecordedCall[] = [];
+    const caller = makeFakeCaller({ serverStop: payload }, calls);
+
+    const res = await dispatchOpsChatTool(caller, {
+      name: "llamactl.server.stop",
+      arguments: { workload: "w1" },
+      dryRun: false,
+    });
+
+    expect(res.ok).toBe(false);
+    expect(res.error).toEqual({
+      code: "stop_refused",
+      message:
+        "serverStop refused by the node stop fence (SessionsActive: s1); nothing was stopped",
+    });
+    expect(res.result).toEqual(payload);
+  });
+
   // Kills: treating a preserved-manifest delete as success.
   test("R3 workload.delete stop refusal maps to delete_refused", async () => {
     const payload = {
@@ -236,6 +262,23 @@ describe("#520 ops-chat stop-fence refusal", () => {
   // Guard: an already-absent manifest delete failure without a refusal string stays unchanged.
   test("G3 workload.delete ok:false without error string stays ok", async () => {
     const payload = { ok: false, name: "w1", stops: [] };
+    const calls: RecordedCall[] = [];
+    const caller = makeFakeCaller({ workloadDelete: payload }, calls);
+
+    const res = await dispatchOpsChatTool(caller, {
+      name: "llamactl.workload.delete",
+      arguments: { name: "w1" },
+      dryRun: false,
+    });
+
+    expect(res.ok).toBe(true);
+    expect(res.error).toBeUndefined();
+    expect(res.result).toEqual(payload);
+  });
+
+  // Guard: an ok:true delete carrying an error string is not a refusal.
+  test("G6 workload.delete ok:true with error string stays ok", async () => {
+    const payload = { ok: true, name: "w1", stops: [], error: "x" };
     const calls: RecordedCall[] = [];
     const caller = makeFakeCaller({ workloadDelete: payload }, calls);
 

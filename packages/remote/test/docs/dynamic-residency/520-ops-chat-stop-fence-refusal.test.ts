@@ -36,9 +36,9 @@ describe("#520 ops-chat stop-fence refusal", () => {
     const helper = enclosingBody(src, "function opsChatStopRefusal(");
     expect(helper, "opsChatStopRefusal signature").not.toBe("");
     expectPins(helper, "opsChatStopRefusal", [
-      "'stop_refused'",
-      "'delete_refused'",
-      "'destroy_refused'",
+      'code: "stop_refused"',
+      'code: "delete_refused"',
+      'code: "destroy_refused"',
       "manifestPreserved",
     ]);
 
