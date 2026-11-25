@@ -927,8 +927,8 @@ run '<id>'`. A run that holds more than one model exits 1 with
 and `--model` then filters both runs. Base and candidate may be different
 arms or engines. The Markdown output starts with `baseline: <run_id>
 (<model>, <engine>)` and `candidate: <run_id> (<model>, <engine>)` lines
-(`renderPerfDiffMd`), and `--format json` prints `baseline`, `candidate`
-and `diffs` (`renderPerfDiffJson`).
+(`renderPerfDiffMd`), and `--format json` prints `baseline`, `candidate`,
+`diffs` and `provenance` (`renderPerfDiffJson`).
 
 Rows are matched on suite and metric name (`diffPerfRuns`,
 `packages/eval/src/perf/diff.ts`). Each metric's direction comes from
@@ -951,7 +951,31 @@ never `regressed`.
 The script exits 3 when any metric is `regressed` and 0 otherwise. An
 `unavailable` metric never counts as a regression, so exit 0 does not mean
 every metric was measured: read the verdict column. The diff compares perf
-metrics only, so the promotion cells in the table above stay `unavailable`.
+metrics and provenance, not promotion metrics, so the promotion cells in
+the table above stay `unavailable`.
+
+### Provenance in a perf diff
+
+After the metric table, the Markdown output has a second table headed
+`| Provenance | Baseline | Candidate | Verdict |` (`renderPerfDiffMd`,
+`packages/eval/src/perf/diff.ts`). It compares the provenance of the first
+row of each run, the same row the header's engine comes from
+(`perfDiffMain`), field by field in the order of
+`PERF_PROVENANCE_DIFF_FIELDS`: `engine`, `engine_version`, `engine_commit`,
+`binary_sha256`, `gguf_sha256`, `hf_revision`, `quant`, `ctx`, `flags` and
+`host` (`diffPerfProvenance`). A field is `same` when both values are equal,
+with `flags` compared token by token, and `differs` otherwise. A field that
+is null on either side, including a field missing from an older row, is
+`unavailable` and never `differs`. Its reason is that side's `unavailable`
+entry from the recorded provenance, or `not recorded` when the row holds
+none, prefixed with the side as for metrics. An unavailable value renders as
+`unavailable`, and an empty `flags` list, which declares an engine launched
+with no flags, renders as `(none)`. The JSON output carries the same
+comparison under `provenance`, one entry per field with its baseline and
+candidate values, verdict and reason; an unavailable side is null there
+(`renderPerfDiffJson`). Provenance never changes the exit code: a pair of
+runs whose only difference is provenance exits 0, so a `differs` row
+explains a metric change but is not a regression.
 
 ### Load and prefill metrics for an arm
 
