@@ -100,7 +100,8 @@ const servingModelWinners = new WeakMap<
 >();
 
 const MAX_JSON_BODY_BYTES = 10 * 1024 * 1024;
-const SESSION_HEADER = "x-llamactl-session";
+// #520: exported because the unified proxy reads the same header when it picks an executor.
+export const SESSION_HEADER = "x-llamactl-session";
 const MAX_SESSION_ID_LENGTH = 128;
 const SESSION_ID_PATTERN = /^[A-Za-z0-9._:-]+$/;
 
