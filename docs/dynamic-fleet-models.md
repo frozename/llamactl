@@ -329,8 +329,15 @@ catalog exclusion apply on other nodes, including a peer's `ModelHost` alias
 ids and node-local pins. Limits: the poller forwards only the experimental
 stage and advertises no other (a non-experimental peer stage is not
 propagated, so a peer route still inherits this node's stage by exact id);
-fleet-supervisor journal snapshots, served in preference to the fallback,
-carry no label yet; and ranking order is unchanged.
+ranking order is unchanged. When a fleet-supervisor journal snapshot is
+served in preference to the fallback, `readFleetSnapshotOrLocalRoutes`
+overlays the same experimental label onto each journal workload whose
+workload name matches an experimental local route — only for callers
+asking `include=local-routes` (the peer poller over HTTP and tRPC). Without
+`include=local-routes` the journal snapshot is served unchanged, a journal
+workload with no experimental local route of the same workload name carries
+no label, and an empty journal workload list or a failing route listing
+serves the journal unchanged.
 
 `proposePromotion` (`packages/core/src/qualification/promotion.ts`)
 applies the first matching check, in source order: `frozen`, `pinned`,
