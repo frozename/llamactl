@@ -6,6 +6,7 @@ import {
   defaultFleetJournalPath,
   type FleetSnapshotEntry,
   readLatestFleetSnapshotFromJournal,
+  type WorkloadSnapshot,
 } from "@llamactl/fleet-supervisor";
 
 export interface FleetSnapshotRouteOptions {
@@ -26,7 +27,9 @@ export interface LocalRoutesSnapshotWorkload {
   reachable: true;
   revision: string | null;
   /** Part of #518: present only when a route is experimental, carrying
-   *  `llamactl.io/qualification: experimental` so a peer can exclude it. */
+   *  `llamactl.io/qualification: experimental` so a peer can exclude it.
+   *  include=local-routes callers also get this label on journal workloads
+   *  whose workload name matches an experimental local route. */
   labels?: Record<string, string>;
 }
 
@@ -111,13 +114,73 @@ function localRoutesFallback(opts: FleetSnapshotRouteOptions): LocalRoutesSnapsh
   }
 }
 
-/** #306: journal snapshot when present; else the local-routes fallback if asked for. */
+/** #518: a journal workload plus the optional experimental label the
+ *  include=local-routes overlay may add — fleet-supervisor's
+ *  WorkloadSnapshot itself stays untouched. */
+export type LabeledWorkloadSnapshot = WorkloadSnapshot & { labels?: Record<string, string> };
+
+/** #518: a journal entry whose workloads may carry the experimental label. */
+export type LabeledFleetSnapshotEntry = Omit<FleetSnapshotEntry, "workloads"> & {
+  workloads: LabeledWorkloadSnapshot[];
+};
+
+/**
+ * #518: overlay `llamactl.io/qualification: experimental` onto journal
+ * workloads whose workload name matches an experimental local route, so a
+ * peer poller asking include=local-routes sees the same exclusion signal
+ * the local-routes fallback advertises. Returns `entry` unchanged — the
+ * same object — when there is nothing to label, when the route source
+ * fails, or when no route is experimental; journal snapshots otherwise win
+ * byte-identical. Never mutates `entry`.
+ */
+export function labelJournalExperimentalWorkloads(
+  entry: FleetSnapshotEntry,
+  opts: FleetSnapshotRouteOptions,
+): FleetSnapshotEntry | LabeledFleetSnapshotEntry {
+  if (!Array.isArray(entry.workloads) || entry.workloads.length === 0) {
+    return entry;
+  }
+  let routes: LocalRoute[];
+  try {
+    routes = opts.localRoutes ? opts.localRoutes() : listLocalRoutes(resolveEnv());
+  } catch {
+    return entry;
+  }
+  const experimental = new Set(
+    routes
+      .filter((route) => routingCapabilities.isExperimentalRoute(route))
+      .map((route) => route.workload),
+  );
+  if (experimental.size === 0) {
+    return entry;
+  }
+  return {
+    ...entry,
+    workloads: entry.workloads.map((workload) =>
+      experimental.has(workload.name)
+        ? {
+            ...workload,
+            labels: { [routingCapabilities.QUALIFICATION_LABEL]: "experimental" },
+          }
+        : workload,
+    ),
+  };
+}
+
+/**
+ * #306: journal snapshot when present; else the local-routes fallback if
+ * asked for. #518: include=local-routes callers also get the experimental
+ * label overlaid onto journal workloads matching an experimental local
+ * route; without the flag the journal entry is served unchanged.
+ */
 export function readFleetSnapshotOrLocalRoutes(
   opts: FleetSnapshotRouteOptions,
   includeLocalRoutes: boolean,
-): FleetSnapshotEntry | LocalRoutesSnapshot | null {
+): FleetSnapshotEntry | LabeledFleetSnapshotEntry | LocalRoutesSnapshot | null {
   const latest = readFleetSnapshot(opts);
-  if (latest !== null) return latest;
+  if (latest !== null) {
+    return includeLocalRoutes ? labelJournalExperimentalWorkloads(latest, opts) : latest;
+  }
   // #306: only callers that ask (the internal proxy's peer poller) get the
   // local-routes fallback; supervisors and the CLI keep seeing 204.
   if (!includeLocalRoutes) return null;
