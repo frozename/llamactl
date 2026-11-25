@@ -556,8 +556,45 @@ describe("#519 apply --evict switchCooldownSeconds", () => {
     expect(localKey.starts).toEqual([]);
   });
 
+  // kills: dropping the `cooldown <= 0` early return for own-store evicts
+  // (an unreadable store would then fail closed EvictCooldownUnknown).
+  test("C4b: a disabled switch cooldown skips the unreadable own store for same-node and anonymous-local", async () => {
+    const disabledResidencies: { label: string; residency: { switchCooldownSeconds?: number } }[] =
+      [
+        { label: "switchCooldownSeconds 0", residency: { switchCooldownSeconds: 0 } },
+        { label: "no switchCooldownSeconds", residency: {} },
+      ];
+    for (const mode of ["same-node", "anonymous-local"] as const) {
+      for (const { label, residency } of disabledResidencies) {
+        const run = await runStoreBackedEvict(
+          mode,
+          (storePath) => {
+            writeFileSync(storePath, "not sqlite");
+            expect("error" in readResidencyStoreSnapshot(storePath)).toBe(true);
+          },
+          (workloadsDir) => ({
+            workloadsDir,
+            getNodeBudgetGiB: (): number => 32,
+            getNodeResidency: (): { switchCooldownSeconds?: number } => residency,
+          }),
+        );
+        const reasons = run.result.statusSection.conditions.map((c) => c.reason);
+        expect({ mode, label, error: run.result.error }).toEqual({ mode, label, error: undefined });
+        expect(reasons).not.toContain("EvictCooldownUnknown");
+        expectPassThrough(run);
+      }
+    }
+
+    const enabled = await runStoreBackedEvict("anonymous-local", (storePath) => {
+      writeFileSync(storePath, "not sqlite");
+    });
+    expect(enabled.result.statusSection.conditions[0]?.reason).toBe("EvictCooldownUnknown");
+    expect(enabled.stops).toEqual([]);
+    expect(enabled.starts).toEqual([]);
+  });
+
   // kills: swallowing store errors.
-  test("C4: an unreadable same-node residency store fails closed EvictCooldownUnknown", async () => {
+  test("C4:an unreadable same-node residency store fails closed EvictCooldownUnknown", async () => {
     const run = await runStoreBackedEvict("same-node", (storePath) => {
       writeFileSync(storePath, "not sqlite");
       expect("error" in readResidencyStoreSnapshot(storePath)).toBe(true);
