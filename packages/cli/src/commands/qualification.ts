@@ -9,8 +9,10 @@
 // (`parsePromotionEvidence`) and a policy file, then `applyQualification`
 // without a writer, so it never writes the overrides file or the catalog.
 // `apply` is the same runner with `writeAppliedStage` injected: the policy's
-// `autoApply` gates the write, `unapply` removes the applied row. Because
-// the file is node-local, every subcommand refuses a non-local `--node` target.
+// `autoApply` gates the write, `unapply` removes the applied row. The
+// read-only `qualification evidence` subcommand builds promotion evidence from
+// eval matrix cells plus a baseline run (Part of #518). Because the file is
+// node-local, every subcommand refuses a non-local `--node` target.
 
 import {
   catalog,
@@ -22,6 +24,12 @@ import {
   schemas,
   workloadRuntime,
 } from "@llamactl/core";
+import {
+  parseQualificationEvidenceMapping,
+  qualificationEvidenceFromCells,
+  readMatrixCellRows,
+} from "@llamactl/eval";
+import { Database } from "bun:sqlite";
 import { userInfo } from "node:os";
 
 import { isLocalDispatch, resolveEffectiveNodeName } from "../dispatcher.js";
@@ -54,15 +62,28 @@ Subcommands:
   propose <rel> --evidence <file.json> --policy <file.json> [--json]   Read-only promotion/demotion proposal.
   apply <rel> --evidence <file.json> --policy <file.json> [--author <name>] [--json]   Record the applied stage when the policy's autoApply is on.
   unapply <rel>                       Remove a rel's applied override row.
+  evidence --db <matrix.db> --model <name> --map <file.json> [--run-id <id>] [--baseline-run-id <id> [--baseline-model <name>]]   Read-only promotion evidence from eval matrix cells.
 
 Example:
   llamactl qualification pin <rel> production --reason "w4 bench passed"
   llamactl qualification status <rel> --json
   llamactl qualification propose <rel> --evidence evidence.json --policy policy.json
   llamactl qualification apply <rel> --evidence evidence.json --policy policy.json
+  llamactl qualification evidence --db matrix.db --model m-a --map map.json --run-id r1
 `;
 
-const VALUE_FLAGS = new Set(["--reason", "--author", "--evidence", "--policy"]);
+const VALUE_FLAGS = new Set([
+  "--reason",
+  "--author",
+  "--evidence",
+  "--policy",
+  "--db",
+  "--model",
+  "--map",
+  "--run-id",
+  "--baseline-run-id",
+  "--baseline-model",
+]);
 
 interface ParsedArgs {
   positional: string[];
@@ -388,7 +409,7 @@ function removalCommand(verb: "unpin" | "unfreeze" | "unapply", rest: string[]):
 
 type ReadResult = { ok: true; json: unknown } | { ok: false; message: string };
 
-function readJsonFile(label: "evidence" | "policy", path: string): ReadResult {
+function readJsonFile(label: "evidence" | "policy" | "map", path: string): ReadResult {
   let raw: string;
   try {
     raw = readFileSync(path, "utf8");
@@ -473,7 +494,7 @@ function evaluateProposal(
 }
 
 function requiredFlag(
-  verb: ProposalVerb,
+  verb: ProposalVerb | "evidence",
   flags: Map<string, string>,
   name: string,
 ): string | undefined {
@@ -639,6 +660,138 @@ function proposalCommand(verb: ProposalVerb, rest: string[]): number {
   return 0;
 }
 
+/**
+ * Read-only evidence subcommand: builds promotion evidence from eval matrix
+ * cells plus an optional baseline run. Never writes the overrides file or
+ * the db. Because the db is opened read-only, the file stays byte-identical.
+ */
+// eslint-disable-next-line sonarjs/cognitive-complexity
+function evidenceCommand(rest: string[]): number {
+  const { positional, flags } = parseArgs(rest);
+  if (positional.length > 0) {
+    const first = positional[0] ?? "";
+    const message = `qualification evidence: unexpected positional argument '${first}'\n\n${USAGE}`;
+    process.stderr.write(message);
+    return 1;
+  }
+
+  const dbPath = requiredFlag("evidence", flags, "--db");
+  if (dbPath === undefined) return 1;
+  const model = requiredFlag("evidence", flags, "--model");
+  if (model === undefined) return 1;
+  const mapPath = requiredFlag("evidence", flags, "--map");
+  if (mapPath === undefined) return 1;
+
+  // Validate baseline-model/run-id pair.
+  const baselineRunId = flags.get("--baseline-run-id");
+  const baselineModelInput = flags.get("--baseline-model");
+  if (baselineModelInput !== undefined && baselineModelInput !== "") {
+    if (baselineRunId === undefined || baselineRunId === "") {
+      process.stderr.write("qualification evidence: --baseline-model needs --baseline-run-id\n");
+      return 1;
+    }
+  }
+  // Default baseline-model to model when --baseline-run-id is set.
+  const baselineRunIdResolved = baselineRunId ?? "";
+  const baselineModelResolved: string | undefined =
+    (baselineModelInput ?? "").length > 0 ? baselineModelInput : undefined;
+
+  // Read and validate the map file.
+  const mapRead = readJsonFile("map", mapPath);
+  if (!mapRead.ok) {
+    process.stderr.write(`qualification evidence: ${mapRead.message}\n`);
+    return 1;
+  }
+  let mapping: ReturnType<typeof parseQualificationEvidenceMapping>;
+  try {
+    mapping = parseQualificationEvidenceMapping(mapRead.json);
+  } catch (err) {
+    const messages = zodIssueMessagesWithPath(err);
+    if (messages === null) throw err;
+    process.stderr.write(
+      `qualification evidence: invalid map file '${mapPath}': ${messages.join("; ")}\n`,
+    );
+    return 1;
+  }
+
+  // Read cells from the matrix db (read-only).
+  let cells: ReturnType<typeof readMatrixCellRows>;
+  let db: Database | null = null;
+  try {
+    db = new Database(dbPath, { readonly: true });
+    cells = readMatrixCellRows(db);
+  } catch (err) {
+    const message = (err as Error).message;
+    process.stderr.write(`qualification evidence: cannot read matrix db '${dbPath}': ${message}\n`);
+    return 1;
+  } finally {
+    if (db !== null) {
+      db.close();
+    }
+  }
+
+  // Build evidence.
+  const evidenceOpts: {
+    model: string;
+    mapping: typeof mapping;
+    runId?: string;
+    baseline?: { model: string; runId: string };
+  } = {
+    model,
+    mapping,
+  };
+  const runIdVal = flags.get("--run-id");
+  if (runIdVal !== undefined && runIdVal !== "") {
+    evidenceOpts.runId = runIdVal;
+  }
+  if (baselineRunIdResolved.length > 0) {
+    const bm = baselineModelResolved ?? model;
+    evidenceOpts.baseline = { model: bm, runId: baselineRunIdResolved };
+  }
+  let result: ReturnType<typeof qualificationEvidenceFromCells>;
+  try {
+    result = qualificationEvidenceFromCells(cells, evidenceOpts);
+  } catch (err) {
+    // parsePromotionEvidence refuses out-of-range values (e.g. a
+    // percent-scaled primary_metric_value): its own refusal, not a db error.
+    const messages = zodIssueMessagesWithPath(err);
+    if (messages === null) throw err;
+    process.stderr.write(
+      `qualification evidence: invalid evidence from matrix cells: ${messages.join("; ")}\n`,
+    );
+    return 1;
+  }
+
+  if (!result.ok) {
+    if (result.reason === "missing-cells") {
+      for (const entry of result.missing) {
+        if (entry.side === "candidate") {
+          process.stderr.write(
+            `qualification evidence: no matrix cell for model ${model} workload ${entry.workload} (metric ${entry.metric})\n`,
+          );
+        } else {
+          const bm = baselineModelResolved ?? model;
+          process.stderr.write(
+            `qualification evidence: no baseline matrix cell for model ${bm} run ${baselineRunIdResolved} workload ${entry.workload}\n`,
+          );
+        }
+      }
+    } else {
+      // baseline-is-candidate
+      for (const w of result.workloads) {
+        process.stderr.write(
+          `qualification evidence: baseline run ${baselineRunIdResolved} is the candidate cell for model ${model} workload ${w}\n`,
+        );
+      }
+    }
+    return 1;
+  }
+
+  // Success: write evidence JSON to stdout.
+  process.stdout.write(`${JSON.stringify(result.evidence, null, 2)}\n`);
+  return 0;
+}
+
 function dispatchQualification(argv: string[]): number {
   if (!isLocalDispatch()) {
     const node = resolveEffectiveNodeName();
@@ -667,6 +820,8 @@ function dispatchQualification(argv: string[]): number {
       return proposalCommand("apply", rest);
     case "unapply":
       return removalCommand("unapply", rest);
+    case "evidence":
+      return evidenceCommand(rest);
     case undefined:
     case "help":
     case "--help":

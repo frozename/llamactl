@@ -543,6 +543,27 @@ function directModelRunOpts(workload: string): DirectLifecycleOpts {
   };
 }
 
+// The catalog residencyGroup of the rel resolveTarget returns for a ModelRun
+// start's target (#517); an unresolvable target, an uncatalogued rel or a
+// throwing resolver means no group, so a start never aborts on it.
+function catalogTargetGroup(target: string): string | undefined {
+  try {
+    const rel = targetMod.resolveTarget(target);
+    return rel === null ? undefined : catalog.findByRel(rel)?.residencyGroup;
+  } catch {
+    return undefined;
+  }
+}
+
+// Start-side ModelRun opts (#517): the stored ModelRun's residency-group label
+// wins, even one naming an undeclared group; an unlabelled or unstored ModelRun
+// falls back to the catalog group of its start target, the order the
+// admit-measure gate uses.
+function directModelRunStartOpts(workload: string, target: string): DirectLifecycleOpts {
+  const opts = directModelRunOpts(workload);
+  return opts.group !== undefined ? opts : { ...opts, group: catalogTargetGroup(target) };
+}
+
 /**
  * Read-only exclusive-group gate for an agent-side bench launch (#517). Resolves
  * `<target>` with `resolveTarget`, reads the rel's `residencyGroup` and delegates
@@ -3568,7 +3589,7 @@ export const router = t.router({
       const outcome = await runDirectResidencyStart<serverMod.StartServerResult>(
         input.workload,
         () => serverMod.startServer(serverStartOptions(input, sig, emit)),
-        directModelRunOpts(input.workload),
+        directModelRunStartOpts(input.workload, input.target),
       );
       emit({
         type: "done",

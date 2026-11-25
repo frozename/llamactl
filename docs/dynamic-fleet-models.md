@@ -381,6 +381,53 @@ the MCP `llamactl.catalog.promote` tool returns `ok: false` (a dry run reports
 
 `resolvePreset` skips an env or file preset override whose rel is experimental, read through `catalogQualificationStages` (so pins count), and falls through to the next layer. Each skip is reported on `skippedExperimental` in layer order. This covers a row written before the rel was pinned experimental, and every `resolveTarget` caller (server start, keepAlive, bench, workload apply) and `recommendationsForProfile`. When the builtin itself is pinned experimental (a pin row set after the rel was promoted), no lower layer exists to fall back to, so the builtin default is returned even when it is pinned experimental.
 
+`llamactl qualification evidence --db <matrix.db> --model <name> --map <file.json> [--run-id <id>] [--baseline-run-id <id> [--baseline-model <name>]]`
+builds promotion evidence from eval matrix cells plus an optional baseline
+run. The adapter module is `qualificationEvidenceFromCells` (Part of #518,
+`packages/eval/src/qualification/evidence.ts`).
+
+The map file is a JSON object with a `metrics` key mapping absolute metric
+names (`firstAttemptSuccess`, `repairSuccess`, `toolCallCorrectness`,
+`structuredOutputValidity`, `memoryStability`, `runtimeReliability`) to
+target workload names. `regression` and `improvement` are refused in the
+map: they are computed from a baseline run, never declared in the map.
+Each workload list is deduplicated; at least one metric key is required.
+
+Evidence is computed as the n_rows-weighted mean of `primary_metric_value`
+for each mapped metric, over the selected cells' workloads.
+Latest-cell selection picks the cell with the greatest `finished_at` per
+workload, with `run_id` breaking ties; `--run-id` restricts the candidate
+pool to a single run. `evaluatedTasks` sums `n_rows` over all distinct
+selected candidate cells (a workload mapped to multiple metrics is
+counted once).
+
+With a baseline (`--baseline-run-id` plus `--baseline-model`, defaulting
+`--baseline-model` to `--model`), `regression` is the fraction of
+compared workloads whose `primary_metric_value` dropped below the
+baseline (per `compareMetric`), and `improvement` is the n_rows-weighted
+mean delta. Without `--baseline-run-id` the evidence carries no
+`regression` or `improvement`, so `propose` answers `insufficient-evidence`.
+
+The evidence ref format is
+`matrix:<model>@<run ids>;baseline=<model>@<run id>`
+when a baseline is set, or
+`matrix:<model>@<run ids>` otherwise.
+
+Three refusal paths:
+
+- **missing-cells**: `no matrix cell for model <m> workload <w> (metric
+<metric>)` for a missing candidate cell, or `no baseline matrix cell for
+model <bm> run <id> workload <w>` for a missing baseline cell.
+- **baseline-is-candidate**: `baseline run <id> is the candidate cell for
+model <m> workload <w>` when a baseline cell's run_id and model match
+  the candidate cell's.
+- **ZodError**: `invalid map file '<path>'` for an invalid map file, or
+  `invalid evidence from matrix cells` for evidence values out of range
+  (such as a percent-scaled `primary_metric_value`).
+
+The command opens the matrix db read-only and never writes the overrides
+file, the db, or any state — it is strictly read-only.
+
 ### Demotion
 
 The optional `demotion` block on the promotion policy carries the floors
