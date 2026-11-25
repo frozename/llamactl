@@ -11,6 +11,8 @@ import { doc, enclosingBody, flat, readOrEmpty, REPO, sectionBody } from "./help
 describe("#522 residency enforcement summary", () => {
   const OPEN =
     "What enforces today is the finite-budget admission math, the per-node residency-group start guard, the fenced direct-start lifecycle refusal and the read-only pre-launch gate, all four listed under Residency states and exclusion below.";
+  const PENDING = "Enforcement in the reconciler is still pending #276. What enforces today";
+  const STALE_PENDING = "Enforcement in the reconciler and ModelHost is still pending #276.";
   const STALE_OPEN =
     "What enforces today is the finite-budget admission math plus the per-node residency-group start guard described below";
   const FALLBACK =
@@ -46,13 +48,16 @@ describe("#522 residency enforcement summary", () => {
       : flatDoc.slice(firstBulletAt, secondBulletAt === -1 ? catalogFieldsAt : secondBulletAt);
   const observableAt = states.indexOf("Observable signals operators use today");
 
-  // Kills: the stale two-check sentence being left in place.
+  // Kills: the stale two-check sentence, or the open-items bullet still
+  // calling ModelHost enforcement pending, being left in place.
   test("open items name all four enforcing checks", () => {
     expect(flatDoc, "open-items enforcement summary").toContain(OPEN);
     const openAt = flatDoc.indexOf(OPEN);
     expect(catalogFieldsAt, "## Catalog fields anchor").toBeGreaterThanOrEqual(0);
     expect(openAt, "summary before catalog fields").toBeLessThan(catalogFieldsAt);
     expect(flatDoc, "stale two-check sentence").not.toContain(STALE_OPEN);
+    expect(openItemsBullet, "reconciler-only pending sentence").toContain(PENDING);
+    expect(openItemsBullet, "stale ModelHost-pending sentence").not.toContain(STALE_PENDING);
   });
 
   // Kills: serverStart reverting to directModelRunOpts, or the fallback
@@ -190,10 +195,14 @@ describe("#522 residency enforcement summary", () => {
       "router launchRefusal wiring",
     ).toBeGreaterThanOrEqual(2);
     const autotuneSrc = flat(readOrEmpty(join(REPO, "packages/core/src/autotune.ts")));
-    expect(autotuneSrc, "auto-tune skipped kind").toContain('kind: "exclusive-group-occupied"');
+    expect(
+      count(autotuneSrc, 'kind: "exclusive-group-occupied"'),
+      "auto-tune skipped kind at preset and vision sites",
+    ).toBeGreaterThanOrEqual(2);
     const candidateTestSrc = flat(readOrEmpty(join(REPO, "packages/core/src/candidateTest.ts")));
-    expect(candidateTestSrc, "candidate step not run").toContain(
-      "if (refusal !== null) return { ran: false, reason: refusal };",
-    );
+    expect(
+      count(candidateTestSrc, "if (refusal !== null) return { ran: false, reason: refusal };"),
+      "candidate preset and vision steps not run",
+    ).toBeGreaterThanOrEqual(2);
   });
 });

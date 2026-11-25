@@ -19,8 +19,7 @@ Open items:
   that the plan observed occupying refuses the start with
   `ExclusiveGroupOccupied` before the engine runs. A same-group occupying row
   the plan did not observe is reconciled to downloaded and logged. Enforcement
-  in the reconciler and ModelHost is still pending
-  #276. What enforces today is the finite-budget admission math, the
+  in the reconciler is still pending #276. What enforces today is the finite-budget admission math, the
   per-node residency-group start guard, the fenced direct-start lifecycle
   refusal and the read-only pre-launch gate, all four listed under Residency
   states and exclusion below. `llamactl residency status`, the
