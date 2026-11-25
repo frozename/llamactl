@@ -20,9 +20,10 @@ Open items:
   `ExclusiveGroupOccupied` before the engine runs. A same-group occupying row
   the plan did not observe is reconciled to downloaded and logged. Enforcement
   in the reconciler and ModelHost is still pending
-  #276. What enforces today is the
-  finite-budget admission math plus the per-node residency-group start
-  guard described below. `llamactl residency status`, the
+  #276. What enforces today is the finite-budget admission math, the
+  per-node residency-group start guard, the fenced direct-start lifecycle
+  refusal and the read-only pre-launch gate, all four listed under Residency
+  states and exclusion below. `llamactl residency status`, the
   `residencyStatus` procedure and the MCP tool now report the serving
   process's `residency_states` rows and any exclusive-group violation
   (`findExclusiveGroupViolations`, previously used only by the planner).
@@ -32,9 +33,12 @@ Open items:
   proven-down same-group peers and refusing an occupied exclusive group or
   an in-flight switch. The direct ModelRun `serverStart`/`serverStop` writers
   now do the same, recording the group from the agent-side ModelRun
-  `llamactl.io/residency-group` label; the switch's own `applyManifest` calls
-  run in a switch scope and are walked only by the switch. Still pending:
-  reconciliation outside a switch.
+  `llamactl.io/residency-group` label; when the stored ModelRun has no such
+  label, or no ModelRun is stored under the name, `serverStart` takes the group
+  from the catalog `residencyGroup` of the rel `resolveTarget` returns for its
+  target (`directModelRunStartOpts`), and a label always wins; the switch's own
+  `applyManifest` calls run in a switch scope and are walked only by the switch.
+  Still pending: reconciliation outside a switch.
 - Real GLM-5.3-Flash z13 measurements are not yet committed (see the
   eval record at the bottom).
 
@@ -138,9 +142,13 @@ persists per-model states in its `residency_states` table:
   direct ModelHost `modelHostStart`/`modelHostStop` now drive their
   `residency_states` rows (see Residency lifecycle states), as do the direct
   ModelRun `serverStart`/`serverStop` writers, recording the group from the
-  agent-side ModelRun `llamactl.io/residency-group` label; the switch's own
-  `applyManifest` calls run in a switch scope and are walked only by the
-  switch. Still pending: reconciliation outside a switch.
+  agent-side ModelRun `llamactl.io/residency-group` label; when the stored
+  ModelRun has no such label, or no ModelRun is stored under the name,
+  `serverStart` takes the group from the catalog `residencyGroup` of the rel
+  `resolveTarget` returns for its target (`directModelRunStartOpts`), and a
+  label always wins; the switch's own `applyManifest` calls run in a switch
+  scope and are walked only by the switch. Still pending: reconciliation outside
+  a switch.
 - Group declarations are not persisted. They come from the caller
   (default `RESIDENCY_GROUPS`).
 
@@ -172,6 +180,45 @@ node memory budget. The enforcement in place today is the following:
      written only after prepareLaunch and spawn.
    - Only labelled ModelHost peers are checked. ModelRuns and
      unlabelled hosts are not.
+3. The fenced direct-start lifecycle refusal (`runDirectResidencyStart`,
+   `packages/remote/src/residency/direct-lifecycle.ts`, #517). The agent's
+   `modelHostStart` and `serverStart` procedures
+   (`packages/remote/src/router.ts`) run every direct start through it.
+   A ModelHost takes its group from its `llamactl.io/residency-group`
+   label; a ModelRun takes the label, else the catalog group of its
+   resolved target. When another `loading` or `warming` row holds that
+   exclusive group, or a `ready` row whose workload is not proven down, the
+   start is refused before the engine runs, as
+   `residency lifecycle refused <name> <from> -> <to>: ExclusiveGroupOccupied: <detail>`;
+   a same-group `ready` peer proven down is instead reconciled to
+   `downloaded` and logged as
+   `[residency] lifecycle reconciled stale <peer> ready -> downloaded in group <group>`.
+   It also refuses a start while a profile switch is in flight on the node, as
+   `residency lifecycle refused <name>: profile switch in flight on this node; retry after it settles`.
+   A writer inside the profile switch's own scope (its `applyManifest`
+   calls) neither records nor refuses, and a node with no residency store
+   file starts unrecorded. Details:
+   [dynamic-residency.md](dynamic-residency.md#direct-modelhost-start-and-stop).
+4. The read-only pre-launch gate (`exclusiveGroupLaunchRefusal`,
+   `packages/remote/src/residency/direct-lifecycle.ts`, #517). Launches that
+   record no `residency_states` row read the local residency store before
+   they spawn and refuse when any `loading`, `warming` or `ready` row holds
+   the declared-exclusive residency group of what they launch, counting a
+   row for the same id: `llamactl eval run <model>` without `--url` and
+   `llamactl admit measure` exit 1; `llamactl keep-alive start` exits 1 and
+   the keep-alive worker records `start-refused`; `llamactl bench preset`
+   and `bench vision` exit 1, and the agent's bench subscriptions return the
+   refusal as a stream error; the post-pull auto-tune records the preset or
+   vision step as skipped with kind `exclusive-group-occupied`, and
+   `llamactl candidate test` reports the step not run with the refusal as
+   its reason. The refusal reads
+   `residency lifecycle refused <id> downloaded -> loading: ExclusiveGroupOccupied: exclusive group <group> is held by <member> in state <state>`.
+   It also refuses while a profile switch is in flight
+   (`residency lifecycle refused <id>: profile switch in flight on this node; retry after it settles`)
+   or when the store cannot be read
+   (`residency lifecycle refused <id>: store unavailable (<error>)`). The
+   gate is unfenced and never reconciles a proven-down peer, and a node with
+   no store file launches as before.
 
 Observable signals operators use today:
 
@@ -204,7 +251,10 @@ apply-profile fence, walk the row the same way, reconcile proven-down
 same-group peers, and refuse a start while a profile switch is in flight.
 The direct ModelRun writers `serverStart`/`serverStop` route through the same
 wrapper, recording the group from the agent-side ModelRun
-`llamactl.io/residency-group` label, and operator force-unload
+`llamactl.io/residency-group` label; when the stored ModelRun has no such label,
+or no ModelRun is stored under the name, `serverStart` takes the group from the
+catalog `residencyGroup` of the rel `resolveTarget` returns for its target
+(`directModelRunStartOpts`), and a label always wins. Operator force-unload
 (`residencyForceUnload`) routes its stop through the same wrapper after the
 lease drain commits. Bookkeeping never blocks a stop: a stop
 whose claim or walk fails still runs and logs `not recorded`. A direct stop
