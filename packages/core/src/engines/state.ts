@@ -11,6 +11,7 @@ import {
   type WorkloadKey,
   workloadRuntimeDir,
 } from "../workloadRuntime.js";
+import { isScopeUnit } from "./scope.js";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost", "0.0.0.0"]);
 
@@ -37,6 +38,13 @@ export interface ModelHostState {
   binaryNames?: string[];
   /** Declared serving probe (#220); absent = legacy behaviour. */
   readiness?: ModelHostReadiness;
+  /**
+   * Transient systemd user scope the engine was launched into (#806), e.g.
+   * `llamactl-engine-modelhost-1a2b3c4d5e6f.scope`. Written only on Linux
+   * scoped launches; readers use it to reconstruct the scope for teardown and
+   * diagnostics. Absent = unscoped launch.
+   */
+  scopeUnit?: string;
 }
 
 /**
@@ -93,6 +101,10 @@ export interface ModelHostStartingState {
   // #516: argv0 basenames this host's process may run under; replaces the
   // engine default in pid-identity checks. Written from spec.binaryNames.
   binaryNames?: string[];
+  // #806: transient systemd user scope for a scoped Linux launch; see
+  // ModelHostState.scopeUnit. Written at spawn so a restarted agent can reap
+  // the scope's processes before the ready sidecar exists.
+  scopeUnit?: string;
 }
 
 export function modelhostStartingFile(
@@ -132,7 +144,7 @@ function validateModelHostStarting(
   parsed: Partial<ModelHostStartingState>,
 ): ModelHostStartingState | null {
   if (parsed.kind !== "ModelHostStarting") return null;
-  const { engine, pid, startedAt, specHash, binaryNames } = parsed;
+  const { engine, pid, startedAt, specHash, binaryNames, scopeUnit } = parsed;
   if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return null;
   if (!isModelHostEngine(engine)) return null;
   if (typeof startedAt !== "string" || Number.isNaN(Date.parse(startedAt))) return null;
@@ -143,6 +155,7 @@ function validateModelHostStarting(
     startedAt,
     ...(typeof specHash === "string" ? { specHash } : {}),
     ...(validBinaryNames(binaryNames) ? { binaryNames: [...binaryNames] } : {}),
+    ...(isScopeUnit(scopeUnit) ? { scopeUnit } : {}),
   };
 }
 
@@ -244,6 +257,7 @@ function validateModelHostState(parsed: Partial<ModelHostState>): ModelHostState
     ...(typeof parsed.specHash === "string" ? { specHash: parsed.specHash } : {}),
     ...(validBinaryNames(binaryNames) ? { binaryNames: [...binaryNames] } : {}),
     ...(isModelHostReadiness(parsed.readiness) ? { readiness: parsed.readiness } : {}),
+    ...(isScopeUnit(parsed.scopeUnit) ? { scopeUnit: parsed.scopeUnit } : {}),
   };
 }
 

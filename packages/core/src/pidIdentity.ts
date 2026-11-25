@@ -31,13 +31,17 @@ const PS_TIMEOUT_MS = 500;
  * full argv0 at a whitespace or end boundary, including paths with spaces.
  * Each entry of `args` must appear as a whole token or as the tail of a path
  * token, so "a.gguf" never
- * matches "/models/xa.gguf".
+ * matches "/models/xa.gguf". `alternatives` lists further whole expectations
+ * the running process may match instead of this one — a transient-scope engine
+ * records the wrapper (`systemd-run`) form while the reaped engine keeps its
+ * own form (#806), so a match against any entry proves identity.
  */
 export interface CommandExpectation {
   binary?: string;
   binaries?: readonly string[];
   path?: string;
   args?: readonly string[];
+  alternatives?: readonly CommandExpectation[];
 }
 
 export interface PidIdentityDeps {
@@ -185,7 +189,7 @@ function expectedBasenames(expect: CommandExpectation): readonly string[] {
   return expect.binary === undefined ? extra : [expect.binary, ...extra];
 }
 
-function commandMatches(cmdline: string, expect: CommandExpectation): boolean {
+function commandMatchesOne(cmdline: string, expect: CommandExpectation): boolean {
   const tokens = cmdline.trim().split(/\s+/);
   const matchesPath =
     expect.path !== undefined && (cmdline === expect.path || cmdline.startsWith(`${expect.path} `));
@@ -197,6 +201,15 @@ function commandMatches(cmdline: string, expect: CommandExpectation): boolean {
     if (!tokens.some((token) => token === arg || token.endsWith(`/${arg}`))) return false;
   }
   return true;
+}
+
+function commandMatches(cmdline: string, expect: CommandExpectation): boolean {
+  const { alternatives, ...primary } = expect;
+  if (commandMatchesOne(cmdline, primary)) return true;
+  for (const alt of alternatives ?? []) {
+    if (commandMatchesOne(cmdline, alt)) return true;
+  }
+  return false;
 }
 
 /**

@@ -17,6 +17,7 @@
     "./engines/conditions": "./src/engines/conditions.ts",
     "./engines/omlx-model-settings": "./src/engines/omlx-model-settings.ts",
     "./engines/omlx-cache-identity": "./src/engines/omlx-cache-identity.ts",
+    "./engines/scope": "./src/engines/scope.ts",
     "./engines/state": "./src/engines/state.ts",
     "./engines/types": "./src/engines/types.ts",
     "./env": "./src/env.ts",

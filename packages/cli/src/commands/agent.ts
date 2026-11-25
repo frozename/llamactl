@@ -318,6 +318,11 @@ Environment:
                               positive integer, default 16. Read only when
                               LLAMACTL_CHAT_ADMISSION_MAX_EXECUTIONS is
                               valid; an invalid value falls back to 16.
+  LLAMACTL_ENGINE_SCOPE       "off" keeps agent-launched engines on direct
+                              spawns; any other value (or unset) lets a Linux
+                              agent launch each engine in its own transient
+                              systemd user scope. Non-Linux hosts always
+                              spawn directly.
   LLAMACTL_AGENT_RUNTIME_ROLE Per-role runtime identity (env fallback for
                               --runtime-role).
   LLAMACTL_AGENT_MEMORY_BUDGET_BYTES
@@ -1629,6 +1634,11 @@ function residencyLeasesOptIn(env: Readonly<Record<string, string | undefined>>)
   return env["LLAMACTL_RESIDENCY_LEASES"] === "1" || env["LLAMACTL_RESIDENCY_LEASES"] === "true";
 }
 
+/** #806 phase 3: engine scopes are on unless LLAMACTL_ENGINE_SCOPE=off. */
+function engineScopeOptIn(env: Readonly<Record<string, string | undefined>>): boolean {
+  return env["LLAMACTL_ENGINE_SCOPE"] !== "off";
+}
+
 /** #520: LLAMACTL_RESIDENCY_SESSION_IDLE_MS (milliseconds) as a spreadable option. */
 function residencySessionIdleOption(env: Readonly<Record<string, string | undefined>>): {
   residencySessionIdleMs?: number;
@@ -1779,6 +1789,9 @@ export function buildServeOptions(
       : {}),
     // #278 DF-05: opt-in residency lease registry, off unless the env says on.
     ...(residencyLeasesOptIn(env) ? { residencyLeases: true } : {}),
+    // #806 phase 3: engine scopes on unless the env opts out; the launcher
+    // itself is published only on linux inside startAgentServer.
+    ...(engineScopeOptIn(env) ? { engineScope: true } : {}),
     // #520: opt-in session idle timeout, honored only when residencyLeases is true.
     ...residencySessionIdleOption(env),
     // #281 (DF-08): opt-in inference admission gate shared by

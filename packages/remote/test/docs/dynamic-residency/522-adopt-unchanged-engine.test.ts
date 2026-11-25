@@ -36,6 +36,9 @@ const MODELDHOST_SIDECAR =
 const STARTING_RECORD =
   "When `modelhost.state` is missing, or its pid is gone and no live listener holds the endpoint, `startModelHost` checks `modelhost.starting`, the record an agent that died before readiness leaves behind. An `unknown` verdict against that record defers with `pid identity unknown; deferring restart`; for an `alive` one, `adoptOrDeferStartingHost` applies the same restart, residency-phase and spec-hash gates. If the readiness probe passes and the engine advertises the first hosted model's rel, its basename or a declared `--alias`, the record is promoted to a full `modelhost.state` and the start returns `adopted: true`. If the probe passes but the engine serves another model, the engine is torn down. If the probe does not pass, the start is deferred with `engine pid <pid> from the starting record is still loading; deferring restart` only while the record's `startedAt` is younger than the readiness budget (the start's `timeoutSeconds`, else the manifest's `spec.timeoutSeconds`); an older record is torn down, as is one that fails a gate.";
 
+const STARTING_WRAPPER =
+  "On Linux, a starting record whose pid still identifies only as the `systemd-run` scope wrapper (the engine has not exec'd yet) is never promoted: it is treated like an engine that is still loading, deferred within the same budget and torn down after it (#806).";
+
 const body = sectionBody(sectionRe("adopting an unchanged engine"));
 const s = flat(body ?? "");
 
@@ -214,7 +217,8 @@ describe("#522 adopting an unchanged engine", () => {
       "servesHostedModel(manifest, readiness.modelIds)",
       "removeModelHostStarting(opts.key, resolved);",
       "return { ok: true, pid: starting.pid, adopted: true };",
-      "if (readiness.ready) return null;",
+      "if (engineVerified && readiness.ready) return null;",
+      "starting.scopeUnit === undefined ||",
       "const budgetMs = (opts.timeoutSeconds ?? manifest.spec.timeoutSeconds) * 1000;",
       "if (Date.now() - Date.parse(starting.startedAt) >= budgetMs) return null;",
       "from the starting record is still loading; deferring restart",
@@ -232,6 +236,6 @@ describe("#522 adopting an unchanged engine", () => {
     const marker = "return await reapStartingOrphan(manifest, opts, resolved, engine);";
     expect(reap.split(marker).length - 1).toBe(2);
     expect(s).not.toContain("when the probe times out or the engine has not yet loaded");
-    expectPins(s, "starting-record adopt", [STARTING_RECORD]);
+    expectPins(s, "starting-record adopt", [STARTING_RECORD, STARTING_WRAPPER]);
   });
 });
