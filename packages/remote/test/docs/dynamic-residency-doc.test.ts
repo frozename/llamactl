@@ -963,7 +963,7 @@ describe("docs/dynamic-residency.md (#285)", () => {
     );
     // each ModelRun call site, pinned on its own
     expectPins(routerSrc, "ModelRun call site", [
-      "const outcome = await runDirectResidencyStart<serverMod.StartServerResult>(\n        input.workload,\n        () => serverMod.startServer(serverStartOptions(input, sig, emit)),\n        directModelRunOpts(input.workload),\n      );",
+      "const outcome = await runDirectResidencyStart<serverMod.StartServerResult>(\n        input.workload,\n        () => serverMod.startServer(serverStartOptions(input, sig, emit)),\n        directModelRunStartOpts(input.workload, input.target),\n      );",
       "const outcome = await runDirectResidencyStop<{",
       "              directModelRunOpts(input.workload),\n            );\n            return outcome.ran ? outcome.result.stop",
       '...(stop.stopped ? {} : { error: "stop did not confirm process removal" }),',
