@@ -10,7 +10,7 @@
 // truncated so runStart cannot spawn, and a rejecting fetch mock.
 import type { ResidencyState } from "@llamactl/core/residency/lifecycle";
 
-import { keepAlive } from "@llamactl/core";
+import { keepAlive, server } from "@llamactl/core";
 import { configSchema } from "@llamactl/remote";
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { tmpdir } from "node:os";
@@ -319,6 +319,87 @@ describe("#517 keep-alive worker lifecycle rows", () => {
     expect(log).not.toContain("start-refused rel=");
     expect(log).toContain(`start-failed rel=${GLM_REL}`);
     expect(finalRow).toMatchObject({ model: GLM_REL, state: "downloaded", group: GROUP });
+    expect(existsSync(markerPath)).toBe(false);
+  }, 20_000);
+
+  // Kills (P9): keepAliveRecordedStop mapping an unconfirmed stopServer
+  // result to ok. A worker whose fenced start reached ready and whose cleanup
+  // stop returns stopped:false must leave its own row occupying (ready), so
+  // the group stays held; mapping the stop to ok:true walks it to downloaded.
+  test("W3: an unconfirmed worker cleanup stop leaves the target's ready row occupying", async () => {
+    seedState("other", "downloaded");
+    const startSpy = spyOn(server, "startServer").mockImplementation(() =>
+      Promise.resolve({
+        ok: true,
+        pid: 424_242,
+        endpoint: "http://127.0.0.1:65534",
+        advertisedEndpoint: "http://127.0.0.1:65534",
+        tunedProfile: null,
+        retried: false,
+      }),
+    );
+    const stopSpy = spyOn(server, "stopServer").mockImplementation(() =>
+      Promise.resolve({ stopped: false, pid: 424_242, killed: false }),
+    );
+    let run: Awaited<ReturnType<typeof driveWorker>>;
+    let readyRow: ResidencyStateRecord | null = null;
+    let afterRow: ResidencyStateRecord | null = null;
+    let stopCalls = 0;
+    let startCalls = 0;
+    try {
+      run = await driveWorker(["ready", "start-failed", "start-refused"]);
+      readyRow = run.state?.state === "ready" ? readRow(GLM_REL) : null;
+      afterRow = readRow(GLM_REL);
+      stopCalls = stopSpy.mock.calls.length;
+      startCalls = startSpy.mock.calls.length;
+    } finally {
+      startSpy.mockRestore();
+      stopSpy.mockRestore();
+    }
+
+    expect(run.exitError).toBeUndefined();
+    expect(run.exitCode).toBe(0);
+    expect(stateName(run.state)).toBe("ready");
+    expect(startCalls).toBe(1);
+    expect(stopCalls).toBe(1);
+    expect(readyRow).toMatchObject({ model: GLM_REL, state: "ready", group: GROUP });
+    expect(afterRow).toMatchObject({ model: GLM_REL, state: "ready", group: GROUP });
+    expect(existsSync(markerPath)).toBe(false);
+  }, 20_000);
+
+  // Kills (P14): keepAliveRecordedStart dropping the ran:false branch. The
+  // unfenced beforeStart gate reads only the lifecycle rows, so a fence held
+  // by a foreign owner passes it; the fenced start then refuses to claim and
+  // the worker must log start-failed with that refusal detail and never run
+  // the engine.
+  test("W4: a fenced start refusal after the unfenced gate passes is logged start-failed with its detail", async () => {
+    seedState("other", "downloaded");
+    const store = openResidencyOperationStore({ path: storePath });
+    try {
+      store.claimOwnership({ ownerId: "foreign-owner", incarnation: "foreign" });
+    } finally {
+      store.close();
+    }
+    const startSpy = spyOn(server, "startServer");
+    let run: Awaited<ReturnType<typeof driveWorker>>;
+    let startCalls = 0;
+    try {
+      run = await driveWorker(["start-failed", "start-refused", "ready"]);
+      startCalls = startSpy.mock.calls.length;
+    } finally {
+      startSpy.mockRestore();
+    }
+
+    const log = readFileSync(keepAlive.keepAliveLogFile(), "utf8");
+    expect(run.exitError).toBeUndefined();
+    expect(run.exitCode).toBe(0);
+    expect(stateName(run.state)).toBe("start-failed");
+    expect(log).not.toContain("start-refused rel=");
+    expect(log).toContain(
+      `start-failed rel=${GLM_REL} error=residency lifecycle refused ${GLM_REL}: profile switch in flight on this node; retry after it settles`,
+    );
+    expect(startCalls).toBe(0);
+    expect(readRow(GLM_REL)).toBeNull();
     expect(existsSync(markerPath)).toBe(false);
   }, 20_000);
 

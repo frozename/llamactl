@@ -4,7 +4,7 @@ import type { keepAlive } from "@llamactl/core";
 // workload identity checks cannot clear its stale residency row. Post-fix
 // `directWorkloadProvenDown` falls through to `keepAliveWorkloadProvenDown`:
 // the state file must still belong to that target, the supervisor record must
-// be absent or provably gone, and the recorded model's llama-server must be
+// be absent or provably gone, and the target-keyed llama-server must be
 // proven down. Everything fails closed. All state lives in temp dirs; no
 // engine or supervisor process is started.
 import type { ResidencyState } from "@llamactl/core/residency/lifecycle";
