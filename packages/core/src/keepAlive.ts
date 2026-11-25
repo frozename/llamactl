@@ -262,6 +262,15 @@ export interface StopKeepAliveResult {
    * and says nothing about the llama-server.
    */
   killed: boolean;
+  /**
+   * Set only by the node-side residency fence (#278 leases, #520 sessions),
+   * never by `stopKeepAlive` itself: which registry refusal blocked the stop
+   * and the lease or session ids that were active at refusal time.
+   */
+  refused?: {
+    reason: "LeasesActive" | "DrainInProgress" | "SessionsActive" | "SessionsUnknown";
+    active: string[];
+  };
 }
 
 /**
