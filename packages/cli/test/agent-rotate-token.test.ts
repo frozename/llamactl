@@ -1,4 +1,4 @@
-import { agentConfig as agentConfigMod } from "@llamactl/remote";
+import { agentConfig as agentConfigMod, auth, tls } from "@llamactl/remote";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +7,7 @@ import { parse as parseYaml } from "yaml";
 import { runAgent } from "../src/commands/agent.js";
 import {
   chmodSync,
+  copyFileSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -43,6 +44,45 @@ function restore(): void {
   process.stderr.write = originalStderrWrite;
 }
 
+const fixtureCert = join(import.meta.dir, "fixtures", "rotate-token-test-fixture.crt");
+
+/**
+ * Seed an agent dir the way `agent init` would, minus the keygen: the cert
+ * comes from a committed public fixture, so these tests measure rotation and
+ * not openssl (#840). agent.key is a placeholder; rotate-token never reads it.
+ */
+function seedAgentDir(
+  dir: string,
+  nodeName = "rotate-fixture",
+): { token: string; tokenHash: string; certPem: string; fingerprint: string } {
+  const certPath = join(dir, "agent.crt");
+  const keyPath = join(dir, "agent.key");
+  copyFileSync(fixtureCert, certPath);
+  writeFileSync(
+    keyPath,
+    "TEST FIXTURE PLACEHOLDER: not a key; agent rotate-token never reads agent.key\n",
+  );
+  chmodSync(keyPath, 0o600);
+  const certPem = readFileSync(certPath, "utf8");
+  const { token, hash } = auth.generateToken();
+  const fingerprint = tls.computeFingerprint(certPem);
+  agentConfigMod.saveAgentConfig(
+    {
+      apiVersion: "llamactl/v1",
+      kind: "AgentConfig",
+      nodeName,
+      bindHost: "127.0.0.1",
+      port: 7843,
+      certPath,
+      keyPath,
+      tokenHash: hash,
+      fingerprint,
+    },
+    join(dir, "agent.yaml"),
+  );
+  return { token, tokenHash: hash, certPem, fingerprint };
+}
+
 beforeAll(() => {
   tmp = mkdtempSync(join(tmpdir(), "rotate-token-"));
 });
@@ -56,36 +96,25 @@ afterAll(() => {
 describe("agent rotate-token", () => {
   test("rotates tokenHash, preserves cert/key/fingerprint, emits a fresh bootstrap blob", async () => {
     captureStdout();
-    let initRecord: { fingerprint: string; blob: string };
-    let rotatedRecord: { fingerprint: string; blob: string };
     try {
-      // 1. seed an agent via runInit so we have real cert + agent.yaml
-      const code1 = await runAgent([
-        "init",
-        `--dir=${tmp}`,
-        "--host=127.0.0.1",
-        "--port=7843",
-        "--json",
-      ]);
-      expect(code1).toBe(0);
-      initRecord = JSON.parse(stdoutBuf.trim().split("\n").pop()!) as {
-        fingerprint: string;
-        blob: string;
-      };
+      // 1. seed an agent dir from the fixture cert, so no openssl runs here
+      const seeded = seedAgentDir(tmp);
       stdoutBuf = "";
+      stderrBuf = "";
 
       // capture pre-rotation state
       const yamlBefore = readFileSync(join(tmp, "agent.yaml"), "utf8");
-      const certStatBefore = statSync(join(tmp, "agent.crt"));
-      const keyStatBefore = statSync(join(tmp, "agent.key"));
+      const certPath = join(tmp, "agent.crt");
+      const keyPath = join(tmp, "agent.key");
+      const certBefore = readFileSync(certPath, "utf8");
+      const keyBefore = readFileSync(keyPath, "utf8");
+      const certStatBefore = statSync(certPath);
+      const keyStatBefore = statSync(keyPath);
 
       // 2. rotate
       const code2 = await runAgent(["rotate-token", `--dir=${tmp}`, "--host=127.0.0.1", "--json"]);
       expect(code2).toBe(0);
-      rotatedRecord = JSON.parse(stdoutBuf.trim().split("\n").pop()!) as {
-        fingerprint: string;
-        blob: string;
-      };
+      const rotated = parseJsonRecord(stdoutBuf.trim().split("\n").pop()!);
 
       // 3. agent.yaml's tokenHash changed, but everything else stayed
       const yamlAfter = readFileSync(join(tmp, "agent.yaml"), "utf8");
@@ -95,24 +124,35 @@ describe("agent rotate-token", () => {
       expect(beforeHash).toBeTruthy();
       expect(afterHash).toBeTruthy();
       expect(afterHash).not.toBe(beforeHash);
+      expect(beforeHash).toBe(seeded.tokenHash);
+      expect(afterHash).not.toBe(seeded.tokenHash);
 
-      // fingerprint preserved between init and rotate
-      expect(rotatedRecord.fingerprint).toBe(initRecord.fingerprint);
+      // fingerprint preserved across the rotation, and it is the fixture's
+      expect(rotated["fingerprint"]).toBe(seeded.fingerprint);
+      expect(rotated["fingerprint"]).toBe(
+        tls.computeFingerprint(readFileSync(fixtureCert, "utf8")),
+      );
 
-      // cert + key files unchanged (mtime + content hash)
-      const certStatAfter = statSync(join(tmp, "agent.crt"));
-      const keyStatAfter = statSync(join(tmp, "agent.key"));
+      // cert + key files unchanged (mtime + bytes)
+      const certStatAfter = statSync(certPath);
+      const keyStatAfter = statSync(keyPath);
       expect(certStatAfter.mtimeMs).toBe(certStatBefore.mtimeMs);
       expect(keyStatAfter.mtimeMs).toBe(keyStatBefore.mtimeMs);
+      expect(readFileSync(certPath, "utf8")).toBe(certBefore);
+      expect(readFileSync(keyPath, "utf8")).toBe(keyBefore);
 
-      // 4. blob decodes to a different token but the same fingerprint + cert
-      const decode = (b: string): Record<string, unknown> =>
-        parseJsonRecord(Buffer.from(b, "base64url").toString("utf8"));
-      const initBlob = decode(initRecord.blob);
-      const rotatedBlob = decode(rotatedRecord.blob);
-      expect(rotatedBlob["token"]).not.toBe(initBlob["token"]);
-      expect(rotatedBlob["fingerprint"]).toBe(initBlob["fingerprint"]);
-      expect(rotatedBlob["certificate"]).toBe(initBlob["certificate"]);
+      // 4. blob decodes to a fresh token, the same fingerprint + cert, and a
+      // url built from --host plus agent.yaml's port
+      const blob = parseJsonRecord(
+        Buffer.from(String(rotated["blob"]), "base64url").toString("utf8"),
+      );
+      const blobToken = String(blob["token"]);
+      expect(blobToken).not.toBe("");
+      expect(blobToken).not.toBe(seeded.token);
+      expect(afterHash).toBe(auth.hashToken(blobToken));
+      expect(blob["fingerprint"]).toBe(seeded.fingerprint);
+      expect(blob["certificate"]).toBe(seeded.certPem);
+      expect(blob["url"]).toBe("https://127.0.0.1:7843");
     } finally {
       restore();
     }
@@ -147,14 +187,7 @@ describe("agent rotate-token", () => {
     const d = mkdtempSync(join(tmpdir(), "rotate-token-out-"));
     captureStdout();
     try {
-      const code1 = await runAgent([
-        "init",
-        `--dir=${d}`,
-        "--host=127.0.0.1",
-        "--port=7843",
-        "--json",
-      ]);
-      expect(code1).toBe(0);
+      seedAgentDir(d);
       stdoutBuf = "";
       stderrBuf = "";
 
@@ -178,14 +211,7 @@ describe("agent rotate-token", () => {
     const d = mkdtempSync(join(tmpdir(), "rotate-token-mode-"));
     captureStdout();
     try {
-      const code1 = await runAgent([
-        "init",
-        `--dir=${d}`,
-        "--host=127.0.0.1",
-        "--port=7843",
-        "--json",
-      ]);
-      expect(code1).toBe(0);
+      seedAgentDir(d);
       stdoutBuf = "";
       stderrBuf = "";
 
@@ -206,14 +232,7 @@ describe("agent rotate-token", () => {
     const d = mkdtempSync(join(tmpdir(), "rotate-token-human-"));
     captureStdout();
     try {
-      const code1 = await runAgent([
-        "init",
-        `--dir=${d}`,
-        "--host=127.0.0.1",
-        "--port=7843",
-        "--json",
-      ]);
-      expect(code1).toBe(0);
+      seedAgentDir(d);
       stdoutBuf = "";
       stderrBuf = "";
 
@@ -231,14 +250,7 @@ describe("agent rotate-token", () => {
     const d = mkdtempSync(join(tmpdir(), "rotate-token-warn-"));
     captureStdout();
     try {
-      const code1 = await runAgent([
-        "init",
-        `--dir=${d}`,
-        "--host=127.0.0.1",
-        "--port=7843",
-        "--json",
-      ]);
-      expect(code1).toBe(0);
+      seedAgentDir(d);
       stdoutBuf = "";
       stderrBuf = "";
 
@@ -255,14 +267,7 @@ describe("agent rotate-token", () => {
     const d = mkdtempSync(join(tmpdir(), "rotate-token-warn-json-"));
     captureStdout();
     try {
-      const code1 = await runAgent([
-        "init",
-        `--dir=${d}`,
-        "--host=127.0.0.1",
-        "--port=7843",
-        "--json",
-      ]);
-      expect(code1).toBe(0);
+      seedAgentDir(d);
       stdoutBuf = "";
       stderrBuf = "";
 
@@ -282,14 +287,7 @@ describe("agent rotate-token", () => {
     const d = mkdtempSync(join(tmpdir(), "rotate-token-failout-"));
     captureStdout();
     try {
-      const code1 = await runAgent([
-        "init",
-        `--dir=${d}`,
-        "--host=127.0.0.1",
-        "--port=7843",
-        "--json",
-      ]);
-      expect(code1).toBe(0);
+      seedAgentDir(d);
       stdoutBuf = "";
       stderrBuf = "";
 
@@ -317,14 +315,7 @@ describe("agent rotate-token", () => {
     const d = mkdtempSync(join(tmpdir(), "rotate-token-empty-out-"));
     captureStdout();
     try {
-      const code1 = await runAgent([
-        "init",
-        `--dir=${d}`,
-        "--host=127.0.0.1",
-        "--port=7843",
-        "--json",
-      ]);
-      expect(code1).toBe(0);
+      seedAgentDir(d);
       stdoutBuf = "";
       stderrBuf = "";
 
@@ -353,13 +344,12 @@ function bearerTokensYaml(yamlPath: string): BearerYamlEntry[] {
 }
 
 describe("agent rotate-token --grace", () => {
-  /** Init a fresh agent in dir, clear the buffers, return the primary tokenHash. */
-  async function seed(dir: string): Promise<string> {
-    const code = await runAgent(["init", `--dir=${dir}`, "--host=127.0.0.1", "--json"]);
-    expect(code).toBe(0);
+  /** Seed dir from the fixture cert, clear the buffers, return the primary tokenHash. */
+  function seed(dir: string): string {
+    const { tokenHash } = seedAgentDir(dir);
     stdoutBuf = "";
     stderrBuf = "";
-    return agentConfigMod.loadAgentConfig(join(dir, "agent.yaml")).tokenHash;
+    return tokenHash;
   }
 
   test("--json records the old hash under a rotated-* name with a grace expiry", async () => {
@@ -369,7 +359,7 @@ describe("agent rotate-token --grace", () => {
     captureStdout();
     const d = mkdtempSync(join(tmpdir(), "rotate-grace-json-"));
     try {
-      const h0 = await seed(d);
+      const h0 = seed(d);
       const yamlPath = join(d, "agent.yaml");
       const before = Date.now();
       const code = await runAgent(["rotate-token", `--dir=${d}`, "--grace=2h", "--json"]);
@@ -404,7 +394,7 @@ describe("agent rotate-token --grace", () => {
     captureStdout();
     const d = mkdtempSync(join(tmpdir(), "rotate-grace-human-"));
     try {
-      const h0 = await seed(d);
+      const h0 = seed(d);
       const yamlPath = join(d, "agent.yaml");
       const code = await runAgent(["rotate-token", `--dir=${d}`, "--grace=2h"]);
       expect(code).toBe(0);
@@ -427,7 +417,7 @@ describe("agent rotate-token --grace", () => {
     captureStdout();
     const d = mkdtempSync(join(tmpdir(), "rotate-grace-append-"));
     try {
-      const h0 = await seed(d);
+      const h0 = seed(d);
       const yamlPath = join(d, "agent.yaml");
       expect(await runAgent(["token", "add", "ci", `--dir=${d}`, "--json"])).toBe(0);
       stdoutBuf = "";
@@ -456,7 +446,7 @@ describe("agent rotate-token --grace", () => {
     captureStdout();
     const d = mkdtempSync(join(tmpdir(), "rotate-grace-bad-"));
     try {
-      await seed(d);
+      seed(d);
       const yamlPath = join(d, "agent.yaml");
       const yamlBefore = readFileSync(yamlPath, "utf8");
       for (const value of ["bogus", "0", "", "1.5h", "366d", "99999999999999d"]) {
@@ -479,7 +469,7 @@ describe("agent rotate-token --grace", () => {
     captureStdout();
     const d = mkdtempSync(join(tmpdir(), "rotate-grace-record-"));
     try {
-      await seed(d);
+      seed(d);
       const code = await runAgent(["rotate-token", `--dir=${d}`, "--grace=1d", "--json"]);
       expect(code).toBe(0);
       const record = parseJsonRecord(stdoutBuf.trim().split("\n").pop()!);
@@ -502,7 +492,7 @@ describe("agent rotate-token --grace", () => {
     captureStdout();
     const d = mkdtempSync(join(tmpdir(), "rotate-grace-malformed-"));
     try {
-      await seed(d);
+      seed(d);
       const yamlPath = join(d, "agent.yaml");
       const cfg = agentConfigMod.loadAgentConfig(yamlPath);
       agentConfigMod.saveAgentConfig(
@@ -534,7 +524,7 @@ describe("agent rotate-token --grace", () => {
     captureStdout();
     const d = mkdtempSync(join(tmpdir(), "rotate-grace-dup-hash-"));
     try {
-      const h0 = await seed(d);
+      const h0 = seed(d);
       const yamlPath = join(d, "agent.yaml");
       const cfg = agentConfigMod.loadAgentConfig(yamlPath);
       agentConfigMod.saveAgentConfig(
@@ -564,7 +554,7 @@ describe("agent rotate-token --grace", () => {
     captureStdout();
     const d = mkdtempSync(join(tmpdir(), "rotate-grace-cap-"));
     try {
-      const h0 = await seed(d);
+      const h0 = seed(d);
       const yamlPath = join(d, "agent.yaml");
       const before = Date.now();
       const code = await runAgent(["rotate-token", `--dir=${d}`, "--grace=365d", "--json"]);
@@ -591,12 +581,12 @@ describe("agent rotate-token --grace", () => {
     const human = mkdtempSync(join(tmpdir(), "rotate-pin-human-"));
     const json = mkdtempSync(join(tmpdir(), "rotate-pin-json-"));
     try {
-      await seed(human);
+      seed(human);
       expect(await runAgent(["rotate-token", `--dir=${human}`])).toBe(0);
       expect(stdoutBuf.includes("warning: the previous token no longer authenticates")).toBe(true);
       expect(stderrBuf).not.toContain("no longer authenticates");
 
-      await seed(json);
+      seed(json);
       expect(await runAgent(["rotate-token", `--dir=${json}`, "--json"])).toBe(0);
       expect(stderrBuf).toContain("warning: the previous token no longer authenticates");
 
