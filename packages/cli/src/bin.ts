@@ -356,7 +356,7 @@ async function main(argv: string[]): Promise<number> {
     case "fleet":
       return await runFleet(rest);
     case "console":
-      return await runConsole(rest);
+      return await runConsole(rest, { ignoreSignalsAfterStop: true });
     case "update":
       return await runUpdate(rest);
     case "--version":
