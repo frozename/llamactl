@@ -1214,7 +1214,8 @@ export type ResidencyPlanRefusalReason =
   | "NotOptedIn"
   | "UnknownState"
   | "DuplicateId"
-  | "UnknownMemory";
+  | "UnknownMemory"
+  | "LifecycleUnreadable";
 
 export type ResidencyPlan = ProfileSwitchPlan & {
   dryRun?: true;
@@ -1264,7 +1265,9 @@ function recordedSwitchAtMs(
 // The time each model's residency_states row entered `ready`, read from the
 // unscoped snapshot. Defined only when the store applies to this node, reads
 // cleanly and carries lifecycle rows; a model maps only when its row is `ready`
-// with a finite updatedAtMs (Part of #519).
+// with a finite updatedAtMs (Part of #519). When lifecycle rows are unreadable
+// and `minResidencySeconds` is above 0, `buildResidencyPlan` refuses a switch
+// that has victims with `LifecycleUnreadable` rather than protecting nothing.
 function recordedReadySinceMs(
   store: ResidencyStoreSnapshot,
   applies: boolean,
@@ -1279,6 +1282,34 @@ function recordedReadySinceMs(
     }
   }
   return readySince;
+}
+
+// When the serving node's lifecycle rows are unreadable and `minResidencySeconds`
+// is above 0, refuse a switch that has victims: the victims' ready-since times
+// cannot be verified (Part of #519). Returns null when the knob is disabled,
+// the plan is not ok, the store does not serve, or there are no victims.
+function minResidencyLifecycleRefusal(
+  snapshot: ResidencyStoreSnapshot,
+  applies: boolean,
+  minResidencySeconds: number,
+  plan: ProfileSwitchPlan,
+): ResidencyPlan | null {
+  if (
+    !applies ||
+    minResidencySeconds <= 0 ||
+    !plan.ok ||
+    !snapshot.present ||
+    "error" in snapshot ||
+    snapshot.lifecycleError === undefined ||
+    plan.victims.length === 0
+  ) {
+    return null;
+  }
+  return refusal(
+    "LifecycleUnreadable",
+    `residency plan refused: lifecycle rows unreadable (${snapshot.lifecycleError}); minResidencySeconds of ${String(minResidencySeconds)} cannot be verified for ${plan.victims.join(", ")}`,
+    plan.victims,
+  );
 }
 
 export function buildResidencyPlan(input: {
@@ -1387,6 +1418,14 @@ export function buildResidencyPlan(input: {
     workloads: patched,
     inFlightOperationId,
   });
+
+  const lifecycleRefusal = minResidencyLifecycleRefusal(
+    input.store,
+    applies,
+    resolvedPolicy.minResidencySeconds,
+    plan,
+  );
+  if (lifecycleRefusal !== null) return { ...lifecycleRefusal, store };
 
   return {
     ...plan,

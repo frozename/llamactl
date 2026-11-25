@@ -772,8 +772,9 @@ describe("buildResidencyPlan", () => {
         store: { path: STORE_PATH, present: true, nonterminal: [], lifecycleError: "boom" },
       }),
     );
-    expect(unreadableLifecycle.ok).toBe(true);
-    expect(unreadableLifecycle.victims).toEqual(["chat-a"]);
+    expect(unreadableLifecycle.ok).toBe(false);
+    expect(unreadableLifecycle.reason).toBe("LifecycleUnreadable");
+    expect(unreadableLifecycle.workloads).toEqual(["chat-a"]);
 
     const defaultPolicy = buildResidencyPlan(
       planInput({
