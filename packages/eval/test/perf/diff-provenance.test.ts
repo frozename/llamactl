@@ -308,6 +308,24 @@ describe("perf/diff provenance", () => {
   );
 
   test(
+    "string provenance cells escape markdown pipes",
+    () => {
+      // Kills: the string branch of provenanceCell returning the raw value instead of
+      // mdField(value), which would break the table for a host or quant with a pipe.
+      seedPair(
+        dbPath,
+        pFull({ host: "h|1", quant: "Q4|K" }),
+        pFull({ host: "h|2", quant: "Q4|K" }),
+      );
+      const result = run(["--db", dbPath, "--base", "base", "--candidate", "cand"]);
+
+      expect(result.stdout).toContain("| quant | Q4\\|K | Q4\\|K | same |");
+      expect(result.stdout).toContain("| host | h\\|1 | h\\|2 |");
+    },
+    SPAWN_TIMEOUT_MS,
+  );
+
+  test(
     "--format json emits provenance entries mirroring compareMetric reasons",
     () => {
       // Kills: a lost reason; null coerced to a string or 0; a reason format
