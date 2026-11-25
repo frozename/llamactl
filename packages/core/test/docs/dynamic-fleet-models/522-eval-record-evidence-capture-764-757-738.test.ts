@@ -54,7 +54,7 @@ describe("#522 eval record evidence capture (#764, #757, #738)", () => {
     // Kills: dropping `[--hf-revision <rev>]` from the eval.ts USAGE line, or
     // the doc synopsis drifting from that line (it claims a verbatim copy).
     const usageOptionalFlags =
-      "[--suite perf-quick|perf-full] [--pid <n>] [--binary <path>] [--gguf <path>] [--hf-revision <rev>] [--quant <q>] [--ctx <n>] [--slots <n>] [--flags=<args>] [--db <path>] [--run-id <id>]";
+      "[--suite perf-quick|perf-full] [--pid <n>] [--binary <path>] [--gguf <path>] [--hf-revision <rev>] [--quant <q>] [--ctx <n>] [--slots <n>] [--flags=<args>] [--db <path>] [--run-id <id>] [--launch]";
     expect(evalSrc).toContain(`--model <id> ${usageOptionalFlags}\n`);
     expect(sec).toContain(`\`${usageOptionalFlags}\``);
     expect(sec).toContain("copied verbatim from the USAGE text");
@@ -62,7 +62,7 @@ describe("#522 eval record evidence capture (#764, #757, #738)", () => {
     for (const needle of [
       "`llamactl eval perf --url <http://...> --engine <llamacpp|omlx|gufo|kapitsa> --model <id>`",
       "already serving",
-      "never starts or stops the engine",
+      "Without `--launch` it never starts or stops the engine",
       "`perf-quick`",
       "`perf-full`",
       "`--engine` defaults to `llamacpp`",

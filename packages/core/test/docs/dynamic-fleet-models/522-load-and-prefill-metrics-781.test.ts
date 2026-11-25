@@ -34,19 +34,21 @@ describe("#522 load and prefill metrics (#781)", () => {
     expect(lines.slice(cmpIdx + 1, loadIdx).some((line) => line.startsWith("## "))).toBe(false);
   });
 
-  // Kills: a caller starting to pass `load:` without a doc update, or the
-  // doc claiming load is measured.
-  test("no shipped caller injects load hooks", () => {
+  // Kills: a scheduled suite injecting load hooks, eval perf injecting them
+  // without --launch, or the doc claiming an unmanaged load is measured.
+  test("a scheduled suite never injects load hooks; eval perf only with --launch", () => {
     expect(runnerSrc).toContain("export interface PerfSuiteLoadHooks");
     expect(runnerSrc).toContain("The runner performs no readiness");
-    expect(buildOptsBody).not.toMatch(/\bload:/);
+    const loadAssignments = buildOptsBody.match(/\bload:/g) ?? [];
+    expect(loadAssignments).toHaveLength(1);
+    expect(buildOptsBody).toContain("load: input.launchHooks");
     expect(benchBody).not.toMatch(/\bload:/);
     for (const needle of [
       "are measured only when the caller injects load hooks",
       "(`PerfSuiteLoadHooks` and `runLoadHook`, `packages/eval/src/perf/runner.ts`)",
       "it performs no readiness probe of its own",
-      "Neither `llamactl eval perf` nor a scheduled suite injects load hooks",
-      "the two load metrics are always recorded `unavailable`",
+      "A scheduled suite never injects load hooks, and `llamactl eval perf` injects them only with `--launch`",
+      "so from a scheduled suite, and from `eval perf` without `--launch`, the two load metrics are always recorded `unavailable`",
     ]) {
       expect(sec, needle).toContain(needle);
     }
