@@ -18,7 +18,7 @@ const savedDevStorage = process.env["DEV_STORAGE"];
 
 let tmpDir = "";
 
-function provenance(): EvalProvenance {
+function provenance(overrides: Partial<EvalProvenance> = {}): EvalProvenance {
   return {
     engine: "llamacpp",
     engine_version: null,
@@ -30,17 +30,22 @@ function provenance(): EvalProvenance {
     ctx: 65536,
     flags: [],
     host: "h",
+    ...overrides,
   };
 }
 
-function perfRow(runId: string, metric: MetricValue): PerfRunRow {
+function perfRow(
+  runId: string,
+  metric: MetricValue,
+  prov: EvalProvenance = provenance(),
+): PerfRunRow {
   return {
     run_id: runId,
     model_name: "m",
     suite_name: "perf-quick",
     metric_name: "decode_tps",
     metric,
-    provenance: provenance(),
+    provenance: prov,
     started_at: "2026-11-01T00:00:00Z",
     host_machine: "h",
   };
@@ -208,5 +213,36 @@ describe("#521 llamactl eval perf-diff", () => {
 
     expect(result).toBe(0);
     expect(stdout).toContain("  perf-diff --base <run_id> --candidate <run_id> [--db <path>]");
+  });
+});
+
+describe("#521 llamactl eval perf-diff provenance", () => {
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "llamactl-eval-perf-diff-"));
+    process.env["DEV_STORAGE"] = tmpDir;
+  });
+
+  afterEach(() => {
+    if (savedDevStorage === undefined) delete process.env["DEV_STORAGE"];
+    else process.env["DEV_STORAGE"] = savedDevStorage;
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  // Kills: the installed verb dropping the provenance table.
+  test("prints the provenance table with per-field verdicts", async () => {
+    const dbPath = join(tmpDir, "perf.sqlite");
+    seedPerfDb(dbPath, [
+      perfRow("base", { value: 10, status: "ok" }, provenance({ quant: "Q4_K_M" })),
+      perfRow("cand", { value: 10, status: "ok" }, provenance({ quant: "Q8_0" })),
+    ]);
+
+    const { result, stdout, stderr } = await captureProcessStreams(() =>
+      runEval(["perf-diff", "--db", dbPath, "--base", "base", "--candidate", "cand"]),
+    );
+
+    expect(stdout).toContain("| Provenance | Baseline | Candidate | Verdict |");
+    expect(stdout).toContain("| quant | Q4_K_M | Q8_0 | differs |");
+    expect(result).toBe(0);
+    expect(stderr).toBe("");
   });
 });

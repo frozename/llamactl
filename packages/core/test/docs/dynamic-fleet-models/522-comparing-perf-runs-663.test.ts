@@ -170,12 +170,12 @@ describe("#522 comparing perf runs (#663)", () => {
       expect(mdBody, needle).toContain(needle);
     }
     expect(enclosingBody(diffSrc, "export function renderPerfDiffJson(")).toContain(
-      "{ baseline: meta.base, candidate: meta.cand, diffs }",
+      "{ baseline: meta.base, candidate: meta.cand, diffs, provenance: meta.provenance }",
     );
     for (const needle of [
       "`baseline: <run_id> (<model>, <engine>)`",
       "`candidate: <run_id> (<model>, <engine>)`",
-      "`--format json` prints `baseline`, `candidate` and `diffs` (`renderPerfDiffJson`)",
+      "`--format json` prints `baseline`, `candidate`, `diffs` and `provenance` (`renderPerfDiffJson`)",
       "the promotion cells in the table above stay `unavailable`",
     ]) {
       expect(sec, needle).toContain(needle);
