@@ -833,12 +833,14 @@ describe("#521 scheduled suite declared slots", () => {
 });
 
 function writeDeclaredStore(
-  declared: { quant?: string; ctx?: number; flags?: string[] } = {},
+  declared: { quant?: string; ctx?: number; flags?: string[]; hfRevision?: string } = {},
 ): void {
   const quantLine = declared.quant === undefined ? "" : `    quant: ${declared.quant}\n`;
   const ctxLine = declared.ctx === undefined ? "" : `    ctx: ${String(declared.ctx)}\n`;
   const flagsLine =
     declared.flags === undefined ? "" : `    flags: ${JSON.stringify(declared.flags)}\n`;
+  const hfRevisionLine =
+    declared.hfRevision === undefined ? "" : `    hfRevision: ${declared.hfRevision}\n`;
   writeFileSync(
     schedulePath,
     `schedules:
@@ -852,7 +854,7 @@ function writeDeclaredStore(
     lastError: null
     kind: suite
     suite: perf-quick
-${quantLine}${ctxLine}${flagsLine}`,
+${quantLine}${ctxLine}${flagsLine}${hfRevisionLine}`,
     "utf8",
   );
 }
@@ -1114,5 +1116,96 @@ describe("#521 scheduled suite declared launch flags", () => {
     expect(unavailable["flags"]).toBe(
       "scheduled suites reach org/repo/m.gguf through the agent gateway; the engine launch flags are not known",
     );
+  });
+});
+
+const HF_REVISION = "0123456789abcdef0123456789abcdef01234567";
+
+describe("#521 scheduled suite declared hf revision", () => {
+  test("kick records declared hfRevision in provenance.hf_revision", async () => {
+    // Kills: the runner dropping the hf_revision spread into collectEvalProvenance.
+    writeDeclaredStore({ hfRevision: HF_REVISION });
+    const run = fakeRunPerfSuite();
+    provenanceSeams(run);
+
+    const { result } = await captureProcessStreams(() => runBenchSchedule(["kick"]));
+
+    expect(result).toBe(0);
+    expect(run.calls).toHaveLength(1);
+    const provenance = runOpts(run.calls[0])["provenance"];
+    if (!isPlainRecord(provenance)) throw new Error("expected a provenance record");
+    expect(provenance["hf_revision"]).toBe(HF_REVISION);
+    const unavailable = provenance["unavailable"];
+    if (!isPlainRecord(unavailable)) {
+      throw new Error("expected provenance.unavailable to be a record");
+    }
+    expect("hf_revision" in unavailable).toBe(false);
+    expect(provenance["binary_sha256"]).toBeNull();
+    expect(provenance["gguf_sha256"]).toBeNull();
+    expect(unavailable["binary_sha256"]).toBe(
+      "scheduled suites reach org/repo/m.gguf through the agent gateway; the engine binary path is not known",
+    );
+    expect(unavailable["gguf_sha256"]).toBe(
+      "scheduled suites reach org/repo/m.gguf through the agent gateway; the GGUF path is not known",
+    );
+  });
+
+  test("the runner rejects an invalid hfRevision before any endpoint work", async () => {
+    // Kills: removing the runner re-validation, or moving it after endpoint resolution.
+    const endpoint = fakeEndpoint("http://fake-engine.invalid");
+    const run = fakeRunPerfSuite();
+    const runner = createPerfBenchSuiteRunner({
+      runPerfSuite: run.runPerfSuite,
+      resolveEndpoint: endpoint.resolveEndpoint,
+      openDb: () => new Database(":memory:"),
+    });
+    let message = "";
+    try {
+      await runner({
+        scheduleId: "x",
+        suite: "perf-quick",
+        node: "n",
+        rel: "org/repo/m.gguf",
+        hfRevision: "MAIN",
+      });
+    } catch (err) {
+      message = err instanceof Error ? err.message : String(err);
+    }
+
+    expect(message).toContain(
+      "invalid hfRevision 'MAIN' for schedule 'x' (expected a 40-character lowercase hex commit hash)",
+    );
+    expect(endpoint.calls).toEqual([]);
+    expect(run.calls).toEqual([]);
+  });
+
+  test("the runner rejects a 41-character hfRevision before any endpoint work", async () => {
+    // Kills: dropping the end anchor from the runner's commit-hash pattern.
+    const tooLong = `${HF_REVISION}0`;
+    const endpoint = fakeEndpoint("http://fake-engine.invalid");
+    const run = fakeRunPerfSuite();
+    const runner = createPerfBenchSuiteRunner({
+      runPerfSuite: run.runPerfSuite,
+      resolveEndpoint: endpoint.resolveEndpoint,
+      openDb: () => new Database(":memory:"),
+    });
+    let message = "";
+    try {
+      await runner({
+        scheduleId: "x",
+        suite: "perf-quick",
+        node: "n",
+        rel: "org/repo/m.gguf",
+        hfRevision: tooLong,
+      });
+    } catch (err) {
+      message = err instanceof Error ? err.message : String(err);
+    }
+
+    expect(message).toContain(
+      `invalid hfRevision '${tooLong}' for schedule 'x' (expected a 40-character lowercase hex commit hash)`,
+    );
+    expect(endpoint.calls).toEqual([]);
+    expect(run.calls).toEqual([]);
   });
 });

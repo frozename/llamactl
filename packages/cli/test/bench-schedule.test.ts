@@ -1212,7 +1212,7 @@ describe("#521 scheduled suite slots", () => {
     );
     expect(result).toBe(0);
     expect(stdout).toContain(
-      "[--engine <llamacpp|omlx|gufo|kapitsa>] [--slots <n>] [--quant <label>] [--ctx <n>] [--flags=<args>]]",
+      "[--kind suite --suite <perf-quick|perf-full> [--engine <llamacpp|omlx|gufo|kapitsa>] [--slots <n>] [--quant <label>] [--ctx <n>] [--flags=<args>] [--hf-revision <rev>]]",
     );
   });
 });
@@ -1315,7 +1315,9 @@ describe("#521 scheduled suite declared provenance", () => {
       benchCmd.runBench(["schedule", "add", "--help"]),
     );
     expect(result).toBe(0);
-    expect(stdout).toContain("[--slots <n>] [--quant <label>] [--ctx <n>] [--flags=<args>]]");
+    expect(stdout).toContain(
+      "[--kind suite --suite <perf-quick|perf-full> [--engine <llamacpp|omlx|gufo|kapitsa>] [--slots <n>] [--quant <label>] [--ctx <n>] [--flags=<args>] [--hf-revision <rev>]]",
+    );
   });
 });
 
@@ -1444,9 +1446,109 @@ describe("#521 scheduled suite declared launch flags", () => {
       benchCmd.runBench(["schedule", "add", "--help"]),
     );
     expect(result).toBe(0);
-    expect(stdout).toContain("[--ctx <n>] [--flags=<args>]]");
+    expect(stdout).toContain(
+      "[--kind suite --suite <perf-quick|perf-full> [--engine <llamacpp|omlx|gufo|kapitsa>] [--slots <n>] [--quant <label>] [--ctx <n>] [--flags=<args>] [--hf-revision <rev>]]",
+    );
     expect(stdout.replaceAll(/\s+/g, " ")).toMatch(
       /--flags(?:=<args>)? records the (?:engine(?:'s)? )?launch flags in perf provenance/,
     );
+  });
+});
+
+const HF_REVISION = "0123456789abcdef0123456789abcdef01234567";
+
+describe("#521 scheduled suite declared hf revision", () => {
+  afterEach(() => {
+    resetGlobals();
+    resetBenchScheduleSeams();
+  });
+
+  function installProvenanceAddCaller(): CallerCalls {
+    const { caller, calls } = installFakeCaller({});
+    setBenchScheduleSeams({ caller });
+    setGlobals({ ...getGlobals(), nodeName: "n" });
+    return calls;
+  }
+
+  test("add forwards --hf-revision to benchScheduleAdd for kind suite", async () => {
+    // Kills: --hf-revision missing from VALUED_ADD_FLAGS/assignAddFlag, or not threaded into the input.
+    for (const tail of [["--hf-revision", HF_REVISION], [`--hf-revision=${HF_REVISION}`]]) {
+      const calls = installProvenanceAddCaller();
+      const { result, stderr } = await captureProcessStreams(() =>
+        benchCmd.runBench([...ADD_PREFIX, "--kind", "suite", "--suite", "perf-quick", ...tail]),
+      );
+      expect(result).toBe(0);
+      expect(calls.add).toHaveLength(1);
+      const input = requireRecord(calls.add[0]);
+      expect(input["hfRevision"]).toBe(HF_REVISION);
+      expect(stderr).not.toContain("Unknown flag");
+    }
+  });
+
+  test("add refuses --hf-revision unless kind is 'suite'", async () => {
+    // Kills: missing kind gating.
+    const calls = installProvenanceAddCaller();
+    const { result, stderr } = await captureProcessStreams(() =>
+      benchCmd.runBench([...ADD_PREFIX, "--hf-revision", HF_REVISION]),
+    );
+    expect(result).toBe(1);
+    expect(stderr).toContain(
+      "bench schedule add: --hf-revision is only valid when kind is 'suite'",
+    );
+    expect(calls.add).toHaveLength(0);
+  });
+
+  test("add refuses malformed --hf-revision values", async () => {
+    // Kills: missing format validation in validateHfRevisionArg.
+    for (const tail of [
+      ["--hf-revision", "main"],
+      ["--hf-revision", HF_REVISION.toUpperCase()],
+      [`--hf-revision=${HF_REVISION.slice(1)}`],
+      ["--hf-revision", `${HF_REVISION}0`],
+      ["--hf-revision", `${HF_REVISION} `],
+    ]) {
+      const calls = installProvenanceAddCaller();
+      const { result, stderr } = await captureProcessStreams(() =>
+        benchCmd.runBench([...ADD_PREFIX, "--kind", "suite", "--suite", "perf-quick", ...tail]),
+      );
+      expect(result).toBe(1);
+      expect(stderr).toContain(
+        "bench schedule add: --hf-revision must be a 40-character lowercase hex commit hash",
+      );
+      expect(calls.add).toHaveLength(0);
+    }
+  });
+
+  test("add reports the --flags error before the --hf-revision error", async () => {
+    // Kills: validateLaunchArgs checking --hf-revision before --flags.
+    const calls = installProvenanceAddCaller();
+    const { result, stderr } = await captureProcessStreams(() =>
+      benchCmd.runBench([
+        ...ADD_PREFIX,
+        "--kind",
+        "suite",
+        "--suite",
+        "perf-quick",
+        "--flags=",
+        "--hf-revision",
+        "main",
+      ]),
+    );
+    expect(result).toBe(1);
+    expect(stderr).toContain("bench schedule add: --flags must list at least one launch flag");
+    expect(stderr).not.toContain("--hf-revision must be");
+    expect(calls.add).toHaveLength(0);
+  });
+
+  test("add --help documents the --hf-revision flag", async () => {
+    // Kills: USAGE not listing --hf-revision or its provenance description.
+    const { result, stdout } = await captureProcessStreams(() =>
+      benchCmd.runBench(["schedule", "add", "--help"]),
+    );
+    expect(result).toBe(0);
+    expect(stdout).toContain(
+      "[--kind suite --suite <perf-quick|perf-full> [--engine <llamacpp|omlx|gufo|kapitsa>] [--slots <n>] [--quant <label>] [--ctx <n>] [--flags=<args>] [--hf-revision <rev>]]",
+    );
+    expect(stdout).toContain("--hf-revision <rev> records");
   });
 });

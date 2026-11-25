@@ -32,7 +32,11 @@ describe("#521 scheduled suite declared launch flags", () => {
 
     expect(
       enclosingBody(benchScheduleSrc, "function planAddArgs("),
-      "planAddArgs validates --flags",
+      "planAddArgs validates launch args",
+    ).toContain("validateLaunchArgs(");
+    expect(
+      enclosingBody(benchScheduleSrc, "function validateLaunchArgs("),
+      "validateLaunchArgs validates --flags",
     ).toContain("validateFlagsArg(");
 
     expect(benchScheduleSrc).toContain("--flags is only valid when kind is 'suite'");

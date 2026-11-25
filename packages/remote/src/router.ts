@@ -3083,6 +3083,10 @@ export const router = t.router({
           .optional(),
         ctx: z.number().int().positive().optional(),
         flags: z.array(z.string().regex(/^\S+$/)).min(1).max(256).optional(),
+        hfRevision: z
+          .string()
+          .regex(/^[0-9a-f]{40}$/)
+          .optional(),
       }),
     )
     .mutation(({ input }) => {
@@ -3102,6 +3106,7 @@ export const router = t.router({
         ...(input.quant !== undefined ? { quant: input.quant } : {}),
         ...(input.ctx !== undefined ? { ctx: input.ctx } : {}),
         ...(input.flags !== undefined ? { flags: input.flags } : {}),
+        ...(input.hfRevision !== undefined ? { hfRevision: input.hfRevision } : {}),
       });
       benchScheduleMod.saveSchedules(next, path);
       return next;

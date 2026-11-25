@@ -286,3 +286,46 @@ describe("#521 scheduled suite declared launch flags", () => {
     expect(loadSchedules(schedulePath).some((s) => s.id === "router-flags-bad")).toBe(false);
   });
 });
+
+const HF_REVISION = "0123456789abcdef0123456789abcdef01234567";
+
+describe("#521 scheduled suite declared hf revision", () => {
+  test("benchScheduleAdd persists hfRevision on a kind 'suite' schedule", async () => {
+    // Kills: the router input or the addSchedule spread dropping hfRevision.
+    const caller = router.createCaller({});
+    const input = {
+      id: "router-hf-revision",
+      node: "fake-node",
+      rel: "org/repo/m.gguf",
+      intervalSeconds: 3600,
+      kind: "suite" as const,
+      suite: "perf-quick",
+      hfRevision: HF_REVISION,
+    };
+    await caller.benchScheduleAdd(input);
+
+    const row = loadSchedules(schedulePath).find((s) => s.id === "router-hf-revision")!;
+    const withHfRevision = row as BenchSchedule & { hfRevision?: string };
+    expect(withHfRevision.hfRevision).toBe(HF_REVISION);
+  });
+
+  test("benchScheduleAdd rejects hfRevision unless kind is 'suite'", async () => {
+    // Kills: the router bypassing the schema gate.
+    const caller = router.createCaller({});
+    const input = {
+      id: "router-hf-revision-bad",
+      node: "fake-node",
+      rel: "org/repo/m.gguf",
+      intervalSeconds: 3600,
+      hfRevision: HF_REVISION,
+    };
+    let message = "";
+    try {
+      await caller.benchScheduleAdd(input);
+    } catch (err) {
+      message = err instanceof Error ? err.message : String(err);
+    }
+    expect(message).toContain("hfRevision is only valid with kind 'suite'");
+    expect(loadSchedules(schedulePath).some((s) => s.id === "router-hf-revision-bad")).toBe(false);
+  });
+});

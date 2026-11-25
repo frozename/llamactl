@@ -62,6 +62,8 @@ export interface BenchSuiteRequest {
   ctx?: number;
   // #521: operator-declared engine launch flags recorded in perf provenance; absent on legacy schedules
   flags?: string[];
+  // #521: operator-declared HF revision recorded in perf provenance; absent on legacy schedules
+  hfRevision?: string;
 }
 
 export type BenchSuiteRunner = (req: BenchSuiteRequest) => Promise<void>;
@@ -262,11 +264,13 @@ function declaredProvenanceFields(schedule: BenchSchedule): {
   quant?: string;
   ctx?: number;
   flags?: string[];
+  hfRevision?: string;
 } {
   return {
     ...(schedule.quant !== undefined ? { quant: schedule.quant } : {}),
     ...(schedule.ctx !== undefined ? { ctx: schedule.ctx } : {}),
     ...(schedule.flags !== undefined ? { flags: [...schedule.flags] } : {}),
+    ...(schedule.hfRevision !== undefined ? { hfRevision: schedule.hfRevision } : {}),
   };
 }
 
