@@ -29,6 +29,10 @@ function api(): any {
 }
 
 const ALLOWED = [
+  "benchHistory",
+  "benchSchedulerStatus",
+  "fleetSnapshot",
+  "inferenceObservations",
   "env",
   "nodeList",
   "nodeTest",
@@ -77,7 +81,7 @@ describe("console allowlist", () => {
     });
   }
 
-  test("(R6) CONSOLE_ALLOWLIST is the 9 read-only entries plus serverStop", () => {
+  test("(R6) CONSOLE_ALLOWLIST permits only the specified reads and serverStop", () => {
     const r = api();
     const allowlist = r.CONSOLE_ALLOWLIST as Record<string, { type?: string; project?: unknown }>;
     const names = Object.keys(allowlist).sort();
@@ -203,7 +207,7 @@ describe("console batch guard", () => {
       distPath: consoleTestFixture().distPath,
       backend: spy.router,
     });
-    const segments = [...ALLOWED, ...ALLOWED.slice(0, 7)].join(",");
+    const segments = [...ALLOWED, ...ALLOWED.slice(0, 17 - ALLOWED.length)].join(",");
     expect(segments.split(",")).toHaveLength(17);
     const res = await fetch(trpcUrl(h, segments, { batch: true, input: {} }), {
       headers: apiHeaders(h),
@@ -220,16 +224,7 @@ describe("console batch guard", () => {
       distPath: consoleTestFixture().distPath,
       backend: spy.router,
     });
-    const segments = [
-      ...ALLOWED,
-      "keepAliveStart",
-      "pullFile",
-      "nodeOpenAIConfig",
-      "reconcilerStart",
-      "uiPickDirectory",
-      "foo1",
-      "foo2",
-    ].join(",");
+    const segments = [...ALLOWED, "keepAliveStart", "pullFile", "nodeOpenAIConfig"].join(",");
     expect(segments.split(",")).toHaveLength(17);
     const res = await fetch(trpcUrl(h, segments, { batch: true, input: {} }), {
       headers: apiHeaders(h),

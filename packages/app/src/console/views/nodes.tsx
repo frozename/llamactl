@@ -16,26 +16,6 @@ import {
 } from "../fleet-scope";
 import { useConsoleNode, useNodeTrpc } from "../node-trpc";
 
-const sectionStyle: React.CSSProperties = { display: "grid", gap: 8, padding: 16 };
-const rowStyle: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  gap: 12,
-  padding: 8,
-  border: "1px solid var(--color-border)",
-  borderRadius: "var(--r-md, 6px)",
-};
-const nameStyle: React.CSSProperties = {
-  fontFamily: "var(--font-mono, monospace)",
-  fontSize: 13,
-  fontWeight: 600,
-};
-const secondaryStyle: React.CSSProperties = { fontSize: 12, color: "var(--color-text-secondary)" };
-const monoStyle: React.CSSProperties = {
-  fontFamily: "var(--font-mono, monospace)",
-  fontSize: 11,
-};
-
 function NodeReachDot({ name }: { name: string }): React.JSX.Element {
   const testQuery = useNodeTrpc().nodeTest.useQuery(
     { name },
@@ -47,18 +27,23 @@ function NodeReachDot({ name }: { name: string }): React.JSX.Element {
 
 function NodeRow({ row }: { row: ConsoleNodeRow }): React.JSX.Element {
   return (
-    <div data-testid={`console-node-row-${row.name}`} style={rowStyle}>
-      <span style={nameStyle}>{row.name}</span>
-      <span style={secondaryStyle}>{row.kind}</span>
+    <div data-testid={`console-node-row-${row.name}`} className="console-list-row">
+      <span className="console-item-title">{row.name}</span>
+      <span className="console-caption">{row.kind}</span>
       {row.endpoint === null ? null : row.endpointHref !== null ? (
-        <a href={row.endpointHref} target="_blank" rel="noopener noreferrer" style={monoStyle}>
+        <a
+          href={row.endpointHref}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="console-readout"
+        >
           {row.endpoint}
         </a>
       ) : (
-        <span style={monoStyle}>{row.endpoint}</span>
+        <span className="console-readout">{row.endpoint}</span>
       )}
       {row.isDefault ? <Badge variant="brand">default</Badge> : null}
-      <span style={{ marginLeft: "auto" }}>
+      <span className="console-list-actions">
         <NodeReachDot name={row.name} />
       </span>
     </div>
@@ -69,12 +54,36 @@ export function NodesView(): React.JSX.Element {
   const trpc = useNodeTrpc();
   const tabNode = useConsoleNode();
   const nodeListQuery = trpc.nodeList.useQuery();
+  const [search, setSearch] = React.useState("");
   const rows = consoleNodeRows(nodeListQuery.data, tabNode);
+  const needle = search.trim().toLowerCase();
+  const visible = rows.filter((row) =>
+    [row.name, row.kind, row.endpoint ?? ""].some((value) => value.toLowerCase().includes(needle)),
+  );
   return (
-    <section data-testid="console-view-nodes" style={sectionStyle}>
-      {rows.map((row) => (
-        <NodeRow key={row.name} row={row} />
-      ))}
-    </section>
+    <main data-testid="console-view-nodes" className="console-page">
+      <h1>Nodes</h1>
+      <section className="console-panel">
+        <div className="console-filterbar">
+          <label className="console-caption">
+            Search nodes
+            <input
+              className="console-select"
+              type="search"
+              value={search}
+              onChange={(event) => {
+                setSearch(event.target.value);
+              }}
+            />
+          </label>
+          <span className="console-caption">
+            {visible.length} of {rows.length} nodes
+          </span>
+        </div>
+        {visible.map((row) => (
+          <NodeRow key={row.name} row={row} />
+        ))}
+      </section>
+    </main>
   );
 }
