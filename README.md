@@ -15,6 +15,56 @@ plane, N agent nodes, the same verbs (apply, get, describe, delete)
 across `ModelRun` and `NodeRun` manifests, plus enough imperative
 escape hatches that one-off operations stay trivial.
 
+## Fleet telemetry
+
+Open **Fleet Stats** in `llamactl console` for workload status, node memory,
+slot occupancy, queue depth, and recent request timings. **Runs** shows busy
+slots, recent inference requests, and benchmark results by node. Metrics depend
+on the agent version and engine instrumentation. The console marks stale
+supervisor samples and shows a dash for unavailable metrics.
+
+Kapitsa control protocol 1 provides live slots, waiting requests, GPU memory
+and recent completion timings over the workload's own Unix socket. Waiting
+requests include requests still processing input. The first token estimate combines the recorded slot wait and prefill durations. Gufo
+reports TTFT from its request log and slot occupancy and queue depth from its
+engine endpoints.
+
+For a model served outside Llamactl, place an `observed-models.json` file in
+the serving agent's resolved `LOCAL_AI_RUNTIME_DIR` or set
+`LLAMACTL_OBSERVED_MODELS_FILE` on that agent. List exact model IDs and local
+HTTP ports.
+
+```json
+[{ "port": 8085, "model": "example-model" }]
+```
+
+Fleet Stats checks the node's loopback `GET /v1/models` and reports whether
+each configured ID is advertised. An inventory entry grants no routing
+or lifecycle controls. Agent versions that predate request observations
+continue to show their supervisor snapshots.
+
+To include **Penumbra handoffs** in Runs, start the console with a loopback
+Penumbra daemon URL and a local file containing its bearer token.
+
+```sh
+LLAMACTL_PENUMBRA_URL=http://127.0.0.1:51257 \
+LLAMACTL_PENUMBRA_TOKEN_FILE="$HOME/.penumbra/token" \
+llamactl console
+```
+
+Use the daemon's actual port or an existing loopback forward to it. The console
+keeps the token server-side and displays only handoff IDs, seats, timestamps,
+and status. Penumbra can continue to use the model proxy independently.
+
+For a colocated deployment with a large handoff database, the loopback
+`tools/penumbra-handoff-feed.ts` adapter serves the same metadata from
+a read-only SQLite connection. Start it with an absolute database path,
+an absolute path to a dedicated bearer-token file, and a port. Point the
+console's Penumbra URL and token-file settings at the adapter. Each sample
+shows up to 30 active handoffs and up to 30 terminal handoffs from the
+256 most recently inserted rows. The adapter requires access to Penumbra's
+live SQLite database and its WAL files.
+
 ## Highlights
 
 - **Single-machine workflow unchanged.** `llamactl bench`, `llamactl

@@ -1,6 +1,11 @@
-// #410 P5a, bounded console manifest, no fifth module.
-
-export type ConsoleViewId = "fleet" | "workloads" | "nodes" | "logs";
+export type ConsoleViewId =
+  | "dashboard"
+  | "fleet"
+  | "workloads"
+  | "nodes"
+  | "logs"
+  | "stats"
+  | "runs";
 
 export interface ConsoleModule {
   id: ConsoleViewId;
@@ -9,8 +14,11 @@ export interface ConsoleModule {
 }
 
 export const CONSOLE_MODULES: readonly ConsoleModule[] = [
-  { id: "fleet", label: "Fleet", path: "/" },
+  { id: "dashboard", label: "Dashboard", path: "/" },
+  { id: "fleet", label: "Fleet", path: "/fleet" },
   { id: "workloads", label: "Workloads", path: "/workloads" },
   { id: "nodes", label: "Nodes", path: "/nodes" },
   { id: "logs", label: "Logs", path: "/logs" },
+  { id: "stats", label: "Fleet Stats", path: "/stats" },
+  { id: "runs", label: "Runs", path: "/runs" },
 ] as const;

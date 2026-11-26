@@ -26,6 +26,7 @@ import {
   newConsoleSession,
 } from "./guards.js";
 import { parseConsoleNodePath, validateConsoleNode } from "./node-route.js";
+import { readPenumbraHandoffs } from "./penumbra.js";
 
 interface TrpcErrorRow {
   error: {
@@ -224,6 +225,12 @@ export function startConsoleServer(opts: StartConsoleServerOptions): Promise<Run
   const handleApi = async (req: Request, pathname: string): Promise<Response> => {
     const denied = checkConsoleSameOrigin(req) ?? checkConsoleSession(req, currentSession());
     if (denied !== null) return denied;
+    if (pathname === "/api/addons/penumbra/handoffs") {
+      if (req.method !== "GET") return jsonError(405, "method_not_allowed");
+      return Response.json(await readPenumbraHandoffs(), {
+        headers: { "cache-control": "no-store" },
+      });
+    }
     const route = parseConsoleNodePath(pathname);
     if (route.kind === "none") return jsonError(404, "not_found");
     if (route.kind === "bad") return jsonError(400, "bad_node");

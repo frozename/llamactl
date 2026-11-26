@@ -101,7 +101,7 @@ test("the api mount guards origin, allowlist, batch and session", async ({
 // .request joins a comma-bearing relative path onto the config baseURL
 // segment-by-segment, which is not what the browser client sends.
 test("a repeated-procedure batch is served per segment unaided", async ({ control, page }) => {
-  await page.goto("/");
+  await page.goto("/fleet");
   // The fleet view fires one load-time nodeTest probe per tile at the
   // tab node, and each probe lands in the same recorded-call log as the
   // manual batch. Let every tile settle (a settled label proves the

@@ -64,6 +64,7 @@ export {
   parseConsoleNodePath,
   validateConsoleNode,
 } from "./console/node-route.js";
+export { type PenumbraHandoffs } from "./console/penumbra.js";
 export { redactDeep } from "./console/redact.js";
 export {
   type RunningConsoleServer,
