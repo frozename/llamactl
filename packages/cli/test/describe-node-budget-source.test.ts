@@ -64,6 +64,13 @@ const payloadR6 = {
     { enabled: true, endpoint: null, expectedMemoryGiB: 22.5, name: "big", phase: "Running" },
   ],
 };
+const payloadR7 = {
+  budget: 24,
+  budgetSource: "manual",
+  reserved: 0,
+  safetyMarginRatio: { defaulted: false, value: 0.5 },
+  workloads: [],
+};
 
 afterEach(() => {
   __resetWorkloadTestSeams();
@@ -185,6 +192,12 @@ describe("renderNodeBudget budgetSource", () => {
     expect(out.split("\n")[0]).toBe(
       "Budget:   22.5 / 16.0 GiB (computed from node memory x safetyMarginRatio 0.5)",
     );
+  });
+
+  // Kills: an unrecognised budgetSource from a newer agent being mislabelled as computed.
+  test("R7: an unknown budget source renders the plain first line with no suffix", () => {
+    const out = renderNodeBudget(payloadR7);
+    expect(out.split("\n")[0]).toBe("Budget:   0.0 / 24.0 GiB");
   });
 });
 

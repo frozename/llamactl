@@ -30,6 +30,7 @@ import * as kubecfg from "@llamactl/core/config/kubeconfig";
 import { ENGINES } from "@llamactl/core/engines";
 import { readModelHostState } from "@llamactl/core/engines/state";
 import { probeEndpointOwnership } from "@llamactl/core/probe";
+import { DEFAULT_RESIDENCY_POLICY } from "@llamactl/core/residency/admission";
 import {
   getResidencyLeaseRegistry,
   type ResidencyAuditEntry,
@@ -2609,7 +2610,7 @@ export const router = t.router({
           ? ("noderun" as const)
           : ("computed" as const),
       safetyMarginRatio: {
-        value: ratioKnob?.value ?? 0.75,
+        value: ratioKnob?.value ?? DEFAULT_RESIDENCY_POLICY.safetyMarginRatio,
         defaulted: ratioKnob?.defaulted ?? true,
       },
       reserved,
