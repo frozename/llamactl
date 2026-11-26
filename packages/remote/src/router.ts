@@ -126,6 +126,7 @@ import {
   buildResidencyPlan,
   buildResidencyStatus,
   collectResidencyObservations,
+  effectiveResidencyPolicy,
   type IdleEvictKind,
   type IdleEvictResult,
   type IdleEvictRow,
@@ -2595,7 +2596,25 @@ export const router = t.router({
     const reserved = workloads
       .filter((w) => w.enabled)
       .reduce((sum, w) => sum + (w.expectedMemoryGiB ?? 0), 0);
-    return { budget, reserved, workloads };
+    // Part of #519: a computed budget is the total memory of *this* process's
+    // machine times the effective ratio, so it is the named node's own RAM only
+    // when that node's agent is the one answering.
+    const ratioKnob = effectiveResidencyPolicy(node?.spec.residency).knobs.find(
+      (k) => k.name === "safetyMarginRatio",
+    );
+    return {
+      budget,
+      budgetSource:
+        typeof node?.spec.budget?.memoryGiB === "number"
+          ? ("noderun" as const)
+          : ("computed" as const),
+      safetyMarginRatio: {
+        value: ratioKnob?.value ?? 0.75,
+        defaulted: ratioKnob?.defaulted ?? true,
+      },
+      reserved,
+      workloads,
+    };
   }),
 
   // Read-only residency status. nodeRun/policy/budget reflect the NodeRun
