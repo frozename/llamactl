@@ -91,7 +91,9 @@ describe("#519 residency status effective policy", () => {
     const cliHelper = enclosingBody(cli, "function pushEffectivePolicyLine(");
     expect(cliHelper).not.toBe("");
     expect(cliHelper).toContain("Effective:  ");
-    expect(cliHelper).toContain(" (default)");
+    // Part of #519: the knob formatting moved to the shared formatResidencyKnobs (describe noderun PR)
+    expect(cliHelper).toContain("formatResidencyKnobs(");
+    expect(cliHelper).not.toContain(" (default)");
     for (const entry of sectionContract.knobs) {
       expect(cliHelper).not.toContain(entry.name);
     }
