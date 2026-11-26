@@ -18,11 +18,20 @@ Open items:
   `residency_states` for its victims and replacements. A same-group occupant
   that the plan observed occupying refuses the start with
   `ExclusiveGroupOccupied` before the engine runs. A same-group occupying row
-  the plan did not observe is reconciled to downloaded and logged. Enforcement
-  in the reconciler is still pending #276. What enforces today is the finite-budget admission math, the
-  per-node residency-group start guard, the fenced direct-start lifecycle
-  refusal and the read-only pre-launch gate, all four listed under Residency
-  states and exclusion below. `llamactl residency status`, the
+  the plan did not observe is reconciled to downloaded and logged. `applyOne`
+  and `applyOneModelHost` (`packages/remote/src/workload/apply.ts`), which the
+  reconciler calls, start a ModelRun's coordinator and a ModelHost through the
+  node agent's `serverStart` and `modelHostStart` procedures, so the fenced
+  direct-start lifecycle refusal covers those starts; the rpc-server workers
+  `applyOne` starts for a ModelRun with `spec.workers` go through the agent's
+  `rpcServerStart` procedure, which calls `startRpcServer` without
+  `runDirectResidencyStart` and records no `residency_states` row, and the
+  reconciler passes `applyOne` no gateway dispatcher, so it leaves a
+  `spec.gateway` ModelRun `Pending` without starting it. What enforces today
+  is the finite-budget admission math, the per-node residency-group start
+  guard, the fenced direct-start lifecycle refusal and the read-only
+  pre-launch gate, all four listed under Residency states and exclusion
+  below. `llamactl residency status`, the
   `residencyStatus` procedure and the MCP tool now report the serving
   process's `residency_states` rows and any exclusive-group violation
   (`findExclusiveGroupViolations`, previously used only by the planner).
@@ -151,9 +160,20 @@ persists per-model states in its `residency_states` table:
 - Group declarations are not persisted. They come from the caller
   (default `RESIDENCY_GROUPS`).
 
-Still pending #276: enforcement in the reconciler and ModelHost,
-recovery, stale-revision rejection, and summing reservations against a
-node memory budget. The enforcement in place today is the following:
+Since #276 opened, ModelHost starts are enforced (items 2 and 3 below),
+boot recovery of interrupted profile-switch operations and lifecycle rows
+has landed
+([dynamic-residency.md](dynamic-residency.md#cancel-and-crash-recovery)),
+and the residency store refuses a `desiredRevision` below its high-water
+mark as `stale-revision` and, on `beginOperation`, refuses as
+`reservation-exceeds-budget` a reservation that would push the pending and
+committed reservations past a caller-supplied `nodeBudgetGiB`; the
+profile-switch executor passes the plan's resolved node budget when it is
+known. Still pending #276: reconciliation outside a switch, a mandatory
+`desiredRevision` on `transitionResidencyState` (a write that carries none
+is accepted and keeps the stored revision), and budget admission for
+`transitionResidencyState`, which records no reservation and is not
+budget-gated. The enforcement in place today is the following:
 
 1. `packages/core/src/residency/admission.ts` — finite-budget
    admission arithmetic: refusals for an unknown budget, an
@@ -199,18 +219,27 @@ node memory budget. The enforcement in place today is the following:
    file starts unrecorded. Details:
    [dynamic-residency.md](dynamic-residency.md#direct-modelhost-start-and-stop).
 4. The read-only pre-launch gate (`exclusiveGroupLaunchRefusal`,
-   `packages/remote/src/residency/direct-lifecycle.ts`, #517). Launches that
-   record no `residency_states` row read the local residency store before
-   they spawn and refuse when any `loading`, `warming` or `ready` row holds
-   the declared-exclusive residency group of what they launch, counting a
-   row for the same id: `llamactl eval run <model>` without `--url` and
-   `llamactl admit measure` exit 1; `llamactl keep-alive start` exits 1 and
-   the keep-alive worker records `start-refused`; `llamactl bench preset`
-   and `bench vision` exit 1, and the agent's bench subscriptions return the
-   refusal as a stream error; the post-pull auto-tune records the preset or
-   vision step as skipped with kind `exclusive-group-occupied`, and
-   `llamactl candidate test` reports the step not run with the refusal as
-   its reason. The refusal reads
+   `packages/remote/src/residency/direct-lifecycle.ts`, #517). Launches read
+   the local residency store before they spawn and refuse when any
+   `loading`, `warming` or `ready` row holds the declared-exclusive residency
+   group of what they launch. Sandbox launches record no `residency_states`
+   row and count a row for the same id:
+   `llamactl eval run <model>` without `--url`,
+   `llamactl eval perf --launch` and `llamactl admit measure` exit 1; the
+   eval matrix runner spawns no refused engine, and writes an error cell for
+   every workload of a refused model and for the one workload whose judge is
+   refused; `llamactl bench preset` and `bench vision` exit 1, and the
+   agent's bench subscriptions return the refusal as a stream error; the
+   post-pull auto-tune records the preset or vision step as skipped with
+   kind `exclusive-group-occupied`, and `llamactl candidate test` reports
+   the step not run with the refusal as its reason.
+   `llamactl keep-alive start` exits 1, locally or through the agent's
+   `keepAliveStart` procedure, and the keep-alive worker's pre-start gate
+   records `start-refused`; these keep-alive gates pass `ignoreModel` so
+   only the target's own row is ignored, because the worker records that row
+   itself through `runDirectResidencyStart` and
+   `runDirectResidencyStop` (`keepAliveRecordedStart`,
+   `keepAliveRecordedStop`). The refusal reads
    `residency lifecycle refused <id> downloaded -> loading: ExclusiveGroupOccupied: exclusive group <group> is held by <member> in state <state>`.
    It also refuses while a profile switch is in flight
    (`residency lifecycle refused <id>: profile switch in flight on this node; retry after it settles`)
