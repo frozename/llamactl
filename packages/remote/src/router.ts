@@ -2554,7 +2554,11 @@ export const router = t.router({
       } catch (err) {
         liveStatus = { error: (err as Error).message };
       }
-      return { manifest, liveStatus };
+      return {
+        manifest,
+        liveStatus,
+        controllerPid: liveLockHolder(workloadStoreMod.defaultWorkloadsDir()),
+      };
     }),
 
   nodeBudget: t.procedure.input(z.object({ node: z.string().min(1) })).query(({ input }) => {

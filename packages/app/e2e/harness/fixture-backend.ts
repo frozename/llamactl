@@ -363,6 +363,8 @@ function buildFixtureRouter(state: FixtureState): FixtureBackend["router"] {
         return {
           liveStatus: seed.E2E_SERVER_STATUS[input.name] ?? null,
           manifest: manifestOf(input.name),
+          // The fixture runs no controller, so it holds no controller lock.
+          controllerPid: null,
         };
       }),
 
