@@ -389,3 +389,61 @@ test.each([
     expect(calls).toHaveLength(0);
   }
 });
+
+// Pins the `cached?.result === result` guard: a stale read that fails after a newer read
+// replaced the cache entry must not shorten the newer entry to the failure TTL.
+test("a late failure for a replaced token file keeps the newer entry's full TTL", async () => {
+  const dir = tmpDir("llamactl-penumbra-token-");
+  const firstTokenFile = join(dir, "held-token");
+  const secondTokenFile = join(dir, "fresh-token");
+  writeFileSync(firstTokenFile, "fixture-held-token\n");
+  writeFileSync(secondTokenFile, "fixture-fresh-token\n");
+  let clock = 1_000;
+  let release: (() => void) | undefined;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const { calls, impl } = recordingFetch(async () => {
+    if (calls.length === 1) {
+      await gate;
+      return new Response(null, { status: 503 });
+    }
+    return Response.json({ handoffs: [] });
+  });
+  const read = createPenumbraHandoffReader({ fetch: impl, now: () => clock });
+  const env = {
+    LLAMACTL_PENUMBRA_URL: FAKE_ORIGIN,
+    LLAMACTL_PENUMBRA_TOKEN_FILE: firstTokenFile,
+  };
+  const freshEnv = { ...env, LLAMACTL_PENUMBRA_TOKEN_FILE: secondTokenFile };
+
+  const held = read(env);
+  // Let the held read get past its token-file read and into fetch.
+  for (let i = 0; i < 50 && calls.length === 0; i += 1) await Bun.sleep(1);
+  expect(calls).toHaveLength(1);
+
+  expect(await read(freshEnv)).toEqual({ state: "ready", handoffs: [] });
+  expect(calls).toHaveLength(2);
+
+  release?.();
+  expect(await held).toEqual({ state: "unavailable" });
+
+  clock += 5_000;
+  expect(await read(freshEnv)).toEqual({ state: "ready", handoffs: [] });
+  expect(calls).toHaveLength(2);
+});
+
+test("treats a whitespace-only token file as unavailable without a request", async () => {
+  const dir = tmpDir("llamactl-penumbra-token-");
+  const tokenFile = join(dir, "blank-token");
+  writeFileSync(tokenFile, " \t\n  \n");
+  const { calls, impl } = recordingFetch(() => Response.json({ handoffs: [] }));
+
+  const result = await createPenumbraHandoffReader({ fetch: impl })({
+    LLAMACTL_PENUMBRA_URL: FAKE_ORIGIN,
+    LLAMACTL_PENUMBRA_TOKEN_FILE: tokenFile,
+  });
+
+  expect(result).toEqual({ state: "unavailable" });
+  expect(calls).toHaveLength(0);
+});
