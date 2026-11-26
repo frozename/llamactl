@@ -264,27 +264,75 @@
   margin-top: 4px;
 }
 
-.chat-markdown pre,
 .chat-markdown :not(pre) > code {
   border: 1px solid var(--console-border);
   border-radius: 5px;
   background: var(--console-inset);
   font-family: var(--console-mono);
   font-size: 0.92em;
-}
-
-.chat-markdown :not(pre) > code {
   padding: 1px 4px;
 }
-.chat-markdown pre {
-  padding: 10px 12px;
-  margin-block: 10px;
+
+.chat-code-block {
+  min-width: 0;
+  margin: 14px 0;
+  overflow: hidden;
+  border: 1px solid var(--console-border);
+  border-radius: 8px;
+  background: #0a1119;
+}
+
+.chat-code-block figcaption {
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--console-border);
+  background: var(--console-hover);
+  color: var(--console-muted);
+  font: 600 11px/1.5 var(--console-mono);
+}
+
+.chat-code-block pre {
+  margin: 0;
+  padding: 12px;
   overflow: auto;
   white-space: pre;
+  overflow-wrap: normal;
+  color: var(--console-text);
+  font: 0.92em/1.55 var(--console-mono);
 }
-.chat-markdown pre code {
+
+.chat-code-block pre:focus-visible {
+  outline: 2px solid var(--console-mint);
+  outline-offset: -2px;
+}
+
+.chat-code-block pre code {
   font: inherit;
 }
+
+.chat-code-block :is(.hljs-keyword, .hljs-selector-tag, .hljs-built_in, .hljs-type) {
+  color: #d4aaff;
+}
+
+.chat-code-block :is(.hljs-string, .hljs-regexp, .hljs-addition) {
+  color: #a3e1a0;
+}
+
+.chat-code-block :is(.hljs-number, .hljs-literal, .hljs-attr, .hljs-symbol) {
+  color: #ffd38d;
+}
+
+.chat-code-block :is(.hljs-title, .hljs-name, .hljs-section, .hljs-selector-class) {
+  color: #92c8ff;
+}
+
+.chat-code-block :is(.hljs-comment, .hljs-quote) {
+  color: #92a5b8;
+}
+
+.chat-code-block :is(.hljs-deletion, .hljs-meta) {
+  color: #ffada8;
+}
+
 .chat-markdown blockquote {
   margin: 10px 0;
   border-inline-start: 3px solid var(--console-border);

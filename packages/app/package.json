@@ -23,6 +23,7 @@
     "react": "19.2.5",
     "react-dom": "19.2.5",
     "react-markdown": "10.1.0",
+    "rehype-highlight": "7.0.2",
     "remark-gfm": "4.0.1",
     "superjson": "2.2.6",
     "yaml": "2.8.3",

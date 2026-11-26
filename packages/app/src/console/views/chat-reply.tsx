@@ -1,11 +1,66 @@
-import { memo } from "react";
-import Markdown, { type Components } from "react-markdown";
+import { type ComponentProps, memo } from "react";
+import Markdown, { type Components, type ExtraProps } from "react-markdown";
+import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 
 import type { ChatProgress } from "../chat-client";
 
+const languageLabels = new Map([
+  ["bash", "Bash"],
+  ["c", "C"],
+  ["cpp", "C++"],
+  ["cs", "C#"],
+  ["csharp", "C#"],
+  ["css", "CSS"],
+  ["diff", "Diff"],
+  ["go", "Go"],
+  ["html", "HTML"],
+  ["java", "Java"],
+  ["javascript", "JavaScript"],
+  ["js", "JavaScript"],
+  ["json", "JSON"],
+  ["jsx", "JSX"],
+  ["md", "Markdown"],
+  ["plaintext", "Text"],
+  ["py", "Python"],
+  ["python", "Python"],
+  ["rs", "Rust"],
+  ["rust", "Rust"],
+  ["sh", "Shell"],
+  ["shell", "Shell"],
+  ["sql", "SQL"],
+  ["text", "Text"],
+  ["ts", "TypeScript"],
+  ["tsx", "TSX"],
+  ["txt", "Text"],
+  ["typescript", "TypeScript"],
+  ["xml", "XML"],
+  ["yaml", "YAML"],
+  ["yml", "YAML"],
+]);
+
+type CodeBlockProps = ComponentProps<"pre"> & { node?: ExtraProps["node"] };
+
+function CodeBlock({ node, ...props }: CodeBlockProps): React.JSX.Element {
+  const code = node?.children.find((child) => child.type === "element" && child.tagName === "code");
+  const classes = code?.type === "element" ? code.properties.className : undefined;
+  const language = Array.isArray(classes)
+    ? classes.find(
+        (value): value is string => typeof value === "string" && value.startsWith("language-"),
+      )
+    : undefined;
+  const tag = language?.slice("language-".length) ?? "text";
+  return (
+    <figure className="chat-code-block">
+      <figcaption>{languageLabels.get(tag.toLowerCase()) ?? tag}</figcaption>
+      <pre {...props} tabIndex={0} />
+    </figure>
+  );
+}
+
 const markdownComponents: Components = {
   a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noreferrer noopener" />,
+  pre: CodeBlock,
 };
 
 const MarkdownText = memo(function MarkdownText({ text }: { text: string }): React.JSX.Element {
@@ -16,6 +71,7 @@ const MarkdownText = memo(function MarkdownText({ text }: { text: string }): Rea
         disallowedElements={["img"]}
         components={markdownComponents}
         remarkPlugins={[remarkGfm]}
+        rehypePlugins={[[rehypeHighlight, { plainText: ["text", "txt", "plaintext"] }]]}
       >
         {text}
       </Markdown>

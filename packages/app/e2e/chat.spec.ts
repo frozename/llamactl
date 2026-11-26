@@ -128,3 +128,56 @@ test("shows streamed reasoning, generation stats and formatted Markdown", async 
   await thinking.click();
   await expect(page.getByText("Check the arithmetic.", { exact: true })).toBeVisible();
 });
+
+test("styles fenced blocks by language and keeps unknown code readable", async ({ page }) => {
+  await page.route("**/api/n/local/chat/models", (route) =>
+    route.fulfill({ json: { models: ["fixture-model"] } }),
+  );
+  const content = [
+    "Use `answer` in this example.",
+    "",
+    "```ts",
+    "const answer: number = 42;",
+    "```",
+    "",
+    "```python",
+    "def answer():",
+    "    return 42",
+    "```",
+    "",
+    "```custom-lang",
+    "leave <output> untouched",
+    "```",
+    "",
+    "```",
+    "raw output",
+    "```",
+  ].join("\n");
+  const body = JSON.stringify({
+    choices: [{ delta: { content }, finish_reason: "stop" }],
+  });
+  await page.route("**/api/n/local/chat/completions", (route) =>
+    route.fulfill({ contentType: "text/event-stream", body: `data: ${body}\n\ndata: [DONE]\n\n` }),
+  );
+  await page.goto("/chat");
+  await page.getByRole("textbox", { name: "Message" }).fill("Show some examples");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+
+  const blocks = page.locator(".chat-code-block");
+  await expect(blocks.locator("figcaption")).toHaveText([
+    "TypeScript",
+    "Python",
+    "custom-lang",
+    "Text",
+  ]);
+  const ts = blocks.nth(0);
+  const keyword = ts.locator(".hljs-keyword");
+  await expect(keyword).toHaveText("const");
+  const codeStyle = await ts.locator("pre").evaluate((node) => getComputedStyle(node).color);
+  expect(await keyword.evaluate((node) => getComputedStyle(node).color)).not.toBe(codeStyle);
+  await expect(blocks.nth(1).locator(".hljs-keyword")).toHaveText(["def", "return"]);
+  await expect(blocks.nth(2).locator("code")).toHaveText("leave <output> untouched");
+  await expect(blocks.nth(2).locator("code span")).toHaveCount(0);
+  await expect(blocks.nth(3).locator("code")).toHaveText("raw output");
+  await expect(page.locator(".chat-markdown p code")).toHaveText("answer");
+});
