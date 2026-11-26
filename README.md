@@ -77,11 +77,14 @@ or lifecycle controls. Agent versions that predate request observations
 continue to show their supervisor snapshots.
 
 To include **Penumbra handoffs** in Runs, start the console with the Penumbra
-daemon's URL and a local file containing its bearer token. The URL must be
-exactly `http://127.0.0.1:<port>`: plain HTTP to the IPv4 address
-`127.0.0.1`, with no path beyond an optional trailing `/` and no query,
-fragment or credentials. Any other form, including `localhost`, `[::1]`
-and `https://`, leaves the Penumbra panel unavailable.
+daemon's URL and a local file containing its bearer token. The value is parsed
+as a standard (WHATWG) URL and used only if the parsed scheme is `http`, the
+host is `127.0.0.1`, and the path is `/`, with no credentials, query, or
+fragment. Spellings the parser normalizes to that form also work: uppercase
+`HTTP://`, short IPv4 forms such as `127.1`, a dot-segment path such as
+`/a/..`, or an empty `?` or `#`. With no port, the URL uses port 80.
+`localhost`, `[::1]`, `https://`, and any other path leave the Penumbra panel
+unavailable.
 
 ```sh
 LLAMACTL_PENUMBRA_URL=http://127.0.0.1:51257 \
@@ -89,14 +92,19 @@ LLAMACTL_PENUMBRA_TOKEN_FILE="$HOME/.penumbra/token" \
 llamactl console
 ```
 
+The token file must be a regular file of at most 4 KiB; it is opened without
+following symlinks, so a symlinked or larger file leaves the Penumbra panel
+unavailable.
+
 Use the daemon's actual port, or a forward to it that listens on
 `127.0.0.1`. The console keeps the token server-side and displays only
 handoff IDs, seats, timestamps, and status. Penumbra can continue to use
 the model proxy independently.
 The daemon's handoff list has no row limit, so the console asks it only for
-active handoffs (pending, approved, dispatched) and reuses each answer for up
-to 10 seconds across all open tabs. Recent terminal handoffs appear when the
-console reads from the adapter below.
+active handoffs (pending, approved, dispatched). A successful answer is reused
+for up to 10 seconds across all open tabs, a failed read for only up to
+2 seconds, so the panel recovers about 2 s after the daemon comes back. Recent
+terminal handoffs appear when the console reads from the adapter below.
 
 For a colocated deployment with a large handoff database, the loopback
 `tools/penumbra-handoff-feed.ts` adapter serves the same metadata from
