@@ -213,14 +213,29 @@ interface ShutdownSignals {
   dispose(): void;
 }
 
+const SHUTDOWN_SIGNALS = ["SIGINT", "SIGTERM"] as const;
+
+// Stand-in listener for the after-stop window (#837): a stable reference
+// so repeated dispose() runs install it at most once per signal.
+const ignoreShutdownSignal = (): void => undefined;
+
 // #535: a SIGTERM landing between the `Console:` print and the listener
 // install used to hit the default disposition and exit 143 on Linux CI,
 // so the handlers are installed before the URL is printed and before the
 // opener spawns. `on` instead of `once` so a repeated signal arriving
 // while the server stops is swallowed rather than falling through to the
-// default disposition. Resolving twice is harmless; dispose() runs only
-// after stop finishes so the handlers never leak.
-function installShutdownSignals(): ShutdownSignals {
+// default disposition. Resolving twice is harmless.
+//
+// #837: the same window reopens on the far side — dispose() ran as soon as
+// the server stopped, but the process exits only afterwards, so a repeat
+// signal in between hit the default disposition and exited 143 again. When
+// ignoreAfterStop is set (the CLI entrypoint, which reaches process.exit
+// right after main() returns) dispose() swaps the live handlers for no-op
+// listeners that stay installed until exit; the no-op is added *before* the
+// live one is removed so there is never a zero-listener instant. In-process
+// callers (tests) leave the flag unset and keep the old behaviour: both
+// handlers removed on dispose, nothing added, so no listener leaks.
+function installShutdownSignals(ignoreAfterStop: boolean): ShutdownSignals {
   let release: () => void = () => undefined;
   const wait = new Promise<void>((resolvePromise) => {
     release = resolvePromise;
@@ -228,13 +243,22 @@ function installShutdownSignals(): ShutdownSignals {
   const onSignal = (): void => {
     release();
   };
-  process.on("SIGINT", onSignal);
-  process.on("SIGTERM", onSignal);
+  for (const sig of SHUTDOWN_SIGNALS) {
+    process.on(sig, onSignal);
+  }
   return {
     wait,
     dispose(): void {
-      process.off("SIGINT", onSignal);
-      process.off("SIGTERM", onSignal);
+      if (ignoreAfterStop) {
+        for (const sig of SHUTDOWN_SIGNALS) {
+          if (!process.listeners(sig).includes(ignoreShutdownSignal)) {
+            process.on(sig, ignoreShutdownSignal);
+          }
+        }
+      }
+      for (const sig of SHUTDOWN_SIGNALS) {
+        process.off(sig, onSignal);
+      }
     },
   };
 }
@@ -242,6 +266,13 @@ function installShutdownSignals(): ShutdownSignals {
 export interface ConsoleDeps {
   openBrowser?: (url: string) => void;
   waitForShutdown?: () => Promise<void>;
+  /**
+   * CLI process only (#837): after the server stops, keep no-op
+   * SIGINT/SIGTERM listeners installed until the process exits instead of
+   * restoring the default disposition, so a repeat signal between dispose()
+   * and process exit cannot exit 143.
+   */
+  ignoreSignalsAfterStop?: boolean;
   /** Test seams forwarded to the default opener when openBrowser is unset. */
   platform?: NodeJS.Platform;
   spawn?: ConsoleOpenerSpawn;
@@ -287,7 +318,10 @@ async function serveUntilShutdown(
   open: boolean,
   deps: ConsoleDeps,
 ): Promise<number> {
-  const signals = deps.waitForShutdown === undefined ? installShutdownSignals() : undefined;
+  const signals =
+    deps.waitForShutdown === undefined
+      ? installShutdownSignals(deps.ignoreSignalsAfterStop === true)
+      : undefined;
   try {
     process.stdout.write(`Console: ${server.url}\nPress Ctrl+C to stop.\n`);
     if (open) {
