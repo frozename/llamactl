@@ -47,3 +47,5 @@ export const {
   writeFileSync,
   writeSync,
 } = nodeFs;
+
+export const { open, readFile, realpath } = nodeFs.promises;
