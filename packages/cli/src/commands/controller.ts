@@ -161,15 +161,23 @@ export interface ControllerLogLine {
 
 type ReportForLog = Pick<
   workloadReconciler.ReconcileNodeReport,
-  "action" | "error" | "foundDead" | "kind" | "managedBy" | "name" | "node"
+  "action" | "error" | "foundDead" | "idleEvictedAt" | "kind" | "managedBy" | "name" | "node"
 >;
 
 function reportLabel(r: ReportForLog): string {
   return `${r.kind === "ModelHost" ? "modelhost" : "modelrun"}/${r.name} on ${r.node}`;
 }
 
-/** The action, plus the managing controller on a `skipped-external` row. */
+/** The action, plus the managing controller on a `skipped-external` row, plus
+ *  the durable idle hold and its release verb on a row the hold kept down. */
 function reportOutcome(r: ReportForLog): string {
+  if (r.idleEvictedAt !== undefined) {
+    return (
+      `${r.action} (idle-evicted at ${r.idleEvictedAt} via ` +
+      `${workloadReconciler.IDLE_EVICTED_AT_ANNOTATION}; run llamactl residency ` +
+      `release-idle ${r.name} to resume)`
+    );
+  }
   if (r.action !== "skipped-external" || !r.managedBy) return r.action;
   return `${r.action} (managed by ${r.managedBy} via ${MANAGED_BY_LABEL})`;
 }
@@ -184,8 +192,9 @@ function stamp(nowMs: number): string {
  * repeated as a reminder at most every `reminderMs` while it persists, and is
  * closed by one recovery line; in between it is counted, not printed. Healthy
  * reports keep their per-pass stdout line; a `skipped-external` row names the
- * managing controller and the label. A workload missing from the pass
- * (deleted) drops out of the state silently.
+ * managing controller and the label, and an idle-held row names the hold, the
+ * annotation stamped on it and the `release-idle` verb that clears it. A
+ * workload missing from the pass (deleted) drops out of the state silently.
  */
 export function reduceReconcileReportLog(
   state: ReconcileErrorLog,

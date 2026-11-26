@@ -18,11 +18,20 @@ Open items:
   `residency_states` for its victims and replacements. A same-group occupant
   that the plan observed occupying refuses the start with
   `ExclusiveGroupOccupied` before the engine runs. A same-group occupying row
-  the plan did not observe is reconciled to downloaded and logged. Enforcement
-  in the reconciler is still pending #276. What enforces today is the finite-budget admission math, the
-  per-node residency-group start guard, the fenced direct-start lifecycle
-  refusal and the read-only pre-launch gate, all four listed under Residency
-  states and exclusion below. `llamactl residency status`, the
+  the plan did not observe is reconciled to downloaded and logged. `applyOne`
+  and `applyOneModelHost` (`packages/remote/src/workload/apply.ts`), which the
+  reconciler calls, start a ModelRun's coordinator and a ModelHost through the
+  node agent's `serverStart` and `modelHostStart` procedures, so the fenced
+  direct-start lifecycle refusal covers those starts; the rpc-server workers
+  `applyOne` starts for a ModelRun with `spec.workers` go through the agent's
+  `rpcServerStart` procedure, which calls `startRpcServer` without
+  `runDirectResidencyStart` and records no `residency_states` row, and the
+  reconciler passes `applyOne` no gateway dispatcher, so it leaves a
+  `spec.gateway` ModelRun `Pending` without starting it. What enforces today
+  is the finite-budget admission math, the per-node residency-group start
+  guard, the fenced direct-start lifecycle refusal and the read-only
+  pre-launch gate, all four listed under Residency states and exclusion
+  below. `llamactl residency status`, the
   `residencyStatus` procedure and the MCP tool now report the serving
   process's `residency_states` rows and any exclusive-group violation
   (`findExclusiveGroupViolations`, previously used only by the planner).
@@ -151,9 +160,20 @@ persists per-model states in its `residency_states` table:
 - Group declarations are not persisted. They come from the caller
   (default `RESIDENCY_GROUPS`).
 
-Still pending #276: enforcement in the reconciler and ModelHost,
-recovery, stale-revision rejection, and summing reservations against a
-node memory budget. The enforcement in place today is the following:
+Since #276 opened, ModelHost starts are enforced (items 2 and 3 below),
+boot recovery of interrupted profile-switch operations and lifecycle rows
+has landed
+([dynamic-residency.md](dynamic-residency.md#cancel-and-crash-recovery)),
+and the residency store refuses a `desiredRevision` below its high-water
+mark as `stale-revision` and, on `beginOperation`, refuses as
+`reservation-exceeds-budget` a reservation that would push the pending and
+committed reservations past a caller-supplied `nodeBudgetGiB`; the
+profile-switch executor passes the plan's resolved node budget when it is
+known. Still pending #276: reconciliation outside a switch, a mandatory
+`desiredRevision` on `transitionResidencyState` (a write that carries none
+is accepted and keeps the stored revision), and budget admission for
+`transitionResidencyState`, which records no reservation and is not
+budget-gated. The enforcement in place today is the following:
 
 1. `packages/core/src/residency/admission.ts` — finite-budget
    admission arithmetic: refusals for an unknown budget, an
@@ -199,18 +219,27 @@ node memory budget. The enforcement in place today is the following:
    file starts unrecorded. Details:
    [dynamic-residency.md](dynamic-residency.md#direct-modelhost-start-and-stop).
 4. The read-only pre-launch gate (`exclusiveGroupLaunchRefusal`,
-   `packages/remote/src/residency/direct-lifecycle.ts`, #517). Launches that
-   record no `residency_states` row read the local residency store before
-   they spawn and refuse when any `loading`, `warming` or `ready` row holds
-   the declared-exclusive residency group of what they launch, counting a
-   row for the same id: `llamactl eval run <model>` without `--url` and
-   `llamactl admit measure` exit 1; `llamactl keep-alive start` exits 1 and
-   the keep-alive worker records `start-refused`; `llamactl bench preset`
-   and `bench vision` exit 1, and the agent's bench subscriptions return the
-   refusal as a stream error; the post-pull auto-tune records the preset or
-   vision step as skipped with kind `exclusive-group-occupied`, and
-   `llamactl candidate test` reports the step not run with the refusal as
-   its reason. The refusal reads
+   `packages/remote/src/residency/direct-lifecycle.ts`, #517). Launches read
+   the local residency store before they spawn and refuse when any
+   `loading`, `warming` or `ready` row holds the declared-exclusive residency
+   group of what they launch. Sandbox launches record no `residency_states`
+   row and count a row for the same id:
+   `llamactl eval run <model>` without `--url`,
+   `llamactl eval perf --launch` and `llamactl admit measure` exit 1; the
+   eval matrix runner spawns no refused engine, and writes an error cell for
+   every workload of a refused model and for the one workload whose judge is
+   refused; `llamactl bench preset` and `bench vision` exit 1, and the
+   agent's bench subscriptions return the refusal as a stream error; the
+   post-pull auto-tune records the preset or vision step as skipped with
+   kind `exclusive-group-occupied`, and `llamactl candidate test` reports
+   the step not run with the refusal as its reason.
+   `llamactl keep-alive start` exits 1, locally or through the agent's
+   `keepAliveStart` procedure, and the keep-alive worker's pre-start gate
+   records `start-refused`; these keep-alive gates pass `ignoreModel` so
+   only the target's own row is ignored, because the worker records that row
+   itself through `runDirectResidencyStart` and
+   `runDirectResidencyStop` (`keepAliveRecordedStart`,
+   `keepAliveRecordedStop`). The refusal reads
    `residency lifecycle refused <id> downloaded -> loading: ExclusiveGroupOccupied: exclusive group <group> is held by <member> in state <state>`.
    It also refuses while a profile switch is in flight
    (`residency lifecycle refused <id>: profile switch in flight on this node; retry after it settles`)
@@ -360,6 +389,17 @@ never under fusion-private-first" (#725). Under #728/#729 the ranked
 replica hint never lifts an experimental replica over a non-experimental
 one, and a session already bound to an experimental workload stays on it.
 
+`benchCompare` (`packages/core/src/bench/compare.ts`) carries each row's
+routing stage as `qualificationStage`, read through
+`catalogQualificationStages`; the `promote-fastest-vision-model` runbook
+never picks an experimental rel and reports excluded experimental rels on
+the `excludedExperimental` field of the bench.compare step result; when
+every benched installed multimodal rel is experimental the runbook returns
+ok:false with an error listing the excluded rels and stating that
+experimental models are served only on an exact model pin and never as a
+preset default; a refused `llamactl.catalog.promote` step fails the
+runbook before `llamactl.embersynth.sync`.
+
 `/v1/models?include=declared` reads the same stages: each `unavailable`
 entry's `qualification.stage` is the routing stage from
 `catalogQualificationStages` (so a pin replaces the catalog stage), and a
@@ -449,6 +489,15 @@ workload, with `run_id` breaking ties; `--run-id` restricts the candidate
 pool to a single run. `evaluatedTasks` sums `n_rows` over all distinct
 selected candidate cells (a workload mapped to multiple metrics is
 counted once).
+
+A selected cell with `n_rows` of 0 or less counts as missing
+(`qualificationEvidenceFromCells` in `packages/eval/src/qualification/evidence.ts`):
+latest-cell selection does not skip unscored cells, so when the latest
+cell for a mapped workload is unscored the command exits 1 with `no
+matrix cell for model <m> workload <w> (metric <metric>)`, even if an
+earlier run scored it; `--run-id <id>` picks the scored run. A selected
+baseline cell with `n_rows` of 0 or less is likewise a missing baseline
+cell, for a workload that has a candidate cell.
 
 With a baseline (`--baseline-run-id` plus `--baseline-model`, defaulting
 `--baseline-model` to `--model`), `regression` is the fraction of
@@ -1267,3 +1316,53 @@ a loopback Linux `eval perf` run, the stored `peak_gtt_bytes` reason is
 therefore the status-only form, for example `GTT reader returned no sample
 (status: denied)`. The source clause appears only for an injected reader
 that names a source.
+
+### Unscored matrix cells for an arm
+
+A matrix cell is unscored when its `n_rows` is 0 or less.
+
+The matrix runner writes such a cell in two cases. When a model or judge
+boot fails or is refused, including a pre-launch gate refusal,
+`recordBootError` stores `n_rows` 0, `primary_metric_value` 0, `errors`
+1 and `per_class_metrics_json` `{}`. When a corpus fails to load,
+`runWorkloadCell` stores `n_rows` 0, `primary_metric_value` -1 and
+`per_class_metrics_json` `{"error":"corpus_load_failed"}` (verify
+`packages/eval/src/matrix/runner.ts`).
+
+The boot error or refusal text goes only to the `[matrix] failed to boot
+...` warning; it is not stored on the cell.
+
+`cellUnavailableReason` returns `no rows scored`, or `no rows scored
+(<error>)` when `per_class_metrics_json` carries a non-empty string
+`error`, so a boot error cell reads `no rows scored` and a corpus failure
+reads `no rows scored (corpus_load_failed)` (verify
+`packages/eval/src/matrix/report.ts`).
+
+The matrix CLI writes the report for the run it just ran with `--report
+md|csv|both` and `--report-out <path>`, or for every run with
+`--report-all-runs`. Each report renders `unavailable` for an unscored
+cell's primary metric, latency and throughput, and keeps its errors
+count (verify `packages/eval/src/matrix/cli.ts`).
+
+The markdown report adds a `## Unavailable cells` section, between
+`## Errors` and `## Per-workload winner`, with one `- <model> / <workload>:
+<reason>` line per unscored cell, and omits the section when every cell
+scored.
+
+The per-workload winner skips unscored cells, and a workload where no cell
+scored reads `- <workload>: unavailable (no cell scored any rows)`.
+
+With `--report-all-runs` the report keeps the latest cell per model and
+workload by `finished_at`, so a later unscored cell replaces an earlier
+scored one.
+
+These cells never count as promotion evidence; see Qualification and
+promotion.
+
+`bun packages/eval/src/matrix/diff.ts` renders `unavailable` for the
+value, tps and p50_ms of an unscored cell and, in markdown, sorts it
+after the scored cells of its workload. `--format json` keeps the raw
+numeric fields (verify `packages/eval/src/matrix/diff.ts`).
+
+Without `--all-runs` the diff keeps the latest cell per model and
+workload by `started_at`, scored or not.

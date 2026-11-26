@@ -9,6 +9,7 @@ import { formatEndpoint, probeEndpointOwnership } from "@llamactl/core/probe";
 import { workloadRuntimeDir } from "@llamactl/core/workloadRuntime";
 import {
   type ClusterNode,
+  effectiveResidencyPolicy,
   config as kubecfg,
   type NodeClient,
   noderunApply,
@@ -17,6 +18,7 @@ import {
   workloadApply,
   workloadGatewayHandlers,
   workloadLock,
+  workloadReconciler,
   type workloadSchema,
   workloadStore,
 } from "@llamactl/remote";
@@ -48,6 +50,8 @@ import {
 import { required } from "../required.js";
 import { existsSync, readFileSync, rmSync } from "../safe-fs.js";
 import {
+  formatNodeRunBudget,
+  formatResidencyKnobs,
   makeSpecArtifactResolver,
   nodeRunBudgetLookup,
   nodeRunResidencyLookup,
@@ -1295,6 +1299,25 @@ function writeHostHistory(
   process.stdout.write(indentBlock(formatHostRuntime(runtime)));
 }
 
+/**
+ * One-line read-out of the durable idle hold (#519), or null when the manifest
+ * carries none. A disabled manifest gets the inactive form because the
+ * reconciler ignores the hold while the workload is disabled, so nothing keeps
+ * it down beyond `enabled: false`.
+ */
+export function formatIdleHoldLine(manifest: {
+  metadata: { name: string; annotations?: Record<string, string> | undefined };
+  spec: { enabled?: boolean | undefined };
+}): string | null {
+  const at = manifest.metadata.annotations?.[workloadReconciler.IDLE_EVICTED_AT_ANNOTATION];
+  if (at === undefined) return null;
+  const lead = `IdleHold:   idle-evicted at ${at} via ${workloadReconciler.IDLE_EVICTED_AT_ANNOTATION}; `;
+  if (manifest.spec.enabled === false) {
+    return `${lead}inactive while the workload is disabled\n`;
+  }
+  return `${lead}the controller keeps it down until llamactl residency release-idle ${manifest.metadata.name}\n`;
+}
+
 async function runDescribeModelHost(manifest: ModelHostManifest, json: boolean): Promise<number> {
   const { spec } = manifest;
   const nowMs = (workloadTestSeams.now ?? ((): Date => new Date()))().getTime();
@@ -1332,6 +1355,8 @@ async function runDescribeModelHost(manifest: ModelHostManifest, json: boolean):
   process.stdout.write(`Enabled:    ${String(spec.enabled)}\n`);
   process.stdout.write(`ExtraArgs:  ${spec.extraArgs.join(" ") || "(none)"}\n`);
   process.stdout.write(`RestartPolicy: ${spec.restartPolicy}\n`);
+  const idleHold = formatIdleHoldLine(manifest);
+  if (idleHold !== null) process.stdout.write(idleHold);
   writeHostHistory(manifest, runtime, nowMs);
   writeLiveStatus(liveStatus);
   return 0;
@@ -1366,6 +1391,8 @@ async function runDescribeWorkload(name: string, json: boolean): Promise<number>
   process.stdout.write(`Target:     ${manifest.spec.target.kind}:${manifest.spec.target.value}\n`);
   process.stdout.write(`ExtraArgs:  ${manifest.spec.extraArgs.join(" ") || "(none)"}\n`);
   process.stdout.write(`RestartPolicy: ${manifest.spec.restartPolicy}\n`);
+  const idleHold = formatIdleHoldLine(manifest);
+  if (idleHold !== null) process.stdout.write(idleHold);
   if (manifest.status) {
     process.stdout.write(
       `Status:     phase=${manifest.status.phase} endpoint=${manifest.status.endpoint ?? "none"} pid=${String(manifest.status.serverPid ?? "none")} since=${manifest.status.lastTransitionTime}\n`,
@@ -1657,6 +1684,7 @@ async function runDescribeNodeRun(name: string, json: boolean): Promise<number> 
     process.stderr.write(`describe: ${(err as Error).message}\n`);
     return 1;
   }
+  const effectivePolicy = effectiveResidencyPolicy(manifest.spec.residency);
   let liveInfra: unknown = null;
   try {
     const client = getWorkloadNodeClient(manifest.spec.node);
@@ -1665,11 +1693,13 @@ async function runDescribeNodeRun(name: string, json: boolean): Promise<number> 
     liveInfra = { error: (err as Error).message };
   }
   if (json) {
-    process.stdout.write(`${JSON.stringify({ manifest, liveInfra }, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify({ manifest, effectivePolicy, liveInfra }, null, 2)}\n`);
     return 0;
   }
   process.stdout.write(`Name:       ${manifest.metadata.name}\n`);
   process.stdout.write(`Node:       ${manifest.spec.node}\n`);
+  process.stdout.write(`Budget:     ${formatNodeRunBudget(manifest.spec.budget)}\n`);
+  process.stdout.write(`Residency:  ${formatResidencyKnobs(effectivePolicy)}\n`);
   process.stdout.write(`Infra:\n`);
   for (const item of manifest.spec.infra) {
     const flags = [

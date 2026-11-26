@@ -21,6 +21,16 @@ interface BenchRow {
   class: string;
   installed: boolean;
   tuned: { gen_tps: string } | null;
+  /** Routing stage from the catalog qualification (#518). "experimental" rels
+   *  are excluded from the fastest-vision promotion runbook. */
+  qualificationStage?: string;
+}
+
+interface PromoteResult {
+  ok?: boolean;
+  refused?: string;
+  dryRun?: boolean;
+  error?: string;
 }
 
 /**
@@ -28,6 +38,17 @@ interface BenchRow {
  * to the `vision` preset on every profile (or the one named in
  * params). Finishes by syncing embersynth.yaml so fusion-vision
  * routes through the new pick.
+ *
+ * Experimental rels (qualificationStage === "experimental") are excluded
+ * from the eligible set and reported on `excludedExperimental` in the
+ * bench.compare step result. When every benched installed multimodal rel
+ * is experimental, the runbook returns ok:false with an error listing the
+ * excluded rels and stating that experimental models are served only on
+ * an exact model pin and never as a preset default.
+ *
+ * A failed promote step (ok:false with an error message, or a dry-run
+ * with `refused` on the result) fails the runbook before embersynth.sync
+ * is called.
  *
  * Runbook steps:
  *   1. llamactl.bench.compare { classFilter: multimodal }  — rank candidates
@@ -47,8 +68,20 @@ export const promoteFastestVisionModel: Runbook<Params> = {
       arguments: { classFilter: "multimodal", scopeFilter: "all" },
     });
     const bench = parseToolJson<BenchRow[]>(benchRaw);
-    const candidates = bench
-      .filter((r) => r.installed && r.tuned && Number.isFinite(Number.parseFloat(r.tuned.gen_tps)))
+    const excludedExperimental: string[] = [];
+    const eligible = bench.filter((r) => {
+      // Installed + tuned + finite gen_tps first, so only otherwise-eligible
+      // rels are ever reported as experimental exclusions.
+      if (!r.installed || !r.tuned || !Number.isFinite(Number.parseFloat(r.tuned.gen_tps))) {
+        return false;
+      }
+      if (r.qualificationStage === "experimental") {
+        excludedExperimental.push(r.rel);
+        return false;
+      }
+      return true;
+    });
+    const candidates = eligible
       .map((row) => ({ row, genTps: Number.parseFloat(row.tuned?.gen_tps ?? "0") }))
       .sort((a, b) => b.genTps - a.genTps);
     steps.push({
@@ -58,10 +91,18 @@ export const promoteFastestVisionModel: Runbook<Params> = {
         inspected: bench.length,
         candidates: candidates.length,
         top: candidates[0]?.row.rel ?? null,
+        ...(excludedExperimental.length > 0 ? { excludedExperimental } : {}),
       },
     });
     const top = candidates.at(0)?.row;
     if (top === undefined) {
+      if (excludedExperimental.length > 0) {
+        return {
+          ok: false,
+          steps,
+          error: `every benched installed multimodal rel is experimental (${excludedExperimental.join(", ")}); experimental models are served only on an exact model pin and never as a preset default`,
+        };
+      }
       return {
         ok: false,
         steps,
@@ -81,11 +122,25 @@ export const promoteFastestVisionModel: Runbook<Params> = {
           dryRun: ctx.dryRun,
         },
       });
+      const promoteResult = parseToolJson<PromoteResult>(promoteRaw);
       steps.push({
         tool: "llamactl.catalog.promote",
         dryRun: ctx.dryRun,
-        result: parseToolJson(promoteRaw),
+        result: promoteResult,
       });
+      // A failure is ok === false (wet run) or a string `refused` (dry run).
+      const isFailure = promoteResult.ok === false || typeof promoteResult.refused === "string";
+      if (isFailure) {
+        const message =
+          typeof promoteResult.refused === "string"
+            ? promoteResult.refused
+            : (promoteResult.error ?? "unknown");
+        return {
+          ok: false,
+          steps,
+          error: `llamactl.catalog.promote refused ${top.rel} for profile ${profile}: ${message}`,
+        };
+      }
     }
 
     const syncRaw = await ctx.tools.callTool({
