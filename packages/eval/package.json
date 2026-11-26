@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@llamactl/core": "workspace:*",
+    "@llamactl/remote": "workspace:*",
     "zod": "4.6.6"
   },
   "devDependencies": {
