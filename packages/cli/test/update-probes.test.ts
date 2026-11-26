@@ -230,6 +230,32 @@ describe("hostReady with a declared readiness probe", () => {
     expect(result).toBe(false);
   });
 
+  describe("with an empty JSON expectation, only the body shape decides", () => {
+    const gatedEmptyJson = { ...host, readiness: { path: "/ready", expectJson: {} } };
+
+    test("an object probe body means ready", async () => {
+      const rec = recorder(modelsThen(r(200, "{}")));
+      expect(await hostReady(rec.get, gatedEmptyJson)).toBe(true);
+    });
+
+    test("an array probe body means not ready", async () => {
+      const rec = recorder(modelsThen(r(200, "[]")));
+      expect(await hostReady(rec.get, gatedEmptyJson)).toBe(false);
+    });
+
+    test("a null probe body means not ready and does not throw", async () => {
+      const rec = recorder(modelsThen(r(200, "null")));
+      // A throw here rejects the awaited call and fails the test.
+      const result = await hostReady(rec.get, gatedEmptyJson);
+      expect(result).toBe(false);
+    });
+
+    test("a string probe body means not ready", async () => {
+      const rec = recorder(modelsThen(r(200, '"x"')));
+      expect(await hostReady(rec.get, gatedEmptyJson)).toBe(false);
+    });
+  });
+
   test("a probe with no answer means not ready", async () => {
     const rec = recorder(modelsThen(null));
     const result = await hostReady(rec.get, gated);
