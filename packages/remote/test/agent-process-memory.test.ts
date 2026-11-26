@@ -36,6 +36,8 @@ type ProcessMemoryAttribution = {
   swapBytes?: number | null;
 };
 
+const LINUX_SPLIT_KEYS = ["rssAnonBytes", "rssFileBytes", "rssShmemBytes", "swapBytes"] as const;
+
 type ProcessMemoryModule = {
   parseLinuxProcStatusMemory: (text: string) => LinuxProcStatusMemory | null;
   decodeDarwinRusageV0: (bytes: Uint8Array) => DarwinRusageV0Memory | null;
@@ -48,7 +50,7 @@ type ProcessMemoryModule = {
 };
 
 async function loadProcessMemoryModule(): Promise<ProcessMemoryModule> {
-  const mod: Record<string, unknown> = await import(PROCESS_MEMORY_MODULE).catch(() => ({}));
+  const mod = (await import(PROCESS_MEMORY_MODULE).catch(() => ({}))) as Record<string, unknown>;
   expect(typeof mod["parseLinuxProcStatusMemory"]).toBe("function");
   expect(typeof mod["decodeDarwinRusageV0"]).toBe("function");
   expect(typeof mod["createProcessMemoryReader"]).toBe("function");
@@ -184,9 +186,9 @@ describe("createProcessMemoryReader", () => {
 
       expect(attribution.footprint.status).toBe("unavailable");
       expect(attribution.footprint.bytes).toBeNull();
-      for (const [key, value] of Object.entries(fixture)) {
-        if (key === "text") continue;
-        expect(attribution[key as keyof ProcessMemoryAttribution]).toBe(value);
+      for (const key of LINUX_SPLIT_KEYS) {
+        if (!(key in fixture)) continue;
+        expect(attribution[key]).toBe((fixture as Partial<LinuxProcStatusMemory>)[key]);
       }
     }
   });
@@ -223,9 +225,9 @@ describe("createProcessMemoryReader", () => {
 
   test("marks the macOS footprint unavailable when the injected rusage read fails", async () => {
     const { createProcessMemoryReader } = await loadProcessMemoryModule();
-    const readers: Array<() => Uint8Array | null> = [
-      () => null,
-      () => {
+    const readers: (() => Uint8Array | null)[] = [
+      (): Uint8Array | null => null,
+      (): Uint8Array | null => {
         throw new Error("rusage unavailable");
       },
     ];
