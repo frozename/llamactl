@@ -174,8 +174,12 @@ beforeAll(() => {
 });
 
 afterAll(async () => {
-  const survivors = await reapFakeProcesses({ scratch: scratchRoot, pids: spawnedPids });
-  rmSync(scratchRoot, { recursive: true, force: true });
+  let survivors: Awaited<ReturnType<typeof reapFakeProcesses>>;
+  try {
+    survivors = await reapFakeProcesses({ scratch: scratchRoot, pids: spawnedPids });
+  } finally {
+    rmSync(scratchRoot, { recursive: true, force: true });
+  }
   expect(survivors).toEqual([]);
 }, 60_000);
 

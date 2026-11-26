@@ -262,6 +262,26 @@ function buildFixtureRouter(state: FixtureState): FixtureBackend["router"] {
     state.record(procedure, node, input);
   };
   return t.router({
+    benchHistory: t.procedure.query(({ ctx, input }) => {
+      record("benchHistory", ctx.node, input);
+      return [];
+    }),
+
+    benchSchedulerStatus: t.procedure.query(({ ctx }) => {
+      record("benchSchedulerStatus", ctx.node, undefined);
+      return { inflight: false };
+    }),
+
+    fleetSnapshot: t.procedure.query(({ ctx, input }) => {
+      record("fleetSnapshot", ctx.node, input);
+      return null;
+    }),
+
+    inferenceObservations: t.procedure.query(({ ctx }) => {
+      record("inferenceObservations", ctx.node, undefined);
+      return { sampledAt: "2026-11-25T00:00:00Z", workloads: [] };
+    }),
+
     env: t.procedure.query(({ ctx }): EnvFixture => {
       record("env", ctx.node, undefined);
       return seed.E2E_ENV;

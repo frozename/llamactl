@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import type { EngineBootEnv, ModelHostSpecForEngine } from "../../src/engines/types.js";
 
@@ -206,25 +206,27 @@ describe("omlx engine adapter", () => {
       tmpdir(),
       `omlx-iso-prep-${String(Date.now())}-${Math.random().toString(36).slice(2, 8)}`,
     );
-    await ENGINES.omlx.prepareLaunch?.(baseSpec, {
-      LLAMACTL_MODELS_DIR: modelsDir,
-      LLAMACTL_RUNTIME_DIR: runtimeDir,
-      workloadName: "iso-prep-host",
-    });
+    try {
+      await ENGINES.omlx.prepareLaunch?.(baseSpec, {
+        LLAMACTL_MODELS_DIR: modelsDir,
+        LLAMACTL_RUNTIME_DIR: runtimeDir,
+        workloadName: "iso-prep-host",
+      });
 
-    const isolatedDir = join(runtimeDir, "workloads", "iso-prep-host", ".omlx", "models");
-    const linkTarget = join(isolatedDir, basename(hostedRel));
-    // The symlink should resolve to the original model dir (i.e. config.json reachable through it).
-    expect(existsSync(linkTarget)).toBe(true);
-    expect(existsSync(join(linkTarget, "config.json"))).toBe(true);
-    // And ONLY the hosted model is present (other models in modelsDir not visible).
-    const otherModelDir = join(modelsDir, "mlx-community", "some-other-model");
-    mkdirSync(otherModelDir, { recursive: true });
-    writeFileSync(join(otherModelDir, "config.json"), "{}");
-    expect(existsSync(join(isolatedDir, "some-other-model"))).toBe(false);
-
-    rmSync(runtimeDir, { recursive: true, force: true });
-    rmSync(modelsDir, { recursive: true, force: true });
+      const isolatedDir = join(runtimeDir, "workloads", "iso-prep-host", ".omlx", "models");
+      const linkTarget = join(isolatedDir, basename(hostedRel));
+      // The symlink should resolve to the original model dir (i.e. config.json reachable through it).
+      expect(existsSync(linkTarget)).toBe(true);
+      expect(existsSync(join(linkTarget, "config.json"))).toBe(true);
+      // And ONLY the hosted model is present (other models in modelsDir not visible).
+      const otherModelDir = join(modelsDir, "mlx-community", "some-other-model");
+      mkdirSync(otherModelDir, { recursive: true });
+      writeFileSync(join(otherModelDir, "config.json"), "{}");
+      expect(existsSync(join(isolatedDir, "some-other-model"))).toBe(false);
+    } finally {
+      rmSync(runtimeDir, { recursive: true, force: true });
+      rmSync(modelsDir, { recursive: true, force: true });
+    }
   });
 
   test("prepareLaunch is idempotent (recreates a stale symlink)", async () => {
@@ -240,25 +242,28 @@ describe("omlx engine adapter", () => {
       tmpdir(),
       `omlx-iso-idem-${String(Date.now())}-${Math.random().toString(36).slice(2, 8)}`,
     );
-    const envBoot = {
-      LLAMACTL_MODELS_DIR: modelsDir,
-      LLAMACTL_RUNTIME_DIR: runtimeDir,
-      workloadName: "iso-idem-host",
-    } satisfies EngineBootEnv;
-    await ENGINES.omlx.prepareLaunch?.(baseSpec, envBoot);
-    // Second call should not throw despite the symlink already existing.
-    await ENGINES.omlx.prepareLaunch?.(baseSpec, envBoot);
-    const linkTarget = join(
-      runtimeDir,
-      "workloads",
-      "iso-idem-host",
-      ".omlx",
-      "models",
-      basename(hostedRel),
-    );
-    expect(existsSync(linkTarget)).toBe(true);
-    rmSync(runtimeDir, { recursive: true, force: true });
-    rmSync(modelsDir, { recursive: true, force: true });
+    try {
+      const envBoot = {
+        LLAMACTL_MODELS_DIR: modelsDir,
+        LLAMACTL_RUNTIME_DIR: runtimeDir,
+        workloadName: "iso-idem-host",
+      } satisfies EngineBootEnv;
+      await ENGINES.omlx.prepareLaunch?.(baseSpec, envBoot);
+      // Second call should not throw despite the symlink already existing.
+      await ENGINES.omlx.prepareLaunch?.(baseSpec, envBoot);
+      const linkTarget = join(
+        runtimeDir,
+        "workloads",
+        "iso-idem-host",
+        ".omlx",
+        "models",
+        basename(hostedRel),
+      );
+      expect(existsSync(linkTarget)).toBe(true);
+    } finally {
+      rmSync(runtimeDir, { recursive: true, force: true });
+      rmSync(modelsDir, { recursive: true, force: true });
+    }
   });
 
   test("probeReady returns matching modelIds when /v1/models contains the rel basename", async () => {
@@ -352,7 +357,8 @@ describe("omlx engine adapter", () => {
 
   afterAll(() => {
     try {
-      rmSync(goodBinary, { force: true });
+      // Remove the whole mkdir'd directory, not just the binary inside it (#870).
+      rmSync(dirname(goodBinary), { recursive: true, force: true });
     } catch {
       // Best-effort cleanup for a temp binary already removed by the OS.
     }

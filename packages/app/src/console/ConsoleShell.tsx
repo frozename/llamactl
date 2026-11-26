@@ -1,12 +1,3 @@
-// #410 P5a-3d, the console shell: four-view nav carrying the tab node,
-// a dispatchable-node tab selector fed by nodeList from inside the
-// provider, the invalid-session banner, the rejected-node notice, the
-// unknown-path notice and a timer-free toast host. All four views are
-// real (fleet, workloads, nodes, logs); a picker in the logs view
-// navigates through the same pushState path as the nav anchors.
-// Location is read through the cast pattern from node-scope so SSR
-// stays type-safe; no Electron import reaches this tree.
-
 import type { MouseEvent } from "react";
 
 import * as React from "react";
@@ -22,10 +13,15 @@ import { NodeScopedProvider } from "./node-scoped-provider";
 import { useNodeTrpc } from "./node-trpc";
 import { consoleHref, parseConsoleRoute } from "./router";
 import { INVALID_SESSION_MESSAGE, useInvalidSession } from "./session-store";
+import { DashboardView } from "./views/dashboard";
 import { FleetView } from "./views/fleet";
 import { LogsView } from "./views/logs";
 import { NodesView } from "./views/nodes";
+import { ObservabilityView } from "./views/observability";
 import { WorkloadsView } from "./views/workloads";
+import "./console.css";
+
+const ChatView = React.lazy(async () => ({ default: (await import("./views/chat")).ChatView }));
 
 interface ShellLocation {
   pathname: string;
@@ -51,12 +47,29 @@ function RoutedView({
   navigate: (next: ConsoleRoute) => void;
 }): React.JSX.Element {
   switch (route.view) {
+    case "chat":
+      return (
+        <React.Suspense
+          fallback={
+            <p className="console-page" role="status">
+              Loading chat…
+            </p>
+          }
+        >
+          <ChatView key={tabNode} node={tabNode} />
+        </React.Suspense>
+      );
+    case "dashboard":
+      return <DashboardView />;
     case "workloads":
       return <WorkloadsView route={route} onSuccessToast={onSuccessToast} />;
     case "fleet":
       return <FleetView />;
     case "nodes":
       return <NodesView />;
+    case "stats":
+    case "runs":
+      return <ObservabilityView mode={route.view} />;
     case "logs":
       return (
         <LogsView
@@ -91,22 +104,17 @@ function ConsoleTitleBar({
   }, [data, onNodeList]);
   const options = dispatchableNodes(data ?? { nodes: [] });
   return (
-    <header style={{ display: "flex", alignItems: "center", gap: 16, padding: "8px 16px" }}>
-      <span style={{ fontWeight: 600 }}>llamactl console</span>
-      <select
-        aria-label="Tab node"
-        value={tabNode}
-        onChange={(event) => {
-          onSelectNode(event.target.value);
+    <header className="console-topbar">
+      <a
+        className="console-brand"
+        href={consoleHref({ view: "dashboard", node: tabNode })}
+        onClick={(event) => {
+          onNavigate(event, { view: "dashboard", node: tabNode });
         }}
       >
-        {options.map((entry: ConsoleNodeEntry) => (
-          <option key={entry.name} value={entry.name}>
-            {entry.name}
-          </option>
-        ))}
-      </select>
-      <nav style={{ display: "flex", gap: 12 }}>
+        llamactl
+      </a>
+      <nav className="console-nav" aria-label="Console pages">
         {CONSOLE_MODULES.map((module) => (
           <a
             key={module.id}
@@ -115,12 +123,28 @@ function ConsoleTitleBar({
             onClick={(event) => {
               onNavigate(event, { view: module.id, node: tabNode });
             }}
-            style={{ textDecoration: "none" }}
           >
             {module.label}
           </a>
         ))}
       </nav>
+      <label className="console-tab-node">
+        <span className="console-caption">Tab node</span>
+        <select
+          aria-label="Tab node"
+          className="console-select"
+          value={tabNode}
+          onChange={(event) => {
+            onSelectNode(event.target.value);
+          }}
+        >
+          {options.map((entry: ConsoleNodeEntry) => (
+            <option key={entry.name} value={entry.name}>
+              {entry.name}
+            </option>
+          ))}
+        </select>
+      </label>
     </header>
   );
 }
@@ -159,7 +183,7 @@ export function ConsoleShell(): React.JSX.Element {
   }
 
   return (
-    <div style={{ display: "grid", gap: 8, minWidth: 0 }}>
+    <div className="console-shell">
       <NodeScopedProvider node={tab.node}>
         <ConsoleTitleBar
           route={location.route}

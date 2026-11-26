@@ -1,5 +1,5 @@
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import {
   auth,
@@ -107,21 +107,29 @@ export async function makeCluster(opts: MakeClusterOptions): Promise<Cluster> {
       const devStorage = mkdtempSync(join(tmpdir(), `llamactl-cluster-${name}-`));
       const runtimeDir = join(devStorage, "ai-models", "local-ai");
       const agentDir = join(devStorage, "agent");
-      const cert = await tls.generateSelfSignedCert({
-        dir: agentDir,
-        commonName: "127.0.0.1",
-        hostnames: ["127.0.0.1", "localhost"],
-      });
+      let cert: Awaited<ReturnType<typeof tls.generateSelfSignedCert>>;
+      let agent: ReturnType<typeof startAgentServer>;
       const token = auth.generateToken();
-      const agent = startAgentServer({
-        bindHost: "127.0.0.1",
-        port: 0,
-        tokenHash: token.hash,
-        tls: { certPath: cert.certPath, keyPath: cert.keyPath },
-        // Hermetic test clusters stay off the LAN — mDNS would
-        // otherwise make every test run advertise itself.
-        advertiseMdns: false,
-      });
+      try {
+        cert = await tls.generateSelfSignedCert({
+          dir: agentDir,
+          commonName: "127.0.0.1",
+          hostnames: ["127.0.0.1", "localhost"],
+        });
+        agent = startAgentServer({
+          bindHost: "127.0.0.1",
+          port: 0,
+          tokenHash: token.hash,
+          tls: { certPath: cert.certPath, keyPath: cert.keyPath },
+          // Hermetic test clusters stay off the LAN — mDNS would
+          // otherwise make every test run advertise itself.
+          advertiseMdns: false,
+        });
+      } catch (err) {
+        // Not yet in `handles`, so the outer cleanup would miss it.
+        rmSync(devStorage, { recursive: true, force: true });
+        throw err;
+      }
       cfg = kubecfg.upsertNode(cfg, "home", {
         name,
         endpoint: agent.url,
@@ -147,8 +155,11 @@ export async function makeCluster(opts: MakeClusterOptions): Promise<Cluster> {
         agent,
         client,
         stop: async () => {
-          await agent.stop();
-          rmSync(devStorage, { recursive: true, force: true });
+          try {
+            await agent.stop();
+          } finally {
+            rmSync(devStorage, { recursive: true, force: true });
+          }
         },
       });
     }
@@ -159,14 +170,21 @@ export async function makeCluster(opts: MakeClusterOptions): Promise<Cluster> {
   }
 
   const clusterConfigPath = join(mkdtempSync(join(tmpdir(), "llamactl-cluster-config-")), "config");
-  kubecfg.saveConfig(cfg, clusterConfigPath);
+  try {
+    kubecfg.saveConfig(cfg, clusterConfigPath);
+  } catch (err) {
+    for (const h of handles) await h.stop().catch(() => undefined);
+    rmSync(dirname(clusterConfigPath), { recursive: true, force: true });
+    throw err;
+  }
 
   return {
     nodes: handles,
     clusterConfigPath,
     cleanup: async (): Promise<void> => {
       for (const h of handles) await h.stop().catch(() => undefined);
-      rmSync(clusterConfigPath, { force: true });
+      // Remove the whole mkdtemp dir, not just the config file in it.
+      rmSync(dirname(clusterConfigPath), { recursive: true, force: true });
     },
   };
 }

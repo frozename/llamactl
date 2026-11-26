@@ -1095,6 +1095,23 @@ gateway reason (`scheduled suites reach <rel> through the agent gateway; no GGUF
 `createPerfBenchSuiteRunner`,
 `packages/cli/src/commands/bench-schedule.ts`).
 
+### Listing suite schedules
+
+`llamactl bench schedule list` and `llamactl bench schedule status` print
+one row per schedule. Two columns show what a suite schedule records:
+`KIND` and `DECLARED` (`ROW_HEADERS`,
+`packages/cli/src/commands/bench-schedule.ts`). `KIND` is `preset` for a
+bench-preset schedule and `suite:<suite>` for a suite schedule
+(`scheduleKindCell`). `DECLARED` lists the suite fields the schedule
+declares, in the order `engine`, `slots`, `quant`, `ctx`, `flags`,
+`hfRevision`, each as `<field>=<value>` joined by commas. For flags the
+value is the number of declared launch-flag tokens, not the tokens. A
+preset schedule, or a suite schedule that declares none of them, shows `-`
+(`declaredSuiteFieldsCell`). A field missing from `DECLARED` falls back as
+described above: the engine records `llamacpp`, c2/c4 record unavailable
+without a slot count, and quant, ctx, flags and hf_revision record null
+with the gateway reason. `--json` still prints every stored field.
+
 ### Comparing perf runs for an arm
 
 `perf.sqlite` rows from `llamactl eval perf` and from scheduled suites can
@@ -1387,3 +1404,7 @@ numeric fields (verify `packages/eval/src/matrix/diff.ts`).
 
 Without `--all-runs` the diff keeps the latest cell per model and
 workload by `started_at`, scored or not.
+
+### Provenance in a matrix report
+
+Every matrix run collects provenance for each model through `collectEvalProvenance` and stores it in the `matrix_provenance` table (`insertMatrixProvenance`, `packages/eval/src/matrix/store.ts`). The markdown report written with `--report md` or `--report both` ends with a `## Provenance` section (`renderMarkdownReport`, `packages/eval/src/matrix/report.ts`). It is loaded from that table for the report's run, or for every run with `--report-all-runs` (`writeReport`, `packages/eval/src/matrix/cli.ts`). Its table is headed `| Run | Model | Field | Value |` and lists one row per field, in the order of `PERF_PROVENANCE_DIFF_FIELDS` (`packages/eval/src/perf/diff.ts`). A null field renders `unavailable (<reason>)` with the reason recorded in `provenance.unavailable`, or `unavailable (not recorded)` when the row holds none; it never renders a guessed value. An empty `flags` list renders `(none)`. A model that has cells in the report but no provenance row, for example because provenance collection failed, gets a single `(all)` row reading `unavailable (not recorded)`. The section follows `## Unavailable cells` and `## Per-workload winner`, so it comes after the unscored-cell lines described in Unscored matrix cells for an arm. The runner collects provenance before it boots the model, so a model whose cells are unscored because its boot failed or was refused still has a provenance row. The CSV report carries no provenance.

@@ -64,6 +64,7 @@ export {
   parseConsoleNodePath,
   validateConsoleNode,
 } from "./console/node-route.js";
+export { type PenumbraHandoffs } from "./console/penumbra.js";
 export { redactDeep } from "./console/redact.js";
 export {
   type RunningConsoleServer,
@@ -94,6 +95,7 @@ export {
   dispatchOpsChatTool,
   KNOWN_OPS_CHAT_TOOLS,
   OPS_CHAT_TOOLS,
+  opsChatStopRefusal,
   type ToolTier as OpsChatTier,
   type OpsChatToolName,
   toolTier as opsChatToolTier,
