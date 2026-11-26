@@ -204,6 +204,7 @@ describe("controller kubeconfig path honours --cluster-config (#221)", () => {
       resetGlobals();
       if (previousWorkloads === undefined) delete process.env["LLAMACTL_WORKLOADS_DIR"];
       else process.env["LLAMACTL_WORKLOADS_DIR"] = previousWorkloads;
+      rmSync(workloadsDir, { recursive: true, force: true });
       rmSync(base, { recursive: true, force: true });
     }
   });
