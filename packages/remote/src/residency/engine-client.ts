@@ -529,10 +529,10 @@ async function runUnload(ctx: ClientCtx): Promise<NativeUnloadResult> {
   return { kind: "refused", reason: "StatusUnavailable", reservation: "held" };
 }
 
-function sessionUnloadRefusal(
-  sessions: SessionRefcounts | null | undefined,
+export function sessionUnloadRefusal(
+  sessions: Pick<SessionRefcounts, "checkUnload"> | null | undefined,
   workload: string,
-): NativeUnloadResult | null {
+): Extract<NativeUnloadResult, { active: string[] }> | null {
   const resolved = sessions === undefined ? currentSessionRefcounts() : sessions;
   if (resolved === null) return null;
   let check;
