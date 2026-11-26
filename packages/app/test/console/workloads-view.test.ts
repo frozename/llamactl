@@ -445,15 +445,19 @@ describe("workloads view (#410 P5a-3b)", () => {
     expect(typeof WorkloadsView).toBe("function");
     if (WorkloadsView === undefined) return;
 
-    const qwenTree = WorkloadsView({
-      route: { view: "workloads", workload: "qwen" },
-      onSuccessToast,
-    });
-    const bigTree = WorkloadsView({
-      route: { view: "workloads", workload: "big" },
-      onSuccessToast,
-    });
-    const plainTree = WorkloadsView({ route: { view: "workloads" }, onSuccessToast });
+    function renderTree(route: ConsoleRoute): unknown {
+      let tree: unknown;
+      function Capture(): null {
+        tree = WorkloadsView!({ route, onSuccessToast });
+        return null;
+      }
+      renderToStaticMarkup(createElement(Capture));
+      return tree;
+    }
+
+    const qwenTree = renderTree({ view: "workloads", workload: "qwen" });
+    const bigTree = renderTree({ view: "workloads", workload: "big" });
+    const plainTree = renderTree({ view: "workloads" });
 
     // Reverting the view to key={row.name} pins every card's key to a
     // constant: qwen and big would keep their useState drawer state
