@@ -52,7 +52,7 @@ test("a full recorded session never carries a sentinel past the console projecti
   control,
   page,
 }, testInfo) => {
-  await page.goto("/");
+  await page.goto("/fleet");
   await expect(page.getByTestId("console-view-fleet")).toBeVisible();
 
   const context = await browser.newContext({
@@ -69,7 +69,7 @@ test("a full recorded session never carries a sentinel past the console projecti
     bodies.push(response.text().catch(() => ""));
   });
 
-  await harPage.goto("/");
+  await harPage.goto("/fleet");
   await expect(harPage.getByTestId("console-fleet-node-agent-off")).toContainText(
     "unreachable: e2e node unreachable",
   );

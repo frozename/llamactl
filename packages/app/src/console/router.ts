@@ -1,4 +1,4 @@
-// #410 P5a, console path router: four views, optional deep-link on
+// #410 P5a, console path router, optional deep-link on
 // workloads and logs, ?node= validation against the console node-name
 // rule, unknown paths degrade to fleet notFound.
 
@@ -7,12 +7,7 @@ import type { ConsoleViewId } from "./console-manifest";
 import { CONSOLE_MODULES } from "./console-manifest";
 import { isConsoleNodeName } from "./node-scope";
 
-const VIEW_ROUTES: ReadonlyMap<string, ConsoleViewId> = new Map([
-  ["fleet", "fleet"],
-  ["workloads", "workloads"],
-  ["nodes", "nodes"],
-  ["logs", "logs"],
-]);
+const VIEW_ROUTES = new Map(CONSOLE_MODULES.map(({ id, path }) => [path.slice(1) || id, id]));
 
 export interface ConsoleRoute {
   view: ConsoleViewId;
@@ -25,8 +20,7 @@ export interface ConsoleRoute {
 function parsePathname(pathname: string): { view: ConsoleViewId | null; workload: string | null } {
   const segments = pathname.split("/").filter((s) => s.length > 0);
 
-  // Root path "/" → empty segments → fleet.
-  if (segments.length === 0) return { view: "fleet", workload: null };
+  if (segments.length === 0) return { view: "dashboard", workload: null };
 
   const [first, second, third] = segments;
 
@@ -38,9 +32,8 @@ function parsePathname(pathname: string): { view: ConsoleViewId | null; workload
   // 3+ segments = notFound (handled by caller).
   // For nodes: only 1 segment is valid; 2+ = notFound.
   if (third !== undefined) return { view: null, workload: null };
-  if (viewId === "nodes" && second !== undefined) return { view: null, workload: null };
-  if (viewId === "nodes") return { view: "nodes", workload: null };
   if (second === undefined) return { view: viewId, workload: null };
+  if (viewId !== "workloads" && viewId !== "logs") return { view: null, workload: null };
 
   // Second segment is the workload name (workloads or logs).
   try {

@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import type { ModelHostSpecForEngine } from "../../src/engines/types.js";
 
@@ -93,7 +93,8 @@ describe("omlx engine dflash boot command", () => {
 
   afterAll(() => {
     try {
-      rmSync(fakeBinary, { force: true });
+      // Remove the whole mkdir'd directory, not just the binary inside it (#870).
+      rmSync(dirname(fakeBinary), { recursive: true, force: true });
     } catch {
       // Best-effort cleanup; failures are not actionable here.
     }

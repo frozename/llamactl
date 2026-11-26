@@ -144,6 +144,10 @@ const trpcStub = new Proxy<Record<string, unknown>>(
     get: (_target, property): unknown => {
       if (typeof property !== "string") return undefined;
       accessedProcedures.add(property);
+      if (property === "useQueries") {
+        return (build: (queries: { nodeTest: (input: unknown) => unknown }) => unknown): unknown =>
+          build({ nodeTest: (input) => queryResult("nodeTest", input, true) });
+      }
       return procedureStub(property);
     },
   },
@@ -284,7 +288,7 @@ function renderShell(): string {
 }
 
 describe("console shell (#410 P5a-3b)", () => {
-  test("nav lists the four console views in order with the tab node and marks the current view", () => {
+  test("nav lists the console views in order with the tab node and marks the current view", () => {
     const ConsoleShell = mod.ConsoleShell;
     expect(typeof ConsoleShell).toBe("function");
     setLocation("/", "");
@@ -295,13 +299,17 @@ describe("console shell (#410 P5a-3b)", () => {
     const nav = /<nav\b[^>]*>[\s\S]*?<\/nav>/.exec(markup);
     expect(nav).not.toBeNull();
     const anchors = [...(nav?.[0] ?? "").matchAll(/<a\b[^>]*>[\s\S]*?<\/a>/g)].map((m) => m[0]);
-    expect(anchors).toHaveLength(4);
+    expect(anchors).toHaveLength(8);
 
     const views = [
+      { id: "dashboard", label: "Dashboard" },
       { id: "fleet", label: "Fleet" },
       { id: "workloads", label: "Workloads" },
       { id: "nodes", label: "Nodes" },
       { id: "logs", label: "Logs" },
+      { id: "stats", label: "Fleet Stats" },
+      { id: "runs", label: "Runs" },
+      { id: "chat", label: "Chat" },
     ] as const;
     for (const [index, view] of views.entries()) {
       const anchor = anchors[index]!;
@@ -315,10 +323,10 @@ describe("console shell (#410 P5a-3b)", () => {
 
     const current = anchors.filter((anchor) => anchor.includes('aria-current="page"'));
     expect(current).toHaveLength(1);
-    expect(current[0]).toContain(`href="${consoleHref({ view: "fleet", node: "local" })}"`);
+    expect(current[0]).toContain(`href="${consoleHref({ view: "dashboard", node: "local" })}"`);
   });
 
-  test("/workloads?node=remote1 renders the workloads view with remote1 selected; / renders fleet", () => {
+  test("/workloads?node=remote1 renders the workloads view with remote1 selected; / renders Dashboard", () => {
     const ConsoleShell = mod.ConsoleShell;
     expect(typeof ConsoleShell).toBe("function");
 
@@ -344,11 +352,26 @@ describe("console shell (#410 P5a-3b)", () => {
 
     setLocation("/", "");
     consoleNode = "local";
-    const fleetMarkup = renderShell();
-    expect(fleetMarkup).toContain('data-testid="console-view-fleet"');
-    expect(fleetMarkup).toContain('data-testid="console-fleet-tab-node"');
-    expect(fleetMarkup).not.toContain("console-placeholder-fleet");
-    expect(fleetMarkup).not.toContain("console-view-workloads");
+    const dashboard = renderShell();
+    expect(dashboard).toContain('data-testid="console-view-dashboard"');
+    expect(dashboard).toContain("Fleet reachable");
+    expect(dashboard).not.toContain("console-view-workloads");
+
+    setLocation("/fleet", "");
+    expect(renderShell()).toContain('data-testid="console-fleet-tab-node"');
+  });
+
+  test("the landing dashboard surfaces a reachable fleet's workload issues", () => {
+    setLocation("/", "");
+    queryResults["workloadList"] = [
+      { name: "broken", kind: "ModelHost", node: "local", phase: "Foreign" },
+      { name: "offline-by-choice", kind: "ModelRun", node: "local", phase: "Stopped" },
+    ];
+    const markup = renderShell();
+    expect(markup).toContain("Attention needed");
+    expect(markup).toContain("Workload issues");
+    expect(markup).toContain("broken");
+    expect(markup).not.toContain("offline-by-choice");
   });
 
   test("a /workloads/<name> deep link reaches WorkloadsView and opens exactly that drawer", () => {
