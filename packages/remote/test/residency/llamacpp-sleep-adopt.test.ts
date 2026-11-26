@@ -83,6 +83,21 @@ function member(id: string, rk = `rk-${id}`, dg = `d-${id}`): SleepMember {
   return { id, runtimeKey: rk, specDigest: dg, allocationGiB: 8, capability: GUARDED };
 }
 
+function sized(id: string, allocationGiB: number): SleepMember {
+  return { id, runtimeKey: "rk-g", specDigest: "d-g", allocationGiB, capability: GUARDED };
+}
+
+function expectGroupBilledAtCore(
+  authority: TargetAdmissionAuthority,
+  controller: LlamacppSleepController,
+  expectedGiB: number,
+): void {
+  expect(controller.snapshot().committedGiB).toBe(expectedGiB);
+  const groupClaims = targetClaims(authority).filter((claim) => claim.runtimeKey === "rk-g");
+  expect(groupClaims).toHaveLength(1);
+  expect(groupClaims[0]?.allocationGiB).toBe(expectedGiB);
+}
+
 function foreignClaim(
   authority: TargetAdmissionAuthority,
   gib: number,
@@ -388,5 +403,98 @@ describe("llama.cpp sleep adoption into the shared TargetAdmissionAuthority (DF-
       claimId: existing.handle!.claimId,
       state: "resident",
     });
+  });
+  test("#283 adopt A12: a larger member adopted after a smaller one raises the group claim", () => {
+    const authority = createTargetAdmissionAuthority();
+    const controller = boundController(authority, () => 16);
+
+    controller.register(sized("s", 4), "ready");
+    expectGroupBilledAtCore(authority, controller, 4);
+    controller.register(sized("l", 12), "ready");
+
+    expectGroupBilledAtCore(authority, controller, 12);
+    const foreign = foreignClaim(authority, 10, 16);
+    expect(foreign.decision).toMatchObject({ kind: "refuse", reason: "BudgetExceeded" });
+    expect(foreign.handle).toBeNull();
+  });
+
+  test("#283 adopt A13: a smaller member adopted after a larger one keeps the larger bill", () => {
+    const authority = createTargetAdmissionAuthority();
+    const controller = boundController(authority, () => 16);
+
+    controller.register(sized("l", 12), "ready");
+    controller.register(sized("s", 4), "ready");
+
+    expectGroupBilledAtCore(authority, controller, 12);
+    const foreign = foreignClaim(authority, 10, 16);
+    expect(foreign.decision).toMatchObject({ kind: "refuse", reason: "BudgetExceeded" });
+    expect(foreign.handle).toBeNull();
+  });
+
+  test("#283 adopt A14: an auto-wake of the larger member raises the group claim before it is ready", () => {
+    const authority = createTargetAdmissionAuthority();
+    const controller = boundController(authority, () => 16);
+    controller.register(sized("s", 4), "ready");
+    controller.register(sized("l", 12), "sleeping");
+    expectGroupBilledAtCore(authority, controller, 4);
+
+    controller.observe("l", "loading");
+    expectGroupBilledAtCore(authority, controller, 12);
+    expect(foreignClaim(authority, 10, 16).decision).toMatchObject({
+      kind: "refuse",
+      reason: "BudgetExceeded",
+    });
+
+    controller.observe("l", "ready");
+    expectGroupBilledAtCore(authority, controller, 12);
+    expect(claimFor(authority, "rk-g")).toMatchObject({ state: "resident" });
+    const foreign = foreignClaim(authority, 10, 16);
+    expect(foreign.decision).toMatchObject({ kind: "refuse", reason: "BudgetExceeded" });
+    expect(foreign.handle).toBeNull();
+  });
+
+  test("#283 adopt A15: an auto-wake straight to ready of the larger member raises the group claim", () => {
+    const authority = createTargetAdmissionAuthority();
+    const controller = boundController(authority, () => 16);
+    controller.register(sized("s", 4), "ready");
+    controller.register(sized("l", 12), "sleeping");
+
+    controller.observe("l", "ready");
+
+    expectGroupBilledAtCore(authority, controller, 12);
+    const foreign = foreignClaim(authority, 10, 16);
+    expect(foreign.decision).toMatchObject({ kind: "refuse", reason: "BudgetExceeded" });
+    expect(foreign.handle).toBeNull();
+  });
+
+  test("#283 adopt A16: the group claim follows core down when the larger member sleeps", () => {
+    const authority = createTargetAdmissionAuthority();
+    const controller = boundController(authority, () => 16);
+    controller.register(sized("s", 4), "ready");
+    controller.register(sized("l", 12), "ready");
+    expectGroupBilledAtCore(authority, controller, 12);
+
+    expect(controller.requestSleep("l").kind).toBe("sleep");
+    // A sleep in flight is still resident: no early drop.
+    expectGroupBilledAtCore(authority, controller, 12);
+    controller.sleepSettled("l", "slept");
+
+    expectGroupBilledAtCore(authority, controller, 4);
+    expect(claimFor(authority, "rk-g")).toMatchObject({ state: "resident" });
+    expect(foreignClaim(authority, 10, 16).decision).toMatchObject({ kind: "admit" });
+  });
+
+  test("#283 adopt A17: the group claim follows core down when the larger member stops", () => {
+    const authority = createTargetAdmissionAuthority();
+    const controller = boundController(authority, () => 16);
+    controller.register(sized("l", 12), "ready");
+    controller.register(sized("s", 4), "ready");
+
+    controller.observe("l", "stopped");
+
+    expectGroupBilledAtCore(authority, controller, 4);
+    controller.observe("s", "stopped");
+    expect(controller.snapshot().committedGiB).toBe(0);
+    expect(claimFor(authority, "rk-g")).toBeUndefined();
   });
 });

@@ -430,6 +430,9 @@ export function modelHostAdmissionChargeGiB(input: {
  * ledger — valid only after a confirmed release, such as a confirmed
  * native unload, and never after an ambiguous outcome. Resident claims
  * stay absorbing for the apply path, which never calls these two.
+ * `restateAllocation` rewrites a held claim's billed allocation from
+ * observed residency — like `adopt`, it is a record, not an admission, so
+ * it runs no budget check (a no-op once released).
  */
 export interface TargetAdmissionClaimHandle {
   claimId: string;
@@ -439,6 +442,7 @@ export interface TargetAdmissionClaimHandle {
   releaseUnstarted(): void;
   demoteUncertain(): void;
   releaseVerified(): void;
+  restateAllocation(allocationGiB: number | undefined): void;
 }
 
 type ClaimFinder = (targetIdentity: string, claimId: string) => ManagedAdmissionClaim | undefined;
@@ -497,6 +501,10 @@ function makeClaimHandle(
       const idx = list.findIndex((c) => c.claimId === claimId);
       const held = idx >= 0 ? list[idx]?.state : undefined;
       if (idx >= 0 && (held === "resident" || held === "uncertain")) list.splice(idx, 1);
+    },
+    restateAllocation: (allocationGiB: number | undefined): void => {
+      const c = findClaim(targetIdentity, claimId);
+      if (c !== undefined) c.allocationGiB = allocationGiB;
     },
   };
 }

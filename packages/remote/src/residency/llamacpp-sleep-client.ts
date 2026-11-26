@@ -384,12 +384,30 @@ function createSharedAdmission(input: {
   };
 }
 
-// Folds one runtime group's member reservations into its shared claim.
-// Returns true when every member released, so the caller drops the handle.
+type GroupMemberEntry = { member: SleepMember; reservation: SleepReservation };
+
+// Mirrors core computeCommittedGiB for one runtime group: the largest
+// allocation among members whose reservation is not released (0 when none).
+function largestHeldAllocationGiB(entries: readonly GroupMemberEntry[]): number {
+  let allocationGiB = 0;
+  for (const entry of entries) {
+    if (entry.reservation === "released") continue;
+    if (entry.member.allocationGiB > allocationGiB) allocationGiB = entry.member.allocationGiB;
+  }
+  return allocationGiB;
+}
+
+// Folds one runtime group's member reservations into its shared claim,
+// billing it at its largest held allocation on every sync so a larger
+// member observed awake raises the bill (and its release lowers it) exactly
+// as core committedGiB does. The bill is restated before the state fold, so
+// the ledger never reads a ready member at a smaller allocation. Returns
+// true when every member released, so the caller drops the handle.
 function foldGroupClaim(
   handle: TargetAdmissionClaimHandle,
-  reservations: readonly SleepReservation[],
+  entries: readonly GroupMemberEntry[],
 ): boolean {
+  const reservations = entries.map((entry) => entry.reservation);
   if (reservations.every((reservation) => reservation === "released")) {
     if (handle.state() === "pending") {
       handle.releaseUnstarted();
@@ -398,6 +416,7 @@ function foldGroupClaim(
     }
     return true;
   }
+  handle.restateAllocation(largestHeldAllocationGiB(entries));
   if (reservations.some((reservation) => reservation === "pending")) return false;
   if (reservations.some((reservation) => reservation === "resident")) {
     handle.markResident();
@@ -407,8 +426,6 @@ function foldGroupClaim(
   handle.demoteUncertain();
   return false;
 }
-
-type GroupMemberEntry = { member: SleepMember; reservation: SleepReservation };
 
 // A group's reservations fold into one claimed state the way core folds them
 // into one runtime-group claim: pending wins, then resident, else uncertain.
@@ -434,10 +451,7 @@ function adoptGroupClaim(input: {
   const held = input.entries.filter((entry) => entry.reservation !== "released");
   const [first] = held;
   if (first === undefined) return;
-  let allocationGiB = 0;
-  for (const entry of held) {
-    if (entry.member.allocationGiB > allocationGiB) allocationGiB = entry.member.allocationGiB;
-  }
+  const allocationGiB = largestHeldAllocationGiB(held);
   const adopted = input.authority.adopt({
     targetIdentity: input.targetIdentity,
     runtimeKey: first.member.runtimeKey,
@@ -504,8 +518,7 @@ export function createSharedBudgetSleepController(
       });
       return;
     }
-    const reservations = groupEntries(groupKey).map((entry) => entry.reservation);
-    if (foldGroupClaim(handle, reservations)) handles.delete(groupKey);
+    if (foldGroupClaim(handle, groupEntries(groupKey))) handles.delete(groupKey);
   };
 
   return {
