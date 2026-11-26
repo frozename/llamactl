@@ -156,27 +156,38 @@ export function formatMetric(metric: MetricValue, digits: number): string {
   return fmt(metric.value, digits);
 }
 
+// #521: cells with n_rows <= 0 render "unavailable" after the scored row.
 export function renderMd(cells: Cell[]): string {
-  const sorted = [...cells].sort(
-    (a, b) =>
-      a.workload_name.localeCompare(b.workload_name) ||
-      b.primary_metric_value - a.primary_metric_value ||
-      a.model_name.localeCompare(b.model_name),
-  );
+  const sorted = [...cells].sort((a, b) => {
+    const wl = a.workload_name.localeCompare(b.workload_name);
+    if (wl !== 0) return wl;
+    const aScored = a.n_rows > 0;
+    const bScored = b.n_rows > 0;
+    // Scored cells first within a workload.
+    if (aScored !== bScored) return aScored ? -1 : 1;
+    // Both scored: descending primary_metric_value.
+    if (aScored && bScored) {
+      const mv = b.primary_metric_value - a.primary_metric_value;
+      if (mv !== 0) return mv;
+    }
+    // Both unscored (or tied): model_name asc.
+    return a.model_name.localeCompare(b.model_name);
+  });
   const lines = [
     "| Workload | Model | n | Metric | Value | tps | p50_ms | err |",
     "|---|---|---|---|---|---|---|---|",
   ];
   for (const c of sorted) {
+    const isUnscored = c.n_rows <= 0;
     lines.push(
       `| ${[
         mdField(c.workload_name),
         mdField(c.model_name),
         String(c.n_rows),
         mdField(c.primary_metric_name),
-        fmt(c.primary_metric_value, 4),
-        fmt(c.throughput_tps, 2),
-        fmt(c.latency_p50_ms, 0),
+        isUnscored ? "unavailable" : fmt(c.primary_metric_value, 4),
+        isUnscored ? "unavailable" : fmt(c.throughput_tps, 2),
+        isUnscored ? "unavailable" : fmt(c.latency_p50_ms, 0),
         String(c.errors),
       ].join(" | ")} |`,
     );
@@ -184,24 +195,26 @@ export function renderMd(cells: Cell[]): string {
   return lines.join("\n") + "\n";
 }
 
+// #521: cells with n_rows <= 0 render "unavailable" for value/tps/p50_ms.
 export function renderCsv(cells: Cell[]): string {
   const header = "workload,model,n,metric,value,tps,p50_ms,errors,run_id,started_at";
-  const rows = cells.map((c) =>
-    [
+  const rows = cells.map((c) => {
+    const isUnscored = c.n_rows <= 0;
+    return [
       c.workload_name,
       c.model_name,
       String(c.n_rows),
       c.primary_metric_name,
-      fmt(c.primary_metric_value, 4),
-      fmt(c.throughput_tps, 2),
-      fmt(c.latency_p50_ms, 0),
+      isUnscored ? "unavailable" : fmt(c.primary_metric_value, 4),
+      isUnscored ? "unavailable" : fmt(c.throughput_tps, 2),
+      isUnscored ? "unavailable" : fmt(c.latency_p50_ms, 0),
       String(c.errors),
       c.run_id,
       c.started_at,
     ]
       .map(csvField)
-      .join(","),
-  );
+      .join(",");
+  });
   return [header, ...rows].join("\n") + "\n";
 }
 
