@@ -20,32 +20,6 @@ import {
 } from "../fleet-scope";
 import { useConsoleNode, useNodeTrpc } from "../node-trpc";
 
-const sectionStyle: React.CSSProperties = { display: "grid", gap: 16, padding: 16 };
-const gridStyle: React.CSSProperties = {
-  display: "grid",
-  gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))",
-  gap: 8,
-};
-const tileStyle: React.CSSProperties = {
-  display: "grid",
-  gap: 6,
-  padding: 12,
-  border: "1px solid var(--color-border)",
-  borderRadius: "var(--r-md, 6px)",
-};
-const headingStyle: React.CSSProperties = { fontSize: 13, fontWeight: 600, margin: 0 };
-const nameStyle: React.CSSProperties = {
-  fontFamily: "var(--font-mono, monospace)",
-  fontSize: 13,
-  fontWeight: 600,
-};
-const secondaryStyle: React.CSSProperties = { fontSize: 12, color: "var(--color-text-secondary)" };
-const monoStyle: React.CSSProperties = {
-  fontFamily: "var(--font-mono, monospace)",
-  fontSize: 11,
-};
-const cardRowStyle: React.CSSProperties = { display: "flex", gap: 8, fontSize: 12 };
-
 function FleetNodeTile({
   name,
   kind,
@@ -63,9 +37,9 @@ function FleetNodeTile({
   );
   const reach = nodeReachability({ data: testQuery.data, isError: testQuery.isError });
   return (
-    <div data-testid={`console-fleet-node-${name}`} style={tileStyle}>
-      <span style={nameStyle}>{name}</span>
-      <span style={secondaryStyle}>{kind}</span>
+    <div data-testid={`console-fleet-node-${name}`} className="console-panel">
+      <span className="console-item-title">{name}</span>
+      <span className="console-caption">{kind}</span>
       <StatusDot tone={reach.tone} label={reach.label} />
       {isDefault ? <Badge variant="brand">default</Badge> : null}
       {newTabHref !== null ? (
@@ -73,7 +47,7 @@ function FleetNodeTile({
           href={newTabHref}
           target="_blank"
           rel="noopener noreferrer"
-          style={{ fontSize: 12 }}
+          className="console-caption"
         >{`Open in new tab on ${name}`}</a>
       ) : null}
     </div>
@@ -93,10 +67,11 @@ export function FleetView(): React.JSX.Element {
   const card = tabNodeCard(envQuery.data, nodeFactsQuery.data);
 
   return (
-    <section data-testid="console-view-fleet" style={sectionStyle}>
-      <div>
-        <h2 style={headingStyle}>Nodes</h2>
-        <div data-testid="console-fleet-node-map" style={gridStyle}>
+    <main data-testid="console-view-fleet" className="console-page">
+      <h1>Fleet</h1>
+      <section className="console-panel">
+        <h2>Nodes</h2>
+        <div data-testid="console-fleet-node-map" className="console-card-grid">
           {rows.map((row) => (
             <FleetNodeTile
               key={row.name}
@@ -107,30 +82,24 @@ export function FleetView(): React.JSX.Element {
             />
           ))}
         </div>
-      </div>
-      <div>
-        <h2 style={headingStyle}>Exposed workloads</h2>
+      </section>
+      <section className="console-panel">
+        <h2>Exposed workloads</h2>
         {exposed.length === 0 ? (
-          <p data-testid="console-fleet-exposed" style={secondaryStyle}>
+          <p data-testid="console-fleet-exposed" className="console-caption">
             No workloads currently serving.
           </p>
         ) : (
-          <ul
-            data-testid="console-fleet-exposed"
-            style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 6 }}
-          >
+          <ul data-testid="console-fleet-exposed" className="console-list">
             {exposed.map((workload) => (
-              <li
-                key={`${workload.node}/${workload.name}`}
-                style={{ display: "flex", gap: 8, alignItems: "center" }}
-              >
-                <span style={nameStyle}>{workload.name}</span>
-                <span style={secondaryStyle}>{workload.node}</span>
+              <li key={`${workload.node}/${workload.name}`} className="console-list-row">
+                <span className="console-item-title">{workload.name}</span>
+                <span className="console-caption">{workload.node}</span>
                 <a
                   href={workload.endpoint}
                   target="_blank"
                   rel="noopener noreferrer"
-                  style={monoStyle}
+                  className="console-readout"
                 >
                   {workload.endpoint}
                 </a>
@@ -138,24 +107,24 @@ export function FleetView(): React.JSX.Element {
             ))}
           </ul>
         )}
-      </div>
-      <div>
-        <h2 style={headingStyle}>This tab&apos;s node</h2>
-        <div data-testid="console-fleet-tab-node" style={{ display: "grid", gap: 4 }}>
+      </section>
+      <section className="console-panel">
+        <h2>This tab&apos;s node</h2>
+        <div data-testid="console-fleet-tab-node" className="console-list">
           {card.facts.map((entry) => (
-            <div key={`fact-${entry.key}`} style={cardRowStyle}>
-              <span style={secondaryStyle}>{entry.key}</span>
-              <span style={monoStyle}>{entry.value}</span>
+            <div key={`fact-${entry.key}`} className="console-kv">
+              <span className="console-caption">{entry.key}</span>
+              <span className="console-readout">{entry.value}</span>
             </div>
           ))}
           {card.env.map((entry) => (
-            <div key={`env-${entry.key}`} style={cardRowStyle}>
-              <span style={monoStyle}>{entry.key}</span>
-              <span style={monoStyle}>{entry.value}</span>
+            <div key={`env-${entry.key}`} className="console-kv">
+              <span className="console-readout">{entry.key}</span>
+              <span className="console-readout">{entry.value}</span>
             </div>
           ))}
         </div>
-      </div>
-    </section>
+      </section>
+    </main>
   );
 }

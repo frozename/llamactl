@@ -784,6 +784,12 @@ describe("I1: clean install", () => {
     BASELINE_ENV.add("LLAMACTL_CHAT_ADMISSION_MAX_QUEUED");
     // #806 phase 3: engine scope kill switch, read by the CLI agent.
     BASELINE_ENV.add("LLAMACTL_ENGINE_SCOPE");
+    // #859: live fleet dashboard. Observed-model inventory path read by the read-only
+    // inferenceObservations query, and the optional Penumbra handoff add-on read by
+    // `llamactl console`, not the worker RPC.
+    BASELINE_ENV.add("LLAMACTL_OBSERVED_MODELS_FILE");
+    BASELINE_ENV.add("LLAMACTL_PENUMBRA_URL");
+    BASELINE_ENV.add("LLAMACTL_PENUMBRA_TOKEN_FILE");
     const sources = join(import.meta.dir, "..", "..");
     const read = new Map<string, string[]>();
     for (const pkg of readdirSync(sources)) {

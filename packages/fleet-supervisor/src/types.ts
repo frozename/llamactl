@@ -58,6 +58,8 @@ export interface SlotProgress {
   nPast: number | null;
   /** Tokens decoded/generated so far (n_decoded / tokens_predicted). */
   nDecoded: number | null;
+  /** Configured slot context, when the engine includes it. */
+  context?: number;
 }
 
 /** Result of one read-only slot-progress poll against a workload's `/slots`. */

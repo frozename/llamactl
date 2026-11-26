@@ -2598,8 +2598,12 @@ function pinnedWebSocket(ca: string): ClientWebSocketConstructor {
  * Both agents serve the one published worker host, so either transport
  * reaches the same attempts.
  */
+/** Dirs made by startTransports, so a setup that throws or hangs still gets them removed. */
+const transportDirs = new Set<string>();
+
 async function startTransports(): Promise<Transports> {
   const dir = mkdtempSync(join(tmpdir(), "p41-transports-"));
+  transportDirs.add(dir);
   const certFor = (name: string): ReturnType<typeof tls.generateSelfSignedCert> =>
     tls.generateSelfSignedCert({
       dir: join(dir, name),
@@ -2683,9 +2687,12 @@ async function startTransports(): Promise<Transports> {
     relayCredential: relayCredential.token,
     relayRequests,
     stop: async (): Promise<void> => {
-      await worker.stop();
-      await central.stop();
-      rmSync(dir, { recursive: true, force: true });
+      try {
+        await worker.stop();
+        await central.stop();
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
     },
   };
 }
@@ -2792,8 +2799,13 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
   }, 30_000);
 
   afterAll(async () => {
-    await transports.stop();
-    guard.dispose();
+    try {
+      await transports.stop();
+    } finally {
+      for (const dir of transportDirs) rmSync(dir, { recursive: true, force: true });
+      transportDirs.clear();
+      guard.dispose();
+    }
   });
 
   function tunnelUp(): boolean {
@@ -3988,8 +4000,11 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
             certificateFingerprint: cert.fingerprint,
           },
           stop: async (): Promise<void> => {
-            await server.stop(true);
-            rmSync(dir, { recursive: true, force: true });
+            try {
+              await server.stop(true);
+            } finally {
+              rmSync(dir, { recursive: true, force: true });
+            }
           },
         };
       }
