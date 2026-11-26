@@ -40,8 +40,14 @@ const ERROR_MESSAGES: Readonly<Record<string, string>> = {
     "The model rejected this conversation. Try a shorter message or another model.",
 };
 
-async function chatFetch(node: string, resource: string, init: RequestInit): Promise<Response> {
+async function chatFetch(
+  node: string,
+  resource: string,
+  init: RequestInit,
+  onStatus?: (status: number) => void,
+): Promise<Response> {
   const response = await fetch(`/api/n/${encodeURIComponent(node)}/chat/${resource}`, init);
+  onStatus?.(response.status);
   if (response.ok) return response;
   const body = (await response.json().catch(() => null)) as { error?: string } | null;
   if (response.status === 401 && body?.error === "invalid_session") {
@@ -166,13 +172,19 @@ export async function streamChat(
   messages: readonly ChatMessage[],
   signal: AbortSignal,
   onProgress: (progress: ChatProgress) => void,
+  onStatus?: (status: number) => void,
 ): Promise<void> {
-  const response = await chatFetch(node, "completions", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ model, messages }),
-    signal,
-  });
+  const response = await chatFetch(
+    node,
+    "completions",
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model, messages }),
+      signal,
+    },
+    onStatus,
+  );
   if (response.body === null) throw new Error("The model returned an empty stream.");
   await readChatStream(response.body, onProgress);
 }
