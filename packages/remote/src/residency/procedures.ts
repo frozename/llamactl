@@ -105,6 +105,39 @@ import { profileSwitchOperationKey } from "./profile-transition.js";
 
 type ResidencyPolicy = NonNullable<NodeRun["spec"]["residency"]>;
 
+export const RESIDENCY_POLICY_KNOBS = [
+  "idleEvictSeconds",
+  "minResidencySeconds",
+  "switchCooldownSeconds",
+  "safetyMarginRatio",
+  "residentPreference",
+  "coldLoadPenaltyMs",
+] as const;
+
+export type ResidencyPolicyKnob = (typeof RESIDENCY_POLICY_KNOBS)[number];
+
+export type ResidencyStatusEffectivePolicy = {
+  knobs: { name: ResidencyPolicyKnob; value: number; defaulted: boolean }[];
+};
+
+export function effectiveResidencyPolicy(
+  residency: ResidencyPolicy | null | undefined,
+): ResidencyStatusEffectivePolicy {
+  const overrides: Partial<ReturnType<typeof resolveResidencyPolicy>> = {};
+  for (const knob of RESIDENCY_POLICY_KNOBS) {
+    const v = residency?.[knob];
+    if (v !== undefined) overrides[knob] = v;
+  }
+  const resolved = resolveResidencyPolicy(overrides);
+  return {
+    knobs: RESIDENCY_POLICY_KNOBS.map((name) => ({
+      name,
+      value: resolved[name],
+      defaulted: residency?.[name] === undefined || resolved[name] !== residency[name],
+    })),
+  };
+}
+
 export type ResidencyStatusNonterminalOperation = {
   operationId: string;
   model: string;
@@ -369,6 +402,10 @@ export type ResidencyStatusIdleEvictionRow = {
   // Present only while the row is idle-due but held short of eviction because
   // its resident has not yet been ready for `minResidencySeconds` (Part of #519).
   minResidencyUntilMs?: number;
+  // Present only while the row is otherwise due but a session holds its
+  // workload (#520). The status read-out carries the reason and the bound ids,
+  // never the eviction's mutable detail text.
+  sessionHold?: { reason: "SessionsActive" | "SessionsUnknown"; sessions: string[] };
 };
 
 // Advisory read-out of NodeRun `idleEvictSeconds` (Part of #519): for each
@@ -486,6 +523,9 @@ export type ResidencyStatus = {
   // Optional like switchGates so older payloads and fixtures still type;
   // buildResidencyStatus always sets it (Part of #519).
   ranking?: ResidencyStatusRanking;
+  // Optional like ranking so older payloads and fixtures still type;
+  // buildResidencyStatus always sets it (Part of #519).
+  effectivePolicy?: ResidencyStatusEffectivePolicy;
   leases: ResidencyStatusLeases;
   omlxNative?: { scope: "serving-process"; workloads: OmlxNativeStatusRow[] };
   sessions?: ResidencyStatusSessions;
@@ -500,17 +540,28 @@ export function buildResidencyStatus(input: {
   leaseRegistry?: ResidencyStatusLeaseRegistry | null | undefined;
   leaseWorkloads?: readonly string[] | undefined;
   omlxNative?: readonly OmlxNativeStatusRow[] | undefined;
-  sessionRegistry?: Pick<SessionRefcounts, "snapshot"> | null | undefined;
+  sessionRegistry?:
+    | (Pick<SessionRefcounts, "snapshot"> & Partial<Pick<SessionRefcounts, "checkUnload">>)
+    | null
+    | undefined;
   nowMs?: number | undefined;
   servingNode?: string | null | undefined;
   unifiedProxy?: boolean | undefined;
 }): ResidencyStatus {
   const residency = input.nodeRun?.spec.residency;
   const sessions = buildResidencySessionSnapshot(input.sessionRegistry);
+  // The idle-evict read-out consults checkUnload too (#520). Bound explicitly:
+  // a truthiness check on an optional property does not narrow it under
+  // exactOptionalPropertyTypes.
+  const reg = input.sessionRegistry ?? null;
+  const check = reg?.checkUnload;
+  const sessionProbe: IdleEvictSessionProbe | null =
+    reg !== null && check !== undefined ? { checkUnload: (w) => check.call(reg, w) } : null;
   return {
     node: input.node,
     nodeRun: { present: input.nodeRun !== undefined },
     policy: residency !== undefined ? { present: true, residency } : { present: false },
+    effectivePolicy: effectiveResidencyPolicy(residency),
     budget: { memoryGiB: input.budgetGiB, source: input.budgetSource },
     store: storeWithScope(input.store),
     lifecycle: buildResidencyLifecycleSnapshot(input.store),
@@ -521,6 +572,7 @@ export function buildResidencyStatus(input: {
       store: input.store,
       leaseRegistry: input.leaseRegistry ?? null,
       nowMs: input.nowMs ?? Date.now(),
+      sessions: sessionProbe,
     }),
     switchGates: buildSwitchGatesSnapshot({
       residency,
@@ -590,13 +642,18 @@ export function buildResidencyLifecycleSnapshot(
 // window is `minResidencyUntilMs`, and `dueAtMs` becomes the later of the idle
 // window and that hold, so a resident still inside its minimum residency reports
 // due false with the hold field set. With 0 or absent min-residency the row is
-// byte-identical to the idle-only computation.
+// byte-identical to the idle-only computation. A resident that is idle-due and
+// not min-residency-held also consults the session registry (#520): a bound
+// session, or a session check that throws, reports the row due false with
+// `sessionHold` set and an unchanged `dueAtMs`. Rows that are not idle-due never
+// consult it, and nothing releases a session here.
 function idleEvictionRowFor(
   row: ResidencyStateRecord,
   registry: ResidencyStatusLeaseRegistry,
   idleEvictSeconds: number,
   minResidencySeconds: number,
   nowMs: number,
+  sessions?: IdleEvictSessionProbe | null,
 ): ResidencyStatusIdleEvictionRow | null {
   if (row.state !== "ready" || !Number.isFinite(row.updatedAtMs)) {
     return null;
@@ -624,7 +681,7 @@ function idleEvictionRowFor(
     minResidencySeconds > 0 ? Math.max(idleDueAtMs, minResidencyUntilMs) : idleDueAtMs;
   const idleDue = snap.phase === "open" && activeLeaseCount === 0 && nowMs >= idleDueAtMs;
   const held = minResidencySeconds > 0 && idleDue && nowMs < minResidencyUntilMs;
-  return {
+  const base: ResidencyStatusIdleEvictionRow = {
     workload: row.model,
     readySinceMs: row.updatedAtMs,
     lastActivityAtMs: lastActivityMs,
@@ -634,6 +691,13 @@ function idleEvictionRowFor(
     due: idleDue && !held,
     ...(held ? { minResidencyUntilMs } : {}),
   };
+  if (!idleDue || held) {
+    return base;
+  }
+  const hold = probeSessionHold(row.model, sessions);
+  return hold === null
+    ? base
+    : { ...base, due: false, sessionHold: { reason: hold.reason, sessions: hold.sessions } };
 }
 
 // Advisory idle-eviction read-out (Part of #519). Resolves the NodeRun policy
@@ -652,7 +716,9 @@ function idleEvictionRowFor(
 // reports due false with `minResidencyUntilMs` set and a `dueAtMs` that is the
 // later of the idle window and the hold. A registry without `lastActivityAtMs`,
 // or one returning a non-finite value, yields null time fields and due false.
-// This module never evicts, sleeps or schedules anything.
+// With a session registry supplied (#520) an idle-due, non-min-residency-held
+// resident also reports `sessionHold` instead of `due`. This module never
+// evicts, sleeps, schedules anything or releases a session.
 export function buildIdleEvictionSnapshot(input: {
   residency: ResidencyPolicy | null | undefined;
   servingNode: string | null;
@@ -660,6 +726,7 @@ export function buildIdleEvictionSnapshot(input: {
   store: ResidencyStoreSnapshot;
   leaseRegistry: ResidencyStatusLeaseRegistry | null;
   nowMs: number;
+  sessions?: IdleEvictSessionProbe | null | undefined;
 }): ResidencyStatusIdleEviction {
   const scope = "serving-process" as const;
   const policy = resolveResidencyPolicy({
@@ -700,6 +767,7 @@ export function buildIdleEvictionSnapshot(input: {
       idleEvictSeconds,
       minResidencySeconds,
       input.nowMs,
+      input.sessions,
     );
     if (mapped !== null) {
       workloads.push(mapped);
@@ -959,15 +1027,24 @@ function idleEvictWouldEvict(row: ResidencyStatusIdleEvictionRow): IdleEvictRow 
   };
 }
 
-// Consults the session registry for one workload (#520). A bound session —
-// idle within its timeout or in flight — holds the row as SessionsActive with
-// the ids as detail; a registry whose checkUnload throws holds it as
-// SessionsUnknown (fail closed). Sessions are never released here: the
-// overrides are `residency release-session` and `residency force-unload`.
-function idleEvictSessionHold(
+// What one session probe answers: why a workload is held, the bound session ids
+// (empty when the registry could not answer) and the eviction-side detail text.
+// The status read-out uses only `reason` and `sessions`; `detail` stays on the
+// evict-idle output.
+type SessionHoldProbe =
+  | { reason: "SessionsActive"; sessions: string[]; detail: string }
+  | { reason: "SessionsUnknown"; sessions: string[]; detail: string };
+
+// The one session probe both the idle-evict mutation and the status read-out go
+// through (#520). A bound session — idle within its timeout or in flight — holds
+// the workload as SessionsActive with the ids; a registry whose checkUnload
+// throws holds it as SessionsUnknown (fail closed). checkUnload is called
+// WITHOUT force: sessions are never released here, the overrides are `residency
+// release-session` and `residency force-unload`.
+function probeSessionHold(
   workload: string,
   sessions: IdleEvictSessionProbe | null | undefined,
-): IdleEvictRow | null {
+): SessionHoldProbe | null {
   if (sessions === null || sessions === undefined) {
     return null;
   }
@@ -975,16 +1052,30 @@ function idleEvictSessionHold(
   try {
     check = sessions.checkUnload(workload);
   } catch (err) {
-    return idleEvictSkipped(
-      workload,
-      "SessionsUnknown",
-      err instanceof Error ? err.message : String(err),
-    );
+    return {
+      reason: "SessionsUnknown",
+      sessions: [],
+      detail: err instanceof Error ? err.message : String(err),
+    };
   }
   if (!check.ok) {
-    return idleEvictSkipped(workload, "SessionsActive", check.sessions.join(", "));
+    return {
+      reason: "SessionsActive",
+      sessions: [...check.sessions],
+      detail: check.sessions.join(", "),
+    };
   }
   return null;
+}
+
+// The evict-idle row form of `probeSessionHold`, byte-identical to the skip the
+// mutation has always reported.
+function idleEvictSessionHold(
+  workload: string,
+  sessions: IdleEvictSessionProbe | null | undefined,
+): IdleEvictRow | null {
+  const hold = probeSessionHold(workload, sessions);
+  return hold === null ? null : idleEvictSkipped(workload, hold.reason, hold.detail);
 }
 
 // Re-reads the live registry to confirm the row is still idle at `nowMs` before

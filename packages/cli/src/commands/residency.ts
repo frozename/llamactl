@@ -147,6 +147,7 @@ export function renderResidencyStatus(s: ResidencyRenderInput, nowMs: number = D
   lines.push(`Node:       ${s.node}`);
   lines.push(`NodeRun:    ${s.nodeRun.present ? "present" : "absent"}`);
   lines.push(`Policy:     ${s.policy.present ? JSON.stringify(s.policy.residency) : "none"}`);
+  pushEffectivePolicyLine(lines, s.effectivePolicy);
   lines.push(`Budget:     ${s.budget.memoryGiB.toFixed(1)} GiB (source: ${s.budget.source})`);
   if (!s.store.present) {
     lines.push(`Store:      not present at ${s.store.path} (scope: serving-process)`);
@@ -219,6 +220,18 @@ function pushLeaseLines(lines: string[], leases: ResidencyRenderInput["leases"])
   }
 }
 
+function pushEffectivePolicyLine(
+  lines: string[],
+  effective: ResidencyRenderInput["effectivePolicy"],
+): void {
+  if (effective === undefined) {
+    return;
+  }
+  lines.push(
+    `Effective:  ${effective.knobs.map((k) => `${k.name} ${String(k.value)}${k.defaulted ? " (default)" : ""}`).join(", ")}`,
+  );
+}
+
 function pushSessionLines(lines: string[], sessions: ResidencyRenderInput["sessions"]): void {
   if (sessions === undefined) {
     return;
@@ -273,11 +286,16 @@ function pushIdleEvictionLines(
     `Idle evict: window ${String(idle.idleEvictSeconds)}s, ${String(idle.workloads.length)} ready workload(s) (advisory; scope: ${idle.scope})`,
   );
   for (const w of idle.workloads) {
+    const sessionHold = w.sessionHold;
     let state: string;
     if (w.due) {
       state = "due";
     } else if (w.minResidencyUntilMs !== undefined) {
       state = `held MinResidency for ${formatMs(Math.max(0, w.minResidencyUntilMs - nowMs))}`;
+    } else if (sessionHold?.reason === "SessionsActive") {
+      state = `held SessionsActive: ${sessionHold.sessions.join(", ")}`;
+    } else if (sessionHold?.reason === "SessionsUnknown") {
+      state = "held SessionsUnknown";
     } else if (w.dueAtMs === null) {
       state = "not due (activity unknown)";
     } else if (w.dueAtMs > nowMs) {
