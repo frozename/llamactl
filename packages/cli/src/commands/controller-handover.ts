@@ -13,12 +13,16 @@ import {
 } from "@llamactl/remote/workload/modelhost-schema";
 
 import { getNodeClientByName } from "../dispatcher.js";
-import { defaultUpdateDeps } from "./update/deps.js";
+import { defaultUpdateDeps, type ExecFn } from "./update/deps.js";
 import {
   DEFAULT_UNITS,
+  killModeProblem,
+  killsChildren,
   makeServiceManager,
   pickServiceManagerKind,
   type ServiceInfo,
+  type ServiceManager,
+  type ServiceManagerKind,
 } from "./update/services.js";
 
 export interface HandoverLocalHost {
@@ -72,6 +76,8 @@ export interface HandoverDeps {
   queryCentral: (name: string) => Promise<CentralHostView>;
   labelHost: (name: string, manager: string) => void;
   unlabelHost: (name: string) => void;
+  /** Why the local controller unit could not be stopped safely, or null. Runs before anything is written. */
+  checkLocalController: () => Promise<string | null>;
   stopLocalController: () => Promise<StopLocalResult>;
   now: () => number;
   sleep: (ms: number) => Promise<void>;
@@ -110,7 +116,13 @@ left alone. The hand-over refuses while an enabled ModelRun still runs here:
 Adoption is confirmed by labelling each host 'llamactl.io/managed-by=<central>';
 the local reconciler skips labelled hosts, so a restarted local controller
 cannot reclaim the seat. If the stop itself fails the labels stay: the hosts
-are handed over and the still-running local controller skips them.
+are handed over and the still-running local controller skips them. After the
+stop the unit is disabled so it does not start again at the next boot.
+
+The hand-over refuses up front, before anything is written, when the local
+controller unit cannot be stopped without taking its engines down: a systemd
+unit with KillMode=control-group or KillMode=mixed kills every engine in its
+cgroup on stop. Set KillMode=process on the unit first.
 `;
 
 function flagValue(arg: string, prefix: string): string {
@@ -374,6 +386,12 @@ export async function runControllerHandover(
     }
     candidates.push(host);
   }
+  const unitProblem = await deps.checkLocalController();
+  if (unitProblem !== null) {
+    deps.stderr(`controller handover: ${unitProblem}`);
+    deps.stderr("controller handover: nothing was labelled and the local controller keeps running");
+    return 1;
+  }
   if ((await verifyAdoption(candidates, opts, deps)) !== 0) return 1;
   if (opts.dryRun) {
     reportPlan(candidates, opts, deps);
@@ -406,7 +424,7 @@ function notFoundView(): CentralHostView {
   };
 }
 
-function isMissingWorkload(err: unknown): boolean {
+export function isMissingWorkload(err: unknown): boolean {
   const error = err as { code?: unknown; message?: unknown };
   if (error.code === "NOT_FOUND") return true;
   const message = typeof error.message === "string" ? error.message : String(err);
@@ -428,9 +446,9 @@ function centralLive(status: unknown): CentralLive {
   };
 }
 
-type WorkloadDescribeResult = Awaited<ReturnType<NodeClient["workloadDescribe"]["query"]>>;
+export type WorkloadDescribeResult = Awaited<ReturnType<NodeClient["workloadDescribe"]["query"]>>;
 
-function describeView(result: WorkloadDescribeResult): CentralHostView {
+export function describeView(result: WorkloadDescribeResult): CentralHostView {
   const manifest = result.manifest;
   const host = manifest.kind === "ModelHost" ? manifest : null;
   return {
@@ -462,61 +480,182 @@ function setManagedByLabel(
   return { ...host, metadata: { ...host.metadata, labels } };
 }
 
-async function waitForLockRelease(
+/**
+ * Effects the production deps run through, injectable so tests drive them with
+ * a temp workloads directory and fake exec/clock instead of the real host.
+ */
+export interface HandoverSystem {
+  exec: ExecFn;
+  readFile: (path: string) => string | null;
+  uid: number;
+  env: NodeJS.ProcessEnv;
+  platform: NodeJS.Platform;
+  liveLockHolder: (workloadsDir: string) => number | null;
+  describeCentral: (to: string, name: string) => Promise<WorkloadDescribeResult>;
+  readEngineState: (name: string) => { pid: number; specHash?: string | null } | null;
+  now: () => number;
+  sleep: (ms: number) => Promise<void>;
+  stdout: (line: string) => void;
+  stderr: (line: string) => void;
+}
+
+async function sleepMs(ms: number): Promise<void> {
+  await new Promise<void>((resolve): void => {
+    setTimeout(resolve, ms);
+  });
+}
+
+export function defaultHandoverSystem(): HandoverSystem {
+  const update = defaultUpdateDeps();
+  return {
+    exec: update.exec,
+    readFile: update.readFile,
+    uid: update.uid,
+    env: update.env,
+    platform: process.platform,
+    liveLockHolder: (workloadsDir: string): number | null =>
+      workloadLock.liveLockHolder(workloadsDir),
+    describeCentral: async (to: string, name: string): Promise<WorkloadDescribeResult> =>
+      await getNodeClientByName(to).workloadDescribe.query({ name }),
+    readEngineState: (name: string): { pid: number; specHash?: string | null } | null =>
+      readModelHostState({ name }),
+    now: (): number => Date.now(),
+    sleep: sleepMs,
+    stdout: (line: string): void => {
+      process.stdout.write(`${line}\n`);
+    },
+    stderr: (line: string): void => {
+      process.stderr.write(`${line}\n`);
+    },
+  };
+}
+
+export async function waitForLockRelease(
   workloadsDir: string,
   info: ServiceInfo,
-  opts: HandoverOptions,
+  opts: Pick<HandoverOptions, "timeoutMs" | "pollMs">,
+  system: Pick<HandoverSystem, "liveLockHolder" | "now" | "sleep">,
 ): Promise<StopLocalResult> {
-  const deadline = Date.now() + opts.timeoutMs;
+  const deadline = system.now() + opts.timeoutMs;
   for (;;) {
-    if (workloadLock.liveLockHolder(workloadsDir) === null) {
+    if (system.liveLockHolder(workloadsDir) === null) {
       return { ok: true, detail: `stopped ${info.name} (pid ${String(info.pid ?? "?")})` };
     }
-    if (Date.now() >= deadline) {
-      const holder = workloadLock.liveLockHolder(workloadsDir);
+    if (system.now() >= deadline) {
+      const holder = system.liveLockHolder(workloadsDir);
       return {
         ok: false,
         detail: `${info.name} was stopped but the controller lock at ${workloadLock.lockFilePath(workloadsDir)} is still held by pid ${String(holder ?? "?")}`,
       };
     }
-    await new Promise<void>((resolve): void => {
-      setTimeout(resolve, Math.min(opts.pollMs, 1_000));
-    });
+    await system.sleep(Math.min(opts.pollMs, 1_000));
   }
 }
 
-async function stopLocalController(
+/**
+ * Why stopping this controller unit would take the engines it spawned down, or
+ * null when it is safe. The same guard 'llamactl update' applies: a KillMode
+ * that kills the unit's whole cgroup (control-group, mixed) refuses, naming the
+ * other processes when the cgroup is readable. A hand-over must leave the
+ * engines running for the central, so it refuses even when no engine is
+ * visible in the cgroup right now.
+ */
+export function handoverKillModeProblem(info: ServiceInfo): string | null {
+  if (!killsChildren(info)) return null;
+  return (
+    killModeProblem(info) ??
+    `${info.name} has KillMode=${String(info.killMode)}: stopping it would kill every ModelHost engine it spawned; set KillMode=process on the unit first`
+  );
+}
+
+interface ControllerUnit {
+  kind: ServiceManagerKind;
+  manager: ServiceManager;
+  info: ServiceInfo;
+}
+
+type UnitLookup = { holder: null } | { holder: number; unit: ControllerUnit } | { problem: string };
+
+/** The loaded service unit running the local controller, or why it cannot be stopped. */
+async function lookupControllerUnit(
   workloadsDir: string,
-  opts: HandoverOptions,
-): Promise<StopLocalResult> {
-  const holder = workloadLock.liveLockHolder(workloadsDir);
-  if (holder === null) return { ok: true, detail: "no local controller running" };
-  const kind = pickServiceManagerKind(null, process.platform);
+  opts: Pick<HandoverOptions, "controllerUnit">,
+  system: HandoverSystem,
+): Promise<UnitLookup> {
+  const holder = system.liveLockHolder(workloadsDir);
+  if (holder === null) return { holder: null };
+  const kind = pickServiceManagerKind(null, system.platform);
   if (kind === null) {
     return {
-      ok: false,
-      detail: `no service manager on ${process.platform}; the local controller (pid ${String(holder)}) holds ${workloadsDir}`,
+      problem: `no service manager on ${system.platform}; the local controller (pid ${String(holder)}) holds ${workloadsDir}`,
     };
   }
-  const unit = opts.controllerUnit ?? DEFAULT_UNITS[kind].controller;
-  const update = defaultUpdateDeps();
-  const manager = makeServiceManager(kind, update.exec, update.readFile, update.uid, update.env);
-  const info = await manager.describe("controller", unit, opts.controllerUnit !== null);
+  const name = opts.controllerUnit ?? DEFAULT_UNITS[kind].controller;
+  const manager = makeServiceManager(kind, system.exec, system.readFile, system.uid, system.env);
+  const info = await manager.describe("controller", name, opts.controllerUnit !== null);
   if (!info.loaded) {
     return {
-      ok: false,
-      detail: `service ${unit} is not loaded, so this command cannot stop the local controller (pid ${String(holder)}); stop it the way it was started`,
+      problem: `service ${name} is not loaded, so this command cannot stop the local controller (pid ${String(holder)}); stop it the way it was started`,
     };
   }
-  const stopped = await manager.stop(info);
-  if (stopped.code !== 0) {
-    const detail = (stopped.stderr.trim() === "" ? stopped.stdout : stopped.stderr).trim();
-    return { ok: false, detail: `${unit} stop exited ${String(stopped.code)}: ${detail}` };
-  }
-  return await waitForLockRelease(workloadsDir, info, opts);
+  const killMode = handoverKillModeProblem(info);
+  if (killMode !== null) return { problem: `refusing to stop the local controller: ${killMode}` };
+  return { holder, unit: { kind, manager, info } };
 }
 
-export function defaultHandoverDeps(workloadsDir: string, opts: HandoverOptions): HandoverDeps {
+/** Keep the stopped unit from starting again at the next boot or login. */
+async function disableUnit(unit: ControllerUnit, system: HandoverSystem): Promise<string | null> {
+  const argv =
+    unit.kind === "systemd"
+      ? ["systemctl", "--user", "disable", unit.info.name]
+      : ["launchctl", "disable", `gui/${String(system.uid)}/${unit.info.name}`];
+  const r = await system.exec(argv);
+  if (r.code === 0) return null;
+  const detail = (r.stderr.trim() === "" ? r.stdout : r.stderr).trim();
+  return `${argv.join(" ")} exited ${String(r.code)}: ${detail}; disable it by hand so it does not start again at boot`;
+}
+
+export async function checkLocalController(
+  workloadsDir: string,
+  opts: Pick<HandoverOptions, "controllerUnit">,
+  system: HandoverSystem,
+): Promise<string | null> {
+  const lookup = await lookupControllerUnit(workloadsDir, opts, system);
+  return "problem" in lookup ? lookup.problem : null;
+}
+
+export async function stopLocalController(
+  workloadsDir: string,
+  opts: Pick<HandoverOptions, "controllerUnit" | "timeoutMs" | "pollMs">,
+  system: HandoverSystem,
+): Promise<StopLocalResult> {
+  const lookup = await lookupControllerUnit(workloadsDir, opts, system);
+  if ("problem" in lookup) return { ok: false, detail: lookup.problem };
+  if (lookup.holder === null) return { ok: true, detail: "no local controller running" };
+  const { unit } = lookup;
+  const stopped = await unit.manager.stop(unit.info);
+  if (stopped.code !== 0) {
+    const detail = (stopped.stderr.trim() === "" ? stopped.stdout : stopped.stderr).trim();
+    return {
+      ok: false,
+      detail: `${unit.info.name} stop exited ${String(stopped.code)}: ${detail}`,
+    };
+  }
+  const disableProblem = await disableUnit(unit, system);
+  const released = await waitForLockRelease(workloadsDir, unit.info, opts, system);
+  if (disableProblem === null) {
+    return released.ok
+      ? { ...released, detail: `${released.detail}; disabled ${unit.info.name}` }
+      : released;
+  }
+  return { ok: released.ok, detail: `${released.detail}; but ${disableProblem}` };
+}
+
+export function defaultHandoverDeps(
+  workloadsDir: string,
+  opts: HandoverOptions,
+  system: HandoverSystem = defaultHandoverSystem(),
+): HandoverDeps {
   return {
     listLocalHosts: (): HandoverLocalHost[] =>
       modelHostStore
@@ -529,13 +668,13 @@ export function defaultHandoverDeps(workloadsDir: string, opts: HandoverOptions)
         .filter((manifest) => manifest.spec.node === LOCAL_NODE_ID && manifest.spec.enabled)
         .map((manifest) => manifest.metadata.name),
     readLocalEngine: (name: string): HandoverEngineRecord | null => {
-      const state = readModelHostState({ name });
+      const state = system.readEngineState(name);
       return state === null ? null : { pid: state.pid, specHash: state.specHash ?? null };
     },
     queryCentral: async (name: string): Promise<CentralHostView> => {
       let result: WorkloadDescribeResult;
       try {
-        result = await getNodeClientByName(opts.to).workloadDescribe.query({ name });
+        result = await system.describeCentral(opts.to, name);
       } catch (err) {
         if (isMissingWorkload(err)) return notFoundView();
         throw err;
@@ -548,19 +687,13 @@ export function defaultHandoverDeps(workloadsDir: string, opts: HandoverOptions)
     unlabelHost: (name: string): void => {
       modelHostStore.saveModelHost(setManagedByLabel(workloadsDir, name, null), workloadsDir);
     },
+    checkLocalController: async (): Promise<string | null> =>
+      await checkLocalController(workloadsDir, opts, system),
     stopLocalController: async (): Promise<StopLocalResult> =>
-      await stopLocalController(workloadsDir, opts),
-    now: (): number => Date.now(),
-    sleep: async (ms: number): Promise<void> => {
-      await new Promise<void>((resolve): void => {
-        setTimeout(resolve, ms);
-      });
-    },
-    stdout: (line: string): void => {
-      process.stdout.write(`${line}\n`);
-    },
-    stderr: (line: string): void => {
-      process.stderr.write(`${line}\n`);
-    },
+      await stopLocalController(workloadsDir, opts, system),
+    now: system.now,
+    sleep: system.sleep,
+    stdout: system.stdout,
+    stderr: system.stderr,
   };
 }

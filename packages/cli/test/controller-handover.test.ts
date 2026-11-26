@@ -32,6 +32,7 @@ interface FakeDepsInput {
   central?: Record<string, CentralScript> | ((name: string, call: number) => CentralResponse);
   labelFailures?: Record<string, Error>;
   stopResult?: { ok: boolean; detail: string };
+  unitProblem?: string;
 }
 
 interface FakeDeps {
@@ -149,6 +150,11 @@ function makeFakeDeps(input: FakeDepsInput = {}): FakeDeps {
     unlabelHost: (name) => {
       calls.push(`unlabel:${name}`);
     },
+    checkLocalController: () => {
+      if (input.unitProblem === undefined) return Promise.resolve(null);
+      calls.push("check");
+      return Promise.resolve(input.unitProblem);
+    },
     stopLocalController: () => {
       calls.push("stop");
       return Promise.resolve(input.stopResult ?? { ok: true, detail: "stopped" });
@@ -212,6 +218,19 @@ describe("runControllerHandover", () => {
       "label:b=central",
       "stop",
     ]);
+  });
+
+  test("refuses before querying the central when the controller unit cannot be stopped safely", async () => {
+    const mod = await loadHandover();
+    const run = handoverRunner(mod);
+    const fake = makeFakeDeps({ unitProblem: "unit has KillMode=mixed" });
+
+    const code = await run(BASE_OPTIONS, fake.deps);
+
+    expect(code).toBe(1);
+    expect(fake.calls).toEqual(["check"]);
+    expect(joined(fake.stderr)).toContain("KillMode=mixed");
+    expectNoMutation(fake.calls);
   });
 
   test("refuses when central reports a different live pid", async () => {
