@@ -1,5 +1,6 @@
 import { join } from "node:path";
 
+import type { QualificationStage } from "../routing/capabilities.js";
 import type { CuratedModel } from "../schemas.js";
 import type { ModelClass } from "../types.js";
 import type { BenchProfileRows } from "./store.js";
@@ -9,6 +10,10 @@ import { listCatalog } from "../catalog.js";
 import { ctxForModel } from "../ctx.js";
 import { resolveEnv } from "../env.js";
 import { existsSync } from "../safe-fs.js";
+// Import cycle: compare → workloadRuntime → server → bench/index → compare.
+// It is safe only because catalogQualificationStages is called inside
+// benchCompare (at call time, not module init). Part of #518.
+import { catalogQualificationStages } from "../workloadRuntime.js";
 import { defaultModeForRel, machineLabel } from "./mode.js";
 import {
   benchProfileFile,
@@ -50,6 +55,12 @@ export interface BenchCompareRow {
     gen_tps: string;
     updated_at: string;
   } | null;
+  /**
+   * Routing stage carried from the catalog qualification for this row's
+   * rel, resolved through `catalogQualificationStages` (#518). Omitted
+   * when the rel has no qualification stage.
+   */
+  qualificationStage?: QualificationStage;
 }
 
 export interface BenchCompareOptions {
@@ -126,6 +137,7 @@ export function benchCompare(
   const machine = machineLabel(resolved);
   const classFilter = opts.classFilter ?? "all";
   const scopeFilter = opts.scopeFilter ?? "all";
+  const stages = catalogQualificationStages(resolved);
 
   const rows: BenchCompareRow[] = [];
   for (const entry of listCatalog("all")) {
@@ -136,6 +148,7 @@ export function benchCompare(
     const installed = existsSync(join(resolved.LLAMA_CPP_MODELS, rel));
     const mode = defaultModeForRel(rel, resolved);
     const ctx = ctxForModel(rel, resolved);
+    const stage = stages.get(rel);
 
     const resolvedTuned = resolveTunedRecord(profiles, { machine, rel, mode, ctx, build });
 
@@ -161,6 +174,7 @@ export function benchCompare(
             updated_at: visionRow.updated_at,
           }
         : null,
+      ...(stage !== undefined ? { qualificationStage: stage } : {}),
     });
   }
 
