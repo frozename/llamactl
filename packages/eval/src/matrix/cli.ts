@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 
 import { defaultProvenanceReaders } from "../perf/provenance.js";
+import { matrixLaunchRefusal } from "./launch-gate.js";
 import { renderCsvReport, renderMarkdownReport } from "./report.js";
 import { runMatrix } from "./runner.js";
 import { listCellRows } from "./store.js";
@@ -345,6 +346,7 @@ async function main(): Promise<void> {
     db,
     concurrency,
     provenanceReaders: defaultProvenanceReaders(),
+    launchRefusal: matrixLaunchRefusal,
     ...(runId !== undefined ? { runId } : {}),
     ...(corpusOverrides !== undefined ? { corpusOverrides } : {}),
   });

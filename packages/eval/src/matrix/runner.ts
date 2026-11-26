@@ -30,6 +30,10 @@ export interface RunMatrixOpts {
   corpusOverrides?: Map<string, string>;
   concurrency?: number;
   provenanceReaders?: ProvenanceReaders;
+  // #517: read-only pre-spawn gate for the managed boots this runner makes;
+  // returns the refusal text for a model whose exclusive residency group is
+  // occupied, or null to let the boot proceed.
+  launchRefusal?: ((model: ModelSpec) => string | null) | undefined;
 }
 
 async function loadCorpusRows(
@@ -410,7 +414,9 @@ async function runWorkloadCell(
   let judgeBoot: Awaited<ReturnType<typeof ensureModelServing>> | undefined;
   if (workload.judge_model) {
     try {
-      judgeBoot = await ensureModelServing(workload.judge_model);
+      judgeBoot = await ensureModelServing(workload.judge_model, {
+        launchRefusal: opts.launchRefusal,
+      });
     } catch (err) {
       recordBootError(model, [workload], runId, opts.db);
       console.warn(
@@ -501,7 +507,7 @@ async function runModelCells(
   }
   let boot: Awaited<ReturnType<typeof ensureModelServing>> | undefined;
   try {
-    boot = await ensureModelServing(model);
+    boot = await ensureModelServing(model, { launchRefusal: opts.launchRefusal });
   } catch (err) {
     const cellsWritten = recordBootError(model, opts.workloads, runId, opts.db);
     console.warn(

@@ -23,6 +23,13 @@ export interface BootResult {
   proc: ChildProcess | null;
 }
 
+/** `launchRefusal` is the read-only pre-spawn launch gate (#517): it returns
+ *  the refusal text for a model whose launch would break an exclusive
+ *  residency group, or null when the boot may proceed. */
+export interface EnsureModelServingOptions {
+  launchRefusal?: ((model: ModelSpec) => string | null) | undefined;
+}
+
 /**
  * Signal the whole process group of an owned server proc. Owned procs are
  * spawned `detached: true` (a new session/group leader, so the process-group id
@@ -203,7 +210,10 @@ export function buildBootCommandForModelSpec(model: ModelSpec): { binary: string
   return buildLlamaCppBootCommand(model);
 }
 
-export async function ensureModelServing(model: ModelSpec): Promise<BootResult> {
+export async function ensureModelServing(
+  model: ModelSpec,
+  opts: EnsureModelServingOptions = {},
+): Promise<BootResult> {
   if (await pingHealth(model.host, model.port)) {
     return { owned: false, proc: null };
   }
@@ -220,6 +230,12 @@ export async function ensureModelServing(model: ModelSpec): Promise<BootResult> 
   }
   if (!model.binary || !existsSync(model.binary)) {
     throw new Error(`model ${model.name} managed=true but binary not found: ${model.binary ?? ""}`);
+  }
+  // #517: the gate runs after the /health probe (a serving engine is adopted
+  // unasked) and before anything is spawned.
+  const refusal = opts.launchRefusal?.(model) ?? null;
+  if (refusal !== null) {
+    throw new Error(`eval matrix: ${refusal}`);
   }
   if ((model.engine ?? "llamacpp") === "omlx") {
     const { spec, env } = buildOmlxLaunch(model);
