@@ -43,8 +43,12 @@ each configured ID is advertised. An inventory entry grants no routing
 or lifecycle controls. Agent versions that predate request observations
 continue to show their supervisor snapshots.
 
-To include **Penumbra handoffs** in Runs, start the console with a loopback
-Penumbra daemon URL and a local file containing its bearer token.
+To include **Penumbra handoffs** in Runs, start the console with the Penumbra
+daemon's URL and a local file containing its bearer token. The URL must be
+exactly `http://127.0.0.1:<port>`: plain HTTP to the IPv4 address
+`127.0.0.1`, with no path beyond an optional trailing `/` and no query,
+fragment or credentials. Any other form, including `localhost`, `[::1]`
+and `https://`, leaves the Penumbra panel unavailable.
 
 ```sh
 LLAMACTL_PENUMBRA_URL=http://127.0.0.1:51257 \
@@ -52,9 +56,10 @@ LLAMACTL_PENUMBRA_TOKEN_FILE="$HOME/.penumbra/token" \
 llamactl console
 ```
 
-Use the daemon's actual port or an existing loopback forward to it. The console
-keeps the token server-side and displays only handoff IDs, seats, timestamps,
-and status. Penumbra can continue to use the model proxy independently.
+Use the daemon's actual port, or a forward to it that listens on
+`127.0.0.1`. The console keeps the token server-side and displays only
+handoff IDs, seats, timestamps, and status. Penumbra can continue to use
+the model proxy independently.
 The daemon's handoff list has no row limit, so the console asks it only for
 active handoffs (pending, approved, dispatched) and reuses each answer for up
 to 10 seconds across all open tabs. Recent terminal handoffs appear when the
