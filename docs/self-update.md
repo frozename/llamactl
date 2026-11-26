@@ -95,8 +95,9 @@ in this order:
 7. Restart the agent. It never reloads itself; its port is down for a few
    seconds, so a request in flight may fail once.
 8. Verify: HEAD is the target, both services are active, the agent's
-   `/healthz` is `ok`, and every model host answers `/v1/models`. The worker
-   RPC `inferenceRpc.negotiate` outcome is printed for information.
+   `/healthz` is `ok`, and every model host answers `/v1/models` and, when
+   its ModelHost/ModelRun declares `spec.readiness`, that probe passes. The
+   worker RPC `inferenceRpc.negotiate` outcome is printed for information.
 
 If any step fails, the same procedure runs back to the previous ref (the
 agent is restarted again only if the failed run got that far), the history
@@ -299,12 +300,15 @@ probes.
   comes from the agent unit's `--bind`/`--port`/`--dir` flags over its
   `agent.yaml`; a wildcard bind is probed on `127.0.0.1`. TLS is not verified
   (the agent's certificate is self-signed) and no credentials are sent.
-- Model hosts: ready when `GET /v1/models` lists a model. Idle, checked in
-  this order: a JSON `/metrics` reports `live.state` `idle` with nothing
-  `queued` (Strata; preferred, since its `/slots` ignores queued requests and
-  is empty while the engine is down); llama-server's `/slots` lists slots and
-  none is processing; llama-server's Prometheus `/metrics` request gauges are
-  zero. Anything else is unknown and does not block.
+- Model hosts: ready when `GET /v1/models` lists a model and, if
+  `spec.readiness` (`path`, `expectStatus`, `expectJson`) is declared,
+  `GET <path>` returns `expectStatus` (default 200) with the expected
+  top-level JSON fields. The probe is unauthenticated and has a 3 s timeout.
+  Idle, checked in this order: a JSON `/metrics` reports `live.state` `idle`
+  with nothing `queued` (Strata; preferred, since its `/slots` ignores queued
+  requests and is empty while the engine is down); llama-server's `/slots`
+  lists slots and none is processing; llama-server's Prometheus `/metrics`
+  request gauges are zero. Anything else is unknown and does not block.
 
 ## Exit codes
 

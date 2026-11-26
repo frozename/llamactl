@@ -1,3 +1,5 @@
+import { saveConfig, upsertNode } from "@llamactl/core/config/kubeconfig";
+import { freshConfig } from "@llamactl/core/config/schema";
 import { writeModelHostState } from "@llamactl/core/engines/state";
 import { resolveEnv } from "@llamactl/core/env";
 import { listLocalRoutes } from "@llamactl/core/workloadRuntime";
@@ -115,6 +117,49 @@ describe("workloadList", () => {
     expect(solo).toBeDefined();
     expect(solo!.workerCount).toBe(0);
     expect(solo!.workerNodes).toEqual([]);
+  });
+
+  test("reads a remote ModelHost's phase and PID from its owner", async () => {
+    const owner = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: (req) => {
+        expect(new URL(req.url).pathname).toBe("/trpc/modelHostStatus");
+        return Response.json({ result: { data: { state: "Running", pid: 42 } } });
+      },
+    });
+    try {
+      const configPath = join(tmp, "config");
+      process.env["LLAMACTL_CONFIG"] = configPath;
+      saveConfig(
+        upsertNode(freshConfig(), "home", {
+          name: "remote-owner",
+          endpoint: owner.url.origin,
+          kind: "agent",
+        }),
+        configPath,
+      );
+      saveModelHost(
+        parseModelHost(modelHostYaml.replace("node: local", "node: remote-owner")),
+        tmp,
+      );
+
+      const caller = router.createCaller({});
+      expect((await caller.workloadList())[0]).toMatchObject({
+        node: "remote-owner",
+        phase: "Running",
+        statePid: 42,
+        listenerPid: null,
+      });
+      await owner.stop(true);
+      expect((await caller.workloadList())[0]).toMatchObject({
+        node: "remote-owner",
+        phase: "Unreachable",
+        statePid: null,
+      });
+    } finally {
+      await owner.stop(true);
+    }
   });
 
   test("includes ModelHost workloads tagged with kind", async () => {

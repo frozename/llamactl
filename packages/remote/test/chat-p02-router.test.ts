@@ -31,6 +31,7 @@ import { pidAlive, readPid } from "./pid-file.js";
 const ENV_KEYS = ["LLAMACTL_CONFIG", "LLAMACTL_USAGE_DIR", "LLAMACTL_CLI_JOURNAL_DIR"] as const;
 
 let dir = "";
+const cfgDirs: string[] = [];
 let upstream: ReturnType<typeof Bun.serve> | undefined;
 let envBackup: Record<string, string | undefined> = {};
 
@@ -56,12 +57,15 @@ afterEach(async () => {
   }
   if (dir) rmSync(dir, { recursive: true, force: true });
   dir = "";
+  for (const cfgDir of cfgDirs.splice(0)) rmSync(cfgDir, { recursive: true, force: true });
 });
 
 function writeConfig(nodes: ClusterNode[]): string {
   let cfg = freshConfig();
   for (const n of nodes) cfg = upsertNode(cfg, "home", n);
-  const path = join(mkdtempSync(join(tmpdir(), "p02-cfg-")), "config");
+  const cfgDir = mkdtempSync(join(tmpdir(), "p02-cfg-"));
+  cfgDirs.push(cfgDir);
+  const path = join(cfgDir, "config");
   saveConfig(cfg, path);
   return path;
 }
