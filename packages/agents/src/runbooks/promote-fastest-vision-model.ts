@@ -70,11 +70,16 @@ export const promoteFastestVisionModel: Runbook<Params> = {
     const bench = parseToolJson<BenchRow[]>(benchRaw);
     const excludedExperimental: string[] = [];
     const eligible = bench.filter((r) => {
+      // Installed + tuned + finite gen_tps first, so only otherwise-eligible
+      // rels are ever reported as experimental exclusions.
+      if (!r.installed || !r.tuned || !Number.isFinite(Number.parseFloat(r.tuned.gen_tps))) {
+        return false;
+      }
       if (r.qualificationStage === "experimental") {
         excludedExperimental.push(r.rel);
         return false;
       }
-      return r.installed && r.tuned && Number.isFinite(Number.parseFloat(r.tuned.gen_tps));
+      return true;
     });
     const candidates = eligible
       .map((row) => ({ row, genTps: Number.parseFloat(row.tuned?.gen_tps ?? "0") }))

@@ -175,6 +175,57 @@ describe("promote-fastest-vision-model experimental exclusion", () => {
     expect(calls.map((c) => c.name)).toEqual(["llamactl.bench.compare"]);
   });
 
+  test("an uninstalled, unbenched experimental rel is not reported as excluded", async () => {
+    const { client, calls } = makeClient({
+      "llamactl.bench.compare": () =>
+        benchResponse([
+          {
+            rel: EXPERIMENTAL_REL,
+            class: "multimodal",
+            installed: false,
+            qualificationStage: "experimental",
+          },
+          { rel: STABLE_REL, class: "multimodal", installed: false },
+        ]),
+      "llamactl.catalog.promote": () => ({ dryRun: true }),
+      "llamactl.embersynth.sync": () => ({ dryRun: true }),
+    });
+
+    const result = await runWithClient(client, true);
+
+    // Kills: running the experimental check before the installed/tuned filter.
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe(
+      "no installed multimodal models with a recorded bench run — pull + bench one first",
+    );
+    expect(result.error).not.toContain("experimental");
+    expect(benchStepResult(result).excludedExperimental).toBeUndefined();
+    expect(calls.map((c) => c.name)).toEqual(["llamactl.bench.compare"]);
+  });
+
+  test("an uninstalled experimental rel is not excluded alongside an eligible stable rel", async () => {
+    const { client } = makeClient({
+      "llamactl.bench.compare": () =>
+        benchResponse([
+          {
+            rel: EXPERIMENTAL_REL,
+            class: "multimodal",
+            installed: false,
+            gen_tps: "90",
+            qualificationStage: "experimental",
+          },
+          { rel: STABLE_REL, class: "multimodal", installed: true, gen_tps: "40" },
+        ]),
+      "llamactl.catalog.promote": () => ({ dryRun: true }),
+      "llamactl.embersynth.sync": () => ({ dryRun: true }),
+    });
+
+    const result = await runWithClient(client, true);
+
+    expect(result.ok).toBe(true);
+    expect(benchStepResult(result).excludedExperimental).toBeUndefined();
+  });
+
   test("a refused wet promote fails before embersynth sync", async () => {
     const { client, calls } = makeClient({
       "llamactl.bench.compare": () =>
