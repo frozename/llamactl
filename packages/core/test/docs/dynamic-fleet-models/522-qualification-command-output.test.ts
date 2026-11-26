@@ -222,6 +222,46 @@ test("propose and apply input refusals", () => {
   expectNeedles(runBody, ["cannot record applied stage: ${writeFailureDetail(err)}"]);
 });
 
+// Kills: the blanket "fields are tab-separated" sentence returning; a space-separated line form gaining a tab, or a status/list line losing one, without the doc following.
+test("says exactly which output lines are tab-separated", () => {
+  expect(S).not.toContain("the real output separates the fields with tabs");
+  expectDocNeedles([
+    "only two of them use tabs in the real output",
+    "Each `status` line puts one tab between its label (the rel, on the first line) and its value; the value keeps its own spaces.",
+    "Each `list` row puts a tab between each of its five fields.",
+    "Every other line is space-separated exactly as written: the `pin`, `freeze`, `unpin`, `unfreeze` and `unapply` success lines, the `overrides: <file>` line, the `proposal`, `demotion` and `none` decision lines, and every `apply: ...` line.",
+    "`pin`, `freeze` and `apply` take `--author`",
+  ]);
+  const refusals = S.slice(
+    S.indexOf("The write refusals are:"),
+    S.indexOf("`status <rel>` prints"),
+  );
+  expect(refusals.length).toBeGreaterThan(0);
+  expect(refusals).not.toContain("--author");
+
+  // The tab-carrying forms: status writes label\tvalue; list writes four tabs per row.
+  const statusBody = enclosingBody(cli, "function statusCommand(");
+  expect(statusBody.match(/process\.stdout\.write\(`[^`]*\\t/g)?.length).toBe(5);
+  const listBody = enclosingBody(cli, "function listCommand(");
+  const row =
+    /process\.stdout\.write\(\s*`([^`]*)`/.exec(
+      listBody.slice(listBody.lastIndexOf("process.stdout.write(")),
+    )?.[1] ?? "";
+  expect(row.split("\\t").length).toBe(5);
+
+  // Every other text line is written without a tab.
+  for (const sig of [
+    "function mutationCommand(",
+    "function removalCommand(",
+    "function decisionLine(",
+    "function applyResultLine(",
+  ]) {
+    const body = enclosingBody(cli, sig);
+    expect(body.length, sig).toBeGreaterThan(0);
+    expect(body, sig).not.toContain("\\t");
+  }
+});
+
 // Kills: the source citation being dropped; a file:line citation being added; the cited path being renamed.
 test("cites the CLI source by path only", () => {
   expect(S).toContain("`packages/cli/src/commands/qualification.ts`");

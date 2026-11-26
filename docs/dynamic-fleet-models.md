@@ -683,9 +683,16 @@ and `apply` print JSON instead with `--json` — one JSON object for `status`,
 `evidence` always prints JSON. Every refusal goes to stderr and exits 1.
 With no subcommand, or with `help` or `--help`, it prints the usage and
 exits 0; an unknown subcommand prints
-`Unknown qualification subcommand: <subcommand>`, then the usage. The line
-forms below are written space-separated; the real output separates the
-fields with tabs.
+`Unknown qualification subcommand: <subcommand>`, then the usage.
+
+The line forms below are written space-separated, and only two of them use
+tabs in the real output. Each `status` line puts one tab between its label
+(the rel, on the first line) and its value; the value keeps its own spaces.
+Each `list` row puts a tab between each of its five fields. Every other line
+is space-separated exactly as written: the `pin`, `freeze`, `unpin`,
+`unfreeze` and `unapply` success lines, the `overrides: <file>` line, the
+`proposal`, `demotion` and `none` decision lines, and every `apply: ...`
+line.
 
 On a non-local `--node` target, every subcommand exits 1 before reading
 anything, with `qualification: overrides are node-local; run this command on
@@ -698,7 +705,9 @@ Every subcommand that takes a rel refuses a missing one with
 `pin` prints `pinned <rel> at <stage>` and `freeze` prints `froze <rel>`;
 `unpin`, `unfreeze` and `unapply` print `unpinned <rel>`, `unfroze <rel>`
 and `unapplied <rel>`. Each success adds a second line, `overrides: <file>`,
-naming the overrides file it wrote. The write refusals are:
+naming the overrides file it wrote. `pin`, `freeze` and `apply` take
+`--author`, which names the author on the row they write; it defaults to the
+OS user name, else `operator`. The write refusals are:
 
 - `pin` refuses with `qualification pin: <stage> is required`, or with
   `qualification pin: unknown stage '<stage>' (expected experimental | candidate | validated | production | degraded)`.
@@ -706,7 +715,6 @@ naming the overrides file it wrote. The write refusals are:
   `qualification <verb>: --reason is required`.
 - A row that the overrides schema rejects is refused with
   `qualification <verb>: ` followed by the schema's issue messages.
-- `--author` defaults to the OS user name, else `operator`.
 - Removing a row that is absent exits 1 with
   `qualification unpin: no pin override for '<rel>'`,
   `qualification unfreeze: no freeze override for '<rel>'` or
