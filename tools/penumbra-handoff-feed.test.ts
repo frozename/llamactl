@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { startHandoffFeed } from "./penumbra-handoff-feed.js";
+import { describeReadError, startHandoffFeed } from "./penumbra-handoff-feed.js";
 
 test("serves active and bounded recent terminal metadata without exposing handoff content", async () => {
   const dir = mkdtempSync(join(tmpdir(), "penumbra-handoff-feed-"));
@@ -140,4 +140,16 @@ test("does not log database errors for unauthenticated requests", async () => {
     if (feed) await feed.stop(true);
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("describeReadError replaces the database path and token in the error message", () => {
+  const databasePath = "/fixture/state/handoffs.sqlite";
+  const token = "fake-feed-token-0000";
+  const error = new Error(`cannot open ${databasePath} with Bearer ${token}`);
+
+  const description = describeReadError(error, { databasePath, port: 0, token });
+
+  expect(description).toBe("Error: cannot open <database> with Bearer <redacted>");
+  expect(description).not.toContain(databasePath);
+  expect(description).not.toContain(token);
 });

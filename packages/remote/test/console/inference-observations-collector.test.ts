@@ -367,6 +367,31 @@ test("does not probe a non-loopback workload endpoint", async () => {
   }
 });
 
+test("does not fetch Kapitsa model capacity from a private non-loopback host", async () => {
+  useTempRuntime();
+  fixture.routes = [
+    routeFor("private-kapitsa", {
+      engine: "kapitsa",
+      host: "192.168.1.5",
+      model: "kapitsa-model",
+      port: 18201,
+    }),
+  ];
+  const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+    asFetch(() => Promise.resolve(Response.json({ active: true, slots: 7, context_length: 8192 }))),
+  );
+  try {
+    const observations = await inferenceObservations();
+
+    const workload = requireWorkload(observations, "private-kapitsa");
+    expect(fixture.kapitsaCalls).toHaveLength(1);
+    expect(fetchSpy.mock.calls).toHaveLength(0);
+    expect(workload.capacity).toBeNull();
+  } finally {
+    fetchSpy.mockRestore();
+  }
+});
+
 test("retains exactly 128 slots and suppresses a larger slot response", async () => {
   useTempRuntime();
   fixture.routes = [routeFor("slots")];

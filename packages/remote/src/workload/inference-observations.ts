@@ -1,5 +1,3 @@
-import type { ResolvedEnv } from "@llamactl/core/types";
-
 import { resolveEnv } from "@llamactl/core/env";
 import {
   listLocalRoutes,
@@ -21,12 +19,7 @@ import { constants, open, realpath } from "../safe-fs.js";
 import { readKapitsaObservation } from "./kapitsa-observations.js";
 import { type ObservedModels, readObservedModels } from "./observed-models.js";
 
-export interface InferenceObservationDeps {
-  processEnv?: NodeJS.ProcessEnv;
-  listRoutes?: (env: ResolvedEnv) => LocalRoute[];
-  probeMemory?: () => Promise<NodeMemSnapshot>;
-  fetch?: typeof globalThis.fetch;
-}
+type ResolvedEnv = ReturnType<typeof resolveEnv>;
 
 export interface InferenceRun {
   id: string | null;
@@ -174,14 +167,10 @@ const KapitsaModel = z.object({
   context_length: z.number().int().positive(),
 });
 
-async function readKapitsaCapacity(
-  endpoint: URL,
-  model: string,
-  fetchImpl: typeof globalThis.fetch,
-): Promise<ModelCapacity | null> {
+async function readKapitsaCapacity(endpoint: URL, model: string): Promise<ModelCapacity | null> {
   try {
     if (endpoint.hostname !== "127.0.0.1" && endpoint.hostname !== "[::1]") return null;
-    const response = await fetchImpl(new URL(`/v1/models/${encodeURIComponent(model)}`, endpoint), {
+    const response = await fetch(new URL(`/v1/models/${encodeURIComponent(model)}`, endpoint), {
       redirect: "error",
       signal: AbortSignal.timeout(1200),
     });
@@ -193,26 +182,23 @@ async function readKapitsaCapacity(
   }
 }
 
-function redirectErrorFetch(fetchImpl: typeof globalThis.fetch): typeof globalThis.fetch {
-  return ((input, init) =>
-    fetchImpl(input, { ...init, redirect: "error" })) as typeof globalThis.fetch;
-}
+const probeFetch = ((input, init) =>
+  fetch(input, { ...init, redirect: "error" })) as typeof globalThis.fetch;
 
 async function observeHttpWorkload(
   env: ResolvedEnv,
   route: LocalRoute,
   dir: string,
-  fetchImpl: typeof globalThis.fetch,
 ): Promise<WorkloadObservation> {
   const host =
     route.host.includes(":") && !route.host.startsWith("[") ? `[${route.host}]` : route.host;
   const endpoint = new URL(`http://${host}:${String(route.port)}`);
-  const options = { timeoutMs: 1200, fetch: redirectErrorFetch(fetchImpl) };
+  const options = { timeoutMs: 1200, fetch: probeFetch };
   const [slots, metrics, runs, kapitsaCapacity] = await Promise.all([
     readSlotProgress(endpoint.origin, options),
     readEngineMetrics(endpoint.origin, options),
     route.kind === "ModelHost" ? readRecentRuns(workloadRuntimeRoot(env), dir) : null,
-    route.engine === "kapitsa" ? readKapitsaCapacity(endpoint, route.model, fetchImpl) : null,
+    route.engine === "kapitsa" ? readKapitsaCapacity(endpoint, route.model) : null,
   ]);
   const contexts = new Set(slots.slots.map((slot) => slot.context));
   const capacity =
@@ -232,11 +218,7 @@ async function observeHttpWorkload(
   };
 }
 
-async function observeWorkload(
-  env: ResolvedEnv,
-  route: LocalRoute,
-  fetchImpl: typeof globalThis.fetch,
-): Promise<WorkloadObservation> {
+async function observeWorkload(env: ResolvedEnv, route: LocalRoute): Promise<WorkloadObservation> {
   const dir = workloadRuntimeDir(env, { name: route.workload });
   if (route.engine === "kapitsa") {
     const native = await readKapitsaObservation(dir, route.port, route.model);
@@ -257,27 +239,21 @@ async function observeWorkload(
       };
     }
   }
-  return await observeHttpWorkload(env, route, dir, fetchImpl);
+  return await observeHttpWorkload(env, route, dir);
 }
 
-export async function inferenceObservations(
-  deps: InferenceObservationDeps = {},
-): Promise<InferenceObservations> {
-  const source = deps.processEnv ?? process.env;
-  const env = resolveEnv(source);
-  const listRoutes = deps.listRoutes ?? listLocalRoutes;
-  const probeMemory = deps.probeMemory ?? ((): Promise<NodeMemSnapshot> => probeNodeMem());
-  const fetchImpl = deps.fetch ?? globalThis.fetch;
+export async function inferenceObservations(): Promise<InferenceObservations> {
+  const env = resolveEnv();
   const sampledAt = new Date().toISOString();
-  const workloads = new Map(listRoutes(env).map((route) => [route.workload, route]));
+  const workloads = new Map(listLocalRoutes(env).map((route) => [route.workload, route]));
   const observations = Promise.all(
-    [...workloads.values()].map((route) => observeWorkload(env, route, fetchImpl)),
+    [...workloads.values()].map((route) => observeWorkload(env, route)),
   );
   const [nodeMemory, rows, externalModels] = await Promise.all([
-    probeMemory(),
+    probeNodeMem(),
     observations,
     readObservedModels(
-      source["LLAMACTL_OBSERVED_MODELS_FILE"],
+      process.env["LLAMACTL_OBSERVED_MODELS_FILE"],
       join(env.LOCAL_AI_RUNTIME_DIR, "observed-models.json"),
     ),
   ]);

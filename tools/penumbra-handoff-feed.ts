@@ -40,7 +40,7 @@ function readHandoffs(databasePath: string): unknown[] {
   }
 }
 
-function describeReadError(error: unknown, options: HandoffFeedOptions): string {
+export function describeReadError(error: unknown, options: HandoffFeedOptions): string {
   let description: string;
   if (error instanceof Error) {
     const code = "code" in error && typeof error.code === "string" ? ` ${error.code}` : "";
