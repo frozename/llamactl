@@ -15,7 +15,7 @@ describe("#517 keep-alive exclusive-group refusal", () => {
   test("doc and source pin the keep-alive pre-spawn exclusive-group refusal", () => {
     const section = flat(sectionBody(sectionRe("direct modelhost start and stop")) ?? "");
     expect(section).toContain(
-      "`llamactl keep-alive start <target>` spawns a detached supervisor that records no `residency_states` row, but before spawning it resolves `<target>` to a catalog rel and reads the local residency store read-only through `keepAliveLaunchRefusal` (`packages/cli/src/commands/keepAlive.ts`), exiting 1 without spawning when the rel's declared-exclusive residency group is occupied (#517).",
+      "`llamactl keep-alive start <target>` spawns a detached supervisor whose worker records its own `residency_states` row under `<target>`, but before spawning it resolves `<target>` to a catalog rel and reads the local residency store read-only through `keepAliveLaunchRefusal` (`packages/cli/src/commands/keepAlive.ts`), ignoring only that target's own row and exiting 1 without spawning when another member of the rel's declared-exclusive residency group is occupied (#517).",
     );
     expect(section).toContain(
       "The rel comes from `resolveTarget` (`packages/core/src/target.ts`), the resolver the worker uses, so the default target `current` and aliases such as `best` are checked under the rel they resolve to and the refusal names that rel; a target that does not resolve skips the check and spawns as before, and the worker then records `resolve-failed`.",
