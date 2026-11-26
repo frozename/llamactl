@@ -73,6 +73,17 @@ export interface ResolvedEnv {
   LOCAL_AI_LMSTUDIO_PORT: string;
   LOCAL_AI_LMSTUDIO_BASE_URL: string;
   LOCAL_AI_LLAMA_CPP_BASE_URL: string;
+  /**
+   * Derivation marker for the tracked llama-server URL:
+   *
+   * - llamactl writes it.
+   * - It is the http://LLAMA_CPP_HOST:LLAMA_CPP_PORT/v1 default from the
+   *   last resolve.
+   * - A re-fed LOCAL_AI_LLAMA_CPP_BASE_URL equal to it reads as derived,
+   *   not configured (#315).
+   * - Operators should not set it.
+   */
+  LOCAL_AI_LLAMA_CPP_DERIVED_BASE_URL: string;
   LOCAL_AI_RUNTIME_DIR: string;
   LOCAL_AI_ENABLE_THINKING: string;
   LOCAL_AI_PRESERVE_THINKING: string;

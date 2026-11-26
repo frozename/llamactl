@@ -59,6 +59,26 @@ describe("shell/env.zsh fallback (#315)", () => {
       (): Record<string, string> => ({ LLAMA_CPP_PORT: "9090" }),
       PX,
     ],
+    // kills: treating a re-fed derived tracked URL as explicit after a port change.
+    [
+      "seeded shell then LLAMA_CPP_PORT change goes to the proxy",
+      (): Record<string, string> => ({
+        LOCAL_AI_LLAMA_CPP_BASE_URL: TRACKED,
+        LOCAL_AI_LLAMA_CPP_DERIVED_BASE_URL: TRACKED,
+        LLAMA_CPP_PORT: "9090",
+      }),
+      PX,
+    ],
+    // kills: a port change re-deriving over an explicit tracked URL.
+    [
+      "explicit tracked URL survives a seeded port change",
+      (): Record<string, string> => ({
+        LOCAL_AI_LLAMA_CPP_BASE_URL: CUSTOM_TRACKED,
+        LOCAL_AI_LLAMA_CPP_DERIVED_BASE_URL: TRACKED,
+        LLAMA_CPP_PORT: "9090",
+      }),
+      CUSTOM_TRACKED,
+    ],
     // kills: dropping the LOCAL_AI_PROVIDER_ROUTE=direct opt-out.
     [
       "ROUTE=direct keeps the tracked URL",
@@ -191,6 +211,30 @@ describe("shell/llamactl.zsh _local_ai_sync_env (#315)", () => {
   const CASES: readonly (readonly [string, InputFn, string])[] = [
     // kills: LOCAL_AI_PROVIDER_URL="$LOCAL_AI_LLAMA_CPP_BASE_URL" in sync.
     ["seeded defaults", (dir): SyncInput => ({ env: baseVars(dir) }), PX],
+    // kills: treating the seeded tracked URL as explicit after a port change.
+    [
+      "seeded then LLAMA_CPP_PORT change goes to the proxy",
+      (dir): SyncInput => ({ env: baseVars(dir), patch: { LLAMA_CPP_PORT: "9090" } }),
+      PX,
+    ],
+    // kills: direct mode following the stale seeded tracked URL instead of the changed port.
+    [
+      "seeded ROUTE=direct then port change follows the port",
+      (dir): SyncInput => ({
+        env: { ...baseVars(dir), LOCAL_AI_PROVIDER_ROUTE: "direct" },
+        patch: { LLAMA_CPP_PORT: "9090" },
+      }),
+      "http://127.0.0.1:9090/v1",
+    ],
+    // kills: a port change re-deriving over an explicit seeded tracked URL.
+    [
+      "seeded explicit tracked URL survives a port change",
+      (dir): SyncInput => ({
+        env: { ...baseVars(dir), LOCAL_AI_LLAMA_CPP_BASE_URL: CUSTOM_TRACKED },
+        patch: { LLAMA_CPP_PORT: "9090" },
+      }),
+      CUSTOM_TRACKED,
+    ],
     // kills: reusing the stale lmstudio provider URL after a provider switch.
     [
       "lmstudio seed then switch to llama.cpp",

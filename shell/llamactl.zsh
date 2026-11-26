@@ -4719,6 +4719,7 @@ _local_ai_llama_cpp_provider_url() {
   # provider URL is derived from the inputs below, never read back from
   # LOCAL_AI_PROVIDER_URL or OPENAI_BASE_URL. POSIX sh only (local, case,
   # ${x%/}, [ ]) so this mirror also runs under bash and sh.
+  # sync leaves LOCAL_AI_LLAMA_CPP_BASE_URL as it is until the next eval.
   local host port tracked proxy
   host="${LLAMA_CPP_HOST:-127.0.0.1}"
   if [ -n "${LLAMACTL_TEST_PROFILE:-}" ] && [ -z "${LLAMA_CPP_PORT:-}" ]; then
@@ -4726,12 +4727,16 @@ _local_ai_llama_cpp_provider_url() {
   else
     port="${LLAMA_CPP_PORT:-8080}"
   fi
-  tracked="${LOCAL_AI_LLAMA_CPP_BASE_URL:-http://$host:$port/v1}"
+  if [ -n "${LOCAL_AI_LLAMA_CPP_BASE_URL:-}" ] && [ "${LOCAL_AI_LLAMA_CPP_BASE_URL:-}" != "http://$host:$port/v1" ] && [ "${LOCAL_AI_LLAMA_CPP_BASE_URL:-}" != "${LOCAL_AI_LLAMA_CPP_DERIVED_BASE_URL:-}" ]; then
+    tracked="${LOCAL_AI_LLAMA_CPP_BASE_URL:-}"
+  else
+    tracked="http://$host:$port/v1"
+  fi
   if [ "${LOCAL_AI_PROVIDER_ROUTE:-}" = "direct" ]; then
     printf '%s' "$tracked"
     return 0
   fi
-  if [ -n "${LOCAL_AI_LLAMA_CPP_BASE_URL:-}" ] && [ "${LOCAL_AI_LLAMA_CPP_BASE_URL:-}" != "http://$host:$port/v1" ]; then
+  if [ -n "${LOCAL_AI_LLAMA_CPP_BASE_URL:-}" ] && [ "${LOCAL_AI_LLAMA_CPP_BASE_URL:-}" != "http://$host:$port/v1" ] && [ "${LOCAL_AI_LLAMA_CPP_BASE_URL:-}" != "${LOCAL_AI_LLAMA_CPP_DERIVED_BASE_URL:-}" ]; then
     printf '%s' "$tracked"
     return 0
   fi

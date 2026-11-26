@@ -176,6 +176,128 @@ describe("hostReady", () => {
   });
 });
 
+describe("hostReady with a declared readiness probe", () => {
+  const gated = {
+    ...host,
+    readiness: { path: "/ready", expectStatus: 200, expectJson: { status: "ready" } },
+  };
+
+  function modelsThen(readyAnswer: HttpResponse | null): (url: string) => HttpResponse | null {
+    return (url: string) => {
+      if (url.endsWith("/v1/models")) return r(200, '{"data":[{"id":"m"}]}');
+      if (url.endsWith("/ready")) return readyAnswer;
+      return null;
+    };
+  }
+
+  test("a 503 probe answer means not ready", async () => {
+    const rec = recorder(modelsThen(r(503, '{"status":"loading"}')));
+    const result = await hostReady(rec.get, gated);
+    expect(result).toBe(false);
+  });
+
+  test("a passing probe answer means ready after both calls", async () => {
+    const rec = recorder(modelsThen(r(200, '{"status":"ready","model":"m"}')));
+    const result = await hostReady(rec.get, gated);
+    expect(result).toBe(true);
+    expect(rec.calls).toStrictEqual([
+      { url: "http://127.0.0.1:8080/v1/models", opts: { timeoutMs: 3000 } },
+      { url: "http://127.0.0.1:8080/ready", opts: { timeoutMs: 3000 } },
+    ]);
+  });
+
+  test("a 200 probe answer with the wrong JSON value means not ready", async () => {
+    const rec = recorder(modelsThen(r(200, '{"status":"loading"}')));
+    const result = await hostReady(rec.get, gated);
+    expect(result).toBe(false);
+  });
+
+  test("an array probe body means not ready", async () => {
+    const rec = recorder(modelsThen(r(200, "[]")));
+    const result = await hostReady(rec.get, gated);
+    expect(result).toBe(false);
+  });
+
+  test("an invalid JSON probe body means not ready", async () => {
+    const rec = recorder(modelsThen(r(200, "not json")));
+    const result = await hostReady(rec.get, gated);
+    expect(result).toBe(false);
+  });
+
+  test("a string probe body means not ready", async () => {
+    const rec = recorder(modelsThen(r(200, '"ready"')));
+    const result = await hostReady(rec.get, gated);
+    expect(result).toBe(false);
+  });
+
+  describe("with an empty JSON expectation, only the body shape decides", () => {
+    const gatedEmptyJson = { ...host, readiness: { path: "/ready", expectJson: {} } };
+
+    test("an object probe body means ready", async () => {
+      const rec = recorder(modelsThen(r(200, "{}")));
+      expect(await hostReady(rec.get, gatedEmptyJson)).toBe(true);
+    });
+
+    test("an array probe body means not ready", async () => {
+      const rec = recorder(modelsThen(r(200, "[]")));
+      expect(await hostReady(rec.get, gatedEmptyJson)).toBe(false);
+    });
+
+    test("a null probe body means not ready and does not throw", async () => {
+      const rec = recorder(modelsThen(r(200, "null")));
+      // A throw here rejects the awaited call and fails the test.
+      const result = await hostReady(rec.get, gatedEmptyJson);
+      expect(result).toBe(false);
+    });
+
+    test("a string probe body means not ready", async () => {
+      const rec = recorder(modelsThen(r(200, '"x"')));
+      expect(await hostReady(rec.get, gatedEmptyJson)).toBe(false);
+    });
+  });
+
+  test("a probe with no answer means not ready", async () => {
+    const rec = recorder(modelsThen(null));
+    const result = await hostReady(rec.get, gated);
+    expect(result).toBe(false);
+  });
+
+  test("the declared expected status is honored without a JSON expectation", async () => {
+    const gatedNoJson = { ...host, readiness: { path: "/ready", expectStatus: 204 } };
+
+    const wrongStatus = recorder(modelsThen(r(200, "")));
+    expect(await hostReady(wrongStatus.get, gatedNoJson)).toBe(false);
+
+    const expectedStatus = recorder(modelsThen(r(204, "")));
+    expect(await hostReady(expectedStatus.get, gatedNoJson)).toBe(true);
+    expect(expectedStatus.calls).toStrictEqual([
+      { url: "http://127.0.0.1:8080/v1/models", opts: { timeoutMs: 3000 } },
+      { url: "http://127.0.0.1:8080/ready", opts: { timeoutMs: 3000 } },
+    ]);
+  });
+
+  test("the default expected probe status is exactly 200", async () => {
+    const gatedDefaultStatus = { ...host, readiness: { path: "/ready" } };
+
+    const wrongStatus = recorder(modelsThen(r(201, "")));
+    expect(await hostReady(wrongStatus.get, gatedDefaultStatus)).toBe(false);
+
+    const expectedStatus = recorder(modelsThen(r(200, "")));
+    expect(await hostReady(expectedStatus.get, gatedDefaultStatus)).toBe(true);
+  });
+
+  test("an empty model list short-circuits before the declared probe", async () => {
+    const rec = recorder((url: string) => {
+      if (url.endsWith("/v1/models")) return r(200, '{"data":[]}');
+      if (url.endsWith("/ready")) return r(200, '{"status":"ready"}');
+      return null;
+    });
+    const result = await hostReady(rec.get, gated);
+    expect(result).toBe(false);
+    expect(rec.calls).toHaveLength(1);
+  });
+});
+
 describe("hostIdle", () => {
   test("metrics returns idle, result is 'idle'", async () => {
     const rec = recorder((url: string) => {
