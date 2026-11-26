@@ -1,8 +1,7 @@
 // Footprint is the single charged basis. The split kinds are attribution only
 // and are never summed; shared shmem and file-backed pages are not charged.
 import type { MemoryReadStatus } from "@llamactl/core/resources/memory";
-
-import { dlopen, FFIType } from "bun:ffi";
+import type * as BunFfi from "bun:ffi";
 
 import { readFileSync } from "../safe-fs.js";
 
@@ -180,7 +179,10 @@ interface DarwinProcPidRusageBinding {
   };
 }
 
+// bun:ffi is required on first macOS read only, so Linux, other platforms
+// and agents that never scrape metrics never load it.
 function openDarwinProcPidRusageBinding(): DarwinProcPidRusageBinding {
+  const { dlopen, FFIType } = import.meta.require("bun:ffi") as typeof BunFfi;
   return dlopen("/usr/lib/libSystem.B.dylib", {
     proc_pid_rusage: {
       args: [FFIType.i32, FFIType.i32, FFIType.ptr],
