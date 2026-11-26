@@ -152,7 +152,7 @@ export function registerReadTools(server: McpServer): void {
     {
       title: "Node workload budget rollup",
       description:
-        "Return the current budget, reserved GiB, and declared workloads for a node. Mirrors the node budget rollup used by `llamactl describe node` and the remote nodeBudget procedure. Read-only.",
+        "Return the current budget, reserved GiB, and declared workloads for a node. Mirrors the node budget rollup used by `llamactl describe node` and the remote nodeBudget procedure. Read-only. It also reports budgetSource (noderun when NodeRun spec.budget.memoryGiB is set, otherwise computed) and safetyMarginRatio ({ value, defaulted }) as resolved by effectiveResidencyPolicy. A computed budget is the total memory of the process that answers this query x that ratio, which equals the node's own memory only when that node's agent answers.",
       inputSchema: {
         node: z.string().min(1).describe("Name of the node to inspect."),
       },
