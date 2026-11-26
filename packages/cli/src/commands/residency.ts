@@ -67,9 +67,19 @@ export type ResidencyForceUnloadView = Awaited<
   ReturnType<NodeClient["residencyForceUnload"]["mutate"]>
 >;
 
-export type ResidencyApplyProfileView = Awaited<
-  ReturnType<NodeClient["residencyApplyProfile"]["mutate"]>
->;
+type ResidencyApplyProfileRefusalView = {
+  reason: string;
+  detail: string;
+  retryAfterMs?: number;
+  workloads?: string[];
+};
+
+export type ResidencyApplyProfileView = Omit<
+  Awaited<ReturnType<NodeClient["residencyApplyProfile"]["mutate"]>>,
+  "refusal"
+> & {
+  refusal?: ResidencyApplyProfileRefusalView;
+};
 
 export type ResidencyCancelOperationView = Awaited<
   ReturnType<NodeClient["residencyCancelOperation"]["mutate"]>
@@ -443,6 +453,13 @@ function formatMs(ms: number): string {
   return `${String(hours)}h ${String(minutes % 60)}m`;
 }
 
+export function formatRefusalRetry(retryAfterMs: number | null | undefined): string | null {
+  if (typeof retryAfterMs !== "number" || !Number.isFinite(retryAfterMs) || retryAfterMs < 0) {
+    return null;
+  }
+  return formatMs(Math.ceil(retryAfterMs));
+}
+
 type StatusFlags = { json: boolean; node: string | undefined } | { exit: number };
 
 function parseStatusArgs(args: string[]): StatusFlags {
@@ -556,6 +573,10 @@ export function renderResidencyPlan(
     lines.push(renderResidencyPlanLabel("Result:", `refused (${plan.reason})`));
     lines.push(renderResidencyPlanLabel("Detail:", plan.detail));
     lines.push(renderResidencyPlanLabel("Workloads:", joinPlanList(plan.workloads)));
+    const retry = formatRefusalRetry(plan.retryAfterMs);
+    if (retry !== null) {
+      lines.push(renderResidencyPlanLabel("Retry in:", retry));
+    }
   }
   return `${lines.join("\n")}\n`;
 }
@@ -785,7 +806,12 @@ function applyProfileFailureLine(result: ResidencyApplyProfileView): string {
   }
   const reason = result.refusal?.reason ?? result.outcome;
   const detail = result.refusal?.detail ?? "";
-  return `residency apply-profile: ${reason}: ${detail}\n`;
+  const workloads = result.refusal?.workloads;
+  const workloadText =
+    workloads !== undefined && workloads.length > 0 ? `; workloads: ${workloads.join(", ")}` : "";
+  const retry = formatRefusalRetry(result.refusal?.retryAfterMs);
+  const retryText = retry === null ? "" : `; retry in ${retry}`;
+  return `residency apply-profile: ${reason}: ${detail}${workloadText}${retryText}\n`;
 }
 
 async function runResidencyApplyProfile(args: string[], deps: ResidencyDeps): Promise<number> {
