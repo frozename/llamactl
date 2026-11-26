@@ -98,7 +98,11 @@ async function complete(
       ? jsonError(413, "chat_request_too_large")
       : jsonError(400, "invalid_chat_request");
   }
-  const body = JSON.stringify({ ...payload, stream: true });
+  const body = JSON.stringify({
+    ...payload,
+    stream: true,
+    stream_options: { include_usage: true },
+  });
   const upstream = await forward(cfg, node, "/v1/chat/completions", req.signal, body);
   const type = upstream.headers.get("content-type")?.split(";")[0]?.trim();
   if (upstream.ok && upstream.body && type === "text/event-stream") {

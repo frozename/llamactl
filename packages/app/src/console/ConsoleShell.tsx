@@ -13,7 +13,6 @@ import { NodeScopedProvider } from "./node-scoped-provider";
 import { useNodeTrpc } from "./node-trpc";
 import { consoleHref, parseConsoleRoute } from "./router";
 import { INVALID_SESSION_MESSAGE, useInvalidSession } from "./session-store";
-import { ChatView } from "./views/chat";
 import { DashboardView } from "./views/dashboard";
 import { FleetView } from "./views/fleet";
 import { LogsView } from "./views/logs";
@@ -21,6 +20,8 @@ import { NodesView } from "./views/nodes";
 import { ObservabilityView } from "./views/observability";
 import { WorkloadsView } from "./views/workloads";
 import "./console.css";
+
+const ChatView = React.lazy(async () => ({ default: (await import("./views/chat")).ChatView }));
 
 interface ShellLocation {
   pathname: string;
@@ -47,7 +48,17 @@ function RoutedView({
 }): React.JSX.Element {
   switch (route.view) {
     case "chat":
-      return <ChatView key={tabNode} node={tabNode} />;
+      return (
+        <React.Suspense
+          fallback={
+            <p className="console-page" role="status">
+              Loading chat…
+            </p>
+          }
+        >
+          <ChatView key={tabNode} node={tabNode} />
+        </React.Suspense>
+      );
     case "dashboard":
       return <DashboardView />;
     case "workloads":

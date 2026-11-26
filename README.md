@@ -19,8 +19,11 @@ escape hatches that one-off operations stay trivial.
 
 Open **Chat** in the web console. Choose a host with the tab's node
 picker, then choose one of its served models. Replies stream as the model
-generates them, and follow-up messages include the current conversation.
-Use **Stop** to interrupt generation and **New chat** to clear the conversation.
+generates them, with Markdown formatting for headings, tables, and code blocks.
+Expand **Thinking** to read reasoning provided by the model. The reply shows
+output tokens and generation speed when the stream provides enough data. The
+`≈` prefix marks a rate measured from token counts and response timing in the browser.
+Follow-up messages include the current conversation. Use **Stop** to interrupt generation and **New chat** to clear the conversation.
 Chat keeps the transcript in memory until you leave the page or change nodes.
 
 ## Fleet telemetry

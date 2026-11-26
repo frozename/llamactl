@@ -1,12 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 
-import { type ChatMessage, loadChatModels, streamChat } from "../chat-client";
+import { type ChatMessage, type ChatProgress, loadChatModels, streamChat } from "../chat-client";
+import { ChatReply } from "./chat-reply";
 import "./chat.css";
 
-interface ChatTurn {
+interface ChatTurn extends ChatProgress {
   prompt: string;
-  reply: string;
   model: string;
   stopped?: boolean;
 }
@@ -46,11 +46,12 @@ function ChatTranscript({
             <span className="chat-speaker">You</span>
             <p>{turn.prompt}</p>
           </div>
-          <div className="chat-reply">
-            <span className="chat-speaker">{turn.model}</span>
-            {turn.reply ? <p>{turn.reply}</p> : <p role="status">Waiting for a reply…</p>}
-            {turn.stopped === true ? <span className="chat-speaker">Stopped</span> : null}
-          </div>
+          <ChatReply
+            reply={turn}
+            model={turn.model}
+            pending={turn === pending}
+            stopped={turn.stopped === true}
+          />
         </div>
       ))}
     </div>
@@ -86,11 +87,8 @@ function useChatConversation(node: string, model: string): ChatConversation {
     if (active.current?.controller !== controller) return;
     active.current = null;
     const stopped = controller.signal.aborted;
-    if (turn.reply) {
-      setTurns((previous) => [...previous, { ...turn, stopped }]);
-    } else {
-      setDraft(turn.prompt);
-    }
+    if (turn.reply || turn.reasoning) setTurns((previous) => [...previous, { ...turn, stopped }]);
+    if (!turn.reply) setDraft(turn.prompt);
     if (!stopped && (failure !== null || !turn.reply)) {
       setNotice(failure instanceof Error ? failure.message : "The model returned no text.");
     }
@@ -100,12 +98,14 @@ function useChatConversation(node: string, model: string): ChatConversation {
   async function send(): Promise<void> {
     const prompt = draft.trim();
     if (prompt === "" || model === "" || active.current !== null) return;
-    const messages = turns.flatMap(({ prompt, reply }): ChatMessage[] => [
-      { role: "user", content: prompt },
-      { role: "assistant", content: reply },
-    ]);
+    const messages = turns
+      .filter(({ reply }) => reply !== "")
+      .flatMap(({ prompt, reply }): ChatMessage[] => [
+        { role: "user", content: prompt },
+        { role: "assistant", content: reply },
+      ]);
     const controller = new AbortController();
-    const turn = { prompt, model, reply: "" };
+    const turn: ChatTurn = { prompt, model, reply: "", reasoning: "" };
     active.current = { controller, turn };
     setDraft("");
     setNotice(null);
@@ -117,8 +117,8 @@ function useChatConversation(node: string, model: string): ChatConversation {
         model,
         [...messages, { role: "user", content: prompt }],
         controller.signal,
-        (delta) => {
-          turn.reply += delta;
+        (progress) => {
+          Object.assign(turn, progress);
           if (active.current?.controller === controller) setPending({ ...turn });
         },
       );

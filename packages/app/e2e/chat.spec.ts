@@ -63,3 +63,68 @@ test("stopping a pending reply restores the unsent draft", async ({ page }) => {
     release.resolve(null);
   }
 });
+
+test("shows streamed reasoning, generation stats and formatted Markdown", async ({ page }) => {
+  await page.route("**/api/n/local/chat/models", (route) =>
+    route.fulfill({ json: { models: ["fixture-model"] } }),
+  );
+  await page.route("**/api/n/local/chat/completions", (route) =>
+    route.fulfill({
+      contentType: "text/event-stream",
+      body:
+        [
+          { choices: [{ delta: { reasoning_content: "Check " } }] },
+          { choices: [{ delta: { reasoning: "the arithmetic." } }] },
+          {
+            choices: [
+              {
+                delta: {
+                  content: [
+                    "## Result",
+                    "",
+                    "**42**",
+                    "",
+                    "| Value |",
+                    "| --- |",
+                    "| 42 |",
+                    "",
+                    "```ts",
+                    "const answer = 42;",
+                    "```",
+                    "",
+                    "<img src='/fixture-untrusted'>",
+                    "",
+                    "[unsafe](javascript:alert%281%29)",
+                  ].join("\n"),
+                },
+                finish_reason: "stop",
+              },
+            ],
+            timings: { predicted_per_second: 45.5 },
+          },
+          {
+            choices: [],
+            usage: { completion_tokens: 24, completion_tokens_details: { reasoning_tokens: 8 } },
+          },
+        ]
+          .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+          .join("") + "data: [DONE]\n\n",
+    }),
+  );
+  await page.goto("/chat");
+  await page.getByRole("textbox", { name: "Message" }).fill("What is the result?");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Result" })).toBeVisible();
+  await expect(page.locator(".chat-reply strong")).toHaveText("42");
+  await expect(page.getByRole("table")).toBeVisible();
+  await expect(page.locator(".chat-reply pre code")).toHaveText("const answer = 42;");
+  await expect(page.locator(".chat-reply img")).toHaveCount(0);
+  await expect(page.locator(".chat-reply a[href^='javascript']")).toHaveCount(0);
+  await expect(page.getByText("45.5 tok/s", { exact: true })).toBeVisible();
+  await expect(page.getByText("24 tokens", { exact: true })).toBeVisible();
+  const thinking = page.locator("summary").filter({ hasText: "Thinking" });
+  await expect(thinking).toContainText("8 tokens");
+  await expect(page.getByText("Check the arithmetic.", { exact: true })).toBeHidden();
+  await thinking.click();
+  await expect(page.getByText("Check the arithmetic.", { exact: true })).toBeVisible();
+});

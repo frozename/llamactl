@@ -71,7 +71,12 @@ test("lists models and posts only chat messages to the selected agent", async ()
         path: "/v1/chat/completions",
         auth: "Bearer tok-console-test",
         method: "POST",
-        body: { model: "fixture/model", messages, stream: true },
+        body: {
+          model: "fixture/model",
+          messages,
+          stream: true,
+          stream_options: { include_usage: true },
+        },
       },
     ]);
   } finally {
