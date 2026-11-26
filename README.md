@@ -55,6 +55,10 @@ llamactl console
 Use the daemon's actual port or an existing loopback forward to it. The console
 keeps the token server-side and displays only handoff IDs, seats, timestamps,
 and status. Penumbra can continue to use the model proxy independently.
+The daemon's handoff list has no row limit, so the console asks it only for
+active handoffs (pending, approved, dispatched) and reuses each answer for up
+to 10 seconds across all open tabs. Recent terminal handoffs appear when the
+console reads from the adapter below.
 
 For a colocated deployment with a large handoff database, the loopback
 `tools/penumbra-handoff-feed.ts` adapter serves the same metadata from
