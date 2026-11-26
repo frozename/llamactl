@@ -137,6 +137,7 @@ export function createLaunchLoadHooks(
   deps: EvalPerfLaunchDeps,
 ): {
   hooks: PerfSuiteLoadHooks;
+  pid(): number | null;
   foreign(): boolean;
   failure(): string | null;
   teardown(): Promise<void>;
@@ -187,11 +188,15 @@ export function createLaunchLoadHooks(
 
   return {
     hooks: { cold, beforeWarm, warm },
+    pid: () => (boot?.owned ? boot.proc?.pid : null) ?? null,
     foreign: () => isForeign,
     failure: () => failureMessage,
     teardown,
   };
 }
+
+export const LAUNCH_IO_REASON =
+  "--launch relaunches the engine between the cold and warm load, so no single engine process spans the suite; per-process SSD I/O (/proc/<pid>/io) is not measured";
 
 export const LAUNCH_SLOTS_REASON =
   "--launch starts the engine inside the perf suite, so GET /props is not probed before the run; pass --slots <n> to measure c2/c4";
