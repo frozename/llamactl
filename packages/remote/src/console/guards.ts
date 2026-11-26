@@ -21,7 +21,7 @@ export function newConsoleSession(port: number): ConsoleSession {
   };
 }
 
-function jsonError(status: number, error: string): Response {
+export function jsonError(status: number, error: string): Response {
   return new Response(JSON.stringify({ error }), {
     status,
     headers: { "content-type": "application/json" },

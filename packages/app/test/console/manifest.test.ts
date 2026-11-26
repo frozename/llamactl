@@ -1,11 +1,4 @@
-// packages/app/test/console/manifest.test.ts
-// Issue #410, P5a RED — pins the console module manifest: exactly four
-// modules (fleet, workloads, nodes, logs) in shell order, each with a
-// non-empty label and a console path outside /api. The retired Electron
-// modules (chat, models, settings, projects) must never come back
-// through this registry. The module does not exist at the base commit,
-// so every case fails by assertion through the import-catch pattern —
-// never by import error.
+// The dashboard is the landing route. Detail pages retain their own paths.
 
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
@@ -29,15 +22,19 @@ async function importManifest(): Promise<ConsoleManifestModule | null> {
 }
 
 describe("console module manifest (#410 P5a)", () => {
-  test("lists exactly fleet, workloads, nodes, logs in order", async () => {
+  test("places Dashboard first, followed by the fleet and detail views", async () => {
     const mod = await importManifest();
     expect(mod?.CONSOLE_MODULES).toBeDefined();
 
     expect(mod!.CONSOLE_MODULES!.map((entry) => entry.id)).toEqual([
+      "dashboard",
       "fleet",
       "workloads",
       "nodes",
       "logs",
+      "stats",
+      "runs",
+      "chat",
     ]);
   });
 
@@ -74,7 +71,7 @@ describe("console module manifest (#410 P5a)", () => {
     expect(mod?.CONSOLE_MODULES).toBeDefined();
 
     const ids = mod!.CONSOLE_MODULES!.map((entry) => entry.id);
-    for (const retired of ["chat", "models", "settings", "projects"]) {
+    for (const retired of ["models", "settings", "projects"]) {
       expect(ids).not.toContain(retired);
     }
   });

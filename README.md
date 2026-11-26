@@ -15,6 +15,76 @@ plane, N agent nodes, the same verbs (apply, get, describe, delete)
 across `ModelRun` and `NodeRun` manifests, plus enough imperative
 escape hatches that one-off operations stay trivial.
 
+## Chat with a model
+
+Open **Chat** in the web console. Choose a host with the tab's node
+picker, then choose one of its served models. Replies stream as the model
+generates them, with Markdown formatting for headings, tables, and code blocks.
+Expand **Thinking** to read reasoning provided by the model. The reply shows
+output tokens and generation speed when the stream provides enough data. The
+`≈` prefix marks a rate measured from token counts and response timing in the browser.
+Follow-up messages include the current conversation. Use **Stop** to interrupt generation and **New chat** to clear the conversation.
+Chat keeps the transcript in memory until you leave the page or change nodes.
+
+## Fleet telemetry
+
+Open **Fleet Stats** in `llamactl console` for workload status, node memory,
+slot occupancy, queue depth, and recent request timings. **Runs** shows busy
+slots, recent inference requests, and benchmark results by node. Metrics depend
+on the agent version and engine instrumentation. The console marks stale
+supervisor samples and shows a dash for unavailable metrics.
+
+Kapitsa control protocol 1 provides live slots, waiting requests, GPU memory
+and recent completion timings over the workload's own Unix socket. Waiting
+requests include requests still processing input. The first token estimate combines the recorded slot wait and prefill durations. Gufo
+reports TTFT from its request log and slot occupancy and queue depth from its
+engine endpoints.
+
+For a model served outside Llamactl, place an `observed-models.json` file in
+the serving agent's resolved `LOCAL_AI_RUNTIME_DIR` or set
+`LLAMACTL_OBSERVED_MODELS_FILE` on that agent. List exact model IDs and local
+HTTP ports.
+
+```json
+[{ "port": 8085, "model": "example-model" }]
+```
+
+Fleet Stats checks the node's loopback `GET /v1/models` and reports whether
+each configured ID is advertised. An inventory entry grants no routing
+or lifecycle controls. Agent versions that predate request observations
+continue to show their supervisor snapshots.
+
+To include **Penumbra handoffs** in Runs, start the console with the Penumbra
+daemon's URL and a local file containing its bearer token. The URL must be
+exactly `http://127.0.0.1:<port>`: plain HTTP to the IPv4 address
+`127.0.0.1`, with no path beyond an optional trailing `/` and no query,
+fragment or credentials. Any other form, including `localhost`, `[::1]`
+and `https://`, leaves the Penumbra panel unavailable.
+
+```sh
+LLAMACTL_PENUMBRA_URL=http://127.0.0.1:51257 \
+LLAMACTL_PENUMBRA_TOKEN_FILE="$HOME/.penumbra/token" \
+llamactl console
+```
+
+Use the daemon's actual port, or a forward to it that listens on
+`127.0.0.1`. The console keeps the token server-side and displays only
+handoff IDs, seats, timestamps, and status. Penumbra can continue to use
+the model proxy independently.
+The daemon's handoff list has no row limit, so the console asks it only for
+active handoffs (pending, approved, dispatched) and reuses each answer for up
+to 10 seconds across all open tabs. Recent terminal handoffs appear when the
+console reads from the adapter below.
+
+For a colocated deployment with a large handoff database, the loopback
+`tools/penumbra-handoff-feed.ts` adapter serves the same metadata from
+a read-only SQLite connection. Start it with an absolute database path,
+an absolute path to a dedicated bearer-token file, and a port. Point the
+console's Penumbra URL and token-file settings at the adapter. Each sample
+shows up to 30 active handoffs and up to 30 terminal handoffs from the
+256 most recently inserted rows. The adapter requires access to Penumbra's
+live SQLite database and its WAL files.
+
 ## Highlights
 
 - **Single-machine workflow unchanged.** `llamactl bench`, `llamactl
