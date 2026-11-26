@@ -883,10 +883,16 @@ SSD read and write bytes come from `/proc/<pid>/io` and peak RSS comes from
 `unavailable` with a reason naming the unknown engine PID
 (`createPerfHostReaders`, `packages/eval/src/perf/readers.ts`). With --launch, peak RSS is read from the launched engine instead; see Measured load with --launch. GTT comes from the GTT probe on
 any loopback Linux run, with or without `--pid`
-(`hostReaders`, `packages/cli/src/commands/eval-perf.ts`). These counters are
+(`hostReaders`, `packages/cli/src/commands/eval-perf.ts`). On macOS with `--pid`,
+`proc_pid_rusage` with flavor `RUSAGE_INFO_V2` fills `ri_diskio_bytesread` and
+`ri_diskio_byteswritten`, and their per-sample deltas are the SSD read and write bytes
+(`createPerfHostReaders`, `packages/eval/src/perf/readers.ts`, and
+`defaultProcPidRusage`, `packages/eval/src/perf/darwin-rusage.ts`). Peak RSS and GTT are
 Linux-only; on macOS each is recorded `unavailable` with a named reason
 (`createPerfHostReaders`, `packages/eval/src/perf/readers.ts`, and
-`hostReaders`, `packages/cli/src/commands/eval-perf.ts`). With a non-loopback URL, every
+`hostReaders`, `packages/cli/src/commands/eval-perf.ts`). On any other platform SSD I/O
+records `per-process disk I/O counters are read from /proc/<pid>/io on Linux and
+proc_pid_rusage on macOS; no I/O reader on <platform>`. With a non-loopback URL, every
 host counter is recorded `unavailable`, with a reason naming the remote engine
 (`remoteReasons`, `packages/cli/src/commands/eval-perf.ts`).
 
@@ -1299,8 +1305,9 @@ not known when the reader ran`. SSD I/O records
 `--launch relaunches the engine between the cold and warm load, so no single
 engine process spans the suite; per-process SSD I/O (/proc/<pid>/io) is not
 measured` (`LAUNCH_IO_REASON`, `packages/cli/src/commands/eval-perf-launch.ts`),
-because the cold and warm boots are different processes. GTT is unchanged, and
-on macOS the Linux-only reasons apply.
+because the cold and warm boots are different processes. GTT is unchanged. On macOS, SSD
+I/O records the same `LAUNCH_IO_REASON`, and peak RSS and GTT keep their Linux-only
+reasons.
 
 Because the engine is not up before the suite starts, `GET /props` is not
 probed. Without an explicit `--slots <n>`, c2/c4 record
@@ -1343,10 +1350,11 @@ sample from any phase still wins over a failed one (`peakGttMetric`,
 caller-named reasons, as described in Capturing evidence for an arm.
 
 The shipped `createPerfHostReaders` (packages/eval/src/perf/readers.ts)
-turns a failed /proc read into null. So `eval perf` records `I/O reader
-returned no sample` and `peak-RSS (VmHWM) reader returned no sample`, and
-the `... reader failed: <message>` reasons apply only to an injected
-reader that throws. The GTT probe `probeGpuGtt`
+turns a failed /proc read into null. On macOS it turns a non-zero
+`proc_pid_rusage` return, or a counter above `Number.MAX_SAFE_INTEGER`, into
+null the same way. So `eval perf` records `I/O reader returned no sample` and
+`peak-RSS (VmHWM) reader returned no sample`, and the `... reader failed:
+<message>` reasons apply only to an injected reader that throws. The GTT probe `probeGpuGtt`
 (packages/fleet-supervisor/src/node-probe.ts) reports `denied` when the
 counters are not readable, `unavailable` when no card exposes them, and
 `unsupported` off Linux, and reports an empty source for each of them. On

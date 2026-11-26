@@ -11,12 +11,13 @@ import type { ChildProcess } from "node:child_process";
 
 import { listPerfRuns } from "@llamactl/eval";
 import { Database } from "bun:sqlite";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { RESIDENCY_APPLY_PROFILE_FENCE_OWNER } from "../../remote/src/residency/apply-profile.js";
 import { openResidencyOperationStore } from "../../remote/src/residency/store.js";
+import { LAUNCH_IO_REASON } from "../src/commands/eval-perf-launch.js";
 import * as evalCmd from "../src/commands/eval.js";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 import { captureProcessStreams, isPlainRecord } from "./helpers.js";
@@ -44,6 +45,15 @@ interface EvalPerfProvenanceReaders {
   hostname(): string;
 }
 
+type ProcPidRusage = (pid: number, flavor: number, buffer: Uint8Array) => number | Promise<number>;
+
+const unexpectedRusageCalls: { pid: number; flavor: number }[] = [];
+
+function unexpectedRusage(pid: number, flavor: number, _buffer: Uint8Array): number {
+  unexpectedRusageCalls.push({ pid, flavor });
+  throw new Error("unexpected proc_pid_rusage call");
+}
+
 interface LaunchSeam {
   ensure(spec: ModelSpec): Promise<BootResult>;
   teardown(boot: BootResult): Promise<void>;
@@ -55,6 +65,7 @@ interface EvalPerfTestSeams {
   provenanceReaders?: EvalPerfProvenanceReaders;
   platform?: NodeJS.Platform;
   readFile?: (path: string) => Promise<string>;
+  procPidRusage?: ProcPidRusage;
   probeGtt?: () => Promise<GttObservation>;
   clock?: { now(): number };
   launch?: LaunchSeam;
@@ -83,6 +94,7 @@ interface HarnessOptions {
   modelsStatus?: number;
   pids?: (number | null)[];
   platform?: NodeJS.Platform;
+  procPidRusage?: ProcPidRusage;
   runPerfSuite?: (db: Database, opts: unknown) => Promise<unknown>;
 }
 
@@ -270,6 +282,7 @@ function installHarness(options: HarnessOptions = {}): LaunchHarness {
     platform: options.platform ?? "darwin",
     fetchImpl,
     readFile,
+    procPidRusage: options.procPidRusage ?? unexpectedRusage,
     probeGtt: () => Promise.resolve(GTT_OK),
     provenanceReaders: {
       sha256File: () => "ab".repeat(32),
@@ -373,6 +386,10 @@ afterEach(() => {
   }
   rmSync(tmpDir, { recursive: true, force: true });
   tmpDir = "";
+});
+
+afterAll(() => {
+  expect(unexpectedRusageCalls).toEqual([]);
 });
 
 describe("#521 eval perf --launch", () => {
@@ -737,14 +754,10 @@ describe("#521 eval perf --launch", () => {
   });
 });
 
-const LAUNCH_IO_REASON =
-  "--launch relaunches the engine between the cold and warm load, so no single engine process spans the suite; per-process SSD I/O (/proc/<pid>/io) is not measured";
 const LAUNCH_PEAK_RSS_NULL_REASON =
   "peak-RSS (VmHWM) reader failed: engine PID not known when the reader ran";
 const DARWIN_PEAK_RSS_REASON =
   "VmHWM (/proc/<pid>/status) is Linux-only; no peak-RSS reader on darwin";
-const DARWIN_IO_REASON =
-  "per-process disk I/O counters (/proc/<pid>/io) are Linux-only; darwin needs proc_pid_rusage, which this build does not read";
 
 function expectUnavailable(metric: MetricValue | undefined, reason: string): void {
   expect(metric).toEqual({ status: "unavailable", value: null, reason });
@@ -800,9 +813,18 @@ describe("#521 eval perf --launch peak RSS", () => {
     expectUnavailable(byName.get("peak_rss_bytes"), LAUNCH_PEAK_RSS_NULL_REASON);
   });
 
-  test("(B4) darwin keeps platform reasons for the launched engine", async () => {
-    // Kills: falling back to the pid-null path under --launch.
-    installHarness({ platform: "darwin", pids: [1111, 2222] });
+  test("(B4) launch drops the darwin io reader for the relaunched engine", async () => {
+    // Kills: keeping the lazy io reader under --launch, which would sample two
+    //        different processes, or falling back to the pid-null path.
+    const procPidRusageCalls: { pid: number; flavor: number }[] = [];
+    const procPidRusage: ProcPidRusage = (pid, flavor, buffer) => {
+      procPidRusageCalls.push({ pid, flavor });
+      const view = new DataView(buffer.buffer, buffer.byteOffset);
+      view.setBigUint64(144, 1n, true);
+      view.setBigUint64(152, 1n, true);
+      return 0;
+    };
+    installHarness({ platform: "darwin", pids: [1111, 2222], procPidRusage });
 
     const { result, stdout } = await captureProcessStreams(() =>
       runEval(perfArgv({ dbPath: dbPath(), launch: true })),
@@ -812,7 +834,9 @@ describe("#521 eval perf --launch peak RSS", () => {
     expect(stdout).toContain("run_id: r1");
     const byName = metricsByName(dbPath(), "r1");
     expectUnavailable(byName.get("peak_rss_bytes"), DARWIN_PEAK_RSS_REASON);
-    expectUnavailable(byName.get("ssd_read_bytes"), DARWIN_IO_REASON);
-    expectUnavailable(byName.get("ssd_write_bytes"), DARWIN_IO_REASON);
+    expectUnavailable(byName.get("ssd_read_bytes"), LAUNCH_IO_REASON);
+    expectUnavailable(byName.get("ssd_write_bytes"), LAUNCH_IO_REASON);
+    expect(procPidRusageCalls).toEqual([]);
+    expect(unexpectedRusageCalls).toEqual([]);
   });
 });

@@ -145,6 +145,34 @@ export interface RusageIoInput {
   ri_diskio_byteswritten: number;
 }
 
+// `struct rusage_info_v2` (BSD sys/resource.h) is uuid[16] followed by the
+// 16 u64 counters carried by v0/v1, then the two diskio fields:
+// ri_diskio_bytesread at 144 and ri_diskio_byteswritten at 152, so the
+// whole struct is 16 + 16 * 8 + 2 * 8 = 160 bytes.
+export const RUSAGE_INFO_V2 = 2;
+export const RUSAGE_INFO_V2_SIZE = 160;
+export const RI_DISKIO_BYTESREAD_OFFSET = 144;
+export const RI_DISKIO_BYTESWRITTEN_OFFSET = 152;
+
+/**
+ * Decode the disk I/O counters out of a raw `rusage_info_v2` buffer filled by
+ * `proc_pid_rusage`. Returns null for a short buffer or a counter too large
+ * for an exact JavaScript number.
+ */
+export function decodeRusageInfoV2Io(buffer: Uint8Array): RusageIoInput | null {
+  if (buffer.byteLength < RUSAGE_INFO_V2_SIZE) return null;
+  const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+  const readBytes = view.getBigUint64(RI_DISKIO_BYTESREAD_OFFSET, true);
+  const writeBytes = view.getBigUint64(RI_DISKIO_BYTESWRITTEN_OFFSET, true);
+  if (readBytes > BigInt(Number.MAX_SAFE_INTEGER) || writeBytes > BigInt(Number.MAX_SAFE_INTEGER)) {
+    return null;
+  }
+  return {
+    ri_diskio_bytesread: Number(readBytes),
+    ri_diskio_byteswritten: Number(writeBytes),
+  };
+}
+
 export function rusageIo(r: RusageIoInput): IoByteCounts | null {
   const readBytes = r.ri_diskio_bytesread;
   const writeBytes = r.ri_diskio_byteswritten;
