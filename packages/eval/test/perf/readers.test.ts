@@ -250,3 +250,110 @@ describe("createPerfHostReaders", () => {
     }
   });
 });
+
+type LivePidHostReaderOptions = Omit<Parameters<CreatePerfHostReaders>[0], "pid"> & {
+  pid: () => number | null;
+};
+
+function livePidOpts(opts: LivePidHostReaderOptions): Parameters<CreatePerfHostReaders>[0] {
+  return opts as unknown as Parameters<CreatePerfHostReaders>[0];
+}
+
+async function rejectionOf(promise: Promise<unknown>): Promise<unknown> {
+  try {
+    await promise;
+    return null;
+  } catch (err) {
+    return err;
+  }
+}
+
+describe("#521 createPerfHostReaders live pid getter", () => {
+  test("linux resolves the getter when each reader runs", async () => {
+    // Kills: snapshotting the pid when the readers are built, or treating
+    //        a getter as an unknown pid.
+    const paths: string[] = [];
+    let current = 10;
+    const { readers } = hostReaders()(
+      livePidOpts({
+        pid: () => current,
+        platform: "linux",
+        readFile: (path) => {
+          paths.push(path);
+          if (path.endsWith("/status")) return Promise.resolve("VmHWM:\t    2048 kB");
+          if (path.endsWith("/io")) return Promise.resolve("read_bytes: 8\nwrite_bytes: 4\n");
+          return Promise.reject(new Error(`unexpected proc read: ${path}`));
+        },
+      }),
+    );
+    current = 20;
+
+    expect(readers.peakRss).toBeDefined();
+    expect(await readers.peakRss!()).toBe(2097152);
+    expect(paths).toEqual(["/proc/20/status"]);
+
+    paths.length = 0;
+    expect(readers.io).toBeDefined();
+    expect(await readers.io!()).toEqual({ readBytes: 8, writeBytes: 4 });
+    expect(paths).toEqual(["/proc/20/io"]);
+  });
+
+  test("linux a null getter result rejects when the reader runs", async () => {
+    // Kills: swallowing the missing pid into a null return, which would
+    //        become the misleading 'returned no sample'.
+    const { readers } = hostReaders()(
+      livePidOpts({
+        pid: () => null,
+        platform: "linux",
+        readFile: () => Promise.resolve(""),
+      }),
+    );
+
+    expect(readers.peakRss).toBeDefined();
+    const peakErr = await rejectionOf(Promise.resolve().then(() => readers.peakRss!()));
+    expect(peakErr).toBeInstanceOf(Error);
+    expect((peakErr as Error).message).toBe("engine PID not known when the reader ran");
+
+    expect(readers.io).toBeDefined();
+    const ioErr = await rejectionOf(Promise.resolve().then(() => readers.io!()));
+    expect(ioErr).toBeInstanceOf(Error);
+    expect((ioErr as Error).message).toBe("engine PID not known when the reader ran");
+  });
+
+  test("darwin keeps the platform reasons for a live pid getter", () => {
+    // Kills: running the PID-unknown branch for a getter.
+    const { reasons } = hostReaders()(
+      livePidOpts({
+        pid: () => 5,
+        platform: "darwin",
+        readFile: () => Promise.resolve(""),
+      }),
+    );
+
+    expect(reasons.peakRss).toBe(
+      "VmHWM (/proc/<pid>/status) is Linux-only; no peak-RSS reader on darwin",
+    );
+    expect(reasons.io).toBe(
+      "per-process disk I/O counters (/proc/<pid>/io) are Linux-only; darwin needs proc_pid_rusage, which this build does not read",
+    );
+  });
+
+  test("guard: numeric null pid keeps the engine-PID-unknown reason", () => {
+    // Kills: dropping the existing unknown-pid contract while adding live
+    //        getters.
+    const { readers, reasons } = hostReaders()({
+      pid: null,
+      platform: "linux",
+      readFile: () => Promise.resolve(""),
+    });
+
+    expect(readers.io).toBeUndefined();
+    expect(readers.peakRss).toBeUndefined();
+    expect(reasons.io).toBe(
+      "engine PID unknown; per-process I/O and VmHWM counters need the engine process id",
+    );
+    expect(reasons.peakRss).toBe(
+      "engine PID unknown; per-process I/O and VmHWM counters need the engine process id",
+    );
+  });
+});

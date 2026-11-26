@@ -5,7 +5,9 @@
 // readers are faked; at base `--launch` is an unknown flag, so every case
 // fails on its assertion rather than on a missing import.
 
+import type { GttObservation } from "@llamactl/core/resources/memory";
 import type { BootResult, EngineVersionInfo, MetricValue, ModelSpec } from "@llamactl/eval";
+import type { ChildProcess } from "node:child_process";
 
 import { listPerfRuns } from "@llamactl/eval";
 import { Database } from "bun:sqlite";
@@ -27,6 +29,15 @@ const GROUP = "z13-large-gpu";
 const NOW = 1_000_000_000;
 const ENV_KEYS = ["LLAMA_CPP_MODELS", "LLAMACTL_RESIDENCY_STORE"] as const;
 
+const GTT_OK: GttObservation = {
+  status: "ok",
+  totalBytes: 1000,
+  usedBytes: 123,
+  observedAtMs: 1,
+  source: "/sys/class/drm/card1/device",
+  scope: "shared",
+};
+
 interface EvalPerfProvenanceReaders {
   sha256File(path: string): string | Promise<string>;
   engineVersion(binaryPath: string): EngineVersionInfo | Promise<EngineVersionInfo>;
@@ -43,6 +54,8 @@ interface EvalPerfTestSeams {
   fetchImpl?: typeof fetch;
   provenanceReaders?: EvalPerfProvenanceReaders;
   platform?: NodeJS.Platform;
+  readFile?: (path: string) => Promise<string>;
+  probeGtt?: () => Promise<GttObservation>;
   clock?: { now(): number };
   launch?: LaunchSeam;
 }
@@ -58,6 +71,7 @@ interface LaunchHarness {
   calls: LaunchLogEntry[];
   ensureSpecs: ModelSpec[];
   fetchedUrls: string[];
+  readFilePaths: string[];
 }
 
 interface HarnessOptions {
@@ -67,6 +81,8 @@ interface HarnessOptions {
   teardownMs?: number;
   healthStatus?: number;
   modelsStatus?: number;
+  pids?: (number | null)[];
+  platform?: NodeJS.Platform;
   runPerfSuite?: (db: Database, opts: unknown) => Promise<unknown>;
 }
 
@@ -182,6 +198,7 @@ function installHarness(options: HarnessOptions = {}): LaunchHarness {
   const calls: LaunchLogEntry[] = [];
   const ensureSpecs: ModelSpec[] = [];
   const fetchedUrls: string[] = [];
+  const readFilePaths: string[] = [];
   const clock: ManualClock = {
     now: () => now,
     advance: (ms: number): void => {
@@ -196,7 +213,12 @@ function installHarness(options: HarnessOptions = {}): LaunchHarness {
     up = true;
     ensureCount += 1;
     clock.advance(ensureCount === 1 ? 1500 : 400);
-    return Promise.resolve({ owned: options.owned ?? true, proc: null });
+    const pid = options.pids?.[ensureCount - 1];
+    const proc =
+      options.pids === undefined || pid === null || pid === undefined
+        ? null
+        : ({ pid } as ChildProcess);
+    return Promise.resolve({ owned: options.owned ?? true, proc });
   };
   const teardown = (): Promise<void> => {
     calls.push(["teardown"]);
@@ -238,9 +260,17 @@ function installHarness(options: HarnessOptions = {}): LaunchHarness {
     return Promise.resolve(new Response("engine unavailable", { status: 503 }));
   }) as typeof fetch;
 
+  const readFile = (path: string): Promise<string> => {
+    readFilePaths.push(path);
+    if (/^\/proc\/\d+\/status$/.test(path)) return Promise.resolve("VmHWM:\t    3072 kB");
+    return Promise.reject(new Error(`unexpected proc read: ${path}`));
+  };
+
   const seams: EvalPerfTestSeams = {
-    platform: "darwin",
+    platform: options.platform ?? "darwin",
     fetchImpl,
+    readFile,
+    probeGtt: () => Promise.resolve(GTT_OK),
     provenanceReaders: {
       sha256File: () => "ab".repeat(32),
       engineVersion: () => ({ version: "b9000", commit: "abc1234" }),
@@ -251,7 +281,7 @@ function installHarness(options: HarnessOptions = {}): LaunchHarness {
     ...(options.runPerfSuite === undefined ? {} : { runPerfSuite: options.runPerfSuite }),
   };
   perfSeams()(seams);
-  return { calls, ensureSpecs, fetchedUrls };
+  return { calls, ensureSpecs, fetchedUrls, readFilePaths };
 }
 
 function perfArgv(opts: PerfArgvOptions): string[] {
@@ -704,5 +734,85 @@ describe("#521 eval perf --launch", () => {
     expect(unavailable["flags"]).toBe(
       "no --flags given; the launch flags of the engine at http://127.0.0.1:18080 are not known",
     );
+  });
+});
+
+const LAUNCH_IO_REASON =
+  "--launch relaunches the engine between the cold and warm load, so no single engine process spans the suite; per-process SSD I/O (/proc/<pid>/io) is not measured";
+const LAUNCH_PEAK_RSS_NULL_REASON =
+  "peak-RSS (VmHWM) reader failed: engine PID not known when the reader ran";
+const DARWIN_PEAK_RSS_REASON =
+  "VmHWM (/proc/<pid>/status) is Linux-only; no peak-RSS reader on darwin";
+const DARWIN_IO_REASON =
+  "per-process disk I/O counters (/proc/<pid>/io) are Linux-only; darwin needs proc_pid_rusage, which this build does not read";
+
+function expectUnavailable(metric: MetricValue | undefined, reason: string): void {
+  expect(metric).toEqual({ status: "unavailable", value: null, reason });
+}
+
+describe("#521 eval perf --launch peak RSS", () => {
+  test("(B1) linux records VmHWM from the warm relaunch pid", async () => {
+    // Kills: passing null as the launch pid (the base behaviour, which
+    //        gives the 'engine PID unknown' reason), or caching the cold
+    //        boot's pid.
+    const harness = installHarness({ platform: "linux", pids: [1111, 2222] });
+
+    const { result, stdout } = await captureProcessStreams(() =>
+      runEval(perfArgv({ dbPath: dbPath(), launch: true })),
+    );
+
+    expect(result).toBe(0);
+    expect(stdout).toContain("run_id: r1");
+    const byName = metricsByName(dbPath(), "r1");
+    expect(byName.get("peak_rss_bytes")).toEqual({ status: "ok", value: 3145728 });
+    expect(harness.readFilePaths).toContain("/proc/2222/status");
+    expect(harness.readFilePaths).not.toContain("/proc/1111/status");
+  });
+
+  test("(B2) linux names why no per-process SSD I/O spans the relaunch", async () => {
+    // Kills: keeping the lazy io reader, which would produce a bogus delta
+    //        or 'I/O reader returned no sample'.
+    const harness = installHarness({ platform: "linux", pids: [1111, 2222] });
+
+    const { result, stdout } = await captureProcessStreams(() =>
+      runEval(perfArgv({ dbPath: dbPath(), launch: true })),
+    );
+
+    expect(result).toBe(0);
+    expect(stdout).toContain("run_id: r1");
+    const byName = metricsByName(dbPath(), "r1");
+    expectUnavailable(byName.get("ssd_read_bytes"), LAUNCH_IO_REASON);
+    expectUnavailable(byName.get("ssd_write_bytes"), LAUNCH_IO_REASON);
+    expect(harness.readFilePaths.some((path) => /^\/proc\/\d+\/io$/.test(path))).toBe(false);
+  });
+
+  test("(B3) linux surfaces a missing warm-boot pid as a reader failure", async () => {
+    // Kills: returning null for a missing pid.
+    installHarness({ platform: "linux", pids: [1111, null] });
+
+    const { result, stdout } = await captureProcessStreams(() =>
+      runEval(perfArgv({ dbPath: dbPath(), launch: true })),
+    );
+
+    expect(result).toBe(0);
+    expect(stdout).toContain("run_id: r1");
+    const byName = metricsByName(dbPath(), "r1");
+    expectUnavailable(byName.get("peak_rss_bytes"), LAUNCH_PEAK_RSS_NULL_REASON);
+  });
+
+  test("(B4) darwin keeps platform reasons for the launched engine", async () => {
+    // Kills: falling back to the pid-null path under --launch.
+    installHarness({ platform: "darwin", pids: [1111, 2222] });
+
+    const { result, stdout } = await captureProcessStreams(() =>
+      runEval(perfArgv({ dbPath: dbPath(), launch: true })),
+    );
+
+    expect(result).toBe(0);
+    expect(stdout).toContain("run_id: r1");
+    const byName = metricsByName(dbPath(), "r1");
+    expectUnavailable(byName.get("peak_rss_bytes"), DARWIN_PEAK_RSS_REASON);
+    expectUnavailable(byName.get("ssd_read_bytes"), DARWIN_IO_REASON);
+    expectUnavailable(byName.get("ssd_write_bytes"), DARWIN_IO_REASON);
   });
 });

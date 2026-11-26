@@ -811,7 +811,7 @@ Because host counters are read on this machine, `--pid` needs a loopback
 SSD read and write bytes come from `/proc/<pid>/io` and peak RSS comes from
 `VmHWM` in `/proc/<pid>/status`. Without `--pid`, those counters are recorded
 `unavailable` with a reason naming the unknown engine PID
-(`createPerfHostReaders`, `packages/eval/src/perf/readers.ts`). GTT comes from the GTT probe on
+(`createPerfHostReaders`, `packages/eval/src/perf/readers.ts`). With --launch, peak RSS is read from the launched engine instead; see Measured load with --launch. GTT comes from the GTT probe on
 any loopback Linux run, with or without `--pid`
 (`hostReaders`, `packages/cli/src/commands/eval-perf.ts`). These counters are
 Linux-only; on macOS each is recorded `unavailable` with a named reason
@@ -1202,6 +1202,18 @@ read-only exclusive-group gate used by sandbox eval launches and can refuse
 with
 `residency lifecycle refused <model> downloaded -> loading: ExclusiveGroupOccupied: exclusive group <group> is held by <member> in state <state>`
 (`exclusiveGroupLaunchRefusal`, `packages/remote/src/residency/direct-lifecycle.ts`).
+
+On Linux, `peak_rss_bytes` is `VmHWM` in `/proc/<pid>/status` of the boot that
+`eval perf` owns when the memory phase runs, which is the warm relaunch
+(`createLaunchLoadHooks`, `packages/cli/src/commands/eval-perf-launch.ts`, and
+`createPerfHostReaders`, `packages/eval/src/perf/readers.ts`). If no launched
+engine has a PID then, it records `peak-RSS (VmHWM) reader failed: engine PID
+not known when the reader ran`. SSD I/O records
+`--launch relaunches the engine between the cold and warm load, so no single
+engine process spans the suite; per-process SSD I/O (/proc/<pid>/io) is not
+measured` (`LAUNCH_IO_REASON`, `packages/cli/src/commands/eval-perf-launch.ts`),
+because the cold and warm boots are different processes. GTT is unchanged, and
+on macOS the Linux-only reasons apply.
 
 Because the engine is not up before the suite starts, `GET /props` is not
 probed. Without an explicit `--slots <n>`, c2/c4 record
