@@ -110,7 +110,14 @@ type ResidencyLifecycleSection = {
   workloads?: readonly ResidencyLifecycleRow[];
 };
 
-type ResidencyStatusRead = { lifecycle?: ResidencyLifecycleSection };
+/** The victim node's `residencyStatus` read-out as the evict gates consume it.
+ *  Structurally compatible with `ResidencyStatus` (residency/procedures.ts):
+ *  a real agent payload satisfies it, and a section an older agent omits
+ *  stays undefined. */
+type ResidencyStatusRead = {
+  lifecycle?: ResidencyLifecycleSection;
+  switchGates?: { status: string; reason?: string; lastSwitchAtMs?: number | null };
+};
 
 type EvictReadinessOutcome =
   | { kind: "payload"; payload: ResidencyStatusRead }
@@ -119,6 +126,13 @@ type EvictReadinessOutcome =
 
 type RemoteEvictReadiness =
   | { ok: true; readySinceMs: Map<string, number> }
+  | { ok: false; error: string };
+
+/** #519: the switch-cooldown answer of the same victim-node read — the node's
+ *  last succeeded `profile-switch:<node>` instant (null when it recorded
+ *  none), or the failure to read it. */
+type RemoteEvictLastSwitch =
+  | { ok: true; lastSwitchAtMs: number | null }
   | { ok: false; error: string };
 
 export interface WorkloadClient {
@@ -210,8 +224,10 @@ export interface WorkloadClient {
   };
   /** The victim node's own `residency_states` read-out, used by the #519
    *  cross-node `minResidencySeconds` evict gate when this process's own
-   *  store does not apply. Served by every real client through the router's
-   *  residencyStatus procedure. */
+   *  store does not apply. The same read also feeds the cross-node
+   *  `switchCooldownSeconds` evict gate through its `switchGates` section.
+   *  Served by every real client through the router's residencyStatus
+   *  procedure. */
   residencyStatus?: {
     query(input: { node: string }): Promise<ResidencyStatusRead>;
   };
@@ -2162,6 +2178,10 @@ interface EvictionStageCtx {
    *  prefetched from the victim node when this process's own store does not
    *  apply: the model→ready-since map, or the failure to read it. */
   remoteEvictReadiness?: RemoteEvictReadiness;
+  /** #519: the switch-cooldown side of that same prefetched read, for the
+   *  `switchCooldownSeconds` evict gate when this process's own residency
+   *  store does not hold the victim node's switch record. */
+  remoteEvictLastSwitch?: RemoteEvictLastSwitch;
 }
 
 interface ConvergeServerContext extends EvictionStageCtx {
@@ -2425,6 +2445,8 @@ function checkEvictTarget(
   if (gated !== null) return { status: "refused", refusal: gated };
   const young = checkEvictMinResidency(ctx, target, sameNode);
   if (young !== null) return { status: "refused", refusal: young };
+  const cooling = checkEvictSwitchCooldown(ctx, target);
+  if (cooling !== null) return { status: "refused", refusal: cooling };
   return { status: "verified", kind: loaded.kind };
 }
 
@@ -2508,17 +2530,97 @@ function evictMinResidencySeconds(ctx: EvictionStageCtx): number {
   ).minResidencySeconds;
 }
 
-/** True when the cross-node evict readiness read has nothing to decide: no
- *  evict targets, a disabled gate, an explicit readiness seam, a serving node
- *  that verifiably owns the victim (its own store applies), or a client that
- *  does not serve residencyStatus. */
+/** Resolve the victim node's `switchCooldownSeconds` (the #519 evict gate's
+ *  threshold, in seconds; 0 when absent or disabled). */
+function evictSwitchCooldownSeconds(ctx: EvictionStageCtx): number {
+  const residency = ctx.opts?.getNodeResidency?.(ctx.manifest.spec.node) ?? null;
+  // Same literal-only seam as evictMinResidencySeconds: NodeRunResidency's
+  // explicit `| undefined` optionals are rejected against
+  // Partial<ResidencyPolicy> under exactOptionalPropertyTypes.
+  return resolveResidencyPolicy(
+    residency?.switchCooldownSeconds === undefined
+      ? null
+      : { switchCooldownSeconds: residency.switchCooldownSeconds },
+  ).switchCooldownSeconds;
+}
+
+/** The residency-store operation key a node's succeeded profile switch records
+ *  under, `profile-switch:<node>`. Mirrors the `profileSwitchOperationKey` export
+ *  of the residency executor module and is inlined rather than imported: that
+ *  module's live-caller guard test sanctions only apply-profile.ts,
+ *  lifecycle-steps.ts and procedures.ts on its import edge, which is also why
+ *  residency/direct-lifecycle.ts inlines the colon-terminated prefix (#517). */
+function profileSwitchOperationKey(node: string): string {
+  return `profile-switch:${node}`;
+}
+
+/** The residency-store operation key this process's *own* store holds the
+ *  victim node's profile-switch record under, or null when only the victim
+ *  node itself can answer (#519).
+ *
+ *  With `LLAMACTL_NODE_NAME` unset, a victim on the intrinsic `local` node is
+ *  still answered here: the local node's client is the in-process router
+ *  caller (proxyFromCaller in client/node-client.ts), whose `switchGates`
+ *  reports NotServingNode whenever `LLAMACTL_NODE_NAME` is unset
+ *  (buildSwitchGatesSnapshot in residency/procedures.ts), so its own store has
+ *  to be read directly, as the ungated lifecycle section already is.
+ *
+ *  Otherwise the record is keyed by the *serving* name: `residencyApplyProfile`
+ *  only records `profile-switch:<node>` when it serves that node (it requires
+ *  servingNode === node). */
+function evictSwitchOwnStoreKey(ctx: EvictionStageCtx): string | null {
+  const serving = process.env["LLAMACTL_NODE_NAME"]?.trim() ?? "";
+  const node = ctx.manifest.spec.node;
+  if (serving === "") {
+    return node === LOCAL_NODE_ID ? profileSwitchOperationKey(LOCAL_NODE_ID) : null;
+  }
+  return nodeIdentityMatcher(ctx.opts, node)(serving) ? profileSwitchOperationKey(serving) : null;
+}
+
+/** Resolve the victim node's last succeeded profile switch (ms epoch) for the
+ *  #519 switchCooldownSeconds evict gate, or null when no switch is recorded.
+ *  When this process's own residency store holds the record it is read
+ *  directly; otherwise the prefetched victim-node read stands in — a failed or
+ *  timed-out read throws so the caller fails closed, and no read at all (a
+ *  client without residencyStatus) means no recorded switch. An absent store
+ *  means no recorded switch; an unreadable one throws. `lifecycleError` is
+ *  ignored: the cooldown reads no lifecycle rows. */
+function resolveEvictLastSwitchAtMs(ctx: EvictionStageCtx): number | null {
+  const key = evictSwitchOwnStoreKey(ctx);
+  if (key === null) {
+    const remote = ctx.remoteEvictLastSwitch;
+    if (remote === undefined) return null;
+    if (!remote.ok) throw new Error(remote.error);
+    return remote.lastSwitchAtMs;
+  }
+  const snap = readResidencyStoreSnapshot(defaultResidencyStorePath());
+  if (!snap.present) return null;
+  if ("error" in snap) throw new Error(snap.error);
+  const recorded = snap.lastSucceededAtMs?.[key];
+  return recorded !== undefined && Number.isFinite(recorded) ? recorded : null;
+}
+
+/** True when the shared victim-node `residencyStatus` read has nothing to
+ *  decide: no evict targets, or a client that does not serve residencyStatus.
+ *  Otherwise each of the two gates that consume the single read (#519
+ *  minResidencySeconds and switchCooldownSeconds) still needs it: a disabled
+ *  gate, an explicit readiness seam, a serving node that verifiably owns the
+ *  victim (its own store answers readiness) or an own store that holds the
+ *  switch record (same node, or an anonymous process with the victim on
+ *  `local`) drop that gate's need. */
 function evictReadinessPrefetchSkipped(ctx: EvictionStageCtx): boolean {
   if (ctx.evictTargets.length === 0) return true;
-  if (evictMinResidencySeconds(ctx) <= 0) return true;
-  if (ctx.opts?.evictReadySinceMs !== undefined) return true;
+  if (ctx.client.residencyStatus === undefined) return true;
   const serving = process.env["LLAMACTL_NODE_NAME"]?.trim() ?? "";
-  if (serving !== "" && nodeIdentityMatcher(ctx.opts, ctx.manifest.spec.node)(serving)) return true;
-  return ctx.client.residencyStatus === undefined;
+  const ownServingNode =
+    serving !== "" && nodeIdentityMatcher(ctx.opts, ctx.manifest.spec.node)(serving);
+  const readinessNeedsRead =
+    evictMinResidencySeconds(ctx) > 0 &&
+    ctx.opts?.evictReadySinceMs === undefined &&
+    !ownServingNode;
+  const cooldownNeedsRead =
+    evictSwitchCooldownSeconds(ctx) > 0 && evictSwitchOwnStoreKey(ctx) === null;
+  return !readinessNeedsRead && !cooldownNeedsRead;
 }
 
 /** Map the raced residencyStatus read to the cached cross-node readiness: a
@@ -2556,14 +2658,61 @@ function readinessFromReadOutcome(
   return { ok: true, readySinceMs };
 }
 
+/** Map the same raced residencyStatus read to the cached cross-node switch
+ *  cooldown (#519): a timeout or rejection fails closed, a payload with no
+ *  `switchGates` section (an agent that predates it) and a `disabled` section
+ *  report no recorded switch, and an `unavailable` section is no recorded
+ *  switch only for NotServingNode — every other reason fails closed. */
+function lastSwitchFromReadOutcome(
+  outcome: EvictReadinessOutcome,
+  timeoutMs: number,
+): RemoteEvictLastSwitch {
+  if (outcome.kind === "timeout") {
+    return {
+      ok: false,
+      error: `residencyStatus timed out after ${String(timeoutMs)}ms`,
+    };
+  }
+  if (outcome.kind === "rejected") {
+    return { ok: false, error: outcome.message };
+  }
+  const gates = outcome.payload.switchGates;
+  if (gates === undefined || gates.status === "disabled") {
+    return { ok: true, lastSwitchAtMs: null };
+  }
+  if (gates.status === "unavailable") {
+    // An agent that does not serve the victim node never records its
+    // `profile-switch:<node>` row: residencyApplyProfile (router.ts) refuses
+    // NotServingNode before recording, so "not serving" means "no recorded
+    // switch", never "unreadable".
+    if (gates.reason === "NotServingNode") return { ok: true, lastSwitchAtMs: null };
+    return {
+      ok: false,
+      error: `victim node switch gates unavailable (${gates.reason ?? "unknown"})`,
+    };
+  }
+  if (gates.status === "available") {
+    const recorded = gates.lastSwitchAtMs;
+    return {
+      ok: true,
+      lastSwitchAtMs: recorded !== undefined && Number.isFinite(recorded) ? recorded : null,
+    };
+  }
+  return {
+    ok: false,
+    error: `victim node switch gates unavailable (${gates.status})`,
+  };
+}
+
 /**
- * Prefetch the victim node's cross-node evict readiness for the #519
- * minResidencySeconds gate once per apply, writing it to
- * `ctx.remoteEvictReadiness`. Returns without reading when the gate has
- * nothing to decide. The read races an `opts.evictReadinessTimeoutMs` timer
- * (default EVICT_READINESS_TIMEOUT_MS) and
- * records the outcome (failure closed on rejection or timeout) so
- * `resolveEvictReadySinceMs` fails closed for a foreign serving node.
+ * Prefetch the victim node's cross-node evict gates once per apply, writing
+ * the #519 minResidencySeconds readiness to `ctx.remoteEvictReadiness` and the
+ * switchCooldownSeconds last-switch to `ctx.remoteEvictLastSwitch`. Returns
+ * without reading when neither gate has anything to decide. The one read races
+ * an `opts.evictReadinessTimeoutMs` timer (default EVICT_READINESS_TIMEOUT_MS)
+ * and records both outcomes (failure closed on rejection or timeout) so
+ * `resolveEvictReadySinceMs` and `resolveEvictLastSwitchAtMs` fail closed for a
+ * foreign serving node.
  */
 async function prefetchEvictReadiness(ctx: EvictionStageCtx): Promise<void> {
   if (evictReadinessPrefetchSkipped(ctx)) return;
@@ -2588,6 +2737,7 @@ async function prefetchEvictReadiness(ctx: EvictionStageCtx): Promise<void> {
       );
     const outcome = await Promise.race([read, timeout]);
     ctx.remoteEvictReadiness = readinessFromReadOutcome(outcome, timeoutMs);
+    ctx.remoteEvictLastSwitch = lastSwitchFromReadOutcome(outcome, timeoutMs);
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
@@ -2631,6 +2781,45 @@ function checkEvictMinResidency(
         `it has been ready for ${readyForS}s, under the node's minResidencySeconds of ` +
         `${String(min)}; retry in ${retryInS}s`,
       reason: "EvictMinResidency",
+    };
+  }
+  return null;
+}
+
+/** #519: a verified evict victim whose node recorded a succeeded profile switch
+ *  fewer than switchCooldownSeconds seconds ago is refused EvictCooldown before
+ *  any marker, stop or start; an unreadable own store or an unavailable, failed
+ *  or timed-out victim-node switch-gates read fails closed with
+ *  EvictCooldownUnknown. Disabled (no read, no refusal) when
+ *  switchCooldownSeconds is absent or 0, and EvictMinResidency keeps
+ *  precedence. The eviction itself records no switch, so it never restarts the
+ *  cooldown. */
+function checkEvictSwitchCooldown(ctx: EvictionStageCtx, target: string): EvictStageRefusal | null {
+  const cooldown = evictSwitchCooldownSeconds(ctx);
+  if (cooldown <= 0) return null;
+  let lastSwitchAtMs: number | null;
+  try {
+    lastSwitchAtMs = resolveEvictLastSwitchAtMs(ctx);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      target,
+      why: `its node's last profile switch could not be verified (${message})`,
+      reason: "EvictCooldownUnknown",
+    };
+  }
+  if (lastSwitchAtMs === null) return null;
+  const nowMs = Date.parse(ctx.now);
+  const elapsedMs = nowMs - Math.min(lastSwitchAtMs, nowMs);
+  if (elapsedMs < cooldown * 1000) {
+    const agoS = String(Math.floor(elapsedMs / 1000));
+    const retryInS = String(Math.ceil((cooldown * 1000 - elapsedMs) / 1000));
+    return {
+      target,
+      why:
+        `the node's last profile switch was ${agoS}s ago, under the node's ` +
+        `switchCooldownSeconds of ${String(cooldown)}; retry in ${retryInS}s`,
+      reason: "EvictCooldown",
     };
   }
   return null;

@@ -499,12 +499,52 @@ function directModelRunGroup(workload: string): string | undefined {
   }
 }
 
+type KeepAliveWorkloadProvenDownDeps = {
+  readState?: () => ReturnType<typeof keepAliveMod.readKeepAliveState>;
+  readRecord?: () => ReturnType<typeof keepAliveMod.readKeepAliveRecord>;
+  isServerProvenDown?: (name: string) => boolean;
+};
+
+// Proves a crash-left keep-alive workload down (#517): a keep-alive target has
+// no ModelRun or ModelHost manifest, so its identity comes from the
+// keep-alive files instead. The state file must still name that target (a
+// stale file left by another target proves nothing), its recorded supervisor
+// pid must be absent or provably gone, and the engine must be proven down.
+// Anything that throws fails closed.
+export function keepAliveWorkloadProvenDown(
+  model: string,
+  deps: KeepAliveWorkloadProvenDownDeps = {},
+): boolean {
+  try {
+    const readState =
+      deps.readState ??
+      ((): ReturnType<typeof keepAliveMod.readKeepAliveState> => keepAliveMod.readKeepAliveState());
+    const readRecord =
+      deps.readRecord ??
+      ((): ReturnType<typeof keepAliveMod.readKeepAliveRecord> =>
+        keepAliveMod.readKeepAliveRecord());
+    const serverDown =
+      deps.isServerProvenDown ??
+      ((name: string): boolean => serverMod.isServerProvenDown({ name }));
+    if (readState()?.target !== model) {
+      return false;
+    }
+    const { pid, verdict } = readRecord();
+    if (!(pid === null || verdict === "dead" || verdict === "reused")) {
+      return false;
+    }
+    return serverDown(model);
+  } catch {
+    return false;
+  }
+}
+
 // A peer is proven down only when it is a known ModelHost whose recorded-pid
-// status reads Stopped without an unresolved identity, or a known ModelRun that
+// status reads Stopped without an unresolved identity, a known ModelRun that
 // has no recorded pid file or whose recorded pid verifies `dead` or `reused`
-// against its pid file using the stopServer identity check. A live pid, or an
-// unverifiable one, fails closed. Also used by agent boot recovery for the
-// orphan lifecycle sweep (Part of #517).
+// against its pid file using the stopServer identity check, or a crash-left
+// keep-alive workload. A live pid, or an unverifiable one, fails closed. Also
+// used by agent boot recovery for the orphan lifecycle sweep (Part of #517).
 export function directWorkloadProvenDown(model: string): boolean {
   if (modelHostStoreMod.listModelHosts().some((host) => host.metadata.name === model)) {
     const status = statusModelHost({ key: { name: model } });
@@ -513,7 +553,7 @@ export function directWorkloadProvenDown(model: string): boolean {
   if (workloadStoreMod.listWorkloads().some((run) => run.metadata.name === model)) {
     return serverMod.isServerProvenDown({ name: model });
   }
-  return false;
+  return keepAliveWorkloadProvenDown(model);
 }
 
 function directResidencyOpts(
@@ -588,8 +628,11 @@ function benchLaunchRefusal(target: string): string | null {
  * (#517), mirroring the CLI's `keepAliveLaunchRefusal` (#813). Resolves
  * `<target>` with `resolveTarget`, reads the rel's `residencyGroup` and delegates
  * to `exclusiveGroupLaunchRefusal` with the local store, using the rel as the
- * refusal id. An unresolvable target, an uncatalogued rel, or a missing store
- * file returns null, so the supervisor spawns as before.
+ * refusal id and `ignoreModel: target`, because the worker records its row under
+ * that target and the fenced start that follows adopts or walks it. Callers run
+ * this after their duplicate-supervisor checks, so ignoring that row never hides
+ * a live supervisor. An unresolvable target, an uncatalogued rel, or a missing
+ * store file returns null, so the supervisor spawns as before.
  */
 function keepAliveStartRefusal(target: string): string | null {
   const rel = targetMod.resolveTarget(target);
@@ -600,6 +643,7 @@ function keepAliveStartRefusal(target: string): string | null {
     id: rel,
     group: entry.residencyGroup,
     storePath: defaultResidencyStorePath(),
+    ignoreModel: target,
   });
 }
 
