@@ -241,6 +241,9 @@ describe("llamactl.residency.releaseSession MCP tool", () => {
 
     expect(badSpace.isError).toBe(true);
     expect(tooLong.isError).toBe(true);
+    // MCP -32602: the tool's own sessionId bounds reject these, not a downstream refusal.
+    expect(textOf(badSpace)).toContain("Input validation error");
+    expect(textOf(tooLong)).toContain("Input validation error");
     expect(reg.activeSessions("gemma4-run-a")).toEqual(["s-1"]);
     expect(auditLines()).toHaveLength(0);
   });
