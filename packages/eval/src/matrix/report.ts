@@ -1,7 +1,11 @@
-import type { CellRow } from "./types.js";
+import type { MatrixProvenanceRow } from "./store.js";
+import type { CellRow, EvalProvenance } from "./types.js";
+
+import { PERF_PROVENANCE_DIFF_FIELDS } from "../perf/diff.js";
 
 export interface ReportOpts {
   runId?: string;
+  provenance?: readonly MatrixProvenanceRow[];
 }
 
 type Section = "primary_metric" | "latency_p50_ms" | "latency_p95_ms" | "throughput_tps" | "errors";
@@ -104,6 +108,65 @@ function buildGrid(cells: CellRow[]): {
 function getPrimaryMetricName(cells: CellRow[]): string {
   const names = uniqueSorted(cells.map((cell) => cell.primary_metric_name));
   return names.length === 1 ? (names[0] ?? "mixed") : "mixed";
+}
+
+// #521: returns a string for a provenance field value.
+const NOT_RECORD_REASON = "not recorded";
+const ALIAS_MARKER = "(all)";
+function provenanceValue(p: EvalProvenance, field: string): string {
+  const value = (p as unknown as Record<string, unknown>)[field];
+  if (value === null || value === undefined) {
+    const reason = (p.unavailable as Record<string, string> | undefined)?.[field];
+    return reason !== undefined && reason.trim() !== ""
+      ? `unavailable (${reason})`
+      : `unavailable (${NOT_RECORD_REASON})`;
+  }
+  if (typeof value === "number") return String(value);
+  if (Array.isArray(value)) return value.length === 0 ? "(none)" : value.join(" ");
+  return value as string;
+}
+
+// #521: render the provenance section from recorded rows, appended after winner.
+function renderProvenanceSection(
+  cells: CellRow[],
+  rows: readonly MatrixProvenanceRow[],
+  runId: string | undefined,
+): string[] {
+  const filtered = runId ? rows.filter((r) => r.run_id === runId) : rows;
+  const sorted = [...filtered].sort((a, b) =>
+    a.run_id === b.run_id
+      ? a.model_name.localeCompare(b.model_name)
+      : a.run_id.localeCompare(b.run_id),
+  );
+  const lines: string[] = ["## Provenance", ""];
+  lines.push("| Run | Model | Field | Value |", "| -- | -- | -- | -- |");
+  for (const row of sorted) {
+    for (const field of PERF_PROVENANCE_DIFF_FIELDS) {
+      lines.push(
+        `| ${mdField(row.run_id)} | ${mdField(row.model_name)} | ${field} | ${mdField(provenanceValue(row.provenance, field))} |`,
+      );
+    }
+  }
+  // Emit (all) rows for models in cells with no provenance row.
+  const cellModels = new Set(cells.map((c) => `${c.run_id}\u0000${c.model_name}`));
+  const seen = new Set<string>();
+  for (const row of sorted) {
+    seen.add(`${row.run_id}\u0000${row.model_name}`);
+  }
+  for (const key of cellModels) {
+    if (!seen.has(key)) {
+      const parts = key.split("\u0000");
+      const rId = parts[0];
+      const mName = parts[1];
+      if (rId !== undefined && mName !== undefined) {
+        lines.push(
+          `| ${mdField(rId)} | ${mdField(mName)} | ${ALIAS_MARKER} | unavailable (${NOT_RECORD_REASON}) |`,
+        );
+      }
+    }
+  }
+  lines.push("");
+  return lines;
 }
 
 // #521: list each unscored cell with its reason; empty when every cell scored.
@@ -211,6 +274,9 @@ export function renderMarkdownReport(cells: CellRow[], opts: ReportOpts = {}): s
     "",
     ...renderUnavailableList(lookup),
     renderWinnerList(workloads, lookup),
+    ...(opts.provenance !== undefined
+      ? renderProvenanceSection(filtered, opts.provenance, opts.runId)
+      : []),
   ];
   return sections.join("\n");
 }

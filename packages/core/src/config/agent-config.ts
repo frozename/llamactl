@@ -185,6 +185,15 @@ export const AgentConfigSchema = z.object({
   tokenHash: z.string().regex(SHA256_HEX),
   fingerprint: z.string().regex(/^sha256:[0-9a-f]{64}$/),
   /**
+   * #211: the host remote clients dial, i.e. the host in the last bootstrap
+   * URL (https://<host>:<port>) that `agent init --host`, or
+   * `rotate-token`/`rotate-cert` with an explicit --host, emitted, so
+   * `agent status` checks cert SAN coverage of it without --host. Absent on
+   * agent.yaml written before it; an invalid value is dropped, never fails
+   * the load.
+   */
+  advertisedHost: z.string().min(1).optional().catch(undefined),
+  /**
    * The optional worker-RPC block, opaque here so a malformed one never
    * stops the agent, its token rotation or its status: only its reader
    * validates it, and an invalid block is not advertised. Re-saves write
