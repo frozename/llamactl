@@ -105,6 +105,39 @@ import { profileSwitchOperationKey } from "./profile-transition.js";
 
 type ResidencyPolicy = NonNullable<NodeRun["spec"]["residency"]>;
 
+export const RESIDENCY_POLICY_KNOBS = [
+  "idleEvictSeconds",
+  "minResidencySeconds",
+  "switchCooldownSeconds",
+  "safetyMarginRatio",
+  "residentPreference",
+  "coldLoadPenaltyMs",
+] as const;
+
+export type ResidencyPolicyKnob = (typeof RESIDENCY_POLICY_KNOBS)[number];
+
+export type ResidencyStatusEffectivePolicy = {
+  knobs: { name: ResidencyPolicyKnob; value: number; defaulted: boolean }[];
+};
+
+export function effectiveResidencyPolicy(
+  residency: ResidencyPolicy | null | undefined,
+): ResidencyStatusEffectivePolicy {
+  const overrides: Partial<ReturnType<typeof resolveResidencyPolicy>> = {};
+  for (const knob of RESIDENCY_POLICY_KNOBS) {
+    const v = residency?.[knob];
+    if (v !== undefined) overrides[knob] = v;
+  }
+  const resolved = resolveResidencyPolicy(overrides);
+  return {
+    knobs: RESIDENCY_POLICY_KNOBS.map((name) => ({
+      name,
+      value: resolved[name],
+      defaulted: residency?.[name] === undefined || resolved[name] !== residency[name],
+    })),
+  };
+}
+
 export type ResidencyStatusNonterminalOperation = {
   operationId: string;
   model: string;
@@ -486,6 +519,9 @@ export type ResidencyStatus = {
   // Optional like switchGates so older payloads and fixtures still type;
   // buildResidencyStatus always sets it (Part of #519).
   ranking?: ResidencyStatusRanking;
+  // Optional like ranking so older payloads and fixtures still type;
+  // buildResidencyStatus always sets it (Part of #519).
+  effectivePolicy?: ResidencyStatusEffectivePolicy;
   leases: ResidencyStatusLeases;
   omlxNative?: { scope: "serving-process"; workloads: OmlxNativeStatusRow[] };
   sessions?: ResidencyStatusSessions;
@@ -511,6 +547,7 @@ export function buildResidencyStatus(input: {
     node: input.node,
     nodeRun: { present: input.nodeRun !== undefined },
     policy: residency !== undefined ? { present: true, residency } : { present: false },
+    effectivePolicy: effectiveResidencyPolicy(residency),
     budget: { memoryGiB: input.budgetGiB, source: input.budgetSource },
     store: storeWithScope(input.store),
     lifecycle: buildResidencyLifecycleSnapshot(input.store),
