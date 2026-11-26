@@ -1,10 +1,4 @@
-// Deny-by-default procedure allowlist for the #410 P2b console
-// (plan §0.12): the 9 read-only entries of plan §1, each carrying its
-// response projection, plus buildConsoleRouter — a fresh tRPC router
-// containing ONLY those entries, wrapping a backend router through
-// createCaller. Anything not listed here does not exist on the console
-// surface. As of P5a the console has exactly one mutation: serverStop,
-// gated by a server-side workload precheck ahead of the backend call.
+// Deny-by-default read-only console procedures and the fenced serverStop mutation.
 
 import type { AnyProcedure, CreateRouterOptions } from "@trpc/server/unstable-core-do-not-import";
 
@@ -192,6 +186,32 @@ function maskLineSecrets(value: unknown): unknown {
 }
 
 export const CONSOLE_ALLOWLIST: Record<string, ConsoleAllowlistEntry> = {
+  benchHistory: {
+    project: (out) =>
+      redactDeep(
+        Array.isArray(out)
+          ? out.filter(isRecord).map((row) => ({
+              updated_at: row["updated_at"],
+              rel: row["rel"],
+              gen_ts: row["gen_ts"],
+              prompt_ts: row["prompt_ts"],
+            }))
+          : [],
+      ),
+    type: "query",
+  },
+  benchSchedulerStatus: {
+    project: (out) => (isRecord(out) ? { inflight: out["inflight"] === true } : null),
+    type: "query",
+  },
+  fleetSnapshot: {
+    project: redactDeep,
+    type: "query",
+  },
+  inferenceObservations: {
+    project: redactDeep,
+    type: "query",
+  },
   env: {
     project: (out) => redactDeep(maskEnvSecrets(out)),
     type: "query",

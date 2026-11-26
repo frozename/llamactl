@@ -1,3 +1,4 @@
+import type { ModelHostRuntimeStatus } from "@llamactl/core/engines/conditions";
 import type { ModelHostReadiness } from "@llamactl/core/engines/types";
 import type { SleepResidency } from "@llamactl/core/residency/llamacpp-sleep";
 import type { MeasuredEnvelope } from "@llamactl/core/resources/memory";
@@ -182,11 +183,14 @@ export interface WorkloadClient {
     mutate(input: { workload: string; graceSeconds?: number }): Promise<unknown>;
   };
   modelHostStatus: {
-    query(input: { workload: string }): Promise<{
+    query(input: { workload: string; includeListener?: boolean }): Promise<{
       state: string;
       pid?: number | null;
       specHash?: string;
       identityUnknown?: boolean;
+      runtime?: ModelHostRuntimeStatus;
+      listenerPid?: number | null;
+      foreign?: boolean;
       /** Set by a node whose llama.cpp sleep controller holds the member
        *  sleeping or sleep-pending; the reconciler leaves such a host alone
        *  (#283). Absent means the node makes no sleep claim. */

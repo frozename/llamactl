@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 
 import type { PresetName } from "../src/presets.js";
@@ -50,30 +50,37 @@ describe("presets.resolvePreset", () => {
   });
   test("env-var override wins over file override", () => {
     const temp = makeTempRuntime();
-    const overridesFile = join(temp.runtimeDir, "preset-overrides.tsv");
     try {
-      copyFileSync(
-        join(FIXTURE_DIR, "preset-overrides.tsv"),
-        (Bun.file(overridesFile), overridesFile),
-      );
-    } catch {
-      // fall back: write the fixture contents without mkdir yet
+      const overridesFile = join(temp.runtimeDir, "preset-overrides.tsv");
+      try {
+        copyFileSync(
+          join(FIXTURE_DIR, "preset-overrides.tsv"),
+          (Bun.file(overridesFile), overridesFile),
+        );
+      } catch {
+        // fall back: write the fixture contents without mkdir yet
+      }
+      const env = {
+        ...envForTemp(temp),
+        LOCAL_AI_PRESET_OVERRIDES_FILE: overridesFile,
+        LOCAL_AI_PRESET_MACBOOK_PRO_48G_FAST_MODEL: "env/override.gguf",
+      } as NodeJS.ProcessEnv;
+      const res = resolvePreset("macbook-pro-48g", "fast", env);
+      expect(res.rel).toBe("env/override.gguf");
+      expect(res.source).toBe("env");
+    } finally {
+      temp.cleanup();
     }
-    const env = {
-      ...envForTemp(temp),
-      LOCAL_AI_PRESET_OVERRIDES_FILE: overridesFile,
-      LOCAL_AI_PRESET_MACBOOK_PRO_48G_FAST_MODEL: "env/override.gguf",
-    } as NodeJS.ProcessEnv;
-    const res = resolvePreset("macbook-pro-48g", "fast", env);
-    expect(res.rel).toBe("env/override.gguf");
-    expect(res.source).toBe("env");
-    temp.cleanup();
   });
 });
 
 describe("presets.writePresetOverride (round-trip)", () => {
   const temp = makeTempRuntime();
   const env = envForTemp(temp);
+
+  afterAll(() => {
+    temp.cleanup();
+  });
 
   afterEach(async () => {
     // Wipe any file we may have written so subsequent tests start empty.
@@ -114,6 +121,10 @@ describe("presets.writePresetOverride (round-trip)", () => {
 describe("presets.deletePresetOverride", () => {
   const temp = makeTempRuntime();
   const env = envForTemp(temp);
+
+  afterAll(() => {
+    temp.cleanup();
+  });
 
   afterEach(async () => {
     try {

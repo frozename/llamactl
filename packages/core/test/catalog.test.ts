@@ -1,4 +1,4 @@
-import { describe, expect, spyOn, test } from "bun:test";
+import { afterAll, describe, expect, spyOn, test } from "bun:test";
 import * as childProcess from "node:child_process";
 import * as os from "node:os";
 import { tmpdir } from "node:os";
@@ -20,9 +20,22 @@ import {
   repoKnown,
 } from "../src/catalog.js";
 import * as envModule from "../src/env.js";
-import { mkdtempSync, writeFileSync } from "../src/safe-fs.js";
+import { mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 import { curatedMetaFields, CuratedModel } from "../src/schemas.js";
 import { FIXTURE_DIR } from "./helpers.js";
+
+const tempDirs: string[] = [];
+
+/** mkdtemp under os.tmpdir(), removed once this file's tests finish (#870). */
+function makeTempDir(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
+
+afterAll(() => {
+  for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
 
 describe("catalog.BUILTIN_CATALOG", () => {
   const PINNED: Record<string, string> = {
@@ -90,7 +103,7 @@ describe("catalog.readCustomCatalog", () => {
   });
 
   test("treats an explicit empty format column as legacy gguf", () => {
-    const dir = mkdtempSync(join(tmpdir(), "llamactl-catalog-"));
+    const dir = makeTempDir("llamactl-catalog-");
     const file = join(dir, "empty-format.tsv");
     writeFileSync(
       file,
@@ -103,7 +116,7 @@ describe("catalog.readCustomCatalog", () => {
   });
 
   test("parses format=mlx when explicitly present", () => {
-    const dir = mkdtempSync(join(tmpdir(), "llamactl-catalog-"));
+    const dir = makeTempDir("llamactl-catalog-");
     const file = join(dir, "mlx.tsv");
     writeFileSync(
       file,
@@ -330,7 +343,7 @@ describe("catalog candidate metadata (#515)", () => {
     }
 
     const tsv = formatCatalogTsv(BUILTIN_CATALOG);
-    const dir = mkdtempSync(join(tmpdir(), "llamactl-catalog-meta-"));
+    const dir = makeTempDir("llamactl-catalog-meta-");
     const file = join(dir, "builtin.tsv");
     writeFileSync(file, `${tsv}\n`);
 
@@ -468,7 +481,7 @@ describe("catalog candidate metadata (#515)", () => {
     expect(formatted).toBe(`${line}\tgguf`);
     expect(formatted.split("\t")).toHaveLength(8);
 
-    const dir = mkdtempSync(join(tmpdir(), "llamactl-catalog-meta-"));
+    const dir = makeTempDir("llamactl-catalog-meta-");
     const file = join(dir, "legacy-7.tsv");
     writeFileSync(file, `${line}\n`);
 
@@ -521,7 +534,7 @@ describe("catalog candidate metadata (#515)", () => {
     })}`;
     expect(parseCatalogRow!(metaLine).ok).toBe(false);
 
-    const dir = mkdtempSync(join(tmpdir(), "llamactl-catalog-meta-"));
+    const dir = makeTempDir("llamactl-catalog-meta-");
     const file = join(dir, "unavailable-no-reason.tsv");
     writeFileSync(file, `${metaLine}\n`);
 
@@ -597,14 +610,14 @@ describe("catalog candidate metadata (#515)", () => {
     expect(r.entry).toStrictEqual(full);
     expect(formatCatalogRow(r.entry)).toBe(line);
 
-    const dir = mkdtempSync(join(tmpdir(), "llamactl-catalog-meta-"));
+    const dir = makeTempDir("llamactl-catalog-meta-");
     const file = join(dir, "full-meta.tsv");
     writeFileSync(file, `${line}\n`);
     expect(readCustomCatalog(file)).toStrictEqual([full]);
   });
 
   test("meta column null/[]/primitive is skipped with warning; rest loads", () => {
-    const dir = mkdtempSync(join(tmpdir(), "llamactl-catalog-meta-"));
+    const dir = makeTempDir("llamactl-catalog-meta-");
     const file = join(dir, "bad-meta.tsv");
 
     const goodLine = formatCatalogRow({
@@ -644,7 +657,7 @@ describe("catalog candidate metadata (#515)", () => {
   });
 
   test("invalid JSON in meta column is skipped with warning; rest loads", () => {
-    const dir = mkdtempSync(join(tmpdir(), "llamactl-catalog-meta-"));
+    const dir = makeTempDir("llamactl-catalog-meta-");
     const file = join(dir, "bad-json.tsv");
 
     const goodLine = formatCatalogRow({
@@ -697,7 +710,7 @@ describe("catalog candidate metadata (#515)", () => {
       format: "gguf",
     });
 
-    const dir = mkdtempSync(join(tmpdir(), "llamactl-catalog-meta-"));
+    const dir = makeTempDir("llamactl-catalog-meta-");
     const file = join(dir, "trailing-tab.tsv");
     writeFileSync(file, `${base}\t\n`);
 
