@@ -284,7 +284,18 @@ or no ModelRun is stored under the name, `serverStart` takes the group from the
 catalog `residencyGroup` of the rel `resolveTarget` returns for its target
 (`directModelRunStartOpts`), and a label always wins. Operator force-unload
 (`residencyForceUnload`) routes its stop through the same wrapper after the
-lease drain commits. Bookkeeping never blocks a stop: a stop
+lease drain commits. Since #847 (Part of #517) the detached keep-alive worker
+records its own row through the same wrapper: `keepAliveRecordedStart` and
+`keepAliveRecordedStop` (`packages/cli/src/commands/keepAlive.ts`) wrap the
+worker's engine start in `runDirectResidencyStart` and its worker-exit stop in
+`runDirectResidencyStop`. The row is keyed by the keep-alive target as given,
+not the resolved rel, and the start takes its group from the catalog
+`residencyGroup` of the rel being started, so a failed start leaves the row
+`failed` with that group and only a confirmed stop walks it to `downloaded`. A
+keep-alive target has no ModelRun or ModelHost manifest, so
+`directWorkloadProvenDown` (`packages/remote/src/router.ts`) proves it down
+through `keepAliveWorkloadProvenDown` (see [dynamic-residency.md](dynamic-residency.md#direct-modelhost-start-and-stop)).
+Bookkeeping never blocks a stop: a stop
 whose claim or walk fails still runs and logs `not recorded`. A direct stop
 runs before its row moves and walks it to `downloaded` only once the stop is
 confirmed; an unconfirmed stop (the process may still be alive) leaves the row
@@ -338,8 +349,18 @@ nonterminal operation row, it also sweeps lifecycle rows interrupted outside a
 switch, such as a direct start whose agent died in `loading`, once they have
 made no progress for 30 minutes and their workload is proven down, under its
 own claim of the apply-profile fence. A workload that is not proven down, for
-example an engine that outlived its agent, keeps its row. The group is not
-wedged forever: before the window elapses an operator stop or
+example an engine that outlived its agent, keeps its row. The outside-a-switch
+pass also moves a stale `ready` row to `failed` over the legal `ready` ->
+`failed` edge once it has made no progress for 30 minutes and its workload is
+proven down, for example an engine that crashed, or a host that rebooted, while
+its row read `ready`; the claimed pass never touches `ready` rows
+(`ORPHAN_LIFECYCLE_STATES` in `packages/remote/src/residency/boot-recovery.ts`
+is `INTERRUPTED_LIFECYCLE_STATES` plus `ready`). The agent passes
+`directWorkloadProvenDown` as the proven-down predicate, and without one the
+pass fails closed and never opens the store. A `ready` row younger than the
+window, or one beside any nonterminal operation row, stays `ready` until a
+later boot. The group is not wedged forever: before the window elapses an
+operator stop or
 `llamactl residency force-unload` also clears it. Any nonterminal operation row keeps
 this sweep off. When no profile-switch row is nonterminal, boot recovery first
 finishes `evict:` rows that have made no progress for 30 minutes as `unknown`,
