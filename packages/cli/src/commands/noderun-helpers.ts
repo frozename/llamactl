@@ -106,3 +106,19 @@ export function nodeRunResidencyLookup(
   return (nodeName) =>
     listNodeRuns().find((nodeRun) => nodeRun.metadata.name === nodeName)?.spec.residency;
 }
+
+/** Part of #519: format the effective residency knobs for describe noderun output. */
+export function formatResidencyKnobs(effective: {
+  knobs: readonly { name: string; value: number; defaulted: boolean }[];
+}): string {
+  return effective.knobs
+    .map((k) => `${k.name} ${String(k.value)}${k.defaulted ? " (default)" : ""}`)
+    .join(", ");
+}
+
+/** Part of #519: format the NodeRun budget source for describe noderun output. */
+export function formatNodeRunBudget(budget: { memoryGiB: number } | undefined): string {
+  return budget
+    ? `${budget.memoryGiB.toFixed(1)} GiB (spec.budget.memoryGiB)`
+    : "computed from node memory x safetyMarginRatio";
+}

@@ -190,6 +190,12 @@ export {
   runDirectResidencyStop,
 } from "./residency/direct-lifecycle.js";
 export {
+  effectiveResidencyPolicy,
+  RESIDENCY_POLICY_KNOBS,
+  type ResidencyPolicyKnob,
+  type ResidencyStatusEffectivePolicy,
+} from "./residency/procedures.js";
+export {
   type AdmissionRejectCode,
   type AdmissionRequest,
   createRequestAdmission,
