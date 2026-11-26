@@ -51,7 +51,11 @@ import { applyOne } from "../workload/apply.js";
  *   - Walks successfully-applied components in **reverse** and tears
  *     each down via its type-specific destroy path.
  *   - Swallows rollback errors (logs via the event stream) so a
- *     single stuck teardown can't keep the applier from finishing.
+ *     single stuck teardown can't keep the applier from finishing. A
+ *     node stop-fence refusal is reported through `component-failed`
+ *     AND the component's status message, and the component stays
+ *     Ready because its engine is still up. Rollback never releases
+ *     sessions (#520).
  */
 import { removeCompositeEntries, updateGatewayCatalog } from "../workload/gateway-catalog/index.js";
 import { reloadAllGatewayNodesOfKind } from "../workload/gateway-catalog/reload.js";
@@ -281,7 +285,8 @@ export async function applyComposite(opts: CompositeApplyOptions): Promise<Compo
   if (outcome.failureMessage !== null && manifest.spec.onFailure === "rollback") {
     const teardownRefs = reverseOrder(applied.filter((r) => r.started).map((r) => r.ref));
     emit({ type: "rollback-start", refs: teardownRefs });
-    await rollback(applied, manifest, opts);
+    const stopRefusals = await rollback(applied, manifest, opts);
+    recordRollbackRefusals(componentResults, stopRefusals);
     rolledBack = true;
     emit({ type: "rollback-complete" });
   }
@@ -621,29 +626,117 @@ async function applyPipelineComponentRef(
   };
 }
 
+// ---- node stop-fence refusal ----------------------------------------------
+
+/**
+ * Thrown when a node's stop fence refuses a composite teardown, so the
+ * rollback path can report it in the component status and the destroy
+ * path can keep the manifest for a retry (#520).
+ */
+class CompositeWorkloadStopRefused extends Error {}
+
+/**
+ * Format a node stop-fence refusal out of a `serverStop` result, or null
+ * when the result reports no fence refusal (#520). A fence refuses with
+ * `stopped: false` plus a structured `refused` object whose `reason` is a
+ * string; the `: <ids>` suffix is dropped when no ids come back. A bare
+ * `stopped: false` without `refused` is NOT a fence refusal — remaining
+ * scope. Formatting mirrors modelRunStopRefusalLine (cli workload.ts) and
+ * serverStopDeleteRefusal (router.ts).
+ */
+function serverStopRefusalDetail(node: string, outcome: unknown): string | null {
+  if (outcome === null || typeof outcome !== "object") return null;
+  const o = outcome as { stopped?: unknown; refused?: unknown };
+  if (o.stopped !== false) return null;
+  if (o.refused === null || typeof o.refused !== "object") return null;
+  const refused = o.refused as { reason?: unknown; active?: unknown };
+  if (typeof refused.reason !== "string") return null;
+  const ids = Array.isArray(refused.active)
+    ? refused.active.filter((x): x is string => typeof x === "string")
+    : [];
+  return `serverStop on ${node} refused (${refused.reason}${ids.length > 0 ? `: ${ids.join(", ")}` : ""})`;
+}
+
 // ---- rollback -------------------------------------------------------------
+
+/** Rollback stop-fence refusals keyed `<kind>/<name>` (#520). */
+type RollbackRefusals = Map<string, string>;
+
+function componentKey(ref: ComponentRef): string {
+  return `${ref.kind}/${ref.name}`;
+}
+
+/**
+ * Copy each rollback stop-fence refusal onto its component result as a
+ * status message, keeping the state: the workload's engine is still
+ * running, so it is not Failed — the operator only needs to know the
+ * rollback did not stop it (#520).
+ */
+function recordRollbackRefusals(
+  componentResults: CompositeComponentResult[],
+  refusals: RollbackRefusals,
+): void {
+  if (refusals.size === 0) return;
+  for (const result of componentResults) {
+    const message = refusals.get(componentKey(result.ref));
+    if (message !== undefined) result.message = message;
+  }
+}
 
 async function rollback(
   applied: AppliedRecord[],
   manifest: Composite,
   opts: CompositeApplyOptions,
-): Promise<void> {
+): Promise<RollbackRefusals> {
   // Walk in reverse. Never throw from inside rollback — swallow +
   // surface via events so a single stuck teardown doesn't keep the
-  // applier from finishing its cleanup pass.
+  // applier from finishing its cleanup pass. A stop-fence refusal is
+  // additionally returned so the caller can put it on the component
+  // status.
+  const refusals: RollbackRefusals = new Map();
   const toTeardown = [...applied].reverse();
   for (const rec of toTeardown) {
     if (!rec.started) continue;
     try {
       await teardownComponent(rec, manifest, opts);
     } catch (err) {
+      const message = `rollback failed for ${componentKey(rec.ref)}: ${toErrorMessage(err)}`;
       opts.onEvent?.({
         type: "component-failed",
         ref: rec.ref,
-        message: `rollback failed for ${rec.ref.kind}/${rec.ref.name}: ${toErrorMessage(err)}`,
+        message,
       });
+      if (err instanceof CompositeWorkloadStopRefused) {
+        refusals.set(componentKey(rec.ref), message);
+      }
     }
   }
+  return refusals;
+}
+
+/**
+ * Roll back a started workload through the same stop path the CLI uses:
+ * getClient(node).serverStop.mutate. A transport error stays swallowed; a
+ * node stop-fence refusal throws so rollback reports it (#520).
+ */
+async function teardownWorkloadComponent(
+  rec: AppliedRecord,
+  manifest: Composite,
+  opts: CompositeApplyOptions,
+): Promise<void> {
+  const manifestWorkload = manifest.spec.workloads.find((w) => w.node === rec.ref.name);
+  if (!manifestWorkload) return;
+  const client = opts.getWorkloadClient(manifestWorkload.node);
+  // The workload's llama-server is keyed by its NODE (synthesizeModelRun
+  // sets metadata.name = spec.node, and serverStart launches under that
+  // key). Stop by the node — `manifest.metadata.name` is the COMPOSITE
+  // name, which targets a nonexistent key (core stopServer no-ops) and
+  // orphans the GPU-pinned process.
+  const outcome = await client.serverStop
+    .mutate({ workload: manifestWorkload.node, graceSeconds: 10 })
+    .catch(() => undefined);
+  const detail = serverStopRefusalDetail(manifestWorkload.node, outcome);
+  if (detail !== null) throw new CompositeWorkloadStopRefused(`${detail}; workload left running`);
 }
 
 async function teardownComponent(
@@ -662,21 +755,9 @@ async function teardownComponent(
       }
       return;
     }
-    case "workload": {
-      // Reuse the existing stop path: getClient(node).serverStop.mutate.
-      const manifestWorkload = manifest.spec.workloads.find((w) => w.node === rec.ref.name);
-      if (!manifestWorkload) return;
-      const client = opts.getWorkloadClient(manifestWorkload.node);
-      // The workload's llama-server is keyed by its NODE (synthesizeModelRun
-      // sets metadata.name = spec.node, and serverStart launches under that
-      // key). Stop by the node — `manifest.metadata.name` is the COMPOSITE
-      // name, which targets a nonexistent key (core stopServer no-ops) and
-      // orphans the GPU-pinned process.
-      await client.serverStop
-        .mutate({ workload: manifestWorkload.node, graceSeconds: 10 })
-        .catch(() => undefined);
+    case "workload":
+      await teardownWorkloadComponent(rec, manifest, opts);
       return;
-    }
     case "rag": {
       if (!rec.ragNodeCreated) return;
       const cfg = loadConfig(opts.configPath);
@@ -910,28 +991,10 @@ async function destroyWorkloadComponent(
     workload: manifestWorkload.node,
     graceSeconds: 10,
   });
-  const refusal = compositeStopRefusal(manifestWorkload.node, outcome);
-  if (refusal !== null) throw new CompositeWorkloadStopRefused(refusal);
+  const detail = serverStopRefusalDetail(manifestWorkload.node, outcome);
+  if (detail !== null)
+    throw new CompositeWorkloadStopRefused(`${detail}; composite manifest preserved`);
 }
-
-// A stop fence refuses with `stopped: false` plus a structured `refused`
-// detail (#520). A bare `stopped: false` without `refused` is NOT a fence
-// refusal — remaining scope. Formatting mirrors modelRunStopRefusalLine
-// (cli workload.ts) and serverStopDeleteRefusal (router.ts).
-function compositeStopRefusal(node: string, outcome: unknown): string | null {
-  if (outcome === null || typeof outcome !== "object") return null;
-  const o = outcome as { stopped?: unknown; refused?: unknown };
-  if (o.stopped !== false) return null;
-  if (o.refused === null || typeof o.refused !== "object") return null;
-  const refused = o.refused as { reason?: unknown; active?: unknown };
-  if (typeof refused.reason !== "string") return null;
-  const ids = Array.isArray(refused.active)
-    ? refused.active.filter((x): x is string => typeof x === "string")
-    : [];
-  return `serverStop on ${node} refused (${refused.reason}${ids.length > 0 ? `: ${ids.join(", ")}` : ""}); composite manifest preserved`;
-}
-
-class CompositeWorkloadStopRefused extends Error {}
 
 function destroyRagComponent(ref: ComponentRef, opts: CompositeDestroyOptions): void {
   const cfg = loadConfig(opts.configPath);
