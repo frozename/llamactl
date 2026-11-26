@@ -93,9 +93,11 @@ import {
   openaiUpstreamErrorsTotal,
   setAgentRuntimeIdentity,
   setModelHostMetricsNode,
+  setRuntimeProcessMemoryReader,
   statusClass,
 } from "./metrics.js";
 import { startPeerSnapshotPoller } from "./peer-snapshot-poller.js";
+import { defaultProcessMemoryReader, type ProcessMemoryReader } from "./process-memory.js";
 import { handleRagChatCompletions } from "./rag-chat-endpoint.js";
 import { handleRegister, type RegisterHandlerOptions } from "./register.js";
 import { loadCert } from "./tls.js";
@@ -315,6 +317,8 @@ export interface StartAgentOptions {
    */
   runtimeRole?: string;
   runtimeMemoryBudgetBytes?: number;
+  /** Tests inject a deterministic reader; production uses the platform probe. */
+  processMemoryReader?: ProcessMemoryReader;
 }
 
 export interface RunningAgent {
@@ -1646,6 +1650,7 @@ function applyAgentRuntimeIdentity(opts: StartAgentOptions): void {
       ? { memoryBudgetBytes: opts.runtimeMemoryBudgetBytes }
       : {}),
   });
+  setRuntimeProcessMemoryReader(opts.processMemoryReader ?? defaultProcessMemoryReader());
 }
 
 function startAgentServerAfterHandlers(
