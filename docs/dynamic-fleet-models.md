@@ -1074,6 +1074,23 @@ gateway reason (`scheduled suites reach <rel> through the agent gateway; no GGUF
 `createPerfBenchSuiteRunner`,
 `packages/cli/src/commands/bench-schedule.ts`).
 
+### Listing suite schedules
+
+`llamactl bench schedule list` and `llamactl bench schedule status` print
+one row per schedule. Two columns show what a suite schedule records:
+`KIND` and `DECLARED` (`ROW_HEADERS`,
+`packages/cli/src/commands/bench-schedule.ts`). `KIND` is `preset` for a
+bench-preset schedule and `suite:<suite>` for a suite schedule
+(`scheduleKindCell`). `DECLARED` lists the suite fields the schedule
+declares, in the order `engine`, `slots`, `quant`, `ctx`, `flags`,
+`hfRevision`, each as `<field>=<value>` joined by commas. For flags the
+value is the number of declared launch-flag tokens, not the tokens. A
+preset schedule, or a suite schedule that declares none of them, shows `-`
+(`declaredSuiteFieldsCell`). A field missing from `DECLARED` falls back as
+described above: the engine records `llamacpp`, c2/c4 record unavailable
+without a slot count, and quant, ctx, flags and hf_revision record null
+with the gateway reason. `--json` still prints every stored field.
+
 ### Comparing perf runs for an arm
 
 `perf.sqlite` rows from `llamactl eval perf` and from scheduled suites can
