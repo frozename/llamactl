@@ -94,6 +94,7 @@ export {
   dispatchOpsChatTool,
   KNOWN_OPS_CHAT_TOOLS,
   OPS_CHAT_TOOLS,
+  opsChatStopRefusal,
   type ToolTier as OpsChatTier,
   type OpsChatToolName,
   toolTier as opsChatToolTier,
