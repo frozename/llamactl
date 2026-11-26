@@ -1,6 +1,16 @@
 /**
  * DF-10 (#283) guarded llama.cpp sleep with verified process-stop fallback;
  * inert unless the residency lease registry is published.
+ *
+ * #520 — When a lease registry is installed, the driver consults the session
+ * registry at sleep time: a bound session (idle within its timeout or in
+ * flight) refuses the sleep as `SessionsActive` with the session ids in
+ * `active`, and a registry whose `checkUnload` throws refuses it as
+ * `SessionsUnknown`. The refusal applies to both the guarded sleep and the
+ * process-stop fallback: no `POST /sleep` is sent, no stop runs, and the
+ * reservation stays `held`. The factory captures the installed session
+ * registry at construction, and `sessions: null` opts out. The driver never
+ * releases sessions.
  */
 import type {
   ManagedAdmissionClaim,
@@ -8,6 +18,7 @@ import type {
   ManagedWorkloadKind,
 } from "@llamactl/core/residency/admission";
 import type { ResidencyLeases } from "@llamactl/core/residency/leases";
+import type { SessionRefcounts } from "@llamactl/core/residency/sessions";
 
 import { getResidencyLeaseRegistry } from "@llamactl/core/residency/leases";
 import {
@@ -15,13 +26,19 @@ import {
   type LlamacppSleepController,
   type SleepWakeAdmission,
 } from "@llamactl/core/residency/llamacpp-sleep";
+import { currentSessionRefcounts } from "@llamactl/core/residency/sessions";
 
 import type {
   TargetAdmissionAuthority,
   TargetAdmissionClaimHandle,
 } from "../workload/admission.js";
 
-import { applyAuth, buildBaseUrl, classifyFetchError } from "./engine-client.js";
+import {
+  applyAuth,
+  buildBaseUrl,
+  classifyFetchError,
+  sessionUnloadRefusal,
+} from "./engine-client.js";
 
 // ── Public types ──────────────────────────────────────────────────────────
 
@@ -51,7 +68,7 @@ export type LlamacppSleepOutcome =
       stopReason: string;
       reservation: "uncertain";
     }
-  | { kind: "refused"; reason: string; reservation: "held" }
+  | { kind: "refused"; reason: string; reservation: "held"; active?: string[] }
   | { kind: "inert"; reason: "ResidencyPolicyDisabled" };
 
 export type LlamacppSleepDriver = { sleep(): Promise<LlamacppSleepOutcome> };
@@ -65,6 +82,11 @@ export type LlamacppSleepDriverOptions = {
   cacheIdentity?: string;
   sleepTimeoutMs?: number;
   fetch?: typeof globalThis.fetch;
+  /**
+   * undefined: resolve the installed session registry at sleep time;
+   * null: opt out (#520).
+   */
+  sessions?: Pick<SessionRefcounts, "checkUnload"> | null;
   verifiedStop: () => Promise<LlamacppVerifiedStopResult>;
 };
 
@@ -80,6 +102,7 @@ function createLlamacppSleepDriver(opts: LlamacppSleepDriverOptions): LlamacppSl
     cacheIdentity,
     sleepTimeoutMs = 30_000,
     fetch: baseFetch,
+    sessions,
     verifiedStop,
   } = opts;
   const baseUrl = buildBaseUrl(endpoint.host, endpoint.port);
@@ -87,6 +110,18 @@ function createLlamacppSleepDriver(opts: LlamacppSleepDriverOptions): LlamacppSl
   const base = baseFetch ?? globalThis.fetch;
 
   async function sleep(): Promise<LlamacppSleepOutcome> {
+    // #520: session check runs before controller.requestSleep — no IO, no
+    // controller mutation, no process stop.
+    const sessionRefusal = sessionUnloadRefusal(sessions, memberId);
+    if (sessionRefusal !== null) {
+      return {
+        kind: "refused",
+        reason: sessionRefusal.reason,
+        reservation: "held",
+        active: sessionRefusal.active,
+      };
+    }
+
     const v = controller.requestSleep(memberId);
 
     // Step 1: controller refusal — no IO
@@ -240,7 +275,8 @@ export function createAgentLlamacppSleepDriver(
       },
     };
   }
-  return createLlamacppSleepDriver(opts);
+  const sessions = opts.sessions !== undefined ? opts.sessions : currentSessionRefcounts();
+  return createLlamacppSleepDriver({ ...opts, sessions });
 }
 
 // ── Shared-budget binding + wake driver (DF-10 #283) ─────────────────────
