@@ -299,7 +299,7 @@ describe("console shell (#410 P5a-3b)", () => {
     const nav = /<nav\b[^>]*>[\s\S]*?<\/nav>/.exec(markup);
     expect(nav).not.toBeNull();
     const anchors = [...(nav?.[0] ?? "").matchAll(/<a\b[^>]*>[\s\S]*?<\/a>/g)].map((m) => m[0]);
-    expect(anchors).toHaveLength(7);
+    expect(anchors).toHaveLength(8);
 
     const views = [
       { id: "dashboard", label: "Dashboard" },
@@ -309,6 +309,7 @@ describe("console shell (#410 P5a-3b)", () => {
       { id: "logs", label: "Logs" },
       { id: "stats", label: "Fleet Stats" },
       { id: "runs", label: "Runs" },
+      { id: "chat", label: "Chat" },
     ] as const;
     for (const [index, view] of views.entries()) {
       const anchor = anchors[index]!;

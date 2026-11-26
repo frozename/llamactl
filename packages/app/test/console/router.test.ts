@@ -49,6 +49,7 @@ describe("console router (#410 P5a)", () => {
     expect(parse("/nodes", "")).toEqual({ view: "nodes" });
     expect(parse("/stats", "?node=z13")).toEqual({ view: "stats", node: "z13" });
     expect(parse("/runs", "")).toEqual({ view: "runs" });
+    expect(parse("/chat", "?node=gpu-1")).toEqual({ view: "chat", node: "gpu-1" });
     expect(parse("/runs/workload", "")).toEqual({ view: "fleet", notFound: true });
     expect(parse("/logs", "")).toEqual({ view: "logs" });
     expect(parse("/logs/qwen-coder", "")).toEqual({ view: "logs", workload: "qwen-coder" });
@@ -88,7 +89,7 @@ describe("console router (#410 P5a)", () => {
 
     const parse = mod!.parseConsoleRoute!;
     for (const pathname of [
-      "/chat",
+      "/chat/model",
       "/api/x",
       "/workloads/a/b",
       "/nodes/x",
@@ -106,7 +107,7 @@ describe("console router (#410 P5a)", () => {
     const mod = await importRouter();
     expect(mod?.parseConsoleRoute).toBeFunction();
 
-    expect(mod!.parseConsoleRoute!("/chat", "?node=gpu-1")).toEqual({
+    expect(mod!.parseConsoleRoute!("/chat/model", "?node=gpu-1")).toEqual({
       view: "fleet",
       notFound: true,
       node: "gpu-1",

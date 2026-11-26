@@ -13,6 +13,7 @@ import { NodeScopedProvider } from "./node-scoped-provider";
 import { useNodeTrpc } from "./node-trpc";
 import { consoleHref, parseConsoleRoute } from "./router";
 import { INVALID_SESSION_MESSAGE, useInvalidSession } from "./session-store";
+import { ChatView } from "./views/chat";
 import { DashboardView } from "./views/dashboard";
 import { FleetView } from "./views/fleet";
 import { LogsView } from "./views/logs";
@@ -45,6 +46,8 @@ function RoutedView({
   navigate: (next: ConsoleRoute) => void;
 }): React.JSX.Element {
   switch (route.view) {
+    case "chat":
+      return <ChatView key={tabNode} node={tabNode} />;
     case "dashboard":
       return <DashboardView />;
     case "workloads":

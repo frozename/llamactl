@@ -15,6 +15,14 @@ plane, N agent nodes, the same verbs (apply, get, describe, delete)
 across `ModelRun` and `NodeRun` manifests, plus enough imperative
 escape hatches that one-off operations stay trivial.
 
+## Chat with a model
+
+Open **Chat** in the web console. Choose a host with the tab's node
+picker, then choose one of its served models. Replies stream as the model
+generates them, and follow-up messages include the current conversation.
+Use **Stop** to interrupt generation and **New chat** to clear the conversation.
+Chat keeps the transcript in memory until you leave the page or change nodes.
+
 ## Fleet telemetry
 
 Open **Fleet Stats** in `llamactl console` for workload status, node memory,

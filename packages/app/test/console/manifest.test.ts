@@ -34,6 +34,7 @@ describe("console module manifest (#410 P5a)", () => {
       "logs",
       "stats",
       "runs",
+      "chat",
     ]);
   });
 
@@ -70,7 +71,7 @@ describe("console module manifest (#410 P5a)", () => {
     expect(mod?.CONSOLE_MODULES).toBeDefined();
 
     const ids = mod!.CONSOLE_MODULES!.map((entry) => entry.id);
-    for (const retired of ["chat", "models", "settings", "projects"]) {
+    for (const retired of ["models", "settings", "projects"]) {
       expect(ids).not.toContain(retired);
     }
   });

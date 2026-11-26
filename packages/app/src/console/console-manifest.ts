@@ -5,7 +5,8 @@ export type ConsoleViewId =
   | "nodes"
   | "logs"
   | "stats"
-  | "runs";
+  | "runs"
+  | "chat";
 
 export interface ConsoleModule {
   id: ConsoleViewId;
@@ -21,4 +22,5 @@ export const CONSOLE_MODULES: readonly ConsoleModule[] = [
   { id: "logs", label: "Logs", path: "/logs" },
   { id: "stats", label: "Fleet Stats", path: "/stats" },
   { id: "runs", label: "Runs", path: "/runs" },
+  { id: "chat", label: "Chat", path: "/chat" },
 ] as const;

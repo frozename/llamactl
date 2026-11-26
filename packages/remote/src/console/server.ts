@@ -17,12 +17,14 @@ import { makePinnedFetch } from "../client/links.js";
 import { buildDispatchRouter } from "../dispatch/router.js";
 import { existsSync, statSync } from "../safe-fs.js";
 import { buildConsoleRouter, CONSOLE_ALLOWLIST, type ConsoleLookupWorkload } from "./allowlist.js";
+import { routeConsoleChat } from "./chat.js";
 import {
   checkConsoleHost,
   checkConsoleSameOrigin,
   checkConsoleSession,
   checkConsoleTrpcPath,
   type ConsoleSession,
+  jsonError,
   newConsoleSession,
 } from "./guards.js";
 import { parseConsoleNodePath, validateConsoleNode } from "./node-route.js";
@@ -170,13 +172,6 @@ export interface RunningConsoleServer {
 const CSP =
   "default-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'";
 
-function jsonError(status: number, error: string): Response {
-  return new Response(JSON.stringify({ error }), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
-}
-
 function withSecurityHeaders(res: Response): Response {
   const headers = new Headers(res.headers);
   headers.set("x-content-type-options", "nosniff");
@@ -187,6 +182,13 @@ function withSecurityHeaders(res: Response): Response {
     return new Response(null, init);
   }
   return new Response(res.body, init);
+}
+
+async function servePenumbraHandoffs(req: Request): Promise<Response> {
+  if (req.method !== "GET") return jsonError(405, "method_not_allowed");
+  return Response.json(await readPenumbraHandoffs(), {
+    headers: { "cache-control": "no-store" },
+  });
 }
 
 export function startConsoleServer(opts: StartConsoleServerOptions): Promise<RunningConsoleServer> {
@@ -226,11 +228,10 @@ export function startConsoleServer(opts: StartConsoleServerOptions): Promise<Run
     const denied = checkConsoleSameOrigin(req) ?? checkConsoleSession(req, currentSession());
     if (denied !== null) return denied;
     if (pathname === "/api/addons/penumbra/handoffs") {
-      if (req.method !== "GET") return jsonError(405, "method_not_allowed");
-      return Response.json(await readPenumbraHandoffs(), {
-        headers: { "cache-control": "no-store" },
-      });
+      return await servePenumbraHandoffs(req);
     }
+    const chat = routeConsoleChat(req, pathname);
+    if (chat !== null) return await chat;
     const route = parseConsoleNodePath(pathname);
     if (route.kind === "none") return jsonError(404, "not_found");
     if (route.kind === "bad") return jsonError(400, "bad_node");

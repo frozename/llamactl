@@ -1,0 +1,65 @@
+import { expect, test } from "./harness/fixtures/test";
+
+test("selects a model, streams a reply and sends conversation context", async ({ page }) => {
+  await page.route("**/api/n/local/chat/models", (route) =>
+    route.fulfill({ json: { models: ["fixture-model", "other-model"] } }),
+  );
+  const requests: unknown[] = [];
+  await page.route("**/api/n/local/chat/completions", async (route) => {
+    requests.push(route.request().postDataJSON());
+    await route.fulfill({
+      contentType: "text/event-stream",
+      body:
+        'data: {"choices":[{"delta":{"content":"Hello "}}]}\n\n' +
+        'data: {"choices":[{"delta":{"content":"world"}}]}\n\n' +
+        "data: [DONE]\n\n",
+    });
+  });
+  await page.goto("/");
+  await page.getByRole("link", { name: "Chat", exact: true }).click();
+  await expect(page).toHaveURL(/\/chat\?node=local$/);
+  await page.getByRole("combobox", { name: "Model", exact: true }).selectOption("other-model");
+  const composer = page.getByRole("textbox", { name: "Message" });
+  await composer.fill("First question");
+  await composer.press("Enter");
+  await expect(page.getByText("Hello world", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Stop", exact: true })).toHaveCount(0);
+  await composer.fill("Follow up");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(page.getByText("Hello world", { exact: true })).toHaveCount(2);
+  await expect(page.getByRole("button", { name: "Stop", exact: true })).toHaveCount(0);
+  expect(requests[1]).toEqual({
+    model: "other-model",
+    messages: [
+      { role: "user", content: "First question" },
+      { role: "assistant", content: "Hello world" },
+      { role: "user", content: "Follow up" },
+    ],
+  });
+  await page.getByRole("button", { name: "New chat", exact: true }).click();
+  await expect(page.getByText("First question", { exact: true })).toHaveCount(0);
+});
+
+test("stopping a pending reply restores the unsent draft", async ({ page }) => {
+  await page.route("**/api/n/local/chat/models", (route) =>
+    route.fulfill({ json: { models: ["fixture-model"] } }),
+  );
+  const release = Promise.withResolvers<null>();
+  await page.route("**/api/n/local/chat/completions", async (route) => {
+    await release.promise;
+    await route.abort().catch(() => undefined);
+  });
+  try {
+    await page.goto("/chat");
+    const composer = page.getByRole("textbox", { name: "Message" });
+    await composer.fill("Keep this prompt");
+    const pendingRequest = page.waitForRequest("**/api/n/local/chat/completions");
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+    await pendingRequest;
+    await page.getByRole("button", { name: "Stop", exact: true }).click();
+    await expect(composer).toHaveValue("Keep this prompt");
+    await expect(page.getByRole("alert")).toHaveCount(0);
+  } finally {
+    release.resolve(null);
+  }
+});
