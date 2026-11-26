@@ -6,7 +6,14 @@ const ACTIVE_STATES = "('pending','approved','dispatched')";
 const TERMINAL_STATES = "('completed','failed','expired','redirected','rejected')";
 const FIELDS = "handoff_id, ts, to_agent, status, resolved_at";
 
-function readHandoffs(databasePath: string) {
+export interface HandoffFeedOptions {
+  databasePath: string;
+  port: number;
+  token: string;
+  log?: (_line: string) => void;
+}
+
+function readHandoffs(databasePath: string): unknown[] {
   const db = new Database(databasePath, { readonly: true });
   try {
     db.exec("PRAGMA busy_timeout=250");
@@ -33,8 +40,26 @@ function readHandoffs(databasePath: string) {
   }
 }
 
-export function startHandoffFeed(options: { databasePath: string; port: number; token: string }) {
+function describeReadError(error: unknown, options: HandoffFeedOptions): string {
+  let description: string;
+  if (error instanceof Error) {
+    const code = "code" in error && typeof error.code === "string" ? ` ${error.code}` : "";
+    description = `${error.name}${code}: ${error.message}`;
+  } else {
+    description = "unknown error";
+  }
+  let redacted = description.replaceAll(options.databasePath, "<database>");
+  if (options.token !== "") redacted = redacted.replaceAll(options.token, "<redacted>");
+  return redacted.replaceAll(/\s+/g, " ").slice(0, 300);
+}
+
+export function startHandoffFeed(options: HandoffFeedOptions): ReturnType<typeof Bun.serve> {
   const expected = Buffer.from(`Bearer ${options.token}`);
+  const log =
+    options.log ??
+    ((line: string): void => {
+      console.error(line);
+    });
   return Bun.serve({
     hostname: "127.0.0.1",
     port: options.port,
@@ -48,7 +73,8 @@ export function startHandoffFeed(options: { databasePath: string; port: number; 
       const headers = { "cache-control": "no-store" };
       try {
         return Response.json({ handoffs: readHandoffs(options.databasePath) }, { headers });
-      } catch {
+      } catch (error) {
+        log(`penumbra handoff feed: read failed: ${describeReadError(error, options)}`);
         return new Response(null, { status: 503, headers });
       }
     },
