@@ -394,6 +394,68 @@ describe("env.resolveEnv — LOCAL_AI_PROVIDER_URL routes through the internal p
     expect(r.LLAMA_CPP_PORT).toBe("9090");
   });
 
+  // kills: treating a re-fed derived LOCAL_AI_LLAMA_CPP_BASE_URL as explicit after a host/port change.
+  test("changing LLAMA_CPP_PORT after a seed re-derives the tracked URL and keeps the proxy", () => {
+    const s = seed(B);
+    const r = resolveEnv({ ...s, LLAMA_CPP_PORT: "9090" });
+    expect(r.LOCAL_AI_PROVIDER_URL).toBe(PX);
+    expect(r.OPENAI_BASE_URL).toBe(PX);
+    expect(r.LOCAL_AI_LLAMA_CPP_BASE_URL).toBe("http://127.0.0.1:9090/v1");
+
+    const hostChanged = resolveEnv({ ...s, LLAMA_CPP_HOST: "127.0.0.2" });
+    expect(hostChanged.LOCAL_AI_PROVIDER_URL).toBe(PX);
+    expect(hostChanged.OPENAI_BASE_URL).toBe(PX);
+    expect(hostChanged.LOCAL_AI_LLAMA_CPP_BASE_URL).toBe("http://127.0.0.2:8080/v1");
+  });
+
+  // kills: a re-fed tracked URL outranking host:port derivation in direct mode.
+  test("seeded ROUTE=direct follows a later LLAMA_CPP_PORT change", () => {
+    const s = seed({ ...B, LOCAL_AI_PROVIDER_ROUTE: "direct" });
+    expect(resolveEnv({ ...s, LLAMA_CPP_PORT: "9090" }).LOCAL_AI_PROVIDER_URL).toBe(
+      "http://127.0.0.1:9090/v1",
+    );
+  });
+
+  // kills: re-resolving a seeded port change as a non-fixed-point or dropping the derivation marker.
+  test("the re-derive is a fixed point", () => {
+    const s2 = seed({ ...seed(B), LLAMA_CPP_PORT: "9090" });
+    const r = resolveEnv(s2);
+    expect(r.LOCAL_AI_PROVIDER_URL).toBe(PX);
+    expect(r.OPENAI_BASE_URL).toBe(PX);
+    expect(r.LOCAL_AI_LLAMA_CPP_BASE_URL).toBe("http://127.0.0.1:9090/v1");
+    expect(s2["LOCAL_AI_LLAMA_CPP_DERIVED_BASE_URL"]).toBe("http://127.0.0.1:9090/v1");
+  });
+
+  // kills: treating a re-fed derived URL as more explicit than an operator's post-seed override.
+  test("an explicit tracked URL after a seed still wins", () => {
+    const custom = "http://10.0.0.99:9999/v1";
+    expect(
+      resolveEnv({ ...seed(B), LOCAL_AI_LLAMA_CPP_BASE_URL: custom }).LOCAL_AI_PROVIDER_URL,
+    ).toBe(custom);
+  });
+
+  // kills: a later port change re-deriving over an explicit seeded tracked URL.
+  test("an explicit seeded tracked URL survives a later port change", () => {
+    const custom = "http://10.0.0.99:9999/v1";
+    const r = resolveEnv({
+      ...seed({ ...B, LOCAL_AI_LLAMA_CPP_BASE_URL: custom }),
+      LLAMA_CPP_PORT: "9090",
+    });
+    expect(r.LOCAL_AI_PROVIDER_URL).toBe(custom);
+    expect(r.LOCAL_AI_LLAMA_CPP_BASE_URL).toBe(custom);
+  });
+
+  // kills: re-fed derived URL outranking LLAMACTL_INTERNAL_PROXY_URL after a port change.
+  test("a proxy override after a seeded port change outranks the re-fed tracked URL", () => {
+    expect(
+      resolveEnv({
+        ...seed(B),
+        LLAMA_CPP_PORT: "9090",
+        LLAMACTL_INTERNAL_PROXY_URL: "http://127.0.0.1:9001",
+      }).LOCAL_AI_PROVIDER_URL,
+    ).toBe("http://127.0.0.1:9001/v1");
+  });
+
   // kills: the proxy outranking a configured tracked URL; treating the host:port default as configured.
   test("an explicit tracked URL that differs from host:port wins over the proxy, as on main", () => {
     const custom = "http://10.0.0.99:9999/v1";
