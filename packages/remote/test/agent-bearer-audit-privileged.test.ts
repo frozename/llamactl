@@ -10,7 +10,7 @@ import { join } from "node:path";
 
 import type { RunningAgent } from "../src/server/serve.js";
 
-import { mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 import { handleAgentRollback, handleAgentUpdate } from "../src/server/agent-update.js";
 import * as authMod from "../src/server/auth.js";
 import { startAgentServer } from "../src/server/serve.js";
@@ -114,6 +114,17 @@ describe("privileged bearer auth audit", () => {
     const res = await postEmpty("/agent/update", primary.token);
     expect(res.status).not.toBe(401);
     expect(records).toEqual([{ tokenName: "default", method: "POST", pathname: "/agent/update" }]);
+  });
+
+  test("POST /agent/rollback with the primary bearer is recorded once as default", async () => {
+    // The route rolls back `process.execPath`; the test runner has no
+    // `.previous` beside it, so the admitted hop ends in the 409 refusal.
+    expect(existsSync(`${process.execPath}.previous`)).toBe(false);
+    const res = await postEmpty("/agent/rollback", primary.token);
+    expect(res.status).toBe(409);
+    expect(records).toEqual([
+      { tokenName: "default", method: "POST", pathname: "/agent/rollback" },
+    ]);
   });
 
   test("POST /agent/update rejects named and unknown bearers without audit", async () => {
