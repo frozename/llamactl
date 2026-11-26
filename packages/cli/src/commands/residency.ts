@@ -33,6 +33,7 @@ import { workloadReconciler, workloadStore } from "@llamactl/remote";
 
 import { getGlobals, getNodeClientByName } from "../dispatcher.js";
 import { required } from "../required.js";
+import { formatResidencyKnobs } from "./noderun-helpers.js";
 import { withNodeQueryDeadline } from "./workload.js";
 
 const USAGE = `Usage: llamactl residency <subcommand>
@@ -227,9 +228,7 @@ function pushEffectivePolicyLine(
   if (effective === undefined) {
     return;
   }
-  lines.push(
-    `Effective:  ${effective.knobs.map((k) => `${k.name} ${String(k.value)}${k.defaulted ? " (default)" : ""}`).join(", ")}`,
-  );
+  lines.push(`Effective:  ${formatResidencyKnobs(effective)}`);
 }
 
 function pushSessionLines(lines: string[], sessions: ResidencyRenderInput["sessions"]): void {
