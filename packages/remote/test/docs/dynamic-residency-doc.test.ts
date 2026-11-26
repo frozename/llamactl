@@ -817,7 +817,7 @@ describe("docs/dynamic-residency.md (#285)", () => {
       "A node with no store file runs the start or stop unrecorded and never creates the store.",
       "Otherwise the wrapper claims the shared apply-profile fence and walks the `residency_states` row through the same `withResidencyLifecycle` hops as a profile switch (`packages/remote/src/residency/lifecycle-steps.ts`).",
       "A label naming an undeclared group records no group.",
-      "A same-group `ready` peer is reconciled to downloaded only when it is proven down: a known ModelHost that reads Stopped with its identity resolved, or a known ModelRun with no recorded pid file or whose recorded pid is provably gone (`dead` or `reused`).",
+      "A same-group `ready` peer is reconciled to downloaded only when it is proven down: a known ModelHost that reads Stopped with its identity resolved, a known ModelRun with no recorded pid file or whose recorded pid is provably gone (`dead` or `reused`), or a keep-alive target whose supervisor is absent or provably gone and whose own server key (the target name) is proven down.",
       "Any other occupying same-group row refuses the start with `ExclusiveGroupOccupied`, as `residency lifecycle refused <name> <from> -> <to>: ExclusiveGroupOccupied: <detail>`, before the engine runs.",
       "A nonterminal profile switch refuses a start with `residency lifecycle refused <name>: profile switch in flight on this node; retry after it settles`.",
       "A grouped start whose store cannot be opened or claimed refuses with `store unavailable (<message>)`.",
