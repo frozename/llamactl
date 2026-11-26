@@ -32,6 +32,7 @@ import { defaultPerfDbPath, servedModelIds } from "./bench-schedule.js";
 import {
   createLaunchLoadHooks,
   defaultLaunchDeps,
+  LAUNCH_IO_REASON,
   LAUNCH_SLOTS_REASON,
   launchRefusal,
   preflightLaunch,
@@ -285,7 +286,7 @@ function remoteReasons(url: string): PerfSuiteReaderReasons {
 function hostReaders(
   url: string,
   loopback: boolean,
-  pid: number | null,
+  pid: number | null | (() => number | null),
 ): { readers: PerfSuiteReaders | undefined; reasons: PerfSuiteReaderReasons } {
   if (!loopback) return { readers: undefined, reasons: remoteReasons(url) };
 
@@ -351,6 +352,21 @@ function buildOpts(input: BuildOptsInput): PerfSuiteOptions {
 
 type SlotResolution = { slots: number | null; slotsReason: string | undefined };
 
+function withLaunchIoReason(
+  readers: PerfSuiteReaders | undefined,
+  reasons: PerfSuiteReaderReasons,
+  launch: LaunchHooks | null,
+): { readers: PerfSuiteReaders | undefined; reasons: PerfSuiteReaderReasons } {
+  if (launch === null || readers?.io === undefined) {
+    return { readers, reasons };
+  }
+  // Drop io for a --launch run: no single engine process spans the suite.
+  const { io: _io, ...rest } = readers;
+  const droppedReaders: PerfSuiteReaders = Object.keys(rest).length > 0 ? rest : {};
+  reasons.io = LAUNCH_IO_REASON;
+  return { readers: hasAnyReader(droppedReaders) ? droppedReaders : undefined, reasons };
+}
+
 async function resolveSlots(input: RunInput): Promise<SlotResolution> {
   if (input.slots !== null) return { slots: input.slots, slotsReason: undefined };
   if (input.engine !== "llamacpp") {
@@ -376,6 +392,7 @@ function resolveLaunchSlots(input: RunInput): SlotResolution {
 
 interface LaunchHooks {
   hooks: PerfSuiteLoadHooks;
+  pid(): number | null;
   foreign(): boolean;
   failure(): string | null;
   teardown(): Promise<void>;
@@ -431,8 +448,11 @@ function provenanceRunInput(input: RunInput, spec: ModelSpec | null): RunInput {
   return { ...input, flags: spec.extra_args ?? [] };
 }
 
-function pidForRun(input: RunInput, launch: boolean): number | null {
-  return launch ? null : input.pid;
+function pidForRun(
+  input: RunInput,
+  launch: LaunchHooks | null,
+): number | null | (() => number | null) {
+  return launch === null ? input.pid : (): number | null => launch.pid();
 }
 
 function launchExitStatus(launch: LaunchHooks | null, url: string, runId: string): number {
@@ -484,10 +504,16 @@ export async function runEvalPerf(argv: string[]): Promise<number> {
   const { slots, slotsReason } = parsed.launch
     ? resolveLaunchSlots(resolved)
     : await resolveSlots(resolved);
-  const { readers, reasons: readerReasons } = hostReaders(
+  const launchPid = pidForRun(resolved, launchContext.launch);
+  const { readers: hostReadersResult, reasons: readerReasons } = hostReaders(
     resolved.url,
     resolved.loopback,
-    pidForRun(resolved, parsed.launch),
+    launchPid,
+  );
+  const { readers, reasons: finalReaderReasons } = withLaunchIoReason(
+    hostReadersResult,
+    readerReasons,
+    launchContext.launch,
   );
 
   const db = new Database(values["--db"] ?? defaultPerfDbPath());
@@ -502,7 +528,7 @@ export async function runEvalPerf(argv: string[]): Promise<number> {
         clock,
         provenance,
         readers,
-        readerReasons,
+        readerReasons: finalReaderReasons,
         slots,
         slotsReason,
         launchHooks: launchContext.launch?.hooks,
