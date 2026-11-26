@@ -1307,3 +1307,7 @@ a loopback Linux `eval perf` run, the stored `peak_gtt_bytes` reason is
 therefore the status-only form, for example `GTT reader returned no sample
 (status: denied)`. The source clause appears only for an injected reader
 that names a source.
+
+### Provenance in a matrix report
+
+Every matrix run collects provenance for each model through `collectEvalProvenance` and stores it in the `matrix_provenance` table (`insertMatrixProvenance`, `packages/eval/src/matrix/store.ts`). The markdown report written with `--report md` or `--report both` ends with a `## Provenance` section (`renderMarkdownReport`, `packages/eval/src/matrix/report.ts`). It is loaded from that table for the report's run, or for every run with `--report-all-runs` (`writeReport`, `packages/eval/src/matrix/cli.ts`). Its table is headed `| Run | Model | Field | Value |` and lists one row per field, in the order of `PERF_PROVENANCE_DIFF_FIELDS` (`packages/eval/src/perf/diff.ts`). A null field renders `unavailable (<reason>)` with the reason recorded in `provenance.unavailable`, or `unavailable (not recorded)` when the row holds none; it never renders a guessed value. An empty `flags` list renders `(none)`. A model that has cells in the report but no provenance row, for example because provenance collection failed, gets a single `(all)` row reading `unavailable (not recorded)`. The CSV report carries no provenance.
