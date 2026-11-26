@@ -154,10 +154,23 @@ type LifecycleSection =
     }
   | { status: "unavailable"; scope: "serving-process"; reason: string };
 
+type EffectivePolicyKnob =
+  | "idleEvictSeconds"
+  | "minResidencySeconds"
+  | "switchCooldownSeconds"
+  | "safetyMarginRatio"
+  | "residentPreference"
+  | "coldLoadPenaltyMs";
+
+type EffectivePolicySection = {
+  knobs: { name: EffectivePolicyKnob; value: number; defaulted: boolean }[];
+};
+
 type ResidencyStatus = {
   node: string;
   nodeRun: { present: boolean };
   policy: { present: false } | { present: true; residency: unknown };
+  effectivePolicy?: EffectivePolicySection;
   budget: { memoryGiB: number; source: "noderun" | "computed" };
   store: StoreProbe & { scope: "serving-process" };
   lifecycle?: LifecycleSection;
@@ -566,6 +579,16 @@ describe("buildResidencyStatus", () => {
       node: "n",
       nodeRun: { present: false },
       policy: { present: false },
+      effectivePolicy: {
+        knobs: [
+          { name: "idleEvictSeconds", value: 0, defaulted: true },
+          { name: "minResidencySeconds", value: 0, defaulted: true },
+          { name: "switchCooldownSeconds", value: 0, defaulted: true },
+          { name: "safetyMarginRatio", value: 0.75, defaulted: true },
+          { name: "residentPreference", value: 0, defaulted: true },
+          { name: "coldLoadPenaltyMs", value: 0, defaulted: true },
+        ],
+      },
       budget: { memoryGiB: 10, source: "computed" },
       store: { path: "/p", present: false, scope: "serving-process" },
       lifecycle: {

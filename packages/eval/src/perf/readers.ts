@@ -19,13 +19,17 @@ export interface PerfSuiteReaderReasons {
  * Options for `createPerfHostReaders`.
  *
  * `pid` must be a positive safe integer for the engine process; pass
- * `null` when the engine PID is unknown (I/O and VmHWM need it).
+ * `null` when the engine PID is unknown (I/O and VmHWM need it). A
+ * getter `() => number | null` is resolved on every read, so the
+ * caller can supply a live pid that changes between cold and warm
+ * boots.
+ *
  * `platform` defaults to `process.platform`; override it in tests.
  * `readFile` defaults to the package safe-fs `readFile(path, 'utf8')`
  * (a `node:fs/promises` re-export).
  */
 export interface PerfHostReaderOptions {
-  pid: number | null;
+  pid: number | null | (() => number | null);
   platform?: NodeJS.Platform;
   readFile?: (path: string) => Promise<string>;
 }
@@ -49,7 +53,12 @@ export function createPerfHostReaders(opts: PerfHostReaderOptions): {
   const reasons: PerfSuiteReaderReasons = {};
 
   // Unknown / invalid PID: cannot build /proc/<pid> paths.
-  if (opts.pid === null || !Number.isSafeInteger(opts.pid) || opts.pid <= 0) {
+  // A getter is resolved on every read, so a function pid is never
+  // treated as unknown here.
+  if (
+    !(typeof opts.pid === "function") &&
+    (opts.pid === null || !Number.isSafeInteger(opts.pid) || opts.pid <= 0)
+  ) {
     reasons.io =
       "engine PID unknown; per-process I/O and VmHWM counters need the engine process id";
     reasons.peakRss = reasons.io;
@@ -63,13 +72,22 @@ export function createPerfHostReaders(opts: PerfHostReaderOptions): {
     return { readers: {}, reasons };
   }
 
-  const pid = opts.pid;
+  // Linux: build a livePid that resolves the numeric pid (or calls the
+  // getter and throws) so each reader can call it OUTSIDE its try/catch.
+  const livePid = (): number => {
+    const raw = typeof opts.pid === "function" ? opts.pid() : opts.pid;
+    if (raw === null || !Number.isSafeInteger(raw) || raw <= 0) {
+      throw new Error("engine PID not known when the reader ran");
+    }
+    return raw;
+  };
 
   // Linux: wire up readers that delegate to parseProcIo / parseVmHwm,
   // wrapping each in try/catch so a rejection returns null.
   const readers: PerfSuiteReaders = {};
 
   readers.io = async (): Promise<IoByteCounts | null> => {
+    const pid = livePid();
     try {
       return parseProcIo(await readFile(`/proc/${String(pid)}/io`));
     } catch {
@@ -78,6 +96,7 @@ export function createPerfHostReaders(opts: PerfHostReaderOptions): {
   };
 
   readers.peakRss = async (): Promise<number | null> => {
+    const pid = livePid();
     try {
       return parseVmHwm(await readFile(`/proc/${String(pid)}/status`));
     } catch {
