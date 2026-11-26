@@ -273,11 +273,16 @@ function pushIdleEvictionLines(
     `Idle evict: window ${String(idle.idleEvictSeconds)}s, ${String(idle.workloads.length)} ready workload(s) (advisory; scope: ${idle.scope})`,
   );
   for (const w of idle.workloads) {
+    const sessionHold = w.sessionHold;
     let state: string;
     if (w.due) {
       state = "due";
     } else if (w.minResidencyUntilMs !== undefined) {
       state = `held MinResidency for ${formatMs(Math.max(0, w.minResidencyUntilMs - nowMs))}`;
+    } else if (sessionHold?.reason === "SessionsActive") {
+      state = `held SessionsActive: ${sessionHold.sessions.join(", ")}`;
+    } else if (sessionHold?.reason === "SessionsUnknown") {
+      state = "held SessionsUnknown";
     } else if (w.dueAtMs === null) {
       state = "not due (activity unknown)";
     } else if (w.dueAtMs > nowMs) {
