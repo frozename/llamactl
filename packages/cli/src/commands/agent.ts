@@ -523,6 +523,9 @@ function assignInitValueFlag(flags: InitFlags, k: string, v: string): string | n
       flags.dir = v;
       break;
     case "--host":
+      if (v.trim() === "") {
+        return "agent init: --host requires a host; omit --host to use the default 127.0.0.1";
+      }
       flags.host = v;
       break;
     case "--port": {

@@ -495,41 +495,85 @@ describe("agent status advertised host recorded in agent.yaml (#211)", () => {
     expect(rep.advertisedHostCovered).toBe(false);
   });
 
-  test("rotate-token --host= (empty) is refused and keeps the recorded advertisedHost", async () => {
-    await initAdvertisedHost();
+  test.each([
+    ["empty", ""],
+    ["whitespace-only", "  "],
+  ])(
+    "rotate-token --host (%s) is refused and keeps the recorded advertisedHost",
+    async (_label, host) => {
+      await initAdvertisedHost();
+      const cfgPath = join(tmp, "agent.yaml");
+      const before = readFileSync(cfgPath, "utf8");
+
+      const r = await capture(["rotate-token", `--dir=${tmp}`, `--host=${host}`, "--json"]);
+      expect(r.code).toBe(1);
+      expect(r.err).toContain("--host");
+      expect(r.err).toContain("requires a host");
+      expect(r.out).toBe("");
+      expect(readFileSync(cfgPath, "utf8")).toBe(before);
+      expect(advertisedHostOf(agentConfigMod.loadAgentConfig(cfgPath))).toBe("192.168.68.139");
+    },
+  );
+
+  test.each([
+    ["empty", ""],
+    ["whitespace-only", "  "],
+  ])(
+    "rotate-cert --host (%s) is refused and keeps the recorded advertisedHost",
+    async (_label, host) => {
+      await initAdvertisedHost();
+      const cfgPath = join(tmp, "agent.yaml");
+      const crtPath = join(tmp, "agent.crt");
+      const cfgBefore = readFileSync(cfgPath, "utf8");
+      const crtBefore = readFileSync(crtPath, "utf8");
+
+      const r = await capture([
+        "rotate-cert",
+        `--dir=${tmp}`,
+        `--host=${host}`,
+        "--san=127.0.0.1,localhost",
+        "--json",
+      ]);
+      expect(r.code).toBe(1);
+      expect(r.err).toContain("--host");
+      expect(r.err).toContain("requires a host");
+      expect(r.out).toBe("");
+      expect(readFileSync(cfgPath, "utf8")).toBe(cfgBefore);
+      expect(readFileSync(crtPath, "utf8")).toBe(crtBefore);
+      expect(advertisedHostOf(agentConfigMod.loadAgentConfig(cfgPath))).toBe("192.168.68.139");
+    },
+  );
+
+  test.each([
+    ["empty", ""],
+    ["whitespace-only", "  "],
+  ])("init --host (%s) is refused before anything is written", async (_label, host) => {
     const cfgPath = join(tmp, "agent.yaml");
-    const before = readFileSync(cfgPath, "utf8");
-
-    const r = await capture(["rotate-token", `--dir=${tmp}`, "--host=", "--json"]);
-    expect(r.code).toBe(1);
-    expect(r.err).toContain("--host");
-    expect(r.err).toContain("requires a host");
-    expect(r.out).toBe("");
-    expect(readFileSync(cfgPath, "utf8")).toBe(before);
-    expect(advertisedHostOf(agentConfigMod.loadAgentConfig(cfgPath))).toBe("192.168.68.139");
-  });
-
-  test("rotate-cert --host= (empty) is refused and keeps the recorded advertisedHost", async () => {
-    await initAdvertisedHost();
-    const cfgPath = join(tmp, "agent.yaml");
-    const crtPath = join(tmp, "agent.crt");
-    const cfgBefore = readFileSync(cfgPath, "utf8");
-    const crtBefore = readFileSync(crtPath, "utf8");
-
     const r = await capture([
-      "rotate-cert",
+      "init",
       `--dir=${tmp}`,
-      "--host=",
+      `--host=${host}`,
+      "--port=59996",
       "--san=127.0.0.1,localhost",
       "--json",
     ]);
     expect(r.code).toBe(1);
-    expect(r.err).toContain("--host");
-    expect(r.err).toContain("requires a host");
+    expect(r.err).toContain("agent init: --host requires a host");
     expect(r.out).toBe("");
-    expect(readFileSync(cfgPath, "utf8")).toBe(cfgBefore);
-    expect(readFileSync(crtPath, "utf8")).toBe(crtBefore);
-    expect(advertisedHostOf(agentConfigMod.loadAgentConfig(cfgPath))).toBe("192.168.68.139");
+    expect(existsSync(cfgPath)).toBe(false);
+  });
+
+  test("init with --host omitted still records the default advertisedHost", async () => {
+    const cfgPath = join(tmp, "agent.yaml");
+    const r = await capture([
+      "init",
+      `--dir=${tmp}`,
+      "--port=59996",
+      "--san=127.0.0.1,localhost",
+      "--json",
+    ]);
+    expect(r.code).toBe(0);
+    expect(advertisedHostOf(agentConfigMod.loadAgentConfig(cfgPath))).toBe("127.0.0.1");
   });
 
   test.each([
