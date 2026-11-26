@@ -490,6 +490,15 @@ pool to a single run. `evaluatedTasks` sums `n_rows` over all distinct
 selected candidate cells (a workload mapped to multiple metrics is
 counted once).
 
+A selected cell with `n_rows` of 0 or less counts as missing
+(`qualificationEvidenceFromCells` in `packages/eval/src/qualification/evidence.ts`):
+latest-cell selection does not skip unscored cells, so when the latest
+cell for a mapped workload is unscored the command exits 1 with `no
+matrix cell for model <m> workload <w> (metric <metric>)`, even if an
+earlier run scored it; `--run-id <id>` picks the scored run. A selected
+baseline cell with `n_rows` of 0 or less is likewise a missing baseline
+cell, for a workload that has a candidate cell.
+
 With a baseline (`--baseline-run-id` plus `--baseline-model`, defaulting
 `--baseline-model` to `--model`), `regression` is the fraction of
 compared workloads whose `primary_metric_value` dropped below the
@@ -1307,3 +1316,53 @@ a loopback Linux `eval perf` run, the stored `peak_gtt_bytes` reason is
 therefore the status-only form, for example `GTT reader returned no sample
 (status: denied)`. The source clause appears only for an injected reader
 that names a source.
+
+### Unscored matrix cells for an arm
+
+A matrix cell is unscored when its `n_rows` is 0 or less.
+
+The matrix runner writes such a cell in two cases. When a model or judge
+boot fails or is refused, including a pre-launch gate refusal,
+`recordBootError` stores `n_rows` 0, `primary_metric_value` 0, `errors`
+1 and `per_class_metrics_json` `{}`. When a corpus fails to load,
+`runWorkloadCell` stores `n_rows` 0, `primary_metric_value` -1 and
+`per_class_metrics_json` `{"error":"corpus_load_failed"}` (verify
+`packages/eval/src/matrix/runner.ts`).
+
+The boot error or refusal text goes only to the `[matrix] failed to boot
+...` warning; it is not stored on the cell.
+
+`cellUnavailableReason` returns `no rows scored`, or `no rows scored
+(<error>)` when `per_class_metrics_json` carries a non-empty string
+`error`, so a boot error cell reads `no rows scored` and a corpus failure
+reads `no rows scored (corpus_load_failed)` (verify
+`packages/eval/src/matrix/report.ts`).
+
+The matrix CLI writes the report for the run it just ran with `--report
+md|csv|both` and `--report-out <path>`, or for every run with
+`--report-all-runs`. Each report renders `unavailable` for an unscored
+cell's primary metric, latency and throughput, and keeps its errors
+count (verify `packages/eval/src/matrix/cli.ts`).
+
+The markdown report adds a `## Unavailable cells` section, between
+`## Errors` and `## Per-workload winner`, with one `- <model> / <workload>:
+<reason>` line per unscored cell, and omits the section when every cell
+scored.
+
+The per-workload winner skips unscored cells, and a workload where no cell
+scored reads `- <workload>: unavailable (no cell scored any rows)`.
+
+With `--report-all-runs` the report keeps the latest cell per model and
+workload by `finished_at`, so a later unscored cell replaces an earlier
+scored one.
+
+These cells never count as promotion evidence; see Qualification and
+promotion.
+
+`bun packages/eval/src/matrix/diff.ts` renders `unavailable` for the
+value, tps and p50_ms of an unscored cell and, in markdown, sorts it
+after the scored cells of its workload. `--format json` keeps the raw
+numeric fields (verify `packages/eval/src/matrix/diff.ts`).
+
+Without `--all-runs` the diff keeps the latest cell per model and
+workload by `started_at`, scored or not.
