@@ -24,11 +24,19 @@ interface Fixture {
 
 async function fixture(tls: boolean, status: number, slow: boolean): Promise<Fixture> {
   const dir = mkdtempSync(join(tmpdir(), "llamactl-peer-body-"));
-  const cert = await generateSelfSignedCert({
-    dir,
-    commonName: "127.0.0.1",
-    hostnames: ["127.0.0.1"],
-  });
+  let cert: Awaited<ReturnType<typeof generateSelfSignedCert>>;
+  try {
+    cert = await generateSelfSignedCert({
+      dir,
+      commonName: "127.0.0.1",
+      hostnames: ["127.0.0.1"],
+    });
+  } finally {
+    // The server takes the PEMs from memory, so the cert dir is not
+    // needed past this point; removing it here means a stop() that
+    // hangs on server.close cannot leak it.
+    rmSync(dir, { recursive: true, force: true });
+  }
   const stats = { requests: 0, active: 0, completed: 0, disconnected: 0, bytes: 0 };
   const ports = new Set<number>();
   const payload = JSON.stringify({
@@ -101,7 +109,6 @@ async function fixture(tls: boolean, status: number, slow: boolean): Promise<Fix
       });
       server.closeAllConnections();
       await closed;
-      rmSync(dir, { recursive: true, force: true });
     },
   };
 }

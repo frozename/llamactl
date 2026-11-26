@@ -81,9 +81,13 @@ afterAll(async () => {
   for (const pid of parentPids) {
     killQuiet(pid);
   }
-  const survivors = await reapFakeProcesses({ scratch: scratchRoot, pids: [...enginePids] });
-  if (scratchRoot !== "") {
-    rmSync(scratchRoot, { recursive: true, force: true });
+  let survivors: Awaited<ReturnType<typeof reapFakeProcesses>>;
+  try {
+    survivors = await reapFakeProcesses({ scratch: scratchRoot, pids: [...enginePids] });
+  } finally {
+    if (scratchRoot !== "") {
+      rmSync(scratchRoot, { recursive: true, force: true });
+    }
   }
   expect(survivors).toEqual([]);
 }, 60_000);
