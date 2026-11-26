@@ -41,11 +41,14 @@
  * `exclusiveGroupLaunchRefusal` is the read-only, unfenced sandbox-launch
  * refusal (#517) that `llamactl eval run` and `llamactl admit measure` consult
  * before spawning. Unlike `isCorroboratedOccupant`/`runDirectResidencyStart`,
- * which exclude the starting workload's own row, it deliberately counts
- * self-occupancy (a row for the same id): a sandbox copy runs beside any
- * existing engine and so doubles GPU memory. Note that eval's id is a catalog
- * rel while admit measure's is a workload name, so the self-row case triggers
- * only when a store row's model happens to match that name.
+ * which exclude the starting workload's own row, it counts self-occupancy (a
+ * row for the same id) unless the caller names its own workload with
+ * `ignoreModel`: a sandbox copy runs beside any existing engine and so doubles
+ * GPU memory. The keep-alive worker and the keep-alive start gates do name it,
+ * because the fenced start that follows adopts or walks that row instead of
+ * running a second engine beside it. Note that eval's id is a catalog rel while
+ * admit measure's is a workload name, so the self-row case triggers only when a
+ * store row's model happens to match that name.
  */
 import {
   isOccupyingResidencyState,
@@ -590,6 +593,10 @@ export type ExclusiveGroupLaunchRefusalOpts = {
   id: string;
   group: string | undefined;
   storePath: string;
+  // the caller's own workload, whose row must not refuse the launch (#517: the
+  // keep-alive worker records its row under its target and the fenced start
+  // then adopts or walks it rather than running a second engine beside it)
+  ignoreModel?: string;
   groups?: readonly ResidencyGroupDeclaration[];
   readSnapshot?: (path: string) => ResidencyStoreSnapshot;
 };
@@ -599,7 +606,9 @@ export type ExclusiveGroupLaunchRefusalOpts = {
 // declared-exclusive group, reads a snapshot, and returns the refusal string
 // the caller prints or null when the launch may proceed. Unlike a fenced start
 // it counts self-occupancy, because a sandbox copy runs beside any engine the
-// row records and doubles GPU memory.
+// row records and doubles GPU memory — unless the caller names its own workload
+// with `ignoreModel`, as the keep-alive gates do, because the fenced start that
+// follows adopts or walks that row.
 export function exclusiveGroupLaunchRefusal(opts: ExclusiveGroupLaunchRefusalOpts): string | null {
   const group = opts.group;
   if (group === undefined) {
@@ -625,7 +634,12 @@ export function exclusiveGroupLaunchRefusal(opts: ExclusiveGroupLaunchRefusalOpt
     return `residency lifecycle refused ${opts.id}: profile switch in flight on this node; retry after it settles`;
   }
   const occupants = (snapshot.lifecycle ?? [])
-    .filter((row) => row.group === group && isOccupyingResidencyState(row.state))
+    .filter(
+      (row) =>
+        row.group === group &&
+        row.model !== opts.ignoreModel &&
+        isOccupyingResidencyState(row.state),
+    )
     .sort((a, b) => {
       if (a.model < b.model) {
         return -1;

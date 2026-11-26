@@ -29,6 +29,8 @@ import {
   type StartServerOptions,
   type StartServerResult,
   stopServer,
+  type StopServerOptions,
+  type StopServerResult,
 } from "./server.js";
 import { resolveTarget } from "./target.js";
 
@@ -352,8 +354,12 @@ export interface RunKeepAliveWorkerOptions {
    * path. The gate is consulted on every loop iteration, including restarts. */
   beforeStart?: (rel: string) => string | null;
   /** Test seam replacing the `startServer` call so latch behaviour can be driven
-   * without spawning an engine. Production leaves it unset. */
+   * without spawning an engine. The CLI worker passes a recorded start. */
   start?: (opts: StartServerOptions) => Promise<StartServerResult>;
+  /** Seam the CLI worker uses to record the stop: the worker's exit runs
+   * `(stop ?? stopServer)({ key, resolved })`, so the cleanup stop drives the
+   * residency row without moving adapter code into core. */
+  stop?: (opts: StopServerOptions) => Promise<StopServerResult>;
 }
 
 function logLine(resolved: ResolvedEnv, line: string): void {
@@ -435,6 +441,7 @@ async function cleanupWorker(
   restarts: number,
   backoff: number,
   rel: string,
+  stop: ((opts: StopServerOptions) => Promise<StopServerResult>) | undefined,
 ): Promise<void> {
   logLine(resolved, `supervisor exiting state=stopped`);
   writeState(resolved, {
@@ -444,7 +451,7 @@ async function cleanupWorker(
     restarts,
     backoff_seconds: backoff,
   });
-  await stopServer({ key, resolved });
+  await (stop ?? stopServer)({ key, resolved });
   try {
     unlinkSync(keepAlivePidFile(resolved));
   } catch {
@@ -565,6 +572,6 @@ export async function runKeepAliveWorker(opts: RunKeepAliveWorkerOptions): Promi
       backoff = Math.min(backoff * 2, maxBackoff);
     }
   } finally {
-    await cleanupWorker(resolved, key, opts.target, restarts, backoff, lastRel);
+    await cleanupWorker(resolved, key, opts.target, restarts, backoff, lastRel, opts.stop);
   }
 }

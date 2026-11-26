@@ -201,6 +201,8 @@ interface OpenerSpawnCall {
   options: { stdin: "ignore"; stdout: "ignore"; stderr: "ignore" };
 }
 
+type SignalIgnoreConsoleDeps = ConsoleDeps & { ignoreSignalsAfterStop: true };
+
 function recordingOpenerSpawn(makeExited: () => Promise<number> = () => Promise.resolve(0)): {
   calls: OpenerSpawnCall[];
   spawn: OpenerSpawnFn;
@@ -866,5 +868,132 @@ describe("llamactl console", () => {
         }
       }
     }, 120_000);
+  });
+
+  describe("signals after stop (#837)", () => {
+    test("keeps SIGTERM/SIGINT ignored after dispose without duplicating the no-op", async () => {
+      const firstFx = makeFixture();
+      const beforeTerm = process.listeners("SIGTERM");
+      const beforeInt = process.listeners("SIGINT");
+      const runs: Promise<number>[] = [];
+      let urlPrinted = false;
+      let consoleWrites = 0;
+      const writeSpy = spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
+        if (String(chunk).includes("Console: ")) {
+          urlPrinted = true;
+          consoleWrites += 1;
+        }
+        return true;
+      });
+      const deps: SignalIgnoreConsoleDeps = {
+        ignoreSignalsAfterStop: true,
+        platform: "linux",
+      };
+      let code: number | "timeout" = "timeout";
+      try {
+        const firstRun = runConsole(["--port", "0", "--no-open", "--dist", firstFx.distDir], deps);
+        runs.push(firstRun);
+        expect(await pollUntil(() => urlPrinted, 10_000)).toBe(true);
+        process.emit("SIGTERM");
+        code = await withTimeout(firstRun, 15_000);
+        expect(code).toBe(0);
+        expect(
+          process.listeners("SIGTERM").some((listener) => !beforeTerm.includes(listener)),
+        ).toBe(true);
+        expect(process.listeners("SIGINT").some((listener) => !beforeInt.includes(listener))).toBe(
+          true,
+        );
+        expect(() => {
+          process.emit("SIGTERM");
+          process.emit("SIGINT");
+        }).not.toThrow();
+        expect(consoleWrites).toBe(1);
+
+        const afterFirstTerm = process.listenerCount("SIGTERM");
+        const afterFirstInt = process.listenerCount("SIGINT");
+        const secondFx = makeFixture();
+        urlPrinted = false;
+        const secondRun = runConsole(
+          ["--port", "0", "--no-open", "--dist", secondFx.distDir],
+          deps,
+        );
+        runs.push(secondRun);
+        expect(await pollUntil(() => urlPrinted, 10_000)).toBe(true);
+        process.emit("SIGTERM");
+        expect(await withTimeout(secondRun, 15_000)).toBe(0);
+        expect(process.listenerCount("SIGTERM")).toBe(afterFirstTerm);
+        expect(process.listenerCount("SIGINT")).toBe(afterFirstInt);
+      } finally {
+        process.emit("SIGTERM");
+        for (const activeRun of runs) {
+          await withTimeout(activeRun, 15_000).catch(() => undefined);
+        }
+        writeSpy.mockRestore();
+        for (const sig of ["SIGTERM", "SIGINT"] as const) {
+          const before = sig === "SIGTERM" ? beforeTerm : beforeInt;
+          for (const listener of process.listeners(sig)) {
+            if (!before.includes(listener)) {
+              process.off(sig, listener);
+            }
+          }
+        }
+      }
+    });
+
+    test("ignores a real SIGTERM delivered after shutdown finishes", async () => {
+      const fx = makeFixture();
+      const proc = Bun.spawn(
+        [
+          process.execPath,
+          join(import.meta.dir, "fixtures", "console-signal-after-stop.ts"),
+          fx.distDir,
+        ],
+        { env: fx.env, stdin: "pipe", stdout: "pipe", stderr: "pipe" },
+      );
+      try {
+        const returned = await readUntil(proc.stdout, /RETURNED (\d+)/, 15_000);
+        expect(returned).not.toBeNull();
+        expect(returned?.[1]).toBe("0");
+        proc.kill("SIGTERM");
+        void proc.stdin.write("exit\n");
+        await proc.stdin.end();
+        expect(await withTimeout(proc.exited, 15_000)).toBe(0);
+      } finally {
+        proc.kill("SIGKILL");
+      }
+    }, 60_000);
+
+    test("keeps signal listeners installed through the real CLI exit", async () => {
+      const fx = makeFixture();
+      const proc = Bun.spawn(
+        [
+          process.execPath,
+          "--preload",
+          join(import.meta.dir, "fixtures", "console-exit-probe.ts"),
+          CLI_BIN,
+          "console",
+          "--port",
+          "0",
+          "--no-open",
+          "--dist",
+          fx.distDir,
+        ],
+        { env: fx.env, stdout: "pipe", stderr: "pipe" },
+      );
+      try {
+        expect(await readUntil(proc.stdout, CONSOLE_URL_RE, 15_000)).not.toBeNull();
+        proc.kill("SIGTERM");
+        const stderrResult = await withTimeout(new Response(proc.stderr).text(), 30_000);
+        expect(await withTimeout(proc.exited, 30_000)).toBe(0);
+        expect(stderrResult).not.toBe("timeout");
+        const stderr = stderrResult === "timeout" ? "" : stderrResult;
+        const listeners = /EXIT_LISTENERS (\d+) (\d+) code=0/.exec(stderr);
+        expect(listeners).not.toBeNull();
+        expect(Number(listeners?.[1])).toBeGreaterThanOrEqual(1);
+        expect(Number(listeners?.[2])).toBeGreaterThanOrEqual(1);
+      } finally {
+        proc.kill("SIGKILL");
+      }
+    }, 60_000);
   });
 });

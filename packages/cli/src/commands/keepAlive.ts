@@ -1,5 +1,12 @@
-import { catalog, env as envMod, keepAlive, target as targetMod } from "@llamactl/core";
-import { defaultResidencyStorePath, exclusiveGroupLaunchRefusal } from "@llamactl/remote";
+import { catalog, env as envMod, keepAlive, server, target as targetMod } from "@llamactl/core";
+import {
+  defaultResidencyStorePath,
+  type DirectLifecycleOpts,
+  directWorkloadProvenDown,
+  exclusiveGroupLaunchRefusal,
+  runDirectResidencyStart,
+  runDirectResidencyStop,
+} from "@llamactl/remote";
 import { spawn } from "node:child_process";
 
 import {
@@ -143,16 +150,86 @@ function duplicateStartRefusal(): { msg: string; pid: number } | null {
  * `residencyGroup` and delegates to `exclusiveGroupLaunchRefusal` with the local store, using the
  * rel as the refusal id. Returns null when the launch may proceed. `runStart` calls it before the
  * detached spawn with the target resolved by `resolveTarget`; the worker passes it as `beforeStart`,
- * which receives the rel the loop already resolved. A node with no store file launches as before.
+ * which receives the rel the loop already resolved. `ignoreModel` names the caller's own workload
+ * (the keep-alive target) so its recorded row never refuses its own restart. A node with no store
+ * file launches as before.
  */
-function keepAliveLaunchRefusal(rel: string): string | null {
+function keepAliveLaunchRefusal(rel: string, ignoreModel?: string): string | null {
   const entry = catalog.findByRel(rel);
   if (!entry) return null;
   return exclusiveGroupLaunchRefusal({
     id: rel,
     group: entry.residencyGroup,
     storePath: defaultResidencyStorePath(),
+    ...(ignoreModel !== undefined ? { ignoreModel } : {}),
   });
+}
+
+// The lifecycle opts the worker's recorded start/stop run under (#517): the
+// local store, the group of the resolved catalog rel, and the same proven-down
+// and running predicates the agent's direct ModelRun procedures use.
+function keepAliveLifecycleOpts(group: string | undefined): DirectLifecycleOpts {
+  return {
+    storePath: defaultResidencyStorePath(),
+    group,
+    isProvenDown: directWorkloadProvenDown,
+    isRunning: (model) => server.readServerPid({ name: model }) !== null,
+    log: (line): void => {
+      process.stderr.write(line);
+    },
+  };
+}
+
+/**
+ * The worker's engine start with its `residency_states` row recorded (#517). The
+ * row is keyed by the workload name — the `<target>` as given — and grouped by
+ * the catalog row of the rel being started, so a failed start leaves it `failed`
+ * with that group. A walk that refuses before the dep returns its detail as the
+ * start error, so the worker takes its unchanged start-failed path.
+ */
+async function keepAliveRecordedStart(
+  o: server.StartServerOptions,
+): Promise<server.StartServerResult> {
+  const outcome = await runDirectResidencyStart(
+    o.key.name,
+    () => server.startServer(o),
+    keepAliveLifecycleOpts(catalog.findByRel(o.target)?.residencyGroup),
+  );
+  if (outcome.ran) {
+    return outcome.result;
+  }
+  return {
+    ok: false,
+    pid: null,
+    endpoint: "",
+    advertisedEndpoint: "",
+    tunedProfile: null,
+    retried: false,
+    error: outcome.detail,
+  };
+}
+
+/**
+ * The worker-exit stop with its `residency_states` row recorded (#517): only a
+ * confirmed stop walks the row down to `downloaded`, so an unconfirmed one keeps
+ * the group held exactly as a direct ModelRun stop does.
+ */
+async function keepAliveRecordedStop(
+  o: server.StopServerOptions,
+): Promise<server.StopServerResult> {
+  const outcome = await runDirectResidencyStop(
+    o.key.name,
+    async () => {
+      const s = await server.stopServer(o);
+      return {
+        ok: s.stopped,
+        ...(s.stopped ? {} : { error: "stop did not confirm process removal" }),
+        stop: s,
+      };
+    },
+    keepAliveLifecycleOpts(undefined),
+  );
+  return outcome.ran ? outcome.result.stop : { stopped: false, pid: null, killed: false };
 }
 
 async function runStart(args: string[]): Promise<number> {
@@ -178,7 +255,7 @@ async function runStart(args: string[]): Promise<number> {
   // Gate on the resolved rel, as the worker does. An unresolvable target
   // skips the gate and spawns as before; the worker records resolve-failed.
   const resolvedRel = targetMod.resolveTarget(target);
-  const groupRefusal = resolvedRel === null ? null : keepAliveLaunchRefusal(resolvedRel);
+  const groupRefusal = resolvedRel === null ? null : keepAliveLaunchRefusal(resolvedRel, target);
   if (groupRefusal !== null) {
     process.stderr.write(`keep-alive start: ${groupRefusal}\n`);
     return 1;
@@ -423,7 +500,9 @@ async function runWorker(args: string[]): Promise<number> {
       ...(intervalSeconds !== undefined ? { intervalSeconds } : {}),
       ...(maxBackoff !== undefined ? { maxBackoff } : {}),
       signal: controller.signal,
-      beforeStart: keepAliveLaunchRefusal,
+      beforeStart: (rel) => keepAliveLaunchRefusal(rel, target),
+      start: keepAliveRecordedStart,
+      stop: keepAliveRecordedStop,
     });
     return 0;
   } finally {

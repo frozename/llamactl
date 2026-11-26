@@ -26,6 +26,10 @@ import {
  *  probe of its own; it trusts the hooks. */
 export interface PerfSuiteLoadHooks {
   cold?: () => void | Promise<void>;
+  /** Runs untimed after the cold hook and before the warm hook's clock
+   *  starts, e.g. to tear the cold boot down, so load_warm_ms brackets only
+   *  the warm model-load window. A throw records load_warm_ms as failed. */
+  beforeWarm?: () => void | Promise<void>;
   warm?: () => void | Promise<void>;
 }
 
@@ -210,6 +214,8 @@ async function runLoadHook(
       );
       return;
     }
+    const prepare = hookName === "warm" ? run.opts.load?.beforeWarm : undefined;
+    if (prepare !== undefined) await prepare();
     const t0 = run.clock.now();
     await hook();
     const elapsed = run.clock.now() - t0;

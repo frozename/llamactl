@@ -54,7 +54,9 @@ export type NodeRunInfraItem = z.infer<typeof NodeRunInfraItemSchema>;
  * the residencyPlan budget (Part of #519). `switchCooldownSeconds` is enforced:
  * residencyPlan and residencyApplyProfile refuse with `Cooldown` within that
  * many seconds of the node's last succeeded profile switch recorded in the
- * node-local residency store. `minResidencySeconds` is enforced: residencyPlan
+ * node-local residency store, and apply --evict / a llamactl.io/evict victim on
+ * that node is refused with EvictCooldown inside the same window (Part of #519).
+ * `minResidencySeconds` is enforced: residencyPlan
  * and residencyApplyProfile refuse with `MinResidency` while a victim's
  * node-local residency_states row has been `ready` for fewer than that many
  * seconds; 0 disables. It also feeds the ranker's `cooldownUntil` signal
@@ -87,7 +89,9 @@ export const ResidencyPolicySchema = z
     minResidencySeconds: z.number().int().nonnegative().optional(),
     /** enforced: refuses residencyPlan and residencyApplyProfile with Cooldown
      *  within this many seconds of the node's last succeeded profile switch
-     *  recorded in the node-local residency store; 0 disables (Part of #519) */
+     *  recorded in the node-local residency store, and refuses a verified
+     *  apply --evict / llamactl.io/evict victim on that node with EvictCooldown
+     *  inside the same window; 0 disables (Part of #519) */
     switchCooldownSeconds: z.number().int().nonnegative().optional(),
     /** defaults to 0.75; sizes the computed admission budget when
      *  spec.budget is unset */
