@@ -2,8 +2,10 @@ import type { GttObservation } from "@llamactl/core/resources/memory";
 import type {
   EvalEngine,
   EvalProvenance,
+  ModelSpec,
   PerfEngineClock,
   PerfRunRow,
+  PerfSuiteLoadHooks,
   PerfSuiteOptions,
   PerfSuitePreset,
   PerfSuiteReaderReasons,
@@ -24,16 +26,23 @@ import {
 } from "@llamactl/eval";
 import { Database } from "bun:sqlite";
 
+import type { EvalPerfLaunchDeps } from "./eval-perf-launch.js";
+
 import { defaultPerfDbPath, servedModelIds } from "./bench-schedule.js";
+import {
+  createLaunchLoadHooks,
+  defaultLaunchDeps,
+  LAUNCH_SLOTS_REASON,
+  launchRefusal,
+  preflightLaunch,
+  validateLaunch,
+} from "./eval-perf-launch.js";
 
 /**
- * `llamactl eval perf` runs the perf suite against an engine already serving
- * at --url. On a loopback URL it wires the engine PID's /proc I/O and VmHWM
- * readers (Linux) plus a GTT probe into runPerfSuite, fills provenance from
- * --binary/--gguf/--quant/--ctx/--flags/--slots, refuses --pid off loopback,
- * and records per-reader unavailable reasons everywhere else. The c2/c4 slot
- * count comes from --slots, else (for llamacpp) from `GET /props` total_slots;
- * when neither yields a count the run records an engine-named slotsReason.
+ * `llamactl eval perf` runs the perf suite against an engine serving at
+ * --url. Without --launch it requires the engine to be serving already; with
+ * --launch it boots llama-server through the eval matrix lifecycle inside the
+ * suite's load hooks, measures cold/warm load, and tears the owned boot down.
  * `__setEvalPerfTestSeams` narrows every side effect so the command stays
  * hermetic under test.
  */
@@ -46,6 +55,7 @@ export interface EvalPerfTestSeams {
   readFile?: (path: string) => Promise<string>;
   probeGtt?: () => Promise<GttObservation>;
   clock?: { now(): number };
+  launch?: EvalPerfLaunchDeps;
 }
 
 let seams: EvalPerfTestSeams = {};
@@ -75,23 +85,41 @@ const VALUED_FLAGS: ReadonlySet<string> = new Set([
   "--url",
 ]);
 
-type PerfParse = { values: Record<string, string> } | { error: string };
+const BOOLEAN_FLAGS: ReadonlySet<string> = new Set(["--launch"]);
+
+type PerfParse = { values: Record<string, string>; launch: boolean } | { error: string };
 
 function parsePerfArgv(argv: string[]): PerfParse {
   const values: Record<string, string> = {};
   const rest = [...argv];
   let arg = rest.shift();
+  let launch = false;
   while (arg !== undefined) {
-    if (!arg.startsWith("--")) return { error: `unexpected argument '${arg}'` };
-    const eq = arg.indexOf("=");
-    const name = eq >= 0 ? arg.slice(0, eq) : arg;
-    if (!VALUED_FLAGS.has(name)) return { error: `unknown flag '${arg}'` };
-    const value = eq >= 0 ? arg.slice(eq + 1) : rest.shift();
-    if (value === undefined) return { error: `missing value for ${name}` };
-    values[name] = value;
+    const result = parseSingleArg(arg, rest, values);
+    if (result.error !== null) return { error: result.error, launch: false };
+    launch = launch || result.launch;
     arg = rest.shift();
   }
-  return { values };
+  return { values, launch };
+}
+
+function parseSingleArg(
+  arg: string,
+  rest: string[],
+  values: Record<string, string>,
+): { error: string | null; launch: boolean } {
+  if (!arg.startsWith("--")) return { error: `unexpected argument '${arg}'`, launch: false };
+  const eq = arg.indexOf("=");
+  const name = eq >= 0 ? arg.slice(0, eq) : arg;
+  if (BOOLEAN_FLAGS.has(name)) {
+    if (eq >= 0) return { error: `--launch takes no value`, launch: false };
+    return { error: null, launch: true };
+  }
+  if (!VALUED_FLAGS.has(name)) return { error: `unknown flag '${arg}'`, launch: false };
+  const value = eq >= 0 ? arg.slice(eq + 1) : rest.shift();
+  if (value === undefined) return { error: `missing value for ${name}`, launch: false };
+  values[name] = value;
+  return { error: null, launch: false };
 }
 
 function fail(message: string): number {
@@ -118,8 +146,10 @@ type ReadInts = {
   error: string | null;
 };
 
-function readPositiveInts(values: Record<string, string>): ReadInts {
-  const pid = parsePositiveInt(values["--pid"], "--pid");
+function readPositiveInts(values: Record<string, string>, validatePid: boolean): ReadInts {
+  const pid = validatePid
+    ? parsePositiveInt(values["--pid"], "--pid")
+    : { value: null, error: null };
   const ctx = parsePositiveInt(values["--ctx"], "--ctx");
   const slots = parsePositiveInt(values["--slots"], "--slots");
   const error = pid.error ?? ctx.error ?? slots.error;
@@ -158,7 +188,8 @@ interface RunInput {
   ctx: number | null;
   slots: number | null;
   loopback: boolean;
-  flags: string[] | null;
+  hostname: string;
+  flags: readonly string[] | null;
 }
 
 type ResolveResult = RunInput | { error: string };
@@ -171,7 +202,7 @@ function resolveSuite(id: string): { preset: PerfSuitePreset } | { error: string
   }
 }
 
-function resolveRunInput(values: Record<string, string>): ResolveResult {
+function resolveRunInput(values: Record<string, string>, launch = false): ResolveResult {
   const url = values["--url"];
   const model = values["--model"];
   if (url === undefined || url === "" || model === undefined || model === "") {
@@ -183,9 +214,9 @@ function resolveRunInput(values: Record<string, string>): ResolveResult {
   }
   const location = loopbackFor(url);
   if (location === null) return { error: `invalid --url '${url}'` };
-  const ints = readPositiveInts(values);
+  const ints = readPositiveInts(values, !launch);
   if (ints.error !== null) return { error: ints.error };
-  if (ints.pid !== null && !location.loopback) {
+  if (ints.pid !== null && !location.loopback && !launch) {
     return {
       error: `--pid needs a loopback --url (got ${location.hostname}); host counters are read on this machine`,
     };
@@ -201,6 +232,7 @@ function resolveRunInput(values: Record<string, string>): ResolveResult {
     ctx: ints.ctx,
     slots: ints.slots,
     loopback: location.loopback,
+    hostname: location.hostname,
     flags: splitFlags(values["--flags"]),
   };
 }
@@ -284,8 +316,7 @@ function printPerfTable(rows: readonly PerfRunRow[]): void {
 
 type PerfEngineClientLike = ReturnType<typeof createHttpPerfEngineClient>;
 
-function buildOpts(args: {
-  input: RunInput;
+interface BuildOptsInput extends RunInput {
   runId: string;
   client: PerfEngineClientLike;
   clock: PerfEngineClock;
@@ -294,22 +325,27 @@ function buildOpts(args: {
   readerReasons: PerfSuiteReaderReasons;
   slots: number | null;
   slotsReason: string | undefined;
-}): PerfSuiteOptions {
-  const { input, runId, client, clock, provenance, readers, readerReasons, slots, slotsReason } =
-    args;
+  launchHooks: PerfSuiteLoadHooks | undefined;
+}
+
+function buildOpts(input: BuildOptsInput): PerfSuiteOptions {
   return {
     ...input.preset,
-    run_id: runId,
+    run_id: input.runId,
     model_name: input.model,
-    client,
-    clock,
-    provenance,
-    readerReasons,
-    loadReason: `eval perf runs against an engine already serving '${input.model}' at ${input.url}; it does not launch or reload the engine, so cold/warm model-load time is not measured`,
-    ...(readers !== undefined ? { readers } : {}),
+    client: input.client,
+    clock: input.clock,
+    provenance: input.provenance,
+    readerReasons: input.readerReasons,
+    ...(input.launchHooks === undefined
+      ? {
+          loadReason: `eval perf runs against an engine already serving '${input.model}' at ${input.url}; it does not launch or reload the engine, so cold/warm model-load time is not measured`,
+        }
+      : { load: input.launchHooks }),
+    ...(input.readers !== undefined ? { readers: input.readers } : {}),
     ...(input.ctx !== null ? { ctx: input.ctx } : {}),
-    ...(slots !== null ? { slots } : {}),
-    ...(slotsReason !== undefined ? { slotsReason } : {}),
+    ...(input.slots !== null ? { slots: input.slots } : {}),
+    ...(input.slotsReason !== undefined ? { slotsReason: input.slotsReason } : {}),
   };
 }
 
@@ -333,12 +369,92 @@ async function resolveSlots(input: RunInput): Promise<SlotResolution> {
   };
 }
 
+function resolveLaunchSlots(input: RunInput): SlotResolution {
+  if (input.slots !== null) return { slots: input.slots, slotsReason: undefined };
+  return { slots: null, slotsReason: LAUNCH_SLOTS_REASON };
+}
+
+interface LaunchHooks {
+  hooks: PerfSuiteLoadHooks;
+  foreign(): boolean;
+  failure(): string | null;
+  teardown(): Promise<void>;
+}
+
+type PreparedLaunch =
+  | { ok: false; error: string }
+  | { ok: true; spec: ModelSpec; launch: LaunchHooks };
+
+async function prepareLaunch(
+  values: Record<string, string>,
+  input: RunInput,
+): Promise<PreparedLaunch> {
+  const validation = validateLaunch(values, {
+    engine: input.engine,
+    hostname: input.hostname,
+    url: input.url,
+    flags: input.flags,
+    model: input.model,
+  });
+  if ("error" in validation) return { ok: false, error: validation.error };
+
+  const refusal = launchRefusal(input.model, validation.spec.gguf_path);
+  if (refusal !== null) return { ok: false, error: refusal };
+
+  const preflightError = await preflightLaunch(input.url, seams.fetchImpl ?? fetch);
+  if (preflightError !== null) return { ok: false, error: preflightError };
+
+  const deps = seams.launch ?? defaultLaunchDeps();
+  return {
+    ok: true,
+    spec: validation.spec,
+    launch: createLaunchLoadHooks(validation.spec, deps),
+  };
+}
+
+type LaunchContext = { spec: ModelSpec | null; launch: LaunchHooks | null };
+type RequestedLaunch = LaunchContext | { error: string };
+
+async function prepareRequestedLaunch(
+  enabled: boolean,
+  values: Record<string, string>,
+  input: RunInput,
+): Promise<RequestedLaunch> {
+  if (!enabled) return { spec: null, launch: null };
+  const prepared = await prepareLaunch(values, input);
+  if (!prepared.ok) return { error: prepared.error };
+  return { spec: prepared.spec, launch: prepared.launch };
+}
+
+function provenanceRunInput(input: RunInput, spec: ModelSpec | null): RunInput {
+  if (spec === null) return input;
+  return { ...input, flags: spec.extra_args ?? [] };
+}
+
+function pidForRun(input: RunInput, launch: boolean): number | null {
+  return launch ? null : input.pid;
+}
+
+function launchExitStatus(launch: LaunchHooks | null, url: string, runId: string): number {
+  if (launch === null) return 0;
+  if (launch.foreign()) {
+    return fail(
+      `--launch did not start the engine at ${url}; run ${runId} measured an engine it did not launch`,
+    );
+  }
+  const message = launch.failure();
+  if (message !== null) {
+    return fail(`--launch failed to start the engine at ${url}: ${message}`);
+  }
+  return 0;
+}
+
 export async function runEvalPerf(argv: string[]): Promise<number> {
   const parsed = parsePerfArgv(argv);
   if ("error" in parsed) return fail(parsed.error);
   const values = parsed.values;
 
-  const resolved = resolveRunInput(values);
+  const resolved = resolveRunInput(values, parsed.launch);
   if ("error" in resolved) return fail(resolved.error);
 
   const clock: PerfEngineClock = seams.clock ?? { now: () => performance.now() };
@@ -347,30 +463,40 @@ export async function runEvalPerf(argv: string[]): Promise<number> {
     model: resolved.model,
     ...(seams.fetchImpl !== undefined ? { fetchImpl: seams.fetchImpl } : {}),
   });
+  const runId = values["--run-id"] ?? `perf-${resolved.model}-${new Date().toISOString()}`;
 
-  const served = servedModelIds(await client.listModels());
-  if (!served.includes(resolved.model)) {
-    return fail(
-      `engine at ${resolved.url} is not serving '${resolved.model}' (serving: ${served.join(", ") || "nothing"})`,
-    );
+  const launchContext = await prepareRequestedLaunch(parsed.launch, values, resolved);
+  if ("error" in launchContext) return fail(launchContext.error);
+
+  if (!parsed.launch) {
+    const served = servedModelIds(await client.listModels());
+    if (!served.includes(resolved.model)) {
+      return fail(
+        `engine at ${resolved.url} is not serving '${resolved.model}' (serving: ${served.join(", ") || "nothing"})`,
+      );
+    }
   }
 
-  const provenance = await buildProvenance(values, resolved);
-  const { slots, slotsReason } = await resolveSlots(resolved);
+  const provenance = await buildProvenance(
+    values,
+    provenanceRunInput(resolved, launchContext.spec),
+  );
+  const { slots, slotsReason } = parsed.launch
+    ? resolveLaunchSlots(resolved)
+    : await resolveSlots(resolved);
   const { readers, reasons: readerReasons } = hostReaders(
     resolved.url,
     resolved.loopback,
-    resolved.pid,
+    pidForRun(resolved, parsed.launch),
   );
 
-  const runId = values["--run-id"] ?? `perf-${resolved.model}-${new Date().toISOString()}`;
   const db = new Database(values["--db"] ?? defaultPerfDbPath());
   try {
     const runner = seams.runPerfSuite ?? runPerfSuite;
     await runner(
       db,
       buildOpts({
-        input: resolved,
+        ...resolved,
         runId,
         client,
         clock,
@@ -379,12 +505,14 @@ export async function runEvalPerf(argv: string[]): Promise<number> {
         readerReasons,
         slots,
         slotsReason,
+        launchHooks: launchContext.launch?.hooks,
       }),
     );
     process.stdout.write(`run_id: ${runId}\n`);
     printPerfTable(listPerfRuns(db, { run_id: runId }));
+    return launchExitStatus(launchContext.launch, resolved.url, runId);
   } finally {
+    await launchContext.launch?.teardown();
     db.close();
   }
-  return 0;
 }

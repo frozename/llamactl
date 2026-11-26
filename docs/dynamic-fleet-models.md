@@ -735,13 +735,13 @@ Notes:
 The synopsis is
 `llamactl eval perf --url <http://...> --engine <llamacpp|omlx|gufo|kapitsa> --model <id>`,
 followed by the optional flags
-`[--suite perf-quick|perf-full] [--pid <n>] [--binary <path>] [--gguf <path>] [--hf-revision <rev>] [--quant <q>] [--ctx <n>] [--slots <n>] [--flags=<args>] [--db <path>] [--run-id <id>]`.
+`[--suite perf-quick|perf-full] [--pid <n>] [--binary <path>] [--gguf <path>] [--hf-revision <rev>] [--quant <q>] [--ctx <n>] [--slots <n>] [--flags=<args>] [--db <path>] [--run-id <id>] [--launch]`.
 Both are copied verbatim from the USAGE text (`USAGE`,
 `packages/cli/src/commands/eval.ts`), and every valued flag in it is in
 `VALUED_FLAGS` (`packages/cli/src/commands/eval-perf.ts`).
 
 The command runs the perf suite against an engine that is already serving at
-`--url`. It never starts or stops the engine, so the operator runs it inside
+`--url`. Without `--launch` it never starts or stops the engine, so the operator runs it inside
 the exclusive window after step 7 of the runbook. `--engine` defaults to
 `llamacpp`. `--suite` defaults to `perf-quick`; the other choice is
 `perf-full`. It reads `/v1/models` first, and when `--model` is not listed it
@@ -1060,60 +1060,113 @@ explains a metric change but is not a regression.
 
 `load_cold_ms` and `load_warm_ms` are measured only when the caller injects
 load hooks (`PerfSuiteLoadHooks` and `runLoadHook`,
-`packages/eval/src/perf/runner.ts`). The runner times each hook and trusts
-it to resolve only once the engine can serve; it performs no readiness
-probe of its own. Neither `llamactl eval perf` nor a scheduled suite
-injects load hooks, so from both commands the two load metrics are always
-recorded `unavailable`, each with a reason naming the caller. `eval perf`
-records `eval perf runs against an engine already serving '<model>' at
-<url>; it does not launch or reload the engine, so cold/warm model-load
-time is not measured` (`buildOpts`, `packages/cli/src/commands/eval-perf.ts`).
-A scheduled suite records `model load for <rel> happens on node '<node>';
-scheduled suites reach an already-serving engine through the agent gateway
-and do not load or reload it, so cold/warm load time is not measured`
+`packages/eval/src/perf/runner.ts`). The runner times each hook and trusts it
+to resolve only once the engine can serve; it performs no readiness probe of
+its own. An optional `beforeWarm` hook runs untimed before the warm hook's
+clock starts. A scheduled suite never injects load hooks, and `llamactl eval perf`
+injects them only with `--launch`, so from a scheduled suite, and from
+`eval perf` without `--launch`, the two load metrics are always recorded
+`unavailable`, each with a reason naming the caller. `eval perf` records
+`eval perf runs against an engine already serving '<model>' at <url>; it does not launch or reload the engine, so cold/warm model-load time is not measured`
+(`buildOpts`, `packages/cli/src/commands/eval-perf.ts`). A scheduled suite
+records
+`model load for <rel> happens on node '<node>'; scheduled suites reach an already-serving engine through the agent gateway and do not load or reload it, so cold/warm load time is not measured`
 (`createPerfBenchSuiteRunner`, `packages/cli/src/commands/bench-schedule.ts`).
-A caller that passes neither hooks nor a reason gets `no load hooks
-injected (engine not managed by the suite)`. A hook that throws records
-`<metric> failed: <message>`, and a non-finite or negative elapsed time
-records `non-finite load time`. Because an `unavailable` metric never
-counts as a regression, the perf diff reports both load metrics
-`unavailable` for runs from these commands, never `regressed`.
+A caller that passes neither hooks nor a reason gets
+`no load hooks injected (engine not managed by the suite)`. A hook that throws
+records `<metric> failed: <message>`, and a non-finite or negative elapsed
+time records `non-finite load time`. Because an `unavailable` metric never
+counts as a regression, the perf diff reports both load metrics `unavailable`
+for runs from these commands, never `regressed`.
 
 A scheduled suite never measures prefill, even when the schedule declares
 `--ctx`. The suite runner sets `prefillReason` to
-`prefill for <rel> on node '<node>' is not measured; scheduled suites
-reach the engine through the agent gateway, which forwards only /v1/* and
-not the engine's /tokenize` (`createPerfBenchSuiteRunner`,
-`packages/cli/src/commands/bench-schedule.ts`). `runPrefillSize` records
-that reason for every prefill size before any context check and without
-calling `/tokenize` (`runPrefillSize`, `packages/eval/src/perf/runner.ts`).
-For background, the gateway's `/v1/models` entries carry no
-`context_length`, `max_model_len` or `meta` (`buildListOpenAIModels`,
-`packages/core/src/openaiProxy.ts`). The gateway routes only `/v1/*` paths,
-and `/tokenize` is not one of them. For prefill evidence on an arm, run
-`llamactl eval perf` against the engine's own URL.
+`prefill for <rel> on node '<node>' is not measured; scheduled suites reach the engine through the agent gateway, which forwards only /v1/* and not the engine's /tokenize`
+(`createPerfBenchSuiteRunner`, `packages/cli/src/commands/bench-schedule.ts`).
+`runPrefillSize` records that reason for every prefill size before any context
+check and without calling `/tokenize` (`runPrefillSize`,
+`packages/eval/src/perf/runner.ts`). For background, the gateway's
+`/v1/models` entries carry no `context_length`, `max_model_len` or `meta`
+(`buildListOpenAIModels`, `packages/core/src/openaiProxy.ts`). The gateway
+routes only `/v1/*` paths, and `/tokenize` is not one of them. For prefill
+evidence on an arm, run `llamactl eval perf` against the engine's own URL.
 
-Prefill runs after the load phase. The model context comes from the
-suite's `ctx` option (`--ctx` on `eval perf`), then the provenance `ctx`,
-then the first `/v1/models` entry's `context_length`, `max_model_len`,
-`meta.n_ctx` or `meta.n_ctx_train` (`resolveModelCtx`,
-`packages/eval/src/perf/runner.ts`). With no context, each of
-`prefill_4k_tps`, `prefill_16k_tps`, `prefill_32k_tps` and
-`prefill_64k_tps` is recorded `unavailable` with `model context unknown`.
-Otherwise each size builds a token-exact prompt through the engine's
-`/tokenize` endpoint (the `tokenizePath` default in
-`createHttpPerfEngineClient`, `packages/eval/src/perf/client.ts`) before
-the context guard, so a missing tokenize endpoint is reported the same way
-at every size. An HTTP error records
+Prefill runs after the load phase. The model context comes from the suite's
+`ctx` option (`--ctx` on `eval perf`), then the provenance `ctx`, then the
+first `/v1/models` entry's `context_length`, `max_model_len`, `meta.n_ctx` or
+`meta.n_ctx_train` (`resolveModelCtx`, `packages/eval/src/perf/runner.ts`).
+With no context, each of `prefill_4k_tps`, `prefill_16k_tps`,
+`prefill_32k_tps` and `prefill_64k_tps` is recorded `unavailable` with
+`model context unknown`. Otherwise each size builds a token-exact prompt
+through the engine's `/tokenize` endpoint (the `tokenizePath` default in
+`createHttpPerfEngineClient`, `packages/eval/src/perf/client.ts`) before the
+context guard, so a missing tokenize endpoint is reported the same way at
+every size. An HTTP error records
 `<metric> failed: tokenize HTTP <status> at /tokenize`, and a prompt that
 cannot be matched to the target count records
-`could not build a token-exact prompt`. A size whose tokens plus the
-suite's decode tokens (16 for `perf-quick`, 64 for `perf-full`;
-`PERF_SUITES`, `packages/eval/src/perf/suites.ts`) exceed the context
-records `prefill <n> tokens exceeds model context <ctx>`. An engine whose
-own prompt-token count is more than 8 off the target records
+`could not build a token-exact prompt`. A size whose tokens plus the suite's
+decode tokens (16 for `perf-quick`, 64 for `perf-full`; `PERF_SUITES`,
+`packages/eval/src/perf/suites.ts`) exceed the context records
+`prefill <n> tokens exceeds model context <ctx>`. An engine whose own
+prompt-token count is more than 8 off the target records
 `engine counted <n> prompt tokens for target <target>` (`runPrefillSize`,
 `packages/eval/src/perf/runner.ts`).
+
+### Measured load with --launch
+
+With `--launch`, `eval perf` starts llama-server itself through the eval
+matrix lifecycle. In order, the cold hook calls `ensureModelServing`, the
+untimed `beforeWarm` hook calls `teardownIfOwned`, the warm hook calls
+`ensureModelServing` again, and a final `teardownIfOwned` runs in `finally`
+even when the suite throws. Cold is the first launch and warm is the relaunch
+after that teardown; the runner calls `beforeWarm` before it starts the warm
+clock, so `load_warm_ms` excludes tearing the cold boot down. Each load is
+timed until `/health` and the `/v1` boot probe pass (`ensureModelServing`,
+`packages/eval/src/matrix/lifecycle.ts`). `load_cold_ms` and `load_warm_ms`
+are measured only for an engine eval perf starts. The OS page cache is not
+dropped, so warm load includes whatever cache the cold boot left behind.
+
+The residency group comes from the `--gguf` path relative to
+`LLAMA_CPP_MODELS` when that relative path names a catalog row, falling back
+to `--model` (`launchRefusal`, `packages/cli/src/commands/eval-perf-launch.ts`).
+Provenance flags are the launch args: the `--flags` list becomes the launched
+spec's `extra_args`, and no `--flags` records an explicit empty list rather
+than the not-known reason used for an externally launched engine.
+
+Validation refuses, in order, with
+`--launch starts llama-server through the eval matrix lifecycle and supports only --engine llamacpp (got <engine>)`,
+`--launch does not support an IPv6 --url (got <host>); use 127.0.0.1 or localhost`,
+`--launch needs a loopback --url (got <host>); the engine is started on this machine`,
+`--launch needs an explicit port in --url`,
+`--launch needs --binary <path> and --gguf <path>`,
+`--launch needs an existing --binary (not found: <path>)`,
+`--launch needs an existing --gguf (not found: <path>)`, and
+`--pid cannot be combined with --launch; the launched engine's PID is not known before the suite starts`.
+Giving the boolean a value refuses with `--launch takes no value`.
+
+Before launching, `preflightLaunch` (`packages/cli/src/commands/eval-perf-launch.ts`)
+probes `GET /health`. Any resolved response, even a non-2xx response, means
+the port is occupied and refuses with
+`--launch needs a free port, but something is already answering at <url> (GET /health returned HTTP <status>)`;
+a rejected fetch means the port is free. The residency gate is the same
+read-only exclusive-group gate used by sandbox eval launches and can refuse
+with
+`residency lifecycle refused <model> downloaded -> loading: ExclusiveGroupOccupied: exclusive group <group> is held by <member> in state <state>`
+(`exclusiveGroupLaunchRefusal`, `packages/remote/src/residency/direct-lifecycle.ts`).
+
+Because the engine is not up before the suite starts, `GET /props` is not
+probed. Without an explicit `--slots <n>`, c2/c4 record
+`--launch starts the engine inside the perf suite, so GET /props is not probed before the run; pass --slots <n> to measure c2/c4`
+(`LAUNCH_SLOTS_REASON`, `packages/cli/src/commands/eval-perf-launch.ts`).
+
+In this race, a boot that is not `owned` means another engine won the port race. The load
+metric records
+`an engine was already serving at <host>:<port> before --launch started one; cold/warm load is measured only for an engine eval perf starts`,
+and after the table prints the run exits 1 with
+`--launch did not start the engine at <url>; run <run-id> measured an engine it did not launch`.
+If the launch itself fails, the suite still stores the rows it captured and
+the run exits 1 with
+`--launch failed to start the engine at <url>: <message>`.
 
 ### Host reader failures for an arm
 

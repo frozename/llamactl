@@ -46,10 +46,13 @@ Subcommands:
       Regenerate the markdown report card for <model> from SQLite.
   leaderboard [--node <name>] [--sort-by <field>]
       Print the eval leaderboard table to stdout.
-  perf --url <http://...> --engine <llamacpp|omlx|gufo|kapitsa> --model <id> [--suite perf-quick|perf-full] [--pid <n>] [--binary <path>] [--gguf <path>] [--hf-revision <rev>] [--quant <q>] [--ctx <n>] [--slots <n>] [--flags=<args>] [--db <path>] [--run-id <id>]
+  perf --url <http://...> --engine <llamacpp|omlx|gufo|kapitsa> --model <id> [--suite perf-quick|perf-full] [--pid <n>] [--binary <path>] [--gguf <path>] [--hf-revision <rev>] [--quant <q>] [--ctx <n>] [--slots <n>] [--flags=<args>] [--db <path>] [--run-id <id>] [--launch]
       A direct perf run against a locally reachable engine. It records SSD
       I/O and VmHWM when --pid names a local engine, and GTT on any
-      loopback Linux run, with or without --pid. Rows go to the same
+      loopback Linux run, with or without --pid. With --launch (llamacpp,
+      a loopback --url with a port, existing --binary and --gguf) it starts
+      llama-server itself, times the cold and warm loads, and stops it
+      afterwards. Rows go to the same
       perf.sqlite as bench schedule suites.
   perf-diff --base <run_id> --candidate <run_id> [--db <path>] [--model <name>] [--format md|json] [--tolerance <fraction>]
       Compare two perf runs in perf.sqlite metric by metric (default db: the
