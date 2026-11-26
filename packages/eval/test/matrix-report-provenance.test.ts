@@ -365,4 +365,54 @@ describe("#521 matrix report provenance", () => {
     expect(report).toContain("## Provenance");
     expect(report).toContain(`| ${result.runId} | ${modelName} | engine | gufo |`);
   });
+
+  test("W2 cli writeReport carries provenance for every run under --report-all-runs", async () => {
+    const dir = tempDir();
+    const db = new Database(join(dir, "matrix.db"));
+    dbs.push(db);
+    insertCellRow(
+      db,
+      makeCell({ run_id: "run-1", model_name: "m1", workload_name: "w1", finished_at: "t1" }),
+    );
+    insertCellRow(
+      db,
+      makeCell({ run_id: "run-2", model_name: "m2", workload_name: "w1", finished_at: "t2" }),
+    );
+    insertMatrixProvenance(db, provenanceRow("m1", P, "run-1"));
+    insertMatrixProvenance(db, provenanceRow("m2", { ...P, host: "host-b" }, "run-2"));
+
+    const mdOut = join(dir, "all.md");
+    await matrixCli.writeReport({
+      report: "md",
+      reportOut: mdOut,
+      db,
+      runId: "run-2",
+      reportAllRuns: true,
+    });
+    const md = readFileSync(mdOut, "utf8");
+
+    expect(md).toContain("## Provenance");
+    expect(md).toContain("| run-1 | m1 | engine | gufo |");
+    expect(md).toContain("| run-1 | m1 | host | host-a |");
+    expect(md).toContain("| run-2 | m2 | engine | gufo |");
+    expect(md).toContain("| run-2 | m2 | host | host-b |");
+
+    const bothOut = join(dir, "both");
+    await matrixCli.writeReport({
+      report: "both",
+      reportOut: bothOut,
+      db,
+      runId: "run-2",
+      reportAllRuns: true,
+    });
+    const bothMd = readFileSync(`${bothOut}.md`, "utf8");
+    const bothCsv = readFileSync(`${bothOut}.csv`, "utf8");
+
+    expect(bothMd).toContain("## Provenance");
+    expect(bothMd).toContain("| run-1 | m1 | engine | gufo |");
+    expect(bothMd).toContain("| run-2 | m2 | engine | gufo |");
+    expect(bothCsv).not.toContain("Provenance");
+    expect(bothCsv).not.toContain("provenance");
+    expect(bothCsv).not.toContain("| run-");
+  });
 });
