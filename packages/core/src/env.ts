@@ -140,9 +140,10 @@ function toOpenAiV1(base: string): string {
  * First match wins:
  *
  * 1. LOCAL_AI_PROVIDER_ROUTE=direct: the tracked llama-server URL
- *    (LOCAL_AI_LLAMA_CPP_BASE_URL, else host:port), exactly as on main.
- * 2. An explicit LOCAL_AI_LLAMA_CPP_BASE_URL that differs from the
- *    host:port default: that tracked URL, as on main.
+ *    (an explicit LOCAL_AI_LLAMA_CPP_BASE_URL, else host:port), exactly
+ *    as on main.
+ * 2. An explicit LOCAL_AI_LLAMA_CPP_BASE_URL: that tracked URL, as on
+ *    main.
  * 3. LLAMACTL_INTERNAL_PROXY_URL set: that proxy, normalised to `/v1`.
  * 4. Under a test profile: the tracked URL, which carries the `65534`
  *    sentinel, so hermetic runs never dial a live proxy.
@@ -154,10 +155,26 @@ function toOpenAiV1(base: string): string {
  * configured something, and main sends consumers there (pinned by
  * env.resolvers.test.ts case 16), so that keeps main's semantics. The
  * host:port default, including the `:8080` value that every eval re-feeds,
- * is not a configuration and goes to the proxy. Limitation, shared with
- * main: resolveEnv emits LOCAL_AI_LLAMA_CPP_BASE_URL, so after a seeded
- * shell changes LLAMA_CPP_PORT the re-fed old value reads as explicit and
- * stays the provider URL, exactly as main keeps it as the tracked URL.
+ * is not a configuration and goes to the proxy.
+ *
+ * resolveEnv also emits LOCAL_AI_LLAMA_CPP_DERIVED_BASE_URL, a marker
+ * holding the host:port default from the last resolution. A re-fed
+ * LOCAL_AI_LLAMA_CPP_BASE_URL equal to either the current host:port
+ * default or that marker reads as derived rather than configured, so a
+ * seeded shell that later changes LLAMA_CPP_HOST or LLAMA_CPP_PORT
+ * re-derives the tracked URL and falls through to the proxy rules.
+ * Operators should not set the marker.
+ *
+ * Edge case: explicitly setting LOCAL_AI_LLAMA_CPP_BASE_URL to exactly
+ * the previous derived URL in a seeded shell is indistinguishable from a
+ * re-fed derived value and reads as derived.
+ *
+ * Caveat: in a zsh session that sources shell/llamactl.zsh,
+ * _local_ai_sync_env recomputes LOCAL_AI_PROVIDER_URL and OPENAI_BASE_URL
+ * after a host or port change, but it does not re-export
+ * LOCAL_AI_LLAMA_CPP_BASE_URL or the marker. Those keep their old values
+ * until the next `llamactl env --eval`. Only the resolvers read them, so
+ * this is cosmetic.
  *
  * A custom endpoint is configured with LLAMACTL_INTERNAL_PROXY_URL, or
  * with LOCAL_AI_LLAMA_CPP_BASE_URL (plus LOCAL_AI_PROVIDER_ROUTE=direct to
@@ -171,13 +188,7 @@ function resolveLlamaCppProviderUrl(
   basics: EnvBasics,
 ): string {
   if (env["LOCAL_AI_PROVIDER_ROUTE"] === "direct") return basics.llamaCppBaseUrl;
-  const explicitTracked = nonEmpty(env["LOCAL_AI_LLAMA_CPP_BASE_URL"]);
-  if (
-    explicitTracked !== undefined &&
-    explicitTracked !== `http://${basics.host}:${basics.port}/v1`
-  ) {
-    return basics.llamaCppBaseUrl;
-  }
+  if (basics.llamaCppBaseUrlExplicit) return basics.llamaCppBaseUrl;
   const proxyOverride = nonEmpty(env["LLAMACTL_INTERNAL_PROXY_URL"]);
   if (proxyOverride !== undefined) return toOpenAiV1(proxyOverride);
   if (testProfile !== null) return basics.llamaCppBaseUrl;
@@ -198,6 +209,8 @@ type EnvBasics = {
   lmStudioHost: string;
   lmStudioPort: string;
   lmStudioBaseUrl: string;
+  derivedBaseUrl: string;
+  llamaCppBaseUrlExplicit: boolean;
   llamaCppBaseUrl: string;
 };
 
@@ -246,7 +259,11 @@ function computeEnvBasics(
     env["LOCAL_AI_LMSTUDIO_BASE_URL"],
     `http://${lmStudioHost}:${lmStudioPort}/v1`,
   );
-  const llamaCppBaseUrl = pick(env["LOCAL_AI_LLAMA_CPP_BASE_URL"], `http://${host}:${port}/v1`);
+  const derivedBaseUrl = `http://${host}:${port}/v1`;
+  const fed = nonEmpty(env["LOCAL_AI_LLAMA_CPP_BASE_URL"]);
+  const prior = nonEmpty(env["LOCAL_AI_LLAMA_CPP_DERIVED_BASE_URL"]);
+  const llamaCppBaseUrlExplicit = fed !== undefined && fed !== derivedBaseUrl && fed !== prior;
+  const llamaCppBaseUrl = llamaCppBaseUrlExplicit ? fed : derivedBaseUrl;
   return {
     devStorage,
     hfHome,
@@ -261,6 +278,8 @@ function computeEnvBasics(
     lmStudioHost,
     lmStudioPort,
     lmStudioBaseUrl,
+    derivedBaseUrl,
+    llamaCppBaseUrlExplicit,
     llamaCppBaseUrl,
   };
 }
@@ -430,6 +449,7 @@ export function resolveEnv(env: NodeJS.ProcessEnv = process.env): ResolvedEnv {
     LOCAL_AI_LMSTUDIO_PORT: basics.lmStudioPort,
     LOCAL_AI_LMSTUDIO_BASE_URL: basics.lmStudioBaseUrl,
     LOCAL_AI_LLAMA_CPP_BASE_URL: basics.llamaCppBaseUrl,
+    LOCAL_AI_LLAMA_CPP_DERIVED_BASE_URL: basics.derivedBaseUrl,
     LOCAL_AI_RUNTIME_DIR: runtimeDir,
     LOCAL_AI_ENABLE_THINKING: pick(env["LOCAL_AI_ENABLE_THINKING"], "false"),
     LOCAL_AI_PRESERVE_THINKING: pick(env["LOCAL_AI_PRESERVE_THINKING"], "true"),

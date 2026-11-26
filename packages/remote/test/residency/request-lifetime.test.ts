@@ -291,16 +291,19 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  for (const gate of [...engine.gates]) gate.release();
-  for (const reader of readers.splice(0)) {
-    await reader.cancel("cleanup").catch((): void => undefined);
+  try {
+    for (const gate of [...engine.gates]) gate.release();
+    for (const reader of readers.splice(0)) {
+      await reader.cancel("cleanup").catch((): void => undefined);
+    }
+    await activeAgent?.stop();
+    activeAgent = null;
+    setResidencyLeaseRegistry(null);
+    await engine.stop();
+    openaiProxy.__resetOpenAIProxyRouteMapCacheForTests();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
-  await activeAgent?.stop();
-  activeAgent = null;
-  setResidencyLeaseRegistry(null);
-  await engine.stop();
-  openaiProxy.__resetOpenAIProxyRouteMapCacheForTests();
-  rmSync(dir, { recursive: true, force: true });
   for (const key of ENV_KEYS) {
     const value = savedEnv.get(key);
     if (value === undefined) Reflect.deleteProperty(process.env, key);

@@ -1,7 +1,7 @@
 // Read-only agent status report (#211): config, liveness via the
 // unauthenticated /healthz, loopback-bind detection, the addresses the
 // running listener actually bound, and cert expiry + SAN coverage of the host
-// the operator advertises.
+// the operator advertises, defaulting to the one recorded in agent.yaml.
 import type { AgentConfig } from "@llamactl/core/config/agent-config";
 
 import { findTcpListenerPid } from "@llamactl/core/probe";
@@ -417,6 +417,7 @@ export async function collectAgentStatus(o: {
   describeService?: DescribeServiceFn;
   listModelHosts?: ListModelHostsFn;
 }): Promise<AgentStatusReport> {
+  const advertisedHost = o.advertisedHost ?? o.cfg.advertisedHost;
   const warnings: string[] = [];
   const bind = `${o.cfg.bindHost}:${String(o.cfg.port)}`;
   const loopbackOnly = isLoopbackHost(o.cfg.bindHost);
@@ -449,7 +450,7 @@ export async function collectAgentStatus(o: {
     warnings.push(`cert at ${o.cfg.certPath} could not be read: ${message}`);
   }
 
-  const coverage = advertisedHostCoverage(x509, cert, o.advertisedHost);
+  const coverage = advertisedHostCoverage(x509, cert, advertisedHost);
   const advertisedHostCovered = coverage.covered;
   if (coverage.warning !== null) warnings.push(coverage.warning);
   if (loopbackOnly) {
@@ -474,7 +475,7 @@ export async function collectAgentStatus(o: {
     probeUrl,
     loopbackOnly,
     cert,
-    advertisedHost: o.advertisedHost ?? null,
+    advertisedHost: advertisedHost ?? null,
     advertisedHostCovered,
     exposedModelHosts,
     warnings,

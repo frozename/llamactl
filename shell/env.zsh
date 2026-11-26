@@ -89,7 +89,12 @@ export LLAMA_CPP_SERVER_ALIAS="${LLAMA_CPP_SERVER_ALIAS:-local}"
 export LOCAL_AI_LMSTUDIO_HOST="${LOCAL_AI_LMSTUDIO_HOST:-127.0.0.1}"
 export LOCAL_AI_LMSTUDIO_PORT="${LOCAL_AI_LMSTUDIO_PORT:-1234}"
 export LOCAL_AI_LMSTUDIO_BASE_URL="${LOCAL_AI_LMSTUDIO_BASE_URL:-http://$LOCAL_AI_LMSTUDIO_HOST:$LOCAL_AI_LMSTUDIO_PORT/v1}"
-export LOCAL_AI_LLAMA_CPP_BASE_URL="${LOCAL_AI_LLAMA_CPP_BASE_URL:-http://$LLAMA_CPP_HOST:$LLAMA_CPP_PORT/v1}"
+_llamactl_derived="http://$LLAMA_CPP_HOST:$LLAMA_CPP_PORT/v1"
+if [ -z "${LOCAL_AI_LLAMA_CPP_BASE_URL:-}" ] || [ "$LOCAL_AI_LLAMA_CPP_BASE_URL" = "${LOCAL_AI_LLAMA_CPP_DERIVED_BASE_URL:-}" ]; then
+  export LOCAL_AI_LLAMA_CPP_BASE_URL="$_llamactl_derived"
+fi
+export LOCAL_AI_LLAMA_CPP_DERIVED_BASE_URL="$_llamactl_derived"
+unset _llamactl_derived
 export LOCAL_AI_RUNTIME_DIR="${LOCAL_AI_RUNTIME_DIR:-$DEV_STORAGE/ai-models/local-ai}"
 export LOCAL_AI_ENABLE_THINKING="${LOCAL_AI_ENABLE_THINKING:-false}"
 export LOCAL_AI_PRESERVE_THINKING="${LOCAL_AI_PRESERVE_THINKING:-true}"
@@ -122,12 +127,16 @@ _llamactl_fallback_provider_url() {
   else
     port="${LLAMA_CPP_PORT:-8080}"
   fi
-  tracked="${LOCAL_AI_LLAMA_CPP_BASE_URL:-http://$host:$port/v1}"
+  if [ -n "${LOCAL_AI_LLAMA_CPP_BASE_URL:-}" ] && [ "${LOCAL_AI_LLAMA_CPP_BASE_URL:-}" != "http://$host:$port/v1" ] && [ "${LOCAL_AI_LLAMA_CPP_BASE_URL:-}" != "${LOCAL_AI_LLAMA_CPP_DERIVED_BASE_URL:-}" ]; then
+    tracked="${LOCAL_AI_LLAMA_CPP_BASE_URL:-}"
+  else
+    tracked="http://$host:$port/v1"
+  fi
   if [ "${LOCAL_AI_PROVIDER_ROUTE:-}" = "direct" ]; then
     printf '%s' "$tracked"
     return 0
   fi
-  if [ -n "${LOCAL_AI_LLAMA_CPP_BASE_URL:-}" ] && [ "${LOCAL_AI_LLAMA_CPP_BASE_URL:-}" != "http://$host:$port/v1" ]; then
+  if [ -n "${LOCAL_AI_LLAMA_CPP_BASE_URL:-}" ] && [ "${LOCAL_AI_LLAMA_CPP_BASE_URL:-}" != "http://$host:$port/v1" ] && [ "${LOCAL_AI_LLAMA_CPP_BASE_URL:-}" != "${LOCAL_AI_LLAMA_CPP_DERIVED_BASE_URL:-}" ]; then
     printf '%s' "$tracked"
     return 0
   fi
