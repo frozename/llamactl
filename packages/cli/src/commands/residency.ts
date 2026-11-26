@@ -147,6 +147,7 @@ export function renderResidencyStatus(s: ResidencyRenderInput, nowMs: number = D
   lines.push(`Node:       ${s.node}`);
   lines.push(`NodeRun:    ${s.nodeRun.present ? "present" : "absent"}`);
   lines.push(`Policy:     ${s.policy.present ? JSON.stringify(s.policy.residency) : "none"}`);
+  pushEffectivePolicyLine(lines, s.effectivePolicy);
   lines.push(`Budget:     ${s.budget.memoryGiB.toFixed(1)} GiB (source: ${s.budget.source})`);
   if (!s.store.present) {
     lines.push(`Store:      not present at ${s.store.path} (scope: serving-process)`);
@@ -217,6 +218,18 @@ function pushLeaseLines(lines: string[], leases: ResidencyRenderInput["leases"])
       `  ${a.workload}  epoch ${String(a.epoch)}  revoked ${String(a.revokedCount)}  reason ${a.reason ?? "-"}`,
     );
   }
+}
+
+function pushEffectivePolicyLine(
+  lines: string[],
+  effective: ResidencyRenderInput["effectivePolicy"],
+): void {
+  if (effective === undefined) {
+    return;
+  }
+  lines.push(
+    `Effective:  ${effective.knobs.map((k) => `${k.name} ${String(k.value)}${k.defaulted ? " (default)" : ""}`).join(", ")}`,
+  );
 }
 
 function pushSessionLines(lines: string[], sessions: ResidencyRenderInput["sessions"]): void {
