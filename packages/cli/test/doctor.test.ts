@@ -5,10 +5,14 @@ import { join } from "node:path";
 import { type CheckResult, type DoctorDeps, runDoctor } from "../src/commands/doctor.js";
 import { mkdtempSync, rmSync } from "../src/safe-fs.js";
 
-const hermeticUnitSecrets = {
-  platform: "darwin" as const,
-  launchdDirs: [] as string[],
-  systemdDirs: [] as string[],
+const hermeticUnitSecrets: {
+  platform: NodeJS.Platform;
+  launchdDirs: string[];
+  systemdDirs: string[];
+} = {
+  platform: "darwin",
+  launchdDirs: [],
+  systemdDirs: [],
 };
 
 type DoctorDepsWithUnitSecrets = DoctorDeps & {
