@@ -25,19 +25,6 @@ import {
 } from "../logs-scope";
 import { useConsoleNode, useNodeTrpc } from "../node-trpc";
 
-const sectionStyle: React.CSSProperties = { display: "grid", gap: 8, padding: 16 };
-const secondaryStyle: React.CSSProperties = { fontSize: 12, color: "var(--color-text-secondary)" };
-const bufferStyle: React.CSSProperties = {
-  maxHeight: 480,
-  overflowY: "auto",
-  fontFamily: "var(--font-mono, monospace)",
-  fontSize: 12,
-  background: "var(--color-surface-2)",
-  border: "1px solid var(--color-border)",
-  borderRadius: "var(--r-md, 6px)",
-  padding: 8,
-};
-
 function connTone(conn: string): StatusDotTone {
   if (conn === "streaming") return "ok";
   if (conn === "reconnecting") return "warn";
@@ -48,7 +35,7 @@ function connTone(conn: string): StatusDotTone {
 
 function LogLine({ text }: { text: string }): React.JSX.Element {
   return (
-    <div data-testid="console-logs-line" style={{ whiteSpace: "pre-wrap" }}>
+    <div data-testid="console-logs-line" className="console-log-line">
       {text}
     </div>
   );
@@ -57,18 +44,27 @@ function LogLine({ text }: { text: string }): React.JSX.Element {
 function LogsBuffer({
   state,
   scrollRef,
+  search,
 }: {
   state: LogsState;
   scrollRef: React.RefObject<HTMLDivElement | null>;
+  search: string;
 }): React.JSX.Element {
+  const needle = search.trim().toLowerCase();
+  const entries = state.entries.filter(
+    (entry) => entry.kind === "divider" || entry.text.toLowerCase().includes(needle),
+  );
   return (
-    <div ref={scrollRef} style={bufferStyle}>
-      {state.entries.map((entry, index) =>
+    <div ref={scrollRef} className="console-code" data-console-log-buffer>
+      {needle && entries.every((entry) => entry.kind === "divider") ? (
+        <p className="console-caption">No matching log lines.</p>
+      ) : null}
+      {entries.map((entry, index) =>
         entry.kind === "divider" ? (
           <div
             key={`divider-${String(index)}`}
             data-testid="console-logs-divider"
-            style={secondaryStyle}
+            className="console-caption"
           >
             reconnected
           </div>
@@ -85,6 +81,7 @@ function LogsStream({ workload, gate }: { workload: string; gate: LogsGate }): R
   const input = React.useMemo(() => logsSubscriptionInput(workload), [workload]);
   const [state, dispatch] = React.useReducer(logsReducer, INITIAL_LOGS_STATE);
   const [follow, setFollow] = React.useState(true);
+  const [search, setSearch] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
   const scrollRef = React.useRef<HTMLDivElement | null>(null);
   // A gate-off period ends with a brand-new subscription that replays
@@ -118,11 +115,11 @@ function LogsStream({ workload, gate }: { workload: string; gate: LogsGate }): R
     if (follow && scrollRef.current !== null) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [state.entries, follow]);
+  }, [state.entries, follow, search]);
 
   return (
-    <div style={{ display: "grid", gap: 8 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+    <div className="console-panel">
+      <div className="console-list-row">
         <StatusDot
           data-testid="console-logs-conn"
           data-state={conn}
@@ -141,6 +138,18 @@ function LogsStream({ workload, gate }: { workload: string; gate: LogsGate }): R
           />
           Follow
         </label>
+        <label className="console-caption">
+          <input
+            className="console-select"
+            type="search"
+            aria-label="Filter log lines"
+            placeholder="Filter log lines"
+            value={search}
+            onChange={(event) => {
+              setSearch(event.target.value);
+            }}
+          />
+        </label>
         <Button
           variant="ghost"
           size="sm"
@@ -152,15 +161,15 @@ function LogsStream({ workload, gate }: { workload: string; gate: LogsGate }): R
         </Button>
       </div>
       {gate === "offline" ? (
-        <div data-testid="console-logs-offline" style={secondaryStyle}>
+        <div data-testid="console-logs-offline" className="console-caption">
           Server offline
         </div>
       ) : gate === "error" ? (
-        <div data-testid="console-logs-gate-error" style={secondaryStyle}>
+        <div data-testid="console-logs-gate-error" className="console-caption">
           Server status unavailable
         </div>
       ) : (
-        <LogsBuffer state={state} scrollRef={scrollRef} />
+        <LogsBuffer state={state} scrollRef={scrollRef} search={search} />
       )}
       {error !== null ? (
         <div data-testid="console-logs-error" style={{ fontSize: 12, color: "var(--color-err)" }}>
@@ -184,31 +193,33 @@ function LogsNotice({
 }): React.JSX.Element | null {
   if (listError) {
     return (
-      <div data-testid="console-logs-list-error" style={secondaryStyle}>
+      <div data-testid="console-logs-list-error" className="console-caption">
         Could not load workloads
       </div>
     );
   }
   if (selection.kind === "pending") {
     return (
-      <div data-testid="console-logs-pending" style={secondaryStyle}>
+      <div data-testid="console-logs-pending" className="console-caption">
         Loading workloads…
       </div>
     );
   }
   if (selection.kind === "elsewhere") {
     return (
-      <div style={secondaryStyle}>
+      <div className="console-caption">
         <p style={{ margin: 0 }}>{selection.message}</p>
         <a href={selection.href}>{`Open ${routeWorkload ?? ""} on ${selection.node}`}</a>
       </div>
     );
   }
   if (selection.kind === "missing") {
-    return <div style={secondaryStyle}>{`No workload named ${selection.name} on this node`}</div>;
+    return (
+      <div className="console-caption">{`No workload named ${selection.name} on this node`}</div>
+    );
   }
   if (selection.kind === "none") {
-    return <div style={secondaryStyle}>{`No workloads on ${tabNode}`}</div>;
+    return <div className="console-caption">{`No workloads on ${tabNode}`}</div>;
   }
   return null;
 }
@@ -231,9 +242,11 @@ export function LogsView({
   });
   const optionNames = logsWorkloadNames(Array.isArray(list.data) ? list.data : [], tabNode);
   return (
-    <section data-testid="console-view-logs" style={sectionStyle}>
+    <main data-testid="console-view-logs" className="console-page">
+      <h1>Logs</h1>
       <select
         aria-label="Logs workload"
+        className="console-select"
         value={name ?? ""}
         onChange={(event) => {
           const next = event.target.value;
@@ -262,6 +275,6 @@ export function LogsView({
       {name !== null ? (
         <LogsStream key={`${tabNode}\u0000${name}`} workload={name} gate={logsStreamGate(status)} />
       ) : null}
-    </section>
+    </main>
   );
 }

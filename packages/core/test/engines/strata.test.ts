@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/await-thenable, @typescript-eslint/no-confusing-void-expression -- Bun's rejects/resolves matchers are typed as void. */
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -11,14 +11,23 @@ import type {
 import type { PidIdentityDeps, SignalIdentity } from "../../src/pidIdentity.js";
 
 import { createStrataEngine, strataEngine } from "../../src/engines/strata.js";
-import { existsSync, mkdirSync, writeFileSync } from "../../src/safe-fs.js";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
 
+const tempDirs: string[] = [];
+
+/** A temp path under os.tmpdir(), removed once this file's tests finish (#870). */
 function tempDir(tag: string): string {
-  return join(
+  const dir = join(
     tmpdir(),
     `strata-test-${tag}-${String(Date.now())}-${Math.random().toString(36).slice(2, 8)}`,
   );
+  tempDirs.push(dir);
+  return dir;
 }
+
+afterAll(() => {
+  for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
 
 function makeBinary(dir: string, name = "strata-server"): string {
   mkdirSync(dir, { recursive: true });

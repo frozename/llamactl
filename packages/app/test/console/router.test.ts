@@ -1,6 +1,6 @@
 // packages/app/test/console/router.test.ts
-// Issue #410, P5a RED — pins the console path router. Four views, one
-// optional trailing workload segment on workloads and logs, and a
+// Issue #410, P5a RED — pins the console path router and its optional
+// trailing workload segment on workloads and logs, along with a
 // ?node= query that is validated against the console node-name rule:
 // invalid values surface decoded under `invalidNode` and never under
 // `node`. Unknown or malformed paths degrade to the fleet view with
@@ -31,12 +31,13 @@ async function importRouter(): Promise<ConsoleRouterModule | null> {
 }
 
 describe("console router (#410 P5a)", () => {
-  test("parses the four views and their workload deep links", async () => {
+  test("parses console views and workload deep links", async () => {
     const mod = await importRouter();
     expect(mod?.parseConsoleRoute).toBeFunction();
 
     const parse = mod!.parseConsoleRoute!;
-    expect(parse("/", "")).toEqual({ view: "fleet" });
+    expect(parse("/", "")).toEqual({ view: "dashboard" });
+    expect(parse("/dashboard", "")).toEqual({ view: "dashboard" });
     expect(parse("/fleet", "")).toEqual({ view: "fleet" });
     expect(parse("/workloads", "")).toEqual({ view: "workloads" });
     expect(parse("/workloads/", "")).toEqual({ view: "workloads" });
@@ -46,6 +47,10 @@ describe("console router (#410 P5a)", () => {
     });
     expect(parse("/workloads/a%20b", "")).toEqual({ view: "workloads", workload: "a b" });
     expect(parse("/nodes", "")).toEqual({ view: "nodes" });
+    expect(parse("/stats", "?node=z13")).toEqual({ view: "stats", node: "z13" });
+    expect(parse("/runs", "")).toEqual({ view: "runs" });
+    expect(parse("/chat", "?node=gpu-1")).toEqual({ view: "chat", node: "gpu-1" });
+    expect(parse("/runs/workload", "")).toEqual({ view: "fleet", notFound: true });
     expect(parse("/logs", "")).toEqual({ view: "logs" });
     expect(parse("/logs/qwen-coder", "")).toEqual({ view: "logs", workload: "qwen-coder" });
   });
@@ -73,7 +78,7 @@ describe("console router (#410 P5a)", () => {
       ["?node=a%20b", "a b"],
     ] as const) {
       const route = parse("/", search);
-      expect(route).toEqual({ view: "fleet", invalidNode: decoded });
+      expect(route).toEqual({ view: "dashboard", invalidNode: decoded });
       expect("node" in route).toBe(false);
     }
   });
@@ -84,7 +89,7 @@ describe("console router (#410 P5a)", () => {
 
     const parse = mod!.parseConsoleRoute!;
     for (const pathname of [
-      "/chat",
+      "/chat/model",
       "/api/x",
       "/workloads/a/b",
       "/nodes/x",
@@ -102,7 +107,7 @@ describe("console router (#410 P5a)", () => {
     const mod = await importRouter();
     expect(mod?.parseConsoleRoute).toBeFunction();
 
-    expect(mod!.parseConsoleRoute!("/chat", "?node=gpu-1")).toEqual({
+    expect(mod!.parseConsoleRoute!("/chat/model", "?node=gpu-1")).toEqual({
       view: "fleet",
       notFound: true,
       node: "gpu-1",
@@ -114,12 +119,13 @@ describe("console router (#410 P5a)", () => {
     expect(mod?.consoleHref).toBeFunction();
 
     const href = mod!.consoleHref!;
-    expect(href({ view: "fleet" })).toBe("/");
+    expect(href({ view: "dashboard" })).toBe("/");
+    expect(href({ view: "fleet" })).toBe("/fleet");
     expect(href({ view: "workloads", workload: "a b", node: "gpu-1" })).toBe(
       "/workloads/a%20b?node=gpu-1",
     );
     expect(href({ view: "nodes", workload: "x" })).toBe("/nodes");
-    expect(href({ view: "fleet", workload: "x" })).toBe("/");
+    expect(href({ view: "fleet", workload: "x" })).toBe("/fleet");
   });
 
   test("consoleHref round-trips through parseConsoleRoute", async () => {
@@ -130,6 +136,8 @@ describe("console router (#410 P5a)", () => {
     const href = mod!.consoleHref!;
     const parse = mod!.parseConsoleRoute!;
     const routes: ConsoleRoute[] = [
+      { view: "dashboard" },
+      { view: "dashboard", node: "gpu-1" },
       { view: "fleet" },
       { view: "fleet", node: "gpu-1" },
       { view: "nodes" },

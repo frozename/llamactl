@@ -162,6 +162,7 @@ import {
 } from "./workload/admission.js";
 import * as workloadApplyMod from "./workload/apply.js";
 import { CompositeOwnershipSchema } from "./workload/gateway-catalog/schema.js";
+import { inferenceObservations } from "./workload/inference-observations.js";
 import { liveLockHolder } from "./workload/lock.js";
 import {
   LOCAL_NODE_ID,
@@ -1155,7 +1156,10 @@ const infraIdentifier = z
   .regex(/^[A-Za-z0-9_.+-]+$/, "must match /^[A-Za-z0-9_.+-]+$/")
   .refine((s) => s !== "." && s !== ".." && s !== "~", "reserved name");
 
-const modelHostStatusInput = z.object({ workload: z.string().min(1) });
+const modelHostStatusInput = z.object({
+  workload: ModelHostManifestSchema.shape.metadata.shape.name,
+  includeListener: z.boolean().optional(),
+});
 const modelHostStopInput = z.object({
   workload: z.string().min(1),
   graceSeconds: z.number().int().positive().max(60).optional(),
@@ -1758,6 +1762,8 @@ export const router = t.router({
   env: t.procedure.query(() => envMod.resolveEnv()),
 
   nodeFacts: t.procedure.query(() => nodeFactsMod.collectNodeFacts()),
+
+  inferenceObservations: t.procedure.query(() => inferenceObservations()),
 
   fleetSnapshot: t.procedure
     .input(z.object({ include: z.array(z.string()).optional() }).optional())
@@ -2486,7 +2492,8 @@ export const router = t.router({
     // them with the same row shape, discriminated by `kind`.
     const hostRows = await Promise.all(
       modelHostStoreMod.listModelHosts().map(async (manifest) => {
-        const status = statusModelHost({ key: { name: manifest.metadata.name } });
+        const workload = manifest.metadata.name;
+        const node = manifest.spec.node;
         const ep = manifest.spec.endpoint;
         const hosted = manifest.spec.hostedModels[0];
         if (!hosted) {
@@ -2495,25 +2502,22 @@ export const router = t.router({
             message: `ModelHost '${manifest.metadata.name}' has no hosted models`,
           });
         }
-        let phase: "Running" | "Stopped" | "Foreign" =
-          status.state === "Running" ? "Running" : "Stopped";
-        const statePid = status.state === "Running" ? (status.pid ?? null) : null;
+        let phase: "Running" | "Stopped" | "Foreign" | "Unreachable" = "Unreachable";
+        let statePid: number | null = null;
         let listenerPid: number | null = null;
-        // statusModelHost only reports recorded-pid liveness — a dead
-        // recorded pid with a foreign process still answering on the
-        // endpoint would otherwise read Stopped while the proxy has no
-        // route, and a live recorded pid could mask a port the recorded
-        // process no longer holds. Compare the answering pid directly.
-        const hostState = readModelHostState({ name: manifest.metadata.name });
-        if (hostState) {
-          const ownership = await probeEndpointOwnership(hostState.host, hostState.port);
-          listenerPid = ownership.listenerPid;
-          if (
-            ownership.reachable &&
-            (statePid === null || (listenerPid !== null && listenerPid !== statePid))
-          ) {
-            phase = "Foreign";
-          }
+        let runtime: ReturnType<typeof statusModelHost>["runtime"];
+        try {
+          const status = await queryServerStatusWithTimeout(
+            () =>
+              clientForNode(cfg, node).modelHostStatus.query({ workload, includeListener: true }),
+            WORKLOAD_LIST_NODE_TIMEOUT_MS,
+          );
+          phase = status.foreign ? "Foreign" : status.state === "Running" ? "Running" : "Stopped";
+          statePid = status.state === "Running" ? (status.pid ?? null) : null;
+          listenerPid = status.listenerPid ?? null;
+          runtime = status.runtime;
+        } catch {
+          phase = "Unreachable";
         }
         return {
           name: manifest.metadata.name,
@@ -2524,7 +2528,7 @@ export const router = t.router({
           endpoint: `http://${ep.host}:${String(ep.port)}`,
           statePid,
           listenerPid,
-          status: status.runtime ? { phase, ...status.runtime } : null,
+          status: runtime ? { ...runtime, phase } : null,
           workerCount: 0,
           workerNodes: [] as string[],
         };
@@ -2949,9 +2953,19 @@ export const router = t.router({
       });
     }),
 
-  modelHostStatus: t.procedure
-    .input(modelHostStatusInput)
-    .query(({ input }) => statusModelHost({ key: { name: input.workload } })),
+  modelHostStatus: t.procedure.input(modelHostStatusInput).query(async ({ input }) => {
+    const key = { name: input.workload };
+    const status = statusModelHost({ key });
+    if (input.includeListener !== true) return status;
+    const state = readModelHostState(key);
+    if (state === null) return status;
+
+    const { listenerPid, reachable } = await probeEndpointOwnership(state.host, state.port);
+    const foreign =
+      reachable &&
+      (status.state !== "Running" || (listenerPid !== null && listenerPid !== status.pid));
+    return { ...status, listenerPid, foreign };
+  }),
 
   modelHostStop: t.procedure.input(modelHostStopInput).mutation(
     async ({ input }) =>
