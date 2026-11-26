@@ -2,8 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { checkUnitSecrets } from "../src/commands/doctor-unit-secrets.js";
 import { type DoctorDeps, runDoctor } from "../src/commands/doctor.js";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 /**
  * `llamactl doctor [secrets]` unit-file scan (#289). Installed launchd
@@ -303,6 +304,57 @@ describe("doctor [secrets] unit-file scan (#289)", () => {
       expect(result).toBe(0);
       expect(out.split("\n").filter((line) => line.includes("[secrets]"))).toHaveLength(1);
       expect(out).toContain("stub keychain ok");
+    }
+  });
+});
+
+describe("checkUnitSecrets degrade paths and drop-in hints (#289)", () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "doctor-unit-secrets-degrade-"));
+  });
+
+  afterEach(() => {
+    rmSync(root, { force: true, recursive: true });
+  });
+
+  test("a drop-in fix names the parent unit and requires --dir", () => {
+    const dropInDir = join(root, "llamactl-agent.service.d");
+    mkdirSync(dropInDir, { recursive: true });
+    writeFileSync(
+      join(dropInDir, "bearer.conf"),
+      `[Service]\nEnvironment=LLAMACTL_TUNNEL_BEARER=${FAKE_TOKEN}\n`,
+    );
+
+    const results = checkUnitSecrets({ platform: "linux", launchdDirs: [], systemdDirs: [root] });
+
+    expect(results).toHaveLength(1);
+    const fix = results[0]?.fix ?? "";
+    expect(fix).toContain("drop-in of llamactl-agent.service");
+    expect(fix).toContain("--dir=<abs path>");
+    expect(fix).toContain("is required");
+    expect(fix).toContain("restart llamactl-agent.service");
+    expect(fix).toContain("daemon-reload");
+    expect(JSON.stringify(results)).not.toContain(FAKE_TOKEN);
+  });
+
+  test("an unreadable scan dir degrades to an info row instead of throwing", () => {
+    if (process.getuid?.() === 0) return; // root ignores directory modes
+    const locked = join(root, "locked");
+    mkdirSync(locked, { recursive: true });
+    chmodSync(locked, 0o000);
+    try {
+      const results = checkUnitSecrets({
+        platform: "darwin",
+        launchdDirs: [locked, join(root, "missing")],
+        systemdDirs: [],
+      });
+      expect(results).toHaveLength(1);
+      expect(results[0]?.status).toBe("info");
+      expect(results[0]?.message).toContain(locked);
+    } finally {
+      chmodSync(locked, 0o755);
     }
   });
 });
