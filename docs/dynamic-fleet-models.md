@@ -360,6 +360,17 @@ never under fusion-private-first" (#725). Under #728/#729 the ranked
 replica hint never lifts an experimental replica over a non-experimental
 one, and a session already bound to an experimental workload stays on it.
 
+`benchCompare` (`packages/core/src/bench/compare.ts`) carries each row's
+routing stage as `qualificationStage`, read through
+`catalogQualificationStages`; the `promote-fastest-vision-model` runbook
+never picks an experimental rel and reports excluded experimental rels on
+the `excludedExperimental` field of the bench.compare step result; when
+every benched installed multimodal rel is experimental the runbook returns
+ok:false with an error listing the excluded rels and stating that
+experimental models are served only on an exact model pin and never as a
+preset default; a refused `llamactl.catalog.promote` step fails the
+runbook before `llamactl.embersynth.sync`.
+
 `/v1/models?include=declared` reads the same stages: each `unavailable`
 entry's `qualification.stage` is the routing stage from
 `catalogQualificationStages` (so a pin replaces the catalog stage), and a
