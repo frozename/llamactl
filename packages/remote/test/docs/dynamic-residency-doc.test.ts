@@ -1210,8 +1210,8 @@ describe("docs/dynamic-residency.md (#285)", () => {
   // removing the generation guard in release, keeping the entry instead of
   // deleting it on an idle or forced release, or flipping the force check;
   // changing the success or forced line text, contacting the node before
-  // the --yes check, or allowing --node all; adding an MCP tool without
-  // updating the doc sentence.
+  // the --yes check, or allowing --node all; dropping the MCP releaseSession
+  // tool or its doc sentence.
   test("case 23: operator per-session release-session (#755)", () => {
     const aff = flat(sectionBody(sectionRe("session affinity")) ?? "");
     const para = flat(
@@ -1240,7 +1240,7 @@ describe("docs/dynamic-residency.md (#285)", () => {
       'The other refusals are `Unavailable` when no session registry is installed ("no session registry installed; nothing to release") or the registry has no per-session release, `SessionNotFound` for an unknown or idled-out id, and `SessionsUnknown` when the registry throws.',
       "Without `--yes` the CLI refuses before contacting the node, and `--node all` is refused.",
       "Success prints `Released session <id> (workload <workload>, <n> in-flight request(s))`, with `, forced; their leases stay held` appended inside the parentheses after a forced release; a refusal prints `residency release-session: <reason>: <detail>` and exits 1.",
-      "No MCP tool exposes the release.",
+      "The MCP `llamactl.residency.releaseSession` tool (`packages/mcp/src/tools/residency.ts`) sends the same mutation inside the MCP server's own process: it takes `sessionId`, optional `force` and `confirm`, refuses without `confirm: true` before calling the router, returns a refusal as `isError` with the payload, audits each confirmed call, and is not in the Ops Chat dispatch.",
     ]);
 
     // (2) The refusal reasons the doc must name, read from the
@@ -1337,8 +1337,9 @@ describe("docs/dynamic-residency.md (#285)", () => {
       "if (!flags.yes) {",
     );
 
-    // (7) No MCP tool exposes the release.
-    expect(mcpSrc).not.toContain("residencyReleaseSession");
+    // (7) The MCP tool projects the same mutation.
+    expect(mcpSrc).toContain('"llamactl.residency.releaseSession"');
+    expect(mcpSrc).toContain("caller.residencyReleaseSession(");
     expect(mcpSrc).toContain("llamactl.residency.forceUnload");
   });
 });

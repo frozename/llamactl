@@ -12,6 +12,7 @@ export function registerResidencyTools(server: McpServer): void {
   registerResidencyApplyProfile(server);
   registerResidencyCancelOperation(server);
   registerResidencyForceUnload(server);
+  registerResidencyReleaseSession(server);
 }
 
 function registerResidencyStatus(server: McpServer): void {
@@ -149,6 +150,55 @@ function registerResidencyCancelOperation(server: McpServer): void {
         server: SERVER_SLUG,
         tool: "llamactl.residency.cancelOperation",
         input: { operationId },
+        dryRun: false,
+        result,
+      });
+      return { ...toTextContent(result), ...(result.ok ? {} : { isError: true }) };
+    },
+  );
+}
+
+function registerResidencyReleaseSession(server: McpServer): void {
+  server.registerTool(
+    "llamactl.residency.releaseSession",
+    {
+      title: "Release one residency session binding",
+      description:
+        "Mirrors the remote residencyReleaseSession mutation (#520). Drops one session binding by id and nothing else: it never drains, revokes leases or stops a workload, so the DF-05 leases of in-flight requests stay held and LeasesActive still fences their stop. An idle binding (refs 0) is dropped; a binding with in-flight requests refuses SessionInFlight unless `force: true`. Other refusals: Unavailable (no session registry), SessionNotFound, SessionsUnknown. It is process-local: it reaches only the session registry installed in this MCP server process. `confirm: true` is required.",
+      inputSchema: {
+        sessionId: z
+          .string()
+          .min(1)
+          .max(128)
+          .regex(/^[A-Za-z0-9._:-]+$/)
+          .describe("Session id to release (same bounds as the session header)."),
+        force: z
+          .boolean()
+          .default(false)
+          .describe("Drop the binding even with in-flight requests; their leases stay held."),
+        confirm: z.boolean().default(false).describe("Must be true to release the binding."),
+      },
+      annotations: { destructiveHint: true, readOnlyHint: false },
+    },
+    async (input) => {
+      const { sessionId, force, confirm } = input;
+      if (!confirm) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "refusing without confirm: true; releasing a session lets its workload be unloaded",
+            },
+          ],
+        };
+      }
+      const caller = router.createCaller({});
+      const result = await caller.residencyReleaseSession({ sessionId, force, confirm: true });
+      appendAudit({
+        server: SERVER_SLUG,
+        tool: "llamactl.residency.releaseSession",
+        input: { sessionId, force },
         dryRun: false,
         result,
       });
