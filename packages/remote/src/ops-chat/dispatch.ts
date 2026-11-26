@@ -644,6 +644,71 @@ async function executeMutationDestructiveTool(
   }
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== "object" || value === null) return null;
+  return value as Record<string, unknown>;
+}
+
+function activeIdsSuffix(ids: string[]): string {
+  if (ids.length === 0) return "";
+  return `: ${ids.join(", ")}`;
+}
+
+function stringEntries(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((entry): entry is string => typeof entry === "string");
+}
+
+/**
+ * Pure refusal detector: given a tool name and its raw result,
+ * returns a structured refusal envelope when the result matches
+ * a node stop-fence refusal pattern, or null otherwise. A dry-run
+ * preview never matches because its payload has no `refused`, no
+ * `ok: false` with an `error` string, and no `manifestPreserved`.
+ */
+export function opsChatStopRefusal(
+  name: OpsChatToolName,
+  args: Record<string, unknown>,
+  result: unknown,
+): { code: string; message: string } | null {
+  // Keep the operator-facing codes stable: 'stop_refused', 'delete_refused',
+  // and 'destroy_refused'.
+  const record = asRecord(result);
+  if (record === null) return null;
+
+  if (name === "llamactl.server.stop") {
+    const refused = asRecord(record["refused"]);
+    const reason = refused?.["reason"];
+    if (typeof reason !== "string") return null;
+    const ids = stringEntries(refused?.["active"]);
+    const suffix = activeIdsSuffix(ids);
+    return {
+      code: "stop_refused",
+      message: `serverStop refused by the node stop fence (${reason}${suffix}); nothing was stopped`,
+    };
+  }
+
+  if (name === "llamactl.workload.delete") {
+    const error = record["error"];
+    if (record["ok"] !== false || typeof error !== "string") return null;
+    return {
+      code: "delete_refused",
+      message: `workloadDelete refused: ${error}`,
+    };
+  }
+
+  if (name === "llamactl.composite.destroy") {
+    if (record["manifestPreserved"] !== true) return null;
+    const compositeName = String(args["name"]);
+    return {
+      code: "destroy_refused",
+      message: `composite/${compositeName} not destroyed: a workload stop was refused; manifest preserved`,
+    };
+  }
+
+  return null;
+}
+
 async function executeToolCall(
   caller: Caller,
   name: OpsChatToolName,
@@ -686,6 +751,18 @@ export async function dispatchOpsChatTool(
     }
 
     const result = await executeToolCall(caller, input.name, input.arguments, input.dryRun);
+
+    const refusal = opsChatStopRefusal(input.name, input.arguments, result);
+    if (refusal !== null) {
+      return {
+        ok: false,
+        name: input.name,
+        tier,
+        durationMs: Date.now() - startedAt,
+        result,
+        error: refusal,
+      };
+    }
 
     return {
       ok: true,
