@@ -15,6 +15,7 @@
 import type {
   ManagedAdmissionClaim,
   ManagedAdmissionDecision,
+  ManagedClaimState,
   ManagedWorkloadKind,
 } from "@llamactl/core/residency/admission";
 import type { ResidencyLeases } from "@llamactl/core/residency/leases";
@@ -24,6 +25,7 @@ import { getResidencyLeaseRegistry } from "@llamactl/core/residency/leases";
 import {
   createLlamacppSleepController,
   type LlamacppSleepController,
+  type SleepMember,
   type SleepWakeAdmission,
 } from "@llamactl/core/residency/llamacpp-sleep";
 import { currentSessionRefcounts } from "@llamactl/core/residency/sessions";
@@ -406,6 +408,47 @@ function foldGroupClaim(
   return false;
 }
 
+type GroupMemberEntry = { member: SleepMember; reservation: SleepReservation };
+
+// A group's reservations fold into one claimed state the way core folds them
+// into one runtime-group claim: pending wins, then resident, else uncertain.
+function adoptedClaimState(entries: readonly GroupMemberEntry[]): ManagedClaimState {
+  if (entries.some((entry) => entry.reservation === "pending")) return "pending";
+  if (entries.some((entry) => entry.reservation === "resident")) return "resident";
+  return "uncertain";
+}
+
+// Records a runtime group's observed residency in the shared ledger without
+// admitting it: no budget check, and it bills the group once at its largest
+// held allocation. A null handle means the runtime is charged elsewhere, so
+// nothing is stored — a later sleep of this group must not release a foreign
+// claim, and the next sync tries again.
+function adoptGroupClaim(input: {
+  groupKey: string;
+  entries: readonly GroupMemberEntry[];
+  authority: TargetAdmissionAuthority;
+  targetIdentity: string;
+  kind: ManagedWorkloadKind;
+  handles: Map<string, TargetAdmissionClaimHandle>;
+}): void {
+  const held = input.entries.filter((entry) => entry.reservation !== "released");
+  const [first] = held;
+  if (first === undefined) return;
+  let allocationGiB = 0;
+  for (const entry of held) {
+    if (entry.member.allocationGiB > allocationGiB) allocationGiB = entry.member.allocationGiB;
+  }
+  const adopted = input.authority.adopt({
+    targetIdentity: input.targetIdentity,
+    runtimeKey: first.member.runtimeKey,
+    specDigest: first.member.specDigest,
+    kind: input.kind,
+    allocationGiB,
+    state: adoptedClaimState(held),
+  });
+  if (adopted.handle !== null) input.handles.set(input.groupKey, adopted.handle);
+}
+
 // Wraps a LlamacppSleepController so wakes admit through the shared
 // TargetAdmissionAuthority: every requestWake charges the node budget in the
 // shared ledger, billed once per runtime group (core merges same-runtime
@@ -413,13 +456,16 @@ function foldGroupClaim(
 // lifecycle transitions re-fold the group's reservations into the claim —
 // a confirmed sleep of the last awake member, including the driver's
 // verified-stop path ending in observe('stopped'), releases it. Members
-// registered already awake are not adopted into the ledger yet; that is
-// deferred to the wiring slice (Part of #283).
+// observed awake, loading or of unknown residency are adopted into the
+// ledger at registration and on every later transition, which covers an
+// auto-wake outside a requested wake; adopt defers to a claim already held
+// elsewhere on the same runtime.
 export function createSharedBudgetSleepController(
   opts: SharedBudgetSleepControllerOptions,
 ): LlamacppSleepController {
   const kind = opts.kind ?? "ModelRun";
   const groupOf = new Map<string, string>();
+  const membersById = new Map<string, SleepMember>();
   const handles = new Map<string, TargetAdmissionClaimHandle>();
 
   const inner = createLlamacppSleepController({
@@ -433,30 +479,43 @@ export function createSharedBudgetSleepController(
     }),
   });
 
-  const groupReservations = (groupKey: string): SleepReservation[] => {
+  const groupEntries = (groupKey: string): GroupMemberEntry[] => {
     const members = inner.snapshot().members;
-    const reservations: SleepReservation[] = [];
-    for (const [memberId, memberGroup] of groupOf) {
-      if (memberGroup !== groupKey) continue;
+    const entries: GroupMemberEntry[] = [];
+    for (const [memberId, member] of membersById) {
+      if (groupOf.get(memberId) !== groupKey) continue;
       const reservation = members[memberId]?.reservation;
-      if (reservation !== undefined) reservations.push(reservation);
+      if (reservation !== undefined) entries.push({ member, reservation });
     }
-    return reservations;
+    return entries;
   };
 
   const syncGroup = (groupKey: string | undefined): void => {
     if (groupKey === undefined) return;
     const handle = handles.get(groupKey);
-    if (handle === undefined) return;
-    if (foldGroupClaim(handle, groupReservations(groupKey))) handles.delete(groupKey);
+    if (handle === undefined) {
+      adoptGroupClaim({
+        groupKey,
+        entries: groupEntries(groupKey),
+        authority: opts.authority,
+        targetIdentity: opts.targetIdentity,
+        kind,
+        handles,
+      });
+      return;
+    }
+    const reservations = groupEntries(groupKey).map((entry) => entry.reservation);
+    if (foldGroupClaim(handle, reservations)) handles.delete(groupKey);
   };
 
   return {
     register(member, state): void {
       if (!groupOf.has(member.id)) {
         groupOf.set(member.id, sleepGroupKey(member.runtimeKey, member.specDigest));
+        membersById.set(member.id, member);
       }
       inner.register(member, state);
+      syncGroup(groupOf.get(member.id));
     },
     requestWake(id, wakeOpts): ReturnType<LlamacppSleepController["requestWake"]> {
       const result = inner.requestWake(id, wakeOpts);

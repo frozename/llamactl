@@ -441,6 +441,66 @@ export interface TargetAdmissionClaimHandle {
   releaseVerified(): void;
 }
 
+type ClaimFinder = (targetIdentity: string, claimId: string) => ManagedAdmissionClaim | undefined;
+
+// Shared by tryClaim and adopt: one claim ledger per target, created on
+// first touch.
+function targetClaimList(
+  claimsByTarget: Map<string, ManagedAdmissionClaim[]>,
+  targetIdentity: string,
+): ManagedAdmissionClaim[] {
+  let list = claimsByTarget.get(targetIdentity);
+  if (list === undefined) {
+    list = [];
+    claimsByTarget.set(targetIdentity, list);
+  }
+  return list;
+}
+
+// The one `${targetIdentity}#${seq}` sequence, advanced only by an insert so
+// claim ids stay stable across refusals.
+function nextClaimId(nextClaimSeq: Map<string, number>, targetIdentity: string): string {
+  const seq = (nextClaimSeq.get(targetIdentity) ?? 0) + 1;
+  nextClaimSeq.set(targetIdentity, seq);
+  return `${targetIdentity}#${String(seq)}`;
+}
+
+// Resolves the handle by claim id against the live ledger, so a claim that
+// was spliced out stops answering to every transition.
+function makeClaimHandle(
+  list: ManagedAdmissionClaim[],
+  targetIdentity: string,
+  claimId: string,
+  findClaim: ClaimFinder,
+): TargetAdmissionClaimHandle {
+  return {
+    claimId,
+    state: (): ManagedClaimState | "released" =>
+      findClaim(targetIdentity, claimId)?.state ?? "released",
+    markResident: (): void => {
+      const c = findClaim(targetIdentity, claimId);
+      if (c?.state === "pending") c.state = "resident";
+    },
+    markUncertain: (): void => {
+      const c = findClaim(targetIdentity, claimId);
+      if (c?.state === "pending") c.state = "uncertain";
+    },
+    releaseUnstarted: (): void => {
+      const idx = list.findIndex((c) => c.claimId === claimId);
+      if (idx >= 0 && list[idx]?.state === "pending") list.splice(idx, 1);
+    },
+    demoteUncertain: (): void => {
+      const c = findClaim(targetIdentity, claimId);
+      if (c?.state === "resident") c.state = "uncertain";
+    },
+    releaseVerified: (): void => {
+      const idx = list.findIndex((c) => c.claimId === claimId);
+      const held = idx >= 0 ? list[idx]?.state : undefined;
+      if (idx >= 0 && (held === "resident" || held === "uncertain")) list.splice(idx, 1);
+    },
+  };
+}
+
 /**
  * In-process, synchronous target-owned pending admission (DF-01 #274,
  * E-1 slice). One claim ledger per resolved target identity; the check
@@ -459,6 +519,20 @@ export interface TargetAdmissionAuthority {
      *  target, merged with the pending ledger for evaluation. */
     living?: readonly ManagedAdmissionClaim[];
   }): { decision: ManagedAdmissionDecision; handle: TargetAdmissionClaimHandle | null };
+  /** Records residency already observed on the target. This is not an
+   *  admission, so it runs no budget and no claim-limit check: refusing it
+   *  would only hide memory that is in use. When the ledger already holds a
+   *  claim for the same runtimeKey it inserts nothing and returns
+   *  `{ handle: null, heldBy: claimId }`, so one runtime is never charged
+   *  twice and the holder keeps the claim. */
+  adopt(input: {
+    targetIdentity: string;
+    runtimeKey: string;
+    specDigest: string;
+    kind: ManagedWorkloadKind;
+    allocationGiB: number | undefined;
+    state: ManagedClaimState;
+  }): { handle: TargetAdmissionClaimHandle | null; heldBy: string | null };
   snapshot(targetIdentity: string): readonly ManagedAdmissionClaim[];
 }
 
@@ -466,7 +540,7 @@ export function createTargetAdmissionAuthority(): TargetAdmissionAuthority {
   const claimsByTarget = new Map<string, ManagedAdmissionClaim[]>();
   const nextClaimSeq = new Map<string, number>();
 
-  const findClaim = (targetIdentity: string, claimId: string): ManagedAdmissionClaim | undefined =>
+  const findClaim: ClaimFinder = (targetIdentity, claimId) =>
     claimsByTarget.get(targetIdentity)?.find((c) => c.claimId === claimId);
 
   return {
@@ -474,11 +548,7 @@ export function createTargetAdmissionAuthority(): TargetAdmissionAuthority {
       decision: ManagedAdmissionDecision;
       handle: TargetAdmissionClaimHandle | null;
     } {
-      let list = claimsByTarget.get(input.targetIdentity);
-      if (list === undefined) {
-        list = [];
-        claimsByTarget.set(input.targetIdentity, list);
-      }
+      const list = targetClaimList(claimsByTarget, input.targetIdentity);
       // The ledger must charge committed manifests together with pending
       // claims, deduplicated by runtimeKey so one workload is never
       // charged twice. Ledger claims come first: an in-flight pending or
@@ -501,9 +571,7 @@ export function createTargetAdmissionAuthority(): TargetAdmissionAuthority {
         },
       });
       if (decision.kind !== "admit") return { decision, handle: null };
-      const seq = (nextClaimSeq.get(input.targetIdentity) ?? 0) + 1;
-      nextClaimSeq.set(input.targetIdentity, seq);
-      const claimId = `${input.targetIdentity}#${String(seq)}`;
+      const claimId = nextClaimId(nextClaimSeq, input.targetIdentity);
       const claim: ManagedAdmissionClaim = {
         claimId,
         runtimeKey: input.runtimeKey,
@@ -513,33 +581,26 @@ export function createTargetAdmissionAuthority(): TargetAdmissionAuthority {
         kind: input.kind,
       };
       list.push(claim);
-      const targetIdentity = input.targetIdentity;
-      const handle: TargetAdmissionClaimHandle = {
-        claimId,
-        state: () => findClaim(targetIdentity, claimId)?.state ?? "released",
-        markResident: () => {
-          const c = findClaim(targetIdentity, claimId);
-          if (c?.state === "pending") c.state = "resident";
-        },
-        markUncertain: () => {
-          const c = findClaim(targetIdentity, claimId);
-          if (c?.state === "pending") c.state = "uncertain";
-        },
-        releaseUnstarted: () => {
-          const idx = list.findIndex((c) => c.claimId === claimId);
-          if (idx >= 0 && list[idx]?.state === "pending") list.splice(idx, 1);
-        },
-        demoteUncertain: () => {
-          const c = findClaim(targetIdentity, claimId);
-          if (c?.state === "resident") c.state = "uncertain";
-        },
-        releaseVerified: () => {
-          const idx = list.findIndex((c) => c.claimId === claimId);
-          const held = idx >= 0 ? list[idx]?.state : undefined;
-          if (idx >= 0 && (held === "resident" || held === "uncertain")) list.splice(idx, 1);
-        },
-      };
+      const handle = makeClaimHandle(list, input.targetIdentity, claimId, findClaim);
       return { decision, handle };
+    },
+    adopt(input): { handle: TargetAdmissionClaimHandle | null; heldBy: string | null } {
+      const list = targetClaimList(claimsByTarget, input.targetIdentity);
+      const held = list.find((c) => c.runtimeKey === input.runtimeKey);
+      if (held !== undefined) return { handle: null, heldBy: held.claimId };
+      const claimId = nextClaimId(nextClaimSeq, input.targetIdentity);
+      list.push({
+        claimId,
+        runtimeKey: input.runtimeKey,
+        specDigest: input.specDigest,
+        state: input.state,
+        allocationGiB: input.allocationGiB,
+        kind: input.kind,
+      });
+      return {
+        handle: makeClaimHandle(list, input.targetIdentity, claimId, findClaim),
+        heldBy: null,
+      };
     },
     snapshot(targetIdentity): readonly ManagedAdmissionClaim[] {
       return (claimsByTarget.get(targetIdentity) ?? []).map((c) => ({ ...c }));
