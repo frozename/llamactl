@@ -17,6 +17,7 @@ import {
   workloadApply,
   workloadGatewayHandlers,
   workloadLock,
+  workloadReconciler,
   type workloadSchema,
   workloadStore,
 } from "@llamactl/remote";
@@ -1295,6 +1296,25 @@ function writeHostHistory(
   process.stdout.write(indentBlock(formatHostRuntime(runtime)));
 }
 
+/**
+ * One-line read-out of the durable idle hold (#519), or null when the manifest
+ * carries none. A disabled manifest gets the inactive form because the
+ * reconciler ignores the hold while the workload is disabled, so nothing keeps
+ * it down beyond `enabled: false`.
+ */
+export function formatIdleHoldLine(manifest: {
+  metadata: { name: string; annotations?: Record<string, string> | undefined };
+  spec: { enabled?: boolean | undefined };
+}): string | null {
+  const at = manifest.metadata.annotations?.[workloadReconciler.IDLE_EVICTED_AT_ANNOTATION];
+  if (at === undefined) return null;
+  const lead = `IdleHold:   idle-evicted at ${at} via ${workloadReconciler.IDLE_EVICTED_AT_ANNOTATION}; `;
+  if (manifest.spec.enabled === false) {
+    return `${lead}inactive while the workload is disabled\n`;
+  }
+  return `${lead}the controller keeps it down until llamactl residency release-idle ${manifest.metadata.name}\n`;
+}
+
 async function runDescribeModelHost(manifest: ModelHostManifest, json: boolean): Promise<number> {
   const { spec } = manifest;
   const nowMs = (workloadTestSeams.now ?? ((): Date => new Date()))().getTime();
@@ -1332,6 +1352,8 @@ async function runDescribeModelHost(manifest: ModelHostManifest, json: boolean):
   process.stdout.write(`Enabled:    ${String(spec.enabled)}\n`);
   process.stdout.write(`ExtraArgs:  ${spec.extraArgs.join(" ") || "(none)"}\n`);
   process.stdout.write(`RestartPolicy: ${spec.restartPolicy}\n`);
+  const idleHold = formatIdleHoldLine(manifest);
+  if (idleHold !== null) process.stdout.write(idleHold);
   writeHostHistory(manifest, runtime, nowMs);
   writeLiveStatus(liveStatus);
   return 0;
@@ -1366,6 +1388,8 @@ async function runDescribeWorkload(name: string, json: boolean): Promise<number>
   process.stdout.write(`Target:     ${manifest.spec.target.kind}:${manifest.spec.target.value}\n`);
   process.stdout.write(`ExtraArgs:  ${manifest.spec.extraArgs.join(" ") || "(none)"}\n`);
   process.stdout.write(`RestartPolicy: ${manifest.spec.restartPolicy}\n`);
+  const idleHold = formatIdleHoldLine(manifest);
+  if (idleHold !== null) process.stdout.write(idleHold);
   if (manifest.status) {
     process.stdout.write(
       `Status:     phase=${manifest.status.phase} endpoint=${manifest.status.endpoint ?? "none"} pid=${String(manifest.status.serverPid ?? "none")} since=${manifest.status.lastTransitionTime}\n`,
