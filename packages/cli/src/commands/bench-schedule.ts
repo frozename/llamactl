@@ -82,8 +82,9 @@ to keep schedules firing. \`start\` and \`stop\` are not daemon controls:
 stop the loop with Ctrl-C or SIGTERM.
 
 SUBCOMMANDS:
-  list      Print every schedule (id, node, rel, mode, every, state,
-            last run, last error). --json emits the raw array.
+  list      Print every schedule (id, node, rel, mode, kind, declared
+            suite fields, every, state, last run, last error). --json
+            emits the raw array.
   add       Register a schedule. The target node comes from the global
             --node flag (--node <node> / -n <node>) and is required.
             --every takes a positive integer with an optional s, m, h or
@@ -414,11 +415,33 @@ const ROW_HEADERS: readonly string[] = [
   "NODE",
   "REL",
   "MODE",
+  "KIND",
+  "DECLARED",
   "EVERY",
   "STATE",
   "LAST_RUN",
   "LAST_ERROR",
 ];
+
+// A schedule with no kind predates the suite kind: it fires a bench preset.
+function scheduleKindCell(row: ScheduleRow): string {
+  return row.kind === "suite" ? `suite:${row.suite ?? ""}` : "preset";
+}
+
+// Only the fields the schedule declares are shown: an undeclared field falls
+// back to a runner default or records unavailable, so inventing one here
+// would misreport the run. The gateway cannot discover any of them.
+function declaredSuiteFieldsCell(row: ScheduleRow): string {
+  if (row.kind !== "suite") return "-";
+  const parts: string[] = [];
+  if (row.engine !== undefined) parts.push(`engine=${row.engine}`);
+  if (row.slots !== undefined) parts.push(`slots=${String(row.slots)}`);
+  if (row.quant !== undefined) parts.push(`quant=${row.quant}`);
+  if (row.ctx !== undefined) parts.push(`ctx=${String(row.ctx)}`);
+  if (row.flags !== undefined) parts.push(`flags=${String(row.flags.length)}`);
+  if (row.hfRevision !== undefined) parts.push(`hfRevision=${row.hfRevision}`);
+  return parts.length === 0 ? "-" : parts.join(",");
+}
 
 function rowCells(row: ScheduleRow): string[] {
   return [
@@ -426,6 +449,8 @@ function rowCells(row: ScheduleRow): string[] {
     row.node,
     row.rel,
     row.mode,
+    scheduleKindCell(row),
+    declaredSuiteFieldsCell(row),
     String(row.intervalSeconds),
     row.enabled ? "enabled" : "disabled",
     row.lastRunAt ?? "-",
