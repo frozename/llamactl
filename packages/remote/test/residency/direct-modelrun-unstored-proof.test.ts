@@ -211,7 +211,7 @@ function writeLivePid(name: string): string {
 function recordedPid(name: string): number {
   const pid = server.readServerPid({ name });
   expect(pid).not.toBeNull();
-  return pid as number;
+  return pid!;
 }
 
 function writeSidecar(name: string, pid: number): void {
