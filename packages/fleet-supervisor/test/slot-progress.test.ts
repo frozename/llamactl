@@ -114,3 +114,11 @@ describe("readSlotProgress", () => {
     expect(called).toBe(false);
   });
 });
+
+it("preserves configured slot context and excludes prompt contents", () => {
+  const response = parseSlotsResponse([
+    { id: 0, is_processing: false, n_ctx: 131072, prompt: "private text" },
+  ]);
+  expect(response[0]).toMatchObject({ id: 0, processing: false, context: 131072 });
+  expect(JSON.stringify(response)).not.toContain("private text");
+});

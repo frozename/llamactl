@@ -56,6 +56,7 @@ export function parseSlotsResponse(body: unknown): SlotProgress[] {
     const id = typeof obj["id"] === "number" && Number.isFinite(obj["id"]) ? obj["id"] : null;
     const state =
       typeof obj["state"] === "number" && Number.isFinite(obj["state"]) ? obj["state"] : null;
+    const context = numField(obj, ["n_ctx"]);
     const nDecoded = numField(obj, DECODED_KEYS) ?? nestedDecoded(obj);
     return {
       id,
@@ -63,6 +64,7 @@ export function parseSlotsResponse(body: unknown): SlotProgress[] {
       processing: deriveProcessing(obj, state),
       nPast: numField(obj, PAST_KEYS),
       nDecoded,
+      ...(context !== null && Number.isSafeInteger(context) && context > 0 ? { context } : {}),
     };
   });
 }

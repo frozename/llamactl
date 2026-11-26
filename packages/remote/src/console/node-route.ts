@@ -41,10 +41,13 @@ export type ConsoleNodeCheck =
         | "no_current_context";
     };
 
-export function validateConsoleNode(name: string): ConsoleNodeCheck {
+export function validateConsoleNode(
+  name: string,
+  cfg?: ReturnType<typeof kubecfg.loadConfig>,
+): ConsoleNodeCheck {
   let config;
   try {
-    config = kubecfg.loadConfig();
+    config = cfg ?? kubecfg.loadConfig();
   } catch {
     return { error: "kubeconfig_unreadable", ok: false, status: 412 };
   }
