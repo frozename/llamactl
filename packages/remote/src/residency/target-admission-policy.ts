@@ -33,7 +33,14 @@ import {
   type ManagedLaunchAdmission,
   type ManagedLaunchRequest,
 } from "./managed-launch-admission.js";
+import {
+  evaluateManagedProfileStart,
+  managedProfileMemberProfiles,
+  managedProfilePermit,
+  readManagedProfileSelection,
+} from "./managed-profile-selection.js";
 import { type LocalAdmissionRuntime, openLocalAdmissionRuntime } from "./process-generation.js";
+import { defaultResidencyStorePath } from "./store.js";
 
 export interface VerifiedNodeCapacity {
   nodeName: string;
@@ -128,7 +135,8 @@ function approveLaunch(
   workloadsDir: string,
   aliases: ReadonlySet<string>,
   pending: DesiredManifest | undefined,
-): ApprovedPlan | undefined {
+  nodeName: string,
+): ApprovedPlan | { refusal: string } | undefined {
   if (request.effectiveSpecDigest === undefined) return undefined;
   const manifest =
     pending?.metadata.name === request.runtimeKey
@@ -143,7 +151,12 @@ function approveLaunch(
     return undefined;
   }
   const approved = readDesired(() => compileDesired(manifest));
-  return approved?.specDigest === request.effectiveSpecDigest ? approved : undefined;
+  if (approved?.specDigest !== request.effectiveSpecDigest) return undefined;
+  const profiles = managedProfileMemberProfiles(manifest.metadata.annotations);
+  if (profiles.length === 0) return approved;
+  const selected = readManagedProfileSelection(defaultResidencyStorePath(), nodeName);
+  const decision = evaluateManagedProfileStart(selected, profiles, managedProfilePermit());
+  return decision.ok ? approved : { refusal: decision.reason };
 }
 
 function parseDesired(input: unknown): DesiredManifest | undefined {
@@ -221,6 +234,9 @@ function preflightManagedProfile(
   if (!authority.isOperational()) return "AuthorityUnavailable";
   const claims = authority.snapshot();
   const victims = new Set(plan.victims);
+  const planned = new Set([...plan.retained, ...plan.victims]);
+  const unexpected = claims.find((row) => row.state !== "resident" || !planned.has(row.runtimeKey));
+  if (unexpected !== undefined) return `ManagedUnplannedRuntime: ${unexpected.runtimeKey}`;
   for (const name of victims) {
     const row = claims.find((claim) => claim.runtimeKey === name);
     if (
@@ -346,7 +362,7 @@ export async function openNodeManagedAdmission(opts: NodeManagedAdmissionOptions
     inspectRuntime,
     resolve: (request) =>
       resolveEnv().LOCAL_AI_RUNTIME_DIR === runtimeDir
-        ? approveLaunch(request, workloadsDir, aliases, desired.getStore())
+        ? approveLaunch(request, workloadsDir, aliases, desired.getStore(), opts.nodeName)
         : undefined,
   });
   return {

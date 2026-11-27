@@ -143,6 +143,7 @@ export type ProfileSwitchOperationOpts = {
   fenceToken: number;
   operationId: string;
   desiredRevision: number;
+  managed?: boolean;
   nowMs?: () => number;
   // the resolved node budget the reservation is admitted against; absent =
   // recorded but not admitted (store opt-in, #685)
@@ -817,7 +818,7 @@ async function runFenced(
     return { steps, failedAt: drain.failedAt, cancelledAt: null };
   }
 
-  const refusal = deps.beforeTeardown?.();
+  const refusal = beforeTeardownRefusal(deps);
   if (refusal !== undefined) {
     cancelBestEffort(registry, fence.tokens);
     const failure = stepRecord("verify", plan.node, "failed", refusal);
@@ -848,6 +849,14 @@ async function runFenced(
   const start = await startPhase(deps, plan.replacements, signal, beat, budget);
   steps.push(...start.steps);
   return { steps, failedAt: start.failedAt, cancelledAt: start.cancelledAt };
+}
+
+function beforeTeardownRefusal(deps: ProfileSwitchExecutorDeps): string | undefined {
+  try {
+    return deps.beforeTeardown?.();
+  } catch (error: unknown) {
+    return messageOf(error);
+  }
 }
 
 function buildReport(input: ReportInput): ProfileSwitchExecutionReport {
@@ -1087,14 +1096,10 @@ async function executeWithOperation(
   try {
     result = await run(heartbeatFor(operation));
   } catch (error: unknown) {
-    finishSwitchOperation(operation, begun.version, {
-      outcome: "failed",
-      detail: messageOf(error),
-    });
+    finishCrashedExecution(operation, begun.version, error);
     throw error;
   }
-  const info = finishInfoFor(result);
-  const record = finishSwitchOperation(operation, begun.version, info);
+  const { info, record } = finishExecution(operation, begun.version, result);
   const outcome =
     result.cancelledAt !== null
       ? "cancelled"
@@ -1118,6 +1123,35 @@ async function executeWithOperation(
       ...(record.recordFailure === undefined ? {} : { recordFailure: record.recordFailure }),
     },
   });
+}
+
+function finishCrashedExecution(
+  operation: ProfileSwitchOperationOpts,
+  version: number,
+  error: unknown,
+): void {
+  if (operation.managed === true) return;
+  finishSwitchOperation(operation, version, { outcome: "failed", detail: messageOf(error) });
+}
+
+function finishExecution(
+  operation: ProfileSwitchOperationOpts,
+  version: number,
+  result: RunResult,
+): { info: FinishInfo; record: FinishRecord } {
+  const info = finishInfoFor(result);
+  const acted = result.steps.some(
+    (step) =>
+      (step.action === "stop" || step.action === "start") &&
+      (step.status === "ok" || step.status === "failed"),
+  );
+  if (operation.managed === true && info.outcome !== "succeeded" && acted) {
+    return {
+      info: { ...info, outcome: "unknown" },
+      record: { recorded: false, recordFailure: "managed dispatch requires generation recovery" },
+    };
+  }
+  return { info, record: finishSwitchOperation(operation, version, info) };
 }
 
 function drainTimeoutMsFrom(customTimeout: number | undefined): number {
@@ -1250,7 +1284,10 @@ export async function executeProfileSwitch(
   const sessions = opts?.sessions === undefined ? currentSessionRefcounts() : opts.sessions;
   const drainTimeoutMs = drainTimeoutMsFrom(opts?.drainTimeoutMs);
   const fenced = registry !== null;
-  const deferred = deferredKinds(plan, fenced, opts?.operation !== undefined);
+  const deferred =
+    opts?.operation?.managed === true
+      ? []
+      : deferredKinds(plan, fenced, opts?.operation !== undefined);
   const planned = plannedSteps(plan.victims, plan.replacements, fenced);
 
   if (dryRun) {

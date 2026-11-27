@@ -62,7 +62,7 @@ describe("#522 residency pending #276 refresh", () => {
       "stale-revision rejection, and summing reservations",
     );
 
-    const beginOperation = flat(enclosingBody(store, "function beginOperationTx("));
+    const beginOperation = flat(enclosingBody(store, "function checkBeginOperation("));
     expect(beginOperation, "stale operation revision refusal").toContain(
       'reason: "stale-revision"',
     );
@@ -79,7 +79,7 @@ describe("#522 residency pending #276 refresh", () => {
     );
     expect(transition, "transition is not budget-gated").not.toContain("nodeBudgetGiB");
 
-    const fencedSwitch = flat(enclosingBody(applyProfile, "async function runFencedSwitch("));
+    const fencedSwitch = flat(enclosingBody(applyProfile, "async function runWet("));
     expect(fencedSwitch, "profile switch passes a resolved budget").toContain(
       "...(nodeBudgetGiB === undefined ? {} : { nodeBudgetGiB }),",
     );

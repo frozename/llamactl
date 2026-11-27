@@ -236,10 +236,11 @@ function clientForApply(
   cfg: Config,
   managed: ManagedLaunchAdmission | undefined,
   ownsNode: boolean,
+  signal?: AbortSignal,
 ): (nodeName: string) => WorkloadNodeClient {
   return (nodeName) =>
     ownsNode && managed?.ownsNode?.(nodeName) === true
-      ? localCallerProxy(managed)
+      ? localCallerProxy(managed, signal)
       : clientForNode(cfg, nodeName, managed);
 }
 
@@ -3129,7 +3130,7 @@ export const router = t.router({
 
   workloadApply: t.procedure
     .input(z.object({ yaml: z.string().min(1) }))
-    .mutation(async ({ ctx, input }) => {
+    .mutation(async ({ ctx, input, signal }) => {
       let manifest: unknown;
       try {
         manifest = workloadStoreMod.parseManifestYaml(input.yaml);
@@ -3176,7 +3177,7 @@ export const router = t.router({
             if (handoffResult) return handoffResult;
             const result = await workloadApplyMod.applyManifest({
               manifest,
-              getClient: clientForApply(cfg, managed, ownsNode),
+              getClient: clientForApply(cfg, managed, ownsNode, signal),
               getNodeBudgetGiB: (nodeName) => nodeRunBudgetGiB(nodeName, workloadsDir),
               ...(budget === undefined ? {} : { managedBudget: budget }),
               getNodeResidency: (nodeName) => nodeRunResidency(nodeName, workloadsDir),
@@ -3231,6 +3232,7 @@ export const router = t.router({
     async ({
       ctx,
       input,
+      signal,
     }): Promise<{
       action: string;
       path: string | null;
@@ -3255,7 +3257,9 @@ export const router = t.router({
           message: "ManagedNodeIdentityMismatch",
         });
       }
-      return await router.createCaller({ managedLaunchAdmission: managed }).workloadApply(input);
+      return await router
+        .createCaller({ managedLaunchAdmission: managed }, signal ? { signal } : undefined)
+        .workloadApply(input);
     },
   ),
 
