@@ -85,7 +85,7 @@ function servingOptions(workload: string): StartAgentOptions {
 async function admitHeldStream(
   url: string,
   workload: string,
-): Promise<ReadableStreamDefaultReader<Uint8Array>> {
+): Promise<{ cancel: () => Promise<void> }> {
   const response = await fetch(`${url}/v1/completions`, {
     method: "POST",
     headers: requestHeaders,
