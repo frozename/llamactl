@@ -197,7 +197,7 @@ Restart the agent afterwards so it loads the new tokenHash.
 
 Flags:
 ${DIR_FLAG_HELP}
-  --host=<host>    Host recorded in the emitted bootstrap URL (default: 127.0.0.1)
+  --host=<host>    Host recorded in the emitted bootstrap URL (default: 127.0.0.1); when passed, recorded in agent.yaml for agent status
   --token-out=<path>  Also write the new bearer token to <path> (mode 0600)
   --grace=<duration>  Keep the previous token authenticating for this long
                    (a positive duration up to 365d like 30m, 12h or 7d).
@@ -232,7 +232,7 @@ Restart the agent afterwards so it loads the new cert.
 
 Flags:
 ${DIR_FLAG_HELP}
-  --host=<host>    Cert CN and host in the emitted bootstrap URL (default: 127.0.0.1)
+  --host=<host>    Cert CN and host in the emitted bootstrap URL (default: 127.0.0.1); when passed, recorded in agent.yaml for agent status
   --san=<host,...> Certificate SANs; repeatable (default: the --host and bindHost).
                    127.0.0.1, ::1 and localhost are also added when
                    agent.yaml's bindHost is a wildcard or loopback address.
@@ -341,7 +341,7 @@ only).
 
 Flags:
 ${DIR_FLAG_HELP}
-  --host=<host>    Host remote clients dial, to check cert SAN coverage
+  --host=<host>    Host remote clients dial, to check cert SAN coverage (default: the host recorded in agent.yaml by agent init, or by rotate-token/rotate-cert --host)
   --json           Emit a single-line JSON record instead of the human summary
   -h, --help       Show this help
 `;
@@ -523,6 +523,9 @@ function assignInitValueFlag(flags: InitFlags, k: string, v: string): string | n
       flags.dir = v;
       break;
     case "--host":
+      if (v.trim() === "") {
+        return "agent init: --host requires a host; omit --host to use the default 127.0.0.1";
+      }
       flags.host = v;
       break;
     case "--port": {
@@ -661,6 +664,7 @@ async function runInit(args: string[]): Promise<number> {
     keyPath: cert.keyPath,
     tokenHash: token.hash,
     fingerprint: cert.fingerprint,
+    advertisedHost: f.host,
   };
   agentConfigMod.saveAgentConfig(config, configPath);
 
@@ -728,9 +732,15 @@ async function runInit(args: string[]): Promise<number> {
 interface RotateTokenFlags {
   dir: string;
   host: string;
+  hostExplicit: boolean;
   tokenOut?: string;
   graceSeconds?: number;
   json: boolean;
+}
+
+function recordedHost(f: { host: string; hostExplicit: boolean }): { advertisedHost?: string } {
+  if (!f.hostExplicit) return {};
+  return { advertisedHost: f.host };
 }
 
 const GRACE_UNIT_SECONDS: Record<string, number> = { s: 1, m: 60, h: 3600, d: 86400 };
@@ -762,7 +772,10 @@ function assignRotateTokenValueFlag(flags: RotateTokenFlags, k: string, v: strin
       flags.dir = v;
       return null;
     case "--host":
+      if (v.trim() === "")
+        return "agent rotate-token: --host requires a host; omit --host to keep the recorded advertised host";
       flags.host = v;
+      flags.hostExplicit = true;
       return null;
     case "--token-out":
       if (v === "") return "agent rotate-token: --token-out requires a path";
@@ -783,6 +796,7 @@ function parseRotateTokenFlags(args: string[]): RotateTokenFlags | { error: stri
   const flags: RotateTokenFlags = {
     dir: agentConfigMod.defaultAgentDir(),
     host: "127.0.0.1",
+    hostExplicit: false,
     json: false,
   };
   for (const arg of args) {
@@ -968,6 +982,7 @@ export async function runRotateToken(args: string[]): Promise<number> {
     ...existing,
     tokenHash: token.hash,
     ...(grace !== undefined ? { bearerTokens: grace.bearerTokens } : {}),
+    ...recordedHost(f),
   };
   agentConfigMod.saveAgentConfig(updated, configPath);
 
@@ -1134,6 +1149,7 @@ export function runSetToken(args: string[]): number {
 interface RotateCertFlags {
   dir: string;
   host: string;
+  hostExplicit: boolean;
   sans: string[];
   tokenFile?: string;
   json: boolean;
@@ -1144,6 +1160,7 @@ function parseRotateCertFlags(args: string[]): RotateCertFlags | { error: string
   const flags: RotateCertFlags = {
     dir: agentConfigMod.defaultAgentDir(),
     host: "127.0.0.1",
+    hostExplicit: false,
     sans: [],
     json: false,
     loopbackSan: true,
@@ -1164,7 +1181,13 @@ function parseRotateCertFlags(args: string[]): RotateCertFlags | { error: string
         flags.dir = v;
         break;
       case "--host":
+        if (v.trim() === "")
+          return {
+            error:
+              "agent rotate-cert: --host requires a host; omit --host to keep the recorded advertised host",
+          };
         flags.host = v;
+        flags.hostExplicit = true;
         break;
       case "--san":
         flags.sans.push(
@@ -1265,7 +1288,14 @@ export async function runRotateCert(args: string[]): Promise<number> {
     });
     renameSync(cert.keyPath, existing.keyPath);
     renameSync(cert.certPath, existing.certPath);
-    agentConfigMod.saveAgentConfig({ ...existing, fingerprint: cert.fingerprint }, configPath);
+    agentConfigMod.saveAgentConfig(
+      {
+        ...existing,
+        fingerprint: cert.fingerprint,
+        ...recordedHost(f),
+      },
+      configPath,
+    );
 
     const blob =
       token === null

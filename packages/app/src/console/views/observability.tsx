@@ -12,6 +12,7 @@ import { useNodeTrpc } from "../node-trpc";
 import { consoleHref } from "../router";
 import { dashboardPolling, refreshPeriods, requestLimits } from "./dashboard-settings";
 import { RequestChart, SlotActivity } from "./dashboard-visuals";
+import { BrowserRequestInspector, FleetRequestInspector } from "./request-inspector";
 import "./observability.css";
 
 type Outputs = inferRouterOutputs<AppRouter>;
@@ -514,6 +515,7 @@ function NodeRuns({
       {workloads.map((workload) => (
         <WorkloadRuns key={workload.workload} node={node} workload={workload} settings={settings} />
       ))}
+      <FleetRequestInspector node={node} settings={settings} />
       <NodeBenchmarks settings={settings} />
     </section>
   );
@@ -703,7 +705,12 @@ export function ObservabilityView({ mode }: { mode: "stats" | "runs" }): React.J
       {catalog.isError ? <p role="alert">Fleet inventory unavailable.</p> : null}
       {catalog.isPending ? <p>Loading fleet inventory…</p> : null}
       {catalog.isSuccess && nodes.length === 0 ? <p>No agent nodes registered.</p> : null}
-      {mode === "runs" ? <PenumbraRuns settings={settings} /> : null}
+      {mode === "runs" ? (
+        <>
+          <BrowserRequestInspector settings={settings} />
+          <PenumbraRuns settings={settings} />
+        </>
+      ) : null}
       <div className="dashboard-nodes">
         {visibleNodes.map((name) => (
           <NodeScopedProvider key={name} node={name}>

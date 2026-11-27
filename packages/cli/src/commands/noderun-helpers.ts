@@ -122,3 +122,15 @@ export function formatNodeRunBudget(budget: { memoryGiB: number } | undefined): 
     ? `${budget.memoryGiB.toFixed(1)} GiB (spec.budget.memoryGiB)`
     : "computed from node memory x safetyMarginRatio";
 }
+
+/** Part of #519: format the live nodeBudget source for describe node output. */
+export function formatNodeBudgetSource(
+  budgetSource: "noderun" | "computed",
+  safetyMarginRatio?: { value: number; defaulted: boolean },
+): string {
+  if (budgetSource === "noderun") return "spec.budget.memoryGiB";
+  if (!safetyMarginRatio) return formatNodeRunBudget(undefined);
+  return `computed from node memory x ${formatResidencyKnobs({
+    knobs: [{ name: "safetyMarginRatio", ...safetyMarginRatio }],
+  })}`;
+}
