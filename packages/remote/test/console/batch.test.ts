@@ -37,6 +37,7 @@ const ALLOWED = [
   "nodeList",
   "nodeTest",
   "nodeFacts",
+  "residencyStatus",
   "serverStatus",
   "workloadList",
   "workloadDescribe",
@@ -80,6 +81,100 @@ describe("console allowlist", () => {
       expect(spy.calls).toEqual([]);
     });
   }
+
+  test("residencyStatus is node-scoped and projects only console status fields", async () => {
+    const spy = makeSpyBackend({
+      residencyStatus: {
+        node: "local",
+        store: {
+          path: "/sensitive/residency.db",
+          scope: "serving-process",
+          present: true,
+          nonterminal: [{ operationId: "op-one", phase: "pending", reservationGiB: 3 }],
+        },
+        lifecycle: {
+          status: "available",
+          scope: "serving-process",
+          workloads: [{ model: "w1", state: "loading", ownerId: "private-owner" }],
+        },
+        leases: { status: "unavailable", scope: "serving-process", reason: "NoRegistry" },
+        omlxNative: {
+          scope: "serving-process",
+          workloads: [
+            { workload: "o1", mode: "native", modelState: "discovered", endpoint: "private" },
+          ],
+        },
+        managed: {
+          ownerNodeId: "worker-a",
+          ledger: "available",
+          profile: { kind: "selected", profile: "interactive", operationId: "private-op" },
+          budgetGiB: 24,
+          claims: [
+            { workload: "w1", kind: "ModelRun", state: "resident", allocationGiB: 8, pid: 10 },
+          ],
+          execution: [
+            {
+              group: "metal",
+              executing: 1,
+              queued: 2,
+              queuedBytes: 441,
+              oldestQueuedWaitMs: 185,
+              fenced: true,
+            },
+          ],
+        },
+        sessions: { sessions: [{ sessionId: "private-session" }] },
+      },
+    });
+    const h = await startConsole(api(), {
+      distPath: consoleTestFixture().distPath,
+      backend: spy.router,
+    });
+
+    const denied = await fetch(trpcUrl(h, "residencyStatus", { input: { node: "another-node" } }), {
+      headers: apiHeaders(h),
+    });
+    expect(denied.status).toBe(400);
+    expect(spy.calls).toEqual([]);
+
+    const allowed = await fetch(trpcUrl(h, "residencyStatus", { input: { node: "local" } }), {
+      headers: apiHeaders(h),
+    });
+    expect(allowed.status).toBe(200);
+    expect(await allowed.json()).toEqual({
+      result: {
+        data: {
+          node: "local",
+          store: {
+            scope: "serving-process",
+            present: true,
+            nonterminal: [{ operationId: "op-one", phase: "pending" }],
+          },
+          lifecycle: {
+            scope: "serving-process",
+            status: "available",
+            workloads: [{ model: "w1", state: "loading" }],
+          },
+          leases: { scope: "serving-process", status: "unavailable" },
+          omlxNative: {
+            scope: "serving-process",
+            workloads: [{ workload: "o1", mode: "native", modelState: "discovered" }],
+          },
+          managed: {
+            ownerNodeId: "worker-a",
+            ledger: "available",
+            profile: { kind: "selected", profile: "interactive" },
+            budgetGiB: 24,
+            claims: [{ workload: "w1", kind: "ModelRun", state: "resident", allocationGiB: 8 }],
+            execution: [
+              { group: "metal", executing: 1, queued: 2, oldestQueuedWaitMs: 185, fenced: true },
+            ],
+          },
+        },
+      },
+    });
+    expect(spy.calls.map((call) => call.path)).toEqual(["residencyStatus"]);
+  });
 
   test("(R6) CONSOLE_ALLOWLIST permits only the specified reads and serverStop", () => {
     const r = api();
@@ -224,7 +319,7 @@ describe("console batch guard", () => {
       distPath: consoleTestFixture().distPath,
       backend: spy.router,
     });
-    const segments = [...ALLOWED, "keepAliveStart", "pullFile", "nodeOpenAIConfig"].join(",");
+    const segments = [...ALLOWED, "keepAliveStart", "nodeOpenAIConfig"].join(",");
     expect(segments.split(",")).toHaveLength(17);
     const res = await fetch(trpcUrl(h, segments, { batch: true, input: {} }), {
       headers: apiHeaders(h),

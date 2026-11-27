@@ -1,6 +1,7 @@
 import type { spawn as nodeSpawn } from "node:child_process";
 
 import { openAggregatorDb, writeSnapshot } from "@llamactl/fleet-supervisor";
+import { recordMeasuredMemoryCalibration } from "@llamactl/fleet-supervisor/measured-memory";
 import { describe, expect, mock, spyOn, test } from "bun:test";
 import { tmpdir, totalmem } from "node:os";
 import { join } from "node:path";
@@ -1935,6 +1936,79 @@ describe("applyManifest — kind dispatch", () => {
     if (envelope.known) expect(envelope.envelopeBytes).toBe(gib * 1024 ** 3);
     return envelope;
   };
+
+  test("durable calibration reaches local ModelHost admission only for its fresh exact identity", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-durable-calibration-"));
+    const calibrationStorePath = join(tmp, "calibrations.sqlite");
+    const { client, startSubscribes } = makeResidencyAdmissionClient();
+    try {
+      expect(
+        recordMeasuredMemoryCalibration(
+          {
+            key: ENVELOPE_KEY_INPUT,
+            samples: [
+              {
+                status: "ok",
+                source: "fixture",
+                observedAtMs: ENVELOPE_NOW_MS,
+                processBytes: 2 * 1024 ** 3,
+                processDeviceBytes: 18 * 1024 ** 3,
+                sharedDeviceBytes: 100 * 1024 ** 3,
+              },
+            ],
+            options: { minSamples: 1, overheadFraction: 0 },
+          },
+          calibrationStorePath,
+        ),
+      ).toMatchObject({ ok: true, recorded: true });
+
+      async function apply(
+        name: string,
+        key: string,
+        nowMs: number,
+        node = "local",
+      ): Promise<Awaited<ReturnType<typeof applyManifest>>> {
+        const manifest = makeModelHostManifest(name, 6);
+        const residencyAdmission: NonNullable<
+          Parameters<typeof applyManifest>[0]["residencyAdmission"]
+        > = {
+          getNodeResidencyPolicy: () => ({}),
+          getMeasuredEnvelope: () => null,
+          getCandidateCalibrationKey: () => key,
+          nowMs: () => nowMs,
+          maxAgeMs: 1000,
+          calibrationStorePath,
+        };
+        return await applyManifest({
+          manifest: { ...manifest, spec: { ...manifest.spec, node } },
+          getClient: () => client,
+          getNodeBudgetGiB: () => 16,
+          workloadsDir: join(tmp, "workloads"),
+          env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp },
+          residencyAdmission,
+        });
+      }
+
+      const fresh = await apply("calibration-match", ENVELOPE_KEY, ENVELOPE_NOW_MS + 1000);
+      expect(fresh).toMatchObject({ ok: false, reason: "BudgetExceeded" });
+      if (!fresh.ok) expect(fresh.error).toContain("20.0 GiB");
+      expect(startSubscribes.count).toBe(0);
+
+      const mismatched = memoryCalibrationKey({ ...ENVELOPE_KEY_INPUT, ctx: 16384 })!;
+      expect(await apply("calibration-mismatch", mismatched, ENVELOPE_NOW_MS)).toMatchObject({
+        ok: true,
+      });
+      expect(await apply("calibration-stale", ENVELOPE_KEY, ENVELOPE_NOW_MS + 1001)).toMatchObject({
+        ok: true,
+      });
+      expect(
+        await apply("calibration-remote", ENVELOPE_KEY, ENVELOPE_NOW_MS, "peer"),
+      ).toMatchObject({ ok: true });
+      expect(startSubscribes.count).toBe(3);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 
   test("ModelHost admission charges a measured envelope above the declared value under a NodeRun residency policy", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-measured-"));

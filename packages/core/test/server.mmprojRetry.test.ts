@@ -12,6 +12,7 @@ import { resolveEnv } from "../src/env.js";
 import { processCommand } from "../src/pidIdentity.js";
 import { existsSync, mkdirSync, writeFileSync } from "../src/safe-fs.js";
 import {
+  prepareManagedServerStart,
   readServerPid,
   readServerState,
   type ServerEvent,
@@ -1012,6 +1013,46 @@ describe("startServer mmproj safe-flag retry bookkeeping", () => {
       expect(readServerPid(KEY, resolved)).toBe(firstPid);
       expect(withoutStartedAt(readServerState(KEY, resolved))).toEqual(expectedState(firstPid));
       expect(kills.nonPositive).toEqual([]);
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "a managed mmproj retry rechecks spawn eligibility after verifying the first process stopped",
+    async () => {
+      let refused = false;
+      const prepared = prepareManagedServerStart({
+        key: KEY,
+        target: "current",
+        resolved,
+        binary,
+        endpoint: { host: HOST, port: PORT },
+        extraArgs,
+        identity,
+        timeoutSeconds: 1,
+        skipTuned: true,
+        engineScope: null,
+        onEvent: recordingLaunches((event) => {
+          if (event.type === "retry" && event.reason === "mmproj safe-flag retry") refused = true;
+        }),
+      });
+      if ("result" in prepared) throw new Error(prepared.result.error);
+
+      const result = await trackStart(
+        prepared.start(
+          () => undefined,
+          () => (refused ? "admission changed before retry spawn" : undefined),
+        ),
+      );
+      expect(refused).toBe(true);
+      expect(launches).toHaveLength(1);
+      expect(isAlive(launches[0]!.pid)).toBe(false);
+      expect(readServerPid(KEY, resolved)).toBeNull();
+      expect(result).toMatchObject({
+        ok: false,
+        pid: null,
+        error: "admission changed before retry spawn",
+      });
     },
     TEST_TIMEOUT_MS,
   );

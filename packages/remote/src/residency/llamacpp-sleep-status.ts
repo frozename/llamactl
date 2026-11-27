@@ -9,10 +9,30 @@ import type {
 
 import { isSleepResidency } from "@llamactl/core/residency/llamacpp-sleep";
 
-let nodeController: LlamacppSleepController | null = null;
+type SleepRuntimeGeneration = { pid: number; startedAt: string };
 
-export function setNodeLlamacppSleepController(controller: LlamacppSleepController | null): void {
+let nodeController: LlamacppSleepController | null = null;
+let generationForMember: ((name: string) => SleepRuntimeGeneration | undefined) | undefined;
+
+export function setNodeLlamacppSleepController(
+  controller: LlamacppSleepController | null,
+  /** The generation captured when this controller adopted the runtime. */
+  readGeneration?: (name: string) => SleepRuntimeGeneration | undefined,
+): void {
   nodeController = controller;
+  generationForMember = controller === null ? undefined : readGeneration;
+}
+
+export function matchesLlamacppSleepGeneration(
+  name: string,
+  current: SleepRuntimeGeneration,
+): boolean {
+  try {
+    const recorded = generationForMember?.(name);
+    return recorded?.pid === current.pid && recorded.startedAt === current.startedAt;
+  } catch {
+    return false;
+  }
 }
 
 export function getNodeLlamacppSleepController(): LlamacppSleepController | null {

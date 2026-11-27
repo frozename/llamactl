@@ -187,6 +187,7 @@ export function makeSpyBackend(fixtures: Record<string, unknown> = {}): SpyBacke
       yield fixtures["pullFile"];
     }),
     reconcilerStart: mutation("reconcilerStart"),
+    residencyStatus: query("residencyStatus"),
     serverLogs: t.procedure.input(z.unknown()).subscription(async function* ({
       ctx,
       input,

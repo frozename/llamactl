@@ -2,6 +2,7 @@
 
 import type { AnyProcedure, CreateRouterOptions } from "@trpc/server/unstable-core-do-not-import";
 
+import { RESIDENCY_STATES } from "@llamactl/core/residency/lifecycle";
 import { initTRPC, TRPCError } from "@trpc/server";
 import { createCallerFactory } from "@trpc/server/unstable-core-do-not-import";
 import { z } from "zod";
@@ -185,6 +186,98 @@ function maskLineSecrets(value: unknown): unknown {
   return value;
 }
 
+const residencyDisplayId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/);
+const servingProcess = z.literal("serving-process");
+const consoleResidencyStatus = z.object({
+  node: residencyDisplayId,
+  lifecycle: z
+    .discriminatedUnion("status", [
+      z.object({ scope: servingProcess, status: z.literal("unavailable") }),
+      z.object({
+        scope: servingProcess,
+        status: z.literal("available"),
+        workloads: z.array(
+          z.object({ model: residencyDisplayId, state: z.enum(RESIDENCY_STATES) }),
+        ),
+      }),
+    ])
+    .optional(),
+  leases: z
+    .discriminatedUnion("status", [
+      z.object({ scope: servingProcess, status: z.literal("unavailable") }),
+      z.object({
+        scope: servingProcess,
+        status: z.literal("available"),
+        workloads: z.array(
+          z.object({
+            workload: residencyDisplayId,
+            phase: z.enum(["open", "draining", "unloaded"]),
+          }),
+        ),
+      }),
+    ])
+    .optional(),
+  managed: z
+    .object({
+      ownerNodeId: residencyDisplayId,
+      ledger: z.enum(["available", "unavailable"]),
+      profile: z.discriminatedUnion("kind", [
+        z.object({ kind: z.literal("selected"), profile: z.string().min(1) }),
+        z.object({ kind: z.enum(["unselected", "switching", "unknown"]) }),
+      ]),
+      budgetGiB: z.number().nonnegative().nullable(),
+      claims: z.array(
+        z.object({
+          workload: residencyDisplayId,
+          kind: z.enum(["ModelRun", "ModelHost"]).nullable(),
+          state: z.enum(["pending", "resident", "uncertain"]),
+          allocationGiB: z.number().nonnegative(),
+          inferenceHold: z.enum(["clear", "current", "prior", "unknown"]).optional(),
+        }),
+      ),
+      execution: z
+        .array(
+          z.object({
+            group: z.string().min(1),
+            executing: z.number().int().nonnegative(),
+            queued: z.number().int().nonnegative(),
+            oldestQueuedWaitMs: z.number().nonnegative().optional(),
+            fenced: z.boolean(),
+          }),
+        )
+        .nullable(),
+    })
+    .optional(),
+  store: z
+    .object({
+      scope: servingProcess,
+      present: z.boolean(),
+      nonterminal: z
+        .array(
+          z.object({ operationId: residencyDisplayId, phase: z.enum(["pending", "committed"]) }),
+        )
+        .optional(),
+    })
+    .optional(),
+  omlxNative: z
+    .object({
+      scope: servingProcess,
+      workloads: z.array(
+        z.object({
+          workload: residencyDisplayId,
+          mode: z.enum(["native", "process-fallback", "unknown"]),
+          modelState: z.enum(["discovered", "loading", "loaded", "missing", "unknown"]).optional(),
+        }),
+      ),
+    })
+    .optional(),
+});
+
+function projectResidencyStatus(out: unknown): unknown {
+  const parsed = consoleResidencyStatus.safeParse(out);
+  return parsed.success ? redactDeep(parsed.data) : null;
+}
+
 export const CONSOLE_ALLOWLIST: Record<string, ConsoleAllowlistEntry> = {
   benchHistory: {
     project: (out) =>
@@ -226,6 +319,19 @@ export const CONSOLE_ALLOWLIST: Record<string, ConsoleAllowlistEntry> = {
   },
   nodeTest: {
     project: (out) => redactDeep(maskCliEnv(out)),
+    type: "query",
+  },
+  residencyStatus: {
+    precheck: ({ node }, input) => {
+      if (node === null || !isRecord(input) || input["node"] !== node) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "residency status must use the console node",
+        });
+      }
+      return Promise.resolve();
+    },
+    project: projectResidencyStatus,
     type: "query",
   },
   serverLogs: {

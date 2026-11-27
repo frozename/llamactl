@@ -28,7 +28,11 @@
  */
 
 import { openaiProxy } from "@llamactl/core";
-import { getResidencyLeaseRegistry, type ResidencyLeases } from "@llamactl/core/residency/leases";
+import {
+  type DrainToken,
+  getResidencyLeaseRegistry,
+  type ResidencyLeases,
+} from "@llamactl/core/residency/leases";
 import {
   currentSessionRefcounts,
   type SessionRefcounts,
@@ -47,6 +51,7 @@ export interface FenceWorkloadStopOptions<R> {
   refuse: (f: StopFenceRefusal) => R;
   registry?: ResidencyLeases | null;
   sessions?: SessionRefcounts | null;
+  wait?: { timeoutMs: number; signal: AbortSignal | undefined };
 }
 
 async function withRouteWithdrawn<R>(workload: string, run: () => Promise<R>): Promise<R> {
@@ -58,20 +63,45 @@ async function withRouteWithdrawn<R>(workload: string, run: () => Promise<R>): P
   }
 }
 
+async function waitForStopLeases(
+  registry: ResidencyLeases,
+  token: DrainToken,
+  wait: NonNullable<FenceWorkloadStopOptions<unknown>["wait"]>,
+): Promise<StopFenceRefusal | undefined> {
+  const timeout = AbortSignal.timeout(wait.timeoutMs);
+  const signal = wait.signal === undefined ? timeout : AbortSignal.any([timeout, wait.signal]);
+  const idle = await registry.whenIdle(token, { signal });
+  const snapshot = registry.snapshot(token.workload);
+  if (snapshot.epoch !== token.epoch || snapshot.phase !== "draining") {
+    return { reason: "DrainInProgress", active: snapshot.active };
+  }
+  return !idle.idle || signal.aborted
+    ? { reason: "LeasesActive", active: snapshot.active }
+    : undefined;
+}
+
+function activeLeasesRefusal(active: string[]): StopFenceRefusal | undefined {
+  return active.length > 0 ? { reason: "LeasesActive", active } : undefined;
+}
+
 async function runFenced<R>(
   registry: ResidencyLeases,
   opts: FenceWorkloadStopOptions<R>,
 ): Promise<R> {
   const d = registry.beginDrain(opts.workload);
   if (!d.ok) {
-    if (d.reason === "AlreadyDraining") {
+    if (d.reason === "AlreadyDraining" || opts.wait !== undefined) {
       return opts.refuse({ reason: "DrainInProgress", active: registry.active(opts.workload) });
     }
     return await withRouteWithdrawn(opts.workload, opts.stop);
   }
-  if (d.active.length > 0) {
+  const refusal =
+    opts.wait === undefined
+      ? activeLeasesRefusal(d.active)
+      : await waitForStopLeases(registry, d.token, opts.wait);
+  if (refusal !== undefined) {
     registry.cancelDrain(d.token);
-    return opts.refuse({ reason: "LeasesActive", active: d.active });
+    return opts.refuse(refusal);
   }
   const sessions = opts.sessions === undefined ? currentSessionRefcounts() : opts.sessions;
   if (sessions !== null) {
@@ -107,6 +137,8 @@ async function runFenced<R>(
 export function fenceWorkloadStop<R>(opts: FenceWorkloadStopOptions<R>): Promise<R> {
   const registry = opts.registry === undefined ? getResidencyLeaseRegistry() : opts.registry;
   if (registry === null) {
+    if (opts.wait !== undefined)
+      return Promise.resolve(opts.refuse({ reason: "DrainInProgress", active: [] }));
     return withRouteWithdrawn(opts.workload, opts.stop);
   }
   return runFenced(registry, opts);

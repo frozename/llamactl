@@ -22,7 +22,10 @@ export function hashToken(token: string): string {
 }
 
 export function extractBearer(req: Request): string | null {
-  const h = req.headers.get("authorization");
+  return bearerFromHeader(req.headers.get("authorization"));
+}
+
+export function bearerFromHeader(h: string | null): string | null {
   if (!h) return null;
   if (!h.startsWith("Bearer ")) return null;
   const rest = h.slice("Bearer ".length).trim();

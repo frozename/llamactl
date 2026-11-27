@@ -14,7 +14,8 @@ import type { OkPlan, PlannerWorkload } from "@llamactl/core/residency/planner";
 import { createResidencyLeases } from "@llamactl/core/residency/leases";
 import { planProfileSwitch } from "@llamactl/core/residency/planner";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { tmpdir } from "node:os";
+import { createHash, randomUUID } from "node:crypto";
+import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { RESIDENCY_APPLY_PROFILE_FENCE_OWNER } from "../../src/residency/apply-profile.js";
@@ -27,7 +28,7 @@ import {
   openResidencyOperationStore,
   readResidencyStoreSnapshot,
 } from "../../src/residency/store.js";
-import { existsSync, mkdtempSync, rmSync } from "../../src/safe-fs.js";
+import { existsSync, mkdtempSync, readlinkSync, rmSync } from "../../src/safe-fs.js";
 
 const BOOT_MODULE = "../../src/residency/boot-recovery.js" as string;
 
@@ -40,6 +41,7 @@ type BootRecoverySummary = {
   skipped: number;
   unrecognized: number;
   possiblyLive: number;
+  dispatchUnverified?: number;
 };
 
 type BootRecoveryStore = ReturnType<typeof openResidencyOperationStore>;
@@ -91,6 +93,8 @@ type SeedRow = {
   targetState?: string;
   desiredRevision?: number;
   nowMs?: number;
+  owner?: { ownerId: string; incarnation: string };
+  committed?: boolean;
 };
 
 // Leaves the same pending `profile-switch:<node>` row a crashed switch
@@ -99,7 +103,7 @@ type SeedRow = {
 function seedCrashRow(row: SeedRow = {}): void {
   const store = openResidencyOperationStore({ path });
   try {
-    const fence = store.claimOwnership({ ownerId: "agent", incarnation: "i1" });
+    const fence = store.claimOwnership(row.owner ?? { ownerId: "agent", incarnation: "i1" });
     const operationId = row.operationId ?? "op-crash";
     const begun = store.beginOperation({
       fenceToken: fence.fenceToken,
@@ -112,6 +116,16 @@ function seedCrashRow(row: SeedRow = {}): void {
     });
     if (!begun.ok) {
       throw new Error(`seed beginOperation(${operationId}) refused: ${begun.reason}`);
+    }
+    if (row.committed === true) {
+      expect(
+        store.commitReservation({
+          operationId,
+          fenceToken: fence.fenceToken,
+          nowMs: row.nowMs ?? 1,
+          expectedVersion: begun.record.version,
+        }),
+      ).toEqual({ ok: true });
     }
   } finally {
     store.close();
@@ -134,6 +148,15 @@ function nonterminalIds(): string[] {
     throw new Error(`expected a readable snapshot, got ${JSON.stringify(snap)}`);
   }
   return snap.nonterminal.map((record) => record.operationId);
+}
+
+function recordedProfileOwner(pid: number): NonNullable<SeedRow["owner"]> {
+  const namespace = process.platform === "linux" ? readlinkSync("/proc/self/ns/pid") : "darwin";
+  const host = createHash("sha256").update(`${hostname()}\0${namespace}`).digest("base64url");
+  return {
+    ownerId: RESIDENCY_APPLY_PROFILE_FENCE_OWNER,
+    incarnation: `profile-owner-v1:${host}:${String(pid)}:${randomUUID()}`,
+  };
 }
 
 describe("runProfileSwitchBootRecovery (#279 DF-06)", () => {
@@ -403,6 +426,99 @@ describe("runProfileSwitchBootRecovery (#279 DF-06)", () => {
     expect(old.recovered).toBe(1);
     expect(old.possiblyLive).toBe(0);
     expect(nonterminalIds()).toEqual([]);
+  });
+
+  test("a young pending reservation owned by an exited process is recovered without replacing the fence", async () => {
+    const recover = await loadBootRecovery();
+    const child = Bun.spawn([process.execPath, "-e", ""], { stdout: "ignore", stderr: "ignore" });
+    expect(await child.exited).toBe(0);
+    seedCrashRow({ owner: recordedProfileOwner(child.pid), nowMs: 50_000 });
+    const before = currentFence();
+
+    const result = recover({
+      path,
+      incarnation: "boot",
+      nowMs: () => 50_001,
+      write: () => undefined,
+    });
+
+    expect(result.status).toBe("recovered");
+    expect(result.recovered).toBe(1);
+    expect(nonterminalIds()).toEqual([]);
+    expect(currentFence()).toEqual(before);
+  });
+
+  test("a young committed switch survives owner exit recovery", async () => {
+    const recover = await loadBootRecovery();
+    const child = Bun.spawn([process.execPath, "-e", ""], { stdout: "ignore", stderr: "ignore" });
+    expect(await child.exited).toBe(0);
+    seedCrashRow({ owner: recordedProfileOwner(child.pid), nowMs: 50_000, committed: true });
+    const before = currentFence();
+
+    const result = recover({
+      path,
+      incarnation: "boot",
+      nowMs: () => 50_001,
+      write: () => undefined,
+    });
+
+    expect(result.status).toBe("deferred");
+    expect(nonterminalIds()).toEqual(["op-crash"]);
+    expect(currentFence()).toEqual(before);
+  });
+
+  test("a dispatch commit wins over early recovery's stale pending snapshot", async () => {
+    const recover = await loadBootRecovery();
+    const child = Bun.spawn([process.execPath, "-e", ""], { stdout: "ignore", stderr: "ignore" });
+    expect(await child.exited).toBe(0);
+    seedCrashRow({ owner: recordedProfileOwner(child.pid), nowMs: 50_000 });
+    const before = currentFence();
+    let opened = 0;
+
+    const result = recover({
+      path,
+      incarnation: "boot",
+      nowMs: () => 50_001,
+      write: () => undefined,
+      openStore: (storePath) => {
+        opened += 1;
+        const store = openResidencyOperationStore({ path: storePath });
+        const row = store.getOperation("op-crash");
+        if (row === null) throw new Error("missing pending operation");
+        expect(
+          store.commitReservation({
+            operationId: row.operationId,
+            fenceToken: row.fenceToken,
+            expectedVersion: row.version,
+            nowMs: 50_001,
+          }),
+        ).toEqual({ ok: true });
+        return store;
+      },
+    });
+
+    expect(opened).toBe(1);
+    expect(result.recovered).toBe(0);
+    expect(result.recordFailures).toBe(1);
+    expect(nonterminalIds()).toEqual(["op-crash"]);
+    expect(currentFence()).toEqual(before);
+  });
+
+  test("a recognized live profile owner is not fenced out after the staleness window", async () => {
+    const recover = await loadBootRecovery();
+    seedCrashRow({ owner: recordedProfileOwner(process.pid), nowMs: 1, committed: true });
+    const before = currentFence();
+
+    const result = recover({
+      path,
+      incarnation: "boot",
+      nowMs: () => 1 + PROFILE_SWITCH_BOOT_RECOVERY_MIN_AGE_MS,
+      write: () => undefined,
+    });
+
+    expect(result.status).toBe("deferred");
+    expect(nonterminalIds()).toEqual(["op-crash"]);
+    expect(currentFence()).toEqual(before);
   });
 
   // The window defaults on: a row stamped now is possibly live under the
@@ -759,6 +875,41 @@ describe("profile-switch step heartbeat against boot recovery (#279 DF-06)", () 
 });
 
 describe("boot recovery claim atomicity (#279 DF-06)", () => {
+  test("a dispatch committed after the read-only scan prevents the boot claim", async () => {
+    const recover = await loadBootRecovery();
+    seedCrashRow();
+    const before = currentFence();
+
+    const summary = recover({
+      path,
+      incarnation: "boot",
+      nowMs: () => 2 * PROFILE_SWITCH_BOOT_RECOVERY_MIN_AGE_MS,
+      write: () => undefined,
+      openStore: (storePath) => {
+        const writer = openResidencyOperationStore({ path: storePath });
+        try {
+          const row = writer.getOperation("op-crash");
+          if (row === null) throw new Error("missing pending operation");
+          expect(
+            writer.commitReservation({
+              operationId: row.operationId,
+              fenceToken: row.fenceToken,
+              expectedVersion: row.version,
+              nowMs: row.updatedAtMs,
+            }),
+          ).toEqual({ ok: true });
+        } finally {
+          writer.close();
+        }
+        return openResidencyOperationStore({ path: storePath });
+      },
+    });
+
+    expect(currentFence()).toEqual(before);
+    expect(nonterminalIds()).toEqual(["op-crash"]);
+    expect(summary).toMatchObject({ status: "deferred", dispatchUnverified: 1 });
+  });
+
   // Kills T1: with the re-check and the claim as separate statements, a CLI
   // can claim and begin a switch between them. Boot then claims over it and
   // stale-fences the live switch. Inside one IMMEDIATE transaction the CLI's

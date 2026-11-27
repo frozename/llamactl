@@ -1,5 +1,6 @@
 import type { PeerNode } from "@llamactl/core/config/peers";
 import type { ResidencyPolicy } from "@llamactl/core/residency/admission";
+import type { ColdEngineForwarder } from "@llamactl/core/residency/engine-forwarder";
 import type { ResolvedEnv } from "@llamactl/core/types";
 
 /**
@@ -25,6 +26,7 @@ import {
   catalogQualificationStages,
   listClusterRoutes,
   listLocalRoutes,
+  PEER_ROUTE_STALE_MS,
   type PeerSnapshot,
 } from "@llamactl/core/workloadRuntime";
 import { createHash, randomUUID } from "node:crypto";
@@ -93,7 +95,7 @@ export interface UnifiedProxyOptions {
 export interface UnifiedProxy {
   unifiedEnabled: boolean;
   describe(): { unified: boolean; executors: string[] };
-  handleRequest(req: Request): Promise<Response>;
+  handleRequest(req: Request, trustedColdOwner?: ColdEngineForwarder): Promise<Response>;
   shadowCatalog(): Promise<routingCatalog.RouteCatalog>;
 }
 
@@ -199,6 +201,7 @@ interface UnifiedDeps {
   now: () => number;
   nodeId: string;
   catalogForGate: () => Promise<routingCatalog.RouteCatalog | null>;
+  unroutedPeerAlias: (model: string) => PeerAliasEvidence;
   resolveCredentials?: UnifiedProxyOptions["resolveCredentials"];
   acquireExecutor?: UnifiedProxyOptions["acquireExecutor"];
   rankingSignals: () => routingRanking.RankingSignals;
@@ -262,27 +265,111 @@ function carriesSessionHeader(req: Request): boolean {
   return header !== null && header.trim() !== "";
 }
 
+function matchesDeclaredOwner(
+  candidate: routingCatalog.RouteCandidate,
+  declaration: routingCatalog.DeclaredModelEntryV1,
+): boolean {
+  const ad = candidate.advertisement;
+  return (
+    candidate.source === "legacy" &&
+    ad.transport === "local-http" &&
+    ad.ownerNodeId === declaration.ownerNodeId &&
+    routingCatalog.workloadOfDeployment(ad.deploymentId, ad.ownerNodeId) === declaration.workload
+  );
+}
+
+interface PeerAliasEvidence {
+  declared?: routingCatalog.DeclaredModelEntryV1;
+  denied?: routingCatalog.DeclaredModelEntryV1;
+  warm: boolean;
+}
+
+function tryUnroutedLocalColdCompletion(
+  peer: PeerAliasEvidence,
+  selection: ReturnType<typeof routingCatalog.selectCatalogCandidates> | null,
+  ctx: BackendExecutionContext,
+  declaration: routingCatalog.DeclaredModelEntryV1 | undefined,
+  bodyText: string | undefined,
+  owner: ColdEngineForwarder | undefined,
+): Promise<Response> | undefined {
+  if (
+    selection === null ||
+    selection.rejected.length > 0 ||
+    peer.declared !== undefined ||
+    peer.denied !== undefined ||
+    peer.warm ||
+    declaration?.ownerNodeId !== LOCAL_NODE_NAME ||
+    declaration.kind !== "ModelRun" ||
+    declaration.state === "ready" ||
+    new URL(ctx.req.url).pathname !== "/v1/completions" ||
+    owner === undefined ||
+    bodyText === undefined
+  )
+    return undefined;
+  return openaiProxy.forwardExactLocalColdCompletion(
+    ctx.req,
+    ctx.resolved,
+    declaration,
+    bodyText,
+    owner,
+  );
+}
+
 async function gatedExecute(
   deps: UnifiedDeps,
   model: string,
   features: routingCapabilities.RequiredFeatures,
   envelope: inferenceContracts.InferenceEnvelopeV1,
   ctx: BackendExecutionContext,
+  declaration: routingCatalog.DeclaredModelEntryV1 | undefined,
+  bodyText: string | undefined,
+  trustedColdOwner: ColdEngineForwarder | undefined,
 ): Promise<Response> {
   const catalog = await deps.catalogForGate();
-  if (catalog === null) return await deps.executor.execute(envelope, ctx);
-
   // #518: a default-target id is an implicit fall-through, not an exact
   // client pin, so experimental candidates for it stay excluded.
   const pinned = !openaiProxy.defaultTargetModelIds(ctx.resolved).has(model);
-  const selection = routingCatalog.selectCatalogCandidates(catalog, model, { pinned });
-  if (selection.eligible.length === 0 && selection.rejected.length === 0) {
+  const selection =
+    catalog === null ? null : routingCatalog.selectCatalogCandidates(catalog, model, { pinned });
+  const routes = selection?.eligible ?? [];
+  if (routes.length === 0) {
+    const peer = deps.unroutedPeerAlias(model);
+    const cold = pinned
+      ? tryUnroutedLocalColdCompletion(
+          peer,
+          selection,
+          ctx,
+          declaration,
+          bodyText,
+          trustedColdOwner,
+        )
+      : undefined;
+    if (cold !== undefined) return await cold;
+    declaration ??= pinned ? (peer.declared ?? peer.denied) : peer.denied;
+  }
+  const candidates =
+    declaration === undefined
+      ? routes
+      : routes.filter((candidate) => matchesDeclaredOwner(candidate, declaration));
+  const refusal = openaiProxy.declaredRouteRejection(declaration, candidates.length > 0, bodyText);
+  if (refusal !== null) return refusal;
+  if (selection === null || (candidates.length === 0 && selection.rejected.length === 0)) {
     return await deps.executor.execute(envelope, ctx);
   }
 
+  return await executeRouteCandidates(deps, features, envelope, ctx, candidates);
+}
+
+async function executeRouteCandidates(
+  deps: UnifiedDeps,
+  features: routingCapabilities.RequiredFeatures,
+  envelope: inferenceContracts.InferenceEnvelopeV1,
+  ctx: BackendExecutionContext,
+  candidates: readonly routingCatalog.RouteCandidate[],
+): Promise<Response> {
   const { eligible, rejected } = routingCapabilities.filterCandidatesByCapabilities(
     features,
-    selection.eligible,
+    candidates,
     (candidate) => candidate.advertisement.capabilities,
   );
   const candidate = routingRanking.pickRouteCandidate(eligible, {
@@ -322,7 +409,11 @@ async function gatedExecute(
   );
 }
 
-async function handleUnifiedRequest(deps: UnifiedDeps, req: Request): Promise<Response> {
+async function handleUnifiedRequest(
+  deps: UnifiedDeps,
+  req: Request,
+  trustedColdOwner: ColdEngineForwarder | undefined,
+): Promise<Response> {
   const url = new URL(req.url);
   const gate = await readGateInput(req);
   const forwarded = rebuildRequest(req, gate.bodyText);
@@ -355,16 +446,27 @@ async function handleUnifiedRequest(deps: UnifiedDeps, req: Request): Promise<Re
     deadline,
   };
   if (gate.model === null) return await deps.executor.execute(envelope, ctx);
-  // #280 DF-07: under unified ingress, a worker-rpc / acquired / fall-through
-  // executor never reaches proxyOpenAI's routed stale check, so refuse a stale
-  // declared pin here, before catalog, credential and executor work.
-  const stale = openaiProxy.staleDeclaredModelRejection(
+  const binding = openaiProxy.declaredModelBinding(gate.model, ctx.resolved);
+  const isDefault = openaiProxy.defaultTargetModelIds(ctx.resolved).has(gate.model);
+  const declaration =
+    isDefault &&
+    !routingCatalog.isDeclaredStaleReason(binding?.reason) &&
+    !openaiProxy.requiresManagedDefaultOwner(gate.model, ctx.resolved, binding)
+      ? undefined
+      : binding;
+  const bodyText = gate.bodyText ?? undefined;
+  const refusal = openaiProxy.declaredRouteRejection(declaration, true, bodyText);
+  if (refusal !== null) return refusal;
+  return await gatedExecute(
+    deps,
     gate.model,
-    ctx.resolved,
-    gate.bodyText ?? undefined,
+    features,
+    envelope,
+    ctx,
+    declaration,
+    bodyText,
+    trustedColdOwner,
   );
-  if (stale !== null) return stale;
-  return await gatedExecute(deps, gate.model, features, envelope, ctx);
 }
 
 let publishedPeerSnapshots = new Map<string, PeerSnapshot>();
@@ -467,6 +569,46 @@ export function createProxy(opts: UnifiedProxyOptions = {}): UnifiedProxy {
     return discoverPeers();
   }
 
+  function freshPeerAlias(
+    snapshots: ReadonlyMap<string, PeerSnapshot>,
+    model: string,
+  ): PeerAliasEvidence {
+    let warm = false;
+    for (const { id } of configuredPeers()) {
+      if (id === LOCAL_NODE_NAME || id === nodeId) continue;
+      const snapshot = snapshots.get(id);
+      if (snapshot === undefined || now() - snapshot.fetchedAt > PEER_ROUTE_STALE_MS) continue;
+      // Only the authenticated snapshot poller can publish a declaration.
+      const entry = snapshot.declaredProvenance?.entries.find(
+        (candidate) => candidate.id === model,
+      );
+      if (entry?.ownerNodeId === id) {
+        return {
+          warm,
+          declared: {
+            id: entry.id,
+            workload: entry.workload,
+            kind: entry.kind,
+            ownerNodeId: id,
+            state: entry.state === "ready" || entry.state === "loading" ? "cold" : entry.state,
+            autoLoadEligible: false,
+            reason: "peer-owner-required",
+          },
+        };
+      }
+      warm ||= snapshot.workloads.some((candidate) => candidate.modelId === model);
+    }
+    return { warm };
+  }
+
+  function unroutedPeerAlias(model: string): PeerAliasEvidence {
+    const snapshots = opts.peerSnapshots ?? publishedPeerSnapshots;
+    if (snapshots.size === 0) return { warm: false };
+    const denied = openaiProxy.retainedPeerDeclaration(model, snapshots, nodeId);
+    const fresh = freshPeerAlias(snapshots, model);
+    return denied === undefined ? fresh : { ...fresh, denied };
+  }
+
   function buildShadowCatalog(): routingCatalog.RouteCatalog {
     const resolvedEnv = resolve();
     const routes = listClusterRoutes(
@@ -496,6 +638,7 @@ export function createProxy(opts: UnifiedProxyOptions = {}): UnifiedProxy {
         return null;
       }
     },
+    unroutedPeerAlias,
     ...(opts.resolveCredentials !== undefined
       ? { resolveCredentials: opts.resolveCredentials }
       : {}),
@@ -508,8 +651,8 @@ export function createProxy(opts: UnifiedProxyOptions = {}): UnifiedProxy {
     unifiedEnabled: enabled,
     describe: () => ({ unified: enabled, executors: [executor.describe().id] }),
     shadowCatalog: () => Promise.resolve(buildShadowCatalog()),
-    handleRequest: async (req: Request): Promise<Response> =>
-      enabled ? await handleUnifiedRequest(deps, req) : await passthrough(req),
+    handleRequest: async (req, trustedColdOwner): Promise<Response> =>
+      enabled ? await handleUnifiedRequest(deps, req, trustedColdOwner) : await passthrough(req),
   };
 }
 
@@ -560,10 +703,17 @@ let sharedProxy: UnifiedProxy | null = null;
  * catalog construction — while "1" routes through the lazily created
  * shared unified composition.
  */
-export function dispatchProxyRequest(req: Request): Promise<Response> {
-  if (!unifiedProxyEnabled()) return openaiProxy.proxyOpenAI(req);
+export function dispatchProxyRequest(
+  req: Request,
+  trustedColdOwner?: ColdEngineForwarder,
+): Promise<Response> {
+  if (!unifiedProxyEnabled()) {
+    return trustedColdOwner === undefined
+      ? openaiProxy.proxyOpenAI(req)
+      : openaiProxy.proxyOpenAI(req, undefined, { trustedColdOwner });
+  }
   sharedProxy ??= createSharedUnifiedProxy();
-  return sharedProxy.handleRequest(req);
+  return sharedProxy.handleRequest(req, trustedColdOwner);
 }
 
 export function __setSharedUnifiedProxyForTests(proxy: UnifiedProxy | null): void {

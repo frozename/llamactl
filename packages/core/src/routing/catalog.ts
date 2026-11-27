@@ -597,3 +597,73 @@ export const DeclaredModelEntryV1Schema = z
     }
   });
 export type DeclaredModelEntryV1 = z.infer<typeof DeclaredModelEntryV1Schema>;
+
+export const PEER_DECLARATION_PROVENANCE_HEADER = "x-llamactl-declaration-provenance";
+export const PEER_DECLARATION_INVENTORY_HEADER = "x-llamactl-declaration-inventory";
+
+const PeerEmptyDeclarationInventorySchema = z.strictObject({
+  schemaVersion: z.literal(2),
+  ownerNodeId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/),
+  complete: z.literal(true),
+  entries: z.tuple([]),
+});
+
+export type PeerEmptyDeclarationInventory = z.infer<typeof PeerEmptyDeclarationInventorySchema>;
+
+export function readEmptyPeerDeclarationInventory(
+  value: unknown,
+  ownerNodeId: string,
+): PeerEmptyDeclarationInventory | undefined {
+  const parsed = PeerEmptyDeclarationInventorySchema.safeParse(value);
+  return parsed.success && parsed.data.ownerNodeId === ownerNodeId ? parsed.data : undefined;
+}
+
+const publishedDigest = z.string().regex(/^sha256:[0-9a-f]{64}$/);
+const peerModelId = z
+  .string()
+  .min(1)
+  .max(512)
+  .regex(/^[A-Za-z0-9_-][A-Za-z0-9._:/-]*$/)
+  .refine(
+    (id) =>
+      !id.includes(":/") &&
+      id.split("/").every((part) => part !== "" && part !== "." && part !== ".."),
+  );
+
+const PeerDeclarationEntryV1Schema = z
+  .strictObject({
+    id: peerModelId,
+    workload: z.string().regex(/^[a-z0-9][-a-z0-9]{0,62}$/),
+    kind: z.enum(["ModelRun", "ModelHost"]),
+    ownerNodeId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/),
+    state: DeclaredModelStateSchema,
+    artifactRevision: publishedDigest,
+    policyRevision: publishedDigest,
+    deploymentEpoch: z
+      .string()
+      .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/)
+      .optional(),
+  })
+  .refine((entry) => entry.state !== "ready" || entry.deploymentEpoch !== undefined);
+
+const PeerDeclarationProvenanceV1Schema = z.strictObject({
+  schemaVersion: z.literal(1),
+  entries: z.array(PeerDeclarationEntryV1Schema).min(1),
+});
+
+/** Evidence only. This companion neither publishes a route nor authorizes a load. */
+export type PeerDeclarationProvenanceV1 = z.infer<typeof PeerDeclarationProvenanceV1Schema>;
+
+export function readPeerDeclarationProvenance(
+  value: unknown,
+  ownerNodeId: string,
+): PeerDeclarationProvenanceV1 | undefined {
+  const parsed = PeerDeclarationProvenanceV1Schema.safeParse(value);
+  if (!parsed.success) return undefined;
+  const seen = new Set<string>();
+  for (const entry of parsed.data.entries) {
+    if (entry.ownerNodeId !== ownerNodeId || seen.has(entry.id)) return undefined;
+    seen.add(entry.id);
+  }
+  return parsed.data;
+}

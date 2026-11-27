@@ -1,4 +1,9 @@
-import type { AgentWorkerRpc, AgentWorkerRpcRelay } from "@llamactl/core/config/agent-config";
+import type {
+  AgentWorkerRpc,
+  AgentWorkerRpcRelay,
+  ExecutionAdmissionConfig,
+  ManagedColdModelRuns,
+} from "@llamactl/core/config/agent-config";
 
 import { inferenceRpc, nodeFacts, openaiProxy } from "@llamactl/core";
 import {
@@ -9,11 +14,16 @@ import {
 } from "@llamactl/core/engines/scope";
 import { resolveEnv } from "@llamactl/core/env";
 import {
+  type ColdEngineForwarder,
+  installLocalEngineForwarder,
+} from "@llamactl/core/residency/engine-forwarder";
+import {
   createResidencyLeases,
   getResidencyLeaseRegistry,
   type ResidencyLeases,
   setResidencyLeaseRegistry,
 } from "@llamactl/core/residency/leases";
+import { hasManagedRuntimeMarker } from "@llamactl/core/residency/managed-runtime";
 import {
   createSessionRefcounts,
   currentSessionRefcounts,
@@ -24,6 +34,8 @@ import { listLocalRoutes, migrateLegacySingletonRuntime } from "@llamactl/core/w
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
 import { join } from "node:path";
 
+import type { InferenceHolds } from "../residency/inference-holds.js";
+import type { ManagedLaunchAdmission } from "../residency/managed-launch-admission.js";
 import type { RequestAdmission } from "../residency/request-admission.js";
 import type { ModelRun } from "../workload/schema.js";
 
@@ -43,13 +55,18 @@ import {
   type DeclaredWorkloadPhase,
   listDeclaredModels,
 } from "../residency/catalog.js";
-import { createResidencyLeaseAuditSink, defaultResidencyStorePath } from "../residency/store.js";
+import { createOwnerAdmission, type OwnerAdmission } from "../residency/owner-admission.js";
+import {
+  createResidencyLeaseAuditSink,
+  defaultResidencyStorePath,
+  openResidencyOperationStore,
+} from "../residency/store.js";
 import {
   type AgentRouterContext,
   router as appRouter,
   directWorkloadProvenDown,
 } from "../router.js";
-import { handleFleetSnapshotRoute } from "../routes/fleet.js";
+import { type FleetSnapshotRouteOptions, handleFleetSnapshotRoute } from "../routes/fleet.js";
 import { existsSync, readFileSync } from "../safe-fs.js";
 import { type SearchIngestStop, startSearchIngest } from "../search/ingest/lifecycle.js";
 import {
@@ -82,6 +99,7 @@ import {
   unauthorizedResponse,
 } from "./auth.js";
 import { admitChatCompletions } from "./chat-admission.js";
+import { type ManagedColdOwnerFactory, prepareColdOwnerMount } from "./cold-owner-mount.js";
 import { handleInstallScript, type InstallScriptHandlerOptions } from "./install-script.js";
 import { publishAgentMdns, type PublishedAgent } from "./mdns.js";
 import {
@@ -96,6 +114,7 @@ import {
   openaiUpstreamErrorsTotal,
   setAgentRuntimeIdentity,
   setModelHostMetricsNode,
+  setOwnerAdmissionMetricsReader,
   setRuntimeProcessMemoryReader,
   statusClass,
 } from "./metrics.js";
@@ -168,6 +187,8 @@ export interface StartAgentOptions {
    * bump the dir mtime.
    */
   declaredModels?: boolean;
+  /** Authoritative owner evidence for negotiated peer GETs. Missing data publishes no proof. */
+  peerDeclarationProvenance?: () => unknown;
   /**
    * Override paths for the /register handler. Production leaves this
    * unset so the handler uses ~/.llamactl/bootstrap-tokens and
@@ -313,6 +334,13 @@ export interface StartAgentOptions {
    * principal; physical per-node accounting comes later.
    */
   chatCompletionsAdmission?: RequestAdmission;
+  /** Trusted host adapter for the two explicit agent start procedures. */
+  managedLaunchAdmission?: ManagedLaunchAdmission;
+  /** Explicit owner factory for authenticated local cold completion requests. */
+  managedColdOwnerFactory?: ManagedColdOwnerFactory;
+  managedColdModelRuns?: ManagedColdModelRuns;
+  executionAdmission?: ExecutionAdmissionConfig;
+  managedInferenceHolds?: InferenceHolds;
   /**
    * Per-role runtime memory budget. Sets the identity (role + optional
    * memory budget) so the Prometheus gauges emit per-role series. When
@@ -528,11 +556,15 @@ function authGateReject(
   return null;
 }
 
+type ServingAgentOptions = StartAgentOptions & {
+  trustedColdOwner?: ColdEngineForwarder | undefined;
+};
+
 async function handleOpenAIRoute(
   req: Request,
   url: URL,
   address: ClientAddress | null,
-  opts: StartAgentOptions,
+  opts: ServingAgentOptions,
   gate: NoAuthGate,
   server: AgentFetchServer,
   record = true,
@@ -554,9 +586,8 @@ async function handleOpenAIRoute(
       return Response.json(openaiProxy.projectModelsResponseBody(full, includeDeclared));
     }
     server.timeout?.(req, proxiedRouteIdleSeconds());
-    const res = record
-      ? await captureInference(req, url.pathname, () => dispatchProxyRequest(req))
-      : await dispatchProxyRequest(req);
+    const forward = (): Promise<Response> => dispatchProxyRequest(req, opts.trustedColdOwner);
+    const res = record ? await captureInference(req, url.pathname, forward) : await forward();
     status = res.status;
     if (status === 502) openaiUpstreamErrorsTotal.inc();
     return res;
@@ -720,6 +751,18 @@ function inspectCapturedRequest(req: Request, pathname: string, opts: StartAgent
   return REQUEST_ID.test(id) ? captureResponse(id) : new Response(null, { status: 404 });
 }
 
+function fleetSnapshotOptions(opts: StartAgentOptions): FleetSnapshotRouteOptions {
+  const snapshot: FleetSnapshotRouteOptions = {};
+  if (opts.fleetJournalPath !== undefined) snapshot.journalPath = opts.fleetJournalPath;
+  if (opts.noAuth !== true && opts.peerDeclarationProvenance !== undefined) {
+    snapshot.declaredProvenance = {
+      ownerNodeId: opts.nodeName ?? process.env["LLAMACTL_NODE_NAME"] ?? "agent",
+      read: opts.peerDeclarationProvenance,
+    };
+  }
+  return snapshot;
+}
+
 /**
  * Bearer-auth'd API routes: metrics, RAG-aware chat completions, the
  * fleet snapshot, and the OpenAI-compatible /v1 gateway. Order is
@@ -730,7 +773,7 @@ function handleAuthedApiRoutes(
   req: Request,
   url: URL,
   clientAddress: ClientAddress | null,
-  opts: StartAgentOptions,
+  opts: ServingAgentOptions,
   gate: NoAuthGate,
   server: AgentFetchServer,
 ): Response | Promise<Response> | null {
@@ -754,9 +797,7 @@ function handleAuthedApiRoutes(
   if (req.method === "GET" && url.pathname === "/v1/fleet/snapshot") {
     const denied = authGateReject(req, url.pathname, clientAddress, opts, gate);
     if (denied) return denied;
-    return handleFleetSnapshotRoute(req, {
-      ...(opts.fleetJournalPath !== undefined ? { journalPath: opts.fleetJournalPath } : {}),
-    });
+    return handleFleetSnapshotRoute(req, fleetSnapshotOptions(opts));
   }
   // #281 DF-08: the Anthropic Messages, OpenAI Responses and generic
   // completions ingresses share the chat-completions admission instance.
@@ -801,7 +842,7 @@ function handleChatCompletionsRoute(
   req: Request,
   url: URL,
   clientAddress: ClientAddress | null,
-  opts: StartAgentOptions,
+  opts: ServingAgentOptions,
   gate: NoAuthGate,
   server: AgentFetchServer,
 ): Response | Promise<Response> {
@@ -831,7 +872,7 @@ function handleAdmittedProxyRoute(
   req: Request,
   url: URL,
   clientAddress: ClientAddress | null,
-  opts: StartAgentOptions,
+  opts: ServingAgentOptions,
   gate: NoAuthGate,
   server: AgentFetchServer,
   admission: RequestAdmission,
@@ -913,12 +954,15 @@ function requestContext(
   if (opts.chatCompletionsAdmission !== undefined) {
     context.chatAdmission = opts.chatCompletionsAdmission;
   }
+  if (opts.managedLaunchAdmission !== undefined) {
+    context.managedLaunchAdmission = opts.managedLaunchAdmission;
+  }
   if (claims !== null) context.inferenceClaims = claims;
   return context;
 }
 
 function createAgentFetchHandler(args: {
-  opts: StartAgentOptions;
+  opts: ServingAgentOptions;
   endpoint: string;
   tunnelServer: TunnelServer | null;
   gate: NoAuthGate;
@@ -1325,6 +1369,7 @@ async function stopAgentServerResources(
   engineScope: ReturnType<typeof maybePublishEngineScope> | null,
   unregisterDeclaredModels: (() => void) | null,
   stopIngest: SearchIngestStop,
+  coldIdle?: () => Promise<void>,
 ): Promise<void> {
   // Worker-RPC attempts drain first, while their transports are up.
   await workerRpc?.drain();
@@ -1366,6 +1411,9 @@ async function stopAgentServerResources(
     // keep its pre-#610 timing. Bonjour's stop is bounded inside it: a
     // hung one must not keep the tunnel serving or hold stop() open.
     if (servedRequests !== null || mdns) await finalFlushWindow(servedRequests, mdns);
+    // A canceled cold request can return before its managed start settles.
+    // Keep the lease registry and runtime owner live until that verdict is recorded.
+    if (coldIdle !== undefined) await coldIdle();
     // After the worker-RPC drain, server.stop() and the final flush of
     // served requests, so in-flight bodies (which may hold leases) settle
     // against the published registry before the seam reverts (#278 DF-05).
@@ -1417,9 +1465,9 @@ function defaultActiveShare(bindings: readonly ServiceCredentialBinding[]): numb
 }
 
 /**
- * Prepares the one opt-in residency lease registry (DF-05, #278). Returns
- * null unless `opts.residencyLeases` is true, so the default path only does a
- * null check, opens nothing and never reads or writes the process-wide seam.
+ * Prepares the residency lease registry (DF-05, #278) for explicit leases
+ * or owner execution groups. The default path leaves the process-wide seam
+ * and the on-disk audit alone.
  * Otherwise it captures the seam's previous value, wires the registry's
  * onAudit sink to the node-local residency store (the forced-unload audit
  * survives a restart; the sink opens lazily on the first write and its close
@@ -1433,10 +1481,13 @@ function defaultActiveShare(bindings: readonly ServiceCredentialBinding[]): numb
 function maybePublishResidencyLeases(
   opts: StartAgentOptions,
 ): { registry: ResidencyLeases; publish: () => void; restore: () => void } | null {
-  if (opts.residencyLeases !== true) return null;
+  if (opts.residencyLeases !== true && !opts.executionAdmission?.length) return null;
   const previous = getResidencyLeaseRegistry();
   const previousSession = currentSessionRefcounts();
-  const auditSink = createResidencyLeaseAuditSink({ path: defaultResidencyStorePath() });
+  const auditSink = createResidencyLeaseAuditSink({
+    path: defaultResidencyStorePath(),
+    requireExisting: hasManagedRuntimeMarker(resolveEnv().LOCAL_AI_RUNTIME_DIR),
+  });
   const registry = createResidencyLeases({ onAudit: auditSink.onAudit });
   let sessionRefcounts: SessionRefcounts | null = null;
   if (opts.residencySessionIdleMs !== undefined) {
@@ -1488,6 +1539,42 @@ export function maybePublishEngineScope(
   };
 }
 
+function prepareExecutionHooks(opts: StartAgentOptions): {
+  hooks: ReturnType<typeof maybePublishEngineScope>;
+  owner?: OwnerAdmission;
+} {
+  const scope = maybePublishEngineScope(opts);
+  if (!opts.executionAdmission?.length && opts.managedInferenceHolds === undefined) {
+    return { hooks: scope };
+  }
+  const owner = createOwnerAdmission(opts.executionAdmission ?? [], {
+    noAuth: opts.noAuth === true && isLoopbackAddress(opts.bindHost ?? "127.0.0.1"),
+    ...(opts.managedInferenceHolds === undefined
+      ? {}
+      : { inferenceHolds: opts.managedInferenceHolds }),
+  });
+  let uninstall: (() => void) | undefined;
+  return {
+    owner,
+    hooks: {
+      publish: (): void => {
+        scope?.publish();
+        uninstall = installLocalEngineForwarder(owner.forward);
+        setOwnerAdmissionMetricsReader(owner.snapshot);
+      },
+      restore: (): void => {
+        if (uninstall !== undefined) {
+          owner.stop();
+          uninstall();
+          uninstall = undefined;
+          setOwnerAdmissionMetricsReader(null);
+        }
+        scope?.restore();
+      },
+    },
+  };
+}
+
 /**
  * Publishes this agent's worker-RPC host (P4.1). It advertises the
  * versions agent.yaml lists that this build speaks, read on every call,
@@ -1499,6 +1586,7 @@ export function maybePublishEngineScope(
 function maybePublishWorkerRpc(
   opts: StartAgentOptions,
   leases: ResidencyLeases | null,
+  ownerAdmission?: OwnerAdmission,
 ): WorkerRpcServing | null {
   const config = opts.workerRpc;
   if (config === undefined) return null;
@@ -1507,6 +1595,7 @@ function maybePublishWorkerRpc(
     workerId: config.workerId,
     ...(config.backends !== undefined ? { backends: config.backends } : {}),
     ...(leases !== null ? { residencyLeases: leases } : {}),
+    ...(ownerAdmission !== undefined ? { ownerAdmission } : {}),
     ...(opts.chatCompletionsAdmission !== undefined
       ? { admission: opts.chatCompletionsAdmission }
       : {}),
@@ -1597,6 +1686,17 @@ async function finalFlushWindow(
  * three mounts.
  */
 export function startAgentServer(opts: StartAgentOptions): RunningAgent {
+  if (
+    hasManagedRuntimeMarker(resolveEnv().LOCAL_AI_RUNTIME_DIR) &&
+    (opts.managedLaunchAdmission?.runOwnedLifecycle === undefined ||
+      opts.residencyLeases !== true ||
+      opts.noAuth === true)
+  ) {
+    throw new Error("ManagedOwnerRequired");
+  }
+  if (opts.executionAdmission?.length && opts.chatCompletionsAdmission !== undefined) {
+    throw new Error("executionAdmission requires the agent-wide chat admission cap to be disabled");
+  }
   const bindHost = opts.bindHost ?? "127.0.0.1";
   const port = opts.port ?? 0;
   const endpoint = opts.endpoint ?? "/trpc";
@@ -1631,11 +1731,23 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     // owner identity, so the #284 residencyApplyProfile mutation (#703), which
     // runs executeProfileSwitch, is never left Busy by it. This is recovery,
     // not activation: there is no opt-in flag.
-    runProfileSwitchBootRecovery({
+    const recovery = runProfileSwitchBootRecovery({
       path: defaultResidencyStorePath(),
       incarnation: `agent-boot:${String(process.pid)}:${crypto.randomUUID()}`,
       isProvenDown: directWorkloadProvenDown,
+      ...(opts.managedLaunchAdmission?.runOwnedLifecycle === undefined
+        ? {}
+        : {
+            openStore: (path: string): ReturnType<typeof openResidencyOperationStore> =>
+              openResidencyOperationStore({ path, requireExisting: true }),
+          }),
     });
+    if (
+      opts.managedLaunchAdmission?.runOwnedLifecycle !== undefined &&
+      (recovery.status === "failed" || recovery.status === "absent" || recovery.recordFailures > 0)
+    ) {
+      throw new Error("ManagedTransitionRecoveryFailed");
+    }
     if (noAuth) {
       warnNoAuthEnabled(allowPlainHttp);
     }
@@ -1694,6 +1806,24 @@ function applyAgentRuntimeIdentity(opts: StartAgentOptions): void {
   setRuntimeProcessMemoryReader(opts.processMemoryReader ?? defaultProcessMemoryReader());
 }
 
+function prepareServingColdOwner(
+  opts: StartAgentOptions,
+  warm: OwnerAdmission | undefined,
+): ReturnType<typeof prepareColdOwnerMount> {
+  if (opts.managedColdOwnerFactory === undefined) return undefined;
+  return prepareColdOwnerMount({
+    factory: opts.managedColdOwnerFactory,
+    managed: opts.managedLaunchAdmission,
+    warm,
+    executionAdmission: opts.executionAdmission,
+    managedRuntime: hasManagedRuntimeMarker(resolveEnv().LOCAL_AI_RUNTIME_DIR),
+    tls: opts.tls !== undefined,
+    noAuth: opts.noAuth === true,
+    declaredModels: opts.declaredModels === true,
+    residencyLeases: opts.residencyLeases === true,
+  });
+}
+
 function startAgentServerAfterHandlers(
   opts: StartAgentOptions,
   bind: {
@@ -1734,8 +1864,10 @@ function startAgentServerAfterHandlers(
   const gate = makeNoAuthGate(noAuth, bindHost);
 
   const leases = maybePublishResidencyLeases(opts);
-  const engineScope = maybePublishEngineScope(opts);
-  const workerRpc = maybePublishWorkerRpc(opts, leases?.registry ?? null);
+  const execution = prepareExecutionHooks(opts);
+  const engineScope = execution.hooks;
+  const cold = prepareServingColdOwner(opts, execution.owner);
+  const workerRpc = maybePublishWorkerRpc(opts, leases?.registry ?? null, execution.owner);
 
   const started: {
     server?: { stop(closeActive?: boolean): unknown };
@@ -1747,7 +1879,7 @@ function startAgentServerAfterHandlers(
     applyAgentRuntimeIdentity(opts);
 
     const baseFetchHandler = createAgentFetchHandler({
-      opts,
+      opts: { ...opts, trustedColdOwner: cold?.forward },
       endpoint,
       tunnelServer,
       gate,
@@ -1809,6 +1941,7 @@ function startAgentServerAfterHandlers(
         });
       },
       stop: async (): Promise<void> => {
+        cold?.stop();
         await stopAgentServerResources(
           workerRpc,
           onUncaughtException,
@@ -1822,12 +1955,14 @@ function startAgentServerAfterHandlers(
           engineScope,
           unregisterDeclaredModels,
           stopOwnIngest,
+          cold?.whenIdle,
         );
       },
       ...(tunnelServer ? { tunnelServer } : {}),
       ...(tunnelClient ? { tunnelClient } : {}),
     };
   } catch (err) {
+    cold?.stop();
     // Synchronous, best-effort rollback: each step is individually try/catch'd
     // so one failure cannot mask the original error or skip the others. The
     // rethrow reaches startAgentServer's early-step rollback, which stops

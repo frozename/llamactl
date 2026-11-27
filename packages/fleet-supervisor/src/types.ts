@@ -1,3 +1,6 @@
+import type { SleepResidency } from "@llamactl/core/residency/llamacpp-sleep";
+import type { SwapCounterSample, SwapRate } from "@llamactl/core/resources/memory";
+
 import type { WorkloadThroughputStats } from "./engine-throughput.js";
 
 /**
@@ -16,6 +19,8 @@ export interface NodeMemSnapshot {
   compressor_mb: number;
   swap_in: number;
   swap_out: number;
+  /** Cumulative host swap traffic in bytes with its own source and timestamp. */
+  swap_io?: SwapCounterSample;
   /** False when the probe failed or produced no parseable data. Absent means available. See `unavailable_reason`. */
   available?: boolean;
   /** Set only when `available` is false; absent when the snapshot is available. */
@@ -71,6 +76,8 @@ export interface SlotProgressReading {
   slots: SlotProgress[];
 }
 
+export type WorkloadProbeResidency = SleepResidency | "parked";
+
 export interface WorkloadSnapshot {
   name: string;
   kind: "ModelHost" | "ModelRun";
@@ -120,6 +127,10 @@ export interface WorkloadSnapshot {
    * mode where /health stays 200 but completions return 5xx.
    */
   completionProbe?: CompletionProbeSnapshot;
+  /** Owner-confirmed residency for this exact probe target during the tick. */
+  sleep?: SleepResidency;
+  /** Positive oMLX park proof from the owner, independent of HTTP liveness. */
+  parked?: true;
   /**
    * Declared expected memory in MiB, carried from WorkloadTarget.expectedMemoryMb.
    * Used by evaluateMigrationWorkloads to populate MigrationWorkload.spec.resources.memoryMb
@@ -143,6 +154,8 @@ export interface FleetSnapshotEntry {
   ts: string;
   node: string;
   node_mem: NodeMemSnapshot;
+  /** Read-only rate over the two latest local swap-counter samples. */
+  swapRate?: SwapRate;
   workloads: WorkloadSnapshot[];
   /**
    * Self-published scheduler-lease intent (derived leader election). Optional:

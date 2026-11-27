@@ -26,9 +26,10 @@ test("D2: gatedExecute keys the session split on the worker-rpc transport and sh
   // Kills: doc/source drift, or a private header literal.
   const createProxySrc = readOrEmpty(join(REPO, "packages/remote/src/proxy/create-proxy.ts"));
   const gated = enclosingBody(createProxySrc, "async function gatedExecute(");
-  expect(gated).not.toBe("");
-  expect(gated).toContain("carriesSessionHeader(");
-  expect(gated).toContain('transport === "worker-rpc"');
+  expect(gated).toContain("executeRouteCandidates(");
+  const execute = enclosingBody(createProxySrc, "async function executeRouteCandidates(");
+  expect(execute).toContain("carriesSessionHeader(");
+  expect(execute).toContain('transport === "worker-rpc"');
   expect(createProxySrc).toContain("openaiProxy.SESSION_HEADER");
 
   const openaiProxySrc = readOrEmpty(join(REPO, "packages/core/src/openaiProxy.ts"));

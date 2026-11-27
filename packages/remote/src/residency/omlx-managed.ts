@@ -22,7 +22,13 @@ import type {
   TargetAdmissionAuthority,
   TargetAdmissionClaimHandle,
 } from "../workload/admission.js";
-import type { NativeLoadResult, NativeUnloadResult, OmlxNativeClient } from "./engine-client.js";
+import type {
+  NativeLoadResult,
+  NativeUnloadResult,
+  OmlxNativeClient,
+  OmlxNativeLoadLease,
+  OmlxNativeLoadReceipt,
+} from "./engine-client.js";
 
 export type ManagedOmlxResidencyState = "unclaimed" | "pending" | "resident" | "uncertain";
 
@@ -31,6 +37,12 @@ export type ManagedEnsureLoadedResult =
   | { kind: "refused"; reason: "ResidencyUncertain" }
   | { kind: "refused"; reason: "AdmissionRefused"; admission: ManagedAdmissionRefuseReason }
   | { kind: "refused"; reason: "ClaimHeldElsewhere"; claimId: string };
+
+type ManagedOmlxLoadPublication = {
+  parked: Pick<OmlxNativeLoadLease, "registry" | "token">;
+  /** Commit or confirm the exact durable charge while the original drain is held. */
+  commitReady(receipt: OmlxNativeLoadReceipt): boolean;
+};
 
 export type ManagedOmlxResidencyOptions = {
   client: OmlxNativeClient;
@@ -42,6 +54,7 @@ export type ManagedOmlxResidencyOptions = {
   allocationGiB: number | undefined;
   budgetGiB: () => number | undefined;
   living?: () => readonly ManagedAdmissionClaim[];
+  loadPublication?: ManagedOmlxLoadPublication;
 };
 
 export type ManagedOmlxResidency = {
@@ -57,13 +70,64 @@ export type ManagedOmlxResidency = {
 function loadDemotesToUncertain(result: NativeLoadResult): boolean {
   // prettier-ignore
   return (
-    result.kind === "ambiguous" || (result.kind === "refused" && result.reason === "LoadInProgress") || (result.kind === "failed" && result.reason === "Conflict")
+    result.kind === "ambiguous" || (result.kind === "refused" && (result.reason === "LoadInProgress" || result.reason === "IdentityUnverified")) || (result.kind === "failed" && result.reason === "Conflict")
   );
+}
+
+function isLoaded(result: NativeLoadResult): boolean {
+  return result.kind === "loaded" || result.kind === "already-loaded";
+}
+
+async function loadWithClaim(
+  opts: ManagedOmlxResidencyOptions,
+  admitted: TargetAdmissionClaimHandle,
+  publication: ManagedOmlxLoadPublication | undefined,
+  alreadyResident: boolean,
+): Promise<NativeLoadResult> {
+  let committed = false;
+  const commitLocal = (): boolean => {
+    admitted.markResident();
+    committed = admitted.state() === "resident";
+    return committed;
+  };
+  const expectedLease: OmlxNativeLoadLease | undefined =
+    publication === undefined
+      ? undefined
+      : { ...publication.parked, phase: alreadyResident ? "open" : "unloaded" };
+  const result =
+    opts.client.loadWithCommit === undefined
+      ? await opts.client.load()
+      : await opts.client.loadWithCommit({
+          workload: opts.runtimeKey,
+          ...(expectedLease === undefined ? {} : { expectedLease }),
+          commitReady(receipt): boolean {
+            const durable: unknown =
+              publication === undefined ? true : publication.commitReady(receipt);
+            return durable === true && commitLocal();
+          },
+        });
+  if (!isLoaded(result)) return result;
+  const ready = opts.client.loadWithCommit === undefined ? commitLocal() : committed;
+  return ready
+    ? result
+    : { kind: "ambiguous", reason: "LoadUnconfirmed", reservation: "uncertain" };
 }
 
 export function createManagedOmlxResidency(
   opts: ManagedOmlxResidencyOptions,
 ): ManagedOmlxResidency {
+  const configuredPublication = opts.loadPublication;
+  const publication =
+    configuredPublication === undefined
+      ? undefined
+      : {
+          commitReady: (receipt: OmlxNativeLoadReceipt): boolean =>
+            configuredPublication.commitReady(receipt),
+          parked: {
+            registry: configuredPublication.parked.registry,
+            token: { ...configuredPublication.parked.token },
+          },
+        };
   let state: ManagedOmlxResidencyState = "unclaimed";
   let handle: TargetAdmissionClaimHandle | null = null;
   // One shared operation flight gates the whole layer: while a load or an
@@ -78,6 +142,12 @@ export function createManagedOmlxResidency(
     admitted.releaseUnstarted();
     handle = null;
     state = "unclaimed";
+  };
+
+  const retainUncertain = (admitted: TargetAdmissionClaimHandle): void => {
+    if (admitted.state() === "resident") admitted.demoteUncertain();
+    else admitted.markUncertain();
+    state = "uncertain";
   };
 
   const admitAndLoad = async (): Promise<ManagedEnsureLoadedResult> => {
@@ -104,33 +174,21 @@ export function createManagedOmlxResidency(
     // from the client means the load may already have reached the backend,
     // so the finally marks the claim uncertain instead of releasing it.
     try {
-      const result = await opts.client.load();
-      if (result.kind === "loaded" || result.kind === "already-loaded") {
-        admitted.markResident();
-        state = "resident";
-      } else if (loadDemotesToUncertain(result)) {
-        admitted.markUncertain();
-        state = "uncertain";
-      } else {
-        abandonClaim(admitted);
-      }
+      const result = await loadWithClaim(opts, admitted, publication, false);
+      if (isLoaded(result)) state = "resident";
+      else if (loadDemotesToUncertain(result)) retainUncertain(admitted);
+      else abandonClaim(admitted);
       return result;
     } finally {
-      if (admitted.state() === "pending") {
-        admitted.markUncertain();
-        state = "uncertain";
-      }
+      if (state === "pending") retainUncertain(admitted);
     }
   };
 
   const ensureLoadedInner = async (): Promise<ManagedEnsureLoadedResult> => {
     if (state === "resident" && handle !== null) {
       const held = handle;
-      const result = await opts.client.load();
-      if (loadDemotesToUncertain(result)) {
-        held.demoteUncertain();
-        state = "uncertain";
-      }
+      const result = await loadWithClaim(opts, held, publication, true);
+      if (loadDemotesToUncertain(result)) retainUncertain(held);
       return result;
     }
     return await admitAndLoad();
@@ -138,6 +196,9 @@ export function createManagedOmlxResidency(
 
   return {
     async ensureLoaded(): Promise<ManagedEnsureLoadedResult> {
+      if (publication !== undefined && opts.client.loadWithCommit === undefined) {
+        return { kind: "refused", reason: "IdentityUnverified" };
+      }
       if (state === "uncertain") return { kind: "refused", reason: "ResidencyUncertain" };
       if (unloadInFlight) return { kind: "refused", reason: "OperationInProgress" };
       if (flight !== null) return await flight;
@@ -163,7 +224,10 @@ export function createManagedOmlxResidency(
           }
           handle = null;
           state = "unclaimed";
-        } else if (result.reservation === "uncertain") {
+        } else if (
+          result.reservation === "uncertain" ||
+          (result.kind === "refused" && result.reason === "IdentityUnverified")
+        ) {
           if (handle !== null && state === "resident") {
             handle.demoteUncertain();
           }

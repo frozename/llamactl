@@ -774,6 +774,8 @@ describe("I1: clean install", () => {
     BASELINE_ENV.add("LLAMACTL_DECLARED_MODELS");
     // #278 (DF-05): opt-in residency lease registry read by `agent serve`, not the worker RPC.
     BASELINE_ENV.add("LLAMACTL_RESIDENCY_LEASES");
+    // #274: opt-in whole-process ownership on the serving agent.
+    BASELINE_ENV.add("LLAMACTL_MANAGED_RESIDENCY");
     // #520: opt-in session refcount idle timeout read by `agent serve`, not the worker RPC.
     BASELINE_ENV.add("LLAMACTL_RESIDENCY_SESSION_IDLE_MS");
     // #367: per-role runtime memory identity env fallbacks read by `agent serve`, not the worker RPC.

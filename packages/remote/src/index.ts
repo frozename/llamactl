@@ -186,6 +186,7 @@ export {
   writeLastRun,
 } from "./rag/pipeline/store.js";
 export type { CapturedRequest, RequestSummary } from "./request-capture/store.js";
+export type { ResidencyApplyProfileResult } from "./residency/apply-profile.js";
 export {
   type DirectLifecycleOpts,
   exclusiveGroupLaunchRefusal,
@@ -193,11 +194,21 @@ export {
   runDirectResidencyStop,
 } from "./residency/direct-lifecycle.js";
 export {
+  RESIDENCY_CONTROL_TOOL,
+  residencyControlInput,
+  type ResidencyControlResult,
+} from "./residency/managed-operator-control.js";
+export {
   effectiveResidencyPolicy,
   RESIDENCY_POLICY_KNOBS,
   type ResidencyPolicyKnob,
   type ResidencyStatusEffectivePolicy,
 } from "./residency/procedures.js";
+export {
+  MANAGED_PROFILE_PROTOCOL_VERSION,
+  RESIDENCY_APPLY_PROFILE_TOOL,
+  residencyApplyProfileToolInput,
+} from "./residency/profile-protocol.js";
 export {
   type AdmissionRejectCode,
   type AdmissionRequest,
@@ -208,6 +219,11 @@ export {
   type RequestAdmissionOptions,
 } from "./residency/request-admission.js";
 export { defaultResidencyStorePath } from "./residency/store.js";
+export {
+  type NodeManagedAdmissionOptions,
+  openNodeManagedAdmission,
+  type VerifiedNodeCapacity,
+} from "./residency/target-admission-policy.js";
 export {
   type AppRouter,
   BUILT_IN_PLANNER_TOOLS,
@@ -248,6 +264,7 @@ export {
   createChatCompletionsAdmission,
 } from "./server/chat-admission.js";
 export { type RunningAgent, type StartAgentOptions, startAgentServer } from "./server/serve.js";
+export { startManagedAgentServer } from "./server/start-managed-agent.js";
 export * as tls from "./server/tls.js";
 export * as tunnel from "./tunnel/index.js";
 export * as workloadApply from "./workload/apply.js";

@@ -2,6 +2,20 @@ import type { MachineProfile, presets, SafetyTier } from "@llamactl/core";
 
 import type { router as AppRouterType } from "../router.js";
 
+import {
+  residencyApplyProfileRefusal,
+  type ResidencyApplyProfileResult,
+} from "../residency/apply-profile.js";
+import {
+  RESIDENCY_CONTROL_TOOL,
+  residencyControlInput,
+  type ResidencyControlResult,
+} from "../residency/managed-operator-control.js";
+import {
+  MANAGED_PROFILE_PROTOCOL_VERSION,
+  RESIDENCY_APPLY_PROFILE_TOOL,
+  residencyApplyProfileToolInput,
+} from "../residency/profile-protocol.js";
 import { appendOpsChatAudit, hashArguments } from "./audit.js";
 
 type PresetName = presets.PresetName;
@@ -149,6 +163,16 @@ export const OPS_CHAT_TOOLS = [
   {
     name: "llamactl.reconciler.kick",
     tier: "mutation-dry-run-safe",
+    surfaces: OPS_CHAT_AND_MCP_SURFACES,
+  },
+  {
+    name: RESIDENCY_APPLY_PROFILE_TOOL,
+    tier: "mutation-destructive",
+    surfaces: OPS_CHAT_AND_MCP_SURFACES,
+  },
+  {
+    name: RESIDENCY_CONTROL_TOOL,
+    tier: "mutation-destructive",
     surfaces: OPS_CHAT_AND_MCP_SURFACES,
   },
   { name: "llamactl.residency.plan", tier: "read", surfaces: OPS_CHAT_AND_MCP_SURFACES },
@@ -560,6 +584,47 @@ async function executeMutationDryRunTool(
   }
 }
 
+async function runResidencyControl(
+  caller: Caller,
+  args: Record<string, unknown>,
+  dryRun: boolean,
+): Promise<ResidencyControlResult> {
+  const input = residencyControlInput.parse({ ...args, dryRun });
+  if (!dryRun && !input.confirm) {
+    return {
+      ok: false,
+      action: input.action,
+      node: input.node,
+      workload: input.workload,
+      reason: "ConfirmationRequired",
+    };
+  }
+  return await caller.residencyControl(input);
+}
+
+async function runResidencyApplyProfile(
+  caller: Caller,
+  args: Record<string, unknown>,
+  dryRun: boolean,
+): Promise<ResidencyApplyProfileResult> {
+  const { managed, ...input } = residencyApplyProfileToolInput.parse({ ...args, dryRun });
+  if (!dryRun && !input.confirm) {
+    return residencyApplyProfileRefusal({
+      node: input.node,
+      to: input.to,
+      from: input.from ?? null,
+      reason: "ConfirmationRequired",
+      detail: "a wet profile switch requires confirm: true",
+    });
+  }
+  return managed
+    ? await caller.residencyApplyManagedProfile({
+        ...input,
+        version: MANAGED_PROFILE_PROTOCOL_VERSION,
+      })
+    : await caller.residencyApplyProfile(input);
+}
+
 async function executeMutationDestructiveTool(
   caller: Caller,
   name: DestructiveToolName,
@@ -567,6 +632,10 @@ async function executeMutationDestructiveTool(
   dryRun: boolean,
 ): Promise<unknown> {
   switch (name) {
+    case RESIDENCY_APPLY_PROFILE_TOOL:
+      return await runResidencyApplyProfile(caller, args, dryRun);
+    case RESIDENCY_CONTROL_TOOL:
+      return await runResidencyControl(caller, args, dryRun);
     case "llamactl.catalog.promoteDelete": {
       const payload = {
         profile: requireString(args, "profile") as MachineProfile,
@@ -709,6 +778,24 @@ export function opsChatStopRefusal(
   return null;
 }
 
+function residencyToolRefusal(
+  name: OpsChatToolName,
+  result: unknown,
+): { code: string; message: string } | null {
+  const record = asRecord(result);
+  if (record?.["ok"] !== false) return null;
+  if (name === RESIDENCY_APPLY_PROFILE_TOOL) {
+    const reason = asRecord(record["refusal"])?.["reason"] ?? asRecord(record["busy"])?.["reason"];
+    const code = typeof reason === "string" ? reason : "ProfileSwitchFailed";
+    return { code, message: `Residency profile switch returned ${code}` };
+  }
+  if (name !== RESIDENCY_CONTROL_TOOL) return null;
+  const reason = record["reason"];
+  return typeof reason === "string"
+    ? { code: reason, message: `Managed residency control refused (${reason})` }
+    : null;
+}
+
 async function executeToolCall(
   caller: Caller,
   name: OpsChatToolName,
@@ -752,7 +839,9 @@ export async function dispatchOpsChatTool(
 
     const result = await executeToolCall(caller, input.name, input.arguments, input.dryRun);
 
-    const refusal = opsChatStopRefusal(input.name, input.arguments, result);
+    const refusal =
+      residencyToolRefusal(input.name, result) ??
+      opsChatStopRefusal(input.name, input.arguments, result);
     if (refusal !== null) {
       return {
         ok: false,

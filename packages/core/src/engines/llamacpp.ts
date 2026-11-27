@@ -14,6 +14,13 @@ const DRAFT_MODEL_PATH_FLAGS: ReadonlySet<string> = new Set([
   "--dspark",
 ]);
 
+export function hasDraftModelPathArg(args: readonly string[]): boolean {
+  return args.some((token) => {
+    const [flag = ""] = token.split("=", 1);
+    return DRAFT_MODEL_PATH_FLAGS.has(flag);
+  });
+}
+
 // Absolute draft paths pass through on purpose, matching the issue's "relative" wording.
 // Both the separate and the `--flag=value` forms are resolved.
 function resolveInlineDraftFlag(

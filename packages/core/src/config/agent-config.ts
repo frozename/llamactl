@@ -174,6 +174,51 @@ export const AgentBearerTokensSchema = z
   });
 export type AgentBearerTokens = z.infer<typeof AgentBearerTokensSchema>;
 
+const executionPort = z.number().int().min(1).max(65535);
+
+export const ExecutionAdmissionSchema = z
+  .array(
+    z.strictObject({
+      name: z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/),
+      foregroundPorts: z.array(executionPort).min(1),
+      backgroundPorts: z.array(executionPort).min(1),
+      foregroundConcurrency: z.number().int().min(1).max(64),
+      maxQueued: z.number().int().min(1).max(256),
+      maxQueuedBytes: z.number().int().min(1).max(134_217_728),
+      maxPerPrincipal: z.number().int().min(2).max(320),
+      maxQueueWaitMs: z.number().int().min(1).max(120_000),
+      starvationBoundMs: z.number().int().min(0).max(120_000),
+      maxCompletionTokens: z.number().int().positive().max(16_777_216).optional(),
+      maxContextTokens: z.number().int().positive().max(16_777_216).optional(),
+    }),
+  )
+  .max(16)
+  .refine(
+    (groups) => {
+      const ports = groups.flatMap((group) => [...group.foregroundPorts, ...group.backgroundPorts]);
+      return (
+        new Set(groups.map((group) => group.name)).size === groups.length &&
+        new Set(ports).size === ports.length
+      );
+    },
+    { message: "execution admission group names and engine ports must be unique" },
+  );
+
+export type ExecutionAdmissionConfig = z.infer<typeof ExecutionAdmissionSchema>;
+
+export const ManagedColdModelRunsSchema = z
+  .array(
+    z.strictObject({
+      workload: z.string().regex(/^[a-z0-9][-a-z0-9]{0,62}$/),
+      sha256: z.string().regex(SHA256_HEX),
+      maxArtifactBytes: z.number().int().positive(),
+    }),
+  )
+  .refine((entries) => new Set(entries.map(({ workload }) => workload)).size === entries.length, {
+    message: "managed cold workloads must be unique",
+  });
+export type ManagedColdModelRuns = z.infer<typeof ManagedColdModelRunsSchema>;
+
 export const AgentConfigSchema = z.object({
   apiVersion: z.literal("llamactl/v1"),
   kind: z.literal("AgentConfig"),
@@ -203,6 +248,8 @@ export const AgentConfigSchema = z.object({
    * it back as it was read.
    */
   workerRpc: z.unknown().optional(),
+  executionAdmission: ExecutionAdmissionSchema.optional(),
+  managedColdModelRuns: ManagedColdModelRunsSchema.optional(),
   /** Central's relay-only credentials; opaque here for the same reason. */
   workerRpcRelay: z.unknown().optional(),
   /**

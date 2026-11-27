@@ -106,7 +106,7 @@ export type NativeModelStatusObservation =
       residentEstimatedSize: number | null;
       engineType?: string;
     }
-  | { state: "failed"; reason: "ModelNotListed" | "MalformedStatus" };
+  | { state: "failed"; reason: "ModelNotListed" | "MalformedStatus" | "IdentityUnverified" };
 
 /**
  * "discovered" means listed by oMLX but not loaded, and is NOT serving-ready.
@@ -123,4 +123,4 @@ export type NativeModelResidency =
       actualSize: number | null;
       residentEstimatedSize: number | null;
     }
-  | { state: "failed"; reason: "ModelNotListed" | "MalformedStatus" };
+  | { state: "failed"; reason: "ModelNotListed" | "MalformedStatus" | "IdentityUnverified" };

@@ -44,11 +44,18 @@ function readConfiguredToken(config: Config): string | undefined {
   }
 }
 
-export function listPeers(opts?: { currentNodeName?: string }): PeerNode[] {
-  const config = loadConfig();
+export function listPeers(opts?: {
+  currentNodeName?: string;
+  requireConfig?: boolean;
+}): PeerNode[] {
+  const config = loadConfig(undefined, { requireFile: opts?.requireConfig === true });
   const context = currentContext(config);
   const cluster = config.clusters.find((candidate) => candidate.name === context.cluster);
-  if (!cluster) return [];
+  if (!cluster) {
+    if (opts?.requireConfig === true)
+      throw new Error(`cluster '${context.cluster}' is not configured`);
+    return [];
+  }
 
   const localNodeName = opts?.currentNodeName ?? LOCAL_NODE_NAME;
   const resolvedToken = readConfiguredToken(config);

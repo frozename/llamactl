@@ -208,8 +208,6 @@ const MCP_ONLY_EXCLUDED = new Set([
   "llamactl.fleet.supervisor.audit",
   "llamactl.fleet.supervisor.status",
   "llamactl.models.leaderboard",
-  // operator profile-switch mutation (#284 DF-11, this PR); Ops Chat projection is a later slice
-  "llamactl.residency.applyProfile",
   // operator cancel of an in-flight profile switch (#284 DF-11, this PR); Ops Chat projection is a later slice
   "llamactl.residency.cancelOperation",
   // operator-only destructive override (#278 DF-05); deliberately not in Ops Chat dispatch
@@ -305,6 +303,7 @@ describe("@llamactl/mcp read surface", () => {
       "llamactl.reconciler.kick",
       "llamactl.residency.applyProfile",
       "llamactl.residency.cancelOperation",
+      "llamactl.residency.control",
       "llamactl.residency.forceUnload",
       "llamactl.residency.plan",
       "llamactl.residency.releaseSession",
@@ -1234,7 +1233,7 @@ describe("@llamactl/mcp M.1 pipeline-tool pickup", () => {
     const llamactlTools = list.tools
       .map((t) => t.name)
       .filter((n) => n.startsWith("llamactl.") && !n.startsWith("llamactl.pipeline."));
-    expect(llamactlTools.length).toBe(61);
+    expect(llamactlTools.length).toBe(62);
   });
 });
 

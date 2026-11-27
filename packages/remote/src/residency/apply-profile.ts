@@ -10,8 +10,8 @@
  * `residencyPlanFor`) into the store so the reservation is budget-admitted; an
  * unknown budget keeps the pre-#276 behaviour and logs once to `args.log`. A
  * foreign fence, or any fence with a nonterminal `profile-switch:<node>` row,
- * is never claimed over — it reports busy without touching authority (see
- * `runWet` for the cross-process window that remains). The wet run also passes
+ * is never claimed over. Fence and reservation are recorded in one IMMEDIATE
+ * transaction before the executor can run steps. The wet run also passes
  * `operation.lifecycle` (the operation store plus a `groupOf` that reads the
  * `llamactl.io/residency-group` manifest label) into the executor, so each stop
  * and start drives its `residency_states` row, a corroborated exclusive-group
@@ -30,6 +30,7 @@ import type { OkPlan } from "@llamactl/core/residency/planner";
 import { server as serverMod } from "@llamactl/core";
 import { randomUUID } from "node:crypto";
 
+import type { ManagedLaunchAdmission } from "./managed-launch-admission.js";
 import type { ResidencyPlan } from "./procedures.js";
 
 import { existsSync } from "../safe-fs.js";
@@ -44,16 +45,24 @@ import {
 } from "../workload/store.js";
 import { residencyGroupLabelOf } from "./coordinator.js";
 import {
+  managedProfileTargetState,
+  withManagedProfilePermit,
+} from "./managed-profile-selection.js";
+import { isProfileDesiredCurrent, type ProfileDesiredSnapshot } from "./profile-desired.js";
+import { profileOwnerIncarnation, RESIDENCY_APPLY_PROFILE_FENCE_OWNER } from "./profile-owner.js";
+import {
   executeProfileSwitch,
   type ProfileSwitchExecutionReport,
   type ProfileSwitchExecutionStep,
   type ProfileSwitchExecutorDeps,
   profileSwitchOperationKey,
+  profileSwitchOperationRefusal,
   profileSwitchReservationGiB,
   type ProfileSwitchStepOutcome,
 } from "./profile-transition.js";
 import { reopenWorkloadAfterLoad } from "./stop-fence.js";
 import {
+  type BeginOperationResult,
   openResidencyOperationStore,
   type ResidencyLifecycleStore,
   type ResidencyOperationOutcome,
@@ -65,7 +74,7 @@ import {
 // uses (only the incarnation differs). #279 DF-06 agent-boot recovery claims
 // with it too, so a recovery claim never turns later apply-profile calls into
 // a foreign-owner Busy.
-export const RESIDENCY_APPLY_PROFILE_FENCE_OWNER = "llamactl-residency-apply-profile";
+export { RESIDENCY_APPLY_PROFILE_FENCE_OWNER } from "./profile-owner.js";
 const RESIDENCY_APPLY_PROFILE_DESIRED_REVISION = 0;
 
 // Per-process registry (#693) of the AbortController behind each in-flight wet
@@ -134,6 +143,7 @@ export type ResidencyCancelOperationResult = {
 
 export type ApplyResidencyProfileArgs = {
   plan: ResidencyPlan;
+  desired?: ProfileDesiredSnapshot;
   dryRun: boolean;
   storePath: string;
   workloadsDir: string;
@@ -142,7 +152,9 @@ export type ApplyResidencyProfileArgs = {
   node?: string | null;
   to?: string | null;
   from?: string | null;
-  applyModelRun?: (manifest: unknown) => Promise<unknown>;
+  applyModelRun?: (manifest: unknown, signal?: AbortSignal) => Promise<unknown>;
+  managedLaunchAdmission?: ManagedLaunchAdmission;
+  expectedManagedProfileOperationId?: string | null;
   // sink for a missing node budget and heartbeat failures; default stderr
   log?: (line: string) => void;
 };
@@ -168,10 +180,11 @@ export function residencyApplyProfileRefusal(input: {
   to: string;
   from: string | null;
   controllerPid?: number;
+  dryRun?: boolean;
 }): ResidencyApplyProfileResult {
   return {
     ok: false,
-    dryRun: false,
+    dryRun: input.dryRun ?? false,
     outcome: "refused",
     node: input.node,
     from: input.from,
@@ -192,7 +205,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function defaultFenceIdentity(): FenceIdentity {
-  return { ownerId: RESIDENCY_APPLY_PROFILE_FENCE_OWNER, incarnation: randomUUID() };
+  return { ownerId: RESIDENCY_APPLY_PROFILE_FENCE_OWNER, incarnation: profileOwnerIncarnation() };
 }
 
 /**
@@ -220,17 +233,30 @@ function stoppedStatus(iso: string): ModelRunStatus {
 async function stopWorkload(
   workloadsDir: string,
   workload: string,
+  managed?: ManagedLaunchAdmission,
 ): Promise<ProfileSwitchStepOutcome> {
   const manifest = loadWorkloadByNameAny(workload, workloadsDir);
-  if (manifest.kind === "ModelHost") {
-    const stopped = await stopModelHost({ key: { name: workload } });
-    return stopped.ok
-      ? { ok: true }
-      : { ok: false, detail: stopped.error ?? "modelHost stop failed" };
+  const release = managed?.prepareStopRelease?.(workload, manifest.kind);
+  const withOwnership = managed?.runOwnedLifecycle;
+  if (managed !== undefined && (release === undefined || withOwnership === undefined)) {
+    return { ok: false, detail: `managed stop cannot prove the claim for ${workload}` };
   }
-  const result = await serverMod.stopServer({ key: { name: workload } });
+  if (manifest.kind === "ModelHost") {
+    return await stopProfileHost(workload, withOwnership, release);
+  }
+  const stop = (): ReturnType<typeof serverMod.stopServer> =>
+    serverMod.stopServer({
+      key: { name: workload },
+      ...(release === undefined
+        ? {}
+        : { identity: { verifyGeneration: release.verifyGeneration } }),
+    });
+  const result = await (withOwnership === undefined ? stop() : withOwnership(stop));
   if (!result.stopped) {
     return { ok: false, detail: `stop did not confirm process removal for ${workload}` };
+  }
+  if (release !== undefined && !claimReleased(result.pid, release)) {
+    return unverifiedCapacity(workload);
   }
   const iso = new Date().toISOString();
   await withWorkloadsMutex(workloadsDir, () => {
@@ -240,6 +266,38 @@ async function stopWorkload(
   });
   reopenWorkloadAfterLoad(workload, true);
   return { ok: true };
+}
+
+async function stopProfileHost(
+  workload: string,
+  withOwnership: ManagedLaunchAdmission["runOwnedLifecycle"],
+  release: ProfileStopProof | undefined,
+): Promise<ProfileSwitchStepOutcome> {
+  const stop = (): ReturnType<typeof stopModelHost> =>
+    stopModelHost({
+      key: { name: workload },
+      ...(release === undefined
+        ? {}
+        : { identity: { verifyGeneration: release.verifyGeneration } }),
+    });
+  const stopped = await (withOwnership === undefined ? stop() : withOwnership(stop));
+  if (!stopped.ok) return { ok: false, detail: stopped.error ?? "modelHost stop failed" };
+  if (release !== undefined && !claimReleased(stopped.pid, release)) {
+    return unverifiedCapacity(workload);
+  }
+  return { ok: true };
+}
+
+type ProfileStopProof = NonNullable<
+  ReturnType<NonNullable<ManagedLaunchAdmission["prepareStopRelease"]>>
+>;
+
+function claimReleased(pid: number | null, release: ProfileStopProof): boolean {
+  return pid !== null && release.release(pid).kind === "released";
+}
+
+function unverifiedCapacity(workload: string): ProfileSwitchStepOutcome {
+  return { ok: false, detail: `managed stop could not verify capacity release for ${workload}` };
 }
 
 function applyOutcomeDetail(applied: Record<string, unknown>): string {
@@ -261,19 +319,21 @@ function persistApplyStatus(workloadsDir: string, applied: Record<string, unknow
 async function startWorkload(
   workloadsDir: string,
   workload: string,
-  applyModelRun: (manifest: unknown) => Promise<unknown>,
+  opts: ProfileWorkloadSteps,
+  signal?: AbortSignal,
 ): Promise<ProfileSwitchStepOutcome> {
   if (!listWorkloadNames(workloadsDir).includes(workload)) {
     return { ok: false, detail: `unknown workload ${workload}` };
   }
   const manifest = loadWorkloadByNameAny(workload, workloadsDir);
-  if (manifest.kind === "ModelHost") {
+  if (!manifest.spec.enabled) return { ok: false, detail: `workload ${workload} is disabled` };
+  if (manifest.kind === "ModelHost" && opts.managedLaunchAdmission === undefined) {
     const started = await startModelHost({ key: { name: workload } });
     return started.ok
       ? { ok: true }
       : { ok: false, detail: started.error ?? "modelHost start failed" };
   }
-  const applied = await applyModelRun(manifest);
+  const applied = await opts.applyModelRun(manifest, signal);
   if (!isRecord(applied)) {
     return { ok: false, detail: "apply returned a non-object result" };
   }
@@ -288,13 +348,18 @@ async function startWorkload(
   return { ok: true };
 }
 
-export function defaultResidencyApplyProfileSteps(opts: {
+type ProfileWorkloadSteps = {
   workloadsDir: string;
-  applyModelRun: (manifest: unknown) => Promise<unknown>;
-}): ProfileSwitchExecutorDeps {
+  applyModelRun: NonNullable<ApplyResidencyProfileArgs["applyModelRun"]>;
+  managedLaunchAdmission?: ManagedLaunchAdmission;
+};
+
+export function defaultResidencyApplyProfileSteps(
+  opts: ProfileWorkloadSteps,
+): ProfileSwitchExecutorDeps {
   return {
-    stop: (workload) => stopWorkload(opts.workloadsDir, workload),
-    start: (workload) => startWorkload(opts.workloadsDir, workload, opts.applyModelRun),
+    stop: (workload) => stopWorkload(opts.workloadsDir, workload, opts.managedLaunchAdmission),
+    start: (workload, ctx) => startWorkload(opts.workloadsDir, workload, opts, ctx?.signal),
   };
 }
 
@@ -384,47 +449,103 @@ function inFlightBusy(plan: OkPlan, operationId: string): ResidencyApplyProfileR
   };
 }
 
+async function runWetNoop(
+  plan: OkPlan,
+  steps: ProfileSwitchExecutorDeps,
+  store: ResidencyOperationStore,
+  identity: FenceIdentity,
+): Promise<ResidencyApplyProfileResult> {
+  const inFlight = nonterminalSwitchId(store, plan.node);
+  if (inFlight !== null) {
+    return inFlightBusy(plan, inFlight);
+  }
+  const current = store.currentFence();
+  if (current !== null && current.ownerId !== identity.ownerId) {
+    return inFlightBusy(plan, "unknown");
+  }
+  return mapReport(await executeProfileSwitch(plan, steps, { dryRun: false }));
+}
+
+function refusedProfileReservation(
+  plan: OkPlan,
+  registry: ResidencyLeases | null,
+  refusal: Extract<ReturnType<ResidencyOperationStore["claimAndBeginOperation"]>, { ok: false }>,
+): ResidencyApplyProfileResult {
+  if (refusal.reason === "profile-selection-changed") {
+    return residencyApplyProfileRefusal({
+      node: plan.node,
+      from: plan.from,
+      to: plan.to,
+      reason: "ProfileSelectionChanged",
+      detail: "the owner committed a different selection after planning; replan the switch",
+    });
+  }
+  return refusal.reason === "busy"
+    ? inFlightBusy(plan, refusal.operationId ?? "unknown")
+    : mapReport(profileSwitchOperationRefusal(plan, registry, refusal.reason));
+}
+
 async function runWet(
   plan: OkPlan,
   steps: ProfileSwitchExecutorDeps,
   args: ApplyResidencyProfileArgs,
 ): Promise<ResidencyApplyProfileResult> {
-  const store = openResidencyOperationStore({ path: args.storePath });
+  const store = openResidencyOperationStore({
+    path: args.storePath,
+    requireExisting: args.managedLaunchAdmission !== undefined,
+  });
   try {
     const identity = args.fenceIdentity ?? defaultFenceIdentity();
-    // Cross-process race. Every apply-profile caller shares one ownerId (only
-    // the incarnation differs), so the foreign-owner check below never stops a
-    // second apply-profile process serving the same node. The planner's
-    // in-flight refusal comes from `readResidencyStoreSnapshot`, taken before
-    // observation collection, so it can be stale by the time we get here: call
-    // B snapshots (no row yet), call A claims and begins
-    // `profile-switch:<node>`, then B's claimOwnership bumps the token. A's
-    // fenced finishOperation then fails stale-fence, A's stops/starts have
-    // already run, and A's row is orphaned nonterminal — every later switch on
-    // the node is NodeBusy until #702's recovery terminalizes it (a row whose
-    // fence is not the current one is recovered, as `unknown`). The agent runs
-    // the synchronous variant at boot (#279 DF-06, boot-recovery.ts), so the
-    // bound is the next agent start once the row is older than the boot
-    // staleness window; nothing recovers it while the agent keeps running.
-    // The re-check below closes the snapshot-to-claim gap down to the synchronous
-    // listNonterminal → claimOwnership pair; a claim landing between those two
-    // calls, or between our claim and beginOperation, is not excluded. In the
-    // latter order our beginOperation fails stale-fence and is reported refused
-    // before any step runs; in the former, #702 recovery is what bounds the
-    // damage. Closing it fully needs a check-and-claim inside one IMMEDIATE
-    // store transaction.
-    const inFlight = nonterminalSwitchId(store, plan.node);
-    if (inFlight !== null) {
-      return inFlightBusy(plan, inFlight);
+    const managed = args.managedLaunchAdmission !== undefined;
+    if (plan.noop && !managed) {
+      return await runWetNoop(plan, steps, store, identity);
     }
-    const current = store.currentFence();
-    if (current !== null && current.ownerId !== identity.ownerId) {
-      return inFlightBusy(plan, "unknown");
+
+    const budgetGiB = plan.budgetGiB;
+    const nodeBudgetGiB =
+      budgetGiB !== null && Number.isFinite(budgetGiB) && budgetGiB >= 0 ? budgetGiB : undefined;
+    const reservationGiB = profileSwitchReservationGiB(plan);
+    let begun: ReturnType<ResidencyOperationStore["claimAndBeginOperation"]>;
+    try {
+      begun = store.claimAndBeginOperation(identity, {
+        operationId: randomUUID(),
+        model: profileSwitchOperationKey(plan.node),
+        targetState: profileTargetState(plan.to, managed),
+        desiredRevision: RESIDENCY_APPLY_PROFILE_DESIRED_REVISION,
+        reservationGiB,
+        nowMs: Date.now(),
+        ...(nodeBudgetGiB === undefined ? {} : { nodeBudgetGiB }),
+        expectedManagedProfileOperationId: args.expectedManagedProfileOperationId,
+      });
+    } catch (error: unknown) {
+      const detail = error instanceof Error ? error.message : String(error);
+      return mapReport(profileSwitchOperationRefusal(plan, args.registry, detail));
     }
-    const fence = store.claimOwnership(identity);
-    return await runFencedSwitch(plan, steps, args, store, fence.fenceToken);
+    if (!begun.ok) return refusedProfileReservation(plan, args.registry, begun);
+    if (nodeBudgetGiB === undefined) {
+      logUnbudgetedSwitch(args, plan.node, reservationGiB);
+    }
+    return await runFencedSwitch(plan, steps, args, store, begun);
   } finally {
     store.close();
+  }
+}
+
+function profileTargetState(profile: string, managed: boolean): string {
+  return managed ? managedProfileTargetState(profile) : `profile:${profile}`;
+}
+
+function logUnbudgetedSwitch(
+  args: ApplyResidencyProfileArgs,
+  node: string,
+  reservationGiB: number,
+): void {
+  try {
+    applyProfileLog(args)(
+      `[residency] profile-switch node budget unknown on node ${node}; reservation of ${String(reservationGiB)} GiB recorded without a budget check\n`,
+    );
+  } catch {
+    // A diagnostic sink cannot strand the already reserved operation.
   }
 }
 
@@ -448,28 +569,100 @@ function applyProfileLog(args: ApplyResidencyProfileArgs): (line: string) => voi
   return args.log ?? defaultApplyProfileLog;
 }
 
+function commitProfileDispatch(
+  store: ResidencyOperationStore,
+  pending: Extract<BeginOperationResult, { ok: true }>,
+): Extract<BeginOperationResult, { ok: true }> | { ok: false; reason: string } {
+  if (!pending.created) return pending;
+  const { operationId, fenceToken, version } = pending.record;
+  const nowMs = Date.now();
+  const input = { operationId, fenceToken, expectedVersion: version, nowMs };
+  let reason: string;
+  try {
+    const result = store.commitReservation(input);
+    if (result.ok) {
+      return {
+        ...pending,
+        record: { ...pending.record, phase: "committed", version: version + 1, updatedAtMs: nowMs },
+      };
+    }
+    reason = result.reason;
+  } catch (error: unknown) {
+    reason = error instanceof Error ? error.message : String(error);
+  }
+  try {
+    store.finishOperation({ ...input, outcome: "failed", detail: reason });
+  } catch {
+    // An unsuccessful cleanup leaves the original phase and fence for recovery.
+  }
+  return { ok: false, reason };
+}
+
+function checkDesiredProfile(plan: OkPlan, args: ApplyResidencyProfileArgs): string | null {
+  const desired = args.desired;
+  if (desired === undefined) return null;
+  return desired.node === plan.node &&
+    isProfileDesiredCurrent(desired, args.workloadsDir, args.managedLaunchAdmission?.ownsNode)
+    ? null
+    : "desired inputs changed since profile planning; replan the switch";
+}
+
+function finishManagedNoop(
+  plan: OkPlan,
+  steps: ProfileSwitchExecutorDeps,
+  args: ApplyResidencyProfileArgs,
+  store: ResidencyOperationStore,
+  record: ResidencyOperationRecord,
+): ResidencyApplyProfileResult {
+  const refusal = checkDesiredProfile(plan, args) ?? steps.beforeTeardown?.();
+  const released = store.finishOperation({
+    operationId: record.operationId,
+    fenceToken: record.fenceToken,
+    expectedVersion: record.version,
+    nowMs: Date.now(),
+    outcome: refusal === undefined ? "succeeded" : "failed",
+    ...(refusal === undefined ? {} : { detail: refusal }),
+  });
+  if (refusal !== undefined || !released.ok) {
+    return residencyApplyProfileRefusal({
+      node: plan.node,
+      from: plan.from,
+      to: plan.to,
+      reason: "ManagedProfileUnverified",
+      detail: refusal ?? (released.ok ? "unable to publish profile" : released.reason),
+    });
+  }
+  return {
+    ok: true,
+    dryRun: false,
+    outcome: "noop",
+    node: plan.node,
+    from: plan.from,
+    to: plan.to,
+    steps: [],
+    deferred: [],
+    operationId: record.operationId,
+  };
+}
+
 async function runFencedSwitch(
   plan: OkPlan,
   steps: ProfileSwitchExecutorDeps,
   args: ApplyResidencyProfileArgs,
   store: ResidencyOperationStore & ResidencyLifecycleStore,
-  fenceToken: number,
+  pending: Extract<BeginOperationResult, { ok: true }>,
 ): Promise<ResidencyApplyProfileResult> {
-  const operationId = randomUUID();
+  const begun = commitProfileDispatch(store, pending);
+  if (!begun.ok) return mapReport(profileSwitchOperationRefusal(plan, args.registry, begun.reason));
+  const { operationId, fenceToken, desiredRevision } = begun.record;
+  const managed = args.managedLaunchAdmission !== undefined;
+  if (managed && plan.noop) return finishManagedNoop(plan, steps, args, store, begun.record);
   const controller = new AbortController();
   const log = applyProfileLog(args);
-  const budgetGiB = plan.budgetGiB;
-  const nodeBudgetGiB =
-    budgetGiB !== null && Number.isFinite(budgetGiB) && budgetGiB >= 0 ? budgetGiB : undefined;
-  if (nodeBudgetGiB === undefined) {
-    log(
-      `[residency] profile-switch node budget unknown on node ${plan.node}; reservation of ${String(profileSwitchReservationGiB(plan))} GiB recorded without a budget check\n`,
-    );
-  }
   inFlightSwitchControllers.set(operationId, controller);
   try {
-    return mapReport(
-      await executeProfileSwitch(plan, steps, {
+    const execute = (): Promise<ProfileSwitchExecutionReport> =>
+      executeProfileSwitch(plan, steps, {
         dryRun: false,
         registry: args.registry,
         signal: controller.signal,
@@ -477,16 +670,34 @@ async function runFencedSwitch(
           store,
           fenceToken,
           operationId,
-          desiredRevision: RESIDENCY_APPLY_PROFILE_DESIRED_REVISION,
-          ...(nodeBudgetGiB === undefined ? {} : { nodeBudgetGiB }),
+          desiredRevision,
+          begun,
+          managed,
           log,
+          ...(args.desired === undefined
+            ? {}
+            : { checkDesired: () => checkDesiredProfile(plan, args) }),
           lifecycle: {
             store,
             groupOf: (workload) => residencyGroupOf(args.workloadsDir, workload),
           },
         },
-      }),
-    );
+      });
+    const report = await (managed
+      ? withManagedProfilePermit({ operationId, fenceToken }, execute)
+      : execute());
+    const result = mapReport(report);
+    return managed && report.ok && report.operation?.recorded !== true
+      ? {
+          ...result,
+          ok: false,
+          outcome: "failed",
+          refusal: {
+            reason: "ManagedProfileUnverified",
+            detail: report.operation?.recordFailure ?? "unable to publish profile",
+          },
+        }
+      : result;
   } finally {
     inFlightSwitchControllers.delete(operationId);
   }
@@ -507,12 +718,44 @@ export async function applyResidencyProfile(
     defaultResidencyApplyProfileSteps({
       workloadsDir: args.workloadsDir,
       applyModelRun: args.applyModelRun ?? unavailableApplyModelRun,
+      ...(args.managedLaunchAdmission === undefined
+        ? {}
+        : { managedLaunchAdmission: args.managedLaunchAdmission }),
     }),
   );
   if (args.dryRun) {
     return mapReport(
       await executeProfileSwitch(plan, steps, { dryRun: true, registry: args.registry }),
     );
+  }
+  const stale = checkDesiredProfile(plan, args);
+  if (stale !== null) {
+    return residencyApplyProfileRefusal({
+      node: plan.node,
+      to: plan.to,
+      from: plan.from,
+      reason: "DesiredStateChanged",
+      detail: stale,
+    });
+  }
+  const managed = args.managedLaunchAdmission;
+  if (managed !== undefined) {
+    const preflight = (): string | undefined => {
+      if (args.registry === null) return "managed profiles require a target lease registry";
+      if (managed.preflightProfile === undefined) return "managed profile preflight is unavailable";
+      return managed.preflightProfile(plan);
+    };
+    const refusal = preflight();
+    if (refusal !== undefined) {
+      return residencyApplyProfileRefusal({
+        reason: "ManagedProfilePreflight",
+        detail: refusal,
+        node: plan.node,
+        from: plan.from,
+        to: plan.to,
+      });
+    }
+    return await runWet(plan, { ...steps, beforeTeardown: preflight }, args);
   }
   return await runWet(plan, steps, args);
 }

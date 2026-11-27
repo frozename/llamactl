@@ -6,6 +6,7 @@ import {
   createChatCompletionsAdmission,
   type RequestAdmission,
   startAgentServer,
+  startManagedAgentServer,
   tls,
 } from "@llamactl/remote";
 import { hostname } from "node:os";
@@ -328,6 +329,9 @@ ${DIR_FLAG_HELP}
   -h, --help       Show this help
 
 Environment:
+  LLAMACTL_MANAGED_RESIDENCY  "1" delegates engine lifecycle to this agent.
+                              Requires a finite local NodeRun budget and
+                              authenticated, isolated operation. Off by default.
   LLAMACTL_RESIDENCY_LEASES   "1"/"true" publishes one residency lease
                               registry at start (opt-in, off by default).
   LLAMACTL_RESIDENCY_SESSION_IDLE_MS
@@ -1910,6 +1914,17 @@ function runtimeIdentitySpread(
   return {};
 }
 
+function managedExecutionOptions(
+  cfg: ReturnType<typeof agentConfigMod.loadAgentConfig>,
+): Pick<Parameters<typeof startAgentServer>[0], "executionAdmission" | "managedColdModelRuns"> {
+  return {
+    ...(cfg.executionAdmission === undefined ? {} : { executionAdmission: cfg.executionAdmission }),
+    ...(cfg.managedColdModelRuns === undefined
+      ? {}
+      : { managedColdModelRuns: cfg.managedColdModelRuns }),
+  };
+}
+
 export function buildServeOptions(
   parsed: ServeFlags,
   cfg: ReturnType<typeof agentConfigMod.loadAgentConfig>,
@@ -1923,6 +1938,7 @@ export function buildServeOptions(
     bindHost: parsed.bindHost ?? cfg.bindHost,
     port: parsed.port ?? cfg.port,
     tokenHash: cfg.tokenHash,
+    ...managedExecutionOptions(cfg),
     // Named operator bearer tokens (#218), re-read on every request, so
     // 'agent token add' / 'revoke' apply without a restart.
     bearerTokens: agentConfigMod.bearerTokensReader(join(parsed.dir, "agent.yaml")),
@@ -2055,7 +2071,11 @@ async function runServe(args: string[]): Promise<number> {
 
   let running;
   try {
-    running = startAgentServer(buildServeOptions(parsed, cfg, wiring, dialNodeName));
+    const options = buildServeOptions(parsed, cfg, wiring, dialNodeName);
+    running =
+      process.env["LLAMACTL_MANAGED_RESIDENCY"] === "1"
+        ? await startManagedAgentServer(options, cfg.nodeName)
+        : startAgentServer(options);
   } catch (err) {
     if (reportServeStartFailure(err, parsed, cfg)) return 1;
     throw err;

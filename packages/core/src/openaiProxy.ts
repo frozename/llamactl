@@ -18,6 +18,7 @@ import { translateOpenAIStreamToAnthropic } from "./anthropic/translateStream.js
 import { boundaryNaiveBytePrefixSha, canonicalRequestSha } from "./cache-identity/canonical.js";
 import { listCatalog } from "./catalog.js";
 import { listPeers, type PeerNode } from "./config/peers.js";
+import { LOCAL_NODE_NAME } from "./config/schema.js";
 import { ctxForModel } from "./ctx.js";
 import { sanitizeLibosmosGreedyBody } from "./engines/libosmos.js";
 import { checkServingReadiness } from "./engines/lifecycle.js";
@@ -49,11 +50,19 @@ import {
   probeColdPinQueue,
 } from "./residency/cold-pin-admission.js";
 import {
+  type ColdEngineDispatch,
+  type ColdEngineForwarder,
+  getLocalEngineForwarder,
+  type LocalEngineRequest,
+  withLocalEngineBody,
+} from "./residency/engine-forwarder.js";
+import {
   bindLeaseToBody,
   getResidencyLeaseRegistry,
   type Lease,
   type ResidencyLeases,
 } from "./residency/leases.js";
+import { hasManagedRuntimeMarker } from "./residency/managed-runtime.js";
 import { currentSessionRefcounts, type SessionRefcounts } from "./residency/sessions.js";
 import {
   isDeterministic,
@@ -627,6 +636,7 @@ type RouteEntry = {
   port: number;
   workload: string;
   kind: "ModelRun" | "ModelHost";
+  pid?: number;
   engine: workloadRuntime.LocalRoute["engine"];
   model: string;
   /** Catalog-qualified experimental (#518); kept for downstream consumers
@@ -699,6 +709,7 @@ interface ResponseCacheRequestState {
  */
 export interface ProxyOpenAIOptions {
   preferredWorkload?: string;
+  trustedColdOwner?: ColdEngineForwarder;
 }
 
 type ProxyContext = {
@@ -710,6 +721,8 @@ type ProxyContext = {
   init: RequestInit;
   bodyText?: string;
   preferredWorkload?: string;
+  trustedColdOwner?: ColdEngineForwarder;
+  coldRoute?: Pick<ColdEngineDispatch, "declaration" | "path">;
   isAnthropic?: boolean;
   anthropicModel?: string;
   anthropicRequest?: AnthropicMessagesRequest;
@@ -975,15 +988,13 @@ function applyPreferredWorkload(
  * forwarded to without its verdict.
  */
 async function servingRouteForModel(
-  model: string,
+  candidates: readonly RouteCandidate[],
   pathname: string,
   search: string,
-  resolved: ResolvedEnv,
   preferredWorkload?: string,
   sessionAffinity?: (workload: string) => boolean,
 ): Promise<ServingRouteOutcome> {
-  const candidates = getRouteMap(resolved).candidates.get(model);
-  if (candidates === undefined || candidates.length === 0) return null;
+  if (candidates.length === 0) return null;
   // Only local routes are ever withdrawn: a peer route lives on another node's
   // engine and is never the subject of this node's stop fence.
   const filtered = candidates.filter(
@@ -1045,14 +1056,13 @@ let declaredModelSource: (() => readonly unknown[]) | null = null;
 // (serve.ts passes a manifest stat signature). Folded into the stale-binding
 // projection key below; never consulted by the route-miss or listing paths.
 let declaredModelSourceSignature: (() => string) | null = null;
-// #280 DF-07: stale-binding projection for the routed hot path — the
-// declared entries carrying a stale reason, keyed on the route-map runtime
-// signature, the source's own signature and the withdrawn set. A routed
+// #280 DF-07: declared bindings for the routed hot path, keyed on the
+// route-map runtime signature, source signature and withdrawn set. A routed
 // request consults this instead of evaluating the declared source, so the
 // happy path spawns no `ps` and parses no manifest while nothing changes.
-let staleDeclaredCache: {
+let declaredBindingCache: {
   key: string;
-  stale: ReadonlyMap<string, DeclaredModelEntryV1>;
+  byId: ReadonlyMap<string, DeclaredModelEntryV1>;
 } | null = null;
 // #281 DF-08: opt-in cold-pin queue probe config and a monotonic id so every
 // probe carries a unique requestId/principal. Null (the default) keeps the
@@ -1081,7 +1091,7 @@ export function setDeclaredModelSource(
 ): void {
   declaredModelSource = source;
   declaredModelSourceSignature = source === null ? null : (options.signature ?? null);
-  staleDeclaredCache = null;
+  declaredBindingCache = null;
   routeMapCache = null;
   modelsResponseCache = null;
 }
@@ -1137,6 +1147,7 @@ function routeEntryFor(route: workloadRuntime.ClusterRoute): RouteEntry {
     engine: route.engine,
     model: route.model,
     ...(isExperimentalRoute(route) ? { experimental: true as const } : {}),
+    ...("pid" in route ? { pid: route.pid } : {}),
     ...peerFields,
   };
 }
@@ -1197,7 +1208,7 @@ export function __resetOpenAIProxyRouteMapCacheForTests(): void {
   clusterRoutingOverrideForTests = null;
   declaredModelSource = null;
   declaredModelSourceSignature = null;
-  staleDeclaredCache = null;
+  declaredBindingCache = null;
   coldPinQueueProbe = null;
   coldPinProbeSeq = 0;
   servingVerdictCache.clear();
@@ -1373,11 +1384,7 @@ async function responsesApiContext(
   }
 }
 
-async function parseIncoming(
-  req: Request,
-  resolved: ResolvedEnv,
-): Promise<ProxyContext | Response> {
-  const url = new URL(req.url);
+function proxyForwardHeaders(req: Request): Headers {
   const headers = new Headers();
   for (const [key, value] of req.headers.entries()) {
     const lower = key.toLowerCase();
@@ -1391,6 +1398,15 @@ async function parseIncoming(
     }
     headers.set(key, value);
   }
+  return headers;
+}
+
+async function parseIncoming(
+  req: Request,
+  resolved: ResolvedEnv,
+): Promise<ProxyContext | Response> {
+  const url = new URL(req.url);
+  const headers = proxyForwardHeaders(req);
   if (url.pathname === "/v1/messages") {
     return await anthropicMessagesContext(req, resolved, headers);
   }
@@ -2650,11 +2666,9 @@ function declaredUnavailableRejectionFor(model: string, resolved: ResolvedEnv): 
 /**
  * #280 DF-07: validated declared-model entries from the registered
  * source. A throwing source or schema-invalid rows degrade to "no
- * declarations" — a malformed declared catalog must never fail a
- * request. Sorted by id then workload; on duplicate ids the first
- * claim wins.
+ * declarations" so a malformed declared catalog cannot fail a request.
  */
-function declaredModelEntries(): DeclaredModelEntryV1[] {
+export function validatedDeclaredModelEntries(): DeclaredModelEntryV1[] {
   if (declaredModelSource === null) return [];
   let raw: readonly unknown[];
   try {
@@ -2667,6 +2681,11 @@ function declaredModelEntries(): DeclaredModelEntryV1[] {
     const parsed = DeclaredModelEntryV1Schema.safeParse(item);
     if (parsed.success) entries.push(parsed.data);
   }
+  return entries;
+}
+
+function declaredModelEntries(): DeclaredModelEntryV1[] {
+  const entries = validatedDeclaredModelEntries();
   entries.sort((a, b) => {
     if (a.id !== b.id) return a.id < b.id ? -1 : 1;
     return a.workload.localeCompare(b.workload);
@@ -2798,15 +2817,9 @@ function declaredNotLoadedRejectionFor(
   return declaredNotLoadedResponse(model, entry, bodyText);
 }
 
-const NO_STALE_DECLARED_ENTRIES: ReadonlyMap<string, DeclaredModelEntryV1> = new Map();
-
-// Key for the stale-binding projection. The runtime signature is the one
-// getRouteMap keys on (the live routes the source projects against); the
-// source signature tracks manifest edits; the withdrawn set flips a claim to
-// 'draining', which suppresses its stale reason. Warming is not folded in:
-// it only moves a claim between ready/loading/cold, all of which keep the
-// stale reason. A throwing signature makes the projection uncacheable.
-function staleDeclaredCacheKey(resolved: ResolvedEnv): string | null {
+// Warming may change without a route-map update. Both ready and loading
+// entries keep the same owner; the serving probe still controls admission.
+function declaredBindingCacheKey(resolved: ResolvedEnv): string | null {
   try {
     return [
       workloadRuntimeCacheSignature(resolved),
@@ -2818,41 +2831,77 @@ function staleDeclaredCacheKey(resolved: ResolvedEnv): string | null {
   }
 }
 
-function staleDeclaredEntries(resolved: ResolvedEnv): ReadonlyMap<string, DeclaredModelEntryV1> {
-  if (declaredModelSource === null) return NO_STALE_DECLARED_ENTRIES;
-  const key = staleDeclaredCacheKey(resolved);
-  if (key !== null && staleDeclaredCache?.key === key) return staleDeclaredCache.stale;
-  const stale = new Map<string, DeclaredModelEntryV1>();
-  for (const entry of declaredModelEntries()) {
-    if (isDeclaredStaleReason(entry.reason)) stale.set(entry.id, entry);
-  }
-  if (key !== null) staleDeclaredCache = { key, stale };
-  return stale;
-}
-
-/**
- * #280 DF-07: 503 for a routed pin whose declared entry is stale (the owner
- * or the artifact revision moved under a live route). Reads the cached
- * stale-binding projection, so a routed request evaluates the declared
- * source at most once per runtime/manifest signature.
- */
-function staleDeclaredEntryRejectionFor(
+export function declaredModelBinding(
   model: string,
   resolved: ResolvedEnv,
+): DeclaredModelEntryV1 | undefined {
+  if (declaredModelSource === null) return undefined;
+  const key = declaredBindingCacheKey(resolved);
+  if (key !== null && declaredBindingCache?.key === key)
+    return declaredBindingCache.byId.get(model);
+  const byId = new Map(declaredModelEntries().map((entry) => [entry.id, entry]));
+  if (key !== null) declaredBindingCache = { key, byId };
+  return byId.get(model);
+}
+
+/** Historic peer evidence fences fallback only after selection finds no serving route. */
+export function retainedPeerDeclaration(
+  model: string,
+  snapshots: ReadonlyMap<string, workloadRuntime.PeerSnapshot> = productionPeerSnapshots,
+  nodeId: string = LOCAL_NODE_NAME,
+): DeclaredModelEntryV1 | undefined {
+  for (const [ownerNodeId, { declaredDenials }] of snapshots) {
+    if (ownerNodeId === nodeId || ownerNodeId === LOCAL_NODE_NAME || declaredDenials === undefined)
+      continue;
+    const known = declaredDenials.aliases.has(model);
+    if (known || declaredDenials.saturated) {
+      return {
+        id: model,
+        workload: "peer-declaration-history",
+        kind: "ModelRun",
+        ownerNodeId,
+        state: known ? "cold" : "unavailable",
+        autoLoadEligible: false,
+        reason: known ? "peer-owner-unverified" : "peer-owner-history-overflow",
+      };
+    }
+  }
+  return undefined;
+}
+
+export function requiresManagedDefaultOwner(
+  model: string,
+  resolved: ResolvedEnv,
+  binding: DeclaredModelEntryV1 | undefined,
+): boolean {
+  return (
+    binding !== undefined &&
+    defaultTargetModelIds(resolved).has(model) &&
+    hasManagedRuntimeMarker(resolved.LOCAL_AI_RUNTIME_DIR)
+  );
+}
+
+export function declaredRouteRejection(
+  entry: DeclaredModelEntryV1 | undefined,
+  hasOwnerRoute: boolean,
   bodyText: string | undefined,
 ): Response | null {
-  const entry = staleDeclaredEntries(resolved).get(model);
   if (entry === undefined) return null;
-  return declaredNotLoadedResponse(model, entry, bodyText);
-}
-
-/** #280 DF-07: shared cached stale-binding refusal for ingress paths that bypass applyBodyModelRoute (unified createProxy). */
-export function staleDeclaredModelRejection(
-  model: string,
-  resolved: ResolvedEnv,
-  bodyText?: string,
-): Response | null {
-  return staleDeclaredEntryRejectionFor(model, resolved, bodyText);
+  if (entry.state === "cold" && hasOwnerRoute && !isDeclaredStaleReason(entry.reason)) return null;
+  if (entry.state !== "ready" && entry.state !== "loading") {
+    return declaredNotLoadedResponse(entry.id, entry, bodyText);
+  }
+  if (hasOwnerRoute) return null;
+  return declaredNotLoadedResponse(
+    entry.id,
+    {
+      ...entry,
+      state: "cold",
+      autoLoadEligible: false,
+      reason: "stale-owner-epoch",
+    },
+    bodyText,
+  );
 }
 
 /**
@@ -2899,16 +2948,6 @@ function withdrawnAtDefaultEndpoint(
   return entries.some(
     (entry) =>
       entry.isPeer !== true && `http://${entry.host}:${String(entry.port)}` === defaultEndpoint,
-  );
-}
-
-function withdrawnDefaultTargetFallsThrough(
-  model: string,
-  entries: readonly RouteEntry[],
-  resolved: ResolvedEnv,
-): boolean {
-  return (
-    defaultTargetModelIds(resolved).has(model) && !withdrawnAtDefaultEndpoint(entries, resolved)
   );
 }
 
@@ -3011,55 +3050,128 @@ async function resolveJsonBodyRoute(context: ProxyContext): Promise<ProxyContext
   return context;
 }
 
+async function selectBodyModelRoute(
+  context: ProxyContext,
+  model: string,
+  bodyText: string | undefined,
+  binding: DeclaredModelEntryV1 | undefined,
+  managedDefaultOwner: boolean,
+): Promise<ServingRouteOutcome | Response> {
+  const exact =
+    managedDefaultOwner || !defaultTargetModelIds(context.resolved).has(model)
+      ? binding
+      : undefined;
+  const candidates = getRouteMap(context.resolved).candidates.get(model) ?? [];
+  if (candidates.length === 0 && !managedDefaultOwner) return null;
+  const owned =
+    exact === undefined
+      ? candidates
+      : candidates.filter(
+          ({ entry }) =>
+            entry.isPeer !== true && entry.workload === exact.workload && entry.kind === exact.kind,
+        );
+  const rejection = declaredRouteRejection(exact, owned.length > 0, bodyText);
+  if (rejection !== null) return rejection;
+  const outcome = await servingRouteForModel(
+    owned,
+    context.pathname,
+    context.search,
+    context.preferredWorkload,
+    context.sessionAffinity,
+  );
+  if (
+    outcome !== null &&
+    "routed" in outcome &&
+    binding !== undefined &&
+    isDeclaredStaleReason(binding.reason)
+  ) {
+    return declaredNotLoadedResponse(model, binding, bodyText);
+  }
+  return outcome;
+}
+
 async function applyBodyModelRoute(
   context: ProxyContext,
   model: string,
   bodyText: string | undefined,
 ): Promise<ProxyContext | Response> {
-  const outcome = await servingRouteForModel(
+  const binding = declaredModelBinding(model, context.resolved);
+  const managedDefaultOwner = requiresManagedDefaultOwner(model, context.resolved, binding);
+  const outcome = await selectBodyModelRoute(
+    context,
     model,
-    context.pathname,
-    context.search,
-    context.resolved,
-    context.preferredWorkload,
-    context.sessionAffinity,
+    bodyText,
+    binding,
+    managedDefaultOwner,
   );
+  if (outcome instanceof Response) return outcome;
   if (outcome !== null && "routed" in outcome) {
-    // #280 DF-07: even when a model has a live route, check if the declared
-    // entry is stale (owner epoch or artifact revision moved). A stale
-    // declared entry is refused with 503 instead of forwarded to the engine.
-    const staleRejection = staleDeclaredEntryRejectionFor(model, context.resolved, bodyText);
-    if (staleRejection) return staleRejection;
     context.target = outcome.routed.target;
     context.route = outcome.routed;
     clearServingWarming(model);
     return context;
   }
-  if (outcome !== null && "withdrawn" in outcome) {
-    // A default-target id falls through to the default endpoint only when no
-    // withdrawn route is the engine behind it; a withdrawn default llama-server
-    // ModelRun (it binds LLAMA_CPP_HOST:LLAMA_CPP_PORT) is refused draining.
-    if (withdrawnDefaultTargetFallsThrough(model, outcome.withdrawnEntries, context.resolved)) {
-      clearServingWarming(model);
-      return context;
-    }
+  const peerDenial = retainedPeerDeclaration(model);
+  if (peerDenial !== undefined) return declaredNotLoadedResponse(model, peerDenial, bodyText);
+  if (outcome === null) return routeMissResponse(context, model);
+  // A withdrawn default ModelRun may itself be the engine behind the fallback.
+  if (legacyDefaultFallback(context, model, outcome, managedDefaultOwner)) {
+    clearServingWarming(model);
+    return context;
+  }
+  if ("withdrawn" in outcome) {
     return servingWithdrawnRejectionFor(model, outcome.withdrawn, bodyText);
   }
-  if (outcome !== null && "warming" in outcome) {
-    if (defaultTargetModelIds(context.resolved).has(model)) {
-      clearServingWarming(model);
-      return context;
-    }
-    recordServingWarming(model);
-    return servingNotReadyRejectionFor(model, outcome.warming, bodyText);
+  recordServingWarming(model);
+  return servingNotReadyRejectionFor(model, outcome.warming, bodyText);
+}
+
+function legacyDefaultFallback(
+  context: ProxyContext,
+  model: string,
+  outcome: Exclude<ServingRouteOutcome, null | { routed: unknown }>,
+  managedDefaultOwner: boolean,
+): boolean {
+  return (
+    !managedDefaultOwner &&
+    defaultTargetModelIds(context.resolved).has(model) &&
+    (!("withdrawn" in outcome) ||
+      !withdrawnAtDefaultEndpoint(outcome.withdrawnEntries, context.resolved))
+  );
+}
+
+function coldOwnerRoute(
+  context: ProxyContext,
+  declaration: DeclaredModelEntryV1,
+): (ProxyContext & { coldRoute: NonNullable<ProxyContext["coldRoute"]> }) | Response {
+  const { pathname, req } = context;
+  const eligible =
+    declaration.state === "loading" ||
+    (declaration.state === "cold" && declaration.autoLoadEligible);
+  if (
+    !eligible ||
+    isDeclaredStaleReason(declaration.reason) ||
+    req.method !== "POST" ||
+    context.search !== "" ||
+    context.isAnthropic === true ||
+    context.isResponsesApi === true ||
+    req.headers.has(SESSION_HEADER) ||
+    requestBodyContainsOmlxRequestHandle(context.bodyText) ||
+    (pathname !== "/v1/chat/completions" && pathname !== "/v1/completions")
+  ) {
+    return declaredNotLoadedResponse(declaration.id, declaration, context.bodyText);
   }
-  return routeMissResponse(context, model);
+  return { ...context, coldRoute: { path: pathname, declaration } };
 }
 
 /** Rejection chain for a body model that matched no route (#306 + #280). */
 function routeMissResponse(context: ProxyContext, model: string): ProxyContext | Response {
   const unavailableRejection = declaredUnavailableRejectionFor(model, context.resolved);
   if (unavailableRejection) return unavailableRejection;
+  if (context.trustedColdOwner !== undefined) {
+    const declaration = declaredModelEntries().find((entry) => entry.id === model);
+    if (declaration !== undefined) return coldOwnerRoute(context, declaration);
+  }
   const notLoadedRejection = declaredNotLoadedRejectionFor(
     model,
     context.resolved,
@@ -3067,7 +3179,10 @@ function routeMissResponse(context: ProxyContext, model: string): ProxyContext |
   );
   if (notLoadedRejection) return notLoadedRejection;
   const routeMap = getRouteMap(context.resolved).winner;
-  if (routeMap.size > 0 && !defaultTargetModelIds(context.resolved).has(model)) {
+  if (
+    hasManagedRuntimeMarker(context.resolved.LOCAL_AI_RUNTIME_DIR) ||
+    (routeMap.size > 0 && !defaultTargetModelIds(context.resolved).has(model))
+  ) {
     return modelNotRoutedResponse(model, [...routeMap.keys()].sort());
   }
   return context;
@@ -3194,6 +3309,123 @@ export function upstreamTimeoutMs(): number {
   return parsed;
 }
 
+function requestBodyForAdmission(body: RequestInit["body"]): string | null {
+  if (typeof body === "string") return body;
+  return body === null || body === undefined ? "" : null;
+}
+
+function routeStillOwned(route: RoutedEntry, resolved: ResolvedEnv): boolean {
+  if (servingWithdrawnWorkloads().has(route.workload)) return false;
+  return workloadRuntime
+    .listWorkloadRoutes(resolved, route.workload)
+    .some(
+      (current) =>
+        current.pid === route.pid &&
+        current.engine === route.engine &&
+        current.kind === route.kind &&
+        current.host === route.host &&
+        current.port === route.port &&
+        current.model === route.model,
+    );
+}
+
+export function bindLocalEngineWorkload(
+  target: string,
+  resolved: ResolvedEnv,
+): Pick<LocalEngineRequest, "workload" | "stillOwnsTarget" | "pretokenizedCompletion"> {
+  const identity = workloadRuntime.identifyLocalEngineAtTarget(target, resolved);
+  if (identity === undefined) return { stillOwnsTarget: () => false };
+  return {
+    workload: identity.workload,
+    ...(identity.engine === "llamacpp" ? { pretokenizedCompletion: true } : {}),
+    stillOwnsTarget: (): boolean => {
+      if (isRouteWithdrawn(identity.workload)) return false;
+      const current = workloadRuntime.identifyLocalEngineAtTarget(target, resolved);
+      return (
+        current?.workload === identity.workload &&
+        current.kind === identity.kind &&
+        current.engine === identity.engine &&
+        current.pid === identity.pid &&
+        current.startedAt === identity.startedAt
+      );
+    },
+  };
+}
+
+function bindManagedDefaultEngine(
+  context: ProxyContext,
+): Pick<LocalEngineRequest, "workload" | "stillOwnsTarget" | "pretokenizedCompletion"> {
+  const model = requestedModelFromBody(context.bodyText ?? "");
+  const hasDeclaration = (): boolean => declaredModelEntries().some((entry) => entry.id === model);
+  if (model !== undefined && hasDeclaration()) {
+    // A declaration names an owner. It cannot authorize the implicit
+    // default engine when routing did not find a verified serving target.
+    return { stillOwnsTarget: () => false };
+  }
+  const binding = bindLocalEngineWorkload(context.target, context.resolved);
+  if (model === undefined) return binding;
+  return {
+    ...binding,
+    stillOwnsTarget: () => !hasDeclaration() && binding.stillOwnsTarget?.() === true,
+  };
+}
+
+function forwardColdOwner(
+  context: ProxyContext,
+  route: NonNullable<ProxyContext["coldRoute"]>,
+  owner: ColdEngineForwarder,
+): Promise<Response> {
+  const init = context.init;
+  return owner({
+    ...route,
+    body: requestBodyForAdmission(init.body),
+    clientSignal: context.req.signal,
+    deadlineMs: Date.now() + upstreamTimeoutMs(),
+    principal: { bearer: context.req.headers.get("authorization") },
+    send: (target, signal, body) => {
+      const upstream: RequestInit & { timeout: boolean } = {
+        ...withLocalEngineBody(init, body),
+        signal,
+        redirect: "error",
+        timeout: false,
+      };
+      return fetch(target, upstream);
+    },
+  });
+}
+
+function forwardAdmittedEngine(
+  context: ProxyContext,
+  init: RequestInit,
+): Promise<Response> | undefined {
+  if (context.req.method !== "POST" || context.route?.isPeer === true) return undefined;
+  const admit = getLocalEngineForwarder();
+  if (admit === undefined) return undefined;
+  const { signal } = context.init;
+  const route = context.route;
+  return admit({
+    target: context.target,
+    clientSignal: context.req.signal,
+    deadlineMs: Date.now() + upstreamTimeoutMs(),
+    body: requestBodyForAdmission(init.body),
+    principal: { bearer: context.req.headers.get("authorization") },
+    ...(route === undefined
+      ? bindManagedDefaultEngine(context)
+      : {
+          workload: route.workload,
+          ...(route.engine === "llamacpp" ? { pretokenizedCompletion: true as const } : {}),
+          stillOwnsTarget: () => routeStillOwned(route, context.resolved),
+        }),
+    ...(signal === null || signal === undefined ? {} : { engineSignal: signal }),
+    send: (engineSignal, body) =>
+      fetch(context.target, {
+        ...withLocalEngineBody(init, body),
+        signal: engineSignal,
+        redirect: "error",
+      }),
+  });
+}
+
 async function forward(context: ProxyContext): Promise<Response> {
   if (context.route?.isPeer && requestBodyContainsOmlxRequestHandle(context.bodyText)) {
     return Response.json({ error: "cross-node slot ops not supported" }, { status: 400 });
@@ -3219,6 +3451,8 @@ async function forward(context: ProxyContext): Promise<Response> {
   }
   const peerTls = peerTlsForRoute(context.route);
   if (peerTls) (init as RequestInit & { tls?: { ca: string; serverName?: string } }).tls = peerTls;
+  const admitted = forwardAdmittedEngine(context, init);
+  if (admitted !== undefined) return await admitted;
   // Propagate the client's AbortSignal to the upstream fetch so that a client
   // disconnect promptly cancels upstream inference and releases warm-hit lease
   // + registry reservation via the finally in proxyOpenAI. Compose with any
@@ -3964,7 +4198,76 @@ function acquireProxySession(
   return { ok: true, release, cancel };
 }
 
+function sanitizeForwardBody(context: ProxyContext): void {
+  stripVendorFieldsFromBody(context);
+  sanitizeLibosmosGreedyFromBody(context);
+}
+
+/** Unified ingress has already selected an exact id without a catalog route. */
+export function forwardExactLocalColdCompletion(
+  req: Request,
+  resolved: ResolvedEnv,
+  expected: DeclaredModelEntryV1,
+  bodyText: string,
+  owner: ColdEngineForwarder,
+): Promise<Response> {
+  const url = new URL(req.url);
+  const model = expected.id;
+  const [declaration, duplicate] = validatedDeclaredModelEntries().filter(
+    (entry) => entry.id === model,
+  );
+  if (
+    url.pathname !== "/v1/completions" ||
+    requestedModelFromBody(bodyText) !== model ||
+    declaration === undefined ||
+    duplicate !== undefined ||
+    declaration.ownerNodeId !== LOCAL_NODE_NAME ||
+    declaration.ownerNodeId !== expected.ownerNodeId ||
+    declaration.workload !== expected.workload ||
+    declaration.kind !== expected.kind ||
+    declaration.kind !== "ModelRun" ||
+    defaultTargetModelIds(resolved).has(model) ||
+    (getRouteMap(resolved).candidates.get(model)?.length ?? 0) > 0
+  ) {
+    return Promise.resolve(declaredNotLoadedResponse(model, expected, bodyText));
+  }
+  if (isOversizedJsonBody(req) || bodyText.length > MAX_JSON_BODY_BYTES) {
+    return Promise.resolve(new Response("Payload Too Large", { status: 413 }));
+  }
+  const unavailable = declaredUnavailableRejectionFor(model, resolved);
+  if (unavailable !== null) return Promise.resolve(unavailable);
+  const context = coldOwnerRoute(
+    {
+      req,
+      resolved,
+      target: `${llamaEndpoint(resolved)}${url.pathname}${url.search}`,
+      pathname: url.pathname,
+      search: url.search,
+      bodyText,
+      init: { method: req.method, headers: proxyForwardHeaders(req), body: bodyText },
+    },
+    declaration,
+  );
+  if (context instanceof Response) return Promise.resolve(context);
+  sanitizeForwardBody(context);
+  return forwardColdOwner(context, context.coldRoute, owner);
+}
+
+function prepareProxyForward(context: ProxyContext): Promise<Response> | undefined {
+  if (context.route?.isPeer && requestBodyContainsOmlxRequestHandle(context.bodyText)) {
+    return Promise.resolve(
+      Response.json({ error: "cross-node slot ops not supported" }, { status: 400 }),
+    );
+  }
+  sanitizeForwardBody(context);
+  if (context.coldRoute !== undefined && context.trustedColdOwner !== undefined) {
+    return forwardColdOwner(context, context.coldRoute, context.trustedColdOwner);
+  }
+  return undefined;
+}
+
 function applyProxyOptions(context: ProxyContext, opts: ProxyOpenAIOptions): void {
+  if (opts.trustedColdOwner !== undefined) context.trustedColdOwner = opts.trustedColdOwner;
   const preferred = opts.preferredWorkload;
   if (preferred !== undefined && preferred.length > 0) {
     context.preferredWorkload = preferred;
@@ -4038,11 +4341,8 @@ export async function proxyOpenAI(
   attachSessionAffinity(parsed, trimmedSessionId, sessionRegistry, leaseRegistry);
   const routed = await resolveRoute(parsed);
   if (routed instanceof Response) return routed;
-  if (routed.route?.isPeer && requestBodyContainsOmlxRequestHandle(routed.bodyText)) {
-    return Response.json({ error: "cross-node slot ops not supported" }, { status: 400 });
-  }
-  stripVendorFieldsFromBody(routed);
-  sanitizeLibosmosGreedyFromBody(routed);
+  const earlyResponse = prepareProxyForward(routed);
+  if (earlyResponse !== undefined) return await earlyResponse;
   let withResponseCacheLookup = routed;
   try {
     withResponseCacheLookup = await maybeResponseCacheLookup(routed);

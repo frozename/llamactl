@@ -571,7 +571,9 @@ describe("docs/dynamic-residency.md (#285)", () => {
     );
     expect(proxySrc).toContain("acquireProxySession(sessionRegistry, trimmedSessionId");
     const serveSrc = readOrEmpty(join(REPO, "packages/remote/src/server/serve.ts"));
-    expect(serveSrc).toContain("if (opts.residencyLeases !== true) return null;");
+    expect(serveSrc).toContain(
+      "if (opts.residencyLeases !== true && !opts.executionAdmission?.length) return null;",
+    );
     expect(serveSrc).toContain("if (opts.residencySessionIdleMs !== undefined) {");
     expect(readOrEmpty(join(REPO, "packages/remote/src/residency/stop-fence.ts"))).toContain(
       '"SessionsActive"',
@@ -707,6 +709,7 @@ describe("docs/dynamic-residency.md (#285)", () => {
       "`failed`",
       "claimed pass",
       "a stale profile-switch row",
+      "`dispatchUnverified`",
       "When the store holds no nonterminal operation row, boot recovery also sweeps lifecycle rows interrupted outside a switch (for example a direct start whose agent died in `loading`) once they have made no progress for 30 minutes and their workload is proven down by `directWorkloadProvenDown`; a younger row, a workload not proven down, or any nonterminal operation row leaves them untouched.",
       "When no `profile-switch:` row is nonterminal, boot recovery first finishes a crashed eviction's `evict:` operation rows: an `evict:<victim>` row whose `targetState` reads `evicted-by:<replacement>` and that has made no progress for 30 minutes is finished `unknown` with detail `recovered: interrupted-unverified (was <phase>)` under a claim of the apply-profile fence, and the outside-a-switch sweep then runs in the same boot.",
       "Meanwhile clear a stuck interrupted row by hand with an operator stop or `llamactl residency force-unload <workload> --reason <text> --yes --node <name>`, which an `evict:` row does not block.",
@@ -730,9 +733,9 @@ describe("docs/dynamic-residency.md (#285)", () => {
       "function failInterruptedLifecycleRows(",
       "function sweepOrphanedLifecycleRows(",
       "nonterminal.length === 0",
-      "const result = shouldClaim(preview)\n      ? scanWithStore(openStore, opts, nowMs, minStaleAgeMs, lifecycle)\n      : deferred(preview);",
+      "const result = shouldClaim(preview)\n    ? scanWithStore(openStore, opts, nowMs, minStaleAgeMs, lifecycle)\n    : deferred(preview);",
       "preview = previewProfileSwitchRecovery(nonterminal, { nowMs: nowMs(), minStaleAgeMs });\n        return shouldClaim(preview);",
-      "[residency] lifecycle boot recovery ${lifecycleCountsJson(lifecycle.counts)}",
+      "[residency] lifecycle boot recovery ${lifecycleCountsJson(counts)}",
       "[residency] lifecycle boot recovery failed: ",
       'to: "failed"',
       "isProvenDown?: (model: string) => boolean",
@@ -843,7 +846,7 @@ describe("docs/dynamic-residency.md (#285)", () => {
       [
         "async function unrecordedOrFail<",
         [
-          'if (action === "start" && lifecycleGroup !== undefined) {',
+          'if (action === "start" && (env.managed || lifecycleGroup !== undefined)) {',
           "detail: `residency lifecycle refused ${workload}: store unavailable (${message})`,",
           "`[residency] lifecycle ${workload} ${action} not recorded: store unavailable (${message})\\n`,",
           "return { ran: true, result: await env.dep(workload) };",
@@ -961,17 +964,30 @@ describe("docs/dynamic-residency.md (#285)", () => {
     expect(flat(modelRunOpts), "ModelRun agent stderr log").toContain(
       "log: (line): void => { process.stderr.write(line); },",
     );
-    // each ModelRun call site, pinned on its own
-    expectPins(routerSrc, "ModelRun call site", [
-      "const outcome = await runDirectResidencyStart<serverMod.StartServerResult>(\n        input.workload,\n        () => serverMod.startServer(serverStartOptions(input, sig, emit)),\n        directModelRunStartOpts(input.workload, input.target),\n      );",
-      "const outcome = await runDirectResidencyStop<{",
-      "              directModelRunOpts(input.workload),\n            );\n            return outcome.ran ? outcome.result.stop",
-      '...(stop.stopped ? {} : { error: "stop did not confirm process removal" }),',
-      // deleting a ModelRun reaches serverStop
-      ": await stopWorkloadForDelete(manifest, stops);",
-      // the switch's applyManifest runs in the switch scope
-      "return await runInResidencySwitchScope(\n            async () =>\n              await workloadApplyMod.applyManifest({",
+    const serverStart = enclosingBody(routerSrc, "serverStart: t.procedure");
+    expect(serverStart).toContain("runModelRunStart(input, sig, emit, managed)");
+    expectPins(enclosingBody(routerSrc, "async function runModelRunStart("), "ModelRun start", [
+      "runDirectResidencyStart(",
+      "serverMod.startServer(opts)",
+      "serverStartOptions(input, signal,",
+      "directModelRunStartOpts(input.workload, input.target),",
     ]);
+    const serverStop = enclosingBody(routerSrc, "serverStop: t.procedure");
+    expectPins(flat(serverStop), "ModelRun stop call site", [
+      "const outcome = await runDirectResidencyStop<{",
+      "directModelRunOpts(input.workload),",
+      "return outcome.ran ? outcome.result.stop",
+      '...(stop.stopped ? {} : { error: "stop did not confirm process removal" }),',
+    ]);
+    expectPins(routerSrc, "ModelRun orchestration call sites", [
+      ": await stopWorkloadForDelete(manifest, stops);",
+      "applyProfileWorkload(",
+    ]);
+    expectPins(
+      flat(enclosingBody(routerSrc, "async function applyProfileWorkload(")),
+      "profile scope",
+      ["return await runInResidencySwitchScope(", "await workloadApplyMod.applyManifest("],
+    );
     expect(
       enclosingBody(routerSrc, "async function stopWorkloadForDelete("),
       "delete run",
@@ -1016,7 +1032,7 @@ describe("docs/dynamic-residency.md (#285)", () => {
         "async function applyModelHostManifest(",
         [
           "if (!manifest.spec.enabled) { return await disableModelHost(manifest, client, resolved); }",
-          "const started = await startModelHostProcess(client, manifest);",
+          "const started = await startModelHostProcess(client, manifest, opts.managedBudget !== undefined);",
         ],
       ],
       [

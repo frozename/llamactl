@@ -258,6 +258,30 @@ Observable signals operators use today:
 - the guard's Running / Starting / Unknown peer states;
 - template readiness probes (e.g. `/ready` flipping to 200).
 
+### Recording a measured memory envelope
+
+`llamactl admit calibrate <local-evidence.json>` imports attributed samples
+collected on the local host into `measured-calibrations.sqlite` under the
+llamactl state directory (`DEV_STORAGE` or `~/.llamactl`). The report has
+three fields.
+
+- `key` contains `artifactRevision`, `engine`, `engineBuild`, `ctx`,
+  `kvType`, `speculative`, `prefillBatch`, and `concurrency`. Set
+  `speculative.mode` to `none`, `mtp`, or `draft`, with the draft
+  `artifactRevision` for `draft`.
+- `samples` contains `status`, `source`, `observedAtMs`, `processBytes`,
+  `processDeviceBytes`, and `sharedDeviceBytes` for each observation. Use
+  epoch milliseconds for sample time and separate host-process bytes from
+  attributable device bytes. Use `null` for an unavailable byte reading.
+  Shared-device readings never count toward a model's allocation.
+- `options` contains `minSamples` and `overheadFraction`.
+
+The existing `admit measure` RSS cache is separate. The ModelHost admission
+adapter can read the calibration store when its caller supplies the exact
+key and a NodeRun residency policy. It uses only a fresh match for the local
+node. Automatic launch identity discovery and sample collection remain
+separate work.
+
 ### Residency lifecycle states
 
 `packages/core/src/residency/lifecycle.ts` is pure and synchronous:
@@ -343,8 +367,11 @@ more occupying members.
 Lifecycle-row boot recovery (Part of #517) sweeps interrupted transient
 states (`loading`, `warming`, `draining`, `unloading`) to `failed` under
 the same claimed fence as the profile-switch operation recovery, releasing
-exclusive-group capacity. On a claimed pass, i.e. when a stale profile-switch
-row exists, it sweeps every interrupted row. When the store holds no
+exclusive-group capacity. On a claimed pass for a stale legacy pending switch,
+it sweeps every interrupted row. A nonterminal `committed` switch retains its
+reservation and lifecycle rows across agent restarts because its replacement
+process may still be live. Boot reports a `dispatchUnverified` count for these
+operations. When the store holds no
 nonterminal operation row, it also sweeps lifecycle rows interrupted outside a
 switch, such as a direct start whose agent died in `loading`, once they have
 made no progress for 30 minutes and their workload is proven down, under its
@@ -1468,6 +1495,24 @@ a loopback Linux `eval perf` run, the stored `peak_gtt_bytes` reason is
 therefore the status-only form, for example `GTT reader returned no sample
 (status: denied)`. The source clause appears only for an injected reader
 that names a source.
+
+### Supervisor swap observations
+
+The supervisor's fleet snapshot carries host swap-page traffic in
+`node_mem.swap_io`. Linux reads `pswpin` and `pswpout` from
+`/proc/vmstat` and scales them by `getconf PAGESIZE`. macOS reads
+`Swapins` and `Swapouts` from `vm_stat` and scales them by the page size in
+its header. The result contains cumulative bytes, a source, an independent
+observation timestamp in epoch milliseconds, and a status. Missing
+counters or page-size evidence produce unavailable readings with null bytes.
+
+The journal's `swapRate` records bytes per second over the two latest
+consecutive observations from the same source. Each sample must be within
+twice the greater of the supervisor interval and probe timeout. The first
+sample, missing readings, stale readings and reset counters give an unknown
+rate with a reason. This measures host-wide swap traffic in page bytes.
+The existing pressure thresholds and routing decisions keep their existing
+inputs.
 
 ### Unscored matrix cells for an arm
 

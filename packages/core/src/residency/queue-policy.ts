@@ -42,6 +42,7 @@ export interface RequestQueuePolicyOptions {
   limits: RequestQueueLimits;
   now?: () => number;
   resident?: string[];
+  exclusiveBackground?: boolean;
 }
 
 export interface QueueRequest {
@@ -95,11 +96,13 @@ export interface QueueSnapshot {
 export interface RequestQueuePolicy {
   enqueue: (request: QueueRequest) => EnqueueResult;
   schedule: () => QueueAction[];
-  loadSettled: (loadId: string, outcome: "ready" | "failed") => QueueAction[];
+  hasLoadDemand: (loadId: string) => boolean;
+  loadSettled: (loadId: string, outcome: "ready" | "failed" | "abandoned") => QueueAction[];
   markEvicted: (modelKey: string) => void;
   cancel: (requestId: string) => CancelResult;
   finishExecution: (requestId: string) => boolean;
   snapshot: () => QueueSnapshot;
+  oldestQueuedWaitMs?: () => number | null;
   queueLimits: () => RequestQueueLimits;
 }
 
@@ -177,6 +180,7 @@ class RequestQueuePolicyImpl implements RequestQueuePolicy {
   private readonly limits: RequestQueueLimits;
   private readonly now: () => number;
   private readonly resident: readonly string[];
+  private readonly exclusiveBackground: boolean;
   private readonly queue: Map<string, QueuedRequest>;
   private readonly executing: Map<string, ExecutingRequest>;
   private loaded: Set<string>;
@@ -190,6 +194,7 @@ class RequestQueuePolicyImpl implements RequestQueuePolicy {
     this.limits = opts.limits;
     this.now = opts.now ?? ((): number => Date.now());
     this.resident = opts.resident ?? [];
+    this.exclusiveBackground = opts.exclusiveBackground === true;
     this.queue = new Map();
     this.executing = new Map();
     this.loaded = new Set();
@@ -275,6 +280,11 @@ class RequestQueuePolicyImpl implements RequestQueuePolicy {
       };
     }
 
+    const backgroundLimit = this.backgroundQueueLimit(req);
+    if (backgroundLimit !== null) {
+      return { kind: "refused", reason: backgroundLimit, retryAfterMs: this.limits.retryAfterMs };
+    }
+
     // 10. Enqueue
     const entry: QueuedRequest = {
       requestId,
@@ -313,7 +323,16 @@ class RequestQueuePolicyImpl implements RequestQueuePolicy {
 
   // ── loadSettled ──────────────────────────────────────────────────────
 
-  loadSettled(loadId: string, outcome: "ready" | "failed"): QueueAction[] {
+  hasLoadDemand(loadId: string): boolean {
+    const load = this.inFlight;
+    if (load?.loadId !== loadId) return false;
+    for (const entry of this.queue.values()) {
+      if (entry.modelKey === load.modelKey) return true;
+    }
+    return false;
+  }
+
+  loadSettled(loadId: string, outcome: "ready" | "failed" | "abandoned"): QueueAction[] {
     // Idempotent: only the current in-flight load responds
     if (this.inFlight?.loadId !== loadId) {
       return [];
@@ -322,6 +341,7 @@ class RequestQueuePolicyImpl implements RequestQueuePolicy {
     const modelKey = this.inFlight.modelKey;
     this.inFlight = null;
 
+    if (outcome === "abandoned") return [];
     if (outcome === "ready") {
       // Model is now loaded (available for execution)
       this.loaded.add(modelKey);
@@ -352,7 +372,8 @@ class RequestQueuePolicyImpl implements RequestQueuePolicy {
   // ── markEvicted ──────────────────────────────────────────────────────
 
   markEvicted(modelKey: string): void {
-    this.evicted.add(modelKey);
+    this.loaded.delete(modelKey);
+    if (this.resident.includes(modelKey)) this.evicted.add(modelKey);
   }
 
   // ── cancel ───────────────────────────────────────────────────────────
@@ -380,6 +401,11 @@ class RequestQueuePolicyImpl implements RequestQueuePolicy {
   }
 
   // ── snapshot ─────────────────────────────────────────────────────────
+
+  oldestQueuedWaitMs(): number | null {
+    const oldest = this.queue.values().next().value;
+    return oldest === undefined ? null : Math.max(0, this.now() - oldest.enqueuedAt);
+  }
 
   snapshot(): QueueSnapshot {
     // Resident = constructor-resident + successfully loaded, minus evicted
@@ -449,6 +475,26 @@ class RequestQueuePolicyImpl implements RequestQueuePolicy {
     return count;
   }
 
+  private backgroundQueueLimit(req: QueueRequest): QueueRefuseReason | null {
+    if (!this.exclusiveBackground || req.priority !== "background") return null;
+    if (this.executing.size === 0 && this.queue.size === 0) return null;
+    let backgroundCount = 0;
+    let backgroundBytes = req.bytes;
+    for (const entry of this.queue.values()) {
+      if (entry.priority !== "background") continue;
+      backgroundCount++;
+      backgroundBytes += entry.bytes;
+    }
+    // Background waiters cannot spend all of the capacity an interactive
+    // request needs to join the queue. An idle group still admits directly.
+    if (backgroundCount >= Math.floor(this.limits.maxQueued / 2)) return "QueueFull";
+    if (backgroundBytes > Math.floor(this.limits.maxQueuedBytes / 2)) return "QueueBytesExceeded";
+    if (this.principalCount(req.principal) >= this.limits.maxPerPrincipal - 1) {
+      return "PrincipalShareExceeded";
+    }
+    return null;
+  }
+
   // ── Expire timed-out waiters ─────────────────────────────────────────
 
   private expireDue(now: number, actions: QueueAction[]): void {
@@ -489,7 +535,7 @@ class RequestQueuePolicyImpl implements RequestQueuePolicy {
 
   private startExecutions(actions: QueueAction[], now: number): void {
     const execSlots = this.limits.maxExecutions - this.executing.size;
-    if (execSlots <= 0) return;
+    if (execSlots <= 0 || this.backgroundExecuting()) return;
 
     // Gather ALL candidates sorted by urgency then enqueue order,
     // then walk the whole list skipping unavailable models until
@@ -501,6 +547,10 @@ class RequestQueuePolicyImpl implements RequestQueuePolicy {
       if (filled >= execSlots) break;
       const isAvailable = this.isModelAvailable(candidate.modelKey);
       if (!isAvailable) continue;
+      const exclusive = this.exclusiveBackground && candidate.priority === "background";
+      // Once the background entry wins by age, stop backfilling the device
+      // with later foreground work so that the earlier claim can run alone.
+      if (exclusive && this.executing.size > 0) break;
 
       actions.push({
         kind: "start-execution",
@@ -516,7 +566,16 @@ class RequestQueuePolicyImpl implements RequestQueuePolicy {
       });
       this.queue.delete(candidate.requestId);
       filled++;
+      if (exclusive) break;
     }
+  }
+
+  private backgroundExecuting(): boolean {
+    if (!this.exclusiveBackground) return false;
+    for (const entry of this.executing.values()) {
+      if (entry.priority === "background") return true;
+    }
+    return false;
   }
 
   private candidatesForExecution(now: number): QueuedRequest[] {

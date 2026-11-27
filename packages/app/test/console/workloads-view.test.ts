@@ -67,6 +67,7 @@ const nodeTrpcReal = { ...(await import("../../src/console/node-trpc.ts")) };
 const accessedProcedures = new Set<string>();
 const describeCalls: { input: unknown; enabled: unknown }[] = [];
 const statusCalls: unknown[] = [];
+const residencyCalls: unknown[] = [];
 const stopCalls: unknown[] = [];
 const invalidatedKeys: string[] = [];
 let queryResults: Record<string, unknown> = {};
@@ -75,6 +76,7 @@ let consoleNode = CONSOLE_NODE;
 function queryResult(procedure: string, input: unknown, enabled: unknown): Record<string, unknown> {
   if (procedure === "workloadDescribe") describeCalls.push({ input, enabled });
   if (procedure === "serverStatus") statusCalls.push(input);
+  if (procedure === "residencyStatus") residencyCalls.push(input);
   return {
     data: queryResults[procedure],
     error: null,
@@ -198,6 +200,7 @@ const ROWS: WorkloadRow[] = [
 const ALLOWED_PROCEDURES = new Set([
   "workloadList",
   "workloadDescribe",
+  "residencyStatus",
   "serverStop",
   "serverStatus",
 ]);
@@ -206,6 +209,7 @@ beforeEach(() => {
   accessedProcedures.clear();
   describeCalls.length = 0;
   statusCalls.length = 0;
+  residencyCalls.length = 0;
   stopCalls.length = 0;
   invalidatedKeys.length = 0;
   renderedButtons.length = 0;
@@ -419,6 +423,86 @@ describe("workloads view (#410 P5a-3b)", () => {
     expect(openWorkloadName(ROWS, "far", "local")).toBeNull();
     expect(openWorkloadName(ROWS, "ghost", "local")).toBeNull();
     expect(openWorkloadName(ROWS, "far", "remote1")).toBe("far");
+  });
+
+  test("running process rows use coordinator loading, draining and failed states", () => {
+    queryResults["residencyStatus"] = {
+      node: "local",
+      lifecycle: {
+        status: "available",
+        scope: "serving-process",
+        workloads: [
+          { model: "qwen", state: "warming" },
+          { model: "big", state: "ready" },
+          { model: "omlx", state: "failed" },
+        ],
+      },
+      leases: {
+        status: "available",
+        scope: "serving-process",
+        workloads: [{ workload: "big", phase: "draining" }],
+      },
+      store: {
+        present: true,
+        scope: "serving-process",
+        nonterminal: [{ operationId: "op-switch", phase: "pending" }],
+      },
+      managed: {
+        ownerNodeId: "worker-a",
+        ledger: "available",
+        profile: { kind: "selected", profile: "interactive" },
+        budgetGiB: 24,
+        claims: [{ workload: "qwen", kind: "ModelRun", state: "resident", allocationGiB: 8 }],
+        execution: [
+          { group: "metal", executing: 1, queued: 2, oldestQueuedWaitMs: 185, fenced: true },
+        ],
+      },
+      omlxNative: {
+        scope: "serving-process",
+        workloads: [{ workload: "omlx", mode: "process-fallback" }],
+      },
+    };
+    const markup = renderView({ view: "workloads" });
+
+    expect(residencyCalls).toEqual([{ node: "local" }]);
+    expect(rowBlock(markup, "qwen")).toContain("Running");
+    expect(rowBlock(markup, "qwen")).toContain("Residency: Loading");
+    expect(rowBlock(markup, "big")).toContain("Residency: Draining");
+    expect(rowBlock(markup, "omlx")).toContain("Residency: Failed");
+    expect(rowBlock(markup, "omlx")).toContain("Whole-process mode");
+    expect(markup).toContain("op-switch");
+    expect(markup).toContain("Pending");
+    expect(markup).toContain("Profile interactive · 8.0 / 24.0 GiB · 0 pending");
+    expect(markup).toContain("metal · 1 active · 2 queued · oldest 185 ms · fenced");
+  });
+
+  test("a different node’s residency snapshot cannot mark a process ready", () => {
+    queryResults["residencyStatus"] = {
+      node: "remote1",
+      lifecycle: {
+        status: "available",
+        scope: "serving-process",
+        workloads: [{ model: "qwen", state: "ready" }],
+      },
+    };
+    const markup = renderView({ view: "workloads" });
+    expect(rowBlock(markup, "qwen")).toContain("Running");
+    expect(rowBlock(markup, "qwen")).toContain("Residency: Unknown");
+    expect(rowBlock(markup, "qwen")).not.toContain("Residency: Ready");
+  });
+
+  test("oMLX inventory is shown separately from coordinator readiness", () => {
+    queryResults["residencyStatus"] = {
+      node: "local",
+      omlxNative: {
+        scope: "serving-process",
+        workloads: [{ workload: "omlx", mode: "native", modelState: "discovered" }],
+      },
+    };
+    const row = rowBlock(renderView({ view: "workloads" }), "omlx");
+    expect(row).toContain("Native mode");
+    expect(row).toContain("Engine inventory discovered");
+    expect(row).not.toContain("Residency: Ready");
   });
 
   test("phaseTone maps each phase bucket to its status tone", () => {

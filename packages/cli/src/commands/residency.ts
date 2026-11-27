@@ -31,7 +31,11 @@ import type { NodeClient, noderunSchema } from "@llamactl/remote";
 
 import { workloadReconciler, workloadStore } from "@llamactl/remote";
 
-import { getGlobals, getNodeClientByName } from "../dispatcher.js";
+import {
+  getAuthenticatedAgentClientByName,
+  getGlobals,
+  getNodeClientByName,
+} from "../dispatcher.js";
 import { required } from "../required.js";
 import { formatResidencyKnobs } from "./noderun-helpers.js";
 import { withNodeQueryDeadline } from "./workload.js";
@@ -41,7 +45,9 @@ const USAGE = `Usage: llamactl residency <subcommand>
 Subcommands:
   status --node <name> [--json]   Read-only residency status: NodeRun policy, memory budget, the serving process's residency store, its per-model lifecycle rows and exclusive-group violations, its per-workload lease/drain state, its bound sessions (refs, idle-timeout expiry), the advisory idle-eviction window, and the read-only ranking read-out (resident preference, resident set and drain charges). Never wakes a model or mutates state.
   plan --node <name> --to <profile> [--from <profile>] [--json]   Read-only dry-run profile switch: budget source, victims, replacements, protected workloads or refusal. Never starts, stops, loads or writes the store.
-  apply-profile --node <name> --to <profile> [--from <profile>] [--json]   Dry-run by default: plan and report the profile switch without touching the store. Add --execute --yes to run the switch for real (stops and starts workloads, records an operation).
+  apply-profile --node <name> --to <profile> [--from <profile>] [--managed] [--json]   Dry-run by default. Use --managed on a managed owner. Add --execute --yes to run the switch and record an operation.
+  load <workload> --node <name> [--execute --yes] [--json]   Preview loading an enabled workload on its managed owner. Execution uses the owner admission and readiness gates.
+  unload <workload> --node <name> [--wait-seconds <1-60>] [--execute --yes] [--json]   Preview stopping an idle, unprotected workload on its managed owner. A wait drains active leases before stopping. Execution leaves the desired manifest enabled, so eligible workloads can load again.
   cancel-operation <operationId> --yes [--node <name>] [--json]   Request an abort of an in-flight profile switch started by apply-profile --execute --yes in the process serving <node> (an agent serve process); it stops before its next step boundary. Process-local: a switch run in-process by a local-endpoint CLI invocation cannot be cancelled from another CLI invocation. Requires --yes.
   force-unload <workload> --reason <text> --yes [--node <name>] [--json]   Operator override of the stop fence: revoke active leases (audited as an operator override), then stop the workload. Destructive; requires --yes. Reports the released session ids when a session registry is installed.
   evict-idle --node <name> [--yes] [--json]   Operator-initiated idle eviction: dry by default (one residencyEvictIdle query reports the window and which residents would be evicted). Add --yes to stamp the durable idle hold on each targeted local manifest and run the fenced stop, keeping the hold only on workloads that come back evicted. Workloads with no local manifest are reported skipped (NotHeld) and never targeted. Destructive with --yes.
@@ -51,7 +57,7 @@ Subcommands:
 Example:
   llamactl residency status --node <name> [--json]
   llamactl residency plan --node <name> --to <profile> [--json]
-  llamactl residency apply-profile --node <name> --to <profile> [--from <profile>] [--execute --yes]
+  llamactl residency apply-profile --node <name> --to <profile> [--from <profile>] [--managed] [--execute --yes]
   llamactl residency cancel-operation <operationId> --yes
   llamactl residency force-unload <workload> --reason <text> --yes
   llamactl residency evict-idle --node <name> [--yes] [--json]
@@ -177,12 +183,32 @@ export function renderResidencyStatus(s: ResidencyRenderInput, nowMs: number = D
   pushIdleEvictionLines(lines, s.idleEviction, nowMs);
   pushSwitchGateLines(lines, s.switchGates, nowMs);
   pushRankingLines(lines, s.ranking, nowMs);
+  pushManagedLines(lines, s.managed);
   pushLeaseLines(lines, s.leases);
   pushSessionLines(lines, s.sessions);
   lines.push(
     `Note:       store is the serving process's node-local store, not ${s.node}'s coordinator state`,
   );
   return lines.join("\n") + "\n";
+}
+
+function pushManagedLines(lines: string[], managed: ResidencyRenderInput["managed"]): void {
+  if (managed === undefined) return;
+  const { profile, budgetGiB, claims, execution } = managed;
+  const selected = profile.kind === "selected" ? profile.profile : profile.kind;
+  const budget = budgetGiB === null ? "unknown" : `${budgetGiB.toFixed(1)} GiB`;
+  lines.push(
+    `Managed:    ${managed.ownerNodeId} · ${selected} · ledger ${managed.ledger} · ${budget}`,
+  );
+  for (const claim of claims) {
+    const hold = claim.inferenceHold === undefined ? "" : `  inference hold ${claim.inferenceHold}`;
+    lines.push(`  ${claim.workload}  ${claim.state}  ${claim.allocationGiB.toFixed(1)} GiB${hold}`);
+  }
+  for (const group of execution ?? []) {
+    lines.push(
+      `  ${group.group}  ${String(group.executing)} active  ${String(group.queued)} queued${group.fenced ? "  fenced" : ""}`,
+    );
+  }
 }
 
 function pushLifecycleLines(lines: string[], lifecycle: ResidencyRenderInput["lifecycle"]): void {
@@ -676,6 +702,7 @@ type ApplyProfileMutableFlags = {
   from: string | undefined;
   execute: boolean;
   yes: boolean;
+  managed: boolean;
 };
 
 type ApplyProfileFlags = ApplyProfileMutableFlags | { exit: number };
@@ -692,6 +719,10 @@ function applyProfileArg(args: string[], i: number, flags: ApplyProfileMutableFl
   }
   if (arg === "--yes") {
     flags.yes = true;
+    return { consumed: 1 };
+  }
+  if (arg === "--managed") {
+    flags.managed = true;
     return { consumed: 1 };
   }
   if (arg === "-h" || arg === "--help") {
@@ -726,6 +757,7 @@ function parseApplyProfileArgs(args: string[]): ApplyProfileFlags {
     from: undefined,
     execute: false,
     yes: false,
+    managed: false,
   };
   let i = 0;
   while (i < args.length) {
@@ -770,15 +802,19 @@ export function renderResidencyApplyProfile(
 type ResidencyApplyProfileInput = Parameters<NodeClient["residencyApplyProfile"]["mutate"]>[0];
 
 async function callResidencyApplyProfile(
-  client: NodeClient,
   node: string,
-  execute: boolean,
+  managed: boolean,
   input: ResidencyApplyProfileInput,
+  deps: ResidencyDeps,
 ): Promise<ResidencyApplyProfileView> {
-  if (execute) {
-    return await client.residencyApplyProfile.mutate(input);
-  }
-  return await withNodeQueryDeadline(node, () => client.residencyApplyProfile.mutate(input));
+  const client =
+    deps.getNodeClientByName?.(node) ??
+    (managed ? getAuthenticatedAgentClientByName(node, getGlobals()) : getNodeClientByName(node));
+  const apply = (): Promise<ResidencyApplyProfileView> =>
+    managed
+      ? client.residencyApplyManagedProfile.mutate({ ...input, version: 1 })
+      : client.residencyApplyProfile.mutate(input);
+  return input.dryRun === false ? await apply() : await withNodeQueryDeadline(node, apply);
 }
 
 function validateApplyProfileArgs(parsed: ApplyProfileMutableFlags): { node: string } | string {
@@ -831,8 +867,7 @@ async function runResidencyApplyProfile(args: string[], deps: ResidencyDeps): Pr
     : { ...base, dryRun: true };
 
   try {
-    const client = (deps.getNodeClientByName ?? getNodeClientByName)(node);
-    const result = await callResidencyApplyProfile(client, node, parsed.execute, input);
+    const result = await callResidencyApplyProfile(node, parsed.managed, input, deps);
     if (parsed.json) {
       process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
       return result.ok ? 0 : 1;
@@ -846,7 +881,11 @@ async function runResidencyApplyProfile(args: string[], deps: ResidencyDeps): Pr
     );
     return 0;
   } catch (err) {
-    process.stderr.write(`residency apply-profile: ${(err as Error).message}\n`);
+    const reason =
+      parsed.managed && isMissingProcedure(err)
+        ? "ManagedProfileUnavailable: the agent does not support managed profile version 1"
+        : (err as Error).message;
+    process.stderr.write(`residency apply-profile: ${reason}\n`);
     return 1;
   }
 }
@@ -1567,6 +1606,111 @@ async function runResidencyReleaseSession(args: string[], deps: ResidencyDeps): 
   }
 }
 
+type ResidencyControlAction = "load" | "unload";
+type ResidencyControlInput = Parameters<NodeClient["residencyControl"]["mutate"]>[0];
+
+function controlArgs(
+  action: ResidencyControlAction,
+  args: string[],
+): { json: boolean; input: ResidencyControlInput } | string {
+  const [workload, ...flags] = args;
+  if (workload === undefined || workload.startsWith("-")) return "a workload name is required";
+  let node = getGlobals().nodeName ?? "";
+  let execute = false;
+  let confirm = false;
+  let json = false;
+  let waitSeconds: number | undefined;
+  for (let index = 0; index < flags.length; index++) {
+    const flag = flags[index] ?? "";
+    switch (flag) {
+      case "--node":
+        node = flags[++index] ?? "";
+        if (node.startsWith("-")) return "--node requires a value";
+        break;
+      case "--execute":
+        execute = true;
+        break;
+      case "--yes":
+        confirm = true;
+        break;
+      case "--json":
+        json = true;
+        break;
+      case "--wait-seconds":
+        waitSeconds = Number(flags[++index]);
+        break;
+      default:
+        return `unknown argument ${flag}`;
+    }
+  }
+  if (node === "") return "--node <name> is required";
+  if (node === "all") return "name one managed node";
+  if (execute && !confirm) return "--execute requires --yes";
+  return controlWait(
+    { json, input: { workload, node, action, dryRun: !execute, confirm } },
+    waitSeconds,
+  );
+}
+
+function controlWait(
+  parsed: { json: boolean; input: ResidencyControlInput },
+  waitSeconds: number | undefined,
+): ReturnType<typeof controlArgs> {
+  if (waitSeconds === undefined) return parsed;
+  if (
+    parsed.input.action !== "unload" ||
+    !Number.isSafeInteger(waitSeconds) ||
+    waitSeconds < 1 ||
+    waitSeconds > 60
+  ) {
+    return "--wait-seconds requires unload and an integer from 1 to 60";
+  }
+  return { ...parsed, input: { ...parsed.input, drainTimeoutMs: waitSeconds * 1000 } };
+}
+
+function isMissingProcedure(error: unknown): boolean {
+  const data = typeof error === "object" && error !== null && "data" in error ? error.data : null;
+  return typeof data === "object" && data !== null && "code" in data && data.code === "NOT_FOUND";
+}
+
+function controlTransportReason(error: unknown): string {
+  return isMissingProcedure(error) ? "ManagedControlUnavailable" : "ControlTransportError";
+}
+
+async function runResidencyControl(
+  action: ResidencyControlAction,
+  args: string[],
+  deps: ResidencyDeps,
+): Promise<number> {
+  const parsed = controlArgs(action, args);
+  if (typeof parsed === "string") {
+    process.stderr.write(`residency ${action}: ${parsed}\n`);
+    return 1;
+  }
+  const { json, input } = parsed;
+  try {
+    const client = (deps.getNodeClientByName ?? getNodeClientByName)(input.node);
+    const result = input.dryRun
+      ? await withNodeQueryDeadline(input.node, () => client.residencyControl.mutate(input))
+      : await client.residencyControl.mutate(input);
+    if (json) process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    else if (result.ok) {
+      process.stdout.write(
+        `residency ${action} ${result.workload} on ${result.node}: ${result.outcome}\n`,
+      );
+    } else process.stderr.write(`residency ${action}: ${result.reason}\n`);
+    return result.ok ? 0 : 1;
+  } catch (error) {
+    const reason = controlTransportReason(error);
+    if (json) {
+      process.stdout.write(
+        `${JSON.stringify({ ok: false, action, node: input.node, workload: input.workload, reason }, null, 2)}\n`,
+      );
+    } else process.stderr.write(`residency ${action}: ${reason}\n`);
+    return 1;
+  }
+}
+
 export async function runResidency(args: string[], deps: ResidencyDeps = {}): Promise<number> {
   const [sub, ...rest] = args;
   if (sub === undefined) {
@@ -1585,6 +1729,9 @@ export async function runResidency(args: string[], deps: ResidencyDeps = {}): Pr
   }
   if (sub === "apply-profile") {
     return await runResidencyApplyProfile(rest, deps);
+  }
+  if (sub === "load" || sub === "unload") {
+    return await runResidencyControl(sub, rest, deps);
   }
   if (sub === "cancel-operation") {
     return await runResidencyCancelOperation(rest, deps);

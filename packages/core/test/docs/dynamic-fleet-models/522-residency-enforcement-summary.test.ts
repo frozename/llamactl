@@ -76,7 +76,10 @@ describe("#522 residency enforcement summary", () => {
 
     const startOpts = flat(enclosingBody(router, "function directModelRunStartOpts("));
     expect(startOpts, "directModelRunStartOpts fallback").toContain(
-      "return opts.group !== undefined ? opts : { ...opts, group: catalogTargetGroup(target) };",
+      "if (opts.group !== undefined) return opts;",
+    );
+    expect(startOpts, "pinned targets avoid a second resolution").toContain(
+      "pinnedRel === undefined ? catalogTargetGroup(target) : catalog.findByRel(pinnedRel)?.residencyGroup",
     );
     const targetGroup = flat(enclosingBody(router, "function catalogTargetGroup("));
     expect(targetGroup, "catalogTargetGroup rel lookup").toContain(
@@ -105,9 +108,10 @@ describe("#522 residency enforcement summary", () => {
     expect(flatRouter, "modelHostStart fenced").toContain(
       "runDirectResidencyStart<StartModelHostResult>(",
     );
-    expect(flatRouter, "serverStart fenced").toContain(
-      "runDirectResidencyStart<serverMod.StartServerResult>(",
-    );
+    expect(
+      flat(enclosingBody(router, "async function runModelRunStart(")),
+      "serverStart fenced",
+    ).toContain("runDirectResidencyStart(");
     expect(lifecycleSteps, "transition refusal format").toContain(
       "`residency lifecycle refused ${workload} ${from} -> ${to}: ${decision.reason}: ${decision.detail}`",
     );
@@ -131,7 +135,7 @@ describe("#522 residency enforcement summary", () => {
       "if (inResidencySwitchScope()) { return { ran: true, result: await dep(workload) }; }",
     );
     expect(runDirect, "store-absent bypass").toContain(
-      "if (!existsSync(opts.storePath)) { return { ran: true, result: await dep(workload) }; }",
+      "if (!existsSync(opts.storePath) && !managed && !strictStop) { return { ran: true, result: await dep(workload) }; }",
     );
     expect(
       flat(readOrEmpty(join(REPO, "docs/dynamic-residency.md"))),
