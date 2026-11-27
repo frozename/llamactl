@@ -145,6 +145,7 @@ import {
   residencyControlInput,
   type ResidencyControlResult,
 } from "./residency/managed-operator-control.js";
+import { readManagedProfileSelection } from "./residency/managed-profile-selection.js";
 import { collectOmlxNativeStatus } from "./residency/omlx-capability.js";
 import {
   buildIdleEvictionSnapshot,
@@ -728,6 +729,39 @@ async function runProfileMutation(
   }
 }
 
+function managedProfilePredecessor(
+  storePath: string,
+  node: string,
+  input: ProfileMutationInput,
+): { operationId: string | null } | { refusal: ResidencyApplyProfileResult } {
+  const selection = readManagedProfileSelection(storePath, node);
+  const refuse = (reason: string, detail: string): { refusal: ResidencyApplyProfileResult } => ({
+    refusal: residencyApplyProfileRefusal({
+      node,
+      from: input.from ?? null,
+      to: input.to,
+      reason,
+      detail,
+      dryRun: input.dryRun,
+    }),
+  });
+
+  if (selection.kind === "switching")
+    return refuse("NodeBusy", "a managed profile switch is active");
+  if (selection.kind === "unknown")
+    return refuse("ManagedProfileUnverified", "the owner cannot verify its selected profile");
+  if (
+    input.from !== undefined &&
+    (selection.kind !== "selected" || input.from !== selection.profile)
+  )
+    return refuse(
+      "ProfileSelectionChanged",
+      "the requested source profile is not the verified selection",
+    );
+
+  return { operationId: selection.kind === "selected" ? selection.operationId : null };
+}
+
 async function applyProfileMutation(
   input: ProfileMutationInput,
   node: string,
@@ -740,6 +774,9 @@ async function applyProfileMutation(
     if (refusal !== undefined) return refusal;
     recoverAbandonedProfileIntentsOnNode(storePath, node);
   }
+  const prior =
+    managed === undefined ? undefined : managedProfilePredecessor(storePath, node, input);
+  if (prior !== undefined && "refusal" in prior) return prior.refusal;
   const { plan, desired } = residencyPlanFor({ ...input, managed }, workloadsDir);
   return await applyResidencyProfile({
     plan,
@@ -752,6 +789,7 @@ async function applyProfileMutation(
     to: input.to,
     from: input.from ?? null,
     ...(managed === undefined ? {} : { managedLaunchAdmission: managed }),
+    ...(prior === undefined ? {} : { expectedManagedProfileOperationId: prior.operationId }),
     applyModelRun: (manifest, signal) =>
       applyProfileWorkload(node, workloadsDir, manifest, managed, signal),
   });

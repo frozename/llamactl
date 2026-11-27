@@ -1272,6 +1272,43 @@ function fixturePid(name: string): number | undefined {
   return undefined;
 }
 
+function commitNewerFixtureSelection(operationId: string | null | undefined): void {
+  if (typeof operationId !== "string") throw new Error("fixture missing selected operation");
+  const store = openResidencyOperationStore({ path: defaultResidencyStorePath() });
+  try {
+    const previous = store.getOperation(operationId);
+    if (previous?.outcome !== "succeeded") throw new Error("fixture selection not committed");
+    const begun = store.claimAndBeginOperation(
+      { ownerId: previous.ownerId, incarnation: previous.incarnation },
+      {
+        operationId: "newer-fixture-profile",
+        model: previous.model,
+        targetState: previous.targetState,
+        desiredRevision: previous.desiredRevision,
+        reservationGiB: 0,
+        nowMs: Date.now(),
+      },
+    );
+    if (!begun.ok) throw new Error(`fixture reservation failed: ${begun.reason}`);
+    const receipt = {
+      operationId: begun.record.operationId,
+      fenceToken: begun.record.fenceToken,
+      expectedVersion: begun.record.version,
+      nowMs: Date.now(),
+    };
+    expect(store.commitReservation(receipt)).toEqual({ ok: true });
+    expect(
+      store.finishOperation({
+        ...receipt,
+        expectedVersion: receipt.expectedVersion + 1,
+        outcome: "succeeded",
+      }),
+    ).toEqual({ ok: true });
+  } finally {
+    store.close();
+  }
+}
+
 test.skipIf(process.platform !== "darwin" && process.platform !== "linux")(
   "a mixed-engine switch drains leases and releases capacity only after the stopped generation is gone",
   async () => {
@@ -1350,7 +1387,18 @@ spec:
       aliases: ["local"],
       workloadsDir: tmp,
     });
-    const caller = router.createCaller({ managedLaunchAdmission: runtime.admission });
+    let interleave: (() => void) | undefined;
+    const caller = router.createCaller({
+      managedLaunchAdmission: {
+        ...runtime.admission,
+        preflightProfile: (plan) => {
+          const pending = interleave;
+          interleave = undefined;
+          pending?.();
+          return runtime.admission.preflightProfile?.(plan);
+        },
+      },
+    });
     try {
       expect(existsSync(workloadPath(run, tmp))).toBe(false);
       const unowned = await router
@@ -1568,6 +1616,45 @@ spec:
       expect(noop.operationId).toBeString();
       expect(fixturePid(host)).toBe(newHostPid);
       if (restoredPid !== undefined) spawnedServerPids.delete(restoredPid);
+
+      expect(
+        await caller.residencyApplyManagedProfile({
+          ...managedProfile,
+          from: "interactive",
+          to: "interactive",
+        }),
+      ).toMatchObject({
+        ok: false,
+        dryRun: true,
+        refusal: { reason: "ProfileSelectionChanged" },
+      });
+      const staleRollback = await caller.residencyApplyManagedProfile({
+        ...wetProfile,
+        from: "interactive",
+        to: "interactive",
+      });
+      registerSpawnedPid(join(runtimeRoot(), "workloads", run, "llama-server.pid"));
+      expect(staleRollback).toMatchObject({
+        ok: false,
+        refusal: { reason: "ProfileSelectionChanged" },
+      });
+      expect(fixturePid(host)).toBe(newHostPid);
+      expect(fixturePid(run)).toBeUndefined();
+
+      interleave = (): void => {
+        commitNewerFixtureSelection(noop.operationId);
+      };
+      const stalePlan = await caller.residencyApplyManagedProfile({
+        ...wetProfile,
+        to: "interactive",
+      });
+      registerSpawnedPid(join(runtimeRoot(), "workloads", run, "llama-server.pid"));
+      expect(stalePlan).toMatchObject({
+        ok: false,
+        refusal: { reason: "ProfileSelectionChanged" },
+      });
+      expect(fixturePid(host)).toBe(newHostPid);
+      expect(fixturePid(run)).toBeUndefined();
 
       const rollback = await caller.residencyApplyManagedProfile({
         ...wetProfile,

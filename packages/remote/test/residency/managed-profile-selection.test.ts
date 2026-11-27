@@ -105,6 +105,46 @@ test("the newest succeeded managed profile survives a reopen and ignores legacy 
   }
 });
 
+test("a competing committed selection invalidates an older reservation without moving the fence", () => {
+  const { path, cleanup } = temporaryStore();
+  const planner = openResidencyOperationStore({ path });
+  const competitor = openResidencyOperationStore({ path });
+  try {
+    const profile = managedProfileTargetState("chat");
+    const previous = commit(planner, begin(planner, "prior", profile));
+    finish(planner, previous, "succeeded");
+    const stale = {
+      operationId: "stale-reservation",
+      model: key,
+      targetState: managedProfileTargetState("vision"),
+      desiredRevision: 0,
+      reservationGiB: 1,
+      nowMs: 400,
+      nodeBudgetGiB: 8,
+      expectedManagedProfileOperationId: previous.operationId,
+    };
+    const concurrent = commit(competitor, begin(competitor, "newer", profile, 300));
+    finish(competitor, concurrent, "succeeded");
+
+    expect(planner.claimAndBeginOperation(identity, stale)).toEqual({
+      ok: false,
+      reason: "profile-selection-changed",
+    });
+    expect(planner.getOperation(stale.operationId)).toBeNull();
+    expect(planner.currentFence()?.fenceToken).toBe(concurrent.fenceToken);
+    expect(planner.listNonterminal()).toEqual([]);
+    expect(readManagedProfileSelection(path, node)).toEqual({
+      kind: "selected",
+      profile: "chat",
+      operationId: concurrent.operationId,
+    });
+  } finally {
+    planner.close();
+    competitor.close();
+    cleanup();
+  }
+});
+
 test("only the current committed managed switch permit can start a member of its target", () => {
   const { path, cleanup } = temporaryStore();
   const store = openResidencyOperationStore({ path });

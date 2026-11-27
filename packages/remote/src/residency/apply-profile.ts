@@ -154,6 +154,7 @@ export type ApplyResidencyProfileArgs = {
   from?: string | null;
   applyModelRun?: (manifest: unknown, signal?: AbortSignal) => Promise<unknown>;
   managedLaunchAdmission?: ManagedLaunchAdmission;
+  expectedManagedProfileOperationId?: string | null;
   // sink for a missing node budget and heartbeat failures; default stderr
   log?: (line: string) => void;
 };
@@ -179,10 +180,11 @@ export function residencyApplyProfileRefusal(input: {
   to: string;
   from: string | null;
   controllerPid?: number;
+  dryRun?: boolean;
 }): ResidencyApplyProfileResult {
   return {
     ok: false,
-    dryRun: false,
+    dryRun: input.dryRun ?? false,
     outcome: "refused",
     node: input.node,
     from: input.from,
@@ -464,6 +466,25 @@ async function runWetNoop(
   return mapReport(await executeProfileSwitch(plan, steps, { dryRun: false }));
 }
 
+function refusedProfileReservation(
+  plan: OkPlan,
+  registry: ResidencyLeases | null,
+  refusal: Extract<ReturnType<ResidencyOperationStore["claimAndBeginOperation"]>, { ok: false }>,
+): ResidencyApplyProfileResult {
+  if (refusal.reason === "profile-selection-changed") {
+    return residencyApplyProfileRefusal({
+      node: plan.node,
+      from: plan.from,
+      to: plan.to,
+      reason: "ProfileSelectionChanged",
+      detail: "the owner committed a different selection after planning; replan the switch",
+    });
+  }
+  return refusal.reason === "busy"
+    ? inFlightBusy(plan, refusal.operationId ?? "unknown")
+    : mapReport(profileSwitchOperationRefusal(plan, registry, refusal.reason));
+}
+
 async function runWet(
   plan: OkPlan,
   steps: ProfileSwitchExecutorDeps,
@@ -494,16 +515,13 @@ async function runWet(
         reservationGiB,
         nowMs: Date.now(),
         ...(nodeBudgetGiB === undefined ? {} : { nodeBudgetGiB }),
+        expectedManagedProfileOperationId: args.expectedManagedProfileOperationId,
       });
     } catch (error: unknown) {
       const detail = error instanceof Error ? error.message : String(error);
       return mapReport(profileSwitchOperationRefusal(plan, args.registry, detail));
     }
-    if (!begun.ok) {
-      return begun.reason === "busy"
-        ? inFlightBusy(plan, begun.operationId ?? "unknown")
-        : mapReport(profileSwitchOperationRefusal(plan, args.registry, begun.reason));
-    }
+    if (!begun.ok) return refusedProfileReservation(plan, args.registry, begun);
     if (nodeBudgetGiB === undefined) {
       logUnbudgetedSwitch(args, plan.node, reservationGiB);
     }
