@@ -186,6 +186,7 @@ export {
   writeLastRun,
 } from "./rag/pipeline/store.js";
 export type { CapturedRequest, RequestSummary } from "./request-capture/store.js";
+export type { ResidencyApplyProfileResult } from "./residency/apply-profile.js";
 export {
   type DirectLifecycleOpts,
   exclusiveGroupLaunchRefusal,
@@ -203,6 +204,11 @@ export {
   type ResidencyPolicyKnob,
   type ResidencyStatusEffectivePolicy,
 } from "./residency/procedures.js";
+export {
+  MANAGED_PROFILE_PROTOCOL_VERSION,
+  RESIDENCY_APPLY_PROFILE_TOOL,
+  residencyApplyProfileToolInput,
+} from "./residency/profile-protocol.js";
 export {
   type AdmissionRejectCode,
   type AdmissionRequest,
