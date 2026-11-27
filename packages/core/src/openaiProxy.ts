@@ -2843,6 +2843,31 @@ export function declaredModelBinding(
   return byId.get(model);
 }
 
+/** Historic peer evidence fences fallback only after selection finds no serving route. */
+export function retainedPeerDeclaration(
+  model: string,
+  snapshots: ReadonlyMap<string, workloadRuntime.PeerSnapshot> = productionPeerSnapshots,
+  nodeId: string = LOCAL_NODE_NAME,
+): DeclaredModelEntryV1 | undefined {
+  for (const [ownerNodeId, { declaredDenials }] of snapshots) {
+    if (ownerNodeId === nodeId || ownerNodeId === LOCAL_NODE_NAME || declaredDenials === undefined)
+      continue;
+    const known = declaredDenials.aliases.has(model);
+    if (known || declaredDenials.saturated) {
+      return {
+        id: model,
+        workload: "peer-declaration-history",
+        kind: "ModelRun",
+        ownerNodeId,
+        state: known ? "cold" : "unavailable",
+        autoLoadEligible: false,
+        reason: known ? "peer-owner-unverified" : "peer-owner-history-overflow",
+      };
+    }
+  }
+  return undefined;
+}
+
 export function declaredRouteRejection(
   entry: DeclaredModelEntryV1 | undefined,
   hasOwnerRoute: boolean,
@@ -3074,6 +3099,8 @@ async function applyBodyModelRoute(
     clearServingWarming(model);
     return context;
   }
+  const peerDenial = retainedPeerDeclaration(model);
+  if (peerDenial !== undefined) return declaredNotLoadedResponse(model, peerDenial, bodyText);
   if (outcome !== null && "withdrawn" in outcome) {
     // A default-target id falls through to the default endpoint only when no
     // withdrawn route is the engine behind it; a withdrawn default llama-server

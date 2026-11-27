@@ -3,7 +3,10 @@ import { basename, join } from "node:path";
 import type { EngineName } from "./engines/index.js";
 import type { ModelHostReadiness } from "./engines/types.js";
 import type { QualificationStage } from "./routing/capabilities.js";
-import type { PeerDeclarationProvenanceV1 } from "./routing/catalog.js";
+import type {
+  PeerDeclarationProvenanceV1,
+  PeerEmptyDeclarationInventory,
+} from "./routing/catalog.js";
 import type { ResolvedEnv } from "./types.js";
 
 import { listCatalog } from "./catalog.js";
@@ -81,6 +84,10 @@ export interface PeerSnapshot {
   }[];
   /** Explicit negotiated evidence, independent of legacy workload cache revisions. */
   declaredProvenance?: PeerDeclarationProvenanceV1;
+  declaredInventory?: PeerEmptyDeclarationInventory;
+  /** Retained denial evidence. It cannot create a route or authorize activation. */
+  declaredDenials?: { aliases: ReadonlySet<string>; saturated: boolean };
+
   pressure: "NORMAL" | "HIGH";
   fetchedAt: number;
 }

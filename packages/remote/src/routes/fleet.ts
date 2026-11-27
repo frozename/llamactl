@@ -17,6 +17,7 @@ export interface FleetSnapshotRouteOptions {
   revisionOf?: (name: string) => string | null;
   /** #306: clock for the fallback's `ts`. Defaults to new Date(). */
   now?: () => Date;
+  /** The owner can explicitly publish a v2 empty inventory after verifying complete absence. */
   declaredProvenance?: { ownerNodeId: string; read: () => unknown };
 }
 
@@ -48,8 +49,11 @@ export function readFleetSnapshot(
 ): ReturnType<typeof readLatestFleetSnapshotFromJournal> {
   const journalPath = opts.journalPath ?? defaultFleetJournalPath();
   const snapshot = readLatestFleetSnapshotFromJournal(journalPath);
-  // Journal bytes can carry extra keys, but only the owner publisher can add this field.
-  if (snapshot !== null) Reflect.deleteProperty(snapshot, "declaredProvenance");
+  // A journal is not an authoritative declaration publisher.
+  if (snapshot !== null) {
+    Reflect.deleteProperty(snapshot, "declaredProvenance");
+    Reflect.deleteProperty(snapshot, "declaredInventory");
+  }
   return snapshot;
 }
 
@@ -210,21 +214,32 @@ export function readFleetSnapshotOrLocalRoutes(
   return localRoutesFallback(opts);
 }
 
-function readPublishedProvenance(
+type PublishedDeclaration =
+  | { declaredProvenance: routingCatalog.PeerDeclarationProvenanceV1 }
+  | { declaredInventory: routingCatalog.PeerEmptyDeclarationInventory };
+
+function readPublishedDeclaration(
   req: Request,
   source: FleetSnapshotRouteOptions["declaredProvenance"],
-): routingCatalog.PeerDeclarationProvenanceV1 | undefined {
-  if (
-    source === undefined ||
-    req.headers.get(routingCatalog.PEER_DECLARATION_PROVENANCE_HEADER) !== "1"
-  ) {
-    return undefined;
-  }
+): PublishedDeclaration | undefined {
+  const wantsProvenance =
+    req.headers.get(routingCatalog.PEER_DECLARATION_PROVENANCE_HEADER) === "1";
+  const wantsInventory = req.headers.get(routingCatalog.PEER_DECLARATION_INVENTORY_HEADER) === "2";
+  if (source === undefined || (!wantsProvenance && !wantsInventory)) return undefined;
   try {
-    return routingCatalog.readPeerDeclarationProvenance(source.read(), source.ownerNodeId);
+    const value = source.read();
+    if (wantsProvenance) {
+      const proof = routingCatalog.readPeerDeclarationProvenance(value, source.ownerNodeId);
+      if (proof !== undefined) return { declaredProvenance: proof };
+    }
+    if (wantsInventory) {
+      const inventory = routingCatalog.readEmptyPeerDeclarationInventory(value, source.ownerNodeId);
+      if (inventory !== undefined) return { declaredInventory: inventory };
+    }
   } catch {
     return undefined;
   }
+  return undefined;
 }
 
 export function handleFleetSnapshotRoute(
@@ -233,10 +248,10 @@ export function handleFleetSnapshotRoute(
 ): Response {
   const includeLocal = wantsLocalRoutes(req);
   const snapshot = readFleetSnapshotOrLocalRoutes(opts, includeLocal);
-  const declaredProvenance = includeLocal
-    ? readPublishedProvenance(req, opts.declaredProvenance)
+  const declaration = includeLocal
+    ? readPublishedDeclaration(req, opts.declaredProvenance)
     : undefined;
-  if (snapshot === null && declaredProvenance === undefined) {
+  if (snapshot === null && declaration === undefined) {
     return new Response(null, { status: 204 });
   }
   const body = snapshot ?? {
@@ -244,7 +259,7 @@ export function handleFleetSnapshotRoute(
     ts: (opts.now?.() ?? new Date()).toISOString(),
     workloads: [],
   };
-  return Response.json(declaredProvenance === undefined ? body : { ...body, declaredProvenance }, {
-    status: 200,
-  });
+  return declaration === undefined
+    ? Response.json(body)
+    : Response.json({ ...body, ...declaration }, { headers: { "cache-control": "no-store" } });
 }

@@ -201,10 +201,7 @@ interface UnifiedDeps {
   now: () => number;
   nodeId: string;
   catalogForGate: () => Promise<routingCatalog.RouteCatalog | null>;
-  unroutedPeerAlias: (model: string) => {
-    declared?: routingCatalog.DeclaredModelEntryV1;
-    warm: boolean;
-  };
+  unroutedPeerAlias: (model: string) => PeerAliasEvidence;
   resolveCredentials?: UnifiedProxyOptions["resolveCredentials"];
   acquireExecutor?: UnifiedProxyOptions["acquireExecutor"];
   rankingSignals: () => routingRanking.RankingSignals;
@@ -281,8 +278,14 @@ function matchesDeclaredOwner(
   );
 }
 
+interface PeerAliasEvidence {
+  declared?: routingCatalog.DeclaredModelEntryV1;
+  denied?: routingCatalog.DeclaredModelEntryV1;
+  warm: boolean;
+}
+
 function tryUnroutedLocalColdCompletion(
-  peer: ReturnType<UnifiedDeps["unroutedPeerAlias"]>,
+  peer: PeerAliasEvidence,
   selection: ReturnType<typeof routingCatalog.selectCatalogCandidates> | null,
   ctx: BackendExecutionContext,
   declaration: routingCatalog.DeclaredModelEntryV1 | undefined,
@@ -293,6 +296,7 @@ function tryUnroutedLocalColdCompletion(
     selection === null ||
     selection.rejected.length > 0 ||
     peer.declared !== undefined ||
+    peer.denied !== undefined ||
     peer.warm ||
     declaration?.ownerNodeId !== LOCAL_NODE_NAME ||
     declaration.kind !== "ModelRun" ||
@@ -328,18 +332,20 @@ async function gatedExecute(
   const selection =
     catalog === null ? null : routingCatalog.selectCatalogCandidates(catalog, model, { pinned });
   const routes = selection?.eligible ?? [];
-  if (pinned && routes.length === 0) {
+  if (routes.length === 0) {
     const peer = deps.unroutedPeerAlias(model);
-    const cold = tryUnroutedLocalColdCompletion(
-      peer,
-      selection,
-      ctx,
-      declaration,
-      bodyText,
-      trustedColdOwner,
-    );
+    const cold = pinned
+      ? tryUnroutedLocalColdCompletion(
+          peer,
+          selection,
+          ctx,
+          declaration,
+          bodyText,
+          trustedColdOwner,
+        )
+      : undefined;
     if (cold !== undefined) return await cold;
-    declaration ??= peer.declared;
+    declaration ??= pinned ? (peer.declared ?? peer.denied) : peer.denied;
   }
   const candidates =
     declaration === undefined
@@ -559,9 +565,10 @@ export function createProxy(opts: UnifiedProxyOptions = {}): UnifiedProxy {
     return discoverPeers();
   }
 
-  function unroutedPeerAlias(model: string): ReturnType<UnifiedDeps["unroutedPeerAlias"]> {
-    const snapshots = opts.peerSnapshots ?? publishedPeerSnapshots;
-    if (snapshots.size === 0) return { warm: false };
+  function freshPeerAlias(
+    snapshots: ReadonlyMap<string, PeerSnapshot>,
+    model: string,
+  ): PeerAliasEvidence {
     let warm = false;
     for (const { id } of configuredPeers()) {
       if (id === LOCAL_NODE_NAME || id === nodeId) continue;
@@ -588,6 +595,14 @@ export function createProxy(opts: UnifiedProxyOptions = {}): UnifiedProxy {
       warm ||= snapshot.workloads.some((candidate) => candidate.modelId === model);
     }
     return { warm };
+  }
+
+  function unroutedPeerAlias(model: string): PeerAliasEvidence {
+    const snapshots = opts.peerSnapshots ?? publishedPeerSnapshots;
+    if (snapshots.size === 0) return { warm: false };
+    const denied = openaiProxy.retainedPeerDeclaration(model, snapshots, nodeId);
+    const fresh = freshPeerAlias(snapshots, model);
+    return denied === undefined ? fresh : { ...fresh, denied };
   }
 
   function buildShadowCatalog(): routingCatalog.RouteCatalog {

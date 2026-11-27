@@ -35,8 +35,11 @@ export function defaultConfigPath(env: NodeJS.ProcessEnv = process.env): string 
   return join(base, "config");
 }
 
-export function loadConfig(path: string = defaultConfigPath()): Config {
-  if (!existsSync(path)) return freshConfig();
+export function loadConfig(
+  path: string = defaultConfigPath(),
+  options: { requireFile?: boolean } = {},
+): Config {
+  if (options.requireFile !== true && !existsSync(path)) return freshConfig();
   const raw = readFileSync(path, "utf8");
   const parsed = parseYaml(raw) as unknown;
   return ConfigSchema.parse(parsed);

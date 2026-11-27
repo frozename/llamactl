@@ -11,6 +11,11 @@ import { listPeers, type PeerNode } from "@llamactl/core/config/peers";
 import { callViaTunnelRelay } from "@llamactl/core/tunnel-relay";
 
 import { makePinnedFetch } from "../client/links.js";
+import {
+  admitsPeerDeclarationEvidence,
+  type PeerDeclarationHistory,
+  recordPeerDeclarationDenials,
+} from "./peer-declaration-denials.js";
 
 /**
  * Production peer-snapshot poller. Periodically fetches each cluster peer's
@@ -36,6 +41,7 @@ interface RawFleetSnapshot {
   node_mem?: { free_mb?: number; inactive_mb?: number };
   workloads?: unknown;
   declaredProvenance?: unknown;
+  declaredInventory?: unknown;
 }
 
 // Treat a peer as HIGH pressure (routes dropped by listClusterRoutes) only when
@@ -97,17 +103,6 @@ function collectPeerWorkloads(rawWorkloads: RawFleetWorkload[]): PeerSnapshot["w
   return workloads;
 }
 
-function allowsDeclarationProvenance(peer: PeerNode): boolean {
-  // Tunnel hello names can share a bearer. This version requires a direct
-  // connection using the configured peer's pinned certificate.
-  return (
-    peer.tunnelPreferred !== true &&
-    peer.endpoint.startsWith("https://") &&
-    Boolean(peer.certificate?.trim()) &&
-    Boolean(peer.token?.trim())
-  );
-}
-
 function uniqueWorkloadByAlias(
   workloads: RawFleetWorkload[],
 ): Map<string, RawFleetWorkload | null> {
@@ -136,7 +131,7 @@ function readDeclarationProvenance(
   value: unknown,
   workloads: RawFleetWorkload[],
 ): routingCatalog.PeerDeclarationProvenanceV1 | undefined {
-  if (!allowsDeclarationProvenance(peer)) return undefined;
+  if (!admitsPeerDeclarationEvidence(peer)) return undefined;
   const proof = routingCatalog.readPeerDeclarationProvenance(value, peer.id);
   if (proof === undefined) return undefined;
   const aliases = uniqueWorkloadByAlias(workloads);
@@ -168,8 +163,11 @@ async function readPeerSnapshotDirectWithTimeout(
 ): Promise<RawFleetSnapshot | null> {
   const headers: Record<string, string> = {};
   if (peer.token) headers["authorization"] = `Bearer ${peer.token}`;
-  const negotiatedProof = allowsDeclarationProvenance(peer);
-  if (negotiatedProof) headers[routingCatalog.PEER_DECLARATION_PROVENANCE_HEADER] = "1";
+  const negotiatedProof = admitsPeerDeclarationEvidence(peer);
+  if (negotiatedProof) {
+    headers[routingCatalog.PEER_DECLARATION_PROVENANCE_HEADER] = "1";
+    headers[routingCatalog.PEER_DECLARATION_INVENTORY_HEADER] = "2";
+  }
   const pinnedFetch = makePinnedFetch({
     name: peer.id,
     endpoint: peer.endpoint,
@@ -258,18 +256,25 @@ async function fetchPeerSnapshot(
   const rawWorkloads = snap.workloads.filter(isFleetWorkload);
   const workloads = collectPeerWorkloads(rawWorkloads);
   const declaredProvenance = readDeclarationProvenance(peer, snap.declaredProvenance, rawWorkloads);
-  if (workloads.length === 0 && declaredProvenance === undefined) return null;
+  const declaredInventory =
+    snap.declaredProvenance === undefined && admitsPeerDeclarationEvidence(peer)
+      ? routingCatalog.readEmptyPeerDeclarationInventory(snap.declaredInventory, peer.id)
+      : undefined;
+  if (workloads.length === 0 && declaredProvenance === undefined && declaredInventory === undefined)
+    return null;
   return {
     workloads,
     ...(declaredProvenance === undefined ? {} : { declaredProvenance }),
+    ...(declaredInventory === undefined ? {} : { declaredInventory }),
     pressure: computePeerPressure(snap.node_mem),
     fetchedAt: nowMs,
   };
 }
 
 function withoutDeclarationProvenance(snapshot: PeerSnapshot): PeerSnapshot {
-  if (snapshot.declaredProvenance === undefined) return snapshot;
-  const { declaredProvenance: _discarded, ...legacy } = snapshot;
+  if (snapshot.declaredProvenance === undefined && snapshot.declaredInventory === undefined)
+    return snapshot;
+  const { declaredProvenance: _discarded, declaredInventory: _inventory, ...legacy } = snapshot;
   return legacy;
 }
 
@@ -303,7 +308,8 @@ export interface PeerSnapshotPollerOptions {
 export function startPeerSnapshotPoller(opts: PeerSnapshotPollerOptions = {}): () => void {
   const intervalMs = opts.intervalMs ?? 15_000;
   const nowFn = opts.nowFn ?? ((): number => Date.now());
-  const discover = opts.listPeersFn ?? ((): PeerNode[] => listPeers());
+  // A synthesized empty config would turn a failed read into peer removal.
+  const discover = opts.listPeersFn ?? ((): PeerNode[] => listPeers({ requireConfig: true }));
   const peerSnapshotFetchTimeoutMs =
     opts.peerSnapshotFetchTimeoutMs ?? DEFAULT_PEER_FETCH_TIMEOUT_MS;
   const fetchOne =
@@ -314,6 +320,7 @@ export function startPeerSnapshotPoller(opts: PeerSnapshotPollerOptions = {}): (
   let stopped = false;
   let inflight = false;
   let lastPublished = new Map<string, PeerSnapshot>();
+  const declarationHistory: PeerDeclarationHistory = new Map();
   const isStopped = (): boolean => stopped;
 
   const discoverPeers = (): PeerNode[] | null => {
@@ -367,6 +374,7 @@ export function startPeerSnapshotPoller(opts: PeerSnapshotPollerOptions = {}): (
         }),
       );
       if (!isStopped()) {
+        recordPeerDeclarationDenials(declarationHistory, peers, duplicates, next);
         const before = [...lastPublished.values()]
           .flatMap((s) => s.workloads.map((w) => w.modelId))
           .sort()

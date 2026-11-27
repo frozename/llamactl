@@ -599,6 +599,24 @@ export const DeclaredModelEntryV1Schema = z
 export type DeclaredModelEntryV1 = z.infer<typeof DeclaredModelEntryV1Schema>;
 
 export const PEER_DECLARATION_PROVENANCE_HEADER = "x-llamactl-declaration-provenance";
+export const PEER_DECLARATION_INVENTORY_HEADER = "x-llamactl-declaration-inventory";
+
+const PeerEmptyDeclarationInventorySchema = z.strictObject({
+  schemaVersion: z.literal(2),
+  ownerNodeId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/),
+  complete: z.literal(true),
+  entries: z.tuple([]),
+});
+
+export type PeerEmptyDeclarationInventory = z.infer<typeof PeerEmptyDeclarationInventorySchema>;
+
+export function readEmptyPeerDeclarationInventory(
+  value: unknown,
+  ownerNodeId: string,
+): PeerEmptyDeclarationInventory | undefined {
+  const parsed = PeerEmptyDeclarationInventorySchema.safeParse(value);
+  return parsed.success && parsed.data.ownerNodeId === ownerNodeId ? parsed.data : undefined;
+}
 
 const publishedDigest = z.string().regex(/^sha256:[0-9a-f]{64}$/);
 const peerModelId = z
