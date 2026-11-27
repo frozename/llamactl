@@ -666,6 +666,7 @@ async function runFencedSwitch(
         dryRun: false,
         registry: args.registry,
         signal: controller.signal,
+        enforcePlanDeadline: managed,
         operation: {
           store,
           fenceToken,

@@ -210,6 +210,8 @@ type StepBudget = {
   startMs: number | null;
   timer: ProfileSwitchStepTimer;
   signal: AbortSignal | undefined;
+  deadlineMs: number | undefined;
+  nowMs: () => number;
 };
 type CancelledAt = { action: ProfileSwitchStepAction; workload: string };
 type RunResult = {
@@ -389,12 +391,42 @@ function normalizeOutcome(raw: unknown): StepOutcome {
   return { ok: false, detail: "invalid step outcome" };
 }
 
+function boundedProfileTime(ms: number | null, budget: StepBudget): number | null {
+  if (budget.deadlineMs === undefined) return ms;
+  const remaining = Math.max(0, budget.deadlineMs - budget.nowMs());
+  return Math.min(ms ?? remaining, remaining);
+}
+
+function profileDeadlineRefusal(budget: StepBudget): string | undefined {
+  return boundedProfileTime(null, budget) === 0 ? "ProfileDeadlineExceeded" : undefined;
+}
+
+function failedBeforeActuators(
+  node: string,
+  detail: string,
+  planned: readonly PlannedStep[],
+): RunResult {
+  const failure = stepRecord("verify", node, "failed", detail);
+  return {
+    steps: [
+      failure,
+      ...planned.map(({ action, workload }) => stepRecord(action, workload, "not-run")),
+    ],
+    failedAt: failureOf(failure),
+    cancelledAt: null,
+  };
+}
+
 async function runStep(
   step: PlannedStep,
   deps: ProfileSwitchExecutorDeps,
   budget: StepBudget,
 ): Promise<StepOutcome> {
-  const budgetMs = step.action === "start" ? budget.startMs : budget.stopMs;
+  const budgetMs = boundedProfileTime(
+    step.action === "start" ? budget.startMs : budget.stopMs,
+    budget,
+  );
+  if (budgetMs === 0) return { ok: false, detail: "ProfileDeadlineExceeded" };
   const execute = (signal: AbortSignal | undefined): Promise<ProfileSwitchStepOutcome> => {
     const run = step.action === "start" ? deps.start : deps.stop;
     return signal === undefined ? run(step.workload) : run(step.workload, { signal });
@@ -803,7 +835,8 @@ async function runFenced(
     return { steps, failedAt: null, cancelledAt };
   }
 
-  const drain = await drainPhase(registry, fence.tokens, drainTimeoutMs, signal, beat, sessions);
+  const drainBudgetMs = Math.max(1, boundedProfileTime(drainTimeoutMs, budget) ?? drainTimeoutMs);
+  const drain = await drainPhase(registry, fence.tokens, drainBudgetMs, signal, beat, sessions);
   steps.push(...drain.steps);
   if (drain.cancelled) {
     cancelBestEffort(registry, fence.tokens);
@@ -818,7 +851,7 @@ async function runFenced(
     return { steps, failedAt: drain.failedAt, cancelledAt: null };
   }
 
-  const refusal = beforeTeardownRefusal(deps);
+  const refusal = profileDeadlineRefusal(budget) ?? beforeTeardownRefusal(deps);
   if (refusal !== undefined) {
     cancelBestEffort(registry, fence.tokens);
     const failure = stepRecord("verify", plan.node, "failed", refusal);
@@ -1177,12 +1210,16 @@ function stepBudgetFrom(
   stepTimeouts: ProfileSwitchStepTimeouts | undefined,
   stepTimer: ProfileSwitchStepTimer | undefined,
   signal: AbortSignal | undefined,
+  deadlineMs: number | undefined,
+  nowMs: () => number,
 ): StepBudget {
   return {
     stopMs: finiteBudgetMs(stepTimeouts?.unloadMs),
     startMs: finiteBudgetMs(stepTimeouts?.loadMs),
     timer: stepTimer ?? defaultStepTimer,
     signal,
+    deadlineMs,
+    nowMs,
   };
 }
 
@@ -1245,6 +1282,8 @@ export async function executeProfileSwitch(
     stepTimeouts?: ProfileSwitchStepTimeouts;
     stepTimer?: ProfileSwitchStepTimer;
     sessions?: SessionRefcounts | null;
+    enforcePlanDeadline?: boolean;
+    nowMs?: () => number;
   },
 ): Promise<ProfileSwitchExecutionReport> {
   const dryRun = opts?.dryRun !== false;
@@ -1307,37 +1346,35 @@ export async function executeProfileSwitch(
 
   const signal = opts.signal;
   const operation = opts.operation;
-  const budget = stepBudgetFrom(opts.stepTimeouts, opts.stepTimer, signal);
+  const budget = stepBudgetFrom(
+    opts.stepTimeouts,
+    opts.stepTimer,
+    signal,
+    opts.enforcePlanDeadline === true ? plan.deadlineMs : undefined,
+    opts.nowMs ?? Date.now,
+  );
   const executorDeps = executorDepsFor(plan, deps, operation);
+  const run = async (beat: Beat): Promise<RunResult> => {
+    const refusal = profileDeadlineRefusal(budget);
+    if (refusal !== undefined) return failedBeforeActuators(plan.node, refusal, planned);
+    return fenced
+      ? await runFenced(
+          plan,
+          executorDeps,
+          registry,
+          drainTimeoutMs,
+          signal,
+          beat,
+          budget,
+          sessions,
+        )
+      : await runSteps(planned, executorDeps, signal, beat, budget);
+  };
   if (operation !== undefined) {
-    return await executeWithOperation(plan, deferred, operation, async (beat) =>
-      fenced
-        ? await runFenced(
-            plan,
-            executorDeps,
-            registry,
-            drainTimeoutMs,
-            signal,
-            beat,
-            budget,
-            sessions,
-          )
-        : await runSteps(planned, executorDeps, signal, beat, budget),
-    );
+    return await executeWithOperation(plan, deferred, operation, run);
   }
 
-  const result = fenced
-    ? await runFenced(
-        plan,
-        executorDeps,
-        registry,
-        drainTimeoutMs,
-        signal,
-        NO_BEAT,
-        budget,
-        sessions,
-      )
-    : await runSteps(planned, executorDeps, signal, NO_BEAT, budget);
+  const result = await run(NO_BEAT);
   const outcome =
     result.cancelledAt !== null
       ? "cancelled"
