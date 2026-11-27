@@ -57,7 +57,7 @@ export type ManagedOmlxResidency = {
 function loadDemotesToUncertain(result: NativeLoadResult): boolean {
   // prettier-ignore
   return (
-    result.kind === "ambiguous" || (result.kind === "refused" && result.reason === "LoadInProgress") || (result.kind === "failed" && result.reason === "Conflict")
+    result.kind === "ambiguous" || (result.kind === "refused" && (result.reason === "LoadInProgress" || result.reason === "IdentityUnverified")) || (result.kind === "failed" && result.reason === "Conflict")
   );
 }
 
@@ -163,7 +163,10 @@ export function createManagedOmlxResidency(
           }
           handle = null;
           state = "unclaimed";
-        } else if (result.reservation === "uncertain") {
+        } else if (
+          result.reservation === "uncertain" ||
+          (result.kind === "refused" && result.reason === "IdentityUnverified")
+        ) {
           if (handle !== null && state === "resident") {
             handle.demoteUncertain();
           }
