@@ -766,7 +766,8 @@ async function startModelHostProcess(
   client: WorkloadClient,
   manifest: ModelHostManifest,
 ): Promise<
-  { ok: false; error: string } | { ok: true; status: { state: string; pid?: number | null } }
+  | { ok: false; error: string }
+  | { ok: true; status: { state: string; pid?: number | null; identityUnknown?: boolean } }
 > {
   const timeoutMs = manifest.spec.timeoutSeconds * 1000;
   // Wire contract: metadata.annotations are controller-side markers
@@ -780,7 +781,13 @@ async function startModelHostProcess(
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     type StartResult =
-      | { ok: true; error?: string; pid?: number | null; state?: string | null }
+      | {
+          ok: true;
+          error?: string;
+          pid?: number | null;
+          state?: string | null;
+          identityUnknown?: boolean;
+        }
       | { ok: false; error: string };
     const startResult = await new Promise<StartResult | null>((resolve, reject) => {
       timer = setTimeout(() => {
@@ -820,7 +827,16 @@ async function startModelHostProcess(
     }
 
     if (typeof startResult.pid === "number" && typeof startResult.state === "string") {
-      return { ok: true, status: { state: startResult.state, pid: startResult.pid } };
+      return {
+        ok: true,
+        status: {
+          state: startResult.state,
+          pid: startResult.pid,
+          ...(startResult.identityUnknown === undefined
+            ? {}
+            : { identityUnknown: startResult.identityUnknown }),
+        },
+      };
     }
     return {
       ok: true,
@@ -986,6 +1002,21 @@ async function teardownFailedModelHost(ctx: EvictionStageCtx): Promise<string | 
   return failure?.message ?? null;
 }
 
+async function failedModelHostReplacement(
+  ctx: EvictionStageCtx,
+  error: string,
+): Promise<Extract<ApplyManifestOutcome, { ok: false }>> {
+  const detail = await teardownFailedModelHost(ctx);
+  if (detail === null) return { ok: false, error };
+  const victims = [...ctx.evictionClaims].map((n) => `'${n}'`).join(", ");
+  ctx.evictionClaims.clear();
+  ctx.evictionIntentKept = true;
+  return {
+    ok: false,
+    error: `${error}; replacement '${ctx.manifest.metadata.name}' teardown after failed start unverified (${detail}); eviction intent on ${victims} kept`,
+  };
+}
+
 /**
  * DF-02 (#275): the verified-eviction pass for a ModelHost replacement —
  * authorize victims, admit budget with their capacity credited, persist
@@ -1070,18 +1101,23 @@ async function convergeModelHostReplacement(
     };
   }
 
+  const holdFailure = armEvictionMarkers(ctx);
+  if (holdFailure !== null) return { ok: false, error: holdFailure.message };
   lifecycle.startInvoked = true;
   const started = await startModelHostProcess(client, manifest);
-  if (!started.ok) {
-    let message = started.error;
-    const detail = await teardownFailedModelHost(ctx);
-    if (detail !== null) {
-      const victims = [...ctx.evictionClaims].map((n) => `'${n}'`).join(", ");
-      ctx.evictionClaims.clear();
-      ctx.evictionIntentKept = true;
-      message = `${message}; replacement '${manifest.metadata.name}' teardown after failed start unverified (${detail}); eviction intent on ${victims} kept`;
-    }
-    return { ok: false, error: message };
+  if (!started.ok) return await failedModelHostReplacement(ctx, started.error);
+  const { state, pid, identityUnknown } = started.status;
+  if (
+    state !== "Running" ||
+    typeof pid !== "number" ||
+    !Number.isInteger(pid) ||
+    pid < 1 ||
+    identityUnknown
+  ) {
+    return await failedModelHostReplacement(
+      ctx,
+      `modelHostStart did not verify readiness (state=${state}, pid=${String(pid ?? "unknown")})`,
+    );
   }
 
   writeModelHostSidecar(manifest, started.status, resolved, firstHostedModel.rel);
@@ -1136,15 +1172,16 @@ async function applyModelHostReplacement(
       lifecycle,
     );
   } catch (err) {
-    clearEvictionMarkers(manifest, ctx.opts, ctx.evictionClaims);
-    finalizeEvictionOperations(
-      ctx,
-      false,
-      `threw ${err instanceof Error ? err.message : String(err)}`,
-    );
-    throw err;
+    const detail = err instanceof Error ? err.message : String(err);
+    if (!lifecycle.startInvoked) {
+      clearEvictionMarkers(manifest, ctx.opts, ctx.evictionClaims);
+      finalizeEvictionOperations(ctx, false, `threw ${detail}`);
+      throw err;
+    }
+    outcome = await failedModelHostReplacement(ctx, detail);
   }
   if (outcome.ok) {
+    settleEvictionMarkers(ctx);
     finalizeEvictionOperations(ctx, true, undefined);
     return outcome;
   }
@@ -1680,6 +1717,7 @@ function checkPortCollision(
 
 export const EVICTED_BY_ANNOTATION = "llamactl.io/evicted-by";
 export const EVICTED_AT_ANNOTATION = "llamactl.io/evicted-at";
+export const EVICTION_TEARDOWN_UNVERIFIED = "llamactl.io/eviction-teardown-unverified";
 export const EVICTION_INTENT_GRACE_MS = 15 * 60_000;
 
 /** A manifest that can name eviction victims: ModelRun replacements and,
@@ -2061,6 +2099,17 @@ function persistEvictIntent(
       throw new Error(`manifest declares metadata.name '${victim.metadata.name}', not '${target}'`);
     }
     const owner = victim.metadata.annotations?.[EVICTED_BY_ANNOTATION];
+    if (
+      owner !== undefined &&
+      victim.metadata.annotations?.[EVICTION_TEARDOWN_UNVERIFIED] === owner
+    ) {
+      return evictStopFailure(
+        manifest,
+        target,
+        "EvictIntentHeld",
+        `'${target}' is already held by eviction owner '${owner}' pending verified teardown`,
+      );
+    }
     if (owner !== manifest.metadata.name) {
       // A live foreign hold belongs to another replacement: overwriting
       // it would let this apply's rollback erase a hold it never owned.
@@ -2078,17 +2127,78 @@ function persistEvictIntent(
         [EVICTED_BY_ANNOTATION]: manifest.metadata.name,
         [EVICTED_AT_ANNOTATION]: now,
       };
-      if (victim.kind === "ModelHost") {
-        saveModelHost({ ...victim, metadata: { ...victim.metadata, annotations } }, workloadsDir);
-      } else {
-        saveWorkload({ ...victim, metadata: { ...victim.metadata, annotations } }, workloadsDir);
-      }
+      saveVictimAnnotations(victim, annotations, workloadsDir);
     }
     claimedTargets.add(target);
     return null;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return evictStopFailure(manifest, target, "EvictIntentUnpersisted", message);
+  }
+}
+
+function saveVictimAnnotations(
+  victim: EvictOwner,
+  annotations: Record<string, string>,
+  workloadsDir: string,
+): void {
+  if (victim.kind === "ModelHost") {
+    const { annotations: _previous, ...metadata } = victim.metadata;
+    saveModelHost(
+      {
+        ...victim,
+        metadata: Object.keys(annotations).length > 0 ? { ...metadata, annotations } : metadata,
+      },
+      workloadsDir,
+    );
+  } else {
+    saveWorkload({ ...victim, metadata: { ...victim.metadata, annotations } }, workloadsDir);
+  }
+}
+
+function armEvictionMarkers(ctx: EvictionStageCtx): EvictStopFailure | null {
+  const { manifest, opts } = ctx;
+  const workloadsDir = opts?.workloadsDir ?? defaultWorkloadsDir(opts?.env);
+  const owner = manifest.metadata.name;
+  for (const target of ctx.evictionClaims) {
+    try {
+      const victim = loadWorkloadByNameAny(target, workloadsDir);
+      const annotations = victim.metadata.annotations;
+      if (victim.metadata.name !== target || annotations?.[EVICTED_BY_ANNOTATION] !== owner) {
+        throw new Error("eviction intent ownership changed before replacement start");
+      }
+      saveVictimAnnotations(
+        victim,
+        { ...annotations, [EVICTION_TEARDOWN_UNVERIFIED]: owner },
+        workloadsDir,
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return evictStopFailure(manifest, target, "EvictIntentUnpersisted", message);
+    }
+  }
+  return null;
+}
+
+function settleEvictionMarkers(ctx: EvictionStageCtx): void {
+  const { manifest, opts } = ctx;
+  const workloadsDir = opts?.workloadsDir ?? defaultWorkloadsDir(opts?.env);
+  const owner = manifest.metadata.name;
+  for (const target of ctx.evictionClaims) {
+    try {
+      const victim = loadWorkloadByNameAny(target, workloadsDir);
+      const annotations = victim.metadata.annotations;
+      if (
+        victim.metadata.name === target &&
+        annotations?.[EVICTED_BY_ANNOTATION] === owner &&
+        annotations[EVICTION_TEARDOWN_UNVERIFIED] === owner
+      ) {
+        const { [EVICTION_TEARDOWN_UNVERIFIED]: _hold, ...settled } = annotations;
+        saveVictimAnnotations(victim, settled, workloadsDir);
+      }
+    } catch {
+      // Leave the durable hold when the victim manifest cannot be safely updated.
+    }
   }
 }
 
@@ -3341,11 +3451,8 @@ interface ClaimLifecycle {
  * stops any partially-started workers, marks the claim uncertain, and
  * tears down a half-started eviction replacement so its victims are not
  * released beside a live process. An unverified teardown keeps the
- * eviction intent held (see `teardownFailedReplacement`). That hold is
- * bounded: a failed apply does not store the replacement manifest, so
- * the kept marker suppresses the victim only for the eviction-intent
- * grace window (`evictionGraceMs`, default EVICTION_INTENT_GRACE_MS),
- * after which the reconciler releases it.
+ * durable eviction hold (see `teardownFailedReplacement`), even if the
+ * replacement manifest was never saved.
  */
 async function failedStartResult(
   ctx: ConvergeServerContext,
@@ -3368,6 +3475,42 @@ async function failedStartResult(
   return failedApplyResult(action, message, ctx.now);
 }
 
+async function startClaimedWorkers(
+  ctx: ConvergeServerContext,
+  handle: TargetAdmissionClaimHandle | null,
+  lifecycle: ClaimLifecycle,
+): Promise<string | undefined> {
+  const workers = ctx.manifest.spec.workers;
+  if (workers.length === 0) return undefined;
+  lifecycle.destructive = true;
+  const result = await startWorkers(workers, ctx.getClient, ctx.onEvent);
+  if (result.error) {
+    await stopWorkers(workers, ctx.getClient);
+    handle?.releaseUnstarted();
+  }
+  return result.error;
+}
+
+function reportClaimedServer(
+  ctx: ConvergeServerContext,
+  started: StartDone,
+  handle: TargetAdmissionClaimHandle | null,
+): string | null {
+  const replacing = ctx.evictionClaims.size > 0;
+  if (!replacing) handle?.markResident();
+  try {
+    ctx.onEvent?.({
+      type: "started",
+      message: `${ctx.manifest.metadata.name}: ready at ${started.endpoint} pid=${String(started.pid ?? "?")}`,
+    });
+  } catch (err) {
+    if (!replacing) throw err;
+    return err instanceof Error ? err.message : String(err);
+  }
+  if (replacing) handle?.markResident();
+  return null;
+}
+
 async function startClaimedServer(
   ctx: ConvergeServerContext,
   action: ApplyAction,
@@ -3377,22 +3520,20 @@ async function startClaimedServer(
 ): Promise<ApplyResult> {
   const { manifest, client, getClient, onEvent, now, desiredArgs } = ctx;
   const workers = manifest.spec.workers;
-  if (workers.length > 0) {
-    lifecycle.destructive = true;
-    const wres = await startWorkers(workers, getClient, onEvent);
-    if (wres.error) {
-      // Already inside `workers.length > 0`; stop the partially-started workers
-      // before returning so a worker-start failure is all-or-nothing.
-      await stopWorkers(workers, getClient);
-      handle?.releaseUnstarted();
-      return failedApplyResult(action, wres.error, new Date().toISOString());
-    }
+  const workerError = await startClaimedWorkers(ctx, handle, lifecycle);
+  if (workerError !== undefined) {
+    return failedApplyResult(action, workerError, new Date().toISOString());
   }
 
   onEvent?.({
     type: "start",
     message: `${manifest.metadata.name}: starting ${manifest.spec.target.value}`,
   });
+  const holdFailure = armEvictionMarkers(ctx);
+  if (holdFailure !== null) {
+    await stopWorkers(workers, getClient);
+    return evictFailureResult(ctx, holdFailure.target, holdFailure.message, holdFailure.reason);
+  }
   lifecycle.startInvoked = true;
   let startOutcome: { ok: true; result: StartDone } | { ok: false; error: string };
   try {
@@ -3409,12 +3550,10 @@ async function startClaimedServer(
   }
 
   const okResult = startOutcome.result;
-  handle?.markResident();
-
-  onEvent?.({
-    type: "started",
-    message: `${manifest.metadata.name}: ready at ${okResult.endpoint} pid=${String(okResult.pid ?? "?")}`,
-  });
+  const observerError = reportClaimedServer(ctx, okResult, handle);
+  if (observerError !== null) {
+    return await failedStartResult(ctx, action, observerError, workers, getClient, handle);
+  }
 
   return {
     action,
@@ -3445,8 +3584,7 @@ async function startClaimedServer(
  * exit rollback releases the victims, so the reconciler never runs a
  * victim beside a live replacement. Returns a human detail when the
  * teardown could not be verified (so the caller keeps the eviction
- * intent held — only for the EVICTION_INTENT_GRACE_MS grace window
- * while the replacement manifest is not stored), and null when there
+ * intent held even without a saved replacement manifest), and null when there
  * was nothing to tear down or the replacement is confirmed down.
  */
 async function teardownFailedReplacement(ctx: ConvergeServerContext): Promise<string | null> {
@@ -3458,6 +3596,7 @@ async function teardownFailedReplacement(ctx: ConvergeServerContext): Promise<st
   const remainingMs = (): number => Math.max(0, expires - Date.now());
   try {
     const status = await withDeadline(client.serverStatus.query({ workload: name }), remainingMs());
+    if (status.identityUnknown === true) return "pid identity unknown before stop";
     if (status.state !== "up") return null;
     if (status.foreign === true) {
       return "the recorded server is foreign to this workload";
@@ -3473,6 +3612,7 @@ async function teardownFailedReplacement(ctx: ConvergeServerContext): Promise<st
       client.serverStatus.query({ workload: name }),
       remainingMs(),
     );
+    if (postStatus.identityUnknown === true) return "pid identity unknown after stop";
     if (postStatus.state === "up") return "still up after stop";
     return null;
   } catch (err) {
@@ -3627,24 +3767,11 @@ function releaseClaimedMarker(
   const {
     [EVICTED_BY_ANNOTATION]: _evictedBy,
     [EVICTED_AT_ANNOTATION]: _evictedAt,
+    [EVICTION_TEARDOWN_UNVERIFIED]: _teardownUnverified,
     ...annotations
   } = source;
   try {
-    if (victim.kind === "ModelHost") {
-      const { annotations: _stale, ...hostMetadata } = victim.metadata;
-      // ModelHost annotations are optional: drop the key entirely when
-      // nothing remains rather than leave `annotations: {}` behind.
-      saveModelHost(
-        {
-          ...victim,
-          metadata:
-            Object.keys(annotations).length > 0 ? { ...hostMetadata, annotations } : hostMetadata,
-        },
-        workloadsDir,
-      );
-    } else {
-      saveWorkload({ ...victim, metadata: { ...victim.metadata, annotations } }, workloadsDir);
-    }
+    saveVictimAnnotations(victim, annotations, workloadsDir);
     return { released: true };
   } catch (err) {
     return {
@@ -3832,6 +3959,7 @@ export async function applyOne(
       throw err;
     }
     if (result.error === undefined && result.statusSection.phase === "Running") {
+      settleEvictionMarkers(ctx);
       finalizeEvictionOperations(ctx, true, undefined);
       return result;
     }
