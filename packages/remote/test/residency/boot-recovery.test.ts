@@ -41,6 +41,7 @@ type BootRecoverySummary = {
   skipped: number;
   unrecognized: number;
   possiblyLive: number;
+  dispatchUnverified?: number;
 };
 
 type BootRecoveryStore = ReturnType<typeof openResidencyOperationStore>;
@@ -874,6 +875,41 @@ describe("profile-switch step heartbeat against boot recovery (#279 DF-06)", () 
 });
 
 describe("boot recovery claim atomicity (#279 DF-06)", () => {
+  test("a dispatch committed after the read-only scan prevents the boot claim", async () => {
+    const recover = await loadBootRecovery();
+    seedCrashRow();
+    const before = currentFence();
+
+    const summary = recover({
+      path,
+      incarnation: "boot",
+      nowMs: () => 2 * PROFILE_SWITCH_BOOT_RECOVERY_MIN_AGE_MS,
+      write: () => undefined,
+      openStore: (storePath) => {
+        const writer = openResidencyOperationStore({ path: storePath });
+        try {
+          const row = writer.getOperation("op-crash");
+          if (row === null) throw new Error("missing pending operation");
+          expect(
+            writer.commitReservation({
+              operationId: row.operationId,
+              fenceToken: row.fenceToken,
+              expectedVersion: row.version,
+              nowMs: row.updatedAtMs,
+            }),
+          ).toEqual({ ok: true });
+        } finally {
+          writer.close();
+        }
+        return openResidencyOperationStore({ path: storePath });
+      },
+    });
+
+    expect(currentFence()).toEqual(before);
+    expect(nonterminalIds()).toEqual(["op-crash"]);
+    expect(summary).toMatchObject({ status: "deferred", dispatchUnverified: 1 });
+  });
+
   // Kills T1: with the re-check and the claim as separate statements, a CLI
   // can claim and begin a switch between them. Boot then claims over it and
   // stale-fences the live switch. Inside one IMMEDIATE transaction the CLI's

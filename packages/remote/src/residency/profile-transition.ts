@@ -30,11 +30,8 @@
  * `operation-record-refused`. Cancellation is checked at step boundaries and
  * ends a drain wait. The record is opt-in; the live caller (apply-profile)
  * passes it. The op's desiredRevision participates in the store's shared
- * watermark. A crash
- * between begin and finish leaves a nonterminal profile-switch row that
- * blocks the node (every later switch is Busy) until the deferred
- * crash-recovery path terminalizes it; serialization is therefore NOT
- * complete without recovery.
+ * watermark. An interrupted dispatched switch can leave its nonterminal row
+ * blocking later switches until its dispatch outcome is verified.
  *
  * On an ok, non-noop plan, `deferred` omits `complete` whenever
  * `opts.operation` is passed, because finishing that record terminal is the
@@ -54,9 +51,8 @@
  * `updatedAtMs` as "last step progress", so a live switch whose steps each
  * finish inside its staleness window is never terminalized under it.
  *
- * Crash recovery (via `recovery.ts`) terminalizes stale profile-switch rows;
- * rollback/persist-suppression/verify-release/reserve/verify-ready/publish
- * stay deferred. Per-action step budgets ride `opts.stepTimeouts`: `unloadMs`
+ * Crash recovery (via `recovery.ts`) preserves committed profile-switch rows
+ * and their reservations. Per-action step budgets ride `opts.stepTimeouts`: `unloadMs`
  * bounds each `stop` and `loadMs` each `start`, armed through the injectable
  * `opts.stepTimer`; absent, zero or non-finite budgets leave that action
  * unbounded (the same rule as `opts.drainTimeoutMs`, with no default). A
