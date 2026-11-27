@@ -831,6 +831,7 @@ function residencyPlanFor(
     modelRuns: rawRuns.map((manifest) => profileManifest(manifest, nodeName, managed)),
     modelHosts,
     modelHostStatus: (name) => statusModelHost({ key: { name } }),
+    observeManaged: managed?.observeProfileWorkload,
     estimateModelRunGiB: (manifest) => estimateWorkloadMemoryGiB(manifest, resolved),
     estimateModelHostGiB: (manifest) => estimateModelHostMemoryGiB(manifest, resolved),
   });

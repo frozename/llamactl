@@ -96,6 +96,7 @@ import type { ResidencyRankingReadout } from "../proxy/residency-ranking.js";
 import type { ModelHostManifest } from "../workload/modelhost-schema.js";
 import type { NodeRun } from "../workload/noderun-schema.js";
 import type { ModelRun } from "../workload/schema.js";
+import type { ManagedLaunchAdmission } from "./managed-launch-admission.js";
 import type { OmlxNativeStatusRow } from "./omlx-capability.js";
 import type { ResidencyStateRecord, ResidencyStoreSnapshot } from "./store.js";
 
@@ -1255,12 +1256,20 @@ export function observedFromModelHostStatus(s: ModelHostStatusProbe): ObservedWo
   return s.state === "Running" ? "starting" : "stopped";
 }
 
+function observedAllocation(
+  managed: ReturnType<NonNullable<ManagedLaunchAdmission["observeProfileWorkload"]>>,
+  fallback: () => number | null,
+): number | null {
+  return managed?.state === "running" ? managed.allocationGiB : fallback();
+}
+
 export function collectResidencyObservations(input: {
   node: string;
   servingNode: string | null;
   modelRuns: readonly ModelRun[];
   modelHosts: readonly ModelHostManifest[];
   modelHostStatus: (name: string) => ModelHostStatusProbe;
+  observeManaged?: ManagedLaunchAdmission["observeProfileWorkload"];
   estimateModelRunGiB: (m: ModelRun) => number | null;
   estimateModelHostGiB: (m: ModelHostManifest) => number | null;
 }): {
@@ -1276,23 +1285,32 @@ export function collectResidencyObservations(input: {
 
   for (const m of modelRuns) {
     if (m.spec.node !== input.node) continue;
-    observed.set(m.metadata.name, observedFromModelRun(m));
+    const managed = input.observeManaged?.(m.metadata.name, m.kind);
+    observed.set(m.metadata.name, managed?.state ?? observedFromModelRun(m));
     memoryGiB.set(
       m.metadata.name,
-      m.spec.resources?.expectedMemoryGiB ?? input.estimateModelRunGiB(m),
+      observedAllocation(
+        managed,
+        () => m.spec.resources?.expectedMemoryGiB ?? input.estimateModelRunGiB(m),
+      ),
     );
   }
 
   const hostIsLocal = input.servingNode !== null && input.servingNode === input.node;
+  const observeHost = hostIsLocal ? input.observeManaged : undefined;
   for (const m of input.modelHosts) {
     if (m.spec.node !== input.node) continue;
-    memoryGiB.set(m.metadata.name, input.estimateModelHostGiB(m));
+    const managed = observeHost?.(m.metadata.name, m.kind);
+    memoryGiB.set(
+      m.metadata.name,
+      observedAllocation(managed, () => input.estimateModelHostGiB(m)),
+    );
     // Local pid files say nothing about another node, so leave observed unset
     // (which the coordinator reads as "unknown") unless this node is serving.
     if (hostIsLocal) {
       observed.set(
         m.metadata.name,
-        observedFromModelHostStatus(input.modelHostStatus(m.metadata.name)),
+        managed?.state ?? observedFromModelHostStatus(input.modelHostStatus(m.metadata.name)),
       );
     }
   }

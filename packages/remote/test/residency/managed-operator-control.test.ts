@@ -392,21 +392,21 @@ test("authenticated manual control uses the managed launch and stop fences", asy
       action: "load",
     });
     expect(existsSync(engine.marker)).toBe(true);
-    saveWorkload(
-      {
-        ...manifest,
-        status: {
-          phase: "Running",
-          serverPid: Number(
-            readFileSync(join(temp.runtimeDir, "workloads", workload, "llama-server.pid"), "utf8"),
-          ),
-          endpoint: `http://127.0.0.1:${String(engine.port)}`,
-          lastTransitionTime: new Date().toISOString(),
-          conditions: [],
-        },
-      },
-      workloadsDir,
-    );
+    expect(readFileSync(file, "utf8")).toBe(plain);
+    const sidecar = join(temp.runtimeDir, "workloads", workload, "llama-server.state");
+    const published = readFileSync(sidecar, "utf8");
+    const state = JSON.parse(published) as Record<string, unknown>;
+    writeFileSync(sidecar, JSON.stringify({ ...state, publicationPending: true }));
+    try {
+      expect(
+        await operatorCall(running, "operatorRunTool", {
+          name: profileTool,
+          arguments: profileArguments,
+        }),
+      ).toMatchObject({ ok: false, error: { code: "UnknownState" } });
+    } finally {
+      writeFileSync(sidecar, published);
+    }
     expect(
       await operatorCall(running, "operatorRunTool", {
         name: profileTool,

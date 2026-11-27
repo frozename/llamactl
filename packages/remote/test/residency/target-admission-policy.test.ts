@@ -433,6 +433,9 @@ test("profile preflight uses the ledger ceiling, while launch uses fresh headroo
       if (preflight === undefined) throw new Error("the owner must expose profile preflight");
       available = 16;
       expect(preflight({ victims: [], retained: [], replacements: [workload] })).toBeUndefined();
+      expect(preflight({ victims: [], retained: ["unverified"], replacements: [workload] })).toBe(
+        "ManagedRetainedUnverified: unverified",
+      );
       expect(
         preflight({ victims: ["unverified"], retained: [], replacements: [workload] }),
       ).toMatch(/^ManagedVictimUnverified/);
