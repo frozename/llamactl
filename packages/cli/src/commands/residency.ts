@@ -42,6 +42,8 @@ Subcommands:
   status --node <name> [--json]   Read-only residency status: NodeRun policy, memory budget, the serving process's residency store, its per-model lifecycle rows and exclusive-group violations, its per-workload lease/drain state, its bound sessions (refs, idle-timeout expiry), the advisory idle-eviction window, and the read-only ranking read-out (resident preference, resident set and drain charges). Never wakes a model or mutates state.
   plan --node <name> --to <profile> [--from <profile>] [--json]   Read-only dry-run profile switch: budget source, victims, replacements, protected workloads or refusal. Never starts, stops, loads or writes the store.
   apply-profile --node <name> --to <profile> [--from <profile>] [--json]   Dry-run by default: plan and report the profile switch without touching the store. Add --execute --yes to run the switch for real (stops and starts workloads, records an operation).
+  load <workload> --node <name> [--execute --yes] [--json]   Preview loading an enabled workload on its managed owner. Execution uses the owner admission and readiness gates.
+  unload <workload> --node <name> [--execute --yes] [--json]   Preview stopping an idle, unprotected workload on its managed owner. Execution leaves the desired manifest enabled, so eligible workloads can load again.
   cancel-operation <operationId> --yes [--node <name>] [--json]   Request an abort of an in-flight profile switch started by apply-profile --execute --yes in the process serving <node> (an agent serve process); it stops before its next step boundary. Process-local: a switch run in-process by a local-endpoint CLI invocation cannot be cancelled from another CLI invocation. Requires --yes.
   force-unload <workload> --reason <text> --yes [--node <name>] [--json]   Operator override of the stop fence: revoke active leases (audited as an operator override), then stop the workload. Destructive; requires --yes. Reports the released session ids when a session registry is installed.
   evict-idle --node <name> [--yes] [--json]   Operator-initiated idle eviction: dry by default (one residencyEvictIdle query reports the window and which residents would be evicted). Add --yes to stamp the durable idle hold on each targeted local manifest and run the fenced stop, keeping the hold only on workloads that come back evicted. Workloads with no local manifest are reported skipped (NotHeld) and never targeted. Destructive with --yes.
@@ -1587,6 +1589,86 @@ async function runResidencyReleaseSession(args: string[], deps: ResidencyDeps): 
   }
 }
 
+type ResidencyControlAction = "load" | "unload";
+type ResidencyControlInput = Parameters<NodeClient["residencyControl"]["mutate"]>[0];
+
+function controlArgs(
+  action: ResidencyControlAction,
+  args: string[],
+): { json: boolean; input: ResidencyControlInput } | string {
+  const [workload, ...flags] = args;
+  if (workload === undefined || workload.startsWith("-")) return "a workload name is required";
+  let node = getGlobals().nodeName ?? "";
+  let execute = false;
+  let confirm = false;
+  let json = false;
+  for (let index = 0; index < flags.length; index++) {
+    const flag = flags[index] ?? "";
+    switch (flag) {
+      case "--node":
+        node = flags[++index] ?? "";
+        if (node.startsWith("-")) return "--node requires a value";
+        break;
+      case "--execute":
+        execute = true;
+        break;
+      case "--yes":
+        confirm = true;
+        break;
+      case "--json":
+        json = true;
+        break;
+      default:
+        return `unknown argument ${flag}`;
+    }
+  }
+  if (node === "") return "--node <name> is required";
+  if (node === "all") return "name one managed node";
+  if (execute && !confirm) return "--execute requires --yes";
+  return { json, input: { workload, node, action, dryRun: !execute, confirm } };
+}
+
+function controlTransportReason(error: unknown): string {
+  const data = typeof error === "object" && error !== null && "data" in error ? error.data : null;
+  return typeof data === "object" && data !== null && "code" in data && data.code === "NOT_FOUND"
+    ? "ManagedControlUnavailable"
+    : "ControlTransportError";
+}
+
+async function runResidencyControl(
+  action: ResidencyControlAction,
+  args: string[],
+  deps: ResidencyDeps,
+): Promise<number> {
+  const parsed = controlArgs(action, args);
+  if (typeof parsed === "string") {
+    process.stderr.write(`residency ${action}: ${parsed}\n`);
+    return 1;
+  }
+  const { json, input } = parsed;
+  try {
+    const client = (deps.getNodeClientByName ?? getNodeClientByName)(input.node);
+    const result = input.dryRun
+      ? await withNodeQueryDeadline(input.node, () => client.residencyControl.mutate(input))
+      : await client.residencyControl.mutate(input);
+    if (json) process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    else if (result.ok) {
+      process.stdout.write(
+        `residency ${action} ${result.workload} on ${result.node}: ${result.outcome}\n`,
+      );
+    } else process.stderr.write(`residency ${action}: ${result.reason}\n`);
+    return result.ok ? 0 : 1;
+  } catch (error) {
+    const reason = controlTransportReason(error);
+    if (json) {
+      process.stdout.write(
+        `${JSON.stringify({ ok: false, action, node: input.node, workload: input.workload, reason }, null, 2)}\n`,
+      );
+    } else process.stderr.write(`residency ${action}: ${reason}\n`);
+    return 1;
+  }
+}
+
 export async function runResidency(args: string[], deps: ResidencyDeps = {}): Promise<number> {
   const [sub, ...rest] = args;
   if (sub === undefined) {
@@ -1605,6 +1687,9 @@ export async function runResidency(args: string[], deps: ResidencyDeps = {}): Pr
   }
   if (sub === "apply-profile") {
     return await runResidencyApplyProfile(rest, deps);
+  }
+  if (sub === "load" || sub === "unload") {
+    return await runResidencyControl(sub, rest, deps);
   }
   if (sub === "cancel-operation") {
     return await runResidencyCancelOperation(rest, deps);

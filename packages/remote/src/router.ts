@@ -137,6 +137,12 @@ import {
   releaseResidencySession,
   type ReleaseSessionResult,
 } from "./residency/force-unload.js";
+import {
+  controlManagedResidency,
+  enterManagedOperatorAction,
+  residencyControlInput,
+  type ResidencyControlResult,
+} from "./residency/managed-operator-control.js";
 import { collectOmlxNativeStatus } from "./residency/omlx-capability.js";
 import {
   buildIdleEvictionSnapshot,
@@ -526,6 +532,91 @@ async function applyProfileWorkload(
     : await managed.withDesiredManifest(manifest, apply);
 }
 
+const controlStartTerminal = z.object({
+  ok: z.boolean(),
+  pid: z.number().nullable(),
+  error: z.string().optional(),
+});
+
+function controlFailure(error: string | undefined, fallback: string): string {
+  const reason = error?.split(":", 1)[0];
+  return reason !== undefined && CONTROL_OUTCOME_CODES.has(reason) ? reason : fallback;
+}
+
+const CONTROL_OUTCOME_CODES = new Set([
+  "AuthorityUnavailable",
+  "BudgetExceeded",
+  "BudgetUnknown",
+  "DrainInProgress",
+  "LeasesActive",
+  "SessionsActive",
+  "SessionsUnknown",
+  "ManagedInferenceUnresolved",
+  "ManagedOwnerRequired",
+  "ManagedSpecUnknown",
+  "ManagedSpecChanged",
+  "ManagedLaunchPending",
+  "ManagedRuntimeResident",
+  "ManagedReadyUnverified",
+  "ManagedStopGenerationUnverified",
+  "ManagedStopReleaseUnverified",
+  "ManagedReplacementRequiresProfile",
+  "LaunchCanceled",
+  "NodeBusy",
+  "TransitionUnavailable",
+]);
+
+async function controlStartOutcome(
+  events: AsyncIterable<unknown>,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  for await (const event of events) {
+    if (typeof event !== "object" || event === null || !("type" in event) || event.type !== "done")
+      continue;
+    const parsed = controlStartTerminal.safeParse("result" in event ? event.result : undefined);
+    if (!parsed.success) break;
+    return parsed.data.ok && parsed.data.pid !== null
+      ? { ok: true }
+      : { ok: false, reason: controlFailure(parsed.data.error, "LoadUnconfirmed") };
+  }
+  return { ok: false, reason: "LoadUnconfirmed" };
+}
+
+async function dispatchManagedControl(
+  ctx: AgentRouterContext,
+  signal: AbortSignal | undefined,
+  action: "load" | "unload",
+  manifest: ModelRun | ModelHostManifest,
+): Promise<{ ok: true } | { ok: false; reason: string; activeCount?: number }> {
+  const workload = manifest.metadata.name;
+  const caller = router.createCaller(
+    { ...ctx, ownerStopIntent: true },
+    signal === undefined ? undefined : { signal },
+  );
+  if (action === "load") {
+    const events =
+      manifest.kind === "ModelHost"
+        ? await caller.modelHostStart({ workload, manifest })
+        : await caller.serverStart(workloadApplyMod.modelRunStartInvocation(manifest));
+    return await controlStartOutcome(events);
+  }
+  if (manifest.kind === "ModelHost") {
+    const stopped = await caller.modelHostStop({ workload });
+    return stopped.ok
+      ? { ok: true }
+      : { ok: false, reason: controlFailure(stopped.error, "UnloadUnconfirmed") };
+  }
+  const stopped = await caller.serverStop({ workload });
+  if (stopped.stopped) return { ok: true };
+  if (stopped.refused !== undefined) {
+    return {
+      ok: false,
+      reason: stopped.refused.reason,
+      activeCount: stopped.refused.active.length,
+    };
+  }
+  return { ok: false, reason: controlFailure(stopped.managedRefusal, "UnloadUnconfirmed") };
+}
+
 function profileOwner(
   node: string,
   managed: ManagedLaunchAdmission | undefined,
@@ -571,6 +662,75 @@ function wetProfileRefusal(
         from,
         controllerPid,
       });
+}
+
+type ProfileMutationInput = {
+  node: string;
+  to: string;
+  from?: string | undefined;
+  dryRun: boolean;
+  confirm: boolean;
+};
+
+async function runProfileMutation(
+  input: ProfileMutationInput,
+  admission: ManagedLaunchAdmission | undefined,
+): Promise<ResidencyApplyProfileResult> {
+  if (!input.dryRun && !input.confirm) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "residency apply-profile: confirm: true is required when dryRun is false",
+    });
+  }
+  const managed = profileOwner(input.node, admission);
+  const node = managed?.ownerNodeId ?? input.node;
+  if (input.dryRun || managed === undefined)
+    return await applyProfileMutation(input, node, managed);
+
+  const leave = enterManagedOperatorAction(node, "profile");
+  if (leave === undefined) {
+    return residencyApplyProfileRefusal({
+      reason: "NodeBusy",
+      detail: "a manual residency operation owns this node",
+      node,
+      from: input.from ?? null,
+      to: input.to,
+    });
+  }
+  try {
+    return await applyProfileMutation(input, node, managed);
+  } finally {
+    leave();
+  }
+}
+
+async function applyProfileMutation(
+  input: ProfileMutationInput,
+  node: string,
+  managed: ManagedLaunchAdmission | undefined,
+): Promise<ResidencyApplyProfileResult> {
+  const workloadsDir = workloadStoreMod.defaultWorkloadsDir();
+  const storePath = defaultResidencyStorePath();
+  if (!input.dryRun) {
+    const refusal = wetProfileRefusal(node, input.to, input.from ?? null, workloadsDir, managed);
+    if (refusal !== undefined) return refusal;
+    recoverAbandonedProfileIntentsOnNode(storePath, node);
+  }
+  const { plan, desired } = residencyPlanFor({ ...input, managed }, workloadsDir);
+  return await applyResidencyProfile({
+    plan,
+    desired,
+    dryRun: input.dryRun,
+    storePath,
+    workloadsDir,
+    registry: getResidencyLeaseRegistry(),
+    node,
+    to: input.to,
+    from: input.from ?? null,
+    ...(managed === undefined ? {} : { managedLaunchAdmission: managed }),
+    applyModelRun: (manifest, signal) =>
+      applyProfileWorkload(node, workloadsDir, manifest, managed, signal),
+  });
 }
 
 function profileManifest<T extends { spec: { node: string } }>(
@@ -1088,6 +1248,13 @@ function refuseLegacyManagedMutation(reason: string): void {
 
 function stopReleased(proof: ManagedStopProof | undefined, pid: number | null): boolean {
   return proof === undefined || (pid !== null && proof.release(pid).kind === "released");
+}
+
+function stopTransitionRefusal(detail: string): serverMod.StopServerResult {
+  const base = { stopped: false, pid: null, killed: false };
+  return detail === "TransitionUnavailable" || detail === "NodeBusy"
+    ? { ...base, managedRefusal: detail }
+    : base;
 }
 
 type ServerStopRefusalShape = { reason?: unknown; active?: unknown };
@@ -3039,6 +3206,17 @@ export const router = t.router({
       ({ ctx, input }) => residencyPlanFor({ ...input, managed: ctx.managedLaunchAdmission }).plan,
     ),
 
+  residencyControl: t.procedure.input(residencyControlInput).mutation(
+    async ({ ctx, input, signal }): Promise<ResidencyControlResult> =>
+      await controlManagedResidency(input, {
+        managed: ctx.managedLaunchAdmission,
+        registry: getResidencyLeaseRegistry(),
+        workloadsDir: workloadStoreMod.defaultWorkloadsDir(),
+        signal,
+        execute: (action, manifest) => dispatchManagedControl(ctx, signal, action, manifest),
+      }),
+  ),
+
   // #284 (DF-11): dry-run-by-default profile switch. A bare call plans and
   // reports without opening the store; dryRun:false requires confirm:true,
   // refuses NotServingNode off the serving process and ControllerActive while
@@ -3054,44 +3232,10 @@ export const router = t.router({
         confirm: z.boolean().default(false),
       }),
     )
-    .mutation(async ({ ctx, input }): Promise<ResidencyApplyProfileResult> => {
-      const workloadsDir = workloadStoreMod.defaultWorkloadsDir();
-      const managed = profileOwner(input.node, ctx.managedLaunchAdmission);
-      const node = managed?.ownerNodeId ?? input.node;
-      const storePath = defaultResidencyStorePath();
-      if (!input.dryRun) {
-        if (!input.confirm) {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: "residency apply-profile: confirm: true is required when dryRun is false",
-          });
-        }
-        const refusal = wetProfileRefusal(
-          node,
-          input.to,
-          input.from ?? null,
-          workloadsDir,
-          managed,
-        );
-        if (refusal !== undefined) return refusal;
-        recoverAbandonedProfileIntentsOnNode(storePath, node);
-      }
-      const { plan, desired } = residencyPlanFor({ ...input, managed }, workloadsDir);
-      return await applyResidencyProfile({
-        plan,
-        desired,
-        dryRun: input.dryRun,
-        storePath,
-        workloadsDir,
-        registry: getResidencyLeaseRegistry(),
-        node,
-        to: input.to,
-        from: input.from ?? null,
-        ...(managed === undefined ? {} : { managedLaunchAdmission: managed }),
-        applyModelRun: (manifest, signal) =>
-          applyProfileWorkload(node, workloadsDir, manifest, managed, signal),
-      });
-    }),
+    .mutation(
+      ({ ctx, input }): Promise<ResidencyApplyProfileResult> =>
+        runProfileMutation(input, ctx.managedLaunchAdmission),
+    ),
 
   // #284 (DF-11): request cancellation of an in-flight profile switch by
   // operationId. The id comes from residencyApplyProfile (operationId /
@@ -3349,7 +3493,10 @@ export const router = t.router({
                     ? { ok: false, pid: stopped.pid, error: "ManagedStopReleaseUnverified" }
                     : stopped;
                 },
-                directResidencyOpts(input.workload, undefined),
+                {
+                  ...directResidencyOpts(input.workload, undefined),
+                  requireVerifiedStopJournal: managed !== undefined && managedLocalRuntime(),
+                },
               );
               return outcome.ran ? outcome.result : { ok: false, pid: null, error: outcome.detail };
             },
@@ -4000,11 +4147,12 @@ export const router = t.router({
                       stop,
                     };
                   },
-                  directModelRunOpts(input.workload),
+                  {
+                    ...directModelRunOpts(input.workload),
+                    requireVerifiedStopJournal: managed !== undefined && managedLocalRuntime(),
+                  },
                 );
-                return outcome.ran
-                  ? outcome.result.stop
-                  : { stopped: false, pid: null, killed: false };
+                return outcome.ran ? outcome.result.stop : stopTransitionRefusal(outcome.detail);
               },
               isVerifiedStop: (r) => r.stopped,
               refuse: (refused) => ({ stopped: false, pid: null, killed: false, refused }),
