@@ -1,3 +1,5 @@
+import { omitUndefined } from "@llamactl/core/object";
+
 import type { CompletionProbeConfig } from "./completion-probe.js";
 
 export interface WorkloadTarget {
@@ -23,6 +25,7 @@ export interface WorkloadProbeOptions {
   fetch?: typeof globalThis.fetch;
   timeoutMs?: number;
   priorConsecutiveErrors?: number;
+  redirect?: NonNullable<RequestInit["redirect"]>;
   /**
    * The max `created` from this workload's previous successful /v1/models
    * read, when one exists. A read is only trusted as a boot token when it
@@ -184,6 +187,7 @@ export async function probeWorkload(
     fetch: fetchFn = globalThis.fetch,
     timeoutMs = 5000,
     priorConsecutiveErrors = 0,
+    redirect,
     priorCreated = null,
     allowPublicEndpoints = false,
   } = opts;
@@ -209,11 +213,12 @@ export async function probeWorkload(
     controller.abort();
   }, timeoutMs);
   const start = Date.now();
+  const request = { signal: controller.signal, ...omitUndefined({ redirect }) };
 
   try {
     // Both llamactl-agent (since the /healthz alias landed) and raw
     // llama-server expose /health, so a single probe covers both.
-    const healthRes = await fetchFn(`${target.endpoint}/health`, { signal: controller.signal });
+    const healthRes = await fetchFn(`${target.endpoint}/health`, request);
     const latency = Date.now() - start;
 
     if (!healthRes.ok) {
@@ -236,9 +241,7 @@ export async function probeWorkload(
       // endpoint that returns /health fast then stalls /v1/models would
       // otherwise hang the tick. The controller.signal is the same so the
       // outer timeout aborts both.
-      const modelsRes = await fetchFn(`${target.endpoint}/v1/models`, {
-        signal: controller.signal,
-      });
+      const modelsRes = await fetchFn(`${target.endpoint}/v1/models`, request);
       if (modelsRes.ok) {
         const body = (await modelsRes.json()) as { data: { id: string; created?: number }[] };
         models = body.data.map((m) => m.id);

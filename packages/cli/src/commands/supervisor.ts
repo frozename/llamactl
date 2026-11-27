@@ -1,5 +1,7 @@
 import { env as envMod, sourceRevision } from "@llamactl/core";
+import { formatHostForUrl } from "@llamactl/core/engines";
 import { omitUndefined } from "@llamactl/core/object";
+import { isSleepResidency, type SleepResidency } from "@llamactl/core/residency/llamacpp-sleep";
 import { callViaTunnelRelay, type TunnelRelayCallOptions } from "@llamactl/core/tunnel-relay";
 import {
   appendFleetJournal,
@@ -32,7 +34,7 @@ import {
 import { listPeers, workloadStore } from "@llamactl/remote";
 import { stringify as stringifyYaml } from "yaml";
 
-import { getGlobals, getNodeClientByName } from "../dispatcher.js";
+import { getDirectAgentClientForHost, getGlobals, getNodeClientByName } from "../dispatcher.js";
 import { isRecord } from "../runtime-shape.js";
 import { setWorkloadEnabled } from "./setEnabled.js";
 
@@ -887,6 +889,7 @@ function buildSupervisorLoopOptions(
   return {
     node: flags.node,
     workloads: flags.workloads,
+    readRecordedSleep: readSupervisorRecordedSleep,
     once,
     intervalMs: flags.intervalMs,
     writeJournal,
@@ -946,6 +949,50 @@ function buildSupervisorLoopOptions(
         }
       : {}),
   };
+}
+
+export async function readSupervisorRecordedSleep(
+  target: WorkloadTarget,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<SleepResidency | undefined> {
+  if (target.kind !== "ModelHost") return undefined;
+  try {
+    const probe = new URL(target.endpoint);
+    if (probe.protocol !== "http:" || probe.href !== `${probe.origin}/`) return undefined;
+
+    const manifest = workloadStore.loadWorkloadByNameAny(
+      target.name,
+      workloadStore.defaultWorkloadsDir(env),
+    );
+    if (
+      manifest.kind !== "ModelHost" ||
+      manifest.metadata.name !== target.name ||
+      manifest.spec.engine !== "llamacpp" ||
+      manifest.spec.useProxy
+    ) {
+      return undefined;
+    }
+    const { host, port } = manifest.spec.endpoint;
+    if (new URL(`http://${formatHostForUrl(host)}:${String(port)}`).origin !== probe.origin) {
+      return undefined;
+    }
+
+    const owner = getDirectAgentClientForHost(
+      manifest.spec.node,
+      probe.hostname,
+      getGlobals(),
+      env,
+    );
+    const status = await owner?.modelHostStatus.query(
+      { workload: target.name, probeOrigin: probe.origin },
+      { signal: AbortSignal.timeout(1200) },
+    );
+    if (status?.state === "Running" && isSleepResidency(status.probeSleep))
+      return status.probeSleep;
+  } catch {
+    // A missing or unreachable owner cannot attest that a probe is safe to skip.
+  }
+  return undefined;
 }
 
 function isSupervisorSubcommand(sub: string): sub is "audit" | "serve" | "status" | "tick" {

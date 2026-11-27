@@ -4,9 +4,11 @@ import {
   config as kubecfg,
   LOCAL_NODE_ENDPOINT,
   type NodeClient,
+  resolveNodeKind,
   type TunnelSendFn,
   type TunnelSubscribeFn,
 } from "@llamactl/remote";
+import { isIP } from "node:net";
 
 import { required } from "./required.js";
 import { buildTunnelSend, buildTunnelSubscribe, type FetchLike } from "./tunnel-dispatch.js";
@@ -302,6 +304,37 @@ export function getNodeClientByName(
     opts.tunnelSubscribe = tunnelDispatch.subscribe;
   }
   return createNodeClient(cfg, opts);
+}
+
+/** Only direct authenticated nodes can vouch for a listener at this host. */
+export function getDirectAgentClientForHost(
+  nodeName: string,
+  hostname: string,
+  globals: Globals = currentGlobals,
+  env: NodeJS.ProcessEnv = process.env,
+): NodeClient | undefined {
+  const cfg = loadConfigForDispatch(globals, env);
+  const contextName = globals.contextName ?? undefined;
+  const { node } = kubecfg.resolveNode(cfg, nodeName, contextName);
+  if (
+    resolveNodeKind(node) !== "agent" ||
+    node.tunnelPreferred ||
+    node.endpoint === LOCAL_NODE_ENDPOINT
+  ) {
+    return undefined;
+  }
+  const endpoint = new URL(node.endpoint);
+  if (endpoint.protocol !== "https:" || endpoint.hostname !== hostname) return undefined;
+  const address = hostname.startsWith("[") ? hostname.slice(1, -1) : hostname;
+  if (isIP(address) === 0) return undefined;
+  return (
+    testSeams.nodeClient ??
+    createNodeClient(cfg, {
+      nodeName,
+      env,
+      ...(contextName === undefined ? {} : { contextName }),
+    })
+  );
 }
 
 /** True when the user passed `--node all` to fan a read out over every
