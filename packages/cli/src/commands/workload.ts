@@ -6,6 +6,7 @@ import { modelhostPidFile, readModelHostState } from "@llamactl/core/engines/sta
 import { resolveEnv } from "@llamactl/core/env";
 import { isRecordedPidAlive } from "@llamactl/core/pidIdentity";
 import { formatEndpoint, probeEndpointOwnership } from "@llamactl/core/probe";
+import { hasManagedRuntimeMarker } from "@llamactl/core/residency/managed-runtime";
 import { workloadRuntimeDir } from "@llamactl/core/workloadRuntime";
 import {
   type ClusterNode,
@@ -405,8 +406,20 @@ export async function runApply(args: string[]): Promise<number> {
     return 1;
   }
   if (parsed.managed) return await applyManagedFromRaw(raw, kind, parsed);
+  return await applyLegacyFromRaw(raw, kind, parsed);
+}
+
+async function applyLegacyFromRaw(
+  raw: string,
+  kind: string | undefined,
+  parsed: ApplyFlags,
+): Promise<number> {
   if (kind === "NodeRun") {
     return await applyNodeRunFromRaw(raw, parsed.json);
+  }
+  if (hasManagedRuntimeMarker(resolveEnv().LOCAL_AI_RUNTIME_DIR)) {
+    process.stderr.write("apply: use --managed with the owner agent for this runtime\n");
+    return 1;
   }
   if (kind === "ModelHost") {
     const flagRefusal = modelHostApplyFlagsRefusal(parsed);
@@ -1682,6 +1695,10 @@ export async function runDelete(args: string[]): Promise<number> {
   }
   if (!name) {
     process.stderr.write(DELETE_USAGE);
+    return 1;
+  }
+  if (hasManagedRuntimeMarker(resolveEnv().LOCAL_AI_RUNTIME_DIR)) {
+    process.stderr.write("delete: ManagedWorkloadRetirementRequired\n");
     return 1;
   }
   let manifest: workloadSchema.ModelRun | ModelHostManifest;

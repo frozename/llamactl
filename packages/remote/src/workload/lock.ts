@@ -1,3 +1,5 @@
+import { resolveEnv } from "@llamactl/core/env";
+import { hasManagedRuntimeMarker } from "@llamactl/core/residency/managed-runtime";
 import { dirname, join } from "node:path";
 
 import {
@@ -31,6 +33,9 @@ export function lockFilePath(workloadsDir: string): string {
 }
 
 export function acquireLock(workloadsDir: string): LockHandle | { error: string } {
+  if (hasManagedRuntimeMarker(resolveEnv().LOCAL_AI_RUNTIME_DIR)) {
+    return { error: "ManagedControllerOwnerConflict" };
+  }
   mkdirSync(workloadsDir, { recursive: true });
   const path = lockFilePath(workloadsDir);
   if (existsSync(path)) {

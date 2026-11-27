@@ -1,5 +1,7 @@
 import type { ModelHostManifest } from "@llamactl/remote/workload/modelhost-schema";
 
+import { resolveEnv } from "@llamactl/core/env";
+import { hasManagedRuntimeMarker } from "@llamactl/core/residency/managed-runtime";
 import {
   config as kubecfg,
   type noderunStore,
@@ -151,5 +153,8 @@ export async function setWorkloadEnabled(
   name: string,
   enabled: boolean,
 ): Promise<SetEnabledResult> {
+  if (hasManagedRuntimeMarker(resolveEnv().LOCAL_AI_RUNTIME_DIR)) {
+    return { code: 1, message: "use apply --managed with the owner agent for this runtime\n" };
+  }
   return await setWorkloadEnabledWithDeps(name, enabled);
 }
