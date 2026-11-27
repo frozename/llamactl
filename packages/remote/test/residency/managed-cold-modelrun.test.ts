@@ -1,6 +1,7 @@
 import type { ColdEngineDispatch } from "@llamactl/core/residency/engine-forwarder";
 
 import { server } from "@llamactl/core";
+import { getEngineScopeLauncher, setEngineScopeLauncher } from "@llamactl/core/engines/scope";
 import { expect, mock, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
@@ -13,6 +14,12 @@ import { openAdmissionAuthority } from "../../src/residency/admission-authority.
 import { verifyColdModelArtifactReceipt } from "../../src/residency/cold-artifact-receipt.js";
 import { createManagedColdModelRunFactory } from "../../src/residency/managed-cold-modelrun.js";
 import { createManagedLaunchAdmission } from "../../src/residency/managed-launch-admission.js";
+import {
+  defaultResidencyStorePath,
+  openResidencyOperationStore,
+} from "../../src/residency/store.js";
+import { openNodeManagedAdmission } from "../../src/residency/target-admission-policy.js";
+import { runModelRunStart, ServerStartInputSchema } from "../../src/router.js";
 import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
 import { modelRunStartInvocation } from "../../src/workload/apply.js";
 import { ModelRunSchema } from "../../src/workload/schema.js";
@@ -61,6 +68,7 @@ function storedRun(extraArgs: string[] = ["--ctx-size", "256", "--parallel", "2"
 function fixture(): {
   artifact: Buffer;
   modelPath: string;
+  runtimeDir: string;
   workloadsDir: string;
   [Symbol.dispose](): void;
 } {
@@ -68,12 +76,14 @@ function fixture(): {
   const models = join(dir, "models");
   const modelPath = join(models, MODEL);
   const workloadsDir = join(dir, "workloads");
+  const runtimeDir = join(dir, "runtime");
   const artifact = Buffer.alloc(48 * 1024, 13);
   mkdirSync(models);
   writeFileSync(modelPath, artifact);
   const env = {
     DEV_STORAGE: dir,
-    LOCAL_AI_RUNTIME_DIR: join(dir, "runtime"),
+    LOCAL_AI_RUNTIME_DIR: runtimeDir,
+    LLAMACTL_RESIDENCY_STORE: join(dir, "residency.sqlite"),
     LLAMACTL_WORKLOADS_DIR: workloadsDir,
     LLAMA_CPP_MODELS: models,
     LLAMA_CPP_HOST: "127.0.0.1",
@@ -87,6 +97,7 @@ function fixture(): {
   return {
     artifact,
     modelPath,
+    runtimeDir,
     workloadsDir,
     [Symbol.dispose](): void {
       for (const [key, value] of previous) {
@@ -198,6 +209,117 @@ test("the proof-consuming factory pins final engine bounds and calls the exact m
   renameSync(files.modelPath + ".replacement", files.modelPath);
   expect(owner.pin(DECLARATION)).toBeUndefined();
 });
+
+test("a cold pin binds allocation and canonical profile membership independently of argv", async () => {
+  using files = fixture();
+  const run = storedRun();
+  run.metadata.annotations = { "llamactl.io/residency-profiles": "offline, overnight" };
+  saveWorkload(run, files.workloadsDir);
+  const prepared = compileFixture();
+  const gate = mock(() => Promise.resolve({ ran: false as const, detail: "fixture refusal" }));
+  const owner = createManagedColdModelRunFactory({
+    workloadsDir: files.workloadsDir,
+    readDeclarations: () => [DECLARATION],
+    readArtifactReceipt: () => ({
+      rel: MODEL,
+      generationDigest: prepared.launch.artifacts.model.generationDigest,
+      sha256: createHash("sha256").update(files.artifact).digest("hex"),
+    }),
+    readTargetPolicyRevision: () => "a".repeat(64),
+    readResident: () => undefined,
+    readReadyRoutes: () => [],
+  })({ ownerNodeId: "local", managed: { run: gate }, executionGroups: [CAP] });
+  const pin = owner?.pin(DECLARATION);
+  if (owner === undefined || pin === undefined) throw new Error("expected fixture pin");
+
+  run.metadata.annotations["llamactl.io/residency-profiles"] = "overnight, offline, overnight";
+  saveWorkload(run, files.workloadsDir);
+  expect(owner.pin(DECLARATION)?.policyRevision).toBe(pin.policyRevision);
+
+  run.spec.resources = { expectedMemoryGiB: 8 };
+  saveWorkload(run, files.workloadsDir);
+  expect(owner.pin(DECLARATION)?.policyRevision).not.toBe(pin.policyRevision);
+  expect(await owner.activate(pin, new AbortController().signal)).toBe("refused");
+
+  run.spec.resources = { expectedMemoryGiB: 4 };
+  run.metadata.annotations["llamactl.io/residency-profiles"] = "overnight";
+  saveWorkload(run, files.workloadsDir);
+  expect(owner.pin(DECLARATION)?.policyRevision).not.toBe(pin.policyRevision);
+  expect(await owner.activate(pin, new AbortController().signal)).toBe("refused");
+  expect(gate).not.toHaveBeenCalled();
+});
+
+for (const cause of ["physical headroom", "desired allocation", "cold pin"] as const) {
+  test(`changed ${cause} after asynchronous scope resolution refuses the managed spawn`, async () => {
+    using files = fixture();
+    const run = storedRun();
+    saveWorkload(run, files.workloadsDir);
+    openResidencyOperationStore({ path: defaultResidencyStorePath() }).close();
+    const now = 80_000;
+    const GiB = 1024 ** 3;
+    let availableGiB = 56;
+    let current = true;
+    let scopeResolved = false;
+    const { admission, authority } = await openNodeManagedAdmission({
+      nodeName: "local",
+      workloadsDir: files.workloadsDir,
+      nowMs: () => now,
+      readCapacity: () => ({
+        source: "linux-procfs",
+        observedAtMs: now,
+        physicalBytes: 64 * GiB,
+        availableBytes: availableGiB * GiB,
+        scope: { kind: "host-physical" },
+        pressure: "normal",
+        swapUsedBytes: 0,
+      }),
+    });
+    writeFileSync(join(files.runtimeDir, "managed-residency-v1"), "local\n");
+    const previousLauncher = getEngineScopeLauncher();
+    setEngineScopeLauncher({
+      establishTimeoutMs: 1,
+      unitSuffix: () => "fixture",
+      noteFailure: () => undefined,
+      async resolve() {
+        await Promise.resolve();
+        scopeResolved = true;
+        if (cause === "physical headroom") availableGiB = 16;
+        else if (cause === "desired allocation") {
+          run.spec.resources = { expectedMemoryGiB: 8 };
+          saveWorkload(run, files.workloadsDir);
+        } else current = false;
+        return { ok: false, reason: "not-linux" };
+      },
+    });
+    try {
+      const attempts: number[] = [];
+      const expected = {
+        "physical headroom": "ManagedCapacity: InsufficientHeadroom",
+        "desired allocation": "ManagedSpecChanged",
+        "cold pin": "ColdPlanChanged",
+      }[cause];
+      const outcome = await runModelRunStart(
+        ServerStartInputSchema.parse({ ...modelRunStartInvocation(run), timeoutSeconds: 1 }),
+        new AbortController().signal,
+        (event) => {
+          if (event.type === "launch") attempts.push(event.pid);
+        },
+        admission,
+        { effectiveSpecDigest: compileFixture().effectiveSpecDigest, stillCurrent: () => current },
+      );
+      expect(scopeResolved).toBe(true);
+      expect(attempts).toEqual([]);
+      expect(outcome).toMatchObject({
+        ran: true,
+        result: { ok: false, pid: null, error: expected },
+      });
+      expect(authority.snapshot()).toMatchObject([{ state: "uncertain", allocationGiB: 4 }]);
+    } finally {
+      setEngineScopeLauncher(previousLauncher);
+      authority.close();
+    }
+  });
+}
 
 test("policy drift inside the admitted launch scope prevents spawn and keeps the claim charged", async () => {
   using files = fixture();

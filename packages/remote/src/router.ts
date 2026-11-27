@@ -1042,14 +1042,18 @@ export async function runModelRunStart(
     effectiveLaunch: prepared.launch,
     effectiveSpecDigest: prepared.effectiveSpecDigest,
   };
-  return await managed.run(request, signal, (commitReadiness) => {
+  return await managed.run(request, signal, (commitReadiness, checkSpawn) => {
     const detail = prepared.artifactRefusal();
     return detail === undefined
       ? runDirectResidencyStart(
           input.workload,
           () =>
             (cold?.stillCurrent() ?? true)
-              ? prepared.start(commitReadiness)
+              ? prepared.start(commitReadiness, () => {
+                  if (signal.aborted) return "LaunchCanceled";
+                  if (cold !== undefined && !cold.stillCurrent()) return "ColdPlanChanged";
+                  return checkSpawn?.();
+                })
               : Promise.resolve(serverStartRefusal(input, "ColdPlanChanged")),
           lifecycle,
         )

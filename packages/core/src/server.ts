@@ -651,7 +651,10 @@ interface PinnedModelRunStart {
   artifacts: ModelRunArtifacts;
 }
 
-type ServerStartExecutionOptions = StartServerOptions & { pinned?: PinnedModelRunStart };
+type ServerStartExecutionOptions = StartServerOptions & {
+  pinned?: PinnedModelRunStart;
+  checkSpawn?: () => string | undefined;
+};
 
 export interface PreparedManagedServerStart {
   readonly launch: {
@@ -664,8 +667,10 @@ export interface PreparedManagedServerStart {
   };
   readonly effectiveSpecDigest: string;
   artifactRefusal: () => string | undefined;
+  /** Recheck owner policy synchronously at every spawn attempt, including retries and fallback. */
   start: (
     commitReadiness: NonNullable<StartServerOptions["commitReadiness"]>,
+    checkSpawn?: () => string | undefined,
   ) => Promise<StartServerResult>;
 }
 
@@ -1932,7 +1937,7 @@ async function launchAndRecordServer(
     host: launchHost,
     port: launchPort,
     ...omitUndefined({ onEvent: opts.onEvent }),
-    ...omitUndefined({ spawn: opts.spawn, pinned: opts.pinned }),
+    ...omitUndefined({ spawn: opts.spawn, pinned: opts.pinned, checkSpawn: opts.checkSpawn }),
     scope: scoped?.plan ?? null,
   });
   if (scoped === null || launched.scope === null) {
@@ -2104,7 +2109,7 @@ function executeServerStart(opts: ServerStartExecutionOptions): Promise<StartSer
   );
 }
 
-class ManagedArtifactChangedError extends Error {}
+class ManagedSpawnRefusedError extends Error {}
 
 /** An inode generation tags observed metadata, without claiming validation of file contents. */
 export function modelRunArtifactGenerationDigest(
@@ -2258,7 +2263,9 @@ export function prepareManagedServerStart(
     artifactRefusal: (): string | undefined => managedArtifactRefusal(pinned),
     start: (
       commitReadiness: NonNullable<StartServerOptions["commitReadiness"]>,
-    ): Promise<StartServerResult> => executeServerStart({ ...opts, commitReadiness, pinned }),
+      checkSpawn?: () => string | undefined,
+    ): Promise<StartServerResult> =>
+      executeServerStart({ ...opts, commitReadiness, pinned, ...omitUndefined({ checkSpawn }) }),
   });
 }
 
@@ -2277,7 +2284,7 @@ async function startServerWithPublicationBarrier(
       if (event.type !== "ready") opts.onEvent?.(event);
     },
   }).catch((error: unknown): StartServerResult => {
-    if (!(error instanceof ManagedArtifactChangedError)) throw error;
+    if (!(error instanceof ManagedSpawnRefusedError)) throw error;
     return startServerError(resolved, opts.endpoint, null, false, error.message);
   });
   if (!result.ok || result.pid === null) return result;
@@ -2448,6 +2455,7 @@ interface LaunchArgs {
   onEvent?: (e: ServerEvent) => void;
   spawn?: typeof spawn;
   pinned?: PinnedModelRunStart;
+  checkSpawn?: () => string | undefined;
   scope?: { systemdRunPath: string; base: string; env: NodeJS.ProcessEnv } | null;
 }
 
@@ -2569,8 +2577,14 @@ async function launchBackground(opts: LaunchArgs): Promise<LaunchResult> {
   const scoped = opts.scope ?? null;
   let child: ChildProcess;
   try {
-    const refusal = managedArtifactRefusal(opts.pinned);
-    if (refusal !== undefined) throw new ManagedArtifactChangedError(refusal);
+    if (
+      opts.pinned !== undefined &&
+      managedRuntimeRefusesMutation(opts.resolved.LOCAL_AI_RUNTIME_DIR)
+    ) {
+      throw new ManagedSpawnRefusedError("ManagedOwnerRequired");
+    }
+    const refusal = opts.checkSpawn?.() ?? managedArtifactRefusal(opts.pinned);
+    if (refusal !== undefined) throw new ManagedSpawnRefusedError(refusal);
     child =
       scoped === null
         ? doSpawn(opts.bin, fullArgs, {

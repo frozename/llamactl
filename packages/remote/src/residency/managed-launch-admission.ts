@@ -21,6 +21,10 @@ interface LaunchResult {
 }
 
 export type CommitLaunchReadiness = (pid: number) => string | undefined;
+type StartManagedLaunch<T> = (
+  commitReadiness: CommitLaunchReadiness,
+  checkSpawn?: () => string | undefined,
+) => Promise<DirectLifecycleOutcome<T>>;
 
 export interface ManagedApplyBudget {
   ok: true;
@@ -60,7 +64,7 @@ export interface ManagedLaunchAdmission {
   run<T extends LaunchResult>(
     request: ManagedLaunchRequest,
     signal: AbortSignal,
-    start: (commitReadiness: CommitLaunchReadiness) => Promise<DirectLifecycleOutcome<T>>,
+    start: StartManagedLaunch<T>,
   ): Promise<DirectLifecycleOutcome<T>>;
 }
 
@@ -174,7 +178,7 @@ export function createManagedLaunchAdmission(opts: ManagedLaunchOptions): Manage
     async run<T extends LaunchResult>(
       request: ManagedLaunchRequest,
       signal: AbortSignal,
-      start: (commitReadiness: CommitLaunchReadiness) => Promise<DirectLifecycleOutcome<T>>,
+      start: StartManagedLaunch<T>,
     ): Promise<DirectLifecycleOutcome<T>> {
       if (signal.aborted) return refuse("LaunchCanceled");
       // Replacement needs a verified release of the old generation.
@@ -201,9 +205,11 @@ export function createManagedLaunchAdmission(opts: ManagedLaunchOptions): Manage
         runClaimedLaunch(opts, request, claim, signal, (commitReadiness) => {
           const verify = (): string | undefined => verifyApprovedPlan(spec, opts.resolve(request));
           const issue = verify();
-          return issue === undefined
-            ? start((pid) => verify() ?? commitReadiness(pid))
-            : Promise.resolve(refuse(issue));
+          if (issue !== undefined) return Promise.resolve(refuse(issue));
+          return start(
+            (pid) => verify() ?? commitReadiness(pid),
+            () => (signal.aborted ? "LaunchCanceled" : verify()),
+          );
         });
       return await (opts.runOwnedLifecycle === undefined
         ? execute()
