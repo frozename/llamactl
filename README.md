@@ -26,6 +26,28 @@ output tokens and generation speed when the stream provides enough data. The
 Follow-up messages include the current conversation. Use **Stop** to interrupt generation and **New chat** to clear the conversation.
 Chat keeps the transcript in memory until you leave the page or change nodes.
 
+## Inspect requests
+
+Open **Runs** and select a request to inspect the payload, response, status,
+and timing. Web Chat keeps the latest 20 requests in the current browser tab
+until reload. Each request and response has a 64 KiB capture limit.
+
+Fleet capture is off by default. Set `LLAMACTL_REQUEST_CAPTURE_FILE` to an
+absolute SQLite path in an existing directory owned by the service user
+with mode `0700`. Set the same path on the inference gateway and the
+authenticated agent on that machine when they run as separate processes.
+For an in-process console node, set the path on the console as well.
+Capture covers new HTTP requests to the chat completions, completions,
+Responses, and Messages endpoints. The agent retains up to 50 records for
+15 minutes and expires rows while running.
+
+Fleet capture stores request bodies and JSON replies or reassembled streamed
+text, usage and reasoning where available. It limits inspection to the first
+64 KiB in each direction. It omits HTTP headers and redacts recognized
+credentials. Prompts and replies can still contain private information.
+Keep the capture directory out of shared storage and backups. The authenticated
+agent serves details on demand to the loopback console.
+
 ## Fleet telemetry
 
 Open **Fleet Stats** in `llamactl console` for workload status, node memory,
