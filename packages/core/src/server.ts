@@ -37,6 +37,7 @@ import {
 } from "./engines/scope.js";
 import { isModelHostReadiness } from "./engines/state.js";
 import { resolveEnv } from "./env.js";
+import { atomicWriteFile } from "./fsAtomic.js";
 import {
   defaultReadProcessCommand,
   parseSlotSavePathFromCommand,
@@ -279,6 +280,8 @@ export interface ServerState {
    * instead of restarting it; a legacy sidecar without it restarts.
    */
   specHash?: string;
+  /** Keep crash/stop evidence without advertising a generation that is still pending admission. */
+  publicationPending?: true;
   /**
    * Transient systemd user-scope unit a scoped ModelRun launch recorded
    * (#806 phase 3). Informational: status and stop act on the pid. Absent on
@@ -400,7 +403,8 @@ export function readServerState(
 
 function writeServerState(resolved: ResolvedEnv, key: WorkloadKey, state: ServerState): void {
   ensureWorkloadRuntimeDir(resolved, key);
-  writeFileSync(serverStateFile(resolved, key), JSON.stringify(state, null, 2));
+  const write = state.publicationPending === true ? atomicWriteFile : writeFileSync;
+  write(serverStateFile(resolved, key), JSON.stringify(state, null, 2));
 }
 
 function removeServerState(resolved: ResolvedEnv, key: WorkloadKey): void {
@@ -589,6 +593,8 @@ export interface StartServerOptions {
    */
   readiness?: ModelHostReadiness;
   onEvent?: (e: ServerEvent) => void;
+  /** A returned reason refuses publication of the freshly started process. */
+  commitReadiness?: (pid: number) => string | undefined;
   resolved?: ResolvedEnv;
   env?: NodeJS.ProcessEnv;
   /**
@@ -1330,6 +1336,7 @@ function launchedServerState(
     startedAt: new Date().toISOString(),
     tunedProfile: prepared.tunedProfile,
     ...(opts.readiness !== undefined ? { readiness: opts.readiness } : {}),
+    ...(opts.commitReadiness === undefined ? {} : { publicationPending: true }),
     specHash: computeServerSpecHash({
       rel: target.rel,
       ...launchSpecHashFields(opts, target, prepared, resolved, launchHost, launchPort),
@@ -1723,6 +1730,11 @@ async function stopOrAdoptBeforeStart(
   launchHost: string,
   launchPort: number | string,
 ): Promise<StartServerResult | null> {
+  if (opts.commitReadiness !== undefined) {
+    return isServerProvenDown(key, resolved, opts.identity)
+      ? null
+      : startServerError(resolved, launchEndpoint, null, false, "ManagedRestartUnavailable");
+  }
   const adopted = await adoptTrackedServer(
     opts,
     resolved,
@@ -1756,6 +1768,9 @@ async function handlePortConflict(
 ): Promise<StartServerResult | null> {
   const portConflictHint = await detectPortConflict(endpoint(resolved, launchEndpoint));
   if (!portConflictHint) return null;
+  if (opts.commitReadiness !== undefined) {
+    return startServerError(resolved, launchEndpoint, null, false, portConflictHint);
+  }
   // Something already answers on our endpoint. If it's serving OUR model,
   // adopt it (record pid + state so it's managed + routable) instead of
   // failing — a spawn could not win the held port anyway. Only a genuine
@@ -2027,9 +2042,40 @@ function wireAbortToKill(signal: AbortSignal | undefined, killOnAbort: () => voi
 export function startServer(opts: StartServerOptions): Promise<StartServerResult> {
   return withReopenAfterLoad(
     opts.key.name,
-    () => startServerUnwrapped(opts),
+    () =>
+      opts.commitReadiness === undefined
+        ? startServerUnwrapped(opts)
+        : startServerWithPublicationBarrier(opts, opts.commitReadiness),
     (r) => r.ok,
   );
+}
+
+async function startServerWithPublicationBarrier(
+  opts: StartServerOptions,
+  commitReadiness: NonNullable<StartServerOptions["commitReadiness"]>,
+): Promise<StartServerResult> {
+  const resolved = opts.resolved ?? resolveEnv(opts.env ?? process.env);
+  const result = await startServerUnwrapped({
+    ...opts,
+    resolved,
+    onEvent: (event) => {
+      if (event.type !== "ready") opts.onEvent?.(event);
+    },
+  });
+  if (!result.ok || result.pid === null) return result;
+
+  const pid = result.pid;
+  const state = readServerState(opts.key, resolved);
+  if (state?.publicationPending !== true || state.pid !== pid) {
+    return { ...result, ok: false, error: "ManagedGenerationUnverified" };
+  }
+  const refusal = commitReadiness(pid);
+  if (refusal !== undefined) return { ...result, ok: false, error: refusal };
+
+  delete state.publicationPending;
+  atomicWriteFile(serverStateFile(resolved, opts.key), JSON.stringify(state, null, 2));
+  opts.onEvent?.({ type: "ready", pid, endpoint: result.endpoint });
+  return result;
 }
 
 async function startServerUnwrapped(opts: StartServerOptions): Promise<StartServerResult> {

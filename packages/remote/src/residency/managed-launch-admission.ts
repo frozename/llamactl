@@ -15,11 +15,13 @@ interface LaunchResult {
   spawnedPid?: number;
 }
 
+export type CommitLaunchReadiness = (pid: number) => string | undefined;
+
 export interface ManagedLaunchAdmission {
   run<T extends LaunchResult>(
     request: ManagedLaunchRequest,
     signal: AbortSignal,
-    start: () => Promise<DirectLifecycleOutcome<T>>,
+    start: (commitReadiness: CommitLaunchReadiness) => Promise<DirectLifecycleOutcome<T>>,
   ): Promise<DirectLifecycleOutcome<T>>;
 }
 
@@ -47,10 +49,8 @@ function recordLaunchGeneration(
   opts: ManagedLaunchOptions,
   request: ManagedLaunchRequest,
   claim: AdmittedClaim,
-  result: LaunchResult,
+  pid: number,
 ): boolean {
-  const pid = result.pid ?? result.spawnedPid;
-  if (pid === undefined) return false;
   const generation = opts.capture(request, pid);
   return (
     generation?.pid === pid &&
@@ -66,23 +66,41 @@ async function runClaimedLaunch<T extends LaunchResult>(
   request: ManagedLaunchRequest,
   { claimId, fenceToken }: AdmittedClaim,
   signal: AbortSignal,
-  start: () => Promise<DirectLifecycleOutcome<T>>,
+  start: (commitReadiness: CommitLaunchReadiness) => Promise<DirectLifecycleOutcome<T>>,
 ): Promise<DirectLifecycleOutcome<T>> {
-  let settled = false;
+  const claim = { claimId, fenceToken };
+  let capturedPid: number | undefined;
+  let committedPid: number | undefined;
+  let abandoned = false;
+  const commitReadiness: CommitLaunchReadiness = (pid) => {
+    if (committedPid !== undefined) {
+      return committedPid === pid ? undefined : "ManagedReadyUnverified";
+    }
+    if (signal.aborted) return "LaunchCanceled";
+    if (!recordLaunchGeneration(opts, request, claim, pid)) return "ManagedGenerationUnverified";
+    capturedPid = pid;
+    if (!opts.authority.completeReady(claimId, fenceToken)) return "ManagedReadyUnverified";
+    committedPid = pid;
+    return undefined;
+  };
   try {
-    const outcome = signal.aborted ? refuse("LaunchCanceled") : await start();
+    const outcome = signal.aborted ? refuse("LaunchCanceled") : await start(commitReadiness);
     if (!outcome.ran) {
-      settled = opts.authority.abandonUnstarted(claimId, fenceToken);
+      abandoned =
+        committedPid === undefined && opts.authority.abandonUnstarted(claimId, fenceToken);
       return outcome;
     }
-    const recorded = recordLaunchGeneration(opts, request, { claimId, fenceToken }, outcome.result);
-    if (!outcome.result.ok) return outcome;
-    if (signal.aborted) return refuse("LaunchCanceled");
-    if (outcome.result.pid === null || !recorded) return refuse("ManagedGenerationUnverified");
-    settled = opts.authority.completeReady(claimId, fenceToken);
-    return settled ? outcome : refuse("ManagedReadyUnverified");
+    const { ok, pid, spawnedPid } = outcome.result;
+    if (ok) {
+      return pid === committedPid ? outcome : refuse("ManagedReadyUnverified");
+    }
+    const failedPid = pid ?? spawnedPid;
+    if (committedPid === undefined && failedPid !== undefined && failedPid !== capturedPid) {
+      recordLaunchGeneration(opts, request, claim, failedPid);
+    }
+    return outcome;
   } finally {
-    if (!settled) {
+    if (committedPid === undefined && !abandoned) {
       opts.authority.failUncertain(claimId, fenceToken, "launch outcome could not be committed");
     }
   }
@@ -93,7 +111,7 @@ export function createManagedLaunchAdmission(opts: ManagedLaunchOptions): Manage
     async run<T extends LaunchResult>(
       request: ManagedLaunchRequest,
       signal: AbortSignal,
-      start: () => Promise<DirectLifecycleOutcome<T>>,
+      start: (commitReadiness: CommitLaunchReadiness) => Promise<DirectLifecycleOutcome<T>>,
     ): Promise<DirectLifecycleOutcome<T>> {
       if (signal.aborted) return refuse("LaunchCanceled");
       // Replacement needs a verified release of the old generation.

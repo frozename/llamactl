@@ -476,7 +476,14 @@ function modelRunRoutesForDir(
 ): LocalRoute[] {
   if (verdict === "dead" || verdict === "reused") return [];
   const state = readServerState({ name }, resolved);
-  if (!state?.rel || !state.host) return [];
+  if (
+    !state?.rel ||
+    !state.host ||
+    state.pid !== runPid ||
+    state.publicationPending !== undefined
+  ) {
+    return [];
+  }
   // Route by the model rel AND any `--alias` the server advertises. The
   // server reports its alias (not the rel) on /v1/models, so peer snapshots
   // and clients that use the alias must resolve to a real route rather than

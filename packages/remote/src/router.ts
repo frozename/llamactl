@@ -76,7 +76,10 @@ import { dirname, join } from "node:path";
 import { z } from "zod";
 
 import type { CompositeApplyEvent } from "./composite/types.js";
-import type { ManagedLaunchAdmission } from "./residency/managed-launch-admission.js";
+import type {
+  CommitLaunchReadiness,
+  ManagedLaunchAdmission,
+} from "./residency/managed-launch-admission.js";
 import type { Release, RequestAdmission } from "./residency/request-admission.js";
 import type { RuntimeBackend } from "./runtime/backend.js";
 import type { RuntimeKind } from "./runtime/factory.js";
@@ -3036,7 +3039,9 @@ export const router = t.router({
   }) {
     yield* bridgeEventStream(signal ?? new AbortController().signal, async (emit, subSignal) => {
       const managed = ctx.managedLaunchAdmission;
-      const start = (): Promise<DirectLifecycleOutcome<StartModelHostResult>> =>
+      const start = (
+        commitReadiness?: CommitLaunchReadiness,
+      ): Promise<DirectLifecycleOutcome<StartModelHostResult>> =>
         runDirectResidencyStart<StartModelHostResult>(
           input.workload,
           () =>
@@ -3048,6 +3053,7 @@ export const router = t.router({
               ...(input.manifest !== undefined ? { manifest: input.manifest } : {}),
               ...(input.restart !== undefined ? { restart: input.restart } : {}),
               signal: subSignal,
+              ...(commitReadiness === undefined ? {} : { commitReadiness }),
               onEvent: (event) => {
                 // Readiness is provisional until the managed claim commits.
                 if (
@@ -3732,15 +3738,18 @@ export const router = t.router({
   }) {
     yield* bridgeEventStream<ServerStartEvent>(signal, async (emit, sig) => {
       const managed = ctx.managedLaunchAdmission;
-      const start = (): Promise<DirectLifecycleOutcome<serverMod.StartServerResult>> =>
+      const start = (
+        commitReadiness?: CommitLaunchReadiness,
+      ): Promise<DirectLifecycleOutcome<serverMod.StartServerResult>> =>
         runDirectResidencyStart<serverMod.StartServerResult>(
           input.workload,
           () =>
-            serverMod.startServer(
-              serverStartOptions(input, sig, (event) => {
+            serverMod.startServer({
+              ...serverStartOptions(input, sig, (event) => {
                 if (managed === undefined || event.type !== "ready") emit(event);
               }),
-            ),
+              ...(commitReadiness === undefined ? {} : { commitReadiness }),
+            }),
           directModelRunStartOpts(input.workload, input.target),
         );
       const outcome =
