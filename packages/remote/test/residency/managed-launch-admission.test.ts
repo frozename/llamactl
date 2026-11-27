@@ -7,6 +7,7 @@ import {
   openAdmissionAuthority,
 } from "../../src/residency/admission-authority.js";
 import {
+  type CommitLaunchReadiness,
   createManagedLaunchAdmission,
   type ManagedLaunchRequest,
 } from "../../src/residency/managed-launch-admission.js";
@@ -16,6 +17,16 @@ const request: ManagedLaunchRequest = { kind: "ModelRun", runtimeKey: "alpha", l
 const signal = new AbortController().signal;
 const generation = { pid: 2468, startTimeMs: 101 };
 const ready = { ran: true as const, result: { ok: true, pid: generation.pid } };
+
+function simulateRuntimeReady(commitReadiness: CommitLaunchReadiness): Promise<{
+  readonly ran: true;
+  result: { ok: boolean; pid: number; error?: string };
+}> {
+  const error = commitReadiness(generation.pid);
+  return Promise.resolve(
+    error === undefined ? ready : { ran: true, result: { ...ready.result, ok: false, error } },
+  );
+}
 
 function fixture(): {
   authority: AdmissionAuthority;
@@ -47,10 +58,11 @@ test("reserves before starting and publishes readiness only after recording a ge
   using f = fixture();
   const gate = createManagedLaunchAdmission({ ...f, capture: () => generation });
   const started = Promise.withResolvers<undefined>();
-  const resume = Promise.withResolvers<typeof ready>();
-  const start = mock(async () => {
+  const resume = Promise.withResolvers<undefined>();
+  const start = mock(async (commit: CommitLaunchReadiness) => {
     started.resolve(undefined);
-    return await resume.promise;
+    await resume.promise;
+    return await simulateRuntimeReady(commit);
   });
   const pending = gate.run(request, signal, start);
   try {
@@ -69,7 +81,7 @@ test("reserves before starting and publishes readiness only after recording a ge
     if (!contender.ran) expect(contender.detail).toMatch(/^BudgetExceeded:/);
     expect(start).toHaveBeenCalledTimes(1);
   } finally {
-    resume.resolve(ready);
+    resume.resolve(undefined);
     await pending;
   }
   expect(await pending).toEqual(ready);
@@ -87,9 +99,9 @@ test("retains a charge when reported readiness has no stable process identity", 
     ...f,
     capture: () => ({ pid: generation.pid, executable: "/fixture/engine" }),
   });
-  expect(await gate.run(request, signal, () => Promise.resolve(ready))).toEqual({
-    ran: false,
-    detail: "ManagedGenerationUnverified",
+  expect(await gate.run(request, signal, simulateRuntimeReady)).toEqual({
+    ran: true,
+    result: { ok: false, pid: generation.pid, error: "ManagedGenerationUnverified" },
   });
   expect(f.authority.snapshot()).toMatchObject([
     { state: "uncertain", allocationGiB: 16, generations: [] },
@@ -111,13 +123,15 @@ test("a transport abort during launch retains the charge and suppresses readines
   using f = fixture();
   const gate = createManagedLaunchAdmission({ ...f, capture: () => generation });
   const aborter = new AbortController();
-  const start = (): Promise<typeof ready> => {
+  const start = (
+    commitReadiness: CommitLaunchReadiness,
+  ): ReturnType<typeof simulateRuntimeReady> => {
     aborter.abort();
-    return Promise.resolve(ready);
+    return simulateRuntimeReady(commitReadiness);
   };
   expect(await gate.run(request, aborter.signal, start)).toEqual({
-    ran: false,
-    detail: "LaunchCanceled",
+    ran: true,
+    result: { ok: false, pid: generation.pid, error: "LaunchCanceled" },
   });
   expect(f.authority.snapshot()).toMatchObject([{ state: "uncertain", generations: [generation] }]);
 });
@@ -153,9 +167,9 @@ test("retains the generation and returns a refusal when the ready commit cannot 
     authority: { ...f.authority, completeReady: () => false },
     capture: () => generation,
   });
-  expect(await gate.run(request, signal, () => Promise.resolve(ready))).toEqual({
-    ran: false,
-    detail: "ManagedReadyUnverified",
+  expect(await gate.run(request, signal, simulateRuntimeReady)).toEqual({
+    ran: true,
+    result: { ok: false, pid: generation.pid, error: "ManagedReadyUnverified" },
   });
   expect(f.authority.snapshot()).toMatchObject([{ state: "uncertain", generations: [generation] }]);
 });
@@ -171,7 +185,7 @@ test("a lifecycle refusal before invoking the engine does not strand capacity", 
   expect(f.authority.snapshot()).toEqual([]);
 
   const next = { kind: "ModelHost" as const, runtimeKey: "beta", launch: { manifest: {} } };
-  expect(await gate.run(next, signal, () => Promise.resolve(ready))).toEqual(ready);
+  expect(await gate.run(next, signal, simulateRuntimeReady)).toEqual(ready);
   expect(f.authority.snapshot()).toMatchObject([{ runtimeKey: "beta", state: "resident" }]);
 });
 
@@ -188,4 +202,14 @@ test("a managed ModelHost must supply the manifest being admitted", async () => 
   expect(resolve).not.toHaveBeenCalled();
   expect(start).not.toHaveBeenCalled();
   expect(f.authority.snapshot()).toEqual([]);
+});
+
+test("a runtime cannot report success without committing publication for its PID", async () => {
+  using f = fixture();
+  const gate = createManagedLaunchAdmission({ ...f, capture: () => generation });
+  expect(await gate.run(request, signal, () => Promise.resolve(ready))).toEqual({
+    ran: false,
+    detail: "ManagedReadyUnverified",
+  });
+  expect(f.authority.snapshot()).toMatchObject([{ state: "uncertain" }]);
 });

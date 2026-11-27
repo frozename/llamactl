@@ -10,7 +10,7 @@
  * so `tsc` cannot resolve it at base — every RED case fails by assertion,
  * never by a missing module or a type error.
  */
-import { server as serverMod } from "@llamactl/core";
+import { env as envMod, server as serverMod } from "@llamactl/core";
 import { type ModelHostState, writeModelHostState } from "@llamactl/core/engines/state";
 import {
   createResidencyLeases,
@@ -23,10 +23,17 @@ import {
   type SessionRefcounts,
   setSessionRefcountRegistry,
 } from "@llamactl/core/residency/sessions";
+import { listWorkloadRoutes } from "@llamactl/core/workloadRuntime";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { openAdmissionAuthority } from "../../src/residency/admission-authority.js";
+import { createManagedLaunchAdmission } from "../../src/residency/managed-launch-admission.js";
+import {
+  defaultResidencyStorePath,
+  openResidencyOperationStore,
+} from "../../src/residency/store.js";
 import { router } from "../../src/router.js";
 import {
   existsSync,
@@ -1137,3 +1144,109 @@ describe("#520 session refcounts under the DF-05 stop fence", () => {
     expect(acquired.lease.release()).toBe(true);
   });
 });
+
+test.each([
+  ["ModelRun", false],
+  ["ModelRun", true],
+  ["ModelHost", false],
+  ["ModelHost", true],
+] as const)(
+  "managed %s publishes routes and reopens leases only after commit=%s",
+  async (kind, accept) => {
+    const reg = createResidencyLeases();
+    setResidencyLeaseRegistry(reg);
+    const workload = "managed-readiness-fixture";
+    const reserver = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: () => new Response("fixture"),
+    });
+    const port = Number(reserver.port);
+    await reserver.stop(true);
+    const endpoint = { host: "127.0.0.1", port };
+    const bin = join(tmp, "fake-llama-server");
+    const models = join(tmp, "models");
+    mkdirSync(models, { recursive: true });
+    writeFileSync(join(models, "fake.gguf"), "GGUF-fake");
+    writeFakeServer(bin, endpoint.host, port);
+    Object.assign(process.env, {
+      LLAMA_CPP_MODELS: models,
+      LLAMA_CPP_LOGS: join(tmp, "logs"),
+      LLAMA_CPP_USE_TUNED_ARGS: "false",
+    });
+    const authority = openAdmissionAuthority({
+      storePath: join(tmp, "admission.db"),
+      budgetGiB: () => 24,
+      observe: () => undefined,
+      readPidFile: () => undefined,
+      owner: { pid: process.pid },
+    });
+    const lifecycle = openResidencyOperationStore({ path: defaultResidencyStorePath() });
+    const observations: { routeCount: number; phase: string; residency: string | undefined }[] = [];
+    const gate = createManagedLaunchAdmission({
+      authority: {
+        ...authority,
+        completeReady: (id, token) => {
+          observations.push({
+            routeCount: listWorkloadRoutes(envMod.resolveEnv(), workload).length,
+            phase: reg.snapshot(workload).phase,
+            residency: lifecycle.getResidencyState(workload)?.state,
+          });
+          return accept && authority.completeReady(id, token);
+        },
+      },
+      resolve: () => ({ specDigest: "fixture", allocationGiB: 16 }),
+      capture: (_request, pid) => {
+        spawnedServerPids.add(pid);
+        return { pid, startTimeMs: 100 };
+      },
+    });
+    const caller = router.createCaller({ managedLaunchAdmission: gate });
+    try {
+      if (kind === "ModelRun") {
+        expect((await caller.serverStop({ workload })).stopped).toBe(true);
+        const events = await caller.serverStart({
+          workload,
+          target: "fake.gguf",
+          binary: bin,
+          endpoint,
+          timeoutSeconds: 5,
+        });
+        for await (const event of events) {
+          if (event.type === "launch") spawnedServerPids.add(event.pid);
+        }
+      } else {
+        expect((await caller.modelHostStop({ workload })).ok).toBe(true);
+        const events = await caller.modelHostStart({
+          workload,
+          timeoutSeconds: 5,
+          manifest: {
+            apiVersion: "llamactl/v1",
+            kind: "ModelHost",
+            metadata: { name: workload },
+            spec: {
+              engine: "llamacpp",
+              node: "local",
+              binary: bin,
+              endpoint,
+              hostedModels: [{ rel: "fake.gguf" }],
+            },
+          },
+        });
+        for await (const _event of events) {
+          // Wait for readiness and claim settlement.
+        }
+      }
+      expect(observations).toEqual([{ routeCount: 0, phase: "unloaded", residency: "loading" }]);
+      expect(lifecycle.getResidencyState(workload)?.state).toBe(accept ? "ready" : "failed");
+      expect(listWorkloadRoutes(envMod.resolveEnv(), workload).length > 0).toBe(accept);
+      expect(reg.snapshot(workload).phase).toBe(accept ? "open" : "unloaded");
+      expect(authority.snapshot().map((row) => row.state)).toEqual([
+        accept ? "resident" : "uncertain",
+      ]);
+    } finally {
+      authority.close();
+      lifecycle.close();
+    }
+  },
+);

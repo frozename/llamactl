@@ -108,6 +108,7 @@ export interface StartModelHostOptions {
   manifest?: unknown;
   signal?: AbortSignal;
   onEvent?: (event: unknown) => void;
+  commitReadiness?: (pid: number) => string | undefined;
   workloadsDir?: string;
   runtimeDir?: string;
   env?: NodeJS.ProcessEnv;
@@ -933,6 +934,7 @@ async function reapOrAdoptPriorHost(
   resolved: ReturnType<typeof resolveEnv>,
   engine: (typeof ENGINES)[keyof typeof ENGINES],
 ): Promise<StartModelHostResult | null> {
+  if (opts.commitReadiness !== undefined) return null;
   const priorState = readModelHostState(opts.key, resolved);
   if (!priorState) {
     return await reapStartingOrphan(manifest, opts, resolved, engine);
@@ -1587,6 +1589,8 @@ function writeReadyModelHostState(
   startSpecHash: string,
   slotSavePath: string | null,
 ): void {
+  const refusal = opts.commitReadiness?.(pid);
+  if (refusal !== undefined) throw new Error(refusal);
   const endpoint = manifest.spec.endpoint;
   writeModelHostState(
     {
@@ -1885,6 +1889,12 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
       error: `residency-group ${residency.group} already has ${residency.state} ModelHost ${residency.host} on this node; stop it before starting ${manifest.metadata.name}`,
       residencyConflict: residency,
     };
+    opts.onEvent?.({ type: "done", result });
+    return result;
+  }
+
+  if (opts.commitReadiness !== undefined && residencyPeerState(opts.key, opts, resolved) !== null) {
+    const result = { ok: false, pid: null, error: "ManagedRestartUnavailable" };
     opts.onEvent?.({ type: "done", result });
     return result;
   }

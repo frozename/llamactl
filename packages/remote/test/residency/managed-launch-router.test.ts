@@ -62,7 +62,7 @@ test("modelHostStart consults target admission before entering the runtime lifec
 test("modelHostStart withholds its runtime terminal event until managed admission settles", async () => {
   const managed: ManagedLaunchAdmission = {
     async run(_request, _signal, start) {
-      const runtime = await start();
+      const runtime = await start(() => undefined);
       if (!runtime.ran) throw new Error(runtime.detail);
       expect(runtime.result).toMatchObject({ ok: false });
       expect("error" in runtime.result && runtime.result.error).toMatch(/refusing to bind/);
@@ -174,7 +174,7 @@ test("an already canceled caller passes cancellation to the managed launch gate"
   const managed: ManagedLaunchAdmission = {
     run(_request, signal, start) {
       if (signal.aborted) return Promise.resolve({ ran: false, detail: "already canceled" });
-      return start();
+      return start(() => undefined);
     },
   };
   const caller = router.createCaller(
@@ -209,7 +209,7 @@ test("serverStart publishes ready only after managed admission commits", async (
     for (const accepted of [true, false]) {
       const managed: ManagedLaunchAdmission = {
         async run(_request, _signal, start) {
-          const result = await start();
+          const result = await start(() => undefined);
           return accepted ? result : { ran: false, detail: "claim commit failed" };
         },
       };
