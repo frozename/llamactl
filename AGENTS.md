@@ -559,6 +559,13 @@ expectedBearerHash, onNodeConnect?, onNodeDisconnect? } })` in
   - `--central-bearer=<token>` — tunnel bearer (or write it to a 0600
     `<dir>/tunnel-bearer` file so it stays out of the command line; the
     now-deprecated `LLAMACTL_TUNNEL_BEARER` env var still works).
+  - `--central-bearer-ref=keychain:<service>/<account>` — tunnel bearer
+    read from the macOS login keychain (`security find-generic-password`)
+    at serve time, so the token stays out of the plist, the command line
+    and the process env. macOS only, `keychain:` refs only, and an
+    explicit source equal in rank to `--central-bearer` /
+    `--central-bearer-file` (the three must not be combined).
+    `--tunnel-bearer-ref` is the same thing for the central-side bearer.
   - `--tunnel-node-name=<name>` — identity presented in the hello
     frame; defaults to the agent's `nodeName`.
 - _In kubeconfig_: mark a node with `tunnelPreferred: true` and
