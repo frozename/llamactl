@@ -523,6 +523,9 @@ function assignInitValueFlag(flags: InitFlags, k: string, v: string): string | n
       flags.dir = v;
       break;
     case "--host":
+      if (v.trim() === "") {
+        return "agent init: --host requires a host; omit --host to use the default 127.0.0.1";
+      }
       flags.host = v;
       break;
     case "--port": {
@@ -769,6 +772,8 @@ function assignRotateTokenValueFlag(flags: RotateTokenFlags, k: string, v: strin
       flags.dir = v;
       return null;
     case "--host":
+      if (v.trim() === "")
+        return "agent rotate-token: --host requires a host; omit --host to keep the recorded advertised host";
       flags.host = v;
       flags.hostExplicit = true;
       return null;
@@ -1176,6 +1181,11 @@ function parseRotateCertFlags(args: string[]): RotateCertFlags | { error: string
         flags.dir = v;
         break;
       case "--host":
+        if (v.trim() === "")
+          return {
+            error:
+              "agent rotate-cert: --host requires a host; omit --host to keep the recorded advertised host",
+          };
         flags.host = v;
         flags.hostExplicit = true;
         break;

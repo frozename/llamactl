@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 
+import { saveBrowserRequest } from "../browser-requests";
 import { type ChatMessage, type ChatProgress, loadChatModels, streamChat } from "../chat-client";
 import { ChatReply } from "./chat-reply";
 import "./chat.css";
@@ -69,23 +70,65 @@ interface ChatConversation {
   reset: () => void;
 }
 
+interface ActiveRequest {
+  id: string;
+  node: string;
+  at: number;
+  started: number;
+  firstByteMs: number | null;
+  status: number;
+  controller: AbortController;
+  messages: ChatMessage[];
+  turn: ChatTurn;
+}
+
+function saveRequest(request: ActiveRequest, failure: unknown): void {
+  const { id, node, at, started, firstByteMs, status, turn, controller, messages } = request;
+  saveBrowserRequest({
+    id,
+    node,
+    at,
+    path: "/v1/chat/completions",
+    model: turn.model,
+    status,
+    firstByteMs,
+    durationMs: Math.round(performance.now() - started),
+    cancelled: controller.signal.aborted,
+    truncated: false,
+    request: { model: turn.model, messages, stream: true, stream_options: { include_usage: true } },
+    response: {
+      reply: turn.reply,
+      reasoning: turn.reasoning,
+      outputTokens: turn.outputTokens,
+      reasoningTokens: turn.reasoningTokens,
+      rate: turn.rate,
+      error: failure instanceof Error ? failure.message : undefined,
+    },
+  });
+}
+
 function useChatConversation(node: string, model: string): ChatConversation {
   const [draft, setDraft] = useState("");
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [pending, setPending] = useState<ChatTurn | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const active = useRef<{ controller: AbortController; turn: ChatTurn } | null>(null);
+  const active = useRef<ActiveRequest | null>(null);
   useEffect(() => {
     return (): void => {
       const inFlight = active.current;
       active.current = null;
-      inFlight?.controller.abort();
+      if (inFlight) {
+        inFlight.controller.abort();
+        saveRequest(inFlight, null);
+      }
     };
   }, []);
 
   function settle(controller: AbortController, turn: ChatTurn, failure: unknown): void {
-    if (active.current?.controller !== controller) return;
+    const request = active.current;
+    if (request?.controller !== controller) return;
     active.current = null;
+    saveRequest(request, failure);
     const stopped = controller.signal.aborted;
     if (turn.reply || turn.reasoning) setTurns((previous) => [...previous, { ...turn, stopped }]);
     if (!turn.reply) setDraft(turn.prompt);
@@ -106,7 +149,18 @@ function useChatConversation(node: string, model: string): ChatConversation {
       ]);
     const controller = new AbortController();
     const turn: ChatTurn = { prompt, model, reply: "", reasoning: "" };
-    active.current = { controller, turn };
+    const request: ActiveRequest = {
+      id: crypto.randomUUID(),
+      node,
+      at: Date.now(),
+      started: performance.now(),
+      firstByteMs: null,
+      status: 0,
+      controller,
+      turn,
+      messages: [...messages, { role: "user", content: prompt }],
+    };
+    active.current = request;
     setDraft("");
     setNotice(null);
     setPending({ ...turn });
@@ -115,11 +169,15 @@ function useChatConversation(node: string, model: string): ChatConversation {
       await streamChat(
         node,
         model,
-        [...messages, { role: "user", content: prompt }],
+        request.messages,
         controller.signal,
         (progress) => {
+          request.firstByteMs ??= Math.round(performance.now() - request.started);
           Object.assign(turn, progress);
           if (active.current?.controller === controller) setPending({ ...turn });
+        },
+        (status) => {
+          request.status = status;
         },
       );
     } catch (error) {

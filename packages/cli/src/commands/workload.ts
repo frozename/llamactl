@@ -50,6 +50,7 @@ import {
 import { required } from "../required.js";
 import { existsSync, readFileSync, rmSync } from "../safe-fs.js";
 import {
+  formatNodeBudgetSource,
   formatNodeRunBudget,
   formatResidencyKnobs,
   makeSpecArtifactResolver,
@@ -136,6 +137,10 @@ remove the manifest file from the workloads directory.
 
 export interface NodeBudgetView {
   budget: number;
+  /** Absent on payloads from an older agent, which reported no source. */
+  budgetSource?: "noderun" | "computed";
+  /** Absent on payloads from an older agent, which reported no ratio. */
+  safetyMarginRatio?: { value: number; defaulted: boolean };
   reserved: number;
   workloads: {
     name: string;
@@ -220,10 +225,22 @@ export async function withNodeQueryDeadline<T>(node: string, query: () => Promis
   }
 }
 
-export function renderNodeBudget(budget: NodeBudgetView): string {
+// Part of #519: the source arrives as a bare wire string (and tRPC output typing
+// strips `| undefined` from optional properties), so the render input re-widens
+// budgetSource; an unrecognised value renders like an older agent's payload.
+type NodeBudgetRenderInput = Omit<NodeBudgetView, "budgetSource"> & { budgetSource?: string };
+
+export function renderNodeBudget(budget: NodeBudgetRenderInput): string {
   const pad = (s: string, w: number): string => (s.length >= w ? s : s + " ".repeat(w - s.length));
   const out: string[] = [];
-  out.push(`Budget:   ${budget.reserved.toFixed(1)} / ${budget.budget.toFixed(1)} GiB`);
+  const budgetSource =
+    budget.budgetSource === "noderun" || budget.budgetSource === "computed"
+      ? budget.budgetSource
+      : undefined;
+  const source = budgetSource
+    ? ` (${formatNodeBudgetSource(budgetSource, budget.safetyMarginRatio)})`
+    : "";
+  out.push(`Budget:   ${budget.reserved.toFixed(1)} / ${budget.budget.toFixed(1)} GiB${source}`);
   out.push(`Workloads:`);
   if (budget.workloads.length === 0) {
     out.push("  (none)");
