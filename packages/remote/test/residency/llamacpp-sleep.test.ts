@@ -3,7 +3,7 @@
  * The loopback fixture serves a programmable sleep command and observation.
  * Verified stop tests prove release by checking the port after shutdown.
  */
-import type { ResidencyLeases } from "@llamactl/core/residency/leases";
+import type { DrainToken, ResidencyLeases } from "@llamactl/core/residency/leases";
 import type {
   LlamacppSleepController,
   ObservedSleepState,
@@ -28,7 +28,11 @@ import { createTargetAdmissionAuthority } from "../../src/workload/admission.js"
 // ── module under test (lands with the fix) ──────────────────────────────
 
 type StopProof = { ok: true } | { ok: false; reason: string };
-type VerifiedStop = () => Promise<StopProof>;
+type VerifiedStop = (drain: DrainToken) => Promise<StopProof>;
+type ManagedSleep = {
+  workload: string;
+  readInferenceHold(workload: string): "clear" | "current" | "prior" | "unknown";
+};
 
 type SleepDriveOutcome = {
   kind: string;
@@ -37,6 +41,7 @@ type SleepDriveOutcome = {
   stopReason?: string | undefined;
   reason?: string | undefined;
   reservation?: string | undefined;
+  active?: string[] | undefined;
 };
 
 type AgentLlamacppSleepDriverOptions = {
@@ -44,6 +49,7 @@ type AgentLlamacppSleepDriverOptions = {
   memberId: string;
   endpoint: { host: string; port: number };
   verifiedStop: VerifiedStop;
+  managed?: ManagedSleep;
   cacheIdentity?: string | undefined;
   sleepTimeoutMs?: number | undefined;
   fetch?: typeof globalThis.fetch | undefined;
@@ -238,6 +244,7 @@ async function makeDriver(opts: {
   controller: LlamacppSleepController;
   fake: FakeLlama;
   verifiedStop: VerifiedStop;
+  managed?: ManagedSleep;
   memberId?: string | undefined;
   cacheIdentity?: string | undefined;
   sleepTimeoutMs?: number | undefined;
@@ -252,6 +259,7 @@ async function makeDriver(opts: {
     cacheIdentity: opts.cacheIdentity,
     sleepTimeoutMs: opts.sleepTimeoutMs,
     ...(opts.fetch !== undefined ? { fetch: opts.fetch } : {}),
+    ...(opts.managed !== undefined ? { managed: opts.managed } : {}),
   });
 }
 
@@ -265,6 +273,172 @@ function snapshotMember(
 }
 
 // ── cases ───────────────────────────────────────────────────────────────
+
+function installedLeases(): ResidencyLeases {
+  const registry = getResidencyLeaseRegistry();
+  if (registry === null) throw new Error("fixture requires installed leases");
+  return registry;
+}
+
+describe("managed sleep inference fencing", () => {
+  test.each(["native", "fallback"] as const)(
+    "an active exact-workload lease refuses %s sleep without a side effect",
+    async (path) => {
+      const registry = installedLeases();
+      const fake = startFakeLlama();
+      const workload = "llama-workload";
+      const acquired = registry.acquire(workload);
+      if (!acquired.ok) throw new Error("fixture lease refused");
+      const capability =
+        path === "native" ? undefined : qualifySleepCapability({ engine: "llamacpp" }, []);
+      const controller = makeController(capability);
+      const stops: StopCounter = { count: 0 };
+      const driver = await makeDriver({
+        controller,
+        fake,
+        verifiedStop: releaseVerifiedStop(fake, stops),
+        managed: { workload, readInferenceHold: (): "clear" => "clear" },
+      });
+
+      expect(await driver.sleep()).toEqual({
+        kind: "refused",
+        reason: "LeasesActive",
+        reservation: "held",
+        active: [acquired.lease.id],
+      });
+      expect(fake.counts.sleepPosts).toBe(0);
+      expect(stops.count).toBe(0);
+      expect(registry.snapshot(workload)).toMatchObject({ phase: "open" });
+      expect(controller.snapshot().committedGiB).toBe(8);
+      acquired.lease.release();
+    },
+  );
+
+  test.each([
+    ["prior", "PriorInferenceHold"],
+    ["unknown", "InferenceHoldUnknown"],
+    ["current", "InferenceHoldActive"],
+  ] as const)(
+    "a durable inference hold in state %s refuses before either action",
+    async (hold, reason) => {
+      const registry = installedLeases();
+      const fake = startFakeLlama();
+      fake.state.sleepMode = 409;
+      const workload = "llama-workload";
+      const stops: StopCounter = { count: 0 };
+      const reads: string[] = [];
+      const driver = await makeDriver({
+        controller: makeController(),
+        fake,
+        verifiedStop: releaseVerifiedStop(fake, stops),
+        managed: {
+          workload,
+          readInferenceHold(name): typeof hold {
+            reads.push(name);
+            return hold;
+          },
+        },
+      });
+
+      expect(await driver.sleep()).toEqual({ kind: "refused", reason, reservation: "held" });
+      expect(reads).toEqual([workload]);
+      expect(fake.counts.sleepPosts).toBe(0);
+      expect(stops.count).toBe(0);
+      expect(registry.snapshot(workload)).toMatchObject({ phase: "open" });
+    },
+  );
+
+  test("ambiguous sleep retains its drain during and after an unproven fallback", async () => {
+    const registry = installedLeases();
+    const workload = "llama-workload";
+    const fake = startFakeLlama();
+    fake.state.propsReply = (): Response => Response.json({ is_sleeping: false });
+    const enteredStop = Promise.withResolvers<DrainToken>();
+    const finishedStop = Promise.withResolvers<StopProof>();
+    const controller = makeController();
+    const driver = await makeDriver({
+      controller,
+      fake,
+      verifiedStop(drain): Promise<StopProof> {
+        enteredStop.resolve(drain);
+        return finishedStop.promise;
+      },
+      managed: { workload, readInferenceHold: (): "clear" => "clear" },
+    });
+
+    const sleeping = driver.sleep();
+    try {
+      const drain: unknown = await Promise.race([enteredStop.promise, sleeping]);
+      const captured =
+        typeof drain === "object" && drain !== null && "workload" in drain
+          ? drain.workload
+          : undefined;
+      expect(captured).toBe(workload);
+      expect(registry.acquire(workload)).toMatchObject({ ok: false, reason: "Draining" });
+      const another = registry.acquire("other-workload");
+      expect(another.ok).toBe(true);
+      if (another.ok) another.lease.release();
+    } finally {
+      finishedStop.resolve({ ok: false, reason: "ProcessExitUnconfirmed" });
+      await sleeping;
+    }
+    expect(await sleeping).toMatchObject({ kind: "stop-failed", reservation: "uncertain" });
+    expect(registry.acquire(workload)).toMatchObject({ ok: false, reason: "Draining" });
+    expect(controller.snapshot().committedGiB).toBe(8);
+  });
+
+  test.each([true, false])(
+    "lost durable proof after the POST keeps capacity charged when is_sleeping=%s",
+    async (observedSleeping) => {
+      const registry = installedLeases();
+      const workload = "llama-workload";
+      let evidence = true;
+      const fake = startFakeLlama();
+      fake.state.propsReply = (): Response => {
+        evidence = false;
+        return Response.json({ is_sleeping: observedSleeping });
+      };
+      const stops: StopCounter = { count: 0 };
+      const controller = makeController();
+      const driver = await makeDriver({
+        controller,
+        fake,
+        verifiedStop: releaseVerifiedStop(fake, stops),
+        managed: {
+          workload,
+          readInferenceHold: (): "clear" | "unknown" => (evidence ? "clear" : "unknown"),
+        },
+      });
+
+      expect(await driver.sleep()).toEqual({
+        kind: "unconfirmed",
+        reason: "InferenceHoldUnknown",
+        reservation: "uncertain",
+      });
+      expect(fake.counts.sleepPosts).toBe(1);
+      expect(stops.count).toBe(0);
+      expect(registry.acquire(workload)).toMatchObject({ ok: false, reason: "Draining" });
+      expect(controller.snapshot().committedGiB).toBe(8);
+    },
+  );
+
+  test("verified native sleep parks the exact workload lease registry", async () => {
+    const registry = installedLeases();
+    const workload = "llama-workload";
+    const fake = startFakeLlama();
+    const controller = makeController();
+    const driver = await makeDriver({
+      controller,
+      fake,
+      verifiedStop: refusedVerifiedStop({ count: 0 }),
+      managed: { workload, readInferenceHold: (): "clear" => "clear" },
+    });
+
+    expect(await driver.sleep()).toEqual({ kind: "slept", reservation: "released" });
+    expect(registry.acquire(workload)).toMatchObject({ ok: false, reason: "Unloaded" });
+    expect(controller.snapshot().committedGiB).toBe(0);
+  });
+});
 
 describe("createAgentLlamacppSleepDriver (DF-10 #283)", () => {
   test("refused sleep (409) falls back to verified stop and releases the budget", async () => {
@@ -587,6 +761,7 @@ describe("createAgentLlamacppSleepDriver (DF-10 #283)", () => {
       sleepPosts: number;
       stops: number;
     }> {
+      setResidencyLeaseRegistry(createResidencyLeases());
       const fake = startFakeLlama();
       const controller = makeController(capability);
       const stops: StopCounter = { count: 0 };

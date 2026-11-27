@@ -2118,7 +2118,21 @@ function modelHostProbeSleep(
   } catch {
     return undefined;
   }
-  return matchesLlamacppSleepGeneration(opts.key.name, state) ? sleep : undefined;
+  return sleep;
+}
+
+function modelHostSleepResidency(
+  opts: StatusModelHostOptions,
+  state: ModelHostState,
+): SleepResidency | undefined {
+  if (state.engine !== "llamacpp") return undefined;
+  if (opts.sleepController !== undefined) {
+    return readLlamacppSleepResidency(opts.sleepController, opts.key.name);
+  }
+  const recorded = readLlamacppSleepResidency(getNodeLlamacppSleepController(), opts.key.name);
+  return recorded !== undefined && matchesLlamacppSleepGeneration(opts.key.name, state)
+    ? recorded
+    : undefined;
 }
 
 export function statusModelHost(opts: StatusModelHostOptions): StatusModelHostResult {
@@ -2145,15 +2159,7 @@ export function statusModelHost(opts: StatusModelHostOptions): StatusModelHostRe
       ...runtime,
     };
   }
-  const sleep =
-    state.engine === "llamacpp"
-      ? readLlamacppSleepResidency(
-          opts.sleepController === undefined
-            ? getNodeLlamacppSleepController()
-            : opts.sleepController,
-          opts.key.name,
-        )
-      : undefined;
+  const sleep = modelHostSleepResidency(opts, state);
   return {
     state: "Running",
     pid: state.pid,
