@@ -7,7 +7,10 @@ import type { RunningAgent } from "../../src/server/serve.js";
 
 import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
 import { hashToken } from "../../src/server/auth.js";
-import { startManagedAgentServer } from "../../src/server/start-managed-agent.js";
+import {
+  type ManagedAgentDependencies,
+  startManagedAgentServer,
+} from "../../src/server/start-managed-agent.js";
 import { generateSelfSignedCert } from "../../src/server/tls.js";
 import { parseNodeRun, saveNodeRun } from "../../src/workload/noderun-store.js";
 import { loadWorkloadByName, parseWorkload, saveWorkload } from "../../src/workload/store.js";
@@ -15,6 +18,19 @@ import { loadWorkloadByName, parseWorkload, saveWorkload } from "../../src/workl
 const NODE = "registered-owner";
 const REL = "fixture.gguf";
 const TOKEN = "registered-cold-fixture-token";
+const verifiedCapacity: ManagedAgentDependencies = {
+  nowMs: () => 100_000,
+  onCapacityAudit: () => undefined,
+  readCapacity: () => ({
+    source: "linux-procfs",
+    observedAtMs: 100_000,
+    physicalBytes: 64 * 1024 ** 3,
+    availableBytes: 48 * 1024 ** 3,
+    scope: { kind: "host-physical" },
+    pressure: "normal",
+    swapUsedBytes: 0,
+  }),
+};
 
 async function fixtureEngine(dir: string): Promise<{ port: number; binary: string }> {
   const held = Bun.serve({
@@ -133,19 +149,7 @@ test.skipIf(process.platform !== "darwin" && process.platform !== "linux")(
           managedColdModelRuns: [{ workload: "enabled", sha256, maxArtifactBytes: bytes.length }],
         },
         NODE,
-        {
-          nowMs: () => 100_000,
-          onCapacityAudit: () => undefined,
-          readCapacity: () => ({
-            source: "linux-procfs",
-            observedAtMs: 100_000,
-            physicalBytes: 64 * 1024 ** 3,
-            availableBytes: 48 * 1024 ** 3,
-            scope: { kind: "host-physical" },
-            pressure: "normal",
-            swapUsedBytes: 0,
-          }),
-        },
+        verifiedCapacity,
       );
       const url = `${running.url}/v1/fleet/snapshot?include=local-routes`;
       const headers = {
@@ -224,6 +228,71 @@ test.skipIf(process.platform !== "darwin" && process.platform !== "linux")(
       writeFileSync(modelPath + ".replacement", bytes);
       renameSync(modelPath + ".replacement", modelPath);
       expect((await fetch(url, { tls, headers })).status).toBe(204);
+    } finally {
+      await running?.stop();
+      for (const [key, value] of previous) {
+        if (value === undefined) Reflect.deleteProperty(process.env, key);
+        else process.env[key] = value;
+      }
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
+
+test.skipIf(process.platform !== "darwin" && process.platform !== "linux")(
+  "only an explicit empty owner declaration inventory clears peer history",
+  async () => {
+    const dir = mkdtempSync(join(tmpdir(), "llamactl-empty-cold-"));
+    const env = {
+      DEV_STORAGE: dir,
+      LOCAL_AI_RUNTIME_DIR: join(dir, "runtime"),
+      LLAMACTL_WORKLOADS_DIR: join(dir, "workloads"),
+      LLAMACTL_RESIDENCY_STORE: join(dir, "operations.sqlite"),
+    };
+    const previous = Object.keys(env).map((key) => [key, process.env[key]] as const);
+    Object.assign(process.env, env);
+    let running: RunningAgent | undefined;
+    try {
+      savePolicy(env.LLAMACTL_WORKLOADS_DIR, 24);
+      const cert = await generateSelfSignedCert({ dir, commonName: "127.0.0.1" });
+      const opts = {
+        tokenHash: hashToken(TOKEN),
+        tls: { certPath: cert.certPath, keyPath: cert.keyPath },
+        advertiseMdns: false,
+        declaredModels: true,
+      };
+      const tls = { ca: cert.certPem };
+      const inventory = { "x-llamactl-declaration-inventory": "2" };
+      const auth = { authorization: `Bearer ${TOKEN}` };
+      const endpoint = (agent: RunningAgent): string =>
+        `${agent.url}/v1/fleet/snapshot?include=local-routes`;
+      running = await startManagedAgentServer(opts, NODE, verifiedCapacity);
+      expect(
+        (await fetch(endpoint(running), { tls, headers: { ...auth, ...inventory } })).status,
+      ).toBe(204);
+      await running.stop();
+      running = await startManagedAgentServer(
+        { ...opts, managedColdModelRuns: [] },
+        NODE,
+        verifiedCapacity,
+      );
+      const url = endpoint(running);
+      expect((await fetch(url, { tls, headers: inventory })).status).toBe(401);
+      expect((await fetch(url, { tls, headers: auth })).status).toBe(204);
+      const response = await fetch(url, { tls, headers: { ...auth, ...inventory } });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        workloads: [],
+        declaredInventory: { schemaVersion: 2, ownerNodeId: NODE, complete: true, entries: [] },
+      });
+
+      const operations = env.LLAMACTL_RESIDENCY_STORE;
+      renameSync(operations, operations + ".saved");
+      try {
+        expect((await fetch(url, { tls, headers: { ...auth, ...inventory } })).status).toBe(204);
+      } finally {
+        renameSync(operations + ".saved", operations);
+      }
     } finally {
       await running?.stop();
       for (const [key, value] of previous) {

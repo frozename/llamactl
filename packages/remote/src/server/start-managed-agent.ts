@@ -1,6 +1,6 @@
 import type { ManagedCapacitySample } from "@llamactl/core/resources/managed-capacity";
 
-import { rpcServer } from "@llamactl/core";
+import { type routingCatalog, rpcServer } from "@llamactl/core";
 import { resolveEnv } from "@llamactl/core/env";
 import { resolve } from "node:path";
 
@@ -30,13 +30,41 @@ function logCapacity(entry: ManagedCapacityAudit): void {
   process.stderr.write(JSON.stringify({ event: "managed_capacity", ...entry }) + "\n");
 }
 
+function emptyColdInventory(
+  opts: StartAgentOptions,
+  nodeName: string,
+  journalReadable: () => boolean,
+): Partial<StartAgentOptions> {
+  if (
+    opts.tls === undefined ||
+    opts.declaredModels !== true ||
+    opts.managedColdOwnerFactory !== undefined ||
+    opts.peerDeclarationProvenance !== undefined
+  )
+    return {};
+  return {
+    peerDeclarationProvenance: (): routingCatalog.PeerEmptyDeclarationInventory | undefined =>
+      journalReadable()
+        ? { schemaVersion: 2, ownerNodeId: nodeName, complete: true, entries: [] }
+        : undefined,
+  };
+}
+
 async function stageColdModelRuns(
   opts: StartAgentOptions,
   nodeName: string,
   runtime: Awaited<ReturnType<typeof openNodeManagedAdmission>>,
   verifyExclusive: () => void,
+  verifyJournals: () => string | undefined,
 ): Promise<Partial<StartAgentOptions>> {
-  if (!opts.managedColdModelRuns?.length) return {};
+  if (opts.managedColdModelRuns === undefined) return {};
+  if (opts.managedColdModelRuns.length === 0) {
+    return emptyColdInventory(
+      opts,
+      nodeName,
+      () => verifyJournals() === undefined && runtime.authority.isOperational(),
+    );
+  }
   const cold = await registerManagedColdModelRuns(
     opts,
     nodeName,
@@ -107,7 +135,13 @@ export async function startManagedAgentServer(
     checkOtherWorkloads();
     const recheck = runtime.verifyActivation();
     if (recheck !== undefined) throw new Error(recheck);
-    const cold = await stageColdModelRuns(opts, nodeName, runtime, checkOtherWorkloads);
+    const cold = await stageColdModelRuns(
+      opts,
+      nodeName,
+      runtime,
+      checkOtherWorkloads,
+      journals.verify,
+    );
     const running = startAgentServer({
       ...opts,
       ...cold,
