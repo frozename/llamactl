@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { checkUnitSecrets } from "../src/commands/doctor-unit-secrets.js";
+import { checkUnitSecrets, defaultUnitSecretOptions } from "../src/commands/doctor-unit-secrets.js";
 import { type DoctorDeps, runDoctor } from "../src/commands/doctor.js";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
@@ -355,6 +355,67 @@ describe("checkUnitSecrets degrade paths and drop-in hints (#289)", () => {
       expect(results[0]?.message).toContain(locked);
     } finally {
       chmodSync(locked, 0o755);
+    }
+  });
+});
+
+/**
+ * Pin the default unit-file directories that `defaultUnitSecretOptions`
+ * returns — the paths the inline-bearer warning scans (#905).
+ *
+ * These tests call the function directly with an explicit env object so
+ * they never read the real $HOME, /Library, or /etc.  Expected values are
+ * built from `homedir()` (Bun caches it at startup) plus literal path
+ * parts, and compared with `toEqual` on the whole array.
+ */
+describe("defaultUnitSecretOptions scan directories (#905)", () => {
+  const home = homedir();
+
+  test("darwin scans user LaunchAgents then system LaunchDaemons", () => {
+    const opts = defaultUnitSecretOptions("darwin", {});
+
+    expect(opts.platform).toBe("darwin");
+    expect(opts.launchdDirs).toEqual([
+      join(home, "Library", "LaunchAgents"),
+      "/Library/LaunchDaemons",
+    ]);
+  });
+
+  test("linux scans ~/.config/systemd/user then /etc/systemd/system when XDG_CONFIG_HOME is unset", () => {
+    const opts = defaultUnitSecretOptions("linux", {});
+
+    expect(opts.platform).toBe("linux");
+    expect(opts.systemdDirs).toEqual([
+      join(home, ".config", "systemd", "user"),
+      "/etc/systemd/system",
+    ]);
+  });
+
+  test("linux honours XDG_CONFIG_HOME for the user unit dir only", () => {
+    const opts = defaultUnitSecretOptions("linux", {
+      XDG_CONFIG_HOME: "/nonexistent-905/xdg",
+    });
+
+    expect(opts.systemdDirs).toEqual(["/nonexistent-905/xdg/systemd/user", "/etc/systemd/system"]);
+    // launchd must be unchanged: XDG must not affect launchd
+    expect(opts.launchdDirs).toEqual([
+      join(home, "Library", "LaunchAgents"),
+      "/Library/LaunchDaemons",
+    ]);
+  });
+
+  test("env defaults to process.env", () => {
+    const prev = process.env["XDG_CONFIG_HOME"];
+    try {
+      process.env["XDG_CONFIG_HOME"] = "/nonexistent-905/proc-env";
+      const opts = defaultUnitSecretOptions("linux");
+      expect(opts.systemdDirs[0]).toBe("/nonexistent-905/proc-env/systemd/user");
+    } finally {
+      if (prev === undefined) {
+        delete process.env["XDG_CONFIG_HOME"];
+      } else {
+        process.env["XDG_CONFIG_HOME"] = prev;
+      }
     }
   });
 });
