@@ -9,7 +9,7 @@ import type {
 } from "@llamactl/core/residency/llamacpp-sleep";
 
 import { resolveSecret } from "@llamactl/core/config/secret";
-import { type EngineName, ENGINES } from "@llamactl/core/engines";
+import { type EngineName, ENGINES, formatHostForUrl } from "@llamactl/core/engines";
 import {
   type ModelHostRuntimeStatus,
   readModelHostRuntimeStatus,
@@ -65,6 +65,7 @@ import type { StopFenceRefusal } from "../residency/stop-fence.js";
 
 import {
   getNodeLlamacppSleepController,
+  matchesLlamacppSleepGeneration,
   readLlamacppSleepResidency,
 } from "../residency/llamacpp-sleep-status.js";
 import { existsSync, fstatSync, mkdirSync, openSync, writeFileSync } from "../safe-fs.js";
@@ -191,6 +192,7 @@ export interface StatusModelHostOptions {
   identity?: PidIdentityDeps;
   /** Test seam; undefined reads the node's published llama.cpp sleep controller (#283). */
   sleepController?: LlamacppSleepController | null;
+  probeOrigin?: string;
 }
 
 export interface StatusModelHostResult {
@@ -207,6 +209,8 @@ export interface StatusModelHostResult {
   /** #283: present only for a live llama.cpp host its node's sleep controller
    *  records as sleeping or sleep-pending; recorded state, never a live probe. */
   sleep?: SleepResidency;
+  /** Recorded sleep bound to the requested probe origin and tracked process generation. */
+  probeSleep?: SleepResidency;
 }
 
 function toRuntimeEnv(env: NodeJS.ProcessEnv | undefined): NodeJS.ProcessEnv {
@@ -2021,6 +2025,23 @@ export async function stopModelHost(opts: StopModelHostOptions): Promise<StopMod
   return { ok: true, pid: state.pid };
 }
 
+function modelHostProbeSleep(
+  opts: StatusModelHostOptions,
+  state: ModelHostState,
+  sleep: SleepResidency | undefined,
+): SleepResidency | undefined {
+  if (sleep === undefined || opts.sleepController !== undefined || opts.probeOrigin === undefined) {
+    return undefined;
+  }
+  try {
+    const origin = new URL(`http://${formatHostForUrl(state.host)}:${String(state.port)}`).origin;
+    if (opts.probeOrigin !== origin) return undefined;
+  } catch {
+    return undefined;
+  }
+  return matchesLlamacppSleepGeneration(opts.key.name, state) ? sleep : undefined;
+}
+
 export function statusModelHost(opts: StatusModelHostOptions): StatusModelHostResult {
   const resolved = resolveEnv(withRuntimeDir(toRuntimeEnv(opts.env), opts.runtimeDir));
   const runtimeStatus = readModelHostRuntimeStatus(opts.key, resolved);
@@ -2057,7 +2078,11 @@ export function statusModelHost(opts: StatusModelHostOptions): StatusModelHostRe
   return {
     state: "Running",
     pid: state.pid,
-    ...omitUndefined({ specHash: state.specHash, sleep }),
+    ...omitUndefined({
+      specHash: state.specHash,
+      sleep,
+      probeSleep: modelHostProbeSleep(opts, state, sleep),
+    }),
     ...runtime,
   };
 }
