@@ -20,6 +20,7 @@ import {
 } from "@llamactl/core/engines/state";
 import { resolveEnv } from "@llamactl/core/env";
 import { isSleepResidency } from "@llamactl/core/residency/llamacpp-sleep";
+import { hasManagedRuntimeMarker } from "@llamactl/core/residency/managed-runtime";
 
 import type { NodeRunResidency } from "./noderun-schema.js";
 import type { ModelRun } from "./schema.js";
@@ -271,6 +272,9 @@ type ReconcileWorkItem =
  * retries it.
  */
 export async function reconcileOnce(opts: ReconcileOptions): Promise<ReconcileResult> {
+  if (hasManagedRuntimeMarker(resolveEnv().LOCAL_AI_RUNTIME_DIR)) {
+    return { reports: [], errors: 1 };
+  }
   const timeoutsByNode = new Map<string, NodeRpcTimeouts>();
   const timeoutsForNode = (nodeName: string): NodeRpcTimeouts => {
     const cached = timeoutsByNode.get(nodeName);
@@ -894,9 +898,10 @@ function sweepDisabledHost(
   reports: ReconcileNodeReport[],
   ctx: HostRecordContext,
 ): number {
-  if (spec.node === LOCAL_NODE_ID) {
-    removeModelHostState({ name }, resolveEnv(process.env));
-    removeModelHostStartAttempt({ name }, resolveEnv(process.env));
+  const resolved = resolveEnv();
+  if (spec.node === LOCAL_NODE_ID && !hasManagedRuntimeMarker(resolved.LOCAL_AI_RUNTIME_DIR)) {
+    removeModelHostState({ name }, resolved);
+    removeModelHostStartAttempt({ name }, resolved);
   }
   recordHostOutcome(
     spec,

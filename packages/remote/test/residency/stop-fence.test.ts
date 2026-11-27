@@ -1518,6 +1518,23 @@ spec:
       expect(noop.operationId).toBeString();
       expect(fixturePid(host)).toBe(newHostPid);
       if (restoredPid !== undefined) spawnedServerPids.delete(restoredPid);
+
+      const rollback = await caller.residencyApplyProfile({
+        node: "local",
+        from: "maintenance",
+        to: "interactive",
+        dryRun: false,
+        confirm: true,
+      });
+      registerSpawnedPid(join(runtimeRoot(), "workloads", run, "llama-server.pid"));
+      expect(rollback).toMatchObject({ ok: true, outcome: "stops-and-starts-ran", deferred: [] });
+      expect(listWorkloadRoutes(envMod.resolveEnv(), host)).toEqual([]);
+      expect(listWorkloadRoutes(envMod.resolveEnv(), run)).toHaveLength(1);
+      expect(runtime.authority.snapshot()).toMatchObject([
+        { runtimeKey: run, state: "resident", allocationGiB: 16 },
+      ]);
+      expect(loadModelHostByName(host, tmp).spec.enabled).toBe(true);
+      if (newHostPid !== undefined) spawnedServerPids.delete(newHostPid);
     } finally {
       runtime.authority.close();
     }

@@ -240,7 +240,7 @@ function clientForApply(
 ): (nodeName: string) => WorkloadNodeClient {
   return (nodeName) =>
     ownsNode && managed?.ownsNode?.(nodeName) === true
-      ? localCallerProxy(managed, signal)
+      ? localCallerProxy(managed, signal, true)
       : clientForNode(cfg, nodeName, managed);
 }
 
@@ -321,9 +321,12 @@ type WorkloadNodeClient = workloadApplyMod.WorkloadClient & benchScheduleLoopMod
 function localCallerProxy(
   managedLaunchAdmission?: ManagedLaunchAdmission,
   parentSignal?: AbortSignal,
+  ownerStopIntent = false,
 ): WorkloadNodeClient {
-  const ctx: AgentRouterContext =
-    managedLaunchAdmission === undefined ? {} : { managedLaunchAdmission };
+  const ctx: AgentRouterContext = {
+    ...(managedLaunchAdmission === undefined ? {} : { managedLaunchAdmission }),
+    ...(ownerStopIntent ? { ownerStopIntent: true } : {}),
+  };
   // Deferred reference — at runtime `router` exists by the time the
   // helper is invoked from within a procedure body, even though at
   // module-load time the declaration below is still being evaluated.
@@ -1062,6 +1065,14 @@ function runOwnedStop<T>(managed: ManagedLaunchAdmission | undefined, run: () =>
   return managed?.runOwnedLifecycle === undefined ? run() : managed.runOwnedLifecycle(run);
 }
 
+function managedLocalRuntime(): boolean {
+  return hasManagedRuntimeMarker(envMod.resolveEnv().LOCAL_AI_RUNTIME_DIR);
+}
+
+function refuseLegacyManagedMutation(reason: string): void {
+  if (managedLocalRuntime()) throw new TRPCError({ code: "PRECONDITION_FAILED", message: reason });
+}
+
 function stopReleased(proof: ManagedStopProof | undefined, pid: number | null): boolean {
   return proof === undefined || (pid !== null && proof.release(pid).kind === "released");
 }
@@ -1380,6 +1391,7 @@ export interface AgentRouterContext {
    *  pass none because they already hold the outer HTTP slot. */
   chatAdmission?: RequestAdmission;
   managedLaunchAdmission?: ManagedLaunchAdmission;
+  ownerStopIntent?: true;
 }
 
 const t = initTRPC.context<AgentRouterContext>().create();
@@ -3095,6 +3107,9 @@ export const router = t.router({
       }),
     )
     .mutation(async ({ input }): Promise<IdleEvictResult> => {
+      if (input.targets !== undefined) {
+        refuseLegacyManagedMutation("ManagedIdleEvictionRequiresOwner");
+      }
       const rawNodeName = process.env["LLAMACTL_NODE_NAME"]?.trim() ?? "";
       const servingNode = rawNodeName === "" ? null : rawNodeName;
       const nodeRun = nodeRunStoreMod.listNodeRuns().find((n) => n.metadata.name === input.node);
@@ -3172,6 +3187,7 @@ export const router = t.router({
         workloadsDir,
         async () =>
           await scope(manifest, async (ownsNode, budget) => {
+            if (!ownsNode) refuseLegacyManagedMutation("ManagedOwnerRequired");
             if (ownsNode) assertManagedApplyOwnsDirectory(workloadsDir);
             const handoffResult = ownsNode ? null : handoffLocalModelHost(manifest, workloadsDir);
             if (handoffResult) return handoffResult;
@@ -3281,38 +3297,42 @@ export const router = t.router({
   }),
 
   modelHostStop: t.procedure.input(modelHostStopInput).mutation(
-    async ({ ctx, input }) =>
-      await fenceWorkloadStop<StopModelHostResult>({
-        workload: input.workload,
-        stop: async () => {
-          const managed = ctx.managedLaunchAdmission;
-          const proof = managed?.prepareStopRelease?.(input.workload, "ModelHost");
-          if (managed !== undefined && proof === undefined) {
-            return { ok: false, pid: null, error: "ManagedStopGenerationUnverified" };
-          }
-          const outcome = await runDirectResidencyStop<StopModelHostResult>(
-            input.workload,
-            async () => {
-              const stopped = await runOwnedStop(managed, () =>
-                stopModelHost({
-                  key: { name: input.workload },
-                  ...(input.graceSeconds !== undefined ? { graceSeconds: input.graceSeconds } : {}),
-                  ...(proof === undefined
-                    ? {}
-                    : { identity: { verifyGeneration: proof.verifyGeneration } }),
-                }),
+    async ({ ctx, input }): Promise<StopModelHostResult> =>
+      !ctx.ownerStopIntent && managedLocalRuntime()
+        ? { ok: false, pid: null, error: "ManagedStopIntentRequired" }
+        : await fenceWorkloadStop<StopModelHostResult>({
+            workload: input.workload,
+            stop: async () => {
+              const managed = ctx.managedLaunchAdmission;
+              const proof = managed?.prepareStopRelease?.(input.workload, "ModelHost");
+              if (managed !== undefined && proof === undefined) {
+                return { ok: false, pid: null, error: "ManagedStopGenerationUnverified" };
+              }
+              const outcome = await runDirectResidencyStop<StopModelHostResult>(
+                input.workload,
+                async () => {
+                  const stopped = await runOwnedStop(managed, () =>
+                    stopModelHost({
+                      key: { name: input.workload },
+                      ...(input.graceSeconds !== undefined
+                        ? { graceSeconds: input.graceSeconds }
+                        : {}),
+                      ...(proof === undefined
+                        ? {}
+                        : { identity: { verifyGeneration: proof.verifyGeneration } }),
+                    }),
+                  );
+                  return stopped.ok && !stopReleased(proof, stopped.pid)
+                    ? { ok: false, pid: stopped.pid, error: "ManagedStopReleaseUnverified" }
+                    : stopped;
+                },
+                directResidencyOpts(input.workload, undefined),
               );
-              return stopped.ok && !stopReleased(proof, stopped.pid)
-                ? { ok: false, pid: stopped.pid, error: "ManagedStopReleaseUnverified" }
-                : stopped;
+              return outcome.ran ? outcome.result : { ok: false, pid: null, error: outcome.detail };
             },
-            directResidencyOpts(input.workload, undefined),
-          );
-          return outcome.ran ? outcome.result : { ok: false, pid: null, error: outcome.detail };
-        },
-        isVerifiedStop: (r) => r.ok,
-        refuse: (f) => ({ ok: false, pid: null, error: `${f.reason}: ${f.active.join(", ")}` }),
-      }),
+            isVerifiedStop: (r) => r.ok,
+            refuse: (f) => ({ ok: false, pid: null, error: `${f.reason}: ${f.active.join(", ")}` }),
+          }),
   ),
 
   modelHostStart: t.procedure.input(modelHostStartInput).subscription(async function* ({
@@ -3398,6 +3418,14 @@ export const router = t.router({
         async () => {
           const manifest = workloadStoreMod.loadWorkloadByNameAny(input.name);
           const stops: string[] = [];
+          if (managedLocalRuntime()) {
+            return {
+              ok: false,
+              name: input.name,
+              stops,
+              error: "ManagedWorkloadRetirementRequired",
+            };
+          }
           if (!input.keepRunning) {
             const refused =
               manifest.kind === "ModelHost"
@@ -3462,6 +3490,7 @@ export const router = t.router({
         .optional(),
     )
     .mutation(({ input }) => {
+      refuseLegacyManagedMutation("ManagedControllerOwnerConflict");
       const cfg = kubecfg.loadConfig();
       const resolveNodeIdentity = (n: string): string | null => {
         try {
@@ -3484,6 +3513,7 @@ export const router = t.router({
   }),
 
   reconcilerKick: t.procedure.mutation(async () => {
+    refuseLegacyManagedMutation("ManagedControllerOwnerConflict");
     const cfg = kubecfg.loadConfig();
     const resolveNodeIdentity = (n: string): string | null => {
       try {
@@ -3894,55 +3924,68 @@ export const router = t.router({
       }),
     )
     .mutation(
-      async ({ ctx, input }) =>
-        await fenceWorkloadStop<serverMod.StopServerResult>({
-          workload: input.workload,
-          stop: async () => {
-            const managed = ctx.managedLaunchAdmission;
-            const proof = managed?.prepareStopRelease?.(input.workload, "ModelRun");
-            if (managed !== undefined && proof === undefined) {
-              return {
-                stopped: false,
-                pid: null,
-                killed: false,
-                managedRefusal: "ManagedStopGenerationUnverified",
-              };
+      async ({ ctx, input }): Promise<serverMod.StopServerResult> =>
+        !ctx.ownerStopIntent && managedLocalRuntime()
+          ? {
+              stopped: false,
+              pid: null,
+              killed: false,
+              managedRefusal: "ManagedStopIntentRequired",
             }
-            const outcome = await runDirectResidencyStop<{
-              ok: boolean;
-              error?: string;
-              stop: serverMod.StopServerResult;
-            }>(
-              input.workload,
-              async () => {
-                const stopped = await runOwnedStop(managed, () =>
-                  serverMod.stopServer({
-                    key: { name: input.workload },
-                    ...(input.graceSeconds !== undefined
-                      ? { graceSeconds: input.graceSeconds }
-                      : {}),
-                    ...(proof === undefined
-                      ? {}
-                      : { identity: { verifyGeneration: proof.verifyGeneration } }),
-                  }),
+          : await fenceWorkloadStop<serverMod.StopServerResult>({
+              workload: input.workload,
+              stop: async () => {
+                const managed = ctx.managedLaunchAdmission;
+                const proof = managed?.prepareStopRelease?.(input.workload, "ModelRun");
+                if (managed !== undefined && proof === undefined) {
+                  return {
+                    stopped: false,
+                    pid: null,
+                    killed: false,
+                    managedRefusal: "ManagedStopGenerationUnverified",
+                  };
+                }
+                const outcome = await runDirectResidencyStop<{
+                  ok: boolean;
+                  error?: string;
+                  stop: serverMod.StopServerResult;
+                }>(
+                  input.workload,
+                  async () => {
+                    const stopped = await runOwnedStop(managed, () =>
+                      serverMod.stopServer({
+                        key: { name: input.workload },
+                        ...(input.graceSeconds !== undefined
+                          ? { graceSeconds: input.graceSeconds }
+                          : {}),
+                        ...(proof === undefined
+                          ? {}
+                          : { identity: { verifyGeneration: proof.verifyGeneration } }),
+                      }),
+                    );
+                    const stop: serverMod.StopServerResult =
+                      stopped.stopped && !stopReleased(proof, stopped.pid)
+                        ? {
+                            ...stopped,
+                            stopped: false,
+                            managedRefusal: "ManagedStopReleaseUnverified",
+                          }
+                        : stopped;
+                    return {
+                      ok: stop.stopped,
+                      ...(stop.stopped ? {} : { error: "stop did not confirm process removal" }),
+                      stop,
+                    };
+                  },
+                  directModelRunOpts(input.workload),
                 );
-                const stop: serverMod.StopServerResult =
-                  stopped.stopped && !stopReleased(proof, stopped.pid)
-                    ? { ...stopped, stopped: false, managedRefusal: "ManagedStopReleaseUnverified" }
-                    : stopped;
-                return {
-                  ok: stop.stopped,
-                  ...(stop.stopped ? {} : { error: "stop did not confirm process removal" }),
-                  stop,
-                };
+                return outcome.ran
+                  ? outcome.result.stop
+                  : { stopped: false, pid: null, killed: false };
               },
-              directModelRunOpts(input.workload),
-            );
-            return outcome.ran ? outcome.result.stop : { stopped: false, pid: null, killed: false };
-          },
-          isVerifiedStop: (r) => r.stopped,
-          refuse: (refused) => ({ stopped: false, pid: null, killed: false, refused }),
-        }),
+              isVerifiedStop: (r) => r.stopped,
+              refuse: (refused) => ({ stopped: false, pid: null, killed: false, refused }),
+            }),
     ),
 
   // DF-05 (#278): explicit operator override of the stop fence. Unlike
@@ -3962,6 +4005,7 @@ export const router = t.router({
       }),
     )
     .mutation(async ({ input }): Promise<ForceUnloadResult> => {
+      refuseLegacyManagedMutation("ManagedForceUnloadRequiresOwner");
       const name = input.workload;
       const kind: ForceUnloadKind | null = workloadStoreMod
         .listWorkloads()

@@ -103,7 +103,7 @@ spec:
       });
       expect(stop.status).toBe(200);
       expect(await stop.json()).toMatchObject({
-        result: { data: { stopped: false, managedRefusal: "ManagedStopGenerationUnverified" } },
+        result: { data: { stopped: false, managedRefusal: "ManagedStopIntentRequired" } },
       });
 
       await running.stop();
