@@ -1,3 +1,9 @@
+import {
+  deriveSwapRate,
+  type SwapCounterSample,
+  type SwapRate,
+} from "@llamactl/core/resources/memory";
+
 import type { MigrationController } from "./migration-controller.js";
 import type { DegradationThresholds, PressureThresholds, WorkloadHealthState } from "./policy.js";
 import type {
@@ -31,6 +37,8 @@ import { probeNodeMem as defaultProbeNodeMem } from "./node-probe.js";
 import { detectPressure, PressureWindow } from "./policy.js";
 import { readSlotProgress } from "./slot-progress.js";
 
+const DEFAULT_INTERVAL_MS = 30_000;
+
 export const DEFAULT_PRESSURE_THRESHOLDS: PressureThresholds = {
   headroomMinMb: 512,
   compressorWarnMb: 2048,
@@ -52,6 +60,7 @@ export interface SupervisorLoopOptions {
   probeTimeoutMs?: number;
   fetch?: typeof globalThis.fetch;
   probeNodeMem?: () => Promise<NodeMemSnapshot>;
+  swapRateNow?: () => number;
   probeWorkload?: (target: WorkloadTarget) => Promise<WorkloadSnapshot>;
   /**
    * Boot token for workloads local to this node. Defaults to
@@ -112,6 +121,7 @@ export interface SupervisorLoopHandle {
 }
 
 interface TickState extends PressureTransitionResult {
+  previousSwap: SwapCounterSample | undefined;
   pressureWindow: PressureWindow;
   workloadHealth: Map<string, WorkloadHealthState>;
 }
@@ -243,6 +253,18 @@ async function logSlotProgressForWorkloads(
   );
 }
 
+function observeSwapRate(
+  previous: SwapCounterSample | undefined,
+  current: SwapCounterSample | undefined,
+  opts: SupervisorLoopOptions,
+): SwapRate | undefined {
+  if (current === undefined) return undefined;
+  if (previous === undefined) return { known: false, reason: "unknown-source" };
+  const maxAgeMs =
+    2 * Math.max(opts.intervalMs ?? DEFAULT_INTERVAL_MS, opts.probeTimeoutMs ?? 5000);
+  return deriveSwapRate(previous, current, { nowMs: (opts.swapRateNow ?? Date.now)(), maxAgeMs });
+}
+
 async function runTick(
   opts: SupervisorLoopOptions,
   state: TickState,
@@ -257,7 +279,10 @@ async function runTick(
   throughput: EngineThroughputTickState | null,
 ): Promise<void> {
   const ts = new Date().toISOString();
+  const previousSwap = state.previousSwap;
+  state.previousSwap = undefined;
   const node_mem = await (opts.probeNodeMem ?? defaultProbeNodeMem)();
+  const swapRate = observeSwapRate(previousSwap, node_mem.swap_io, opts);
   const workloads = await Promise.all(
     opts.workloads.map((target) =>
       probeWorkloadFn(target).catch(() => unreachableFallback(target)),
@@ -352,12 +377,14 @@ async function runTick(
     node: opts.node,
     node_mem,
     workloads,
+    ...(swapRate ? { swapRate } : {}),
     ...(leaseIntent ? { lease: leaseIntent } : {}),
     ...(inFlightMoves.length > 0 ? { inFlightMoves } : {}),
     ...(engineThroughput.length > 0 ? { engineThroughput } : {}),
   };
   const heartbeat: FleetHeartbeatEntry = { kind: "fleet-heartbeat", ts, node: opts.node };
   writeJournalEntry(snapshot);
+  state.previousSwap = node_mem.swap_io;
   writeJournalEntry(heartbeat);
 
   await opts.onTick?.(snapshot);
@@ -379,6 +406,7 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
   const consecutiveErrors = new Map<string, number>();
   const completionState = makeCompletionState();
   const state: TickState = {
+    previousSwap: undefined,
     consecutiveClearTicks: 0,
     enteredHighAt: null,
     lastPressureLevel: "NORMAL",
@@ -412,7 +440,7 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
   });
   const isStopped = (): boolean => stopped;
 
-  const intervalMs = opts.intervalMs ?? 30_000;
+  const intervalMs = opts.intervalMs ?? DEFAULT_INTERVAL_MS;
   const startupRev = opts.startupRev;
   const reloadOnSourceChange = opts.reloadOnSourceChange ?? true;
   const onSourceReload =
