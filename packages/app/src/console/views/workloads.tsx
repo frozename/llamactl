@@ -12,7 +12,11 @@ import { StatusDot } from "@/ui";
 
 import type { WorkerManifest } from "../../modules/workloads/workers-panel";
 import type { ConsoleRoute } from "../router";
-import type { ConsoleWorkloadRow, WorkloadLocationResult } from "../workloads-scope";
+import type {
+  ConsoleWorkloadRow,
+  WorkloadLocationResult,
+  WorkloadResidencyStatus,
+} from "../workloads-scope";
 
 import { WorkersPanel } from "../../modules/workloads/workers-panel";
 import { StopServerAction } from "../actions/stop-server";
@@ -20,8 +24,10 @@ import { useConsoleNode, useNodeTrpc } from "../node-trpc";
 import {
   openWorkloadName,
   phaseTone,
+  residencyForNode,
   workloadCardKey,
   workloadLocation,
+  workloadResidencyOf,
   workloadsForTab,
 } from "../workloads-scope";
 
@@ -72,14 +78,19 @@ function ConsoleWorkloadRowCard({
   row,
   initiallyOpen,
   onSuccessToast,
+  residency,
 }: {
   row: ConsoleWorkloadRow;
+  residency: WorkloadResidencyStatus | undefined;
   initiallyOpen: boolean;
   onSuccessToast: (text: string) => void;
 }): React.JSX.Element {
   const [open, setOpen] = React.useState(initiallyOpen);
   const describe = useNodeTrpc().workloadDescribe.useQuery({ name: row.name }, { enabled: open });
   const phase = phaseOf(row);
+  const mode = residency?.omlxNative?.workloads.find(
+    (workload) => workload.workload === row.name,
+  )?.mode;
   return (
     <div data-testid={`console-workload-row-${row.name}`} style={{ display: "grid", gap: 4 }}>
       <div className="console-list-row">
@@ -109,6 +120,11 @@ function ConsoleWorkloadRowCard({
             {open ? "Hide" : "Describe"}
           </button>
         </span>
+      </div>
+      <div className="console-caption" data-testid="console-workload-residency">
+        {`Residency: ${workloadResidencyOf(residency, row.name)}`}
+        {mode === "native" ? " · Native mode" : null}
+        {mode === "process-fallback" ? " · Whole-process mode" : null}
       </div>
       {open ? <DescribeDrawer data={describe.data} /> : null}
     </div>
@@ -163,6 +179,19 @@ export function WorkloadsView({
   const [phase, setPhase] = React.useState("");
   const listQuery = useNodeTrpc().workloadList.useQuery();
   const tabNode = useConsoleNode();
+  const residencyQuery = useNodeTrpc().residencyStatus.useQuery(
+    { node: tabNode },
+    {
+      refetchInterval: 5000,
+      retry: false,
+    },
+  );
+  const residency = residencyForNode(
+    residencyQuery.isSuccess ? residencyQuery.data : null,
+    tabNode,
+  );
+  const store = residency?.store;
+  const operations = store?.present === true && "nonterminal" in store ? store.nonterminal : [];
   const rows = normaliseRows(listQuery.data);
   const scope = workloadsForTab(rows, tabNode);
   const workload = route.workload;
@@ -217,6 +246,15 @@ export function WorkloadsView({
         {workload !== undefined && deepLink !== null ? (
           <DeepLinkNotice deepLink={deepLink} workload={workload} />
         ) : null}
+        {operations.length > 0 ? (
+          <ul className="console-caption" aria-label="Active residency operations">
+            {operations.map((operation) => (
+              <li key={operation.operationId}>
+                {`${operation.phase === "committed" ? "In progress" : "Pending"} · ${operation.operationId}`}
+              </li>
+            ))}
+          </ul>
+        ) : null}
         {visible.map((row) => (
           <ConsoleWorkloadRowCard
             // Keyed on route membership so a popstate move from
@@ -224,6 +262,7 @@ export function WorkloadsView({
             // cards: b opens, a closes, without an effect.
             key={workloadCardKey(row.name, routeOpen)}
             row={row}
+            residency={residency}
             initiallyOpen={routeOpen === row.name}
             onSuccessToast={onSuccessToast}
           />
