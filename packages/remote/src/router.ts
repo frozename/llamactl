@@ -205,7 +205,12 @@ import {
 import * as modelHostStoreMod from "./workload/modelhost-store.js";
 import * as nodeRunStoreMod from "./workload/noderun-store.js";
 import * as reconcileLoopMod from "./workload/reconcileLoop.js";
-import { type ModelRun, ModelRunSchema, ModelRunSpecSchema } from "./workload/schema.js";
+import {
+  type ModelRun,
+  ModelRunSchema,
+  ModelRunSpecSchema,
+  type ModelRunStatus,
+} from "./workload/schema.js";
 import * as workloadStoreMod from "./workload/store.js";
 
 // #216: when a local ModelHost is applied through the router and a live
@@ -2249,6 +2254,138 @@ export const ServerStartInputSchema = z.object({
   readiness: ModelHostReadinessSchema.optional(),
 });
 
+function parseWorkloadInput(yaml: string): unknown {
+  try {
+    return workloadStoreMod.parseManifestYaml(yaml);
+  } catch (err) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: `invalid workload manifest: ${(err as Error).message}`,
+    });
+  }
+}
+
+type AgentWorkloadApplyResult =
+  | HandoffResult
+  | {
+      action: workloadApplyMod.ApplyAction | "stopped";
+      path: string | null;
+      status: ModelRunStatus;
+      name: string;
+      node: string;
+    };
+
+async function applyAgentWorkload(
+  managed: ManagedLaunchAdmission | undefined,
+  signal: AbortSignal | undefined,
+  readManifest: (workloadsDir: string) => unknown,
+): Promise<AgentWorkloadApplyResult> {
+  const workloadsDir = workloadStoreMod.defaultWorkloadsDir();
+  // applyOne's NodeClient type pulls AppRouter → NodeClient → AppRouter
+  // at the type level. clientForNode returns a structurally-compatible
+  // surface (serverStatus/serverStop/rpcServerStop + the subscription
+  // helpers for serverStart/rpcServerStart arrive from the pinned tRPC
+  // client on the remote path; local path wraps core directly).
+  // `WorkloadClient` was widened from `NodeClient` precisely so this
+  // callsite no longer needs an `as any` escape.
+  //
+  // Serialize list-check-save under a per-directory in-process mutex
+  // so two concurrent `workloadApply` mutations can't both pass the
+  // port-collision preflight and both write. Cross-process callers
+  // (`acquireLock`) are coordinated separately by the file lock.
+  //
+  // #216: when a local ModelHost is handed off to a live controller,
+  // the engine would otherwise land in the caller's cgroup (e.g. a
+  // desktop-app terminal scope), outside the controller unit's
+  // OOMScoreAdjust and limits. Validate the spec, persist, and return
+  // without spawning so the controller's reconciler starts it under
+  // its own service on the next pass.
+  const scope =
+    managed?.withDesiredManifest ??
+    (async <T>(
+      _input: unknown,
+      apply: (ownsNode: boolean, budget?: ManagedApplyBudget) => Promise<T>,
+    ): Promise<T> => await apply(false));
+  return await workloadStoreMod.withWorkloadsMutex(workloadsDir, async () => {
+    const manifest = readManifest(workloadsDir);
+    const cfg = kubecfg.loadConfig();
+    return await scope(manifest, async (ownsNode, budget) => {
+      if (!ownsNode) refuseLegacyManagedMutation("ManagedOwnerRequired");
+      if (ownsNode) assertManagedApplyOwnsDirectory(workloadsDir);
+      const handoffResult = ownsNode ? null : handoffLocalModelHost(manifest, workloadsDir);
+      if (handoffResult) return handoffResult;
+      const result = await workloadApplyMod.applyManifest({
+        manifest,
+        getClient: clientForApply(cfg, managed, ownsNode, signal),
+        getNodeBudgetGiB: (nodeName) => nodeRunBudgetGiB(nodeName, workloadsDir),
+        ...(budget === undefined ? {} : { managedBudget: budget }),
+        getNodeResidency: (nodeName) => nodeRunResidency(nodeName, workloadsDir),
+      });
+      if (!result.ok) {
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: result.error });
+      }
+      if (result.kind === "ModelRun") {
+        const persisted: ModelRun = {
+          ...result.manifest,
+          status: result.result.statusSection,
+        };
+        const savedPath = workloadStoreMod.saveWorkload(persisted, workloadsDir);
+        return {
+          action: result.result.action,
+          path: savedPath,
+          status: result.result.statusSection,
+          name: result.manifest.metadata.name,
+          node: result.manifest.spec.node,
+        };
+      }
+      const disabled = ownsNode && !result.manifest.spec.enabled;
+      const action = disabled ? "stopped" : "started";
+      const savedPath = disabled
+        ? modelHostStoreMod.saveModelHost(result.manifest, workloadsDir)
+        : null;
+      return {
+        action,
+        path: savedPath,
+        status: {
+          phase: disabled ? "Stopped" : "Running",
+          serverPid: result.pid,
+          endpoint: result.endpoint,
+          lastTransitionTime: new Date().toISOString(),
+          conditions: [
+            {
+              type: "Applied",
+              status: "True",
+              reason: action,
+              lastTransitionTime: new Date().toISOString(),
+            },
+          ],
+        },
+        name: result.manifest.metadata.name,
+        node: result.manifest.spec.node,
+      };
+    });
+  });
+}
+
+function readOwnedWorkloadToggle(
+  dir: string,
+  ownsNode: (node: string) => boolean,
+  workload: string,
+  enabled: boolean,
+): ModelRun | ModelHostManifest {
+  let manifest: ModelRun | ModelHostManifest;
+  try {
+    manifest = workloadStoreMod.loadWorkloadByNameAny(workload, dir);
+  } catch {
+    throw new TRPCError({ code: "NOT_FOUND", message: "WorkloadUnavailable" });
+  }
+  if (manifest.metadata.name !== workload || !ownsNode(manifest.spec.node)) {
+    throw new TRPCError({ code: "PRECONDITION_FAILED", message: "ManagedNodeIdentityMismatch" });
+  }
+  manifest.spec.enabled = enabled;
+  return manifest;
+}
+
 export const router = t.router({
   env: t.procedure.query(() => envMod.resolveEnv()),
 
@@ -3339,104 +3476,9 @@ export const router = t.router({
 
   workloadApply: t.procedure
     .input(z.object({ yaml: z.string().min(1) }))
-    .mutation(async ({ ctx, input, signal }) => {
-      let manifest: unknown;
-      try {
-        manifest = workloadStoreMod.parseManifestYaml(input.yaml);
-      } catch (err) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: `invalid workload manifest: ${(err as Error).message}`,
-        });
-      }
-      const cfg = kubecfg.loadConfig();
-      const workloadsDir = workloadStoreMod.defaultWorkloadsDir();
-      // applyOne's NodeClient type pulls AppRouter → NodeClient → AppRouter
-      // at the type level. clientForNode returns a structurally-compatible
-      // surface (serverStatus/serverStop/rpcServerStop + the subscription
-      // helpers for serverStart/rpcServerStart arrive from the pinned tRPC
-      // client on the remote path; local path wraps core directly).
-      // `WorkloadClient` was widened from `NodeClient` precisely so this
-      // callsite no longer needs an `as any` escape.
-      //
-      // Serialize list-check-save under a per-directory in-process mutex
-      // so two concurrent `workloadApply` mutations can't both pass the
-      // port-collision preflight and both write. Cross-process callers
-      // (`acquireLock`) are coordinated separately by the file lock.
-      //
-      // #216: when a local ModelHost is handed off to a live controller,
-      // the engine would otherwise land in the caller's cgroup (e.g. a
-      // desktop-app terminal scope), outside the controller unit's
-      // OOMScoreAdjust and limits. Validate the spec, persist, and return
-      // without spawning so the controller's reconciler starts it under
-      // its own service on the next pass.
-      const managed = ctx.managedLaunchAdmission;
-      const scope =
-        managed?.withDesiredManifest ??
-        (async <T>(
-          _input: unknown,
-          apply: (ownsNode: boolean, budget?: ManagedApplyBudget) => Promise<T>,
-        ): Promise<T> => await apply(false));
-      return await workloadStoreMod.withWorkloadsMutex(
-        workloadsDir,
-        async () =>
-          await scope(manifest, async (ownsNode, budget) => {
-            if (!ownsNode) refuseLegacyManagedMutation("ManagedOwnerRequired");
-            if (ownsNode) assertManagedApplyOwnsDirectory(workloadsDir);
-            const handoffResult = ownsNode ? null : handoffLocalModelHost(manifest, workloadsDir);
-            if (handoffResult) return handoffResult;
-            const result = await workloadApplyMod.applyManifest({
-              manifest,
-              getClient: clientForApply(cfg, managed, ownsNode, signal),
-              getNodeBudgetGiB: (nodeName) => nodeRunBudgetGiB(nodeName, workloadsDir),
-              ...(budget === undefined ? {} : { managedBudget: budget }),
-              getNodeResidency: (nodeName) => nodeRunResidency(nodeName, workloadsDir),
-            });
-            if (!result.ok) {
-              throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: result.error });
-            }
-            if (result.kind === "ModelRun") {
-              const persisted: ModelRun = {
-                ...result.manifest,
-                status: result.result.statusSection,
-              };
-              const savedPath = workloadStoreMod.saveWorkload(persisted, workloadsDir);
-              return {
-                action: result.result.action,
-                path: savedPath,
-                status: result.result.statusSection,
-                name: result.manifest.metadata.name,
-                node: result.manifest.spec.node,
-              };
-            }
-            const disabled = ownsNode && !result.manifest.spec.enabled;
-            const action = disabled ? "stopped" : "started";
-            const savedPath = disabled
-              ? modelHostStoreMod.saveModelHost(result.manifest, workloadsDir)
-              : null;
-            return {
-              action,
-              path: savedPath,
-              status: {
-                phase: disabled ? "Stopped" : "Running",
-                serverPid: result.pid,
-                endpoint: result.endpoint,
-                lastTransitionTime: new Date().toISOString(),
-                conditions: [
-                  {
-                    type: "Applied",
-                    status: "True",
-                    reason: action,
-                    lastTransitionTime: new Date().toISOString(),
-                  },
-                ],
-              },
-              name: result.manifest.metadata.name,
-              node: result.manifest.spec.node,
-            };
-          }),
-      );
-    }),
+    .mutation(({ ctx, input, signal }) =>
+      applyAgentWorkload(ctx.managedLaunchAdmission, signal, () => parseWorkloadInput(input.yaml)),
+    ),
 
   managedWorkloadApply: t.procedure.input(z.object({ yaml: z.string().min(1) })).mutation(
     async ({
@@ -3472,6 +3514,24 @@ export const router = t.router({
         .workloadApply(input);
     },
   ),
+
+  managedWorkloadSetEnabled: t.procedure
+    .input(
+      z.strictObject({
+        workload: ModelHostManifestSchema.shape.metadata.shape.name,
+        enabled: z.boolean(),
+      }),
+    )
+    .mutation(async ({ ctx, input, signal }) => {
+      const managed = ctx.managedLaunchAdmission;
+      const ownsNode = managed?.ownsNode;
+      if (managed?.withDesiredManifest === undefined || ownsNode === undefined) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "ManagedOwnerRequired" });
+      }
+      return await applyAgentWorkload(managed, signal, (dir) =>
+        readOwnedWorkloadToggle(dir, ownsNode, input.workload, input.enabled),
+      );
+    }),
 
   modelHostStatus: t.procedure.input(modelHostStatusInput).query(async ({ input, ctx }) => {
     const key = { name: input.workload };

@@ -489,6 +489,8 @@ Managed workloads require a loopback engine listener so fleet requests enter thr
 
 Use `llamactl residency load <workload> --node <name>` and `llamactl residency unload <workload> --node <name>` to preview a whole-process action on one exact managed workload. Add `--execute --yes` to run the previewed action. The owner checks the current profile, its leases and the transition journal. Unload refuses an active or protected workload and leaves the desired manifest enabled, so later authorized activation can load it again. Disable the workload through managed apply to remove that eligibility.
 
+Use `llamactl enable <workload> --managed --node <owner>` and `llamactl disable <workload> --managed --node <owner>` to change eligibility. The authenticated owner reads and edits its current desired manifest under the same lock as managed apply. Enable uses the owner's finite budget. Disable waits for a verified stop before saving the disabled state. An older agent without this procedure refuses the command.
+
 On an authorized unload, `--wait-seconds` gives active requests up to 60 seconds to finish. The owner blocks new leases for that workload while it waits and holds the same drain through the verified stop. A timeout or cancellation before teardown reopens admission. Protected workloads, active sessions, and unverified inference holds still refuse the stop.
 
 ```sh

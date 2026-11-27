@@ -211,14 +211,13 @@ test.skipIf(process.platform !== "darwin" && process.platform !== "linux")(
         result: { data: { stopped: false, managedRefusal: "ManagedStopIntentRequired" } },
       });
       const desired = loadWorkloadByName("enabled", workloadsDir);
-      const disabled = await fetch(`${running.url}/trpc/managedWorkloadApply`, {
+      const disabled = await fetch(`${running.url}/trpc/managedWorkloadSetEnabled`, {
         tls,
         method: "POST",
         headers: { authorization: headers.authorization, "content-type": "application/json" },
-        body: JSON.stringify({
-          yaml: JSON.stringify({ ...desired, spec: { ...desired.spec, enabled: false } }),
-        }),
+        body: JSON.stringify({ workload: "enabled", enabled: false }),
       });
+      expect(disabled.status).toBe(200);
       expect(await disabled.json()).toMatchObject({
         result: { data: { status: { phase: "Stopped", serverPid: null } } },
       });

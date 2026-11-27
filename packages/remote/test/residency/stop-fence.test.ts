@@ -1397,6 +1397,31 @@ spec:
       ]);
       expect(fixturePid(host)).toBeUndefined();
 
+      saveModelHost({ ...manifest, spec: { ...manifest.spec, enabled: false } }, tmp);
+      const disabledRun = parseWorkload(
+        runYaml
+          .replace(run, "disabled-over-budget")
+          .replace("  node: local", "  node: local\n  enabled: false"),
+      );
+      saveWorkload(disabledRun, tmp);
+      for (const [workload, path] of [
+        [host, modelHostPath(host, tmp)],
+        [disabledRun.metadata.name, workloadPath(disabledRun.metadata.name, tmp)],
+      ] as const) {
+        const previous = readFileSync(path, "utf8");
+        const refusal = await caller
+          .managedWorkloadSetEnabled({ workload, enabled: true })
+          .catch((error: unknown) => error);
+        expect(refusal).toBeInstanceOf(Error);
+        expect((refusal as Error).message).toContain("BudgetExceeded");
+        expect(readFileSync(path, "utf8")).toBe(previous);
+        expect(fixturePid(workload)).toBeUndefined();
+      }
+      expect(runtime.authority.snapshot()).toMatchObject([
+        { runtimeKey: run, state: "resident", allocationGiB: 16 },
+      ]);
+      saveModelHost(manifest, tmp);
+
       const deniedName = "would-exceed-managed-budget";
       const deniedApply = await caller
         .workloadApply({
