@@ -240,8 +240,10 @@ async function forwardGranted(
   const lease = acquired?.lease;
   const engineSignal = lease === undefined ? hard : AbortSignal.any([hard, lease.signal]);
   const complete = (confirmed: boolean): void => {
-    if (!confirmed) fence(group);
-    lease?.release();
+    // Lifecycle drains must keep seeing the lease when only transport
+    // cancellation has settled.
+    if (confirmed) lease?.release();
+    else fence(group);
     release();
   };
 

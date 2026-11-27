@@ -365,6 +365,49 @@ test("a detached request keeps its residency lease until the engine finishes", a
   }
 });
 
+test("an unconfirmed engine abort blocks unload through and after reader cancellation", async () => {
+  const previous = getResidencyLeaseRegistry();
+  const leases = createResidencyLeases();
+  setResidencyLeaseRegistry(leases);
+  const gate = createOwnerAdmission([group(18200, 18210)]);
+  const engineAbort = new AbortController();
+  const cancelStarted = Promise.withResolvers<undefined>();
+  const cancelFinished = Promise.withResolvers<undefined>();
+  const body = new ReadableStream<Uint8Array>({
+    cancel(): Promise<undefined> {
+      cancelStarted.resolve(undefined);
+      return cancelFinished.promise;
+    },
+  });
+  try {
+    const response = await gate.forward(
+      dispatch(18210, () => Promise.resolve(new Response(body)), {
+        workload: "granite",
+        engineSignal: engineAbort.signal,
+      }),
+    );
+    expect(response?.status).toBe(200);
+    const reading = response?.text().catch((error: unknown) => error);
+    const drain = leases.beginDrain("granite");
+    if (!drain.ok) throw new Error("fixture drain refused");
+    expect(drain.active).toHaveLength(1);
+
+    engineAbort.abort(new Error("engine deadline passed"));
+    await cancelStarted.promise;
+    expect(leases.commitUnload(drain.token)).toMatchObject({ ok: false, reason: "LeasesActive" });
+
+    cancelFinished.resolve(undefined);
+    expect(await reading).toEqual(new Error("engine deadline passed"));
+    await Bun.sleep(0);
+    expect(leases.commitUnload(drain.token)).toMatchObject({ ok: false, reason: "LeasesActive" });
+    expect(gate.snapshot()).toMatchObject([{ executing: 0, fenced: true }]);
+  } finally {
+    cancelFinished.resolve(undefined);
+    gate.stop();
+    setResidencyLeaseRegistry(previous);
+  }
+});
+
 test("the owner bounds request bytes, queue deadlines and cancellable waiting", async () => {
   const gate = createOwnerAdmission([{ ...group(18200, 18210), maxQueuedBytes: 16 }]);
   const held = heldResponse();
