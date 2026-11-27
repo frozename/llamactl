@@ -294,6 +294,9 @@ ${DIR_FLAG_HELP}
   -h, --help       Show this help
 
 Environment:
+  LLAMACTL_MANAGED_RESIDENCY  "1" delegates engine lifecycle to this agent.
+                              Requires a finite local NodeRun budget and
+                              authenticated, isolated operation. Off by default.
   LLAMACTL_RESIDENCY_LEASES   "1"/"true" publishes one residency lease
                               registry at start (opt-in, off by default).
   LLAMACTL_RESIDENCY_SESSION_IDLE_MS
