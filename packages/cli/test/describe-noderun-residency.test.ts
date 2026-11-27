@@ -198,3 +198,57 @@ test("DN6: the shared formatter and exported resolver render defaults together",
     );
   }
 });
+
+// Kills: describe silently accepting node-scoped knobs on an infra NodeRun.
+test("DN7: describe noderun warns when residency is scoped by a mismatched name", async () => {
+  writeNodeRun("nr1", ["residency:", "  minResidencySeconds: 300"]);
+  seamInfraList();
+
+  const { result, stdout } = await withCapturedIo(() => runDescribe(["noderun", "nr1"]));
+
+  expect(result).toBe(0);
+  expect(stdout).toContain(
+    "Warning:    NodeRun 'nr1' sets spec.residency but metadata.name 'nr1' differs from spec.node 'z13'",
+  );
+  const warningIndex = stdout.indexOf("Warning:");
+  const residencyIndex = stdout.indexOf("Residency:");
+  const infraIndex = stdout.indexOf("Infra:");
+  expect(warningIndex).toBeGreaterThan(residencyIndex);
+  expect(warningIndex).toBeLessThan(infraIndex);
+});
+
+// Guard: a NodeRun named for its node owns the node-scoped knobs and needs no warning.
+test("DN8: describe noderun omits the warning when name and node match", async () => {
+  writeNodeRun("z13", ["residency:", "  minResidencySeconds: 300"]);
+  seamInfraList();
+
+  const { result, stdout } = await withCapturedIo(() => runDescribe(["noderun", "z13"]));
+
+  expect(result).toBe(0);
+  expect(stdout).not.toContain("Warning:");
+});
+
+// Kills: the JSON surface omitting the same warning operators see in text output.
+test("DN9: describe noderun --json includes the knob scope warning", async () => {
+  writeNodeRun("nr1", ["residency:", "  minResidencySeconds: 300"]);
+  seamInfraList();
+
+  const { stdout } = await withCapturedIo(() => runDescribe(["noderun", "nr1", "--json"]));
+  const parsed = JSON.parse(stdout) as { knobScopeWarning?: unknown };
+
+  expect(typeof parsed.knobScopeWarning).toBe("string");
+  if (typeof parsed.knobScopeWarning === "string") {
+    expect(parsed.knobScopeWarning).toContain("differs from spec.node 'z13'");
+  }
+});
+
+// Guard: the JSON field is absent rather than null when the knobs are correctly scoped.
+test("DN10: describe noderun --json omits knobScopeWarning when name and node match", async () => {
+  writeNodeRun("z13", ["residency:", "  minResidencySeconds: 300"]);
+  seamInfraList();
+
+  const { stdout } = await withCapturedIo(() => runDescribe(["noderun", "z13", "--json"]));
+  const parsed = JSON.parse(stdout) as Record<string, unknown>;
+
+  expect("knobScopeWarning" in parsed).toBe(false);
+});

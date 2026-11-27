@@ -179,3 +179,32 @@ export const NodeRunSchema = z.object({
   status: NodeRunStatusSchema.optional(),
 });
 export type NodeRun = z.infer<typeof NodeRunSchema>;
+
+/**
+ * Part of #519: detects when spec.budget and/or spec.residency are set on a
+ * NodeRun whose metadata.name differs from spec.node.  Consumers that key by
+ * metadata.name — router.ts nodeRunBudgetGiB / nodeRunResidency, reconciler.ts
+ * budgetByName / residencyByName, cli noderun-helpers lookups, and
+ * residency-ranking.ts — see only the manifest keyed by name, so knobs on a
+ * mismatched manifest would apply to the wrong node.
+ *
+ * Returns null when metadata.name === spec.node (correctly scoped), or when
+ * both spec.budget and spec.residency are undefined (infra-only).  Otherwise
+ * returns a human-readable rejection string.
+ */
+export function nodeRunKnobScopeMismatch(nodeRun: {
+  metadata: { name: string };
+  spec: { node: string; budget?: unknown; residency?: unknown };
+}): string | null {
+  const { metadata, spec } = nodeRun;
+  const { name } = metadata;
+  const { node, budget, residency } = spec;
+  // Correctly scoped: metadata.name === spec.node.
+  if (name === node) return null;
+  // Infra-only: no knobs that key by name.
+  if (budget === undefined && residency === undefined) return null;
+  const parts: string[] = [];
+  if (budget !== undefined) parts.push("spec.budget");
+  if (residency !== undefined) parts.push("spec.residency");
+  return `NodeRun '${name}' sets ${parts.join(" and ")} but metadata.name '${name}' differs from spec.node '${node}': admission, the residency planner and ranking look NodeRun knobs up by metadata.name, so they would apply to node '${name}', not '${node}'; set metadata.name to '${node}' or drop ${parts.join(" and ")}`;
+}

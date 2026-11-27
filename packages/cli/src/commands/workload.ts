@@ -13,7 +13,7 @@ import {
   config as kubecfg,
   type NodeClient,
   noderunApply,
-  type noderunSchema,
+  noderunSchema,
   noderunStore,
   workloadApply,
   workloadGatewayHandlers,
@@ -529,6 +529,11 @@ async function applyNodeRunFromRaw(raw: string, json: boolean): Promise<number> 
     manifest = noderunStore.parseNodeRun(raw);
   } catch (err) {
     process.stderr.write(`apply: NodeRun manifest rejected: ${(err as Error).message}\n`);
+    return 1;
+  }
+  const knobScope = noderunSchema.nodeRunKnobScopeMismatch(manifest);
+  if (knobScope !== null) {
+    process.stderr.write(`apply: NodeRun manifest rejected: ${knobScope}\n`);
     return 1;
   }
   const node = manifest.spec.node;
@@ -1702,6 +1707,7 @@ async function runDescribeNodeRun(name: string, json: boolean): Promise<number> 
     return 1;
   }
   const effectivePolicy = effectiveResidencyPolicy(manifest.spec.residency);
+  const knobScopeWarning = noderunSchema.nodeRunKnobScopeMismatch(manifest);
   let liveInfra: unknown = null;
   try {
     const client = getWorkloadNodeClient(manifest.spec.node);
@@ -1710,13 +1716,18 @@ async function runDescribeNodeRun(name: string, json: boolean): Promise<number> 
     liveInfra = { error: (err as Error).message };
   }
   if (json) {
-    process.stdout.write(`${JSON.stringify({ manifest, effectivePolicy, liveInfra }, null, 2)}\n`);
+    process.stdout.write(
+      `${JSON.stringify({ manifest, effectivePolicy, liveInfra, ...(knobScopeWarning !== null ? { knobScopeWarning } : {}) }, null, 2)}\n`,
+    );
     return 0;
   }
   process.stdout.write(`Name:       ${manifest.metadata.name}\n`);
   process.stdout.write(`Node:       ${manifest.spec.node}\n`);
   process.stdout.write(`Budget:     ${formatNodeRunBudget(manifest.spec.budget)}\n`);
   process.stdout.write(`Residency:  ${formatResidencyKnobs(effectivePolicy)}\n`);
+  if (knobScopeWarning !== null) {
+    process.stdout.write(`Warning:    ${knobScopeWarning}\n`);
+  }
   process.stdout.write(`Infra:\n`);
   for (const item of manifest.spec.infra) {
     const flags = [
