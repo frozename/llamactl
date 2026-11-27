@@ -142,7 +142,7 @@ function createLlamacppSleepDriver(
   const {
     controller,
     memberId,
-    endpoint,
+    endpoint: configuredEndpoint,
     sleepPath: rawSleepPath,
     apiKey,
     cacheIdentity,
@@ -152,6 +152,7 @@ function createLlamacppSleepDriver(
     verifiedStop,
     managed,
   } = opts;
+  const endpoint = Object.freeze({ ...configuredEndpoint });
   const baseUrl = buildBaseUrl(endpoint.host, endpoint.port);
   const sleepPath = rawSleepPath ?? "/sleep";
   const base = baseFetch ?? globalThis.fetch;
@@ -265,14 +266,12 @@ function createLlamacppSleepDriver(
   }
 
   return {
-    sleep: () =>
-      managedSleepAllowed(managed)
+    sleep(): Promise<LlamacppSleepOutcome> {
+      const reason = managedSleepRefusal(managed, endpoint, sleepPath);
+      return reason === undefined
         ? withSleepDrain(registry, workload, holdRefusal, sleepWithDrain)
-        : Promise.resolve({
-            kind: "refused",
-            reason: "ManagedSleepReleaseProofRequired",
-            reservation: "held",
-          }),
+        : Promise.resolve({ kind: "refused", reason, reservation: "held" });
+    },
   };
 }
 
@@ -428,12 +427,27 @@ type ManagedSleepProof = {
   parkAfterSleep?: (receipt: NativeSleepReceipt) => boolean;
 };
 
-function managedSleepAllowed(proof: ManagedSleepProof | undefined): boolean {
-  return (
-    (proof?.parkAfterSleep !== undefined && proof.beforeDispatch !== undefined) ||
-    (proof?.parkAfterSleep === undefined &&
-      !hasManagedRuntimeMarker(resolveEnv().LOCAL_AI_RUNTIME_DIR))
-  );
+function managedSleepRefusal(
+  proof: ManagedSleepProof | undefined,
+  endpoint: LlamacppSleepDriverOptions["endpoint"],
+  path: string,
+): "ManagedSleepReleaseProofRequired" | "ManagedSleepBindingInvalid" | undefined {
+  if (proof?.parkAfterSleep === undefined) {
+    return hasManagedRuntimeMarker(resolveEnv().LOCAL_AI_RUNTIME_DIR)
+      ? "ManagedSleepReleaseProofRequired"
+      : undefined;
+  }
+  if (proof.beforeDispatch === undefined) return "ManagedSleepReleaseProofRequired";
+  if (
+    (endpoint.host !== "127.0.0.1" && endpoint.host !== "::1") ||
+    !Number.isSafeInteger(endpoint.port) ||
+    endpoint.port < 1 ||
+    endpoint.port > 65_535 ||
+    path !== "/sleep"
+  ) {
+    return "ManagedSleepBindingInvalid";
+  }
+  return undefined;
 }
 
 function verifyManagedDispatch(

@@ -89,6 +89,7 @@ type Fixture = {
   path: string;
   owner: { pid: number; birthId: string };
   sleep: ReturnType<typeof createAgentLlamacppSleepDriver>;
+  driverEndpoint: typeof runtime.endpoint;
   proof: FixtureProof;
   observed: typeof runtime;
   calls: string[];
@@ -97,7 +98,19 @@ type Fixture = {
   [Symbol.dispose](): void;
 };
 
-function durableFixture(): Fixture {
+function durableFixture(options?: {
+  host?: string;
+  port?: number;
+  sleepPath?: string;
+  driverHost?: string;
+}): Fixture {
+  const pinned = {
+    ...runtime,
+    endpoint: {
+      host: options?.host ?? runtime.endpoint.host,
+      port: options?.port ?? runtime.endpoint.port,
+    },
+  };
   const temp = makeTempRuntime();
   mkdirSync(temp.runtimeDir, { recursive: true });
   writeFileSync(join(temp.runtimeDir, "managed-residency-v1"), "fixture\n");
@@ -109,7 +122,7 @@ function durableFixture(): Fixture {
   process.env["LOCAL_AI_RUNTIME_DIR"] = temp.runtimeDir;
 
   const owner = { pid: 301, birthId: "first-owner" };
-  const observed = { ...runtime };
+  const observed = { ...pinned };
   const authority = openAdmissionAuthority({
     storePath: path,
     budgetGiB: () => 16,
@@ -194,7 +207,7 @@ function durableFixture(): Fixture {
 
   const parking = createDurableLlamacppParking({
     authority,
-    runtime,
+    runtime: pinned,
     memberId: MEMBER,
     readInferenceHold: () => "clear",
     qualifiedResidualGiB: () => {
@@ -222,10 +235,12 @@ function durableFixture(): Fixture {
     }),
     capacityPolicy: () => ({ nowMs: 100_000, configuredBudgetGiB: 16 }),
   });
+  const driverEndpoint = { ...pinned.endpoint, host: options?.driverHost ?? pinned.endpoint.host };
   const sleep = createAgentLlamacppSleepDriver({
     controller,
     memberId: MEMBER,
-    endpoint: runtime.endpoint,
+    endpoint: driverEndpoint,
+    ...(options?.sleepPath === undefined ? {} : { sleepPath: options.sleepPath }),
     managed: parking.sleep,
     fetch: fetchFixture,
     verifiedStop: (drain) => {
@@ -239,6 +254,7 @@ function durableFixture(): Fixture {
     path,
     owner,
     sleep,
+    driverEndpoint,
     proof,
     observed,
     calls,
@@ -355,6 +371,31 @@ test("a generation replaced after sleep dispatch never reaches the process stop 
   expect(fixture.stops).toEqual([]);
   expect(fixture.authority.snapshot()[0]?.allocationGiB).toBe(8);
   expect(fixture.registry.snapshot(WORKLOAD).phase).toBe("draining");
+});
+
+test.each([
+  { label: "external address", host: "192.0.2.1" },
+  { label: "DNS name", host: "localhost" },
+  { label: "noncanonical sleep path", sleepPath: "/sleep?force=1" },
+  { label: "invalid port", port: 0 },
+])("managed native sleep refuses $label before dispatch", async ({ label: _label, ...options }) => {
+  using fixture = durableFixture(options);
+  const outcome = await fixture.sleep.sleep();
+  expect(fixture.calls).toEqual([]);
+  expect(fixture.stops).toEqual([]);
+  expect(outcome).toMatchObject({ kind: "refused", reason: "ManagedSleepBindingInvalid" });
+  expect(fixture.authority.snapshot()[0]?.allocationGiB).toBe(8);
+  expect(fixture.registry.snapshot(WORKLOAD).phase).toBe("open");
+});
+
+test("mutating the supplied endpoint cannot authorize the URL captured for the dispatch", async () => {
+  using fixture = durableFixture({ driverHost: "192.0.2.1" });
+  fixture.driverEndpoint.host = runtime.endpoint.host;
+  const outcome = await fixture.sleep.sleep();
+  expect(fixture.calls).toEqual([]);
+  expect(fixture.stops).toEqual([]);
+  expect(outcome).toMatchObject({ kind: "refused", reason: "ManagedSleepBindingInvalid" });
+  expect(fixture.registry.snapshot(WORKLOAD).phase).toBe("open");
 });
 
 test("sleep refuses a listener whose owner cannot be proven", async () => {
