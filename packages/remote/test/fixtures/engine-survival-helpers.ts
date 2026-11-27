@@ -76,6 +76,12 @@ export function killQuiet(pid: number): void {
   }
 }
 
+function isSuccessfulOutcome(value: unknown): value is LaunchOutcome {
+  return (
+    value !== null && typeof value === "object" && (value as Partial<LaunchOutcome>).ok === true
+  );
+}
+
 // Launch through the real path from a short-lived parent, then kill the parent
 // and return the surviving engine pid.
 export async function launchFromDyingParent(
@@ -97,7 +103,7 @@ export async function launchFromDyingParent(
   // parents write atomically too (atomicWriteFileSync); this covers torn reads
   // regardless of the writer.
   let lastRaw = "";
-  let outcome: LaunchOutcome | undefined;
+  let parsed: unknown;
   try {
     await waitFor(
       () => {
@@ -106,16 +112,11 @@ export async function launchFromDyingParent(
         }
         lastRaw = readFileSync(config.resultPath, "utf8");
         try {
-          const parsed: unknown = JSON.parse(lastRaw);
-          if (
-            parsed !== null &&
-            typeof parsed === "object" &&
-            typeof (parsed as Partial<LaunchOutcome>).ok === "boolean"
-          ) {
-            outcome = parsed as LaunchOutcome;
-            return true;
-          }
-          return false;
+          // Complete JSON is the whole payload: a well-formed result that is
+          // not a successful outcome (e.g. no boolean `ok`) fails fast below
+          // rather than polling to the timeout.
+          parsed = JSON.parse(lastRaw);
+          return true;
         } catch (error) {
           // A truncated file is "not ready yet", not a failure.
           if (error instanceof SyntaxError) {
@@ -136,9 +137,10 @@ export async function launchFromDyingParent(
       `timed out waiting for launch result raw=${JSON.stringify(lastRaw)} spawnPid=${String(proc.pid)}`,
     );
   }
-  if (!outcome?.ok) {
+  if (!isSuccessfulOutcome(parsed)) {
     throw new Error(`launch failed raw=${JSON.stringify(lastRaw)} spawnPid=${String(proc.pid)}`);
   }
+  const outcome = parsed;
   killQuiet(proc.pid);
   await waitFor(() => !isProcessAlive(proc.pid), "parent death", 10_000);
   return outcome;
