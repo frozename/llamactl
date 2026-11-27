@@ -29,6 +29,7 @@ import {
   type ClaimRefuseReason,
   type ClaimRow,
   type InspectedOwnership,
+  type NativeClaimAction,
   openAdmissionStore,
   type OwnerIdentity,
 } from "./admission-store.js";
@@ -84,6 +85,13 @@ export interface AuthorityClaimRow extends ClaimRow {
   readonly generations: readonly GenerationRecord[];
 }
 
+export type NativeRuntimeGeneration = Readonly<{
+  workload: string;
+  specDigest: string;
+  pid: number;
+  birthId: string;
+}>;
+
 export interface AdmissionAuthority {
   /**
    * Claim via the store under the current opts.budgetGiB() value. An
@@ -129,6 +137,11 @@ export interface AdmissionAuthority {
    */
   snapshot(): readonly AuthorityClaimRow[];
   isOperational(): boolean;
+  transitionNative(
+    runtime: NativeRuntimeGeneration,
+    claim: Readonly<ClaimRow>,
+    action: NativeClaimAction,
+  ): ClaimRow | undefined;
   /** Idempotent; post-close admits refuse AuthorityUnavailable. */
   close(): void;
 }
@@ -137,6 +150,55 @@ type ObserveGeneration = (
   pid: number,
   recorded: GenerationRecord,
 ) => ProcessObservation | undefined;
+
+function transitionBoundNative(
+  active: AdmissionStore | null,
+  opts: { readPidFile: (runtimeKey: string) => number | undefined; observe: ObserveGeneration },
+  runtime: NativeRuntimeGeneration,
+  claim: Readonly<ClaimRow>,
+  action: NativeClaimAction,
+): ClaimRow | undefined {
+  if (
+    active === null ||
+    claim.runtimeKey !== runtime.workload ||
+    claim.specDigest !== runtime.specDigest
+  )
+    return undefined;
+  try {
+    if (
+      action.kind !== "uncertain" &&
+      !boundNativeGeneration(active, runtime, claim, opts.readPidFile, opts.observe)
+    )
+      return undefined;
+    return active.transitionNative(claim, action);
+  } catch {
+    return undefined;
+  }
+}
+
+function boundNativeGeneration(
+  store: AdmissionStore,
+  runtime: NativeRuntimeGeneration,
+  claim: Readonly<ClaimRow>,
+  readPidFile: (runtimeKey: string) => number | undefined,
+  observe: ObserveGeneration,
+): boolean {
+  const captured = store.generationsOf(claim.claimId);
+  const generation = captured[0];
+  if (
+    captured.length !== 1 ||
+    runtime.birthId.length === 0 ||
+    generation?.pid !== runtime.pid ||
+    generation.birthId !== runtime.birthId ||
+    readPidFile(runtime.workload) !== runtime.pid
+  )
+    return false;
+  const observation = observe(runtime.pid, generation);
+  return (
+    judgeGeneration({ recorded: generation, observation }).kind === "same-generation" &&
+    matchesRecordedGroup(generation, observation)
+  );
+}
 
 function ownerIdentityMatches(a: OwnerIdentity, b: OwnerIdentity): boolean {
   if (a.birthId !== undefined || b.birthId !== undefined) {
@@ -458,6 +520,9 @@ export function openAdmissionAuthority(opts: {
     },
 
     isOperational: () => isReadableStore(ledger()),
+
+    transitionNative: (runtime, claim, action) =>
+      transitionBoundNative(ledger(), opts, runtime, claim, action),
 
     close(): void {
       store?.close();

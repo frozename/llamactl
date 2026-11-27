@@ -22,6 +22,7 @@ import type {
 import type { DrainToken, ResidencyLeases } from "@llamactl/core/residency/leases";
 import type { SessionRefcounts } from "@llamactl/core/residency/sessions";
 
+import { resolveEnv } from "@llamactl/core/env";
 import { getResidencyLeaseRegistry } from "@llamactl/core/residency/leases";
 import {
   createLlamacppSleepController,
@@ -29,6 +30,7 @@ import {
   type SleepMember,
   type SleepWakeAdmission,
 } from "@llamactl/core/residency/llamacpp-sleep";
+import { hasManagedRuntimeMarker } from "@llamactl/core/residency/managed-runtime";
 import { currentSessionRefcounts } from "@llamactl/core/residency/sessions";
 
 import type {
@@ -58,7 +60,7 @@ export type LlamacppSleepTrigger =
   | "ProcessFallback";
 
 type InferenceHoldRefusal = "PriorInferenceHold" | "InferenceHoldActive" | "InferenceHoldUnknown";
-type SleepFenceRefusal = InferenceHoldRefusal | "DrainChanged";
+type SleepFenceRefusal = InferenceHoldRefusal | "DrainChanged" | "NativeSleepGenerationChanged";
 
 export type LlamacppSleepOutcome =
   | { kind: "slept"; reservation: "released" }
@@ -75,7 +77,11 @@ export type LlamacppSleepOutcome =
       stopReason: string;
       reservation: "uncertain";
     }
-  | { kind: "unconfirmed"; reason: SleepFenceRefusal; reservation: "uncertain" }
+  | {
+      kind: "unconfirmed";
+      reason: SleepFenceRefusal | "NativeReleaseUnverified";
+      reservation: "uncertain";
+    }
   | { kind: "refused"; reason: string; reservation: "held"; active?: string[] }
   | { kind: "inert"; reason: "ResidencyPolicyDisabled" };
 
@@ -154,6 +160,12 @@ function createLlamacppSleepDriver(
     inferenceHoldRefusal(managed?.readInferenceHold, workload);
   const confirmRelease = (drain: DrainToken): SleepFenceRefusal | undefined =>
     holdRefusal() ?? (registry.commitUnload(drain).ok ? undefined : "DrainChanged");
+  const receipt = (sleepDrain: DrainToken): NativeSleepReceipt => ({
+    sleepRegistry: registry,
+    sleepDrain,
+    memberId,
+    endpoint,
+  });
 
   async function sleepWithDrain(token: DrainToken): Promise<LlamacppSleepOutcome> {
     const sessionRefusal = sessionUnloadRefusal(sessions, workload);
@@ -166,6 +178,8 @@ function createLlamacppSleepDriver(
       };
     }
 
+    if (!verifyManagedDispatch(managed, receipt(token)))
+      return { kind: "refused", reason: "NativeSleepGenerationChanged", reservation: "held" };
     const v = controller.requestSleep(memberId);
 
     // Step 1: controller refusal — no IO
@@ -206,7 +220,13 @@ function createLlamacppSleepDriver(
       // A successful command acknowledgement is not proof that the model
       // released memory. /props observes the state without triggering wake.
       if (response.ok && (await confirmsSleep(base, baseUrl, apiKey, signal))) {
-        return settleNativeSleep(token);
+        return settleNativeSleep({
+          reason: confirmRelease(token),
+          receipt: receipt(token),
+          park: managed?.parkAfterSleep,
+          controller,
+          cacheIdentity,
+        });
       }
 
       controller.sleepSettled(memberId, "failed");
@@ -221,26 +241,12 @@ function createLlamacppSleepDriver(
     }
   }
 
-  function settleNativeSleep(token: DrainToken): LlamacppSleepOutcome {
-    const reason = confirmRelease(token);
-    if (reason !== undefined) {
-      controller.sleepSettled(memberId, "failed");
-      return { kind: "unconfirmed", reason, reservation: "uncertain" };
-    }
-    controller.sleepSettled(memberId, "slept", cacheIdentity);
-    return { kind: "slept", reservation: "released" };
-  }
-
   function stopUnderDrain(
     trigger: LlamacppSleepTrigger,
     httpStatus: number | undefined,
     token: DrainToken,
   ): Promise<LlamacppSleepOutcome> {
-    const snapshot = registry.snapshot(workload);
-    const reason =
-      snapshot.phase !== "draining" || snapshot.epoch !== token.epoch
-        ? "DrainChanged"
-        : holdRefusal();
+    const reason = fallbackFenceRefusal(managed, receipt(token), holdRefusal);
     if (reason !== undefined) {
       return Promise.resolve(
         trigger === "ProcessFallback"
@@ -259,8 +265,48 @@ function createLlamacppSleepDriver(
   }
 
   return {
-    sleep: () => withSleepDrain(registry, workload, holdRefusal, sleepWithDrain),
+    sleep: () =>
+      managedSleepAllowed(managed)
+        ? withSleepDrain(registry, workload, holdRefusal, sleepWithDrain)
+        : Promise.resolve({
+            kind: "refused",
+            reason: "ManagedSleepReleaseProofRequired",
+            reservation: "held",
+          }),
   };
+}
+
+function fallbackFenceRefusal(
+  managed: ManagedSleepProof | undefined,
+  receipt: NativeSleepReceipt,
+  holdRefusal: () => InferenceHoldRefusal | undefined,
+): SleepFenceRefusal | undefined {
+  const { sleepDrain, sleepRegistry } = receipt;
+  const snapshot = sleepRegistry.snapshot(sleepDrain.workload);
+  if (snapshot.phase !== "draining" || snapshot.epoch !== sleepDrain.epoch) return "DrainChanged";
+  return (
+    holdRefusal() ??
+    (verifyManagedDispatch(managed, receipt) ? undefined : "NativeSleepGenerationChanged")
+  );
+}
+
+function settleNativeSleep(opts: {
+  reason: SleepFenceRefusal | undefined;
+  receipt: NativeSleepReceipt;
+  park: ManagedSleepProof["parkAfterSleep"];
+  controller: LlamacppSleepController;
+  cacheIdentity: string | undefined;
+}): LlamacppSleepOutcome {
+  const { controller, receipt, park, cacheIdentity } = opts;
+  const { memberId } = receipt;
+  const reason =
+    opts.reason ?? (sealManagedPark(park, receipt) ? undefined : "NativeReleaseUnverified");
+  if (reason !== undefined) {
+    controller.sleepSettled(memberId, "failed");
+    return { kind: "unconfirmed", reason, reservation: "uncertain" };
+  }
+  controller.sleepSettled(memberId, "slept", cacheIdentity);
+  return { kind: "slept", reservation: "released" };
 }
 
 async function withSleepDrain(
@@ -366,10 +412,52 @@ async function runVerifiedStop(
 
 // ── Agent-side driver (residency-lease-registry gated) ───────────────────
 
+export type NativeSleepReceipt = Readonly<{
+  sleepRegistry: ResidencyLeases;
+  sleepDrain: Readonly<DrainToken>;
+  memberId: string;
+  endpoint: Readonly<{ host: string; port: number }>;
+}>;
+
 type ManagedSleepProof = {
   workload: string;
   readInferenceHold: (workload: string) => "clear" | "current" | "prior" | "unknown";
+  /** Recheck the owned process and endpoint before a native command or stop. */
+  beforeDispatch?: (receipt: NativeSleepReceipt) => boolean;
+  /** Return true only once the exact lease epoch and measured residual are durably parked. */
+  parkAfterSleep?: (receipt: NativeSleepReceipt) => boolean;
 };
+
+function managedSleepAllowed(proof: ManagedSleepProof | undefined): boolean {
+  return (
+    (proof?.parkAfterSleep !== undefined && proof.beforeDispatch !== undefined) ||
+    (proof?.parkAfterSleep === undefined &&
+      !hasManagedRuntimeMarker(resolveEnv().LOCAL_AI_RUNTIME_DIR))
+  );
+}
+
+function verifyManagedDispatch(
+  proof: ManagedSleepProof | undefined,
+  receipt: NativeSleepReceipt,
+): boolean {
+  const verify = proof?.beforeDispatch;
+  try {
+    return verify === undefined || verify(receipt);
+  } catch {
+    return false;
+  }
+}
+
+function sealManagedPark(
+  park: ManagedSleepProof["parkAfterSleep"],
+  receipt: NativeSleepReceipt,
+): boolean {
+  try {
+    return park === undefined || park(receipt);
+  } catch {
+    return false;
+  }
+}
 
 function inferenceHoldRefusal(
   read: ManagedSleepProof["readInferenceHold"] | undefined,
