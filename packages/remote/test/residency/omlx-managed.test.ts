@@ -10,6 +10,7 @@
  * jundot/omlx server.py at OMLX_REVISION (list_models_status,
  * load_model_public, unload_model, /api/status).
  */
+import { createResidencyLeases } from "@llamactl/core/residency/leases";
 import { afterEach, describe, expect, test } from "bun:test";
 
 import {
@@ -17,6 +18,7 @@ import {
   type NativeLoadResult,
   type NativeUnloadResult,
   type OmlxNativeClient,
+  type OmlxNativeClientOptions,
 } from "../../src/residency/engine-client.js";
 import {
   createTargetAdmissionAuthority,
@@ -70,9 +72,10 @@ type FakeModel = { loaded: boolean; is_loading: boolean };
 
 type FakeState = {
   model: FakeModel;
+  conflictingStatus: boolean;
   activity: { active: number; waiting: number };
   loadMode: "ok" | 409 | 500 | 507 | "hang";
-  unloadMode: "ok" | 500 | "hang";
+  unloadMode: "ok" | "ok-stale" | "ok-conflicting" | 500 | "hang";
 };
 
 type FakeCounts = {
@@ -99,15 +102,16 @@ afterEach(async () => {
 });
 
 // Mirrors GET /v1/models/status (list_models_status) at OMLX_REVISION.
-function statusFixtureV1(model: FakeModel): Record<string, unknown> {
+function statusFixtureV1(model: FakeModel, conflictingStatus: boolean): Record<string, unknown> {
   return {
     final_ceiling: 34359738368,
     current_model_memory: 0,
-    model_count: 1,
+    model_count: conflictingStatus ? 2 : 1,
     loaded_count: model.loaded ? 1 : 0,
     load_seconds_per_gb_estimate: null,
     load_time_observations: 0,
     models: [
+      ...(conflictingStatus ? [{ id: ID, loaded: false, is_loading: false }] : []),
       {
         id: ID,
         model_path: `/models/${ID}`,
@@ -191,7 +195,7 @@ function actionModelId(path: string, action: "load" | "unload"): string | null {
 
 function statusResponse(ctx: FakeContext): Response {
   ctx.counts.statusGets += 1;
-  return Response.json(statusFixtureV1(ctx.state.model));
+  return Response.json(statusFixtureV1(ctx.state.model, ctx.state.conflictingStatus));
 }
 
 function activityResponse(ctx: FakeContext): Response {
@@ -240,8 +244,12 @@ function unloadResponse(ctx: FakeContext, id: string): Response | Promise<Respon
   if (!ctx.state.model.loaded) {
     return jsonError(400, `Model not loaded: ${id}`);
   }
-  ctx.state.model.loaded = false;
-  ctx.state.model.is_loading = false;
+  if (mode === "ok-conflicting") {
+    ctx.state.conflictingStatus = true;
+  } else if (mode === "ok") {
+    ctx.state.model.loaded = false;
+    ctx.state.model.is_loading = false;
+  }
   return Response.json({ status: "ok", model_id: id });
 }
 
@@ -269,6 +277,7 @@ function routeRequest(ctx: FakeContext, method: string, url: URL): Response | Pr
 function startFakeOmlx(opts: { loadDelayMs?: number } = {}): FakeOmlx {
   const state: FakeState = {
     model: { loaded: false, is_loading: false },
+    conflictingStatus: false,
     activity: { active: 0, waiting: 0 },
     loadMode: "ok",
     unloadMode: "ok",
@@ -327,7 +336,10 @@ function startFakeOmlx(opts: { loadDelayMs?: number } = {}): FakeOmlx {
 
 // --- helpers ---
 
-function nativeClientFor(fake: FakeOmlx): OmlxNativeClient {
+function nativeClientFor(
+  fake: FakeOmlx,
+  leases?: OmlxNativeClientOptions["leases"],
+): OmlxNativeClient {
   // requestTimeoutMs 300 clears the 150 ms load delay while still bounding
   // the hang modes; statusTimeoutMs 200 keeps status reads fast.
   return createOmlxNativeClient({
@@ -337,6 +349,7 @@ function nativeClientFor(fake: FakeOmlx): OmlxNativeClient {
     apiKey: API_KEY,
     requestTimeoutMs: 300,
     statusTimeoutMs: 200,
+    ...(leases === undefined ? {} : { leases }),
   });
 }
 
@@ -597,6 +610,88 @@ describe("managed oMLX residency", () => {
       reservation: "uncertain",
       httpStatus: 500,
     });
+  });
+
+  test("M7 successful unload without status proof keeps the managed reservation charged", async () => {
+    const fake = startFakeOmlx();
+    fake.state.unloadMode = "ok-stale";
+    const mod = await loadManagedModule();
+    await expectUncertainAfterAmbiguousUnload(mod, fake, {
+      kind: "ambiguous",
+      reason: "UnloadUnconfirmed",
+      reservation: "uncertain",
+      httpStatus: 200,
+    });
+    expect(fake.state.model.loaded).toBe(true);
+  });
+
+  test("ambiguous native identity before unload preserves the claim and sends no mutation", async () => {
+    const fake = startFakeOmlx();
+    const mod = await loadManagedModule();
+    const authority = createTargetAdmissionAuthority();
+    const workload = "omlx-host";
+    const registry = createResidencyLeases();
+    const client = nativeClientFor(fake, { registry, workload, sessions: null });
+    const residency = mod.createManagedOmlxResidency(managedOpts(client, authority));
+    expect(await residency.ensureLoaded()).toStrictEqual({ kind: "loaded", modelId: ID });
+    const claims = authority.snapshot("node-a");
+    const lease = registry.snapshot(workload);
+
+    fake.state.conflictingStatus = true;
+    expect(await residency.unload()).toStrictEqual({
+      kind: "refused",
+      reason: "StatusUnavailable",
+      reservation: "held",
+    });
+    expect(await residency.ensureLoaded()).toStrictEqual({
+      kind: "refused",
+      reason: "StatusUnavailable",
+    });
+    expect(fake.counts.unloadPosts).toBe(0);
+    expect(fake.counts.loadPosts).toBe(1);
+    expect(authority.snapshot("node-a")).toEqual(claims);
+    expect(registry.snapshot(workload)).toEqual({ ...lease, epoch: lease.epoch + 1 });
+  });
+
+  test("a successful unload receipt with contradictory status retains the claim and does not commit the lease drain", async () => {
+    const fake = startFakeOmlx();
+    const mod = await loadManagedModule();
+    const authority = createTargetAdmissionAuthority();
+    const workload = "omlx-host";
+    const registry = createResidencyLeases();
+    const client = nativeClientFor(fake, { registry, workload, sessions: null });
+    const residency = mod.createManagedOmlxResidency(managedOpts(client, authority));
+    expect(await residency.ensureLoaded()).toStrictEqual({ kind: "loaded", modelId: ID });
+    const claims = authority.snapshot("node-a");
+    const lease = registry.snapshot(workload);
+
+    fake.state.unloadMode = "ok-conflicting";
+    expect(await residency.unload()).toStrictEqual({
+      kind: "ambiguous",
+      reason: "UnloadUnconfirmed",
+      reservation: "uncertain",
+      httpStatus: 200,
+    });
+    expect(fake.counts.unloadPosts).toBe(1);
+    expect(fake.state.model.loaded).toBe(true);
+    expect(authority.snapshot("node-a")).toEqual(
+      claims.map((claim) => ({ ...claim, state: "uncertain" as const })),
+    );
+    expect(claimTarget(authority, "replacement-host", 20, 24).decision).toMatchObject({
+      kind: "refuse",
+      reason: "BudgetExceeded",
+    });
+    expect(registry.snapshot(workload)).toEqual({ ...lease, epoch: lease.epoch + 1 });
+
+    fake.state.conflictingStatus = false;
+    fake.state.unloadMode = "ok";
+    expect(await residency.unload()).toStrictEqual({
+      kind: "unloaded",
+      modelId: ID,
+      reservation: "released",
+    });
+    expect(authority.snapshot("node-a")).toEqual([]);
+    expect(registry.snapshot(workload).phase).toBe("unloaded");
   });
 
   test("M7 unload timeout demotes the claim to uncertain", async () => {

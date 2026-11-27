@@ -129,8 +129,8 @@ type FakeModelState = { loaded: boolean; is_loading: boolean; engineType?: strin
 
 type StatusMode = "ok" | 404 | 500 | "garbage" | "hang";
 type ActivityMode = "ok" | 500;
-type LoadMode = "ok" | "already" | 404 | 409 | 500 | 507 | "garbage" | "hang";
-type UnloadMode = "ok" | 400 | "400-stale" | 403 | 404 | 500 | "hang";
+type LoadMode = "ok" | "ok-stale" | "already" | 404 | 409 | 500 | 507 | "garbage" | "hang";
+type UnloadMode = "ok" | "ok-stale" | "ok-replaced" | 400 | "400-stale" | 403 | 404 | 500 | "hang";
 
 type FakeState = {
   models: Map<string, FakeModelState>;
@@ -258,6 +258,8 @@ async function loadResponse(ctx: FakeContext, id: string): Promise<Response> {
     return Response.json({ weird: true });
   }
   if (mode === "already") {
+    const model = ctx.state.models.get(id);
+    if (model !== undefined) model.loaded = true;
     return Response.json({ status: "ok", model_id: id, message: `Already loaded: ${id}` });
   }
   if (typeof mode === "number") {
@@ -269,6 +271,9 @@ async function loadResponse(ctx: FakeContext, id: string): Promise<Response> {
   }
   if (model.loaded) {
     return Response.json({ status: "ok", model_id: id, message: `Already loaded: ${id}` });
+  }
+  if (mode === "ok-stale") {
+    return Response.json({ status: "ok", model_id: id, message: `Loaded ${id}` });
   }
   model.is_loading = true;
   await delay(ctx.loadDelayMs);
@@ -308,7 +313,12 @@ function unloadResponse(
   if (!model.loaded) {
     return jsonError(400, `Model not loaded: ${id}`);
   }
-  model.loaded = false;
+  if (mode === "ok-replaced") {
+    ctx.state.models.delete(id);
+    ctx.state.models.set(REL, { loaded: false, is_loading: false, engineType: "batched" });
+  } else if (mode !== "ok-stale") {
+    model.loaded = false;
+  }
   return Response.json({ status: "ok", model_id: id });
 }
 
@@ -634,6 +644,31 @@ describe("load()", () => {
     expect(resultB).toStrictEqual({ kind: "loaded", modelId: ID });
   });
 
+  test("L2b a native load flight cannot supply another caller's readiness or authorization proof", async () => {
+    const fake = startFakeOmlx({ apiKey: "test-key", loadDelayMs: 50 });
+    const first = await clientFor(fake);
+    const conflicting = await clientFor(fake, {
+      ...baseClientOpts(fake.endpoint),
+      readiness: { path: "/ready" },
+    });
+    const unauthenticated = await clientFor(fake, {
+      ...baseClientOpts(fake.endpoint),
+      apiKey: "wrong-key",
+    });
+    const alias = await clientFor(fake, { ...baseClientOpts(fake.endpoint), hostedRel: ID });
+    const [load, readiness, auth, aliased] = await Promise.all([
+      first.load(),
+      conflicting.load(),
+      unauthenticated.load(),
+      alias.load(),
+    ]);
+    expect(load).toStrictEqual({ kind: "loaded", modelId: ID });
+    expect(readiness).toStrictEqual({ kind: "refused", reason: "OperationInProgress" });
+    expect(auth).toStrictEqual({ kind: "refused", reason: "OperationInProgress" });
+    expect(aliased).toStrictEqual({ kind: "refused", reason: "OperationInProgress" });
+    expect(fake.counts.loadPosts).toBe(1);
+  });
+
   test("L3 refuses load without a POST when state forbids it", async () => {
     const fakeLoaded = startFakeOmlx({ apiKey: "test-key" });
     fakeLoaded.state.models.get(ID)!.loaded = true;
@@ -707,6 +742,43 @@ describe("load()", () => {
     expect(await client.load()).toStrictEqual({ kind: "already-loaded", modelId: ID });
     expect(fake.counts.loadPosts).toBe(1);
   });
+  test("L7 a successful load receipt does not prove an unloaded model became resident", async () => {
+    const fake = startFakeOmlx({ apiKey: "test-key" });
+    fake.state.loadMode = "ok-stale";
+    const client = await clientFor(fake);
+    expect(await client.load()).toStrictEqual({
+      kind: "ambiguous",
+      reason: "LoadUnconfirmed",
+      reservation: "uncertain",
+    });
+    expect(fake.counts.loadPosts).toBe(1);
+    expect(fake.counts.statusGets).toBe(2);
+    expect(fake.state.models.get(ID)?.loaded).toBe(false);
+  });
+
+  test("L8 a configured failing readiness probe keeps a loaded model unconfirmed", async () => {
+    const fake = startFakeOmlx({ apiKey: "test-key" });
+    fake.state.readyStatus = 503;
+    const registry = createResidencyLeases();
+    const drain = registry.beginDrain("host");
+    if (!drain.ok) throw new Error("drain refused");
+    expect(registry.commitUnload(drain.token).ok).toBe(true);
+    const client = await clientFor(fake, {
+      ...baseClientOpts(fake.endpoint),
+      readiness: { path: "/ready" },
+      leases: { registry, workload: "host" },
+    });
+    const uncertain = { kind: "ambiguous", reason: "LoadUnconfirmed", reservation: "uncertain" };
+    expect(await client.load()).toStrictEqual(uncertain);
+    expect(fake.state.models.get(ID)?.loaded).toBe(true);
+    expect(registry.snapshot("host").phase).toBe("unloaded");
+    expect(await client.load()).toStrictEqual(uncertain);
+    expect(fake.counts.loadPosts).toBe(1);
+    expect(fake.counts.readyGets).toBe(2);
+    fake.state.readyStatus = 200;
+    expect(await client.load()).toStrictEqual({ kind: "already-loaded", modelId: ID });
+    expect(registry.snapshot("host").phase).toBe("open");
+  });
 });
 
 describe("unload()", () => {
@@ -721,6 +793,7 @@ describe("unload()", () => {
     });
     expect(fake.counts.unloadPosts).toBe(1);
     expect(fake.seen.unloadSearch).toStrictEqual([""]);
+    expect(fake.counts.statusGetsAfterUnloadPost).toBe(1);
     expect(await client.status()).toStrictEqual({
       state: "discovered",
       modelId: ID,
@@ -796,6 +869,23 @@ describe("unload()", () => {
       httpStatus: 400,
     });
   });
+
+  for (const mode of ["ok-stale", "ok-replaced"] as const) {
+    test(`U4b a successful unload receipt leaves the reservation uncertain (${mode})`, async () => {
+      const fake = startFakeOmlx({ apiKey: "test-key" });
+      fake.state.models.get(ID)!.loaded = true;
+      fake.state.unloadMode = mode;
+      const client = await clientFor(fake);
+      expect(await client.unload()).toStrictEqual({
+        kind: "ambiguous",
+        reason: "UnloadUnconfirmed",
+        reservation: "uncertain",
+        httpStatus: 200,
+      });
+      expect(fake.counts.unloadPosts).toBe(1);
+      expect(fake.counts.statusGetsAfterUnloadPost).toBe(1);
+    });
+  }
 
   test("U5 maps unload POST failures", async () => {
     const cases: { mode: UnloadMode; expected: Record<string, unknown> }[] = [
@@ -1201,6 +1291,62 @@ describe("lease fencing", () => {
     expect(fake.counts.loadPosts).toBe(0);
     expect(registry.snapshot(W).phase).toBe("open");
     expect(registry.acquire(W).ok).toBe(true);
+  });
+
+  test("F11 a native load does not send a request while another operation is draining", async () => {
+    const fake = startFakeOmlx({ apiKey: "test-key" });
+    const registry = createResidencyLeases();
+    const drain = registry.beginDrain(W);
+    if (!drain.ok) throw new Error("drain refused");
+    const client = await leasedClientFor(fake, registry);
+    expect(await client.load()).toStrictEqual({ kind: "refused", reason: "OperationInProgress" });
+    expect(fake.counts.statusGets).toBe(0);
+    expect(fake.counts.loadPosts).toBe(0);
+    expect(registry.snapshot(W).phase).toBe("draining");
+  });
+
+  test("F12 a late native load cannot reopen a newer committed drain", async () => {
+    const fake = startFakeOmlx({ apiKey: "test-key" });
+    const registry = createResidencyLeases();
+    const intercept: NonNullable<ClientOpts["fetch"]> = async (url, init) => {
+      const result = await fetch(url, init);
+      if (init?.method === "POST") {
+        const newer = registry.beginDrain(W);
+        if (!newer.ok) throw new Error("newer drain refused");
+        expect(registry.commitUnload(newer.token).ok).toBe(true);
+      }
+      return result;
+    };
+    const client = await leasedClientFor(fake, registry, intercept);
+    expect(await client.load()).toStrictEqual({
+      kind: "ambiguous",
+      reason: "LoadUnconfirmed",
+      reservation: "uncertain",
+    });
+    expect(fake.counts.loadPosts).toBe(1);
+    expect(registry.snapshot(W)).toMatchObject({ phase: "unloaded", epoch: 1 });
+  });
+
+  test("F13 a known unload result cannot release behind a lost drain token", async () => {
+    const fake = startFakeOmlx({ apiKey: "test-key" });
+    fake.state.models.get(ID)!.loaded = true;
+    const registry = createResidencyLeases();
+    const intercept: NonNullable<ClientOpts["fetch"]> = async (url, init) => {
+      const result = await fetch(url, init);
+      if (init?.method === "POST") {
+        const { epoch } = registry.snapshot(W);
+        expect(registry.cancelDrain({ workload: W, epoch })).toBe(true);
+      }
+      return result;
+    };
+    const client = await leasedClientFor(fake, registry, intercept);
+    expect(await client.unload()).toStrictEqual({
+      kind: "ambiguous",
+      reason: "DrainChanged",
+      reservation: "uncertain",
+    });
+    expect(fake.counts.statusGetsAfterUnloadPost).toBe(1);
+    expect(registry.snapshot(W).phase).toBe("open");
   });
 
   test("F10 a throw from the native path cancels the drain and reopens admission", async () => {
