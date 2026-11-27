@@ -12,7 +12,11 @@
 // ControllerActive while a live .controller.lock exists, and — when the plan
 // is ok — runs the fenced executor against the node-local operation store,
 // recording a terminal operation under model `profile-switch:<node>`.
-import { setResidencyLeaseRegistry } from "@llamactl/core/residency/leases";
+import {
+  createResidencyLeases,
+  type ResidencyLeases,
+  setResidencyLeaseRegistry,
+} from "@llamactl/core/residency/leases";
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, setSystemTime, test } from "bun:test";
 import { tmpdir } from "node:os";
@@ -24,6 +28,7 @@ import {
   buildResidencyPlan,
   collectResidencyObservations,
 } from "../../src/residency/procedures.js";
+import { captureProfileDesired } from "../../src/residency/profile-desired.js";
 import { profileOwnerIncarnation } from "../../src/residency/profile-owner.js";
 import {
   openResidencyOperationStore,
@@ -39,7 +44,7 @@ import {
   rmSync,
   writeFileSync,
 } from "../../src/safe-fs.js";
-import { saveNodeRun } from "../../src/workload/noderun-store.js";
+import { loadNodeRunByName, saveNodeRun } from "../../src/workload/noderun-store.js";
 import { type ModelRun, ModelRunSchema } from "../../src/workload/schema.js";
 import { listWorkloads, loadWorkloadByName, saveWorkload } from "../../src/workload/store.js";
 
@@ -557,6 +562,145 @@ describe("residencyApplyProfile procedure", () => {
       outcome: "unknown",
       detail: "recovered: owner exited before profile dispatch",
     });
+    expect(stepCalls).toEqual([
+      ["stop", "chat-a"],
+      ["start", "code-b"],
+    ]);
+  });
+
+  for (const change of ["artifact", "disabled", "node"] as const) {
+    test(`a replacement ${change} change after drain refuses start before lifecycle writes`, async () => {
+      seedRouterFixture();
+      const steps = recordingSteps();
+      const mod = await applyProfileModule();
+      mod.__setResidencyApplyProfileStepsForTests({
+        ...steps,
+        stop: (workload): ReturnType<ApplyProfileSteps["stop"]> => {
+          const current = loadWorkloadByName("code-b", workloadsDir);
+          const modified = {
+            artifact: {
+              ...current.spec,
+              target: { kind: "rel" as const, value: "new/model.gguf" },
+            },
+            disabled: { ...current.spec, enabled: false },
+            node: { ...current.spec, node: "another-node" },
+          }[change];
+          saveWorkload({ ...current, spec: modified }, workloadsDir);
+          return steps.stop(workload);
+        },
+      });
+
+      const result = await applyProfile({
+        node: "local",
+        to: "code",
+        dryRun: false,
+        confirm: true,
+      });
+      expect(stepCalls).toEqual([["stop", "chat-a"]]);
+      expect(result).toMatchObject({ ok: false, outcome: "failed" });
+      const start = result.steps?.find((step) => step.action === "start");
+      expect(start).toMatchObject({ workload: "code-b", status: "failed" });
+      expect(start?.detail).toContain("desired inputs changed");
+      expect(withStore((store) => store.getResidencyState("code-b"))).toBeNull();
+      expect(withStore((store) => store.getOperation(result.operationId ?? ""))).toMatchObject({
+        phase: "terminal",
+        outcome: "failed",
+      });
+    });
+  }
+
+  test("a victim newly protected while draining is left ready and never stopped", async () => {
+    seedRouterFixture();
+    seedReadyLifecycle("chat-a", Date.now() - 60_000);
+    withStore((store) =>
+      store.claimOwnership({
+        ownerId: RESIDENCY_APPLY_PROFILE_FENCE_OWNER,
+        incarnation: "fixture",
+      }),
+    );
+    await installStepsFake();
+    const registry = createResidencyLeases();
+    const held = registry.acquire("chat-a");
+    if (!held.ok) throw new Error("test lease refused");
+    const enteredDrain = Promise.withResolvers<undefined>();
+    const whenIdle = registry.whenIdle;
+    registry.whenIdle = (...args): ReturnType<ResidencyLeases["whenIdle"]> => {
+      enteredDrain.resolve(undefined);
+      return whenIdle(...args);
+    };
+    setResidencyLeaseRegistry(registry);
+
+    const switching = applyProfile({ node: "local", to: "code", dryRun: false, confirm: true });
+    try {
+      await enteredDrain.promise;
+      const current = loadWorkloadByName("chat-a", workloadsDir);
+      saveWorkload(
+        {
+          ...current,
+          metadata: {
+            ...current.metadata,
+            annotations: {
+              ...current.metadata.annotations,
+              "llamactl.io/residency-protected": "true",
+            },
+          },
+        },
+        workloadsDir,
+      );
+    } finally {
+      held.lease.release();
+    }
+    const result = await switching;
+    expect(stepCalls).toEqual([]);
+    expect(result.outcome).toBe("failed");
+    expect(result.steps?.find((step) => step.action === "stop")?.detail).toContain(
+      "desired inputs changed",
+    );
+    expect(withStore((store) => store.getResidencyState("chat-a"))?.state).toBe("ready");
+    expect(registry.snapshot("chat-a").phase).toBe("open");
+  });
+
+  test("a stale planned budget is refused before reservation and still supports dry run", async () => {
+    seedRouterFixture();
+    await installStepsFake();
+    const { applyResidencyProfile } = await applyProfileModule();
+    const plan = await buildOkPlan();
+    const nodeRun = loadNodeRunByName("local", workloadsDir);
+    const desired = captureProfileDesired("local", nodeRun, listWorkloads(workloadsDir), []);
+    saveNodeRun({ ...nodeRun, spec: { ...nodeRun.spec, budget: { memoryGiB: 2 } } }, workloadsDir);
+
+    const common = { plan, desired, storePath, workloadsDir, registry: null };
+    const dry = await applyResidencyProfile({ ...common, dryRun: true });
+    expect(dry).toMatchObject({ ok: true, outcome: "dry-run" });
+    expect(existsSync(storePath)).toBe(false);
+    const wet = await applyResidencyProfile({ ...common, dryRun: false });
+    expect(wet).toMatchObject({
+      ok: false,
+      outcome: "refused",
+      refusal: { reason: "DesiredStateChanged" },
+    });
+    expect(existsSync(storePath)).toBe(false);
+    expect(stepCalls).toEqual([]);
+  });
+
+  test("status-only changes during teardown do not invalidate the planned replacement", async () => {
+    seedRouterFixture();
+    const steps = recordingSteps();
+    const mod = await applyProfileModule();
+    mod.__setResidencyApplyProfileStepsForTests({
+      ...steps,
+      stop: (workload): ReturnType<ApplyProfileSteps["stop"]> => {
+        const current = loadWorkloadByName(workload, workloadsDir);
+        const stopped = runManifest(workload, { phase: "Stopped" }).status;
+        if (stopped === undefined) throw new Error("missing stopped status");
+        saveWorkload({ ...current, status: stopped }, workloadsDir);
+        return steps.stop(workload);
+      },
+    });
+
+    expect(
+      (await applyProfile({ node: "local", to: "code", dryRun: false, confirm: true })).outcome,
+    ).toBe("stops-and-starts-ran");
     expect(stepCalls).toEqual([
       ["stop", "chat-a"],
       ["start", "code-b"],

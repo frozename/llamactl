@@ -140,6 +140,7 @@ import {
   type ResidencyPlan,
   runIdleEviction,
 } from "./residency/procedures.js";
+import { captureProfileDesired, type ProfileDesiredSnapshot } from "./residency/profile-desired.js";
 import { recoverAbandonedProfileIntentsOnNode } from "./residency/recovery.js";
 import { fenceWorkloadStop, reopenWorkloadAfterLoad } from "./residency/stop-fence.js";
 import {
@@ -440,28 +441,27 @@ function nodeRunResidency(nodeName: string, workloadsDir: string): NodeRunReside
   return nodeRuns.find((n) => n.metadata.name === nodeName)?.spec.residency;
 }
 
-function residencyPlanFor(input: {
-  node: string;
-  to: string;
-  from?: string | undefined;
-}): ResidencyPlan {
-  const nodeRuns = nodeRunStoreMod.listNodeRuns();
+function residencyPlanFor(
+  input: { node: string; to: string; from?: string | undefined },
+  workloadsDir = workloadStoreMod.defaultWorkloadsDir(),
+): { plan: ResidencyPlan; desired: ProfileDesiredSnapshot } {
+  const nodeRuns = nodeRunStoreMod.listNodeRuns(workloadsDir);
   const node = nodeRuns.find((n: (typeof nodeRuns)[number]) => n.metadata.name === input.node);
   const declared = node?.spec.budget?.memoryGiB;
   const rawNodeName = process.env["LLAMACTL_NODE_NAME"]?.trim() ?? "";
   const servingNode = rawNodeName === "" ? null : rawNodeName;
   const resolved = envMod.resolveEnv();
-  const modelHosts = modelHostStoreMod.listModelHosts();
+  const modelHosts = modelHostStoreMod.listModelHosts(workloadsDir);
   const observations = collectResidencyObservations({
     node: input.node,
     servingNode,
-    modelRuns: workloadStoreMod.listWorkloads(),
+    modelRuns: workloadStoreMod.listWorkloads(workloadsDir),
     modelHosts,
     modelHostStatus: (name) => statusModelHost({ key: { name } }),
     estimateModelRunGiB: (manifest) => estimateWorkloadMemoryGiB(manifest, resolved),
     estimateModelHostGiB: (manifest) => estimateModelHostMemoryGiB(manifest, resolved),
   });
-  return buildResidencyPlan({
+  const plan = buildResidencyPlan({
     node: input.node,
     to: input.to,
     from: input.from ?? null,
@@ -476,6 +476,10 @@ function residencyPlanFor(input: {
     store: readResidencyStoreSnapshot(defaultResidencyStorePath()),
     residency: node?.spec.residency ?? null,
   });
+  return {
+    plan,
+    desired: captureProfileDesired(input.node, node, observations.modelRuns, modelHosts),
+  };
 }
 
 // Resolves the direct-start/stop residency group: an inline manifest's label
@@ -2754,7 +2758,7 @@ export const router = t.router({
         from: z.string().min(1).optional(),
       }),
     )
-    .query(({ input }) => residencyPlanFor(input)),
+    .query(({ input }) => residencyPlanFor(input).plan),
 
   // #284 (DF-11): dry-run-by-default profile switch. A bare call plans and
   // reports without opening the store; dryRun:false requires confirm:true,
@@ -2805,13 +2809,10 @@ export const router = t.router({
         }
         recoverAbandonedProfileIntentsOnNode(storePath, input.node);
       }
-      const plan = residencyPlanFor({
-        node: input.node,
-        to: input.to,
-        ...(input.from === undefined ? {} : { from: input.from }),
-      });
+      const { plan, desired } = residencyPlanFor(input, workloadsDir);
       return await applyResidencyProfile({
         plan,
+        desired,
         dryRun: input.dryRun,
         storePath,
         workloadsDir,

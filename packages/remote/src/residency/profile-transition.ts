@@ -153,6 +153,8 @@ export type ProfileSwitchOperationOpts = {
   begun?: Extract<BeginOperationResult, { ok: true }>;
   // where a failed step-boundary heartbeat is reported; default stderr
   log?: (line: string) => void;
+  /** Revalidates desired inputs just before an actuator and its lifecycle writes. */
+  checkDesired?: () => string | null;
   // per-model residency lifecycle wiring; when set the executor drives the
   // residency_states rows around each fenced stop/start
   lifecycle?: ProfileSwitchLifecycleOpts;
@@ -1142,7 +1144,7 @@ function stepBudgetFrom(
 // The executor deps, wrapped in the residency-lifecycle decorator only when
 // the operation opts carry `lifecycle`. Without it the deps pass through
 // untouched, so the switch behaves byte-identically to a no-lifecycle run.
-function executorDepsFor(
+function lifecycleDepsFor(
   plan: OkPlan,
   deps: ProfileSwitchExecutorDeps,
   operation: ProfileSwitchOperationOpts | undefined,
@@ -1157,6 +1159,30 @@ function executorDepsFor(
     nowMs: operation.nowMs ?? Date.now,
     log: operation.log ?? defaultLog,
   });
+}
+
+function checkBeforeProfileStep(
+  checkDesired: () => string | null,
+  run: () => Promise<ProfileSwitchStepOutcome>,
+): Promise<ProfileSwitchStepOutcome> {
+  const stale = checkDesired();
+  return stale === null ? run() : Promise.resolve({ ok: false, detail: stale });
+}
+
+function executorDepsFor(
+  plan: OkPlan,
+  deps: ProfileSwitchExecutorDeps,
+  operation: ProfileSwitchOperationOpts | undefined,
+): ProfileSwitchExecutorDeps {
+  const lifecycleDeps = lifecycleDepsFor(plan, deps, operation);
+  const checkDesired = operation?.checkDesired;
+  if (checkDesired === undefined) return lifecycleDeps;
+  return {
+    stop: (workload, ctx) =>
+      checkBeforeProfileStep(checkDesired, () => lifecycleDeps.stop(workload, ctx)),
+    start: (workload, ctx) =>
+      checkBeforeProfileStep(checkDesired, () => lifecycleDeps.start(workload, ctx)),
+  };
 }
 
 export async function executeProfileSwitch(

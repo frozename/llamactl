@@ -43,6 +43,7 @@ import {
   withWorkloadsMutex,
 } from "../workload/store.js";
 import { residencyGroupLabelOf } from "./coordinator.js";
+import { isProfileDesiredCurrent, type ProfileDesiredSnapshot } from "./profile-desired.js";
 import { profileOwnerIncarnation, RESIDENCY_APPLY_PROFILE_FENCE_OWNER } from "./profile-owner.js";
 import {
   executeProfileSwitch,
@@ -137,6 +138,7 @@ export type ResidencyCancelOperationResult = {
 
 export type ApplyResidencyProfileArgs = {
   plan: ResidencyPlan;
+  desired?: ProfileDesiredSnapshot;
   dryRun: boolean;
   storePath: string;
   workloadsDir: string;
@@ -512,6 +514,14 @@ function commitProfileDispatch(
   return { ok: false, reason };
 }
 
+function checkDesiredProfile(plan: OkPlan, args: ApplyResidencyProfileArgs): string | null {
+  const desired = args.desired;
+  if (desired === undefined) return null;
+  return desired.node === plan.node && isProfileDesiredCurrent(desired, args.workloadsDir)
+    ? null
+    : "desired inputs changed since profile planning; replan the switch";
+}
+
 async function runFencedSwitch(
   plan: OkPlan,
   steps: ProfileSwitchExecutorDeps,
@@ -538,6 +548,9 @@ async function runFencedSwitch(
           desiredRevision,
           begun,
           log,
+          ...(args.desired === undefined
+            ? {}
+            : { checkDesired: () => checkDesiredProfile(plan, args) }),
           lifecycle: {
             store,
             groupOf: (workload) => residencyGroupOf(args.workloadsDir, workload),
@@ -571,6 +584,16 @@ export async function applyResidencyProfile(
     return mapReport(
       await executeProfileSwitch(plan, steps, { dryRun: true, registry: args.registry }),
     );
+  }
+  const stale = checkDesiredProfile(plan, args);
+  if (stale !== null) {
+    return residencyApplyProfileRefusal({
+      node: plan.node,
+      to: plan.to,
+      from: plan.from,
+      reason: "DesiredStateChanged",
+      detail: stale,
+    });
   }
   return await runWet(plan, steps, args);
 }
