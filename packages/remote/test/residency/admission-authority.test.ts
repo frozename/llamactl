@@ -487,6 +487,37 @@ describe("admission-authority", () => {
     }
   });
 
+  test("stop proof refuses a changed tracked PID or recycled native birth identity", () => {
+    const h = openAuthority(24);
+    const pid = 4401;
+    try {
+      const { claimId, fenceToken } = mustAdmit(h.authority, request("w-stop", "d", "ModelRun", 8));
+      expect(
+        h.authority.recordGeneration(claimId, fenceToken, { pid, birthId: "old-generation" }),
+      ).toBe(true);
+      expect(h.authority.completeReady(claimId, fenceToken)).toBe(true);
+      h.observations.set(pid, { pid, alive: true, birthId: "old-generation" });
+      h.pidFiles.set("w-stop", pid + 1);
+      expect(h.authority.prepareStopRelease("w-stop", "ModelRun")).toBeUndefined();
+
+      h.pidFiles.set("w-stop", pid);
+      h.observations.set(pid, { pid, alive: true, birthId: "new-generation" });
+      expect(h.authority.prepareStopRelease("w-stop", "ModelRun")).toBeUndefined();
+      h.observations.set(pid, { pid, alive: true, birthId: "old-generation" });
+      const proof = h.authority.prepareStopRelease("w-stop", "ModelRun");
+      expect(proof?.verifyGeneration(pid)).toBe("alive");
+      expect(proof?.verifyGeneration(pid + 1)).toBe("unknown");
+
+      h.observations.set(pid, { pid, alive: true, birthId: "new-generation" });
+      expect(proof?.verifyGeneration(pid)).toBe("unknown");
+      expect(proof?.release(pid)).toMatchObject({ kind: "retained", reason: "live-generation" });
+      expect(chargedGiB(h.authority)).toBe(8);
+    } finally {
+      h.authority.close();
+      h.cleanup();
+    }
+  });
+
   test("a vanished pid file or an unidentified dead process does not release", () => {
     const h = openAuthority(24);
     try {

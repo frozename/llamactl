@@ -1996,6 +1996,37 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
   }
 }
 
+async function teardownStoppedHost(
+  opts: StopModelHostOptions,
+  recordPath: string,
+  host: { pid: number; engine: EngineName },
+  identity: PidIdentityDeps,
+): Promise<string | undefined> {
+  const teardown =
+    opts.teardown ??
+    ((pid: number): Promise<void> =>
+      ENGINES[host.engine].teardown(
+        pid,
+        teardownIdentity(recordPath, opts.identity, identity.expectCommand),
+      ));
+  try {
+    await teardown(host.pid, opts.graceSeconds);
+  } catch {
+    // A resolved or thrown teardown is not proof of release.
+  }
+  const verdict = verifyPidFile(recordPath, host.pid, identity);
+  if (isRecordedPidGone(verdict)) return undefined;
+  return verdict === "alive"
+    ? "process still alive after teardown"
+    : "pid identity unknown after teardown";
+}
+
+function modelHostStopIdentityError(identity: PidIdentityDeps): string {
+  return identity.verifyGeneration === undefined
+    ? "pid identity unknown"
+    : "ManagedStopGenerationUnverified";
+}
+
 // #317: an engine orphaned by an agent restart during start-up has no state
 // sidecar — the starting record written at spawn is the only track of it.
 // Same identity contract as the sidecar path: alive means ours (teardown +
@@ -2006,44 +2037,35 @@ async function stopStartingRecord(
   resolved: ReturnType<typeof resolveEnv>,
 ): Promise<StopModelHostResult> {
   const starting = readModelHostStarting(opts.key, resolved);
-  if (!starting) return { ok: true, pid: null };
+  const managed = opts.identity?.verifyGeneration !== undefined;
+  if (!starting) {
+    return managed
+      ? { ok: false, pid: null, error: "ManagedStopGenerationUnverified" }
+      : { ok: true, pid: null };
+  }
   const recordPath = modelhostStartingFile(resolved, opts.key);
   // #806 phase 3: tombstone the scope unit before verifying, so an in-flight
   // scoped launch that sees its wrapper exit cannot fall back to a direct
-  // spawn behind this stop's back.
-  if (starting.scopeUnit !== undefined) {
-    writeScopeStop(workloadRuntimeDir(resolved, opts.key), "modelhost", starting.scopeUnit);
-  }
+  // spawn behind this stop's back. A managed stop first verifies its claim.
+  const tombstone = (): void => {
+    if (starting.scopeUnit !== undefined) {
+      writeScopeStop(workloadRuntimeDir(resolved, opts.key), "modelhost", starting.scopeUnit);
+    }
+  };
+  if (!managed) tombstone();
   const identity = startingIdentityDeps(starting, opts.identity, starting.binaryNames);
   const verdict = verifyPidFile(recordPath, starting.pid, identity);
   if (verdict === "unknown") {
-    return { ok: false, pid: starting.pid, error: "pid identity unknown" };
+    return {
+      ok: false,
+      pid: starting.pid,
+      error: modelHostStopIdentityError(identity),
+    };
   }
   if (verdict === "alive") {
-    const teardown =
-      opts.teardown ??
-      ((pid: number, _graceSeconds?: number): Promise<void> =>
-        ENGINES[starting.engine].teardown(
-          pid,
-          teardownIdentity(recordPath, opts.identity, identity.expectCommand),
-        ));
-    try {
-      await teardown(starting.pid, opts.graceSeconds);
-    } catch {
-      // A resolved or thrown teardown is not proof of release; the identity
-      // re-check below is authoritative.
-    }
-    const released = verifyPidFile(recordPath, starting.pid, identity);
-    if (!isRecordedPidGone(released)) {
-      return {
-        ok: false,
-        pid: starting.pid,
-        error:
-          released === "alive"
-            ? "process still alive after teardown"
-            : "pid identity unknown after teardown",
-      };
-    }
+    if (managed) tombstone();
+    const error = await teardownStoppedHost(opts, recordPath, starting, identity);
+    if (error !== undefined) return { ok: false, pid: starting.pid, error };
   }
   clearStartingRecordIfOwned(opts.key, resolved, starting.pid);
   return { ok: true, pid: starting.pid };
@@ -2064,33 +2086,15 @@ export async function stopModelHost(opts: StopModelHostOptions): Promise<StopMod
   const identity = hostIdentityDeps(state.engine, opts.identity, state.binaryNames);
   const verdict = verifyPidFile(recordPath, state.pid, identity);
   if (verdict === "unknown") {
-    return { ok: false, pid: state.pid, error: "pid identity unknown" };
+    return {
+      ok: false,
+      pid: state.pid,
+      error: modelHostStopIdentityError(identity),
+    };
   }
   if (verdict === "alive") {
-    const teardown =
-      opts.teardown ??
-      ((pid: number, _graceSeconds?: number): Promise<void> =>
-        ENGINES[state.engine].teardown(
-          pid,
-          teardownIdentity(recordPath, opts.identity, identity.expectCommand),
-        ));
-    try {
-      await teardown(state.pid, opts.graceSeconds);
-    } catch {
-      // A resolved or thrown teardown is not proof of release; the identity
-      // re-check below is authoritative.
-    }
-    const released = verifyPidFile(recordPath, state.pid, identity);
-    if (!isRecordedPidGone(released)) {
-      return {
-        ok: false,
-        pid: state.pid,
-        error:
-          released === "alive"
-            ? "process still alive after teardown"
-            : "pid identity unknown after teardown",
-      };
-    }
+    const error = await teardownStoppedHost(opts, recordPath, state, identity);
+    if (error !== undefined) return { ok: false, pid: state.pid, error };
   }
   removeModelHostState(opts.key, resolved);
   return { ok: true, pid: state.pid };

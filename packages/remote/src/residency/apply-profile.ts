@@ -239,7 +239,12 @@ async function stopWorkload(
     return await stopProfileHost(workload, withOwnership, release);
   }
   const stop = (): ReturnType<typeof serverMod.stopServer> =>
-    serverMod.stopServer({ key: { name: workload } });
+    serverMod.stopServer({
+      key: { name: workload },
+      ...(release === undefined
+        ? {}
+        : { identity: { verifyGeneration: release.verifyGeneration } }),
+    });
   const result = await (withOwnership === undefined ? stop() : withOwnership(stop));
   if (!result.stopped) {
     return { ok: false, detail: `stop did not confirm process removal for ${workload}` };
@@ -262,7 +267,13 @@ async function stopProfileHost(
   withOwnership: ManagedLaunchAdmission["runOwnedLifecycle"],
   release: ProfileStopProof | undefined,
 ): Promise<ProfileSwitchStepOutcome> {
-  const stop = (): ReturnType<typeof stopModelHost> => stopModelHost({ key: { name: workload } });
+  const stop = (): ReturnType<typeof stopModelHost> =>
+    stopModelHost({
+      key: { name: workload },
+      ...(release === undefined
+        ? {}
+        : { identity: { verifyGeneration: release.verifyGeneration } }),
+    });
   const stopped = await (withOwnership === undefined ? stop() : withOwnership(stop));
   if (!stopped.ok) return { ok: false, detail: stopped.error ?? "modelHost stop failed" };
   if (release !== undefined && !claimReleased(stopped.pid, release)) {
@@ -276,7 +287,7 @@ type ProfileStopProof = NonNullable<
 >;
 
 function claimReleased(pid: number | null, release: ProfileStopProof): boolean {
-  return pid !== null && release(pid).kind === "released";
+  return pid !== null && release.release(pid).kind === "released";
 }
 
 function unverifiedCapacity(workload: string): ProfileSwitchStepOutcome {

@@ -77,6 +77,7 @@ import { dirname, join } from "node:path";
 import { z } from "zod";
 
 import type { CompositeApplyEvent } from "./composite/types.js";
+import type { ManagedStopProof } from "./residency/admission-authority.js";
 import type {
   CommitLaunchReadiness,
   ManagedApplyBudget,
@@ -1051,6 +1052,10 @@ function serverStartRefusal(input: ServerStartInput, detail: string): serverMod.
 
 function runOwnedStop<T>(managed: ManagedLaunchAdmission | undefined, run: () => T): T {
   return managed?.runOwnedLifecycle === undefined ? run() : managed.runOwnedLifecycle(run);
+}
+
+function stopReleased(proof: ManagedStopProof | undefined, pid: number | null): boolean {
+  return proof === undefined || (pid !== null && proof.release(pid).kind === "released");
 }
 
 type ServerStopRefusalShape = { reason?: unknown; active?: unknown };
@@ -3227,24 +3232,29 @@ export const router = t.router({
       await fenceWorkloadStop<StopModelHostResult>({
         workload: input.workload,
         stop: async () => {
-          const release = ctx.managedLaunchAdmission?.prepareStopRelease?.(
-            input.workload,
-            "ModelHost",
-          );
+          const managed = ctx.managedLaunchAdmission;
+          const proof = managed?.prepareStopRelease?.(input.workload, "ModelHost");
+          if (managed !== undefined && proof === undefined) {
+            return { ok: false, pid: null, error: "ManagedStopGenerationUnverified" };
+          }
           const outcome = await runDirectResidencyStop<StopModelHostResult>(
             input.workload,
-            () =>
-              runOwnedStop(ctx.managedLaunchAdmission, () =>
+            async () => {
+              const stopped = await runOwnedStop(managed, () =>
                 stopModelHost({
                   key: { name: input.workload },
                   ...(input.graceSeconds !== undefined ? { graceSeconds: input.graceSeconds } : {}),
+                  ...(proof === undefined
+                    ? {}
+                    : { identity: { verifyGeneration: proof.verifyGeneration } }),
                 }),
-              ),
+              );
+              return stopped.ok && !stopReleased(proof, stopped.pid)
+                ? { ok: false, pid: stopped.pid, error: "ManagedStopReleaseUnverified" }
+                : stopped;
+            },
             directResidencyOpts(input.workload, undefined),
           );
-          if (outcome.ran && outcome.result.ok && outcome.result.pid !== null) {
-            release?.(outcome.result.pid);
-          }
           return outcome.ran ? outcome.result : { ok: false, pid: null, error: outcome.detail };
         },
         isVerifiedStop: (r) => r.ok,
@@ -3835,10 +3845,16 @@ export const router = t.router({
         await fenceWorkloadStop<serverMod.StopServerResult>({
           workload: input.workload,
           stop: async () => {
-            const release = ctx.managedLaunchAdmission?.prepareStopRelease?.(
-              input.workload,
-              "ModelRun",
-            );
+            const managed = ctx.managedLaunchAdmission;
+            const proof = managed?.prepareStopRelease?.(input.workload, "ModelRun");
+            if (managed !== undefined && proof === undefined) {
+              return {
+                stopped: false,
+                pid: null,
+                killed: false,
+                managedRefusal: "ManagedStopGenerationUnverified",
+              };
+            }
             const outcome = await runDirectResidencyStop<{
               ok: boolean;
               error?: string;
@@ -3846,14 +3862,21 @@ export const router = t.router({
             }>(
               input.workload,
               async () => {
-                const stop = await runOwnedStop(ctx.managedLaunchAdmission, () =>
+                const stopped = await runOwnedStop(managed, () =>
                   serverMod.stopServer({
                     key: { name: input.workload },
                     ...(input.graceSeconds !== undefined
                       ? { graceSeconds: input.graceSeconds }
                       : {}),
+                    ...(proof === undefined
+                      ? {}
+                      : { identity: { verifyGeneration: proof.verifyGeneration } }),
                   }),
                 );
+                const stop: serverMod.StopServerResult =
+                  stopped.stopped && !stopReleased(proof, stopped.pid)
+                    ? { ...stopped, stopped: false, managedRefusal: "ManagedStopReleaseUnverified" }
+                    : stopped;
                 return {
                   ok: stop.stopped,
                   ...(stop.stopped ? {} : { error: "stop did not confirm process removal" }),
@@ -3862,9 +3885,6 @@ export const router = t.router({
               },
               directModelRunOpts(input.workload),
             );
-            if (outcome.ran && outcome.result.stop.stopped && outcome.result.stop.pid !== null) {
-              release?.(outcome.result.stop.pid);
-            }
             return outcome.ran ? outcome.result.stop : { stopped: false, pid: null, killed: false };
           },
           isVerifiedStop: (r) => r.stopped,

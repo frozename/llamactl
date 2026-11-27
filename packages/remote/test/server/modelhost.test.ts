@@ -2330,6 +2330,31 @@ describe("server/modelhost", () => {
     }
   });
 
+  test("a managed ModelHost does not tear down a process outside its recorded generation", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-managed-stop-"));
+    const pid = 4402;
+    try {
+      const hostDir = seedImpostorSidecar(join(tmp, "runtime"), pid, false);
+      const teardown = mock(() => Promise.resolve());
+      const stopped = await stopModelHost({
+        key: { name: "mlx-host-server" },
+        runtimeDir: join(tmp, "runtime"),
+        identity: {
+          probe: () => undefined,
+          processStartMs: () => 0,
+          processCommand: () => "omlx",
+          verifyGeneration: () => "unknown",
+        },
+        teardown,
+      });
+      expect(stopped).toEqual({ ok: false, pid, error: "ManagedStopGenerationUnverified" });
+      expect(teardown).not.toHaveBeenCalled();
+      expect(existsSync(join(hostDir, "modelhost.state"))).toBe(true);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   test("statusModelHost surfaces identityUnknown when the record cannot be verified", () => {
     const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-idunknown-"));
     const runtimeDir = join(tmp, "runtime");
