@@ -59,6 +59,7 @@ import {
   type ResidencyLeases,
   withReopenAfterLoad,
 } from "./residency/leases.js";
+import { managedRuntimeRefusesMutation } from "./residency/managed-runtime.js";
 import { currentSessionRefcounts, type SessionRefcounts } from "./residency/sessions.js";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "./safe-fs.js";
 import { resolveTarget } from "./target.js";
@@ -2060,6 +2061,18 @@ export function startServer(opts: StartServerOptions): Promise<StartServerResult
 }
 
 function executeServerStart(opts: ServerStartExecutionOptions): Promise<StartServerResult> {
+  const resolved = opts.resolved ?? resolveEnv(opts.env);
+  if (managedRuntimeRefusesMutation(resolved.LOCAL_AI_RUNTIME_DIR)) {
+    return Promise.resolve({
+      ok: false,
+      pid: null,
+      endpoint: endpoint(resolved, opts.endpoint),
+      advertisedEndpoint: advertisedEndpoint(resolved, opts.endpoint),
+      tunedProfile: null,
+      retried: false,
+      error: "ManagedOwnerRequired",
+    });
+  }
   return withReopenAfterLoad(
     opts.key.name,
     () =>
@@ -2560,6 +2573,9 @@ function trackedStopIdentity(
  */
 export async function stopServer(opts: StopServerOptions): Promise<StopServerResult> {
   const resolved = opts.resolved ?? resolveEnv();
+  if (managedRuntimeRefusesMutation(resolved.LOCAL_AI_RUNTIME_DIR)) {
+    return { stopped: false, pid: null, killed: false };
+  }
   const key = opts.key;
   const grace = Math.max(1, opts.graceSeconds ?? 5);
   const pid = readServerPid(key, resolved);

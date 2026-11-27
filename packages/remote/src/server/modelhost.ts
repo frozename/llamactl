@@ -56,6 +56,7 @@ import {
   verifyPidFile,
 } from "@llamactl/core/pidIdentity";
 import { getResidencyLeaseRegistry } from "@llamactl/core/residency/leases";
+import { managedRuntimeRefusesMutation } from "@llamactl/core/residency/managed-runtime";
 import { currentSessionRefcounts } from "@llamactl/core/residency/sessions";
 import { type WorkloadKey, workloadRuntimeDir } from "@llamactl/core/workloadRuntime";
 import { type ChildProcess, spawn as nodeSpawn } from "node:child_process";
@@ -1883,6 +1884,11 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
   const env = toRuntimeEnv(opts.env);
   const runtimeEnv = withRuntimeDir(env, opts.runtimeDir);
   const resolved = resolveEnv(runtimeEnv);
+  if (managedRuntimeRefusesMutation(resolved.LOCAL_AI_RUNTIME_DIR)) {
+    const result = { ok: false, pid: null, error: "ManagedOwnerRequired" };
+    opts.onEvent?.({ type: "done", result });
+    return result;
+  }
   const manifest = opts.manifest
     ? ModelHostManifestSchema.parse(opts.manifest)
     : loadModelHostByName(opts.key.name, opts.workloadsDir);
@@ -2042,6 +2048,9 @@ async function stopStartingRecord(
 
 export async function stopModelHost(opts: StopModelHostOptions): Promise<StopModelHostResult> {
   const resolved = resolveEnv(withRuntimeDir(toRuntimeEnv(opts.env), opts.runtimeDir));
+  if (managedRuntimeRefusesMutation(resolved.LOCAL_AI_RUNTIME_DIR)) {
+    return { ok: false, pid: null, error: "ManagedOwnerRequired" };
+  }
   const state = readModelHostState(opts.key, resolved);
   if (!state) return await stopStartingRecord(opts, resolved);
   // Teardown signals the whole process group — the worst place to act on a

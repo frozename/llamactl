@@ -21,6 +21,7 @@ export type CommitLaunchReadiness = (pid: number) => string | undefined;
 
 export interface ManagedLaunchAdmission {
   prepareStopRelease?: AdmissionAuthority["prepareStopRelease"];
+  runOwnedLifecycle?: <T>(run: () => T) => T;
   run<T extends LaunchResult>(
     request: ManagedLaunchRequest,
     signal: AbortSignal,
@@ -32,6 +33,7 @@ type LaunchRefusal = { ran: false; detail: string };
 type AdmittedClaim = { claimId: string; fenceToken: string };
 
 interface ManagedLaunchOptions {
+  runOwnedLifecycle?: ManagedLaunchAdmission["runOwnedLifecycle"];
   authority: Pick<
     AdmissionAuthority,
     | "admit"
@@ -120,6 +122,7 @@ async function runClaimedLaunch<T extends LaunchResult>(
 export function createManagedLaunchAdmission(opts: ManagedLaunchOptions): ManagedLaunchAdmission {
   return {
     prepareStopRelease: (runtimeKey, kind) => opts.authority.prepareStopRelease(runtimeKey, kind),
+    ...(opts.runOwnedLifecycle === undefined ? {} : { runOwnedLifecycle: opts.runOwnedLifecycle }),
     async run<T extends LaunchResult>(
       request: ManagedLaunchRequest,
       signal: AbortSignal,
@@ -145,7 +148,11 @@ export function createManagedLaunchAdmission(opts: ManagedLaunchOptions): Manage
       if (claim.kind === "refuse") return refuse(`${claim.reason}: ${claim.detail}`);
       if (claim.kind === "joined") return refuse("ManagedLaunchPending");
       if (claim.kind === "resident") return refuse("ManagedRuntimeResident");
-      return await runClaimedLaunch(opts, request, claim, signal, start);
+      const execute = (): Promise<DirectLifecycleOutcome<T>> =>
+        runClaimedLaunch(opts, request, claim, signal, start);
+      return await (opts.runOwnedLifecycle === undefined
+        ? execute()
+        : opts.runOwnedLifecycle(execute));
     },
   };
 }

@@ -135,7 +135,7 @@ describe("#522 residency enforcement summary", () => {
       "if (inResidencySwitchScope()) { return { ran: true, result: await dep(workload) }; }",
     );
     expect(runDirect, "store-absent bypass").toContain(
-      "if (!existsSync(opts.storePath)) { return { ran: true, result: await dep(workload) }; }",
+      "if (!existsSync(opts.storePath) && !managed) { return { ran: true, result: await dep(workload) }; }",
     );
     expect(
       flat(readOrEmpty(join(REPO, "docs/dynamic-residency.md"))),

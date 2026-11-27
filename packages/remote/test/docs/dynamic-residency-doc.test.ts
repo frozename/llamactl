@@ -843,7 +843,7 @@ describe("docs/dynamic-residency.md (#285)", () => {
       [
         "async function unrecordedOrFail<",
         [
-          'if (action === "start" && lifecycleGroup !== undefined) {',
+          'if (action === "start" && (env.managed || lifecycleGroup !== undefined)) {',
           "detail: `residency lifecycle refused ${workload}: store unavailable (${message})`,",
           "`[residency] lifecycle ${workload} ${action} not recorded: store unavailable (${message})\\n`,",
           "return { ran: true, result: await env.dep(workload) };",
