@@ -180,6 +180,7 @@ import {
   startModelHost,
   type StartModelHostResult,
   statusModelHost,
+  statusModelHostForProbe,
   stopModelHost,
   type StopModelHostResult,
 } from "./server/modelhost.js";
@@ -3454,10 +3455,13 @@ export const router = t.router({
     },
   ),
 
-  modelHostStatus: t.procedure.input(modelHostStatusInput).query(async ({ input }) => {
+  modelHostStatus: t.procedure.input(modelHostStatusInput).query(async ({ input, ctx }) => {
     const key = { name: input.workload };
     if (input.probeOrigin !== undefined) {
-      return statusModelHost({ key, probeOrigin: input.probeOrigin });
+      return await statusModelHostForProbe(
+        { key, probeOrigin: input.probeOrigin },
+        ctx.managedLaunchAdmission?.verifyParkedOmlxProbe,
+      );
     }
     const status = statusModelHost({ key });
     if (input.includeListener !== true) return status;

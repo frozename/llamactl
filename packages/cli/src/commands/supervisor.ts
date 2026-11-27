@@ -1,7 +1,7 @@
 import { env as envMod, sourceRevision } from "@llamactl/core";
 import { formatHostForUrl } from "@llamactl/core/engines";
 import { omitUndefined } from "@llamactl/core/object";
-import { isSleepResidency, type SleepResidency } from "@llamactl/core/residency/llamacpp-sleep";
+import { isSleepResidency } from "@llamactl/core/residency/llamacpp-sleep";
 import { callViaTunnelRelay, type TunnelRelayCallOptions } from "@llamactl/core/tunnel-relay";
 import {
   appendFleetJournal,
@@ -29,6 +29,7 @@ import {
   type SnapshotRow,
   startSupervisorLoop,
   type SupervisorLoopOptions,
+  type WorkloadProbeResidency,
   type WorkloadTarget,
 } from "@llamactl/fleet-supervisor";
 import { listPeers, workloadStore } from "@llamactl/remote";
@@ -954,7 +955,7 @@ function buildSupervisorLoopOptions(
 export async function readSupervisorRecordedSleep(
   target: WorkloadTarget,
   env: NodeJS.ProcessEnv = process.env,
-): Promise<SleepResidency | undefined> {
+): Promise<WorkloadProbeResidency | undefined> {
   if (target.kind !== "ModelHost") return undefined;
   try {
     const probe = new URL(target.endpoint);
@@ -967,7 +968,7 @@ export async function readSupervisorRecordedSleep(
     if (
       manifest.kind !== "ModelHost" ||
       manifest.metadata.name !== target.name ||
-      manifest.spec.engine !== "llamacpp" ||
+      (manifest.spec.engine !== "llamacpp" && manifest.spec.engine !== "omlx") ||
       manifest.spec.useProxy
     ) {
       return undefined;
@@ -987,8 +988,9 @@ export async function readSupervisorRecordedSleep(
       { workload: target.name, probeOrigin: probe.origin },
       { signal: AbortSignal.timeout(1200) },
     );
-    if (status?.state === "Running" && isSleepResidency(status.probeSleep))
-      return status.probeSleep;
+    if (status?.state !== "Running") return undefined;
+    if (manifest.spec.engine === "omlx") return status.probeParked === true ? "parked" : undefined;
+    if (isSleepResidency(status.probeSleep)) return status.probeSleep;
   } catch {
     // A missing or unreachable owner cannot attest that a probe is safe to skip.
   }

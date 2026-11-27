@@ -145,7 +145,10 @@ function unreachableSnapshot(
     revision: snapshot?.revision ?? null,
     sampledAt,
     metrics: { available: false, reason: "workload unreachable" },
-    slots: { available: false, reason: snapshot?.sleep ?? "workload unreachable" },
+    slots: {
+      available: false,
+      reason: snapshot?.parked ? "parked" : (snapshot?.sleep ?? "workload unreachable"),
+    },
     stats: recorder.get(target.name),
   };
 }
@@ -165,15 +168,15 @@ async function sampleTarget(
   readOptions: CollectorReadOptions,
   now: () => number,
 ): Promise<EngineThroughputSnapshot> {
-  const sleep = snapshot.sleep;
+  const residency = snapshot.parked ? "parked" : snapshot.sleep;
   const [metrics, slots] = await Promise.all([
     readEngineMetrics(
       target.endpoint,
-      sleep === undefined ? readOptions : { ...readOptions, redirect: "error" },
+      residency === undefined ? readOptions : { ...readOptions, redirect: "error" },
     ),
-    sleep === undefined
+    residency === undefined
       ? readSlotProgress(target.endpoint, readOptions)
-      : { available: false, reason: sleep, slots: [] },
+      : { available: false, reason: residency, slots: [] },
   ]);
   const atMs = now();
 
