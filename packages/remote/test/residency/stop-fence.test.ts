@@ -1239,9 +1239,9 @@ test.each([
         for await (const _event of events) {
           // Wait for readiness and claim settlement.
         }
+        expect(existsSync(modelHostPath(workload, tmp))).toBe(accept);
       }
       expect(observations).toEqual([{ routeCount: 0, phase: "unloaded", residency: "loading" }]);
-      if (kind === "ModelHost") expect(existsSync(modelHostPath(workload, tmp))).toBe(accept);
       expect(lifecycle.getResidencyState(workload)?.state).toBe(accept ? "ready" : "failed");
       expect(listWorkloadRoutes(envMod.resolveEnv(), workload).length > 0).toBe(accept);
       expect(reg.snapshot(workload).phase).toBe(accept ? "open" : "unloaded");
