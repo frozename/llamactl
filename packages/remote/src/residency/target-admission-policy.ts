@@ -34,7 +34,10 @@ import { existsSync, mkdirSync, readFileSync } from "../safe-fs.js";
 import { pinModelHostStartup } from "../server/modelhost.js";
 import { declaredModelHostMemoryGiB } from "../workload/admission.js";
 import { modelRunStartInvocation, parseEvictTargets } from "../workload/apply.js";
-import { ModelHostManifestSchema } from "../workload/modelhost-schema.js";
+import {
+  modelHostExternalBindHost,
+  ModelHostManifestSchema,
+} from "../workload/modelhost-schema.js";
 import { loadNodeRunByName, nodeRunPath } from "../workload/noderun-store.js";
 import { ModelRunSchema } from "../workload/schema.js";
 import { defaultWorkloadsDir, loadWorkloadByNameAny, workloadPath } from "../workload/store.js";
@@ -331,9 +334,12 @@ function launchWithPhysicalGate(
 
 type ApprovedPlan = Pick<AdmitRequest, "specDigest" | "allocationGiB">;
 type DesiredManifest = ReturnType<typeof loadWorkloadByNameAny>;
+type PlanRefusal = { refusal: string };
 
-function compileDesired(manifest: DesiredManifest): ApprovedPlan | undefined {
+function compileDesired(manifest: DesiredManifest): ApprovedPlan | PlanRefusal | undefined {
   if (manifest.kind === "ModelHost") {
+    if (modelHostExternalBindHost(manifest.spec) !== null)
+      return { refusal: "ManagedExternalBindUnavailable" };
     const allocationGiB = declaredModelHostMemoryGiB(manifest);
     if (allocationGiB === null || allocationGiB <= 0) return undefined;
     return { allocationGiB, specDigest: pinModelHostStartup(manifest).effectiveSpecDigest };
@@ -351,10 +357,14 @@ function compileDesired(manifest: DesiredManifest): ApprovedPlan | undefined {
     return undefined;
   }
   const { workload, ...opts } = modelRunStartInvocation(manifest);
-  const prepared = server.prepareManagedServerStart({ ...opts, key: { name: workload } });
-  return "result" in prepared
-    ? undefined
-    : { allocationGiB, specDigest: prepared.effectiveSpecDigest };
+  const resolved = resolveEnv();
+  const prepared = server.prepareManagedServerStart({ ...opts, resolved, key: { name: workload } });
+  if ("result" in prepared) return undefined;
+  // A retry can drop the explicit --host and fall back to the endpoint.
+  const fallback = opts.endpoint?.host ?? resolved.LLAMA_CPP_HOST;
+  if (server.hostBindRefusal(["--host", fallback, ...prepared.launch.args], undefined, false))
+    return { refusal: "ManagedExternalBindUnavailable" };
+  return { allocationGiB, specDigest: prepared.effectiveSpecDigest };
 }
 
 function approveLaunch(
@@ -363,7 +373,7 @@ function approveLaunch(
   aliases: ReadonlySet<string>,
   pending: DesiredManifest | undefined,
   nodeName: string,
-): ApprovedPlan | { refusal: string } | undefined {
+): ApprovedPlan | PlanRefusal | undefined {
   if (request.effectiveSpecDigest === undefined) return undefined;
   const manifest =
     pending?.metadata.name === request.runtimeKey
@@ -378,6 +388,7 @@ function approveLaunch(
     return undefined;
   }
   const approved = readDesired(() => compileDesired(manifest));
+  if (approved !== undefined && "refusal" in approved) return approved;
   if (approved?.specDigest !== request.effectiveSpecDigest) return undefined;
   const profiles = managedProfileMemberProfiles(manifest.metadata.annotations);
   if (profiles.length === 0) return approved;
@@ -405,6 +416,7 @@ function checkManagedApply(
   const approved = compileDesired(manifest);
   if (approved === undefined)
     throw new Error("ManagedSpecUnknown: managed apply cannot pin this manifest");
+  if ("refusal" in approved) throw new Error(approved.refusal);
   const claims = authority.snapshot();
   const runtimeKey = manifest.metadata.name;
   const current = claims.find((row) => row.runtimeKey === runtimeKey);
@@ -445,7 +457,9 @@ function profileReplacement(
     return undefined;
   }
   const plan = readDesired(() => compileDesired(manifest));
-  return plan === undefined ? undefined : { ...plan, runtimeKey: workload, kind: manifest.kind };
+  return plan === undefined || "refusal" in plan
+    ? undefined
+    : { ...plan, runtimeKey: workload, kind: manifest.kind };
 }
 
 function preflightManagedProfile(

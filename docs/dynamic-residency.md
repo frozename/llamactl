@@ -485,6 +485,8 @@ Use a one-off switch with a single desired-state writer and no conflicting launc
 
 On the approved target, start its authenticated agent with `LLAMACTL_MANAGED_RESIDENCY=1`. The agent checks its named NodeRun budget against fresh local capacity, verifies the recorded processes, and binds the two journals to their file identities. Use `llamactl apply -f` with `--managed` to send desired workload changes to that owner. Capture the admission ledger and transition journal together for recovery.
 
+Managed workloads require a loopback engine listener so fleet requests enter through the admitting agent. The owner checks the effective bind, including engine arguments and the ModelRun fallback endpoint. Route fleet traffic through the agent's authenticated proxy.
+
 Use `llamactl residency load <workload> --node <name>` and `llamactl residency unload <workload> --node <name>` to preview a whole-process action on one exact managed workload. Add `--execute --yes` to run the previewed action. The owner checks the current profile, its leases and the transition journal. Unload refuses an active or protected workload and leaves the desired manifest enabled, so later authorized activation can load it again. Disable the workload through managed apply to remove that eligibility.
 
 On an authorized unload, `--wait-seconds` gives active requests up to 60 seconds to finish. The owner blocks new leases for that workload while it waits and holds the same drain through the verified stop. A timeout or cancellation before teardown reopens admission. Protected workloads, active sessions, and unverified inference holds still refuse the stop.

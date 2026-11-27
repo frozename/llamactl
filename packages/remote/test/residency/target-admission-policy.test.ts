@@ -320,6 +320,109 @@ async function withCapacityOwner(
   }
 }
 
+test.each(["endpoint", "engine argument"])(
+  "managed ModelHost rejects an external %s before any reservation or start",
+  async (source) => {
+    await withCapacityOwner(
+      () => localCapacity(56),
+      async ({ admission, authority }, request, runtimeDir) => {
+        const manifest = request.launch.manifest;
+        const exposed = {
+          ...manifest,
+          spec: {
+            ...manifest.spec,
+            allowExternalBind: true,
+            ...(source === "endpoint"
+              ? { endpoint: { ...manifest.spec.endpoint, host: "0.0.0.0" } }
+              : { extraArgs: ["--host=0.0.0.0"] }),
+          },
+        };
+        const pinned = pinModelHostStartup(exposed);
+        saveModelHost(exposed, join(runtimeDir, ".."));
+        const launch = mock(() =>
+          Promise.resolve({ ran: false as const, detail: "reached launch" }),
+        );
+        expect(
+          await admission.run(
+            {
+              ...request,
+              effectiveSpecDigest: pinned.effectiveSpecDigest,
+              effectiveLaunch: pinned.effectiveLaunch,
+              launch: { manifest: exposed },
+            },
+            new AbortController().signal,
+            launch,
+          ),
+        ).toEqual({ ran: false, detail: "ManagedExternalBindUnavailable" });
+        expect(launch).not.toHaveBeenCalled();
+        expect(authority.snapshot()).toEqual([]);
+        expect(
+          admission.preflightProfile?.({ victims: [], retained: [], replacements: [workload] }),
+        ).toBeDefined();
+      },
+    );
+  },
+);
+
+test.each(["endpoint", "engine argument"])(
+  "managed ModelRun rejects an external %s before any reservation or start",
+  async (source) => {
+    await withCapacityOwner(
+      () => localCapacity(56),
+      async ({ admission, authority }, _request, runtimeDir) => {
+        const directory = join(runtimeDir, "..");
+        const models = join(directory, "models");
+        const previous = process.env["LLAMA_CPP_MODELS"];
+        process.env["LLAMA_CPP_MODELS"] = models;
+        try {
+          mkdirSync(models);
+          writeFileSync(join(models, "exact.gguf"), "GGUF-fixture");
+          const manifest = parseWorkload(`
+apiVersion: llamactl/v1
+kind: ModelRun
+metadata: { name: external-model-run }
+spec:
+  node: ${node}
+  target: { kind: rel, value: exact.gguf }
+  binary: /usr/bin/false
+  allowExternalBind: true
+  ${source === "endpoint" ? 'endpoint: { host: "0.0.0.0" }' : 'extraArgs: ["--host", "0.0.0.0"]'}
+  resources: { expectedMemoryGiB: 16 }
+`);
+          saveWorkload(manifest, directory);
+          const { workload: runtimeKey, ...launch } = modelRunStartInvocation(manifest);
+          const prepared = server.prepareManagedServerStart({
+            ...launch,
+            key: { name: runtimeKey },
+          });
+          if ("result" in prepared) throw new Error(prepared.result.error);
+          const start = mock(() =>
+            Promise.resolve({ ran: false as const, detail: "reached launch" }),
+          );
+          expect(
+            await admission.run(
+              {
+                kind: "ModelRun",
+                runtimeKey,
+                effectiveSpecDigest: prepared.effectiveSpecDigest,
+                effectiveLaunch: prepared.launch,
+                launch,
+              },
+              new AbortController().signal,
+              start,
+            ),
+          ).toEqual({ ran: false, detail: "ManagedExternalBindUnavailable" });
+          expect(start).not.toHaveBeenCalled();
+          expect(authority.snapshot()).toEqual([]);
+        } finally {
+          if (previous === undefined) Reflect.deleteProperty(process.env, "LLAMA_CPP_MODELS");
+          else process.env["LLAMA_CPP_MODELS"] = previous;
+        }
+      },
+    );
+  },
+);
+
 test("profile preflight uses the ledger ceiling, while launch uses fresh headroom and abandons a refused claim", async () => {
   let available = 56;
   let reads = 0;
