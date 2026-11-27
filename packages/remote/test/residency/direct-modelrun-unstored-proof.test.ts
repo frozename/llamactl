@@ -14,10 +14,10 @@
  */
 import type { ResidencyState } from "@llamactl/core/residency/lifecycle";
 
-import { server } from "@llamactl/core";
+import { keepAlive, server } from "@llamactl/core";
 import { setResidencyLeaseRegistry } from "@llamactl/core/residency/leases";
 import { setSessionRefcountRegistry } from "@llamactl/core/residency/sessions";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -237,6 +237,16 @@ function writeSidecar(name: string, pid: number): void {
   expect(server.readServerState({ name })).not.toBeNull();
 }
 
+// Turns a propagated throw into a failing value, so a fail-closed case that
+// leaks its error fails BY ASSERTION instead of as an uncaught test error.
+function provenDownOrThrown(name: string): boolean | string {
+  try {
+    return directWorkloadProvenDown(name);
+  } catch (e) {
+    return e instanceof Error ? `threw: ${e.message}` : "threw";
+  }
+}
+
 beforeEach(() => {
   // Null registries keep fenceWorkloadStop on its pass-through path: these
   // cases pin the residency lifecycle rows and the proven-down predicate,
@@ -355,5 +365,62 @@ describe("unstored ModelRun proven-down (#517)", () => {
           line.startsWith("[residency] lifecycle boot recovery") && line.includes('"failed":1'),
       ),
     ).toBe(true);
+  });
+
+  // Part of #905. Kills: (a) requiring a pid file for the unstored-ModelRun
+  // identity (`serverMod.readServerPid(key) === null` in the sidecar guard) and
+  // (b) dropping the `modelhost.state` runtime exclusion, i.e. only the no-pid-file
+  // branch of isServerProvenDown and only `modelhost.pid` would prove down.
+  test("UP4: a sidecar with no pid file is proven down, and a sidecar beside only modelhost.state fails closed", () => {
+    writeSidecar("run-stateonly", 424242);
+    expect(server.readServerPid({ name: "run-stateonly" })).toBeNull();
+    expect(directWorkloadProvenDown("run-stateonly")).toBe(true);
+
+    const name = "run-hoststate";
+    writeDeadPid(name);
+    writeSidecar(name, recordedPid(name));
+    expect(directWorkloadProvenDown(name)).toBe(true);
+
+    writeFileSync(join(runtimeDir, "workloads", name, "modelhost.state"), "{}");
+    expect(directWorkloadProvenDown(name)).toBe(false);
+  });
+
+  // Part of #905. Kills: turning unstoredModelRunRecorded's `catch { return false }`
+  // into a rethrow, on the first statement of its try (the sidecar read). The
+  // sidecar is written before the spy lands, because writeSidecar reads it back
+  // through the same function.
+  test("UP5a: a throw from the sidecar read fails closed", () => {
+    writeDeadPid("run-throw");
+    writeSidecar("run-throw", recordedPid("run-throw"));
+    expect(provenDownOrThrown("run-throw")).toBe(true);
+
+    const spy = spyOn(server, "readServerState").mockImplementation(() => {
+      throw new Error("boom-state");
+    });
+    try {
+      expect(provenDownOrThrown("run-throw")).toBe(false);
+      expect(spy).toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  // Part of #905. Kills: the same rethrow on the last statement of the try (the
+  // keep-alive read). keepAliveWorkloadProvenDown also hits the spy on the
+  // fall-through path, but its own catch keeps the answer false.
+  test("UP5b: a throw from the keep-alive read fails closed", () => {
+    writeDeadPid("run-throw-ka");
+    writeSidecar("run-throw-ka", recordedPid("run-throw-ka"));
+    expect(provenDownOrThrown("run-throw-ka")).toBe(true);
+
+    const spy = spyOn(keepAlive, "readKeepAliveState").mockImplementation(() => {
+      throw new Error("boom-ka");
+    });
+    try {
+      expect(provenDownOrThrown("run-throw-ka")).toBe(false);
+      expect(spy).toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
