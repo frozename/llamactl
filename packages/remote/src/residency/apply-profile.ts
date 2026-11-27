@@ -43,6 +43,7 @@ import {
   withWorkloadsMutex,
 } from "../workload/store.js";
 import { residencyGroupLabelOf } from "./coordinator.js";
+import { profileOwnerIncarnation, RESIDENCY_APPLY_PROFILE_FENCE_OWNER } from "./profile-owner.js";
 import {
   executeProfileSwitch,
   type ProfileSwitchExecutionReport,
@@ -67,7 +68,7 @@ import {
 // uses (only the incarnation differs). #279 DF-06 agent-boot recovery claims
 // with it too, so a recovery claim never turns later apply-profile calls into
 // a foreign-owner Busy.
-export const RESIDENCY_APPLY_PROFILE_FENCE_OWNER = "llamactl-residency-apply-profile";
+export { RESIDENCY_APPLY_PROFILE_FENCE_OWNER } from "./profile-owner.js";
 const RESIDENCY_APPLY_PROFILE_DESIRED_REVISION = 0;
 
 // Per-process registry (#693) of the AbortController behind each in-flight wet
@@ -194,7 +195,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function defaultFenceIdentity(): FenceIdentity {
-  return { ownerId: RESIDENCY_APPLY_PROFILE_FENCE_OWNER, incarnation: randomUUID() };
+  return { ownerId: RESIDENCY_APPLY_PROFILE_FENCE_OWNER, incarnation: profileOwnerIncarnation() };
 }
 
 /**
@@ -482,13 +483,44 @@ function applyProfileLog(args: ApplyResidencyProfileArgs): (line: string) => voi
   return args.log ?? defaultApplyProfileLog;
 }
 
+function commitProfileDispatch(
+  store: ResidencyOperationStore,
+  pending: Extract<BeginOperationResult, { ok: true }>,
+): Extract<BeginOperationResult, { ok: true }> | { ok: false; reason: string } {
+  if (!pending.created) return pending;
+  const { operationId, fenceToken, version } = pending.record;
+  const nowMs = Date.now();
+  const input = { operationId, fenceToken, expectedVersion: version, nowMs };
+  let reason: string;
+  try {
+    const result = store.commitReservation(input);
+    if (result.ok) {
+      return {
+        ...pending,
+        record: { ...pending.record, phase: "committed", version: version + 1, updatedAtMs: nowMs },
+      };
+    }
+    reason = result.reason;
+  } catch (error: unknown) {
+    reason = error instanceof Error ? error.message : String(error);
+  }
+  try {
+    store.finishOperation({ ...input, outcome: "failed", detail: reason });
+  } catch {
+    // An unsuccessful cleanup leaves the original phase and fence for recovery.
+  }
+  return { ok: false, reason };
+}
+
 async function runFencedSwitch(
   plan: OkPlan,
   steps: ProfileSwitchExecutorDeps,
   args: ApplyResidencyProfileArgs,
   store: ResidencyOperationStore & ResidencyLifecycleStore,
-  begun: Extract<BeginOperationResult, { ok: true }>,
+  pending: Extract<BeginOperationResult, { ok: true }>,
 ): Promise<ResidencyApplyProfileResult> {
+  const begun = commitProfileDispatch(store, pending);
+  if (!begun.ok) return mapReport(profileSwitchOperationRefusal(plan, args.registry, begun.reason));
   const { operationId, fenceToken, desiredRevision } = begun.record;
   const controller = new AbortController();
   const log = applyProfileLog(args);

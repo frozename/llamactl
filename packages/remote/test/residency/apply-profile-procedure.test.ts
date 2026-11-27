@@ -24,6 +24,7 @@ import {
   buildResidencyPlan,
   collectResidencyObservations,
 } from "../../src/residency/procedures.js";
+import { profileOwnerIncarnation } from "../../src/residency/profile-owner.js";
 import {
   openResidencyOperationStore,
   type ResidencyLifecycleStore,
@@ -503,6 +504,65 @@ describe("residencyApplyProfile procedure", () => {
     expect(rec?.desiredRevision).toBe(0);
   });
 
+  test("a wet profile switch commits the reservation before the first lifecycle dependency", async () => {
+    seedRouterFixture();
+    const steps = recordingSteps();
+    const mod = await applyProfileModule();
+    const firstPhase: (string | undefined)[] = [];
+    mod.__setResidencyApplyProfileStepsForTests({
+      ...steps,
+      stop: (workload: string): ReturnType<ApplyProfileSteps["stop"]> => {
+        firstPhase.push(withStore((store) => store.listNonterminal()[0]?.phase));
+        return steps.stop(workload);
+      },
+    });
+
+    const result = await applyProfile({ node: "local", to: "code", dryRun: false, confirm: true });
+
+    expect(result.ok).toBe(true);
+    expect(firstPhase).toEqual(["committed"]);
+  });
+
+  test("confirmed wet retry recovers an abandoned pending reservation before planning", async () => {
+    seedRouterFixture();
+    await installStepsFake();
+    const child = Bun.spawn([process.execPath, "-e", ""], { stdout: "ignore", stderr: "ignore" });
+    expect(await child.exited).toBe(0);
+    withStore((store) => {
+      const owner = store.claimOwnership({
+        ownerId: RESIDENCY_APPLY_PROFILE_FENCE_OWNER,
+        incarnation: profileOwnerIncarnation(child.pid),
+      });
+      expect(
+        store.beginOperation({
+          operationId: "abandoned",
+          model: "profile-switch:local",
+          targetState: "profile:code",
+          desiredRevision: 0,
+          nowMs: Date.now(),
+          reservationGiB: 12,
+          fenceToken: owner.fenceToken,
+        }).ok,
+      ).toBe(true);
+    });
+
+    const dry = await applyProfile({ node: "local", to: "code" });
+    expect(dry.refusal?.reason).toBe("NodeBusy");
+    expect(withStore((store) => store.getOperation("abandoned"))?.phase).toBe("pending");
+
+    const wet = await applyProfile({ node: "local", to: "code", dryRun: false, confirm: true });
+    expect(wet.outcome).toBe("stops-and-starts-ran");
+    expect(withStore((store) => store.getOperation("abandoned"))).toMatchObject({
+      phase: "terminal",
+      outcome: "unknown",
+      detail: "recovered: owner exited before profile dispatch",
+    });
+    expect(stepCalls).toEqual([
+      ["stop", "chat-a"],
+      ["start", "code-b"],
+    ]);
+  });
+
   test("R3b: omitting from reports from null — the planner does not infer it", async () => {
     // kills: fabricating a from value.
     seedRouterFixture();
@@ -708,6 +768,31 @@ describe("residencyApplyProfile procedure", () => {
     expect(withStore((store) => store.currentFence())).toEqual(original);
     expect(withStore((store) => store.listNonterminal())).toEqual([]);
     expect(stepCalls).toEqual([]);
+  });
+
+  test("a refused profile dispatch commit releases the unused reservation and runs no step", async () => {
+    seedRouterFixture();
+    await installStepsFake();
+    withStore(() => undefined);
+    const fault = new Database(storePath);
+    try {
+      fault.run(`
+        CREATE TRIGGER refuse_profile_dispatch BEFORE UPDATE OF phase ON operations
+        WHEN NEW.model = 'profile-switch:local' AND NEW.phase = 'committed'
+        BEGIN SELECT RAISE(ABORT, 'fixture dispatch write failure'); END
+      `);
+    } finally {
+      fault.close();
+    }
+
+    const result = await applyProfile({ node: "local", to: "code", dryRun: false, confirm: true });
+
+    expect(result).toMatchObject({
+      outcome: "refused",
+      refusal: { reason: "operation-record-refused", detail: "fixture dispatch write failure" },
+    });
+    expect(stepCalls).toEqual([]);
+    expect(withStore((store) => store.listNonterminal())).toEqual([]);
   });
 
   test("wet no-op preserves the existing fence and leaves no reservation", async () => {

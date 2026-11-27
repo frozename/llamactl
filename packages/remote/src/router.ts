@@ -140,6 +140,7 @@ import {
   type ResidencyPlan,
   runIdleEviction,
 } from "./residency/procedures.js";
+import { recoverAbandonedProfileIntentsOnNode } from "./residency/recovery.js";
 import { fenceWorkloadStop, reopenWorkloadAfterLoad } from "./residency/stop-fence.js";
 import {
   defaultResidencyStorePath,
@@ -2772,6 +2773,7 @@ export const router = t.router({
     )
     .mutation(async ({ input }): Promise<ResidencyApplyProfileResult> => {
       const workloadsDir = workloadStoreMod.defaultWorkloadsDir();
+      const storePath = defaultResidencyStorePath();
       const rawNodeName = process.env["LLAMACTL_NODE_NAME"]?.trim() ?? "";
       const servingNode = rawNodeName === "" ? null : rawNodeName;
       if (!input.dryRun) {
@@ -2801,6 +2803,7 @@ export const router = t.router({
             controllerPid,
           });
         }
+        recoverAbandonedProfileIntentsOnNode(storePath, input.node);
       }
       const plan = residencyPlanFor({
         node: input.node,
@@ -2810,7 +2813,7 @@ export const router = t.router({
       return await applyResidencyProfile({
         plan,
         dryRun: input.dryRun,
-        storePath: defaultResidencyStorePath(),
+        storePath,
         workloadsDir,
         registry: getResidencyLeaseRegistry(),
         node: input.node,

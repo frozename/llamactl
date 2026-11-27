@@ -1,3 +1,4 @@
+import { profileOwnerLiveness } from "./profile-owner.js";
 /**
  * #279 DF-06: crash recovery for interrupted profile-switch operation records.
  *
@@ -51,7 +52,13 @@
  * An `evict:` row has no node and no fence-owned skip, so the classifier never
  * reports `owned-by-current-fence`.
  */
-import type { ResidencyOperationRecord } from "./store.js";
+import {
+  openResidencyOperationStore,
+  readResidencyStoreSnapshot,
+  RESIDENCY_LEASE_AUDIT_BUSY_TIMEOUT_MS,
+  type ResidencyOperationRecord,
+  type ResidencyOperationStore,
+} from "./store.js";
 
 type RecoverStore = {
   finishOperation: (input: {
@@ -263,6 +270,90 @@ function isPossiblyLive(
   return nowMs - record.updatedAtMs < minStaleAgeMs;
 }
 
+function isAbandonedBeforeProfileDispatch(record: ResidencyOperationRecord): boolean {
+  return (
+    record.phase === "pending" &&
+    classifyRow(record, null).kind === "stale" &&
+    profileOwnerLiveness(record) === "gone"
+  );
+}
+
+type AbandonedIntentStore = Pick<
+  ResidencyOperationStore,
+  "currentFence" | "finishOperation" | "close"
+>;
+
+function finishAbandonedIntent(
+  store: AbandonedIntentStore,
+  row: ResidencyOperationRecord,
+  nowMs: number,
+): boolean {
+  try {
+    const fence = store.currentFence();
+    if (fence === null) return false;
+    return store.finishOperation({
+      fenceToken: fence.fenceToken,
+      operationId: row.operationId,
+      expectedVersion: row.version,
+      outcome: "unknown",
+      detail: "recovered: owner exited before profile dispatch",
+      nowMs,
+    }).ok;
+  } catch {
+    return false;
+  }
+}
+
+export function finishAbandonedProfileIntents(
+  rows: readonly ResidencyOperationRecord[],
+  openStore: () => AbandonedIntentStore,
+  nowMs: number,
+): { finished: Set<string>; recordFailures: number } | null {
+  const abandoned = rows.filter(isAbandonedBeforeProfileDispatch);
+  if (abandoned.length === 0) return null;
+
+  const store = openStore();
+  const finished = new Set<string>();
+  try {
+    for (const row of abandoned) {
+      if (finishAbandonedIntent(store, row, nowMs)) finished.add(row.operationId);
+    }
+    return { finished, recordFailures: abandoned.length - finished.size };
+  } finally {
+    try {
+      store.close();
+    } catch {
+      // The operation outcome is already durable.
+    }
+  }
+}
+
+export function recoverAbandonedProfileIntentsOnNode(path: string, node: string): void {
+  try {
+    const busyTimeoutMs = RESIDENCY_LEASE_AUDIT_BUSY_TIMEOUT_MS;
+    const snapshot = readResidencyStoreSnapshot(path, { busyTimeoutMs });
+    if (!snapshot.present || "error" in snapshot) return;
+    const model = `${SWITCH_PREFIX}${node}`;
+    finishAbandonedProfileIntents(
+      snapshot.nonterminal.filter((record) => record.model === model),
+      () => openResidencyOperationStore({ path, busyTimeoutMs }),
+      Date.now(),
+    );
+  } catch {
+    // If the store stays busy the planner still sees the reservation and refuses the switch.
+  }
+}
+
+function profileSwitchPossiblyLive(
+  record: ResidencyOperationRecord,
+  nowMs: number,
+  minStaleAgeMs: number | undefined,
+): boolean {
+  return (
+    profileOwnerLiveness(record) === "possibly-live" || isPossiblyLive(record, nowMs, minStaleAgeMs)
+  );
+}
+
 export type ProfileSwitchRecoveryPreview = {
   stale: number;
   possiblyLive: number;
@@ -282,7 +373,7 @@ export function previewProfileSwitchRecovery(
     if (classification.kind === "unrecognized") {
       preview.unrecognized += 1;
     } else if (classification.kind === "stale") {
-      if (isPossiblyLive(record, opts.nowMs, opts.minStaleAgeMs)) {
+      if (profileSwitchPossiblyLive(record, opts.nowMs, opts.minStaleAgeMs)) {
         preview.possiblyLive += 1;
       } else {
         preview.stale += 1;
@@ -318,7 +409,7 @@ export function recoverProfileSwitchOperationsUnverified(
     }
 
     const now = nowMs();
-    if (isPossiblyLive(record, now, opts.minStaleAgeMs)) {
+    if (profileSwitchPossiblyLive(record, now, opts.minStaleAgeMs)) {
       possiblyLive.push({
         operationId: record.operationId,
         node: classification.node,
