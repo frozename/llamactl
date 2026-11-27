@@ -1,4 +1,4 @@
-import { routingCapabilities } from "@llamactl/core";
+import { routingCapabilities, routingCatalog } from "@llamactl/core";
 import { resolveEnv } from "@llamactl/core/env";
 import { readWorkloadEpoch } from "@llamactl/core/kvstore";
 import { listLocalRoutes, type LocalRoute } from "@llamactl/core/workloadRuntime";
@@ -17,6 +17,7 @@ export interface FleetSnapshotRouteOptions {
   revisionOf?: (name: string) => string | null;
   /** #306: clock for the fallback's `ts`. Defaults to new Date(). */
   now?: () => Date;
+  declaredProvenance?: { ownerNodeId: string; read: () => unknown };
 }
 
 /** #306: one workload of the minimal snapshot served when the journal has no entry. */
@@ -46,7 +47,10 @@ export function readFleetSnapshot(
   opts: FleetSnapshotRouteOptions = {},
 ): ReturnType<typeof readLatestFleetSnapshotFromJournal> {
   const journalPath = opts.journalPath ?? defaultFleetJournalPath();
-  return readLatestFleetSnapshotFromJournal(journalPath);
+  const snapshot = readLatestFleetSnapshotFromJournal(journalPath);
+  // Journal bytes can carry extra keys, but only the owner publisher can add this field.
+  if (snapshot !== null) Reflect.deleteProperty(snapshot, "declaredProvenance");
+  return snapshot;
 }
 
 function urlHost(host: string): string {
@@ -206,11 +210,41 @@ export function readFleetSnapshotOrLocalRoutes(
   return localRoutesFallback(opts);
 }
 
+function readPublishedProvenance(
+  req: Request,
+  source: FleetSnapshotRouteOptions["declaredProvenance"],
+): routingCatalog.PeerDeclarationProvenanceV1 | undefined {
+  if (
+    source === undefined ||
+    req.headers.get(routingCatalog.PEER_DECLARATION_PROVENANCE_HEADER) !== "1"
+  ) {
+    return undefined;
+  }
+  try {
+    return routingCatalog.readPeerDeclarationProvenance(source.read(), source.ownerNodeId);
+  } catch {
+    return undefined;
+  }
+}
+
 export function handleFleetSnapshotRoute(
   req: Request,
   opts: FleetSnapshotRouteOptions = {},
 ): Response {
-  const snapshot = readFleetSnapshotOrLocalRoutes(opts, wantsLocalRoutes(req));
-  if (snapshot === null) return new Response(null, { status: 204 });
-  return Response.json(snapshot, { status: 200 });
+  const includeLocal = wantsLocalRoutes(req);
+  const snapshot = readFleetSnapshotOrLocalRoutes(opts, includeLocal);
+  const declaredProvenance = includeLocal
+    ? readPublishedProvenance(req, opts.declaredProvenance)
+    : undefined;
+  if (snapshot === null && declaredProvenance === undefined) {
+    return new Response(null, { status: 204 });
+  }
+  const body = snapshot ?? {
+    kind: "local-routes",
+    ts: (opts.now?.() ?? new Date()).toISOString(),
+    workloads: [],
+  };
+  return Response.json(declaredProvenance === undefined ? body : { ...body, declaredProvenance }, {
+    status: 200,
+  });
 }

@@ -5,7 +5,7 @@ import type { PeerSnapshot } from "@llamactl/core/workloadRuntime";
 // package path and the relative path are distinct module instances, so a
 // relative import would publish to a productionPeerSnapshots the proxy never
 // reads (routes silently never appear).
-import { openaiProxy, routingCapabilities } from "@llamactl/core";
+import { openaiProxy, routingCapabilities, routingCatalog } from "@llamactl/core";
 import { resolveToken } from "@llamactl/core/config/kubeconfig";
 import { listPeers, type PeerNode } from "@llamactl/core/config/peers";
 import { callViaTunnelRelay } from "@llamactl/core/tunnel-relay";
@@ -22,15 +22,20 @@ import { makePinnedFetch } from "../client/links.js";
  * collision — so publishing a peer's full model list is safe.
  */
 
+interface RawFleetWorkload {
+  name?: string;
+  kind?: string;
+  models?: unknown;
+  endpoint?: string;
+  reachable?: boolean;
+  revision?: string | null;
+  labels?: unknown;
+}
+
 interface RawFleetSnapshot {
   node_mem?: { free_mb?: number; inactive_mb?: number };
-  workloads?: {
-    models?: string[];
-    endpoint?: string;
-    reachable?: boolean;
-    revision?: string | null;
-    labels?: unknown;
-  }[];
+  workloads?: unknown;
+  declaredProvenance?: unknown;
 }
 
 // Treat a peer as HIGH pressure (routes dropped by listClusterRoutes) only when
@@ -65,19 +70,21 @@ function peerQualificationLabels(labels: unknown): Record<string, string> | unde
   return { [routingCapabilities.QUALIFICATION_LABEL]: stage };
 }
 
+function isFleetWorkload(value: unknown): value is RawFleetWorkload {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 /** Flatten reachable workloads into deduped { modelId, port, revision } rows. */
-function collectPeerWorkloads(
-  rawWorkloads: NonNullable<RawFleetSnapshot["workloads"]>,
-): PeerSnapshot["workloads"] {
+function collectPeerWorkloads(rawWorkloads: RawFleetWorkload[]): PeerSnapshot["workloads"] {
   const seen = new Set<string>();
   const workloads: PeerSnapshot["workloads"] = [];
   for (const w of rawWorkloads) {
-    if (w.reachable === false) continue;
+    if (w.reachable === false || !Array.isArray(w.models)) continue;
     const port = parseWorkloadPort(w.endpoint);
     const revision = w.revision ?? null;
     const labels = peerQualificationLabels(w.labels);
-    for (const modelId of w.models ?? []) {
-      if (!modelId || seen.has(modelId)) continue;
+    for (const modelId of w.models) {
+      if (typeof modelId !== "string" || !modelId || seen.has(modelId)) continue;
       seen.add(modelId);
       workloads.push({
         modelId,
@@ -88,6 +95,54 @@ function collectPeerWorkloads(
     }
   }
   return workloads;
+}
+
+function allowsDeclarationProvenance(peer: PeerNode): boolean {
+  // Tunnel hello names can share a bearer. This version requires a direct
+  // connection using the configured peer's pinned certificate.
+  return (
+    peer.tunnelPreferred !== true &&
+    peer.endpoint.startsWith("https://") &&
+    Boolean(peer.certificate?.trim()) &&
+    Boolean(peer.token?.trim())
+  );
+}
+
+function uniqueWorkloadByAlias(
+  workloads: RawFleetWorkload[],
+): Map<string, RawFleetWorkload | null> {
+  const aliases = new Map<string, RawFleetWorkload | null>();
+  for (const workload of workloads) {
+    if (!Array.isArray(workload.models)) continue;
+    for (const model of new Set(workload.models)) {
+      if (typeof model === "string") aliases.set(model, aliases.has(model) ? null : workload);
+    }
+  }
+  return aliases;
+}
+
+function matchesWorkload(
+  entry: routingCatalog.PeerDeclarationProvenanceV1["entries"][number],
+  workload: RawFleetWorkload | null | undefined,
+): boolean {
+  if (workload === undefined) return entry.state !== "ready";
+  if (workload?.name !== entry.workload) return false;
+  if (workload.kind !== undefined && workload.kind !== entry.kind) return false;
+  return entry.state !== "ready" || workload.reachable === true;
+}
+
+function readDeclarationProvenance(
+  peer: PeerNode,
+  value: unknown,
+  workloads: RawFleetWorkload[],
+): routingCatalog.PeerDeclarationProvenanceV1 | undefined {
+  if (!allowsDeclarationProvenance(peer)) return undefined;
+  const proof = routingCatalog.readPeerDeclarationProvenance(value, peer.id);
+  if (proof === undefined) return undefined;
+  const aliases = uniqueWorkloadByAlias(workloads);
+  return proof.entries.every((entry) => matchesWorkload(entry, aliases.get(entry.id)))
+    ? proof
+    : undefined;
 }
 
 function computePeerPressure(nodeMem: RawFleetSnapshot["node_mem"]): PeerSnapshot["pressure"] {
@@ -113,6 +168,8 @@ async function readPeerSnapshotDirectWithTimeout(
 ): Promise<RawFleetSnapshot | null> {
   const headers: Record<string, string> = {};
   if (peer.token) headers["authorization"] = `Bearer ${peer.token}`;
+  const negotiatedProof = allowsDeclarationProvenance(peer);
+  if (negotiatedProof) headers[routingCatalog.PEER_DECLARATION_PROVENANCE_HEADER] = "1";
   const pinnedFetch = makePinnedFetch({
     name: peer.id,
     endpoint: peer.endpoint,
@@ -127,7 +184,12 @@ async function readPeerSnapshotDirectWithTimeout(
     controller.abort();
   }, timeoutMs);
   try {
-    const res = await pinnedFetch(target, { method: "GET", headers, signal: controller.signal });
+    const res = await pinnedFetch(target, {
+      method: "GET",
+      headers,
+      signal: controller.signal,
+      ...(negotiatedProof ? { redirect: "error" } : {}),
+    });
     if (!res.ok) {
       // Discarding the response leaves Bun transferring its body after this tick.
       controller.abort();
@@ -191,11 +253,34 @@ async function fetchPeerSnapshot(
     peer.tunnelPreferred === true
       ? await readPeerSnapshotViaTunnel(peer).catch(() => null)
       : await readPeerSnapshotDirectWithTimeout(peer, timeoutMs).catch(() => null);
-  if (!snap?.workloads?.length) return null;
+  if (!snap || !Array.isArray(snap.workloads)) return null;
 
-  const workloads = collectPeerWorkloads(snap.workloads);
-  if (workloads.length === 0) return null;
-  return { workloads, pressure: computePeerPressure(snap.node_mem), fetchedAt: nowMs };
+  const rawWorkloads = snap.workloads.filter(isFleetWorkload);
+  const workloads = collectPeerWorkloads(rawWorkloads);
+  const declaredProvenance = readDeclarationProvenance(peer, snap.declaredProvenance, rawWorkloads);
+  if (workloads.length === 0 && declaredProvenance === undefined) return null;
+  return {
+    workloads,
+    ...(declaredProvenance === undefined ? {} : { declaredProvenance }),
+    pressure: computePeerPressure(snap.node_mem),
+    fetchedAt: nowMs,
+  };
+}
+
+function withoutDeclarationProvenance(snapshot: PeerSnapshot): PeerSnapshot {
+  if (snapshot.declaredProvenance === undefined) return snapshot;
+  const { declaredProvenance: _discarded, ...legacy } = snapshot;
+  return legacy;
+}
+
+function duplicatePeerIds(peers: PeerNode[]): Set<string> {
+  const seen = new Set<string>();
+  const duplicates = new Set<string>();
+  for (const { id } of peers) {
+    if (seen.has(id)) duplicates.add(id);
+    seen.add(id);
+  }
+  return duplicates;
 }
 
 export interface PeerSnapshotPollerOptions {
@@ -231,11 +316,29 @@ export function startPeerSnapshotPoller(opts: PeerSnapshotPollerOptions = {}): (
   let lastPublished = new Map<string, PeerSnapshot>();
   const isStopped = (): boolean => stopped;
 
+  const discoverPeers = (): PeerNode[] | null => {
+    try {
+      return discover();
+    } catch {
+      // A broken kubeconfig cannot vouch for the previous set of owners.
+      if ([...lastPublished.values()].some((snap) => snap.declaredProvenance !== undefined)) {
+        const legacy = new Map(
+          [...lastPublished].map(([id, snap]) => [id, withoutDeclarationProvenance(snap)]),
+        );
+        publish(legacy);
+        lastPublished = legacy;
+      }
+      return null;
+    }
+  };
+
   const tick = async (): Promise<void> => {
     if (stopped || inflight) return;
     inflight = true;
     try {
-      const peers = discover();
+      const peers = discoverPeers();
+      if (peers === null) return;
+      const duplicates = duplicatePeerIds(peers);
       // Seed with the previous snapshot for each still-configured peer so a
       // single transient fetch failure (TLS keepalive, a 204 between supervisor
       // journal writes) does NOT wipe the peer's routes. listClusterRoutes
@@ -245,14 +348,19 @@ export function startPeerSnapshotPoller(opts: PeerSnapshotPollerOptions = {}): (
       const next = new Map<string, PeerSnapshot>();
       for (const peer of peers) {
         const prev = lastPublished.get(peer.id);
-        if (prev !== undefined) next.set(peer.id, prev);
+        if (prev !== undefined) next.set(peer.id, withoutDeclarationProvenance(prev));
       }
       const nowMs = nowFn();
       await Promise.all(
         peers.map(async (peer) => {
           try {
             const snap = await fetchOne(peer, nowMs);
-            if (snap) next.set(peer.id, snap);
+            if (snap) {
+              next.set(
+                peer.id,
+                duplicates.has(peer.id) ? withoutDeclarationProvenance(snap) : snap,
+              );
+            }
           } catch {
             // Per-peer failure must not block peers already in flight.
           }
