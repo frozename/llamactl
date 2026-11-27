@@ -48,6 +48,7 @@ import {
   type AdmissionAuthority,
   type AdmitRequest,
   type AuthorityClaimRow,
+  type DetachedGroupState,
   type GenerationRecord,
   openAdmissionAuthority,
   type ProcessObservation,
@@ -84,6 +85,7 @@ const openAuthority = (
     owner?: OwnerIdentity | undefined;
     observations?: Map<number, ProcessObservation> | undefined;
     observe?: (pid: number) => ProcessObservation | undefined;
+    observeGroup?: (generation: GenerationRecord) => DetachedGroupState;
     pidFiles?: Map<string, number> | undefined;
   },
 ): Harness => {
@@ -101,6 +103,7 @@ const openAuthority = (
       storePath,
       budgetGiB: () => budget.value,
       observe: opts?.observe ?? ((pid): ProcessObservation | undefined => observations.get(pid)),
+      ...(opts?.observeGroup === undefined ? {} : { observeGroup: opts.observeGroup }),
       readPidFile: (key) => pidFiles.get(key),
       owner,
     });
@@ -511,6 +514,36 @@ describe("admission-authority", () => {
       h.observations.set(pid, { pid, alive: true, birthId: "new-generation" });
       expect(proof?.verifyGeneration(pid)).toBe("unknown");
       expect(proof?.release(pid)).toMatchObject({ kind: "retained", reason: "live-generation" });
+      expect(chargedGiB(h.authority)).toBe(8);
+    } finally {
+      h.authority.close();
+      h.cleanup();
+    }
+  });
+
+  test("missing detached-group evidence keeps a dead legacy generation charged", () => {
+    const h = openAuthority(24, { observeGroup: () => "unknown" });
+    const pid = 4401;
+    const generation = { pid, birthId: "fixture-generation" };
+    try {
+      const { claimId, fenceToken } = mustAdmit(
+        h.authority,
+        request("legacy-group", "d", "ModelRun", 8),
+      );
+      expect(h.authority.recordGeneration(claimId, fenceToken, generation)).toBe(true);
+      expect(h.authority.completeReady(claimId, fenceToken)).toBe(true);
+      h.pidFiles.set("legacy-group", pid);
+      h.observations.set(pid, { ...generation, alive: true });
+      const proof = h.authority.prepareStopRelease("legacy-group", "ModelRun");
+      expect(proof?.verifyGeneration(pid)).toBe("alive");
+
+      h.observations.set(pid, { ...generation, alive: false });
+      expect(proof?.verifyGeneration(pid)).toBe("unknown");
+      expect(h.authority.tryRelease(claimId)).toEqual({
+        kind: "retained",
+        claimId,
+        reason: "unverified-process-group",
+      });
       expect(chargedGiB(h.authority)).toBe(8);
     } finally {
       h.authority.close();

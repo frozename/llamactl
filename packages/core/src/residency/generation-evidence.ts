@@ -1,6 +1,8 @@
 export type GenerationRecord = {
   pid: number;
   birthId?: string | undefined;
+  processGroupId?: number | undefined;
+  processGroupScope?: string | undefined;
   startTimeMs?: number | undefined;
   executable?: string | undefined;
 };

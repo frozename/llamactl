@@ -66,6 +66,14 @@ export type ReleaseAttemptResult =
   | { kind: "retained"; claimId: string; reason: string }
   | { kind: "unknown-claim"; claimId: string };
 
+export type DetachedGroupState = "absent" | "present" | "unknown";
+type ObserveDetachedGroup = (generation: GenerationRecord) => DetachedGroupState;
+const GROUP_RELEASE_REFUSAL = {
+  absent: undefined,
+  present: "live-detached-group",
+  unknown: "unverified-process-group",
+} as const;
+
 export interface ManagedStopProof {
   verifyGeneration: NonNullable<PidIdentityDeps["verifyGeneration"]>;
   release(stoppedPid: number): ReleaseAttemptResult;
@@ -212,6 +220,7 @@ function releaseClaim(
   store: AdmissionStore,
   pidFilePid: number | undefined,
   observe: ObserveGeneration,
+  observeGroup: ObserveDetachedGroup | undefined,
 ): ReleaseAttemptResult {
   const { claimId } = row;
   if (captured.length === 0) {
@@ -234,6 +243,8 @@ function releaseClaim(
     if (verdict.kind !== "verified-absent") {
       return { kind: "retained", claimId, reason: "unidentified-death" };
     }
+    const groupRefusal = GROUP_RELEASE_REFUSAL[observeGroup?.(gen) ?? "absent"];
+    if (groupRefusal !== undefined) return { kind: "retained", claimId, reason: groupRefusal };
   }
   const released = store.releaseVerified(claimId, row.fenceToken, {
     verification: "runtime-absent",
@@ -251,6 +262,7 @@ function captureStopRelease(
   row: ClaimRow,
   readPidFile: (runtimeKey: string) => number | undefined,
   observe: ObserveGeneration,
+  observeGroup: ObserveDetachedGroup | undefined,
 ): ManagedStopProof | undefined {
   if (row.state === "pending") return undefined;
   const before = readPidFile(row.runtimeKey);
@@ -260,12 +272,18 @@ function captureStopRelease(
   if (generation === undefined) return undefined;
   const verifyGeneration: ManagedStopProof["verifyGeneration"] = (pid) => {
     if (pid !== before || readPidFile(row.runtimeKey) !== before) return "unknown";
+    const observation = observe(pid, generation);
     const verdict = judgeGeneration({
       recorded: generation,
-      observation: observe(pid, generation),
+      observation,
     });
-    if (verdict.kind === "same-generation") return "alive";
-    return verdict.kind === "verified-absent" ? "dead" : "unknown";
+    if (verdict.kind === "same-generation") {
+      return matchesRecordedGroup(generation, observation) ? "alive" : "unknown";
+    }
+    return verdict.kind === "verified-absent" &&
+      (observeGroup?.(generation) ?? "absent") === "absent"
+      ? "dead"
+      : "unknown";
   };
   if (verifyGeneration(before) === "unknown") return undefined;
   return {
@@ -275,9 +293,20 @@ function captureStopRelease(
       if (stoppedPid !== before || (after !== undefined && after !== before)) {
         return { kind: "retained", claimId: row.claimId, reason: "pid-record-conflict" };
       }
-      return releaseClaim(row, captured, store, before, observe);
+      return releaseClaim(row, captured, store, before, observe, observeGroup);
     },
   };
+}
+
+function matchesRecordedGroup(
+  recorded: GenerationRecord,
+  observed: ProcessObservation | undefined,
+): boolean {
+  return (
+    recorded.processGroupId === undefined ||
+    (recorded.processGroupId === observed?.processGroupId &&
+      recorded.processGroupScope === observed.processGroupScope)
+  );
 }
 
 function isReadableStore(store: AdmissionStore | null): boolean {
@@ -311,6 +340,7 @@ export function openAdmissionAuthority(opts: {
   storePath: string;
   budgetGiB: () => number | undefined;
   observe: ObserveGeneration;
+  observeGroup?: ObserveDetachedGroup;
   readPidFile: (runtimeKey: string) => number | undefined;
   owner: OwnerIdentity;
 }): AdmissionAuthority {
@@ -395,6 +425,7 @@ export function openAdmissionAuthority(opts: {
         active,
         opts.readPidFile(row.runtimeKey),
         opts.observe,
+        opts.observeGroup,
       );
     },
 
@@ -409,7 +440,7 @@ export function openAdmissionAuthority(opts: {
       );
       return row === undefined
         ? undefined
-        : captureStopRelease(active, row, opts.readPidFile, opts.observe);
+        : captureStopRelease(active, row, opts.readPidFile, opts.observe, opts.observeGroup);
     },
 
     snapshot(): readonly AuthorityClaimRow[] {
