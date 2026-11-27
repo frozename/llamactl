@@ -51,6 +51,7 @@ export type LlamacppVerifiedStopResult =
 export type LlamacppSleepTrigger =
   | "SleepRefused"
   | "SleepUnsupported"
+  | "SleepUnconfirmed"
   | "SleepTimedOut"
   | "SleepUnreachable"
   | "ProcessFallback";
@@ -111,6 +112,29 @@ function createLlamacppSleepDriver(opts: LlamacppSleepDriverOptions): LlamacppSl
   const sleepPath = rawSleepPath ?? "/sleep";
   const base = baseFetch ?? globalThis.fetch;
 
+  async function confirmsSleep(signal: AbortSignal): Promise<boolean> {
+    try {
+      const response = await base(
+        `${baseUrl}/props`,
+        applyAuth(apiKey, { method: "GET", signal, redirect: "error", cache: "no-store" }),
+      );
+      if (response.status !== 200) {
+        response.body?.cancel().catch(() => undefined);
+        return false;
+      }
+      const body: unknown = await response.json();
+      return (
+        !signal.aborted &&
+        typeof body === "object" &&
+        body !== null &&
+        !Array.isArray(body) &&
+        (body as Record<string, unknown>)["is_sleeping"] === true
+      );
+    } catch {
+      return false;
+    }
+  }
+
   async function sleep(): Promise<LlamacppSleepOutcome> {
     // #520: session check runs before controller.requestSleep — no IO, no
     // controller mutation, no process stop.
@@ -157,7 +181,7 @@ function createLlamacppSleepDriver(opts: LlamacppSleepDriverOptions): LlamacppSl
     try {
       const response = await base(
         `${baseUrl}${sleepPath}`,
-        applyAuth(apiKey, { method: "POST", signal }),
+        applyAuth(apiKey, { method: "POST", signal, redirect: "error" }),
       );
       httpStatus = response.status;
 
@@ -167,21 +191,21 @@ function createLlamacppSleepDriver(opts: LlamacppSleepDriverOptions): LlamacppSl
         response.body.cancel().catch(() => undefined);
       }
 
-      // Step 4: classify the response
-      if (response.ok) {
+      // A successful command acknowledgement is not proof that the model
+      // released memory. /props observes the state without triggering wake.
+      if (response.ok && (await confirmsSleep(signal))) {
         controller.sleepSettled(memberId, "slept", cacheIdentity);
         return { kind: "slept", reservation: "released" };
       }
 
-      // Non-2xx: sleep failed, mark as failed first so member is unknown/uncertain
       controller.sleepSettled(memberId, "failed");
-
-      const trigger: LlamacppSleepTrigger =
-        httpStatus === 404 || httpStatus === 405 || httpStatus === 501
-          ? "SleepUnsupported"
-          : "SleepRefused";
-
-      return await runVerifiedStop(trigger, httpStatus, verifiedStop, controller, memberId);
+      return await runVerifiedStop(
+        sleepResponseTrigger(response),
+        httpStatus,
+        verifiedStop,
+        controller,
+        memberId,
+      );
     } catch (err) {
       // Step 4 (cont): fetch error — mark as failed first
       controller.sleepSettled(memberId, "failed");
@@ -193,6 +217,12 @@ function createLlamacppSleepDriver(opts: LlamacppSleepDriverOptions): LlamacppSl
   }
 
   return { sleep };
+}
+
+function sleepResponseTrigger(response: Response): LlamacppSleepTrigger {
+  if (response.ok) return "SleepUnconfirmed";
+  const { status } = response;
+  return status === 404 || status === 405 || status === 501 ? "SleepUnsupported" : "SleepRefused";
 }
 
 // A waking member blocks every observation except 'ready'/'loading'

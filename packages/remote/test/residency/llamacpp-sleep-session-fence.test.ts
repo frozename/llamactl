@@ -113,6 +113,9 @@ function startFakeLlama(): FakeLlama {
         }
         return Response.json({ error: `sleep refused with ${String(mode)}` }, { status: mode });
       }
+      if (req.method === "GET" && url.pathname === "/props") {
+        return Response.json({ is_sleeping: true });
+      }
       if (req.method === "GET" && url.pathname === "/health") {
         counts.healthGets += 1;
         return Response.json({ ok: true });
