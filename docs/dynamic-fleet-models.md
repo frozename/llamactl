@@ -1492,6 +1492,24 @@ therefore the status-only form, for example `GTT reader returned no sample
 (status: denied)`. The source clause appears only for an injected reader
 that names a source.
 
+### Supervisor swap observations
+
+The supervisor's fleet snapshot carries host swap-page traffic in
+`node_mem.swap_io`. Linux reads `pswpin` and `pswpout` from
+`/proc/vmstat` and scales them by `getconf PAGESIZE`. macOS reads
+`Swapins` and `Swapouts` from `vm_stat` and scales them by the page size in
+its header. The result contains cumulative bytes, a source, an independent
+observation timestamp in epoch milliseconds, and a status. Missing
+counters or page-size evidence produce unavailable readings with null bytes.
+
+The journal's `swapRate` records bytes per second over the two latest
+consecutive observations from the same source. Each sample must be within
+twice the greater of the supervisor interval and probe timeout. The first
+sample, missing readings, stale readings and reset counters give an unknown
+rate with a reason. This measures host-wide swap traffic in page bytes.
+The existing pressure thresholds and routing decisions keep their existing
+inputs.
+
 ### Unscored matrix cells for an arm
 
 A matrix cell is unscored when its `n_rows` is 0 or less.
