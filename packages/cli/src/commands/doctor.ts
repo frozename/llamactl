@@ -12,7 +12,9 @@
  *   [docker]      /var/run/docker.sock reachable via ping()
  *   [kubernetes]  kubeconfig + reachable cluster + RBAC + default
  *                 StorageClass + llamactl-labelled nodes
- *   [secrets]     macOS Keychain availability (Darwin only)
+ *   [secrets]     macOS Keychain availability (Darwin only), plus
+ *                 llamactl launchd plists / systemd units that inline a
+ *                 tunnel bearer or other secret-looking env (#289)
  *   [units]       Linux: installed llamactl-controller/agent user units
  *                 (and .d drop-ins) keep OOMScoreAdjust ≤ 100 (#196)
  */
@@ -21,9 +23,11 @@ import type { KubernetesClient } from "@llamactl/remote";
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
 
+import type { UnitSecretProbeOptions } from "./doctor-unit-secrets.js";
 import type { UnitOomProbeOptions } from "./doctor-units.js";
 
 import { existsSync, readdirSync, readFileSync } from "../safe-fs.js";
+import { checkUnitSecrets, defaultUnitSecretOptions } from "./doctor-unit-secrets.js";
 import { checkUnitOomScores, defaultUnitDir } from "./doctor-units.js";
 
 export type Status = "ok" | "warn" | "fail" | "info";
@@ -52,6 +56,8 @@ export interface DoctorDeps {
   checkSecrets?: () => CheckResult[];
   /** Test seam: platform + systemd user unit dir for the [units] probe. */
   units?: UnitOomProbeOptions;
+  /** Test seam: platform + launchd/systemd dirs for the [secrets] unit-file scan (#289). */
+  unitSecrets?: UnitSecretProbeOptions;
 }
 
 export async function runDoctor(argv: string[], deps: DoctorDeps = {}): Promise<number> {
@@ -122,6 +128,7 @@ export async function runDoctor(argv: string[], deps: DoctorDeps = {}): Promise<
       // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
       async () => {
         results.push(...secretsProbe());
+        results.push(...checkUnitSecrets(deps.unitSecrets ?? defaultUnitSecretOptions(platform())));
       },
       (err) =>
         results.push({
@@ -559,7 +566,10 @@ Checks:
                 kubernetes or persist a composite with
                 spec.runtime:kubernetes to see the probe as ⚠
                 when the cluster is absent.
-  [secrets]     macOS Keychain CLI availability
+  [secrets]     macOS Keychain CLI availability; llamactl launchd
+                plists / systemd units (and .d drop-ins) that inline
+                the tunnel bearer or other secret-looking env (#289).
+                Key names only — values are never printed.
   [units]       Linux: installed llamactl-controller/agent user units
                 (and .d drop-ins) keep OOMScoreAdjust ≤ 100 (#196)
 
