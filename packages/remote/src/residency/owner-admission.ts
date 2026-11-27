@@ -22,6 +22,7 @@ import { bearerFromHeader } from "../server/auth.js";
 import { admissionErrorResponse } from "../server/chat-admission.js";
 import { boundOwnerRequest, type OwnerRequestBounds } from "./owner-request-bounds.js";
 import {
+  type AdmissionRequest,
   createRequestAdmission,
   type Release,
   RequestAdmissionError,
@@ -50,7 +51,12 @@ export type OwnerReservation =
   | { pending: Promise<OwnerPermit> }
   | { refusal: RequestAdmissionError };
 
+export type OwnerPreflight =
+  | { request: Omit<AdmissionRequest, "model" | "requestId">; body: string | undefined }
+  | { refusal: RequestAdmissionError };
+
 export interface OwnerAdmission {
+  preflightCold: (request: LocalEngineRequest, model: string) => OwnerPreflight | undefined;
   acquire: (request: LocalEngineRequest) => OwnerReservation | undefined;
   forward: LocalEngineForwarder;
   stop: () => void;
@@ -304,21 +310,43 @@ function permitFor(
   };
 }
 
+function preflightMatched(
+  group: ExecutionGroup,
+  priority: RequestPriority,
+  request: LocalEngineRequest,
+  noAuth: boolean,
+  expectedModel?: string,
+): OwnerPreflight {
+  const id = "owner-preflight";
+  if (group.unconfirmed.signal.aborted) return { refusal: new EngineGroupFencedError() };
+  if (group.stopping.signal.aborted)
+    return { refusal: new RequestAdmissionError("LoadFailed", null, id) };
+  if (request.clientSignal.aborted)
+    return { refusal: new RequestAdmissionError("Aborted", null, id) };
+  if (request.deadlineMs <= Date.now())
+    return { refusal: new RequestAdmissionError("DeadlineExceeded", null, id) };
+  const bounded = boundOwnerRequest(request, group.bounds, expectedModel);
+  if ("code" in bounded) return { refusal: new RequestAdmissionError(bounded.code, null, id) };
+  return {
+    body: bounded.body,
+    request: {
+      principal: principalOf(request.principal, noAuth),
+      priority,
+      bytes: bounded.bytes,
+      promptTokens: bounded.promptTokens,
+      maxCompletionTokens: bounded.completionTokens,
+    },
+  };
+}
+
 function acquireMatched(
   group: ExecutionGroup,
   priority: RequestPriority,
   request: LocalEngineRequest,
   noAuth: boolean,
 ): OwnerReservation {
-  const id = randomUUID();
-  if (group.unconfirmed.signal.aborted) return { refusal: new EngineGroupFencedError() };
-  if (group.stopping.signal.aborted) {
-    return { refusal: new RequestAdmissionError("LoadFailed", null, id) };
-  }
-  const bounded = boundOwnerRequest(request, group.bounds);
-  if ("code" in bounded) {
-    return { refusal: new RequestAdmissionError(bounded.code, null, id) };
-  }
+  const preflight = preflightMatched(group, priority, request, noAuth);
+  if ("refusal" in preflight) return preflight;
   const signal = AbortSignal.any([
     request.clientSignal,
     group.stopping.signal,
@@ -326,21 +354,13 @@ function acquireMatched(
     ...(request.engineSignal === undefined ? [] : [request.engineSignal]),
   ]);
   const reservation = group.admission.reserve(
-    {
-      requestId: id,
-      principal: principalOf(request.principal, noAuth),
-      priority,
-      model: group.model,
-      bytes: bounded.bytes,
-      promptTokens: bounded.promptTokens,
-      maxCompletionTokens: bounded.completionTokens,
-    },
+    { ...preflight.request, requestId: randomUUID(), model: group.model },
     { signal, deadlineMs: request.deadlineMs },
   );
   if ("refusal" in reservation) return reservation;
   return {
     pending: reservation.pending.then(
-      (release) => permitFor(group, request, release, bounded.body),
+      (release) => permitFor(group, request, release, preflight.body),
       (error: unknown) => {
         if (group.unconfirmed.signal.aborted) throw new EngineGroupFencedError();
         throw error;
@@ -396,15 +416,29 @@ export function createOwnerAdmission(
     return group;
   });
 
+  const matchTarget = (
+    target: string,
+  ): { group: ExecutionGroup; priority: RequestPriority } | undefined => {
+    const port = loopbackPort(target);
+    return port === undefined ? undefined : targets.get(port);
+  };
   const acquire = (request: LocalEngineRequest): OwnerReservation | undefined => {
-    const port = loopbackPort(request.target);
-    const match = port === undefined ? undefined : targets.get(port);
+    const match = matchTarget(request.target);
     return match === undefined
       ? undefined
       : acquireMatched(match.group, match.priority, request, options.noAuth === true);
   };
   return {
     acquire,
+    preflightCold: (request, model): OwnerPreflight | undefined => {
+      const match = matchTarget(request.target);
+      if (match === undefined) return undefined;
+      const { maxCompletionTokens, maxContextTokens } = match.group.bounds;
+      if (maxCompletionTokens === undefined || maxContextTokens === undefined) {
+        return { refusal: new RequestAdmissionError("ContextUnverified", null, "cold-owner") };
+      }
+      return preflightMatched(match.group, match.priority, request, options.noAuth === true, model);
+    },
     forward: (dispatch): Promise<Response> | undefined => {
       const ticket = acquire(dispatch);
       if (ticket === undefined) return undefined;

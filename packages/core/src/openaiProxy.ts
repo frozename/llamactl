@@ -49,6 +49,8 @@ import {
   probeColdPinQueue,
 } from "./residency/cold-pin-admission.js";
 import {
+  type ColdEngineDispatch,
+  type ColdEngineForwarder,
   getLocalEngineForwarder,
   type LocalEngineRequest,
   withLocalEngineBody,
@@ -704,6 +706,7 @@ interface ResponseCacheRequestState {
  */
 export interface ProxyOpenAIOptions {
   preferredWorkload?: string;
+  trustedColdOwner?: ColdEngineForwarder;
 }
 
 type ProxyContext = {
@@ -715,6 +718,8 @@ type ProxyContext = {
   init: RequestInit;
   bodyText?: string;
   preferredWorkload?: string;
+  trustedColdOwner?: ColdEngineForwarder;
+  coldRoute?: Pick<ColdEngineDispatch, "declaration" | "path">;
   isAnthropic?: boolean;
   anthropicModel?: string;
   anthropicRequest?: AnthropicMessagesRequest;
@@ -3062,10 +3067,38 @@ async function applyBodyModelRoute(
   return routeMissResponse(context, model);
 }
 
+function coldOwnerRoute(
+  context: ProxyContext,
+  declaration: DeclaredModelEntryV1,
+): ProxyContext | Response {
+  const { pathname, req } = context;
+  const eligible =
+    declaration.state === "loading" ||
+    (declaration.state === "cold" && declaration.autoLoadEligible);
+  if (
+    !eligible ||
+    isDeclaredStaleReason(declaration.reason) ||
+    req.method !== "POST" ||
+    context.search !== "" ||
+    context.isAnthropic === true ||
+    context.isResponsesApi === true ||
+    req.headers.has(SESSION_HEADER) ||
+    requestBodyContainsOmlxRequestHandle(context.bodyText) ||
+    (pathname !== "/v1/chat/completions" && pathname !== "/v1/completions")
+  ) {
+    return declaredNotLoadedResponse(declaration.id, declaration, context.bodyText);
+  }
+  return { ...context, coldRoute: { path: pathname, declaration } };
+}
+
 /** Rejection chain for a body model that matched no route (#306 + #280). */
 function routeMissResponse(context: ProxyContext, model: string): ProxyContext | Response {
   const unavailableRejection = declaredUnavailableRejectionFor(model, context.resolved);
   if (unavailableRejection) return unavailableRejection;
+  if (context.trustedColdOwner !== undefined) {
+    const declaration = declaredModelEntries().find((entry) => entry.id === model);
+    if (declaration !== undefined) return coldOwnerRoute(context, declaration);
+  }
   const notLoadedRejection = declaredNotLoadedRejectionFor(
     model,
     context.resolved,
@@ -3259,6 +3292,27 @@ function bindManagedDefaultEngine(
     ...binding,
     stillOwnsTarget: () => !hasDeclaration() && binding.stillOwnsTarget?.() === true,
   };
+}
+
+function forwardColdOwner(context: ProxyContext): Promise<Response> | undefined {
+  if (context.coldRoute === undefined || context.trustedColdOwner === undefined) return undefined;
+  const init = context.init;
+  return context.trustedColdOwner({
+    ...context.coldRoute,
+    body: requestBodyForAdmission(init.body),
+    clientSignal: context.req.signal,
+    deadlineMs: Date.now() + upstreamTimeoutMs(),
+    principal: { bearer: context.req.headers.get("authorization") },
+    send: (target, signal, body) => {
+      const upstream: RequestInit & { timeout: boolean } = {
+        ...withLocalEngineBody(init, body),
+        signal,
+        redirect: "error",
+        timeout: false,
+      };
+      return fetch(target, upstream);
+    },
+  });
 }
 
 function forwardAdmittedEngine(
@@ -4065,7 +4119,19 @@ function acquireProxySession(
   return { ok: true, release, cancel };
 }
 
+function prepareProxyForward(context: ProxyContext): Promise<Response> | undefined {
+  if (context.route?.isPeer && requestBodyContainsOmlxRequestHandle(context.bodyText)) {
+    return Promise.resolve(
+      Response.json({ error: "cross-node slot ops not supported" }, { status: 400 }),
+    );
+  }
+  stripVendorFieldsFromBody(context);
+  sanitizeLibosmosGreedyFromBody(context);
+  return forwardColdOwner(context);
+}
+
 function applyProxyOptions(context: ProxyContext, opts: ProxyOpenAIOptions): void {
+  if (opts.trustedColdOwner !== undefined) context.trustedColdOwner = opts.trustedColdOwner;
   const preferred = opts.preferredWorkload;
   if (preferred !== undefined && preferred.length > 0) {
     context.preferredWorkload = preferred;
@@ -4139,11 +4205,8 @@ export async function proxyOpenAI(
   attachSessionAffinity(parsed, trimmedSessionId, sessionRegistry, leaseRegistry);
   const routed = await resolveRoute(parsed);
   if (routed instanceof Response) return routed;
-  if (routed.route?.isPeer && requestBodyContainsOmlxRequestHandle(routed.bodyText)) {
-    return Response.json({ error: "cross-node slot ops not supported" }, { status: 400 });
-  }
-  stripVendorFieldsFromBody(routed);
-  sanitizeLibosmosGreedyFromBody(routed);
+  const earlyResponse = prepareProxyForward(routed);
+  if (earlyResponse !== undefined) return await earlyResponse;
   let withResponseCacheLookup = routed;
   try {
     withResponseCacheLookup = await maybeResponseCacheLookup(routed);
