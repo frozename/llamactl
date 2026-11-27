@@ -962,10 +962,11 @@ describe("docs/dynamic-residency.md (#285)", () => {
       "log: (line): void => { process.stderr.write(line); },",
     );
     const serverStart = enclosingBody(routerSrc, "serverStart: t.procedure");
-    expectPins(serverStart, "ModelRun start call site", [
-      "runDirectResidencyStart<serverMod.StartServerResult>(",
-      "serverMod.startServer(",
-      "serverStartOptions(input, sig,",
+    expect(serverStart).toContain("runModelRunStart(input, sig, emit, managed)");
+    expectPins(enclosingBody(routerSrc, "async function runModelRunStart("), "ModelRun start", [
+      "runDirectResidencyStart(",
+      "serverMod.startServer(opts)",
+      "serverStartOptions(input, signal,",
       "directModelRunStartOpts(input.workload, input.target),",
     ]);
     const serverStop = enclosingBody(routerSrc, "serverStop: t.procedure");

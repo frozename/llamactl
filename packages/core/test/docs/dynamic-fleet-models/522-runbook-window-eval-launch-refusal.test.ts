@@ -120,9 +120,7 @@ describe("#522 runbook window eval launch refusal", () => {
     const optsBody = enclosingBody(routerSrc, "function directResidencyOpts");
     expect(optsBody, "directResidencyOpts signature").not.toBe("");
     expect(optsBody).toContain("group: directResidencyGroup(workload, labels)");
-    expect(routerSrc).toContain(
-      "directResidencyOpts(input.workload, input.manifest?.metadata.labels)",
-    );
+    expect(routerSrc).toContain("directResidencyOpts(input.workload, manifest?.metadata.labels)");
 
     const startBody = enclosingBody(applySrc, "async function startModelHostProcess");
     expect(startBody, "startModelHostProcess signature").not.toBe("");

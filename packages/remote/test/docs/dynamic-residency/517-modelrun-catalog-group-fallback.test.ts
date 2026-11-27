@@ -40,7 +40,12 @@ describe("#517 ModelRun catalog residency-group fallback", () => {
     const end = start === -1 ? -1 : routerSrc.indexOf("lmstudioScan: t.procedure", start);
     const block = start === -1 || end === -1 ? "" : routerSrc.slice(start, end);
 
-    expect(block).toContain("directModelRunStartOpts(input.workload, input.target)");
-    expect(block).not.toContain("directModelRunOpts(input.workload)");
+    expect(block).toContain("runModelRunStart(input, sig, emit, managed)");
+    const runStart = enclosingBody(routerSrc, "async function runModelRunStart(");
+    expect(runStart).toContain("directModelRunStartOpts(input.workload, input.target)");
+    expect(runStart).toContain(
+      "directModelRunStartOpts(input.workload, input.target, prepared.launch.rel)",
+    );
+    expect(runStart).not.toContain("directModelRunOpts(input.workload)");
   });
 });

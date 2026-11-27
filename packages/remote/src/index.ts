@@ -209,6 +209,11 @@ export {
 } from "./residency/request-admission.js";
 export { defaultResidencyStorePath } from "./residency/store.js";
 export {
+  type NodeManagedAdmissionOptions,
+  openNodeManagedAdmission,
+  type VerifiedNodeCapacity,
+} from "./residency/target-admission-policy.js";
+export {
   type AppRouter,
   BUILT_IN_PLANNER_TOOLS,
   directWorkloadProvenDown,

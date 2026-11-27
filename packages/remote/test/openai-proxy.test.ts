@@ -163,7 +163,7 @@ beforeAll(async () => {
   // wrong directory.
   process.env["LOCAL_AI_RUNTIME_DIR"] = runtimeDir;
   process.env["LLAMA_CPP_HOST"] = "127.0.0.1";
-  process.env["LLAMA_CPP_PORT"] = String(ENV_LLAMA_PORT);
+  process.env["LLAMA_CPP_PORT"] = String(fakeUpstreams[0]!.port);
   process.env["LLAMACTL_NODE_NAME"] = "test-agent";
 
   // Write sidecar state files for two live workloads so `/v1/models`
@@ -178,7 +178,7 @@ beforeAll(async () => {
       rel: "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
       extraArgs: [],
       host: "127.0.0.1",
-      port: String(WORKLOAD_A_PORT),
+      port: String(fakeUpstreams[1]!.port),
       pid,
       startedAt: new Date().toISOString(),
       tunedProfile: null,
@@ -193,7 +193,7 @@ beforeAll(async () => {
       rel: "qwen3-8b-GGUF/qwen3-8b-Q8_0.gguf",
       extraArgs: [],
       host: "127.0.0.1",
-      port: String(WORKLOAD_B_PORT),
+      port: String(fakeUpstreams[2]!.port),
       pid,
       startedAt: new Date().toISOString(),
       tunedProfile: null,
@@ -302,7 +302,7 @@ describe("agent OpenAI proxy", () => {
         rel: "mistral-7b-GGUF/mistral-7b-Q4_K_M.gguf",
         extraArgs: [],
         host: "127.0.0.1",
-        port: String(WORKLOAD_A_PORT),
+        port: String(fakeUpstreams[1]!.port),
         pid: process.pid,
         startedAt: new Date().toISOString(),
         tunedProfile: null,

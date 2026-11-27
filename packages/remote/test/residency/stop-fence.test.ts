@@ -30,11 +30,11 @@ import { join } from "node:path";
 
 import { openAdmissionAuthority } from "../../src/residency/admission-authority.js";
 import { createManagedLaunchAdmission } from "../../src/residency/managed-launch-admission.js";
-import { openLocalAdmissionRuntime } from "../../src/residency/process-generation.js";
 import {
   defaultResidencyStorePath,
   openResidencyOperationStore,
 } from "../../src/residency/store.js";
+import { openNodeManagedAdmission } from "../../src/residency/target-admission-policy.js";
 import { router } from "../../src/router.js";
 import {
   existsSync,
@@ -46,6 +46,7 @@ import {
 } from "../../src/safe-fs.js";
 import { stopModelHost } from "../../src/server/modelhost.js";
 import { parseModelHost, saveModelHost } from "../../src/workload/modelhost-store.js";
+import { parseNodeRun, saveNodeRun } from "../../src/workload/noderun-store.js";
 import { parseWorkload, saveWorkload, workloadPath } from "../../src/workload/store.js";
 
 const FENCE_MODULE = "../../src/residency/stop-fence.js" as string;
@@ -1292,20 +1293,6 @@ test.skipIf(process.platform !== "darwin" && process.platform !== "linux")(
       LLAMA_CPP_USE_TUNED_ARGS: "false",
     });
 
-    const runtime = await openLocalAdmissionRuntime({
-      storePath: join(tmp, "mixed-admission.db"),
-      budgetGiB: () => 24,
-      readPidFile: fixturePid,
-    });
-    const gate = createManagedLaunchAdmission({
-      authority: runtime.authority,
-      resolve: ({ runtimeKey }) => ({ specDigest: runtimeKey, allocationGiB: 16 }),
-      capture: (_request, pid) => {
-        spawnedServerPids.add(pid);
-        return runtime.capture(pid);
-      },
-    });
-    const caller = router.createCaller({ managedLaunchAdmission: gate });
     const manifest = parseModelHost(`
 apiVersion: llamactl/v1
 kind: ModelHost
@@ -1321,7 +1308,43 @@ spec:
     port: ${String(hostPort)}
   hostedModels:
     - rel: fake.gguf
+  resources: { expectedMemoryGiB: 16 }
 `);
+    saveModelHost(manifest, tmp);
+    saveWorkload(
+      parseWorkload(`
+apiVersion: llamactl/v1
+kind: ModelRun
+metadata:
+  name: ${run}
+spec:
+  node: local
+  target: { kind: rel, value: fake.gguf }
+  binary: ${runBinary}
+  endpoint: { host: 127.0.0.1, port: ${String(runPort)} }
+  timeoutSeconds: 5
+  resources: { expectedMemoryGiB: 16 }
+`),
+      tmp,
+    );
+    saveNodeRun(
+      parseNodeRun(`
+apiVersion: llamactl/v1
+kind: NodeRun
+metadata:
+  name: switch-fixture-node
+spec:
+  node: switch-fixture-node
+  budget: { memoryGiB: 24 }
+`),
+      tmp,
+    );
+    const runtime = await openNodeManagedAdmission({
+      nodeName: "switch-fixture-node",
+      aliases: ["local"],
+      workloadsDir: tmp,
+    });
+    const caller = router.createCaller({ managedLaunchAdmission: runtime.admission });
     try {
       const first = await caller.serverStart({
         workload: run,
@@ -1374,6 +1397,8 @@ spec:
       for await (const _event of resumed) {
         // Wait for the host to commit and publish.
       }
+      const hostPid = fixturePid(host);
+      if (hostPid !== undefined) spawnedServerPids.add(hostPid);
       expect(listWorkloadRoutes(envMod.resolveEnv(), host)).toHaveLength(1);
       expect(runtime.authority.snapshot()).toMatchObject([
         { runtimeKey: host, state: "resident", allocationGiB: 16 },

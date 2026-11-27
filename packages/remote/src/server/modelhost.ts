@@ -59,6 +59,7 @@ import { getResidencyLeaseRegistry } from "@llamactl/core/residency/leases";
 import { currentSessionRefcounts } from "@llamactl/core/residency/sessions";
 import { type WorkloadKey, workloadRuntimeDir } from "@llamactl/core/workloadRuntime";
 import { type ChildProcess, spawn as nodeSpawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { basename, dirname, resolve, sep } from "node:path";
 
 import type { StopFenceRefusal } from "../residency/stop-fence.js";
@@ -1824,6 +1825,58 @@ function residencyGroupConflict(
     }
   }
   return null;
+}
+
+export interface PinnedModelHostStartup {
+  manifest: ModelHostManifest;
+  env: NodeJS.ProcessEnv;
+  effectiveSpecDigest: string;
+  effectiveLaunch: Readonly<Record<string, unknown>>;
+}
+
+export function pinModelHostStartup(input: ModelHostManifest): PinnedModelHostStartup {
+  const manifest = ModelHostManifestSchema.parse(input);
+  const env = { ...process.env };
+  const resolved = resolveEnv(env);
+  const boot = modelHostBootEnv(
+    env,
+    resolved,
+    buildModelHostSpec(manifest),
+    manifest.metadata.name,
+  );
+  const effective = {
+    name: manifest.metadata.name,
+    labels: manifest.metadata.labels,
+    spec: manifest.spec,
+    boot,
+    modelsDir: resolved.LLAMA_CPP_MODELS,
+    runtimeDir: resolved.LOCAL_AI_RUNTIME_DIR,
+    childEnv: sanitizeChildEnv(env, undefined, manifest.spec.env),
+  };
+  const canonical = JSON.stringify(effective, (_key: string, value: unknown): unknown =>
+    value !== null && typeof value === "object" && !Array.isArray(value)
+      ? Object.fromEntries(
+          Object.keys(value)
+            .sort()
+            .map((key) => [key, Reflect.get(value, key)]),
+        )
+      : value,
+  );
+  const effectiveLaunch = structuredClone({
+    engine: manifest.spec.engine,
+    binary: manifest.spec.binary,
+    endpoint: manifest.spec.endpoint,
+    hostedModels: manifest.spec.hostedModels,
+    extraArgs: manifest.spec.extraArgs,
+    modelsDir: resolved.LLAMA_CPP_MODELS,
+    runtimeDir: resolved.LOCAL_AI_RUNTIME_DIR,
+  });
+  return {
+    manifest,
+    env,
+    effectiveSpecDigest: createHash("sha256").update(canonical).digest("hex"),
+    effectiveLaunch,
+  };
 }
 
 export async function startModelHost(opts: StartModelHostOptions): Promise<StartModelHostResult> {
