@@ -43,6 +43,8 @@ import {
 } from "@llamactl/core/engines";
 import { getResidencyLeaseRegistry } from "@llamactl/core/residency/leases";
 import { currentSessionRefcounts } from "@llamactl/core/residency/sessions";
+import { basename } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 const OBSERVABLE_ENGINES = new Set(["batched"]);
 
@@ -80,7 +82,7 @@ export type NativeLoadResult =
   | { kind: "ambiguous"; reason: "HttpError"; reservation: "uncertain"; httpStatus: number }
   | {
       kind: "ambiguous";
-      reason: "Timeout" | "Unreachable" | "MalformedResponse";
+      reason: "Timeout" | "Unreachable" | "MalformedResponse" | "LoadUnconfirmed";
       reservation: "uncertain";
     };
 
@@ -117,7 +119,7 @@ export type NativeUnloadResult =
     }
   | {
       kind: "ambiguous";
-      reason: "Timeout" | "Unreachable" | "MalformedResponse";
+      reason: "Timeout" | "Unreachable" | "MalformedResponse" | "DrainChanged";
       reservation: "uncertain";
     };
 
@@ -173,7 +175,7 @@ type SendResult =
 
 // --- single-flight map ---
 
-type SingleFlightEntry = { op: "load" | "unload"; promise: Promise<unknown> };
+type SingleFlightEntry = { op: "load" | "unload"; promise: Promise<unknown>; ctx: ClientCtx };
 
 const singleFlight = new Map<string, SingleFlightEntry>();
 
@@ -296,7 +298,11 @@ function loadedStatus(
   };
 }
 
-async function statusInner(ctx: ClientCtx): Promise<NativeStatus> {
+type NativeObservation =
+  | NativeModelStatusObservation
+  | Extract<NativeStatus, { state: "failed" | "unknown" }>;
+
+async function observeNativeModel(ctx: ClientCtx): Promise<NativeObservation> {
   const sent = await send(ctx, OMLX_MODELS_STATUS_PATH, "GET", ctx.statusTimeoutMs);
   if (!sent.ok) {
     return { state: "unknown", reason: "StatusUnreachable" };
@@ -319,7 +325,11 @@ async function statusInner(ctx: ClientCtx): Promise<NativeStatus> {
     return { state: "failed", reason: "MalformedStatus" };
   }
 
-  const observation = parseOmlxModelsStatus(body, ctx.hostedRel);
+  return parseOmlxModelsStatus(body, ctx.hostedRel);
+}
+
+async function statusInner(ctx: ClientCtx): Promise<NativeStatus> {
+  const observation = await observeNativeModel(ctx);
   if (observation.state !== "loaded") {
     return observation;
   }
@@ -352,7 +362,7 @@ async function statusInner(ctx: ClientCtx): Promise<NativeStatus> {
 function classifyLoadResponse(body: unknown, modelId: string): NativeLoadResult {
   if (typeof body === "object" && body !== null && !Array.isArray(body)) {
     const record = body as Record<string, unknown>;
-    if (record["status"] === "ok") {
+    if (validNativeReceipt(record, modelId)) {
       const message = record["message"];
       if (typeof message === "string" && message.startsWith("Already loaded")) {
         return { kind: "already-loaded", modelId };
@@ -361,6 +371,37 @@ function classifyLoadResponse(body: unknown, modelId: string): NativeLoadResult 
     }
   }
   return { kind: "ambiguous", reason: "MalformedResponse", reservation: "uncertain" };
+}
+
+function validNativeReceipt(record: Record<string, unknown>, modelId: string): boolean {
+  return (
+    record["status"] === "ok" &&
+    (record["model_id"] === undefined || record["model_id"] === modelId)
+  );
+}
+
+function loadConfirmed(ctx: ClientCtx, status: NativeStatus): status is ResidentStatus {
+  return status.state === "ready" || (ctx.readiness === undefined && status.state === "busy");
+}
+
+function unconfirmedLoad(): NativeLoadResult {
+  return { kind: "ambiguous", reason: "LoadUnconfirmed", reservation: "uncertain" };
+}
+
+async function verifyLoadReceipt(
+  ctx: ClientCtx,
+  response: Response,
+  modelId: string,
+): Promise<NativeLoadResult> {
+  let receipt: NativeLoadResult;
+  try {
+    receipt = classifyLoadResponse(await response.json(), modelId);
+  } catch {
+    return { kind: "ambiguous", reason: "MalformedResponse", reservation: "uncertain" };
+  }
+  if (receipt.kind !== "loaded" && receipt.kind !== "already-loaded") return receipt;
+  const status = await statusInner(ctx);
+  return loadConfirmed(ctx, status) && status.modelId === modelId ? receipt : unconfirmedLoad();
 }
 
 async function runLoad(ctx: ClientCtx): Promise<NativeLoadResult> {
@@ -372,7 +413,9 @@ async function runLoad(ctx: ClientCtx): Promise<NativeLoadResult> {
     return { kind: "refused", reason: "LoadInProgress" };
   }
   if (statusResult.state !== "discovered") {
-    return { kind: "already-loaded", modelId: statusResult.modelId };
+    return loadConfirmed(ctx, statusResult)
+      ? { kind: "already-loaded", modelId: statusResult.modelId }
+      : unconfirmedLoad();
   }
 
   const sent = await send(
@@ -386,11 +429,7 @@ async function runLoad(ctx: ClientCtx): Promise<NativeLoadResult> {
   }
   const response = sent.response;
   if (response.ok) {
-    try {
-      return classifyLoadResponse(await response.json(), statusResult.modelId);
-    } catch {
-      return { kind: "ambiguous", reason: "MalformedResponse", reservation: "uncertain" };
-    }
+    return await verifyLoadReceipt(ctx, response, statusResult.modelId);
   }
   const httpStatus = response.status;
   if (httpStatus === 404) {
@@ -409,58 +448,65 @@ async function runLoad(ctx: ClientCtx): Promise<NativeLoadResult> {
 }
 
 async function runLoadWithLeases(ctx: ClientCtx): Promise<NativeLoadResult> {
-  const result = await runLoad(ctx);
   const leases = ctx.leases;
-  if (leases === undefined) {
-    return result;
+  if (leases === undefined) return await runLoad(ctx);
+
+  const { registry, workload } = leases;
+  const started = registry.snapshot(workload);
+  if (started.phase === "draining") {
+    return { kind: "refused", reason: "OperationInProgress" };
   }
-  // A single snapshot drives both the phase guard and the reopen epoch, so the
-  // reopen cannot race a phase change between two reads.
-  const snap = registrySnapshot(leases.registry, leases.workload);
-  if ((result.kind === "loaded" || result.kind === "already-loaded") && snap.phase === "unloaded") {
-    leases.registry.reopen({ workload: leases.workload, epoch: snap.epoch });
+  const result = await runLoad(ctx);
+  if (result.kind !== "loaded" && result.kind !== "already-loaded") return result;
+
+  const current = registry.snapshot(workload);
+  if (current.epoch !== started.epoch || current.phase !== started.phase) {
+    return unconfirmedLoad();
+  }
+  if (started.phase === "unloaded" && !registry.reopen({ workload, epoch: started.epoch })) {
+    return unconfirmedLoad();
   }
   return result;
 }
 
-function registrySnapshot(
-  registry: ResidencyLeases,
-  workload: string,
-): { phase: string; epoch: number } {
-  const snap = registry.snapshot(workload);
-  return { phase: snap.phase, epoch: snap.epoch };
-}
-
-// A 400 means "not loaded"; only a follow-up status that parses as discovered
-// confirms it, so a stale 400 stays ambiguous rather than claiming release.
-async function confirmUnload400(ctx: ClientCtx, modelId: string): Promise<NativeUnloadResult> {
-  const reSent = await send(ctx, OMLX_MODELS_STATUS_PATH, "GET", ctx.statusTimeoutMs);
-  if (reSent.ok && reSent.response.ok) {
-    try {
-      const reObservation = parseOmlxModelsStatus(await reSent.response.json(), ctx.hostedRel);
-      if (reObservation.state === "discovered") {
-        return { kind: "already-unloaded", modelId, reservation: "released" };
-      }
-    } catch {
-      // fall through to unconfirmed
-    }
+async function confirmNativeUnload(
+  ctx: ClientCtx,
+  modelId: string,
+  result: "unloaded" | "already-unloaded",
+  httpStatus: number,
+): Promise<NativeUnloadResult> {
+  const observation = await observeNativeModel(ctx);
+  if (observation.state === "discovered" && observation.modelId === modelId) {
+    return { kind: result, modelId, reservation: "released" };
   }
   return {
     kind: "ambiguous",
     reason: "UnloadUnconfirmed",
     reservation: "uncertain",
-    httpStatus: 400,
+    httpStatus,
   };
 }
 
-function classifyUnloadResponse(body: unknown, modelId: string): NativeUnloadResult {
-  if (typeof body === "object" && body !== null && !Array.isArray(body)) {
-    const record = body as Record<string, unknown>;
-    if (record["status"] === "ok") {
-      return { kind: "unloaded", modelId, reservation: "released" };
-    }
+async function verifyUnloadReceipt(
+  ctx: ClientCtx,
+  response: Response,
+  modelId: string,
+): Promise<NativeUnloadResult> {
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    return { kind: "ambiguous", reason: "MalformedResponse", reservation: "uncertain" };
   }
-  return { kind: "ambiguous", reason: "MalformedResponse", reservation: "uncertain" };
+  if (
+    typeof body !== "object" ||
+    body === null ||
+    Array.isArray(body) ||
+    !validNativeReceipt(body as Record<string, unknown>, modelId)
+  ) {
+    return { kind: "ambiguous", reason: "MalformedResponse", reservation: "uncertain" };
+  }
+  return await confirmNativeUnload(ctx, modelId, "unloaded", response.status);
 }
 
 type ResidentStatus = Extract<NativeStatus, { state: "busy" | "resident" | "ready" }>;
@@ -477,15 +523,11 @@ async function postUnload(ctx: ClientCtx, modelId: string): Promise<NativeUnload
   }
   const response = sent.response;
   if (response.ok) {
-    try {
-      return classifyUnloadResponse(await response.json(), modelId);
-    } catch {
-      return { kind: "ambiguous", reason: "MalformedResponse", reservation: "uncertain" };
-    }
+    return await verifyUnloadReceipt(ctx, response, modelId);
   }
   const httpStatus = response.status;
   if (httpStatus === 400) {
-    return await confirmUnload400(ctx, modelId);
+    return await confirmNativeUnload(ctx, modelId, "already-unloaded", httpStatus);
   }
   if (httpStatus === 404) {
     return { kind: "failed", reason: "ModelNotListed", reservation: "held", httpStatus };
@@ -598,8 +640,9 @@ async function runUnloadWithLeases(ctx: ClientCtx): Promise<NativeUnloadResult> 
   }
 
   if (result.kind === "unloaded" || result.kind === "already-unloaded") {
-    registry.commitUnload(token);
-    return result;
+    return registry.commitUnload(token).ok
+      ? result
+      : { kind: "ambiguous", reason: "DrainChanged", reservation: "uncertain" };
   }
 
   registry.cancelDrain(token);
@@ -608,9 +651,24 @@ async function runUnloadWithLeases(ctx: ClientCtx): Promise<NativeUnloadResult> 
 
 // --- single-flight wrapper ---
 
+function canShareNativeFlight(a: ClientCtx, b: ClientCtx): boolean {
+  return (
+    a.hostedRel === b.hostedRel &&
+    a.apiKey === b.apiKey &&
+    a.base === b.base &&
+    a.activityObservable === b.activityObservable &&
+    a.requestTimeoutMs === b.requestTimeoutMs &&
+    a.statusTimeoutMs === b.statusTimeoutMs &&
+    isDeepStrictEqual(a.readiness, b.readiness) &&
+    a.leases?.registry === b.leases?.registry &&
+    a.leases?.workload === b.leases?.workload &&
+    a.leases?.sessions === b.leases?.sessions
+  );
+}
+
 // The entry is committed synchronously at entry (before any await) so a
-// concurrent call from another client sees it; same op shares the promise, the
-// other op is refused without issuing a request.
+// concurrent call from another client sees it. A matching operation may join
+// only when the caller would apply the same proof and admission policy.
 //
 // When ctx.leases is set for unload, beginDrain() fences before any HTTP call;
 // the drain is visible synchronously to callers that have not awaited unload().
@@ -620,16 +678,16 @@ function singleFlightRun<T>(
   busyResult: () => T,
   body: () => Promise<T>,
 ): Promise<T> {
-  const key = `${ctx.baseUrl}|${ctx.hostedRel}`;
+  const key = `${ctx.baseUrl}|${basename(ctx.hostedRel)}`;
   const existing = singleFlight.get(key);
   if (existing !== undefined) {
-    if (existing.op === op) {
+    if (existing.op === op && canShareNativeFlight(existing.ctx, ctx)) {
       return existing.promise as Promise<T>;
     }
     return Promise.resolve(busyResult());
   }
   const promise = body();
-  singleFlight.set(key, { op, promise });
+  singleFlight.set(key, { op, promise, ctx });
   return promise.finally(() => {
     singleFlight.delete(key);
   });
