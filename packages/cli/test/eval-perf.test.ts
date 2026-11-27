@@ -37,6 +37,7 @@ interface EvalPerfTestSeams {
   provenanceReaders?: EvalPerfProvenanceReaders;
   platform?: NodeJS.Platform;
   readFile?: (path: string) => Promise<string>;
+  procPidRusage?: (pid: number, flavor: number, buffer: Uint8Array) => number | Promise<number>;
   probeGtt?: () => Promise<GttObservation>;
   clock?: { now(): number };
 }
@@ -278,13 +279,23 @@ test("linux loopback engine wires a GTT reader from probeGtt (kills: gtt reader 
   }
 });
 
-test("darwin --pid gives platform reasons, not agent-gateway reasons (kills: reusing bench-schedule gateway reasons)", async () => {
+test("darwin --pid wires proc_pid_rusage io and keeps peakRss/GTT platform reasons (kills: hostReaders not forwarding seams.procPidRusage)", async () => {
+  // Kills: dropping the procPidRusage seam before createPerfHostReaders, or
+  //        reusing bench-schedule gateway reasons for the remaining readers.
   const proc = fakeProcFs();
   const run = fakeRunPerfSuite();
+  const rusageCalls: number[] = [];
   perfSeams()({
     platform: "darwin",
     fetchImpl: fakeEngineFetch(["m"]),
     readFile: proc.readFile,
+    procPidRusage: (pid, _flavor, buffer) => {
+      rusageCalls.push(pid);
+      const view = new DataView(buffer.buffer, buffer.byteOffset);
+      view.setBigUint64(144, 12288n, true);
+      view.setBigUint64(152, 8192n, true);
+      return 0;
+    },
     probeGtt: () => Promise.resolve(GTT_OK),
     runPerfSuite: run.runPerfSuite,
   });
@@ -309,18 +320,19 @@ test("darwin --pid gives platform reasons, not agent-gateway reasons (kills: reu
   expect(run.calls).toHaveLength(1);
   const opts = runOpts(run.calls[0]);
   const readers = readersOf(opts) ?? {};
-  expect(readers["io"]).toBeUndefined();
+  expect(typeof readers["io"]).toBe("function");
+  const io = readerFn(opts, "io");
+  expect(await io!()).toEqual({ readBytes: 12288, writeBytes: 8192 });
+  expect(rusageCalls).toEqual([4242]);
   expect(readers["peakRss"]).toBeUndefined();
   expect(readers["gtt"]).toBeUndefined();
   const reasons = readerReasonsOf(opts);
-  const ioReason = reasonText(reasons, "io");
-  expect(ioReason).toContain("Linux-only");
-  expect(ioReason).toContain("darwin");
+  expect(reasons["io"]).toBeUndefined();
   expect(reasonText(reasons, "gtt")).toBe(
     "GTT counters (/sys/class/drm/card*/device/mem_info_gtt_used) are Linux-only; " +
       "no GTT reader on darwin",
   );
-  for (const key of ["io", "peakRss", "gtt"] as const) {
+  for (const key of ["peakRss", "gtt"] as const) {
     expect(reasonText(reasons, key).toLowerCase()).not.toContain("agent gateway");
   }
 });
