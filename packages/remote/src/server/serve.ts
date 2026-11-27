@@ -2,6 +2,7 @@ import type {
   AgentWorkerRpc,
   AgentWorkerRpcRelay,
   ExecutionAdmissionConfig,
+  ManagedColdModelRuns,
 } from "@llamactl/core/config/agent-config";
 
 import { inferenceRpc, nodeFacts, openaiProxy } from "@llamactl/core";
@@ -336,6 +337,7 @@ export interface StartAgentOptions {
   managedLaunchAdmission?: ManagedLaunchAdmission;
   /** Explicit owner factory for authenticated local cold completion requests. */
   managedColdOwnerFactory?: ManagedColdOwnerFactory;
+  managedColdModelRuns?: ManagedColdModelRuns;
   executionAdmission?: ExecutionAdmissionConfig;
   /**
    * Per-role runtime memory budget. Sets the identity (role + optional

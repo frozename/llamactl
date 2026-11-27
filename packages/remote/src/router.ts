@@ -979,10 +979,10 @@ function serverStartEndpointOverride(
   };
 }
 
-function serverStartOptions(
+export function serverStartOptions(
   input: ServerStartInput,
-  sig: AbortSignal,
-  emit: (e: serverMod.ServerEvent) => void,
+  sig?: AbortSignal,
+  emit?: (e: serverMod.ServerEvent) => void,
 ): serverMod.StartServerOptions {
   const readiness = normalizeReadiness(input.readiness);
   const endpointOverride = serverStartEndpointOverride(input.endpoint);
@@ -999,8 +999,8 @@ function serverStartOptions(
     ...(input.skipTuned !== undefined ? { skipTuned: input.skipTuned } : {}),
     ...(input.restart !== undefined ? { restart: input.restart } : {}),
     ...(readiness !== undefined ? { readiness } : {}),
-    signal: sig,
-    onEvent: emit,
+    ...(sig === undefined ? {} : { signal: sig }),
+    ...(emit === undefined ? {} : { onEvent: emit }),
   };
 }
 

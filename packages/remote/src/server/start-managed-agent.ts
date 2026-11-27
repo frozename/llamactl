@@ -8,6 +8,7 @@ import { openNodeManagedAdmission } from "../residency/target-admission-policy.j
 import { existsSync } from "../safe-fs.js";
 import { liveLockHolder } from "../workload/lock.js";
 import { defaultWorkloadsDir } from "../workload/store.js";
+import { registerManagedColdModelRuns } from "./register-managed-cold-modelruns.js";
 import { type RunningAgent, type StartAgentOptions, startAgentServer } from "./serve.js";
 
 const activeRuntimeRoots = new Set<string>();
@@ -55,9 +56,24 @@ export async function startManagedAgentServer(
     checkOtherWorkloads();
     const recheck = runtime.verifyActivation();
     if (recheck !== undefined) throw new Error(recheck);
+    const cold = opts.managedColdModelRuns?.length
+      ? await registerManagedColdModelRuns(opts, nodeName, runtime.readColdResidentGeneration)
+      : undefined;
+    if (opts.managedColdModelRuns?.length) {
+      checkOtherWorkloads();
+      const afterStaging = runtime.verifyActivation();
+      if (afterStaging !== undefined) throw new Error(afterStaging);
+    }
 
     const running = startAgentServer({
       ...opts,
+      ...(cold === undefined
+        ? {}
+        : {
+            managedColdOwnerFactory: cold.factory,
+            peerDeclarationProvenance:
+              opts.peerDeclarationProvenance ?? cold.readPeerDeclarationProvenance,
+          }),
       nodeName,
       residencyLeases: true,
       managedLaunchAdmission: runtime.admission,
