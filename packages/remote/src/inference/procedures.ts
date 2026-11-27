@@ -94,7 +94,11 @@ export type WorkerRpcBackendEvent =
   | { type: "content"; payload: ExecutionContentPayload }
   | { type: "end"; result: BackendResult; usage: UsageObservationV1 };
 
-/** Executes one fixed deployment. Registered per backend kind on the host. */
+/**
+ * Executes one fixed deployment. Iterator completion, including return()
+ * after cancellation, acknowledges adapter teardown. An adapter that cannot
+ * confirm teardown must keep its iterator open.
+ */
 export interface WorkerRpcBackend {
   execute(
     deployment: Deployment,
@@ -155,8 +159,7 @@ export interface WorkerRpcHostOptions {
   /**
    * Opt-in residency leases: when set, a lease is acquired after all
    * acceptance fences pass (after `fenceExecution`, before `admit`) and
-   * released in `settle`. Unset (the default) means no lease is taken
-   * and behaviour is unchanged.
+   * released when execution settles. Unset means no residency lease is taken.
    */
   residencyLeases?: ResidencyLeases;
   /**
@@ -206,8 +209,8 @@ type StopReason = "cancel" | "deadline" | "disconnect" | "attach-timeout" | "clo
 
 /**
  * An owner, the service and credential scope its records belong to, how
- * many it holds and how many of those are unsettled. An owner outlives its
- * unsettled records, since only sweeping a settled one forgets it.
+ * many records or active backend executions it holds. Either keeps this
+ * owner available for admission accounting.
  */
 interface AttemptOwner {
   key: string;
@@ -217,7 +220,13 @@ interface AttemptOwner {
   active: number;
 }
 
-/** What an unsettled attempt needs to run and report; dropped when it settles. */
+interface BackendExecution {
+  iterator: AsyncIterator<WorkerRpcBackendEvent>;
+  read: Promise<IteratorResult<WorkerRpcBackendEvent>> | undefined;
+  closed: boolean;
+}
+
+/** Execution resources retained until backend teardown is acknowledged. */
 interface AttemptRun {
   deployment: Deployment;
   envelope: Envelope;
@@ -229,8 +238,10 @@ interface AttemptRun {
   streamed: boolean;
   lease: Lease | undefined;
   onRevoke: (() => void) | undefined;
-  /** The shared admission slot for this stream, released once on settle (#281 DF-08). */
+  /** The shared admission slot for this stream, held through backend teardown (#281 DF-08). */
   admissionRelease?: Release;
+  execution?: BackendExecution;
+  cleanup?: Promise<void>;
 }
 
 /**
@@ -775,9 +786,8 @@ function statusOf(record: AttemptRecord): AttemptStatus {
 }
 
 /**
- * Settles once. The record is then a tombstone: the run goes with the
- * envelope, backend and deployment it held, so a settled attempt holds no
- * request body however large it was. Releases any residency lease.
+ * Publishes one terminal result and drops the execution from the RPC record.
+ * Only its unfinished backend cleanup may retain admission and residency.
  */
 function settle(
   state: HostState,
@@ -786,26 +796,41 @@ function settle(
 ): ExecutionTerminal {
   if (record.terminal !== undefined) return record.terminal;
   record.terminal = terminal;
-  for (const timer of record.run?.timers ?? []) clearTimeout(timer);
   const run = record.run;
-  const lease = run?.lease;
-  const onRevoke = run?.onRevoke;
-  const admissionRelease = run?.admissionRelease;
-  if (lease !== undefined && onRevoke !== undefined) {
-    lease.signal.removeEventListener("abort", onRevoke);
-  }
   record.run = undefined;
-  if (lease !== undefined) {
-    lease.release();
+  if (run === undefined) return terminal;
+  for (const timer of run.timers) clearTimeout(timer);
+  const execution = run.execution;
+  if (execution === undefined || execution.closed) {
+    releaseSettledRun(state, record.owner, run);
+  } else {
+    run.cleanup = closeBackendExecution(execution).then((closed) => {
+      if (closed) releaseSettledRun(state, record.owner, run);
+    });
   }
-  if (admissionRelease !== undefined) {
-    if (run !== undefined) delete run.admissionRelease;
-    admissionRelease();
-  }
-  state.active -= 1;
-  record.owner.active -= 1;
-  notifyIdle(state);
   return terminal;
+}
+
+function releaseSettledRun(state: HostState, owner: AttemptOwner, run: AttemptRun): void {
+  const { lease, onRevoke, admissionRelease } = run;
+  if (onRevoke !== undefined) lease?.signal.removeEventListener("abort", onRevoke);
+  lease?.release();
+  admissionRelease?.();
+  state.active -= 1;
+  owner.active -= 1;
+  forgetEmptyOwner(state, owner);
+  notifyIdle(state);
+}
+
+async function closeBackendExecution(execution: BackendExecution): Promise<boolean> {
+  // A terminal must be visible before abort listeners run, but backend
+  // teardown must begin after those listeners receive the stop signal.
+  const close = Promise.resolve().then(() => execution.iterator.return?.());
+  const [pending, returned] = await Promise.allSettled([execution.read, close]);
+  return (
+    (pending.status === "fulfilled" && pending.value?.done === true) ||
+    (returned.status === "fulfilled" && returned.value?.done === true)
+  );
 }
 
 function forget(state: HostState, record: AttemptRecord): void {
@@ -815,7 +840,11 @@ function forget(state: HostState, record: AttemptRecord): void {
     state.cancelIds.delete(key);
   }
   record.owner.held -= 1;
-  if (record.owner.held === 0) state.owners.delete(record.owner.key);
+  forgetEmptyOwner(state, record.owner);
+}
+
+function forgetEmptyOwner(state: HostState, owner: AttemptOwner): void {
+  if (owner.held === 0 && owner.active === 0) state.owners.delete(owner.key);
 }
 
 /** The sweep reads only the earliest deadline, so the records waiting are never scanned. */
@@ -911,7 +940,7 @@ function stopTerminal(run: AttemptRun, reason: StopReason): ExecutionTerminal {
   return { outcome: "cancelled", started, ...executed, usage: UNKNOWN_USAGE };
 }
 
-/** Settle first, then abort: the running stream sees the recorded terminal. */
+/** Record cancellation before notifying the backend. Its cleanup owns capacity. */
 function stopAttempt(state: HostState, record: AttemptRecord, reason: StopReason): void {
   const run = record.run;
   if (run === undefined) return;
@@ -1108,9 +1137,9 @@ function startBackend(
   state: HostState,
   record: AttemptRecord,
   run: AttemptRun,
-): AsyncIterable<WorkerRpcBackendEvent> | readonly WorkerRpcBackendEvent[] {
+): BackendExecution | null {
   // Stopped between acceptance and the first pull: nothing starts.
-  if (run.controller.signal.aborted) return [];
+  if (run.controller.signal.aborted) return null;
   const moved = movedSinceAcceptance(state, run.deployment);
   if (moved !== null) {
     // Nothing started: the stream ends on this typed terminal, never at the engine.
@@ -1120,10 +1149,29 @@ function startBackend(
       error: { code: "target-unavailable", message: moved, retryable: false },
       usage: UNKNOWN_USAGE,
     });
-    return [];
+    return null;
   }
   run.state = "started";
-  return run.backend.execute(run.deployment, run.envelope, run.controller.signal);
+  const iterator = run.backend
+    .execute(run.deployment, run.envelope, run.controller.signal)
+    [Symbol.asyncIterator]();
+  const execution = { iterator, read: undefined, closed: false };
+  run.execution = execution;
+  return execution;
+}
+
+async function readBackendExecution(
+  execution: BackendExecution,
+): Promise<IteratorResult<WorkerRpcBackendEvent>> {
+  const read = Promise.resolve(execution.iterator.next());
+  execution.read = read;
+  try {
+    const next = await read;
+    execution.closed = next.done === true;
+    return next;
+  } finally {
+    execution.read = undefined;
+  }
 }
 
 /** Runs `fn` at most once across every caller that shares the closure. */
@@ -1217,16 +1265,24 @@ async function* emitBackend(
   run: AttemptRun,
   identity: () => EventIdentity,
 ): AsyncGenerator<StreamFrame, ExecutionTerminal> {
-  for await (const out of startBackend(state, record, run)) {
-    if (record.terminal !== undefined) break;
+  const execution = startBackend(state, record, run);
+  let completed: ExecutionTerminal | undefined;
+  while (execution !== null && record.terminal === undefined) {
+    const next = await readBackendExecution(execution);
+    if (next.done === true || run.controller.signal.aborted) break;
+    const out = next.value;
     if (out.type === "end") {
-      settle(state, record, endTerminal(run, out));
-      continue;
+      completed ??= endTerminal(run, out);
+    } else if (completed === undefined) {
+      run.state = "emitting";
+      yield { frame: "event", event: { ...identity(), type: "content", payload: out.payload } };
     }
-    run.state = "emitting";
-    yield { frame: "event", event: { ...identity(), type: "content", payload: out.payload } };
   }
-  return settle(state, record, failureTerminal(run, "no backend result", "internal-error"));
+  return settle(
+    state,
+    record,
+    completed ?? failureTerminal(run, "no backend result", "internal-error"),
+  );
 }
 
 async function* runAttempt(
@@ -1274,6 +1330,7 @@ async function* runAttempt(
   const last = identity();
   record.terminalSequence = last.sequence;
   yield { frame: "event", event: { ...last, type: "terminal", terminal } };
+  await run.cleanup;
 }
 
 /**
