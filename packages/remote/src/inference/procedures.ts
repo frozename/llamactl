@@ -35,8 +35,9 @@ import type { ResolvedEnv } from "@llamactl/core/types";
  * and generic /v1/* proxying) stay uncounted until the create-proxy.ts slice.
  * Without `admission`, nothing is called and behaviour is unchanged.
  */
-import { type inferenceContracts, inferenceRpc, routingCatalog } from "@llamactl/core";
+import { type inferenceContracts, inferenceRpc, openaiProxy, routingCatalog } from "@llamactl/core";
 import { LOCAL_NODE_NAME } from "@llamactl/core/config/schema";
+import { checkServingReadiness, formatHostForUrl } from "@llamactl/core/engines";
 import { resolveEnv } from "@llamactl/core/env";
 import { withLocalEngineBody } from "@llamactl/core/residency/engine-forwarder";
 import {
@@ -112,6 +113,7 @@ export interface WorkerRpcBackend {
     envelope: Envelope,
     signal: AbortSignal,
     managed?: { permit: OwnerPermit; onDial: () => void },
+    beforeLocalDial?: () => void,
   ): AsyncIterable<WorkerRpcBackendEvent>;
 }
 
@@ -188,7 +190,10 @@ export interface WorkerRpcHost {
     claims: Claims | undefined,
     input: inferenceRpc.InferenceRpcNegotiateRequestV1,
   ): inferenceRpc.InferenceRpcNegotiateResultV1;
+  /** Synchronous catalog for hosts that provide their own serving contract. */
   catalog(claims: Claims | undefined): inferenceRpc.InferenceRpcCatalogResultV1;
+  /** Network and embedded procedures prefer readiness-checked availability. */
+  servingCatalog?(claims: Claims | undefined): Promise<inferenceRpc.InferenceRpcCatalogResultV1>;
   submit(claims: Claims | undefined, input: SubmitRequest): SubmitResult;
   stream(
     claims: Claims | undefined,
@@ -252,6 +257,7 @@ interface AttemptRun {
   execution?: BackendExecution;
   cleanup?: Promise<void>;
   ownerPermit?: OwnerPermit;
+  dialRefusal?: string;
 }
 
 /**
@@ -324,6 +330,7 @@ interface WorkerCatalog {
   generation: string;
   all: Deployment[];
   owned: Map<string, Deployment>;
+  routes: readonly LocalRoute[];
 }
 
 const UNKNOWN_USAGE: UsageObservationV1 = Object.freeze({ source: "unknown" });
@@ -365,13 +372,17 @@ function engineBaseUrl(endpoint: string): string {
 
 // Local engines take no credential and must never receive one; the Nova
 // provider always sets Authorization, so it is dropped before the dial.
-function engineFetch(managed: Parameters<WorkerRpcBackend["execute"]>[3]): typeof fetch {
+function engineFetch(
+  managed: Parameters<WorkerRpcBackend["execute"]>[3],
+  beforeLocalDial: (() => void) | undefined,
+): typeof fetch {
   return ((input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const headers = new Headers(init?.headers);
     headers.delete("authorization");
     if (managed !== undefined) {
       return managed.permit.send(
         (signal, body) => {
+          beforeLocalDial?.();
           managed.onDial();
           const engine = {
             ...withLocalEngineBody({ ...init, headers }, body),
@@ -384,7 +395,12 @@ function engineFetch(managed: Parameters<WorkerRpcBackend["execute"]>[3]): typeo
         typeof init?.body === "string" ? init.body : null,
       );
     }
-    return fetch(input, { ...init, headers });
+    beforeLocalDial?.();
+    return fetch(input, {
+      ...init,
+      headers,
+      ...(beforeLocalDial === undefined ? {} : { redirect: "error" as const }),
+    });
   }) as typeof fetch;
 }
 
@@ -413,13 +429,19 @@ function localBackendRequest(deployment: Deployment, envelope: Envelope): Unifie
  * so the terminal can report it as observed.
  */
 export const localModelBackend: WorkerRpcBackend = {
-  async *execute(deployment, envelope, signal, managed): AsyncGenerator<WorkerRpcBackendEvent> {
+  async *execute(
+    deployment,
+    envelope,
+    signal,
+    managed,
+    beforeLocalDial,
+  ): AsyncGenerator<WorkerRpcBackendEvent> {
     let usage: UsageObservationV1 = UNKNOWN_USAGE;
     const provider = createOpenAICompatProvider({
       name: deployment.providerKind ?? "local-model",
       baseUrl: engineBaseUrl(deployment.endpoint),
       apiKey: "",
-      fetch: engineFetch(managed),
+      fetch: engineFetch(managed, beforeLocalDial),
       onUsageObservation: (snapshot) => {
         usage = snapshot.observation;
       },
@@ -472,10 +494,8 @@ function ownedDeployments(
 }
 
 function buildWorkerCatalog(state: HostState): WorkerCatalog {
-  const { all, owned } = ownedDeployments(
-    state,
-    listLocalRoutes(state.resolve(), state.pidIdentity),
-  );
+  const routes = listLocalRoutes(state.resolve(), state.pidIdentity);
+  const { all, owned } = ownedDeployments(state, routes);
   const hash = createHash("sha256");
   for (const d of owned) {
     const identity = [
@@ -492,6 +512,7 @@ function buildWorkerCatalog(state: HostState): WorkerCatalog {
     generation: `gen-${hash.digest("hex").slice(0, 16)}`,
     all,
     owned: new Map(owned.map((d) => [d.deploymentId, d])),
+    routes,
   };
 }
 
@@ -506,6 +527,116 @@ function isAvailable(state: HostState, deployment: Deployment): boolean {
     epochOf(deployment) !== null &&
     !deployment.draining
   );
+}
+
+type LocalServingBinding =
+  | { kind: "external" }
+  | { kind: "refused" }
+  | { kind: "local"; route: LocalRoute; guarded: boolean };
+
+function modelDeclaration(
+  state: HostState,
+  model: string,
+): routingCatalog.DeclaredModelEntryV1 | undefined {
+  return openaiProxy.declaredModelBinding(model, state.resolve());
+}
+
+function declarationMatches(
+  state: HostState,
+  declaration: routingCatalog.DeclaredModelEntryV1,
+  route: LocalRoute,
+): boolean {
+  return (
+    (declaration.ownerNodeId === LOCAL_NODE_NAME || declaration.ownerNodeId === state.workerId) &&
+    declaration.workload === route.workload &&
+    declaration.kind === route.kind &&
+    (declaration.state === "ready" ||
+      (declaration.state === "loading" && route.readiness !== undefined)) &&
+    !routingCatalog.isDeclaredStaleReason(declaration.reason)
+  );
+}
+
+function findServingBinding(
+  state: HostState,
+  deployment: Deployment,
+  model: string,
+  routes: readonly LocalRoute[],
+): LocalServingBinding {
+  if (backendFor(state, deployment) !== localModelBackend) return { kind: "external" };
+  const declaration = modelDeclaration(state, model);
+  const canonicalDeclaration =
+    model === deployment.upstreamModelId
+      ? declaration
+      : modelDeclaration(state, deployment.upstreamModelId);
+  // An external advertisement with no local declaration keeps its own
+  // readiness contract. Discovered local routes are always workload-bound.
+  if (
+    deployment.transport !== "local-http" &&
+    declaration === undefined &&
+    canonicalDeclaration === undefined
+  )
+    return { kind: "external" };
+  const workload = routingCatalog.workloadOfDeployment(deployment.deploymentId, state.workerId);
+  const route = routes.find(
+    (candidate) =>
+      candidate.workload === workload &&
+      candidate.model === model &&
+      engineBaseUrl(deployment.endpoint) ===
+        `http://${formatHostForUrl(candidate.host)}:${String(candidate.port)}/v1`,
+  );
+  if (
+    route === undefined ||
+    openaiProxy.servingWithdrawnWorkloads().has(route.workload) ||
+    (declaration !== undefined && !declarationMatches(state, declaration, route)) ||
+    (canonicalDeclaration !== undefined && !declarationMatches(state, canonicalDeclaration, route))
+  )
+    return { kind: "refused" };
+  return {
+    kind: "local",
+    route,
+    guarded:
+      route.readiness !== undefined ||
+      declaration !== undefined ||
+      canonicalDeclaration !== undefined,
+  };
+}
+
+function currentRoutes(state: HostState, deployment: Deployment): LocalRoute[] {
+  const workload = routingCatalog.workloadOfDeployment(deployment.deploymentId, state.workerId);
+  return workload === null ? [] : listWorkloadRoutes(state.resolve(), workload, state.pidIdentity);
+}
+
+function bindingStillCurrent(state: HostState, deployment: Deployment, route: LocalRoute): boolean {
+  const current = findServingBinding(
+    state,
+    deployment,
+    route.model,
+    currentRoutes(state, deployment),
+  );
+  return (
+    current.kind === "local" &&
+    current.route.pid === route.pid &&
+    current.route.engine === route.engine &&
+    current.route.kind === route.kind &&
+    JSON.stringify(current.route.readiness) === JSON.stringify(route.readiness)
+  );
+}
+
+const fetchAtServingEndpoint = ((input: string | URL | Request, init?: RequestInit) =>
+  fetch(input, { ...init, redirect: "error" })) as typeof fetch;
+
+async function verifiesServingReadiness(
+  state: HostState,
+  deployment: Deployment,
+  binding: Extract<LocalServingBinding, { kind: "local" }>,
+): Promise<boolean> {
+  const { route } = binding;
+  if (
+    route.readiness !== undefined &&
+    !(await checkServingReadiness(route, route.readiness, { fetch: fetchAtServingEndpoint }))
+  )
+    return false;
+  return bindingStillCurrent(state, deployment, route);
 }
 
 function authorized(
@@ -579,10 +710,11 @@ function negotiate(
 function listCatalog(
   state: HostState,
   claimsIn: Claims | undefined,
+  snapshot?: WorkerCatalog,
 ): inferenceRpc.InferenceRpcCatalogResultV1 {
   const claims = authorized(claimsIn, "catalog");
   if (claims === null) return rejectedWith(NO_SCOPE);
-  const catalog = buildWorkerCatalog(state);
+  const catalog = snapshot ?? buildWorkerCatalog(state);
   const deployments = [...catalog.owned.values()]
     .filter((d) => inScope(claims, d))
     .map((d) => ({
@@ -600,6 +732,38 @@ function listCatalog(
     catalogGeneration: catalog.generation,
     deployments,
   };
+}
+
+async function listServingCatalog(
+  state: HostState,
+  claims: Claims | undefined,
+): Promise<inferenceRpc.InferenceRpcCatalogResultV1> {
+  if (authorized(claims, "catalog") === null) return rejectedWith(NO_SCOPE);
+  const catalog = buildWorkerCatalog(state);
+  const listing = listCatalog(state, claims, catalog);
+  if (listing.outcome !== "catalog") return listing;
+  const deployments = await Promise.all(
+    listing.deployments.map(async (row) => {
+      const deployment = catalog.owned.get(row.deploymentId);
+      if (row.availability !== "available" || deployment === undefined) return row;
+      const binding = findServingBinding(state, deployment, row.model, catalog.routes);
+      if (
+        binding.kind === "refused" ||
+        (binding.kind === "local" &&
+          binding.guarded &&
+          !(await verifiesServingReadiness(state, deployment, binding)))
+      )
+        return { ...row, availability: "unavailable" as const };
+      return {
+        ...row,
+        publicModelIds: row.publicModelIds.filter(
+          (model) =>
+            findServingBinding(state, deployment, model, catalog.routes).kind !== "refused",
+        ),
+      };
+    }),
+  );
+  return { ...listing, deployments };
 }
 
 // ---- submit: acceptance fencing -------------------------------------------
@@ -1091,6 +1255,14 @@ function submit(
   if ("rejection" in owned) return rejectedWith(owned.rejection);
   const execution = fenceExecution(state, claims, owned.deployment, input.envelope);
   if ("rejection" in execution) return rejectedWith(execution.rejection);
+  if (
+    findServingBinding(state, owned.deployment, input.envelope.publicModelId, catalog.routes)
+      .kind === "refused"
+  )
+    return rejectedWith({
+      code: "target-unavailable",
+      message: "the declared model has no exact local serving route",
+    });
   const residency = acquireResidency(state, owned.deployment);
   if ("rejection" in residency) return rejectedWith(residency.rejection);
   const run = admit(state, claims, input, owned.deployment, execution.backend, residency.lease);
@@ -1160,10 +1332,11 @@ function failureTerminal(
  * rejects an advertisement, which can then shadow a later one. That
  * matters only once the worker host is given advertisements.
  */
-function movedSinceAcceptance(state: HostState, accepted: Deployment): string | null {
-  const workload = routingCatalog.workloadOfDeployment(accepted.deploymentId, state.workerId);
-  const routes =
-    workload === null ? [] : listWorkloadRoutes(state.resolve(), workload, state.pidIdentity);
+function movedSinceAcceptance(
+  state: HostState,
+  accepted: Deployment,
+  routes: readonly LocalRoute[],
+): string | null {
   const { owned } = ownedDeployments(state, routes);
   const current = new Map(owned.map((d) => [d.deploymentId, d])).get(accepted.deploymentId);
   if (current === undefined) {
@@ -1174,35 +1347,77 @@ function movedSinceAcceptance(state: HostState, accepted: Deployment): string | 
   return epoch === null ? "the deployment epoch is unknown" : `deployment epoch is now '${epoch}'`;
 }
 
-function startBackend(
+function refuseUnstarted(
+  state: HostState,
+  record: AttemptRecord,
+  message: string,
+): ExecutionTerminal {
+  return settle(state, record, {
+    outcome: "failed",
+    started: false,
+    error: { code: "target-unavailable", message, retryable: false },
+    usage: UNKNOWN_USAGE,
+  });
+}
+
+function guardedLocalDial(
+  state: HostState,
+  run: AttemptRun,
+  binding: Extract<LocalServingBinding, { kind: "local" }>,
+): () => void {
+  return () => {
+    run.controller.signal.throwIfAborted();
+    if (!bindingStillCurrent(state, run.deployment, binding.route)) {
+      const reason = "local serving route changed before the engine dial";
+      run.dialRefusal = reason;
+      throw new Error(reason);
+    }
+    run.state = "started";
+  };
+}
+
+async function startBackend(
   state: HostState,
   record: AttemptRecord,
   run: AttemptRun,
-): BackendExecution | null {
+): Promise<BackendExecution | null> {
   // Stopped between acceptance and the first pull: nothing starts.
-  if (run.controller.signal.aborted) return null;
-  const moved = movedSinceAcceptance(state, run.deployment);
+  if (record.terminal !== undefined) return null;
+  const routes = currentRoutes(state, run.deployment);
+  const moved = movedSinceAcceptance(state, run.deployment, routes);
   if (moved !== null) {
-    // Nothing started: the stream ends on this typed terminal, never at the engine.
-    settle(state, record, {
-      outcome: "failed",
-      started: false,
-      error: { code: "target-unavailable", message: moved, retryable: false },
-      usage: UNKNOWN_USAGE,
-    });
+    refuseUnstarted(state, record, moved);
     return null;
   }
+  const binding = findServingBinding(state, run.deployment, run.envelope.publicModelId, routes);
+  if (
+    binding.kind === "refused" ||
+    (binding.kind === "local" &&
+      binding.guarded &&
+      !(await verifiesServingReadiness(state, run.deployment, binding)))
+  ) {
+    refuseUnstarted(state, record, "the declared local serving route is unavailable");
+    return null;
+  }
+  if (run.controller.signal.aborted) return null;
+  const beforeDial =
+    binding.kind === "local" && binding.guarded ? guardedLocalDial(state, run, binding) : undefined;
   const permit = run.ownerPermit;
-  if (permit === undefined) run.state = "started";
-  const backend =
+  if (permit === undefined && beforeDial === undefined) run.state = "started";
+  const backend = run.backend.execute(
+    run.deployment,
+    run.envelope,
+    run.controller.signal,
     permit === undefined
-      ? run.backend.execute(run.deployment, run.envelope, run.controller.signal)
-      : run.backend.execute(run.deployment, run.envelope, run.controller.signal, {
+      ? undefined
+      : {
           permit,
           onDial: (): void => {
             run.state = "started";
           },
-        });
+        },
+    beforeDial,
+  );
   const iterator = backend[Symbol.asyncIterator]();
   const execution = { iterator, read: undefined, closed: false };
   run.execution = execution;
@@ -1313,10 +1528,11 @@ async function* emitBackend(
   run: AttemptRun,
   identity: () => EventIdentity,
 ): AsyncGenerator<StreamFrame, ExecutionTerminal> {
-  const execution = startBackend(state, record, run);
+  const execution = await startBackend(state, record, run);
   let completed: ExecutionTerminal | undefined;
   while (execution !== null && record.terminal === undefined) {
     const next = await readBackendExecution(execution);
+    if (run.dialRefusal !== undefined) return refuseUnstarted(state, record, run.dialRefusal);
     if (next.done === true || run.controller.signal.aborted) break;
     const out = next.value;
     if (out.type === "end") {
@@ -1369,7 +1585,10 @@ async function* runAttempt(
     const refused = await lateRefusal(state, record, admission);
     terminal = refused ?? (yield* emitBackend(state, record, run, identity));
   } catch (err) {
-    terminal = settle(state, record, failureTerminal(run, err, "upstream-error"));
+    terminal =
+      run.dialRefusal === undefined
+        ? settle(state, record, failureTerminal(run, err, "upstream-error"))
+        : refuseUnstarted(state, record, run.dialRefusal);
   } finally {
     signal.removeEventListener("abort", onDisconnect);
     // The consumer left mid-stream: that is a disconnect, never an orphan.
@@ -1687,6 +1906,7 @@ export function createWorkerRpcHost(opts: WorkerRpcHostOptions): WorkerRpcHost {
     resolveClaims: opts.resolveClaims ?? ((ctx): Claims | undefined => ctx.inferenceClaims),
     negotiate: (claims, input) => negotiate(state, claims, input),
     catalog: (claims) => listCatalog(state, claims),
+    servingCatalog: (claims) => listServingCatalog(state, claims),
     submit: (claims, input) => submit(state, claims, input),
     stream: (claims, input, signal, options) =>
       streamAttempt(state, claims, input, signal, options),
@@ -1744,7 +1964,7 @@ export const inferenceRpcRouter = t.router({
     }),
   catalog: t.procedure.query(({ ctx }) => {
     const { host, claims } = served(ctx);
-    return host.catalog(claims);
+    return host.servingCatalog?.(claims) ?? host.catalog(claims);
   }),
   submit: t.procedure
     .input(inferenceRpc.InferenceRpcSubmitRequestV1Schema)

@@ -927,6 +927,9 @@ async function targetFor(
   const listed = listedTarget(plan, listing);
   if ("rejection" in listed) return listed;
   const deploymentId = listed.entry?.deploymentId ?? plan.deploymentId;
+  if (listed.entry?.availability === "unavailable") {
+    return unavailable(`the worker lists deployment '${deploymentId}' as unavailable`);
+  }
   const epoch = plan.expectedEpoch ?? listed.entry?.deploymentEpoch ?? null;
   if (epoch === null) {
     return unavailable(`the worker lists no fenceable deployment '${deploymentId}'`);

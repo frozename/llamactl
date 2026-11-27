@@ -4794,7 +4794,13 @@ describe("the dial-time re-check reads only the accepted workload (X2)", () => {
   const workloadDir = (name: string): string =>
     join(resolved.LOCAL_AI_RUNTIME_DIR, "workloads", name);
 
-  function writeRun(name: string, pid: number, rel: string, bindHost = "127.0.0.1"): void {
+  function writeRun(
+    name: string,
+    pid: number,
+    rel: string,
+    bindHost = "127.0.0.1",
+    options?: { port?: number; path?: string; alias?: string },
+  ): void {
     const dir = workloadDir(name);
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "llama-server.pid"), `${String(pid)}\n`);
@@ -4802,9 +4808,12 @@ describe("the dial-time re-check reads only the accepted workload (X2)", () => {
       join(dir, "llama-server.state"),
       JSON.stringify({
         rel,
-        extraArgs: [],
+        extraArgs: options?.alias === undefined ? [] : ["--alias", options.alias],
         host: bindHost,
-        port: new URL(engine.url).port,
+        port: options?.port ?? new URL(engine.url).port,
+        ...(options?.path === undefined
+          ? {}
+          : { readiness: { path: options.path, expectStatus: 200 } }),
         pid,
         startedAt: new Date().toISOString(),
         tunedProfile: null,
@@ -4843,6 +4852,184 @@ describe("the dial-time re-check reads only the accepted workload (X2)", () => {
     for (const name of NAMES) rmSync(workloadDir(name), { recursive: true, force: true });
     verified.length = 0;
     gone.clear();
+  });
+
+  test("serving readiness gate refuses failed or replaced declared routes before dialing", async () => {
+    let ready = false;
+    let replace = false;
+    let redirect = false;
+    let probes = 0;
+    let redirected = 0;
+    let enginePosts = 0;
+    const serving = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req: Request): Promise<Response> {
+        const path = new URL(req.url).pathname;
+        if (path === "/ready") {
+          probes++;
+          if (replace)
+            writeRun(RUN, RUN_PID + 1, RUN_REL, "127.0.0.1", {
+              port: Number(serving.url.port),
+              path,
+            });
+          if (redirect) return Response.redirect(new URL("/alternate-ready", req.url).href);
+          return new Response(null, { status: ready ? 200 : 503 });
+        }
+        if (path === "/alternate-ready") {
+          redirected++;
+          return new Response(null, { status: 200 });
+        }
+        enginePosts++;
+        return await fetch(new URL(path, engine.url), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: await req.text(),
+        });
+      },
+    });
+    try {
+      writeRun(RUN, RUN_PID, RUN_REL, "127.0.0.1", {
+        port: Number(serving.url.port),
+        path: "/ready",
+      });
+      openaiProxy.setDeclaredModelSource(() => [
+        {
+          id: RUN_REL,
+          workload: RUN,
+          kind: "ModelRun",
+          ownerNodeId: WORKER,
+          state: ready ? "ready" : "loading",
+          autoLoadEligible: true,
+        },
+      ]);
+      useHost({ advertisements: () => [], pidIdentity });
+      const client = createEmbeddedInferenceRpcClient(claims({ deployments: [RUN_DEPLOYMENT] }));
+      const availability = async (): Promise<string | undefined> => {
+        const listing = await client.catalog();
+        return listing.outcome === "catalog"
+          ? listing.deployments.find((d) => d.deploymentId === RUN_DEPLOYMENT)?.availability
+          : listing.outcome;
+      };
+      async function accept(attemptId: string): Promise<void> {
+        const asked = envelope(attemptId, {
+          publicModelId: RUN_REL,
+          nativeBody: { model: RUN_REL, stream: true, messages: [{ role: "user", content: "hi" }] },
+        });
+        const admitted = await submit(client, attemptId, {
+          deploymentId: RUN_DEPLOYMENT,
+          envelope: asked,
+        });
+        expect(rejectionCode(admitted)).toBe("accepted");
+      }
+      const unstarted = async (attemptId: string): Promise<void> => {
+        const frames = await collect(client.stream({ attemptId }));
+        expect(terminalOf(frames)).toMatchObject({
+          outcome: "failed",
+          started: false,
+          error: { code: "target-unavailable" },
+        });
+      };
+
+      expect(await availability()).toBe("unavailable");
+      expect(probes).toBe(1);
+      let submits = 0;
+      const fallbacks: string[] = [];
+      const requested = envelope("att-catalog-unavailable", { publicModelId: RUN_REL });
+      const executor = createWorkerRpcExecutor({
+        client: {
+          ...client,
+          submit: async (input) => {
+            submits++;
+            return await client.submit(input);
+          },
+        },
+        deploymentId: RUN_DEPLOYMENT,
+        fallback: recordingFallback(fallbacks),
+        nodeId: "gw",
+      });
+      const refused = await executor.execute(requested, ctxFor(requested));
+      expect(refused.status).toBe(503);
+      expect(await refused.json()).toMatchObject({ error: { code: "target-unavailable" } });
+      expect(submits).toBe(0);
+      expect(fallbacks).toEqual([]);
+      redirect = true;
+      expect(await availability()).toBe("unavailable");
+      expect(redirected).toBe(0);
+      redirect = false;
+      ready = true;
+      expect(await availability()).toBe("available");
+      await accept("att-readiness-fails");
+      ready = false;
+      await unstarted("att-readiness-fails");
+      expect(enginePosts).toBe(0);
+
+      ready = true;
+      await accept("att-readiness-succeeds");
+      expect(
+        terminalOf(await collect(client.stream({ attemptId: "att-readiness-succeeds" }))),
+      ).toMatchObject({ outcome: "completed", deployment: RUN_DEPLOYMENT });
+      expect(enginePosts).toBe(1);
+
+      await accept("att-readiness-replaced");
+      replace = true;
+      await unstarted("att-readiness-replaced");
+      expect(enginePosts).toBe(1);
+      writeRun(RUN, RUN_PID, RUN_REL, "127.0.0.1", {
+        port: Number(serving.url.port),
+        path: "/ready",
+      });
+      expect(await availability()).toBe("unavailable");
+    } finally {
+      openaiProxy.setDeclaredModelSource(null);
+      await serving.stop(true);
+    }
+  });
+
+  test("serving readiness gate refuses a local alias owned by another declared workload", async () => {
+    const alias = "a-dial-shared-alias";
+    writeRun(RUN, RUN_PID, RUN_REL, "127.0.0.1", { alias });
+    useHost({ advertisements: () => [], pidIdentity });
+    const client = createEmbeddedInferenceRpcClient(claims({ deployments: [RUN_DEPLOYMENT] }));
+    const requestTarget = await target(client, RUN_DEPLOYMENT);
+    openaiProxy.setDeclaredModelSource(() => [
+      {
+        id: RUN_REL,
+        workload: "other-declared-owner",
+        kind: "ModelRun",
+        ownerNodeId: "local",
+        state: "cold",
+        autoLoadEligible: true,
+      },
+    ]);
+    try {
+      const listing = await client.catalog();
+      expect(listing).toMatchObject({
+        outcome: "catalog",
+        deployments: [{ deploymentId: RUN_DEPLOYMENT, availability: "unavailable" }],
+      });
+      const attemptId = "att-other-declared-owner";
+      const input = {
+        version: V1_0,
+        target: requestTarget,
+        envelope: envelope(attemptId, { publicModelId: RUN_REL }),
+        cancelId: attemptId,
+      };
+      expect(rejectionCode(await client.submit(input))).toBe("target-unavailable");
+      const aliasAttempt = "att-alias-canonical-owner";
+      expect(
+        rejectionCode(
+          await client.submit({
+            ...input,
+            envelope: envelope(aliasAttempt, { publicModelId: alias }),
+            cancelId: aliasAttempt,
+          }),
+        ),
+      ).toBe("target-unavailable");
+      expect(runRequests()).toHaveLength(0);
+    } finally {
+      openaiProxy.setDeclaredModelSource(null);
+    }
   });
 
   test("the stream verifies the accepted pid alone, at the epoch the catalog listed", async () => {
