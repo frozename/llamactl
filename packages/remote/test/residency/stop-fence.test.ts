@@ -1495,6 +1495,14 @@ spec:
       expect(runtime.authority.snapshot()).toMatchObject([
         { runtimeKey: host, state: "resident", allocationGiB: 16 },
       ]);
+      expect((await caller.residencyStatus({ node: "local" })).managed).toMatchObject({
+        ownerNodeId: "switch-fixture-node",
+        ledger: "available",
+        budgetGiB: 24,
+        profile: { kind: "selected", profile: "maintenance" },
+        claims: [{ workload: host, kind: "ModelHost", state: "resident", allocationGiB: 16 }],
+      });
+      expect((await caller.residencyStatus({ node: "unowned" })).managed).toBeUndefined();
       expect(loadModelHostByName(host, tmp).spec.enabled).toBe(true);
       const inactiveStart = await caller.serverStart({
         workload: run,

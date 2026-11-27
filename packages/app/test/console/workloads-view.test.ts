@@ -447,6 +447,14 @@ describe("workloads view (#410 P5a-3b)", () => {
         scope: "serving-process",
         nonterminal: [{ operationId: "op-switch", phase: "pending" }],
       },
+      managed: {
+        ownerNodeId: "worker-a",
+        ledger: "available",
+        profile: { kind: "selected", profile: "interactive" },
+        budgetGiB: 24,
+        claims: [{ workload: "qwen", kind: "ModelRun", state: "resident", allocationGiB: 8 }],
+        execution: [{ group: "metal", executing: 1, queued: 2, fenced: true }],
+      },
       omlxNative: {
         scope: "serving-process",
         workloads: [{ workload: "omlx", mode: "process-fallback" }],
@@ -462,6 +470,8 @@ describe("workloads view (#410 P5a-3b)", () => {
     expect(rowBlock(markup, "omlx")).toContain("Whole-process mode");
     expect(markup).toContain("op-switch");
     expect(markup).toContain("Pending");
+    expect(markup).toContain("Profile interactive · 8.0 / 24.0 GiB · 0 pending");
+    expect(markup).toContain("metal · 1 active · 2 queued · fenced");
   });
 
   test("a different node’s residency snapshot cannot mark a process ready", () => {

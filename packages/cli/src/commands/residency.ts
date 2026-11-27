@@ -177,12 +177,31 @@ export function renderResidencyStatus(s: ResidencyRenderInput, nowMs: number = D
   pushIdleEvictionLines(lines, s.idleEviction, nowMs);
   pushSwitchGateLines(lines, s.switchGates, nowMs);
   pushRankingLines(lines, s.ranking, nowMs);
+  pushManagedLines(lines, s.managed);
   pushLeaseLines(lines, s.leases);
   pushSessionLines(lines, s.sessions);
   lines.push(
     `Note:       store is the serving process's node-local store, not ${s.node}'s coordinator state`,
   );
   return lines.join("\n") + "\n";
+}
+
+function pushManagedLines(lines: string[], managed: ResidencyRenderInput["managed"]): void {
+  if (managed === undefined) return;
+  const { profile, budgetGiB, claims, execution } = managed;
+  const selected = profile.kind === "selected" ? profile.profile : profile.kind;
+  const budget = budgetGiB === null ? "unknown" : `${budgetGiB.toFixed(1)} GiB`;
+  lines.push(
+    `Managed:    ${managed.ownerNodeId} · ${selected} · ledger ${managed.ledger} · ${budget}`,
+  );
+  for (const claim of claims) {
+    lines.push(`  ${claim.workload}  ${claim.state}  ${claim.allocationGiB.toFixed(1)} GiB`);
+  }
+  for (const group of execution ?? []) {
+    lines.push(
+      `  ${group.group}  ${String(group.executing)} active  ${String(group.queued)} queued${group.fenced ? "  fenced" : ""}`,
+    );
+  }
 }
 
 function pushLifecycleLines(lines: string[], lifecycle: ResidencyRenderInput["lifecycle"]): void {

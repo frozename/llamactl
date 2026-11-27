@@ -166,6 +166,7 @@ import { searchLogs } from "./search/logs.js";
 import { resolveDefaultRagNode } from "./search/rag-node.js";
 import { searchSessions } from "./search/sessions.js";
 import { acquireChatSlot, admissionTrpcError } from "./server/chat-admission.js";
+import { ownerExecutionStatus } from "./server/metrics.js";
 import {
   pinModelHostStartup,
   startModelHost,
@@ -2936,13 +2937,16 @@ export const router = t.router({
   // the serving node with the unified proxy on; it never ranks anything.
   residencyStatus: t.procedure
     .input(z.object({ node: z.string().min(1) }))
-    .query(async ({ input }) => {
+    .query(async ({ ctx, input }) => {
+      const owner = profileOwner(input.node, ctx.managedLaunchAdmission);
+      const ownerNode = owner?.ownerNodeId ?? input.node;
       const nodeRuns = nodeRunStoreMod.listNodeRuns();
-      const node = nodeRuns.find((n: (typeof nodeRuns)[number]) => n.metadata.name === input.node);
+      const node = nodeRuns.find((n) => n.metadata.name === ownerNode);
       const declared = node?.spec.budget?.memoryGiB;
       const leaseRegistry = getResidencyLeaseRegistry();
       const rawNodeName = process.env["LLAMACTL_NODE_NAME"]?.trim() ?? "";
-      const servingNode = rawNodeName === "" ? null : rawNodeName;
+      const servingNode =
+        owner === undefined ? (rawNodeName === "" ? null : rawNodeName) : input.node;
       // The store keeps the audit across a process restart, but a sink write can
       // fail quietly (a locked store hits the short busy timeout and core swallows
       // the error), so the live in-memory audit may hold entries the store lacks.
@@ -2979,7 +2983,7 @@ export const router = t.router({
               ...modelHostStoreMod.listModelHosts().map((h) => h.metadata.name),
             ];
       const { unifiedProxyEnabled } = await import("./proxy/create-proxy.js");
-      return buildResidencyStatus({
+      const status = buildResidencyStatus({
         node: input.node,
         nodeRun: node,
         budgetGiB: defaultNodeBudgetGiB(declared, undefined, node?.spec.residency),
@@ -2996,6 +3000,13 @@ export const router = t.router({
         }),
         sessionRegistry: currentSessionRefcounts(),
       });
+      const managed = owner?.readStatus?.();
+      return {
+        ...status,
+        ...(managed === undefined
+          ? {}
+          : { managed: { ...managed, execution: ownerExecutionStatus() } }),
+      };
     }),
 
   // Read-only residency plan: a dry-run profile switch, never a mutation.

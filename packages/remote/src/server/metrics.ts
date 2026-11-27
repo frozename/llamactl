@@ -60,6 +60,10 @@ export function setOwnerAdmissionMetricsReader(reader: typeof ownerAdmissionMetr
   ownerAdmissionMetricsReader = reader;
 }
 
+export function ownerExecutionStatus(): OwnerAdmissionSnapshot[] | null {
+  return ownerAdmissionMetricsReader?.() ?? null;
+}
+
 new Gauge({
   name: "llamactl_execution_admission_requests",
   help: "Requests by state in each local engine execution group.",

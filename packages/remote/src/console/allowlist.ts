@@ -217,6 +217,35 @@ const consoleResidencyStatus = z.object({
       }),
     ])
     .optional(),
+  managed: z
+    .object({
+      ownerNodeId: residencyDisplayId,
+      ledger: z.enum(["available", "unavailable"]),
+      profile: z.discriminatedUnion("kind", [
+        z.object({ kind: z.literal("selected"), profile: z.string().min(1) }),
+        z.object({ kind: z.enum(["unselected", "switching", "unknown"]) }),
+      ]),
+      budgetGiB: z.number().nonnegative().nullable(),
+      claims: z.array(
+        z.object({
+          workload: residencyDisplayId,
+          kind: z.enum(["ModelRun", "ModelHost"]).nullable(),
+          state: z.enum(["pending", "resident", "uncertain"]),
+          allocationGiB: z.number().nonnegative(),
+        }),
+      ),
+      execution: z
+        .array(
+          z.object({
+            group: z.string().min(1),
+            executing: z.number().int().nonnegative(),
+            queued: z.number().int().nonnegative(),
+            fenced: z.boolean(),
+          }),
+        )
+        .nullable(),
+    })
+    .optional(),
   store: z
     .object({
       scope: servingProcess,

@@ -102,7 +102,7 @@ export function phaseTone(phase: string): StatusDotTone {
 
 type ResidencyStatus = inferRouterOutputs<AppRouter>["residencyStatus"];
 export type WorkloadResidencyStatus = Pick<ResidencyStatus, "node" | "lifecycle" | "omlxNative"> &
-  Partial<Pick<ResidencyStatus, "leases" | "store">>;
+  Partial<Pick<ResidencyStatus, "leases" | "managed" | "store">>;
 
 export function residencyForNode(
   status: WorkloadResidencyStatus | null | undefined,

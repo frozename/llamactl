@@ -1,5 +1,6 @@
-import type { ManagedWorkloadKind } from "@llamactl/core/residency/admission";
+import type { ManagedClaimState, ManagedWorkloadKind } from "@llamactl/core/residency/admission";
 import type { OkPlan } from "@llamactl/core/residency/planner";
+import type { ManagedProfileSelection } from "@llamactl/core/residency/profile-selection";
 
 import type { AdmissionAuthority, AdmitRequest, GenerationRecord } from "./admission-authority.js";
 import type { DirectLifecycleOutcome } from "./direct-lifecycle.js";
@@ -26,11 +27,27 @@ export interface ManagedApplyBudget {
   reservedAfter: number;
 }
 
+export interface ManagedAdmissionReadout {
+  ownerNodeId: string;
+  ledger: "available" | "unavailable";
+  profile:
+    | { kind: Exclude<ManagedProfileSelection["kind"], "selected"> }
+    | { kind: "selected"; profile: string };
+  budgetGiB: number | null;
+  claims: {
+    workload: string;
+    kind: ManagedWorkloadKind | null;
+    state: ManagedClaimState;
+    allocationGiB: number;
+  }[];
+}
+
 export interface ManagedLaunchAdmission {
   prepareStopRelease?: AdmissionAuthority["prepareStopRelease"];
   runOwnedLifecycle?: <T>(run: () => T) => T;
   ownsNode?: (name: string) => boolean;
   ownerNodeId?: string;
+  readStatus?: () => ManagedAdmissionReadout;
   preflightProfile?: (
     plan: Pick<OkPlan, "victims" | "replacements" | "retained">,
   ) => string | undefined;

@@ -246,6 +246,9 @@ export function WorkloadsView({
         {workload !== undefined && deepLink !== null ? (
           <DeepLinkNotice deepLink={deepLink} workload={workload} />
         ) : null}
+        {residency?.managed === undefined ? null : (
+          <ManagedResidencyOverview managed={residency.managed} />
+        )}
         {operations.length > 0 ? (
           <ul className="console-caption" aria-label="Active residency operations">
             {operations.map((operation) => (
@@ -270,5 +273,30 @@ export function WorkloadsView({
         <OtherNodesFooter others={scope.others} />
       </section>
     </main>
+  );
+}
+
+function ManagedResidencyOverview({
+  managed,
+}: {
+  managed: NonNullable<WorkloadResidencyStatus["managed"]>;
+}): React.JSX.Element {
+  const { profile, claims, budgetGiB } = managed;
+  const selected = profile.kind === "selected" ? profile.profile : profile.kind;
+  const allocated = claims.reduce((total, claim) => total + claim.allocationGiB, 0);
+  const pending = claims.filter((claim) => claim.state === "pending").length;
+  return (
+    <div className="console-caption" aria-label="Managed residency">
+      <p>
+        {managed.ledger === "available"
+          ? `Profile ${selected} · ${allocated.toFixed(1)} / ${budgetGiB?.toFixed(1) ?? "unknown"} GiB · ${String(pending)} pending`
+          : "Managed residency ledger unavailable"}
+      </p>
+      {(managed.execution ?? []).map((group) => (
+        <p key={group.group}>
+          {`${group.group} · ${String(group.executing)} active · ${String(group.queued)} queued${group.fenced ? " · fenced" : ""}`}
+        </p>
+      ))}
+    </div>
   );
 }

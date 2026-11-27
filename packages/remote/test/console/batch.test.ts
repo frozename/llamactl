@@ -98,6 +98,16 @@ describe("console allowlist", () => {
           workloads: [{ model: "w1", state: "loading", ownerId: "private-owner" }],
         },
         leases: { status: "unavailable", scope: "serving-process", reason: "NoRegistry" },
+        managed: {
+          ownerNodeId: "worker-a",
+          ledger: "available",
+          profile: { kind: "selected", profile: "interactive", operationId: "private-op" },
+          budgetGiB: 24,
+          claims: [
+            { workload: "w1", kind: "ModelRun", state: "resident", allocationGiB: 8, pid: 10 },
+          ],
+          execution: [{ group: "metal", executing: 1, queued: 2, queuedBytes: 441, fenced: true }],
+        },
         sessions: { sessions: [{ sessionId: "private-session" }] },
       },
     });
@@ -131,6 +141,14 @@ describe("console allowlist", () => {
             workloads: [{ model: "w1", state: "loading" }],
           },
           leases: { scope: "serving-process", status: "unavailable" },
+          managed: {
+            ownerNodeId: "worker-a",
+            ledger: "available",
+            profile: { kind: "selected", profile: "interactive" },
+            budgetGiB: 24,
+            claims: [{ workload: "w1", kind: "ModelRun", state: "resident", allocationGiB: 8 }],
+            execution: [{ group: "metal", executing: 1, queued: 2, fenced: true }],
+          },
         },
       },
     });

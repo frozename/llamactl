@@ -450,6 +450,31 @@ describe("llamactl residency status", () => {
     expect(stdout).toMatch(/op-1\s+qwen3-8b\s+loading -> resident\s+6\.5 GiB/);
   });
 
+  test("status renders the selected managed profile, charge and owner queue", async () => {
+    const residency = await loadResidency();
+    const rec = setupResidency({
+      "residencyStatus.query": () =>
+        Promise.resolve({
+          ...OK_STATUS,
+          managed: {
+            ownerNodeId: "gpu1",
+            ledger: "available",
+            profile: { kind: "selected", profile: "interactive" },
+            budgetGiB: 24,
+            claims: [{ workload: "qwen", kind: "ModelRun", state: "uncertain", allocationGiB: 8 }],
+            execution: [{ group: "metal", executing: 1, queued: 2, fenced: true }],
+          },
+        }),
+    });
+    const { result, stdout } = await withCapturedIo(() =>
+      residency.runResidency(["status", "--node", "gpu1"], rec.deps),
+    );
+    expect(result).toBe(0);
+    expect(stdout).toContain("gpu1 · interactive · ledger available · 24.0 GiB");
+    expect(stdout).toContain("qwen  uncertain  8.0 GiB");
+    expect(stdout).toContain("metal  1 active  2 queued  fenced");
+  });
+
   test("status renders the lease/drain section after the store", async () => {
     const residency = await loadResidency();
     const rec = setupResidency({

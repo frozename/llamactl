@@ -29,6 +29,7 @@ import { ModelRunSchema } from "../workload/schema.js";
 import { defaultWorkloadsDir, loadWorkloadByNameAny, workloadPath } from "../workload/store.js";
 import {
   createManagedLaunchAdmission,
+  type ManagedAdmissionReadout,
   type ManagedApplyBudget,
   type ManagedLaunchAdmission,
   type ManagedLaunchRequest,
@@ -370,6 +371,30 @@ export async function openNodeManagedAdmission(opts: NodeManagedAdmissionOptions
       ...admission,
       ownsNode: (name) => aliases.has(name),
       ownerNodeId: opts.nodeName,
+      readStatus(): ManagedAdmissionReadout {
+        const operational =
+          opts.verifyJournalPair?.() === undefined && runtime.authority.isOperational();
+        const selection = operational
+          ? readManagedProfileSelection(defaultResidencyStorePath(), opts.nodeName)
+          : { kind: "unknown" as const };
+        return {
+          ownerNodeId: opts.nodeName,
+          ledger: operational ? "available" : "unavailable",
+          profile:
+            selection.kind === "selected"
+              ? { kind: selection.kind, profile: selection.profile }
+              : { kind: selection.kind },
+          budgetGiB: operational ? (budgetGiB() ?? null) : null,
+          claims: operational
+            ? runtime.authority.snapshot().map((claim) => ({
+                workload: claim.runtimeKey,
+                kind: claim.kind ?? null,
+                state: claim.state,
+                allocationGiB: claim.allocationGiB,
+              }))
+            : [],
+        };
+      },
       preflightProfile(plan): string | undefined {
         return (
           inspectRuntime() ??
