@@ -5,10 +5,8 @@
  * fence.
  *
  * `runProfileSwitchBootRecovery` runs synchronously inside `startAgentServer`,
- * before it returns, so a leftover `profile-switch:<node>` row from a crashed
- * switch is terminalized before any request can be served. It probes the store
- * read-only first (short busy timeout, never creates a file) and only opens a
- * writable handle when such a row actually exists.
+ * before it returns. It probes the store read-only first (short busy timeout,
+ * never creates a file) and only opens a writable handle for rows it can recover.
  *
  * Fence identity. It claims the operation fence as
  * `RESIDENCY_APPLY_PROFILE_FENCE_OWNER`, the owner every apply-profile call
@@ -17,7 +15,7 @@
  * wet apply-profile Busy until something else re-claimed.
  *
  * When it claims. Only when at least one recognized stale row needs finishing
- * AND no profile-switch row looks possibly live. A store holding only
+ * AND no profile-switch row is committed or looks possibly live. A store holding only
  * unrecognized rows, or nothing to recover, is never claimed: the fence and
  * every row stay exactly as they were.
  *
@@ -26,6 +24,12 @@
  * using the current fence token and operation version, without claiming or
  * changing lifecycle rows. A tagged live or unverified owner blocks the
  * following staleness scan regardless of age.
+ *
+ * A committed row may already have dispatched a detached replacement. Age,
+ * owner exit and pid-file probes cannot establish that generation's outcome.
+ * Boot leaves its fence, reservation and occupancy intact and reports it as
+ * `dispatchUnverified`. The nonterminal row keeps later starts and switches
+ * out even on subsequent boots.
  *
  * Live-switch guard for the remaining rows. The executor refreshes the row's
  * `updatedAtMs` through a fenced heartbeat at every step boundary (each fence,
@@ -62,7 +66,7 @@
  * makes those finishes fail stale-fence, which never touches a live switch.
  *
  * Lifecycle-row sweep (Part of #517). After the profile-switch operations are
- * terminalized, the same claimed pass walks every residency_states row stuck
+ * terminalized for legacy pending switches, the same claimed pass walks every residency_states row stuck
  * in an interrupted transient state (`loading`, `warming`, `draining`,
  * `unloading`) and transitions it to `failed`, releasing the exclusive-group
  * occupancy a crashed switch left behind. Per-row write failures or refusals
@@ -187,6 +191,7 @@ export type BootRecoverySummary = {
   skipped: number;
   unrecognized: number;
   possiblyLive: number;
+  dispatchUnverified?: number;
 };
 
 type BootRecoveryStore = ResidencyOperationStore & ResidencyLifecycleStore;
@@ -293,7 +298,7 @@ function recoverProfileSwitchRows(
     ? result
     : {
         ...result,
-        status: "recovered",
+        status: result.dispatchUnverified === undefined ? "recovered" : "deferred",
         recovered: result.recovered + early.finished.size,
         recordFailures: result.recordFailures + early.recordFailures,
       };
@@ -307,6 +312,9 @@ function countsJson(result: BootRecoverySummary): string {
     skipped: result.skipped,
     unrecognized: result.unrecognized,
     possiblyLive: result.possiblyLive,
+    ...(result.dispatchUnverified === undefined
+      ? {}
+      : { dispatchUnverified: result.dispatchUnverified }),
   });
 }
 
@@ -564,7 +572,7 @@ function claimAndFailOrphans(store: BootRecoveryStore, ctx: OrphanSweepContext):
 }
 
 function shouldClaim(preview: ProfileSwitchRecoveryPreview): boolean {
-  return preview.stale > 0 && preview.possiblyLive === 0;
+  return preview.stale > 0 && preview.possiblyLive === 0 && preview.dispatchUnverified === 0;
 }
 
 function deferred(preview: ProfileSwitchRecoveryPreview): BootRecoverySummary {
@@ -573,6 +581,7 @@ function deferred(preview: ProfileSwitchRecoveryPreview): BootRecoverySummary {
     ...NO_COUNTS,
     unrecognized: preview.unrecognized,
     possiblyLive: preview.possiblyLive,
+    ...(preview.dispatchUnverified === 0 ? {} : { dispatchUnverified: preview.dispatchUnverified }),
   };
 }
 
@@ -588,7 +597,12 @@ function scanWithStore(
     // Re-check on the writable handle: the snapshot may be stale by now, and a
     // claim must never land while a possibly-live switch row exists. The
     // re-check and the claim share one IMMEDIATE transaction.
-    let preview: ProfileSwitchRecoveryPreview = { stale: 0, possiblyLive: 0, unrecognized: 0 };
+    let preview: ProfileSwitchRecoveryPreview = {
+      stale: 0,
+      possiblyLive: 0,
+      unrecognized: 0,
+      dispatchUnverified: 0,
+    };
     const claim = store.claimOwnershipWhen(
       { ownerId: RESIDENCY_APPLY_PROFILE_FENCE_OWNER, incarnation: opts.incarnation },
       (nonterminal) => {
@@ -606,6 +620,9 @@ function scanWithStore(
       nowMs,
       minStaleAgeMs,
     });
+    if (result.dispatchUnverified > 0) {
+      return deferred({ ...preview, dispatchUnverified: result.dispatchUnverified });
+    }
     const recovered = result.recovered.filter((row) => row.recorded).length;
     let lifecycleCounts: LifecycleCounts;
     try {

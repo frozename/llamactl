@@ -343,8 +343,11 @@ more occupying members.
 Lifecycle-row boot recovery (Part of #517) sweeps interrupted transient
 states (`loading`, `warming`, `draining`, `unloading`) to `failed` under
 the same claimed fence as the profile-switch operation recovery, releasing
-exclusive-group capacity. On a claimed pass, i.e. when a stale profile-switch
-row exists, it sweeps every interrupted row. When the store holds no
+exclusive-group capacity. On a claimed pass for a stale legacy pending switch,
+it sweeps every interrupted row. A nonterminal `committed` switch retains its
+reservation and lifecycle rows across agent restarts because its replacement
+process may still be live. Boot reports a `dispatchUnverified` count for these
+operations. When the store holds no
 nonterminal operation row, it also sweeps lifecycle rows interrupted outside a
 switch, such as a direct start whose agent died in `loading`, once they have
 made no progress for 30 minutes and their workload is proven down, under its
