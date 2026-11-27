@@ -309,6 +309,8 @@ function ensureSchema(db: Database): void {
     start_time_ms INTEGER,
     executable TEXT,
     birth_id TEXT,
+    process_group_id INTEGER,
+    process_group_scope TEXT,
     PRIMARY KEY (claim_id, seq)
   )`);
   const generationColumns = db
@@ -316,6 +318,12 @@ function ensureSchema(db: Database): void {
     .all();
   if (!generationColumns.some((column) => column.name === "birth_id")) {
     db.run("ALTER TABLE claim_generations ADD COLUMN birth_id TEXT");
+  }
+  if (!generationColumns.some((column) => column.name === "process_group_id")) {
+    db.run("ALTER TABLE claim_generations ADD COLUMN process_group_id INTEGER");
+  }
+  if (!generationColumns.some((column) => column.name === "process_group_scope")) {
+    db.run("ALTER TABLE claim_generations ADD COLUMN process_group_scope TEXT");
   }
 }
 
@@ -599,7 +607,7 @@ class SqliteAdmissionStore implements AdmissionStore {
           .get(claimId) as { max_seq: number | null } | null;
         const nextSeq = (maxSeq?.max_seq ?? 0) + 1;
         db.run(
-          "INSERT INTO claim_generations (claim_id, seq, pid, start_time_ms, executable, birth_id) VALUES (?, ?, ?, ?, ?, ?)",
+          "INSERT INTO claim_generations (claim_id, seq, pid, start_time_ms, executable, birth_id, process_group_id, process_group_scope) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
           [
             claimId,
             nextSeq,
@@ -607,6 +615,8 @@ class SqliteAdmissionStore implements AdmissionStore {
             generation.startTimeMs ?? null,
             generation.executable ?? null,
             generation.birthId ?? null,
+            generation.processGroupId ?? null,
+            generation.processGroupScope ?? null,
           ],
         );
         return true;
@@ -630,10 +640,12 @@ class SqliteAdmissionStore implements AdmissionStore {
             start_time_ms: number | null;
             executable: string | null;
             birth_id: string | null;
+            process_group_id: number | null;
+            process_group_scope: string | null;
           },
           [string]
         >(
-          "SELECT seq, pid, start_time_ms, executable, birth_id FROM claim_generations WHERE claim_id = ? ORDER BY seq",
+          "SELECT seq, pid, start_time_ms, executable, birth_id, process_group_id, process_group_scope FROM claim_generations WHERE claim_id = ? ORDER BY seq",
         )
         .all(claimId);
       return rows.map((row) => ({
@@ -641,6 +653,8 @@ class SqliteAdmissionStore implements AdmissionStore {
         ...(row.start_time_ms === null ? {} : { startTimeMs: row.start_time_ms }),
         ...(row.executable === null ? {} : { executable: row.executable }),
         ...(row.birth_id === null ? {} : { birthId: row.birth_id }),
+        ...(row.process_group_id === null ? {} : { processGroupId: row.process_group_id }),
+        ...(row.process_group_scope === null ? {} : { processGroupScope: row.process_group_scope }),
       }));
     } catch {
       return [];
@@ -736,7 +750,7 @@ class SqliteAdmissionStore implements AdmissionStore {
 
 /** SQLite application_id stamped on every admission store ("LMAD"). */
 const ADMISSION_APPLICATION_ID = 0x4c4d4144;
-const ADMISSION_SCHEMA_VERSION = 2;
+const ADMISSION_SCHEMA_VERSION = 3;
 
 /**
  * Refuse a file whose pages fail PRAGMA quick_check before the open path

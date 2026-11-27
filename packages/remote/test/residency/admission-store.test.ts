@@ -864,7 +864,7 @@ describe("admission-store", () => {
       const user_version =
         rawDb.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version ?? 0;
       expect(application_id).toBe(0x4c4d4144);
-      expect(user_version).toBe(2);
+      expect(user_version).toBe(3);
     } finally {
       rawDb.close();
       t.cleanup();
@@ -900,13 +900,13 @@ describe("admission-store", () => {
     store.close();
     const rawDb = new Database(t.path);
     try {
-      rawDb.run("PRAGMA user_version = 3");
+      rawDb.run("PRAGMA user_version = 4");
       rawDb.close();
       expect(() => openAdmissionStore({ path: t.path })).toThrow(AuthorityUnavailableError);
       const verify = new Database(t.path);
       try {
         const row = verify.query<{ user_version: number }, []>("PRAGMA user_version").get();
-        expect(row?.user_version ?? 0).toBe(3);
+        expect(row?.user_version ?? 0).toBe(4);
       } finally {
         verify.close();
       }
@@ -1105,7 +1105,7 @@ describe("admission-store", () => {
             .all()
             .map((r) => r.name);
           expect(tables).toContain("claim_generations");
-          expect(verify.query("PRAGMA user_version").get()).toEqual({ user_version: 2 });
+          expect(verify.query("PRAGMA user_version").get()).toEqual({ user_version: 3 });
         } finally {
           verify.close();
         }
