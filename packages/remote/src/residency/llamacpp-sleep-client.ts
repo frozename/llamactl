@@ -1,6 +1,7 @@
 /**
  * DF-10 (#283) guarded llama.cpp sleep with verified process-stop fallback;
- * inert unless the residency lease registry is published.
+ * inert unless the residency lease registry is published. An unresolved
+ * sleep or stop keeps the exact workload drain closed and its capacity charged.
  *
  * #520 — When a lease registry is installed, the driver consults the session
  * registry at sleep time: a bound session (idle within its timeout or in
@@ -18,7 +19,7 @@ import type {
   ManagedClaimState,
   ManagedWorkloadKind,
 } from "@llamactl/core/residency/admission";
-import type { ResidencyLeases } from "@llamactl/core/residency/leases";
+import type { DrainToken, ResidencyLeases } from "@llamactl/core/residency/leases";
 import type { SessionRefcounts } from "@llamactl/core/residency/sessions";
 
 import { getResidencyLeaseRegistry } from "@llamactl/core/residency/leases";
@@ -56,6 +57,9 @@ export type LlamacppSleepTrigger =
   | "SleepUnreachable"
   | "ProcessFallback";
 
+type InferenceHoldRefusal = "PriorInferenceHold" | "InferenceHoldActive" | "InferenceHoldUnknown";
+type SleepFenceRefusal = InferenceHoldRefusal | "DrainChanged";
+
 export type LlamacppSleepOutcome =
   | { kind: "slept"; reservation: "released" }
   | {
@@ -71,6 +75,7 @@ export type LlamacppSleepOutcome =
       stopReason: string;
       reservation: "uncertain";
     }
+  | { kind: "unconfirmed"; reason: SleepFenceRefusal; reservation: "uncertain" }
   | { kind: "refused"; reason: string; reservation: "held"; active?: string[] }
   | { kind: "inert"; reason: "ResidencyPolicyDisabled" };
 
@@ -90,12 +95,44 @@ export type LlamacppSleepDriverOptions = {
    * null: opt out (#520).
    */
   sessions?: Pick<SessionRefcounts, "checkUnload"> | null;
-  verifiedStop: () => Promise<LlamacppVerifiedStopResult>;
+  /** The owner verifies the exact process while reusing this operation's drain. */
+  verifiedStop: (drain: DrainToken) => Promise<LlamacppVerifiedStopResult>;
 };
 
 // ── Driver implementation ────────────────────────────────────────────────
 
-function createLlamacppSleepDriver(opts: LlamacppSleepDriverOptions): LlamacppSleepDriver {
+async function confirmsSleep(
+  base: typeof globalThis.fetch,
+  baseUrl: string,
+  apiKey: string | undefined,
+  signal: AbortSignal,
+): Promise<boolean> {
+  try {
+    const response = await base(
+      `${baseUrl}/props`,
+      applyAuth(apiKey, { method: "GET", signal, redirect: "error", cache: "no-store" }),
+    );
+    if (response.status !== 200) {
+      response.body?.cancel().catch(() => undefined);
+      return false;
+    }
+    const body: unknown = await response.json();
+    return (
+      !signal.aborted &&
+      typeof body === "object" &&
+      body !== null &&
+      !Array.isArray(body) &&
+      (body as Record<string, unknown>)["is_sleeping"] === true
+    );
+  } catch {
+    return false;
+  }
+}
+
+function createLlamacppSleepDriver(
+  opts: AgentLlamacppSleepDriverOptions,
+  registry: ResidencyLeases,
+): LlamacppSleepDriver {
   const {
     controller,
     memberId,
@@ -107,38 +144,19 @@ function createLlamacppSleepDriver(opts: LlamacppSleepDriverOptions): LlamacppSl
     fetch: baseFetch,
     sessions,
     verifiedStop,
+    managed,
   } = opts;
   const baseUrl = buildBaseUrl(endpoint.host, endpoint.port);
   const sleepPath = rawSleepPath ?? "/sleep";
   const base = baseFetch ?? globalThis.fetch;
+  const workload = managed?.workload ?? memberId;
+  const holdRefusal = (): InferenceHoldRefusal | undefined =>
+    inferenceHoldRefusal(managed?.readInferenceHold, workload);
+  const confirmRelease = (drain: DrainToken): SleepFenceRefusal | undefined =>
+    holdRefusal() ?? (registry.commitUnload(drain).ok ? undefined : "DrainChanged");
 
-  async function confirmsSleep(signal: AbortSignal): Promise<boolean> {
-    try {
-      const response = await base(
-        `${baseUrl}/props`,
-        applyAuth(apiKey, { method: "GET", signal, redirect: "error", cache: "no-store" }),
-      );
-      if (response.status !== 200) {
-        response.body?.cancel().catch(() => undefined);
-        return false;
-      }
-      const body: unknown = await response.json();
-      return (
-        !signal.aborted &&
-        typeof body === "object" &&
-        body !== null &&
-        !Array.isArray(body) &&
-        (body as Record<string, unknown>)["is_sleeping"] === true
-      );
-    } catch {
-      return false;
-    }
-  }
-
-  async function sleep(): Promise<LlamacppSleepOutcome> {
-    // #520: session check runs before controller.requestSleep — no IO, no
-    // controller mutation, no process stop.
-    const sessionRefusal = sessionUnloadRefusal(sessions, memberId);
+  async function sleepWithDrain(token: DrainToken): Promise<LlamacppSleepOutcome> {
+    const sessionRefusal = sessionUnloadRefusal(sessions, workload);
     if (sessionRefusal !== null) {
       return {
         kind: "refused",
@@ -165,13 +183,7 @@ function createLlamacppSleepDriver(opts: LlamacppSleepDriverOptions): LlamacppSl
       if (inFlight !== null) {
         return { kind: "refused", reason: inFlight, reservation: "held" };
       }
-      return await runVerifiedStop(
-        "ProcessFallback",
-        undefined,
-        verifiedStop,
-        controller,
-        memberId,
-      );
+      return await stopUnderDrain("ProcessFallback", undefined, token);
     }
 
     // Step 3: guarded sleep — POST to the endpoint
@@ -193,30 +205,91 @@ function createLlamacppSleepDriver(opts: LlamacppSleepDriverOptions): LlamacppSl
 
       // A successful command acknowledgement is not proof that the model
       // released memory. /props observes the state without triggering wake.
-      if (response.ok && (await confirmsSleep(signal))) {
-        controller.sleepSettled(memberId, "slept", cacheIdentity);
-        return { kind: "slept", reservation: "released" };
+      if (response.ok && (await confirmsSleep(base, baseUrl, apiKey, signal))) {
+        return settleNativeSleep(token);
       }
 
       controller.sleepSettled(memberId, "failed");
-      return await runVerifiedStop(
-        sleepResponseTrigger(response),
-        httpStatus,
-        verifiedStop,
-        controller,
-        memberId,
-      );
+      return await stopUnderDrain(sleepResponseTrigger(response), httpStatus, token);
     } catch (err) {
       // Step 4 (cont): fetch error — mark as failed first
       controller.sleepSettled(memberId, "failed");
       const fetchError = classifyFetchError(signal, err);
       const trigger: LlamacppSleepTrigger =
         fetchError === "Timeout" ? "SleepTimedOut" : "SleepUnreachable";
-      return await runVerifiedStop(trigger, undefined, verifiedStop, controller, memberId);
+      return await stopUnderDrain(trigger, undefined, token);
     }
   }
 
-  return { sleep };
+  function settleNativeSleep(token: DrainToken): LlamacppSleepOutcome {
+    const reason = confirmRelease(token);
+    if (reason !== undefined) {
+      controller.sleepSettled(memberId, "failed");
+      return { kind: "unconfirmed", reason, reservation: "uncertain" };
+    }
+    controller.sleepSettled(memberId, "slept", cacheIdentity);
+    return { kind: "slept", reservation: "released" };
+  }
+
+  function stopUnderDrain(
+    trigger: LlamacppSleepTrigger,
+    httpStatus: number | undefined,
+    token: DrainToken,
+  ): Promise<LlamacppSleepOutcome> {
+    const snapshot = registry.snapshot(workload);
+    const reason =
+      snapshot.phase !== "draining" || snapshot.epoch !== token.epoch
+        ? "DrainChanged"
+        : holdRefusal();
+    if (reason !== undefined) {
+      return Promise.resolve(
+        trigger === "ProcessFallback"
+          ? { kind: "refused", reason, reservation: "held" }
+          : { kind: "unconfirmed", reason, reservation: "uncertain" },
+      );
+    }
+    return runVerifiedStop(
+      trigger,
+      httpStatus,
+      () => verifiedStop(token),
+      controller,
+      memberId,
+      () => confirmRelease(token),
+    );
+  }
+
+  return {
+    sleep: () => withSleepDrain(registry, workload, holdRefusal, sleepWithDrain),
+  };
+}
+
+async function withSleepDrain(
+  registry: ResidencyLeases,
+  workload: string,
+  holdRefusal: () => InferenceHoldRefusal | undefined,
+  sleep: (token: DrainToken) => Promise<LlamacppSleepOutcome>,
+): Promise<LlamacppSleepOutcome> {
+  if (workload.trim().length === 0) {
+    return { kind: "refused", reason: "WorkloadUnknown", reservation: "held" };
+  }
+  const drain = registry.beginDrain(workload);
+  if (!drain.ok) {
+    const reason = drain.reason === "AlreadyDraining" ? "DrainInProgress" : drain.reason;
+    return { kind: "refused", reason, reservation: "held" };
+  }
+  const { token, active } = drain;
+  if (active.length > 0) {
+    registry.cancelDrain(token);
+    return { kind: "refused", reason: "LeasesActive", reservation: "held", active };
+  }
+  const held = holdRefusal();
+  const result: LlamacppSleepOutcome =
+    held === undefined
+      ? await sleep(token)
+      : { kind: "refused", reason: held, reservation: "held" };
+  // Failed dispatch and failed stop can leave a live engine in transition.
+  if (result.kind === "refused") registry.cancelDrain(token);
+  return result;
 }
 
 function sleepResponseTrigger(response: Response): LlamacppSleepTrigger {
@@ -245,6 +318,7 @@ async function runVerifiedStop(
   verifiedStop: () => Promise<LlamacppVerifiedStopResult>,
   controller: LlamacppSleepController,
   memberId: string,
+  confirmRelease: () => SleepFenceRefusal | undefined,
 ): Promise<LlamacppSleepOutcome> {
   let r: LlamacppVerifiedStopResult;
   try {
@@ -269,7 +343,8 @@ async function runVerifiedStop(
     };
   }
 
-  if (r.ok) {
+  const stopReason = r.ok ? confirmRelease() : r.reason;
+  if (stopReason === undefined) {
     controller.observe(memberId, "stopped");
     return {
       kind: "stopped",
@@ -279,7 +354,6 @@ async function runVerifiedStop(
     };
   }
 
-  const stopReason = r.reason;
   controller.observe(memberId, "unknown");
   return {
     kind: "stop-failed",
@@ -292,8 +366,34 @@ async function runVerifiedStop(
 
 // ── Agent-side driver (residency-lease-registry gated) ───────────────────
 
-export type AgentLlamacppSleepDriverOptions = Omit<LlamacppSleepDriverOptions, "controller"> & {
-  controller: LlamacppSleepController;
+type ManagedSleepProof = {
+  workload: string;
+  readInferenceHold: (workload: string) => "clear" | "current" | "prior" | "unknown";
+};
+
+function inferenceHoldRefusal(
+  read: ManagedSleepProof["readInferenceHold"] | undefined,
+  workload: string,
+): InferenceHoldRefusal | undefined {
+  if (read === undefined) return undefined;
+  try {
+    switch (read(workload)) {
+      case "prior":
+        return "PriorInferenceHold";
+      case "current":
+        return "InferenceHoldActive";
+      case "clear":
+        return undefined;
+      case "unknown":
+        return "InferenceHoldUnknown";
+    }
+  } catch {
+    return "InferenceHoldUnknown";
+  }
+}
+
+export type AgentLlamacppSleepDriverOptions = LlamacppSleepDriverOptions & {
+  managed?: ManagedSleepProof;
 };
 
 export function createAgentLlamacppSleepDriver(
@@ -308,7 +408,7 @@ export function createAgentLlamacppSleepDriver(
     };
   }
   const sessions = opts.sessions !== undefined ? opts.sessions : currentSessionRefcounts();
-  return createLlamacppSleepDriver({ ...opts, sessions });
+  return createLlamacppSleepDriver({ ...opts, sessions }, registry);
 }
 
 // ── Shared-budget binding + wake driver (DF-10 #283) ─────────────────────
