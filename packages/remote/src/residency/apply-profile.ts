@@ -30,6 +30,7 @@ import type { OkPlan } from "@llamactl/core/residency/planner";
 import { server as serverMod } from "@llamactl/core";
 import { randomUUID } from "node:crypto";
 
+import type { ManagedLaunchAdmission } from "./managed-launch-admission.js";
 import type { ResidencyPlan } from "./procedures.js";
 
 import { existsSync } from "../safe-fs.js";
@@ -142,7 +143,8 @@ export type ApplyResidencyProfileArgs = {
   node?: string | null;
   to?: string | null;
   from?: string | null;
-  applyModelRun?: (manifest: unknown) => Promise<unknown>;
+  applyModelRun?: (manifest: unknown, signal?: AbortSignal) => Promise<unknown>;
+  managedLaunchAdmission?: ManagedLaunchAdmission;
   // sink for a missing node budget and heartbeat failures; default stderr
   log?: (line: string) => void;
 };
@@ -220,17 +222,25 @@ function stoppedStatus(iso: string): ModelRunStatus {
 async function stopWorkload(
   workloadsDir: string,
   workload: string,
+  managed?: ManagedLaunchAdmission,
 ): Promise<ProfileSwitchStepOutcome> {
   const manifest = loadWorkloadByNameAny(workload, workloadsDir);
-  if (manifest.kind === "ModelHost") {
-    const stopped = await stopModelHost({ key: { name: workload } });
-    return stopped.ok
-      ? { ok: true }
-      : { ok: false, detail: stopped.error ?? "modelHost stop failed" };
+  const release = managed?.prepareStopRelease?.(workload, manifest.kind);
+  const withOwnership = managed?.runOwnedLifecycle;
+  if (managed !== undefined && (release === undefined || withOwnership === undefined)) {
+    return { ok: false, detail: `managed stop cannot prove the claim for ${workload}` };
   }
-  const result = await serverMod.stopServer({ key: { name: workload } });
+  if (manifest.kind === "ModelHost") {
+    return await stopProfileHost(workload, withOwnership, release);
+  }
+  const stop = (): ReturnType<typeof serverMod.stopServer> =>
+    serverMod.stopServer({ key: { name: workload } });
+  const result = await (withOwnership === undefined ? stop() : withOwnership(stop));
   if (!result.stopped) {
     return { ok: false, detail: `stop did not confirm process removal for ${workload}` };
+  }
+  if (release !== undefined && !claimReleased(result.pid, release)) {
+    return unverifiedCapacity(workload);
   }
   const iso = new Date().toISOString();
   await withWorkloadsMutex(workloadsDir, () => {
@@ -240,6 +250,32 @@ async function stopWorkload(
   });
   reopenWorkloadAfterLoad(workload, true);
   return { ok: true };
+}
+
+async function stopProfileHost(
+  workload: string,
+  withOwnership: ManagedLaunchAdmission["runOwnedLifecycle"],
+  release: ProfileStopProof | undefined,
+): Promise<ProfileSwitchStepOutcome> {
+  const stop = (): ReturnType<typeof stopModelHost> => stopModelHost({ key: { name: workload } });
+  const stopped = await (withOwnership === undefined ? stop() : withOwnership(stop));
+  if (!stopped.ok) return { ok: false, detail: stopped.error ?? "modelHost stop failed" };
+  if (release !== undefined && !claimReleased(stopped.pid, release)) {
+    return unverifiedCapacity(workload);
+  }
+  return { ok: true };
+}
+
+type ProfileStopProof = NonNullable<
+  ReturnType<NonNullable<ManagedLaunchAdmission["prepareStopRelease"]>>
+>;
+
+function claimReleased(pid: number | null, release: ProfileStopProof): boolean {
+  return pid !== null && release(pid).kind === "released";
+}
+
+function unverifiedCapacity(workload: string): ProfileSwitchStepOutcome {
+  return { ok: false, detail: `managed stop could not verify capacity release for ${workload}` };
 }
 
 function applyOutcomeDetail(applied: Record<string, unknown>): string {
@@ -261,19 +297,21 @@ function persistApplyStatus(workloadsDir: string, applied: Record<string, unknow
 async function startWorkload(
   workloadsDir: string,
   workload: string,
-  applyModelRun: (manifest: unknown) => Promise<unknown>,
+  opts: ProfileWorkloadSteps,
+  signal?: AbortSignal,
 ): Promise<ProfileSwitchStepOutcome> {
   if (!listWorkloadNames(workloadsDir).includes(workload)) {
     return { ok: false, detail: `unknown workload ${workload}` };
   }
   const manifest = loadWorkloadByNameAny(workload, workloadsDir);
-  if (manifest.kind === "ModelHost") {
+  if (!manifest.spec.enabled) return { ok: false, detail: `workload ${workload} is disabled` };
+  if (manifest.kind === "ModelHost" && opts.managedLaunchAdmission === undefined) {
     const started = await startModelHost({ key: { name: workload } });
     return started.ok
       ? { ok: true }
       : { ok: false, detail: started.error ?? "modelHost start failed" };
   }
-  const applied = await applyModelRun(manifest);
+  const applied = await opts.applyModelRun(manifest, signal);
   if (!isRecord(applied)) {
     return { ok: false, detail: "apply returned a non-object result" };
   }
@@ -288,13 +326,18 @@ async function startWorkload(
   return { ok: true };
 }
 
-export function defaultResidencyApplyProfileSteps(opts: {
+type ProfileWorkloadSteps = {
   workloadsDir: string;
-  applyModelRun: (manifest: unknown) => Promise<unknown>;
-}): ProfileSwitchExecutorDeps {
+  applyModelRun: NonNullable<ApplyResidencyProfileArgs["applyModelRun"]>;
+  managedLaunchAdmission?: ManagedLaunchAdmission;
+};
+
+export function defaultResidencyApplyProfileSteps(
+  opts: ProfileWorkloadSteps,
+): ProfileSwitchExecutorDeps {
   return {
-    stop: (workload) => stopWorkload(opts.workloadsDir, workload),
-    start: (workload) => startWorkload(opts.workloadsDir, workload, opts.applyModelRun),
+    stop: (workload) => stopWorkload(opts.workloadsDir, workload, opts.managedLaunchAdmission),
+    start: (workload, ctx) => startWorkload(opts.workloadsDir, workload, opts, ctx?.signal),
   };
 }
 
@@ -507,12 +550,34 @@ export async function applyResidencyProfile(
     defaultResidencyApplyProfileSteps({
       workloadsDir: args.workloadsDir,
       applyModelRun: args.applyModelRun ?? unavailableApplyModelRun,
+      ...(args.managedLaunchAdmission === undefined
+        ? {}
+        : { managedLaunchAdmission: args.managedLaunchAdmission }),
     }),
   );
   if (args.dryRun) {
     return mapReport(
       await executeProfileSwitch(plan, steps, { dryRun: true, registry: args.registry }),
     );
+  }
+  const managed = args.managedLaunchAdmission;
+  if (!plan.noop && managed !== undefined) {
+    const preflight = (): string | undefined => {
+      if (args.registry === null) return "managed profiles require a target lease registry";
+      if (managed.preflightProfile === undefined) return "managed profile preflight is unavailable";
+      return managed.preflightProfile(plan);
+    };
+    const refusal = preflight();
+    if (refusal !== undefined) {
+      return residencyApplyProfileRefusal({
+        reason: "ManagedProfilePreflight",
+        detail: refusal,
+        node: plan.node,
+        from: plan.from,
+        to: plan.to,
+      });
+    }
+    return await runWet(plan, { ...steps, beforeTeardown: preflight }, args);
   }
   return await runWet(plan, steps, args);
 }

@@ -40,6 +40,7 @@ import {
   type ResidencyAuditEntry,
   type ResidencySnapshot,
 } from "@llamactl/core/residency/leases";
+import { hasManagedRuntimeMarker } from "@llamactl/core/residency/managed-runtime";
 import { currentSessionRefcounts } from "@llamactl/core/residency/sessions";
 import {
   type CostJournalEntry,
@@ -289,17 +290,25 @@ type WorkloadNodeClient = workloadApplyMod.WorkloadClient & benchScheduleLoopMod
  * surface as the remote tRPC client. Mirrors the proxy wrapper in
  * `client/node-client.ts` but lives here to avoid the AppRouter cycle.
  */
-function localCallerProxy(managedLaunchAdmission?: ManagedLaunchAdmission): WorkloadNodeClient {
+function localCallerProxy(
+  managedLaunchAdmission?: ManagedLaunchAdmission,
+  parentSignal?: AbortSignal,
+): WorkloadNodeClient {
   const ctx: AgentRouterContext =
     managedLaunchAdmission === undefined ? {} : { managedLaunchAdmission };
   // Deferred reference — at runtime `router` exists by the time the
   // helper is invoked from within a procedure body, even though at
   // module-load time the declaration below is still being evaluated.
-  const getCaller = (signal?: AbortSignal): Record<string, (...a: unknown[]) => unknown> =>
-    router.createCaller(ctx, signal ? { signal } : undefined) as unknown as Record<
-      string,
-      (...a: unknown[]) => unknown
-    >;
+  const getCaller = (signal?: AbortSignal): Record<string, (...a: unknown[]) => unknown> => {
+    const combined =
+      signal !== undefined && parentSignal !== undefined
+        ? AbortSignal.any([signal, parentSignal])
+        : (signal ?? parentSignal);
+    return router.createCaller(
+      ctx,
+      combined ? { signal: combined } : undefined,
+    ) as unknown as Record<string, (...a: unknown[]) => unknown>;
+  };
   const handler: ProxyHandler<object> = {
     get(_t, prop) {
       if (typeof prop !== "string") return undefined;
@@ -453,29 +462,125 @@ function nodeRunResidency(nodeName: string, workloadsDir: string): NodeRunReside
   return nodeRuns.find((n) => n.metadata.name === nodeName)?.spec.residency;
 }
 
+async function applyProfileWorkload(
+  node: string,
+  workloadsDir: string,
+  manifest: unknown,
+  managed: ManagedLaunchAdmission | undefined,
+  signal: AbortSignal | undefined,
+): Promise<workloadApplyMod.ApplyManifestOutcome> {
+  const cfg = kubecfg.loadConfig();
+  const apply = async (
+    owned: boolean,
+    budget?: ManagedApplyBudget,
+  ): Promise<workloadApplyMod.ApplyManifestOutcome> => {
+    if (managed !== undefined && !owned) return { ok: false, error: "ManagedOwnerRequired" };
+    return await runInResidencySwitchScope(
+      async () =>
+        await workloadApplyMod.applyManifest({
+          manifest,
+          getClient: (nodeName) =>
+            nodeName === node || managed?.ownsNode?.(nodeName) === true
+              ? localCallerProxy(managed, signal)
+              : clientForNode(cfg, nodeName),
+          getNodeBudgetGiB: (nodeName) => nodeRunBudgetGiB(nodeName, workloadsDir),
+          getNodeResidency: (nodeName) => nodeRunResidency(nodeName, workloadsDir),
+          ...(budget === undefined ? {} : { managedBudget: budget }),
+        }),
+    );
+  };
+  return managed?.withDesiredManifest === undefined
+    ? await apply(false)
+    : await managed.withDesiredManifest(manifest, apply);
+}
+
+function profileOwner(
+  node: string,
+  managed: ManagedLaunchAdmission | undefined,
+): ManagedLaunchAdmission | undefined {
+  return managed?.ownsNode?.(node) === true ? managed : undefined;
+}
+
+function wetProfileRefusal(
+  node: string,
+  to: string,
+  from: string | null,
+  workloadsDir: string,
+  managed: ManagedLaunchAdmission | undefined,
+): ResidencyApplyProfileResult | undefined {
+  const rawNode = process.env["LLAMACTL_NODE_NAME"]?.trim() ?? "";
+  const servingNode = managed === undefined ? (rawNode === "" ? null : rawNode) : node;
+  if (managed === undefined && hasManagedRuntimeMarker(envMod.resolveEnv().LOCAL_AI_RUNTIME_DIR)) {
+    return residencyApplyProfileRefusal({
+      reason: "ManagedOwnerRequired",
+      detail: "send the profile to its owner agent",
+      node,
+      to,
+      from,
+    });
+  }
+  if (servingNode !== node) {
+    return residencyApplyProfileRefusal({
+      reason: "NotServingNode",
+      detail: `node ${node} is not served by this process (serving ${String(servingNode)})`,
+      node,
+      to,
+      from,
+    });
+  }
+  const controllerPid = liveLockHolder(workloadsDir);
+  return controllerPid === null
+    ? undefined
+    : residencyApplyProfileRefusal({
+        reason: "ControllerActive",
+        detail: `a residency controller is live on ${node} (pid ${String(controllerPid)}); persist-suppression is deferred to the controller`,
+        node,
+        to,
+        from,
+        controllerPid,
+      });
+}
+
+function profileManifest<T extends { spec: { node: string } }>(
+  manifest: T,
+  node: string,
+  managed: ManagedLaunchAdmission | undefined,
+): T {
+  return managed?.ownsNode?.(manifest.spec.node) === true
+    ? { ...manifest, spec: { ...manifest.spec, node } }
+    : manifest;
+}
+
 function residencyPlanFor(input: {
   node: string;
   to: string;
   from?: string | undefined;
+  managed?: ManagedLaunchAdmission | undefined;
 }): ResidencyPlan {
+  const managed = profileOwner(input.node, input.managed);
+  const nodeName = managed?.ownerNodeId ?? input.node;
   const nodeRuns = nodeRunStoreMod.listNodeRuns();
-  const node = nodeRuns.find((n: (typeof nodeRuns)[number]) => n.metadata.name === input.node);
+  const node = nodeRuns.find((n: (typeof nodeRuns)[number]) => n.metadata.name === nodeName);
   const declared = node?.spec.budget?.memoryGiB;
   const rawNodeName = process.env["LLAMACTL_NODE_NAME"]?.trim() ?? "";
-  const servingNode = rawNodeName === "" ? null : rawNodeName;
+  const servingNode = managed === undefined ? (rawNodeName === "" ? null : rawNodeName) : nodeName;
   const resolved = envMod.resolveEnv();
-  const modelHosts = modelHostStoreMod.listModelHosts();
+  const modelHosts = modelHostStoreMod
+    .listModelHosts()
+    .map((manifest) => profileManifest(manifest, nodeName, managed));
   const observations = collectResidencyObservations({
-    node: input.node,
+    node: nodeName,
     servingNode,
-    modelRuns: workloadStoreMod.listWorkloads(),
+    modelRuns: workloadStoreMod
+      .listWorkloads()
+      .map((manifest) => profileManifest(manifest, nodeName, managed)),
     modelHosts,
     modelHostStatus: (name) => statusModelHost({ key: { name } }),
     estimateModelRunGiB: (manifest) => estimateWorkloadMemoryGiB(manifest, resolved),
     estimateModelHostGiB: (manifest) => estimateModelHostMemoryGiB(manifest, resolved),
   });
   return buildResidencyPlan({
-    node: input.node,
+    node: nodeName,
     to: input.to,
     from: input.from ?? null,
     nowMs: Date.now(),
@@ -2816,7 +2921,7 @@ export const router = t.router({
         from: z.string().min(1).optional(),
       }),
     )
-    .query(({ input }) => residencyPlanFor(input)),
+    .query(({ ctx, input }) => residencyPlanFor({ ...input, managed: ctx.managedLaunchAdmission })),
 
   // #284 (DF-11): dry-run-by-default profile switch. A bare call plans and
   // reports without opening the store; dryRun:false requires confirm:true,
@@ -2833,10 +2938,10 @@ export const router = t.router({
         confirm: z.boolean().default(false),
       }),
     )
-    .mutation(async ({ input }): Promise<ResidencyApplyProfileResult> => {
+    .mutation(async ({ ctx, input }): Promise<ResidencyApplyProfileResult> => {
       const workloadsDir = workloadStoreMod.defaultWorkloadsDir();
-      const rawNodeName = process.env["LLAMACTL_NODE_NAME"]?.trim() ?? "";
-      const servingNode = rawNodeName === "" ? null : rawNodeName;
+      const managed = profileOwner(input.node, ctx.managedLaunchAdmission);
+      const node = managed?.ownerNodeId ?? input.node;
       if (!input.dryRun) {
         if (!input.confirm) {
           throw new TRPCError({
@@ -2844,63 +2949,28 @@ export const router = t.router({
             message: "residency apply-profile: confirm: true is required when dryRun is false",
           });
         }
-        if (servingNode !== input.node) {
-          return residencyApplyProfileRefusal({
-            reason: "NotServingNode",
-            detail: `node ${input.node} is not served by this process (serving ${String(servingNode)})`,
-            node: input.node,
-            to: input.to,
-            from: input.from ?? null,
-          });
-        }
-        const controllerPid = liveLockHolder(workloadsDir);
-        if (controllerPid !== null) {
-          return residencyApplyProfileRefusal({
-            reason: "ControllerActive",
-            detail: `a residency controller is live on ${input.node} (pid ${String(controllerPid)}); persist-suppression is deferred to the controller`,
-            node: input.node,
-            to: input.to,
-            from: input.from ?? null,
-            controllerPid,
-          });
-        }
+        const refusal = wetProfileRefusal(
+          node,
+          input.to,
+          input.from ?? null,
+          workloadsDir,
+          managed,
+        );
+        if (refusal !== undefined) return refusal;
       }
-      const plan = residencyPlanFor({
-        node: input.node,
-        to: input.to,
-        ...(input.from === undefined ? {} : { from: input.from }),
-      });
+      const plan = residencyPlanFor({ ...input, managed });
       return await applyResidencyProfile({
         plan,
         dryRun: input.dryRun,
         storePath: defaultResidencyStorePath(),
         workloadsDir,
         registry: getResidencyLeaseRegistry(),
-        node: input.node,
+        node,
         to: input.to,
         from: input.from ?? null,
-        applyModelRun: async (manifest: unknown): Promise<unknown> => {
-          const cfg = kubecfg.loadConfig();
-          // The switch executor already owns this row through its own fenced
-          // lifecycle walk, so its nested start/stop must not double-record or
-          // get refused by the direct wrapper: run the apply inside the switch
-          // scope. The scope is in-process AsyncLocalStorage, so the apply's
-          // serverStart/serverStop must not cross a loopback HTTP hop — hence
-          // getClient is forced local for this node. That is safe: the wet path
-          // already requires servingNode === input.node, and planned ModelRuns
-          // have spec.node === input.node, so the only node the switch applies
-          // against is this one.
-          return await runInResidencySwitchScope(
-            async () =>
-              await workloadApplyMod.applyManifest({
-                manifest,
-                getClient: (nodeName: string) =>
-                  nodeName === input.node ? localCallerProxy() : clientForNode(cfg, nodeName),
-                getNodeBudgetGiB: (nodeName: string) => nodeRunBudgetGiB(nodeName, workloadsDir),
-                getNodeResidency: (nodeName: string) => nodeRunResidency(nodeName, workloadsDir),
-              }),
-          );
-        },
+        ...(managed === undefined ? {} : { managedLaunchAdmission: managed }),
+        applyModelRun: (manifest, signal) =>
+          applyProfileWorkload(node, workloadsDir, manifest, managed, signal),
       });
     }),
 
@@ -3085,6 +3155,38 @@ export const router = t.router({
           }),
       );
     }),
+
+  managedWorkloadApply: t.procedure.input(z.object({ yaml: z.string().min(1) })).mutation(
+    async ({
+      ctx,
+      input,
+    }): Promise<{
+      action: string;
+      path: string | null;
+      status: unknown;
+      name: string;
+      node: string;
+    }> => {
+      const managed = ctx.managedLaunchAdmission;
+      if (managed?.withDesiredManifest === undefined || managed.ownsNode === undefined) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "ManagedOwnerRequired" });
+      }
+      const raw = workloadStoreMod.parseManifestYaml(input.yaml);
+      const run = ModelRunSchema.safeParse(raw);
+      const host = ModelHostManifestSchema.safeParse(raw);
+      const manifest = run.success ? run.data : host.success ? host.data : undefined;
+      if (manifest === undefined) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "ModelRun or ModelHost required" });
+      }
+      if (!managed.ownsNode(manifest.spec.node)) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "ManagedNodeIdentityMismatch",
+        });
+      }
+      return await router.createCaller({ managedLaunchAdmission: managed }).workloadApply(input);
+    },
+  ),
 
   modelHostStatus: t.procedure.input(modelHostStatusInput).query(async ({ input }) => {
     const key = { name: input.workload };

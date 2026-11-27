@@ -35,6 +35,7 @@ import {
 import {
   defaultModelHostDir,
   listModelHosts,
+  parseModelHost,
   saveModelHost,
 } from "@llamactl/remote/workload/modelhost-store";
 import { resolve as resolvePath } from "node:path";
@@ -59,6 +60,7 @@ import {
 } from "./noderun-helpers.js";
 
 const APPLY_USAGE = `Usage: llamactl apply -f <manifest.yaml> [--evict <name>]... [--force]
+       llamactl apply -f <manifest.yaml> --managed [--node <owner>] [--json]
 
 Reconcile a ModelRun manifest against the target node:
   * If the node already runs the same rel with the same extraArgs,
@@ -71,6 +73,9 @@ The accepted manifest is persisted under $DEV_STORAGE/workloads/<name>.yaml
 so 'llamactl get workloads' can list it afterwards.
 
 --evict also applies to ModelHost manifests; --force is ModelRun-only.
+
+--managed sends a ModelRun or ModelHost to an authenticated owner agent for
+durable admission. Use --node when the manifest names an owner-local alias.
 
 For a ModelHost with node: local while the controller service holds the
 workloads lock, apply only validates the manifest and hands the start off
@@ -274,6 +279,7 @@ interface ApplyFlags {
   json: boolean;
   evict: string[];
   force: boolean;
+  managed: boolean;
 }
 
 function appendEvict(
@@ -314,6 +320,10 @@ function consumeApplyArg(
     draft.force = true;
     return { next: i + 1 };
   }
+  if (arg === "--managed") {
+    draft.managed = true;
+    return { next: i + 1 };
+  }
   if (arg === "-h" || arg === "--help") return { error: "help" };
   if (arg.startsWith("-")) return { error: `Unknown flag: ${arg}` };
   if (!draft.file) {
@@ -324,7 +334,7 @@ function consumeApplyArg(
 }
 
 function parseApplyFlags(args: string[]): ApplyFlags | { error: string } {
-  const draft: ApplyFlags = { file: "", json: false, evict: [], force: false };
+  const draft: ApplyFlags = { file: "", json: false, evict: [], force: false, managed: false };
   let i = 0;
   while (i < args.length) {
     const step = consumeApplyArg(draft, args, i);
@@ -394,6 +404,7 @@ export async function runApply(args: string[]): Promise<number> {
     process.stderr.write(`apply: manifest YAML is not parseable\n`);
     return 1;
   }
+  if (parsed.managed) return await applyManagedFromRaw(raw, kind, parsed);
   if (kind === "NodeRun") {
     return await applyNodeRunFromRaw(raw, parsed.json);
   }
@@ -406,6 +417,33 @@ export async function runApply(args: string[]): Promise<number> {
     return await applyModelHostFromRaw(raw, parsed.json, parsed);
   }
   return await applyModelRunFromRaw(raw, parsed.json, parsed);
+}
+
+async function applyManagedFromRaw(
+  raw: string,
+  kind: string | undefined,
+  flags: ApplyFlags,
+): Promise<number> {
+  try {
+    if (flags.force || flags.evict.length > 0) {
+      throw new Error("managed apply requires a verified profile transition for replacements");
+    }
+    const manifest = kind === "ModelHost" ? parseModelHost(raw) : workloadStore.parseWorkload(raw);
+    const node = getGlobals().nodeName ?? manifest.spec.node;
+    if (node === LOCAL_NODE_ID || node === "all") {
+      throw new Error("managed apply requires one named owner agent");
+    }
+    const result = await getNodeClientByName(node).managedWorkloadApply.mutate({ yaml: raw });
+    process.stdout.write(
+      flags.json
+        ? JSON.stringify(result) + "\n"
+        : `${result.action} ${result.name} on ${result.node}\n`,
+    );
+    return 0;
+  } catch (error: unknown) {
+    process.stderr.write(`apply: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
 }
 
 async function applyModelRunFromRaw(

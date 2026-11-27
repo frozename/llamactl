@@ -663,10 +663,6 @@ function writeFakeServer(path: string, host: string, port: number): void {
   writeFileSync(path, script, { mode: 0o755 });
 }
 
-function pickPort(): number {
-  return 18200 + Math.floor(Math.random() * 80);
-}
-
 function registerSpawnedPid(pidFile: string): void {
   if (!existsSync(pidFile)) {
     return;
@@ -689,7 +685,7 @@ describe("load reopens admission through the router (#278 DF-05)", () => {
     const modelsDir = join(tmp, "models");
     mkdirSync(binDir, { recursive: true });
     mkdirSync(modelsDir, { recursive: true });
-    const port = pickPort();
+    const port = await freshLoopbackPort();
     writeFakeServer(join(binDir, "llama-server"), "127.0.0.1", port);
     writeFileSync(join(modelsDir, "fake-model.gguf"), "GGUF-fake");
     Object.assign(process.env, {
@@ -740,7 +736,7 @@ describe("load reopens admission through the router (#278 DF-05)", () => {
     const binDir = join(tmp, "bin");
     mkdirSync(binDir, { recursive: true });
     mkdirSync(join(tmp, "models"), { recursive: true });
-    const port = pickPort();
+    const port = await freshLoopbackPort();
     const binary = join(binDir, "llama-host");
     writeFakeServer(binary, "127.0.0.1", port);
     Object.assign(process.env, { LLAMA_CPP_MODELS: join(tmp, "models") });
@@ -1297,6 +1293,7 @@ test.skipIf(process.platform !== "darwin" && process.platform !== "linux")(
       LLAMA_CPP_MODELS: models,
       LLAMA_CPP_LOGS: join(tmp, "logs"),
       LLAMA_CPP_USE_TUNED_ARGS: "false",
+      LLAMACTL_NODE_NAME: "local",
     });
 
     const manifest = parseModelHost(`
@@ -1304,6 +1301,7 @@ apiVersion: llamactl/v1
 kind: ModelHost
 metadata:
   name: ${host}
+  annotations: { llamactl.io/residency-profiles: maintenance }
 spec:
   engine: llamacpp
   node: local
@@ -1322,6 +1320,7 @@ apiVersion: llamactl/v1
 kind: ModelRun
 metadata:
   name: ${run}
+  annotations: { llamactl.io/residency-profiles: interactive }
 spec:
   node: local
   target: { kind: rel, value: fake.gguf }
@@ -1352,7 +1351,15 @@ spec:
     const caller = router.createCaller({ managedLaunchAdmission: runtime.admission });
     try {
       expect(existsSync(workloadPath(run, tmp))).toBe(false);
-      const first = await caller.workloadApply({ yaml: runYaml }).catch((error: unknown) => error);
+      const unowned = await router
+        .createCaller({})
+        .managedWorkloadApply({ yaml: runYaml })
+        .catch((error: unknown) => error);
+      expect(unowned).toBeInstanceOf(Error);
+      expect((unowned as Error).message).toContain("ManagedOwnerRequired");
+      const first = await caller
+        .managedWorkloadApply({ yaml: runYaml })
+        .catch((error: unknown) => error);
       registerSpawnedPid(join(runtimeRoot(), "workloads", run, "llama-server.pid"));
       expect(first).toMatchObject({ action: "started", name: run });
       expect(existsSync(workloadPath(run, tmp))).toBe(true);
@@ -1394,8 +1401,8 @@ spec:
           yaml: runYaml
             .replace(run, deniedName)
             .replace(
-              `name: ${deniedName}`,
-              `name: ${deniedName}\n  annotations: { llamactl.io/force-admit: "true" }`,
+              "llamactl.io/residency-profiles: interactive",
+              'llamactl.io/residency-profiles: interactive, llamactl.io/force-admit: "true"',
             ),
         })
         .catch((error: unknown) => error);
@@ -1440,6 +1447,49 @@ spec:
       expect(runtime.authority.snapshot()).toEqual([]);
       expect(listWorkloadRoutes(envMod.resolveEnv(), host)).toEqual([]);
       if (hostPid !== undefined) spawnedServerPids.delete(hostPid);
+
+      saveModelHost(manifest, tmp);
+      openResidencyOperationStore({ path: defaultResidencyStorePath() }).close();
+      writeFileSync(join(runtimeRoot(), "managed-residency-v1"), "switch-fixture-node\n");
+      const restored = await caller.workloadApply({ yaml: runYaml });
+      expect(restored.action).toBe("started");
+      const restoredPid = fixturePid(run);
+      if (restoredPid !== undefined) spawnedServerPids.add(restoredPid);
+      const preview = await caller.residencyApplyProfile({ node: "local", to: "maintenance" });
+      expect(preview).toMatchObject({ ok: true, dryRun: true });
+      const { resources: _resources, ...unqualifiedSpec } = manifest.spec;
+      saveModelHost({ ...manifest, spec: unqualifiedSpec }, tmp);
+      const unqualified = await caller.residencyApplyProfile({
+        node: "local",
+        to: "maintenance",
+        dryRun: false,
+        confirm: true,
+      });
+      expect(unqualified).toMatchObject({
+        ok: false,
+        refusal: { reason: "ManagedProfilePreflight" },
+      });
+      expect(fixturePid(run)).toBe(restoredPid);
+      expect(runtime.authority.snapshot()).toMatchObject([
+        { runtimeKey: run, state: "resident", allocationGiB: 16 },
+      ]);
+      saveModelHost(manifest, tmp);
+      const profile = await caller.residencyApplyProfile({
+        node: "local",
+        to: "maintenance",
+        dryRun: false,
+        confirm: true,
+      });
+      expect(profile).toMatchObject({ ok: true, outcome: "stops-and-starts-ran" });
+      const newHostPid = fixturePid(host);
+      if (newHostPid !== undefined) spawnedServerPids.add(newHostPid);
+      expect(listWorkloadRoutes(envMod.resolveEnv(), run)).toEqual([]);
+      expect(listWorkloadRoutes(envMod.resolveEnv(), host)).toHaveLength(1);
+      expect(runtime.authority.snapshot()).toMatchObject([
+        { runtimeKey: host, state: "resident", allocationGiB: 16 },
+      ]);
+      expect(loadModelHostByName(host, tmp).spec.enabled).toBe(true);
+      if (restoredPid !== undefined) spawnedServerPids.delete(restoredPid);
     } finally {
       runtime.authority.close();
     }

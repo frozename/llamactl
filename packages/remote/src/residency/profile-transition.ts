@@ -110,6 +110,7 @@ export type ProfileSwitchStepTimeouts = { unloadMs?: number; loadMs?: number };
 // tests drive timeouts deterministically.
 export type ProfileSwitchStepTimer = (ms: number, onTimeout: () => void) => () => void;
 export type ProfileSwitchExecutorDeps = {
+  beforeTeardown?: () => string | undefined;
   // caller wires the verified stop procedures; with a lease registry in play the
   // executor holds the drain token, so the caller must wire the unfenced verified
   // stop: the #613 fenceWorkloadStop would refuse it with DrainInProgress. The
@@ -124,7 +125,7 @@ export type ProfileSwitchExecutorDeps = {
   start: (workload: string, ctx?: { signal?: AbortSignal }) => Promise<ProfileSwitchStepOutcome>;
 };
 export type ProfileSwitchExecutionStatus = "planned" | "ok" | "failed" | "not-run";
-export type ProfileSwitchStepAction = "fence" | "drain" | "stop" | "start";
+export type ProfileSwitchStepAction = "fence" | "drain" | "verify" | "stop" | "start";
 export type ProfileSwitchExecutionStep = {
   action: ProfileSwitchStepAction;
   workload: string;
@@ -202,6 +203,7 @@ type StepBudget = {
   stopMs: number | null;
   startMs: number | null;
   timer: ProfileSwitchStepTimer;
+  signal: AbortSignal | undefined;
 };
 type CancelledAt = { action: ProfileSwitchStepAction; workload: string };
 type RunResult = {
@@ -387,27 +389,29 @@ async function runStep(
   budget: StepBudget,
 ): Promise<StepOutcome> {
   const budgetMs = step.action === "start" ? budget.startMs : budget.stopMs;
+  const execute = (signal: AbortSignal | undefined): Promise<ProfileSwitchStepOutcome> => {
+    const run = step.action === "start" ? deps.start : deps.stop;
+    return signal === undefined ? run(step.workload) : run(step.workload, { signal });
+  };
   if (budgetMs === null) {
     try {
-      const pending =
-        step.action === "start" ? deps.start(step.workload) : deps.stop(step.workload);
-      return normalizeOutcome(await pending);
+      return normalizeOutcome(await execute(budget.signal));
     } catch (error: unknown) {
       return { ok: false, detail: messageOf(error) };
     }
   }
   const controller = new AbortController();
+  const signal =
+    budget.signal === undefined
+      ? controller.signal
+      : AbortSignal.any([budget.signal, controller.signal]);
   // The dep promise is normalized before the race so a late resolve or reject
   // is already handled and never unhandled once the timer wins. The dep is
   // invoked inside a then callback so a synchronous throw or a non-promise
   // return is normalized exactly like the unbudgeted path, never escaping
   // runStep (which would skip cancelBestEffort on the fenced path).
   const depSettled: Promise<StepOutcome> = Promise.resolve()
-    .then(() =>
-      step.action === "start"
-        ? deps.start(step.workload, { signal: controller.signal })
-        : deps.stop(step.workload, { signal: controller.signal }),
-    )
+    .then(() => execute(signal))
     .then(
       normalizeOutcome,
       (error: unknown): StepOutcome => ({ ok: false, detail: messageOf(error) }),
@@ -808,6 +812,16 @@ async function runFenced(
     return { steps, failedAt: drain.failedAt, cancelledAt: null };
   }
 
+  const refusal = deps.beforeTeardown?.();
+  if (refusal !== undefined) {
+    cancelBestEffort(registry, fence.tokens);
+    const failure = stepRecord("verify", plan.node, "failed", refusal);
+    steps.push(failure);
+    appendNotRun(steps, "stop", plan.victims);
+    appendNotRun(steps, "start", plan.replacements);
+    return { steps, failedAt: failureOf(failure), cancelledAt: null };
+  }
+
   const stop = await stopPhase(
     registry,
     deps,
@@ -1105,11 +1119,13 @@ function finiteBudgetMs(ms: number | undefined): number | null {
 function stepBudgetFrom(
   stepTimeouts: ProfileSwitchStepTimeouts | undefined,
   stepTimer: ProfileSwitchStepTimer | undefined,
+  signal: AbortSignal | undefined,
 ): StepBudget {
   return {
     stopMs: finiteBudgetMs(stepTimeouts?.unloadMs),
     startMs: finiteBudgetMs(stepTimeouts?.loadMs),
     timer: stepTimer ?? defaultStepTimer,
+    signal,
   };
 }
 
@@ -1124,13 +1140,16 @@ function executorDepsFor(
   if (operation?.lifecycle === undefined) {
     return deps;
   }
-  return withResidencyLifecycle(deps, {
-    lifecycle: operation.lifecycle,
-    fenceToken: operation.fenceToken,
-    occupiedAtPlan: new Set([...plan.victims, ...plan.retained]),
-    nowMs: operation.nowMs ?? Date.now,
-    log: operation.log ?? defaultLog,
-  });
+  return {
+    ...deps,
+    ...withResidencyLifecycle(deps, {
+      lifecycle: operation.lifecycle,
+      fenceToken: operation.fenceToken,
+      occupiedAtPlan: new Set([...plan.victims, ...plan.retained]),
+      nowMs: operation.nowMs ?? Date.now,
+      log: operation.log ?? defaultLog,
+    }),
+  };
 }
 
 export async function executeProfileSwitch(
@@ -1204,7 +1223,7 @@ export async function executeProfileSwitch(
 
   const signal = opts.signal;
   const operation = opts.operation;
-  const budget = stepBudgetFrom(opts.stepTimeouts, opts.stepTimer);
+  const budget = stepBudgetFrom(opts.stepTimeouts, opts.stepTimer, signal);
   const executorDeps = executorDepsFor(plan, deps, operation);
   if (operation !== undefined) {
     return await executeWithOperation(plan, deferred, operation, async (beat) =>

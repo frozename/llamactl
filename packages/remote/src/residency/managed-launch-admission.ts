@@ -1,4 +1,5 @@
 import type { ManagedWorkloadKind } from "@llamactl/core/residency/admission";
+import type { OkPlan } from "@llamactl/core/residency/planner";
 
 import type { AdmissionAuthority, AdmitRequest, GenerationRecord } from "./admission-authority.js";
 import type { DirectLifecycleOutcome } from "./direct-lifecycle.js";
@@ -29,6 +30,8 @@ export interface ManagedLaunchAdmission {
   prepareStopRelease?: AdmissionAuthority["prepareStopRelease"];
   runOwnedLifecycle?: <T>(run: () => T) => T;
   ownsNode?: (name: string) => boolean;
+  ownerNodeId?: string;
+  preflightProfile?: (plan: Pick<OkPlan, "victims" | "replacements">) => string | undefined;
   withDesiredManifest?: <T>(
     input: unknown,
     apply: (owned: boolean, budget?: ManagedApplyBudget) => Promise<T>,

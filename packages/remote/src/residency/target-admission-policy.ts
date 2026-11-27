@@ -9,6 +9,7 @@ import { resolveEnv } from "@llamactl/core/env";
 import {
   capacityBudgetGiB,
   evaluateManagedAdmission,
+  type ManagedAdmissionClaim,
   type ManagedWorkloadKind,
 } from "@llamactl/core/residency/admission";
 import { withManagedRuntimeMutation } from "@llamactl/core/residency/managed-runtime";
@@ -183,6 +184,60 @@ function checkManagedApply(
   return { ok: true, budget: budgetGiB, reservedAfter };
 }
 
+function profileReplacement(
+  workload: string,
+  workloadsDir: string,
+  aliases: ReadonlySet<string>,
+): (ApprovedPlan & { runtimeKey: string; kind: ManagedWorkloadKind }) | undefined {
+  const manifest = readDesired(() => loadWorkloadByNameAny(workload, workloadsDir));
+  if (
+    manifest === undefined ||
+    !aliases.has(manifest.spec.node) ||
+    !manifest.spec.enabled ||
+    parseEvictTargets(manifest).length > 0
+  ) {
+    return undefined;
+  }
+  const plan = readDesired(() => compileDesired(manifest));
+  return plan === undefined ? undefined : { ...plan, runtimeKey: workload, kind: manifest.kind };
+}
+
+function preflightManagedProfile(
+  plan: Parameters<NonNullable<ManagedLaunchAdmission["preflightProfile"]>>[0],
+  opts: {
+    authority: AdmissionAuthority;
+    budget: number | undefined;
+    workloadsDir: string;
+    aliases: ReadonlySet<string>;
+  },
+): string | undefined {
+  const { authority, budget, workloadsDir, aliases } = opts;
+  if (!authority.isOperational()) return "AuthorityUnavailable";
+  const claims = authority.snapshot();
+  const victims = new Set(plan.victims);
+  for (const name of victims) {
+    const row = claims.find((claim) => claim.runtimeKey === name);
+    if (
+      row?.state !== "resident" ||
+      row.kind === undefined ||
+      authority.prepareStopRelease(name, row.kind) === undefined
+    ) {
+      return `ManagedVictimUnverified: ${name}`;
+    }
+  }
+
+  const projected: ManagedAdmissionClaim[] = claims.filter((row) => !victims.has(row.runtimeKey));
+  for (const name of plan.replacements) {
+    const incoming = profileReplacement(name, workloadsDir, aliases);
+    if (incoming === undefined) return `ManagedReplacementSpecUnknown: ${name}`;
+    const decision = evaluateManagedAdmission({ budgetGiB: budget, incoming, claims: projected });
+    if (decision.kind === "refuse") return `${decision.reason}: ${decision.detail}`;
+    if (decision.kind !== "admit") return `ManagedReplacementUnverified: ${name}`;
+    projected.push({ ...incoming, state: "pending", claimId: `profile:${name}` });
+  }
+  return undefined;
+}
+
 interface RuntimeRecord {
   name: string;
   kind: ManagedWorkloadKind;
@@ -285,6 +340,18 @@ export async function openNodeManagedAdmission(opts: NodeManagedAdmissionOptions
     admission: {
       ...admission,
       ownsNode: (name) => aliases.has(name),
+      ownerNodeId: opts.nodeName,
+      preflightProfile(plan): string | undefined {
+        return (
+          inspectRuntime() ??
+          preflightManagedProfile(plan, {
+            authority: runtime.authority,
+            budget: budgetGiB(),
+            workloadsDir,
+            aliases,
+          })
+        );
+      },
       async withDesiredManifest<T>(
         input: unknown,
         apply: (owned: boolean, budget?: ManagedApplyBudget) => Promise<T>,
