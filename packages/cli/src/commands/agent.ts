@@ -1,3 +1,4 @@
+import { createSecretResolver, type SecretResolver } from "@llamactl/core/config/secret";
 import { findTcpListenerAddresses } from "@llamactl/core/probe";
 import {
   agentConfig as agentConfigMod,
@@ -76,9 +77,13 @@ Subcommands:
        the old cert. Restart the agent afterwards so it loads the new
        cert.
    serve [--dir=<path>] [--bind=<host>] [--host=<host>] [--port=<n>] [--no-auth]
-        [--dial-central=<wss-url>] [--central-bearer=<token> | --central-bearer-file=<abs path>]
+        [--dial-central=<wss-url>] [--central-bearer=<token>
+                          | --central-bearer-file=<abs path>
+                          | --central-bearer-ref=keychain:<service>/<account>]
         [--tunnel-node-name=<name>]
-        [--tunnel-central=true] [--tunnel-bearer=<token> | --tunnel-bearer-file=<abs path>]
+        [--tunnel-central=true] [--tunnel-bearer=<token>
+                          | --tunnel-bearer-file=<abs path>
+                          | --tunnel-bearer-ref=keychain:<service>/<account>]
         [--tunnel-journal=<path>] [--fleet-journal=<path>]
       Run the node agent (blocks until SIGINT/SIGTERM).
       With --dial-central + --central-bearer (or --central-bearer-file),
@@ -98,6 +103,15 @@ Subcommands:
       named by LLAMACTL_TUNNEL_CENTRAL_BEARER_FILE, then
       <dir>/tunnel-central-bearer (0600 required), then the plain
       LLAMACTL_TUNNEL_CENTRAL_BEARER env var (deprecated).
+      --central-bearer-ref / --tunnel-bearer-ref take a
+      keychain:<service>/<account> reference (macOS only, resolved with
+      /usr/bin/security find-generic-password) so the token never enters a
+      plist, a unit file, a command line or the process env. A ref is an
+      explicit source, equal in rank to the literal and file flags (the
+      three must not be combined) and it wins over the *_FILE env vars,
+      the agent-dir default file and the plain env var. Only keychain:
+      refs are accepted: env:/$ refs put the token back in the env and
+      file: refs would bypass the 0600 check.
       --tunnel-journal overrides the JSONL audit path for tunnel
       events (default ~/.llamactl/tunnel/journal.jsonl, also
       settable via LLAMACTL_TUNNEL_JOURNAL).
@@ -266,6 +280,16 @@ ${DIR_FLAG_HELP}
                               (deprecated; prefer a file under
                               launchd/systemd so the token never lands in
                               a unit file or process env).
+  --central-bearer-ref=keychain:<service>/<account>
+                              Read the dial-side bearer from the macOS
+                              login keychain (/usr/bin/security
+                              find-generic-password); macOS only. An
+                              explicit source, equal in rank to
+                              --central-bearer and
+                              --central-bearer-file (never combine
+                              them): when set it is the source and the
+                              env and agent-dir fallbacks do not apply.
+                              Only keychain: refs are accepted.
   --tunnel-node-name=<name>   Identity in the tunnel hello frame
                               (default: nodeName from agent.yaml)
   --tunnel-central=true       Mount /tunnel and /tunnel-relay so NAT'd nodes can dial in
@@ -281,6 +305,16 @@ ${DIR_FLAG_HELP}
                               prefer a file under launchd/systemd so the
                               token never lands in a unit file or process
                               env).
+  --tunnel-bearer-ref=keychain:<service>/<account>
+                              Read the central-side bearer from the
+                              macOS login keychain (/usr/bin/security
+                              find-generic-password); macOS only. An
+                              explicit source, equal in rank to
+                              --tunnel-bearer and
+                              --tunnel-bearer-file (never combine
+                              them): when set it is the source and the
+                              env and agent-dir fallbacks do not apply.
+                              Only keychain: refs are accepted.
   --tunnel-journal=<path>     Tunnel audit JSONL (default: ~/.llamactl/tunnel/journal.jsonl,
                               or LLAMACTL_TUNNEL_JOURNAL)
   --fleet-journal=<path>      Fleet journal served at GET /v1/fleet/snapshot
@@ -1376,10 +1410,12 @@ export interface ServeFlags {
   dialCentral?: string;
   centralBearer?: string;
   centralBearerFile?: string;
+  centralBearerRef?: string;
   tunnelNodeName?: string;
   tunnelCentral?: boolean;
   tunnelBearer?: string;
   tunnelBearerFile?: string;
+  tunnelBearerRef?: string;
   tunnelJournal?: string;
   fleetJournal?: string;
   runtimeRole?: string;
@@ -1421,6 +1457,9 @@ export function parseServeFlags(args: string[]): ServeFlags | { error: string } 
       case "--central-bearer-file":
         flags.centralBearerFile = v;
         break;
+      case "--central-bearer-ref":
+        flags.centralBearerRef = v;
+        break;
       case "--tunnel-node-name":
         flags.tunnelNodeName = v;
         break;
@@ -1432,6 +1471,9 @@ export function parseServeFlags(args: string[]): ServeFlags | { error: string } 
         break;
       case "--tunnel-bearer-file":
         flags.tunnelBearerFile = v;
+        break;
+      case "--tunnel-bearer-ref":
+        flags.tunnelBearerRef = v;
         break;
       case "--tunnel-journal":
         flags.tunnelJournal = v;
@@ -1491,49 +1533,111 @@ function fileBearer(path: string, label: string): ResolvedBearerSide | { error: 
   return { bearer: read.bearer, fromPlainEnv: false };
 }
 
-// #289: per-side bearer resolution. Literal flag > explicit --*-bearer-file
-// > (when the side is enabled) a *_FILE env var pointing at a 0600 file >
-// the default file <dir>/tunnel-bearer|tunnel-central-bearer when present
-// (0600 required) > the plain env var, so launchd/systemd units never need
-// to embed the token. A source that exists but is rejected (bad mode) is an
-// error, never a fall-through. Only the winning source is read.
-function resolveBearerSide(
-  literal: string | undefined,
-  file: string | undefined,
-  literalLabel: string,
+// #289: only keychain refs are accepted as bearer references. An env:/$
+// ref would put the token back into the process env this function scrubs,
+// and a file: ref would bypass the 0600 check readBearerFile applies.
+const KEYCHAIN_REF_PREFIX = "keychain:";
+
+interface BearerSideSources {
+  literal: string | undefined;
+  file: string | undefined;
+  ref: string | undefined;
+  literalLabel: string;
+  fileLabel: string;
+  refLabel: string;
+  enabled: boolean;
+  envFileVar: string;
+  envVar: string;
+  dir: string;
+  defaultFileName: string;
+  env: NodeJS.ProcessEnv;
+  /** Built on demand so a run without a ref never touches `security`. */
+  secretResolver: () => SecretResolver;
+}
+
+function bearerSourceConflict(sources: BearerSideSources): string | undefined {
+  const set: string[] = [];
+  if (sources.literal !== undefined) set.push(sources.literalLabel);
+  if (sources.file !== undefined) set.push(sources.fileLabel);
+  if (sources.ref !== undefined) set.push(sources.refLabel);
+  const [a, b] = set;
+  if (a === undefined || b === undefined) return undefined;
+  return `${a} and ${b} must not be combined; pick one source for the bearer`;
+}
+
+// Errors name the flag, the service and the account only — resolveSecret's
+// own messages are redaction-safe and the resolved value is never shown.
+function keychainBearer(
+  ref: string,
+  refLabel: string,
   fileLabel: string,
-  enabled: boolean,
-  envFileVar: string,
-  envVar: string,
-  dir: string,
-  defaultFileName: string,
-  env: NodeJS.ProcessEnv,
+  secretResolver: () => SecretResolver,
 ): ResolvedBearerSide | { error: string } {
-  if (literal !== undefined && file !== undefined) {
+  const trimmed = ref.trim();
+  if (!trimmed.startsWith(KEYCHAIN_REF_PREFIX)) {
     return {
-      error: `${literalLabel} and ${fileLabel} must not be combined; pick one source for the bearer`,
+      error: `${refLabel}: only keychain:<service>/<account> refs are supported; for a file use ${fileLabel}=<abs path> (0600)`,
     };
   }
-  if (literal !== undefined) return { bearer: literal, fromPlainEnv: false };
-  if (file !== undefined) return fileBearer(file, fileLabel);
-  if (enabled) {
-    const envFile = env[envFileVar];
-    if (envFile !== undefined && envFile !== "") return fileBearer(envFile, envFileVar);
-    const defaultPath = join(dir, defaultFileName);
-    if (existsSync(defaultPath)) return fileBearer(defaultPath, "agent dir default bearer");
+  let bearer: string;
+  try {
+    bearer = secretResolver().resolve(trimmed);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    return { error: `${refLabel}: ${reason}` };
   }
-  const plain = env[envVar];
+  if (bearer === "") {
+    return { error: `${refLabel}: keychain ref resolved to an empty value` };
+  }
+  return { bearer, fromPlainEnv: false };
+}
+
+// #289: per-side bearer resolution. Exactly one explicit source
+// (literal flag, --*-bearer-file, --*-bearer-ref) > (when the side is
+// enabled) a *_FILE env var pointing at a 0600 file > the default file
+// <dir>/tunnel-bearer|tunnel-central-bearer when present (0600 required) >
+// the plain env var, so launchd/systemd units never need to embed the
+// token. A source that exists but is rejected (bad mode, non-keychain ref)
+// is an error, never a fall-through. Only the winning source is read.
+function resolveBearerSide(sources: BearerSideSources): ResolvedBearerSide | { error: string } {
+  const conflict = bearerSourceConflict(sources);
+  if (conflict !== undefined) return { error: conflict };
+  if (sources.literal !== undefined) return { bearer: sources.literal, fromPlainEnv: false };
+  if (sources.file !== undefined) return fileBearer(sources.file, sources.fileLabel);
+  if (sources.ref !== undefined) {
+    return keychainBearer(sources.ref, sources.refLabel, sources.fileLabel, sources.secretResolver);
+  }
+  if (sources.enabled) {
+    const envFile = sources.env[sources.envFileVar];
+    if (envFile !== undefined && envFile !== "") return fileBearer(envFile, sources.envFileVar);
+    const defaultPath = join(sources.dir, sources.defaultFileName);
+    if (existsSync(defaultPath)) {
+      return fileBearer(defaultPath, "agent dir default bearer");
+    }
+  }
+  const plain = sources.env[sources.envVar];
   const hasPlain = plain !== undefined && plain !== "";
   return { bearer: hasPlain ? plain : undefined, fromPlainEnv: hasPlain };
+}
+
+/** Injection surface for #289: tests drive the keychain without `security`. */
+export interface ServeBearerDeps {
+  secretResolver?: SecretResolver;
 }
 
 export function resolveServeBearers(
   parsed: ServeFlags,
   env: NodeJS.ProcessEnv,
   warn?: (msg: string) => void,
+  deps: ServeBearerDeps = {},
 ): { dialBearer: string | undefined; tunnelCentralBearer: string | undefined } | { error: string } {
   const dialEnabled = parsed.dialCentral !== undefined;
   const centralEnabled = parsed.tunnelCentral === true;
+  // Built lazily: a run with no --*-bearer-ref must never construct a
+  // resolver, so nothing here can reach for the `security` binary.
+  let secretResolver: SecretResolver | undefined;
+  const makeSecretResolver = (): SecretResolver =>
+    (secretResolver ??= deps.secretResolver ?? createSecretResolver({ env }));
   // #289 step 4: once resolved, scrub both plain bearer vars from the env we
   // were handed (success or error) so llama-server children, spawned later
   // without an env option (packages/core/src/server.ts), never inherit the
@@ -1541,39 +1645,47 @@ export function resolveServeBearers(
   // alone; nothing else in src reads these vars from process.env after
   // validation.
   try {
-    const dial = resolveBearerSide(
-      parsed.centralBearer,
-      parsed.centralBearerFile,
-      "--central-bearer",
-      "--central-bearer-file",
-      dialEnabled,
-      "LLAMACTL_TUNNEL_BEARER_FILE",
-      "LLAMACTL_TUNNEL_BEARER",
-      parsed.dir,
-      DEFAULT_DIAL_BEARER_FILE,
+    const dial = resolveBearerSide({
+      literal: parsed.centralBearer,
+      file: parsed.centralBearerFile,
+      ref: parsed.centralBearerRef,
+      literalLabel: "--central-bearer",
+      fileLabel: "--central-bearer-file",
+      refLabel: "--central-bearer-ref",
+      enabled: dialEnabled,
+      envFileVar: "LLAMACTL_TUNNEL_BEARER_FILE",
+      envVar: "LLAMACTL_TUNNEL_BEARER",
+      dir: parsed.dir,
+      defaultFileName: DEFAULT_DIAL_BEARER_FILE,
       env,
-    );
+      secretResolver: makeSecretResolver,
+    });
     if ("error" in dial) return dial;
-    const central = resolveBearerSide(
-      parsed.tunnelBearer,
-      parsed.tunnelBearerFile,
-      "--tunnel-bearer",
-      "--tunnel-bearer-file",
-      centralEnabled,
-      "LLAMACTL_TUNNEL_CENTRAL_BEARER_FILE",
-      "LLAMACTL_TUNNEL_CENTRAL_BEARER",
-      parsed.dir,
-      DEFAULT_CENTRAL_BEARER_FILE,
+    const central = resolveBearerSide({
+      literal: parsed.tunnelBearer,
+      file: parsed.tunnelBearerFile,
+      ref: parsed.tunnelBearerRef,
+      literalLabel: "--tunnel-bearer",
+      fileLabel: "--tunnel-bearer-file",
+      refLabel: "--tunnel-bearer-ref",
+      enabled: centralEnabled,
+      envFileVar: "LLAMACTL_TUNNEL_CENTRAL_BEARER_FILE",
+      envVar: "LLAMACTL_TUNNEL_CENTRAL_BEARER",
+      dir: parsed.dir,
+      defaultFileName: DEFAULT_CENTRAL_BEARER_FILE,
       env,
-    );
+      secretResolver: makeSecretResolver,
+    });
     if ("error" in central) return central;
+    // A disabled side's bearer is never wired, so warning about its plain
+    // env var would be noise (the operator asked for no such tunnel side).
     if (warn !== undefined) {
-      if (dial.fromPlainEnv) {
+      if (dialEnabled && dial.fromPlainEnv) {
         warn(
           `warning: LLAMACTL_TUNNEL_BEARER is deprecated as a tunnel bearer source; put the token in ${join(parsed.dir, DEFAULT_DIAL_BEARER_FILE)} (chmod 600) or pass --central-bearer-file\n`,
         );
       }
-      if (central.fromPlainEnv) {
+      if (centralEnabled && central.fromPlainEnv) {
         warn(
           `warning: LLAMACTL_TUNNEL_CENTRAL_BEARER is deprecated as a tunnel bearer source; put the token in ${join(parsed.dir, DEFAULT_CENTRAL_BEARER_FILE)} (chmod 600) or pass --tunnel-bearer-file\n`,
         );
@@ -1588,19 +1700,20 @@ export function resolveServeBearers(
 
 // --dial-central / --central-bearer must travel together. The
 // bearer can also come from a 0600 file (--central-bearer-file or
-// LLAMACTL_TUNNEL_BEARER_FILE) or LLAMACTL_TUNNEL_BEARER so neither the
-// CLI line nor the unit file needs to embed secrets. Either both are
-// present (and we wire tunnelDial below) or neither is.
+// LLAMACTL_TUNNEL_BEARER_FILE), a keychain ref (--central-bearer-ref) or
+// LLAMACTL_TUNNEL_BEARER so neither the CLI line nor the unit file needs
+// to embed secrets. Either both are present (and we wire tunnelDial
+// below) or neither is.
 function checkDialFlags(
   parsed: ServeFlags,
   dialUrl: string | undefined,
   dialBearer: string | undefined,
 ): string | null {
-  if (dialUrl || parsed.centralBearer || parsed.centralBearerFile) {
+  if (dialUrl || parsed.centralBearer || parsed.centralBearerFile || parsed.centralBearerRef) {
     if (!dialUrl || !dialBearer) {
       return (
         "--dial-central and --central-bearer must be provided together (or supply the bearer " +
-        `via --central-bearer-file, LLAMACTL_TUNNEL_BEARER_FILE, ${join(parsed.dir, DEFAULT_DIAL_BEARER_FILE)} or LLAMACTL_TUNNEL_BEARER)\n`
+        `via --central-bearer-file, --central-bearer-ref, LLAMACTL_TUNNEL_BEARER_FILE, ${join(parsed.dir, DEFAULT_DIAL_BEARER_FILE)} or LLAMACTL_TUNNEL_BEARER)\n`
       );
     }
   }
@@ -1628,13 +1741,20 @@ function checkTunnelCentral(
 ): string | null {
   if (tunnelCentralOn) {
     if (!tunnelCentralBearer) {
-      return `--tunnel-central=true requires --tunnel-bearer or --tunnel-bearer-file (or set LLAMACTL_TUNNEL_CENTRAL_BEARER / LLAMACTL_TUNNEL_CENTRAL_BEARER_FILE, or write ${join(parsed.dir, DEFAULT_CENTRAL_BEARER_FILE)})\n`;
+      return `--tunnel-central=true requires --tunnel-bearer, --tunnel-bearer-file or --tunnel-bearer-ref (or set LLAMACTL_TUNNEL_CENTRAL_BEARER / LLAMACTL_TUNNEL_CENTRAL_BEARER_FILE, or write ${join(parsed.dir, DEFAULT_CENTRAL_BEARER_FILE)})\n`;
     }
     return null;
   }
-  if (parsed.tunnelBearer !== undefined || parsed.tunnelBearerFile !== undefined) {
-    const label = parsed.tunnelBearer !== undefined ? "--tunnel-bearer" : "--tunnel-bearer-file";
-    process.stderr.write(`warning: ${label} set without --tunnel-central=true; ignoring\n`);
+  // Combining two explicit sources is already an error upstream, so at
+  // most one of these labels applies.
+  for (const [value, label] of [
+    [parsed.tunnelBearer, "--tunnel-bearer"],
+    [parsed.tunnelBearerFile, "--tunnel-bearer-file"],
+    [parsed.tunnelBearerRef, "--tunnel-bearer-ref"],
+  ] as const) {
+    if (value !== undefined) {
+      process.stderr.write(`warning: ${label} set without --tunnel-central=true; ignoring\n`);
+    }
   }
   return null;
 }
