@@ -1,9 +1,13 @@
+import type { ManagedCapacitySample } from "@llamactl/core/resources/managed-capacity";
+
 import { rpcServer, server } from "@llamactl/core";
 import { resolveEnv } from "@llamactl/core/env";
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import type { ManagedCapacityAudit } from "../../src/residency/target-admission-policy.js";
 
 import { runDirectResidencyStart } from "../../src/residency/direct-lifecycle.js";
 import {
@@ -17,8 +21,22 @@ import {
 } from "../../src/safe-fs.js";
 import { startModelHost, stopModelHost } from "../../src/server/modelhost.js";
 import { type RunningAgent, startAgentServer } from "../../src/server/serve.js";
-import { startManagedAgentServer } from "../../src/server/start-managed-agent.js";
+import {
+  type ManagedAgentDependencies,
+  startManagedAgentServer,
+} from "../../src/server/start-managed-agent.js";
 import { parseNodeRun, saveNodeRun } from "../../src/workload/noderun-store.js";
+
+const GiB = 1024 ** 3;
+const capacityFixture: ManagedCapacitySample = {
+  source: "linux-procfs",
+  observedAtMs: 100_000,
+  physicalBytes: 64 * GiB,
+  availableBytes: 56 * GiB,
+  scope: { kind: "host-physical" },
+  pressure: "normal",
+  swapUsedBytes: 0,
+};
 
 test("an owner marker blocks unmanaged engine lifecycle on the same runtime root", async () => {
   const dir = mkdtempSync(join(tmpdir(), "llamactl-managed-owner-"));
@@ -75,9 +93,20 @@ test.skipIf(process.platform !== "darwin" && process.platform !== "linux")(
     };
     const name = "managed-fixture";
     let running: RunningAgent | undefined;
+    let sample: ManagedCapacitySample | undefined;
+    const audit: ManagedCapacityAudit[] = [];
+    const deps: ManagedAgentDependencies = {
+      readCapacity: () => sample,
+      nowMs: () => capacityFixture.observedAtMs,
+      onCapacityAudit: (entry): void => {
+        audit.push(entry);
+      },
+    };
     try {
-      const unknown = await startManagedAgentServer(opts, name).catch((error: unknown) => error);
-      expect(unknown).toEqual(new Error("BudgetUnknown"));
+      const unknown = await startManagedAgentServer(opts, name, deps).catch(
+        (error: unknown) => error,
+      );
+      expect(unknown).toEqual(new Error("ManagedCapacity: CapacityUnknown"));
       expect(existsSync(join(runtimeDir, "managed-residency-v1"))).toBe(false);
       saveNodeRun(
         parseNodeRun(`
@@ -90,8 +119,17 @@ spec:
 `),
         workloadsDir,
       );
-      running = await startManagedAgentServer(opts, name);
-      const double = await startManagedAgentServer(opts, name).catch((error: unknown) => error);
+      sample = capacityFixture;
+      running = await startManagedAgentServer(opts, name, deps);
+      expect(audit).toContainEqual({
+        nodeName: name,
+        phase: "bootstrap",
+        ledgerCeilingGiB: 24,
+        launchHeadroomGiB: 40,
+      });
+      const double = await startManagedAgentServer(opts, name, deps).catch(
+        (error: unknown) => error,
+      );
       expect(double).toEqual(new Error("ManagedAgentAlreadyActive"));
       expect(() => startAgentServer(opts)).toThrow("ManagedOwnerRequired");
 
@@ -110,22 +148,102 @@ spec:
       running = undefined;
       const ledger = join(runtimeDir, "residency-admission.db");
       renameSync(ledger, ledger + ".saved");
-      const lostLedger = await startManagedAgentServer(opts, name).catch((error: unknown) => error);
+      const lostLedger = await startManagedAgentServer(opts, name, deps).catch(
+        (error: unknown) => error,
+      );
       expect(lostLedger).toEqual(new Error("ManagedAdmissionJournalMismatch"));
       expect(existsSync(ledger)).toBe(false);
       renameSync(ledger + ".saved", ledger);
-      const wrong = await startManagedAgentServer(opts, "foreign").catch((error: unknown) => error);
+      const wrong = await startManagedAgentServer(opts, "foreign", deps).catch(
+        (error: unknown) => error,
+      );
       expect(wrong).toEqual(new Error("ManagedNodeIdentityMismatch"));
       expect(() => startAgentServer(opts)).toThrow("ManagedOwnerRequired");
 
       const operations = env.LLAMACTL_RESIDENCY_STORE;
       renameSync(operations, operations + ".saved");
       writeFileSync(operations, readFileSync(operations + ".saved"));
-      const replaced = await startManagedAgentServer(opts, name).catch((error: unknown) => error);
+      const replaced = await startManagedAgentServer(opts, name, deps).catch(
+        (error: unknown) => error,
+      );
       expect(replaced).toEqual(new Error("ManagedTransitionJournalMismatch"));
       renameSync(operations + ".saved", operations);
-      running = await startManagedAgentServer(opts, name);
+      running = await startManagedAgentServer(opts, name, deps);
       expect(running.port).toBeGreaterThan(0);
+    } finally {
+      await running?.stop();
+      for (const [key, value] of previous) {
+        if (value === undefined) Reflect.deleteProperty(process.env, key);
+        else process.env[key] = value;
+      }
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
+
+test.skipIf(process.platform !== "darwin" && process.platform !== "linux")(
+  "managed boot refuses an oversized explicit budget and unknown local pressure or swap",
+  async () => {
+    const dir = mkdtempSync(join(tmpdir(), "llamactl-managed-capacity-boot-"));
+    const workloadsDir = join(dir, "workloads");
+    const runtimeDir = join(dir, "runtime");
+    const env = {
+      DEV_STORAGE: dir,
+      LOCAL_AI_RUNTIME_DIR: runtimeDir,
+      LLAMACTL_WORKLOADS_DIR: workloadsDir,
+      LLAMACTL_RESIDENCY_STORE: join(dir, "operations.sqlite"),
+    };
+    const previous = Object.keys(env).map((key) => [key, process.env[key]] as const);
+    Object.assign(process.env, env);
+    const opts = {
+      bindHost: "127.0.0.1",
+      port: 0,
+      tokenHash: createHash("sha256").update("fixture").digest("hex"),
+    };
+    let running: RunningAgent | undefined;
+    const cases: { budget: number; sample: ManagedCapacitySample; refusal: string }[] = [
+      { budget: 52, sample: capacityFixture, refusal: "ConfiguredBudgetExceedsCapacity" },
+      {
+        budget: 24,
+        sample: {
+          ...capacityFixture,
+          scope: { kind: "cgroup-v2", limitBytes: 12 * GiB, availableBytes: 10 * GiB },
+        },
+        refusal: "ConfiguredBudgetExceedsCapacity",
+      },
+      {
+        budget: 24,
+        sample: { ...capacityFixture, observedAtMs: capacityFixture.observedAtMs - 30_001 },
+        refusal: "StaleCapacity",
+      },
+      { budget: 24, sample: { ...capacityFixture, pressure: null }, refusal: "PressureUnknown" },
+      { budget: 24, sample: { ...capacityFixture, swapUsedBytes: null }, refusal: "SwapUnknown" },
+    ];
+    try {
+      for (const { budget, sample, refusal } of cases) {
+        saveNodeRun(
+          parseNodeRun(`
+apiVersion: llamactl/v1
+kind: NodeRun
+metadata: { name: fixture }
+spec: { node: fixture, budget: { memoryGiB: ${String(budget)} } }
+`),
+          workloadsDir,
+        );
+        const outcome = await startManagedAgentServer(opts, "fixture", {
+          readCapacity: () => sample,
+          nowMs: () => capacityFixture.observedAtMs,
+          onCapacityAudit: () => undefined,
+        }).then(
+          (agent) => {
+            running = agent;
+            return "booted";
+          },
+          (error: unknown) => (error instanceof Error ? error.message : String(error)),
+        );
+        expect(outcome).toBe(`ManagedCapacity: ${refusal}`);
+        expect(existsSync(join(runtimeDir, "managed-residency-v1"))).toBe(false);
+      }
     } finally {
       await running?.stop();
       for (const [key, value] of previous) {

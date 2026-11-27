@@ -1,10 +1,16 @@
+import type { ManagedCapacitySample } from "@llamactl/core/resources/managed-capacity";
+
 import { rpcServer } from "@llamactl/core";
 import { resolveEnv } from "@llamactl/core/env";
 import { resolve } from "node:path";
 
+import { readLocalManagedCapacity } from "../residency/local-managed-capacity.js";
 import { manageJournalPair } from "../residency/managed-journals.js";
 import { defaultResidencyStorePath, openResidencyOperationStore } from "../residency/store.js";
-import { openNodeManagedAdmission } from "../residency/target-admission-policy.js";
+import {
+  type ManagedCapacityAudit,
+  openNodeManagedAdmission,
+} from "../residency/target-admission-policy.js";
 import { existsSync } from "../safe-fs.js";
 import { liveLockHolder } from "../workload/lock.js";
 import { defaultWorkloadsDir } from "../workload/store.js";
@@ -12,9 +18,20 @@ import { type RunningAgent, type StartAgentOptions, startAgentServer } from "./s
 
 const activeRuntimeRoots = new Set<string>();
 
+export interface ManagedAgentDependencies {
+  readCapacity?: () => ManagedCapacitySample | undefined;
+  nowMs?: () => number;
+  onCapacityAudit?: (entry: ManagedCapacityAudit) => void;
+}
+
+function logCapacity(entry: ManagedCapacityAudit): void {
+  process.stderr.write(JSON.stringify({ event: "managed_capacity", ...entry }) + "\n");
+}
+
 export async function startManagedAgentServer(
   opts: StartAgentOptions,
   nodeName: string | undefined,
+  deps: ManagedAgentDependencies = {},
 ): Promise<RunningAgent> {
   if (nodeName === undefined || !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(nodeName)) {
     throw new Error("ManagedNodeIdentityRequired");
@@ -41,6 +58,9 @@ export async function startManagedAgentServer(
     const runtime = await openNodeManagedAdmission({
       nodeName,
       aliases: ["local"],
+      readCapacity: deps.readCapacity ?? readLocalManagedCapacity,
+      onCapacityAudit: deps.onCapacityAudit ?? logCapacity,
+      ...(deps.nowMs === undefined ? {} : { nowMs: deps.nowMs }),
       requireExistingStore: journals.prior,
       verifyJournalPair: journals.verify,
     });
