@@ -571,7 +571,9 @@ describe("docs/dynamic-residency.md (#285)", () => {
     );
     expect(proxySrc).toContain("acquireProxySession(sessionRegistry, trimmedSessionId");
     const serveSrc = readOrEmpty(join(REPO, "packages/remote/src/server/serve.ts"));
-    expect(serveSrc).toContain("if (opts.residencyLeases !== true) return null;");
+    expect(serveSrc).toContain(
+      "if (opts.residencyLeases !== true && !opts.executionAdmission?.length) return null;",
+    );
     expect(serveSrc).toContain("if (opts.residencySessionIdleMs !== undefined) {");
     expect(readOrEmpty(join(REPO, "packages/remote/src/residency/stop-fence.ts"))).toContain(
       '"SessionsActive"',

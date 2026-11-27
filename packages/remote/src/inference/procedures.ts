@@ -38,6 +38,7 @@ import type { ResolvedEnv } from "@llamactl/core/types";
 import { type inferenceContracts, inferenceRpc, routingCatalog } from "@llamactl/core";
 import { LOCAL_NODE_NAME } from "@llamactl/core/config/schema";
 import { resolveEnv } from "@llamactl/core/env";
+import { withLocalEngineBody } from "@llamactl/core/residency/engine-forwarder";
 import {
   listLocalRoutes,
   listWorkloadRoutes,
@@ -56,6 +57,12 @@ import {
 } from "@novaproto/contracts";
 import { initTRPC } from "@trpc/server";
 import { createHash, randomUUID } from "node:crypto";
+
+import type {
+  OwnerAdmission,
+  OwnerPermit,
+  OwnerReservation,
+} from "../residency/owner-admission.js";
 
 import {
   type Release,
@@ -100,6 +107,7 @@ export interface WorkerRpcBackend {
     deployment: Deployment,
     envelope: Envelope,
     signal: AbortSignal,
+    managed?: { permit: OwnerPermit; onDial: () => void },
   ): AsyncIterable<WorkerRpcBackendEvent>;
 }
 
@@ -166,6 +174,7 @@ export interface WorkerRpcHostOptions {
    * unchanged and nothing is called.
    */
   admission?: RequestAdmission;
+  ownerAdmission?: OwnerAdmission;
 }
 
 export interface WorkerRpcHost {
@@ -231,6 +240,7 @@ interface AttemptRun {
   onRevoke: (() => void) | undefined;
   /** The shared admission slot for this stream, released once on settle (#281 DF-08). */
   admissionRelease?: Release;
+  ownerPermit?: OwnerPermit;
 }
 
 /**
@@ -296,6 +306,7 @@ interface HostState {
   idle: (() => void)[];
   leases: ResidencyLeases | undefined;
   admission: RequestAdmission | undefined;
+  ownerAdmission: OwnerAdmission | undefined;
 }
 
 interface WorkerCatalog {
@@ -343,11 +354,28 @@ function engineBaseUrl(endpoint: string): string {
 
 // Local engines take no credential and must never receive one; the Nova
 // provider always sets Authorization, so it is dropped before the dial.
-const engineFetch = ((input: string | URL | Request, init?: RequestInit): Promise<Response> => {
-  const headers = new Headers(init?.headers);
-  headers.delete("authorization");
-  return fetch(input, { ...init, headers });
-}) as typeof globalThis.fetch;
+function engineFetch(managed: Parameters<WorkerRpcBackend["execute"]>[3]): typeof fetch {
+  return ((input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    const headers = new Headers(init?.headers);
+    headers.delete("authorization");
+    if (managed !== undefined) {
+      return managed.permit.send(
+        (signal, body) => {
+          managed.onDial();
+          const engine = {
+            ...withLocalEngineBody({ ...init, headers }, body),
+            signal,
+            redirect: "error" as const,
+            timeout: false,
+          };
+          return fetch(input, engine);
+        },
+        typeof init?.body === "string" ? init.body : null,
+      );
+    }
+    return fetch(input, { ...init, headers });
+  }) as typeof fetch;
+}
 
 function resultFromDone(event: Extract<UnifiedStreamEvent, { type: "done" }>): BackendResult {
   if (event.completion !== "upstream") {
@@ -359,28 +387,33 @@ function resultFromDone(event: Extract<UnifiedStreamEvent, { type: "done" }>): B
   return { ok: true, finishReason: event.finish_reason ?? "stop" };
 }
 
+function localBackendRequest(deployment: Deployment, envelope: Envelope): UnifiedAiRequest {
+  return {
+    ...envelope.nativeBody,
+    model: deployment.upstreamModelId,
+    stream: true,
+    stream_options: { include_usage: true },
+  } as unknown as UnifiedAiRequest;
+}
+
 /**
  * Streams the fixed deployment through Nova's OpenAI-compatible provider:
  * the exact upstream model, never the public alias, with usage requested
  * so the terminal can report it as observed.
  */
 export const localModelBackend: WorkerRpcBackend = {
-  async *execute(deployment, envelope, signal): AsyncGenerator<WorkerRpcBackendEvent> {
+  async *execute(deployment, envelope, signal, managed): AsyncGenerator<WorkerRpcBackendEvent> {
     let usage: UsageObservationV1 = UNKNOWN_USAGE;
     const provider = createOpenAICompatProvider({
       name: deployment.providerKind ?? "local-model",
       baseUrl: engineBaseUrl(deployment.endpoint),
       apiKey: "",
-      fetch: engineFetch,
+      fetch: engineFetch(managed),
       onUsageObservation: (snapshot) => {
         usage = snapshot.observation;
       },
     });
-    const request = {
-      ...envelope.nativeBody,
-      model: deployment.upstreamModelId,
-      stream_options: { include_usage: true },
-    } as unknown as UnifiedAiRequest;
+    const request = localBackendRequest(deployment, envelope);
     let result: BackendResult = {
       ok: false,
       code: "incomplete",
@@ -791,6 +824,7 @@ function settle(
   const lease = run?.lease;
   const onRevoke = run?.onRevoke;
   const admissionRelease = run?.admissionRelease;
+  run?.ownerPermit?.releaseUnused();
   if (lease !== undefined && onRevoke !== undefined) {
     lease.signal.removeEventListener("abort", onRevoke);
   }
@@ -1059,7 +1093,14 @@ function endTerminal(
     };
   }
   const error = { code: end.result.code, message: end.result.message, retryable: false };
-  return { outcome: "failed", started: true, error, ...executedBy(run), usage: end.usage };
+  const started = run.state !== "accepted";
+  return {
+    outcome: "failed",
+    started,
+    error,
+    ...(started ? executedBy(run) : {}),
+    usage: end.usage,
+  };
 }
 
 function failureTerminal(
@@ -1122,8 +1163,16 @@ function startBackend(
     });
     return [];
   }
-  run.state = "started";
-  return run.backend.execute(run.deployment, run.envelope, run.controller.signal);
+  if (run.ownerPermit === undefined) {
+    run.state = "started";
+    return run.backend.execute(run.deployment, run.envelope, run.controller.signal);
+  }
+  return run.backend.execute(run.deployment, run.envelope, run.controller.signal, {
+    permit: run.ownerPermit,
+    onDial: () => {
+      run.state = "started";
+    },
+  });
 }
 
 /** Runs `fn` at most once across every caller that shares the closure. */
@@ -1159,8 +1208,7 @@ function immediateRejection(err: RequestAdmissionError): Rejection {
 }
 
 interface AdmissionWait {
-  pending: Promise<Release>;
-  queued: boolean;
+  pending: Promise<unknown>;
 }
 
 /**
@@ -1179,8 +1227,9 @@ async function lateRefusal(
     () => null,
     (e: unknown) => e,
   );
+  if (refusal === null || record.terminal !== undefined) return null;
   if (refusal instanceof RequestAdmissionError) {
-    if (refusal.code === "Aborted" || record.terminal !== undefined) return null;
+    if (refusal.code === "Aborted" && record.run?.controller.signal.aborted === true) return null;
     const hint =
       refusal.retryAfterMs !== null ? `; retry after ${String(refusal.retryAfterMs)} ms` : "";
     return settle(state, record, {
@@ -1194,7 +1243,6 @@ async function lateRefusal(
       usage: UNKNOWN_USAGE,
     });
   }
-  if (refusal === null) return null;
   const message =
     refusal instanceof Error
       ? refusal.message
@@ -1322,6 +1370,11 @@ async function* streamAttempt(
   run.streamed = true;
   state.streams += 1;
   try {
+    const ownerPermit = acquireOwnerPermit(state, record, run);
+    if (ownerPermit !== undefined) {
+      yield* streamOwnerAdmission(state, record, run, signal, ownerPermit);
+      return;
+    }
     if (state.admission === undefined || options?.embedded === true) {
       yield* runAttempt(state, record, run, signal);
       return;
@@ -1333,6 +1386,51 @@ async function* streamAttempt(
     state.streams -= 1;
     notifyIdle(state);
   }
+}
+
+async function* streamOwnerAdmission(
+  state: HostState,
+  record: AttemptRecord,
+  run: AttemptRun,
+  signal: AbortSignal,
+  reservation: OwnerReservation,
+): AsyncGenerator<StreamFrame> {
+  if ("refusal" in reservation) {
+    if (reservation.refusal.code !== "Aborted" || !run.controller.signal.aborted) {
+      yield rejectAdmission(state, record, reservation.refusal);
+      return;
+    }
+  }
+  const pending = "pending" in reservation ? reservation.pending : Promise.resolve();
+  void pending.catch(() => undefined);
+  yield* runAttempt(state, record, run, signal, { pending });
+}
+
+function acquireOwnerPermit(
+  state: HostState,
+  record: AttemptRecord,
+  run: AttemptRun,
+): OwnerReservation | undefined {
+  const admission = state.ownerAdmission;
+  if (admission === undefined || run.backend !== localModelBackend) return undefined;
+  const workload = routingCatalog.workloadOfDeployment(run.deployment.deploymentId, state.workerId);
+  const permit = admission.acquire({
+    target: `${engineBaseUrl(run.deployment.endpoint)}/chat/completions`,
+    body: JSON.stringify(localBackendRequest(run.deployment, run.envelope)),
+    deadlineMs: run.envelope.deadline,
+    clientSignal: run.controller.signal,
+    principal: { service: record.owner.serviceId, scope: record.owner.credentialScopeId },
+    ...(workload === null ? {} : { workload }),
+    ...(run.lease === undefined ? {} : { engineSignal: run.lease.signal }),
+  });
+  if (permit === undefined || "refusal" in permit) return permit;
+  return {
+    pending: permit.pending.then((granted) => {
+      if (record.terminal !== undefined) granted.releaseUnused();
+      else run.ownerPermit = granted;
+      return granted;
+    }),
+  };
 }
 
 /**
@@ -1369,6 +1467,14 @@ async function* acquireAdmission(
     },
     () => undefined,
   );
+  return yield* presentAdmission(state, record, pending);
+}
+
+async function* presentAdmission(
+  state: HostState,
+  record: AttemptRecord,
+  pending: Promise<unknown>,
+): AsyncGenerator<StreamFrame, AdmissionWait | null> {
   // Both an enqueue refusal (rejected promise) and a resident grant
   // (resolved in pump) are already settled, so the race returns them
   // before the sentinel.
@@ -1380,20 +1486,28 @@ async function* acquireAdmission(
     first = err;
   }
   if (first instanceof RequestAdmissionError && first.code !== "Aborted") {
-    settle(state, record, {
-      outcome: "failed",
-      started: false,
-      error: {
-        code: "target-unavailable",
-        message: `worker admission refused: ${first.code}`,
-        retryable: true,
-      },
-      usage: UNKNOWN_USAGE,
-    });
-    yield { frame: "rejected", rejection: immediateRejection(first) };
+    yield rejectAdmission(state, record, first);
     return null;
   }
-  return { pending, queued: first === queuedProbe };
+  return { pending };
+}
+
+function rejectAdmission(
+  state: HostState,
+  record: AttemptRecord,
+  error: RequestAdmissionError,
+): StreamFrame {
+  settle(state, record, {
+    outcome: "failed",
+    started: false,
+    error: {
+      code: "target-unavailable",
+      message: `worker admission refused: ${error.code}`,
+      retryable: true,
+    },
+    usage: UNKNOWN_USAGE,
+  });
+  return { frame: "rejected", rejection: immediateRejection(error) };
 }
 
 // ---- status / cancel ------------------------------------------------------
@@ -1508,6 +1622,7 @@ export function createWorkerRpcHost(opts: WorkerRpcHostOptions): WorkerRpcHost {
     idle: [],
     leases: opts.residencyLeases,
     admission: opts.admission,
+    ownerAdmission: opts.ownerAdmission,
   };
   const host: WorkerRpcHost = {
     workerId: state.workerId,

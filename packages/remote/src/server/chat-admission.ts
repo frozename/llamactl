@@ -94,6 +94,7 @@ function admissionStatus(code: RequestAdmissionError["code"], retryAfterMs: numb
     case "DeadlineExceeded":
       return 504;
     case "InvalidRequest":
+    case "ContextUnverified":
     case "ContextLimitExceeded":
       return 400;
     case "DuplicateRequest":

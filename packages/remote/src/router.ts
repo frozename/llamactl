@@ -36,6 +36,10 @@ import {
 import { probeEndpointOwnership } from "@llamactl/core/probe";
 import { DEFAULT_RESIDENCY_POLICY } from "@llamactl/core/residency/admission";
 import {
+  type LocalEngineForwarder,
+  withLocalEngineBody,
+} from "@llamactl/core/residency/engine-forwarder";
+import {
   getResidencyLeaseRegistry,
   type ResidencyAuditEntry,
   type ResidencySnapshot,
@@ -1382,6 +1386,30 @@ async function* streamNodeChatEvents(
   }
 }
 
+function localChatEngineFetch(forward: LocalEngineForwarder, timeoutMs: number): typeof fetch {
+  return ((input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    if (init?.method !== "POST") return fetch(input, init);
+    const target = input instanceof Request ? input.url : String(input);
+    const admitted = forward({
+      target,
+      body: typeof init.body === "string" ? init.body : null,
+      clientSignal: init.signal ?? new AbortController().signal,
+      deadlineMs: Date.now() + timeoutMs,
+      principal: { bearer: null },
+      send: (signal, body) => {
+        const engine = {
+          ...withLocalEngineBody(init, body),
+          signal,
+          redirect: "error" as const,
+          timeout: false,
+        };
+        return fetch(input, engine);
+      },
+    });
+    return admitted ?? fetch(input, init);
+  }) as typeof fetch;
+}
+
 /**
  * Drive the local inproc://local chat stream: the OpenAI-compat adapter
  * pointed at the in-process llama-server's HTTP endpoint, with usage
@@ -1392,10 +1420,24 @@ async function* localNodeChatEvents(
   usageRoute: string | undefined,
   signal: AbortSignal | undefined,
 ): AsyncGenerator<UnifiedStreamEvent> {
-  const { env: envMod } = await import("@llamactl/core");
+  const { env: envMod, openaiProxy } = await import("@llamactl/core");
   const { createOpenAICompatProvider } = await import("@novaproto/contracts");
   const rEnv = envMod.resolveEnv();
+  const { getLocalEngineForwarder } = await import("@llamactl/core/residency/engine-forwarder");
+  const forward = getLocalEngineForwarder();
   const provider = createOpenAICompatProvider({
+    ...(forward === undefined
+      ? {}
+      : {
+          fetch: localChatEngineFetch(
+            (dispatch) =>
+              forward({
+                ...dispatch,
+                ...openaiProxy.bindLocalEngineWorkload(dispatch.target, rEnv),
+              }),
+            openaiProxy.upstreamTimeoutMs(),
+          ),
+        }),
     name: "local",
     baseUrl: `http://${rEnv.LLAMA_CPP_HOST}:${rEnv.LLAMA_CPP_PORT}/v1`,
     apiKey: "local",

@@ -239,6 +239,70 @@ To disable, unset the vars and restart the agent (`packages/cli/src/commands/age
 llamactl agent serve
 ```
 
+### Shared GPU execution on the owning agent
+
+For co-resident models, add `executionAdmission` to the owning node's
+`agent.yaml`. Each group matches local engine ports after routing. Local
+HTTP proxy traffic, local tRPC chat and the default local-model Worker
+RPC backend use the same queue. Use one owning agent process per node
+with this setting. The agent installs a residency lease registry when
+groups are enabled. The following is an example for Kapitsa and Granite:
+
+```yaml
+executionAdmission:
+  - name: macbook-metal
+    foregroundPorts: [18200]
+    backgroundPorts: [18210]
+    foregroundConcurrency: 2
+    maxQueued: 16
+    maxQueuedBytes: 33554432
+    maxPerPrincipal: 8
+    maxQueueWaitMs: 45000
+    starvationBoundMs: 45000
+```
+
+Execution groups can also set `maxCompletionTokens` and `maxContextTokens`.
+An output limit requires a single explicit, positive completion cap on
+generation requests. Admission forwards one normalized token-cap field and
+rejects competing caps and multi-completion requests. A finite context limit
+also requires a single flat token-ID prompt sent to a verified llama.cpp
+completion endpoint. The request budget includes the full input sequence and
+requested output. Chat templates, media and unknown prompt expansions refuse
+with `ContextUnverified` when a finite context limit is configured.
+
+The foreground can occupy up to its configured number of slots. One
+background request runs alone. Setting the starvation bound below the
+queue wait lets an aged background request reserve the next idle window
+ahead of newer foreground arrivals. Setting the two values equal gives
+strict foreground priority with a finite background wait. Background
+waiters can use half the configured queue count and bytes, and leave
+one request of headroom per principal. Overload
+returns retry guidance to HTTP clients. Requests with a streaming
+request body need a buffered format to participate in the byte limit.
+
+A client disconnect frees its queued request immediately. Once the
+request reaches the engine, the slot and any acquired workload lease
+stay held through the upstream response, including when the client
+disconnects. An engine transport error or timeout fences the group.
+Confirm the engines are idle before restarting the agent to clear a
+fence. Existing generation is allowed to finish when higher-priority
+work arrives.
+
+Disable the older `LLAMACTL_CHAT_ADMISSION_MAX_EXECUTIONS` cap on this
+agent when using groups, since queueing before routing can let all of
+that cap's permits be held by background work. Keep engine endpoints
+on loopback and direct clients to the owning agent or its relay.
+Clients dialing engine ports, the planner’s direct engine provider,
+custom Worker RPC backends and engine side calls such as KV slot restore bypass this policy. The group
+accounts for execution of resident requests and does not enable cold
+model activation.
+
+The agent's authenticated `/metrics` exposes group active and queued
+request counts, queued bytes and the fenced state under
+`llamactl_execution_admission_*`. Qualify mixed-load latency before
+removing a production wrapper. To disable the group, drain the
+engines, remove `executionAdmission` and restart the owning agent.
+
 ## Declared models and readiness
 
 `LLAMACTL_DECLARED_MODELS` set to `1` turns on declared-model projection (`packages/cli/src/commands/agent.ts`). The states are `DeclaredModelStateSchema` (`packages/core/src/routing/catalog.ts`): `cold`, `loading`, `ready`, `draining`, `disabled` and `unavailable`. Ids depend on the kind (`packages/remote/src/residency/catalog.ts`): a `ModelHost` claims the `rel` of its first hosted model plus `basename(rel)` (`hostClaimIds`), and a `ModelRun` claims `spec.target.value` plus each `--alias`/`-a` value in `spec.extraArgs`, with no basename (`runClaims`, `aliasIdsFromExtraArgs`). A model is unavailable only on alias-collision.

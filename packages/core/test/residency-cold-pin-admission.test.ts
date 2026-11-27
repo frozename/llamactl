@@ -132,6 +132,7 @@ const untouchableQueuePolicy = (): RequestQueuePolicy => {
   return {
     enqueue: touch,
     schedule: touch,
+    hasLoadDemand: touch,
     loadSettled: touch,
     markEvicted: touch,
     cancel: touch,
@@ -153,6 +154,7 @@ const spyPolicy = (
         return inner.enqueue(request);
       },
       schedule: (): QueueAction[] => inner.schedule(),
+      hasLoadDemand: inner.hasLoadDemand.bind(inner),
       loadSettled: (loadId, outcome): QueueAction[] => inner.loadSettled(loadId, outcome),
       markEvicted: (modelKey): void => {
         inner.markEvicted(modelKey);
