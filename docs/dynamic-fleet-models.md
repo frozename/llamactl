@@ -477,12 +477,16 @@ or experimental peer routes, which is what lets the unified ranker place the
 degraded peer in its existing degraded tier behind the healthy one; local routes
 stay authoritative, so a healthy peer is not admitted over any non-experimental
 local route, a degraded local route included, and one healthy peer still closes
-the id. Limits: the legacy (flag-off) comparator ignores degraded, so the first
-admitted peer route by workload name leads the legacy `/v1/models` listing and
-a second admitted peer route for the same id may log a route-map collision for
-that listing. When a fleet-supervisor journal snapshot is served in preference
-to the fallback, `readFleetSnapshotOrLocalRoutes` overlays the same
-qualification label onto each journal workload whose workload name matches an
+the id. The legacy (flag-off) order ranks a degraded route behind a healthy one
+and ahead of an experimental one, so a healthy route leads the legacy
+`/v1/models` listing and legacy chat forwarding: `orderedProxyRoutes`
+(`packages/core/src/openaiProxy.ts`) and `compareDeployments`
+(`packages/core/src/routing/catalog.ts`) carry the same healthy, degraded,
+experimental tier. A second admitted peer route for the same id still logs a
+route-map collision, which keeps the healthy route. When a fleet-supervisor
+journal snapshot is served in preference to the fallback,
+`readFleetSnapshotOrLocalRoutes` overlays the same qualification label onto each
+journal workload whose workload name matches an
 experimental or degraded local route — only for callers asking
 `include=local-routes` (the peer poller over HTTP and tRPC). Without
 `include=local-routes` the journal snapshot is served unchanged, a journal

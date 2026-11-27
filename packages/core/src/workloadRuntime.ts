@@ -337,11 +337,11 @@ function appendPeerRoutes(
  * peer's local-routes snapshot now carries (#518). A peer may also advertise
  * `llamactl.io/qualification: degraded`, which demotes its own route while
  * never lifting an inherited experimental stage; because a degraded-only peer
- * holder no longer closes the id, two peer routes for one id can be admitted,
- * and the legacy (flag-off) comparator ignores degraded, so the first admitted
- * peer route by workload name leads the legacy listing. Known limitation
- * tracked by the #518 follow-up (create-proxy) alongside the legacyWinner
- * divergence documented on RouteCandidate in routing/catalog.ts.
+ * holder no longer closes the id, two peer routes for one id can be admitted.
+ * The legacy order (`orderedProxyRoutes` / `compareDeployments`) ranks a
+ * degraded route behind a healthy one, so the healthy peer leads; a second
+ * admitted peer route still logs a route-map collision, which keeps the
+ * healthy route.
  */
 export function listClusterRoutes(
   localRoutes: LocalRoute[],
