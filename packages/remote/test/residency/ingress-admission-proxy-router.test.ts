@@ -782,6 +782,54 @@ describe("#281 DF-08: router local branches + /v1/completions share the chat cap
     }
   });
 
+  test("a new cold declaration fences an already queued default request before dial", async () => {
+    trackDefaultWorkload("resident");
+    startDefaultEngineAdmission();
+    const activeA = await postChatStream();
+    const activeB = await postChatStream();
+    const queued = postChatStream();
+    void queued.catch(() => undefined);
+    let result: Response | undefined;
+    try {
+      const deadline = Date.now() + 2_000;
+      let heldInQueue = false;
+      while (Date.now() < deadline) {
+        const metrics = await fetch(`${agent!.url}/metrics`, { headers: authedHeaders() });
+        heldInQueue = (await metrics.text())
+          .split("\n")
+          .some(
+            (line) =>
+              line.startsWith("llamactl_execution_admission_requests{") &&
+              line.includes('state="queued"') &&
+              line.endsWith(" 1"),
+          );
+        if (heldInQueue) break;
+        await Bun.sleep(10);
+      }
+      expect(heldInQueue).toBe(true);
+      openaiProxy.setDeclaredModelSource(() => [
+        {
+          id: "no-such-model",
+          workload: "cold-declared",
+          kind: "ModelHost",
+          ownerNodeId: "local",
+          state: "cold",
+          autoLoadEligible: true,
+        },
+      ]);
+      upstream.gates[0]?.release();
+      await activeA.text();
+      result = await queued;
+      expect(result.status).toBe(503);
+      expect(upstream.hits("/v1/chat/completions")).toBe(2);
+    } finally {
+      openaiProxy.setDeclaredModelSource(null);
+      for (const gate of [...upstream.gates]) gate.release();
+      await activeB.body?.cancel().catch(() => undefined);
+      await result?.body?.cancel().catch(() => undefined);
+    }
+  });
+
   test("owner HTTP admission enforces explicit completion bounds before dialing", async () => {
     trackDefaultWorkload("resident");
     startDefaultEngineAdmission({ maxCompletionTokens: 4 });

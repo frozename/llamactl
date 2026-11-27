@@ -3247,12 +3247,18 @@ function bindManagedDefaultEngine(
   context: ProxyContext,
 ): Pick<LocalEngineRequest, "workload" | "stillOwnsTarget" | "pretokenizedCompletion"> {
   const model = requestedModelFromBody(context.bodyText ?? "");
-  if (model !== undefined && declaredModelEntries().some((entry) => entry.id === model)) {
+  const hasDeclaration = (): boolean => declaredModelEntries().some((entry) => entry.id === model);
+  if (model !== undefined && hasDeclaration()) {
     // A declaration names an owner. It cannot authorize the implicit
     // default engine when routing did not find a verified serving target.
     return { stillOwnsTarget: () => false };
   }
-  return bindLocalEngineWorkload(context.target, context.resolved);
+  const binding = bindLocalEngineWorkload(context.target, context.resolved);
+  if (model === undefined) return binding;
+  return {
+    ...binding,
+    stillOwnsTarget: () => !hasDeclaration() && binding.stillOwnsTarget?.() === true,
+  };
 }
 
 function forwardAdmittedEngine(
