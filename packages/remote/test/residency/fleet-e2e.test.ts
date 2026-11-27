@@ -183,20 +183,26 @@ async function publicationEngine(
   if (port === undefined) throw new Error("missing fixture port");
   const binary = join(dir, "fixture-llama-server");
   const source = `
-    Bun.serve({hostname:"127.0.0.1", port:${String(port)}, fetch(req) {
+    await Bun.write(${JSON.stringify(join(dir, "engine-spawned"))}, "started");
+    Bun.serve({hostname:"127.0.0.1", port:${String(port)}, async fetch(req) {
       const path = new URL(req.url).pathname;
       if (path === "/__stop_fixture") {
         setTimeout(() => process.exit(0), 5);
         return new Response(null, { status: 204 });
       }
       if (path === "/health") return new Response("publication fixture healthy");
+      if (path === "/v1/completions" && (await req.json()).stream === true) {
+        return new Response(new ReadableStream({ start(controller) {
+          controller.enqueue(new TextEncoder().encode("data: fixture-stream-prefix\\n\\n"));
+        }}), { headers: { "content-type": "text/event-stream" } });
+      }
       return Response.json({fixture:"unpublished engine received a request"});
     }});
     setTimeout(() => process.exit(0), 15000);
   `;
   writeFileSync(
     binary,
-    `#!/bin/bash\nexec -a llama-server ${JSON.stringify(process.execPath)} -e ${JSON.stringify(source.replaceAll("\n", " "))} -- "$@"\n`,
+    `#!/bin/bash\nexec -a "$0" ${JSON.stringify(process.execPath)} -e ${JSON.stringify(source.replaceAll("\n", " "))} -- "$@"\n`,
     { mode: 0o755 },
   );
   return { endpoint: `http://127.0.0.1:${String(port)}`, binary, port };
@@ -222,12 +228,15 @@ function savePublicationWorkload(
   name: string,
   rel: string,
   allocationGiB: number,
+  unloadable = false,
 ): void {
   saveWorkload(
     parseWorkload(`
 apiVersion: llamactl/v1
 kind: ModelRun
-metadata: { name: ${name} }
+metadata:
+  name: ${name}
+${unloadable ? '  annotations: { "llamactl.io/residency-profiles": fixture }' : ""}
 spec:
   node: local
   target: { kind: rel, value: ${rel} }
@@ -239,9 +248,131 @@ spec:
   );
 }
 
-for (const stage of ["launch", "ready"] as const) {
+const crashStages = {
+  dispatch: "admission before dispatch",
+  launch: "spawn before PID recording",
+  ready: "readiness commit before route publication",
+  drain: "inference drain before stop dispatch",
+  release: "verified stop before durable release",
+} as const;
+
+type CrashStage = keyof typeof crashStages;
+type CrashEvidence = { signal: string | null; report: unknown };
+
+function assertCrash(crashed: CrashEvidence, stage: CrashStage, workload: string): void {
+  const { pid, claims, drain } = crashed.report as {
+    pid?: number | null;
+    claims?: { generations?: { birthId?: string }[] }[];
+    drain?: { active: string[] };
+  };
+  const pending = stage === "dispatch" || stage === "launch";
+  if (stage === "dispatch") expect(pid).toBeNull();
+  else expect(pid).toBeGreaterThan(0);
+  expect(crashed.report).toMatchObject({
+    recordedPid: stage === "ready" || stage === "drain" ? pid : null,
+    state:
+      stage === "ready" || stage === "drain"
+        ? { pid, ...(stage === "ready" ? { publicationPending: true } : {}) }
+        : null,
+    claims: [
+      {
+        runtimeKey: workload,
+        state: pending ? "pending" : "resident",
+        allocationGiB: 4,
+        generations: pending ? [] : [{ pid }],
+      },
+    ],
+  });
+  if (stage === "drain") {
+    expect(crashed.report).toMatchObject({
+      drain: { workload, phase: "draining", waiters: 1 },
+      inferenceHold: "current",
+    });
+    expect(drain?.active.length).toBeGreaterThan(0);
+  }
+  if (!pending) expect(typeof claims?.[0]?.generations?.[0]?.birthId).toBe("string");
+  expect(crashed.signal).toBe("SIGKILL");
+}
+
+async function assertEngineAfterCrash(
+  dir: string,
+  endpoint: string,
+  stage: CrashStage,
+): Promise<void> {
+  if (stage === "dispatch" || stage === "release") {
+    const reachable = await fetch(`${endpoint}/health`, { signal: AbortSignal.timeout(250) }).then(
+      () => true,
+      () => false,
+    );
+    expect(reachable).toBe(false);
+  } else {
+    await waitForFixtureEngine(endpoint);
+  }
+  expect(await Bun.file(join(dir, "engine-spawned")).exists()).toBe(stage !== "dispatch");
+}
+
+async function assertRecovery(
+  recovered: CrashEvidence,
+  endpoint: string,
+  stage: CrashStage,
+  workload: string,
+): Promise<void> {
+  const pending = stage === "dispatch" || stage === "launch";
+  expect(recovered.report).toMatchObject({
+    routes:
+      stage === "drain"
+        ? {
+            status: 200,
+            body: {
+              workloads: [{ name: workload, endpoint: endpoint, reachable: true }],
+            },
+          }
+        : { status: 204, body: "" },
+    status: {
+      status: 200,
+      body: {
+        result: {
+          data: {
+            managed: {
+              ledger: "available",
+              claims: [
+                {
+                  workload,
+                  state: pending ? "uncertain" : "resident",
+                  allocationGiB: 4,
+                  inferenceHold: stage === "drain" ? "prior" : "clear",
+                },
+              ],
+            },
+          },
+        },
+      },
+    },
+    completion: { status: 503 },
+    replacement: {
+      status: 200,
+      body: { result: { data: { ok: false, reason: "BudgetExceeded" } } },
+    },
+  });
+  expect(JSON.stringify(recovered.report)).not.toContain("unpublished engine received a request");
+  if (stage === "drain") {
+    const evidence = recovered.report as { completion?: { body?: string } };
+    expect(evidence.completion?.body).toContain("residency_hold_unavailable");
+    expect(recovered.report).toMatchObject({
+      unload: {
+        status: 200,
+        body: { result: { data: { ok: false, reason: "ManagedInferenceUnresolved" } } },
+      },
+    });
+    await waitForFixtureEngine(endpoint);
+  }
+  expect(recovered.signal).toBeNull();
+}
+
+for (const stage of Object.keys(crashStages) as CrashStage[]) {
+  const description = crashStages[stage];
   test.skipIf(process.platform !== "darwin" && process.platform !== "linux")(
-    `restarting after managed ${stage === "launch" ? "spawn before PID recording" : "readiness commit"} retains the charge and hides the unpublished route`,
+    `restarting after managed ${description} retains the charge and refuses ingress`,
     async () => {
       const dir = mkdtempSync(join(tmpdir(), "llamactl-fleet-publication-crash-"));
       const node = "publication-owner";
@@ -268,7 +399,7 @@ for (const stage of ["launch", "ready"] as const) {
           LLAMA_CPP_USE_TUNED_ARGS: "false",
           LLAMACTL_CONFIG: join(dir, "missing-fixture-config"),
         };
-        savePublicationWorkload(workloadsDir, engine, workload, rel, 4);
+        savePublicationWorkload(workloadsDir, engine, workload, rel, 4, true);
         savePublicationWorkload(
           workloadsDir,
           engine,
@@ -276,15 +407,14 @@ for (const stage of ["launch", "ready"] as const) {
           "replacement.gguf",
           24,
         );
-        const run = async (
-          mode: typeof stage | "recover",
-        ): Promise<{ signal: string | null; report: unknown }> => {
+        const run = async (mode: CrashStage | "recover"): Promise<CrashEvidence> => {
           const path = join(dir, `${mode}.json`);
           const child = bootFixture("./fleet-fixture-publication.ts", env, [
             mode,
             node,
             workload,
             path,
+            stage,
           ]);
           processes.push(child);
           await child.exited;
@@ -292,60 +422,9 @@ for (const stage of ["launch", "ready"] as const) {
         };
 
         const crashed = await run(stage);
-        const { pid, claims } = crashed.report as {
-          pid?: number;
-          claims?: { generations?: { birthId?: string }[] }[];
-        };
-        expect(typeof pid).toBe("number");
-        expect(crashed.report).toMatchObject({
-          recordedPid: stage === "launch" ? null : pid,
-          state: stage === "launch" ? null : { pid, publicationPending: true },
-          claims: [
-            {
-              runtimeKey: workload,
-              state: stage === "launch" ? "pending" : "resident",
-              allocationGiB: 4,
-              generations: stage === "launch" ? [] : [{ pid }],
-            },
-          ],
-        });
-        expect(pid).toBeGreaterThan(0);
-        if (stage === "ready") expect(typeof claims?.[0]?.generations?.[0]?.birthId).toBe("string");
-        expect(crashed.signal).toBe("SIGKILL");
-        await waitForFixtureEngine(engine.endpoint);
-
-        const recovered = await run("recover");
-        expect(recovered.report).toMatchObject({
-          routes: { status: 204, body: "" },
-          status: {
-            status: 200,
-            body: {
-              result: {
-                data: {
-                  managed: {
-                    ledger: "available",
-                    claims: [
-                      {
-                        workload,
-                        state: stage === "launch" ? "uncertain" : "resident",
-                        allocationGiB: 4,
-                      },
-                    ],
-                  },
-                },
-              },
-            },
-          },
-          completion: { status: 503 },
-          replacement: {
-            status: 200,
-            body: { result: { data: { ok: false, reason: "BudgetExceeded" } } },
-          },
-        });
-        expect(JSON.stringify(recovered.report)).not.toContain(
-          "unpublished engine received a request",
-        );
-        expect(recovered.signal).toBeNull();
+        assertCrash(crashed, stage, workload);
+        await assertEngineAfterCrash(dir, engine.endpoint, stage);
+        await assertRecovery(await run("recover"), engine.endpoint, stage, workload);
       } finally {
         if (endpoint !== undefined) {
           await fetch(`${endpoint}/__stop_fixture`, { signal: AbortSignal.timeout(250) }).catch(
