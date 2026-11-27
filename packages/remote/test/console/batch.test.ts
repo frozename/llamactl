@@ -112,7 +112,16 @@ describe("console allowlist", () => {
           claims: [
             { workload: "w1", kind: "ModelRun", state: "resident", allocationGiB: 8, pid: 10 },
           ],
-          execution: [{ group: "metal", executing: 1, queued: 2, queuedBytes: 441, fenced: true }],
+          execution: [
+            {
+              group: "metal",
+              executing: 1,
+              queued: 2,
+              queuedBytes: 441,
+              oldestQueuedWaitMs: 185,
+              fenced: true,
+            },
+          ],
         },
         sessions: { sessions: [{ sessionId: "private-session" }] },
       },
@@ -157,7 +166,9 @@ describe("console allowlist", () => {
             profile: { kind: "selected", profile: "interactive" },
             budgetGiB: 24,
             claims: [{ workload: "w1", kind: "ModelRun", state: "resident", allocationGiB: 8 }],
-            execution: [{ group: "metal", executing: 1, queued: 2, fenced: true }],
+            execution: [
+              { group: "metal", executing: 1, queued: 2, oldestQueuedWaitMs: 185, fenced: true },
+            ],
           },
         },
       },

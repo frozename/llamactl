@@ -59,6 +59,7 @@ export type AdmissionReservation =
 
 export interface ReservableRequestAdmission extends RequestAdmission {
   invalidateModel: (modelKey: string) => void;
+  oldestQueuedWaitMs: () => number | null;
   reserve: (request: AdmissionRequest, options?: AcquireOptions) => AdmissionReservation;
 }
 
@@ -144,6 +145,10 @@ class RequestAdmissionImpl implements ReservableRequestAdmission {
 
   snapshot(): QueueSnapshot {
     return this.policy.snapshot();
+  }
+
+  oldestQueuedWaitMs(): number | null {
+    return this.policy.oldestQueuedWaitMs();
   }
 
   invalidateModel(modelKey: string): void {

@@ -301,7 +301,11 @@ function ManagedResidencyOverview({
       ))}
       {(managed.execution ?? []).map((group) => (
         <p key={group.group}>
-          {`${group.group} · ${String(group.executing)} active · ${String(group.queued)} queued${group.fenced ? " · fenced" : ""}`}
+          {`${group.group} · ${String(group.executing)} active · ${String(group.queued)} queued`}
+          {group.oldestQueuedWaitMs === undefined
+            ? null
+            : ` · oldest ${String(group.oldestQueuedWaitMs)} ms`}
+          {group.fenced ? " · fenced" : null}
         </p>
       ))}
     </div>

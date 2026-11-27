@@ -644,6 +644,7 @@ test("HTTP admission verifies ownership again after queueing", async () => {
     ),
   );
   expect(gate.snapshot()).toMatchObject([{ queued: 1, executing: 1 }]);
+  expect(gate.snapshot()[0]?.oldestQueuedWaitMs).toBeGreaterThanOrEqual(0);
   owned = false;
   held.end();
   await active?.text();
@@ -652,6 +653,7 @@ test("HTTP admission verifies ownership again after queueing", async () => {
   expect(await refusal?.json()).toMatchObject({ error: { code: "execution_target_changed" } });
   expect(dials).toBe(0);
   expect(gate.snapshot()).toMatchObject([{ queued: 0, executing: 0, fenced: false }]);
+  expect(gate.snapshot()[0]?.oldestQueuedWaitMs).toBeUndefined();
   gate.stop();
 });
 

@@ -43,6 +43,7 @@ interface ExecutionGroup {
 export type OwnerAdmissionSnapshot = Pick<QueueSnapshot, "queued" | "executing" | "queuedBytes"> & {
   group: string;
   fenced: boolean;
+  oldestQueuedWaitMs?: number;
 };
 
 export interface OwnerPermit {
@@ -506,12 +507,14 @@ export function createOwnerAdmission(
     snapshot: (): OwnerAdmissionSnapshot[] =>
       groups.map(({ admission, model, unconfirmed }) => {
         const { queued, queuedBytes, executing } = admission.snapshot();
+        const oldestQueuedWaitMs = admission.oldestQueuedWaitMs();
         return {
           group: model.name,
           queued,
           queuedBytes,
           executing,
           fenced: unconfirmed.signal.aborted,
+          ...(oldestQueuedWaitMs === null ? {} : { oldestQueuedWaitMs }),
         };
       }),
   };

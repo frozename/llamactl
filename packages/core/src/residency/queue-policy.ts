@@ -102,6 +102,7 @@ export interface RequestQueuePolicy {
   cancel: (requestId: string) => CancelResult;
   finishExecution: (requestId: string) => boolean;
   snapshot: () => QueueSnapshot;
+  oldestQueuedWaitMs: () => number | null;
   queueLimits: () => RequestQueueLimits;
 }
 
@@ -400,6 +401,11 @@ class RequestQueuePolicyImpl implements RequestQueuePolicy {
   }
 
   // ── snapshot ─────────────────────────────────────────────────────────
+
+  oldestQueuedWaitMs(): number | null {
+    const oldest = this.queue.values().next().value;
+    return oldest === undefined ? null : Math.max(0, this.now() - oldest.enqueuedAt);
+  }
 
   snapshot(): QueueSnapshot {
     // Resident = constructor-resident + successfully loaded, minus evicted

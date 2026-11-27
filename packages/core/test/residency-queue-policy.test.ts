@@ -75,6 +75,7 @@ type QueuePolicy = {
   cancel: (requestId: string) => CancelResult;
   finishExecution: (requestId: string) => boolean;
   snapshot: () => Snapshot;
+  oldestQueuedWaitMs: () => number | null;
 };
 
 type Mod = {
@@ -1333,4 +1334,21 @@ test("#281: queueLimits returns a copy, so mutating it cannot change a live poli
     requestId: "after-mutation",
   });
   expect(withLimits.queueLimits()).toEqual(configured);
+});
+
+test("reports the oldest current wait and clears it when the queued request leaves", async () => {
+  const mod = await load();
+  let now = 1_000;
+  const policy = mod.createRequestQueuePolicy({ limits: lim(), now: () => now });
+  expect(typeof policy.oldestQueuedWaitMs).toBe("function");
+  expect(policy.oldestQueuedWaitMs()).toBeNull();
+  policy.enqueue(q("first"));
+  now += 120;
+  policy.enqueue(q("second"));
+  now += 65;
+  expect(policy.oldestQueuedWaitMs()).toBe(185);
+  policy.cancel("first");
+  expect(policy.oldestQueuedWaitMs()).toBe(65);
+  policy.cancel("second");
+  expect(policy.oldestQueuedWaitMs()).toBeNull();
 });

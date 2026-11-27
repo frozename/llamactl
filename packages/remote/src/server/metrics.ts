@@ -92,6 +92,21 @@ new Gauge({
 });
 
 new Gauge({
+  name: "llamactl_execution_admission_oldest_wait_seconds",
+  help: "Age of the oldest currently queued request in each local execution group.",
+  labelNames: ["group"] as const,
+  registers: [registry],
+  collect(): void {
+    this.reset();
+    for (const group of ownerAdmissionMetricsReader?.() ?? []) {
+      if (group.oldestQueuedWaitMs !== undefined) {
+        this.set({ group: group.group }, group.oldestQueuedWaitMs / 1000);
+      }
+    }
+  },
+});
+
+new Gauge({
   name: "llamactl_execution_admission_fenced",
   help: "Whether the group refuses further work after losing engine completion confirmation.",
   labelNames: ["group"] as const,

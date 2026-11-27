@@ -241,6 +241,7 @@ const consoleResidencyStatus = z.object({
             group: z.string().min(1),
             executing: z.number().int().nonnegative(),
             queued: z.number().int().nonnegative(),
+            oldestQueuedWaitMs: z.number().nonnegative().optional(),
             fenced: z.boolean(),
           }),
         )

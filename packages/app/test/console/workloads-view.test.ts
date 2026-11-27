@@ -453,7 +453,9 @@ describe("workloads view (#410 P5a-3b)", () => {
         profile: { kind: "selected", profile: "interactive" },
         budgetGiB: 24,
         claims: [{ workload: "qwen", kind: "ModelRun", state: "resident", allocationGiB: 8 }],
-        execution: [{ group: "metal", executing: 1, queued: 2, fenced: true }],
+        execution: [
+          { group: "metal", executing: 1, queued: 2, oldestQueuedWaitMs: 185, fenced: true },
+        ],
       },
       omlxNative: {
         scope: "serving-process",
@@ -471,7 +473,7 @@ describe("workloads view (#410 P5a-3b)", () => {
     expect(markup).toContain("op-switch");
     expect(markup).toContain("Pending");
     expect(markup).toContain("Profile interactive · 8.0 / 24.0 GiB · 0 pending");
-    expect(markup).toContain("metal · 1 active · 2 queued · fenced");
+    expect(markup).toContain("metal · 1 active · 2 queued · oldest 185 ms · fenced");
   });
 
   test("a different node’s residency snapshot cannot mark a process ready", () => {
