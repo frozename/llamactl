@@ -916,6 +916,10 @@ function serverStartRefusal(input: ServerStartInput, detail: string): serverMod.
   };
 }
 
+function runOwnedStop<T>(managed: ManagedLaunchAdmission | undefined, run: () => T): T {
+  return managed?.runOwnedLifecycle === undefined ? run() : managed.runOwnedLifecycle(run);
+}
+
 type ServerStopRefusalShape = { reason?: unknown; active?: unknown };
 type ServerStopDeleteOutcome = {
   stopped?: unknown;
@@ -3074,10 +3078,12 @@ export const router = t.router({
           const outcome = await runDirectResidencyStop<StopModelHostResult>(
             input.workload,
             () =>
-              stopModelHost({
-                key: { name: input.workload },
-                ...(input.graceSeconds !== undefined ? { graceSeconds: input.graceSeconds } : {}),
-              }),
+              runOwnedStop(ctx.managedLaunchAdmission, () =>
+                stopModelHost({
+                  key: { name: input.workload },
+                  ...(input.graceSeconds !== undefined ? { graceSeconds: input.graceSeconds } : {}),
+                }),
+              ),
             directResidencyOpts(input.workload, undefined),
           );
           if (outcome.ran && outcome.result.ok && outcome.result.pid !== null) {
@@ -3684,10 +3690,14 @@ export const router = t.router({
             }>(
               input.workload,
               async () => {
-                const stop = await serverMod.stopServer({
-                  key: { name: input.workload },
-                  ...(input.graceSeconds !== undefined ? { graceSeconds: input.graceSeconds } : {}),
-                });
+                const stop = await runOwnedStop(ctx.managedLaunchAdmission, () =>
+                  serverMod.stopServer({
+                    key: { name: input.workload },
+                    ...(input.graceSeconds !== undefined
+                      ? { graceSeconds: input.graceSeconds }
+                      : {}),
+                  }),
+                );
                 return {
                   ok: stop.stopped,
                   ...(stop.stopped ? {} : { error: "stop did not confirm process removal" }),

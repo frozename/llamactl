@@ -5,6 +5,7 @@ import {
   createChatCompletionsAdmission,
   type RequestAdmission,
   startAgentServer,
+  startManagedAgentServer,
   tls,
 } from "@llamactl/remote";
 import { hostname } from "node:os";
@@ -1898,7 +1899,11 @@ async function runServe(args: string[]): Promise<number> {
 
   let running;
   try {
-    running = startAgentServer(buildServeOptions(parsed, cfg, wiring, dialNodeName));
+    const options = buildServeOptions(parsed, cfg, wiring, dialNodeName);
+    running =
+      process.env["LLAMACTL_MANAGED_RESIDENCY"] === "1"
+        ? await startManagedAgentServer(options, cfg.nodeName)
+        : startAgentServer(options);
   } catch (err) {
     if (reportServeStartFailure(err, parsed, cfg)) return 1;
     throw err;

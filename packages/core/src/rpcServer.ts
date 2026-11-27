@@ -11,6 +11,7 @@ import {
   terminateVerifiedPid,
   verifyPidFile,
 } from "./pidIdentity.js";
+import { hasManagedRuntimeMarker } from "./residency/managed-runtime.js";
 import {
   accessSync,
   closeSync,
@@ -258,6 +259,16 @@ export async function rpcServerStatus(
 export async function startRpcServer(opts: StartRpcServerOptions): Promise<StartRpcServerResult> {
   const env = opts.env ?? process.env;
   const resolved = opts.resolved ?? resolveEnv(env);
+  if (hasManagedRuntimeMarker(resolved.LOCAL_AI_RUNTIME_DIR)) {
+    return { ok: false, pid: null, endpoint: "", error: "ManagedRpcServerUnavailable" };
+  }
+  return await startUnmanagedRpcServer(opts, resolved);
+}
+
+async function startUnmanagedRpcServer(
+  opts: StartRpcServerOptions,
+  resolved: ResolvedEnv,
+): Promise<StartRpcServerResult> {
   const bin = join(resolved.LLAMA_CPP_BIN, "rpc-server");
   if (!existsSync(bin)) {
     return {
@@ -376,6 +387,9 @@ export interface StopRpcServerResult {
  */
 export async function stopRpcServer(opts: StopRpcServerOptions = {}): Promise<StopRpcServerResult> {
   const resolved = opts.resolved ?? resolveEnv();
+  if (hasManagedRuntimeMarker(resolved.LOCAL_AI_RUNTIME_DIR)) {
+    return { stopped: false, pid: null, killed: false };
+  }
   const grace = Math.max(1, opts.graceSeconds ?? 5);
   const pid = readPid(resolved);
   if (pid === null) {

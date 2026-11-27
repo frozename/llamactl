@@ -116,6 +116,7 @@ export interface AdmissionAuthority {
    * snapshot; the authority stays degraded, never legacy.
    */
   snapshot(): readonly AuthorityClaimRow[];
+  isOperational(): boolean;
   /** Idempotent; post-close admits refuse AuthorityUnavailable. */
   close(): void;
 }
@@ -260,6 +261,17 @@ function captureStopRelease(
   };
 }
 
+function isReadableStore(store: AdmissionStore | null): boolean {
+  if (store === null) return false;
+  try {
+    store.snapshot();
+    return true;
+  } catch (error) {
+    if (error instanceof AuthorityUnavailableError) return false;
+    throw error;
+  }
+}
+
 /**
  * Open (or degrade) the authority over `storePath`. An unreadable store
  * still returns an authority — degraded — so callers always speak to the
@@ -394,8 +406,11 @@ export function openAdmissionAuthority(opts: {
       );
     },
 
+    isOperational: () => isReadableStore(ledger()),
+
     close(): void {
       store?.close();
+      store = null;
     },
   };
 }

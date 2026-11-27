@@ -7,6 +7,7 @@ import {
 } from "@llamactl/core/engines/state";
 import { resolveEnv } from "@llamactl/core/env";
 import { capacityBudgetGiB, type ManagedWorkloadKind } from "@llamactl/core/residency/admission";
+import { withManagedRuntimeMutation } from "@llamactl/core/residency/managed-runtime";
 import { listWorkloadDirs, workloadRuntimeDir } from "@llamactl/core/workloadRuntime";
 import { join } from "node:path";
 
@@ -190,6 +191,7 @@ function verifyLocalInventory(
 export async function openNodeManagedAdmission(opts: NodeManagedAdmissionOptions): Promise<{
   admission: ManagedLaunchAdmission;
   authority: AdmissionAuthority;
+  verifyActivation(): string | undefined;
 }> {
   const resolved = resolveEnv();
   const runtimeDir = resolved.LOCAL_AI_RUNTIME_DIR;
@@ -207,19 +209,28 @@ export async function openNodeManagedAdmission(opts: NodeManagedAdmissionOptions
       return run !== null && host !== undefined ? undefined : (run ?? host);
     },
   });
-  return {
-    admission: createManagedLaunchAdmission({
-      authority: runtime.authority,
-      capture: (_request, pid) => runtime.capture(pid),
-      inspectRuntime: () =>
-        readDesired(() => verifyLocalInventory(resolved, runtime)) === true
-          ? undefined
-          : "ManagedRuntimeInventoryUnknown",
-      resolve: (request) =>
-        resolveEnv().LOCAL_AI_RUNTIME_DIR === runtimeDir
-          ? approveLaunch(request, workloadsDir, aliases)
-          : undefined,
-    }),
+  const runOwnedLifecycle = <T>(run: () => T): T => withManagedRuntimeMutation(runtimeDir, run);
+  const inspectRuntime = (): string | undefined =>
+    readDesired(() => verifyLocalInventory(resolved, runtime)) === true
+      ? undefined
+      : "ManagedRuntimeInventoryUnknown";
+  const admission = createManagedLaunchAdmission({
+    runOwnedLifecycle,
     authority: runtime.authority,
+    capture: (_request, pid) => runtime.capture(pid),
+    inspectRuntime,
+    resolve: (request) =>
+      resolveEnv().LOCAL_AI_RUNTIME_DIR === runtimeDir
+        ? approveLaunch(request, workloadsDir, aliases)
+        : undefined,
+  });
+  return {
+    admission,
+    authority: runtime.authority,
+    verifyActivation(): string | undefined {
+      if (!runtime.authority.isOperational()) return "AuthorityUnavailable";
+      if (localBudget(opts, workloadsDir, aliases) === undefined) return "BudgetUnknown";
+      return inspectRuntime();
+    },
   };
 }

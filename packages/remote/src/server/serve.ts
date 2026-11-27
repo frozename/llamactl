@@ -14,6 +14,7 @@ import {
   type ResidencyLeases,
   setResidencyLeaseRegistry,
 } from "@llamactl/core/residency/leases";
+import { hasManagedRuntimeMarker } from "@llamactl/core/residency/managed-runtime";
 import {
   createSessionRefcounts,
   currentSessionRefcounts,
@@ -1603,6 +1604,14 @@ async function finalFlushWindow(
  * three mounts.
  */
 export function startAgentServer(opts: StartAgentOptions): RunningAgent {
+  if (
+    hasManagedRuntimeMarker(resolveEnv().LOCAL_AI_RUNTIME_DIR) &&
+    (opts.managedLaunchAdmission?.runOwnedLifecycle === undefined ||
+      opts.residencyLeases !== true ||
+      opts.noAuth === true)
+  ) {
+    throw new Error("ManagedOwnerRequired");
+  }
   const bindHost = opts.bindHost ?? "127.0.0.1";
   const port = opts.port ?? 0;
   const endpoint = opts.endpoint ?? "/trpc";
