@@ -1,9 +1,19 @@
+import type { ManagedCapacitySample } from "@llamactl/core/resources/managed-capacity";
+
 import { server } from "@llamactl/core";
+import { resolveEnv } from "@llamactl/core/env";
+import { managedRuntimeRefusesMutation } from "@llamactl/core/residency/managed-runtime";
+import { workloadRuntimeDir } from "@llamactl/core/workloadRuntime";
 import { expect, mock, test } from "bun:test";
+import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { openNodeManagedAdmission } from "../../src/residency/target-admission-policy.js";
+import { openLocalAdmissionRuntime } from "../../src/residency/process-generation.js";
+import {
+  type ManagedCapacityAudit,
+  openNodeManagedAdmission,
+} from "../../src/residency/target-admission-policy.js";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
 import { pinModelHostStartup } from "../../src/server/modelhost.js";
 import { modelRunStartInvocation } from "../../src/workload/apply.js";
@@ -198,4 +208,276 @@ spec:
     }
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+const GiB = 1024 ** 3;
+const now = 100_000;
+const node = "physical-fixture";
+const workload = "replacement";
+
+function modelHostFixture(dir: string): ReturnType<typeof parseModelHost> {
+  const manifest = parseModelHost(`
+apiVersion: llamactl/v1
+kind: ModelHost
+metadata: { name: ${workload} }
+spec:
+  node: ${node}
+  engine: llamacpp
+  binary: /usr/bin/false
+  endpoint: { host: "127.0.0.1", port: 19095 }
+  hostedModels: [{ rel: exact.gguf }]
+  resources: { expectedMemoryGiB: 16 }
+`);
+  saveModelHost(manifest, dir);
+  return manifest;
+}
+
+function localCapacity(availableGiB: number): ManagedCapacitySample {
+  return {
+    source: "linux-procfs",
+    observedAtMs: now,
+    physicalBytes: 64 * GiB,
+    availableBytes: availableGiB * GiB,
+    scope: { kind: "host-physical" },
+    pressure: "normal",
+    swapUsedBytes: 0,
+  };
+}
+
+async function withCapacityOwner(
+  readCapacity: () => ManagedCapacitySample,
+  run: (
+    policy: Awaited<ReturnType<typeof openNodeManagedAdmission>>,
+    request: {
+      kind: "ModelHost";
+      runtimeKey: string;
+      effectiveSpecDigest: string;
+      effectiveLaunch: Readonly<Record<string, unknown>>;
+      launch: { manifest: ReturnType<typeof parseModelHost> };
+    },
+    runtimeDir: string,
+  ) => Promise<void>,
+  onCapacityAudit?: (entry: ManagedCapacityAudit) => void,
+): Promise<void> {
+  const dir = mkdtempSync(join(tmpdir(), "llamactl-physical-owner-"));
+  const runtimeDir = join(dir, "runtime");
+  const original = process.env["LOCAL_AI_RUNTIME_DIR"];
+  process.env["LOCAL_AI_RUNTIME_DIR"] = runtimeDir;
+  let policy: Awaited<ReturnType<typeof openNodeManagedAdmission>> | undefined;
+  try {
+    const manifest = modelHostFixture(dir);
+    const pinned = pinModelHostStartup(manifest);
+    policy = await openNodeManagedAdmission({
+      nodeName: node,
+      workloadsDir: dir,
+      readCapacity,
+      ...(onCapacityAudit === undefined ? {} : { onCapacityAudit }),
+      nowMs: () => now,
+    });
+    await run(
+      policy,
+      {
+        kind: "ModelHost",
+        runtimeKey: workload,
+        effectiveSpecDigest: pinned.effectiveSpecDigest,
+        effectiveLaunch: pinned.effectiveLaunch,
+        launch: { manifest },
+      },
+      runtimeDir,
+    );
+  } finally {
+    policy?.authority.close();
+    if (original === undefined) Reflect.deleteProperty(process.env, "LOCAL_AI_RUNTIME_DIR");
+    else process.env["LOCAL_AI_RUNTIME_DIR"] = original;
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test("profile preflight uses the ledger ceiling, while launch uses fresh headroom and abandons a refused claim", async () => {
+  let available = 56;
+  let reads = 0;
+  await withCapacityOwner(
+    () => localCapacity(reads++ === 0 ? 56 : available),
+    async ({ admission, authority }, request) => {
+      const preflight = admission.preflightProfile;
+      if (preflight === undefined) throw new Error("the owner must expose profile preflight");
+      available = 16;
+      expect(preflight({ victims: [], retained: [], replacements: [workload] })).toBeUndefined();
+      expect(
+        preflight({ victims: ["unverified"], retained: [], replacements: [workload] }),
+      ).toMatch(/^ManagedVictimUnverified/);
+
+      // The first reading allows a ledger reservation. Its later launch must still refuse.
+      reads = 0;
+      available = 24;
+      const called = mock(() =>
+        Promise.resolve({ ran: false as const, detail: "fixture engine stopped" }),
+      );
+      const signal = new AbortController().signal;
+      expect(await admission.run(request, signal, called)).toEqual({
+        ran: false,
+        detail: "ManagedCapacity: InsufficientHeadroom",
+      });
+      expect(called).not.toHaveBeenCalled();
+      expect(authority.snapshot()).toEqual([]);
+
+      available = 56;
+      expect(await admission.run(request, signal, called)).toEqual({
+        ran: false,
+        detail: "fixture engine stopped",
+      });
+      expect(called).toHaveBeenCalledTimes(1);
+    },
+  );
+});
+
+test("a granted launch rechecks at the engine boundary and an unstarted refusal releases its claim", async () => {
+  let available = 56;
+  await withCapacityOwner(
+    () => localCapacity(available),
+    async ({ admission, authority }, request, runtimeDir) => {
+      writeFileSync(join(runtimeDir, "managed-residency-v1"), node + "\n");
+      let spawns = 0;
+      const result = await admission.run(request, new AbortController().signal, async () => {
+        await Promise.resolve();
+        available = 24;
+        const blocked = managedRuntimeRefusesMutation(runtimeDir);
+        if (!blocked) spawns++;
+        return { ran: true, result: { ok: false, pid: null } };
+      });
+      expect(result).toEqual({ ran: false, detail: "ManagedCapacity: InsufficientHeadroom" });
+      expect(spawns).toBe(0);
+      expect(authority.snapshot()).toEqual([]);
+    },
+  );
+});
+
+test("unsettled and unverified resident claims still charge fresh launch headroom", async () => {
+  let available = 56;
+  await withCapacityOwner(
+    () => localCapacity(available),
+    async ({ admission, authority }, request) => {
+      const claim = authority.admit({
+        kind: "ModelHost",
+        runtimeKey: "unverified-resident",
+        specDigest: "test",
+        allocationGiB: 10,
+      });
+      if (claim.kind !== "admitted") throw new Error("fixture claim failed");
+      expect(authority.completeReady(claim.claimId, claim.fenceToken)).toBe(true);
+      available = 36; // 20 GiB headroom. The 10 GiB unresolved liability plus 16 GiB request does not fit.
+      const callback = mock(() =>
+        Promise.resolve({ ran: false as const, detail: "fixture engine stopped" }),
+      );
+      expect(await admission.run(request, new AbortController().signal, callback)).toEqual({
+        ran: false,
+        detail: "ManagedCapacity: InsufficientHeadroom",
+      });
+      expect(callback).not.toHaveBeenCalled();
+      expect(authority.snapshot()).toMatchObject([{ claimId: claim.claimId }]);
+    },
+  );
+});
+
+test("a verified victim release changes the ledger while another sample still controls launch", async () => {
+  let available = 56;
+  const audit: ManagedCapacityAudit[] = [];
+  await withCapacityOwner(
+    () => localCapacity(available),
+    async ({ admission, authority }, request, runtimeDir) => {
+      // This fixture process has an observable generation and performs no inference or allocation.
+      const child = spawn(process.execPath, ["-e", "await Bun.stdin.text()"], {
+        detached: true,
+        stdio: ["pipe", "ignore", "ignore"],
+      });
+      const exited = new Promise((resolve) => child.once("exit", resolve));
+      let witness: Awaited<ReturnType<typeof openLocalAdmissionRuntime>> | undefined;
+      try {
+        witness = await openLocalAdmissionRuntime({
+          storePath: join(runtimeDir, "fixture-witness.sqlite"),
+          budgetGiB: () => 48,
+          readPidFile: () => undefined,
+        });
+        const pid = child.pid;
+        if (pid === undefined) throw new Error("fixture victim did not start");
+        const generation = witness.capture(pid);
+        if (generation === undefined) throw new Error("fixture victim is not observable");
+        const victim = "verified-victim";
+        const victimDir = workloadRuntimeDir(resolveEnv(), { name: victim });
+        mkdirSync(victimDir, { recursive: true });
+        writeFileSync(join(victimDir, "llama-server.pid"), String(pid));
+        const claim = authority.admit({
+          kind: "ModelRun",
+          runtimeKey: victim,
+          specDigest: "fixture",
+          allocationGiB: 16,
+        });
+        if (claim.kind !== "admitted") throw new Error("fixture victim reservation refused");
+        expect(authority.recordGeneration(claim.claimId, claim.fenceToken, generation)).toBe(true);
+        expect(authority.completeReady(claim.claimId, claim.fenceToken)).toBe(true);
+
+        const launch = mock(() =>
+          Promise.resolve({ ran: false as const, detail: "fixture reached launch" }),
+        );
+        const signal = new AbortController().signal;
+        // The live victim is already represented in the availability sample.
+        available = 36;
+        expect(await admission.run(request, signal, launch)).toEqual({
+          ran: false,
+          detail: "fixture reached launch",
+        });
+        expect(launch).toHaveBeenCalledTimes(1);
+        expect(audit).toContainEqual({
+          nodeName: node,
+          phase: "launch",
+          ledgerCeilingGiB: 48,
+          launchHeadroomGiB: 20,
+          ledgerHeldGiB: 32,
+          requiredHeadroomGiB: 16,
+        });
+
+        available = 16;
+        expect(
+          admission.preflightProfile?.({
+            victims: [victim],
+            retained: [],
+            replacements: [workload],
+          }),
+        ).toBeUndefined();
+        expect(audit).toContainEqual({
+          nodeName: node,
+          phase: "profile-preflight",
+          ledgerCeilingGiB: 48,
+          launchHeadroomGiB: 0,
+        });
+        const stop = admission.prepareStopRelease?.(victim, "ModelRun");
+        if (stop === undefined) throw new Error("fixture receipt missing");
+        child.stdin.end();
+        await exited;
+        expect(stop.release(pid)).toEqual({ kind: "released", claimId: claim.claimId });
+
+        // Verified exit alone never creates more available memory.
+        expect(await admission.run(request, signal, launch)).toEqual({
+          ran: false,
+          detail: "ManagedCapacity: InsufficientHeadroom",
+        });
+        expect(launch).toHaveBeenCalledTimes(1);
+        expect(authority.snapshot()).toEqual([]);
+
+        available = 40;
+        expect(await admission.run(request, signal, launch)).toEqual({
+          ran: false,
+          detail: "fixture reached launch",
+        });
+        expect(launch).toHaveBeenCalledTimes(2);
+      } finally {
+        child.kill();
+        await exited;
+        witness?.authority.close();
+      }
+    },
+    (entry): void => {
+      audit.push(entry);
+    },
+  );
 });
