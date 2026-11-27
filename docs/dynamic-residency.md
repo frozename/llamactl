@@ -330,7 +330,11 @@ The fleet snapshot publisher can carry an optional `declaredProvenance` companio
 
 ## Model artifact and cache identity
 
-Artifact identity today is the manifest model name only (`packages/remote/src/residency/catalog.ts`): a `ModelHost` keys off its first hosted model's `rel` and its `basename`, and a `ModelRun` keys off `spec.target.value` and its `--alias`/`-a` values, nothing else. Since #711 declared-model projection compares that manifest model string with the model a live route reports and marks a mismatch `stale-artifact-revision`, and a live id owned by another workload `stale-owner-epoch` (both in `DECLARED_STALE_REASONS`); a routed pin of a stale id gets `503`. That comparison is still by name. Nothing hashes model files or tracks their revision at readiness or at declared-model projection, so replacing weights in place under the same `rel` is invisible; publish new weights under a new `rel`. `MemoryCalibrationKey.artifactRevision` (`packages/core/src/resources/memory.ts`) gates measured envelopes only through an injected hook, and `getCandidateCalibrationKey` has no production caller. For oMLX, the cache identity (modelId, `engineBuild`, `cacheEpoch`, the artifact `sha256` or size/mtime, and settings) lives in `packages/core/src/engines/omlx-cache-identity.ts`, and `decideOmlxCacheRetention` has no production caller. For native load/unload, `createManagedOmlxResidency` has no production caller (`packages/remote/src/residency/omlx-managed.ts`).
+Ordinary declared routes compare the manifest name and aliases with the serving route (`packages/remote/src/residency/catalog.ts`). A ModelHost uses its first model's `rel` and `basename`. The two `DECLARED_STALE_REASONS` are `stale-artifact-revision` and `stale-owner-epoch`. Use a new `rel` when replacing weights under ordinary routing.
+
+For a configured managed cold ModelRun, startup verifies the selected regular-file artifact against its declared SHA-256 and byte ceiling. The admission path checks that the staged file generation remains current. A ready peer declaration also needs the live process generation and serving route. Changing the artifact, target policy or execution-group configuration withdraws that proof.
+
+`MemoryCalibrationKey.artifactRevision` (`packages/core/src/resources/memory.ts`) gates measured envelopes only through an injected hook, and `getCandidateCalibrationKey` has no production caller. For oMLX, the cache identity (modelId, `engineBuild`, `cacheEpoch`, the artifact `sha256` or size/mtime, and settings) lives in `packages/core/src/engines/omlx-cache-identity.ts`, and `decideOmlxCacheRetention` has no production caller. For native load/unload, `createManagedOmlxResidency` has no production caller (`packages/remote/src/residency/omlx-managed.ts`).
 
 ## llama.cpp sleep and wake
 
@@ -477,6 +481,8 @@ llamactl residency plan --node <name> --to <profile> [--from <profile>]
 
 Use a one-off switch with a single desired-state writer and no conflicting launcher. The `ControllerActive` guard refuses a wet request while the controller lock is live. Review the dry run before the wet run. Use the operation ID to request cancellation while the owning process is still running. Cancellation is process-local and takes effect at a step boundary.
 
+On the approved target, start its authenticated agent with `LLAMACTL_MANAGED_RESIDENCY=1`. The agent checks its named NodeRun budget against fresh local capacity, verifies the recorded processes, and binds the two journals to their file identities. Use `llamactl apply -f` with `--managed` to send desired workload changes to that owner. Capture the admission ledger and transition journal together for recovery.
+
 ```sh
 llamactl residency apply-profile --node <name> --to <profile> [--from <profile>]
 llamactl residency apply-profile --node <name> --to <profile> [--from <profile>] --execute --yes
@@ -509,7 +515,9 @@ launchctl bootout "gui/$(id -u)" "$PLIST"
 launchctl bootstrap "gui/$(id -u)" "$PLIST"
 ```
 
-**Enable gate.** These settings alone provide no evidence for cold loading. Request-driven loading remains blocked until the deployed worker proves exact alias ownership, coalesces concurrent cold requests into one fenced launch, and enforces finite shared execution and queue limits. Check fair wait and cancellation under contention. Verify response codes for the applicable overload and warming cases, and verify older and unmanaged peers keep their documented route behavior.
+**Enable gate.** The local cold ModelRun canary needs the managed owner, an authenticated TLS listener, declared models, and an `executionAdmission` group with explicit context and completion limits for the engine port. List each approved workload in `managedColdModelRuns` in the owning agent's `agent.yaml`. Each entry has `workload`, a lowercase hex `sha256` of the artifact, and a positive `maxArtifactBytes` sized for that exact artifact. Allow startup time for the digest verification. The supported cold request body uses a token-ID prompt and explicit `max_tokens` on `/v1/completions`.
+
+Before allowing production canary traffic, test exact alias ownership, bounded coalescing, fair wait, cancellation, overload and warming responses under contention. Verify older and unmanaged peers keep their documented routing behavior. Treat a peer's cold declaration as evidence for availability and refusal. A remote activation needs a compatible owner-enforced transport before it can be qualified.
 
 **Rollback.** Remove the canary from new request routing, then drain queued and active requests, leases and accepted launches under the current build. Resolve all resulting claims and verify available capacity before reverting canary settings or restarting the agent. Restore previous values or remove only the keys added for this canary (`plutil -remove EnvironmentVariables.<key> "$PLIST"` for the LaunchAgent). Verify contract behavior and ready routes against the baseline before returning the node to service. Carry any unknown transition forward using the Stage 1 hold.
 
@@ -525,6 +533,8 @@ launchctl bootstrap "gui/$(id -u)" "$PLIST"
 - **Hardware PASS** requires a separately approved host, engine build, artifact and test window for each of oMLX, supported llama.cpp builds and the opaque-process backend. Compare baseline → canary → restored baseline with the same artifact, workload mix, arrival schedule and correctness rules. Record cold and warm cache state separately. Set acceptable thresholds and comparison sample counts before starting. Default CI uses fake engines and temporary state. Hardware qualification has not been run for this rollout.
 - **FAIL** records a failed assertion or a measured result outside its predeclared threshold. Preserve the failed witness and the result of restoring the baseline.
 - **BLOCKED** records missing evidence or an unresolved dependency with the next verification needed. Keep approvals separate from test status. A passing hermetic suite, skipped hardware run, or issue closure does not authorize activation.
+
+The process fixture in `packages/remote/test/residency/fleet-e2e.test.ts` starts two managed owners with separate runtime roots and loopback engines. It keeps one peer request open during the other owner's forced exit, confirms that a second process cannot take the live owner's authority, and verifies that the restarted owner refuses the unresolved workload without dialing again. The peer completes normally. The mixed-engine fixture in `packages/remote/test/residency/stop-fence.test.ts` separately checks the verified forward switch and reverse profile rollback on one owner. Both fixtures use synthetic capacity samples and make no hardware or throughput claim.
 
 Use the following comparison units for each scenario and window. Record sample counts, aborts, timeouts, refusals, in-flight requests and measurement sources alongside the aggregates. Missing sources are reported as unavailable.
 
