@@ -688,6 +688,94 @@ consistent with pin and freeze), `effectiveStage` and the routing stage;
 the `list` text output omits the applied row. The overrides file is
 node-local, so every subcommand refuses a non-local `--node` target.
 
+### Reading `llamactl qualification` output
+
+Every subcommand prints plain text on stdout and exits 0
+(`packages/cli/src/commands/qualification.ts`). `list`, `status`, `propose`
+and `apply` print JSON instead with `--json` — one JSON object for `status`,
+`propose` and `apply`, one JSON array of those objects for `list` — and
+`evidence` always prints JSON. Every refusal goes to stderr and exits 1.
+With no subcommand, or with `help` or `--help`, it prints the usage and
+exits 0; an unknown subcommand prints
+`Unknown qualification subcommand: <subcommand>`, then the usage.
+
+The line forms below are written space-separated, and only two of them use
+tabs in the real output. Each `status` line puts one tab between its label
+(the rel, on the first line) and its value; the value keeps its own spaces.
+Each `list` row puts a tab between each of its five fields. Every other line
+is space-separated exactly as written: the `pin`, `freeze`, `unpin`,
+`unfreeze` and `unapply` success lines, the `overrides: <file>` line, the
+`proposal`, `demotion` and `none` decision lines, and every `apply: ...`
+line.
+
+On a non-local `--node` target, every subcommand exits 1 before reading
+anything, with `qualification: overrides are node-local; run this command on
+the target node (selected node '<node>' is not local)`.
+
+Every subcommand that takes a rel refuses a missing one with
+`qualification <verb>: <rel> is required`, followed by the usage; for
+`status` that reads `qualification status: <rel> is required`.
+
+`pin` prints `pinned <rel> at <stage>` and `freeze` prints `froze <rel>`;
+`unpin`, `unfreeze` and `unapply` print `unpinned <rel>`, `unfroze <rel>`
+and `unapplied <rel>`. Each success adds a second line, `overrides: <file>`,
+naming the overrides file it wrote. `pin`, `freeze` and `apply` take
+`--author`, which names the author on the row they write; it defaults to the
+OS user name, else `operator`. The write refusals are:
+
+- `pin` refuses with `qualification pin: <stage> is required`, or with
+  `qualification pin: unknown stage '<stage>' (expected experimental | candidate | validated | production | degraded)`.
+- `pin` and `freeze` refuse a missing or empty `--reason` with
+  `qualification <verb>: --reason is required`.
+- A row that the overrides schema rejects is refused with
+  `qualification <verb>: ` followed by the schema's issue messages.
+- Removing a row that is absent exits 1 with
+  `qualification unpin: no pin override for '<rel>'`,
+  `qualification unfreeze: no freeze override for '<rel>'` or
+  `qualification unapply: no applied stage for '<rel>'`.
+
+`status <rel>` prints five tab-separated lines: `<rel> <effective stage>`,
+`catalog <stage>`, `pin <stage> (<author>): <reason>`,
+`freeze <author>: <reason>` and `applied <stage> (<author>): <reason>`. It
+prints `-` for an absent value, and `unstaged` as the effective stage when
+the rel has no declared stage. The declared stage is the applied stage, else
+the catalog stage, else the pin stage (`declaredFor`).
+
+`list` prints no header line. It prints one tab-separated line per rel,
+sorted: `<rel> <catalog stage> <pin stage> <frozen> <effective stage>`, over
+every rel with a catalog stage plus every rel with an override row.
+`<frozen>` reads `frozen` or `-`, an absent catalog or pin stage reads `-`,
+and an absent effective stage reads `unstaged`. The text output has no
+routing-stage or applied column; `--json` carries both.
+
+`propose` and `apply` each print a decision line, then an apply line. The
+decision line is `proposal <rel> <from> -> <to>`,
+`demotion <rel> <from> -> <to> (breached: <metrics>)` or
+`none <rel>: <reason>`; for a `below-threshold` refusal
+` (failed: <metrics>)` is appended. `propose` always follows with
+`apply: <status> (nothing written; autoApply has no writer here)`. `apply`
+follows with one of three lines:
+
+- `apply: applied <rel> <from> -> <to>`, plus `overrides: <file>`, after a
+  write;
+- `apply: proposed (nothing written; policy autoApply is off)`;
+- `apply: skipped (nothing written)` for a `none` decision.
+
+With `--json`, both print one object with `rel`, `declared`,
+`overridesFile`, `decision` and `apply`.
+
+Each `propose` and `apply` refusal exits 1 with a message prefixed
+`qualification <verb>: `. They are `--evidence is required` and
+`--policy is required`; `cannot read evidence file '<path>'`,
+`invalid JSON in evidence file '<path>'` and
+`invalid evidence file '<path>': <issues>`, where each issue is prefixed
+with its key path, and the same three forms exist for the policy file;
+`'<rel>' has no qualification stage`; `invalid policy: <issues>` when the
+gate's re-parse of the policy refuses it; and, for `apply` only,
+`cannot record applied stage: <detail>` when `writeAppliedStage` refuses the
+row or the write fails. Only the Zod refusal guarantees that nothing was
+written; an IO failure says nothing about the file.
+
 ## Exclusive-window runbook
 
 Manual procedure, before DF-06 / #279 automates the swap.
