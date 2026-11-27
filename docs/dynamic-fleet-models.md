@@ -428,25 +428,39 @@ entry's `qualification.stage` is the routing stage from
 `experimental: true`, the same flag a `data` entry carries. Neither array
 is routable, so the flags only report; they change no routing decision.
 
-Peer-advertised experimental stage (#518): the `include=local-routes` fleet
+Peer-advertised qualification stages (#518): the `include=local-routes` fleet
 snapshot (`buildLocalRoutesSnapshot`, `packages/remote/src/routes/fleet.ts`)
 labels a workload `llamactl.io/qualification: experimental` when any of its
 routes is experimental — a catalog row, an applied or pin override, or an
-explicit label. The peer poller (`collectPeerWorkloads`,
-`packages/remote/src/server/peer-snapshot-poller.ts`) forwards only that
-experimental label onto each model id, so the existing peer admission and
-catalog exclusion apply on other nodes, including a peer's `ModelHost` alias
-ids and node-local pins. Limits: the poller forwards only the experimental
-stage and advertises no other (a non-experimental peer stage is not
-propagated, so a peer route still inherits this node's stage by exact id);
-ranking order is unchanged. When a fleet-supervisor journal snapshot is
-served in preference to the fallback, `readFleetSnapshotOrLocalRoutes`
-overlays the same experimental label onto each journal workload whose
-workload name matches an experimental local route — only for callers
-asking `include=local-routes` (the peer poller over HTTP and tRPC). Without
+explicit label — and `llamactl.io/qualification: degraded` when any of its
+routes carries the degraded stage. Experimental wins whenever a workload has
+both kinds of route, whatever the route order, and a workload with neither
+advertises no label at all. The peer poller (`collectPeerWorkloads`,
+`packages/remote/src/server/peer-snapshot-poller.ts`) forwards only the
+experimental and degraded stages onto each model id and advertises no other, so
+the existing peer admission and catalog exclusion apply on other nodes,
+including a peer's `ModelHost` alias ids and node-local pins. A peer can add an
+exclusion or a demotion but never lift a stage: a degraded peer label never
+lifts an inherited experimental stage, and the other non-experimental peer
+stages (validated, candidate, production) are not propagated, so a peer route
+still inherits this node's stage by exact id. Admission
+(`admitPeerRoute`, `packages/core/src/workloadRuntime.ts`): a healthy peer —
+neither experimental nor degraded — is admitted for an id held only by degraded
+or experimental peer routes, which is what lets the unified ranker place the
+degraded peer in its existing degraded tier behind the healthy one; local routes
+stay authoritative, so a healthy peer is not admitted over any non-experimental
+local route, a degraded local route included, and one healthy peer still closes
+the id. Limits: the legacy (flag-off) comparator ignores degraded, so the first
+admitted peer route by workload name leads the legacy `/v1/models` listing and
+a second admitted peer route for the same id may log a route-map collision for
+that listing. When a fleet-supervisor journal snapshot is served in preference
+to the fallback, `readFleetSnapshotOrLocalRoutes` overlays the same
+qualification label onto each journal workload whose workload name matches an
+experimental or degraded local route — only for callers asking
+`include=local-routes` (the peer poller over HTTP and tRPC). Without
 `include=local-routes` the journal snapshot is served unchanged, a journal
-workload with no experimental local route of the same workload name carries
-no label, and an empty journal workload list or a failing route listing
+workload with no experimental or degraded local route of the same workload name
+carries no label, and an empty journal workload list or a failing route listing
 serves the journal unchanged.
 
 `proposePromotion` (`packages/core/src/qualification/promotion.ts`)
@@ -674,6 +688,94 @@ consistent with pin and freeze), `effectiveStage` and the routing stage;
 the `list` text output omits the applied row. The overrides file is
 node-local, so every subcommand refuses a non-local `--node` target.
 
+### Reading `llamactl qualification` output
+
+Every subcommand prints plain text on stdout and exits 0
+(`packages/cli/src/commands/qualification.ts`). `list`, `status`, `propose`
+and `apply` print JSON instead with `--json` — one JSON object for `status`,
+`propose` and `apply`, one JSON array of those objects for `list` — and
+`evidence` always prints JSON. Every refusal goes to stderr and exits 1.
+With no subcommand, or with `help` or `--help`, it prints the usage and
+exits 0; an unknown subcommand prints
+`Unknown qualification subcommand: <subcommand>`, then the usage.
+
+The line forms below are written space-separated, and only two of them use
+tabs in the real output. Each `status` line puts one tab between its label
+(the rel, on the first line) and its value; the value keeps its own spaces.
+Each `list` row puts a tab between each of its five fields. Every other line
+is space-separated exactly as written: the `pin`, `freeze`, `unpin`,
+`unfreeze` and `unapply` success lines, the `overrides: <file>` line, the
+`proposal`, `demotion` and `none` decision lines, and every `apply: ...`
+line.
+
+On a non-local `--node` target, every subcommand exits 1 before reading
+anything, with `qualification: overrides are node-local; run this command on
+the target node (selected node '<node>' is not local)`.
+
+Every subcommand that takes a rel refuses a missing one with
+`qualification <verb>: <rel> is required`, followed by the usage; for
+`status` that reads `qualification status: <rel> is required`.
+
+`pin` prints `pinned <rel> at <stage>` and `freeze` prints `froze <rel>`;
+`unpin`, `unfreeze` and `unapply` print `unpinned <rel>`, `unfroze <rel>`
+and `unapplied <rel>`. Each success adds a second line, `overrides: <file>`,
+naming the overrides file it wrote. `pin`, `freeze` and `apply` take
+`--author`, which names the author on the row they write; it defaults to the
+OS user name, else `operator`. The write refusals are:
+
+- `pin` refuses with `qualification pin: <stage> is required`, or with
+  `qualification pin: unknown stage '<stage>' (expected experimental | candidate | validated | production | degraded)`.
+- `pin` and `freeze` refuse a missing or empty `--reason` with
+  `qualification <verb>: --reason is required`.
+- A row that the overrides schema rejects is refused with
+  `qualification <verb>: ` followed by the schema's issue messages.
+- Removing a row that is absent exits 1 with
+  `qualification unpin: no pin override for '<rel>'`,
+  `qualification unfreeze: no freeze override for '<rel>'` or
+  `qualification unapply: no applied stage for '<rel>'`.
+
+`status <rel>` prints five tab-separated lines: `<rel> <effective stage>`,
+`catalog <stage>`, `pin <stage> (<author>): <reason>`,
+`freeze <author>: <reason>` and `applied <stage> (<author>): <reason>`. It
+prints `-` for an absent value, and `unstaged` as the effective stage when
+the rel has no declared stage. The declared stage is the applied stage, else
+the catalog stage, else the pin stage (`declaredFor`).
+
+`list` prints no header line. It prints one tab-separated line per rel,
+sorted: `<rel> <catalog stage> <pin stage> <frozen> <effective stage>`, over
+every rel with a catalog stage plus every rel with an override row.
+`<frozen>` reads `frozen` or `-`, an absent catalog or pin stage reads `-`,
+and an absent effective stage reads `unstaged`. The text output has no
+routing-stage or applied column; `--json` carries both.
+
+`propose` and `apply` each print a decision line, then an apply line. The
+decision line is `proposal <rel> <from> -> <to>`,
+`demotion <rel> <from> -> <to> (breached: <metrics>)` or
+`none <rel>: <reason>`; for a `below-threshold` refusal
+` (failed: <metrics>)` is appended. `propose` always follows with
+`apply: <status> (nothing written; autoApply has no writer here)`. `apply`
+follows with one of three lines:
+
+- `apply: applied <rel> <from> -> <to>`, plus `overrides: <file>`, after a
+  write;
+- `apply: proposed (nothing written; policy autoApply is off)`;
+- `apply: skipped (nothing written)` for a `none` decision.
+
+With `--json`, both print one object with `rel`, `declared`,
+`overridesFile`, `decision` and `apply`.
+
+Each `propose` and `apply` refusal exits 1 with a message prefixed
+`qualification <verb>: `. They are `--evidence is required` and
+`--policy is required`; `cannot read evidence file '<path>'`,
+`invalid JSON in evidence file '<path>'` and
+`invalid evidence file '<path>': <issues>`, where each issue is prefixed
+with its key path, and the same three forms exist for the policy file;
+`'<rel>' has no qualification stage`; `invalid policy: <issues>` when the
+gate's re-parse of the policy refuses it; and, for `apply` only,
+`cannot record applied stage: <detail>` when `writeAppliedStage` refuses the
+row or the write fails. Only the Zod refusal guarantees that nothing was
+written; an IO failure says nothing about the file.
+
 ## Exclusive-window runbook
 
 Manual procedure, before DF-06 / #279 automates the swap.
@@ -883,10 +985,16 @@ SSD read and write bytes come from `/proc/<pid>/io` and peak RSS comes from
 `unavailable` with a reason naming the unknown engine PID
 (`createPerfHostReaders`, `packages/eval/src/perf/readers.ts`). With --launch, peak RSS is read from the launched engine instead; see Measured load with --launch. GTT comes from the GTT probe on
 any loopback Linux run, with or without `--pid`
-(`hostReaders`, `packages/cli/src/commands/eval-perf.ts`). These counters are
+(`hostReaders`, `packages/cli/src/commands/eval-perf.ts`). On macOS with `--pid`,
+`proc_pid_rusage` with flavor `RUSAGE_INFO_V2` fills `ri_diskio_bytesread` and
+`ri_diskio_byteswritten`, and their per-sample deltas are the SSD read and write bytes
+(`createPerfHostReaders`, `packages/eval/src/perf/readers.ts`, and
+`defaultProcPidRusage`, `packages/eval/src/perf/darwin-rusage.ts`). Peak RSS and GTT are
 Linux-only; on macOS each is recorded `unavailable` with a named reason
 (`createPerfHostReaders`, `packages/eval/src/perf/readers.ts`, and
-`hostReaders`, `packages/cli/src/commands/eval-perf.ts`). With a non-loopback URL, every
+`hostReaders`, `packages/cli/src/commands/eval-perf.ts`). On any other platform SSD I/O
+records `per-process disk I/O counters are read from /proc/<pid>/io on Linux and
+proc_pid_rusage on macOS; no I/O reader on <platform>`. With a non-loopback URL, every
 host counter is recorded `unavailable`, with a reason naming the remote engine
 (`remoteReasons`, `packages/cli/src/commands/eval-perf.ts`).
 
@@ -1299,8 +1407,9 @@ not known when the reader ran`. SSD I/O records
 `--launch relaunches the engine between the cold and warm load, so no single
 engine process spans the suite; per-process SSD I/O (/proc/<pid>/io) is not
 measured` (`LAUNCH_IO_REASON`, `packages/cli/src/commands/eval-perf-launch.ts`),
-because the cold and warm boots are different processes. GTT is unchanged, and
-on macOS the Linux-only reasons apply.
+because the cold and warm boots are different processes. GTT is unchanged. On macOS, SSD
+I/O records the same `LAUNCH_IO_REASON`, and peak RSS and GTT keep their Linux-only
+reasons.
 
 Because the engine is not up before the suite starts, `GET /props` is not
 probed. Without an explicit `--slots <n>`, c2/c4 record
@@ -1343,10 +1452,11 @@ sample from any phase still wins over a failed one (`peakGttMetric`,
 caller-named reasons, as described in Capturing evidence for an arm.
 
 The shipped `createPerfHostReaders` (packages/eval/src/perf/readers.ts)
-turns a failed /proc read into null. So `eval perf` records `I/O reader
-returned no sample` and `peak-RSS (VmHWM) reader returned no sample`, and
-the `... reader failed: <message>` reasons apply only to an injected
-reader that throws. The GTT probe `probeGpuGtt`
+turns a failed /proc read into null. On macOS it turns a non-zero
+`proc_pid_rusage` return, or a counter above `Number.MAX_SAFE_INTEGER`, into
+null the same way. So `eval perf` records `I/O reader returned no sample` and
+`peak-RSS (VmHWM) reader returned no sample`, and the `... reader failed:
+<message>` reasons apply only to an injected reader that throws. The GTT probe `probeGpuGtt`
 (packages/fleet-supervisor/src/node-probe.ts) reports `denied` when the
 counters are not readable, `unavailable` when no card exposes them, and
 `unsupported` off Linux, and reports an empty source for each of them. On

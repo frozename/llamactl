@@ -185,6 +185,7 @@ export {
   removePipeline,
   writeLastRun,
 } from "./rag/pipeline/store.js";
+export type { CapturedRequest, RequestSummary } from "./request-capture/store.js";
 export {
   type DirectLifecycleOpts,
   exclusiveGroupLaunchRefusal,

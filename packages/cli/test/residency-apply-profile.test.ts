@@ -697,3 +697,85 @@ describe("#520 apply-profile session detail", () => {
     expect(stderr).not.toContain("Unknown residency subcommand");
   });
 });
+
+describe("#519 apply-profile refusal retry readout", () => {
+  test("AP1: a MinResidency refusal prints held workloads and retry guidance", async () => {
+    // kills: applyProfileFailureLine dropping workloads or the retry time.
+    const { run } = await loadResidency();
+    const rec = craftedApplyProfileDeps({
+      ok: false,
+      dryRun: true,
+      outcome: "refused",
+      node: "local",
+      from: "chat",
+      to: "code",
+      steps: [],
+      deferred: [],
+      refusal: {
+        reason: "MinResidency",
+        detail: "1 victim(s) have not met minimum residency",
+        workloads: ["chat-a"],
+        retryAfterMs: 90_000,
+      },
+    });
+
+    const {
+      result: code,
+      stdout,
+      stderr,
+    } = await withCapturedIo(() =>
+      run(["apply-profile", "--node", "local", "--to", "code", "--from", "chat"], rec.deps),
+    );
+
+    expect(code).toBe(1);
+    expect(stdout).toBe("");
+    expect(stderr).toBe(
+      "residency apply-profile: MinResidency: 1 victim(s) have not met minimum residency; workloads: chat-a; retry in 1m 30s\n",
+    );
+  });
+
+  test("AP2: a Cooldown refusal prints retry guidance and older-agent payloads stay unchanged", async () => {
+    // kills: printing '; workloads: ' for an absent list; dropping the retry; breaking the older-agent line.
+    const { run } = await loadResidency();
+    const current = craftedApplyProfileDeps({
+      ok: false,
+      dryRun: true,
+      outcome: "refused",
+      node: "local",
+      from: "chat",
+      to: "code",
+      steps: [],
+      deferred: [],
+      refusal: {
+        reason: "Cooldown",
+        detail: "switch cooldown active (125000ms remaining)",
+        retryAfterMs: 125_000,
+      },
+    });
+    const older = craftedApplyProfileDeps({
+      ok: false,
+      dryRun: true,
+      outcome: "refused",
+      node: "local",
+      from: "chat",
+      to: "code",
+      steps: [],
+      deferred: [],
+      refusal: { reason: "Cooldown", detail: "x" },
+    });
+
+    const currentRun = await withCapturedIo(() =>
+      run(["apply-profile", "--node", "local", "--to", "code", "--from", "chat"], current.deps),
+    );
+    const olderRun = await withCapturedIo(() =>
+      run(["apply-profile", "--node", "local", "--to", "code", "--from", "chat"], older.deps),
+    );
+
+    expect(currentRun.result).toBe(1);
+    expect(currentRun.stderr).toBe(
+      "residency apply-profile: Cooldown: switch cooldown active (125000ms remaining); retry in 2m 5s\n",
+    );
+    expect(olderRun.result).toBe(1);
+    expect(olderRun.stderr).toBe("residency apply-profile: Cooldown: x\n");
+  });
+});

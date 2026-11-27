@@ -81,7 +81,7 @@ The web console Stop dialog reports the same fence refusal (#520). `stopResultMe
 
 A supervisor move's source removal treats a structured `workloadDelete` refusal (manifest preserved) as a failed removal. `llamactl supervisor serve` invokes `buildMigrationWorkloadOps` (`packages/cli/src/commands/supervisor.ts`), which wraps `workloadDelete` in `deleteFromNode` and checks the result through `workloadDeleteRefusal`: when the agent resolves `{ ok:false, error }` the move journals `remove failed: workloadDelete on <node> did not remove <workload>: <error>; will retry`, keeps the move in flight, and retries each tick until the source stops, where before it journalled the move `executed` while the source stayed loaded. The move never releases sessions. The overrides are `llamactl residency release-session <sessionId> --yes --node <name>` and `llamactl residency force-unload <workload> --reason <text> --yes --node <name>` (#520).
 
-The ops-chat tool dispatch (`dispatchOpsChatTool` in `packages/remote/src/ops-chat/dispatch.ts`, served by `operatorRunTool`) reports a node stop-fence refusal as a failed run, covering three tools: `llamactl.server.stop` with code `stop_refused` and message `serverStop refused by the node stop fence (<reason>: <ids>); nothing was stopped` (the `: <ids>` part is dropped when the list is empty), `llamactl.workload.delete` with code `delete_refused` when the manifest is preserved, and `llamactl.composite.destroy` with code `destroy_refused` when `manifestPreserved` is true. The procedure payload stays in `result`, and the audit row records `ok: false` with the code. A stop with no fence reason, a delete of an already-gone manifest, and dry runs are unchanged. It never releases sessions. The overrides are `llamactl residency release-session <sessionId> --yes --node <name>` and `llamactl residency force-unload <workload> --reason <text> --yes --node <name>`. The MCP `llamactl.server.stop` tool maps the same refusal instead of returning it raw: when the agent's result carries `refused`, the tool returns `isError` with the payload plus `code: stop_refused` and the message `serverStop refused by the node stop fence (<reason>: <ids>); nothing was stopped` (the `: <ids>` part is dropped when the list is empty), and its audit row records `ok: false` with that code instead of the raw result. A stop with no `refused` field and a dry run are unchanged. A refusal never releases sessions; the overrides are `llamactl residency release-session <sessionId> --yes --node <name>` and `llamactl residency force-unload <workload> --reason <text> --yes --node <name>`. MCP `llamactl.composite.destroy` is not mapped yet (#520).
+The ops-chat tool dispatch (`dispatchOpsChatTool` in `packages/remote/src/ops-chat/dispatch.ts`, served by `operatorRunTool`) reports a node stop-fence refusal as a failed run, covering three tools: `llamactl.server.stop` with code `stop_refused` and message `serverStop refused by the node stop fence (<reason>: <ids>); nothing was stopped` (the `: <ids>` part is dropped when the list is empty), `llamactl.workload.delete` with code `delete_refused` when the manifest is preserved, and `llamactl.composite.destroy` with code `destroy_refused` when `manifestPreserved` is true. The procedure payload stays in `result`, and the audit row records `ok: false` with the code. A stop with no fence reason, a delete of an already-gone manifest, and dry runs are unchanged. It never releases sessions. The overrides are `llamactl residency release-session <sessionId> --yes --node <name>` and `llamactl residency force-unload <workload> --reason <text> --yes --node <name>`. The MCP `llamactl.server.stop` tool maps the same refusal instead of returning it raw: when the agent's result carries `refused`, the tool returns `isError` with the payload plus `code: stop_refused` and the message `serverStop refused by the node stop fence (<reason>: <ids>); nothing was stopped` (the `: <ids>` part is dropped when the list is empty), and its audit row records `ok: false` with that code instead of the raw result. A stop with no `refused` field and a dry run are unchanged. A refusal never releases sessions; the overrides are `llamactl residency release-session <sessionId> --yes --node <name>` and `llamactl residency force-unload <workload> --reason <text> --yes --node <name>`. MCP `llamactl.composite.destroy` maps the same refusal: when `compositeDestroy` returns `manifestPreserved: true`, the tool returns `isError` with the payload plus `code: destroy_refused` and the message `composite/<name> not destroyed: a workload stop was refused; manifest preserved`, and the per-workload `errors` keep the fence reason and ids. Its audit row records `ok: false` with that code. A destroy with no refusal and a dry run are unchanged. A refusal never releases sessions; the overrides are `llamactl residency release-session <sessionId> --yes --node <name>` and `llamactl residency force-unload <workload> --reason <text> --yes --node <name>` (#520).
 
 A response-cache hit served for a session's bound local workload refreshes the binding through `touch` (`touchSessionOnCacheHit` in `packages/core/src/openaiProxy.ts`, #520), so a session answered from a warm cache does not idle-expire: it takes no ref and no lease, a session bound to another workload or a peer route is left untouched, and a registry that throws on `touch` still serves the cached response.
 
@@ -134,6 +134,8 @@ With the lease registry on, a dry run (`apply-profile` without `--execute`) chec
 
 `plan` and `apply-profile` also refuse with `Cooldown` within `switchCooldownSeconds` of the node's last succeeded switch recorded in the residency store; see the [NodeRun residency policy knobs](#noderun-residency-policy-knobs) table (#732).
 
+A `Cooldown` or `MinResidency` planner refusal carries `retryAfterMs`: the remaining cooldown, or the longest remaining min-residency hold across the named victims. `llamactl residency plan --node <name> --to <profile>` prints it as a `Retry in:` line after `Workloads:`, formatted by `formatRefusalRetry`. A refusal with no retry time prints no line. `residencyApplyProfile` copies it to `refusal.retryAfterMs`, and the planner's named workloads to `refusal.workloads`, each only when present. `llamactl residency apply-profile --node <name> --to <profile>` appends `; workloads: <names>` and `; retry in <t>` to its stderr refusal line. A payload from an older agent carries neither field and prints the line unchanged. The MCP `llamactl.residency.plan` / `llamactl.residency.applyProfile` JSON carries the same fields.
+
 ## Direct ModelHost start and stop
 
 The agent's `modelHostStart` and `modelHostStop` procedures (`packages/remote/src/router.ts`) wrap `startModelHost`/`stopModelHost` in `runDirectResidencyStart`/`runDirectResidencyStop` (`packages/remote/src/residency/direct-lifecycle.ts`). `llamactl apply -f` and `llamactl enable` of a ModelHost reach `modelHostStart` (`startModelHostProcess` in `packages/remote/src/workload/apply.ts`), and `llamactl disable` (`disableModelHost`) or deleting a ModelHost reaches `modelHostStop`. The agent's ModelRun `serverStart` and `serverStop` procedures wrap `startServer`/`stopServer` the same way (#517), recording the group from the agent-side ModelRun `llamactl.io/residency-group` label, and deleting a ModelRun reaches `serverStop` (`stopWorkloadForDelete`). A profile switch's own `applyManifest` calls run inside `runInResidencySwitchScope`, where the wrapper neither records nor refuses, because the switch's walk owns the row.
@@ -151,6 +153,8 @@ A direct stop runs its stop before the row moves, so an occupying row keeps its 
 Known limits: a `ready` ModelRun row whose recorded pid is still alive, or whose identity cannot be verified (`unknown`), is never proven down, so it fails closed and refuses same-group starts. `llamactl residency force-unload <workload> --reason <text> --yes --node <name>` routes its `stopModelHost`/`stopServer` through `runDirectResidencyStop` after the lease drain commits, so a confirmed force-unload walks the row to `downloaded` and an unconfirmed one leaves it occupying (#517). Read rows with `llamactl residency status --node <name>`.
 
 ModelRun proof uses `isServerProvenDown` (`packages/core/src/server.ts`), which checks the recorded pid against its pid file with the same identity check `stopServer` uses and never deletes the pid file; agent boot recovery uses the same predicate through `directWorkloadProvenDown`.
+
+A ModelRun that the agent started through `serverStart` with no manifest in its own workloads dir (the reconciler or `llamactl expose` stores the manifest on the host that applied it) still records its row under the workload name, and `directWorkloadProvenDown` treats that name as a ModelRun when `startServer`'s `llama-server.state` sidecar exists under it, no `modelhost.pid` or `modelhost.state` file exists under it, and the keep-alive state file does not name it (`unstoredModelRunRecorded` in `packages/remote/src/router.ts`); the same `isServerProvenDown` check then proves it down, so a crashed run's stale `ready` row reconciles before a same-group start and the boot orphan sweep can fail it, while a name with no sidecar, with ModelHost runtime files, or named by the keep-alive state still fails closed (#517).
 
 `llamactl server start` and `llamactl server stop` against the local node dispatch through the in-process `serverStart`/`serverStop` procedures instead of calling `startServer`/`stopServer` in the CLI process, so they record the `residency_states` row and refuse an occupied exclusive group exactly as the agent procedures do (#517). When `llamactl server start` rewrites the ModelRun manifest it keeps the stored ModelRun's labels and annotations, including `llamactl.io/residency-group`.
 
@@ -299,6 +303,58 @@ Under `createSharedUnifiedProxy` (Part of #518), the residency store's lifecycle
 Under `createSharedUnifiedProxy` (Part of #518), `minResidencySeconds` also feeds the ranker's `cooldownUntil` signal — a local candidate without a `ready` lifecycle row whose exclusive residency group is held by another member in `ready` is charged until that member has been `ready` for `minResidencySeconds`, the later of the switch cooldown and the min-residency hold. Its limits: peers are never charged (only ads owned by `nodeId` qualify); only `ready` occupants of a declared-exclusive group hold (`state === "ready"`, not `isOccupyingResidencyState`); only a candidate with a lifecycle row tagged with the group is charged; a candidate with no lifecycle row is never charged; the latest-ready occupant sets the hold (max `updatedAtMs` per model within the group); an expired hold still reports its past instant (not clamped to now); when `minResidencySeconds` is 0, the hold is absent and the switch cooldown value stands alone; an absent or errored store charges nothing; the signal is emitted only when a ranking knob is nonzero (the store is not read otherwise). Ranking only orders candidates: eligibility and experimental exclusion are unchanged and no candidate is dropped.
 
 Under `createSharedUnifiedProxy` (Part of #519), the resident set speaks only for candidates this node owns. The ranking signals carry `residencyKnown`, which is true only for ads whose `ownerNodeId` is this node, so a peer candidate has unknown residency. `coldLoadPenaltyMs` and the default expected-load cost never charge a peer and `residentPreference` never rewards one. A local candidate without a `ready` lifecycle row still ranks as non-resident, so a peer candidate outranks a local candidate that has no `ready` lifecycle row (for example one started by a plain apply) by that candidate's expected-load cost plus `coldLoadPenaltyMs`. This trade-off holds until local residency without a lifecycle row is known. A caller that passes `resident` without `residencyKnown` keeps the old behaviour, where the set speaks for every candidate.
+
+## Node policy examples
+
+Three `NodeRun` manifests for a three-node layout: one control-only 16 GiB node and two inference nodes, 48 GiB and 128 GiB. `control-16g`, `infer-48g` and `infer-128g` are placeholders: set `metadata.name` and `spec.node` to your own node names. The examples carry no credentials, no `env`, no `tarballUrl` and no addresses. They are policy examples, not hardware qualification: no measured TTFT, memory or swap evidence backs these values, and that evidence stays BLOCKED on opt-in hardware runs (Part of #285). Apply with `llamactl apply -f <file>` and inspect with `llamactl describe noderun <name>`.
+
+```yaml
+apiVersion: llamactl/v1
+kind: NodeRun
+metadata:
+  name: control-16g
+spec:
+  node: control-16g
+  budget:
+    memoryGiB: 1
+```
+
+That node runs the agent and the controller and no inference. The explicit budget wins over the computed one (`defaultNodeBudgetGiB` in `packages/remote/src/workload/admission.ts`), so `computeNodeBudget` refuses as `over-budget` any ModelRun whose `spec.resources.expectedMemoryGiB` would push the node above 1 GiB. A ModelRun that declares no `spec.resources.expectedMemoryGiB` reserves nothing and is admitted, and the `llamactl.io/force-admit` annotation bypasses the budget. The budget is therefore only a backstop: keep inference manifests off this node.
+
+```yaml
+apiVersion: llamactl/v1
+kind: NodeRun
+metadata:
+  name: infer-48g
+spec:
+  node: infer-48g
+  residency:
+    safetyMarginRatio: 0.75
+    minResidencySeconds: 600
+    switchCooldownSeconds: 300
+```
+
+```yaml
+apiVersion: llamactl/v1
+kind: NodeRun
+metadata:
+  name: infer-128g
+spec:
+  node: infer-128g
+  residency:
+    safetyMarginRatio: 0.8
+    minResidencySeconds: 1800
+    switchCooldownSeconds: 600
+    coldLoadPenaltyMs: 30000
+```
+
+`minResidencySeconds` and `switchCooldownSeconds` are enforced, as the knob table above says. `coldLoadPenaltyMs` is ranking-only and applies only under `LLAMACTL_UNIFIED_PROXY=1` on the node that `LLAMACTL_NODE_NAME` names. Every value here is a starting point to tune from measured evidence, not a qualified profile.
+
+| Node          | Memory  | Budget    | Source                            |
+| ------------- | ------- | --------- | --------------------------------- |
+| `control-16g` | 16 GiB  | 1 GiB     | `spec.budget.memoryGiB`           |
+| `infer-48g`   | 48 GiB  | 36 GiB    | 48 GiB x `safetyMarginRatio` 0.75 |
+| `infer-128g`  | 128 GiB | 102.4 GiB | 128 GiB x `safetyMarginRatio` 0.8 |
 
 ## Cleanup of conflicting legacy launchers
 

@@ -82,6 +82,9 @@ export function namedBearerFor(
  * The legacy single agent.yaml tokenHash is the bearer named 'default'
  * in audit records; new named tokens cannot take the name, and a legacy
  * named entry called 'default' is labelled 'named:default' instead.
+ * The privileged routes (self-update, rollback, operator tunnel-relay
+ * hops) accept this bearer only, so every hop they admit is recorded
+ * under 'default' (#218).
  */
 export { PRIMARY_BEARER_NAME };
 

@@ -95,7 +95,12 @@ export type ResidencyApplyProfileBusy = {
   detail: string;
 };
 
-export type ResidencyApplyProfileRefusal = { reason: string; detail: string };
+export type ResidencyApplyProfileRefusal = {
+  reason: string;
+  detail: string;
+  retryAfterMs?: number;
+  workloads?: string[];
+};
 
 export type ResidencyApplyProfileResult = {
   ok: boolean;
@@ -346,7 +351,14 @@ function plannerRefusal(
     to: args.to ?? null,
     steps: [],
     deferred: [],
-    refusal: { reason: plan.reason, detail: plan.detail },
+    refusal: {
+      reason: plan.reason,
+      detail: plan.detail,
+      ...(typeof plan.retryAfterMs === "number" && Number.isFinite(plan.retryAfterMs)
+        ? { retryAfterMs: plan.retryAfterMs }
+        : {}),
+      ...(plan.workloads.length > 0 ? { workloads: [...plan.workloads] } : {}),
+    },
     ...(inFlight === null || inFlight === undefined ? {} : { inFlightOperationId: inFlight }),
   };
 }
