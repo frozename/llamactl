@@ -18,6 +18,8 @@ import {
 import { createHash, randomUUID } from "node:crypto";
 import { isIP } from "node:net";
 
+import type { InferenceHolds } from "./inference-holds.js";
+
 import { bearerFromHeader } from "../server/auth.js";
 import { admissionErrorResponse } from "../server/chat-admission.js";
 import { boundOwnerRequest, type OwnerRequestBounds } from "./owner-request-bounds.js";
@@ -33,6 +35,7 @@ interface ExecutionGroup {
   model: QueueModelRef;
   admission: ReservableRequestAdmission;
   bounds: OwnerRequestBounds;
+  inferenceHolds?: InferenceHolds;
   unconfirmed: AbortController;
   stopping: AbortController;
 }
@@ -208,6 +211,23 @@ function beforeDialRefusal(
   return undefined;
 }
 
+function validateDial(
+  group: ExecutionGroup,
+  dispatch: LocalEngineDispatch,
+  signal: AbortSignal,
+  onRefused: () => void,
+): Response | undefined {
+  let refusal: Response | undefined;
+  try {
+    refusal = beforeDialRefusal(dispatch, signal, group);
+  } catch (error) {
+    onRefused();
+    throw error;
+  }
+  if (refusal !== undefined) onRefused();
+  return refusal;
+}
+
 async function forwardGranted(
   group: ExecutionGroup,
   dispatch: LocalEngineDispatch,
@@ -215,17 +235,8 @@ async function forwardGranted(
   release: Release,
 ): Promise<Response> {
   const client = dispatch.clientSignal;
-  let refusal: Response | undefined;
-  try {
-    refusal = beforeDialRefusal(dispatch, hard, group);
-  } catch (error) {
-    release();
-    throw error;
-  }
-  if (refusal !== undefined) {
-    release();
-    return refusal;
-  }
+  const refusal = validateDial(group, dispatch, hard, release);
+  if (refusal !== undefined) return refusal;
   const acquired =
     dispatch.workload === undefined
       ? undefined
@@ -238,14 +249,30 @@ async function forwardGranted(
     );
   }
   const lease = acquired?.lease;
+  const hold = lease === undefined ? undefined : group.inferenceHolds?.begin(lease.workload);
+  if (group.inferenceHolds !== undefined && hold === undefined) {
+    lease?.release();
+    release();
+    return Response.json(
+      { error: { type: "model_unavailable", code: "residency_hold_unavailable" } },
+      { status: 503 },
+    );
+  }
   const engineSignal = lease === undefined ? hard : AbortSignal.any([hard, lease.signal]);
   const complete = (confirmed: boolean): void => {
     // Lifecycle drains must keep seeing the lease when only transport
     // cancellation has settled.
-    if (confirmed) lease?.release();
+    if (confirmed && (hold?.confirmCompletion() ?? true)) lease?.release();
     else fence(group);
     release();
   };
+  if (hold !== undefined) {
+    // The journal write can outlast the deadline or an ownership change.
+    const afterHold = validateDial(group, dispatch, engineSignal, () => {
+      complete(true);
+    });
+    if (afterHold !== undefined) return afterHold;
+  }
 
   // Once the dial starts, the HTTP connection stays alive until terminal
   // output or its engine deadline. The caller can leave immediately.
@@ -387,7 +414,7 @@ async function forwardWithPermit(
 
 export function createOwnerAdmission(
   config: ExecutionAdmissionConfig,
-  options: { noAuth?: boolean } = {},
+  options: { noAuth?: boolean; inferenceHolds?: InferenceHolds } = {},
 ): OwnerAdmission {
   const targets = new Map<number, { group: ExecutionGroup; priority: RequestPriority }>();
   const groups = ExecutionAdmissionSchema.parse(config).map((spec): ExecutionGroup => {
@@ -395,6 +422,7 @@ export function createOwnerAdmission(
     const group: ExecutionGroup = {
       model,
       bounds: spec,
+      ...(options.inferenceHolds === undefined ? {} : { inferenceHolds: options.inferenceHolds }),
       unconfirmed: new AbortController(),
       stopping: new AbortController(),
       admission: createRequestAdmission({
