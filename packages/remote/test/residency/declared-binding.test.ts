@@ -136,6 +136,32 @@ describe("declared binding to owner epoch and artifact revision (#280 DF-07)", (
     ]);
   });
 
+  test("an alias owned only by another workload is stale even when its claimant's rel is live", () => {
+    const entries = buildDeclaredModelEntries({
+      nodeName: "local",
+      modelHosts: [],
+      modelRuns: [
+        runManifest("run-a", {
+          target: { kind: "rel", value: "fam/m.gguf" },
+          extraArgs: ["--alias", "chat"],
+        }),
+      ],
+      liveModelIds: new Set(["fam/m.gguf", "chat"]),
+      liveRoutes: [
+        { workload: "run-a", model: "fam/m.gguf" },
+        { workload: "run-b", model: "chat" },
+      ],
+    });
+
+    expect(entries.find((entry) => entry.id === "chat")).toMatchObject({
+      workload: "run-a",
+      state: "cold",
+      autoLoadEligible: false,
+      reason: "stale-owner-epoch",
+    });
+    expect(entries.find((entry) => entry.id === "fam/m.gguf")?.state).toBe("ready");
+  });
+
   test("a live id under a workload serving a different artifact is stale-artifact-revision", () => {
     // Kills: dropping the artifact comparison.
     const entries = buildDeclaredModelEntries(artifactHostInput());

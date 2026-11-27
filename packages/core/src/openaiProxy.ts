@@ -974,15 +974,13 @@ function applyPreferredWorkload(
  * forwarded to without its verdict.
  */
 async function servingRouteForModel(
-  model: string,
+  candidates: readonly RouteCandidate[],
   pathname: string,
   search: string,
-  resolved: ResolvedEnv,
   preferredWorkload?: string,
   sessionAffinity?: (workload: string) => boolean,
 ): Promise<ServingRouteOutcome> {
-  const candidates = getRouteMap(resolved).candidates.get(model);
-  if (candidates === undefined || candidates.length === 0) return null;
+  if (candidates.length === 0) return null;
   // Only local routes are ever withdrawn: a peer route lives on another node's
   // engine and is never the subject of this node's stop fence.
   const filtered = candidates.filter(
@@ -1044,14 +1042,13 @@ let declaredModelSource: (() => readonly unknown[]) | null = null;
 // (serve.ts passes a manifest stat signature). Folded into the stale-binding
 // projection key below; never consulted by the route-miss or listing paths.
 let declaredModelSourceSignature: (() => string) | null = null;
-// #280 DF-07: stale-binding projection for the routed hot path — the
-// declared entries carrying a stale reason, keyed on the route-map runtime
-// signature, the source's own signature and the withdrawn set. A routed
+// #280 DF-07: declared bindings for the routed hot path, keyed on the
+// route-map runtime signature, source signature and withdrawn set. A routed
 // request consults this instead of evaluating the declared source, so the
 // happy path spawns no `ps` and parses no manifest while nothing changes.
-let staleDeclaredCache: {
+let declaredBindingCache: {
   key: string;
-  stale: ReadonlyMap<string, DeclaredModelEntryV1>;
+  byId: ReadonlyMap<string, DeclaredModelEntryV1>;
 } | null = null;
 // #281 DF-08: opt-in cold-pin queue probe config and a monotonic id so every
 // probe carries a unique requestId/principal. Null (the default) keeps the
@@ -1080,7 +1077,7 @@ export function setDeclaredModelSource(
 ): void {
   declaredModelSource = source;
   declaredModelSourceSignature = source === null ? null : (options.signature ?? null);
-  staleDeclaredCache = null;
+  declaredBindingCache = null;
   routeMapCache = null;
   modelsResponseCache = null;
 }
@@ -1196,7 +1193,7 @@ export function __resetOpenAIProxyRouteMapCacheForTests(): void {
   clusterRoutingOverrideForTests = null;
   declaredModelSource = null;
   declaredModelSourceSignature = null;
-  staleDeclaredCache = null;
+  declaredBindingCache = null;
   coldPinQueueProbe = null;
   coldPinProbeSeq = 0;
   servingVerdictCache.clear();
@@ -2797,15 +2794,9 @@ function declaredNotLoadedRejectionFor(
   return declaredNotLoadedResponse(model, entry, bodyText);
 }
 
-const NO_STALE_DECLARED_ENTRIES: ReadonlyMap<string, DeclaredModelEntryV1> = new Map();
-
-// Key for the stale-binding projection. The runtime signature is the one
-// getRouteMap keys on (the live routes the source projects against); the
-// source signature tracks manifest edits; the withdrawn set flips a claim to
-// 'draining', which suppresses its stale reason. Warming is not folded in:
-// it only moves a claim between ready/loading/cold, all of which keep the
-// stale reason. A throwing signature makes the projection uncacheable.
-function staleDeclaredCacheKey(resolved: ResolvedEnv): string | null {
+// Warming may change without a route-map update. Both ready and loading
+// entries keep the same owner; the serving probe still controls admission.
+function declaredBindingCacheKey(resolved: ResolvedEnv): string | null {
   try {
     return [
       workloadRuntimeCacheSignature(resolved),
@@ -2817,41 +2808,40 @@ function staleDeclaredCacheKey(resolved: ResolvedEnv): string | null {
   }
 }
 
-function staleDeclaredEntries(resolved: ResolvedEnv): ReadonlyMap<string, DeclaredModelEntryV1> {
-  if (declaredModelSource === null) return NO_STALE_DECLARED_ENTRIES;
-  const key = staleDeclaredCacheKey(resolved);
-  if (key !== null && staleDeclaredCache?.key === key) return staleDeclaredCache.stale;
-  const stale = new Map<string, DeclaredModelEntryV1>();
-  for (const entry of declaredModelEntries()) {
-    if (isDeclaredStaleReason(entry.reason)) stale.set(entry.id, entry);
-  }
-  if (key !== null) staleDeclaredCache = { key, stale };
-  return stale;
-}
-
-/**
- * #280 DF-07: 503 for a routed pin whose declared entry is stale (the owner
- * or the artifact revision moved under a live route). Reads the cached
- * stale-binding projection, so a routed request evaluates the declared
- * source at most once per runtime/manifest signature.
- */
-function staleDeclaredEntryRejectionFor(
+export function declaredModelBinding(
   model: string,
   resolved: ResolvedEnv,
+): DeclaredModelEntryV1 | undefined {
+  if (declaredModelSource === null) return undefined;
+  const key = declaredBindingCacheKey(resolved);
+  if (key !== null && declaredBindingCache?.key === key)
+    return declaredBindingCache.byId.get(model);
+  const byId = new Map(declaredModelEntries().map((entry) => [entry.id, entry]));
+  if (key !== null) declaredBindingCache = { key, byId };
+  return byId.get(model);
+}
+
+export function declaredRouteRejection(
+  entry: DeclaredModelEntryV1 | undefined,
+  hasOwnerRoute: boolean,
   bodyText: string | undefined,
 ): Response | null {
-  const entry = staleDeclaredEntries(resolved).get(model);
   if (entry === undefined) return null;
-  return declaredNotLoadedResponse(model, entry, bodyText);
-}
-
-/** #280 DF-07: shared cached stale-binding refusal for ingress paths that bypass applyBodyModelRoute (unified createProxy). */
-export function staleDeclaredModelRejection(
-  model: string,
-  resolved: ResolvedEnv,
-  bodyText?: string,
-): Response | null {
-  return staleDeclaredEntryRejectionFor(model, resolved, bodyText);
+  if (entry.state === "cold" && hasOwnerRoute && !isDeclaredStaleReason(entry.reason)) return null;
+  if (entry.state !== "ready" && entry.state !== "loading") {
+    return declaredNotLoadedResponse(entry.id, entry, bodyText);
+  }
+  if (hasOwnerRoute) return null;
+  return declaredNotLoadedResponse(
+    entry.id,
+    {
+      ...entry,
+      state: "cold",
+      autoLoadEligible: false,
+      reason: "stale-owner-epoch",
+    },
+    bodyText,
+  );
 }
 
 /**
@@ -3010,25 +3000,53 @@ async function resolveJsonBodyRoute(context: ProxyContext): Promise<ProxyContext
   return context;
 }
 
+async function selectBodyModelRoute(
+  context: ProxyContext,
+  model: string,
+  bodyText: string | undefined,
+): Promise<ServingRouteOutcome | Response> {
+  const binding = declaredModelBinding(model, context.resolved);
+  const exact =
+    binding !== undefined && !defaultTargetModelIds(context.resolved).has(model)
+      ? binding
+      : undefined;
+  const candidates = getRouteMap(context.resolved).candidates.get(model) ?? [];
+  if (candidates.length === 0) return null;
+  const owned =
+    exact === undefined
+      ? candidates
+      : candidates.filter(
+          ({ entry }) =>
+            entry.isPeer !== true && entry.workload === exact.workload && entry.kind === exact.kind,
+        );
+  const rejection = declaredRouteRejection(exact, owned.length > 0, bodyText);
+  if (rejection !== null) return rejection;
+  const outcome = await servingRouteForModel(
+    owned,
+    context.pathname,
+    context.search,
+    context.preferredWorkload,
+    context.sessionAffinity,
+  );
+  if (
+    outcome !== null &&
+    "routed" in outcome &&
+    binding !== undefined &&
+    isDeclaredStaleReason(binding.reason)
+  ) {
+    return declaredNotLoadedResponse(model, binding, bodyText);
+  }
+  return outcome;
+}
+
 async function applyBodyModelRoute(
   context: ProxyContext,
   model: string,
   bodyText: string | undefined,
 ): Promise<ProxyContext | Response> {
-  const outcome = await servingRouteForModel(
-    model,
-    context.pathname,
-    context.search,
-    context.resolved,
-    context.preferredWorkload,
-    context.sessionAffinity,
-  );
+  const outcome = await selectBodyModelRoute(context, model, bodyText);
+  if (outcome instanceof Response) return outcome;
   if (outcome !== null && "routed" in outcome) {
-    // #280 DF-07: even when a model has a live route, check if the declared
-    // entry is stale (owner epoch or artifact revision moved). A stale
-    // declared entry is refused with 503 instead of forwarded to the engine.
-    const staleRejection = staleDeclaredEntryRejectionFor(model, context.resolved, bodyText);
-    if (staleRejection) return staleRejection;
     context.target = outcome.routed.target;
     context.route = outcome.routed;
     clearServingWarming(model);

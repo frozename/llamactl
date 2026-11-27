@@ -49,7 +49,7 @@ import {
   router as appRouter,
   directWorkloadProvenDown,
 } from "../router.js";
-import { handleFleetSnapshotRoute } from "../routes/fleet.js";
+import { type FleetSnapshotRouteOptions, handleFleetSnapshotRoute } from "../routes/fleet.js";
 import { existsSync, readFileSync } from "../safe-fs.js";
 import { type SearchIngestStop, startSearchIngest } from "../search/ingest/lifecycle.js";
 import {
@@ -168,6 +168,8 @@ export interface StartAgentOptions {
    * bump the dir mtime.
    */
   declaredModels?: boolean;
+  /** Authoritative owner evidence for negotiated peer GETs. Missing data publishes no proof. */
+  peerDeclarationProvenance?: () => unknown;
   /**
    * Override paths for the /register handler. Production leaves this
    * unset so the handler uses ~/.llamactl/bootstrap-tokens and
@@ -720,6 +722,18 @@ function inspectCapturedRequest(req: Request, pathname: string, opts: StartAgent
   return REQUEST_ID.test(id) ? captureResponse(id) : new Response(null, { status: 404 });
 }
 
+function fleetSnapshotOptions(opts: StartAgentOptions): FleetSnapshotRouteOptions {
+  const snapshot: FleetSnapshotRouteOptions = {};
+  if (opts.fleetJournalPath !== undefined) snapshot.journalPath = opts.fleetJournalPath;
+  if (opts.noAuth !== true && opts.peerDeclarationProvenance !== undefined) {
+    snapshot.declaredProvenance = {
+      ownerNodeId: opts.nodeName ?? process.env["LLAMACTL_NODE_NAME"] ?? "agent",
+      read: opts.peerDeclarationProvenance,
+    };
+  }
+  return snapshot;
+}
+
 /**
  * Bearer-auth'd API routes: metrics, RAG-aware chat completions, the
  * fleet snapshot, and the OpenAI-compatible /v1 gateway. Order is
@@ -754,9 +768,7 @@ function handleAuthedApiRoutes(
   if (req.method === "GET" && url.pathname === "/v1/fleet/snapshot") {
     const denied = authGateReject(req, url.pathname, clientAddress, opts, gate);
     if (denied) return denied;
-    return handleFleetSnapshotRoute(req, {
-      ...(opts.fleetJournalPath !== undefined ? { journalPath: opts.fleetJournalPath } : {}),
-    });
+    return handleFleetSnapshotRoute(req, fleetSnapshotOptions(opts));
   }
   // #281 DF-08: the Anthropic Messages, OpenAI Responses and generic
   // completions ingresses share the chat-completions admission instance.
