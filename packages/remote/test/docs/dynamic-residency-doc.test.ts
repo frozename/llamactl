@@ -973,7 +973,7 @@ describe("docs/dynamic-residency.md (#285)", () => {
       "directModelRunStartOpts(input.workload, input.target),",
     ]);
     const serverStop = enclosingBody(routerSrc, "serverStop: t.procedure");
-    expectPins(serverStop, "ModelRun stop call site", [
+    expectPins(flat(serverStop), "ModelRun stop call site", [
       "const outcome = await runDirectResidencyStop<{",
       "directModelRunOpts(input.workload),",
       "return outcome.ran ? outcome.result.stop",

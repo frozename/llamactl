@@ -232,6 +232,7 @@ const consoleResidencyStatus = z.object({
           kind: z.enum(["ModelRun", "ModelHost"]).nullable(),
           state: z.enum(["pending", "resident", "uncertain"]),
           allocationGiB: z.number().nonnegative(),
+          inferenceHold: z.enum(["clear", "current", "prior", "unknown"]).optional(),
         }),
       ),
       execution: z

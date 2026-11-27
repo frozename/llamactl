@@ -195,7 +195,8 @@ function pushManagedLines(lines: string[], managed: ResidencyRenderInput["manage
     `Managed:    ${managed.ownerNodeId} · ${selected} · ledger ${managed.ledger} · ${budget}`,
   );
   for (const claim of claims) {
-    lines.push(`  ${claim.workload}  ${claim.state}  ${claim.allocationGiB.toFixed(1)} GiB`);
+    const hold = claim.inferenceHold === undefined ? "" : `  inference hold ${claim.inferenceHold}`;
+    lines.push(`  ${claim.workload}  ${claim.state}  ${claim.allocationGiB.toFixed(1)} GiB${hold}`);
   }
   for (const group of execution ?? []) {
     lines.push(

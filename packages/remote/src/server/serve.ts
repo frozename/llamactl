@@ -33,6 +33,7 @@ import { listLocalRoutes, migrateLegacySingletonRuntime } from "@llamactl/core/w
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
 import { join } from "node:path";
 
+import type { InferenceHolds } from "../residency/inference-holds.js";
 import type { ManagedLaunchAdmission } from "../residency/managed-launch-admission.js";
 import type { RequestAdmission } from "../residency/request-admission.js";
 import type { ModelRun } from "../workload/schema.js";
@@ -337,6 +338,7 @@ export interface StartAgentOptions {
   /** Explicit owner factory for authenticated local cold completion requests. */
   managedColdOwnerFactory?: ManagedColdOwnerFactory;
   executionAdmission?: ExecutionAdmissionConfig;
+  managedInferenceHolds?: InferenceHolds;
   /**
    * Per-role runtime memory budget. Sets the identity (role + optional
    * memory budget) so the Prometheus gauges emit per-role series. When
@@ -1540,9 +1542,14 @@ function prepareExecutionHooks(opts: StartAgentOptions): {
   owner?: OwnerAdmission;
 } {
   const scope = maybePublishEngineScope(opts);
-  if (!opts.executionAdmission?.length) return { hooks: scope };
-  const owner = createOwnerAdmission(opts.executionAdmission, {
+  if (!opts.executionAdmission?.length && opts.managedInferenceHolds === undefined) {
+    return { hooks: scope };
+  }
+  const owner = createOwnerAdmission(opts.executionAdmission ?? [], {
     noAuth: opts.noAuth === true && isLoopbackAddress(opts.bindHost ?? "127.0.0.1"),
+    ...(opts.managedInferenceHolds === undefined
+      ? {}
+      : { inferenceHolds: opts.managedInferenceHolds }),
   });
   let uninstall: (() => void) | undefined;
   return {

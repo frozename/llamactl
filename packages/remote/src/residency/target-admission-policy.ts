@@ -21,7 +21,13 @@ import { listWorkloadDirs, workloadRuntimeDir } from "@llamactl/core/workloadRun
 import { AsyncLocalStorage } from "node:async_hooks";
 import { join } from "node:path";
 
-import type { AdmissionAuthority, AdmitRequest, AuthorityClaimRow } from "./admission-authority.js";
+import type {
+  AdmissionAuthority,
+  AdmitRequest,
+  AuthorityClaimRow,
+  ManagedStopProof,
+} from "./admission-authority.js";
+import type { InferenceHolds, InferenceHoldState } from "./inference-holds.js";
 
 import { existsSync, mkdirSync, readFileSync } from "../safe-fs.js";
 import { pinModelHostStartup } from "../server/modelhost.js";
@@ -64,6 +70,11 @@ export interface NodeManagedAdmissionOptions {
   nowMs?: () => number;
   requireExistingStore?: boolean;
   verifyJournalPair?: () => string | undefined;
+  inferenceHolds?: InferenceHolds;
+}
+
+function unresolvedInference(state: InferenceHoldState | undefined): boolean {
+  return state === "prior" || state === "unknown";
 }
 
 const MAX_CAPACITY_AGE_MS = 30_000;
@@ -526,6 +537,69 @@ function verifyLocalInventory(
   });
 }
 
+function managedReadout(
+  opts: NodeManagedAdmissionOptions,
+  authority: AdmissionAuthority,
+  budgetGiB: () => number | undefined,
+): ManagedAdmissionReadout {
+  const operational = opts.verifyJournalPair?.() === undefined && authority.isOperational();
+  const selection = operational
+    ? readManagedProfileSelection(defaultResidencyStorePath(), opts.nodeName)
+    : { kind: "unknown" as const };
+  return {
+    ownerNodeId: opts.nodeName,
+    ledger: operational ? "available" : "unavailable",
+    profile:
+      selection.kind === "selected"
+        ? { kind: selection.kind, profile: selection.profile }
+        : { kind: selection.kind },
+    budgetGiB: operational ? (budgetGiB() ?? null) : null,
+    claims: operational
+      ? authority.snapshot().map((claim) => ({
+          workload: claim.runtimeKey,
+          kind: claim.kind ?? null,
+          state: claim.state,
+          allocationGiB: claim.allocationGiB,
+          ...(opts.inferenceHolds === undefined
+            ? {}
+            : { inferenceHold: opts.inferenceHolds.state(claim.runtimeKey) }),
+        }))
+      : [],
+  };
+}
+
+function verifyManagedDesiredOwner(
+  manifest: DesiredManifest,
+  workloadsDir: string,
+  aliases: ReadonlySet<string>,
+  inferenceHolds: InferenceHolds | undefined,
+): void {
+  const name = manifest.metadata.name;
+  if (unresolvedInference(inferenceHolds?.state(name)))
+    throw new Error("ManagedInferenceUnresolved");
+  if (!existsSync(workloadPath(name, workloadsDir))) return;
+  const previous = readDesired(() => loadWorkloadByNameAny(name, workloadsDir));
+  if (previous?.kind !== manifest.kind || !aliases.has(previous.spec.node)) {
+    throw new Error("ManagedManifestConflict: the stored workload has a different owner or kind");
+  }
+}
+
+function stopWithInferenceFence(
+  authority: AdmissionAuthority,
+  holds: InferenceHolds | undefined,
+): NonNullable<ManagedLaunchAdmission["prepareStopRelease"]> {
+  return (workload, kind): ManagedStopProof | undefined => {
+    const clear = (): boolean => holds === undefined || holds.state(workload) === "clear";
+    const proof = clear() ? authority.prepareStopRelease(workload, kind) : undefined;
+    return proof === undefined
+      ? undefined
+      : {
+          ...proof,
+          verifyGeneration: (pid) => (clear() ? proof.verifyGeneration(pid) : "unknown"),
+        };
+  };
+}
+
 export async function openNodeManagedAdmission(opts: NodeManagedAdmissionOptions): Promise<{
   admission: ManagedLaunchAdmission;
   authority: AdmissionAuthority;
@@ -581,46 +655,32 @@ export async function openNodeManagedAdmission(opts: NodeManagedAdmissionOptions
     authority: runtime.authority,
     capture: (_request, pid) => runtime.capture(pid),
     inspectRuntime,
-    resolve: (request) =>
-      resolveEnv().LOCAL_AI_RUNTIME_DIR === runtimeDir
+    resolve: (request) => {
+      if (unresolvedInference(opts.inferenceHolds?.state(request.runtimeKey))) {
+        return { refusal: "ManagedInferenceUnresolved" };
+      }
+      return resolveEnv().LOCAL_AI_RUNTIME_DIR === runtimeDir
         ? approveLaunch(request, workloadsDir, aliases, desired.getStore(), opts.nodeName)
-        : undefined,
+        : undefined;
+    },
   });
   return {
     admission: {
       ...admission,
+      prepareStopRelease: stopWithInferenceFence(runtime.authority, opts.inferenceHolds),
       ...(physical === undefined
         ? {}
         : { run: launchWithPhysicalGate(admission, physical, engineGate) }),
       ownsNode: (name) => aliases.has(name),
       ownerNodeId: opts.nodeName,
-      readStatus(): ManagedAdmissionReadout {
-        const operational =
-          opts.verifyJournalPair?.() === undefined && runtime.authority.isOperational();
-        const selection = operational
-          ? readManagedProfileSelection(defaultResidencyStorePath(), opts.nodeName)
-          : { kind: "unknown" as const };
-        return {
-          ownerNodeId: opts.nodeName,
-          ledger: operational ? "available" : "unavailable",
-          profile:
-            selection.kind === "selected"
-              ? { kind: selection.kind, profile: selection.profile }
-              : { kind: selection.kind },
-          budgetGiB: operational ? (budgetGiB() ?? null) : null,
-          claims: operational
-            ? runtime.authority.snapshot().map((claim) => ({
-                workload: claim.runtimeKey,
-                kind: claim.kind ?? null,
-                state: claim.state,
-                allocationGiB: claim.allocationGiB,
-              }))
-            : [],
-        };
-      },
+      readStatus: () => managedReadout(opts, runtime.authority, budgetGiB),
       preflightProfile(plan): string | undefined {
         const runtimeRefusal = inspectRuntime();
         if (runtimeRefusal !== undefined) return runtimeRefusal;
+        const unresolved = plan.victims.find((name) =>
+          unresolvedInference(opts.inferenceHolds?.state(name)),
+        );
+        if (unresolved !== undefined) return `ManagedInferenceUnresolved: ${unresolved}`;
         const measured = physical?.measure();
         if (measured !== undefined) {
           auditCapacity(opts, "profile-preflight", measured);
@@ -639,15 +699,7 @@ export async function openNodeManagedAdmission(opts: NodeManagedAdmissionOptions
       ): Promise<T> {
         const manifest = parseDesired(input);
         if (manifest === undefined || !aliases.has(manifest.spec.node)) return await apply(false);
-        const name = manifest.metadata.name;
-        if (existsSync(workloadPath(name, workloadsDir))) {
-          const previous = readDesired(() => loadWorkloadByNameAny(name, workloadsDir));
-          if (previous?.kind !== manifest.kind || !aliases.has(previous.spec.node)) {
-            throw new Error(
-              "ManagedManifestConflict: the stored workload has a different owner or kind",
-            );
-          }
-        }
+        verifyManagedDesiredOwner(manifest, workloadsDir, aliases, opts.inferenceHolds);
         const inventoryError = manifest.spec.enabled ? inspectRuntime() : undefined;
         if (inventoryError !== undefined) throw new Error(inventoryError);
         const budget = checkManagedApply(manifest, runtime.authority, budgetGiB());

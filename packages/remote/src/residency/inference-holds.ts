@@ -44,7 +44,7 @@ function upgradeSchema(db: Database): void {
 export function createDurableInferenceHolds(opts: {
   path: string;
   verifyJournal: () => string | undefined;
-}): InferenceHolds {
+}): InferenceHolds & { initialize(): boolean } {
   const incarnation = randomUUID();
   let initialized = false;
   const withJournal = <T>(use: (db: Database) => T): T | undefined => {
@@ -68,6 +68,11 @@ export function createDurableInferenceHolds(opts: {
   };
 
   return {
+    initialize: () =>
+      withJournal((db) => {
+        db.query("SELECT hold_id FROM inference_holds LIMIT 0").all();
+        return true;
+      }) === true,
     begin(workload): InferenceHoldReceipt | undefined {
       if (workload.trim().length === 0) return undefined;
       const id = randomUUID();

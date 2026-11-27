@@ -245,6 +245,17 @@ llamactl agent serve
 
 ### Shared GPU execution on the owning agent
 
+The managed owner uses the same execution groups for dispatch. Each serving
+backend port needs a group in `executionAdmission`; unmatched local
+inference is refused before dialing. If the transition or admission journal
+is missing or has been replaced, managed operations fail closed.
+
+Before a dial, the owner records a durable hold for the exact workload.
+Confirmed engine completion clears it. After a crash, an unresolved hold
+fences that workload from inference and stop. The CLI and console show the
+hold alongside its memory claim. Preserve both journals for recovery and
+verify the previous engine generation before any manual intervention.
+
 For co-resident models, add `executionAdmission` to the owning node's
 `agent.yaml`. Each group matches local engine ports after routing. Local
 HTTP proxy traffic, local tRPC chat and the default local-model Worker

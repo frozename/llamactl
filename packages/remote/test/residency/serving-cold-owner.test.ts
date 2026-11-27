@@ -12,7 +12,10 @@ import { mkdtempSync, rmSync } from "../../src/safe-fs.js";
 import { hashToken } from "../../src/server/auth.js";
 import { prepareColdOwnerMount } from "../../src/server/cold-owner-mount.js";
 import { type RunningAgent, startAgentServer } from "../../src/server/serve.js";
-import { startManagedAgentServer } from "../../src/server/start-managed-agent.js";
+import {
+  type ManagedAgentDependencies,
+  startManagedAgentServer,
+} from "../../src/server/start-managed-agent.js";
 import { generateSelfSignedCert } from "../../src/server/tls.js";
 import { parseNodeRun, saveNodeRun } from "../../src/workload/noderun-store.js";
 import { parseWorkload, saveWorkload } from "../../src/workload/store.js";
@@ -21,6 +24,19 @@ const MODEL = "org/cold.gguf";
 const WORKLOAD = "cold-model";
 const TOKEN = "cold-owner-test-token";
 const NODE = "fixture-cold-owner";
+const capacity: ManagedAgentDependencies = {
+  nowMs: () => 100_000,
+  onCapacityAudit: () => undefined,
+  readCapacity: () => ({
+    source: "linux-procfs",
+    observedAtMs: 100_000,
+    physicalBytes: 64 * 1024 ** 3,
+    availableBytes: 48 * 1024 ** 3,
+    scope: { kind: "host-physical" },
+    pressure: "normal",
+    swapUsedBytes: 0,
+  }),
+};
 const CAP: ExecutionAdmissionConfig[number] = {
   name: "test-device",
   foregroundPorts: [19000],
@@ -179,13 +195,18 @@ test.skipIf(process.platform !== "darwin" && process.platform !== "linux")(
         running = await startManagedAgentServer(
           { ...options, managedColdOwnerFactory: factory },
           NODE,
+          capacity,
         );
         expect(factories).toBe(0);
         await running.stop();
         running = undefined;
       }
 
-      running = await startManagedAgentServer({ ...opts, managedColdOwnerFactory: factory }, NODE);
+      running = await startManagedAgentServer(
+        { ...opts, managedColdOwnerFactory: factory },
+        NODE,
+        capacity,
+      );
       expect(factories).toBe(1);
       expect((await fetch(request(running, false), { tls: { ca: cert.certPem } })).status).toBe(
         401,
@@ -239,6 +260,7 @@ test.skipIf(process.platform !== "darwin" && process.platform !== "linux")(
             }),
         },
         NODE,
+        capacity,
       );
       const dispatch = running.handleRequest;
       if (dispatch === undefined) throw new Error("expected test agent request seam");

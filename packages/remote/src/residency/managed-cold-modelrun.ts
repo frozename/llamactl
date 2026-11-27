@@ -7,7 +7,7 @@ import type { ColdExecutionGroup, ManagedColdOwnerFactory } from "../server/cold
 import type { ModelRun } from "../workload/schema.js";
 import type { ColdModelArtifactReceipt } from "./cold-artifact-receipt.js";
 
-import { runModelRunStart, ServerStartInputSchema } from "../router.js";
+import { runModelRunStart, ServerStartInputSchema, serverStartOptions } from "../router.js";
 import { modelRunStartInvocation } from "../workload/apply.js";
 import {
   createLocalModelRunColdOwner,
@@ -95,8 +95,7 @@ function compileColdPlan(
   const parsed = ServerStartInputSchema.safeParse(modelRunStartInvocation(manifest));
   if (!parsed.success) return undefined;
   const invocation = parsed.data;
-  const { workload, ...input } = invocation;
-  const prepared = server.prepareManagedServerStart({ ...input, key: { name: workload } });
+  const prepared = server.prepareManagedServerStart(serverStartOptions(invocation));
   if ("result" in prepared) return undefined;
   const { launch, effectiveSpecDigest } = prepared;
   if (

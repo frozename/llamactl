@@ -285,6 +285,9 @@ function ManagedResidencyOverview({
   const selected = profile.kind === "selected" ? profile.profile : profile.kind;
   const allocated = claims.reduce((total, claim) => total + claim.allocationGiB, 0);
   const pending = claims.filter((claim) => claim.state === "pending").length;
+  const unresolved = claims.filter(
+    (claim) => claim.inferenceHold === "prior" || claim.inferenceHold === "unknown",
+  );
   return (
     <div className="console-caption" aria-label="Managed residency">
       <p>
@@ -292,6 +295,9 @@ function ManagedResidencyOverview({
           ? `Profile ${selected} · ${allocated.toFixed(1)} / ${budgetGiB?.toFixed(1) ?? "unknown"} GiB · ${String(pending)} pending`
           : "Managed residency ledger unavailable"}
       </p>
+      {unresolved.map((claim) => (
+        <p key={claim.workload}>{`${claim.workload} · inference completion unconfirmed`}</p>
+      ))}
       {(managed.execution ?? []).map((group) => (
         <p key={group.group}>
           {`${group.group} · ${String(group.executing)} active · ${String(group.queued)} queued${group.fenced ? " · fenced" : ""}`}

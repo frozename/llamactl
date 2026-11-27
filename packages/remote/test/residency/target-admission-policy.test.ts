@@ -9,6 +9,8 @@ import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { InferenceHolds, InferenceHoldState } from "../../src/residency/inference-holds.js";
+
 import { openLocalAdmissionRuntime } from "../../src/residency/process-generation.js";
 import {
   type ManagedCapacityAudit,
@@ -258,6 +260,7 @@ async function withCapacityOwner(
     runtimeDir: string,
   ) => Promise<void>,
   onCapacityAudit?: (entry: ManagedCapacityAudit) => void,
+  inferenceHolds?: InferenceHolds,
 ): Promise<void> {
   const dir = mkdtempSync(join(tmpdir(), "llamactl-physical-owner-"));
   const runtimeDir = join(dir, "runtime");
@@ -272,6 +275,7 @@ async function withCapacityOwner(
       workloadsDir: dir,
       readCapacity,
       ...(onCapacityAudit === undefined ? {} : { onCapacityAudit }),
+      ...(inferenceHolds === undefined ? {} : { inferenceHolds }),
       nowMs: () => now,
     });
     await run(
@@ -381,6 +385,7 @@ test("unsettled and unverified resident claims still charge fresh launch headroo
 
 test("a verified victim release changes the ledger while another sample still controls launch", async () => {
   let available = 56;
+  let hold: InferenceHoldState = "clear";
   const audit: ManagedCapacityAudit[] = [];
   await withCapacityOwner(
     () => localCapacity(available),
@@ -452,6 +457,21 @@ test("a verified victim release changes the ledger while another sample still co
         });
         const stop = admission.prepareStopRelease?.(victim, "ModelRun");
         if (stop === undefined) throw new Error("fixture receipt missing");
+        expect(stop.verifyGeneration(pid)).toBe("alive");
+        hold = "prior";
+        expect(stop.verifyGeneration(pid)).toBe("unknown");
+        expect(admission.prepareStopRelease?.(victim, "ModelRun")).toBeUndefined();
+        expect(
+          admission.preflightProfile?.({
+            victims: [victim],
+            retained: [],
+            replacements: [workload],
+          }),
+        ).toBe(`ManagedInferenceUnresolved: ${victim}`);
+        expect(admission.readStatus?.().claims).toMatchObject([
+          { workload: victim, inferenceHold: "prior" },
+        ]);
+        hold = "clear";
         child.stdin.end();
         await exited;
         expect(stop.release(pid)).toEqual({ kind: "released", claimId: claim.claimId });
@@ -479,5 +499,6 @@ test("a verified victim release changes the ledger while another sample still co
     (entry): void => {
       audit.push(entry);
     },
+    { state: (name) => (name === "verified-victim" ? hold : "clear"), begin: () => undefined },
   );
 });

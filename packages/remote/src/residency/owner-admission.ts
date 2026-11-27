@@ -96,6 +96,13 @@ function fencedResponse(): Response {
   );
 }
 
+function unconfiguredTarget(): Response {
+  return Response.json(
+    { error: { type: "model_unavailable", code: "managed_execution_target_unconfigured" } },
+    { status: 503 },
+  );
+}
+
 function fence(group: ExecutionGroup): void {
   group.unconfirmed.abort();
 }
@@ -302,6 +309,12 @@ class EngineGroupFencedError extends RequestAdmissionError {
   }
 }
 
+class ManagedExecutionTargetError extends RequestAdmissionError {
+  constructor() {
+    super("LoadFailed", null, "managed-execution-target");
+  }
+}
+
 function permitFor(
   group: ExecutionGroup,
   request: LocalEngineRequest,
@@ -454,9 +467,12 @@ export function createOwnerAdmission(
   };
   const acquire = (request: LocalEngineRequest): OwnerReservation | undefined => {
     const match = matchTarget(request.target);
-    return match === undefined
+    if (match !== undefined) {
+      return acquireMatched(match.group, match.priority, request, options.noAuth === true);
+    }
+    return options.inferenceHolds === undefined
       ? undefined
-      : acquireMatched(match.group, match.priority, request, options.noAuth === true);
+      : { refusal: new ManagedExecutionTargetError() };
   };
   return {
     acquire,
@@ -474,6 +490,8 @@ export function createOwnerAdmission(
       if (ticket === undefined) return undefined;
       if ("refusal" in ticket) {
         const error = ticket.refusal;
+        if (error instanceof ManagedExecutionTargetError)
+          return Promise.resolve(unconfiguredTarget());
         return Promise.resolve(
           error instanceof EngineGroupFencedError
             ? fencedResponse()

@@ -4,6 +4,7 @@ import type { ManagedProfileSelection } from "@llamactl/core/residency/profile-s
 
 import type { AdmissionAuthority, AdmitRequest, GenerationRecord } from "./admission-authority.js";
 import type { DirectLifecycleOutcome } from "./direct-lifecycle.js";
+import type { InferenceHoldState } from "./inference-holds.js";
 
 export interface ManagedLaunchRequest {
   kind: ManagedWorkloadKind;
@@ -39,6 +40,7 @@ export interface ManagedAdmissionReadout {
     kind: ManagedWorkloadKind | null;
     state: ManagedClaimState;
     allocationGiB: number;
+    inferenceHold?: InferenceHoldState;
   }[];
 }
 

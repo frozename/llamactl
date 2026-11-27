@@ -4,6 +4,7 @@ import { rpcServer } from "@llamactl/core";
 import { resolveEnv } from "@llamactl/core/env";
 import { resolve } from "node:path";
 
+import { createDurableInferenceHolds } from "../residency/inference-holds.js";
 import { readLocalManagedCapacity } from "../residency/local-managed-capacity.js";
 import { manageJournalPair } from "../residency/managed-journals.js";
 import { defaultResidencyStorePath, openResidencyOperationStore } from "../residency/store.js";
@@ -46,6 +47,10 @@ export async function startManagedAgentServer(
   try {
     const operationsPath = defaultResidencyStorePath();
     const journals = manageJournalPair(runtimeDir, operationsPath, nodeName);
+    const inferenceHolds = createDurableInferenceHolds({
+      path: operationsPath,
+      verifyJournal: journals.verify,
+    });
     const missing = journals.verify();
     if (missing !== undefined) throw new Error(missing);
     const checkOtherWorkloads = (): void => {
@@ -63,6 +68,7 @@ export async function startManagedAgentServer(
       ...(deps.nowMs === undefined ? {} : { nowMs: deps.nowMs }),
       requireExistingStore: journals.prior,
       verifyJournalPair: journals.verify,
+      inferenceHolds,
     });
     authority = runtime.authority;
     const refusal = runtime.verifyActivation();
@@ -72,6 +78,7 @@ export async function startManagedAgentServer(
       requireExisting: journals.prior,
     }).close();
     journals.install();
+    if (!inferenceHolds.initialize()) throw new Error("ManagedInferenceJournalUnavailable");
     checkOtherWorkloads();
     const recheck = runtime.verifyActivation();
     if (recheck !== undefined) throw new Error(recheck);
@@ -81,6 +88,7 @@ export async function startManagedAgentServer(
       nodeName,
       residencyLeases: true,
       managedLaunchAdmission: runtime.admission,
+      managedInferenceHolds: inferenceHolds,
     });
     return {
       ...running,

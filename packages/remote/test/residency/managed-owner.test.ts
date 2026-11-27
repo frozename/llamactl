@@ -133,6 +133,17 @@ spec:
       expect(double).toEqual(new Error("ManagedAgentAlreadyActive"));
       expect(() => startAgentServer(opts)).toThrow("ManagedOwnerRequired");
 
+      const unknownTarget = await fetch(`${running.url}/v1/completions`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" },
+        body: JSON.stringify({ prompt: "fixture" }),
+        signal: AbortSignal.timeout(3000),
+      });
+      expect(unknownTarget.status).toBe(503);
+      expect(await unknownTarget.json()).toMatchObject({
+        error: { code: "managed_execution_target_unconfigured" },
+      });
+
       const stop = await fetch(`${running.url}/trpc/serverStop`, {
         method: "POST",
         headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" },
