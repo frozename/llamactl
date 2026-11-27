@@ -1,10 +1,11 @@
 // RED pins for frozename/llamactl#367: the agent publishes per-role runtime
-// memory series — RSS, JS heap used/total, external and ArrayBuffer bytes —
-// plus the configured memory budget and an over-budget flag, charging a
-// single basis instead of summing process counters. The sampler, the runtime
-// identity and the serve-option wiring do not exist at the pinned base;
-// every case reaches them through namespace imports and optional-chained
-// setters so a missing export fails by assertion, never by a link error.
+// memory series — footprint, the Linux RSS split, RSS, JS heap used/total,
+// external and ArrayBuffer bytes — plus the configured memory budget, the
+// charged basis and an over-budget flag, charging a single basis instead of
+// summing process counters. The process-memory reader seam does not exist at
+// the pinned base; new cases reach it through namespace imports and
+// optional-chained setters so a missing export fails by assertion, never by a
+// link error.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -29,10 +30,23 @@ type AgentRuntimeIdentity = {
   memoryBudgetBytes?: number;
 };
 
+type ProcessMemoryAttribution = {
+  footprint: {
+    status: "ok" | "unavailable" | "denied" | "unsupported";
+    bytes: number | null;
+    source: string;
+  };
+  rssAnonBytes?: number | null;
+  rssFileBytes?: number | null;
+  rssShmemBytes?: number | null;
+  swapBytes?: number | null;
+};
+
 type RuntimeMemoryApi = {
   setModelHostMetricsNode?: (name: string | null) => void;
   setRuntimeMemorySampler?: (sampler: (() => AgentRuntimeMemorySample | null) | null) => void;
   setAgentRuntimeIdentity?: (identity: AgentRuntimeIdentity | null) => void;
+  setRuntimeProcessMemoryReader?: (reader: (() => ProcessMemoryAttribution) | null) => void;
 };
 
 function runtimeMemoryApi(): RuntimeMemoryApi {
@@ -45,6 +59,7 @@ const resetRuntimeMemory = (): void => {
   api.setModelHostMetricsNode?.(null);
   api.setRuntimeMemorySampler?.(null);
   api.setAgentRuntimeIdentity?.(null);
+  api.setRuntimeProcessMemoryReader?.(null);
 };
 
 function memorySample(overrides: Partial<AgentRuntimeMemorySample> = {}): AgentRuntimeMemorySample {
@@ -68,6 +83,29 @@ function setIdentity(identity: AgentRuntimeIdentity): void {
   const api = runtimeMemoryApi();
   expect(typeof api.setAgentRuntimeIdentity).toBe("function");
   api.setAgentRuntimeIdentity?.(identity);
+}
+
+function processMemoryAttribution(
+  footprintBytes: number | null,
+  status: ProcessMemoryAttribution["footprint"]["status"] = "ok",
+): ProcessMemoryAttribution {
+  return {
+    footprint: {
+      status,
+      bytes: footprintBytes,
+      source: "test:process-memory",
+    },
+  };
+}
+
+function fakeReader(footprintBytes: number): () => ProcessMemoryAttribution {
+  return () => processMemoryAttribution(footprintBytes);
+}
+
+function setProcessReader(reader: () => ProcessMemoryAttribution): void {
+  const api = runtimeMemoryApi();
+  expect(typeof api.setRuntimeProcessMemoryReader).toBe("function");
+  api.setRuntimeProcessMemoryReader?.(reader);
 }
 
 describe("agent runtime memory metrics", () => {
@@ -165,6 +203,160 @@ describe("agent runtime memory metrics", () => {
       expect(text).toMatch(
         /^llamactl_agent_runtime_memory_bytes\{(?=[^}]*role="control")(?=[^}]*node="mem-node")(?=[^}]*kind="heap_used")[^}]*\} 41943040$/m,
       );
+    }
+  });
+
+  test("exposes process footprint and linux split memory kinds", async () => {
+    setSampler(() => memorySample());
+    setIdentity({ role: "control" });
+    setProcessReader(() => ({
+      ...processMemoryAttribution(180 * MiB),
+      rssAnonBytes: 150 * MiB,
+      rssFileBytes: 137 * MiB,
+      rssShmemBytes: 13 * MiB,
+      swapBytes: 2 * MiB,
+    }));
+
+    const text = await scrape();
+    expect(text).toMatch(
+      /^llamactl_agent_runtime_memory_bytes\{(?=[^}]*role="control")(?=[^}]*node="mem-node")(?=[^}]*kind="footprint")[^}]*\} 188743680$/m,
+    );
+    expect(text).toMatch(
+      /^llamactl_agent_runtime_memory_bytes\{(?=[^}]*role="control")(?=[^}]*node="mem-node")(?=[^}]*kind="rss_anon")[^}]*\} 157286400$/m,
+    );
+    expect(text).toMatch(
+      /^llamactl_agent_runtime_memory_bytes\{(?=[^}]*role="control")(?=[^}]*node="mem-node")(?=[^}]*kind="rss_file")[^}]*\} 143654912$/m,
+    );
+    expect(text).toMatch(
+      /^llamactl_agent_runtime_memory_bytes\{(?=[^}]*role="control")(?=[^}]*node="mem-node")(?=[^}]*kind="rss_shmem")[^}]*\} 13631488$/m,
+    );
+    expect(text).toMatch(
+      /^llamactl_agent_runtime_memory_bytes\{(?=[^}]*role="control")(?=[^}]*node="mem-node")(?=[^}]*kind="swap")[^}]*\} 2097152$/m,
+    );
+    expect(text).toMatch(
+      /^llamactl_agent_runtime_memory_bytes\{(?=[^}]*role="control")(?=[^}]*node="mem-node")(?=[^}]*kind="rss")[^}]*\} 314572800$/m,
+    );
+    expect(text).toMatch(
+      /^llamactl_agent_runtime_memory_bytes\{(?=[^}]*role="control")(?=[^}]*node="mem-node")(?=[^}]*kind="heap_used")[^}]*\} 41943040$/m,
+    );
+    expect(text).toMatch(
+      /^llamactl_agent_runtime_memory_bytes\{(?=[^}]*role="control")(?=[^}]*node="mem-node")(?=[^}]*kind="heap_total")[^}]*\} 67108864$/m,
+    );
+    expect(text).toMatch(
+      /^llamactl_agent_runtime_memory_bytes\{(?=[^}]*role="control")(?=[^}]*node="mem-node")(?=[^}]*kind="external")[^}]*\} 8388608$/m,
+    );
+    expect(text).toMatch(
+      /^llamactl_agent_runtime_memory_bytes\{(?=[^}]*role="control")(?=[^}]*node="mem-node")(?=[^}]*kind="array_buffers")[^}]*\} 2097152$/m,
+    );
+  });
+
+  test("charges footprint rather than inflated rss against the runtime memory budget", async () => {
+    setIdentity({ role: "control", memoryBudgetBytes: 256 * MiB });
+    setSampler(() => memorySample({ rss: 300 * MiB }));
+    setProcessReader(fakeReader(180 * MiB));
+
+    const text = await scrape();
+    expect(text).toMatch(
+      /^llamactl_agent_runtime_memory_over_budget\{(?=[^}]*role="control")(?=[^}]*node="mem-node")[^}]*\} 0$/m,
+    );
+    expect(text).toMatch(
+      /^llamactl_agent_runtime_memory_charged_bytes\{(?=[^}]*role="control")(?=[^}]*node="mem-node")(?=[^}]*basis="footprint")[^}]*\} 188743680$/m,
+    );
+  });
+
+  test("falls back to rss when the process footprint is unavailable", async () => {
+    setIdentity({ role: "control", memoryBudgetBytes: 256 * MiB });
+    setSampler(() => memorySample({ rss: 300 * MiB }));
+    setProcessReader(() => processMemoryAttribution(null, "unavailable"));
+
+    const text = await scrape();
+    expect(text).not.toMatch(
+      /^llamactl_agent_runtime_memory_bytes\{(?=[^}]*kind="footprint")[^}]*\}/m,
+    );
+    expect(text).toMatch(
+      /^llamactl_agent_runtime_memory_over_budget\{(?=[^}]*role="control")(?=[^}]*node="mem-node")[^}]*\} 1$/m,
+    );
+    expect(text).toMatch(
+      /^llamactl_agent_runtime_memory_charged_bytes\{(?=[^}]*role="control")(?=[^}]*node="mem-node")(?=[^}]*basis="rss")[^}]*\} 314572800$/m,
+    );
+  });
+
+  test("falls back to rss when the process memory reader throws", async () => {
+    setIdentity({ role: "control", memoryBudgetBytes: 256 * MiB });
+    setSampler(() => memorySample({ rss: 300 * MiB }));
+    setProcessReader(() => {
+      throw new Error("process memory reader failed");
+    });
+
+    const text = await scrape();
+    expect(text).toMatch(
+      /^llamactl_agent_runtime_memory_bytes\{(?=[^}]*role="control")(?=[^}]*node="mem-node")(?=[^}]*kind="rss")[^}]*\} 314572800$/m,
+    );
+    expect(text).toMatch(
+      /^llamactl_agent_runtime_memory_charged_bytes\{(?=[^}]*role="control")(?=[^}]*node="mem-node")(?=[^}]*basis="rss")[^}]*\} 314572800$/m,
+    );
+  });
+
+  test("stamps footprint and budget evaluation with the same nowMs", async () => {
+    const originalNow = Date.now;
+    let tick = 0;
+    Date.now = (): number => 1_000_000_000_000 + tick++;
+    try {
+      setIdentity({ role: "control", memoryBudgetBytes: 256 * MiB });
+      setSampler(() => memorySample({ rss: 300 * MiB }));
+      setProcessReader(fakeReader(180 * MiB));
+
+      const text = await scrape();
+      expect(text).toMatch(
+        /^llamactl_agent_runtime_memory_charged_bytes\{(?=[^}]*role="control")(?=[^}]*node="mem-node")(?=[^}]*basis="footprint")[^}]*\} 188743680$/m,
+      );
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
+  test("coerces negative or NaN footprint bytes to non-ok and falls back to rss", async () => {
+    setIdentity({ role: "control", memoryBudgetBytes: 512 * MiB });
+    setSampler(() => memorySample({ rss: 300 * MiB }));
+
+    for (const footprintBytes of [-1, Number.NaN]) {
+      setProcessReader(() => processMemoryAttribution(footprintBytes));
+
+      const text = await scrape();
+      expect(text).not.toMatch(
+        /^llamactl_agent_runtime_memory_bytes\{(?=[^}]*kind="footprint")[^}]*\}/m,
+      );
+      expect(text).toMatch(
+        /^llamactl_agent_runtime_memory_over_budget\{(?=[^}]*role="control")(?=[^}]*node="mem-node")[^}]*\} 0$/m,
+      );
+      expect(text).toMatch(
+        /^llamactl_agent_runtime_memory_charged_bytes\{(?=[^}]*role="control")(?=[^}]*node="mem-node")(?=[^}]*basis="rss")[^}]*\} 314572800$/m,
+      );
+    }
+  });
+
+  test("startAgentServer wires processMemoryReader into footprint metrics and budget charge", async () => {
+    const options = {
+      bindHost: "127.0.0.1",
+      port: 0,
+      tokenHash: "0".repeat(64),
+      advertiseMdns: false,
+      nodeName: "mem-node",
+      runtimeRole: "control",
+      runtimeMemoryBudgetBytes: 512 * MiB,
+      processMemoryReader: fakeReader(180 * MiB),
+    } as Parameters<typeof startAgentServer>[0];
+    const agent = startAgentServer(options);
+    try {
+      const text = await scrape();
+      expect(text).toMatch(
+        /^llamactl_agent_runtime_memory_bytes\{(?=[^}]*role="control")(?=[^}]*node="mem-node")(?=[^}]*kind="footprint")[^}]*\} 188743680$/m,
+      );
+      expect(text).toMatch(
+        /^llamactl_agent_runtime_memory_charged_bytes\{(?=[^}]*role="control")(?=[^}]*node="mem-node")(?=[^}]*basis="footprint")[^}]*\} 188743680$/m,
+      );
+    } finally {
+      await agent.stop();
     }
   });
 

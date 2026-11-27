@@ -49,18 +49,20 @@ function parseWorkloadPort(endpoint: string | undefined): number {
   }
 }
 
-// #518: forward only the experimental qualification label onto a peer model
-// row. A peer can add exclusion but never lift a locally inherited stage, so
-// any other label, value or shape is dropped. The plain-object check rejects
-// null, strings and arrays that a malformed snapshot could carry; the
-// Array.isArray and getPrototypeOf guards are defence in depth with no
-// observable effect on JSON-parsed input, which never yields those shapes.
-function peerExperimentalLabels(labels: unknown): Record<string, string> | undefined {
+// #518: forward only the experimental or degraded qualification label onto a
+// peer model row. A peer can add an exclusion or a demotion but never lift a
+// locally inherited stage, so any other label, value or shape is dropped. The
+// plain-object check rejects null, strings and arrays that a malformed snapshot
+// could carry; the Array.isArray and getPrototypeOf guards are defence in depth
+// with no observable effect on JSON-parsed input, which never yields those
+// shapes.
+function peerQualificationLabels(labels: unknown): Record<string, string> | undefined {
   if (labels === null || typeof labels !== "object" || Array.isArray(labels)) return undefined;
   if (Object.getPrototypeOf(labels) !== Object.prototype) return undefined;
   const record = labels as Record<string, unknown>;
-  if (record[routingCapabilities.QUALIFICATION_LABEL] !== "experimental") return undefined;
-  return { [routingCapabilities.QUALIFICATION_LABEL]: "experimental" };
+  const stage = record[routingCapabilities.QUALIFICATION_LABEL];
+  if (stage !== "experimental" && stage !== "degraded") return undefined;
+  return { [routingCapabilities.QUALIFICATION_LABEL]: stage };
 }
 
 /** Flatten reachable workloads into deduped { modelId, port, revision } rows. */
@@ -73,7 +75,7 @@ function collectPeerWorkloads(
     if (w.reachable === false) continue;
     const port = parseWorkloadPort(w.endpoint);
     const revision = w.revision ?? null;
-    const labels = peerExperimentalLabels(w.labels);
+    const labels = peerQualificationLabels(w.labels);
     for (const modelId of w.models ?? []) {
       if (!modelId || seen.has(modelId)) continue;
       seen.add(modelId);
