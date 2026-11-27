@@ -37,6 +37,7 @@ import {
   EVICTED_AT_ANNOTATION,
   EVICTED_BY_ANNOTATION,
   EVICTION_INTENT_GRACE_MS,
+  EVICTION_TEARDOWN_UNVERIFIED,
   parseEvictTargets,
   replacementHoldsEviction,
   type WorkloadClient,
@@ -365,6 +366,7 @@ function clearStaleEvictionMarker(manifest: ModelRun, dir: string): ModelRun {
     const {
       [EVICTED_BY_ANNOTATION]: _evictedBy,
       [EVICTED_AT_ANNOTATION]: _evictedAt,
+      [EVICTION_TEARDOWN_UNVERIFIED]: _teardownUnverified,
       ...annotations
     } = fresh.metadata.annotations;
     const cleared: ModelRun = { ...fresh, metadata: { ...fresh.metadata, annotations } };
@@ -388,6 +390,7 @@ function clearStaleHostEvictionMarker(manifest: ModelHostManifest, dir: string):
     const {
       [EVICTED_BY_ANNOTATION]: _evictedBy,
       [EVICTED_AT_ANNOTATION]: _evictedAt,
+      [EVICTION_TEARDOWN_UNVERIFIED]: _teardownUnverified,
       ...annotations
     } = fresh.metadata.annotations ?? {};
     const { annotations: _stale, ...metadata } = fresh.metadata;
@@ -493,6 +496,7 @@ function evictionDecision(
 ): EvictionDecision {
   const evictedBy = annotations?.[EVICTED_BY_ANNOTATION];
   if (annotations === undefined || !evictedBy) return { kind: "none" };
+  if (annotations[EVICTION_TEARDOWN_UNVERIFIED] === evictedBy) return { kind: "hold", evictedBy };
   const graceMs = opts.evictionGraceMs ?? EVICTION_INTENT_GRACE_MS;
   const nowMs = (opts.now?.() ?? new Date()).getTime();
   const evictedAt = annotations[EVICTED_AT_ANNOTATION];

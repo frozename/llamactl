@@ -28,7 +28,11 @@ import {
   rmSync,
   writeFileSync,
 } from "../../src/safe-fs.js";
-import { applyOne, applyOneModelHost } from "../../src/workload/apply.js";
+import {
+  applyOne,
+  applyOneModelHost,
+  EVICTION_TEARDOWN_UNVERIFIED,
+} from "../../src/workload/apply.js";
 import { saveModelHost } from "../../src/workload/modelhost-store.js";
 import { reconcileOnce } from "../../src/workload/reconciler.js";
 import { loadWorkloadByName, saveWorkload } from "../../src/workload/store.js";
@@ -50,7 +54,9 @@ type Faults = {
     workload: string,
   ) => ModelHostStatusReply | Promise<ModelHostStatusReply> | undefined;
   hostStop?: (workload: string) => unknown;
-  hostStart?: (workload: string) => { ok: false; error: string } | undefined;
+  hostStart?: (
+    workload: string,
+  ) => { ok: false; error: string } | { ok: true; pid?: number; state?: string } | undefined;
 };
 
 type ModelHostStatusReply = {
@@ -335,12 +341,17 @@ test("R1 intent persisted before stop and kept on success", async () => {
   const state: StateMap = new Map([["a", upEntry(8182)]]);
   saveWorkload(mkManifest("a", { port: 8182 }), dir);
   let captured: string | undefined;
+  let launchHold: string | undefined;
   const { client, starts } = makeClient(state, {
     stop: (workload) => {
       if (workload === "a") {
         captured = loadWorkloadByName("a", dir).metadata.annotations["llamactl.io/evicted-by"];
       }
       return undefined;
+    },
+    start: () => {
+      launchHold = loadWorkloadByName("a", dir).metadata.annotations[EVICTION_TEARDOWN_UNVERIFIED];
+      return false;
     },
   });
   try {
@@ -352,10 +363,12 @@ test("R1 intent persisted before stop and kept on success", async () => {
       { workloadsDir: dir, getNodeBudgetGiB: () => 32 },
     );
     expect(captured).toBe("b");
+    expect(launchHold).toBe("b");
     expect(starts).toEqual(["b"]);
     expect(result.error).toBeUndefined();
     const storedA = loadWorkloadByName("a", dir);
     expect(storedA.metadata.annotations["llamactl.io/evicted-by"]).toBe("b");
+    expect(storedA.metadata.annotations[EVICTION_TEARDOWN_UNVERIFIED]).toBeUndefined();
     const evictedAt = storedA.metadata.annotations["llamactl.io/evicted-at"];
     expect(typeof evictedAt).toBe("string");
     expect(Number.isNaN(Date.parse(evictedAt ?? ""))).toBe(false);
@@ -1019,7 +1032,7 @@ test("R16 apply honours a non-default eviction grace", async () => {
   }
 });
 
-test("G7 rollback leaves a marker re-owned by another replacement", async () => {
+test("G7 re-owned intent refuses launch and preserves the new owner's marker", async () => {
   const dir = mkdtempSync(join(tmpdir(), "llamactl-df02-g7-"));
   const state: StateMap = new Map([["a", upEntry(8182)]]);
   saveWorkload(mkManifest("a", { port: 8182 }), dir);
@@ -1044,7 +1057,6 @@ test("G7 rollback leaves a marker re-owned by another replacement", async () => 
       );
       return undefined;
     },
-    start: (workload) => workload === "b",
   });
   try {
     const result = await applyOne(
@@ -1054,10 +1066,10 @@ test("G7 rollback leaves a marker re-owned by another replacement", async () => 
       undefined,
       { workloadsDir: dir, getNodeBudgetGiB: () => 32 },
     );
-    expect(result.error).toBeTruthy();
+    expect(result.error).toContain("eviction intent ownership changed before replacement start");
     expect(result.statusSection.phase).toBe("Failed");
     expect(stops).toEqual(["a"]);
-    expect(starts).toEqual(["b"]);
+    expect(starts).toEqual([]);
     const storedA = loadWorkloadByName("a", dir);
     expect(storedA.metadata.annotations["llamactl.io/evicted-by"]).toBe("c");
     expect(storedA.metadata.annotations["llamactl.io/evicted-at"]).toBe(foreignAt);
@@ -1490,6 +1502,70 @@ test("RB4 a stop that reports success while the replacement stays up keeps the v
   }
 });
 
+test("RB8 an unverified ModelRun teardown blocks reconciliation and takeover after grace", async () => {
+  const { result, state, dir } = await applyFailedReplacementWith(
+    "rb8",
+    (): Faults => ({
+      stop: (workload) => (workload === "b" ? Promise.resolve({ stopped: false }) : undefined),
+    }),
+  );
+  try {
+    expect(result.error).toContain("teardown after failed start unverified");
+    writeLocalNodeBudget(dir, 8);
+    const { client, starts, stops } = makeClient(state);
+    const tick = await reconcileOnce({
+      workloadsDir: dir,
+      getClient: () => client,
+      evictionGraceMs: 1,
+      now: () => new Date(Date.now() + 60_000),
+    });
+    expect(reportEvictedBy(tick.reports.find((r) => r.name === "a"))).toBe("b");
+    expect(starts).toEqual([]);
+    for (const name of ["b", "c"]) {
+      const takeover = await applyOne(
+        mkManifest(name, { annotations: { "llamactl.io/evict": "a" }, port: 8091, ram: 8 }),
+        () => client,
+        undefined,
+        undefined,
+        { workloadsDir: dir, getNodeBudgetGiB: () => 8, evictionGraceMs: 0 },
+      );
+      expect(takeover.error).toContain("already held by eviction owner 'b'");
+    }
+    expect(stops).toEqual([]);
+    expect(starts).toEqual([]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("RB9 a post-launch observer error requires verified replacement teardown", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "llamactl-df02-rb9-"));
+  const state: StateMap = new Map([["a", upEntry(8182)]]);
+  saveWorkload(mkManifest("a", { port: 8182, ram: 8 }), dir);
+  const { client, stops } = makeClient(state, {
+    stop: (workload) => (workload === "b" ? Promise.resolve({ stopped: false }) : undefined),
+  });
+  try {
+    const result = await applyOne(
+      mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090, ram: 8 }),
+      () => client,
+      (event) => {
+        if (event.type === "started") throw new Error("observer failed after launch");
+      },
+      undefined,
+      { workloadsDir: dir, getNodeBudgetGiB: () => 8 },
+    );
+    expect(result.statusSection.phase).toBe("Failed");
+    expect(result.error).toContain("observer failed after launch");
+    expect(result.error).toContain("teardown after failed start unverified");
+    expect(stops).toEqual(["a", "b"]);
+    expect(state.has("b")).toBe(true);
+    expect(loadWorkloadByName("a", dir).metadata.annotations["llamactl.io/evicted-by"]).toBe("b");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // Kills mutant P7 (dropping the foreign-listener guard).
 test("RB5 a foreign listener on the replacement is not stopped and keeps the victim held", async () => {
   const { result, state, dir } = await applyFailedReplacementWith(
@@ -1537,6 +1613,40 @@ test("RB6 an RPC error during the replacement teardown keeps the victim held", a
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+for (const proofPoint of ["before stop", "after stop"] as const) {
+  test(`RB7 #275: identity unknown ${proofPoint} keeps the failed ModelRun replacement held`, async () => {
+    let replacementStops = 0;
+    const { result, dir } = await applyFailedReplacementWith(
+      `rb7-${proofPoint.replace(" ", "-")}`,
+      (state): Faults => ({
+        status: (name, delegate) =>
+          name === "b" && state.has("b") && (proofPoint === "before stop" || replacementStops > 0)
+            ? delegate().then((status) => ({
+                ...status,
+                state: "down",
+                pid: null,
+                identityUnknown: true,
+              }))
+            : undefined,
+        stop: (name): Promise<unknown> | undefined => {
+          if (name !== "b") return undefined;
+          replacementStops++;
+          return Promise.resolve({ stopped: true });
+        },
+      }),
+    );
+    try {
+      expect(result.statusSection.phase).toBe("Failed");
+      expect(result.error).toContain(`pid identity unknown ${proofPoint}`);
+      expect(result.error).toContain("eviction intent on 'a' kept");
+      expect(loadWorkloadByName("a", dir).metadata.annotations["llamactl.io/evicted-by"]).toBe("b");
+      expect(replacementStops).toBe(proofPoint === "after stop" ? 1 : 0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}
 
 // DF-02 (#275): ModelHost replacements. A ModelHost manifest carrying
 // llamactl.io/evict follows the same verified-eviction contract a
@@ -1698,6 +1808,115 @@ test("MH4 #677: a ModelHost replacement readiness failure with a verified teardo
     rmSync(tmp, { recursive: true, force: true });
   }
 });
+
+for (const verifyRelease of [false, true]) {
+  test(`MH4b #275: post-launch status error requires release proof (verified=${String(verifyRelease)})`, async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-df02-mh4b-"));
+    const dir = join(tmp, "workloads");
+    mkdirSync(dir, { recursive: true });
+    const fakeBinary = mkFakeOmlxBinary(tmp);
+    const state: StateMap = new Map([["a", upEntry(8182)]]);
+    saveWorkload(mkManifest("a", { port: 8182, ram: 8 }), dir);
+    let launched = false;
+    let statusReads = 0;
+    let stopped = false;
+    const { client, hostStops } = makeClient(state, {
+      hostStart: (workload) => {
+        if (workload !== "host-b") return undefined;
+        launched = true;
+        return { ok: true };
+      },
+      hostStatus: (workload) => {
+        if (workload !== "host-b" || !launched) return undefined;
+        statusReads++;
+        if (statusReads === 1) return Promise.reject(new Error("post-launch status unavailable"));
+        if (!verifyRelease) return { state: "Stopped", pid: null, identityUnknown: true };
+        return stopped ? { state: "Stopped", pid: null } : { state: "Running", pid: 12345 };
+      },
+      hostStop: (workload) => {
+        if (workload !== "host-b") return undefined;
+        stopped = true;
+        return { ok: true, pid: 12345 };
+      },
+    });
+    const hostB = hostReplacement("host-b", "a", { ram: 8, binary: fakeBinary });
+    const restore = pinLocalRuntimeDir(join(tmp, "runtime"));
+    try {
+      const outcome = await applyOneModelHost(hostB, () => client, undefined, {
+        workloadsDir: dir,
+        getNodeBudgetGiB: () => 8,
+      }).catch((error: unknown) => error);
+      expect(outcome).toMatchObject({ ok: false });
+      if (typeof outcome !== "object" || outcome === null || !("error" in outcome)) {
+        throw new Error("missing structured failure");
+      }
+      expect(outcome.error).toContain("post-launch status unavailable");
+      expect(outcome.error).toContain(
+        verifyRelease ? "released eviction intent on 'a'" : "eviction intent on 'a' kept",
+      );
+      expect(hostStops).toEqual(["host-b"]);
+      expect(readWorkloadAnnotations(join(dir, "a.yaml"))?.["llamactl.io/evicted-by"]).toBe(
+        verifyRelease ? undefined : "host-b",
+      );
+    } finally {
+      restore();
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+}
+
+for (const source of ["start reply", "fallback status"] as const) {
+  test(`MH4c a non-ready ModelHost ${source} keeps a ModelHost victim suppressed after grace`, async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-df02-mh4c-"));
+    const dir = join(tmp, "workloads");
+    mkdirSync(dir, { recursive: true });
+    const binary = mkFakeOmlxBinary(tmp);
+    writeLocalNodeBudget(dir, 8);
+    saveModelHost(mkModelHostManifest("host-a", { binary, port: 8182, ram: 8 }), dir);
+    let victimDown = false;
+    const { client, hostStarts, hostStops } = makeClient(new Map(), {
+      hostStart: (name) =>
+        name === "host-b"
+          ? source === "start reply"
+            ? { ok: true, state: "Starting", pid: 12345 }
+            : { ok: true }
+          : undefined,
+      hostStatus: (name) => {
+        if (name === "host-b") return { state: "Starting", pid: 12345 };
+        return victimDown ? { state: "Stopped", pid: null } : { state: "Running", pid: 100 };
+      },
+      hostStop: (name) => {
+        if (name === "host-b") return { ok: false, error: "stop not verified" };
+        victimDown = true;
+        return { ok: true, pid: 100 };
+      },
+    });
+    const restore = pinLocalRuntimeDir(join(tmp, "runtime"));
+    try {
+      const outcome = await applyOneModelHost(
+        hostReplacement("host-b", "host-a", { binary, ram: 8, port: 8090 }),
+        () => client,
+        undefined,
+        { workloadsDir: dir, getNodeBudgetGiB: () => 8 },
+      );
+      expect(outcome.ok).toBe(false);
+      if (outcome.ok) return;
+      expect(outcome.error).toContain("Starting");
+      const tick = await reconcileOnce({
+        workloadsDir: dir,
+        getClient: () => client,
+        evictionGraceMs: 1,
+        now: () => new Date(Date.now() + 60_000),
+      });
+      expect(reportEvictedBy(tick.reports.find((r) => r.name === "host-a"))).toBe("host-b");
+      expect(hostStarts).toEqual(["host-b"]);
+      expect(hostStops).toEqual(["host-a", "host-b"]);
+    } finally {
+      restore();
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+}
 
 test("MH5 #678: a lease-fenced victim stop refuses the ModelHost replacement as EvictVictimBusy", async () => {
   const tmp = mkdtempSync(join(tmpdir(), "llamactl-df02-mh5-"));
