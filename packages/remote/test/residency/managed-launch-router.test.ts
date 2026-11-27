@@ -15,7 +15,10 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  renameSync,
   rmSync,
+  statSync,
+  utimesSync,
   writeFileSync,
 } from "../../src/safe-fs.js";
 import * as modelHost from "../../src/server/modelhost.js";
@@ -32,6 +35,28 @@ function setFixtureEnv(env: Record<string, string>): () => void {
   };
 }
 
+function replaceFixtureFile(path: string): void {
+  const stat = statSync(path);
+  const replacement = `${path}.replacement`;
+  writeFileSync(replacement, readFileSync(path), { mode: stat.mode & 0o777 });
+  utimesSync(replacement, stat.atime, stat.mtime);
+  renameSync(replacement, path);
+}
+
+function writeManagedFakeEngine(path: string, port: number, beforeListen = ""): void {
+  const program = `
+    ${beforeListen}
+    const listener = Bun.serve({ hostname: "127.0.0.1", port: ${String(port)}, fetch: () => new Response("ok") });
+    process.on("SIGTERM", () => { listener.stop(true); process.exit(0); });
+    await new Promise(() => undefined);
+  `;
+  writeFileSync(
+    path,
+    `#!/bin/bash\nexec -a llama-server ${JSON.stringify(process.execPath)} -e ${JSON.stringify(program.replaceAll("\n", " "))}\n`,
+    { mode: 0o755 },
+  );
+}
+
 function modelRunEnvironment(dir: string): {
   model: { target: string; binary: string };
   [Symbol.dispose](): void;
@@ -46,6 +71,8 @@ function modelRunEnvironment(dir: string): {
     LLAMA_CPP_HOST: "127.0.0.1",
     LLAMA_CPP_PORT: "65534",
     LLAMA_CPP_MODELS: models,
+    LLAMA_CPP_CACHE: join(dir, "cache"),
+    LLAMA_CPP_LOGS: join(dir, "logs"),
     LLAMA_CPP_USE_TUNED_ARGS: "false",
   };
   const restoreEnv = setFixtureEnv(env);
@@ -265,7 +292,12 @@ test("serverStart publishes ready only after managed admission commits", async (
       binary: "/usr/bin/false",
       args: [],
       tunedProfile: null,
+      artifacts: {
+        model: { evidence: "filesystem-metadata", generationDigest: "fixture-model" },
+        binary: { evidence: "filesystem-metadata", generationDigest: "fixture-binary" },
+      },
     },
+    artifactRefusal: (): undefined => undefined,
     start: (): Promise<server.StartServerResult> => {
       opts.onEvent?.({ type: "ready", pid, endpoint });
       return Promise.resolve({
@@ -401,16 +433,10 @@ test("managed ModelRun launches the pinned target, args and child environment af
   mkdirSync(secondModels);
   writeFileSync(join(firstModels, "fixture.gguf"), "fixture");
   writeFileSync(join(secondModels, "fixture.gguf"), "replacement");
-  const program = `
-    await Bun.write(${JSON.stringify(childInput)}, JSON.stringify({ inherited: process.env["PLAN_TEST_ENGINE_ENV"] }));
-    const listener = Bun.serve({ hostname: "127.0.0.1", port: ${String(port)}, fetch: () => new Response("ok") });
-    process.on("SIGTERM", () => { listener.stop(true); process.exit(0); });
-    await new Promise(() => undefined);
-  `;
-  writeFileSync(
+  writeManagedFakeEngine(
     bin,
-    `#!/bin/bash\nexec -a llama-server ${JSON.stringify(process.execPath)} -e ${JSON.stringify(program.replaceAll("\n", " "))}\n`,
-    { mode: 0o755 },
+    port,
+    `await Bun.write(${JSON.stringify(childInput)}, JSON.stringify({ inherited: process.env["PLAN_TEST_ENGINE_ENV"] }));`,
   );
   const env = {
     DEV_STORAGE: dir,
@@ -494,5 +520,158 @@ test("managed ModelRun launches the pinned target, args and child environment af
     }
     restoreEnv();
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("managed ModelRun rejects a second model path before admission", async () => {
+  using fixture = modelRunEnvironment(mkdtempSync(join(tmpdir(), "managed-artifact-override-")));
+  const run = mock(() => Promise.resolve({ ran: false as const, detail: "unexpected admission" }));
+  const caller = router.createCaller({ managedLaunchAdmission: { run } });
+  const events = await caller.serverStart({
+    ...fixture.model,
+    workload: "managed-override",
+    extraArgs: ["--model=/tmp/another-model.gguf"],
+  });
+  expect(JSON.stringify(await terminalResults(events))).toContain(
+    "ManagedModelOverrideUnavailable",
+  );
+  expect(run).not.toHaveBeenCalled();
+});
+
+test.each(["model", "binary"] as const)(
+  "managed ModelRun refuses a replaced %s at the approved path",
+  async (artifact) => {
+    const dir = mkdtempSync(join(tmpdir(), "managed-run-artifact-"));
+    using fixture = modelRunEnvironment(dir);
+    const marker = join(dir, "engine-spawned");
+    const binary = join(dir, "llama-server");
+    writeFileSync(binary, `#!/bin/sh\nprintf spawned > ${JSON.stringify(marker)}\n`, {
+      mode: 0o755,
+    });
+    const artifactPath =
+      artifact === "binary" ? binary : join(dir, "fixture-models", fixture.model.target);
+    const authority = openAdmissionAuthority({
+      storePath: join(dir, "admission.db"),
+      budgetGiB: () => 24,
+      observe: () => undefined,
+      readPidFile: () => undefined,
+      owner: { pid: process.pid },
+    });
+    const gate = createManagedLaunchAdmission({
+      authority: {
+        ...authority,
+        admit: (request) => {
+          const claim = authority.admit(request);
+          replaceFixtureFile(artifactPath);
+          return claim;
+        },
+      },
+      resolve: () => ({ specDigest: "resolver-digest", allocationGiB: 16 }),
+      capture: () => undefined,
+    });
+    try {
+      const caller = router.createCaller({ managedLaunchAdmission: gate });
+      const events = await caller.serverStart({
+        ...fixture.model,
+        workload: "artifact-check",
+        binary,
+        timeoutSeconds: 1,
+      });
+      const results = await terminalResults(events);
+      expect(JSON.stringify(results)).toContain(`ManagedArtifactChanged: ${artifact}`);
+      expect(existsSync(marker)).toBe(false);
+      expect(existsSync(join(dir, "runtime"))).toBe(false);
+      expect(authority.snapshot()).toEqual([]);
+    } finally {
+      authority.close();
+    }
+  },
+);
+
+test("managed ModelRun rechecks artifacts after the async scope decision", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "managed-run-artifact-scope-"));
+  using fixture = modelRunEnvironment(dir);
+  const marker = join(dir, "engine-spawned");
+  const binary = join(dir, "llama-server");
+  writeFileSync(binary, `#!/bin/sh\nprintf spawned > ${JSON.stringify(marker)}\n`, { mode: 0o755 });
+  const model = join(dir, "fixture-models", fixture.model.target);
+  const prepared = server.prepareManagedServerStart({
+    ...fixture.model,
+    key: { name: "artifact-scope-check" },
+    binary,
+    timeoutSeconds: 1,
+    engineScope: {
+      establishTimeoutMs: 100,
+      noteFailure: () => undefined,
+      unitSuffix: () => "fixture",
+      async resolve() {
+        await Promise.resolve();
+        replaceFixtureFile(model);
+        return { ok: false as const, reason: "not-linux" as const };
+      },
+    },
+  });
+  if ("result" in prepared) throw new Error(prepared.result.error);
+  const result = await prepared.start(() => undefined);
+  expect(result).toMatchObject({ ok: false, pid: null, error: "ManagedArtifactChanged: model" });
+  expect(existsSync(marker)).toBe(false);
+});
+
+test("managed ModelRun changes its prepared digest for a different file generation at the same path", () => {
+  const dir = mkdtempSync(join(tmpdir(), "managed-run-artifact-digest-"));
+  using fixture = modelRunEnvironment(dir);
+  const opts = { ...fixture.model, key: { name: "artifact-digest-check" } };
+  const first = server.prepareManagedServerStart(opts);
+  if ("result" in first) throw new Error(first.result.error);
+  const model = join(dir, "fixture-models", fixture.model.target);
+  replaceFixtureFile(model);
+  const next = server.prepareManagedServerStart(opts);
+  if ("result" in next) throw new Error(next.result.error);
+  expect(next.effectiveSpecDigest).not.toBe(first.effectiveSpecDigest);
+  expect(next.launch.artifacts.model.evidence).toBe("filesystem-metadata");
+  expect(next.launch.artifacts.model.generationDigest).not.toBe(
+    first.launch.artifacts.model.generationDigest,
+  );
+  expect(next.launch.artifacts.binary).toEqual(first.launch.artifacts.binary);
+});
+
+test("managed ModelRun does not commit readiness when an artifact changes after spawn", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "managed-run-artifact-readiness-"));
+  using fixture = modelRunEnvironment(dir);
+  const binary = join(dir, "llama-server");
+  const reserver = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response() });
+  const port = Number(reserver.port);
+  await reserver.stop(true);
+  writeManagedFakeEngine(binary, port);
+  const model = join(dir, "fixture-models", fixture.model.target);
+  const committed = mock(() => undefined);
+  const key = { name: "artifact-readiness-check" };
+  let pid: number | undefined;
+  const plan = server.prepareManagedServerStart({
+    ...fixture.model,
+    binary,
+    key,
+    endpoint: { host: "127.0.0.1", port },
+    timeoutSeconds: 5,
+    onEvent: (event) => {
+      if (event.type !== "launch") return;
+      pid = event.pid;
+      replaceFixtureFile(model);
+    },
+  });
+  if ("result" in plan) throw new Error(plan.result.error);
+  try {
+    const result = await plan.start(committed);
+    expect(result).toMatchObject({ ok: false, pid, error: "ManagedArtifactChanged: model" });
+    expect(committed).not.toHaveBeenCalled();
+    expect(server.readServerState(key)).toMatchObject({ publicationPending: true, pid });
+  } finally {
+    if (pid !== undefined && pid > 0) {
+      try {
+        process.kill(pid, "SIGTERM");
+      } catch {
+        /* Already exited. */
+      }
+    }
   }
 });

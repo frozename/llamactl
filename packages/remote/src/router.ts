@@ -894,9 +894,12 @@ async function runModelRunStart(
     effectiveLaunch: prepared.launch,
     effectiveSpecDigest: prepared.effectiveSpecDigest,
   };
-  return await managed.run(request, signal, (commitReadiness) =>
-    runDirectResidencyStart(input.workload, () => prepared.start(commitReadiness), lifecycle),
-  );
+  return await managed.run(request, signal, (commitReadiness) => {
+    const detail = prepared.artifactRefusal();
+    return detail === undefined
+      ? runDirectResidencyStart(input.workload, () => prepared.start(commitReadiness), lifecycle)
+      : Promise.resolve({ ran: false, detail });
+  });
 }
 
 // A lifecycle refusal never ran the engine, so the done event still carries a

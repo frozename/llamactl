@@ -60,7 +60,14 @@ import {
   withReopenAfterLoad,
 } from "./residency/leases.js";
 import { currentSessionRefcounts, type SessionRefcounts } from "./residency/sessions.js";
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "./safe-fs.js";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "./safe-fs.js";
 import { resolveTarget } from "./target.js";
 import { ensureWorkloadRuntimeDir, workloadRuntimeDir } from "./workloadRuntime.js";
 
@@ -625,10 +632,21 @@ export interface StartServerOptions {
   engineScope?: EngineScopeLauncher | null;
 }
 
+interface ArtifactGeneration {
+  readonly evidence: "filesystem-metadata";
+  readonly generationDigest: string;
+}
+
+interface ModelRunArtifacts {
+  readonly model: ArtifactGeneration;
+  readonly binary: ArtifactGeneration;
+}
+
 interface PinnedModelRunStart {
   target: ResolvedLaunchTarget;
   prepared: PreparedLaunchArgs;
   childProcess: { env: NodeJS.ProcessEnv; cwd: string };
+  artifacts: ModelRunArtifacts;
 }
 
 type ServerStartExecutionOptions = StartServerOptions & { pinned?: PinnedModelRunStart };
@@ -640,8 +658,10 @@ export interface PreparedManagedServerStart {
     readonly binary: string;
     readonly args: readonly string[];
     readonly tunedProfile: string | null;
+    readonly artifacts: ModelRunArtifacts;
   };
   readonly effectiveSpecDigest: string;
+  artifactRefusal: () => string | undefined;
   start: (
     commitReadiness: NonNullable<StartServerOptions["commitReadiness"]>,
   ) => Promise<StartServerResult>;
@@ -1910,7 +1930,7 @@ async function launchAndRecordServer(
     host: launchHost,
     port: launchPort,
     ...omitUndefined({ onEvent: opts.onEvent }),
-    ...omitUndefined({ spawn: opts.spawn, childProcess: opts.pinned?.childProcess }),
+    ...omitUndefined({ spawn: opts.spawn, pinned: opts.pinned }),
     scope: scoped?.plan ?? null,
   });
   if (scoped === null || launched.scope === null) {
@@ -2070,6 +2090,49 @@ function executeServerStart(opts: ServerStartExecutionOptions): Promise<StartSer
   );
 }
 
+class ManagedArtifactChangedError extends Error {}
+
+/** An inode generation tags observed metadata, without claiming validation of file contents. */
+function artifactGeneration(path: string): ArtifactGeneration | undefined {
+  try {
+    const stat = statSync(path, { bigint: true });
+    if (!stat.isFile()) return undefined;
+    const fields = [stat.dev, stat.ino, stat.mode, stat.size, stat.mtimeNs, stat.ctimeNs];
+    return Object.freeze({
+      evidence: "filesystem-metadata",
+      generationDigest: createHash("sha256").update(fields.map(String).join(":")).digest("hex"),
+    });
+  } catch {
+    return undefined;
+  }
+}
+
+function readModelRunArtifacts(
+  target: ResolvedLaunchTarget,
+): ModelRunArtifacts | "model" | "binary" {
+  const model = artifactGeneration(target.modelPath);
+  if (model === undefined) return "model";
+  const binary = artifactGeneration(target.bin);
+  return binary === undefined ? "binary" : Object.freeze({ model, binary });
+}
+
+function managedArtifactRefusal(pinned: PinnedModelRunStart | undefined): string | undefined {
+  if (pinned === undefined) return undefined;
+  if (
+    artifactGeneration(pinned.target.modelPath)?.generationDigest !==
+    pinned.artifacts.model.generationDigest
+  ) {
+    return "ManagedArtifactChanged: model";
+  }
+  if (
+    artifactGeneration(pinned.target.bin)?.generationDigest !==
+    pinned.artifacts.binary.generationDigest
+  ) {
+    return "ManagedArtifactChanged: binary";
+  }
+  return undefined;
+}
+
 export function prepareManagedServerStart(
   input: StartServerOptions,
 ): PreparedManagedServerStart | { result: StartServerResult } {
@@ -2089,6 +2152,17 @@ export function prepareManagedServerStart(
   };
   const launchHost = opts.endpoint?.host ?? resolved.LLAMA_CPP_HOST;
   const launchPort = opts.endpoint?.port ?? resolved.LLAMA_CPP_PORT;
+  if (hasFlag(opts.extraArgs ?? [], "-m", "--model")) {
+    return {
+      result: startServerError(
+        resolved,
+        opts.endpoint,
+        null,
+        false,
+        "ManagedModelOverrideUnavailable",
+      ),
+    };
+  }
   const validated = resolveAndValidateTarget(opts, resolved, opts.endpoint, env, launchHost);
   if ("result" in validated) return validated;
   const cwd = process.cwd();
@@ -2097,6 +2171,18 @@ export function prepareManagedServerStart(
     bin: resolve(cwd, validated.bin),
     modelPath: resolve(cwd, validated.modelPath),
   };
+  const artifacts = readModelRunArtifacts(target);
+  if (typeof artifacts === "string") {
+    return {
+      result: startServerError(
+        resolved,
+        opts.endpoint,
+        null,
+        false,
+        `ManagedArtifactUnverified: ${artifacts}`,
+      ),
+    };
+  }
   const prepared = buildLaunchArgs(
     opts,
     target.rel,
@@ -2116,7 +2202,8 @@ export function prepareManagedServerStart(
   const effectiveSpecDigest = createHash("sha256")
     .update(
       JSON.stringify({
-        version: 1,
+        version: 2,
+        artifacts,
         specHash: computeServerSpecHash({
           rel: target.rel,
           ...launchSpecHashFields(opts, target, prepared, resolved, launchHost, launchPort),
@@ -2142,14 +2229,16 @@ export function prepareManagedServerStart(
     binary: target.bin,
     args: Object.freeze(args),
     tunedProfile: prepared.tunedProfile,
+    artifacts,
   });
+  const pinned = { target, prepared, childProcess, artifacts };
   return Object.freeze({
     effectiveSpecDigest,
     launch,
+    artifactRefusal: (): string | undefined => managedArtifactRefusal(pinned),
     start: (
       commitReadiness: NonNullable<StartServerOptions["commitReadiness"]>,
-    ): Promise<StartServerResult> =>
-      executeServerStart({ ...opts, commitReadiness, pinned: { target, prepared, childProcess } }),
+    ): Promise<StartServerResult> => executeServerStart({ ...opts, commitReadiness, pinned }),
   });
 }
 
@@ -2158,14 +2247,22 @@ async function startServerWithPublicationBarrier(
   commitReadiness: NonNullable<StartServerOptions["commitReadiness"]>,
 ): Promise<StartServerResult> {
   const resolved = opts.resolved ?? resolveEnv(opts.env ?? process.env);
+  const earlyRefusal = managedArtifactRefusal(opts.pinned);
+  if (earlyRefusal !== undefined)
+    return startServerError(resolved, opts.endpoint, null, false, earlyRefusal);
   const result = await startServerUnwrapped({
     ...opts,
     resolved,
     onEvent: (event) => {
       if (event.type !== "ready") opts.onEvent?.(event);
     },
+  }).catch((error: unknown): StartServerResult => {
+    if (!(error instanceof ManagedArtifactChangedError)) throw error;
+    return startServerError(resolved, opts.endpoint, null, false, error.message);
   });
   if (!result.ok || result.pid === null) return result;
+  const readyRefusal = managedArtifactRefusal(opts.pinned);
+  if (readyRefusal !== undefined) return { ...result, ok: false, error: readyRefusal };
 
   const pid = result.pid;
   const state = readServerState(opts.key, resolved);
@@ -2275,6 +2372,9 @@ async function startServerUnwrapped(opts: ServerStartExecutionOptions): Promise<
       timeoutSeconds,
       abortKiller,
       firstPid: pid,
+    }).catch((error: unknown): never => {
+      opts.signal?.removeEventListener("abort", abortKiller.kill);
+      throw error;
     });
     if (retry.result) return retry.result;
     readyResult = retry.readyResult;
@@ -2327,7 +2427,7 @@ interface LaunchArgs {
   binary?: string;
   onEvent?: (e: ServerEvent) => void;
   spawn?: typeof spawn;
-  childProcess?: PinnedModelRunStart["childProcess"];
+  pinned?: PinnedModelRunStart;
   scope?: { systemdRunPath: string; base: string; env: NodeJS.ProcessEnv } | null;
 }
 
@@ -2447,25 +2547,31 @@ async function launchBackground(opts: LaunchArgs): Promise<LaunchResult> {
   validateHostBind(fullArgs, opts.allowExternalBind);
   const doSpawn = opts.spawn ?? spawn;
   const scoped = opts.scope ?? null;
-  const child =
-    scoped === null
-      ? doSpawn(opts.bin, fullArgs, {
-          stdio: ["ignore", logFd, logFd],
-          detached: true,
-          ...opts.childProcess,
-        })
-      : doSpawn(
-          scoped.systemdRunPath,
-          buildScopeArgv(scoped.base, opts.key.name, opts.bin, fullArgs),
-          {
+  let child: ChildProcess;
+  try {
+    const refusal = managedArtifactRefusal(opts.pinned);
+    if (refusal !== undefined) throw new ManagedArtifactChangedError(refusal);
+    child =
+      scoped === null
+        ? doSpawn(opts.bin, fullArgs, {
             stdio: ["ignore", logFd, logFd],
             detached: true,
-            ...omitUndefined({ cwd: opts.childProcess?.cwd }),
-            env: scoped.env,
-          },
-        );
+            ...opts.pinned?.childProcess,
+          })
+        : doSpawn(
+            scoped.systemdRunPath,
+            buildScopeArgv(scoped.base, opts.key.name, opts.bin, fullArgs),
+            {
+              stdio: ["ignore", logFd, logFd],
+              detached: true,
+              ...omitUndefined({ cwd: opts.pinned?.childProcess.cwd }),
+              env: scoped.env,
+            },
+          );
+  } finally {
+    closeSync(logFd);
+  }
   child.unref();
-  closeSync(logFd);
   const pid = child.pid ?? 0;
   opts.onEvent?.({ type: "launch", pid, command: opts.bin, args: fullArgs });
   return {
