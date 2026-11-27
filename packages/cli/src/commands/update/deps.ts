@@ -3,6 +3,9 @@
 // without git, systemctl, launchctl or a network. Nothing here imports from the
 // checkout lazily: after the update switches HEAD the running process must keep
 // using what it loaded at startup.
+import type { ModelHostReadiness } from "@llamactl/core/engines/types";
+import type { LocalRoute } from "@llamactl/core/workloadRuntime";
+
 import { resolveEnv } from "@llamactl/core/env";
 import { listLocalRoutes } from "@llamactl/core/workloadRuntime";
 import { dirname } from "node:path";
@@ -70,6 +73,8 @@ export interface ManagedHost {
   pid: number;
   host: string;
   port: number;
+  /** Declared serving probe (#220) from the ModelHost/ModelRun sidecar; absent = /v1/models only. */
+  readiness?: ModelHostReadiness;
 }
 
 export interface UpdateDeps {
@@ -297,9 +302,9 @@ function defaultAppendFile(path: string, data: string): void {
 }
 
 /** Running local ModelHosts and ModelRuns, one entry per workload. */
-function defaultListManagedHosts(env: NodeJS.ProcessEnv): ManagedHost[] {
+export function managedHostsFromRoutes(routes: readonly LocalRoute[]): ManagedHost[] {
   const byName = new Map<string, ManagedHost>();
-  for (const route of listLocalRoutes(resolveEnv(env))) {
+  for (const route of routes) {
     if (byName.has(route.workload)) continue;
     byName.set(route.workload, {
       name: route.workload,
@@ -307,9 +312,14 @@ function defaultListManagedHosts(env: NodeJS.ProcessEnv): ManagedHost[] {
       pid: route.pid,
       host: route.host,
       port: route.port,
+      ...(route.readiness !== undefined ? { readiness: route.readiness } : {}),
     });
   }
   return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function defaultListManagedHosts(env: NodeJS.ProcessEnv): ManagedHost[] {
+  return managedHostsFromRoutes(listLocalRoutes(resolveEnv(env)));
 }
 
 export function defaultUpdateDeps(): UpdateDeps {

@@ -1,6 +1,8 @@
 // Read-only probes `llamactl update` runs over HTTP or short-lived processes:
 // the agent's /healthz, the managed model endpoints, their idle state, and the
 // target commit's CI result. They carry no credentials.
+import type { ModelHostReadiness } from "@llamactl/core/engines/types";
+
 import { defaultAgentDir } from "@llamactl/core/config/agent-config";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
@@ -100,16 +102,39 @@ export function hostBaseUrl(host: ManagedHost): string {
   return `http://${urlHost(host.host)}:${String(host.port)}`;
 }
 
-/** Ready = `/v1/models` lists at least one model, the readiness test the engines use. */
-export async function hostReady(httpGet: HttpGetFn, host: ManagedHost): Promise<boolean> {
-  const r = await httpGet(`${hostBaseUrl(host)}/v1/models`, { timeoutMs: 3000 });
-  if (r?.status !== 200) return false;
+function servingProbeOk(r: HttpResponse | null, readiness: ModelHostReadiness): boolean {
+  if (r === null) return false;
+  if (r.status !== (readiness.expectStatus ?? 200)) return false;
+  if (readiness.expectJson === undefined) return true;
+  let body: unknown;
   try {
-    const body = JSON.parse(r.body) as { data?: unknown };
-    return Array.isArray(body.data) && body.data.length > 0;
+    body = JSON.parse(r.body);
   } catch {
     return false;
   }
+  if (typeof body !== "object" || body === null || Array.isArray(body)) return false;
+  const record = body as Record<string, unknown>;
+  return Object.entries(readiness.expectJson).every(([key, value]) => record[key] === value);
+}
+
+/**
+ * Ready = `/v1/models` lists at least one model and, when declared, the
+ * readiness probe passes (same contract as core checkServingReadiness).
+ */
+export async function hostReady(httpGet: HttpGetFn, host: ManagedHost): Promise<boolean> {
+  const r = await httpGet(`${hostBaseUrl(host)}/v1/models`, { timeoutMs: 3000 });
+  if (r?.status !== 200) return false;
+  let modelListed: boolean;
+  try {
+    const body = JSON.parse(r.body) as { data?: unknown };
+    modelListed = Array.isArray(body.data) && body.data.length > 0;
+  } catch {
+    return false;
+  }
+  if (!modelListed) return false;
+  if (host.readiness === undefined) return true;
+  const probe = await httpGet(`${hostBaseUrl(host)}${host.readiness.path}`, { timeoutMs: 3000 });
+  return servingProbeOk(probe, host.readiness);
 }
 
 export type IdleState = "busy" | "idle" | "unknown";
