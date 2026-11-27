@@ -35,6 +35,8 @@ import {
   type WorkerRpcHostOptions,
 } from "../inference/procedures.js";
 import { dispatchProxyRequest, publishUnifiedPeerSnapshots } from "../proxy/create-proxy.js";
+import { captureInference, scheduleCaptureExpiry } from "../request-capture/record.js";
+import { CAPTURE_PATH, captureResponse, REQUEST_ID } from "../request-capture/store.js";
 import { runProfileSwitchBootRecovery } from "../residency/boot-recovery.js";
 import {
   declaredManifestSignature,
@@ -94,9 +96,11 @@ import {
   openaiUpstreamErrorsTotal,
   setAgentRuntimeIdentity,
   setModelHostMetricsNode,
+  setRuntimeProcessMemoryReader,
   statusClass,
 } from "./metrics.js";
 import { startPeerSnapshotPoller } from "./peer-snapshot-poller.js";
+import { defaultProcessMemoryReader, type ProcessMemoryReader } from "./process-memory.js";
 import { handleRagChatCompletions } from "./rag-chat-endpoint.js";
 import { handleRegister, type RegisterHandlerOptions } from "./register.js";
 import { loadCert } from "./tls.js";
@@ -317,6 +321,8 @@ export interface StartAgentOptions {
    */
   runtimeRole?: string;
   runtimeMemoryBudgetBytes?: number;
+  /** Tests inject a deterministic reader; production uses the platform probe. */
+  processMemoryReader?: ProcessMemoryReader;
 }
 
 export interface RunningAgent {
@@ -548,7 +554,9 @@ async function handleOpenAIRoute(
       return Response.json(openaiProxy.projectModelsResponseBody(full, includeDeclared));
     }
     server.timeout?.(req, proxiedRouteIdleSeconds());
-    const res = await dispatchProxyRequest(req);
+    const res = record
+      ? await captureInference(req, url.pathname, () => dispatchProxyRequest(req))
+      : await dispatchProxyRequest(req);
     status = res.status;
     if (status === 502) openaiUpstreamErrorsTotal.inc();
     return res;
@@ -702,6 +710,16 @@ function forwardingServiceToken(server: TunnelServer, req: Request): TunnelServe
   };
 }
 
+function inspectCapturedRequest(req: Request, pathname: string, opts: StartAgentOptions): Response {
+  if (bearerNameFor(extractBearer(req), opts.tokenHash, opts.bearerTokens?.() ?? []) === null) {
+    return unauthorizedResponse();
+  }
+  if (req.method !== "GET") return new Response(null, { status: 405 });
+  if (pathname === CAPTURE_PATH) return captureResponse();
+  const id = pathname.slice(CAPTURE_PATH.length + 1);
+  return REQUEST_ID.test(id) ? captureResponse(id) : new Response(null, { status: 404 });
+}
+
 /**
  * Bearer-auth'd API routes: metrics, RAG-aware chat completions, the
  * fleet snapshot, and the OpenAI-compatible /v1 gateway. Order is
@@ -716,6 +734,9 @@ function handleAuthedApiRoutes(
   gate: NoAuthGate,
   server: AgentFetchServer,
 ): Response | Promise<Response> | null {
+  if (url.pathname === CAPTURE_PATH || url.pathname.startsWith(CAPTURE_PATH + "/")) {
+    return inspectCapturedRequest(req, url.pathname, opts);
+  }
   // Prometheus scrape endpoint. Bearer-auth'd like everything else;
   // scrapers can set the standard Authorization header.
   if (url.pathname === "/metrics") {
@@ -774,9 +795,8 @@ function isAdmittedProxyIngress(
   );
 }
 
-// #281 (DF-08): the chat-completions branch is split out so the admission
-// gate is opt-in with no closure or wrapper on the flag-off path — the
-// existing RAG/proxy call stays exactly as it was when no admission is set.
+// Capture the original chat before admission and RAG rewrite so results
+// describe what the client sent, including requests refused during admission.
 function handleChatCompletionsRoute(
   req: Request,
   url: URL,
@@ -789,19 +809,14 @@ function handleChatCompletionsRoute(
   if (denied) return denied;
   server.timeout?.(req, proxiedRouteIdleSeconds());
   const admission = opts.chatCompletionsAdmission;
-  if (admission === undefined) {
-    return handleRagChatCompletions(req, {
+  const forward = (request: Request): Promise<Response> =>
+    handleRagChatCompletions(request, {
       appRouter,
       fallback: (forwarded) =>
         handleOpenAIRoute(forwarded, url, clientAddress, opts, gate, server, false),
     });
-  }
-  return admitChatCompletions(req, admission, (admitted) =>
-    handleRagChatCompletions(admitted, {
-      appRouter,
-      fallback: (forwarded) =>
-        handleOpenAIRoute(forwarded, url, clientAddress, opts, gate, server, false),
-    }),
+  return captureInference(req, url.pathname, () =>
+    admission === undefined ? forward(req) : admitChatCompletions(req, admission, forward),
   );
 }
 
@@ -824,8 +839,10 @@ function handleAdmittedProxyRoute(
   const denied = authGateReject(req, url.pathname, clientAddress, opts, gate);
   if (denied) return denied;
   server.timeout?.(req, proxiedRouteIdleSeconds());
-  return admitChatCompletions(req, admission, (admitted) =>
-    handleOpenAIRoute(admitted, url, clientAddress, opts, gate, server, false),
+  return captureInference(req, url.pathname, () =>
+    admitChatCompletions(req, admission, (admitted) =>
+      handleOpenAIRoute(admitted, url, clientAddress, opts, gate, server, false),
+    ),
   ).catch((err: unknown) => {
     console.warn("admitted proxy route forward failed", { path: url.pathname, error: err });
     return new Response(JSON.stringify({ error: { type: "api_error" } }), {
@@ -908,6 +925,7 @@ function createAgentFetchHandler(args: {
   workerRpc: WorkerRpcServing | null;
 }): AgentFetchHandler {
   const { opts, endpoint, tunnelServer, gate, workerRpc } = args;
+  scheduleCaptureExpiry();
   return (req, server) => {
     const url = new URL(req.url);
     const clientAddress = typeof server.requestIP === "function" ? server.requestIP(req) : null;
@@ -1673,6 +1691,7 @@ function applyAgentRuntimeIdentity(opts: StartAgentOptions): void {
       ? { memoryBudgetBytes: opts.runtimeMemoryBudgetBytes }
       : {}),
   });
+  setRuntimeProcessMemoryReader(opts.processMemoryReader ?? defaultProcessMemoryReader());
 }
 
 function startAgentServerAfterHandlers(

@@ -4,7 +4,7 @@ import { defaultProvenanceReaders } from "../perf/provenance.js";
 import { matrixLaunchRefusal } from "./launch-gate.js";
 import { renderCsvReport, renderMarkdownReport } from "./report.js";
 import { runMatrix } from "./runner.js";
-import { listCellRows } from "./store.js";
+import { listCellRows, listMatrixProvenance } from "./store.js";
 import {
   EVAL_ENGINES,
   type EvalEngine,
@@ -280,7 +280,7 @@ function resolveWorkloads(
   return workloads;
 }
 
-async function writeReport(opts: {
+export async function writeReport(opts: {
   report: "md" | "csv" | "both";
   reportOut: string | undefined;
   db: Database;
@@ -293,7 +293,11 @@ async function writeReport(opts: {
   const cells = opts.reportAllRuns
     ? listCellRows(opts.db)
     : listCellRows(opts.db, { run_id: opts.runId });
-  const reportOpts = opts.reportAllRuns ? {} : { runId: opts.runId };
+  const provenance = listMatrixProvenance(
+    opts.db,
+    opts.reportAllRuns ? {} : { run_id: opts.runId },
+  );
+  const reportOpts = opts.reportAllRuns ? { provenance } : { runId: opts.runId, provenance };
   if (opts.report === "md") {
     await Bun.write(opts.reportOut, renderMarkdownReport(cells, reportOpts));
     return;

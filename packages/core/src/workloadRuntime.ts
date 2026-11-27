@@ -173,6 +173,12 @@ function endpointPortForUrl(url: URL): number {
 interface PeerAdmissionHolder {
   /** True while every admitted route for this model id is experimental. */
   experimentalOnly: boolean;
+  /** True once a route this node would actually serve for the id is in play:
+   *  any local route (local routes stay authoritative, even a degraded one)
+   *  or a peer route that is neither experimental nor degraded (#518). While
+   *  false the id is held only by routes the router demotes or excludes, so a
+   *  healthy peer is still admitted rather than shadowed. */
+  healthy: boolean;
   /** Qualification stage of the first local route for this id, inherited by
    *  unlabeled peer routes when stageByModel has no entry (#518). */
   stage?: string;
@@ -183,12 +189,15 @@ function seedPeerHolders(localRoutes: readonly LocalRoute[]): Map<string, PeerAd
   for (const route of localRoutes) {
     const holder = holders.get(route.model);
     if (holder === undefined) {
+      const experimental = isExperimentalRoute(route);
       holders.set(route.model, {
-        experimentalOnly: isExperimentalRoute(route),
+        experimentalOnly: experimental,
+        healthy: !experimental,
         ...(route.qualificationStage !== undefined ? { stage: route.qualificationStage } : {}),
       });
     } else if (!isExperimentalRoute(route)) {
       holder.experimentalOnly = false;
+      holder.healthy = true;
     }
   }
   return holders;
@@ -210,11 +219,13 @@ function sanitizePeerLabels(
 }
 
 /**
- * #518 admission: a route is admitted when no route exists for its id yet,
- * or when the id is held only by experimental routes and this route is not
- * experimental (the holder then flips to mixed). An experimental route for
- * an id with a non-experimental holder is skipped, so experimental never
- * shadows a stable route.
+ * #518 admission, evaluated on the route after its stage is set: admit when no
+ * route exists for its id yet, when the id is held only by experimental routes
+ * and this route is not experimental (the holder flips to mixed), or when the
+ * id is held only by degraded/experimental peer routes and this route is
+ * healthy (neither experimental nor degraded). So a degraded peer never
+ * shadows a healthy one, while local routes stay authoritative over every
+ * peer and one healthy peer is enough to close the id.
  */
 function admitPeerRoute(
   holders: Map<string, PeerAdmissionHolder>,
@@ -222,15 +233,37 @@ function admitPeerRoute(
 ): boolean {
   const holder = holders.get(route.model);
   const experimental = isExperimentalRoute(route);
+  const degraded = route.qualificationStage === "degraded";
   if (holder === undefined) {
-    holders.set(route.model, { experimentalOnly: experimental });
+    holders.set(route.model, {
+      experimentalOnly: experimental,
+      healthy: !experimental && !degraded,
+    });
     return true;
   }
   if (holder.experimentalOnly && !experimental) {
     holder.experimentalOnly = false;
+    holder.healthy = !degraded;
+    return true;
+  }
+  if (!holder.healthy && !experimental && !degraded) {
+    holder.healthy = true;
     return true;
   }
   return false;
+}
+
+/** Stage a peer route carries (#518): an explicit `degraded` label demotes the
+ *  peer route but never lifts an inherited experimental stage; any other
+ *  explicit label suppresses inheritance outright, so the route stays
+ *  unstageable from a peer's word alone; an unlabelled route inherits. */
+function peerRouteStage(
+  label: string | undefined,
+  inheritedStage: string | undefined,
+): string | undefined {
+  if (label === undefined) return inheritedStage;
+  if (label !== "degraded") return undefined;
+  return inheritedStage === "experimental" ? "experimental" : "degraded";
 }
 
 function peerTlsFields(peer: ClusterConfigPeer): {
@@ -245,11 +278,12 @@ function peerTlsFields(peer: ClusterConfigPeer): {
   };
 }
 
-/** Append routes for one healthy peer snapshot, admitting per #518.
- *  Unlabeled peer routes inherit a qualification stage (stageByModel first,
- *  then the first local route's stage), so a peer serving a locally
- *  experimental id stays shadowed; an explicit peer label always beats the
- *  inherited stage. */
+/** Append routes for one healthy peer snapshot, admitting per #518. The
+ *  inherited stage (stageByModel first, then the first local route's stage) is
+ *  always computed: an unlabelled peer route carries it, a `degraded` peer
+ *  label demotes to `degraded` unless the inherited stage is `experimental`
+ *  (a peer can add an exclusion, never lift one), and any other explicit peer
+ *  label suppresses the inheritance. */
 function appendPeerRoutes(
   routes: ClusterRoute[],
   holders: Map<string, PeerAdmissionHolder>,
@@ -266,11 +300,9 @@ function appendPeerRoutes(
 
   for (const workload of snapshot.workloads) {
     const labels = sanitizePeerLabels(workload.labels);
-    // An explicit peer qualification label beats any inherited stage.
-    const inherited =
-      labels?.[QUALIFICATION_LABEL] === undefined
-        ? (stageByModel?.get(workload.modelId) ?? holders.get(workload.modelId)?.stage)
-        : undefined;
+    const inheritedStage =
+      stageByModel?.get(workload.modelId) ?? holders.get(workload.modelId)?.stage;
+    const stage = peerRouteStage(labels?.[QUALIFICATION_LABEL], inheritedStage);
     const route: ClusterRoute = {
       workload: `${peer.id}:${workload.modelId}`,
       model: workload.modelId,
@@ -284,7 +316,7 @@ function appendPeerRoutes(
       targetNodeId: peer.id,
       revision: workload.revision ?? null,
       ...(labels !== undefined ? { labels } : {}),
-      ...(inherited !== undefined ? { qualificationStage: inherited } : {}),
+      ...(stage !== undefined ? { qualificationStage: stage } : {}),
     };
     if (!admitPeerRoute(holders, route)) continue;
     routes.push(route);
@@ -298,7 +330,12 @@ function appendPeerRoutes(
  * basename(rel) alias matching, so a peer advertising a basename alias of a
  * locally experimental rel does not inherit the stage; it is instead flagged
  * experimental by the peer's own `llamactl.io/qualification` label, which the
- * peer's local-routes snapshot now carries (#518). Known limitation
+ * peer's local-routes snapshot now carries (#518). A peer may also advertise
+ * `llamactl.io/qualification: degraded`, which demotes its own route while
+ * never lifting an inherited experimental stage; because a degraded-only peer
+ * holder no longer closes the id, two peer routes for one id can be admitted,
+ * and the legacy (flag-off) comparator ignores degraded, so the first admitted
+ * peer route by workload name leads the legacy listing. Known limitation
  * tracked by the #518 follow-up (create-proxy) alongside the legacyWinner
  * divergence documented on RouteCandidate in routing/catalog.ts.
  */
