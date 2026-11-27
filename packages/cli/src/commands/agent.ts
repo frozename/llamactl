@@ -32,6 +32,7 @@ import {
   readCertSans,
 } from "./agent-status.js";
 import { writeTokenFile } from "./agent-token.js";
+import { keychainBearerRefProblem, keychainRefShapeError } from "./bearer-ref.js";
 import { runHeal } from "./heal.js";
 
 // #289: default bearer files inside the agent dir, slotted between the
@@ -1490,7 +1491,21 @@ export function parseServeFlags(args: string[]): ServeFlags | { error: string } 
     }
     if (identityError !== undefined) return identityError;
   }
-  return flags;
+  return checkServeBearerRefs(flags) ?? flags;
+}
+
+// #289: reject a malformed --*-bearer-ref while parsing, before any
+// resolver (and so the `security` binary) is reached.
+function checkServeBearerRefs(flags: ServeFlags): { error: string } | undefined {
+  for (const [ref, refLabel, fileLabel] of [
+    [flags.centralBearerRef, "--central-bearer-ref", "--central-bearer-file"],
+    [flags.tunnelBearerRef, "--tunnel-bearer-ref", "--tunnel-bearer-file"],
+  ] as const) {
+    if (ref === undefined) continue;
+    const err = bearerRefError(ref, refLabel, fileLabel);
+    if (err !== undefined) return { error: `agent serve: ${err}` };
+  }
+  return undefined;
 }
 
 // #367: validate and record --runtime-role / --memory-budget-bytes.
@@ -1514,7 +1529,7 @@ function applyRuntimeIdentityFlag(
   return undefined;
 }
 
-interface ServeWiring {
+export interface ServeWiring {
   dialUrl: string | undefined;
   dialBearer: string | undefined;
   tunnelCentralOn: boolean;
@@ -1536,7 +1551,12 @@ function fileBearer(path: string, label: string): ResolvedBearerSide | { error: 
 // #289: only keychain refs are accepted as bearer references. An env:/$
 // ref would put the token back into the process env this function scrubs,
 // and a file: ref would bypass the 0600 check readBearerFile applies.
-const KEYCHAIN_REF_PREFIX = "keychain:";
+function bearerRefError(ref: string, refLabel: string, fileLabel: string): string | undefined {
+  const problem = keychainBearerRefProblem(ref);
+  if (problem === null) return undefined;
+  if (problem === "shape") return keychainRefShapeError(refLabel);
+  return `${refLabel}: only keychain:<service>/<account> refs are supported; for a file use ${fileLabel}=<abs path> (0600)`;
+}
 
 interface BearerSideSources {
   literal: string | undefined;
@@ -1573,12 +1593,9 @@ function keychainBearer(
   fileLabel: string,
   secretResolver: () => SecretResolver,
 ): ResolvedBearerSide | { error: string } {
+  const refError = bearerRefError(ref, refLabel, fileLabel);
+  if (refError !== undefined) return { error: refError };
   const trimmed = ref.trim();
-  if (!trimmed.startsWith(KEYCHAIN_REF_PREFIX)) {
-    return {
-      error: `${refLabel}: only keychain:<service>/<account> refs are supported; for a file use ${fileLabel}=<abs path> (0600)`,
-    };
-  }
   let bearer: string;
   try {
     bearer = secretResolver().resolve(trimmed);
@@ -1738,6 +1755,7 @@ function checkTunnelCentral(
   parsed: ServeFlags,
   tunnelCentralOn: boolean,
   tunnelCentralBearer: string | undefined,
+  warn: (msg: string) => void,
 ): string | null {
   if (tunnelCentralOn) {
     if (!tunnelCentralBearer) {
@@ -1753,14 +1771,33 @@ function checkTunnelCentral(
     [parsed.tunnelBearerRef, "--tunnel-bearer-ref"],
   ] as const) {
     if (value !== undefined) {
-      process.stderr.write(`warning: ${label} set without --tunnel-central=true; ignoring\n`);
+      warn(`warning: ${label} set without --tunnel-central=true; ignoring\n`);
     }
   }
   return null;
 }
 
-function validateServeWiring(parsed: ServeFlags): ServeWiring | { error: string } {
-  const bearers = resolveServeBearers(parsed, process.env, (m) => process.stderr.write(m));
+/** #289 test seam: env, warning sink and keychain resolver for serve wiring. */
+export interface ServeWiringDeps extends ServeBearerDeps {
+  env?: NodeJS.ProcessEnv;
+  warn?: (msg: string) => void;
+}
+
+export function validateServeWiring(
+  parsed: ServeFlags,
+  deps: ServeWiringDeps = {},
+): ServeWiring | { error: string } {
+  const warn =
+    deps.warn ??
+    ((m: string): void => {
+      process.stderr.write(m);
+    });
+  const bearers = resolveServeBearers(
+    parsed,
+    deps.env ?? process.env,
+    warn,
+    deps.secretResolver === undefined ? {} : { secretResolver: deps.secretResolver },
+  );
   if ("error" in bearers) return { error: `${bearers.error}\n` };
 
   const dialUrl = parsed.dialCentral;
@@ -1773,7 +1810,7 @@ function validateServeWiring(parsed: ServeFlags): ServeWiring | { error: string 
 
   const tunnelCentralOn = parsed.tunnelCentral === true;
   const tunnelCentralBearer = bearers.tunnelCentralBearer;
-  const tunnelErr = checkTunnelCentral(parsed, tunnelCentralOn, tunnelCentralBearer);
+  const tunnelErr = checkTunnelCentral(parsed, tunnelCentralOn, tunnelCentralBearer, warn);
   if (tunnelErr) return { error: tunnelErr };
 
   return { dialUrl, dialBearer, tunnelCentralOn, tunnelCentralBearer };

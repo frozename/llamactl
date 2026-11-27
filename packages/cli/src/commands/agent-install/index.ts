@@ -27,6 +27,7 @@ import {
   type Platform,
   resolveSourceDefault,
 } from "../artifacts.js";
+import { keychainBearerRefProblem, keychainRefShapeError } from "../bearer-ref.js";
 import { type BuildPlistOptions, buildSystemPlist, buildUserPlist } from "./templates.js";
 
 /**
@@ -353,9 +354,7 @@ function applyInstallKeyValueFlag(
 // #289: a bearer reference may only point at the macOS login keychain. An
 // env:/$ ref would need the token in the launchd session env (which a
 // plist cannot carry) and a file: ref would bypass the 0600 check the
-// --*-bearer-file flags apply.
-const KEYCHAIN_REF_PREFIX = "keychain:";
-
+// --*-bearer-file flags apply. The shape check lives in ../bearer-ref.ts.
 function applyBearerRefFlag(
   value: string,
   side: "central" | "tunnel",
@@ -374,12 +373,34 @@ function bearerRefError(
   refLabel: string,
   fileLabel: string,
 ): { error: string } | null {
-  if (value.trim().startsWith(KEYCHAIN_REF_PREFIX)) return null;
+  const problem = keychainBearerRefProblem(value);
+  if (problem === null) return null;
+  if (problem === "shape") {
+    return { error: `agent install-launchd: ${keychainRefShapeError(refLabel)}` };
+  }
   return {
     error:
       `agent install-launchd: ${refLabel} must be a keychain:<service>/<account> ref ` +
       `(macOS login keychain, resolved by the agent at serve time); for a file use ` +
       `${fileLabel}=<abs path> (a 0600 file)`,
+  };
+}
+
+// #289: only a user-scope LaunchAgent runs inside the login session that
+// can read the login keychain; a system LaunchDaemon would fail at serve
+// time, so refuse the combination while parsing.
+function checkBearerRefScope(state: InstallFlagState): { error: string } | null {
+  if (state.scope !== "system") return null;
+  const refLabel = [
+    state.centralBearerRef !== undefined ? "--central-bearer-ref" : null,
+    state.tunnelBearerRef !== undefined ? "--tunnel-bearer-ref" : null,
+  ].find((label) => label !== null);
+  if (refLabel === undefined) return null;
+  return {
+    error:
+      `agent install-launchd: ${refLabel} needs --scope=user (a LaunchAgent in the login ` +
+      "session, the only scope that can read the login keychain); --scope=system cannot " +
+      "resolve keychain refs, so use a --*-bearer-file instead",
   };
 }
 
@@ -524,6 +545,8 @@ export function parseInstallLaunchdFlags(argv: string[]): InstallLaunchdFlags | 
   if ("error" in source) return source;
   const wiringErr = checkTunnelWiringFlags(state);
   if (wiringErr !== null) return wiringErr;
+  const scopeErr = checkBearerRefScope(state);
+  if (scopeErr !== null) return scopeErr;
 
   return {
     scope: state.scope,

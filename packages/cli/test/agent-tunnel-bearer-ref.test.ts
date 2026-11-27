@@ -12,7 +12,7 @@ import { join } from "node:path";
 import * as agentCmd from "../src/commands/agent.js";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
-const { parseServeFlags } = agentCmd;
+const { parseServeFlags, validateServeWiring } = agentCmd;
 
 interface ResolvedBearers {
   dialBearer?: string;
@@ -428,6 +428,163 @@ describe("agent serve bearer-ref flags (#289)", () => {
         ),
       );
       expect(err).not.toContain("fake-keychain-tok");
+    });
+  });
+
+  test("a resolved keychain bearer never lands in process.env or the handed env", () => {
+    withTempDir("llamactl-bearer-ref-env-isolation-", (dir) => {
+      const token = "fake-keychain-tok-env-isolation";
+      const calls: [string, string][] = [];
+      const env: NodeJS.ProcessEnv = { LLAMACTL_TUNNEL_BEARER: "plain-env-tok" };
+      const result = resolveWithKeychain(
+        {
+          dir,
+          dialCentral: "wss://h/t",
+          centralBearerRef: "keychain:llamactl/tunnel-bearer",
+          tunnelCentral: true,
+          tunnelBearerRef: "keychain:llamactl/tunnel-central-bearer",
+        },
+        env,
+        calls,
+        [],
+        { result: `${token}\n` },
+      );
+      const ok = expectOk(result);
+      expect(ok.dialBearer).toBe(token);
+      expect(ok.tunnelCentralBearer).toBe(token);
+      const leakedProcessKeys = Object.entries({ ...process.env })
+        .filter(([, value]) => value?.includes(token) === true)
+        .map(([key]) => key);
+      expect(leakedProcessKeys).toEqual([]);
+      const leakedEnvKeys = Object.entries(env)
+        .filter(([, value]) => value?.includes(token) === true)
+        .map(([key]) => key);
+      expect(leakedEnvKeys).toEqual([]);
+    });
+  });
+});
+
+describe("agent serve bearer-ref parse-time shape check (#289)", () => {
+  test.each([
+    "keychain:noslash",
+    "keychain:/account",
+    "keychain:service/",
+    "keychain:",
+    "keychain: / ",
+  ] as const)("--central-bearer-ref=%s is rejected at parse time", (ref) => {
+    const parsed = parseServeFlags(["--dial-central=wss://h/t", `--central-bearer-ref=${ref}`]);
+    expect("error" in parsed).toBe(true);
+    if ("error" in parsed) {
+      expect(parsed.error).toContain("--central-bearer-ref");
+      expect(parsed.error).toContain("non-empty service and account");
+    }
+  });
+
+  test.each(["keychain:noslash", "keychain:/account", "keychain:service/"] as const)(
+    "--tunnel-bearer-ref=%s is rejected at parse time",
+    (ref) => {
+      const parsed = parseServeFlags(["--tunnel-central=true", `--tunnel-bearer-ref=${ref}`]);
+      expect("error" in parsed).toBe(true);
+      if ("error" in parsed) {
+        expect(parsed.error).toContain("--tunnel-bearer-ref");
+        expect(parsed.error).toContain("non-empty service and account");
+      }
+    },
+  );
+
+  test("a non-keychain ref is rejected at parse time too", () => {
+    const parsed = parseServeFlags(["--dial-central=wss://h/t", "--central-bearer-ref=env:FOO"]);
+    expect("error" in parsed).toBe(true);
+    if ("error" in parsed) {
+      expect(parsed.error).toContain("--central-bearer-ref");
+      expect(parsed.error).toContain("keychain:");
+    }
+  });
+
+  test("an account containing a slash is accepted (service splits at the first slash)", () => {
+    const parsed = parseServeFlags([
+      "--dial-central=wss://h/t",
+      "--central-bearer-ref=keychain:llamactl/tunnel/bearer",
+    ]);
+    expect("error" in parsed).toBe(false);
+  });
+});
+
+describe("agent serve wiring with bearer refs (#289)", () => {
+  function parseOk(args: string[]): agentCmd.ServeFlags {
+    const parsed = parseServeFlags(args);
+    expect("error" in parsed).toBe(false);
+    if ("error" in parsed) {
+      throw new Error("unreachable");
+    }
+    return parsed;
+  }
+
+  test("--central-bearer-ref without --dial-central fails even when the ref resolves", () => {
+    withTempDir("llamactl-bearer-ref-no-dial-", (dir) => {
+      const calls: [string, string][] = [];
+      const warnings: string[] = [];
+      const parsed = parseOk([`--dir=${dir}`, "--central-bearer-ref=keychain:svc/acct"]);
+      const wiring = validateServeWiring(parsed, {
+        env: {},
+        warn: (m) => {
+          warnings.push(m);
+        },
+        secretResolver: makeKeychainResolver(calls),
+      });
+      expect("error" in wiring).toBe(true);
+      if ("error" in wiring) {
+        expect(wiring.error).toContain("--dial-central");
+        expect(wiring.error).not.toContain("fake-keychain-tok");
+      }
+      expect(calls).toEqual([["svc", "acct"]]);
+    });
+  });
+
+  test("--central-bearer-ref with --dial-central wires the dial side", () => {
+    withTempDir("llamactl-bearer-ref-dial-wiring-", (dir) => {
+      const calls: [string, string][] = [];
+      const warnings: string[] = [];
+      const parsed = parseOk([
+        `--dir=${dir}`,
+        "--dial-central=wss://h/t",
+        "--central-bearer-ref=keychain:svc/acct",
+      ]);
+      const wiring = validateServeWiring(parsed, {
+        env: {},
+        warn: (m) => {
+          warnings.push(m);
+        },
+        secretResolver: makeKeychainResolver(calls),
+      });
+      expect("error" in wiring).toBe(false);
+      if (!("error" in wiring)) {
+        expect(wiring.dialUrl).toBe("wss://h/t");
+        expect(wiring.dialBearer).toBe("fake-keychain-tok");
+      }
+      expect(warnings).toEqual([]);
+    });
+  });
+
+  test("--tunnel-bearer-ref without --tunnel-central=true warns naming the ref flag", () => {
+    withTempDir("llamactl-bearer-ref-central-off-", (dir) => {
+      const calls: [string, string][] = [];
+      const warnings: string[] = [];
+      const parsed = parseOk([`--dir=${dir}`, "--tunnel-bearer-ref=keychain:svc/acct"]);
+      const wiring = validateServeWiring(parsed, {
+        env: {},
+        warn: (m) => {
+          warnings.push(m);
+        },
+        secretResolver: makeKeychainResolver(calls),
+      });
+      expect("error" in wiring).toBe(false);
+      if (!("error" in wiring)) {
+        expect(wiring.tunnelCentralOn).toBe(false);
+      }
+      expect(warnings).toEqual([
+        "warning: --tunnel-bearer-ref set without --tunnel-central=true; ignoring\n",
+      ]);
     });
   });
 });

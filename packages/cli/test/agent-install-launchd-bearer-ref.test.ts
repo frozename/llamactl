@@ -203,4 +203,72 @@ describe("install-launchd bearer-ref flags (#289)", () => {
       expect(parsed.error).toContain("--tunnel-bearer-ref");
     }
   });
+
+  test.each([
+    ["--scope=system", "--dial-central=wss://h:7843/tunnel", "--central-bearer-ref=keychain:a/b"],
+    ["--dial-central=wss://h:7843/tunnel", "--central-bearer-ref=keychain:a/b", "--scope=system"],
+  ] as const)("--scope=system with --central-bearer-ref is rejected (%s %s %s)", (a, b, c) => {
+    const parsed = parseInstallLaunchdFlags([a, b, c]);
+    expect("error" in parsed).toBe(true);
+    if ("error" in parsed) {
+      expect(parsed.error).toContain("--central-bearer-ref");
+      expect(parsed.error).toContain("--scope=user");
+    }
+  });
+
+  test("--scope=system with --tunnel-bearer-ref is rejected", () => {
+    const parsed = parseInstallLaunchdFlags(["--scope=system", "--tunnel-bearer-ref=keychain:a/b"]);
+    expect("error" in parsed).toBe(true);
+    if ("error" in parsed) {
+      expect(parsed.error).toContain("--tunnel-bearer-ref");
+      expect(parsed.error).toContain("--scope=user");
+    }
+  });
+
+  test("--scope=system with bearer files stays accepted", () => {
+    const parsed = parseInstallLaunchdFlags([
+      "--scope=system",
+      "--dial-central=wss://h:7843/tunnel",
+      "--central-bearer-file=/abs/tb",
+      "--tunnel-bearer-file=/abs/cb",
+    ]);
+    expect("error" in parsed).toBe(false);
+  });
+
+  test("--scope=user (the default) with bearer refs stays accepted", () => {
+    const parsed = parseInstallLaunchdFlags([
+      "--scope=user",
+      "--dial-central=wss://h:7843/tunnel",
+      "--central-bearer-ref=keychain:a/b",
+      "--tunnel-bearer-ref=keychain:c/d",
+    ]);
+    expect("error" in parsed).toBe(false);
+  });
+
+  test.each(["keychain:noslash", "keychain:/account", "keychain:service/", "keychain:"] as const)(
+    "malformed --central-bearer-ref=%s is rejected at parse time",
+    (ref) => {
+      const parsed = parseInstallLaunchdFlags([
+        "--dial-central=wss://h:7843/tunnel",
+        `--central-bearer-ref=${ref}`,
+      ]);
+      expect("error" in parsed).toBe(true);
+      if ("error" in parsed) {
+        expect(parsed.error).toContain("--central-bearer-ref");
+        expect(parsed.error).toContain("non-empty service and account");
+      }
+    },
+  );
+
+  test.each(["keychain:noslash", "keychain:/account", "keychain:service/"] as const)(
+    "malformed --tunnel-bearer-ref=%s is rejected at parse time",
+    (ref) => {
+      const parsed = parseInstallLaunchdFlags([`--tunnel-bearer-ref=${ref}`]);
+      expect("error" in parsed).toBe(true);
+      if ("error" in parsed) {
+        expect(parsed.error).toContain("--tunnel-bearer-ref");
+        expect(parsed.error).toContain("non-empty service and account");
+      }
+    },
+  );
 });
