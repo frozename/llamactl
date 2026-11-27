@@ -19,6 +19,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { isIP } from "node:net";
 
 import type { InferenceHolds } from "./inference-holds.js";
+import type { OwnerActivity } from "./owner-activity.js";
 
 import { bearerFromHeader } from "../server/auth.js";
 import { admissionErrorResponse } from "../server/chat-admission.js";
@@ -36,6 +37,7 @@ interface ExecutionGroup {
   admission: ReservableRequestAdmission;
   bounds: OwnerRequestBounds;
   inferenceHolds?: InferenceHolds;
+  activity?: OwnerActivity;
   unconfirmed: AbortController;
   stopping: AbortController;
 }
@@ -64,6 +66,7 @@ export interface OwnerAdmission {
   acquire: (request: LocalEngineRequest) => OwnerReservation | undefined;
   forward: LocalEngineForwarder;
   stop: () => void;
+  isQuiescent: () => boolean;
   snapshot: () => OwnerAdmissionSnapshot[];
 }
 
@@ -370,6 +373,8 @@ function preflightMatched(
     return { refusal: new RequestAdmissionError("DeadlineExceeded", null, id) };
   const bounded = boundOwnerRequest(request, group.bounds, expectedModel);
   if ("code" in bounded) return { refusal: new RequestAdmissionError(bounded.code, null, id) };
+  if (group.activity?.allowDemand() === false)
+    return { refusal: new RequestAdmissionError("LoadFailed", 1_000, "owner-activity-paused") };
   return {
     body: bounded.body,
     request: {
@@ -426,9 +431,15 @@ async function forwardWithPermit(
   }
 }
 
+function groupQuiescent(group: ExecutionGroup): boolean {
+  if (group.unconfirmed.signal.aborted || group.stopping.signal.aborted) return false;
+  const { queued, executing } = group.admission.snapshot();
+  return queued === 0 && executing === 0;
+}
+
 export function createOwnerAdmission(
   config: ExecutionAdmissionConfig,
-  options: { noAuth?: boolean; inferenceHolds?: InferenceHolds } = {},
+  options: { noAuth?: boolean; inferenceHolds?: InferenceHolds; activity?: OwnerActivity } = {},
 ): OwnerAdmission {
   const targets = new Map<number, { group: ExecutionGroup; priority: RequestPriority }>();
   const groups = ExecutionAdmissionSchema.parse(config).map((spec): ExecutionGroup => {
@@ -437,6 +448,7 @@ export function createOwnerAdmission(
       model,
       bounds: spec,
       ...(options.inferenceHolds === undefined ? {} : { inferenceHolds: options.inferenceHolds }),
+      ...(options.activity === undefined ? {} : { activity: options.activity }),
       unconfirmed: new AbortController(),
       stopping: new AbortController(),
       admission: createRequestAdmission({
@@ -504,6 +516,7 @@ export function createOwnerAdmission(
     stop: (): void => {
       for (const group of groups) group.stopping.abort();
     },
+    isQuiescent: (): boolean => groups.length > 0 && groups.every(groupQuiescent),
     snapshot: (): OwnerAdmissionSnapshot[] =>
       groups.map(({ admission, model, unconfirmed }) => {
         const { queued, queuedBytes, executing } = admission.snapshot();

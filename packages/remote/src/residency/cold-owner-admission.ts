@@ -73,6 +73,7 @@ export interface ColdOwnerAdmission {
   forward: ColdEngineForwarder;
   stop: () => void;
   whenIdle: () => Promise<void>;
+  isQuiescent: () => boolean;
   snapshot: () => QueueSnapshot;
 }
 
@@ -128,6 +129,7 @@ class ColdOwnerAdmissionImpl implements ColdOwnerAdmission {
   private readonly byModel = new Map<string, ColdBatch>();
   private readonly activeLoads = new Set<Promise<void>>();
   private readonly admission;
+  private pendingAdmissions = 0;
 
   constructor(private readonly opts: ColdOwnerOptions) {
     this.admission = createRequestAdmission({
@@ -285,7 +287,7 @@ class ColdOwnerAdmissionImpl implements ColdOwnerAdmission {
     }) ?? ownerRefusal("cold_owner_unavailable"));
   }
 
-  forward: ColdEngineForwarder = async (dispatch): Promise<Response> => {
+  private async forwardRequest(dispatch: ColdEngineDispatch): Promise<Response> {
     if (dispatch.clientSignal.aborted) return new Response(null, { status: 499 });
     if (this.blocked.signal.aborted) return ownerRefusal("cold_owner_fenced");
     if (this.stopped.signal.aborted) return ownerRefusal("cold_owner_unavailable");
@@ -310,6 +312,16 @@ class ColdOwnerAdmissionImpl implements ColdOwnerAdmission {
     if (batch === undefined) return ownerRefusal("cold_owner_unavailable");
     // Warm preflight owns the effective body. The queue keeps only its bounded costs.
     return await this.queueAndForward(batch, request, dispatch, checked.request);
+  }
+
+  forward: ColdEngineForwarder = async (dispatch): Promise<Response> => {
+    // Keep cold demand visible through the handoff to warm admission.
+    this.pendingAdmissions++;
+    try {
+      return await this.forwardRequest(dispatch);
+    } finally {
+      this.pendingAdmissions--;
+    }
   };
 
   stop = (): void => {
@@ -319,6 +331,13 @@ class ColdOwnerAdmissionImpl implements ColdOwnerAdmission {
   whenIdle = async (): Promise<void> => {
     await Promise.allSettled(this.activeLoads);
   };
+
+  isQuiescent = (): boolean =>
+    !this.blocked.signal.aborted &&
+    !this.stopped.signal.aborted &&
+    this.pendingAdmissions === 0 &&
+    this.activeLoads.size === 0 &&
+    this.admission.snapshot().loading === null;
 
   snapshot = (): QueueSnapshot => this.admission.snapshot();
 }

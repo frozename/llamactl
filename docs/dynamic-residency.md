@@ -507,7 +507,11 @@ llamactl residency cancel-operation <operationId> --yes --node <name>
 
 **Rollback.** Fence new canary traffic and drain active requests. If a committed switch has an unknown outcome, stop rollout and preserve the operation ID, fence, replacement process identity and reservation evidence. Keep the committed reservation, fence and lifecycle rows intact. Keep the node out of the canary while the claim, process or release is uncertain. Cancellation, a missing PID file, an agent restart, and elapsed time are insufficient release evidence. Before restoring the prior profile, prove the exact replacement generation is down and its capacity is released. Then reconcile the durable claim through a supported operation and obtain a fresh finite reservation before restoring any victim. If the build has no supported resolution path, leave the hold in place and record the blocker. Verify the restored profile's readiness, protected routes, and remaining budget before restoring traffic.
 
-Automatic maintenance windows remain gated. The owner needs one activity fence shared by warm admissions, cold activations and terminal engine completion, plus a bounded transition deadline that preserves unresolved capacity. Manual selection uses the authenticated profile command above.
+Managed profile execution consumes the plan's deadline across the drain, stops and starts. A plan that expires before actuation settles without starting or stopping an engine. A timed-out dispatched stop keeps the affected workload fenced, and uncertain dispatch retains the durable charge for recovery.
+
+A programmatic managed owner can opt in to admission quiescence by supplying an exclusive-ingress verifier. Acquisition checks the warm queue, cold activation and handoff, active leases and durable inference holds. New demand invalidates the pause. Admission stays closed until its owning handle releases it. The capability requires authenticated managed cold ingress and declines Worker RPC configurations.
+
+Automatic maintenance windows remain gated on a qualified exclusive-ingress deployment and an authorized scheduling policy. Manual selection uses the authenticated profile command above.
 
 ### Stage 2 - request-driven admission and declared models
 
