@@ -3,8 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { mkdirSync, mkdtempSync, rmSync } from "../../src/safe-fs.js";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
 import { parseNodeRun, saveNodeRun } from "../../src/workload/noderun-store.js";
+import { parseWorkload, saveWorkload } from "../../src/workload/store.js";
 
 function ownerEnvironment(dir: string, node: string): NodeJS.ProcessEnv {
   mkdirSync(dir, { recursive: true });
@@ -34,8 +35,12 @@ function boot(
   workload: string,
   statusPath: string,
 ): Bun.Subprocess {
-  const script = fileURLToPath(new URL("./fleet-fixture-owner.ts", import.meta.url));
-  return Bun.spawn([process.execPath, script, node, target, workload, statusPath], {
+  return bootFixture("./fleet-fixture-owner.ts", env, [node, target, workload, statusPath]);
+}
+
+function bootFixture(name: string, env: NodeJS.ProcessEnv, args: string[]): Bun.Subprocess {
+  const script = fileURLToPath(new URL(name, import.meta.url));
+  return Bun.spawn([process.execPath, script, ...args], {
     env,
     stdin: "ignore",
     stdout: "ignore",
@@ -164,3 +169,196 @@ test.skipIf(process.platform !== "darwin" && process.platform !== "linux")(
   },
   15_000,
 );
+
+async function publicationEngine(
+  dir: string,
+): Promise<{ endpoint: string; binary: string; port: number }> {
+  const reservation = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: () => new Response(null, { status: 204 }),
+  });
+  const { port } = reservation;
+  await reservation.stop(true);
+  if (port === undefined) throw new Error("missing fixture port");
+  const binary = join(dir, "fixture-llama-server");
+  const source = `
+    Bun.serve({hostname:"127.0.0.1", port:${String(port)}, fetch(req) {
+      const path = new URL(req.url).pathname;
+      if (path === "/__stop_fixture") {
+        setTimeout(() => process.exit(0), 5);
+        return new Response(null, { status: 204 });
+      }
+      if (path === "/health") return new Response("publication fixture healthy");
+      return Response.json({fixture:"unpublished engine received a request"});
+    }});
+    setTimeout(() => process.exit(0), 15000);
+  `;
+  writeFileSync(
+    binary,
+    `#!/bin/bash\nexec -a llama-server ${JSON.stringify(process.execPath)} -e ${JSON.stringify(source.replaceAll("\n", " "))} -- "$@"\n`,
+    { mode: 0o755 },
+  );
+  return { endpoint: `http://127.0.0.1:${String(port)}`, binary, port };
+}
+
+async function waitForFixtureEngine(endpoint: string): Promise<void> {
+  const deadline = performance.now() + 3000;
+  while (performance.now() < deadline) {
+    try {
+      const response = await fetch(`${endpoint}/health`, { signal: AbortSignal.timeout(100) });
+      if (response.ok && (await response.text()) === "publication fixture healthy") return;
+    } catch {
+      // The detached fixture process may still be binding its port.
+    }
+    await Bun.sleep(20);
+  }
+  throw new Error("the detached fixture engine did not become reachable");
+}
+
+function savePublicationWorkload(
+  workloadsDir: string,
+  engine: { binary: string; port: number },
+  name: string,
+  rel: string,
+  allocationGiB: number,
+): void {
+  saveWorkload(
+    parseWorkload(`
+apiVersion: llamactl/v1
+kind: ModelRun
+metadata: { name: ${name} }
+spec:
+  node: local
+  target: { kind: rel, value: ${rel} }
+  endpoint: { host: 127.0.0.1, port: ${String(engine.port)} }
+  binary: ${JSON.stringify(engine.binary)}
+  resources: { expectedMemoryGiB: ${String(allocationGiB)} }
+`),
+    workloadsDir,
+  );
+}
+
+for (const stage of ["launch", "ready"] as const) {
+  test.skipIf(process.platform !== "darwin" && process.platform !== "linux")(
+    `restarting after managed ${stage === "launch" ? "spawn before PID recording" : "readiness commit"} retains the charge and hides the unpublished route`,
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), "llamactl-fleet-publication-crash-"));
+      const node = "publication-owner";
+      const workload = "unpublished";
+      const rel = "fixture-private.gguf";
+      const processes: Bun.Subprocess[] = [];
+      let endpoint: string | undefined;
+      try {
+        const engine = await publicationEngine(dir);
+        endpoint = engine.endpoint;
+        const workloadsDir = join(dir, "workloads");
+        const models = join(dir, "models");
+        mkdirSync(models);
+        writeFileSync(join(models, rel), "fixture");
+        writeFileSync(join(models, "replacement.gguf"), "fixture");
+        const env = {
+          ...ownerEnvironment(dir, node),
+          LLAMA_CPP_MODELS: models,
+          LLAMA_CPP_HOST: "127.0.0.1",
+          LLAMA_CPP_PORT: String(engine.port),
+          LLAMA_CPP_SERVER_ALIAS: rel,
+          LLAMA_CPP_CACHE: join(dir, "cache"),
+          LLAMA_CPP_LOGS: join(dir, "logs"),
+          LLAMA_CPP_USE_TUNED_ARGS: "false",
+          LLAMACTL_CONFIG: join(dir, "missing-fixture-config"),
+        };
+        savePublicationWorkload(workloadsDir, engine, workload, rel, 4);
+        savePublicationWorkload(
+          workloadsDir,
+          engine,
+          `${workload}-replacement`,
+          "replacement.gguf",
+          24,
+        );
+        const run = async (
+          mode: typeof stage | "recover",
+        ): Promise<{ signal: string | null; report: unknown }> => {
+          const path = join(dir, `${mode}.json`);
+          const child = bootFixture("./fleet-fixture-publication.ts", env, [
+            mode,
+            node,
+            workload,
+            path,
+          ]);
+          processes.push(child);
+          await child.exited;
+          return { signal: child.signalCode, report: await Bun.file(path).json() };
+        };
+
+        const crashed = await run(stage);
+        const { pid, claims } = crashed.report as {
+          pid?: number;
+          claims?: { generations?: { birthId?: string }[] }[];
+        };
+        expect(typeof pid).toBe("number");
+        expect(crashed.report).toMatchObject({
+          recordedPid: stage === "launch" ? null : pid,
+          state: stage === "launch" ? null : { pid, publicationPending: true },
+          claims: [
+            {
+              runtimeKey: workload,
+              state: stage === "launch" ? "pending" : "resident",
+              allocationGiB: 4,
+              generations: stage === "launch" ? [] : [{ pid }],
+            },
+          ],
+        });
+        expect(pid).toBeGreaterThan(0);
+        if (stage === "ready") expect(typeof claims?.[0]?.generations?.[0]?.birthId).toBe("string");
+        expect(crashed.signal).toBe("SIGKILL");
+        await waitForFixtureEngine(engine.endpoint);
+
+        const recovered = await run("recover");
+        expect(recovered.report).toMatchObject({
+          routes: { status: 204, body: "" },
+          status: {
+            status: 200,
+            body: {
+              result: {
+                data: {
+                  managed: {
+                    ledger: "available",
+                    claims: [
+                      {
+                        workload,
+                        state: stage === "launch" ? "uncertain" : "resident",
+                        allocationGiB: 4,
+                      },
+                    ],
+                  },
+                },
+              },
+            },
+          },
+          completion: { status: 503 },
+          replacement: {
+            status: 200,
+            body: { result: { data: { ok: false, reason: "BudgetExceeded" } } },
+          },
+        });
+        expect(JSON.stringify(recovered.report)).not.toContain(
+          "unpublished engine received a request",
+        );
+        expect(recovered.signal).toBeNull();
+      } finally {
+        if (endpoint !== undefined) {
+          await fetch(`${endpoint}/__stop_fixture`, { signal: AbortSignal.timeout(250) }).catch(
+            () => undefined,
+          );
+        }
+        for (const child of processes) {
+          if (child.exitCode === null && child.signalCode === null) child.kill();
+        }
+        await Promise.all(processes.map((child) => child.exited));
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+    15_000,
+  );
+}
