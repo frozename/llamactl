@@ -1,5 +1,6 @@
 import type { PeerNode } from "@llamactl/core/config/peers";
 import type { ResidencyPolicy } from "@llamactl/core/residency/admission";
+import type { ColdEngineForwarder } from "@llamactl/core/residency/engine-forwarder";
 import type { ResolvedEnv } from "@llamactl/core/types";
 
 /**
@@ -579,8 +580,15 @@ let sharedProxy: UnifiedProxy | null = null;
  * catalog construction — while "1" routes through the lazily created
  * shared unified composition.
  */
-export function dispatchProxyRequest(req: Request): Promise<Response> {
-  if (!unifiedProxyEnabled()) return openaiProxy.proxyOpenAI(req);
+export function dispatchProxyRequest(
+  req: Request,
+  trustedColdOwner?: ColdEngineForwarder,
+): Promise<Response> {
+  if (!unifiedProxyEnabled()) {
+    return trustedColdOwner === undefined
+      ? openaiProxy.proxyOpenAI(req)
+      : openaiProxy.proxyOpenAI(req, undefined, { trustedColdOwner });
+  }
   sharedProxy ??= createSharedUnifiedProxy();
   return sharedProxy.handleRequest(req);
 }
