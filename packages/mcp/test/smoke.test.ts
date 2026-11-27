@@ -208,8 +208,6 @@ const MCP_ONLY_EXCLUDED = new Set([
   "llamactl.fleet.supervisor.audit",
   "llamactl.fleet.supervisor.status",
   "llamactl.models.leaderboard",
-  // operator profile-switch mutation (#284 DF-11, this PR); Ops Chat projection is a later slice
-  "llamactl.residency.applyProfile",
   // operator cancel of an in-flight profile switch (#284 DF-11, this PR); Ops Chat projection is a later slice
   "llamactl.residency.cancelOperation",
   // operator-only destructive override (#278 DF-05); deliberately not in Ops Chat dispatch

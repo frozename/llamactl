@@ -304,6 +304,48 @@ test("authenticated manual control uses the managed launch and stop fences", asy
         arguments: argumentsFor,
       }),
     ).toMatchObject({ ok: false, error: { code: "ManagedControlUnavailable" } });
+    const profileTool = "llamactl.residency.applyProfile";
+    const profileArguments = { node, to: profile, managed: true };
+    expect(
+      await operatorCall(running, "operatorRunTool", {
+        name: profileTool,
+        arguments: profileArguments,
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { code: "UnknownState" },
+      result: { dryRun: true, node, refusal: { workloads: [workload] } },
+    });
+    expect(
+      await operatorCall(running, "operatorRunTool", {
+        name: profileTool,
+        dryRun: false,
+        arguments: profileArguments,
+      }),
+    ).toMatchObject({ ok: false, error: { code: "ConfirmationRequired" } });
+    expect(
+      await router.createCaller({}).operatorRunTool({
+        name: profileTool,
+        arguments: profileArguments,
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { code: "ManagedOwnerRequired" },
+      result: { dryRun: true },
+    });
+    const leaveManual = enterManagedOperatorAction(node, "manual");
+    if (leaveManual === undefined) throw new Error("fixture manual scope refused");
+    try {
+      expect(
+        await operatorCall(running, "operatorRunTool", {
+          name: profileTool,
+          dryRun: false,
+          arguments: { ...profileArguments, confirm: true },
+        }),
+      ).toMatchObject({ ok: false, error: { code: "NodeBusy" } });
+    } finally {
+      leaveManual();
+    }
     expect(existsSync(engine.marker)).toBe(false);
 
     expect(await control(running, { action: "unload", force: true })).toMatchObject({
@@ -350,6 +392,39 @@ test("authenticated manual control uses the managed launch and stop fences", asy
       action: "load",
     });
     expect(existsSync(engine.marker)).toBe(true);
+    saveWorkload(
+      {
+        ...manifest,
+        status: {
+          phase: "Running",
+          serverPid: Number(
+            readFileSync(join(temp.runtimeDir, "workloads", workload, "llama-server.pid"), "utf8"),
+          ),
+          endpoint: `http://127.0.0.1:${String(engine.port)}`,
+          lastTransitionTime: new Date().toISOString(),
+          conditions: [],
+        },
+      },
+      workloadsDir,
+    );
+    expect(
+      await operatorCall(running, "operatorRunTool", {
+        name: profileTool,
+        arguments: profileArguments,
+      }),
+    ).toMatchObject({ ok: true, result: { ok: true, dryRun: true, node } });
+    const appliedProfile = await operatorCall(running, "operatorRunTool", {
+      name: profileTool,
+      dryRun: false,
+      arguments: { ...profileArguments, confirm: true },
+    });
+    expect(appliedProfile).toMatchObject({
+      ok: true,
+      result: { ok: true, dryRun: false, outcome: "noop" },
+    });
+    expect(
+      (appliedProfile as { result: { operationId: unknown } }).result.operationId,
+    ).toBeString();
     const registry = getResidencyLeaseRegistry();
     if (registry === null) throw new Error("fixture registry unavailable");
     const lease = registry.acquire(workload);

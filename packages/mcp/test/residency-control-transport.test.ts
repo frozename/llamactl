@@ -20,6 +20,7 @@ import { mkdtempSync, rmSync } from "../src/safe-fs.js";
 import { buildMcpServer } from "../src/server.js";
 
 const TOOL = "llamactl.residency.control";
+const PROFILE_TOOL = "llamactl.residency.applyProfile";
 const NODE = "managed-owner";
 const WORKLOAD = "transport-model";
 const OPERATOR = "fixture-owner-operator";
@@ -202,6 +203,35 @@ test("managed residency MCP uses the selected authenticated direct and tunnel en
     expect(resultOf(refused)).toMatchObject({ ok: false, reason: "WorkloadProtected" });
     expect(direct).toHaveLength(2);
 
+    const profile = { node: NODE, to: "missing-fixture-profile", managed: true };
+    const directProfile = await client.callTool({ name: PROFILE_TOOL, arguments: profile });
+    expect(resultOf(directProfile)).toMatchObject({
+      ok: false,
+      refusal: { reason: "NotOptedIn" },
+    });
+    expect(direct).toEqual([
+      "/trpc/residencyControl",
+      "/trpc/residencyControl",
+      "/trpc/residencyApplyManagedProfile",
+    ]);
+    const unconfirmedProfile = await client.callTool({
+      name: PROFILE_TOOL,
+      arguments: { ...profile, dryRun: false },
+    });
+    expect(unconfirmedProfile.isError).toBe(true);
+    expect(direct).toHaveLength(3);
+    const confirmedProfile = await client.callTool({
+      name: PROFILE_TOOL,
+      arguments: { ...profile, dryRun: false, confirm: true },
+    });
+    expect(resultOf(confirmedProfile)).toMatchObject({
+      ok: false,
+      dryRun: false,
+      refusal: { reason: "NotOptedIn" },
+    });
+    expect(direct.at(-1)).toBe("/trpc/residencyApplyManagedProfile");
+    expect(direct).toHaveLength(4);
+
     await ready.promise;
     context.tunnelCentralUrl = centralUrl;
     context.tunnelCentralCertificate = cert.certPem;
@@ -218,8 +248,10 @@ test("managed residency MCP uses the selected authenticated direct and tunnel en
       ok: true,
       result: { outcome: "preview", ...request },
     });
-    expect(relay.filter((path) => path === `/tunnel-relay/${NODE}`)).toHaveLength(2);
-    expect(direct).toHaveLength(2);
+    const tunnelProfile = await client.callTool({ name: PROFILE_TOOL, arguments: profile });
+    expect(resultOf(tunnelProfile)).toEqual(resultOf(directProfile));
+    expect(relay.filter((path) => path === `/tunnel-relay/${NODE}`)).toHaveLength(3);
+    expect(direct).toHaveLength(4);
   } finally {
     await client.close();
     await server.close();

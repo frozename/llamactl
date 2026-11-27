@@ -161,6 +161,11 @@ import {
   runIdleEviction,
 } from "./residency/procedures.js";
 import { captureProfileDesired, type ProfileDesiredSnapshot } from "./residency/profile-desired.js";
+import {
+  managedProfileMutationSchema,
+  profileMutationSchema,
+  RESIDENCY_APPLY_PROFILE_TOOL,
+} from "./residency/profile-protocol.js";
 import { recoverAbandonedProfileIntentsOnNode } from "./residency/recovery.js";
 import { fenceWorkloadStop, reopenWorkloadAfterLoad } from "./residency/stop-fence.js";
 import {
@@ -685,14 +690,6 @@ type ProfileMutationInput = {
   dryRun: boolean;
   confirm: boolean;
 };
-
-const profileMutationSchema = z.object({
-  node: z.string().min(1),
-  to: z.string().min(1),
-  from: z.string().min(1).optional(),
-  dryRun: z.boolean().default(true),
-  confirm: z.boolean().default(false),
-});
 
 async function runProfileMutation(
   input: ProfileMutationInput,
@@ -3270,17 +3267,20 @@ export const router = t.router({
     }),
 
   residencyApplyManagedProfile: t.procedure
-    .input(z.strictObject({ ...profileMutationSchema.shape, version: z.literal(1) }))
+    .input(managedProfileMutationSchema)
     .mutation(async ({ ctx, input }): Promise<ResidencyApplyProfileResult> => {
       const managed = profileOwner(input.node, ctx.managedLaunchAdmission);
       if (managed === undefined) {
-        return residencyApplyProfileRefusal({
-          node: input.node,
-          to: input.to,
-          from: input.from ?? null,
-          reason: "ManagedOwnerRequired",
-          detail: "send the managed profile to its owner agent",
-        });
+        return {
+          ...residencyApplyProfileRefusal({
+            node: input.node,
+            to: input.to,
+            from: input.from ?? null,
+            reason: "ManagedOwnerRequired",
+            detail: "send the managed profile to its owner agent",
+          }),
+          dryRun: input.dryRun,
+        };
       }
       return await runProfileMutation(input, managed);
     }),
@@ -5024,9 +5024,10 @@ export const router = t.router({
       }),
     )
     .mutation(async ({ ctx, input, signal }) => {
-      const managedControl = input.name === RESIDENCY_CONTROL_TOOL;
-      const dryRun = input.dryRun ?? managedControl;
-      const caller = managedControl
+      const residencyMutation =
+        input.name === RESIDENCY_CONTROL_TOOL || input.name === RESIDENCY_APPLY_PROFILE_TOOL;
+      const dryRun = input.dryRun ?? residencyMutation;
+      const caller = residencyMutation
         ? router.createCaller(omitUndefined(ctx), signal === undefined ? undefined : { signal })
         : router.createCaller({});
       const dispatched = await dispatchOpsChatTool(caller, {
