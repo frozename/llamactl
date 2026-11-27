@@ -113,14 +113,19 @@ test("an invalid node segment beats the id check and the method check", async ()
   writeKubeconfig();
   setEnv("LLAMACTL_REQUEST_CAPTURE_FILE", undefined);
 
-  // Raw segments: no decoding, so %2F and %2C are invalid characters, and
-  // the last one pairs a bad segment with a well-formed id.
+  // Raw segments: no decoding, so %2F and %2C are invalid characters. One
+  // pairs a bad segment with a well-formed id; the last three pair it with a
+  // malformed id, so an id check moved ahead of the node check answers 404
+  // instead of 400 on both methods.
   for (const method of ["GET", "POST"]) {
     for (const pathname of [
       "/api/n//requests",
       "/api/n/-bad/requests",
       "/api/n/%2Flocal/requests",
       `/api/n/a%2Cb/requests/${ID}`,
+      "/api/n/-bad/requests/not-a-uuid",
+      "/api/n//requests/not-a-uuid",
+      `/api/n/a%2Cb/requests/${ID.toUpperCase()}`,
     ]) {
       await expectJson(await inspectRoute(pathname, method), 400, { error: "bad_node" });
     }
