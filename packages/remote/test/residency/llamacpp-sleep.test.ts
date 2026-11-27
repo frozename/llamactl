@@ -1,12 +1,7 @@
 /**
- * #283 DF-10 — agent-side llama.cpp sleep driver with verified
- * process-stop fallback. `src/residency/llamacpp-sleep-client` lands with
- * the fix, so the module is reached through a guarded dynamic import and
- * bracket access: at the pinned base every case fails by assertion —
- * never by a missing module or a type error. The fake llama-server is a
- * Bun.serve on loopback whose POST /sleep route is programmable per case
- * (200, refusal, unsupported, hang); the verifiedStop seam is injected
- * per case and proves release by fetching the port after server.stop.
+ * #283 guarded llama.cpp sleep with verified process-stop fallback.
+ * The loopback fixture serves a programmable sleep command and observation.
+ * Verified stop tests prove release by checking the port after shutdown.
  */
 import type { ResidencyLeases } from "@llamactl/core/residency/leases";
 import type {
@@ -26,6 +21,9 @@ import {
   qualifySleepCapability,
 } from "@llamactl/core/residency/llamacpp-sleep";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+
+import { createSharedBudgetSleepController } from "../../src/residency/llamacpp-sleep-client.js";
+import { createTargetAdmissionAuthority } from "../../src/workload/admission.js";
 
 // ── module under test (lands with the fix) ──────────────────────────────
 
@@ -73,8 +71,8 @@ async function loadClientModule(): Promise<LlamacppSleepClientModule> {
 
 type SleepMode = "ok" | 409 | 503 | 404 | 501 | "hang";
 
-type FakeLlamaState = { sleepMode: SleepMode };
-type FakeLlamaCounts = { sleepPosts: number; healthGets: number };
+type FakeLlamaState = { sleepMode: SleepMode; propsReply?: () => Response | Promise<Response> };
+type FakeLlamaCounts = { sleepPosts: number; healthGets: number; propsGets: number };
 
 type FakeLlama = {
   endpoint: { host: string; port: number };
@@ -105,7 +103,7 @@ function hangResponse(): Promise<Response> {
 
 function startFakeLlama(): FakeLlama {
   const state: FakeLlamaState = { sleepMode: "ok" };
-  const counts: FakeLlamaCounts = { sleepPosts: 0, healthGets: 0 };
+  const counts: FakeLlamaCounts = { sleepPosts: 0, healthGets: 0, propsGets: 0 };
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -121,6 +119,10 @@ function startFakeLlama(): FakeLlama {
           return Response.json({});
         }
         return Response.json({ error: `sleep refused with ${String(mode)}` }, { status: mode });
+      }
+      if (req.method === "GET" && url.pathname === "/props") {
+        counts.propsGets += 1;
+        return state.propsReply?.() ?? Response.json({ is_sleeping: true });
       }
       if (req.method === "GET" && url.pathname === "/health") {
         counts.healthGets += 1;
@@ -215,6 +217,21 @@ function makeController(
   controller.register(memberSpec("a", capabilityA), stateA);
   controller.register(memberSpec("b", GUARDED_CAPABILITY), "sleeping");
   return controller;
+}
+
+function makeSharedController(): {
+  authority: ReturnType<typeof createTargetAdmissionAuthority>;
+  controller: LlamacppSleepController;
+} {
+  const authority = createTargetAdmissionAuthority();
+  const controller = createSharedBudgetSleepController({
+    authority,
+    targetIdentity: "node-a",
+    budgetGiB: () => 10,
+  });
+  controller.register(memberSpec("a", GUARDED_CAPABILITY), "ready");
+  controller.register(memberSpec("b", GUARDED_CAPABILITY), "sleeping");
+  return { authority, controller };
 }
 
 async function makeDriver(opts: {
@@ -373,9 +390,9 @@ describe("createAgentLlamacppSleepDriver (DF-10 #283)", () => {
     expect(controller.snapshot().committedGiB).toBe(0);
   });
 
-  test("successful sleep keeps today's path", async () => {
+  test("confirmed sleep releases the shared claim and preserves the cache identity", async () => {
     const fake = startFakeLlama();
-    const controller = makeController();
+    const { authority, controller } = makeSharedController();
     const stops: StopCounter = { count: 0 };
     const driver = await makeDriver({
       controller,
@@ -388,7 +405,8 @@ describe("createAgentLlamacppSleepDriver (DF-10 #283)", () => {
 
     expect(outcome).toMatchObject({ kind: "slept", reservation: "released" });
     expect(stops.count).toBe(0);
-    expect(fake.counts.sleepPosts).toBe(1);
+    expect(fake.counts).toEqual({ sleepPosts: 1, propsGets: 1, healthGets: 0 });
+    expect(authority.snapshot("node-a")).toEqual([]);
     expect(snapshotMember(controller, "a")).toEqual({
       state: "sleeping",
       reservation: "released",
@@ -400,6 +418,79 @@ describe("createAgentLlamacppSleepDriver (DF-10 #283)", () => {
       slots: "restore",
     });
   });
+
+  test("a 2xx acknowledgement with awake props keeps the shared budget charged", async () => {
+    const fake = startFakeLlama();
+    fake.state.propsReply = (): Response => Response.json({ is_sleeping: false });
+    const { authority, controller } = makeSharedController();
+    const stops: StopCounter = { count: 0 };
+    const driver = await makeDriver({ controller, fake, verifiedStop: refusedVerifiedStop(stops) });
+
+    expect(await driver.sleep()).toEqual({
+      kind: "stop-failed",
+      trigger: "SleepUnconfirmed",
+      httpStatus: 200,
+      stopReason: "EvictStopRefused",
+      reservation: "uncertain",
+    });
+    expect(fake.counts).toEqual({ sleepPosts: 1, propsGets: 1, healthGets: 0 });
+    expect(stops.count).toBe(1);
+    expect(snapshotMember(controller, "a")).toEqual({
+      state: "unknown",
+      reservation: "uncertain",
+    });
+    expect(authority.snapshot("node-a")).toMatchObject([
+      { runtimeKey: "rk-a", allocationGiB: 8, state: "uncertain" },
+    ]);
+    expect(controller.requestWake("b")).toMatchObject({
+      kind: "refuse",
+      reason: "BudgetExceeded",
+    });
+  });
+
+  for (const [label, propsReply] of [
+    ["a missing sleep flag", (): Response => Response.json({})],
+    ["a string sleep flag", (): Response => Response.json({ is_sleeping: "true" })],
+    ["malformed props", (): Response => new Response("not JSON")],
+    ["a missing props endpoint", (): Response => new Response(null, { status: 404 })],
+    [
+      "a redirect to health",
+      (): Response =>
+        new Response(null, {
+          status: 307,
+          headers: { location: "/health" },
+        }),
+    ],
+    ["a hung observation", hangResponse],
+  ] as const) {
+    test(`sleep with ${label} releases only after verified stop`, async () => {
+      const fake = startFakeLlama();
+      fake.state.propsReply = propsReply;
+      const { authority, controller } = makeSharedController();
+      const stops: StopCounter = { count: 0 };
+      const driver = await makeDriver({
+        controller,
+        fake,
+        verifiedStop: releaseVerifiedStop(fake, stops),
+        sleepTimeoutMs: 100,
+      });
+
+      expect(await driver.sleep()).toEqual({
+        kind: "stopped",
+        trigger: "SleepUnconfirmed",
+        httpStatus: 200,
+        reservation: "released",
+      });
+      expect(fake.counts).toEqual({ sleepPosts: 1, propsGets: 1, healthGets: 0 });
+      expect(stops.count).toBe(1);
+      expect(snapshotMember(controller, "a")).toEqual({
+        state: "stopped",
+        reservation: "released",
+      });
+      expect(authority.snapshot("node-a")).toEqual([]);
+      expect(controller.requestWake("b").kind).toBe("wake");
+    });
+  }
 
   test("fallback stop that fails retains the reservation", async () => {
     const fake = startFakeLlama();
@@ -618,7 +709,8 @@ describe("createAgentLlamacppSleepDriver (DF-10 #283)", () => {
     record: CancelRecord;
   } {
     const record: CancelRecord = { cancels: 0, rejectionHandlers: 0 };
-    const fetchImpl = (): Promise<Response> => {
+    const fetchImpl = (_input: unknown, init?: RequestInit): Promise<Response> => {
+      if (init?.method === "GET") return Promise.resolve(Response.json({ is_sleeping: true }));
       const rejected = Promise.reject(new Error("boom"));
       // Pre-handled so a missing driver handler fails our assertion below,
       // not the runner's unhandled-rejection check.
