@@ -3235,6 +3235,18 @@ export function bindLocalEngineWorkload(
   };
 }
 
+function bindManagedDefaultEngine(
+  context: ProxyContext,
+): Pick<LocalEngineRequest, "workload" | "stillOwnsTarget"> {
+  const model = requestedModelFromBody(context.bodyText ?? "");
+  if (model !== undefined && declaredModelEntries().some((entry) => entry.id === model)) {
+    // A declaration names an owner. It cannot authorize the implicit
+    // default engine when routing did not find a verified serving target.
+    return { stillOwnsTarget: () => false };
+  }
+  return bindLocalEngineWorkload(context.target, context.resolved);
+}
+
 function forwardAdmittedEngine(
   context: ProxyContext,
   init: RequestInit,
@@ -3251,7 +3263,7 @@ function forwardAdmittedEngine(
     body: requestBodyForAdmission(init.body),
     principal: { bearer: context.req.headers.get("authorization") },
     ...(route === undefined
-      ? bindLocalEngineWorkload(context.target, context.resolved)
+      ? bindManagedDefaultEngine(context)
       : {
           workload: route.workload,
           stillOwnsTarget: () => routeStillOwned(route, context.resolved),

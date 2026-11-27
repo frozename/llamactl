@@ -750,6 +750,30 @@ describe("#281 DF-08: router local branches + /v1/completions share the chat cap
     },
   );
 
+  test("a declared cold pin cannot use an unrelated owner-admitted default engine", async () => {
+    trackDefaultWorkload("resident");
+    startDefaultEngineAdmission();
+    openaiProxy.setDeclaredModelSource(() => [
+      {
+        id: "no-such-model",
+        workload: "cold-declared",
+        kind: "ModelHost",
+        ownerNodeId: "local",
+        state: "cold",
+        autoLoadEligible: true,
+      },
+    ]);
+    const response = await postChatStream();
+    try {
+      expect(response.status).toBe(503);
+      expect(upstream.hits("/v1/chat/completions")).toBe(0);
+    } finally {
+      openaiProxy.setDeclaredModelSource(null);
+      for (const gate of upstream.gates) gate.release();
+      await response.body?.cancel().catch(() => undefined);
+    }
+  });
+
   test("the default binding refuses a changed generation at the same PID and endpoint", () => {
     trackDefaultWorkload("resident", "2026-11-27T15:00:00Z");
     const target = `http://127.0.0.1:${String(upstream.port)}/v1/chat/completions`;

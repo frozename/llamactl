@@ -45,7 +45,8 @@ export interface RequestAdmissionOptions {
   limits: RequestQueueLimits;
   resident?: string[];
   exclusiveBackground?: boolean;
-  load: (modelKey: string) => Promise<void>;
+  /** Completion acknowledges the owner's ready/failed outcome and releases the load gate. */
+  load: (modelKey: string, signal: AbortSignal) => Promise<void>;
   now?: () => number;
   setTimer?: (fn: () => void, ms: number) => unknown;
   clearTimer?: (handle: unknown) => void;
@@ -103,6 +104,7 @@ class RequestAdmissionImpl implements ReservableRequestAdmission {
   private readonly clearTimer: ClearTimer;
   private readonly policy: RequestQueuePolicy;
   private readonly waiters = new Map<string, Waiter>();
+  private activeLoad: { id: string; controller: AbortController } | undefined;
 
   constructor(opts: RequestAdmissionOptions) {
     this.opts = opts;
@@ -240,6 +242,10 @@ class RequestAdmissionImpl implements ReservableRequestAdmission {
 
   private pump(): void {
     this.apply(this.policy.schedule());
+    const active = this.activeLoad;
+    if (active !== undefined && !this.policy.hasLoadDemand(active.id)) {
+      active.controller.abort();
+    }
   }
 
   private apply(actions: QueueAction[]): void {
@@ -249,18 +255,21 @@ class RequestAdmissionImpl implements ReservableRequestAdmission {
   }
 
   private runLoad(action: StartLoadAction): void {
+    const controller = new AbortController();
+    this.activeLoad = { id: action.loadId, controller };
     void Promise.resolve()
       .then(async () => {
         this.pump();
-        if (!this.policy.hasLoadDemand(action.loadId)) return "abandoned" as const;
+        if (controller.signal.aborted) return "abandoned" as const;
         try {
-          await this.opts.load(action.modelKey);
+          await this.opts.load(action.modelKey, controller.signal);
           return "ready" as const;
         } catch {
           return "failed" as const;
         }
       })
       .then((outcome) => {
+        this.activeLoad = undefined;
         this.apply(this.policy.loadSettled(action.loadId, outcome));
         this.pump();
       });
