@@ -133,6 +133,30 @@ spec:
       expect(double).toEqual(new Error("ManagedAgentAlreadyActive"));
       expect(() => startAgentServer(opts)).toThrow("ManagedOwnerRequired");
 
+      const statusUrl = new URL("/trpc/residencyStatus", running.url);
+      statusUrl.searchParams.set("input", JSON.stringify({ node: "local" }));
+      const status = async (): Promise<unknown> =>
+        await (await fetch(statusUrl, { headers: { authorization: `Bearer ${bearer}` } })).json();
+      expect(await status()).toMatchObject({
+        result: { data: { managed: { ledger: "available" } } },
+      });
+      const marker = join(runtimeDir, "managed-residency-v1");
+      renameSync(marker, marker + ".saved");
+      try {
+        expect(await status()).toMatchObject({
+          result: { data: { managed: { ledger: "unavailable" } } },
+        });
+        writeFileSync(marker, readFileSync(marker + ".saved"));
+        expect(await status()).toMatchObject({
+          result: { data: { managed: { ledger: "unavailable" } } },
+        });
+      } finally {
+        renameSync(marker + ".saved", marker);
+      }
+      expect(await status()).toMatchObject({
+        result: { data: { managed: { ledger: "available" } } },
+      });
+
       const unknownTarget = await fetch(`${running.url}/v1/completions`, {
         method: "POST",
         headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" },

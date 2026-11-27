@@ -15,7 +15,7 @@ const MarkerSchema = z.strictObject({
 });
 type Marker = z.infer<typeof MarkerSchema>;
 
-function databaseIdentity(path: string): string | undefined {
+function fileIdentity(path: string): string | undefined {
   try {
     const stat = statSync(path, { bigint: true });
     return stat.isFile() ? `${String(stat.dev)}/${String(stat.ino)}` : undefined;
@@ -42,11 +42,13 @@ export function manageJournalPair(
   const path = managedRuntimeMarker(runtimeDir);
   const admissionPath = managedAdmissionStorePath(runtimeDir);
   let marker = hasManagedRuntimeMarker(runtimeDir) ? readMarker(path, node) : undefined;
+  let markerIdentity = marker === undefined ? undefined : fileIdentity(path);
   const verify = (): string | undefined => {
     if (marker === undefined) return undefined;
-    if (databaseIdentity(admissionPath) !== marker.admission)
-      return "ManagedAdmissionJournalMismatch";
-    if (databaseIdentity(operationsPath) !== marker.operations)
+    if (markerIdentity === undefined || fileIdentity(path) !== markerIdentity)
+      return "ManagedOwnershipMarkerMismatch";
+    if (fileIdentity(admissionPath) !== marker.admission) return "ManagedAdmissionJournalMismatch";
+    if (fileIdentity(operationsPath) !== marker.operations)
       return "ManagedTransitionJournalMismatch";
     return undefined;
   };
@@ -55,8 +57,8 @@ export function manageJournalPair(
     verify,
     install(): void {
       if (marker === undefined) {
-        const admission = databaseIdentity(admissionPath);
-        const operations = databaseIdentity(operationsPath);
+        const admission = fileIdentity(admissionPath);
+        const operations = fileIdentity(operationsPath);
         if (admission === undefined || operations === undefined)
           throw new Error("ManagedJournalUnverified");
         const next: Marker = { version: 1, node, admission, operations };
@@ -67,6 +69,7 @@ export function manageJournalPair(
           if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
           marker = readMarker(path, node);
         }
+        markerIdentity = fileIdentity(path);
       }
       const refusal = verify();
       if (refusal !== undefined) throw new Error(refusal);
