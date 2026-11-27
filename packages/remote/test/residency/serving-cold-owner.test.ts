@@ -217,8 +217,13 @@ test.skipIf(process.platform !== "darwin" && process.platform !== "linux")(
       expect(attempts).toBe(1);
 
       process.env["LLAMACTL_UNIFIED_PROXY"] = "1";
-      expect((await fetch(request(running), { tls: { ca: cert.certPem } })).status).toBe(503);
+      expect((await fetch(request(running, false), { tls: { ca: cert.certPem } })).status).toBe(
+        401,
+      );
       expect(attempts).toBe(1);
+      const unified = await fetch(request(running), { tls: { ca: cert.certPem } });
+      expect(unified.status).toBe(503);
+      expect(attempts).toBe(2);
     } finally {
       await running?.stop();
       restore();

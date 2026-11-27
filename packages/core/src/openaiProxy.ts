@@ -18,6 +18,7 @@ import { translateOpenAIStreamToAnthropic } from "./anthropic/translateStream.js
 import { boundaryNaiveBytePrefixSha, canonicalRequestSha } from "./cache-identity/canonical.js";
 import { listCatalog } from "./catalog.js";
 import { listPeers, type PeerNode } from "./config/peers.js";
+import { LOCAL_NODE_NAME } from "./config/schema.js";
 import { ctxForModel } from "./ctx.js";
 import { sanitizeLibosmosGreedyBody } from "./engines/libosmos.js";
 import { checkServingReadiness } from "./engines/lifecycle.js";
@@ -1382,11 +1383,7 @@ async function responsesApiContext(
   }
 }
 
-async function parseIncoming(
-  req: Request,
-  resolved: ResolvedEnv,
-): Promise<ProxyContext | Response> {
-  const url = new URL(req.url);
+function proxyForwardHeaders(req: Request): Headers {
   const headers = new Headers();
   for (const [key, value] of req.headers.entries()) {
     const lower = key.toLowerCase();
@@ -1400,6 +1397,15 @@ async function parseIncoming(
     }
     headers.set(key, value);
   }
+  return headers;
+}
+
+async function parseIncoming(
+  req: Request,
+  resolved: ResolvedEnv,
+): Promise<ProxyContext | Response> {
+  const url = new URL(req.url);
+  const headers = proxyForwardHeaders(req);
   if (url.pathname === "/v1/messages") {
     return await anthropicMessagesContext(req, resolved, headers);
   }
@@ -2659,11 +2665,9 @@ function declaredUnavailableRejectionFor(model: string, resolved: ResolvedEnv): 
 /**
  * #280 DF-07: validated declared-model entries from the registered
  * source. A throwing source or schema-invalid rows degrade to "no
- * declarations" — a malformed declared catalog must never fail a
- * request. Sorted by id then workload; on duplicate ids the first
- * claim wins.
+ * declarations" so a malformed declared catalog cannot fail a request.
  */
-export function declaredModelEntries(): DeclaredModelEntryV1[] {
+export function validatedDeclaredModelEntries(): DeclaredModelEntryV1[] {
   if (declaredModelSource === null) return [];
   let raw: readonly unknown[];
   try {
@@ -2676,6 +2680,11 @@ export function declaredModelEntries(): DeclaredModelEntryV1[] {
     const parsed = DeclaredModelEntryV1Schema.safeParse(item);
     if (parsed.success) entries.push(parsed.data);
   }
+  return entries;
+}
+
+function declaredModelEntries(): DeclaredModelEntryV1[] {
+  const entries = validatedDeclaredModelEntries();
   entries.sort((a, b) => {
     if (a.id !== b.id) return a.id < b.id ? -1 : 1;
     return a.workload.localeCompare(b.workload);
@@ -3089,7 +3098,7 @@ async function applyBodyModelRoute(
 function coldOwnerRoute(
   context: ProxyContext,
   declaration: DeclaredModelEntryV1,
-): ProxyContext | Response {
+): (ProxyContext & { coldRoute: NonNullable<ProxyContext["coldRoute"]> }) | Response {
   const { pathname, req } = context;
   const eligible =
     declaration.state === "loading" ||
@@ -3313,11 +3322,14 @@ function bindManagedDefaultEngine(
   };
 }
 
-function forwardColdOwner(context: ProxyContext): Promise<Response> | undefined {
-  if (context.coldRoute === undefined || context.trustedColdOwner === undefined) return undefined;
+function forwardColdOwner(
+  context: ProxyContext,
+  route: NonNullable<ProxyContext["coldRoute"]>,
+  owner: ColdEngineForwarder,
+): Promise<Response> {
   const init = context.init;
-  return context.trustedColdOwner({
-    ...context.coldRoute,
+  return owner({
+    ...route,
     body: requestBodyForAdmission(init.body),
     clientSignal: context.req.signal,
     deadlineMs: Date.now() + upstreamTimeoutMs(),
@@ -4138,15 +4150,72 @@ function acquireProxySession(
   return { ok: true, release, cancel };
 }
 
+function sanitizeForwardBody(context: ProxyContext): void {
+  stripVendorFieldsFromBody(context);
+  sanitizeLibosmosGreedyFromBody(context);
+}
+
+/** Unified ingress has already selected an exact id without a catalog route. */
+export function forwardExactLocalColdCompletion(
+  req: Request,
+  resolved: ResolvedEnv,
+  expected: DeclaredModelEntryV1,
+  bodyText: string,
+  owner: ColdEngineForwarder,
+): Promise<Response> {
+  const url = new URL(req.url);
+  const model = expected.id;
+  const [declaration, duplicate] = validatedDeclaredModelEntries().filter(
+    (entry) => entry.id === model,
+  );
+  if (
+    url.pathname !== "/v1/completions" ||
+    requestedModelFromBody(bodyText) !== model ||
+    declaration === undefined ||
+    duplicate !== undefined ||
+    declaration.ownerNodeId !== LOCAL_NODE_NAME ||
+    declaration.ownerNodeId !== expected.ownerNodeId ||
+    declaration.workload !== expected.workload ||
+    declaration.kind !== expected.kind ||
+    declaration.kind !== "ModelRun" ||
+    defaultTargetModelIds(resolved).has(model) ||
+    (getRouteMap(resolved).candidates.get(model)?.length ?? 0) > 0
+  ) {
+    return Promise.resolve(declaredNotLoadedResponse(model, expected, bodyText));
+  }
+  if (isOversizedJsonBody(req) || bodyText.length > MAX_JSON_BODY_BYTES) {
+    return Promise.resolve(new Response("Payload Too Large", { status: 413 }));
+  }
+  const unavailable = declaredUnavailableRejectionFor(model, resolved);
+  if (unavailable !== null) return Promise.resolve(unavailable);
+  const context = coldOwnerRoute(
+    {
+      req,
+      resolved,
+      target: `${llamaEndpoint(resolved)}${url.pathname}${url.search}`,
+      pathname: url.pathname,
+      search: url.search,
+      bodyText,
+      init: { method: req.method, headers: proxyForwardHeaders(req), body: bodyText },
+    },
+    declaration,
+  );
+  if (context instanceof Response) return Promise.resolve(context);
+  sanitizeForwardBody(context);
+  return forwardColdOwner(context, context.coldRoute, owner);
+}
+
 function prepareProxyForward(context: ProxyContext): Promise<Response> | undefined {
   if (context.route?.isPeer && requestBodyContainsOmlxRequestHandle(context.bodyText)) {
     return Promise.resolve(
       Response.json({ error: "cross-node slot ops not supported" }, { status: 400 }),
     );
   }
-  stripVendorFieldsFromBody(context);
-  sanitizeLibosmosGreedyFromBody(context);
-  return forwardColdOwner(context);
+  sanitizeForwardBody(context);
+  if (context.coldRoute !== undefined && context.trustedColdOwner !== undefined) {
+    return forwardColdOwner(context, context.coldRoute, context.trustedColdOwner);
+  }
+  return undefined;
 }
 
 function applyProxyOptions(context: ProxyContext, opts: ProxyOpenAIOptions): void {

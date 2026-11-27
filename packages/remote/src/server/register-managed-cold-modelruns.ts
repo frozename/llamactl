@@ -152,7 +152,7 @@ function readPeerProof(
 ): Provenance | undefined {
   if (owner === undefined) return undefined;
   const entries = openaiProxy
-    .declaredModelEntries()
+    .validatedDeclaredModelEntries()
     .map((entry) => peerEntry(nodeName, entry, owner, readResident))
     .filter((entry) => entry !== undefined);
   return entries.length === 0 ? undefined : { schemaVersion: 1, entries };
@@ -193,7 +193,7 @@ export async function registerManagedColdModelRuns(
       });
   const factory = createManagedColdModelRunFactory({
     workloadsDir,
-    readDeclarations: openaiProxy.declaredModelEntries,
+    readDeclarations: openaiProxy.validatedDeclaredModelEntries,
     readArtifactReceipt(rel, workload) {
       const receipt = staged.get(workload);
       return receipt?.rel === rel ? receipt : undefined;
