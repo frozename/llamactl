@@ -151,6 +151,9 @@ function manifestPreserved(result: unknown): boolean | undefined {
   return (result as { manifestPreserved?: boolean }).manifestPreserved;
 }
 
+const UNVERIFIED =
+  "serverStop on local refused (pid identity unverifiable); composite manifest preserved";
+
 // ---- tests -----------------------------------------------------------------
 
 describe("destroyComposite — stop-fence refusal (#520)", () => {
@@ -247,6 +250,133 @@ describe("destroyComposite — stop-fence refusal (#520)", () => {
     expect(manifestPreserved(result)).toBe(true);
     expect(localFake.stopKeys).toEqual(["local"]);
     expect(gpu2Fake.stopKeys).toEqual(["gpu2"]);
+  });
+
+  test("R4: a bare stopped:false with a pid is an unverifiable stop refusal", async () => {
+    // Kills: treating stopped:false as a successful teardown whenever the
+    // structured fence detail is absent — the pid identity is unverifiable,
+    // so the workload must stay out of removed.
+    const { client, stopKeys } = makeWorkloadClient(() =>
+      Promise.resolve({ stopped: false, pid: 4242, killed: false }),
+    );
+
+    const result = await destroy(workloadComposite(["local"]), () => client);
+
+    expect(result.ok).toBe(false);
+    expect(result.removed).not.toContainEqual({ kind: "workload", name: "local" });
+    expect(result.errors).toEqual([
+      { ref: { kind: "workload", name: "local" }, message: UNVERIFIED },
+    ]);
+    expect(manifestPreserved(result)).toBe(true);
+    expect(stopKeys).toEqual(["local"]);
+  });
+
+  test("R5: a bare stopped:false without a pid is an unverifiable stop refusal", async () => {
+    // Kills: requiring a pid before treating stopped:false as unverified —
+    // the router's serverStop fallback has pid:null.
+    const { client, stopKeys } = makeWorkloadClient(() =>
+      Promise.resolve({ stopped: false, pid: null, killed: false }),
+    );
+
+    const result = await destroy(workloadComposite(["local"]), () => client);
+
+    expect(result.ok).toBe(false);
+    expect(result.removed).not.toContainEqual({ kind: "workload", name: "local" });
+    expect(result.errors).toEqual([
+      { ref: { kind: "workload", name: "local" }, message: UNVERIFIED },
+    ]);
+    expect(manifestPreserved(result)).toBe(true);
+    expect(stopKeys).toEqual(["local"]);
+  });
+
+  test("R6: a malformed refused reason still leaves the stop unverifiable", async () => {
+    // Kills: returning null for a non-string refusal reason instead of
+    // falling back to the pid-identity-unverifiable refusal.
+    const { client, stopKeys } = makeWorkloadClient(() =>
+      Promise.resolve({
+        stopped: false,
+        pid: null,
+        killed: false,
+        refused: { reason: 42 },
+      }),
+    );
+
+    const result = await destroy(workloadComposite(["local"]), () => client);
+
+    expect(result.ok).toBe(false);
+    expect(result.removed).not.toContainEqual({ kind: "workload", name: "local" });
+    expect(result.errors).toEqual([
+      { ref: { kind: "workload", name: "local" }, message: UNVERIFIED },
+    ]);
+    expect(manifestPreserved(result)).toBe(true);
+    expect(stopKeys).toEqual(["local"]);
+  });
+
+  test("R7: a non-object refused value still leaves the stop unverifiable", async () => {
+    // Kills: returning null when `refused` is present but not an object.
+    const { client, stopKeys } = makeWorkloadClient(() =>
+      Promise.resolve({ stopped: false, pid: null, killed: false, refused: "x" }),
+    );
+
+    const result = await destroy(workloadComposite(["local"]), () => client);
+
+    expect(result.ok).toBe(false);
+    expect(result.removed).not.toContainEqual({ kind: "workload", name: "local" });
+    expect(result.errors).toEqual([
+      { ref: { kind: "workload", name: "local" }, message: UNVERIFIED },
+    ]);
+    expect(manifestPreserved(result)).toBe(true);
+    expect(stopKeys).toEqual(["local"]);
+  });
+
+  test("R8: an unverifiable stop on one node preserves the manifest while the other workload is removed", async () => {
+    // Kills: aborting the destroy loop on an unverified stop, and treating a
+    // bare stopped:false as removable when another node stopped cleanly.
+    const localFake = makeWorkloadClient(() =>
+      Promise.resolve({ stopped: true, pid: 1, killed: false }),
+    );
+    const gpu2Fake = makeWorkloadClient(() =>
+      Promise.resolve({ stopped: false, pid: 9, killed: false }),
+    );
+    const byNode = new Map<string, WorkloadClient>([
+      ["local", localFake.client],
+      ["gpu2", gpu2Fake.client],
+    ]);
+    const getWorkloadClient = (node: string): WorkloadClient => {
+      const c = byNode.get(node);
+      if (!c) throw new Error(`no fake client for node '${node}'`);
+      return c;
+    };
+
+    const result = await destroy(workloadComposite(["local", "gpu2"]), getWorkloadClient);
+
+    expect(result.ok).toBe(false);
+    expect(result.removed).toContainEqual({ kind: "workload", name: "local" });
+    expect(result.removed).not.toContainEqual({ kind: "workload", name: "gpu2" });
+    expect(result.errors).toEqual([
+      {
+        ref: { kind: "workload", name: "gpu2" },
+        message:
+          "serverStop on gpu2 refused (pid identity unverifiable); composite manifest preserved",
+      },
+    ]);
+    expect(manifestPreserved(result)).toBe(true);
+    expect(localFake.stopKeys).toEqual(["local"]);
+    expect(gpu2Fake.stopKeys).toEqual(["gpu2"]);
+  });
+
+  test("G3 guard: a null stop outcome remains a transport-style miss, not a refusal", async () => {
+    // Guard (passes on the base too): no outcome object means there is no
+    // positive stopped:false signal to fence on.
+    const { client, stopKeys } = makeWorkloadClient(() => Promise.resolve(null));
+
+    const result = await destroy(workloadComposite(["local"]), () => client);
+
+    expect(result.ok).toBe(true);
+    expect(result.removed).toContainEqual({ kind: "workload", name: "local" });
+    expect(result.errors).toEqual([]);
+    expect(manifestPreserved(result)).not.toBe(true);
+    expect(stopKeys).toEqual(["local"]);
   });
 
   test("G1 guard: a verified stop is not a refusal — ok, removed, and no manifestPreserved", async () => {
