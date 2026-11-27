@@ -87,7 +87,12 @@ function relayAccess(
  * with durationMs measured from stream start — NOT per-event to
  * avoid burning disk on chatty subscriptions.
  *
- * Deferred: rate-limit relay calls per node — currently unbounded.
+ * Bearer audit (#218): an operator hop calls `onOperatorAuthenticated`
+ * once, right after the primary bearer verifies, so it enters the same
+ * audit sink as the API surface under the primary's name 'default'.
+ * Named tokens are refused here (401) and stay unaudited; relay-only
+ * credential audit labels are deferred, as is rate-limiting relay calls
+ * per node — currently unbounded.
  */
 export async function handleTunnelRelay(
   req: Request,
@@ -96,6 +101,7 @@ export async function handleTunnelRelay(
   tokenHash: string,
   journalPath?: string,
   relayCredentialHashes: readonly string[] = [],
+  onOperatorAuthenticated?: () => void,
 ): Promise<Response> {
   const journal = (entry: TunnelJournalEntry): void => {
     try {
@@ -107,6 +113,8 @@ export async function handleTunnelRelay(
   const access = relayAccess(req, tokenHash, relayCredentialHashes);
   // 401/403/405 — HTTP-layer rejections, not tunnel events. See module doc.
   if (access instanceof Response) return access;
+  // #218: only the operator hop is audited; relay-only labels are deferred.
+  if (access === "operator") onOperatorAuthenticated?.();
   const nodeName = decodeURIComponent(url.pathname.slice("/tunnel-relay/".length));
   // 400 branches below — HTTP-layer rejection, not a tunnel event.
   if (!nodeName) return new Response("missing node name", { status: 400 });

@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
-import { router } from "@llamactl/remote";
+import { opsChatStopRefusal, router } from "@llamactl/remote";
 import { appendAudit, toTextContent } from "@novaproto/mcp-shared";
 import { z } from "zod";
 
@@ -35,46 +35,7 @@ export function registerCompositeTools(server: McpServer): void {
     },
   );
 
-  server.registerTool(
-    "llamactl.composite.destroy",
-    {
-      title: "Destroy a Composite",
-      description:
-        "Tear down every component of a previously-applied Composite, walking the dependency DAG in reverse. `dryRun: true` returns the teardown order without touching the runtime. Wet-run removes containers + rag-node kubeconfig entries and deletes the on-disk composite YAML. Destructive. Pass `purgeVolumes: true` for a full reset that also reaps anonymous docker volumes — storage is preserved by default.",
-      inputSchema: {
-        name: z.string().min(1).describe("metadata.name of the composite."),
-        dryRun: z.boolean().default(false),
-        purgeVolumes: z
-          .boolean()
-          .default(false)
-          .describe(
-            "Also remove anonymous docker volumes tied to the containers (default: preserve storage). Named volumes + bind mounts are not touched.",
-          ),
-      },
-    },
-    async (input) => {
-      const caller = router.createCaller({});
-      const result = await caller.compositeDestroy(input);
-      appendAudit({
-        server: SERVER_SLUG,
-        tool: "llamactl.composite.destroy",
-        input,
-        dryRun: input.dryRun,
-        result:
-          "dryRun" in result && result.dryRun
-            ? {
-                dryRun: true,
-                wouldRemoveCount: result.wouldRemove.length,
-                wouldPurgeVolumes: result.wouldPurgeVolumes,
-              }
-            : {
-                ok: (result as { ok: boolean }).ok,
-                purgedVolumes: (result as { purgedVolumes?: boolean }).purgedVolumes ?? false,
-              },
-      });
-      return toTextContent(result);
-    },
-  );
+  registerCompositeDestroy(server);
 
   server.registerTool(
     "llamactl.composite.list",
@@ -117,6 +78,80 @@ export function registerCompositeTools(server: McpServer): void {
         input,
         dryRun: false,
         result: { found: result !== null },
+      });
+      return toTextContent(result);
+    },
+  );
+}
+
+function registerCompositeDestroy(server: McpServer): void {
+  server.registerTool(
+    "llamactl.composite.destroy",
+    {
+      title: "Destroy a Composite",
+      description:
+        "Tear down every component of a previously-applied Composite, walking the dependency DAG in reverse. `dryRun: true` returns the teardown order without touching the runtime. Wet-run removes containers + rag-node kubeconfig entries and deletes the on-disk composite YAML unless the node stop fence refuses a workload stop (`LeasesActive`, `DrainInProgress`, `SessionsActive` or `SessionsUnknown`). In that case the YAML is kept with status `Degraded`, and the tool returns `isError` with code `destroy_refused`. A refusal never releases sessions; the overrides are `llamactl residency release-session` and `llamactl residency force-unload`. Destructive. Pass `purgeVolumes: true` for a full reset that also reaps anonymous docker volumes — storage is preserved by default.",
+      inputSchema: {
+        name: z.string().min(1).describe("metadata.name of the composite."),
+        dryRun: z.boolean().default(false),
+        purgeVolumes: z
+          .boolean()
+          .default(false)
+          .describe(
+            "Also remove anonymous docker volumes tied to the containers (default: preserve storage). Named volumes + bind mounts are not touched.",
+          ),
+      },
+    },
+    async (input) => {
+      const caller = router.createCaller({});
+      const result = await caller.compositeDestroy(input);
+      if (!result.dryRun) {
+        const refusal = opsChatStopRefusal(
+          "llamactl.composite.destroy",
+          { name: input.name },
+          result,
+        );
+        if (refusal !== null) {
+          appendAudit({
+            server: SERVER_SLUG,
+            tool: "llamactl.composite.destroy",
+            input,
+            dryRun: input.dryRun,
+            result: {
+              ok: false,
+              code: refusal.code,
+              manifestPreserved: true,
+              errors: result.errors,
+              purgedVolumes: result.purgedVolumes,
+            },
+          });
+          return {
+            ...toTextContent({
+              ...result,
+              ok: false,
+              code: refusal.code,
+              error: refusal.message,
+            }),
+            isError: true,
+          };
+        }
+      }
+      appendAudit({
+        server: SERVER_SLUG,
+        tool: "llamactl.composite.destroy",
+        input,
+        dryRun: input.dryRun,
+        result:
+          "dryRun" in result && result.dryRun
+            ? {
+                dryRun: true,
+                wouldRemoveCount: result.wouldRemove.length,
+                wouldPurgeVolumes: result.wouldPurgeVolumes,
+              }
+            : {
+                ok: (result as { ok: boolean }).ok,
+                purgedVolumes: (result as { purgedVolumes?: boolean }).purgedVolumes ?? false,
+              },
       });
       return toTextContent(result);
     },

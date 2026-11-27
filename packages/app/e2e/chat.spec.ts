@@ -128,3 +128,60 @@ test("shows streamed reasoning, generation stats and formatted Markdown", async 
   await thinking.click();
   await expect(page.getByText("Check the arithmetic.", { exact: true })).toBeVisible();
 });
+
+test("inspects web Chat and opt-in fleet requests in Runs", async ({ page }) => {
+  await page.route("**/api/n/local/chat/models", (route) =>
+    route.fulfill({ json: { models: ["web-model"] } }),
+  );
+  await page.route("**/api/n/local/chat/completions", (route) =>
+    route.fulfill({
+      contentType: "text/event-stream",
+      body: 'data: {"choices":[{"delta":{"content":"Browser reply"}}]}\n\ndata: [DONE]\n\n',
+    }),
+  );
+  const summary = {
+    id: "5f512abf-b81a-4612-a7df-0881d0e7171d",
+    at: Date.UTC(2026, 10, 26),
+    path: "/v1/chat/completions",
+    model: "fleet-model",
+    status: 200,
+    durationMs: 900,
+  };
+  let detailLoads = 0;
+  await page.route("**/api/n/local/requests", (route) =>
+    route.fulfill({ json: { enabled: true, requests: [summary] } }),
+  );
+  await page.route(`**/api/n/local/requests/${summary.id}`, (route) => {
+    detailLoads++;
+    return route.fulfill({
+      json: {
+        ...summary,
+        firstByteMs: 80,
+        cancelled: false,
+        truncated: false,
+        request: { messages: [{ role: "user", content: "Fleet prompt" }], temperature: 0.2 },
+        response: { reply: "Fleet reply" },
+      },
+    });
+  });
+  await page.goto("/chat");
+  await page.getByRole("textbox", { name: "Message" }).fill("Browser prompt");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(page.getByText("Browser reply", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Stop", exact: true })).toHaveCount(0);
+  await page.getByRole("link", { name: "Runs", exact: true }).click();
+  await page.getByRole("button", { name: /web-model/ }).click();
+  const web = page.getByRole("region", { name: "Request details" });
+  await expect(web).toContainText("Browser prompt");
+  await expect(web).toContainText("Browser reply");
+  await expect(page.getByRole("button", { name: /fleet-model/ })).toBeVisible();
+  expect(detailLoads).toBe(0);
+  await page.getByRole("button", { name: /fleet-model/ }).click();
+  const fleet = page.getByRole("region", { name: "Captured requests on local" });
+  await expect(fleet.getByRole("region", { name: "Request details" })).toContainText(
+    "Fleet prompt",
+  );
+  await expect(fleet).toContainText("Fleet reply");
+  await expect(fleet).toContainText("80 ms");
+  expect(detailLoads).toBe(1);
+});
