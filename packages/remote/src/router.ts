@@ -33,6 +33,7 @@ import {
   modelhostStateFile,
   readModelHostState,
 } from "@llamactl/core/engines/state";
+import { omitUndefined } from "@llamactl/core/object";
 import { probeEndpointOwnership } from "@llamactl/core/probe";
 import { DEFAULT_RESIDENCY_POLICY } from "@llamactl/core/residency/admission";
 import {
@@ -3218,7 +3219,8 @@ export const router = t.router({
         registry: getResidencyLeaseRegistry(),
         workloadsDir: workloadStoreMod.defaultWorkloadsDir(),
         signal,
-        execute: (action, manifest) => dispatchManagedControl(ctx, signal, action, manifest),
+        execute: (action, manifest) =>
+          dispatchManagedControl(omitUndefined(ctx), signal, action, manifest),
       }),
   ),
 
@@ -3524,6 +3526,7 @@ export const router = t.router({
       const manifest = pinned?.manifest ?? input.manifest;
       const start = (
         commitReadiness?: CommitLaunchReadiness,
+        checkSpawn?: () => string | undefined,
       ): Promise<DirectLifecycleOutcome<StartModelHostResult>> =>
         runDirectResidencyStart<StartModelHostResult>(
           input.workload,
@@ -3538,6 +3541,7 @@ export const router = t.router({
               ...(input.restart !== undefined ? { restart: input.restart } : {}),
               signal: subSignal,
               ...(commitReadiness === undefined ? {} : { commitReadiness }),
+              ...(checkSpawn === undefined ? {} : { checkSpawn }),
               onEvent: (event) => {
                 // Readiness is provisional until the managed claim commits.
                 if (

@@ -184,6 +184,53 @@ test("modelHostStart withholds its runtime terminal event until managed admissio
   expect(results).toEqual([{ ok: false, pid: null, error: "target verification failed" }]);
 });
 
+test("ModelHost applies its fresh managed spawn check before invoking the binary", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "managed-modelhost-spawn-"));
+  using fixture = modelRunEnvironment(dir);
+  const reached = join(dir, "spawned");
+  const binary = join(dir, "llama-server");
+  writeFileSync(binary, `#!/bin/bash\nprintf reached > ${JSON.stringify(reached)}\nexit 1\n`, {
+    mode: 0o755,
+  });
+  const listener = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: () => new Response(null, { status: 204 }),
+  });
+  const port = listener.port;
+  await listener.stop(true);
+  if (port === undefined) throw new Error("fixture port is unavailable");
+  const refuse = mock(() => "ManagedCapacity: InsufficientHeadroom");
+  const managed: ManagedLaunchAdmission = {
+    async run(_request, _signal, start) {
+      return await start(() => undefined, refuse);
+    },
+  };
+  const results = await terminalResults(
+    await router.createCaller({ managedLaunchAdmission: managed }).modelHostStart({
+      workload: "fresh-host",
+      timeoutSeconds: 2,
+      manifest: {
+        apiVersion: "llamactl/v1",
+        kind: "ModelHost",
+        metadata: { name: "fresh-host" },
+        spec: {
+          engine: "llamacpp",
+          node: "local",
+          binary,
+          endpoint: { host: "127.0.0.1", port },
+          hostedModels: [{ rel: fixture.model.target }],
+        },
+      },
+    }),
+  );
+  expect(results).toMatchObject([
+    { ok: false, pid: null, error: "ManagedCapacity: InsufficientHeadroom" },
+  ]);
+  expect(refuse).toHaveBeenCalledTimes(1);
+  expect(existsSync(reached)).toBe(false);
+});
+
 test("authenticated agent starts share one mixed-kind memory budget", async () => {
   const dir = mkdtempSync(join(tmpdir(), "managed-launch-router-"));
   using fixture = modelRunEnvironment(dir);

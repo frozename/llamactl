@@ -2,7 +2,10 @@ import type { ManagedCapacitySample } from "@llamactl/core/resources/managed-cap
 
 import { server } from "@llamactl/core";
 import { resolveEnv } from "@llamactl/core/env";
-import { managedRuntimeRefusesMutation } from "@llamactl/core/residency/managed-runtime";
+import {
+  managedRuntimeRefusesMutation,
+  withManagedRuntimeMutation,
+} from "@llamactl/core/residency/managed-runtime";
 import { workloadRuntimeDir } from "@llamactl/core/workloadRuntime";
 import { expect, mock, test } from "bun:test";
 import { spawn } from "node:child_process";
@@ -16,7 +19,7 @@ import {
   type ManagedCapacityAudit,
   openNodeManagedAdmission,
 } from "../../src/residency/target-admission-policy.js";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
 import { pinModelHostStartup } from "../../src/server/modelhost.js";
 import { modelRunStartInvocation } from "../../src/workload/apply.js";
 import { parseModelHost, saveModelHost } from "../../src/workload/modelhost-store.js";
@@ -25,6 +28,26 @@ import { parseWorkload, saveWorkload } from "../../src/workload/store.js";
 
 const target = "fixture-owner";
 const alias = "fixture-alias";
+
+test("a mounted owner still checks its lease to mutate after the marker disappears", () => {
+  const runtimeDir = mkdtempSync(join(tmpdir(), "llamactl-owner-marker-"));
+  const marker = join(runtimeDir, "managed-residency-v1");
+  writeFileSync(marker, "fixture-owned");
+  try {
+    withManagedRuntimeMutation(
+      runtimeDir,
+      () => existsSync(marker),
+      () => {
+        expect(managedRuntimeRefusesMutation(runtimeDir)).toBe(false);
+        rmSync(marker);
+        expect(managedRuntimeRefusesMutation(runtimeDir)).toBe(true);
+      },
+    );
+    expect(managedRuntimeRefusesMutation(runtimeDir)).toBe(false);
+  } finally {
+    rmSync(runtimeDir, { recursive: true, force: true });
+  }
+});
 
 test("the target authorizes an exact enabled manifest and rejects forged plans", async () => {
   const dir = mkdtempSync(join(tmpdir(), "llamactl-admission-policy-"));

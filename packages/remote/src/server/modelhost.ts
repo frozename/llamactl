@@ -112,6 +112,7 @@ export interface StartModelHostOptions {
   signal?: AbortSignal;
   onEvent?: (event: unknown) => void;
   commitReadiness?: (pid: number) => string | undefined;
+  checkSpawn?: () => string | undefined;
   workloadsDir?: string;
   runtimeDir?: string;
   env?: NodeJS.ProcessEnv;
@@ -1375,6 +1376,18 @@ type ScopedSpawnAttempt =
   | { kind: "aborted"; child: ChildProcess; pid: number; scope: ModelHostScopeLaunch }
   | { kind: "none" };
 
+function enforceManagedHostSpawn(
+  opts: StartModelHostOptions,
+  resolved: ReturnType<typeof resolveEnv>,
+): void {
+  if (opts.checkSpawn === undefined) return;
+  if (managedRuntimeRefusesMutation(resolved.LOCAL_AI_RUNTIME_DIR)) {
+    throw new Error("ManagedOwnerRequired");
+  }
+  const refusal = opts.checkSpawn();
+  if (refusal !== undefined) throw new Error(refusal);
+}
+
 async function attemptScopedModelHostSpawn(
   opts: StartModelHostOptions,
   manifest: ModelHostManifest,
@@ -1397,6 +1410,7 @@ async function attemptScopedModelHostSpawn(
   );
   if (scoped === null) return { kind: "none" };
   const offset = fstatSync(scoped.plan.bootFd).size;
+  enforceManagedHostSpawn(opts, resolved);
   const child = spawn(
     scoped.plan.systemdRunPath,
     buildScopeArgv(scoped.plan.base, opts.key.name, launch.binary, launch.args),
@@ -1460,6 +1474,7 @@ function spawnDirectModelHostChild(
   onSpawned?: (child: ChildProcess, pid: number) => void,
 ): { child: ChildProcess; pid: number } {
   const spawn = opts.spawn ?? nodeSpawn;
+  enforceManagedHostSpawn(opts, resolved);
   const child = spawn(launch.binary, launch.args, {
     detached: true,
     stdio: bootStdio === "ignore" ? "ignore" : ["ignore", bootStdio, bootStdio],

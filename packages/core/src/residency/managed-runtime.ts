@@ -19,9 +19,10 @@ export function hasManagedRuntimeMarker(runtimeDir: string): boolean {
 }
 
 export function managedRuntimeRefusesMutation(runtimeDir: string): boolean {
-  if (!hasManagedRuntimeMarker(runtimeDir)) return false;
   const scope = mutationScope.getStore();
-  return scope?.runtimeDir !== resolve(runtimeDir) || !scope.active();
+  return scope?.runtimeDir === resolve(runtimeDir)
+    ? !scope.active()
+    : hasManagedRuntimeMarker(runtimeDir);
 }
 
 export function withManagedRuntimeMutation<T>(
