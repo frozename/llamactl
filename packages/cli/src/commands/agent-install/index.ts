@@ -27,6 +27,7 @@ import {
   type Platform,
   resolveSourceDefault,
 } from "../artifacts.js";
+import { keychainBearerRefProblem, keychainRefShapeError } from "../bearer-ref.js";
 import { type BuildPlistOptions, buildSystemPlist, buildUserPlist } from "./templates.js";
 
 /**
@@ -61,17 +62,33 @@ Flags (all --key=value):
                                --*-bearer-file flags below instead.
   --dial-central=<url>         wss URL of a central's /tunnel endpoint;
                                forwarded into ProgramArguments. Requires
-                               --central-bearer-file.
+                               exactly one of --central-bearer-file and
+                               --central-bearer-ref.
   --tunnel-node-name=<name>    Identity in the tunnel hello frame.
                                Requires --dial-central.
   --central-bearer-file=<abs path>
                                Absolute path to a 0600 file holding the
                                dial-side tunnel bearer. The token itself
                                never enters the plist.
+  --central-bearer-ref=keychain:<service>/<account>
+                               Read the dial-side bearer from the macOS
+                               login keychain at serve time instead of a
+                               file. keychain: refs only; macOS only. A
+                               keychain ref needs a user-scope
+                               LaunchAgent (--scope=user), the only
+                               scope with access to the login keychain.
   --tunnel-bearer-file=<abs path>
                                Absolute path to a 0600 file holding the
                                central-side bearer; also adds
                                --tunnel-central=true to ProgramArguments.
+  --tunnel-bearer-ref=keychain:<service>/<account>
+                               Read the central-side bearer from the
+                               macOS login keychain at serve time
+                               instead of a file; also adds
+                               --tunnel-central=true. keychain: refs
+                               only; macOS only, and like
+                               --central-bearer-ref it needs a
+                               user-scope LaunchAgent.
   --label=<label>              service label
                                default: com.llamactl.agent (user)
                                         com.llamactl.agent.daemon (system)
@@ -208,7 +225,9 @@ export interface InstallLaunchdFlags {
   dialCentral?: string;
   tunnelNodeName?: string;
   centralBearerFile?: string;
+  centralBearerRef?: string;
   tunnelBearerFile?: string;
+  tunnelBearerRef?: string;
 }
 
 interface InstallFlagState {
@@ -227,7 +246,9 @@ interface InstallFlagState {
   dialCentral: string | undefined;
   tunnelNodeName: string | undefined;
   centralBearerFile: string | undefined;
+  centralBearerRef: string | undefined;
   tunnelBearerFile: string | undefined;
+  tunnelBearerRef: string | undefined;
 }
 
 function applyScopeFlag(v: string, state: InstallFlagState): { error: string } | null {
@@ -321,25 +342,119 @@ function applyInstallKeyValueFlag(
       }
       state.tunnelBearerFile = v;
       return null;
+    case "--central-bearer-ref":
+      return applyBearerRefFlag(v, "central", state, "--central-bearer-file");
+    case "--tunnel-bearer-ref":
+      return applyBearerRefFlag(v, "tunnel", state, "--tunnel-bearer-file");
     default:
       return { error: `agent install-launchd: unknown flag ${k}` };
   }
 }
 
+// #289: a bearer reference may only point at the macOS login keychain. An
+// env:/$ ref would need the token in the launchd session env (which a
+// plist cannot carry) and a file: ref would bypass the 0600 check the
+// --*-bearer-file flags apply. The shape check lives in ../bearer-ref.ts.
+function applyBearerRefFlag(
+  value: string,
+  side: "central" | "tunnel",
+  state: InstallFlagState,
+  fileLabel: string,
+): { error: string } | null {
+  const err = bearerRefError(value, `--${side}-bearer-ref`, fileLabel);
+  if (err !== null) return err;
+  const field = side === "central" ? "centralBearerRef" : "tunnelBearerRef";
+  state[field] = value;
+  return null;
+}
+
+function bearerRefError(
+  value: string,
+  refLabel: string,
+  fileLabel: string,
+): { error: string } | null {
+  const problem = keychainBearerRefProblem(value);
+  if (problem === null) return null;
+  if (problem === "shape") {
+    return { error: `agent install-launchd: ${keychainRefShapeError(refLabel)}` };
+  }
+  return {
+    error:
+      `agent install-launchd: ${refLabel} must be a keychain:<service>/<account> ref ` +
+      `(macOS login keychain, resolved by the agent at serve time); for a file use ` +
+      `${fileLabel}=<abs path> (a 0600 file)`,
+  };
+}
+
+// #289: only a user-scope LaunchAgent runs inside the login session that
+// can read the login keychain; a system LaunchDaemon would fail at serve
+// time, so refuse the combination while parsing.
+function checkBearerRefScope(state: InstallFlagState): { error: string } | null {
+  if (state.scope !== "system") return null;
+  const refLabel = [
+    state.centralBearerRef !== undefined ? "--central-bearer-ref" : null,
+    state.tunnelBearerRef !== undefined ? "--tunnel-bearer-ref" : null,
+  ].find((label) => label !== null);
+  if (refLabel === undefined) return null;
+  return {
+    error:
+      `agent install-launchd: ${refLabel} needs --scope=user (a LaunchAgent in the login ` +
+      "session, the only scope that can read the login keychain); --scope=system cannot " +
+      "resolve keychain refs, so use a --*-bearer-file instead",
+  };
+}
+
+function bearerSourceConflict(
+  file: string | undefined,
+  ref: string | undefined,
+  fileLabel: string,
+  refLabel: string,
+): { error: string } | null {
+  if (file === undefined || ref === undefined) return null;
+  return {
+    error: `agent install-launchd: ${fileLabel} and ${refLabel} must not be combined; pick one bearer source`,
+  };
+}
+
 // #289: tunnel wiring travels as ProgramArguments, never as secret env.
-// --dial-central needs its bearer file (the plist must stay token-free),
-// and --tunnel-node-name only makes sense on a dialing node.
+// --dial-central needs exactly one bearer source, a 0600 file or a
+// keychain ref (the plist must stay token-free), and --tunnel-node-name
+// only makes sense on a dialing node.
 function checkTunnelWiringFlags(state: InstallFlagState): { error: string } | null {
-  if (state.dialCentral !== undefined && state.centralBearerFile === undefined) {
+  const centralConflict = bearerSourceConflict(
+    state.centralBearerFile,
+    state.centralBearerRef,
+    "--central-bearer-file",
+    "--central-bearer-ref",
+  );
+  if (centralConflict !== null) return centralConflict;
+  const tunnelConflict = bearerSourceConflict(
+    state.tunnelBearerFile,
+    state.tunnelBearerRef,
+    "--tunnel-bearer-file",
+    "--tunnel-bearer-ref",
+  );
+  if (tunnelConflict !== null) return tunnelConflict;
+  if (
+    state.dialCentral !== undefined &&
+    state.centralBearerFile === undefined &&
+    state.centralBearerRef === undefined
+  ) {
     return {
       error:
-        "agent install-launchd: --dial-central requires --central-bearer-file=<abs path> " +
-        "(a 0600 file; the plist must not carry the token)",
+        "agent install-launchd: --dial-central requires exactly one of " +
+        "--central-bearer-file=<abs path> (a 0600 file) and " +
+        "--central-bearer-ref=keychain:<service>/<account>; the plist must not carry the token",
     };
   }
   if (state.centralBearerFile !== undefined && state.dialCentral === undefined) {
     return {
       error: "agent install-launchd: --central-bearer-file requires --dial-central=<wss-url>",
+    };
+  }
+  if (state.centralBearerRef !== undefined && state.dialCentral === undefined) {
+    return {
+      error: "agent install-launchd: --central-bearer-ref requires --dial-central=<wss-url>",
     };
   }
   if (state.tunnelNodeName !== undefined && state.dialCentral === undefined) {
@@ -416,7 +531,9 @@ export function parseInstallLaunchdFlags(argv: string[]): InstallLaunchdFlags | 
     dialCentral: undefined,
     tunnelNodeName: undefined,
     centralBearerFile: undefined,
+    centralBearerRef: undefined,
     tunnelBearerFile: undefined,
+    tunnelBearerRef: undefined,
   };
 
   for (const arg of argv) {
@@ -428,6 +545,8 @@ export function parseInstallLaunchdFlags(argv: string[]): InstallLaunchdFlags | 
   if ("error" in source) return source;
   const wiringErr = checkTunnelWiringFlags(state);
   if (wiringErr !== null) return wiringErr;
+  const scopeErr = checkBearerRefScope(state);
+  if (scopeErr !== null) return scopeErr;
 
   return {
     scope: state.scope,
@@ -445,7 +564,9 @@ export function parseInstallLaunchdFlags(argv: string[]): InstallLaunchdFlags | 
     ...(state.centralBearerFile !== undefined
       ? { centralBearerFile: state.centralBearerFile }
       : {}),
+    ...(state.centralBearerRef !== undefined ? { centralBearerRef: state.centralBearerRef } : {}),
     ...(state.tunnelBearerFile !== undefined ? { tunnelBearerFile: state.tunnelBearerFile } : {}),
+    ...(state.tunnelBearerRef !== undefined ? { tunnelBearerRef: state.tunnelBearerRef } : {}),
   };
 }
 
@@ -885,8 +1006,14 @@ function buildPlistForInstall(
   if (parsed.centralBearerFile !== undefined) {
     extraServeArgs.push(`--central-bearer-file=${parsed.centralBearerFile}`);
   }
+  if (parsed.centralBearerRef !== undefined) {
+    extraServeArgs.push(`--central-bearer-ref=${parsed.centralBearerRef}`);
+  }
   if (parsed.tunnelBearerFile !== undefined) {
     extraServeArgs.push("--tunnel-central=true", `--tunnel-bearer-file=${parsed.tunnelBearerFile}`);
+  }
+  if (parsed.tunnelBearerRef !== undefined) {
+    extraServeArgs.push("--tunnel-central=true", `--tunnel-bearer-ref=${parsed.tunnelBearerRef}`);
   }
   const plistOpts = assemblePlistOptions({
     label: targets.label,
