@@ -968,10 +968,14 @@ describe("docs/dynamic-residency.md (#285)", () => {
       "serverStartOptions(input, sig,",
       "directModelRunStartOpts(input.workload, input.target),",
     ]);
-    expectPins(routerSrc, "ModelRun stop call sites", [
+    const serverStop = enclosingBody(routerSrc, "serverStop: t.procedure");
+    expectPins(serverStop, "ModelRun stop call site", [
       "const outcome = await runDirectResidencyStop<{",
-      "              directModelRunOpts(input.workload),\n            );\n            return outcome.ran ? outcome.result.stop",
+      "directModelRunOpts(input.workload),",
+      "return outcome.ran ? outcome.result.stop",
       '...(stop.stopped ? {} : { error: "stop did not confirm process removal" }),',
+    ]);
+    expectPins(routerSrc, "ModelRun orchestration call sites", [
       // deleting a ModelRun reaches serverStop
       ": await stopWorkloadForDelete(manifest, stops);",
       // the switch's applyManifest runs in the switch scope

@@ -18,6 +18,7 @@ interface LaunchResult {
 export type CommitLaunchReadiness = (pid: number) => string | undefined;
 
 export interface ManagedLaunchAdmission {
+  prepareStopRelease?: AdmissionAuthority["prepareStopRelease"];
   run<T extends LaunchResult>(
     request: ManagedLaunchRequest,
     signal: AbortSignal,
@@ -31,7 +32,12 @@ type AdmittedClaim = { claimId: string; fenceToken: string };
 interface ManagedLaunchOptions {
   authority: Pick<
     AdmissionAuthority,
-    "admit" | "recordGeneration" | "completeReady" | "failUncertain" | "abandonUnstarted"
+    | "admit"
+    | "recordGeneration"
+    | "completeReady"
+    | "failUncertain"
+    | "abandonUnstarted"
+    | "prepareStopRelease"
   >;
   // The approved spec must account for the complete invocation.
   resolve: (
@@ -54,9 +60,11 @@ function recordLaunchGeneration(
   const generation = opts.capture(request, pid);
   return (
     generation?.pid === pid &&
-    generation.startTimeMs !== undefined &&
-    Number.isFinite(generation.startTimeMs) &&
-    generation.startTimeMs > 0 &&
+    (generation.birthId !== undefined
+      ? generation.birthId.length > 0
+      : generation.startTimeMs !== undefined &&
+        Number.isFinite(generation.startTimeMs) &&
+        generation.startTimeMs > 0) &&
     opts.authority.recordGeneration(claim.claimId, claim.fenceToken, generation)
   );
 }
@@ -108,6 +116,7 @@ async function runClaimedLaunch<T extends LaunchResult>(
 
 export function createManagedLaunchAdmission(opts: ManagedLaunchOptions): ManagedLaunchAdmission {
   return {
+    prepareStopRelease: (runtimeKey, kind) => opts.authority.prepareStopRelease(runtimeKey, kind),
     async run<T extends LaunchResult>(
       request: ManagedLaunchRequest,
       signal: AbortSignal,

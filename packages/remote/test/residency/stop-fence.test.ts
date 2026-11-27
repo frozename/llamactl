@@ -30,6 +30,7 @@ import { join } from "node:path";
 
 import { openAdmissionAuthority } from "../../src/residency/admission-authority.js";
 import { createManagedLaunchAdmission } from "../../src/residency/managed-launch-admission.js";
+import { openLocalAdmissionRuntime } from "../../src/residency/process-generation.js";
 import {
   defaultResidencyStorePath,
   openResidencyOperationStore,
@@ -1249,4 +1250,137 @@ test.each([
       lifecycle.close();
     }
   },
+);
+
+async function freshLoopbackPort(): Promise<number> {
+  const probe = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response() });
+  const port = Number(probe.port);
+  await probe.stop(true);
+  return port;
+}
+
+function fixturePid(name: string): number | undefined {
+  for (const file of ["llama-server.pid", "modelhost.pid"]) {
+    const path = join(runtimeRoot(), "workloads", name, file);
+    if (existsSync(path)) return Number(readFileSync(path, "utf8").trim());
+  }
+  return undefined;
+}
+
+test.skipIf(process.platform !== "darwin" && process.platform !== "linux")(
+  "a mixed-engine switch drains leases and releases capacity only after the stopped generation is gone",
+  async () => {
+    const run = "managed-switch-run";
+    const host = "managed-switch-host";
+    const reg = createResidencyLeases();
+    setResidencyLeaseRegistry(reg);
+    const runPort = await freshLoopbackPort();
+    const hostPort = await freshLoopbackPort();
+    const models = join(tmp, "models");
+    mkdirSync(models, { recursive: true });
+    writeFileSync(join(models, "fake.gguf"), "GGUF-fake");
+    const runBinary = join(tmp, "llama-server");
+    const hostBinary = join(tmp, "host-llama-server");
+    writeFakeServer(runBinary, "127.0.0.1", runPort);
+    // Keep the actual model arguments visible to the verified ModelRun stop.
+    const script = readFileSync(runBinary, "utf8").trimEnd();
+    writeFileSync(runBinary, script + ' -- "$@"\n', { mode: 0o755 });
+    writeFakeServer(hostBinary, "127.0.0.1", hostPort);
+    Object.assign(process.env, {
+      LLAMA_CPP_MODELS: models,
+      LLAMA_CPP_LOGS: join(tmp, "logs"),
+      LLAMA_CPP_USE_TUNED_ARGS: "false",
+    });
+
+    const runtime = await openLocalAdmissionRuntime({
+      storePath: join(tmp, "mixed-admission.db"),
+      budgetGiB: () => 24,
+      readPidFile: fixturePid,
+    });
+    const gate = createManagedLaunchAdmission({
+      authority: runtime.authority,
+      resolve: ({ runtimeKey }) => ({ specDigest: runtimeKey, allocationGiB: 16 }),
+      capture: (_request, pid) => {
+        spawnedServerPids.add(pid);
+        return runtime.capture(pid);
+      },
+    });
+    const caller = router.createCaller({ managedLaunchAdmission: gate });
+    const manifest = parseModelHost(`
+apiVersion: llamactl/v1
+kind: ModelHost
+metadata:
+  name: ${host}
+spec:
+  engine: llamacpp
+  node: local
+  enabled: true
+  binary: ${hostBinary}
+  endpoint:
+    host: 127.0.0.1
+    port: ${String(hostPort)}
+  hostedModels:
+    - rel: fake.gguf
+`);
+    try {
+      const first = await caller.serverStart({
+        workload: run,
+        target: "fake.gguf",
+        binary: runBinary,
+        endpoint: { host: "127.0.0.1", port: runPort },
+        timeoutSeconds: 5,
+      });
+      for await (const event of first) {
+        if (event.type === "launch") spawnedServerPids.add(event.pid);
+      }
+      expect(listWorkloadRoutes(envMod.resolveEnv(), run)).toHaveLength(1);
+
+      const blocked = [];
+      for await (const event of await caller.modelHostStart({ workload: host, manifest })) {
+        blocked.push(event);
+      }
+      expect(blocked).toEqual([
+        {
+          type: "done",
+          result: {
+            ok: false,
+            pid: null,
+            error: "BudgetExceeded: committed 16 GiB plus incoming 16 GiB exceeds budget 24 GiB",
+          },
+        },
+      ]);
+      expect(fixturePid(host)).toBeUndefined();
+
+      const active = reg.acquire(run);
+      if (!active.ok) throw new Error("fixture lease refused");
+      try {
+        expect(await caller.serverStop({ workload: run })).toMatchObject({
+          stopped: false,
+          refused: { reason: "LeasesActive" },
+        });
+        expect(runtime.authority.snapshot()).toMatchObject([
+          { runtimeKey: run, state: "resident", allocationGiB: 16 },
+        ]);
+      } finally {
+        active.lease.release();
+      }
+      const stopped = await caller.serverStop({ workload: run, graceSeconds: 2 });
+      expect(stopped.stopped).toBe(true);
+      if (stopped.pid !== null) spawnedServerPids.delete(stopped.pid);
+      expect(runtime.authority.snapshot()).toEqual([]);
+      expect(listWorkloadRoutes(envMod.resolveEnv(), run)).toEqual([]);
+
+      const resumed = await caller.modelHostStart({ workload: host, manifest, timeoutSeconds: 5 });
+      for await (const _event of resumed) {
+        // Wait for the host to commit and publish.
+      }
+      expect(listWorkloadRoutes(envMod.resolveEnv(), host)).toHaveLength(1);
+      expect(runtime.authority.snapshot()).toMatchObject([
+        { runtimeKey: host, state: "resident", allocationGiB: 16 },
+      ]);
+    } finally {
+      runtime.authority.close();
+    }
+  },
+  20_000,
 );

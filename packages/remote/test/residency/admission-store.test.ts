@@ -864,7 +864,7 @@ describe("admission-store", () => {
       const user_version =
         rawDb.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version ?? 0;
       expect(application_id).toBe(0x4c4d4144);
-      expect(user_version).toBe(1);
+      expect(user_version).toBe(2);
     } finally {
       rawDb.close();
       t.cleanup();
@@ -900,13 +900,13 @@ describe("admission-store", () => {
     store.close();
     const rawDb = new Database(t.path);
     try {
-      rawDb.run("PRAGMA user_version = 2");
+      rawDb.run("PRAGMA user_version = 3");
       rawDb.close();
       expect(() => openAdmissionStore({ path: t.path })).toThrow(AuthorityUnavailableError);
       const verify = new Database(t.path);
       try {
         const row = verify.query<{ user_version: number }, []>("PRAGMA user_version").get();
-        expect(row?.user_version ?? 0).toBe(2);
+        expect(row?.user_version ?? 0).toBe(3);
       } finally {
         verify.close();
       }
@@ -1024,36 +1024,39 @@ describe("admission-store", () => {
     if (c.kind !== "admitted") {
       throw new Error("claim not admitted");
     }
-    expect(recordGen(first, c.claimId, c.fenceToken, { pid: 5300, startTimeMs: 42 })).toBe(true);
+    expect(recordGen(first, c.claimId, c.fenceToken, { pid: 5300, birthId: "linux:boot:42" })).toBe(
+      true,
+    );
     first.close();
     const second = openStore(t.path);
     try {
-      expect(generationsOf(second, c.claimId)).toEqual([{ pid: 5300, startTimeMs: 42 }]);
+      expect(generationsOf(second, c.claimId)).toEqual([{ pid: 5300, birthId: "linux:boot:42" }]);
       // No owner is recorded, so recovery proceeds — the orphan pending
       // row sweeps to uncertain and keeps its captured evidence.
       expect(recover(second, { pid: 6601, startTimeMs: 9 }, false).kind).toBe("recovered");
       expect(row(second, c.claimId)?.state).toBe("uncertain");
-      expect(generationsOf(second, c.claimId)).toEqual([{ pid: 5300, startTimeMs: 42 }]);
+      expect(generationsOf(second, c.claimId)).toEqual([{ pid: 5300, birthId: "linux:boot:42" }]);
     } finally {
       second.close();
     }
     const third = openStore(t.path);
     try {
-      expect(generationsOf(third, c.claimId)).toEqual([{ pid: 5300, startTimeMs: 42 }]);
+      expect(generationsOf(third, c.claimId)).toEqual([{ pid: 5300, birthId: "linux:boot:42" }]);
     } finally {
       third.close();
       t.cleanup();
     }
   });
 
-  test("a ledger created before the generations table still opens and migrates", () => {
-    const t = tempDb();
-    // Recreate the pre-generations schema by hand — opening through
-    // openAdmissionStore on this code path would already migrate, so the
-    // "before" file is written directly.
-    const raw = new Database(t.path);
-    try {
-      raw.run(`CREATE TABLE authority_meta (
+  test.each([false, true])(
+    "a v1 ledger migrates with existing generation table=%p",
+    (hasGenerations) => {
+      const t = tempDb();
+      const previous = hasGenerations ? [{ pid: 5300, startTimeMs: 2 }] : [];
+      const captured = { pid: 5400, birthId: "linux:boot:3" };
+      const raw = new Database(t.path);
+      try {
+        raw.run(`CREATE TABLE authority_meta (
         id INTEGER PRIMARY KEY CHECK (id = 1),
         authority_id TEXT NOT NULL,
         epoch INTEGER NOT NULL,
@@ -1061,7 +1064,7 @@ describe("admission-store", () => {
         owner_start_time_ms INTEGER,
         owner_executable TEXT
       )`);
-      raw.run(`CREATE TABLE claims (
+        raw.run(`CREATE TABLE claims (
         claim_id TEXT PRIMARY KEY,
         runtime_key TEXT NOT NULL,
         spec_digest TEXT NOT NULL,
@@ -1072,52 +1075,59 @@ describe("admission-store", () => {
         generation_version INTEGER NOT NULL,
         fence_token TEXT NOT NULL
       )`);
-      raw.run(
-        "INSERT INTO authority_meta (id, authority_id, epoch) VALUES (1, 'legacy-authority', 1)",
-      );
-      raw.run(`INSERT INTO claims (claim_id, runtime_key, spec_digest, kind, state,
+        raw.run(
+          "INSERT INTO authority_meta (id, authority_id, epoch) VALUES (1, 'legacy-authority', 1)",
+        );
+        raw.run(`INSERT INTO claims (claim_id, runtime_key, spec_digest, kind, state,
                                    allocation_gib, owner_epoch, generation_version, fence_token)
                VALUES ('legacy-claim', 'w-legacy', 'd', 'ModelRun', 'pending',
                        4, 1, 1, 'legacy-fence')`);
-      raw.run(`PRAGMA application_id = ${String(0x4c4d4144)}`);
-      raw.run("PRAGMA user_version = 1");
-    } finally {
-      raw.close();
-    }
-    const store = openStore(t.path);
-    try {
-      const verify = new Database(t.path);
-      try {
-        const tables = verify
-          .query<{ name: string }, []>(
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
-          )
-          .all()
-          .map((r) => r.name);
-        expect(tables.some((name) => /generation/i.test(name))).toBe(true);
+        if (hasGenerations) {
+          raw.run(`CREATE TABLE claim_generations (
+          claim_id TEXT NOT NULL, seq INTEGER NOT NULL, pid INTEGER NOT NULL,
+          start_time_ms INTEGER, executable TEXT, PRIMARY KEY (claim_id, seq)
+        )`);
+          raw.run("INSERT INTO claim_generations VALUES ('legacy-claim', 1, 5300, 2, NULL)");
+        }
+        raw.run(`PRAGMA application_id = ${String(0x4c4d4144)}`);
+        raw.run("PRAGMA user_version = 1");
       } finally {
-        verify.close();
+        raw.close();
       }
-      // The migrated ledger stays fully functional: the pre-existing row
-      // is readable and the new evidence table accepts appends.
-      expect(row(store, "legacy-claim")?.state).toBe("pending");
-      expect(generationsOf(store, "legacy-claim")).toEqual([]);
-      expect(recordGen(store, "legacy-claim", "legacy-fence", { pid: 5400, startTimeMs: 3 })).toBe(
-        true,
-      );
-      expect(generationsOf(store, "legacy-claim")).toEqual([{ pid: 5400, startTimeMs: 3 }]);
-    } finally {
-      store.close();
-    }
-    // Reopening is idempotent — the migration does not repeat or fail.
-    const reopened = openStore(t.path);
-    try {
-      expect(generationsOf(reopened, "legacy-claim")).toEqual([{ pid: 5400, startTimeMs: 3 }]);
-    } finally {
-      reopened.close();
-      t.cleanup();
-    }
-  });
+      const store = openStore(t.path);
+      try {
+        const verify = new Database(t.path);
+        try {
+          const tables = verify
+            .query<{ name: string }, []>(
+              "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+            )
+            .all()
+            .map((r) => r.name);
+          expect(tables).toContain("claim_generations");
+          expect(verify.query("PRAGMA user_version").get()).toEqual({ user_version: 2 });
+        } finally {
+          verify.close();
+        }
+        // The migrated ledger stays fully functional: the pre-existing row
+        // is readable and the new evidence table accepts appends.
+        expect(row(store, "legacy-claim")?.state).toBe("pending");
+        expect(generationsOf(store, "legacy-claim")).toEqual(previous);
+        expect(recordGen(store, "legacy-claim", "legacy-fence", captured)).toBe(true);
+        expect(generationsOf(store, "legacy-claim")).toEqual([...previous, captured]);
+      } finally {
+        store.close();
+      }
+      // Reopening is idempotent — the migration does not repeat or fail.
+      const reopened = openStore(t.path);
+      try {
+        expect(generationsOf(reopened, "legacy-claim")).toEqual([...previous, captured]);
+      } finally {
+        reopened.close();
+        t.cleanup();
+      }
+    },
+  );
 
   test("a ledger read failure surfaces as AuthorityUnavailableError, not an empty snapshot", () => {
     const t = tempDb();
