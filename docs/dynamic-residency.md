@@ -33,6 +33,8 @@ sqlite3 "file:$BACKUP_DIR/operations.sqlite?mode=ro&immutable=1" "PRAGMA integri
 
 Restore only with the agent stopped, and back up the workloads dir in the same breath. The store holds profile-switch ops (`profile-switch:<node>`), fenced eviction intent (#710, `packages/remote/src/residency/eviction-operation.ts`), lease audit (#686) and the `desiredRevision` watermark (#676). `residency status` reads it read-only via `readResidencyStoreSnapshot`.
 
+A stopped agent can leave a model process running. Preserve the current store and its WAL while a switch, process generation or reservation remains unresolved. A backup is for disaster recovery after reconciling engine identities, capacity and desired state with the restored revision. A backup restore does not settle a profile switch.
+
 ## Desired-state ownership
 
 `ModelRun`, `ModelHost` and `NodeRun` manifests live in `defaultWorkloadsDir`: `LLAMACTL_WORKLOADS_DIR`, else `<home>/workloads` (`packages/remote/src/workload/store.ts`). The manifest store is central to the control plane: every read and write of desired state flows through it (`packages/cli/src/commands/_workload-resolve.ts`).
@@ -373,20 +375,24 @@ The operator removes them with `llamactl keep-alive stop` and `llamactl server s
 
 ## Staged enable order and rollback
 
+Approve each stage for one named canary at a time. Record the approved stage and window, exact controller and agent builds and negotiated capabilities, engine build, artifact revision, cache epoch, desired manifest revision, and prior configuration. Keep automatic residency disabled outside that approval. A missing capability or unresolved earlier operation blocks activation. Each report records the rollback trigger and verifies recovery of the prior routes and required services.
+
 ### Stage 0 - inventory and dry-run
 
-Inventory the node, then read the plan. No writes.
+Inventory the node, the authoritative manifest writer, and launchers that could restart the same workloads. Check the worker's reported capabilities and compare the expected build and artifact identities. Review the proposed plan against protected workloads and the node's finite budget.
 
 ```sh
 llamactl residency status --node <name>
 llamactl residency plan --node <name> --to <profile> [--from <profile>]
 ```
 
-Enable gate: the `residency plan` output is reviewed and the store is backed up. Rollback: none needed; nothing was written.
+**Enable gate.** The plan has been reviewed, the manifest revision and prior service configuration have been captured, and the node-local store has a verified backup. Validate that the 16 GiB control-only example has no dedicated model placement and the 48/128 GiB examples leave room for protected services and host reserve.
+
+**Rollback.** End the assessment and retain the inventory and dry-run report. Inventory and planning leave the deployed configuration intact.
 
 ### Stage 1 - manual switch
 
-Make a one-off switch and abort if it misbehaves. The controller lock must not be live (see the `ControllerActive` guard). Run the dry run first and read its report, then the wet run; cancel by the operation id the wet run reports.
+Use a one-off switch with a single desired-state writer and no conflicting launcher. The `ControllerActive` guard refuses a wet request while the controller lock is live. Review the dry run before the wet run. Use the operation ID to request cancellation while the owning process is still running. Cancellation is process-local and takes effect at a step boundary.
 
 ```sh
 llamactl residency apply-profile --node <name> --to <profile> [--from <profile>]
@@ -394,14 +400,17 @@ llamactl residency apply-profile --node <name> --to <profile> [--from <profile>]
 llamactl residency cancel-operation <operationId> --yes --node <name>
 ```
 
-Enable gate: a single profile switch succeeds and `residency status` agrees. Rollback: run cancel-operation, then `llamactl apply -f` the prior manifest from the control plane.
+**Enable gate.** Require the accepted finite-admission, lease, verified-release and restart-recovery builds. Drain existing pre-marker profile switches before upgrading. Prove that an overlapping request holds its lease through teardown, protected services keep serving, and a replacement enters the ready route only after a serving probe verifies the intended artifact. Verify the canary's `residency status` and restart outcome. A build that can release an unresolved switch's reservation or start a victim when its store is unreadable is blocked.
+
+**Rollback.** Fence new canary traffic and drain active requests. If a committed switch has an unknown outcome, stop rollout and preserve the operation ID, fence, replacement process identity and reservation evidence. Keep the committed reservation, fence and lifecycle rows intact. Keep the node out of the canary while the claim, process or release is uncertain. Cancellation, a missing PID file, an agent restart, and elapsed time are insufficient release evidence. Before restoring the prior profile, prove the exact replacement generation is down and its capacity is released. Then reconcile the durable claim through a supported operation and obtain a fresh finite reservation before restoring any victim. If the build has no supported resolution path, leave the hold in place and record the blocker. Verify the restored profile's readiness, protected routes, and remaining budget before restoring traffic.
 
 ### Stage 2 - request-driven admission and declared models
 
-Turn on request admission and declared models in the agent's environment, then restart the agent. Both are read once at `agent serve` startup (`packages/cli/src/commands/agent.ts`). For an agent run in the foreground:
+The following startup settings enable chat execution limits and declared-model projection. Enable only on the approved canary. Set `MAX_EXECUTIONS` and `MAX_QUEUED` to the reviewed positive integer execution and queue limits before restarting the agent. `agent serve` reads the settings once (`packages/cli/src/commands/agent.ts`).
 
 ```sh
-export LLAMACTL_CHAT_ADMISSION_MAX_EXECUTIONS=<n>
+export LLAMACTL_CHAT_ADMISSION_MAX_EXECUTIONS="$MAX_EXECUTIONS"
+export LLAMACTL_CHAT_ADMISSION_MAX_QUEUED="$MAX_QUEUED"
 export LLAMACTL_DECLARED_MODELS=1
 llamactl agent serve
 ```
@@ -410,14 +419,65 @@ For the default user LaunchAgent `com.llamactl.agent`, whose plist `agent instal
 
 ```sh
 PLIST="$HOME/Library/LaunchAgents/com.llamactl.agent.plist"
-plutil -replace EnvironmentVariables.LLAMACTL_CHAT_ADMISSION_MAX_EXECUTIONS -string "<n>" "$PLIST"
+plutil -replace EnvironmentVariables.LLAMACTL_CHAT_ADMISSION_MAX_EXECUTIONS -string "$MAX_EXECUTIONS" "$PLIST"
+plutil -replace EnvironmentVariables.LLAMACTL_CHAT_ADMISSION_MAX_QUEUED -string "$MAX_QUEUED" "$PLIST"
 plutil -replace EnvironmentVariables.LLAMACTL_DECLARED_MODELS -string 1 "$PLIST"
 launchctl bootout "gui/$(id -u)" "$PLIST"
 launchctl bootstrap "gui/$(id -u)" "$PLIST"
 ```
 
-Enable gate: 429 and 503 appear only under real overload and declared states match readiness. Rollback: unset `LLAMACTL_CHAT_ADMISSION_MAX_EXECUTIONS` and `LLAMACTL_DECLARED_MODELS` (`plutil -remove EnvironmentVariables.<key> "$PLIST"` for the LaunchAgent) and restart the agent.
+**Enable gate.** These settings alone provide no evidence for cold loading. Request-driven loading remains blocked until the deployed worker proves exact alias ownership, coalesces concurrent cold requests into one fenced launch, and enforces finite shared execution and queue limits. Check fair wait and cancellation under contention. Verify response codes for the applicable overload and warming cases, and verify older and unmanaged peers keep their documented route behavior.
+
+**Rollback.** Remove the canary from new request routing, then drain queued and active requests, leases and accepted launches under the current build. Resolve all resulting claims and verify available capacity before reverting canary settings or restarting the agent. Restore previous values or remove only the keys added for this canary (`plutil -remove EnvironmentVariables.<key> "$PLIST"` for the LaunchAgent). Verify contract behavior and ready routes against the baseline before returning the node to service. Carry any unknown transition forward using the Stage 1 hold.
 
 ### Stage 3 - native unload/wake
 
-BLOCKED: the sleep/wake controllers and managed oMLX residency have no production caller (see above), so there is nothing to enable here yet. Enable gate: blocked until a caller is wired. Rollback: blocked; nothing is on.
+**Enable gate.** BLOCKED for the sleep/wake controllers and managed oMLX residency until an accepted production caller is wired. Qualify each engine build independently for serving readiness, measured memory release, lease protection, probe-induced wake prevention and fallback for unsupported capabilities.
+
+**Rollback.** Fence and drain requests under the current build. Reconcile each native claim and verify the exact model generation and released capacity before returning to the qualified whole-process path. Preserve the artifact/cache identity and verify serving readiness under the prior profile. Use the Stage 1 hold for any unresolved outcome.
+
+## Qualification evidence
+
+- **Hermetic PASS** requires assertion-level evidence from the final build on macOS and Ubuntu with the workflow's pinned Bun version. Use temporary runtimes, loopback fake engine HTTP endpoints and real small fake executables. Inject restart before dispatch, during drain, after stop before release, after launch before PID recording, and after readiness before route publication. Cover stale ownership, partitions, stop refusal, delayed release and failed readiness. Under repeated overlap, assert reservations stay within budget and active and protected services remain available. Each restart must complete once, roll back within budget, or report a stable actionable unknown or unavailable state. Include unmanaged and older-peer controls.
+- **Hardware PASS** requires a separately approved host, engine build, artifact and test window for each of oMLX, supported llama.cpp builds and the opaque-process backend. Compare baseline → canary → restored baseline with the same artifact, workload mix, arrival schedule and correctness rules. Record cold and warm cache state separately. Set acceptable thresholds and comparison sample counts before starting. Default CI uses fake engines and temporary state. Hardware qualification has not been run for this rollout.
+- **FAIL** records a failed assertion or a measured result outside its predeclared threshold. Preserve the failed witness and the result of restoring the baseline.
+- **BLOCKED** records missing evidence or an unresolved dependency with the next verification needed. Keep approvals separate from test status. A passing hermetic suite, skipped hardware run, or issue closure does not authorize activation.
+
+Use the following comparison units for each scenario and window. Record sample counts, aborts, timeouts, refusals, in-flight requests and measurement sources alongside the aggregates. Missing sources are reported as unavailable.
+
+| Measure                 | Unit and evidence                                                                                                                 |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Warm and cold TTFT      | Milliseconds from request submission to the first output token, p50 and p95 for each cache state.                                 |
+| Inference latency       | Milliseconds from submission through terminal response, p50 and p95.                                                              |
+| Correct completed tasks | Tasks accepted by the fixture's correctness oracle per hour of the full observed wall-clock window.                               |
+| Load and switch time    | Milliseconds from load start to serving readiness and from accepted switch to settled outcome.                                    |
+| Queue fairness          | Queue wait p50/p95 in milliseconds and counts of admitted, refused, cancelled and expired requests per class.                     |
+| Memory                  | Peak unified memory in bytes, pressure readings with platform source, and swap-in and swap-out deltas in bytes over each window.  |
+| Engine telemetry        | Decode and prefill tokens/second, slot occupancy and deferral from the #249 collector, with counter resets identified per window. |
+
+Validate the Book interactive and maintenance scenarios against the consumer's existing quorum rules. Check the required role sets, the protected large-node executor, the fixed embedding identity and deferred background judging under request overlap and failure. Record consumer-visible completed tasks and the observed state of each required role. Preserve the configured models, embedding space and consumer policy.
+
+### Evidence manifest example
+
+Copy this JSON template for one candidate build, stage and backend. Record test status as `NOT_RUN`, `PASS`, `FAIL` or `BLOCKED`. Each completed window references a redacted measurement record using the units above. Record approved scope separately. Evidence references identify immutable artifacts or logs without publishing credentials, private addresses, model paths, or request contents.
+
+```json
+{
+  "schemaVersion": 1,
+  "sourceCommit": null,
+  "stage": 0,
+  "activationApproved": false,
+  "builds": { "controller": null, "agent": null, "engine": null },
+  "workerCapabilities": [],
+  "identity": { "artifactRevision": null, "cacheEpoch": null, "manifestRevision": null },
+  "hermetic": { "status": "NOT_RUN", "evidence": [] },
+  "hardware": {
+    "status": "NOT_RUN",
+    "backend": null,
+    "cases": [],
+    "windows": { "baseline": null, "canary": null, "restoredBaseline": null }
+  },
+  "rollback": { "trigger": null, "restorationEvidence": null },
+  "blockers": ["No hardware qualification has been run"]
+}
+```
