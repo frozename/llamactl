@@ -193,6 +193,11 @@ export {
   runDirectResidencyStop,
 } from "./residency/direct-lifecycle.js";
 export {
+  RESIDENCY_CONTROL_TOOL,
+  residencyControlInput,
+  type ResidencyControlResult,
+} from "./residency/managed-operator-control.js";
+export {
   effectiveResidencyPolicy,
   RESIDENCY_POLICY_KNOBS,
   type ResidencyPolicyKnob,

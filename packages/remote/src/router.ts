@@ -141,6 +141,7 @@ import {
 import {
   controlManagedResidency,
   enterManagedOperatorAction,
+  RESIDENCY_CONTROL_TOOL,
   residencyControlInput,
   type ResidencyControlResult,
 } from "./residency/managed-operator-control.js";
@@ -4973,21 +4974,25 @@ export const router = t.router({
       z.object({
         name: z.string().min(1),
         arguments: z.record(z.string(), z.unknown()).default({}),
-        dryRun: z.boolean().default(false),
+        dryRun: z.boolean().optional(),
         sessionId: z.string().optional(),
       }),
     )
-    .mutation(async ({ input }) => {
-      const caller = router.createCaller({});
+    .mutation(async ({ ctx, input, signal }) => {
+      const managedControl = input.name === RESIDENCY_CONTROL_TOOL;
+      const dryRun = input.dryRun ?? managedControl;
+      const caller = managedControl
+        ? router.createCaller(omitUndefined(ctx), signal === undefined ? undefined : { signal })
+        : router.createCaller({});
       const dispatched = await dispatchOpsChatTool(caller, {
         name: input.name,
         arguments: input.arguments,
-        dryRun: input.dryRun,
+        dryRun,
       });
       auditOpsChatToolRun({
         tool: input.name,
         arguments: input.arguments,
-        dryRun: input.dryRun,
+        dryRun,
         ok: dispatched.ok,
         durationMs: dispatched.durationMs,
         ...(dispatched.ok

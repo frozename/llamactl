@@ -55,6 +55,7 @@ function maybeBuildTunnelDispatch(
   effectiveNodeName: string,
   contextName: string | null,
   env: NodeJS.ProcessEnv,
+  requirePinnedHttps = false,
 ): { send: TunnelSendFn; subscribe: TunnelSubscribeFn } | undefined {
   const ctxName = contextName ?? cfg.currentContext;
   const ctx = cfg.contexts.find((c) => c.name === ctxName);
@@ -73,6 +74,9 @@ function maybeBuildTunnelDispatch(
     );
   }
 
+  if (requirePinnedHttps && new URL(centralUrl).protocol !== "https:") {
+    throw new Error("the tunnel relay must use pinned HTTPS");
+  }
   const user = cfg.users.find((u) => u.name === ctx.user);
   if (!user) {
     throw new Error(`user '${ctx.user}' not found`);
@@ -109,7 +113,7 @@ function maybeBuildTunnelDispatch(
   // plumbing a new field through the globals parser for every
   // command that might route via the tunnel. Documented choice —
   // keeps the existing Globals surface lean.
-  if (isInsecureTunnelRelay()) sharedOpts.insecure = true;
+  if (!requirePinnedHttps && isInsecureTunnelRelay()) sharedOpts.insecure = true;
   return {
     send: buildTunnelSend(sharedOpts),
     subscribe: buildTunnelSubscribe(sharedOpts),
@@ -295,10 +299,53 @@ export function getNodeClientByName(
   globals: Globals = currentGlobals,
   env: NodeJS.ProcessEnv = process.env,
 ): NodeClient {
+  return buildNamedNodeClient(nodeName, globals, env, false);
+}
+
+/** Resolve and dispatch on one kubeconfig snapshot for owner-authenticated tools. */
+export function getAuthenticatedAgentClientByName(
+  nodeName: string,
+  globals: Globals = EMPTY_GLOBALS,
+  env: NodeJS.ProcessEnv = process.env,
+): NodeClient {
+  return buildNamedNodeClient(nodeName, globals, env, true);
+}
+
+function requireAuthenticatedAgent(
+  cfg: Config,
+  nodeName: string,
+  contextName: string | null,
+): void {
+  if (nodeName === "all") throw new Error("name one managed agent");
+  const { node } = kubecfg.resolveNode(cfg, nodeName, contextName ?? undefined);
+  if (resolveNodeKind(node) !== "agent" || node.endpoint === LOCAL_NODE_ENDPOINT) {
+    throw new Error("name an authenticated managed agent");
+  }
+  if (
+    node.tunnelPreferred !== true &&
+    (!node.certificate?.trim() || new URL(node.endpoint).protocol !== "https:")
+  ) {
+    throw new Error("the managed agent must use pinned HTTPS");
+  }
+}
+
+function buildNamedNodeClient(
+  nodeName: string,
+  globals: Globals,
+  env: NodeJS.ProcessEnv,
+  requireAuthentication: boolean,
+): NodeClient {
   const cfg = loadConfigForDispatch(globals, env);
+  if (requireAuthentication) requireAuthenticatedAgent(cfg, nodeName, globals.contextName);
   const opts: Parameters<typeof createNodeClient>[1] = { nodeName, env };
   if (globals.contextName) opts.contextName = globals.contextName;
-  const tunnelDispatch = maybeBuildTunnelDispatch(cfg, nodeName, globals.contextName, env);
+  const tunnelDispatch = maybeBuildTunnelDispatch(
+    cfg,
+    nodeName,
+    globals.contextName,
+    env,
+    requireAuthentication,
+  );
   if (tunnelDispatch) {
     opts.tunnelSend = tunnelDispatch.send;
     opts.tunnelSubscribe = tunnelDispatch.subscribe;

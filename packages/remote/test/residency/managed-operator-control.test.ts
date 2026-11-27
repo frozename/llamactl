@@ -182,6 +182,7 @@ test("authenticated manual control uses the managed launch and stop fences", asy
     LOCAL_AI_RUNTIME_DIR: temp.runtimeDir,
     LLAMACTL_WORKLOADS_DIR: workloadsDir,
     LLAMACTL_RESIDENCY_STORE: storePath,
+    LLAMACTL_OPS_CHAT_AUDIT: join(temp.devStorage, "ops-chat.jsonl"),
     LLAMA_CPP_MODELS: temp.modelsDir,
     LLAMA_CPP_CACHE: join(temp.devStorage, "cache"),
     LLAMA_CPP_LOGS: join(temp.devStorage, "logs"),
@@ -230,6 +231,47 @@ test("authenticated manual control uses the managed launch and stop fences", asy
       body: JSON.stringify({ node, workload, action: "load" }),
     });
     expect(denied.status).toBe(401);
+
+    const tool = "llamactl.residency.control";
+    const argumentsFor = { node, workload, action: "load" };
+    expect(
+      (
+        await fetch(`${running.url}/trpc/operatorRunTool`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ name: tool, arguments: argumentsFor }),
+        })
+      ).status,
+    ).toBe(401);
+    expect(
+      await operatorCall(running, "operatorRunTool", {
+        name: tool,
+        arguments: argumentsFor,
+      }),
+    ).toMatchObject({ ok: true, result: { outcome: "preview" } });
+    expect(
+      await operatorCall(running, "operatorRunTool", {
+        name: tool,
+        dryRun: false,
+        arguments: argumentsFor,
+      }),
+    ).toMatchObject({ ok: false, error: { code: "ConfirmationRequired" } });
+    expect(
+      await operatorCall(running, "operatorRunTool", {
+        name: tool,
+        dryRun: true,
+        arguments: { ...argumentsFor, node: "wrong-owner" },
+      }),
+    ).toMatchObject({ ok: false, error: { code: "NotServingNode" } });
+    expect(
+      await router.createCaller({}).operatorRunTool({
+        name: tool,
+        dryRun: true,
+        arguments: argumentsFor,
+      }),
+    ).toMatchObject({ ok: false, error: { code: "ManagedControlUnavailable" } });
+    expect(existsSync(engine.marker)).toBe(false);
+
     expect(await control(running, { action: "unload", force: true })).toMatchObject({
       data: { code: "BAD_REQUEST" },
     });
@@ -250,6 +292,17 @@ test("authenticated manual control uses the managed launch and stop fences", asy
     expect(readFileSync(file, "utf8")).toBe(plain);
 
     saveWorkload({ ...manifest, spec: { ...manifest.spec, enabled: false } }, workloadsDir);
+    expect(
+      await operatorCall(running, "operatorRunTool", {
+        name: tool,
+        dryRun: false,
+        arguments: { ...argumentsFor, confirm: true },
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { code: "WorkloadDisabled" },
+      result: { ok: false, reason: "WorkloadDisabled" },
+    });
     expect(await control(running, { action: "load", dryRun: false, confirm: true })).toMatchObject({
       ok: false,
       reason: "WorkloadDisabled",
