@@ -83,7 +83,7 @@ import {
 import { Database } from "bun:sqlite";
 import { dirname, join } from "node:path";
 
-import { existsSync, mkdirSync } from "../safe-fs.js";
+import { existsSync, mkdirSync, statSync } from "../safe-fs.js";
 
 const SCHEMA_VERSION = 1;
 
@@ -499,6 +499,62 @@ export function readResidencyStoreSnapshot(
     return { path, present: true, error: (error as Error).message };
   } finally {
     db?.close();
+  }
+}
+
+type ProfileOperationView = {
+  active: ResidencyOperationRecord | null;
+  terminal: ResidencyOperationRecord | null;
+  fenceToken: number | null;
+};
+
+function profileOperationsAt(
+  db: Database,
+  model: string,
+  targetPrefix: string,
+): ProfileOperationView {
+  const active = db
+    .query(`SELECT ${OPERATION_COLUMNS} FROM operations WHERE model = ? AND phase != 'terminal'`)
+    .get(model) as OperationRow | null;
+  // Switches on a model serialize. Insertion order survives wall-clock changes.
+  // A pending row starts at v1. Only a committed row can finish at v3.
+  const terminal = db
+    .query(
+      `SELECT ${OPERATION_COLUMNS} FROM operations
+       WHERE model = ? AND phase = 'terminal' AND substr(target_state, 1, ?) = ?
+         AND (outcome = 'succeeded' OR (outcome = 'unknown' AND version >= 3))
+       ORDER BY rowid DESC LIMIT 1`,
+    )
+    .get(model, targetPrefix.length, targetPrefix) as OperationRow | null;
+  return {
+    active: active === null ? null : rowToRecord(active),
+    terminal: terminal === null ? null : rowToRecord(terminal),
+    fenceToken: readAuthority(db)?.fenceToken ?? null,
+  };
+}
+
+function profileStorePresent(path: string): boolean {
+  try {
+    statSync(path);
+    return true;
+  } catch (error: unknown) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+export function readProfileOperations(
+  path: string,
+  model: string,
+  targetPrefix: string,
+): ProfileOperationView | null {
+  if (!profileStorePresent(path)) return null;
+  const db = new Database(path, { readonly: true });
+  try {
+    db.run(`PRAGMA busy_timeout = ${String(RESIDENCY_LEASE_AUDIT_BUSY_TIMEOUT_MS)}`);
+    return db.transaction(() => profileOperationsAt(db, model, targetPrefix))();
+  } finally {
+    db.close();
   }
 }
 

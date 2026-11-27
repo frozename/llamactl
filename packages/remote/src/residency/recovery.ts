@@ -1,3 +1,8 @@
+import {
+  managedProfileFromTargetState,
+  PROFILE_SWITCH_OPERATION_PREFIX as SWITCH_PREFIX,
+} from "@llamactl/core/residency/profile-selection";
+
 import { profileOwnerLiveness } from "./profile-owner.js";
 /**
  * #279 DF-06: crash recovery for interrupted profile-switch operation records.
@@ -27,10 +32,11 @@ import { profileOwnerLiveness } from "./profile-owner.js";
  *    owned by the current fence is still reported, never skipped.
  * 5. A row whose fenceToken equals the current fence is `skipped`
  *    (`owned-by-current-fence`), not terminalized.
- * 6. A `targetState` that is not `profile:<non-empty>` is reported
- *    `unrecognized` as `malformed-target`.
+ * 6. A `targetState` that names neither a legacy nor a managed profile is
+ *    reported `unrecognized` as `malformed-target`.
  * 7. Otherwise the row is stale and gets terminalized (the sync variant first
- *    applies its `minStaleAgeMs` guard, see above).
+ *    applies its `minStaleAgeMs` guard, see above). Managed pending intent
+ *    cannot publish a selection: it never reached its dispatch boundary.
  *
  * An `unrecognized` row is never finished: it stays nonterminal so a later,
  * better-informed writer can repair or retire it. A `finishOperation` that
@@ -132,7 +138,6 @@ type UnverifiedRecoverOpts = {
   minStaleAgeMs?: number;
 };
 
-const SWITCH_PREFIX = "profile-switch:";
 const EVICT_PREFIX = "evict:";
 const EVICTED_BY_PREFIX = "evicted-by:";
 
@@ -141,7 +146,7 @@ const EVICTED_BY_PREFIX = "evicted-by:";
 type RowClassification =
   | { kind: "skip" }
   | { kind: "dispatch-unverified" }
-  | { kind: "stale"; node: string; profile: string }
+  | { kind: "stale"; node: string; profile: string; managed: boolean }
   | { kind: "owned-current-fence"; node: string }
   | { kind: "unrecognized"; reason: "malformed-node" | "malformed-target" };
 
@@ -172,11 +177,12 @@ function classifyRow(
   if (record.fenceToken === fenceToken) {
     return { kind: "owned-current-fence", node };
   }
-  const profile = extractProfile(record.targetState);
+  const managedProfile = managedProfileFromTargetState(record.targetState);
+  const profile = managedProfile ?? extractProfile(record.targetState);
   if (profile === null) {
     return { kind: "unrecognized", reason: "malformed-target" };
   }
-  return { kind: "stale", node, profile };
+  return { kind: "stale", node, profile, managed: managedProfile !== null };
 }
 
 export async function recoverProfileSwitchOperations(opts: RecoverOpts): Promise<RecoverResult> {
@@ -212,7 +218,7 @@ export async function recoverProfileSwitchOperations(opts: RecoverOpts): Promise
         classification.profile,
         fenceToken,
         nowMs(),
-        verifyTargetReady,
+        classification.managed ? undefined : verifyTargetReady,
         verifyTimeoutMs,
       ),
     );

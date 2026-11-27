@@ -86,6 +86,7 @@ import {
   type ProfileSwitchPlan,
   type StepKind,
 } from "@llamactl/core/residency/planner";
+import { profileSwitchOperationKey } from "@llamactl/core/residency/profile-selection";
 import {
   currentSessionRefcounts,
   type SessionRefcounts,
@@ -853,9 +854,7 @@ function buildReport(input: ReportInput): ProfileSwitchExecutionReport {
   };
 }
 
-export function profileSwitchOperationKey(node: string): string {
-  return `profile-switch:${node}`;
-}
+export { profileSwitchOperationKey };
 
 // The reservation the switch records at begin: the plan's `reserve` step, or 0
 // when there is none or it is not a finite non-negative number.
