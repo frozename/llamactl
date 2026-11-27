@@ -371,7 +371,8 @@ class RequestQueuePolicyImpl implements RequestQueuePolicy {
   // ── markEvicted ──────────────────────────────────────────────────────
 
   markEvicted(modelKey: string): void {
-    this.evicted.add(modelKey);
+    this.loaded.delete(modelKey);
+    if (this.resident.includes(modelKey)) this.evicted.add(modelKey);
   }
 
   // ── cancel ───────────────────────────────────────────────────────────

@@ -58,6 +58,7 @@ export type AdmissionReservation =
   | { refusal: RequestAdmissionError };
 
 export interface ReservableRequestAdmission extends RequestAdmission {
+  invalidateModel: (modelKey: string) => void;
   reserve: (request: AdmissionRequest, options?: AcquireOptions) => AdmissionReservation;
 }
 
@@ -143,6 +144,10 @@ class RequestAdmissionImpl implements ReservableRequestAdmission {
 
   snapshot(): QueueSnapshot {
     return this.policy.snapshot();
+  }
+
+  invalidateModel(modelKey: string): void {
+    this.policy.markEvicted(modelKey);
   }
 
   // ── enqueue path ─────────────────────────────────────────────────────

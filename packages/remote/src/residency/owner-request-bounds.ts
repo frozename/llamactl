@@ -75,6 +75,7 @@ function promptTokenCount(
 export function boundOwnerRequest(
   request: LocalEngineRequest,
   limits: OwnerRequestBounds,
+  expectedModel?: string,
 ): BoundRequest {
   if (request.body === null) return { code: "InvalidRequest" };
   const bytes = Buffer.byteLength(request.body);
@@ -87,7 +88,7 @@ export function boundOwnerRequest(
     return limits.maxContextTokens === undefined ? zero : { code: "ContextUnverified" };
   }
 
-  return boundGeneration(request, request.body, pathname, bytes, limits);
+  return boundGeneration(request, request.body, pathname, bytes, limits, expectedModel);
 }
 
 function boundGeneration(
@@ -96,9 +97,12 @@ function boundGeneration(
   pathname: string,
   bytes: number,
   limits: OwnerRequestBounds,
+  expectedModel?: string,
 ): BoundRequest {
   const body = parseObject(text);
-  if (body === null) return { code: "InvalidRequest" };
+  if (body === null || (expectedModel !== undefined && body["model"] !== expectedModel)) {
+    return { code: "InvalidRequest" };
+  }
   const prompt = body["prompt"];
   if (pathname === "/v1/completions" && typeof prompt !== "string" && !isFlatTokenPrompt(prompt)) {
     return { code: limits.maxContextTokens === undefined ? "InvalidRequest" : "ContextUnverified" };
