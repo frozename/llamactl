@@ -62,6 +62,7 @@ import {
   type Lease,
   type ResidencyLeases,
 } from "./residency/leases.js";
+import { hasManagedRuntimeMarker } from "./residency/managed-runtime.js";
 import { currentSessionRefcounts, type SessionRefcounts } from "./residency/sessions.js";
 import {
   isDeterministic,
@@ -2868,6 +2869,18 @@ export function retainedPeerDeclaration(
   return undefined;
 }
 
+export function requiresManagedDefaultOwner(
+  model: string,
+  resolved: ResolvedEnv,
+  binding: DeclaredModelEntryV1 | undefined,
+): boolean {
+  return (
+    binding !== undefined &&
+    defaultTargetModelIds(resolved).has(model) &&
+    hasManagedRuntimeMarker(resolved.LOCAL_AI_RUNTIME_DIR)
+  );
+}
+
 export function declaredRouteRejection(
   entry: DeclaredModelEntryV1 | undefined,
   hasOwnerRoute: boolean,
@@ -2935,16 +2948,6 @@ function withdrawnAtDefaultEndpoint(
   return entries.some(
     (entry) =>
       entry.isPeer !== true && `http://${entry.host}:${String(entry.port)}` === defaultEndpoint,
-  );
-}
-
-function withdrawnDefaultTargetFallsThrough(
-  model: string,
-  entries: readonly RouteEntry[],
-  resolved: ResolvedEnv,
-): boolean {
-  return (
-    defaultTargetModelIds(resolved).has(model) && !withdrawnAtDefaultEndpoint(entries, resolved)
   );
 }
 
@@ -3051,14 +3054,15 @@ async function selectBodyModelRoute(
   context: ProxyContext,
   model: string,
   bodyText: string | undefined,
+  binding: DeclaredModelEntryV1 | undefined,
+  managedDefaultOwner: boolean,
 ): Promise<ServingRouteOutcome | Response> {
-  const binding = declaredModelBinding(model, context.resolved);
   const exact =
-    binding !== undefined && !defaultTargetModelIds(context.resolved).has(model)
+    managedDefaultOwner || !defaultTargetModelIds(context.resolved).has(model)
       ? binding
       : undefined;
   const candidates = getRouteMap(context.resolved).candidates.get(model) ?? [];
-  if (candidates.length === 0) return null;
+  if (candidates.length === 0 && !managedDefaultOwner) return null;
   const owned =
     exact === undefined
       ? candidates
@@ -3091,7 +3095,15 @@ async function applyBodyModelRoute(
   model: string,
   bodyText: string | undefined,
 ): Promise<ProxyContext | Response> {
-  const outcome = await selectBodyModelRoute(context, model, bodyText);
+  const binding = declaredModelBinding(model, context.resolved);
+  const managedDefaultOwner = requiresManagedDefaultOwner(model, context.resolved, binding);
+  const outcome = await selectBodyModelRoute(
+    context,
+    model,
+    bodyText,
+    binding,
+    managedDefaultOwner,
+  );
   if (outcome instanceof Response) return outcome;
   if (outcome !== null && "routed" in outcome) {
     context.target = outcome.routed.target;
@@ -3101,25 +3113,31 @@ async function applyBodyModelRoute(
   }
   const peerDenial = retainedPeerDeclaration(model);
   if (peerDenial !== undefined) return declaredNotLoadedResponse(model, peerDenial, bodyText);
-  if (outcome !== null && "withdrawn" in outcome) {
-    // A default-target id falls through to the default endpoint only when no
-    // withdrawn route is the engine behind it; a withdrawn default llama-server
-    // ModelRun (it binds LLAMA_CPP_HOST:LLAMA_CPP_PORT) is refused draining.
-    if (withdrawnDefaultTargetFallsThrough(model, outcome.withdrawnEntries, context.resolved)) {
-      clearServingWarming(model);
-      return context;
-    }
+  if (outcome === null) return routeMissResponse(context, model);
+  // A withdrawn default ModelRun may itself be the engine behind the fallback.
+  if (legacyDefaultFallback(context, model, outcome, managedDefaultOwner)) {
+    clearServingWarming(model);
+    return context;
+  }
+  if ("withdrawn" in outcome) {
     return servingWithdrawnRejectionFor(model, outcome.withdrawn, bodyText);
   }
-  if (outcome !== null && "warming" in outcome) {
-    if (defaultTargetModelIds(context.resolved).has(model)) {
-      clearServingWarming(model);
-      return context;
-    }
-    recordServingWarming(model);
-    return servingNotReadyRejectionFor(model, outcome.warming, bodyText);
-  }
-  return routeMissResponse(context, model);
+  recordServingWarming(model);
+  return servingNotReadyRejectionFor(model, outcome.warming, bodyText);
+}
+
+function legacyDefaultFallback(
+  context: ProxyContext,
+  model: string,
+  outcome: Exclude<ServingRouteOutcome, null | { routed: unknown }>,
+  managedDefaultOwner: boolean,
+): boolean {
+  return (
+    !managedDefaultOwner &&
+    defaultTargetModelIds(context.resolved).has(model) &&
+    (!("withdrawn" in outcome) ||
+      !withdrawnAtDefaultEndpoint(outcome.withdrawnEntries, context.resolved))
+  );
 }
 
 function coldOwnerRoute(

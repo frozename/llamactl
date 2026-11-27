@@ -449,7 +449,11 @@ async function handleUnifiedRequest(
   const binding = openaiProxy.declaredModelBinding(gate.model, ctx.resolved);
   const isDefault = openaiProxy.defaultTargetModelIds(ctx.resolved).has(gate.model);
   const declaration =
-    isDefault && !routingCatalog.isDeclaredStaleReason(binding?.reason) ? undefined : binding;
+    isDefault &&
+    !routingCatalog.isDeclaredStaleReason(binding?.reason) &&
+    !openaiProxy.requiresManagedDefaultOwner(gate.model, ctx.resolved, binding)
+      ? undefined
+      : binding;
   const bodyText = gate.bodyText ?? undefined;
   const refusal = openaiProxy.declaredRouteRejection(declaration, true, bodyText);
   if (refusal !== null) return refusal;

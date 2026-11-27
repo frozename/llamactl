@@ -333,17 +333,20 @@ describe("declared stale route (#280 DF-07)", () => {
     },
   );
 
-  test.each(["legacy", "unified"])(
+  test.each(["legacy", "unified", "legacy-managed-default", "unified-managed-default"])(
     "%s only forwards a shared alias to its declared owner",
     async (mode) => {
       setupSandbox();
       writeHostManifest("z-owner", "fam/m.gguf");
       writeHostRuntime("z-owner", ["fam/m.gguf", "m.gguf"]);
       writeHostRuntime("a-unrelated", ["other/m.gguf", "m.gguf"], defaultStub!.port);
-      if (mode === "unified") process.env["LLAMACTL_UNIFIED_PROXY"] = "1";
+      const managedDefault = mode.endsWith("-managed-default");
+      if (mode.startsWith("unified")) process.env["LLAMACTL_UNIFIED_PROXY"] = "1";
+      if (managedDefault) process.env["LLAMA_CPP_SERVER_ALIAS"] = "m.gguf";
       try {
         const running = startAgentServer(agentOptions(true));
         agent = running;
+        if (managedDefault) writeFileSync(join(runtimeDir, "managed-residency-v1"), "node-a\n");
         const res = await running.handleRequest!(postChatCompletions("m.gguf"), LOOPBACK_CLIENT);
 
         expect(res.status).toBe(200);
@@ -351,6 +354,33 @@ describe("declared stale route (#280 DF-07)", () => {
         expect(chatCalls(hostCalls)).toHaveLength(1);
         expect(chatCalls(defaultCalls)).toHaveLength(0);
       } finally {
+        Reflect.deleteProperty(process.env, "LLAMA_CPP_SERVER_ALIAS");
+        Reflect.deleteProperty(process.env, "LLAMACTL_UNIFIED_PROXY");
+        __setSharedUnifiedProxyForTests(null);
+      }
+    },
+  );
+
+  test.each(["legacy", "unified"])(
+    "%s fences an explicit managed declaration at the configured default alias",
+    async (mode) => {
+      setupSandbox();
+      writeHostManifest("cold-owner", "fam/m.gguf");
+      process.env["LLAMA_CPP_SERVER_ALIAS"] = "m.gguf";
+      if (mode === "unified") process.env["LLAMACTL_UNIFIED_PROXY"] = "1";
+      try {
+        const running = startAgentServer(agentOptions(true));
+        agent = running;
+        writeFileSync(join(runtimeDir, "managed-residency-v1"), "node-a\n");
+
+        const res = await running.handleRequest!(postChatCompletions("m.gguf"), LOOPBACK_CLIENT);
+
+        expect(res.status).toBe(503);
+        expect(await res.json()).toMatchObject({ error: { code: "model_not_loaded" } });
+        expect(chatCalls(hostCalls)).toHaveLength(0);
+        expect(chatCalls(defaultCalls)).toHaveLength(0);
+      } finally {
+        Reflect.deleteProperty(process.env, "LLAMA_CPP_SERVER_ALIAS");
         Reflect.deleteProperty(process.env, "LLAMACTL_UNIFIED_PROXY");
         __setSharedUnifiedProxyForTests(null);
       }
