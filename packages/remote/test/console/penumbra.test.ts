@@ -3,7 +3,8 @@ import { join } from "node:path";
 
 import { createPenumbraHandoffReader, readPenumbraHandoffs } from "../../src/console/penumbra.js";
 import { startConsoleServer } from "../../src/console/server.js";
-import { apiHeaders, cleanupConsoleTest, consoleTestFixture } from "./helpers.js";
+import { symlinkSync, writeFileSync } from "../../src/safe-fs.js";
+import { apiHeaders, cleanupConsoleTest, consoleTestFixture, tmpDir } from "./helpers.js";
 
 afterEach(async () => {
   await cleanupConsoleTest();
@@ -256,4 +257,193 @@ test("reports a response over 2 MiB as unavailable", async () => {
   });
   // The reader stopped pulling soon after the limit instead of draining the stream.
   expect(sent).toBeLessThan(20);
+});
+
+test("refuses a token file that is a symlink", async () => {
+  const dir = tmpDir("llamactl-penumbra-token-");
+  writeFileSync(join(dir, "real-token"), "fixture-link-token\n");
+  symlinkSync(join(dir, "real-token"), join(dir, "token-link"));
+  const { calls, impl } = recordingFetch(() => Response.json({ handoffs: [] }));
+
+  const result = await createPenumbraHandoffReader({ fetch: impl })({
+    LLAMACTL_PENUMBRA_URL: FAKE_ORIGIN,
+    LLAMACTL_PENUMBRA_TOKEN_FILE: join(dir, "token-link"),
+  });
+
+  expect(result).toEqual({ state: "unavailable" });
+  expect(calls).toHaveLength(0);
+});
+
+test("refuses a token file over 4 KiB", async () => {
+  const dir = tmpDir("llamactl-penumbra-token-");
+  writeFileSync(join(dir, "big-token"), "a".repeat(4097));
+  const { calls, impl } = recordingFetch(() => Response.json({ handoffs: [] }));
+
+  const result = await createPenumbraHandoffReader({ fetch: impl })({
+    LLAMACTL_PENUMBRA_URL: FAKE_ORIGIN,
+    LLAMACTL_PENUMBRA_TOKEN_FILE: join(dir, "big-token"),
+  });
+
+  expect(result).toEqual({ state: "unavailable" });
+  expect(calls).toHaveLength(0);
+});
+
+test("retries a failed read after 2 seconds, not the full TTL", async () => {
+  const dir = tmpDir("llamactl-penumbra-token-");
+  const tokenFile = join(dir, "retry-token");
+  writeFileSync(tokenFile, "fixture-retry-token\n");
+  let clock = 1_000;
+  let responses = 0;
+  const { calls, impl } = recordingFetch(() => {
+    responses += 1;
+    if (responses === 1) return new Response(null, { status: 503 });
+    return Response.json({ handoffs: [handoff(1, "dispatched", false)] });
+  });
+  const read = createPenumbraHandoffReader({ fetch: impl, now: () => clock });
+  const env = { LLAMACTL_PENUMBRA_URL: FAKE_ORIGIN, LLAMACTL_PENUMBRA_TOKEN_FILE: tokenFile };
+  const ready = { state: "ready" as const, handoffs: [handoff(1, "dispatched", false)] };
+
+  expect(await read(env)).toEqual({ state: "unavailable" });
+  expect(calls).toHaveLength(1);
+
+  clock += 1_999;
+  expect(await read(env)).toEqual({ state: "unavailable" });
+  expect(calls).toHaveLength(1);
+
+  clock += 1;
+  expect(await read(env)).toEqual(ready);
+  expect(calls).toHaveLength(2);
+
+  clock += 9_999;
+  expect(await read(env)).toEqual(ready);
+  expect(calls).toHaveLength(2);
+});
+
+// Non-RED pin for issue item 1: passes at base and kills cache keys that omit the token file.
+test("token-file change bypasses the cache", async () => {
+  const dir = tmpDir("llamactl-penumbra-token-");
+  const firstTokenFile = join(dir, "first-token");
+  const secondTokenFile = join(dir, "second-token");
+  writeFileSync(firstTokenFile, "fixture-first-token\n");
+  writeFileSync(secondTokenFile, "fixture-second-token\n");
+  const { calls, impl } = recordingFetch(() => Response.json({ handoffs: [] }));
+  const read = createPenumbraHandoffReader({ fetch: impl });
+  const env = {
+    LLAMACTL_PENUMBRA_URL: FAKE_ORIGIN,
+    LLAMACTL_PENUMBRA_TOKEN_FILE: firstTokenFile,
+  };
+
+  expect(await read(env)).toEqual({ state: "ready", handoffs: [] });
+  expect(await read({ ...env, LLAMACTL_PENUMBRA_TOKEN_FILE: secondTokenFile })).toEqual({
+    state: "ready",
+    handoffs: [],
+  });
+  expect(calls).toHaveLength(2);
+  expect(calls[1]!.authorization).toBe("Bearer fixture-second-token");
+});
+
+// Non-RED pin: passes at base and fixes the accepted token-size boundary at exactly 4 KiB.
+test("accepts a 4096-byte token", async () => {
+  const dir = tmpDir("llamactl-penumbra-token-");
+  const tokenFile = join(dir, "edge-token");
+  writeFileSync(tokenFile, "b".repeat(4096));
+  const { calls, impl } = recordingFetch(() => Response.json({ handoffs: [] }));
+
+  const result = await createPenumbraHandoffReader({ fetch: impl })({
+    LLAMACTL_PENUMBRA_URL: FAKE_ORIGIN,
+    LLAMACTL_PENUMBRA_TOKEN_FILE: tokenFile,
+  });
+
+  expect(result).toEqual({ state: "ready", handoffs: [] });
+  expect(calls).toHaveLength(1);
+  expect(calls[0]!.authorization).toBe("Bearer " + "b".repeat(4096));
+});
+
+// Non-RED pin for README item 3: passes at base and pins the documented loopback URL forms.
+test.each([
+  ["HTTP://127.0.0.1:9", true],
+  ["http://127.1:9", true],
+  ["http://127.0.0.1:9/", true],
+  ["http://localhost:9", false],
+  ["http://[::1]:9", false],
+  ["https://127.0.0.1:9", false],
+  ["http://127.0.0.1:9/x", false],
+  ["http://127.0.0.1:9/?q=1", false],
+  ["http://u:p@127.0.0.1:9", false],
+] as const)("pins the README wording on accepted URL forms: %s", async (origin, accepted) => {
+  const dir = tmpDir("llamactl-penumbra-token-");
+  const tokenFile = join(dir, "url-token");
+  writeFileSync(tokenFile, "fixture-url-token\n");
+  const { calls, impl } = recordingFetch(() => Response.json({ handoffs: [] }));
+
+  const result = await createPenumbraHandoffReader({ fetch: impl })({
+    LLAMACTL_PENUMBRA_URL: origin,
+    LLAMACTL_PENUMBRA_TOKEN_FILE: tokenFile,
+  });
+
+  if (accepted) {
+    expect(result).toEqual({ state: "ready", handoffs: [] });
+    expect(calls).toHaveLength(1);
+  } else {
+    expect(result).toEqual({ state: "unavailable" });
+    expect(calls).toHaveLength(0);
+  }
+});
+
+// Pins the `cached?.result === result` guard: a stale read that fails after a newer read
+// replaced the cache entry must not shorten the newer entry to the failure TTL.
+test("a late failure for a replaced token file keeps the newer entry's full TTL", async () => {
+  const dir = tmpDir("llamactl-penumbra-token-");
+  const firstTokenFile = join(dir, "held-token");
+  const secondTokenFile = join(dir, "fresh-token");
+  writeFileSync(firstTokenFile, "fixture-held-token\n");
+  writeFileSync(secondTokenFile, "fixture-fresh-token\n");
+  let clock = 1_000;
+  let release: (() => void) | undefined;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const { calls, impl } = recordingFetch(async () => {
+    if (calls.length === 1) {
+      await gate;
+      return new Response(null, { status: 503 });
+    }
+    return Response.json({ handoffs: [] });
+  });
+  const read = createPenumbraHandoffReader({ fetch: impl, now: () => clock });
+  const env = {
+    LLAMACTL_PENUMBRA_URL: FAKE_ORIGIN,
+    LLAMACTL_PENUMBRA_TOKEN_FILE: firstTokenFile,
+  };
+  const freshEnv = { ...env, LLAMACTL_PENUMBRA_TOKEN_FILE: secondTokenFile };
+
+  const held = read(env);
+  // Let the held read get past its token-file read and into fetch.
+  for (let i = 0; i < 50 && calls.length === 0; i += 1) await Bun.sleep(1);
+  expect(calls).toHaveLength(1);
+
+  expect(await read(freshEnv)).toEqual({ state: "ready", handoffs: [] });
+  expect(calls).toHaveLength(2);
+
+  release?.();
+  expect(await held).toEqual({ state: "unavailable" });
+
+  clock += 5_000;
+  expect(await read(freshEnv)).toEqual({ state: "ready", handoffs: [] });
+  expect(calls).toHaveLength(2);
+});
+
+test("treats a whitespace-only token file as unavailable without a request", async () => {
+  const dir = tmpDir("llamactl-penumbra-token-");
+  const tokenFile = join(dir, "blank-token");
+  writeFileSync(tokenFile, " \t\n  \n");
+  const { calls, impl } = recordingFetch(() => Response.json({ handoffs: [] }));
+
+  const result = await createPenumbraHandoffReader({ fetch: impl })({
+    LLAMACTL_PENUMBRA_URL: FAKE_ORIGIN,
+    LLAMACTL_PENUMBRA_TOKEN_FILE: tokenFile,
+  });
+
+  expect(result).toEqual({ state: "unavailable" });
+  expect(calls).toHaveLength(0);
 });
