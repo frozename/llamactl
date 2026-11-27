@@ -95,6 +95,7 @@ export {
   dispatchOpsChatTool,
   KNOWN_OPS_CHAT_TOOLS,
   OPS_CHAT_TOOLS,
+  opsChatStopRefusal,
   type ToolTier as OpsChatTier,
   type OpsChatToolName,
   toolTier as opsChatToolTier,
@@ -184,6 +185,7 @@ export {
   removePipeline,
   writeLastRun,
 } from "./rag/pipeline/store.js";
+export type { CapturedRequest, RequestSummary } from "./request-capture/store.js";
 export {
   type DirectLifecycleOpts,
   exclusiveGroupLaunchRefusal,

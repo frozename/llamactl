@@ -225,6 +225,8 @@ function bootAgentWithTunnel(journalDir: string): AgentHandle {
     tokenHash: agentHash,
     tunnelCentral: { expectedBearerHash: hashToken(tunnelBearer) },
     tunnelJournalPath: journalPath,
+    // Keep the relay hops' bearer audit (#218) off the test output.
+    onAuthenticated: (): void => undefined,
   });
   return {
     agent,

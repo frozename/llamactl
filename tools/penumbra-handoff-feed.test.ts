@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { startHandoffFeed } from "./penumbra-handoff-feed.js";
+import { describeReadError, startHandoffFeed } from "./penumbra-handoff-feed.js";
 
 test("serves active and bounded recent terminal metadata without exposing handoff content", async () => {
   const dir = mkdtempSync(join(tmpdir(), "penumbra-handoff-feed-"));
@@ -61,4 +61,95 @@ test("serves active and bounded recent terminal metadata without exposing handof
     db.close();
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("logs a redacted database error when the handoffs table is missing", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-handoff-feed-"));
+  const path = join(dir, "db.sqlite");
+  const db = new Database(path, { create: true });
+  db.close();
+  const lines: string[] = [];
+  let feed: ReturnType<typeof startHandoffFeed> | undefined;
+  try {
+    feed = startHandoffFeed({
+      databasePath: path,
+      port: 0,
+      token: "a-test-feed-token",
+      log: (line: string) => lines.push(line),
+    });
+    const response = await fetch(new URL("/handoffs", feed.url), {
+      headers: { authorization: "Bearer a-test-feed-token" },
+    });
+    expect(response.status).toBe(503);
+    expect(await response.text()).toBe("");
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/no such table/);
+    expect(lines[0]).toMatch(/SQLiteError/);
+    expect(lines[0]).not.toContain("a-test-feed-token");
+    expect(lines[0]).not.toContain(dir);
+  } finally {
+    if (feed) await feed.stop(true);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("logs a redacted database error when the database file is missing", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-handoff-feed-"));
+  const lines: string[] = [];
+  let feed: ReturnType<typeof startHandoffFeed> | undefined;
+  try {
+    feed = startHandoffFeed({
+      databasePath: join(dir, "missing.sqlite"),
+      port: 0,
+      token: "a-test-feed-token",
+      log: (line: string) => lines.push(line),
+    });
+    const response = await fetch(new URL("/handoffs", feed.url), {
+      headers: { authorization: "Bearer a-test-feed-token" },
+    });
+    expect(response.status).toBe(503);
+    expect(await response.text()).toBe("");
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/unable to open database/i);
+    expect(lines[0]).not.toContain("a-test-feed-token");
+    expect(lines[0]).not.toContain(dir);
+  } finally {
+    if (feed) await feed.stop(true);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("does not log database errors for unauthenticated requests", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-handoff-feed-"));
+  const path = join(dir, "db.sqlite");
+  const db = new Database(path, { create: true });
+  db.close();
+  const lines: string[] = [];
+  let feed: ReturnType<typeof startHandoffFeed> | undefined;
+  try {
+    feed = startHandoffFeed({
+      databasePath: path,
+      port: 0,
+      token: "a-test-feed-token",
+      log: (line: string) => lines.push(line),
+    });
+    const response = await fetch(new URL("/handoffs", feed.url));
+    expect(response.status).toBe(401);
+    expect(lines).toHaveLength(0);
+  } finally {
+    if (feed) await feed.stop(true);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("describeReadError replaces the database path and token in the error message", () => {
+  const databasePath = "/fixture/state/handoffs.sqlite";
+  const token = "fake-feed-token-0000";
+  const error = new Error(`cannot open ${databasePath} with Bearer ${token}`);
+
+  const description = describeReadError(error, { databasePath, port: 0, token });
+
+  expect(description).toBe("Error: cannot open <database> with Bearer <redacted>");
+  expect(description).not.toContain(databasePath);
+  expect(description).not.toContain(token);
 });
