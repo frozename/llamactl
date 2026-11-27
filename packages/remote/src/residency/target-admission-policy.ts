@@ -48,9 +48,15 @@ export interface NodeManagedAdmissionOptions {
   workloadsDir?: string;
   verifiedCapacity?: () => VerifiedNodeCapacity | undefined;
   nowMs?: () => number;
+  requireExistingStore?: boolean;
+  verifyJournalPair?: () => string | undefined;
 }
 
 const MAX_CAPACITY_AGE_MS = 30_000;
+
+export function managedAdmissionStorePath(runtimeDir: string): string {
+  return join(runtimeDir, "residency-admission.db");
+}
 
 function readDesired<T>(load: () => T): T | undefined {
   try {
@@ -311,7 +317,8 @@ export async function openNodeManagedAdmission(opts: NodeManagedAdmissionOptions
   const budgetGiB = (): number | undefined => localBudget(opts, workloadsDir, aliases);
   mkdirSync(runtimeDir, { recursive: true });
   const runtime = await openLocalAdmissionRuntime({
-    storePath: join(runtimeDir, "residency-admission.db"),
+    storePath: managedAdmissionStorePath(runtimeDir),
+    requireExisting: opts.requireExistingStore,
     budgetGiB,
     readPidFile: (name) => {
       const key = { name };
@@ -321,11 +328,17 @@ export async function openNodeManagedAdmission(opts: NodeManagedAdmissionOptions
       return run !== null && host !== undefined ? undefined : (run ?? host);
     },
   });
-  const runOwnedLifecycle = <T>(run: () => T): T => withManagedRuntimeMutation(runtimeDir, run);
+  const runOwnedLifecycle = <T>(run: () => T): T =>
+    withManagedRuntimeMutation(
+      runtimeDir,
+      () => opts.verifyJournalPair?.() === undefined && runtime.authority.isOperational(),
+      run,
+    );
   const inspectRuntime = (): string | undefined =>
-    readDesired(() => verifyLocalInventory(resolved, runtime)) === true
+    opts.verifyJournalPair?.() ??
+    (readDesired(() => verifyLocalInventory(resolved, runtime)) === true
       ? undefined
-      : "ManagedRuntimeInventoryUnknown";
+      : "ManagedRuntimeInventoryUnknown");
   const admission = createManagedLaunchAdmission({
     runOwnedLifecycle,
     authority: runtime.authority,

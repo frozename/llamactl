@@ -45,7 +45,11 @@ import {
   type DeclaredWorkloadPhase,
   listDeclaredModels,
 } from "../residency/catalog.js";
-import { createResidencyLeaseAuditSink, defaultResidencyStorePath } from "../residency/store.js";
+import {
+  createResidencyLeaseAuditSink,
+  defaultResidencyStorePath,
+  openResidencyOperationStore,
+} from "../residency/store.js";
 import {
   type AgentRouterContext,
   router as appRouter,
@@ -1443,7 +1447,10 @@ function maybePublishResidencyLeases(
   if (opts.residencyLeases !== true) return null;
   const previous = getResidencyLeaseRegistry();
   const previousSession = currentSessionRefcounts();
-  const auditSink = createResidencyLeaseAuditSink({ path: defaultResidencyStorePath() });
+  const auditSink = createResidencyLeaseAuditSink({
+    path: defaultResidencyStorePath(),
+    requireExisting: hasManagedRuntimeMarker(resolveEnv().LOCAL_AI_RUNTIME_DIR),
+  });
   const registry = createResidencyLeases({ onAudit: auditSink.onAudit });
   let sessionRefcounts: SessionRefcounts | null = null;
   if (opts.residencySessionIdleMs !== undefined) {
@@ -1646,11 +1653,23 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     // owner identity, so the #284 residencyApplyProfile mutation (#703), which
     // runs executeProfileSwitch, is never left Busy by it. This is recovery,
     // not activation: there is no opt-in flag.
-    runProfileSwitchBootRecovery({
+    const recovery = runProfileSwitchBootRecovery({
       path: defaultResidencyStorePath(),
       incarnation: `agent-boot:${String(process.pid)}:${crypto.randomUUID()}`,
       isProvenDown: directWorkloadProvenDown,
+      ...(opts.managedLaunchAdmission?.runOwnedLifecycle === undefined
+        ? {}
+        : {
+            openStore: (path: string): ReturnType<typeof openResidencyOperationStore> =>
+              openResidencyOperationStore({ path, requireExisting: true }),
+          }),
     });
+    if (
+      opts.managedLaunchAdmission?.runOwnedLifecycle !== undefined &&
+      (recovery.status === "failed" || recovery.status === "absent" || recovery.recordFailures > 0)
+    ) {
+      throw new Error("ManagedTransitionRecoveryFailed");
+    }
     if (noAuth) {
       warnNoAuthEnabled(allowPlainHttp);
     }

@@ -109,6 +109,7 @@ export interface LocalAdmissionRuntime {
 
 export async function openLocalAdmissionRuntime(opts: {
   storePath: string;
+  requireExisting?: boolean | undefined;
   budgetGiB: () => number | undefined;
   readPidFile: (runtimeKey: string) => number | undefined;
 }): Promise<LocalAdmissionRuntime> {

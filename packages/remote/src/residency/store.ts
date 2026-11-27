@@ -279,9 +279,10 @@ const RESIDENCY_STATE_COLUMNS =
 
 export function openResidencyOperationStore(input: {
   path: string;
+  requireExisting?: boolean;
   busyTimeoutMs?: number;
 }): ResidencyOperationStore & ResidencyLifecycleStore {
-  const db = openDb(input.path, input.busyTimeoutMs ?? 15000);
+  const db = openDb(input.path, input.busyTimeoutMs ?? 15000, input.requireExisting === true);
   const claimTx = db.transaction(
     (claimInput: ClaimInput): Fence => claimOwnershipTx(db, claimInput),
   );
@@ -384,10 +385,11 @@ export function openResidencyOperationStore(input: {
   return store;
 }
 
-function openDb(path: string, busyTimeoutMs = 15000): Database {
-  mkdirSync(dirname(path), { recursive: true });
-  const db = new Database(path);
+function openDb(path: string, busyTimeoutMs = 15000, requireExisting = false): Database {
+  if (!requireExisting) mkdirSync(dirname(path), { recursive: true });
+  const db = new Database(path, { readwrite: true, create: !requireExisting });
   try {
+    if (requireExisting) db.query("SELECT version FROM schema_version").get();
     db.run("PRAGMA journal_mode = WAL");
     db.run(`PRAGMA busy_timeout = ${String(busyTimeoutMs)}`);
     migrate(db);
@@ -558,6 +560,7 @@ export type ResidencyLeaseAuditSink = {
 export function createResidencyLeaseAuditSink(opts: {
   path: string;
   busyTimeoutMs?: number;
+  requireExisting?: boolean;
 }): ResidencyLeaseAuditSink {
   const busyTimeoutMs = opts.busyTimeoutMs ?? RESIDENCY_LEASE_AUDIT_BUSY_TIMEOUT_MS;
   let db: Database | null = null;
@@ -570,7 +573,7 @@ export function createResidencyLeaseAuditSink(opts: {
         return;
       }
       if (db === null) {
-        const opened = openDb(opts.path, busyTimeoutMs);
+        const opened = openDb(opts.path, busyTimeoutMs, opts.requireExisting === true);
         const appendImmediate = opened.transaction((auditEntry: ResidencyAuditEntry): void => {
           appendLeaseAuditTx(opened, auditEntry);
         });

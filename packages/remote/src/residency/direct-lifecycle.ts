@@ -137,10 +137,6 @@ function logSafe(log: (line: string) => void, line: string): void {
   }
 }
 
-function defaultOpenStore(path: string): Store {
-  return openResidencyOperationStore({ path });
-}
-
 // A group is recorded only when the caller's declarations name it; an
 // undeclared label records no group so the store never refuses it as
 // UnknownGroup.
@@ -566,10 +562,11 @@ async function runDirect<T extends DepResult>(
   if (!existsSync(opts.storePath)) {
     return await unrecordedOrFail(action, workload, lifecycleGroup, env, "missing journal");
   }
-  const openStore = opts.openStore ?? defaultOpenStore;
   let store: Store;
   try {
-    store = openStore(opts.storePath);
+    store =
+      opts.openStore?.(opts.storePath) ??
+      openResidencyOperationStore({ path: opts.storePath, requireExisting: managed });
   } catch (error: unknown) {
     return await unrecordedOrFail(action, workload, lifecycleGroup, env, messageOf(error));
   }

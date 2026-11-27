@@ -798,10 +798,11 @@ export function openAdmissionStore(opts: {
   path: string;
   busyTimeoutMs?: number | undefined;
   owner?: OwnerIdentity | undefined;
+  requireExisting?: boolean | undefined;
 }): AdmissionStore {
   let db: Database;
   try {
-    db = new Database(opts.path);
+    db = new Database(opts.path, { readwrite: true, create: opts.requireExisting !== true });
   } catch (e) {
     throw new AuthorityUnavailableError(
       `cannot open admission authority at ${opts.path}: ${errText(e)}`,
@@ -811,6 +812,13 @@ export function openAdmissionStore(opts: {
   try {
     db.run(`PRAGMA busy_timeout = ${String(resolveBusyTimeoutMs(opts.busyTimeoutMs))}`);
     assertQuickCheck(db);
+    if (
+      opts.requireExisting === true &&
+      db.query<{ application_id: number }, []>("PRAGMA application_id").get()?.application_id !==
+        ADMISSION_APPLICATION_ID
+    ) {
+      throw new AuthorityUnavailableError("managed admission journal identity is missing");
+    }
     db.run("PRAGMA journal_mode = WAL");
     db.run("PRAGMA synchronous = FULL");
     db.run("BEGIN IMMEDIATE");
