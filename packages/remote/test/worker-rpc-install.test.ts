@@ -790,6 +790,8 @@ describe("I1: clean install", () => {
     BASELINE_ENV.add("LLAMACTL_OBSERVED_MODELS_FILE");
     BASELINE_ENV.add("LLAMACTL_PENUMBRA_URL");
     BASELINE_ENV.add("LLAMACTL_PENUMBRA_TOKEN_FILE");
+    // Opt-in capture store shared by the inference ingress and authenticated reader.
+    BASELINE_ENV.add("LLAMACTL_REQUEST_CAPTURE_FILE");
     const sources = join(import.meta.dir, "..", "..");
     const read = new Map<string, string[]>();
     for (const pkg of readdirSync(sources)) {
