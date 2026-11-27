@@ -6,7 +6,12 @@ export type ManagedMemoryPressure = HostMemoryObservation["pressure"];
 
 export type ManagedCapacityScope =
   | { kind: "host-physical" }
-  | { kind: "cgroup-v2"; limitBytes: number; availableBytes: number }
+  | {
+      kind: "cgroup-v2";
+      /** Null means every hard limit is "max", even when a reclaim threshold bounds headroom. */
+      limitBytes: number | null;
+      availableBytes: number;
+    }
   | { kind: "unknown" };
 
 export interface ManagedCapacitySample {
@@ -113,10 +118,16 @@ function scopeCeilings(
     return { limitGiB: Number.POSITIVE_INFINITY, availableGiB: Number.POSITIVE_INFINITY };
   }
   const { limitBytes, availableBytes } = scope;
-  if (!nonnegative(limitBytes) || !nonnegative(availableBytes) || availableBytes > limitBytes) {
+  if (
+    !nonnegative(availableBytes) ||
+    (limitBytes !== null && (!nonnegative(limitBytes) || availableBytes > limitBytes))
+  ) {
     return { reason: "InvalidCapacity" };
   }
-  return { limitGiB: limitBytes / GiB, availableGiB: availableBytes / GiB };
+  return {
+    limitGiB: limitBytes === null ? Number.POSITIVE_INFINITY : limitBytes / GiB,
+    availableGiB: availableBytes / GiB,
+  };
 }
 
 export function projectManagedCapacity(

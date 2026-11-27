@@ -358,6 +358,46 @@ test("profile preflight uses the ledger ceiling, while launch uses fresh headroo
   );
 });
 
+test("a cgroup reclaim threshold refuses a new owner launch without reducing the ledger ceiling", async () => {
+  let headroom = 0;
+  const audit: ManagedCapacityAudit[] = [];
+  await withCapacityOwner(
+    () => ({
+      ...localCapacity(56),
+      scope: { kind: "cgroup-v2", limitBytes: null, availableBytes: headroom * GiB },
+    }),
+    async ({ admission, authority }, request) => {
+      expect(
+        admission.preflightProfile?.({ victims: [], retained: [], replacements: [workload] }),
+      ).toBeUndefined();
+      expect(admission.readStatus?.().budgetGiB).toBe(48);
+      expect(audit).toContainEqual({
+        nodeName: node,
+        phase: "profile-preflight",
+        ledgerCeilingGiB: 48,
+        launchHeadroomGiB: 0,
+      });
+      const launch = mock(() => Promise.resolve({ ran: false as const, detail: "reached launch" }));
+      expect(await admission.run(request, new AbortController().signal, launch)).toEqual({
+        ran: false,
+        detail: "ManagedCapacity: InsufficientHeadroom",
+      });
+      expect(launch).not.toHaveBeenCalled();
+      expect(authority.snapshot()).toEqual([]);
+
+      headroom = 18;
+      expect(await admission.run(request, new AbortController().signal, launch)).toEqual({
+        ran: false,
+        detail: "reached launch",
+      });
+      expect(launch).toHaveBeenCalledTimes(1);
+    },
+    (entry): void => {
+      audit.push(entry);
+    },
+  );
+});
+
 test("a granted launch rechecks at the engine boundary and an unstarted refusal releases its claim", async () => {
   let available = 56;
   await withCapacityOwner(
