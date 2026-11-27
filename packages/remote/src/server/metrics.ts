@@ -15,6 +15,8 @@ import {
 import { listWorkloadDirs } from "@llamactl/core/workloadRuntime";
 import { collectDefaultMetrics, Counter, Gauge, Histogram, Registry } from "prom-client";
 
+import type { ProcessMemoryAttribution, ProcessMemoryReader } from "./process-memory.js";
+
 /**
  * Prometheus metrics for the agent. Registered on a dedicated
  * `Registry` so we don't fight with any other prom-client usage in
@@ -109,6 +111,12 @@ let runtimeMemorySampler: RuntimeMemorySampler | null = null;
 
 export function setRuntimeMemorySampler(sampler: RuntimeMemorySampler | null): void {
   runtimeMemorySampler = sampler;
+}
+
+let runtimeProcessMemoryReader: ProcessMemoryReader | null = null;
+
+export function setRuntimeProcessMemoryReader(reader: ProcessMemoryReader | null): void {
+  runtimeProcessMemoryReader = reader;
 }
 
 export interface AgentRuntimeIdentity {
@@ -220,34 +228,52 @@ new Gauge({
   },
 });
 
-// Per-role runtime memory series (RSS, JS heap used/total, external,
-// ArrayBuffer bytes) plus the configured memory budget and an over-budget
-// flag. The sampler defaults to process.memoryUsage(); setRuntimeMemorySampler
-// replaces it for tests. The identity (role + optional memoryBudgetBytes) is
-// set via setAgentRuntimeIdentity; without a budget no budget or over-budget
+// Per-role runtime memory series (physical footprint, the Linux RSS split,
+// RSS, JS heap used/total, external and ArrayBuffer bytes) plus the configured
+// memory budget, charged bytes and an over-budget flag. The sampler defaults
+// to process.memoryUsage(); setRuntimeMemorySampler replaces it for tests.
+// The identity (role + optional memoryBudgetBytes) is set via
+// setAgentRuntimeIdentity; without a budget no budget, charged or over-budget
 // series are emitted.
 //
 // The budget check charges a single basis (footprint when ok and fresh, RSS
-// as fallback) — JS heap, external memory and device-wide counters are never
-// attributed to a control process.
+// as fallback) — JS heap, external memory, the split kinds and device-wide
+// counters are attribution only and are never summed into a control process.
 
-let runtimeMemoryScrapeSample: AgentRuntimeMemorySample | null = null;
-let runtimeMemoryScrapeVerdict: RuntimeMemoryVerdict | null = null;
-let runtimeMemoryScrapeRole: string | null = null;
-
-function runtimeMemoryScrape(): {
+interface RuntimeMemoryScrapeResult {
   sample: AgentRuntimeMemorySample | null;
   verdict: RuntimeMemoryVerdict | null;
   role: string;
-} {
-  if (runtimeMemoryScrapeSample !== null) {
-    return {
-      sample: runtimeMemoryScrapeSample,
-      verdict: runtimeMemoryScrapeVerdict,
-      role: runtimeMemoryScrapeRole ?? "agent",
-    };
-  }
+  attribution: ProcessMemoryAttribution | null;
+}
 
+let runtimeMemoryScrapeCache: RuntimeMemoryScrapeResult | null = null;
+
+function finiteNonnegativeByteCount(value: number | null | undefined): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+function footprintMemoryReading(
+  attribution: ProcessMemoryAttribution | null,
+  unsupportedReading: MemoryReading,
+  nowMs: number,
+): MemoryReading {
+  const footprint = attribution?.footprint;
+  if (footprint?.status !== "ok" || !finiteNonnegativeByteCount(footprint.bytes)) {
+    return unsupportedReading;
+  }
+  return {
+    bytes: footprint.bytes,
+    observedAtMs: nowMs,
+    source: footprint.source,
+    status: footprint.status,
+  };
+}
+
+function runtimeMemoryScrape(): RuntimeMemoryScrapeResult {
+  if (runtimeMemoryScrapeCache !== null) return runtimeMemoryScrapeCache;
+
+  const nowMs = Date.now();
   let sample: AgentRuntimeMemorySample | null = null;
   try {
     const raw = (runtimeMemorySampler ?? ((): AgentRuntimeMemorySample => process.memoryUsage()))();
@@ -264,23 +290,30 @@ function runtimeMemoryScrape(): {
     /* ignore — sample stays null */
   }
 
+  let attribution: ProcessMemoryAttribution | null = null;
+  try {
+    attribution = runtimeProcessMemoryReader?.() ?? null;
+  } catch {
+    attribution = null;
+  }
+
+  const unsupportedReading: MemoryReading = {
+    bytes: null,
+    observedAtMs: null,
+    source: "",
+    status: "unsupported",
+  };
+  const footprintReading = footprintMemoryReading(attribution, unsupportedReading, nowMs);
   const identity = runtimeIdentity ?? { role: "agent" };
   const role = identity.role;
   let verdict: RuntimeMemoryVerdict | null = null;
 
   if (sample !== null && identity.memoryBudgetBytes !== undefined) {
-    const nowMs = Date.now();
     const rssReading: MemoryReading = {
       bytes: sample.rss,
       observedAtMs: nowMs,
       source: "process.memoryUsage",
       status: "ok",
-    };
-    const unsupportedReading: MemoryReading = {
-      bytes: null,
-      observedAtMs: null,
-      source: "",
-      status: "unsupported",
     };
     const deviceReading: HostMemoryObservation["device"] = {
       ...unsupportedReading,
@@ -289,7 +322,7 @@ function runtimeMemoryScrape(): {
     const runtimeSample: RuntimeMemorySample = {
       role,
       rss: rssReading,
-      footprint: unsupportedReading,
+      footprint: footprintReading,
       jsHeapUsed: unsupportedReading,
       external: unsupportedReading,
       device: deviceReading,
@@ -305,17 +338,12 @@ function runtimeMemoryScrape(): {
     verdict = evaluateRuntimeMemoryBudget(runtimeSample, budget, options);
   }
 
-  runtimeMemoryScrapeSample = sample;
-  runtimeMemoryScrapeVerdict = verdict;
-  runtimeMemoryScrapeRole = role;
-
+  const result: RuntimeMemoryScrapeResult = { sample, verdict, role, attribution };
+  runtimeMemoryScrapeCache = result;
   queueMicrotask(() => {
-    runtimeMemoryScrapeSample = null;
-    runtimeMemoryScrapeVerdict = null;
-    runtimeMemoryScrapeRole = null;
+    runtimeMemoryScrapeCache = null;
   });
-
-  return { sample, verdict, role };
+  return result;
 }
 
 new Gauge({
@@ -325,19 +353,38 @@ new Gauge({
   registers: [registry],
   collect(): void {
     this.reset();
-    const { sample, role } = runtimeMemoryScrape();
-    if (sample === null) return;
+    const { sample, role, attribution } = runtimeMemoryScrape();
     const labels = { role, node: modelHostMetricsNodeName() };
-    const kinds: { key: keyof AgentRuntimeMemorySample; kind: string }[] = [
-      { key: "rss", kind: "rss" },
-      { key: "heapUsed", kind: "heap_used" },
-      { key: "heapTotal", kind: "heap_total" },
-      { key: "external", kind: "external" },
-      { key: "arrayBuffers", kind: "array_buffers" },
+
+    if (sample !== null) {
+      const kinds: { key: keyof AgentRuntimeMemorySample; kind: string }[] = [
+        { key: "rss", kind: "rss" },
+        { key: "heapUsed", kind: "heap_used" },
+        { key: "heapTotal", kind: "heap_total" },
+        { key: "external", kind: "external" },
+        { key: "arrayBuffers", kind: "array_buffers" },
+      ];
+      for (const { key, kind } of kinds) {
+        const value = sample[key];
+        if (finiteNonnegativeByteCount(value)) {
+          this.labels({ ...labels, kind }).set(value);
+        }
+      }
+    }
+
+    const footprint = attribution?.footprint;
+    if (footprint?.status === "ok" && finiteNonnegativeByteCount(footprint.bytes)) {
+      this.labels({ ...labels, kind: "footprint" }).set(footprint.bytes);
+    }
+
+    const splitKinds: { kind: string; value: number | null | undefined }[] = [
+      { kind: "rss_anon", value: attribution?.rssAnonBytes },
+      { kind: "rss_file", value: attribution?.rssFileBytes },
+      { kind: "rss_shmem", value: attribution?.rssShmemBytes },
+      { kind: "swap", value: attribution?.swapBytes },
     ];
-    for (const { key, kind } of kinds) {
-      const value = sample[key];
-      if (Number.isFinite(value) && value >= 0) {
+    for (const { kind, value } of splitKinds) {
+      if (finiteNonnegativeByteCount(value)) {
         this.labels({ ...labels, kind }).set(value);
       }
     }
@@ -354,6 +401,21 @@ new Gauge({
     const { verdict, role } = runtimeMemoryScrape();
     if (!verdict?.known) return;
     this.labels({ role, node: modelHostMetricsNodeName() }).set(verdict.maxBytes);
+  },
+});
+
+new Gauge({
+  name: "llamactl_agent_runtime_memory_charged_bytes",
+  help: "Bytes charged against the role budget and the basis used (footprint when readable, else rss). Present only when a budget is set.",
+  labelNames: ["role", "node", "basis"] as const,
+  registers: [registry],
+  collect(): void {
+    this.reset();
+    const { verdict, role } = runtimeMemoryScrape();
+    if (!verdict?.known) return;
+    this.labels({ role, node: modelHostMetricsNodeName(), basis: verdict.basis }).set(
+      verdict.chargedBytes,
+    );
   },
 });
 
