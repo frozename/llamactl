@@ -12,7 +12,10 @@ import {
   setEngineScopeLauncher,
 } from "@llamactl/core/engines/scope";
 import { resolveEnv } from "@llamactl/core/env";
-import { installLocalEngineForwarder } from "@llamactl/core/residency/engine-forwarder";
+import {
+  type ColdEngineForwarder,
+  installLocalEngineForwarder,
+} from "@llamactl/core/residency/engine-forwarder";
 import {
   createResidencyLeases,
   getResidencyLeaseRegistry,
@@ -94,6 +97,7 @@ import {
   unauthorizedResponse,
 } from "./auth.js";
 import { admitChatCompletions } from "./chat-admission.js";
+import { type ManagedColdOwnerFactory, prepareColdOwnerMount } from "./cold-owner-mount.js";
 import { handleInstallScript, type InstallScriptHandlerOptions } from "./install-script.js";
 import { publishAgentMdns, type PublishedAgent } from "./mdns.js";
 import {
@@ -330,6 +334,8 @@ export interface StartAgentOptions {
   chatCompletionsAdmission?: RequestAdmission;
   /** Trusted host adapter for the two explicit agent start procedures. */
   managedLaunchAdmission?: ManagedLaunchAdmission;
+  /** Explicit owner factory for authenticated local cold completion requests. */
+  managedColdOwnerFactory?: ManagedColdOwnerFactory;
   executionAdmission?: ExecutionAdmissionConfig;
   /**
    * Per-role runtime memory budget. Sets the identity (role + optional
@@ -546,11 +552,15 @@ function authGateReject(
   return null;
 }
 
+type ServingAgentOptions = StartAgentOptions & {
+  trustedColdOwner?: ColdEngineForwarder | undefined;
+};
+
 async function handleOpenAIRoute(
   req: Request,
   url: URL,
   address: ClientAddress | null,
-  opts: StartAgentOptions,
+  opts: ServingAgentOptions,
   gate: NoAuthGate,
   server: AgentFetchServer,
   record = true,
@@ -572,9 +582,8 @@ async function handleOpenAIRoute(
       return Response.json(openaiProxy.projectModelsResponseBody(full, includeDeclared));
     }
     server.timeout?.(req, proxiedRouteIdleSeconds());
-    const res = record
-      ? await captureInference(req, url.pathname, () => dispatchProxyRequest(req))
-      : await dispatchProxyRequest(req);
+    const forward = (): Promise<Response> => dispatchProxyRequest(req, opts.trustedColdOwner);
+    const res = record ? await captureInference(req, url.pathname, forward) : await forward();
     status = res.status;
     if (status === 502) openaiUpstreamErrorsTotal.inc();
     return res;
@@ -760,7 +769,7 @@ function handleAuthedApiRoutes(
   req: Request,
   url: URL,
   clientAddress: ClientAddress | null,
-  opts: StartAgentOptions,
+  opts: ServingAgentOptions,
   gate: NoAuthGate,
   server: AgentFetchServer,
 ): Response | Promise<Response> | null {
@@ -829,7 +838,7 @@ function handleChatCompletionsRoute(
   req: Request,
   url: URL,
   clientAddress: ClientAddress | null,
-  opts: StartAgentOptions,
+  opts: ServingAgentOptions,
   gate: NoAuthGate,
   server: AgentFetchServer,
 ): Response | Promise<Response> {
@@ -859,7 +868,7 @@ function handleAdmittedProxyRoute(
   req: Request,
   url: URL,
   clientAddress: ClientAddress | null,
-  opts: StartAgentOptions,
+  opts: ServingAgentOptions,
   gate: NoAuthGate,
   server: AgentFetchServer,
   admission: RequestAdmission,
@@ -949,7 +958,7 @@ function requestContext(
 }
 
 function createAgentFetchHandler(args: {
-  opts: StartAgentOptions;
+  opts: ServingAgentOptions;
   endpoint: string;
   tunnelServer: TunnelServer | null;
   gate: NoAuthGate;
@@ -1356,6 +1365,7 @@ async function stopAgentServerResources(
   engineScope: ReturnType<typeof maybePublishEngineScope> | null,
   unregisterDeclaredModels: (() => void) | null,
   stopIngest: SearchIngestStop,
+  coldIdle?: () => Promise<void>,
 ): Promise<void> {
   // Worker-RPC attempts drain first, while their transports are up.
   await workerRpc?.drain();
@@ -1397,6 +1407,9 @@ async function stopAgentServerResources(
     // keep its pre-#610 timing. Bonjour's stop is bounded inside it: a
     // hung one must not keep the tunnel serving or hold stop() open.
     if (servedRequests !== null || mdns) await finalFlushWindow(servedRequests, mdns);
+    // A canceled cold request can return before its managed start settles.
+    // Keep the lease registry and runtime owner live until that verdict is recorded.
+    if (coldIdle !== undefined) await coldIdle();
     // After the worker-RPC drain, server.stop() and the final flush of
     // served requests, so in-flight bodies (which may hold leases) settle
     // against the published registry before the seam reverts (#278 DF-05).
@@ -1784,6 +1797,24 @@ function applyAgentRuntimeIdentity(opts: StartAgentOptions): void {
   setRuntimeProcessMemoryReader(opts.processMemoryReader ?? defaultProcessMemoryReader());
 }
 
+function prepareServingColdOwner(
+  opts: StartAgentOptions,
+  warm: OwnerAdmission | undefined,
+): ReturnType<typeof prepareColdOwnerMount> {
+  if (opts.managedColdOwnerFactory === undefined) return undefined;
+  return prepareColdOwnerMount({
+    factory: opts.managedColdOwnerFactory,
+    managed: opts.managedLaunchAdmission,
+    warm,
+    executionAdmission: opts.executionAdmission,
+    managedRuntime: hasManagedRuntimeMarker(resolveEnv().LOCAL_AI_RUNTIME_DIR),
+    tls: opts.tls !== undefined,
+    noAuth: opts.noAuth === true,
+    declaredModels: opts.declaredModels === true,
+    residencyLeases: opts.residencyLeases === true,
+  });
+}
+
 function startAgentServerAfterHandlers(
   opts: StartAgentOptions,
   bind: {
@@ -1826,6 +1857,7 @@ function startAgentServerAfterHandlers(
   const leases = maybePublishResidencyLeases(opts);
   const execution = prepareExecutionHooks(opts);
   const engineScope = execution.hooks;
+  const cold = prepareServingColdOwner(opts, execution.owner);
   const workerRpc = maybePublishWorkerRpc(opts, leases?.registry ?? null, execution.owner);
 
   const started: {
@@ -1838,7 +1870,7 @@ function startAgentServerAfterHandlers(
     applyAgentRuntimeIdentity(opts);
 
     const baseFetchHandler = createAgentFetchHandler({
-      opts,
+      opts: { ...opts, trustedColdOwner: cold?.forward },
       endpoint,
       tunnelServer,
       gate,
@@ -1900,6 +1932,7 @@ function startAgentServerAfterHandlers(
         });
       },
       stop: async (): Promise<void> => {
+        cold?.stop();
         await stopAgentServerResources(
           workerRpc,
           onUncaughtException,
@@ -1913,12 +1946,14 @@ function startAgentServerAfterHandlers(
           engineScope,
           unregisterDeclaredModels,
           stopOwnIngest,
+          cold?.whenIdle,
         );
       },
       ...(tunnelServer ? { tunnelServer } : {}),
       ...(tunnelClient ? { tunnelClient } : {}),
     };
   } catch (err) {
+    cold?.stop();
     // Synchronous, best-effort rollback: each step is individually try/catch'd
     // so one failure cannot mask the original error or skip the others. The
     // rethrow reaches startAgentServer's early-step rollback, which stops

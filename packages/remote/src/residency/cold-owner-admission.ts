@@ -72,6 +72,7 @@ interface ColdBatch {
 export interface ColdOwnerAdmission {
   forward: ColdEngineForwarder;
   stop: () => void;
+  whenIdle: () => Promise<void>;
   snapshot: () => QueueSnapshot;
 }
 
@@ -125,24 +126,34 @@ class ColdOwnerAdmissionImpl implements ColdOwnerAdmission {
   private readonly stopped = new AbortController();
   private readonly batches = new Map<string, ColdBatch>();
   private readonly byModel = new Map<string, ColdBatch>();
+  private readonly activeLoads = new Set<Promise<void>>();
   private readonly admission;
 
   constructor(private readonly opts: ColdOwnerOptions) {
     this.admission = createRequestAdmission({
       limits: opts.limits,
-      load: async (key, signal): Promise<void> => {
-        const batch = this.byModel.get(key);
-        if (batch === undefined) throw new Error("cold batch ended");
-        batch.loadSignal = signal;
-        try {
-          batch.ready = await this.load(batch, signal);
-          signal.throwIfAborted();
-        } finally {
-          delete batch.loadSignal;
-          this.forgetIdleBatch(batch);
-        }
+      load: (key, signal): Promise<void> => {
+        const load = this.loadBatch(key, signal);
+        this.activeLoads.add(load);
+        return load.finally(() => {
+          this.activeLoads.delete(load);
+        });
       },
     });
+  }
+
+  private async loadBatch(key: string, signal: AbortSignal): Promise<void> {
+    this.stopped.signal.throwIfAborted();
+    const batch = this.byModel.get(key);
+    if (batch === undefined) throw new Error("cold batch ended");
+    batch.loadSignal = signal;
+    try {
+      batch.ready = await this.load(batch, signal);
+      signal.throwIfAborted();
+    } finally {
+      delete batch.loadSignal;
+      this.forgetIdleBatch(batch);
+    }
   }
 
   private pinStillCurrent(batch: ColdBatch): boolean {
@@ -303,6 +314,10 @@ class ColdOwnerAdmissionImpl implements ColdOwnerAdmission {
 
   stop = (): void => {
     this.stopped.abort();
+  };
+
+  whenIdle = async (): Promise<void> => {
+    await Promise.allSettled(this.activeLoads);
   };
 
   snapshot = (): QueueSnapshot => this.admission.snapshot();

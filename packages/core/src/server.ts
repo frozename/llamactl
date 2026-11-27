@@ -1,4 +1,5 @@
 import type { ChildProcess } from "node:child_process";
+import type { BigIntStats } from "node:fs";
 
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -2106,14 +2107,20 @@ function executeServerStart(opts: ServerStartExecutionOptions): Promise<StartSer
 class ManagedArtifactChangedError extends Error {}
 
 /** An inode generation tags observed metadata, without claiming validation of file contents. */
+export function modelRunArtifactGenerationDigest(
+  stat: Pick<BigIntStats, "dev" | "ino" | "mode" | "size" | "mtimeNs" | "ctimeNs">,
+): string {
+  const fields = [stat.dev, stat.ino, stat.mode, stat.size, stat.mtimeNs, stat.ctimeNs];
+  return createHash("sha256").update(fields.map(String).join(":")).digest("hex");
+}
+
 function artifactGeneration(path: string): ArtifactGeneration | undefined {
   try {
     const stat = statSync(path, { bigint: true });
     if (!stat.isFile()) return undefined;
-    const fields = [stat.dev, stat.ino, stat.mode, stat.size, stat.mtimeNs, stat.ctimeNs];
     return Object.freeze({
       evidence: "filesystem-metadata",
-      generationDigest: createHash("sha256").update(fields.map(String).join(":")).digest("hex"),
+      generationDigest: modelRunArtifactGenerationDigest(stat),
     });
   } catch {
     return undefined;

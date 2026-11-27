@@ -1009,16 +1009,18 @@ function serverStartOptions(
   };
 }
 
-async function runModelRunStart(
+export async function runModelRunStart(
   input: ServerStartInput,
   signal: AbortSignal,
   emit: (event: serverMod.ServerEvent) => void,
   managed: ManagedLaunchAdmission | undefined,
+  cold?: { effectiveSpecDigest: string; stillCurrent: () => boolean },
 ): Promise<DirectLifecycleOutcome<serverMod.StartServerResult>> {
   const opts = serverStartOptions(input, signal, (event) => {
     if (managed === undefined || event.type !== "ready") emit(event);
   });
   if (managed === undefined) {
+    if (cold !== undefined) return { ran: false, detail: "ManagedOwnerRequired" };
     return await runDirectResidencyStart(
       input.workload,
       () => serverMod.startServer(opts),
@@ -1029,6 +1031,9 @@ async function runModelRunStart(
   if (input.restart === true) return { ran: false, detail: "ManagedRestartUnavailable" };
   const prepared = serverMod.prepareManagedServerStart(opts);
   if ("result" in prepared) return { ran: true, result: prepared.result };
+  if (cold !== undefined && prepared.effectiveSpecDigest !== cold.effectiveSpecDigest) {
+    return { ran: false, detail: "ColdPlanChanged" };
+  }
   const lifecycle = directModelRunStartOpts(input.workload, input.target, prepared.launch.rel);
   const request = {
     kind: "ModelRun" as const,
@@ -1040,7 +1045,14 @@ async function runModelRunStart(
   return await managed.run(request, signal, (commitReadiness) => {
     const detail = prepared.artifactRefusal();
     return detail === undefined
-      ? runDirectResidencyStart(input.workload, () => prepared.start(commitReadiness), lifecycle)
+      ? runDirectResidencyStart(
+          input.workload,
+          () =>
+            (cold?.stillCurrent() ?? true)
+              ? prepared.start(commitReadiness)
+              : Promise.resolve(serverStartRefusal(input, "ColdPlanChanged")),
+          lifecycle,
+        )
       : Promise.resolve({ ran: false, detail });
   });
 }
