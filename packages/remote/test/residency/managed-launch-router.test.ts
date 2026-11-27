@@ -470,11 +470,13 @@ test("managed ModelRun launches the pinned target, args and child environment af
       },
     },
     resolve: (request) => {
+      if (digest === undefined) {
+        expect(existsSync(env.LLAMA_CPP_LOGS)).toBe(false);
+        expect(existsSync(env.LOCAL_AI_RUNTIME_DIR)).toBe(false);
+      }
       digest = request.effectiveSpecDigest;
       effectiveArgs = request.effectiveLaunch?.["args"];
       expect(request.effectiveLaunch?.["modelPath"]).toBe(join(firstModels, "fixture.gguf"));
-      expect(existsSync(env.LLAMA_CPP_LOGS)).toBe(false);
-      expect(existsSync(env.LOCAL_AI_RUNTIME_DIR)).toBe(false);
       process.env["LLAMA_CPP_MODELS"] = secondModels;
       process.env["LLAMA_CPP_SERVER_ALIAS"] = "changed-alias";
       process.env["PLAN_TEST_ENGINE_ENV"] = "changed-value";

@@ -286,11 +286,15 @@ const OPERATION_COLUMNS =
 const RESIDENCY_STATE_COLUMNS =
   "model, residency_group, state, owner_id, incarnation, fence_token, version, updated_at_ms, desired_revision";
 
-export function openResidencyOperationStore(input: {
+interface OpenResidencyStoreOptions {
   path: string;
   requireExisting?: boolean;
   busyTimeoutMs?: number;
-}): ResidencyOperationStore & ResidencyLifecycleStore {
+}
+
+export function openResidencyOperationStore(
+  input: OpenResidencyStoreOptions,
+): ResidencyOperationStore & ResidencyLifecycleStore {
   const db = openDb(input.path, input.busyTimeoutMs ?? 15000, input.requireExisting === true);
   const claimTx = db.transaction(
     (claimInput: ClaimInput): Fence => claimOwnershipTx(db, claimInput),

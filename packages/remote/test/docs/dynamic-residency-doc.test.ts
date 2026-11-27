@@ -980,11 +980,14 @@ describe("docs/dynamic-residency.md (#285)", () => {
       '...(stop.stopped ? {} : { error: "stop did not confirm process removal" }),',
     ]);
     expectPins(routerSrc, "ModelRun orchestration call sites", [
-      // deleting a ModelRun reaches serverStop
       ": await stopWorkloadForDelete(manifest, stops);",
-      // the switch's applyManifest runs in the switch scope
-      "return await runInResidencySwitchScope(\n            async () =>\n              await workloadApplyMod.applyManifest({",
+      "applyProfileWorkload(",
     ]);
+    expectPins(
+      flat(enclosingBody(routerSrc, "async function applyProfileWorkload(")),
+      "profile scope",
+      ["return await runInResidencySwitchScope(", "await workloadApplyMod.applyManifest("],
+    );
     expect(
       enclosingBody(routerSrc, "async function stopWorkloadForDelete("),
       "delete run",
