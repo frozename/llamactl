@@ -128,7 +128,13 @@ function localBudget(
   return capacityBudgetGiB(sample.memBytes, nodeRun?.spec.residency?.safetyMarginRatio);
 }
 
-type CapacityPhase = "bootstrap" | "profile-preflight" | "reservation" | "launch" | "engine-entry";
+type CapacityPhase =
+  | "bootstrap"
+  | "profile-preflight"
+  | "reservation"
+  | "launch"
+  | "engine-entry"
+  | "spawn";
 
 export interface ManagedCapacityAudit {
   nodeName: string;
@@ -242,7 +248,7 @@ type PhysicalPolicy = {
   measure: () => OwnerCapacity;
   checkLaunch: (
     request: ManagedLaunchRequest,
-    phase: "launch" | "engine-entry",
+    phase: "launch" | "engine-entry" | "spawn",
   ) => string | undefined;
 };
 
@@ -310,11 +316,13 @@ function launchWithPhysicalGate(
   engineGate: AsyncLocalStorage<ManagedEngineGate>,
 ): ManagedLaunchAdmission["run"] {
   return (request, signal, start) =>
-    admission.run(request, signal, async (commit) => {
+    admission.run(request, signal, async (commit, checkSpawn) => {
       const refusal = physical.checkLaunch(request, "launch");
       if (refusal !== undefined) return { ran: false, detail: refusal };
       const gate = preLaunchGate(physical, request);
-      const result = await engineGate.run(gate, () => start(commit));
+      const result = await engineGate.run(gate, () =>
+        start(commit, () => checkSpawn?.() ?? physical.checkLaunch(request, "spawn")),
+      );
       // A refusal at the first managed runtime mutation proves no engine ran.
       return gate.refusal === undefined ? result : { ran: false, detail: gate.refusal };
     });

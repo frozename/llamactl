@@ -9,12 +9,14 @@ import type { ColdModelArtifactReceipt } from "./cold-artifact-receipt.js";
 
 import { runModelRunStart, ServerStartInputSchema, serverStartOptions } from "../router.js";
 import { modelRunStartInvocation } from "../workload/apply.js";
+import { residencyGroupLabelOf } from "./coordinator.js";
 import {
   createLocalModelRunColdOwner,
   type LocalModelRunColdPlan,
   type LocalModelRunReadyRoute,
   type LocalModelRunResidentProof,
 } from "./local-modelrun-cold-owner.js";
+import { managedProfileMemberProfiles } from "./managed-profile-selection.js";
 
 export interface ManagedColdModelRunProofs {
   workloadNodeId?: string;
@@ -69,9 +71,16 @@ function servingSpec(
   return contextTokens > 0 ? { host, port, contextTokens, parallel } : undefined;
 }
 
-function policyRevision(targetRevision: string, group: Readonly<ColdExecutionGroup>): string {
+function policyRevision(
+  targetRevision: string,
+  manifest: Readonly<ModelRun>,
+  group: Readonly<ColdExecutionGroup>,
+): string {
   const policy = [
     targetRevision,
+    manifest.spec.resources?.expectedMemoryGiB,
+    managedProfileMemberProfiles(manifest.metadata.annotations).sort(),
+    residencyGroupLabelOf(manifest.metadata.labels),
     group.name,
     [...group.foregroundPorts].sort((a, b) => a - b),
     [...group.backgroundPorts].sort((a, b) => a - b),
@@ -148,7 +157,7 @@ function compileColdPlan(
     effectiveSpecDigest,
     artifactRel: launch.rel,
     artifactRevision: `sha256:${receipt.sha256}`,
-    policyRevision: policyRevision(targetPolicy, group),
+    policyRevision: policyRevision(targetPolicy, manifest, group),
     endpoint: { host: serving.host, port: serving.port },
     contextTokens: serving.contextTokens,
   };
