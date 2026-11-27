@@ -1482,16 +1482,43 @@ spec:
       expect(restored.action).toBe("started");
       const restoredPid = fixturePid(run);
       if (restoredPid !== undefined) spawnedServerPids.add(restoredPid);
-      const preview = await caller.residencyApplyProfile({ node: "local", to: "maintenance" });
-      expect(preview).toMatchObject({ ok: true, dryRun: true });
-      const { resources: _resources, ...unqualifiedSpec } = manifest.spec;
-      saveModelHost({ ...manifest, spec: unqualifiedSpec }, tmp);
-      const unqualified = await caller.residencyApplyProfile({
+      const managedProfile = { node: "local", to: "maintenance", version: 1 } as const;
+      const wetProfile = { ...managedProfile, dryRun: false, confirm: true };
+      const oldDispatch = await caller.residencyApplyProfile({
         node: "local",
         to: "maintenance",
         dryRun: false,
         confirm: true,
       });
+      expect(oldDispatch).toMatchObject({
+        ok: false,
+        refusal: { reason: "ManagedProfileProtocolRequired" },
+      });
+      expect(
+        await caller.residencyApplyManagedProfile({
+          ...wetProfile,
+          node: "another-owner",
+          dryRun: true,
+        }),
+      ).toMatchObject({ ok: false, refusal: { reason: "ManagedOwnerRequired" } });
+      expect(
+        await caller
+          .residencyApplyManagedProfile({ ...wetProfile, version: 2 as 1 })
+          .catch((error: unknown) => error),
+      ).toMatchObject({ code: "BAD_REQUEST" });
+      expect(
+        await caller
+          .residencyApplyManagedProfile({ ...wetProfile, confirm: false })
+          .catch((error: unknown) => error),
+      ).toMatchObject({ code: "BAD_REQUEST" });
+      expect(fixturePid(run)).toBe(restoredPid);
+      expect(fixturePid(host)).toBeUndefined();
+
+      const preview = await caller.residencyApplyManagedProfile(managedProfile);
+      expect(preview).toMatchObject({ ok: true, dryRun: true });
+      const { resources: _resources, ...unqualifiedSpec } = manifest.spec;
+      saveModelHost({ ...manifest, spec: unqualifiedSpec }, tmp);
+      const unqualified = await caller.residencyApplyManagedProfile(wetProfile);
       expect(unqualified).toMatchObject({
         ok: false,
         refusal: { reason: "ManagedProfilePreflight" },
@@ -1501,12 +1528,7 @@ spec:
         { runtimeKey: run, state: "resident", allocationGiB: 16 },
       ]);
       saveModelHost(manifest, tmp);
-      const profile = await caller.residencyApplyProfile({
-        node: "local",
-        to: "maintenance",
-        dryRun: false,
-        confirm: true,
-      });
+      const profile = await caller.residencyApplyManagedProfile(wetProfile);
       expect(profile).toMatchObject({
         ok: true,
         outcome: "stops-and-starts-ran",
@@ -1541,23 +1563,16 @@ spec:
       expect(inactive).toMatchObject([
         { type: "done", result: { ok: false, error: "ProfileInactive" } },
       ]);
-      const noop = await caller.residencyApplyProfile({
-        node: "local",
-        to: "maintenance",
-        dryRun: false,
-        confirm: true,
-      });
+      const noop = await caller.residencyApplyManagedProfile(wetProfile);
       expect(noop).toMatchObject({ ok: true, outcome: "noop", node: "switch-fixture-node" });
       expect(noop.operationId).toBeString();
       expect(fixturePid(host)).toBe(newHostPid);
       if (restoredPid !== undefined) spawnedServerPids.delete(restoredPid);
 
-      const rollback = await caller.residencyApplyProfile({
-        node: "local",
+      const rollback = await caller.residencyApplyManagedProfile({
+        ...wetProfile,
         from: "maintenance",
         to: "interactive",
-        dryRun: false,
-        confirm: true,
       });
       registerSpawnedPid(join(runtimeRoot(), "workloads", run, "llama-server.pid"));
       expect(rollback).toMatchObject({ ok: true, outcome: "stops-and-starts-ran", deferred: [] });

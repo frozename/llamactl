@@ -9,7 +9,15 @@
 // exports are asserted `typeof === "function"`.
 import type { NodeClient } from "@llamactl/remote";
 
-import { noderunStore, router, workloadSchema, workloadStore } from "@llamactl/remote";
+import {
+  config,
+  configSchema,
+  noderunStore,
+  router,
+  tls,
+  workloadSchema,
+  workloadStore,
+} from "@llamactl/remote";
 import { afterEach, beforeEach, describe, expect, setSystemTime, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -375,6 +383,86 @@ async function resetStepsSeam(): Promise<void> {
 }
 
 describe("llamactl residency apply-profile", () => {
+  test("explicit managed profile dispatch never runs an older agent's wet procedure", async () => {
+    const node = "old-profile-agent";
+    const operator = "fixture-profile-operator";
+    const cert = await tls.generateSelfSignedCert({ dir: tmp, commonName: "127.0.0.1" });
+    const paths: string[] = [];
+    let wet = 0;
+    const oldAgent = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: { cert: Bun.file(cert.certPath), key: Bun.file(cert.keyPath) },
+      async fetch(req): Promise<Response> {
+        const path = new URL(req.url).pathname;
+        paths.push(path);
+        if (req.headers.get("authorization") !== `Bearer ${operator}`) {
+          return new Response(null, { status: 401 });
+        }
+        if (path === "/trpc/residencyApplyProfile") {
+          const submitted = (await req.json()) as Record<string, unknown>;
+          const input = submitted["0"];
+          if (typeof input === "object" && input !== null && "dryRun" in input && !input.dryRun)
+            wet++;
+          return Response.json([
+            {
+              result: {
+                data: {
+                  ok: true,
+                  dryRun: false,
+                  outcome: "stops-and-starts-ran",
+                  steps: [],
+                  deferred: [],
+                },
+              },
+            },
+          ]);
+        }
+        return Response.json(
+          [
+            {
+              error: {
+                message: "No mutation procedure on path",
+                code: -32004,
+                data: { code: "NOT_FOUND", httpStatus: 404, path },
+              },
+            },
+          ],
+          { status: 404 },
+        );
+      },
+    });
+    try {
+      const cfg = configSchema.freshConfig();
+      const cluster = cfg.clusters.at(0);
+      const user = cfg.users.at(0);
+      if (cluster === undefined || user === undefined) throw new Error("incomplete fixture config");
+      user.token = operator;
+      cluster.nodes.push({
+        name: node,
+        endpoint: oldAgent.url.origin,
+        certificate: cert.certPem,
+        certificateFingerprint: cert.fingerprint,
+      });
+      config.saveConfig(cfg);
+      const { run } = await loadResidency();
+      const wetArgs = ["apply-profile", "--node", node, "--to", "code", "--execute", "--yes"];
+      const legacy = await withCapturedIo(() => run([...wetArgs, "--json"]));
+      expect(legacy.stderr).toBe("");
+      expect(legacy.result).toBe(0);
+      expect(paths).toEqual(["/trpc/residencyApplyProfile"]);
+      expect(wet).toBe(1);
+
+      const managed = await withCapturedIo(() => run([...wetArgs, "--managed"]));
+      expect(paths).toEqual(["/trpc/residencyApplyProfile", "/trpc/residencyApplyManagedProfile"]);
+      expect(managed.result).toBe(1);
+      expect(managed.stderr).toContain("ManagedProfileUnavailable");
+      expect(wet).toBe(1);
+    } finally {
+      await oldAgent.stop(true);
+    }
+  });
+
   test("C1: apply-profile defaults to a dry run and prints the plan summary", async () => {
     // kills: the CLI defaulting to dryRun:false.
     seedRouterFixture();

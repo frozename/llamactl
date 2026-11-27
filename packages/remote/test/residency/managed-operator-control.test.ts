@@ -182,9 +182,10 @@ async function checkContention(agent: RunningAgent): Promise<void> {
   if (leaveManual === undefined) throw new Error("fixture manual scope refused");
   try {
     expect(
-      await operatorCall(agent, "residencyApplyProfile", {
+      await operatorCall(agent, "residencyApplyManagedProfile", {
         node,
         to: profile,
+        version: 1,
         dryRun: false,
         confirm: true,
       }),
