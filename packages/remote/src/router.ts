@@ -686,6 +686,14 @@ type ProfileMutationInput = {
   confirm: boolean;
 };
 
+const profileMutationSchema = z.object({
+  node: z.string().min(1),
+  to: z.string().min(1),
+  from: z.string().min(1).optional(),
+  dryRun: z.boolean().default(true),
+  confirm: z.boolean().default(false),
+});
+
 async function runProfileMutation(
   input: ProfileMutationInput,
   admission: ManagedLaunchAdmission | undefined,
@@ -3244,25 +3252,38 @@ export const router = t.router({
       }),
   ),
 
-  // #284 (DF-11): dry-run-by-default profile switch. A bare call plans and
-  // reports without opening the store; dryRun:false requires confirm:true,
-  // refuses NotServingNode off the serving process and ControllerActive while
-  // a live controller lock exists, then runs the fenced executor against the
-  // node-local operation store.
+  // Older agents already accept this procedure's wet request shape.
   residencyApplyProfile: t.procedure
-    .input(
-      z.object({
-        node: z.string().min(1),
-        to: z.string().min(1),
-        from: z.string().min(1).optional(),
-        dryRun: z.boolean().default(true),
-        confirm: z.boolean().default(false),
-      }),
-    )
-    .mutation(
-      ({ ctx, input }): Promise<ResidencyApplyProfileResult> =>
-        runProfileMutation(input, ctx.managedLaunchAdmission),
-    ),
+    .input(profileMutationSchema)
+    .mutation(async ({ ctx, input }): Promise<ResidencyApplyProfileResult> => {
+      const managed = profileOwner(input.node, ctx.managedLaunchAdmission);
+      if (!input.dryRun && managed !== undefined) {
+        return residencyApplyProfileRefusal({
+          node: managed.ownerNodeId ?? input.node,
+          to: input.to,
+          from: input.from ?? null,
+          reason: "ManagedProfileProtocolRequired",
+          detail: "use the versioned managed profile procedure on the authenticated owner",
+        });
+      }
+      return await runProfileMutation(input, managed);
+    }),
+
+  residencyApplyManagedProfile: t.procedure
+    .input(z.strictObject({ ...profileMutationSchema.shape, version: z.literal(1) }))
+    .mutation(async ({ ctx, input }): Promise<ResidencyApplyProfileResult> => {
+      const managed = profileOwner(input.node, ctx.managedLaunchAdmission);
+      if (managed === undefined) {
+        return residencyApplyProfileRefusal({
+          node: input.node,
+          to: input.to,
+          from: input.from ?? null,
+          reason: "ManagedOwnerRequired",
+          detail: "send the managed profile to its owner agent",
+        });
+      }
+      return await runProfileMutation(input, managed);
+    }),
 
   // #284 (DF-11): request cancellation of an in-flight profile switch by
   // operationId. The id comes from residencyApplyProfile (operationId /
