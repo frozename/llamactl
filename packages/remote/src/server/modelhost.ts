@@ -62,6 +62,7 @@ import { type WorkloadKey, workloadRuntimeDir } from "@llamactl/core/workloadRun
 import { type ChildProcess, spawn as nodeSpawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { basename, dirname, resolve, sep } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 import type { StopFenceRefusal } from "../residency/stop-fence.js";
 
@@ -214,7 +215,23 @@ export interface StatusModelHostResult {
   sleep?: SleepResidency;
   /** Recorded sleep bound to the requested probe origin and tracked process generation. */
   probeSleep?: SleepResidency;
+  /** Positive durable native park proof for this live oMLX generation and requested origin. */
+  probeParked?: true;
 }
+
+export type OmlxParkedProbeIdentity = Readonly<{
+  workload: string;
+  pid: number;
+  startedAt: string;
+  specHash: string;
+  endpoint: Readonly<{ host: string; port: number }>;
+}>;
+
+/** The owner proves the durable parked claim and the exact live process birth and listener. */
+export type VerifyParkedOmlxProbe = (
+  identity: OmlxParkedProbeIdentity,
+  signal: AbortSignal,
+) => Promise<boolean>;
 
 function toRuntimeEnv(env: NodeJS.ProcessEnv | undefined): NodeJS.ProcessEnv {
   return env ?? process.env;
@@ -2104,21 +2121,17 @@ export async function stopModelHost(opts: StopModelHostOptions): Promise<StopMod
   return { ok: true, pid: state.pid };
 }
 
-function modelHostProbeSleep(
-  opts: StatusModelHostOptions,
+function matchesModelHostProbeOrigin(
   state: ModelHostState,
-  sleep: SleepResidency | undefined,
-): SleepResidency | undefined {
-  if (sleep === undefined || opts.sleepController !== undefined || opts.probeOrigin === undefined) {
-    return undefined;
-  }
+  probeOrigin: string | undefined,
+): boolean {
+  if (probeOrigin === undefined) return false;
   try {
     const origin = new URL(`http://${formatHostForUrl(state.host)}:${String(state.port)}`).origin;
-    if (opts.probeOrigin !== origin) return undefined;
+    return probeOrigin === origin;
   } catch {
-    return undefined;
+    return false;
   }
-  return sleep;
 }
 
 function modelHostSleepResidency(
@@ -2166,8 +2179,58 @@ export function statusModelHost(opts: StatusModelHostOptions): StatusModelHostRe
     ...omitUndefined({
       specHash: state.specHash,
       sleep,
-      probeSleep: modelHostProbeSleep(opts, state, sleep),
+      probeSleep:
+        sleep !== undefined &&
+        opts.sleepController === undefined &&
+        matchesModelHostProbeOrigin(state, opts.probeOrigin)
+          ? sleep
+          : undefined,
     }),
     ...runtime,
   };
+}
+
+function omlxParkedProbeIdentity(
+  opts: StatusModelHostOptions,
+  pid: StatusModelHostResult["pid"],
+): OmlxParkedProbeIdentity | undefined {
+  const resolved = resolveEnv(withRuntimeDir(toRuntimeEnv(opts.env), opts.runtimeDir));
+  const state = readModelHostState(opts.key, resolved);
+  if (
+    state?.engine !== "omlx" ||
+    state.pid !== pid ||
+    !state.specHash ||
+    !Number.isFinite(Date.parse(state.startedAt)) ||
+    !matchesModelHostProbeOrigin(state, opts.probeOrigin)
+  ) {
+    return undefined;
+  }
+  return Object.freeze({
+    workload: opts.key.name,
+    pid: state.pid,
+    startedAt: state.startedAt,
+    specHash: state.specHash,
+    endpoint: Object.freeze({ host: state.host, port: state.port }),
+  });
+}
+
+export async function statusModelHostForProbe(
+  opts: StatusModelHostOptions,
+  verifyParkedOmlx?: VerifyParkedOmlxProbe,
+): Promise<StatusModelHostResult> {
+  const status = statusModelHost(opts);
+  if (verifyParkedOmlx === undefined || status.state !== "Running") return status;
+  const pinned = omlxParkedProbeIdentity(opts, status.pid);
+  if (pinned === undefined) return status;
+  try {
+    const signal = AbortSignal.timeout(500);
+    if (!(await verifyParkedOmlx(pinned, signal)) || signal.aborted) return status;
+    const current = statusModelHost(opts);
+    return current.state === "Running" &&
+      isDeepStrictEqual(pinned, omlxParkedProbeIdentity(opts, current.pid))
+      ? { ...current, probeParked: true }
+      : current;
+  } catch {
+    return status;
+  }
 }

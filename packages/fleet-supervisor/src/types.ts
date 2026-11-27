@@ -76,6 +76,8 @@ export interface SlotProgressReading {
   slots: SlotProgress[];
 }
 
+export type WorkloadProbeResidency = SleepResidency | "parked";
+
 export interface WorkloadSnapshot {
   name: string;
   kind: "ModelHost" | "ModelRun";
@@ -127,6 +129,8 @@ export interface WorkloadSnapshot {
   completionProbe?: CompletionProbeSnapshot;
   /** Owner-confirmed residency for this exact probe target during the tick. */
   sleep?: SleepResidency;
+  /** Positive oMLX park proof from the owner, independent of HTTP liveness. */
+  parked?: true;
   /**
    * Declared expected memory in MiB, carried from WorkloadTarget.expectedMemoryMb.
    * Used by evaluateMigrationWorkloads to populate MigrationWorkload.spec.resources.memoryMb

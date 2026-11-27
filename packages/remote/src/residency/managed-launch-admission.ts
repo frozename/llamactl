@@ -2,6 +2,7 @@ import type { ManagedClaimState, ManagedWorkloadKind } from "@llamactl/core/resi
 import type { OkPlan } from "@llamactl/core/residency/planner";
 import type { ManagedProfileSelection } from "@llamactl/core/residency/profile-selection";
 
+import type { VerifyParkedOmlxProbe } from "../server/modelhost.js";
 import type { AdmissionAuthority, AdmitRequest, GenerationRecord } from "./admission-authority.js";
 import type { DirectLifecycleOutcome } from "./direct-lifecycle.js";
 import type { InferenceHoldState } from "./inference-holds.js";
@@ -54,6 +55,7 @@ export interface ManagedLaunchAdmission {
   ownsNode?: (name: string) => boolean;
   ownerNodeId?: string;
   readStatus?: () => ManagedAdmissionReadout;
+  verifyParkedOmlxProbe?: VerifyParkedOmlxProbe;
   preflightProfile?: (
     plan: Pick<OkPlan, "victims" | "replacements" | "retained">,
   ) => string | undefined;

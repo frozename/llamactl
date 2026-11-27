@@ -1,4 +1,4 @@
-import { isSleepResidency, type SleepResidency } from "@llamactl/core/residency/llamacpp-sleep";
+import { isSleepResidency } from "@llamactl/core/residency/llamacpp-sleep";
 import {
   deriveSwapRate,
   type SwapCounterSample,
@@ -15,6 +15,7 @@ import type {
   FleetSlotProgressEntry,
   FleetSnapshotEntry,
   NodeMemSnapshot,
+  WorkloadProbeResidency,
   WorkloadSnapshot,
 } from "./types.js";
 import type { WorkloadTarget } from "./workload-probe.js";
@@ -64,7 +65,7 @@ export interface SupervisorLoopOptions {
   swapRateNow?: () => number;
   probeWorkload?: (target: WorkloadTarget) => Promise<WorkloadSnapshot>;
   /** Read the owning runtime's recorded state for this exact target, without engine probes. */
-  readRecordedSleep?: (target: WorkloadTarget) => Promise<SleepResidency | undefined>;
+  readRecordedSleep?: (target: WorkloadTarget) => Promise<WorkloadProbeResidency | undefined>;
   /**
    * Boot token for workloads local to this node. Defaults to
    * `makeLocalRevisionReader()`, which reads llamactl runtime records
@@ -239,14 +240,15 @@ async function logSlotProgressForWorkloads(
   const timeoutMs = opts.probeTimeoutMs ?? 5_000;
   await Promise.all(
     opts.workloads.map(async (target, index) => {
-      const sleep = workloads[index]?.sleep;
+      const snapshot = workloads[index];
+      const residency = snapshot?.parked ? "parked" : snapshot?.sleep;
       const reading =
-        sleep === undefined
+        residency === undefined
           ? await readSlotProgress(target.endpoint, {
               ...(opts.fetch !== undefined ? { fetch: opts.fetch } : {}),
               timeoutMs,
             })
-          : { available: false, reason: sleep, slots: [] };
+          : { available: false, reason: residency, slots: [] };
       const entry: FleetSlotProgressEntry = {
         kind: "fleet-slot-progress",
         ts,
@@ -273,13 +275,13 @@ function observeSwapRate(
   return deriveSwapRate(previous, current, { nowMs: (opts.swapRateNow ?? Date.now)(), maxAgeMs });
 }
 
-async function readTargetSleep(
+async function readTargetResidency(
   read: SupervisorLoopOptions["readRecordedSleep"],
   target: WorkloadTarget,
-): Promise<SleepResidency | undefined> {
+): Promise<WorkloadProbeResidency | undefined> {
   try {
     const status = await read?.(target);
-    return isSleepResidency(status) ? status : undefined;
+    return status === "parked" || isSleepResidency(status) ? status : undefined;
   } catch {
     return undefined;
   }
@@ -304,12 +306,13 @@ async function runTick(
   const node_mem = await (opts.probeNodeMem ?? defaultProbeNodeMem)();
   const swapRate = observeSwapRate(previousSwap, node_mem.swap_io, opts);
   const workloads = await Promise.all(
-    opts.workloads.map(async (target) => {
-      const sleep = await readTargetSleep(opts.readRecordedSleep, target);
-      const snapshot = await probeWorkloadFn(target, sleep).catch(() =>
+    opts.workloads.map(async (target): Promise<WorkloadSnapshot> => {
+      const residency = await readTargetResidency(opts.readRecordedSleep, target);
+      const snapshot = await probeWorkloadFn(target, residency).catch(() =>
         unreachableFallback(target),
       );
-      return sleep === undefined ? snapshot : { ...snapshot, sleep };
+      if (residency === "parked") return { ...snapshot, parked: true };
+      return residency === undefined ? snapshot : { ...snapshot, sleep: residency };
     }),
   );
 

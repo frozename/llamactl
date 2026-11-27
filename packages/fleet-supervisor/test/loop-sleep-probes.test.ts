@@ -30,7 +30,7 @@ const target: WorkloadTarget = {
   },
 };
 
-for (const sleep of ["sleeping", "sleep-pending"] as const) {
+for (const sleep of ["sleeping", "sleep-pending", "parked"] as const) {
   test(`recorded ${sleep} suppresses waking probes for only its exact supervisor target`, async () => {
     const contacts = new Map<string, string[]>();
     const entries: FleetJournalEntry[] = [];
@@ -94,7 +94,12 @@ for (const sleep of ["sleeping", "sleep-pending"] as const) {
     ]);
     const snapshot = entries.find((entry) => entry.kind === "fleet-snapshot");
     expect(snapshot?.workloads).toMatchObject([
-      { endpoint: SLEEP_ENDPOINT, sleep, reachable: true, models: ["model"] },
+      {
+        endpoint: SLEEP_ENDPOINT,
+        ...(sleep === "parked" ? { parked: true } : { sleep }),
+        reachable: true,
+        models: ["model"],
+      },
       { endpoint: OTHER_ENDPOINT, reachable: true, completionProbe: { ran: true, ok: true } },
     ]);
     expect(snapshot?.workloads[0]?.completionProbe).toBeUndefined();
@@ -110,35 +115,37 @@ for (const sleep of ["sleeping", "sleep-pending"] as const) {
   });
 }
 
-test("recorded sleep-pending preserves failed health without requesting restart", async () => {
-  const entries: FleetJournalEntry[] = [];
-  const fetch = Object.assign(
-    (): Promise<Response> => Promise.resolve(new Response(null, { status: 503 })),
-    { preconnect: (): void => undefined },
-  );
-  await startSupervisorLoop({
-    node: "local",
-    once: true,
-    workloads: [target],
-    degradationThresholds: {
-      consecutiveErrorsForDegraded: 1,
-      p95DegradedMs: 10,
-      consecutiveCompletionErrorsForDegraded: 1,
-    },
-    probeNodeMem: (): Promise<NodeMemSnapshot> => Promise.resolve(NODE_MEM),
-    readRecordedSleep: (): Promise<"sleep-pending"> => Promise.resolve("sleep-pending"),
-    readLocalRevision: (): null => null,
-    fetch,
-    writeJournal: (entry): void => {
-      entries.push(entry);
-    },
-  }).done;
-  const snapshot = entries.find((entry) => entry.kind === "fleet-snapshot");
-  expect(snapshot?.workloads[0]).toMatchObject({
-    sleep: "sleep-pending",
-    reachable: false,
-    models: [],
-    consecutiveErrors: 1,
+for (const residency of ["sleep-pending", "parked"] as const) {
+  test(`recorded ${residency} preserves failed health without requesting restart`, async () => {
+    const entries: FleetJournalEntry[] = [];
+    const fetch = Object.assign(
+      (): Promise<Response> => Promise.resolve(new Response(null, { status: 503 })),
+      { preconnect: (): void => undefined },
+    );
+    await startSupervisorLoop({
+      node: "local",
+      once: true,
+      workloads: [target],
+      degradationThresholds: {
+        consecutiveErrorsForDegraded: 1,
+        p95DegradedMs: 10,
+        consecutiveCompletionErrorsForDegraded: 1,
+      },
+      probeNodeMem: (): Promise<NodeMemSnapshot> => Promise.resolve(NODE_MEM),
+      readRecordedSleep: (): Promise<typeof residency> => Promise.resolve(residency),
+      readLocalRevision: (): null => null,
+      fetch,
+      writeJournal: (entry): void => {
+        entries.push(entry);
+      },
+    }).done;
+    const snapshot = entries.find((entry) => entry.kind === "fleet-snapshot");
+    expect(snapshot?.workloads[0]).toMatchObject({
+      ...(residency === "parked" ? { parked: true } : { sleep: residency }),
+      reachable: false,
+      models: [],
+      consecutiveErrors: 1,
+    });
+    expect(entries.some((entry) => entry.kind === "fleet-proposal")).toBe(false);
   });
-  expect(entries.some((entry) => entry.kind === "fleet-proposal")).toBe(false);
-});
+}

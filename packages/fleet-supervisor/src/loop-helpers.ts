@@ -1,5 +1,3 @@
-import type { SleepResidency } from "@llamactl/core/residency/llamacpp-sleep";
-
 import { omitUndefined } from "@llamactl/core/object";
 
 import type {
@@ -22,6 +20,7 @@ import type {
   FleetProposalEntry,
   FleetTransitionEntry,
   NodeMemSnapshot,
+  WorkloadProbeResidency,
   WorkloadSnapshot,
 } from "./types.js";
 import type { WorkloadProbeResult, WorkloadTarget } from "./workload-probe.js";
@@ -288,7 +287,7 @@ async function runCompletionProbe(
 
 export function makeDefaultProbeFn(
   deps: ProbeFnDeps,
-): (target: WorkloadTarget, sleep?: SleepResidency) => Promise<WorkloadSnapshot> {
+): (target: WorkloadTarget, residency?: WorkloadProbeResidency) => Promise<WorkloadSnapshot> {
   // One entry per workload for the lifetime of the loop: the boot token is
   // only trusted once two consecutive /v1/models reads agree.
   const lastCreated = new Map<string, number | null>();
@@ -299,10 +298,10 @@ export function makeDefaultProbeFn(
       return null;
     }
   };
-  return async (target, sleep): Promise<WorkloadSnapshot> => {
+  return async (target, residency): Promise<WorkloadSnapshot> => {
     const probed = await defaultProbeWorkload(target, {
       ...omitUndefined({ fetch: deps.fetch }),
-      ...(sleep === undefined ? {} : { redirect: "error" }),
+      ...(residency === undefined ? {} : { redirect: "error" }),
       timeoutMs: deps.timeoutMs,
       priorConsecutiveErrors: deps.consecutiveErrors.get(target.name) ?? 0,
       priorCreated: lastCreated.get(target.name) ?? null,
@@ -311,11 +310,11 @@ export function makeDefaultProbeFn(
     deps.consecutiveErrors.set(target.name, probed.consecutiveErrors);
     const localRevision = probed.reachable ? readLocal(target) : null;
     const result = localRevision !== null ? { ...probed, revision: localRevision } : probed;
-    if (sleep !== undefined && deps.completion) {
+    if (residency !== undefined && deps.completion) {
       clearCompletionProbeState(deps.completion, target.name);
     }
     const completionProbe =
-      sleep === undefined ? await runCompletionProbe(target, result, deps) : undefined;
+      residency === undefined ? await runCompletionProbe(target, result, deps) : undefined;
     return {
       name: target.name,
       kind: target.kind,
@@ -508,7 +507,7 @@ export function applyWorkloadDegradation(
   writeJournalEntry: (entry: FleetJournalEntry) => void,
 ): void {
   for (const workload of workloads) {
-    if (workload.sleep !== undefined) continue;
+    if (workload.sleep !== undefined || workload.parked) continue;
     const prior = workloadHealth.get(workload.name) ?? "healthy";
     const result = detectDegradation(workload, prior, degradationThresholds);
     if (result) {
