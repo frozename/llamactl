@@ -29,6 +29,7 @@
     "./residency/admission": "./src/residency/admission.ts",
     "./residency/generation-evidence": "./src/residency/generation-evidence.ts",
     "./residency/cold-pin-admission": "./src/residency/cold-pin-admission.ts",
+    "./residency/engine-forwarder": "./src/residency/engine-forwarder.ts",
     "./residency/leases": "./src/residency/leases.ts",
     "./residency/lifecycle": "./src/residency/lifecycle.ts",
     "./residency/managed-runtime": "./src/residency/managed-runtime.ts",

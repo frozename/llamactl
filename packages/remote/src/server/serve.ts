@@ -1,4 +1,8 @@
-import type { AgentWorkerRpc, AgentWorkerRpcRelay } from "@llamactl/core/config/agent-config";
+import type {
+  AgentWorkerRpc,
+  AgentWorkerRpcRelay,
+  ExecutionAdmissionConfig,
+} from "@llamactl/core/config/agent-config";
 
 import { inferenceRpc, nodeFacts, openaiProxy } from "@llamactl/core";
 import {
@@ -8,6 +12,7 @@ import {
   setEngineScopeLauncher,
 } from "@llamactl/core/engines/scope";
 import { resolveEnv } from "@llamactl/core/env";
+import { installLocalEngineForwarder } from "@llamactl/core/residency/engine-forwarder";
 import {
   createResidencyLeases,
   getResidencyLeaseRegistry,
@@ -45,6 +50,7 @@ import {
   type DeclaredWorkloadPhase,
   listDeclaredModels,
 } from "../residency/catalog.js";
+import { createOwnerAdmission, type OwnerAdmission } from "../residency/owner-admission.js";
 import {
   createResidencyLeaseAuditSink,
   defaultResidencyStorePath,
@@ -102,6 +108,7 @@ import {
   openaiUpstreamErrorsTotal,
   setAgentRuntimeIdentity,
   setModelHostMetricsNode,
+  setOwnerAdmissionMetricsReader,
   setRuntimeProcessMemoryReader,
   statusClass,
 } from "./metrics.js";
@@ -323,6 +330,7 @@ export interface StartAgentOptions {
   chatCompletionsAdmission?: RequestAdmission;
   /** Trusted host adapter for the two explicit agent start procedures. */
   managedLaunchAdmission?: ManagedLaunchAdmission;
+  executionAdmission?: ExecutionAdmissionConfig;
   /**
    * Per-role runtime memory budget. Sets the identity (role + optional
    * memory budget) so the Prometheus gauges emit per-role series. When
@@ -1440,9 +1448,9 @@ function defaultActiveShare(bindings: readonly ServiceCredentialBinding[]): numb
 }
 
 /**
- * Prepares the one opt-in residency lease registry (DF-05, #278). Returns
- * null unless `opts.residencyLeases` is true, so the default path only does a
- * null check, opens nothing and never reads or writes the process-wide seam.
+ * Prepares the residency lease registry (DF-05, #278) for explicit leases
+ * or owner execution groups. The default path leaves the process-wide seam
+ * and the on-disk audit alone.
  * Otherwise it captures the seam's previous value, wires the registry's
  * onAudit sink to the node-local residency store (the forced-unload audit
  * survives a restart; the sink opens lazily on the first write and its close
@@ -1456,7 +1464,7 @@ function defaultActiveShare(bindings: readonly ServiceCredentialBinding[]): numb
 function maybePublishResidencyLeases(
   opts: StartAgentOptions,
 ): { registry: ResidencyLeases; publish: () => void; restore: () => void } | null {
-  if (opts.residencyLeases !== true) return null;
+  if (opts.residencyLeases !== true && !opts.executionAdmission?.length) return null;
   const previous = getResidencyLeaseRegistry();
   const previousSession = currentSessionRefcounts();
   const auditSink = createResidencyLeaseAuditSink({
@@ -1514,6 +1522,37 @@ export function maybePublishEngineScope(
   };
 }
 
+function prepareExecutionHooks(opts: StartAgentOptions): {
+  hooks: ReturnType<typeof maybePublishEngineScope>;
+  owner?: OwnerAdmission;
+} {
+  const scope = maybePublishEngineScope(opts);
+  if (!opts.executionAdmission?.length) return { hooks: scope };
+  const owner = createOwnerAdmission(opts.executionAdmission, {
+    noAuth: opts.noAuth === true && isLoopbackAddress(opts.bindHost ?? "127.0.0.1"),
+  });
+  let uninstall: (() => void) | undefined;
+  return {
+    owner,
+    hooks: {
+      publish: (): void => {
+        scope?.publish();
+        uninstall = installLocalEngineForwarder(owner.forward);
+        setOwnerAdmissionMetricsReader(owner.snapshot);
+      },
+      restore: (): void => {
+        if (uninstall !== undefined) {
+          owner.stop();
+          uninstall();
+          uninstall = undefined;
+          setOwnerAdmissionMetricsReader(null);
+        }
+        scope?.restore();
+      },
+    },
+  };
+}
+
 /**
  * Publishes this agent's worker-RPC host (P4.1). It advertises the
  * versions agent.yaml lists that this build speaks, read on every call,
@@ -1525,6 +1564,7 @@ export function maybePublishEngineScope(
 function maybePublishWorkerRpc(
   opts: StartAgentOptions,
   leases: ResidencyLeases | null,
+  ownerAdmission?: OwnerAdmission,
 ): WorkerRpcServing | null {
   const config = opts.workerRpc;
   if (config === undefined) return null;
@@ -1533,6 +1573,7 @@ function maybePublishWorkerRpc(
     workerId: config.workerId,
     ...(config.backends !== undefined ? { backends: config.backends } : {}),
     ...(leases !== null ? { residencyLeases: leases } : {}),
+    ...(ownerAdmission !== undefined ? { ownerAdmission } : {}),
     ...(opts.chatCompletionsAdmission !== undefined
       ? { admission: opts.chatCompletionsAdmission }
       : {}),
@@ -1630,6 +1671,9 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
       opts.noAuth === true)
   ) {
     throw new Error("ManagedOwnerRequired");
+  }
+  if (opts.executionAdmission?.length && opts.chatCompletionsAdmission !== undefined) {
+    throw new Error("executionAdmission requires the agent-wide chat admission cap to be disabled");
   }
   const bindHost = opts.bindHost ?? "127.0.0.1";
   const port = opts.port ?? 0;
@@ -1780,8 +1824,9 @@ function startAgentServerAfterHandlers(
   const gate = makeNoAuthGate(noAuth, bindHost);
 
   const leases = maybePublishResidencyLeases(opts);
-  const engineScope = maybePublishEngineScope(opts);
-  const workerRpc = maybePublishWorkerRpc(opts, leases?.registry ?? null);
+  const execution = prepareExecutionHooks(opts);
+  const engineScope = execution.hooks;
+  const workerRpc = maybePublishWorkerRpc(opts, leases?.registry ?? null, execution.owner);
 
   const started: {
     server?: { stop(closeActive?: boolean): unknown };

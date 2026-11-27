@@ -41,7 +41,7 @@ type RequestAdmission = {
 type AdmissionOptions = {
   limits: RequestQueueLimits;
   resident: string[];
-  load: (modelKey: string) => unknown;
+  load: (modelKey: string, signal: AbortSignal) => unknown;
   now: () => number;
   setTimer: (fn: () => void, ms: number) => number;
   clearTimer: (id: number) => void;
@@ -424,6 +424,73 @@ describe("createRequestAdmission (#281 DF-08)", () => {
     await flush();
 
     expect(grants).toEqual(["x", "a#1"]);
+  });
+
+  test("cancelling the last waiter before dispatch prevents the cold load", async () => {
+    const mod = await loadAdmission();
+    const loads: string[] = [];
+    const admission = mod!.createRequestAdmission(
+      admissionOptions(new FakeClock(), {
+        resident: [],
+        load: (key) => {
+          loads.push(key);
+        },
+      }),
+    );
+    const abort = new AbortController();
+    const pending = admission.acquire(req("cancelled"), { signal: abort.signal });
+    abort.abort();
+    expect(await pending.catch((error: unknown) => error)).toMatchObject({ code: "Aborted" });
+    await flush();
+    expect(loads).toEqual([]);
+    expect(admission.snapshot().loading).toBeNull();
+    const next = await admission.acquire(req("fresh"));
+    expect(loads).toEqual(["m@r1"]);
+    next();
+  });
+
+  test("last-waiter cancellation signals the load owner without clearing its allocation gate", async () => {
+    const mod = await loadAdmission();
+    const loads: { key: string; signal: AbortSignal }[] = [];
+    const settleFirst = deferred<null>();
+    const admission = mod!.createRequestAdmission(
+      admissionOptions(new FakeClock(), {
+        resident: [],
+        load: (key, signal) => {
+          loads.push({ key, signal });
+          return key === "m@r1" ? settleFirst.promise : Promise.resolve();
+        },
+      }),
+    );
+    const first = new AbortController();
+    const second = new AbortController();
+    const a = admission
+      .acquire(req("first"), { signal: first.signal })
+      .catch((error: unknown) => error);
+    const b = admission
+      .acquire(req("second"), { signal: second.signal })
+      .catch((error: unknown) => error);
+    await flush();
+    const other = admission.acquire({
+      ...req("other"),
+      model: { name: "different", revision: "r2" },
+    });
+    try {
+      expect(loads).toHaveLength(1);
+      first.abort();
+      expect(await a).toMatchObject({ code: "Aborted" });
+      expect(loads[0]?.signal.aborted).toBe(false);
+      second.abort();
+      expect(await b).toMatchObject({ code: "Aborted" });
+      expect(loads[0]?.signal.aborted).toBe(true);
+      expect(admission.snapshot().loading).toBe("m@r1");
+      expect(loads).toHaveLength(1);
+    } finally {
+      settleFirst.resolve(null);
+    }
+    await flush();
+    expect(loads.map(({ key }) => key)).toEqual(["m@r1", "different@r2"]);
+    (await other)();
   });
 
   // Kills: calling load per waiter, or not pumping after loadSettled("ready").

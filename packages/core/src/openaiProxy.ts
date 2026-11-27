@@ -49,6 +49,13 @@ import {
   probeColdPinQueue,
 } from "./residency/cold-pin-admission.js";
 import {
+  type ColdEngineDispatch,
+  type ColdEngineForwarder,
+  getLocalEngineForwarder,
+  type LocalEngineRequest,
+  withLocalEngineBody,
+} from "./residency/engine-forwarder.js";
+import {
   bindLeaseToBody,
   getResidencyLeaseRegistry,
   type Lease,
@@ -626,6 +633,7 @@ type RouteEntry = {
   port: number;
   workload: string;
   kind: "ModelRun" | "ModelHost";
+  pid?: number;
   engine: workloadRuntime.LocalRoute["engine"];
   model: string;
   /** Catalog-qualified experimental (#518); kept for downstream consumers
@@ -698,6 +706,7 @@ interface ResponseCacheRequestState {
  */
 export interface ProxyOpenAIOptions {
   preferredWorkload?: string;
+  trustedColdOwner?: ColdEngineForwarder;
 }
 
 type ProxyContext = {
@@ -709,6 +718,8 @@ type ProxyContext = {
   init: RequestInit;
   bodyText?: string;
   preferredWorkload?: string;
+  trustedColdOwner?: ColdEngineForwarder;
+  coldRoute?: Pick<ColdEngineDispatch, "declaration" | "path">;
   isAnthropic?: boolean;
   anthropicModel?: string;
   anthropicRequest?: AnthropicMessagesRequest;
@@ -1133,6 +1144,7 @@ function routeEntryFor(route: workloadRuntime.ClusterRoute): RouteEntry {
     engine: route.engine,
     model: route.model,
     ...(isExperimentalRoute(route) ? { experimental: true as const } : {}),
+    ...("pid" in route ? { pid: route.pid } : {}),
     ...peerFields,
   };
 }
@@ -3073,10 +3085,38 @@ async function applyBodyModelRoute(
   return routeMissResponse(context, model);
 }
 
+function coldOwnerRoute(
+  context: ProxyContext,
+  declaration: DeclaredModelEntryV1,
+): ProxyContext | Response {
+  const { pathname, req } = context;
+  const eligible =
+    declaration.state === "loading" ||
+    (declaration.state === "cold" && declaration.autoLoadEligible);
+  if (
+    !eligible ||
+    isDeclaredStaleReason(declaration.reason) ||
+    req.method !== "POST" ||
+    context.search !== "" ||
+    context.isAnthropic === true ||
+    context.isResponsesApi === true ||
+    req.headers.has(SESSION_HEADER) ||
+    requestBodyContainsOmlxRequestHandle(context.bodyText) ||
+    (pathname !== "/v1/chat/completions" && pathname !== "/v1/completions")
+  ) {
+    return declaredNotLoadedResponse(declaration.id, declaration, context.bodyText);
+  }
+  return { ...context, coldRoute: { path: pathname, declaration } };
+}
+
 /** Rejection chain for a body model that matched no route (#306 + #280). */
 function routeMissResponse(context: ProxyContext, model: string): ProxyContext | Response {
   const unavailableRejection = declaredUnavailableRejectionFor(model, context.resolved);
   if (unavailableRejection) return unavailableRejection;
+  if (context.trustedColdOwner !== undefined) {
+    const declaration = declaredModelEntries().find((entry) => entry.id === model);
+    if (declaration !== undefined) return coldOwnerRoute(context, declaration);
+  }
   const notLoadedRejection = declaredNotLoadedRejectionFor(
     model,
     context.resolved,
@@ -3211,6 +3251,120 @@ export function upstreamTimeoutMs(): number {
   return parsed;
 }
 
+function requestBodyForAdmission(body: RequestInit["body"]): string | null {
+  if (typeof body === "string") return body;
+  return body === null || body === undefined ? "" : null;
+}
+
+function routeStillOwned(route: RoutedEntry, resolved: ResolvedEnv): boolean {
+  if (servingWithdrawnWorkloads().has(route.workload)) return false;
+  return workloadRuntime
+    .listWorkloadRoutes(resolved, route.workload)
+    .some(
+      (current) =>
+        current.pid === route.pid &&
+        current.engine === route.engine &&
+        current.kind === route.kind &&
+        current.host === route.host &&
+        current.port === route.port &&
+        current.model === route.model,
+    );
+}
+
+export function bindLocalEngineWorkload(
+  target: string,
+  resolved: ResolvedEnv,
+): Pick<LocalEngineRequest, "workload" | "stillOwnsTarget" | "pretokenizedCompletion"> {
+  const identity = workloadRuntime.identifyLocalEngineAtTarget(target, resolved);
+  if (identity === undefined) return { stillOwnsTarget: () => false };
+  return {
+    workload: identity.workload,
+    ...(identity.engine === "llamacpp" ? { pretokenizedCompletion: true } : {}),
+    stillOwnsTarget: (): boolean => {
+      if (isRouteWithdrawn(identity.workload)) return false;
+      const current = workloadRuntime.identifyLocalEngineAtTarget(target, resolved);
+      return (
+        current?.workload === identity.workload &&
+        current.kind === identity.kind &&
+        current.engine === identity.engine &&
+        current.pid === identity.pid &&
+        current.startedAt === identity.startedAt
+      );
+    },
+  };
+}
+
+function bindManagedDefaultEngine(
+  context: ProxyContext,
+): Pick<LocalEngineRequest, "workload" | "stillOwnsTarget" | "pretokenizedCompletion"> {
+  const model = requestedModelFromBody(context.bodyText ?? "");
+  const hasDeclaration = (): boolean => declaredModelEntries().some((entry) => entry.id === model);
+  if (model !== undefined && hasDeclaration()) {
+    // A declaration names an owner. It cannot authorize the implicit
+    // default engine when routing did not find a verified serving target.
+    return { stillOwnsTarget: () => false };
+  }
+  const binding = bindLocalEngineWorkload(context.target, context.resolved);
+  if (model === undefined) return binding;
+  return {
+    ...binding,
+    stillOwnsTarget: () => !hasDeclaration() && binding.stillOwnsTarget?.() === true,
+  };
+}
+
+function forwardColdOwner(context: ProxyContext): Promise<Response> | undefined {
+  if (context.coldRoute === undefined || context.trustedColdOwner === undefined) return undefined;
+  const init = context.init;
+  return context.trustedColdOwner({
+    ...context.coldRoute,
+    body: requestBodyForAdmission(init.body),
+    clientSignal: context.req.signal,
+    deadlineMs: Date.now() + upstreamTimeoutMs(),
+    principal: { bearer: context.req.headers.get("authorization") },
+    send: (target, signal, body) => {
+      const upstream: RequestInit & { timeout: boolean } = {
+        ...withLocalEngineBody(init, body),
+        signal,
+        redirect: "error",
+        timeout: false,
+      };
+      return fetch(target, upstream);
+    },
+  });
+}
+
+function forwardAdmittedEngine(
+  context: ProxyContext,
+  init: RequestInit,
+): Promise<Response> | undefined {
+  if (context.req.method !== "POST" || context.route?.isPeer === true) return undefined;
+  const admit = getLocalEngineForwarder();
+  if (admit === undefined) return undefined;
+  const { signal } = context.init;
+  const route = context.route;
+  return admit({
+    target: context.target,
+    clientSignal: context.req.signal,
+    deadlineMs: Date.now() + upstreamTimeoutMs(),
+    body: requestBodyForAdmission(init.body),
+    principal: { bearer: context.req.headers.get("authorization") },
+    ...(route === undefined
+      ? bindManagedDefaultEngine(context)
+      : {
+          workload: route.workload,
+          ...(route.engine === "llamacpp" ? { pretokenizedCompletion: true as const } : {}),
+          stillOwnsTarget: () => routeStillOwned(route, context.resolved),
+        }),
+    ...(signal === null || signal === undefined ? {} : { engineSignal: signal }),
+    send: (engineSignal, body) =>
+      fetch(context.target, {
+        ...withLocalEngineBody(init, body),
+        signal: engineSignal,
+        redirect: "error",
+      }),
+  });
+}
+
 async function forward(context: ProxyContext): Promise<Response> {
   if (context.route?.isPeer && requestBodyContainsOmlxRequestHandle(context.bodyText)) {
     return Response.json({ error: "cross-node slot ops not supported" }, { status: 400 });
@@ -3236,6 +3390,8 @@ async function forward(context: ProxyContext): Promise<Response> {
   }
   const peerTls = peerTlsForRoute(context.route);
   if (peerTls) (init as RequestInit & { tls?: { ca: string; serverName?: string } }).tls = peerTls;
+  const admitted = forwardAdmittedEngine(context, init);
+  if (admitted !== undefined) return await admitted;
   // Propagate the client's AbortSignal to the upstream fetch so that a client
   // disconnect promptly cancels upstream inference and releases warm-hit lease
   // + registry reservation via the finally in proxyOpenAI. Compose with any
@@ -3981,7 +4137,19 @@ function acquireProxySession(
   return { ok: true, release, cancel };
 }
 
+function prepareProxyForward(context: ProxyContext): Promise<Response> | undefined {
+  if (context.route?.isPeer && requestBodyContainsOmlxRequestHandle(context.bodyText)) {
+    return Promise.resolve(
+      Response.json({ error: "cross-node slot ops not supported" }, { status: 400 }),
+    );
+  }
+  stripVendorFieldsFromBody(context);
+  sanitizeLibosmosGreedyFromBody(context);
+  return forwardColdOwner(context);
+}
+
 function applyProxyOptions(context: ProxyContext, opts: ProxyOpenAIOptions): void {
+  if (opts.trustedColdOwner !== undefined) context.trustedColdOwner = opts.trustedColdOwner;
   const preferred = opts.preferredWorkload;
   if (preferred !== undefined && preferred.length > 0) {
     context.preferredWorkload = preferred;
@@ -4055,11 +4223,8 @@ export async function proxyOpenAI(
   attachSessionAffinity(parsed, trimmedSessionId, sessionRegistry, leaseRegistry);
   const routed = await resolveRoute(parsed);
   if (routed instanceof Response) return routed;
-  if (routed.route?.isPeer && requestBodyContainsOmlxRequestHandle(routed.bodyText)) {
-    return Response.json({ error: "cross-node slot ops not supported" }, { status: 400 });
-  }
-  stripVendorFieldsFromBody(routed);
-  sanitizeLibosmosGreedyFromBody(routed);
+  const earlyResponse = prepareProxyForward(routed);
+  if (earlyResponse !== undefined) return await earlyResponse;
   let withResponseCacheLookup = routed;
   try {
     withResponseCacheLookup = await maybeResponseCacheLookup(routed);
