@@ -8,6 +8,12 @@ trip up first-time deployments (LaunchAgent loops, FDA grants).
 Estimated time: 20 minutes (plus model-cache rsync, which runs
 unattended).
 
+For a separately approved dynamic residency canary, follow the
+[staged enable and rollback gates](dynamic-residency.md#staged-enable-order-and-rollback)
+after the ordinary smoke tests. Keep automatic residency disabled during
+onboarding. Record the installed agent build, engine and artifact identity,
+and negotiated worker capabilities before planning a switch.
+
 ---
 
 ## 1. Prerequisites
