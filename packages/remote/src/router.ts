@@ -158,6 +158,7 @@ import { resolveDefaultRagNode } from "./search/rag-node.js";
 import { searchSessions } from "./search/sessions.js";
 import { acquireChatSlot, admissionTrpcError } from "./server/chat-admission.js";
 import {
+  pinModelHostStartup,
   startModelHost,
   type StartModelHostResult,
   statusModelHost,
@@ -282,17 +283,19 @@ const mutateConfigLocked = (path: string, fn: (cfg: Config) => Config): Config =
 type WorkloadNodeClient = workloadApplyMod.WorkloadClient & benchScheduleLoopMod.BenchClient;
 
 /**
- * Build a tRPC-client-shaped proxy over `router.createCaller({})` so
+ * Build a tRPC-client-shaped proxy over the invoking agent's local caller so
  * local workload ops can reuse the same `.query/.mutate/.subscribe`
  * surface as the remote tRPC client. Mirrors the proxy wrapper in
  * `client/node-client.ts` but lives here to avoid the AppRouter cycle.
  */
-function localCallerProxy(): WorkloadNodeClient {
+function localCallerProxy(managedLaunchAdmission?: ManagedLaunchAdmission): WorkloadNodeClient {
+  const ctx: AgentRouterContext =
+    managedLaunchAdmission === undefined ? {} : { managedLaunchAdmission };
   // Deferred reference — at runtime `router` exists by the time the
   // helper is invoked from within a procedure body, even though at
   // module-load time the declaration below is still being evaluated.
   const getCaller = (signal?: AbortSignal): Record<string, (...a: unknown[]) => unknown> =>
-    router.createCaller({}, signal ? { signal } : undefined) as unknown as Record<
+    router.createCaller(ctx, signal ? { signal } : undefined) as unknown as Record<
       string,
       (...a: unknown[]) => unknown
     >;
@@ -412,10 +415,14 @@ export async function queryServerStatusWithTimeout<T>(
   }
 }
 
-function clientForNode(cfg: Config, nodeName: string): WorkloadNodeClient {
+function clientForNode(
+  cfg: Config,
+  nodeName: string,
+  managedLaunchAdmission?: ManagedLaunchAdmission,
+): WorkloadNodeClient {
   const resolved = kubecfg.resolveNode(cfg, nodeName);
   if (resolved.node.endpoint.startsWith("inproc://")) {
-    return localCallerProxy();
+    return localCallerProxy(managedLaunchAdmission);
   }
   const token = kubecfg.resolveToken(resolved.user);
   const trpc = createTRPCClient({
@@ -641,9 +648,20 @@ function catalogTargetGroup(target: string): string | undefined {
 // wins, even one naming an undeclared group; an unlabelled or unstored ModelRun
 // falls back to the catalog group of its start target, the order the
 // admit-measure gate uses.
-function directModelRunStartOpts(workload: string, target: string): DirectLifecycleOpts {
+function directModelRunStartOpts(
+  workload: string,
+  target: string,
+  pinnedRel?: string,
+): DirectLifecycleOpts {
   const opts = directModelRunOpts(workload);
-  return opts.group !== undefined ? opts : { ...opts, group: catalogTargetGroup(target) };
+  if (opts.group !== undefined) return opts;
+  return {
+    ...opts,
+    group:
+      pinnedRel === undefined
+        ? catalogTargetGroup(target)
+        : catalog.findByRel(pinnedRel)?.residencyGroup,
+  };
 }
 
 /**
@@ -846,6 +864,39 @@ function serverStartOptions(
     signal: sig,
     onEvent: emit,
   };
+}
+
+async function runModelRunStart(
+  input: ServerStartInput,
+  signal: AbortSignal,
+  emit: (event: serverMod.ServerEvent) => void,
+  managed: ManagedLaunchAdmission | undefined,
+): Promise<DirectLifecycleOutcome<serverMod.StartServerResult>> {
+  const opts = serverStartOptions(input, signal, (event) => {
+    if (managed === undefined || event.type !== "ready") emit(event);
+  });
+  if (managed === undefined) {
+    return await runDirectResidencyStart(
+      input.workload,
+      () => serverMod.startServer(opts),
+      directModelRunStartOpts(input.workload, input.target),
+    );
+  }
+  if (signal.aborted) return { ran: false, detail: "LaunchCanceled" };
+  if (input.restart === true) return { ran: false, detail: "ManagedRestartUnavailable" };
+  const prepared = serverMod.prepareManagedServerStart(opts);
+  if ("result" in prepared) return { ran: true, result: prepared.result };
+  const lifecycle = directModelRunStartOpts(input.workload, input.target, prepared.launch.rel);
+  const request = {
+    kind: "ModelRun" as const,
+    runtimeKey: input.workload,
+    launch: input,
+    effectiveLaunch: prepared.launch,
+    effectiveSpecDigest: prepared.effectiveSpecDigest,
+  };
+  return await managed.run(request, signal, (commitReadiness) =>
+    runDirectResidencyStart(input.workload, () => prepared.start(commitReadiness), lifecycle),
+  );
 }
 
 // A lifecycle refusal never ran the engine, so the done event still carries a
@@ -2920,7 +2971,7 @@ export const router = t.router({
 
   workloadApply: t.procedure
     .input(z.object({ yaml: z.string().min(1) }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       let manifest: unknown;
       try {
         manifest = workloadStoreMod.parseManifestYaml(input.yaml);
@@ -2956,7 +3007,7 @@ export const router = t.router({
         if (handoffResult) return handoffResult;
         const result = await workloadApplyMod.applyManifest({
           manifest,
-          getClient: (nodeName) => clientForNode(cfg, nodeName),
+          getClient: (nodeName) => clientForNode(cfg, nodeName, ctx.managedLaunchAdmission),
           getNodeBudgetGiB: (nodeName) => nodeRunBudgetGiB(nodeName, workloadsDir),
           getNodeResidency: (nodeName) => nodeRunResidency(nodeName, workloadsDir),
         });
@@ -3046,6 +3097,11 @@ export const router = t.router({
   }) {
     yield* bridgeEventStream(signal ?? new AbortController().signal, async (emit, subSignal) => {
       const managed = ctx.managedLaunchAdmission;
+      const pinned =
+        managed === undefined || input.manifest === undefined
+          ? undefined
+          : pinModelHostStartup(input.manifest);
+      const manifest = pinned?.manifest ?? input.manifest;
       const start = (
         commitReadiness?: CommitLaunchReadiness,
       ): Promise<DirectLifecycleOutcome<StartModelHostResult>> =>
@@ -3057,7 +3113,8 @@ export const router = t.router({
               ...(input.timeoutSeconds !== undefined
                 ? { timeoutSeconds: input.timeoutSeconds }
                 : {}),
-              ...(input.manifest !== undefined ? { manifest: input.manifest } : {}),
+              ...(manifest === undefined ? {} : { manifest }),
+              ...(pinned === undefined ? {} : { env: pinned.env }),
               ...(input.restart !== undefined ? { restart: input.restart } : {}),
               signal: subSignal,
               ...(commitReadiness === undefined ? {} : { commitReadiness }),
@@ -3074,13 +3131,23 @@ export const router = t.router({
                 emit(event);
               },
             }),
-          directResidencyOpts(input.workload, input.manifest?.metadata.labels),
+          directResidencyOpts(input.workload, manifest?.metadata.labels),
         );
       const outcome =
         managed === undefined
           ? await start()
           : await managed.run(
-              { kind: "ModelHost", runtimeKey: input.workload, launch: input },
+              {
+                kind: "ModelHost",
+                runtimeKey: input.workload,
+                launch: input,
+                ...(pinned === undefined
+                  ? {}
+                  : {
+                      effectiveSpecDigest: pinned.effectiveSpecDigest,
+                      effectiveLaunch: pinned.effectiveLaunch,
+                    }),
+              },
               subSignal,
               start,
             );
@@ -3752,28 +3819,7 @@ export const router = t.router({
   }) {
     yield* bridgeEventStream<ServerStartEvent>(signal, async (emit, sig) => {
       const managed = ctx.managedLaunchAdmission;
-      const start = (
-        commitReadiness?: CommitLaunchReadiness,
-      ): Promise<DirectLifecycleOutcome<serverMod.StartServerResult>> =>
-        runDirectResidencyStart<serverMod.StartServerResult>(
-          input.workload,
-          () =>
-            serverMod.startServer({
-              ...serverStartOptions(input, sig, (event) => {
-                if (managed === undefined || event.type !== "ready") emit(event);
-              }),
-              ...(commitReadiness === undefined ? {} : { commitReadiness }),
-            }),
-          directModelRunStartOpts(input.workload, input.target),
-        );
-      const outcome =
-        managed === undefined
-          ? await start()
-          : await managed.run(
-              { kind: "ModelRun", runtimeKey: input.workload, launch: input },
-              sig,
-              start,
-            );
+      const outcome = await runModelRunStart(input, sig, emit, managed);
       const result = outcome.ran ? outcome.result : serverStartRefusal(input, outcome.detail);
       if (managed !== undefined && result.ok && result.pid !== null) {
         emit({ type: "ready", pid: result.pid, endpoint: result.endpoint });

@@ -138,9 +138,13 @@ describe("#522 residency pending #276 refresh", () => {
       "rpcServerMod.startRpcServer({",
     );
     expect(rpcStart, "rpcServerStart is unfenced").not.toContain("runDirectResidencyStart");
-    expect(flat(procedureBody(router, "serverStart")), "serverStart fenced").toContain(
-      "runDirectResidencyStart<",
+    expect(flat(procedureBody(router, "serverStart")), "serverStart delegates").toContain(
+      "runModelRunStart(input, sig, emit, managed)",
     );
+    expect(
+      flat(enclosingBody(router, "async function runModelRunStart(")),
+      "serverStart fenced",
+    ).toContain("runDirectResidencyStart(");
     expect(flat(procedureBody(router, "modelHostStart")), "modelHostStart fenced").toContain(
       "runDirectResidencyStart<",
     );

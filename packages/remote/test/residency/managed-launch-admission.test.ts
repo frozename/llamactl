@@ -213,3 +213,11 @@ test("a runtime cannot report success without committing publication for its PID
   });
   expect(f.authority.snapshot()).toMatchObject([{ state: "uncertain" }]);
 });
+
+test("the ledger uses the runtime-derived digest when admission includes a pinned plan", async () => {
+  using f = fixture();
+  const gate = createManagedLaunchAdmission({ ...f, capture: () => generation });
+  const prepared = { ...request, effectiveSpecDigest: "pinned-runtime-digest" };
+  expect(await gate.run(prepared, signal, simulateRuntimeReady)).toEqual(ready);
+  expect(f.authority.snapshot()).toMatchObject([{ specDigest: "pinned-runtime-digest" }]);
+});

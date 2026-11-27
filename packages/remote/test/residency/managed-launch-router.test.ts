@@ -10,8 +10,53 @@ import {
   type ManagedLaunchAdmission,
 } from "../../src/residency/managed-launch-admission.js";
 import { router } from "../../src/router.js";
-import { mkdtempSync, rmSync } from "../../src/safe-fs.js";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "../../src/safe-fs.js";
+import * as modelHost from "../../src/server/modelhost.js";
 import { type RunningAgent, startAgentServer } from "../../src/server/serve.js";
+
+function setFixtureEnv(env: Record<string, string>): () => void {
+  const previous = Object.keys(env).map((key) => [key, process.env[key]] as const);
+  Object.assign(process.env, env);
+  return () => {
+    for (const [key, value] of previous) {
+      if (value === undefined) Reflect.deleteProperty(process.env, key);
+      else process.env[key] = value;
+    }
+  };
+}
+
+function modelRunEnvironment(dir: string): {
+  model: { target: string; binary: string };
+  [Symbol.dispose](): void;
+} {
+  const models = join(dir, "fixture-models");
+  mkdirSync(models);
+  writeFileSync(join(models, "model.gguf"), "fixture");
+  const env = {
+    DEV_STORAGE: dir,
+    LOCAL_AI_RUNTIME_DIR: join(dir, "runtime"),
+    LLAMACTL_WORKLOADS_DIR: join(dir, "workloads"),
+    LLAMA_CPP_HOST: "127.0.0.1",
+    LLAMA_CPP_PORT: "65534",
+    LLAMA_CPP_MODELS: models,
+    LLAMA_CPP_USE_TUNED_ARGS: "false",
+  };
+  const restoreEnv = setFixtureEnv(env);
+  return {
+    model: { target: "model.gguf", binary: "/usr/bin/false" },
+    [Symbol.dispose](): void {
+      restoreEnv();
+      rmSync(dir, { recursive: true, force: true });
+    },
+  };
+}
 
 async function terminalResults(stream: AsyncIterable<unknown>): Promise<unknown[]> {
   const results: unknown[] = [];
@@ -28,18 +73,39 @@ test("serverStart consults target admission before entering the runtime lifecycl
     Promise.resolve({ ran: false as const, detail: "test admission refusal" }),
   );
   const caller = router.createCaller({ managedLaunchAdmission: { run } });
-  const input = { workload: "managed-router-missing-run", target: "missing/model.gguf" };
+  using fixture = modelRunEnvironment(mkdtempSync(join(tmpdir(), "managed-router-plan-")));
+  const input = { workload: "managed-router-run", ...fixture.model };
   const results = await terminalResults(await caller.serverStart(input));
 
   expect(run.mock.calls).toHaveLength(1);
   expect(run).toHaveBeenCalledWith(
-    { kind: "ModelRun", runtimeKey: input.workload, launch: input },
+    expect.objectContaining({
+      kind: "ModelRun",
+      runtimeKey: input.workload,
+      launch: input,
+    }),
     expect.any(AbortSignal),
     expect.any(Function),
   );
   expect(results).toEqual([
     expect.objectContaining({ ok: false, pid: null, error: "test admission refusal" }),
   ]);
+});
+
+test("an invalid ModelRun plan refuses without reserving or creating launch state", async () => {
+  using fixture = modelRunEnvironment(mkdtempSync(join(tmpdir(), "managed-router-invalid-")));
+  const run = mock(() => Promise.resolve({ ran: false as const, detail: "unexpected admission" }));
+  const caller = router.createCaller({ managedLaunchAdmission: { run } });
+  const events = await caller.serverStart({
+    workload: "invalid-managed-run",
+    ...fixture.model,
+    target: "missing.gguf",
+  });
+  const results = await terminalResults(events);
+  expect(results).toMatchObject([{ ok: false, pid: null }]);
+  expect(JSON.stringify(results)).toContain("Model file not found");
+  expect(run).not.toHaveBeenCalled();
+  expect(existsSync(process.env["LOCAL_AI_RUNTIME_DIR"] ?? "")).toBe(false);
 });
 
 test("modelHostStart consults target admission before entering the runtime lifecycle", async () => {
@@ -93,6 +159,7 @@ test("modelHostStart withholds its runtime terminal event until managed admissio
 
 test("authenticated agent starts share one mixed-kind memory budget", async () => {
   const dir = mkdtempSync(join(tmpdir(), "managed-launch-router-"));
+  using fixture = modelRunEnvironment(dir);
   const authority = openAdmissionAuthority({
     storePath: join(dir, "admission.db"),
     budgetGiB: () => 24,
@@ -120,7 +187,7 @@ test("authenticated agent starts share one mixed-kind memory budget", async () =
       managedLaunchAdmission: gate,
     });
     for (const [procedure, input] of [
-      ["serverStart", { workload: "denied-run", target: "missing/model.gguf" }],
+      ["serverStart", { workload: "denied-run", ...fixture.model }],
       [
         "modelHostStart",
         {
@@ -170,13 +237,9 @@ test("authenticated agent starts share one mixed-kind memory budget", async () =
   }
 });
 
-test("an already canceled caller passes cancellation to the managed launch gate", async () => {
-  const managed: ManagedLaunchAdmission = {
-    run(_request, signal, start) {
-      if (signal.aborted) return Promise.resolve({ ran: false, detail: "already canceled" });
-      return start(() => undefined);
-    },
-  };
+test("an already canceled caller skips planning and admission", async () => {
+  const run = mock(() => Promise.resolve({ ran: false as const, detail: "unexpected admission" }));
+  const managed: ManagedLaunchAdmission = { run };
   const caller = router.createCaller(
     { managedLaunchAdmission: managed },
     { signal: AbortSignal.abort() },
@@ -187,23 +250,34 @@ test("an already canceled caller passes cancellation to the managed launch gate"
       target: "missing/model.gguf",
     }),
   );
-  expect(results).toEqual([expect.objectContaining({ ok: false, error: "already canceled" })]);
+  expect(results).toEqual([expect.objectContaining({ ok: false, error: "LaunchCanceled" })]);
+  expect(run).not.toHaveBeenCalled();
 });
 
 test("serverStart publishes ready only after managed admission commits", async () => {
   const endpoint = "http://127.0.0.1:19092";
   const pid = 1234;
-  const startSpy = spyOn(server, "startServer").mockImplementation((opts) => {
-    opts.onEvent?.({ type: "ready", pid, endpoint });
-    return Promise.resolve({
-      ok: true,
-      pid,
-      endpoint,
-      advertisedEndpoint: endpoint,
+  const startSpy = spyOn(server, "prepareManagedServerStart").mockImplementation((opts) => ({
+    effectiveSpecDigest: "fixture",
+    launch: {
+      rel: opts.target,
+      modelPath: opts.target,
+      binary: "/usr/bin/false",
+      args: [],
       tunedProfile: null,
-      retried: false,
-    });
-  });
+    },
+    start: (): Promise<server.StartServerResult> => {
+      opts.onEvent?.({ type: "ready", pid, endpoint });
+      return Promise.resolve({
+        ok: true,
+        pid,
+        endpoint,
+        advertisedEndpoint: endpoint,
+        tunedProfile: null,
+        retried: false,
+      });
+    },
+  }));
   try {
     const input = { workload: "managed-run", target: "missing/model.gguf" };
     for (const accepted of [true, false]) {
@@ -222,5 +296,203 @@ test("serverStart publishes ready only after managed admission commits", async (
     }
   } finally {
     startSpy.mockRestore();
+  }
+});
+
+test("managed ModelHost reservation names a pinned manifest and runtime environment", async () => {
+  const before = process.env["LLAMA_CPP_MODELS"];
+  const initialRoot = "/fixture/models-before";
+  process.env["LLAMA_CPP_MODELS"] = initialRoot;
+  const startSpy = spyOn(modelHost, "startModelHost").mockImplementation(() =>
+    Promise.resolve({ ok: true, pid: 4403 }),
+  );
+  let digest: string | undefined;
+  const managed: ManagedLaunchAdmission = {
+    async run(request, _signal, start) {
+      digest = request.effectiveSpecDigest;
+      expect(request.effectiveLaunch).toMatchObject({
+        modelsDir: initialRoot,
+        hostedModels: [{ rel: "before.gguf" }],
+      });
+      process.env["LLAMA_CPP_MODELS"] = "/fixture/models-after";
+      const mutable = request.launch["manifest"] as { spec: { hostedModels: { rel: string }[] } };
+      mutable.spec.hostedModels[0]!.rel = "after.gguf";
+      return await start(() => undefined);
+    },
+  };
+
+  try {
+    const caller = router.createCaller({ managedLaunchAdmission: managed });
+    await terminalResults(
+      await caller.modelHostStart({
+        workload: "pinned-host",
+        manifest: {
+          apiVersion: "llamactl/v1",
+          kind: "ModelHost",
+          metadata: { name: "pinned-host" },
+          spec: {
+            engine: "llamacpp",
+            node: "local",
+            binary: "/usr/bin/false",
+            endpoint: { host: "127.0.0.1", port: 19092 },
+            hostedModels: [{ rel: "before.gguf" }],
+          },
+        },
+      }),
+    );
+    const opts = startSpy.mock.calls[0]?.[0];
+    expect(opts?.manifest).toMatchObject({ spec: { hostedModels: [{ rel: "before.gguf" }] } });
+    expect(opts?.env?.["LLAMA_CPP_MODELS"]).toBe(initialRoot);
+    expect(digest).toMatch(/^[a-f0-9]{64}$/);
+  } finally {
+    startSpy.mockRestore();
+    if (before === undefined) delete process.env["LLAMA_CPP_MODELS"];
+    else process.env["LLAMA_CPP_MODELS"] = before;
+  }
+});
+
+test("workloadApply keeps the target admission gate through the local client", async () => {
+  const run = mock(() =>
+    Promise.resolve({ ran: false as const, detail: "fixture-managed-budget" }),
+  );
+  const startSpy = spyOn(modelHost, "startModelHost").mockImplementation(() =>
+    Promise.resolve({ ok: false, pid: null, error: "unexpected unmanaged start" }),
+  );
+  try {
+    const caller = router.createCaller({ managedLaunchAdmission: { run } });
+    const result = caller.workloadApply({
+      yaml: `
+apiVersion: llamactl/v1
+kind: ModelHost
+metadata:
+  name: managed-local-apply
+spec:
+  engine: llamacpp
+  node: local
+  binary: /usr/bin/false
+  hostedModels:
+    - rel: fake.gguf
+  endpoint:
+    host: 127.0.0.1
+    port: 19106
+  resources:
+    expectedMemoryGiB: 1
+`,
+    });
+    const failure = await result.catch((error: unknown) => error);
+    expect(failure instanceof Error ? failure.message : "").toContain("fixture-managed-budget");
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(startSpy).not.toHaveBeenCalled();
+  } finally {
+    startSpy.mockRestore();
+  }
+});
+
+test("managed ModelRun launches the pinned target, args and child environment after admission", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "managed-modelrun-plan-"));
+  const firstModels = join(dir, "first-models");
+  const secondModels = join(dir, "second-models");
+  const childInput = join(dir, "child-input.json");
+  const bin = join(dir, "fake-llama-server");
+  const reserver = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response() });
+  const port = Number(reserver.port);
+  await reserver.stop(true);
+  mkdirSync(firstModels);
+  mkdirSync(secondModels);
+  writeFileSync(join(firstModels, "fixture.gguf"), "fixture");
+  writeFileSync(join(secondModels, "fixture.gguf"), "replacement");
+  const program = `
+    await Bun.write(${JSON.stringify(childInput)}, JSON.stringify({ inherited: process.env["PLAN_TEST_ENGINE_ENV"] }));
+    const listener = Bun.serve({ hostname: "127.0.0.1", port: ${String(port)}, fetch: () => new Response("ok") });
+    process.on("SIGTERM", () => { listener.stop(true); process.exit(0); });
+    await new Promise(() => undefined);
+  `;
+  writeFileSync(
+    bin,
+    `#!/bin/bash\nexec -a llama-server ${JSON.stringify(process.execPath)} -e ${JSON.stringify(program.replaceAll("\n", " "))}\n`,
+    { mode: 0o755 },
+  );
+  const env = {
+    DEV_STORAGE: dir,
+    LOCAL_AI_RUNTIME_DIR: join(dir, "runtime"),
+    LLAMACTL_WORKLOADS_DIR: join(dir, "workloads"),
+    LLAMA_CPP_MODELS: firstModels,
+    LLAMA_CPP_CACHE: join(dir, "cache"),
+    LLAMA_CPP_LOGS: join(dir, "logs"),
+    LLAMA_CPP_SERVER_ALIAS: "admitted-alias",
+    LLAMA_CPP_USE_TUNED_ARGS: "false",
+    PLAN_TEST_ENGINE_ENV: "admitted-value",
+  };
+  const restoreEnv = setFixtureEnv(env);
+  let pid: number | undefined;
+  let digest: string | undefined;
+  let claimedDigest: string | undefined;
+  let effectiveArgs: unknown;
+  const authority = openAdmissionAuthority({
+    storePath: join(dir, "admission.db"),
+    budgetGiB: () => 24,
+    observe: () => undefined,
+    readPidFile: () => undefined,
+    owner: { pid: process.pid },
+  });
+  const managed = createManagedLaunchAdmission({
+    authority: {
+      ...authority,
+      admit: (request) => {
+        claimedDigest = request.specDigest;
+        return authority.admit(request);
+      },
+    },
+    resolve: (request) => {
+      digest = request.effectiveSpecDigest;
+      effectiveArgs = request.effectiveLaunch?.["args"];
+      expect(request.effectiveLaunch?.["modelPath"]).toBe(join(firstModels, "fixture.gguf"));
+      expect(existsSync(env.LLAMA_CPP_LOGS)).toBe(false);
+      expect(existsSync(env.LOCAL_AI_RUNTIME_DIR)).toBe(false);
+      process.env["LLAMA_CPP_MODELS"] = secondModels;
+      process.env["LLAMA_CPP_SERVER_ALIAS"] = "changed-alias";
+      process.env["PLAN_TEST_ENGINE_ENV"] = "changed-value";
+      return { specDigest: "raw-resolver-digest", allocationGiB: 16 };
+    },
+    capture: (_request, capturedPid) => ({ pid: capturedPid, startTimeMs: 100 }),
+  });
+  try {
+    const events = await router.createCaller({ managedLaunchAdmission: managed }).serverStart({
+      workload: "managed-pinned-run",
+      target: "fixture.gguf",
+      binary: bin,
+      endpoint: { host: "127.0.0.1", port },
+      timeoutSeconds: 5,
+    });
+    let args: string[] = [];
+    for await (const event of events) {
+      if (event.type === "launch") {
+        pid = event.pid;
+        args = event.args;
+      }
+      if (event.type === "done") expect(event.result.ok).toBe(true);
+    }
+    expect(args.slice(0, 4)).toEqual([
+      "-m",
+      join(firstModels, "fixture.gguf"),
+      "--alias",
+      "admitted-alias",
+    ]);
+    expect(effectiveArgs).toEqual(args);
+    expect(readFileSync(childInput, "utf8")).toBe('{"inherited":"admitted-value"}');
+    expect(digest).toMatch(/^[a-f0-9]{64}$/);
+    expect(claimedDigest).toBe(digest);
+    expect(authority.snapshot()).toMatchObject([{ state: "resident", specDigest: digest }]);
+  } finally {
+    authority.close();
+    if (pid !== undefined && pid > 0) {
+      try {
+        process.kill(pid, "SIGTERM");
+      } catch {
+        /* Already exited. */
+      }
+    }
+    restoreEnv();
+    rmSync(dir, { recursive: true, force: true });
   }
 });

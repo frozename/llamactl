@@ -1,7 +1,8 @@
 import type { ChildProcess } from "node:child_process";
 
 import { spawn } from "node:child_process";
-import { basename, join } from "node:path";
+import { createHash } from "node:crypto";
+import { basename, join, resolve } from "node:path";
 
 import type { ModelHostReadiness } from "./engines/types.js";
 import type { ResolvedEnv } from "./types.js";
@@ -624,6 +625,28 @@ export interface StartServerOptions {
   engineScope?: EngineScopeLauncher | null;
 }
 
+interface PinnedModelRunStart {
+  target: ResolvedLaunchTarget;
+  prepared: PreparedLaunchArgs;
+  childProcess: { env: NodeJS.ProcessEnv; cwd: string };
+}
+
+type ServerStartExecutionOptions = StartServerOptions & { pinned?: PinnedModelRunStart };
+
+export interface PreparedManagedServerStart {
+  readonly launch: {
+    readonly rel: string;
+    readonly modelPath: string;
+    readonly binary: string;
+    readonly args: readonly string[];
+    readonly tunedProfile: string | null;
+  };
+  readonly effectiveSpecDigest: string;
+  start: (
+    commitReadiness: NonNullable<StartServerOptions["commitReadiness"]>,
+  ) => Promise<StartServerResult>;
+}
+
 export interface StartServerResult {
   ok: boolean;
   pid: number | null;
@@ -1129,15 +1152,7 @@ function buildLaunchArgs(
  * already specified the same flag in extraArgs, so a manifest that
  * sets e.g. `-ub 1024` isn't doubled up with the profile's `-ub 512`.
  */
-function prepareLaunchArgs(
-  opts: StartServerOptions,
-  rel: string,
-  resolved: ResolvedEnv,
-  env: NodeJS.ProcessEnv,
-  key: WorkloadKey,
-  draftResolvedExtraArgs: readonly string[],
-): PreparedLaunchArgs {
-  const prepared = buildLaunchArgs(opts, rel, resolved, env, key, draftResolvedExtraArgs);
+function prepareLaunchArgs(prepared: PreparedLaunchArgs): PreparedLaunchArgs {
   if (prepared.slotPathResolved.slotSavePath !== null) {
     mkdirSync(prepared.slotPathResolved.slotSavePath, { recursive: true });
   }
@@ -1586,7 +1601,7 @@ async function fencedStopDrained(
  * outcomes; timeout and exited fall through with the retry pid and updated readiness result.
  */
 async function retryWithMmprojSafeFlags(
-  opts: StartServerOptions,
+  opts: ServerStartExecutionOptions,
   ctx: MmprojRetryContext,
 ): Promise<MmprojRetryOutcome> {
   const { resolved, key, launchEndpoint, target, prepared } = ctx;
@@ -1835,13 +1850,14 @@ interface ScopePlan {
 // null launcher, a null override, an env-conflict, or a failed capability
 // resolve all mean a direct spawn; the direct argv stays byte-identical.
 async function resolveScopePlan(
-  opts: StartServerOptions,
+  opts: ServerStartExecutionOptions,
   forceDirect: boolean,
 ): Promise<{ launcher: EngineScopeLauncher; plan: ScopePlan } | null> {
   if (forceDirect) return null;
   const launcher = opts.engineScope !== undefined ? opts.engineScope : getEngineScopeLauncher();
   if (launcher === null) return null;
-  const shaped = shapeScopeEnv({ ...process.env }, process.env, []);
+  const env = opts.pinned?.childProcess.env ?? process.env;
+  const shaped = shapeScopeEnv({ ...env }, env, []);
   if ("conflict" in shaped) {
     opts.onEvent?.({
       type: "retry",
@@ -1849,7 +1865,7 @@ async function resolveScopePlan(
     });
     return null;
   }
-  const resolved = await launcher.resolve(process.env);
+  const resolved = await launcher.resolve(env);
   if (!resolved.ok) return null;
   return {
     launcher,
@@ -1874,7 +1890,7 @@ function signalableLaunchPid(launch: RecordedServerLaunch): number | null {
 
 /** Spawn llama-server detached and record the pid + state sidecars. */
 async function launchAndRecordServer(
-  opts: StartServerOptions,
+  opts: ServerStartExecutionOptions,
   resolved: ResolvedEnv,
   target: ResolvedLaunchTarget,
   prepared: PreparedLaunchArgs,
@@ -1894,7 +1910,7 @@ async function launchAndRecordServer(
     host: launchHost,
     port: launchPort,
     ...omitUndefined({ onEvent: opts.onEvent }),
-    ...omitUndefined({ spawn: opts.spawn }),
+    ...omitUndefined({ spawn: opts.spawn, childProcess: opts.pinned?.childProcess }),
     scope: scoped?.plan ?? null,
   });
   if (scoped === null || launched.scope === null) {
@@ -1924,7 +1940,7 @@ async function launchAndRecordServer(
 // outcome that is not fallback-eligible leaves the (dead) pid recorded so
 // pollReady reports the exit.
 async function recordScopedLaunch(
-  opts: StartServerOptions,
+  opts: ServerStartExecutionOptions,
   resolved: ResolvedEnv,
   target: ResolvedLaunchTarget,
   prepared: PreparedLaunchArgs,
@@ -2040,6 +2056,10 @@ function wireAbortToKill(signal: AbortSignal | undefined, killOnAbort: () => voi
  * published registry; a failed start never reopens.
  */
 export function startServer(opts: StartServerOptions): Promise<StartServerResult> {
+  return executeServerStart(opts);
+}
+
+function executeServerStart(opts: ServerStartExecutionOptions): Promise<StartServerResult> {
   return withReopenAfterLoad(
     opts.key.name,
     () =>
@@ -2050,8 +2070,91 @@ export function startServer(opts: StartServerOptions): Promise<StartServerResult
   );
 }
 
+export function prepareManagedServerStart(
+  input: StartServerOptions,
+): PreparedManagedServerStart | { result: StartServerResult } {
+  const env = { ...(input.env ?? process.env) };
+  const resolved = { ...(input.resolved ?? resolveEnv(env)) };
+  const opts: StartServerOptions = {
+    ...input,
+    key: { ...input.key },
+    ...omitUndefined({
+      endpoint: input.endpoint === undefined ? undefined : { ...input.endpoint },
+      extraArgs: input.extraArgs === undefined ? undefined : [...input.extraArgs],
+      readiness: input.readiness === undefined ? undefined : { ...input.readiness },
+    }),
+    env,
+    resolved,
+    engineScope: input.engineScope === undefined ? getEngineScopeLauncher() : input.engineScope,
+  };
+  const launchHost = opts.endpoint?.host ?? resolved.LLAMA_CPP_HOST;
+  const launchPort = opts.endpoint?.port ?? resolved.LLAMA_CPP_PORT;
+  const validated = resolveAndValidateTarget(opts, resolved, opts.endpoint, env, launchHost);
+  if ("result" in validated) return validated;
+  const cwd = process.cwd();
+  const target = {
+    ...validated,
+    bin: resolve(cwd, validated.bin),
+    modelPath: resolve(cwd, validated.modelPath),
+  };
+  const prepared = buildLaunchArgs(
+    opts,
+    target.rel,
+    resolved,
+    env,
+    opts.key,
+    target.draftResolvedExtraArgs,
+  );
+  const args = assembleServerLaunchArgs(
+    target.modelPath,
+    resolved,
+    prepared.launchArgs,
+    launchHost,
+    launchPort,
+  );
+  const childProcess = { env: Object.freeze({ ...process.env }), cwd };
+  const effectiveSpecDigest = createHash("sha256")
+    .update(
+      JSON.stringify({
+        version: 1,
+        specHash: computeServerSpecHash({
+          rel: target.rel,
+          ...launchSpecHashFields(opts, target, prepared, resolved, launchHost, launchPort),
+        }),
+        args,
+        retryArgs: hasMmprojArg(prepared.launchArgs) ? safeRetryArgs() : [],
+        childEnv: Object.entries(childProcess.env).sort(([left], [right]) =>
+          left.localeCompare(right),
+        ),
+        cwd,
+        workload: opts.key.name,
+        runtimeDir: resolved.LOCAL_AI_RUNTIME_DIR,
+        cacheDir: resolved.LLAMA_CPP_CACHE,
+        logsDir: resolved.LLAMA_CPP_LOGS,
+        engineScope: opts.engineScope !== null,
+        slotSavePath: prepared.slotPathResolved.slotSavePath,
+      }),
+    )
+    .digest("hex");
+  const launch = Object.freeze({
+    rel: target.rel,
+    modelPath: target.modelPath,
+    binary: target.bin,
+    args: Object.freeze(args),
+    tunedProfile: prepared.tunedProfile,
+  });
+  return Object.freeze({
+    effectiveSpecDigest,
+    launch,
+    start: (
+      commitReadiness: NonNullable<StartServerOptions["commitReadiness"]>,
+    ): Promise<StartServerResult> =>
+      executeServerStart({ ...opts, commitReadiness, pinned: { target, prepared, childProcess } }),
+  });
+}
+
 async function startServerWithPublicationBarrier(
-  opts: StartServerOptions,
+  opts: ServerStartExecutionOptions,
   commitReadiness: NonNullable<StartServerOptions["commitReadiness"]>,
 ): Promise<StartServerResult> {
   const resolved = opts.resolved ?? resolveEnv(opts.env ?? process.env);
@@ -2078,14 +2181,16 @@ async function startServerWithPublicationBarrier(
   return result;
 }
 
-async function startServerUnwrapped(opts: StartServerOptions): Promise<StartServerResult> {
+async function startServerUnwrapped(opts: ServerStartExecutionOptions): Promise<StartServerResult> {
   const env = opts.env ?? process.env;
   const resolved = opts.resolved ?? resolveEnv(env);
   const key = opts.key;
   const launchEndpoint = opts.endpoint;
   const launchHost = launchEndpoint?.host ?? resolved.LLAMA_CPP_HOST;
   const launchPort = launchEndpoint?.port ?? resolved.LLAMA_CPP_PORT;
-  const validation = resolveAndValidateTarget(opts, resolved, launchEndpoint, env, launchHost);
+  const validation =
+    opts.pinned?.target ??
+    resolveAndValidateTarget(opts, resolved, launchEndpoint, env, launchHost);
   if ("result" in validation) return validation.result;
   const { rel } = validation;
 
@@ -2117,12 +2222,8 @@ async function startServerUnwrapped(opts: StartServerOptions): Promise<StartServ
   mkdirSync(resolved.LLAMA_CPP_LOGS, { recursive: true });
 
   const prepared = prepareLaunchArgs(
-    opts,
-    rel,
-    resolved,
-    env,
-    key,
-    validation.draftResolvedExtraArgs,
+    opts.pinned?.prepared ??
+      buildLaunchArgs(opts, rel, resolved, env, key, validation.draftResolvedExtraArgs),
   );
   const { launchArgs, tunedProfile } = prepared;
 
@@ -2226,6 +2327,7 @@ interface LaunchArgs {
   binary?: string;
   onEvent?: (e: ServerEvent) => void;
   spawn?: typeof spawn;
+  childProcess?: PinnedModelRunStart["childProcess"];
   scope?: { systemdRunPath: string; base: string; env: NodeJS.ProcessEnv } | null;
 }
 
@@ -2347,13 +2449,18 @@ async function launchBackground(opts: LaunchArgs): Promise<LaunchResult> {
   const scoped = opts.scope ?? null;
   const child =
     scoped === null
-      ? doSpawn(opts.bin, fullArgs, { stdio: ["ignore", logFd, logFd], detached: true })
+      ? doSpawn(opts.bin, fullArgs, {
+          stdio: ["ignore", logFd, logFd],
+          detached: true,
+          ...opts.childProcess,
+        })
       : doSpawn(
           scoped.systemdRunPath,
           buildScopeArgv(scoped.base, opts.key.name, opts.bin, fullArgs),
           {
             stdio: ["ignore", logFd, logFd],
             detached: true,
+            ...omitUndefined({ cwd: opts.childProcess?.cwd }),
             env: scoped.env,
           },
         );

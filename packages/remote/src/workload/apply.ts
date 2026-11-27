@@ -3133,6 +3133,34 @@ function failedApplyResult(action: ApplyAction, error: string, when: string): Ap
   };
 }
 
+export function modelRunStartInvocation(
+  manifest: ModelRun,
+  desiredArgs: string[] = desiredArgsFor(manifest),
+): Parameters<WorkloadClient["serverStart"]["subscribe"]>[0] {
+  const readiness = normalizeReadiness(manifest.spec.readiness);
+  return {
+    workload: manifest.metadata.name,
+    target: manifest.spec.target.value,
+    ...(desiredArgs.length > 0 ? { extraArgs: desiredArgs } : {}),
+    ...(manifest.spec.allowExternalBind ? { allowExternalBind: true } : {}),
+    ...(manifest.spec.endpoint
+      ? {
+          endpoint: {
+            ...(manifest.spec.endpoint.host !== undefined
+              ? { host: manifest.spec.endpoint.host }
+              : {}),
+            ...(manifest.spec.endpoint.port !== undefined
+              ? { port: manifest.spec.endpoint.port }
+              : {}),
+          },
+        }
+      : {}),
+    ...(manifest.spec.binary ? { binary: manifest.spec.binary } : {}),
+    timeoutSeconds: manifest.spec.timeoutSeconds,
+    ...(readiness !== undefined ? { readiness } : {}),
+  };
+}
+
 async function startCoordinator(
   client: WorkloadClient,
   manifest: ModelRun,
@@ -3140,7 +3168,6 @@ async function startCoordinator(
 ): Promise<StartDone | null> {
   let sub: Unsubscribable | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const readiness = normalizeReadiness(manifest.spec.readiness);
   try {
     return await new Promise<StartDone | null>((resolve, reject) => {
       timer = setTimeout(
@@ -3150,43 +3177,20 @@ async function startCoordinator(
         (manifest.spec.timeoutSeconds + 5) * 1000,
       );
       let done: StartDone | null = null;
-      sub = client.serverStart.subscribe(
-        {
-          workload: manifest.metadata.name,
-          target: manifest.spec.target.value,
-          ...(desiredArgs.length > 0 ? { extraArgs: desiredArgs } : {}),
-          ...(manifest.spec.allowExternalBind ? { allowExternalBind: true } : {}),
-          ...(manifest.spec.endpoint
-            ? {
-                endpoint: {
-                  ...(manifest.spec.endpoint.host !== undefined
-                    ? { host: manifest.spec.endpoint.host }
-                    : {}),
-                  ...(manifest.spec.endpoint.port !== undefined
-                    ? { port: manifest.spec.endpoint.port }
-                    : {}),
-                },
-              }
-            : {}),
-          ...(manifest.spec.binary ? { binary: manifest.spec.binary } : {}),
-          timeoutSeconds: manifest.spec.timeoutSeconds,
-          ...(readiness !== undefined ? { readiness } : {}),
+      sub = client.serverStart.subscribe(modelRunStartInvocation(manifest, desiredArgs), {
+        onData: (evt: unknown) => {
+          const e = evt as { type?: string; result?: unknown };
+          if (e.type === "done") done = e.result as StartDone;
         },
-        {
-          onData: (evt: unknown) => {
-            const e = evt as { type?: string; result?: unknown };
-            if (e.type === "done") done = e.result as StartDone;
-          },
-          onError: (err: unknown) => {
-            if (timer) clearTimeout(timer);
-            reject(err instanceof Error ? err : new Error(String(err)));
-          },
-          onComplete: () => {
-            if (timer) clearTimeout(timer);
-            resolve(done);
-          },
+        onError: (err: unknown) => {
+          if (timer) clearTimeout(timer);
+          reject(err instanceof Error ? err : new Error(String(err)));
         },
-      );
+        onComplete: () => {
+          if (timer) clearTimeout(timer);
+          resolve(done);
+        },
+      });
     });
   } finally {
     if (timer) clearTimeout(timer);

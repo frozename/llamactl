@@ -7,6 +7,8 @@ export interface ManagedLaunchRequest {
   kind: ManagedWorkloadKind;
   runtimeKey: string;
   launch: Readonly<Record<string, unknown>>;
+  effectiveSpecDigest?: string;
+  effectiveLaunch?: Readonly<Record<string, unknown>>;
 }
 
 interface LaunchResult {
@@ -39,6 +41,7 @@ interface ManagedLaunchOptions {
     | "abandonUnstarted"
     | "prepareStopRelease"
   >;
+  inspectRuntime?: () => string | undefined;
   // The approved spec must account for the complete invocation.
   resolve: (
     request: ManagedLaunchRequest,
@@ -129,10 +132,12 @@ export function createManagedLaunchAdmission(opts: ManagedLaunchOptions): Manage
       if (request.kind === "ModelHost" && request.launch["manifest"] === undefined) {
         return refuse("ManagedManifestRequired");
       }
+      const runtimeRefusal = opts.inspectRuntime?.();
+      if (runtimeRefusal !== undefined) return refuse(runtimeRefusal);
       const spec = opts.resolve(request);
       if (spec === undefined) return refuse("ManagedSpecUnknown");
       const claim = opts.authority.admit({
-        specDigest: spec.specDigest,
+        specDigest: request.effectiveSpecDigest ?? spec.specDigest,
         allocationGiB: spec.allocationGiB,
         runtimeKey: request.runtimeKey,
         kind: request.kind,
