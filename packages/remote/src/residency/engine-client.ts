@@ -28,7 +28,7 @@ import type {
   NativeModelActivity,
   NativeModelStatusObservation,
 } from "@llamactl/core/engines";
-import type { ResidencyLeases } from "@llamactl/core/residency/leases";
+import type { DrainToken, ResidencyLeases } from "@llamactl/core/residency/leases";
 import type { SessionRefcounts } from "@llamactl/core/residency/sessions";
 
 import {
@@ -207,9 +207,28 @@ export type OmlxNativeClientOptions = {
   leases?: NativeLeasesOption;
 };
 
+export type OmlxNativeLoadLease = Readonly<{
+  registry: ResidencyLeases;
+  token: Readonly<DrainToken>;
+  phase: "open" | "unloaded";
+}>;
+
+export type OmlxNativeLoadReceipt = Readonly<{
+  modelId: string;
+  binding: OmlxNativePin | undefined;
+  lease: OmlxNativeLoadLease;
+}>;
+
+type OmlxNativeLoadCommit = {
+  workload: string;
+  commitReady(receipt: OmlxNativeLoadReceipt): boolean;
+  expectedLease?: OmlxNativeLoadLease;
+};
+
 export type OmlxNativeClient = {
   status(): Promise<NativeStatus>;
   load(): Promise<NativeLoadResult>;
+  loadWithCommit?(commit: OmlxNativeLoadCommit): Promise<NativeLoadResult>;
   unload(): Promise<NativeUnloadResult>;
 };
 
@@ -235,7 +254,12 @@ type SendResult =
 
 // --- single-flight map ---
 
-type SingleFlightEntry = { op: "load" | "unload"; promise: Promise<unknown>; ctx: ClientCtx };
+type SingleFlightEntry = {
+  op: "load" | "unload";
+  promise: Promise<unknown>;
+  ctx: ClientCtx;
+  exclusive: boolean;
+};
 
 const singleFlight = new Map<string, SingleFlightEntry>();
 
@@ -568,26 +592,86 @@ function classifyLoadHttpError(httpStatus: number): NativeLoadResult {
   return { kind: "ambiguous", reason: "HttpError", reservation: "uncertain", httpStatus };
 }
 
-async function runLoadWithLeases(ctx: ClientCtx): Promise<NativeLoadResult> {
+function loadLeaseCurrent(lease: OmlxNativeLoadLease): boolean {
+  const current = lease.registry.snapshot(lease.token.workload);
+  return current.epoch === lease.token.epoch && current.phase === lease.phase;
+}
+
+function sameLoadLease(a: OmlxNativeLoadLease, b: OmlxNativeLoadLease): boolean {
+  return (
+    a.registry === b.registry &&
+    a.token.workload === b.token.workload &&
+    a.token.epoch === b.token.epoch &&
+    a.phase === b.phase
+  );
+}
+
+function commitNativeLoad(commit: OmlxNativeLoadCommit, receipt: OmlxNativeLoadReceipt): boolean {
+  try {
+    const confirmed: unknown = commit.commitReady(receipt);
+    return confirmed === true;
+  } catch {
+    return false;
+  }
+}
+
+function loadCommitRefusal(
+  ctx: ClientCtx,
+  lease: OmlxNativeLoadLease,
+  commit: OmlxNativeLoadCommit | undefined,
+): NativeLoadResult | undefined {
+  if (commit === undefined) return undefined;
+  if (commit.workload !== lease.token.workload) {
+    return { kind: "refused", reason: "IdentityUnverified" };
+  }
+  if (commit.expectedLease === undefined) return undefined;
+  if (!sameLoadLease(commit.expectedLease, lease)) {
+    return { kind: "refused", reason: "OperationInProgress" };
+  }
+  return ctx.binding === undefined ? { kind: "refused", reason: "IdentityUnverified" } : undefined;
+}
+
+function publishConfirmedLoad(
+  ctx: ClientCtx,
+  lease: OmlxNativeLoadLease,
+  modelId: string,
+  commit: OmlxNativeLoadCommit | undefined,
+): boolean {
+  if (!loadLeaseCurrent(lease)) return false;
+  if (commit !== undefined) {
+    const receipt = Object.freeze({ modelId, binding: ctx.binding, lease });
+    if (
+      !identityCurrent(ctx) ||
+      !commitNativeLoad(commit, receipt) ||
+      !identityCurrent(ctx) ||
+      !loadLeaseCurrent(lease)
+    ) {
+      return false;
+    }
+  }
+  return lease.phase === "open" || lease.registry.reopen(lease.token);
+}
+
+async function runLoadWithLeases(
+  ctx: ClientCtx,
+  commit?: OmlxNativeLoadCommit,
+): Promise<NativeLoadResult> {
   const leases = ctx.leases;
   if (leases === undefined) return await runLoad(ctx);
-
-  const { registry, workload } = leases;
-  const started = registry.snapshot(workload);
+  const started = leases.registry.snapshot(leases.workload);
   if (started.phase === "draining") {
     return { kind: "refused", reason: "OperationInProgress" };
   }
+  const lease = Object.freeze({
+    registry: leases.registry,
+    token: Object.freeze({ workload: leases.workload, epoch: started.epoch }),
+    phase: started.phase,
+  });
+  const refusal = loadCommitRefusal(ctx, lease, commit);
+  if (refusal !== undefined) return refusal;
   const result = await runLoad(ctx);
   if (result.kind !== "loaded" && result.kind !== "already-loaded") return result;
-
-  const current = registry.snapshot(workload);
-  if (current.epoch !== started.epoch || current.phase !== started.phase) {
-    return unconfirmedLoad();
-  }
-  if (started.phase === "unloaded" && !registry.reopen({ workload, epoch: started.epoch })) {
-    return unconfirmedLoad();
-  }
-  return result;
+  return publishConfirmedLoad(ctx, lease, result.modelId, commit) ? result : unconfirmedLoad();
 }
 
 async function confirmNativeUnload(
@@ -827,17 +911,23 @@ function singleFlightRun<T>(
   op: "load" | "unload",
   busyResult: () => T,
   body: () => Promise<T>,
+  exclusive = false,
 ): Promise<T> {
   const key = `${ctx.baseUrl}|${basename(ctx.hostedRel)}`;
   const existing = singleFlight.get(key);
   if (existing !== undefined) {
-    if (existing.op === op && canShareNativeFlight(existing.ctx, ctx)) {
+    if (
+      !exclusive &&
+      !existing.exclusive &&
+      existing.op === op &&
+      canShareNativeFlight(existing.ctx, ctx)
+    ) {
       return existing.promise as Promise<T>;
     }
     return Promise.resolve(busyResult());
   }
   const promise = body();
-  singleFlight.set(key, { op, promise, ctx });
+  singleFlight.set(key, { op, promise, ctx, exclusive });
   return promise.finally(() => {
     singleFlight.delete(key);
   });
@@ -878,6 +968,19 @@ export function createOmlxNativeClient(opts: OmlxNativeClientOptions): OmlxNativ
         () => runLoadWithLeases(ctx),
       );
     },
+    ...(ctx.leases === undefined
+      ? {}
+      : {
+          async loadWithCommit(commit: OmlxNativeLoadCommit): Promise<NativeLoadResult> {
+            return await singleFlightRun(
+              ctx,
+              "load",
+              () => ({ kind: "refused", reason: "OperationInProgress" }),
+              () => runLoadWithLeases(ctx, commit),
+              true,
+            );
+          },
+        }),
     async unload(): Promise<NativeUnloadResult> {
       return await singleFlightRun(
         ctx,
