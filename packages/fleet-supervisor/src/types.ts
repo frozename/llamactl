@@ -1,3 +1,5 @@
+import type { SwapCounterSample, SwapRate } from "@llamactl/core/resources/memory";
+
 import type { WorkloadThroughputStats } from "./engine-throughput.js";
 
 /**
@@ -16,6 +18,8 @@ export interface NodeMemSnapshot {
   compressor_mb: number;
   swap_in: number;
   swap_out: number;
+  /** Cumulative host swap traffic in bytes with its own source and timestamp. */
+  swap_io?: SwapCounterSample;
   /** False when the probe failed or produced no parseable data. Absent means available. See `unavailable_reason`. */
   available?: boolean;
   /** Set only when `available` is false; absent when the snapshot is available. */
@@ -143,6 +147,8 @@ export interface FleetSnapshotEntry {
   ts: string;
   node: string;
   node_mem: NodeMemSnapshot;
+  /** Read-only rate over the two latest local swap-counter samples. */
+  swapRate?: SwapRate;
   workloads: WorkloadSnapshot[];
   /**
    * Self-published scheduler-lease intent (derived leader election). Optional:
