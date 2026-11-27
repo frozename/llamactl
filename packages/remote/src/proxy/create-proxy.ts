@@ -262,27 +262,48 @@ function carriesSessionHeader(req: Request): boolean {
   return header !== null && header.trim() !== "";
 }
 
+function matchesDeclaredOwner(
+  candidate: routingCatalog.RouteCandidate,
+  declaration: routingCatalog.DeclaredModelEntryV1,
+): boolean {
+  const ad = candidate.advertisement;
+  return (
+    candidate.source === "legacy" &&
+    ad.transport === "local-http" &&
+    ad.ownerNodeId === declaration.ownerNodeId &&
+    routingCatalog.workloadOfDeployment(ad.deploymentId, ad.ownerNodeId) === declaration.workload
+  );
+}
+
 async function gatedExecute(
   deps: UnifiedDeps,
   model: string,
   features: routingCapabilities.RequiredFeatures,
   envelope: inferenceContracts.InferenceEnvelopeV1,
   ctx: BackendExecutionContext,
+  declaration: routingCatalog.DeclaredModelEntryV1 | undefined,
+  bodyText: string | undefined,
 ): Promise<Response> {
   const catalog = await deps.catalogForGate();
-  if (catalog === null) return await deps.executor.execute(envelope, ctx);
-
   // #518: a default-target id is an implicit fall-through, not an exact
   // client pin, so experimental candidates for it stay excluded.
   const pinned = !openaiProxy.defaultTargetModelIds(ctx.resolved).has(model);
-  const selection = routingCatalog.selectCatalogCandidates(catalog, model, { pinned });
-  if (selection.eligible.length === 0 && selection.rejected.length === 0) {
+  const selection =
+    catalog === null ? null : routingCatalog.selectCatalogCandidates(catalog, model, { pinned });
+  const routes = selection?.eligible ?? [];
+  const candidates =
+    declaration === undefined
+      ? routes
+      : routes.filter((candidate) => matchesDeclaredOwner(candidate, declaration));
+  const refusal = openaiProxy.declaredRouteRejection(declaration, candidates.length > 0, bodyText);
+  if (refusal !== null) return refusal;
+  if (selection === null || (candidates.length === 0 && selection.rejected.length === 0)) {
     return await deps.executor.execute(envelope, ctx);
   }
 
   const { eligible, rejected } = routingCapabilities.filterCandidatesByCapabilities(
     features,
-    selection.eligible,
+    candidates,
     (candidate) => candidate.advertisement.capabilities,
   );
   const candidate = routingRanking.pickRouteCandidate(eligible, {
@@ -355,16 +376,14 @@ async function handleUnifiedRequest(deps: UnifiedDeps, req: Request): Promise<Re
     deadline,
   };
   if (gate.model === null) return await deps.executor.execute(envelope, ctx);
-  // #280 DF-07: under unified ingress, a worker-rpc / acquired / fall-through
-  // executor never reaches proxyOpenAI's routed stale check, so refuse a stale
-  // declared pin here, before catalog, credential and executor work.
-  const stale = openaiProxy.staleDeclaredModelRejection(
-    gate.model,
-    ctx.resolved,
-    gate.bodyText ?? undefined,
-  );
-  if (stale !== null) return stale;
-  return await gatedExecute(deps, gate.model, features, envelope, ctx);
+  const binding = openaiProxy.declaredModelBinding(gate.model, ctx.resolved);
+  const isDefault = openaiProxy.defaultTargetModelIds(ctx.resolved).has(gate.model);
+  const declaration =
+    isDefault && !routingCatalog.isDeclaredStaleReason(binding?.reason) ? undefined : binding;
+  const bodyText = gate.bodyText ?? undefined;
+  const refusal = openaiProxy.declaredRouteRejection(declaration, true, bodyText);
+  if (refusal !== null) return refusal;
+  return await gatedExecute(deps, gate.model, features, envelope, ctx, declaration, bodyText);
 }
 
 let publishedPeerSnapshots = new Map<string, PeerSnapshot>();

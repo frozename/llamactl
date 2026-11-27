@@ -262,10 +262,9 @@ test("a stale pin with a selectable candidate is refused before credential/execu
         return executor;
       },
     });
-    openaiProxy.setDeclaredModelSource(
-      () => [staleRow("stale-model", "stale-owner-epoch"), readyRow("current-model")],
-      { signature: () => "r1" },
-    );
+    openaiProxy.setDeclaredModelSource(() => [staleRow("stale-model", "stale-owner-epoch")], {
+      signature: () => "r1",
+    });
 
     const stale = await proxy.handleRequest(chatRequest("stale-model"));
     expect(stale.status).toBe(503);
@@ -388,3 +387,58 @@ test("flag off is unchanged", async () => {
     t.cleanup();
   }
 });
+
+test.each([
+  ["cold", "model_not_loaded"],
+  ["disabled", "model_unavailable"],
+  ["ready", "model_not_loaded"],
+] as const)(
+  "unified ingress refuses a %s local declaration when only a peer advertises the alias",
+  async (state, code) => {
+    const t = tempEnv();
+    try {
+      const model = "shared-model";
+      const counts = { execute: 0, acquire: 0, credentials: 0 };
+      const executor = countingExecutor(counts);
+      const catalog = routingCatalog.buildRouteCatalog({
+        nodeId: "local",
+        routes: [
+          {
+            workload: "peer:shared-model",
+            model,
+            host: "peer.invalid",
+            port: 443,
+            engine: "llamacpp",
+            kind: "ModelRun",
+            isPeer: true,
+            peerEndpoint: "https://peer.invalid",
+            targetNodeId: "peer",
+            revision: "old-peer-boot",
+          },
+        ],
+      });
+      const proxy = createProxy({
+        env: { LLAMACTL_UNIFIED_PROXY: "1" },
+        resolved: t.env,
+        executor,
+        catalog: () => catalog,
+        resolveCredentials: () => {
+          counts.credentials += 1;
+          return Promise.resolve(null);
+        },
+        acquireExecutor: () => {
+          counts.acquire += 1;
+          return executor;
+        },
+      });
+      openaiProxy.setDeclaredModelSource(() => [{ ...readyRow(model), state }]);
+
+      const response = await proxy.handleRequest(chatRequest(model));
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({ error: { code } });
+      expect(counts).toEqual({ execute: 0, acquire: 0, credentials: 0 });
+    } finally {
+      t.cleanup();
+    }
+  },
+);
