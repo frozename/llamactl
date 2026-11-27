@@ -26,10 +26,12 @@ export interface LocalRoutesSnapshotWorkload {
   endpoint: string;
   reachable: true;
   revision: string | null;
-  /** Part of #518: present only when a route is experimental, carrying
-   *  `llamactl.io/qualification: experimental` so a peer can exclude it.
-   *  include=local-routes callers also get this label on journal workloads
-   *  whose workload name matches an experimental local route. */
+  /** Part of #518: present only when a route of this workload is experimental
+   *  or degraded, carrying `llamactl.io/qualification: experimental` (exclude)
+   *  or `llamactl.io/qualification: degraded` (demote) so a peer rates the
+   *  route the same way this node does. experimental wins when a workload has
+   *  both. include=local-routes callers also get this label on journal
+   *  workloads whose workload name matches such a local route. */
   labels?: Record<string, string>;
 }
 
@@ -51,7 +53,17 @@ function urlHost(host: string): string {
   return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
 }
 
-/** Group routes by workload, keeping route order and dropping duplicate model ids. */
+/** #518: the qualification stages a workload advertises to peers. Experimental
+ *  is an exclusion, degraded a demotion; any other stage advertises nothing. */
+type AdvertisedStage = "experimental" | "degraded";
+
+/** #518: a `llamactl.io/qualification` label carrying `stage`. */
+function qualificationLabel(stage: AdvertisedStage): Record<string, string> {
+  return { [routingCapabilities.QUALIFICATION_LABEL]: stage };
+}
+
+/** Group routes by workload, keeping route order and dropping duplicate model
+ *  ids, and advertise each workload's qualification stage (#518). */
 export function buildLocalRoutesSnapshot(
   routes: readonly LocalRoute[],
   revisionOf: (name: string) => string | null,
@@ -70,8 +82,12 @@ export function buildLocalRoutesSnapshot(
       };
       byWorkload.set(route.workload, entry);
     }
+    // #518: experimental outranks degraded, so a later degraded route never
+    // overwrites an experimental label on the same workload.
     if (routingCapabilities.isExperimentalRoute(route)) {
-      entry.labels = { [routingCapabilities.QUALIFICATION_LABEL]: "experimental" };
+      entry.labels = qualificationLabel("experimental");
+    } else if (route.qualificationStage === "degraded" && entry.labels === undefined) {
+      entry.labels = qualificationLabel("degraded");
     }
     if (!entry.models.includes(route.model)) {
       entry.models.push(route.model);
@@ -114,24 +130,26 @@ function localRoutesFallback(opts: FleetSnapshotRouteOptions): LocalRoutesSnapsh
   }
 }
 
-/** #518: a journal workload plus the optional experimental label the
+/** #518: a journal workload plus the optional qualification label the
  *  include=local-routes overlay may add — fleet-supervisor's
  *  WorkloadSnapshot itself stays untouched. */
 export type LabeledWorkloadSnapshot = WorkloadSnapshot & { labels?: Record<string, string> };
 
-/** #518: a journal entry whose workloads may carry the experimental label. */
+/** #518: a journal entry whose workloads may carry a qualification label. */
 export type LabeledFleetSnapshotEntry = Omit<FleetSnapshotEntry, "workloads"> & {
   workloads: LabeledWorkloadSnapshot[];
 };
 
 /**
- * #518: overlay `llamactl.io/qualification: experimental` onto journal
- * workloads whose workload name matches an experimental local route, so a
- * peer poller asking include=local-routes sees the same exclusion signal
- * the local-routes fallback advertises. Returns `entry` unchanged — the
- * same object — when there is nothing to label, when the route source
- * fails, or when no route is experimental; journal snapshots otherwise win
- * byte-identical. Never mutates `entry`.
+ * #518: overlay the qualification label the local routes advertise —
+ * `llamactl.io/qualification: experimental` or `degraded` — onto journal
+ * workloads whose workload name matches such a local route, so a peer poller
+ * asking include=local-routes sees the same exclusion and demotion signals the
+ * local-routes fallback advertises. experimental wins for a workload that has
+ * both kinds of route, whatever the route order. Returns `entry` unchanged —
+ * the same object — when there is nothing to label, when the route source
+ * fails, or when no route is experimental or degraded; journal snapshots
+ * otherwise win byte-identical. Never mutates `entry`.
  */
 export function labelJournalExperimentalWorkloads(
   entry: FleetSnapshotEntry,
@@ -146,32 +164,33 @@ export function labelJournalExperimentalWorkloads(
   } catch {
     return entry;
   }
-  const experimental = new Set(
-    routes
-      .filter((route) => routingCapabilities.isExperimentalRoute(route))
-      .map((route) => route.workload),
-  );
-  if (experimental.size === 0) {
+  const stages = new Map<string, AdvertisedStage>();
+  for (const route of routes) {
+    // Experimental outranks degraded, so a later degraded route never
+    // overwrites an experimental label on the same workload.
+    if (routingCapabilities.isExperimentalRoute(route)) {
+      stages.set(route.workload, "experimental");
+    } else if (route.qualificationStage === "degraded" && !stages.has(route.workload)) {
+      stages.set(route.workload, "degraded");
+    }
+  }
+  if (stages.size === 0) {
     return entry;
   }
   return {
     ...entry,
-    workloads: entry.workloads.map((workload) =>
-      experimental.has(workload.name)
-        ? {
-            ...workload,
-            labels: { [routingCapabilities.QUALIFICATION_LABEL]: "experimental" },
-          }
-        : workload,
-    ),
+    workloads: entry.workloads.map((workload) => {
+      const stage = stages.get(workload.name);
+      return stage === undefined ? workload : { ...workload, labels: qualificationLabel(stage) };
+    }),
   };
 }
 
 /**
  * #306: journal snapshot when present; else the local-routes fallback if
- * asked for. #518: include=local-routes callers also get the experimental
- * label overlaid onto journal workloads matching an experimental local
- * route; without the flag the journal entry is served unchanged.
+ * asked for. #518: include=local-routes callers also get the qualification
+ * label overlaid onto journal workloads matching an experimental or degraded
+ * local route; without the flag the journal entry is served unchanged.
  */
 export function readFleetSnapshotOrLocalRoutes(
   opts: FleetSnapshotRouteOptions,

@@ -428,25 +428,39 @@ entry's `qualification.stage` is the routing stage from
 `experimental: true`, the same flag a `data` entry carries. Neither array
 is routable, so the flags only report; they change no routing decision.
 
-Peer-advertised experimental stage (#518): the `include=local-routes` fleet
+Peer-advertised qualification stages (#518): the `include=local-routes` fleet
 snapshot (`buildLocalRoutesSnapshot`, `packages/remote/src/routes/fleet.ts`)
 labels a workload `llamactl.io/qualification: experimental` when any of its
 routes is experimental — a catalog row, an applied or pin override, or an
-explicit label. The peer poller (`collectPeerWorkloads`,
-`packages/remote/src/server/peer-snapshot-poller.ts`) forwards only that
-experimental label onto each model id, so the existing peer admission and
-catalog exclusion apply on other nodes, including a peer's `ModelHost` alias
-ids and node-local pins. Limits: the poller forwards only the experimental
-stage and advertises no other (a non-experimental peer stage is not
-propagated, so a peer route still inherits this node's stage by exact id);
-ranking order is unchanged. When a fleet-supervisor journal snapshot is
-served in preference to the fallback, `readFleetSnapshotOrLocalRoutes`
-overlays the same experimental label onto each journal workload whose
-workload name matches an experimental local route — only for callers
-asking `include=local-routes` (the peer poller over HTTP and tRPC). Without
+explicit label — and `llamactl.io/qualification: degraded` when any of its
+routes carries the degraded stage. Experimental wins whenever a workload has
+both kinds of route, whatever the route order, and a workload with neither
+advertises no label at all. The peer poller (`collectPeerWorkloads`,
+`packages/remote/src/server/peer-snapshot-poller.ts`) forwards only the
+experimental and degraded stages onto each model id and advertises no other, so
+the existing peer admission and catalog exclusion apply on other nodes,
+including a peer's `ModelHost` alias ids and node-local pins. A peer can add an
+exclusion or a demotion but never lift a stage: a degraded peer label never
+lifts an inherited experimental stage, and the other non-experimental peer
+stages (validated, candidate, production) are not propagated, so a peer route
+still inherits this node's stage by exact id. Admission
+(`admitPeerRoute`, `packages/core/src/workloadRuntime.ts`): a healthy peer —
+neither experimental nor degraded — is admitted for an id held only by degraded
+or experimental peer routes, which is what lets the unified ranker place the
+degraded peer in its existing degraded tier behind the healthy one; local routes
+stay authoritative, so a healthy peer is not admitted over any non-experimental
+local route, a degraded local route included, and one healthy peer still closes
+the id. Limits: the legacy (flag-off) comparator ignores degraded, so the first
+admitted peer route by workload name leads the legacy `/v1/models` listing and
+a second admitted peer route for the same id may log a route-map collision for
+that listing. When a fleet-supervisor journal snapshot is served in preference
+to the fallback, `readFleetSnapshotOrLocalRoutes` overlays the same
+qualification label onto each journal workload whose workload name matches an
+experimental or degraded local route — only for callers asking
+`include=local-routes` (the peer poller over HTTP and tRPC). Without
 `include=local-routes` the journal snapshot is served unchanged, a journal
-workload with no experimental local route of the same workload name carries
-no label, and an empty journal workload list or a failing route listing
+workload with no experimental or degraded local route of the same workload name
+carries no label, and an empty journal workload list or a failing route listing
 serves the journal unchanged.
 
 `proposePromotion` (`packages/core/src/qualification/promotion.ts`)
