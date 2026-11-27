@@ -102,7 +102,7 @@ export interface RequestQueuePolicy {
   cancel: (requestId: string) => CancelResult;
   finishExecution: (requestId: string) => boolean;
   snapshot: () => QueueSnapshot;
-  oldestQueuedWaitMs: () => number | null;
+  oldestQueuedWaitMs?: () => number | null;
   queueLimits: () => RequestQueueLimits;
 }
 

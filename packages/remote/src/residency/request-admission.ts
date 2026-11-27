@@ -148,7 +148,7 @@ class RequestAdmissionImpl implements ReservableRequestAdmission {
   }
 
   oldestQueuedWaitMs(): number | null {
-    return this.policy.oldestQueuedWaitMs();
+    return this.policy.oldestQueuedWaitMs?.() ?? null;
   }
 
   invalidateModel(modelKey: string): void {
