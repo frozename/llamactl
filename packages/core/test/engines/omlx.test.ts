@@ -452,6 +452,27 @@ const MALFORMED_STATUS_BODIES: { label: string; body: unknown }[] = [
   { label: "empty object body", body: {} },
   { label: "models not an array", body: { models: "x" } },
   {
+    label: "contradictory duplicate model IDs",
+    body: statusFixtureV1([
+      { id: ID, loaded: false, is_loading: false },
+      { id: ID, loaded: true, is_loading: false },
+    ]),
+  },
+  {
+    label: "basename and full model IDs both match",
+    body: statusFixtureV1([
+      { id: ID, loaded: false, is_loading: false },
+      { id: REL, loaded: true, is_loading: false },
+    ]),
+  },
+  {
+    label: "full and basename model IDs both match",
+    body: statusFixtureV1([
+      { id: REL, loaded: true, is_loading: false },
+      { id: ID, loaded: false, is_loading: false },
+    ]),
+  },
+  {
     label: "loaded not a boolean",
     body: { models: [{ id: ID, loaded: "yes", is_loading: false }] },
   },

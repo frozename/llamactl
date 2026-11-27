@@ -264,7 +264,8 @@ function readSize(value: unknown): SizeField {
 function findHostedEntry(
   models: unknown[],
   hostedRel: string,
-): { entry: Record<string, unknown>; id: string } | null {
+): { entry: Record<string, unknown>; id: string } | "ambiguous" | null {
+  let match: { entry: Record<string, unknown>; id: string } | null = null;
   for (const element of models) {
     if (!isRecord(element)) {
       continue;
@@ -273,9 +274,11 @@ function findHostedEntry(
     if (typeof id !== "string" || !matchHostedModel(hostedRel, [id])) {
       continue;
     }
-    return { entry: element, id };
+    // An exact ID and its basename can both match, even when the IDs are distinct.
+    if (match !== null) return "ambiguous";
+    match = { entry: element, id };
   }
-  return null;
+  return match;
 }
 
 function observeEntry(entry: Record<string, unknown>, id: string): NativeModelStatusObservation {
@@ -334,6 +337,9 @@ export function parseOmlxModelsStatus(
     return { state: "failed", reason: "MalformedStatus" };
   }
   const found = findHostedEntry(models, hostedRel);
+  if (found === "ambiguous") {
+    return { state: "failed", reason: "MalformedStatus" };
+  }
   if (found === null) {
     return { state: "failed", reason: "ModelNotListed" };
   }
