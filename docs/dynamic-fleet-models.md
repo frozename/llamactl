@@ -421,6 +421,16 @@ experimental models are served only on an exact model pin and never as a
 preset default; a refused `llamactl.catalog.promote` step fails the
 runbook before `llamactl.embersynth.sync`.
 
+Bench scorers rank a degraded rel behind every healthy rel (#518): the
+embersynth bench scorer (`summarizeBenchForMachine`,
+`packages/remote/src/config/embersynth.ts`) picks a fusion node's `modelId`
+from the fastest bench row that is neither experimental nor degraded and
+falls back to the fastest degraded row only when the machine has no such
+row, and the `promote-fastest-vision-model` runbook ranks a degraded rel
+behind every healthy rel, promoting a degraded rel only when every eligible
+rel is degraded. A degraded rel is demoted, not excluded: it stays eligible,
+unlike an experimental one.
+
 `/v1/models?include=declared` reads the same stages: each `unavailable`
 entry's `qualification.stage` is the routing stage from
 `catalogQualificationStages` (so a pin replaces the catalog stage), and a
