@@ -15,6 +15,8 @@ import { MANAGED_BY_LABEL, ModelHostManifestSchema } from "../workload/modelhost
 import { loadWorkloadByNameAny, withWorkloadsMutex } from "../workload/store.js";
 import { managedProfileMemberProfiles } from "./managed-profile-selection.js";
 
+export const RESIDENCY_CONTROL_TOOL = "llamactl.residency.control";
+
 export const residencyControlInput = z.strictObject({
   action: z.enum(["load", "unload"]),
   node: z.string().min(1),

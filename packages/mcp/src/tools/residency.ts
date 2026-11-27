@@ -1,18 +1,65 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
-import { router } from "@llamactl/remote";
+import { getAuthenticatedAgentClientByName } from "@llamactl/cli/dispatcher";
+import {
+  RESIDENCY_CONTROL_TOOL,
+  residencyControlInput,
+  type ResidencyControlResult,
+  router,
+} from "@llamactl/remote";
 import { appendAudit, toTextContent } from "@novaproto/mcp-shared";
 import { z } from "zod";
 
 import { SERVER_SLUG } from "./shared.js";
 
 export function registerResidencyTools(server: McpServer): void {
+  registerResidencyControl(server);
   registerResidencyStatus(server);
   registerResidencyPlan(server);
   registerResidencyApplyProfile(server);
   registerResidencyCancelOperation(server);
   registerResidencyForceUnload(server);
   registerResidencyReleaseSession(server);
+}
+
+function transportRefusal(error: unknown): string {
+  if (typeof error !== "object" || error === null) return "ControlTransportError";
+  const code = "code" in error ? error.code : undefined;
+  const data = "data" in error ? error.data : null;
+  const absent =
+    code === "NOT_FOUND" ||
+    (typeof data === "object" && data !== null && "code" in data && data.code === "NOT_FOUND");
+  return absent ? "ManagedControlUnavailable" : "ControlTransportError";
+}
+
+function registerResidencyControl(server: McpServer): void {
+  server.registerTool(
+    RESIDENCY_CONTROL_TOOL,
+    {
+      title: "Manage workload residency on one node",
+      description:
+        "Preview a load or unload on the named authenticated managed agent. Dry-run is the default. Set dryRun to false and confirm to true to execute under the owner's capacity, policy and lease checks.",
+      inputSchema: residencyControlInput,
+      annotations: { destructiveHint: true, readOnlyHint: false },
+    },
+    async ({ action, node, workload, dryRun, confirm }, { signal }) => {
+      const target = { action, node, workload };
+      const input = { ...target, dryRun, confirm };
+      let result: ResidencyControlResult;
+      if (!dryRun && !confirm) {
+        result = { ...target, ok: false, reason: "ConfirmationRequired" };
+      } else {
+        try {
+          const client = getAuthenticatedAgentClientByName(node);
+          result = await client.residencyControl.mutate(input, { signal });
+        } catch (error) {
+          result = { ...target, ok: false, reason: transportRefusal(error) };
+        }
+      }
+      appendAudit({ server: SERVER_SLUG, tool: RESIDENCY_CONTROL_TOOL, input, dryRun, result });
+      return { ...toTextContent(result), ...(result.ok ? {} : { isError: true }) };
+    },
+  );
 }
 
 function registerResidencyStatus(server: McpServer): void {

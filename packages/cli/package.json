@@ -27,6 +27,7 @@
     "typescript": "5.9.3"
   },
   "exports": {
-    "./bin": "./src/bin.ts"
+    "./bin": "./src/bin.ts",
+    "./dispatcher": "./src/dispatcher.ts"
   }
 }

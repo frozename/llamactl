@@ -2,6 +2,11 @@ import type { MachineProfile, presets, SafetyTier } from "@llamactl/core";
 
 import type { router as AppRouterType } from "../router.js";
 
+import {
+  RESIDENCY_CONTROL_TOOL,
+  residencyControlInput,
+  type ResidencyControlResult,
+} from "../residency/managed-operator-control.js";
 import { appendOpsChatAudit, hashArguments } from "./audit.js";
 
 type PresetName = presets.PresetName;
@@ -149,6 +154,11 @@ export const OPS_CHAT_TOOLS = [
   {
     name: "llamactl.reconciler.kick",
     tier: "mutation-dry-run-safe",
+    surfaces: OPS_CHAT_AND_MCP_SURFACES,
+  },
+  {
+    name: RESIDENCY_CONTROL_TOOL,
+    tier: "mutation-destructive",
     surfaces: OPS_CHAT_AND_MCP_SURFACES,
   },
   { name: "llamactl.residency.plan", tier: "read", surfaces: OPS_CHAT_AND_MCP_SURFACES },
@@ -560,6 +570,24 @@ async function executeMutationDryRunTool(
   }
 }
 
+async function runResidencyControl(
+  caller: Caller,
+  args: Record<string, unknown>,
+  dryRun: boolean,
+): Promise<ResidencyControlResult> {
+  const input = residencyControlInput.parse({ ...args, dryRun });
+  if (!dryRun && !input.confirm) {
+    return {
+      ok: false,
+      action: input.action,
+      node: input.node,
+      workload: input.workload,
+      reason: "ConfirmationRequired",
+    };
+  }
+  return await caller.residencyControl(input);
+}
+
 async function executeMutationDestructiveTool(
   caller: Caller,
   name: DestructiveToolName,
@@ -567,6 +595,8 @@ async function executeMutationDestructiveTool(
   dryRun: boolean,
 ): Promise<unknown> {
   switch (name) {
+    case RESIDENCY_CONTROL_TOOL:
+      return await runResidencyControl(caller, args, dryRun);
     case "llamactl.catalog.promoteDelete": {
       const payload = {
         profile: requireString(args, "profile") as MachineProfile,
@@ -709,6 +739,18 @@ export function opsChatStopRefusal(
   return null;
 }
 
+function managedResidencyRefusal(
+  name: OpsChatToolName,
+  result: unknown,
+): { code: string; message: string } | null {
+  if (name !== RESIDENCY_CONTROL_TOOL) return null;
+  const record = asRecord(result);
+  const reason = record?.["reason"];
+  return record?.["ok"] === false && typeof reason === "string"
+    ? { code: reason, message: `Managed residency control refused (${reason})` }
+    : null;
+}
+
 async function executeToolCall(
   caller: Caller,
   name: OpsChatToolName,
@@ -752,7 +794,9 @@ export async function dispatchOpsChatTool(
 
     const result = await executeToolCall(caller, input.name, input.arguments, input.dryRun);
 
-    const refusal = opsChatStopRefusal(input.name, input.arguments, result);
+    const refusal =
+      managedResidencyRefusal(input.name, result) ??
+      opsChatStopRefusal(input.name, input.arguments, result);
     if (refusal !== null) {
       return {
         ok: false,
