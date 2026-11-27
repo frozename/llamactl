@@ -2655,7 +2655,9 @@ export interface StopServerResult {
   managedRefusal?:
     | "ManagedStopIntentRequired"
     | "ManagedStopGenerationUnverified"
-    | "ManagedStopReleaseUnverified";
+    | "ManagedStopReleaseUnverified"
+    | "TransitionUnavailable"
+    | "NodeBusy";
   /**
    * Set only by the node-side residency fence (#278 leases, #520 sessions),
    * never by `stopServer` itself: which registry refusal blocked the stop

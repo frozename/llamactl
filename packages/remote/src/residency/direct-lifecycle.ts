@@ -108,6 +108,8 @@ export type DirectLifecycleOpts = {
   isRunning: (model: string) => boolean;
   log: (line: string) => void;
   openStore?: (path: string) => Store;
+  /** Managed-owned stops require the existing transition journal and fence. */
+  requireVerifiedStopJournal?: boolean;
   incarnation?: string;
   nowMs?: () => number;
   groups?: readonly ResidencyGroupDeclaration[];
@@ -117,6 +119,7 @@ export type DirectLifecycleOutcome<T> = { ran: true; result: T } | { ran: false;
 
 type DepEnv<T> = {
   managed: boolean;
+  strictStop: boolean;
   lifecycleGroup: string | undefined;
   groups: readonly ResidencyGroupDeclaration[];
   nowMs: () => number;
@@ -458,7 +461,7 @@ async function recordSettledStop<T extends DepResult>(
   }
 }
 
-// A managed or grouped start requires a usable transition journal.
+// Managed lifecycle stops and managed or grouped starts require usable journal evidence.
 async function unrecordedOrFail<T extends DepResult>(
   action: DirectAction,
   workload: string,
@@ -466,6 +469,7 @@ async function unrecordedOrFail<T extends DepResult>(
   env: DepEnv<T>,
   message: string,
 ): Promise<DirectLifecycleOutcome<T>> {
+  if (env.strictStop) return { ran: false, detail: "TransitionUnavailable" };
   if (action === "start" && (env.managed || lifecycleGroup !== undefined)) {
     return {
       ran: false,
@@ -479,8 +483,8 @@ async function unrecordedOrFail<T extends DepResult>(
   return { ran: true, result: await env.dep(workload) };
 }
 
-// (c) the initial claim: a refusal refuses a start but only logs a stop,
-// which still runs.
+// A legacy stop may run without the fence when freeing the engine is
+// safer than waiting for a journal repair.
 async function initialClaim<T extends DepResult>(
   action: DirectAction,
   workload: string,
@@ -495,6 +499,7 @@ async function initialClaim<T extends DepResult>(
   } catch (error: unknown) {
     return await unrecordedOrFail(action, workload, env.lifecycleGroup, env, messageOf(error));
   }
+  if (env.strictStop) return { ran: false, detail: "NodeBusy" };
   if (action === "start") {
     return {
       ran: false,
@@ -545,13 +550,15 @@ async function runDirect<T extends DepResult>(
     return { ran: true, result: await dep(workload) };
   }
   const managed = hasManagedRuntimeMarker(resolveEnv().LOCAL_AI_RUNTIME_DIR);
-  if (!existsSync(opts.storePath) && !managed) {
+  const strictStop = action === "stop" && opts.requireVerifiedStopJournal === true;
+  if (!existsSync(opts.storePath) && !managed && !strictStop) {
     return { ran: true, result: await dep(workload) };
   }
   const groups = opts.groups ?? RESIDENCY_GROUPS;
   const lifecycleGroup = declaredGroup(groups, opts.group);
   const env: DepEnv<T> = {
     managed,
+    strictStop,
     lifecycleGroup,
     groups,
     nowMs: opts.nowMs ?? Date.now,
@@ -566,7 +573,11 @@ async function runDirect<T extends DepResult>(
   try {
     store =
       opts.openStore?.(opts.storePath) ??
-      openResidencyOperationStore({ path: opts.storePath, requireExisting: managed });
+      openResidencyOperationStore({
+        path: opts.storePath,
+        requireExisting: managed,
+        verifyExistingSchema: strictStop,
+      });
   } catch (error: unknown) {
     return await unrecordedOrFail(action, workload, lifecycleGroup, env, messageOf(error));
   }

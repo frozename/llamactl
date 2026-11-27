@@ -290,13 +290,14 @@ const RESIDENCY_STATE_COLUMNS =
 interface OpenResidencyStoreOptions {
   path: string;
   requireExisting?: boolean;
+  verifyExistingSchema?: boolean;
   busyTimeoutMs?: number;
 }
 
 export function openResidencyOperationStore(
   input: OpenResidencyStoreOptions,
 ): ResidencyOperationStore & ResidencyLifecycleStore {
-  const db = openDb(input.path, input.busyTimeoutMs ?? 15000, input.requireExisting === true);
+  const db = openOperationDb(input);
   const claimTx = db.transaction(
     (claimInput: ClaimInput): Fence => claimOwnershipTx(db, claimInput),
   );
@@ -410,14 +411,47 @@ export function openResidencyOperationStore(
   return store;
 }
 
-function openDb(path: string, busyTimeoutMs = 15000, requireExisting = false): Database {
+function openOperationDb(input: OpenResidencyStoreOptions): Database {
+  const verify = input.verifyExistingSchema === true;
+  return openDb(
+    input.path,
+    input.busyTimeoutMs ?? 15000,
+    verify || input.requireExisting === true,
+    verify,
+  );
+}
+
+function verifyTransitionSchema(db: Database): void {
+  const versions = db.query<{ version: number }, []>("SELECT version FROM schema_version").all();
+  const version = versions[0]?.version;
+  if (
+    versions.length !== 1 ||
+    (version !== SCHEMA_VERSION && version !== RESIDENCY_INFERENCE_HOLD_SCHEMA_VERSION)
+  ) {
+    throw new Error("transition journal schema version is unavailable");
+  }
+  readAuthority(db);
+  db.query(`SELECT ${OPERATION_COLUMNS} FROM operations LIMIT 0`).all();
+  listResidencyStateRows(db);
+}
+
+function openDb(
+  path: string,
+  busyTimeoutMs = 15000,
+  requireExisting = false,
+  verifyExisting = false,
+): Database {
   if (!requireExisting) mkdirSync(dirname(path), { recursive: true });
   const db = new Database(path, { readwrite: true, create: !requireExisting });
   try {
-    if (requireExisting) db.query("SELECT version FROM schema_version").get();
-    db.run("PRAGMA journal_mode = WAL");
     db.run(`PRAGMA busy_timeout = ${String(busyTimeoutMs)}`);
-    migrate(db);
+    if (verifyExisting) {
+      verifyTransitionSchema(db);
+    } else {
+      if (requireExisting) db.query("SELECT version FROM schema_version").get();
+      db.run("PRAGMA journal_mode = WAL");
+      migrate(db);
+    }
   } catch (error: unknown) {
     db.close();
     throw error;
