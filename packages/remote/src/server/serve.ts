@@ -24,6 +24,7 @@ import { listLocalRoutes, migrateLegacySingletonRuntime } from "@llamactl/core/w
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
 import { join } from "node:path";
 
+import type { ManagedLaunchAdmission } from "../residency/managed-launch-admission.js";
 import type { RequestAdmission } from "../residency/request-admission.js";
 import type { ModelRun } from "../workload/schema.js";
 
@@ -313,6 +314,8 @@ export interface StartAgentOptions {
    * principal; physical per-node accounting comes later.
    */
   chatCompletionsAdmission?: RequestAdmission;
+  /** Trusted host adapter for the two explicit agent start procedures. */
+  managedLaunchAdmission?: ManagedLaunchAdmission;
   /**
    * Per-role runtime memory budget. Sets the identity (role + optional
    * memory budget) so the Prometheus gauges emit per-role series. When
@@ -912,6 +915,9 @@ function requestContext(
   // both build their context here.
   if (opts.chatCompletionsAdmission !== undefined) {
     context.chatAdmission = opts.chatCompletionsAdmission;
+  }
+  if (opts.managedLaunchAdmission !== undefined) {
+    context.managedLaunchAdmission = opts.managedLaunchAdmission;
   }
   if (claims !== null) context.inferenceClaims = claims;
   return context;

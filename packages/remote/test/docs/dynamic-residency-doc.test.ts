@@ -961,9 +961,14 @@ describe("docs/dynamic-residency.md (#285)", () => {
     expect(flat(modelRunOpts), "ModelRun agent stderr log").toContain(
       "log: (line): void => { process.stderr.write(line); },",
     );
-    // each ModelRun call site, pinned on its own
-    expectPins(routerSrc, "ModelRun call site", [
-      "const outcome = await runDirectResidencyStart<serverMod.StartServerResult>(\n        input.workload,\n        () => serverMod.startServer(serverStartOptions(input, sig, emit)),\n        directModelRunStartOpts(input.workload, input.target),\n      );",
+    const serverStart = enclosingBody(routerSrc, "serverStart: t.procedure");
+    expectPins(serverStart, "ModelRun start call site", [
+      "runDirectResidencyStart<serverMod.StartServerResult>(",
+      "serverMod.startServer(",
+      "serverStartOptions(input, sig,",
+      "directModelRunStartOpts(input.workload, input.target),",
+    ]);
+    expectPins(routerSrc, "ModelRun stop call sites", [
       "const outcome = await runDirectResidencyStop<{",
       "              directModelRunOpts(input.workload),\n            );\n            return outcome.ran ? outcome.result.stop",
       '...(stop.stopped ? {} : { error: "stop did not confirm process removal" }),',

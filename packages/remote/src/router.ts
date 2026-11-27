@@ -76,6 +76,7 @@ import { dirname, join } from "node:path";
 import { z } from "zod";
 
 import type { CompositeApplyEvent } from "./composite/types.js";
+import type { ManagedLaunchAdmission } from "./residency/managed-launch-admission.js";
 import type { Release, RequestAdmission } from "./residency/request-admission.js";
 import type { RuntimeBackend } from "./runtime/backend.js";
 import type { RuntimeKind } from "./runtime/factory.js";
@@ -112,6 +113,7 @@ import {
 import { residencyGroupLabelOf } from "./residency/coordinator.js";
 import {
   type DirectLifecycleOpts,
+  type DirectLifecycleOutcome,
   exclusiveGroupLaunchRefusal,
   runDirectResidencyStart,
   runDirectResidencyStop,
@@ -329,6 +331,7 @@ async function* bridgeEventStream<T>(
     controller.abort();
   };
   clientSignal?.addEventListener("abort", onClientAbort);
+  if (clientSignal?.aborted === true) onClientAbort();
 
   const queue: T[] = [];
   const state: { finished: boolean; err: Error | null } = { finished: false, err: null };
@@ -1172,6 +1175,7 @@ export interface AgentRouterContext {
    *  over /trpc and the tunnel); in-process callers such as the RAG via-forward
    *  pass none because they already hold the outer HTTP slot. */
   chatAdmission?: RequestAdmission;
+  managedLaunchAdmission?: ManagedLaunchAdmission;
 }
 
 const t = initTRPC.context<AgentRouterContext>().create();
@@ -3026,25 +3030,50 @@ export const router = t.router({
   ),
 
   modelHostStart: t.procedure.input(modelHostStartInput).subscription(async function* ({
+    ctx,
     input,
     signal,
   }) {
     yield* bridgeEventStream(signal ?? new AbortController().signal, async (emit, subSignal) => {
-      const outcome = await runDirectResidencyStart<StartModelHostResult>(
-        input.workload,
-        () =>
-          startModelHost({
-            key: { name: input.workload },
-            ...(input.timeoutSeconds !== undefined ? { timeoutSeconds: input.timeoutSeconds } : {}),
-            ...(input.manifest !== undefined ? { manifest: input.manifest } : {}),
-            ...(input.restart !== undefined ? { restart: input.restart } : {}),
-            signal: subSignal,
-            onEvent: emit,
-          }),
-        directResidencyOpts(input.workload, input.manifest?.metadata.labels),
-      );
+      const managed = ctx.managedLaunchAdmission;
+      const start = (): Promise<DirectLifecycleOutcome<StartModelHostResult>> =>
+        runDirectResidencyStart<StartModelHostResult>(
+          input.workload,
+          () =>
+            startModelHost({
+              key: { name: input.workload },
+              ...(input.timeoutSeconds !== undefined
+                ? { timeoutSeconds: input.timeoutSeconds }
+                : {}),
+              ...(input.manifest !== undefined ? { manifest: input.manifest } : {}),
+              ...(input.restart !== undefined ? { restart: input.restart } : {}),
+              signal: subSignal,
+              onEvent: (event) => {
+                // Readiness is provisional until the managed claim commits.
+                if (
+                  managed !== undefined &&
+                  typeof event === "object" &&
+                  event !== null &&
+                  "type" in event &&
+                  event.type === "done"
+                )
+                  return;
+                emit(event);
+              },
+            }),
+          directResidencyOpts(input.workload, input.manifest?.metadata.labels),
+        );
+      const outcome =
+        managed === undefined
+          ? await start()
+          : await managed.run(
+              { kind: "ModelHost", runtimeKey: input.workload, launch: input },
+              subSignal,
+              start,
+            );
       if (outcome.ran) {
         reopenWorkloadAfterLoad(input.workload, outcome.result.ok);
+        if (managed !== undefined) emit({ type: "done", result: outcome.result });
       } else {
         emit({ type: "done", result: { ok: false, pid: null, error: outcome.detail } });
       }
@@ -3697,19 +3726,36 @@ export const router = t.router({
     ),
 
   serverStart: t.procedure.input(ServerStartInputSchema).subscription(async function* ({
+    ctx,
     input,
     signal,
   }) {
     yield* bridgeEventStream<ServerStartEvent>(signal, async (emit, sig) => {
-      const outcome = await runDirectResidencyStart<serverMod.StartServerResult>(
-        input.workload,
-        () => serverMod.startServer(serverStartOptions(input, sig, emit)),
-        directModelRunStartOpts(input.workload, input.target),
-      );
-      emit({
-        type: "done",
-        result: outcome.ran ? outcome.result : serverStartRefusal(input, outcome.detail),
-      });
+      const managed = ctx.managedLaunchAdmission;
+      const start = (): Promise<DirectLifecycleOutcome<serverMod.StartServerResult>> =>
+        runDirectResidencyStart<serverMod.StartServerResult>(
+          input.workload,
+          () =>
+            serverMod.startServer(
+              serverStartOptions(input, sig, (event) => {
+                if (managed === undefined || event.type !== "ready") emit(event);
+              }),
+            ),
+          directModelRunStartOpts(input.workload, input.target),
+        );
+      const outcome =
+        managed === undefined
+          ? await start()
+          : await managed.run(
+              { kind: "ModelRun", runtimeKey: input.workload, launch: input },
+              sig,
+              start,
+            );
+      const result = outcome.ran ? outcome.result : serverStartRefusal(input, outcome.detail);
+      if (managed !== undefined && result.ok && result.pid !== null) {
+        emit({ type: "ready", pid: result.pid, endpoint: result.endpoint });
+      }
+      emit({ type: "done", result });
     });
   }),
 
