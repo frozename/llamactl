@@ -13,6 +13,7 @@ describe("#522 eval record evidence capture (#764, #757, #738)", () => {
   const evalSrc = readOrEmpty(join(REPO, "packages/cli/src/commands/eval.ts"));
   const benchScheduleSrc = readOrEmpty(join(REPO, "packages/cli/src/commands/bench-schedule.ts"));
   const readersSrc = readOrEmpty(join(REPO, "packages/eval/src/perf/readers.ts"));
+  const darwinRusageSrc = readOrEmpty(join(REPO, "packages/eval/src/perf/darwin-rusage.ts"));
   const metricsSrc = readOrEmpty(join(REPO, "packages/eval/src/perf/metrics.ts"));
   const provenanceSrc = readOrEmpty(join(REPO, "packages/eval/src/perf/provenance.ts"));
   const typesSrc = readOrEmpty(join(REPO, "packages/eval/src/matrix/types.ts"));
@@ -427,6 +428,7 @@ describe("#522 eval record evidence capture (#764, #757, #738)", () => {
       ["packages/cli/src/commands/eval-perf.ts", evalPerfSrc],
       ["packages/cli/src/commands/bench-schedule.ts", benchScheduleSrc],
       ["packages/eval/src/perf/readers.ts", readersSrc],
+      ["packages/eval/src/perf/darwin-rusage.ts", darwinRusageSrc],
       ["packages/eval/src/perf/metrics.ts", metricsSrc],
       ["packages/eval/src/perf/provenance.ts", provenanceSrc],
       ["packages/eval/src/matrix/types.ts", typesSrc],
@@ -531,6 +533,24 @@ describe("#522 eval record evidence capture (#764, #757, #738)", () => {
             path: "packages/cli/src/commands/eval-perf.ts",
             declaration: "function hostReaders(",
             credits: ["readers.gtt = linuxGttReader();"],
+          },
+        ],
+      },
+      {
+        phrase:
+          "On macOS with `--pid`, `proc_pid_rusage` with flavor `RUSAGE_INFO_V2` fills `ri_diskio_bytesread` and `ri_diskio_byteswritten`, and their per-sample deltas are the SSD read and write bytes (`createPerfHostReaders`, `packages/eval/src/perf/readers.ts`, and `defaultProcPidRusage`, `packages/eval/src/perf/darwin-rusage.ts`).",
+        cited: [
+          {
+            symbol: "createPerfHostReaders",
+            path: "packages/eval/src/perf/readers.ts",
+            declaration: "export function createPerfHostReaders(",
+            credits: ["RUSAGE_INFO_V2"],
+          },
+          {
+            symbol: "defaultProcPidRusage",
+            path: "packages/eval/src/perf/darwin-rusage.ts",
+            declaration: "export function defaultProcPidRusage(",
+            credits: ['"/usr/lib/libSystem.B.dylib"'],
           },
         ],
       },

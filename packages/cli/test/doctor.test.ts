@@ -5,6 +5,25 @@ import { join } from "node:path";
 import { type CheckResult, type DoctorDeps, runDoctor } from "../src/commands/doctor.js";
 import { mkdtempSync, rmSync } from "../src/safe-fs.js";
 
+const hermeticUnitSecrets: {
+  platform: NodeJS.Platform;
+  launchdDirs: string[];
+  systemdDirs: string[];
+} = {
+  platform: "darwin",
+  launchdDirs: [],
+  systemdDirs: [],
+};
+
+type DoctorDepsWithUnitSecrets = DoctorDeps & {
+  unitSecrets: typeof hermeticUnitSecrets;
+};
+
+function hermeticDeps(): DoctorDeps {
+  const deps: DoctorDepsWithUnitSecrets = { unitSecrets: hermeticUnitSecrets };
+  return deps;
+}
+
 /**
  * `llamactl doctor` smoke tests. The probes hit real-ish surfaces
  * (docker socket / kubeconfig / filesystem) which we can't cleanly
@@ -73,7 +92,7 @@ describe("doctor --timeout", () => {
   test("parses --timeout=<seconds> without throwing", async () => {
     // Tiny timeout so we don't hang waiting for a real cluster.
     // The probes will time out internally + surface as fail/warn.
-    const { result } = await captureStdout(() => runDoctor(["--timeout=1"]));
+    const { result } = await captureStdout(() => runDoctor(["--timeout=1"], hermeticDeps()));
     // Exit code is 0 or 1 depending on whether the host has docker
     // running. We only care that we got a number back, not a throw.
     expect(typeof result).toBe("number");
@@ -83,13 +102,13 @@ describe("doctor --timeout", () => {
 
 describe("doctor output format", () => {
   test("always prints a summary line at the end", async () => {
-    const { out } = await captureStdout(() => runDoctor(["--timeout=2"]));
+    const { out } = await captureStdout(() => runDoctor(["--timeout=2"], hermeticDeps()));
     // Summary line lives past every probe's output.
     expect(out).toMatch(/check(s)? —/);
   });
 
   test("probes are namespaced with [system] prefix", async () => {
-    const { out } = await captureStdout(() => runDoctor(["--timeout=2"]));
+    const { out } = await captureStdout(() => runDoctor(["--timeout=2"], hermeticDeps()));
     expect(out).toContain("[agent]");
     expect(out).toContain("[secrets]");
   });
@@ -97,7 +116,9 @@ describe("doctor output format", () => {
 
 describe("doctor --skip=<system> suppresses the named probe", () => {
   test("--skip=kubernetes omits the [kubernetes] line entirely", async () => {
-    const { out } = await captureStdout(() => runDoctor(["--skip=kubernetes", "--timeout=2"]));
+    const { out } = await captureStdout(() =>
+      runDoctor(["--skip=kubernetes", "--timeout=2"], hermeticDeps()),
+    );
     expect(out).not.toContain("[kubernetes]");
     // Other systems still run.
     expect(out).toContain("[agent]");
@@ -105,13 +126,18 @@ describe("doctor --skip=<system> suppresses the named probe", () => {
   });
 
   test("--skip=k8s alias works the same", async () => {
-    const { out } = await captureStdout(() => runDoctor(["--skip=k8s", "--timeout=2"]));
+    const { out } = await captureStdout(() =>
+      runDoctor(["--skip=k8s", "--timeout=2"], hermeticDeps()),
+    );
     expect(out).not.toContain("[kubernetes]");
   });
 
   test("multiple --skip flags stack", async () => {
     const { out } = await captureStdout(() =>
-      runDoctor(["--skip=kubernetes", "--skip=docker", "--skip=secrets", "--timeout=2"]),
+      runDoctor(
+        ["--skip=kubernetes", "--skip=docker", "--skip=secrets", "--timeout=2"],
+        hermeticDeps(),
+      ),
     );
     expect(out).not.toContain("[kubernetes]");
     expect(out).not.toContain("[docker]");
@@ -122,7 +148,7 @@ describe("doctor --skip=<system> suppresses the named probe", () => {
 
 describe("doctor probes (via injected deps)", () => {
   function stubDeps(overrides: Partial<DoctorDeps> = {}): DoctorDeps {
-    return {
+    const deps: DoctorDepsWithUnitSecrets = {
       // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
       checkAgent: async () => [{ system: "agent", status: "ok", message: "stub agent ok" }],
       // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
@@ -131,8 +157,10 @@ describe("doctor probes (via injected deps)", () => {
       checkKubernetes: async () => [{ system: "kubernetes", status: "ok", message: "stub k8s ok" }],
       checkSecrets: () => [{ system: "secrets", status: "ok", message: "stub secrets ok" }],
       units: { platform: "darwin", unitDir: "/nonexistent" },
+      unitSecrets: hermeticUnitSecrets,
       ...overrides,
     };
+    return deps;
   }
 
   test('all ok → exit 0 + summary reads "all clear"', async () => {

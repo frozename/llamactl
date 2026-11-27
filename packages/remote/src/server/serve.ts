@@ -35,6 +35,8 @@ import {
   type WorkerRpcHostOptions,
 } from "../inference/procedures.js";
 import { dispatchProxyRequest, publishUnifiedPeerSnapshots } from "../proxy/create-proxy.js";
+import { captureInference, scheduleCaptureExpiry } from "../request-capture/record.js";
+import { CAPTURE_PATH, captureResponse, REQUEST_ID } from "../request-capture/store.js";
 import { runProfileSwitchBootRecovery } from "../residency/boot-recovery.js";
 import {
   declaredManifestSignature,
@@ -72,6 +74,7 @@ import {
   createServiceTokenVerifier,
   extractBearer,
   type NamedBearerToken,
+  PRIMARY_BEARER_NAME,
   relayPrincipalOf,
   SERVICE_TOKEN_HEADER,
   SERVICE_TOKEN_MAX_LENGTH,
@@ -93,9 +96,11 @@ import {
   openaiUpstreamErrorsTotal,
   setAgentRuntimeIdentity,
   setModelHostMetricsNode,
+  setRuntimeProcessMemoryReader,
   statusClass,
 } from "./metrics.js";
 import { startPeerSnapshotPoller } from "./peer-snapshot-poller.js";
+import { defaultProcessMemoryReader, type ProcessMemoryReader } from "./process-memory.js";
 import { handleRagChatCompletions } from "./rag-chat-endpoint.js";
 import { handleRegister, type RegisterHandlerOptions } from "./register.js";
 import { loadCert } from "./tls.js";
@@ -110,7 +115,8 @@ export interface StartAgentOptions {
    * Named operator bearer tokens (#218), read on every request, so an
    * added or revoked token applies without a restart. Each authenticates
    * the authed API routes exactly as `tokenHash` does; the tunnel relay,
-   * self-update and rollback stay primary-only.
+   * self-update and rollback stay primary-only, so their admitted hops are
+   * audited under the primary's name 'default'.
    */
   bearerTokens?: () => readonly NamedBearerToken[] | undefined;
   /**
@@ -315,6 +321,8 @@ export interface StartAgentOptions {
    */
   runtimeRole?: string;
   runtimeMemoryBudgetBytes?: number;
+  /** Tests inject a deterministic reader; production uses the platform probe. */
+  processMemoryReader?: ProcessMemoryReader;
 }
 
 export interface RunningAgent {
@@ -468,6 +476,11 @@ function makeNoAuthGate(noAuth: boolean, bindHost: string): NoAuthGate {
  * then the audit sink — `onAuthenticated` when given, else the default
  * stderr line. The sink is wrapped so a throwing hook never fails the
  * request; on error a note without any token is written instead.
+ *
+ * The privileged routes (self-update, rollback, operator tunnel-relay
+ * hops) verify the primary bearer inside their own handlers, so they
+ * reach this through `primaryBearerAuditor` and are recorded under
+ * 'default'; named tokens stay refused there.
  */
 function recordBearerUse(
   req: Request,
@@ -541,7 +554,9 @@ async function handleOpenAIRoute(
       return Response.json(openaiProxy.projectModelsResponseBody(full, includeDeclared));
     }
     server.timeout?.(req, proxiedRouteIdleSeconds());
-    const res = await dispatchProxyRequest(req);
+    const res = record
+      ? await captureInference(req, url.pathname, () => dispatchProxyRequest(req))
+      : await dispatchProxyRequest(req);
     status = res.status;
     if (status === 502) openaiUpstreamErrorsTotal.inc();
     return res;
@@ -571,6 +586,17 @@ function proxiedRouteIdleSeconds(): number {
 }
 
 type AgentFetchHandler = (req: Request, server: AgentFetchServer) => Response | Promise<Response>;
+
+/**
+ * The audit closure the privileged routes hand their bearer check (#218).
+ * Those routes verify the primary bearer only, so the admitted hop is
+ * recorded under `PRIMARY_BEARER_NAME`.
+ */
+function primaryBearerAuditor(req: Request, url: URL, opts: StartAgentOptions): () => void {
+  return (): void => {
+    recordBearerUse(req, url.pathname, PRIMARY_BEARER_NAME, opts);
+  };
+}
 
 /**
  * Infrastructure routes that precede the API surface: health checks,
@@ -614,6 +640,7 @@ function handleInfraRoutes(
       opts.tokenHash,
       opts.tunnelJournalPath,
       opts.tunnelCentral?.workerRpcRelay?.()?.tokenHashes ?? [],
+      primaryBearerAuditor(req, url, opts),
     );
   }
   // Bootstrap registration — unauthenticated by design (nodes have
@@ -640,15 +667,23 @@ function handleInfraRoutes(
   // raw binary body + X-Sha256 header, atomic-replaces the running
   // binary, and exits so launchd respawns into the new build.
   // Used by `llamactl agent update --node <n>` from the control
-  // plane; never exposed unauthenticated.
+  // plane; never exposed unauthenticated. An admitted primary bearer is
+  // audited (#218) before the build-stamp refusal.
   if (url.pathname === "/agent/update") {
-    return handleAgentUpdate(req, { tokenHash: opts.tokenHash });
+    return handleAgentUpdate(req, {
+      tokenHash: opts.tokenHash,
+      onAuthenticated: primaryBearerAuditor(req, url, opts),
+    });
   }
   // Companion to /agent/update — restores `<execPath>.previous`
   // over the running binary + exits 0 so launchd respawns the
-  // prior version. Symmetric: calling it twice flips back.
+  // prior version. Symmetric: calling it twice flips back. Like update, an
+  // admitted primary bearer is audited before any refusal.
   if (url.pathname === "/agent/rollback") {
-    return handleAgentRollback(req, { tokenHash: opts.tokenHash });
+    return handleAgentRollback(req, {
+      tokenHash: opts.tokenHash,
+      onAuthenticated: primaryBearerAuditor(req, url, opts),
+    });
   }
   return null;
 }
@@ -675,6 +710,16 @@ function forwardingServiceToken(server: TunnelServer, req: Request): TunnelServe
   };
 }
 
+function inspectCapturedRequest(req: Request, pathname: string, opts: StartAgentOptions): Response {
+  if (bearerNameFor(extractBearer(req), opts.tokenHash, opts.bearerTokens?.() ?? []) === null) {
+    return unauthorizedResponse();
+  }
+  if (req.method !== "GET") return new Response(null, { status: 405 });
+  if (pathname === CAPTURE_PATH) return captureResponse();
+  const id = pathname.slice(CAPTURE_PATH.length + 1);
+  return REQUEST_ID.test(id) ? captureResponse(id) : new Response(null, { status: 404 });
+}
+
 /**
  * Bearer-auth'd API routes: metrics, RAG-aware chat completions, the
  * fleet snapshot, and the OpenAI-compatible /v1 gateway. Order is
@@ -689,6 +734,9 @@ function handleAuthedApiRoutes(
   gate: NoAuthGate,
   server: AgentFetchServer,
 ): Response | Promise<Response> | null {
+  if (url.pathname === CAPTURE_PATH || url.pathname.startsWith(CAPTURE_PATH + "/")) {
+    return inspectCapturedRequest(req, url.pathname, opts);
+  }
   // Prometheus scrape endpoint. Bearer-auth'd like everything else;
   // scrapers can set the standard Authorization header.
   if (url.pathname === "/metrics") {
@@ -747,9 +795,8 @@ function isAdmittedProxyIngress(
   );
 }
 
-// #281 (DF-08): the chat-completions branch is split out so the admission
-// gate is opt-in with no closure or wrapper on the flag-off path — the
-// existing RAG/proxy call stays exactly as it was when no admission is set.
+// Capture the original chat before admission and RAG rewrite so results
+// describe what the client sent, including requests refused during admission.
 function handleChatCompletionsRoute(
   req: Request,
   url: URL,
@@ -762,19 +809,14 @@ function handleChatCompletionsRoute(
   if (denied) return denied;
   server.timeout?.(req, proxiedRouteIdleSeconds());
   const admission = opts.chatCompletionsAdmission;
-  if (admission === undefined) {
-    return handleRagChatCompletions(req, {
+  const forward = (request: Request): Promise<Response> =>
+    handleRagChatCompletions(request, {
       appRouter,
       fallback: (forwarded) =>
         handleOpenAIRoute(forwarded, url, clientAddress, opts, gate, server, false),
     });
-  }
-  return admitChatCompletions(req, admission, (admitted) =>
-    handleRagChatCompletions(admitted, {
-      appRouter,
-      fallback: (forwarded) =>
-        handleOpenAIRoute(forwarded, url, clientAddress, opts, gate, server, false),
-    }),
+  return captureInference(req, url.pathname, () =>
+    admission === undefined ? forward(req) : admitChatCompletions(req, admission, forward),
   );
 }
 
@@ -797,8 +839,10 @@ function handleAdmittedProxyRoute(
   const denied = authGateReject(req, url.pathname, clientAddress, opts, gate);
   if (denied) return denied;
   server.timeout?.(req, proxiedRouteIdleSeconds());
-  return admitChatCompletions(req, admission, (admitted) =>
-    handleOpenAIRoute(admitted, url, clientAddress, opts, gate, server, false),
+  return captureInference(req, url.pathname, () =>
+    admitChatCompletions(req, admission, (admitted) =>
+      handleOpenAIRoute(admitted, url, clientAddress, opts, gate, server, false),
+    ),
   ).catch((err: unknown) => {
     console.warn("admitted proxy route forward failed", { path: url.pathname, error: err });
     return new Response(JSON.stringify({ error: { type: "api_error" } }), {
@@ -881,6 +925,7 @@ function createAgentFetchHandler(args: {
   workerRpc: WorkerRpcServing | null;
 }): AgentFetchHandler {
   const { opts, endpoint, tunnelServer, gate, workerRpc } = args;
+  scheduleCaptureExpiry();
   return (req, server) => {
     const url = new URL(req.url);
     const clientAddress = typeof server.requestIP === "function" ? server.requestIP(req) : null;
@@ -1646,6 +1691,7 @@ function applyAgentRuntimeIdentity(opts: StartAgentOptions): void {
       ? { memoryBudgetBytes: opts.runtimeMemoryBudgetBytes }
       : {}),
   });
+  setRuntimeProcessMemoryReader(opts.processMemoryReader ?? defaultProcessMemoryReader());
 }
 
 function startAgentServerAfterHandlers(

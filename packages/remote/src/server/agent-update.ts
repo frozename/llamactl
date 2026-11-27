@@ -27,9 +27,10 @@ import { unauthorizedResponse, verifyBearer } from "./auth.js";
  * to respawn within the deadline it restores `.previous` and relaunches
  * the agent directly so the node self-heals without operator intervention.
  *
- * Bearer-auth'd with the same token as every other agent endpoint —
- * only callers with the agent's existing kubeconfig credentials can
- * push an update.
+ * Bearer-auth'd with the primary token — only callers holding the
+ * agent's original kubeconfig credential can push an update, and named
+ * tokens (#218) are refused here. An admitted hop is audited once,
+ * under the primary's name 'default', before any later refusal.
  *
  * Same-platform, signed-by-an-identity-the-target-trusts is the
  * operator's contract. The agent does not validate the signature
@@ -206,6 +207,11 @@ export interface AgentUpdateOptions {
    * non-compiled install or missing stamp fields.
    */
   buildStamp?: nodeFacts.BuildStamp;
+  /**
+   * Called once, right after the primary bearer verifies (#218 audit),
+   * never with the token or its hash.
+   */
+  onAuthenticated?: () => void;
 }
 
 export interface AgentUpdateResult {
@@ -259,6 +265,8 @@ export async function handleAgentUpdate(req: Request, opts: AgentUpdateOptions):
   if (!verifyBearer(req, opts.tokenHash)) {
     return unauthorizedResponse();
   }
+  // #218: the hop is audited on admission, before any later refusal.
+  opts.onAuthenticated?.();
 
   // #745: refuse self-update unless the agent is a compiled, build-stamped binary.
   const refusal = selfUpdateRefusal(opts);
@@ -359,6 +367,11 @@ export interface AgentRollbackOptions {
   tokenHash: string;
   selfPath?: string;
   exitAfter?: boolean;
+  /**
+   * Called once, right after the primary bearer verifies (#218 audit),
+   * never with the token or its hash.
+   */
+  onAuthenticated?: () => void;
 }
 
 export interface AgentRollbackResult {
@@ -391,6 +404,8 @@ export function handleAgentRollback(req: Request, opts: AgentRollbackOptions): R
   if (!verifyBearer(req, opts.tokenHash)) {
     return unauthorizedResponse();
   }
+  // #218: the hop is audited on admission, before the missing-previous refusal.
+  opts.onAuthenticated?.();
 
   const selfPath = opts.selfPath ?? process.execPath;
   const previousPath = `${selfPath}.previous`;

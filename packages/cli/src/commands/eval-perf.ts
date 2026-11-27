@@ -10,6 +10,7 @@ import type {
   PerfSuitePreset,
   PerfSuiteReaderReasons,
   PerfSuiteReaders,
+  ProcPidRusage,
   ProvenanceReaders,
 } from "@llamactl/eval";
 
@@ -54,6 +55,7 @@ export interface EvalPerfTestSeams {
   provenanceReaders?: ProvenanceReaders;
   platform?: NodeJS.Platform;
   readFile?: (path: string) => Promise<string>;
+  procPidRusage?: ProcPidRusage;
   probeGtt?: () => Promise<GttObservation>;
   clock?: { now(): number };
   launch?: EvalPerfLaunchDeps;
@@ -295,6 +297,7 @@ function hostReaders(
     pid,
     ...(seams.platform !== undefined ? { platform: seams.platform } : {}),
     ...(seams.readFile !== undefined ? { readFile: seams.readFile } : {}),
+    ...(seams.procPidRusage !== undefined ? { procPidRusage: seams.procPidRusage } : {}),
   });
   const reasons: PerfSuiteReaderReasons = { ...host.reasons };
   const readers: PerfSuiteReaders = { ...host.readers };

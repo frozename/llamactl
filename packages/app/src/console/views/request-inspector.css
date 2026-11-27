@@ -1,0 +1,55 @@
+.request-inspector {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.inspector-row {
+  display: grid;
+  grid-template-columns: minmax(9em, auto) minmax(9em, 1fr) minmax(7em, auto) auto;
+  align-items: center;
+  gap: 8px 16px;
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--console-inset);
+  border: 1px solid var(--console-border);
+  border-radius: 6px;
+  color: var(--console-text);
+  cursor: pointer;
+  text-align: start;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.inspector-row[aria-expanded="true"],
+.inspector-row:hover {
+  background: var(--console-hover);
+}
+
+.inspector-detail {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--console-border);
+  border-radius: 8px;
+  background: var(--console-inset);
+  min-width: 0;
+}
+
+.inspector-detail pre {
+  max-height: 24em;
+  overflow: auto;
+  padding: 10px;
+  border-radius: 5px;
+  background: var(--console-bg);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--console-mono);
+  font-size: 12px;
+}
+
+@media (max-width: 680px) {
+  .inspector-row {
+    grid-template-columns: 1fr 1fr;
+  }
+}
