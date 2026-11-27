@@ -19,7 +19,7 @@ import {
 } from "./bench/index.js";
 import { resolveBuildId } from "./build.js";
 import { ctxForModel } from "./ctx.js";
-import { resolveDraftModelPathArgs } from "./engines/llamacpp.js";
+import { hasDraftModelPathArg, resolveDraftModelPathArgs } from "./engines/llamacpp.js";
 import {
   awaitScopeExec,
   buildScopeArgv,
@@ -216,10 +216,10 @@ function safeRetryArgs(): string[] {
   ];
 }
 
+const MMPROJ_INPUT_FLAGS = ["--mmproj", "-mm", "--mmproj-url", "--mmproj-auto"];
+
 function hasMmprojArg(args: readonly string[]): boolean {
-  return args.some(
-    (a) => a === "--mmproj" || a === "-mm" || a === "--mmproj-url" || a === "--mmproj-auto",
-  );
+  return MMPROJ_INPUT_FLAGS.some((flag) => args.includes(flag));
 }
 
 // ---- PID helpers -------------------------------------------------------
@@ -666,6 +666,7 @@ export interface PreparedManagedServerStart {
     readonly artifacts: ModelRunArtifacts;
   };
   readonly effectiveSpecDigest: string;
+  readonly additionalModelInputs: boolean;
   artifactRefusal: () => string | undefined;
   /** Recheck owner policy synchronously at every spawn attempt, including retries and fallback. */
   start: (
@@ -2260,6 +2261,9 @@ export function prepareManagedServerStart(
   return Object.freeze({
     effectiveSpecDigest,
     launch,
+    additionalModelInputs:
+      hasFlag(args, ...MMPROJ_INPUT_FLAGS, "--mtp-head", "--lora", "--lora-scaled") ||
+      hasDraftModelPathArg(args),
     artifactRefusal: (): string | undefined => managedArtifactRefusal(pinned),
     start: (
       commitReadiness: NonNullable<StartServerOptions["commitReadiness"]>,
