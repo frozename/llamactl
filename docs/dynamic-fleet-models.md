@@ -258,6 +258,30 @@ Observable signals operators use today:
 - the guard's Running / Starting / Unknown peer states;
 - template readiness probes (e.g. `/ready` flipping to 200).
 
+### Recording a measured memory envelope
+
+`llamactl admit calibrate <local-evidence.json>` imports attributed samples
+collected on the local host into `measured-calibrations.sqlite` under the
+llamactl state directory (`DEV_STORAGE` or `~/.llamactl`). The report has
+three fields.
+
+- `key` contains `artifactRevision`, `engine`, `engineBuild`, `ctx`,
+  `kvType`, `speculative`, `prefillBatch`, and `concurrency`. Set
+  `speculative.mode` to `none`, `mtp`, or `draft`, with the draft
+  `artifactRevision` for `draft`.
+- `samples` contains `status`, `source`, `observedAtMs`, `processBytes`,
+  `processDeviceBytes`, and `sharedDeviceBytes` for each observation. Use
+  epoch milliseconds for sample time and separate host-process bytes from
+  attributable device bytes. Use `null` for an unavailable byte reading.
+  Shared-device readings never count toward a model's allocation.
+- `options` contains `minSamples` and `overheadFraction`.
+
+The existing `admit measure` RSS cache is separate. The ModelHost admission
+adapter can read the calibration store when its caller supplies the exact
+key and a NodeRun residency policy. It uses only a fresh match for the local
+node. Automatic launch identity discovery and sample collection remain
+separate work.
+
 ### Residency lifecycle states
 
 `packages/core/src/residency/lifecycle.ts` is pure and synchronous:

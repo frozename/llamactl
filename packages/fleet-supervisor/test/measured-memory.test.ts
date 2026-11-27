@@ -1,9 +1,15 @@
+import { memoryCalibrationKey, type MemoryCalibrationKey } from "@llamactl/core/resources/memory";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { readMeasuredMemoryCache, writeMeasuredMemoryCache } from "../src/measured-memory.js";
-import { mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
+import {
+  readMeasuredMemoryCache,
+  readMeasuredMemoryCalibration,
+  recordMeasuredMemoryCalibration,
+  writeMeasuredMemoryCache,
+} from "../src/measured-memory.js";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 const ORIG_ENV_KEY = "LLAMACTL_MEASURED_MEMORY_PATH";
 
@@ -139,5 +145,92 @@ describe("writeMeasuredMemoryCache", () => {
     process.env[ORIG_ENV_KEY] = nested;
     writeMeasuredMemoryCache("model.gguf::", makeEntry("w", 3000));
     expect(readMeasuredMemoryCache("model.gguf::")).toEqual({ peakMb: 3000 });
+  });
+});
+
+describe("durable memory calibration", () => {
+  const key: MemoryCalibrationKey = {
+    artifactRevision: "revision",
+    engine: "llama.cpp",
+    engineBuild: "build",
+    ctx: 8192,
+    kvType: "f16",
+    speculative: { mode: "mtp" },
+    prefillBatch: 512,
+    concurrency: 1,
+  };
+  const sampleAt = 1_700_000_000_000;
+  function report(
+    at: number | null,
+    deviceBytes: number | null = 4096,
+  ): Parameters<typeof recordMeasuredMemoryCalibration>[0] {
+    return {
+      key,
+      samples: [
+        {
+          status: "ok",
+          source: "recorded",
+          observedAtMs: at,
+          processBytes: 1024,
+          processDeviceBytes: deviceBytes,
+          sharedDeviceBytes: 65536,
+        },
+      ],
+      options: { minSamples: 1, overheadFraction: 0.25 },
+    };
+  }
+
+  let dir: string;
+  let path: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "llamactl-memory-calibration-"));
+    path = join(dir, "measured-calibrations.sqlite");
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("retains attributed bytes and sample time across reopen and ignores a late older report", () => {
+    const canonical = memoryCalibrationKey(key)!;
+    expect(recordMeasuredMemoryCalibration(report(sampleAt), path)).toMatchObject({
+      ok: true,
+      recorded: true,
+    });
+    expect(recordMeasuredMemoryCalibration(report(sampleAt - 100, 8192), path)).toMatchObject({
+      ok: true,
+      recorded: false,
+    });
+    expect(readMeasuredMemoryCalibration(canonical, path)).toMatchObject({
+      key: canonical,
+      known: true,
+      sampleCount: 1,
+      peakBytes: 5120,
+      calibrationOverheadBytes: 1280,
+      envelopeBytes: 6400,
+      attribution: "process",
+      measuredAtMs: sampleAt,
+    });
+    for (const changed of [
+      { ...key, ctx: 16384 },
+      { ...key, engineBuild: "other-build" },
+      { ...key, speculative: { mode: "none" as const } },
+    ]) {
+      expect(readMeasuredMemoryCalibration(memoryCalibrationKey(changed)!, path)).toBeNull();
+    }
+  });
+
+  test("refuses to persist unattributed, untimed, or future samples", () => {
+    expect(recordMeasuredMemoryCalibration(report(sampleAt, null), path)).toEqual({
+      ok: false,
+      reason: "unknown-device",
+    });
+    for (const at of [null, Date.now() + 60_000]) {
+      expect(recordMeasuredMemoryCalibration(report(at), path)).toEqual({
+        ok: false,
+        reason: "invalid-input",
+      });
+    }
+    expect(readMeasuredMemoryCalibration(memoryCalibrationKey(key)!, path)).toBeNull();
+    expect(existsSync(path)).toBe(false);
   });
 });

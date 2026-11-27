@@ -1,3 +1,8 @@
+import { memoryCalibrationKey } from "@llamactl/core/resources/memory";
+import {
+  measuredCalibrationStorePath,
+  readMeasuredMemoryCalibration,
+} from "@llamactl/fleet-supervisor/measured-memory";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -77,4 +82,52 @@ test("the larger of residentGiB and expectedMemoryGiB is charged", async () => {
 test("exit 2 only when neither expectedMemoryGiB nor residentGiB is declared", async () => {
   const path = writeHostManifest({}, "admit-undeclared");
   expect(await runQuiet([path, "--headroom-mb=0", "--safety-factor=0"])).toBe(2);
+});
+
+test("admit calibrate records attributed observations from a local report", async () => {
+  const state = join(dir, "calibration-state");
+  const evidence = join(dir, "calibration.json");
+  const key = {
+    artifactRevision: "model-revision",
+    engine: "omlx",
+    engineBuild: "build-revision",
+    ctx: 8192,
+    kvType: "f16",
+    speculative: { mode: "none" as const },
+    prefillBatch: 512,
+    concurrency: 1,
+  };
+  writeFileSync(
+    evidence,
+    JSON.stringify({
+      key,
+      samples: [
+        {
+          status: "ok",
+          source: "recorded-process-observation",
+          observedAtMs: 1_700_000_000_000,
+          processBytes: 1024,
+          processDeviceBytes: 4096,
+          sharedDeviceBytes: null,
+        },
+      ],
+      options: { minSamples: 1, overheadFraction: 0.25 },
+    }),
+  );
+  const previous = process.env["DEV_STORAGE"];
+  process.env["DEV_STORAGE"] = state;
+  try {
+    expect(await runQuiet(["calibrate", evidence])).toBe(0);
+    expect(
+      readMeasuredMemoryCalibration(memoryCalibrationKey(key)!, measuredCalibrationStorePath()),
+    ).toMatchObject({
+      attribution: "process",
+      peakBytes: 5120,
+      envelopeBytes: 6400,
+      measuredAtMs: 1_700_000_000_000,
+    });
+  } finally {
+    if (previous === undefined) delete process.env["DEV_STORAGE"];
+    else process.env["DEV_STORAGE"] = previous;
+  }
 });

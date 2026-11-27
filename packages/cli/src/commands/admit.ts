@@ -4,9 +4,9 @@ import { workloadStore } from "@llamactl/remote";
 import { spawnSync } from "node:child_process";
 import yaml from "yaml";
 
-import { required } from "../required.js";
 import { isRecord } from "../runtime-shape.js";
 import { readFileSync } from "../safe-fs.js";
+import { runAdmitCalibrate } from "./admit-calibrate.js";
 import { runAdmitMeasure } from "./admit-measure.js";
 
 function requireFinite(value: number, flag: string): number {
@@ -20,6 +20,7 @@ const USAGE = `llamactl admit — dry-run predictive admission check for a workl
 
 USAGE:
   llamactl admit <workload-name-or-yaml-path> [flags]
+  llamactl admit calibrate <local-evidence.json>
 
 When given a workload name, reads templates/workloads/<name>.yaml.
 When given a path ending in .yaml, reads that file directly.
@@ -227,13 +228,19 @@ function buildAdmitModelKey(manifest: AdmitManifest): string | undefined {
 }
 
 export async function runAdmit(args: string[]): Promise<number> {
-  if (args[0] === "measure") return await runAdmitMeasure(args.slice(1));
-  if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
-    process.stdout.write(`${USAGE}\n`);
-    return args.length === 0 ? 2 : 0;
+  const [target, ...flags] = args;
+  switch (target) {
+    case "measure":
+      return await runAdmitMeasure(flags);
+    case "calibrate":
+      return runAdmitCalibrate(flags);
+    case undefined:
+    case "--help":
+    case "-h":
+      process.stdout.write(`${USAGE}\n`);
+      return target === undefined ? 2 : 0;
   }
-  const target = required(args[0]);
-  const parsed = parseAdmitFlags(args.slice(1));
+  const parsed = parseAdmitFlags(flags);
   if ("error" in parsed) {
     console.error(parsed.error);
     return 2;
