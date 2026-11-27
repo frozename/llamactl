@@ -72,7 +72,7 @@ type FakeState = {
   model: FakeModel;
   activity: { active: number; waiting: number };
   loadMode: "ok" | 409 | 500 | 507 | "hang";
-  unloadMode: "ok" | 500 | "hang";
+  unloadMode: "ok" | "ok-stale" | 500 | "hang";
 };
 
 type FakeCounts = {
@@ -240,8 +240,10 @@ function unloadResponse(ctx: FakeContext, id: string): Response | Promise<Respon
   if (!ctx.state.model.loaded) {
     return jsonError(400, `Model not loaded: ${id}`);
   }
-  ctx.state.model.loaded = false;
-  ctx.state.model.is_loading = false;
+  if (mode !== "ok-stale") {
+    ctx.state.model.loaded = false;
+    ctx.state.model.is_loading = false;
+  }
   return Response.json({ status: "ok", model_id: id });
 }
 
@@ -597,6 +599,19 @@ describe("managed oMLX residency", () => {
       reservation: "uncertain",
       httpStatus: 500,
     });
+  });
+
+  test("M7 successful unload without status proof keeps the managed reservation charged", async () => {
+    const fake = startFakeOmlx();
+    fake.state.unloadMode = "ok-stale";
+    const mod = await loadManagedModule();
+    await expectUncertainAfterAmbiguousUnload(mod, fake, {
+      kind: "ambiguous",
+      reason: "UnloadUnconfirmed",
+      reservation: "uncertain",
+      httpStatus: 200,
+    });
+    expect(fake.state.model.loaded).toBe(true);
   });
 
   test("M7 unload timeout demotes the claim to uncertain", async () => {
