@@ -17,7 +17,11 @@ import {
 } from "@llamactl/core/residency/admission";
 import { withManagedRuntimeMutation } from "@llamactl/core/residency/managed-runtime";
 import { projectManagedCapacity } from "@llamactl/core/resources/managed-capacity";
-import { listWorkloadDirs, workloadRuntimeDir } from "@llamactl/core/workloadRuntime";
+import {
+  listWorkloadDirs,
+  listWorkloadRoutes,
+  workloadRuntimeDir,
+} from "@llamactl/core/workloadRuntime";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
@@ -47,6 +51,7 @@ import {
   type ManagedApplyBudget,
   type ManagedLaunchAdmission,
   type ManagedLaunchRequest,
+  type ManagedProfileWorkloadObservation,
 } from "./managed-launch-admission.js";
 import {
   evaluateManagedProfileStart,
@@ -478,16 +483,20 @@ function preflightManagedProfile(
   const planned = new Set([...plan.retained, ...plan.victims]);
   const unexpected = claims.find((row) => row.state !== "resident" || !planned.has(row.runtimeKey));
   if (unexpected !== undefined) return `ManagedUnplannedRuntime: ${unexpected.runtimeKey}`;
-  for (const name of victims) {
+  const unverifiedVictim = plan.victims.find((name) => {
     const row = claims.find((claim) => claim.runtimeKey === name);
-    if (
+    return (
       row?.state !== "resident" ||
       row.kind === undefined ||
       authority.prepareStopRelease(name, row.kind) === undefined
-    ) {
-      return `ManagedVictimUnverified: ${name}`;
-    }
-  }
+    );
+  });
+  if (unverifiedVictim !== undefined) return `ManagedVictimUnverified: ${unverifiedVictim}`;
+
+  const unverifiedRetained = plan.retained.find(
+    (name) => !claims.some((row) => row.runtimeKey === name && verifiedResident(row, authority)),
+  );
+  if (unverifiedRetained !== undefined) return `ManagedRetainedUnverified: ${unverifiedRetained}`;
 
   const projected: ManagedAdmissionClaim[] = claims.filter((row) => !victims.has(row.runtimeKey));
   for (const name of plan.replacements) {
@@ -499,6 +508,35 @@ function preflightManagedProfile(
     projected.push({ ...incoming, state: "pending", claimId: `profile:${name}` });
   }
   return undefined;
+}
+
+function profileWorkload(
+  opts: NodeManagedAdmissionOptions,
+  resolved: ReturnType<typeof resolveEnv>,
+  authority: AdmissionAuthority,
+  workload: string,
+  kind: ManagedWorkloadKind,
+): ManagedProfileWorkloadObservation | undefined {
+  const unknown = { state: "unknown" } as const;
+  if (
+    opts.verifyJournalPair?.() !== undefined ||
+    !authority.isOperational() ||
+    unresolvedInference(opts.inferenceHolds?.state(workload))
+  ) {
+    return unknown;
+  }
+  const claim = authority.snapshot().find((row) => row.runtimeKey === workload);
+  if (claim === undefined) return undefined;
+  if (claim.kind !== kind || claim.state !== "resident" || claim.native !== undefined)
+    return unknown;
+  const proof = authority.prepareStopRelease(workload, kind);
+  const pid = claim.generations.at(-1)?.pid;
+  if (proof === undefined || pid === undefined || proof.verifyGeneration(pid) !== "alive")
+    return unknown;
+  const routes = readDesired(() => listWorkloadRoutes(resolved, workload));
+  return routes?.some((route) => route.kind === kind && route.pid === pid)
+    ? { state: "running", allocationGiB: claim.allocationGiB }
+    : unknown;
 }
 
 interface RuntimeRecord {
@@ -735,6 +773,7 @@ export async function openNodeManagedAdmission(opts: NodeManagedAdmissionOptions
       ownsNode: (name) => aliases.has(name),
       ownerNodeId: opts.nodeName,
       readStatus: () => managedReadout(opts, runtime.authority, budgetGiB),
+      observeProfileWorkload: profileWorkload.bind(null, opts, resolved, runtime.authority),
       preflightProfile(plan): string | undefined {
         const runtimeRefusal = inspectRuntime();
         if (runtimeRefusal !== undefined) return runtimeRefusal;

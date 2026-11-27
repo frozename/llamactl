@@ -49,12 +49,20 @@ export interface ManagedAdmissionReadout {
   }[];
 }
 
+export type ManagedProfileWorkloadObservation =
+  | { state: "running"; allocationGiB: number }
+  | { state: "unknown" };
+
 export interface ManagedLaunchAdmission {
   prepareStopRelease?: AdmissionAuthority["prepareStopRelease"];
   runOwnedLifecycle?: <T>(run: () => T) => T;
   ownsNode?: (name: string) => boolean;
   ownerNodeId?: string;
   readStatus?: () => ManagedAdmissionReadout;
+  observeProfileWorkload?: (
+    workload: string,
+    kind: ManagedWorkloadKind,
+  ) => ManagedProfileWorkloadObservation | undefined;
   verifyParkedOmlxProbe?: VerifyParkedOmlxProbe;
   preflightProfile?: (
     plan: Pick<OkPlan, "victims" | "replacements" | "retained">,
