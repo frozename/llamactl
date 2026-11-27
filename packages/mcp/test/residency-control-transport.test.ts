@@ -101,7 +101,11 @@ test("managed residency MCP uses the selected authenticated direct and tunnel en
       },
     });
     const centralUrl = central.url;
-    const PinnedWebSocket = class extends WebSocket {
+    const BunWebSocket = WebSocket as unknown as new (
+      url: string,
+      opts: { tls: { ca: string } },
+    ) => WebSocket;
+    const PinnedWebSocket = class extends BunWebSocket {
       constructor(url: string) {
         super(url, { tls: { ca: cert.certPem } });
       }
