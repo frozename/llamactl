@@ -112,14 +112,19 @@ function cgroupDirectories(raw: string): string[] | null {
   return parts.map((part) => (directory += "/" + part));
 }
 
-function finiteCgroupLimit(read: ReadFile, path: string): { limit: number; available: number } {
-  const rawLimit = read(path + "/memory.max").trim();
-  if (rawLimit === "max")
-    return { limit: Number.POSITIVE_INFINITY, available: Number.POSITIVE_INFINITY };
-  const limit = unsigned(rawLimit);
+function cgroupMemoryLimit(raw: string): number | null {
+  return raw.trim() === "max" ? Number.POSITIVE_INFINITY : unsigned(raw);
+}
+
+function cgroupMemoryBounds(read: ReadFile, path: string): { limit: number; available: number } {
+  const limit = cgroupMemoryLimit(read(path + "/memory.max"));
+  const high = cgroupMemoryLimit(read(path + "/memory.high"));
+  if (limit === null || high === null) throw new Error("unverified cgroup memory bound");
+  const headroomLimit = Math.min(limit, high);
+  if (!Number.isFinite(headroomLimit)) return { limit, available: headroomLimit };
   const usage = unsigned(read(path + "/memory.current"));
-  if (limit === null || usage === null) throw new Error("unverified cgroup memory bound");
-  return { limit, available: Math.max(0, limit - usage) };
+  if (usage === null) throw new Error("unverified cgroup memory usage");
+  return { limit, available: Math.max(0, headroomLimit - usage) };
 }
 
 function linuxCgroup(read: ReadFile): {
@@ -136,7 +141,7 @@ function linuxCgroup(read: ReadFile): {
     let availableBytes = Number.POSITIVE_INFINITY;
     let pressure: ManagedMemoryPressure = "normal";
     for (const path of directories) {
-      const view = finiteCgroupLimit(read, path);
+      const view = cgroupMemoryBounds(read, path);
       limitBytes = Math.min(limitBytes, view.limit);
       availableBytes = Math.min(availableBytes, view.available);
       pressure = worsePressure(
@@ -147,8 +152,12 @@ function linuxCgroup(read: ReadFile): {
     if (read("/proc/self/cgroup").trim() !== membership) {
       return { scope: unknownScope, pressure: null };
     }
-    const scope: ManagedCapacityScope = Number.isFinite(limitBytes)
-      ? { kind: "cgroup-v2", limitBytes, availableBytes }
+    const scope: ManagedCapacityScope = Number.isFinite(availableBytes)
+      ? {
+          kind: "cgroup-v2",
+          limitBytes: Number.isFinite(limitBytes) ? limitBytes : null,
+          availableBytes,
+        }
       : hostScope;
     return { scope, pressure };
   } catch {

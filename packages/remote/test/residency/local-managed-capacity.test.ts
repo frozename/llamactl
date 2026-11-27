@@ -73,22 +73,53 @@ test("Linux bounds physical and current launch bytes by every visible finite mem
     linuxFixture({
       "/proc/self/cgroup": "0::/parent/child\n",
       [`${parent}/memory.max`]: String(12 * GiB),
+      [`${parent}/memory.high`]: String(8 * GiB),
       [`${parent}/memory.current`]: String(5 * GiB),
       [`${parent}/memory.pressure`]: PSI,
       [`${child}/memory.max`]: String(16 * GiB),
+      [`${child}/memory.high`]: "max",
       [`${child}/memory.current`]: String(3 * GiB),
       [`${child}/memory.pressure`]: PSI,
     }),
   );
   expect(sample).toMatchObject({
     physicalBytes: 64 * GiB,
-    scope: { kind: "cgroup-v2", limitBytes: 12 * GiB, availableBytes: 7 * GiB },
+    scope: { kind: "cgroup-v2", limitBytes: 12 * GiB, availableBytes: 3 * GiB },
   });
   expect(projectManagedCapacity(sample, { nowMs: NOW, configuredBudgetGiB: 96 })).toMatchObject({
     ok: true,
     ledgerCeilingGiB: 12,
-    launchHeadroomGiB: 7,
-    budgetGiB: 7,
+    launchHeadroomGiB: 3,
+    budgetGiB: 3,
+  });
+});
+
+test("Linux honors memory.high even when the cgroup has no finite hard ceiling", () => {
+  const leaf = `${CGROUP}/inference`;
+  const observation = (high: string): ReturnType<typeof readLocalManagedCapacity> =>
+    readLocalManagedCapacity(
+      linuxFixture({
+        "/proc/self/cgroup": "0::/inference\n",
+        [`${leaf}/memory.max`]: "max",
+        [`${leaf}/memory.high`]: high,
+        [`${leaf}/memory.current`]: String(5 * GiB),
+        [`${leaf}/memory.pressure`]: PSI,
+      }),
+    );
+  const sample = observation(String(8 * GiB));
+  expect(sample.scope).toEqual({ kind: "cgroup-v2", limitBytes: null, availableBytes: 3 * GiB });
+  expect(projectManagedCapacity(sample, { nowMs: NOW, configuredBudgetGiB: 24 })).toMatchObject({
+    ok: true,
+    ledgerCeilingGiB: 24,
+    launchHeadroomGiB: 3,
+  });
+  expect(projectManagedCapacity(observation(String(4 * GiB)), { nowMs: NOW })).toEqual({
+    ok: false,
+    reason: "NoMemoryHeadroom",
+  });
+  expect(projectManagedCapacity(observation("invalid"), { nowMs: NOW })).toEqual({
+    ok: false,
+    reason: "CapacityScopeUnknown",
   });
 });
 
@@ -212,6 +243,7 @@ test("a moving cgroup or missing finite usage cannot be used as launch headroom"
   const fixture = linuxFixture({
     "/proc/self/cgroup": "0::/workload\n",
     [`${leaf}/memory.max`]: String(8 * GiB),
+    [`${leaf}/memory.high`]: "max",
     [`${leaf}/memory.pressure`]: PSI,
   });
   expect(projectManagedCapacity(readLocalManagedCapacity(fixture), { nowMs: NOW })).toEqual({
@@ -221,6 +253,7 @@ test("a moving cgroup or missing finite usage cannot be used as launch headroom"
   const complete = linuxFixture({
     "/proc/self/cgroup": "0::/workload\n",
     [`${leaf}/memory.max`]: String(8 * GiB),
+    [`${leaf}/memory.high`]: "max",
     [`${leaf}/memory.current`]: String(2 * GiB),
     [`${leaf}/memory.pressure`]: PSI,
   });

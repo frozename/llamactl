@@ -167,7 +167,8 @@ function ceilingWithoutHeadroom(
   // returning NoMemoryHeadroom. Stops must still be able to free memory.
   const physicalGiB = (sample.physicalBytes ?? 0) / GiB;
   const host = physicalGiB - physicalGiB * (1 - ratio);
-  const scope = sample.scope.kind === "cgroup-v2" ? sample.scope.limitBytes / GiB : host;
+  const cgroupLimit = sample.scope.kind === "cgroup-v2" ? sample.scope.limitBytes : null;
+  const scope = cgroupLimit === null ? host : cgroupLimit / GiB;
   return Math.min(host, scope, configured ?? host);
 }
 
