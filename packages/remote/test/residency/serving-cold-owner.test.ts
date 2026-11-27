@@ -1,5 +1,7 @@
 import type { ExecutionAdmissionConfig } from "@llamactl/core/config/agent-config";
+import type { LocalEngineDispatch } from "@llamactl/core/residency/engine-forwarder";
 
+import { getLocalEngineForwarder } from "@llamactl/core/residency/engine-forwarder";
 import { getResidencyLeaseRegistry } from "@llamactl/core/residency/leases";
 import { expect, test } from "bun:test";
 import { tmpdir } from "node:os";
@@ -11,7 +13,11 @@ import { createOwnerAdmission } from "../../src/residency/owner-admission.js";
 import { mkdtempSync, rmSync } from "../../src/safe-fs.js";
 import { hashToken } from "../../src/server/auth.js";
 import { prepareColdOwnerMount } from "../../src/server/cold-owner-mount.js";
-import { type RunningAgent, startAgentServer } from "../../src/server/serve.js";
+import {
+  type RunningAgent,
+  type StartAgentOptions,
+  startAgentServer,
+} from "../../src/server/serve.js";
 import {
   type ManagedAgentDependencies,
   startManagedAgentServer,
@@ -99,7 +105,10 @@ function request(agent: RunningAgent, authenticated = true, signal?: AbortSignal
   });
 }
 
-function fixtureOwner(activate: TrustedColdOwner["activate"]): TrustedColdOwner {
+function fixtureOwner(
+  activate: TrustedColdOwner["activate"],
+  endpoint = "http://127.0.0.1:19000",
+): TrustedColdOwner {
   return {
     pin: (entry): TrustedColdPin => ({
       model: entry.id,
@@ -108,7 +117,7 @@ function fixtureOwner(activate: TrustedColdOwner["activate"]): TrustedColdOwner 
       deploymentId: "fixture-deployment",
       artifactRevision: "fixture-artifact",
       policyRevision: "fixture-policy",
-      endpoint: "http://127.0.0.1:19000",
+      endpoint,
       pretokenizedCompletion: true,
     }),
     activate,
@@ -208,6 +217,7 @@ test.skipIf(process.platform !== "darwin" && process.platform !== "linux")(
         capacity,
       );
       expect(factories).toBe(1);
+      expect(running.tryQuiesceOwnerAdmissions).toBeUndefined();
       expect((await fetch(request(running, false), { tls: { ca: cert.certPem } })).status).toBe(
         401,
       );
@@ -295,3 +305,269 @@ test.skipIf(process.platform !== "darwin" && process.platform !== "linux")(
     }
   },
 );
+
+async function ownerFixtureOptions(
+  dir: string,
+  factory: NonNullable<StartAgentOptions["managedColdOwnerFactory"]>,
+  caps = CAP,
+): Promise<StartAgentOptions> {
+  const cert = await generateSelfSignedCert({ dir, commonName: "127.0.0.1" });
+  return {
+    tokenHash: hashToken(TOKEN),
+    tls: { certPath: cert.certPath, keyPath: cert.keyPath },
+    advertiseMdns: false,
+    declaredModels: true,
+    executionAdmission: [caps],
+    managedColdOwnerFactory: factory,
+  };
+}
+
+function dispatchWarm(
+  send: LocalEngineDispatch["send"],
+  signal = new AbortController().signal,
+): Promise<Response> {
+  const forward = getLocalEngineForwarder();
+  const response = forward?.({
+    target: "http://127.0.0.1:19000/v1/completions",
+    workload: WORKLOAD,
+    pretokenizedCompletion: true,
+    body: JSON.stringify({ model: MODEL, prompt: [1], max_tokens: 1 }),
+    deadlineMs: Date.now() + 5000,
+    clientSignal: signal,
+    principal: { bearer: null },
+    send,
+  });
+  if (response === undefined) throw new Error("fixture missing warm owner");
+  return response;
+}
+
+test("a mounted owner fence excludes warm and cold admissions until its exact handle releases", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "llamactl-owner-activity-"));
+  const restore = isolate(dir);
+  let running: RunningAgent | undefined;
+  let coldAttempts = 0;
+  let warmDials = 0;
+  let exclusiveIngress = false;
+  const send = (): Promise<Response> => {
+    warmDials++;
+    return Promise.resolve(new Response(null, { status: 204 }));
+  };
+  try {
+    const opts = await ownerFixtureOptions(dir, () =>
+      fixtureOwner((): Promise<"refused"> => {
+        coldAttempts++;
+        return Promise.resolve("refused");
+      }),
+    );
+    const deps = {
+      ...capacity,
+      ownerActivity: { verifyExclusiveIngress: (): boolean => exclusiveIngress },
+    };
+    const unsupported = await startManagedAgentServer(
+      { ...opts, workerRpc: { workerId: NODE, settings: () => undefined } },
+      NODE,
+      deps,
+    ).then(
+      async (unexpected) => {
+        await unexpected.stop();
+      },
+      (error: unknown) => error,
+    );
+    expect(unsupported).toMatchObject({ message: "ManagedOwnerActivityIngressUnsupported" });
+    running = await startManagedAgentServer(opts, NODE, deps);
+    const acquire = running.tryQuiesceOwnerAdmissions;
+    const dispatch = running.handleRequest;
+    if (acquire === undefined || dispatch === undefined)
+      throw new Error("fixture fence was not mounted");
+    expect(acquire()).toBeUndefined();
+    exclusiveIngress = true;
+    const liveLease = getResidencyLeaseRegistry()?.acquire("ingress-before-owner-reservation");
+    if (liveLease?.ok !== true) throw new Error("fixture lease missing");
+    expect(acquire()).toBeUndefined();
+    liveLease.lease.release();
+    const first = acquire();
+    if (first === undefined) throw new Error("idle managed owner refused");
+    expect(first.isCurrent()).toBe(true);
+    expect(acquire()).toBeUndefined();
+
+    expect((await dispatch(request(running))).status).toBe(503);
+    expect(first.signal.aborted).toBe(true);
+    expect(coldAttempts).toBe(0);
+    expect((await dispatchWarm(send)).status).toBe(503);
+    expect(warmDials).toBe(0);
+    expect(acquire()).toBeUndefined();
+
+    first.release();
+    const second = acquire();
+    if (second === undefined) throw new Error("exact release did not reopen owner");
+    first.release();
+    expect(second.isCurrent()).toBe(true);
+    expect((await dispatchWarm(send)).status).toBe(503);
+    expect(warmDials).toBe(0);
+    expect(second.signal.aborted).toBe(true);
+    second.release();
+    expect((await dispatchWarm(send)).status).toBe(204);
+    expect(warmDials).toBe(1);
+
+    const last = acquire();
+    if (last === undefined) throw new Error("terminal engine response still fenced");
+    exclusiveIngress = false;
+    expect(last.isCurrent()).toBe(false);
+    expect(last.signal.aborted).toBe(true);
+    last.release();
+  } finally {
+    await running?.stop();
+    restore();
+    rmSync(dir, { recursive: true, force: true });
+  }
+}, 20_000);
+
+test("client cancellation retains the warm fence until engine completion and across an unresolved restart", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "llamactl-owner-warm-activity-"));
+  const restore = isolate(dir);
+  const entered = Promise.withResolvers<undefined>();
+  const terminal = Promise.withResolvers<Response>();
+  let running: RunningAgent | undefined;
+  try {
+    const opts = await ownerFixtureOptions(dir, () =>
+      fixtureOwner((): Promise<"refused"> => Promise.resolve("refused")),
+    );
+    const deps = { ...capacity, ownerActivity: { verifyExclusiveIngress: (): boolean => true } };
+    running = await startManagedAgentServer(opts, NODE, deps);
+    const acquire = running.tryQuiesceOwnerAdmissions;
+    if (acquire === undefined) throw new Error("fixture fence was not mounted");
+    const signal = new AbortController();
+    const inference = dispatchWarm(() => {
+      entered.resolve(undefined);
+      return terminal.promise;
+    }, signal.signal);
+    expect(acquire()).toBeUndefined();
+    await entered.promise;
+    expect(acquire()).toBeUndefined();
+    signal.abort();
+    expect((await inference).status).toBe(499);
+    expect(acquire()).toBeUndefined();
+    terminal.resolve(new Response(null, { status: 204 }));
+    await new Promise<void>((deliver) => {
+      setImmediate(deliver);
+    });
+    const settled = acquire();
+    if (settled === undefined) throw new Error("confirmed warm completion stayed busy");
+    settled.release();
+
+    expect((await dispatchWarm(() => Promise.reject(new Error("unresolved engine")))).status).toBe(
+      503,
+    );
+    expect(acquire()).toBeUndefined();
+    await running.stop();
+    running = await startManagedAgentServer(opts, NODE, deps);
+    const reopened = running.tryQuiesceOwnerAdmissions;
+    if (reopened === undefined) throw new Error("restarted owner did not mount fence");
+    expect(reopened()).toBeUndefined();
+  } finally {
+    terminal.resolve(new Response(null, { status: 204 }));
+    await running?.stop();
+    restore();
+    rmSync(dir, { recursive: true, force: true });
+  }
+}, 20_000);
+
+test("a cancelled cold request remains busy through an uncertain activation", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "llamactl-owner-cold-activity-"));
+  const restore = isolate(dir);
+  const entered = Promise.withResolvers<undefined>();
+  const interrupted = Promise.withResolvers<undefined>();
+  const settle = Promise.withResolvers<"uncertain">();
+  let running: RunningAgent | undefined;
+  try {
+    const opts = await ownerFixtureOptions(dir, () =>
+      fixtureOwner((_pin, signal) => {
+        signal.addEventListener(
+          "abort",
+          () => {
+            interrupted.resolve(undefined);
+          },
+          { once: true },
+        );
+        entered.resolve(undefined);
+        return settle.promise;
+      }),
+    );
+    const deps = { ...capacity, ownerActivity: { verifyExclusiveIngress: (): boolean => true } };
+    running = await startManagedAgentServer(opts, NODE, deps);
+    const acquire = running.tryQuiesceOwnerAdmissions;
+    const dispatch = running.handleRequest;
+    if (acquire === undefined || dispatch === undefined)
+      throw new Error("fixture fence was not mounted");
+    const signal = new AbortController();
+    const inference = dispatch(request(running, true, signal.signal));
+    await entered.promise;
+    expect(acquire()).toBeUndefined();
+    signal.abort();
+    await interrupted.promise;
+    await inference;
+    expect(acquire()).toBeUndefined();
+    settle.resolve("uncertain");
+    await new Promise<void>((deliver) => {
+      setImmediate(deliver);
+    });
+    expect(acquire()).toBeUndefined();
+  } finally {
+    settle.resolve("uncertain");
+    await running?.stop();
+    restore();
+    rmSync(dir, { recursive: true, force: true });
+  }
+}, 20_000);
+
+test("cold-to-warm handoff cannot expose an idle gap before engine dispatch", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "llamactl-owner-handoff-"));
+  const restore = isolate(dir);
+  const engine = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: () => Response.json({ id: "fixture", choices: [] }),
+  });
+  let running: RunningAgent | undefined;
+  let tryPause: RunningAgent["tryQuiesceOwnerAdmissions"];
+  let idleGaps = 0;
+  try {
+    const opts = await ownerFixtureOptions(
+      dir,
+      () => ({
+        ...fixtureOwner((): Promise<"refused"> => Promise.resolve("refused"), engine.url.origin),
+        ready: (pin): ReturnType<TrustedColdOwner["ready"]> =>
+          Promise.resolve({ pin, runtimeGeneration: "fixture-runtime" }),
+        stillOwns: (): boolean => {
+          const leaked = tryPause?.();
+          if (leaked !== undefined) {
+            idleGaps++;
+            leaked.release();
+          }
+          return true;
+        },
+      }),
+      { ...CAP, foregroundPorts: [Number(engine.port)] },
+    );
+    running = await startManagedAgentServer(opts, NODE, {
+      ...capacity,
+      ownerActivity: { verifyExclusiveIngress: (): boolean => true },
+    });
+    tryPause = running.tryQuiesceOwnerAdmissions;
+    const dispatch = running.handleRequest;
+    if (dispatch === undefined || tryPause === undefined)
+      throw new Error("fixture fence was not mounted");
+    const response = await dispatch(request(running));
+    expect(response.status).toBe(200);
+    await response.text();
+    expect(idleGaps).toBe(0);
+    const idle = tryPause();
+    expect(idle).toBeDefined();
+    idle?.release();
+  } finally {
+    await running?.stop();
+    await engine.stop(true);
+    restore();
+    rmSync(dir, { recursive: true, force: true });
+  }
+}, 20_000);

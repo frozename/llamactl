@@ -24,6 +24,7 @@ export interface ManagedAgentDependencies {
   readCapacity?: () => ManagedCapacitySample | undefined;
   nowMs?: () => number;
   onCapacityAudit?: (entry: ManagedCapacityAudit) => void;
+  ownerActivity?: StartAgentOptions["managedOwnerActivity"];
 }
 
 function logCapacity(entry: ManagedCapacityAudit): void {
@@ -91,6 +92,8 @@ export async function startManagedAgentServer(
     throw new Error("ManagedNodeIdentityRequired");
   }
   if (opts.noAuth === true) throw new Error("ManagedAgentAuthenticationRequired");
+  if (deps.ownerActivity !== undefined && opts.workerRpc !== undefined)
+    throw new Error("ManagedOwnerActivityIngressUnsupported");
 
   const resolved = resolveEnv();
   const runtimeDir = resolve(resolved.LOCAL_AI_RUNTIME_DIR);
@@ -149,6 +152,7 @@ export async function startManagedAgentServer(
       residencyLeases: true,
       managedLaunchAdmission: runtime.admission,
       managedInferenceHolds: inferenceHolds,
+      ...(deps.ownerActivity === undefined ? {} : { managedOwnerActivity: deps.ownerActivity }),
     });
     return {
       ...running,
