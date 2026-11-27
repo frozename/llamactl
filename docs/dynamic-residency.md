@@ -304,6 +304,58 @@ Under `createSharedUnifiedProxy` (Part of #518), `minResidencySeconds` also feed
 
 Under `createSharedUnifiedProxy` (Part of #519), the resident set speaks only for candidates this node owns. The ranking signals carry `residencyKnown`, which is true only for ads whose `ownerNodeId` is this node, so a peer candidate has unknown residency. `coldLoadPenaltyMs` and the default expected-load cost never charge a peer and `residentPreference` never rewards one. A local candidate without a `ready` lifecycle row still ranks as non-resident, so a peer candidate outranks a local candidate that has no `ready` lifecycle row (for example one started by a plain apply) by that candidate's expected-load cost plus `coldLoadPenaltyMs`. This trade-off holds until local residency without a lifecycle row is known. A caller that passes `resident` without `residencyKnown` keeps the old behaviour, where the set speaks for every candidate.
 
+## Node policy examples
+
+Three `NodeRun` manifests for a three-node layout: one control-only 16 GiB node and two inference nodes, 48 GiB and 128 GiB. `control-16g`, `infer-48g` and `infer-128g` are placeholders: set `metadata.name` and `spec.node` to your own node names. The examples carry no credentials, no `env`, no `tarballUrl` and no addresses. They are policy examples, not hardware qualification: no measured TTFT, memory or swap evidence backs these values, and that evidence stays BLOCKED on opt-in hardware runs (Part of #285). Apply with `llamactl apply -f <file>` and inspect with `llamactl describe noderun <name>`.
+
+```yaml
+apiVersion: llamactl/v1
+kind: NodeRun
+metadata:
+  name: control-16g
+spec:
+  node: control-16g
+  budget:
+    memoryGiB: 1
+```
+
+That node runs the agent and the controller and no inference. The explicit budget wins over the computed one (`defaultNodeBudgetGiB` in `packages/remote/src/workload/admission.ts`), so `computeNodeBudget` refuses as `over-budget` any ModelRun whose `spec.resources.expectedMemoryGiB` would push the node above 1 GiB. A ModelRun that declares no `spec.resources.expectedMemoryGiB` reserves nothing and is admitted, and the `llamactl.io/force-admit` annotation bypasses the budget. The budget is therefore only a backstop: keep inference manifests off this node.
+
+```yaml
+apiVersion: llamactl/v1
+kind: NodeRun
+metadata:
+  name: infer-48g
+spec:
+  node: infer-48g
+  residency:
+    safetyMarginRatio: 0.75
+    minResidencySeconds: 600
+    switchCooldownSeconds: 300
+```
+
+```yaml
+apiVersion: llamactl/v1
+kind: NodeRun
+metadata:
+  name: infer-128g
+spec:
+  node: infer-128g
+  residency:
+    safetyMarginRatio: 0.8
+    minResidencySeconds: 1800
+    switchCooldownSeconds: 600
+    coldLoadPenaltyMs: 30000
+```
+
+`minResidencySeconds` and `switchCooldownSeconds` are enforced, as the knob table above says. `coldLoadPenaltyMs` is ranking-only and applies only under `LLAMACTL_UNIFIED_PROXY=1` on the node that `LLAMACTL_NODE_NAME` names. Every value here is a starting point to tune from measured evidence, not a qualified profile.
+
+| Node          | Memory  | Budget    | Source                            |
+| ------------- | ------- | --------- | --------------------------------- |
+| `control-16g` | 16 GiB  | 1 GiB     | `spec.budget.memoryGiB`           |
+| `infer-48g`   | 48 GiB  | 36 GiB    | 48 GiB x `safetyMarginRatio` 0.75 |
+| `infer-128g`  | 128 GiB | 102.4 GiB | 128 GiB x `safetyMarginRatio` 0.8 |
+
 ## Cleanup of conflicting legacy launchers
 
 First run `git grep -n keepAlive packages/remote/src/workload`. It finds nothing, so the controller does not detect a keep-alive supervisor and you must inventory by hand. Inventory with `llamactl keep-alive status` and `llamactl server status`:
