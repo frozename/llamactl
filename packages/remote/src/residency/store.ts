@@ -80,6 +80,7 @@ import {
   type ResidencyState,
   type ResidencyTransitionDecision,
 } from "@llamactl/core/residency/lifecycle";
+import { MANAGED_PROFILE_TARGET_PREFIX } from "@llamactl/core/residency/profile-selection";
 import { Database } from "bun:sqlite";
 import { dirname, join } from "node:path";
 
@@ -183,6 +184,9 @@ type OperationSpec = {
 };
 
 type BeginOperationInput = OperationSpec & { fenceToken: number };
+type ClaimAndBeginOperationSpec = OperationSpec & {
+  expectedManagedProfileOperationId?: string | null | undefined;
+};
 
 type MutationInput = {
   fenceToken: number;
@@ -210,6 +214,7 @@ export type BeginOperationResult =
 
 type ClaimAndBeginOperationResult =
   | BeginOperationResult
+  | { ok: false; reason: "profile-selection-changed" }
   | { ok: false; reason: "busy"; operationId: string | null };
 
 type MutationResult = { ok: true } | { ok: false; reason: ResidencyStoreFailure };
@@ -224,7 +229,7 @@ export type ResidencyOperationStore = {
   beginOperation: (input: BeginOperationInput) => BeginOperationResult;
   claimAndBeginOperation: (
     identity: ClaimInput,
-    input: OperationSpec,
+    input: ClaimAndBeginOperationSpec,
   ) => ClaimAndBeginOperationResult;
   commitReservation: (input: MutationInput) => MutationResult;
   finishOperation: (input: FinishOperationInput) => MutationResult;
@@ -316,7 +321,7 @@ export function openResidencyOperationStore(
     (beginInput: BeginOperationInput): BeginOperationResult => beginOperationTx(db, beginInput),
   );
   const claimAndBeginTx = db.transaction(
-    (identity: ClaimInput, input: OperationSpec): ClaimAndBeginOperationResult =>
+    (identity: ClaimInput, input: ClaimAndBeginOperationSpec): ClaimAndBeginOperationResult =>
       claimAndBeginOperationTx(db, identity, input),
   );
   const commitTx = db.transaction(
@@ -856,7 +861,7 @@ function beginOperationTx(db: Database, input: BeginOperationInput): BeginOperat
 function claimAndBeginOperationTx(
   db: Database,
   identity: ClaimInput,
-  input: OperationSpec,
+  input: ClaimAndBeginOperationSpec,
 ): ClaimAndBeginOperationResult {
   const operationId = nonterminalOperationIdForModel(db, input.model);
   if (operationId !== null) {
@@ -869,6 +874,15 @@ function claimAndBeginOperationTx(
   const checked = checkBeginOperation(db, input);
   if (checked !== null) {
     return checked;
+  }
+
+  const expected = input.expectedManagedProfileOperationId;
+  if (
+    expected !== undefined &&
+    (profileOperationsAt(db, input.model, MANAGED_PROFILE_TARGET_PREFIX).terminal?.operationId ??
+      null) !== expected
+  ) {
+    return { ok: false, reason: "profile-selection-changed" };
   }
 
   // Commit the new fence and its blocking reservation as one write. A
