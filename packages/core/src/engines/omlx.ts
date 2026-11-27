@@ -264,6 +264,7 @@ function readSize(value: unknown): SizeField {
 function findHostedEntry(
   models: unknown[],
   hostedRel: string,
+  exactId: string | undefined,
 ): { entry: Record<string, unknown>; id: string } | "ambiguous" | null {
   let match: { entry: Record<string, unknown>; id: string } | null = null;
   for (const element of models) {
@@ -271,7 +272,10 @@ function findHostedEntry(
       continue;
     }
     const id = element["id"];
-    if (typeof id !== "string" || !matchHostedModel(hostedRel, [id])) {
+    if (
+      typeof id !== "string" ||
+      (exactId === undefined ? !matchHostedModel(hostedRel, [id]) : id !== exactId)
+    ) {
       continue;
     }
     // An exact ID and its basename can both match, even when the IDs are distinct.
@@ -328,6 +332,7 @@ function observeEntry(entry: Record<string, unknown>, id: string): NativeModelSt
 export function parseOmlxModelsStatus(
   body: unknown,
   hostedRel: string,
+  exact?: { modelId: string; modelPath: string },
 ): NativeModelStatusObservation {
   if (!isRecord(body)) {
     return { state: "failed", reason: "MalformedStatus" };
@@ -336,12 +341,21 @@ export function parseOmlxModelsStatus(
   if (!isUnknownArray(models)) {
     return { state: "failed", reason: "MalformedStatus" };
   }
-  const found = findHostedEntry(models, hostedRel);
+  const found = findHostedEntry(models, hostedRel, exact?.modelId);
   if (found === "ambiguous") {
-    return { state: "failed", reason: "MalformedStatus" };
+    return {
+      state: "failed",
+      reason: exact === undefined ? "MalformedStatus" : "IdentityUnverified",
+    };
   }
   if (found === null) {
-    return { state: "failed", reason: "ModelNotListed" };
+    return {
+      state: "failed",
+      reason: exact === undefined ? "ModelNotListed" : "IdentityUnverified",
+    };
+  }
+  if (exact !== undefined && found.entry["model_path"] !== exact.modelPath) {
+    return { state: "failed", reason: "IdentityUnverified" };
   }
   return observeEntry(found.entry, found.id);
 }
