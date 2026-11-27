@@ -1,6 +1,6 @@
-import { getResidencyLeaseRegistry } from "@llamactl/core/residency/leases";
+import { createResidencyLeases, getResidencyLeaseRegistry } from "@llamactl/core/residency/leases";
 import { Database } from "bun:sqlite";
-import { expect, test } from "bun:test";
+import { expect, mock, test } from "bun:test";
 import { join } from "node:path";
 
 import type { RunningAgent } from "../../src/server/serve.js";
@@ -10,6 +10,7 @@ import { makeTempRuntime } from "../../../core/test/helpers.js";
 import { enterManagedOperatorAction } from "../../src/residency/managed-operator-control.js";
 import { managedProfileTargetState } from "../../src/residency/managed-profile-selection.js";
 import { RESIDENCY_APPLY_PROFILE_FENCE_OWNER } from "../../src/residency/profile-owner.js";
+import { fenceWorkloadStop } from "../../src/residency/stop-fence.js";
 import { openResidencyOperationStore } from "../../src/residency/store.js";
 import { router } from "../../src/router.js";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "../../src/safe-fs.js";
@@ -41,6 +42,38 @@ const capacity: ManagedAgentDependencies = {
     swapUsedBytes: 0,
   }),
 };
+
+test("canceling an operator's drain keeps the engine and its existing lease open", async () => {
+  const registry = createResidencyLeases();
+  const held = registry.acquire(workload);
+  if (!held.ok) throw new Error("fixture lease unavailable");
+  const controller = new AbortController();
+  const stop = mock(() => Promise.resolve("stopped"));
+  const waiting = fenceWorkloadStop({
+    workload,
+    registry,
+    stop,
+    wait: { timeoutMs: 2000, signal: controller.signal },
+    isVerifiedStop: (outcome) => outcome === "stopped",
+    refuse: ({ reason }) => reason,
+  });
+  try {
+    expect(registry.snapshot(workload)).toMatchObject({ phase: "draining", waiters: 1 });
+    const unrelated = registry.acquire("unrelated");
+    expect(unrelated.ok).toBe(true);
+    if (unrelated.ok) unrelated.lease.release();
+    controller.abort();
+    expect(await waiting).toBe("LeasesActive");
+    expect(stop).not.toHaveBeenCalled();
+    expect(registry.snapshot(workload)).toMatchObject({
+      phase: "open",
+      active: [held.lease.id],
+      waiters: 0,
+    });
+  } finally {
+    held.lease.release();
+  }
+});
 
 function isolate(env: Record<string, string>): () => void {
   const previous = Object.keys(env).map((key) => [key, process.env[key]] as const);
@@ -317,8 +350,9 @@ test("authenticated manual control uses the managed launch and stop fences", asy
     });
     expect(existsSync(engine.marker)).toBe(true);
     const registry = getResidencyLeaseRegistry();
-    const lease = registry?.acquire(workload);
-    if (lease?.ok !== true) throw new Error("fixture lease unavailable");
+    if (registry === null) throw new Error("fixture registry unavailable");
+    const lease = registry.acquire(workload);
+    if (!lease.ok) throw new Error("fixture lease unavailable");
     try {
       expect(
         await control(running, { action: "unload", dryRun: false, confirm: true }),
@@ -326,6 +360,20 @@ test("authenticated manual control uses the managed launch and stop fences", asy
         ok: false,
         reason: "LeasesActive",
       });
+      expect(await control(running, { action: "unload", drainTimeoutMs: 10 })).toMatchObject({
+        ok: true,
+        outcome: "preview",
+      });
+      expect(registry.snapshot(workload).phase).toBe("open");
+      expect(
+        await control(running, {
+          action: "unload",
+          drainTimeoutMs: 10,
+          dryRun: false,
+          confirm: true,
+        }),
+      ).toMatchObject({ ok: false, reason: "LeasesActive", activeCount: 1 });
+      expect(registry.snapshot(workload).phase).toBe("open");
       expect((await fetch(`http://127.0.0.1:${String(engine.port)}`)).ok).toBe(true);
     } finally {
       lease.lease.release();
@@ -370,14 +418,27 @@ test("authenticated manual control uses the managed launch and stop fences", asy
       operations.close();
     }
 
-    expect(
-      await control(running, { action: "unload", dryRun: false, confirm: true }),
-    ).toMatchObject({
-      ok: true,
-      outcome: "completed",
+    const delayed = registry.acquire(workload);
+    if (!delayed.ok) throw new Error("fixture final lease unavailable");
+    const retiring = control(running, {
       action: "unload",
+      drainTimeoutMs: 2000,
+      dryRun: false,
+      confirm: true,
     });
-    expect(registry?.snapshot(workload).phase).toBe("unloaded");
+    try {
+      const start = performance.now();
+      while (registry.snapshot(workload).phase !== "draining" && performance.now() - start < 1000) {
+        await Bun.sleep(5);
+      }
+      expect(registry.snapshot(workload).phase).toBe("draining");
+      expect(registry.acquire(workload)).toMatchObject({ ok: false, reason: "Draining" });
+      expect((await fetch(`http://127.0.0.1:${String(engine.port)}`)).ok).toBe(true);
+    } finally {
+      delayed.lease.release();
+    }
+    expect(await retiring).toMatchObject({ ok: true, outcome: "completed", action: "unload" });
+    expect(registry.snapshot(workload).phase).toBe("unloaded");
     expect(readFileSync(file, "utf8")).toBe(plain);
 
     const events = await router.createCaller({}).serverStart(modelRunStartInvocation(manifest));

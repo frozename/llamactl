@@ -43,7 +43,7 @@ Subcommands:
   plan --node <name> --to <profile> [--from <profile>] [--json]   Read-only dry-run profile switch: budget source, victims, replacements, protected workloads or refusal. Never starts, stops, loads or writes the store.
   apply-profile --node <name> --to <profile> [--from <profile>] [--json]   Dry-run by default: plan and report the profile switch without touching the store. Add --execute --yes to run the switch for real (stops and starts workloads, records an operation).
   load <workload> --node <name> [--execute --yes] [--json]   Preview loading an enabled workload on its managed owner. Execution uses the owner admission and readiness gates.
-  unload <workload> --node <name> [--execute --yes] [--json]   Preview stopping an idle, unprotected workload on its managed owner. Execution leaves the desired manifest enabled, so eligible workloads can load again.
+  unload <workload> --node <name> [--wait-seconds <1-60>] [--execute --yes] [--json]   Preview stopping an idle, unprotected workload on its managed owner. A wait drains active leases before stopping. Execution leaves the desired manifest enabled, so eligible workloads can load again.
   cancel-operation <operationId> --yes [--node <name>] [--json]   Request an abort of an in-flight profile switch started by apply-profile --execute --yes in the process serving <node> (an agent serve process); it stops before its next step boundary. Process-local: a switch run in-process by a local-endpoint CLI invocation cannot be cancelled from another CLI invocation. Requires --yes.
   force-unload <workload> --reason <text> --yes [--node <name>] [--json]   Operator override of the stop fence: revoke active leases (audited as an operator override), then stop the workload. Destructive; requires --yes. Reports the released session ids when a session registry is installed.
   evict-idle --node <name> [--yes] [--json]   Operator-initiated idle eviction: dry by default (one residencyEvictIdle query reports the window and which residents would be evicted). Add --yes to stamp the durable idle hold on each targeted local manifest and run the fenced stop, keeping the hold only on workloads that come back evicted. Workloads with no local manifest are reported skipped (NotHeld) and never targeted. Destructive with --yes.
@@ -1602,6 +1602,7 @@ function controlArgs(
   let execute = false;
   let confirm = false;
   let json = false;
+  let waitSeconds: number | undefined;
   for (let index = 0; index < flags.length; index++) {
     const flag = flags[index] ?? "";
     switch (flag) {
@@ -1618,6 +1619,9 @@ function controlArgs(
       case "--json":
         json = true;
         break;
+      case "--wait-seconds":
+        waitSeconds = Number(flags[++index]);
+        break;
       default:
         return `unknown argument ${flag}`;
     }
@@ -1625,7 +1629,26 @@ function controlArgs(
   if (node === "") return "--node <name> is required";
   if (node === "all") return "name one managed node";
   if (execute && !confirm) return "--execute requires --yes";
-  return { json, input: { workload, node, action, dryRun: !execute, confirm } };
+  return controlWait(
+    { json, input: { workload, node, action, dryRun: !execute, confirm } },
+    waitSeconds,
+  );
+}
+
+function controlWait(
+  parsed: { json: boolean; input: ResidencyControlInput },
+  waitSeconds: number | undefined,
+): ReturnType<typeof controlArgs> {
+  if (waitSeconds === undefined) return parsed;
+  if (
+    parsed.input.action !== "unload" ||
+    !Number.isSafeInteger(waitSeconds) ||
+    waitSeconds < 1 ||
+    waitSeconds > 60
+  ) {
+    return "--wait-seconds requires unload and an integer from 1 to 60";
+  }
+  return { ...parsed, input: { ...parsed.input, drainTimeoutMs: waitSeconds * 1000 } };
 }
 
 function controlTransportReason(error: unknown): string {

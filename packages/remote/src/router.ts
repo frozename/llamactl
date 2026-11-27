@@ -589,11 +589,18 @@ async function dispatchManagedControl(
   signal: AbortSignal | undefined,
   action: "load" | "unload",
   manifest: ModelRun | ModelHostManifest,
+  drainTimeoutMs: number | undefined,
 ): Promise<{ ok: true } | { ok: false; reason: string; activeCount?: number }> {
   const workload = manifest.metadata.name;
   const caller = router.createCaller(
-    { ...ctx, ownerStopIntent: true },
-    signal === undefined ? undefined : { signal },
+    {
+      ...ctx,
+      ownerStopIntent: true,
+      ...(drainTimeoutMs === undefined
+        ? {}
+        : { ownerStopWait: { timeoutMs: drainTimeoutMs, signal } }),
+    },
+    omitUndefined({ signal }),
   );
   if (action === "load") {
     const events =
@@ -604,12 +611,12 @@ async function dispatchManagedControl(
   }
   if (manifest.kind === "ModelHost") {
     const stopped = await caller.modelHostStop({ workload });
-    return stopped.ok
-      ? { ok: true }
-      : { ok: false, reason: controlFailure(stopped.error, "UnloadUnconfirmed") };
+    if (stopped.ok) return { ok: true };
+    return { ok: false, reason: controlStopFailure(signal, stopped.error) };
   }
   const stopped = await caller.serverStop({ workload });
   if (stopped.stopped) return { ok: true };
+  if (signal?.aborted === true) return { ok: false, reason: "ControlCanceled" };
   if (stopped.refused !== undefined) {
     return {
       ok: false,
@@ -618,6 +625,10 @@ async function dispatchManagedControl(
     };
   }
   return { ok: false, reason: controlFailure(stopped.managedRefusal, "UnloadUnconfirmed") };
+}
+
+function controlStopFailure(signal: AbortSignal | undefined, error: string | undefined): string {
+  return signal?.aborted === true ? "ControlCanceled" : controlFailure(error, "UnloadUnconfirmed");
 }
 
 function profileOwner(
@@ -1579,6 +1590,7 @@ export interface AgentRouterContext {
   chatAdmission?: RequestAdmission;
   managedLaunchAdmission?: ManagedLaunchAdmission;
   ownerStopIntent?: true;
+  ownerStopWait?: { timeoutMs: number; signal: AbortSignal | undefined };
 }
 
 const t = initTRPC.context<AgentRouterContext>().create();
@@ -3222,7 +3234,13 @@ export const router = t.router({
         workloadsDir: workloadStoreMod.defaultWorkloadsDir(),
         signal,
         execute: (action, manifest) =>
-          dispatchManagedControl(omitUndefined(ctx), signal, action, manifest),
+          dispatchManagedControl(
+            omitUndefined(ctx),
+            signal,
+            action,
+            manifest,
+            input.drainTimeoutMs,
+          ),
       }),
   ),
 
@@ -3481,6 +3499,7 @@ export const router = t.router({
         ? { ok: false, pid: null, error: "ManagedStopIntentRequired" }
         : await fenceWorkloadStop<StopModelHostResult>({
             workload: input.workload,
+            ...(ctx.ownerStopWait === undefined ? {} : { wait: ctx.ownerStopWait }),
             stop: async () => {
               const managed = ctx.managedLaunchAdmission;
               const proof = managed?.prepareStopRelease?.(input.workload, "ModelHost");
@@ -4118,6 +4137,7 @@ export const router = t.router({
             }
           : await fenceWorkloadStop<serverMod.StopServerResult>({
               workload: input.workload,
+              ...(ctx.ownerStopWait === undefined ? {} : { wait: ctx.ownerStopWait }),
               stop: async () => {
                 const managed = ctx.managedLaunchAdmission;
                 const proof = managed?.prepareStopRelease?.(input.workload, "ModelRun");

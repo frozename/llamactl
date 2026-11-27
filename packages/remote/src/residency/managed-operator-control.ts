@@ -17,13 +17,18 @@ import { managedProfileMemberProfiles } from "./managed-profile-selection.js";
 
 export const RESIDENCY_CONTROL_TOOL = "llamactl.residency.control";
 
-export const residencyControlInput = z.strictObject({
-  action: z.enum(["load", "unload"]),
-  node: z.string().min(1),
-  workload: ModelHostManifestSchema.shape.metadata.shape.name,
-  dryRun: z.boolean().default(true),
-  confirm: z.boolean().default(false),
-});
+export const residencyControlInput = z
+  .strictObject({
+    action: z.enum(["load", "unload"]),
+    node: z.string().min(1),
+    workload: ModelHostManifestSchema.shape.metadata.shape.name,
+    dryRun: z.boolean().default(true),
+    confirm: z.boolean().default(false),
+    drainTimeoutMs: z.number().int().min(1).max(60_000).optional(),
+  })
+  .refine(({ action, drainTimeoutMs }) => action === "unload" || drainTimeoutMs === undefined, {
+    message: "drainTimeoutMs is only supported for unload",
+  });
 
 type Input = z.output<typeof residencyControlInput>;
 type Manifest = ModelRun | ModelHostManifest;
@@ -99,6 +104,7 @@ function unloadRefusal(
   manifest: Manifest,
   claim: ManagedAdmissionReadout["claims"][number] | undefined,
   registry: ResidencyLeases,
+  waitForLeases: boolean,
 ): ControlRefusal | undefined {
   if (managedProfileMemberProfiles(manifest.metadata.annotations).length === 0) {
     return refuse("WorkloadProtected");
@@ -107,15 +113,22 @@ function unloadRefusal(
     return refuse("ManagedResidentUnverified");
   }
   const snapshot = registry.snapshot(manifest.metadata.name);
-  if (snapshot.active.length > 0) return refuse("LeasesActive", snapshot.active.length);
+  if (!waitForLeases && snapshot.active.length > 0) {
+    return refuse("LeasesActive", snapshot.active.length);
+  }
   if (snapshot.phase === "draining") return refuse("DrainInProgress");
   if (snapshot.phase !== "open") return refuse("ManagedResidentUnverified");
-  if (claim.inferenceHold !== "clear") return refuse("ManagedInferenceUnresolved");
+  if (
+    claim.inferenceHold !== "clear" &&
+    !(waitForLeases && claim.inferenceHold === "current" && snapshot.active.length > 0)
+  ) {
+    return refuse("ManagedInferenceUnresolved");
+  }
   return undefined;
 }
 
 function actionRefusal(
-  action: Input["action"],
+  input: Input,
   manifest: Manifest,
   status: ManagedAdmissionReadout,
   registry: ResidencyLeases,
@@ -124,7 +137,9 @@ function actionRefusal(
   if (status.profile.kind === "switching") return refuse("NodeBusy");
   if (status.profile.kind === "unknown") return refuse("ProfileUnverified");
   const claim = status.claims.find((entry) => entry.workload === manifest.metadata.name);
-  if (action === "unload") return unloadRefusal(manifest, claim, registry);
+  if (input.action === "unload") {
+    return unloadRefusal(manifest, claim, registry, input.drainTimeoutMs !== undefined);
+  }
   if (claim?.state === "resident") return refuse("ManagedRuntimeResident");
   if (claim !== undefined) return refuse("ManagedClaimUnsettled");
   return loadRefusal(manifest, status);
@@ -197,7 +212,7 @@ async function inspectControl(
   }
   const status = managed.readStatus?.();
   if (status?.ownerNodeId !== target.node) return { ...target, ...refuse("AuthorityUnavailable") };
-  const blocked = actionRefusal(target.action, manifest, status, registry);
+  const blocked = actionRefusal(input, manifest, status, registry);
   if (blocked !== undefined) return { ...target, ...blocked };
   if (input.dryRun) return { ...target, ok: true, outcome: "preview" };
   if (liveLockHolder(opts.workloadsDir) !== null) {

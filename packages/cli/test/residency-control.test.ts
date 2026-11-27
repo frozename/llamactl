@@ -32,9 +32,12 @@ test("manual residency commands route preview and confirmed actions through the 
     });
 
     expect(
-      await runResidency(["unload", "model", "--node", "gpu1", "--execute", "--yes"], {
-        getNodeClientByName,
-      }),
+      await runResidency(
+        ["unload", "model", "--node", "gpu1", "--wait-seconds", "3", "--execute", "--yes"],
+        {
+          getNodeClientByName,
+        },
+      ),
     ).toBe(0);
     expect(mutate).toHaveBeenLastCalledWith({
       action: "unload",
@@ -42,6 +45,7 @@ test("manual residency commands route preview and confirmed actions through the 
       node: "gpu1",
       dryRun: false,
       confirm: true,
+      drainTimeoutMs: 3000,
     });
     expect(stdout).toHaveBeenCalledTimes(2);
   } finally {
@@ -60,6 +64,8 @@ test("an unconfirmed unload, forced option and fan-out perform no RPC", async ()
       ["unload", "model", "--node", "gpu1", "--execute"],
       ["unload", "model", "--node", "gpu1", "--force"],
       ["load", "model", "--node", "all"],
+      ["load", "model", "--node", "gpu1", "--wait-seconds", "5"],
+      ["unload", "model", "--node", "gpu1", "--wait-seconds", "0"],
     ]) {
       expect(await runResidency(args, { getNodeClientByName })).toBe(1);
     }

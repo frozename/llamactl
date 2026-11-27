@@ -487,6 +487,8 @@ On the approved target, start its authenticated agent with `LLAMACTL_MANAGED_RES
 
 Use `llamactl residency load <workload> --node <name>` and `llamactl residency unload <workload> --node <name>` to preview a whole-process action on one exact managed workload. Add `--execute --yes` to run the previewed action. The owner checks the current profile, its leases and the transition journal. Unload refuses an active or protected workload and leaves the desired manifest enabled, so later authorized activation can load it again. Disable the workload through managed apply to remove that eligibility.
 
+On an authorized unload, `--wait-seconds` gives active requests up to 60 seconds to finish. The owner blocks new leases for that workload while it waits and holds the same drain through the verified stop. A timeout or cancellation before teardown reopens admission. Protected workloads, active sessions, and unverified inference holds still refuse the stop.
+
 ```sh
 llamactl residency apply-profile --node <name> --to <profile> [--from <profile>]
 llamactl residency apply-profile --node <name> --to <profile> [--from <profile>] --execute --yes
