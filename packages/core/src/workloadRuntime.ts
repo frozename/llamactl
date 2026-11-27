@@ -3,6 +3,7 @@ import { basename, join } from "node:path";
 import type { EngineName } from "./engines/index.js";
 import type { ModelHostReadiness } from "./engines/types.js";
 import type { QualificationStage } from "./routing/capabilities.js";
+import type { PeerDeclarationProvenanceV1 } from "./routing/catalog.js";
 import type { ResolvedEnv } from "./types.js";
 
 import { listCatalog } from "./catalog.js";
@@ -77,6 +78,8 @@ export interface PeerSnapshot {
      *  peer route experimental so an experimental-only id stays shadowed. */
     labels?: Record<string, string>;
   }[];
+  /** Explicit negotiated evidence, independent of legacy workload cache revisions. */
+  declaredProvenance?: PeerDeclarationProvenanceV1;
   pressure: "NORMAL" | "HIGH";
   fetchedAt: number;
 }

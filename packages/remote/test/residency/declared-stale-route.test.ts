@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
 
+import { __setSharedUnifiedProxyForTests } from "../../src/proxy/create-proxy.js";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
 import { generateToken } from "../../src/server/auth.js";
 import {
@@ -176,7 +177,7 @@ function writeHostManifest(name: string, rel: string): void {
 // The runtime record is the live binding: modelAliases order is the
 // served-artifact order listLocalRoutes reports. No readiness probe —
 // the routes are servable as soon as they exist.
-function writeHostRuntime(name: string, modelAliases: readonly string[]): void {
+function writeHostRuntime(name: string, modelAliases: readonly string[], port = hostPort): void {
   const dir = join(runtimeDir, "workloads", name);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "modelhost.pid"), `${String(process.pid)}\n`);
@@ -187,7 +188,7 @@ function writeHostRuntime(name: string, modelAliases: readonly string[]): void {
       engine: "llamacpp",
       pid: process.pid,
       host: "127.0.0.1",
-      port: hostPort,
+      port,
       modelAliases: [...modelAliases],
       startedAt: "2026-11-15T00:00:00.000Z",
     }),
@@ -299,4 +300,83 @@ describe("declared stale route (#280 DF-07)", () => {
     expect(chatCalls(hostCalls)).toHaveLength(1);
     expect(chatCalls(defaultCalls)).toHaveLength(0);
   });
+
+  test.each(["legacy", "unified"])(
+    "(e) %s refuses a live alias owned only by another workload",
+    async (mode) => {
+      setupSandbox();
+      writeHostManifest("host-a", "fam/m.gguf");
+      writeHostRuntime("host-a", ["fam/m.gguf"]);
+      writeHostRuntime("host-b", ["other/m.gguf", "m.gguf"]);
+      if (mode === "unified") process.env["LLAMACTL_UNIFIED_PROXY"] = "1";
+      try {
+        const running = startAgentServer(agentOptions(true));
+        agent = running;
+
+        const res = await running.handleRequest!(postChatCompletions("m.gguf"), LOOPBACK_CLIENT);
+
+        expect(res.status).toBe(503);
+        expect(await res.json()).toMatchObject({
+          error: {
+            code: "model_not_loaded",
+            state: "cold",
+            auto_load_eligible: false,
+            reason: "stale-owner-epoch",
+          },
+        });
+        expect(chatCalls(hostCalls)).toHaveLength(0);
+        expect(chatCalls(defaultCalls)).toHaveLength(0);
+      } finally {
+        Reflect.deleteProperty(process.env, "LLAMACTL_UNIFIED_PROXY");
+        __setSharedUnifiedProxyForTests(null);
+      }
+    },
+  );
+
+  test.each(["legacy", "unified"])(
+    "%s only forwards a shared alias to its declared owner",
+    async (mode) => {
+      setupSandbox();
+      writeHostManifest("z-owner", "fam/m.gguf");
+      writeHostRuntime("z-owner", ["fam/m.gguf", "m.gguf"]);
+      writeHostRuntime("a-unrelated", ["other/m.gguf", "m.gguf"], defaultStub!.port);
+      if (mode === "unified") process.env["LLAMACTL_UNIFIED_PROXY"] = "1";
+      try {
+        const running = startAgentServer(agentOptions(true));
+        agent = running;
+        const res = await running.handleRequest!(postChatCompletions("m.gguf"), LOOPBACK_CLIENT);
+
+        expect(res.status).toBe(200);
+        expect(await res.json()).toMatchObject({ id: "chatcmpl-stale-host" });
+        expect(chatCalls(hostCalls)).toHaveLength(1);
+        expect(chatCalls(defaultCalls)).toHaveLength(0);
+      } finally {
+        Reflect.deleteProperty(process.env, "LLAMACTL_UNIFIED_PROXY");
+        __setSharedUnifiedProxyForTests(null);
+      }
+    },
+  );
+
+  test.each(["legacy", "unified"])(
+    "%s preserves configured default-target fallback for a cold declaration",
+    async (mode) => {
+      setupSandbox();
+      writeHostManifest("cold-owner", "fam/m.gguf");
+      process.env["LLAMA_CPP_SERVER_ALIAS"] = "m.gguf";
+      if (mode === "unified") process.env["LLAMACTL_UNIFIED_PROXY"] = "1";
+      try {
+        const running = startAgentServer(agentOptions(true));
+        agent = running;
+        const res = await running.handleRequest!(postChatCompletions("m.gguf"), LOOPBACK_CLIENT);
+
+        expect(res.status).toBe(200);
+        expect(chatCalls(hostCalls)).toHaveLength(0);
+        expect(chatCalls(defaultCalls)).toHaveLength(1);
+      } finally {
+        Reflect.deleteProperty(process.env, "LLAMA_CPP_SERVER_ALIAS");
+        Reflect.deleteProperty(process.env, "LLAMACTL_UNIFIED_PROXY");
+        __setSharedUnifiedProxyForTests(null);
+      }
+    },
+  );
 });
