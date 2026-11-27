@@ -1026,7 +1026,7 @@ describe("docs/dynamic-residency.md (#285)", () => {
         "async function applyModelHostManifest(",
         [
           "if (!manifest.spec.enabled) { return await disableModelHost(manifest, client, resolved); }",
-          "const started = await startModelHostProcess(client, manifest);",
+          "const started = await startModelHostProcess(client, manifest, opts.managedBudget !== undefined);",
         ],
       ],
       [
