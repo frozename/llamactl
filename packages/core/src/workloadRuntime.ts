@@ -113,7 +113,7 @@ export interface ClusterConfigLike {
   peers: ClusterConfigPeer[];
 }
 
-const PEER_ROUTE_STALE_MS = 30_000;
+export const PEER_ROUTE_STALE_MS = 30_000;
 
 /** Resolved path of the operator's custom catalog file, honouring
  *  LOCAL_AI_CUSTOM_CATALOG_FILE then the runtime-dir default. Never reads
