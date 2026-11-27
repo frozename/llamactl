@@ -11,6 +11,8 @@ import {
 } from "@llamactl/core/residency/leases";
 import { expect, test } from "bun:test";
 
+import type { InferenceHoldReceipt } from "../../src/residency/inference-holds.js";
+
 import { envForTemp, makeTempRuntime } from "../../../core/test/helpers.js";
 import { currentWorkerRpcHost } from "../../src/inference/procedures.js";
 import { createOwnerAdmission } from "../../src/residency/owner-admission.js";
@@ -369,7 +371,20 @@ test("an unconfirmed engine abort blocks unload through and after reader cancell
   const previous = getResidencyLeaseRegistry();
   const leases = createResidencyLeases();
   setResidencyLeaseRegistry(leases);
-  const gate = createOwnerAdmission([group(18200, 18210)]);
+  let settlements = 0;
+  const gate = createOwnerAdmission([group(18200, 18210)], {
+    inferenceHolds: {
+      begin(): InferenceHoldReceipt {
+        return {
+          confirmCompletion: (): boolean => {
+            settlements++;
+            return true;
+          },
+        };
+      },
+      state: (): "current" => "current",
+    },
+  });
   const engineAbort = new AbortController();
   const cancelStarted = Promise.withResolvers<undefined>();
   const cancelFinished = Promise.withResolvers<undefined>();
@@ -401,8 +416,129 @@ test("an unconfirmed engine abort blocks unload through and after reader cancell
     await Bun.sleep(0);
     expect(leases.commitUnload(drain.token)).toMatchObject({ ok: false, reason: "LeasesActive" });
     expect(gate.snapshot()).toMatchObject([{ executing: 0, fenced: true }]);
+    expect(settlements).toBe(0);
   } finally {
     cancelFinished.resolve(undefined);
+    gate.stop();
+    setResidencyLeaseRegistry(previous);
+  }
+});
+
+test("owner admission refuses before dialing when the durable inference hold cannot begin", async () => {
+  const previous = getResidencyLeaseRegistry();
+  const leases = createResidencyLeases();
+  setResidencyLeaseRegistry(leases);
+  const starts: string[] = [];
+  const gate = createOwnerAdmission([group(18200, 18210)], {
+    inferenceHolds: {
+      begin(workload: string): undefined {
+        starts.push(workload);
+        return undefined;
+      },
+      state: () => "unknown",
+    },
+  });
+  let dials = 0;
+  try {
+    const response = await gate.forward(
+      dispatch(
+        18210,
+        () => {
+          dials++;
+          return Promise.resolve(new Response(null, { status: 204 }));
+        },
+        { workload: "granite" },
+      ),
+    );
+    expect(response?.status).toBe(503);
+    expect(starts).toEqual(["granite"]);
+    expect(dials).toBe(0);
+    expect(leases.active("granite")).toEqual([]);
+  } finally {
+    gate.stop();
+    setResidencyLeaseRegistry(previous);
+  }
+});
+
+test("owner admission settles a durable hold only when the engine outcome is confirmed", async () => {
+  const previous = getResidencyLeaseRegistry();
+  const leases = createResidencyLeases();
+  setResidencyLeaseRegistry(leases);
+  const events: string[] = [];
+  let canSettle = true;
+  const gate = createOwnerAdmission([group(18200, 18210)], {
+    inferenceHolds: {
+      begin(workload: string): InferenceHoldReceipt {
+        events.push("hold:" + workload);
+        return {
+          confirmCompletion: (): boolean => {
+            events.push("settle");
+            return canSettle;
+          },
+        };
+      },
+      state: (): "current" => "current",
+    },
+  });
+  const send = (): Promise<Response> => {
+    events.push("dial");
+    return Promise.resolve(new Response(null, { status: 204 }));
+  };
+  try {
+    const confirmed = await gate.forward(dispatch(18210, send, { workload: "granite" }));
+    expect(confirmed?.status).toBe(204);
+    expect(events).toEqual(["hold:granite", "dial", "settle"]);
+    expect(leases.active("granite")).toHaveLength(0);
+
+    canSettle = false;
+    const verified = await gate.forward(dispatch(18210, send, { workload: "granite" }));
+    expect(verified?.status).toBe(204);
+    expect(events).toEqual(["hold:granite", "dial", "settle", "hold:granite", "dial", "settle"]);
+    expect(leases.active("granite")).toHaveLength(1);
+    expect(gate.snapshot()).toMatchObject([{ executing: 0, fenced: true }]);
+  } finally {
+    gate.stop();
+    setResidencyLeaseRegistry(previous);
+  }
+});
+
+test("owner admission rechecks target ownership after recording a durable hold", async () => {
+  const previous = getResidencyLeaseRegistry();
+  const leases = createResidencyLeases();
+  setResidencyLeaseRegistry(leases);
+  let ownsTarget = true;
+  let settled = false;
+  let dialed = false;
+  const gate = createOwnerAdmission([group(18200, 18210)], {
+    inferenceHolds: {
+      begin(): InferenceHoldReceipt {
+        ownsTarget = false;
+        return {
+          confirmCompletion: (): boolean => {
+            settled = true;
+            return true;
+          },
+        };
+      },
+      state: (): "current" => "current",
+    },
+  });
+  try {
+    const response = await gate.forward(
+      dispatch(
+        18210,
+        () => {
+          dialed = true;
+          return Promise.resolve(new Response(null, { status: 204 }));
+        },
+        { workload: "granite", stillOwnsTarget: () => ownsTarget },
+      ),
+    );
+    expect(response?.status).toBe(503);
+    expect(settled).toBe(true);
+    expect(dialed).toBe(false);
+    expect(leases.active("granite")).toHaveLength(0);
+  } finally {
     gate.stop();
     setResidencyLeaseRegistry(previous);
   }

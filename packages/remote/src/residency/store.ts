@@ -86,6 +86,7 @@ import { dirname, join } from "node:path";
 import { existsSync, mkdirSync, statSync } from "../safe-fs.js";
 
 const SCHEMA_VERSION = 1;
+export const RESIDENCY_INFERENCE_HOLD_SCHEMA_VERSION = 2;
 
 // Forced-unload lease audit (#278, DF-05). Newest rows win: the sink trims to
 // this many after every append, and the busy timeout is short so a locked store
@@ -377,10 +378,7 @@ export function openResidencyOperationStore(
     },
     getOperation: (operationId) => {
       const row = selectOperationRow(db, operationId);
-      if (row === null) {
-        return null;
-      }
-      return rowToRecord(row);
+      return row === null ? null : rowToRecord(row);
     },
     getResidencyState: (model) => {
       const row = selectResidencyStateRow(db, model);
@@ -709,9 +707,9 @@ function migrate(db: Database): void {
     db.query("INSERT INTO schema_version (version) VALUES (?)").run(SCHEMA_VERSION);
     return;
   }
-  if (stored.version > SCHEMA_VERSION) {
+  if (stored.version > RESIDENCY_INFERENCE_HOLD_SCHEMA_VERSION) {
     throw new Error(
-      `residency store schema_version ${String(stored.version)} is newer than supported ${String(SCHEMA_VERSION)}`,
+      `residency store schema_version ${String(stored.version)} is newer than supported ${String(RESIDENCY_INFERENCE_HOLD_SCHEMA_VERSION)}`,
     );
   }
   createTables(db);
