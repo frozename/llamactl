@@ -28,7 +28,11 @@ import { decodeBootstrap } from "@llamactl/core/config/agent-config";
 import { nonEmpty } from "@llamactl/core/config/env";
 import * as kubecfg from "@llamactl/core/config/kubeconfig";
 import { ENGINES } from "@llamactl/core/engines";
-import { readModelHostState } from "@llamactl/core/engines/state";
+import {
+  modelhostPidFile,
+  modelhostStateFile,
+  readModelHostState,
+} from "@llamactl/core/engines/state";
 import { probeEndpointOwnership } from "@llamactl/core/probe";
 import { DEFAULT_RESIDENCY_POLICY } from "@llamactl/core/residency/admission";
 import {
@@ -542,18 +546,47 @@ export function keepAliveWorkloadProvenDown(
   }
 }
 
+// Identifies an unstored ModelRun (#517): a run the agent started through
+// `serverStart` with no manifest in its own workloads dir (the manifest lives on
+// the host that ran workloadApply/expose) still records a lifecycle row under its
+// workload name, and `startServer`'s `llama-server.state` sidecar written under
+// that key is what makes the name a ModelRun. A key that also carries ModelHost
+// runtime files, or one the keep-alive state names, is not an unstored run —
+// `keepAliveWorkloadProvenDown` owns that proof, which additionally requires the
+// supervisor to be gone. A throw fails closed.
+function unstoredModelRunRecorded(model: string): boolean {
+  try {
+    const key = { name: model };
+    if (serverMod.readServerState(key) === null) return false;
+    const resolved = envMod.resolveEnv();
+    if (
+      existsSync(modelhostPidFile(resolved, key)) ||
+      existsSync(modelhostStateFile(resolved, key))
+    ) {
+      return false;
+    }
+    return keepAliveMod.readKeepAliveState()?.target !== model;
+  } catch {
+    return false;
+  }
+}
+
 // A peer is proven down only when it is a known ModelHost whose recorded-pid
-// status reads Stopped without an unresolved identity, a known ModelRun that
-// has no recorded pid file or whose recorded pid verifies `dead` or `reused`
-// against its pid file using the stopServer identity check, or a crash-left
-// keep-alive workload. A live pid, or an unverifiable one, fails closed. Also
-// used by agent boot recovery for the orphan lifecycle sweep (Part of #517).
+// status reads Stopped without an unresolved identity, a known ModelRun (stored,
+// or unstored and identified by its server sidecar) that has no recorded pid file
+// or whose recorded pid verifies `dead` or `reused` against its pid file using the
+// stopServer identity check, or a crash-left keep-alive workload. A live pid, or
+// an unverifiable one, fails closed. Also used by agent boot recovery for the
+// orphan lifecycle sweep (Part of #517).
 export function directWorkloadProvenDown(model: string): boolean {
   if (modelHostStoreMod.listModelHosts().some((host) => host.metadata.name === model)) {
     const status = statusModelHost({ key: { name: model } });
     return status.state === "Stopped" && status.identityUnknown !== true;
   }
-  if (workloadStoreMod.listWorkloads().some((run) => run.metadata.name === model)) {
+  if (
+    workloadStoreMod.listWorkloads().some((run) => run.metadata.name === model) ||
+    unstoredModelRunRecorded(model)
+  ) {
     return serverMod.isServerProvenDown({ name: model });
   }
   return keepAliveWorkloadProvenDown(model);
@@ -2556,7 +2589,11 @@ export const router = t.router({
       } catch (err) {
         liveStatus = { error: (err as Error).message };
       }
-      return { manifest, liveStatus };
+      return {
+        manifest,
+        liveStatus,
+        controllerPid: liveLockHolder(workloadStoreMod.defaultWorkloadsDir()),
+      };
     }),
 
   nodeBudget: t.procedure.input(z.object({ node: z.string().min(1) })).query(({ input }) => {

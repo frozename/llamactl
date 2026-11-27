@@ -69,7 +69,7 @@ type ApplyProfileResult = {
   operationId?: string | null;
   steps?: { action: string; workload: string; status: string; detail?: string }[];
   deferred?: string[];
-  refusal?: { reason: string; detail: string };
+  refusal?: { reason: string; detail: string; retryAfterMs?: number; workloads?: string[] };
   busy?: { reason: string; node: string; operationId: string; detail: string };
   inFlightOperationId?: string | null;
   controllerPid?: number;
@@ -855,6 +855,55 @@ describe("residencyApplyProfile procedure", () => {
     expect(result.refusal?.reason).toBe("MinResidency");
     expect(result.refusal?.detail).toBe("1 victim(s) have not met minimum residency");
     expect(stepCalls).toEqual([]);
+  });
+
+  test("A13: a MinResidency dry-run refusal carries held workloads and retryAfterMs", async () => {
+    // kills: the router path stripping workloads/retryAfterMs.
+    seedRouterFixtureWithMinResidency();
+    seedReadyLifecycle("chat-a", Date.now() - 10_000);
+
+    const result = await applyProfile({ node: "local", to: "code", from: "chat", dryRun: true });
+
+    expect(result.ok).toBe(false);
+    expect(result.outcome).toBe("refused");
+    expect(result.refusal?.reason).toBe("MinResidency");
+    expect(result.refusal?.workloads).toEqual(["chat-a"]);
+    expect(typeof result.refusal?.retryAfterMs).toBe("number");
+    expect(result.refusal?.retryAfterMs ?? 0).toBeGreaterThan(3_580_000);
+    expect(result.refusal?.retryAfterMs ?? 0).toBeLessThanOrEqual(3_600_000);
+  });
+
+  test("A14: a Cooldown wet refusal carries retryAfterMs without an empty workloads list", async () => {
+    // kills: the wet refusal dropping retryAfterMs.
+    seedRouterFixtureWithSwitchCooldown();
+    await installStepsFake();
+
+    const first = await applyProfile({
+      node: "local",
+      to: "code",
+      from: "chat",
+      dryRun: false,
+      confirm: true,
+    });
+    const second = await applyProfile({
+      node: "local",
+      to: "code",
+      from: "chat",
+      dryRun: false,
+      confirm: true,
+    });
+
+    expect(first.ok).toBe(true);
+    expect(first.outcome).toBe("stops-and-starts-ran");
+    expect(second.ok).toBe(false);
+    expect(second.outcome).toBe("refused");
+    expect(second.refusal?.reason).toBe("Cooldown");
+    expect(second.refusal?.retryAfterMs ?? 0).toBeGreaterThan(3_590_000);
+    expect(second.refusal?.retryAfterMs ?? 0).toBeLessThanOrEqual(3_600_000);
+    const refusal = second.refusal;
+    expect(refusal).toBeDefined();
+    if (refusal === undefined) return;
+    expect("workloads" in refusal).toBe(false);
   });
 });
 

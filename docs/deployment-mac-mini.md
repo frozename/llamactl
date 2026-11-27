@@ -160,6 +160,11 @@ summary: label, PID, binary path, log dir.
 Add `--dry-run` first if you want to see the rendered plist + the
 `launchctl` commands before committing.
 
+A 16 GiB Mac mini used only as a control node can carry the
+control-only NodeRun example in
+[dynamic residency](dynamic-residency.md#node-policy-examples). That
+example is policy shape only: it is not deployment approval.
+
 ---
 
 ## 8. Full Disk Access grant (one-time, GUI)

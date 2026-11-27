@@ -1,8 +1,19 @@
+import type { ProcPidRusage } from "./darwin-rusage.js";
 import type { IoByteCounts } from "./normalise.js";
 import type { PerfSuiteReaders } from "./runner.js";
 
 import { readFile as fsReadFile } from "../safe-fs-promises.js";
-import { parseProcIo, parseVmHwm } from "./normalise.js";
+import { defaultProcPidRusage } from "./darwin-rusage.js";
+import {
+  decodeRusageInfoV2Io,
+  parseProcIo,
+  parseVmHwm,
+  RUSAGE_INFO_V2,
+  RUSAGE_INFO_V2_SIZE,
+  rusageIo,
+} from "./normalise.js";
+
+export type { ProcPidRusage } from "./darwin-rusage.js";
 
 /**
  * Per-reader unavailable reasons injected by `runPerfSuite` when a
@@ -27,15 +38,23 @@ export interface PerfSuiteReaderReasons {
  * `platform` defaults to `process.platform`; override it in tests.
  * `readFile` defaults to the package safe-fs `readFile(path, 'utf8')`
  * (a `node:fs/promises` re-export).
+ *
+ * `procPidRusage` is the macOS `proc_pid_rusage` call used by the darwin I/O
+ * reader; it defaults to `defaultProcPidRusage()` and tests inject a fake.
  */
 export interface PerfHostReaderOptions {
   pid: number | null | (() => number | null);
   platform?: NodeJS.Platform;
   readFile?: (path: string) => Promise<string>;
+  procPidRusage?: ProcPidRusage;
 }
 
 /**
- * Build per-engine host readers for I/O and peak RSS on Linux.
+ * Build per-engine host readers for I/O and peak RSS.
+ *
+ * Linux reads `/proc/<pid>/io` and `VmHWM`. macOS reads only I/O, through
+ * `proc_pid_rusage` with `RUSAGE_INFO_V2`; peak RSS stays unavailable. Any
+ * other platform gets no reader and names the platform in its reason.
  *
  * This function never sets `gtt` — GTT stays caller-injected
  * (probeGpuGtt lives in fleet-supervisor, which eval does not
@@ -65,15 +84,9 @@ export function createPerfHostReaders(opts: PerfHostReaderOptions): {
     return { readers: {}, reasons };
   }
 
-  // Non-Linux: /proc/<pid>/io and VmHWM are Linux-only.
-  if (platform !== "linux") {
-    reasons.io = `per-process disk I/O counters (/proc/<pid>/io) are Linux-only; ${platform} needs proc_pid_rusage, which this build does not read`;
-    reasons.peakRss = `VmHWM (/proc/<pid>/status) is Linux-only; no peak-RSS reader on ${platform}`;
-    return { readers: {}, reasons };
-  }
-
-  // Linux: build a livePid that resolves the numeric pid (or calls the
-  // getter and throws) so each reader can call it OUTSIDE its try/catch.
+  // Build a livePid that resolves the numeric pid (or calls the getter and
+  // throws) so each reader can call it OUTSIDE its try/catch, on every
+  // platform that has a reader.
   const livePid = (): number => {
     const raw = typeof opts.pid === "function" ? opts.pid() : opts.pid;
     if (raw === null || !Number.isSafeInteger(raw) || raw <= 0) {
@@ -82,10 +95,38 @@ export function createPerfHostReaders(opts: PerfHostReaderOptions): {
     return raw;
   };
 
-  // Linux: wire up readers that delegate to parseProcIo / parseVmHwm,
-  // wrapping each in try/catch so a rejection returns null.
   const readers: PerfSuiteReaders = {};
 
+  // macOS: /proc is absent, but proc_pid_rusage with RUSAGE_INFO_V2 fills
+  // the per-process disk I/O byte counters. Peak RSS has no macOS reader.
+  if (platform === "darwin") {
+    reasons.peakRss = `VmHWM (/proc/<pid>/status) is Linux-only; no peak-RSS reader on ${platform}`;
+    const call = opts.procPidRusage ?? defaultProcPidRusage();
+    readers.io = async (): Promise<IoByteCounts | null> => {
+      const pid = livePid();
+      try {
+        const buffer = new Uint8Array(RUSAGE_INFO_V2_SIZE);
+        const rc = await call(pid, RUSAGE_INFO_V2, buffer);
+        if (rc !== 0) return null;
+        const counts = decodeRusageInfoV2Io(buffer);
+        return counts === null ? null : rusageIo(counts);
+      } catch {
+        return null;
+      }
+    };
+    return { readers, reasons };
+  }
+
+  // Off Linux and off macOS there is neither /proc/<pid>/io nor
+  // proc_pid_rusage, so no reader is built.
+  if (platform !== "linux") {
+    reasons.io = `per-process disk I/O counters are read from /proc/<pid>/io on Linux and proc_pid_rusage on macOS; no I/O reader on ${platform}`;
+    reasons.peakRss = `VmHWM (/proc/<pid>/status) is Linux-only; no peak-RSS reader on ${platform}`;
+    return { readers: {}, reasons };
+  }
+
+  // Linux: wire up readers that delegate to parseProcIo / parseVmHwm,
+  // wrapping each in try/catch so a rejection returns null.
   readers.io = async (): Promise<IoByteCounts | null> => {
     const pid = livePid();
     try {

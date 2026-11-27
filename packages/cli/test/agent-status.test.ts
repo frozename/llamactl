@@ -23,7 +23,14 @@ import {
   type ServiceProbeDeps,
 } from "../src/commands/agent-status.js";
 import { runAgent } from "../src/commands/agent.js";
-import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync } from "../src/safe-fs.js";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from "../src/safe-fs.js";
 
 /**
  * #211: `agent status` must report liveness (GET /healthz), flag a
@@ -487,6 +494,115 @@ describe("agent status advertised host recorded in agent.yaml (#211)", () => {
     expect(rep.advertisedHost).toBe("10.0.0.6");
     expect(rep.advertisedHostCovered).toBe(false);
   });
+
+  test.each([
+    ["empty", ""],
+    ["whitespace-only", "  "],
+  ])(
+    "rotate-token --host (%s) is refused and keeps the recorded advertisedHost",
+    async (_label, host) => {
+      await initAdvertisedHost();
+      const cfgPath = join(tmp, "agent.yaml");
+      const before = readFileSync(cfgPath, "utf8");
+
+      const r = await capture(["rotate-token", `--dir=${tmp}`, `--host=${host}`, "--json"]);
+      expect(r.code).toBe(1);
+      expect(r.err).toContain("--host");
+      expect(r.err).toContain("requires a host");
+      expect(r.out).toBe("");
+      expect(readFileSync(cfgPath, "utf8")).toBe(before);
+      expect(advertisedHostOf(agentConfigMod.loadAgentConfig(cfgPath))).toBe("192.168.68.139");
+    },
+  );
+
+  test.each([
+    ["empty", ""],
+    ["whitespace-only", "  "],
+  ])(
+    "rotate-cert --host (%s) is refused and keeps the recorded advertisedHost",
+    async (_label, host) => {
+      await initAdvertisedHost();
+      const cfgPath = join(tmp, "agent.yaml");
+      const crtPath = join(tmp, "agent.crt");
+      const cfgBefore = readFileSync(cfgPath, "utf8");
+      const crtBefore = readFileSync(crtPath, "utf8");
+
+      const r = await capture([
+        "rotate-cert",
+        `--dir=${tmp}`,
+        `--host=${host}`,
+        "--san=127.0.0.1,localhost",
+        "--json",
+      ]);
+      expect(r.code).toBe(1);
+      expect(r.err).toContain("--host");
+      expect(r.err).toContain("requires a host");
+      expect(r.out).toBe("");
+      expect(readFileSync(cfgPath, "utf8")).toBe(cfgBefore);
+      expect(readFileSync(crtPath, "utf8")).toBe(crtBefore);
+      expect(advertisedHostOf(agentConfigMod.loadAgentConfig(cfgPath))).toBe("192.168.68.139");
+    },
+  );
+
+  test.each([
+    ["empty", ""],
+    ["whitespace-only", "  "],
+  ])("init --host (%s) is refused before anything is written", async (_label, host) => {
+    const cfgPath = join(tmp, "agent.yaml");
+    const r = await capture([
+      "init",
+      `--dir=${tmp}`,
+      `--host=${host}`,
+      "--port=59996",
+      "--san=127.0.0.1,localhost",
+      "--json",
+    ]);
+    expect(r.code).toBe(1);
+    expect(r.err).toContain("agent init: --host requires a host");
+    expect(r.out).toBe("");
+    expect(existsSync(cfgPath)).toBe(false);
+  });
+
+  test("init with --host omitted still records the default advertisedHost", async () => {
+    const cfgPath = join(tmp, "agent.yaml");
+    const r = await capture([
+      "init",
+      `--dir=${tmp}`,
+      "--port=59996",
+      "--san=127.0.0.1,localhost",
+      "--json",
+    ]);
+    expect(r.code).toBe(0);
+    expect(advertisedHostOf(agentConfigMod.loadAgentConfig(cfgPath))).toBe("127.0.0.1");
+  });
+
+  test.each([
+    ["a number", "42"],
+    ["an empty string", '""'],
+    ["an object", "{ host: 10.0.0.1 }"],
+  ])(
+    "an invalid recorded advertisedHost (%s) is dropped on load, without a write-back",
+    async (_label, yamlValue) => {
+      await initAdvertisedHost();
+      const cfgPath = join(tmp, "agent.yaml");
+      const originalLine = "advertisedHost: 192.168.68.139";
+      const text = readFileSync(cfgPath, "utf8");
+      expect(text).toContain(originalLine);
+      const edited = text.replace(originalLine, `advertisedHost: ${yamlValue}`);
+      writeFileSync(cfgPath, edited);
+      const before = edited;
+
+      const cfg = agentConfigMod.loadAgentConfig(cfgPath);
+      expect(advertisedHostOf(cfg)).toBeUndefined();
+      expect(readFileSync(cfgPath, "utf8")).toBe(before);
+
+      const s = await capture(["status", `--dir=${tmp}`, "--json"]);
+      expect(s.code).toBe(0);
+      expect(parseReport(s.out).advertisedHost).toBeNull();
+      expect(parseReport(s.out).advertisedHostCovered).toBeNull();
+      expect(readFileSync(cfgPath, "utf8")).toBe(before);
+    },
+  );
 });
 
 describe("agent status listener pid", () => {

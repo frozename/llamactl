@@ -654,3 +654,26 @@ describe("bin residency plan routing", () => {
     CLI_SPAWN_TEST_TIMEOUT_MS,
   );
 });
+
+describe("#519 residency plan refusal retry readout", () => {
+  test("P1: a refused plan renders retry guidance only when retryAfterMs is present", async () => {
+    // kills: the renderer ignoring retryAfterMs; an unconditional or 'null' Retry line.
+    const { mod } = await loadResidency();
+    const render = renderResidencyPlanOf(mod);
+    const req = { node: "local", to: "code", from: "chat" };
+    const refused = {
+      ok: false,
+      reason: "Cooldown",
+      detail: "switch cooldown active (125000ms remaining)",
+      workloads: [],
+      retryAfterMs: 125_000,
+      steps: [],
+    };
+
+    const withRetry = render(req, refused);
+    const withoutRetry = render(req, { ...refused, retryAfterMs: null });
+
+    expect(withRetry).toContain("Workloads:    none\nRetry in:     2m 5s\n");
+    expect(withoutRetry).not.toContain("Retry in:");
+  });
+});

@@ -34,6 +34,7 @@ type CreatePerfHostReaders = (opts: {
   pid: number | null;
   platform: NodeJS.Platform;
   readFile: (path: string) => Promise<string>;
+  procPidRusage?: (pid: number, flavor: number, buffer: Uint8Array) => number | Promise<number>;
 }) => { readers: PerfSuiteReaders; reasons: { io?: string; peakRss?: string } };
 
 function hostReaders(): CreatePerfHostReaders {
@@ -111,10 +112,11 @@ describe("createPerfHostReaders", () => {
     expect(paths).toEqual(["/proc/4242/status"]);
   });
 
-  test("darwin returns no io/peakRss reader and names the platform", () => {
-    // Kills: returning Linux /proc readers on darwin, or omitting the
-    //        platform reason.
+  test("darwin reads SSD I/O through proc_pid_rusage but keeps peakRss platform-only", async () => {
+    // Kills: returning Linux /proc readers on darwin, omitting the io reader,
+    //        or inventing a macOS VmHWM reader.
     const paths: string[] = [];
+    const rusageCalls: number[] = [];
     const { readers, reasons } = hostReaders()({
       pid: 4242,
       platform: "darwin",
@@ -122,11 +124,19 @@ describe("createPerfHostReaders", () => {
         paths.push(path);
         return Promise.resolve("");
       },
+      procPidRusage: (pid, _flavor, buffer) => {
+        rusageCalls.push(pid);
+        const view = new DataView(buffer.buffer, buffer.byteOffset);
+        view.setBigUint64(144, 1n, true);
+        view.setBigUint64(152, 1n, true);
+        return 0;
+      },
     });
-    expect(readers.io).toBeUndefined();
+    expect(readers.io).toBeDefined();
+    expect(await readers.io!()).toEqual({ readBytes: 1, writeBytes: 1 });
+    expect(rusageCalls).toEqual([4242]);
     expect(readers.peakRss).toBeUndefined();
-    expect(reasons.io).toMatch(/darwin/);
-    expect(reasons.io).toMatch(/\/proc\/<pid>\/io|Linux-only/i);
+    expect(reasons.io).toBeUndefined();
     expect(reasons.peakRss).toMatch(/VmHWM/);
     expect(reasons.peakRss).toMatch(/darwin/);
     expect(paths).toEqual([]);
@@ -163,10 +173,10 @@ describe("createPerfHostReaders", () => {
     expect(await readers.peakRss!()).toBeNull();
   });
 
-  test("end-to-end with runPerfSuite records real deltas on linux and darwin reasons otherwise", async () => {
-    // Kills: host readers that read the CLI's own /proc/self counters
-    //        instead of the engine pid's, record 0 for missing readers,
-    //        or drop readerReasons on non-linux platforms.
+  test("end-to-end with runPerfSuite records real linux and darwin SSD deltas", async () => {
+    // Kills: host readers that read the CLI's own counters instead of the
+    //        engine pid's, record 0 for missing readers, or drop the
+    //        remaining peakRss reader reason on darwin.
     const clock = createManualClock();
     const fake = startEngine(engineOpts(clock));
     const client = evalIndex.createHttpPerfEngineClient(fake.url, { clock });
@@ -216,10 +226,19 @@ describe("createPerfHostReaders", () => {
     const darwinClient = evalIndex.createHttpPerfEngineClient(darwinFake.url, {
       clock: darwinClock,
     });
+    let darwinRusageCalls = 0;
     const darwinHost = hostReaders()({
       pid: 4242,
       platform: "darwin",
       readFile: () => Promise.reject(new Error("darwin host readers must not read /proc")),
+      procPidRusage: (_pid, _flavor, buffer) => {
+        const first = darwinRusageCalls === 0;
+        darwinRusageCalls += 1;
+        const view = new DataView(buffer.buffer, buffer.byteOffset);
+        view.setBigUint64(144, first ? 1000n : 5000n, true);
+        view.setBigUint64(152, first ? 10n : 30n, true);
+        return 0;
+      },
     });
     const darwinOpts: PerfSuiteOptions = {
       run_id: RUN_ID,
@@ -234,13 +253,13 @@ describe("createPerfHostReaders", () => {
     try {
       await evalIndex.runPerfSuite(darwinDb, darwinOpts);
       const rows = evalIndex.listPerfRuns(darwinDb, { run_id: RUN_ID });
-      for (const name of ["ssd_read_bytes", "ssd_write_bytes", "peak_rss_bytes"] as const) {
-        const metric = metricOf(rows, name);
-        expect(metric.status).toBe("unavailable");
-        if (metric.status === "unavailable") {
-          expect(metric.value).toBeNull();
-          expect(metric.reason).toMatch(/darwin/);
-        }
+      expect(metricOf(rows, "ssd_read_bytes")).toEqual({ status: "ok", value: 4000 });
+      expect(metricOf(rows, "ssd_write_bytes")).toEqual({ status: "ok", value: 20 });
+      const peakRss = metricOf(rows, "peak_rss_bytes");
+      expect(peakRss.status).toBe("unavailable");
+      if (peakRss.status === "unavailable") {
+        expect(peakRss.value).toBeNull();
+        expect(peakRss.reason).toMatch(/darwin/);
       }
       expect(rows.filter((row) => row.metric.status === "ok" && row.metric.value === 0)).toEqual(
         [],
@@ -320,22 +339,27 @@ describe("#521 createPerfHostReaders live pid getter", () => {
     expect((ioErr as Error).message).toBe("engine PID not known when the reader ran");
   });
 
-  test("darwin keeps the platform reasons for a live pid getter", () => {
-    // Kills: running the PID-unknown branch for a getter.
+  test("darwin keeps only the peakRss platform reason for a live pid getter", () => {
+    // Kills: running the PID-unknown branch for a getter, or treating a live
+    //        darwin pid as though proc_pid_rusage were unavailable.
     const { reasons } = hostReaders()(
       livePidOpts({
         pid: () => 5,
         platform: "darwin",
         readFile: () => Promise.resolve(""),
+        procPidRusage: (_pid, _flavor, buffer) => {
+          const view = new DataView(buffer.buffer, buffer.byteOffset);
+          view.setBigUint64(144, 1n, true);
+          view.setBigUint64(152, 1n, true);
+          return 0;
+        },
       }),
     );
 
     expect(reasons.peakRss).toBe(
       "VmHWM (/proc/<pid>/status) is Linux-only; no peak-RSS reader on darwin",
     );
-    expect(reasons.io).toBe(
-      "per-process disk I/O counters (/proc/<pid>/io) are Linux-only; darwin needs proc_pid_rusage, which this build does not read",
-    );
+    expect(reasons.io).toBeUndefined();
   });
 
   test("guard: numeric null pid keeps the engine-PID-unknown reason", () => {
