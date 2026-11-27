@@ -13,6 +13,7 @@
  * re-exported from packages/core/src/residency/generation-evidence.ts.
  * judgeGeneration is called directly from that module.
  */
+import type { PidIdentityDeps } from "@llamactl/core/pidIdentity";
 import type { ManagedWorkloadKind } from "@llamactl/core/residency/admission";
 
 import {
@@ -65,7 +66,10 @@ export type ReleaseAttemptResult =
   | { kind: "retained"; claimId: string; reason: string }
   | { kind: "unknown-claim"; claimId: string };
 
-export type ManagedStopProof = (stoppedPid: number) => ReleaseAttemptResult;
+export interface ManagedStopProof {
+  verifyGeneration: NonNullable<PidIdentityDeps["verifyGeneration"]>;
+  release(stoppedPid: number): ReleaseAttemptResult;
+}
 
 export interface AuthorityClaimRow extends ClaimRow {
   /** Captured generations, oldest first. Detached like every snapshot row. */
@@ -252,12 +256,27 @@ function captureStopRelease(
   const before = readPidFile(row.runtimeKey);
   if (before === undefined) return undefined;
   const captured = store.generationsOf(row.claimId);
-  return (stoppedPid) => {
-    const after = readPidFile(row.runtimeKey);
-    if (stoppedPid !== before || (after !== undefined && after !== before)) {
-      return { kind: "retained", claimId: row.claimId, reason: "pid-record-conflict" };
-    }
-    return releaseClaim(row, captured, store, before, observe);
+  const generation = captured.findLast((item) => item.pid === before && item.birthId);
+  if (generation === undefined) return undefined;
+  const verifyGeneration: ManagedStopProof["verifyGeneration"] = (pid) => {
+    if (pid !== before || readPidFile(row.runtimeKey) !== before) return "unknown";
+    const verdict = judgeGeneration({
+      recorded: generation,
+      observation: observe(pid, generation),
+    });
+    if (verdict.kind === "same-generation") return "alive";
+    return verdict.kind === "verified-absent" ? "dead" : "unknown";
+  };
+  if (verifyGeneration(before) === "unknown") return undefined;
+  return {
+    verifyGeneration,
+    release(stoppedPid): ReleaseAttemptResult {
+      const after = readPidFile(row.runtimeKey);
+      if (stoppedPid !== before || (after !== undefined && after !== before)) {
+        return { kind: "retained", claimId: row.claimId, reason: "pid-record-conflict" };
+      }
+      return releaseClaim(row, captured, store, before, observe);
+    },
   };
 }
 

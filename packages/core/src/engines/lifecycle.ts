@@ -35,6 +35,11 @@ function shutdownSignalTarget(pid: number): number {
   return pid > 1 && processGroupId(pid) === pid ? -pid : pid;
 }
 
+function signalGenerationMatches(pid: number, identity: SignalIdentity | undefined): boolean {
+  const exact = identity?.deps?.verifyGeneration;
+  return exact === undefined || exact(pid) === "alive";
+}
+
 // Resolving a teardown while the pid is still alive would report a shutdown
 // that never confirmed exit: a survivor past the wait is a failed shutdown,
 // not a stopped process.
@@ -66,6 +71,7 @@ export async function gracefulShutdown(
   // pgid is unreadable, but the group id (== the original pid) stays valid for
   // the SIGKILL sweep of any worker that ignored SIGTERM.
   const target = shutdownSignalTarget(pid);
+  if (!signalGenerationMatches(pid, identity)) return;
   try {
     process.kill(target, "SIGTERM");
   } catch {
@@ -81,6 +87,7 @@ export async function gracefulShutdown(
     await sleep(Math.min(POLL_MS, Math.max(0, remaining)));
   }
 
+  if (!signalGenerationMatches(pid, identity)) return;
   try {
     process.kill(target, "SIGKILL");
   } catch {

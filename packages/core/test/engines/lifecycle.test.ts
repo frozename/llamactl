@@ -53,6 +53,34 @@ async function spawnParentWithGrandchild(
 }
 
 describe("gracefulShutdown process-group reaping", () => {
+  test("a managed ModelHost stop does not escalate after its leader generation changes", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "llamactl-managed-group-"));
+    const recordPath = join(dir, "pid");
+    const pid = 4402;
+    const signals: string[] = [];
+    writeFileSync(recordPath, String(pid));
+    const kill = spyOn(process, "kill").mockImplementation((_pid, signal) => {
+      if (typeof signal === "string") signals.push(signal);
+      if (signal === 0 && signals.includes("SIGKILL")) {
+        throw Object.assign(new Error("fixture exited"), { code: "ESRCH" });
+      }
+      return true;
+    });
+    try {
+      await gracefulShutdown(pid, 0, {
+        recordPath,
+        deps: {
+          processStartMs: () => 0,
+          verifyGeneration: () => (signals.includes("SIGTERM") ? "unknown" : "alive"),
+        },
+      });
+      expect(signals).toEqual(["SIGTERM"]);
+    } finally {
+      kill.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("group-leader (detached) proc: signalling reaps the forked grandchild", async () => {
     const dir = mkdtempSync(join(tmpdir(), "llamactl-gshut-grp-"));
     const gpidFile = join(dir, "gc.pid");

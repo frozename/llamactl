@@ -57,21 +57,26 @@ test.skipIf(!nativePlatform)(
       const stopProof = runtime.authority.prepareStopRelease("fixture", "ModelRun");
       expect(runtime.authority.prepareStopRelease("fixture", "ModelHost")).toBeUndefined();
       if (stopProof === undefined) throw new Error("fixture stop is missing required evidence");
-      expect(stopProof(child.pid + 1)).toMatchObject({
+      expect(stopProof.verifyGeneration(child.pid)).toBe("alive");
+      expect(stopProof.release(child.pid + 1)).toMatchObject({
         kind: "retained",
         reason: "pid-record-conflict",
       });
-      expect(stopProof(child.pid)).toMatchObject({ kind: "retained", reason: "live-generation" });
+      expect(stopProof.release(child.pid)).toMatchObject({
+        kind: "retained",
+        reason: "live-generation",
+      });
       await child.stdin.end();
       expect(await child.exited).toBe(0);
       expect(runtime.capture(child.pid)).toBeUndefined();
+      expect(stopProof.verifyGeneration(child.pid)).toBe("dead");
       trackedPid = child.pid + 1;
-      expect(stopProof(child.pid)).toMatchObject({
+      expect(stopProof.release(child.pid)).toMatchObject({
         kind: "retained",
         reason: "pid-record-conflict",
       });
       trackedPid = undefined;
-      expect(stopProof(child.pid)).toEqual({
+      expect(stopProof.release(child.pid)).toEqual({
         kind: "released",
         claimId,
       });
