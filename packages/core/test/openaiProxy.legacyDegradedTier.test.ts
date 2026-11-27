@@ -3,12 +3,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { ResolvedEnv } from "../src/types.js";
-import type { PeerSnapshot } from "../src/workloadRuntime.js";
+import type { LocalRoute, PeerSnapshot } from "../src/workloadRuntime.js";
 
 import { resolveEnv } from "../src/env.js";
 import { openaiProxy } from "../src/index.js";
 import { QUALIFICATION_LABEL } from "../src/routing/capabilities.js";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
+import * as workloadRuntime from "../src/workloadRuntime.js";
 import { installConditionalChatUpstream } from "./conditionalUpstream.js";
 
 const originalFetch = globalThis.fetch;
@@ -217,6 +218,49 @@ describe("#518 legacy degraded tier in the proxy", () => {
       expect(chatCalls).toHaveLength(1);
       expect(chatCalls[0]!.url).toBe("http://127.0.0.1:8372/v1/chat/completions");
     } finally {
+      warnSpy.mockRestore();
+      t.cleanup();
+    }
+  });
+
+  test("LD5: an explicit experimental label wins over a degraded stage in the legacy order", async () => {
+    const t = tempEnv();
+    const warnSpy = spyOn(console, "warn").mockImplementation(() => undefined);
+    // Local routes carry no labels from disk, so the label + degraded stage
+    // pair is injected at the listLocalRoutes seam.
+    const localRoute = (
+      workload: string,
+      port: number,
+      labels?: Record<string, string>,
+    ): LocalRoute => ({
+      workload,
+      model: "shared-alias",
+      host: "127.0.0.1",
+      port,
+      engine: "llamacpp",
+      kind: "ModelRun",
+      pid: process.pid,
+      qualificationStage: "degraded",
+      ...(labels !== undefined ? { labels } : {}),
+    });
+    const routesSpy = spyOn(workloadRuntime, "listLocalRoutes").mockImplementation(() => [
+      localRoute("a-exp-deg", 8381, { [QUALIFICATION_LABEL]: "experimental" }),
+      localRoute("b-deg", 8382),
+    ]);
+    try {
+      const upstream = installConditionalChatUpstream();
+
+      const res = await openaiProxy.proxyOpenAI(chatRequest("shared-alias"), t.env);
+
+      expect(res.status).toBe(200);
+      const chatCalls = upstream.calls.filter((c) => c.url.endsWith("/v1/chat/completions"));
+      expect(chatCalls).toHaveLength(1);
+      expect(chatCalls[0]!.url).toBe("http://127.0.0.1:8382/v1/chat/completions");
+      expect(warnSpy).toHaveBeenCalledWith(
+        "[openaiProxy] route-map collision on model='shared-alias': keeping ModelRun:b-deg, ignoring ModelRun:a-exp-deg",
+      );
+    } finally {
+      routesSpy.mockRestore();
       warnSpy.mockRestore();
       t.cleanup();
     }

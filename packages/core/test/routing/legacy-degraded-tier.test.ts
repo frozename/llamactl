@@ -16,7 +16,11 @@ const MODEL = "org/glm.gguf";
 const PEER_A: ClusterConfigPeer = { id: "peer-a", endpoint: "https://127.0.0.1:7843" };
 const PEER_B: ClusterConfigPeer = { id: "peer-b", endpoint: "https://127.0.0.1:7844" };
 
-function localRoute(workload: string, qualificationStage?: string): LocalRoute {
+function localRoute(
+  workload: string,
+  qualificationStage?: string,
+  labels?: Record<string, string>,
+): LocalRoute {
   return {
     workload,
     model: "shared",
@@ -26,6 +30,7 @@ function localRoute(workload: string, qualificationStage?: string): LocalRoute {
     kind: "ModelRun",
     pid: 4242,
     ...(qualificationStage !== undefined ? { qualificationStage } : {}),
+    ...(labels !== undefined ? { labels } : {}),
   };
 }
 
@@ -91,5 +96,22 @@ describe("#518 legacy degraded tier in the route catalog", () => {
         (candidate) => candidate.advertisement.deploymentId,
       ),
     ).toEqual(["deploy/local/c-prod", "deploy/local/b-deg", "deploy/local/a-exp"]);
+  });
+
+  test("K4: an explicit experimental label wins over a degraded stage", () => {
+    const catalog = buildRouteCatalog({
+      routes: [
+        localRoute("a-exp-deg", "degraded", { [QUALIFICATION_LABEL]: "experimental" }),
+        localRoute("b-deg", "degraded"),
+      ],
+      now: NOW,
+    });
+
+    const candidates = catalogCandidatesFor(catalog, "shared");
+    expect(candidates.map((candidate) => candidate.advertisement.deploymentId)).toEqual([
+      "deploy/local/b-deg",
+      "deploy/local/a-exp-deg",
+    ]);
+    expect(candidates.map((candidate) => candidate.legacyWinner)).toEqual([true, false]);
   });
 });
