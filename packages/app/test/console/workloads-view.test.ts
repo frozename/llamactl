@@ -489,6 +489,20 @@ describe("workloads view (#410 P5a-3b)", () => {
     expect(rowBlock(markup, "qwen")).not.toContain("Residency: Ready");
   });
 
+  test("oMLX inventory is shown separately from coordinator readiness", () => {
+    queryResults["residencyStatus"] = {
+      node: "local",
+      omlxNative: {
+        scope: "serving-process",
+        workloads: [{ workload: "omlx", mode: "native", modelState: "discovered" }],
+      },
+    };
+    const row = rowBlock(renderView({ view: "workloads" }), "omlx");
+    expect(row).toContain("Native mode");
+    expect(row).toContain("Engine inventory discovered");
+    expect(row).not.toContain("Residency: Ready");
+  });
+
   test("phaseTone maps each phase bucket to its status tone", () => {
     expect(phaseTone("Running")).toBe("ok");
     expect(phaseTone("Mismatch")).toBe("warn");

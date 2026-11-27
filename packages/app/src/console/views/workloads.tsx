@@ -88,9 +88,9 @@ function ConsoleWorkloadRowCard({
   const [open, setOpen] = React.useState(initiallyOpen);
   const describe = useNodeTrpc().workloadDescribe.useQuery({ name: row.name }, { enabled: open });
   const phase = phaseOf(row);
-  const mode = residency?.omlxNative?.workloads.find(
+  const native = residency?.omlxNative?.workloads.find(
     (workload) => workload.workload === row.name,
-  )?.mode;
+  );
   return (
     <div data-testid={`console-workload-row-${row.name}`} style={{ display: "grid", gap: 4 }}>
       <div className="console-list-row">
@@ -123,8 +123,9 @@ function ConsoleWorkloadRowCard({
       </div>
       <div className="console-caption" data-testid="console-workload-residency">
         {`Residency: ${workloadResidencyOf(residency, row.name)}`}
-        {mode === "native" ? " · Native mode" : null}
-        {mode === "process-fallback" ? " · Whole-process mode" : null}
+        {native?.mode === "native" ? " · Native mode" : null}
+        {native?.mode === "process-fallback" ? " · Whole-process mode" : null}
+        {native?.modelState === undefined ? null : ` · Engine inventory ${native.modelState}`}
       </div>
       {open ? <DescribeDrawer data={describe.data} /> : null}
     </div>

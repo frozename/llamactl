@@ -98,6 +98,12 @@ describe("console allowlist", () => {
           workloads: [{ model: "w1", state: "loading", ownerId: "private-owner" }],
         },
         leases: { status: "unavailable", scope: "serving-process", reason: "NoRegistry" },
+        omlxNative: {
+          scope: "serving-process",
+          workloads: [
+            { workload: "o1", mode: "native", modelState: "discovered", endpoint: "private" },
+          ],
+        },
         managed: {
           ownerNodeId: "worker-a",
           ledger: "available",
@@ -141,6 +147,10 @@ describe("console allowlist", () => {
             workloads: [{ model: "w1", state: "loading" }],
           },
           leases: { scope: "serving-process", status: "unavailable" },
+          omlxNative: {
+            scope: "serving-process",
+            workloads: [{ workload: "o1", mode: "native", modelState: "discovered" }],
+          },
           managed: {
             ownerNodeId: "worker-a",
             ledger: "available",

@@ -531,6 +531,33 @@ describe("resolveOmlxResidencyPath", () => {
 // ── residencyStatus projection ──────────────────────────────────────────
 
 describe("residencyStatus omlxNative", () => {
+  test("managed status distinguishes refreshed engine inventory from serving readiness", async () => {
+    const fake = startFakeOmlx({
+      statusScript: [
+        { status: 200, body: statusFixtureV1() },
+        { status: 200, body: { models: [{ id: ID, loaded: true, is_loading: false }] } },
+        { status: 200, body: { models: [] } },
+      ],
+    });
+    saveHostManifests(fake);
+    const caller = router.createCaller({
+      managedLaunchAdmission: {
+        ownsNode: (node) => node === "local" || node === "fixture-node",
+        ownerNodeId: "fixture-node",
+        run(): never {
+          throw new Error("status must not start an engine");
+        },
+      },
+    });
+    for (const state of ["discovered", "loaded", "missing"]) {
+      const result = await caller.residencyStatus({ node: "fixture-node" });
+      expect(result.omlxNative?.workloads).toMatchObject([
+        { workload: "host-omlx", modelState: state },
+      ]);
+    }
+    expect(fake.log).toEqual(Array<string>(3).fill("GET /v1/models/status"));
+  });
+
   // kills the router not being wired, re-probing on every status call, or
   // non-omlx hosts being included
   test("serving node projects oMLX capability rows", async () => {

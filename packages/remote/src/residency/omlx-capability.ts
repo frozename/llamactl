@@ -78,6 +78,7 @@ export type OmlxNativeStatusRow = {
   mode: OmlxNativeCapability["mode"];
   reason: string | null;
   httpStatus: number | null;
+  modelState?: "discovered" | "loading" | "loaded" | "missing" | "unknown";
 };
 
 async function drainBody(response: Response): Promise<void> {
@@ -100,7 +101,10 @@ async function probeOnce(
   timeoutMs: number,
   base: typeof globalThis.fetch,
   apiKey: string | undefined,
-  exact?: OmlxNativePin,
+  inventory?: {
+    exact?: OmlxNativePin;
+    observe?: (body: unknown) => void;
+  },
 ): Promise<OmlxNativeCapability> {
   const url = `${buildBaseUrl(endpoint.host, endpoint.port)}${OMLX_MODELS_STATUS_PATH}`;
   const signal = AbortSignal.timeout(timeoutMs);
@@ -135,9 +139,11 @@ async function probeOnce(
   if (!isModelsStatusBody(body)) {
     return { mode: "unknown", reason: "MalformedResponse", httpStatus: null };
   }
+  const exact = inventory?.exact;
   if (exact !== undefined && parseOmlxModelsStatus(body, exact.modelId, exact).state === "failed") {
     return unverifiedBinding().capability;
   }
+  inventory?.observe?.(body);
   return { mode: "native", reason: null, httpStatus: 200 };
 }
 
@@ -221,7 +227,7 @@ export async function resolveOmlxResidencyPath(
     probeTimeoutMs ?? OMLX_CAPABILITY_PROBE_TIMEOUT_MS,
     opts.fetch ?? globalThis.fetch,
     opts.apiKey,
-    binding,
+    { exact: binding },
   );
   if (!nativeBindingCurrent(binding, opts.endpoint)) return unverifiedBinding();
   if (capability.mode === "unknown") {
@@ -261,13 +267,43 @@ function rowFor(
   };
 }
 
+async function readNativeInventory(
+  manifest: ModelHostManifest,
+  timeoutMs: number,
+): Promise<OmlxNativeStatusRow> {
+  let modelState: NonNullable<OmlxNativeStatusRow["modelState"]> = "unknown";
+  const hosted = manifest.spec.hostedModels[0];
+  const capability = await probeOnce(
+    manifest.spec.endpoint,
+    timeoutMs,
+    globalThis.fetch,
+    undefined,
+    {
+      observe(body): void {
+        if (hosted === undefined) return;
+        const state = parseOmlxModelsStatus(body, hosted.rel);
+        modelState =
+          state.state !== "failed"
+            ? state.state
+            : state.reason === "ModelNotListed"
+              ? "missing"
+              : "unknown";
+      },
+    },
+  );
+  return { ...rowFor(manifest, capability), modelState };
+}
+
 export async function collectOmlxNativeStatus(opts: {
   node: string;
   servingNode: string | null;
   hosts: readonly ModelHostManifest[];
   timeoutMs?: number;
+  ownsNode?: (node: string) => boolean;
 }): Promise<OmlxNativeStatusRow[]> {
-  const hosts = opts.hosts.filter((h) => h.spec.engine === "omlx" && h.spec.node === opts.node);
+  const hosts = opts.hosts.filter(
+    (h) => h.spec.engine === "omlx" && (opts.ownsNode?.(h.spec.node) ?? h.spec.node === opts.node),
+  );
   if (opts.servingNode !== opts.node) {
     const notServing: OmlxNativeCapability = {
       mode: "unknown",
@@ -281,6 +317,7 @@ export async function collectOmlxNativeStatus(opts: {
   const timeoutMs = opts.timeoutMs ?? OMLX_STATUS_PROBE_TIMEOUT_MS;
   const rows = await Promise.all(
     hosts.map(async (h): Promise<OmlxNativeStatusRow> => {
+      if (opts.ownsNode !== undefined) return await readNativeInventory(h, timeoutMs);
       const capability = await ensureOmlxNativeCapability({ endpoint: h.spec.endpoint, timeoutMs });
       return rowFor(h, capability);
     }),

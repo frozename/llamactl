@@ -3013,6 +3013,7 @@ export const router = t.router({
           node: input.node,
           servingNode,
           hosts: modelHostStoreMod.listModelHosts(),
+          ...(owner?.ownsNode === undefined ? {} : { ownsNode: owner.ownsNode }),
         }),
         sessionRegistry: currentSessionRefcounts(),
       });
