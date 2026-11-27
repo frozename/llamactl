@@ -33,6 +33,10 @@ import {
   projectAdmissionHeadroom,
   scoreNodes,
 } from "@llamactl/fleet-supervisor";
+import {
+  measuredCalibrationStorePath,
+  readMeasuredMemoryCalibration,
+} from "@llamactl/fleet-supervisor/measured-memory";
 import { basename } from "node:path";
 
 import type { BegunEvictionOps, EvictionOperationOpts } from "../residency/eviction-operation.js";
@@ -284,6 +288,16 @@ export function admissionRefusalReason(result: ApplyResult): AdmissionRefusalRea
   return undefined;
 }
 
+interface ModelHostResidencyAdmission {
+  getNodeResidencyPolicy: (nodeName: string) => NodeRunResidency | null | undefined;
+  getCandidateCalibrationKey: (manifest: ModelHostManifest) => string | null | undefined;
+  getMeasuredEnvelope?: (manifest: ModelHostManifest) => MeasuredEnvelope | null | undefined;
+  /** An explicit path selects the local store in place of the injected reader. */
+  calibrationStorePath?: string;
+  nowMs?: () => number;
+  maxAgeMs?: number;
+}
+
 export interface ApplyManifestOptions {
   manifest: unknown;
   getClient?: (nodeName: string) => WorkloadClient;
@@ -339,21 +353,7 @@ export interface ApplyManifestOptions {
     /** Nodes whose latest snapshot is older than this many ms are excluded. Default 150000 (5× 30s tick). staleCutoffMs <= 0 disables filtering. */
     staleCutoffMs?: number;
   };
-  /** #277 DF-04 opt-in: measured calibration envelopes in ModelHost budget
-   *  admission. Absent => charging is unchanged. Synchronous so the default
-   *  path gains no await; no production caller passes it yet. */
-  residencyAdmission?: {
-    getNodeResidencyPolicy: (nodeName: string) => NodeRunResidency | null | undefined;
-    getMeasuredEnvelope: (manifest: ModelHostManifest) => MeasuredEnvelope | null | undefined;
-    /** The memoryCalibrationKey encoding of the candidate's calibration
-     *  inputs. The measured envelope is only charged when it matches; a null
-     *  key means the candidate is uncalibratable and the envelope is ignored. */
-    getCandidateCalibrationKey: (manifest: ModelHostManifest) => string | null | undefined;
-    /** Clock override for freshness checks; defaults to Date.now(). */
-    nowMs?: () => number;
-    /** Max envelope age in ms; defaults to DEFAULT_MEASURED_ENVELOPE_MAX_AGE_MS. */
-    maxAgeMs?: number;
-  };
+  residencyAdmission?: ModelHostResidencyAdmission;
 }
 
 interface PlacementContext {
@@ -684,29 +684,39 @@ const NO_VERIFIED_EVICT_VICTIMS: ReadonlySet<string> = new Set();
 function modelHostExpectedMemoryGiB(
   manifest: ModelHostManifest,
   opts: Omit<ApplyManifestOptions, "manifest">,
-  resolved: ReturnType<typeof resolveEnv>,
   estimateGiB: number | null,
 ): number | null {
-  if (opts.residencyAdmission === undefined) return estimateGiB;
-  const policy = opts.residencyAdmission.getNodeResidencyPolicy(manifest.spec.node);
-  const policyPresent = policy !== null && policy !== undefined;
-  const envelope = policyPresent
-    ? opts.residencyAdmission.getMeasuredEnvelope(manifest)
-    : undefined;
-  const candidateKey = policyPresent
-    ? (opts.residencyAdmission.getCandidateCalibrationKey(manifest) ?? undefined)
-    : undefined;
-  const nowMs = policyPresent ? (opts.residencyAdmission.nowMs?.() ?? Date.now()) : undefined;
+  const admission = opts.residencyAdmission;
+  if (admission === undefined) return estimateGiB;
+  const policy = admission.getNodeResidencyPolicy(manifest.spec.node);
+  if (policy === null || policy === undefined) return estimateGiB;
+  const candidateKey = admission.getCandidateCalibrationKey(manifest) ?? undefined;
+  const envelope = modelHostCalibrationEnvelope(manifest, admission, candidateKey, opts.env);
   return modelHostAdmissionChargeGiB({
     estimateGiB,
-    residencyPolicyPresent: policyPresent,
+    residencyPolicyPresent: true,
     envelope,
     candidateKey,
-    nowMs,
-    ...(opts.residencyAdmission.maxAgeMs !== undefined
-      ? { maxAgeMs: opts.residencyAdmission.maxAgeMs }
-      : {}),
+    nowMs: admission.nowMs?.() ?? Date.now(),
+    ...omitUndefined({ maxAgeMs: admission.maxAgeMs }),
   });
+}
+
+function modelHostCalibrationEnvelope(
+  manifest: ModelHostManifest,
+  admission: ModelHostResidencyAdmission,
+  candidateKey: string | undefined,
+  env: NodeJS.ProcessEnv | undefined,
+): MeasuredEnvelope | null | undefined {
+  if (admission.calibrationStorePath === undefined && admission.getMeasuredEnvelope) {
+    return admission.getMeasuredEnvelope(manifest);
+  }
+  // Device identity is outside the calibration key, so a remote target cannot use this host's store.
+  if (manifest.spec.node !== LOCAL_NODE_ID || candidateKey === undefined) return null;
+  return readMeasuredMemoryCalibration(
+    candidateKey,
+    admission.calibrationStorePath ?? measuredCalibrationStorePath(env),
+  );
 }
 
 function admitModelHostBudget(
@@ -725,7 +735,7 @@ function admitModelHostBudget(
     .filter((m) => sameNode(m.spec.node))
     .filter((m) => m.spec.enabled);
   const estimateGiB = estimateModelHostMemoryGiB(manifest, resolved);
-  const expectedMemoryGiB = modelHostExpectedMemoryGiB(manifest, opts, resolved, estimateGiB);
+  const expectedMemoryGiB = modelHostExpectedMemoryGiB(manifest, opts, estimateGiB);
   const admit = computeNodeBudget({
     nodeName: manifest.spec.node,
     nodeBudgetGiB: budget,
@@ -1169,18 +1179,7 @@ export async function applyOneModelHost(
       headroomMinGiB: number;
       safetyFactor?: number;
     };
-    residencyAdmission?: {
-      getNodeResidencyPolicy: (nodeName: string) => NodeRunResidency | null | undefined;
-      getMeasuredEnvelope: (manifest: ModelHostManifest) => MeasuredEnvelope | null | undefined;
-      /** The memoryCalibrationKey encoding of the candidate's calibration
-       *  inputs. The measured envelope is only charged when it matches; a null
-       *  key means the candidate is uncalibratable and the envelope is ignored. */
-      getCandidateCalibrationKey: (manifest: ModelHostManifest) => string | null | undefined;
-      /** Clock override for freshness checks; defaults to Date.now(). */
-      nowMs?: () => number;
-      /** Max envelope age in ms; defaults to DEFAULT_MEASURED_ENVELOPE_MAX_AGE_MS. */
-      maxAgeMs?: number;
-    };
+    residencyAdmission?: ModelHostResidencyAdmission;
     /** Map a node name to a stable identity across node aliases. Feeds the
      *  victim same-node check (nodeIdentityMatcher in authorizeEvictTargets);
      *  the ModelHost path runs no port-collision detection. */
