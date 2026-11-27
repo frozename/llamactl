@@ -290,6 +290,7 @@ function isReadableStore(store: AdmissionStore | null): boolean {
  */
 export function openAdmissionAuthority(opts: {
   storePath: string;
+  requireExisting?: boolean | undefined;
   budgetGiB: () => number | undefined;
   observe: ObserveGeneration;
   readPidFile: (runtimeKey: string) => number | undefined;
@@ -297,7 +298,7 @@ export function openAdmissionAuthority(opts: {
 }): AdmissionAuthority {
   let store: AdmissionStore | null = null;
   try {
-    store = openAdmissionStore({ path: opts.storePath });
+    store = openAdmissionStore({ path: opts.storePath, requireExisting: opts.requireExisting });
   } catch (e) {
     if (!(e instanceof AuthorityUnavailableError)) {
       throw e;

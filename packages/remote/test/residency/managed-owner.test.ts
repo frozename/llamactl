@@ -6,7 +6,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { runDirectResidencyStart } from "../../src/residency/direct-lifecycle.js";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "../../src/safe-fs.js";
 import { startModelHost, stopModelHost } from "../../src/server/modelhost.js";
 import { type RunningAgent, startAgentServer } from "../../src/server/serve.js";
 import { startManagedAgentServer } from "../../src/server/start-managed-agent.js";
@@ -55,6 +63,7 @@ test.skipIf(process.platform !== "darwin" && process.platform !== "linux")(
       DEV_STORAGE: dir,
       LOCAL_AI_RUNTIME_DIR: runtimeDir,
       LLAMACTL_WORKLOADS_DIR: workloadsDir,
+      LLAMACTL_RESIDENCY_STORE: join(dir, "operations.sqlite"),
     };
     const previous = Object.keys(env).map((key) => [key, process.env[key]] as const);
     Object.assign(process.env, env);
@@ -97,9 +106,22 @@ spec:
 
       await running.stop();
       running = undefined;
+      const ledger = join(runtimeDir, "residency-admission.db");
+      renameSync(ledger, ledger + ".saved");
+      const lostLedger = await startManagedAgentServer(opts, name).catch((error: unknown) => error);
+      expect(lostLedger).toEqual(new Error("ManagedAdmissionJournalMismatch"));
+      expect(existsSync(ledger)).toBe(false);
+      renameSync(ledger + ".saved", ledger);
       const wrong = await startManagedAgentServer(opts, "foreign").catch((error: unknown) => error);
       expect(wrong).toEqual(new Error("ManagedNodeIdentityMismatch"));
       expect(() => startAgentServer(opts)).toThrow("ManagedOwnerRequired");
+
+      const operations = env.LLAMACTL_RESIDENCY_STORE;
+      renameSync(operations, operations + ".saved");
+      writeFileSync(operations, readFileSync(operations + ".saved"));
+      const replaced = await startManagedAgentServer(opts, name).catch((error: unknown) => error);
+      expect(replaced).toEqual(new Error("ManagedTransitionJournalMismatch"));
+      renameSync(operations + ".saved", operations);
       running = await startManagedAgentServer(opts, name);
       expect(running.port).toBeGreaterThan(0);
     } finally {

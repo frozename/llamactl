@@ -3,7 +3,7 @@ import { join, resolve } from "node:path";
 
 import { lstatSync } from "../safe-fs.js";
 
-const mutationScope = new AsyncLocalStorage<string>();
+const mutationScope = new AsyncLocalStorage<{ runtimeDir: string; active: () => boolean }>();
 
 export function managedRuntimeMarker(runtimeDir: string): string {
   return join(runtimeDir, "managed-residency-v1");
@@ -19,9 +19,15 @@ export function hasManagedRuntimeMarker(runtimeDir: string): boolean {
 }
 
 export function managedRuntimeRefusesMutation(runtimeDir: string): boolean {
-  return mutationScope.getStore() !== resolve(runtimeDir) && hasManagedRuntimeMarker(runtimeDir);
+  if (!hasManagedRuntimeMarker(runtimeDir)) return false;
+  const scope = mutationScope.getStore();
+  return scope?.runtimeDir !== resolve(runtimeDir) || !scope.active();
 }
 
-export function withManagedRuntimeMutation<T>(runtimeDir: string, run: () => T): T {
-  return mutationScope.run(resolve(runtimeDir), run);
+export function withManagedRuntimeMutation<T>(
+  runtimeDir: string,
+  active: () => boolean,
+  run: () => T,
+): T {
+  return mutationScope.run({ runtimeDir: resolve(runtimeDir), active }, run);
 }

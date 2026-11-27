@@ -1,37 +1,16 @@
 import { rpcServer } from "@llamactl/core";
 import { resolveEnv } from "@llamactl/core/env";
-import {
-  hasManagedRuntimeMarker,
-  managedRuntimeMarker,
-} from "@llamactl/core/residency/managed-runtime";
 import { resolve } from "node:path";
 
+import { manageJournalPair } from "../residency/managed-journals.js";
 import { defaultResidencyStorePath, openResidencyOperationStore } from "../residency/store.js";
 import { openNodeManagedAdmission } from "../residency/target-admission-policy.js";
-import { existsSync, readFileSync, writeFileSync } from "../safe-fs.js";
+import { existsSync } from "../safe-fs.js";
 import { liveLockHolder } from "../workload/lock.js";
 import { defaultWorkloadsDir } from "../workload/store.js";
 import { type RunningAgent, type StartAgentOptions, startAgentServer } from "./serve.js";
 
 const activeRuntimeRoots = new Set<string>();
-
-function checkPriorOwner(runtimeDir: string, node: string): void {
-  if (
-    hasManagedRuntimeMarker(runtimeDir) &&
-    readFileSync(managedRuntimeMarker(runtimeDir), "utf8") !== `${node}\n`
-  ) {
-    throw new Error("ManagedNodeIdentityMismatch");
-  }
-}
-
-function installMarker(runtimeDir: string, node: string): void {
-  try {
-    writeFileSync(managedRuntimeMarker(runtimeDir), `${node}\n`, { flag: "wx", mode: 0o600 });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-    checkPriorOwner(runtimeDir, node);
-  }
-}
 
 export async function startManagedAgentServer(
   opts: StartAgentOptions,
@@ -48,11 +27,10 @@ export async function startManagedAgentServer(
   activeRuntimeRoots.add(runtimeDir);
   let authority: Awaited<ReturnType<typeof openNodeManagedAdmission>>["authority"] | undefined;
   try {
-    checkPriorOwner(runtimeDir, nodeName);
     const operationsPath = defaultResidencyStorePath();
-    if (hasManagedRuntimeMarker(runtimeDir) && !existsSync(operationsPath)) {
-      throw new Error("ManagedTransitionStoreMissing");
-    }
+    const journals = manageJournalPair(runtimeDir, operationsPath, nodeName);
+    const missing = journals.verify();
+    if (missing !== undefined) throw new Error(missing);
     const checkOtherWorkloads = (): void => {
       if (liveLockHolder(defaultWorkloadsDir()) !== null)
         throw new Error("ManagedControllerActive");
@@ -60,12 +38,20 @@ export async function startManagedAgentServer(
         throw new Error("ManagedRpcServerPresent");
     };
     checkOtherWorkloads();
-    const runtime = await openNodeManagedAdmission({ nodeName, aliases: ["local"] });
+    const runtime = await openNodeManagedAdmission({
+      nodeName,
+      aliases: ["local"],
+      requireExistingStore: journals.prior,
+      verifyJournalPair: journals.verify,
+    });
     authority = runtime.authority;
     const refusal = runtime.verifyActivation();
     if (refusal !== undefined) throw new Error(refusal);
-    openResidencyOperationStore({ path: operationsPath }).close();
-    installMarker(runtimeDir, nodeName);
+    openResidencyOperationStore({
+      path: operationsPath,
+      requireExisting: journals.prior,
+    }).close();
+    journals.install();
     checkOtherWorkloads();
     const recheck = runtime.verifyActivation();
     if (recheck !== undefined) throw new Error(recheck);
