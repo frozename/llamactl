@@ -485,6 +485,8 @@ Use a one-off switch with a single desired-state writer and no conflicting launc
 
 On the approved target, start its authenticated agent with `LLAMACTL_MANAGED_RESIDENCY=1`. The agent checks its named NodeRun budget against fresh local capacity, verifies the recorded processes, and binds the two journals to their file identities. Use `llamactl apply -f` with `--managed` to send desired workload changes to that owner. Capture the admission ledger and transition journal together for recovery.
 
+Use `llamactl residency load <workload> --node <name>` and `llamactl residency unload <workload> --node <name>` to preview a whole-process action on one exact managed workload. Add `--execute --yes` to run the previewed action. The owner checks the current profile, its leases and the transition journal. Unload refuses an active or protected workload and leaves the desired manifest enabled, so later authorized activation can load it again. Disable the workload through managed apply to remove that eligibility.
+
 ```sh
 llamactl residency apply-profile --node <name> --to <profile> [--from <profile>]
 llamactl residency apply-profile --node <name> --to <profile> [--from <profile>] --execute --yes
