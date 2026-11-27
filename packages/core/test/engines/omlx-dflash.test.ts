@@ -91,6 +91,102 @@ describe("omlx engine dflash boot command", () => {
     });
   });
 
+  test.each([
+    { form: "separate", extraArgs: ["--base-path", "/tmp/alternate"] },
+    { form: "inline", extraArgs: ["--base-path=/tmp/alternate"] },
+  ])("declared model settings refuse an overriding base path ($form)", async ({ extraArgs }) => {
+    const spec = {
+      ...baseSpec,
+      hostedModels: [{ rel: baseSpec.hostedModels[0]!.rel, omlx: { max_tokens: 128 } }],
+      extraArgs: [...extraArgs],
+    };
+    const env = {
+      LLAMA_CPP_MODELS: "/unused/models",
+      LLAMACTL_RUNTIME_DIR: runtimeRoot,
+      workloadName: "settings-override",
+    };
+    expect(() => ENGINES.omlx.buildBootCommand(spec, env)).toThrow("base-path");
+    let preparationError: unknown;
+    try {
+      await ENGINES.omlx.prepareLaunch?.(spec, env);
+    } catch (error) {
+      preparationError = error;
+    }
+    expect(preparationError).toEqual(
+      new Error("oMLX model settings require the workload's --base-path"),
+    );
+    expect(existsSync(join(runtimeRoot, "workloads", "settings-override"))).toBe(false);
+  });
+
+  test("a host with no manifest settings retains its legacy launch and settings file", async () => {
+    const spec = {
+      ...baseSpec,
+      hostedModels: [{ rel: baseSpec.hostedModels[0]!.rel }],
+    };
+    const env = {
+      LLAMA_CPP_MODELS: "/unused/models",
+      LLAMACTL_RUNTIME_DIR: runtimeRoot,
+      workloadName: "legacy-settings",
+    };
+    const basePath = join(runtimeRoot, "workloads", "legacy-settings", ".omlx");
+    mkdirSync(basePath, { recursive: true });
+    const settings = join(basePath, "model_settings.json");
+    writeFileSync(settings, "opaque legacy file");
+    expect(ENGINES.omlx.buildBootCommand(spec, env).args).not.toContain("--base-path");
+    const customSpec = { ...spec, extraArgs: ["--base-path", "/legacy/omlx"] };
+    expect(ENGINES.omlx.buildBootCommand(customSpec, env).args.slice(-2)).toEqual([
+      "--base-path",
+      "/legacy/omlx",
+    ]);
+    await ENGINES.omlx.prepareLaunch?.(spec, env);
+    expect(readFileSync(settings, "utf8")).toBe("opaque legacy file");
+  });
+
+  test("replaces stale DFlash options without dropping declared context settings", async () => {
+    const model = baseSpec.hostedModels[0]!;
+    const spec = {
+      ...baseSpec,
+      hostedModels: [
+        {
+          rel: model.rel,
+          dflash: { enabled: true, dflash_draft_model: "current-draft" },
+          omlx: { max_context_window: 4096 },
+        },
+      ],
+    };
+    const env = {
+      LLAMA_CPP_MODELS: "/unused/models",
+      LLAMACTL_RUNTIME_DIR: runtimeRoot,
+      workloadName: "combined-settings",
+    };
+    const basePath = join(runtimeRoot, "workloads", "combined-settings", ".omlx");
+    mkdirSync(basePath, { recursive: true });
+    const settings = join(basePath, "model_settings.json");
+    const id = basename(model.rel);
+    writeFileSync(
+      settings,
+      JSON.stringify({
+        version: 1,
+        models: { [id]: { dflash_draft_model: "old-draft", dflash_in_memory_cache: true } },
+      }),
+    );
+    await ENGINES.omlx.prepareLaunch?.(spec, env);
+    const expected = {
+      version: 1,
+      models: {
+        [id]: {
+          dflash_enabled: true,
+          dflash_draft_model: "current-draft",
+          max_context_window: 4096,
+        },
+      },
+    };
+    expect(JSON.parse(readFileSync(settings, "utf8"))).toEqual(expected);
+    const prepared = readFileSync(settings, "utf8");
+    await ENGINES.omlx.prepareLaunch?.(spec, env);
+    expect(readFileSync(settings, "utf8")).toBe(prepared);
+  });
+
   afterAll(() => {
     try {
       // Remove the whole mkdir'd directory, not just the binary inside it (#870).
