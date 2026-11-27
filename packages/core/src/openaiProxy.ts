@@ -71,6 +71,7 @@ import {
 import {
   type CapabilityRejection,
   isExperimentalRoute,
+  legacyQualificationTier,
   type QualificationStage,
 } from "./routing/capabilities.js";
 import {
@@ -259,8 +260,9 @@ function listRoutesForProxy(resolved: ResolvedEnv): workloadRuntime.ClusterRoute
 }
 
 /**
- * Proxy route order (#518): non-experimental before experimental, then
- * ModelRun before ModelHost, then workload name — kept in parity with
+ * Proxy route order (#518): healthy, then degraded, then experimental — a
+ * degraded route sorts behind a healthy one and ahead of an experimental one —
+ * then ModelRun before ModelHost, then workload name, kept in parity with
  * compareDeployments in routing/catalog.ts. An experimental route whose
  * model is a default-target id is dropped entirely, so requests for that
  * id fall through to the node's default endpoint instead of being captured
@@ -272,9 +274,8 @@ function orderedProxyRoutes(resolved: ResolvedEnv): workloadRuntime.ClusterRoute
     (route) => !(isExperimentalRoute(route) && defaultTargets.has(route.model)),
   );
   routes.sort((a, b) => {
-    const aExperimental = isExperimentalRoute(a);
-    const bExperimental = isExperimentalRoute(b);
-    if (aExperimental !== bExperimental) return aExperimental ? 1 : -1;
+    const tierDelta = legacyQualificationTier(a) - legacyQualificationTier(b);
+    if (tierDelta !== 0) return tierDelta;
     if (a.kind !== b.kind) return a.kind === "ModelRun" ? -1 : 1;
     return a.workload.localeCompare(b.workload);
   });

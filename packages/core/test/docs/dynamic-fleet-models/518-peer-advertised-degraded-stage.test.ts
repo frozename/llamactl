@@ -14,8 +14,7 @@ describe("#518 peer-advertised degraded stage doc", () => {
     expect(q).toContain("admitPeerRoute");
     expect(q).toMatch(/healthy peer[^.]*admit/i);
     expect(q).toMatch(/local routes?[^.]*(authoritative|always win)/i);
-    expect(q).toMatch(/legacy[^.]*comparator[^.]*ignores degraded/i);
-    expect(q).toMatch(/first admitted peer route by workload name[^.]*leads/i);
+    expect(q).toMatch(/legacy[^.]*degraded[^.]*(behind|after)/i);
 
     const fleet = readOrEmpty(join(REPO, "packages/remote/src/routes/fleet.ts"));
     expect(fleet).toContain("degraded");
