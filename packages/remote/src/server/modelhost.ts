@@ -1592,6 +1592,9 @@ function writeReadyModelHostState(
 ): void {
   const refusal = opts.commitReadiness?.(pid);
   if (refusal !== undefined) throw new Error(refusal);
+  if (opts.commitReadiness !== undefined && opts.manifest !== undefined) {
+    saveModelHost(mergeDiskManagedByLabel(manifest, opts.workloadsDir), opts.workloadsDir);
+  }
   const endpoint = manifest.spec.endpoint;
   writeModelHostState(
     {
@@ -1955,7 +1958,7 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
   // Persist the accepted inline manifest only once validation and the bind
   // gate have passed: a refused start must not replace the previously saved
   // desired state with a manifest the controller will always refuse.
-  if (opts.manifest) {
+  if (opts.manifest !== undefined && opts.commitReadiness === undefined) {
     saveModelHost(mergeDiskManagedByLabel(manifest, opts.workloadsDir), opts.workloadsDir);
   }
 

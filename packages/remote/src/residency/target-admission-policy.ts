@@ -6,8 +6,13 @@ import {
   readModelHostState,
 } from "@llamactl/core/engines/state";
 import { resolveEnv } from "@llamactl/core/env";
-import { capacityBudgetGiB, type ManagedWorkloadKind } from "@llamactl/core/residency/admission";
+import {
+  capacityBudgetGiB,
+  evaluateManagedAdmission,
+  type ManagedWorkloadKind,
+} from "@llamactl/core/residency/admission";
 import { listWorkloadDirs, workloadRuntimeDir } from "@llamactl/core/workloadRuntime";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { join } from "node:path";
 
 import type { AdmissionAuthority, AdmitRequest } from "./admission-authority.js";
@@ -15,11 +20,14 @@ import type { AdmissionAuthority, AdmitRequest } from "./admission-authority.js"
 import { existsSync, mkdirSync, readFileSync } from "../safe-fs.js";
 import { pinModelHostStartup } from "../server/modelhost.js";
 import { declaredModelHostMemoryGiB } from "../workload/admission.js";
-import { modelRunStartInvocation } from "../workload/apply.js";
+import { modelRunStartInvocation, parseEvictTargets } from "../workload/apply.js";
+import { ModelHostManifestSchema } from "../workload/modelhost-schema.js";
 import { loadNodeRunByName, nodeRunPath } from "../workload/noderun-store.js";
-import { defaultWorkloadsDir, loadWorkloadByNameAny } from "../workload/store.js";
+import { ModelRunSchema } from "../workload/schema.js";
+import { defaultWorkloadsDir, loadWorkloadByNameAny, workloadPath } from "../workload/store.js";
 import {
   createManagedLaunchAdmission,
+  type ManagedApplyBudget,
   type ManagedLaunchAdmission,
   type ManagedLaunchRequest,
 } from "./managed-launch-admission.js";
@@ -80,10 +88,9 @@ function localBudget(
 }
 
 type ApprovedPlan = Pick<AdmitRequest, "specDigest" | "allocationGiB">;
+type DesiredManifest = ReturnType<typeof loadWorkloadByNameAny>;
 
-function compileDesired(
-  manifest: ReturnType<typeof loadWorkloadByNameAny>,
-): ApprovedPlan | undefined {
+function compileDesired(manifest: DesiredManifest): ApprovedPlan | undefined {
   if (manifest.kind === "ModelHost") {
     const allocationGiB = declaredModelHostMemoryGiB(manifest);
     if (allocationGiB === null || allocationGiB <= 0) return undefined;
@@ -112,9 +119,13 @@ function approveLaunch(
   request: ManagedLaunchRequest,
   workloadsDir: string,
   aliases: ReadonlySet<string>,
+  pending: DesiredManifest | undefined,
 ): ApprovedPlan | undefined {
   if (request.effectiveSpecDigest === undefined) return undefined;
-  const manifest = readDesired(() => loadWorkloadByNameAny(request.runtimeKey, workloadsDir));
+  const manifest =
+    pending?.metadata.name === request.runtimeKey
+      ? pending
+      : readDesired(() => loadWorkloadByNameAny(request.runtimeKey, workloadsDir));
   if (
     manifest?.kind !== request.kind ||
     manifest.metadata.name !== request.runtimeKey ||
@@ -125,6 +136,50 @@ function approveLaunch(
   }
   const approved = readDesired(() => compileDesired(manifest));
   return approved?.specDigest === request.effectiveSpecDigest ? approved : undefined;
+}
+
+function parseDesired(input: unknown): DesiredManifest | undefined {
+  const run = ModelRunSchema.safeParse(input);
+  if (run.success) return run.data;
+  const host = ModelHostManifestSchema.safeParse(input);
+  return host.success ? host.data : undefined;
+}
+
+function checkManagedApply(
+  manifest: DesiredManifest,
+  authority: AdmissionAuthority,
+  budgetGiB: number | undefined,
+): ManagedApplyBudget | undefined {
+  if (!manifest.spec.enabled) return undefined;
+  if (budgetGiB === undefined || !Number.isFinite(budgetGiB) || budgetGiB <= 0) {
+    throw new Error("BudgetUnknown: managed apply requires a finite target budget");
+  }
+  const approved = compileDesired(manifest);
+  if (approved === undefined)
+    throw new Error("ManagedSpecUnknown: managed apply cannot pin this manifest");
+  const claims = authority.snapshot();
+  const runtimeKey = manifest.metadata.name;
+  const current = claims.find((row) => row.runtimeKey === runtimeKey);
+  if (
+    parseEvictTargets(manifest).length > 0 ||
+    (current !== undefined &&
+      (current.kind !== manifest.kind || current.specDigest !== approved.specDigest))
+  ) {
+    throw new Error("ManagedReplacementRequiresProfile: use a verified profile transition");
+  }
+  const decision = evaluateManagedAdmission({
+    budgetGiB,
+    incoming: { ...approved, runtimeKey, kind: manifest.kind },
+    claims,
+  });
+  if (decision.kind === "refuse") throw new Error(`${decision.reason}: ${decision.detail}`);
+  if (decision.kind === "join-pending")
+    throw new Error("ManagedLaunchPending: the same workload is already loading");
+  const reservedAfter =
+    decision.kind === "admit"
+      ? decision.committedGiB
+      : claims.reduce((total, claim) => total + claim.allocationGiB, 0);
+  return { ok: true, budget: budgetGiB, reservedAfter };
 }
 
 interface RuntimeRecord {
@@ -195,10 +250,12 @@ export async function openNodeManagedAdmission(opts: NodeManagedAdmissionOptions
   const runtimeDir = resolved.LOCAL_AI_RUNTIME_DIR;
   const workloadsDir = opts.workloadsDir ?? defaultWorkloadsDir();
   const aliases = new Set([opts.nodeName, ...(opts.aliases ?? [])]);
+  const desired = new AsyncLocalStorage<DesiredManifest>();
+  const budgetGiB = (): number | undefined => localBudget(opts, workloadsDir, aliases);
   mkdirSync(runtimeDir, { recursive: true });
   const runtime = await openLocalAdmissionRuntime({
     storePath: join(runtimeDir, "residency-admission.db"),
-    budgetGiB: () => localBudget(opts, workloadsDir, aliases),
+    budgetGiB,
     readPidFile: (name) => {
       const key = { name };
       const run = server.readServerPid(key, resolved);
@@ -207,19 +264,44 @@ export async function openNodeManagedAdmission(opts: NodeManagedAdmissionOptions
       return run !== null && host !== undefined ? undefined : (run ?? host);
     },
   });
+  const inspectRuntime = (): string | undefined =>
+    readDesired(() => verifyLocalInventory(resolved, runtime)) === true
+      ? undefined
+      : "ManagedRuntimeInventoryUnknown";
+  const admission = createManagedLaunchAdmission({
+    authority: runtime.authority,
+    capture: (_request, pid) => runtime.capture(pid),
+    inspectRuntime,
+    resolve: (request) =>
+      resolveEnv().LOCAL_AI_RUNTIME_DIR === runtimeDir
+        ? approveLaunch(request, workloadsDir, aliases, desired.getStore())
+        : undefined,
+  });
   return {
-    admission: createManagedLaunchAdmission({
-      authority: runtime.authority,
-      capture: (_request, pid) => runtime.capture(pid),
-      inspectRuntime: () =>
-        readDesired(() => verifyLocalInventory(resolved, runtime)) === true
-          ? undefined
-          : "ManagedRuntimeInventoryUnknown",
-      resolve: (request) =>
-        resolveEnv().LOCAL_AI_RUNTIME_DIR === runtimeDir
-          ? approveLaunch(request, workloadsDir, aliases)
-          : undefined,
-    }),
+    admission: {
+      ...admission,
+      ownsNode: (name) => aliases.has(name),
+      async withDesiredManifest<T>(
+        input: unknown,
+        apply: (owned: boolean, budget?: ManagedApplyBudget) => Promise<T>,
+      ): Promise<T> {
+        const manifest = parseDesired(input);
+        if (manifest === undefined || !aliases.has(manifest.spec.node)) return await apply(false);
+        const name = manifest.metadata.name;
+        if (existsSync(workloadPath(name, workloadsDir))) {
+          const previous = readDesired(() => loadWorkloadByNameAny(name, workloadsDir));
+          if (previous?.kind !== manifest.kind || !aliases.has(previous.spec.node)) {
+            throw new Error(
+              "ManagedManifestConflict: the stored workload has a different owner or kind",
+            );
+          }
+        }
+        const inventoryError = manifest.spec.enabled ? inspectRuntime() : undefined;
+        if (inventoryError !== undefined) throw new Error(inventoryError);
+        const budget = checkManagedApply(manifest, runtime.authority, budgetGiB());
+        return await desired.run(manifest, () => apply(true, budget));
+      },
+    },
     authority: runtime.authority,
   };
 }

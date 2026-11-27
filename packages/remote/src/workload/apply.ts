@@ -286,6 +286,8 @@ export function admissionRefusalReason(result: ApplyResult): AdmissionRefusalRea
 
 export interface ApplyManifestOptions {
   manifest: unknown;
+  /** Advisory projection from the target authority; the actual start reserves atomically. */
+  managedBudget?: Extract<AdmissionResult, { ok: true }>;
   getClient?: (nodeName: string) => WorkloadClient;
   spawn?: typeof nodeSpawn;
   env?: NodeJS.ProcessEnv;
@@ -765,6 +767,7 @@ function admitModelHostBudget(
 async function startModelHostProcess(
   client: WorkloadClient,
   manifest: ModelHostManifest,
+  managed = false,
 ): Promise<
   { ok: false; error: string } | { ok: true; status: { state: string; pid?: number | null } }
 > {
@@ -775,7 +778,7 @@ async function startModelHostProcess(
   // ModelHostManifestSchema.optional() — reject as unknown keys, so the
   // manifest sent on the wire is a copy with annotations removed.
   const { annotations: _wireAnnotations, ...wireMetadata } = manifest.metadata;
-  const wireManifest: ModelHostManifest = { ...manifest, metadata: wireMetadata };
+  const wireManifest = managed ? manifest : { ...manifest, metadata: wireMetadata };
   let sub: Unsubscribable | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -916,21 +919,24 @@ async function applyModelHostManifest(
   // the same physical node serializes here (DF-01 #274). The start keeps the
   // lock for up to its start timeout.
   return await withAdmissionLock(opts, manifest.spec.node, async () => {
-    const budget = await resolveModelHostBudgetGiB(manifest, opts, client);
-    const rejected = admitModelHostBudget(
-      manifest,
-      opts,
-      resolved,
-      firstHostedModel,
-      budget,
-      NO_VERIFIED_EVICT_VICTIMS,
-    );
-    if (rejected) return rejected;
+    if (opts.managedBudget === undefined) {
+      const budget = await resolveModelHostBudgetGiB(manifest, opts, client);
+      const rejected = admitModelHostBudget(
+        manifest,
+        opts,
+        resolved,
+        firstHostedModel,
+        budget,
+        NO_VERIFIED_EVICT_VICTIMS,
+      );
+      if (rejected) return rejected;
+    }
 
-    const started = await startModelHostProcess(client, manifest);
+    const started = await startModelHostProcess(client, manifest, opts.managedBudget !== undefined);
     if (!started.ok) return { ok: false, error: started.error };
 
-    writeModelHostSidecar(manifest, started.status, resolved, firstHostedModel.rel);
+    if (opts.managedBudget === undefined)
+      writeModelHostSidecar(manifest, started.status, resolved, firstHostedModel.rel);
 
     return {
       ok: true,
@@ -1410,6 +1416,7 @@ async function stopWorkers(
 
 interface ApplyOneOpts {
   workloadsDir?: string;
+  managedBudget?: ApplyManifestOptions["managedBudget"];
   /** Env used to resolve the runtime layout when projecting ModelHosts
    *  into the admission accounting — same forwarding contract the
    *  ModelHost apply path already honors. */
@@ -3714,7 +3721,14 @@ function finalizeEvictionOperations(
 }
 
 async function convergeServerUnderLock(ctx: ConvergeServerContext): Promise<ApplyResult> {
-  const admission = await admitServerBudget(ctx);
+  const managedBudget = ctx.opts?.managedBudget;
+  if (managedBudget !== undefined && ctx.status.state === "up" && !ctx.matches) {
+    return stopRefusedResult(ctx.status, "ManagedReplacementRequiresProfile", ctx.now);
+  }
+  const admission =
+    managedBudget === undefined
+      ? await admitServerBudget(ctx)
+      : { ok: true as const, adm: managedBudget, verified: new Set<string>(), living: [] };
   if (!admission.ok) return admissionRejection(ctx, admission);
   const adm = admission.adm;
   const verified = admission.verified;
@@ -3872,6 +3886,7 @@ async function applyModelRunManifest(opts: ApplyManifestOptions): Promise<ApplyM
     ...omitUndefined({
       workloadsDir: opts.workloadsDir,
       env: opts.env,
+      managedBudget: opts.managedBudget,
       getNodeBudgetGiB: opts.getNodeBudgetGiB,
       getNodeResidency: opts.getNodeResidency,
       resolveNodeIdentity: opts.resolveNodeIdentity,

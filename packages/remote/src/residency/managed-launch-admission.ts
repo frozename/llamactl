@@ -19,8 +19,19 @@ interface LaunchResult {
 
 export type CommitLaunchReadiness = (pid: number) => string | undefined;
 
+export interface ManagedApplyBudget {
+  ok: true;
+  budget: number;
+  reservedAfter: number;
+}
+
 export interface ManagedLaunchAdmission {
   prepareStopRelease?: AdmissionAuthority["prepareStopRelease"];
+  ownsNode?: (name: string) => boolean;
+  withDesiredManifest?: <T>(
+    input: unknown,
+    apply: (owned: boolean, budget?: ManagedApplyBudget) => Promise<T>,
+  ) => Promise<T>;
   run<T extends LaunchResult>(
     request: ManagedLaunchRequest,
     signal: AbortSignal,

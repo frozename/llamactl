@@ -78,6 +78,7 @@ import { z } from "zod";
 import type { CompositeApplyEvent } from "./composite/types.js";
 import type {
   CommitLaunchReadiness,
+  ManagedApplyBudget,
   ManagedLaunchAdmission,
 } from "./residency/managed-launch-admission.js";
 import type { Release, RequestAdmission } from "./residency/request-admission.js";
@@ -213,6 +214,26 @@ type HandoffResult = {
     }[];
   };
 };
+
+function assertManagedApplyOwnsDirectory(workloadsDir: string): void {
+  const owner = liveLockHolder(workloadsDir);
+  if (owner === null || owner === process.pid) return;
+  throw new TRPCError({
+    code: "CONFLICT",
+    message: "ManagedControllerActive: an independent controller owns the workload directory",
+  });
+}
+
+function clientForApply(
+  cfg: Config,
+  managed: ManagedLaunchAdmission | undefined,
+  ownsNode: boolean,
+): (nodeName: string) => WorkloadNodeClient {
+  return (nodeName) =>
+    ownsNode && managed?.ownsNode?.(nodeName) === true
+      ? localCallerProxy(managed)
+      : clientForNode(cfg, nodeName, managed);
+}
 
 function handoffLocalModelHost(manifest: unknown, workloadsDir: string): HandoffResult | null {
   const parsed = ModelHostManifestSchema.safeParse(manifest);
@@ -3002,50 +3023,71 @@ export const router = t.router({
       // OOMScoreAdjust and limits. Validate the spec, persist, and return
       // without spawning so the controller's reconciler starts it under
       // its own service on the next pass.
-      return await workloadStoreMod.withWorkloadsMutex(workloadsDir, async () => {
-        const handoffResult = handoffLocalModelHost(manifest, workloadsDir);
-        if (handoffResult) return handoffResult;
-        const result = await workloadApplyMod.applyManifest({
-          manifest,
-          getClient: (nodeName) => clientForNode(cfg, nodeName, ctx.managedLaunchAdmission),
-          getNodeBudgetGiB: (nodeName) => nodeRunBudgetGiB(nodeName, workloadsDir),
-          getNodeResidency: (nodeName) => nodeRunResidency(nodeName, workloadsDir),
-        });
-        if (!result.ok) {
-          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: result.error });
-        }
-        if (result.kind === "ModelRun") {
-          const persisted: ModelRun = { ...result.manifest, status: result.result.statusSection };
-          const savedPath = workloadStoreMod.saveWorkload(persisted, workloadsDir);
-          return {
-            action: result.result.action,
-            path: savedPath,
-            status: result.result.statusSection,
-            name: result.manifest.metadata.name,
-            node: result.manifest.spec.node,
-          };
-        }
-        return {
-          action: "started",
-          path: null,
-          status: {
-            phase: "Running",
-            serverPid: result.pid,
-            endpoint: result.endpoint,
-            lastTransitionTime: new Date().toISOString(),
-            conditions: [
-              {
-                type: "Applied",
-                status: "True",
-                reason: "started",
+      const managed = ctx.managedLaunchAdmission;
+      const scope =
+        managed?.withDesiredManifest ??
+        (async <T>(
+          _input: unknown,
+          apply: (ownsNode: boolean, budget?: ManagedApplyBudget) => Promise<T>,
+        ): Promise<T> => await apply(false));
+      return await workloadStoreMod.withWorkloadsMutex(
+        workloadsDir,
+        async () =>
+          await scope(manifest, async (ownsNode, budget) => {
+            if (ownsNode) assertManagedApplyOwnsDirectory(workloadsDir);
+            const handoffResult = ownsNode ? null : handoffLocalModelHost(manifest, workloadsDir);
+            if (handoffResult) return handoffResult;
+            const result = await workloadApplyMod.applyManifest({
+              manifest,
+              getClient: clientForApply(cfg, managed, ownsNode),
+              getNodeBudgetGiB: (nodeName) => nodeRunBudgetGiB(nodeName, workloadsDir),
+              ...(budget === undefined ? {} : { managedBudget: budget }),
+              getNodeResidency: (nodeName) => nodeRunResidency(nodeName, workloadsDir),
+            });
+            if (!result.ok) {
+              throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: result.error });
+            }
+            if (result.kind === "ModelRun") {
+              const persisted: ModelRun = {
+                ...result.manifest,
+                status: result.result.statusSection,
+              };
+              const savedPath = workloadStoreMod.saveWorkload(persisted, workloadsDir);
+              return {
+                action: result.result.action,
+                path: savedPath,
+                status: result.result.statusSection,
+                name: result.manifest.metadata.name,
+                node: result.manifest.spec.node,
+              };
+            }
+            const disabled = ownsNode && !result.manifest.spec.enabled;
+            const action = disabled ? "stopped" : "started";
+            const savedPath = disabled
+              ? modelHostStoreMod.saveModelHost(result.manifest, workloadsDir)
+              : null;
+            return {
+              action,
+              path: savedPath,
+              status: {
+                phase: disabled ? "Stopped" : "Running",
+                serverPid: result.pid,
+                endpoint: result.endpoint,
                 lastTransitionTime: new Date().toISOString(),
+                conditions: [
+                  {
+                    type: "Applied",
+                    status: "True",
+                    reason: action,
+                    lastTransitionTime: new Date().toISOString(),
+                  },
+                ],
               },
-            ],
-          },
-          name: result.manifest.metadata.name,
-          node: result.manifest.spec.node,
-        };
-      });
+              name: result.manifest.metadata.name,
+              node: result.manifest.spec.node,
+            };
+          }),
+      );
     }),
 
   modelHostStatus: t.procedure.input(modelHostStatusInput).query(async ({ input }) => {
