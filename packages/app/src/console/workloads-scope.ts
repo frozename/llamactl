@@ -4,6 +4,9 @@
 // pure so a route change (popstate from /workloads/a to /workloads/b)
 // can be pinned without a mounted component.
 
+import type { AppRouter } from "@llamactl/remote";
+import type { inferRouterOutputs } from "@trpc/server";
+
 import type { StatusDotTone } from "@/ui";
 
 import { consoleHref } from "./router";
@@ -95,4 +98,44 @@ export function phaseTone(phase: string): StatusDotTone {
   if (phase === "Mismatch") return "warn";
   if (phase === "Unreachable" || phase === "Foreign") return "err";
   return "idle";
+}
+
+type ResidencyStatus = inferRouterOutputs<AppRouter>["residencyStatus"];
+export type WorkloadResidencyStatus = Pick<ResidencyStatus, "node" | "lifecycle" | "omlxNative"> &
+  Partial<Pick<ResidencyStatus, "leases" | "store">>;
+
+export function residencyForNode(
+  status: WorkloadResidencyStatus | null | undefined,
+  node: string,
+): WorkloadResidencyStatus | undefined {
+  return status?.node === node ? status : undefined;
+}
+
+const residencyLabel = {
+  unavailable: "Unavailable",
+  downloaded: "Cold",
+  loading: "Loading",
+  warming: "Loading",
+  ready: "Ready",
+  draining: "Draining",
+  unloading: "Draining",
+  failed: "Failed",
+};
+
+export function workloadResidencyOf(
+  status: WorkloadResidencyStatus | undefined,
+  workload: string,
+): string {
+  const state =
+    status?.lifecycle?.status === "available"
+      ? status.lifecycle.workloads.find((row) => row.model === workload)?.state
+      : undefined;
+  const phase =
+    status?.leases?.status === "available"
+      ? status.leases.workloads.find((row) => row.workload === workload)?.phase
+      : undefined;
+  if (state === "failed") return "Failed";
+  if (phase === "draining") return "Draining";
+  if (state === undefined || (state === "ready" && phase === "unloaded")) return "Unknown";
+  return residencyLabel[state];
 }
