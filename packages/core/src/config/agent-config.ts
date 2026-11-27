@@ -206,6 +206,19 @@ export const ExecutionAdmissionSchema = z
 
 export type ExecutionAdmissionConfig = z.infer<typeof ExecutionAdmissionSchema>;
 
+export const ManagedColdModelRunsSchema = z
+  .array(
+    z.strictObject({
+      workload: z.string().regex(/^[a-z0-9][-a-z0-9]{0,62}$/),
+      sha256: z.string().regex(SHA256_HEX),
+      maxArtifactBytes: z.number().int().positive(),
+    }),
+  )
+  .refine((entries) => new Set(entries.map(({ workload }) => workload)).size === entries.length, {
+    message: "managed cold workloads must be unique",
+  });
+export type ManagedColdModelRuns = z.infer<typeof ManagedColdModelRunsSchema>;
+
 export const AgentConfigSchema = z.object({
   apiVersion: z.literal("llamactl/v1"),
   kind: z.literal("AgentConfig"),
@@ -236,6 +249,7 @@ export const AgentConfigSchema = z.object({
    */
   workerRpc: z.unknown().optional(),
   executionAdmission: ExecutionAdmissionSchema.optional(),
+  managedColdModelRuns: ManagedColdModelRunsSchema.optional(),
   /** Central's relay-only credentials; opaque here for the same reason. */
   workerRpcRelay: z.unknown().optional(),
   /**

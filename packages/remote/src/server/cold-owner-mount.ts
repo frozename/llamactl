@@ -34,6 +34,12 @@ function hasExplicitCaps(group: ExecutionAdmissionConfig[number]): group is Cold
   );
 }
 
+export function boundedColdExecutionGroups(
+  groups: ExecutionAdmissionConfig | undefined,
+): ColdExecutionGroup[] {
+  return (groups ?? []).filter(hasExplicitCaps);
+}
+
 function coldLimits(groups: readonly ColdExecutionGroup[]): RequestQueueLimits {
   // One launch at a time on this owner. Warm admission still applies the
   // selected engine's cap after the cold queue has settled.
@@ -74,7 +80,7 @@ export function prepareColdOwnerMount(opts: {
     return undefined;
   }
   if (factory === undefined || warm === undefined) return undefined;
-  const executionGroups = (opts.executionAdmission ?? []).filter(hasExplicitCaps);
+  const executionGroups = boundedColdExecutionGroups(opts.executionAdmission);
   if (executionGroups.length === 0) return undefined;
   const owner = factory({ ownerNodeId: LOCAL_NODE_ID, managed, executionGroups });
   return owner === undefined

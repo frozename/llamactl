@@ -21,11 +21,15 @@ export interface ManagedColdModelRunProofs {
   workloadsDir?: string;
   readDeclarations: () => readonly Readonly<ColdEngineDispatch["declaration"]>[];
   /** Content receipt published before serving, for an explicitly cold-eligible artifact. */
-  readArtifactReceipt(rel: string): ColdModelArtifactReceipt | undefined;
+  readArtifactReceipt(rel: string, workload: string): ColdModelArtifactReceipt | undefined;
   /** Fresh revision of the target operator's launch policy, bound to its durable state. */
   readTargetPolicyRevision(): string | undefined;
   readResident: (workload: string) => Readonly<LocalModelRunResidentProof> | undefined;
   readReadyRoutes: (model: string) => readonly Readonly<LocalModelRunReadyRoute>[];
+  recordLaunchReady?: (
+    workload: string,
+    proof: Readonly<Omit<LocalModelRunResidentProof, "runtimeGeneration">>,
+  ) => void | Promise<void>;
 }
 
 type Invocation = ReturnType<typeof ServerStartInputSchema.parse>;
@@ -83,28 +87,23 @@ function policyRevision(targetRevision: string, group: Readonly<ColdExecutionGro
   return `sha256:${createHash("sha256").update(JSON.stringify(policy)).digest("hex")}`;
 }
 
-function compileColdPlan(
+export function prepareManagedColdModelRun(
   manifest: Readonly<ModelRun>,
-  proofs: ManagedColdModelRunProofs,
   groups: readonly Readonly<ColdExecutionGroup>[],
-): ColdPlan | undefined {
-  const receipt = proofs.readArtifactReceipt(manifest.spec.target.value);
-  const targetPolicy = proofs.readTargetPolicyRevision();
-  if (receipt === undefined || targetPolicy === undefined || !SHA256.test(targetPolicy))
-    return undefined;
+):
+  | {
+      invocation: Invocation;
+      prepared: server.PreparedManagedServerStart;
+      serving: NonNullable<ReturnType<typeof servingSpec>>;
+      group: Readonly<ColdExecutionGroup>;
+    }
+  | undefined {
   const parsed = ServerStartInputSchema.safeParse(modelRunStartInvocation(manifest));
   if (!parsed.success) return undefined;
   const invocation = parsed.data;
   const prepared = server.prepareManagedServerStart(serverStartOptions(invocation));
   if ("result" in prepared) return undefined;
-  const { launch, effectiveSpecDigest } = prepared;
-  if (
-    receipt.rel !== launch.rel ||
-    receipt.generationDigest !== launch.artifacts.model.generationDigest ||
-    !SHA256.test(receipt.sha256)
-  )
-    return undefined;
-  const serving = servingSpec(launch.args);
+  const serving = servingSpec(prepared.launch.args);
   if (serving === undefined) return undefined;
   const group = groups.find(
     (candidate) =>
@@ -118,6 +117,32 @@ function compileColdPlan(
   ) {
     return undefined;
   }
+  return { invocation, prepared, serving, group };
+}
+
+function compileColdPlan(
+  manifest: Readonly<ModelRun>,
+  proofs: ManagedColdModelRunProofs,
+  groups: readonly Readonly<ColdExecutionGroup>[],
+): ColdPlan | undefined {
+  const receipt = proofs.readArtifactReceipt(manifest.spec.target.value, manifest.metadata.name);
+  const targetPolicy = proofs.readTargetPolicyRevision();
+  if (receipt === undefined || targetPolicy === undefined || !SHA256.test(targetPolicy))
+    return undefined;
+  const plan = prepareManagedColdModelRun(manifest, groups);
+  if (plan === undefined) return undefined;
+  const {
+    invocation,
+    prepared: { launch, effectiveSpecDigest },
+    serving,
+    group,
+  } = plan;
+  if (
+    receipt.rel !== launch.rel ||
+    receipt.generationDigest !== launch.artifacts.model.generationDigest ||
+    !SHA256.test(receipt.sha256)
+  )
+    return undefined;
   return {
     launch: invocation,
     effectiveSpecDigest,
@@ -150,6 +175,14 @@ export function createManagedColdModelRunFactory(
         if (!outcome.ran)
           return { kind: outcome.detail === "ManagedReadyUnverified" ? "uncertain" : "refused" };
         if (!outcome.result.ok || outcome.result.pid === null) return { kind: "uncertain" };
+        await proofs.recordLaunchReady?.(pin.workload, {
+          pid: outcome.result.pid,
+          effectiveSpecDigest: plan.effectiveSpecDigest,
+          artifactRevision: plan.artifactRevision,
+          policyRevision: plan.policyRevision,
+          contextTokens: plan.contextTokens,
+          endpoint: plan.endpoint,
+        });
         const committed = proofs.readResident(pin.workload);
         return committed?.pid === outcome.result.pid
           ? { kind: "ready", runtimeGeneration: committed.runtimeGeneration }

@@ -1757,6 +1757,17 @@ function runtimeIdentitySpread(
   return {};
 }
 
+function managedExecutionOptions(
+  cfg: ReturnType<typeof agentConfigMod.loadAgentConfig>,
+): Pick<Parameters<typeof startAgentServer>[0], "executionAdmission" | "managedColdModelRuns"> {
+  return {
+    ...(cfg.executionAdmission === undefined ? {} : { executionAdmission: cfg.executionAdmission }),
+    ...(cfg.managedColdModelRuns === undefined
+      ? {}
+      : { managedColdModelRuns: cfg.managedColdModelRuns }),
+  };
+}
+
 export function buildServeOptions(
   parsed: ServeFlags,
   cfg: ReturnType<typeof agentConfigMod.loadAgentConfig>,
@@ -1770,7 +1781,7 @@ export function buildServeOptions(
     bindHost: parsed.bindHost ?? cfg.bindHost,
     port: parsed.port ?? cfg.port,
     tokenHash: cfg.tokenHash,
-    ...(cfg.executionAdmission !== undefined ? { executionAdmission: cfg.executionAdmission } : {}),
+    ...managedExecutionOptions(cfg),
     // Named operator bearer tokens (#218), re-read on every request, so
     // 'agent token add' / 'revoke' apply without a restart.
     bearerTokens: agentConfigMod.bearerTokensReader(join(parsed.dir, "agent.yaml")),

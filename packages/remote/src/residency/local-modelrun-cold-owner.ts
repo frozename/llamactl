@@ -333,7 +333,7 @@ export function createLocalModelRunColdOwner<Launch>(
       if (
         entry.kind !== "ModelRun" ||
         entry.ownerNodeId !== opts.ownerNodeId ||
-        !launchable(entry)
+        !(launchable(entry) || (entry.state === "ready" && entry.reason === undefined))
       ) {
         return undefined;
       }

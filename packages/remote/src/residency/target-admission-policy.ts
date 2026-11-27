@@ -19,6 +19,7 @@ import { withManagedRuntimeMutation } from "@llamactl/core/residency/managed-run
 import { projectManagedCapacity } from "@llamactl/core/resources/managed-capacity";
 import { listWorkloadDirs, workloadRuntimeDir } from "@llamactl/core/workloadRuntime";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 
 import type {
@@ -600,9 +601,49 @@ function stopWithInferenceFence(
   };
 }
 
+type ColdResidentGeneration = { pid: number; runtimeGeneration: string };
+type ColdResidentReader = (
+  workload: string,
+  specDigest: string,
+) => ColdResidentGeneration | undefined;
+
+function coldResidentReader(
+  resolved: ReturnType<typeof resolveEnv>,
+  runtime: LocalAdmissionRuntime,
+  verifyJournalPair: NodeManagedAdmissionOptions["verifyJournalPair"],
+): ColdResidentReader {
+  return (workload, specDigest): ColdResidentGeneration | undefined => {
+    if (verifyJournalPair?.() !== undefined || !runtime.authority.isOperational()) return undefined;
+    const resident = runtime.authority
+      .snapshot()
+      .find(
+        (row) =>
+          row.runtimeKey === workload &&
+          row.kind === "ModelRun" &&
+          row.state === "resident" &&
+          row.specDigest === specDigest,
+      );
+    const generation = resident?.generations.at(-1);
+    if (resident === undefined || generation?.birthId === undefined) return undefined;
+    const live = runtime.capture(generation.pid);
+    if (
+      live?.birthId !== generation.birthId ||
+      server.readServerPid({ name: workload }, resolved) !== generation.pid
+    )
+      return undefined;
+    return {
+      pid: generation.pid,
+      runtimeGeneration: createHash("sha256")
+        .update(JSON.stringify([resident.claimId, resident.generationVersion, generation.birthId]))
+        .digest("hex"),
+    };
+  };
+}
+
 export async function openNodeManagedAdmission(opts: NodeManagedAdmissionOptions): Promise<{
   admission: ManagedLaunchAdmission;
   authority: AdmissionAuthority;
+  readColdResidentGeneration: ColdResidentReader;
   verifyActivation(): string | undefined;
 }> {
   const resolved = resolveEnv();
@@ -646,10 +687,7 @@ export async function openNodeManagedAdmission(opts: NodeManagedAdmissionOptions
       run,
     );
   const inspectRuntime = (): string | undefined =>
-    opts.verifyJournalPair?.() ??
-    (readDesired(() => verifyLocalInventory(resolved, runtime)) === true
-      ? undefined
-      : "ManagedRuntimeInventoryUnknown");
+    opts.verifyJournalPair?.() ?? managedInventoryRefusal(resolved, runtime);
   const admission = createManagedLaunchAdmission({
     runOwnedLifecycle,
     authority: runtime.authority,
@@ -707,6 +745,7 @@ export async function openNodeManagedAdmission(opts: NodeManagedAdmissionOptions
       },
     },
     authority: runtime.authority,
+    readColdResidentGeneration: coldResidentReader(resolved, runtime, opts.verifyJournalPair),
     verifyActivation(): string | undefined {
       if (!runtime.authority.isOperational()) return "AuthorityUnavailable";
       const measured = physical?.measure();
@@ -719,4 +758,13 @@ export async function openNodeManagedAdmission(opts: NodeManagedAdmissionOptions
       return inspectRuntime();
     },
   };
+}
+
+function managedInventoryRefusal(
+  resolved: ReturnType<typeof resolveEnv>,
+  runtime: LocalAdmissionRuntime,
+): string | undefined {
+  return readDesired(() => verifyLocalInventory(resolved, runtime)) === true
+    ? undefined
+    : "ManagedRuntimeInventoryUnknown";
 }

@@ -2663,7 +2663,7 @@ function declaredUnavailableRejectionFor(model: string, resolved: ResolvedEnv): 
  * request. Sorted by id then workload; on duplicate ids the first
  * claim wins.
  */
-function declaredModelEntries(): DeclaredModelEntryV1[] {
+export function declaredModelEntries(): DeclaredModelEntryV1[] {
   if (declaredModelSource === null) return [];
   let raw: readonly unknown[];
   try {

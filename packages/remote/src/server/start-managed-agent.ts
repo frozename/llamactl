@@ -15,6 +15,7 @@ import {
 import { existsSync } from "../safe-fs.js";
 import { liveLockHolder } from "../workload/lock.js";
 import { defaultWorkloadsDir } from "../workload/store.js";
+import { registerManagedColdModelRuns } from "./register-managed-cold-modelruns.js";
 import { type RunningAgent, type StartAgentOptions, startAgentServer } from "./serve.js";
 
 const activeRuntimeRoots = new Set<string>();
@@ -27,6 +28,30 @@ export interface ManagedAgentDependencies {
 
 function logCapacity(entry: ManagedCapacityAudit): void {
   process.stderr.write(JSON.stringify({ event: "managed_capacity", ...entry }) + "\n");
+}
+
+async function stageColdModelRuns(
+  opts: StartAgentOptions,
+  nodeName: string,
+  runtime: Awaited<ReturnType<typeof openNodeManagedAdmission>>,
+  verifyExclusive: () => void,
+): Promise<Partial<StartAgentOptions>> {
+  if (!opts.managedColdModelRuns?.length) return {};
+  const cold = await registerManagedColdModelRuns(
+    opts,
+    nodeName,
+    runtime.readColdResidentGeneration,
+  );
+  verifyExclusive();
+  const refusal = runtime.verifyActivation();
+  if (refusal !== undefined) throw new Error(refusal);
+  return cold === undefined
+    ? {}
+    : {
+        managedColdOwnerFactory: cold.factory,
+        peerDeclarationProvenance:
+          opts.peerDeclarationProvenance ?? cold.readPeerDeclarationProvenance,
+      };
 }
 
 export async function startManagedAgentServer(
@@ -82,9 +107,10 @@ export async function startManagedAgentServer(
     checkOtherWorkloads();
     const recheck = runtime.verifyActivation();
     if (recheck !== undefined) throw new Error(recheck);
-
+    const cold = await stageColdModelRuns(opts, nodeName, runtime, checkOtherWorkloads);
     const running = startAgentServer({
       ...opts,
+      ...cold,
       nodeName,
       residencyLeases: true,
       managedLaunchAdmission: runtime.admission,
