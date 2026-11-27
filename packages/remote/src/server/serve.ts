@@ -15,6 +15,7 @@ import {
 import { resolveEnv } from "@llamactl/core/env";
 import {
   type ColdEngineForwarder,
+  getLocalEngineForwarder,
   installLocalEngineForwarder,
 } from "@llamactl/core/residency/engine-forwarder";
 import {
@@ -55,6 +56,11 @@ import {
   type DeclaredWorkloadPhase,
   listDeclaredModels,
 } from "../residency/catalog.js";
+import {
+  createOwnerActivity,
+  type OwnerActivity,
+  type OwnerAdmissionPause,
+} from "../residency/owner-activity.js";
 import { createOwnerAdmission, type OwnerAdmission } from "../residency/owner-admission.js";
 import {
   createResidencyLeaseAuditSink,
@@ -341,6 +347,8 @@ export interface StartAgentOptions {
   managedColdModelRuns?: ManagedColdModelRuns;
   executionAdmission?: ExecutionAdmissionConfig;
   managedInferenceHolds?: InferenceHolds;
+  /** Trusted programmatic owner wiring. The host must verify that no ingress bypasses these admissions. */
+  managedOwnerActivity?: { verifyExclusiveIngress: () => unknown };
   /**
    * Per-role runtime memory budget. Sets the identity (role + optional
    * memory budget) so the Prometheus gauges emit per-role series. When
@@ -359,6 +367,7 @@ export interface RunningAgent {
   fingerprint: string | null;
   stop: () => Promise<void>;
   handleRequest?: (req: Request, address?: ClientAddress | null) => Promise<Response>;
+  tryQuiesceOwnerAdmissions?: () => OwnerAdmissionPause | undefined;
   /** Present only when StartAgentOptions.tunnelCentral was set. */
   tunnelServer?: TunnelServer;
   /** Present only when StartAgentOptions.tunnelDial was set. */
@@ -1542,12 +1551,15 @@ export function maybePublishEngineScope(
 function prepareExecutionHooks(opts: StartAgentOptions): {
   hooks: ReturnType<typeof maybePublishEngineScope>;
   owner?: OwnerAdmission;
+  activity?: OwnerActivity;
 } {
   const scope = maybePublishEngineScope(opts);
   if (!opts.executionAdmission?.length && opts.managedInferenceHolds === undefined) {
     return { hooks: scope };
   }
+  const activity = opts.managedOwnerActivity === undefined ? undefined : createOwnerActivity();
   const owner = createOwnerAdmission(opts.executionAdmission ?? [], {
+    ...(activity === undefined ? {} : { activity }),
     noAuth: opts.noAuth === true && isLoopbackAddress(opts.bindHost ?? "127.0.0.1"),
     ...(opts.managedInferenceHolds === undefined
       ? {}
@@ -1556,6 +1568,7 @@ function prepareExecutionHooks(opts: StartAgentOptions): {
   let uninstall: (() => void) | undefined;
   return {
     owner,
+    ...(activity === undefined ? {} : { activity }),
     hooks: {
       publish: (): void => {
         scope?.publish();
@@ -1686,6 +1699,8 @@ async function finalFlushWindow(
  * three mounts.
  */
 export function startAgentServer(opts: StartAgentOptions): RunningAgent {
+  if (opts.managedOwnerActivity !== undefined && opts.workerRpc !== undefined)
+    throw new Error("ManagedOwnerActivityIngressUnsupported");
   if (
     hasManagedRuntimeMarker(resolveEnv().LOCAL_AI_RUNTIME_DIR) &&
     (opts.managedLaunchAdmission?.runOwnedLifecycle === undefined ||
@@ -1824,6 +1839,49 @@ function prepareServingColdOwner(
   });
 }
 
+function ownerAdmissionPause(
+  opts: StartAgentOptions,
+  nodeName: string,
+  execution: ReturnType<typeof prepareExecutionHooks>,
+  cold: ReturnType<typeof prepareServingColdOwner>,
+  leases: ResidencyLeases | undefined,
+): Pick<RunningAgent, "tryQuiesceOwnerAdmissions"> {
+  const { owner, activity } = execution;
+  const managed = opts.managedLaunchAdmission;
+  const proof = opts.managedOwnerActivity;
+  const holds = opts.managedInferenceHolds;
+  if (
+    owner === undefined ||
+    activity === undefined ||
+    cold === undefined ||
+    leases === undefined ||
+    proof === undefined ||
+    managed?.ownerNodeId !== nodeName ||
+    managed.ownsNode?.(nodeName) !== true
+  )
+    return {};
+
+  const verifyIngress = (): boolean =>
+    getLocalEngineForwarder() === owner.forward &&
+    getResidencyLeaseRegistry() === leases &&
+    proof.verifyExclusiveIngress() === true &&
+    owner.isQuiescent() &&
+    cold.isQuiescent() &&
+    holds?.allClear?.() === true;
+  // A holder may start its own durable transition after acquiring the pause.
+  const proveInitialIdle = (): boolean => {
+    const status = managed.readStatus?.();
+    return (
+      leases.isQuiescent?.() === true &&
+      status?.ledger === "available" &&
+      status.ownerNodeId === nodeName &&
+      (status.profile.kind === "selected" || status.profile.kind === "unselected") &&
+      status.claims.every((claim) => claim.state === "resident")
+    );
+  };
+  return { tryQuiesceOwnerAdmissions: () => activity.tryPause(verifyIngress, proveInitialIdle) };
+}
+
 function startAgentServerAfterHandlers(
   opts: StartAgentOptions,
   bind: {
@@ -1889,13 +1947,12 @@ function startAgentServerAfterHandlers(
       opts.declaredModels === true ? trackServedRequests(baseFetchHandler) : null;
     const fetchHandler = servedRequests?.handler ?? baseFetchHandler;
 
-    const wsConfig = tunnelServer ? tunnelServer.websocket : null;
     const { server, fingerprint } = startBunServer({
       tls: opts.tls,
       allowPlainHttp,
       port,
       bindHost,
-      wsConfig,
+      wsConfig: tunnelServer?.websocket ?? null,
       fetchHandler,
       ...(opts.idleTimeoutSeconds !== undefined
         ? { idleTimeoutSeconds: opts.idleTimeoutSeconds }
@@ -1930,6 +1987,7 @@ function startAgentServerAfterHandlers(
       url: `${scheme}://${bindHost}:${String(listenPort)}`,
       port: listenPort,
       fingerprint,
+      ...ownerAdmissionPause(opts, nodeName, execution, cold, leases?.registry),
       handleRequest: async (
         req: Request,
         address: ClientAddress | null = null,
@@ -1941,6 +1999,7 @@ function startAgentServerAfterHandlers(
         });
       },
       stop: async (): Promise<void> => {
+        execution.activity?.stop();
         cold?.stop();
         await stopAgentServerResources(
           workerRpc,

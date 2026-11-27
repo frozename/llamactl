@@ -15,6 +15,7 @@ export interface InferenceHoldReceipt {
 export interface InferenceHolds {
   begin(workload: string): InferenceHoldReceipt | undefined;
   state(workload: string): InferenceHoldState;
+  allClear?(): boolean;
 }
 
 function schemaVersion(db: Database): number | undefined {
@@ -98,6 +99,9 @@ export function createDurableInferenceHolds(opts: {
           ) === true,
       };
     },
+    allClear: () =>
+      withJournal((db) => db.query("SELECT 1 FROM inference_holds LIMIT 1").get() === null) ===
+      true,
     state(workload): InferenceHoldState {
       if (workload.trim().length === 0) return "unknown";
       return (
