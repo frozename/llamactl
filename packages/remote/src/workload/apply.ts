@@ -3560,9 +3560,6 @@ async function convergeClaimedServer(
 
   let action: ApplyAction;
   if (status.state === "up") {
-    if (ctx.opts?.managedBudget !== undefined) {
-      return stopRefusedResult(status, "ManagedReplacementRequiresProfile", now);
-    }
     onEvent?.({ type: "stop", message: `${manifest.metadata.name}: stopping mismatched server` });
     // #520: the restart never releases sessions. A node stop-fence refusal
     // (LeasesActive, DrainInProgress, SessionsActive or SessionsUnknown)
@@ -3725,6 +3722,9 @@ function finalizeEvictionOperations(
 
 async function convergeServerUnderLock(ctx: ConvergeServerContext): Promise<ApplyResult> {
   const managedBudget = ctx.opts?.managedBudget;
+  if (managedBudget !== undefined && ctx.status.state === "up" && !ctx.matches) {
+    return stopRefusedResult(ctx.status, "ManagedReplacementRequiresProfile", ctx.now);
+  }
   const admission =
     managedBudget === undefined
       ? await admitServerBudget(ctx)

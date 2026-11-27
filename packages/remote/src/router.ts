@@ -215,6 +215,26 @@ type HandoffResult = {
   };
 };
 
+function assertManagedApplyOwnsDirectory(workloadsDir: string): void {
+  const owner = liveLockHolder(workloadsDir);
+  if (owner === null || owner === process.pid) return;
+  throw new TRPCError({
+    code: "CONFLICT",
+    message: "ManagedControllerActive: an independent controller owns the workload directory",
+  });
+}
+
+function clientForApply(
+  cfg: Config,
+  managed: ManagedLaunchAdmission | undefined,
+  ownsNode: boolean,
+): (nodeName: string) => WorkloadNodeClient {
+  return (nodeName) =>
+    ownsNode && managed?.ownsNode?.(nodeName) === true
+      ? localCallerProxy(managed)
+      : clientForNode(cfg, nodeName, managed);
+}
+
 function handoffLocalModelHost(manifest: unknown, workloadsDir: string): HandoffResult | null {
   const parsed = ModelHostManifestSchema.safeParse(manifest);
   if (!parsed.success) return null;
@@ -3014,24 +3034,12 @@ export const router = t.router({
         workloadsDir,
         async () =>
           await scope(manifest, async (ownsNode, budget) => {
-            if (ownsNode) {
-              const owner = liveLockHolder(workloadsDir);
-              if (owner !== null && owner !== process.pid) {
-                throw new TRPCError({
-                  code: "CONFLICT",
-                  message:
-                    "ManagedControllerActive: an independent controller owns the workload directory",
-                });
-              }
-            }
+            if (ownsNode) assertManagedApplyOwnsDirectory(workloadsDir);
             const handoffResult = ownsNode ? null : handoffLocalModelHost(manifest, workloadsDir);
             if (handoffResult) return handoffResult;
             const result = await workloadApplyMod.applyManifest({
               manifest,
-              getClient: (nodeName) =>
-                ownsNode && managed?.ownsNode?.(nodeName) === true
-                  ? localCallerProxy(managed)
-                  : clientForNode(cfg, nodeName, managed),
+              getClient: clientForApply(cfg, managed, ownsNode),
               getNodeBudgetGiB: (nodeName) => nodeRunBudgetGiB(nodeName, workloadsDir),
               ...(budget === undefined ? {} : { managedBudget: budget }),
               getNodeResidency: (nodeName) => nodeRunResidency(nodeName, workloadsDir),

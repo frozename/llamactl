@@ -178,7 +178,7 @@ function checkManagedApply(
   const reservedAfter =
     decision.kind === "admit"
       ? decision.committedGiB
-      : claims.reduce((total, claim) => total + (claim.allocationGiB ?? 0), 0);
+      : claims.reduce((total, claim) => total + claim.allocationGiB, 0);
   return { ok: true, budget: budgetGiB, reservedAfter };
 }
 
@@ -290,11 +290,7 @@ export async function openNodeManagedAdmission(opts: NodeManagedAdmissionOptions
         const name = manifest.metadata.name;
         if (existsSync(workloadPath(name, workloadsDir))) {
           const previous = readDesired(() => loadWorkloadByNameAny(name, workloadsDir));
-          if (
-            previous === undefined ||
-            previous.kind !== manifest.kind ||
-            !aliases.has(previous.spec.node)
-          ) {
+          if (previous?.kind !== manifest.kind || !aliases.has(previous.spec.node)) {
             throw new Error(
               "ManagedManifestConflict: the stored workload has a different owner or kind",
             );
