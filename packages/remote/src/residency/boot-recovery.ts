@@ -5,10 +5,8 @@
  * fence.
  *
  * `runProfileSwitchBootRecovery` runs synchronously inside `startAgentServer`,
- * before it returns, so a leftover `profile-switch:<node>` row from a crashed
- * switch is terminalized before any request can be served. It probes the store
- * read-only first (short busy timeout, never creates a file) and only opens a
- * writable handle when such a row actually exists.
+ * before it returns. It probes the store read-only first (short busy timeout,
+ * never creates a file) and only opens a writable handle for rows it can recover.
  *
  * Fence identity. It claims the operation fence as
  * `RESIDENCY_APPLY_PROFILE_FENCE_OWNER`, the owner every apply-profile call
@@ -17,13 +15,23 @@
  * wet apply-profile Busy until something else re-claimed.
  *
  * When it claims. Only when at least one recognized stale row needs finishing
- * AND no profile-switch row looks possibly live. A store holding only
+ * AND no profile-switch row is committed or looks possibly live. A store holding only
  * unrecognized rows, or nothing to recover, is never claimed: the fence and
  * every row stay exactly as they were.
  *
- * Live-switch guard. Boot cannot tell a crashed switch from one a CLI process
- * is still running through its own router caller: there is no owner liveness
- * check. What it has is step progress: the executor refreshes the row's
+ * A tagged pending reservation has never entered the executor. When the
+ * node-local owner PID is absent, boot may finish that reservation at any age
+ * using the current fence token and operation version, without claiming or
+ * changing lifecycle rows. A tagged live or unverified owner blocks the
+ * following staleness scan regardless of age.
+ *
+ * A committed row may already have dispatched a detached replacement. Age,
+ * owner exit and pid-file probes cannot establish that generation's outcome.
+ * Boot leaves its fence, reservation and occupancy intact and reports it as
+ * `dispatchUnverified`. The nonterminal row keeps later starts and switches
+ * out even on subsequent boots.
+ *
+ * Live-switch guard for the remaining rows. The executor refreshes the row's
  * `updatedAtMs` through a fenced heartbeat at every step boundary (each fence,
  * each drain settle, each stop, each start). So the rule is a fixed staleness
  * window over step progress: a row whose `updatedAtMs` is less than
@@ -58,7 +66,7 @@
  * makes those finishes fail stale-fence, which never touches a live switch.
  *
  * Lifecycle-row sweep (Part of #517). After the profile-switch operations are
- * terminalized, the same claimed pass walks every residency_states row stuck
+ * terminalized for legacy pending switches, the same claimed pass walks every residency_states row stuck
  * in an interrupted transient state (`loading`, `warming`, `draining`,
  * `unloading`) and transitions it to `failed`, releasing the exclusive-group
  * occupancy a crashed switch left behind. Per-row write failures or refusals
@@ -142,8 +150,9 @@
  * lines' `recordFailures` are separate, the profile-switch line counts operation
  * rows only and the lifecycle line counts lifecycle rows only.
  */
-import { RESIDENCY_APPLY_PROFILE_FENCE_OWNER } from "./apply-profile.js";
+import { RESIDENCY_APPLY_PROFILE_FENCE_OWNER } from "./profile-owner.js";
 import {
+  finishAbandonedProfileIntents,
   previewEvictionRecovery,
   previewProfileSwitchRecovery,
   type ProfileSwitchRecoveryPreview,
@@ -182,6 +191,7 @@ export type BootRecoverySummary = {
   skipped: number;
   unrecognized: number;
   possiblyLive: number;
+  dispatchUnverified?: number;
 };
 
 type BootRecoveryStore = ResidencyOperationStore & ResidencyLifecycleStore;
@@ -241,31 +251,57 @@ export function runProfileSwitchBootRecovery(opts: BootRecoveryOpts): BootRecove
       return { status: "clean", ...NO_COUNTS };
     }
 
-    const preview = previewProfileSwitchRecovery(snapshot.nonterminal, {
-      nowMs: nowMs(),
-      minStaleAgeMs,
-    });
     const lifecycle: LifecycleContext = { counts: undefined };
-    const result = shouldClaim(preview)
-      ? scanWithStore(openStore, opts, nowMs, minStaleAgeMs, lifecycle)
-      : deferred(preview);
-
+    const result = recoverProfileSwitchRows(
+      snapshot.nonterminal,
+      openStore,
+      opts,
+      nowMs,
+      minStaleAgeMs,
+      lifecycle,
+    );
     safeWrite(write, `[residency] profile-switch boot recovery ${countsJson(result)}\n`);
-    if (
-      result.status === "recovered" &&
-      lifecycle.counts &&
-      lifecycle.counts.failed + lifecycle.counts.recordFailures > 0
-    ) {
-      safeWrite(
-        write,
-        `[residency] lifecycle boot recovery ${lifecycleCountsJson(lifecycle.counts)}\n`,
-      );
-    }
+    writeRecoveredLifecycles(lifecycle, write);
     return result;
   } catch (error: unknown) {
     safeWrite(write, `[residency] profile-switch boot recovery failed: ${failureMessage(error)}\n`);
     return { status: "failed", ...NO_COUNTS };
   }
+}
+
+function writeRecoveredLifecycles(
+  lifecycle: LifecycleContext,
+  write: (line: string) => void,
+): void {
+  const counts = lifecycle.counts;
+  if (counts && counts.failed + counts.recordFailures > 0) {
+    safeWrite(write, `[residency] lifecycle boot recovery ${lifecycleCountsJson(counts)}\n`);
+  }
+}
+
+function recoverProfileSwitchRows(
+  rows: ResidencyOperationRecord[],
+  openStore: (path: string) => BootRecoveryStore,
+  opts: BootRecoveryOpts,
+  nowMs: () => number,
+  minStaleAgeMs: number,
+  lifecycle: LifecycleContext,
+): BootRecoverySummary {
+  const early = finishAbandonedProfileIntents(rows, () => openStore(opts.path), nowMs());
+  const remaining =
+    early === null ? rows : rows.filter((row) => !early.finished.has(row.operationId));
+  const preview = previewProfileSwitchRecovery(remaining, { nowMs: nowMs(), minStaleAgeMs });
+  const result = shouldClaim(preview)
+    ? scanWithStore(openStore, opts, nowMs, minStaleAgeMs, lifecycle)
+    : deferred(preview);
+  return early === null
+    ? result
+    : {
+        ...result,
+        status: result.dispatchUnverified === undefined ? "recovered" : "deferred",
+        recovered: result.recovered + early.finished.size,
+        recordFailures: result.recordFailures + early.recordFailures,
+      };
 }
 
 // Counts only, in a fixed key order: never an operation id, model or node.
@@ -276,6 +312,9 @@ function countsJson(result: BootRecoverySummary): string {
     skipped: result.skipped,
     unrecognized: result.unrecognized,
     possiblyLive: result.possiblyLive,
+    ...(result.dispatchUnverified === undefined
+      ? {}
+      : { dispatchUnverified: result.dispatchUnverified }),
   });
 }
 
@@ -533,7 +572,7 @@ function claimAndFailOrphans(store: BootRecoveryStore, ctx: OrphanSweepContext):
 }
 
 function shouldClaim(preview: ProfileSwitchRecoveryPreview): boolean {
-  return preview.stale > 0 && preview.possiblyLive === 0;
+  return preview.stale > 0 && preview.possiblyLive === 0 && preview.dispatchUnverified === 0;
 }
 
 function deferred(preview: ProfileSwitchRecoveryPreview): BootRecoverySummary {
@@ -542,6 +581,7 @@ function deferred(preview: ProfileSwitchRecoveryPreview): BootRecoverySummary {
     ...NO_COUNTS,
     unrecognized: preview.unrecognized,
     possiblyLive: preview.possiblyLive,
+    ...(preview.dispatchUnverified === 0 ? {} : { dispatchUnverified: preview.dispatchUnverified }),
   };
 }
 
@@ -557,7 +597,12 @@ function scanWithStore(
     // Re-check on the writable handle: the snapshot may be stale by now, and a
     // claim must never land while a possibly-live switch row exists. The
     // re-check and the claim share one IMMEDIATE transaction.
-    let preview: ProfileSwitchRecoveryPreview = { stale: 0, possiblyLive: 0, unrecognized: 0 };
+    let preview: ProfileSwitchRecoveryPreview = {
+      stale: 0,
+      possiblyLive: 0,
+      unrecognized: 0,
+      dispatchUnverified: 0,
+    };
     const claim = store.claimOwnershipWhen(
       { ownerId: RESIDENCY_APPLY_PROFILE_FENCE_OWNER, incarnation: opts.incarnation },
       (nonterminal) => {
@@ -575,6 +620,9 @@ function scanWithStore(
       nowMs,
       minStaleAgeMs,
     });
+    if (result.dispatchUnverified > 0) {
+      return deferred({ ...preview, dispatchUnverified: result.dispatchUnverified });
+    }
     const recovered = result.recovered.filter((row) => row.recorded).length;
     let lifecycleCounts: LifecycleCounts;
     try {

@@ -370,7 +370,9 @@ describe("docs/dynamic-fleet-models.md (#522)", () => {
   test("case 22: lifecycle boot recovery scope (claimed pass and outside a switch)", () => {
     const s = (sectionBody(/^#{2,} .*residency lifecycle states/i) ?? "").replaceAll(/\s+/g, " ");
     for (const n of [
-      "On a claimed pass, i.e. when a stale profile-switch row exists, it sweeps every interrupted row. When the store holds no nonterminal operation row, it also sweeps lifecycle rows interrupted outside a switch, such as a direct start whose agent died in `loading`, once they have made no progress for 30 minutes and their workload is proven down, under its own claim of the apply-profile fence.",
+      "On a claimed pass for a stale legacy pending switch, it sweeps every interrupted row.",
+      "A nonterminal `committed` switch retains its reservation and lifecycle rows across agent restarts because its replacement process may still be live. Boot reports a `dispatchUnverified` count for these operations.",
+      "When the store holds no nonterminal operation row, it also sweeps lifecycle rows interrupted outside a switch, such as a direct start whose agent died in `loading`, once they have made no progress for 30 minutes and their workload is proven down, under its own claim of the apply-profile fence.",
       "A workload that is not proven down, for example an engine that outlived its agent, keeps its row.",
       "Any nonterminal operation row keeps this sweep off. When no profile-switch row is nonterminal, boot recovery first finishes `evict:` rows that have made no progress for 30 minutes as `unknown`, so a crashed eviction no longer disables the outside-a-switch sweep; a younger or malformed `evict:` row still keeps it off, and until then an operator stop or `llamactl residency force-unload` clears a stuck interrupted row, and an `evict:` row does not block either.",
       "`failInterruptedLifecycleRows`",

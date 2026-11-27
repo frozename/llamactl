@@ -147,6 +147,8 @@ import {
   type ResidencyPlan,
   runIdleEviction,
 } from "./residency/procedures.js";
+import { captureProfileDesired, type ProfileDesiredSnapshot } from "./residency/profile-desired.js";
+import { recoverAbandonedProfileIntentsOnNode } from "./residency/recovery.js";
 import { fenceWorkloadStop, reopenWorkloadAfterLoad } from "./residency/stop-fence.js";
 import {
   defaultResidencyStorePath,
@@ -571,35 +573,36 @@ function profileManifest<T extends { spec: { node: string } }>(
     : manifest;
 }
 
-function residencyPlanFor(input: {
-  node: string;
-  to: string;
-  from?: string | undefined;
-  managed?: ManagedLaunchAdmission | undefined;
-}): ResidencyPlan {
+function residencyPlanFor(
+  input: {
+    node: string;
+    to: string;
+    from?: string | undefined;
+    managed?: ManagedLaunchAdmission | undefined;
+  },
+  workloadsDir = workloadStoreMod.defaultWorkloadsDir(),
+): { plan: ResidencyPlan; desired: ProfileDesiredSnapshot } {
   const managed = profileOwner(input.node, input.managed);
   const nodeName = managed?.ownerNodeId ?? input.node;
-  const nodeRuns = nodeRunStoreMod.listNodeRuns();
-  const node = nodeRuns.find((n: (typeof nodeRuns)[number]) => n.metadata.name === nodeName);
+  const nodeRuns = nodeRunStoreMod.listNodeRuns(workloadsDir);
+  const node = nodeRuns.find((n) => n.metadata.name === nodeName);
   const declared = node?.spec.budget?.memoryGiB;
   const rawNodeName = process.env["LLAMACTL_NODE_NAME"]?.trim() ?? "";
   const servingNode = managed === undefined ? (rawNodeName === "" ? null : rawNodeName) : nodeName;
   const resolved = envMod.resolveEnv();
-  const modelHosts = modelHostStoreMod
-    .listModelHosts()
-    .map((manifest) => profileManifest(manifest, nodeName, managed));
+  const rawHosts = modelHostStoreMod.listModelHosts(workloadsDir);
+  const rawRuns = workloadStoreMod.listWorkloads(workloadsDir);
+  const modelHosts = rawHosts.map((manifest) => profileManifest(manifest, nodeName, managed));
   const observations = collectResidencyObservations({
     node: nodeName,
     servingNode,
-    modelRuns: workloadStoreMod
-      .listWorkloads()
-      .map((manifest) => profileManifest(manifest, nodeName, managed)),
+    modelRuns: rawRuns.map((manifest) => profileManifest(manifest, nodeName, managed)),
     modelHosts,
     modelHostStatus: (name) => statusModelHost({ key: { name } }),
     estimateModelRunGiB: (manifest) => estimateWorkloadMemoryGiB(manifest, resolved),
     estimateModelHostGiB: (manifest) => estimateModelHostMemoryGiB(manifest, resolved),
   });
-  return buildResidencyPlan({
+  const plan = buildResidencyPlan({
     node: nodeName,
     to: input.to,
     from: input.from ?? null,
@@ -614,6 +617,10 @@ function residencyPlanFor(input: {
     store: readResidencyStoreSnapshot(defaultResidencyStorePath()),
     residency: node?.spec.residency ?? null,
   });
+  return {
+    plan,
+    desired: captureProfileDesired(nodeName, node, rawRuns, rawHosts, managed?.ownsNode),
+  };
 }
 
 // Resolves the direct-start/stop residency group: an inline manifest's label
@@ -2941,7 +2948,9 @@ export const router = t.router({
         from: z.string().min(1).optional(),
       }),
     )
-    .query(({ ctx, input }) => residencyPlanFor({ ...input, managed: ctx.managedLaunchAdmission })),
+    .query(
+      ({ ctx, input }) => residencyPlanFor({ ...input, managed: ctx.managedLaunchAdmission }).plan,
+    ),
 
   // #284 (DF-11): dry-run-by-default profile switch. A bare call plans and
   // reports without opening the store; dryRun:false requires confirm:true,
@@ -2962,6 +2971,7 @@ export const router = t.router({
       const workloadsDir = workloadStoreMod.defaultWorkloadsDir();
       const managed = profileOwner(input.node, ctx.managedLaunchAdmission);
       const node = managed?.ownerNodeId ?? input.node;
+      const storePath = defaultResidencyStorePath();
       if (!input.dryRun) {
         if (!input.confirm) {
           throw new TRPCError({
@@ -2977,12 +2987,14 @@ export const router = t.router({
           managed,
         );
         if (refusal !== undefined) return refusal;
+        recoverAbandonedProfileIntentsOnNode(storePath, node);
       }
-      const plan = residencyPlanFor({ ...input, managed });
+      const { plan, desired } = residencyPlanFor({ ...input, managed }, workloadsDir);
       return await applyResidencyProfile({
         plan,
+        desired,
         dryRun: input.dryRun,
-        storePath: defaultResidencyStorePath(),
+        storePath,
         workloadsDir,
         registry: getResidencyLeaseRegistry(),
         node,

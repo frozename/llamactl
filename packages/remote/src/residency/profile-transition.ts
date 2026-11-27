@@ -30,11 +30,8 @@
  * `operation-record-refused`. Cancellation is checked at step boundaries and
  * ends a drain wait. The record is opt-in; the live caller (apply-profile)
  * passes it. The op's desiredRevision participates in the store's shared
- * watermark. A crash
- * between begin and finish leaves a nonterminal profile-switch row that
- * blocks the node (every later switch is Busy) until the deferred
- * crash-recovery path terminalizes it; serialization is therefore NOT
- * complete without recovery.
+ * watermark. An interrupted dispatched switch can leave its nonterminal row
+ * blocking later switches until its dispatch outcome is verified.
  *
  * On an ok, non-noop plan, `deferred` omits `complete` whenever
  * `opts.operation` is passed, because finishing that record terminal is the
@@ -54,9 +51,8 @@
  * `updatedAtMs` as "last step progress", so a live switch whose steps each
  * finish inside its staleness window is never terminalized under it.
  *
- * Crash recovery (via `recovery.ts`) terminalizes stale profile-switch rows;
- * rollback/persist-suppression/verify-release/reserve/verify-ready/publish
- * stay deferred. Per-action step budgets ride `opts.stepTimeouts`: `unloadMs`
+ * Crash recovery (via `recovery.ts`) preserves committed profile-switch rows
+ * and their reservations. Per-action step budgets ride `opts.stepTimeouts`: `unloadMs`
  * bounds each `stop` and `loadMs` each `start`, armed through the injectable
  * `opts.stepTimer`; absent, zero or non-finite budgets leave that action
  * unbounded (the same rule as `opts.drainTimeoutMs`, with no default). A
@@ -90,13 +86,18 @@ import {
   type ProfileSwitchPlan,
   type StepKind,
 } from "@llamactl/core/residency/planner";
+import { profileSwitchOperationKey } from "@llamactl/core/residency/profile-selection";
 import {
   currentSessionRefcounts,
   type SessionRefcounts,
   type SessionUnloadCheck,
 } from "@llamactl/core/residency/sessions";
 
-import type { ResidencyOperationOutcome, ResidencyOperationStore } from "./store.js";
+import type {
+  BeginOperationResult,
+  ResidencyOperationOutcome,
+  ResidencyOperationStore,
+} from "./store.js";
 
 import { type ProfileSwitchLifecycleOpts, withResidencyLifecycle } from "./lifecycle-steps.js";
 
@@ -146,8 +147,12 @@ export type ProfileSwitchOperationOpts = {
   // the resolved node budget the reservation is admitted against; absent =
   // recorded but not admitted (store opt-in, #685)
   nodeBudgetGiB?: number;
+  // The wet apply caller writes the reservation together with its new fence.
+  begun?: Extract<BeginOperationResult, { ok: true }>;
   // where a failed step-boundary heartbeat is reported; default stderr
   log?: (line: string) => void;
+  /** Revalidates desired inputs just before an actuator and its lifecycle writes. */
+  checkDesired?: () => string | null;
   // per-model residency lifecycle wiring; when set the executor drives the
   // residency_states rows around each fenced stop/start
   lifecycle?: ProfileSwitchLifecycleOpts;
@@ -863,9 +868,7 @@ function buildReport(input: ReportInput): ProfileSwitchExecutionReport {
   };
 }
 
-export function profileSwitchOperationKey(node: string): string {
-  return `profile-switch:${node}`;
-}
+export { profileSwitchOperationKey };
 
 // The reservation the switch records at begin: the plan's `reserve` step, or 0
 // when there is none or it is not a finite non-negative number.
@@ -884,16 +887,20 @@ function beginSwitchOperation(
 ): BeginSwitchResult {
   const nowMs = operation.nowMs ?? Date.now;
   try {
-    const begun = operation.store.beginOperation({
-      fenceToken: operation.fenceToken,
-      operationId: operation.operationId,
-      model: profileSwitchOperationKey(plan.node),
-      targetState: `profile:${plan.to}`,
-      desiredRevision: operation.desiredRevision,
-      reservationGiB: profileSwitchReservationGiB(plan),
-      nowMs: nowMs(),
-      ...(operation.nodeBudgetGiB === undefined ? {} : { nodeBudgetGiB: operation.nodeBudgetGiB }),
-    });
+    const begun =
+      operation.begun ??
+      operation.store.beginOperation({
+        fenceToken: operation.fenceToken,
+        operationId: operation.operationId,
+        model: profileSwitchOperationKey(plan.node),
+        targetState: `profile:${plan.to}`,
+        desiredRevision: operation.desiredRevision,
+        reservationGiB: profileSwitchReservationGiB(plan),
+        nowMs: nowMs(),
+        ...(operation.nodeBudgetGiB === undefined
+          ? {}
+          : { nodeBudgetGiB: operation.nodeBudgetGiB }),
+      });
     if (!begun.ok) {
       return { ok: false, reason: begun.reason };
     }
@@ -1012,6 +1019,34 @@ function inFlightOperationId(operation: ProfileSwitchOperationOpts, plan: OkPlan
   return inflight?.operationId ?? "unknown";
 }
 
+function refusedOperationReport(
+  plan: OkPlan,
+  deferred: StepKind[],
+  reason: string,
+): ProfileSwitchExecutionReport {
+  return {
+    dryRun: false,
+    ok: false,
+    outcome: "refused",
+    node: plan.node,
+    from: plan.from,
+    to: plan.to,
+    steps: [],
+    ran: [],
+    failedAt: null,
+    deferred,
+    refusal: { reason: "operation-record-refused", detail: reason },
+  };
+}
+
+export function profileSwitchOperationRefusal(
+  plan: OkPlan,
+  registry: ResidencyLeases | null,
+  reason: string,
+): ProfileSwitchExecutionReport {
+  return refusedOperationReport(plan, deferredKinds(plan, registry !== null, true), reason);
+}
+
 async function executeWithOperation(
   plan: OkPlan,
   deferred: StepKind[],
@@ -1023,19 +1058,7 @@ async function executeWithOperation(
     if (begun.reason === "reservation-conflict") {
       return busyReport(plan, deferred, inFlightOperationId(operation, plan));
     }
-    return {
-      dryRun: false,
-      ok: false,
-      outcome: "refused",
-      node: plan.node,
-      from: plan.from,
-      to: plan.to,
-      steps: [],
-      ran: [],
-      failedAt: null,
-      deferred,
-      refusal: { reason: "operation-record-refused", detail: begun.reason },
-    };
+    return refusedOperationReport(plan, deferred, begun.reason);
   }
   if (!begun.created) {
     if (begun.phase === "terminal") {
@@ -1132,7 +1155,7 @@ function stepBudgetFrom(
 // The executor deps, wrapped in the residency-lifecycle decorator only when
 // the operation opts carry `lifecycle`. Without it the deps pass through
 // untouched, so the switch behaves byte-identically to a no-lifecycle run.
-function executorDepsFor(
+function lifecycleDepsFor(
   plan: OkPlan,
   deps: ProfileSwitchExecutorDeps,
   operation: ProfileSwitchOperationOpts | undefined,
@@ -1149,6 +1172,30 @@ function executorDepsFor(
       nowMs: operation.nowMs ?? Date.now,
       log: operation.log ?? defaultLog,
     }),
+  };
+}
+
+function checkBeforeProfileStep(
+  checkDesired: () => string | null,
+  run: () => Promise<ProfileSwitchStepOutcome>,
+): Promise<ProfileSwitchStepOutcome> {
+  const stale = checkDesired();
+  return stale === null ? run() : Promise.resolve({ ok: false, detail: stale });
+}
+
+function executorDepsFor(
+  plan: OkPlan,
+  deps: ProfileSwitchExecutorDeps,
+  operation: ProfileSwitchOperationOpts | undefined,
+): ProfileSwitchExecutorDeps {
+  const lifecycleDeps = lifecycleDepsFor(plan, deps, operation);
+  const checkDesired = operation?.checkDesired;
+  if (checkDesired === undefined) return lifecycleDeps;
+  return {
+    stop: (workload, ctx) =>
+      checkBeforeProfileStep(checkDesired, () => lifecycleDeps.stop(workload, ctx)),
+    start: (workload, ctx) =>
+      checkBeforeProfileStep(checkDesired, () => lifecycleDeps.start(workload, ctx)),
   };
 }
 

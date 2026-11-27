@@ -83,7 +83,7 @@ import {
 import { Database } from "bun:sqlite";
 import { dirname, join } from "node:path";
 
-import { existsSync, mkdirSync } from "../safe-fs.js";
+import { existsSync, mkdirSync, statSync } from "../safe-fs.js";
 
 const SCHEMA_VERSION = 1;
 
@@ -171,8 +171,7 @@ type ClaimInput = {
   incarnation: string;
 };
 
-type BeginOperationInput = {
-  fenceToken: number;
+type OperationSpec = {
   operationId: string;
   model: string;
   targetState: string;
@@ -181,6 +180,8 @@ type BeginOperationInput = {
   nowMs: number;
   nodeBudgetGiB?: number;
 };
+
+type BeginOperationInput = OperationSpec & { fenceToken: number };
 
 type MutationInput = {
   fenceToken: number;
@@ -202,9 +203,13 @@ type FinishOperationInput = MutationInput & {
   detail?: string;
 };
 
-type BeginOperationResult =
+export type BeginOperationResult =
   | { ok: true; created: boolean; record: ResidencyOperationRecord }
   | { ok: false; reason: ResidencyStoreFailure };
+
+type ClaimAndBeginOperationResult =
+  | BeginOperationResult
+  | { ok: false; reason: "busy"; operationId: string | null };
 
 type MutationResult = { ok: true } | { ok: false; reason: ResidencyStoreFailure };
 
@@ -216,6 +221,10 @@ export type ResidencyOperationStore = {
   ) => ClaimWhenResult;
   currentFence: () => Fence | null;
   beginOperation: (input: BeginOperationInput) => BeginOperationResult;
+  claimAndBeginOperation: (
+    identity: ClaimInput,
+    input: OperationSpec,
+  ) => ClaimAndBeginOperationResult;
   commitReservation: (input: MutationInput) => MutationResult;
   finishOperation: (input: FinishOperationInput) => MutationResult;
   touchOperation: (input: TouchOperationInput) => MutationResult;
@@ -300,6 +309,10 @@ export function openResidencyOperationStore(input: {
   const beginTx = db.transaction(
     (beginInput: BeginOperationInput): BeginOperationResult => beginOperationTx(db, beginInput),
   );
+  const claimAndBeginTx = db.transaction(
+    (identity: ClaimInput, input: OperationSpec): ClaimAndBeginOperationResult =>
+      claimAndBeginOperationTx(db, identity, input),
+  );
   const commitTx = db.transaction(
     (mutationInput: MutationInput): MutationResult => commitReservationTx(db, mutationInput),
   );
@@ -317,6 +330,16 @@ export function openResidencyOperationStore(input: {
         return { ok: false, reason: invalid };
       }
       return beginTx.immediate(beginInput);
+    },
+    claimAndBeginOperation: (identity, beginInput) => {
+      const { ownerId, incarnation } = identity;
+      if (!isNonEmpty(ownerId) || !isNonEmpty(incarnation)) {
+        throw new Error("claimAndBeginOperation requires a non-empty ownerId and incarnation");
+      }
+      const invalid = validateOperationSpec(beginInput);
+      return invalid === null
+        ? claimAndBeginTx.immediate({ ownerId, incarnation }, beginInput)
+        : { ok: false, reason: invalid };
     },
     claimOwnership: (claimInput) => {
       if (!isNonEmpty(claimInput.ownerId) || !isNonEmpty(claimInput.incarnation)) {
@@ -478,6 +501,62 @@ export function readResidencyStoreSnapshot(
     return { path, present: true, error: (error as Error).message };
   } finally {
     db?.close();
+  }
+}
+
+type ProfileOperationView = {
+  active: ResidencyOperationRecord | null;
+  terminal: ResidencyOperationRecord | null;
+  fenceToken: number | null;
+};
+
+function profileOperationsAt(
+  db: Database,
+  model: string,
+  targetPrefix: string,
+): ProfileOperationView {
+  const active = db
+    .query(`SELECT ${OPERATION_COLUMNS} FROM operations WHERE model = ? AND phase != 'terminal'`)
+    .get(model) as OperationRow | null;
+  // Switches on a model serialize. Insertion order survives wall-clock changes.
+  // A pending row starts at v1. Only a committed row can finish at v3.
+  const terminal = db
+    .query(
+      `SELECT ${OPERATION_COLUMNS} FROM operations
+       WHERE model = ? AND phase = 'terminal' AND substr(target_state, 1, ?) = ?
+         AND (outcome = 'succeeded' OR (outcome = 'unknown' AND version >= 3))
+       ORDER BY rowid DESC LIMIT 1`,
+    )
+    .get(model, targetPrefix.length, targetPrefix) as OperationRow | null;
+  return {
+    active: active === null ? null : rowToRecord(active),
+    terminal: terminal === null ? null : rowToRecord(terminal),
+    fenceToken: readAuthority(db)?.fenceToken ?? null,
+  };
+}
+
+function profileStorePresent(path: string): boolean {
+  try {
+    statSync(path);
+    return true;
+  } catch (error: unknown) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+export function readProfileOperations(
+  path: string,
+  model: string,
+  targetPrefix: string,
+): ProfileOperationView | null {
+  if (!profileStorePresent(path)) return null;
+  const db = new Database(path, { readonly: true });
+  try {
+    db.run(`PRAGMA busy_timeout = ${String(RESIDENCY_LEASE_AUDIT_BUSY_TIMEOUT_MS)}`);
+    return db.transaction(() => profileOperationsAt(db, model, targetPrefix))();
+  } finally {
+    db.close();
   }
 }
 
@@ -735,6 +814,34 @@ function beginOperationTx(db: Database, input: BeginOperationInput): BeginOperat
   if (authority?.fenceToken !== input.fenceToken) {
     return { ok: false, reason: "stale-fence" };
   }
+  return checkBeginOperation(db, input) ?? createPendingOperation(db, input, authority);
+}
+
+function claimAndBeginOperationTx(
+  db: Database,
+  identity: ClaimInput,
+  input: OperationSpec,
+): ClaimAndBeginOperationResult {
+  const operationId = nonterminalOperationIdForModel(db, input.model);
+  if (operationId !== null) {
+    return { ok: false, reason: "busy", operationId };
+  }
+  const current = readAuthority(db);
+  if (current !== null && current.ownerId !== identity.ownerId) {
+    return { ok: false, reason: "busy", operationId: null };
+  }
+  const checked = checkBeginOperation(db, input);
+  if (checked !== null) {
+    return checked;
+  }
+
+  // Commit the new fence and its blocking reservation as one write. A
+  // rejected reservation must leave the preceding writer's fence intact.
+  const authority = claimOwnershipTx(db, identity);
+  return createPendingOperation(db, input, authority);
+}
+
+function checkBeginOperation(db: Database, input: OperationSpec): BeginOperationResult | null {
   const existing = selectOperationRow(db, input.operationId);
   if (existing !== null) {
     if (matchesImmutableFields(existing, input)) {
@@ -746,7 +853,7 @@ function beginOperationTx(db: Database, input: BeginOperationInput): BeginOperat
   if (watermark !== null && input.desiredRevision < watermark) {
     return { ok: false, reason: "stale-revision" };
   }
-  if (hasNonterminalForModel(db, input.model)) {
+  if (nonterminalOperationIdForModel(db, input.model) !== null) {
     return { ok: false, reason: "reservation-conflict" };
   }
   if (
@@ -755,6 +862,14 @@ function beginOperationTx(db: Database, input: BeginOperationInput): BeginOperat
   ) {
     return { ok: false, reason: "reservation-exceeds-budget" };
   }
+  return null;
+}
+
+function createPendingOperation(
+  db: Database,
+  input: OperationSpec,
+  authority: Fence,
+): BeginOperationResult {
   insertPendingOperation(db, input, authority);
   return { ok: true, created: true, record: pendingRecord(input, authority) };
 }
@@ -1040,11 +1155,11 @@ function selectOperationRow(db: Database, operationId: string): OperationRow | n
     .get(operationId) as OperationRow | null;
 }
 
-function hasNonterminalForModel(db: Database, model: string): boolean {
-  const hit = db
-    .query("SELECT 1 AS hit FROM operations WHERE model = ? AND phase != 'terminal' LIMIT 1")
-    .get(model) as { hit: number } | null;
-  return hit !== null;
+function nonterminalOperationIdForModel(db: Database, model: string): string | null {
+  const row = db
+    .query("SELECT operation_id FROM operations WHERE model = ? AND phase != 'terminal' LIMIT 1")
+    .get(model) as { operation_id: string } | null;
+  return row?.operation_id ?? null;
 }
 
 // The store is node-local, so this sum over nonterminal operations (pending
@@ -1077,7 +1192,7 @@ function storedDesiredRevision(db: Database): number | null {
   return watermark;
 }
 
-function insertPendingOperation(db: Database, input: BeginOperationInput, authority: Fence): void {
+function insertPendingOperation(db: Database, input: OperationSpec, authority: Fence): void {
   db.query(
     `INSERT INTO operations (operation_id, model, target_state, desired_revision, reservation_gib, phase, outcome, detail, owner_id, incarnation, fence_token, version, created_at_ms, updated_at_ms)
      VALUES (?, ?, ?, ?, ?, 'pending', NULL, NULL, ?, ?, ?, 1, ?, ?)`,
@@ -1095,7 +1210,7 @@ function insertPendingOperation(db: Database, input: BeginOperationInput, author
   );
 }
 
-function pendingRecord(input: BeginOperationInput, authority: Fence): ResidencyOperationRecord {
+function pendingRecord(input: OperationSpec, authority: Fence): ResidencyOperationRecord {
   return {
     operationId: input.operationId,
     model: input.model,
@@ -1158,7 +1273,7 @@ function isOutcome(value: string): value is ResidencyOperationOutcome {
   return (OUTCOMES as readonly string[]).includes(value);
 }
 
-function matchesImmutableFields(row: OperationRow, input: BeginOperationInput): boolean {
+function matchesImmutableFields(row: OperationRow, input: OperationSpec): boolean {
   return (
     row.model === input.model &&
     row.target_state === input.targetState &&
@@ -1168,6 +1283,10 @@ function matchesImmutableFields(row: OperationRow, input: BeginOperationInput): 
 }
 
 function validateBeginInput(input: BeginOperationInput): ResidencyStoreFailure | null {
+  return isFenceToken(input.fenceToken) ? validateOperationSpec(input) : "invalid-input";
+}
+
+function validateOperationSpec(input: OperationSpec): ResidencyStoreFailure | null {
   if (
     !isNonEmpty(input.operationId) ||
     !isNonEmpty(input.model) ||
@@ -1179,9 +1298,6 @@ function validateBeginInput(input: BeginOperationInput): ResidencyStoreFailure |
     return "invalid-input";
   }
   if (!Number.isInteger(input.desiredRevision) || input.desiredRevision < 0) {
-    return "invalid-input";
-  }
-  if (!isFenceToken(input.fenceToken)) {
     return "invalid-input";
   }
   if (
