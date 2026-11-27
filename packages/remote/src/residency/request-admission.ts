@@ -14,6 +14,7 @@ import {
 export type AdmissionRejectCode =
   | QueueRefuseReason
   | "Aborted"
+  | "ContextUnverified"
   | "DuplicateRequest"
   | "LoadFailed"
   | "QueueWaitExceeded";

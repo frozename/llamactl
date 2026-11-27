@@ -396,6 +396,25 @@ test("the owner bounds request bytes, queue deadlines and cancellable waiting", 
   }
 });
 
+test("the owner rechecks the adapter's actual body before using its reserved permit", async () => {
+  const owner = createOwnerAdmission([{ ...group(18200, 18210), maxCompletionTokens: 4 }]);
+  let sends = 0;
+  const send = (): Promise<Response> => {
+    sends += 1;
+    return Promise.resolve(new Response(null, { status: 204 }));
+  };
+  const request = dispatch(18200, send, { body: '{"max_tokens":4}' });
+  const ticket = owner.acquire(request);
+  if (ticket === undefined || "refusal" in ticket) throw new Error("fixture admission refused");
+  const permit = await ticket.pending;
+  const result = await permit.send(send, '{"max_tokens":5}');
+  expect(result.status).toBe(400);
+  expect(await result.json()).toMatchObject({ error: { code: "ContextLimitExceeded" } });
+  expect(sends).toBe(0);
+  expect(owner.snapshot()[0]?.executing).toBe(0);
+  owner.stop();
+});
+
 test("two interactive requests can execute together without admitting a third or Granite", async () => {
   const gate = createOwnerAdmission([{ ...group(18200, 18210), maxQueued: 2 }]);
   const one = heldResponse();

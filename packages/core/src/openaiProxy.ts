@@ -48,7 +48,11 @@ import {
   type ColdPinQueueProbeConfig,
   probeColdPinQueue,
 } from "./residency/cold-pin-admission.js";
-import { getLocalEngineForwarder, type LocalEngineRequest } from "./residency/engine-forwarder.js";
+import {
+  getLocalEngineForwarder,
+  type LocalEngineRequest,
+  withLocalEngineBody,
+} from "./residency/engine-forwarder.js";
 import {
   bindLeaseToBody,
   getResidencyLeaseRegistry,
@@ -3208,6 +3212,8 @@ function routeStillOwned(route: RoutedEntry, resolved: ResolvedEnv): boolean {
     .some(
       (current) =>
         current.pid === route.pid &&
+        current.engine === route.engine &&
+        current.kind === route.kind &&
         current.host === route.host &&
         current.port === route.port &&
         current.model === route.model,
@@ -3217,17 +3223,19 @@ function routeStillOwned(route: RoutedEntry, resolved: ResolvedEnv): boolean {
 export function bindLocalEngineWorkload(
   target: string,
   resolved: ResolvedEnv,
-): Pick<LocalEngineRequest, "workload" | "stillOwnsTarget"> {
+): Pick<LocalEngineRequest, "workload" | "stillOwnsTarget" | "pretokenizedCompletion"> {
   const identity = workloadRuntime.identifyLocalEngineAtTarget(target, resolved);
   if (identity === undefined) return { stillOwnsTarget: () => false };
   return {
     workload: identity.workload,
+    ...(identity.engine === "llamacpp" ? { pretokenizedCompletion: true } : {}),
     stillOwnsTarget: (): boolean => {
       if (isRouteWithdrawn(identity.workload)) return false;
       const current = workloadRuntime.identifyLocalEngineAtTarget(target, resolved);
       return (
         current?.workload === identity.workload &&
         current.kind === identity.kind &&
+        current.engine === identity.engine &&
         current.pid === identity.pid &&
         current.startedAt === identity.startedAt
       );
@@ -3237,7 +3245,7 @@ export function bindLocalEngineWorkload(
 
 function bindManagedDefaultEngine(
   context: ProxyContext,
-): Pick<LocalEngineRequest, "workload" | "stillOwnsTarget"> {
+): Pick<LocalEngineRequest, "workload" | "stillOwnsTarget" | "pretokenizedCompletion"> {
   const model = requestedModelFromBody(context.bodyText ?? "");
   if (model !== undefined && declaredModelEntries().some((entry) => entry.id === model)) {
     // A declaration names an owner. It cannot authorize the implicit
@@ -3266,11 +3274,16 @@ function forwardAdmittedEngine(
       ? bindManagedDefaultEngine(context)
       : {
           workload: route.workload,
+          ...(route.engine === "llamacpp" ? { pretokenizedCompletion: true as const } : {}),
           stillOwnsTarget: () => routeStillOwned(route, context.resolved),
         }),
     ...(signal === null || signal === undefined ? {} : { engineSignal: signal }),
-    send: (engineSignal) =>
-      fetch(context.target, { ...init, signal: engineSignal, redirect: "error" }),
+    send: (engineSignal, body) =>
+      fetch(context.target, {
+        ...withLocalEngineBody(init, body),
+        signal: engineSignal,
+        redirect: "error",
+      }),
   });
 }
 

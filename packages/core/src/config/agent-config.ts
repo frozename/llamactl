@@ -188,6 +188,8 @@ export const ExecutionAdmissionSchema = z
       maxPerPrincipal: z.number().int().min(2).max(320),
       maxQueueWaitMs: z.number().int().min(1).max(120_000),
       starvationBoundMs: z.number().int().min(0).max(120_000),
+      maxCompletionTokens: z.number().int().positive().max(16_777_216).optional(),
+      maxContextTokens: z.number().int().positive().max(16_777_216).optional(),
     }),
   )
   .max(16)

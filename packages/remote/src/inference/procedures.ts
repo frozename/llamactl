@@ -38,6 +38,7 @@ import type { ResolvedEnv } from "@llamactl/core/types";
 import { type inferenceContracts, inferenceRpc, routingCatalog } from "@llamactl/core";
 import { LOCAL_NODE_NAME } from "@llamactl/core/config/schema";
 import { resolveEnv } from "@llamactl/core/env";
+import { withLocalEngineBody } from "@llamactl/core/residency/engine-forwarder";
 import {
   listLocalRoutes,
   listWorkloadRoutes,
@@ -358,11 +359,19 @@ function engineFetch(managed: Parameters<WorkerRpcBackend["execute"]>[3]): typeo
     const headers = new Headers(init?.headers);
     headers.delete("authorization");
     if (managed !== undefined) {
-      return managed.permit.send((signal) => {
-        managed.onDial();
-        const engine = { ...init, headers, signal, redirect: "error" as const, timeout: false };
-        return fetch(input, engine);
-      });
+      return managed.permit.send(
+        (signal, body) => {
+          managed.onDial();
+          const engine = {
+            ...withLocalEngineBody({ ...init, headers }, body),
+            signal,
+            redirect: "error" as const,
+            timeout: false,
+          };
+          return fetch(input, engine);
+        },
+        typeof init?.body === "string" ? init.body : null,
+      );
     }
     return fetch(input, { ...init, headers });
   }) as typeof fetch;
@@ -1406,7 +1415,7 @@ function acquireOwnerPermit(
   if (admission === undefined || run.backend !== localModelBackend) return undefined;
   const workload = routingCatalog.workloadOfDeployment(run.deployment.deploymentId, state.workerId);
   const permit = admission.acquire({
-    target: run.deployment.endpoint,
+    target: `${engineBaseUrl(run.deployment.endpoint)}/chat/completions`,
     body: JSON.stringify(localBackendRequest(run.deployment, run.envelope)),
     deadlineMs: run.envelope.deadline,
     clientSignal: run.controller.signal,

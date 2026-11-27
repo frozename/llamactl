@@ -158,6 +158,7 @@ interface UpstreamGate {
 interface FakeUpstream {
   readonly port: number;
   hits(path: string): number;
+  lastBody(path: string): unknown;
   /** Live per-request gates, oldest first; released/failed/cancelled ones drop out. */
   readonly gates: readonly UpstreamGate[];
   stop(): Promise<void>;
@@ -230,6 +231,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  */
 function startFakeUpstream(): FakeUpstream {
   const hits = new Map<string, number>();
+  const bodies = new Map<string, unknown>();
   const gates: (UpstreamGate & { settled: boolean })[] = [];
   const drop = (gate: UpstreamGate & { settled: boolean }): void => {
     const at = gates.indexOf(gate);
@@ -335,6 +337,7 @@ function startFakeUpstream(): FakeUpstream {
       }
       hits.set(path, (hits.get(path) ?? 0) + 1);
       const parsed: unknown = await req.json().catch(() => null);
+      bodies.set(path, parsed);
       const wantsStream = isRecord(parsed) && parsed["stream"] === true;
       if (wantsStream) return sseGate();
       return await jsonGate(path, req.signal);
@@ -343,6 +346,7 @@ function startFakeUpstream(): FakeUpstream {
   return {
     port: server.port ?? 0,
     hits: (path: string) => hits.get(path) ?? 0,
+    lastBody: (path: string): unknown => bodies.get(path),
     gates,
     stop: () => server.stop(true),
   };
@@ -425,7 +429,10 @@ describe("#281 DF-08: router local branches + /v1/completions share the chat cap
     );
   }
 
-  function startDefaultEngineAdmission(): void {
+  function startDefaultEngineAdmission(bounds?: {
+    maxCompletionTokens?: number;
+    maxContextTokens?: number;
+  }): void {
     process.env["LLAMA_CPP_SERVER_ALIAS"] = "no-such-model";
     agent = startAgentServer({
       tokenHash,
@@ -441,6 +448,7 @@ describe("#281 DF-08: router local branches + /v1/completions share the chat cap
           maxPerPrincipal: 4,
           maxQueueWaitMs: 3000,
           starvationBoundMs: 3000,
+          ...bounds,
         },
       ],
     });
@@ -772,6 +780,83 @@ describe("#281 DF-08: router local branches + /v1/completions share the chat cap
       for (const gate of upstream.gates) gate.release();
       await response.body?.cancel().catch(() => undefined);
     }
+  });
+
+  test("owner HTTP admission enforces explicit completion bounds before dialing", async () => {
+    trackDefaultWorkload("resident");
+    startDefaultEngineAdmission({ maxCompletionTokens: 4 });
+    const route = "/v1/chat/completions";
+    for (const [fields, code] of [
+      [{ max_completion_tokens: 5 }, "ContextLimitExceeded"],
+      [{}, "InvalidRequest"],
+      [{ max_tokens: 2, n_predict: -1 }, "InvalidRequest"],
+      [{ max_tokens: 2, n: 2 }, "InvalidRequest"],
+    ] as const) {
+      const response = await fetch(`${agent!.url}${route}`, {
+        method: "POST",
+        headers: authedHeaders(),
+        body: JSON.stringify({ ...chatRequest(), stream: true, ...fields }),
+      });
+      if (response.status !== 400) {
+        for (const gate of upstream.gates) gate.release();
+        await response.body?.cancel().catch(() => undefined);
+      }
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ error: { code } });
+    }
+    expect(upstream.hits(route)).toBe(0);
+
+    const allowed = await fetch(`${agent!.url}${route}`, {
+      method: "POST",
+      headers: authedHeaders(),
+      body: JSON.stringify({ ...chatRequest(), stream: true, max_completion_tokens: 4 }),
+    });
+    expect(allowed.status).toBe(200);
+    expect(upstream.hits(route)).toBe(1);
+    expect(upstream.lastBody(route)).toMatchObject({ max_tokens: 4 });
+    expect(upstream.lastBody(route)).not.toHaveProperty("max_completion_tokens");
+    latestGate(upstream).release();
+    await allowed.body?.cancel();
+  });
+
+  test("owner HTTP context uses exact token IDs and refuses unverified prompt claims", async () => {
+    trackDefaultWorkload("resident");
+    startDefaultEngineAdmission({ maxContextTokens: 6 });
+    for (const [path, data, code] of [
+      ["/v1/completions", { prompt: [11, 12, 13], max_tokens: 4 }, "ContextLimitExceeded"],
+      [
+        "/v1/chat/completions",
+        { ...chatRequest(), prompt_tokens: 1, max_tokens: 4 },
+        "ContextUnverified",
+      ],
+    ] as const) {
+      const response = await fetch(`${agent!.url}${path}`, {
+        method: "POST",
+        headers: authedHeaders(),
+        body: JSON.stringify({ model: "no-such-model", stream: true, ...data }),
+      });
+      if (response.status !== 400) {
+        for (const gate of upstream.gates) gate.release();
+        await response.body?.cancel().catch(() => undefined);
+      }
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ error: { code } });
+      expect(upstream.hits(path)).toBe(0);
+    }
+    const allowed = await fetch(`${agent!.url}/v1/completions`, {
+      method: "POST",
+      headers: authedHeaders(),
+      body: JSON.stringify({
+        model: "no-such-model",
+        stream: true,
+        prompt: [11, 12],
+        max_tokens: 4,
+      }),
+    });
+    expect(allowed.status).toBe(200);
+    expect(upstream.hits("/v1/completions")).toBe(1);
+    latestGate(upstream).release();
+    await allowed.body?.cancel();
   });
 
   test("the default binding refuses a changed generation at the same PID and endpoint", () => {

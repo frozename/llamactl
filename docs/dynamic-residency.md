@@ -261,6 +261,15 @@ executionAdmission:
     starvationBoundMs: 45000
 ```
 
+Execution groups can also set `maxCompletionTokens` and `maxContextTokens`.
+An output limit requires a single explicit, positive completion cap on
+generation requests. Admission forwards one normalized token-cap field and
+rejects competing caps and multi-completion requests. A finite context limit
+also requires a single flat token-ID prompt sent to a verified llama.cpp
+completion endpoint. The request budget includes the full input sequence and
+requested output. Chat templates, media and unknown prompt expansions refuse
+with `ContextUnverified` when a finite context limit is configured.
+
 The foreground can occupy up to its configured number of slots. One
 background request runs alone. Setting the starvation bound below the
 queue wait lets an aged background request reserve the next idle window

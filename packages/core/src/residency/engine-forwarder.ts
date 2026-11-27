@@ -4,6 +4,8 @@ export interface LocalEngineRequest {
   deadlineMs: number;
   body: string | null;
   workload?: string;
+  /** Published only for the verified llama.cpp HTTP completion target. */
+  pretokenizedCompletion?: true;
   clientSignal: AbortSignal;
   engineSignal?: AbortSignal;
   stillOwnsTarget?: () => boolean;
@@ -11,7 +13,14 @@ export interface LocalEngineRequest {
 }
 
 export interface LocalEngineDispatch extends LocalEngineRequest {
-  send: (signal: AbortSignal) => Promise<Response>;
+  send: (signal: AbortSignal, body?: string) => Promise<Response>;
+}
+
+export function withLocalEngineBody(init: RequestInit, body: string | undefined): RequestInit {
+  if (body === undefined) return init;
+  const headers = new Headers(init.headers);
+  headers.delete("content-length");
+  return { ...init, headers, body };
 }
 
 export type LocalEngineForwarder = (dispatch: LocalEngineDispatch) => Promise<Response> | undefined;

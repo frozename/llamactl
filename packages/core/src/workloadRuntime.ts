@@ -559,7 +559,7 @@ export function listLocalRoutes(
   );
 }
 
-type LocalEngineIdentity = Pick<LocalRoute, "workload" | "kind" | "pid"> & {
+type LocalEngineIdentity = Pick<LocalRoute, "workload" | "kind" | "pid" | "engine"> & {
   startedAt: string;
 };
 
@@ -599,7 +599,13 @@ export function identifyLocalEngineAtTarget(
   ) {
     return undefined;
   }
-  return { workload: first.workload, kind: first.kind, pid: first.pid, startedAt: state.startedAt };
+  return {
+    workload: first.workload,
+    kind: first.kind,
+    pid: first.pid,
+    engine: first.engine,
+    startedAt: state.startedAt,
+  };
 }
 
 /**

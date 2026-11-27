@@ -1,5 +1,4 @@
 import type { ClusterNode, Config, User } from "@llamactl/core/config/schema";
-import type { LocalEngineForwarder } from "@llamactl/core/residency/engine-forwarder";
 import type { LocalRoute } from "@llamactl/core/workloadRuntime";
 
 import {
@@ -36,6 +35,10 @@ import {
 } from "@llamactl/core/engines/state";
 import { probeEndpointOwnership } from "@llamactl/core/probe";
 import { DEFAULT_RESIDENCY_POLICY } from "@llamactl/core/residency/admission";
+import {
+  type LocalEngineForwarder,
+  withLocalEngineBody,
+} from "@llamactl/core/residency/engine-forwarder";
 import {
   getResidencyLeaseRegistry,
   type ResidencyAuditEntry,
@@ -1393,8 +1396,13 @@ function localChatEngineFetch(forward: LocalEngineForwarder, timeoutMs: number):
       clientSignal: init.signal ?? new AbortController().signal,
       deadlineMs: Date.now() + timeoutMs,
       principal: { bearer: null },
-      send: (signal) => {
-        const engine = { ...init, signal, redirect: "error" as const, timeout: false };
+      send: (signal, body) => {
+        const engine = {
+          ...withLocalEngineBody(init, body),
+          signal,
+          redirect: "error" as const,
+          timeout: false,
+        };
         return fetch(input, engine);
       },
     });

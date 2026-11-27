@@ -20,6 +20,7 @@ import { isIP } from "node:net";
 
 import { bearerFromHeader } from "../server/auth.js";
 import { admissionErrorResponse } from "../server/chat-admission.js";
+import { boundOwnerRequest, type OwnerRequestBounds } from "./owner-request-bounds.js";
 import {
   createRequestAdmission,
   type Release,
@@ -30,6 +31,7 @@ import {
 interface ExecutionGroup {
   model: QueueModelRef;
   admission: ReservableRequestAdmission;
+  bounds: OwnerRequestBounds;
   unconfirmed: AbortController;
   stopping: AbortController;
 }
@@ -40,7 +42,7 @@ export type OwnerAdmissionSnapshot = Pick<QueueSnapshot, "queued" | "executing" 
 };
 
 export interface OwnerPermit {
-  send: (send: LocalEngineDispatch["send"]) => Promise<Response>;
+  send: (send: LocalEngineDispatch["send"], actualBody?: string | null) => Promise<Response>;
   releaseUnused: () => void;
 }
 
@@ -269,13 +271,30 @@ function permitFor(
   group: ExecutionGroup,
   request: LocalEngineRequest,
   release: Release,
+  checkedBody: string | undefined,
 ): OwnerPermit {
   let unused = true;
   return {
-    send: async (send): Promise<Response> => {
+    send: async (send, actualBody): Promise<Response> => {
       if (!unused) return new Response(null, { status: 409 });
       unused = false;
-      return await forwardGranted(group, { ...request, send }, hardSignal(group, request), release);
+      const body =
+        actualBody === undefined
+          ? checkedBody
+          : boundOwnerRequest({ ...request, body: actualBody }, group.bounds);
+      if (typeof body === "object" && "code" in body) {
+        release();
+        return admissionErrorResponse(
+          new RequestAdmissionError(body.code, null, "engine-dispatch"),
+        );
+      }
+      const bounded = typeof body === "object" ? body.body : body;
+      return await forwardGranted(
+        group,
+        { ...request, send: (signal) => send(signal, bounded) },
+        hardSignal(group, request),
+        release,
+      );
     },
     releaseUnused: (): void => {
       if (!unused) return;
@@ -296,8 +315,9 @@ function acquireMatched(
   if (group.stopping.signal.aborted) {
     return { refusal: new RequestAdmissionError("LoadFailed", null, id) };
   }
-  if (request.body === null) {
-    return { refusal: new RequestAdmissionError("InvalidRequest", null, id) };
+  const bounded = boundOwnerRequest(request, group.bounds);
+  if ("code" in bounded) {
+    return { refusal: new RequestAdmissionError(bounded.code, null, id) };
   }
   const signal = AbortSignal.any([
     request.clientSignal,
@@ -311,16 +331,16 @@ function acquireMatched(
       principal: principalOf(request.principal, noAuth),
       priority,
       model: group.model,
-      bytes: Buffer.byteLength(request.body),
-      promptTokens: 0,
-      maxCompletionTokens: 0,
+      bytes: bounded.bytes,
+      promptTokens: bounded.promptTokens,
+      maxCompletionTokens: bounded.completionTokens,
     },
     { signal, deadlineMs: request.deadlineMs },
   );
   if ("refusal" in reservation) return reservation;
   return {
     pending: reservation.pending.then(
-      (release) => permitFor(group, request, release),
+      (release) => permitFor(group, request, release, bounded.body),
       (error: unknown) => {
         if (group.unconfirmed.signal.aborted) throw new EngineGroupFencedError();
         throw error;
@@ -352,6 +372,7 @@ export function createOwnerAdmission(
     const model = { name: spec.name, revision: "owner-execution" };
     const group: ExecutionGroup = {
       model,
+      bounds: spec,
       unconfirmed: new AbortController(),
       stopping: new AbortController(),
       admission: createRequestAdmission({
@@ -365,7 +386,7 @@ export function createOwnerAdmission(
           maxQueueWaitMs: spec.maxQueueWaitMs,
           maxPerPrincipal: spec.maxPerPrincipal,
           starvationBoundMs: spec.starvationBoundMs,
-          maxContextTokens: Number.MAX_SAFE_INTEGER,
+          maxContextTokens: spec.maxContextTokens ?? Number.MAX_SAFE_INTEGER,
           retryAfterMs: 1_000,
         },
       }),
