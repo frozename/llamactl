@@ -1,3 +1,5 @@
+import type { GenerationRecord } from "@llamactl/core/residency/generation-evidence";
+
 /**
  * Target-owned managed-admission authority store (plan v3, "Store" package).
  * Tests live in test/residency/admission-store.test.ts.
@@ -60,23 +62,12 @@ export type ClaimRefuseReason =
   | "AuthorityUnavailable"
   | "InvalidKind";
 
-/** Process identity recorded in authority_meta as the ledger's owner. */
-export interface OwnerIdentity {
-  pid: number;
-  startTimeMs?: number | undefined;
-  executable?: string | undefined;
-}
+export type OwnerIdentity = GenerationRecord;
+export type { GenerationRecord };
 
 export interface InspectedOwnership {
   epoch: number;
   owner: OwnerIdentity | undefined;
-}
-
-/** One captured generation of a claim: a pid plus optional identity fields. */
-export interface GenerationRecord {
-  pid: number;
-  startTimeMs?: number | undefined;
-  executable?: string | undefined;
 }
 
 export type RecoverOwnershipResult =
@@ -279,7 +270,8 @@ function ensureSchema(db: Database): void {
     epoch INTEGER NOT NULL,
     owner_pid INTEGER,
     owner_start_time_ms INTEGER,
-    owner_executable TEXT
+    owner_executable TEXT,
+    owner_birth_id TEXT
   )`);
   const columns = new Set(
     db
@@ -295,6 +287,9 @@ function ensureSchema(db: Database): void {
   }
   if (!columns.has("owner_executable")) {
     db.run("ALTER TABLE authority_meta ADD COLUMN owner_executable TEXT");
+  }
+  if (!columns.has("owner_birth_id")) {
+    db.run("ALTER TABLE authority_meta ADD COLUMN owner_birth_id TEXT");
   }
   db.run(`CREATE TABLE IF NOT EXISTS claims (
     claim_id TEXT PRIMARY KEY,
@@ -313,8 +308,15 @@ function ensureSchema(db: Database): void {
     pid INTEGER NOT NULL,
     start_time_ms INTEGER,
     executable TEXT,
+    birth_id TEXT,
     PRIMARY KEY (claim_id, seq)
   )`);
+  const generationColumns = db
+    .query<{ name: string }, []>("PRAGMA table_info(claim_generations)")
+    .all();
+  if (!generationColumns.some((column) => column.name === "birth_id")) {
+    db.run("ALTER TABLE claim_generations ADD COLUMN birth_id TEXT");
+  }
 }
 
 function initAuthority(db: Database): { authorityId: string; epoch: number } {
@@ -337,12 +339,13 @@ interface OwnerRecord {
   owner_pid: number | null;
   owner_start_time_ms: number | null;
   owner_executable: string | null;
+  owner_birth_id: string | null;
 }
 
 function readOwnerRecord(db: Database): OwnerRecord | null {
   return db
     .query<OwnerRecord, []>(
-      `SELECT epoch, owner_pid, owner_start_time_ms, owner_executable
+      `SELECT epoch, owner_pid, owner_start_time_ms, owner_executable, owner_birth_id
          FROM authority_meta WHERE id = 1`,
     )
     .get();
@@ -352,6 +355,7 @@ function toOwnerIdentity(record: OwnerRecord | null): OwnerIdentity | undefined 
   const ownerPid = record?.owner_pid ?? null;
   const startTimeMs = record?.owner_start_time_ms ?? null;
   const executable = record?.owner_executable ?? null;
+  const birthId = record?.owner_birth_id ?? null;
   if (ownerPid === null) {
     return undefined;
   }
@@ -359,6 +363,7 @@ function toOwnerIdentity(record: OwnerRecord | null): OwnerIdentity | undefined 
     pid: ownerPid,
     ...(startTimeMs === null ? {} : { startTimeMs }),
     ...(executable === null ? {} : { executable }),
+    ...(birthId === null ? {} : { birthId }),
   };
 }
 
@@ -366,16 +371,17 @@ function isInspectedOwner(record: OwnerRecord, inspected: OwnerIdentity | undefi
   return (
     record.owner_pid === (inspected?.pid ?? null) &&
     record.owner_start_time_ms === (inspected?.startTimeMs ?? null) &&
-    record.owner_executable === (inspected?.executable ?? null)
+    record.owner_executable === (inspected?.executable ?? null) &&
+    record.owner_birth_id === (inspected?.birthId ?? null)
   );
 }
 
 function stakeOwner(db: Database, owner: OwnerIdentity): void {
   db.run(
     `UPDATE authority_meta
-        SET owner_pid = ?, owner_start_time_ms = ?, owner_executable = ?
+        SET owner_pid = ?, owner_start_time_ms = ?, owner_executable = ?, owner_birth_id = ?
       WHERE id = 1 AND owner_pid IS NULL`,
-    [owner.pid, owner.startTimeMs ?? null, owner.executable ?? null],
+    [owner.pid, owner.startTimeMs ?? null, owner.executable ?? null, owner.birthId ?? null],
   );
 }
 
@@ -457,9 +463,15 @@ class SqliteAdmissionStore implements AdmissionStore {
     const epoch = recorded.epoch + 1;
     db.run(
       `UPDATE authority_meta
-          SET epoch = ?, owner_pid = ?, owner_start_time_ms = ?, owner_executable = ?
+          SET epoch = ?, owner_pid = ?, owner_start_time_ms = ?, owner_executable = ?, owner_birth_id = ?
         WHERE id = 1`,
-      [epoch, owner.pid, owner.startTimeMs ?? null, owner.executable ?? null],
+      [
+        epoch,
+        owner.pid,
+        owner.startTimeMs ?? null,
+        owner.executable ?? null,
+        owner.birthId ?? null,
+      ],
     );
     const pendingRows = db
       .query<{ claim_id: string }, []>("SELECT claim_id FROM claims WHERE state = 'pending'")
@@ -587,13 +599,14 @@ class SqliteAdmissionStore implements AdmissionStore {
           .get(claimId) as { max_seq: number | null } | null;
         const nextSeq = (maxSeq?.max_seq ?? 0) + 1;
         db.run(
-          "INSERT INTO claim_generations (claim_id, seq, pid, start_time_ms, executable) VALUES (?, ?, ?, ?, ?)",
+          "INSERT INTO claim_generations (claim_id, seq, pid, start_time_ms, executable, birth_id) VALUES (?, ?, ?, ?, ?, ?)",
           [
             claimId,
             nextSeq,
             generation.pid,
             generation.startTimeMs ?? null,
             generation.executable ?? null,
+            generation.birthId ?? null,
           ],
         );
         return true;
@@ -611,14 +624,23 @@ class SqliteAdmissionStore implements AdmissionStore {
     try {
       const rows = db
         .prepare<
-          { seq: number; pid: number; start_time_ms: number | null; executable: string | null },
+          {
+            seq: number;
+            pid: number;
+            start_time_ms: number | null;
+            executable: string | null;
+            birth_id: string | null;
+          },
           [string]
-        >("SELECT seq, pid, start_time_ms, executable FROM claim_generations WHERE claim_id = ? ORDER BY seq")
+        >(
+          "SELECT seq, pid, start_time_ms, executable, birth_id FROM claim_generations WHERE claim_id = ? ORDER BY seq",
+        )
         .all(claimId);
       return rows.map((row) => ({
         pid: row.pid,
         ...(row.start_time_ms === null ? {} : { startTimeMs: row.start_time_ms }),
         ...(row.executable === null ? {} : { executable: row.executable }),
+        ...(row.birth_id === null ? {} : { birthId: row.birth_id }),
       }));
     } catch {
       return [];
@@ -714,7 +736,7 @@ class SqliteAdmissionStore implements AdmissionStore {
 
 /** SQLite application_id stamped on every admission store ("LMAD"). */
 const ADMISSION_APPLICATION_ID = 0x4c4d4144;
-const ADMISSION_SCHEMA_VERSION = 1;
+const ADMISSION_SCHEMA_VERSION = 2;
 
 /**
  * Refuse a file whose pages fail PRAGMA quick_check before the open path
@@ -761,6 +783,8 @@ function validateAndStampSchema(
     throw new AuthorityUnavailableError("foreign database");
   } else if (user_version > expectedSchemaVersion) {
     throw new AuthorityUnavailableError(`unsupported schema version ${String(user_version)}`);
+  } else if (user_version < expectedSchemaVersion) {
+    db.run(`PRAGMA user_version = ${String(expectedSchemaVersion)}`);
   }
 }
 

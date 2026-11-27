@@ -65,6 +65,8 @@ export type ReleaseAttemptResult =
   | { kind: "retained"; claimId: string; reason: string }
   | { kind: "unknown-claim"; claimId: string };
 
+export type ManagedStopProof = (stoppedPid: number) => ReleaseAttemptResult;
+
 export interface AuthorityClaimRow extends ClaimRow {
   /** Captured generations, oldest first. Detached like every snapshot row. */
   readonly generations: readonly GenerationRecord[];
@@ -105,6 +107,8 @@ export interface AdmissionAuthority {
    * claim with no captured generation.
    */
   tryRelease(claimId: string): ReleaseAttemptResult;
+  /** Capture the runtime record before a verified stop removes it. */
+  prepareStopRelease(runtimeKey: string, kind: ManagedWorkloadKind): ManagedStopProof | undefined;
   /**
    * Detached rows including captured generations. A ledger degraded
    * after open — where the store's snapshot throws
@@ -116,7 +120,15 @@ export interface AdmissionAuthority {
   close(): void;
 }
 
+type ObserveGeneration = (
+  pid: number,
+  recorded: GenerationRecord,
+) => ProcessObservation | undefined;
+
 function ownerIdentityMatches(a: OwnerIdentity, b: OwnerIdentity): boolean {
+  if (a.birthId !== undefined || b.birthId !== undefined) {
+    return a.pid === b.pid && a.birthId === b.birthId;
+  }
   const shared = (field: "startTimeMs" | "executable"): boolean =>
     a[field] === undefined || b[field] === undefined || a[field] === b[field];
   return a.pid === b.pid && shared("startTimeMs") && shared("executable");
@@ -161,7 +173,7 @@ function stakeOrRecover(
 function resolveOpenOwnership(
   store: AdmissionStore,
   owner: OwnerIdentity,
-  observe: (pid: number) => ProcessObservation | undefined,
+  observe: ObserveGeneration,
 ): string | undefined {
   const inspected = store.inspectOwnership();
   if (inspected === null) {
@@ -174,11 +186,14 @@ function resolveOpenOwnership(
   if (ownerIdentityMatches(rec, owner)) {
     return undefined;
   }
-  const verdict = judgeGeneration({
-    recorded: rec,
-    observation: observe(rec.pid),
-  });
-  if (verdict.kind === "verified-absent") {
+  const observation = observe(rec.pid, rec);
+  const verdict = judgeGeneration({ recorded: rec, observation });
+  const knownReused =
+    verdict.kind === "different-generation" &&
+    rec.birthId !== undefined &&
+    observation?.birthId !== undefined &&
+    rec.birthId !== observation.birthId;
+  if (verdict.kind === "verified-absent" || knownReused) {
     return stakeOrRecover(store, owner, true, inspected);
   }
   return verdict.kind === "uncertain"
@@ -186,22 +201,17 @@ function resolveOpenOwnership(
     : `admission authority is degraded: the recorded owner pid ${String(rec.pid)} is still live`;
 }
 
-interface ReleaseContext {
-  readPidFile: (runtimeKey: string) => number | undefined;
-  observe: (pid: number) => ProcessObservation | undefined;
-}
-
 function releaseClaim(
-  claimId: string,
   row: ClaimRow,
   captured: readonly GenerationRecord[],
   store: AdmissionStore,
-  ctx: ReleaseContext,
+  pidFilePid: number | undefined,
+  observe: ObserveGeneration,
 ): ReleaseAttemptResult {
+  const { claimId } = row;
   if (captured.length === 0) {
     return { kind: "retained", claimId, reason: "no-generation" };
   }
-  const pidFilePid = ctx.readPidFile(row.runtimeKey);
   if (pidFilePid === undefined) {
     return { kind: "retained", claimId, reason: "pid-record-missing" };
   }
@@ -211,7 +221,7 @@ function releaseClaim(
   for (const gen of captured) {
     const verdict = judgeGeneration({
       recorded: gen,
-      observation: ctx.observe(gen.pid),
+      observation: observe(gen.pid, gen),
     });
     if (verdict.kind === "same-generation" || verdict.kind === "different-generation") {
       return { kind: "retained", claimId, reason: "live-generation" };
@@ -229,6 +239,25 @@ function releaseClaim(
     return { kind: "retained", claimId, reason: "release-cas-failed" };
   }
   return { kind: "released", claimId };
+}
+
+function captureStopRelease(
+  store: AdmissionStore,
+  row: ClaimRow,
+  readPidFile: (runtimeKey: string) => number | undefined,
+  observe: ObserveGeneration,
+): ManagedStopProof | undefined {
+  if (row.state === "pending") return undefined;
+  const before = readPidFile(row.runtimeKey);
+  if (before === undefined) return undefined;
+  const captured = store.generationsOf(row.claimId);
+  return (stoppedPid) => {
+    const after = readPidFile(row.runtimeKey);
+    if (stoppedPid !== before || (after !== undefined && after !== before)) {
+      return { kind: "retained", claimId: row.claimId, reason: "pid-record-conflict" };
+    }
+    return releaseClaim(row, captured, store, before, observe);
+  };
 }
 
 /**
@@ -250,7 +279,7 @@ function releaseClaim(
 export function openAdmissionAuthority(opts: {
   storePath: string;
   budgetGiB: () => number | undefined;
-  observe: (pid: number) => ProcessObservation | undefined;
+  observe: ObserveGeneration;
   readPidFile: (runtimeKey: string) => number | undefined;
   owner: OwnerIdentity;
 }): AdmissionAuthority {
@@ -267,11 +296,6 @@ export function openAdmissionAuthority(opts: {
     store === null ? undefined : resolveOpenOwnership(store, opts.owner, opts.observe);
 
   const ledger = (): AdmissionStore | null => (degradedDetail === undefined ? store : null);
-
-  const releaseCtx: ReleaseContext = {
-    readPidFile: opts.readPidFile,
-    observe: opts.observe,
-  };
 
   return {
     admit(request: AdmitRequest): AdmissionOutcome {
@@ -334,7 +358,27 @@ export function openAdmissionAuthority(opts: {
       if (row.state === "pending") {
         return { kind: "retained", claimId, reason: "launch-pending" };
       }
-      return releaseClaim(claimId, row, active.generationsOf(claimId), active, releaseCtx);
+      return releaseClaim(
+        row,
+        active.generationsOf(claimId),
+        active,
+        opts.readPidFile(row.runtimeKey),
+        opts.observe,
+      );
+    },
+
+    prepareStopRelease(
+      runtimeKey: string,
+      kind: ManagedWorkloadKind,
+    ): ManagedStopProof | undefined {
+      const active = ledger();
+      if (active === null) return undefined;
+      const row = ledgerRows(active).find(
+        (claim) => claim.runtimeKey === runtimeKey && claim.kind === kind,
+      );
+      return row === undefined
+        ? undefined
+        : captureStopRelease(active, row, opts.readPidFile, opts.observe);
     },
 
     snapshot(): readonly AuthorityClaimRow[] {

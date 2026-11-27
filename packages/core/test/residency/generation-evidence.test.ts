@@ -167,3 +167,21 @@ test("inputs are not mutated", () => {
   expect(JSON.stringify(recorded)).toBe(originalRecorded);
   expect(JSON.stringify(observation)).toBe(originalObservation);
 });
+
+test("a durable birth identity takes precedence over a coarse start-time estimate", () => {
+  const recorded = { pid: 100, birthId: "linux:boot:123", startTimeMs: 1000 };
+  const observation = { pid: 100, alive: true, birthId: "linux:boot:124", startTimeMs: 1000 };
+  expect(judgeGeneration({ recorded, observation }).kind).toBe("different-generation");
+  expect(judgeGeneration({ recorded, observation: { ...observation, alive: false } }).kind).toBe(
+    "uncertain",
+  );
+});
+
+test("native absence proof can verify the exact birth without a wall-clock estimate", () => {
+  const recorded = { pid: 100, birthId: "darwin:1712345678:9001" };
+  const observation = { ...recorded, alive: false };
+  expect(judgeGeneration({ recorded, observation }).kind).toBe("verified-absent");
+  expect(judgeGeneration({ recorded, observation: { pid: 100, alive: false } }).kind).toBe(
+    "uncertain",
+  );
+});

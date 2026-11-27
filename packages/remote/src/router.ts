@@ -3012,10 +3012,14 @@ export const router = t.router({
   }),
 
   modelHostStop: t.procedure.input(modelHostStopInput).mutation(
-    async ({ input }) =>
+    async ({ ctx, input }) =>
       await fenceWorkloadStop<StopModelHostResult>({
         workload: input.workload,
         stop: async () => {
+          const release = ctx.managedLaunchAdmission?.prepareStopRelease?.(
+            input.workload,
+            "ModelHost",
+          );
           const outcome = await runDirectResidencyStop<StopModelHostResult>(
             input.workload,
             () =>
@@ -3025,6 +3029,9 @@ export const router = t.router({
               }),
             directResidencyOpts(input.workload, undefined),
           );
+          if (outcome.ran && outcome.result.ok && outcome.result.pid !== null) {
+            release?.(outcome.result.pid);
+          }
           return outcome.ran ? outcome.result : { ok: false, pid: null, error: outcome.detail };
         },
         isVerifiedStop: (r) => r.ok,
@@ -3595,10 +3602,14 @@ export const router = t.router({
       }),
     )
     .mutation(
-      async ({ input }) =>
+      async ({ ctx, input }) =>
         await fenceWorkloadStop<serverMod.StopServerResult>({
           workload: input.workload,
           stop: async () => {
+            const release = ctx.managedLaunchAdmission?.prepareStopRelease?.(
+              input.workload,
+              "ModelRun",
+            );
             const outcome = await runDirectResidencyStop<{
               ok: boolean;
               error?: string;
@@ -3618,6 +3629,9 @@ export const router = t.router({
               },
               directModelRunOpts(input.workload),
             );
+            if (outcome.ran && outcome.result.stop.stopped && outcome.result.stop.pid !== null) {
+              release?.(outcome.result.stop.pid);
+            }
             return outcome.ran ? outcome.result.stop : { stopped: false, pid: null, killed: false };
           },
           isVerifiedStop: (r) => r.stopped,
