@@ -44,6 +44,18 @@ import { Database } from "bun:sqlite";
 import { randomBytes, randomUUID } from "node:crypto";
 
 export type ClaimState = "pending" | "resident" | "uncertain";
+export type NativeClaimPhase = "parked" | "reserved" | "dispatched";
+
+export type NativeWakeLimits = Readonly<{
+  ledgerCeilingGiB: number;
+  launchHeadroomGiB: number;
+}>;
+
+export type NativeClaimAction =
+  | { kind: "verify-sleep" }
+  | { kind: "park"; residualGiB: number }
+  | { kind: "reserve" | "dispatch"; limits: NativeWakeLimits }
+  | { kind: "ready" | "uncertain" };
 
 export interface ClaimRow {
   claimId: string;
@@ -55,6 +67,7 @@ export interface ClaimRow {
   ownerEpoch: number;
   generationVersion: number;
   fenceToken: string;
+  native?: { phase: NativeClaimPhase; wakeAllocationGiB: number };
 }
 
 export type ClaimRefuseReason =
@@ -166,6 +179,8 @@ export interface AdmissionStore {
   snapshot(): readonly ClaimRow[];
   /** Detached generation rows for the claim, oldest first; empty when none. */
   generationsOf(claimId: string): readonly GenerationRecord[];
+  /** Trusted native transitions preserve the original claim and process generations. */
+  transitionNative(claim: Readonly<ClaimRow>, action: NativeClaimAction): ClaimRow | undefined;
   /** Idempotent. Calls after close refuse/return false rather than write. */
   close(): void;
 }
@@ -182,6 +197,8 @@ interface ClaimRecord {
   owner_epoch: number;
   generation_version: number;
   fence_token: string;
+  native_phase?: string | null;
+  native_wake_gib?: number | null;
 }
 
 const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
@@ -212,7 +229,33 @@ const asState = (value: string): ClaimState => {
   );
 };
 
+function readNativeClaim(record: ClaimRecord): ClaimRow["native"] {
+  const phase = record.native_phase;
+  const wakeAllocationGiB = record.native_wake_gib;
+  if (
+    (phase === undefined || phase === null) &&
+    (wakeAllocationGiB === undefined || wakeAllocationGiB === null)
+  )
+    return undefined;
+  if (
+    (phase !== "parked" && phase !== "reserved" && phase !== "dispatched") ||
+    typeof wakeAllocationGiB !== "number" ||
+    !Number.isFinite(wakeAllocationGiB) ||
+    wakeAllocationGiB <= 0 ||
+    !Number.isFinite(record.allocation_gib) ||
+    record.allocation_gib <= 0 ||
+    (phase === "parked" &&
+      (record.state !== "uncertain" || record.allocation_gib >= wakeAllocationGiB)) ||
+    (phase !== "parked" &&
+      (record.state !== "pending" || record.allocation_gib !== wakeAllocationGiB))
+  ) {
+    throw new AuthorityUnavailableError("invalid native claim evidence");
+  }
+  return { phase, wakeAllocationGiB };
+}
+
 function toPolicyClaim(record: ClaimRecord): ManagedAdmissionClaim {
+  readNativeClaim(record);
   const claim: ManagedAdmissionClaim = {
     claimId: record.claim_id,
     runtimeKey: record.runtime_key,
@@ -225,7 +268,9 @@ function toPolicyClaim(record: ClaimRecord): ManagedAdmissionClaim {
 }
 
 function toClaimRow(record: ClaimRecord): ClaimRow {
+  const native = readNativeClaim(record);
   const row: ClaimRow = {
+    ...(native === undefined ? {} : { native }),
     claimId: record.claim_id,
     runtimeKey: record.runtime_key,
     specDigest: record.spec_digest,
@@ -254,11 +299,14 @@ function incomingOf(input: ClaimInput): {
 }
 
 function readClaimRecords(db: Database): ClaimRecord[] {
+  const native =
+    admissionSchemaVersion(db) === NATIVE_ADMISSION_SCHEMA_VERSION
+      ? ", native_phase, native_wake_gib"
+      : "";
   return db
     .query<ClaimRecord, []>(
-      `SELECT claim_id, runtime_key, spec_digest, kind, state, allocation_gib,
-              owner_epoch, generation_version, fence_token
-       FROM claims ORDER BY rowid`,
+      `SELECT claim_id, runtime_key, spec_digest, kind, state, allocation_gib, owner_epoch,
+            generation_version, fence_token${native} FROM claims ORDER BY rowid`,
     )
     .all();
 }
@@ -481,6 +529,9 @@ class SqliteAdmissionStore implements AdmissionStore {
         owner.birthId ?? null,
       ],
     );
+    if (admissionSchemaVersion(db) === NATIVE_ADMISSION_SCHEMA_VERSION) {
+      recoverNativeClaims(db);
+    }
     const pendingRows = db
       .query<{ claim_id: string }, []>("SELECT claim_id FROM claims WHERE state = 'pending'")
       .all();
@@ -598,7 +649,7 @@ class SqliteAdmissionStore implements AdmissionStore {
       return this.#writeCurrentEpoch(db, false, () => {
         const updated = db.run(
           `UPDATE claims SET generation_version = generation_version + 1
-            WHERE claim_id = ? AND fence_token = ?`,
+            WHERE claim_id = ? AND fence_token = ?${baseClaimOnly(db)}`,
           [claimId, fenceToken],
         );
         if (updated.changes !== 1) return false;
@@ -678,6 +729,18 @@ class SqliteAdmissionStore implements AdmissionStore {
     }
   }
 
+  transitionNative(claim: Readonly<ClaimRow>, action: NativeClaimAction): ClaimRow | undefined {
+    const db = this.#db;
+    if (db === null) return undefined;
+    try {
+      return this.#writeCurrentEpoch(db, undefined, () =>
+        transitionNativeClaim(db, this.#epoch, claim, action),
+      );
+    } catch {
+      return undefined;
+    }
+  }
+
   close(): void {
     const db = this.#db;
     if (db === null) {
@@ -737,7 +800,7 @@ class SqliteAdmissionStore implements AdmissionStore {
         const result = db.run(
           `UPDATE claims
               SET state = ?, fence_token = ?, generation_version = generation_version + 1
-            WHERE claim_id = ? AND fence_token = ? AND state = ?`,
+            WHERE claim_id = ? AND fence_token = ? AND state = ?${baseClaimOnly(db)}`,
           [to, newFenceToken(), claimId, fenceToken, from],
         );
         return result.changes === 1;
@@ -751,6 +814,158 @@ class SqliteAdmissionStore implements AdmissionStore {
 /** SQLite application_id stamped on every admission store ("LMAD"). */
 const ADMISSION_APPLICATION_ID = 0x4c4d4144;
 const ADMISSION_SCHEMA_VERSION = 3;
+const NATIVE_ADMISSION_SCHEMA_VERSION = 4;
+
+function admissionSchemaVersion(db: Database): number {
+  return db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version ?? 0;
+}
+
+function ensureNativeSchema(db: Database): void {
+  if (admissionSchemaVersion(db) !== ADMISSION_SCHEMA_VERSION) return;
+  db.run("ALTER TABLE claims ADD COLUMN native_phase TEXT");
+  db.run("ALTER TABLE claims ADD COLUMN native_wake_gib REAL");
+  db.run(`PRAGMA user_version = ${String(NATIVE_ADMISSION_SCHEMA_VERSION)}`);
+}
+
+function baseClaimOnly(db: Database): string {
+  return admissionSchemaVersion(db) === NATIVE_ADMISSION_SCHEMA_VERSION
+    ? " AND native_phase IS NULL"
+    : "";
+}
+
+function recoverNativeClaims(db: Database): void {
+  for (const claim of readClaimRecords(db).map(toClaimRow)) {
+    if (claim.native === undefined) continue;
+    db.run(
+      `UPDATE claims SET state = 'uncertain', allocation_gib = native_wake_gib,
+         native_phase = NULL, native_wake_gib = NULL, fence_token = ?,
+         generation_version = generation_version + 1 WHERE claim_id = ?`,
+      [newFenceToken(), claim.claimId],
+    );
+  }
+}
+
+export function nativeWakeCovered(
+  claims: readonly ClaimRow[],
+  claim: Readonly<ClaimRow>,
+  limits: NativeWakeLimits,
+): boolean {
+  const native = claim.native;
+  if (
+    native === undefined ||
+    claims.some((row) => !Number.isFinite(row.allocationGiB) || row.allocationGiB <= 0)
+  )
+    return false;
+  const charged = claims.reduce((sum, row) => sum + row.allocationGiB, 0);
+  const after = charged - claim.allocationGiB + native.wakeAllocationGiB;
+  // Pending and already charged peers may have been absent from the physical
+  // sample. Count their full charge against headroom rather than crediting them.
+  return (
+    Number.isFinite(limits.ledgerCeilingGiB) &&
+    Number.isFinite(limits.launchHeadroomGiB) &&
+    after <= limits.ledgerCeilingGiB &&
+    after <= limits.launchHeadroomGiB
+  );
+}
+
+type NativeUpdate = {
+  phase: NativeClaimPhase | null;
+  wakeAllocation: number | null;
+  state: ClaimState;
+  allocation: number;
+};
+
+function nativePendingUpdate(
+  claim: ClaimRow,
+  action: "reserve" | "dispatch",
+  limits: NativeWakeLimits,
+  claims: readonly ClaimRow[],
+): NativeUpdate | undefined {
+  const native = claim.native;
+  const requiredPhase = action === "reserve" ? "parked" : "reserved";
+  if (native?.phase !== requiredPhase || !nativeWakeCovered(claims, claim, limits))
+    return undefined;
+  return {
+    phase: action === "reserve" ? "reserved" : "dispatched",
+    wakeAllocation: native.wakeAllocationGiB,
+    state: "pending",
+    allocation: native.wakeAllocationGiB,
+  };
+}
+
+function nativeUpdate(
+  claim: ClaimRow,
+  action: Exclude<NativeClaimAction, { kind: "verify-sleep" }>,
+  claims: readonly ClaimRow[],
+): NativeUpdate | undefined {
+  const native = claim.native;
+  switch (action.kind) {
+    case "park":
+      return claim.state === "resident" &&
+        native === undefined &&
+        Number.isFinite(action.residualGiB) &&
+        action.residualGiB > 0 &&
+        action.residualGiB < claim.allocationGiB
+        ? {
+            phase: "parked",
+            wakeAllocation: claim.allocationGiB,
+            state: "uncertain",
+            allocation: action.residualGiB,
+          }
+        : undefined;
+    case "reserve":
+    case "dispatch":
+      return nativePendingUpdate(claim, action.kind, action.limits, claims);
+    case "ready":
+      return native?.phase === "dispatched"
+        ? { phase: null, wakeAllocation: null, state: "resident", allocation: claim.allocationGiB }
+        : undefined;
+    case "uncertain":
+      return native?.phase === "reserved" || native?.phase === "dispatched"
+        ? { phase: null, wakeAllocation: null, state: "uncertain", allocation: claim.allocationGiB }
+        : undefined;
+  }
+}
+
+function transitionNativeClaim(
+  db: Database,
+  epoch: number,
+  expected: Readonly<ClaimRow>,
+  action: NativeClaimAction,
+): ClaimRow | undefined {
+  const claims = readClaimRecords(db).map(toClaimRow);
+  const current = claims.find((claim) => claim.claimId === expected.claimId);
+  if (
+    current?.fenceToken !== expected.fenceToken ||
+    current.generationVersion !== expected.generationVersion ||
+    current.ownerEpoch !== expected.ownerEpoch ||
+    (action.kind !== "park" && action.kind !== "verify-sleep" && current.ownerEpoch !== epoch)
+  )
+    return undefined;
+  if (action.kind === "verify-sleep")
+    return current.state === "resident" && current.native === undefined ? current : undefined;
+  const update = nativeUpdate(current, action, claims);
+  if (update === undefined) return undefined;
+  if (action.kind === "park") ensureNativeSchema(db);
+  // Dispatch is a durable one-shot marker on this reservation, retaining
+  // the token already handed to the wake driver.
+  const token = action.kind === "dispatch" ? current.fenceToken : newFenceToken();
+  db.run(
+    `UPDATE claims SET native_phase = ?, native_wake_gib = ?, allocation_gib = ?,
+       state = ?, owner_epoch = ?, fence_token = ? WHERE claim_id = ?`,
+    [
+      update.phase,
+      update.wakeAllocation,
+      update.allocation,
+      update.state,
+      epoch,
+      token,
+      current.claimId,
+    ],
+  );
+  const record = readClaimRecords(db).find((row) => row.claim_id === current.claimId);
+  return record === undefined ? undefined : toClaimRow(record);
+}
 
 /**
  * Refuse a file whose pages fail PRAGMA quick_check before the open path
@@ -777,8 +992,7 @@ function validateAndStampSchema(
 ): void {
   const application_id =
     db.query<{ application_id: number }, []>("PRAGMA application_id").get()?.application_id ?? 0;
-  const user_version =
-    db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version ?? 0;
+  const user_version = admissionSchemaVersion(db);
   const tableNames = db
     .query<
       { name: string },
@@ -795,10 +1009,13 @@ function validateAndStampSchema(
     db.run(`PRAGMA user_version = ${String(expectedSchemaVersion)}`);
   } else if (application_id !== expectedApplicationId) {
     throw new AuthorityUnavailableError("foreign database");
-  } else if (user_version > expectedSchemaVersion) {
+  } else if (user_version > NATIVE_ADMISSION_SCHEMA_VERSION) {
     throw new AuthorityUnavailableError(`unsupported schema version ${String(user_version)}`);
   } else if (user_version < expectedSchemaVersion) {
     db.run(`PRAGMA user_version = ${String(expectedSchemaVersion)}`);
+  }
+  if (user_version === NATIVE_ADMISSION_SCHEMA_VERSION) {
+    db.query("SELECT native_phase, native_wake_gib FROM claims LIMIT 0").all();
   }
 }
 
