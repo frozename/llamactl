@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
-import { router } from "@llamactl/remote";
+import { opsChatStopRefusal, router } from "@llamactl/remote";
 import { appendAudit, toTextContent } from "@novaproto/mcp-shared";
 import { z } from "zod";
 
@@ -26,7 +26,7 @@ function registerServerStop(server: McpServer): void {
     {
       title: "Stop a workload's llama-server",
       description:
-        "Stop the running llama-server for a workload on the control plane's node. Reversible — restart via llamactl.workload.apply or `llamactl server start`. Does NOT delete the manifest. `dryRun: true` reports the target without stopping.",
+        "Stop the running llama-server for a workload on the control plane's node. Reversible — restart via llamactl.workload.apply or `llamactl server start`. Does NOT delete the manifest. `dryRun: true` reports the target without stopping. The node stop fence refuses a stop while leases are held or sessions are bound (`LeasesActive`, `DrainInProgress`, `SessionsActive`, `SessionsUnknown`): that comes back as a tool error (`isError`) with code `stop_refused`, and nothing was stopped. A refusal never releases sessions; the overrides are `llamactl residency release-session` and `llamactl residency force-unload`.",
       inputSchema: {
         workload: z.string().min(1).describe("metadata.name of the workload whose server to stop."),
         graceSeconds: z
@@ -57,6 +57,25 @@ function registerServerStop(server: McpServer): void {
       const result = await caller.serverStop(
         graceSeconds === undefined ? { workload } : { workload, graceSeconds },
       );
+      const refusal = opsChatStopRefusal("llamactl.server.stop", { workload }, result);
+      if (refusal !== null) {
+        appendAudit({
+          server: SERVER_SLUG,
+          tool: "llamactl.server.stop",
+          input: { dryRun, workload },
+          dryRun: false,
+          result: { ok: false, code: refusal.code, refused: result.refused },
+        });
+        return {
+          ...toTextContent({
+            ...result,
+            ok: false,
+            code: refusal.code,
+            error: refusal.message,
+          }),
+          isError: true,
+        };
+      }
       appendAudit({
         server: SERVER_SLUG,
         tool: "llamactl.server.stop",

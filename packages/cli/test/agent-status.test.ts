@@ -23,7 +23,14 @@ import {
   type ServiceProbeDeps,
 } from "../src/commands/agent-status.js";
 import { runAgent } from "../src/commands/agent.js";
-import { existsSync, mkdtempSync, rmSync, unlinkSync } from "../src/safe-fs.js";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from "../src/safe-fs.js";
 
 /**
  * #211: `agent status` must report liveness (GET /healthz), flag a
@@ -67,6 +74,24 @@ async function seedInit(extraArgs: string[] = []): Promise<void> {
     ...extraArgs,
   ]);
   expect(r.code).toBe(0);
+}
+
+async function initAdvertisedHost(): Promise<void> {
+  const r = await capture([
+    "init",
+    `--dir=${tmp}`,
+    "--host=192.168.68.139",
+    "--port=59996",
+    "--san=127.0.0.1,localhost",
+    "--json",
+  ]);
+  expect(r.code).toBe(0);
+}
+
+type LoadedAgentConfig = ReturnType<typeof agentConfigMod.loadAgentConfig>;
+
+function advertisedHostOf(cfg: LoadedAgentConfig): unknown {
+  return (cfg as { advertisedHost?: unknown }).advertisedHost;
 }
 
 function parseReport(out: string): AgentStatusReport {
@@ -301,8 +326,19 @@ describe("agent status", () => {
 
     const none = await capture(["status", `--dir=${tmp}`, "--json"]);
     const noneRep = parseReport(none.out);
-    expect(noneRep.advertisedHost).toBeNull();
-    expect(noneRep.advertisedHostCovered).toBeNull();
+    expect(noneRep.advertisedHost).toBe("127.0.0.1");
+    expect(noneRep.advertisedHostCovered).toBe(true);
+
+    const cfgPath = join(tmp, "agent.yaml");
+    const legacy = { ...agentConfigMod.loadAgentConfig(cfgPath) };
+    Reflect.deleteProperty(legacy, "advertisedHost");
+    agentConfigMod.saveAgentConfig(legacy, cfgPath);
+
+    const legacyStatus = await capture(["status", `--dir=${tmp}`, "--json"]);
+    expect(legacyStatus.code).toBe(0);
+    const legacyRep = parseReport(legacyStatus.out);
+    expect(legacyRep.advertisedHost).toBeNull();
+    expect(legacyRep.advertisedHostCovered).toBeNull();
   });
 
   test("--bind=0.0.0.0 is not loopback-only and probes on 127.0.0.1", async () => {
@@ -331,6 +367,242 @@ describe("agent status", () => {
     expect(r.code).toBe(1);
     expect(r.err).toContain("bogus");
   });
+});
+
+describe("agent status advertised host recorded in agent.yaml (#211)", () => {
+  test("agent init records --host", async () => {
+    await initAdvertisedHost();
+    const cfgPath = join(tmp, "agent.yaml");
+    const cfg = agentConfigMod.loadAgentConfig(cfgPath);
+    expect(advertisedHostOf(cfg)).toBe("192.168.68.139");
+    expect(readFileSync(cfgPath, "utf8")).toContain("advertisedHost: 192.168.68.139");
+  });
+
+  test("plain status checks the recorded host after rotate-cert --san drops it", async () => {
+    await initAdvertisedHost();
+    const rotate = await capture(["rotate-cert", `--dir=${tmp}`, "--san=127.0.0.1,localhost"]);
+    expect(rotate.code).toBe(0);
+
+    const cfgPath = join(tmp, "agent.yaml");
+    const cfg = agentConfigMod.loadAgentConfig(cfgPath);
+    expect(advertisedHostOf(cfg)).toBe("192.168.68.139");
+
+    const json = await capture(["status", `--dir=${tmp}`, "--json"]);
+    expect(json.code).toBe(0);
+    const rep = parseReport(json.out);
+    expect(rep.advertisedHost).toBe("192.168.68.139");
+    expect(rep.advertisedHostCovered).toBe(false);
+    expect(
+      rep.warnings.some((w) => w.includes("192.168.68.139") && w.includes("do not cover")),
+    ).toBe(true);
+
+    const human = await capture(["status", `--dir=${tmp}`]);
+    expect(human.code).toBe(0);
+    expect(human.out).toContain("advertised 192.168.68.139 (cert covers: no)");
+
+    const override = await capture(["status", `--dir=${tmp}`, "--host=localhost", "--json"]);
+    expect(override.code).toBe(0);
+    const overrideRep = parseReport(override.out);
+    expect(overrideRep.advertisedHost).toBe("localhost");
+    expect(overrideRep.advertisedHostCovered).toBe(true);
+  });
+
+  test("collectAgentStatus falls back to cfg.advertisedHost; o.advertisedHost wins", async () => {
+    await seedInit();
+    const cfgPath = join(tmp, "agent.yaml");
+    const base = agentConfigMod.loadAgentConfig(cfgPath);
+
+    const cfgMiss = { ...base, advertisedHost: "10.9.8.7" };
+    const miss = await collectAgentStatus({
+      configPath: cfgPath,
+      cfg: cfgMiss,
+      probe: () => Promise.resolve(false),
+      listModelHosts: () => [],
+    });
+    expect(miss.advertisedHost).toBe("10.9.8.7");
+    expect(miss.advertisedHostCovered).toBe(false);
+    expect(miss.warnings.some((w) => w.includes("10.9.8.7"))).toBe(true);
+
+    const cfgHit = { ...base, advertisedHost: "localhost" };
+    const hit = await collectAgentStatus({
+      configPath: cfgPath,
+      cfg: cfgHit,
+      probe: () => Promise.resolve(false),
+      listModelHosts: () => [],
+    });
+    expect(hit.advertisedHost).toBe("localhost");
+    expect(hit.advertisedHostCovered).toBe(true);
+    expect(hit.warnings.some((w) => w.includes("10.9.8.7"))).toBe(false);
+
+    const cfgOverride = { ...base, advertisedHost: "10.9.8.7" };
+    const override = await collectAgentStatus({
+      configPath: cfgPath,
+      cfg: cfgOverride,
+      advertisedHost: "localhost",
+      probe: () => Promise.resolve(false),
+      listModelHosts: () => [],
+    });
+    expect(override.advertisedHost).toBe("localhost");
+    expect(override.advertisedHostCovered).toBe(true);
+    expect(override.warnings.some((w) => w.includes("10.9.8.7"))).toBe(false);
+  });
+
+  test("rotate-token without --host keeps the recorded advertisedHost", async () => {
+    await initAdvertisedHost();
+    const rotate = await capture(["rotate-token", `--dir=${tmp}`, "--json"]);
+    expect(rotate.code).toBe(0);
+
+    const cfgPath = join(tmp, "agent.yaml");
+    const cfg = agentConfigMod.loadAgentConfig(cfgPath);
+    expect(advertisedHostOf(cfg)).toBe("192.168.68.139");
+  });
+
+  test("rotate-cert --host re-advertises and the record follows", async () => {
+    await initAdvertisedHost();
+    const rotate = await capture([
+      "rotate-cert",
+      `--dir=${tmp}`,
+      "--host=10.0.0.5",
+      "--san=10.0.0.5",
+    ]);
+    expect(rotate.code).toBe(0);
+
+    const cfgPath = join(tmp, "agent.yaml");
+    const cfg = agentConfigMod.loadAgentConfig(cfgPath);
+    expect(advertisedHostOf(cfg)).toBe("10.0.0.5");
+
+    const status = await capture(["status", `--dir=${tmp}`, "--json"]);
+    expect(status.code).toBe(0);
+    const rep = parseReport(status.out);
+    expect(rep.advertisedHost).toBe("10.0.0.5");
+    expect(rep.advertisedHostCovered).toBe(true);
+    expect(rep.warnings.some((w) => w.includes("do not cover"))).toBe(false);
+  });
+
+  test("rotate-token --host re-advertises and the record follows", async () => {
+    await initAdvertisedHost();
+    const rotate = await capture(["rotate-token", `--dir=${tmp}`, "--host=10.0.0.6", "--json"]);
+    expect(rotate.code).toBe(0);
+
+    const cfgPath = join(tmp, "agent.yaml");
+    const cfg = agentConfigMod.loadAgentConfig(cfgPath);
+    expect(advertisedHostOf(cfg)).toBe("10.0.0.6");
+
+    const status = await capture(["status", `--dir=${tmp}`, "--json"]);
+    expect(status.code).toBe(0);
+    const rep = parseReport(status.out);
+    expect(rep.advertisedHost).toBe("10.0.0.6");
+    expect(rep.advertisedHostCovered).toBe(false);
+  });
+
+  test.each([
+    ["empty", ""],
+    ["whitespace-only", "  "],
+  ])(
+    "rotate-token --host (%s) is refused and keeps the recorded advertisedHost",
+    async (_label, host) => {
+      await initAdvertisedHost();
+      const cfgPath = join(tmp, "agent.yaml");
+      const before = readFileSync(cfgPath, "utf8");
+
+      const r = await capture(["rotate-token", `--dir=${tmp}`, `--host=${host}`, "--json"]);
+      expect(r.code).toBe(1);
+      expect(r.err).toContain("--host");
+      expect(r.err).toContain("requires a host");
+      expect(r.out).toBe("");
+      expect(readFileSync(cfgPath, "utf8")).toBe(before);
+      expect(advertisedHostOf(agentConfigMod.loadAgentConfig(cfgPath))).toBe("192.168.68.139");
+    },
+  );
+
+  test.each([
+    ["empty", ""],
+    ["whitespace-only", "  "],
+  ])(
+    "rotate-cert --host (%s) is refused and keeps the recorded advertisedHost",
+    async (_label, host) => {
+      await initAdvertisedHost();
+      const cfgPath = join(tmp, "agent.yaml");
+      const crtPath = join(tmp, "agent.crt");
+      const cfgBefore = readFileSync(cfgPath, "utf8");
+      const crtBefore = readFileSync(crtPath, "utf8");
+
+      const r = await capture([
+        "rotate-cert",
+        `--dir=${tmp}`,
+        `--host=${host}`,
+        "--san=127.0.0.1,localhost",
+        "--json",
+      ]);
+      expect(r.code).toBe(1);
+      expect(r.err).toContain("--host");
+      expect(r.err).toContain("requires a host");
+      expect(r.out).toBe("");
+      expect(readFileSync(cfgPath, "utf8")).toBe(cfgBefore);
+      expect(readFileSync(crtPath, "utf8")).toBe(crtBefore);
+      expect(advertisedHostOf(agentConfigMod.loadAgentConfig(cfgPath))).toBe("192.168.68.139");
+    },
+  );
+
+  test.each([
+    ["empty", ""],
+    ["whitespace-only", "  "],
+  ])("init --host (%s) is refused before anything is written", async (_label, host) => {
+    const cfgPath = join(tmp, "agent.yaml");
+    const r = await capture([
+      "init",
+      `--dir=${tmp}`,
+      `--host=${host}`,
+      "--port=59996",
+      "--san=127.0.0.1,localhost",
+      "--json",
+    ]);
+    expect(r.code).toBe(1);
+    expect(r.err).toContain("agent init: --host requires a host");
+    expect(r.out).toBe("");
+    expect(existsSync(cfgPath)).toBe(false);
+  });
+
+  test("init with --host omitted still records the default advertisedHost", async () => {
+    const cfgPath = join(tmp, "agent.yaml");
+    const r = await capture([
+      "init",
+      `--dir=${tmp}`,
+      "--port=59996",
+      "--san=127.0.0.1,localhost",
+      "--json",
+    ]);
+    expect(r.code).toBe(0);
+    expect(advertisedHostOf(agentConfigMod.loadAgentConfig(cfgPath))).toBe("127.0.0.1");
+  });
+
+  test.each([
+    ["a number", "42"],
+    ["an empty string", '""'],
+    ["an object", "{ host: 10.0.0.1 }"],
+  ])(
+    "an invalid recorded advertisedHost (%s) is dropped on load, without a write-back",
+    async (_label, yamlValue) => {
+      await initAdvertisedHost();
+      const cfgPath = join(tmp, "agent.yaml");
+      const originalLine = "advertisedHost: 192.168.68.139";
+      const text = readFileSync(cfgPath, "utf8");
+      expect(text).toContain(originalLine);
+      const edited = text.replace(originalLine, `advertisedHost: ${yamlValue}`);
+      writeFileSync(cfgPath, edited);
+      const before = edited;
+
+      const cfg = agentConfigMod.loadAgentConfig(cfgPath);
+      expect(advertisedHostOf(cfg)).toBeUndefined();
+      expect(readFileSync(cfgPath, "utf8")).toBe(before);
+
+      const s = await capture(["status", `--dir=${tmp}`, "--json"]);
+      expect(s.code).toBe(0);
+      expect(parseReport(s.out).advertisedHost).toBeNull();
+      expect(parseReport(s.out).advertisedHostCovered).toBeNull();
+      expect(readFileSync(cfgPath, "utf8")).toBe(before);
+    },
+  );
 });
 
 describe("agent status listener pid", () => {

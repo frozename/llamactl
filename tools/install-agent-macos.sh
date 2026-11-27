@@ -46,6 +46,7 @@ Options:
 EOF
 }
 
+ALLOW_DIRTY=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --allow-dirty)
@@ -78,7 +79,7 @@ fi
 PORCELAIN="$(git -C "$REPO_ROOT" status --porcelain --untracked-files=no)"
 DIRTY=false
 if [ -n "$PORCELAIN" ]; then
-  if [ -z "${ALLOW_DIRTY:-}" ]; then
+  if [ -z "$ALLOW_DIRTY" ]; then
     echo "[install-agent] error: refusing to build from a dirty tree; tracked changes:" >&2
     printf '%s\n' "$PORCELAIN" | sed -n '1,5p' >&2
     echo "[install-agent] hint: commit or stash these changes, or rerun with --allow-dirty" >&2
