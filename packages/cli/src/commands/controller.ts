@@ -26,6 +26,12 @@ import {
 import { join } from "node:path";
 
 import { getGlobals, getNodeClientByName } from "../dispatcher.js";
+import {
+  defaultHandoverDeps,
+  HANDOVER_USAGE,
+  parseHandoverFlags,
+  runControllerHandover,
+} from "./controller-handover.js";
 import { makeSpecArtifactResolver } from "./noderun-helpers.js";
 
 const USAGE = `Usage: llamactl controller serve [--interval=<s>] [--once]
@@ -62,6 +68,18 @@ every 10 minutes while it persists, and once on recovery. On Linux the
 controller reads its own cgroup's memory.events each pass; when oom_kill
 rises and a local ModelHost engine is found dead, it logs the OOM kill
 and records an OOMKilled condition (see 'llamactl describe workload').
+
+Usage: llamactl controller handover --to=<central> --node=<name>
+                                  [--timeout=<s>] [--dry-run] [--controller-unit=<name>]
+
+Retire this node's local controller in favour of a central one. The local
+controller is stopped only after the central confirms every local ModelHost:
+same spec hash, the same engine pid seen through its own route to this node,
+and a live controller lock on the directory holding those manifests. Until then
+nothing is written and the local controller keeps supervising the seat, so a
+hand-over cannot leave it unsupervised. Adoption is recorded by labelling each
+host 'llamactl.io/managed-by=<central>', which the reconciler skips. Run
+'llamactl controller handover --help' for the flags.
 `;
 
 interface ControllerFlags {
@@ -461,6 +479,25 @@ function parseServeInvocation(args: string[]): ControllerFlags | { code: number 
   return parsed;
 }
 
+/**
+ * `controller handover` dispatch, ahead of the serve preflight: null when the
+ * args are a serve invocation, otherwise the handover's process exit code.
+ */
+async function handoverInvocation(args: readonly string[]): Promise<number | null> {
+  const [sub, ...rest] = args;
+  if (sub !== "handover") return null;
+  const parsed = parseHandoverFlags(rest);
+  if ("error" in parsed) {
+    const help = parsed.error === "help";
+    (help ? process.stdout : process.stderr).write(
+      help ? HANDOVER_USAGE : `${parsed.error}\n\n${HANDOVER_USAGE}`,
+    );
+    return help ? 0 : 1;
+  }
+  const workloadsDir = workloadStore.defaultWorkloadsDir();
+  return await runControllerHandover(parsed, defaultHandoverDeps(workloadsDir, parsed));
+}
+
 type NodeRpcTimeoutsForNode = (
   nodeName: string,
 ) => { queryMs?: number; mutateMs?: number } | undefined;
@@ -494,6 +531,8 @@ export function nodeRpcTimeoutsFromConfig(
 }
 
 export async function runController(args: string[]): Promise<number> {
+  const handover = await handoverInvocation(args);
+  if (handover !== null) return handover;
   const invocation = parseServeInvocation(args);
   if ("code" in invocation) return invocation.code;
   const parsed = invocation;

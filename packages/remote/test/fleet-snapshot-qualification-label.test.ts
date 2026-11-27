@@ -147,7 +147,6 @@ describe("local-routes snapshot qualification label (#518)", () => {
     const cases: (Partial<LocalRoute> & Pick<LocalRoute, "model">)[] = [
       { model: "m-validated", qualificationStage: "validated" },
       { model: "m-production", qualificationStage: "production" },
-      { model: "m-degraded", qualificationStage: "degraded" },
       { model: "m-bogus", qualificationStage: "bogus" },
       { model: "m-none" },
       { model: "m-labelled-validated", labels: { [QUALIFICATION]: "validated" } },

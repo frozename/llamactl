@@ -83,6 +83,10 @@ jobs:
         working-directory: llamactl
         run: bun run --cwd packages/mcp test
 
+      - name: Test tools
+        working-directory: llamactl
+        run: bun test ./tools/penumbra-handoff-feed.test.ts
+
       - name: Test exec-primitives test consumer
         working-directory: llamactl/test/consumers/exec-primitives
         run: bun install --frozen-lockfile && bun run typecheck && bun run test

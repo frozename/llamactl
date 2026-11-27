@@ -26,6 +26,28 @@ output tokens and generation speed when the stream provides enough data. The
 Follow-up messages include the current conversation. Use **Stop** to interrupt generation and **New chat** to clear the conversation.
 Chat keeps the transcript in memory until you leave the page or change nodes.
 
+## Inspect requests
+
+Open **Runs** and select a request to inspect the payload, response, status,
+and timing. Web Chat keeps the latest 20 requests in the current browser tab
+until reload. Each request and response has a 64 KiB capture limit.
+
+Fleet capture is off by default. Set `LLAMACTL_REQUEST_CAPTURE_FILE` to an
+absolute SQLite path in an existing directory owned by the service user
+with mode `0700`. Set the same path on the inference gateway and the
+authenticated agent on that machine when they run as separate processes.
+For an in-process console node, set the path on the console as well.
+Capture covers new HTTP requests to the chat completions, completions,
+Responses, and Messages endpoints. The agent retains up to 50 records for
+15 minutes and expires rows while running.
+
+Fleet capture stores request bodies and JSON replies or reassembled streamed
+text, usage and reasoning where available. It limits inspection to the first
+64 KiB in each direction. It omits HTTP headers and redacts recognized
+credentials. Prompts and replies can still contain private information.
+Keep the capture directory out of shared storage and backups. The authenticated
+agent serves details on demand to the loopback console.
+
 ## Fleet telemetry
 
 Open **Fleet Stats** in `llamactl console` for workload status, node memory,
@@ -55,11 +77,14 @@ or lifecycle controls. Agent versions that predate request observations
 continue to show their supervisor snapshots.
 
 To include **Penumbra handoffs** in Runs, start the console with the Penumbra
-daemon's URL and a local file containing its bearer token. The URL must be
-exactly `http://127.0.0.1:<port>`: plain HTTP to the IPv4 address
-`127.0.0.1`, with no path beyond an optional trailing `/` and no query,
-fragment or credentials. Any other form, including `localhost`, `[::1]`
-and `https://`, leaves the Penumbra panel unavailable.
+daemon's URL and a local file containing its bearer token. The value is parsed
+as a standard (WHATWG) URL and used only if the parsed scheme is `http`, the
+host is `127.0.0.1`, and the path is `/`, with no credentials, query, or
+fragment. Spellings the parser normalizes to that form also work: uppercase
+`HTTP://`, short IPv4 forms such as `127.1`, a dot-segment path such as
+`/a/..`, or an empty `?` or `#`. With no port, the URL uses port 80.
+`localhost`, `[::1]`, `https://`, and any other path leave the Penumbra panel
+unavailable.
 
 ```sh
 LLAMACTL_PENUMBRA_URL=http://127.0.0.1:51257 \
@@ -67,14 +92,19 @@ LLAMACTL_PENUMBRA_TOKEN_FILE="$HOME/.penumbra/token" \
 llamactl console
 ```
 
+The token file must be a regular file of at most 4 KiB; it is opened without
+following symlinks, so a symlinked or larger file leaves the Penumbra panel
+unavailable.
+
 Use the daemon's actual port, or a forward to it that listens on
 `127.0.0.1`. The console keeps the token server-side and displays only
 handoff IDs, seats, timestamps, and status. Penumbra can continue to use
 the model proxy independently.
 The daemon's handoff list has no row limit, so the console asks it only for
-active handoffs (pending, approved, dispatched) and reuses each answer for up
-to 10 seconds across all open tabs. Recent terminal handoffs appear when the
-console reads from the adapter below.
+active handoffs (pending, approved, dispatched). A successful answer is reused
+for up to 10 seconds across all open tabs, a failed read for only up to
+2 seconds, so the panel recovers about 2 s after the daemon comes back. Recent
+terminal handoffs appear when the console reads from the adapter below.
 
 For a colocated deployment with a large handoff database, the loopback
 `tools/penumbra-handoff-feed.ts` adapter serves the same metadata from

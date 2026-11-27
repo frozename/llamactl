@@ -79,6 +79,7 @@ interface EnvOverrides {
   fakeGitFail?: string;
   fakeGitPorcelain?: string;
   fakeVersionLine?: string;
+  extraEnv?: Record<string, string>;
 }
 
 interface InstallerRun {
@@ -115,6 +116,7 @@ function makeEnv(overrides: EnvOverrides = {}): Record<string, string> {
     FAKE_GIT_PORCELAIN: overrides.fakeGitPorcelain ?? "",
     FAKE_GIT_FAIL: overrides.fakeGitFail ?? "0",
     FAKE_VERSION_LINE: overrides.fakeVersionLine ?? DEFAULT_VERSION_LINE,
+    ...(overrides.extraEnv ?? {}),
   };
 }
 
@@ -215,6 +217,22 @@ describe("tools/install-agent-macos.sh build stamp (#743)", () => {
     expect(readTextIfExists(installedBinaryPath())).toBe("OLD");
   });
 
+  test("an ALLOW_DIRTY inherited from the environment does not bypass the dirty-tree refusal", () => {
+    seedInstalledBinary("OLD");
+    const run = runInstaller(
+      [],
+      makeEnv({
+        fakeGitPorcelain: " M packages/core/src/nodeFacts.ts",
+        extraEnv: { ALLOW_DIRTY: "1" },
+      }),
+    );
+
+    expect(run.exitCode).not.toBe(0);
+    expect(run.stderr).toContain("--allow-dirty");
+    expect(readLines(join(tmp, "bun.log"))).toEqual([]);
+    expect(readTextIfExists(installedBinaryPath())).toBe("OLD");
+  });
+
   test("dirty tree with --allow-dirty compiles with the dirty stamp", () => {
     const run = runInstaller(
       ["--allow-dirty"],
@@ -244,6 +262,19 @@ describe("tools/install-agent-macos.sh build stamp (#743)", () => {
   test("self-check failure keeps the previously installed binary", () => {
     seedInstalledBinary("OLD");
     const run = runInstaller([], makeEnv({ fakeVersionLine: "llamactl 0.0.0" }));
+
+    expect(run.exitCode).not.toBe(0);
+    expect(run.stderr).toContain(SHORT_COMMIT);
+    expect(readTextIfExists(installedBinaryPath())).toBe("OLD");
+    expectNoPartialBinary();
+  });
+
+  test("a --version that reports only the 7-char commit prefix is refused", () => {
+    seedInstalledBinary("OLD");
+    const shortPrefixVersionLine = `llamactl 0.0.0 (${COMMIT.slice(0, 7)}, built 2026-11-26T00:00:00.000Z, compiled)`;
+    expect(shortPrefixVersionLine).not.toContain(SHORT_COMMIT);
+
+    const run = runInstaller([], makeEnv({ fakeVersionLine: shortPrefixVersionLine }));
 
     expect(run.exitCode).not.toBe(0);
     expect(run.stderr).toContain(SHORT_COMMIT);

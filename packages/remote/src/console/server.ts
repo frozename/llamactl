@@ -29,6 +29,7 @@ import {
 } from "./guards.js";
 import { parseConsoleNodePath, validateConsoleNode } from "./node-route.js";
 import { readPenumbraHandoffs } from "./penumbra.js";
+import { routeRequestInspector } from "./request-inspector.js";
 
 interface TrpcErrorRow {
   error: {
@@ -230,8 +231,8 @@ export function startConsoleServer(opts: StartConsoleServerOptions): Promise<Run
     if (pathname === "/api/addons/penumbra/handoffs") {
       return await servePenumbraHandoffs(req);
     }
-    const chat = routeConsoleChat(req, pathname);
-    if (chat !== null) return await chat;
+    const feature = routeConsoleChat(req, pathname) ?? routeRequestInspector(req, pathname);
+    if (feature !== null) return await feature;
     const route = parseConsoleNodePath(pathname);
     if (route.kind === "none") return jsonError(404, "not_found");
     if (route.kind === "bad") return jsonError(400, "bad_node");
