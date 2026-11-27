@@ -1482,7 +1482,12 @@ spec:
         dryRun: false,
         confirm: true,
       });
-      expect(profile).toMatchObject({ ok: true, outcome: "stops-and-starts-ran" });
+      expect(profile).toMatchObject({
+        ok: true,
+        outcome: "stops-and-starts-ran",
+        node: "switch-fixture-node",
+        deferred: [],
+      });
       const newHostPid = fixturePid(host);
       if (newHostPid !== undefined) spawnedServerPids.add(newHostPid);
       expect(listWorkloadRoutes(envMod.resolveEnv(), run)).toEqual([]);
@@ -1491,6 +1496,27 @@ spec:
         { runtimeKey: host, state: "resident", allocationGiB: 16 },
       ]);
       expect(loadModelHostByName(host, tmp).spec.enabled).toBe(true);
+      const inactiveStart = await caller.serverStart({
+        workload: run,
+        target: "fake.gguf",
+        binary: runBinary,
+        endpoint: { host: "127.0.0.1", port: runPort },
+        timeoutSeconds: 5,
+      });
+      const inactive = [];
+      for await (const event of inactiveStart) inactive.push(event);
+      expect(inactive).toMatchObject([
+        { type: "done", result: { ok: false, error: "ProfileInactive" } },
+      ]);
+      const noop = await caller.residencyApplyProfile({
+        node: "local",
+        to: "maintenance",
+        dryRun: false,
+        confirm: true,
+      });
+      expect(noop).toMatchObject({ ok: true, outcome: "noop", node: "switch-fixture-node" });
+      expect(noop.operationId).toBeString();
+      expect(fixturePid(host)).toBe(newHostPid);
       if (restoredPid !== undefined) spawnedServerPids.delete(restoredPid);
     } finally {
       runtime.authority.close();

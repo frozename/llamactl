@@ -1,9 +1,11 @@
 import {
   MANAGED_PROFILE_TARGET_PREFIX,
   managedProfileFromTargetState,
+  type ManagedProfilePermit,
   type ManagedProfileSelection,
   profileSwitchOperationKey,
 } from "@llamactl/core/residency/profile-selection";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 import {
   parseProfiles,
@@ -19,6 +21,16 @@ export {
   type ManagedProfileStartDecision,
   managedProfileTargetState,
 } from "@llamactl/core/residency/profile-selection";
+
+const currentPermit = new AsyncLocalStorage<ManagedProfilePermit>();
+
+export function managedProfilePermit(): ManagedProfilePermit | undefined {
+  return currentPermit.getStore();
+}
+
+export function withManagedProfilePermit<T>(permit: ManagedProfilePermit, apply: () => T): T {
+  return currentPermit.run(permit, apply);
+}
 
 export function managedProfileMemberProfiles(
   annotations?: Readonly<Record<string, string>>,

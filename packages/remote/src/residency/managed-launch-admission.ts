@@ -31,7 +31,9 @@ export interface ManagedLaunchAdmission {
   runOwnedLifecycle?: <T>(run: () => T) => T;
   ownsNode?: (name: string) => boolean;
   ownerNodeId?: string;
-  preflightProfile?: (plan: Pick<OkPlan, "victims" | "replacements">) => string | undefined;
+  preflightProfile?: (
+    plan: Pick<OkPlan, "victims" | "replacements" | "retained">,
+  ) => string | undefined;
   withDesiredManifest?: <T>(
     input: unknown,
     apply: (owned: boolean, budget?: ManagedApplyBudget) => Promise<T>,
@@ -59,11 +61,24 @@ interface ManagedLaunchOptions {
   >;
   inspectRuntime?: () => string | undefined;
   // The approved spec must account for the complete invocation.
-  resolve: (
-    request: ManagedLaunchRequest,
-  ) => Pick<AdmitRequest, "specDigest" | "allocationGiB"> | undefined;
+  resolve: (request: ManagedLaunchRequest) => PlanResolution;
   // A probe of a bare PID cannot prove which process the launch created.
   capture: (request: ManagedLaunchRequest, pid: number) => GenerationRecord | undefined;
+}
+
+type ApprovedClaimPlan = Pick<AdmitRequest, "specDigest" | "allocationGiB">;
+type PlanResolution = ApprovedClaimPlan | { refusal: string } | undefined;
+
+function verifyApprovedPlan(
+  expected: ApprovedClaimPlan,
+  actual: PlanResolution,
+): string | undefined {
+  if (actual === undefined) return "ManagedSpecUnknown";
+  if ("refusal" in actual) return actual.refusal;
+  return actual.specDigest === expected.specDigest &&
+    actual.allocationGiB === expected.allocationGiB
+    ? undefined
+    : "ManagedSpecChanged";
 }
 
 function refuse(detail: string): LaunchRefusal {
@@ -153,6 +168,7 @@ export function createManagedLaunchAdmission(opts: ManagedLaunchOptions): Manage
       if (runtimeRefusal !== undefined) return refuse(runtimeRefusal);
       const spec = opts.resolve(request);
       if (spec === undefined) return refuse("ManagedSpecUnknown");
+      if ("refusal" in spec) return refuse(spec.refusal);
       const claim = opts.authority.admit({
         specDigest: request.effectiveSpecDigest ?? spec.specDigest,
         allocationGiB: spec.allocationGiB,
@@ -163,7 +179,13 @@ export function createManagedLaunchAdmission(opts: ManagedLaunchOptions): Manage
       if (claim.kind === "joined") return refuse("ManagedLaunchPending");
       if (claim.kind === "resident") return refuse("ManagedRuntimeResident");
       const execute = (): Promise<DirectLifecycleOutcome<T>> =>
-        runClaimedLaunch(opts, request, claim, signal, start);
+        runClaimedLaunch(opts, request, claim, signal, (commitReadiness) => {
+          const verify = (): string | undefined => verifyApprovedPlan(spec, opts.resolve(request));
+          const issue = verify();
+          return issue === undefined
+            ? start((pid) => verify() ?? commitReadiness(pid))
+            : Promise.resolve(refuse(issue));
+        });
       return await (opts.runOwnedLifecycle === undefined
         ? execute()
         : opts.runOwnedLifecycle(execute));

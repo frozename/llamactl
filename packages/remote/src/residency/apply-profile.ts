@@ -44,6 +44,10 @@ import {
   withWorkloadsMutex,
 } from "../workload/store.js";
 import { residencyGroupLabelOf } from "./coordinator.js";
+import {
+  managedProfileTargetState,
+  withManagedProfilePermit,
+} from "./managed-profile-selection.js";
 import { isProfileDesiredCurrent, type ProfileDesiredSnapshot } from "./profile-desired.js";
 import { profileOwnerIncarnation, RESIDENCY_APPLY_PROFILE_FENCE_OWNER } from "./profile-owner.js";
 import {
@@ -471,7 +475,8 @@ async function runWet(
   });
   try {
     const identity = args.fenceIdentity ?? defaultFenceIdentity();
-    if (plan.noop) {
+    const managed = args.managedLaunchAdmission !== undefined;
+    if (plan.noop && !managed) {
       return await runWetNoop(plan, steps, store, identity);
     }
 
@@ -484,7 +489,7 @@ async function runWet(
       begun = store.claimAndBeginOperation(identity, {
         operationId: randomUUID(),
         model: profileSwitchOperationKey(plan.node),
-        targetState: `profile:${plan.to}`,
+        targetState: profileTargetState(plan.to, managed),
         desiredRevision: RESIDENCY_APPLY_PROFILE_DESIRED_REVISION,
         reservationGiB,
         nowMs: Date.now(),
@@ -506,6 +511,10 @@ async function runWet(
   } finally {
     store.close();
   }
+}
+
+function profileTargetState(profile: string, managed: boolean): string {
+  return managed ? managedProfileTargetState(profile) : `profile:${profile}`;
 }
 
 function logUnbudgetedSwitch(
@@ -580,6 +589,44 @@ function checkDesiredProfile(plan: OkPlan, args: ApplyResidencyProfileArgs): str
     : "desired inputs changed since profile planning; replan the switch";
 }
 
+function finishManagedNoop(
+  plan: OkPlan,
+  steps: ProfileSwitchExecutorDeps,
+  args: ApplyResidencyProfileArgs,
+  store: ResidencyOperationStore,
+  record: ResidencyOperationRecord,
+): ResidencyApplyProfileResult {
+  const refusal = checkDesiredProfile(plan, args) ?? steps.beforeTeardown?.();
+  const released = store.finishOperation({
+    operationId: record.operationId,
+    fenceToken: record.fenceToken,
+    expectedVersion: record.version,
+    nowMs: Date.now(),
+    outcome: refusal === undefined ? "succeeded" : "failed",
+    ...(refusal === undefined ? {} : { detail: refusal }),
+  });
+  if (refusal !== undefined || !released.ok) {
+    return residencyApplyProfileRefusal({
+      node: plan.node,
+      from: plan.from,
+      to: plan.to,
+      reason: "ManagedProfileUnverified",
+      detail: refusal ?? (released.ok ? "unable to publish profile" : released.reason),
+    });
+  }
+  return {
+    ok: true,
+    dryRun: false,
+    outcome: "noop",
+    node: plan.node,
+    from: plan.from,
+    to: plan.to,
+    steps: [],
+    deferred: [],
+    operationId: record.operationId,
+  };
+}
+
 async function runFencedSwitch(
   plan: OkPlan,
   steps: ProfileSwitchExecutorDeps,
@@ -590,12 +637,14 @@ async function runFencedSwitch(
   const begun = commitProfileDispatch(store, pending);
   if (!begun.ok) return mapReport(profileSwitchOperationRefusal(plan, args.registry, begun.reason));
   const { operationId, fenceToken, desiredRevision } = begun.record;
+  const managed = args.managedLaunchAdmission !== undefined;
+  if (managed && plan.noop) return finishManagedNoop(plan, steps, args, store, begun.record);
   const controller = new AbortController();
   const log = applyProfileLog(args);
   inFlightSwitchControllers.set(operationId, controller);
   try {
-    return mapReport(
-      await executeProfileSwitch(plan, steps, {
+    const execute = (): Promise<ProfileSwitchExecutionReport> =>
+      executeProfileSwitch(plan, steps, {
         dryRun: false,
         registry: args.registry,
         signal: controller.signal,
@@ -605,6 +654,7 @@ async function runFencedSwitch(
           operationId,
           desiredRevision,
           begun,
+          managed,
           log,
           ...(args.desired === undefined
             ? {}
@@ -614,8 +664,22 @@ async function runFencedSwitch(
             groupOf: (workload) => residencyGroupOf(args.workloadsDir, workload),
           },
         },
-      }),
-    );
+      });
+    const report = await (managed
+      ? withManagedProfilePermit({ operationId, fenceToken }, execute)
+      : execute());
+    const result = mapReport(report);
+    return managed && report.ok && report.operation?.recorded !== true
+      ? {
+          ...result,
+          ok: false,
+          outcome: "failed",
+          refusal: {
+            reason: "ManagedProfileUnverified",
+            detail: report.operation?.recordFailure ?? "unable to publish profile",
+          },
+        }
+      : result;
   } finally {
     inFlightSwitchControllers.delete(operationId);
   }
@@ -657,7 +721,7 @@ export async function applyResidencyProfile(
     });
   }
   const managed = args.managedLaunchAdmission;
-  if (!plan.noop && managed !== undefined) {
+  if (managed !== undefined) {
     const preflight = (): string | undefined => {
       if (args.registry === null) return "managed profiles require a target lease registry";
       if (managed.preflightProfile === undefined) return "managed profile preflight is unavailable";
