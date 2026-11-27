@@ -5,14 +5,17 @@ import { getEngineScopeLauncher, setEngineScopeLauncher } from "@llamactl/core/e
 import { expect, mock, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import type { ColdExecutionGroup } from "../../src/server/cold-owner-mount.js";
 import type { ModelRun } from "../../src/workload/schema.js";
 
 import { openAdmissionAuthority } from "../../src/residency/admission-authority.js";
 import { verifyColdModelArtifactReceipt } from "../../src/residency/cold-artifact-receipt.js";
-import { createManagedColdModelRunFactory } from "../../src/residency/managed-cold-modelrun.js";
+import {
+  createManagedColdModelRunFactory,
+  prepareManagedColdModelRun,
+} from "../../src/residency/managed-cold-modelrun.js";
 import { createManagedLaunchAdmission } from "../../src/residency/managed-launch-admission.js";
 import {
   defaultResidencyStorePath,
@@ -247,6 +250,39 @@ test("a cold pin binds allocation and canonical profile membership independently
   expect(owner.pin(DECLARATION)?.policyRevision).not.toBe(pin.policyRevision);
   expect(await owner.activate(pin, new AbortController().signal)).toBe("refused");
   expect(gate).not.toHaveBeenCalled();
+});
+
+for (const [name, options] of [
+  ["projector path", ["--mmproj", "projector.gguf"]],
+  ["inline projector URL", ["--mmproj-url=https://example.invalid/projector.gguf"]],
+  ["automatic projector with safe-flag retry", ["--mmproj-auto"]],
+  ["draft path", ["-md", "draft.gguf"]],
+  ["inline speculative draft", ["--spec-draft-model=draft.gguf"]],
+  ["MTP assistant", ["--mtp-head", "assistant.gguf"]],
+  ["LoRA adapter", ["--lora", "adapter.gguf"]],
+] as const) {
+  test(`cold registration refuses an unattested ${name} without changing normal preparation`, () => {
+    using files = fixture();
+    const run = storedRun(["--ctx-size", "256", "--parallel", "2", ...options]);
+    const { workload, ...input } = modelRunStartInvocation(run);
+    expect(server.prepareManagedServerStart({ ...input, key: { name: workload } })).toHaveProperty(
+      "effectiveSpecDigest",
+    );
+    expect(prepareManagedColdModelRun(run, [CAP])).toBeUndefined();
+  });
+}
+
+test("cold registration refuses a split GGUF rel without changing normal preparation", () => {
+  using files = fixture();
+  const run = storedRun();
+  const shard = "fixture-00001-of-00002.gguf";
+  renameSync(files.modelPath, join(dirname(files.modelPath), shard));
+  run.spec.target = { kind: "rel", value: shard };
+  const { workload, ...input } = modelRunStartInvocation(run);
+  expect(server.prepareManagedServerStart({ ...input, key: { name: workload } })).toHaveProperty(
+    "effectiveSpecDigest",
+  );
+  expect(prepareManagedColdModelRun(run, [CAP])).toBeUndefined();
 });
 
 for (const cause of ["physical headroom", "desired allocation", "cold pin"] as const) {

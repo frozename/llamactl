@@ -37,6 +37,7 @@ export interface ManagedColdModelRunProofs {
 type Invocation = ReturnType<typeof ServerStartInputSchema.parse>;
 type ColdPlan = LocalModelRunColdPlan<Invocation>;
 const SHA256 = /^[0-9a-f]{64}$/;
+const SPLIT_GGUF = /-[0-9]{5}-of-[0-9]{5}\.gguf$/iu;
 
 function oneOption(args: readonly string[], names: readonly string[]): string | undefined {
   let value: string | undefined;
@@ -112,6 +113,8 @@ export function prepareManagedColdModelRun(
   const invocation = parsed.data;
   const prepared = server.prepareManagedServerStart(serverStartOptions(invocation));
   if ("result" in prepared) return undefined;
+  // The receipt covers one GGUF, and the serving bounds come from argv before any projector retry.
+  if (prepared.additionalModelInputs || SPLIT_GGUF.test(prepared.launch.rel)) return undefined;
   const serving = servingSpec(prepared.launch.args);
   if (serving === undefined) return undefined;
   const group = groups.find(

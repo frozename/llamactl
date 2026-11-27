@@ -286,6 +286,7 @@ test("serverStart publishes ready only after managed admission commits", async (
   const pid = 1234;
   const startSpy = spyOn(server, "prepareManagedServerStart").mockImplementation((opts) => ({
     effectiveSpecDigest: "fixture",
+    additionalModelInputs: false,
     launch: {
       rel: opts.target,
       modelPath: opts.target,
