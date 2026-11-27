@@ -369,11 +369,8 @@ describe("llama.cpp sleep wakes through the shared TargetAdmissionAuthority (DF-
     expect(settledBStart.starts).toHaveLength(0);
   });
 
-  // Kills the mutant that drops the `kind` tag in sharedLivingClaims
-  // (`claims.map((claim) => ({ ...claim, kind }))` -> `[...claims]`): the
-  // ledger is empty, so the awake sibling reaches core only as a local
-  // `living` claim, and an untagged one reads as a kind mismatch that core
-  // refuses WorkloadBusy instead of already-resident.
+  // The locally awake sibling is adopted before the join; the join must
+  // reuse that one ledger claim instead of opening a second.
   test("a wake joins a locally awake runtime-group sibling as already-awake, not WorkloadBusy", async () => {
     expect(typeof binder).toBe("function");
     expect(typeof wake).toBe("function");
@@ -391,9 +388,60 @@ describe("llama.cpp sleep wakes through the shared TargetAdmissionAuthority (DF-
       state: "ready",
       reservation: "resident",
     });
-    // The join opens no new claim: registered-awake members are not adopted
-    // into the shared ledger in this slice.
+    const groupClaims = targetClaims(authority).filter((claim) => claim.runtimeKey === "rk-g");
+    expect(groupClaims).toHaveLength(1);
+    expect(groupClaims[0]).toMatchObject({
+      runtimeKey: "rk-g",
+      state: "resident",
+      allocationGiB: 8,
+      kind: "ModelRun",
+    });
+  });
+
+  // Kills the mutant that drops the `kind` tag in sharedLivingClaims
+  // (`claims.map((claim) => ({ ...claim, kind }))` -> `[...claims]`): after
+  // the foreign claim is released the ledger is empty, so the awake sibling
+  // reaches core only as a local `living` claim, and an untagged one reads
+  // as a kind mismatch that core refuses WorkloadBusy instead of
+  // already-resident.
+  test("a wake joins a locally awake sibling whose runtime claim was released elsewhere as already-awake, not WorkloadBusy", async () => {
+    expect(typeof binder).toBe("function");
+    expect(typeof wake).toBe("function");
+    const authority = createTargetAdmissionAuthority();
+    const foreign = authority.tryClaim({
+      targetIdentity: TARGET,
+      runtimeKey: "rk-g",
+      specDigest: "d-g",
+      kind: "ModelRun",
+      allocationGiB: 8,
+      budgetGiB: 16,
+    });
+    foreign.handle!.markResident();
+    const controller = boundController(authority, () => 16);
+    controller.register(member("a", "rk-g", "d-g"), "ready");
+    controller.register(member("b", "rk-g", "d-g"), "sleeping");
+    expect(targetClaims(authority)).toHaveLength(1);
+    expect(targetClaims(authority)[0]?.claimId).toBe(foreign.handle!.claimId);
+    foreign.handle!.releaseVerified();
     expect(targetClaims(authority)).toHaveLength(0);
+    const { starts, start } = recordingStart("ready");
+
+    const out = await wakeMember(controller, "b", start);
+
+    expect(out).toEqual({ kind: "already-awake" });
+    expect(starts).toHaveLength(0);
+    expect(controller.snapshot().members["b"]).toEqual({
+      state: "ready",
+      reservation: "resident",
+    });
+    const groupClaims = targetClaims(authority).filter((claim) => claim.runtimeKey === "rk-g");
+    expect(groupClaims).toHaveLength(1);
+    expect(groupClaims[0]).toMatchObject({
+      runtimeKey: "rk-g",
+      state: "resident",
+      allocationGiB: 8,
+      kind: "ModelRun",
+    });
   });
 
   // Kills the mutants on runWakeStart's catch branch: removing the
