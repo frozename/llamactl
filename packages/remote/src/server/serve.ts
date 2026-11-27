@@ -74,6 +74,7 @@ import {
   createServiceTokenVerifier,
   extractBearer,
   type NamedBearerToken,
+  PRIMARY_BEARER_NAME,
   relayPrincipalOf,
   SERVICE_TOKEN_HEADER,
   SERVICE_TOKEN_MAX_LENGTH,
@@ -114,7 +115,8 @@ export interface StartAgentOptions {
    * Named operator bearer tokens (#218), read on every request, so an
    * added or revoked token applies without a restart. Each authenticates
    * the authed API routes exactly as `tokenHash` does; the tunnel relay,
-   * self-update and rollback stay primary-only.
+   * self-update and rollback stay primary-only, so their admitted hops are
+   * audited under the primary's name 'default'.
    */
   bearerTokens?: () => readonly NamedBearerToken[] | undefined;
   /**
@@ -474,6 +476,11 @@ function makeNoAuthGate(noAuth: boolean, bindHost: string): NoAuthGate {
  * then the audit sink — `onAuthenticated` when given, else the default
  * stderr line. The sink is wrapped so a throwing hook never fails the
  * request; on error a note without any token is written instead.
+ *
+ * The privileged routes (self-update, rollback, operator tunnel-relay
+ * hops) verify the primary bearer inside their own handlers, so they
+ * reach this through `primaryBearerAuditor` and are recorded under
+ * 'default'; named tokens stay refused there.
  */
 function recordBearerUse(
   req: Request,
@@ -581,6 +588,17 @@ function proxiedRouteIdleSeconds(): number {
 type AgentFetchHandler = (req: Request, server: AgentFetchServer) => Response | Promise<Response>;
 
 /**
+ * The audit closure the privileged routes hand their bearer check (#218).
+ * Those routes verify the primary bearer only, so the admitted hop is
+ * recorded under `PRIMARY_BEARER_NAME`.
+ */
+function primaryBearerAuditor(req: Request, url: URL, opts: StartAgentOptions): () => void {
+  return (): void => {
+    recordBearerUse(req, url.pathname, PRIMARY_BEARER_NAME, opts);
+  };
+}
+
+/**
  * Infrastructure routes that precede the API surface: health checks,
  * reverse-tunnel endpoints, bootstrap registration, the install
  * script, artifact downloads, and agent self-update/rollback. Order
@@ -622,6 +640,7 @@ function handleInfraRoutes(
       opts.tokenHash,
       opts.tunnelJournalPath,
       opts.tunnelCentral?.workerRpcRelay?.()?.tokenHashes ?? [],
+      primaryBearerAuditor(req, url, opts),
     );
   }
   // Bootstrap registration — unauthenticated by design (nodes have
@@ -648,15 +667,23 @@ function handleInfraRoutes(
   // raw binary body + X-Sha256 header, atomic-replaces the running
   // binary, and exits so launchd respawns into the new build.
   // Used by `llamactl agent update --node <n>` from the control
-  // plane; never exposed unauthenticated.
+  // plane; never exposed unauthenticated. An admitted primary bearer is
+  // audited (#218) before the build-stamp refusal.
   if (url.pathname === "/agent/update") {
-    return handleAgentUpdate(req, { tokenHash: opts.tokenHash });
+    return handleAgentUpdate(req, {
+      tokenHash: opts.tokenHash,
+      onAuthenticated: primaryBearerAuditor(req, url, opts),
+    });
   }
   // Companion to /agent/update — restores `<execPath>.previous`
   // over the running binary + exits 0 so launchd respawns the
-  // prior version. Symmetric: calling it twice flips back.
+  // prior version. Symmetric: calling it twice flips back. Like update, an
+  // admitted primary bearer is audited before any refusal.
   if (url.pathname === "/agent/rollback") {
-    return handleAgentRollback(req, { tokenHash: opts.tokenHash });
+    return handleAgentRollback(req, {
+      tokenHash: opts.tokenHash,
+      onAuthenticated: primaryBearerAuditor(req, url, opts),
+    });
   }
   return null;
 }
