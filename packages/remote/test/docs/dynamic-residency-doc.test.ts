@@ -726,13 +726,15 @@ describe("docs/dynamic-residency.md (#285)", () => {
       "warming",
     ]);
     const bootRecovery = readOrEmpty(join(REPO, "packages/remote/src/residency/boot-recovery.ts"));
+    expect(flat(bootRecovery)).toContain(
+      "const result = shouldClaim(preview) ? scanWithStore(openStore, opts, nowMs, minStaleAgeMs, lifecycle) : deferred(preview);",
+    );
     for (const pin of [
       "function failInterruptedLifecycleRows(",
       "function sweepOrphanedLifecycleRows(",
       "nonterminal.length === 0",
-      "const result = shouldClaim(preview)\n      ? scanWithStore(openStore, opts, nowMs, minStaleAgeMs, lifecycle)\n      : deferred(preview);",
       "preview = previewProfileSwitchRecovery(nonterminal, { nowMs: nowMs(), minStaleAgeMs });\n        return shouldClaim(preview);",
-      "[residency] lifecycle boot recovery ${lifecycleCountsJson(lifecycle.counts)}",
+      "[residency] lifecycle boot recovery ${lifecycleCountsJson(",
       "[residency] lifecycle boot recovery failed: ",
       'to: "failed"',
       "isProvenDown?: (model: string) => boolean",

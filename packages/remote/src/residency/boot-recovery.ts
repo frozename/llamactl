@@ -21,9 +21,13 @@
  * unrecognized rows, or nothing to recover, is never claimed: the fence and
  * every row stay exactly as they were.
  *
- * Live-switch guard. Boot cannot tell a crashed switch from one a CLI process
- * is still running through its own router caller: there is no owner liveness
- * check. What it has is step progress: the executor refreshes the row's
+ * A tagged pending reservation has never entered the executor. When the
+ * node-local owner PID is absent, boot may finish that reservation at any age
+ * using the current fence token and operation version, without claiming or
+ * changing lifecycle rows. A tagged live or unverified owner blocks the
+ * following staleness scan regardless of age.
+ *
+ * Live-switch guard for the remaining rows. The executor refreshes the row's
  * `updatedAtMs` through a fenced heartbeat at every step boundary (each fence,
  * each drain settle, each stop, each start). So the rule is a fixed staleness
  * window over step progress: a row whose `updatedAtMs` is less than
@@ -142,8 +146,9 @@
  * lines' `recordFailures` are separate, the profile-switch line counts operation
  * rows only and the lifecycle line counts lifecycle rows only.
  */
-import { RESIDENCY_APPLY_PROFILE_FENCE_OWNER } from "./apply-profile.js";
+import { RESIDENCY_APPLY_PROFILE_FENCE_OWNER } from "./profile-owner.js";
 import {
+  finishAbandonedProfileIntents,
   previewEvictionRecovery,
   previewProfileSwitchRecovery,
   type ProfileSwitchRecoveryPreview,
@@ -241,31 +246,57 @@ export function runProfileSwitchBootRecovery(opts: BootRecoveryOpts): BootRecove
       return { status: "clean", ...NO_COUNTS };
     }
 
-    const preview = previewProfileSwitchRecovery(snapshot.nonterminal, {
-      nowMs: nowMs(),
-      minStaleAgeMs,
-    });
     const lifecycle: LifecycleContext = { counts: undefined };
-    const result = shouldClaim(preview)
-      ? scanWithStore(openStore, opts, nowMs, minStaleAgeMs, lifecycle)
-      : deferred(preview);
-
+    const result = recoverProfileSwitchRows(
+      snapshot.nonterminal,
+      openStore,
+      opts,
+      nowMs,
+      minStaleAgeMs,
+      lifecycle,
+    );
     safeWrite(write, `[residency] profile-switch boot recovery ${countsJson(result)}\n`);
-    if (
-      result.status === "recovered" &&
-      lifecycle.counts &&
-      lifecycle.counts.failed + lifecycle.counts.recordFailures > 0
-    ) {
-      safeWrite(
-        write,
-        `[residency] lifecycle boot recovery ${lifecycleCountsJson(lifecycle.counts)}\n`,
-      );
-    }
+    writeRecoveredLifecycles(lifecycle, write);
     return result;
   } catch (error: unknown) {
     safeWrite(write, `[residency] profile-switch boot recovery failed: ${failureMessage(error)}\n`);
     return { status: "failed", ...NO_COUNTS };
   }
+}
+
+function writeRecoveredLifecycles(
+  lifecycle: LifecycleContext,
+  write: (line: string) => void,
+): void {
+  const counts = lifecycle.counts;
+  if (counts && counts.failed + counts.recordFailures > 0) {
+    safeWrite(write, `[residency] lifecycle boot recovery ${lifecycleCountsJson(counts)}\n`);
+  }
+}
+
+function recoverProfileSwitchRows(
+  rows: ResidencyOperationRecord[],
+  openStore: (path: string) => BootRecoveryStore,
+  opts: BootRecoveryOpts,
+  nowMs: () => number,
+  minStaleAgeMs: number,
+  lifecycle: LifecycleContext,
+): BootRecoverySummary {
+  const early = finishAbandonedProfileIntents(rows, () => openStore(opts.path), nowMs());
+  const remaining =
+    early === null ? rows : rows.filter((row) => !early.finished.has(row.operationId));
+  const preview = previewProfileSwitchRecovery(remaining, { nowMs: nowMs(), minStaleAgeMs });
+  const result = shouldClaim(preview)
+    ? scanWithStore(openStore, opts, nowMs, minStaleAgeMs, lifecycle)
+    : deferred(preview);
+  return early === null
+    ? result
+    : {
+        ...result,
+        status: "recovered",
+        recovered: result.recovered + early.finished.size,
+        recordFailures: result.recordFailures + early.recordFailures,
+      };
 }
 
 // Counts only, in a fixed key order: never an operation id, model or node.
