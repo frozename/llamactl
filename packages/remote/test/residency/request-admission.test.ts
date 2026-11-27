@@ -426,6 +426,29 @@ describe("createRequestAdmission (#281 DF-08)", () => {
     expect(grants).toEqual(["x", "a#1"]);
   });
 
+  test("cancelling the last waiter before dispatch prevents the cold load", async () => {
+    const mod = await loadAdmission();
+    const loads: string[] = [];
+    const admission = mod!.createRequestAdmission(
+      admissionOptions(new FakeClock(), {
+        resident: [],
+        load: (key) => {
+          loads.push(key);
+        },
+      }),
+    );
+    const abort = new AbortController();
+    const pending = admission.acquire(req("cancelled"), { signal: abort.signal });
+    abort.abort();
+    expect(await pending.catch((error: unknown) => error)).toMatchObject({ code: "Aborted" });
+    await flush();
+    expect(loads).toEqual([]);
+    expect(admission.snapshot().loading).toBeNull();
+    const next = await admission.acquire(req("fresh"));
+    expect(loads).toEqual(["m@r1"]);
+    next();
+  });
+
   // Kills: calling load per waiter, or not pumping after loadSettled("ready").
   test("concurrent acquires for one cold model call load exactly once", async () => {
     const mod = await loadAdmission();

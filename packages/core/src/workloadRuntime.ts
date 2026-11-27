@@ -6,10 +6,11 @@ import type { QualificationStage } from "./routing/capabilities.js";
 import type { ResolvedEnv } from "./types.js";
 
 import { listCatalog } from "./catalog.js";
-import { checkServingReadiness } from "./engines/lifecycle.js";
+import { checkServingReadiness, formatHostForUrl } from "./engines/lifecycle.js";
 import { modelhostPidFile, readModelHostState } from "./engines/state.js";
 import { resolveEnv } from "./env.js";
 import {
+  isRecordedPidAlive,
   type PidIdentityDeps,
   type PidRecordQuery,
   type PidVerdict,
@@ -556,6 +557,49 @@ export function listLocalRoutes(
   return dirs.flatMap((dr) =>
     withCatalogStages(routesForDir(dr, verdicts, resolved), stageByModel),
   );
+}
+
+type LocalEngineIdentity = Pick<LocalRoute, "workload" | "kind" | "pid"> & {
+  startedAt: string;
+};
+
+export function identifyLocalEngineAtTarget(
+  target: string,
+  resolved: ResolvedEnv,
+): LocalEngineIdentity | undefined {
+  const endpoint = new URL(target);
+  if (endpoint.protocol !== "http:") return undefined;
+  const port = endpointPortForUrl(endpoint);
+  const matches = listLocalRoutes(resolved).filter(
+    (route) => formatHostForUrl(route.host) === endpoint.hostname && route.port === port,
+  );
+  const first = matches[0];
+  // An engine can advertise several aliases on one endpoint.
+  if (
+    first === undefined ||
+    matches.some(
+      (route) =>
+        route.workload !== first.workload || route.kind !== first.kind || route.pid !== first.pid,
+    )
+  ) {
+    return undefined;
+  }
+  const key = { name: first.workload };
+  const records = dirPidRecords(workloadRuntimeRoot(resolved), first.workload, resolved);
+  const record = first.kind === "ModelHost" ? records.host : records.run;
+  const state =
+    first.kind === "ModelHost" ? readModelHostState(key, resolved) : readServerState(key, resolved);
+  if (
+    record?.pid !== first.pid ||
+    state?.pid !== first.pid ||
+    formatHostForUrl(state.host) !== endpoint.hostname ||
+    Number(state.port) !== port ||
+    !Number.isFinite(Date.parse(state.startedAt)) ||
+    !isRecordedPidAlive(record.recordPath, record.pid)
+  ) {
+    return undefined;
+  }
+  return { workload: first.workload, kind: first.kind, pid: first.pid, startedAt: state.startedAt };
 }
 
 /**

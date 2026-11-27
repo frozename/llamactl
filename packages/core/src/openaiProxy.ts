@@ -48,6 +48,7 @@ import {
   type ColdPinQueueProbeConfig,
   probeColdPinQueue,
 } from "./residency/cold-pin-admission.js";
+import { getLocalEngineForwarder, type LocalEngineRequest } from "./residency/engine-forwarder.js";
 import {
   bindLeaseToBody,
   getResidencyLeaseRegistry,
@@ -626,6 +627,7 @@ type RouteEntry = {
   port: number;
   workload: string;
   kind: "ModelRun" | "ModelHost";
+  pid?: number;
   engine: workloadRuntime.LocalRoute["engine"];
   model: string;
   /** Catalog-qualified experimental (#518); kept for downstream consumers
@@ -1136,6 +1138,7 @@ function routeEntryFor(route: workloadRuntime.ClusterRoute): RouteEntry {
     engine: route.engine,
     model: route.model,
     ...(isExperimentalRoute(route) ? { experimental: true as const } : {}),
+    ...("pid" in route ? { pid: route.pid } : {}),
     ...peerFields,
   };
 }
@@ -3193,6 +3196,72 @@ export function upstreamTimeoutMs(): number {
   return parsed;
 }
 
+function requestBodyForAdmission(body: RequestInit["body"]): string | null {
+  if (typeof body === "string") return body;
+  return body === null || body === undefined ? "" : null;
+}
+
+function routeStillOwned(route: RoutedEntry, resolved: ResolvedEnv): boolean {
+  if (servingWithdrawnWorkloads().has(route.workload)) return false;
+  return workloadRuntime
+    .listWorkloadRoutes(resolved, route.workload)
+    .some(
+      (current) =>
+        current.pid === route.pid &&
+        current.host === route.host &&
+        current.port === route.port &&
+        current.model === route.model,
+    );
+}
+
+export function bindLocalEngineWorkload(
+  target: string,
+  resolved: ResolvedEnv,
+): Pick<LocalEngineRequest, "workload" | "stillOwnsTarget"> {
+  const identity = workloadRuntime.identifyLocalEngineAtTarget(target, resolved);
+  if (identity === undefined) return { stillOwnsTarget: () => false };
+  return {
+    workload: identity.workload,
+    stillOwnsTarget: (): boolean => {
+      if (isRouteWithdrawn(identity.workload)) return false;
+      const current = workloadRuntime.identifyLocalEngineAtTarget(target, resolved);
+      return (
+        current?.workload === identity.workload &&
+        current.kind === identity.kind &&
+        current.pid === identity.pid &&
+        current.startedAt === identity.startedAt
+      );
+    },
+  };
+}
+
+function forwardAdmittedEngine(
+  context: ProxyContext,
+  init: RequestInit,
+): Promise<Response> | undefined {
+  if (context.req.method !== "POST" || context.route?.isPeer === true) return undefined;
+  const admit = getLocalEngineForwarder();
+  if (admit === undefined) return undefined;
+  const { signal } = context.init;
+  const route = context.route;
+  return admit({
+    target: context.target,
+    clientSignal: context.req.signal,
+    deadlineMs: Date.now() + upstreamTimeoutMs(),
+    body: requestBodyForAdmission(init.body),
+    principal: { bearer: context.req.headers.get("authorization") },
+    ...(route === undefined
+      ? bindLocalEngineWorkload(context.target, context.resolved)
+      : {
+          workload: route.workload,
+          stillOwnsTarget: () => routeStillOwned(route, context.resolved),
+        }),
+    ...(signal === null || signal === undefined ? {} : { engineSignal: signal }),
+    send: (engineSignal) =>
+      fetch(context.target, { ...init, signal: engineSignal, redirect: "error" }),
+  });
+}
+
 async function forward(context: ProxyContext): Promise<Response> {
   if (context.route?.isPeer && requestBodyContainsOmlxRequestHandle(context.bodyText)) {
     return Response.json({ error: "cross-node slot ops not supported" }, { status: 400 });
@@ -3218,6 +3287,8 @@ async function forward(context: ProxyContext): Promise<Response> {
   }
   const peerTls = peerTlsForRoute(context.route);
   if (peerTls) (init as RequestInit & { tls?: { ca: string; serverName?: string } }).tls = peerTls;
+  const admitted = forwardAdmittedEngine(context, init);
+  if (admitted !== undefined) return await admitted;
   // Propagate the client's AbortSignal to the upstream fetch so that a client
   // disconnect promptly cancels upstream inference and releases warm-hit lease
   // + registry reservation via the finally in proxyOpenAI. Compose with any

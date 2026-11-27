@@ -35,8 +35,12 @@ import type { RequestQueueLimits } from "@llamactl/core/residency/queue-policy";
 import type { UnifiedStreamEvent } from "@novaproto/contracts";
 import type { ReadableStreamDefaultReader as WebStreamReader } from "node:stream/web";
 
+import { openaiProxy } from "@llamactl/core";
 import { saveConfig } from "@llamactl/core/config/kubeconfig";
 import { freshConfig } from "@llamactl/core/config/schema";
+import { writeModelHostState } from "@llamactl/core/engines/state";
+import { resolveEnv } from "@llamactl/core/env";
+import { getResidencyLeaseRegistry } from "@llamactl/core/residency/leases";
 import { TRPCError } from "@trpc/server";
 import { getHTTPStatusCodeFromError } from "@trpc/server/http";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -62,6 +66,7 @@ const ENV_KEYS = [
   "LLAMA_CPP_MODELS",
   "LLAMA_CPP_HOST",
   "LLAMA_CPP_PORT",
+  "LLAMA_CPP_SERVER_ALIAS",
   "LLAMACTL_UNIFIED_PROXY",
   "LLAMACTL_CONFIG",
   "LLAMACTL_USAGE_DIR",
@@ -404,6 +409,43 @@ describe("#281 DF-08: router local branches + /v1/completions share the chat cap
     return agent;
   }
 
+  function trackDefaultWorkload(name: string, startedAt = new Date().toISOString()): void {
+    writeModelHostState(
+      {
+        kind: "ModelHost",
+        engine: "llamacpp",
+        pid: process.pid,
+        host: "127.0.0.1",
+        port: upstream.port,
+        modelAliases: ["managed/model.gguf", "managed-alias"],
+        startedAt,
+      },
+      { name },
+      resolveEnv(),
+    );
+  }
+
+  function startDefaultEngineAdmission(): void {
+    process.env["LLAMA_CPP_SERVER_ALIAS"] = "no-such-model";
+    agent = startAgentServer({
+      tokenHash,
+      advertiseMdns: false,
+      executionAdmission: [
+        {
+          name: "default-device",
+          foregroundPorts: [upstream.port],
+          backgroundPorts: [1],
+          foregroundConcurrency: 2,
+          maxQueued: 4,
+          maxQueuedBytes: 65536,
+          maxPerPrincipal: 4,
+          maxQueueWaitMs: 3000,
+          starvationBoundMs: 3000,
+        },
+      ],
+    });
+  }
+
   function callerWith(counted: { admission: RequestAdmission }): AgentRouterContext {
     return { chatAdmission: counted.admission };
   }
@@ -685,6 +727,168 @@ describe("#281 DF-08: router local branches + /v1/completions share the chat cap
     expect(counted.acquires()).toBe(1);
     expect(await waitFor(() => admission.snapshot().executing === 0)).toBe(true);
   }, 15_000);
+
+  test.each(["untracked", "ambiguous"])(
+    "HTTP admission refuses an %s default engine without dialing it",
+    async (kind) => {
+      if (kind === "ambiguous") {
+        trackDefaultWorkload("one");
+        trackDefaultWorkload("two");
+      }
+      startDefaultEngineAdmission();
+      const response = await postChatStream();
+      try {
+        expect(response.status).toBe(503);
+        expect(await response.json()).toMatchObject({
+          error: { code: "execution_target_changed" },
+        });
+        expect(upstream.hits("/v1/chat/completions")).toBe(0);
+      } finally {
+        for (const gate of [...upstream.gates]) gate.release();
+        await response.body?.cancel().catch(() => undefined);
+      }
+    },
+  );
+
+  test("the default binding refuses a changed generation at the same PID and endpoint", () => {
+    trackDefaultWorkload("resident", "2026-11-27T15:00:00Z");
+    const target = `http://127.0.0.1:${String(upstream.port)}/v1/chat/completions`;
+    const binding = openaiProxy.bindLocalEngineWorkload(target, resolveEnv());
+    expect(binding.workload).toBe("resident");
+    expect(binding.stillOwnsTarget?.()).toBe(true);
+    trackDefaultWorkload("resident", "2026-11-27T15:00:01Z");
+    expect(binding.stillOwnsTarget?.()).toBe(false);
+  });
+
+  test("default-target HTTP holds the exact workload lease through detached engine completion", async () => {
+    trackDefaultWorkload("resident");
+    startDefaultEngineAdmission();
+    const response = await postChatStream();
+    try {
+      expect(response.status).toBe(200);
+      const leases = getResidencyLeaseRegistry()!;
+      expect(leases.snapshot("resident").active).toHaveLength(1);
+      await response.body?.cancel();
+      const drain = leases.beginDrain("resident");
+      if (!drain.ok) throw new Error(`unexpected drain refusal: ${drain.reason}`);
+      expect(leases.commitUnload(drain.token)).toMatchObject({ ok: false, reason: "LeasesActive" });
+      latestGate(upstream).release();
+      expect(await waitFor(() => leases.snapshot("resident").active.length === 0)).toBe(true);
+      expect(leases.commitUnload(drain.token)).toMatchObject({ ok: true });
+    } finally {
+      for (const gate of [...upstream.gates]) gate.release();
+      await response.body?.cancel().catch(() => undefined);
+    }
+  });
+
+  test("local tRPC streams hold the owner execution slot through upstream completion", async () => {
+    trackDefaultWorkload("resident");
+    process.env["LLAMA_CPP_SERVER_ALIAS"] = "no-such-model";
+    const scratch = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: (): Response => new Response(),
+    });
+    try {
+      agent = startAgentServer({
+        tokenHash,
+        advertiseMdns: false,
+        executionAdmission: [
+          {
+            name: "test-device",
+            foregroundPorts: [scratch.port!],
+            backgroundPorts: [upstream.port],
+            foregroundConcurrency: 2,
+            maxQueued: 4,
+            maxQueuedBytes: 65536,
+            maxPerPrincipal: 4,
+            maxQueueWaitMs: 3000,
+            starvationBoundMs: 3000,
+          },
+        ],
+      });
+      const caller = appRouter.createCaller({});
+      const stream = (await caller.chatStream({
+        node: "local",
+        request: chatRequest(),
+      })) as AsyncIterable<UnifiedStreamEvent>;
+      const iterator = stream[Symbol.asyncIterator]();
+      expect((await iterator.next()).done).toBe(false);
+      expect(getResidencyLeaseRegistry()!.snapshot("resident").active).toHaveLength(1);
+
+      const pending = caller.chatComplete({ node: "local", request: chatRequest() });
+      void pending.catch(() => undefined);
+      await Bun.sleep(100);
+      expect(upstream.hits("/v1/chat/completions")).toBe(1);
+      latestGate(upstream).release();
+      while (!(await iterator.next()).done) {
+        // Read through the terminal so the next engine dispatch can begin.
+      }
+      expect(await waitFor(() => upstream.hits("/v1/chat/completions") === 2)).toBe(true);
+      latestGate(upstream).release();
+      expect((await pending).choices).toHaveLength(1);
+    } finally {
+      await scratch.stop(true);
+    }
+  });
+
+  test("local tRPC keeps its explicit engine when another execution group is configured", async () => {
+    const alternate = startFakeUpstream();
+    const scratch = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: (): Response => new Response(),
+    });
+    try {
+      const request = chatRequest();
+      writeModelHostState(
+        {
+          kind: "ModelHost",
+          engine: "llamacpp",
+          pid: process.pid,
+          host: "127.0.0.1",
+          port: alternate.port,
+          modelAliases: [request.model],
+          startedAt: "2026-11-27T15:00:00.000Z",
+        },
+        { name: "alternate" },
+        resolveEnv(),
+      );
+      agent = startAgentServer({
+        tokenHash,
+        advertiseMdns: false,
+        executionAdmission: [
+          {
+            name: "other-device",
+            foregroundPorts: [scratch.port!],
+            backgroundPorts: [alternate.port],
+            foregroundConcurrency: 2,
+            maxQueued: 4,
+            maxQueuedBytes: 65536,
+            maxPerPrincipal: 4,
+            maxQueueWaitMs: 3000,
+            starvationBoundMs: 3000,
+          },
+        ],
+      });
+      const caller = appRouter.createCaller({});
+      const stream = (await caller.chatStream({
+        node: "local",
+        request,
+      })) as AsyncIterable<UnifiedStreamEvent>;
+      const iterator = stream[Symbol.asyncIterator]();
+      expect((await iterator.next()).done).toBe(false);
+      for (const fixture of [upstream, alternate]) fixture.gates.at(-1)?.release();
+      expect(upstream.hits("/v1/chat/completions")).toBe(1);
+      expect(alternate.hits("/v1/chat/completions")).toBe(0);
+      while (!(await iterator.next()).done) {
+        // Drain the explicit local engine's response before teardown.
+      }
+    } finally {
+      await alternate.stop();
+      await scratch.stop(true);
+    }
+  });
 
   // ── (p4) chatStream local holds the slot for the stream lifetime ───────
 

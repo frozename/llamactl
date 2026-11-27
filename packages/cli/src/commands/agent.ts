@@ -1766,6 +1766,7 @@ export function buildServeOptions(
     bindHost: parsed.bindHost ?? cfg.bindHost,
     port: parsed.port ?? cfg.port,
     tokenHash: cfg.tokenHash,
+    ...(cfg.executionAdmission !== undefined ? { executionAdmission: cfg.executionAdmission } : {}),
     // Named operator bearer tokens (#218), re-read on every request, so
     // 'agent token add' / 'revoke' apply without a restart.
     bearerTokens: agentConfigMod.bearerTokensReader(join(parsed.dir, "agent.yaml")),
