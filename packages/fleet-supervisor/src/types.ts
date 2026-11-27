@@ -1,3 +1,4 @@
+import type { SleepResidency } from "@llamactl/core/residency/llamacpp-sleep";
 import type { SwapCounterSample, SwapRate } from "@llamactl/core/resources/memory";
 
 import type { WorkloadThroughputStats } from "./engine-throughput.js";
@@ -124,6 +125,8 @@ export interface WorkloadSnapshot {
    * mode where /health stays 200 but completions return 5xx.
    */
   completionProbe?: CompletionProbeSnapshot;
+  /** Owner-confirmed residency for this exact probe target during the tick. */
+  sleep?: SleepResidency;
   /**
    * Declared expected memory in MiB, carried from WorkloadTarget.expectedMemoryMb.
    * Used by evaluateMigrationWorkloads to populate MigrationWorkload.spec.resources.memoryMb

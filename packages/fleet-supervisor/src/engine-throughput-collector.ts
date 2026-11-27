@@ -3,8 +3,8 @@
 // through the node agent's internal proxy (resolveInternalProxyEndpoint, shared
 // by all useProxy workloads, whose bare /metrics is the agent's own registry)
 // are not supported yet — the later supervisor-CLI-flag PR owns proxied
-// endpoints (frozename/llamactl#249). GET-only: never triggers inference or
-// wakes a model.
+// endpoints (frozename/llamactl#249). /slots can wake a sleeping
+// llama.cpp runtime, so a confirmed sleeping target only reads /metrics.
 
 import type { EngineMetrics, EngineThroughputRecorder } from "./engine-throughput.js";
 import type { EngineThroughputSnapshot, WorkloadSnapshot } from "./types.js";
@@ -12,7 +12,7 @@ import type { WorkloadTarget } from "./workload-probe.js";
 
 import { countBusySlots, parseEngineMetrics } from "./engine-throughput.js";
 import { readSlotProgress } from "./slot-progress.js";
-import { InvalidEndpointError, validateProbeEndpoint } from "./workload-probe.js";
+import { InvalidEndpointError, redactEndpoint, validateProbeEndpoint } from "./workload-probe.js";
 
 const DEFAULT_TIMEOUT_MS = 5_000;
 
@@ -20,6 +20,7 @@ export interface ReadEngineMetricsOptions {
   fetch?: typeof globalThis.fetch;
   timeoutMs?: number;
   allowPublicEndpoints?: boolean;
+  redirect?: NonNullable<RequestInit["redirect"]>;
 }
 
 export type EngineMetricsReading =
@@ -57,6 +58,7 @@ export async function readEngineMetrics(
     fetch: fetchFn = globalThis.fetch,
     timeoutMs = DEFAULT_TIMEOUT_MS,
     allowPublicEndpoints = false,
+    redirect,
   } = opts;
 
   try {
@@ -77,7 +79,11 @@ export async function readEngineMetrics(
     controller.abort();
   }, timeoutMs);
   try {
-    const res = await fetchFn(`${endpoint}/metrics`, { method: "GET", signal: controller.signal });
+    const res = await fetchFn(`${endpoint}/metrics`, {
+      method: "GET",
+      signal: controller.signal,
+      ...(redirect === undefined ? {} : { redirect }),
+    });
     if (!res.ok) {
       return { available: false, reason: `HTTP ${String(res.status)}`, metrics: nullMetrics() };
     }
@@ -139,7 +145,7 @@ function unreachableSnapshot(
     revision: snapshot?.revision ?? null,
     sampledAt,
     metrics: { available: false, reason: "workload unreachable" },
-    slots: { available: false, reason: "workload unreachable" },
+    slots: { available: false, reason: snapshot?.sleep ?? "workload unreachable" },
     stats: recorder.get(target.name),
   };
 }
@@ -159,9 +165,15 @@ async function sampleTarget(
   readOptions: CollectorReadOptions,
   now: () => number,
 ): Promise<EngineThroughputSnapshot> {
+  const sleep = snapshot.sleep;
   const [metrics, slots] = await Promise.all([
-    readEngineMetrics(target.endpoint, readOptions),
-    readSlotProgress(target.endpoint, readOptions),
+    readEngineMetrics(
+      target.endpoint,
+      sleep === undefined ? readOptions : { ...readOptions, redirect: "error" },
+    ),
+    sleep === undefined
+      ? readSlotProgress(target.endpoint, readOptions)
+      : { available: false, reason: sleep, slots: [] },
   ]);
   const atMs = now();
 
@@ -199,7 +211,13 @@ export async function collectEngineThroughput(
   const results = await Promise.all(
     targets.map(async (target): Promise<EngineThroughputSnapshot | null> => {
       if (target.kind !== "ModelHost") return null;
-      const snapshot = workloads.find((workload) => workload.name === target.name);
+      const endpoint = redactEndpoint(target.endpoint);
+      const snapshot = workloads.find(
+        (workload) =>
+          workload.name === target.name &&
+          workload.kind === target.kind &&
+          workload.endpoint === endpoint,
+      );
       if (!snapshot?.reachable) {
         return unreachableSnapshot(target, snapshot, recorder, new Date(tickMs).toISOString());
       }

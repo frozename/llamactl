@@ -1396,6 +1396,7 @@ const infraIdentifier = z
 const modelHostStatusInput = z.object({
   workload: ModelHostManifestSchema.shape.metadata.shape.name,
   includeListener: z.boolean().optional(),
+  probeOrigin: z.url().max(2048).optional(),
 });
 const modelHostStopInput = z.object({
   workload: z.string().min(1),
@@ -3257,6 +3258,9 @@ export const router = t.router({
 
   modelHostStatus: t.procedure.input(modelHostStatusInput).query(async ({ input }) => {
     const key = { name: input.workload };
+    if (input.probeOrigin !== undefined) {
+      return statusModelHost({ key, probeOrigin: input.probeOrigin });
+    }
     const status = statusModelHost({ key });
     if (input.includeListener !== true) return status;
     const state = readModelHostState(key);
