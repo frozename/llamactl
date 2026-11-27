@@ -388,6 +388,34 @@ describe("declared stale route (#280 DF-07)", () => {
   );
 
   test.each(["legacy", "unified"])(
+    "%s refuses an unknown explicit model on a managed owner without ready routes",
+    async (mode) => {
+      setupSandbox();
+      process.env["LLAMA_CPP_SERVER_ALIAS"] = "fallback.gguf";
+      if (mode === "unified") process.env["LLAMACTL_UNIFIED_PROXY"] = "1";
+      try {
+        const running = startAgentServer(agentOptions(true));
+        agent = running;
+        writeFileSync(join(runtimeDir, "managed-residency-v1"), "node-a\n");
+
+        const res = await running.handleRequest!(
+          postChatCompletions("unknown.gguf"),
+          LOOPBACK_CLIENT,
+        );
+
+        expect(res.status).toBe(404);
+        expect(await res.json()).toMatchObject({ error: { code: "model_not_routed" } });
+        expect(chatCalls(hostCalls)).toHaveLength(0);
+        expect(chatCalls(defaultCalls)).toHaveLength(0);
+      } finally {
+        Reflect.deleteProperty(process.env, "LLAMA_CPP_SERVER_ALIAS");
+        Reflect.deleteProperty(process.env, "LLAMACTL_UNIFIED_PROXY");
+        __setSharedUnifiedProxyForTests(null);
+      }
+    },
+  );
+
+  test.each(["legacy", "unified"])(
     "%s preserves configured default-target fallback for a cold declaration",
     async (mode) => {
       setupSandbox();

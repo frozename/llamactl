@@ -3179,7 +3179,10 @@ function routeMissResponse(context: ProxyContext, model: string): ProxyContext |
   );
   if (notLoadedRejection) return notLoadedRejection;
   const routeMap = getRouteMap(context.resolved).winner;
-  if (routeMap.size > 0 && !defaultTargetModelIds(context.resolved).has(model)) {
+  if (
+    hasManagedRuntimeMarker(context.resolved.LOCAL_AI_RUNTIME_DIR) ||
+    (routeMap.size > 0 && !defaultTargetModelIds(context.resolved).has(model))
+  ) {
     return modelNotRoutedResponse(model, [...routeMap.keys()].sort());
   }
   return context;
