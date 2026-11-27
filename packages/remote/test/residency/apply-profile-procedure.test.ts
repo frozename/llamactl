@@ -13,6 +13,7 @@
 // is ok — runs the fenced executor against the node-local operation store,
 // recording a terminal operation under model `profile-switch:<node>`.
 import { setResidencyLeaseRegistry } from "@llamactl/core/residency/leases";
+import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, setSystemTime, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -623,6 +624,112 @@ describe("residencyApplyProfile procedure", () => {
     expect(result.busy?.operationId).toBe("op-inflight");
     const fenceAfter = withStore((store) => store.currentFence());
     expect(fenceAfter).toEqual(fenceBefore);
+  });
+
+  test("same-owner wet applies keep the winner's fence across a stale pre-claim observation", async () => {
+    seedRouterFixture();
+    await installStepsFake();
+    const plan = await buildOkPlan();
+    const { applyResidencyProfile } = await applyProfileModule();
+    const ownerId = RESIDENCY_APPLY_PROFILE_FENCE_OWNER;
+    const initialFence = withStore((store) =>
+      store.claimOwnership({ ownerId, incarnation: "prior" }),
+    );
+    const common = { plan, dryRun: false, storePath, workloadsDir, registry: null };
+    const race = { winner: null as Promise<ApplyProfileResult> | null };
+    const losing = await applyResidencyProfile({
+      ...common,
+      fenceIdentity: {
+        get ownerId(): string {
+          // The old caller has already observed no row by this read. A second
+          // real store connection starts the winner before the loser can claim.
+          race.winner ??= applyResidencyProfile({
+            ...common,
+            fenceIdentity: { ownerId, incarnation: "winner" },
+          });
+          return ownerId;
+        },
+        incarnation: "loser",
+      },
+    });
+    const winner = await race.winner;
+
+    expect(losing.outcome).toBe("busy");
+    expect(losing.busy?.operationId).toBe(winner?.operationId ?? undefined);
+    expect(withStore((store) => store.currentFence())).toEqual({
+      ownerId,
+      incarnation: "winner",
+      fenceToken: initialFence.fenceToken + 1,
+    });
+    expect(winner?.outcome).toBe("stops-and-starts-ran");
+    expect(stepCalls).toEqual([
+      ["stop", "chat-a"],
+      ["start", "code-b"],
+    ]);
+    expect(withStore((store) => store.getOperation(winner?.operationId ?? ""))).toMatchObject({
+      phase: "terminal",
+      outcome: "succeeded",
+      reservationGiB: 12,
+    });
+    expect(withStore((store) => store.listNonterminal())).toEqual([]);
+  });
+
+  test("a failed reservation write rolls back the wet apply's fence claim", async () => {
+    seedRouterFixture();
+    await installStepsFake();
+    const plan = await buildOkPlan();
+    const { applyResidencyProfile } = await applyProfileModule();
+    const ownerId = RESIDENCY_APPLY_PROFILE_FENCE_OWNER;
+    const original = withStore((store) => store.claimOwnership({ ownerId, incarnation: "prior" }));
+    const fault = new Database(storePath);
+    try {
+      fault.run(`
+        CREATE TRIGGER refuse_profile_reservation BEFORE INSERT ON operations
+        WHEN NEW.model = 'profile-switch:local'
+        BEGIN SELECT RAISE(ABORT, 'fixture reservation write failure'); END
+      `);
+    } finally {
+      fault.close();
+    }
+
+    const result = await applyResidencyProfile({
+      plan,
+      dryRun: false,
+      storePath,
+      workloadsDir,
+      registry: null,
+      fenceIdentity: { ownerId, incarnation: "failed-write" },
+    });
+
+    expect(result).toMatchObject({
+      outcome: "refused",
+      refusal: { reason: "operation-record-refused", detail: "fixture reservation write failure" },
+    });
+    expect(withStore((store) => store.currentFence())).toEqual(original);
+    expect(withStore((store) => store.listNonterminal())).toEqual([]);
+    expect(stepCalls).toEqual([]);
+  });
+
+  test("wet no-op preserves the existing fence and leaves no reservation", async () => {
+    seedRouterFixture();
+    await installStepsFake();
+    const { applyResidencyProfile } = await applyProfileModule();
+    const ownerId = RESIDENCY_APPLY_PROFILE_FENCE_OWNER;
+    const original = withStore((store) => store.claimOwnership({ ownerId, incarnation: "prior" }));
+
+    const result = await applyResidencyProfile({
+      plan: { ...(await buildOkPlan()), noop: true },
+      dryRun: false,
+      storePath,
+      workloadsDir,
+      registry: null,
+      fenceIdentity: { ownerId, incarnation: "noop" },
+    });
+
+    expect(result).toMatchObject({ ok: true, outcome: "noop" });
+    expect(withStore((store) => store.currentFence())).toEqual(original);
+    expect(withStore((store) => store.listNonterminal())).toEqual([]);
+    expect(stepCalls).toEqual([]);
   });
 
   test("R8: a live controller lock refuses ControllerActive on wet apply only", async () => {

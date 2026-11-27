@@ -10,8 +10,8 @@
  * `residencyPlanFor`) into the store so the reservation is budget-admitted; an
  * unknown budget keeps the pre-#276 behaviour and logs once to `args.log`. A
  * foreign fence, or any fence with a nonterminal `profile-switch:<node>` row,
- * is never claimed over — it reports busy without touching authority (see
- * `runWet` for the cross-process window that remains). The wet run also passes
+ * is never claimed over. Fence and reservation are recorded in one IMMEDIATE
+ * transaction before the executor can run steps. The wet run also passes
  * `operation.lifecycle` (the operation store plus a `groupOf` that reads the
  * `llamactl.io/residency-group` manifest label) into the executor, so each stop
  * and start drives its `residency_states` row, a corroborated exclusive-group
@@ -49,11 +49,13 @@ import {
   type ProfileSwitchExecutionStep,
   type ProfileSwitchExecutorDeps,
   profileSwitchOperationKey,
+  profileSwitchOperationRefusal,
   profileSwitchReservationGiB,
   type ProfileSwitchStepOutcome,
 } from "./profile-transition.js";
 import { reopenWorkloadAfterLoad } from "./stop-fence.js";
 import {
+  type BeginOperationResult,
   openResidencyOperationStore,
   type ResidencyLifecycleStore,
   type ResidencyOperationOutcome,
@@ -384,6 +386,23 @@ function inFlightBusy(plan: OkPlan, operationId: string): ResidencyApplyProfileR
   };
 }
 
+async function runWetNoop(
+  plan: OkPlan,
+  steps: ProfileSwitchExecutorDeps,
+  store: ResidencyOperationStore,
+  identity: FenceIdentity,
+): Promise<ResidencyApplyProfileResult> {
+  const inFlight = nonterminalSwitchId(store, plan.node);
+  if (inFlight !== null) {
+    return inFlightBusy(plan, inFlight);
+  }
+  const current = store.currentFence();
+  if (current !== null && current.ownerId !== identity.ownerId) {
+    return inFlightBusy(plan, "unknown");
+  }
+  return mapReport(await executeProfileSwitch(plan, steps, { dryRun: false }));
+}
+
 async function runWet(
   plan: OkPlan,
   steps: ProfileSwitchExecutorDeps,
@@ -392,39 +411,54 @@ async function runWet(
   const store = openResidencyOperationStore({ path: args.storePath });
   try {
     const identity = args.fenceIdentity ?? defaultFenceIdentity();
-    // Cross-process race. Every apply-profile caller shares one ownerId (only
-    // the incarnation differs), so the foreign-owner check below never stops a
-    // second apply-profile process serving the same node. The planner's
-    // in-flight refusal comes from `readResidencyStoreSnapshot`, taken before
-    // observation collection, so it can be stale by the time we get here: call
-    // B snapshots (no row yet), call A claims and begins
-    // `profile-switch:<node>`, then B's claimOwnership bumps the token. A's
-    // fenced finishOperation then fails stale-fence, A's stops/starts have
-    // already run, and A's row is orphaned nonterminal — every later switch on
-    // the node is NodeBusy until #702's recovery terminalizes it (a row whose
-    // fence is not the current one is recovered, as `unknown`). The agent runs
-    // the synchronous variant at boot (#279 DF-06, boot-recovery.ts), so the
-    // bound is the next agent start once the row is older than the boot
-    // staleness window; nothing recovers it while the agent keeps running.
-    // The re-check below closes the snapshot-to-claim gap down to the synchronous
-    // listNonterminal → claimOwnership pair; a claim landing between those two
-    // calls, or between our claim and beginOperation, is not excluded. In the
-    // latter order our beginOperation fails stale-fence and is reported refused
-    // before any step runs; in the former, #702 recovery is what bounds the
-    // damage. Closing it fully needs a check-and-claim inside one IMMEDIATE
-    // store transaction.
-    const inFlight = nonterminalSwitchId(store, plan.node);
-    if (inFlight !== null) {
-      return inFlightBusy(plan, inFlight);
+    if (plan.noop) {
+      return await runWetNoop(plan, steps, store, identity);
     }
-    const current = store.currentFence();
-    if (current !== null && current.ownerId !== identity.ownerId) {
-      return inFlightBusy(plan, "unknown");
+
+    const budgetGiB = plan.budgetGiB;
+    const nodeBudgetGiB =
+      budgetGiB !== null && Number.isFinite(budgetGiB) && budgetGiB >= 0 ? budgetGiB : undefined;
+    const reservationGiB = profileSwitchReservationGiB(plan);
+    let begun: ReturnType<ResidencyOperationStore["claimAndBeginOperation"]>;
+    try {
+      begun = store.claimAndBeginOperation(identity, {
+        operationId: randomUUID(),
+        model: profileSwitchOperationKey(plan.node),
+        targetState: `profile:${plan.to}`,
+        desiredRevision: RESIDENCY_APPLY_PROFILE_DESIRED_REVISION,
+        reservationGiB,
+        nowMs: Date.now(),
+        ...(nodeBudgetGiB === undefined ? {} : { nodeBudgetGiB }),
+      });
+    } catch (error: unknown) {
+      const detail = error instanceof Error ? error.message : String(error);
+      return mapReport(profileSwitchOperationRefusal(plan, args.registry, detail));
     }
-    const fence = store.claimOwnership(identity);
-    return await runFencedSwitch(plan, steps, args, store, fence.fenceToken);
+    if (!begun.ok) {
+      return begun.reason === "busy"
+        ? inFlightBusy(plan, begun.operationId ?? "unknown")
+        : mapReport(profileSwitchOperationRefusal(plan, args.registry, begun.reason));
+    }
+    if (nodeBudgetGiB === undefined) {
+      logUnbudgetedSwitch(args, plan.node, reservationGiB);
+    }
+    return await runFencedSwitch(plan, steps, args, store, begun);
   } finally {
     store.close();
+  }
+}
+
+function logUnbudgetedSwitch(
+  args: ApplyResidencyProfileArgs,
+  node: string,
+  reservationGiB: number,
+): void {
+  try {
+    applyProfileLog(args)(
+      `[residency] profile-switch node budget unknown on node ${node}; reservation of ${String(reservationGiB)} GiB recorded without a budget check\n`,
+    );
+  } catch {
+    // A diagnostic sink cannot strand the already reserved operation.
   }
 }
 
@@ -453,19 +487,11 @@ async function runFencedSwitch(
   steps: ProfileSwitchExecutorDeps,
   args: ApplyResidencyProfileArgs,
   store: ResidencyOperationStore & ResidencyLifecycleStore,
-  fenceToken: number,
+  begun: Extract<BeginOperationResult, { ok: true }>,
 ): Promise<ResidencyApplyProfileResult> {
-  const operationId = randomUUID();
+  const { operationId, fenceToken, desiredRevision } = begun.record;
   const controller = new AbortController();
   const log = applyProfileLog(args);
-  const budgetGiB = plan.budgetGiB;
-  const nodeBudgetGiB =
-    budgetGiB !== null && Number.isFinite(budgetGiB) && budgetGiB >= 0 ? budgetGiB : undefined;
-  if (nodeBudgetGiB === undefined) {
-    log(
-      `[residency] profile-switch node budget unknown on node ${plan.node}; reservation of ${String(profileSwitchReservationGiB(plan))} GiB recorded without a budget check\n`,
-    );
-  }
   inFlightSwitchControllers.set(operationId, controller);
   try {
     return mapReport(
@@ -477,8 +503,8 @@ async function runFencedSwitch(
           store,
           fenceToken,
           operationId,
-          desiredRevision: RESIDENCY_APPLY_PROFILE_DESIRED_REVISION,
-          ...(nodeBudgetGiB === undefined ? {} : { nodeBudgetGiB }),
+          desiredRevision,
+          begun,
           log,
           lifecycle: {
             store,
