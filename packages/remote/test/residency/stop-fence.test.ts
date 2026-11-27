@@ -25,6 +25,7 @@ import {
 } from "@llamactl/core/residency/sessions";
 import { listWorkloadRoutes } from "@llamactl/core/workloadRuntime";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -1158,6 +1159,9 @@ test.each([
     const reg = createResidencyLeases();
     setResidencyLeaseRegistry(reg);
     const workload = "managed-readiness-fixture";
+    const drain = reg.beginDrain(workload);
+    assert(drain.ok, "fixture lease could not enter drain");
+    expect(reg.commitUnload(drain.token).ok).toBe(true);
     const reserver = Bun.serve({
       hostname: "127.0.0.1",
       port: 0,
@@ -1206,7 +1210,6 @@ test.each([
     const caller = router.createCaller({ managedLaunchAdmission: gate });
     try {
       if (kind === "ModelRun") {
-        expect((await caller.serverStop({ workload })).stopped).toBe(true);
         const events = await caller.serverStart({
           workload,
           target: "fake.gguf",
@@ -1218,7 +1221,6 @@ test.each([
           if (event.type === "launch") spawnedServerPids.add(event.pid);
         }
       } else {
-        expect((await caller.modelHostStop({ workload })).ok).toBe(true);
         const events = await caller.modelHostStart({
           workload,
           timeoutSeconds: 5,

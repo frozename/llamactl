@@ -2499,7 +2499,7 @@ export interface StopServerOptions {
    * 1 s steps). SIGKILL follows only if the identity re-verification then returns "alive".
    */
   graceSeconds?: number;
-  /** Identity resolver seams for tests; production uses the defaults. */
+  /** Managed stop binds the exact generation in addition to normal PID checks. */
   identity?: PidIdentityDeps;
 }
 
@@ -2521,6 +2521,7 @@ export interface StopServerResult {
    * not sent.
    */
   killed: boolean;
+  managedRefusal?: "ManagedStopGenerationUnverified" | "ManagedStopReleaseUnverified";
   /**
    * Set only by the node-side residency fence (#278 leases, #520 sessions),
    * never by `stopServer` itself: which registry refusal blocked the stop
@@ -2529,6 +2530,21 @@ export interface StopServerResult {
   refused?: {
     reason: "LeasesActive" | "DrainInProgress" | "SessionsActive" | "SessionsUnknown";
     active: string[];
+  };
+}
+
+function unconfirmedServerStop(
+  pid: number | null,
+  identity: PidIdentityDeps | undefined,
+  killed = false,
+): StopServerResult {
+  return {
+    stopped: false,
+    pid,
+    killed,
+    ...(identity?.verifyGeneration === undefined
+      ? {}
+      : { managedRefusal: "ManagedStopGenerationUnverified" }),
   };
 }
 
@@ -2580,6 +2596,9 @@ export async function stopServer(opts: StopServerOptions): Promise<StopServerRes
   const grace = Math.max(1, opts.graceSeconds ?? 5);
   const pid = readServerPid(key, resolved);
   if (pid === null) {
+    if (opts.identity?.verifyGeneration !== undefined) {
+      return unconfirmedServerStop(pid, opts.identity);
+    }
     removeServerPid(resolved, key);
     removeServerState(resolved, key);
     return { stopped: true, pid, killed: false };
@@ -2598,7 +2617,7 @@ export async function stopServer(opts: StopServerOptions): Promise<StopServerRes
   }
   // Only positive identity authorizes signalling; unknown and future verdicts
   // keep the tracking files so a later attempt can still find the process.
-  if (verdict !== "alive") return { stopped: false, pid, killed: false };
+  if (verdict !== "alive") return unconfirmedServerStop(pid, identity);
 
   // A stop during the pre-exec handshake must tombstone the unit first, so the
   // in-flight scoped launch sees it and never falls back to a direct spawn.
@@ -2607,7 +2626,7 @@ export async function stopServer(opts: StopServerOptions): Promise<StopServerRes
     writeScopeStop(workloadRuntimeDir(resolved, key), "llama-server", pending.scopeUnit);
   }
   const terminated = await terminateVerifiedPid(recordPath, pid, identity, grace);
-  if (!terminated.stopped) return { stopped: false, pid, killed: false };
+  if (!terminated.stopped) return unconfirmedServerStop(pid, identity, terminated.killed);
   removeServerRecordIfOwned(resolved, key, pid);
   return { stopped: true, pid, killed: terminated.killed };
 }

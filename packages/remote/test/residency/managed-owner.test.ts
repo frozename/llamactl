@@ -93,7 +93,9 @@ spec:
         signal: AbortSignal.timeout(3000),
       });
       expect(stop.status).toBe(200);
-      expect(await stop.json()).toMatchObject({ result: { data: { stopped: true } } });
+      expect(await stop.json()).toMatchObject({
+        result: { data: { stopped: false, managedRefusal: "ManagedStopGenerationUnverified" } },
+      });
 
       await running.stop();
       running = undefined;

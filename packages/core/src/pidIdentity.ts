@@ -51,6 +51,7 @@ export interface PidIdentityDeps {
   processStartMsMany?: (pids: readonly number[]) => ReadonlyMap<number, number | null>;
   processCommand?: (pid: number) => string | null;
   expectCommand?: CommandExpectation;
+  verifyGeneration?: (pid: number) => "alive" | "dead" | "unknown";
 }
 
 /** Identity evidence a signal path may require before signalling a pid. */
@@ -221,7 +222,7 @@ function commandMatches(cmdline: string, expect: CommandExpectation): boolean {
  * A mismatch is unverifiable identity ("unknown"): never signalled, with
  * tracking files kept because the record may still be ours.
  */
-export function verifyRecordedPid(
+function verifyLegacyRecordedPid(
   pid: number,
   recordedAtMs: number | null,
   deps?: PidIdentityDeps,
@@ -244,6 +245,18 @@ export function verifyRecordedPid(
     if (!commandMatches(cmdline, expect)) return "unknown";
   }
   return "alive";
+}
+
+export function verifyRecordedPid(
+  pid: number,
+  recordedAtMs: number | null,
+  deps?: PidIdentityDeps,
+): PidVerdict {
+  const legacy = verifyLegacyRecordedPid(pid, recordedAtMs, deps);
+  const exact = deps?.verifyGeneration?.(pid);
+  if (exact === undefined) return legacy;
+  if (exact === "alive" && legacy !== "alive") return "unknown";
+  return exact;
 }
 
 function recordMtimeMs(recordPath: string): number | null {
@@ -347,6 +360,19 @@ export function signalRecordedPid(
   }
 }
 
+async function waitForGenerationExit(
+  pid: number,
+  verify: NonNullable<PidIdentityDeps["verifyGeneration"]>,
+  graceSeconds: number,
+): Promise<boolean> {
+  for (let i = 0; i < graceSeconds; i += 1) {
+    const observed = verify(pid);
+    if (observed !== "alive") return observed === "dead";
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  return verify(pid) === "dead";
+}
+
 /**
  * Signal a pid that has JUST verified as ours: SIGTERM, then wait out the
  * grace period polling kill(0) only — each ps-backed verify is a bounded but
@@ -360,6 +386,11 @@ export async function terminateVerifiedPid(
   deps: PidIdentityDeps,
   graceSeconds: number,
 ): Promise<{ stopped: boolean; killed: boolean }> {
+  const exact = deps.verifyGeneration;
+  const beforeTerm = exact?.(pid);
+  if (beforeTerm !== undefined && beforeTerm !== "alive") {
+    return { stopped: beforeTerm === "dead", killed: false };
+  }
   try {
     process.kill(pid, "SIGTERM");
   } catch {
@@ -371,7 +402,9 @@ export async function terminateVerifiedPid(
     await new Promise((r) => setTimeout(r, 1000));
   }
 
-  if (!isProcessAlive(pid)) return { stopped: true, killed: false };
+  if (!isProcessAlive(pid)) {
+    return { stopped: exact === undefined || exact(pid) === "dead", killed: false };
+  }
   // Re-verify before the lethal escalation: the pid may have churned while
   // we waited out the grace period.
   const lastVerdict = verifyPidFile(recordPath, pid, deps);
@@ -382,5 +415,6 @@ export async function terminateVerifiedPid(
   } catch {
     // already gone between verify and signal
   }
-  return { stopped: true, killed: true };
+  const stopped = exact === undefined || (await waitForGenerationExit(pid, exact, graceSeconds));
+  return { stopped, killed: true };
 }
