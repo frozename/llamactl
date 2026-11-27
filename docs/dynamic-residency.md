@@ -509,7 +509,9 @@ llamactl residency cancel-operation <operationId> --yes --node <name>
 
 Managed profile execution consumes the plan's deadline across the drain, stops and starts. A plan that expires before actuation settles without starting or stopping an engine. A timed-out dispatched stop keeps the affected workload fenced, and uncertain dispatch retains the durable charge for recovery.
 
-Automatic maintenance windows remain gated on an activity fence that covers the selected owner's warm and cold ingress and terminal engine completion. Manual selection uses the authenticated profile command above.
+A programmatic managed owner can opt in to admission quiescence by supplying an exclusive-ingress verifier. Acquisition checks the warm queue, cold activation and handoff, active leases and durable inference holds. New demand invalidates the pause. Admission stays closed until its owning handle releases it. The capability requires authenticated managed cold ingress and declines Worker RPC configurations.
+
+Automatic maintenance windows remain gated on a qualified exclusive-ingress deployment and an authorized scheduling policy. Manual selection uses the authenticated profile command above.
 
 ### Stage 2 - request-driven admission and declared models
 
