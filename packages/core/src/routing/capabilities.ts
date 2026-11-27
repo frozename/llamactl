@@ -100,6 +100,35 @@ export function isExperimentalRoute(route: {
 }
 
 /**
+ * True when a route carries the degraded stage without being experimental
+ * (#518). The experimental guard is not redundant: a route can hold a
+ * `qualificationStage: "degraded"` join result next to an explicit
+ * `llamactl.io/qualification: experimental` label, and experimental wins.
+ * Peer routes need no extra handling because `peerRouteStage` maps a peer
+ * `degraded` label to "degraded" or "experimental" only.
+ */
+export function isDegradedRoute(route: {
+  readonly labels?: Readonly<Record<string, string>>;
+  readonly qualificationStage?: string;
+}): boolean {
+  return !isExperimentalRoute(route) && route.qualificationStage === "degraded";
+}
+
+/**
+ * Legacy route-order tier (#518): experimental 2, degraded 1, healthy 0.
+ * Lower sorts first, so healthy leads, then degraded, then experimental.
+ * `orderedProxyRoutes` and `compareDeployments` order on this tier so the
+ * legacy proxy and the route catalog stay in parity.
+ */
+export function legacyQualificationTier(route: {
+  readonly labels?: Readonly<Record<string, string>>;
+  readonly qualificationStage?: string;
+}): 0 | 1 | 2 {
+  if (isExperimentalRoute(route)) return 2;
+  return isDegradedRoute(route) ? 1 : 0;
+}
+
+/**
  * What the legacy forwarding path will attempt today. The proxy forwards
  * OpenAI/Anthropic/Responses bodies verbatim (translating the latter two),
  * streams SSE, cancels on client disconnect, and carries oMLX session

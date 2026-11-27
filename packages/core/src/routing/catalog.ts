@@ -162,6 +162,8 @@ export interface RouteCandidate {
    * createProxy now selects through selectCatalogCandidates with
    * `pinned = !defaultTargetModelIds(resolved).has(model)` and builds its
    * routes with stageByModel, so legacyWinner is informational only.
+   *
+   * A degraded deployment never leads a healthy one for the same alias.
    */
   legacyWinner: boolean;
 }
@@ -292,13 +294,26 @@ function adForGroup(group: DeploymentGroup): RouteAdvertisementV1 {
   });
 }
 
+/**
+ * Legacy collision tier of a deployment group (#518): experimental 2,
+ * degraded 1, healthy 0 — the same tiers as legacyQualificationTier in
+ * routing/capabilities.ts. A group is experimental when any of its routes
+ * is, so a deployment that carries both marks stays last.
+ */
+function legacyGroupTier(group: DeploymentGroup): 0 | 1 | 2 {
+  if (group.experimental) return 2;
+  return group.stage === "degraded" ? 1 : 0;
+}
+
 // Legacy collision ordering from openaiProxy.buildRouteMap: ModelRun before
 // ModelHost, then workload-name order; the first route per alias wins.
-// #518 adds a leading non-experimental-before-experimental tier, kept in
-// parity with orderedProxyRoutes in openaiProxy.ts — an experimental
-// deployment never wins an alias.
+// #518 adds a leading healthy-before-degraded-before-experimental tier, kept
+// in parity with orderedProxyRoutes in openaiProxy.ts — neither a degraded
+// nor an experimental deployment wins an alias over a healthy one, and an
+// experimental deployment never wins over a degraded one.
 function compareDeployments(a: DeploymentGroup, b: DeploymentGroup): number {
-  if (a.experimental !== b.experimental) return a.experimental ? 1 : -1;
+  const tierDelta = legacyGroupTier(a) - legacyGroupTier(b);
+  if (tierDelta !== 0) return tierDelta;
   if (a.kind !== b.kind) return a.kind === "ModelRun" ? -1 : 1;
   return a.workload.localeCompare(b.workload);
 }
