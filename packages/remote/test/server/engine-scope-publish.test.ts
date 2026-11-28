@@ -48,3 +48,33 @@ test("maybePublishEngineScope restore returns a previously installed launcher", 
   handle.restore();
   expect(getEngineScopeLauncher()).toBe(sentinel);
 });
+
+test("maybePublishEngineScope publishes a required launcher in require mode", () => {
+  const handle = maybePublishEngineScope({ engineScope: "require" }, "linux");
+  expect(handle).not.toBeNull();
+  if (handle === null) throw new Error("expected an engine-scope handle on linux");
+  handle.publish();
+  try {
+    const published = getEngineScopeLauncher() as { required?: boolean } | null;
+    expect(published?.required).toBe(true);
+  } finally {
+    handle.restore();
+  }
+});
+
+test("maybePublishEngineScope publishes an optional launcher for boolean opt-in", () => {
+  const handle = maybePublishEngineScope({ engineScope: true }, "linux");
+  expect(handle).not.toBeNull();
+  if (handle === null) throw new Error("expected an engine-scope handle on linux");
+  handle.publish();
+  try {
+    const published = getEngineScopeLauncher() as { required?: boolean } | null;
+    expect(published?.required).toBe(false);
+  } finally {
+    handle.restore();
+  }
+});
+
+test("maybePublishEngineScope ignores require mode off linux", () => {
+  expect(maybePublishEngineScope({ engineScope: "require" }, "darwin")).toBeNull();
+});
