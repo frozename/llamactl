@@ -483,3 +483,78 @@ test("native HTTP forwards only the preflight-normalized request to the exact ap
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("a peer cold receipt rejects replacement of the exact compiled deployment before dispatch", async () => {
+  const warm = warmOwner();
+  let current = PIN;
+  let launches = 0;
+  let sends = 0;
+  const owner = createColdOwnerAdmission({
+    ownerNodeId: "local",
+    limits: LIMITS,
+    warm,
+    owner: {
+      pin: () => current,
+      activate: (): Promise<"ready"> => {
+        launches++;
+        return Promise.resolve("ready");
+      },
+      ready: () => Promise.resolve({ ...READY, pin: current }),
+      stillOwns: () => true,
+    },
+  });
+  try {
+    expect(typeof owner.bindPeer).toBe("function");
+    expect(owner.bindPeer(DECLARATION, { ...PIN, artifactRevision: "stale" })).toBeUndefined();
+    const dispatch = owner.bindPeer(DECLARATION, PIN);
+    if (dispatch === undefined) throw new Error("fixture did not issue a dispatch receipt");
+    expect(launches).toBe(0);
+    current = { ...PIN, deploymentId: "recompiled/context-64" };
+    const response = await dispatch({
+      ...request(),
+      send: () => {
+        sends++;
+        return Promise.resolve(new Response(null, { status: 204 }));
+      },
+    });
+    expect(response.status).toBe(503);
+    expect(launches).toBe(0);
+    expect(sends).toBe(0);
+  } finally {
+    owner.stop();
+    warm.stop();
+  }
+});
+
+test("a peer with a cold snapshot may bind the exact ready target without activating it again", async () => {
+  const warm = warmOwner();
+  let launches = 0;
+  let ready = true;
+  const owner = createColdOwnerAdmission({
+    ownerNodeId: "local",
+    limits: LIMITS,
+    warm,
+    owner: {
+      pin: () => PIN,
+      activate: (): Promise<"ready"> => {
+        launches++;
+        return Promise.resolve("ready");
+      },
+      ready: () => Promise.resolve(ready ? READY : undefined),
+      stillOwns: () => ready,
+    },
+  });
+  try {
+    const declaration = { ...DECLARATION, state: "ready" as const, autoLoadEligible: false };
+    const dispatch = owner.bindPeer(declaration, PIN);
+    if (dispatch === undefined)
+      throw new Error("fixture could not bind the exact ready generation");
+    expect((await dispatch(request())).status).toBe(204);
+    ready = false;
+    expect((await dispatch(request())).status).toBe(503);
+    expect(launches).toBe(0);
+  } finally {
+    owner.stop();
+    warm.stop();
+  }
+});

@@ -47,7 +47,14 @@ import {
   publishWorkerRpcHost,
   type WorkerRpcHostOptions,
 } from "../inference/procedures.js";
-import { dispatchProxyRequest, publishUnifiedPeerSnapshots } from "../proxy/create-proxy.js";
+import {
+  createSharedUnifiedProxy,
+  dispatchProxyRequest,
+  publishUnifiedPeerSnapshots,
+  type UnifiedProxy,
+  unifiedProxyEnabled,
+  type UnifiedProxyOptions,
+} from "../proxy/create-proxy.js";
 import { captureInference, scheduleCaptureExpiry } from "../request-capture/record.js";
 import { CAPTURE_PATH, captureResponse, REQUEST_ID } from "../request-capture/store.js";
 import { runProfileSwitchBootRecovery } from "../residency/boot-recovery.js";
@@ -62,6 +69,7 @@ import {
   type OwnerAdmissionPause,
 } from "../residency/owner-activity.js";
 import { createOwnerAdmission, type OwnerAdmission } from "../residency/owner-admission.js";
+import { PEER_COLD_ROUTE, type PeerColdCredential } from "../residency/peer-cold.js";
 import {
   createResidencyLeaseAuditSink,
   defaultResidencyStorePath,
@@ -124,6 +132,7 @@ import {
   setRuntimeProcessMemoryReader,
   statusClass,
 } from "./metrics.js";
+import { preparePeerColdHandler } from "./peer-cold-mount.js";
 import { startPeerSnapshotPoller } from "./peer-snapshot-poller.js";
 import { defaultProcessMemoryReader, type ProcessMemoryReader } from "./process-memory.js";
 import { handleRagChatCompletions } from "./rag-chat-endpoint.js";
@@ -345,6 +354,8 @@ export interface StartAgentOptions {
   /** Explicit owner factory for authenticated local cold completion requests. */
   managedColdOwnerFactory?: ManagedColdOwnerFactory;
   managedColdModelRuns?: ManagedColdModelRuns;
+  managedPeerColdCredentials?: readonly PeerColdCredential[];
+  managedPeerColdGateway?: Required<Pick<UnifiedProxyOptions, "peers" | "peerCold">>;
   executionAdmission?: ExecutionAdmissionConfig;
   managedInferenceHolds?: InferenceHolds;
   /** Trusted programmatic owner wiring. The host must verify that no ingress bypasses these admissions. */
@@ -567,6 +578,8 @@ function authGateReject(
 
 type ServingAgentOptions = StartAgentOptions & {
   trustedColdOwner?: ColdEngineForwarder | undefined;
+  peerCold?: ReturnType<typeof preparePeerColdHandler>;
+  peerColdGateway?: UnifiedProxy | undefined;
 };
 
 async function handleOpenAIRoute(
@@ -595,7 +608,10 @@ async function handleOpenAIRoute(
       return Response.json(openaiProxy.projectModelsResponseBody(full, includeDeclared));
     }
     server.timeout?.(req, proxiedRouteIdleSeconds());
-    const forward = (): Promise<Response> => dispatchProxyRequest(req, opts.trustedColdOwner);
+    const forward = (): Promise<Response> =>
+      opts.peerColdGateway !== undefined && unifiedProxyEnabled()
+        ? opts.peerColdGateway.handleRequest(req, opts.trustedColdOwner)
+        : dispatchProxyRequest(req, opts.trustedColdOwner);
     const res = record ? await captureInference(req, url.pathname, forward) : await forward();
     status = res.status;
     if (status === 502) openaiUpstreamErrorsTotal.inc();
@@ -970,6 +986,20 @@ function requestContext(
   return context;
 }
 
+function handlePeerColdRequest(
+  req: Request,
+  pathname: string,
+  serving: ServingAgentOptions["peerCold"],
+  server: AgentFetchServer,
+): Promise<Response> | Response | undefined {
+  if (serving === undefined) return undefined;
+  if (pathname.startsWith(PEER_COLD_ROUTE + "/")) {
+    server.timeout?.(req, 360);
+    return serving.handle(req);
+  }
+  return serving.isCredential(req) ? unauthorizedResponse() : undefined;
+}
+
 function createAgentFetchHandler(args: {
   opts: ServingAgentOptions;
   endpoint: string;
@@ -983,6 +1013,8 @@ function createAgentFetchHandler(args: {
     const url = new URL(req.url);
     const clientAddress = typeof server.requestIP === "function" ? server.requestIP(req) : null;
     opts.onRequest?.(url);
+    const peerCold = handlePeerColdRequest(req, url.pathname, opts.peerCold, server);
+    if (peerCold !== undefined) return peerCold;
     const infra = handleInfraRoutes(req, url, server, opts, tunnelServer);
     if (infra) return infra;
     const api = handleAuthedApiRoutes(req, url, clientAddress, opts, gate, server);
@@ -1625,8 +1657,11 @@ function maybePublishWorkerRpc(
     },
   });
   const restore = publishWorkerRpcHost(host);
+  const peerColdHashes = new Set(opts.managedPeerColdCredentials?.map((entry) => entry.tokenHash));
   const bindings = (): readonly ServiceCredentialBinding[] =>
-    config.settings()?.serviceCredentials ?? [];
+    (config.settings()?.serviceCredentials ?? []).filter(
+      (entry) => !peerColdHashes.has(entry.tokenHash),
+    );
   return {
     bindings,
     claimsFor: (token) => claimsForServiceCredential(token, bindings()),
@@ -1882,6 +1917,30 @@ function ownerAdmissionPause(
   return { tryQuiesceOwnerAdmissions: () => activity.tryPause(verifyIngress, proveInitialIdle) };
 }
 
+function coldServingOptions(
+  opts: StartAgentOptions,
+  nodeName: string,
+  cold: ReturnType<typeof prepareServingColdOwner>,
+): ServingAgentOptions {
+  const gateway = opts.managedPeerColdGateway;
+  if (gateway !== undefined && (opts.noAuth === true || opts.tls === undefined)) {
+    throw new Error("ManagedPeerColdGatewayAuthenticationRequired");
+  }
+  return {
+    ...opts,
+    trustedColdOwner: cold?.forward,
+    peerCold: preparePeerColdHandler(opts, nodeName, cold),
+    peerColdGateway:
+      gateway === undefined
+        ? undefined
+        : createSharedUnifiedProxy({
+            ...gateway,
+            peers: gateway.peers.filter((peer) => peer.id !== nodeName),
+            env: { ...process.env, LLAMACTL_UNIFIED_PROXY: "1" },
+          }),
+  };
+}
+
 function startAgentServerAfterHandlers(
   opts: StartAgentOptions,
   bind: {
@@ -1937,7 +1996,7 @@ function startAgentServerAfterHandlers(
     applyAgentRuntimeIdentity(opts);
 
     const baseFetchHandler = createAgentFetchHandler({
-      opts: { ...opts, trustedColdOwner: cold?.forward },
+      opts: coldServingOptions(opts, nodeName, cold),
       endpoint,
       tunnelServer,
       gate,

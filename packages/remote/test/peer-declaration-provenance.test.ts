@@ -271,7 +271,12 @@ test("only a negotiated empty inventory from the same authenticated peer clears 
   const dir = mkdtempSync(join(tmpdir(), "llamactl-peer-empty-inventory-"));
   const cert = await generateSelfSignedCert({ dir, commonName: "127.0.0.1" });
   const journalPath = join(dir, "fleet.jsonl");
-  const empty = { schemaVersion: 2, ownerNodeId: OWNER, complete: true, entries: [] };
+  const empty: NonNullable<PeerSnapshot["declaredInventory"]> = {
+    schemaVersion: 2,
+    ownerNodeId: OWNER,
+    complete: true,
+    entries: [],
+  };
   writeFileSync(journalPath, journal([], { declaredInventory: empty }));
   let published: unknown = { schemaVersion: 1, entries: [COLD] };
   const agent = startAgentServer({
@@ -317,7 +322,8 @@ test("only a negotiated empty inventory from the same authenticated peer clears 
 
     const snapshot = await awaitPublish(empty);
     expect(snapshot?.declaredDenials).toBeUndefined();
-    expect(snapshot?.declaredInventory).toBeUndefined();
+    expect(snapshot?.declaredInventory).toEqual(empty);
+    expect(snapshot?.declarationIdentity).toMatch(/^[0-9a-f]{64}$/);
     const request = fleetRequest(agent.url, undefined, false);
     request.headers.set(INVENTORY_CAPABILITY, "2");
     expect((await fetch(request, { tls: { ca: cert.certPem } })).status).toBe(401);

@@ -1,6 +1,9 @@
 import type { ExecutionAdmissionConfig } from "@llamactl/core/config/agent-config";
 import type { LocalEngineDispatch } from "@llamactl/core/residency/engine-forwarder";
+import type { PeerSnapshot } from "@llamactl/core/workloadRuntime";
 
+import { writeModelHostState } from "@llamactl/core/engines/state";
+import { resolveEnv } from "@llamactl/core/env";
 import { getLocalEngineForwarder } from "@llamactl/core/residency/engine-forwarder";
 import { getResidencyLeaseRegistry } from "@llamactl/core/residency/leases";
 import { expect, test } from "bun:test";
@@ -10,6 +13,7 @@ import { join } from "node:path";
 import type { TrustedColdOwner, TrustedColdPin } from "../../src/residency/cold-owner-admission.js";
 
 import { createOwnerAdmission } from "../../src/residency/owner-admission.js";
+import { peerColdBodyDigest } from "../../src/residency/peer-cold.js";
 import { mkdtempSync, rmSync } from "../../src/safe-fs.js";
 import { hashToken } from "../../src/server/auth.js";
 import { prepareColdOwnerMount } from "../../src/server/cold-owner-mount.js";
@@ -23,6 +27,7 @@ import {
   startManagedAgentServer,
 } from "../../src/server/start-managed-agent.js";
 import { generateSelfSignedCert } from "../../src/server/tls.js";
+import { parseModelHost, saveModelHost } from "../../src/workload/modelhost-store.js";
 import { parseNodeRun, saveNodeRun } from "../../src/workload/noderun-store.js";
 import { parseWorkload, saveWorkload } from "../../src/workload/store.js";
 
@@ -571,3 +576,317 @@ test("cold-to-warm handoff cannot expose an idle gap before engine dispatch", as
     rmSync(dir, { recursive: true, force: true });
   }
 }, 20_000);
+
+test("scoped peer cold ingress reaches the managed queue over TLS and cannot be replayed", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "llamactl-peer-cold-ingress-"));
+  const restore = isolate(dir);
+  let running: RunningAgent | undefined;
+  let loads = 0;
+  let allowActivation = false;
+  let ready = false;
+  let engineCalls = 0;
+  let sharedCredential = false;
+  const engine = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    async fetch(req): Promise<Response> {
+      engineCalls++;
+      expect(new URL(req.url).pathname).toBe("/v1/completions");
+      expect(req.headers.get("authorization")).toBeNull();
+      expect(await req.json()).toEqual({ model: MODEL, prompt: [1], max_tokens: 3 });
+      return Response.json({ id: "fixture-completion" });
+    },
+  });
+  const peerToken = "cold-fixture-gateway-credential";
+  const artifactRevision = `sha256:${"a".repeat(64)}`;
+  const policyRevision = `sha256:${"b".repeat(64)}`;
+  try {
+    const enginePort = engine.port;
+    if (enginePort === undefined) throw new Error("fixture model server unavailable");
+    const cert = await generateSelfSignedCert({ dir, commonName: "127.0.0.1" });
+    const opts: StartAgentOptions = {
+      tokenHash: hashToken(TOKEN),
+      bearerTokens: () =>
+        sharedCredential
+          ? [{ name: "mistaken-shared-token", tokenHash: hashToken(peerToken) }]
+          : [],
+      tls: { certPath: cert.certPath, keyPath: cert.keyPath },
+      advertiseMdns: false,
+      declaredModels: true,
+      executionAdmission: [{ ...CAP, foregroundPorts: [enginePort] }],
+      managedColdOwnerFactory: (): TrustedColdOwner => {
+        const owner = fixtureOwner(
+          (): Promise<"refused" | "ready"> => {
+            loads++;
+            ready = allowActivation;
+            return Promise.resolve(ready ? "ready" : "refused");
+          },
+          `http://127.0.0.1:${String(enginePort)}`,
+        );
+        return {
+          ...owner,
+          ready: (pin) =>
+            Promise.resolve(ready ? { pin, runtimeGeneration: "fixture" } : undefined),
+          stillOwns: ({ runtimeGeneration }) => ready && runtimeGeneration === "fixture",
+          pin: (entry): TrustedColdPin | undefined => {
+            const pin = owner.pin(entry);
+            return pin === undefined ? undefined : { ...pin, artifactRevision, policyRevision };
+          },
+        };
+      },
+      managedPeerColdCredentials: [
+        { name: "fixture-gateway", tokenHash: hashToken(peerToken), models: [MODEL] },
+      ],
+    };
+    running = await startManagedAgentServer(opts, NODE, capacity);
+    const origin = running.url;
+    const post = (route: string, body: unknown, token: string): Promise<Response> =>
+      fetch(`${origin}/_llamactl/peer-cold/v1/${route}`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify(body),
+        tls: { ca: cert.certPem },
+      });
+    const completion = { model: MODEL, prompt: [1], max_tokens: 3 };
+    const body = JSON.stringify(completion);
+    const input = {
+      version: 1,
+      requestId: crypto.randomUUID(),
+      owner: NODE,
+      model: MODEL,
+      workload: WORKLOAD,
+      artifactRevision,
+      policyRevision,
+      bodyDigest: peerColdBodyDigest(body),
+      path: "/v1/completions",
+      budgetMs: 10_000,
+    };
+    expect((await post("resolve", input, TOKEN)).status).toBe(401);
+    expect((await post("resolve", { ...input, owner: "other-owner" }, peerToken)).status).toBe(403);
+    const receipt = await post("resolve", input, peerToken);
+    expect(receipt.status).toBe(200);
+    const { receipt: id } = (await receipt.json()) as { receipt: string };
+    expect(loads).toBe(0);
+    const execution = { receipt: id, completion: body };
+    expect((await post("execute", execution, peerToken)).status).toBe(503);
+    expect(loads).toBe(1);
+    expect((await post("execute", execution, peerToken)).status).toBe(409);
+    expect(loads).toBe(1);
+
+    const now = Date.now();
+    const snapshot = {
+      pressure: "NORMAL" as const,
+      fetchedAt: now,
+      workloads: [],
+      declaredProvenance: {
+        schemaVersion: 1 as const,
+        entries: [
+          {
+            id: MODEL,
+            workload: WORKLOAD,
+            ownerNodeId: NODE,
+            kind: "ModelRun" as const,
+            state: "cold" as const,
+            artifactRevision,
+            policyRevision,
+          },
+        ],
+      },
+    };
+    const peers = [
+      {
+        id: NODE,
+        endpoint: origin,
+        certificate: cert.certPem,
+        fingerprint: cert.fingerprint,
+        token: TOKEN,
+      },
+      {
+        id: "other-owner",
+        endpoint: "https://other-owner.invalid",
+        certificate: "fixture-other-ca",
+        token: "other-read-only",
+      },
+    ];
+    const snapshots = new Map<string, PeerSnapshot>([[NODE, snapshot]]);
+    const gatewayCompletion = async (request?: {
+      method?: string;
+      query?: string;
+      session?: string;
+      unavailableCatalog?: boolean;
+    }): Promise<{ status: number; body: unknown }> => {
+      const fixture = new URL("./peer-cold-gateway-fixture.ts", import.meta.url);
+      const child = Bun.spawn([process.execPath, fixture.pathname], {
+        stdin: new Response(
+          JSON.stringify({
+            peers,
+            snapshots: [...snapshots],
+            now,
+            token: peerToken,
+            body: completion,
+            request,
+          }),
+        ),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [exit, body, errors] = await Promise.all([
+        child.exited,
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+      ]);
+      if (exit !== 0) throw new Error(`fixture gateway failed: ${errors}`);
+      return JSON.parse(body) as { status: number; body: unknown };
+    };
+    const partition = await gatewayCompletion();
+    expect(partition.status).toBe(503);
+    expect(partition.body).toMatchObject({
+      error: { code: "peer_cold_owner_unavailable" },
+    });
+    expect(loads).toBe(1);
+
+    snapshots.set("other-owner", {
+      ...snapshot,
+      declaredProvenance: {
+        schemaVersion: 1,
+        entries: snapshot.declaredProvenance.entries.map((entry) => ({
+          ...entry,
+          ownerNodeId: "other-owner",
+        })),
+      },
+    });
+    const competing = await gatewayCompletion();
+    expect(competing.status).toBe(503);
+    expect(competing.body).toMatchObject({
+      error: { code: "peer_cold_owner_unavailable" },
+    });
+    expect(loads).toBe(1);
+
+    snapshots.set("other-owner", {
+      workloads: [],
+      pressure: "NORMAL",
+      fetchedAt: now,
+      declaredInventory: {
+        schemaVersion: 2,
+        ownerNodeId: "other-owner",
+        complete: true,
+        entries: [],
+      },
+    });
+    allowActivation = true;
+    expect(await gatewayCompletion()).toEqual({ status: 200, body: { id: "fixture-completion" } });
+    expect(loads).toBe(2);
+    expect(engineCalls).toBe(1);
+    for (const request of [
+      { method: "PUT" },
+      { query: "?stream=true" },
+      { session: "fixture-existing-session" },
+      { unavailableCatalog: true },
+    ]) {
+      const refused = await gatewayCompletion(request);
+      expect(refused.status).toBe(503);
+      expect(refused.body).toMatchObject({ error: { code: "peer_cold_owner_unavailable" } });
+    }
+    expect(engineCalls).toBe(1);
+    snapshots.set("unlisted-owner", {
+      ...snapshot,
+      declaredProvenance: {
+        schemaVersion: 1,
+        entries: snapshot.declaredProvenance.entries.map((entry) => ({
+          ...entry,
+          ownerNodeId: "unlisted-owner",
+        })),
+      },
+    });
+    const unexpectedPeer = await gatewayCompletion();
+    expect(unexpectedPeer.status).toBe(503);
+    expect(unexpectedPeer.body).toMatchObject({ error: { code: "peer_cold_owner_unavailable" } });
+    expect(engineCalls).toBe(1);
+    sharedCredential = true;
+    expect(
+      (await post("resolve", { ...input, requestId: crypto.randomUUID() }, peerToken)).status,
+    ).toBe(401);
+    expect(
+      (
+        await fetch(request(running, false), {
+          headers: { authorization: `Bearer ${peerToken}` },
+          tls: { ca: cert.certPem },
+        })
+      ).status,
+    ).toBe(401);
+  } finally {
+    await running?.stop();
+    await engine.stop(true);
+    restore();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("an opted-in named gateway keeps its declared warm local route", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "llamactl-peer-cold-warm-local-"));
+  const restore = isolate(dir);
+  const previous = process.env["LLAMACTL_UNIFIED_PROXY"];
+  process.env["LLAMACTL_UNIFIED_PROXY"] = "1";
+  const localModel = "fixture-local/warm.gguf";
+  let running: RunningAgent | undefined;
+  const engine = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: (): Response => Response.json({ id: "warm-local" }),
+  });
+  try {
+    const cert = await generateSelfSignedCert({ dir, commonName: "127.0.0.1" });
+    saveModelHost(
+      parseModelHost(`
+apiVersion: llamactl/v1
+kind: ModelHost
+metadata: { name: warm-local }
+spec:
+  node: local
+  engine: llamacpp
+  binary: /fixture/not-executed/llama-server
+  endpoint: { host: 127.0.0.1, port: ${engine.url.port} }
+  hostedModels: [{ rel: ${localModel} }]
+`),
+      join(dir, "workloads"),
+    );
+    writeModelHostState(
+      {
+        kind: "ModelHost",
+        engine: "llamacpp",
+        pid: process.pid,
+        host: "127.0.0.1",
+        port: Number(engine.url.port),
+        modelAliases: [localModel],
+        startedAt: "2026-11-15T00:00:00.000Z",
+      },
+      { name: "warm-local" },
+      resolveEnv(),
+    );
+    running = startAgentServer({
+      nodeName: "fixture-named-gateway",
+      tokenHash: hashToken(TOKEN),
+      tls: { certPath: cert.certPath, keyPath: cert.keyPath },
+      advertiseMdns: false,
+      declaredModels: true,
+      managedPeerColdGateway: {
+        peers: [],
+        peerCold: { models: [MODEL], credentialFor: () => undefined },
+      },
+    });
+    const response = await fetch(`${running.url}/v1/completions`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
+      body: JSON.stringify({ model: localModel, prompt: "fixture", max_tokens: 1 }),
+      tls: { ca: cert.certPem },
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ id: "warm-local" });
+  } finally {
+    await running?.stop();
+    await engine.stop(true);
+    process.env["LLAMACTL_UNIFIED_PROXY"] = previous;
+    restore();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
