@@ -51,7 +51,7 @@ What `apply-profile` persists matters for that guard. In `packages/remote/src/re
 
 ## Lease registry, drain and force-unload
 
-The lease registry is opt-in via `LLAMACTL_RESIDENCY_LEASES` set to `1` or `true` (`packages/cli/src/commands/agent.ts`). `LLAMACTL_RESIDENCY_SESSION_IDLE_MS` is honored only with leases on. Unload a workload explicitly:
+The lease registry is opt-in via `LLAMACTL_RESIDENCY_LEASES` set to `1` or `true` (`packages/cli/src/commands/agent.ts`). `LLAMACTL_RESIDENCY_SESSION_IDLE_MS` is honored only with leases on. `agent serve` then prints a startup warning instead of dropping the value silently: `warning: LLAMACTL_RESIDENCY_SESSION_IDLE_MS is set but LLAMACTL_RESIDENCY_LEASES is off; no session registry is installed, so bound sessions do not block unloads` when leases are off, and `warning: LLAMACTL_RESIDENCY_SESSION_IDLE_MS is not a positive integer of milliseconds; ignoring it, so no session registry is installed` when it is not a positive integer. The value is still ignored, so `residency status` reports the sessions section as `unavailable` with `NoRegistry`, and the raw value is not echoed. Where this doc says `LLAMACTL_RESIDENCY_SESSION_IDLE_MS` is set, it means set to a positive integer. Unload a workload explicitly:
 
 ```sh
 llamactl residency force-unload <workload> --reason <text> --yes --node <name>
