@@ -70,7 +70,7 @@ function modelStatusResponse(proof: Proof): Response {
   });
 }
 
-function setup({ alternateClient = false } = {}): Fixture {
+function setup({ alternateClient = false, requireCreditProof = false } = {}): Fixture {
   const temp = makeTempRuntime();
   const path = join(temp.devStorage, "omlx-admission.db");
   const previous = getResidencyLeaseRegistry();
@@ -98,6 +98,14 @@ function setup({ alternateClient = false } = {}): Fixture {
     budgetGiB: () => 16,
     observe: (pid) => (pid === runtime.pid ? { ...runtime, alive: true } : undefined),
     readPidFile: (workload) => (workload === NAME ? runtime.pid : undefined),
+    ...(requireCreditProof
+      ? {
+          nativeAllocationFence: {
+            verifyOwner: (): boolean => true,
+            validateParkedCredit: (claim): boolean => parking.validateParkedCredit(claim),
+          },
+        }
+      : {}),
   });
   const claim = authority.admit({
     runtimeKey: NAME,
@@ -186,7 +194,7 @@ function setup({ alternateClient = false } = {}): Fixture {
           }),
         };
   let ingressChecks = 0;
-  const parking = createDurableOmlxParking({
+  const parking: ReturnType<typeof createDurableOmlxParking> = createDurableOmlxParking({
     ...obsoleteOptions,
     apiKey: "fixture-owner-key",
     readiness: { path: "/health", expectStatus: 204 },
@@ -261,6 +269,40 @@ test("native oMLX holds the same durable charge before unload and reload dispatc
   expect(f.registry.snapshot(NAME).phase).toBe("open");
   expect(await f.parking.load()).toEqual({ kind: "already-loaded", modelId: NAME });
   expect(f.posts).toHaveLength(2);
+});
+
+test("the owner verifies its exact parked receipt inside the allocation transaction", async () => {
+  await using f = setup({ requireCreditProof: true });
+  expect(await f.parking.unload()).toMatchObject({ kind: "parked", chargedGiB: 2 });
+  expect(
+    f.authority.admit({
+      runtimeKey: "small",
+      specDigest: "small",
+      kind: "ModelRun",
+      allocationGiB: 1,
+    }),
+  ).toMatchObject({ kind: "admitted" });
+  const observed = f.authority.snapshot().find((row) => row.claimId === f.claimId);
+  if (observed === undefined) throw new Error("fixture claim missing");
+  const { generations, ...parked } = observed;
+  expect(generations).toHaveLength(1);
+  expect(f.parking.validateParkedCredit(parked)).toBe(true);
+  expect(f.parking.validateParkedCredit({ ...parked, allocationGiB: 1 })).toBe(false);
+
+  f.proof.identityCurrent = false;
+  expect(
+    f.authority.admit({
+      runtimeKey: "denied",
+      specDigest: "denied",
+      kind: "ModelRun",
+      allocationGiB: 1,
+    }),
+  ).toMatchObject({ kind: "refuse", reason: "ManagedNativeCreditUnverified" });
+
+  f.proof.identityCurrent = true;
+  expect(await f.parking.load()).toMatchObject({ kind: "loaded", modelId: NAME });
+  expect(f.parking.validateParkedCredit(parked)).toBe(false);
+  expect(f.posts.map(({ action }) => action)).toEqual(["unload", "load"]);
 });
 
 test("an active request, an unproven exclusive route, and a durable inference hold each prevent dispatch", async () => {

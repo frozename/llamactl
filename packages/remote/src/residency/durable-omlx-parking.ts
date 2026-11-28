@@ -350,6 +350,17 @@ class DurableOmlxParking {
     }
   }
 
+  validateParkedCredit(claim: Readonly<ClaimRow>): boolean {
+    const held = this.#parked;
+    // The caller owns the ledger write lock and supplies its already-read row.
+    return (
+      held !== undefined &&
+      isDeepStrictEqual(claim, held.claim) &&
+      this.#issuerCurrent() &&
+      this.#ownsDrain(held.receipt, "unloaded")
+    );
+  }
+
   unload(): Promise<DurableUnloadResult> {
     return this.#run(() => this.#unload(), {
       kind: "refused",
@@ -366,6 +377,6 @@ class DurableOmlxParking {
 /** Same-claim native transitions for an owner-exclusive, pinned oMLX listener. */
 export function createDurableOmlxParking(
   opts: DurableOmlxParkingOptions,
-): Pick<DurableOmlxParking, "unload" | "load"> {
+): Pick<DurableOmlxParking, "unload" | "load" | "validateParkedCredit"> {
   return new DurableOmlxParking(opts);
 }
