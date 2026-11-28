@@ -80,6 +80,7 @@ import {
 } from "./responses/index.js";
 import {
   type CapabilityRejection,
+  isDegradedRoute,
   isExperimentalRoute,
   legacyQualificationTier,
   type QualificationStage,
@@ -177,6 +178,8 @@ export interface DeclaredModelInfo {
   reason?: string;
   /** #518: routing stage experimental, pins applied; report-only. */
   experimental?: true;
+  /** #518: routing stage degraded (pins applied), never alongside experimental; report-only. */
+  degraded?: true;
 }
 
 export type OpenAIModelListResponse = ModelListResponse & {
@@ -342,13 +345,12 @@ const isLocalClusterRoute = (
 ): route is workloadRuntime.LocalRoute => !isPeerClusterRoute(route);
 
 function buildListOpenAIModels(resolved: ResolvedEnv): OpenAIModelListResponse {
-  const data: (ModelInfo & { experimental?: true })[] = [];
+  const data: (ModelInfo & { experimental?: true; degraded?: true })[] = [];
   const winners = new Map<string, { kind: string; workload: string }>();
   const localWinners = new Map<string, workloadRuntime.LocalRoute>();
   for (const route of orderedProxyRoutes(resolved)) {
-    if (winners.has(route.model)) {
-      const prior = winners.get(route.model);
-      if (!prior) continue;
+    const prior = winners.get(route.model);
+    if (prior) {
       console.warn(
         `[openaiProxy] route-map collision on model='${route.model}': keeping ${prior.kind}:${prior.workload}, ignoring ${route.kind}:${route.workload}`,
       );
@@ -356,14 +358,15 @@ function buildListOpenAIModels(resolved: ResolvedEnv): OpenAIModelListResponse {
     }
     winners.set(route.model, { kind: route.kind, workload: route.workload });
     if (isLocalClusterRoute(route)) localWinners.set(route.model, route);
-    const entry: ModelInfo & { experimental?: true } = {
+    const entry: ModelInfo & { experimental?: true; degraded?: true } = {
       id: route.model,
       object: "model",
       created: createdAtForRoute(route, resolved),
       owned_by: route.kind === "ModelHost" ? "llamactl-host" : "llamactl-agent",
       capabilities: ["chat"],
+      ...(isExperimentalRoute(route) ? { experimental: true as const } : {}),
+      ...(isDegradedRoute(route) ? { degraded: true as const } : {}),
     };
-    if (isExperimentalRoute(route)) entry.experimental = true;
     data.push(entry);
   }
   const response: OpenAIModelListResponse = {
@@ -480,6 +483,7 @@ function declaredModelInfos(
       routable: false,
       ...(entry.reason !== undefined ? { reason: entry.reason } : {}),
       ...(stageOf(entry.id) === "experimental" ? { experimental: true as const } : {}),
+      ...(stageOf(entry.id) === "degraded" ? { degraded: true as const } : {}),
     });
   }
   return declared;
