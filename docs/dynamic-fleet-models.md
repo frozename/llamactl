@@ -158,7 +158,9 @@ persists per-model states in its `residency_states` table:
   scope and are walked only by the switch. Still pending: reconciliation outside
   a switch.
 - Group declarations are not persisted. They come from the caller
-  (default `RESIDENCY_GROUPS`).
+  (default `RESIDENCY_GROUPS`). `catalog add` refuses a `--meta`
+  `residencyGroup` that `RESIDENCY_GROUPS` does not declare, because an
+  undeclared group would be ignored by every exclusive-group gate.
 
 Since #276 opened, ModelHost starts are enforced (items 2 and 3 below),
 boot recovery of interrupted profile-switch operations and lifecycle rows
