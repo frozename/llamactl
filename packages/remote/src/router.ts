@@ -143,7 +143,9 @@ import {
 import {
   controlManagedResidency,
   enterManagedOperatorAction,
+  RESIDENCY_CALIBRATION_KEY_TOOL,
   RESIDENCY_CONTROL_TOOL,
+  residencyCalibrationKeyInput,
   residencyControlInput,
   type ResidencyControlResult,
 } from "./residency/managed-operator-control.js";
@@ -3459,6 +3461,23 @@ export const router = t.router({
   // when node === LLAMACTL_NODE_NAME; otherwise storeAppliesToNode:false means
   // the in-flight state for `node` was not observed here. Failed/Pending
   // workloads fail closed as UnknownState.
+  residencyCalibrationKey: t.procedure
+    .input(residencyCalibrationKeyInput)
+    .query(({ ctx, input }) => {
+      const owner = profileOwner(input.node, ctx.managedLaunchAdmission);
+      if (owner === undefined) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "ManagedOwnerRequired" });
+      }
+      const calibration = owner.readCalibration?.(input.workload);
+      if (calibration === undefined) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "ManagedCalibrationIdentityUnavailable",
+        });
+      }
+      return calibration;
+    }),
+
   residencyPlan: t.procedure
     .input(
       z.object({
@@ -5190,7 +5209,8 @@ export const router = t.router({
       const residencyMutation =
         input.name === RESIDENCY_CONTROL_TOOL || input.name === RESIDENCY_APPLY_PROFILE_TOOL;
       const dryRun = input.dryRun ?? residencyMutation;
-      const caller = residencyMutation
+      const ownerScoped = residencyMutation || input.name === RESIDENCY_CALIBRATION_KEY_TOOL;
+      const caller = ownerScoped
         ? router.createCaller(omitUndefined(ctx), signal === undefined ? undefined : { signal })
         : router.createCaller({});
       const dispatched = await dispatchOpsChatTool(caller, {

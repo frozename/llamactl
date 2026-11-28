@@ -427,6 +427,12 @@ export interface MemoryCalibrationKey {
   concurrency: number;
 }
 
+export interface ManagedMemoryCalibrationKey {
+  managedLaunchDigest: string;
+}
+
+export type CalibrationIdentity = MemoryCalibrationKey | ManagedMemoryCalibrationKey;
+
 export interface CalibrationSample {
   status: MemoryReadStatus;
   source: string;
@@ -557,7 +563,12 @@ function isPositiveSafeInteger(value: number): boolean {
   return Number.isSafeInteger(value) && value > 0;
 }
 
-export function memoryCalibrationKey(key: MemoryCalibrationKey): string | null {
+export function memoryCalibrationKey(key: CalibrationIdentity): string | null {
+  if ("managedLaunchDigest" in key) {
+    const digest = key.managedLaunchDigest;
+    return /^[0-9a-f]{64}$/.test(digest) ? "managed-launch:v1:" + digest : null;
+  }
+
   const artifactRevision = key.artifactRevision.trim();
   const engine = key.engine.trim();
   const engineBuild = key.engineBuild.trim();
@@ -669,7 +680,7 @@ function collectUsableSamples(
 }
 
 export function calibrateMeasuredEnvelope(input: {
-  key: MemoryCalibrationKey;
+  key: CalibrationIdentity;
   samples: readonly CalibrationSample[];
   options: CalibrationOptions;
 }): MeasuredEnvelope {

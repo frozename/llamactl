@@ -17,11 +17,16 @@ import {
 } from "@llamactl/core/residency/admission";
 import { withManagedRuntimeMutation } from "@llamactl/core/residency/managed-runtime";
 import { projectManagedCapacity } from "@llamactl/core/resources/managed-capacity";
+import { memoryCalibrationKey } from "@llamactl/core/resources/memory";
 import {
   listWorkloadDirs,
   listWorkloadRoutes,
   workloadRuntimeDir,
 } from "@llamactl/core/workloadRuntime";
+import {
+  measuredCalibrationStorePath,
+  readMeasuredMemoryCalibrationStrict,
+} from "@llamactl/fleet-supervisor/measured-memory";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
@@ -34,9 +39,13 @@ import type {
 } from "./admission-authority.js";
 import type { InferenceHolds, InferenceHoldState } from "./inference-holds.js";
 
-import { existsSync, mkdirSync, readFileSync } from "../safe-fs.js";
-import { pinModelHostStartup } from "../server/modelhost.js";
-import { declaredModelHostMemoryGiB } from "../workload/admission.js";
+import { existsSync, mkdirSync, readFileSync, statSync } from "../safe-fs.js";
+import { modelHostCalibrationLaunch, pinModelHostStartup } from "../server/modelhost.js";
+import {
+  declaredModelHostMemoryGiB,
+  DEFAULT_MEASURED_ENVELOPE_MAX_AGE_MS,
+  measuredEnvelopeAdmissibility,
+} from "../workload/admission.js";
 import { modelRunStartInvocation, parseEvictTargets } from "../workload/apply.js";
 import {
   modelHostExternalBindHost,
@@ -46,9 +55,14 @@ import { loadNodeRunByName, nodeRunPath } from "../workload/noderun-store.js";
 import { ModelRunSchema } from "../workload/schema.js";
 import { defaultWorkloadsDir, loadWorkloadByNameAny, workloadPath } from "../workload/store.js";
 import {
+  type CalibratableLaunch,
+  deriveManagedLaunchCalibrationKey,
+} from "./launch-calibration.js";
+import {
   createManagedLaunchAdmission,
   type ManagedAdmissionReadout,
   type ManagedApplyBudget,
+  type ManagedCalibrationReadout,
   type ManagedLaunchAdmission,
   type ManagedLaunchRequest,
   type ManagedProfileWorkloadObservation,
@@ -331,24 +345,99 @@ function launchWithPhysicalGate(
       if (refusal !== undefined) return { ran: false, detail: refusal };
       const gate = preLaunchGate(physical, request);
       const result = await engineGate.run(gate, () =>
-        start(commit, () => checkSpawn?.() ?? physical.checkLaunch(request, "spawn")),
+        start(commit, () => physical.checkLaunch(request, "spawn") ?? checkSpawn?.()),
       );
       // A refusal at the first managed runtime mutation proves no engine ran.
       return gate.refusal === undefined ? result : { ran: false, detail: gate.refusal };
     });
 }
 
-type ApprovedPlan = Pick<AdmitRequest, "specDigest" | "allocationGiB">;
+type ApprovedPlan = Pick<AdmitRequest, "specDigest" | "allocationGiB"> & {
+  measuredCalibrationDigest?: string;
+  calibration?: ManagedCalibrationReadout;
+};
 type DesiredManifest = ReturnType<typeof loadWorkloadByNameAny>;
 type PlanRefusal = { refusal: string };
 
-function compileDesired(manifest: DesiredManifest): ApprovedPlan | PlanRefusal | undefined {
+type PlanCompiler = (
+  manifest: DesiredManifest,
+  describe?: boolean,
+) => ApprovedPlan | PlanRefusal | undefined;
+
+interface CalibrationOptions {
+  ownerNodeId: string;
+  path: string;
+  nowMs: () => number;
+}
+
+function calibrationStoreState(path: string): "missing" | "present" | "unavailable" {
+  try {
+    return statSync(path).isFile() ? "present" : "unavailable";
+  } catch (error) {
+    return error instanceof Error && "code" in error && error.code === "ENOENT"
+      ? "missing"
+      : "unavailable";
+  }
+}
+
+function calibratedPlan(
+  declaredGiB: number,
+  specDigest: string,
+  getLaunch: () => CalibratableLaunch | undefined,
+  opts: CalibrationOptions,
+  describe: boolean,
+): ApprovedPlan | PlanRefusal {
+  const declared = { allocationGiB: declaredGiB, specDigest };
+  const store = calibrationStoreState(opts.path);
+  if (!describe && store === "missing") return declared;
+  const launch = readDesired(getLaunch);
+  if (launch === undefined) return declared;
+  const key = deriveManagedLaunchCalibrationKey(launch, opts.ownerNodeId);
+  if (key === undefined) return declared;
+  const candidateKey = memoryCalibrationKey(key);
+  if (candidateKey === null) return declared;
+  if (store === "unavailable") return { refusal: "ManagedCalibrationStoreUnavailable" };
+  const envelope =
+    store === "missing"
+      ? null
+      : readDesired(() => readMeasuredMemoryCalibrationStrict(candidateKey, opts.path));
+  if (envelope === undefined) return { refusal: "ManagedCalibrationStoreUnavailable" };
+  const use =
+    envelope === null
+      ? undefined
+      : measuredEnvelopeAdmissibility({
+          envelope,
+          candidateKey,
+          nowMs: opts.nowMs(),
+          maxAgeMs: DEFAULT_MEASURED_ENVELOPE_MAX_AGE_MS,
+        });
+  const allocationGiB = use?.usable ? Math.max(declaredGiB, use.envelopeBytes / GiB) : declaredGiB;
+  return {
+    allocationGiB,
+    specDigest,
+    calibration: { key, declaredGiB, allocationGiB, measured: use?.usable === true },
+    ...(use?.usable ? { measuredCalibrationDigest: key.managedLaunchDigest } : {}),
+  };
+}
+
+function compileDesired(
+  manifest: DesiredManifest,
+  calibration: CalibrationOptions,
+  describe = false,
+): ApprovedPlan | PlanRefusal | undefined {
   if (manifest.kind === "ModelHost") {
     if (modelHostExternalBindHost(manifest.spec) !== null)
       return { refusal: "ManagedExternalBindUnavailable" };
     const allocationGiB = declaredModelHostMemoryGiB(manifest);
     if (allocationGiB === null || allocationGiB <= 0) return undefined;
-    return { allocationGiB, specDigest: pinModelHostStartup(manifest).effectiveSpecDigest };
+    const pinned = pinModelHostStartup(manifest);
+    return calibratedPlan(
+      allocationGiB,
+      pinned.effectiveSpecDigest,
+      () => modelHostCalibrationLaunch(pinned),
+      calibration,
+      describe,
+    );
   }
 
   const allocationGiB = manifest.spec.resources?.expectedMemoryGiB;
@@ -370,7 +459,13 @@ function compileDesired(manifest: DesiredManifest): ApprovedPlan | PlanRefusal |
   const fallback = opts.endpoint?.host ?? resolved.LLAMA_CPP_HOST;
   if (server.hostBindRefusal(["--host", fallback, ...prepared.launch.args], undefined, false))
     return { refusal: "ManagedExternalBindUnavailable" };
-  return { allocationGiB, specDigest: prepared.effectiveSpecDigest };
+  return calibratedPlan(
+    allocationGiB,
+    prepared.effectiveSpecDigest,
+    () => ({ ...prepared.launch, engine: "llamacpp", env: process.env }),
+    calibration,
+    describe,
+  );
 }
 
 function approveLaunch(
@@ -379,6 +474,7 @@ function approveLaunch(
   aliases: ReadonlySet<string>,
   pending: DesiredManifest | undefined,
   nodeName: string,
+  compile: PlanCompiler,
 ): ApprovedPlan | PlanRefusal | undefined {
   if (request.effectiveSpecDigest === undefined) return undefined;
   const manifest =
@@ -393,7 +489,7 @@ function approveLaunch(
   ) {
     return undefined;
   }
-  const approved = readDesired(() => compileDesired(manifest));
+  const approved = readDesired(() => compile(manifest));
   if (approved !== undefined && "refusal" in approved) return approved;
   if (approved?.specDigest !== request.effectiveSpecDigest) return undefined;
   const profiles = managedProfileMemberProfiles(manifest.metadata.annotations);
@@ -429,12 +525,13 @@ function checkManagedApply(
   manifest: DesiredManifest,
   authority: AdmissionAuthority,
   budgetGiB: number | undefined,
+  compile: PlanCompiler,
 ): ManagedApplyBudget | undefined {
   if (!manifest.spec.enabled) return undefined;
   if (budgetGiB === undefined || !Number.isFinite(budgetGiB) || budgetGiB <= 0) {
     throw new Error("BudgetUnknown: managed apply requires a finite target budget");
   }
-  const approved = compileDesired(manifest);
+  const approved = compile(manifest);
   if (approved === undefined)
     throw new Error("ManagedSpecUnknown: managed apply cannot pin this manifest");
   if ("refusal" in approved) throw new Error(approved.refusal);
@@ -467,7 +564,8 @@ function profileReplacement(
   workload: string,
   workloadsDir: string,
   aliases: ReadonlySet<string>,
-): (ApprovedPlan & { runtimeKey: string; kind: ManagedWorkloadKind }) | undefined {
+  compile: PlanCompiler,
+): (ApprovedPlan & { runtimeKey: string; kind: ManagedWorkloadKind }) | PlanRefusal {
   const manifest = readDesired(() => loadWorkloadByNameAny(workload, workloadsDir));
   if (
     manifest === undefined ||
@@ -475,12 +573,12 @@ function profileReplacement(
     !manifest.spec.enabled ||
     parseEvictTargets(manifest).length > 0
   ) {
-    return undefined;
+    return { refusal: `ManagedReplacementSpecUnknown: ${workload}` };
   }
-  const plan = readDesired(() => compileDesired(manifest));
-  return plan === undefined || "refusal" in plan
-    ? undefined
-    : { ...plan, runtimeKey: workload, kind: manifest.kind };
+  const plan = readDesired(() => compile(manifest));
+  if (plan === undefined) return { refusal: `ManagedReplacementSpecUnknown: ${workload}` };
+  if ("refusal" in plan) return { refusal: `${plan.refusal}: ${workload}` };
+  return { ...plan, runtimeKey: workload, kind: manifest.kind };
 }
 
 function preflightManagedProfile(
@@ -490,9 +588,10 @@ function preflightManagedProfile(
     budget: number | undefined;
     workloadsDir: string;
     aliases: ReadonlySet<string>;
+    compile: PlanCompiler;
   },
 ): string | undefined {
-  const { authority, budget, workloadsDir, aliases } = opts;
+  const { authority, budget, workloadsDir, aliases, compile } = opts;
   if (!authority.isOperational()) return "AuthorityUnavailable";
   const claims = authority.snapshot();
   const victims = new Set(plan.victims);
@@ -516,8 +615,8 @@ function preflightManagedProfile(
 
   const projected: ManagedAdmissionClaim[] = claims.filter((row) => !victims.has(row.runtimeKey));
   for (const name of plan.replacements) {
-    const incoming = profileReplacement(name, workloadsDir, aliases);
-    if (incoming === undefined) return `ManagedReplacementSpecUnknown: ${name}`;
+    const incoming = profileReplacement(name, workloadsDir, aliases, compile);
+    if ("refusal" in incoming) return incoming.refusal;
     const decision = evaluateManagedAdmission({ budgetGiB: budget, incoming, claims: projected });
     if (decision.kind === "refuse") return `${decision.reason}: ${decision.detail}`;
     if (decision.kind !== "admit") return `ManagedReplacementUnverified: ${name}`;
@@ -727,16 +826,44 @@ function readManagedRuntimePid(
   return run !== null && host !== undefined ? undefined : (run ?? host);
 }
 
-export async function openNodeManagedAdmission(opts: NodeManagedAdmissionOptions): Promise<{
+function readOwnedCalibration(
+  compile: PlanCompiler,
+  workloadsDir: string,
+  aliases: ReadonlySet<string>,
+  workload: string,
+): ManagedCalibrationReadout | undefined {
+  const manifest = readDesired(() => loadWorkloadByNameAny(workload, workloadsDir));
+  if (
+    manifest?.metadata.name !== workload ||
+    !manifest.spec.enabled ||
+    !aliases.has(manifest.spec.node)
+  ) {
+    return undefined;
+  }
+  const plan = readDesired(() => compile(manifest, true));
+  return plan === undefined || "refusal" in plan ? undefined : plan.calibration;
+}
+
+function planCompiler(ownerNodeId: string, nowMs: () => number): PlanCompiler {
+  const calibration = { ownerNodeId, path: measuredCalibrationStorePath(), nowMs };
+  return (manifest, describe) => compileDesired(manifest, calibration, describe);
+}
+
+interface NodeManagedAdmission {
   admission: ManagedLaunchAdmission;
   authority: AdmissionAuthority;
   readColdResidentGeneration: ColdResidentReader;
   verifyActivation(): string | undefined;
-}> {
+}
+
+export async function openNodeManagedAdmission(
+  opts: NodeManagedAdmissionOptions,
+): Promise<NodeManagedAdmission> {
   const resolved = resolveEnv();
   const runtimeDir = resolved.LOCAL_AI_RUNTIME_DIR;
   const workloadsDir = opts.workloadsDir ?? defaultWorkloadsDir();
   const aliases = new Set([opts.nodeName, ...(opts.aliases ?? [])]);
+  const compile = planCompiler(opts.nodeName, opts.nowMs ?? Date.now);
   const desired = new AsyncLocalStorage<DesiredManifest>();
   const engineGate = new AsyncLocalStorage<ManagedEngineGate>();
   const measure =
@@ -781,7 +908,7 @@ export async function openNodeManagedAdmission(opts: NodeManagedAdmissionOptions
         return { refusal: "ManagedInferenceUnresolved" };
       }
       return resolveEnv().LOCAL_AI_RUNTIME_DIR === runtimeDir
-        ? approveLaunch(request, workloadsDir, aliases, desired.getStore(), opts.nodeName)
+        ? approveLaunch(request, workloadsDir, aliases, desired.getStore(), opts.nodeName, compile)
         : undefined;
     },
   });
@@ -795,6 +922,7 @@ export async function openNodeManagedAdmission(opts: NodeManagedAdmissionOptions
       ownsNode: (name) => aliases.has(name),
       ownerNodeId: opts.nodeName,
       readStatus: () => managedReadout(opts, runtime.authority, budgetGiB),
+      readCalibration: readOwnedCalibration.bind(null, compile, workloadsDir, aliases),
       allowsProfileServing: (workload) =>
         allowsProfileServing(opts.nodeName, aliases, workloadsDir, workload),
       observeProfileWorkload: profileWorkload.bind(null, opts, resolved, runtime.authority),
@@ -815,6 +943,7 @@ export async function openNodeManagedAdmission(opts: NodeManagedAdmissionOptions
           budget: measured?.ledgerCeilingGiB ?? budgetGiB(),
           workloadsDir,
           aliases,
+          compile,
         });
       },
       async withDesiredManifest<T>(
@@ -826,7 +955,7 @@ export async function openNodeManagedAdmission(opts: NodeManagedAdmissionOptions
         verifyManagedDesiredOwner(manifest, workloadsDir, aliases, opts.inferenceHolds);
         const inventoryError = manifest.spec.enabled ? inspectRuntime() : undefined;
         if (inventoryError !== undefined) throw new Error(inventoryError);
-        const budget = checkManagedApply(manifest, runtime.authority, budgetGiB());
+        const budget = checkManagedApply(manifest, runtime.authority, budgetGiB(), compile);
         return await desired.run(manifest, () => apply(true, budget));
       },
     },

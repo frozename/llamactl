@@ -95,19 +95,28 @@ test.each([
     sample: { processBytes: 8192, processDeviceBytes: 4096, deviceAccounting: "included" },
     peakBytes: 8192,
   },
-])("admit calibrate records $label", async ({ sample, peakBytes }) => {
+  {
+    label: "owner-derived launch identity",
+    sample: { processBytes: 16384, processDeviceBytes: 4096, deviceAccounting: "included" },
+    peakBytes: 16384,
+    managedLaunchDigest: "f".repeat(64),
+  },
+])("admit calibrate records $label", async ({ sample, peakBytes, managedLaunchDigest }) => {
   const state = join(dir, "calibration-state-" + String(peakBytes));
   const evidence = join(dir, "calibration.json");
-  const key = {
-    artifactRevision: "model-revision",
-    engine: "omlx",
-    engineBuild: "build-revision",
-    ctx: 8192,
-    kvType: "f16",
-    speculative: { mode: "none" as const },
-    prefillBatch: 512,
-    concurrency: 1,
-  };
+  const key =
+    managedLaunchDigest !== undefined
+      ? { managedLaunchDigest }
+      : {
+          artifactRevision: "model-revision",
+          engine: "omlx",
+          engineBuild: "build-revision",
+          ctx: 8192,
+          kvType: "f16",
+          speculative: { mode: "none" as const },
+          prefillBatch: 512,
+          concurrency: 1,
+        };
   const report = {
     key,
     samples: [

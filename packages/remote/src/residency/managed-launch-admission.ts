@@ -1,6 +1,7 @@
 import type { ManagedClaimState, ManagedWorkloadKind } from "@llamactl/core/residency/admission";
 import type { OkPlan } from "@llamactl/core/residency/planner";
 import type { ManagedProfileSelection } from "@llamactl/core/residency/profile-selection";
+import type { ManagedMemoryCalibrationKey } from "@llamactl/core/resources/memory";
 
 import type { VerifyParkedOmlxProbe } from "../server/modelhost.js";
 import type { AdmissionAuthority, AdmitRequest, GenerationRecord } from "./admission-authority.js";
@@ -53,12 +54,20 @@ export type ManagedProfileWorkloadObservation =
   | { state: "running"; allocationGiB: number }
   | { state: "unknown" };
 
+export interface ManagedCalibrationReadout {
+  key: ManagedMemoryCalibrationKey;
+  declaredGiB: number;
+  allocationGiB: number;
+  measured: boolean;
+}
+
 export interface ManagedLaunchAdmission {
   prepareStopRelease?: AdmissionAuthority["prepareStopRelease"];
   runOwnedLifecycle?: <T>(run: () => T) => T;
   ownsNode?: (name: string) => boolean;
   ownerNodeId?: string;
   readStatus?: () => ManagedAdmissionReadout;
+  readCalibration?: (workload: string) => ManagedCalibrationReadout | undefined;
   allowsProfileServing?: (workload: string) => boolean;
   observeProfileWorkload?: (
     workload: string,
@@ -100,7 +109,9 @@ interface ManagedLaunchOptions {
   capture: (request: ManagedLaunchRequest, pid: number) => GenerationRecord | undefined;
 }
 
-type ApprovedClaimPlan = Pick<AdmitRequest, "specDigest" | "allocationGiB">;
+type ApprovedClaimPlan = Pick<AdmitRequest, "specDigest" | "allocationGiB"> & {
+  measuredCalibrationDigest?: string;
+};
 type PlanResolution = ApprovedClaimPlan | { refusal: string } | undefined;
 
 function verifyApprovedPlan(
@@ -110,7 +121,8 @@ function verifyApprovedPlan(
   if (actual === undefined) return "ManagedSpecUnknown";
   if ("refusal" in actual) return actual.refusal;
   return actual.specDigest === expected.specDigest &&
-    actual.allocationGiB === expected.allocationGiB
+    actual.allocationGiB === expected.allocationGiB &&
+    actual.measuredCalibrationDigest === expected.measuredCalibrationDigest
     ? undefined
     : "ManagedSpecChanged";
 }

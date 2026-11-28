@@ -4,9 +4,11 @@ import { getAuthenticatedAgentClientByName } from "@llamactl/cli/dispatcher";
 import {
   MANAGED_PROFILE_PROTOCOL_VERSION,
   RESIDENCY_APPLY_PROFILE_TOOL,
+  RESIDENCY_CALIBRATION_KEY_TOOL,
   RESIDENCY_CONTROL_TOOL,
   type ResidencyApplyProfileResult,
   residencyApplyProfileToolInput,
+  residencyCalibrationKeyInput,
   residencyControlInput,
   type ResidencyControlResult,
   router,
@@ -18,6 +20,7 @@ import { SERVER_SLUG } from "./shared.js";
 
 export function registerResidencyTools(server: McpServer): void {
   registerResidencyControl(server);
+  registerCalibrationKey(server);
   registerResidencyStatus(server);
   registerResidencyPlan(server);
   registerResidencyApplyProfile(server);
@@ -65,6 +68,30 @@ function registerResidencyControl(server: McpServer): void {
       }
       appendAudit({ server: SERVER_SLUG, tool: RESIDENCY_CONTROL_TOOL, input, dryRun, result });
       return { ...toTextContent(result), ...(result.ok ? {} : { isError: true }) };
+    },
+  );
+}
+
+function registerCalibrationKey(server: McpServer): void {
+  server.registerTool(
+    RESIDENCY_CALIBRATION_KEY_TOOL,
+    {
+      title: "Read the owner calibration key",
+      description:
+        "Read the exact compiled launch key and prospective memory charge from one authenticated managed agent.",
+      inputSchema: residencyCalibrationKeyInput,
+      annotations: { readOnlyHint: true },
+    },
+    async (input, { signal }) => {
+      try {
+        const client = getAuthenticatedAgentClientByName(input.node);
+        return toTextContent(await client.residencyCalibrationKey.query(input, { signal }));
+      } catch (error) {
+        const reason = missingProcedure(error)
+          ? "ManagedCalibrationIdentityUnavailable"
+          : "ManagedCalibrationOwnerUnavailable";
+        return { ...toTextContent({ reason }), isError: true };
+      }
     },
   );
 }

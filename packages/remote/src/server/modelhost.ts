@@ -61,7 +61,7 @@ import { currentSessionRefcounts } from "@llamactl/core/residency/sessions";
 import { type WorkloadKey, workloadRuntimeDir } from "@llamactl/core/workloadRuntime";
 import { type ChildProcess, spawn as nodeSpawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { basename, dirname, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, resolve, sep } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import type { StopFenceRefusal } from "../residency/stop-fence.js";
@@ -1916,6 +1916,36 @@ export function pinModelHostStartup(input: ModelHostManifest): PinnedModelHostSt
     env,
     effectiveSpecDigest: createHash("sha256").update(canonical).digest("hex"),
     effectiveLaunch,
+  };
+}
+
+/** Resolve the same local inputs the supported engines use at spawn. */
+export function modelHostCalibrationLaunch(pinned: PinnedModelHostStartup):
+  | {
+      engine: "llamacpp" | "kapitsa";
+      binary: string;
+      args: readonly string[];
+      env: NodeJS.ProcessEnv;
+    }
+  | undefined {
+  const { manifest, env } = pinned;
+  const engine = manifest.spec.engine;
+  if (engine !== "llamacpp" && engine !== "kapitsa") return undefined;
+  const spec = buildModelHostSpec(manifest);
+  if (!ENGINES[engine].validateSpec(spec).ok || !isAbsolute(spec.binary)) return undefined;
+  const resolved = resolveEnv(env);
+  spec.extraArgs = resolveSlotSavePathArgs(
+    manifest.spec.extraArgs,
+    resolved.LOCAL_AI_RUNTIME_DIR,
+    manifest.metadata.name,
+  ).args;
+  const boot = modelHostBootEnv(env, resolved, spec, manifest.metadata.name);
+  const launch = ENGINES[engine].buildBootCommand(spec, boot);
+  return {
+    engine,
+    binary: launch.binary,
+    args: launch.args,
+    env: sanitizeChildEnv(env, launch.envOverrides, manifest.spec.env),
   };
 }
 
