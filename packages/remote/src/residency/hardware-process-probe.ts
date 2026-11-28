@@ -15,10 +15,12 @@ import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 
 import {
+  constants,
   createReadStream,
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  open,
   readdirSync,
   renameSync,
   rmSync,
@@ -52,6 +54,7 @@ const planSchema = z.strictObject({
     .optional(),
   contextTokens: z.number().int().min(512).max(131_072).default(4096),
   requiredHeadroomGiB: z.number().int().positive(),
+  verificationReadMode: z.enum(["buffered", "darwin-uncached"]).default("buffered"),
   maxSwapUsedGiB: z.number().nonnegative().default(0),
   readinessTimeoutMs: z.number().int().positive().max(180_000).default(60_000),
   requestTimeoutMs: z.number().int().positive().max(120_000).default(30_000),
@@ -95,6 +98,7 @@ interface Evidence {
   backend?: Plan["backend"];
   contextTokens?: number;
   artifactSha256?: string;
+  assetVerification?: { readMode: Plan["verificationReadMode"]; elapsedMs: number };
   capacity: ManagedCapacitySample[];
   existingSwap?: { ceilingGiB: number; baselineUsedBytes?: number };
   readyInventoryMs?: number;
@@ -164,18 +168,53 @@ function entries(root: string): Entries {
   return files;
 }
 
-async function fileSha256(path: string, signal: AbortSignal): Promise<string> {
+async function streamSha256(stream: ReturnType<typeof createReadStream>): Promise<string> {
   const hash = createHash("sha256");
-  for await (const bytes of createReadStream(path, { signal })) hash.update(bytes as Buffer);
+  for await (const bytes of stream) hash.update(bytes as Buffer);
   return hash.digest("hex");
 }
 
-async function assetSha256(inventory: Entries, signal: AbortSignal): Promise<string> {
+function fileSha256(path: string, signal: AbortSignal): Promise<string> {
+  return streamSha256(createReadStream(path, { signal }));
+}
+
+async function uncachedFileSha256(path: string, signal: AbortSignal): Promise<string> {
+  signaled(signal);
+  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    if (!(await file.stat()).isFile()) fail("UnsupportedArtifactEntry");
+    // Darwin stores F_NOCACHE on the shared open file description. The child
+    // sets the flag using the variadic system ABI and exits before the probe reads.
+    const result = spawnSync(
+      "/usr/bin/python3",
+      [
+        "-I",
+        "-S",
+        "-c",
+        "import fcntl, signal; signal.alarm(2); fcntl.fcntl(0, fcntl.F_NOCACHE, 1)",
+      ],
+      { stdio: [file.fd, "ignore", "ignore"], timeout: 3000, killSignal: "SIGKILL" },
+    );
+    if (result.status !== 0) fail("UncachedAssetReadUnverified");
+    signaled(signal);
+    return await streamSha256(
+      file.createReadStream({ autoClose: false, highWaterMark: 1024 * 1024, signal }),
+    );
+  } finally {
+    await file.close();
+  }
+}
+
+async function assetSha256(
+  inventory: Entries,
+  readFile: typeof fileSha256,
+  signal: AbortSignal,
+): Promise<string> {
   const [root] = inventory;
-  if (root?.file) return await fileSha256(root.path, signal);
+  if (root?.file) return await readFile(root.path, signal);
   const content: [string, string][] = [];
   for (const file of inventory) {
-    if (file.file) content.push([file.rel, await fileSha256(file.path, signal)]);
+    if (file.file) content.push([file.rel, await readFile(file.path, signal)]);
   }
   if (content.length === 0) fail("EmptyArtifact");
   return createHash("sha256").update(JSON.stringify(content)).digest("hex");
@@ -227,17 +266,25 @@ async function pinAssets(
 ): Promise<PinnedInputs> {
   const deadline = AbortSignal.timeout(600_000);
   const boundedSignal = signal === undefined ? deadline : AbortSignal.any([signal, deadline]);
+  const started = performance.now();
+  const readFile =
+    plan.verificationReadMode === "darwin-uncached" ? uncachedFileSha256 : fileSha256;
   const binary = entries(plan.binary);
   if (binary.length !== 1 || !binary[0]?.file) fail("InvalidBinary");
-  if ((await assetSha256(binary, boundedSignal)) !== plan.binarySha256) fail("BinaryMismatch");
+  if ((await assetSha256(binary, readFile, boundedSignal)) !== plan.binarySha256)
+    fail("BinaryMismatch");
   report.binarySha256 = plan.binarySha256;
   const artifact = entries(plan.artifact);
   const modelPath = sourceModel(plan, artifact);
-  if ((await assetSha256(artifact, boundedSignal)) !== plan.artifactSha256)
+  if ((await assetSha256(artifact, readFile, boundedSignal)) !== plan.artifactSha256)
     fail("ArtifactMismatch");
   report.artifactSha256 = plan.artifactSha256;
   const inventory = [...binary, ...artifact];
   if (!unchanged(inventory)) fail("PinnedInputChanged");
+  report.assetVerification = {
+    readMode: plan.verificationReadMode,
+    elapsedMs: performance.now() - started,
+  };
   return { inventory, modelPath };
 }
 
@@ -972,6 +1019,8 @@ export async function runHardwareProcessProbe(
   if (!parsed.success) return block(evidence(), "InvalidPlan");
   const plan = parsed.data;
   const report = plannedEvidence(plan);
+  if (plan.verificationReadMode === "darwin-uncached" && process.platform !== "darwin")
+    return block(report, "UncachedAssetReadUnavailable");
   const readCapacity = opts.readCapacity ?? readLocalManagedCapacity;
   const refused = capacityCheck(readCapacity, report, plan.requiredHeadroomGiB);
   if (refused !== undefined) return block(report, refused);

@@ -202,6 +202,45 @@ test("the launch boundary rechecks current memory after hashing", async () => {
   });
 });
 
+test("uncached verification is opt-in and fails closed outside Darwin", async () => {
+  const input = { ...plan("good", "kapitsa"), verificationReadMode: "darwin-uncached" as const };
+  expect(await run(input, { readCapacity: capacity })).toMatchObject(
+    process.platform === "darwin"
+      ? { status: "NOT_RUN", launched: false }
+      : { status: "BLOCKED", launched: false, reason: "UncachedAssetReadUnavailable" },
+  );
+});
+
+test.skipIf(process.platform !== "darwin")(
+  "uncached verification pins a directory's contents before rechecking headroom",
+  async () => {
+    const input = { ...plan("good", "kapitsa"), verificationReadMode: "darwin-uncached" as const };
+    writeFileSync(join(input.artifact, "model.bin"), "wrong weights");
+    expect(await run(input, { execute: true, readCapacity: capacity })).toMatchObject({
+      status: "BLOCKED",
+      launched: false,
+      binarySha256: input.binarySha256,
+      reason: "ArtifactMismatch",
+    });
+    writeFileSync(join(input.artifact, "model.bin"), "model fixture");
+    let reads = 0;
+    const evidence = await run(input, {
+      execute: true,
+      readCapacity: () => capacity(reads++ === 0 ? {} : { availableBytes: 13 * GiB }),
+    });
+    expect(evidence).toMatchObject({
+      status: "BLOCKED",
+      launched: false,
+      reason: "InsufficientHeadroom",
+      binarySha256: input.binarySha256,
+      artifactSha256: input.artifactSha256,
+      assetVerification: { readMode: "darwin-uncached" },
+      capacity: [{ availableBytes: 24 * GiB }, { availableBytes: 13 * GiB }],
+    });
+    expect(evidence.assetVerification?.elapsedMs ?? -1).toBeGreaterThanOrEqual(0);
+  },
+);
+
 test("swap appearing during real inference cancels the request and releases the process", async () => {
   const input = plan("slow");
   let reads = 0;

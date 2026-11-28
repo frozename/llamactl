@@ -684,8 +684,16 @@ A directory artifact is pinned by the SHA-256 of the UTF-8 JSON array of
 `[relativePath, sha256Hex]` pairs. Files are visited in lexical order within
 each directory, depth first. Relative paths use forward slashes. Use regular
 files and directories, and materialize symlinked snapshots in a separate
-staging directory. Hashing may warm the filesystem cache. The first request
-sample measures a fresh process. Measure cache-hit behavior separately.
+staging directory. Buffered verification can warm the filesystem cache and
+reduce the free pages available at the launch fence. On macOS, a private plan
+can set `"verificationReadMode": "darwin-uncached"` to verify every file using
+`F_NOCACHE`. The probe uses `/usr/bin/python3` to set the flag on an inherited
+descriptor, then reads and hashes the file in the probe process. Check that
+the interpreter is installed and exposes `fcntl.F_NOCACHE` before the
+maintenance window. A failed uncached read blocks launch. The probe keeps the same digest and generation checks,
+then samples capacity again. The report records the completed verification
+mode and duration in `assetVerification`. The first request sample measures a
+fresh process. Measure cache-hit behavior separately.
 
 Execution rechecks capacity and the staged file generations just before
 launch. It requires `lsof` to match the isolated listener to the child PID
