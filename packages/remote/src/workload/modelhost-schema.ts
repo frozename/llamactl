@@ -201,6 +201,61 @@ function hostedModelOmlxIssues(
   return issues;
 }
 
+const OMLX_CACHE_OWNER_FLAGS = [
+  "--base-path",
+  "--model-dir",
+  "--paged-ssd-cache-dir",
+  "--hf-cache",
+  "--no-hf-cache",
+  "--slot-save-path",
+];
+
+function omlxCacheFlag(arg: string): string {
+  return arg.split("=", 1)[0] ?? "";
+}
+
+function invalidOmlxCacheSlots(args: readonly string[]): boolean {
+  const slots = args
+    .map(omlxCacheFlag)
+    .flatMap((flag, index) => (flag === "--slot-save-path" ? [index] : []));
+  if (slots.length !== 1) return slots.length > 1;
+  const index = slots[0] ?? 0;
+  const token = args[index] ?? "";
+  const value =
+    token === "--slot-save-path" ? args[index + 1] : token.slice("--slot-save-path=".length);
+  return value !== "auto" && value?.startsWith("/") !== true;
+}
+
+function omlxCacheIssue(spec: {
+  engine: string;
+  omlxCacheEpoch?: number | undefined;
+  extraArgs: readonly string[];
+}): { path: string[]; message: string } | undefined {
+  if (spec.omlxCacheEpoch === undefined) return undefined;
+  if (spec.engine !== "omlx") {
+    return {
+      path: ["omlxCacheEpoch"],
+      message: "omlxCacheEpoch is only supported for engine omlx",
+    };
+  }
+  const conflict = spec.extraArgs
+    .map(omlxCacheFlag)
+    .some(
+      (flag) =>
+        flag.startsWith("--") &&
+        flag !== "--slot-save-path" &&
+        OMLX_CACHE_OWNER_FLAGS.some((owned) => owned.startsWith(flag)),
+    );
+  if (conflict || invalidOmlxCacheSlots(spec.extraArgs)) {
+    return {
+      path: ["extraArgs"],
+      message:
+        "oMLX cache owns model, base and cache paths and accepts at most one absolute or auto slot path",
+    };
+  }
+  return undefined;
+}
+
 export const ModelHostSpecSchema = z
   .object({
     // Engine selection. The registry in packages/core/src/engines/ holds
@@ -267,9 +322,11 @@ export const ModelHostSpecSchema = z
     // readiness.path is restricted to llama-server's unauthenticated
     // endpoints (enforced by apiKeyRefIssues above).
     apiKeyRef: z.string().min(1).optional(),
+    omlxCacheEpoch: z.int().nonnegative().optional(),
   })
   .strict()
   .superRefine((spec, ctx) => {
+    const cacheIssue = omlxCacheIssue(spec);
     if (spec.resources?.diskBackedGiB !== undefined && spec.resources.residentGiB === undefined) {
       ctx.addIssue({
         code: "custom",
@@ -295,8 +352,12 @@ export const ModelHostSpecSchema = z
         }
       }
     }
-    for (const issue of apiKeyRefIssues(spec)) ctx.addIssue({ code: "custom", ...issue });
-    for (const issue of hostedModelOmlxIssues(spec.engine, spec.hostedModels)) {
+    const issues = [
+      ...apiKeyRefIssues(spec),
+      ...hostedModelOmlxIssues(spec.engine, spec.hostedModels),
+      ...(cacheIssue === undefined ? [] : [cacheIssue]),
+    ];
+    for (const issue of issues) {
       ctx.addIssue({ code: "custom", ...issue });
     }
   });
@@ -485,6 +546,7 @@ export function specForEngine(spec: ModelHostSpec): ModelHostSpecForEngine {
     hostedModels: spec.hostedModels.map(normalizeHostedModel),
     extraArgs: spec.extraArgs,
     timeoutSeconds: spec.timeoutSeconds,
+    ...omitUndefined({ omlxCacheEpoch: spec.omlxCacheEpoch }),
     ...(readiness !== undefined ? { readiness } : {}),
     ...(spec.resources !== undefined
       ? {

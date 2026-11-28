@@ -142,27 +142,35 @@ export function recordMeasuredMemoryCalibration(
   }
 }
 
+/** Preserve the distinction between a successful miss and a store read failure. */
+export function readMeasuredMemoryCalibrationStrict(
+  key: string,
+  path: string,
+): KnownCalibration | null {
+  const db = new Database(path, { readonly: true });
+  try {
+    const row = db
+      .query<CalibrationRow, [string]>(
+        `SELECT calibration_key AS key, measured_at_ms AS measuredAtMs, sample_count AS sampleCount,
+                peak_bytes AS peakBytes, overhead_bytes AS calibrationOverheadBytes,
+                envelope_bytes AS envelopeBytes
+         FROM measured_calibrations WHERE calibration_key = ?`,
+      )
+      .get(key);
+    return row === null
+      ? null
+      : { ...row, known: true, provenance: "measured", attribution: "process" };
+  } finally {
+    db.close();
+  }
+}
+
 export function readMeasuredMemoryCalibration(
   key: string,
   path = measuredCalibrationStorePath(),
 ): KnownCalibration | null {
   try {
-    const db = new Database(path, { readonly: true });
-    try {
-      const row = db
-        .query<CalibrationRow, [string]>(
-          `SELECT calibration_key AS key, measured_at_ms AS measuredAtMs, sample_count AS sampleCount,
-                peak_bytes AS peakBytes, overhead_bytes AS calibrationOverheadBytes,
-                envelope_bytes AS envelopeBytes
-         FROM measured_calibrations WHERE calibration_key = ?`,
-        )
-        .get(key);
-      return row === null
-        ? null
-        : { ...row, known: true, provenance: "measured", attribution: "process" };
-    } finally {
-      db.close();
-    }
+    return readMeasuredMemoryCalibrationStrict(key, path);
   } catch {
     return null;
   }

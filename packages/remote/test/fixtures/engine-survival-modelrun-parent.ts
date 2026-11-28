@@ -11,7 +11,7 @@
  */
 
 import { startServer } from "../../../core/src/server.js";
-import { writeFileSync } from "../../src/safe-fs.js";
+import { atomicWriteFileSync } from "../../src/atomic-write.js";
 
 interface ParentConfig {
   readonly name: string;
@@ -44,7 +44,7 @@ try {
   outcome = { ok: false, pid: null, error: error instanceof Error ? error.message : String(error) };
 }
 
-writeFileSync(config.resultPath, JSON.stringify(outcome));
+atomicWriteFileSync(config.resultPath, JSON.stringify(outcome));
 
 // Hold the loop so the parent lives until the test signals it.
 setInterval(() => undefined, 1 << 30);

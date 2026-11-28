@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 
 import type { ResolvedEnv } from "../types.js";
 import type { EngineName } from "./index.js";
@@ -64,6 +64,7 @@ export function computeModelHostSpecHash(spec: {
   timeoutSeconds: number;
   env?: Record<string, string> | undefined;
   apiKeyRef?: string | undefined;
+  omlxCacheEpoch?: number | undefined;
 }): string {
   return JSON.stringify({
     engine: spec.engine,
@@ -76,6 +77,7 @@ export function computeModelHostSpecHash(spec: {
     timeoutSeconds: spec.timeoutSeconds,
     env: spec.env ?? null,
     ...(spec.apiKeyRef !== undefined ? { apiKeyRef: spec.apiKeyRef } : {}),
+    ...(spec.omlxCacheEpoch !== undefined ? { omlxCacheEpoch: spec.omlxCacheEpoch } : {}),
   });
 }
 
@@ -94,6 +96,7 @@ export function modelhostStateFile(resolved: ResolvedEnv = resolveEnv(), key: Wo
 // anchor for a restarted agent to reap the orphan.
 export interface ModelHostStartingState {
   kind: "ModelHostStarting";
+  slotSavePath?: string | null;
   engine: EngineName;
   pid: number;
   startedAt: string;
@@ -144,12 +147,15 @@ function validateModelHostStarting(
   parsed: Partial<ModelHostStartingState>,
 ): ModelHostStartingState | null {
   if (parsed.kind !== "ModelHostStarting") return null;
-  const { engine, pid, startedAt, specHash, binaryNames, scopeUnit } = parsed;
+  const { engine, pid, startedAt, specHash, binaryNames, scopeUnit, slotSavePath } = parsed;
   if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return null;
   if (!isModelHostEngine(engine)) return null;
   if (typeof startedAt !== "string" || Number.isNaN(Date.parse(startedAt))) return null;
   return {
     kind: "ModelHostStarting",
+    ...(slotSavePath === null || (typeof slotSavePath === "string" && isAbsolute(slotSavePath))
+      ? { slotSavePath }
+      : {}),
     engine,
     pid,
     startedAt,

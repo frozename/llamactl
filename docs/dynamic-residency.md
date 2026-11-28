@@ -12,12 +12,12 @@ On `main`:
 - `residency status`, `residency plan` and `residency apply-profile`.
 - Profile-switch cancel and boot crash recovery.
 - Request admission caps and declared-model projection with readiness gates.
+- Managed launch calibration for supported llama.cpp and Kapitsa inputs.
 
 Library-only (no production wiring):
 
 - The llama.cpp sleep/wake clients and the sleep-status recorder.
 - The managed oMLX residency and the oMLX cache-retention decision.
-- The memory-calibration artifact-revision gate.
 
 ## Residency store and backups
 
@@ -66,6 +66,8 @@ Results are `Unavailable` when there is no registry, plus `UnknownWorkload`, `Dr
 Session handling (affinity and id validation) applies only when `LLAMACTL_RESIDENCY_LEASES` is on AND `LLAMACTL_RESIDENCY_SESSION_IDLE_MS` is set: `maybePublishResidencyLeases` in `packages/remote/src/server/serve.ts` installs the session registry only then, and `proxyOpenAI` acquires a session only when the header id, the session registry and the lease registry are all present. Under that condition the `x-llamactl-session` header carries a session id of at most 128 chars matching `[A-Za-z0-9._:-]`, and an invalid id gets `400` `InvalidSessionId`; otherwise the header is ignored. The first local, non-withdrawn candidate the session is already bound to wins, and that check runs ahead of the ranked hint and the #518 experimental ordering. Peers are never consulted. A bound candidate whose readiness verdict is false leaves selection unchanged, and acquisition then refuses with `409` `AffinityConflict` (not a warming `503`). The node stop fence (`packages/remote/src/residency/stop-fence.ts`) refuses a stop with live sessions as `SessionsActive`, or `SessionsUnknown` when the registry throws, and cancels the drain. Eviction never releases sessions; `llamactl residency force-unload <workload> --reason <text> --yes --node <name>` is the override, and its result lists `releasedSessions` (#729, #722). The human output adds `Forced unload: released <n> session(s): <ids>` only when sessions were released; an agent older than #722 omits `releasedSessions`, so the line is skipped (#750).
 
 To drop one session binding without unloading anything, run `llamactl residency release-session <sessionId> --yes --node <name>` (#755). It sends one `residencyReleaseSession` mutation (`packages/remote/src/router.ts`) to the serving process, which calls `releaseResidencySession` (`packages/remote/src/residency/force-unload.ts`); the release never drains, revokes leases or stops a workload. The id follows the same bounds as the session header: at most 128 chars matching `[A-Za-z0-9._:-]`. An idle binding (refs 0) is dropped. A binding with in-flight requests refuses as `SessionInFlight` unless `--force` is given; a forced release drops only the binding, so the DF-05 leases of its in-flight requests stay held and `LeasesActive` still fences their stop. A dropped entry is deleted from the registry (`releaseSession` in `packages/core/src/residency/sessions.ts`): the late release of a force-released request is a no-op, and the next request carrying that id binds afresh with a new generation. The other refusals are `Unavailable` when no session registry is installed ("no session registry installed; nothing to release") or the registry has no per-session release, `SessionNotFound` for an unknown or idled-out id, and `SessionsUnknown` when the registry throws. Without `--yes` the CLI refuses before contacting the node, and `--node all` is refused. Success prints `Released session <id> (workload <workload>, <n> in-flight request(s))`, with `, forced; their leases stay held` appended inside the parentheses after a forced release; a refusal prints `residency release-session: <reason>: <detail>` and exits 1. The MCP `llamactl.residency.releaseSession` tool (`packages/mcp/src/tools/residency.ts`) sends the same mutation inside the MCP server's own process: it takes `sessionId`, optional `force` and `confirm`, refuses without `confirm: true` before calling the router, returns a refusal as `isError` with the payload, audits each confirmed call, and is not in the Ops Chat dispatch.
+
+The MCP `llamactl.residency.forceUnload` tool (`packages/mcp/src/tools/residency.ts`) sends the same `residencyForceUnload` mutation inside the MCP server's own process and returns `releasedSessions`; its dry run lists the session registry's current bindings for the workload as `wouldReleaseSessions` without releasing them (`[]` when no session registry is installed, `null` with `sessionsDetail` when the registry throws), and the real call still releases nothing when it refuses as `Unavailable`, `UnknownWorkload`, `DrainInProgress` or `AlreadyUnloaded`; `llamactl.residency.releaseSession` is the per-session alternative.
 
 A request whose residency lease admission refuses gets `503` (`model_draining` for `Draining`, `model_not_loaded` for `Unloaded`) and undoes its session acquire through `cancelAcquire` (`packages/core/src/residency/sessions.ts`) instead of releasing it (`prepareSessionAndLease`/`acquireProxyResidencyLease` in `packages/core/src/openaiProxy.ts`). The refused request therefore neither binds a fresh session nor extends an idle binding: a session the refused acquire created is deleted when its refs reach 0, and otherwise the pre-acquire `lastActivityMs` is restored. That makes the post-drain session re-check of a wet switch (#730) defence in depth (#740).
 
@@ -340,7 +342,13 @@ Ordinary declared routes compare the manifest name and aliases with the serving 
 
 For a configured managed cold ModelRun, startup verifies the selected regular-file artifact against its declared SHA-256 and byte ceiling. The admission path checks that the staged file generation remains current. A ready peer declaration also needs the live process generation and serving route. Changing the artifact, target policy or execution-group configuration withdraws that proof.
 
-`MemoryCalibrationKey.artifactRevision` (`packages/core/src/resources/memory.ts`) gates measured envelopes only through an injected hook, and `getCandidateCalibrationKey` has no production caller. For oMLX, the cache identity (modelId, `engineBuild`, `cacheEpoch`, the artifact `sha256` or size/mtime, and settings) lives in `packages/core/src/engines/omlx-cache-identity.ts`, and `decideOmlxCacheRetention` has no production caller. For native load/unload, `createManagedOmlxResidency` has no production caller (`packages/remote/src/residency/omlx-managed.ts`).
+The managed owner can use fresh, matching measured envelopes for supported llama.cpp and Kapitsa launches. See [Recording a measured memory envelope](dynamic-fleet-models.md#recording-a-measured-memory-envelope) for key export, import, and valid input scopes. The standalone ModelHost adapter accepts a structured key with `artifactRevision` (defined in `packages/core/src/resources/memory.ts`). Its injected `getCandidateCalibrationKey` has no production caller. For oMLX, the cache identity (modelId, `engineBuild`, `cacheEpoch`, the artifact `sha256` or size/mtime, and settings) lives in `packages/core/src/engines/omlx-cache-identity.ts`, and `decideOmlxCacheRetention` has no production caller. For native load/unload, `createManagedOmlxResidency` has no production caller (`packages/remote/src/residency/omlx-managed.ts`).
+
+For an oMLX ModelHost, set `spec.omlxCacheEpoch: 0` to opt into workload-local SSD cache reuse. The launcher fingerprints the installed Python environment, the discoverable model and any active local drafts using their observed file generations. It combines those generations with the effective cache settings and epoch. It rechecks the identity after managed admission and before spawn. Keep the model artifact, Python installation and effective settings immutable while the process serves. Apply settings and profile changes through a stop and start by the owner. Live changes through oMLX admin APIs can bypass launch validation.
+
+The matching prefix path is `.omlx/managed-cache/cache-by-identity/<digest>/prefix` under the workload runtime directory. On the first managed launch, existing workload-local settings seed the managed base. oMLX writes its persisted overrides to the managed copy. Removing the epoch selects the legacy base again. Runtime profiles in `model_profiles.json` make the startup identity unavailable because they can select different model settings per request. A model or runtime update, cache format change, or epoch bump chooses a fresh path. Existing directories remain available for rollback and count toward disk use. Configure `extraArgs: ["--slot-save-path", "auto"]` to give supported slot APIs their own directory under the same identity. The launcher records that directory for process recovery. Reopening compatible files does not restore in-flight requests or running sessions.
+
+An opaque or unsupported launcher refuses the cache opt-in. A supported launcher with an unavailable model or cache fingerprint, including an unresolved remote draft, starts with paged SSD cache and slot storage disabled. Keep model, base and cache locations owner-managed when setting the epoch. Hosts without an epoch retain their existing launch behavior. Approve native residency separately after checking the deployed build, exclusive ingress and measured capacity.
 
 ## llama.cpp sleep and wake
 
@@ -368,6 +376,8 @@ These keys come from `ResidencyPolicySchema` (`packages/remote/src/workload/node
 The `effectivePolicy` section of `residencyStatus` lists every residency knob as resolved for `node`, in policy key order, with its value and whether it came from the defaults (defaulted), whether or not a NodeRun exists; it never changes anything. It is built by `effectiveResidencyPolicy` (in `packages/remote/src/residency/procedures.ts`) using `RESIDENCY_POLICY_KNOBS` as the fixed key order and `resolveResidencyPolicy`, the same resolver the admission, planner, evict-gate and ranking paths call. The `knobs` field is an ordered list of `{ name, value, defaulted }` entries, where `defaulted` is true when the NodeRun sets no value or the resolver rejected it, so the value comes from `DEFAULT_RESIDENCY_POLICY`; a node with no NodeRun reports `safetyMarginRatio` 0.75 and every other knob 0 (today's behaviour), and unlike `policy` the section is reported whether or not a NodeRun exists. `llamactl residency status --node <name>` prints it as an `Effective:` line after `Policy:` (`pushEffectivePolicyLine` in `packages/cli/src/commands/residency.ts`): `Effective:  idleEvictSeconds <n>, minResidencySeconds <n>, switchCooldownSeconds <n>, safetyMarginRatio <r>, residentPreference <p>, coldLoadPenaltyMs <n>`, in the order the agent sends, each defaulted knob suffixed ` (default)`; a payload without the section (an older agent) prints no `Effective:` line. (Part of #519)
 
 `llamactl describe noderun <name>` shows the NodeRun's knobs without a reachable agent. It prints a `Budget:` line: `<n> GiB (spec.budget.memoryGiB)` for an explicit budget, which overrides `safetyMarginRatio`, otherwise `computed from node memory x safetyMarginRatio`. It prints a `Residency:` line with every knob as resolved by `effectiveResidencyPolicy` and formatted by `formatResidencyKnobs`, the same formatter as the residency status `Effective:` line. Defaulted or resolver-rejected knobs are suffixed ` (default)`. `--json` adds an `effectivePolicy` field next to `manifest` and `liveInfra`. (Part of #519)
+
+NodeRun `spec.budget` and `spec.residency` are keyed by `metadata.name`, not `spec.node`. `llamactl apply -f` refuses a NodeRun that sets either one while `metadata.name` differs from `spec.node`, printing `apply: NodeRun manifest rejected:` with the `nodeRunKnobScopeMismatch` text. An infra-only NodeRun (for example `<node>-infra`) is unaffected. `llamactl describe noderun <name>` prints a `Warning:` line, and `--json` adds `knobScopeWarning`, for a mismatched manifest already on disk. Nothing else is refused at load. (Part of #519)
 
 `llamactl describe node <name>` reads the live rollup from the `nodeBudget` procedure and suffixes its `Budget:` line with where that budget came from. `nodeBudget` returns `budgetSource` (`noderun` or `computed`) and `safetyMarginRatio` as `{ value, defaulted }`, both resolved by `effectiveResidencyPolicy`, and `renderNodeBudget` (`packages/cli/src/commands/workload.ts`) renders them through `formatNodeBudgetSource` (`packages/cli/src/commands/noderun-helpers.ts`): `(spec.budget.memoryGiB)` when the NodeRun sets an explicit budget, otherwise `(computed from node memory x safetyMarginRatio <r>)`, where the ratio is formatted by `formatResidencyKnobs` so it matches `llamactl describe noderun`, default marker included — a resolver-supplied ratio carries ` (default)`. A computed budget is the memory of the process that answers the query times that ratio, and because `describe node` asks the named node's agent, that is the node's own RAM only while its agent answers. A payload from an older agent carries no `budgetSource`, and the line prints unchanged. The `llamactl.node.budget` MCP tool reports the same two fields (Part of #519).
 
@@ -579,6 +589,92 @@ Use the following comparison units for each scenario and window. Record sample c
 | Engine telemetry        | Decode and prefill tokens/second, slot occupancy and deferral from the #249 collector, with counter resets identified per window. |
 
 Validate the Book interactive and maintenance scenarios against the consumer's existing quorum rules. Check the required role sets, the protected large-node executor, the fixed embedding identity and deferred background judging under request overlap and failure. Record consumer-visible completed tasks and the observed state of each required role. Preserve the configured models, embedding space and consumer policy.
+
+### Isolated process preflight and smoke probe
+
+Use the source checkout at the candidate revision. Run the preflight in the
+approved window. It evaluates managed physical capacity and host
+reserve before opening or hashing either artifact. This isolated probe does
+not read the deployed owner's reservation ledger. Exit 2 reports a blocked
+or invalid plan. A successful preflight reports `NOT_RUN` and opens no
+engine socket.
+
+By default the probe requires zero occupied swap. A private plan can set
+`maxSwapUsedGiB` to an approved finite ceiling for already-occupied swap.
+With that option, preflight and execution require a fresh one-second window
+with no swap I/O. The run settles and fails if occupied swap increases above
+its initial reading, swap I/O resumes, or the monitor loses its evidence.
+The option applies only to this isolated process probe. The physical
+headroom, pressure, and host reserve checks still apply.
+
+```sh
+umask 077
+PROBE=packages/remote/src/residency/hardware-process-probe.ts
+bun "$PROBE" --preflight private-plan.json > preflight.json
+bun "$PROBE" --execute private-plan.json > process-smoke.json
+```
+
+Use absolute paths and lowercase SHA-256 hex digests in the private plan. A
+llama.cpp example uses a small, pinned standalone GGUF.
+
+```json
+{
+  "backend": "llamacpp",
+  "binary": "/absolute/path/to/llama-server",
+  "binarySha256": "REPLACE_WITH_ENGINE_SHA256",
+  "artifact": "/absolute/path/to/model.gguf",
+  "artifactSha256": "REPLACE_WITH_MODEL_SHA256",
+  "model": "qualification-fixture",
+  "contextTokens": 4096,
+  "requiredHeadroomGiB": 6,
+  "readinessTimeoutMs": 60000,
+  "requestTimeoutMs": 30000
+}
+```
+
+The probe builds the supported engine arguments itself. It binds an ephemeral
+loopback listener, provides the pinned model path, limits concurrency to one
+and puts engine state in a private temporary directory. Use `llamacpp` with
+a standalone GGUF or a whole GGUF directory plus `ggufFile` naming the first
+shard. Use `omlx` with a directory containing one model subdirectory named
+by `model`. Use `kapitsa` with the exact preconverted model directory.
+The probe uses the oMLX build's default context. Set
+`requiredHeadroomGiB` to a conservative bound for the approved model and
+settings. Pin the interpreter and installed dependency manifest separately
+when the executable is a launcher. Use trusted staged assets that operators
+keep immutable during the run. The probe verifies contents and file
+generations, and the engine opens the verified paths at launch. The JSON
+report omits file paths, process arguments, request text and returned content.
+
+A directory artifact is pinned by the SHA-256 of the UTF-8 JSON array of
+`[relativePath, sha256Hex]` pairs. Files are visited in lexical order within
+each directory, depth first. Relative paths use forward slashes. Use regular
+files and directories, and materialize symlinked snapshots in a separate
+staging directory. Hashing may warm the filesystem cache. The first request
+sample measures a fresh process. Measure cache-hit behavior separately.
+
+Execution rechecks capacity and the staged file generations just before
+launch. It requires `lsof` to match the isolated listener to the child PID
+and uses direct loopback HTTP for inventory and chat. It records the first
+visible content time and terminal latency for one request and three repeats,
+alongside output matches, host capacity and available swap counters.
+Unsafe pressure, swap outside the plan's limits, or unavailable capacity
+aborts the smoke.
+The capacity check requires exclusive use of the hardware smoke probe on the
+host and an operator-approved window for other workloads.
+
+The result includes process group and listener release evidence. Exit 1
+records a failed assertion or cleanup. Exit 0 records a passing process
+smoke. If runtime release is unresolved after a normal interruption or an
+abnormal exit, the directory `/tmp/llamactl-residency-hardware-smoke.lock`
+blocks another run. Its private `run.json` records the supervisor PID and
+adds the listener, workspace and process group as they become known. An
+early crash can leave a partial or empty receipt. Verify exact process
+identity from current observations before signaling anything. Remove the
+lock and workspace only after proving the supervisor and engine group are
+gone and the listener is free. Keep the lock if release remains uncertain.
+Native unload and wake, sustained pressure, workload correctness and
+activation use the broader qualification gates above.
 
 ### Evidence manifest example
 

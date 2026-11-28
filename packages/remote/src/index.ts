@@ -194,7 +194,9 @@ export {
   runDirectResidencyStop,
 } from "./residency/direct-lifecycle.js";
 export {
+  RESIDENCY_CALIBRATION_KEY_TOOL,
   RESIDENCY_CONTROL_TOOL,
+  residencyCalibrationKeyInput,
   residencyControlInput,
   type ResidencyControlResult,
 } from "./residency/managed-operator-control.js";

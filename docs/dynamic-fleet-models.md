@@ -265,22 +265,56 @@ collected on the local host into `measured-calibrations.sqlite` under the
 llamactl state directory (`DEV_STORAGE` or `~/.llamactl`). The report has
 three fields.
 
-- `key` contains `artifactRevision`, `engine`, `engineBuild`, `ctx`,
+- Use the owner-provided `key` below for managed launches. A structured
+  `key` contains `artifactRevision`, `engine`, `engineBuild`, `ctx`,
   `kvType`, `speculative`, `prefillBatch`, and `concurrency`. Set
   `speculative.mode` to `none`, `mtp`, or `draft`, with the draft
   `artifactRevision` for `draft`.
 - `samples` contains `status`, `source`, `observedAtMs`, `processBytes`,
   `processDeviceBytes`, and `sharedDeviceBytes` for each observation. Use
-  epoch milliseconds for sample time and separate host-process bytes from
-  attributable device bytes. Use `null` for an unavailable byte reading.
-  Shared-device readings never count toward a model's allocation.
+  epoch milliseconds for sample time and use `null` for unavailable readings.
+  Optional `deviceAccounting` describes the measured coverage. Use `disjoint`
+  when `processBytes` excludes the attributed device allocation. The importer
+  adds the two readings in this mode and uses it when the field is omitted.
+  Use `included` for a process total that already covers its device
+  allocation. A separate device reading can accompany the total for audit.
+  Use `unknown` when coverage or overlap is unverified. The importer refuses
+  such a sample. Shared-device readings never contribute to the model's
+  measured allocation.
 - `options` contains `minSamples` and `overheadFraction`.
 
-The existing `admit measure` RSS cache is separate. The ModelHost admission
-adapter can read the calibration store when its caller supplies the exact
-key and a NodeRun residency policy. It uses only a fresh match for the local
-node. Automatic launch identity discovery and sample collection remain
-separate work.
+For managed admission, obtain the key from the worker that owns the
+workload. The command returns the key, declared charge, charge for the next
+managed launch, and whether fresh evidence matched.
+
+```sh
+llamactl --node <owner> admit calibration-key <workload>
+```
+
+MCP clients can call `llamactl.residency.calibration-key` with `node` and `workload`.
+
+Use the returned `key` object in the report and import it locally on that
+same worker. Measure a launch of the inputs described by the key and
+check the key again afterward. A changed key requires a fresh measurement. The key fingerprints the
+owner's ID, assembled engine arguments and environment plus observed local
+generations of the executable, weights, and supported auxiliary inputs.
+This includes the configured context, KV types, prefill, concurrency,
+and recognized draft, MTP and adapter paths. Select the native engine
+executable directly. Keep the qualified build and its runtime libraries
+immutable during a calibration.
+
+The managed key currently covers local llama.cpp ModelRun and ModelHost
+launches and Kapitsa ModelHosts with supported arguments. Unsupported
+flags, dependency layouts, or engine settings leave the key unavailable.
+The owner rechecks matching evidence during apply, profile preflight and
+launch. Fresh evidence can raise the declared charge. An invalid or
+expired report leaves the declared charge in effect. An unreadable store
+refuses admission for a launch with a supported key. The physical
+capacity gate and host reserve apply to either charge.
+
+The structured key format remains available for reports consumed by
+operators and callers supplying their own verified key resolver. The
+`admit measure` RSS cache remains separate.
 
 ### Residency lifecycle states
 
@@ -456,7 +490,12 @@ falls back to the fastest degraded row only when the machine has no such
 row, and the `promote-fastest-vision-model` runbook ranks a degraded rel
 behind every healthy rel, promoting a degraded rel only when every eligible
 rel is degraded. A degraded rel is demoted, not excluded: it stays eligible,
-unlike an experimental one.
+unlike an experimental one. Across nodes, a fusion node whose `modelId` fell
+back to a degraded rel is advertised at priority 9
+(`DEGRADED_NODE_PRIORITY`), behind every healthy bench band (1 to 8) and the
+unbenched default 5 and ahead of the cloud provider default 10, so the
+`preferLowerPriority` profiles prefer any node serving a healthy model; every
+degraded node shares that priority.
 
 `/v1/models?include=declared` reads the same stages: each `unavailable`
 entry's `qualification.stage` is the routing stage from
@@ -850,7 +889,24 @@ port):
 Steps:
 
 1. Get operator approval for the window.
-2. Record the current state with `llamactl get workloads`.
+2. Record the current state with `llamactl get workloads` and
+   `llamactl residency status --node <node>`. Its `Lifecycle:` block lists
+   the serving process's `residency_states` rows, one
+   `<model>  <state>  group <group>  version <n>` line each, and its
+   `Exclusive:` line reads `no violations` or `violation in <group>:
+<members>` (see
+   [dynamic-residency.md](dynamic-residency.md#status-plan-and-apply-profile)).
+   After production is stopped in step 3 and before step 6, run it again
+   and open the window only when no other `z13-large-gpu` row occupies the
+   group: in step 6 another `loading` or `warming` row, or a `ready` row
+   whose workload is not proven down, refuses the start with
+   `ExclusiveGroupOccupied`. A node with no residency store prints
+   `Lifecycle:  0 workload(s) (scope: serving-process)` and `Exclusive:  no
+violations`; an unreadable store prints `Lifecycle:  unavailable (store
+unreadable; scope: serving-process)` or `Lifecycle:  unavailable
+(lifecycle rows unreadable; scope: serving-process)` and no
+   `Exclusive:` line, and an agent that predates the section prints no
+   `Lifecycle:` line.
 3. Stop production: `llamactl disable <production-workload>` (the
    node-local production workload name; it is not in this repo).
    Confirm it reads Stopped in `llamactl get workloads`. With the lease
@@ -912,7 +968,31 @@ held by <member> in state <state>`. On the agent host the window's
    readiness. A disable is never blocked by this bookkeeping and at
    worst logs "not recorded" (#741). The stop fence is separate from
    this bookkeeping and can refuse the exit-step disable the same way
-   (see step 3).
+   (see step 3). After `llamactl disable <name>` and before
+   `llamactl enable <production-workload>`, run
+   `llamactl residency status --node <node>` again. A confirmed stop walks
+   the window workload's row `ready` -> `draining` -> `unloading` ->
+   `downloaded`, which frees `z13-large-gpu`, and a stop that throws walks
+   it to `failed`, which does not occupy the group either. An unconfirmed
+   stop (the process may still be alive) is never recorded: the agent logs
+   `[residency] lifecycle <name> stop not recorded: unconfirmed stop
+(process may be alive)` and the row stays occupying, so a later
+   same-group start is refused with `ExclusiveGroupOccupied` until the
+   workload is proven down, and an `eval run` without `--url` keeps
+   refusing while the row occupies. With the lease registry on
+   (`LLAMACTL_RESIDENCY_LEASES`), `llamactl residency force-unload <name>
+--reason <text> --yes --node <node>` is the override: it runs the same
+   stop, so it is confirmed only once the engine process is verified gone,
+   and a confirmed force-unload walks the row to `downloaded` while an
+   unconfirmed one keeps it occupying. Without the lease registry,
+   force-unload exits with `residency force-unload: Unavailable: no
+residency lease registry installed; nothing to fence`, stops nothing
+   and leaves the row as it is. Close the window when `Exclusive:` reads
+   `no violations` and the window workload's row is not `loading`,
+   `warming` or `ready`; a `ready` row left by an unconfirmed stop can be
+   closed over only once its engine process is proven down, since it then
+   no longer refuses a direct start but still refuses an `eval run` without
+   `--url`.
 
 Never run two group members at once, given the two-process race in
 the guard.

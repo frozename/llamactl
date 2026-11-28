@@ -7,6 +7,11 @@ import {
   withManagedRuntimeMutation,
 } from "@llamactl/core/residency/managed-runtime";
 import { workloadRuntimeDir } from "@llamactl/core/workloadRuntime";
+import {
+  measuredCalibrationStorePath,
+  recordMeasuredMemoryCalibration,
+} from "@llamactl/fleet-supervisor/measured-memory";
+import { Database } from "bun:sqlite";
 import { expect, mock, test } from "bun:test";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -19,7 +24,15 @@ import {
   type ManagedCapacityAudit,
   openNodeManagedAdmission,
 } from "../../src/residency/target-admission-policy.js";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
+import { router } from "../../src/router.js";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "../../src/safe-fs.js";
 import { pinModelHostStartup } from "../../src/server/modelhost.js";
 import { modelRunStartInvocation } from "../../src/workload/apply.js";
 import { parseModelHost, saveModelHost } from "../../src/workload/modelhost-store.js";
@@ -154,6 +167,7 @@ test("ModelRun uses the target budget, which outranks fresh capacity and rejects
     LOCAL_AI_RUNTIME_DIR: runtimeDir,
     LLAMA_CPP_MODELS: modelsDir,
     LLAMA_CPP_USE_TUNED_ARGS: "false",
+    DEV_STORAGE: dir,
   };
   const before = new Map(Object.keys(env).map((name) => [name, process.env[name]] as const));
   Object.assign(process.env, env);
@@ -192,6 +206,14 @@ spec:
       launch,
     };
     const signal = new AbortController().signal;
+    const compiledKey = policy.admission.readCalibration?.(workload)?.key;
+    expect(compiledKey?.managedLaunchDigest).toMatch(/^[0-9a-f]{64}$/);
+    if (compiledKey === undefined) throw new Error("missing fixture key");
+    const changedRun = structuredClone(manifest);
+    changedRun.spec.extraArgs.push("--ctx-size", "32768");
+    saveWorkload(changedRun, dir);
+    expect(policy.admission.readCalibration?.(workload)?.key).not.toEqual(compiledKey);
+    saveWorkload(manifest, dir);
     const refusal = { ran: false as const, detail: "fixture did not start" };
     const callback = mock(() => Promise.resolve(refusal));
     for (const unverified of [
@@ -207,6 +229,29 @@ spec:
     expect(callback).not.toHaveBeenCalled();
     sample = { ...sample, nodeName: alias, observedAtMs: nowMs };
     expect(await policy.admission.run(request, signal, callback)).toEqual(refusal);
+    expect(callback).toHaveBeenCalledTimes(1);
+    expect(
+      recordMeasuredMemoryCalibration(
+        {
+          key: compiledKey,
+          samples: [
+            {
+              status: "ok",
+              source: "fixture",
+              observedAtMs: nowMs,
+              processBytes: 60 * 1024 ** 3,
+              processDeviceBytes: 0,
+              sharedDeviceBytes: null,
+            },
+          ],
+          options: { minSamples: 1, overheadFraction: 0 },
+        },
+        measuredCalibrationStorePath(),
+      ).ok,
+    ).toBe(true);
+    const calibrated = await policy.admission.run(request, signal, callback);
+    expect(calibrated.ran).toBe(false);
+    if (!calibrated.ran) expect(calibrated.detail).toContain("BudgetExceeded");
     expect(callback).toHaveBeenCalledTimes(1);
 
     saveNodeRun(
@@ -670,4 +715,203 @@ test("a verified victim release changes the ledger while another sample still co
     },
     { state: (name) => (name === "verified-victim" ? hold : "clear"), begin: () => undefined },
   );
+});
+
+test("the owner charges exact calibrated inputs at apply, profile, and launch and ignores stale evidence", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "llamactl-calibrated-owner-"));
+  const old = {
+    LOCAL_AI_RUNTIME_DIR: process.env["LOCAL_AI_RUNTIME_DIR"],
+    LLAMACTL_MODELS_DIR: process.env["LLAMACTL_MODELS_DIR"],
+    LLAMA_CPP_MODELS: process.env["LLAMA_CPP_MODELS"],
+    DEV_STORAGE: process.env["DEV_STORAGE"],
+  };
+  process.env["LOCAL_AI_RUNTIME_DIR"] = join(dir, "runtime");
+  process.env["LLAMACTL_MODELS_DIR"] = dir;
+  process.env["LLAMA_CPP_MODELS"] = dir;
+  process.env["DEV_STORAGE"] = dir;
+  let policy: Awaited<ReturnType<typeof openNodeManagedAdmission>> | undefined;
+  let clock = Date.now() - 120_000;
+  let changeAtSpawn = false;
+  try {
+    const manifest = modelHostFixture(dir);
+    manifest.spec.binary = join(dir, "fixture-engine");
+    manifest.spec.extraArgs = ["-c", "8192", "--mtp-head", join(dir, "head.gguf")];
+    saveModelHost(manifest, dir);
+    copyFileSync("/usr/bin/false", join(dir, "fixture-engine"));
+    for (const file of ["exact.gguf", "head.gguf"]) {
+      writeFileSync(join(dir, file), file);
+    }
+    policy = await openNodeManagedAdmission({
+      nodeName: node,
+      workloadsDir: dir,
+      nowMs: () => clock,
+      readCapacity: () => ({ ...localCapacity(51), observedAtMs: clock }),
+      onCapacityAudit(entry) {
+        if (changeAtSpawn && entry.phase === "spawn") {
+          writeFileSync(join(dir, "head.gguf"), "changed during final capacity sample");
+          changeAtSpawn = false;
+        }
+      },
+    });
+    const lookup = policy.admission.readCalibration;
+    const before = lookup?.(workload);
+    expect(before).toMatchObject({ declaredGiB: 16, allocationGiB: 16, measured: false });
+    if (before === undefined) throw new Error("missing fixture key");
+    const initialKey = before.key;
+    const caller = router.createCaller({ managedLaunchAdmission: policy.admission });
+    expect(await caller.residencyCalibrationKey({ node, workload })).toEqual(before);
+    expect(
+      await caller.operatorRunTool({
+        name: "llamactl.residency.calibration-key",
+        arguments: { node, workload },
+      }),
+    ).toMatchObject({ ok: true, result: before });
+    const unowned = await caller
+      .residencyCalibrationKey({ node: "wrong-node", workload })
+      .catch((error: unknown) => error);
+    expect(unowned).toHaveProperty("message", "ManagedOwnerRequired");
+    const record = recordMeasuredMemoryCalibration;
+    expect(
+      record(
+        {
+          key: before.key,
+          samples: [
+            {
+              status: "ok",
+              source: "fixture",
+              observedAtMs: clock,
+              processBytes: 50 * GiB,
+              processDeviceBytes: 0,
+              sharedDeviceBytes: null,
+            },
+          ],
+          options: { minSamples: 1, overheadFraction: 0 },
+        },
+        measuredCalibrationStorePath(),
+      ).ok,
+    ).toBe(true);
+    expect(lookup?.(workload)).toMatchObject({
+      declaredGiB: 16,
+      allocationGiB: 50,
+      measured: true,
+    });
+    const smallerDeclaration = structuredClone(manifest);
+    smallerDeclaration.spec.resources = { expectedMemoryGiB: 12 };
+    saveModelHost(smallerDeclaration, dir);
+    expect(lookup?.(workload)).toMatchObject({
+      key: before.key,
+      declaredGiB: 12,
+      allocationGiB: 50,
+      measured: true,
+    });
+    saveModelHost(manifest, dir);
+    const apply = await policy.admission
+      .withDesiredManifest?.(manifest, () => Promise.resolve("applied"))
+      .catch((error: unknown) => error);
+    expect(apply).toBeInstanceOf(Error);
+    expect((apply as Error).message).toContain("Budget");
+    expect(
+      policy.admission.preflightProfile?.({ victims: [], replacements: [workload], retained: [] }),
+    ).toContain("Budget");
+    const pinned = pinModelHostStartup(manifest);
+    const start = mock(() => Promise.resolve({ ran: false as const, detail: "fixture turn" }));
+    const request = {
+      kind: "ModelHost" as const,
+      runtimeKey: workload,
+      launch: { manifest },
+      effectiveSpecDigest: pinned.effectiveSpecDigest,
+      effectiveLaunch: pinned.effectiveLaunch,
+    };
+    const signal = new AbortController().signal;
+    const denied = await policy.admission.run(request, signal, start);
+    expect(denied.ran).toBe(false);
+    if (!denied.ran) expect(denied.detail).toContain("Budget");
+    expect(start).not.toHaveBeenCalled();
+    const writer = new Database(measuredCalibrationStorePath());
+    writer.run("BEGIN EXCLUSIVE");
+    try {
+      const blocked = await policy.admission.run(request, signal, start);
+      expect(blocked).toEqual({ ran: false, detail: "ManagedCalibrationStoreUnavailable" });
+      expect(start).not.toHaveBeenCalled();
+      expect(
+        policy.admission.preflightProfile?.({
+          victims: [],
+          replacements: [workload],
+          retained: [],
+        }),
+      ).toContain("ManagedCalibrationStoreUnavailable");
+      const blockedApply = await policy.admission
+        .withDesiredManifest?.(manifest, () => Promise.resolve("applied"))
+        .catch((error: unknown) => error);
+      expect(blockedApply).toHaveProperty("message", "ManagedCalibrationStoreUnavailable");
+    } finally {
+      writer.run("ROLLBACK");
+      writer.close();
+    }
+    clock += 25 * 60 * 60 * 1000;
+    expect(lookup?.(workload)).toMatchObject({ allocationGiB: 16, measured: false });
+    expect(await policy.admission.run(request, signal, start)).toEqual({
+      ran: false,
+      detail: "fixture turn",
+    });
+    expect(start).toHaveBeenCalledTimes(1);
+    function recordFloor(calibrationKey: typeof initialKey): void {
+      clock = Date.now();
+      expect(
+        record(
+          {
+            key: calibrationKey,
+            samples: [
+              {
+                status: "ok",
+                source: "fixture",
+                observedAtMs: clock,
+                processBytes: 20 * GiB,
+                processDeviceBytes: 0,
+                sharedDeviceBytes: null,
+              },
+            ],
+            options: { minSamples: 1, overheadFraction: 0 },
+          },
+          measuredCalibrationStorePath(),
+        ).ok,
+      ).toBe(true);
+    }
+    recordFloor(initialKey);
+    const result = await policy.admission.run(request, signal, (_ready, checkSpawn) => {
+      writeFileSync(join(dir, "head.gguf"), "changed head generation");
+      const changed = lookup?.(workload);
+      expect(changed?.key).not.toEqual(initialKey);
+      if (changed === undefined) throw new Error("missing changed generation");
+      recordFloor(changed.key);
+      expect(lookup?.(workload)?.allocationGiB).toBe(20);
+      return Promise.resolve({
+        ran: false as const,
+        detail: checkSpawn?.() ?? "fixture did not spawn",
+      });
+    });
+    expect(result).toEqual({ ran: false, detail: "ManagedSpecChanged" });
+    expect(policy.authority.snapshot()).toEqual([]);
+    const dispatched = mock(() => undefined);
+    const swappedDuringSampling = await policy.admission.run(
+      request,
+      signal,
+      (_ready, checkSpawn) => {
+        changeAtSpawn = true;
+        const refusal = checkSpawn?.();
+        if (refusal === undefined) dispatched();
+        return Promise.resolve({ ran: false as const, detail: refusal ?? "unverified dispatch" });
+      },
+    );
+    expect(swappedDuringSampling).toEqual({ ran: false, detail: "ManagedSpecChanged" });
+    expect(dispatched).not.toHaveBeenCalled();
+    expect(policy.authority.snapshot()).toEqual([]);
+  } finally {
+    policy?.authority.close();
+    for (const [name, value] of Object.entries(old)) {
+      if (value === undefined) Reflect.deleteProperty(process.env, name);
+      else process.env[name] = value;
+    }
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

@@ -302,6 +302,7 @@ describe("@llamactl/mcp read surface", () => {
       "llamactl.rag.store",
       "llamactl.reconciler.kick",
       "llamactl.residency.applyProfile",
+      "llamactl.residency.calibration-key",
       "llamactl.residency.cancelOperation",
       "llamactl.residency.control",
       "llamactl.residency.forceUnload",
@@ -493,6 +494,21 @@ describe("@llamactl/mcp read surface", () => {
     expect(row).toBeDefined();
     expect(row?.endpoint).toBe("127.0.0.1:8181");
     expect(row?.phase).toBe("Pending");
+  });
+
+  test("calibration key is read-only and requires a configured authenticated owner", async () => {
+    const { client } = await connected();
+    const name = "llamactl.residency.calibration-key";
+    const tools = await client.listTools();
+    expect(tools.tools.find((tool) => tool.name === name)?.annotations?.readOnlyHint).toBe(true);
+    const result = await client.callTool({
+      name,
+      arguments: { node: "unknown-owner", workload: "fixture" },
+    });
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(textOf(result)) as unknown).toEqual({
+      reason: "ManagedCalibrationOwnerUnavailable",
+    });
   });
 
   test("llamactl.residency.status projects residencyStatus", async () => {
@@ -1233,7 +1249,7 @@ describe("@llamactl/mcp M.1 pipeline-tool pickup", () => {
     const llamactlTools = list.tools
       .map((t) => t.name)
       .filter((n) => n.startsWith("llamactl.") && !n.startsWith("llamactl.pipeline."));
-    expect(llamactlTools.length).toBe(62);
+    expect(llamactlTools.length).toBe(63);
   });
 });
 

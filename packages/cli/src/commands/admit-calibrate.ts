@@ -13,20 +13,23 @@ Use evidence from this host with an exact artifact, engine build and runtime key
 The report must contain key, samples and options. RSS-only or shared-device-only reports cannot qualify.`;
 
 const ReportSchema = z.strictObject({
-  key: z.strictObject({
-    artifactRevision: z.string(),
-    engine: z.string(),
-    engineBuild: z.string(),
-    ctx: z.number(),
-    kvType: z.string(),
-    speculative: z.discriminatedUnion("mode", [
-      z.strictObject({ mode: z.literal("none") }),
-      z.strictObject({ mode: z.literal("mtp") }),
-      z.strictObject({ mode: z.literal("draft"), artifactRevision: z.string() }),
-    ]),
-    prefillBatch: z.number(),
-    concurrency: z.number(),
-  }),
+  key: z.union([
+    z.strictObject({
+      artifactRevision: z.string(),
+      engine: z.string(),
+      engineBuild: z.string(),
+      ctx: z.number(),
+      kvType: z.string(),
+      speculative: z.discriminatedUnion("mode", [
+        z.strictObject({ mode: z.literal("none") }),
+        z.strictObject({ mode: z.literal("mtp") }),
+        z.strictObject({ mode: z.literal("draft"), artifactRevision: z.string() }),
+      ]),
+      prefillBatch: z.number(),
+      concurrency: z.number(),
+    }),
+    z.strictObject({ managedLaunchDigest: z.string().regex(/^[0-9a-f]{64}$/) }),
+  ]),
   samples: z.array(
     z.strictObject({
       status: z.enum(["ok", "unavailable", "denied", "unsupported"]),
@@ -35,6 +38,7 @@ const ReportSchema = z.strictObject({
       processBytes: z.number().nullable(),
       processDeviceBytes: z.number().nullable(),
       sharedDeviceBytes: z.number().nullable(),
+      deviceAccounting: z.enum(["disjoint", "included", "unknown"]).optional(),
     }),
   ),
   options: z.strictObject({ minSamples: z.number(), overheadFraction: z.number() }),

@@ -4,10 +4,12 @@ import { workloadStore } from "@llamactl/remote";
 import { spawnSync } from "node:child_process";
 import yaml from "yaml";
 
+import { getAuthenticatedAgentClientByName, getGlobals } from "../dispatcher.js";
 import { isRecord } from "../runtime-shape.js";
 import { readFileSync } from "../safe-fs.js";
 import { runAdmitCalibrate } from "./admit-calibrate.js";
 import { runAdmitMeasure } from "./admit-measure.js";
+import { withNodeQueryDeadline } from "./workload.js";
 
 function requireFinite(value: number, flag: string): number {
   if (!Number.isFinite(value) || value < 0) {
@@ -21,6 +23,7 @@ const USAGE = `llamactl admit — dry-run predictive admission check for a workl
 USAGE:
   llamactl admit <workload-name-or-yaml-path> [flags]
   llamactl admit calibrate <local-evidence.json>
+  llamactl --node <owner> admit calibration-key <workload>
 
 When given a workload name, reads templates/workloads/<name>.yaml.
 When given a path ending in .yaml, reads that file directly.
@@ -227,6 +230,27 @@ function buildAdmitModelKey(manifest: AdmitManifest): string | undefined {
   return undefined;
 }
 
+async function runCalibrationKey(args: string[]): Promise<number> {
+  const [workload] = args;
+  const globals = getGlobals();
+  const node = globals.nodeName;
+  if (args.length !== 1 || !workload || !node || node === "all") {
+    process.stderr.write("Usage: llamactl --node <owner> admit calibration-key <workload>\n");
+    return 2;
+  }
+  try {
+    const client = getAuthenticatedAgentClientByName(node, globals);
+    const result = await withNodeQueryDeadline(node, () =>
+      client.residencyCalibrationKey.query({ node, workload }),
+    );
+    process.stdout.write(JSON.stringify(result) + "\n");
+    return 0;
+  } catch (error) {
+    process.stderr.write("admit calibration-key: " + (error as Error).message + "\n");
+    return 1;
+  }
+}
+
 export async function runAdmit(args: string[]): Promise<number> {
   const [target, ...flags] = args;
   switch (target) {
@@ -234,6 +258,8 @@ export async function runAdmit(args: string[]): Promise<number> {
       return await runAdmitMeasure(flags);
     case "calibrate":
       return runAdmitCalibrate(flags);
+    case "calibration-key":
+      return await runCalibrationKey(flags);
     case undefined:
     case "--help":
     case "-h":

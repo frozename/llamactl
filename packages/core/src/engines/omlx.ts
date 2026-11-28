@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { basename, join, resolve, sep } from "node:path";
 
 import type {
@@ -14,6 +15,8 @@ import { resolveEnv } from "../env.js";
 import { atomicWriteFile } from "../fsAtomic.js";
 import { defaultOmlxMemoryGiBForProfile } from "../profile.js";
 import {
+  constants,
+  copyFileSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -73,6 +76,28 @@ function omxBasePath(env: EngineBootEnv, workloadName: string): string {
   return join(ensureWorkloadRuntimeDir(resolved, { name: workloadName }), ".omlx");
 }
 
+function cacheModeBase(base: string, cacheEpoch: number | undefined): string {
+  return cacheEpoch === undefined ? base : join(base, "managed-cache");
+}
+
+function seedManagedSettings(legacy: string, managed: string): void {
+  mkdirSync(managed, { recursive: true, mode: 0o700 });
+  if (!lstatSync(managed).isDirectory())
+    throw new Error("oMLX managed cache base must be a directory");
+  for (const name of ["settings.json", OMLX_MODEL_SETTINGS_FILE]) {
+    try {
+      copyFileSync(join(legacy, name), join(managed, name), constants.COPYFILE_EXCL);
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        !("code" in error) ||
+        (error.code !== "ENOENT" && error.code !== "EEXIST")
+      )
+        throw error;
+    }
+  }
+}
+
 // Per-workload isolated model dir: contains a single symlink pointing at the
 // declared hostedModel. Used as oMLX's `--model-dir` so each ModelHost process
 // only sees its own model on the Metal command queue.
@@ -87,8 +112,10 @@ function omxBasePath(env: EngineBootEnv, workloadName: string): string {
 //
 // The schema already constrains hostedModels to exactly one entry, so this
 // matches the intended single-model-per-ModelHost contract.
-function isolatedModelDir(basePath: string): string {
-  return join(basePath, "models");
+function isolatedModelDir(basePath: string, managedRel?: string): string {
+  if (managedRel === undefined) return join(basePath, "models");
+  const key = createHash("sha256").update(managedRel).digest("hex");
+  return join(basePath, "cache-models", key);
 }
 
 function ensureIsolatedModelSymlink(
@@ -205,7 +232,9 @@ export const omlxEngine: EngineAdapter = {
     const workloadName = env.workloadName;
     const managesSettings = usesWorkloadSettings(hostedModel, spec.extraArgs, workloadName);
     if (workloadName) {
-      const basePath = omxBasePath(env, workloadName);
+      const legacyBase = omxBasePath(env, workloadName);
+      const basePath = cacheModeBase(legacyBase, spec.omlxCacheEpoch);
+      if (basePath !== legacyBase) seedManagedSettings(legacyBase, basePath);
       const modelsDir = env.LLAMACTL_MODELS_DIR ?? env.LLAMA_CPP_MODELS;
       if (!modelsDir) {
         throw new Error(
@@ -214,7 +243,11 @@ export const omlxEngine: EngineAdapter = {
       }
       const path = join(basePath, OMLX_MODEL_SETTINGS_FILE);
       const settings = managesSettings ? prepareModelSettings(path, hostedModel) : undefined;
-      ensureIsolatedModelSymlink(isolatedModelDir(basePath), modelsDir, hostedModel.rel);
+      const modelDir = isolatedModelDir(
+        basePath,
+        spec.omlxCacheEpoch === undefined ? undefined : hostedModel.rel,
+      );
+      ensureIsolatedModelSymlink(modelDir, modelsDir, hostedModel.rel);
       if (settings !== undefined) atomicWriteFile(path, settings);
     }
   },
@@ -241,8 +274,16 @@ export const omlxEngine: EngineAdapter = {
     // a unit test invoking buildBootCommand without going through the
     // workload runtime) we fall back to the full models dir for back-compat.
     const managesSettings = usesWorkloadSettings(hostedModel, spec.extraArgs, workloadName);
-    const basePath = workloadName ? omxBasePath(env, workloadName) : undefined;
-    const modelDirArg = basePath === undefined ? modelsDir : isolatedModelDir(basePath);
+    const basePath = workloadName
+      ? cacheModeBase(omxBasePath(env, workloadName), spec.omlxCacheEpoch)
+      : undefined;
+    const managedCache = spec.omlxCacheEpoch !== undefined;
+    if (managedCache && basePath === undefined)
+      throw new Error("oMLX cache epoch requires a workload name");
+    const modelDirArg =
+      basePath === undefined
+        ? modelsDir
+        : isolatedModelDir(basePath, managedCache ? hostedModel.rel : undefined);
     const args: string[] = [
       "serve",
       "--model-dir",
@@ -260,7 +301,8 @@ export const omlxEngine: EngineAdapter = {
     // flag makes `omlx serve` exit with "unrecognized arguments" and the workload
     // never boots.
     args.push("--memory-guard-gb", String(maxModelMemoryGiB));
-    if (managesSettings && basePath !== undefined) args.push("--base-path", basePath);
+    if ((managesSettings || managedCache) && basePath !== undefined)
+      args.push("--base-path", basePath);
     args.push(...spec.extraArgs);
     return { binary: spec.binary, args };
   },

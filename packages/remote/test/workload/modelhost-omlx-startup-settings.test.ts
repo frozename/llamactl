@@ -9,10 +9,14 @@ const name = "omlx-settings-fixture";
 const rel = "fixture-community/test-model";
 const id = basename(rel);
 
-async function startFixture(existing: string): Promise<{
+async function startFixture(
+  existing: string,
+  cacheEpoch?: number,
+): Promise<{
   result: Awaited<ReturnType<typeof startModelHost>>;
   readLaunch: () => unknown;
   spawned: () => boolean;
+  legacyGlobal: () => unknown;
   settings: () => string;
   basePath: string;
   cleanup: () => Promise<void>;
@@ -42,6 +46,10 @@ async function startFixture(existing: string): Promise<{
     mkdirSync(join(modelsDir, rel), { recursive: true });
     mkdirSync(dirname(settingsPath), { recursive: true });
     writeFileSync(settingsPath, existing);
+    writeFileSync(
+      join(basePath, "settings.json"),
+      JSON.stringify({ cache: { enabled: true }, local: "preserve" }),
+    );
     writeFileSync(binary, `#!/bin/bash\nexec -a omlx "${process.execPath}" "${script}" "$@"\n`, {
       mode: 0o755,
     });
@@ -79,6 +87,7 @@ Bun.serve({
           endpoint: { host: "127.0.0.1", port },
           hostedModels: [{ rel, omlx: { max_context_window: 8192, mtp_enabled: true } }],
           extraArgs: [],
+          ...(cacheEpoch === undefined ? {} : { omlxCacheEpoch: cacheEpoch }),
           timeoutSeconds: 3,
         },
       },
@@ -87,6 +96,8 @@ Bun.serve({
       result,
       readLaunch: (): unknown => JSON.parse(readFileSync(witness, "utf8")),
       spawned: () => existsSync(witness),
+      legacyGlobal: (): unknown =>
+        JSON.parse(readFileSync(join(basePath, "settings.json"), "utf8")),
       settings: () => readFileSync(settingsPath, "utf8"),
       basePath,
       cleanup,
@@ -148,3 +159,24 @@ test.each([
     }
   },
 );
+
+test("an opted-in oMLX launch refuses an opaque launcher and preserves legacy settings", async () => {
+  const result = await startFixture('{"version":1,"models":{}}', 0).then(
+    (fixture) => ({ ok: true as const, fixture }),
+    (error: unknown) => ({ ok: false as const, error: String(error) }),
+  );
+  expect(result).toMatchObject({ ok: true });
+  if (!result.ok) return;
+  try {
+    expect(result.fixture.result).toMatchObject({
+      ok: false,
+      pid: null,
+      error: "oMLX cache mode requires a supported Python launcher",
+    });
+    expect(result.fixture.spawned()).toBe(false);
+    expect(result.fixture.legacyGlobal()).toEqual({ cache: { enabled: true }, local: "preserve" });
+    expect(existsSync(join(result.fixture.basePath, "managed-cache", "settings.json"))).toBe(true);
+  } finally {
+    await result.fixture.cleanup();
+  }
+});
