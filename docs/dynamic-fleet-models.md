@@ -18,7 +18,13 @@ Open items:
   `residency_states` for its victims and replacements. A same-group occupant
   that the plan observed occupying refuses the start with
   `ExclusiveGroupOccupied` before the engine runs. A same-group occupying row
-  the plan did not observe is reconciled to downloaded and logged. `applyOne`
+  the plan did not observe is reconciled to downloaded only when it is `ready`
+  and `directWorkloadProvenDown` proves its workload down (for example a
+  crash-left keep-alive, or a ModelRun whose recorded pid is gone). Otherwise,
+  including any `loading`/`warming` row, it is kept, logged as
+  `[residency] lifecycle kept <model> <state> in group <group>: not proven down`,
+  and the replacement start is refused with `ExclusiveGroupOccupied` before the
+  engine runs, matching the direct-start rule. `applyOne`
   and `applyOneModelHost` (`packages/remote/src/workload/apply.ts`), which the
   reconciler calls, start a ModelRun's coordinator and a ModelHost through the
   node agent's `serverStart` and `modelHostStart` procedures, so the fenced
@@ -142,7 +148,13 @@ persists per-model states in its `residency_states` table:
   `residency_states` for its victims and replacements. A same-group occupant
   that the plan observed occupying refuses the start with
   `ExclusiveGroupOccupied` before the engine runs. A same-group occupying row
-  the plan did not observe is reconciled to downloaded and logged.
+  the plan did not observe is reconciled to downloaded only when it is `ready`
+  and `directWorkloadProvenDown` proves its workload down (for example a
+  crash-left keep-alive, or a ModelRun whose recorded pid is gone). Otherwise,
+  including any `loading`/`warming` row, it is kept, logged as
+  `[residency] lifecycle kept <model> <state> in group <group>: not proven down`,
+  and the replacement start is refused with `ExclusiveGroupOccupied` before the
+  engine runs, matching the direct-start rule.
   `llamactl residency status`, the `residencyStatus` procedure and the MCP
   tool now report the serving process's `residency_states` rows and any
   exclusive-group violation (`findExclusiveGroupViolations`, previously

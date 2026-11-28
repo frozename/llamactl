@@ -2817,6 +2817,7 @@ export const router = t.router({
         node: input.node,
         to: input.to,
         from: input.from ?? null,
+        isProvenDown: directWorkloadProvenDown,
         applyModelRun: async (manifest: unknown): Promise<unknown> => {
           const cfg = kubecfg.loadConfig();
           // The switch executor already owns this row through its own fenced

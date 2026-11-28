@@ -81,7 +81,10 @@
  * occupant or any failed write. Corroboration: `victims ∪ retained` is what
  * the planner observed occupying, and `buildResidencyPlan` refuses
  * `UnknownState` unless every on-node workload was observed, so a same-group
- * occupying row outside that set is stale and is reconciled to downloaded.
+ * occupying row outside that set is stale: it is reconciled to downloaded only
+ * when the lifecycle `isProvenDown` predicate proves a `ready` row down (or
+ * when no predicate is given). Otherwise it is kept and the replacement's
+ * loading hop refuses with `ExclusiveGroupOccupied`.
  */
 import { getResidencyLeaseRegistry, type ResidencyLeases } from "@llamactl/core/residency/leases";
 import {
