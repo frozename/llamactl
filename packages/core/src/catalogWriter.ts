@@ -6,6 +6,7 @@ import { resolveEnv } from "./env.js";
 import { appendLine } from "./fsAtomic.js";
 import { fetchModelInfo } from "./hf.js";
 import { quantFromRel } from "./quant.js";
+import { RESIDENCY_GROUPS, type ResidencyGroupDeclaration } from "./residency/lifecycle.js";
 import { CuratedMeta, CuratedModel as CuratedModelValue } from "./schemas.js";
 
 const VALID_CLASSES = new Set<CuratedModel["class"]>([
@@ -26,6 +27,11 @@ export interface AddCuratedInput {
   scope?: string;
   /** Optional candidate metadata (#515), validated against CuratedMeta and written as catalog column 9. */
   meta?: unknown;
+  /**
+   * Residency-group declarations a `residencyGroup` must name (#517).
+   * Defaults to `RESIDENCY_GROUPS`.
+   */
+  groups?: readonly ResidencyGroupDeclaration[];
 }
 
 export type AddCuratedResult =
@@ -90,6 +96,27 @@ function findIllegalField(fields: Record<string, string>): string | null {
 }
 
 /**
+ * Refuse a `residencyGroup` that no declaration names (#517): an undeclared
+ * group is invisible to every exclusive-group gate, so the row would silently
+ * escape exclusion. Any declared group is accepted, exclusive or not.
+ */
+function undeclaredResidencyGroup(
+  group: string | undefined,
+  groups: readonly ResidencyGroupDeclaration[],
+): string | null {
+  if (group === undefined) return null;
+  const declared = groups.map((entry) => entry.name).sort(compareGroupNames);
+  if (declared.includes(group)) return null;
+  return `group ${group} is not declared (declared: ${declared.join(", ")})`;
+}
+
+function compareGroupNames(a: string, b: string): number {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}
+
+/**
  * Append a row to the custom catalog TSV. Guards against duplicates
  * (builtin or custom) so repeated `curated add` calls on the same
  * rel produce a clear error instead of growing the file.
@@ -149,6 +176,16 @@ export async function addCurated(input: AddCuratedInput): Promise<AddCuratedResu
       return {
         ok: false,
         error: `invalid catalog meta: ${issues.join("; ")}`,
+      };
+    }
+    const groupError = undeclaredResidencyGroup(
+      parsed.data.residencyGroup,
+      input.groups ?? RESIDENCY_GROUPS,
+    );
+    if (groupError !== null) {
+      return {
+        ok: false,
+        error: `invalid catalog meta: residencyGroup: ${groupError}`,
       };
     }
     parsedMeta = parsed.data;
