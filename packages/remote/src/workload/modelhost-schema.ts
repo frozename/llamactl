@@ -5,6 +5,7 @@ import type {
 } from "@llamactl/core/engines/types";
 
 import { omitUndefined } from "@llamactl/core/object";
+import { isIP } from "node:net";
 import { z } from "zod";
 
 export const LOCAL_NODE_ID = "local" as const;
@@ -201,6 +202,119 @@ function hostedModelOmlxIssues(
   return issues;
 }
 
+const OMLX_CACHE_OWNER_FLAGS = [
+  "--base-path",
+  "--model-dir",
+  "--paged-ssd-cache-dir",
+  "--hf-cache",
+  "--no-hf-cache",
+  "--slot-save-path",
+];
+
+function omlxCacheFlag(arg: string): string {
+  return arg.split("=", 1)[0] ?? "";
+}
+
+function invalidOmlxCacheSlots(args: readonly string[]): boolean {
+  const slots = args
+    .map(omlxCacheFlag)
+    .flatMap((flag, index) => (flag === "--slot-save-path" ? [index] : []));
+  if (slots.length !== 1) return slots.length > 1;
+  const index = slots[0] ?? 0;
+  const token = args[index] ?? "";
+  const value =
+    token === "--slot-save-path" ? args[index + 1] : token.slice("--slot-save-path=".length);
+  return value !== "auto" && value?.startsWith("/") !== true;
+}
+
+function omlxCacheIssue(spec: {
+  engine: string;
+  omlxCacheEpoch?: number | undefined;
+  extraArgs: readonly string[];
+}): { path: string[]; message: string } | undefined {
+  if (spec.omlxCacheEpoch === undefined) return undefined;
+  if (spec.engine !== "omlx") {
+    return {
+      path: ["omlxCacheEpoch"],
+      message: "omlxCacheEpoch is only supported for engine omlx",
+    };
+  }
+  const conflict = spec.extraArgs
+    .map(omlxCacheFlag)
+    .some(
+      (flag) =>
+        flag.startsWith("--") &&
+        flag !== "--slot-save-path" &&
+        OMLX_CACHE_OWNER_FLAGS.some((owned) => owned.startsWith(flag)),
+    );
+  if (conflict || invalidOmlxCacheSlots(spec.extraArgs)) {
+    return {
+      path: ["extraArgs"],
+      message:
+        "oMLX cache owns model, base and cache paths and accepts at most one absolute or auto slot path",
+    };
+  }
+  return undefined;
+}
+
+const OMLX_NATIVE_OWNED_ARGS = ["--host", "--port", "--api-key", "--mcp-config"];
+const OMLX_NATIVE_OWNED_ENV = [
+  "OMLX_HOST",
+  "OMLX_PORT",
+  "OMLX_MODEL_DIR",
+  "OMLX_API_KEY",
+  "OMLX_SECRET_KEY",
+  "OMLX_MCP_CONFIG",
+];
+
+function omlxNativeIssues(spec: {
+  omlxNativeResidency?: "v0.8.4" | undefined;
+  omlxCacheEpoch?: number | undefined;
+  engine: string;
+  endpoint: { host: string };
+  extraArgs: readonly string[];
+  env?: Record<string, string> | undefined;
+}): { path: string[]; message: string }[] {
+  if (spec.omlxNativeResidency === undefined) return [];
+  const { host } = spec.endpoint;
+  if (
+    spec.engine !== "omlx" ||
+    spec.omlxCacheEpoch === undefined ||
+    (host !== "::1" && !(isIP(host) === 4 && host.startsWith("127.")))
+  ) {
+    return [
+      {
+        path: ["omlxNativeResidency"],
+        message: "native oMLX requires the managed cache and a numeric loopback endpoint",
+      },
+    ];
+  }
+  if (
+    spec.extraArgs
+      .map(omlxCacheFlag)
+      .some(
+        (flag) =>
+          flag.startsWith("--") && OMLX_NATIVE_OWNED_ARGS.some((owned) => owned.startsWith(flag)),
+      )
+  ) {
+    return [
+      {
+        path: ["extraArgs"],
+        message: "native oMLX owns its bind, authentication and MCP configuration",
+      },
+    ];
+  }
+  const override = OMLX_NATIVE_OWNED_ENV.find((name) => spec.env?.[name] !== undefined);
+  return override === undefined
+    ? []
+    : [
+        {
+          path: ["env", override],
+          message: "native oMLX owns its bind and authentication environment",
+        },
+      ];
+}
+
 export const ModelHostSpecSchema = z
   .object({
     // Engine selection. The registry in packages/core/src/engines/ holds
@@ -267,9 +381,12 @@ export const ModelHostSpecSchema = z
     // readiness.path is restricted to llama-server's unauthenticated
     // endpoints (enforced by apiKeyRefIssues above).
     apiKeyRef: z.string().min(1).optional(),
+    omlxCacheEpoch: z.int().nonnegative().optional(),
+    omlxNativeResidency: z.literal("v0.8.4").optional(),
   })
   .strict()
   .superRefine((spec, ctx) => {
+    const cacheIssue = omlxCacheIssue(spec);
     if (spec.resources?.diskBackedGiB !== undefined && spec.resources.residentGiB === undefined) {
       ctx.addIssue({
         code: "custom",
@@ -295,8 +412,13 @@ export const ModelHostSpecSchema = z
         }
       }
     }
-    for (const issue of apiKeyRefIssues(spec)) ctx.addIssue({ code: "custom", ...issue });
-    for (const issue of hostedModelOmlxIssues(spec.engine, spec.hostedModels)) {
+    const issues = [
+      ...apiKeyRefIssues(spec),
+      ...hostedModelOmlxIssues(spec.engine, spec.hostedModels),
+      ...(cacheIssue === undefined ? [] : [cacheIssue]),
+      ...omlxNativeIssues(spec),
+    ];
+    for (const issue of issues) {
       ctx.addIssue({ code: "custom", ...issue });
     }
   });
@@ -485,6 +607,7 @@ export function specForEngine(spec: ModelHostSpec): ModelHostSpecForEngine {
     hostedModels: spec.hostedModels.map(normalizeHostedModel),
     extraArgs: spec.extraArgs,
     timeoutSeconds: spec.timeoutSeconds,
+    ...omitUndefined({ omlxCacheEpoch: spec.omlxCacheEpoch }),
     ...(readiness !== undefined ? { readiness } : {}),
     ...(spec.resources !== undefined
       ? {

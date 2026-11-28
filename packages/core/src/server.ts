@@ -1,7 +1,9 @@
 import type { ChildProcess } from "node:child_process";
+import type { BigIntStats } from "node:fs";
 
 import { spawn } from "node:child_process";
-import { basename, join } from "node:path";
+import { createHash } from "node:crypto";
+import { basename, join, resolve } from "node:path";
 
 import type { ModelHostReadiness } from "./engines/types.js";
 import type { ResolvedEnv } from "./types.js";
@@ -17,7 +19,7 @@ import {
 } from "./bench/index.js";
 import { resolveBuildId } from "./build.js";
 import { ctxForModel } from "./ctx.js";
-import { resolveDraftModelPathArgs } from "./engines/llamacpp.js";
+import { hasDraftModelPathArg, resolveDraftModelPathArgs } from "./engines/llamacpp.js";
 import {
   awaitScopeExec,
   buildScopeArgv,
@@ -38,6 +40,7 @@ import {
 } from "./engines/scope.js";
 import { isModelHostReadiness } from "./engines/state.js";
 import { resolveEnv } from "./env.js";
+import { atomicWriteFile } from "./fsAtomic.js";
 import {
   defaultReadProcessCommand,
   parseSlotSavePathFromCommand,
@@ -47,7 +50,9 @@ import { omitUndefined } from "./object.js";
 import {
   type CommandExpectation,
   isRecordedPidGone,
+  isValidRecordedPid,
   type PidIdentityDeps,
+  readRecordedPidEvidence,
   terminateVerifiedPid,
   verifyPidFile,
 } from "./pidIdentity.js";
@@ -58,8 +63,17 @@ import {
   type ResidencyLeases,
   withReopenAfterLoad,
 } from "./residency/leases.js";
+import { managedRuntimeRefusesMutation } from "./residency/managed-runtime.js";
 import { currentSessionRefcounts, type SessionRefcounts } from "./residency/sessions.js";
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "./safe-fs.js";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "./safe-fs.js";
 import { resolveTarget } from "./target.js";
 import { ensureWorkloadRuntimeDir, workloadRuntimeDir } from "./workloadRuntime.js";
 
@@ -206,10 +220,10 @@ function safeRetryArgs(): string[] {
   ];
 }
 
+const MMPROJ_INPUT_FLAGS = ["--mmproj", "-mm", "--mmproj-url", "--mmproj-auto"];
+
 function hasMmprojArg(args: readonly string[]): boolean {
-  return args.some(
-    (a) => a === "--mmproj" || a === "-mm" || a === "--mmproj-url" || a === "--mmproj-auto",
-  );
+  return MMPROJ_INPUT_FLAGS.some((flag) => args.includes(flag));
 }
 
 // ---- PID helpers -------------------------------------------------------
@@ -280,6 +294,8 @@ export interface ServerState {
    * instead of restarting it; a legacy sidecar without it restarts.
    */
   specHash?: string;
+  /** Keep crash/stop evidence without advertising a generation that is still pending admission. */
+  publicationPending?: true;
   /**
    * Transient systemd user-scope unit a scoped ModelRun launch recorded
    * (#806 phase 3). Informational: status and stop act on the pid. Absent on
@@ -401,7 +417,8 @@ export function readServerState(
 
 function writeServerState(resolved: ResolvedEnv, key: WorkloadKey, state: ServerState): void {
   ensureWorkloadRuntimeDir(resolved, key);
-  writeFileSync(serverStateFile(resolved, key), JSON.stringify(state, null, 2));
+  const write = state.publicationPending === true ? atomicWriteFile : writeFileSync;
+  write(serverStateFile(resolved, key), JSON.stringify(state, null, 2));
 }
 
 function removeServerState(resolved: ResolvedEnv, key: WorkloadKey): void {
@@ -590,6 +607,8 @@ export interface StartServerOptions {
    */
   readiness?: ModelHostReadiness;
   onEvent?: (e: ServerEvent) => void;
+  /** A returned reason refuses publication of the freshly started process. */
+  commitReadiness?: (pid: number) => string | undefined;
   resolved?: ResolvedEnv;
   env?: NodeJS.ProcessEnv;
   /**
@@ -619,6 +638,47 @@ export interface StartServerOptions {
   engineScope?: EngineScopeLauncher | null;
 }
 
+interface ArtifactGeneration {
+  readonly evidence: "filesystem-metadata";
+  readonly generationDigest: string;
+}
+
+interface ModelRunArtifacts {
+  readonly model: ArtifactGeneration;
+  readonly binary: ArtifactGeneration;
+}
+
+interface PinnedModelRunStart {
+  target: ResolvedLaunchTarget;
+  prepared: PreparedLaunchArgs;
+  childProcess: { env: NodeJS.ProcessEnv; cwd: string };
+  artifacts: ModelRunArtifacts;
+}
+
+type ServerStartExecutionOptions = StartServerOptions & {
+  pinned?: PinnedModelRunStart;
+  checkSpawn?: () => string | undefined;
+};
+
+export interface PreparedManagedServerStart {
+  readonly launch: {
+    readonly rel: string;
+    readonly modelPath: string;
+    readonly binary: string;
+    readonly args: readonly string[];
+    readonly tunedProfile: string | null;
+    readonly artifacts: ModelRunArtifacts;
+  };
+  readonly effectiveSpecDigest: string;
+  readonly additionalModelInputs: boolean;
+  artifactRefusal: () => string | undefined;
+  /** Recheck owner policy synchronously at every spawn attempt, including retries and fallback. */
+  start: (
+    commitReadiness: NonNullable<StartServerOptions["commitReadiness"]>,
+    checkSpawn?: () => string | undefined,
+  ) => Promise<StartServerResult>;
+}
+
 export interface StartServerResult {
   ok: boolean;
   pid: number | null;
@@ -630,6 +690,8 @@ export interface StartServerResult {
   tunedProfile: string | null;
   retried: boolean;
   error?: string;
+  /** The owner refused dispatch before any spawn attempt in this start. */
+  preDispatchRefusal?: string;
   /**
    * Set only when the stop-before-start was refused: by a published
    * residency lease registry — `LeasesActive` while a lease is held,
@@ -1135,15 +1197,7 @@ function buildLaunchArgs(
  * already specified the same flag in extraArgs, so a manifest that
  * sets e.g. `-ub 1024` isn't doubled up with the profile's `-ub 512`.
  */
-function prepareLaunchArgs(
-  opts: StartServerOptions,
-  rel: string,
-  resolved: ResolvedEnv,
-  env: NodeJS.ProcessEnv,
-  key: WorkloadKey,
-  draftResolvedExtraArgs: readonly string[],
-): PreparedLaunchArgs {
-  const prepared = buildLaunchArgs(opts, rel, resolved, env, key, draftResolvedExtraArgs);
+function prepareLaunchArgs(prepared: PreparedLaunchArgs): PreparedLaunchArgs {
   if (prepared.slotPathResolved.slotSavePath !== null) {
     mkdirSync(prepared.slotPathResolved.slotSavePath, { recursive: true });
   }
@@ -1342,6 +1396,7 @@ function launchedServerState(
     startedAt: new Date().toISOString(),
     tunedProfile: prepared.tunedProfile,
     ...(opts.readiness !== undefined ? { readiness: opts.readiness } : {}),
+    ...(opts.commitReadiness === undefined ? {} : { publicationPending: true }),
     specHash: computeServerSpecHash({
       rel: target.rel,
       ...launchSpecHashFields(opts, target, prepared, resolved, launchHost, launchPort),
@@ -1405,22 +1460,35 @@ function trackedInstanceLive(
 }
 
 /**
- * Read-only identity proof that a tracked ModelRun is down: a workload with no
- * recorded pid file, or whose recorded pid verifies `dead` or `reused` against
- * its pid file, is proven down. A live pid, or one whose identity cannot be
- * verified (`unknown`), fails closed. The predicate never deletes tracking
- * files, so it is safe to call outside a transaction and from boot recovery.
+ * A missing record is evidence of absence only after checking all tracking
+ * files. Conflicting or unreadable evidence must retain the workload's claim.
  */
 export function isServerProvenDown(
   key: WorkloadKey,
   resolved: ResolvedEnv = resolveEnv(),
   identity?: PidIdentityDeps,
 ): boolean {
-  const pid = readServerPid(key, resolved);
-  if (pid === null) return true;
-  return isRecordedPidGone(
-    verifyPidFile(pidFile(resolved, key), pid, trackedStopIdentity(resolved, key, identity)),
-  );
+  try {
+    const recordPath = pidFile(resolved, key);
+    const record = readRecordedPidEvidence(recordPath);
+    if (record.kind === "unverified") return false;
+    const sidecarPath = serverStateFile(resolved, key);
+    const sidecar = lstatSync(sidecarPath, { throwIfNoEntry: false });
+    const state = sidecar?.isFile() === true ? readServerState(key, resolved) : null;
+    if (sidecar !== undefined && (state === null || !isValidRecordedPid(state.pid))) return false;
+    if (record.kind === "present" && state !== null && record.pid !== state.pid) return false;
+    const pid = record.kind === "present" ? record.pid : state?.pid;
+    if (pid === undefined) return true;
+    return isRecordedPidGone(
+      verifyPidFile(
+        record.kind === "present" ? recordPath : sidecarPath,
+        pid,
+        trackedStopIdentity(resolved, key, identity),
+      ),
+    );
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -1591,7 +1659,7 @@ async function fencedStopDrained(
  * outcomes; timeout and exited fall through with the retry pid and updated readiness result.
  */
 async function retryWithMmprojSafeFlags(
-  opts: StartServerOptions,
+  opts: ServerStartExecutionOptions,
   ctx: MmprojRetryContext,
 ): Promise<MmprojRetryOutcome> {
   const { resolved, key, launchEndpoint, target, prepared } = ctx;
@@ -1625,17 +1693,15 @@ async function retryWithMmprojSafeFlags(
     ctx.launchPort,
     retryArgs,
   );
-  if (retryLaunch.refused !== undefined) {
-    return {
-      result: startServerError(
-        resolved,
-        launchEndpoint,
-        prepared.tunedProfile,
-        true,
-        retryLaunch.refused,
-      ),
-      readyResult: { outcome: "timeout" },
-    };
+  const scopeError = scopeStartError(
+    retryLaunch,
+    { resolved, launchEndpoint, tunedProfile: prepared.tunedProfile },
+    opts,
+    true,
+  );
+  if (scopeError !== undefined) {
+    opts.signal?.removeEventListener("abort", ctx.abortKiller.kill);
+    return { result: scopeError, readyResult: { outcome: "timeout" } };
   }
   const retryPid = retryLaunch.pid;
   ctx.abortKiller.targetPid = signalableLaunchPid(retryLaunch);
@@ -1747,6 +1813,11 @@ async function stopOrAdoptBeforeStart(
   launchHost: string,
   launchPort: number | string,
 ): Promise<StartServerResult | null> {
+  if (opts.commitReadiness !== undefined) {
+    return isServerProvenDown(key, resolved, opts.identity)
+      ? null
+      : startServerError(resolved, launchEndpoint, null, false, "ManagedRestartUnavailable");
+  }
   const adopted = await adoptTrackedServer(
     opts,
     resolved,
@@ -1780,6 +1851,9 @@ async function handlePortConflict(
 ): Promise<StartServerResult | null> {
   const portConflictHint = await detectPortConflict(endpoint(resolved, launchEndpoint));
   if (!portConflictHint) return null;
+  if (opts.commitReadiness !== undefined) {
+    return startServerError(resolved, launchEndpoint, null, false, portConflictHint);
+  }
   // Something already answers on our endpoint. If it's serving OUR model,
   // adopt it (record pid + state so it's managed + routable) instead of
   // failing — a spawn could not win the held port anyway. Only a genuine
@@ -1854,14 +1928,15 @@ type ScopePlanResult = ScopedServerLaunchPlan | { refused: string } | null;
 // resolve all mean a direct spawn; the direct argv stays byte-identical. A
 // required launcher refuses those two fallbacks instead.
 async function resolveScopePlan(
-  opts: StartServerOptions,
+  opts: ServerStartExecutionOptions,
   forceDirect: boolean,
 ): Promise<ScopePlanResult> {
   if (forceDirect) return null;
   const launcher = opts.engineScope !== undefined ? opts.engineScope : getEngineScopeLauncher();
   if (launcher === null) return null;
   const required = launcher.required === true;
-  const shaped = shapeScopeEnv({ ...process.env }, process.env, []);
+  const env = opts.pinned?.childProcess.env ?? process.env;
+  const shaped = shapeScopeEnv({ ...env }, env, []);
   if ("conflict" in shaped) {
     if (required) return { refused: scopeRequiredRefusal(`env-conflict ${shaped.conflict}`) };
     opts.onEvent?.({
@@ -1870,7 +1945,7 @@ async function resolveScopePlan(
     });
     return null;
   }
-  const resolved = await launcher.resolve(process.env);
+  const resolved = await launcher.resolve(env);
   if (!resolved.ok) {
     if (required) return { refused: scopeRequiredRefusal(resolved.reason) };
     return null;
@@ -1891,6 +1966,7 @@ interface RecordedServerLaunch {
   reaped: boolean;
   /** #806 require mode: set when a required scope refused the launch. */
   refused?: string;
+  refusedBeforeDispatch?: true;
 }
 
 function signalableLaunchPid(launch: RecordedServerLaunch): number | null {
@@ -1898,9 +1974,38 @@ function signalableLaunchPid(launch: RecordedServerLaunch): number | null {
   return launch.pid;
 }
 
+function scopeStartError(
+  launch: RecordedServerLaunch,
+  {
+    resolved,
+    launchEndpoint,
+    tunedProfile,
+  }: {
+    resolved: ResolvedEnv;
+    launchEndpoint: StartServerOptions["endpoint"];
+    tunedProfile: string | null;
+  },
+  opts: Pick<ServerStartExecutionOptions, "pinned">,
+  retried = false,
+): StartServerResult | undefined {
+  if (launch.refused === undefined) return undefined;
+  const managed = opts.pinned !== undefined;
+  const failure = startServerError(
+    resolved,
+    launchEndpoint,
+    tunedProfile,
+    retried,
+    launch.refused,
+    managed ? signalableLaunchPid(launch) : null,
+  );
+  return managed && !retried && launch.refusedBeforeDispatch === true
+    ? { ...failure, preDispatchRefusal: launch.refused }
+    : failure;
+}
+
 /** Spawn llama-server detached and record the pid + state sidecars. */
 async function launchAndRecordServer(
-  opts: StartServerOptions,
+  opts: ServerStartExecutionOptions,
   resolved: ResolvedEnv,
   target: ResolvedLaunchTarget,
   prepared: PreparedLaunchArgs,
@@ -1912,7 +2017,7 @@ async function launchAndRecordServer(
   const plan = await resolveScopePlan(opts, forceDirect);
   if (plan !== null && "refused" in plan) {
     // No spawn, no pid file, no state file: the required scope never opened.
-    return { pid: 0, reaped: true, refused: plan.refused };
+    return { pid: 0, reaped: true, refused: plan.refused, refusedBeforeDispatch: true };
   }
   const scoped = plan;
   const launched = await launchBackground({
@@ -1925,7 +2030,7 @@ async function launchAndRecordServer(
     host: launchHost,
     port: launchPort,
     ...omitUndefined({ onEvent: opts.onEvent }),
-    ...omitUndefined({ spawn: opts.spawn }),
+    ...omitUndefined({ spawn: opts.spawn, pinned: opts.pinned, checkSpawn: opts.checkSpawn }),
     scope: scoped?.plan ?? null,
   });
   if (scoped === null || launched.scope === null) {
@@ -1955,7 +2060,7 @@ async function launchAndRecordServer(
 // outcome that is not fallback-eligible leaves the (dead) pid recorded so
 // pollReady reports the exit.
 async function recordScopedLaunch(
-  opts: StartServerOptions,
+  opts: ServerStartExecutionOptions,
   resolved: ResolvedEnv,
   target: ResolvedLaunchTarget,
   prepared: PreparedLaunchArgs,
@@ -2019,9 +2124,17 @@ async function recordScopedLaunch(
     !scopeStopNames(dir, "llama-server", scopeUnit) &&
     opts.signal?.aborted !== true;
   if (!mayFallback) {
+    const requiredUnverified =
+      scoped.launcher.required === true &&
+      outcome.kind !== "established" &&
+      outcome.kind !== "aborted" &&
+      opts.signal?.aborted !== true;
     return {
       pid: launched.pid,
       reaped: launched.child.exitCode !== null || launched.child.signalCode !== null,
+      ...(requiredUnverified
+        ? { refused: scopeRequiredRefusal(describeScopeOutcome(outcome, scopeUnit)) }
+        : {}),
     };
   }
   removeServerRecordIfOwned(resolved, opts.key, launched.pid);
@@ -2087,21 +2200,245 @@ function wireAbortToKill(signal: AbortSignal | undefined, killOnAbort: () => voi
  * published registry; a failed start never reopens.
  */
 export function startServer(opts: StartServerOptions): Promise<StartServerResult> {
+  return executeServerStart(opts);
+}
+
+function executeServerStart(opts: ServerStartExecutionOptions): Promise<StartServerResult> {
+  const resolved = opts.resolved ?? resolveEnv(opts.env);
+  if (managedRuntimeRefusesMutation(resolved.LOCAL_AI_RUNTIME_DIR)) {
+    return Promise.resolve({
+      ok: false,
+      pid: null,
+      endpoint: endpoint(resolved, opts.endpoint),
+      advertisedEndpoint: advertisedEndpoint(resolved, opts.endpoint),
+      tunedProfile: null,
+      retried: false,
+      error: "ManagedOwnerRequired",
+    });
+  }
   return withReopenAfterLoad(
     opts.key.name,
-    () => startServerUnwrapped(opts),
+    () =>
+      opts.commitReadiness === undefined
+        ? startServerUnwrapped(opts)
+        : startServerWithPublicationBarrier(opts, opts.commitReadiness),
     (r) => r.ok,
   );
 }
 
-async function startServerUnwrapped(opts: StartServerOptions): Promise<StartServerResult> {
+class ManagedSpawnRefusedError extends Error {}
+
+/** An inode generation tags observed metadata, without claiming validation of file contents. */
+export function modelRunArtifactGenerationDigest(
+  stat: Pick<BigIntStats, "dev" | "ino" | "mode" | "size" | "mtimeNs" | "ctimeNs">,
+): string {
+  const fields = [stat.dev, stat.ino, stat.mode, stat.size, stat.mtimeNs, stat.ctimeNs];
+  return createHash("sha256").update(fields.map(String).join(":")).digest("hex");
+}
+
+function artifactGeneration(path: string): ArtifactGeneration | undefined {
+  try {
+    const stat = statSync(path, { bigint: true });
+    if (!stat.isFile()) return undefined;
+    return Object.freeze({
+      evidence: "filesystem-metadata",
+      generationDigest: modelRunArtifactGenerationDigest(stat),
+    });
+  } catch {
+    return undefined;
+  }
+}
+
+function readModelRunArtifacts(
+  target: ResolvedLaunchTarget,
+): ModelRunArtifacts | "model" | "binary" {
+  const model = artifactGeneration(target.modelPath);
+  if (model === undefined) return "model";
+  const binary = artifactGeneration(target.bin);
+  return binary === undefined ? "binary" : Object.freeze({ model, binary });
+}
+
+function managedArtifactRefusal(pinned: PinnedModelRunStart | undefined): string | undefined {
+  if (pinned === undefined) return undefined;
+  if (
+    artifactGeneration(pinned.target.modelPath)?.generationDigest !==
+    pinned.artifacts.model.generationDigest
+  ) {
+    return "ManagedArtifactChanged: model";
+  }
+  if (
+    artifactGeneration(pinned.target.bin)?.generationDigest !==
+    pinned.artifacts.binary.generationDigest
+  ) {
+    return "ManagedArtifactChanged: binary";
+  }
+  return undefined;
+}
+
+export function prepareManagedServerStart(
+  input: StartServerOptions,
+): PreparedManagedServerStart | { result: StartServerResult } {
+  const env = { ...(input.env ?? process.env) };
+  const resolved = { ...(input.resolved ?? resolveEnv(env)) };
+  const opts: StartServerOptions = {
+    ...input,
+    key: { ...input.key },
+    ...omitUndefined({
+      endpoint: input.endpoint === undefined ? undefined : { ...input.endpoint },
+      extraArgs: input.extraArgs === undefined ? undefined : [...input.extraArgs],
+      readiness: input.readiness === undefined ? undefined : { ...input.readiness },
+    }),
+    env,
+    resolved,
+    engineScope: input.engineScope === undefined ? getEngineScopeLauncher() : input.engineScope,
+  };
+  const launchHost = opts.endpoint?.host ?? resolved.LLAMA_CPP_HOST;
+  const launchPort = opts.endpoint?.port ?? resolved.LLAMA_CPP_PORT;
+  if (hasFlag(opts.extraArgs ?? [], "-m", "--model")) {
+    return {
+      result: startServerError(
+        resolved,
+        opts.endpoint,
+        null,
+        false,
+        "ManagedModelOverrideUnavailable",
+      ),
+    };
+  }
+  const validated = resolveAndValidateTarget(opts, resolved, opts.endpoint, env, launchHost);
+  if ("result" in validated) return validated;
+  const cwd = process.cwd();
+  const target = {
+    ...validated,
+    bin: resolve(cwd, validated.bin),
+    modelPath: resolve(cwd, validated.modelPath),
+  };
+  const artifacts = readModelRunArtifacts(target);
+  if (typeof artifacts === "string") {
+    return {
+      result: startServerError(
+        resolved,
+        opts.endpoint,
+        null,
+        false,
+        `ManagedArtifactUnverified: ${artifacts}`,
+      ),
+    };
+  }
+  const prepared = buildLaunchArgs(
+    opts,
+    target.rel,
+    resolved,
+    env,
+    opts.key,
+    target.draftResolvedExtraArgs,
+  );
+  const args = assembleServerLaunchArgs(
+    target.modelPath,
+    resolved,
+    prepared.launchArgs,
+    launchHost,
+    launchPort,
+  );
+  const childProcess = { env: Object.freeze({ ...process.env }), cwd };
+  const effectiveSpecDigest = createHash("sha256")
+    .update(
+      JSON.stringify({
+        version: 2,
+        artifacts,
+        specHash: computeServerSpecHash({
+          rel: target.rel,
+          ...launchSpecHashFields(opts, target, prepared, resolved, launchHost, launchPort),
+        }),
+        args,
+        retryArgs: hasMmprojArg(prepared.launchArgs) ? safeRetryArgs() : [],
+        childEnv: Object.entries(childProcess.env).sort(([left], [right]) =>
+          left.localeCompare(right),
+        ),
+        cwd,
+        workload: opts.key.name,
+        runtimeDir: resolved.LOCAL_AI_RUNTIME_DIR,
+        cacheDir: resolved.LLAMA_CPP_CACHE,
+        logsDir: resolved.LLAMA_CPP_LOGS,
+        engineScope: opts.engineScope !== null,
+        slotSavePath: prepared.slotPathResolved.slotSavePath,
+      }),
+    )
+    .digest("hex");
+  const launch = Object.freeze({
+    rel: target.rel,
+    modelPath: target.modelPath,
+    binary: target.bin,
+    args: Object.freeze(args),
+    tunedProfile: prepared.tunedProfile,
+    artifacts,
+  });
+  const pinned = { target, prepared, childProcess, artifacts };
+  return Object.freeze({
+    effectiveSpecDigest,
+    launch,
+    additionalModelInputs:
+      hasFlag(args, ...MMPROJ_INPUT_FLAGS, "--mtp-head", "--lora", "--lora-scaled") ||
+      hasDraftModelPathArg(args),
+    artifactRefusal: (): string | undefined => managedArtifactRefusal(pinned),
+    start: (
+      commitReadiness: NonNullable<StartServerOptions["commitReadiness"]>,
+      checkSpawn?: () => string | undefined,
+    ): Promise<StartServerResult> =>
+      executeServerStart({ ...opts, commitReadiness, pinned, ...omitUndefined({ checkSpawn }) }),
+  });
+}
+
+async function startServerWithPublicationBarrier(
+  opts: ServerStartExecutionOptions,
+  commitReadiness: NonNullable<StartServerOptions["commitReadiness"]>,
+): Promise<StartServerResult> {
+  const resolved = opts.resolved ?? resolveEnv(opts.env ?? process.env);
+  const earlyRefusal = managedArtifactRefusal(opts.pinned);
+  if (earlyRefusal !== undefined)
+    return startServerError(resolved, opts.endpoint, null, false, earlyRefusal);
+  let dispatched = false;
+  const result = await startServerUnwrapped({
+    ...opts,
+    resolved,
+    onEvent: (event) => {
+      // launchBackground emits this after spawn and before any fallback or retry.
+      if (event.type === "launch") dispatched = true;
+      if (event.type !== "ready") opts.onEvent?.(event);
+    },
+  }).catch((error: unknown): StartServerResult => {
+    if (!(error instanceof ManagedSpawnRefusedError)) throw error;
+    const refused = startServerError(resolved, opts.endpoint, null, false, error.message);
+    return dispatched ? refused : { ...refused, preDispatchRefusal: error.message };
+  });
+  if (!result.ok || result.pid === null) return result;
+  const readyRefusal = managedArtifactRefusal(opts.pinned);
+  if (readyRefusal !== undefined) return { ...result, ok: false, error: readyRefusal };
+
+  const pid = result.pid;
+  const state = readServerState(opts.key, resolved);
+  if (state?.publicationPending !== true || state.pid !== pid) {
+    return { ...result, ok: false, error: "ManagedGenerationUnverified" };
+  }
+  const refusal = commitReadiness(pid);
+  if (refusal !== undefined) return { ...result, ok: false, error: refusal };
+
+  delete state.publicationPending;
+  atomicWriteFile(serverStateFile(resolved, opts.key), JSON.stringify(state, null, 2));
+  opts.onEvent?.({ type: "ready", pid, endpoint: result.endpoint });
+  return result;
+}
+
+async function startServerUnwrapped(opts: ServerStartExecutionOptions): Promise<StartServerResult> {
   const env = opts.env ?? process.env;
   const resolved = opts.resolved ?? resolveEnv(env);
   const key = opts.key;
   const launchEndpoint = opts.endpoint;
   const launchHost = launchEndpoint?.host ?? resolved.LLAMA_CPP_HOST;
   const launchPort = launchEndpoint?.port ?? resolved.LLAMA_CPP_PORT;
-  const validation = resolveAndValidateTarget(opts, resolved, launchEndpoint, env, launchHost);
+  const validation =
+    opts.pinned?.target ??
+    resolveAndValidateTarget(opts, resolved, launchEndpoint, env, launchHost);
   if ("result" in validation) return validation.result;
   const { rel } = validation;
 
@@ -2133,12 +2470,8 @@ async function startServerUnwrapped(opts: StartServerOptions): Promise<StartServ
   mkdirSync(resolved.LLAMA_CPP_LOGS, { recursive: true });
 
   const prepared = prepareLaunchArgs(
-    opts,
-    rel,
-    resolved,
-    env,
-    key,
-    validation.draftResolvedExtraArgs,
+    opts.pinned?.prepared ??
+      buildLaunchArgs(opts, rel, resolved, env, key, validation.draftResolvedExtraArgs),
   );
   const { launchArgs, tunedProfile } = prepared;
 
@@ -2151,9 +2484,8 @@ async function startServerUnwrapped(opts: StartServerOptions): Promise<StartServ
     launchPort,
     launchArgs,
   );
-  if (launch.refused !== undefined) {
-    return startServerError(resolved, launchEndpoint, tunedProfile, false, launch.refused);
-  }
+  const scopeError = scopeStartError(launch, { resolved, launchEndpoint, tunedProfile }, opts);
+  if (scopeError !== undefined) return scopeError;
   const pid = launch.pid;
 
   // The per-call target follows ownership: first pid, no pid while stopping, then retry pid.
@@ -2193,6 +2525,9 @@ async function startServerUnwrapped(opts: StartServerOptions): Promise<StartServ
       timeoutSeconds,
       abortKiller,
       firstPid: pid,
+    }).catch((error: unknown): never => {
+      opts.signal?.removeEventListener("abort", abortKiller.kill);
+      throw error;
     });
     if (retry.result) return retry.result;
     readyResult = retry.readyResult;
@@ -2238,6 +2573,8 @@ interface LaunchArgs {
   binary?: string;
   onEvent?: (e: ServerEvent) => void;
   spawn?: typeof spawn;
+  pinned?: PinnedModelRunStart;
+  checkSpawn?: () => string | undefined;
   scope?: { systemdRunPath: string; base: string; env: NodeJS.ProcessEnv } | null;
 }
 
@@ -2357,20 +2694,37 @@ async function launchBackground(opts: LaunchArgs): Promise<LaunchResult> {
   validateHostBind(fullArgs, opts.allowExternalBind);
   const doSpawn = opts.spawn ?? spawn;
   const scoped = opts.scope ?? null;
-  const child =
-    scoped === null
-      ? doSpawn(opts.bin, fullArgs, { stdio: ["ignore", logFd, logFd], detached: true })
-      : doSpawn(
-          scoped.systemdRunPath,
-          buildScopeArgv(scoped.base, opts.key.name, opts.bin, fullArgs),
-          {
+  let child: ChildProcess;
+  try {
+    if (
+      opts.pinned !== undefined &&
+      managedRuntimeRefusesMutation(opts.resolved.LOCAL_AI_RUNTIME_DIR)
+    ) {
+      throw new ManagedSpawnRefusedError("ManagedOwnerRequired");
+    }
+    const refusal = opts.checkSpawn?.() ?? managedArtifactRefusal(opts.pinned);
+    if (refusal !== undefined) throw new ManagedSpawnRefusedError(refusal);
+    child =
+      scoped === null
+        ? doSpawn(opts.bin, fullArgs, {
             stdio: ["ignore", logFd, logFd],
             detached: true,
-            env: scoped.env,
-          },
-        );
+            ...opts.pinned?.childProcess,
+          })
+        : doSpawn(
+            scoped.systemdRunPath,
+            buildScopeArgv(scoped.base, opts.key.name, opts.bin, fullArgs),
+            {
+              stdio: ["ignore", logFd, logFd],
+              detached: true,
+              ...omitUndefined({ cwd: opts.pinned?.childProcess.cwd }),
+              env: scoped.env,
+            },
+          );
+  } finally {
+    closeSync(logFd);
+  }
   child.unref();
-  closeSync(logFd);
   const pid = child.pid ?? 0;
   opts.onEvent?.({ type: "launch", pid, command: opts.bin, args: fullArgs });
   return {
@@ -2391,7 +2745,7 @@ export interface StopServerOptions {
    * 1 s steps). SIGKILL follows only if the identity re-verification then returns "alive".
    */
   graceSeconds?: number;
-  /** Identity resolver seams for tests; production uses the defaults. */
+  /** Managed stop binds the exact generation in addition to normal PID checks. */
   identity?: PidIdentityDeps;
 }
 
@@ -2413,6 +2767,12 @@ export interface StopServerResult {
    * not sent.
    */
   killed: boolean;
+  managedRefusal?:
+    | "ManagedStopIntentRequired"
+    | "ManagedStopGenerationUnverified"
+    | "ManagedStopReleaseUnverified"
+    | "TransitionUnavailable"
+    | "NodeBusy";
   /**
    * Set only by the node-side residency fence (#278 leases, #520 sessions),
    * never by `stopServer` itself: which registry refusal blocked the stop
@@ -2421,6 +2781,21 @@ export interface StopServerResult {
   refused?: {
     reason: "LeasesActive" | "DrainInProgress" | "SessionsActive" | "SessionsUnknown";
     active: string[];
+  };
+}
+
+function unconfirmedServerStop(
+  pid: number | null,
+  identity: PidIdentityDeps | undefined,
+  killed = false,
+): StopServerResult {
+  return {
+    stopped: false,
+    pid,
+    killed,
+    ...(identity?.verifyGeneration === undefined
+      ? {}
+      : { managedRefusal: "ManagedStopGenerationUnverified" }),
   };
 }
 
@@ -2465,10 +2840,16 @@ function trackedStopIdentity(
  */
 export async function stopServer(opts: StopServerOptions): Promise<StopServerResult> {
   const resolved = opts.resolved ?? resolveEnv();
+  if (managedRuntimeRefusesMutation(resolved.LOCAL_AI_RUNTIME_DIR)) {
+    return { stopped: false, pid: null, killed: false };
+  }
   const key = opts.key;
   const grace = Math.max(1, opts.graceSeconds ?? 5);
   const pid = readServerPid(key, resolved);
   if (pid === null) {
+    if (opts.identity?.verifyGeneration !== undefined) {
+      return unconfirmedServerStop(pid, opts.identity);
+    }
     removeServerPid(resolved, key);
     removeServerState(resolved, key);
     return { stopped: true, pid, killed: false };
@@ -2487,7 +2868,7 @@ export async function stopServer(opts: StopServerOptions): Promise<StopServerRes
   }
   // Only positive identity authorizes signalling; unknown and future verdicts
   // keep the tracking files so a later attempt can still find the process.
-  if (verdict !== "alive") return { stopped: false, pid, killed: false };
+  if (verdict !== "alive") return unconfirmedServerStop(pid, identity);
 
   // A stop during the pre-exec handshake must tombstone the unit first, so the
   // in-flight scoped launch sees it and never falls back to a direct spawn.
@@ -2496,7 +2877,7 @@ export async function stopServer(opts: StopServerOptions): Promise<StopServerRes
     writeScopeStop(workloadRuntimeDir(resolved, key), "llama-server", pending.scopeUnit);
   }
   const terminated = await terminateVerifiedPid(recordPath, pid, identity, grace);
-  if (!terminated.stopped) return { stopped: false, pid, killed: false };
+  if (!terminated.stopped) return unconfirmedServerStop(pid, identity, terminated.killed);
   removeServerRecordIfOwned(resolved, key, pid);
   return { stopped: true, pid, killed: terminated.killed };
 }

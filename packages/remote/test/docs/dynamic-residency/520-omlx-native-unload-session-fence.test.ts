@@ -22,10 +22,16 @@ describe("#520 oMLX native unload session fence", () => {
   test("source: runUnloadWithLeases carries the session fence and the factory captures the seam", () => {
     const src = readOrEmpty(join(REPO, "packages/remote/src/residency/engine-client.ts"));
     const run = enclosingBody(src, "async function runUnloadWithLeases(");
-    expect(run, "runUnloadWithLeases body").toContain(
-      "sessionUnloadRefusal(leases.sessions, workload)",
+    const drain = enclosingBody(src, "function drainRefusal(");
+    expect(run, "shared drain check before either dispatch").toContain(
+      "drainRefusal(leases, drain.token, drain.active)",
     );
-    expect(run.split("registry.cancelDrain(token);").length - 1).toBeGreaterThanOrEqual(4);
+    expect(run.indexOf("if (refusal !== null) return refusal;")).toBeLessThan(
+      run.indexOf("await unloadWithLocalDrain"),
+    );
+    expect(run).toContain("await unloadWithDurableProof");
+    expect(drain).toContain("sessionUnloadRefusal(leases.sessions, leases.workload)");
+    expect(drain).toContain("leases.registry.cancelDrain(token)");
 
     const helper = enclosingBody(src, "function sessionUnloadRefusal(");
     expect(helper, "sessionUnloadRefusal body").not.toBe("");
@@ -37,7 +43,7 @@ describe("#520 oMLX native unload session fence", () => {
     ]) {
       expect(helper, pin).toContain(pin);
     }
-    for (const body of [run, helper]) {
+    for (const body of [run, drain, helper]) {
       expect(body).not.toContain("forceRelease");
       expect(body).not.toContain("force: true");
       expect(body).not.toContain("releaseSession");

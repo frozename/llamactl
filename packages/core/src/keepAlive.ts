@@ -11,6 +11,7 @@ import {
   isRecordedPidGone,
   type PidIdentityDeps,
   type PidVerdict,
+  readRecordedPidEvidence,
   signalRecordedPid,
   verifyPidFile,
 } from "./pidIdentity.js";
@@ -142,18 +143,6 @@ export function readKeepAliveState(
   }
 }
 
-function readKeepAlivePidRaw(resolved: ResolvedEnv): number | null {
-  const file = keepAlivePidFile(resolved);
-  if (!existsSync(file)) return null;
-  try {
-    const raw = readFileSync(file, "utf8").trim();
-    const pid = Number.parseInt(raw, 10);
-    return Number.isFinite(pid) && pid > 0 ? pid : null;
-  } catch {
-    return null;
-  }
-}
-
 // The supervisor's argv is `<bin> <entry> keep-alive worker <target>` —
 // argv0 varies (bun vs the packaged binary), so identity is pinned to the
 // argv tokens only the supervisor carries.
@@ -172,16 +161,14 @@ function keepAlivePidVerdict(
   pid: number | null;
   verdict: PidVerdict | null;
 } {
-  const pid = readKeepAlivePidRaw(resolved);
+  const path = keepAlivePidFile(resolved);
+  const record = readRecordedPidEvidence(path);
+  if (record.kind !== "present") {
+    return { pid: null, verdict: record.kind === "absent" ? null : "unknown" };
+  }
   return {
-    pid,
-    verdict:
-      pid === null
-        ? null
-        : verifyPidFile(keepAlivePidFile(resolved), pid, {
-            ...deps,
-            expectCommand: KEEPALIVE_EXPECTATION,
-          }),
+    pid: record.pid,
+    verdict: verifyPidFile(path, record.pid, { ...deps, expectCommand: KEEPALIVE_EXPECTATION }),
   };
 }
 
@@ -215,7 +202,7 @@ export function keepAliveStatus(resolved: ResolvedEnv = resolveEnv()): KeepAlive
   const state = readKeepAliveState(resolved);
   // The pid file is only reaped when the record is provably gone — an
   // unverifiable ("unknown") record is kept because it may still be ours.
-  const fileGone = pid === null || (verdict !== null && isRecordedPidGone(verdict));
+  const fileGone = verdict !== null && isRecordedPidGone(verdict);
   if (fileGone && existsSync(keepAlivePidFile(resolved))) {
     try {
       unlinkSync(keepAlivePidFile(resolved));
@@ -295,6 +282,7 @@ export async function stopKeepAlive(opts: StopKeepAliveOptions): Promise<StopKee
     expectCommand: KEEPALIVE_EXPECTATION,
   };
   const { pid, verdict } = keepAlivePidVerdict(resolved, opts.identity);
+  if (verdict === "unknown") return { stopped: false, pid, killed: false };
   if (pid === null || verdict === null || isRecordedPidGone(verdict)) {
     try {
       unlinkSync(keepAlivePidFile(resolved));

@@ -337,6 +337,64 @@ Observable signals operators use today:
 - the guard's Running / Starting / Unknown peer states;
 - template readiness probes (e.g. `/ready` flipping to 200).
 
+### Recording a measured memory envelope
+
+`llamactl admit calibrate <local-evidence.json>` imports attributed samples
+collected on the local host into `measured-calibrations.sqlite` under the
+llamactl state directory (`DEV_STORAGE` or `~/.llamactl`). The report has
+three fields.
+
+- Use the owner-provided `key` below for managed launches. A structured
+  `key` contains `artifactRevision`, `engine`, `engineBuild`, `ctx`,
+  `kvType`, `speculative`, `prefillBatch`, and `concurrency`. Set
+  `speculative.mode` to `none`, `mtp`, or `draft`, with the draft
+  `artifactRevision` for `draft`.
+- `samples` contains `status`, `source`, `observedAtMs`, `processBytes`,
+  `processDeviceBytes`, and `sharedDeviceBytes` for each observation. Use
+  epoch milliseconds for sample time and use `null` for unavailable readings.
+  Optional `deviceAccounting` describes the measured coverage. Use `disjoint`
+  when `processBytes` excludes the attributed device allocation. The importer
+  adds the two readings in this mode and uses it when the field is omitted.
+  Use `included` for a process total that already covers its device
+  allocation. A separate device reading can accompany the total for audit.
+  Use `unknown` when coverage or overlap is unverified. The importer refuses
+  such a sample. Shared-device readings never contribute to the model's
+  measured allocation.
+- `options` contains `minSamples` and `overheadFraction`.
+
+For managed admission, obtain the key from the worker that owns the
+workload. The command returns the key, declared charge, charge for the next
+managed launch, and whether fresh evidence matched.
+
+```sh
+llamactl --node <owner> admit calibration-key <workload>
+```
+
+MCP clients can call `llamactl.residency.calibration-key` with `node` and `workload`.
+
+Use the returned `key` object in the report and import it locally on that
+same worker. Measure a launch of the inputs described by the key and
+check the key again afterward. A changed key requires a fresh measurement. The key fingerprints the
+owner's ID, assembled engine arguments and environment plus observed local
+generations of the executable, weights, and supported auxiliary inputs.
+This includes the configured context, KV types, prefill, concurrency,
+and recognized draft, MTP and adapter paths. Select the native engine
+executable directly. Keep the qualified build and its runtime libraries
+immutable during a calibration.
+
+The managed key currently covers local llama.cpp ModelRun and ModelHost
+launches and Kapitsa ModelHosts with supported arguments. Unsupported
+flags, dependency layouts, or engine settings leave the key unavailable.
+The owner rechecks matching evidence during apply, profile preflight and
+launch. Fresh evidence can raise the declared charge. An invalid or
+expired report leaves the declared charge in effect. An unreadable store
+refuses admission for a launch with a supported key. The physical
+capacity gate and host reserve apply to either charge.
+
+The structured key format remains available for reports consumed by
+operators and callers supplying their own verified key resolver. The
+`admit measure` RSS cache remains separate.
+
 ### Residency lifecycle states
 
 `packages/core/src/residency/lifecycle.ts` is pure and synchronous:
@@ -426,8 +484,11 @@ more occupying members.
 Lifecycle-row boot recovery (Part of #517) sweeps interrupted transient
 states (`loading`, `warming`, `draining`, `unloading`) to `failed` under
 the same claimed fence as the profile-switch operation recovery, releasing
-exclusive-group capacity. On a claimed pass, i.e. when a stale profile-switch
-row exists, it sweeps every interrupted row. When the store holds no
+exclusive-group capacity. On a claimed pass for a stale legacy pending switch,
+it sweeps every interrupted row. A nonterminal `committed` switch retains its
+reservation and lifecycle rows across agent restarts because its replacement
+process may still be live. Boot reports a `dispatchUnverified` count for these
+operations. When the store holds no
 nonterminal operation row, it also sweeps lifecycle rows interrupted outside a
 switch, such as a direct start whose agent died in `loading`, once they have
 made no progress for 30 minutes and their workload is proven down, under its
@@ -1698,6 +1759,24 @@ a loopback Linux `eval perf` run, the stored `peak_gtt_bytes` reason is
 therefore the status-only form, for example `GTT reader returned no sample
 (status: denied)`. The source clause appears only for an injected reader
 that names a source.
+
+### Supervisor swap observations
+
+The supervisor's fleet snapshot carries host swap-page traffic in
+`node_mem.swap_io`. Linux reads `pswpin` and `pswpout` from
+`/proc/vmstat` and scales them by `getconf PAGESIZE`. macOS reads
+`Swapins` and `Swapouts` from `vm_stat` and scales them by the page size in
+its header. The result contains cumulative bytes, a source, an independent
+observation timestamp in epoch milliseconds, and a status. Missing
+counters or page-size evidence produce unavailable readings with null bytes.
+
+The journal's `swapRate` records bytes per second over the two latest
+consecutive observations from the same source. Each sample must be within
+twice the greater of the supervisor interval and probe timeout. The first
+sample, missing readings, stale readings and reset counters give an unknown
+rate with a reason. This measures host-wide swap traffic in page bytes.
+The existing pressure thresholds and routing decisions keep their existing
+inputs.
 
 ### Unscored matrix cells for an arm
 

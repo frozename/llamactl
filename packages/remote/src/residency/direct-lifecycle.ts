@@ -1,3 +1,9 @@
+import { resolveEnv } from "@llamactl/core/env";
+import {
+  isOccupyingResidencyState,
+  RESIDENCY_GROUPS,
+  type ResidencyGroupDeclaration,
+} from "@llamactl/core/residency/lifecycle";
 /**
  * #517: fenced residency lifecycle for the direct ModelHost and ModelRun
  * start/stop writers. `runDirectResidencyStart`/`runDirectResidencyStop` wrap
@@ -50,11 +56,7 @@
  * admit measure's is a workload name, so the self-row case triggers only when a
  * store row's model happens to match that name.
  */
-import {
-  isOccupyingResidencyState,
-  RESIDENCY_GROUPS,
-  type ResidencyGroupDeclaration,
-} from "@llamactl/core/residency/lifecycle";
+import { hasManagedRuntimeMarker } from "@llamactl/core/residency/managed-runtime";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 
@@ -106,6 +108,8 @@ export type DirectLifecycleOpts = {
   isRunning: (model: string) => boolean;
   log: (line: string) => void;
   openStore?: (path: string) => Store;
+  /** Managed-owned stops require the existing transition journal and fence. */
+  requireVerifiedStopJournal?: boolean;
   incarnation?: string;
   nowMs?: () => number;
   groups?: readonly ResidencyGroupDeclaration[];
@@ -114,6 +118,8 @@ export type DirectLifecycleOpts = {
 export type DirectLifecycleOutcome<T> = { ran: true; result: T } | { ran: false; detail: string };
 
 type DepEnv<T> = {
+  managed: boolean;
+  strictStop: boolean;
   lifecycleGroup: string | undefined;
   groups: readonly ResidencyGroupDeclaration[];
   nowMs: () => number;
@@ -132,10 +138,6 @@ function logSafe(log: (line: string) => void, line: string): void {
   } catch {
     // logging must never change a dep outcome
   }
-}
-
-function defaultOpenStore(path: string): Store {
-  return openResidencyOperationStore({ path });
 }
 
 // A group is recorded only when the caller's declarations name it; an
@@ -459,8 +461,7 @@ async function recordSettledStop<T extends DepResult>(
   }
 }
 
-// (d) a store-open or claim failure: a grouped start refuses, anything else
-// runs the dep unrecorded.
+// Managed lifecycle stops and managed or grouped starts require usable journal evidence.
 async function unrecordedOrFail<T extends DepResult>(
   action: DirectAction,
   workload: string,
@@ -468,7 +469,8 @@ async function unrecordedOrFail<T extends DepResult>(
   env: DepEnv<T>,
   message: string,
 ): Promise<DirectLifecycleOutcome<T>> {
-  if (action === "start" && lifecycleGroup !== undefined) {
+  if (env.strictStop) return { ran: false, detail: "TransitionUnavailable" };
+  if (action === "start" && (env.managed || lifecycleGroup !== undefined)) {
     return {
       ran: false,
       detail: `residency lifecycle refused ${workload}: store unavailable (${message})`,
@@ -481,8 +483,8 @@ async function unrecordedOrFail<T extends DepResult>(
   return { ran: true, result: await env.dep(workload) };
 }
 
-// (c) the initial claim: a refusal refuses a start but only logs a stop,
-// which still runs.
+// A legacy stop may run without the fence when freeing the engine is
+// safer than waiting for a journal repair.
 async function initialClaim<T extends DepResult>(
   action: DirectAction,
   workload: string,
@@ -497,6 +499,7 @@ async function initialClaim<T extends DepResult>(
   } catch (error: unknown) {
     return await unrecordedOrFail(action, workload, env.lifecycleGroup, env, messageOf(error));
   }
+  if (env.strictStop) return { ran: false, detail: "NodeBusy" };
   if (action === "start") {
     return {
       ran: false,
@@ -546,12 +549,16 @@ async function runDirect<T extends DepResult>(
   if (inResidencySwitchScope()) {
     return { ran: true, result: await dep(workload) };
   }
-  if (!existsSync(opts.storePath)) {
+  const managed = hasManagedRuntimeMarker(resolveEnv().LOCAL_AI_RUNTIME_DIR);
+  const strictStop = action === "stop" && opts.requireVerifiedStopJournal === true;
+  if (!existsSync(opts.storePath) && !managed && !strictStop) {
     return { ran: true, result: await dep(workload) };
   }
   const groups = opts.groups ?? RESIDENCY_GROUPS;
   const lifecycleGroup = declaredGroup(groups, opts.group);
   const env: DepEnv<T> = {
+    managed,
+    strictStop,
     lifecycleGroup,
     groups,
     nowMs: opts.nowMs ?? Date.now,
@@ -559,10 +566,18 @@ async function runDirect<T extends DepResult>(
     incarnation: opts.incarnation ?? randomUUID(),
     dep,
   };
-  const openStore = opts.openStore ?? defaultOpenStore;
+  if (!existsSync(opts.storePath)) {
+    return await unrecordedOrFail(action, workload, lifecycleGroup, env, "missing journal");
+  }
   let store: Store;
   try {
-    store = openStore(opts.storePath);
+    store =
+      opts.openStore?.(opts.storePath) ??
+      openResidencyOperationStore({
+        path: opts.storePath,
+        requireExisting: managed,
+        verifyExistingSchema: strictStop,
+      });
   } catch (error: unknown) {
     return await unrecordedOrFail(action, workload, lifecycleGroup, env, messageOf(error));
   }

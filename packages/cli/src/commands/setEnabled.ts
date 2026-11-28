@@ -1,5 +1,7 @@
 import type { ModelHostManifest } from "@llamactl/remote/workload/modelhost-schema";
 
+import { resolveEnv } from "@llamactl/core/env";
+import { hasManagedRuntimeMarker } from "@llamactl/core/residency/managed-runtime";
 import {
   config as kubecfg,
   type noderunStore,
@@ -14,7 +16,11 @@ import {
 } from "@llamactl/remote/workload/apply";
 import { loadModelHostByName, saveModelHost } from "@llamactl/remote/workload/modelhost-store";
 
-import { getNodeClientByName } from "../dispatcher.js";
+import {
+  getAuthenticatedAgentClientByName,
+  getGlobals,
+  getNodeClientByName,
+} from "../dispatcher.js";
 import { nodeRunBudgetLookup, nodeRunResidencyLookup } from "./noderun-helpers.js";
 
 export interface SetEnabledResult {
@@ -147,9 +153,37 @@ export async function setWorkloadEnabledWithDeps(
   };
 }
 
+export async function setManagedWorkloadEnabled(
+  name: string,
+  enabled: boolean,
+  ownerClient: typeof getAuthenticatedAgentClientByName = getAuthenticatedAgentClientByName,
+): Promise<SetEnabledResult> {
+  const verb = enabled ? "enable" : "disable";
+  const globals = getGlobals();
+  const node = globals.nodeName;
+  if (!node || node === "local" || node === "all") {
+    return { code: 1, message: `${verb}: --managed requires --node <owner>\n` };
+  }
+  try {
+    const result = await ownerClient(node, globals).managedWorkloadSetEnabled.mutate({
+      workload: name,
+      enabled,
+    });
+    return { code: 0, message: `${result.action} ${result.name} on ${node}\n` };
+  } catch (error) {
+    return {
+      code: 1,
+      message: `${verb}: ${error instanceof Error ? error.message : String(error)}\n`,
+    };
+  }
+}
+
 export async function setWorkloadEnabled(
   name: string,
   enabled: boolean,
 ): Promise<SetEnabledResult> {
+  if (hasManagedRuntimeMarker(resolveEnv().LOCAL_AI_RUNTIME_DIR)) {
+    return { code: 1, message: "use --managed --node <owner> to change this managed workload\n" };
+  }
   return await setWorkloadEnabledWithDeps(name, enabled);
 }

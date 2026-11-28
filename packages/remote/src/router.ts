@@ -33,13 +33,19 @@ import {
   modelhostStateFile,
   readModelHostState,
 } from "@llamactl/core/engines/state";
+import { omitUndefined } from "@llamactl/core/object";
 import { probeEndpointOwnership } from "@llamactl/core/probe";
 import { DEFAULT_RESIDENCY_POLICY } from "@llamactl/core/residency/admission";
+import {
+  type LocalEngineForwarder,
+  withLocalEngineBody,
+} from "@llamactl/core/residency/engine-forwarder";
 import {
   getResidencyLeaseRegistry,
   type ResidencyAuditEntry,
   type ResidencySnapshot,
 } from "@llamactl/core/residency/leases";
+import { hasManagedRuntimeMarker } from "@llamactl/core/residency/managed-runtime";
 import { currentSessionRefcounts } from "@llamactl/core/residency/sessions";
 import {
   type CostJournalEntry,
@@ -76,6 +82,13 @@ import { dirname, join } from "node:path";
 import { z } from "zod";
 
 import type { CompositeApplyEvent } from "./composite/types.js";
+import type { ManagedStopProof } from "./residency/admission-authority.js";
+import type {
+  CommitLaunchReadiness,
+  ManagedApplyBudget,
+  ManagedLaunchAdmission,
+} from "./residency/managed-launch-admission.js";
+import type { IdleProfileWindow, OwnerAdmissionPause } from "./residency/owner-activity.js";
 import type { Release, RequestAdmission } from "./residency/request-admission.js";
 import type { RuntimeBackend } from "./runtime/backend.js";
 import type { RuntimeKind } from "./runtime/factory.js";
@@ -105,6 +118,7 @@ import { resolveRagNode } from "./rag/resolve.js";
 import {
   applyResidencyProfile,
   cancelResidencyProfileOperation,
+  type ProfileExecutionGuard,
   residencyApplyProfileRefusal,
   type ResidencyApplyProfileResult,
   type ResidencyCancelOperationResult,
@@ -112,6 +126,7 @@ import {
 import { residencyGroupLabelOf } from "./residency/coordinator.js";
 import {
   type DirectLifecycleOpts,
+  type DirectLifecycleOutcome,
   exclusiveGroupLaunchRefusal,
   runDirectResidencyStart,
   runDirectResidencyStop,
@@ -125,6 +140,16 @@ import {
   releaseResidencySession,
   type ReleaseSessionResult,
 } from "./residency/force-unload.js";
+import {
+  controlManagedResidency,
+  enterManagedOperatorAction,
+  RESIDENCY_CALIBRATION_KEY_TOOL,
+  RESIDENCY_CONTROL_TOOL,
+  residencyCalibrationKeyInput,
+  residencyControlInput,
+  type ResidencyControlResult,
+} from "./residency/managed-operator-control.js";
+import { readManagedProfileSelection } from "./residency/managed-profile-selection.js";
 import { collectOmlxNativeStatus } from "./residency/omlx-capability.js";
 import {
   buildIdleEvictionSnapshot,
@@ -140,6 +165,13 @@ import {
   type ResidencyPlan,
   runIdleEviction,
 } from "./residency/procedures.js";
+import { captureProfileDesired, type ProfileDesiredSnapshot } from "./residency/profile-desired.js";
+import {
+  managedProfileMutationSchema,
+  profileMutationSchema,
+  RESIDENCY_APPLY_PROFILE_TOOL,
+} from "./residency/profile-protocol.js";
+import { recoverAbandonedProfileIntentsOnNode } from "./residency/recovery.js";
 import { fenceWorkloadStop, reopenWorkloadAfterLoad } from "./residency/stop-fence.js";
 import {
   defaultResidencyStorePath,
@@ -152,10 +184,14 @@ import { searchLogs } from "./search/logs.js";
 import { resolveDefaultRagNode } from "./search/rag-node.js";
 import { searchSessions } from "./search/sessions.js";
 import { acquireChatSlot, admissionTrpcError } from "./server/chat-admission.js";
+import { ownerExecutionStatus } from "./server/metrics.js";
 import {
+  isModelHostProvenDown,
+  pinModelHostStartup,
   startModelHost,
   type StartModelHostResult,
   statusModelHost,
+  statusModelHostForProbe,
   stopModelHost,
   type StopModelHostResult,
 } from "./server/modelhost.js";
@@ -180,7 +216,12 @@ import {
 import * as modelHostStoreMod from "./workload/modelhost-store.js";
 import * as nodeRunStoreMod from "./workload/noderun-store.js";
 import * as reconcileLoopMod from "./workload/reconcileLoop.js";
-import { type ModelRun, ModelRunSchema, ModelRunSpecSchema } from "./workload/schema.js";
+import {
+  type ModelRun,
+  ModelRunSchema,
+  ModelRunSpecSchema,
+  type ModelRunStatus,
+} from "./workload/schema.js";
 import * as workloadStoreMod from "./workload/store.js";
 
 // #216: when a local ModelHost is applied through the router and a live
@@ -207,6 +248,27 @@ type HandoffResult = {
     }[];
   };
 };
+
+function assertManagedApplyOwnsDirectory(workloadsDir: string): void {
+  const owner = liveLockHolder(workloadsDir);
+  if (owner === null || owner === process.pid) return;
+  throw new TRPCError({
+    code: "CONFLICT",
+    message: "ManagedControllerActive: an independent controller owns the workload directory",
+  });
+}
+
+function clientForApply(
+  cfg: Config,
+  managed: ManagedLaunchAdmission | undefined,
+  ownsNode: boolean,
+  signal?: AbortSignal,
+): (nodeName: string) => WorkloadNodeClient {
+  return (nodeName) =>
+    ownsNode && managed?.ownsNode?.(nodeName) === true
+      ? localCallerProxy(managed, signal, true)
+      : clientForNode(cfg, nodeName, managed);
+}
 
 function handoffLocalModelHost(manifest: unknown, workloadsDir: string): HandoffResult | null {
   const parsed = ModelHostManifestSchema.safeParse(manifest);
@@ -277,20 +339,33 @@ const mutateConfigLocked = (path: string, fn: (cfg: Config) => Config): Config =
 type WorkloadNodeClient = workloadApplyMod.WorkloadClient & benchScheduleLoopMod.BenchClient;
 
 /**
- * Build a tRPC-client-shaped proxy over `router.createCaller({})` so
+ * Build a tRPC-client-shaped proxy over the invoking agent's local caller so
  * local workload ops can reuse the same `.query/.mutate/.subscribe`
  * surface as the remote tRPC client. Mirrors the proxy wrapper in
  * `client/node-client.ts` but lives here to avoid the AppRouter cycle.
  */
-function localCallerProxy(): WorkloadNodeClient {
+function localCallerProxy(
+  managedLaunchAdmission?: ManagedLaunchAdmission,
+  parentSignal?: AbortSignal,
+  ownerStopIntent = false,
+): WorkloadNodeClient {
+  const ctx: AgentRouterContext = {
+    ...(managedLaunchAdmission === undefined ? {} : { managedLaunchAdmission }),
+    ...(ownerStopIntent ? { ownerStopIntent: true } : {}),
+  };
   // Deferred reference — at runtime `router` exists by the time the
   // helper is invoked from within a procedure body, even though at
   // module-load time the declaration below is still being evaluated.
-  const getCaller = (signal?: AbortSignal): Record<string, (...a: unknown[]) => unknown> =>
-    router.createCaller({}, signal ? { signal } : undefined) as unknown as Record<
-      string,
-      (...a: unknown[]) => unknown
-    >;
+  const getCaller = (signal?: AbortSignal): Record<string, (...a: unknown[]) => unknown> => {
+    const combined =
+      signal !== undefined && parentSignal !== undefined
+        ? AbortSignal.any([signal, parentSignal])
+        : (signal ?? parentSignal);
+    return router.createCaller(
+      ctx,
+      combined ? { signal: combined } : undefined,
+    ) as unknown as Record<string, (...a: unknown[]) => unknown>;
+  };
   const handler: ProxyHandler<object> = {
     get(_t, prop) {
       if (typeof prop !== "string") return undefined;
@@ -329,6 +404,7 @@ async function* bridgeEventStream<T>(
     controller.abort();
   };
   clientSignal?.addEventListener("abort", onClientAbort);
+  if (clientSignal?.aborted === true) onClientAbort();
 
   const queue: T[] = [];
   const state: { finished: boolean; err: Error | null } = { finished: false, err: null };
@@ -406,10 +482,14 @@ export async function queryServerStatusWithTimeout<T>(
   }
 }
 
-function clientForNode(cfg: Config, nodeName: string): WorkloadNodeClient {
+function clientForNode(
+  cfg: Config,
+  nodeName: string,
+  managedLaunchAdmission?: ManagedLaunchAdmission,
+): WorkloadNodeClient {
   const resolved = kubecfg.resolveNode(cfg, nodeName);
   if (resolved.node.endpoint.startsWith("inproc://")) {
-    return localCallerProxy();
+    return localCallerProxy(managedLaunchAdmission);
   }
   const token = kubecfg.resolveToken(resolved.user);
   const trpc = createTRPCClient({
@@ -439,29 +519,394 @@ function nodeRunResidency(nodeName: string, workloadsDir: string): NodeRunReside
   return nodeRuns.find((n) => n.metadata.name === nodeName)?.spec.residency;
 }
 
-function residencyPlanFor(input: {
+async function applyProfileWorkload(
+  node: string,
+  workloadsDir: string,
+  manifest: unknown,
+  managed: ManagedLaunchAdmission | undefined,
+  signal: AbortSignal | undefined,
+): Promise<workloadApplyMod.ApplyManifestOutcome> {
+  const cfg = kubecfg.loadConfig();
+  const apply = async (
+    owned: boolean,
+    budget?: ManagedApplyBudget,
+  ): Promise<workloadApplyMod.ApplyManifestOutcome> => {
+    if (managed !== undefined && !owned) return { ok: false, error: "ManagedOwnerRequired" };
+    return await runInResidencySwitchScope(
+      async () =>
+        await workloadApplyMod.applyManifest({
+          manifest,
+          getClient: (nodeName) =>
+            nodeName === node || managed?.ownsNode?.(nodeName) === true
+              ? localCallerProxy(managed, signal)
+              : clientForNode(cfg, nodeName),
+          getNodeBudgetGiB: (nodeName) => nodeRunBudgetGiB(nodeName, workloadsDir),
+          getNodeResidency: (nodeName) => nodeRunResidency(nodeName, workloadsDir),
+          ...(budget === undefined ? {} : { managedBudget: budget }),
+        }),
+    );
+  };
+  return managed?.withDesiredManifest === undefined
+    ? await apply(false)
+    : await managed.withDesiredManifest(manifest, apply);
+}
+
+const controlStartTerminal = z.object({
+  ok: z.boolean(),
+  pid: z.number().nullable(),
+  error: z.string().optional(),
+});
+
+function controlFailure(error: string | undefined, fallback: string): string {
+  const reason = error?.split(":", 1)[0];
+  return reason !== undefined && CONTROL_OUTCOME_CODES.has(reason) ? reason : fallback;
+}
+
+const CONTROL_OUTCOME_CODES = new Set([
+  "AuthorityUnavailable",
+  "BudgetExceeded",
+  "BudgetUnknown",
+  "DrainInProgress",
+  "LeasesActive",
+  "SessionsActive",
+  "SessionsUnknown",
+  "ManagedInferenceUnresolved",
+  "ManagedLlamacppIdleSleepConfigUnverified",
+  "ManagedLlamacppIdleSleepUnavailable",
+  "ManagedOwnerRequired",
+  "ManagedSpecUnknown",
+  "ManagedSpecChanged",
+  "ManagedLaunchPending",
+  "ManagedRuntimeResident",
+  "ManagedReadyUnverified",
+  "ManagedStopGenerationUnverified",
+  "ManagedStopReleaseUnverified",
+  "ManagedReplacementRequiresProfile",
+  "LaunchCanceled",
+  "NodeBusy",
+  "TransitionUnavailable",
+]);
+
+async function controlStartOutcome(
+  events: AsyncIterable<unknown>,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  for await (const event of events) {
+    if (typeof event !== "object" || event === null || !("type" in event) || event.type !== "done")
+      continue;
+    const parsed = controlStartTerminal.safeParse("result" in event ? event.result : undefined);
+    if (!parsed.success) break;
+    return parsed.data.ok && parsed.data.pid !== null
+      ? { ok: true }
+      : { ok: false, reason: controlFailure(parsed.data.error, "LoadUnconfirmed") };
+  }
+  return { ok: false, reason: "LoadUnconfirmed" };
+}
+
+async function dispatchManagedControl(
+  ctx: AgentRouterContext,
+  signal: AbortSignal | undefined,
+  action: "load" | "unload",
+  manifest: ModelRun | ModelHostManifest,
+  drainTimeoutMs: number | undefined,
+): Promise<{ ok: true } | { ok: false; reason: string; activeCount?: number }> {
+  const workload = manifest.metadata.name;
+  const caller = router.createCaller(
+    {
+      ...ctx,
+      ownerStopIntent: true,
+      ...(drainTimeoutMs === undefined
+        ? {}
+        : { ownerStopWait: { timeoutMs: drainTimeoutMs, signal } }),
+    },
+    omitUndefined({ signal }),
+  );
+  if (action === "load") {
+    const events =
+      manifest.kind === "ModelHost"
+        ? await caller.modelHostStart({ workload, manifest })
+        : await caller.serverStart(workloadApplyMod.modelRunStartInvocation(manifest));
+    return await controlStartOutcome(events);
+  }
+  if (manifest.kind === "ModelHost") {
+    const stopped = await caller.modelHostStop({ workload });
+    if (stopped.ok) return { ok: true };
+    return { ok: false, reason: controlStopFailure(signal, stopped.error) };
+  }
+  const stopped = await caller.serverStop({ workload });
+  if (stopped.stopped) return { ok: true };
+  if (signal?.aborted === true) return { ok: false, reason: "ControlCanceled" };
+  if (stopped.refused !== undefined) {
+    return {
+      ok: false,
+      reason: stopped.refused.reason,
+      activeCount: stopped.refused.active.length,
+    };
+  }
+  return { ok: false, reason: controlFailure(stopped.managedRefusal, "UnloadUnconfirmed") };
+}
+
+function controlStopFailure(signal: AbortSignal | undefined, error: string | undefined): string {
+  return signal?.aborted === true ? "ControlCanceled" : controlFailure(error, "UnloadUnconfirmed");
+}
+
+function profileOwner(
+  node: string,
+  managed: ManagedLaunchAdmission | undefined,
+): ManagedLaunchAdmission | undefined {
+  return managed?.ownsNode?.(node) === true ? managed : undefined;
+}
+
+function wetProfileRefusal(
+  node: string,
+  to: string,
+  from: string | null,
+  workloadsDir: string,
+  managed: ManagedLaunchAdmission | undefined,
+): ResidencyApplyProfileResult | undefined {
+  const rawNode = process.env["LLAMACTL_NODE_NAME"]?.trim() ?? "";
+  const servingNode = managed === undefined ? (rawNode === "" ? null : rawNode) : node;
+  if (managed === undefined && hasManagedRuntimeMarker(envMod.resolveEnv().LOCAL_AI_RUNTIME_DIR)) {
+    return residencyApplyProfileRefusal({
+      reason: "ManagedOwnerRequired",
+      detail: "send the profile to its owner agent",
+      node,
+      to,
+      from,
+    });
+  }
+  if (servingNode !== node) {
+    return residencyApplyProfileRefusal({
+      reason: "NotServingNode",
+      detail: `node ${node} is not served by this process (serving ${String(servingNode)})`,
+      node,
+      to,
+      from,
+    });
+  }
+  const controllerPid = liveLockHolder(workloadsDir);
+  return controllerPid === null
+    ? undefined
+    : residencyApplyProfileRefusal({
+        reason: "ControllerActive",
+        detail: `a residency controller is live on ${node} (pid ${String(controllerPid)}); persist-suppression is deferred to the controller`,
+        node,
+        to,
+        from,
+        controllerPid,
+      });
+}
+
+type ProfileMutationInput = {
   node: string;
   to: string;
   from?: string | undefined;
-}): ResidencyPlan {
-  const nodeRuns = nodeRunStoreMod.listNodeRuns();
-  const node = nodeRuns.find((n: (typeof nodeRuns)[number]) => n.metadata.name === input.node);
+  dryRun: boolean;
+  confirm: boolean;
+};
+
+export async function runIdleProfileMutation(
+  node: string,
+  window: IdleProfileWindow,
+  managed: ManagedLaunchAdmission,
+  tryPause: () => OwnerAdmissionPause | undefined,
+  trackSettlement: (settled: Promise<void>) => void,
+): Promise<ResidencyApplyProfileResult> {
+  const { from, to, signal } = window;
+  const refuse = (reason: string, detail: string): ResidencyApplyProfileResult =>
+    residencyApplyProfileRefusal({ node, from, to, reason, detail });
+  if (signal.aborted) return refuse("IdleProfileCanceled", "the maintenance window ended");
+  if (from.trim() === "" || to.trim() === "" || from === to) {
+    return refuse("IdleProfileInvalid", "a window requires distinct source and target profiles");
+  }
+  const pause = tryPause();
+  if (pause === undefined) return refuse("OwnerNotIdle", "no exclusive idle ingress proof");
+  const actuators = new Set<Promise<unknown>>();
+  let didActuate = false;
+  try {
+    const guard: ProfileExecutionGuard = {
+      signal: AbortSignal.any([signal, pause.signal]),
+      check: () =>
+        signal.aborted || !pause.isCurrent() ? "IdleProfileAuthorizationLost" : undefined,
+      didActuate: () => didActuate,
+      trackActuator: (actuator) => {
+        didActuate = true;
+        actuators.add(actuator);
+        const settled = (): void => {
+          actuators.delete(actuator);
+        };
+        void actuator.then(settled, settled);
+      },
+    };
+    return await runProfileMutation(
+      { node, from, to, dryRun: false, confirm: true },
+      managed,
+      guard,
+    );
+  } finally {
+    // A step deadline can return a durable unknown while its actuator is still settling.
+    if (actuators.size === 0) pause.release();
+    else
+      trackSettlement(
+        Promise.allSettled(actuators).then(() => {
+          pause.release();
+        }),
+      );
+  }
+}
+
+async function runProfileMutation(
+  input: ProfileMutationInput,
+  admission: ManagedLaunchAdmission | undefined,
+  guard?: ProfileExecutionGuard,
+): Promise<ResidencyApplyProfileResult> {
+  if (!input.dryRun && !input.confirm) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "residency apply-profile: confirm: true is required when dryRun is false",
+    });
+  }
+  const managed = profileOwner(input.node, admission);
+  const node = managed?.ownerNodeId ?? input.node;
+  if (guard !== undefined && managed === undefined) {
+    return residencyApplyProfileRefusal({
+      reason: "ManagedOwnerRequired",
+      detail: "an idle switch requires its owner coordinator",
+      node,
+      from: input.from ?? null,
+      to: input.to,
+    });
+  }
+  if (input.dryRun || managed === undefined)
+    return await applyProfileMutation(input, node, managed);
+
+  const leave = enterManagedOperatorAction(node, "profile");
+  if (leave === undefined) {
+    return residencyApplyProfileRefusal({
+      reason: "NodeBusy",
+      detail: "a manual residency operation owns this node",
+      node,
+      from: input.from ?? null,
+      to: input.to,
+    });
+  }
+  try {
+    return await applyProfileMutation(input, node, managed, guard);
+  } finally {
+    leave();
+  }
+}
+
+function managedProfilePredecessor(
+  storePath: string,
+  node: string,
+  input: ProfileMutationInput,
+): { operationId: string | null } | { refusal: ResidencyApplyProfileResult } {
+  const selection = readManagedProfileSelection(storePath, node);
+  const refuse = (reason: string, detail: string): { refusal: ResidencyApplyProfileResult } => ({
+    refusal: residencyApplyProfileRefusal({
+      node,
+      from: input.from ?? null,
+      to: input.to,
+      reason,
+      detail,
+      dryRun: input.dryRun,
+    }),
+  });
+
+  if (selection.kind === "switching")
+    return refuse("NodeBusy", "a managed profile switch is active");
+  if (selection.kind === "unknown")
+    return refuse("ManagedProfileUnverified", "the owner cannot verify its selected profile");
+  if (
+    input.from !== undefined &&
+    (selection.kind !== "selected" || input.from !== selection.profile)
+  )
+    return refuse(
+      "ProfileSelectionChanged",
+      "the requested source profile is not the verified selection",
+    );
+
+  return { operationId: selection.kind === "selected" ? selection.operationId : null };
+}
+
+async function applyProfileMutation(
+  input: ProfileMutationInput,
+  node: string,
+  managed: ManagedLaunchAdmission | undefined,
+  guard?: ProfileExecutionGuard,
+): Promise<ResidencyApplyProfileResult> {
+  const workloadsDir = workloadStoreMod.defaultWorkloadsDir();
+  const storePath = defaultResidencyStorePath();
+  if (!input.dryRun) {
+    const refusal = wetProfileRefusal(node, input.to, input.from ?? null, workloadsDir, managed);
+    if (refusal !== undefined) return refusal;
+    recoverAbandonedProfileIntentsOnNode(storePath, node);
+  }
+  const prior =
+    managed === undefined ? undefined : managedProfilePredecessor(storePath, node, input);
+  if (prior !== undefined && "refusal" in prior) return prior.refusal;
+  const { plan, desired } = residencyPlanFor({ ...input, managed }, workloadsDir);
+  return await applyResidencyProfile({
+    plan,
+    desired,
+    dryRun: input.dryRun,
+    storePath,
+    workloadsDir,
+    registry: getResidencyLeaseRegistry(),
+    ...(guard === undefined ? {} : { guard }),
+    node,
+    to: input.to,
+    from: input.from ?? null,
+    isProvenDown: directWorkloadProvenDown,
+    ...(managed === undefined ? {} : { managedLaunchAdmission: managed }),
+    ...(prior === undefined ? {} : { expectedManagedProfileOperationId: prior.operationId }),
+    applyModelRun: (manifest, signal) =>
+      applyProfileWorkload(node, workloadsDir, manifest, managed, signal),
+  });
+}
+
+function profileManifest<T extends { spec: { node: string } }>(
+  manifest: T,
+  node: string,
+  managed: ManagedLaunchAdmission | undefined,
+): T {
+  return managed?.ownsNode?.(manifest.spec.node) === true
+    ? { ...manifest, spec: { ...manifest.spec, node } }
+    : manifest;
+}
+
+function residencyPlanFor(
+  input: {
+    node: string;
+    to: string;
+    from?: string | undefined;
+    managed?: ManagedLaunchAdmission | undefined;
+  },
+  workloadsDir = workloadStoreMod.defaultWorkloadsDir(),
+): { plan: ResidencyPlan; desired: ProfileDesiredSnapshot } {
+  const managed = profileOwner(input.node, input.managed);
+  const nodeName = managed?.ownerNodeId ?? input.node;
+  const nodeRuns = nodeRunStoreMod.listNodeRuns(workloadsDir);
+  const node = nodeRuns.find((n) => n.metadata.name === nodeName);
   const declared = node?.spec.budget?.memoryGiB;
   const rawNodeName = process.env["LLAMACTL_NODE_NAME"]?.trim() ?? "";
-  const servingNode = rawNodeName === "" ? null : rawNodeName;
+  const servingNode = managed === undefined ? (rawNodeName === "" ? null : rawNodeName) : nodeName;
   const resolved = envMod.resolveEnv();
-  const modelHosts = modelHostStoreMod.listModelHosts();
+  const rawHosts = modelHostStoreMod.listModelHosts(workloadsDir);
+  const rawRuns = workloadStoreMod.listWorkloads(workloadsDir);
+  const modelHosts = rawHosts.map((manifest) => profileManifest(manifest, nodeName, managed));
   const observations = collectResidencyObservations({
-    node: input.node,
+    node: nodeName,
     servingNode,
-    modelRuns: workloadStoreMod.listWorkloads(),
+    modelRuns: rawRuns.map((manifest) => profileManifest(manifest, nodeName, managed)),
     modelHosts,
     modelHostStatus: (name) => statusModelHost({ key: { name } }),
+    observeManaged: managed?.observeProfileWorkload,
     estimateModelRunGiB: (manifest) => estimateWorkloadMemoryGiB(manifest, resolved),
     estimateModelHostGiB: (manifest) => estimateModelHostMemoryGiB(manifest, resolved),
   });
-  return buildResidencyPlan({
-    node: input.node,
+  const plan = buildResidencyPlan({
+    node: nodeName,
     to: input.to,
     from: input.from ?? null,
     nowMs: Date.now(),
@@ -475,6 +920,10 @@ function residencyPlanFor(input: {
     store: readResidencyStoreSnapshot(defaultResidencyStorePath()),
     residency: node?.spec.residency ?? null,
   });
+  return {
+    plan,
+    desired: captureProfileDesired(nodeName, node, rawRuns, rawHosts, managed?.ownsNode),
+  };
 }
 
 // Resolves the direct-start/stop residency group: an inline manifest's label
@@ -557,7 +1006,7 @@ export function keepAliveWorkloadProvenDown(
       return false;
     }
     const { pid, verdict } = readRecord();
-    if (!(pid === null || verdict === "dead" || verdict === "reused")) {
+    if (!((pid === null && verdict === null) || verdict === "dead" || verdict === "reused")) {
       return false;
     }
     return serverDown(model);
@@ -591,17 +1040,11 @@ function unstoredModelRunRecorded(model: string): boolean {
   }
 }
 
-// A peer is proven down only when it is a known ModelHost whose recorded-pid
-// status reads Stopped without an unresolved identity, a known ModelRun (stored,
-// or unstored and identified by its server sidecar) that has no recorded pid file
-// or whose recorded pid verifies `dead` or `reused` against its pid file using the
-// stopServer identity check, or a crash-left keep-alive workload. A live pid, or
-// an unverifiable one, fails closed. Also used by agent boot recovery for the
-// orphan lifecycle sweep (Part of #517).
+// The display status can collapse missing and invalid records. Releasing a
+// claim requires confirmed record absence or a verified dead generation.
 export function directWorkloadProvenDown(model: string): boolean {
   if (modelHostStoreMod.listModelHosts().some((host) => host.metadata.name === model)) {
-    const status = statusModelHost({ key: { name: model } });
-    return status.state === "Stopped" && status.identityUnknown !== true;
+    return isModelHostProvenDown({ name: model });
   }
   if (
     workloadStoreMod.listWorkloads().some((run) => run.metadata.name === model) ||
@@ -656,9 +1099,20 @@ function catalogTargetGroup(target: string): string | undefined {
 // wins, even one naming an undeclared group; an unlabelled or unstored ModelRun
 // falls back to the catalog group of its start target, the order the
 // admit-measure gate uses.
-function directModelRunStartOpts(workload: string, target: string): DirectLifecycleOpts {
+function directModelRunStartOpts(
+  workload: string,
+  target: string,
+  pinnedRel?: string,
+): DirectLifecycleOpts {
   const opts = directModelRunOpts(workload);
-  return opts.group !== undefined ? opts : { ...opts, group: catalogTargetGroup(target) };
+  if (opts.group !== undefined) return opts;
+  return {
+    ...opts,
+    group:
+      pinnedRel === undefined
+        ? catalogTargetGroup(target)
+        : catalog.findByRel(pinnedRel)?.residencyGroup,
+  };
 }
 
 /**
@@ -838,10 +1292,10 @@ function serverStartEndpointOverride(
   };
 }
 
-function serverStartOptions(
+export function serverStartOptions(
   input: ServerStartInput,
-  sig: AbortSignal,
-  emit: (e: serverMod.ServerEvent) => void,
+  sig?: AbortSignal,
+  emit?: (e: serverMod.ServerEvent) => void,
 ): serverMod.StartServerOptions {
   const readiness = normalizeReadiness(input.readiness);
   const endpointOverride = serverStartEndpointOverride(input.endpoint);
@@ -858,9 +1312,61 @@ function serverStartOptions(
     ...(input.skipTuned !== undefined ? { skipTuned: input.skipTuned } : {}),
     ...(input.restart !== undefined ? { restart: input.restart } : {}),
     ...(readiness !== undefined ? { readiness } : {}),
-    signal: sig,
-    onEvent: emit,
+    ...(sig === undefined ? {} : { signal: sig }),
+    ...(emit === undefined ? {} : { onEvent: emit }),
   };
+}
+
+export async function runModelRunStart(
+  input: ServerStartInput,
+  signal: AbortSignal,
+  emit: (event: serverMod.ServerEvent) => void,
+  managed: ManagedLaunchAdmission | undefined,
+  cold?: { effectiveSpecDigest: string; stillCurrent: () => boolean },
+): Promise<DirectLifecycleOutcome<serverMod.StartServerResult>> {
+  const opts = serverStartOptions(input, signal, (event) => {
+    if (managed === undefined || event.type !== "ready") emit(event);
+  });
+  if (managed === undefined) {
+    if (cold !== undefined) return { ran: false, detail: "ManagedOwnerRequired" };
+    return await runDirectResidencyStart(
+      input.workload,
+      () => serverMod.startServer(opts),
+      directModelRunStartOpts(input.workload, input.target),
+    );
+  }
+  if (signal.aborted) return { ran: false, detail: "LaunchCanceled" };
+  if (input.restart === true) return { ran: false, detail: "ManagedRestartUnavailable" };
+  const prepared = serverMod.prepareManagedServerStart(opts);
+  if ("result" in prepared) return { ran: true, result: prepared.result };
+  if (cold !== undefined && prepared.effectiveSpecDigest !== cold.effectiveSpecDigest) {
+    return { ran: false, detail: "ColdPlanChanged" };
+  }
+  const lifecycle = directModelRunStartOpts(input.workload, input.target, prepared.launch.rel);
+  const request = {
+    kind: "ModelRun" as const,
+    runtimeKey: input.workload,
+    launch: input,
+    effectiveLaunch: prepared.launch,
+    effectiveSpecDigest: prepared.effectiveSpecDigest,
+  };
+  return await managed.run(request, signal, (commitReadiness, checkSpawn) => {
+    const detail = prepared.artifactRefusal();
+    return detail === undefined
+      ? runDirectResidencyStart(
+          input.workload,
+          () =>
+            (cold?.stillCurrent() ?? true)
+              ? prepared.start(commitReadiness, () => {
+                  if (signal.aborted) return "LaunchCanceled";
+                  if (cold !== undefined && !cold.stillCurrent()) return "ColdPlanChanged";
+                  return checkSpawn?.();
+                })
+              : Promise.resolve(serverStartRefusal(input, "ColdPlanChanged")),
+          lifecycle,
+        )
+      : Promise.resolve({ ran: false, detail });
+  });
 }
 
 // A lifecycle refusal never ran the engine, so the done event still carries a
@@ -878,6 +1384,29 @@ function serverStartRefusal(input: ServerStartInput, detail: string): serverMod.
     retried: false,
     error: detail,
   };
+}
+
+function runOwnedStop<T>(managed: ManagedLaunchAdmission | undefined, run: () => T): T {
+  return managed?.runOwnedLifecycle === undefined ? run() : managed.runOwnedLifecycle(run);
+}
+
+function managedLocalRuntime(): boolean {
+  return hasManagedRuntimeMarker(envMod.resolveEnv().LOCAL_AI_RUNTIME_DIR);
+}
+
+function refuseLegacyManagedMutation(reason: string): void {
+  if (managedLocalRuntime()) throw new TRPCError({ code: "PRECONDITION_FAILED", message: reason });
+}
+
+function stopReleased(proof: ManagedStopProof | undefined, pid: number | null): boolean {
+  return proof === undefined || (pid !== null && proof.release(pid).kind === "released");
+}
+
+function stopTransitionRefusal(detail: string): serverMod.StopServerResult {
+  const base = { stopped: false, pid: null, killed: false };
+  return detail === "TransitionUnavailable" || detail === "NodeBusy"
+    ? { ...base, managedRefusal: detail }
+    : base;
 }
 
 type ServerStopRefusalShape = { reason?: unknown; active?: unknown };
@@ -1193,6 +1722,9 @@ export interface AgentRouterContext {
    *  over /trpc and the tunnel); in-process callers such as the RAG via-forward
    *  pass none because they already hold the outer HTTP slot. */
   chatAdmission?: RequestAdmission;
+  managedLaunchAdmission?: ManagedLaunchAdmission;
+  ownerStopIntent?: true;
+  ownerStopWait?: { timeoutMs: number; signal: AbortSignal | undefined };
 }
 
 const t = initTRPC.context<AgentRouterContext>().create();
@@ -1213,6 +1745,7 @@ const infraIdentifier = z
 const modelHostStatusInput = z.object({
   workload: ModelHostManifestSchema.shape.metadata.shape.name,
   includeListener: z.boolean().optional(),
+  probeOrigin: z.url().max(2048).optional(),
 });
 const modelHostStopInput = z.object({
   workload: z.string().min(1),
@@ -1403,6 +1936,30 @@ async function* streamNodeChatEvents(
   }
 }
 
+function localChatEngineFetch(forward: LocalEngineForwarder, timeoutMs: number): typeof fetch {
+  return ((input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    if (init?.method !== "POST") return fetch(input, init);
+    const target = input instanceof Request ? input.url : String(input);
+    const admitted = forward({
+      target,
+      body: typeof init.body === "string" ? init.body : null,
+      clientSignal: init.signal ?? new AbortController().signal,
+      deadlineMs: Date.now() + timeoutMs,
+      principal: { bearer: null },
+      send: (signal, body, transport = fetch) => {
+        const engine = {
+          ...withLocalEngineBody(init, body),
+          signal,
+          redirect: "error" as const,
+          timeout: false,
+        };
+        return transport(input, engine);
+      },
+    });
+    return admitted ?? fetch(input, init);
+  }) as typeof fetch;
+}
+
 /**
  * Drive the local inproc://local chat stream: the OpenAI-compat adapter
  * pointed at the in-process llama-server's HTTP endpoint, with usage
@@ -1413,10 +1970,24 @@ async function* localNodeChatEvents(
   usageRoute: string | undefined,
   signal: AbortSignal | undefined,
 ): AsyncGenerator<UnifiedStreamEvent> {
-  const { env: envMod } = await import("@llamactl/core");
+  const { env: envMod, openaiProxy } = await import("@llamactl/core");
   const { createOpenAICompatProvider } = await import("@novaproto/contracts");
   const rEnv = envMod.resolveEnv();
+  const { getLocalEngineForwarder } = await import("@llamactl/core/residency/engine-forwarder");
+  const forward = getLocalEngineForwarder();
   const provider = createOpenAICompatProvider({
+    ...(forward === undefined
+      ? {}
+      : {
+          fetch: localChatEngineFetch(
+            (dispatch) =>
+              forward({
+                ...dispatch,
+                ...openaiProxy.bindLocalEngineWorkload(dispatch.target, rEnv),
+              }),
+            openaiProxy.upstreamTimeoutMs(),
+          ),
+        }),
     name: "local",
     baseUrl: `http://${rEnv.LLAMA_CPP_HOST}:${rEnv.LLAMA_CPP_PORT}/v1`,
     apiKey: "local",
@@ -1811,6 +2382,156 @@ export const ServerStartInputSchema = z.object({
   restart: z.boolean().optional(),
   readiness: ModelHostReadinessSchema.optional(),
 });
+
+function parseWorkloadInput(yaml: string): unknown {
+  try {
+    return workloadStoreMod.parseManifestYaml(yaml);
+  } catch (err) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: `invalid workload manifest: ${(err as Error).message}`,
+    });
+  }
+}
+
+type AgentWorkloadApplyResult =
+  | HandoffResult
+  | {
+      action: workloadApplyMod.ApplyAction | "stopped";
+      path: string | null;
+      status: ModelRunStatus;
+      name: string;
+      node: string;
+    };
+
+async function withManagedManualMutation<T>(
+  node: string | undefined,
+  run: () => Promise<T>,
+): Promise<T> {
+  if (node === undefined) return await run();
+  const leave = enterManagedOperatorAction(node, "manual");
+  if (leave === undefined) throw new TRPCError({ code: "CONFLICT", message: "NodeBusy" });
+  try {
+    return await run();
+  } finally {
+    leave();
+  }
+}
+
+async function applyAgentWorkload(
+  managed: ManagedLaunchAdmission | undefined,
+  signal: AbortSignal | undefined,
+  readManifest: (workloadsDir: string) => unknown,
+): Promise<AgentWorkloadApplyResult> {
+  const workloadsDir = workloadStoreMod.defaultWorkloadsDir();
+  // applyOne's NodeClient type pulls AppRouter → NodeClient → AppRouter
+  // at the type level. clientForNode returns a structurally-compatible
+  // surface (serverStatus/serverStop/rpcServerStop + the subscription
+  // helpers for serverStart/rpcServerStart arrive from the pinned tRPC
+  // client on the remote path; local path wraps core directly).
+  // `WorkloadClient` was widened from `NodeClient` precisely so this
+  // callsite no longer needs an `as any` escape.
+  //
+  // Serialize list-check-save under a per-directory in-process mutex
+  // so two concurrent `workloadApply` mutations can't both pass the
+  // port-collision preflight and both write. Cross-process callers
+  // (`acquireLock`) are coordinated separately by the file lock.
+  //
+  // #216: when a local ModelHost is handed off to a live controller,
+  // the engine would otherwise land in the caller's cgroup (e.g. a
+  // desktop-app terminal scope), outside the controller unit's
+  // OOMScoreAdjust and limits. Validate the spec, persist, and return
+  // without spawning so the controller's reconciler starts it under
+  // its own service on the next pass.
+  const scope =
+    managed?.withDesiredManifest ??
+    (async <T>(
+      _input: unknown,
+      apply: (ownsNode: boolean, budget?: ManagedApplyBudget) => Promise<T>,
+    ): Promise<T> => await apply(false));
+  const interlockNode =
+    managed?.setNativeOmlxResidency === undefined ? undefined : managed.ownerNodeId;
+  return await withManagedManualMutation(interlockNode, () =>
+    workloadStoreMod.withWorkloadsMutex(workloadsDir, async () => {
+      const manifest = readManifest(workloadsDir);
+      const cfg = kubecfg.loadConfig();
+      return await scope(manifest, async (ownsNode, budget) => {
+        if (!ownsNode) refuseLegacyManagedMutation("ManagedOwnerRequired");
+        if (ownsNode) assertManagedApplyOwnsDirectory(workloadsDir);
+        const handoffResult = ownsNode ? null : handoffLocalModelHost(manifest, workloadsDir);
+        if (handoffResult) return handoffResult;
+        const result = await workloadApplyMod.applyManifest({
+          manifest,
+          getClient: clientForApply(cfg, managed, ownsNode, signal),
+          getNodeBudgetGiB: (nodeName) => nodeRunBudgetGiB(nodeName, workloadsDir),
+          ...(budget === undefined ? {} : { managedBudget: budget }),
+          getNodeResidency: (nodeName) => nodeRunResidency(nodeName, workloadsDir),
+        });
+        if (!result.ok) {
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: result.error });
+        }
+        if (result.kind === "ModelRun") {
+          const persisted: ModelRun = {
+            ...result.manifest,
+            status: result.result.statusSection,
+          };
+          const savedPath = workloadStoreMod.saveWorkload(persisted, workloadsDir);
+          return {
+            action: result.result.action,
+            path: savedPath,
+            status: result.result.statusSection,
+            name: result.manifest.metadata.name,
+            node: result.manifest.spec.node,
+          };
+        }
+        const disabled = ownsNode && !result.manifest.spec.enabled;
+        const action = disabled ? "stopped" : "started";
+        const savedPath = disabled
+          ? modelHostStoreMod.saveModelHost(result.manifest, workloadsDir)
+          : null;
+        return {
+          action,
+          path: savedPath,
+          status: {
+            phase: disabled ? "Stopped" : "Running",
+            serverPid: result.pid,
+            endpoint: result.endpoint,
+            lastTransitionTime: new Date().toISOString(),
+            conditions: [
+              {
+                type: "Applied",
+                status: "True",
+                reason: action,
+                lastTransitionTime: new Date().toISOString(),
+              },
+            ],
+          },
+          name: result.manifest.metadata.name,
+          node: result.manifest.spec.node,
+        };
+      });
+    }),
+  );
+}
+
+function readOwnedWorkloadToggle(
+  dir: string,
+  ownsNode: (node: string) => boolean,
+  workload: string,
+  enabled: boolean,
+): ModelRun | ModelHostManifest {
+  let manifest: ModelRun | ModelHostManifest;
+  try {
+    manifest = workloadStoreMod.loadWorkloadByNameAny(workload, dir);
+  } catch {
+    throw new TRPCError({ code: "NOT_FOUND", message: "WorkloadUnavailable" });
+  }
+  if (manifest.metadata.name !== workload || !ownsNode(manifest.spec.node)) {
+    throw new TRPCError({ code: "PRECONDITION_FAILED", message: "ManagedNodeIdentityMismatch" });
+  }
+  manifest.spec.enabled = enabled;
+  return manifest;
+}
 
 export const router = t.router({
   env: t.procedure.query(() => envMod.resolveEnv()),
@@ -2698,13 +3419,16 @@ export const router = t.router({
   // the serving node with the unified proxy on; it never ranks anything.
   residencyStatus: t.procedure
     .input(z.object({ node: z.string().min(1) }))
-    .query(async ({ input }) => {
+    .query(async ({ ctx, input }) => {
+      const owner = profileOwner(input.node, ctx.managedLaunchAdmission);
+      const ownerNode = owner?.ownerNodeId ?? input.node;
       const nodeRuns = nodeRunStoreMod.listNodeRuns();
-      const node = nodeRuns.find((n: (typeof nodeRuns)[number]) => n.metadata.name === input.node);
+      const node = nodeRuns.find((n) => n.metadata.name === ownerNode);
       const declared = node?.spec.budget?.memoryGiB;
       const leaseRegistry = getResidencyLeaseRegistry();
       const rawNodeName = process.env["LLAMACTL_NODE_NAME"]?.trim() ?? "";
-      const servingNode = rawNodeName === "" ? null : rawNodeName;
+      const servingNode =
+        owner === undefined ? (rawNodeName === "" ? null : rawNodeName) : input.node;
       // The store keeps the audit across a process restart, but a sink write can
       // fail quietly (a locked store hits the short busy timeout and core swallows
       // the error), so the live in-memory audit may hold entries the store lacks.
@@ -2741,7 +3465,7 @@ export const router = t.router({
               ...modelHostStoreMod.listModelHosts().map((h) => h.metadata.name),
             ];
       const { unifiedProxyEnabled } = await import("./proxy/create-proxy.js");
-      return buildResidencyStatus({
+      const status = buildResidencyStatus({
         node: input.node,
         nodeRun: node,
         nodeRuns: nodeRuns,
@@ -2756,10 +3480,20 @@ export const router = t.router({
           node: input.node,
           servingNode,
           hosts: modelHostStoreMod.listModelHosts(),
+          ...(owner?.ownsNode === undefined ? {} : { ownsNode: owner.ownsNode }),
+          readOwned: owner?.readOwnedOmlxStatus,
         }),
         sessionRegistry: currentSessionRefcounts(),
         invalidNodeRuns: nodeRunStoreMod.listInvalidNodeRuns(),
+        ownerNodeId: ownerNode,
       });
+      const managed = owner?.readStatus?.();
+      return {
+        ...status,
+        ...(managed === undefined
+          ? {}
+          : { managed: { ...managed, execution: ownerExecutionStatus() } }),
+      };
     }),
 
   // Read-only residency plan: a dry-run profile switch, never a mutation.
@@ -2768,6 +3502,23 @@ export const router = t.router({
   // when node === LLAMACTL_NODE_NAME; otherwise storeAppliesToNode:false means
   // the in-flight state for `node` was not observed here. Failed/Pending
   // workloads fail closed as UnknownState.
+  residencyCalibrationKey: t.procedure
+    .input(residencyCalibrationKeyInput)
+    .query(({ ctx, input }) => {
+      const owner = profileOwner(input.node, ctx.managedLaunchAdmission);
+      if (owner === undefined) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "ManagedOwnerRequired" });
+      }
+      const calibration = owner.readCalibration?.(input.workload);
+      if (calibration === undefined) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "ManagedCalibrationIdentityUnavailable",
+        });
+      }
+      return calibration;
+    }),
+
   residencyPlan: t.procedure
     .input(
       z.object({
@@ -2776,93 +3527,62 @@ export const router = t.router({
         from: z.string().min(1).optional(),
       }),
     )
-    .query(({ input }) => residencyPlanFor(input)),
+    .query(
+      ({ ctx, input }) => residencyPlanFor({ ...input, managed: ctx.managedLaunchAdmission }).plan,
+    ),
 
-  // #284 (DF-11): dry-run-by-default profile switch. A bare call plans and
-  // reports without opening the store; dryRun:false requires confirm:true,
-  // refuses NotServingNode off the serving process and ControllerActive while
-  // a live controller lock exists, then runs the fenced executor against the
-  // node-local operation store.
-  residencyApplyProfile: t.procedure
-    .input(
-      z.object({
-        node: z.string().min(1),
-        to: z.string().min(1),
-        from: z.string().min(1).optional(),
-        dryRun: z.boolean().default(true),
-        confirm: z.boolean().default(false),
-      }),
-    )
-    .mutation(async ({ input }): Promise<ResidencyApplyProfileResult> => {
-      const workloadsDir = workloadStoreMod.defaultWorkloadsDir();
-      const rawNodeName = process.env["LLAMACTL_NODE_NAME"]?.trim() ?? "";
-      const servingNode = rawNodeName === "" ? null : rawNodeName;
-      if (!input.dryRun) {
-        if (!input.confirm) {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: "residency apply-profile: confirm: true is required when dryRun is false",
-          });
-        }
-        if (servingNode !== input.node) {
-          return residencyApplyProfileRefusal({
-            reason: "NotServingNode",
-            detail: `node ${input.node} is not served by this process (serving ${String(servingNode)})`,
-            node: input.node,
-            to: input.to,
-            from: input.from ?? null,
-          });
-        }
-        const controllerPid = liveLockHolder(workloadsDir);
-        if (controllerPid !== null) {
-          return residencyApplyProfileRefusal({
-            reason: "ControllerActive",
-            detail: `a residency controller is live on ${input.node} (pid ${String(controllerPid)}); persist-suppression is deferred to the controller`,
-            node: input.node,
-            to: input.to,
-            from: input.from ?? null,
-            controllerPid,
-          });
-        }
-      }
-      const plan = residencyPlanFor({
-        node: input.node,
-        to: input.to,
-        ...(input.from === undefined ? {} : { from: input.from }),
-      });
-      return await applyResidencyProfile({
-        plan,
-        dryRun: input.dryRun,
-        storePath: defaultResidencyStorePath(),
-        workloadsDir,
+  residencyControl: t.procedure.input(residencyControlInput).mutation(
+    async ({ ctx, input, signal }): Promise<ResidencyControlResult> =>
+      await controlManagedResidency(input, {
+        managed: ctx.managedLaunchAdmission,
         registry: getResidencyLeaseRegistry(),
-        node: input.node,
-        to: input.to,
-        from: input.from ?? null,
-        isProvenDown: directWorkloadProvenDown,
-        applyModelRun: async (manifest: unknown): Promise<unknown> => {
-          const cfg = kubecfg.loadConfig();
-          // The switch executor already owns this row through its own fenced
-          // lifecycle walk, so its nested start/stop must not double-record or
-          // get refused by the direct wrapper: run the apply inside the switch
-          // scope. The scope is in-process AsyncLocalStorage, so the apply's
-          // serverStart/serverStop must not cross a loopback HTTP hop — hence
-          // getClient is forced local for this node. That is safe: the wet path
-          // already requires servingNode === input.node, and planned ModelRuns
-          // have spec.node === input.node, so the only node the switch applies
-          // against is this one.
-          return await runInResidencySwitchScope(
-            async () =>
-              await workloadApplyMod.applyManifest({
-                manifest,
-                getClient: (nodeName: string) =>
-                  nodeName === input.node ? localCallerProxy() : clientForNode(cfg, nodeName),
-                getNodeBudgetGiB: (nodeName: string) => nodeRunBudgetGiB(nodeName, workloadsDir),
-                getNodeResidency: (nodeName: string) => nodeRunResidency(nodeName, workloadsDir),
-              }),
-          );
-        },
-      });
+        workloadsDir: workloadStoreMod.defaultWorkloadsDir(),
+        signal,
+        execute: (action, manifest) =>
+          dispatchManagedControl(
+            omitUndefined(ctx),
+            signal,
+            action,
+            manifest,
+            input.drainTimeoutMs,
+          ),
+      }),
+  ),
+
+  // Older agents already accept this procedure's wet request shape.
+  residencyApplyProfile: t.procedure
+    .input(profileMutationSchema)
+    .mutation(async ({ ctx, input }): Promise<ResidencyApplyProfileResult> => {
+      const managed = profileOwner(input.node, ctx.managedLaunchAdmission);
+      if (!input.dryRun && managed !== undefined) {
+        return residencyApplyProfileRefusal({
+          node: managed.ownerNodeId ?? input.node,
+          to: input.to,
+          from: input.from ?? null,
+          reason: "ManagedProfileProtocolRequired",
+          detail: "use the versioned managed profile procedure on the authenticated owner",
+        });
+      }
+      return await runProfileMutation(input, managed);
+    }),
+
+  residencyApplyManagedProfile: t.procedure
+    .input(managedProfileMutationSchema)
+    .mutation(async ({ ctx, input }): Promise<ResidencyApplyProfileResult> => {
+      const managed = profileOwner(input.node, ctx.managedLaunchAdmission);
+      if (managed === undefined) {
+        return {
+          ...residencyApplyProfileRefusal({
+            node: input.node,
+            to: input.to,
+            from: input.from ?? null,
+            reason: "ManagedOwnerRequired",
+            detail: "send the managed profile to its owner agent",
+          }),
+          dryRun: input.dryRun,
+        };
+      }
+      return await runProfileMutation(input, managed);
     }),
 
   // #284 (DF-11): request cancellation of an in-flight profile switch by
@@ -2902,6 +3622,9 @@ export const router = t.router({
       }),
     )
     .mutation(async ({ input }): Promise<IdleEvictResult> => {
+      if (input.targets !== undefined) {
+        refuseLegacyManagedMutation("ManagedIdleEvictionRequiresOwner");
+      }
       const rawNodeName = process.env["LLAMACTL_NODE_NAME"]?.trim() ?? "";
       const servingNode = rawNodeName === "" ? null : rawNodeName;
       const nodeRun = nodeRunStoreMod.listNodeRuns().find((n) => n.metadata.name === input.node);
@@ -2937,85 +3660,101 @@ export const router = t.router({
 
   workloadApply: t.procedure
     .input(z.object({ yaml: z.string().min(1) }))
-    .mutation(async ({ input }) => {
-      let manifest: unknown;
-      try {
-        manifest = workloadStoreMod.parseManifestYaml(input.yaml);
-      } catch (err) {
+    .mutation(({ ctx, input, signal }) =>
+      applyAgentWorkload(ctx.managedLaunchAdmission, signal, () => parseWorkloadInput(input.yaml)),
+    ),
+
+  managedWorkloadApply: t.procedure.input(z.object({ yaml: z.string().min(1) })).mutation(
+    async ({
+      ctx,
+      input,
+      signal,
+    }): Promise<{
+      action: string;
+      path: string | null;
+      status: unknown;
+      name: string;
+      node: string;
+    }> => {
+      const managed = ctx.managedLaunchAdmission;
+      if (managed?.withDesiredManifest === undefined || managed.ownsNode === undefined) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "ManagedOwnerRequired" });
+      }
+      const raw = workloadStoreMod.parseManifestYaml(input.yaml);
+      const run = ModelRunSchema.safeParse(raw);
+      const host = ModelHostManifestSchema.safeParse(raw);
+      const manifest = run.success ? run.data : host.success ? host.data : undefined;
+      if (manifest === undefined) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "ModelRun or ModelHost required" });
+      }
+      if (!managed.ownsNode(manifest.spec.node)) {
         throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: `invalid workload manifest: ${(err as Error).message}`,
+          code: "PRECONDITION_FAILED",
+          message: "ManagedNodeIdentityMismatch",
         });
       }
-      const cfg = kubecfg.loadConfig();
-      const workloadsDir = workloadStoreMod.defaultWorkloadsDir();
-      // applyOne's NodeClient type pulls AppRouter → NodeClient → AppRouter
-      // at the type level. clientForNode returns a structurally-compatible
-      // surface (serverStatus/serverStop/rpcServerStop + the subscription
-      // helpers for serverStart/rpcServerStart arrive from the pinned tRPC
-      // client on the remote path; local path wraps core directly).
-      // `WorkloadClient` was widened from `NodeClient` precisely so this
-      // callsite no longer needs an `as any` escape.
-      //
-      // Serialize list-check-save under a per-directory in-process mutex
-      // so two concurrent `workloadApply` mutations can't both pass the
-      // port-collision preflight and both write. Cross-process callers
-      // (`acquireLock`) are coordinated separately by the file lock.
-      //
-      // #216: when a local ModelHost is handed off to a live controller,
-      // the engine would otherwise land in the caller's cgroup (e.g. a
-      // desktop-app terminal scope), outside the controller unit's
-      // OOMScoreAdjust and limits. Validate the spec, persist, and return
-      // without spawning so the controller's reconciler starts it under
-      // its own service on the next pass.
-      return await workloadStoreMod.withWorkloadsMutex(workloadsDir, async () => {
-        const handoffResult = handoffLocalModelHost(manifest, workloadsDir);
-        if (handoffResult) return handoffResult;
-        const result = await workloadApplyMod.applyManifest({
-          manifest,
-          getClient: (nodeName) => clientForNode(cfg, nodeName),
-          getNodeBudgetGiB: (nodeName) => nodeRunBudgetGiB(nodeName, workloadsDir),
-          getNodeResidency: (nodeName) => nodeRunResidency(nodeName, workloadsDir),
+      return await router
+        .createCaller({ managedLaunchAdmission: managed }, signal ? { signal } : undefined)
+        .workloadApply(input);
+    },
+  ),
+
+  managedWorkloadSetEnabled: t.procedure
+    .input(
+      z.strictObject({
+        workload: ModelHostManifestSchema.shape.metadata.shape.name,
+        enabled: z.boolean(),
+      }),
+    )
+    .mutation(async ({ ctx, input, signal }) => {
+      const managed = ctx.managedLaunchAdmission;
+      const ownsNode = managed?.ownsNode;
+      if (managed?.withDesiredManifest === undefined || ownsNode === undefined) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "ManagedOwnerRequired" });
+      }
+      return await applyAgentWorkload(managed, signal, (dir) =>
+        readOwnedWorkloadToggle(dir, ownsNode, input.workload, input.enabled),
+      );
+    }),
+
+  modelHostNativeResidency: t.procedure
+    .input(
+      z.strictObject({
+        workload: ModelHostManifestSchema.shape.metadata.shape.name,
+        action: z.enum(["park", "resume"]),
+      }),
+    )
+    .mutation(async ({ ctx, input, signal }) => {
+      signal?.throwIfAborted();
+      const owner = ctx.managedLaunchAdmission;
+      const set = owner?.setNativeOmlxResidency;
+      const node = owner?.ownerNodeId;
+      if (set === undefined || node === undefined) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "ManagedNativeOmlxOwnerUnavailable",
         });
-        if (!result.ok) {
-          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: result.error });
+      }
+      return await withManagedManualMutation(node, async () => {
+        const outcome = await set(input.workload, input.action);
+        if (outcome === undefined) {
+          throw new TRPCError({
+            code: "PRECONDITION_FAILED",
+            message: "ManagedNativeOmlxOwnerUnavailable",
+          });
         }
-        if (result.kind === "ModelRun") {
-          const persisted: ModelRun = { ...result.manifest, status: result.result.statusSection };
-          const savedPath = workloadStoreMod.saveWorkload(persisted, workloadsDir);
-          return {
-            action: result.result.action,
-            path: savedPath,
-            status: result.result.statusSection,
-            name: result.manifest.metadata.name,
-            node: result.manifest.spec.node,
-          };
-        }
-        return {
-          action: "started",
-          path: null,
-          status: {
-            phase: "Running",
-            serverPid: result.pid,
-            endpoint: result.endpoint,
-            lastTransitionTime: new Date().toISOString(),
-            conditions: [
-              {
-                type: "Applied",
-                status: "True",
-                reason: "started",
-                lastTransitionTime: new Date().toISOString(),
-              },
-            ],
-          },
-          name: result.manifest.metadata.name,
-          node: result.manifest.spec.node,
-        };
+        return outcome;
       });
     }),
 
-  modelHostStatus: t.procedure.input(modelHostStatusInput).query(async ({ input }) => {
+  modelHostStatus: t.procedure.input(modelHostStatusInput).query(async ({ input, ctx }) => {
     const key = { name: input.workload };
+    if (input.probeOrigin !== undefined) {
+      return await statusModelHostForProbe(
+        { key, probeOrigin: input.probeOrigin },
+        ctx.managedLaunchAdmission?.verifyParkedOmlxProbe,
+      );
+    }
     const status = statusModelHost({ key });
     if (input.includeListener !== true) return status;
     const state = readModelHostState(key);
@@ -3029,48 +3768,116 @@ export const router = t.router({
   }),
 
   modelHostStop: t.procedure.input(modelHostStopInput).mutation(
-    async ({ input }) =>
-      await fenceWorkloadStop<StopModelHostResult>({
-        workload: input.workload,
-        stop: async () => {
-          const outcome = await runDirectResidencyStop<StopModelHostResult>(
-            input.workload,
-            () =>
-              stopModelHost({
-                key: { name: input.workload },
-                ...(input.graceSeconds !== undefined ? { graceSeconds: input.graceSeconds } : {}),
-              }),
-            directResidencyOpts(input.workload, undefined),
-          );
-          return outcome.ran ? outcome.result : { ok: false, pid: null, error: outcome.detail };
-        },
-        isVerifiedStop: (r) => r.ok,
-        refuse: (f) => ({ ok: false, pid: null, error: `${f.reason}: ${f.active.join(", ")}` }),
-      }),
+    async ({ ctx, input }): Promise<StopModelHostResult> =>
+      !ctx.ownerStopIntent && managedLocalRuntime()
+        ? { ok: false, pid: null, error: "ManagedStopIntentRequired" }
+        : await fenceWorkloadStop<StopModelHostResult>({
+            workload: input.workload,
+            ...(ctx.ownerStopWait === undefined ? {} : { wait: ctx.ownerStopWait }),
+            stop: async () => {
+              const managed = ctx.managedLaunchAdmission;
+              const proof = managed?.prepareStopRelease?.(input.workload, "ModelHost");
+              if (managed !== undefined && proof === undefined) {
+                return { ok: false, pid: null, error: "ManagedStopGenerationUnverified" };
+              }
+              const outcome = await runDirectResidencyStop<StopModelHostResult>(
+                input.workload,
+                async () => {
+                  const stopped = await runOwnedStop(managed, () =>
+                    stopModelHost({
+                      key: { name: input.workload },
+                      ...(input.graceSeconds !== undefined
+                        ? { graceSeconds: input.graceSeconds }
+                        : {}),
+                      ...(proof === undefined
+                        ? {}
+                        : { identity: { verifyGeneration: proof.verifyGeneration } }),
+                    }),
+                  );
+                  return stopped.ok && !stopReleased(proof, stopped.pid)
+                    ? { ok: false, pid: stopped.pid, error: "ManagedStopReleaseUnverified" }
+                    : stopped;
+                },
+                {
+                  ...directResidencyOpts(input.workload, undefined),
+                  requireVerifiedStopJournal: managed !== undefined && managedLocalRuntime(),
+                },
+              );
+              return outcome.ran ? outcome.result : { ok: false, pid: null, error: outcome.detail };
+            },
+            isVerifiedStop: (r) => r.ok,
+            refuse: (f) => ({ ok: false, pid: null, error: `${f.reason}: ${f.active.join(", ")}` }),
+          }),
   ),
 
   modelHostStart: t.procedure.input(modelHostStartInput).subscription(async function* ({
+    ctx,
     input,
     signal,
   }) {
     yield* bridgeEventStream(signal ?? new AbortController().signal, async (emit, subSignal) => {
-      const outcome = await runDirectResidencyStart<StartModelHostResult>(
-        input.workload,
-        () =>
-          startModelHost({
-            key: { name: input.workload },
-            ...(input.timeoutSeconds !== undefined ? { timeoutSeconds: input.timeoutSeconds } : {}),
-            ...(input.manifest !== undefined ? { manifest: input.manifest } : {}),
-            ...(input.restart !== undefined ? { restart: input.restart } : {}),
-            signal: subSignal,
-            onEvent: emit,
+      const managed = ctx.managedLaunchAdmission;
+      const pinned =
+        managed === undefined || input.manifest === undefined
+          ? undefined
+          : pinModelHostStartup(input.manifest);
+      const manifest = pinned?.manifest ?? input.manifest;
+      const start = (
+        commitReadiness?: CommitLaunchReadiness,
+        checkSpawn?: () => string | undefined,
+      ): Promise<DirectLifecycleOutcome<StartModelHostResult>> =>
+        runDirectResidencyStart<StartModelHostResult>(
+          input.workload,
+          () =>
+            startModelHost({
+              key: { name: input.workload },
+              ...(input.timeoutSeconds !== undefined
+                ? { timeoutSeconds: input.timeoutSeconds }
+                : {}),
+              ...(manifest === undefined ? {} : { manifest }),
+              ...(pinned === undefined ? {} : { env: pinned.env }),
+              ...(input.restart !== undefined ? { restart: input.restart } : {}),
+              signal: subSignal,
+              ...(commitReadiness === undefined ? {} : { commitReadiness }),
+              ...(checkSpawn === undefined ? {} : { checkSpawn }),
+              onEvent: (event) => {
+                // Readiness is provisional until the managed claim commits.
+                if (
+                  managed !== undefined &&
+                  typeof event === "object" &&
+                  event !== null &&
+                  "type" in event &&
+                  event.type === "done"
+                )
+                  return;
+                emit(event);
+              },
+            }),
+          directResidencyOpts(input.workload, manifest?.metadata.labels, {
+            inlineRel: manifest?.spec.hostedModels[0]?.rel,
           }),
-        directResidencyOpts(input.workload, input.manifest?.metadata.labels, {
-          inlineRel: input.manifest?.spec.hostedModels[0]?.rel,
-        }),
-      );
+        );
+      const outcome =
+        managed === undefined
+          ? await start()
+          : await managed.run(
+              {
+                kind: "ModelHost",
+                runtimeKey: input.workload,
+                launch: input,
+                ...(pinned === undefined
+                  ? {}
+                  : {
+                      effectiveSpecDigest: pinned.effectiveSpecDigest,
+                      effectiveLaunch: pinned.effectiveLaunch,
+                    }),
+              },
+              subSignal,
+              start,
+            );
       if (outcome.ran) {
         reopenWorkloadAfterLoad(input.workload, outcome.result.ok);
+        if (managed !== undefined) emit({ type: "done", result: outcome.result });
       } else {
         emit({ type: "done", result: { ok: false, pid: null, error: outcome.detail } });
       }
@@ -3090,6 +3897,14 @@ export const router = t.router({
         async () => {
           const manifest = workloadStoreMod.loadWorkloadByNameAny(input.name);
           const stops: string[] = [];
+          if (managedLocalRuntime()) {
+            return {
+              ok: false,
+              name: input.name,
+              stops,
+              error: "ManagedWorkloadRetirementRequired",
+            };
+          }
           if (!input.keepRunning) {
             const refused =
               manifest.kind === "ModelHost"
@@ -3154,6 +3969,7 @@ export const router = t.router({
         .optional(),
     )
     .mutation(({ input }) => {
+      refuseLegacyManagedMutation("ManagedControllerOwnerConflict");
       const cfg = kubecfg.loadConfig();
       const resolveNodeIdentity = (n: string): string | null => {
         try {
@@ -3176,6 +3992,7 @@ export const router = t.router({
   }),
 
   reconcilerKick: t.procedure.mutation(async () => {
+    refuseLegacyManagedMutation("ManagedControllerOwnerConflict");
     const cfg = kubecfg.loadConfig();
     const resolveNodeIdentity = (n: string): string | null => {
       try {
@@ -3586,34 +4403,70 @@ export const router = t.router({
       }),
     )
     .mutation(
-      async ({ input }) =>
-        await fenceWorkloadStop<serverMod.StopServerResult>({
-          workload: input.workload,
-          stop: async () => {
-            const outcome = await runDirectResidencyStop<{
-              ok: boolean;
-              error?: string;
-              stop: serverMod.StopServerResult;
-            }>(
-              input.workload,
-              async () => {
-                const stop = await serverMod.stopServer({
-                  key: { name: input.workload },
-                  ...(input.graceSeconds !== undefined ? { graceSeconds: input.graceSeconds } : {}),
-                });
-                return {
-                  ok: stop.stopped,
-                  ...(stop.stopped ? {} : { error: "stop did not confirm process removal" }),
-                  stop,
-                };
+      async ({ ctx, input }): Promise<serverMod.StopServerResult> =>
+        !ctx.ownerStopIntent && managedLocalRuntime()
+          ? {
+              stopped: false,
+              pid: null,
+              killed: false,
+              managedRefusal: "ManagedStopIntentRequired",
+            }
+          : await fenceWorkloadStop<serverMod.StopServerResult>({
+              workload: input.workload,
+              ...(ctx.ownerStopWait === undefined ? {} : { wait: ctx.ownerStopWait }),
+              stop: async () => {
+                const managed = ctx.managedLaunchAdmission;
+                const proof = managed?.prepareStopRelease?.(input.workload, "ModelRun");
+                if (managed !== undefined && proof === undefined) {
+                  return {
+                    stopped: false,
+                    pid: null,
+                    killed: false,
+                    managedRefusal: "ManagedStopGenerationUnverified",
+                  };
+                }
+                const outcome = await runDirectResidencyStop<{
+                  ok: boolean;
+                  error?: string;
+                  stop: serverMod.StopServerResult;
+                }>(
+                  input.workload,
+                  async () => {
+                    const stopped = await runOwnedStop(managed, () =>
+                      serverMod.stopServer({
+                        key: { name: input.workload },
+                        ...(input.graceSeconds !== undefined
+                          ? { graceSeconds: input.graceSeconds }
+                          : {}),
+                        ...(proof === undefined
+                          ? {}
+                          : { identity: { verifyGeneration: proof.verifyGeneration } }),
+                      }),
+                    );
+                    const stop: serverMod.StopServerResult =
+                      stopped.stopped && !stopReleased(proof, stopped.pid)
+                        ? {
+                            ...stopped,
+                            stopped: false,
+                            managedRefusal: "ManagedStopReleaseUnverified",
+                          }
+                        : stopped;
+                    return {
+                      ok: stop.stopped,
+                      ...(stop.stopped ? {} : { error: "stop did not confirm process removal" }),
+                      stop,
+                    };
+                  },
+                  {
+                    ...directModelRunOpts(input.workload),
+                    requireVerifiedStopJournal: managed !== undefined && managedLocalRuntime(),
+                  },
+                );
+                return outcome.ran ? outcome.result.stop : stopTransitionRefusal(outcome.detail);
               },
-              directModelRunOpts(input.workload),
-            );
-            return outcome.ran ? outcome.result.stop : { stopped: false, pid: null, killed: false };
-          },
-          isVerifiedStop: (r) => r.stopped,
-          refuse: (refused) => ({ stopped: false, pid: null, killed: false, refused }),
-        }),
+              isVerifiedStop: (r) => r.stopped,
+              refuse: (refused) => ({ stopped: false, pid: null, killed: false, refused }),
+            }),
     ),
 
   // DF-05 (#278): explicit operator override of the stop fence. Unlike
@@ -3633,6 +4486,7 @@ export const router = t.router({
       }),
     )
     .mutation(async ({ input }): Promise<ForceUnloadResult> => {
+      refuseLegacyManagedMutation("ManagedForceUnloadRequiresOwner");
       const name = input.workload;
       const kind: ForceUnloadKind | null = workloadStoreMod
         .listWorkloads()
@@ -3723,19 +4577,18 @@ export const router = t.router({
     ),
 
   serverStart: t.procedure.input(ServerStartInputSchema).subscription(async function* ({
+    ctx,
     input,
     signal,
   }) {
     yield* bridgeEventStream<ServerStartEvent>(signal, async (emit, sig) => {
-      const outcome = await runDirectResidencyStart<serverMod.StartServerResult>(
-        input.workload,
-        () => serverMod.startServer(serverStartOptions(input, sig, emit)),
-        directModelRunStartOpts(input.workload, input.target),
-      );
-      emit({
-        type: "done",
-        result: outcome.ran ? outcome.result : serverStartRefusal(input, outcome.detail),
-      });
+      const managed = ctx.managedLaunchAdmission;
+      const outcome = await runModelRunStart(input, sig, emit, managed);
+      const result = outcome.ran ? outcome.result : serverStartRefusal(input, outcome.detail);
+      if (managed !== undefined && result.ok && result.pid !== null) {
+        emit({ type: "ready", pid: result.pid, endpoint: result.endpoint });
+      }
+      emit({ type: "done", result });
     });
   }),
 
@@ -3884,11 +4737,14 @@ export const router = t.router({
       }
       // An unverifiable record must not be treated as absent: a second
       // supervisor would compete with a process we cannot rule out as ours.
-      if (existing.pid !== null && existing.verdict === "unknown") {
+      if (existing.verdict === "unknown") {
         return {
           ok: false,
           pid: existing.pid,
-          error: `pid identity unknown for recorded keep-alive pid ${String(existing.pid)} — refusing to start a duplicate`,
+          error:
+            existing.pid === null
+              ? "keep-alive PID record is unreadable — refusing to start a duplicate"
+              : `pid identity unknown for recorded keep-alive pid ${String(existing.pid)} — refusing to start a duplicate`,
         };
       }
       const groupRefusal = keepAliveStartRefusal(input.target);
@@ -4421,21 +5277,27 @@ export const router = t.router({
       z.object({
         name: z.string().min(1),
         arguments: z.record(z.string(), z.unknown()).default({}),
-        dryRun: z.boolean().default(false),
+        dryRun: z.boolean().optional(),
         sessionId: z.string().optional(),
       }),
     )
-    .mutation(async ({ input }) => {
-      const caller = router.createCaller({});
+    .mutation(async ({ ctx, input, signal }) => {
+      const residencyMutation =
+        input.name === RESIDENCY_CONTROL_TOOL || input.name === RESIDENCY_APPLY_PROFILE_TOOL;
+      const dryRun = input.dryRun ?? residencyMutation;
+      const ownerScoped = residencyMutation || input.name === RESIDENCY_CALIBRATION_KEY_TOOL;
+      const caller = ownerScoped
+        ? router.createCaller(omitUndefined(ctx), signal === undefined ? undefined : { signal })
+        : router.createCaller({});
       const dispatched = await dispatchOpsChatTool(caller, {
         name: input.name,
         arguments: input.arguments,
-        dryRun: input.dryRun,
+        dryRun,
       });
       auditOpsChatToolRun({
         tool: input.name,
         arguments: input.arguments,
-        dryRun: input.dryRun,
+        dryRun,
         ok: dispatched.ok,
         durationMs: dispatched.durationMs,
         ...(dispatched.ok

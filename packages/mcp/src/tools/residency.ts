@@ -1,13 +1,27 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
+import { getAuthenticatedAgentClientByName } from "@llamactl/cli/dispatcher";
 import { currentSessionRefcounts } from "@llamactl/core/residency/sessions";
-import { router } from "@llamactl/remote";
+import {
+  MANAGED_PROFILE_PROTOCOL_VERSION,
+  RESIDENCY_APPLY_PROFILE_TOOL,
+  RESIDENCY_CALIBRATION_KEY_TOOL,
+  RESIDENCY_CONTROL_TOOL,
+  type ResidencyApplyProfileResult,
+  residencyApplyProfileToolInput,
+  residencyCalibrationKeyInput,
+  residencyControlInput,
+  type ResidencyControlResult,
+  router,
+} from "@llamactl/remote";
 import { appendAudit, toTextContent } from "@novaproto/mcp-shared";
 import { z } from "zod";
 
 import { SERVER_SLUG } from "./shared.js";
 
 export function registerResidencyTools(server: McpServer): void {
+  registerResidencyControl(server);
+  registerCalibrationKey(server);
   registerResidencyStatus(server);
   registerResidencyPlan(server);
   registerResidencyEvictIdle(server);
@@ -15,6 +29,73 @@ export function registerResidencyTools(server: McpServer): void {
   registerResidencyCancelOperation(server);
   registerResidencyForceUnload(server);
   registerResidencyReleaseSession(server);
+}
+
+function missingProcedure(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const code = "code" in error ? error.code : undefined;
+  const data = "data" in error ? error.data : null;
+  return (
+    code === "NOT_FOUND" ||
+    (typeof data === "object" && data !== null && "code" in data && data.code === "NOT_FOUND")
+  );
+}
+
+function registerResidencyControl(server: McpServer): void {
+  server.registerTool(
+    RESIDENCY_CONTROL_TOOL,
+    {
+      title: "Manage workload residency on one node",
+      description:
+        "Preview a load or unload on the named authenticated managed agent. Dry-run is the default. Set dryRun to false and confirm to true to execute under the owner's capacity, policy and lease checks.",
+      inputSchema: residencyControlInput,
+      annotations: { destructiveHint: true, readOnlyHint: false },
+    },
+    async ({ action, node, workload, dryRun, confirm }, { signal }) => {
+      const target = { action, node, workload };
+      const input = { ...target, dryRun, confirm };
+      let result: ResidencyControlResult;
+      if (!dryRun && !confirm) {
+        result = { ...target, ok: false, reason: "ConfirmationRequired" };
+      } else {
+        try {
+          const client = getAuthenticatedAgentClientByName(node);
+          result = await client.residencyControl.mutate(input, { signal });
+        } catch (error) {
+          const reason = missingProcedure(error)
+            ? "ManagedControlUnavailable"
+            : "ControlTransportError";
+          result = { ...target, ok: false, reason };
+        }
+      }
+      appendAudit({ server: SERVER_SLUG, tool: RESIDENCY_CONTROL_TOOL, input, dryRun, result });
+      return { ...toTextContent(result), ...(result.ok ? {} : { isError: true }) };
+    },
+  );
+}
+
+function registerCalibrationKey(server: McpServer): void {
+  server.registerTool(
+    RESIDENCY_CALIBRATION_KEY_TOOL,
+    {
+      title: "Read the owner calibration key",
+      description:
+        "Read the exact compiled launch key and prospective memory charge from one authenticated managed agent.",
+      inputSchema: residencyCalibrationKeyInput,
+      annotations: { readOnlyHint: true },
+    },
+    async (input, { signal }) => {
+      try {
+        const client = getAuthenticatedAgentClientByName(input.node);
+        return toTextContent(await client.residencyCalibrationKey.query(input, { signal }));
+      } catch (error) {
+        const reason = missingProcedure(error)
+          ? "ManagedCalibrationIdentityUnavailable"
+          : "ManagedCalibrationOwnerUnavailable";
+        return { ...toTextContent({ reason }), isError: true };
+      }
+    },
+  );
 }
 
 function registerResidencyStatus(server: McpServer): void {
@@ -67,6 +148,44 @@ function registerResidencyPlan(server: McpServer): void {
   );
 }
 
+async function managedProfile(
+  profile: Omit<z.output<typeof residencyApplyProfileToolInput>, "managed">,
+  signal: AbortSignal,
+): Promise<
+  | ResidencyApplyProfileResult
+  | (Omit<ResidencyApplyProfileResult, "outcome"> & { outcome: "unknown" })
+> {
+  try {
+    const client = getAuthenticatedAgentClientByName(profile.node);
+    return await client.residencyApplyManagedProfile.mutate(
+      { ...profile, version: MANAGED_PROFILE_PROTOCOL_VERSION },
+      { signal },
+    );
+  } catch (error) {
+    const unsupported = missingProcedure(error);
+    const unknown = !unsupported && !profile.dryRun;
+    return {
+      ok: false,
+      outcome: unknown ? "unknown" : "refused",
+      dryRun: profile.dryRun,
+      node: profile.node,
+      to: profile.to,
+      from: profile.from ?? null,
+      steps: [],
+      deferred: [],
+      refusal: unsupported
+        ? {
+            reason: "ManagedProfileUnavailable",
+            detail: "the agent does not support managed profile version 1",
+          }
+        : {
+            reason: unknown ? "ProfileOutcomeUnknown" : "ProfileTransportError",
+            detail: "the managed profile result could not be retrieved",
+          },
+    };
+  }
+}
+
 // #519: the read-only projection of residencyEvictIdle's dry run. The input is
 // deliberately `{ node }` only and the call passes just `{ node }`, so a stray
 // `targets` argument can never turn this preview into the wet eviction.
@@ -94,26 +213,16 @@ function registerResidencyEvictIdle(server: McpServer): void {
 
 function registerResidencyApplyProfile(server: McpServer): void {
   server.registerTool(
-    "llamactl.residency.applyProfile",
+    RESIDENCY_APPLY_PROFILE_TOOL,
     {
       title: "Apply a residency profile switch (dry-run by default)",
       description:
-        "Mirrors the remote residencyApplyProfile mutation. Dry-run by default: plans and reports the profile switch without touching the store. Set `dryRun: false` to run it for real, which stops the victim workloads and starts the replacements and records a terminal operation under `profile-switch:<node>`; `confirm: true` is then required. Refuses NotServingNode off the serving process, ControllerActive while a live controller lock exists and NodeBusy while a profile switch is already in flight.",
-      inputSchema: {
-        node: z.string().min(1).describe("Name of the NodeRun to switch."),
-        to: z.string().min(1).describe("Target residency profile to switch to."),
-        from: z
-          .string()
-          .min(1)
-          .optional()
-          .describe("Current residency profile; reported as null when omitted."),
-        dryRun: z.boolean().default(true).describe("Preview only when true (default)."),
-        confirm: z.boolean().default(false).describe("Must be true to run the switch for real."),
-      },
+        "Preview a profile switch without mutating state. Use managed: true for the named authenticated owner. Execution stops victims, starts replacements and records an operation. Set dryRun: false and confirm: true to execute.",
+      inputSchema: residencyApplyProfileToolInput,
       annotations: { destructiveHint: true, readOnlyHint: false },
     },
-    async (input) => {
-      const { node, to, from, dryRun, confirm } = input;
+    async ({ managed, ...input }, { signal }) => {
+      const { dryRun, confirm } = input;
       if (!dryRun && !confirm) {
         return {
           isError: true,
@@ -125,18 +234,13 @@ function registerResidencyApplyProfile(server: McpServer): void {
           ],
         };
       }
-      const caller = router.createCaller({});
-      const result = await caller.residencyApplyProfile({
-        node,
-        to,
-        ...(from !== undefined ? { from } : {}),
-        dryRun,
-        confirm,
-      });
+      const result = managed
+        ? await managedProfile(input, signal)
+        : await router.createCaller({}).residencyApplyProfile(input);
       appendAudit({
         server: SERVER_SLUG,
-        tool: "llamactl.residency.applyProfile",
-        input: { dryRun, node, to, ...(from !== undefined ? { from } : {}) },
+        tool: RESIDENCY_APPLY_PROFILE_TOOL,
+        input: { ...input, managed },
         dryRun,
         result,
       });

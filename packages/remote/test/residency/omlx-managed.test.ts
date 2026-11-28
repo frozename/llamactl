@@ -10,14 +10,26 @@
  * jundot/omlx server.py at OMLX_REVISION (list_models_status,
  * load_model_public, unload_model, /api/status).
  */
-import { afterEach, describe, expect, test } from "bun:test";
+import {
+  createResidencyLeases,
+  type DrainToken,
+  type ResidencyLeases,
+} from "@llamactl/core/residency/leases";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
+import type { ManagedOmlxResidencyOptions } from "../../src/residency/omlx-managed.js";
+
+import { openAdmissionAuthority } from "../../src/residency/admission-authority.js";
 import {
   createOmlxNativeClient,
   type NativeLoadResult,
   type NativeUnloadResult,
   type OmlxNativeClient,
+  type OmlxNativeClientOptions,
 } from "../../src/residency/engine-client.js";
+import { mkdtempSync, rmSync } from "../../src/safe-fs.js";
 import {
   createTargetAdmissionAuthority,
   type TargetAdmissionAuthority,
@@ -33,7 +45,7 @@ const API_KEY = "test-key";
 
 type ManagedResidencyState = "unclaimed" | "pending" | "resident" | "uncertain";
 
-type ManagedResidencyOptions = {
+type ManagedResidencyOptions = Pick<ManagedOmlxResidencyOptions, "loadPublication"> & {
   client: OmlxNativeClient;
   authority: TargetAdmissionAuthority;
   targetIdentity: string;
@@ -70,9 +82,10 @@ type FakeModel = { loaded: boolean; is_loading: boolean };
 
 type FakeState = {
   model: FakeModel;
+  conflictingStatus: boolean;
   activity: { active: number; waiting: number };
   loadMode: "ok" | 409 | 500 | 507 | "hang";
-  unloadMode: "ok" | 500 | "hang";
+  unloadMode: "ok" | "ok-stale" | "ok-conflicting" | 500 | "hang";
 };
 
 type FakeCounts = {
@@ -99,15 +112,16 @@ afterEach(async () => {
 });
 
 // Mirrors GET /v1/models/status (list_models_status) at OMLX_REVISION.
-function statusFixtureV1(model: FakeModel): Record<string, unknown> {
+function statusFixtureV1(model: FakeModel, conflictingStatus: boolean): Record<string, unknown> {
   return {
     final_ceiling: 34359738368,
     current_model_memory: 0,
-    model_count: 1,
+    model_count: conflictingStatus ? 2 : 1,
     loaded_count: model.loaded ? 1 : 0,
     load_seconds_per_gb_estimate: null,
     load_time_observations: 0,
     models: [
+      ...(conflictingStatus ? [{ id: ID, loaded: false, is_loading: false }] : []),
       {
         id: ID,
         model_path: `/models/${ID}`,
@@ -191,7 +205,7 @@ function actionModelId(path: string, action: "load" | "unload"): string | null {
 
 function statusResponse(ctx: FakeContext): Response {
   ctx.counts.statusGets += 1;
-  return Response.json(statusFixtureV1(ctx.state.model));
+  return Response.json(statusFixtureV1(ctx.state.model, ctx.state.conflictingStatus));
 }
 
 function activityResponse(ctx: FakeContext): Response {
@@ -240,8 +254,12 @@ function unloadResponse(ctx: FakeContext, id: string): Response | Promise<Respon
   if (!ctx.state.model.loaded) {
     return jsonError(400, `Model not loaded: ${id}`);
   }
-  ctx.state.model.loaded = false;
-  ctx.state.model.is_loading = false;
+  if (mode === "ok-conflicting") {
+    ctx.state.conflictingStatus = true;
+  } else if (mode === "ok") {
+    ctx.state.model.loaded = false;
+    ctx.state.model.is_loading = false;
+  }
   return Response.json({ status: "ok", model_id: id });
 }
 
@@ -269,6 +287,7 @@ function routeRequest(ctx: FakeContext, method: string, url: URL): Response | Pr
 function startFakeOmlx(opts: { loadDelayMs?: number } = {}): FakeOmlx {
   const state: FakeState = {
     model: { loaded: false, is_loading: false },
+    conflictingStatus: false,
     activity: { active: 0, waiting: 0 },
     loadMode: "ok",
     unloadMode: "ok",
@@ -327,7 +346,10 @@ function startFakeOmlx(opts: { loadDelayMs?: number } = {}): FakeOmlx {
 
 // --- helpers ---
 
-function nativeClientFor(fake: FakeOmlx): OmlxNativeClient {
+function nativeClientFor(
+  fake: FakeOmlx,
+  leases?: OmlxNativeClientOptions["leases"],
+): OmlxNativeClient {
   // requestTimeoutMs 300 clears the 150 ms load delay while still bounding
   // the hang modes; statusTimeoutMs 200 keeps status reads fast.
   return createOmlxNativeClient({
@@ -337,6 +359,7 @@ function nativeClientFor(fake: FakeOmlx): OmlxNativeClient {
     apiKey: API_KEY,
     requestTimeoutMs: 300,
     statusTimeoutMs: 200,
+    ...(leases === undefined ? {} : { leases }),
   });
 }
 
@@ -355,6 +378,218 @@ function managedOpts(
     budgetGiB,
   };
 }
+
+test("a managed native load settles its charge before reopening the prior lease drain", async () => {
+  const fake = startFakeOmlx();
+  const mod = await loadManagedModule();
+  const authority = createTargetAdmissionAuthority();
+  const workload = "omlx-host";
+  const registry = createResidencyLeases();
+  const drain = registry.beginDrain(workload);
+  if (!drain.ok || !registry.commitUnload(drain.token).ok) throw new Error("cannot park fixture");
+  const reopen = registry.reopen.bind(registry);
+  const atReopen: string[] = [];
+  const witness = spyOn(registry, "reopen").mockImplementation((token) => {
+    atReopen.push(authority.snapshot("node-a")[0]?.state ?? "missing");
+    return reopen(token);
+  });
+  try {
+    const client = nativeClientFor(fake, { registry, workload, sessions: null });
+    const residency = mod.createManagedOmlxResidency(managedOpts(client, authority));
+    expect(await residency.ensureLoaded()).toEqual({ kind: "loaded", modelId: ID });
+    expect(atReopen).toEqual(["resident"]);
+    expect(registry.snapshot(workload).phase).toBe("open");
+  } finally {
+    witness.mockRestore();
+  }
+});
+
+function parkOmlx(registry: ResidencyLeases, workload: string): DrainToken {
+  const drain = registry.beginDrain(workload);
+  if (!drain.ok || !registry.commitUnload(drain.token).ok) throw new Error("cannot park fixture");
+  return drain.token;
+}
+
+function qualifiedNativeClient(
+  fake: FakeOmlx,
+  registry: ResidencyLeases,
+  workload: string,
+  stillCurrent: () => boolean = () => true,
+): OmlxNativeClient {
+  return createOmlxNativeClient({
+    endpoint: fake.endpoint,
+    hostedRel: REL,
+    activityObservable: true,
+    apiKey: API_KEY,
+    binding: {
+      endpoint: fake.endpoint,
+      modelId: ID,
+      modelPath: `/models/${ID}`,
+      artifactRevision: "fixture-artifact",
+      runtimeGeneration: "fixture-generation",
+      stillCurrent,
+    },
+    leases: { registry, workload, sessions: null },
+  });
+}
+
+for (const scenario of [
+  "permits",
+  "refuses",
+  "returns a promise",
+  "replaces drain",
+  "moves generation",
+] as const) {
+  test(`managed durable commit ${scenario} at the exact lease reopen boundary`, async () => {
+    const fake = startFakeOmlx();
+    const mod = await loadManagedModule();
+    const authority = createTargetAdmissionAuthority();
+    const workload = "omlx-host";
+    const registry = createResidencyLeases();
+    const token = parkOmlx(registry, workload);
+    const dir = mkdtempSync(join(tmpdir(), "llamactl-omlx-publish-"));
+    const durable = openAdmissionAuthority({
+      storePath: join(dir, "native.sqlite"),
+      budgetGiB: () => 24,
+      owner: { pid: process.pid },
+      observe: () => undefined,
+      readPidFile: () => undefined,
+    });
+    try {
+      const claim = durable.admit({
+        runtimeKey: workload,
+        kind: "ModelHost",
+        specDigest: "d1",
+        allocationGiB: 8,
+      });
+      if (claim.kind !== "admitted") throw new Error("missing fixture durable charge");
+      let current = true;
+      const client = qualifiedNativeClient(fake, registry, workload, () => current);
+      let commits = 0;
+      const residency = mod.createManagedOmlxResidency({
+        ...managedOpts(client, authority),
+        loadPublication: {
+          parked: { registry, token },
+          commitReady(receipt): boolean {
+            commits++;
+            expect(receipt).toMatchObject({
+              modelId: ID,
+              binding: { runtimeGeneration: "fixture-generation" },
+              lease: { registry, token, phase: "unloaded" },
+            });
+            expect(registry.acquire(workload)).toMatchObject({ ok: false, reason: "Unloaded" });
+            expect(authority.snapshot("node-a")[0]?.state).toBe("pending");
+            expect(durable.snapshot()[0]?.state).toBe("pending");
+            if (scenario === "refuses") return false;
+            if (scenario === "returns a promise")
+              return Promise.resolve(true) as unknown as boolean;
+            if (scenario === "moves generation") current = false;
+            if (scenario === "replaces drain") {
+              expect(registry.reopen(token)).toBe(true);
+              expect(parkOmlx(registry, workload).epoch).toBeGreaterThan(token.epoch);
+            }
+            return (
+              durable.recordGeneration(claim.claimId, claim.fenceToken, {
+                pid: process.pid,
+                birthId: "fixture-generation",
+              }) && durable.completeReady(claim.claimId, claim.fenceToken)
+            );
+          },
+        },
+      });
+      const published = scenario === "permits";
+      expect(await residency.ensureLoaded()).toEqual(
+        published
+          ? { kind: "loaded", modelId: ID }
+          : { kind: "ambiguous", reason: "LoadUnconfirmed", reservation: "uncertain" },
+      );
+      expect(commits).toBe(1);
+      expect(registry.snapshot(workload).phase).toBe(published ? "open" : "unloaded");
+      expect(authority.snapshot("node-a")).toMatchObject([
+        { state: published ? "resident" : "uncertain", allocationGiB: 8 },
+      ]);
+      expect(durable.snapshot()).toMatchObject([
+        {
+          state:
+            scenario === "refuses" || scenario === "returns a promise" ? "pending" : "resident",
+          allocationGiB: 8,
+        },
+      ]);
+    } finally {
+      durable.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}
+
+test("the managed load refuses a newer drain before any native request", async () => {
+  const fake = startFakeOmlx();
+  const mod = await loadManagedModule();
+  const workload = "omlx-host";
+  const registry = createResidencyLeases();
+  const token = parkOmlx(registry, workload);
+  expect(registry.reopen(token)).toBe(true);
+  const current = parkOmlx(registry, workload);
+  const authority = createTargetAdmissionAuthority();
+  const client = qualifiedNativeClient(fake, registry, workload);
+  const residency = mod.createManagedOmlxResidency({
+    ...managedOpts(client, authority),
+    loadPublication: { parked: { registry, token }, commitReady: () => true },
+  });
+  expect(await residency.ensureLoaded()).toEqual({
+    kind: "refused",
+    reason: "OperationInProgress",
+  });
+  expect(fake.counts.total).toBe(0);
+  expect(registry.snapshot(workload)).toMatchObject({ phase: "unloaded", epoch: current.epoch });
+  expect(authority.snapshot("node-a")).toEqual([]);
+});
+
+test("an explicit durable publication never falls back to an unfenced native client", async () => {
+  const fake = startFakeOmlx();
+  const mod = await loadManagedModule();
+  const registry = createResidencyLeases();
+  const token = parkOmlx(registry, "omlx-host");
+  const residency = mod.createManagedOmlxResidency({
+    ...managedOpts(nativeClientFor(fake), createTargetAdmissionAuthority()),
+    loadPublication: { parked: { registry, token }, commitReady: () => true },
+  });
+  expect(await residency.ensureLoaded()).toEqual({ kind: "refused", reason: "IdentityUnverified" });
+  expect(fake.counts.total).toBe(0);
+});
+
+test("a lease on a different workload cannot use the managed load charge", async () => {
+  const fake = startFakeOmlx();
+  const mod = await loadManagedModule();
+  const registry = createResidencyLeases();
+  const wrongWorkload = "other-omlx-host";
+  parkOmlx(registry, wrongWorkload);
+  const client = nativeClientFor(fake, { registry, workload: wrongWorkload, sessions: null });
+  const residency = mod.createManagedOmlxResidency(
+    managedOpts(client, createTargetAdmissionAuthority()),
+  );
+  expect(await residency.ensureLoaded()).toEqual({ kind: "refused", reason: "IdentityUnverified" });
+  expect(fake.counts.total).toBe(0);
+  expect(registry.snapshot(wrongWorkload).phase).toBe("unloaded");
+});
+
+test("a standalone client cannot join a pending managed load", async () => {
+  const fake = startFakeOmlx({ loadDelayMs: 100 });
+  const mod = await loadManagedModule();
+  const workload = "omlx-host";
+  const registry = createResidencyLeases();
+  parkOmlx(registry, workload);
+  const client = nativeClientFor(fake, { registry, workload, sessions: null });
+  const residency = mod.createManagedOmlxResidency(
+    managedOpts(client, createTargetAdmissionAuthority()),
+  );
+  const pending = residency.ensureLoaded();
+  await fake.loadPosted;
+  expect(await client.load()).toEqual({ kind: "refused", reason: "OperationInProgress" });
+  expect(registry.snapshot(workload).phase).toBe("unloaded");
+  expect(await pending).toEqual({ kind: "loaded", modelId: ID });
+  expect(fake.counts.loadPosts).toBe(1);
+});
 
 function createResidency(
   mod: OmlxManagedModule,
@@ -597,6 +832,88 @@ describe("managed oMLX residency", () => {
       reservation: "uncertain",
       httpStatus: 500,
     });
+  });
+
+  test("M7 successful unload without status proof keeps the managed reservation charged", async () => {
+    const fake = startFakeOmlx();
+    fake.state.unloadMode = "ok-stale";
+    const mod = await loadManagedModule();
+    await expectUncertainAfterAmbiguousUnload(mod, fake, {
+      kind: "ambiguous",
+      reason: "UnloadUnconfirmed",
+      reservation: "uncertain",
+      httpStatus: 200,
+    });
+    expect(fake.state.model.loaded).toBe(true);
+  });
+
+  test("ambiguous native identity before unload preserves the claim and sends no mutation", async () => {
+    const fake = startFakeOmlx();
+    const mod = await loadManagedModule();
+    const authority = createTargetAdmissionAuthority();
+    const workload = "omlx-host";
+    const registry = createResidencyLeases();
+    const client = nativeClientFor(fake, { registry, workload, sessions: null });
+    const residency = mod.createManagedOmlxResidency(managedOpts(client, authority));
+    expect(await residency.ensureLoaded()).toStrictEqual({ kind: "loaded", modelId: ID });
+    const claims = authority.snapshot("node-a");
+    const lease = registry.snapshot(workload);
+
+    fake.state.conflictingStatus = true;
+    expect(await residency.unload()).toStrictEqual({
+      kind: "refused",
+      reason: "StatusUnavailable",
+      reservation: "held",
+    });
+    expect(await residency.ensureLoaded()).toStrictEqual({
+      kind: "refused",
+      reason: "StatusUnavailable",
+    });
+    expect(fake.counts.unloadPosts).toBe(0);
+    expect(fake.counts.loadPosts).toBe(1);
+    expect(authority.snapshot("node-a")).toEqual(claims);
+    expect(registry.snapshot(workload)).toEqual({ ...lease, epoch: lease.epoch + 1 });
+  });
+
+  test("a successful unload receipt with contradictory status retains the claim and does not commit the lease drain", async () => {
+    const fake = startFakeOmlx();
+    const mod = await loadManagedModule();
+    const authority = createTargetAdmissionAuthority();
+    const workload = "omlx-host";
+    const registry = createResidencyLeases();
+    const client = nativeClientFor(fake, { registry, workload, sessions: null });
+    const residency = mod.createManagedOmlxResidency(managedOpts(client, authority));
+    expect(await residency.ensureLoaded()).toStrictEqual({ kind: "loaded", modelId: ID });
+    const claims = authority.snapshot("node-a");
+    const lease = registry.snapshot(workload);
+
+    fake.state.unloadMode = "ok-conflicting";
+    expect(await residency.unload()).toStrictEqual({
+      kind: "ambiguous",
+      reason: "UnloadUnconfirmed",
+      reservation: "uncertain",
+      httpStatus: 200,
+    });
+    expect(fake.counts.unloadPosts).toBe(1);
+    expect(fake.state.model.loaded).toBe(true);
+    expect(authority.snapshot("node-a")).toEqual(
+      claims.map((claim) => ({ ...claim, state: "uncertain" as const })),
+    );
+    expect(claimTarget(authority, "replacement-host", 20, 24).decision).toMatchObject({
+      kind: "refuse",
+      reason: "BudgetExceeded",
+    });
+    expect(registry.snapshot(workload)).toEqual({ ...lease, epoch: lease.epoch + 1 });
+
+    fake.state.conflictingStatus = false;
+    fake.state.unloadMode = "ok";
+    expect(await residency.unload()).toStrictEqual({
+      kind: "unloaded",
+      modelId: ID,
+      reservation: "released",
+    });
+    expect(authority.snapshot("node-a")).toEqual([]);
+    expect(registry.snapshot(workload).phase).toBe("unloaded");
   });
 
   test("M7 unload timeout demotes the claim to uncertain", async () => {

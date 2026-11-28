@@ -28,7 +28,7 @@ import type {
   NativeModelActivity,
   NativeModelStatusObservation,
 } from "@llamactl/core/engines";
-import type { ResidencyLeases } from "@llamactl/core/residency/leases";
+import type { DrainToken, ResidencyLeases } from "@llamactl/core/residency/leases";
 import type { SessionRefcounts } from "@llamactl/core/residency/sessions";
 
 import {
@@ -43,6 +43,9 @@ import {
 } from "@llamactl/core/engines";
 import { getResidencyLeaseRegistry } from "@llamactl/core/residency/leases";
 import { currentSessionRefcounts } from "@llamactl/core/residency/sessions";
+import { isIP } from "node:net";
+import { basename, isAbsolute, normalize } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 const OBSERVABLE_ENGINES = new Set(["batched"]);
 
@@ -61,7 +64,7 @@ export type NativeStatus =
       residentEstimatedSize: number | null;
       activity: NativeModelActivity | "unknown";
     }
-  | { state: "failed"; reason: "ModelNotListed" | "MalformedStatus" }
+  | { state: "failed"; reason: "ModelNotListed" | "MalformedStatus" | "IdentityUnverified" }
   | {
       state: "failed";
       reason: "Unauthorized" | "NativeStatusUnsupported" | "StatusHttpError";
@@ -71,7 +74,15 @@ export type NativeStatus =
 
 export type NativeLoadResult =
   | { kind: "loaded" | "already-loaded"; modelId: string }
-  | { kind: "refused"; reason: "StatusUnavailable" | "LoadInProgress" | "OperationInProgress" }
+  | {
+      kind: "refused";
+      reason:
+        | "StatusUnavailable"
+        | "IdentityUnverified"
+        | "LoadInProgress"
+        | "OperationInProgress"
+        | "ManagedReservationUnavailable";
+    }
   | {
       kind: "failed";
       reason: "ModelNotListed" | "InsufficientMemory" | "Conflict" | "Unauthorized";
@@ -80,7 +91,7 @@ export type NativeLoadResult =
   | { kind: "ambiguous"; reason: "HttpError"; reservation: "uncertain"; httpStatus: number }
   | {
       kind: "ambiguous";
-      reason: "Timeout" | "Unreachable" | "MalformedResponse";
+      reason: "Timeout" | "Unreachable" | "MalformedResponse" | "LoadUnconfirmed";
       reservation: "uncertain";
     };
 
@@ -90,11 +101,13 @@ export type NativeUnloadResult =
       kind: "refused";
       reason:
         | "StatusUnavailable"
+        | "IdentityUnverified"
         | "LoadInProgress"
         | "OperationInProgress"
         | "BackendBusy"
         | "ActivityUnknown"
-        | "DrainInProgress";
+        | "DrainInProgress"
+        | "ManagedReservationUnavailable";
       reservation: "held";
     }
   | {
@@ -117,7 +130,12 @@ export type NativeUnloadResult =
     }
   | {
       kind: "ambiguous";
-      reason: "Timeout" | "Unreachable" | "MalformedResponse";
+      reason:
+        | "Timeout"
+        | "Unreachable"
+        | "MalformedResponse"
+        | "DrainChanged"
+        | "ManagedReleaseUnverified";
       reservation: "uncertain";
     };
 
@@ -128,9 +146,63 @@ type NativeLeasesOption = {
   sessions?: SessionRefcounts | null;
 };
 
+type NativeEndpoint = Readonly<{ host: string; port: number }>;
+
+export type OmlxNativePin = Readonly<{
+  endpoint: NativeEndpoint;
+  modelId: string;
+  modelPath: string;
+  artifactRevision: string;
+  runtimeGeneration: string;
+}>;
+
+export type OmlxNativeBinding = OmlxNativePin & {
+  /** Trusted local proof that the exact artifact and owning listener generation still match. */
+  stillCurrent: (pin: OmlxNativePin) => boolean;
+};
+
+function localNativeEndpoint(endpoint: NativeEndpoint): boolean {
+  const { host, port } = endpoint;
+  const loopback =
+    host === "localhost" ||
+    host === "::1" ||
+    host === "[::1]" ||
+    host === "0.0.0.0" ||
+    (isIP(host) === 4 && host.startsWith("127."));
+  return loopback && Number.isInteger(port) && port > 0 && port <= 65535;
+}
+
+export function nativeBindingCurrent(
+  binding: OmlxNativeBinding | undefined,
+  endpoint: NativeEndpoint,
+): boolean {
+  if (binding === undefined) return false;
+  const { stillCurrent, ...pin } = binding;
+  if (!localNativeEndpoint(endpoint) || !isDeepStrictEqual(pin.endpoint, endpoint)) return false;
+  if (
+    !isAbsolute(pin.modelPath) ||
+    normalize(pin.modelPath) !== pin.modelPath ||
+    pin.modelPath.includes("\0")
+  )
+    return false;
+  if (
+    [pin.modelId, pin.artifactRevision, pin.runtimeGeneration].some(
+      (value) => value.trim().length === 0,
+    )
+  )
+    return false;
+  if (pin.modelId === "." || pin.modelId === "..") return false;
+  try {
+    return stillCurrent(Object.freeze(pin));
+  } catch {
+    return false;
+  }
+}
+
 export type OmlxNativeClientOptions = {
   endpoint: { host: string; port: number };
   hostedRel: string;
+  binding?: OmlxNativeBinding;
   /**
    * Callers pass `hostedModel.dflash?.enabled !== true`. DFlashEngine activity
    * is invisible to /api/status at feec0a0e (server.py:3171-3188 walks
@@ -146,10 +218,46 @@ export type OmlxNativeClientOptions = {
   leases?: NativeLeasesOption;
 };
 
+export type OmlxNativeLoadLease = Readonly<{
+  registry: ResidencyLeases;
+  token: Readonly<DrainToken>;
+  phase: "open" | "unloaded";
+}>;
+
+export type OmlxNativeLoadReceipt = Readonly<{
+  modelId: string;
+  binding: OmlxNativePin | undefined;
+  lease: OmlxNativeLoadLease;
+}>;
+
+type OmlxNativeLoadCommit = {
+  workload: string;
+  commitReady(receipt: OmlxNativeLoadReceipt): boolean;
+  expectedLease?: OmlxNativeLoadLease;
+  beforeDispatch?: (receipt: OmlxNativeLoadReceipt) => boolean;
+};
+
+export type OmlxNativeUnloadReceipt = Readonly<{
+  modelId: string;
+  binding: OmlxNativePin;
+  registry: ResidencyLeases;
+  token: Readonly<DrainToken>;
+}>;
+
+type OmlxNativeUnloadCommit = {
+  workload: string;
+  beforeDispatch(receipt: OmlxNativeUnloadReceipt): boolean;
+  commitParked(receipt: OmlxNativeUnloadReceipt): boolean;
+};
+
+type BeforeNativeAction = (modelId: string) => boolean;
+
 export type OmlxNativeClient = {
-  status(): Promise<NativeStatus>;
+  status(signal?: AbortSignal): Promise<NativeStatus>;
   load(): Promise<NativeLoadResult>;
+  loadWithCommit?(commit: OmlxNativeLoadCommit): Promise<NativeLoadResult>;
   unload(): Promise<NativeUnloadResult>;
+  unloadWithCommit?(commit: OmlxNativeUnloadCommit): Promise<NativeUnloadResult>;
 };
 
 // --- internal context ---
@@ -158,6 +266,7 @@ type ClientCtx = {
   baseUrl: string;
   endpoint: { host: string; port: number };
   hostedRel: string;
+  binding: OmlxNativeBinding | undefined;
   activityObservable: boolean;
   apiKey: string | undefined;
   readiness: ModelHostReadiness | undefined;
@@ -173,7 +282,12 @@ type SendResult =
 
 // --- single-flight map ---
 
-type SingleFlightEntry = { op: "load" | "unload"; promise: Promise<unknown> };
+type SingleFlightEntry = {
+  op: "load" | "unload";
+  promise: Promise<unknown>;
+  ctx: ClientCtx;
+  exclusive: boolean;
+};
 
 const singleFlight = new Map<string, SingleFlightEntry>();
 
@@ -222,12 +336,25 @@ async function send(
   try {
     const response = await ctx.base(
       `${ctx.baseUrl}${path}`,
-      applyAuth(ctx.apiKey, { method, signal }),
+      applyAuth(ctx.apiKey, { method, signal, redirect: "error" }),
     );
     return { ok: true, response };
   } catch (err) {
     return { ok: false, error: classifyFetchError(signal, err) };
   }
+}
+
+function withStatusSignal(ctx: ClientCtx, signal: AbortSignal | undefined): ClientCtx {
+  if (signal === undefined) return ctx;
+  const base = Object.assign(
+    (input: URL | Request | string, init?: RequestInit): Promise<Response> =>
+      ctx.base(input, {
+        ...init,
+        signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal,
+      }),
+    { preconnect: ctx.base.preconnect },
+  );
+  return { ...ctx, base };
 }
 
 // checkServingReadiness builds its own absolute URL and passes only a signal,
@@ -236,14 +363,15 @@ function authFetch(
   base: typeof globalThis.fetch,
   apiKey: string | undefined,
 ): typeof globalThis.fetch {
-  if (apiKey === undefined) {
-    return base;
-  }
   const wrapper = (input: URL | Request | string, init?: RequestInit): Promise<Response> =>
-    base(input, applyAuth(apiKey, init ?? {}));
+    base(input, applyAuth(apiKey, { ...init, redirect: "error" }));
   // @types/bun adds a `preconnect` member to `typeof fetch` that a bare
   // function lacks; carry it through so the wrapper stays a valid fetch.
-  return Object.assign(wrapper, { preconnect: base.preconnect.bind(base) });
+  return Object.assign(wrapper, {
+    preconnect: (...args: Parameters<typeof base.preconnect>): void => {
+      base.preconnect(...args);
+    },
+  });
 }
 
 // --- status ---
@@ -296,7 +424,26 @@ function loadedStatus(
   };
 }
 
-async function statusInner(ctx: ClientCtx): Promise<NativeStatus> {
+function identityCurrent(ctx: ClientCtx): boolean {
+  return ctx.binding === undefined || nativeBindingCurrent(ctx.binding, ctx.endpoint);
+}
+
+function identityFailure(): { state: "failed"; reason: "IdentityUnverified" } {
+  return { state: "failed", reason: "IdentityUnverified" };
+}
+
+function statusRefusal(status: NativeStatus): "IdentityUnverified" | "StatusUnavailable" {
+  return "reason" in status && status.reason === "IdentityUnverified"
+    ? "IdentityUnverified"
+    : "StatusUnavailable";
+}
+
+type NativeObservation =
+  | NativeModelStatusObservation
+  | Extract<NativeStatus, { state: "failed" | "unknown" }>;
+
+async function observeNativeModel(ctx: ClientCtx): Promise<NativeObservation> {
+  if (!identityCurrent(ctx)) return identityFailure();
   const sent = await send(ctx, OMLX_MODELS_STATUS_PATH, "GET", ctx.statusTimeoutMs);
   if (!sent.ok) {
     return { state: "unknown", reason: "StatusUnreachable" };
@@ -319,13 +466,19 @@ async function statusInner(ctx: ClientCtx): Promise<NativeStatus> {
     return { state: "failed", reason: "MalformedStatus" };
   }
 
-  const observation = parseOmlxModelsStatus(body, ctx.hostedRel);
+  if (!identityCurrent(ctx)) return identityFailure();
+  return parseOmlxModelsStatus(body, ctx.hostedRel, ctx.binding);
+}
+
+async function statusInner(ctx: ClientCtx): Promise<NativeStatus> {
+  const observation = await observeNativeModel(ctx);
   if (observation.state !== "loaded") {
     return observation;
   }
 
   const engineType = "engineType" in observation ? observation.engineType : undefined;
   const activity = await fetchActivity(ctx, engineType);
+  if (!identityCurrent(ctx)) return identityFailure();
   if (
     ctx.readiness === undefined ||
     (activityKnown(activity) && activity.activeRequests + activity.waitingRequests > 0)
@@ -337,6 +490,7 @@ async function statusInner(ctx: ClientCtx): Promise<NativeStatus> {
     fetch: authFetch(ctx.base, ctx.apiKey),
     timeoutMs: ctx.statusTimeoutMs,
   });
+  if (!identityCurrent(ctx)) return identityFailure();
   const derived = deriveOmlxResidency(observation, readinessOk);
   return {
     state: derived.state === "resident" ? "resident" : "ready",
@@ -349,10 +503,14 @@ async function statusInner(ctx: ClientCtx): Promise<NativeStatus> {
 
 // --- load / unload bodies ---
 
-function classifyLoadResponse(body: unknown, modelId: string): NativeLoadResult {
+function classifyLoadResponse(
+  body: unknown,
+  modelId: string,
+  qualified: boolean,
+): NativeLoadResult {
   if (typeof body === "object" && body !== null && !Array.isArray(body)) {
     const record = body as Record<string, unknown>;
-    if (record["status"] === "ok") {
+    if (validNativeReceipt(record, modelId, qualified)) {
       const message = record["message"];
       if (typeof message === "string" && message.startsWith("Already loaded")) {
         return { kind: "already-loaded", modelId };
@@ -363,18 +521,88 @@ function classifyLoadResponse(body: unknown, modelId: string): NativeLoadResult 
   return { kind: "ambiguous", reason: "MalformedResponse", reservation: "uncertain" };
 }
 
-async function runLoad(ctx: ClientCtx): Promise<NativeLoadResult> {
+function validNativeReceipt(
+  record: Record<string, unknown>,
+  modelId: string,
+  qualified: boolean,
+): boolean {
+  return (
+    record["status"] === "ok" &&
+    (record["model_id"] === modelId || (!qualified && record["model_id"] === undefined))
+  );
+}
+
+function loadConfirmed(ctx: ClientCtx, status: NativeStatus): status is ResidentStatus {
+  return (
+    identityCurrent(ctx) &&
+    (status.state === "ready" || (ctx.readiness === undefined && status.state === "busy"))
+  );
+}
+
+async function exactLoadedObservation(
+  ctx: ClientCtx,
+  modelId: string,
+  requireObservable: boolean,
+): Promise<boolean> {
+  const observation = await observeNativeModel(ctx);
+  return (
+    observation.state === "loaded" &&
+    observation.modelId === modelId &&
+    (!requireObservable || engineIsObservable(observation.engineType)) &&
+    identityCurrent(ctx)
+  );
+}
+
+async function confirmedNativeLoad(
+  ctx: ClientCtx,
+  status: NativeStatus,
+  modelId: string,
+): Promise<boolean> {
+  if (!loadConfirmed(ctx, status) || status.modelId !== modelId) return false;
+  return ctx.binding === undefined || (await exactLoadedObservation(ctx, modelId, false));
+}
+
+function unconfirmedLoad(): NativeLoadResult {
+  return { kind: "ambiguous", reason: "LoadUnconfirmed", reservation: "uncertain" };
+}
+
+async function verifyLoadReceipt(
+  ctx: ClientCtx,
+  response: Response,
+  modelId: string,
+): Promise<NativeLoadResult> {
+  let receipt: NativeLoadResult;
+  try {
+    receipt = classifyLoadResponse(await response.json(), modelId, ctx.binding !== undefined);
+  } catch {
+    return { kind: "ambiguous", reason: "MalformedResponse", reservation: "uncertain" };
+  }
+  if (receipt.kind !== "loaded" && receipt.kind !== "already-loaded") return receipt;
+  const status = await statusInner(ctx);
+  return (await confirmedNativeLoad(ctx, status, modelId)) ? receipt : unconfirmedLoad();
+}
+
+async function runLoad(
+  ctx: ClientCtx,
+  beforeDispatch?: BeforeNativeAction,
+): Promise<NativeLoadResult> {
   const statusResult = await statusInner(ctx);
   if (statusResult.state === "failed" || statusResult.state === "unknown") {
-    return { kind: "refused", reason: "StatusUnavailable" };
+    return { kind: "refused", reason: statusRefusal(statusResult) };
   }
   if (statusResult.state === "loading") {
     return { kind: "refused", reason: "LoadInProgress" };
   }
   if (statusResult.state !== "discovered") {
-    return { kind: "already-loaded", modelId: statusResult.modelId };
+    return (await confirmedNativeLoad(ctx, statusResult, statusResult.modelId))
+      ? { kind: "already-loaded", modelId: statusResult.modelId }
+      : unconfirmedLoad();
   }
 
+  if (!identityCurrent(ctx)) return { kind: "refused", reason: "IdentityUnverified" };
+  if (beforeDispatch?.(statusResult.modelId) === false) {
+    return { kind: "refused", reason: "ManagedReservationUnavailable" };
+  }
   const sent = await send(
     ctx,
     omlxModelActionPath("load", statusResult.modelId),
@@ -385,14 +613,21 @@ async function runLoad(ctx: ClientCtx): Promise<NativeLoadResult> {
     return { kind: "ambiguous", reason: sent.error, reservation: "uncertain" };
   }
   const response = sent.response;
-  if (response.ok) {
-    try {
-      return classifyLoadResponse(await response.json(), statusResult.modelId);
-    } catch {
-      return { kind: "ambiguous", reason: "MalformedResponse", reservation: "uncertain" };
-    }
+  if (!identityCurrent(ctx)) {
+    void response.body?.cancel().catch(() => undefined);
+    return unconfirmedLoad();
   }
-  const httpStatus = response.status;
+  if (response.status === 202) {
+    void response.body?.cancel().catch(() => undefined);
+    return unconfirmedLoad();
+  }
+  if (response.ok) {
+    return await verifyLoadReceipt(ctx, response, statusResult.modelId);
+  }
+  return classifyLoadHttpError(response.status);
+}
+
+function classifyLoadHttpError(httpStatus: number): NativeLoadResult {
   if (httpStatus === 404) {
     return { kind: "failed", reason: "ModelNotListed", httpStatus };
   }
@@ -408,64 +643,170 @@ async function runLoad(ctx: ClientCtx): Promise<NativeLoadResult> {
   return { kind: "ambiguous", reason: "HttpError", reservation: "uncertain", httpStatus };
 }
 
-async function runLoadWithLeases(ctx: ClientCtx): Promise<NativeLoadResult> {
-  const result = await runLoad(ctx);
-  const leases = ctx.leases;
-  if (leases === undefined) {
-    return result;
-  }
-  // A single snapshot drives both the phase guard and the reopen epoch, so the
-  // reopen cannot race a phase change between two reads.
-  const snap = registrySnapshot(leases.registry, leases.workload);
-  if ((result.kind === "loaded" || result.kind === "already-loaded") && snap.phase === "unloaded") {
-    leases.registry.reopen({ workload: leases.workload, epoch: snap.epoch });
-  }
-  return result;
+function loadLeaseCurrent(lease: OmlxNativeLoadLease): boolean {
+  const current = lease.registry.snapshot(lease.token.workload);
+  return current.epoch === lease.token.epoch && current.phase === lease.phase;
 }
 
-function registrySnapshot(
-  registry: ResidencyLeases,
-  workload: string,
-): { phase: string; epoch: number } {
-  const snap = registry.snapshot(workload);
-  return { phase: snap.phase, epoch: snap.epoch };
+function sameLoadLease(a: OmlxNativeLoadLease, b: OmlxNativeLoadLease): boolean {
+  return (
+    a.registry === b.registry &&
+    a.token.workload === b.token.workload &&
+    a.token.epoch === b.token.epoch &&
+    a.phase === b.phase
+  );
 }
 
-// A 400 means "not loaded"; only a follow-up status that parses as discovered
-// confirms it, so a stale 400 stays ambiguous rather than claiming release.
-async function confirmUnload400(ctx: ClientCtx, modelId: string): Promise<NativeUnloadResult> {
-  const reSent = await send(ctx, OMLX_MODELS_STATUS_PATH, "GET", ctx.statusTimeoutMs);
-  if (reSent.ok && reSent.response.ok) {
-    try {
-      const reObservation = parseOmlxModelsStatus(await reSent.response.json(), ctx.hostedRel);
-      if (reObservation.state === "discovered") {
-        return { kind: "already-unloaded", modelId, reservation: "released" };
-      }
-    } catch {
-      // fall through to unconfirmed
+function confirmNativeProof(check: () => boolean): boolean {
+  try {
+    const confirmed: unknown = check();
+    return confirmed === true;
+  } catch {
+    return false;
+  }
+}
+
+function loadCommitRefusal(
+  ctx: ClientCtx,
+  lease: OmlxNativeLoadLease,
+  commit: OmlxNativeLoadCommit | undefined,
+): NativeLoadResult | undefined {
+  if (commit === undefined) return undefined;
+  if (commit.workload !== lease.token.workload) {
+    return { kind: "refused", reason: "IdentityUnverified" };
+  }
+  if (
+    commit.beforeDispatch !== undefined &&
+    (commit.expectedLease?.phase !== "unloaded" || ctx.readiness === undefined)
+  ) {
+    return { kind: "refused", reason: "ManagedReservationUnavailable" };
+  }
+  if (commit.expectedLease === undefined) return undefined;
+  if (!sameLoadLease(commit.expectedLease, lease)) {
+    return { kind: "refused", reason: "OperationInProgress" };
+  }
+  return ctx.binding === undefined ? { kind: "refused", reason: "IdentityUnverified" } : undefined;
+}
+
+function publishConfirmedLoad(
+  ctx: ClientCtx,
+  lease: OmlxNativeLoadLease,
+  modelId: string,
+  commit: OmlxNativeLoadCommit | undefined,
+): boolean {
+  if (!loadLeaseCurrent(lease)) return false;
+  if (commit !== undefined) {
+    const receipt = Object.freeze({ modelId, binding: ctx.binding, lease });
+    if (
+      !identityCurrent(ctx) ||
+      !confirmNativeProof(() => commit.commitReady(receipt)) ||
+      !identityCurrent(ctx) ||
+      !loadLeaseCurrent(lease)
+    ) {
+      return false;
     }
+  }
+  return lease.phase === "open" || lease.registry.reopen(lease.token);
+}
+
+async function runLoadWithLeases(
+  ctx: ClientCtx,
+  commit?: OmlxNativeLoadCommit,
+): Promise<NativeLoadResult> {
+  const leases = ctx.leases;
+  if (leases === undefined) return await runLoad(ctx);
+  const started = leases.registry.snapshot(leases.workload);
+  if (started.phase === "draining") {
+    return { kind: "refused", reason: "OperationInProgress" };
+  }
+  const lease = Object.freeze({
+    registry: leases.registry,
+    token: Object.freeze({ workload: leases.workload, epoch: started.epoch }),
+    phase: started.phase,
+  });
+  const refusal = loadCommitRefusal(ctx, lease, commit);
+  if (refusal !== undefined) return refusal;
+  const beforeDispatch = commit?.beforeDispatch;
+  const result = await runLoad(
+    ctx,
+    beforeDispatch === undefined
+      ? undefined
+      : (modelId): boolean =>
+          loadLeaseCurrent(lease) &&
+          confirmNativeProof(() =>
+            beforeDispatch(Object.freeze({ modelId, binding: ctx.binding, lease })),
+          ) &&
+          identityCurrent(ctx) &&
+          loadLeaseCurrent(lease),
+  );
+  if (result.kind !== "loaded" && result.kind !== "already-loaded") return result;
+  return publishConfirmedLoad(ctx, lease, result.modelId, commit) ? result : unconfirmedLoad();
+}
+
+async function confirmNativeUnload(
+  ctx: ClientCtx,
+  modelId: string,
+  result: "unloaded" | "already-unloaded",
+  httpStatus: number,
+): Promise<NativeUnloadResult> {
+  const observation = await observeNativeModel(ctx);
+  if (
+    observation.state === "discovered" &&
+    observation.modelId === modelId &&
+    identityCurrent(ctx)
+  ) {
+    return { kind: result, modelId, reservation: "released" };
   }
   return {
     kind: "ambiguous",
     reason: "UnloadUnconfirmed",
     reservation: "uncertain",
-    httpStatus: 400,
+    httpStatus,
   };
 }
 
-function classifyUnloadResponse(body: unknown, modelId: string): NativeUnloadResult {
-  if (typeof body === "object" && body !== null && !Array.isArray(body)) {
-    const record = body as Record<string, unknown>;
-    if (record["status"] === "ok") {
-      return { kind: "unloaded", modelId, reservation: "released" };
-    }
+async function verifyUnloadReceipt(
+  ctx: ClientCtx,
+  response: Response,
+  modelId: string,
+): Promise<NativeUnloadResult> {
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    return { kind: "ambiguous", reason: "MalformedResponse", reservation: "uncertain" };
   }
-  return { kind: "ambiguous", reason: "MalformedResponse", reservation: "uncertain" };
+  if (
+    typeof body !== "object" ||
+    body === null ||
+    Array.isArray(body) ||
+    !validNativeReceipt(body as Record<string, unknown>, modelId, ctx.binding !== undefined)
+  ) {
+    return { kind: "ambiguous", reason: "MalformedResponse", reservation: "uncertain" };
+  }
+  return await confirmNativeUnload(ctx, modelId, "unloaded", response.status);
 }
 
 type ResidentStatus = Extract<NativeStatus, { state: "busy" | "resident" | "ready" }>;
 
-async function postUnload(ctx: ClientCtx, modelId: string): Promise<NativeUnloadResult> {
+function refuseUnboundUnload(): NativeUnloadResult {
+  return { kind: "refused", reason: "IdentityUnverified", reservation: "held" };
+}
+
+function unloadAdmissionRefusal(): NativeUnloadResult {
+  return { kind: "refused", reason: "ManagedReservationUnavailable", reservation: "held" };
+}
+
+async function postUnload(
+  ctx: ClientCtx,
+  modelId: string,
+  beforeDispatch: BeforeNativeAction | undefined,
+): Promise<NativeUnloadResult> {
+  if (ctx.binding !== undefined && !(await exactLoadedObservation(ctx, modelId, true))) {
+    return refuseUnboundUnload();
+  }
+  if (!identityCurrent(ctx)) return refuseUnboundUnload();
+  if (beforeDispatch?.(modelId) === false) return unloadAdmissionRefusal();
   const sent = await send(
     ctx,
     omlxModelActionPath("unload", modelId),
@@ -476,16 +817,30 @@ async function postUnload(ctx: ClientCtx, modelId: string): Promise<NativeUnload
     return { kind: "ambiguous", reason: sent.error, reservation: "uncertain" };
   }
   const response = sent.response;
+  if (!identityCurrent(ctx)) {
+    void response.body?.cancel().catch(() => undefined);
+    return {
+      kind: "ambiguous",
+      reason: "UnloadUnconfirmed",
+      reservation: "uncertain",
+      httpStatus: response.status,
+    };
+  }
+  if (response.status === 202) {
+    void response.body?.cancel().catch(() => undefined);
+    return {
+      kind: "ambiguous",
+      reason: "UnloadUnconfirmed",
+      reservation: "uncertain",
+      httpStatus: 202,
+    };
+  }
   if (response.ok) {
-    try {
-      return classifyUnloadResponse(await response.json(), modelId);
-    } catch {
-      return { kind: "ambiguous", reason: "MalformedResponse", reservation: "uncertain" };
-    }
+    return await verifyUnloadReceipt(ctx, response, modelId);
   }
   const httpStatus = response.status;
   if (httpStatus === 400) {
-    return await confirmUnload400(ctx, modelId);
+    return await confirmNativeUnload(ctx, modelId, "already-unloaded", httpStatus);
   }
   if (httpStatus === 404) {
     return { kind: "failed", reason: "ModelNotListed", reservation: "held", httpStatus };
@@ -501,6 +856,7 @@ async function postUnload(ctx: ClientCtx, modelId: string): Promise<NativeUnload
 async function unloadResident(
   ctx: ClientCtx,
   statusResult: ResidentStatus,
+  beforeDispatch: BeforeNativeAction | undefined,
 ): Promise<NativeUnloadResult> {
   if (!activityKnown(statusResult.activity)) {
     return { kind: "refused", reason: "ActivityUnknown", reservation: "held" };
@@ -508,25 +864,30 @@ async function unloadResident(
   if (statusResult.activity.activeRequests + statusResult.activity.waitingRequests > 0) {
     return { kind: "refused", reason: "BackendBusy", reservation: "held" };
   }
-  return await postUnload(ctx, statusResult.modelId);
+  return await postUnload(ctx, statusResult.modelId, beforeDispatch);
 }
 
-async function runUnload(ctx: ClientCtx): Promise<NativeUnloadResult> {
+async function runUnload(
+  ctx: ClientCtx,
+  beforeDispatch?: BeforeNativeAction,
+): Promise<NativeUnloadResult> {
   const statusResult = await statusInner(ctx);
   if (
     statusResult.state === "resident" ||
     statusResult.state === "ready" ||
     statusResult.state === "busy"
   ) {
-    return await unloadResident(ctx, statusResult);
+    return await unloadResident(ctx, statusResult, beforeDispatch);
   }
   if (statusResult.state === "discovered") {
+    if (!identityCurrent(ctx)) return refuseUnboundUnload();
+    if (beforeDispatch?.(statusResult.modelId) === false) return unloadAdmissionRefusal();
     return { kind: "already-unloaded", modelId: statusResult.modelId, reservation: "released" };
   }
   if (statusResult.state === "loading") {
     return { kind: "refused", reason: "LoadInProgress", reservation: "held" };
   }
-  return { kind: "refused", reason: "StatusUnavailable", reservation: "held" };
+  return { kind: "refused", reason: statusRefusal(statusResult), reservation: "held" };
 }
 
 export function sessionUnloadRefusal(
@@ -550,67 +911,170 @@ export function sessionUnloadRefusal(
   };
 }
 
-async function runUnloadWithLeases(ctx: ClientCtx): Promise<NativeUnloadResult> {
-  const leases = ctx.leases;
-  if (leases === undefined) {
-    return await runUnload(ctx);
+function drainRefusal(
+  leases: NativeLeasesOption,
+  token: Readonly<DrainToken>,
+  active: string[],
+): NativeUnloadResult | null {
+  const refusal =
+    active.length > 0
+      ? ({ kind: "refused", reason: "LeasesActive", reservation: "held", active } as const)
+      : sessionUnloadRefusal(leases.sessions, leases.workload);
+  if (refusal !== null) leases.registry.cancelDrain(token);
+  return refusal;
+}
+
+function managedUnloadUnconfirmed(): NativeUnloadResult {
+  return { kind: "ambiguous", reason: "ManagedReleaseUnverified", reservation: "uncertain" };
+}
+
+function drainChanged(): NativeUnloadResult {
+  return { kind: "ambiguous", reason: "DrainChanged", reservation: "uncertain" };
+}
+
+function unverifiedBoundUnload(result: NativeUnloadResult): boolean {
+  return (
+    result.reservation === "uncertain" ||
+    (result.kind === "refused" && result.reason === "IdentityUnverified")
+  );
+}
+
+function settleUnloadBeforeDispatch(
+  ctx: ClientCtx,
+  registry: ResidencyLeases,
+  token: Readonly<DrainToken>,
+  result: NativeUnloadResult,
+): NativeUnloadResult {
+  const outcome = identityCurrent(ctx) ? result : refuseUnboundUnload();
+  if (unverifiedBoundUnload(outcome)) {
+    return registry.commitUnload(token).ok ? outcome : drainChanged();
   }
+  registry.cancelDrain(token);
+  return outcome;
+}
 
-  const { registry, workload } = leases;
-  const drainResult = registry.beginDrain(workload);
-
-  if (!drainResult.ok) {
-    if (drainResult.reason === "AlreadyDraining") {
-      return {
-        kind: "refused",
-        reason: "DrainInProgress",
-        reservation: "held",
-      };
+async function unloadWithDurableProof(
+  ctx: ClientCtx,
+  registry: ResidencyLeases,
+  token: Readonly<DrainToken>,
+  binding: OmlxNativePin,
+  commit: OmlxNativeUnloadCommit,
+): Promise<NativeUnloadResult> {
+  let receipt: OmlxNativeUnloadReceipt | undefined;
+  const stillDraining = (): boolean => {
+    const lease = registry.snapshot(token.workload);
+    return lease.phase === "draining" && lease.epoch === token.epoch;
+  };
+  const beforeDispatch = (modelId: string): boolean => {
+    const pending = Object.freeze({ modelId, binding, registry, token });
+    if (!stillDraining() || !confirmNativeProof(() => commit.beforeDispatch(pending))) return false;
+    receipt = pending;
+    return identityCurrent(ctx) && stillDraining();
+  };
+  let result: NativeUnloadResult;
+  try {
+    result = await runUnload(ctx, beforeDispatch);
+  } catch (error) {
+    if (receipt === undefined) {
+      settleUnloadBeforeDispatch(ctx, registry, token, unloadAdmissionRefusal());
+      throw error;
     }
-    return await runUnload(ctx);
+    result = managedUnloadUnconfirmed();
   }
 
-  const token = drainResult.token;
-  const activeLeases = drainResult.active;
+  const confirmed = receipt;
+  if (confirmed === undefined) return settleUnloadBeforeDispatch(ctx, registry, token, result);
+  return settleDurableUnload(ctx, commit, confirmed, result);
+}
 
-  if (activeLeases.length > 0) {
-    registry.cancelDrain(token);
-    return {
-      kind: "refused",
-      reason: "LeasesActive",
-      reservation: "held",
-      active: activeLeases,
-    };
+function settleDurableUnload(
+  ctx: ClientCtx,
+  commit: OmlxNativeUnloadCommit,
+  receipt: OmlxNativeUnloadReceipt,
+  result: NativeUnloadResult,
+): NativeUnloadResult {
+  if (!receipt.registry.commitUnload(receipt.token).ok) return drainChanged();
+  if (result.reservation === "released") {
+    return identityCurrent(ctx) && confirmNativeProof(() => commit.commitParked(receipt))
+      ? result
+      : managedUnloadUnconfirmed();
   }
+  return result.kind === "ambiguous" ? result : managedUnloadUnconfirmed();
+}
 
-  const sessionRefusal = sessionUnloadRefusal(leases.sessions, workload);
-  if (sessionRefusal !== null) {
-    registry.cancelDrain(token);
-    return sessionRefusal;
-  }
-
+async function unloadWithLocalDrain(
+  ctx: ClientCtx,
+  registry: ResidencyLeases,
+  token: Readonly<DrainToken>,
+): Promise<NativeUnloadResult> {
   let result: NativeUnloadResult;
   try {
     result = await runUnload(ctx);
-  } catch (err) {
+  } catch (error) {
     registry.cancelDrain(token);
-    throw err;
+    throw error;
   }
-
-  if (result.kind === "unloaded" || result.kind === "already-unloaded") {
-    registry.commitUnload(token);
-    return result;
+  const unverified = ctx.binding !== undefined && unverifiedBoundUnload(result);
+  if (result.reservation === "released" || unverified) {
+    return registry.commitUnload(token).ok ? result : drainChanged();
   }
-
   registry.cancelDrain(token);
   return result;
 }
 
+async function runUnloadWithLeases(
+  ctx: ClientCtx,
+  commit?: OmlxNativeUnloadCommit,
+): Promise<NativeUnloadResult> {
+  const leases = ctx.leases;
+  if (leases === undefined) return await runUnload(ctx);
+
+  const { registry, workload } = leases;
+  const binding = ctx.binding;
+  if (commit !== undefined && (commit.workload !== workload || binding === undefined)) {
+    return unloadAdmissionRefusal();
+  }
+  const drain = registry.beginDrain(workload);
+  if (!drain.ok) {
+    if (drain.reason === "AlreadyDraining") {
+      return { kind: "refused", reason: "DrainInProgress", reservation: "held" };
+    }
+    return commit === undefined ? await runUnload(ctx) : unloadAdmissionRefusal();
+  }
+  const refusal = drainRefusal(leases, drain.token, drain.active);
+  if (refusal !== null) return refusal;
+  return commit === undefined || binding === undefined
+    ? await unloadWithLocalDrain(ctx, registry, drain.token)
+    : await unloadWithDurableProof(
+        ctx,
+        registry,
+        Object.freeze({ ...drain.token }),
+        binding,
+        commit,
+      );
+}
+
 // --- single-flight wrapper ---
 
+function canShareNativeFlight(a: ClientCtx, b: ClientCtx): boolean {
+  return (
+    a.hostedRel === b.hostedRel &&
+    isDeepStrictEqual(a.binding, b.binding) &&
+    a.apiKey === b.apiKey &&
+    a.base === b.base &&
+    a.activityObservable === b.activityObservable &&
+    a.requestTimeoutMs === b.requestTimeoutMs &&
+    a.statusTimeoutMs === b.statusTimeoutMs &&
+    isDeepStrictEqual(a.readiness, b.readiness) &&
+    a.leases?.registry === b.leases?.registry &&
+    a.leases?.workload === b.leases?.workload &&
+    a.leases?.sessions === b.leases?.sessions
+  );
+}
+
 // The entry is committed synchronously at entry (before any await) so a
-// concurrent call from another client sees it; same op shares the promise, the
-// other op is refused without issuing a request.
+// concurrent call from another client sees it. A matching operation may join
+// only when the caller would apply the same proof and admission policy.
 //
 // When ctx.leases is set for unload, beginDrain() fences before any HTTP call;
 // the drain is visible synchronously to callers that have not awaited unload().
@@ -619,17 +1083,23 @@ function singleFlightRun<T>(
   op: "load" | "unload",
   busyResult: () => T,
   body: () => Promise<T>,
+  exclusive = false,
 ): Promise<T> {
-  const key = `${ctx.baseUrl}|${ctx.hostedRel}`;
+  const key = `${ctx.baseUrl}|${basename(ctx.hostedRel)}`;
   const existing = singleFlight.get(key);
   if (existing !== undefined) {
-    if (existing.op === op) {
+    if (
+      !exclusive &&
+      !existing.exclusive &&
+      existing.op === op &&
+      canShareNativeFlight(existing.ctx, ctx)
+    ) {
       return existing.promise as Promise<T>;
     }
     return Promise.resolve(busyResult());
   }
   const promise = body();
-  singleFlight.set(key, { op, promise });
+  singleFlight.set(key, { op, promise, ctx, exclusive });
   return promise.finally(() => {
     singleFlight.delete(key);
   });
@@ -640,8 +1110,15 @@ function singleFlightRun<T>(
 export function createOmlxNativeClient(opts: OmlxNativeClientOptions): OmlxNativeClient {
   const ctx: ClientCtx = {
     baseUrl: buildBaseUrl(opts.endpoint.host, opts.endpoint.port),
-    endpoint: opts.endpoint,
+    endpoint: Object.freeze({ ...opts.endpoint }),
     hostedRel: opts.hostedRel,
+    binding:
+      opts.binding === undefined
+        ? undefined
+        : Object.freeze({
+            ...opts.binding,
+            endpoint: Object.freeze({ ...opts.binding.endpoint }),
+          }),
     activityObservable: opts.activityObservable,
     apiKey: opts.apiKey,
     readiness: opts.readiness,
@@ -652,8 +1129,8 @@ export function createOmlxNativeClient(opts: OmlxNativeClientOptions): OmlxNativ
   };
 
   return {
-    async status(): Promise<NativeStatus> {
-      return await statusInner(ctx);
+    async status(signal?: AbortSignal): Promise<NativeStatus> {
+      return await statusInner(withStatusSignal(ctx, signal));
     },
     async load(): Promise<NativeLoadResult> {
       return await singleFlightRun(
@@ -663,6 +1140,28 @@ export function createOmlxNativeClient(opts: OmlxNativeClientOptions): OmlxNativ
         () => runLoadWithLeases(ctx),
       );
     },
+    ...(ctx.leases === undefined
+      ? {}
+      : {
+          async unloadWithCommit(commit: OmlxNativeUnloadCommit): Promise<NativeUnloadResult> {
+            return await singleFlightRun(
+              ctx,
+              "unload",
+              () => ({ kind: "refused", reason: "OperationInProgress", reservation: "held" }),
+              () => runUnloadWithLeases(ctx, commit),
+              true,
+            );
+          },
+          async loadWithCommit(commit: OmlxNativeLoadCommit): Promise<NativeLoadResult> {
+            return await singleFlightRun(
+              ctx,
+              "load",
+              () => ({ kind: "refused", reason: "OperationInProgress" }),
+              () => runLoadWithLeases(ctx, commit),
+              true,
+            );
+          },
+        }),
     async unload(): Promise<NativeUnloadResult> {
       return await singleFlightRun(
         ctx,

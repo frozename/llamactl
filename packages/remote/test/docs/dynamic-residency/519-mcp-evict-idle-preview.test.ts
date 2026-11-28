@@ -27,7 +27,7 @@ describe("#519 MCP residency.evictIdle dry-run preview", () => {
       "never stamps the idle hold or stops a workload",
       "`llamactl residency evict-idle --node <name> --yes`",
       "writes no audit line",
-      "`llamactl.residency.evictIdle` is a read-tier Ops Chat tool too",
+      "read-tier Ops Chat entry",
       "the dispatch forwards only `node`",
     ]);
   });
@@ -54,7 +54,9 @@ describe("#519 MCP residency.evictIdle dry-run preview", () => {
     );
 
     const body = enclosingBody(src, "async function executeReadTool(");
-    const start = body.indexOf('case "llamactl.residency.evictIdle":');
+    const toolArm = 'case "llamactl.residency.evictIdle":';
+    expect(body.split(toolArm)).toHaveLength(2);
+    const start = body.indexOf(toolArm);
     expect(start).toBeGreaterThan(-1);
     const rest = body.slice(start + 1);
     const next = rest.indexOf('case "');

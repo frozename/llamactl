@@ -10,9 +10,16 @@
  * jundot/omlx server.py GET /v1/models/status at OMLX_REVISION
  * (list_models_status).
  */
+import {
+  createResidencyLeases,
+  getResidencyLeaseRegistry,
+  setResidencyLeaseRegistry,
+} from "@llamactl/core/residency/leases";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import type { OmlxNativeBinding } from "../../src/residency/engine-client.js";
 
 import { router } from "../../src/router.js";
 import { mkdtempSync, rmSync } from "../../src/safe-fs.js";
@@ -40,6 +47,7 @@ type ProbeOptions = {
 type ResolveOptions = {
   endpoint: { host: string; port: number };
   hostedRel: string;
+  binding: OmlxNativeBinding;
   activityObservable: boolean;
   workload: string;
   probeTimeoutMs?: number;
@@ -53,7 +61,7 @@ type ResolveResult =
       capability: OmlxCapability;
       client: { load: unknown; unload: unknown; status: unknown };
     }
-  | { path: "process"; capability: OmlxCapability };
+  | { path: "process" | "held"; capability: OmlxCapability };
 
 type OmlxCapabilityModule = {
   probeOmlxNativeCapability(opts: ProbeOptions): Promise<OmlxCapability>;
@@ -429,6 +437,14 @@ describe("ensureOmlxNativeCapability", () => {
 // ── resolveOmlxResidencyPath ────────────────────────────────────────────
 
 describe("resolveOmlxResidencyPath", () => {
+  const previousLeases = getResidencyLeaseRegistry();
+  beforeEach(() => {
+    setResidencyLeaseRegistry(createResidencyLeases());
+  });
+  afterEach(() => {
+    setResidencyLeaseRegistry(previousLeases);
+  });
+
   function resolveOpts(
     endpoint: { host: string; port: number },
     probeTimeoutMs = 1000,
@@ -436,6 +452,14 @@ describe("resolveOmlxResidencyPath", () => {
     return {
       endpoint,
       hostedRel: REL,
+      binding: {
+        endpoint,
+        modelId: ID,
+        modelPath: `/models/${ID}`,
+        artifactRevision: "fixture-artifact",
+        runtimeGeneration: "fixture-generation",
+        stillCurrent: () => true,
+      },
       activityObservable: true,
       workload: "host-omlx",
       probeTimeoutMs,
@@ -443,11 +467,11 @@ describe("resolveOmlxResidencyPath", () => {
   }
 
   // kills a gate of the form `mode !== "process-fallback"`
-  test("probe timeout -> unknown and process path used", async () => {
+  test("probe timeout -> held without process fallback", async () => {
     const fake = startFakeOmlx({ statusScript: [{ status: 200, delayMs: 500 }] });
     const mod = await loadModule();
     const result = await mod.resolveOmlxResidencyPath(resolveOpts(fake.endpoint, 50));
-    expect(result.path).toBe("process");
+    expect(result.path).toBe("held");
     expect(result.capability).toEqual({
       mode: "unknown",
       reason: "Timeout",
@@ -507,6 +531,33 @@ describe("resolveOmlxResidencyPath", () => {
 // ── residencyStatus projection ──────────────────────────────────────────
 
 describe("residencyStatus omlxNative", () => {
+  test("managed status distinguishes refreshed engine inventory from serving readiness", async () => {
+    const fake = startFakeOmlx({
+      statusScript: [
+        { status: 200, body: statusFixtureV1() },
+        { status: 200, body: { models: [{ id: ID, loaded: true, is_loading: false }] } },
+        { status: 200, body: { models: [] } },
+      ],
+    });
+    saveHostManifests(fake);
+    const caller = router.createCaller({
+      managedLaunchAdmission: {
+        ownsNode: (node) => node === "local" || node === "fixture-node",
+        ownerNodeId: "fixture-node",
+        run(): never {
+          throw new Error("status must not start an engine");
+        },
+      },
+    });
+    for (const state of ["discovered", "loaded", "missing"]) {
+      const result = await caller.residencyStatus({ node: "fixture-node" });
+      expect(result.omlxNative?.workloads).toMatchObject([
+        { workload: "host-omlx", modelState: state },
+      ]);
+    }
+    expect(fake.log).toEqual(Array<string>(3).fill("GET /v1/models/status"));
+  });
+
   // kills the router not being wired, re-probing on every status call, or
   // non-omlx hosts being included
   test("serving node projects oMLX capability rows", async () => {

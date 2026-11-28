@@ -1,4 +1,6 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import type { NodeClient } from "@llamactl/remote";
+
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
@@ -23,7 +25,12 @@ import {
   parseWorkload,
   saveWorkload,
 } from "../../remote/src/workload/store.js";
-import { type SetEnabledDeps, setWorkloadEnabledWithDeps } from "../src/commands/setEnabled.js";
+import {
+  type SetEnabledDeps,
+  setManagedWorkloadEnabled,
+  setWorkloadEnabledWithDeps,
+} from "../src/commands/setEnabled.js";
+import { EMPTY_GLOBALS, resetGlobals, setGlobals } from "../src/dispatcher.js";
 import { mkdtempSync, readFileSync, rmSync } from "../src/safe-fs.js";
 
 let tmp = "";
@@ -557,3 +564,37 @@ for (const kind of ["ModelRun", "ModelHost"] as const) {
     });
   }
 }
+
+test("managed enable and disable dispatch only to the named owner and retain its refusal", async () => {
+  const mutate = mock(
+    (): Promise<{ action: string; name: string }> => Promise.reject(new Error("BudgetExceeded")),
+  );
+  const ownerClient = mock(
+    () => ({ managedWorkloadSetEnabled: { mutate } }) as unknown as NodeClient,
+  );
+  try {
+    setGlobals({ ...EMPTY_GLOBALS, nodeName: "all" });
+    expect(await setManagedWorkloadEnabled("foreign", true, ownerClient)).toMatchObject({
+      code: 1,
+    });
+    expect(ownerClient).not.toHaveBeenCalled();
+
+    const globals = { ...EMPTY_GLOBALS, nodeName: "fixture-owner", contextName: "fixture" };
+    setGlobals(globals);
+    expect(await setManagedWorkloadEnabled("foreign", true, ownerClient)).toEqual({
+      code: 1,
+      message: "enable: BudgetExceeded\n",
+    });
+    expect(ownerClient).toHaveBeenCalledWith("fixture-owner", globals);
+    expect(mutate).toHaveBeenLastCalledWith({ workload: "foreign", enabled: true });
+
+    mutate.mockResolvedValue({ action: "stopped", name: "foreign" });
+    expect(await setManagedWorkloadEnabled("foreign", false, ownerClient)).toEqual({
+      code: 0,
+      message: "stopped foreign on fixture-owner\n",
+    });
+    expect(mutate).toHaveBeenLastCalledWith({ workload: "foreign", enabled: false });
+  } finally {
+    resetGlobals();
+  }
+});

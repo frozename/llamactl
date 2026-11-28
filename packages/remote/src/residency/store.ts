@@ -80,12 +80,14 @@ import {
   type ResidencyState,
   type ResidencyTransitionDecision,
 } from "@llamactl/core/residency/lifecycle";
+import { MANAGED_PROFILE_TARGET_PREFIX } from "@llamactl/core/residency/profile-selection";
 import { Database } from "bun:sqlite";
 import { dirname, join } from "node:path";
 
-import { existsSync, mkdirSync } from "../safe-fs.js";
+import { existsSync, mkdirSync, statSync } from "../safe-fs.js";
 
 const SCHEMA_VERSION = 1;
+export const RESIDENCY_INFERENCE_HOLD_SCHEMA_VERSION = 2;
 
 // Forced-unload lease audit (#278, DF-05). Newest rows win: the sink trims to
 // this many after every append, and the busy timeout is short so a locked store
@@ -171,8 +173,7 @@ type ClaimInput = {
   incarnation: string;
 };
 
-type BeginOperationInput = {
-  fenceToken: number;
+type OperationSpec = {
   operationId: string;
   model: string;
   targetState: string;
@@ -180,6 +181,11 @@ type BeginOperationInput = {
   reservationGiB: number;
   nowMs: number;
   nodeBudgetGiB?: number;
+};
+
+type BeginOperationInput = OperationSpec & { fenceToken: number };
+type ClaimAndBeginOperationSpec = OperationSpec & {
+  expectedManagedProfileOperationId?: string | null | undefined;
 };
 
 type MutationInput = {
@@ -202,9 +208,14 @@ type FinishOperationInput = MutationInput & {
   detail?: string;
 };
 
-type BeginOperationResult =
+export type BeginOperationResult =
   | { ok: true; created: boolean; record: ResidencyOperationRecord }
   | { ok: false; reason: ResidencyStoreFailure };
+
+type ClaimAndBeginOperationResult =
+  | BeginOperationResult
+  | { ok: false; reason: "profile-selection-changed" }
+  | { ok: false; reason: "busy"; operationId: string | null };
 
 type MutationResult = { ok: true } | { ok: false; reason: ResidencyStoreFailure };
 
@@ -216,6 +227,10 @@ export type ResidencyOperationStore = {
   ) => ClaimWhenResult;
   currentFence: () => Fence | null;
   beginOperation: (input: BeginOperationInput) => BeginOperationResult;
+  claimAndBeginOperation: (
+    identity: ClaimInput,
+    input: ClaimAndBeginOperationSpec,
+  ) => ClaimAndBeginOperationResult;
   commitReservation: (input: MutationInput) => MutationResult;
   finishOperation: (input: FinishOperationInput) => MutationResult;
   touchOperation: (input: TouchOperationInput) => MutationResult;
@@ -277,11 +292,17 @@ const OPERATION_COLUMNS =
 const RESIDENCY_STATE_COLUMNS =
   "model, residency_group, state, owner_id, incarnation, fence_token, version, updated_at_ms, desired_revision";
 
-export function openResidencyOperationStore(input: {
+interface OpenResidencyStoreOptions {
   path: string;
+  requireExisting?: boolean;
+  verifyExistingSchema?: boolean;
   busyTimeoutMs?: number;
-}): ResidencyOperationStore & ResidencyLifecycleStore {
-  const db = openDb(input.path, input.busyTimeoutMs ?? 15000);
+}
+
+export function openResidencyOperationStore(
+  input: OpenResidencyStoreOptions,
+): ResidencyOperationStore & ResidencyLifecycleStore {
+  const db = openOperationDb(input);
   const claimTx = db.transaction(
     (claimInput: ClaimInput): Fence => claimOwnershipTx(db, claimInput),
   );
@@ -298,6 +319,10 @@ export function openResidencyOperationStore(input: {
   );
   const beginTx = db.transaction(
     (beginInput: BeginOperationInput): BeginOperationResult => beginOperationTx(db, beginInput),
+  );
+  const claimAndBeginTx = db.transaction(
+    (identity: ClaimInput, input: ClaimAndBeginOperationSpec): ClaimAndBeginOperationResult =>
+      claimAndBeginOperationTx(db, identity, input),
   );
   const commitTx = db.transaction(
     (mutationInput: MutationInput): MutationResult => commitReservationTx(db, mutationInput),
@@ -316,6 +341,16 @@ export function openResidencyOperationStore(input: {
         return { ok: false, reason: invalid };
       }
       return beginTx.immediate(beginInput);
+    },
+    claimAndBeginOperation: (identity, beginInput) => {
+      const { ownerId, incarnation } = identity;
+      if (!isNonEmpty(ownerId) || !isNonEmpty(incarnation)) {
+        throw new Error("claimAndBeginOperation requires a non-empty ownerId and incarnation");
+      }
+      const invalid = validateOperationSpec(beginInput);
+      return invalid === null
+        ? claimAndBeginTx.immediate({ ownerId, incarnation }, beginInput)
+        : { ok: false, reason: invalid };
     },
     claimOwnership: (claimInput) => {
       if (!isNonEmpty(claimInput.ownerId) || !isNonEmpty(claimInput.incarnation)) {
@@ -349,10 +384,7 @@ export function openResidencyOperationStore(input: {
     },
     getOperation: (operationId) => {
       const row = selectOperationRow(db, operationId);
-      if (row === null) {
-        return null;
-      }
-      return rowToRecord(row);
+      return row === null ? null : rowToRecord(row);
     },
     getResidencyState: (model) => {
       const row = selectResidencyStateRow(db, model);
@@ -384,13 +416,47 @@ export function openResidencyOperationStore(input: {
   return store;
 }
 
-function openDb(path: string, busyTimeoutMs = 15000): Database {
-  mkdirSync(dirname(path), { recursive: true });
-  const db = new Database(path);
+function openOperationDb(input: OpenResidencyStoreOptions): Database {
+  const verify = input.verifyExistingSchema === true;
+  return openDb(
+    input.path,
+    input.busyTimeoutMs ?? 15000,
+    verify || input.requireExisting === true,
+    verify,
+  );
+}
+
+function verifyTransitionSchema(db: Database): void {
+  const versions = db.query<{ version: number }, []>("SELECT version FROM schema_version").all();
+  const version = versions[0]?.version;
+  if (
+    versions.length !== 1 ||
+    (version !== SCHEMA_VERSION && version !== RESIDENCY_INFERENCE_HOLD_SCHEMA_VERSION)
+  ) {
+    throw new Error("transition journal schema version is unavailable");
+  }
+  readAuthority(db);
+  db.query(`SELECT ${OPERATION_COLUMNS} FROM operations LIMIT 0`).all();
+  listResidencyStateRows(db);
+}
+
+function openDb(
+  path: string,
+  busyTimeoutMs = 15000,
+  requireExisting = false,
+  verifyExisting = false,
+): Database {
+  if (!requireExisting) mkdirSync(dirname(path), { recursive: true });
+  const db = new Database(path, { readwrite: true, create: !requireExisting });
   try {
-    db.run("PRAGMA journal_mode = WAL");
     db.run(`PRAGMA busy_timeout = ${String(busyTimeoutMs)}`);
-    migrate(db);
+    if (verifyExisting) {
+      verifyTransitionSchema(db);
+    } else {
+      if (requireExisting) db.query("SELECT version FROM schema_version").get();
+      db.run("PRAGMA journal_mode = WAL");
+      migrate(db);
+    }
   } catch (error: unknown) {
     db.close();
     throw error;
@@ -479,6 +545,62 @@ export function readResidencyStoreSnapshot(
   }
 }
 
+type ProfileOperationView = {
+  active: ResidencyOperationRecord | null;
+  terminal: ResidencyOperationRecord | null;
+  fenceToken: number | null;
+};
+
+function profileOperationsAt(
+  db: Database,
+  model: string,
+  targetPrefix: string,
+): ProfileOperationView {
+  const active = db
+    .query(`SELECT ${OPERATION_COLUMNS} FROM operations WHERE model = ? AND phase != 'terminal'`)
+    .get(model) as OperationRow | null;
+  // Switches on a model serialize. Insertion order survives wall-clock changes.
+  // A pending row starts at v1. Only a committed row can finish at v3.
+  const terminal = db
+    .query(
+      `SELECT ${OPERATION_COLUMNS} FROM operations
+       WHERE model = ? AND phase = 'terminal' AND substr(target_state, 1, ?) = ?
+         AND (outcome = 'succeeded' OR (outcome = 'unknown' AND version >= 3))
+       ORDER BY rowid DESC LIMIT 1`,
+    )
+    .get(model, targetPrefix.length, targetPrefix) as OperationRow | null;
+  return {
+    active: active === null ? null : rowToRecord(active),
+    terminal: terminal === null ? null : rowToRecord(terminal),
+    fenceToken: readAuthority(db)?.fenceToken ?? null,
+  };
+}
+
+function profileStorePresent(path: string): boolean {
+  try {
+    statSync(path);
+    return true;
+  } catch (error: unknown) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+export function readProfileOperations(
+  path: string,
+  model: string,
+  targetPrefix: string,
+): ProfileOperationView | null {
+  if (!profileStorePresent(path)) return null;
+  const db = new Database(path, { readonly: true });
+  try {
+    db.run(`PRAGMA busy_timeout = ${String(RESIDENCY_LEASE_AUDIT_BUSY_TIMEOUT_MS)}`);
+    return db.transaction(() => profileOperationsAt(db, model, targetPrefix))();
+  } finally {
+    db.close();
+  }
+}
+
 // ── Forced-unload lease audit persistence (#278, DF-05) ─────────────────
 
 interface LeaseAuditRow {
@@ -558,6 +680,7 @@ export type ResidencyLeaseAuditSink = {
 export function createResidencyLeaseAuditSink(opts: {
   path: string;
   busyTimeoutMs?: number;
+  requireExisting?: boolean;
 }): ResidencyLeaseAuditSink {
   const busyTimeoutMs = opts.busyTimeoutMs ?? RESIDENCY_LEASE_AUDIT_BUSY_TIMEOUT_MS;
   let db: Database | null = null;
@@ -570,7 +693,7 @@ export function createResidencyLeaseAuditSink(opts: {
         return;
       }
       if (db === null) {
-        const opened = openDb(opts.path, busyTimeoutMs);
+        const opened = openDb(opts.path, busyTimeoutMs, opts.requireExisting === true);
         const appendImmediate = opened.transaction((auditEntry: ResidencyAuditEntry): void => {
           appendLeaseAuditTx(opened, auditEntry);
         });
@@ -623,9 +746,9 @@ function migrate(db: Database): void {
     db.query("INSERT INTO schema_version (version) VALUES (?)").run(SCHEMA_VERSION);
     return;
   }
-  if (stored.version > SCHEMA_VERSION) {
+  if (stored.version > RESIDENCY_INFERENCE_HOLD_SCHEMA_VERSION) {
     throw new Error(
-      `residency store schema_version ${String(stored.version)} is newer than supported ${String(SCHEMA_VERSION)}`,
+      `residency store schema_version ${String(stored.version)} is newer than supported ${String(RESIDENCY_INFERENCE_HOLD_SCHEMA_VERSION)}`,
     );
   }
   createTables(db);
@@ -732,6 +855,43 @@ function beginOperationTx(db: Database, input: BeginOperationInput): BeginOperat
   if (authority?.fenceToken !== input.fenceToken) {
     return { ok: false, reason: "stale-fence" };
   }
+  return checkBeginOperation(db, input) ?? createPendingOperation(db, input, authority);
+}
+
+function claimAndBeginOperationTx(
+  db: Database,
+  identity: ClaimInput,
+  input: ClaimAndBeginOperationSpec,
+): ClaimAndBeginOperationResult {
+  const operationId = nonterminalOperationIdForModel(db, input.model);
+  if (operationId !== null) {
+    return { ok: false, reason: "busy", operationId };
+  }
+  const current = readAuthority(db);
+  if (current !== null && current.ownerId !== identity.ownerId) {
+    return { ok: false, reason: "busy", operationId: null };
+  }
+  const checked = checkBeginOperation(db, input);
+  if (checked !== null) {
+    return checked;
+  }
+
+  const expected = input.expectedManagedProfileOperationId;
+  if (
+    expected !== undefined &&
+    (profileOperationsAt(db, input.model, MANAGED_PROFILE_TARGET_PREFIX).terminal?.operationId ??
+      null) !== expected
+  ) {
+    return { ok: false, reason: "profile-selection-changed" };
+  }
+
+  // Commit the new fence and its blocking reservation as one write. A
+  // rejected reservation must leave the preceding writer's fence intact.
+  const authority = claimOwnershipTx(db, identity);
+  return createPendingOperation(db, input, authority);
+}
+
+function checkBeginOperation(db: Database, input: OperationSpec): BeginOperationResult | null {
   const existing = selectOperationRow(db, input.operationId);
   if (existing !== null) {
     if (matchesImmutableFields(existing, input)) {
@@ -743,7 +903,7 @@ function beginOperationTx(db: Database, input: BeginOperationInput): BeginOperat
   if (watermark !== null && input.desiredRevision < watermark) {
     return { ok: false, reason: "stale-revision" };
   }
-  if (hasNonterminalForModel(db, input.model)) {
+  if (nonterminalOperationIdForModel(db, input.model) !== null) {
     return { ok: false, reason: "reservation-conflict" };
   }
   if (
@@ -752,6 +912,14 @@ function beginOperationTx(db: Database, input: BeginOperationInput): BeginOperat
   ) {
     return { ok: false, reason: "reservation-exceeds-budget" };
   }
+  return null;
+}
+
+function createPendingOperation(
+  db: Database,
+  input: OperationSpec,
+  authority: Fence,
+): BeginOperationResult {
   insertPendingOperation(db, input, authority);
   return { ok: true, created: true, record: pendingRecord(input, authority) };
 }
@@ -1037,11 +1205,11 @@ function selectOperationRow(db: Database, operationId: string): OperationRow | n
     .get(operationId) as OperationRow | null;
 }
 
-function hasNonterminalForModel(db: Database, model: string): boolean {
-  const hit = db
-    .query("SELECT 1 AS hit FROM operations WHERE model = ? AND phase != 'terminal' LIMIT 1")
-    .get(model) as { hit: number } | null;
-  return hit !== null;
+function nonterminalOperationIdForModel(db: Database, model: string): string | null {
+  const row = db
+    .query("SELECT operation_id FROM operations WHERE model = ? AND phase != 'terminal' LIMIT 1")
+    .get(model) as { operation_id: string } | null;
+  return row?.operation_id ?? null;
 }
 
 // The store is node-local, so this sum over nonterminal operations (pending
@@ -1074,7 +1242,7 @@ function storedDesiredRevision(db: Database): number | null {
   return watermark;
 }
 
-function insertPendingOperation(db: Database, input: BeginOperationInput, authority: Fence): void {
+function insertPendingOperation(db: Database, input: OperationSpec, authority: Fence): void {
   db.query(
     `INSERT INTO operations (operation_id, model, target_state, desired_revision, reservation_gib, phase, outcome, detail, owner_id, incarnation, fence_token, version, created_at_ms, updated_at_ms)
      VALUES (?, ?, ?, ?, ?, 'pending', NULL, NULL, ?, ?, ?, 1, ?, ?)`,
@@ -1092,7 +1260,7 @@ function insertPendingOperation(db: Database, input: BeginOperationInput, author
   );
 }
 
-function pendingRecord(input: BeginOperationInput, authority: Fence): ResidencyOperationRecord {
+function pendingRecord(input: OperationSpec, authority: Fence): ResidencyOperationRecord {
   return {
     operationId: input.operationId,
     model: input.model,
@@ -1155,7 +1323,7 @@ function isOutcome(value: string): value is ResidencyOperationOutcome {
   return (OUTCOMES as readonly string[]).includes(value);
 }
 
-function matchesImmutableFields(row: OperationRow, input: BeginOperationInput): boolean {
+function matchesImmutableFields(row: OperationRow, input: OperationSpec): boolean {
   return (
     row.model === input.model &&
     row.target_state === input.targetState &&
@@ -1165,6 +1333,10 @@ function matchesImmutableFields(row: OperationRow, input: BeginOperationInput): 
 }
 
 function validateBeginInput(input: BeginOperationInput): ResidencyStoreFailure | null {
+  return isFenceToken(input.fenceToken) ? validateOperationSpec(input) : "invalid-input";
+}
+
+function validateOperationSpec(input: OperationSpec): ResidencyStoreFailure | null {
   if (
     !isNonEmpty(input.operationId) ||
     !isNonEmpty(input.model) ||
@@ -1176,9 +1348,6 @@ function validateBeginInput(input: BeginOperationInput): ResidencyStoreFailure |
     return "invalid-input";
   }
   if (!Number.isInteger(input.desiredRevision) || input.desiredRevision < 0) {
-    return "invalid-input";
-  }
-  if (!isFenceToken(input.fenceToken)) {
     return "invalid-input";
   }
   if (

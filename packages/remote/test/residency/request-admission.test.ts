@@ -41,7 +41,7 @@ type RequestAdmission = {
 type AdmissionOptions = {
   limits: RequestQueueLimits;
   resident: string[];
-  load: (modelKey: string) => unknown;
+  load: (modelKey: string, signal: AbortSignal) => unknown;
   now: () => number;
   setTimer: (fn: () => void, ms: number) => number;
   clearTimer: (id: number) => void;
@@ -426,6 +426,73 @@ describe("createRequestAdmission (#281 DF-08)", () => {
     expect(grants).toEqual(["x", "a#1"]);
   });
 
+  test("cancelling the last waiter before dispatch prevents the cold load", async () => {
+    const mod = await loadAdmission();
+    const loads: string[] = [];
+    const admission = mod!.createRequestAdmission(
+      admissionOptions(new FakeClock(), {
+        resident: [],
+        load: (key) => {
+          loads.push(key);
+        },
+      }),
+    );
+    const abort = new AbortController();
+    const pending = admission.acquire(req("cancelled"), { signal: abort.signal });
+    abort.abort();
+    expect(await pending.catch((error: unknown) => error)).toMatchObject({ code: "Aborted" });
+    await flush();
+    expect(loads).toEqual([]);
+    expect(admission.snapshot().loading).toBeNull();
+    const next = await admission.acquire(req("fresh"));
+    expect(loads).toEqual(["m@r1"]);
+    next();
+  });
+
+  test("last-waiter cancellation signals the load owner without clearing its allocation gate", async () => {
+    const mod = await loadAdmission();
+    const loads: { key: string; signal: AbortSignal }[] = [];
+    const settleFirst = deferred<null>();
+    const admission = mod!.createRequestAdmission(
+      admissionOptions(new FakeClock(), {
+        resident: [],
+        load: (key, signal) => {
+          loads.push({ key, signal });
+          return key === "m@r1" ? settleFirst.promise : Promise.resolve();
+        },
+      }),
+    );
+    const first = new AbortController();
+    const second = new AbortController();
+    const a = admission
+      .acquire(req("first"), { signal: first.signal })
+      .catch((error: unknown) => error);
+    const b = admission
+      .acquire(req("second"), { signal: second.signal })
+      .catch((error: unknown) => error);
+    await flush();
+    const other = admission.acquire({
+      ...req("other"),
+      model: { name: "different", revision: "r2" },
+    });
+    try {
+      expect(loads).toHaveLength(1);
+      first.abort();
+      expect(await a).toMatchObject({ code: "Aborted" });
+      expect(loads[0]?.signal.aborted).toBe(false);
+      second.abort();
+      expect(await b).toMatchObject({ code: "Aborted" });
+      expect(loads[0]?.signal.aborted).toBe(true);
+      expect(admission.snapshot().loading).toBe("m@r1");
+      expect(loads).toHaveLength(1);
+    } finally {
+      settleFirst.resolve(null);
+    }
+    await flush();
+    expect(loads.map(({ key }) => key)).toEqual(["m@r1", "different@r2"]);
+    (await other)();
+  });
+
   // Kills: calling load per waiter, or not pumping after loadSettled("ready").
   test("concurrent acquires for one cold model call load exactly once", async () => {
     const mod = await loadAdmission();
@@ -610,3 +677,76 @@ function countAbortListeners(signal: AbortSignal): ListenerCounts {
   });
   return counts;
 }
+
+test("queue wait records one outcome per reservation using its own priority and elapsed time", async () => {
+  const module = await loadAdmission();
+  expect(module).not.toBeNull();
+  if (module === null) return;
+  const clock = new FakeClock();
+  const samples: unknown[] = [];
+  const options = {
+    ...admissionOptions(clock, { limits: limits({ maxQueued: 2, maxQueueWaitMs: 50 }) }),
+    observeWait: (sample: unknown): void => {
+      samples.push(sample);
+    },
+  };
+  const admission = module.createRequestAdmission(options);
+  const held = await admission.acquire(req("held"));
+  const controller = new AbortController();
+  const cancelled = admission
+    .acquire(
+      { ...req("cancelled"), priority: "background" },
+      {
+        signal: controller.signal,
+      },
+    )
+    .catch((error: unknown) => error);
+  const next = admission.acquire(req("next"));
+  const refusal = await admission.acquire(req("refused")).catch((error: unknown) => error);
+  expect(refusal).toMatchObject({ code: "QueueFull" });
+  await clock.advance(25);
+  controller.abort();
+  expect(await cancelled).toMatchObject({ code: "Aborted" });
+  held();
+  held();
+  const release = await next;
+  const expired = admission
+    .acquire({ ...req("expired"), priority: "background" })
+    .catch((error: unknown) => error);
+  await clock.advance(50);
+  expect(await expired).toMatchObject({ code: "QueueWaitExceeded" });
+  release();
+  expect(samples).toEqual([
+    { priority: "interactive", outcome: "admitted", waitMs: 0 },
+    { priority: "interactive", outcome: "refused", waitMs: 0 },
+    { priority: "background", outcome: "cancelled", waitMs: 25 },
+    { priority: "interactive", outcome: "admitted", waitMs: 25 },
+    { priority: "background", outcome: "expired", waitMs: 50 },
+  ]);
+});
+
+test("a failing queue observer cannot strand grants, refusals or cancelled waiters", async () => {
+  const module = await loadAdmission();
+  expect(module).not.toBeNull();
+  if (module === null) return;
+  const options = {
+    ...admissionOptions(new FakeClock(), { limits: limits({ maxQueued: 1 }) }),
+    observeWait: (): void => {
+      throw new Error("recorder unavailable");
+    },
+  };
+  const admission = module.createRequestAdmission(options);
+  const release = await admission.acquire(req("active"));
+  const controller = new AbortController();
+  const cancelled = admission
+    .acquire(req("cancelled"), { signal: controller.signal })
+    .catch((error: unknown) => error);
+  const refusal = await admission.acquire(req("refused")).catch((error: unknown) => error);
+  expect(refusal).toMatchObject({ code: "QueueFull" });
+  controller.abort();
+  expect(await cancelled).toMatchObject({ code: "Aborted" });
+  const next = admission.acquire(req("next"));
+  release();
+  (await next)();
+  expect(admission.snapshot()).toMatchObject({ queued: 0, executing: 0 });
+});

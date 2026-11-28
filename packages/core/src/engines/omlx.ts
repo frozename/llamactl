@@ -1,8 +1,10 @@
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { createHash } from "node:crypto";
+import { basename, join, resolve, sep } from "node:path";
 
 import type {
   EngineAdapter,
   EngineBootEnv,
+  ModelHostHostedModel,
   ModelHostSpecForEngine,
   NativeModelActivity,
   NativeModelResidency,
@@ -10,18 +12,27 @@ import type {
 } from "./types.js";
 
 import { resolveEnv } from "../env.js";
+import { atomicWriteFile } from "../fsAtomic.js";
 import { defaultOmlxMemoryGiBForProfile } from "../profile.js";
 import {
+  constants,
+  copyFileSync,
   existsSync,
   lstatSync,
   mkdirSync,
-  renameSync,
+  readFileSync,
   symlinkSync,
   unlinkSync,
-  writeFileSync,
 } from "../safe-fs.js";
 import { ensureWorkloadRuntimeDir } from "../workloadRuntime.js";
 import { gracefulShutdown, pollUntilModelIds } from "./lifecycle.js";
+import {
+  mergeOmlxModelSettings,
+  OMLX_MODEL_SETTINGS_FILE,
+  OMLX_MODEL_SETTINGS_VERSION,
+  parseOmlxModelSettings,
+  renderOmlxModelSettings,
+} from "./omlx-model-settings.js";
 
 const LOOPBACK = new Set(["127.0.0.1", "::1", "localhost", "0.0.0.0"]);
 
@@ -65,6 +76,28 @@ function omxBasePath(env: EngineBootEnv, workloadName: string): string {
   return join(ensureWorkloadRuntimeDir(resolved, { name: workloadName }), ".omlx");
 }
 
+function cacheModeBase(base: string, cacheEpoch: number | undefined): string {
+  return cacheEpoch === undefined ? base : join(base, "managed-cache");
+}
+
+function seedManagedSettings(legacy: string, managed: string): void {
+  mkdirSync(managed, { recursive: true, mode: 0o700 });
+  if (!lstatSync(managed).isDirectory())
+    throw new Error("oMLX managed cache base must be a directory");
+  for (const name of ["settings.json", OMLX_MODEL_SETTINGS_FILE]) {
+    try {
+      copyFileSync(join(legacy, name), join(managed, name), constants.COPYFILE_EXCL);
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        !("code" in error) ||
+        (error.code !== "ENOENT" && error.code !== "EEXIST")
+      )
+        throw error;
+    }
+  }
+}
+
 // Per-workload isolated model dir: contains a single symlink pointing at the
 // declared hostedModel. Used as oMLX's `--model-dir` so each ModelHost process
 // only sees its own model on the Metal command queue.
@@ -79,8 +112,10 @@ function omxBasePath(env: EngineBootEnv, workloadName: string): string {
 //
 // The schema already constrains hostedModels to exactly one entry, so this
 // matches the intended single-model-per-ModelHost contract.
-function isolatedModelDir(basePath: string): string {
-  return join(basePath, "models");
+function isolatedModelDir(basePath: string, managedRel?: string): string {
+  if (managedRel === undefined) return join(basePath, "models");
+  const key = createHash("sha256").update(managedRel).digest("hex");
+  return join(basePath, "cache-models", key);
 }
 
 function ensureIsolatedModelSymlink(
@@ -105,23 +140,59 @@ function ensureIsolatedModelSymlink(
   symlinkSync(source, target);
 }
 
-function writeAtomicJson(path: string, value: unknown): void {
-  const tmp = `${path}.tmp-${String(process.pid)}-${String(Date.now())}`;
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`);
-  renameSync(tmp, path);
+function usesWorkloadSettings(
+  model: ModelHostHostedModel,
+  extraArgs: readonly string[],
+  workload: string | undefined,
+): boolean {
+  if (model.omlx === undefined && model.dflash?.enabled !== true) return false;
+  if (!workload) throw new Error("oMLX model settings require a workload name");
+  if (extraArgs.some((arg) => arg === "--base-path" || arg.startsWith("--base-path="))) {
+    throw new Error("oMLX model settings require the workload's --base-path");
+  }
+  return true;
 }
 
-function buildDflashModelSettings(spec: ModelHostSpecForEngine): Record<string, unknown> | null {
-  const hostedModel = spec.hostedModels[0];
-  const dflash = hostedModel?.dflash;
-  if (dflash?.enabled !== true) return null;
-  const settings: Record<string, unknown> = { dflash_enabled: dflash.dflash_enabled ?? true };
-  for (const [key, value] of Object.entries(dflash)) {
-    if (key === "enabled") continue;
-    settings[key] = value;
+function dflashSettings(dflash: ModelHostHostedModel["dflash"]): Record<string, unknown> {
+  if (dflash?.enabled !== true) return { dflash_enabled: false };
+  const { enabled: _enabled, ...settings } = dflash;
+  return { ...settings, dflash_enabled: settings.dflash_enabled ?? true };
+}
+
+function readSettingsFile(path: string): string | undefined {
+  try {
+    return readFileSync(path, "utf8");
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
+    throw error;
   }
-  return settings;
+}
+
+function prepareModelSettings(path: string, model: ModelHostHostedModel): string | undefined {
+  const existing = readSettingsFile(path);
+  const parsed = existing === undefined ? null : parseOmlxModelSettings(existing);
+  if (parsed?.ok === false) throw new Error(`oMLX model settings refused: ${parsed.reason}`);
+  const document = parsed?.document ?? { version: OMLX_MODEL_SETTINGS_VERSION, models: {} };
+
+  const modelId = basename(model.rel);
+  const current = Object.hasOwn(document.models, modelId) ? document.models[modelId] : undefined;
+  // The manifest owns dflash_* separately from the ordinary oMLX settings.
+  // Retaining a prior DFlash flag can invalidate a new MTP declaration.
+  const retained = Object.fromEntries(
+    Object.entries(current ?? {}).filter(([key]) => !key.startsWith("dflash_")),
+  );
+  const models = {
+    ...document.models,
+    [modelId]: { ...dflashSettings(model.dflash), ...retained },
+  };
+  const merged = mergeOmlxModelSettings({ ...document, models }, modelId, { ...model.omlx });
+  if (!merged.ok) {
+    throw new Error(
+      `oMLX model settings refused: ${merged.reason} (${merged.conflicts.join(", ")})`,
+    );
+  }
+  const rendered = renderOmlxModelSettings(merged.document);
+  return rendered === existing ? undefined : rendered;
 }
 
 export const omlxEngine: EngineAdapter = {
@@ -159,24 +230,25 @@ export const omlxEngine: EngineAdapter = {
       throw new Error("hostedModels must have exactly one entry");
     }
     const workloadName = env.workloadName;
+    const managesSettings = usesWorkloadSettings(hostedModel, spec.extraArgs, workloadName);
     if (workloadName) {
-      const basePath = omxBasePath(env, workloadName);
+      const legacyBase = omxBasePath(env, workloadName);
+      const basePath = cacheModeBase(legacyBase, spec.omlxCacheEpoch);
+      if (basePath !== legacyBase) seedManagedSettings(legacyBase, basePath);
       const modelsDir = env.LLAMACTL_MODELS_DIR ?? env.LLAMA_CPP_MODELS;
       if (!modelsDir) {
         throw new Error(
           "omlx prepareLaunch requires LLAMACTL_MODELS_DIR or LLAMA_CPP_MODELS in the boot env — otherwise the per-workload isolated symlink targets a path that does not exist and oMLX serves /v1/models=[] forever",
         );
       }
-      ensureIsolatedModelSymlink(isolatedModelDir(basePath), modelsDir, hostedModel.rel);
-      const modelSettings = buildDflashModelSettings(spec);
-      if (modelSettings) {
-        writeAtomicJson(join(basePath, "model_settings.json"), {
-          version: 1,
-          models: {
-            [basename(hostedModel.rel)]: modelSettings,
-          },
-        });
-      }
+      const path = join(basePath, OMLX_MODEL_SETTINGS_FILE);
+      const settings = managesSettings ? prepareModelSettings(path, hostedModel) : undefined;
+      const modelDir = isolatedModelDir(
+        basePath,
+        spec.omlxCacheEpoch === undefined ? undefined : hostedModel.rel,
+      );
+      ensureIsolatedModelSymlink(modelDir, modelsDir, hostedModel.rel);
+      if (settings !== undefined) atomicWriteFile(path, settings);
     }
   },
 
@@ -201,7 +273,17 @@ export const omlxEngine: EngineAdapter = {
     // oMLX only sees the declared hostedModel. Without `workloadName` (e.g.
     // a unit test invoking buildBootCommand without going through the
     // workload runtime) we fall back to the full models dir for back-compat.
-    const modelDirArg = workloadName ? isolatedModelDir(omxBasePath(env, workloadName)) : modelsDir;
+    const managesSettings = usesWorkloadSettings(hostedModel, spec.extraArgs, workloadName);
+    const basePath = workloadName
+      ? cacheModeBase(omxBasePath(env, workloadName), spec.omlxCacheEpoch)
+      : undefined;
+    const managedCache = spec.omlxCacheEpoch !== undefined;
+    if (managedCache && basePath === undefined)
+      throw new Error("oMLX cache epoch requires a workload name");
+    const modelDirArg =
+      basePath === undefined
+        ? modelsDir
+        : isolatedModelDir(basePath, managedCache ? hostedModel.rel : undefined);
     const args: string[] = [
       "serve",
       "--model-dir",
@@ -219,11 +301,8 @@ export const omlxEngine: EngineAdapter = {
     // flag makes `omlx serve` exit with "unrecognized arguments" and the workload
     // never boots.
     args.push("--memory-guard-gb", String(maxModelMemoryGiB));
-    const modelSettings = workloadName ? buildDflashModelSettings(spec) : null;
-    if (workloadName && modelSettings) {
-      const basePath = omxBasePath(env, workloadName);
+    if ((managesSettings || managedCache) && basePath !== undefined)
       args.push("--base-path", basePath);
-    }
     args.push(...spec.extraArgs);
     return { binary: spec.binary, args };
   },
@@ -264,18 +343,25 @@ function readSize(value: unknown): SizeField {
 function findHostedEntry(
   models: unknown[],
   hostedRel: string,
-): { entry: Record<string, unknown>; id: string } | null {
+  exactId: string | undefined,
+): { entry: Record<string, unknown>; id: string } | "ambiguous" | null {
+  let match: { entry: Record<string, unknown>; id: string } | null = null;
   for (const element of models) {
     if (!isRecord(element)) {
       continue;
     }
     const id = element["id"];
-    if (typeof id !== "string" || !matchHostedModel(hostedRel, [id])) {
+    if (
+      typeof id !== "string" ||
+      (exactId === undefined ? !matchHostedModel(hostedRel, [id]) : id !== exactId)
+    ) {
       continue;
     }
-    return { entry: element, id };
+    // An exact ID and its basename can both match, even when the IDs are distinct.
+    if (match !== null) return "ambiguous";
+    match = { entry: element, id };
   }
-  return null;
+  return match;
 }
 
 function observeEntry(entry: Record<string, unknown>, id: string): NativeModelStatusObservation {
@@ -325,6 +411,7 @@ function observeEntry(entry: Record<string, unknown>, id: string): NativeModelSt
 export function parseOmlxModelsStatus(
   body: unknown,
   hostedRel: string,
+  exact?: { modelId: string; modelPath: string },
 ): NativeModelStatusObservation {
   if (!isRecord(body)) {
     return { state: "failed", reason: "MalformedStatus" };
@@ -333,9 +420,21 @@ export function parseOmlxModelsStatus(
   if (!isUnknownArray(models)) {
     return { state: "failed", reason: "MalformedStatus" };
   }
-  const found = findHostedEntry(models, hostedRel);
+  const found = findHostedEntry(models, hostedRel, exact?.modelId);
+  if (found === "ambiguous") {
+    return {
+      state: "failed",
+      reason: exact === undefined ? "MalformedStatus" : "IdentityUnverified",
+    };
+  }
   if (found === null) {
-    return { state: "failed", reason: "ModelNotListed" };
+    return {
+      state: "failed",
+      reason: exact === undefined ? "ModelNotListed" : "IdentityUnverified",
+    };
+  }
+  if (exact !== undefined && found.entry["model_path"] !== exact.modelPath) {
+    return { state: "failed", reason: "IdentityUnverified" };
   }
   return observeEntry(found.entry, found.id);
 }

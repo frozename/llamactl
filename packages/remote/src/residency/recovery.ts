@@ -1,3 +1,9 @@
+import {
+  managedProfileFromTargetState,
+  PROFILE_SWITCH_OPERATION_PREFIX as SWITCH_PREFIX,
+} from "@llamactl/core/residency/profile-selection";
+
+import { profileOwnerLiveness } from "./profile-owner.js";
 /**
  * #279 DF-06: crash recovery for interrupted profile-switch operation records.
  *
@@ -8,7 +14,7 @@
  * `interrupted-unverified` or `readiness-check-failed`) or `succeeded`
  * (when an optional readiness verifier confirms the target profile is ready).
  * `recoverProfileSwitchOperationsUnverified` is the synchronous variant the
- * agent boot path uses: no verifier, every stale row terminalized as
+ * agent boot path uses to finish stale legacy pending rows as
  * `unknown`/`interrupted-unverified`. It also takes an optional
  * `minStaleAgeMs` live-switch guard: a stale row whose `updatedAtMs` is less
  * than that many ms before `nowMs` (including a row stamped in the future) is
@@ -20,15 +26,17 @@
  * order:
  * 1. Already-terminal rows are skipped (recovery is idempotent).
  * 2. Rows not prefixed `profile-switch:` are ignored, not reported.
- * 3. An empty node (`profile-switch:`) is reported `unrecognized` as
+ * 3. A committed switch is held until its actual dispatch outcome is known.
+ * 4. An empty node (`profile-switch:`) is reported `unrecognized` as
  *    `malformed-node`. This runs BEFORE the fence check, so an empty-node row
  *    owned by the current fence is still reported, never skipped.
- * 4. A row whose fenceToken equals the current fence is `skipped`
+ * 5. A row whose fenceToken equals the current fence is `skipped`
  *    (`owned-by-current-fence`), not terminalized.
- * 5. A `targetState` that is not `profile:<non-empty>` is reported
- *    `unrecognized` as `malformed-target`.
- * 6. Otherwise the row is stale and gets terminalized (the sync variant first
- *    applies its `minStaleAgeMs` guard, see above).
+ * 6. A `targetState` that names neither a legacy nor a managed profile is
+ *    reported `unrecognized` as `malformed-target`.
+ * 7. Otherwise the row is stale and gets terminalized (the sync variant first
+ *    applies its `minStaleAgeMs` guard, see above). Managed pending intent
+ *    cannot publish a selection: it never reached its dispatch boundary.
  *
  * An `unrecognized` row is never finished: it stays nonterminal so a later,
  * better-informed writer can repair or retire it. A `finishOperation` that
@@ -51,7 +59,13 @@
  * An `evict:` row has no node and no fence-owned skip, so the classifier never
  * reports `owned-by-current-fence`.
  */
-import type { ResidencyOperationRecord } from "./store.js";
+import {
+  openResidencyOperationStore,
+  readResidencyStoreSnapshot,
+  RESIDENCY_LEASE_AUDIT_BUSY_TIMEOUT_MS,
+  type ResidencyOperationRecord,
+  type ResidencyOperationStore,
+} from "./store.js";
 
 type RecoverStore = {
   finishOperation: (input: {
@@ -101,10 +115,12 @@ type RecoverResult = {
   recovered: RecoveredOperation[];
   skipped: SkippedOperation[];
   unrecognized: UnrecognizedOperation[];
+  dispatchUnverified?: number;
 };
 
 export type UnverifiedRecoverResult = RecoverResult & {
   possiblyLive: PossiblyLiveOperation[];
+  dispatchUnverified: number;
 };
 
 type RecoverOpts = {
@@ -122,7 +138,6 @@ type UnverifiedRecoverOpts = {
   minStaleAgeMs?: number;
 };
 
-const SWITCH_PREFIX = "profile-switch:";
 const EVICT_PREFIX = "evict:";
 const EVICTED_BY_PREFIX = "evicted-by:";
 
@@ -130,7 +145,8 @@ const EVICTED_BY_PREFIX = "evicted-by:";
 // The order below is the contract; see the header comment.
 type RowClassification =
   | { kind: "skip" }
-  | { kind: "stale"; node: string; profile: string }
+  | { kind: "dispatch-unverified" }
+  | { kind: "stale"; node: string; profile: string; managed: boolean }
   | { kind: "owned-current-fence"; node: string }
   | { kind: "unrecognized"; reason: "malformed-node" | "malformed-target" };
 
@@ -147,6 +163,11 @@ function classifyRow(
   if (!record.model.startsWith(SWITCH_PREFIX)) {
     return { kind: "skip" };
   }
+  // Dispatch can leave a detached engine or a durable claim behind. Neither a
+  // stale heartbeat nor a readiness probe identifies that launch generation.
+  if (record.phase === "committed") {
+    return { kind: "dispatch-unverified" };
+  }
   const node = record.model.slice(SWITCH_PREFIX.length);
   // Empty-node rows are classified before the fence check, so one owned by the
   // current fence is reported rather than skipped.
@@ -156,11 +177,12 @@ function classifyRow(
   if (record.fenceToken === fenceToken) {
     return { kind: "owned-current-fence", node };
   }
-  const profile = extractProfile(record.targetState);
+  const managedProfile = managedProfileFromTargetState(record.targetState);
+  const profile = managedProfile ?? extractProfile(record.targetState);
   if (profile === null) {
     return { kind: "unrecognized", reason: "malformed-target" };
   }
-  return { kind: "stale", node, profile };
+  return { kind: "stale", node, profile, managed: managedProfile !== null };
 }
 
 export async function recoverProfileSwitchOperations(opts: RecoverOpts): Promise<RecoverResult> {
@@ -173,10 +195,15 @@ export async function recoverProfileSwitchOperations(opts: RecoverOpts): Promise
   const recovered: RecoveredOperation[] = [];
   const skipped: SkippedOperation[] = [];
   const unrecognized: UnrecognizedOperation[] = [];
+  let dispatchUnverified = 0;
 
   for (const record of store.listNonterminal()) {
     const classification = classifyRow(record, fenceToken);
     if (classification.kind === "skip") {
+      continue;
+    }
+    if (classification.kind === "dispatch-unverified") {
+      dispatchUnverified += 1;
       continue;
     }
     if (classification.kind !== "stale") {
@@ -191,20 +218,21 @@ export async function recoverProfileSwitchOperations(opts: RecoverOpts): Promise
         classification.profile,
         fenceToken,
         nowMs(),
-        verifyTargetReady,
+        classification.managed ? undefined : verifyTargetReady,
         verifyTimeoutMs,
       ),
     );
   }
 
-  return { recovered, skipped, unrecognized };
+  const result = { recovered, skipped, unrecognized };
+  return dispatchUnverified === 0 ? result : { ...result, dispatchUnverified };
 }
 
 // Shared by both scans: routes an unrecognized or current-fence row into the
 // matching output list. Unrecognized rows are never finished: they stay
 // nonterminal for a later writer to repair.
 function collectNonStaleRow(
-  classification: Exclude<RowClassification, { kind: "skip" } | { kind: "stale" }>,
+  classification: Exclude<RowClassification, { kind: "skip" | "stale" | "dispatch-unverified" }>,
   record: ResidencyOperationRecord,
   skipped: SkippedOperation[],
   unrecognized: UnrecognizedOperation[],
@@ -263,26 +291,118 @@ function isPossiblyLive(
   return nowMs - record.updatedAtMs < minStaleAgeMs;
 }
 
+function isAbandonedBeforeProfileDispatch(record: ResidencyOperationRecord): boolean {
+  return (
+    record.phase === "pending" &&
+    classifyRow(record, null).kind === "stale" &&
+    profileOwnerLiveness(record) === "gone"
+  );
+}
+
+type AbandonedIntentStore = Pick<
+  ResidencyOperationStore,
+  "currentFence" | "finishOperation" | "close"
+>;
+
+function finishAbandonedIntent(
+  store: AbandonedIntentStore,
+  row: ResidencyOperationRecord,
+  nowMs: number,
+): boolean {
+  try {
+    const fence = store.currentFence();
+    if (fence === null) return false;
+    return store.finishOperation({
+      fenceToken: fence.fenceToken,
+      operationId: row.operationId,
+      expectedVersion: row.version,
+      outcome: "unknown",
+      detail: "recovered: owner exited before profile dispatch",
+      nowMs,
+    }).ok;
+  } catch {
+    return false;
+  }
+}
+
+export function finishAbandonedProfileIntents(
+  rows: readonly ResidencyOperationRecord[],
+  openStore: () => AbandonedIntentStore,
+  nowMs: number,
+): { finished: Set<string>; recordFailures: number } | null {
+  const abandoned = rows.filter(isAbandonedBeforeProfileDispatch);
+  if (abandoned.length === 0) return null;
+
+  const store = openStore();
+  const finished = new Set<string>();
+  try {
+    for (const row of abandoned) {
+      if (finishAbandonedIntent(store, row, nowMs)) finished.add(row.operationId);
+    }
+    return { finished, recordFailures: abandoned.length - finished.size };
+  } finally {
+    try {
+      store.close();
+    } catch {
+      // The operation outcome is already durable.
+    }
+  }
+}
+
+export function recoverAbandonedProfileIntentsOnNode(path: string, node: string): void {
+  try {
+    const busyTimeoutMs = RESIDENCY_LEASE_AUDIT_BUSY_TIMEOUT_MS;
+    const snapshot = readResidencyStoreSnapshot(path, { busyTimeoutMs });
+    if (!snapshot.present || "error" in snapshot) return;
+    const model = `${SWITCH_PREFIX}${node}`;
+    finishAbandonedProfileIntents(
+      snapshot.nonterminal.filter((record) => record.model === model),
+      () => openResidencyOperationStore({ path, busyTimeoutMs }),
+      Date.now(),
+    );
+  } catch {
+    // If the store stays busy the planner still sees the reservation and refuses the switch.
+  }
+}
+
+function profileSwitchPossiblyLive(
+  record: ResidencyOperationRecord,
+  nowMs: number,
+  minStaleAgeMs: number | undefined,
+): boolean {
+  return (
+    profileOwnerLiveness(record) === "possibly-live" || isPossiblyLive(record, nowMs, minStaleAgeMs)
+  );
+}
+
 export type ProfileSwitchRecoveryPreview = {
   stale: number;
   possiblyLive: number;
   unrecognized: number;
+  dispatchUnverified: number;
 };
 
 // Read-only classification for the boot pass, run before any fence is claimed:
-// how many rows the sync scan would finish, leave as possibly live, or report
-// unrecognized. It never touches a store.
+// how many rows the sync scan would finish or leave in place. It never touches
+// a store.
 export function previewProfileSwitchRecovery(
   records: readonly ResidencyOperationRecord[],
   opts: { nowMs: number; minStaleAgeMs?: number },
 ): ProfileSwitchRecoveryPreview {
-  const preview: ProfileSwitchRecoveryPreview = { stale: 0, possiblyLive: 0, unrecognized: 0 };
+  const preview: ProfileSwitchRecoveryPreview = {
+    stale: 0,
+    possiblyLive: 0,
+    unrecognized: 0,
+    dispatchUnverified: 0,
+  };
   for (const record of records) {
     const classification = classifyRow(record, null);
-    if (classification.kind === "unrecognized") {
+    if (classification.kind === "dispatch-unverified") {
+      preview.dispatchUnverified += 1;
+    } else if (classification.kind === "unrecognized") {
       preview.unrecognized += 1;
     } else if (classification.kind === "stale") {
-      if (isPossiblyLive(record, opts.nowMs, opts.minStaleAgeMs)) {
+      if (profileSwitchPossiblyLive(record, opts.nowMs, opts.minStaleAgeMs)) {
         preview.possiblyLive += 1;
       } else {
         preview.stale += 1;
@@ -292,9 +412,8 @@ export function previewProfileSwitchRecovery(
   return preview;
 }
 
-// The synchronous variant backing agent boot: no verifier, so every stale row
-// is terminalized as unknown/interrupted-unverified. It shares the classifier
-// and finish helper with the async path.
+// The synchronous variant backing agent boot uses the same dispatch hold and
+// finishes stale legacy pending rows as unknown/interrupted-unverified.
 export function recoverProfileSwitchOperationsUnverified(
   opts: UnverifiedRecoverOpts,
 ): UnverifiedRecoverResult {
@@ -306,10 +425,15 @@ export function recoverProfileSwitchOperationsUnverified(
   const skipped: SkippedOperation[] = [];
   const unrecognized: UnrecognizedOperation[] = [];
   const possiblyLive: PossiblyLiveOperation[] = [];
+  let dispatchUnverified = 0;
 
   for (const record of store.listNonterminal()) {
     const classification = classifyRow(record, fenceToken);
     if (classification.kind === "skip") {
+      continue;
+    }
+    if (classification.kind === "dispatch-unverified") {
+      dispatchUnverified += 1;
       continue;
     }
     if (classification.kind !== "stale") {
@@ -318,7 +442,7 @@ export function recoverProfileSwitchOperationsUnverified(
     }
 
     const now = nowMs();
-    if (isPossiblyLive(record, now, opts.minStaleAgeMs)) {
+    if (profileSwitchPossiblyLive(record, now, opts.minStaleAgeMs)) {
       possiblyLive.push({
         operationId: record.operationId,
         node: classification.node,
@@ -337,7 +461,7 @@ export function recoverProfileSwitchOperationsUnverified(
     );
   }
 
-  return { recovered, skipped, unrecognized, possiblyLive };
+  return { recovered, skipped, unrecognized, possiblyLive, dispatchUnverified };
 }
 
 type FinishArgs = {

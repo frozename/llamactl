@@ -25,6 +25,7 @@ import {
   PROFILE_SWITCH_BOOT_RECOVERY_MIN_AGE_MS,
   runProfileSwitchBootRecovery,
 } from "../../src/residency/boot-recovery.js";
+import { runDirectResidencyStart } from "../../src/residency/direct-lifecycle.js";
 import {
   openResidencyOperationStore,
   type ResidencyStateRecord,
@@ -97,21 +98,36 @@ const SEED_ROWS: readonly {
 // Leaves the same pending `profile-switch:n1` row a crashed switch would
 // have begun, then parks the lifecycle rows under the same agent/i1 fence.
 // Returns the final seeded record per model.
-function seedCrashedSwitch(opts: { opNowMs?: number } = {}): Map<string, ResidencyStateRecord> {
+function seedCrashedSwitch(
+  opts: { opNowMs?: number; dispatched?: boolean } = {},
+): Map<string, ResidencyStateRecord> {
   const store = openResidencyOperationStore({ path });
   try {
-    const fence = store.claimOwnership({ ownerId: "agent", incarnation: "i1" });
+    const fence = store.claimOwnership({
+      ownerId: opts.dispatched ? RESIDENCY_APPLY_PROFILE_FENCE_OWNER : "agent",
+      incarnation: "i1",
+    });
     const begun = store.beginOperation({
       fenceToken: fence.fenceToken,
       operationId: "op-crash",
       model: "profile-switch:n1",
       targetState: "profile:interactive",
       desiredRevision: 1,
-      reservationGiB: 0,
+      reservationGiB: opts.dispatched ? 4 : 0,
       nowMs: opts.opNowMs ?? 1,
     });
     if (!begun.ok) {
       throw new Error(`seed beginOperation(op-crash) refused: ${begun.reason}`);
+    }
+    if (opts.dispatched) {
+      expect(
+        store.commitReservation({
+          fenceToken: fence.fenceToken,
+          operationId: begun.record.operationId,
+          expectedVersion: begun.record.version,
+          nowMs: begun.record.updatedAtMs,
+        }),
+      ).toEqual({ ok: true });
     }
     const seeded = new Map<string, ResidencyStateRecord>();
     for (const spec of SEED_ROWS) {
@@ -167,6 +183,71 @@ function readRows(): Map<string, ResidencyStateRecord | null> {
 }
 
 describe("runProfileSwitchBootRecovery lifecycle-row sweep (Part of #517)", () => {
+  test("a dispatched switch holds capacity and blocks victim reactivation across restarts", async () => {
+    seedCrashedSwitch({ dispatched: true });
+    const before = withStore((store) => ({
+      fence: store.currentFence(),
+      operation: store.getOperation("op-crash"),
+      lifecycle: store.listResidencyStates(),
+    }));
+    const writes: string[] = [];
+
+    for (const incarnation of ["first-boot", "second-boot"]) {
+      const summary = runProfileSwitchBootRecovery({
+        path,
+        incarnation,
+        nowMs: () => NOW,
+        write: (line) => {
+          writes.push(line);
+        },
+        isProvenDown: () => true,
+      });
+      expect(withStore((store) => store.getOperation("op-crash"))).toEqual(before.operation);
+      expect(summary).toMatchObject({ status: "deferred", dispatchUnverified: 1 });
+    }
+
+    expect(writes).toHaveLength(2);
+    expect(writes.every((line) => line.includes('"dispatchUnverified":1'))).toBe(true);
+    let started = false;
+    const reactivation = await runDirectResidencyStart(
+      "glm",
+      () => {
+        started = true;
+        return { ok: true };
+      },
+      {
+        storePath: path,
+        group: EXCLUSIVE_GROUP,
+        isProvenDown: () => true,
+        isRunning: () => false,
+        log: () => undefined,
+      },
+    );
+    expect(reactivation.ran).toBe(false);
+    expect(reactivation.ran ? "" : reactivation.detail).toContain("profile switch in flight");
+    expect(started).toBe(false);
+    withStore((store) => {
+      expect(
+        store.claimAndBeginOperation(
+          {
+            ownerId: RESIDENCY_APPLY_PROFILE_FENCE_OWNER,
+            incarnation: "retry",
+          },
+          {
+            operationId: "op-retry",
+            model: "profile-switch:n1",
+            targetState: "profile:batch",
+            desiredRevision: 2,
+            reservationGiB: 4,
+            nowMs: NOW,
+          },
+        ),
+      ).toEqual({ ok: false, reason: "busy", operationId: "op-crash" });
+      expect(store.currentFence()).toEqual(before.fence);
+      expect(store.listResidencyStates()).toEqual(before.lifecycle);
+    });
+  });
+
   // kills: the sweep call removed from scanWithStore; any one of
   // loading/warming/draining/unloading dropped from the interrupted set;
   // 'ready' added to it; the sweep writing under the stale seed fence

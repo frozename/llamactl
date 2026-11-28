@@ -1,13 +1,7 @@
 /**
- * #278 (DF-05) — opt-in residency leases on Worker RPC submit, released in
- * settle(). `WorkerRpcHostOptions.residencyLeases` lands with the fix, so
- * the option rides a conditional spread that bypasses excess-property
- * checks, and every RED case fails by assertion — never by a type or
- * import error. The host is driven in-process: no agent server, no TLS,
- * no real network. The
- * injected `local-model` backend records the attempt's AbortSignal,
- * yields one content event, then holds until the test releases it or the
- * signal aborts.
+ * #278 (DF-05): in-process Worker RPC lease and execution-lifetime fixtures.
+ * Controllable adapters stage cancellation before output and during cleanup
+ * without a network or engine dependency.
  */
 import type { ResolvedEnv } from "@llamactl/core/types";
 import type { ExecutionEventV1 } from "@novaproto/contracts";
@@ -30,6 +24,7 @@ import {
   type WorkerRpcHost,
   type WorkerRpcHostOptions,
 } from "../src/inference/procedures.js";
+import { createChatCompletionsAdmission } from "../src/server/chat-admission.js";
 
 type Claims = inferenceRpc.InferenceServiceClaimsV1;
 type Ad = routingCatalog.RouteAdvertisementV1;
@@ -287,6 +282,10 @@ interface HostOpts {
   leases?: ResidencyLeases;
   maxActiveAttempts?: number;
   streamAttachTimeoutMs?: number;
+  admission?: WorkerRpcHostOptions["admission"];
+  maxActiveAttemptsPerOwner?: number;
+  now?: () => number;
+  monotonicNow?: () => number;
 }
 
 function hostWith(opts: HostOpts): WorkerRpcHost {
@@ -298,6 +297,12 @@ function hostWith(opts: HostOpts): WorkerRpcHost {
     resolved: () => resolved,
     advertisements: () => ads,
     backends,
+    ...(opts.admission !== undefined ? { admission: opts.admission } : {}),
+    ...(opts.maxActiveAttemptsPerOwner !== undefined
+      ? { maxActiveAttemptsPerOwner: opts.maxActiveAttemptsPerOwner }
+      : {}),
+    ...(opts.now !== undefined ? { now: opts.now } : {}),
+    ...(opts.monotonicNow !== undefined ? { monotonicNow: opts.monotonicNow } : {}),
     ...(opts.leases !== undefined ? { residencyLeases: opts.leases } : {}),
     ...(opts.maxActiveAttempts !== undefined ? { maxActiveAttempts: opts.maxActiveAttempts } : {}),
     ...(opts.streamAttachTimeoutMs !== undefined
@@ -522,6 +527,210 @@ describe("worker RPC residency leases (#278)", () => {
     const frames = await collectFrames(it);
     expect(terminalOutcomeOf(frames)).toBe("completed");
     expect(registry.active(WORKLOAD)).toEqual([]);
+  });
+
+  test("disconnect holds the lease while a started backend is still in its first read", async () => {
+    const spy = spyLeases();
+    const admission = createChatCompletionsAdmission({ maxExecutions: 1, maxQueued: 4 });
+    const started = Promise.withResolvers<AbortSignal>();
+    const finished = Promise.withResolvers<undefined>();
+    const backend: WorkerRpcBackend = {
+      async *execute(_deployment, _envelope, signal): AsyncGenerator<WorkerRpcBackendEvent> {
+        started.resolve(signal);
+        await finished.promise;
+        yield END;
+      },
+    };
+    const h = hostWith({ backend, leases: spy.registry, maxActiveAttempts: 1, admission });
+    const id = "att-pending-disconnect";
+    expect(submitTo(h, id).outcome).toBe("accepted");
+    const client = new AbortController();
+    const it = streamIterator(h, id, { signal: client.signal });
+    expect(await nextFrame(it)).toMatchObject({ frame: "event", event: { type: "accepted" } });
+    const reading = nextFrame(it);
+    try {
+      const signal = await started.promise;
+      client.abort();
+      expect(signal.aborted).toBe(true);
+      expect(h.status(CLAIMS, { attemptId: id })).toMatchObject({
+        state: "terminal",
+        terminal: { outcome: "cancelled", started: true },
+      });
+      expect(spy.registry.active(WORKLOAD)).toHaveLength(1);
+      expect(spy.releaseCalls).toBe(0);
+      expect(admission.snapshot().executing).toBe(1);
+      const drain = spy.registry.beginDrain(WORKLOAD);
+      if (!drain.ok) throw new Error("drain refused");
+      expect(spy.registry.commitUnload(drain.token)).toMatchObject({
+        ok: false,
+        reason: "LeasesActive",
+      });
+      expect(spy.registry.cancelDrain(drain.token)).toBe(true);
+      expect(submitTo(h, "att-pending-other")).toMatchObject({
+        outcome: "rejected",
+        rejection: { code: "overloaded" },
+      });
+    } finally {
+      finished.resolve(undefined);
+      await reading;
+      await collectFrames(it);
+    }
+    expectLeaseReleasedOnce(spy);
+    expect(admission.snapshot().executing).toBe(0);
+    expect(submitTo(h, "att-read-clean")).toMatchObject({ outcome: "accepted" });
+  });
+
+  test("iterator return alone cannot free a lease while its outstanding read is unsettled", async () => {
+    const spy = spyLeases();
+    const reading = Promise.withResolvers<undefined>();
+    const returned = Promise.withResolvers<undefined>();
+    const closed = Promise.withResolvers<IteratorResult<WorkerRpcBackendEvent>>();
+    const done = { done: true, value: undefined } as const;
+    const backend: WorkerRpcBackend = {
+      execute(): AsyncIterable<WorkerRpcBackendEvent> {
+        return {
+          [Symbol.asyncIterator](): AsyncIterator<WorkerRpcBackendEvent> {
+            return {
+              next: (): Promise<IteratorResult<WorkerRpcBackendEvent>> => {
+                reading.resolve(undefined);
+                return closed.promise;
+              },
+              return: (): Promise<IteratorResult<WorkerRpcBackendEvent>> => {
+                returned.resolve(undefined);
+                return Promise.resolve(done);
+              },
+            };
+          },
+        };
+      },
+    };
+    const h = hostWith({ backend, leases: spy.registry });
+    const id = "att-return-before-read";
+    expect(submitTo(h, id).outcome).toBe("accepted");
+    const it = streamIterator(h, id);
+    await nextFrame(it);
+    const pending = nextFrame(it);
+    try {
+      await reading.promise;
+      expect(h.cancel(CLAIMS, { attemptId: id }).outcome).toBe("cancelled");
+      await returned.promise;
+      await new Promise<undefined>((resolve) => setImmediate(resolve, undefined));
+      expect(spy.registry.active(WORKLOAD)).toHaveLength(1);
+      expect(spy.releaseCalls).toBe(0);
+    } finally {
+      closed.resolve(done);
+      await pending;
+      await collectFrames(it);
+    }
+    expectLeaseReleasedOnce(spy);
+  });
+
+  test("cancelling a detached reader closes the backend and waits for asynchronous finally", async () => {
+    const spy = spyLeases();
+    const cleaning = Promise.withResolvers<undefined>();
+    const closed = Promise.withResolvers<undefined>();
+    const backend: WorkerRpcBackend = {
+      async *execute(): AsyncGenerator<WorkerRpcBackendEvent> {
+        try {
+          yield CONTENT;
+        } finally {
+          cleaning.resolve(undefined);
+          await closed.promise;
+        }
+      },
+    };
+    const h = hostWith({ backend, leases: spy.registry });
+    const id = "att-detached-cleanup";
+    expect(submitTo(h, id).outcome).toBe("accepted");
+    const it = await startStreaming(h, id);
+    try {
+      expect(h.cancel(CLAIMS, { attemptId: id }).outcome).toBe("cancelled");
+      expect(spy.registry.active(WORKLOAD)).toHaveLength(1);
+      // Stop owns cleanup even if the consumer never calls next() or return().
+      await cleaning.promise;
+      expect(spy.releaseCalls).toBe(0);
+    } finally {
+      closed.resolve(undefined);
+      await it.return?.();
+    }
+    await h.drain();
+    expectLeaseReleasedOnce(spy);
+  });
+
+  test("sweeping the terminal record preserves the owner's share until backend cleanup", async () => {
+    const gate = Promise.withResolvers<undefined>();
+    const backend: WorkerRpcBackend = {
+      async *execute(): AsyncGenerator<WorkerRpcBackendEvent> {
+        try {
+          yield CONTENT;
+        } finally {
+          await gate.promise;
+        }
+      },
+    };
+    const clock = { wall: Date.now(), monotonic: 0 };
+    const h = hostWith({
+      backend,
+      maxActiveAttempts: 2,
+      maxActiveAttemptsPerOwner: 1,
+      now: () => clock.wall,
+      monotonicNow: () => clock.monotonic,
+    });
+    const id = "att-terminal-sweep";
+    expect(submitTo(h, id, { deadline: clock.wall + 60_000 }).outcome).toBe("accepted");
+    const it = await startStreaming(h, id);
+    try {
+      expect(h.cancel(CLAIMS, { attemptId: id }).outcome).toBe("cancelled");
+      clock.wall += inferenceRpc.INFERENCE_RPC_MAX_DEADLINE_MS + 60_001;
+      clock.monotonic += inferenceRpc.INFERENCE_RPC_MAX_DEADLINE_MS + 60_001;
+      const refused = submitTo(h, "att-owner-still-active", { deadline: clock.wall + 60_000 });
+      expect(h.status(CLAIMS, { attemptId: id })).toMatchObject({ state: "unknown" });
+      expect(refused).toMatchObject({
+        outcome: "rejected",
+        rejection: { code: "overloaded", message: "the service is at its active attempt share" },
+      });
+      expect(
+        submitTo(h, "att-separate-owner", {
+          claims: claims({ serviceId: "svc-b" }),
+          deadline: clock.wall + 60_000,
+        }).outcome,
+      ).toBe("accepted");
+    } finally {
+      gate.resolve(undefined);
+      await collectFrames(it);
+    }
+    expect(
+      submitTo(h, "att-same-owner-after-cleanup", { deadline: clock.wall + 60_000 }).outcome,
+    ).toBe("accepted");
+  });
+
+  test("an end event does not release the lease before the backend iterator finishes", async () => {
+    const spy = spyLeases();
+    const cleaning = Promise.withResolvers<undefined>();
+    const closed = Promise.withResolvers<undefined>();
+    const backend: WorkerRpcBackend = {
+      async *execute(): AsyncGenerator<WorkerRpcBackendEvent> {
+        yield CONTENT;
+        yield END;
+        cleaning.resolve(undefined);
+        await closed.promise;
+      },
+    };
+    const h = hostWith({ backend, leases: spy.registry });
+    const id = "att-end-cleanup";
+    expect(submitTo(h, id).outcome).toBe("accepted");
+    const it = await startStreaming(h, id);
+    const rest = collectFrames(it);
+    try {
+      await cleaning.promise;
+      expect(spy.registry.active(WORKLOAD)).toHaveLength(1);
+      expect(spy.releaseCalls).toBe(0);
+    } finally {
+      closed.resolve(undefined);
+      await rest;
+    }
+    expect(terminalOutcomeOf(await rest)).toBe("completed");
+    expectLeaseReleasedOnce(spy);
   });
 
   test("a draining or unloaded workload refuses submit as target-unavailable", () => {

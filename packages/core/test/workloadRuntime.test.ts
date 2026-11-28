@@ -322,6 +322,21 @@ const recordingIdentity = (batches: number[][]): PidIdentityDeps => ({
   },
 });
 
+test("a fresh ModelRun pid cannot publish a stale serving sidecar", () => {
+  const t = tempEnv();
+  try {
+    const name = "stale-sidecar";
+    const dir = join(t.runtimeDir, "workloads", name);
+    writeRunWorkload(dir, 4001, "org/old.gguf");
+    writeFileSync(join(dir, "llama-server.pid"), "4002\n");
+
+    expect(listLocalRoutes(t.resolved, recordingIdentity([]))).toEqual([]);
+    expect(listWorkloadRoutes(t.resolved, name, recordingIdentity([]))).toEqual([]);
+  } finally {
+    t.cleanup();
+  }
+});
+
 test("listWorkloadRoutes lists one workload's routes and verifies its pid alone", () => {
   const t = tempEnv();
   try {

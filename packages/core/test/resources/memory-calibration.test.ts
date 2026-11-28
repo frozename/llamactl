@@ -58,6 +58,7 @@ type CalibrationSample = {
   processBytes: number | null;
   processDeviceBytes: number | null;
   sharedDeviceBytes: number | null;
+  deviceAccounting?: "disjoint" | "included" | "unknown";
 };
 
 type CalibrationOptions = { minSamples: number; overheadFraction: number };
@@ -733,6 +734,89 @@ describe("calibrateMeasuredEnvelope", () => {
       attribution: "process",
       measuredAtMs: NOW,
     });
+  });
+
+  test("included device bytes count exactly once even when the device has its own reading", () => {
+    const calibrate = api.calibrateMeasuredEnvelope!;
+    const samples = [
+      calibrationSample({
+        processBytes: 20 * GiB,
+        processDeviceBytes: 12 * GiB,
+        deviceAccounting: "included",
+      }),
+      calibrationSample({
+        processBytes: 21 * GiB,
+        processDeviceBytes: null,
+        deviceAccounting: "included",
+      }),
+    ];
+    expect(
+      calibrate({
+        key: baseCalibrationKey(),
+        samples,
+        options: calibrationOptions({ minSamples: 2, overheadFraction: 0.25 }),
+      }),
+    ).toMatchObject({ known: true, peakBytes: 21 * GiB, envelopeBytes: 26.25 * GiB });
+  });
+
+  test("a measured device value with unknown overlap does not authorize calibration", () => {
+    const calibrate = api.calibrateMeasuredEnvelope!;
+    expect(
+      calibrate({
+        key: baseCalibrationKey(),
+        samples: [
+          calibrationSample({
+            processBytes: 20 * GiB,
+            processDeviceBytes: 12 * GiB,
+            deviceAccounting: "unknown",
+          }),
+        ],
+        options: calibrationOptions({ minSamples: 1 }),
+      }),
+    ).toEqual({ known: false, reason: "unknown-device" });
+  });
+
+  test.each([
+    { deviceAccounting: "unknown" as const, reason: "unknown-device" },
+    { deviceAccounting: "included" as const, reason: "invalid-input" },
+    { deviceAccounting: "disjoint" as const, reason: "invalid-input" },
+    { deviceAccounting: null as unknown as "disjoint", reason: "invalid-input" },
+  ])(
+    "missing process total with explicit device accounting is refused ($reason)",
+    ({ deviceAccounting, reason }) => {
+      const calibrate = api.calibrateMeasuredEnvelope!;
+      expect(
+        calibrate({
+          key: baseCalibrationKey(),
+          samples: [
+            calibrationSample({ processBytes: 4 * GiB, processDeviceBytes: 0 }),
+            calibrationSample({
+              processBytes: null,
+              processDeviceBytes: 32 * GiB,
+              deviceAccounting,
+            }),
+          ],
+          options: calibrationOptions({ minSamples: 1 }),
+        }),
+      ).toEqual({ known: false, reason });
+    },
+  );
+
+  test("a device subset larger than the measured total is an invalid sample", () => {
+    const calibrate = api.calibrateMeasuredEnvelope!;
+    expect(
+      calibrate({
+        key: baseCalibrationKey(),
+        samples: [
+          calibrationSample({
+            processBytes: 12 * GiB,
+            processDeviceBytes: 20 * GiB,
+            deviceAccounting: "included",
+          }),
+        ],
+        options: calibrationOptions({ minSamples: 1 }),
+      }),
+    ).toEqual({ known: false, reason: "invalid-input" });
   });
 
   test("null processDeviceBytes is unknown-device, not uncertain", () => {

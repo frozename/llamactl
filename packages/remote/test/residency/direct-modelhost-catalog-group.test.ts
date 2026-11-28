@@ -16,6 +16,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { ManagedLaunchAdmission } from "../../src/residency/managed-launch-admission.js";
+
 import { RESIDENCY_APPLY_PROFILE_FENCE_OWNER } from "../../src/residency/apply-profile.js";
 import {
   defaultResidencyStorePath,
@@ -140,8 +142,15 @@ function refusal(name: string): string {
   return `residency lifecycle refused ${name} downloaded -> loading: ExclusiveGroupOccupied: exclusive group z13-large-gpu is held by peer-qwen in state ready`;
 }
 
-async function startWorkload(workload: string, manifest?: HostManifest): Promise<HostResult> {
-  const stream = await router.createCaller({}).modelHostStart({
+async function startWorkload(
+  workload: string,
+  manifest?: HostManifest,
+  managedLaunchAdmission?: ManagedLaunchAdmission,
+): Promise<HostResult> {
+  const caller = router.createCaller(
+    managedLaunchAdmission === undefined ? {} : { managedLaunchAdmission },
+  );
+  const stream = await caller.modelHostStart({
     workload,
     ...(manifest !== undefined ? { manifest } : {}),
   });
@@ -260,5 +269,28 @@ describe("modelHostStart catalog residency-group fallback", () => {
     const storedLabel = await startWorkload("glm-host", inlineHost("glm-host", GLM_REL));
     expect(storedLabel.ok).toBe(false);
     expect(storedLabel.error).toBe(bindRefusal("glm-host"));
+  });
+
+  test("a pinned managed ModelHost keeps the catalog group guard before engine startup", async () => {
+    seed([{ model: "peer-qwen", target: "ready", group: GROUP }]);
+    const commits: number[] = [];
+    const admissions: string[] = [];
+    const owner: ManagedLaunchAdmission = {
+      run: (request, _signal, start) => {
+        expect(request.effectiveLaunch).toMatchObject({ hostedModels: [{ rel: GLM_REL }] });
+        admissions.push(request.runtimeKey);
+        return start((pid) => {
+          commits.push(pid);
+          return undefined;
+        });
+      },
+    };
+
+    const result = await startWorkload("glm-managed", inlineHost("glm-managed", GLM_REL), owner);
+
+    expect(result).toEqual({ ok: false, pid: null, error: refusal("glm-managed") });
+    expect(admissions).toEqual(["glm-managed"]);
+    expect(commits).toEqual([]);
+    expect(readState("peer-qwen")?.state).toBe("ready");
   });
 });

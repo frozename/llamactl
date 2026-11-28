@@ -15,6 +15,8 @@ import {
 import { listWorkloadDirs } from "@llamactl/core/workloadRuntime";
 import { collectDefaultMetrics, Counter, Gauge, Histogram, Registry } from "prom-client";
 
+import type { OwnerAdmissionSnapshot } from "../residency/owner-admission.js";
+import type { RequestQueueWait } from "../residency/request-admission.js";
 import type { ProcessMemoryAttribution, ProcessMemoryReader } from "./process-memory.js";
 
 /**
@@ -51,6 +53,87 @@ export const openaiRequestDurationSeconds = new Histogram({
   labelNames: ["path"] as const,
   buckets: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60],
   registers: [registry],
+});
+
+const admissionWaitSeconds = new Histogram({
+  name: "llamactl_execution_admission_wait_seconds",
+  help: "Time to settle an execution or cold activation queue reservation.",
+  labelNames: ["stage", "group", "priority", "outcome"] as const,
+  buckets: [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120],
+  registers: [registry],
+});
+
+export function observeAdmissionWait(
+  stage: "execution" | "activation",
+  group: string,
+  { priority, outcome, waitMs }: RequestQueueWait,
+): void {
+  admissionWaitSeconds.observe({ stage, group, priority, outcome }, waitMs / 1000);
+}
+
+let ownerAdmissionMetricsReader: (() => OwnerAdmissionSnapshot[]) | null = null;
+
+export function setOwnerAdmissionMetricsReader(reader: typeof ownerAdmissionMetricsReader): void {
+  ownerAdmissionMetricsReader = reader;
+}
+
+export function ownerExecutionStatus(): OwnerAdmissionSnapshot[] | null {
+  return ownerAdmissionMetricsReader?.() ?? null;
+}
+
+new Gauge({
+  name: "llamactl_execution_admission_requests",
+  help: "Requests by state in each local engine execution group.",
+  labelNames: ["group", "state"] as const,
+  registers: [registry],
+  collect(): void {
+    this.reset();
+    for (const group of ownerAdmissionMetricsReader?.() ?? []) {
+      this.set({ group: group.group, state: "active" }, group.executing);
+      this.set({ group: group.group, state: "queued" }, group.queued);
+    }
+  },
+});
+
+new Gauge({
+  name: "llamactl_execution_admission_queued_bytes",
+  help: "Bytes of request payload queued per local engine execution group.",
+  labelNames: ["group"] as const,
+  registers: [registry],
+  collect(): void {
+    this.reset();
+    for (const group of ownerAdmissionMetricsReader?.() ?? []) {
+      this.set({ group: group.group }, group.queuedBytes);
+    }
+  },
+});
+
+new Gauge({
+  name: "llamactl_execution_admission_oldest_wait_seconds",
+  help: "Age of the oldest currently queued request in each local execution group.",
+  labelNames: ["group"] as const,
+  registers: [registry],
+  collect(): void {
+    this.reset();
+    for (const group of ownerAdmissionMetricsReader?.() ?? []) {
+      if (group.oldestQueuedWaitMs !== undefined) {
+        this.set({ group: group.group }, group.oldestQueuedWaitMs / 1000);
+      }
+    }
+  },
+});
+
+new Gauge({
+  name: "llamactl_execution_admission_fenced",
+  help: "Whether the group refuses further work after losing engine completion confirmation.",
+  labelNames: ["group"] as const,
+  registers: [registry],
+  collect(): void {
+    this.reset();
+    for (const group of ownerAdmissionMetricsReader?.() ?? []) {
+      this.set({ group: group.group }, Number(group.fenced));
+    }
+  },
 });
 
 export const trpcRequestsTotal = new Counter({

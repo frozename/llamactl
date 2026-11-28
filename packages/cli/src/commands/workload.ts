@@ -6,6 +6,7 @@ import { modelhostPidFile, readModelHostState } from "@llamactl/core/engines/sta
 import { resolveEnv } from "@llamactl/core/env";
 import { isRecordedPidAlive } from "@llamactl/core/pidIdentity";
 import { formatEndpoint, probeEndpointOwnership } from "@llamactl/core/probe";
+import { hasManagedRuntimeMarker } from "@llamactl/core/residency/managed-runtime";
 import { workloadRuntimeDir } from "@llamactl/core/workloadRuntime";
 import {
   type ClusterNode,
@@ -35,6 +36,7 @@ import {
 import {
   defaultModelHostDir,
   listModelHosts,
+  parseModelHost,
   saveModelHost,
 } from "@llamactl/remote/workload/modelhost-store";
 import { resolve as resolvePath } from "node:path";
@@ -59,6 +61,7 @@ import {
 } from "./noderun-helpers.js";
 
 const APPLY_USAGE = `Usage: llamactl apply -f <manifest.yaml> [--evict <name>]... [--force]
+       llamactl apply -f <manifest.yaml> --managed [--node <owner>] [--json]
 
 Reconcile a ModelRun manifest against the target node:
   * If the node already runs the same rel with the same extraArgs,
@@ -71,6 +74,9 @@ The accepted manifest is persisted under $DEV_STORAGE/workloads/<name>.yaml
 so 'llamactl get workloads' can list it afterwards.
 
 --evict also applies to ModelHost manifests; --force is ModelRun-only.
+
+--managed sends a ModelRun or ModelHost to an authenticated owner agent for
+durable admission. Use --node when the manifest names an owner-local alias.
 
 For a ModelHost with node: local while the controller service holds the
 workloads lock, apply only validates the manifest and hands the start off
@@ -274,6 +280,7 @@ interface ApplyFlags {
   json: boolean;
   evict: string[];
   force: boolean;
+  managed: boolean;
 }
 
 function appendEvict(
@@ -314,6 +321,10 @@ function consumeApplyArg(
     draft.force = true;
     return { next: i + 1 };
   }
+  if (arg === "--managed") {
+    draft.managed = true;
+    return { next: i + 1 };
+  }
   if (arg === "-h" || arg === "--help") return { error: "help" };
   if (arg.startsWith("-")) return { error: `Unknown flag: ${arg}` };
   if (!draft.file) {
@@ -324,7 +335,7 @@ function consumeApplyArg(
 }
 
 function parseApplyFlags(args: string[]): ApplyFlags | { error: string } {
-  const draft: ApplyFlags = { file: "", json: false, evict: [], force: false };
+  const draft: ApplyFlags = { file: "", json: false, evict: [], force: false, managed: false };
   let i = 0;
   while (i < args.length) {
     const step = consumeApplyArg(draft, args, i);
@@ -394,8 +405,21 @@ export async function runApply(args: string[]): Promise<number> {
     process.stderr.write(`apply: manifest YAML is not parseable\n`);
     return 1;
   }
+  if (parsed.managed) return await applyManagedFromRaw(raw, kind, parsed);
+  return await applyLegacyFromRaw(raw, kind, parsed);
+}
+
+async function applyLegacyFromRaw(
+  raw: string,
+  kind: string | undefined,
+  parsed: ApplyFlags,
+): Promise<number> {
   if (kind === "NodeRun") {
     return await applyNodeRunFromRaw(raw, parsed.json);
+  }
+  if (hasManagedRuntimeMarker(resolveEnv().LOCAL_AI_RUNTIME_DIR)) {
+    process.stderr.write("apply: use --managed with the owner agent for this runtime\n");
+    return 1;
   }
   if (kind === "ModelHost") {
     const flagRefusal = modelHostApplyFlagsRefusal(parsed);
@@ -406,6 +430,33 @@ export async function runApply(args: string[]): Promise<number> {
     return await applyModelHostFromRaw(raw, parsed.json, parsed);
   }
   return await applyModelRunFromRaw(raw, parsed.json, parsed);
+}
+
+async function applyManagedFromRaw(
+  raw: string,
+  kind: string | undefined,
+  flags: ApplyFlags,
+): Promise<number> {
+  try {
+    if (flags.force || flags.evict.length > 0) {
+      throw new Error("managed apply requires a verified profile transition for replacements");
+    }
+    const manifest = kind === "ModelHost" ? parseModelHost(raw) : workloadStore.parseWorkload(raw);
+    const node = getGlobals().nodeName ?? manifest.spec.node;
+    if (node === LOCAL_NODE_ID || node === "all") {
+      throw new Error("managed apply requires one named owner agent");
+    }
+    const result = await getNodeClientByName(node).managedWorkloadApply.mutate({ yaml: raw });
+    process.stdout.write(
+      flags.json
+        ? JSON.stringify(result) + "\n"
+        : `${result.action} ${result.name} on ${result.node}\n`,
+    );
+    return 0;
+  } catch (error: unknown) {
+    process.stderr.write(`apply: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
 }
 
 async function applyModelRunFromRaw(
@@ -1649,6 +1700,10 @@ export async function runDelete(args: string[]): Promise<number> {
   }
   if (!name) {
     process.stderr.write(DELETE_USAGE);
+    return 1;
+  }
+  if (hasManagedRuntimeMarker(resolveEnv().LOCAL_AI_RUNTIME_DIR)) {
+    process.stderr.write("delete: ManagedWorkloadRetirementRequired\n");
     return 1;
   }
   let manifest: workloadSchema.ModelRun | ModelHostManifest;

@@ -161,17 +161,17 @@ export function parseOmlxModelSettings(text: string): OmlxModelSettingsParseResu
   if (!isPlainObject(models)) {
     return { ok: false, reason: "MalformedModels" };
   }
-  const validated: Record<string, Record<string, unknown>> = {};
+  const validated = new Map<string, Record<string, unknown>>();
   for (const [modelId, entry] of Object.entries(models)) {
     if (!isPlainObject(entry)) {
       return { ok: false, reason: "MalformedModelEntry", detail: `models.${modelId}` };
     }
-    validated[modelId] = entry;
+    validated.set(modelId, entry);
   }
   const document: OmlxModelSettingsDocument = {
     ...root,
     version: OMLX_MODEL_SETTINGS_VERSION,
-    models: validated,
+    models: Object.fromEntries(validated),
   };
   return { ok: true, document, canonical: renderOmlxModelSettings(document) === text };
 }
@@ -204,22 +204,22 @@ function mergeModelEntry(
   existingEntry: Record<string, unknown>,
   desired: Record<string, unknown>,
 ): Record<string, unknown> {
-  const next: Record<string, unknown> = {};
+  const next = new Map<string, unknown>();
   for (const key of Object.keys(existingEntry)) {
     const desiredValue = desired[key];
     if (!MANAGED_MODEL_SETTINGS_KEY_SET.has(key)) {
-      next[key] = existingEntry[key];
+      next.set(key, existingEntry[key]);
     } else if (desiredValue !== undefined) {
-      next[key] = desiredValue;
+      next.set(key, desiredValue);
     }
   }
   for (const key of OMLX_MANAGED_MODEL_SETTINGS_KEYS) {
     const desiredValue = desired[key];
     if (desiredValue !== undefined) {
-      next[key] = desiredValue;
+      next.set(key, desiredValue);
     }
   }
-  return next;
+  return Object.fromEntries(next);
 }
 
 /**
@@ -243,19 +243,19 @@ export function mergeOmlxModelSettings(
     version: OMLX_MODEL_SETTINGS_VERSION,
     models: {},
   };
-  const models: Record<string, Record<string, unknown>> = {};
+  const models = new Map<string, Record<string, unknown>>();
   let merged: Record<string, unknown> | undefined;
   for (const [id, entry] of Object.entries(base.models)) {
     if (id === modelId) {
       merged = mergeModelEntry(entry, desired);
-      models[id] = merged;
+      models.set(id, merged);
     } else {
-      models[id] = entry;
+      models.set(id, entry);
     }
   }
   if (merged === undefined) {
     merged = mergeModelEntry({}, desired);
-    models[modelId] = merged;
+    models.set(modelId, merged);
   }
   // Never return a document oMLX would drop on load: the check runs on the
   // merged entry so a preserved unmanaged dflash_enabled/vlm_mtp_enabled flag
@@ -264,5 +264,5 @@ export function mergeOmlxModelSettings(
   if (conflicts.length > 0) {
     return { ok: false, reason: "SpeculativeConflict", conflicts };
   }
-  return { ok: true, document: { ...base, models } };
+  return { ok: true, document: { ...base, models: Object.fromEntries(models) } };
 }

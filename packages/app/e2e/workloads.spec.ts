@@ -27,6 +27,32 @@ test("row phases, the endpoint link and the liveStatus drawer agree for wB (#410
   await expect(liveStatus).toContainText(`"state": "up"`);
 });
 
+test("coordinator residency stays separate from process state and uses the tab node", async ({
+  control,
+  page,
+}) => {
+  await page.goto("/workloads?node=agent-1");
+  const running = page.getByTestId("console-workload-row-wB");
+  await expect(running).toContainText("Running");
+  await expect(running.getByTestId("console-workload-residency")).toHaveText("Residency: Loading");
+  await expect(
+    page.getByTestId("console-workload-row-wB-stopped").getByTestId("console-workload-residency"),
+  ).toHaveText("Residency: Failed");
+  await expect(
+    page.getByTestId("console-workload-row-wMulti").getByTestId("console-workload-residency"),
+  ).toHaveText("Residency: Draining");
+  await expect(page.getByRole("list", { name: "Active residency operations" })).toContainText(
+    "In progress · switch-fixture",
+  );
+  const scoped = (await control.calls("agent-1")).filter(
+    (call) => call.procedure === "residencyStatus",
+  );
+  expect(scoped[0]?.input).toEqual({ node: "agent-1" });
+  expect(
+    (await control.calls("local")).filter((call) => call.procedure === "residencyStatus"),
+  ).toEqual([]);
+});
+
 test("rows are scoped to the tab node with an other-nodes footer", async ({ page }) => {
   await page.goto("/workloads?node=agent-1");
   for (const name of ["wB", "wB-stopped", "wMulti"]) {

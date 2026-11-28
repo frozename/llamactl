@@ -38,7 +38,10 @@ import { reconcileOnce } from "../../src/workload/reconciler.js";
 // ── module under test (lands with the fix) ──────────────────────────────
 
 type NodeSleepStatusModule = {
-  setNodeLlamacppSleepController(controller: LlamacppSleepController | null): void;
+  setNodeLlamacppSleepController(
+    controller: LlamacppSleepController | null,
+    readGeneration?: (name: string) => { pid: number; startedAt: string } | undefined,
+  ): void;
   getNodeLlamacppSleepController(): LlamacppSleepController | null;
 };
 
@@ -96,6 +99,8 @@ function deadPidIdentity(command: string): PidIdentityDeps {
   };
 }
 
+const hostFixtureGeneration = { pid: process.pid, startedAt: "2026-01-01T00:00:00.000Z" };
+
 function writeHostSidecar(
   runtimeDir: string,
   name: string,
@@ -106,11 +111,10 @@ function writeHostSidecar(
     {
       kind: "ModelHost",
       engine,
-      pid: process.pid,
+      ...hostFixtureGeneration,
       host: "127.0.0.1",
       port: 18094,
       modelAliases: [`${name}.gguf`],
-      startedAt: new Date().toISOString(),
       specHash,
     },
     { name },
@@ -249,7 +253,7 @@ test("#283 sleep-status S3: sleep disabled never reports it", async () => {
       controller.register(sleepMember(name), "sleeping");
     }
     const sleepStatus = await loadSleepStatusModule();
-    sleepStatus?.setNodeLlamacppSleepController(controller);
+    sleepStatus?.setNodeLlamacppSleepController(controller, () => hostFixtureGeneration);
     const llamacppIdentity = liveTestIdentity("llama-server --port 18094");
 
     try {
@@ -282,7 +286,7 @@ test("#283 sleep-status S3: sleep disabled never reports it", async () => {
         specHash: "hash-s3-sleeping",
       });
 
-      sleepStatus?.setNodeLlamacppSleepController(controller);
+      sleepStatus?.setNodeLlamacppSleepController(controller, () => hostFixtureGeneration);
 
       // Membership gate: a llamacpp host the controller does not track.
       const unregistered = readHostStatus(freeName, runtimeDir, llamacppIdentity);
@@ -376,7 +380,7 @@ test("#283 sleep-status S4: the status read never touches a wake path", async ()
       },
     };
     const sleepStatus = await loadSleepStatusModule();
-    sleepStatus?.setNodeLlamacppSleepController(wrapped);
+    sleepStatus?.setNodeLlamacppSleepController(wrapped, () => hostFixtureGeneration);
     const fetchSpy = spyOn(globalThis, "fetch");
     try {
       const result = readHostStatus(
@@ -435,16 +439,16 @@ test("#283 sleep-status S5: the reconciler leaves a node-reported sleeping host 
   // SIGKILL below cannot reach the test runner.
   const impostor = spawn("/bin/sleep", ["60"], { stdio: "ignore", argv0: "llama-server" });
   if (impostor.pid === undefined) throw new Error("impostor spawn failed");
+  const generation = { pid: impostor.pid, startedAt: new Date().toISOString() };
   try {
     writeModelHostState(
       {
         kind: "ModelHost",
         engine: "llamacpp",
-        pid: impostor.pid,
+        ...generation,
         host: "127.0.0.1",
         port: 18094,
         modelAliases: [`${name}.gguf`],
-        startedAt: new Date().toISOString(),
         specHash: "stale-hash",
       },
       { name },
@@ -454,7 +458,7 @@ test("#283 sleep-status S5: the reconciler leaves a node-reported sleeping host 
     const controller = createLlamacppSleepController({ budgetGiB: 64 });
     controller.register(sleepMember(name), "sleeping");
     const sleepStatus = await loadSleepStatusModule();
-    sleepStatus?.setNodeLlamacppSleepController(controller);
+    sleepStatus?.setNodeLlamacppSleepController(controller, () => generation);
 
     saveModelHost(makeHostManifest(name), workloadsDir);
 
@@ -524,6 +528,36 @@ test("#283 sleep-status S5: the reconciler leaves a node-reported sleeping host 
 
     const status: SleepAwareStatus = await caller.modelHostStatus({ workload: name });
     expect(status.sleep).toBe("sleeping");
+
+    const probeTarget = { workload: name, probeOrigin: "http://127.0.0.1:18094" };
+    expect(await caller.modelHostStatus(probeTarget)).toMatchObject({ probeSleep: "sleeping" });
+    const fetchSpy = spyOn(globalThis, "fetch");
+    try {
+      sleepStatus?.setNodeLlamacppSleepController(controller, () => generation);
+      expect(await caller.modelHostStatus(probeTarget)).toMatchObject({ probeSleep: "sleeping" });
+      expect(await caller.modelHostStatus({ ...probeTarget, includeListener: true })).toMatchObject(
+        {
+          probeSleep: "sleeping",
+        },
+      );
+      expect(await caller.modelHostStatus({ workload: name })).not.toHaveProperty("probeSleep");
+      const wrongTarget = { ...probeTarget, probeOrigin: "http://127.0.0.1:18095" };
+      expect(await caller.modelHostStatus(wrongTarget)).not.toHaveProperty("probeSleep");
+
+      sleepStatus?.setNodeLlamacppSleepController(controller);
+      expect(await caller.modelHostStatus(probeTarget)).not.toHaveProperty("probeSleep");
+      expect(await caller.modelHostStatus({ workload: name })).not.toHaveProperty("sleep");
+
+      sleepStatus?.setNodeLlamacppSleepController(controller, () => ({
+        ...generation,
+        startedAt: "2020-01-01T00:00:00.000Z",
+      }));
+      expect(await caller.modelHostStatus(probeTarget)).not.toHaveProperty("probeSleep");
+      expect(await caller.modelHostStatus({ workload: name })).not.toHaveProperty("sleep");
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
 
     // Control: with no published controller the same router read carries
     // no sleep claim while the host stays Running.

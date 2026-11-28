@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 
 import type { ResolvedEnv } from "../types.js";
 import type { EngineName } from "./index.js";
@@ -38,6 +38,7 @@ export interface ModelHostState {
   binaryNames?: string[];
   /** Declared serving probe (#220); absent = legacy behaviour. */
   readiness?: ModelHostReadiness;
+  requiresOwnerTransport?: true;
   /**
    * Transient systemd user scope the engine was launched into (#806), e.g.
    * `llamactl-engine-modelhost-1a2b3c4d5e6f.scope`. Written only on Linux
@@ -64,6 +65,8 @@ export function computeModelHostSpecHash(spec: {
   timeoutSeconds: number;
   env?: Record<string, string> | undefined;
   apiKeyRef?: string | undefined;
+  omlxCacheEpoch?: number | undefined;
+  omlxNativeResidency?: "v0.8.4" | undefined;
 }): string {
   return JSON.stringify({
     engine: spec.engine,
@@ -76,6 +79,10 @@ export function computeModelHostSpecHash(spec: {
     timeoutSeconds: spec.timeoutSeconds,
     env: spec.env ?? null,
     ...(spec.apiKeyRef !== undefined ? { apiKeyRef: spec.apiKeyRef } : {}),
+    ...(spec.omlxCacheEpoch !== undefined ? { omlxCacheEpoch: spec.omlxCacheEpoch } : {}),
+    ...(spec.omlxNativeResidency !== undefined
+      ? { omlxNativeResidency: spec.omlxNativeResidency }
+      : {}),
   });
 }
 
@@ -94,6 +101,7 @@ export function modelhostStateFile(resolved: ResolvedEnv = resolveEnv(), key: Wo
 // anchor for a restarted agent to reap the orphan.
 export interface ModelHostStartingState {
   kind: "ModelHostStarting";
+  slotSavePath?: string | null;
   engine: EngineName;
   pid: number;
   startedAt: string;
@@ -144,12 +152,15 @@ function validateModelHostStarting(
   parsed: Partial<ModelHostStartingState>,
 ): ModelHostStartingState | null {
   if (parsed.kind !== "ModelHostStarting") return null;
-  const { engine, pid, startedAt, specHash, binaryNames, scopeUnit } = parsed;
+  const { engine, pid, startedAt, specHash, binaryNames, scopeUnit, slotSavePath } = parsed;
   if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return null;
   if (!isModelHostEngine(engine)) return null;
   if (typeof startedAt !== "string" || Number.isNaN(Date.parse(startedAt))) return null;
   return {
     kind: "ModelHostStarting",
+    ...(slotSavePath === null || (typeof slotSavePath === "string" && isAbsolute(slotSavePath))
+      ? { slotSavePath }
+      : {}),
     engine,
     pid,
     startedAt,
@@ -236,6 +247,16 @@ function validModelAliases(modelAliases: unknown): modelAliases is string[] {
   );
 }
 
+function ownerTransportFields(
+  parsed: Partial<ModelHostState>,
+): Pick<ModelHostState, "readiness" | "requiresOwnerTransport"> {
+  const readiness = isModelHostReadiness(parsed.readiness) ? parsed.readiness : undefined;
+  if (parsed.engine === "omlx" && parsed.requiresOwnerTransport === true) {
+    return { readiness: readiness ?? { path: "/health" }, requiresOwnerTransport: true };
+  }
+  return readiness === undefined ? {} : { readiness };
+}
+
 function validateModelHostState(parsed: Partial<ModelHostState>): ModelHostState | null {
   if (parsed.kind !== "ModelHost") return null;
   const { engine, host, modelAliases, pid, port, startedAt, binaryNames } = parsed;
@@ -256,7 +277,7 @@ function validateModelHostState(parsed: Partial<ModelHostState>): ModelHostState
     slotSavePath: typeof parsed.slotSavePath === "string" ? parsed.slotSavePath : null,
     ...(typeof parsed.specHash === "string" ? { specHash: parsed.specHash } : {}),
     ...(validBinaryNames(binaryNames) ? { binaryNames: [...binaryNames] } : {}),
-    ...(isModelHostReadiness(parsed.readiness) ? { readiness: parsed.readiness } : {}),
+    ...ownerTransportFields(parsed),
     ...(isScopeUnit(parsed.scopeUnit) ? { scopeUnit: parsed.scopeUnit } : {}),
   };
 }

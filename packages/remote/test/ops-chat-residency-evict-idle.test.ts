@@ -1,6 +1,7 @@
-// #519: `llamactl.residency.evictIdle` Ops Chat dispatch — RED tests pinning
-// the read-only preview as a read-tier tool. At the pinned base the dispatch
-// returns unknown_tool, so the behavioral cases fail by assertion.
+// #284: `llamactl.residency.evictIdle` Ops Chat dispatch — RED tests pinning
+// the read-only projection of the residencyEvictIdle dry run. At the pinned
+// base the tool is absent from the dispatch registry, so the registry case
+// fails by assertion and the dispatch cases fail on `unknown_tool`.
 import type { ResidencyState } from "@llamactl/core/residency/lifecycle";
 
 import {
@@ -14,7 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { readOpsChatAudit } from "../src/ops-chat/audit.js";
-import { KNOWN_OPS_CHAT_TOOLS, OPS_CHAT_TOOLS } from "../src/ops-chat/dispatch.js";
+import { KNOWN_OPS_CHAT_TOOLS, OPS_CHAT_TOOLS, toolTier } from "../src/ops-chat/dispatch.js";
 import { RESIDENCY_APPLY_PROFILE_FENCE_OWNER } from "../src/residency/apply-profile.js";
 import {
   defaultResidencyStorePath,
@@ -144,7 +145,7 @@ beforeEach(() => {
   setSessionRefcountRegistry(null);
   root = mkdtempSync(join(tmpdir(), "llamactl-opschat-evict-idle-"));
   workloadsDir = join(root, "workloads");
-  auditPath = join(root, "ops-chat", "audit.jsonl");
+  auditPath = join(root, "audit.jsonl");
   mkdirSync(workloadsDir, { recursive: true });
   mkdirSync(join(root, "models"), { recursive: true });
   for (const k of Object.keys(process.env)) Reflect.deleteProperty(process.env, k);
@@ -152,13 +153,13 @@ beforeEach(() => {
     DEV_STORAGE: join(root, "dev"),
     LOCAL_AI_RUNTIME_DIR: join(root, "runtime"),
     LOCAL_AI_PRESET_OVERRIDES_FILE: join(root, "preset-overrides.tsv"),
+    LLAMACTL_OPS_CHAT_AUDIT: auditPath,
     LLAMACTL_WORKLOADS_DIR: workloadsDir,
     LLAMACTL_EMBERSYNTH_CONFIG: join(root, "embersynth.yaml"),
     LLAMACTL_CONFIG: join(root, "config"),
     LLAMACTL_RESIDENCY_STORE: join(root, "residency", "operations.sqlite"),
     LLAMA_CPP_MODELS: join(root, "models"),
     LLAMACTL_NODE_NAME: NODE,
-    LLAMACTL_OPS_CHAT_AUDIT: auditPath,
   });
   leases = createResidencyLeases({ now: () => NOW });
   setResidencyLeaseRegistry(leases);
@@ -178,101 +179,100 @@ afterEach(() => {
   }
 });
 
+type RunToolResult = Awaited<ReturnType<ReturnType<typeof router.createCaller>["operatorRunTool"]>>;
+
+async function runTool(args: Record<string, unknown>): Promise<RunToolResult> {
+  return await router.createCaller({}).operatorRunTool({
+    name: TOOL,
+    arguments: args,
+    dryRun: false,
+  });
+}
+
 function rowFor(result: EvictIdleResult, workload: string): EvictIdleRow | undefined {
   return result.ok ? result.rows.find((row) => row.workload === workload) : undefined;
 }
 
 describe("llamactl.residency.evictIdle Ops Chat dispatch", () => {
-  test("OE1 registry: advertised as a read-tier tool on mcp + ops-chat", () => {
+  test("O1 registry: advertised as a read tool on mcp + ops-chat", () => {
     expect((KNOWN_OPS_CHAT_TOOLS as readonly string[]).includes(TOOL)).toBe(true);
-    const entry = OPS_CHAT_TOOLS.find((tool) => (tool.name as string) === TOOL);
+    const entry = OPS_CHAT_TOOLS.find((t) => (t.name as string) === TOOL);
     expect(entry).toBeDefined();
     expect(entry?.tier).toBe("read");
     expect(entry?.surfaces).toEqual(["mcp", "ops-chat"]);
+    // GREEN consistency only at the pinned base: toolTier falls back to
+    // 'read' for unknown names, so this assertion passes before the fix.
+    expect(toolTier(TOOL as Parameters<typeof toolTier>[0])).toBe("read");
   });
 
-  test("OE2 dry-run parity: dispatch returns the residencyEvictIdle preview", async () => {
-    const caller = router.createCaller({});
-    const expected = await caller.residencyEvictIdle({ node: NODE });
-    const res = await caller.operatorRunTool({
-      name: TOOL,
-      arguments: { node: NODE },
-      dryRun: false,
-    });
+  test("O2 preview round trip: reports would-evict and changes neither lifecycle, lease nor hold", async () => {
+    const expected = await router.createCaller({}).residencyEvictIdle({ node: NODE });
+    const res = await runTool({ node: NODE });
 
     expect(res.ok).toBe(true);
     expect(res.tier).toBe("read");
     expect(res.result).toEqual(expected);
-    expect(expected).toMatchObject({ ok: true, dryRun: true });
-    expect(rowFor(expected, "w1")).toMatchObject({
-      workload: "w1",
-      action: "would-evict",
-      kind: "modelrun",
-    });
-  });
-
-  test("OE3 never wet: extra targets stay a dry preview and change nothing", async () => {
-    const caller = router.createCaller({});
-    const res = await caller.operatorRunTool({
-      name: TOOL,
-      arguments: { node: NODE, targets: [{ workload: "w1", kind: "modelrun" }] },
-      dryRun: false,
-    });
-
-    expect(res.ok).toBe(true);
+    expect(res.result).toMatchObject({ ok: true, dryRun: true, windowSeconds: 60 });
     const payload = res.result as EvictIdleResult;
-    expect(payload).toMatchObject({ ok: true, dryRun: true });
     expect(rowFor(payload, "w1")).toMatchObject({
       workload: "w1",
       action: "would-evict",
       kind: "modelrun",
     });
+    expect(readState("w1")?.state).toBe("ready");
+    expect(leases.snapshot("w1").phase).toBe("open");
+    expect(
+      loadWorkloadByName("w1", workloadsDir).metadata.annotations[IDLE_EVICTED_AT],
+    ).toBeUndefined();
+  });
+
+  test("O3 wet-path guard: extra targets are ignored and the preview never evicts", async () => {
+    const res = await runTool({
+      node: NODE,
+      targets: [{ workload: "w1", kind: "modelrun" }],
+    });
+
+    expect(res.ok).toBe(true);
+    const payload = res.result as EvictIdleResult;
+    expect(payload.ok ? payload.dryRun : false).toBe(true);
+    expect(payload.ok ? payload.rows.some((row) => row.action === "evicted") : false).toBe(false);
+    expect(rowFor(payload, "w1")).toMatchObject({ action: "would-evict", kind: "modelrun" });
     const persisted = loadWorkloadByName("w1", workloadsDir);
     expect(persisted.metadata.annotations[IDLE_EVICTED_AT]).toBeUndefined();
     expect(persisted.spec.enabled).toBe(true);
     expect(readState("w1")?.state).toBe("ready");
+    expect(leases.snapshot("w1").phase).toBe("open");
   });
 
-  test("OE4 disabled: a NodeRun without residency policy passes through Disabled", async () => {
+  test("O4 refusals pass through: Disabled and NotServingNode stay structured payloads", async () => {
     writeNodeRun(NODE);
-    const caller = router.createCaller({});
-    const expected = await caller.residencyEvictIdle({ node: NODE });
-    const res = await caller.operatorRunTool({
-      name: TOOL,
-      arguments: { node: NODE },
-      dryRun: false,
-    });
+    const disabled = await runTool({ node: NODE });
+    expect(disabled.ok).toBe(true);
+    expect(disabled.result).toEqual({ ok: false, reason: "Disabled" });
 
-    expect(res.ok).toBe(true);
-    expect(res.result).toEqual(expected);
-    expect(expected).toEqual({ ok: false, reason: "Disabled" });
+    writeNodeRun(NODE, { idleEvictSeconds: 60 });
+    process.env["LLAMACTL_NODE_NAME"] = "other";
+    const offNode = await runTool({ node: NODE });
+    expect(offNode.ok).toBe(true);
+    expect(offNode.result).toMatchObject({ ok: false, reason: "NotServingNode" });
   });
 
-  test("OE5 missing node: surfaces the shared required-argument dispatch error", async () => {
-    const caller = router.createCaller({});
-    const res = await caller.operatorRunTool({
-      name: TOOL,
-      arguments: {},
-      dryRun: false,
-    });
+  test("O5 missing node: surfaces the dispatch validation error", async () => {
+    const res = await runTool({});
 
     expect(res.ok).toBe(false);
     expect(res.error?.code).toBe("dispatch_error");
     expect(res.error?.message).toContain("missing required argument: node");
   });
 
-  test("OE6 audit: the operatorRunTool call appends one audit entry", async () => {
-    const caller = router.createCaller({});
-    await caller.operatorRunTool({
-      name: TOOL,
-      arguments: { node: NODE },
-      dryRun: false,
-    });
+  test("O6 audit: one successful preview appends one Ops Chat audit entry", async () => {
+    await runTool({ node: NODE });
 
-    const { entries } = readOpsChatAudit({ path: auditPath });
-    const matching = entries.filter((entry) => entry.tool === TOOL);
-    expect(matching).toHaveLength(1);
-    expect(matching[0]?.ok).toBe(true);
-    expect(matching[0]?.dryRun).toBe(false);
+    const tail = readOpsChatAudit({ path: auditPath });
+    expect(tail.entries).toHaveLength(1);
+    const entry = tail.entries[0];
+    expect(entry?.tool).toBe(TOOL);
+    expect(entry?.ok).toBe(true);
+    expect(entry?.dryRun).toBe(false);
   });
 });

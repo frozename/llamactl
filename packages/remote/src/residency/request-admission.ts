@@ -1,19 +1,4 @@
-/**
- * #281 (DF-08) the remote async request-admission wrapper over the #576 pure
- * queue policy: acquire() hands back a release-once closure, an AbortSignal or
- * a per-request deadline rejects a queued waiter, and overload surfaces as a
- * typed RequestAdmissionError code. This is only the wrapper; it is not wired
- * into any ingress yet.
- *
- * Still open:
- * - the create-proxy.ts and inference/procedures.ts wiring, which composes
- *   with the DF-05 #278 leases;
- * - holding the execution slot through the terminal HTTP / RPC stream;
- * - the mixed-ingress total-execution cap;
- * - queue fairness across ingress;
- * - no-orphan-load on cancellation.
- */
-
+/** Async #281 queue driver. The queue owns execution permits even after a waiter settles. */
 import {
   createRequestQueuePolicy,
   type QueueAction,
@@ -29,6 +14,7 @@ import {
 export type AdmissionRejectCode =
   | QueueRefuseReason
   | "Aborted"
+  | "ContextUnverified"
   | "DuplicateRequest"
   | "LoadFailed"
   | "QueueWaitExceeded";
@@ -56,13 +42,32 @@ export interface AcquireOptions {
 
 export type AdmissionRequest = Omit<QueueRequest, "deadlineMs">;
 
+export interface RequestQueueWait {
+  priority: QueueRequest["priority"];
+  outcome: "admitted" | "refused" | "cancelled" | "expired" | "load_failed";
+  waitMs: number;
+}
+
 export interface RequestAdmissionOptions {
+  observeWait?: (sample: RequestQueueWait) => void;
   limits: RequestQueueLimits;
   resident?: string[];
-  load: (modelKey: string) => Promise<void>;
+  exclusiveBackground?: boolean;
+  /** Completion acknowledges the owner's ready/failed outcome and releases the load gate. */
+  load: (modelKey: string, signal: AbortSignal) => Promise<void>;
   now?: () => number;
   setTimer?: (fn: () => void, ms: number) => unknown;
   clearTimer?: (handle: unknown) => void;
+}
+
+export type AdmissionReservation =
+  | { pending: Promise<Release> }
+  | { refusal: RequestAdmissionError };
+
+export interface ReservableRequestAdmission extends RequestAdmission {
+  invalidateModel: (modelKey: string) => void;
+  oldestQueuedWaitMs: () => number | null;
+  reserve: (request: AdmissionRequest, options?: AcquireOptions) => AdmissionReservation;
 }
 
 export interface RequestAdmission {
@@ -75,6 +80,8 @@ export interface RequestAdmission {
 const MAX_TIMER_MS = 2_147_483_647;
 
 interface Waiter {
+  priority: AdmissionRequest["priority"];
+  queuedAt: number;
   resolve: (release: Release) => void;
   reject: (error: RequestAdmissionError) => void;
   timer: unknown;
@@ -102,13 +109,14 @@ const defaultClearTimer = (handle: unknown): void => {
 // Waiters without an AbortSignal still carry a detach handle.
 const noopDetach = (): void => undefined;
 
-class RequestAdmissionImpl implements RequestAdmission {
+class RequestAdmissionImpl implements ReservableRequestAdmission {
   private readonly opts: RequestAdmissionOptions;
   private readonly now: Now;
   private readonly setTimer: SetTimer;
   private readonly clearTimer: ClearTimer;
   private readonly policy: RequestQueuePolicy;
   private readonly waiters = new Map<string, Waiter>();
+  private activeLoad: { id: string; controller: AbortController } | undefined;
 
   constructor(opts: RequestAdmissionOptions) {
     this.opts = opts;
@@ -117,57 +125,78 @@ class RequestAdmissionImpl implements RequestAdmission {
     this.clearTimer = opts.clearTimer ?? defaultClearTimer;
     this.policy = createRequestQueuePolicy({
       limits: opts.limits,
+      exclusiveBackground: opts.exclusiveBackground === true,
       now: this.now,
       ...(opts.resident !== undefined ? { resident: opts.resident } : {}),
     });
   }
 
   acquire(request: AdmissionRequest, options: AcquireOptions = {}): Promise<Release> {
+    const reservation = this.reserve(request, options);
+    return "refusal" in reservation ? Promise.reject(reservation.refusal) : reservation.pending;
+  }
+
+  reserve(request: AdmissionRequest, options: AcquireOptions = {}): AdmissionReservation {
     const id = request.requestId;
     if (options.signal?.aborted === true) {
-      return Promise.reject(new RequestAdmissionError("Aborted", null, id));
+      this.observeWait(request.priority, "cancelled", 0);
+      return { refusal: new RequestAdmissionError("Aborted", null, id) };
     }
     const deadlineMs = options.deadlineMs ?? Number.POSITIVE_INFINITY;
     const result = this.policy.enqueue({ ...request, deadlineMs });
     if (result.kind === "duplicate") {
-      return Promise.reject(new RequestAdmissionError("DuplicateRequest", null, id));
+      this.observeWait(request.priority, "refused", 0);
+      return { refusal: new RequestAdmissionError("DuplicateRequest", null, id) };
     }
     if (result.kind === "refused") {
-      return Promise.reject(new RequestAdmissionError(result.reason, result.retryAfterMs, id));
+      this.observeWait(request.priority, "refused", 0);
+      return { refusal: new RequestAdmissionError(result.reason, result.retryAfterMs, id) };
     }
-    return this.acquireQueued(id, deadlineMs, options.signal);
+    return { pending: this.acquireQueued(request, deadlineMs, options.signal) };
   }
 
   snapshot(): QueueSnapshot {
     return this.policy.snapshot();
   }
 
+  oldestQueuedWaitMs(): number | null {
+    return this.policy.oldestQueuedWaitMs?.() ?? null;
+  }
+
+  invalidateModel(modelKey: string): void {
+    this.policy.markEvicted(modelKey);
+  }
+
   // ── enqueue path ─────────────────────────────────────────────────────
 
   private acquireQueued(
-    id: string,
+    request: AdmissionRequest,
     deadlineMs: number,
     signal: AbortSignal | undefined,
   ): Promise<Release> {
     const promise = new Promise<Release>((resolve, reject) => {
-      this.attachWaiter(id, deadlineMs, signal, resolve, reject);
+      this.attachWaiter(request, deadlineMs, signal, resolve, reject);
     });
     this.pump();
     return promise;
   }
 
   private attachWaiter(
-    id: string,
+    request: AdmissionRequest,
     deadlineMs: number,
     signal: AbortSignal | undefined,
     resolve: Waiter["resolve"],
     reject: Waiter["reject"],
   ): void {
+    const id = request.requestId;
+    const queuedAt = this.now();
     const waiter: Waiter = {
+      priority: request.priority,
+      queuedAt,
       resolve,
       reject,
       timer: null,
-      due: Math.min(deadlineMs, this.now() + this.opts.limits.maxQueueWaitMs),
+      due: Math.min(deadlineMs, queuedAt + this.opts.limits.maxQueueWaitMs),
       detachAbort: noopDetach,
     };
     if (signal !== undefined) {
@@ -187,7 +216,7 @@ class RequestAdmissionImpl implements RequestAdmission {
         return;
       }
       this.policy.cancel(id);
-      this.settle(id);
+      this.settle(id, "cancelled");
       reject(new RequestAdmissionError("Aborted", null, id));
       this.pump();
     };
@@ -195,7 +224,19 @@ class RequestAdmissionImpl implements RequestAdmission {
 
   // ── waiter lifecycle ─────────────────────────────────────────────────
 
-  private settle(id: string): Waiter | undefined {
+  private observeWait(
+    priority: RequestQueueWait["priority"],
+    outcome: RequestQueueWait["outcome"],
+    waitMs: number,
+  ): void {
+    try {
+      this.opts.observeWait?.({ priority, outcome, waitMs });
+    } catch {
+      // A failed observation must not interrupt a reservation.
+    }
+  }
+
+  private settle(id: string, outcome: RequestQueueWait["outcome"]): Waiter | undefined {
     const waiter = this.waiters.get(id);
     if (waiter === undefined) {
       return undefined;
@@ -206,6 +247,9 @@ class RequestAdmissionImpl implements RequestAdmission {
       waiter.timer = null;
     }
     waiter.detachAbort();
+    if (this.opts.observeWait !== undefined) {
+      this.observeWait(waiter.priority, outcome, Math.max(0, this.now() - waiter.queuedAt));
+    }
     return waiter;
   }
 
@@ -240,6 +284,10 @@ class RequestAdmissionImpl implements RequestAdmission {
 
   private pump(): void {
     this.apply(this.policy.schedule());
+    const active = this.activeLoad;
+    if (active !== undefined && !this.policy.hasLoadDemand(active.id)) {
+      active.controller.abort();
+    }
   }
 
   private apply(actions: QueueAction[]): void {
@@ -249,13 +297,21 @@ class RequestAdmissionImpl implements RequestAdmission {
   }
 
   private runLoad(action: StartLoadAction): void {
+    const controller = new AbortController();
+    this.activeLoad = { id: action.loadId, controller };
     void Promise.resolve()
-      .then(() => this.opts.load(action.modelKey))
-      .then(
-        () => "ready" as const,
-        () => "failed" as const,
-      )
+      .then(async () => {
+        this.pump();
+        if (controller.signal.aborted) return "abandoned" as const;
+        try {
+          await this.opts.load(action.modelKey, controller.signal);
+          return "ready" as const;
+        } catch {
+          return "failed" as const;
+        }
+      })
       .then((outcome) => {
+        this.activeLoad = undefined;
         this.apply(this.policy.loadSettled(action.loadId, outcome));
         this.pump();
       });
@@ -264,17 +320,17 @@ class RequestAdmissionImpl implements RequestAdmission {
   private applyAction(action: QueueAction): void {
     switch (action.kind) {
       case "start-execution": {
-        this.settle(action.requestId)?.resolve(this.makeRelease(action.requestId));
+        this.settle(action.requestId, "admitted")?.resolve(this.makeRelease(action.requestId));
         return;
       }
       case "expire": {
-        this.settle(action.requestId)?.reject(
+        this.settle(action.requestId, "expired")?.reject(
           new RequestAdmissionError(action.reason, action.retryAfterMs, action.requestId),
         );
         return;
       }
       case "fail": {
-        this.settle(action.requestId)?.reject(
+        this.settle(action.requestId, "load_failed")?.reject(
           new RequestAdmissionError("LoadFailed", action.retryAfterMs, action.requestId),
         );
         return;
@@ -287,6 +343,6 @@ class RequestAdmissionImpl implements RequestAdmission {
   }
 }
 
-export function createRequestAdmission(opts: RequestAdmissionOptions): RequestAdmission {
+export function createRequestAdmission(opts: RequestAdmissionOptions): ReservableRequestAdmission {
   return new RequestAdmissionImpl(opts);
 }

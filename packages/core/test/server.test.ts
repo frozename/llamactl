@@ -800,6 +800,30 @@ describe("server.stopServer", () => {
     expect(result.stopped).toBe(true);
     expect(readServerPid(TEST_KEY)).toBeNull();
   });
+
+  test("a managed stop cannot signal a recycled generation with the expected command", async () => {
+    const pid = 4401;
+    const dir = ensureWorkloadRuntimeDir(resolveEnv(), TEST_KEY);
+    writeFileSync(join(dir, "llama-server.pid"), String(pid));
+    const kill = spyOn(process, "kill").mockReturnValue(true);
+    try {
+      const result = await stopServer({
+        key: TEST_KEY,
+        identity: {
+          probe: () => undefined,
+          processStartMs: () => 0,
+          processCommand: () => "llama-server",
+          verifyGeneration: () => "unknown",
+        },
+        graceSeconds: 1,
+      });
+      expect(result.stopped).toBe(false);
+      expect(kill.mock.calls.filter(([, signal]) => signal !== 0)).toEqual([]);
+      expect(readServerPid(TEST_KEY)).toBe(pid);
+    } finally {
+      kill.mockRestore();
+    }
+  });
 });
 
 describe("server.readServerState (host/port validation)", () => {

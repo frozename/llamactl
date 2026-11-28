@@ -95,3 +95,19 @@ describe("agent serve LLAMACTL_RESIDENCY_LEASES (#278)", () => {
     }
   });
 });
+
+test("agent serve retains an explicit managed cold workload receipt configuration", () => {
+  const dir = freshDir("serve-cold-modelrun-config-");
+  const base = seedConfig(dir, "127.0.0.1", 7843);
+  const path = join(dir, "agent.yaml");
+  const parsed = serveFlags([`--dir=${dir}`]);
+  expect(buildServeOptions(parsed, base, idleWiring, "n")).not.toHaveProperty(
+    "managedColdModelRuns",
+  );
+  const expected = [
+    { workload: "manual-cold-run", sha256: "e".repeat(64), maxArtifactBytes: 65_536 },
+  ];
+  agentConfig.saveAgentConfig({ ...base, managedColdModelRuns: expected }, path);
+  const options = buildServeOptions(parsed, agentConfig.loadAgentConfig(path), idleWiring, "n");
+  expect(options.managedColdModelRuns).toEqual(expected);
+});

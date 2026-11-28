@@ -1,8 +1,15 @@
-import { type GttObservation, parseGttCounters } from "@llamactl/core/resources/memory";
+import {
+  type GttObservation,
+  parseGttCounters,
+  type SwapCounterSample,
+} from "@llamactl/core/resources/memory";
 
 import type { NodeMemSnapshot } from "./types.js";
 
 import { readdirSync, readFileSync } from "./safe-fs.js";
+
+const VM_STAT_PAGE_SIZE = /page size of (\d+) bytes/;
+const PROC_VMSTAT_PATH = "/proc/vmstat";
 
 const PAGE_FIELDS: Record<
   string,
@@ -16,7 +23,7 @@ const PAGE_FIELDS: Record<
 };
 
 export function parseVmStatOutput(raw: string): NodeMemSnapshot {
-  const pageSizeMatch = /page size of (\d+) bytes/.exec(raw);
+  const pageSizeMatch = VM_STAT_PAGE_SIZE.exec(raw);
   const pageSizeText = pageSizeMatch?.[1];
   const pageSize = pageSizeText ? parseInt(pageSizeText, 10) : 4096;
   const toMb = (pages: number): number => (pages * pageSize) / 1024 / 1024;
@@ -100,10 +107,60 @@ export function parseProcMeminfo(raw: string): NodeMemSnapshot {
   return snap;
 }
 
+function readSwapCounters(
+  source: string,
+  pageSizeText: string | undefined,
+  swapIn: string | undefined,
+  swapOut: string | undefined,
+  now: () => number,
+): SwapCounterSample {
+  const pageSize = Number(pageSizeText);
+  const swapInBytes = Number(swapIn) * pageSize;
+  const swapOutBytes = Number(swapOut) * pageSize;
+  if (
+    pageSize > 0 &&
+    Number.isSafeInteger(pageSize) &&
+    Number.isSafeInteger(swapInBytes) &&
+    Number.isSafeInteger(swapOutBytes)
+  ) {
+    return { status: "ok", source, observedAtMs: now(), swapInBytes, swapOutBytes };
+  }
+  return {
+    status: "unavailable",
+    source,
+    observedAtMs: null,
+    swapInBytes: null,
+    swapOutBytes: null,
+  };
+}
+
+let linuxPageSizeText: string | undefined;
+function readLinuxPageSize(): string {
+  try {
+    const proc = Bun.spawnSync(["getconf", "PAGESIZE"]);
+    return proc.exitCode === 0 ? new TextDecoder().decode(proc.stdout) : "";
+  } catch {
+    return "";
+  }
+}
+
+function readProcSwapCounters(
+  raw: string,
+  readPageSize: () => string,
+  now: () => number,
+): SwapCounterSample {
+  const swapIn = /^pswpin[ \t]+(\d+)$/m.exec(raw)?.[1];
+  const swapOut = /^pswpout[ \t]+(\d+)$/m.exec(raw)?.[1];
+  const pageSize = swapIn !== undefined && swapOut !== undefined ? readPageSize().trim() : "";
+  return readSwapCounters(PROC_VMSTAT_PATH, /^\d+$/.exec(pageSize)?.[0], swapIn, swapOut, now);
+}
+
 export async function probeNodeMem(opts?: {
   exec?: (cmd: string) => Promise<string>;
   platform?: NodeJS.Platform;
   readFile?: (path: string) => Promise<string>;
+  readPageSize?: () => string;
+  now?: () => number;
 }): Promise<NodeMemSnapshot> {
   const exec =
     opts?.exec ??
@@ -123,11 +180,28 @@ export async function probeNodeMem(opts?: {
     });
   const platform = opts?.platform ?? process.platform;
 
+  const now = opts?.now ?? Date.now;
   if (platform === "darwin") {
-    return parseVmStatOutput(await exec("vm_stat"));
+    const raw = await exec("vm_stat");
+    const swapIo = readSwapCounters(
+      "vm_stat",
+      VM_STAT_PAGE_SIZE.exec(raw)?.[1],
+      /^Swapins:[ \t]+(\d+)\.$/m.exec(raw)?.[1],
+      /^Swapouts:[ \t]+(\d+)\.$/m.exec(raw)?.[1],
+      now,
+    );
+    return { ...parseVmStatOutput(raw), swap_io: swapIo };
   }
   if (platform === "linux") {
-    return parseProcMeminfo(await readFile("/proc/meminfo").catch(() => ""));
+    const readPageSize =
+      opts?.readPageSize ?? ((): string => (linuxPageSizeText ??= readLinuxPageSize()));
+    const [meminfo, swapIo] = await Promise.all([
+      readFile("/proc/meminfo").catch(() => ""),
+      readFile(PROC_VMSTAT_PATH)
+        .catch(() => "")
+        .then((raw): SwapCounterSample => readProcSwapCounters(raw, readPageSize, now)),
+    ]);
+    return { ...parseProcMeminfo(meminfo), swap_io: swapIo };
   }
   return {
     free_mb: 0,
