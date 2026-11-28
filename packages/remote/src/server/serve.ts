@@ -129,6 +129,7 @@ import {
   agentInfo,
   llamaServerUp,
   registry as metricsRegistry,
+  observeAdmissionWait,
   openaiPathBucket,
   openaiRequestDurationSeconds,
   openaiRequestsTotal,
@@ -1623,6 +1624,9 @@ function prepareExecutionHooks(opts: StartAgentOptions): {
     activity === undefined ? undefined : opts.managedLaunchAdmission?.allowsProfileServing;
   const allowsManagedServing = opts.managedLaunchAdmission?.allowsManagedServing;
   const owner = createOwnerAdmission(opts.executionAdmission ?? [], {
+    observeWait: (group, sample): void => {
+      observeAdmissionWait("execution", group, sample);
+    },
     ...(allowsManagedServing === undefined ? {} : { allowsManagedServing }),
     ...(activity === undefined ? {} : { activity }),
     ...(allowsProfileServing === undefined ? {} : { allowsProfileServing }),
@@ -1943,6 +1947,9 @@ function prepareServingColdOwner(
     noAuth: opts.noAuth === true,
     declaredModels: opts.declaredModels === true,
     residencyLeases: opts.residencyLeases === true,
+    observeWait: (sample): void => {
+      observeAdmissionWait("activation", "", sample);
+    },
   });
 }
 

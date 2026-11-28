@@ -16,6 +16,7 @@ import { listWorkloadDirs } from "@llamactl/core/workloadRuntime";
 import { collectDefaultMetrics, Counter, Gauge, Histogram, Registry } from "prom-client";
 
 import type { OwnerAdmissionSnapshot } from "../residency/owner-admission.js";
+import type { RequestQueueWait } from "../residency/request-admission.js";
 import type { ProcessMemoryAttribution, ProcessMemoryReader } from "./process-memory.js";
 
 /**
@@ -53,6 +54,22 @@ export const openaiRequestDurationSeconds = new Histogram({
   buckets: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60],
   registers: [registry],
 });
+
+const admissionWaitSeconds = new Histogram({
+  name: "llamactl_execution_admission_wait_seconds",
+  help: "Time to settle an execution or cold activation queue reservation.",
+  labelNames: ["stage", "group", "priority", "outcome"] as const,
+  buckets: [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120],
+  registers: [registry],
+});
+
+export function observeAdmissionWait(
+  stage: "execution" | "activation",
+  group: string,
+  { priority, outcome, waitMs }: RequestQueueWait,
+): void {
+  admissionWaitSeconds.observe({ stage, group, priority, outcome }, waitMs / 1000);
+}
 
 let ownerAdmissionMetricsReader: (() => OwnerAdmissionSnapshot[]) | null = null;
 

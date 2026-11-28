@@ -29,6 +29,7 @@ import {
   createRequestAdmission,
   type Release,
   RequestAdmissionError,
+  type RequestQueueWait,
   type ReservableRequestAdmission,
 } from "./request-admission.js";
 
@@ -493,8 +494,10 @@ export function createOwnerAdmission(
     allowsProfileServing?: (workload: string) => boolean;
     allowsManagedServing?: (workload: string) => boolean;
     selectEngineTransport?: SelectOwnerTransport;
+    observeWait?: (group: string, sample: RequestQueueWait) => void;
   } = {},
 ): OwnerAdmission {
+  const observeWait = options.observeWait;
   const targets = new Map<number, { group: ExecutionGroup; priority: RequestPriority }>();
   const groups = ExecutionAdmissionSchema.parse(config).map((spec): ExecutionGroup => {
     const model = { name: spec.name, revision: "owner-execution" };
@@ -515,6 +518,13 @@ export function createOwnerAdmission(
       unconfirmed: new AbortController(),
       stopping: new AbortController(),
       admission: createRequestAdmission({
+        ...(observeWait === undefined
+          ? {}
+          : {
+              observeWait: (sample: RequestQueueWait): void => {
+                observeWait(spec.name, sample);
+              },
+            }),
         exclusiveBackground: true,
         resident: [modelKeyOf(model)],
         load: () => Promise.reject(new Error("owner execution groups contain resident targets")),
