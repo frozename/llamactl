@@ -71,7 +71,14 @@ import {
   matchesLlamacppSleepGeneration,
   readLlamacppSleepResidency,
 } from "../residency/llamacpp-sleep-status.js";
-import { existsSync, fstatSync, mkdirSync, openSync, writeFileSync } from "../safe-fs.js";
+import {
+  closeSync,
+  existsSync,
+  fstatSync,
+  mkdirSync,
+  openSync,
+  writeFileSync,
+} from "../safe-fs.js";
 import {
   externalManagerOf,
   MANAGED_BY_LABEL,
@@ -84,6 +91,7 @@ import {
   specForHash,
 } from "../workload/modelhost-schema.js";
 import { listModelHosts, loadModelHostByName, saveModelHost } from "../workload/modelhost-store.js";
+import { type OmlxCacheLaunch, prepareOmlxCacheLaunch } from "./omlx-cache-launch.js";
 
 /**
  * Label marking ModelHosts that share exclusive memory on a node (#557 S5):
@@ -156,6 +164,7 @@ export interface StartModelHostResult {
    *  process is gone before releasing memory; `pid` stays null because a
    *  failure is never a running host. */
   spawnedPid?: number;
+  preDispatchRefusal?: string;
   /** Present when the residency-group guard refused the start: the shared
    *  group, the conflicting peer's name, and the state it was observed in. */
   residencyConflict?: {
@@ -573,6 +582,7 @@ async function tryAdoptLiveHost(
   engine: (typeof ENGINES)[keyof typeof ENGINES],
   priorSpecHash: string | undefined,
 ): Promise<StartModelHostResult | "relaunch" | null> {
+  if (manifest.spec.omlxCacheEpoch !== undefined) return null;
   const endpoint = manifest.spec.endpoint;
   const declaredReadiness = normalizeReadiness(manifest.spec.readiness);
   const readiness = await probeReady(endpoint, ADOPT_PROBE_TIMEOUT_MS, declaredReadiness).catch(
@@ -766,11 +776,14 @@ async function adoptOrDeferStartingHost(
         port: endpoint.port,
         modelAliases: resolveModelAliases(manifest),
         startedAt: starting.startedAt,
-        slotSavePath: resolveSlotSavePathArgs(
-          manifest.spec.extraArgs,
-          resolved.LOCAL_AI_RUNTIME_DIR,
-          opts.key.name,
-        ).slotSavePath,
+        slotSavePath:
+          manifest.spec.omlxCacheEpoch !== undefined
+            ? (starting.slotSavePath ?? null)
+            : resolveSlotSavePathArgs(
+                manifest.spec.extraArgs,
+                resolved.LOCAL_AI_RUNTIME_DIR,
+                opts.key.name,
+              ).slotSavePath,
         specHash: currentHash,
         ...binaryNamesField(starting.binaryNames),
         ...readinessField(declaredReadiness),
@@ -1106,6 +1119,15 @@ function openBootLogFd(workloadName: string, runtimeDir: string): "ignore" | num
   }
 }
 
+function closeBootLogFd(fd: "ignore" | number): void {
+  if (fd === "ignore") return;
+  try {
+    closeSync(fd);
+  } catch {
+    // Closing the parent's log copy cannot change the launch outcome.
+  }
+}
+
 function teardownChildSilently(
   child: ChildProcess | null,
   engine: (typeof ENGINES)[keyof typeof ENGINES],
@@ -1294,10 +1316,15 @@ interface ModelHostScopeLaunch {
 // Every precondition failure — no boot-log evidence channel, an explicit null
 // launcher, an env conflict, a failed capability resolve — returns null and
 // the caller takes the byte-identical direct spawn.
+type ModelHostCommand = OmlxCacheLaunch & {
+  envOverrides?: Record<string, string>;
+  beforeDispatch?: () => void;
+};
+
 async function resolveModelHostScopePlan(
   opts: StartModelHostOptions,
   manifest: ModelHostManifest,
-  launch: { binary: string; args: string[]; envOverrides?: Record<string, string> },
+  launch: ModelHostCommand,
   childEnv: NodeJS.ProcessEnv,
   runtimeEnv: NodeJS.ProcessEnv,
   bootStdio: "ignore" | number,
@@ -1408,7 +1435,7 @@ function enforceManagedHostSpawn(
 async function attemptScopedModelHostSpawn(
   opts: StartModelHostOptions,
   manifest: ModelHostManifest,
-  launch: { binary: string; args: string[]; envOverrides?: Record<string, string> },
+  launch: ModelHostCommand,
   childEnv: NodeJS.ProcessEnv,
   runtimeEnv: NodeJS.ProcessEnv,
   bootStdio: "ignore" | number,
@@ -1428,6 +1455,7 @@ async function attemptScopedModelHostSpawn(
   if (scoped === null) return { kind: "none" };
   const offset = fstatSync(scoped.plan.bootFd).size;
   enforceManagedHostSpawn(opts, resolved);
+  launch.beforeDispatch?.();
   const child = spawn(
     scoped.plan.systemdRunPath,
     buildScopeArgv(scoped.plan.base, opts.key.name, launch.binary, launch.args),
@@ -1454,6 +1482,9 @@ async function attemptScopedModelHostSpawn(
       pid,
       startedAt: new Date().toISOString(),
       specHash: startSpecHash,
+      ...(manifest.spec.omlxCacheEpoch !== undefined
+        ? omitUndefined({ slotSavePath: launch.slotSavePath })
+        : {}),
       ...binaryNamesField(manifest.spec.binaryNames),
       ...scopeUnitField(scoped.scopeUnit),
     },
@@ -1481,7 +1512,7 @@ async function attemptScopedModelHostSpawn(
 // The direct spawn — also the scoped path's single fallback target. Writes the
 // same starting record minus scopeUnit so pre-#806 records stay byte-identical.
 function spawnDirectModelHostChild(
-  launch: { binary: string; args: string[] },
+  launch: ModelHostCommand,
   childEnv: NodeJS.ProcessEnv,
   bootStdio: "ignore" | number,
   opts: StartModelHostOptions,
@@ -1492,6 +1523,7 @@ function spawnDirectModelHostChild(
 ): { child: ChildProcess; pid: number } {
   const spawn = opts.spawn ?? nodeSpawn;
   enforceManagedHostSpawn(opts, resolved);
+  launch.beforeDispatch?.();
   const child = spawn(launch.binary, launch.args, {
     detached: true,
     stdio: bootStdio === "ignore" ? "ignore" : ["ignore", bootStdio, bootStdio],
@@ -1513,6 +1545,9 @@ function spawnDirectModelHostChild(
       pid,
       startedAt: new Date().toISOString(),
       specHash: startSpecHash,
+      ...(manifest.spec.omlxCacheEpoch !== undefined
+        ? omitUndefined({ slotSavePath: launch.slotSavePath })
+        : {}),
       ...binaryNamesField(manifest.spec.binaryNames),
     },
     opts.key,
@@ -1672,12 +1707,68 @@ async function teardownFailedModelHostLaunch(
   }
 }
 
+async function prepareModelHostCommand(
+  manifest: ModelHostManifest,
+  workload: string,
+  ctx: ModelHostLaunchContext,
+  dispatch: { attempted: boolean },
+): Promise<{ launch: ModelHostCommand; childEnv: NodeJS.ProcessEnv }> {
+  const { env, runtimeEnv, resolved, engine, spec, apiKey } = ctx;
+  const boot = modelHostBootEnv(env, resolved, spec, workload);
+  const slots = resolveSlotSavePathArgs(
+    manifest.spec.extraArgs,
+    resolved.LOCAL_AI_RUNTIME_DIR,
+    workload,
+  );
+  spec.extraArgs = slots.args;
+  await engine.prepareLaunch?.(spec, boot);
+  const command = engine.buildBootCommand(spec, boot);
+  const childEnv = sanitizeChildEnv(runtimeEnv, command.envOverrides, manifest.spec.env, apiKey);
+  const cacheEpoch = spec.omlxCacheEpoch;
+  const launch =
+    cacheEpoch === undefined
+      ? { ...command, slotSavePath: slots.slotSavePath }
+      : {
+          ...command,
+          ...prepareOmlxCacheLaunch(
+            command,
+            childEnv,
+            manifest.spec.hostedModels[0]?.rel ?? "",
+            cacheEpoch,
+          ),
+        };
+  return {
+    launch: {
+      ...launch,
+      beforeDispatch(): void {
+        launch.verifyCacheInputs?.();
+        dispatch.attempted = true;
+      },
+    },
+    childEnv,
+  };
+}
+
+function failedModelHostStart(
+  error: unknown,
+  spawnedPid: number | undefined,
+  cacheBeforeDispatch: boolean,
+): StartModelHostResult {
+  const message = error instanceof Error ? error.message : "modelhost start failed";
+  return {
+    ok: false,
+    pid: null,
+    error: message,
+    ...omitUndefined({ spawnedPid, preDispatchRefusal: cacheBeforeDispatch ? message : undefined }),
+  };
+}
+
 async function launchModelHost(
   manifest: ModelHostManifest,
   opts: StartModelHostOptions,
   ctx: ModelHostLaunchContext,
 ): Promise<StartModelHostResult> {
-  const { env, runtimeEnv, resolved, engine, spec, apiKey } = ctx;
+  const { runtimeEnv, resolved, engine, spec } = ctx;
   if (opts.signal?.aborted) {
     const result = { ok: false, pid: null, error: MODEL_HOST_ABORT_MESSAGE };
     opts.onEvent?.({ type: "done", result });
@@ -1691,27 +1782,20 @@ async function launchModelHost(
 
   warnExternalBind(manifest, opts);
 
-  const bootEnv = modelHostBootEnv(env, resolved, spec, opts.key.name);
-
-  const extraArgsResolved = resolveSlotSavePathArgs(
-    manifest.spec.extraArgs,
-    resolved.LOCAL_AI_RUNTIME_DIR,
-    opts.key.name,
-  );
-  spec.extraArgs = extraArgsResolved.args;
   let child: ChildProcess | null = null;
   let startingPid: number | null = null;
   let scoped: ModelHostScopeLaunch | null = null;
+  const dispatch = { attempted: false };
+  let bootStdio: "ignore" | number = "ignore";
   const startSpecHash = computeModelHostSpecHash(specForHash(manifest.spec));
   try {
-    await engine.prepareLaunch?.(spec, bootEnv);
-    const launch = engine.buildBootCommand(spec, bootEnv);
-    // stdio:"ignore" made every launch failure undiagnosable: a child that dies
-    // in ~2s (argparse rejecting a stale flag exits 2) left no trace, probeReady
-    // then polled the whole budget, and the caller reported a bare
-    // "modelHostStart timed out". Persist the child's output beside its state.
-    const bootStdio = openBootLogFd(opts.key.name, resolved.LOCAL_AI_RUNTIME_DIR);
-    const childEnv = sanitizeChildEnv(runtimeEnv, launch.envOverrides, manifest.spec.env, apiKey);
+    const { launch, childEnv } = await prepareModelHostCommand(
+      manifest,
+      opts.key.name,
+      ctx,
+      dispatch,
+    );
+    bootStdio = openBootLogFd(opts.key.name, resolved.LOCAL_AI_RUNTIME_DIR);
     // #806 phase 3: with a published launcher (Linux agents), try the scoped
     // launch first; every precondition failure falls through to the direct
     // spawn below unchanged.
@@ -1782,7 +1866,7 @@ async function launchModelHost(
       pid,
       scoped,
       startSpecHash,
-      extraArgsResolved.slotSavePath,
+      launch.slotSavePath,
     );
     clearStartingRecordIfOwned(opts.key, resolved, pid);
     const result = { ok: true, pid };
@@ -1791,15 +1875,15 @@ async function launchModelHost(
   } catch (error) {
     const spawnedPid = child?.pid;
     await teardownFailedModelHostLaunch(child, engine, scoped, startingPid, opts, resolved);
-    const message = error instanceof Error ? error.message : "modelhost start failed";
-    const result = {
-      ok: false,
-      pid: null,
-      error: message,
-      ...omitUndefined({ spawnedPid }),
-    };
+    const result = failedModelHostStart(
+      error,
+      spawnedPid,
+      spec.omlxCacheEpoch !== undefined && !dispatch.attempted,
+    );
     opts.onEvent?.({ type: "done", result });
     return result;
+  } finally {
+    closeBootLogFd(bootStdio);
   }
 }
 

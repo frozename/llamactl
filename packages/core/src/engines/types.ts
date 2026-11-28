@@ -62,6 +62,7 @@ export interface ModelHostSpecForEngine {
   extraArgs: string[];
   timeoutSeconds: number;
   readiness?: ModelHostReadiness;
+  omlxCacheEpoch?: number;
 }
 
 export interface EngineAdapter {
