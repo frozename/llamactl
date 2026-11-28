@@ -14,9 +14,11 @@ import type { TrustedColdOwner, TrustedColdPin } from "../../src/residency/cold-
 
 import { RESIDENCY_APPLY_PROFILE_FENCE_OWNER } from "../../src/residency/apply-profile.js";
 import { readManagedProfileSelection } from "../../src/residency/managed-profile-selection.js";
+import { createOmlxOwnerFetch } from "../../src/residency/omlx-owner-http.js";
 import { createOwnerAdmission } from "../../src/residency/owner-admission.js";
 import { peerColdBodyDigest } from "../../src/residency/peer-cold.js";
 import { openResidencyOperationStore } from "../../src/residency/store.js";
+import { openNodeManagedAdmission } from "../../src/residency/target-admission-policy.js";
 import { mkdtempSync, rmSync } from "../../src/safe-fs.js";
 import { hashToken } from "../../src/server/auth.js";
 import { prepareColdOwnerMount } from "../../src/server/cold-owner-mount.js";
@@ -1042,6 +1044,185 @@ spec:
     await running?.stop();
     await engine.stop(true);
     process.env["LLAMACTL_UNIFIED_PROXY"] = previous;
+    restore();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+async function markUnsettledClaim(): Promise<void> {
+  const setup = await openNodeManagedAdmission({ nodeName: NODE, ...capacity });
+  try {
+    const pending = setup.authority.admit({
+      runtimeKey: WORKLOAD,
+      specDigest: "native-inference-claim",
+      kind: "ModelHost",
+      allocationGiB: 8,
+    });
+    if (pending.kind !== "admitted") throw new Error("fixture claim refused");
+    expect(
+      setup.authority.failUncertain(pending.claimId, pending.fenceToken, "native receipt lost"),
+    ).toBe(true);
+  } finally {
+    setup.authority.close();
+  }
+}
+
+test("the serving owner blocks an unsettled durable oMLX claim through agent restart", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "llamactl-native-serving-owner-"));
+  const restore = isolate(dir);
+  let running: RunningAgent | undefined;
+  let warmDials = 0;
+  const send = (): Promise<Response> => {
+    warmDials++;
+    return Promise.resolve(new Response(null, { status: 204 }));
+  };
+  const opts = {
+    bindHost: "127.0.0.1",
+    port: 0,
+    tokenHash: hashToken(TOKEN),
+    advertiseMdns: false,
+    executionAdmission: [CAP],
+  };
+  try {
+    await markUnsettledClaim();
+
+    for (let restart = 0; restart < 2; restart++) {
+      running = await startManagedAgentServer(opts, NODE, capacity);
+      expect(getResidencyLeaseRegistry()?.snapshot(WORKLOAD).phase).toBe("open");
+      const response = await dispatchWarm(send);
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({
+        error: { code: "managed_residency_unverified" },
+      });
+      expect(warmDials).toBe(0);
+      await running.stop();
+      running = undefined;
+    }
+  } finally {
+    await running?.stop();
+    restore();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a queued warm request rechecks its durable claim after admission", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "llamactl-native-queued-owner-"));
+  const restore = isolate(dir);
+  const entered = Promise.withResolvers<undefined>();
+  const completion = Promise.withResolvers<Response>();
+  let running: RunningAgent | undefined;
+  let lateDials = 0;
+  try {
+    running = await startManagedAgentServer(
+      {
+        bindHost: "127.0.0.1",
+        port: 0,
+        tokenHash: hashToken(TOKEN),
+        advertiseMdns: false,
+        executionAdmission: [CAP],
+      },
+      NODE,
+      capacity,
+    );
+    const served = dispatchWarm(() => {
+      entered.resolve(undefined);
+      return completion.promise;
+    });
+    await entered.promise;
+    const queued = dispatchWarm(() => {
+      lateDials++;
+      return Promise.resolve(new Response(null, { status: 204 }));
+    });
+
+    await markUnsettledClaim();
+    completion.resolve(new Response(null, { status: 204 }));
+    expect((await served).status).toBe(204);
+    const result = await queued;
+    expect(result.status).toBe(503);
+    expect(await result.json()).toMatchObject({ error: { code: "managed_residency_unverified" } });
+    expect(lateDials).toBe(0);
+  } finally {
+    completion.resolve(new Response(null, { status: 204 }));
+    await running?.stop();
+    restore();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the managed proxy dials the exact private transport and refuses a lost binding", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "llamactl-native-warm-ingress-"));
+  const restore = isolate(dir);
+  const key = "fixture-engine-owner-key";
+  const body = JSON.stringify({ model: MODEL, prompt: "proof", max_tokens: 3 });
+  const calls: [string | null, string | null, string][] = [];
+  using engine = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    async fetch(request): Promise<Response> {
+      const authorization = request.headers.get("authorization");
+      calls.push([authorization, request.headers.get("x-api-key"), await request.text()]);
+      return new Response(null, { status: authorization === `Bearer ${key}` ? 204 : 401 });
+    },
+  });
+  const endpoint = { host: engine.url.hostname, port: Number(engine.url.port) };
+  const send = createOmlxOwnerFetch(endpoint, { inferenceKey: key });
+  const target = new URL("/v1/completions", engine.url).href;
+  let current = true;
+  let running: RunningAgent | undefined;
+  try {
+    running = await startManagedAgentServer(
+      {
+        bindHost: "127.0.0.1",
+        port: 0,
+        tokenHash: hashToken(TOKEN),
+        advertiseMdns: false,
+        executionAdmission: [
+          { ...CAP, foregroundPorts: [endpoint.port], maxContextTokens: undefined },
+        ],
+      },
+      NODE,
+      {
+        ...capacity,
+        selectEngineTransport: (candidate, workload): typeof fetch | null | undefined =>
+          workload === WORKLOAD && candidate === target ? (current ? send : null) : undefined,
+      },
+    );
+    writeModelHostState(
+      {
+        ...endpoint,
+        kind: "ModelHost",
+        engine: "omlx",
+        pid: process.pid,
+        modelAliases: [MODEL],
+        startedAt: new Date().toISOString(),
+      },
+      { name: WORKLOAD },
+      resolveEnv(),
+    );
+    const url = running.url;
+    const inference = (): Promise<Response> =>
+      fetch(`${url}/v1/completions`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${TOKEN}`,
+          "content-type": "application/json",
+          "x-api-key": "fixture-caller-key",
+        },
+        body,
+      });
+    const served = await inference();
+    expect({ status: served.status, count: calls.length }).toEqual({ status: 204, count: 1 });
+    expect(calls).toEqual([[`Bearer ${key}`, null, body]]);
+    current = false;
+    const refused = await inference();
+    expect(refused.status).toBe(503);
+    expect(await refused.json()).toMatchObject({
+      error: { code: "managed_engine_transport_unverified" },
+    });
+    expect(calls).toHaveLength(1);
+    expect(getResidencyLeaseRegistry()?.active(WORKLOAD)).toHaveLength(0);
+  } finally {
+    await running?.stop();
     restore();
     rmSync(dir, { recursive: true, force: true });
   }

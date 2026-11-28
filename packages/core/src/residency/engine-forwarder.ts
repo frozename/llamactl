@@ -15,7 +15,7 @@ export interface LocalEngineRequest {
 }
 
 export interface LocalEngineDispatch extends LocalEngineRequest {
-  send: (signal: AbortSignal, body?: string) => Promise<Response>;
+  send: (signal: AbortSignal, body?: string, transport?: typeof fetch) => Promise<Response>;
 }
 
 export function withLocalEngineBody(init: RequestInit, body: string | undefined): RequestInit {
@@ -32,23 +32,51 @@ export interface ColdEngineDispatch {
   body: string | null;
   clientSignal: AbortSignal;
   principal: LocalEngineRequest["principal"];
-  send: (target: string, signal: AbortSignal, body?: string) => Promise<Response>;
+  send: (
+    target: string,
+    signal: AbortSignal,
+    body?: string,
+    transport?: typeof fetch,
+  ) => Promise<Response>;
 }
 
 export type ColdEngineForwarder = (request: ColdEngineDispatch) => Promise<Response>;
 
 export type LocalEngineForwarder = (dispatch: LocalEngineDispatch) => Promise<Response> | undefined;
 
-let installed: LocalEngineForwarder | undefined;
+export type SelectLocalEngineReadiness = (
+  route: { workload: string; host: string; port: number; requiresOwnerTransport?: true },
+  path: string,
+) => typeof fetch | null | undefined;
+
+let installed:
+  | { forward: LocalEngineForwarder; readiness?: SelectLocalEngineReadiness }
+  | undefined;
 
 export function getLocalEngineForwarder(): LocalEngineForwarder | undefined {
-  return installed;
+  return installed?.forward;
 }
 
-export function installLocalEngineForwarder(forwarder: LocalEngineForwarder): () => void {
+export function selectLocalEngineReadiness(
+  route: Parameters<SelectLocalEngineReadiness>[0],
+  path: string,
+): ReturnType<SelectLocalEngineReadiness> {
+  try {
+    const selected = installed?.readiness?.(route, path);
+    return selected === undefined && route.requiresOwnerTransport === true ? null : selected;
+  } catch {
+    return null;
+  }
+}
+
+export function installLocalEngineForwarder(
+  forward: LocalEngineForwarder,
+  readiness?: SelectLocalEngineReadiness,
+): () => void {
   if (installed !== undefined) throw new Error("local engine admission is already installed");
-  installed = forwarder;
+  const entry = { forward, ...(readiness === undefined ? {} : { readiness }) };
+  installed = entry;
   return (): void => {
-    if (installed === forwarder) installed = undefined;
+    if (installed === entry) installed = undefined;
   };
 }

@@ -5,6 +5,7 @@ import type {
 } from "@llamactl/core/engines/types";
 
 import { omitUndefined } from "@llamactl/core/object";
+import { isIP } from "node:net";
 import { z } from "zod";
 
 export const LOCAL_NODE_ID = "local" as const;
@@ -256,6 +257,64 @@ function omlxCacheIssue(spec: {
   return undefined;
 }
 
+const OMLX_NATIVE_OWNED_ARGS = ["--host", "--port", "--api-key", "--mcp-config"];
+const OMLX_NATIVE_OWNED_ENV = [
+  "OMLX_HOST",
+  "OMLX_PORT",
+  "OMLX_MODEL_DIR",
+  "OMLX_API_KEY",
+  "OMLX_SECRET_KEY",
+  "OMLX_MCP_CONFIG",
+];
+
+function omlxNativeIssues(spec: {
+  omlxNativeResidency?: "v0.8.4" | undefined;
+  omlxCacheEpoch?: number | undefined;
+  engine: string;
+  endpoint: { host: string };
+  extraArgs: readonly string[];
+  env?: Record<string, string> | undefined;
+}): { path: string[]; message: string }[] {
+  if (spec.omlxNativeResidency === undefined) return [];
+  const { host } = spec.endpoint;
+  if (
+    spec.engine !== "omlx" ||
+    spec.omlxCacheEpoch === undefined ||
+    (host !== "::1" && !(isIP(host) === 4 && host.startsWith("127.")))
+  ) {
+    return [
+      {
+        path: ["omlxNativeResidency"],
+        message: "native oMLX requires the managed cache and a numeric loopback endpoint",
+      },
+    ];
+  }
+  if (
+    spec.extraArgs
+      .map(omlxCacheFlag)
+      .some(
+        (flag) =>
+          flag.startsWith("--") && OMLX_NATIVE_OWNED_ARGS.some((owned) => owned.startsWith(flag)),
+      )
+  ) {
+    return [
+      {
+        path: ["extraArgs"],
+        message: "native oMLX owns its bind, authentication and MCP configuration",
+      },
+    ];
+  }
+  const override = OMLX_NATIVE_OWNED_ENV.find((name) => spec.env?.[name] !== undefined);
+  return override === undefined
+    ? []
+    : [
+        {
+          path: ["env", override],
+          message: "native oMLX owns its bind and authentication environment",
+        },
+      ];
+}
+
 export const ModelHostSpecSchema = z
   .object({
     // Engine selection. The registry in packages/core/src/engines/ holds
@@ -323,6 +382,7 @@ export const ModelHostSpecSchema = z
     // endpoints (enforced by apiKeyRefIssues above).
     apiKeyRef: z.string().min(1).optional(),
     omlxCacheEpoch: z.int().nonnegative().optional(),
+    omlxNativeResidency: z.literal("v0.8.4").optional(),
   })
   .strict()
   .superRefine((spec, ctx) => {
@@ -356,6 +416,7 @@ export const ModelHostSpecSchema = z
       ...apiKeyRefIssues(spec),
       ...hostedModelOmlxIssues(spec.engine, spec.hostedModels),
       ...(cacheIssue === undefined ? [] : [cacheIssue]),
+      ...omlxNativeIssues(spec),
     ];
     for (const issue of issues) {
       ctx.addIssue({ code: "custom", ...issue });

@@ -264,6 +264,14 @@ fences that workload from inference and stop. The CLI and console show the
 hold alongside its memory claim. Preserve both journals for recovery and
 verify the previous engine generation before any manual intervention.
 
+The owner checks the durable memory claim before each engine dial, including
+after a request leaves the queue. A pending or uncertain claim blocks inference
+even if a restarted agent has a fresh lease registry. A discounted native
+parked claim needs current owner proof before new allocations are admitted.
+The allocation transaction checks that proof against the locked ledger rows.
+If proof is lost, restoring the full charge or verifying release makes the
+ledger usable for allocation again.
+
 For co-resident models, add `executionAdmission` to the owning node's
 `agent.yaml`. Each group matches local engine ports after routing. Local
 HTTP proxy traffic, local tRPC chat and the default local-model Worker
@@ -346,7 +354,13 @@ For a configured managed cold ModelRun, startup verifies the selected regular-fi
 
 The managed owner can use fresh, matching measured envelopes for supported llama.cpp and Kapitsa launches. See [Recording a measured memory envelope](dynamic-fleet-models.md#recording-a-measured-memory-envelope) for key export, import, and valid input scopes. The standalone ModelHost adapter accepts a structured key with `artifactRevision` (defined in `packages/core/src/resources/memory.ts`). Its injected `getCandidateCalibrationKey` has no production caller. For oMLX, the cache identity (modelId, `engineBuild`, `cacheEpoch`, the artifact `sha256` or size/mtime, and settings) lives in `packages/core/src/engines/omlx-cache-identity.ts`, and `decideOmlxCacheRetention` has no production caller. For native load/unload, `createManagedOmlxResidency` has no production caller (`packages/remote/src/residency/omlx-managed.ts`).
 
+The durable oMLX transition adapter uses one ModelHost claim for the life of the engine. It requires a pinned model and process, exclusive owner ingress, and no unresolved inference holds. Native unload records its intent with the full allocation charged. After the exact unloaded model is confirmed and the lease is closed, only a qualified residual-memory measurement reduces the charge. Reload restores the full allocation before its POST and reopens inference after exact readiness and the durable commit. A queued or ambiguous unload and a recovered owner retain the full charge. The adapter is qualified with isolated fixtures and awaits installation behind the serving owner's ingress gate.
+
 For an oMLX ModelHost, set `spec.omlxCacheEpoch: 0` to opt into workload-local SSD cache reuse. The launcher fingerprints the installed Python environment, the discoverable model and any active local drafts using their observed file generations. It combines those generations with the effective cache settings and epoch. It rechecks the identity after managed admission and before spawn. Keep the model artifact, Python installation and effective settings immutable while the process serves. Apply settings and profile changes through a stop and start by the owner. Live changes through oMLX admin APIs can bypass launch validation.
+
+The managed native startup path is opt-in through `spec.omlxNativeResidency: v0.8.4`. Use a numeric loopback endpoint in the owning agent's execution admission group and the workload-local oMLX cache. The owner binds the pending memory reservation to the spawned process generation, verifies ownership of each connected socket before sending credentials, and rechecks the model artifact and settings before loading and publishing the route. The owner samples launch headroom immediately before the load request. Readiness confirms the same reservation and process after the engine has allocated the weights. HTTP and Worker RPC check the configured readiness endpoint through the owner when it requires authentication.
+
+The engine bearer lives in the child environment and the owning agent. The owner keeps a private settings file, rotates the admin signing key on launch, and retains the declared model settings and cache identity. The running ModelHost records that it requires the private transport. If the owner restarts and loses the credential, the route stays unavailable even if the desired manifest changed. Use verified whole-process recovery to replace that engine. Omit `omlxNativeResidency` to select the whole-process path for a new launch.
 
 The matching prefix path is `.omlx/managed-cache/cache-by-identity/<digest>/prefix` under the workload runtime directory. On the first managed launch, existing workload-local settings seed the managed base. oMLX writes its persisted overrides to the managed copy. Removing the epoch selects the legacy base again. Runtime profiles in `model_profiles.json` make the startup identity unavailable because they can select different model settings per request. A model or runtime update, cache format change, or epoch bump chooses a fresh path. Existing directories remain available for rollback and count toward disk use. Configure `extraArgs: ["--slot-save-path", "auto"]` to give supported slot APIs their own directory under the same identity. The launcher records that directory for process recovery. Reopening compatible files does not restore in-flight requests or running sessions.
 

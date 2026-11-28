@@ -54,6 +54,7 @@ import {
   type ColdEngineForwarder,
   getLocalEngineForwarder,
   type LocalEngineRequest,
+  selectLocalEngineReadiness,
   withLocalEngineBody,
 } from "./residency/engine-forwarder.js";
 import {
@@ -638,6 +639,7 @@ type RouteEntry = {
   kind: "ModelRun" | "ModelHost";
   pid?: number;
   engine: workloadRuntime.LocalRoute["engine"];
+  requiresOwnerTransport?: true;
   model: string;
   /** Catalog-qualified experimental (#518); kept for downstream consumers
    *  of the route entry, never routed by implicitly. */
@@ -869,11 +871,15 @@ function servingReadinessVerdict(
   readiness: ModelHostReadiness,
   probeKey: string,
 ): Promise<boolean> {
+  const selected =
+    entry.isPeer === true ? undefined : selectLocalEngineReadiness(entry, readiness.path);
+  if (selected === null) return Promise.resolve(false);
+  const fetchImpl = selected ?? servingReadinessSeam?.fetch;
   const now = servingReadinessNow();
   const cached = servingVerdictCache.get(probeKey);
   if (cached !== undefined && cached.expiresAt > now) return cached.verdict;
   const verdict = checkServingReadiness({ host: entry.host, port: entry.port }, readiness, {
-    ...(servingReadinessSeam?.fetch !== undefined ? { fetch: servingReadinessSeam.fetch } : {}),
+    ...(fetchImpl === undefined ? {} : { fetch: fetchImpl }),
     timeoutMs: servingReadinessTimeoutMs(),
   }).catch(() => false);
   for (const [key, cachedEntry] of servingVerdictCache) {
@@ -1153,6 +1159,7 @@ function routeEntryFor(route: workloadRuntime.ClusterRoute): RouteEntry {
     model: route.model,
     ...(isExperimentalRoute(route) ? { experimental: true as const } : {}),
     ...("pid" in route ? { pid: route.pid } : {}),
+    ...(route.requiresOwnerTransport === true ? { requiresOwnerTransport: true } : {}),
     ...peerFields,
   };
 }
@@ -3391,14 +3398,14 @@ function forwardColdOwner(
     clientSignal: context.req.signal,
     deadlineMs: Date.now() + upstreamTimeoutMs(),
     principal: { bearer: context.req.headers.get("authorization") },
-    send: (target, signal, body) => {
+    send: (target, signal, body, transport = fetch) => {
       const upstream: RequestInit & { timeout: boolean } = {
         ...withLocalEngineBody(init, body),
         signal,
         redirect: "error",
         timeout: false,
       };
-      return fetch(target, upstream);
+      return transport(target, upstream);
     },
   });
 }
@@ -3426,8 +3433,8 @@ function forwardAdmittedEngine(
           stillOwnsTarget: () => routeStillOwned(route, context.resolved),
         }),
     ...(signal === null || signal === undefined ? {} : { engineSignal: signal }),
-    send: (engineSignal, body) =>
-      fetch(context.target, {
+    send: (engineSignal, body, transport = fetch) =>
+      transport(context.target, {
         ...withLocalEngineBody(init, body),
         signal: engineSignal,
         redirect: "error",

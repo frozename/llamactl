@@ -1,20 +1,41 @@
+import type { ModelHostReadiness } from "@llamactl/core/engines/types";
+
 import { deriveOmlxCacheIdentity } from "@llamactl/core/engines/omlx-cache-identity";
 import {
   OMLX_MODEL_SETTINGS_FILE,
   parseOmlxModelSettings,
 } from "@llamactl/core/engines/omlx-model-settings";
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { basename, dirname, isAbsolute, join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 
+import type { ConnectOmlxOwnerSocket } from "../residency/omlx-owner-socket.js";
+
 import {
+  createOmlxNativeClient,
+  nativeBindingCurrent,
+  type OmlxNativeBinding,
+} from "../residency/engine-client.js";
+import {
+  createOmlxOwnerFetch,
+  verifyOmlxOwnerAuthentication,
+} from "../residency/omlx-owner-http.js";
+import {
+  closeSync,
+  constants,
+  fstatSync,
   lstatSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
   realpathSync,
+  renameSync,
+  rmSync,
   statSync,
+  writeFileSync,
 } from "../safe-fs.js";
 
 const MAX_FILES = 65_536;
@@ -395,6 +416,207 @@ export function prepareOmlxCacheLaunch(
       }
       protectedCacheDir(base, ["cache-by-identity", key, "prefix"]);
       if (slot) protectedCacheDir(base, ["cache-by-identity", key, "slots"]);
+    },
+  };
+}
+
+const nativeAuthSchema = z.object({
+  api_key: z.null().optional(),
+  secret_key: z.string().nullable().optional(),
+  allow_unauthenticated_inference: z.literal(false).optional(),
+  skip_api_key_verification: z.literal(false).optional(),
+  sub_keys: z.array(z.never()).optional(),
+});
+
+function readPrivateNativeSettings(base: string): Record<string, unknown> {
+  const owner = process.getuid?.();
+  const dir = lstatSync(base);
+  if (!dir.isDirectory() || dir.uid !== owner || (dir.mode & 0o077) !== 0) {
+    throw new Error("oMLX native launch requires a private settings directory");
+  }
+  let fd: number;
+  try {
+    fd = openSync(
+      join(base, "settings.json"),
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
+    throw new Error("oMLX native launch requires private settings");
+  }
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.uid !== owner || (stat.mode & 0o077) !== 0) {
+      throw new Error("oMLX native launch requires private settings");
+    }
+    try {
+      return object(JSON.parse(readFileSync(fd, "utf8")));
+    } catch {
+      throw new Error("oMLX native launch could not read private settings");
+    }
+  } finally {
+    closeSync(fd);
+  }
+}
+
+export function prepareOmlxNativeAuth(
+  base: string,
+  env: NodeJS.ProcessEnv,
+): { env: NodeJS.ProcessEnv; apiKey: string; verify: () => boolean } {
+  if (env["OMLX_API_KEY"] !== undefined || env["OMLX_SECRET_KEY"] !== undefined) {
+    throw new Error("oMLX native launch owns its authentication environment");
+  }
+  const settings = readPrivateNativeSettings(base);
+  if (!nativeAuthSchema.safeParse(settings["auth"] ?? {}).success) {
+    throw new Error("oMLX native launch requires exclusive authentication");
+  }
+  const apiKey = randomBytes(32).toString("hex");
+  const signingKey = randomBytes(32).toString("hex");
+  // A missing signing key makes stock oMLX save all runtime settings, including
+  // the environment-supplied inference key.
+  const auth = {
+    api_key: null,
+    secret_key: signingKey,
+    allow_unauthenticated_inference: false,
+    skip_api_key_verification: false,
+    sub_keys: [],
+  };
+  const pending = join(base, `.native-auth-${randomBytes(8).toString("hex")}.tmp`);
+  try {
+    writeFileSync(pending, JSON.stringify({ ...settings, auth }), { flag: "wx", mode: 0o600 });
+    renameSync(pending, join(base, "settings.json"));
+  } finally {
+    rmSync(pending, { force: true });
+  }
+  return {
+    env: { ...env, OMLX_API_KEY: apiKey, OMLX_SECRET_KEY: signingKey },
+    apiKey,
+    verify(): boolean {
+      try {
+        const current = nativeAuthSchema.safeParse(readPrivateNativeSettings(base)["auth"]);
+        return current.success && current.data.secret_key === signingKey;
+      } catch {
+        return false;
+      }
+    },
+  };
+}
+
+export async function loadInitiallyOwnedOmlx({
+  binding,
+  apiKey,
+  readiness,
+  verifyReservation,
+  connect,
+  admitLoad,
+  signal,
+}: {
+  binding: OmlxNativeBinding;
+  apiKey: string;
+  readiness: ModelHostReadiness;
+  verifyReservation: () => boolean;
+  connect: ConnectOmlxOwnerSocket;
+  admitLoad: () => boolean;
+  signal: AbortSignal;
+}): Promise<boolean> {
+  const { endpoint, modelId } = binding;
+  const guardedBinding = {
+    ...binding,
+    stillCurrent: (pin): boolean =>
+      !signal.aborted && binding.stillCurrent(pin) && verifyReservation(),
+  } satisfies OmlxNativeBinding;
+  const current = (): boolean => nativeBindingCurrent(guardedBinding, endpoint);
+  if (
+    !current() ||
+    !(await verifyOmlxOwnerAuthentication({ endpoint, apiKey, modelId, signal, connect }))
+  ) {
+    return false;
+  }
+  const direct = createOmlxOwnerFetch(endpoint, { connect });
+  const load = createOmlxOwnerFetch(endpoint, {
+    async connect(signal) {
+      const socket = await connect(signal);
+      try {
+        if (!admitLoad()) throw new Error("oMLX launch no longer has physical headroom");
+        return socket;
+      } catch (error) {
+        socket.destroy();
+        throw error;
+      }
+    },
+  });
+  const fetch = Object.assign(
+    (input: Request | URL | string, init?: RequestInit): Promise<Response> =>
+      current()
+        ? (init?.method === "POST" ? load : direct)(input, {
+            ...init,
+            signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal,
+          })
+        : Promise.reject(new Error("oMLX native launch reservation is no longer current")),
+    { preconnect: direct.preconnect },
+  );
+
+  // The initial launch already holds the full charge and has no serving route.
+  const client = createOmlxNativeClient({
+    endpoint,
+    binding: guardedBinding,
+    hostedRel: modelId,
+    apiKey,
+    readiness,
+    activityObservable: true,
+    fetch,
+  });
+  const result = await client.load();
+  return (result.kind === "loaded" || result.kind === "already-loaded") && current();
+}
+
+function readExclusiveNativeModelSettings(base: string, modelId: string): Record<string, unknown> {
+  const settings = readModelSettings(base, modelId);
+  const global = readPrivateNativeSettings(base);
+  const mcp = global["mcp"];
+  if (
+    settings["is_pinned"] === true ||
+    settings["dflash_enabled"] === true ||
+    (settings["ttl_seconds"] !== undefined && settings["ttl_seconds"] !== null) ||
+    (mcp !== undefined && typeof object(mcp)["config_path"] === "string")
+  ) {
+    throw new Error("oMLX native launch cannot verify exclusive model activity");
+  }
+  return settings;
+}
+
+export function prepareOmlxOwnerLaunch(
+  launch: OmlxCacheLaunch,
+  env: NodeJS.ProcessEnv,
+  modelRel: string,
+): ReturnType<typeof prepareOmlxNativeAuth> & {
+  modelId: string;
+  modelPath: string;
+  artifactRevision: string;
+  verifyLaunchInputs(): boolean;
+} {
+  const base = argvValue(launch.args, "--base-path");
+  const modelDir = argvValue(launch.args, "--model-dir");
+  const modelId = basename(modelRel);
+  const modelPath = join(modelDir, modelId);
+  const settings = readExclusiveNativeModelSettings(base, modelId);
+  const artifactRevision = digestModelArtifact(modelDir, modelId);
+  const auth = prepareOmlxNativeAuth(base, env);
+  return {
+    ...auth,
+    modelId,
+    modelPath,
+    artifactRevision,
+    verifyLaunchInputs(): boolean {
+      try {
+        return (
+          auth.verify() &&
+          isDeepStrictEqual(readExclusiveNativeModelSettings(base, modelId), settings) &&
+          digestModelArtifact(modelDir, modelId) === artifactRevision
+        );
+      } catch {
+        return false;
+      }
     },
   };
 }

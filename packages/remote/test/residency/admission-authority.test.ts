@@ -56,6 +56,7 @@ import {
 import {
   type AdmissionStore,
   AuthorityUnavailableError,
+  type ClaimRow,
   openAdmissionStore,
   type OwnerIdentity,
 } from "../../src/residency/admission-store.js";
@@ -1153,5 +1154,142 @@ describe("admission-authority", () => {
       h.authority.close();
       h.cleanup();
     }
+  });
+});
+
+const atomicWakeGeneration = { pid: 4100, birthId: "atomic-wake-generation" };
+const atomicWake = { workload: "waking", specDigest: "atomic-spec", ...atomicWakeGeneration };
+
+type AtomicAllocationFixture = {
+  authority: AdmissionAuthority;
+  side: AdmissionStore;
+  verify: { owner: boolean; budget?: () => void; generation?: () => void };
+  [Symbol.dispose](): void;
+};
+
+function atomicAllocationFixture(): AtomicAllocationFixture {
+  const dir = mkdtempSync(join(tmpdir(), "llamactl-atomic-credit-"));
+  const path = join(dir, "admission.db");
+  const verify: AtomicAllocationFixture["verify"] = { owner: true };
+  const authority = openAdmissionAuthority({
+    storePath: path,
+    owner: { pid: 4101, birthId: "atomic-owner" },
+    budgetGiB(): number {
+      verify.budget?.();
+      return 24;
+    },
+    observe: (pid): ProcessObservation | undefined => {
+      if (pid !== atomicWakeGeneration.pid) return undefined;
+      verify.generation?.();
+      return { ...atomicWakeGeneration, alive: true };
+    },
+    readPidFile: (name) => (name === atomicWake.workload ? atomicWakeGeneration.pid : undefined),
+    nativeAllocationFence: { verifyOwner: () => verify.owner },
+  });
+  const side = openAdmissionStore({ path, requireExisting: true });
+  return {
+    authority,
+    side,
+    verify,
+    [Symbol.dispose](): void {
+      side.close();
+      authority.close();
+      rmSync(dir, { recursive: true, force: true });
+    },
+  };
+}
+
+function recordAtomicResident(f: AtomicAllocationFixture, workload: string): void {
+  const result = f.authority.admit({
+    runtimeKey: workload,
+    specDigest: atomicWake.specDigest,
+    kind: "ModelHost",
+    allocationGiB: 8,
+  });
+  if (result.kind !== "admitted") throw new Error("fixture claim refused");
+  if (
+    workload === atomicWake.workload &&
+    !f.authority.recordGeneration(result.claimId, result.fenceToken, atomicWakeGeneration)
+  ) {
+    throw new Error("fixture generation refused");
+  }
+  if (!f.authority.completeReady(result.claimId, result.fenceToken))
+    throw new Error("fixture ready refused");
+}
+
+function parkAtomicFixture(
+  f: AtomicAllocationFixture,
+  workload: string,
+  residualGiB: number,
+): ClaimRow {
+  const resident = f.side.snapshot().find((claim) => claim.runtimeKey === workload);
+  if (resident === undefined) throw new Error("fixture resident missing");
+  const starting = f.side.transitionNative(resident, { kind: "begin-park" });
+  if (starting === undefined) throw new Error("fixture park intent refused");
+  const parked = f.side.transitionNative(starting, { kind: "park", residualGiB });
+  if (parked === undefined) throw new Error("fixture park refused");
+  return parked;
+}
+
+test("admission rechecks parked credit against the claims locked for insertion", () => {
+  using f = atomicAllocationFixture();
+  recordAtomicResident(f, "other");
+  f.verify.budget = (): void => {
+    parkAtomicFixture(f, "other", 2);
+  };
+  const result = f.authority.admit({
+    runtimeKey: "would-overcommit",
+    specDigest: "fixture",
+    kind: "ModelHost",
+    allocationGiB: 20,
+  });
+  expect(result).toMatchObject({ kind: "refuse", reason: "ManagedNativeCreditUnverified" });
+  expect(f.side.snapshot()).toMatchObject([{ runtimeKey: "other", allocationGiB: 2 }]);
+});
+
+test.each(["reserve", "dispatch"] as const)(
+  "native %s rechecks parked credit after its generation observation",
+  (kind) => {
+    using f = atomicAllocationFixture();
+    recordAtomicResident(f, atomicWake.workload);
+    recordAtomicResident(f, "other");
+    const parked = parkAtomicFixture(f, atomicWake.workload, 8);
+    const limits = { ledgerCeilingGiB: 24, launchHeadroomGiB: 24 };
+    const expected =
+      kind === "reserve"
+        ? parked
+        : f.authority.transitionNative(atomicWake, parked, { kind: "reserve", limits });
+    if (expected === undefined) throw new Error("fixture native reservation refused");
+    f.verify.generation = (): void => {
+      parkAtomicFixture(f, "other", 2);
+    };
+    expect(f.authority.transitionNative(atomicWake, expected, { kind, limits })).toBeUndefined();
+    expect(f.side.snapshot().find((claim) => claim.runtimeKey === "other")?.allocationGiB).toBe(2);
+    expect(
+      f.side.snapshot().find((claim) => claim.runtimeKey === atomicWake.workload)?.native?.phase,
+    ).toBe(kind === "reserve" ? "parked" : "reserved");
+  },
+);
+
+test("direct allocation and native reserve refuse a lost owner journal while recovery remains available", () => {
+  using f = atomicAllocationFixture();
+  recordAtomicResident(f, atomicWake.workload);
+  const parked = parkAtomicFixture(f, atomicWake.workload, 8);
+  const limits = { ledgerCeilingGiB: 24, launchHeadroomGiB: 24 };
+  f.verify.owner = false;
+  expect(
+    f.authority.admit({
+      runtimeKey: "new-work",
+      specDigest: "fixture",
+      kind: "ModelHost",
+      allocationGiB: 4,
+    }),
+  ).toMatchObject({ kind: "refuse", reason: "AuthorityUnavailable" });
+  expect(
+    f.authority.transitionNative(atomicWake, parked, { kind: "reserve", limits }),
+  ).toBeUndefined();
+  expect(f.authority.transitionNative(atomicWake, parked, { kind: "uncertain" })).toMatchObject({
+    state: "uncertain",
+    allocationGiB: 8,
   });
 });

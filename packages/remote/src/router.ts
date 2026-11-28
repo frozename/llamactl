@@ -1927,14 +1927,14 @@ function localChatEngineFetch(forward: LocalEngineForwarder, timeoutMs: number):
       clientSignal: init.signal ?? new AbortController().signal,
       deadlineMs: Date.now() + timeoutMs,
       principal: { bearer: null },
-      send: (signal, body) => {
+      send: (signal, body, transport = fetch) => {
         const engine = {
           ...withLocalEngineBody(init, body),
           signal,
           redirect: "error" as const,
           timeout: false,
         };
-        return fetch(input, engine);
+        return transport(input, engine);
       },
     });
     return admitted ?? fetch(input, init);

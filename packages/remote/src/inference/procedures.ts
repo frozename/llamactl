@@ -39,7 +39,10 @@ import { type inferenceContracts, inferenceRpc, openaiProxy, routingCatalog } fr
 import { LOCAL_NODE_NAME } from "@llamactl/core/config/schema";
 import { checkServingReadiness, formatHostForUrl } from "@llamactl/core/engines";
 import { resolveEnv } from "@llamactl/core/env";
-import { withLocalEngineBody } from "@llamactl/core/residency/engine-forwarder";
+import {
+  selectLocalEngineReadiness,
+  withLocalEngineBody,
+} from "@llamactl/core/residency/engine-forwarder";
 import {
   listLocalRoutes,
   listWorkloadRoutes,
@@ -381,7 +384,7 @@ function engineFetch(
     headers.delete("authorization");
     if (managed !== undefined) {
       return managed.permit.send(
-        (signal, body) => {
+        (signal, body, transport = fetch) => {
           beforeLocalDial?.();
           managed.onDial();
           const engine = {
@@ -390,7 +393,7 @@ function engineFetch(
             redirect: "error" as const,
             timeout: false,
           };
-          return fetch(input, engine);
+          return transport(input, engine);
         },
         typeof init?.body === "string" ? init.body : null,
       );
@@ -631,11 +634,16 @@ async function verifiesServingReadiness(
   binding: Extract<LocalServingBinding, { kind: "local" }>,
 ): Promise<boolean> {
   const { route } = binding;
-  if (
-    route.readiness !== undefined &&
-    !(await checkServingReadiness(route, route.readiness, { fetch: fetchAtServingEndpoint }))
-  )
-    return false;
+  if (route.readiness !== undefined) {
+    const transport = selectLocalEngineReadiness(route, route.readiness.path);
+    if (
+      transport === null ||
+      !(await checkServingReadiness(route, route.readiness, {
+        fetch: transport ?? fetchAtServingEndpoint,
+      }))
+    )
+      return false;
+  }
   return bindingStillCurrent(state, deployment, route);
 }
 

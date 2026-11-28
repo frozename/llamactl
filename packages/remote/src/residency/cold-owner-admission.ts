@@ -294,7 +294,7 @@ class ColdOwnerAdmissionImpl implements ColdOwnerAdmission {
     return await (this.opts.warm.forward({
       ...request,
       stillOwnsTarget: () => this.stillOwns(batch, proof),
-      send: (signal, body) => dispatch.send(request.target, signal, body),
+      send: (signal, body, transport) => dispatch.send(request.target, signal, body, transport),
     }) ?? ownerRefusal("cold_owner_unavailable"));
   }
 

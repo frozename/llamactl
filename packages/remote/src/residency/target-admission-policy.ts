@@ -36,6 +36,7 @@ import type {
   AdmitRequest,
   AuthorityClaimRow,
   ManagedStopProof,
+  ValidateParkedCredit,
 } from "./admission-authority.js";
 import type { InferenceHolds, InferenceHoldState } from "./inference-holds.js";
 
@@ -95,6 +96,8 @@ export interface NodeManagedAdmissionOptions {
   requireExistingStore?: boolean;
   verifyJournalPair?: () => string | undefined;
   inferenceHolds?: InferenceHolds;
+  validateParkedCredit?: ValidateParkedCredit | undefined;
+  aroundOwnedLifecycle?: (<T>(run: () => T) => T) | undefined;
 }
 
 function unresolvedInference(state: InferenceHoldState | undefined): boolean {
@@ -856,6 +859,24 @@ interface NodeManagedAdmission {
   verifyActivation(): string | undefined;
 }
 
+function verifyManagedActivation(
+  opts: NodeManagedAdmissionOptions,
+  authority: AdmissionAuthority,
+  physical: PhysicalPolicy | undefined,
+  budgetGiB: () => number | undefined,
+  inspectRuntime: () => string | undefined,
+): string | undefined {
+  if (!authority.isOperational()) return "AuthorityUnavailable";
+  const measured = physical?.measure();
+  if (measured === undefined) {
+    if (budgetGiB() === undefined) return "BudgetUnknown";
+  } else {
+    auditCapacity(opts, "bootstrap", measured);
+    if ("refusal" in measured) return measured.refusal;
+  }
+  return inspectRuntime();
+}
+
 export async function openNodeManagedAdmission(
   opts: NodeManagedAdmissionOptions,
 ): Promise<NodeManagedAdmission> {
@@ -882,7 +903,12 @@ export async function openNodeManagedAdmission(
     requireExisting: opts.requireExistingStore,
     budgetGiB,
     readPidFile: (name) => readManagedRuntimePid(resolved, name),
+    nativeAllocationFence: {
+      verifyOwner: () => opts.verifyJournalPair?.() === undefined,
+      validateParkedCredit: opts.validateParkedCredit,
+    },
   });
+  const { authority } = runtime;
   const physical =
     measure === undefined ? undefined : ownerPhysicalPolicy(opts, measure, runtime.authority);
   const runOwnedLifecycle = <T>(run: () => T): T =>
@@ -892,17 +918,19 @@ export async function openNodeManagedAdmission(
         opts.verifyJournalPair?.() === undefined &&
         runtime.authority.isOperational() &&
         (engineGate.getStore()?.mayEnter() ?? true),
-      run,
+      () => (opts.aroundOwnedLifecycle === undefined ? run() : opts.aroundOwnedLifecycle(run)),
     );
   const inspectRuntime = (): string | undefined =>
     opts.verifyJournalPair?.() ?? managedInventoryRefusal(resolved, runtime);
+  const inspectAllocation = (): string | undefined =>
+    inspectRuntime() ?? authority.nativeAllocationRefusal();
   const admission = createManagedLaunchAdmission({
     runOwnedLifecycle,
-    authority: runtime.authority,
+    authority,
     capture: (_request, pid) => runtime.capture(pid),
-    inspectRuntime,
+    inspectRuntime: inspectAllocation,
     resolve: (request) => {
-      const profileRefusal = managedProfileLaunchRefusal();
+      const profileRefusal = authority.nativeAllocationRefusal() ?? managedProfileLaunchRefusal();
       if (profileRefusal !== undefined) return { refusal: profileRefusal };
       if (unresolvedInference(opts.inferenceHolds?.state(request.runtimeKey))) {
         return { refusal: "ManagedInferenceUnresolved" };
@@ -923,11 +951,13 @@ export async function openNodeManagedAdmission(
       ownerNodeId: opts.nodeName,
       readStatus: () => managedReadout(opts, runtime.authority, budgetGiB),
       readCalibration: readOwnedCalibration.bind(null, compile, workloadsDir, aliases),
+      allowsManagedServing: (workload) =>
+        opts.verifyJournalPair?.() === undefined && authority.allowsServing(workload),
       allowsProfileServing: (workload) =>
         allowsProfileServing(opts.nodeName, aliases, workloadsDir, workload),
       observeProfileWorkload: profileWorkload.bind(null, opts, resolved, runtime.authority),
       preflightProfile(plan): string | undefined {
-        const runtimeRefusal = inspectRuntime();
+        const runtimeRefusal = inspectAllocation();
         if (runtimeRefusal !== undefined) return runtimeRefusal;
         const unresolved = plan.victims.find((name) =>
           unresolvedInference(opts.inferenceHolds?.state(name)),
@@ -953,25 +983,16 @@ export async function openNodeManagedAdmission(
         const manifest = parseDesired(input);
         if (manifest === undefined || !aliases.has(manifest.spec.node)) return await apply(false);
         verifyManagedDesiredOwner(manifest, workloadsDir, aliases, opts.inferenceHolds);
-        const inventoryError = manifest.spec.enabled ? inspectRuntime() : undefined;
+        const inventoryError = manifest.spec.enabled ? inspectAllocation() : undefined;
         if (inventoryError !== undefined) throw new Error(inventoryError);
         const budget = checkManagedApply(manifest, runtime.authority, budgetGiB(), compile);
         return await desired.run(manifest, () => apply(true, budget));
       },
     },
-    authority: runtime.authority,
+    authority,
     readColdResidentGeneration: coldResidentReader(resolved, runtime, opts.verifyJournalPair),
-    verifyActivation(): string | undefined {
-      if (!runtime.authority.isOperational()) return "AuthorityUnavailable";
-      const measured = physical?.measure();
-      if (measured === undefined) {
-        if (localBudget(opts, workloadsDir, aliases) === undefined) return "BudgetUnknown";
-      } else {
-        auditCapacity(opts, "bootstrap", measured);
-        if ("refusal" in measured) return measured.refusal;
-      }
-      return inspectRuntime();
-    },
+    verifyActivation: () =>
+      verifyManagedActivation(opts, authority, physical, budgetGiB, inspectRuntime),
   };
 }
 
