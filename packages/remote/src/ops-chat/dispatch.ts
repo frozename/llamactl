@@ -178,6 +178,7 @@ export const OPS_CHAT_TOOLS = [
     tier: "mutation-destructive",
     surfaces: OPS_CHAT_AND_MCP_SURFACES,
   },
+  { name: "llamactl.residency.evictIdle", tier: "read", surfaces: OPS_CHAT_AND_MCP_SURFACES },
   { name: "llamactl.residency.plan", tier: "read", surfaces: OPS_CHAT_AND_MCP_SURFACES },
   { name: "llamactl.residency.status", tier: "read", surfaces: OPS_CHAT_AND_MCP_SURFACES },
   { name: "llamactl.server.status", tier: "read", surfaces: OPS_CHAT_AND_MCP_SURFACES },
@@ -348,6 +349,9 @@ async function executeReadTool(
       return await caller.residencyCalibrationKey(residencyCalibrationKeyInput.parse(args));
     case "llamactl.residency.status":
       return await caller.residencyStatus({ node: requireString(args, "node") });
+    case "llamactl.residency.evictIdle":
+      // Supplying targets would turn the preview into an eviction.
+      return await caller.residencyEvictIdle({ node: requireString(args, "node") });
     case "llamactl.residency.plan":
       return await caller.residencyPlan({
         node: requireString(args, "node"),
