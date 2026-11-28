@@ -15,7 +15,8 @@
  * `operation.lifecycle` (the operation store plus a `groupOf` that reads the
  * `llamactl.io/residency-group` manifest label) into the executor, so each stop
  * and start drives its `residency_states` row, a corroborated exclusive-group
- * occupant refuses the start, and a stale same-group occupant is reconciled.
+ * occupant refuses the start, and a stale same-group occupant is reconciled only
+ * when it is a `ready` row that `args.isProvenDown` proves down.
  *
  * `applyResidencyProfile` is wired (router procedure, CLI verb, MCP tool).
  * `cancelResidencyProfileOperation` aborts a switch this process owns at its
@@ -165,6 +166,10 @@ export type ApplyResidencyProfileArgs = {
   guard?: ProfileExecutionGuard;
   // sink for a missing node budget and heartbeat failures; default stderr
   log?: (line: string) => void;
+  // proven-down proof for the switch's uncorroborated exclusive-group peers
+  // (the router wires `directWorkloadProvenDown`); absent, the executor keeps
+  // its pre-existing reconcile-all behaviour
+  isProvenDown?: (model: string) => boolean;
 };
 
 let stepsSeam: ProfileSwitchExecutorDeps | null = null;
@@ -699,6 +704,7 @@ async function runFencedSwitch(
           lifecycle: {
             store,
             groupOf: (workload) => residencyGroupOf(args.workloadsDir, workload),
+            ...(args.isProvenDown === undefined ? {} : { isProvenDown: args.isProvenDown }),
           },
         },
       });

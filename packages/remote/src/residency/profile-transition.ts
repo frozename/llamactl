@@ -77,7 +77,10 @@
  * occupant or any failed write. Corroboration: `victims ∪ retained` is what
  * the planner observed occupying, and `buildResidencyPlan` refuses
  * `UnknownState` unless every on-node workload was observed, so a same-group
- * occupying row outside that set is stale and is reconciled to downloaded.
+ * occupying row outside that set is stale: it is reconciled to downloaded only
+ * when the lifecycle `isProvenDown` predicate proves a `ready` row down (or
+ * when no predicate is given). Otherwise it is kept and the replacement's
+ * loading hop refuses with `ExclusiveGroupOccupied`.
  */
 import { getResidencyLeaseRegistry, type ResidencyLeases } from "@llamactl/core/residency/leases";
 import {
@@ -1276,13 +1279,30 @@ function lifecycleDepsFor(
 function checkBeforeProfileStep(
   checkDesired: () => string | null,
   run: () => Promise<ProfileSwitchStepOutcome>,
-  trackActuator: ProfileSwitchOperationOpts["trackActuator"],
 ): Promise<ProfileSwitchStepOutcome> {
   const stale = checkDesired();
   if (stale !== null) return Promise.resolve({ ok: false, detail: stale });
-  const actuator = run();
-  trackActuator?.(actuator);
-  return actuator;
+  return run();
+}
+
+function trackProfileActuators(
+  deps: ProfileSwitchExecutorDeps,
+  track: (actuator: Promise<ProfileSwitchStepOutcome>) => void,
+  started: () => void,
+): ProfileSwitchExecutorDeps {
+  function dispatch(
+    run: () => Promise<ProfileSwitchStepOutcome>,
+  ): Promise<ProfileSwitchStepOutcome> {
+    started();
+    const actuator = run();
+    track(actuator);
+    return actuator;
+  }
+  return {
+    ...deps,
+    stop: (workload, ctx) => dispatch(() => deps.stop(workload, ctx)),
+    start: (workload, ctx) => dispatch(() => deps.start(workload, ctx)),
+  };
 }
 
 function executorDepsFor(
@@ -1292,13 +1312,39 @@ function executorDepsFor(
 ): ProfileSwitchExecutorDeps {
   const lifecycleDeps = lifecycleDepsFor(plan, deps, operation);
   if (operation?.checkDesired === undefined) return lifecycleDeps;
-  const { checkDesired, trackActuator } = operation;
+  const { checkDesired } = operation;
   return {
     ...lifecycleDeps,
     stop: (workload, ctx) =>
-      checkBeforeProfileStep(checkDesired, () => lifecycleDeps.stop(workload, ctx), trackActuator),
+      checkBeforeProfileStep(checkDesired, () => lifecycleDeps.stop(workload, ctx)),
     start: (workload, ctx) =>
-      checkBeforeProfileStep(checkDesired, () => lifecycleDeps.start(workload, ctx), trackActuator),
+      checkBeforeProfileStep(checkDesired, () => lifecycleDeps.start(workload, ctx)),
+  };
+}
+
+function observeProfileExecution(
+  plan: OkPlan,
+  deps: ProfileSwitchExecutorDeps,
+  operation: ProfileSwitchOperationOpts | undefined,
+): {
+  executorDeps: ProfileSwitchExecutorDeps;
+  operation: ProfileSwitchOperationOpts | undefined;
+} {
+  if (operation === undefined) return { executorDeps: deps, operation };
+  let actuatorStarted = false;
+  const tracked = trackProfileActuators(
+    deps,
+    (actuator) => operation.trackActuator?.(actuator),
+    (): void => {
+      actuatorStarted = true;
+    },
+  );
+  return {
+    executorDeps: executorDepsFor(plan, tracked, operation),
+    operation: {
+      ...operation,
+      didActuate: () => actuatorStarted || operation.didActuate?.() === true,
+    },
   };
 }
 
@@ -1377,7 +1423,7 @@ export async function executeProfileSwitch(
   }
 
   const signal = opts.signal;
-  const operation = opts.operation;
+  const { executorDeps, operation } = observeProfileExecution(plan, deps, opts.operation);
   const budget = stepBudgetFrom(
     opts.stepTimeouts,
     opts.stepTimer,
@@ -1385,7 +1431,6 @@ export async function executeProfileSwitch(
     opts.enforcePlanDeadline === true ? plan.deadlineMs : undefined,
     opts.nowMs ?? Date.now,
   );
-  const executorDeps = executorDepsFor(plan, deps, operation);
   const run = async (beat: Beat): Promise<RunResult> => {
     const refusal = profileDeadlineRefusal(budget);
     if (refusal !== undefined) return failedBeforeActuators(plan.node, refusal, planned);

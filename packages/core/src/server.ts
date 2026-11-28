@@ -49,7 +49,9 @@ import { omitUndefined } from "./object.js";
 import {
   type CommandExpectation,
   isRecordedPidGone,
+  isValidRecordedPid,
   type PidIdentityDeps,
+  readRecordedPidEvidence,
   terminateVerifiedPid,
   verifyPidFile,
 } from "./pidIdentity.js";
@@ -64,6 +66,7 @@ import { managedRuntimeRefusesMutation } from "./residency/managed-runtime.js";
 import { currentSessionRefcounts, type SessionRefcounts } from "./residency/sessions.js";
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   statSync,
@@ -1443,22 +1446,35 @@ function trackedInstanceLive(
 }
 
 /**
- * Read-only identity proof that a tracked ModelRun is down: a workload with no
- * recorded pid file, or whose recorded pid verifies `dead` or `reused` against
- * its pid file, is proven down. A live pid, or one whose identity cannot be
- * verified (`unknown`), fails closed. The predicate never deletes tracking
- * files, so it is safe to call outside a transaction and from boot recovery.
+ * A missing record is evidence of absence only after checking all tracking
+ * files. Conflicting or unreadable evidence must retain the workload's claim.
  */
 export function isServerProvenDown(
   key: WorkloadKey,
   resolved: ResolvedEnv = resolveEnv(),
   identity?: PidIdentityDeps,
 ): boolean {
-  const pid = readServerPid(key, resolved);
-  if (pid === null) return true;
-  return isRecordedPidGone(
-    verifyPidFile(pidFile(resolved, key), pid, trackedStopIdentity(resolved, key, identity)),
-  );
+  try {
+    const recordPath = pidFile(resolved, key);
+    const record = readRecordedPidEvidence(recordPath);
+    if (record.kind === "unverified") return false;
+    const sidecarPath = serverStateFile(resolved, key);
+    const sidecar = lstatSync(sidecarPath, { throwIfNoEntry: false });
+    const state = sidecar?.isFile() === true ? readServerState(key, resolved) : null;
+    if (sidecar !== undefined && (state === null || !isValidRecordedPid(state.pid))) return false;
+    if (record.kind === "present" && state !== null && record.pid !== state.pid) return false;
+    const pid = record.kind === "present" ? record.pid : state?.pid;
+    if (pid === undefined) return true;
+    return isRecordedPidGone(
+      verifyPidFile(
+        record.kind === "present" ? recordPath : sidecarPath,
+        pid,
+        trackedStopIdentity(resolved, key, identity),
+      ),
+    );
+  } catch {
+    return false;
+  }
 }
 
 /**

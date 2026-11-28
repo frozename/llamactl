@@ -134,10 +134,16 @@ function reportStartResult(pid: number | null, target: string, json: boolean): n
  * second supervisor would compete with a process we cannot rule out as
  * ours. Only provably-gone records (dead/reused) fall through.
  */
-function duplicateStartRefusal(): { msg: string; pid: number } | null {
+function duplicateStartRefusal(): { msg: string; pid: number | null } | null {
   const existing = keepAlive.readKeepAliveRecord();
-  if (existing.pid === null || existing.verdict === null) return null;
+  if (existing.verdict === null) return null;
   if (existing.verdict === "dead" || existing.verdict === "reused") return null;
+  if (existing.pid === null) {
+    return {
+      msg: "keep-alive PID record is unreadable — refusing to start a duplicate",
+      pid: null,
+    };
+  }
   const msg =
     existing.verdict === "alive"
       ? `keep-alive already running (pid=${String(existing.pid)})`
@@ -412,11 +418,17 @@ async function runStop(args: string[]): Promise<number> {
 
   if (flags.json) {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-    return result.refused !== undefined ? 1 : 0;
+    return result.refused !== undefined || !result.stopped ? 1 : 0;
   }
   if (result.refused !== undefined) {
     process.stderr.write(
       keepAliveStopRefusalLine(resolveEffectiveNodeName(), workload, result.refused),
+    );
+    return 1;
+  }
+  if (!result.stopped) {
+    process.stderr.write(
+      `keep-alive stop: node ${resolveEffectiveNodeName()} could not confirm that ${workload} stopped\n`,
     );
     return 1;
   }

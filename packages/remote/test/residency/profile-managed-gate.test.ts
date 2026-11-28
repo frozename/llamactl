@@ -1,4 +1,5 @@
 import { createResidencyLeases } from "@llamactl/core/residency/leases";
+import { RESIDENCY_GROUPS } from "@llamactl/core/residency/lifecycle";
 import { planProfileSwitch } from "@llamactl/core/residency/planner";
 import { managedProfileTargetState } from "@llamactl/core/residency/profile-selection";
 import { expect, test } from "bun:test";
@@ -23,6 +24,98 @@ const plan = planProfileSwitch({
     { id: "new", profiles: ["new"], state: "downloaded", expectedMemoryGiB: 16 },
   ],
 });
+
+test.each([false, true])(
+  "exclusive peer refusal settles without an engine call (idle guard=%s)",
+  async (guarded) => {
+    const dir = mkdtempSync(join(tmpdir(), "llamactl-managed-peer-refusal-"));
+    const store = openResidencyOperationStore({ path: join(dir, "operations.sqlite") });
+    try {
+      const group = "z13-large-gpu";
+      const target = planProfileSwitch({
+        node: "fixture",
+        to: "new",
+        budgetGiB: 24,
+        groups: RESIDENCY_GROUPS,
+        nowMs: 0,
+        workloads: [{ id: "new", profiles: ["new"], state: "downloaded", expectedMemoryGiB: 16 }],
+      });
+      if (!target.ok) throw new Error("fixture plan refused");
+      expect(target.victims).toEqual([]);
+      const { fenceToken } = store.claimOwnership({ ownerId: "fixture", incarnation: "one" });
+      const peer = "existing";
+      for (const to of ["downloaded", "loading", "warming", "ready"] as const) {
+        expect(
+          store.transitionResidencyState({
+            fenceToken,
+            model: peer,
+            group,
+            to,
+            expectedVersion: store.getResidencyState(peer)?.version ?? 0,
+            nowMs: Date.now(),
+            groups: RESIDENCY_GROUPS,
+          }).ok,
+        ).toBe(true);
+      }
+      const calls: string[] = [];
+      const observed: Promise<ProfileSwitchStepOutcome>[] = [];
+      const steps = {
+        stop: (id: string): Promise<ProfileSwitchStepOutcome> => {
+          calls.push(`stop:${id}`);
+          return Promise.resolve({ ok: true });
+        },
+        start: (id: string): Promise<ProfileSwitchStepOutcome> => {
+          calls.push(`start:${id}`);
+          return Promise.resolve({ ok: true });
+        },
+      };
+      const run = (
+        operationId: string,
+        peerDown: boolean,
+      ): ReturnType<typeof executeProfileSwitch> =>
+        executeProfileSwitch(target, steps, {
+          dryRun: false,
+          registry: createResidencyLeases(),
+          operation: {
+            store,
+            fenceToken,
+            operationId,
+            desiredRevision: 0,
+            managed: true,
+            checkDesired: () => null,
+            ...(guarded
+              ? {
+                  trackActuator: (pending: Promise<ProfileSwitchStepOutcome>): void => {
+                    observed.push(pending);
+                  },
+                  didActuate: (): boolean => observed.length > 0,
+                }
+              : {}),
+            lifecycle: {
+              store,
+              groupOf: () => group,
+              groups: RESIDENCY_GROUPS,
+              isProvenDown: () => peerDown,
+            },
+          },
+        });
+      const refused = await run("refused", false);
+      expect(refused.failedAt?.detail).toContain("ExclusiveGroupOccupied");
+      expect(calls).toEqual([]);
+      expect(observed).toEqual([]);
+      expect(refused.operation).toMatchObject({ outcome: "failed", recorded: true });
+      expect(store.listNonterminal()).toEqual([]);
+      expect(store.getResidencyState(peer)?.state).toBe("ready");
+
+      const retried = await run("retried", true);
+      expect(retried.ok).toBe(true);
+      expect(calls).toEqual(["start:new"]);
+    } finally {
+      store.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
 
 test("managed preflight revalidates after drain ahead of any stop", async () => {
   const dir = mkdtempSync(join(tmpdir(), "llamactl-managed-preflight-"));

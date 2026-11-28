@@ -10,9 +10,30 @@
 import { execFileSync } from "node:child_process";
 import { basename } from "node:path";
 
-import { existsSync, statSync } from "./safe-fs.js";
+import { existsSync, lstatSync, readFileSync, statSync } from "./safe-fs.js";
 
 export type PidVerdict = "alive" | "dead" | "reused" | "unknown";
+
+export function isValidRecordedPid(pid: number): boolean {
+  return Number.isInteger(pid) && pid > 0 && pid <= 0x7fff_ffff;
+}
+
+export function readRecordedPidEvidence(
+  path: string,
+): { kind: "absent" | "unverified" } | { kind: "present"; pid: number } {
+  try {
+    const stat = lstatSync(path, { throwIfNoEntry: false });
+    if (stat === undefined) return { kind: "absent" };
+    if (!stat.isFile()) return { kind: "unverified" };
+    const raw = readFileSync(path, "utf8").trim();
+    const pid = Number(raw);
+    return /^[1-9]\d*$/.test(raw) && isValidRecordedPid(pid)
+      ? { kind: "present", pid }
+      : { kind: "unverified" };
+  } catch {
+    return { kind: "unverified" };
+  }
+}
 
 export const PID_START_SLACK_MS = 30_000;
 

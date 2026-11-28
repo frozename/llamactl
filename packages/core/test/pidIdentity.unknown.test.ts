@@ -187,6 +187,28 @@ describe("unknown identity is fail-closed at every caller", () => {
     });
   });
 
+  test.each(["status", "stop"])(
+    "keep-alive %s preserves an unreadable PID record",
+    async (action) => {
+      mkdirSync(resolved.LOCAL_AI_RUNTIME_DIR, { recursive: true });
+      const pidPath = keepAlive.keepAlivePidFile(resolved);
+      writeFileSync(pidPath, "incomplete-pid");
+      if (action === "status") {
+        expect(keepAlive.keepAliveStatus(resolved)).toMatchObject({
+          running: false,
+          verdict: "unknown",
+        });
+      } else {
+        expect(await keepAlive.stopKeepAlive({ key: KEY, resolved })).toEqual({
+          stopped: false,
+          pid: null,
+          killed: false,
+        });
+      }
+      expect(readFileSync(pidPath, "utf8")).toBe("incomplete-pid");
+    },
+  );
+
   test("readKeepAliveRecord flags a command-line impostor as unknown", () => {
     // A fresh record passes the start-time check, so only the command line
     // can show this pid is not the keep-alive supervisor.

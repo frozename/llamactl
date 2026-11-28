@@ -15,6 +15,7 @@ import { openAdmissionAuthority } from "../../src/residency/admission-authority.
 import { createDurableOmlxParking } from "../../src/residency/durable-omlx-parking.js";
 import { createAgentOmlxNativeClient } from "../../src/residency/engine-client.js";
 import { connectOmlxOwnerSocket } from "../../src/residency/omlx-owner-socket.js";
+import { ownedOmlxListener } from "../omlx-loopback-fixture.js";
 
 const NAME = "omlx-model";
 const MODEL_PATH = "/fixtures/approved/omlx-model";
@@ -73,11 +74,11 @@ function modelStatusResponse(proof: Proof): Response {
   });
 }
 
-function setup({
+async function setup({
   alternateClient = false,
   requireCreditProof = false,
   blockSocket = false,
-} = {}): Fixture {
+} = {}): Promise<Fixture> {
   const temp = makeTempRuntime();
   const path = join(temp.devStorage, "omlx-admission.db");
   const previous = getResidencyLeaseRegistry();
@@ -177,7 +178,14 @@ function setup({
       return new Response(null, { status: 404 });
     },
   });
-  const endpoint = { host: "127.0.0.1", port: server.port ?? 0 };
+  const listener = await ownedOmlxListener(server.port ?? 0).catch(async (error: unknown) => {
+    await server.stop(true);
+    setResidencyLeaseRegistry(previous);
+    authority.close();
+    temp.cleanup();
+    throw error;
+  });
+  const { endpoint } = listener;
   const binding = {
     endpoint,
     modelPath: MODEL_PATH,
@@ -210,7 +218,7 @@ function setup({
             activityObservable: true,
           }),
         };
-  const openSocket = connectOmlxOwnerSocket(binding.endpoint, process.pid, () => !blockSocket);
+  const openSocket = connectOmlxOwnerSocket(binding.endpoint, listener.pid, () => !blockSocket);
   let ingressChecks = 0;
   const parking: ReturnType<typeof createDurableOmlxParking> = createDurableOmlxParking({
     ...obsoleteOptions,
@@ -266,6 +274,7 @@ function setup({
     alternateReads: (): number => reads,
     statusReads: (): number => statusReads,
     async [Symbol.asyncDispose](): Promise<void> {
+      await listener[Symbol.asyncDispose]();
       await alternate?.stop(true);
       await server.stop(true);
       setResidencyLeaseRegistry(previous);
@@ -276,7 +285,7 @@ function setup({
 }
 
 test("native oMLX holds the same durable charge before unload and reload dispatch", async () => {
-  await using f = setup();
+  await using f = await setup();
   const parked = await f.parking.unload();
   expect(f.posts).toEqual([
     { action: "unload", allocation: 8, native: "parking", lease: "draining" },
@@ -306,7 +315,7 @@ test("native oMLX holds the same durable charge before unload and reload dispatc
 });
 
 test("the owner verifies its exact parked receipt inside the allocation transaction", async () => {
-  await using f = setup({ requireCreditProof: true });
+  await using f = await setup({ requireCreditProof: true });
   expect(await f.parking.unload()).toMatchObject({ kind: "parked", chargedGiB: 2 });
   expect(
     f.authority.admit({
@@ -340,7 +349,7 @@ test("the owner verifies its exact parked receipt inside the allocation transact
 });
 
 test("an active request, an unproven exclusive route, and a durable inference hold each prevent dispatch", async () => {
-  await using f = setup();
+  await using f = await setup();
   const lease = f.registry.acquire(NAME);
   if (!lease.ok) throw new Error("fixture lease refused");
   expect(await f.parking.unload()).toMatchObject({ kind: "refused", reason: "LeasesActive" });
@@ -363,7 +372,7 @@ test("an active request, an unproven exclusive route, and a durable inference ho
 });
 
 test("a queued oMLX unload retains the full durable charge and keeps inference closed", async () => {
-  await using f = setup();
+  await using f = await setup();
   f.proof.response = 202;
   expect(await f.parking.unload()).toMatchObject({ kind: "ambiguous", reservation: "uncertain" });
   expect(f.authority.snapshot()[0]).toMatchObject({ state: "uncertain", allocationGiB: 8 });
@@ -376,7 +385,7 @@ test("a queued oMLX unload retains the full durable charge and keeps inference c
 });
 
 test("parked oMLX gets no memory credit without a qualified observation and refuses reload under pressure", async () => {
-  await using f = setup();
+  await using f = await setup();
   f.proof.residual = undefined;
   expect(await f.parking.unload()).toMatchObject({ kind: "parked", chargedGiB: 8 });
   expect(f.authority.snapshot()[0]).toMatchObject({
@@ -395,7 +404,7 @@ test("parked oMLX gets no memory credit without a qualified observation and refu
 });
 
 test("loss of exclusive ingress while parked revokes the previously measured memory credit", async () => {
-  await using f = setup();
+  await using f = await setup();
   expect(await f.parking.unload()).toMatchObject({ kind: "parked", chargedGiB: 2 });
   f.proof.exclusive = false;
   expect(await f.parking.load()).toMatchObject({ kind: "refused" });
@@ -406,7 +415,7 @@ test("loss of exclusive ingress while parked revokes the previously measured mem
 });
 
 test("owner recovery after native park restores the full allocation and invalidates the old receipt", async () => {
-  await using f = setup();
+  await using f = await setup();
   expect(await f.parking.unload()).toMatchObject({ kind: "parked", chargedGiB: 2 });
   const old = f.authority.snapshot()[0];
   f.authority.close();
@@ -431,13 +440,13 @@ test("owner recovery after native park restores the full allocation and invalida
 });
 
 test("an alternate client cannot receive status traffic for the pinned model", async () => {
-  await using f = setup({ alternateClient: true });
+  await using f = await setup({ alternateClient: true });
   expect(await f.parking.load()).toMatchObject({ kind: "already-loaded", modelId: NAME });
   expect(f.alternateReads()).toBe(0);
 });
 
 test("direct owner calls do not send the bearer to an ambient HTTP proxy", async () => {
-  await using f = setup();
+  await using f = await setup();
   const captured: (string | null)[] = [];
   using trap = Bun.serve({
     hostname: "127.0.0.1",
@@ -468,7 +477,7 @@ test("direct owner calls do not send the bearer to an ambient HTTP proxy", async
 });
 
 test("identity loss during the status read closes inference without dispatch", async () => {
-  await using f = setup();
+  await using f = await setup();
   f.proof.changeIdentityOnStatus = true;
   expect(await f.parking.unload()).toMatchObject({ kind: "refused", reason: "IdentityUnverified" });
   expect(f.registry.snapshot(NAME).phase).toBe("unloaded");
@@ -478,7 +487,7 @@ test("identity loss during the status read closes inference without dispatch", a
 
 test("queued reloads and failed serving readiness retain capacity without reopening inference", async () => {
   for (const scenario of [{ loadResponse: 202 }, { ready: false }]) {
-    await using f = setup();
+    await using f = await setup();
     expect(await f.parking.unload()).toMatchObject({ kind: "parked" });
     Object.assign(f.proof, scenario);
     expect(await f.parking.load()).toMatchObject({ kind: "ambiguous" });
@@ -488,7 +497,7 @@ test("queued reloads and failed serving readiness retain capacity without reopen
 });
 
 test("losing identity inside unload admission keeps the route fenced before dispatch", async () => {
-  await using f = setup();
+  await using f = await setup();
   f.proof.changeIdentityOnCommit = true;
   expect(await f.parking.unload()).toMatchObject({ kind: "refused", reason: "IdentityUnverified" });
   expect(f.registry.snapshot(NAME).phase).toBe("unloaded");
@@ -497,7 +506,7 @@ test("losing identity inside unload admission keeps the route fenced before disp
 });
 
 test("losing exclusivity during the reload status probe restores the full charge", async () => {
-  await using f = setup();
+  await using f = await setup();
   expect(await f.parking.unload()).toMatchObject({ kind: "parked", chargedGiB: 2 });
   f.proof.loseExclusiveOnStatus = true;
   expect(await f.parking.load()).toMatchObject({ kind: "refused" });
@@ -507,7 +516,7 @@ test("losing exclusivity during the reload status probe restores the full charge
 });
 
 test("native parking does not send status or unload to an unverified socket", async () => {
-  await using f = setup({ blockSocket: true });
+  await using f = await setup({ blockSocket: true });
   expect(f.statusReads()).toBe(0);
   expect(await f.parking.unload()).toMatchObject({ reservation: "held" });
   expect(f.posts).toEqual([]);
@@ -517,7 +526,7 @@ test("native parking does not send status or unload to an unverified socket", as
 });
 
 test("parked verification requires the live receipt and never changes the reservation", async () => {
-  await using f = setup();
+  await using f = await setup();
   expect(await f.parking.verifyParked()).toBe(false);
   expect(f.statusReads()).toBe(0);
   expect(await f.parking.unload()).toMatchObject({ kind: "parked", chargedGiB: 2 });
@@ -530,7 +539,7 @@ test("parked verification requires the live receipt and never changes the reserv
 });
 
 test("resume rechecks available capacity on the verified socket before sending the load", async () => {
-  await using f = setup();
+  await using f = await setup();
   expect(await f.parking.unload()).toMatchObject({ kind: "parked" });
   f.proof.loseCapacityAtSocket = true;
   await f.parking.load();
@@ -540,7 +549,7 @@ test("resume rechecks available capacity on the verified socket before sending t
 });
 
 test("park rechecks exclusive ownership on the verified socket before sending the unload", async () => {
-  await using f = setup();
+  await using f = await setup();
   f.proof.loseExclusivityAtSocket = true;
   await f.parking.unload();
   expect(f.posts).toEqual([]);
@@ -549,7 +558,7 @@ test("park rechecks exclusive ownership on the verified socket before sending th
 });
 
 test("aborting a parked probe cancels its verified status request before the engine replies", async () => {
-  await using f = setup();
+  await using f = await setup();
   expect(await f.parking.unload()).toMatchObject({ kind: "parked" });
   const ledger = f.authority.snapshot();
   const entered = Promise.withResolvers<undefined>();
@@ -563,12 +572,18 @@ test("aborting a parked probe cancels its verified status request before the eng
   const abort = new AbortController();
   const check = f.parking.verifyParked(abort.signal);
   try {
-    await entered.promise;
+    const reached = await Promise.race([
+      entered.promise.then(() => true),
+      check.then(() => false),
+      Bun.sleep(2000).then(() => false),
+    ]);
+    expect(reached).toBe(true);
     abort.abort();
     const cancelled = await Promise.race([check, Bun.sleep(600).then(() => "stalled")]);
     expect(cancelled).toBe(false);
     expect(f.authority.snapshot()).toEqual(ledger);
   } finally {
+    abort.abort();
     release.resolve(undefined);
     await check;
   }

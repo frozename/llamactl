@@ -52,6 +52,7 @@ import { omitUndefined } from "@llamactl/core/object";
 import {
   isRecordedPidGone,
   type PidIdentityDeps,
+  readRecordedPidEvidence,
   type SignalIdentity,
   verifyPidFile,
 } from "@llamactl/core/pidIdentity";
@@ -77,6 +78,7 @@ import {
   closeSync,
   existsSync,
   fstatSync,
+  lstatSync,
   mkdirSync,
   openSync,
   writeFileSync,
@@ -2567,6 +2569,31 @@ export function statusModelHost(opts: StatusModelHostOptions): StatusModelHostRe
     }),
     ...runtime,
   };
+}
+
+export function isModelHostProvenDown(key: WorkloadKey, resolved = resolveEnv()): boolean {
+  const pidPath = modelhostPidFile(resolved, key);
+  const statePath = modelhostStateFile(resolved, key);
+  try {
+    if (lstatSync(modelhostStartingFile(resolved, key), { throwIfNoEntry: false }) !== undefined) {
+      return false;
+    }
+    const pidRecord = readRecordedPidEvidence(pidPath);
+    const stateRecord = lstatSync(statePath, { throwIfNoEntry: false });
+    if (pidRecord.kind === "absent" && stateRecord === undefined) return true;
+    if (pidRecord.kind !== "present" || stateRecord?.isFile() !== true) return false;
+    const state = readModelHostState(key, resolved);
+    if (state?.pid !== pidRecord.pid) return false;
+    return isRecordedPidGone(
+      verifyPidFile(
+        pidPath,
+        state.pid,
+        hostIdentityDeps(state.engine, undefined, state.binaryNames),
+      ),
+    );
+  } catch {
+    return false;
+  }
 }
 
 function omlxParkedProbeIdentity(

@@ -213,6 +213,20 @@ afterEach(() => {
 });
 
 describe("#517 keep-alive exclusive-group refusal", () => {
+  test("an unreadable supervisor PID refuses a duplicate start before spawn", async () => {
+    const record = keepAlive.keepAlivePidFile();
+    mkdirSync(dirname(record), { recursive: true });
+    writeFileSync(record, "incomplete-pid");
+    const { result, stdout } = await runStartHermetic(["start", GLM_REL, "--json"]);
+    expect(result).toBe(1);
+    expect(JSON.parse(stdout)).toMatchObject({
+      error: "keep-alive PID record is unreadable — refusing to start a duplicate",
+      pid: null,
+    });
+    expect(existsSync(record)).toBe(true);
+    expect(existsSync(markerPath)).toBe(false);
+  });
+
   // Kills: no pre-spawn gate in runStart, or a gate placed after the
   // bin/entry check — the base prints "Cannot determine bin path for
   // supervisor" instead of the residency refusal.

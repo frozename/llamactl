@@ -186,6 +186,7 @@ import { searchSessions } from "./search/sessions.js";
 import { acquireChatSlot, admissionTrpcError } from "./server/chat-admission.js";
 import { ownerExecutionStatus } from "./server/metrics.js";
 import {
+  isModelHostProvenDown,
   pinModelHostStartup,
   startModelHost,
   type StartModelHostResult,
@@ -854,6 +855,7 @@ async function applyProfileMutation(
     node,
     to: input.to,
     from: input.from ?? null,
+    isProvenDown: directWorkloadProvenDown,
     ...(managed === undefined ? {} : { managedLaunchAdmission: managed }),
     ...(prior === undefined ? {} : { expectedManagedProfileOperationId: prior.operationId }),
     applyModelRun: (manifest, signal) =>
@@ -982,7 +984,7 @@ export function keepAliveWorkloadProvenDown(
       return false;
     }
     const { pid, verdict } = readRecord();
-    if (!(pid === null || verdict === "dead" || verdict === "reused")) {
+    if (!((pid === null && verdict === null) || verdict === "dead" || verdict === "reused")) {
       return false;
     }
     return serverDown(model);
@@ -1016,17 +1018,11 @@ function unstoredModelRunRecorded(model: string): boolean {
   }
 }
 
-// A peer is proven down only when it is a known ModelHost whose recorded-pid
-// status reads Stopped without an unresolved identity, a known ModelRun (stored,
-// or unstored and identified by its server sidecar) that has no recorded pid file
-// or whose recorded pid verifies `dead` or `reused` against its pid file using the
-// stopServer identity check, or a crash-left keep-alive workload. A live pid, or
-// an unverifiable one, fails closed. Also used by agent boot recovery for the
-// orphan lifecycle sweep (Part of #517).
+// The display status can collapse missing and invalid records. Releasing a
+// claim requires confirmed record absence or a verified dead generation.
 export function directWorkloadProvenDown(model: string): boolean {
   if (modelHostStoreMod.listModelHosts().some((host) => host.metadata.name === model)) {
-    const status = statusModelHost({ key: { name: model } });
-    return status.state === "Stopped" && status.identityUnknown !== true;
+    return isModelHostProvenDown({ name: model });
   }
   if (
     workloadStoreMod.listWorkloads().some((run) => run.metadata.name === model) ||
@@ -4714,11 +4710,14 @@ export const router = t.router({
       }
       // An unverifiable record must not be treated as absent: a second
       // supervisor would compete with a process we cannot rule out as ours.
-      if (existing.pid !== null && existing.verdict === "unknown") {
+      if (existing.verdict === "unknown") {
         return {
           ok: false,
           pid: existing.pid,
-          error: `pid identity unknown for recorded keep-alive pid ${String(existing.pid)} — refusing to start a duplicate`,
+          error:
+            existing.pid === null
+              ? "keep-alive PID record is unreadable — refusing to start a duplicate"
+              : `pid identity unknown for recorded keep-alive pid ${String(existing.pid)} — refusing to start a duplicate`,
         };
       }
       const groupRefusal = keepAliveStartRefusal(input.target);

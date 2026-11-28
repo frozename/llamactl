@@ -16,6 +16,7 @@ import {
   prepareOmlxNativeAuth,
 } from "../../src/server/omlx-cache-launch.js";
 import { createNativeOmlxOwner } from "../../src/server/omlx-native-owner.js";
+import { ownedOmlxListener } from "../omlx-loopback-fixture.js";
 
 test("native oMLX launch rotates the signing secret and never persists the inference key", () => {
   const base = mkdtempSync(join(tmpdir(), "llamactl-omlx-native-auth-"));
@@ -163,8 +164,9 @@ test("initial native load requires the exact reservation and fresh capacity at d
       return new Response(null, { status: 503 });
     },
   });
-  const endpoint = { host: server.url.hostname, port: Number(server.url.port) };
-  const openSocket = connectOmlxOwnerSocket(endpoint, process.pid, () => true);
+  await using listener = await ownedOmlxListener(Number(server.url.port));
+  const { endpoint } = listener;
+  const openSocket = connectOmlxOwnerSocket(endpoint, listener.pid, () => true);
   const bootstrap = (): Promise<boolean> =>
     loadInitiallyOwnedOmlx({
       binding: {
@@ -188,12 +190,14 @@ test("initial native load requires the exact reservation and fresh capacity at d
     });
 
   expect(await bootstrap()).toBe(false);
+  expect(statusObserved).toBe(true);
   expect(actions).toEqual([]);
   reserved = true;
   revokeOnStatus = false;
   statusObserved = false;
   revokeHeadroomAfterStatus = true;
   expect(await bootstrap()).toBe(false);
+  expect(statusObserved).toBe(true);
   expect(actions).toEqual([]);
   revokeHeadroomAfterStatus = false;
   headroom = true;
@@ -226,7 +230,8 @@ test("owner inventory discards a status reply after the serving registration cha
       });
     },
   });
-  const endpoint = { host: server.url.hostname, port: Number(server.url.port) };
+  await using listener = await ownedOmlxListener(Number(server.url.port));
+  const { endpoint } = listener;
   const owner = createNativeOmlxOwner([modelId], new Set([endpoint.port]), () => true);
   let current = true;
   owner.register({
@@ -239,11 +244,11 @@ test("owner inventory discards a status reply after the serving registration cha
       runtimeGeneration: "fixture-birth",
       stillCurrent: () => true,
     },
-    connect: connectOmlxOwnerSocket(endpoint, process.pid, () => true),
+    connect: connectOmlxOwnerSocket(endpoint, listener.pid, () => true),
     current: () => current,
     runtime: {
       workload: modelId,
-      pid: process.pid,
+      pid: listener.pid,
       birthId: "fixture-birth",
       specDigest: "fixture",
     },
@@ -253,7 +258,12 @@ test("owner inventory discards a status reply after the serving registration cha
   });
   const pending = owner.readOwnedStatus(modelId, endpoint, AbortSignal.timeout(2000));
   try {
-    await entered.promise;
+    await Promise.race([
+      entered.promise,
+      pending.then(() => {
+        throw new Error("owner inventory settled before reaching the status fixture");
+      }),
+    ]);
     current = false;
   } finally {
     release.resolve(undefined);
