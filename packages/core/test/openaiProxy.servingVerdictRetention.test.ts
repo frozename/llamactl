@@ -256,3 +256,28 @@ test("a verdict expiring exactly now is swept by a miss for another key", async 
     t.cleanup();
   }
 });
+
+test("a cached verdict expiring exactly now is re-probed, not served from cache", async () => {
+  const t = tempEnv();
+  try {
+    installClock();
+    const ttlMs = servingRouteReadinessTtlMs();
+    const t0 = clock;
+    const portA = fixturePort();
+    writeModelHost(t.env, "a-host", "a-model", portA);
+    const stub = installProxyFetchStub();
+
+    const firstA = await pinModel("a-model", t.env);
+    expect(firstA.status).toBe(200);
+    expect(stub.readyCalls(portA)).toHaveLength(1);
+
+    // expiresAt == now: a hit requires expiresAt > now, so this boundary
+    // must miss and re-probe A.
+    clock = t0 + ttlMs;
+    const secondA = await pinModel("a-model", t.env);
+    expect(secondA.status).toBe(200);
+    expect(stub.readyCalls(portA)).toHaveLength(2);
+  } finally {
+    t.cleanup();
+  }
+});
