@@ -181,4 +181,17 @@ describe("libosmos asset flags", () => {
     );
     expect(readOsmosJson(runtimeDir, workloadName)["picks"]).toBe(picks);
   });
+
+  test("prepareLaunch keeps the flag after an inline --picks value", async () => {
+    expect(adapter?.name).toBe("libosmos" as EngineName);
+    const runtimeDir = join(dir, "rt-inline-picks-no-guess");
+    const workloadName = "inline-picks-no-guess";
+    await prep(
+      { ...spec, extraArgs: [...BASE_ARGS, "--picks=picks/picks.bin", "--no-guess"] },
+      bootEnv(runtimeDir, workloadName),
+    );
+    const parsed = readOsmosJson(runtimeDir, workloadName);
+    expect(parsed["picks"]).toBe(join(modelsDir, "picks", "picks.bin"));
+    expect(parsed["no_guess"]).toBe(true);
+  });
 });
