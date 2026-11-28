@@ -5,6 +5,7 @@
 import { afterAll, beforeAll, expect, mock, test } from "bun:test";
 import { type ChildProcess, spawn as nodeSpawn, type SpawnOptions } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { EventEmitter } from "node:events";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
@@ -17,7 +18,7 @@ import { readModelHostStarting, readModelHostState } from "../../../core/src/eng
 import { resolveEnv } from "../../../core/src/env.js";
 import { processCommand } from "../../../core/src/pidIdentity.js";
 import { reapFakeProcesses } from "../../../core/test/fake-process-reaper.js";
-import { mkdtempSync, rmSync } from "../../src/safe-fs.js";
+import { mkdirSync, mkdtempSync, rmSync } from "../../src/safe-fs.js";
 import { startModelHost, stopModelHost } from "../../src/server/modelhost.js";
 import {
   baseEnv,
@@ -121,12 +122,25 @@ function manifest(fixture: Fixture, specOverrides: Record<string, unknown> = {})
   });
 }
 
+// A child the wrapper spawn never gave a pid: no process exists to handshake.
+function pidlessChild(): ChildProcess {
+  const child = Object.assign(new EventEmitter(), {
+    pid: undefined,
+    exitCode: null,
+    signalCode: null,
+    unref: (): void => undefined,
+    kill: (): boolean => false,
+  });
+  return child as unknown as ChildProcess;
+}
+
 function startHost(
   fixture: Fixture,
   launcher: EngineScopeLauncher,
   calls: SpawnCall[],
   warnings: string[],
   specOverrides: Record<string, unknown> = {},
+  override?: (call: SpawnCall) => ChildProcess | null,
 ): ReturnType<typeof startModelHost> {
   return startModelHost({
     key: { name: fixture.name },
@@ -134,7 +148,7 @@ function startHost(
     workloadsDir: fixture.dirs.workloadsDir,
     runtimeDir: fixture.dirs.runtimeDir,
     env: fixture.env,
-    spawn: spawnSpy(calls, spawnedPids),
+    spawn: spawnSpy(calls, spawnedPids, override),
     engineScope: launcher,
     signal: AbortSignal.timeout(15_000),
     warn: (message) => warnings.push(message),
@@ -242,4 +256,46 @@ test("required ModelHost scope: a scope that execs still launches", async () => 
   expect(isScopeUnit(state?.scopeUnit)).toBe(true);
   if (result.pid === null) throw new Error("expected a pid");
   await stopLiveEngine(fixture, result.pid);
+}, 60_000);
+
+test("required ModelHost scope: no boot log refuses before resolve or spawn", async () => {
+  const fixture = newFixture("required-nobootlog-host");
+  const fake = writeFakeSystemdRun(fixture.dirs.tmp, "ok");
+  let resolves = 0;
+  const { launcher } = requiredLauncher(fake, 20_000, () => {
+    resolves += 1;
+    return Promise.resolve({ ok: true, systemdRunPath: fake });
+  });
+  // A directory where the boot log belongs makes the open fail, so the launch
+  // has no boot-log fd and no exec marker could ever prove the scope.
+  mkdirSync(join(fixture.dirs.runtimeDir, "workloads", fixture.name, "modelhost.boot.log"), {
+    recursive: true,
+  });
+  const calls: SpawnCall[] = [];
+  const warnings: string[] = [];
+  const result = await startHost(fixture, launcher, calls, warnings);
+  expect(result.ok).toBe(false);
+  expect(result.error ?? "").toContain("no boot log");
+  expect(result.error).toMatch(/refusing direct spawn/);
+  expect(resolves).toBe(0);
+  expect(calls.length).toBe(0);
+  expect(readModelHostStarting({ name: fixture.name }, fixture.resolved)).toBeNull();
+  expect(readModelHostState({ name: fixture.name }, fixture.resolved)).toBeNull();
+}, 60_000);
+
+test("required ModelHost scope: a wrapper with no pid refuses the direct fallback", async () => {
+  const fixture = newFixture("required-nopid-host");
+  const fake = writeFakeSystemdRun(fixture.dirs.tmp, "ok");
+  const { launcher, noteFailure } = requiredLauncher(fake, 20_000);
+  const calls: SpawnCall[] = [];
+  const warnings: string[] = [];
+  const result = await startHost(fixture, launcher, calls, warnings, {}, () => pidlessChild());
+  expect(result.ok).toBe(false);
+  expect(result.error ?? "").toContain("wrapper pid unavailable");
+  expect(result.error).toMatch(/refusing direct spawn/);
+  expect(calls.length).toBe(1);
+  expect(calls[0]?.command).toBe(fake);
+  expect(noteFailure).toHaveBeenCalledTimes(1);
+  expect(readModelHostStarting({ name: fixture.name }, fixture.resolved)).toBeNull();
+  expect(readModelHostState({ name: fixture.name }, fixture.resolved)).toBeNull();
 }, 60_000);

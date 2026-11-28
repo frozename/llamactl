@@ -356,8 +356,10 @@ Environment:
   LLAMACTL_ENGINE_SCOPE       "off" keeps agent-launched engines on direct
                               spawns; any other value (or unset) lets a Linux
                               agent launch each engine in its own transient
-                              systemd user scope. Non-Linux hosts always
-                              spawn directly.
+                              systemd user scope. "require" makes that scope
+                              mandatory: a launch that cannot establish one
+                              fails instead of falling back to a direct
+                              spawn. Non-Linux hosts always spawn directly.
   LLAMACTL_AGENT_RUNTIME_ROLE Per-role runtime identity (env fallback for
                               --runtime-role).
   LLAMACTL_AGENT_MEMORY_BUDGET_BYTES
@@ -1821,9 +1823,23 @@ function residencyLeasesOptIn(env: Readonly<Record<string, string | undefined>>)
   return env["LLAMACTL_RESIDENCY_LEASES"] === "1" || env["LLAMACTL_RESIDENCY_LEASES"] === "true";
 }
 
-/** #806 phase 3: engine scopes are on unless LLAMACTL_ENGINE_SCOPE=off. */
-function engineScopeOptIn(env: Readonly<Record<string, string | undefined>>): boolean {
-  return env["LLAMACTL_ENGINE_SCOPE"] !== "off";
+/**
+ * #806 phase 3: engine scopes are on unless LLAMACTL_ENGINE_SCOPE=off;
+ * LLAMACTL_ENGINE_SCOPE=require (#806 require mode) refuses the direct-spawn
+ * fallback when a scope cannot be established.
+ */
+function engineScopeOptIn(env: Readonly<Record<string, string | undefined>>): boolean | "require" {
+  const value = env["LLAMACTL_ENGINE_SCOPE"];
+  if (value === "off") return false;
+  return value === "require" ? "require" : true;
+}
+
+/** The engine-scope opt-in as a spreadable option; "off" omits the field. */
+function engineScopeOption(env: Readonly<Record<string, string | undefined>>): {
+  engineScope?: true | "require";
+} {
+  const optIn = engineScopeOptIn(env);
+  return optIn === false ? {} : { engineScope: optIn };
 }
 
 /** #520: LLAMACTL_RESIDENCY_SESSION_IDLE_MS (milliseconds) as a spreadable option. */
@@ -1984,7 +2000,7 @@ export function buildServeOptions(
     ...(residencyLeasesOptIn(env) ? { residencyLeases: true } : {}),
     // #806 phase 3: engine scopes on unless the env opts out; the launcher
     // itself is published only on linux inside startAgentServer.
-    ...(engineScopeOptIn(env) ? { engineScope: true } : {}),
+    ...engineScopeOption(env),
     // #520: opt-in session idle timeout, honored only when residencyLeases is true.
     ...residencySessionIdleOption(env),
     // #281 (DF-08): opt-in inference admission gate shared by
