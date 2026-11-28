@@ -580,6 +580,83 @@ Use the following comparison units for each scenario and window. Record sample c
 
 Validate the Book interactive and maintenance scenarios against the consumer's existing quorum rules. Check the required role sets, the protected large-node executor, the fixed embedding identity and deferred background judging under request overlap and failure. Record consumer-visible completed tasks and the observed state of each required role. Preserve the configured models, embedding space and consumer policy.
 
+### Isolated process preflight and smoke probe
+
+Use the source checkout at the candidate revision. Run the preflight in the
+approved window. It evaluates the default managed physical capacity and host
+reserve before opening or hashing either artifact. This isolated probe does
+not read the deployed owner's reservation ledger. Exit 2 reports a blocked
+or invalid plan. A successful preflight reports `NOT_RUN` and opens no
+engine socket.
+
+```sh
+umask 077
+PROBE=packages/remote/src/residency/hardware-process-probe.ts
+bun "$PROBE" --preflight private-plan.json > preflight.json
+bun "$PROBE" --execute private-plan.json > process-smoke.json
+```
+
+Use absolute paths and lowercase SHA-256 hex digests in the private plan. A
+llama.cpp example uses a small, pinned standalone GGUF.
+
+```json
+{
+  "backend": "llamacpp",
+  "binary": "/absolute/path/to/llama-server",
+  "binarySha256": "REPLACE_WITH_ENGINE_SHA256",
+  "artifact": "/absolute/path/to/model.gguf",
+  "artifactSha256": "REPLACE_WITH_MODEL_SHA256",
+  "model": "qualification-fixture",
+  "contextTokens": 4096,
+  "requiredHeadroomGiB": 6,
+  "readinessTimeoutMs": 60000,
+  "requestTimeoutMs": 30000
+}
+```
+
+The probe builds the supported engine arguments itself. It binds an ephemeral
+loopback listener, provides the pinned model path, limits concurrency to one
+and puts engine state in a private temporary directory. Use `llamacpp` with
+a standalone GGUF or a whole GGUF directory plus `ggufFile` naming the first
+shard. Use `omlx` with a directory containing one model subdirectory named
+by `model`. Use `kapitsa` with the exact preconverted model directory.
+The probe uses the oMLX build's default context. Set
+`requiredHeadroomGiB` to a conservative bound for the approved model and
+settings. Pin the interpreter and installed dependency manifest separately
+when the executable is a launcher. Use trusted staged assets that operators
+keep immutable during the run. The probe verifies contents and file
+generations, and the engine opens the verified paths at launch. The JSON
+report omits file paths, process arguments, request text and returned content.
+
+A directory artifact is pinned by the SHA-256 of the UTF-8 JSON array of
+`[relativePath, sha256Hex]` pairs. Files are visited in lexical order within
+each directory, depth first. Relative paths use forward slashes. Use regular
+files and directories, and materialize symlinked snapshots in a separate
+staging directory. Hashing may warm the filesystem cache. The first request
+sample measures a fresh process. Measure cache-hit behavior separately.
+
+Execution rechecks capacity and the staged file generations just before
+launch. It requires `lsof` to match the isolated listener to the child PID
+and uses direct loopback HTTP for inventory and chat. It records the first
+visible content time and terminal latency for one request and three repeats,
+alongside output matches, host capacity and available swap counters.
+Unsafe pressure, occupied swap or unavailable capacity aborts the smoke.
+The capacity check requires exclusive use of the hardware smoke probe on the
+host and an operator-approved window for other workloads.
+
+The result includes process group and listener release evidence. Exit 1
+records a failed assertion or cleanup. Exit 0 records a passing process
+smoke. If runtime release is unresolved after a normal interruption or an
+abnormal exit, the directory `/tmp/llamactl-residency-hardware-smoke.lock`
+blocks another run. Its private `run.json` records the supervisor PID and
+adds the listener, workspace and process group as they become known. An
+early crash can leave a partial or empty receipt. Verify exact process
+identity from current observations before signaling anything. Remove the
+lock and workspace only after proving the supervisor and engine group are
+gone and the listener is free. Keep the lock if release remains uncertain.
+Native unload and wake, sustained pressure, workload correctness and
+activation use the broader qualification gates above.
+
 ### Evidence manifest example
 
 Copy this JSON template for one candidate build, stage and backend. Record test status as `NOT_RUN`, `PASS`, `FAIL` or `BLOCKED`. Each completed window references a redacted measurement record using the units above. Record approved scope separately. Evidence references identify immutable artifacts or logs without publishing credentials, private addresses, model paths, or request contents.
