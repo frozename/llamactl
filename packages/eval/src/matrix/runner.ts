@@ -350,6 +350,24 @@ function ctxUnavailableReason(model: ModelSpec, engine: EvalEngine): string {
   return `engine ${engine} context size is not declared in ModelSpec flags; no --ctx-size`;
 }
 
+/** #521: eval never launches a gufo/kapitsa engine or a spec without
+ *  managed:true, and extra_args is a required ModelSpec field, so an
+ *  empty list there does not say how the engine was started. */
+function flagsUnavailableReason(
+  model: ModelSpec,
+  engine: EvalEngine,
+  flags: readonly string[],
+): string | null {
+  if (flags.length > 0) return null;
+  if (isExternalOnlyEngine(engine)) {
+    return `ModelSpec ${model.name} declares no launch flags (engine ${engine} runs outside eval)`;
+  }
+  if (model.managed !== true) {
+    return `ModelSpec ${model.name} declares no launch flags (managed=false, so eval does not launch it)`;
+  }
+  return null;
+}
+
 function matrixProvenanceInput(model: ModelSpec): ProvenanceInput {
   const engine = model.engine ?? "llamacpp";
   const flags = [...(model.start_args ?? []), ...(model.extra_args ?? [])];
@@ -361,12 +379,14 @@ function matrixProvenanceInput(model: ModelSpec): ProvenanceInput {
   }
   const ctx = engine === "llamacpp" || engine === "gufo" ? lastCtxSize(flags) : null;
   if (ctx === null) reasons.ctx = ctxUnavailableReason(model, engine);
+  const flagsReason = flagsUnavailableReason(model, engine, flags);
+  if (flagsReason !== null) reasons.flags = flagsReason;
   return {
     engine,
     binary_path: model.binary ?? null,
     gguf_path: engine === "omlx" ? null : model.gguf_path,
     quant: model.quant,
-    flags,
+    flags: flagsReason === null ? flags : null,
     ctx,
     ...(Object.keys(reasons).length > 0 ? { reasons } : {}),
   };

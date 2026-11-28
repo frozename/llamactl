@@ -22,7 +22,8 @@ interface BenchRow {
   installed: boolean;
   tuned: { gen_tps: string } | null;
   /** Routing stage from the catalog qualification (#518). "experimental" rels
-   *  are excluded from the fastest-vision promotion runbook. */
+   *  are excluded from the fastest-vision promotion runbook; a "degraded" rel
+   *  stays eligible but ranks behind every healthy rel. */
   qualificationStage?: string;
 }
 
@@ -34,10 +35,10 @@ interface PromoteResult {
 }
 
 /**
- * Pick the highest-gen-tps installed multimodal model and promote it
- * to the `vision` preset on every profile (or the one named in
- * params). Finishes by syncing embersynth.yaml so fusion-vision
- * routes through the new pick.
+ * Pick the top-ranked installed multimodal model — healthy rels first,
+ * then highest gen_tps — and promote it to the `vision` preset on every
+ * profile (or the one named in params). Finishes by syncing
+ * embersynth.yaml so fusion-vision routes through the new pick.
  *
  * Experimental rels (qualificationStage === "experimental") are excluded
  * from the eligible set and reported on `excludedExperimental` in the
@@ -45,6 +46,13 @@ interface PromoteResult {
  * is experimental, the runbook returns ok:false with an error listing the
  * excluded rels and stating that experimental models are served only on
  * an exact model pin and never as a preset default.
+ *
+ * Degraded rels (qualificationStage === "degraded", #518) are demoted, not
+ * excluded: they stay in the eligible set and the candidate count, but the
+ * candidates are ordered by tier first and then by gen_tps, so a degraded rel
+ * ranks behind every healthy rel and is promoted only when every eligible rel
+ * is degraded. Healthy rels still order by gen_tps descending among
+ * themselves, as degraded rels do among themselves.
  *
  * A failed promote step (ok:false with an error message, or a dry-run
  * with `refused` on the result) fails the runbook before embersynth.sync
@@ -82,8 +90,12 @@ export const promoteFastestVisionModel: Runbook<Params> = {
       return true;
     });
     const candidates = eligible
-      .map((row) => ({ row, genTps: Number.parseFloat(row.tuned?.gen_tps ?? "0") }))
-      .sort((a, b) => b.genTps - a.genTps);
+      .map((row) => ({
+        row,
+        genTps: Number.parseFloat(row.tuned?.gen_tps ?? "0"),
+        tier: row.qualificationStage === "degraded" ? 1 : 0,
+      }))
+      .sort((a, b) => a.tier - b.tier || b.genTps - a.genTps);
     steps.push({
       tool: "llamactl.bench.compare",
       dryRun: false,

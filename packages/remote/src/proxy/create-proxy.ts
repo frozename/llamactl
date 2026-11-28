@@ -36,6 +36,9 @@ import type { NodeRun } from "../workload/noderun-schema.js";
 
 import { acquireWorkerRpcExecutor } from "../inference/client.js";
 import { createLegacyLocalExecutor } from "../inference/legacy-local-executor.js";
+import { PEER_COLD_MAX_BODY_BYTES, readPeerText } from "../residency/peer-cold.js";
+import { dispatchPinnedPeerCold } from "./peer-cold-client.js";
+import { selectPeerColdOwner } from "./peer-cold-selection.js";
 import { createResidencyRankingSource } from "./residency-ranking.js";
 
 export interface BackendExecutorDescription {
@@ -82,6 +85,11 @@ export interface UnifiedProxyOptions {
   ) => Promise<BackendExecutor> | BackendExecutor;
   peers?: PeerNode[];
   peerSnapshots?: Map<string, PeerSnapshot>;
+  /** Dedicated service credentials. Programmatic opt-in uses an explicit complete peers set. */
+  peerCold?: {
+    models: readonly string[];
+    credentialFor: (ownerNodeId: string) => string | undefined;
+  };
   advertisements?: readonly routingCatalog.RouteAdvertisementV1[];
   nodeId?: string;
   now?: () => number;
@@ -165,14 +173,22 @@ interface GateInput {
   model: string | null;
 }
 
-async function readGateInput(req: Request): Promise<GateInput> {
+async function readGateInput(req: Request, peerCold: boolean): Promise<GateInput | Response> {
   if (req.method === "GET" || req.method === "HEAD") {
     return { bodyText: null, body: null, model: null };
   }
-  if (!isJsonContentType(req.headers.get("content-type"))) {
+  if (req.body === null || !isJsonContentType(req.headers.get("content-type"))) {
     return { bodyText: null, body: null, model: null };
   }
-  const bodyText = await req.text();
+  const bodyText = peerCold
+    ? await readPeerText(req, PEER_COLD_MAX_BODY_BYTES, req.signal)
+    : await req.text();
+  if (bodyText === undefined) {
+    return Response.json(
+      { error: { type: "invalid_request_error", code: "request_body_too_large" } },
+      { status: 413 },
+    );
+  }
   let body: Record<string, unknown> | null = null;
   try {
     const parsed: unknown = JSON.parse(bodyText);
@@ -202,6 +218,14 @@ interface UnifiedDeps {
   nodeId: string;
   catalogForGate: () => Promise<routingCatalog.RouteCatalog | null>;
   unroutedPeerAlias: (model: string) => PeerAliasEvidence;
+  boundedColdGateway: boolean;
+  tryPeerCold: (
+    model: string,
+    ctx: BackendExecutionContext,
+    bodyText: string | undefined,
+    canSubmit: boolean,
+    confirmNoOtherRoute: () => Promise<boolean>,
+  ) => Promise<Response> | undefined;
   resolveCredentials?: UnifiedProxyOptions["resolveCredentials"];
   acquireExecutor?: UnifiedProxyOptions["acquireExecutor"];
   rankingSignals: () => routingRanking.RankingSignals;
@@ -315,6 +339,50 @@ function tryUnroutedLocalColdCompletion(
   );
 }
 
+function planUnroutedCompletion(
+  deps: UnifiedDeps,
+  model: string,
+  selection: ReturnType<typeof routingCatalog.selectCatalogCandidates> | null,
+  pinned: boolean,
+  ctx: BackendExecutionContext,
+  declaration: routingCatalog.DeclaredModelEntryV1 | undefined,
+  bodyText: string | undefined,
+  localOwner: ColdEngineForwarder | undefined,
+): {
+  dispatch: Promise<Response> | undefined;
+  declaration: routingCatalog.DeclaredModelEntryV1 | undefined;
+} {
+  const peer = deps.unroutedPeerAlias(model);
+  const bound = declaration ?? (pinned ? (peer.declared ?? peer.denied) : peer.denied);
+  if (!pinned) return { dispatch: undefined, declaration: bound };
+  const local = tryUnroutedLocalColdCompletion(
+    peer,
+    selection,
+    ctx,
+    declaration,
+    bodyText,
+    localOwner,
+  );
+  if (local !== undefined) return { dispatch: local, declaration: bound };
+  return { dispatch: undefined, declaration: bound };
+}
+
+async function exactColdStillUnrouted(
+  deps: UnifiedDeps,
+  model: string,
+  resolved: ResolvedEnv,
+): Promise<boolean> {
+  const catalog = await deps.catalogForGate();
+  if (
+    catalog === null ||
+    openaiProxy.declaredModelBinding(model, resolved) !== undefined ||
+    openaiProxy.defaultTargetModelIds(resolved).has(model)
+  )
+    return false;
+  const selection = routingCatalog.selectCatalogCandidates(catalog, model, { pinned: true });
+  return selection.eligible.length === 0 && selection.rejected.length === 0;
+}
+
 async function gatedExecute(
   deps: UnifiedDeps,
   model: string,
@@ -332,20 +400,30 @@ async function gatedExecute(
   const selection =
     catalog === null ? null : routingCatalog.selectCatalogCandidates(catalog, model, { pinned });
   const routes = selection?.eligible ?? [];
-  if (routes.length === 0) {
-    const peer = deps.unroutedPeerAlias(model);
-    const cold = pinned
-      ? tryUnroutedLocalColdCompletion(
-          peer,
-          selection,
+  const remote =
+    routes.length === 0
+      ? deps.tryPeerCold(
+          model,
           ctx,
-          declaration,
           bodyText,
-          trustedColdOwner,
+          pinned && declaration === undefined && selection?.rejected.length === 0,
+          () => exactColdStillUnrouted(deps, model, ctx.resolved),
         )
       : undefined;
-    if (cold !== undefined) return await cold;
-    declaration ??= pinned ? (peer.declared ?? peer.denied) : peer.denied;
+  if (remote !== undefined) return await remote;
+  if (routes.length === 0) {
+    const unrouted = planUnroutedCompletion(
+      deps,
+      model,
+      selection,
+      pinned,
+      ctx,
+      declaration,
+      bodyText,
+      trustedColdOwner,
+    );
+    if (unrouted.dispatch !== undefined) return await unrouted.dispatch;
+    declaration = unrouted.declaration;
   }
   const candidates =
     declaration === undefined
@@ -415,7 +493,8 @@ async function handleUnifiedRequest(
   trustedColdOwner: ColdEngineForwarder | undefined,
 ): Promise<Response> {
   const url = new URL(req.url);
-  const gate = await readGateInput(req);
+  const gate = await readGateInput(req, deps.boundedColdGateway);
+  if (gate instanceof Response) return gate;
   const forwarded = rebuildRequest(req, gate.bodyText);
   const operation = operationFor(url.pathname);
   const protocol = ingressFor(url.pathname);
@@ -526,6 +605,82 @@ function discoverPeers(): PeerNode[] {
   } catch {
     return [];
   }
+}
+
+function createPeerColdDispatch(
+  opts: UnifiedProxyOptions,
+  nodeId: string,
+  now: () => number,
+): UnifiedDeps["tryPeerCold"] {
+  const policy = opts.peerCold;
+  if (policy === undefined) return () => undefined;
+  const peers = (opts.peers ?? []).filter(
+    (peer) => peer.id !== LOCAL_NODE_NAME && peer.id !== nodeId,
+  );
+  const models = new Set(policy.models);
+  const unavailable = (): Promise<Response> =>
+    Promise.resolve(
+      Response.json(
+        { error: { type: "model_unavailable", code: "peer_cold_owner_unavailable" } },
+        { status: 503 },
+      ),
+    );
+  return (model, ctx, bodyText, canSubmit, confirmNoOtherRoute) => {
+    const url = new URL(ctx.req.url);
+    if (!models.has(model) || url.pathname !== "/v1/completions") return undefined;
+    if (
+      !canSubmit ||
+      bodyText === undefined ||
+      url.search !== "" ||
+      ctx.req.method !== "POST" ||
+      ctx.req.headers.has(openaiProxy.SESSION_HEADER)
+    )
+      return unavailable();
+    const selected = (): ReturnType<typeof selectPeerColdOwner> =>
+      selectPeerColdOwner(model, peers, opts.peerSnapshots ?? publishedPeerSnapshots, now());
+    const offer = selected();
+    const owner =
+      offer === undefined ? undefined : peers.find((peer) => peer.id === offer.ownerNodeId);
+    if (offer === undefined || owner === undefined) return unavailable();
+    const credential = policy.credentialFor(owner.id);
+    const body = JSON.parse(bodyText) as unknown;
+    if (credential === undefined || !isRecord(body) || Object.hasOwn(body, "x_omlx_request_handle"))
+      return unavailable();
+    return dispatchPinnedPeerCold({
+      node: peerColdNode(owner),
+      serviceCredential: credential,
+      declaration: offer,
+      path: "/v1/completions",
+      body,
+      deadlineMs: ctx.deadline,
+      signal: ctx.req.signal,
+      stillSelected: async () =>
+        (await confirmNoOtherRoute()) && samePeerColdOffer(offer, selected()),
+    });
+  };
+}
+
+function samePeerColdOffer(
+  offered: NonNullable<ReturnType<typeof selectPeerColdOwner>>,
+  current: ReturnType<typeof selectPeerColdOwner>,
+): boolean {
+  return (
+    current?.ownerNodeId === offered.ownerNodeId &&
+    current.workload === offered.workload &&
+    current.artifactRevision === offered.artifactRevision &&
+    current.policyRevision === offered.policyRevision
+  );
+}
+
+function peerColdNode(owner: PeerNode): Parameters<typeof dispatchPinnedPeerCold>[0]["node"] {
+  return {
+    name: owner.id,
+    endpoint: owner.endpoint,
+    ...(owner.certificate === undefined ? {} : { certificate: owner.certificate }),
+    ...(owner.fingerprint === undefined ? {} : { certificateFingerprint: owner.fingerprint }),
+    ...(owner.tlsServerName === undefined ? {} : { tlsServerName: owner.tlsServerName }),
+    ...(owner.tunnelPreferred === undefined ? {} : { tunnelPreferred: owner.tunnelPreferred }),
+  };
 }
 
 export function createProxy(opts: UnifiedProxyOptions = {}): UnifiedProxy {
@@ -639,6 +794,8 @@ export function createProxy(opts: UnifiedProxyOptions = {}): UnifiedProxy {
       }
     },
     unroutedPeerAlias,
+    boundedColdGateway: opts.peerCold !== undefined,
+    tryPeerCold: createPeerColdDispatch(opts, nodeId, now),
     ...(opts.resolveCredentials !== undefined
       ? { resolveCredentials: opts.resolveCredentials }
       : {}),
