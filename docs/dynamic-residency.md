@@ -198,7 +198,7 @@ llamactl residency release-idle <workload> [--json]
 
 A disabled residency, a non-serving node or an unreadable store reports `ok: false` (`Disabled`, `NotServingNode`, `LeasesUnavailable`, `StoreUnreadable`, `LifecycleUnreadable`) and stops nothing.
 
-The MCP `llamactl.residency.evictIdle` tool (`packages/mcp/src/tools/residency.ts`) is the read-only preview of this dry run: it takes `node` only, sends one `residencyEvictIdle` mutation inside the MCP server's own process and never sends `targets`, so it never stamps the idle hold or stops a workload; the wet run stays `llamactl residency evict-idle --node <name> --yes`. It returns the same rows and `ok: false` reasons as the dry run, writes no audit line, and is not in the Ops Chat dispatch (Part of #519).
+The MCP `llamactl.residency.evictIdle` tool (`packages/mcp/src/tools/residency.ts`) is the read-only preview of this dry run: it takes `node` only, sends one `residencyEvictIdle` mutation inside the MCP server's own process and never sends `targets`, so it never stamps the idle hold or stops a workload; the wet run stays `llamactl residency evict-idle --node <name> --yes`. It returns the same rows and `ok: false` reasons as the dry run and writes no audit line. `llamactl.residency.evictIdle` is a read-tier Ops Chat tool too (`packages/remote/src/ops-chat/dispatch.ts`): the dispatch forwards only `node`, so it is the same dry-run preview, and like every Ops Chat call it appends one Ops Chat audit entry (Part of #519).
 
 A resident that is idle-due but has not yet been ready for `minResidencySeconds` is skipped `MinResidency` until it has been ready for `minResidencySeconds`; the status `dueAtMs` is the later of the two windows.
 
