@@ -349,22 +349,16 @@ function exclusiveWriteAttempt(tmp: string, contents: string, path: string): Err
 }
 
 /**
- * Writes via a 0600 tmp in the same dir + a rename, so the credential
- * hash is never readable under the umask mid-write and a concurrent
- * reader sees either the old or the new file, never a partial one.
- * The tmp is created exclusively ('wx'): a truncating open on a path an
+ * Writes `contents` at `path` through an exclusive 0600 tmp in the same dir
+ * + a rename, so the file is never readable under the umask mid-write and a
+ * concurrent reader sees either the old or the new version, never a partial
+ * one. The tmp is created exclusively ('wx'): a truncating open on a path an
  * attacker pre-planted as a symlink would write through it to the link's
  * target, so on EEXIST we retry under a fresh suffix and never touch,
  * and never unlink, an entry this call did not create.
  */
-export function saveAgentConfig(
-  config: AgentConfig,
-  path: string = defaultAgentConfigPath(),
-): void {
-  AgentConfigSchema.parse(config);
+function exclusiveWrite(path: string, contents: string): void {
   const dir = dirname(path);
-  mkdirSync(dir, { recursive: true });
-  const contents = serialize(config, path);
   const prefix = `.${path.slice(dir.length + 1)}.tmp-${String(process.pid)}-`;
   let lastCollision: Error | null = null;
   for (let attempt = 0; attempt < TMP_WRITE_ATTEMPTS; attempt++) {
@@ -376,6 +370,16 @@ export function saveAgentConfig(
     `could not create a temp file next to ${path}: ${String(TMP_WRITE_ATTEMPTS)} attempts all collided with an existing entry`,
     { cause: lastCollision },
   );
+}
+
+/** Writes agent.yaml through {@link exclusiveWrite}, creating its parent dir. */
+export function saveAgentConfig(
+  config: AgentConfig,
+  path: string = defaultAgentConfigPath(),
+): void {
+  AgentConfigSchema.parse(config);
+  mkdirSync(dirname(path), { recursive: true });
+  exclusiveWrite(path, serialize(config, path));
 }
 
 function warnIgnored(path: string, block: string, reason: string): void {
@@ -613,6 +617,38 @@ export function readBearerLastUsed(path: string): BearerLastUsed {
   return out;
 }
 
+/** Whether the two maps hold exactly the same label -> time pairs. */
+function sameBearerLastUsed(a: BearerLastUsed, b: BearerLastUsed): boolean {
+  const keys = Object.keys(a);
+  if (keys.length !== Object.keys(b).length) return false;
+  for (const label of keys) if (a[label] !== b[label]) return false;
+  return true;
+}
+
+/**
+ * Rewrites the last-used store as `update(current)`, for `agent token
+ * rename`/`revoke` to carry a label and prune dead ones (#218). A result
+ * equal to what is on disk writes nothing, so a store that was never created
+ * stays uncreated. A write uses the same exclusive tmp + rename as the
+ * recorder (0600, never through a pre-planted symlink) and a failure throws:
+ * the caller has already changed agent.yaml, so it reports one line naming
+ * the path and still exits 0.
+ *
+ * The race is narrow: the recorder keeps a use in memory until its next
+ * flush, so a use of the old name recorded inside that throttle window just
+ * before a rename or revoke can be rewritten once and is collected by the
+ * next revoke or rename.
+ */
+export function updateBearerLastUsed(
+  path: string,
+  update: (current: BearerLastUsed) => BearerLastUsed,
+): void {
+  const current = readBearerLastUsed(path);
+  const next = update(current);
+  if (sameBearerLastUsed(current, next)) return;
+  exclusiveWrite(path, `${JSON.stringify(next)}\n`);
+}
+
 export interface BearerLastUsedRecorder {
   record(label: string): void;
   snapshot(): BearerLastUsed;
@@ -629,8 +665,13 @@ export interface BearerLastUsedRecorder {
  * Persistence is best-effort: a failed write is one stderr line naming the
  * path (never a token, a hash or the map) and is retried no sooner than
  * `flushIntervalMs` later, so a read-only or unwritable dir cannot flood
- * the log or throw into a request. It reuses {@link exclusiveWriteAttempt}
- * so a tmp an attacker pre-planted as a symlink is never written through.
+ * the log or throw into a request. It reuses {@link exclusiveWrite} so a tmp
+ * an attacker pre-planted as a symlink is never written through.
+ *
+ * A flush merges into what is on disk rather than replacing it, and writes
+ * only the labels recorded since the last successful flush: `agent token
+ * rename` and `revoke` rewrite the store while the agent runs, so flushing
+ * the whole memory map would resurrect a label the CLI just dropped.
  */
 export function bearerLastUsedRecorder(
   path: string,
@@ -639,23 +680,22 @@ export function bearerLastUsedRecorder(
   const now = opts.now ?? Date.now;
   const flushIntervalMs = opts.flushIntervalMs ?? 60_000;
   const memory: BearerLastUsed = readBearerLastUsed(path);
-  let persisted: BearerLastUsed = { ...memory };
+  const pending = new Set<string>();
+  const persisted: BearerLastUsed = { ...memory };
   let lastFailure = Number.NEGATIVE_INFINITY;
 
   const flush = (): void => {
-    const dir = dirname(path);
-    const prefix = `.${path.slice(dir.length + 1)}.tmp-${String(process.pid)}-`;
-    const contents = `${JSON.stringify(memory)}\n`;
-    for (let attempt = 0; attempt < TMP_WRITE_ATTEMPTS; attempt++) {
-      const tmp = join(dir, `${prefix}${Math.random().toString(36).slice(2)}`);
-      if (exclusiveWriteAttempt(tmp, contents, path) === null) {
-        persisted = { ...memory };
-        return;
-      }
+    const merged: BearerLastUsed = { ...readBearerLastUsed(path) };
+    for (const label of pending) {
+      const at = memory[label];
+      if (at !== undefined) merged[label] = at;
     }
-    throw new Error(
-      `could not create a temp file next to ${path}: ${String(TMP_WRITE_ATTEMPTS)} attempts all collided with an existing entry`,
-    );
+    exclusiveWrite(path, `${JSON.stringify(merged)}\n`);
+    for (const label of pending) {
+      const at = memory[label];
+      if (at !== undefined) persisted[label] = at;
+    }
+    pending.clear();
   };
 
   return {
@@ -663,6 +703,7 @@ export function bearerLastUsedRecorder(
       if (!isBearerLastUsedLabel(label)) return;
       const t = now();
       memory[label] = new Date(t).toISOString();
+      pending.add(label);
       const written = persisted[label];
       const stale = written === undefined || t - Date.parse(written) >= flushIntervalMs;
       if (!stale || t - lastFailure < flushIntervalMs) return;
