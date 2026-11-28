@@ -44,8 +44,12 @@ Open items:
   `llamactl.io/residency-group` label; when the stored ModelRun has no such
   label, or no ModelRun is stored under the name, `serverStart` takes the group
   from the catalog `residencyGroup` of the rel `resolveTarget` returns for its
-  target (`directModelRunStartOpts`), and a label always wins; the switch's own
-  `applyManifest` calls run in a switch scope and are walked only by the switch.
+  target (`directModelRunStartOpts`), and a label always wins; when neither the
+  inline nor stored ModelHost has such a label, `modelHostStart` takes the group
+  from the catalog `residencyGroup` of its first hosted rel, the inline rel
+  winning over the stored rel (`directResidencyGroup`), and a label always wins;
+  the switch's own `applyManifest` calls run in a switch scope and are walked
+  only by the switch.
   Still pending: reconciliation outside a switch.
 - Real GLM-5.3-Flash z13 measurements are not yet committed (see the
   eval record at the bottom).
@@ -154,7 +158,11 @@ persists per-model states in its `residency_states` table:
   ModelRun has no such label, or no ModelRun is stored under the name,
   `serverStart` takes the group from the catalog `residencyGroup` of the rel
   `resolveTarget` returns for its target (`directModelRunStartOpts`), and a
-  label always wins; the switch's own `applyManifest` calls run in a switch
+  label always wins; when neither the inline nor stored ModelHost has such a
+  label, `modelHostStart` takes the group from the catalog `residencyGroup` of
+  its first hosted rel, the inline rel winning over the stored rel
+  (`directResidencyGroup`), and a label always wins; the switch's own
+  `applyManifest` calls run in a switch
   scope and are walked only by the switch. Still pending: reconciliation outside
   a switch.
 - Group declarations are not persisted. They come from the caller
@@ -206,8 +214,9 @@ budget-gated. The enforcement in place today is the following:
    `modelHostStart` and `serverStart` procedures
    (`packages/remote/src/router.ts`) run every direct start through it.
    A ModelHost takes its group from its `llamactl.io/residency-group`
-   label; a ModelRun takes the label, else the catalog group of its
-   resolved target. When another `loading` or `warming` row holds that
+   label, else the catalog group of its hosted rel (an inline manifest's
+   rel winning over the stored manifest's); a ModelRun takes the label,
+   else the catalog group of its resolved target. When another `loading` or `warming` row holds that
    exclusive group, or a `ready` row whose workload is not proven down, the
    start is refused before the engine runs, as
    `residency lifecycle refused <name> <from> -> <to>: ExclusiveGroupOccupied: <detail>`;
@@ -284,7 +293,11 @@ wrapper, recording the group from the agent-side ModelRun
 `llamactl.io/residency-group` label; when the stored ModelRun has no such label,
 or no ModelRun is stored under the name, `serverStart` takes the group from the
 catalog `residencyGroup` of the rel `resolveTarget` returns for its target
-(`directModelRunStartOpts`), and a label always wins. Operator force-unload
+(`directModelRunStartOpts`), and a label always wins; when neither the inline
+nor stored ModelHost has such a label, `modelHostStart` takes the group from the
+catalog `residencyGroup` of its first hosted rel, the inline rel winning over
+the stored rel (`directResidencyGroup`), and a label always wins. Operator
+force-unload
 (`residencyForceUnload`) routes its stop through the same wrapper after the
 lease drain commits. Since #847 (Part of #517) the detached keep-alive worker
 records its own row through the same wrapper: `keepAliveRecordedStart` and
