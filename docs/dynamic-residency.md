@@ -583,11 +583,19 @@ Validate the Book interactive and maintenance scenarios against the consumer's e
 ### Isolated process preflight and smoke probe
 
 Use the source checkout at the candidate revision. Run the preflight in the
-approved window. It evaluates the default managed physical capacity and host
+approved window. It evaluates managed physical capacity and host
 reserve before opening or hashing either artifact. This isolated probe does
 not read the deployed owner's reservation ledger. Exit 2 reports a blocked
 or invalid plan. A successful preflight reports `NOT_RUN` and opens no
 engine socket.
+
+By default the probe requires zero occupied swap. A private plan can set
+`maxSwapUsedGiB` to an approved finite ceiling for already-occupied swap.
+With that option, preflight and execution require a fresh one-second window
+with no swap I/O. The run settles and fails if occupied swap increases above
+its initial reading, swap I/O resumes, or the monitor loses its evidence.
+The option applies only to this isolated process probe. The physical
+headroom, pressure, and host reserve checks still apply.
 
 ```sh
 umask 077
