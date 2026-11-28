@@ -3464,6 +3464,7 @@ export const router = t.router({
         }),
         sessionRegistry: currentSessionRefcounts(),
         invalidNodeRuns: nodeRunStoreMod.listInvalidNodeRuns(),
+        ownerNodeId: ownerNode,
       });
       const managed = owner?.readStatus?.();
       return {
