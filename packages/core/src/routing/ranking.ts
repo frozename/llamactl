@@ -11,7 +11,9 @@
  * Intended divergence (#518): stages below production (validated, candidate)
  * now rank below unstaged peers on the unified path, because an unstaged
  * advertisement scores as production (3) while a declared lower stage scores
- * less. The legacy (flag-off) path ignores stages entirely.
+ * less. The legacy (flag-off) path orders only the healthy/degraded/
+ * experimental tier (legacyQualificationTier, #926) and ignores the remaining
+ * stages.
  *
  * Part of #519: the ResidencyPolicy knobs residentPreference and
  * coldLoadPenaltyMs apply here too, resolved through opts.policy.

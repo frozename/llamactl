@@ -6,14 +6,34 @@
   to reach the local node when the manifest spec.endpoint matters
   (per-workload ports — see commit c6b2dda).
 
-  Install:
-    cp scripts/launchd/com.llamactl.node-agent.plist \
-       ~/Library/LaunchAgents/
-    launchctl load -w ~/Library/LaunchAgents/com.llamactl.node-agent.plist
+  This file is a reference example only; do not copy it into
+  ~/Library/LaunchAgents by hand. Install the agent with:
 
-  Uninstall:
-    launchctl unload ~/Library/LaunchAgents/com.llamactl.node-agent.plist
-    rm ~/Library/LaunchAgents/com.llamactl.node-agent.plist
+    llamactl agent install-launchd [--dry-run] [--scope=user] ...
+
+  which writes and loads the plist for you (run with --help for every
+  flag; --dry-run prints the plist without writing it). Tunnel bearers
+  never go in the plist (no LLAMACTL_TUNNEL_*BEARER entries under
+  EnvironmentVariables, and --env refuses secret-looking keys). Pass a
+  bearer source instead; it lands in ProgramArguments as a path or a
+  reference, never as the token:
+
+    --dial-central=<wss-url> with exactly one of
+      --central-bearer-file=<abs path>   a 0600 file holding the token
+      --central-bearer-ref=keychain:<service>/<account>
+    --tunnel-bearer-file=<abs path>      central side (adds
+      or --tunnel-bearer-ref=keychain:<service>/<account>
+                                         --tunnel-central=true)
+
+  keychain: refs are read from the macOS login keychain at serve time
+  and need the default user scope (--scope=user); a --scope=system
+  LaunchDaemon cannot read the login keychain, so use a bearer file
+  there.
+
+  Uninstall (default label com.llamactl.agent; pass the --label you
+  installed with otherwise):
+    launchctl bootout gui/$(id -u)/com.llamactl.agent
+    rm ~/Library/LaunchAgents/com.llamactl.agent.plist
 
   The node-agent uses the default vanilla llama.cpp binary from its
   own environment. Workloads that need a non-default binary should set
