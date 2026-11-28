@@ -129,6 +129,19 @@ export interface StartAgentOptions {
    * the hook replaces that line.
    */
   onAuthenticated?: (record: { tokenName: string; method: string; pathname: string }) => void;
+  /**
+   * The persisted per-token last-use store (#218), wired by `agent serve`
+   * beside agent.yaml. Every bearer the gate admits is handed to `record`
+   * under its audit label (never the token or its hash), and the
+   * last-used gauge is seeded from `snapshot` at start so a restart does
+   * not report every token as never used. Either half may throw: the
+   * agent notes it on stderr and carries on — last use never fails a
+   * request and never blocks boot.
+   */
+  bearerLastUsed?: {
+    record: (label: string) => void;
+    snapshot: () => Readonly<Record<string, string>>;
+  };
   noAuth?: boolean;
   tls?: { certPath: string; keyPath: string }; // omit for plain HTTP (test-only)
   /**
@@ -473,9 +486,10 @@ function makeNoAuthGate(noAuth: boolean, bindHost: string): NoAuthGate {
 /**
  * Records an admitted request under the name of the bearer that
  * authenticated it (#218): the per-token counter, the last-used gauge,
- * then the audit sink — `onAuthenticated` when given, else the default
- * stderr line. The sink is wrapped so a throwing hook never fails the
- * request; on error a note without any token is written instead.
+ * the persisted last-use store, then the audit sink — `onAuthenticated`
+ * when given, else the default stderr line. The sink is wrapped so a
+ * throwing hook never fails the request; on error a note without any
+ * token is written instead.
  *
  * The privileged routes (self-update, rollback, operator tunnel-relay
  * hops) verify the primary bearer inside their own handlers, so they
@@ -490,6 +504,11 @@ function recordBearerUse(
 ): void {
   agentBearerRequestsTotal.inc({ token: name });
   agentBearerLastUsedSeconds.set({ token: name }, Date.now() / 1000);
+  try {
+    opts.bearerLastUsed?.record(name);
+  } catch {
+    process.stderr.write(`[agent] bearer last-use record failed for token=${name}\n`);
+  }
   try {
     if (opts.onAuthenticated) {
       opts.onAuthenticated({ tokenName: name, method: req.method, pathname });
@@ -1591,6 +1610,24 @@ async function finalFlushWindow(
 }
 
 /**
+ * Seeds the per-token last-used gauge from the persisted store (#218) so a
+ * restarted agent reports when a token was last seen rather than nothing.
+ * A label whose time does not parse is skipped, and a store that cannot be
+ * read leaves the gauges empty: last use never blocks boot.
+ */
+function seedBearerLastUsedGauges(opts: StartAgentOptions): void {
+  try {
+    for (const [label, at] of Object.entries(opts.bearerLastUsed?.snapshot() ?? {})) {
+      const ms = Date.parse(at);
+      if (!Number.isFinite(ms)) continue;
+      agentBearerLastUsedSeconds.set({ token: label }, ms / 1000);
+    }
+  } catch {
+    process.stderr.write("[agent] bearer last-use seed failed; gauges start empty\n");
+  }
+}
+
+/**
  * Starts a Bun HTTP(S) server that exposes the llamactl tRPC router
  * behind bearer-token auth. The fetchRequestHandler is the same surface
  * the Electron main process mounts via electron-trpc — one router,
@@ -1618,6 +1655,7 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
   // The post-bind resources are rolled back by the inner catch first.
   const early: EarlyStartup = { stopSearchIngest: null, stopPeerSnapshotPoller: null };
   try {
+    seedBearerLastUsedGauges(opts);
     runStartupMigration();
     // #279 DF-06 boot recovery. Runs synchronously here, before
     // startAgentServerAfterHandlers, so it completes before startAgentServer
