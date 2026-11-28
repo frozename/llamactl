@@ -164,6 +164,52 @@ describe("ops-chat event bus retention", () => {
     expect(retained()).toBe(before);
   });
 
+  test("one of two pre-create subscribers leaving keeps the shared channel for the other", () => {
+    const id = sessionId("two-before-create");
+    const before = retained();
+    const a: JournalEvent[] = [];
+    const b: JournalEvent[] = [];
+    const offA = sessionEventBus.subscribe(id, (event) => {
+      a.push(event);
+    });
+    const offB = sessionEventBus.subscribe(id, (event) => {
+      b.push(event);
+    });
+    // B is still attached, so A leaving must not evict the channel even
+    // though the session is not open yet.
+    offA();
+    expect(sessionEventBus.listenerCount(id)).toBe(1);
+    sessionEventBus.create(id);
+    sessionEventBus.publish(id, startedEvent(id));
+    expect(b).toHaveLength(1);
+    expect(a).toHaveLength(0);
+    offB();
+    sessionEventBus.close(id);
+    expect(retained()).toBe(before);
+  });
+
+  test("calling one unsubscribe twice removes only its own registration of a shared listener", () => {
+    const id = sessionId("double-unsubscribe");
+    const before = retained();
+    const received: JournalEvent[] = [];
+    const listener = (event: JournalEvent): void => {
+      received.push(event);
+    };
+    sessionEventBus.create(id);
+    const offFirst = sessionEventBus.subscribe(id, listener);
+    const offSecond = sessionEventBus.subscribe(id, listener);
+    expect(sessionEventBus.listenerCount(id)).toBe(2);
+    offFirst();
+    offFirst();
+    expect(sessionEventBus.listenerCount(id)).toBe(1);
+    sessionEventBus.publish(id, startedEvent(id));
+    expect(received).toHaveLength(1);
+    offSecond();
+    expect(sessionEventBus.listenerCount(id)).toBe(0);
+    sessionEventBus.close(id);
+    expect(retained()).toBe(before);
+  });
+
   test("a stale unsubscribe never drops a newer channel", () => {
     const id = sessionId("stale-unsubscribe");
     const before = retained();
