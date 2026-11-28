@@ -100,6 +100,7 @@ import type { OmlxNativeStatusRow } from "./omlx-capability.js";
 import type { ResidencyStateRecord, ResidencyStoreSnapshot } from "./store.js";
 
 import { residencyRankingReadout } from "../proxy/residency-ranking.js";
+import { nodeRunKnobScopeMismatch } from "../workload/noderun-schema.js";
 import { buildProfileSwitchRequest, type ObservedWorkloadState } from "./coordinator.js";
 import { profileSwitchOperationKey } from "./profile-transition.js";
 
@@ -119,6 +120,29 @@ export type ResidencyPolicyKnob = (typeof RESIDENCY_POLICY_KNOBS)[number];
 export type ResidencyStatusEffectivePolicy = {
   knobs: { name: ResidencyPolicyKnob; value: number; defaulted: boolean }[];
 };
+
+// Pure projection: each NodeRun whose metadata.name equals `node` or whose
+// spec.node equals `node` is mapped through `nodeRunKnobScopeMismatch`; nulls
+// (correctly scoped or infra-only) are dropped, and the remaining strings are
+// ordered by metadata.name with compareStrings.  Returns an empty list when
+// nothing is mis-scoped (Part of #519).
+export function nodeRunKnobScopeWarnings(node: string, nodeRuns: readonly NodeRun[]): string[] {
+  const matches: { name: string; warning: string }[] = [];
+  for (const run of nodeRuns) {
+    if (run.metadata.name === node || run.spec.node === node) {
+      const warning = nodeRunKnobScopeMismatch(run);
+      if (warning !== null) matches.push({ name: run.metadata.name, warning });
+    }
+  }
+  matches.sort((a, b) => compareStrings(a.name, b.name));
+  return matches.map((m) => m.warning);
+}
+
+// Spread helper: only sets the key when there is something to warn about.
+function warningsFor(node: string, nodeRuns: readonly NodeRun[]): { knobScopeWarnings?: string[] } {
+  const warnings = nodeRunKnobScopeWarnings(node, nodeRuns);
+  return warnings.length > 0 ? { knobScopeWarnings: warnings } : {};
+}
 
 export function effectiveResidencyPolicy(
   residency: ResidencyPolicy | null | undefined,
@@ -526,6 +550,9 @@ export type ResidencyStatus = {
   // Optional like ranking so older payloads and fixtures still type;
   // buildResidencyStatus always sets it (Part of #519).
   effectivePolicy?: ResidencyStatusEffectivePolicy;
+  // Omitted when no NodeRun selected by or targeting `node` is mis-scoped,
+  // so older payloads and fixtures still type (Part of #519).
+  knobScopeWarnings?: string[];
   leases: ResidencyStatusLeases;
   omlxNative?: { scope: "serving-process"; workloads: OmlxNativeStatusRow[] };
   sessions?: ResidencyStatusSessions;
@@ -547,6 +574,7 @@ export function buildResidencyStatus(input: {
   nowMs?: number | undefined;
   servingNode?: string | null | undefined;
   unifiedProxy?: boolean | undefined;
+  nodeRuns?: readonly NodeRun[] | undefined;
 }): ResidencyStatus {
   const residency = input.nodeRun?.spec.residency;
   const sessions = buildResidencySessionSnapshot(input.sessionRegistry);
@@ -592,6 +620,7 @@ export function buildResidencyStatus(input: {
     leases: buildResidencyLeaseSnapshot(input.leaseRegistry ?? null, input.leaseWorkloads ?? []),
     omlxNative: { scope: "serving-process", workloads: [...(input.omlxNative ?? [])] },
     ...(sessions !== undefined ? { sessions } : {}),
+    ...warningsFor(input.node, input.nodeRuns ?? []),
   };
 }
 
