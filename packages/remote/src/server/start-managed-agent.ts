@@ -27,6 +27,7 @@ export interface ManagedAgentDependencies {
   nowMs?: () => number;
   onCapacityAudit?: (entry: ManagedCapacityAudit) => void;
   ownerActivity?: StartAgentOptions["managedOwnerActivity"];
+  selectEngineTransport?: StartAgentOptions["selectManagedEngineTransport"];
   validateParkedCredit?: ValidateParkedCredit;
 }
 
@@ -156,6 +157,7 @@ export async function startManagedAgentServer(
       residencyLeases: true,
       managedLaunchAdmission: runtime.admission,
       managedInferenceHolds: inferenceHolds,
+      selectManagedEngineTransport: deps.selectEngineTransport,
       ...(deps.ownerActivity === undefined ? {} : { managedOwnerActivity: deps.ownerActivity }),
     });
     return {

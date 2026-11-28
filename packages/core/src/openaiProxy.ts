@@ -3382,14 +3382,14 @@ function forwardColdOwner(
     clientSignal: context.req.signal,
     deadlineMs: Date.now() + upstreamTimeoutMs(),
     principal: { bearer: context.req.headers.get("authorization") },
-    send: (target, signal, body) => {
+    send: (target, signal, body, transport = fetch) => {
       const upstream: RequestInit & { timeout: boolean } = {
         ...withLocalEngineBody(init, body),
         signal,
         redirect: "error",
         timeout: false,
       };
-      return fetch(target, upstream);
+      return transport(target, upstream);
     },
   });
 }
@@ -3417,8 +3417,8 @@ function forwardAdmittedEngine(
           stillOwnsTarget: () => routeStillOwned(route, context.resolved),
         }),
     ...(signal === null || signal === undefined ? {} : { engineSignal: signal }),
-    send: (engineSignal, body) =>
-      fetch(context.target, {
+    send: (engineSignal, body, transport = fetch) =>
+      transport(context.target, {
         ...withLocalEngineBody(init, body),
         signal: engineSignal,
         redirect: "error",

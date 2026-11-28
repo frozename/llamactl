@@ -381,7 +381,7 @@ function engineFetch(
     headers.delete("authorization");
     if (managed !== undefined) {
       return managed.permit.send(
-        (signal, body) => {
+        (signal, body, transport = fetch) => {
           beforeLocalDial?.();
           managed.onDial();
           const engine = {
@@ -390,7 +390,7 @@ function engineFetch(
             redirect: "error" as const,
             timeout: false,
           };
-          return fetch(input, engine);
+          return transport(input, engine);
         },
         typeof init?.body === "string" ? init.body : null,
       );

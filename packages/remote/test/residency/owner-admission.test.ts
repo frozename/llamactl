@@ -15,6 +15,7 @@ import type { InferenceHoldReceipt } from "../../src/residency/inference-holds.j
 
 import { envForTemp, makeTempRuntime } from "../../../core/test/helpers.js";
 import { currentWorkerRpcHost } from "../../src/inference/procedures.js";
+import { createOmlxOwnerFetch } from "../../src/residency/omlx-owner-http.js";
 import { createOwnerAdmission } from "../../src/residency/owner-admission.js";
 import { startAgentServer } from "../../src/server/serve.js";
 
@@ -673,4 +674,160 @@ test("a stopping owner refuses queued and new requests without another dial", as
   expect((await queued)?.status).toBe(503);
   expect((await gate.forward(foreground))?.status).toBe(503);
   expect(sends).toBe(0);
+});
+
+test("the admitted Worker RPC stream uses its private engine transport", async () => {
+  const temp = makeTempRuntime();
+  const env = envForTemp(temp);
+  const saved = Object.keys(env).map((key) => [key, process.env[key]] as const);
+  Object.assign(process.env, env);
+  const key = "fixture-private-rpc-key";
+  const observed: (string | null)[] = [];
+  using server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch(request): Response {
+      const auth = request.headers.get("authorization");
+      observed.push(auth);
+      if (auth !== `Bearer ${key}`) return new Response(null, { status: 401 });
+      return new Response(
+        'data: {"id":"rpc","model":"rpc","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+        { headers: { "content-type": "text/event-stream" } },
+      );
+    },
+  });
+  const endpoint = { host: server.url.hostname, port: Number(server.url.port) };
+  const transport = createOmlxOwnerFetch(endpoint, { inferenceKey: key });
+  const agent = startAgentServer({
+    tokenHash: "a".repeat(64),
+    advertiseMdns: false,
+    executionAdmission: [group(endpoint.port, 18210)],
+    selectManagedEngineTransport: (target, workload): typeof fetch | null =>
+      workload === "qwen" && target === new URL("/v1/chat/completions", server.url).href
+        ? transport
+        : null,
+    workerRpc: {
+      workerId: "worker",
+      settings: (): { versions: (typeof V1)[]; serviceCredentials: [] } => ({
+        versions: [V1],
+        serviceCredentials: [],
+      }),
+    },
+  });
+  try {
+    writeModelHostState(
+      {
+        ...endpoint,
+        kind: "ModelHost",
+        engine: "omlx",
+        pid: process.pid,
+        modelAliases: ["rpc"],
+        startedAt: new Date().toISOString(),
+      },
+      { name: "qwen" },
+      resolveEnv(),
+    );
+    const frames = [];
+    for await (const frame of workerChat("private-rpc-1")) frames.push(frame);
+    expect(observed).toEqual([`Bearer ${key}`]);
+    expect(frames.findLast((frame) => frame.frame === "event")).toMatchObject({
+      frame: "event",
+      event: { terminal: { outcome: "completed" } },
+    });
+  } finally {
+    await agent.stop();
+    for (const [name, prior] of saved) {
+      if (prior === undefined) Reflect.deleteProperty(process.env, name);
+      else process.env[name] = prior;
+    }
+    temp.cleanup();
+  }
+});
+
+test("a private transport selected after client cancellation never reaches the dial", async () => {
+  const previous = getResidencyLeaseRegistry();
+  const leases = createResidencyLeases();
+  setResidencyLeaseRegistry(leases);
+  const controller = new AbortController();
+  let sends = 0;
+  let settlements = 0;
+  const gate = createOwnerAdmission([group(18200, 18210)], {
+    inferenceHolds: {
+      begin(): InferenceHoldReceipt {
+        return {
+          confirmCompletion(): boolean {
+            settlements++;
+            return true;
+          },
+        };
+      },
+      state: (): "current" => "current",
+    },
+    selectEngineTransport(): typeof fetch {
+      controller.abort();
+      return fetch;
+    },
+  });
+  try {
+    const reply = await gate.forward(
+      dispatch(
+        18200,
+        () => {
+          sends++;
+          return Promise.resolve(new Response(null, { status: 204 }));
+        },
+        {
+          clientSignal: controller.signal,
+          workload: "private",
+        },
+      ),
+    );
+    expect({ status: reply?.status, sends, settlements }).toEqual({
+      status: 499,
+      sends: 0,
+      settlements: 1,
+    });
+    expect(leases.active("private")).toHaveLength(0);
+  } finally {
+    gate.stop();
+    setResidencyLeaseRegistry(previous);
+  }
+});
+
+test("a private engine selector never falls back outside the configured execution groups", async () => {
+  const gate = createOwnerAdmission([group(18200, 18210)], {
+    selectEngineTransport: (): typeof fetch => fetch,
+  });
+  let dials = 0;
+  try {
+    const reply = await gate.forward(
+      dispatch(18211, () => {
+        dials++;
+        return Promise.resolve(new Response(null, { status: 204 }));
+      }),
+    );
+    expect({ status: reply?.status, dials }).toEqual({ status: 503, dials: 0 });
+    expect(await reply?.json()).toMatchObject({
+      error: { code: "managed_execution_target_unconfigured" },
+    });
+  } finally {
+    gate.stop();
+  }
+});
+
+test("an agent refuses a private selector without configured execution admission", async () => {
+  let running: ReturnType<typeof startAgentServer> | undefined;
+  try {
+    expect(() => {
+      running = startAgentServer({
+        bindHost: "127.0.0.1",
+        port: 0,
+        tokenHash: "a".repeat(64),
+        advertiseMdns: false,
+        selectManagedEngineTransport: (): typeof fetch => fetch,
+      });
+    }).toThrow("ManagedEngineTransportAdmissionRequired");
+  } finally {
+    await running?.stop();
+  }
 });

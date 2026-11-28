@@ -32,6 +32,12 @@ import {
   type ReservableRequestAdmission,
 } from "./request-admission.js";
 
+/** A missing private binding refuses the dial; undefined keeps the ordinary transport. */
+export type SelectOwnerTransport = (
+  target: string,
+  workload?: string,
+) => typeof fetch | null | undefined;
+
 interface ExecutionGroup {
   model: QueueModelRef;
   admission: ReservableRequestAdmission;
@@ -40,6 +46,7 @@ interface ExecutionGroup {
   activity?: OwnerActivity;
   allowsProfileServing?: (workload: string) => boolean;
   allowsManagedServing?: (workload: string) => boolean;
+  selectEngineTransport?: SelectOwnerTransport;
   unconfirmed: AbortController;
   stopping: AbortController;
 }
@@ -254,6 +261,34 @@ function validateDial(
   return refusal;
 }
 
+function selectOwnerDial(
+  group: ExecutionGroup,
+  dispatch: LocalEngineDispatch,
+  engineSignal: AbortSignal,
+  hasDurableHold: boolean,
+  onRefused: () => void,
+): typeof fetch | Response | undefined {
+  let transport: typeof fetch | null | undefined;
+  try {
+    transport = group.selectEngineTransport?.(dispatch.target, dispatch.workload);
+  } catch {
+    transport = null;
+  }
+  if (hasDurableHold || group.selectEngineTransport !== undefined) {
+    // Journal and binding reads can outlast the deadline or an ownership change.
+    const afterSelection = validateDial(group, dispatch, engineSignal, onRefused);
+    if (afterSelection !== undefined) return afterSelection;
+  }
+  if (transport === null) {
+    onRefused();
+    return Response.json(
+      { error: { type: "model_unavailable", code: "managed_engine_transport_unverified" } },
+      { status: 503 },
+    );
+  }
+  return transport;
+}
+
 async function forwardGranted(
   group: ExecutionGroup,
   dispatch: LocalEngineDispatch,
@@ -292,13 +327,10 @@ async function forwardGranted(
     else fence(group);
     release();
   };
-  if (hold !== undefined) {
-    // The journal write can outlast the deadline or an ownership change.
-    const afterHold = validateDial(group, dispatch, engineSignal, () => {
-      complete(true);
-    });
-    if (afterHold !== undefined) return afterHold;
-  }
+  const transport = selectOwnerDial(group, dispatch, engineSignal, hold !== undefined, () => {
+    complete(true);
+  });
+  if (transport instanceof Response) return transport;
 
   // Once the dial starts, the HTTP connection stays alive until terminal
   // output or its engine deadline. The caller can leave immediately.
@@ -310,7 +342,7 @@ async function forwardGranted(
 
   const work = (async (): Promise<Response> => {
     try {
-      const response = await dispatch.send(engineSignal);
+      const response = await dispatch.send(engineSignal, undefined, transport);
       return bindEngineBody(response, dispatch, engineSignal, complete);
     } catch {
       complete(false);
@@ -358,7 +390,7 @@ function permitFor(
       const bounded = typeof body === "object" ? body.body : body;
       return await forwardGranted(
         group,
-        { ...request, send: (signal) => send(signal, bounded) },
+        { ...request, send: (signal, _body, transport) => send(signal, bounded, transport) },
         hardSignal(group, request),
         release,
       );
@@ -460,6 +492,7 @@ export function createOwnerAdmission(
     activity?: OwnerActivity;
     allowsProfileServing?: (workload: string) => boolean;
     allowsManagedServing?: (workload: string) => boolean;
+    selectEngineTransport?: SelectOwnerTransport;
   } = {},
 ): OwnerAdmission {
   const targets = new Map<number, { group: ExecutionGroup; priority: RequestPriority }>();
@@ -476,6 +509,9 @@ export function createOwnerAdmission(
       ...(options.allowsManagedServing === undefined
         ? {}
         : { allowsManagedServing: options.allowsManagedServing }),
+      ...(options.selectEngineTransport === undefined
+        ? {}
+        : { selectEngineTransport: options.selectEngineTransport }),
       unconfirmed: new AbortController(),
       stopping: new AbortController(),
       admission: createRequestAdmission({
@@ -510,7 +546,7 @@ export function createOwnerAdmission(
     if (match !== undefined) {
       return acquireMatched(match.group, match.priority, request, options.noAuth === true);
     }
-    return options.inferenceHolds === undefined
+    return options.inferenceHolds === undefined && options.selectEngineTransport === undefined
       ? undefined
       : { refusal: new ManagedExecutionTargetError() };
   };

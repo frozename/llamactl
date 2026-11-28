@@ -70,7 +70,11 @@ import {
   type OwnerActivity,
   type OwnerAdmissionPause,
 } from "../residency/owner-activity.js";
-import { createOwnerAdmission, type OwnerAdmission } from "../residency/owner-admission.js";
+import {
+  createOwnerAdmission,
+  type OwnerAdmission,
+  type SelectOwnerTransport,
+} from "../residency/owner-admission.js";
 import { PEER_COLD_ROUTE, type PeerColdCredential } from "../residency/peer-cold.js";
 import {
   createResidencyLeaseAuditSink,
@@ -361,6 +365,7 @@ export interface StartAgentOptions {
   managedPeerColdGateway?: Required<Pick<UnifiedProxyOptions, "peers" | "peerCold">>;
   executionAdmission?: ExecutionAdmissionConfig;
   managedInferenceHolds?: InferenceHolds;
+  selectManagedEngineTransport?: SelectOwnerTransport | undefined;
   /** Trusted programmatic owner wiring. The host must verify that no ingress bypasses these admissions. */
   managedOwnerActivity?: { verifyExclusiveIngress: () => unknown };
   /**
@@ -1601,6 +1606,9 @@ function prepareExecutionHooks(opts: StartAgentOptions): {
     ...(allowsManagedServing === undefined ? {} : { allowsManagedServing }),
     ...(activity === undefined ? {} : { activity }),
     ...(allowsProfileServing === undefined ? {} : { allowsProfileServing }),
+    ...(opts.selectManagedEngineTransport === undefined
+      ? {}
+      : { selectEngineTransport: opts.selectManagedEngineTransport }),
     noAuth: opts.noAuth === true && isLoopbackAddress(opts.bindHost ?? "127.0.0.1"),
     ...(opts.managedInferenceHolds === undefined
       ? {}
@@ -1736,6 +1744,15 @@ async function finalFlushWindow(
   }
 }
 
+function verifyManagedEngineTransportAdmission(opts: StartAgentOptions): void {
+  if (
+    opts.selectManagedEngineTransport !== undefined &&
+    (opts.noAuth === true || !opts.executionAdmission?.length)
+  ) {
+    throw new Error("ManagedEngineTransportAdmissionRequired");
+  }
+}
+
 /**
  * Starts a Bun HTTP(S) server that exposes the llamactl tRPC router
  * behind bearer-token auth. The fetchRequestHandler is the same surface
@@ -1743,6 +1760,7 @@ async function finalFlushWindow(
  * three mounts.
  */
 export function startAgentServer(opts: StartAgentOptions): RunningAgent {
+  verifyManagedEngineTransportAdmission(opts);
   if (opts.managedOwnerActivity !== undefined && opts.workerRpc !== undefined)
     throw new Error("ManagedOwnerActivityIngressUnsupported");
   if (

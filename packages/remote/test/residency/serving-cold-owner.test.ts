@@ -14,6 +14,7 @@ import type { TrustedColdOwner, TrustedColdPin } from "../../src/residency/cold-
 
 import { RESIDENCY_APPLY_PROFILE_FENCE_OWNER } from "../../src/residency/apply-profile.js";
 import { readManagedProfileSelection } from "../../src/residency/managed-profile-selection.js";
+import { createOmlxOwnerFetch } from "../../src/residency/omlx-owner-http.js";
 import { createOwnerAdmission } from "../../src/residency/owner-admission.js";
 import { peerColdBodyDigest } from "../../src/residency/peer-cold.js";
 import { openResidencyOperationStore } from "../../src/residency/store.js";
@@ -1142,6 +1143,85 @@ test("a queued warm request rechecks its durable claim after admission", async (
     expect(lateDials).toBe(0);
   } finally {
     completion.resolve(new Response(null, { status: 204 }));
+    await running?.stop();
+    restore();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the managed proxy dials the exact private transport and refuses a lost binding", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "llamactl-native-warm-ingress-"));
+  const restore = isolate(dir);
+  const key = "fixture-engine-owner-key";
+  const body = JSON.stringify({ model: MODEL, prompt: "proof", max_tokens: 3 });
+  const calls: [string | null, string | null, string][] = [];
+  using engine = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    async fetch(request): Promise<Response> {
+      const authorization = request.headers.get("authorization");
+      calls.push([authorization, request.headers.get("x-api-key"), await request.text()]);
+      return new Response(null, { status: authorization === `Bearer ${key}` ? 204 : 401 });
+    },
+  });
+  const endpoint = { host: engine.url.hostname, port: Number(engine.url.port) };
+  const send = createOmlxOwnerFetch(endpoint, { inferenceKey: key });
+  const target = new URL("/v1/completions", engine.url).href;
+  let current = true;
+  let running: RunningAgent | undefined;
+  try {
+    running = await startManagedAgentServer(
+      {
+        bindHost: "127.0.0.1",
+        port: 0,
+        tokenHash: hashToken(TOKEN),
+        advertiseMdns: false,
+        executionAdmission: [
+          { ...CAP, foregroundPorts: [endpoint.port], maxContextTokens: undefined },
+        ],
+      },
+      NODE,
+      {
+        ...capacity,
+        selectEngineTransport: (candidate, workload): typeof fetch | null | undefined =>
+          workload === WORKLOAD && candidate === target ? (current ? send : null) : undefined,
+      },
+    );
+    writeModelHostState(
+      {
+        ...endpoint,
+        kind: "ModelHost",
+        engine: "omlx",
+        pid: process.pid,
+        modelAliases: [MODEL],
+        startedAt: new Date().toISOString(),
+      },
+      { name: WORKLOAD },
+      resolveEnv(),
+    );
+    const url = running.url;
+    const inference = (): Promise<Response> =>
+      fetch(`${url}/v1/completions`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${TOKEN}`,
+          "content-type": "application/json",
+          "x-api-key": "fixture-caller-key",
+        },
+        body,
+      });
+    const served = await inference();
+    expect({ status: served.status, count: calls.length }).toEqual({ status: 204, count: 1 });
+    expect(calls).toEqual([[`Bearer ${key}`, null, body]]);
+    current = false;
+    const refused = await inference();
+    expect(refused.status).toBe(503);
+    expect(await refused.json()).toMatchObject({
+      error: { code: "managed_engine_transport_unverified" },
+    });
+    expect(calls).toHaveLength(1);
+    expect(getResidencyLeaseRegistry()?.active(WORKLOAD)).toHaveLength(0);
+  } finally {
     await running?.stop();
     restore();
     rmSync(dir, { recursive: true, force: true });

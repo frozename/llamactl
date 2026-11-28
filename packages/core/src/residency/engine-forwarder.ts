@@ -15,7 +15,7 @@ export interface LocalEngineRequest {
 }
 
 export interface LocalEngineDispatch extends LocalEngineRequest {
-  send: (signal: AbortSignal, body?: string) => Promise<Response>;
+  send: (signal: AbortSignal, body?: string, transport?: typeof fetch) => Promise<Response>;
 }
 
 export function withLocalEngineBody(init: RequestInit, body: string | undefined): RequestInit {
@@ -32,7 +32,12 @@ export interface ColdEngineDispatch {
   body: string | null;
   clientSignal: AbortSignal;
   principal: LocalEngineRequest["principal"];
-  send: (target: string, signal: AbortSignal, body?: string) => Promise<Response>;
+  send: (
+    target: string,
+    signal: AbortSignal,
+    body?: string,
+    transport?: typeof fetch,
+  ) => Promise<Response>;
 }
 
 export type ColdEngineForwarder = (request: ColdEngineDispatch) => Promise<Response>;
