@@ -432,19 +432,19 @@ describe("startPeerSnapshotPoller", () => {
   test("slow peer fetch does not block healthy peer publishes across ticks", async () => {
     const publishes: Map<string, PeerSnapshot>[] = [];
     let n = 0;
-    const stalledJson = (): Promise<unknown> =>
-      new Promise(() => {
-        void 0;
-      });
 
     globalThis.fetch = ((input: Request | string | URL) => {
       const target = requestUrl(input);
       if (target.includes("127.0.0.2")) {
-        const response = new Response("{}", {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
-        Object.defineProperty(response, "json", { value: stalledJson });
+        const response = new Response(
+          new ReadableStream<Uint8Array>({
+            pull: (): Promise<void> => new Promise<void>(() => undefined),
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        );
         return Promise.resolve(response);
       }
 
@@ -503,16 +503,16 @@ describe("startPeerSnapshotPoller", () => {
   });
 
   test("direct peer fetch times out stalled response bodies instead of wedging the tick", async () => {
-    const stalledJson = (): Promise<unknown> =>
-      new Promise(() => {
-        void 0;
-      });
     globalThis.fetch = ((_input: Request | string | URL) => {
-      const response = new Response("{}", {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
-      Object.defineProperty(response, "json", { value: stalledJson });
+      const response = new Response(
+        new ReadableStream<Uint8Array>({
+          pull: (): Promise<void> => new Promise<void>(() => undefined),
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      );
       return Promise.resolve(response);
     }) as typeof fetch;
 
