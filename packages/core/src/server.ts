@@ -689,6 +689,8 @@ export interface StartServerResult {
   tunedProfile: string | null;
   retried: boolean;
   error?: string;
+  /** The owner refused dispatch before any spawn attempt in this start. */
+  preDispatchRefusal?: string;
   /**
    * Set only when the stop-before-start was refused: by a published
    * residency lease registry — `LeasesActive` while a lease is held,
@@ -2297,15 +2299,19 @@ async function startServerWithPublicationBarrier(
   const earlyRefusal = managedArtifactRefusal(opts.pinned);
   if (earlyRefusal !== undefined)
     return startServerError(resolved, opts.endpoint, null, false, earlyRefusal);
+  let dispatched = false;
   const result = await startServerUnwrapped({
     ...opts,
     resolved,
     onEvent: (event) => {
+      // launchBackground emits this after spawn and before any fallback or retry.
+      if (event.type === "launch") dispatched = true;
       if (event.type !== "ready") opts.onEvent?.(event);
     },
   }).catch((error: unknown): StartServerResult => {
     if (!(error instanceof ManagedSpawnRefusedError)) throw error;
-    return startServerError(resolved, opts.endpoint, null, false, error.message);
+    const refused = startServerError(resolved, opts.endpoint, null, false, error.message);
+    return dispatched ? refused : { ...refused, preDispatchRefusal: error.message };
   });
   if (!result.ok || result.pid === null) return result;
   const readyRefusal = managedArtifactRefusal(opts.pinned);

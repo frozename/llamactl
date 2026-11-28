@@ -571,6 +571,8 @@ const CONTROL_OUTCOME_CODES = new Set([
   "SessionsActive",
   "SessionsUnknown",
   "ManagedInferenceUnresolved",
+  "ManagedLlamacppIdleSleepConfigUnverified",
+  "ManagedLlamacppIdleSleepUnavailable",
   "ManagedOwnerRequired",
   "ManagedSpecUnknown",
   "ManagedSpecChanged",

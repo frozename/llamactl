@@ -16,7 +16,7 @@ export const ENGINES: Record<EngineName, EngineAdapter> = {
 
 export { libosmosEngine } from "./libosmos.js";
 export { checkServingReadiness, formatHostForUrl } from "./lifecycle.js";
-export { hasUnmanagedLlamacppIdleSleep } from "./llamacpp.js";
+export { hasLeadingLlamacppIdleSleepOverride, hasUnmanagedLlamacppIdleSleep } from "./llamacpp.js";
 export {
   deriveOmlxResidency,
   matchHostedModel,

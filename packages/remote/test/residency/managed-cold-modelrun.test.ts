@@ -345,11 +345,8 @@ for (const cause of ["physical headroom", "desired allocation", "cold pin"] as c
       );
       expect(scopeResolved).toBe(true);
       expect(attempts).toEqual([]);
-      expect(outcome).toMatchObject({
-        ran: true,
-        result: { ok: false, pid: null, error: expected },
-      });
-      expect(authority.snapshot()).toMatchObject([{ state: "uncertain", allocationGiB: 4 }]);
+      expect(outcome).toEqual({ ran: false, detail: expected });
+      expect(authority.snapshot()).toEqual([]);
     } finally {
       setEngineScopeLauncher(previousLauncher);
       authority.close();
