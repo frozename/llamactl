@@ -15,6 +15,7 @@ describe("#522 eval record evidence capture (#764, #757, #738)", () => {
   const readersSrc = readOrEmpty(join(REPO, "packages/eval/src/perf/readers.ts"));
   const darwinRusageSrc = readOrEmpty(join(REPO, "packages/eval/src/perf/darwin-rusage.ts"));
   const metricsSrc = readOrEmpty(join(REPO, "packages/eval/src/perf/metrics.ts"));
+  const normaliseSrc = readOrEmpty(join(REPO, "packages/eval/src/perf/normalise.ts"));
   const provenanceSrc = readOrEmpty(join(REPO, "packages/eval/src/perf/provenance.ts"));
   const typesSrc = readOrEmpty(join(REPO, "packages/eval/src/matrix/types.ts"));
   const lifecycleSrc = readOrEmpty(join(REPO, "packages/eval/src/matrix/lifecycle.ts"));
@@ -430,6 +431,7 @@ describe("#522 eval record evidence capture (#764, #757, #738)", () => {
       ["packages/eval/src/perf/readers.ts", readersSrc],
       ["packages/eval/src/perf/darwin-rusage.ts", darwinRusageSrc],
       ["packages/eval/src/perf/metrics.ts", metricsSrc],
+      ["packages/eval/src/perf/normalise.ts", normaliseSrc],
       ["packages/eval/src/perf/provenance.ts", provenanceSrc],
       ["packages/eval/src/matrix/types.ts", typesSrc],
       ["packages/eval/src/matrix/lifecycle.ts", lifecycleSrc],
@@ -597,6 +599,17 @@ describe("#522 eval record evidence capture (#764, #757, #738)", () => {
             symbol: "PERF_METRIC_NAMES",
             path: "packages/eval/src/perf/metrics.ts",
             declaration: "export const PERF_METRIC_NAMES = [",
+          },
+        ],
+      },
+      {
+        phrase: "read by `normaliseAcceptance` (`packages/eval/src/perf/normalise.ts`) from",
+        cited: [
+          {
+            symbol: "normaliseAcceptance",
+            path: "packages/eval/src/perf/normalise.ts",
+            declaration: "export function normaliseAcceptance(",
+            credits: ["no draft tokens proposed", "acceptance cannot exceed 1"],
           },
         ],
       },
