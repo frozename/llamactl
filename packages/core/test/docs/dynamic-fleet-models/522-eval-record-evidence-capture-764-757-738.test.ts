@@ -556,14 +556,20 @@ describe("#522 eval record evidence capture (#764, #757, #738)", () => {
       },
       {
         phrase:
-          "on macOS each is recorded `unavailable` with a named reason (`createPerfHostReaders`, `packages/eval/src/perf/readers.ts`, and `hostReaders`, `packages/cli/src/commands/eval-perf.ts`).",
+          "On macOS with `--pid`, `proc_pid_rusage` with flavor `RUSAGE_INFO_V4` fills `ri_lifetime_max_phys_footprint`, and its value is the peak RSS (`createPerfHostReaders`, `packages/eval/src/perf/readers.ts`).",
         cited: [
           {
             symbol: "createPerfHostReaders",
             path: "packages/eval/src/perf/readers.ts",
             declaration: "export function createPerfHostReaders(",
-            credits: ["is Linux-only"],
+            credits: ["RUSAGE_INFO_V4"],
           },
+        ],
+      },
+      {
+        phrase:
+          "GTT is Linux-only; on macOS it is recorded `unavailable` with a named reason (`hostReaders`, `packages/cli/src/commands/eval-perf.ts`).",
+        cited: [
           {
             symbol: "hostReaders",
             path: "packages/cli/src/commands/eval-perf.ts",

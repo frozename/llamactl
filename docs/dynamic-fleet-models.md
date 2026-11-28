@@ -1003,10 +1003,12 @@ any loopback Linux run, with or without `--pid`
 `proc_pid_rusage` with flavor `RUSAGE_INFO_V2` fills `ri_diskio_bytesread` and
 `ri_diskio_byteswritten`, and their per-sample deltas are the SSD read and write bytes
 (`createPerfHostReaders`, `packages/eval/src/perf/readers.ts`, and
-`defaultProcPidRusage`, `packages/eval/src/perf/darwin-rusage.ts`). Peak RSS and GTT are
-Linux-only; on macOS each is recorded `unavailable` with a named reason
-(`createPerfHostReaders`, `packages/eval/src/perf/readers.ts`, and
-`hostReaders`, `packages/cli/src/commands/eval-perf.ts`). On any other platform SSD I/O
+`defaultProcPidRusage`, `packages/eval/src/perf/darwin-rusage.ts`).
+On macOS with `--pid`, `proc_pid_rusage` with flavor `RUSAGE_INFO_V4` fills
+`ri_lifetime_max_phys_footprint`, and its value is the peak RSS
+(`createPerfHostReaders`, `packages/eval/src/perf/readers.ts`).
+GTT is Linux-only; on macOS it is recorded `unavailable` with a named reason
+(`hostReaders`, `packages/cli/src/commands/eval-perf.ts`). On any other platform SSD I/O
 records `per-process disk I/O counters are read from /proc/<pid>/io on Linux and
 proc_pid_rusage on macOS; no I/O reader on <platform>`. With a non-loopback URL, every
 host counter is recorded `unavailable`, with a reason naming the remote engine
@@ -1422,8 +1424,8 @@ not known when the reader ran`. SSD I/O records
 engine process spans the suite; per-process SSD I/O (/proc/<pid>/io) is not
 measured` (`LAUNCH_IO_REASON`, `packages/cli/src/commands/eval-perf-launch.ts`),
 because the cold and warm boots are different processes. GTT is unchanged. On macOS, SSD
-I/O records the same `LAUNCH_IO_REASON`, and peak RSS and GTT keep their Linux-only
-reasons.
+I/O records the same `LAUNCH_IO_REASON`, peak RSS is read through `proc_pid_rusage` for
+the warm relaunch PID, and GTT keeps its Linux-only reason.
 
 Because the engine is not up before the suite starts, `GET /props` is not
 probed. Without an explicit `--slots <n>`, c2/c4 record
