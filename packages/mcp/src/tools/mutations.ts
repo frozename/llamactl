@@ -5,6 +5,7 @@ import {
   agentConfig,
   type ClusterNode,
   config as kubecfg,
+  opsChatStopRefusal,
   router,
   workloadStore,
 } from "@llamactl/remote";
@@ -35,7 +36,7 @@ function registerWorkloadApply(server: McpServer): void {
     {
       title: "Apply a workload manifest",
       description:
-        "Apply a ModelRun or ModelHost manifest (YAML) to its target node: validate, run admission, place + start the server, and persist the manifest to the workloads store. `dryRun: true` validates and reports the parsed kind/name/node without applying. The narrow single-workload counterpart to llamactl.composite.apply — prefer this for single-model or single-service asks.",
+        "Apply a ModelRun or ModelHost manifest (YAML) to its target node: validate, run admission, place + start the server, and persist the manifest to the workloads store. `dryRun: true` validates and reports the parsed kind/name/node without applying. The narrow single-workload counterpart to llamactl.composite.apply — prefer this for single-model or single-service asks. A restart or eviction the node stop fence refuses (`StopRefused`, `EvictVictimBusy`, `EvictSessionActive`, `EvictSessionUnknown`) comes back as a tool error (`isError`) with code `apply_refused`: the server keeps running its current spec and a refusal never releases sessions, so the overrides are `llamactl residency release-session` and `llamactl residency force-unload`.",
       inputSchema: {
         yaml: z.string().min(1).describe("Raw YAML body of a ModelRun or ModelHost manifest."),
         dryRun: z.boolean().default(false),
@@ -79,16 +80,86 @@ function registerWorkloadApply(server: McpServer): void {
       }
       const caller = router.createCaller({});
       const result = await caller.workloadApply({ yaml });
+      const { response, audit } = workloadApplyToolResult(result);
       appendAudit({
         server: SERVER_SLUG,
         tool: "llamactl.workload.apply",
         input: { dryRun, bytes: yaml.length },
         dryRun: false,
-        result: { name: (result as { name?: string }).name ?? null },
+        result: audit,
       });
-      return toTextContent(result);
+      return response;
     },
   );
+}
+
+// Mirrors APPLY_FENCE_REASONS in the remote ops-chat dispatcher: the MCP audit
+// row names the condition reason next to the refusal code.
+const APPLY_FENCE_REASONS = new Set([
+  "StopRefused",
+  "EvictVictimBusy",
+  "EvictSessionActive",
+  "EvictSessionUnknown",
+]);
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== "object" || value === null) return null;
+  return value as Record<string, unknown>;
+}
+
+function applyStatusConditions(result: unknown): Record<string, unknown>[] {
+  const status = asRecord(asRecord(result)?.["status"]);
+  const conditions = status?.["conditions"];
+  if (!Array.isArray(conditions)) return [];
+  return conditions.filter((entry): entry is Record<string, unknown> => asRecord(entry) !== null);
+}
+
+function applyResultName(result: unknown): string | null {
+  const name = asRecord(result)?.["name"];
+  return typeof name === "string" ? name : null;
+}
+
+function applyFenceReason(result: unknown): string | null {
+  for (const condition of applyStatusConditions(result)) {
+    if (condition["status"] !== "False") continue;
+    const reason = condition["reason"];
+    if (typeof reason === "string" && APPLY_FENCE_REASONS.has(reason)) return reason;
+  }
+  return null;
+}
+
+/**
+ * The `workloadApply` procedure has no `error` field, so a restart or an
+ * eviction the node stop fence refused would otherwise reach the model as a
+ * clean `unchanged`/`pending` payload. A fence condition turns the tool result
+ * into an `isError` envelope carrying the shared refusal code and message, and
+ * the audit row records the refusal instead of the raw result (#520).
+ */
+export function workloadApplyToolResult(result: unknown): {
+  response: ReturnType<typeof toTextContent> & { isError?: true };
+  audit: Record<string, unknown>;
+} {
+  const refusal = opsChatStopRefusal("llamactl.workload.apply", {}, result);
+  if (refusal !== null) {
+    return {
+      response: {
+        ...toTextContent({
+          ...(result as object),
+          ok: false,
+          code: refusal.code,
+          error: refusal.message,
+        }),
+        isError: true,
+      },
+      audit: {
+        ok: false,
+        code: refusal.code,
+        name: applyResultName(result),
+        reason: applyFenceReason(result),
+      },
+    };
+  }
+  return { response: toTextContent(result), audit: { name: applyResultName(result) } };
 }
 
 function registerNodeAdd(server: McpServer): void {
