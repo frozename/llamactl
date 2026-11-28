@@ -273,6 +273,67 @@ describe("agent token rename/revoke last-used coherence", () => {
     }
   });
 
+  test("revoking another token keeps a surviving legacy named default's use", async () => {
+    capture();
+    try {
+      const dir = newAgentDir();
+      const entries = [
+        bearerEntry("default", "2026-01-01T00:00:00.000Z"),
+        bearerEntry("ops", "2026-01-01T00:00:00.000Z"),
+      ];
+      writeAgentConfig(dir, entries);
+      const path = join(dir, "bearer-last-used.json");
+      writeLastUsed(path, {
+        "named:default": "2026-01-05T00:00:00.000Z",
+        default: "2026-01-07T00:00:00.000Z",
+        ops: "2026-01-06T00:00:00.000Z",
+      });
+
+      expect(await runTokenCommand(["token", "revoke", "ops", `--dir=${dir}`], entries)).toBe(0);
+
+      const readBearerLastUsed = requireAgentConfigFn<ReadBearerLastUsed>("readBearerLastUsed");
+      expect(readBearerLastUsed(path)).toEqual({
+        "named:default": "2026-01-05T00:00:00.000Z",
+        default: "2026-01-07T00:00:00.000Z",
+      });
+      expect(fs.statSync(path).mode & 0o777).toBe(0o600);
+    } finally {
+      restore();
+    }
+  });
+
+  test("renaming another token keeps a surviving legacy named default's use", async () => {
+    capture();
+    try {
+      const dir = newAgentDir();
+      const entries = [
+        bearerEntry("default", "2026-01-01T00:00:00.000Z"),
+        bearerEntry("ops", "2026-01-01T00:00:00.000Z"),
+      ];
+      writeAgentConfig(dir, entries);
+      const path = join(dir, "bearer-last-used.json");
+      writeLastUsed(path, {
+        "named:default": "2026-01-05T00:00:00.000Z",
+        default: "2026-01-07T00:00:00.000Z",
+        ops: "2026-01-06T00:00:00.000Z",
+      });
+
+      expect(await runTokenCommand(["token", "rename", "ops", "x", `--dir=${dir}`], entries)).toBe(
+        0,
+      );
+
+      const readBearerLastUsed = requireAgentConfigFn<ReadBearerLastUsed>("readBearerLastUsed");
+      expect(readBearerLastUsed(path)).toEqual({
+        "named:default": "2026-01-05T00:00:00.000Z",
+        default: "2026-01-07T00:00:00.000Z",
+        x: "2026-01-06T00:00:00.000Z",
+      });
+      expect(fs.statSync(path).mode & 0o777).toBe(0o600);
+    } finally {
+      restore();
+    }
+  });
+
   test("the running agent recorder preserves CLI renames across flushes", () => {
     capture();
     try {
