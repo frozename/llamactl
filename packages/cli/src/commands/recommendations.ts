@@ -15,7 +15,12 @@ function formatRow(row: recommendations.RecommendationRow): string {
   const ctx = padRight(row.ctx, 6);
   const promotedNote =
     row.promoted === "env" ? " promoted=env" : row.promoted === "file" ? " promoted=file" : "";
-  return `  ${target} ${label} class=${className} scope=${scope} quant=${quant} ctx=${ctx} model=${row.rel}${promotedNote}`;
+  const skippedNote =
+    row.skippedExperimental && row.skippedExperimental.length > 0
+      ? " skipped-experimental=" +
+        row.skippedExperimental.map((s) => `${s.source}:${s.rel}`).join(",")
+      : "";
+  return `  ${target} ${label} class=${className} scope=${scope} quant=${quant} ctx=${ctx} model=${row.rel}${promotedNote}${skippedNote}`;
 }
 
 const USAGE = `Usage: llamactl recommendations [current|all|<profile>]
@@ -23,7 +28,8 @@ const USAGE = `Usage: llamactl recommendations [current|all|<profile>]
 Prints the recommended preset ladder (best, vision, balanced, fast, qwen,
 qwen27) per machine profile, with class, scope, quant, ctx, rel, any
 active env/file promotion, and a live Hugging Face summary when the
-rel is catalogued and HF lookups are enabled.
+rel is catalogued and HF lookups are enabled. Also shows any env/file
+promotion skipped because its rel is experimental.
 `;
 
 function printProfileBlock(profile: string, rows: recommendations.RecommendationRow[]): void {

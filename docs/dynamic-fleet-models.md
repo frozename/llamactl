@@ -554,6 +554,8 @@ the MCP `llamactl.catalog.promote` tool returns `ok: false` (a dry run reports
 
 `resolvePreset` skips an env or file preset override whose rel is experimental, read through `catalogQualificationStages` (so pins count), and falls through to the next layer. Each skip is reported on `skippedExperimental` in layer order. This covers a row written before the rel was pinned experimental, and every `resolveTarget` caller (server start, keepAlive, bench, workload apply) and `recommendationsForProfile`. When the builtin itself is pinned experimental (a pin row set after the rel was promoted), no lower layer exists to fall back to, so the builtin default is returned even when it is pinned experimental.
 
+`recommendationsForProfile` copies `skippedExperimental` onto each recommendation row when it is non-empty. `llamactl recommendations`, local or `--node`, appends `skipped-experimental=<source>:<rel>` entries, comma-separated in layer order, after any `promoted=` note, and the row then shows the layer that actually won. The qwen and qwen27 rows never carry the field.
+
 `llamactl qualification evidence --db <matrix.db> --model <name> --map <file.json> [--run-id <id>] [--baseline-run-id <id> [--baseline-model <name>]]`
 builds promotion evidence from eval matrix cells plus an optional baseline
 run. The adapter module is `qualificationEvidenceFromCells` (Part of #518,
