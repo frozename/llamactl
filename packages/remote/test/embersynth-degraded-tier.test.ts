@@ -104,7 +104,7 @@ describe("embersynth degraded bench tier (#518)", () => {
 
     const gpu1 = agentNode(out, "agent-gpu1");
     expect(gpu1?.modelId).toBe("a.gguf");
-    expect(gpu1?.priority).toBe(1);
+    expect(gpu1?.priority).toBe(9);
   });
 
   test("E3: a degraded rel loses to a healthy rel after experimental exclusion", () => {

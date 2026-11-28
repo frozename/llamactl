@@ -76,11 +76,18 @@ export function killQuiet(pid: number): void {
   }
 }
 
+function isSuccessfulOutcome(value: unknown): value is LaunchOutcome {
+  return (
+    value !== null && typeof value === "object" && (value as Partial<LaunchOutcome>).ok === true
+  );
+}
+
 // Launch through the real path from a short-lived parent, then kill the parent
 // and return the surviving engine pid.
 export async function launchFromDyingParent(
   parentScript: string,
   config: ParentConfig,
+  opts: { readonly resultBudgetMs?: number } = {},
 ): Promise<LaunchOutcome> {
   const proc = Bun.spawn([process.execPath, parentScript, JSON.stringify(config)], {
     // Pass the live env: Bun does not forward runtime-mutated process.env
@@ -91,12 +98,49 @@ export async function launchFromDyingParent(
     stderr: "ignore",
   });
   parentPids.add(proc.pid);
-  await waitFor(() => existsSync(config.resultPath), "launch result", 30_000);
-  const resultRaw = readFileSync(config.resultPath, "utf8");
-  const outcome = JSON.parse(resultRaw) as LaunchOutcome;
-  if (!outcome.ok) {
-    throw new Error(`launch failed raw=${JSON.stringify(resultRaw)} spawnPid=${String(proc.pid)}`);
+  // #936: a bare existsSync + parse could read the result while the parent was
+  // still writing it, so the reader retries until the JSON is complete. The
+  // parents write atomically too (atomicWriteFileSync); this covers torn reads
+  // regardless of the writer.
+  let lastRaw = "";
+  let parsed: unknown;
+  try {
+    await waitFor(
+      () => {
+        if (!existsSync(config.resultPath)) {
+          return false;
+        }
+        lastRaw = readFileSync(config.resultPath, "utf8");
+        try {
+          // Complete JSON is the whole payload: a well-formed result that is
+          // not a successful outcome (e.g. no boolean `ok`) fails fast below
+          // rather than polling to the timeout.
+          parsed = JSON.parse(lastRaw);
+          return true;
+        } catch (error) {
+          // A truncated file is "not ready yet", not a failure.
+          if (error instanceof SyntaxError) {
+            return false;
+          }
+          throw error;
+        }
+      },
+      "launch result",
+      opts.resultBudgetMs ?? 30_000,
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.startsWith("timed out waiting for launch result")) {
+      throw error instanceof Error ? error : new Error(message);
+    }
+    throw new Error(
+      `timed out waiting for launch result raw=${JSON.stringify(lastRaw)} spawnPid=${String(proc.pid)}`,
+    );
   }
+  if (!isSuccessfulOutcome(parsed)) {
+    throw new Error(`launch failed raw=${JSON.stringify(lastRaw)} spawnPid=${String(proc.pid)}`);
+  }
+  const outcome = parsed;
   killQuiet(proc.pid);
   await waitFor(() => !isProcessAlive(proc.pid), "parent death", 10_000);
   return outcome;

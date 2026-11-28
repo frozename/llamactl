@@ -429,7 +429,12 @@ falls back to the fastest degraded row only when the machine has no such
 row, and the `promote-fastest-vision-model` runbook ranks a degraded rel
 behind every healthy rel, promoting a degraded rel only when every eligible
 rel is degraded. A degraded rel is demoted, not excluded: it stays eligible,
-unlike an experimental one.
+unlike an experimental one. Across nodes, a fusion node whose `modelId` fell
+back to a degraded rel is advertised at priority 9
+(`DEGRADED_NODE_PRIORITY`), behind every healthy bench band (1 to 8) and the
+unbenched default 5 and ahead of the cloud provider default 10, so the
+`preferLowerPriority` profiles prefer any node serving a healthy model; every
+degraded node shares that priority.
 
 `/v1/models?include=declared` reads the same stages: each `unavailable`
 entry's `qualification.stage` is the routing stage from
@@ -823,7 +828,24 @@ port):
 Steps:
 
 1. Get operator approval for the window.
-2. Record the current state with `llamactl get workloads`.
+2. Record the current state with `llamactl get workloads` and
+   `llamactl residency status --node <node>`. Its `Lifecycle:` block lists
+   the serving process's `residency_states` rows, one
+   `<model>  <state>  group <group>  version <n>` line each, and its
+   `Exclusive:` line reads `no violations` or `violation in <group>:
+<members>` (see
+   [dynamic-residency.md](dynamic-residency.md#status-plan-and-apply-profile)).
+   After production is stopped in step 3 and before step 6, run it again
+   and open the window only when no other `z13-large-gpu` row occupies the
+   group: in step 6 another `loading` or `warming` row, or a `ready` row
+   whose workload is not proven down, refuses the start with
+   `ExclusiveGroupOccupied`. A node with no residency store prints
+   `Lifecycle:  0 workload(s) (scope: serving-process)` and `Exclusive:  no
+violations`; an unreadable store prints `Lifecycle:  unavailable (store
+unreadable; scope: serving-process)` or `Lifecycle:  unavailable
+(lifecycle rows unreadable; scope: serving-process)` and no
+   `Exclusive:` line, and an agent that predates the section prints no
+   `Lifecycle:` line.
 3. Stop production: `llamactl disable <production-workload>` (the
    node-local production workload name; it is not in this repo).
    Confirm it reads Stopped in `llamactl get workloads`. With the lease
@@ -885,7 +907,31 @@ held by <member> in state <state>`. On the agent host the window's
    readiness. A disable is never blocked by this bookkeeping and at
    worst logs "not recorded" (#741). The stop fence is separate from
    this bookkeeping and can refuse the exit-step disable the same way
-   (see step 3).
+   (see step 3). After `llamactl disable <name>` and before
+   `llamactl enable <production-workload>`, run
+   `llamactl residency status --node <node>` again. A confirmed stop walks
+   the window workload's row `ready` -> `draining` -> `unloading` ->
+   `downloaded`, which frees `z13-large-gpu`, and a stop that throws walks
+   it to `failed`, which does not occupy the group either. An unconfirmed
+   stop (the process may still be alive) is never recorded: the agent logs
+   `[residency] lifecycle <name> stop not recorded: unconfirmed stop
+(process may be alive)` and the row stays occupying, so a later
+   same-group start is refused with `ExclusiveGroupOccupied` until the
+   workload is proven down, and an `eval run` without `--url` keeps
+   refusing while the row occupies. With the lease registry on
+   (`LLAMACTL_RESIDENCY_LEASES`), `llamactl residency force-unload <name>
+--reason <text> --yes --node <node>` is the override: it runs the same
+   stop, so it is confirmed only once the engine process is verified gone,
+   and a confirmed force-unload walks the row to `downloaded` while an
+   unconfirmed one keeps it occupying. Without the lease registry,
+   force-unload exits with `residency force-unload: Unavailable: no
+residency lease registry installed; nothing to fence`, stops nothing
+   and leaves the row as it is. Close the window when `Exclusive:` reads
+   `no violations` and the window workload's row is not `loading`,
+   `warming` or `ready`; a `ready` row left by an unconfirmed stop can be
+   closed over only once its engine process is proven down, since it then
+   no longer refuses a direct start but still refuses an `eval run` without
+   `--url`.
 
 Never run two group members at once, given the two-process race in
 the guard.
