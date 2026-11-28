@@ -39,6 +39,7 @@ interface ExecutionGroup {
   inferenceHolds?: InferenceHolds;
   activity?: OwnerActivity;
   allowsProfileServing?: (workload: string) => boolean;
+  allowsManagedServing?: (workload: string) => boolean;
   unconfirmed: AbortController;
   stopping: AbortController;
 }
@@ -214,6 +215,16 @@ function beforeDialRefusal(
     );
   }
   if (hard.aborted || group.unconfirmed.signal.aborted) return fencedResponse();
+  const allowsServing = group.allowsManagedServing;
+  if (
+    allowsServing !== undefined &&
+    (dispatch.workload === undefined || !allowsServing(dispatch.workload))
+  ) {
+    return Response.json(
+      { error: { type: "model_unavailable", code: "managed_residency_unverified" } },
+      { status: 503 },
+    );
+  }
   if (
     dispatch.stillOwnsTarget?.() === false ||
     (dispatch.workload !== undefined && group.allowsProfileServing?.(dispatch.workload) === false)
@@ -448,6 +459,7 @@ export function createOwnerAdmission(
     inferenceHolds?: InferenceHolds;
     activity?: OwnerActivity;
     allowsProfileServing?: (workload: string) => boolean;
+    allowsManagedServing?: (workload: string) => boolean;
   } = {},
 ): OwnerAdmission {
   const targets = new Map<number, { group: ExecutionGroup; priority: RequestPriority }>();
@@ -461,6 +473,9 @@ export function createOwnerAdmission(
       ...(options.allowsProfileServing === undefined
         ? {}
         : { allowsProfileServing: options.allowsProfileServing }),
+      ...(options.allowsManagedServing === undefined
+        ? {}
+        : { allowsManagedServing: options.allowsManagedServing }),
       unconfirmed: new AbortController(),
       stopping: new AbortController(),
       admission: createRequestAdmission({

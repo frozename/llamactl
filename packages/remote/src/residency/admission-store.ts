@@ -71,10 +71,21 @@ export interface ClaimRow {
   native?: { phase: NativeClaimPhase; wakeAllocationGiB: number };
 }
 
+export type ValidateParkedCredit = (claim: Readonly<ClaimRow>) => boolean;
+
+export interface NativeAllocationFence {
+  verifyOwner: () => boolean;
+  /** This read-only proof is evaluated against the row held by the write transaction. */
+  validateParkedCredit?: ValidateParkedCredit | undefined;
+}
+
+export type NativeAllocationRefusal = "AuthorityUnavailable" | "ManagedNativeCreditUnverified";
+
 export type ClaimRefuseReason =
   | ManagedAdmissionRefuseReason
   | "AuthorityUnavailable"
-  | "InvalidKind";
+  | "InvalidKind"
+  | "ManagedNativeCreditUnverified";
 
 export type OwnerIdentity = GenerationRecord;
 export type { GenerationRecord };
@@ -154,7 +165,7 @@ export interface AdmissionStore {
    * epochs are NOT converted here — the recovery sweep is the only orphan
    * conversion point, so a second live connection can still join them.
    */
-  claim(input: ClaimInput): ClaimResult;
+  claim(input: ClaimInput, fence?: NativeAllocationFence): ClaimResult;
   /** CAS pending→resident. Rotates the row's fenceToken on success. */
   commitResident(claimId: string, fenceToken: string): boolean;
   /** CAS pending→uncertain. Rotates the row's fenceToken on success. */
@@ -181,7 +192,11 @@ export interface AdmissionStore {
   /** Detached generation rows for the claim, oldest first; empty when none. */
   generationsOf(claimId: string): readonly GenerationRecord[];
   /** Trusted native transitions preserve the original claim and process generations. */
-  transitionNative(claim: Readonly<ClaimRow>, action: NativeClaimAction): ClaimRow | undefined;
+  transitionNative(
+    claim: Readonly<ClaimRow>,
+    action: NativeClaimAction,
+    fence?: NativeAllocationFence,
+  ): ClaimRow | undefined;
   /** Idempotent. Calls after close refuse/return false rather than write. */
   close(): void;
 }
@@ -557,7 +572,7 @@ class SqliteAdmissionStore implements AdmissionStore {
       .immediate();
   }
 
-  claim(input: ClaimInput): ClaimResult {
+  claim(input: ClaimInput, fence?: NativeAllocationFence): ClaimResult {
     const db = this.#db;
     if (db === null) {
       return {
@@ -583,7 +598,7 @@ class SqliteAdmissionStore implements AdmissionStore {
           reason: "AuthorityUnavailable",
           detail: "admission authority ownership changed",
         },
-        () => this.#claimUnderWriteLock(db, input),
+        () => this.#claimUnderWriteLock(db, input, fence),
       );
     } catch (e) {
       return {
@@ -731,12 +746,16 @@ class SqliteAdmissionStore implements AdmissionStore {
     }
   }
 
-  transitionNative(claim: Readonly<ClaimRow>, action: NativeClaimAction): ClaimRow | undefined {
+  transitionNative(
+    claim: Readonly<ClaimRow>,
+    action: NativeClaimAction,
+    fence?: NativeAllocationFence,
+  ): ClaimRow | undefined {
     const db = this.#db;
     if (db === null) return undefined;
     try {
       return this.#writeCurrentEpoch(db, undefined, () =>
-        transitionNativeClaim(db, this.#epoch, claim, action),
+        transitionNativeClaim(db, this.#epoch, claim, action, fence),
       );
     } catch {
       return undefined;
@@ -756,10 +775,24 @@ class SqliteAdmissionStore implements AdmissionStore {
     }
   }
 
-  #claimUnderWriteLock(db: Database, input: ClaimInput): ClaimResult {
+  #claimUnderWriteLock(
+    db: Database,
+    input: ClaimInput,
+    fence: NativeAllocationFence | undefined,
+  ): ClaimResult {
+    const rows = readClaimRecords(db);
+    const refusal =
+      fence === undefined ? undefined : checkNativeAllocations(fence, rows.map(toClaimRow));
+    if (refusal !== undefined) {
+      return {
+        kind: "refuse",
+        reason: refusal,
+        detail: "owner cannot verify native allocation safety",
+      };
+    }
     const decision = evaluateManagedAdmission({
       budgetGiB: input.budgetGiB,
-      claims: readClaimRecords(db).map(toPolicyClaim),
+      claims: rows.map(toPolicyClaim),
       incoming: incomingOf(input),
     });
     if (decision.kind !== "admit") {
@@ -882,7 +915,9 @@ function nativePendingUpdate(
   action: "reserve" | "dispatch",
   limits: NativeWakeLimits,
   claims: readonly ClaimRow[],
+  fence: NativeAllocationFence | undefined,
 ): NativeUpdate | undefined {
+  if (fence !== undefined && checkNativeAllocations(fence, claims) !== undefined) return undefined;
   const native = claim.native;
   const requiredPhase = action === "reserve" ? "parked" : "reserved";
   if (native?.phase !== requiredPhase || !nativeWakeCovered(claims, claim, limits))
@@ -899,6 +934,7 @@ function nativeUpdate(
   claim: ClaimRow,
   action: Exclude<NativeClaimAction, { kind: "verify-sleep" }>,
   claims: readonly ClaimRow[],
+  fence: NativeAllocationFence | undefined,
 ): NativeUpdate | undefined {
   const native = claim.native;
   switch (action.kind) {
@@ -927,7 +963,7 @@ function nativeUpdate(
         : undefined;
     case "reserve":
     case "dispatch":
-      return nativePendingUpdate(claim, action.kind, action.limits, claims);
+      return nativePendingUpdate(claim, action.kind, action.limits, claims, fence);
     case "ready":
       return native?.phase === "dispatched"
         ? { phase: null, wakeAllocation: null, state: "resident", allocation: claim.allocationGiB }
@@ -944,11 +980,30 @@ function nativeUpdate(
   }
 }
 
+export function checkNativeAllocations(
+  fence: NativeAllocationFence,
+  claims: readonly ClaimRow[],
+): NativeAllocationRefusal | undefined {
+  try {
+    if (!fence.verifyOwner()) return "AuthorityUnavailable";
+    const unverified = claims.some(
+      (claim) =>
+        claim.native?.phase === "parked" &&
+        claim.allocationGiB < claim.native.wakeAllocationGiB &&
+        fence.validateParkedCredit?.(claim) !== true,
+    );
+    return unverified ? "ManagedNativeCreditUnverified" : undefined;
+  } catch {
+    return "AuthorityUnavailable";
+  }
+}
+
 function transitionNativeClaim(
   db: Database,
   epoch: number,
   expected: Readonly<ClaimRow>,
   action: NativeClaimAction,
+  fence: NativeAllocationFence | undefined,
 ): ClaimRow | undefined {
   const claims = readClaimRecords(db).map(toClaimRow);
   const current = claims.find((claim) => claim.claimId === expected.claimId);
@@ -964,7 +1019,7 @@ function transitionNativeClaim(
     return undefined;
   if (action.kind === "verify-sleep")
     return current.state === "resident" && current.native === undefined ? current : undefined;
-  const update = nativeUpdate(current, action, claims);
+  const update = nativeUpdate(current, action, claims, fence);
   if (update === undefined) return undefined;
   if (action.kind === "park" || action.kind === "begin-park") ensureNativeSchema(db);
   // Dispatch is a durable one-shot marker on this reservation, retaining

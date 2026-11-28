@@ -26,9 +26,12 @@ import {
 import {
   type AdmissionStore,
   AuthorityUnavailableError,
+  checkNativeAllocations,
   type ClaimRefuseReason,
   type ClaimRow,
   type InspectedOwnership,
+  type NativeAllocationFence,
+  type NativeAllocationRefusal,
   type NativeClaimAction,
   openAdmissionStore,
   type OwnerIdentity,
@@ -92,7 +95,11 @@ export type NativeRuntimeGeneration = Readonly<{
   birthId: string;
 }>;
 
+export type { ValidateParkedCredit } from "./admission-store.js";
+
 export interface AdmissionAuthority {
+  allowsServing(runtimeKey: string): boolean;
+  nativeAllocationRefusal(): NativeAllocationRefusal | undefined;
   /**
    * Claim via the store under the current opts.budgetGiB() value. An
    * unknown budget refuses BudgetUnknown — never falls back to
@@ -153,7 +160,11 @@ type ObserveGeneration = (
 
 function transitionBoundNative(
   active: AdmissionStore | null,
-  opts: { readPidFile: (runtimeKey: string) => number | undefined; observe: ObserveGeneration },
+  opts: {
+    readPidFile: (runtimeKey: string) => number | undefined;
+    observe: ObserveGeneration;
+    nativeAllocationFence?: NativeAllocationFence | undefined;
+  },
   runtime: NativeRuntimeGeneration,
   claim: Readonly<ClaimRow>,
   action: NativeClaimAction,
@@ -170,7 +181,7 @@ function transitionBoundNative(
       !boundNativeGeneration(active, runtime, claim, opts.readPidFile, opts.observe)
     )
       return undefined;
-    return active.transitionNative(claim, action);
+    return active.transitionNative(claim, action, opts.nativeAllocationFence);
   } catch {
     return undefined;
   }
@@ -398,6 +409,50 @@ function isReadableStore(store: AdmissionStore | null): boolean {
  * continues as owner with no rotation; a live or unidentifiable other
  * owner degrades the authority rather than stealing ownership.
  */
+function servingClaimAllows(active: AdmissionStore | null, runtimeKey: string): boolean {
+  if (active === null) return false;
+  try {
+    const row = active.snapshot().find((claim) => claim.runtimeKey === runtimeKey);
+    return row === undefined || (row.state === "resident" && row.native === undefined);
+  } catch {
+    return false;
+  }
+}
+
+function checkAuthorityAllocation(
+  active: AdmissionStore | null,
+  fence: NativeAllocationFence | undefined,
+): NativeAllocationRefusal | undefined {
+  if (active === null) return "AuthorityUnavailable";
+  if (fence === undefined) return undefined;
+  try {
+    return checkNativeAllocations(fence, active.snapshot());
+  } catch {
+    return "AuthorityUnavailable";
+  }
+}
+
+function claimWithBudget(
+  active: AdmissionStore,
+  budgetGiB: () => number | undefined,
+  request: AdmitRequest,
+  fence: NativeAllocationFence | undefined,
+): ReturnType<AdmissionStore["claim"]> {
+  // The budget probe is read on every admit; an unknown budget is
+  // handed to the store's policy as NaN — which the policy refuses
+  // BudgetUnknown — never substituted with an unlimited figure.
+  return active.claim(
+    {
+      runtimeKey: request.runtimeKey,
+      specDigest: request.specDigest,
+      allocationGiB: request.allocationGiB,
+      budgetGiB: budgetGiB() ?? Number.NaN,
+      ...(request.kind === undefined ? {} : { kind: request.kind }),
+    },
+    fence,
+  );
+}
+
 export function openAdmissionAuthority(opts: {
   storePath: string;
   requireExisting?: boolean | undefined;
@@ -406,6 +461,7 @@ export function openAdmissionAuthority(opts: {
   observeGroup?: ObserveDetachedGroup;
   readPidFile: (runtimeKey: string) => number | undefined;
   owner: OwnerIdentity;
+  nativeAllocationFence?: NativeAllocationFence | undefined;
 }): AdmissionAuthority {
   let store: AdmissionStore | null = null;
   try {
@@ -431,16 +487,12 @@ export function openAdmissionAuthority(opts: {
           detail: degradedDetail ?? "admission authority is degraded or closed",
         };
       }
-      // The budget probe is read on every admit; an unknown budget is
-      // handed to the store's policy as NaN — which the policy refuses
-      // BudgetUnknown — never substituted with an unlimited figure.
-      const result = active.claim({
-        runtimeKey: request.runtimeKey,
-        specDigest: request.specDigest,
-        allocationGiB: request.allocationGiB,
-        budgetGiB: opts.budgetGiB() ?? Number.NaN,
-        ...(request.kind === undefined ? {} : { kind: request.kind }),
-      });
+      const result = claimWithBudget(
+        active,
+        () => opts.budgetGiB(),
+        request,
+        opts.nativeAllocationFence,
+      );
       switch (result.kind) {
         case "admitted":
         case "refuse":
@@ -519,6 +571,8 @@ export function openAdmissionAuthority(opts: {
       );
     },
 
+    allowsServing: (runtimeKey) => servingClaimAllows(ledger(), runtimeKey),
+    nativeAllocationRefusal: () => checkAuthorityAllocation(ledger(), opts.nativeAllocationFence),
     isOperational: () => isReadableStore(ledger()),
 
     transitionNative: (runtime, claim, action) =>

@@ -4,6 +4,8 @@ import { type routingCatalog, rpcServer } from "@llamactl/core";
 import { resolveEnv } from "@llamactl/core/env";
 import { resolve } from "node:path";
 
+import type { ValidateParkedCredit } from "../residency/admission-authority.js";
+
 import { createDurableInferenceHolds } from "../residency/inference-holds.js";
 import { readLocalManagedCapacity } from "../residency/local-managed-capacity.js";
 import { manageJournalPair } from "../residency/managed-journals.js";
@@ -25,6 +27,7 @@ export interface ManagedAgentDependencies {
   nowMs?: () => number;
   onCapacityAudit?: (entry: ManagedCapacityAudit) => void;
   ownerActivity?: StartAgentOptions["managedOwnerActivity"];
+  validateParkedCredit?: ValidateParkedCredit;
 }
 
 function logCapacity(entry: ManagedCapacityAudit): void {
@@ -125,6 +128,7 @@ export async function startManagedAgentServer(
       requireExistingStore: journals.prior,
       verifyJournalPair: journals.verify,
       inferenceHolds,
+      validateParkedCredit: deps.validateParkedCredit,
     });
     authority = runtime.authority;
     const refusal = runtime.verifyActivation();

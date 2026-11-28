@@ -10,7 +10,7 @@ import {
   type DetachedGroupState,
   openAdmissionAuthority,
 } from "./admission-authority.js";
-import { AuthorityUnavailableError } from "./admission-store.js";
+import { AuthorityUnavailableError, type NativeAllocationFence } from "./admission-store.js";
 
 type NativeIdentity = { birthId: string; processGroupId?: number; processGroupScope?: string };
 type ReadNativeIdentity = (pid: number) => NativeIdentity | undefined;
@@ -193,6 +193,7 @@ export async function openLocalAdmissionRuntime(opts: {
   requireExisting?: boolean | undefined;
   budgetGiB: () => number | undefined;
   readPidFile: (runtimeKey: string) => number | undefined;
+  nativeAllocationFence?: NativeAllocationFence | undefined;
 }): Promise<LocalAdmissionRuntime> {
   const readIdentity = await nativeIdentityReader();
   const capture = (pid: number): GenerationRecord | undefined => {

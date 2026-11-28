@@ -1596,7 +1596,9 @@ function prepareExecutionHooks(opts: StartAgentOptions): {
   const activity = opts.managedOwnerActivity === undefined ? undefined : createOwnerActivity();
   const allowsProfileServing =
     activity === undefined ? undefined : opts.managedLaunchAdmission?.allowsProfileServing;
+  const allowsManagedServing = opts.managedLaunchAdmission?.allowsManagedServing;
   const owner = createOwnerAdmission(opts.executionAdmission ?? [], {
+    ...(allowsManagedServing === undefined ? {} : { allowsManagedServing }),
     ...(activity === undefined ? {} : { activity }),
     ...(allowsProfileServing === undefined ? {} : { allowsProfileServing }),
     noAuth: opts.noAuth === true && isLoopbackAddress(opts.bindHost ?? "127.0.0.1"),

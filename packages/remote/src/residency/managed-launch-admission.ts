@@ -70,6 +70,7 @@ export interface ManagedLaunchAdmission {
   readStatus?: () => ManagedAdmissionReadout;
   readCalibration?: (workload: string) => ManagedCalibrationReadout | undefined;
   allowsProfileServing?: (workload: string) => boolean;
+  allowsManagedServing?: (workload: string) => boolean;
   observeProfileWorkload?: (
     workload: string,
     kind: ManagedWorkloadKind,
