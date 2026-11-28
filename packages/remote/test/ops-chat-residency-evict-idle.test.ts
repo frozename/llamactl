@@ -155,6 +155,7 @@ beforeEach(() => {
     LOCAL_AI_PRESET_OVERRIDES_FILE: join(root, "preset-overrides.tsv"),
     LLAMACTL_OPS_CHAT_AUDIT: auditPath,
     LLAMACTL_WORKLOADS_DIR: workloadsDir,
+    LLAMACTL_EMBERSYNTH_CONFIG: join(root, "embersynth.yaml"),
     LLAMACTL_CONFIG: join(root, "config"),
     LLAMACTL_RESIDENCY_STORE: join(root, "residency", "operations.sqlite"),
     LLAMA_CPP_MODELS: join(root, "models"),
@@ -205,10 +206,12 @@ describe("llamactl.residency.evictIdle Ops Chat dispatch", () => {
   });
 
   test("O2 preview round trip: reports would-evict and changes neither lifecycle, lease nor hold", async () => {
+    const expected = await router.createCaller({}).residencyEvictIdle({ node: NODE });
     const res = await runTool({ node: NODE });
 
     expect(res.ok).toBe(true);
     expect(res.tier).toBe("read");
+    expect(res.result).toEqual(expected);
     expect(res.result).toMatchObject({ ok: true, dryRun: true, windowSeconds: 60 });
     const payload = res.result as EvictIdleResult;
     expect(rowFor(payload, "w1")).toMatchObject({
@@ -233,6 +236,10 @@ describe("llamactl.residency.evictIdle Ops Chat dispatch", () => {
     const payload = res.result as EvictIdleResult;
     expect(payload.ok ? payload.dryRun : false).toBe(true);
     expect(payload.ok ? payload.rows.some((row) => row.action === "evicted") : false).toBe(false);
+    expect(rowFor(payload, "w1")).toMatchObject({ action: "would-evict", kind: "modelrun" });
+    const persisted = loadWorkloadByName("w1", workloadsDir);
+    expect(persisted.metadata.annotations[IDLE_EVICTED_AT]).toBeUndefined();
+    expect(persisted.spec.enabled).toBe(true);
     expect(readState("w1")?.state).toBe("ready");
     expect(leases.snapshot("w1").phase).toBe("open");
   });
@@ -254,6 +261,7 @@ describe("llamactl.residency.evictIdle Ops Chat dispatch", () => {
     const res = await runTool({});
 
     expect(res.ok).toBe(false);
+    expect(res.error?.code).toBe("dispatch_error");
     expect(res.error?.message).toContain("missing required argument: node");
   });
 
