@@ -1648,7 +1648,7 @@ recorded as 0. The I/O reasons live in `runIoPhase`
 (`packages/eval/src/perf/runner.ts`): a reader that throws at the start or
 the end sample records `I/O reader failed: <message>` (the start sample
 wins), and a present reader that returns null or an invalid sample at
-either point records `I/O reader returned no sample`. Peak RSS works the
+either point records `I/O reader returned no sample`. When both samples are valid but either counter is smaller at the end than at the start, `runIoPhase` records both SSD metrics as unavailable with `I/O counters decreased between the start and end samples (read_bytes <start> -> <end>, write_bytes <start> -> <end>); the sampled process likely restarted`, because per-process counters never decrease; equal start and end counters record 0, since that is a measured zero delta. Peak RSS works the
 same way through `readPeakRss` and `runMemoryPhase`: a throwing peak-RSS
 reader records `peak-RSS reader failed: <message>`, and a present
 reader returning null or a non-positive number records
