@@ -18,7 +18,13 @@ Open items:
   `residency_states` for its victims and replacements. A same-group occupant
   that the plan observed occupying refuses the start with
   `ExclusiveGroupOccupied` before the engine runs. A same-group occupying row
-  the plan did not observe is reconciled to downloaded and logged. `applyOne`
+  the plan did not observe is reconciled to downloaded only when it is `ready`
+  and `directWorkloadProvenDown` proves its workload down (for example a
+  crash-left keep-alive, or a ModelRun whose recorded pid is gone). Otherwise,
+  including any `loading`/`warming` row, it is kept, logged as
+  `[residency] lifecycle kept <model> <state> in group <group>: not proven down`,
+  and the replacement start is refused with `ExclusiveGroupOccupied` before the
+  engine runs, matching the direct-start rule. `applyOne`
   and `applyOneModelHost` (`packages/remote/src/workload/apply.ts`), which the
   reconciler calls, start a ModelRun's coordinator and a ModelHost through the
   node agent's `serverStart` and `modelHostStart` procedures, so the fenced
@@ -44,8 +50,12 @@ Open items:
   `llamactl.io/residency-group` label; when the stored ModelRun has no such
   label, or no ModelRun is stored under the name, `serverStart` takes the group
   from the catalog `residencyGroup` of the rel `resolveTarget` returns for its
-  target (`directModelRunStartOpts`), and a label always wins; the switch's own
-  `applyManifest` calls run in a switch scope and are walked only by the switch.
+  target (`directModelRunStartOpts`), and a label always wins; when neither the
+  inline nor stored ModelHost has such a label, `modelHostStart` takes the group
+  from the catalog `residencyGroup` of its first hosted rel, the inline rel
+  winning over the stored rel (`directResidencyGroup`), and a label always wins;
+  the switch's own `applyManifest` calls run in a switch scope and are walked
+  only by the switch.
   Still pending: reconciliation outside a switch.
 - Real GLM-5.3-Flash z13 measurements are not yet committed (see the
   eval record at the bottom).
@@ -198,7 +208,13 @@ persists per-model states in its `residency_states` table:
   `residency_states` for its victims and replacements. A same-group occupant
   that the plan observed occupying refuses the start with
   `ExclusiveGroupOccupied` before the engine runs. A same-group occupying row
-  the plan did not observe is reconciled to downloaded and logged.
+  the plan did not observe is reconciled to downloaded only when it is `ready`
+  and `directWorkloadProvenDown` proves its workload down (for example a
+  crash-left keep-alive, or a ModelRun whose recorded pid is gone). Otherwise,
+  including any `loading`/`warming` row, it is kept, logged as
+  `[residency] lifecycle kept <model> <state> in group <group>: not proven down`,
+  and the replacement start is refused with `ExclusiveGroupOccupied` before the
+  engine runs, matching the direct-start rule.
   `llamactl residency status`, the `residencyStatus` procedure and the MCP
   tool now report the serving process's `residency_states` rows and any
   exclusive-group violation (`findExclusiveGroupViolations`, previously
@@ -210,7 +226,11 @@ persists per-model states in its `residency_states` table:
   ModelRun has no such label, or no ModelRun is stored under the name,
   `serverStart` takes the group from the catalog `residencyGroup` of the rel
   `resolveTarget` returns for its target (`directModelRunStartOpts`), and a
-  label always wins; the switch's own `applyManifest` calls run in a switch
+  label always wins; when neither the inline nor stored ModelHost has such a
+  label, `modelHostStart` takes the group from the catalog `residencyGroup` of
+  its first hosted rel, the inline rel winning over the stored rel
+  (`directResidencyGroup`), and a label always wins; the switch's own
+  `applyManifest` calls run in a switch
   scope and are walked only by the switch. Still pending: reconciliation outside
   a switch.
 - Group declarations are not persisted. They come from the caller
@@ -262,8 +282,9 @@ budget-gated. The enforcement in place today is the following:
    `modelHostStart` and `serverStart` procedures
    (`packages/remote/src/router.ts`) run every direct start through it.
    A ModelHost takes its group from its `llamactl.io/residency-group`
-   label; a ModelRun takes the label, else the catalog group of its
-   resolved target. When another `loading` or `warming` row holds that
+   label, else the catalog group of its hosted rel (an inline manifest's
+   rel winning over the stored manifest's); a ModelRun takes the label,
+   else the catalog group of its resolved target. When another `loading` or `warming` row holds that
    exclusive group, or a `ready` row whose workload is not proven down, the
    start is refused before the engine runs, as
    `residency lifecycle refused <name> <from> -> <to>: ExclusiveGroupOccupied: <detail>`;
@@ -340,7 +361,11 @@ wrapper, recording the group from the agent-side ModelRun
 `llamactl.io/residency-group` label; when the stored ModelRun has no such label,
 or no ModelRun is stored under the name, `serverStart` takes the group from the
 catalog `residencyGroup` of the rel `resolveTarget` returns for its target
-(`directModelRunStartOpts`), and a label always wins. Operator force-unload
+(`directModelRunStartOpts`), and a label always wins; when neither the inline
+nor stored ModelHost has such a label, `modelHostStart` takes the group from the
+catalog `residencyGroup` of its first hosted rel, the inline rel winning over
+the stored rel (`directResidencyGroup`), and a label always wins. Operator
+force-unload
 (`residencyForceUnload`) routes its stop through the same wrapper after the
 lease drain commits. Since #847 (Part of #517) the detached keep-alive worker
 records its own row through the same wrapper: `keepAliveRecordedStart` and
@@ -508,6 +533,15 @@ entry's `qualification.stage` is the routing stage from
 `experimental: true`, the same flag a `data` entry carries. Neither array
 is routable, so the flags only report; they change no routing decision.
 
+The degraded stage is reported the same way (#518): a `data` entry whose
+winning route is degraded carries `degraded: true`, and a `declared` entry
+whose id's routing stage is degraded carries `degraded: true`; an
+experimental route or stage never also carries `degraded`, because
+experimental wins (`isDegradedRoute`, `packages/core/src/routing/capabilities.ts`).
+Because the legacy order ranks a healthy route ahead of a degraded one, a
+`data` entry carries the flag only when no healthy route serves the id.
+The flag only reports; it changes no routing decision.
+
 Peer-advertised qualification stages (#518): the `include=local-routes` fleet
 snapshot (`buildLocalRoutesSnapshot`, `packages/remote/src/routes/fleet.ts`)
 labels a workload `llamactl.io/qualification: experimental` when any of its
@@ -588,6 +622,8 @@ the MCP `llamactl.catalog.promote` tool returns `ok: false` (a dry run reports
 `refused` instead of previewing a write).
 
 `resolvePreset` skips an env or file preset override whose rel is experimental, read through `catalogQualificationStages` (so pins count), and falls through to the next layer. Each skip is reported on `skippedExperimental` in layer order. This covers a row written before the rel was pinned experimental, and every `resolveTarget` caller (server start, keepAlive, bench, workload apply) and `recommendationsForProfile`. When the builtin itself is pinned experimental (a pin row set after the rel was promoted), no lower layer exists to fall back to, so the builtin default is returned even when it is pinned experimental.
+
+`recommendationsForProfile` copies `skippedExperimental` onto each recommendation row when it is non-empty. `llamactl recommendations`, local or `--node`, appends `skipped-experimental=<source>:<rel>` entries, comma-separated in layer order, after any `promoted=` note, and the row then shows the layer that actually won. The qwen and qwen27 rows never carry the field.
 
 `llamactl qualification evidence --db <matrix.db> --model <name> --map <file.json> [--run-id <id>] [--baseline-run-id <id> [--baseline-model <name>]]`
 builds promotion evidence from eval matrix cells plus an optional baseline
@@ -913,7 +949,40 @@ unreadable; scope: serving-process)` or `Lifecycle:  unavailable
    `Lifecycle:` line.
 3. Stop production: `llamactl disable <production-workload>` (the
    node-local production workload name; it is not in this repo).
-   Confirm it reads Stopped in `llamactl get workloads`. With the lease
+   Confirm it reads Stopped in `llamactl get workloads`.
+   `llamactl get workloads` prints one row per manifest under the
+   columns `NAME`, `NODE`, `KIND`, `PHASE` and `REL`, where `KIND` is
+   `modelrun` or `modelhost` and `REL` is a ModelRun's target or a
+   ModelHost's hosted model rels joined by commas; an empty store
+   prints `No workloads registered.` and `--json` prints the rows as a
+   JSON array instead. A ModelHost whose `spec.node` is `local` reads
+   `Stopped` when it has no runtime state file, `Unreachable` when a
+   state file exists but its endpoint does not answer, `Foreign` when
+   the endpoint answers but its recorded pid is not alive or another
+   pid holds its port, and `Running` otherwise; any other ModelHost,
+   including every z13 template (`node: z13`) even when llamactl runs
+   on z13 itself, reads what its node's agent reports: `Running`,
+   `Stopped`, `unknown` when the node cannot confirm the recorded pid,
+   or `Unreachable` when the node query fails or misses its deadline
+   (10 s by default, or the node's `rpcTimeouts.queryMs` in the
+   kubeconfig). A ModelRun reads `Foreign` when a process llamactl did
+   not record answers on its port, `Running` when its node reports the
+   server up on the manifest's target, `Mismatch` when it is up on
+   another rel, `Stopped` otherwise, including when the node cannot
+   confirm the recorded pid, and `Unreachable` when the node query
+   fails or misses its deadline; a gateway ModelRun shows its stored
+   phase, `Pending` when none was written. Below the table, a
+   non-loopback ModelHost adds a `warning: modelhost/<name> binds an
+   unauthenticated engine to <host:port>` line, an externally managed
+   ModelHost adds a `note: modelhost/<name> is managed by <controller>`
+   line, and a row whose node query failed adds `unreachable:
+   <kind>/<name> on node <node>, last answered <time|never>: <error>`.
+   `Stopped` confirms the stop only when `llamactl describe workload
+   <production-workload>` shows no `"identityUnknown": true` under
+   `LiveStatus:`, because a ModelRun whose recorded pid cannot be
+   confirmed also reads `Stopped` while its process may still be
+   resident; `Unreachable`, `Foreign` and `unknown` never prove the
+   process is gone. With the lease
    registry on (`LLAMACTL_RESIDENCY_LEASES`), the node stop fence can
    refuse a disable: `llamactl disable` exits 1 with `disable:
 serverStop refused: <reason>: <ids>` for a ModelRun (the `: <ids>`
@@ -948,6 +1017,31 @@ force-unload <workload> --reason <text> --yes --node <name>`, after
    this node; retry after it settles" (#741; see
    [dynamic-residency.md](dynamic-residency.md#direct-modelhost-start-and-stop)).
 7. Wait for the readiness probe, then `llamactl describe workload <name>`.
+   For a ModelHost, `llamactl describe workload <name>` prints the
+   manifest as `Name:`, `Kind:`, `Node:`, `Engine:`, `Binary:`,
+   `Models:`, `Endpoint:`, `Enabled:`, `ExtraArgs:` and
+   `RestartPolicy:` lines, an `IdleHold:` line only when the manifest
+   carries the idle hold, then its history (for a `local` host a
+   `Source:` line and the conditions only when the node reports them;
+   for any other host always a `Source: controller history` line, then
+   a `NodeHistory:` line when the node reports its own conditions), and
+   last a `LiveStatus:` block holding the node's `modelHostStatus`
+   JSON. It prints no `PHASE` column: the engine is up when
+   `LiveStatus:` carries `"state": "Running"` with its `"pid"`;
+   `"state": "Stopped"` without `"identityUnknown": true` means no live
+   recorded process, `"state": "Stopped"` with `"identityUnknown": true`
+   means the node cannot confirm the recorded pid and the engine may
+   still be resident, and an `"error"` object means the node query failed
+   or missed its deadline. For a ModelRun it prints `Name:`, `Node:`,
+   `Target:`, `ExtraArgs:` and `RestartPolicy:` lines, an optional
+   `IdleHold:` line, a `Status:` line reading
+   `phase=<phase> endpoint=<endpoint|none> pid=<pid|none> since=<time>`
+   when the manifest has a stored status, and the node's `serverStatus` JSON
+   under `LiveStatus:`, whose `"state"` is `"up"` or `"down"`;
+   `"down"` with `"identityUnknown": true` means the recorded pid
+   cannot be confirmed and the server may still be resident, an
+   `"error"` object means the node query failed or missed its deadline,
+   and the `Status:` line is the stored status, not a live probe.
 8. Run the eval against the engine the window started, with `--url`
    pointing at it: `llamactl eval perf --url <http://...> --engine
 <llamacpp|omlx|gufo|kapitsa> --model <id>` for perf evidence (see
@@ -969,10 +1063,14 @@ held by <member> in state <state>`. On the agent host the window's
    [dynamic-residency.md](dynamic-residency.md#direct-modelhost-start-and-stop)).
 9. Exit the window: `llamactl disable <name>`, then
    `llamactl enable <production-workload>`, then verify Running and
-   readiness. A disable is never blocked by this bookkeeping and at
-   worst logs "not recorded" (#741). The stop fence is separate from
-   this bookkeeping and can refuse the exit-step disable the same way
-   (see step 3). After `llamactl disable <name>` and before
+   readiness. Verify Running as `Running` in the `PHASE` column of
+   `llamactl get workloads` for the production workload and, in
+   `llamactl describe workload <production-workload>`,
+   `"state": "Running"` under `LiveStatus:` for a ModelHost or
+   `"state": "up"` for a ModelRun. A disable is never blocked by this
+   bookkeeping and at worst logs "not recorded" (#741). The stop fence is
+   separate from this bookkeeping and can refuse the exit-step disable the
+   same way (see step 3). After `llamactl disable <name>` and before
    `llamactl enable <production-workload>`, run
    `llamactl residency status --node <node>` again. A confirmed stop walks
    the window workload's row `ready` -> `draining` -> `unloading` ->
@@ -1560,7 +1658,7 @@ recorded as 0. The I/O reasons live in `runIoPhase`
 (`packages/eval/src/perf/runner.ts`): a reader that throws at the start or
 the end sample records `I/O reader failed: <message>` (the start sample
 wins), and a present reader that returns null or an invalid sample at
-either point records `I/O reader returned no sample`. Peak RSS works the
+either point records `I/O reader returned no sample`. When both samples are valid but either counter is smaller at the end than at the start, `runIoPhase` records both SSD metrics as unavailable with `I/O counters decreased between the start and end samples (read_bytes <start> -> <end>, write_bytes <start> -> <end>); the sampled process likely restarted`, because per-process counters never decrease; equal start and end counters record 0, since that is a measured zero delta. Peak RSS works the
 same way through `readPeakRss` and `runMemoryPhase`: a throwing peak-RSS
 reader records `peak-RSS reader failed: <message>`, and a present
 reader returning null or a non-positive number records
