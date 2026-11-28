@@ -421,6 +421,16 @@ experimental models are served only on an exact model pin and never as a
 preset default; a refused `llamactl.catalog.promote` step fails the
 runbook before `llamactl.embersynth.sync`.
 
+Bench scorers rank a degraded rel behind every healthy rel (#518): the
+embersynth bench scorer (`summarizeBenchForMachine`,
+`packages/remote/src/config/embersynth.ts`) picks a fusion node's `modelId`
+from the fastest bench row that is neither experimental nor degraded and
+falls back to the fastest degraded row only when the machine has no such
+row, and the `promote-fastest-vision-model` runbook ranks a degraded rel
+behind every healthy rel, promoting a degraded rel only when every eligible
+rel is degraded. A degraded rel is demoted, not excluded: it stays eligible,
+unlike an experimental one.
+
 `/v1/models?include=declared` reads the same stages: each `unavailable`
 entry's `qualification.stage` is the routing stage from
 `catalogQualificationStages` (so a pin replaces the catalog stage), and a
@@ -1522,3 +1532,27 @@ workload by `started_at`, scored or not.
 ### Provenance in a matrix report
 
 Every matrix run collects provenance for each model through `collectEvalProvenance` and stores it in the `matrix_provenance` table (`insertMatrixProvenance`, `packages/eval/src/matrix/store.ts`). The markdown report written with `--report md` or `--report both` ends with a `## Provenance` section (`renderMarkdownReport`, `packages/eval/src/matrix/report.ts`). It is loaded from that table for the report's run, or for every run with `--report-all-runs` (`writeReport`, `packages/eval/src/matrix/cli.ts`). Its table is headed `| Run | Model | Field | Value |` and lists one row per field, in the order of `PERF_PROVENANCE_DIFF_FIELDS` (`packages/eval/src/perf/diff.ts`). A null field renders `unavailable (<reason>)` with the reason recorded in `provenance.unavailable`, or `unavailable (not recorded)` when the row holds none; it never renders a guessed value. An empty `flags` list renders `(none)`. A model that has cells in the report but no provenance row, for example because provenance collection failed, gets a single `(all)` row reading `unavailable (not recorded)`. The section follows `## Unavailable cells` and `## Per-workload winner`, so it comes after the unscored-cell lines described in Unscored matrix cells for an arm. The runner collects provenance before it boots the model, so a model whose cells are unscored because its boot failed or was refused still has a provenance row. The CSV report carries no provenance.
+
+### Launch flags in matrix provenance
+
+The matrix runner builds each model's provenance input from its ModelSpec
+(`matrixProvenanceInput`, `packages/eval/src/matrix/runner.ts`). The `flags`
+field is the spec's `start_args` followed by its `extra_args`. Eval never
+launches a `gufo` or `kapitsa` engine (`isExternalOnlyEngine`,
+`packages/eval/src/matrix/types.ts`). It also never launches a spec without
+`managed: true`: `ensureModelServing`
+(`packages/eval/src/matrix/lifecycle.ts`) only adopts an engine that is
+already serving. `loadModels` requires `extra_args`
+(`validateModelSpec`, `packages/eval/src/matrix/cli.ts`), so for these specs
+an empty list does not say how the engine was started. When such a spec
+declares no flag tokens, `flags` is recorded null with
+`ModelSpec <name> declares no launch flags (engine <engine> runs outside
+eval)` for gufo and kapitsa. For any other engine it is recorded with
+`ModelSpec <name> declares no launch flags (managed=false, so eval does not
+launch it)` (`flagsUnavailableReason`,
+`packages/eval/src/matrix/runner.ts`). The matrix report then renders
+`unavailable (<reason>)` for the field instead of `(none)`. A spec that
+lists flag tokens keeps them as declared flags. A `managed: true` spec keeps
+its list even when it is empty, because eval boots the engine from that
+spec. Provenance is collected before boot, so a `managed: true` spec whose
+port is already answering still records its declared list.
