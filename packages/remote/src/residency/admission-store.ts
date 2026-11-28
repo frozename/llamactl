@@ -44,7 +44,7 @@ import { Database } from "bun:sqlite";
 import { randomBytes, randomUUID } from "node:crypto";
 
 export type ClaimState = "pending" | "resident" | "uncertain";
-export type NativeClaimPhase = "parked" | "reserved" | "dispatched";
+export type NativeClaimPhase = "parking" | "parked" | "reserved" | "dispatched";
 
 export type NativeWakeLimits = Readonly<{
   ledgerCeilingGiB: number;
@@ -53,6 +53,7 @@ export type NativeWakeLimits = Readonly<{
 
 export type NativeClaimAction =
   | { kind: "verify-sleep" }
+  | { kind: "begin-park" }
   | { kind: "park"; residualGiB: number }
   | { kind: "reserve" | "dispatch"; limits: NativeWakeLimits }
   | { kind: "ready" | "uncertain" };
@@ -237,17 +238,18 @@ function readNativeClaim(record: ClaimRecord): ClaimRow["native"] {
     (wakeAllocationGiB === undefined || wakeAllocationGiB === null)
   )
     return undefined;
+  const unloading = phase === "parking" || phase === "parked";
   if (
-    (phase !== "parked" && phase !== "reserved" && phase !== "dispatched") ||
+    (!unloading && phase !== "reserved" && phase !== "dispatched") ||
     typeof wakeAllocationGiB !== "number" ||
     !Number.isFinite(wakeAllocationGiB) ||
     wakeAllocationGiB <= 0 ||
     !Number.isFinite(record.allocation_gib) ||
     record.allocation_gib <= 0 ||
-    (phase === "parked" &&
-      (record.state !== "uncertain" || record.allocation_gib >= wakeAllocationGiB)) ||
-    (phase !== "parked" &&
-      (record.state !== "pending" || record.allocation_gib !== wakeAllocationGiB))
+    record.state !== (unloading ? "uncertain" : "pending") ||
+    (phase === "parked"
+      ? record.allocation_gib > wakeAllocationGiB
+      : record.allocation_gib !== wakeAllocationGiB)
   ) {
     throw new AuthorityUnavailableError("invalid native claim evidence");
   }
@@ -900,12 +902,22 @@ function nativeUpdate(
 ): NativeUpdate | undefined {
   const native = claim.native;
   switch (action.kind) {
+    case "begin-park":
+      return claim.state === "resident" && native === undefined
+        ? {
+            phase: "parking",
+            wakeAllocation: claim.allocationGiB,
+            state: "uncertain",
+            allocation: claim.allocationGiB,
+          }
+        : undefined;
     case "park":
-      return claim.state === "resident" &&
+      return ((claim.state === "resident" &&
         native === undefined &&
+        action.residualGiB < claim.allocationGiB) ||
+        (native?.phase === "parking" && action.residualGiB <= claim.allocationGiB)) &&
         Number.isFinite(action.residualGiB) &&
-        action.residualGiB > 0 &&
-        action.residualGiB < claim.allocationGiB
+        action.residualGiB > 0
         ? {
             phase: "parked",
             wakeAllocation: claim.allocationGiB,
@@ -921,8 +933,13 @@ function nativeUpdate(
         ? { phase: null, wakeAllocation: null, state: "resident", allocation: claim.allocationGiB }
         : undefined;
     case "uncertain":
-      return native?.phase === "reserved" || native?.phase === "dispatched"
-        ? { phase: null, wakeAllocation: null, state: "uncertain", allocation: claim.allocationGiB }
+      return native !== undefined
+        ? {
+            phase: null,
+            wakeAllocation: null,
+            state: "uncertain",
+            allocation: native.wakeAllocationGiB,
+          }
         : undefined;
   }
 }
@@ -939,14 +956,17 @@ function transitionNativeClaim(
     current?.fenceToken !== expected.fenceToken ||
     current.generationVersion !== expected.generationVersion ||
     current.ownerEpoch !== expected.ownerEpoch ||
-    (action.kind !== "park" && action.kind !== "verify-sleep" && current.ownerEpoch !== epoch)
+    (action.kind !== "park" &&
+      action.kind !== "begin-park" &&
+      action.kind !== "verify-sleep" &&
+      current.ownerEpoch !== epoch)
   )
     return undefined;
   if (action.kind === "verify-sleep")
     return current.state === "resident" && current.native === undefined ? current : undefined;
   const update = nativeUpdate(current, action, claims);
   if (update === undefined) return undefined;
-  if (action.kind === "park") ensureNativeSchema(db);
+  if (action.kind === "park" || action.kind === "begin-park") ensureNativeSchema(db);
   // Dispatch is a durable one-shot marker on this reservation, retaining
   // the token already handed to the wake driver.
   const token = action.kind === "dispatch" ? current.fenceToken : newFenceToken();
