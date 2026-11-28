@@ -3,11 +3,14 @@ import { describe, expect, test } from "bun:test";
 import type { MetricValue } from "../../src/matrix/types.js";
 
 import {
+  decodeRusageInfoV4LifetimeMaxFootprint,
   normaliseAcceptance,
   normaliseDecodeTps,
   normalisePrefillTps,
   parseProcIo,
   parseVmHwm,
+  RI_LIFETIME_MAX_PHYS_FOOTPRINT_OFFSET,
+  RUSAGE_INFO_V4_SIZE,
   rusageIo,
 } from "../../src/perf/normalise.js";
 
@@ -145,5 +148,34 @@ describe("rusageIo", () => {
       writeBytes: 8192,
     });
     expect(rusageIo({ ri_diskio_bytesread: NaN, ri_diskio_byteswritten: 1 })).toBeNull();
+  });
+});
+
+describe("decodeRusageInfoV4LifetimeMaxFootprint", () => {
+  function footprintBuffer(byteLength: number, footprint: bigint): Uint8Array {
+    const buffer = new Uint8Array(byteLength);
+    if (byteLength >= RI_LIFETIME_MAX_PHYS_FOOTPRINT_OFFSET + 8) {
+      new DataView(buffer.buffer).setBigUint64(
+        RI_LIFETIME_MAX_PHYS_FOOTPRINT_OFFSET,
+        footprint,
+        true,
+      );
+    }
+    return buffer;
+  }
+
+  test("guard: a full 296-byte rusage_info_v4 buffer decodes the footprint", () => {
+    expect(RUSAGE_INFO_V4_SIZE).toBe(296);
+    expect(decodeRusageInfoV4LifetimeMaxFootprint(footprintBuffer(296, 7_340_032n))).toBe(
+      7_340_032,
+    );
+  });
+
+  test("a 295-byte buffer returns null even though the footprint counter fits (kills: weakening the size guard to < 248)", () => {
+    expect(decodeRusageInfoV4LifetimeMaxFootprint(footprintBuffer(295, 7_340_032n))).toBeNull();
+  });
+
+  test("a 0-byte buffer returns null instead of throwing (kills: deleting the size guard)", () => {
+    expect(decodeRusageInfoV4LifetimeMaxFootprint(new Uint8Array(0))).toBeNull();
   });
 });

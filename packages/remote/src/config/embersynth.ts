@@ -177,6 +177,8 @@ interface BenchSummary {
   /** Parsed context window from the bench record's ctx field. */
   contextWindow: number | null;
   rel: string;
+  /** Set only when the winning row's rel is a degraded rel (#518). */
+  degraded?: true;
 }
 
 /** Strict `>` so a tie keeps the earlier row, as the single-best scorer did. */
@@ -218,7 +220,7 @@ function summarizeBenchForMachine(
     if (stage === "degraded") bestDegraded = fasterOf(summary, bestDegraded);
     else bestHealthy = fasterOf(summary, bestHealthy);
   }
-  return bestHealthy ?? bestDegraded;
+  return bestHealthy ?? (bestDegraded === null ? null : { ...bestDegraded, degraded: true });
 }
 
 /**
@@ -234,6 +236,16 @@ function priorityFromGenTps(genTps: number): number {
   return 8;
 }
 
+/**
+ * Priority for a fusion node whose modelId fell back to a degraded rel. It
+ * sits behind every healthy bench band (1-8) and the unbenched default 5, and
+ * ahead of the sirius cloud default 10, so the preferLowerPriority profiles
+ * (auto, fast, private-first) prefer any node serving a healthy model. Part of
+ * #518; the per-route demotion is legacyQualificationTier in
+ * packages/core/src/routing/capabilities.ts.
+ */
+const DEGRADED_NODE_PRIORITY = 9;
+
 function agentToEmbersynthNode(
   node: ClusterNode,
   token: string,
@@ -243,7 +255,12 @@ function agentToEmbersynthNode(
     node.endpoint === LOCAL_NODE_ENDPOINT
       ? "http://127.0.0.1:8080"
       : node.endpoint.replace(/\/$/, "");
-  const priority = benchSummary ? priorityFromGenTps(benchSummary.genTps) : 5;
+  const priority =
+    benchSummary === null
+      ? 5
+      : benchSummary.degraded === true
+        ? DEGRADED_NODE_PRIORITY
+        : priorityFromGenTps(benchSummary.genTps);
   const optimization = benchSummary?.contextWindow
     ? { contextWindow: benchSummary.contextWindow }
     : undefined;

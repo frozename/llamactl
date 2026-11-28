@@ -67,7 +67,14 @@ import {
   getNodeLlamacppSleepController,
   readLlamacppSleepResidency,
 } from "../residency/llamacpp-sleep-status.js";
-import { existsSync, fstatSync, mkdirSync, openSync, writeFileSync } from "../safe-fs.js";
+import {
+  closeSync,
+  existsSync,
+  fstatSync,
+  mkdirSync,
+  openSync,
+  writeFileSync,
+} from "../safe-fs.js";
 import {
   externalManagerOf,
   MANAGED_BY_LABEL,
@@ -1061,7 +1068,37 @@ function modelHostBootLogPath(runtimeDir: string, workloadName: string): string 
   return resolve(runtimeDir, "workloads", workloadName, "modelhost.boot.log");
 }
 
-function openBootLogFd(workloadName: string, runtimeDir: string): "ignore" | number {
+// #806 phase 4a: the parent's boot-log fd is a resource of the launch, not of
+// the engine child (the spawn dups it), so whoever opens it has to close it.
+// A handle is used because the fd is opened deep inside the launch and closed
+// by its wrapper.
+interface BootLogHandle {
+  fd: "ignore" | number;
+}
+
+/**
+ * Close the recorded fd, once. fd numbers are recycled the instant they are
+ * released, so a second close would shut an unrelated fd; the handle goes back
+ * to "ignore" to keep the call idempotent.
+ */
+function closeBootLogFd(handle: BootLogHandle): void {
+  if (typeof handle.fd === "number") {
+    try {
+      closeSync(handle.fd);
+    } catch {
+      // Best-effort: the child kept its own dup, so a failed close is not a
+      // launch failure.
+    }
+  }
+  handle.fd = "ignore";
+}
+
+function openBootLogFd(
+  workloadName: string,
+  runtimeDir: string,
+  handle: BootLogHandle,
+): "ignore" | number {
+  handle.fd = "ignore";
   const baseDir = resolve(runtimeDir, "workloads");
   const bootLogPath = modelHostBootLogPath(runtimeDir, workloadName);
   const allowedPrefix = `${baseDir}${sep}`;
@@ -1073,7 +1110,8 @@ function openBootLogFd(workloadName: string, runtimeDir: string): "ignore" | num
     // #333: a never-seen workload has no <runtime>/workloads/<name>/ yet and
     // openSync does not create it, so the first launch logged nothing.
     mkdirSync(dirname(bootLogPath), { recursive: true });
-    return openSync(bootLogPath, "a");
+    handle.fd = openSync(bootLogPath, "a");
+    return handle.fd;
   } catch {
     // never let logging break a launch
     return "ignore";
@@ -1627,12 +1665,12 @@ async function teardownFailedModelHostLaunch(
   }
 }
 
-async function launchModelHost(
+async function launchModelHostWithBootLog(
   manifest: ModelHostManifest,
   opts: StartModelHostOptions,
-  ctx: ModelHostLaunchContext,
+  ctx: ModelHostLaunchContext & { bootLog: BootLogHandle },
 ): Promise<StartModelHostResult> {
-  const { env, runtimeEnv, resolved, engine, spec, apiKey } = ctx;
+  const { env, runtimeEnv, resolved, engine, spec, apiKey, bootLog } = ctx;
   if (opts.signal?.aborted) {
     const result = { ok: false, pid: null, error: MODEL_HOST_ABORT_MESSAGE };
     opts.onEvent?.({ type: "done", result });
@@ -1665,7 +1703,7 @@ async function launchModelHost(
     // in ~2s (argparse rejecting a stale flag exits 2) left no trace, probeReady
     // then polled the whole budget, and the caller reported a bare
     // "modelHostStart timed out". Persist the child's output beside its state.
-    const bootStdio = openBootLogFd(opts.key.name, resolved.LOCAL_AI_RUNTIME_DIR);
+    const bootStdio = openBootLogFd(opts.key.name, resolved.LOCAL_AI_RUNTIME_DIR, bootLog);
     const childEnv = sanitizeChildEnv(runtimeEnv, launch.envOverrides, manifest.spec.env, apiKey);
     // #806 phase 3: with a published launcher (Linux agents), try the scoped
     // launch first; every precondition failure falls through to the direct
@@ -1755,6 +1793,24 @@ async function launchModelHost(
     };
     opts.onEvent?.({ type: "done", result });
     return result;
+  }
+}
+
+// #806 phase 4a: the wrapper owns the boot-log fd, so every exit path (ready,
+// a throwing spawn, a failed readiness probe, an abort) releases the parent's
+// fd instead of leaking it until process exit. The inner call happens before
+// this function's first await, so startModelHost's synchronous in-flight
+// registration still lands before the launch yields.
+async function launchModelHost(
+  manifest: ModelHostManifest,
+  opts: StartModelHostOptions,
+  ctx: ModelHostLaunchContext,
+): Promise<StartModelHostResult> {
+  const bootLog: BootLogHandle = { fd: "ignore" };
+  try {
+    return await launchModelHostWithBootLog(manifest, opts, { ...ctx, bootLog });
+  } finally {
+    closeBootLogFd(bootLog);
   }
 }
 
