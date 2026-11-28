@@ -10,6 +10,7 @@ import { join } from "node:path";
 import type { NodeRun } from "../../src/workload/noderun-schema.js";
 
 import { buildResidencyStatus } from "../../src/residency/procedures.js";
+import { openNodeManagedAdmission } from "../../src/residency/target-admission-policy.js";
 import { router } from "../../src/router.js";
 import { mkdtempSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
 import { saveNodeRun } from "../../src/workload/noderun-store.js";
@@ -155,5 +156,53 @@ describe("residencyStatus invalidNodeRunWarnings (#519)", () => {
 
     expect(res.nodeRun.present).toBe(true);
     expect("invalidNodeRunWarnings" in res).toBe(false);
+  });
+
+  test("an owner alias reports both the canonical file and an alias-specific invalid file", async () => {
+    process.env["LOCAL_AI_RUNTIME_DIR"] = join(tmp, "runtime");
+    writeFileSync(join(tmp, "gpu1.yaml"), INVALID_MIN_RESIDENCY_YAML, "utf8");
+    writeFileSync(
+      join(tmp, "alias-policy.yaml"),
+      INVALID_MIN_RESIDENCY_YAML.replace("node: gpu1", "node: gpu1-lan"),
+      "utf8",
+    );
+    const runtime = await openNodeManagedAdmission({
+      nodeName: "gpu1",
+      aliases: ["gpu1-lan"],
+      workloadsDir: tmp,
+      readCapacity: () => ({
+        source: "linux-procfs",
+        physicalBytes: 64 * 1024 ** 3,
+        availableBytes: 48 * 1024 ** 3,
+        scope: { kind: "host-physical" },
+        pressure: "normal",
+        swapUsedBytes: 0,
+        observedAtMs: Date.now(),
+      }),
+    });
+    try {
+      expect(
+        runtime.admission.preflightProfile?.({ victims: [], retained: [], replacements: [] }),
+      ).toBe("ManagedCapacity: NodeBudgetUnknown");
+      const caller = router.createCaller({ managedLaunchAdmission: runtime.admission });
+      const status = await caller.residencyStatus({ node: "gpu1-lan" });
+      expect(status).toMatchObject({ node: "gpu1-lan", managed: { budgetGiB: null } });
+      const warnings = invalidNodeRunWarningsOf(status);
+      expect(warnings).toHaveLength(2);
+      expect(warnings?.[0]).toContain("alias-policy.yaml");
+      expect(warnings?.[1]).toContain("gpu1.yaml");
+    } finally {
+      runtime.authority.close();
+    }
+  });
+
+  test("a malformed policy warning reports unavailable declarations without promising admission defaults", () => {
+    const status = buildStatus({
+      node: "gpu1",
+      invalidNodeRuns: [{ file: "gpu1.yaml", name: "gpu1", node: "gpu1", error: "bad policy" }],
+    });
+    const warning = invalidNodeRunWarningsOf(status)?.[0];
+    expect(warning).toContain("Its declared budget and residency policy are unavailable");
+    expect(warning).not.toContain("admission, the residency planner and ranking use the defaults");
   });
 });

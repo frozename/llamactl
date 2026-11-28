@@ -141,19 +141,25 @@ export function nodeRunKnobScopeWarnings(node: string, nodeRuns: readonly NodeRu
 }
 
 // Pure projection: each invalid NodeRun file whose metadata.name, spec.node,
-// or file name matches `node` is mapped to the human-readable failure text.
+// or file name matches the query or owner is mapped to the failure text.
 // Entries are ordered by file with compareStrings. Returns an empty list when
 // nothing matches (Part of #519).
 export function invalidNodeRunWarnings(
   node: string,
   invalid: readonly InvalidNodeRunFile[],
+  ownerNodeId = node,
 ): string[] {
+  const names = [node, ownerNodeId];
   const matches: { file: string; warning: string }[] = [];
   for (const entry of invalid) {
-    if (entry.name === node || entry.node === node || entry.file === `${node}.yaml`) {
+    if (
+      names.some(
+        (name) => entry.name === name || entry.node === name || entry.file === `${name}.yaml`,
+      )
+    ) {
       matches.push({
         file: entry.file,
-        warning: `NodeRun file '${entry.file}' (metadata.name '${entry.name ?? "?"}', spec.node '${entry.node ?? "?"}') failed validation and is ignored: ${entry.error}. Its spec.budget and spec.residency do not apply, so admission, the residency planner and ranking use the defaults; fix the file and re-apply it with llamactl apply -f`,
+        warning: `NodeRun file '${entry.file}' (metadata.name '${entry.name ?? "?"}', spec.node '${entry.node ?? "?"}') failed validation: ${entry.error}. Its declared budget and residency policy are unavailable. Fix the file and re-apply it with llamactl apply -f`,
       });
     }
   }
@@ -602,6 +608,7 @@ export function buildResidencyStatus(input: {
   unifiedProxy?: boolean | undefined;
   nodeRuns?: readonly NodeRun[] | undefined;
   invalidNodeRuns?: readonly InvalidNodeRunFile[] | undefined;
+  ownerNodeId?: string | undefined;
 }): ResidencyStatus {
   const residency = input.nodeRun?.spec.residency;
   const sessions = buildResidencySessionSnapshot(input.sessionRegistry);
@@ -613,7 +620,11 @@ export function buildResidencyStatus(input: {
   const sessionProbe: IdleEvictSessionProbe | null =
     reg !== null && check !== undefined ? { checkUnload: (w) => check.call(reg, w) } : null;
   const warnings = warningsFor(input.node, input.nodeRuns ?? []);
-  const invalidWarnings = invalidNodeRunWarnings(input.node, input.invalidNodeRuns ?? []);
+  const invalidWarnings = invalidNodeRunWarnings(
+    input.node,
+    input.invalidNodeRuns ?? [],
+    input.ownerNodeId,
+  );
   return {
     node: input.node,
     nodeRun: { present: input.nodeRun !== undefined },
