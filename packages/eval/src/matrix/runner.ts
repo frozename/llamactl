@@ -392,11 +392,20 @@ function matrixProvenanceInput(model: ModelSpec): ProvenanceInput {
   };
 }
 
+/** #521: the stored reason is the first line only, so a llama-server stderr tail
+ * never lands on the cell. */
+function bootErrorReason(prefix: string, err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  const headline = (message.split("\n")[0] ?? "").trim();
+  return headline === "" ? prefix : `${prefix}: ${headline}`;
+}
+
 function recordBootError(
   model: ModelSpec,
   workloads: WorkloadEval[],
   runId: string,
   db: Database,
+  error: string,
 ): number {
   let cellsWritten = 0;
   for (const workload of workloads) {
@@ -410,7 +419,7 @@ function recordBootError(
       n_rows: 0,
       primary_metric_name: workload.primary_metric_name ?? "macro_f1",
       primary_metric_value: 0,
-      per_class_metrics_json: JSON.stringify({}),
+      per_class_metrics_json: JSON.stringify({ error }),
       latency_p50_ms: 0,
       latency_p95_ms: 0,
       throughput_tps: 0,
@@ -432,13 +441,15 @@ async function runWorkloadCell(
   concurrency: number,
 ): Promise<void> {
   let judgeBoot: Awaited<ReturnType<typeof ensureModelServing>> | undefined;
-  if (workload.judge_model) {
+  const judge = workload.judge_model;
+  if (judge) {
     try {
-      judgeBoot = await ensureModelServing(workload.judge_model, {
+      judgeBoot = await ensureModelServing(judge, {
         launchRefusal: opts.launchRefusal,
       });
     } catch (err) {
-      recordBootError(model, [workload], runId, opts.db);
+      const reason = bootErrorReason(`judge ${judge.name} boot failed`, err);
+      recordBootError(model, [workload], runId, opts.db, reason);
       console.warn(
         `[matrix] failed to boot judge for ${workload.name}: ${err instanceof Error ? err.message : String(err)}`,
       );
@@ -529,7 +540,8 @@ async function runModelCells(
   try {
     boot = await ensureModelServing(model, { launchRefusal: opts.launchRefusal });
   } catch (err) {
-    const cellsWritten = recordBootError(model, opts.workloads, runId, opts.db);
+    const reason = bootErrorReason("model boot failed", err);
+    const cellsWritten = recordBootError(model, opts.workloads, runId, opts.db, reason);
     console.warn(
       `[matrix] failed to boot ${model.name}: ${err instanceof Error ? err.message : String(err)}`,
     );
