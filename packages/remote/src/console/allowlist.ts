@@ -267,6 +267,7 @@ const consoleResidencyStatus = z.object({
           workload: residencyDisplayId,
           mode: z.enum(["native", "process-fallback", "unknown"]),
           modelState: z.enum(["discovered", "loading", "loaded", "missing", "unknown"]).optional(),
+          servingState: z.enum(["resident", "ready", "busy"]).optional(),
         }),
       ),
     })

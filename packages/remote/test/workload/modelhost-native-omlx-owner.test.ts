@@ -249,6 +249,48 @@ function stopFixtureEngine(bootWitness: string | undefined): void {
   }
 }
 
+async function expectNativeInventory(
+  agent: RunningAgent,
+  headers: Record<string, string>,
+  modelState: "ready" | "discovered",
+): Promise<void> {
+  const status = new URL(`${agent.url}/trpc/residencyStatus`);
+  status.searchParams.set("input", JSON.stringify({ node: "local" }));
+  const response = await fetch(status, { headers, signal: AbortSignal.timeout(4000) });
+  const state =
+    modelState === "ready"
+      ? { modelState: "loaded", servingState: "ready" }
+      : { modelState: "discovered" };
+  expect(await response.json()).toMatchObject({
+    result: { data: { omlxNative: { workloads: [{ workload, mode: "native", ...state }] } } },
+  });
+}
+
+async function expectUnboundInventory(
+  agent: RunningAgent,
+  headers: Record<string, string>,
+): Promise<void> {
+  const inventory = new URL(`${agent.url}/trpc/residencyStatus`);
+  inventory.searchParams.set("input", JSON.stringify({ node: "local" }));
+  const unavailable = await fetch(inventory, { headers, signal: AbortSignal.timeout(4000) });
+  expect(await unavailable.json()).toMatchObject({
+    result: {
+      data: {
+        omlxNative: {
+          workloads: [
+            {
+              workload,
+              mode: "unknown",
+              modelState: "unknown",
+              reason: "ManagedNativeOmlxOwnerUnavailable",
+            },
+          ],
+        },
+      },
+    },
+  });
+}
+
 async function verifyNativeParkCycle(
   agent: RunningAgent,
   headers: Record<string, string>,
@@ -272,6 +314,7 @@ async function verifyNativeParkCycle(
     return payload.result?.data;
   };
 
+  await expectNativeInventory(agent, headers, "ready");
   const witness = join(base, "unload-witness");
   const leaveProfile = enterManagedOperatorAction("local", "profile");
   if (leaveProfile === undefined) throw new Error("fixture could not enter its profile operation");
@@ -292,6 +335,7 @@ async function verifyNativeParkCycle(
   }
   expect(await transition("park")).toMatchObject({ kind: "parked", chargedGiB: 8 });
   expect(readFileSync(witness, "utf8")).toBe(String(pid));
+  await expectNativeInventory(agent, headers, "discovered");
   expect(() => process.kill(pid, 0)).not.toThrow();
   const unset = await fetch(`${agent.url}/v1/models`, { headers });
   expect(await unset.json()).toMatchObject({ data: [] });
@@ -473,7 +517,7 @@ test.each([
         },
       });
       saveModelHost(manifest, desiredDir);
-      const startAgent = (): Promise<RunningAgent> =>
+      const startAgent = (executionEnabled = true): Promise<RunningAgent> =>
         startManagedAgentServer(
           {
             bindHost: "127.0.0.1",
@@ -487,20 +531,22 @@ test.each([
                 serviceCredentials: [],
               }),
             },
-            executionAdmission: [
-              {
-                name: "fixture-group",
-                foregroundPorts: [port],
-                backgroundPorts: [port - 1],
-                maxCompletionTokens: 8,
-                maxQueued: 4,
-                maxQueuedBytes: 4096,
-                maxQueueWaitMs: 1000,
-                starvationBoundMs: 1000,
-                maxPerPrincipal: 2,
-                foregroundConcurrency: 1,
-              },
-            ],
+            executionAdmission: executionEnabled
+              ? [
+                  {
+                    name: "fixture-group",
+                    foregroundPorts: [port],
+                    backgroundPorts: [port - 1],
+                    maxCompletionTokens: 8,
+                    maxQueued: 4,
+                    maxQueuedBytes: 4096,
+                    maxQueueWaitMs: 1000,
+                    starvationBoundMs: 1000,
+                    maxPerPrincipal: 2,
+                    foregroundConcurrency: 1,
+                  },
+                ]
+              : [],
           },
           "local",
           {
@@ -655,6 +701,15 @@ test.each([
         });
         expect(replacementRequests).toEqual([]);
         expect(implicitAfterRestart.ok).toBe(false);
+
+        const { omlxNativeResidency: _ownerMode, ...ordinarySpec } = manifest.spec;
+        saveModelHost({ ...manifest, spec: ordinarySpec }, desiredDir);
+        await expectUnboundInventory(running, headers);
+        expect(replacementRequests).toEqual([]);
+        await running.stop();
+        running = await startAgent(false);
+        await expectUnboundInventory(running, headers);
+        expect(replacementRequests).toEqual([]);
       } finally {
         await replacement.stop(true);
       }
