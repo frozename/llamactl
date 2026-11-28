@@ -159,17 +159,22 @@ type ResidencyRenderInput = Omit<ResidencyStatusView, "policy" | "ranking"> & {
   ranking?: RankingSectionRender;
 };
 
+function pushWarningLines(lines: string[], warnings: readonly string[] | undefined): void {
+  if (warnings !== undefined && warnings.length > 0) {
+    for (const w of warnings) {
+      lines.push(`Warning:    ${w}`);
+    }
+  }
+}
+
 export function renderResidencyStatus(s: ResidencyRenderInput, nowMs: number = Date.now()): string {
   const lines: string[] = [];
   lines.push(`Node:       ${s.node}`);
   lines.push(`NodeRun:    ${s.nodeRun.present ? "present" : "absent"}`);
   lines.push(`Policy:     ${s.policy.present ? JSON.stringify(s.policy.residency) : "none"}`);
   pushEffectivePolicyLine(lines, s.effectivePolicy);
-  if (s.knobScopeWarnings !== undefined && s.knobScopeWarnings.length > 0) {
-    for (const w of s.knobScopeWarnings) {
-      lines.push(`Warning:    ${w}`);
-    }
-  }
+  pushWarningLines(lines, s.knobScopeWarnings);
+  pushWarningLines(lines, s.invalidNodeRunWarnings);
   lines.push(`Budget:     ${s.budget.memoryGiB.toFixed(1)} GiB (source: ${s.budget.source})`);
   if (!s.store.present) {
     lines.push(`Store:      not present at ${s.store.path} (scope: serving-process)`);

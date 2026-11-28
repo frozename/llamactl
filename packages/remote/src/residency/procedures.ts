@@ -95,6 +95,7 @@ import { planProfileSwitch } from "@llamactl/core/residency/planner";
 import type { ResidencyRankingReadout } from "../proxy/residency-ranking.js";
 import type { ModelHostManifest } from "../workload/modelhost-schema.js";
 import type { NodeRun } from "../workload/noderun-schema.js";
+import type { InvalidNodeRunFile } from "../workload/noderun-store.js";
 import type { ModelRun } from "../workload/schema.js";
 import type { ManagedLaunchAdmission } from "./managed-launch-admission.js";
 import type { OmlxNativeStatusRow } from "./omlx-capability.js";
@@ -136,6 +137,27 @@ export function nodeRunKnobScopeWarnings(node: string, nodeRuns: readonly NodeRu
     }
   }
   matches.sort((a, b) => compareStrings(a.name, b.name));
+  return matches.map((m) => m.warning);
+}
+
+// Pure projection: each invalid NodeRun file whose metadata.name, spec.node,
+// or file name matches `node` is mapped to the human-readable failure text.
+// Entries are ordered by file with compareStrings. Returns an empty list when
+// nothing matches (Part of #519).
+export function invalidNodeRunWarnings(
+  node: string,
+  invalid: readonly InvalidNodeRunFile[],
+): string[] {
+  const matches: { file: string; warning: string }[] = [];
+  for (const entry of invalid) {
+    if (entry.name === node || entry.node === node || entry.file === `${node}.yaml`) {
+      matches.push({
+        file: entry.file,
+        warning: `NodeRun file '${entry.file}' (metadata.name '${entry.name ?? "?"}', spec.node '${entry.node ?? "?"}') failed validation and is ignored: ${entry.error}. Its spec.budget and spec.residency do not apply, so admission, the residency planner and ranking use the defaults; fix the file and re-apply it with llamactl apply -f`,
+      });
+    }
+  }
+  matches.sort((a, b) => compareStrings(a.file, b.file));
   return matches.map((m) => m.warning);
 }
 
@@ -554,6 +576,9 @@ export type ResidencyStatus = {
   // Omitted when no NodeRun selected by or targeting `node` is mis-scoped,
   // so older payloads and fixtures still type (Part of #519).
   knobScopeWarnings?: string[];
+  // Omitted when no invalid NodeRun file matches `node`, so older payloads
+  // and fixtures still type (Part of #519).
+  invalidNodeRunWarnings?: string[];
   leases: ResidencyStatusLeases;
   omlxNative?: { scope: "serving-process"; workloads: OmlxNativeStatusRow[] };
   sessions?: ResidencyStatusSessions;
@@ -576,6 +601,7 @@ export function buildResidencyStatus(input: {
   servingNode?: string | null | undefined;
   unifiedProxy?: boolean | undefined;
   nodeRuns?: readonly NodeRun[] | undefined;
+  invalidNodeRuns?: readonly InvalidNodeRunFile[] | undefined;
 }): ResidencyStatus {
   const residency = input.nodeRun?.spec.residency;
   const sessions = buildResidencySessionSnapshot(input.sessionRegistry);
@@ -586,6 +612,8 @@ export function buildResidencyStatus(input: {
   const check = reg?.checkUnload;
   const sessionProbe: IdleEvictSessionProbe | null =
     reg !== null && check !== undefined ? { checkUnload: (w) => check.call(reg, w) } : null;
+  const warnings = warningsFor(input.node, input.nodeRuns ?? []);
+  const invalidWarnings = invalidNodeRunWarnings(input.node, input.invalidNodeRuns ?? []);
   return {
     node: input.node,
     nodeRun: { present: input.nodeRun !== undefined },
@@ -621,7 +649,8 @@ export function buildResidencyStatus(input: {
     leases: buildResidencyLeaseSnapshot(input.leaseRegistry ?? null, input.leaseWorkloads ?? []),
     omlxNative: { scope: "serving-process", workloads: [...(input.omlxNative ?? [])] },
     ...(sessions !== undefined ? { sessions } : {}),
-    ...warningsFor(input.node, input.nodeRuns ?? []),
+    ...warnings,
+    ...(invalidWarnings.length > 0 ? { invalidNodeRunWarnings: invalidWarnings } : {}),
   };
 }
 
