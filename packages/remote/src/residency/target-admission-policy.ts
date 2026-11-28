@@ -2,6 +2,10 @@ import type { ManagedCapacitySample } from "@llamactl/core/resources/managed-cap
 
 import { server } from "@llamactl/core";
 import {
+  hasLeadingLlamacppIdleSleepOverride,
+  hasUnmanagedLlamacppIdleSleep,
+} from "@llamactl/core/engines";
+import {
   modelhostPidFile,
   modelhostStartingFile,
   readModelHostStarting,
@@ -29,6 +33,7 @@ import {
 } from "@llamactl/fleet-supervisor/measured-memory";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
+import { userInfo } from "node:os";
 import { join } from "node:path";
 
 import type {
@@ -41,7 +46,7 @@ import type {
 import type { NativeWakeLimits } from "./admission-store.js";
 import type { InferenceHolds, InferenceHoldState } from "./inference-holds.js";
 
-import { existsSync, mkdirSync, readFileSync, statSync } from "../safe-fs.js";
+import { existsSync, lstatSync, mkdirSync, readFileSync, statSync } from "../safe-fs.js";
 import { modelHostCalibrationLaunch, pinModelHostStartup } from "../server/modelhost.js";
 import {
   declaredModelHostMemoryGiB,
@@ -424,25 +429,60 @@ function calibratedPlan(
   };
 }
 
+function managedLlamacppIdleSleepRefusal(
+  args: readonly string[],
+  env: Readonly<NodeJS.ProcessEnv>,
+  extraArgs = args,
+): PlanRefusal | undefined {
+  if (hasUnmanagedLlamacppIdleSleep(args))
+    return { refusal: "ManagedLlamacppIdleSleepUnavailable" };
+  // A preceding two-value option could consume both tokens as argument values.
+  if (hasLeadingLlamacppIdleSleepOverride(extraArgs)) return undefined;
+  const unverified = { refusal: "ManagedLlamacppIdleSleepConfigUnverified" };
+  try {
+    const xdg = env["XDG_CONFIG_HOME"] ?? "";
+    const home = env["HOME"] ?? "";
+    // Preserve symlink/.. traversal as the engine's filesystem lookup sees it.
+    const configRoot = xdg !== "" ? xdg : `${home !== "" ? home : userInfo().homedir}/.config`;
+    const files = ["/etc/llama.cpp/config.ini", `${configRoot}/llama.cpp/config.ini`];
+    return files.some((file) => lstatSync(file, { throwIfNoEntry: false }) !== undefined)
+      ? unverified
+      : undefined;
+  } catch {
+    return unverified;
+  }
+}
+
+function compileModelHostDesired(
+  manifest: Extract<DesiredManifest, { kind: "ModelHost" }>,
+  calibration: CalibrationOptions,
+  describe: boolean,
+): ApprovedPlan | PlanRefusal | undefined {
+  if (modelHostExternalBindHost(manifest.spec) !== null)
+    return { refusal: "ManagedExternalBindUnavailable" };
+  const allocationGiB = declaredModelHostMemoryGiB(manifest);
+  if (allocationGiB === null || allocationGiB <= 0) return undefined;
+  const pinned = pinModelHostStartup(manifest);
+  if (manifest.spec.engine === "llamacpp") {
+    const refusal = managedLlamacppIdleSleepRefusal(manifest.spec.extraArgs, pinned.configEnv);
+    if (refusal !== undefined) return refusal;
+  }
+  return calibratedPlan(
+    allocationGiB,
+    pinned.effectiveSpecDigest,
+    () => modelHostCalibrationLaunch(pinned),
+    calibration,
+    describe,
+  );
+}
+
 function compileDesired(
   manifest: DesiredManifest,
   calibration: CalibrationOptions,
   describe = false,
 ): ApprovedPlan | PlanRefusal | undefined {
-  if (manifest.kind === "ModelHost") {
-    if (modelHostExternalBindHost(manifest.spec) !== null)
-      return { refusal: "ManagedExternalBindUnavailable" };
-    const allocationGiB = declaredModelHostMemoryGiB(manifest);
-    if (allocationGiB === null || allocationGiB <= 0) return undefined;
-    const pinned = pinModelHostStartup(manifest);
-    return calibratedPlan(
-      allocationGiB,
-      pinned.effectiveSpecDigest,
-      () => modelHostCalibrationLaunch(pinned),
-      calibration,
-      describe,
-    );
-  }
+  if (manifest.kind === "ModelHost")
+    return compileModelHostDesired(manifest, calibration, describe);
 
   const allocationGiB = manifest.spec.resources?.expectedMemoryGiB;
   // A tensor-parallel launch needs authorization and reservations on its
@@ -459,6 +499,12 @@ function compileDesired(
   const resolved = resolveEnv();
   const prepared = server.prepareManagedServerStart({ ...opts, resolved, key: { name: workload } });
   if ("result" in prepared) return undefined;
+  const sleepRefusal = managedLlamacppIdleSleepRefusal(
+    prepared.launch.args,
+    process.env,
+    manifest.spec.extraArgs,
+  );
+  if (sleepRefusal !== undefined) return sleepRefusal;
   // A retry can drop the explicit --host and fall back to the endpoint.
   const fallback = opts.endpoint?.host ?? resolved.LLAMA_CPP_HOST;
   if (server.hostBindRefusal(["--host", fallback, ...prepared.launch.args], undefined, false))

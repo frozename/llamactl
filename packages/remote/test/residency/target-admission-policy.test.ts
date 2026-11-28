@@ -33,13 +33,15 @@ import {
   mkdirSync,
   mkdtempSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "../../src/safe-fs.js";
-import { pinModelHostStartup } from "../../src/server/modelhost.js";
+import { pinModelHostStartup, startModelHost } from "../../src/server/modelhost.js";
 import { modelRunStartInvocation } from "../../src/workload/apply.js";
 import { parseModelHost, saveModelHost } from "../../src/workload/modelhost-store.js";
 import { parseNodeRun, saveNodeRun } from "../../src/workload/noderun-store.js";
 import { parseWorkload, saveWorkload } from "../../src/workload/store.js";
+import { ephemeralPort } from "../fixtures/engine-survival-helpers.js";
 
 const target = "fixture-owner";
 const alias = "fixture-alias";
@@ -413,6 +415,177 @@ test.each(["endpoint", "engine argument"])(
   },
 );
 
+test("managed llama.cpp ModelHost refuses idle wake at apply, profile planning, and launch", async () => {
+  await withCapacityOwner(
+    () => localCapacity(56),
+    async ({ admission, authority }, request, runtimeDir) => {
+      const refused = "ManagedLlamacppIdleSleepUnavailable";
+      const manifest = request.launch.manifest;
+      const launch = mock(() => Promise.resolve({ ran: false as const, detail: "reached launch" }));
+      const apply = mock(() => Promise.resolve("reached apply"));
+      const signal = new AbortController().signal;
+      for (const extraArgs of [
+        ["--sleep-idle-seconds", "30"],
+        ["--sleep_idle_seconds", "30"],
+        ["--sleep-idle-seconds=30"],
+        ["--sleep-idle-seconds"],
+      ]) {
+        const sleeping = { ...manifest, spec: { ...manifest.spec, extraArgs } };
+        const denial: unknown = await admission
+          .withDesiredManifest?.(sleeping, apply)
+          .catch((error: unknown) => error);
+        expect(denial).toMatchObject({ message: refused });
+        saveModelHost(sleeping, join(runtimeDir, ".."));
+        const pinned = pinModelHostStartup(sleeping);
+        expect(
+          await admission.run(
+            {
+              ...request,
+              effectiveSpecDigest: pinned.effectiveSpecDigest,
+              effectiveLaunch: pinned.effectiveLaunch,
+              launch: { manifest: sleeping },
+            },
+            signal,
+            launch,
+          ),
+        ).toEqual({ ran: false, detail: refused });
+        expect(
+          admission.preflightProfile?.({ victims: [], retained: [], replacements: [workload] }),
+        ).toBe(`${refused}: ${workload}`);
+      }
+      expect(apply).not.toHaveBeenCalled();
+      expect(launch).not.toHaveBeenCalled();
+      expect(authority.snapshot()).toEqual([]);
+      const disabled = {
+        ...manifest,
+        spec: { ...manifest.spec, extraArgs: ["--sleep-idle-seconds", "-1"] },
+      };
+      saveModelHost(disabled, join(runtimeDir, ".."));
+      const pinned = pinModelHostStartup(disabled);
+      expect(
+        await admission.run(
+          {
+            ...request,
+            effectiveSpecDigest: pinned.effectiveSpecDigest,
+            effectiveLaunch: pinned.effectiveLaunch,
+            launch: { manifest: disabled },
+          },
+          signal,
+          launch,
+        ),
+      ).toEqual({ ran: false, detail: "reached launch" });
+      expect(launch).toHaveBeenCalledTimes(1);
+    },
+  );
+});
+
+test.each(["HOME", "XDG_CONFIG_HOME", "symlinked XDG_CONFIG_HOME"] as const)(
+  "managed llama.cpp ModelHost checks inherited configuration from the child %s",
+  async (selector) => {
+    await withCapacityOwner(
+      () => localCapacity(56),
+      async ({ admission, authority }, request, runtimeDir) => {
+        const dir = join(runtimeDir, "..");
+        const configRoot = join(dir, "child-config");
+        let configuredRoot = configRoot;
+        if (selector === "symlinked XDG_CONFIG_HOME") {
+          mkdirSync(join(configRoot, "child"), { recursive: true });
+          const link = join(dir, "child-link");
+          symlinkSync(join(configRoot, "child"), link);
+          configuredRoot = `${link}/..`;
+        }
+        const configDir = join(
+          configRoot,
+          ...(selector === "HOME" ? [".config"] : []),
+          "llama.cpp",
+        );
+        const config = join(configDir, "config.ini");
+        const blocked = "ManagedLlamacppIdleSleepConfigUnverified";
+        const manifest = request.launch.manifest;
+        const signal = new AbortController().signal;
+        const configure = (extraArgs: string[] = []): typeof request => {
+          const updated = {
+            ...manifest,
+            spec: {
+              ...manifest.spec,
+              extraArgs,
+              env: { [selector === "HOME" ? "HOME" : "XDG_CONFIG_HOME"]: configuredRoot },
+            },
+          };
+          saveModelHost(updated, dir);
+          const { effectiveSpecDigest, effectiveLaunch } = pinModelHostStartup(updated);
+          return {
+            ...request,
+            effectiveSpecDigest,
+            effectiveLaunch,
+            launch: { manifest: updated },
+          };
+        };
+        const configured = configure();
+        mkdirSync(configDir, { recursive: true });
+        const lateConfig = await admission.run(
+          configured,
+          signal,
+          async (commitReadiness, checkSpawn) => {
+            expect(authority.snapshot()).toMatchObject([{ state: "pending" }]);
+            writeFileSync(config, "sleep-idle-seconds = 30\n");
+            const host = configured.launch.manifest;
+            const result = await startModelHost({
+              key: { name: workload },
+              manifest: host,
+              env: pinModelHostStartup(host).env,
+              workloadsDir: dir,
+              engineScope: null,
+              findListenerPid: () => Promise.resolve(null),
+              timeoutSeconds: 1,
+              signal,
+              commitReadiness,
+              ...(checkSpawn === undefined ? {} : { checkSpawn }),
+            });
+            expect(result).toMatchObject({ ok: false, pid: null, error: blocked });
+            expect(result.spawnedPid).toBeUndefined();
+            return { ran: true, result };
+          },
+        );
+        expect(authority.snapshot()).toEqual([]);
+        expect(lateConfig).toEqual({ ran: false, detail: blocked });
+
+        const apply = mock(() => Promise.resolve("reached apply"));
+        const failure: unknown = await admission
+          .withDesiredManifest?.(configured.launch.manifest, apply)
+          .catch((error: unknown) => error);
+        expect(failure).toMatchObject({ message: blocked });
+        expect(apply).not.toHaveBeenCalled();
+        expect(
+          admission.preflightProfile?.({ victims: [], retained: [], replacements: [workload] }),
+        ).toBe(`${blocked}: ${workload}`);
+        const start = mock(() =>
+          Promise.resolve({ ran: false as const, detail: "reached launch" }),
+        );
+        expect(await admission.run(configured, signal, start)).toEqual({
+          ran: false,
+          detail: blocked,
+        });
+        const lookalike = configure(["--lora-scaled", "--sleep-idle-seconds", "-1"]);
+        expect(await admission.run(lookalike, signal, start)).toEqual({
+          ran: false,
+          detail: blocked,
+        });
+        expect(start).not.toHaveBeenCalled();
+
+        expect(
+          await admission.run(configure(["--sleep_idle_seconds", "-1"]), signal, start),
+        ).toEqual({
+          ran: false,
+          detail: "reached launch",
+        });
+        expect(start).toHaveBeenCalledTimes(1);
+        expect(authority.snapshot()).toEqual([]);
+      },
+    );
+  },
+);
+
 test.each(["endpoint", "engine argument"])(
   "managed ModelRun rejects an external %s before any reservation or start",
   async (source) => {
@@ -466,6 +639,94 @@ spec:
         } finally {
           if (previous === undefined) Reflect.deleteProperty(process.env, "LLAMA_CPP_MODELS");
           else process.env["LLAMA_CPP_MODELS"] = previous;
+        }
+      },
+    );
+  },
+);
+
+test.each(["explicit arguments", "inherited configuration", "late inherited configuration"])(
+  "managed llama.cpp ModelRun protects launch against idle wake from %s",
+  async (source) => {
+    await withCapacityOwner(
+      () => localCapacity(56),
+      async ({ admission, authority }, _request, runtimeDir) => {
+        const dir = join(runtimeDir, "..");
+        const models = join(dir, "models");
+        const previous = process.env["LLAMA_CPP_MODELS"];
+        const previousXdg = process.env["XDG_CONFIG_HOME"];
+        process.env["LLAMA_CPP_MODELS"] = models;
+        process.env["XDG_CONFIG_HOME"] = join(dir, "xdg");
+        try {
+          mkdirSync(models);
+          writeFileSync(join(models, "exact.gguf"), "GGUF-fixture");
+          const fromConfig = source !== "explicit arguments";
+          const late = source === "late inherited configuration";
+          const configDir = join(dir, "xdg", "llama.cpp");
+          const writeConfig = (): void => {
+            mkdirSync(configDir, { recursive: true });
+            writeFileSync(join(configDir, "config.ini"), "sleep-idle-seconds = 30\n");
+          };
+          if (fromConfig && !late) writeConfig();
+          const port = ephemeralPort();
+          const manifest = parseWorkload(`
+apiVersion: llamactl/v1
+kind: ModelRun
+metadata: { name: idle-model-run }
+spec:
+  node: ${node}
+  target: { kind: rel, value: exact.gguf }
+  binary: /usr/bin/false
+  endpoint: { host: "127.0.0.1", port: ${String(port)} }
+  extraArgs: ${fromConfig ? "[]" : '["--sleep_idle_seconds", "30"]'}
+  resources: { expectedMemoryGiB: 16 }
+`);
+          saveWorkload(manifest, dir);
+          const { workload: runtimeKey, ...launch } = modelRunStartInvocation(manifest);
+          const prepared = server.prepareManagedServerStart({
+            ...launch,
+            key: { name: runtimeKey },
+            engineScope: null,
+            timeoutSeconds: 1,
+          });
+          if ("result" in prepared) throw new Error(prepared.result.error);
+          const blocked = fromConfig
+            ? "ManagedLlamacppIdleSleepConfigUnverified"
+            : "ManagedLlamacppIdleSleepUnavailable";
+          const start = mock(
+            async (
+              commitReadiness: Parameters<typeof prepared.start>[0],
+              checkSpawn?: Parameters<typeof prepared.start>[1],
+            ) => {
+              expect(authority.snapshot()).toMatchObject([{ state: "pending" }]);
+              if (late) writeConfig();
+              const result = await prepared.start(commitReadiness, checkSpawn);
+              expect(result).toMatchObject({ ok: false, pid: null, error: blocked });
+              return { ran: true as const, result };
+            },
+          );
+          const signal = new AbortController().signal;
+          expect(
+            await admission.run(
+              {
+                kind: "ModelRun",
+                runtimeKey,
+                effectiveSpecDigest: prepared.effectiveSpecDigest,
+                effectiveLaunch: prepared.launch,
+                launch,
+              },
+              signal,
+              start,
+            ),
+          ).toEqual({ ran: false, detail: blocked });
+          expect(start).toHaveBeenCalledTimes(late ? 1 : 0);
+          expect(server.readServerPid({ name: runtimeKey }, resolveEnv())).toBeNull();
+          expect(authority.snapshot()).toEqual([]);
+        } finally {
+          if (previous === undefined) Reflect.deleteProperty(process.env, "LLAMA_CPP_MODELS");
+          else process.env["LLAMA_CPP_MODELS"] = previous;
+          if (previousXdg === undefined) Reflect.deleteProperty(process.env, "XDG_CONFIG_HOME");
+          else process.env["XDG_CONFIG_HOME"] = previousXdg;
         }
       },
     );

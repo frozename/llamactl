@@ -1053,6 +1053,7 @@ describe("startServer mmproj safe-flag retry bookkeeping", () => {
         pid: null,
         error: "admission changed before retry spawn",
       });
+      expect(result.preDispatchRefusal).toBeUndefined();
     },
     TEST_TIMEOUT_MS,
   );

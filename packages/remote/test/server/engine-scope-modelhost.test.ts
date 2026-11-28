@@ -294,6 +294,34 @@ test("scoped ModelHost: a unit collision falls back to exactly one direct spawn"
   await stopLiveEngine(fixture, result.pid);
 }, 60_000);
 
+test("scoped ModelHost: a refusal before fallback preserves the earlier dispatch", async () => {
+  const fixture = newFixture("scope-refused-fallback-host");
+  const fake = writeFakeSystemdRun(fixture.dirs.tmp, "collision");
+  const { launcher } = literalLauncher(fake, 20_000);
+  const calls: SpawnCall[] = [];
+  const checkSpawn = (): string | undefined =>
+    calls.length === 0 ? undefined : "admission changed before direct spawn";
+  const result = await startModelHost({
+    key: { name: fixture.name },
+    manifest: manifest(fixture),
+    workloadsDir: fixture.dirs.workloadsDir,
+    runtimeDir: fixture.dirs.runtimeDir,
+    env: fixture.env,
+    spawn: spawnSpy(calls, spawnedPids),
+    engineScope: launcher,
+    signal: AbortSignal.timeout(15_000),
+    warn: () => undefined,
+    checkSpawn,
+  });
+  expect(calls.map((call) => call.command)).toEqual([fake]);
+  expect(result).toMatchObject({
+    ok: false,
+    pid: null,
+    error: "admission changed before direct spawn",
+  });
+  expect(result.preDispatchRefusal).toBeUndefined();
+}, 60_000);
+
 test("scoped ModelHost: a manifest env conflict stays direct", async () => {
   const fixture = newFixture("scope-envconflict-host");
   const fake = writeFakeSystemdRun(fixture.dirs.tmp, "ok");

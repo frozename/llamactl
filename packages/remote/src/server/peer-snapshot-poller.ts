@@ -51,6 +51,11 @@ interface RawFleetSnapshot {
 const HIGH_PRESSURE_AVAILABLE_MB = 768;
 export const DEFAULT_PEER_FETCH_TIMEOUT_MS = 8_000;
 
+// #367: a direct peer snapshot is parsed on every poll tick (15 s), so its decode
+// allocation is bounded by bytes. The tunnel path is already bounded by
+// TUNNEL_MAX_FRAME_BYTES.
+export const PEER_SNAPSHOT_MAX_BODY_BYTES = 2 * 1024 * 1024;
+
 function parseWorkloadPort(endpoint: string | undefined): number {
   if (!endpoint) return 0;
   try {
@@ -157,6 +162,41 @@ function resolveTunnelRelayToken(peer: PeerNode): string {
   throw new Error(`peer ${peer.id} has tunnelPreferred=true but no tunnel relay bearer set`);
 }
 
+// #367: decode a peer response body under a hard byte cap. A peer that streams
+// more than the cap throws mid-read, and the reader is cancelled so Bun stops
+// transferring the rest of the body.
+async function readBoundedJson(res: Response, maxBytes: number): Promise<unknown> {
+  const declared = Number(res.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    throw new Error(`peer snapshot declares ${String(declared)} bytes, cap is ${String(maxBytes)}`);
+  }
+  if (res.body === null) throw new Error("peer snapshot response has no body");
+
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let done = false;
+  try {
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) {
+        done = true;
+        break;
+      }
+      total += chunk.value.byteLength;
+      if (total > maxBytes) {
+        throw new Error(`peer snapshot exceeded ${String(maxBytes)} bytes`);
+      }
+      chunks.push(chunk.value);
+    }
+  } finally {
+    // A stream that ran to completion must not be cancelled; anything else (over
+    // cap, error, abort) must release the connection for the next tick.
+    if (!done) await reader.cancel().catch(() => undefined);
+  }
+  return JSON.parse(new TextDecoder().decode(Buffer.concat(chunks)));
+}
+
 async function readPeerSnapshotDirectWithTimeout(
   peer: PeerNode,
   timeoutMs: number,
@@ -194,7 +234,7 @@ async function readPeerSnapshotDirectWithTimeout(
       return null;
     }
     return (await Promise.race([
-      res.json(),
+      readBoundedJson(res, PEER_SNAPSHOT_MAX_BODY_BYTES),
       new Promise<never>((_, reject) => {
         if (controller.signal.aborted) {
           reject(new Error("peer snapshot fetch timed out"));
@@ -208,7 +248,11 @@ async function readPeerSnapshotDirectWithTimeout(
           { once: true },
         );
       }),
-    ]).catch(() => null)) as RawFleetSnapshot | null;
+    ]).catch(() => {
+      // Discarding the response leaves Bun transferring its body after this tick.
+      controller.abort();
+      return null;
+    })) as RawFleetSnapshot | null;
   } catch {
     return null; // unreachable / TLS error / timeout -> no peer routes this tick
   } finally {
@@ -414,4 +458,8 @@ export function startPeerSnapshotPoller(opts: PeerSnapshotPollerOptions = {}): (
   };
 }
 
-export const __peerSnapshotInternals = { fetchPeerSnapshot, DEFAULT_PEER_FETCH_TIMEOUT_MS };
+export const __peerSnapshotInternals = {
+  fetchPeerSnapshot,
+  DEFAULT_PEER_FETCH_TIMEOUT_MS,
+  PEER_SNAPSHOT_MAX_BODY_BYTES,
+};

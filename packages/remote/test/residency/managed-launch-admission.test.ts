@@ -205,6 +205,24 @@ test("a managed ModelHost must supply the manifest being admitted", async () => 
   expect(f.authority.snapshot()).toEqual([]);
 });
 
+test("the owner reports an uncertain outcome when it cannot release the unstarted claim", async () => {
+  using f = fixture();
+  const gate = createManagedLaunchAdmission({
+    ...f,
+    authority: { ...f.authority, abandonUnstarted: () => false },
+    capture: () => generation,
+  });
+  const failed = {
+    ran: true as const,
+    result: { ok: false, pid: null, preDispatchRefusal: "launch policy changed" },
+  };
+  expect(await gate.run(request, signal, () => Promise.resolve(failed))).toEqual({
+    ran: false,
+    detail: "ManagedReadyUnverified",
+  });
+  expect(f.authority.snapshot()).toMatchObject([{ state: "uncertain", allocationGiB: 16 }]);
+});
+
 test("a runtime cannot report success without committing publication for its PID", async () => {
   using f = fixture();
   const gate = createManagedLaunchAdmission({ ...f, capture: () => generation });

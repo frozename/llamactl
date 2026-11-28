@@ -733,12 +733,54 @@ function stringEntries(value: unknown): string[] {
   return value.filter((entry): entry is string => typeof entry === "string");
 }
 
+function recordEntries(value: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((entry): entry is Record<string, unknown> => asRecord(entry) !== null);
+}
+
+// Condition reasons a node writes when its stop fence refused the work an
+// apply asked for: the restart itself, and eviction teardown that could not
+// stop the victim. `EvictStopFailed` and friends are ordinary failures, not
+// fence refusals, so they stay out of this set (#520). `EvictStopRefused` is
+// excluded too: eviction writes it for a `stopped: false` reply with no
+// recognised fence reason (no lease or session refusal), so it cannot be
+// attributed to the stop fence and is reported as a plain eviction failure.
+const APPLY_FENCE_REASONS = new Set([
+  "StopRefused",
+  "EvictVictimBusy",
+  "EvictSessionActive",
+  "EvictSessionUnknown",
+]);
+
+function conditionSuffix(message: unknown): string {
+  return typeof message === "string" && message !== "" ? `: ${message}` : "";
+}
+
+/**
+ * First `False` apply status condition whose reason names the node stop
+ * fence. Every entry is scanned, not just the head: the preserved-running
+ * eviction shape leads with `Applied=True/unchanged`.
+ */
+function applyFenceCondition(
+  result: Record<string, unknown>,
+): { reason: string; suffix: string } | null {
+  const status = asRecord(result["status"]);
+  for (const condition of recordEntries(status?.["conditions"])) {
+    if (condition["status"] !== "False") continue;
+    const reason = condition["reason"];
+    if (typeof reason !== "string" || !APPLY_FENCE_REASONS.has(reason)) continue;
+    return { reason, suffix: conditionSuffix(condition["message"]) };
+  }
+  return null;
+}
+
 /**
  * Pure refusal detector: given a tool name and its raw result,
  * returns a structured refusal envelope when the result matches
  * a node stop-fence refusal pattern, or null otherwise. A dry-run
  * preview never matches because its payload has no `refused`, no
- * `ok: false` with an `error` string, and no `manifestPreserved`.
+ * `ok: false` with an `error` string, no `manifestPreserved`, and no
+ * `status` conditions.
  */
 export function opsChatStopRefusal(
   name: OpsChatToolName,
@@ -746,7 +788,7 @@ export function opsChatStopRefusal(
   result: unknown,
 ): { code: string; message: string } | null {
   // Keep the operator-facing codes stable: 'stop_refused', 'delete_refused',
-  // and 'destroy_refused'.
+  // 'destroy_refused', and 'apply_refused'.
   const record = asRecord(result);
   if (record === null) return null;
 
@@ -777,6 +819,17 @@ export function opsChatStopRefusal(
     return {
       code: "destroy_refused",
       message: `composite/${compositeName} not destroyed: a workload stop was refused; manifest preserved`,
+    };
+  }
+
+  // The workloadApply procedure returns no `error` field, so a fenced restart
+  // or eviction reads as a plain `unchanged`/`pending` result unless the
+  // status conditions are inspected (#520).
+  const fence = name === "llamactl.workload.apply" ? applyFenceCondition(record) : null;
+  if (fence !== null) {
+    return {
+      code: "apply_refused",
+      message: `workloadApply refused by the node stop fence (${fence.reason})${fence.suffix}`,
     };
   }
 

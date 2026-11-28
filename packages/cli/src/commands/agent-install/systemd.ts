@@ -1,7 +1,12 @@
 import { userInfo } from "node:os";
 import { dirname, join } from "node:path";
 
-import { DEFAULT_UNITS, parseSystemctlShow } from "../update/services.js";
+import {
+  DEFAULT_UNITS,
+  parseEnvFile,
+  parseSystemctlShow,
+  readCgroupProcs,
+} from "../update/services.js";
 import {
   type BinarySource,
   buildPlistEnv,
@@ -27,6 +32,7 @@ Install the agent as a systemd user unit (scope=user) or system unit
 a local bun build --compile, or a caller-supplied path.
 
 Flags (all --key=value):
+  --kill-mode=process|mixed    default: process (keep engines alive across restart)
   --scope=user|system          default: user
   --binary=<path>              use an existing binary at this path
   --from-release=<tag>         fetch from GitHub Release vX.Y.Z
@@ -65,6 +71,7 @@ User-scope units stop at logout unless lingering is enabled:
 export interface InstallSystemdFlags {
   scope: "user" | "system";
   source: BinarySource;
+  killMode: "process" | "mixed";
   /** Undefined → resolved per-scope at run time ($HOME/.local/bin vs /usr/local/bin). */
   installPath: string | undefined;
   dir: string | undefined;
@@ -80,6 +87,7 @@ export interface InstallSystemdFlags {
 
 interface InstallSystemdFlagState {
   scope: "user" | "system";
+  killMode: "process" | "mixed";
   binaryPath: string | undefined;
   releaseTag: string | undefined;
   fromSource: boolean;
@@ -205,6 +213,12 @@ function applySystemdKeyValueFlag(
       }
       state.scope = v;
       return null;
+    case "--kill-mode":
+      if (v !== "process" && v !== "mixed") {
+        return { error: `agent install-systemd: --kill-mode must be process|mixed (got ${v})` };
+      }
+      state.killMode = v;
+      return null;
     case "--bind": {
       const newline = rejectNewline("--bind", v);
       if (newline) return newline;
@@ -287,6 +301,7 @@ function splitFlag(arg: string): [string, string | undefined] {
 export function parseInstallSystemdFlags(argv: string[]): InstallSystemdFlags | { error: string } {
   const state: InstallSystemdFlagState = {
     scope: "user",
+    killMode: "process",
     binaryPath: undefined,
     releaseTag: undefined,
     fromSource: false,
@@ -310,8 +325,30 @@ export function parseInstallSystemdFlags(argv: string[]): InstallSystemdFlags | 
   const source = resolveSystemdBinarySource(state);
   if ("error" in source) return source;
 
+  // #806 phase 4: --kill-mode=mixed is unsafe when the unit's cgroup
+  // holds other processes (engines in mixed scope or direct-spawn fallback).
+  if (state.killMode === "mixed") {
+    if (state.scope === "system") {
+      return {
+        error:
+          "agent install-systemd: --kill-mode=mixed is incompatible with --scope=system; " +
+          "a system unit has no user bus, so engines fall back to a direct spawn inside the " +
+          "agent cgroup, and the unit's stop would kill them",
+      };
+    }
+    if (state.envOverrides["LLAMACTL_ENGINE_SCOPE"] === "off") {
+      return {
+        error:
+          "agent install-systemd: --kill-mode=mixed is incompatible with " +
+          "LLAMACTL_ENGINE_SCOPE=off; engines fall back to a direct spawn inside the agent " +
+          "cgroup, and the unit's stop would kill them",
+      };
+    }
+  }
+
   return {
     scope: state.scope,
+    killMode: state.killMode,
     source,
     installPath: state.installPath,
     dir: state.dir,
@@ -406,6 +443,112 @@ function warnIfLoopbackBind(deps: InstallLaunchdDeps, bind: string | undefined):
   );
 }
 
+// #806 phase 4: when killMode is "mixed", refuse to install if the existing
+// unit's cgroup holds processes other than the agent itself. The guard runs
+// whenever the unit is loaded and has a ControlGroup, whatever its
+// ActiveState: after a KillMode=process stop or crash the unit can be
+// inactive, activating or auto-restarting with MainPID=0 while engines
+// still sit in its cgroup.
+function checkKillModeCgroup(
+  deps: InstallLaunchdDeps,
+  parsed: InstallSystemdFlags,
+  targets: InstallSystemdTargets,
+): string | null {
+  if (parsed.killMode !== "mixed") return null;
+
+  const res = deps.spawnSync(
+    "systemctl",
+    [
+      ...systemdCtlArgs(parsed.scope),
+      "show",
+      "-p",
+      "LoadState",
+      "-p",
+      "ActiveState",
+      "-p",
+      "MainPID",
+      "-p",
+      "ControlGroup",
+      targets.unitName,
+    ],
+    {
+      encoding: "utf8",
+    },
+  );
+  const props = parseSystemctlShow(res.stdout);
+  const cgroup = props["ControlGroup"];
+  if (res.status !== 0 || props["LoadState"] !== "loaded" || !cgroup) return null;
+
+  const mainPid = Number.parseInt(props["MainPID"] ?? "", 10);
+  // Wrap readFile in try/catch; return null on failure (cgroup.procs unreadable).
+  const readFile = (p: string): string | null => {
+    try {
+      return deps.fs.readFileSync(p, "utf8");
+    } catch {
+      return null;
+    }
+  };
+  const procs = readCgroupProcs(cgroup, readFile);
+  if (procs === null) {
+    return `refusing --kill-mode=mixed: cannot read ${targets.unitName}'s cgroup.procs (${cgroup}); keep --kill-mode=process`;
+  }
+  const others = mainPid > 0 ? procs.filter((p) => p !== mainPid) : procs;
+  if (others.length > 0) {
+    return `refusing --kill-mode=mixed: ${targets.unitName} has ${String(others.length)} other process(es) in its cgroup (pid ${others.join(", ")}): the restart would kill them; keep --kill-mode=process until no engine runs in the agent cgroup`;
+  }
+  return null;
+}
+
+// #806 phase 4: systemd applies EnvironmentFile= after Environment=, so an
+// --env-file can turn engine scopes off even when no --env flag does. The
+// parser cannot read files; this runs before any install side effect.
+function checkKillModeEnvFiles(
+  deps: InstallLaunchdDeps,
+  parsed: InstallSystemdFlags,
+): string | null {
+  if (parsed.killMode !== "mixed") return null;
+  let scope = parsed.envOverrides["LLAMACTL_ENGINE_SCOPE"];
+  let source: string | undefined;
+  for (const path of parsed.envFiles) {
+    let text: string;
+    try {
+      text = deps.fs.readFileSync(path, "utf8");
+    } catch {
+      continue;
+    }
+    const value = parseEnvFile(text)["LLAMACTL_ENGINE_SCOPE"];
+    if (value !== undefined) {
+      scope = value;
+      source = path;
+    }
+  }
+  if (scope !== "off" || source === undefined) return null;
+  return (
+    `--kill-mode=mixed is incompatible with LLAMACTL_ENGINE_SCOPE=off (set by --env-file ${source}); ` +
+    "engines fall back to a direct spawn inside the agent cgroup, and the unit's stop would kill them"
+  );
+}
+
+/** Pre-install guard for --kill-mode=mixed: env-file scope check, then the cgroup check. */
+function checkInstallGuard(
+  deps: InstallLaunchdDeps,
+  parsed: InstallSystemdFlags,
+  targets: InstallSystemdTargets,
+): number | null {
+  const envProblem = checkKillModeEnvFiles(deps, parsed);
+  if (envProblem !== null) {
+    deps.stderr(`agent install-systemd: ${envProblem}\n`);
+    return 1;
+  }
+  if (parsed.dryRun) return null;
+  const guardProblem = checkKillModeCgroup(deps, parsed, targets);
+  if (guardProblem !== null) {
+    deps.stderr(`agent install-systemd: ${guardProblem}\n`);
+    return 1;
+  }
+  return null;
+}
+
 // -----------------------------------------------------------------------------
 // Unit assembly + plan printing
 // -----------------------------------------------------------------------------
@@ -425,6 +568,7 @@ function assembleSystemdUnit(
     args,
     env: buildPlistEnv(deps.env, parsed.envOverrides),
     envFiles: parsed.envFiles,
+    killMode: parsed.killMode,
   };
   if (parsed.logDir !== undefined) options.logDir = parsed.logDir;
   if (parsed.scope === "system") options.workingDir = targets.dirArg;
@@ -670,6 +814,9 @@ export async function runAgentInstallSystemd(
     deps.stderr(`unit file already exists at ${targets.unitPath}; pass --force to overwrite.\n`);
     return 1;
   }
+
+  const guardCode = checkInstallGuard(deps, parsed, targets);
+  if (guardCode !== null) return guardCode;
 
   const installedPath = await resolveBinaryOrReport(deps, parsed, targets.installPath);
   if (installedPath === null) return 1;
