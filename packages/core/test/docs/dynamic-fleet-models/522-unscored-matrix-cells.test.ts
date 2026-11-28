@@ -22,9 +22,9 @@ describe("#522 unscored matrix cells", () => {
     for (const needle of [
       "A matrix cell is unscored when its `n_rows` is 0 or less",
       "`recordBootError`",
-      "`n_rows` 0, `primary_metric_value` 0, `errors` 1 and `per_class_metrics_json` `{}`",
+      '`n_rows` 0, `primary_metric_value` 0, `errors` 1 and `per_class_metrics_json` `{"error":"<reason>"}`',
       '`primary_metric_value` -1 and `per_class_metrics_json` `{"error":"corpus_load_failed"}`',
-      "it is not stored on the cell",
+      "only the first line of the boot error is stored",
     ]) {
       expect(S, needle).toContain(needle);
     }
@@ -34,7 +34,7 @@ describe("#522 unscored matrix cells", () => {
     for (const needle of [
       "n_rows: 0,",
       "primary_metric_value: 0,",
-      "per_class_metrics_json: JSON.stringify({}),",
+      "per_class_metrics_json: JSON.stringify({ error }),",
       "errors: 1,",
     ]) {
       expect(bootBody, needle).toContain(needle);
@@ -49,7 +49,10 @@ describe("#522 unscored matrix cells", () => {
 
     const modelCellsBody = enclosingBody(runner, "async function runModelCells(");
     expect(modelCellsBody.length).toBeGreaterThan(0);
-    expect(modelCellsBody).toContain("recordBootError(model, opts.workloads, runId, opts.db)");
+    expect(modelCellsBody).toContain('const reason = bootErrorReason("model boot failed", err);');
+    expect(modelCellsBody).toContain(
+      "recordBootError(model, opts.workloads, runId, opts.db, reason)",
+    );
     expect(modelCellsBody).toContain("[matrix] failed to boot ${model.name}");
   });
 
@@ -58,7 +61,7 @@ describe("#522 unscored matrix cells", () => {
     for (const needle of [
       "`cellUnavailableReason`",
       "`no rows scored`, or `no rows scored (<error>)`",
-      "a boot error cell reads `no rows scored` and a corpus failure reads `no rows scored (corpus_load_failed)`",
+      "a boot error cell reads `no rows scored (model boot failed: <first line of the boot error>)` and a corpus failure reads `no rows scored (corpus_load_failed)`",
     ]) {
       expect(S, needle).toContain(needle);
     }

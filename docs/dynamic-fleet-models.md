@@ -18,7 +18,13 @@ Open items:
   `residency_states` for its victims and replacements. A same-group occupant
   that the plan observed occupying refuses the start with
   `ExclusiveGroupOccupied` before the engine runs. A same-group occupying row
-  the plan did not observe is reconciled to downloaded and logged. `applyOne`
+  the plan did not observe is reconciled to downloaded only when it is `ready`
+  and `directWorkloadProvenDown` proves its workload down (for example a
+  crash-left keep-alive, or a ModelRun whose recorded pid is gone). Otherwise,
+  including any `loading`/`warming` row, it is kept, logged as
+  `[residency] lifecycle kept <model> <state> in group <group>: not proven down`,
+  and the replacement start is refused with `ExclusiveGroupOccupied` before the
+  engine runs, matching the direct-start rule. `applyOne`
   and `applyOneModelHost` (`packages/remote/src/workload/apply.ts`), which the
   reconciler calls, start a ModelRun's coordinator and a ModelHost through the
   node agent's `serverStart` and `modelHostStart` procedures, so the fenced
@@ -142,7 +148,13 @@ persists per-model states in its `residency_states` table:
   `residency_states` for its victims and replacements. A same-group occupant
   that the plan observed occupying refuses the start with
   `ExclusiveGroupOccupied` before the engine runs. A same-group occupying row
-  the plan did not observe is reconciled to downloaded and logged.
+  the plan did not observe is reconciled to downloaded only when it is `ready`
+  and `directWorkloadProvenDown` proves its workload down (for example a
+  crash-left keep-alive, or a ModelRun whose recorded pid is gone). Otherwise,
+  including any `loading`/`warming` row, it is kept, logged as
+  `[residency] lifecycle kept <model> <state> in group <group>: not proven down`,
+  and the replacement start is refused with `ExclusiveGroupOccupied` before the
+  engine runs, matching the direct-start rule.
   `llamactl residency status`, the `residencyStatus` procedure and the MCP
   tool now report the serving process's `residency_states` rows and any
   exclusive-group violation (`findExclusiveGroupViolations`, previously
@@ -158,7 +170,9 @@ persists per-model states in its `residency_states` table:
   scope and are walked only by the switch. Still pending: reconciliation outside
   a switch.
 - Group declarations are not persisted. They come from the caller
-  (default `RESIDENCY_GROUPS`).
+  (default `RESIDENCY_GROUPS`). `catalog add` refuses a `--meta`
+  `residencyGroup` that `RESIDENCY_GROUPS` does not declare, because an
+  undeclared group would be ignored by every exclusive-group gate.
 
 Since #276 opened, ModelHost starts are enforced (items 2 and 3 below),
 boot recovery of interrupted profile-switch operations and lifecycle rows
@@ -397,10 +411,17 @@ non-experimental candidate exists; otherwise it is rejected with
 `experimental-excluded`.
 
 `admissionConflict` (`packages/core/src/routing/catalog.ts`) judges a
-stable advertisement only against stable peers; an experimental
-advertisement is judged against all candidates, so it can neither shadow
-nor intrude on a stable alias or replica group. The embersynth bench
-scorer never picks an experimental rel as a fusion node's `modelId`: it
+healthy advertisement (neither experimental nor degraded) only against
+healthy candidates and local routes, so a healthy advertisement is
+admitted for an id held only by degraded or experimental peer or
+advertised candidates. Local routes stay authoritative, even a degraded
+one, as in `listClusterRoutes` (#896); a degraded advertisement is judged
+against every non-experimental candidate and an experimental advertisement
+against all candidates, so neither ever shadows or joins a healthy or
+degraded holder. `insertCandidate` places an admitted advertisement in the
+same healthy, degraded, experimental order as `compareDeployments`. The
+embersynth bench scorer never picks an experimental rel as a fusion node's
+`modelId`: it
 reads stages through `embersynthQualificationStages`
 (`packages/remote/src/config/embersynth.ts`), which is
 `catalogQualificationStages` with pin overrides applied. `llamactl
@@ -442,6 +463,15 @@ entry's `qualification.stage` is the routing stage from
 `declared` entry whose id's routing stage is experimental carries
 `experimental: true`, the same flag a `data` entry carries. Neither array
 is routable, so the flags only report; they change no routing decision.
+
+The degraded stage is reported the same way (#518): a `data` entry whose
+winning route is degraded carries `degraded: true`, and a `declared` entry
+whose id's routing stage is degraded carries `degraded: true`; an
+experimental route or stage never also carries `degraded`, because
+experimental wins (`isDegradedRoute`, `packages/core/src/routing/capabilities.ts`).
+Because the legacy order ranks a healthy route ahead of a degraded one, a
+`data` entry carries the flag only when no healthy route serves the id.
+The flag only reports; it changes no routing decision.
 
 Peer-advertised qualification stages (#518): the `include=local-routes` fleet
 snapshot (`buildLocalRoutesSnapshot`, `packages/remote/src/routes/fleet.ts`)
@@ -1534,19 +1564,33 @@ A matrix cell is unscored when its `n_rows` is 0 or less.
 The matrix runner writes such a cell in two cases. When a model or judge
 boot fails or is refused, including a pre-launch gate refusal,
 `recordBootError` stores `n_rows` 0, `primary_metric_value` 0, `errors`
-1 and `per_class_metrics_json` `{}`. When a corpus fails to load,
-`runWorkloadCell` stores `n_rows` 0, `primary_metric_value` -1 and
-`per_class_metrics_json` `{"error":"corpus_load_failed"}` (verify
+1 and `per_class_metrics_json` `{"error":"<reason>"}`. The reason is
+`model boot failed: <first line of the boot error>` for a model and
+`judge <judge> boot failed: <first line of the boot error>` for a judge
+(verify `bootErrorReason` at `packages/eval/src/matrix/runner.ts`).
+When a corpus fails to load, `runWorkloadCell` stores `n_rows` 0,
+`primary_metric_value` -1 and `per_class_metrics_json`
+`{"error":"corpus_load_failed"}` (verify
 `packages/eval/src/matrix/runner.ts`).
 
-The boot error or refusal text goes only to the `[matrix] failed to boot
-...` warning; it is not stored on the cell.
+The reason is truncated on purpose: only the first line of the boot error
+is stored, so a llama-server stderr tail never lands on the cell. The
+full text still goes to the `[matrix] failed to boot ...` warning. So a
+boot error cell reads `no rows scored (model boot failed: <first line of
+the boot error>)`, and a corpus failure reads
+`no rows scored (corpus_load_failed)` (verify
+`packages/eval/src/matrix/report.ts`).
 
 `cellUnavailableReason` returns `no rows scored`, or `no rows scored
 (<error>)` when `per_class_metrics_json` carries a non-empty string
-`error`, so a boot error cell reads `no rows scored` and a corpus failure
-reads `no rows scored (corpus_load_failed)` (verify
-`packages/eval/src/matrix/report.ts`).
+`error`, so a boot error cell reads `no rows scored (model boot failed:
+<first line of the boot error>)` and a corpus failure reads `no rows
+scored (corpus_load_failed)`.
+
+An unreachable gufo arm reads `no rows scored (model boot failed: model
+<name>: engine gufo is not managed by eval and is not reachable at
+<host>:<port>; run the server externally)`; that engine text is copied
+byte-for-byte from `packages/eval/src/matrix/lifecycle.ts`.
 
 The matrix CLI writes the report for the run it just ran with `--report
 md|csv|both` and `--report-out <path>`, or for every run with
