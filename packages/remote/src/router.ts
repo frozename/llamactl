@@ -2723,6 +2723,7 @@ export const router = t.router({
       return buildResidencyStatus({
         node: input.node,
         nodeRun: node,
+        nodeRuns: nodeRuns,
         budgetGiB: defaultNodeBudgetGiB(declared, undefined, node?.spec.residency),
         budgetSource: typeof declared === "number" ? "noderun" : "computed",
         store: readResidencyStoreSnapshot(defaultResidencyStorePath()),
@@ -3807,8 +3808,8 @@ export const router = t.router({
       });
     }),
 
-  // #520: `llamactl keep-alive stop` on remote dispatch now runs through the
-  // same node stop fence as serverStop. A held lease refuses first
+  // #520: `llamactl keep-alive stop` on remote and local dispatch now runs
+  // through the same node stop fence as serverStop. A held lease refuses first
   // (LeasesActive/DrainInProgress), then a bound session refuses
   // (SessionsActive/SessionsUnknown), and the refusal applies whether or not
   // a supervisor is tracked, so stale tracking files are not cleaned while a

@@ -315,6 +315,12 @@ function applyStopNameFlag(
   return null;
 }
 
+// The keepAliveStop procedure caps graceSeconds at MAX_GRACE_SECONDS; reject
+// anything outside 1..MAX here so the user gets a clear error before any
+// dispatch instead of a raw schema dump and a supervisor left running.
+const MAX_GRACE_SECONDS = 60;
+const GRACE_RANGE_ERROR = `keep-alive stop: --grace must be between 1 and ${String(MAX_GRACE_SECONDS)}`;
+
 function applyStopArg(args: string[], i: number, flags: StopFlags): StopArgStep {
   const arg = required(args[i]);
   if (arg === "--json") {
@@ -323,7 +329,13 @@ function applyStopArg(args: string[], i: number, flags: StopFlags): StopArgStep 
   }
   if (arg.startsWith("--grace=")) {
     const n = Number.parseInt(arg.slice("--grace=".length), 10);
-    if (Number.isFinite(n) && n > 0) flags.graceSeconds = n;
+    if (Number.isFinite(n) && n > 0) {
+      if (n > MAX_GRACE_SECONDS) {
+        process.stderr.write(`${GRACE_RANGE_ERROR}\n`);
+        return { exit: 1 };
+      }
+      flags.graceSeconds = n;
+    }
     return { next: i + 1 };
   }
   const nameStep = applyStopNameFlag(arg, args, i, flags);
@@ -339,13 +351,22 @@ function applyStopArg(args: string[], i: number, flags: StopFlags): StopArgStep 
   return { next: i + 1 };
 }
 
+// Mirrors dispatchFailureLabel in the server command: local dispatch carries no
+// --node flag, so name the in-process node 'local' and drop 'remote' from its
+// failures, which never left this process.
+function dispatchFailureLabel(): string {
+  const nodeName = getGlobals().nodeName;
+  if (isLocalDispatch()) return `call to '${nodeName ?? "local"}'`;
+  return `remote call to '${nodeName ?? ""}'`;
+}
+
 async function executeStop(
   workload: string,
   graceSeconds: number,
 ): Promise<Awaited<ReturnType<typeof keepAlive.stopKeepAlive>> | null> {
-  if (isLocalDispatch()) {
-    return await keepAlive.stopKeepAlive({ key: { name: workload }, graceSeconds });
-  }
+  // #520: dispatch goes through the keepAliveStop procedure on remote and
+  // local runs alike; for a local node that is the in-process router caller, so
+  // the node stop fence sees the stop exactly like `llamactl server stop`.
   try {
     return await getNodeClient().keepAliveStop.mutate({
       workload,
@@ -353,7 +374,7 @@ async function executeStop(
     });
   } catch (err) {
     process.stderr.write(
-      `keep-alive stop: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
+      `keep-alive stop: ${dispatchFailureLabel()} failed: ${(err as Error).message}\n`,
     );
     return null;
   }

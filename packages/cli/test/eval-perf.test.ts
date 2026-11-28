@@ -279,7 +279,7 @@ test("linux loopback engine wires a GTT reader from probeGtt (kills: gtt reader 
   }
 });
 
-test("darwin --pid wires proc_pid_rusage io and keeps peakRss/GTT platform reasons (kills: hostReaders not forwarding seams.procPidRusage)", async () => {
+test("darwin --pid wires proc_pid_rusage io/peakRss and keeps the GTT platform reason (kills: hostReaders not forwarding seams.procPidRusage)", async () => {
   // Kills: dropping the procPidRusage seam before createPerfHostReaders, or
   //        reusing bench-schedule gateway reasons for the remaining readers.
   const proc = fakeProcFs();
@@ -324,7 +324,7 @@ test("darwin --pid wires proc_pid_rusage io and keeps peakRss/GTT platform reaso
   const io = readerFn(opts, "io");
   expect(await io!()).toEqual({ readBytes: 12288, writeBytes: 8192 });
   expect(rusageCalls).toEqual([4242]);
-  expect(readers["peakRss"]).toBeUndefined();
+  expect(typeof readers["peakRss"]).toBe("function");
   expect(readers["gtt"]).toBeUndefined();
   const reasons = readerReasonsOf(opts);
   expect(reasons["io"]).toBeUndefined();
@@ -332,7 +332,7 @@ test("darwin --pid wires proc_pid_rusage io and keeps peakRss/GTT platform reaso
     "GTT counters (/sys/class/drm/card*/device/mem_info_gtt_used) are Linux-only; " +
       "no GTT reader on darwin",
   );
-  for (const key of ["peakRss", "gtt"] as const) {
+  for (const key of ["gtt"] as const) {
     expect(reasonText(reasons, key).toLowerCase()).not.toContain("agent gateway");
   }
 });
