@@ -15,6 +15,7 @@ import {
   loadInitiallyOwnedOmlx,
   prepareOmlxNativeAuth,
 } from "../../src/server/omlx-cache-launch.js";
+import { createNativeOmlxOwner } from "../../src/server/omlx-native-owner.js";
 
 test("native oMLX launch rotates the signing secret and never persists the inference key", () => {
   const base = mkdtempSync(join(tmpdir(), "llamactl-omlx-native-auth-"));
@@ -199,4 +200,63 @@ test("initial native load requires the exact reservation and fresh capacity at d
   expect(await bootstrap()).toBe(true);
   expect(actions).toEqual(["/v1/models/fixture/load", "/health"]);
   expect(resident).toBe(true);
+});
+
+test("owner inventory discards a status reply after the serving registration changes", async () => {
+  const modelId = "fixture";
+  const modelPath = "/tmp/qualification/fixture";
+  const entered = Promise.withResolvers<undefined>();
+  const release = Promise.withResolvers<undefined>();
+  using server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    async fetch(): Promise<Response> {
+      entered.resolve(undefined);
+      await release.promise;
+      return Response.json({
+        models: [
+          {
+            id: modelId,
+            model_path: modelPath,
+            engine_type: "batched",
+            loaded: false,
+            is_loading: false,
+          },
+        ],
+      });
+    },
+  });
+  const endpoint = { host: server.url.hostname, port: Number(server.url.port) };
+  const owner = createNativeOmlxOwner([modelId], new Set([endpoint.port]), () => true);
+  let current = true;
+  owner.register({
+    apiKey: "fixture-owner",
+    binding: {
+      endpoint,
+      modelId,
+      modelPath,
+      artifactRevision: "fixture-artifact",
+      runtimeGeneration: "fixture-birth",
+      stillCurrent: () => true,
+    },
+    connect: connectOmlxOwnerSocket(endpoint, process.pid, () => true),
+    current: () => current,
+    runtime: {
+      workload: modelId,
+      pid: process.pid,
+      birthId: "fixture-birth",
+      specDigest: "fixture",
+    },
+    readiness: { path: "/health" },
+    specHash: "fixture",
+    verifyLaunchInputs: () => true,
+  });
+  const pending = owner.readOwnedStatus(modelId, endpoint, AbortSignal.timeout(2000));
+  try {
+    await entered.promise;
+    current = false;
+  } finally {
+    release.resolve(undefined);
+  }
+  expect(await pending).toBeNull();
 });
