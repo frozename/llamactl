@@ -7,9 +7,11 @@
 // change acceptable for a benchmark arm); every rewrite is logged as
 // libosmos_greedy_rewrite. The endpoint host must be exactly 127.0.0.1:
 // osmos-api binds IPv4 via inet_pton, and llamactl's state validator and
-// bind gate accept no other IPv4 loopback.
+// bind gate accept no other IPv4 loopback. Asset flags (--picks, --dspark)
+// must name existing paths inside the models dir (or absolute paths), and a
+// flag token is never taken as a flag value.
 
-import { basename, isAbsolute, join, resolve, sep } from "node:path";
+import { basename, isAbsolute, join, normalize, resolve, sep } from "node:path";
 
 import type {
   EngineAdapter,
@@ -123,10 +125,17 @@ function applyOsFlag(
     parsed.noGuess = true;
     return { ok: true, consumed: false };
   }
-  const value = hasInline ? inline : next;
-  if (value === undefined) return { ok: false, message: `malformed flag: ${token}` };
-  assignOsValue(parsed, name, value);
-  return { ok: true, consumed: !hasInline };
+  if (hasInline) {
+    assignOsValue(parsed, name, inline);
+    return { ok: true, consumed: false };
+  }
+  // A following flag is never a value: "--picks --no-guess" must be refused,
+  // not silently paired, or the next setting is swallowed as a path.
+  if (next === undefined || next.startsWith(OS_FLAG_PREFIX)) {
+    return { ok: false, message: `malformed flag: ${token}` };
+  }
+  assignOsValue(parsed, name, next);
+  return { ok: true, consumed: true };
 }
 
 function parseArg(
@@ -186,6 +195,17 @@ function budgetError(value: string | undefined): string | null {
     : '--budget value must be a positive number or "auto"';
 }
 
+function assetFlagError(flag: string, value: string | undefined): string | null {
+  if (value === undefined) return null;
+  if (value.trim() === "") return `${flag} must not be empty`;
+  if (isAbsolute(value)) return null;
+  const lexical = normalize(value);
+  if (lexical === "." || lexical === ".." || lexical.startsWith(`..${sep}`)) {
+    return `${flag} path escapes models dir: ${value}`;
+  }
+  return null;
+}
+
 function validateOsValues(args: ParsedOsArgs): string | null {
   if (args.maxContext === undefined) return "--max-context is required";
   const ints: [string, string | undefined][] = [
@@ -199,6 +219,14 @@ function validateOsValues(args: ParsedOsArgs): string | null {
       if (error !== null) return error;
     }
   }
+  const assets: [string, string | undefined][] = [
+    ["--picks", args.picks],
+    ["--dspark", args.dspark],
+  ];
+  for (const [flag, value] of assets) {
+    const error = assetFlagError(flag, value);
+    if (error !== null) return error;
+  }
   return budgetError(args.budget);
 }
 
@@ -210,11 +238,17 @@ function parseAndValidate(extraArgs: readonly string[]): ParseOutcome {
 }
 
 function resolveAssetPath(modelsDir: string, value: string, flag: string): string {
-  if (isAbsolute(value)) return value;
   const root = resolve(modelsDir);
-  const resolved = resolve(root, value);
-  if (!resolved.startsWith(`${root}${sep}`)) {
+  const absolute = isAbsolute(value);
+  const resolved = absolute ? normalize(value) : resolve(root, value);
+  if (!absolute && !resolved.startsWith(`${root}${sep}`)) {
     throw new Error(`${flag} path escapes models dir: ${value}`);
+  }
+  // A picks map or a DSpark drafter directory that is not there yet would
+  // otherwise boot osmos-api into a startup failure; a directory is legal
+  // because the shipped drafter assets are directories.
+  if (!existsSync(resolved)) {
+    throw new Error(`libosmos requires an existing ${flag} path: ${value}`);
   }
   return resolved;
 }
