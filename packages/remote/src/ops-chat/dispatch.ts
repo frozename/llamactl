@@ -151,6 +151,7 @@ export const OPS_CHAT_TOOLS = [
     tier: "mutation-dry-run-safe",
     surfaces: OPS_CHAT_AND_MCP_SURFACES,
   },
+  { name: "llamactl.residency.evictIdle", tier: "read", surfaces: OPS_CHAT_AND_MCP_SURFACES },
   { name: "llamactl.residency.plan", tier: "read", surfaces: OPS_CHAT_AND_MCP_SURFACES },
   { name: "llamactl.residency.status", tier: "read", surfaces: OPS_CHAT_AND_MCP_SURFACES },
   { name: "llamactl.server.status", tier: "read", surfaces: OPS_CHAT_AND_MCP_SURFACES },
@@ -319,6 +320,10 @@ async function executeReadTool(
       return await caller.nodeBudget({ node: requireString(args, "node") });
     case "llamactl.residency.status":
       return await caller.residencyStatus({ node: requireString(args, "node") });
+    // Read-only projection of the residencyEvictIdle dry run (#284 / #519):
+    // forwards only node, never the wet-run target list.
+    case "llamactl.residency.evictIdle":
+      return await caller.residencyEvictIdle({ node: requireString(args, "node") });
     case "llamactl.residency.plan":
       return await caller.residencyPlan({
         node: requireString(args, "node"),

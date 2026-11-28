@@ -27,7 +27,6 @@ describe("#519 MCP residency.evictIdle dry-run preview", () => {
       "never stamps the idle hold or stops a workload",
       "`llamactl residency evict-idle --node <name> --yes`",
       "writes no audit line",
-      "not in the Ops Chat dispatch",
     ]);
   });
 
