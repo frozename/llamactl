@@ -134,9 +134,9 @@ describe("#521 darwin SSD I/O via proc_pid_rusage", () => {
     expect(paths).toEqual([]);
   });
 
-  test("R2 darwin clears the io reason and keeps only the exact peakRss reason", () => {
-    // Kills: keeping the stale 'which this build does not read' io reason,
-    //        or inventing a macOS VmHWM reader.
+  test("R2 darwin clears both reader reasons and builds a peakRss reader", () => {
+    // Kills: keeping the stale io or peakRss platform reasons, or leaving
+    //        peak RSS without a macOS rusage reader.
     const fake = createRusageFake(1n, 1n);
     const { readers, reasons } = hostReaders()({
       pid: 4242,
@@ -146,10 +146,8 @@ describe("#521 darwin SSD I/O via proc_pid_rusage", () => {
     });
 
     expect(reasons.io).toBeUndefined();
-    expect(reasons.peakRss).toBe(
-      "VmHWM (/proc/<pid>/status) is Linux-only; no peak-RSS reader on darwin",
-    );
-    expect(readers.peakRss).toBeUndefined();
+    expect(reasons.peakRss).toBeUndefined();
+    expect(typeof readers.peakRss).toBe("function");
   });
 
   test("R3 a non-zero proc_pid_rusage return resolves null", async () => {
@@ -242,10 +240,16 @@ describe("#521 darwin SSD I/O via proc_pid_rusage", () => {
     const clock = createManualClock();
     const engine = startEngine(engineOpts(clock));
     const client = evalIndex.createHttpPerfEngineClient(engine.url, { clock });
-    let rusageCalls = 0;
-    const procPidRusage: ProcPidRusage = (_pid, _flavor, buffer) => {
-      const first = rusageCalls === 0;
-      rusageCalls += 1;
+    let ioCalls = 0;
+    const procPidRusage: ProcPidRusage = (_pid, flavor, buffer) => {
+      if (flavor === 4) {
+        const view = new DataView(buffer.buffer, buffer.byteOffset);
+        view.setBigUint64(240, 3221225472n, true);
+        return 0;
+      }
+      if (flavor !== 2) return -1;
+      const first = ioCalls === 0;
+      ioCalls += 1;
       writeRusage(buffer, first ? 1000n : 5000n, first ? 10n : 30n);
       return 0;
     };
@@ -270,12 +274,7 @@ describe("#521 darwin SSD I/O via proc_pid_rusage", () => {
       const rows = evalIndex.listPerfRuns(db, { run_id: "run-darwin-rusage" });
       expect(metricOf(rows, "ssd_read_bytes")).toEqual({ status: "ok", value: 4000 });
       expect(metricOf(rows, "ssd_write_bytes")).toEqual({ status: "ok", value: 20 });
-      const peakRss = metricOf(rows, "peak_rss_bytes");
-      expect(peakRss.status).toBe("unavailable");
-      if (peakRss.status === "unavailable") {
-        expect(peakRss.value).toBeNull();
-        expect(peakRss.reason).toMatch(/darwin/);
-      }
+      expect(metricOf(rows, "peak_rss_bytes")).toEqual({ status: "ok", value: 3221225472 });
     } finally {
       db.close();
     }

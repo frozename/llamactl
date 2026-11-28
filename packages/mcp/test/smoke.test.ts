@@ -210,6 +210,8 @@ const MCP_ONLY_EXCLUDED = new Set([
   "llamactl.models.leaderboard",
   // operator cancel of an in-flight profile switch (#284 DF-11, this PR); Ops Chat projection is a later slice
   "llamactl.residency.cancelOperation",
+  // operator idle-eviction dry-run preview (#519); Ops Chat projection is a later slice
+  "llamactl.residency.evictIdle",
   // operator-only destructive override (#278 DF-05); deliberately not in Ops Chat dispatch
   "llamactl.residency.forceUnload",
   // operator per-session release (#520 / #284 DF-11); deliberately not in Ops Chat dispatch
@@ -305,6 +307,7 @@ describe("@llamactl/mcp read surface", () => {
       "llamactl.residency.calibration-key",
       "llamactl.residency.cancelOperation",
       "llamactl.residency.control",
+      "llamactl.residency.evictIdle",
       "llamactl.residency.forceUnload",
       "llamactl.residency.plan",
       "llamactl.residency.releaseSession",
@@ -1243,13 +1246,14 @@ describe("@llamactl/mcp M.1 pipeline-tool pickup", () => {
     // llamactl.residency.applyProfile mutation + 1 from the #284 (DF-11)
     // llamactl.residency.cancelOperation mutation;
     // + 1 from the #284 (DF-11) llamactl.residency.releaseSession operator tool;
+    // + 1 from the #519 llamactl.residency.evictIdle preview tool
     // the retained underscore aliases use the `llamactl_` prefix and are not counted here).
     const { client } = await connected();
     const list = await client.listTools();
     const llamactlTools = list.tools
       .map((t) => t.name)
       .filter((n) => n.startsWith("llamactl.") && !n.startsWith("llamactl.pipeline."));
-    expect(llamactlTools.length).toBe(63);
+    expect(llamactlTools.length).toBe(64);
   });
 });
 

@@ -26,7 +26,7 @@ describe("#521 perf host reader failure reasons", () => {
     expect(gttReasonBody).toContain(", source: ");
     expect(gttReasonBody).toContain("usedBytes: ");
     expect(runIoPhaseBody).toContain("I/O reader failed: ");
-    expect(runMemoryPhaseBody).toContain("peak-RSS (VmHWM) reader failed: ");
+    expect(runMemoryPhaseBody).toContain("peak-RSS reader failed: ");
     expect(readerErrorBody).toContain("instanceof Error");
   });
 
@@ -50,8 +50,8 @@ describe("#521 perf host reader failure reasons", () => {
     for (const needle of [
       "`I/O reader failed: <message>`",
       "`I/O reader returned no sample`",
-      "`peak-RSS (VmHWM) reader failed: <message>`",
-      "`peak-RSS (VmHWM) reader returned no sample`",
+      "`peak-RSS reader failed: <message>`",
+      "`peak-RSS reader returned no sample`",
       "`GTT reader failed: <message>`",
       "`GTT reader returned no sample`",
       "`GTT reader returned no sample (status: <status>)`",

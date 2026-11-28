@@ -24,6 +24,7 @@ export function registerResidencyTools(server: McpServer): void {
   registerCalibrationKey(server);
   registerResidencyStatus(server);
   registerResidencyPlan(server);
+  registerResidencyEvictIdle(server);
   registerResidencyApplyProfile(server);
   registerResidencyCancelOperation(server);
   registerResidencyForceUnload(server);
@@ -103,7 +104,7 @@ function registerResidencyStatus(server: McpServer): void {
     {
       title: "Node residency status",
       description:
-        "Read-only. Mirrors the remote residencyStatus procedure. nodeRun/policy/budget come from the NodeRun matched by metadata.name, while the store section is always the serving process's own node-local residency store (scope \"serving-process\"), not `node`'s coordinator state. The leases section is this serving process's lease/drain registry snapshot: per-workload phase, epoch, active lease count, waiters and recent forced-unload audit. It reports status \"unavailable\" when no lease registry is installed. The omlxNative section reports, for each oMLX ModelHost on `node`, whether the native residency contract is used (native), the whole-process path is declared (process-fallback), or the state is unknown with a reason; it is probed and cached only on the serving process. The idleEviction section is an advisory read-out of the NodeRun idle-evict window against this serving process's ready lifecycle rows and lease activity, reported only when `node` is the serving node; nothing is evicted. The switchGates section is an advisory read-out of the NodeRun switchCooldownSeconds (from the last succeeded profile switch in this serving process's store) and minResidencySeconds (per ready lifecycle row), reported only when `node` is the serving node; a `held` resident would block a switch only if the target profile evicts it, and nothing is refused or switched. The ranking section is an advisory read-out of the ranking signals the unified proxy applies on the serving node (resident set, drain charge, cooldown/min-residency charge, in-flight load credit loadCredited, drain and degraded tiers); it is disabled when every ranking knob is 0 and never ranks anything. The effectivePolicy section lists every residency knob as resolved for `node`, in policy key order, with its value and whether it came from the defaults (defaulted), whether or not a NodeRun exists; it never changes anything. The sessions section is this serving process's session registry snapshot: idle timeout plus per-session workload, refs, idleMs and expiresInMs; it reports status \"unavailable\" when no session registry is installed, the registry cannot be read, or it has no snapshot.",
+        "Read-only. Mirrors the remote residencyStatus procedure. nodeRun/policy/budget come from the NodeRun matched by metadata.name, while the store section is always the serving process's own node-local residency store (scope \"serving-process\"), not `node`'s coordinator state. The leases section is this serving process's lease/drain registry snapshot: per-workload phase, epoch, active lease count, waiters and recent forced-unload audit. It reports status \"unavailable\" when no lease registry is installed. The omlxNative section reports, for each oMLX ModelHost on `node`, whether the native residency contract is used (native), the whole-process path is declared (process-fallback), or the state is unknown with a reason; it is probed and cached only on the serving process. The idleEviction section is an advisory read-out of the NodeRun idle-evict window against this serving process's ready lifecycle rows and lease activity, reported only when `node` is the serving node; nothing is evicted. The switchGates section is an advisory read-out of the NodeRun switchCooldownSeconds (from the last succeeded profile switch in this serving process's store) and minResidencySeconds (per ready lifecycle row), reported only when `node` is the serving node; a `held` resident would block a switch only if the target profile evicts it, and nothing is refused or switched. The ranking section is an advisory read-out of the ranking signals the unified proxy applies on the serving node (resident set, drain charge, cooldown/min-residency charge, in-flight load credit loadCredited, drain and degraded tiers); it is disabled when every ranking knob is 0 and never ranks anything. The effectivePolicy section lists every residency knob as resolved for `node`, in policy key order, with its value and whether it came from the defaults (defaulted), whether or not a NodeRun exists; it never changes anything. The sessions section is this serving process's session registry snapshot: idle timeout plus per-session workload, refs, idleMs and expiresInMs; it reports status \"unavailable\" when no session registry is installed, the registry cannot be read, or it has no snapshot. The optional `knobScopeWarnings` field lists, sorted by NodeRun metadata.name, the nodeRunKnobScopeMismatch text for each NodeRun whose metadata.name equals `node` or whose spec.node equals `node` and whose spec.budget/spec.residency are keyed by a metadata.name that differs from spec.node; the field is omitted when there are none; nothing is refused.",
       inputSchema: {
         node: z.string().min(1).describe("Name of the NodeRun to inspect."),
       },
@@ -183,6 +184,31 @@ async function managedProfile(
           },
     };
   }
+}
+
+// #519: the read-only projection of residencyEvictIdle's dry run. The input is
+// deliberately `{ node }` only and the call passes just `{ node }`, so a stray
+// `targets` argument can never turn this preview into the wet eviction.
+function registerResidencyEvictIdle(server: McpServer): void {
+  server.registerTool(
+    "llamactl.residency.evictIdle",
+    {
+      title: "Idle eviction preview (dry run)",
+      description:
+        "Read-only. Mirrors the dry run of the remote residencyEvictIdle mutation: it takes `node` only and never sends targets, so it never stamps the idle hold or stops a workload; the wet run stays `llamactl residency evict-idle --node <name> --yes`, which stamps the durable llamactl.io/idle-evicted-at hold first. Returns the idle-evict window and one row per ready resident (would-evict with kind, or skipped NotDue / MinResidency / SessionsActive / SessionsUnknown), or ok:false with Disabled, NotServingNode, LeasesUnavailable, StoreUnreadable or LifecycleUnreadable. It is process-local: it reads the lease registry, session registry and node-local residency store of the MCP server's own process.",
+      inputSchema: {
+        node: z
+          .string()
+          .min(1)
+          .describe("Name of the NodeRun / serving node to preview idle eviction for."),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async (input) => {
+      const caller = router.createCaller({});
+      return toTextContent(await caller.residencyEvictIdle({ node: input.node }));
+    },
+  );
 }
 
 function registerResidencyApplyProfile(server: McpServer): void {

@@ -112,9 +112,9 @@ describe("createPerfHostReaders", () => {
     expect(paths).toEqual(["/proc/4242/status"]);
   });
 
-  test("darwin reads SSD I/O through proc_pid_rusage but keeps peakRss platform-only", async () => {
-    // Kills: returning Linux /proc readers on darwin, omitting the io reader,
-    //        or inventing a macOS VmHWM reader.
+  test("darwin reads SSD I/O and peak RSS through proc_pid_rusage", async () => {
+    // Kills: returning Linux /proc readers on darwin, omitting either rusage
+    //        reader, or keeping the stale peakRss platform-only reason.
     const paths: string[] = [];
     const rusageCalls: number[] = [];
     const { readers, reasons } = hostReaders()({
@@ -135,10 +135,9 @@ describe("createPerfHostReaders", () => {
     expect(readers.io).toBeDefined();
     expect(await readers.io!()).toEqual({ readBytes: 1, writeBytes: 1 });
     expect(rusageCalls).toEqual([4242]);
-    expect(readers.peakRss).toBeUndefined();
+    expect(typeof readers.peakRss).toBe("function");
     expect(reasons.io).toBeUndefined();
-    expect(reasons.peakRss).toMatch(/VmHWM/);
-    expect(reasons.peakRss).toMatch(/darwin/);
+    expect(reasons.peakRss).toBeUndefined();
     expect(paths).toEqual([]);
   });
 
@@ -175,8 +174,8 @@ describe("createPerfHostReaders", () => {
 
   test("end-to-end with runPerfSuite records real linux and darwin SSD deltas", async () => {
     // Kills: host readers that read the CLI's own counters instead of the
-    //        engine pid's, record 0 for missing readers, or drop the
-    //        remaining peakRss reader reason on darwin.
+    //        engine pid's, record 0 for missing readers, or leave the darwin
+    //        peakRss reader out of the suite.
     const clock = createManualClock();
     const fake = startEngine(engineOpts(clock));
     const client = evalIndex.createHttpPerfEngineClient(fake.url, { clock });
@@ -226,15 +225,20 @@ describe("createPerfHostReaders", () => {
     const darwinClient = evalIndex.createHttpPerfEngineClient(darwinFake.url, {
       clock: darwinClock,
     });
-    let darwinRusageCalls = 0;
+    let darwinIoCalls = 0;
     const darwinHost = hostReaders()({
       pid: 4242,
       platform: "darwin",
       readFile: () => Promise.reject(new Error("darwin host readers must not read /proc")),
-      procPidRusage: (_pid, _flavor, buffer) => {
-        const first = darwinRusageCalls === 0;
-        darwinRusageCalls += 1;
+      procPidRusage: (_pid, flavor, buffer) => {
         const view = new DataView(buffer.buffer, buffer.byteOffset);
+        if (flavor === 4) {
+          view.setBigUint64(240, 3221225472n, true);
+          return 0;
+        }
+        if (flavor !== 2) return -1;
+        const first = darwinIoCalls === 0;
+        darwinIoCalls += 1;
         view.setBigUint64(144, first ? 1000n : 5000n, true);
         view.setBigUint64(152, first ? 10n : 30n, true);
         return 0;
@@ -255,12 +259,7 @@ describe("createPerfHostReaders", () => {
       const rows = evalIndex.listPerfRuns(darwinDb, { run_id: RUN_ID });
       expect(metricOf(rows, "ssd_read_bytes")).toEqual({ status: "ok", value: 4000 });
       expect(metricOf(rows, "ssd_write_bytes")).toEqual({ status: "ok", value: 20 });
-      const peakRss = metricOf(rows, "peak_rss_bytes");
-      expect(peakRss.status).toBe("unavailable");
-      if (peakRss.status === "unavailable") {
-        expect(peakRss.value).toBeNull();
-        expect(peakRss.reason).toMatch(/darwin/);
-      }
+      expect(metricOf(rows, "peak_rss_bytes")).toEqual({ status: "ok", value: 3221225472 });
       expect(rows.filter((row) => row.metric.status === "ok" && row.metric.value === 0)).toEqual(
         [],
       );
@@ -339,10 +338,10 @@ describe("#521 createPerfHostReaders live pid getter", () => {
     expect((ioErr as Error).message).toBe("engine PID not known when the reader ran");
   });
 
-  test("darwin keeps only the peakRss platform reason for a live pid getter", () => {
+  test("darwin builds both rusage readers for a live pid getter", () => {
     // Kills: running the PID-unknown branch for a getter, or treating a live
-    //        darwin pid as though proc_pid_rusage were unavailable.
-    const { reasons } = hostReaders()(
+    //        darwin pid as though only the io proc_pid_rusage reader existed.
+    const { readers, reasons } = hostReaders()(
       livePidOpts({
         pid: () => 5,
         platform: "darwin",
@@ -356,9 +355,8 @@ describe("#521 createPerfHostReaders live pid getter", () => {
       }),
     );
 
-    expect(reasons.peakRss).toBe(
-      "VmHWM (/proc/<pid>/status) is Linux-only; no peak-RSS reader on darwin",
-    );
+    expect(reasons.peakRss).toBeUndefined();
+    expect(typeof readers.peakRss).toBe("function");
     expect(reasons.io).toBeUndefined();
   });
 

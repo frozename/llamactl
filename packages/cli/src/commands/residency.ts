@@ -165,6 +165,11 @@ export function renderResidencyStatus(s: ResidencyRenderInput, nowMs: number = D
   lines.push(`NodeRun:    ${s.nodeRun.present ? "present" : "absent"}`);
   lines.push(`Policy:     ${s.policy.present ? JSON.stringify(s.policy.residency) : "none"}`);
   pushEffectivePolicyLine(lines, s.effectivePolicy);
+  if (s.knobScopeWarnings !== undefined && s.knobScopeWarnings.length > 0) {
+    for (const w of s.knobScopeWarnings) {
+      lines.push(`Warning:    ${w}`);
+    }
+  }
   lines.push(`Budget:     ${s.budget.memoryGiB.toFixed(1)} GiB (source: ${s.budget.source})`);
   if (!s.store.present) {
     lines.push(`Store:      not present at ${s.store.path} (scope: serving-process)`);

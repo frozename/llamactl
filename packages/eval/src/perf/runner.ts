@@ -496,18 +496,15 @@ async function runMemoryPhase(run: PerfSuiteRun): Promise<void> {
       return;
     }
     if (sample.kind === "failed") {
-      run.record(
-        "peak_rss_bytes",
-        unavailableMetric(`peak-RSS (VmHWM) reader failed: ${sample.message}`),
-      );
+      run.record("peak_rss_bytes", unavailableMetric(`peak-RSS reader failed: ${sample.message}`));
       return;
     }
     run.record(
       "peak_rss_bytes",
       unavailableMetric(
         sample.kind === "absent"
-          ? (run.opts.readerReasons?.peakRss ?? "no peak-RSS (VmHWM) reader")
-          : "peak-RSS (VmHWM) reader returned no sample",
+          ? (run.opts.readerReasons?.peakRss ?? "no peak-RSS reader")
+          : "peak-RSS reader returned no sample",
       ),
     );
   });

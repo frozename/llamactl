@@ -754,8 +754,10 @@ let routeMapCache: { sig: string; map: RouteMap } | null = null;
 let routeMapBuildCount = 0;
 // #280 DF-07: serving-readiness verdict cache for chat routing. Keyed
 // `${workload}\0${host}\0${port}\0${pid}\0${path}` so a restart (new pid)
-// re-probes; the stored promise gives in-flight dedupe. TTL
-// SERVING_ROUTE_READINESS_TTL_MS unless the test seam overrides it.
+// re-probes; the stored promise gives in-flight dedupe. Expired verdicts are
+// swept on each miss, so entries keyed by restart (new pid or port) do not
+// accumulate (#367). TTL SERVING_ROUTE_READINESS_TTL_MS unless the test seam
+// overrides it.
 const servingVerdictCache = new Map<string, { expiresAt: number; verdict: Promise<boolean> }>();
 // #280 DF-07: ids whose last routing outcome was warming, mapped to the
 // clock instant their record expires. Read fresh by serve-registered sources
@@ -874,6 +876,9 @@ function servingReadinessVerdict(
     ...(servingReadinessSeam?.fetch !== undefined ? { fetch: servingReadinessSeam.fetch } : {}),
     timeoutMs: servingReadinessTimeoutMs(),
   }).catch(() => false);
+  for (const [key, cachedEntry] of servingVerdictCache) {
+    if (cachedEntry.expiresAt <= now) servingVerdictCache.delete(key);
+  }
   servingVerdictCache.set(probeKey, { expiresAt: now + servingReadinessTtlMs(), verdict });
   return verdict;
 }
@@ -1263,6 +1268,10 @@ export function __getOpenAIProxyResponseCacheMissTotalForTests(resolved: Resolve
 
 export function __getOpenAIProxyResponseCacheEvictTotalForTests(resolved: ResolvedEnv): number {
   return responseCacheRuntimeFor(resolved).storage.response_cache_evict_total;
+}
+
+export function __getOpenAIProxyServingVerdictCacheSizeForTests(): number {
+  return servingVerdictCache.size;
 }
 
 export function __getOpenAIProxySlotAllocatorInUseForTests(
