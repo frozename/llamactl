@@ -397,10 +397,17 @@ non-experimental candidate exists; otherwise it is rejected with
 `experimental-excluded`.
 
 `admissionConflict` (`packages/core/src/routing/catalog.ts`) judges a
-stable advertisement only against stable peers; an experimental
-advertisement is judged against all candidates, so it can neither shadow
-nor intrude on a stable alias or replica group. The embersynth bench
-scorer never picks an experimental rel as a fusion node's `modelId`: it
+healthy advertisement (neither experimental nor degraded) only against
+healthy candidates and local routes, so a healthy advertisement is
+admitted for an id held only by degraded or experimental peer or
+advertised candidates. Local routes stay authoritative, even a degraded
+one, as in `listClusterRoutes` (#896); a degraded advertisement is judged
+against every non-experimental candidate and an experimental advertisement
+against all candidates, so neither ever shadows or joins a healthy or
+degraded holder. `insertCandidate` places an admitted advertisement in the
+same healthy, degraded, experimental order as `compareDeployments`. The
+embersynth bench scorer never picks an experimental rel as a fusion node's
+`modelId`: it
 reads stages through `embersynthQualificationStages`
 (`packages/remote/src/config/embersynth.ts`), which is
 `catalogQualificationStages` with pin overrides applied. `llamactl
