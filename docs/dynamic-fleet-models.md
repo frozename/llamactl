@@ -1077,6 +1077,15 @@ The 16 `PERF_METRIC_NAMES` (`packages/eval/src/perf/metrics.ts`) are
 perf metrics, not promotion metrics, so it does not fill the table above. The
 promotion cells stay `unavailable` until promotion evidence is committed.
 
+`spec_acceptance` is accepted draft tokens divided by drafted tokens, read by
+`normaliseAcceptance` (`packages/eval/src/perf/normalise.ts`) from
+`llama.cpp` `timings.draft_n`/`draft_n_accepted`, then `usage.draft_tokens`/
+`draft_tokens_accepted`, then `usage.gufo.*`, then `usage.kapitsa.*`. Zero
+drafted tokens records `no draft tokens proposed`. An engine that reports more
+accepted than drafted tokens records `unavailable` with
+`engine reported <accepted> accepted draft tokens of <drafted> drafted; acceptance
+cannot exceed 1`, and the ratio is never clamped to 1.
+
 `--binary` gives the engine version, the engine commit and the `binary_sha256`.
 `--gguf` gives `gguf_sha256`. `hf_revision` is derived from an HF
 `snapshots/<rev>/` path unless `--hf-revision` is given. `--quant`, `--ctx`

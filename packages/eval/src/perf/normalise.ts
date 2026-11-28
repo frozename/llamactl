@@ -46,7 +46,8 @@ export function normaliseAcceptance(payload: unknown): MetricValue {
   // documented in-repo. ASSUMPTION: the Kapitsa shape
   // (usage.kapitsa.draft_tokens / draft_tokens_accepted) is assumed to
   // mirror the Gufo shape — also undocumented. Unknown shapes count as
-  // unavailable.
+  // unavailable. ASSUMPTION: an engine-reported ratio above 1 is impossible
+  // and is recorded as unavailable, never clamped to 1.
   const sources: readonly (readonly [number | null, number | null])[] = [
     [finiteNumber(timings?.["draft_n"]), finiteNumber(timings?.["draft_n_accepted"])],
     [finiteNumber(usage?.["draft_tokens"]), finiteNumber(usage?.["draft_tokens_accepted"])],
@@ -57,6 +58,10 @@ export function normaliseAcceptance(payload: unknown): MetricValue {
     if (draft === null) continue;
     if (draft === 0) return unavailableMetric("no draft tokens proposed");
     if (accepted === null || draft < 0 || accepted < 0) continue;
+    if (accepted > draft)
+      return unavailableMetric(
+        `engine reported ${String(accepted)} accepted draft tokens of ${String(draft)} drafted; acceptance cannot exceed 1`,
+      );
     return okMetric(accepted / draft);
   }
   return unavailableMetric("engine reports no draft acceptance");
