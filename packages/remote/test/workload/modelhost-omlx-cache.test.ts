@@ -69,6 +69,13 @@ import argparse
 import json
 import os
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from socketserver import TCPServer
+
+class LoopbackHTTPServer(HTTPServer):
+    def server_bind(self):
+        # HTTPServer resolves a hostname before listen(); this fixture only needs its numeric bind address.
+        TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -102,7 +109,7 @@ def main():
     if args.paged_ssd_cache_dir:
         Path(args.paged_ssd_cache_dir, "cache.bin").touch()
     mark_phase("before-bind")
-    server = HTTPServer((args.host, args.port), Handler)
+    server = LoopbackHTTPServer((args.host, args.port), Handler)
     mark_phase("listening")
     print(f"fixture pid {os.getpid()} listening on {args.host}:{args.port}", flush=True)
     server.serve_forever()
