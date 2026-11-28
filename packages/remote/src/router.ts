@@ -2818,6 +2818,7 @@ export const router = t.router({
         node: input.node,
         to: input.to,
         from: input.from ?? null,
+        isProvenDown: directWorkloadProvenDown,
         applyModelRun: async (manifest: unknown): Promise<unknown> => {
           const cfg = kubecfg.loadConfig();
           // The switch executor already owns this row through its own fenced
@@ -3809,8 +3810,8 @@ export const router = t.router({
       });
     }),
 
-  // #520: `llamactl keep-alive stop` on remote dispatch now runs through the
-  // same node stop fence as serverStop. A held lease refuses first
+  // #520: `llamactl keep-alive stop` on remote and local dispatch now runs
+  // through the same node stop fence as serverStop. A held lease refuses first
   // (LeasesActive/DrainInProgress), then a bound session refuses
   // (SessionsActive/SessionsUnknown), and the refusal applies whether or not
   // a supervisor is tracked, so stale tracking files are not cleaned while a
