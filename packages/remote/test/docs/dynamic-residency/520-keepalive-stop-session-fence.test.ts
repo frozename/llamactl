@@ -44,4 +44,14 @@ describe("#520 keep-alive stop session fence", () => {
     expect(stopBody, "runStop signature").not.toBe("");
     expect(stopBody, "runStop wiring").toContain("keepAliveStopRefusalLine(");
   });
+
+  test("D2: local keep-alive stop dispatch is fenced in-process", () => {
+    const body = flat(sectionBody(sectionRe("session affinity")) ?? "");
+    expect(body).not.toContain("The local in-process dispatch is not fenced yet");
+    expectPins(body, "session affinity", [
+      "local in-process dispatch",
+      "in-process `keepAliveStop` procedure",
+      "--node <agent>",
+    ]);
+  });
 });
