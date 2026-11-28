@@ -154,6 +154,9 @@ export type ProfileSwitchOperationOpts = {
   log?: (line: string) => void;
   /** Revalidates desired inputs just before an actuator and its lifecycle writes. */
   checkDesired?: () => string | null;
+  checkBeforePublish?: () => string | undefined;
+  trackActuator?: (actuator: Promise<ProfileSwitchStepOutcome>) => void;
+  didActuate?: () => boolean;
   // per-model residency lifecycle wiring; when set the executor drives the
   // residency_states rows around each fenced stop/start
   lifecycle?: ProfileSwitchLifecycleOpts;
@@ -1089,11 +1092,28 @@ export function profileSwitchOperationRefusal(
   return refusedOperationReport(plan, deferredKinds(plan, registry !== null, true), reason);
 }
 
+function verifyProfilePublication(
+  plan: OkPlan,
+  result: RunResult,
+  check: ProfileSwitchOperationOpts["checkBeforePublish"],
+  budget: StepBudget,
+): RunResult {
+  if (check === undefined || result.failedAt !== null || result.cancelledAt !== null) return result;
+  const lost =
+    budget.signal?.aborted === true
+      ? "ProfileSwitchCanceled"
+      : (profileDeadlineRefusal(budget) ?? check());
+  if (lost === undefined) return result;
+  const failure = stepRecord("verify", plan.node, "failed", lost);
+  return { ...result, steps: [...result.steps, failure], failedAt: failureOf(failure) };
+}
+
 async function executeWithOperation(
   plan: OkPlan,
   deferred: StepKind[],
   operation: ProfileSwitchOperationOpts,
   run: (beat: Beat) => Promise<RunResult>,
+  budget: StepBudget,
 ): Promise<ProfileSwitchExecutionReport> {
   const begun = beginSwitchOperation(plan, operation);
   if (!begun.ok) {
@@ -1127,7 +1147,12 @@ async function executeWithOperation(
 
   let result: RunResult;
   try {
-    result = await run(heartbeatFor(operation));
+    result = verifyProfilePublication(
+      plan,
+      await run(heartbeatFor(operation)),
+      operation.checkBeforePublish,
+      budget,
+    );
   } catch (error: unknown) {
     finishCrashedExecution(operation, begun.version, error);
     throw error;
@@ -1173,11 +1198,13 @@ function finishExecution(
   result: RunResult,
 ): { info: FinishInfo; record: FinishRecord } {
   const info = finishInfoFor(result);
-  const acted = result.steps.some(
-    (step) =>
-      (step.action === "stop" || step.action === "start") &&
-      (step.status === "ok" || step.status === "failed"),
-  );
+  const acted =
+    operation.didActuate?.() ??
+    result.steps.some(
+      (step) =>
+        (step.action === "stop" || step.action === "start") &&
+        (step.status === "ok" || step.status === "failed"),
+    );
   if (operation.managed === true && info.outcome !== "succeeded" && acted) {
     return {
       info: { ...info, outcome: "unknown" },
@@ -1249,9 +1276,13 @@ function lifecycleDepsFor(
 function checkBeforeProfileStep(
   checkDesired: () => string | null,
   run: () => Promise<ProfileSwitchStepOutcome>,
+  trackActuator: ProfileSwitchOperationOpts["trackActuator"],
 ): Promise<ProfileSwitchStepOutcome> {
   const stale = checkDesired();
-  return stale === null ? run() : Promise.resolve({ ok: false, detail: stale });
+  if (stale !== null) return Promise.resolve({ ok: false, detail: stale });
+  const actuator = run();
+  trackActuator?.(actuator);
+  return actuator;
 }
 
 function executorDepsFor(
@@ -1260,13 +1291,14 @@ function executorDepsFor(
   operation: ProfileSwitchOperationOpts | undefined,
 ): ProfileSwitchExecutorDeps {
   const lifecycleDeps = lifecycleDepsFor(plan, deps, operation);
-  const checkDesired = operation?.checkDesired;
-  if (checkDesired === undefined) return lifecycleDeps;
+  if (operation?.checkDesired === undefined) return lifecycleDeps;
+  const { checkDesired, trackActuator } = operation;
   return {
+    ...lifecycleDeps,
     stop: (workload, ctx) =>
-      checkBeforeProfileStep(checkDesired, () => lifecycleDeps.stop(workload, ctx)),
+      checkBeforeProfileStep(checkDesired, () => lifecycleDeps.stop(workload, ctx), trackActuator),
     start: (workload, ctx) =>
-      checkBeforeProfileStep(checkDesired, () => lifecycleDeps.start(workload, ctx)),
+      checkBeforeProfileStep(checkDesired, () => lifecycleDeps.start(workload, ctx), trackActuator),
   };
 }
 
@@ -1371,7 +1403,7 @@ export async function executeProfileSwitch(
       : await runSteps(planned, executorDeps, signal, beat, budget);
   };
   if (operation !== undefined) {
-    return await executeWithOperation(plan, deferred, operation, run);
+    return await executeWithOperation(plan, deferred, operation, run, budget);
   }
 
   const result = await run(NO_BEAT);

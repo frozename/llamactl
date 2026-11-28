@@ -9,7 +9,10 @@ import { join } from "node:path";
 
 import type { TrustedColdOwner, TrustedColdPin } from "../../src/residency/cold-owner-admission.js";
 
+import { RESIDENCY_APPLY_PROFILE_FENCE_OWNER } from "../../src/residency/apply-profile.js";
+import { readManagedProfileSelection } from "../../src/residency/managed-profile-selection.js";
 import { createOwnerAdmission } from "../../src/residency/owner-admission.js";
+import { openResidencyOperationStore } from "../../src/residency/store.js";
 import { mkdtempSync, rmSync } from "../../src/safe-fs.js";
 import { hashToken } from "../../src/server/auth.js";
 import { prepareColdOwnerMount } from "../../src/server/cold-owner-mount.js";
@@ -340,6 +343,135 @@ function dispatchWarm(
   if (response === undefined) throw new Error("fixture missing warm owner");
   return response;
 }
+
+test("an explicit maintenance window uses the owner pause and publishes through the managed coordinator", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "llamactl-idle-profile-"));
+  const restore = isolate(dir);
+  const path = join(dir, "operations.sqlite");
+  let running: RunningAgent | undefined;
+  let exclusiveIngress = false;
+  try {
+    const manifest = parseWorkload(`
+apiVersion: llamactl/v1
+kind: ModelRun
+metadata:
+  name: ${WORKLOAD}
+  annotations: { llamactl.io/residency-profiles: 'interactive,maintenance' }
+spec:
+  node: local
+  enabled: false
+  target: { kind: rel, value: ${MODEL} }
+  resources: { expectedMemoryGiB: 1 }
+`);
+    const workloadsDir = join(dir, "workloads");
+    saveWorkload(manifest, workloadsDir);
+    const opts = await ownerFixtureOptions(dir, () =>
+      fixtureOwner(() => Promise.resolve("refused")),
+    );
+    running = await startManagedAgentServer(opts, NODE, {
+      ...capacity,
+      ownerActivity: { verifyExclusiveIngress: () => exclusiveIngress },
+    });
+    const apply = running.tryApplyIdleProfile;
+    expect(typeof apply).toBe("function");
+    if (apply === undefined) throw new Error("fixture idle profile is unavailable");
+
+    const dispatch = running.handleRequest;
+    if (dispatch === undefined) throw new Error("fixture owner handler missing");
+    const selected = await dispatch(
+      new Request(`${running.url}/trpc/residencyApplyManagedProfile`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
+        body: JSON.stringify({
+          node: NODE,
+          to: "interactive",
+          dryRun: false,
+          confirm: true,
+          version: 1,
+        }),
+      }),
+    );
+    expect(selected.status).toBe(200);
+    expect(await selected.json()).toMatchObject({ result: { data: { ok: true } } });
+    const initial = readManagedProfileSelection(path, NODE);
+    expect(initial).toMatchObject({ kind: "selected", profile: "interactive" });
+
+    const window = new AbortController();
+    const change = { from: "interactive", to: "maintenance", signal: window.signal };
+    expect(await apply(change)).toMatchObject({ ok: false, refusal: { reason: "OwnerNotIdle" } });
+    exclusiveIngress = true;
+    expect(await apply({ ...change, signal: AbortSignal.abort() })).toMatchObject({
+      ok: false,
+      refusal: { reason: "IdleProfileCanceled" },
+    });
+    expect(await apply({ ...change, from: "stale-profile" })).toMatchObject({
+      ok: false,
+      refusal: { reason: "ProfileSelectionChanged" },
+    });
+    expect(readManagedProfileSelection(path, NODE)).toEqual(initial);
+    const result = await apply(change);
+    expect(result).toMatchObject({ ok: true, from: "interactive", to: "maintenance" });
+    if (typeof result.operationId !== "string") throw new Error("fixture operation id missing");
+    expect(readManagedProfileSelection(path, NODE)).toEqual({
+      kind: "selected",
+      profile: "maintenance",
+      operationId: result.operationId,
+    });
+    const store = openResidencyOperationStore({ path });
+    try {
+      expect(store.listNonterminal()).toEqual([]);
+    } finally {
+      store.close();
+    }
+    const pause = running.tryQuiesceOwnerAdmissions?.();
+    expect(pause?.isCurrent()).toBe(true);
+    pause?.release();
+
+    const send = (): Promise<Response> => Promise.resolve(new Response(null, { status: 204 }));
+    expect((await dispatchWarm(send)).status).toBe(503);
+    saveWorkload({ ...manifest, spec: { ...manifest.spec, enabled: true } }, workloadsDir);
+    expect((await dispatchWarm(send)).status).toBe(204);
+    const interrupted = openResidencyOperationStore({ path });
+    try {
+      const operationId = "unpublished-replacement";
+      const pending = interrupted.claimAndBeginOperation(
+        { ownerId: RESIDENCY_APPLY_PROFILE_FENCE_OWNER, incarnation: "one" },
+        {
+          operationId,
+          model: `profile-switch:${NODE}`,
+          targetState: "managed-profile:interactive",
+          desiredRevision: 0,
+          reservationGiB: 0,
+          nowMs: Date.now(),
+        },
+      );
+      if (!pending.ok) throw new Error("fixture could not reserve the interrupted profile");
+      expect(
+        interrupted.commitReservation({
+          operationId,
+          fenceToken: pending.record.fenceToken,
+          expectedVersion: pending.record.version,
+          nowMs: Date.now(),
+        }),
+      ).toEqual({ ok: true });
+      expect(readManagedProfileSelection(path, NODE)).toMatchObject({ kind: "switching" });
+    } finally {
+      interrupted.close();
+    }
+
+    let unpublishedDials = 0;
+    const unavailable = await dispatchWarm(() => {
+      unpublishedDials++;
+      return send();
+    });
+    expect(unavailable.status).toBe(503);
+    expect(unpublishedDials).toBe(0);
+  } finally {
+    await running?.stop();
+    restore();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test("a mounted owner fence excludes warm and cold admissions until its exact handle releases", async () => {
   const dir = mkdtempSync(join(tmpdir(), "llamactl-owner-activity-"));

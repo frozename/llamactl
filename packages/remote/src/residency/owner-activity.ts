@@ -1,3 +1,9 @@
+export interface IdleProfileWindow {
+  from: string;
+  to: string;
+  signal: AbortSignal;
+}
+
 export interface OwnerAdmissionPause {
   signal: AbortSignal;
   isCurrent(): boolean;

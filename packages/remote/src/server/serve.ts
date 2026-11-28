@@ -35,6 +35,7 @@ import { listLocalRoutes, migrateLegacySingletonRuntime } from "@llamactl/core/w
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
 import { join } from "node:path";
 
+import type { ResidencyApplyProfileResult } from "../residency/apply-profile.js";
 import type { InferenceHolds } from "../residency/inference-holds.js";
 import type { ManagedLaunchAdmission } from "../residency/managed-launch-admission.js";
 import type { RequestAdmission } from "../residency/request-admission.js";
@@ -58,6 +59,7 @@ import {
 } from "../residency/catalog.js";
 import {
   createOwnerActivity,
+  type IdleProfileWindow,
   type OwnerActivity,
   type OwnerAdmissionPause,
 } from "../residency/owner-activity.js";
@@ -71,6 +73,7 @@ import {
   type AgentRouterContext,
   router as appRouter,
   directWorkloadProvenDown,
+  runIdleProfileMutation,
 } from "../router.js";
 import { type FleetSnapshotRouteOptions, handleFleetSnapshotRoute } from "../routes/fleet.js";
 import { existsSync, readFileSync } from "../safe-fs.js";
@@ -368,6 +371,7 @@ export interface RunningAgent {
   stop: () => Promise<void>;
   handleRequest?: (req: Request, address?: ClientAddress | null) => Promise<Response>;
   tryQuiesceOwnerAdmissions?: () => OwnerAdmissionPause | undefined;
+  tryApplyIdleProfile?: (window: IdleProfileWindow) => Promise<ResidencyApplyProfileResult>;
   /** Present only when StartAgentOptions.tunnelCentral was set. */
   tunnelServer?: TunnelServer;
   /** Present only when StartAgentOptions.tunnelDial was set. */
@@ -1378,7 +1382,7 @@ async function stopAgentServerResources(
   engineScope: ReturnType<typeof maybePublishEngineScope> | null,
   unregisterDeclaredModels: (() => void) | null,
   stopIngest: SearchIngestStop,
-  coldIdle?: () => Promise<void>,
+  admissionsIdle?: () => Promise<void>,
 ): Promise<void> {
   // Worker-RPC attempts drain first, while their transports are up.
   await workerRpc?.drain();
@@ -1420,9 +1424,9 @@ async function stopAgentServerResources(
     // keep its pre-#610 timing. Bonjour's stop is bounded inside it: a
     // hung one must not keep the tunnel serving or hold stop() open.
     if (servedRequests !== null || mdns) await finalFlushWindow(servedRequests, mdns);
-    // A canceled cold request can return before its managed start settles.
-    // Keep the lease registry and runtime owner live until that verdict is recorded.
-    if (coldIdle !== undefined) await coldIdle();
+    // A canceled cold request or a timed-out idle switch can return while a
+    // managed actuator is still settling against this owner.
+    if (admissionsIdle !== undefined) await admissionsIdle();
     // After the worker-RPC drain, server.stop() and the final flush of
     // served requests, so in-flight bodies (which may hold leases) settle
     // against the published registry before the seam reverts (#278 DF-05).
@@ -1558,8 +1562,11 @@ function prepareExecutionHooks(opts: StartAgentOptions): {
     return { hooks: scope };
   }
   const activity = opts.managedOwnerActivity === undefined ? undefined : createOwnerActivity();
+  const allowsProfileServing =
+    activity === undefined ? undefined : opts.managedLaunchAdmission?.allowsProfileServing;
   const owner = createOwnerAdmission(opts.executionAdmission ?? [], {
     ...(activity === undefined ? {} : { activity }),
+    ...(allowsProfileServing === undefined ? {} : { allowsProfileServing }),
     noAuth: opts.noAuth === true && isLoopbackAddress(opts.bindHost ?? "127.0.0.1"),
     ...(opts.managedInferenceHolds === undefined
       ? {}
@@ -1845,7 +1852,10 @@ function ownerAdmissionPause(
   execution: ReturnType<typeof prepareExecutionHooks>,
   cold: ReturnType<typeof prepareServingColdOwner>,
   leases: ResidencyLeases | undefined,
-): Pick<RunningAgent, "tryQuiesceOwnerAdmissions"> {
+): {
+  methods: Pick<RunningAgent, "tryQuiesceOwnerAdmissions" | "tryApplyIdleProfile">;
+  whenIdle: (() => Promise<void>) | undefined;
+} {
   const { owner, activity } = execution;
   const managed = opts.managedLaunchAdmission;
   const proof = opts.managedOwnerActivity;
@@ -1857,9 +1867,10 @@ function ownerAdmissionPause(
     leases === undefined ||
     proof === undefined ||
     managed?.ownerNodeId !== nodeName ||
+    managed.allowsProfileServing === undefined ||
     managed.ownsNode?.(nodeName) !== true
   )
-    return {};
+    return { methods: {}, whenIdle: cold?.whenIdle };
 
   const verifyIngress = (): boolean =>
     getLocalEngineForwarder() === owner.forward &&
@@ -1879,7 +1890,31 @@ function ownerAdmissionPause(
       status.claims.every((claim) => claim.state === "resident")
     );
   };
-  return { tryQuiesceOwnerAdmissions: () => activity.tryPause(verifyIngress, proveInitialIdle) };
+  const tryPause = (): OwnerAdmissionPause | undefined =>
+    activity.tryPause(verifyIngress, proveInitialIdle);
+  const pending = new Set<Promise<unknown>>();
+  const track = <T>(task: Promise<T>): Promise<T> => {
+    pending.add(task);
+    const settled = (): void => {
+      pending.delete(task);
+    };
+    void task.then(settled, settled);
+    return task;
+  };
+  const trackSettlement = (task: Promise<void>): void => {
+    void track(task);
+  };
+  return {
+    methods: {
+      tryQuiesceOwnerAdmissions: tryPause,
+      tryApplyIdleProfile: (window) =>
+        track(runIdleProfileMutation(nodeName, window, managed, tryPause, trackSettlement)),
+    },
+    async whenIdle(): Promise<void> {
+      await cold.whenIdle();
+      while (pending.size > 0) await Promise.allSettled(pending);
+    },
+  };
 }
 
 function startAgentServerAfterHandlers(
@@ -1923,7 +1958,6 @@ function startAgentServerAfterHandlers(
 
   const leases = maybePublishResidencyLeases(opts);
   const execution = prepareExecutionHooks(opts);
-  const engineScope = execution.hooks;
   const cold = prepareServingColdOwner(opts, execution.owner);
   const workerRpc = maybePublishWorkerRpc(opts, leases?.registry ?? null, execution.owner);
 
@@ -1969,7 +2003,7 @@ function startAgentServerAfterHandlers(
     // the Worker RPC host is published now unpublishes it, restores the seam
     // and stops the bound server (#278 DF-05).
     leases?.publish();
-    engineScope?.publish();
+    execution.hooks?.publish();
     const unregisterDeclaredModels = maybeRegisterDeclaredModels(opts);
     started.unregisterDeclaredModels = unregisterDeclaredModels;
 
@@ -1983,11 +2017,12 @@ function startAgentServerAfterHandlers(
       started.tunnelClient = client;
     });
 
+    const idleProfile = ownerAdmissionPause(opts, nodeName, execution, cold, leases?.registry);
     return {
       url: `${scheme}://${bindHost}:${String(listenPort)}`,
       port: listenPort,
       fingerprint,
-      ...ownerAdmissionPause(opts, nodeName, execution, cold, leases?.registry),
+      ...idleProfile.methods,
       handleRequest: async (
         req: Request,
         address: ClientAddress | null = null,
@@ -2011,10 +2046,10 @@ function startAgentServerAfterHandlers(
           servedRequests,
           mdns,
           leases,
-          engineScope,
+          execution.hooks,
           unregisterDeclaredModels,
           stopOwnIngest,
-          cold?.whenIdle,
+          idleProfile.whenIdle,
         );
       },
       ...(tunnelServer ? { tunnelServer } : {}),
@@ -2026,7 +2061,7 @@ function startAgentServerAfterHandlers(
     // so one failure cannot mask the original error or skip the others. The
     // rethrow reaches startAgentServer's early-step rollback, which stops
     // this agent's own search ingest through its handle (#634).
-    rollbackStartupResources(started, workerRpc, leases, engineScope);
+    rollbackStartupResources(started, workerRpc, leases, execution.hooks);
     throw err;
   }
 }

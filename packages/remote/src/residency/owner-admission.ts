@@ -38,6 +38,7 @@ interface ExecutionGroup {
   bounds: OwnerRequestBounds;
   inferenceHolds?: InferenceHolds;
   activity?: OwnerActivity;
+  allowsProfileServing?: (workload: string) => boolean;
   unconfirmed: AbortController;
   stopping: AbortController;
 }
@@ -213,7 +214,10 @@ function beforeDialRefusal(
     );
   }
   if (hard.aborted || group.unconfirmed.signal.aborted) return fencedResponse();
-  if (dispatch.stillOwnsTarget?.() === false) {
+  if (
+    dispatch.stillOwnsTarget?.() === false ||
+    (dispatch.workload !== undefined && group.allowsProfileServing?.(dispatch.workload) === false)
+  ) {
     return Response.json(
       { error: { type: "model_unavailable", code: "execution_target_changed" } },
       { status: 503 },
@@ -439,7 +443,12 @@ function groupQuiescent(group: ExecutionGroup): boolean {
 
 export function createOwnerAdmission(
   config: ExecutionAdmissionConfig,
-  options: { noAuth?: boolean; inferenceHolds?: InferenceHolds; activity?: OwnerActivity } = {},
+  options: {
+    noAuth?: boolean;
+    inferenceHolds?: InferenceHolds;
+    activity?: OwnerActivity;
+    allowsProfileServing?: (workload: string) => boolean;
+  } = {},
 ): OwnerAdmission {
   const targets = new Map<number, { group: ExecutionGroup; priority: RequestPriority }>();
   const groups = ExecutionAdmissionSchema.parse(config).map((spec): ExecutionGroup => {
@@ -449,6 +458,9 @@ export function createOwnerAdmission(
       bounds: spec,
       ...(options.inferenceHolds === undefined ? {} : { inferenceHolds: options.inferenceHolds }),
       ...(options.activity === undefined ? {} : { activity: options.activity }),
+      ...(options.allowsProfileServing === undefined
+        ? {}
+        : { allowsProfileServing: options.allowsProfileServing }),
       unconfirmed: new AbortController(),
       stopping: new AbortController(),
       admission: createRequestAdmission({
