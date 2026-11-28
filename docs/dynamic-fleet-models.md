@@ -271,9 +271,15 @@ three fields.
   `artifactRevision` for `draft`.
 - `samples` contains `status`, `source`, `observedAtMs`, `processBytes`,
   `processDeviceBytes`, and `sharedDeviceBytes` for each observation. Use
-  epoch milliseconds for sample time and separate host-process bytes from
-  attributable device bytes. Use `null` for an unavailable byte reading.
-  Shared-device readings never count toward a model's allocation.
+  epoch milliseconds for sample time and use `null` for unavailable readings.
+  Optional `deviceAccounting` describes the measured coverage. Use `disjoint`
+  when `processBytes` excludes the attributed device allocation. The importer
+  adds the two readings in this mode and uses it when the field is omitted.
+  Use `included` for a process total that already covers its device
+  allocation. A separate device reading can accompany the total for audit.
+  Use `unknown` when coverage or overlap is unverified. The importer refuses
+  such a sample. Shared-device readings never contribute to the model's
+  measured allocation.
 - `options` contains `minSamples` and `overheadFraction`.
 
 The existing `admit measure` RSS cache is separate. The ModelHost admission

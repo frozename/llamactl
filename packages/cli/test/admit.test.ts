@@ -84,8 +84,19 @@ test("exit 2 only when neither expectedMemoryGiB nor residentGiB is declared", a
   expect(await runQuiet([path, "--headroom-mb=0", "--safety-factor=0"])).toBe(2);
 });
 
-test("admit calibrate records attributed observations from a local report", async () => {
-  const state = join(dir, "calibration-state");
+test.each([
+  {
+    label: "disjoint process and device bytes",
+    sample: { processBytes: 1024, processDeviceBytes: 4096 },
+    peakBytes: 5120,
+  },
+  {
+    label: "device-inclusive process bytes",
+    sample: { processBytes: 8192, processDeviceBytes: 4096, deviceAccounting: "included" },
+    peakBytes: 8192,
+  },
+])("admit calibrate records $label", async ({ sample, peakBytes }) => {
+  const state = join(dir, "calibration-state-" + String(peakBytes));
   const evidence = join(dir, "calibration.json");
   const key = {
     artifactRevision: "model-revision",
@@ -97,35 +108,59 @@ test("admit calibrate records attributed observations from a local report", asyn
     prefillBatch: 512,
     concurrency: 1,
   };
-  writeFileSync(
-    evidence,
-    JSON.stringify({
-      key,
-      samples: [
-        {
-          status: "ok",
-          source: "recorded-process-observation",
-          observedAtMs: 1_700_000_000_000,
-          processBytes: 1024,
-          processDeviceBytes: 4096,
-          sharedDeviceBytes: null,
-        },
-      ],
-      options: { minSamples: 1, overheadFraction: 0.25 },
-    }),
-  );
+  const report = {
+    key,
+    samples: [
+      {
+        status: "ok",
+        source: "recorded-process-observation",
+        observedAtMs: 1_700_000_000_000,
+        ...sample,
+        sharedDeviceBytes: null,
+      },
+    ],
+    options: { minSamples: 1, overheadFraction: 0.25 },
+  };
+  writeFileSync(evidence, JSON.stringify(report));
   const previous = process.env["DEV_STORAGE"];
   process.env["DEV_STORAGE"] = state;
   try {
     expect(await runQuiet(["calibrate", evidence])).toBe(0);
-    expect(
-      readMeasuredMemoryCalibration(memoryCalibrationKey(key)!, measuredCalibrationStorePath()),
-    ).toMatchObject({
+    const canonical = memoryCalibrationKey(key)!;
+    const stored = readMeasuredMemoryCalibration(canonical, measuredCalibrationStorePath());
+    expect(stored).toMatchObject({
       attribution: "process",
-      peakBytes: 5120,
-      envelopeBytes: 6400,
+      peakBytes,
+      envelopeBytes: peakBytes * 1.25,
       measuredAtMs: 1_700_000_000_000,
     });
+    const newer = 1_700_000_000_100;
+    writeFileSync(
+      evidence,
+      JSON.stringify({
+        ...report,
+        samples: [
+          {
+            ...report.samples[0],
+            observedAtMs: newer,
+            processBytes: 1024,
+            processDeviceBytes: 0,
+            deviceAccounting: "disjoint",
+          },
+          {
+            ...report.samples[0],
+            observedAtMs: newer,
+            processBytes: null,
+            processDeviceBytes: 4096 * 1024,
+            deviceAccounting: "unknown",
+          },
+        ],
+      }),
+    );
+    expect(await runQuiet(["calibrate", evidence])).toBe(1);
+    expect(readMeasuredMemoryCalibration(canonical, measuredCalibrationStorePath())).toEqual(
+      stored,
+    );
   } finally {
     if (previous === undefined) delete process.env["DEV_STORAGE"];
     else process.env["DEV_STORAGE"] = previous;
