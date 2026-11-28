@@ -2723,6 +2723,7 @@ export const router = t.router({
       return buildResidencyStatus({
         node: input.node,
         nodeRun: node,
+        nodeRuns: nodeRuns,
         budgetGiB: defaultNodeBudgetGiB(declared, undefined, node?.spec.residency),
         budgetSource: typeof declared === "number" ? "noderun" : "computed",
         store: readResidencyStoreSnapshot(defaultResidencyStorePath()),

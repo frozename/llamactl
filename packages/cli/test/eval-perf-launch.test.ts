@@ -755,9 +755,7 @@ describe("#521 eval perf --launch", () => {
 });
 
 const LAUNCH_PEAK_RSS_NULL_REASON =
-  "peak-RSS (VmHWM) reader failed: engine PID not known when the reader ran";
-const DARWIN_PEAK_RSS_REASON =
-  "VmHWM (/proc/<pid>/status) is Linux-only; no peak-RSS reader on darwin";
+  "peak-RSS reader failed: engine PID not known when the reader ran";
 
 function expectUnavailable(metric: MetricValue | undefined, reason: string): void {
   expect(metric).toEqual({ status: "unavailable", value: null, reason });
@@ -813,15 +811,16 @@ describe("#521 eval perf --launch peak RSS", () => {
     expectUnavailable(byName.get("peak_rss_bytes"), LAUNCH_PEAK_RSS_NULL_REASON);
   });
 
-  test("(B4) launch drops the darwin io reader for the relaunched engine", async () => {
-    // Kills: keeping the lazy io reader under --launch, which would sample two
-    //        different processes, or falling back to the pid-null path.
+  test("(B4) launch reads darwin peak RSS from the relaunched engine and drops io", async () => {
+    // Kills: the launch pid getter not reaching the darwin peakRss reader, or
+    //        io being kept under --launch.
     const procPidRusageCalls: { pid: number; flavor: number }[] = [];
     const procPidRusage: ProcPidRusage = (pid, flavor, buffer) => {
       procPidRusageCalls.push({ pid, flavor });
-      const view = new DataView(buffer.buffer, buffer.byteOffset);
-      view.setBigUint64(144, 1n, true);
-      view.setBigUint64(152, 1n, true);
+      if (flavor === 4) {
+        const view = new DataView(buffer.buffer, buffer.byteOffset);
+        view.setBigUint64(240, 3221225472n, true);
+      }
       return 0;
     };
     installHarness({ platform: "darwin", pids: [1111, 2222], procPidRusage });
@@ -833,10 +832,13 @@ describe("#521 eval perf --launch peak RSS", () => {
     expect(result).toBe(0);
     expect(stdout).toContain("run_id: r1");
     const byName = metricsByName(dbPath(), "r1");
-    expectUnavailable(byName.get("peak_rss_bytes"), DARWIN_PEAK_RSS_REASON);
+    expect(byName.get("peak_rss_bytes")).toEqual({ status: "ok", value: 3221225472 });
     expectUnavailable(byName.get("ssd_read_bytes"), LAUNCH_IO_REASON);
     expectUnavailable(byName.get("ssd_write_bytes"), LAUNCH_IO_REASON);
-    expect(procPidRusageCalls).toEqual([]);
+    expect(procPidRusageCalls.length).toBeGreaterThan(0);
+    for (const call of procPidRusageCalls) {
+      expect(call).toEqual({ pid: 2222, flavor: 4 });
+    }
     expect(unexpectedRusageCalls).toEqual([]);
   });
 });
