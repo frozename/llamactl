@@ -443,6 +443,15 @@ entry's `qualification.stage` is the routing stage from
 `experimental: true`, the same flag a `data` entry carries. Neither array
 is routable, so the flags only report; they change no routing decision.
 
+The degraded stage is reported the same way (#518): a `data` entry whose
+winning route is degraded carries `degraded: true`, and a `declared` entry
+whose id's routing stage is degraded carries `degraded: true`; an
+experimental route or stage never also carries `degraded`, because
+experimental wins (`isDegradedRoute`, `packages/core/src/routing/capabilities.ts`).
+Because the legacy order ranks a healthy route ahead of a degraded one, a
+`data` entry carries the flag only when no healthy route serves the id.
+The flag only reports; it changes no routing decision.
+
 Peer-advertised qualification stages (#518): the `include=local-routes` fleet
 snapshot (`buildLocalRoutesSnapshot`, `packages/remote/src/routes/fleet.ts`)
 labels a workload `llamactl.io/qualification: experimental` when any of its
