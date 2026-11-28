@@ -61,7 +61,7 @@ describe("#521 eval perf darwin SSD I/O", () => {
       "`ri_diskio_byteswritten`",
       "`defaultProcPidRusage`",
       "`packages/eval/src/perf/darwin-rusage.ts`",
-      "Peak RSS and GTT are Linux-only; on macOS each is recorded `unavailable` with a named reason",
+      "GTT is Linux-only; on macOS it is recorded `unavailable` with a named reason",
       docNoIoReason,
     ]) {
       expect(evidenceSec, needle).toContain(needle);
