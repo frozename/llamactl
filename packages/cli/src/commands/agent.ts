@@ -5,6 +5,7 @@ import {
   auth,
   createChatCompletionsAdmission,
   type RequestAdmission,
+  residencyLeasesEnabled,
   startAgentServer,
   startManagedAgentServer,
   tls,
@@ -337,11 +338,13 @@ Environment:
   LLAMACTL_RESIDENCY_SESSION_IDLE_MS
                               Session idle timeout in milliseconds: a
                               positive integer up to
-                              Number.MAX_SAFE_INTEGER. Honored only when
-                              LLAMACTL_RESIDENCY_LEASES is on; publishes
-                              a session refcount registry beside the
-                              lease registry once the listener binds.
-                              Other values are ignored.
+                              Number.MAX_SAFE_INTEGER. Publishes a session
+                              refcount registry when leases are enabled by
+                              LLAMACTL_RESIDENCY_LEASES, managed residency,
+                              or execution admission groups. The registries
+                              install once the listener binds. Invalid or
+                              unused timeouts are ignored with a startup
+                              warning.
   LLAMACTL_CHAT_ADMISSION_MAX_EXECUTIONS
                               Inference admission concurrency cap: a positive
                               integer (opt-in, off by default). One cap is
@@ -1799,6 +1802,7 @@ export function validateServeWiring(
   parsed: ServeFlags,
   deps: ServeWiringDeps = {},
 ): ServeWiring | { error: string } {
+  const env = deps.env ?? process.env;
   const warn =
     deps.warn ??
     ((m: string): void => {
@@ -1806,7 +1810,7 @@ export function validateServeWiring(
     });
   const bearers = resolveServeBearers(
     parsed,
-    deps.env ?? process.env,
+    env,
     warn,
     deps.secretResolver === undefined ? {} : { secretResolver: deps.secretResolver },
   );
@@ -1846,6 +1850,26 @@ function residencySessionIdleOption(env: Readonly<Record<string, string | undefi
   if (raw === undefined) return {};
   const ms = parsePositiveInteger(raw);
   return ms === null ? {} : { residencySessionIdleMs: ms };
+}
+
+// #520: an idle timeout the agent will not honor is reported, not silently dropped
+export function residencySessionConfigWarning(
+  env: Readonly<Record<string, string | undefined>>,
+  options: Pick<
+    Parameters<typeof startAgentServer>[0],
+    "residencyLeases" | "executionAdmission" | "residencySessionIdleMs"
+  >,
+  managed: boolean,
+): string | null {
+  const raw = env["LLAMACTL_RESIDENCY_SESSION_IDLE_MS"];
+  if (raw === undefined) return null;
+  if (!managed && !residencyLeasesEnabled(options)) {
+    return "warning: LLAMACTL_RESIDENCY_SESSION_IDLE_MS is set but LLAMACTL_RESIDENCY_LEASES is off; no session registry is installed, so bound sessions do not block unloads\n";
+  }
+  if (options.residencySessionIdleMs === undefined) {
+    return "warning: LLAMACTL_RESIDENCY_SESSION_IDLE_MS is not a positive integer of milliseconds; ignoring it, so no session registry is installed\n";
+  }
+  return null;
 }
 
 const CHAT_ADMISSION_DEFAULT_MAX_QUEUED = 16;
@@ -2009,7 +2033,7 @@ export function buildServeOptions(
     // #806 phase 3: engine scopes on unless the env opts out; the launcher
     // itself is published only on linux inside startAgentServer.
     ...(engineScopeOptIn(env) ? { engineScope: true } : {}),
-    // #520: opt-in session idle timeout, honored only when residencyLeases is true.
+    // #520: an installed lease registry publishes the session timeout.
     ...residencySessionIdleOption(env),
     // #281 (DF-08): opt-in inference admission gate shared by
     // /v1/chat/completions, /v1/messages and /v1/responses, off by default.
@@ -2086,10 +2110,12 @@ async function runServe(args: string[]): Promise<number> {
   let running;
   try {
     const options = buildServeOptions(parsed, cfg, wiring, dialNodeName);
-    running =
-      process.env["LLAMACTL_MANAGED_RESIDENCY"] === "1"
-        ? await startManagedAgentServer(options, cfg.nodeName)
-        : startAgentServer(options);
+    const managed = process.env["LLAMACTL_MANAGED_RESIDENCY"] === "1";
+    const sessionWarn = residencySessionConfigWarning(process.env, options, managed);
+    if (sessionWarn !== null) process.stderr.write(sessionWarn);
+    running = managed
+      ? await startManagedAgentServer(options, cfg.nodeName)
+      : startAgentServer(options);
   } catch (err) {
     if (reportServeStartFailure(err, parsed, cfg)) return 1;
     throw err;

@@ -571,8 +571,9 @@ describe("docs/dynamic-residency.md (#285)", () => {
     );
     expect(proxySrc).toContain("acquireProxySession(sessionRegistry, trimmedSessionId");
     const serveSrc = readOrEmpty(join(REPO, "packages/remote/src/server/serve.ts"));
+    expect(serveSrc).toContain("if (!residencyLeasesEnabled(opts)) return null;");
     expect(serveSrc).toContain(
-      "if (opts.residencyLeases !== true && !opts.executionAdmission?.length) return null;",
+      "opts.residencyLeases === true || Boolean(opts.executionAdmission?.length)",
     );
     expect(serveSrc).toContain("if (opts.residencySessionIdleMs !== undefined) {");
     expect(readOrEmpty(join(REPO, "packages/remote/src/residency/stop-fence.ts"))).toContain(
@@ -672,7 +673,7 @@ describe("docs/dynamic-residency.md (#285)", () => {
       "`DrainInProgress`",
       "`SessionsActive`",
       "`SessionsUnknown`",
-      "`LLAMACTL_RESIDENCY_LEASES`",
+      "With no lease registry, it stops as before.",
       "`LLAMACTL_RESIDENCY_SESSION_IDLE_MS`",
       "while a session is bound to its running instance",
       "crashed",
@@ -1089,7 +1090,7 @@ describe("docs/dynamic-residency.md (#285)", () => {
       "a session with refs above 0 is `in flight` and has no expiry, while a session at refs 0 shows the rest of its idle-timeout window.",
       "Only live sessions are listed (expired ones are pruned first), most recently active first.",
       "The `residencyStatus` procedure, and the MCP tool that returns its result, carry the same data as a `sessions` section built by `buildResidencySessionSnapshot` in `packages/remote/src/residency/procedures.ts`: `status`, `scope` `serving-process`, `idleTimeoutMs`, and per session `sessionId`, `workload`, `refs`, `idleMs` and `expiresInMs` (`null` while in flight).",
-      "The registry is installed only when `LLAMACTL_RESIDENCY_LEASES` is on AND `LLAMACTL_RESIDENCY_SESSION_IDLE_MS` is set (see Session affinity);",
+      "The session registry is installed when the agent enables leases and `LLAMACTL_RESIDENCY_SESSION_IDLE_MS` is set (see Session affinity);",
       "Unlike `idleEviction`, the section is not limited to the serving node: whatever `--node` names, it shows the serving process's registry.",
     ]);
 

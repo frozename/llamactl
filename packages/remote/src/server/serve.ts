@@ -1535,6 +1535,12 @@ function defaultActiveShare(bindings: readonly ServiceCredentialBinding[]): numb
   return owners.size > 1 ? DEFAULT_SHARED_MAX_ACTIVE_PER_OWNER : undefined;
 }
 
+export function residencyLeasesEnabled(
+  opts: Pick<StartAgentOptions, "residencyLeases" | "executionAdmission">,
+): boolean {
+  return opts.residencyLeases === true || Boolean(opts.executionAdmission?.length);
+}
+
 /**
  * Prepares the residency lease registry (DF-05, #278) for explicit leases
  * or owner execution groups. The default path leaves the process-wide seam
@@ -1552,7 +1558,7 @@ function defaultActiveShare(bindings: readonly ServiceCredentialBinding[]): numb
 function maybePublishResidencyLeases(
   opts: StartAgentOptions,
 ): { registry: ResidencyLeases; publish: () => void; restore: () => void } | null {
-  if (opts.residencyLeases !== true && !opts.executionAdmission?.length) return null;
+  if (!residencyLeasesEnabled(opts)) return null;
   const previous = getResidencyLeaseRegistry();
   const previousSession = currentSessionRefcounts();
   const auditSink = createResidencyLeaseAuditSink({

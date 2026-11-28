@@ -265,7 +265,12 @@ export {
   CHAT_INGRESS_MODEL,
   createChatCompletionsAdmission,
 } from "./server/chat-admission.js";
-export { type RunningAgent, type StartAgentOptions, startAgentServer } from "./server/serve.js";
+export {
+  residencyLeasesEnabled,
+  type RunningAgent,
+  type StartAgentOptions,
+  startAgentServer,
+} from "./server/serve.js";
 export { startManagedAgentServer } from "./server/start-managed-agent.js";
 export * as tls from "./server/tls.js";
 export * as tunnel from "./tunnel/index.js";
