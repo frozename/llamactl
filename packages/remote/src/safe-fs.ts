@@ -35,6 +35,7 @@ export const {
   readFileSync,
   readlinkSync,
   readSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,

@@ -19,6 +19,7 @@ interface LaunchResult {
   ok: boolean;
   pid: number | null;
   spawnedPid?: number;
+  preDispatchRefusal?: string;
 }
 
 export type CommitLaunchReadiness = (pid: number) => string | undefined;
@@ -137,6 +138,15 @@ function recordLaunchGeneration(
   );
 }
 
+function settlePreDispatchRefusal<T extends LaunchResult>(
+  outcome: DirectLifecycleOutcome<T>,
+): DirectLifecycleOutcome<T> {
+  if (!outcome.ran || outcome.result.ok || outcome.result.preDispatchRefusal === undefined) {
+    return outcome;
+  }
+  return refuse(outcome.result.preDispatchRefusal);
+}
+
 async function runClaimedLaunch<T extends LaunchResult>(
   opts: ManagedLaunchOptions,
   request: ManagedLaunchRequest,
@@ -160,7 +170,9 @@ async function runClaimedLaunch<T extends LaunchResult>(
     return undefined;
   };
   try {
-    const outcome = signal.aborted ? refuse("LaunchCanceled") : await start(commitReadiness);
+    const outcome = settlePreDispatchRefusal(
+      signal.aborted ? refuse("LaunchCanceled") : await start(commitReadiness),
+    );
     if (!outcome.ran) {
       abandoned =
         committedPid === undefined && opts.authority.abandonUnstarted(claimId, fenceToken);
