@@ -2,22 +2,31 @@ import { readModelHostState } from "@llamactl/core/engines/state";
 import { resolveEnv } from "@llamactl/core/env";
 import { defaultReadProcessCommand } from "@llamactl/core/kvstore";
 import { expect, test } from "bun:test";
-import { execFileSync } from "node:child_process";
+import { type ChildProcess, execFileSync, spawn, type SpawnOptions } from "node:child_process";
 import { dirname, join } from "node:path";
 
+import { ENGINES } from "../../../core/src/engines/index.js";
 import { envForTemp, makeTempRuntime } from "../../../core/test/helpers.js";
 import { openNodeManagedAdmission } from "../../src/residency/target-admission-policy.js";
 import { router } from "../../src/router.js";
 import {
+  closeSync,
   existsSync,
   fstatSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
+  realpathSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from "../../src/safe-fs.js";
-import { startModelHost, stopModelHost } from "../../src/server/modelhost.js";
+import {
+  startModelHost,
+  type StartModelHostOptions,
+  stopModelHost,
+} from "../../src/server/modelhost.js";
 import {
   modelHostPath,
   parseModelHost,
@@ -27,7 +36,12 @@ import {
 const name = "omlx-cache-fixture";
 const rel = "fixture-model";
 
-function installFixture(root: string): { binary: string; module: string } {
+function installFixture(root: string): {
+  binary: string;
+  interpreter: string;
+  module: string;
+  phase: string;
+} {
   const venv = join(root, "venv");
   execFileSync("python3", ["-m", "venv", "--without-pip", venv], { timeout: 15_000 });
   const interpreter = join(venv, "bin", "python3");
@@ -37,24 +51,35 @@ function installFixture(root: string): { binary: string; module: string } {
     { encoding: "utf8", timeout: 5000 },
   ).trim();
   const cli = join(packages, "omlx", "cli.py");
+  const phase = join(root, "boot-phase.txt");
   mkdirSync(dirname(cli), { recursive: true });
   writeFileSync(join(dirname(cli), "__init__.py"), "");
   writeFileSync(
     cli,
     `
+import sys
+from pathlib import Path
+
+def mark_phase(phase):
+    if "--help" not in sys.argv:
+        Path(${JSON.stringify(phase)}).write_text(phase)
+
+mark_phase("module-entered")
 import argparse
 import json
 import os
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from pathlib import Path
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
+        if self.path == "/v1/models":
+            mark_phase("model-list-request")
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b'{"data":[{"id":"fixture-model"}]}')
 
 def main():
+    mark_phase("main-entered")
     parser = argparse.ArgumentParser()
     parser.add_argument("command")
     parser.add_argument("--model-dir")
@@ -76,7 +101,9 @@ def main():
     witness.write_text((args.paged_ssd_cache_dir or "") + "\\n" + (args.slot_save_path or ""))
     if args.paged_ssd_cache_dir:
         Path(args.paged_ssd_cache_dir, "cache.bin").touch()
+    mark_phase("before-bind")
     server = HTTPServer((args.host, args.port), Handler)
+    mark_phase("listening")
     print(f"fixture pid {os.getpid()} listening on {args.host}:{args.port}", flush=True)
     server.serve_forever()
 `,
@@ -92,7 +119,83 @@ if __name__ == "__main__":
 `,
     { mode: 0o755 },
   );
-  return { binary, module: cli };
+  return { binary, interpreter, module: cli, phase };
+}
+
+type SpawnObservation = {
+  child: ChildProcess;
+  env: NodeJS.ProcessEnv | undefined;
+  logFd: number | undefined;
+  errorCode?: string;
+};
+
+function childStatus(observed: SpawnObservation | undefined):
+  | {
+      exitCode: number | null;
+      signalCode: NodeJS.Signals | null;
+      errorCode: string | undefined;
+    }
+  | undefined {
+  return (
+    observed && {
+      exitCode: observed.child.exitCode,
+      signalCode: observed.child.signalCode,
+      errorCode: observed.errorCode,
+    }
+  );
+}
+
+async function probeLauncherHelp(
+  executable: string,
+  args: string[],
+  log: string,
+  env: NodeJS.ProcessEnv | undefined,
+): Promise<unknown> {
+  let fd: number | undefined;
+  try {
+    fd = openSync(log, "w", 0o600);
+    const child = spawn(executable, args, { detached: true, stdio: ["ignore", fd, fd], env });
+    const result = await new Promise<object>((resolve) => {
+      let timedOut = false;
+      let reapTimer: ReturnType<typeof setTimeout> | undefined;
+      let errorCode: string | undefined;
+      const finish = (status: object): void => {
+        clearTimeout(runTimer);
+        clearTimeout(reapTimer);
+        resolve({ pid: child.pid, timedOut, errorCode, ...status });
+      };
+      const onExit = (exitCode: number | null, signalCode: NodeJS.Signals | null): void => {
+        finish({ exitCode, signalCode, ...(timedOut ? { reap: "confirmed" } : {}) });
+      };
+      const runTimer = setTimeout(() => {
+        timedOut = true;
+        reapTimer = setTimeout(() => {
+          child.unref();
+          finish({ reap: "unconfirmed" });
+        }, 1000);
+        try {
+          child.kill("SIGKILL");
+        } catch (error) {
+          errorCode = (error as NodeJS.ErrnoException).code ?? "kill-error";
+        }
+      }, 1500);
+      child.once("exit", onExit);
+      child.once("close", onExit);
+      child.once("error", (error: NodeJS.ErrnoException) => {
+        errorCode = error.code ?? error.name;
+        if (!timedOut) finish({});
+      });
+      if (child.exitCode !== null || child.signalCode !== null) {
+        onExit(child.exitCode, child.signalCode);
+      }
+    });
+    const output = readFileSync(log, "utf8");
+    return { ...result, bytes: Buffer.byteLength(output), usage: output.includes("usage:") };
+  } catch (error) {
+    return { errorCode: (error as NodeJS.ErrnoException).code ?? "probe-error" };
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
 }
 
 function openLogDescriptors(path: string): number {
@@ -111,7 +214,44 @@ function openLogDescriptors(path: string): number {
 
 test("the ModelHost reuses exact oMLX cache paths and rotates on every relevant input", async () => {
   const root = makeTempRuntime();
-  const { binary, module } = installFixture(root.devStorage);
+  using cleanup = { [Symbol.dispose]: root.cleanup };
+  const { binary, interpreter, module, phase } = installFixture(root.devStorage);
+  const traceBoot = process.env["LLAMACTL_TEST_TRACE_OMLX_BOOT"] === "1";
+  if (traceBoot) {
+    const version = execFileSync(interpreter, ["--version"], { encoding: "utf8", timeout: 5000 });
+    const identity = {
+      interpreter,
+      resolved: realpathSync(interpreter),
+      version: version.trim(),
+      shebangBytes: Buffer.byteLength(`#!${interpreter}`),
+    };
+    process.stdout.write(`oMLX fixture interpreter ${JSON.stringify(identity)}\n`);
+  }
+  let observed: SpawnObservation | undefined;
+  let atReadinessDeadline: ReturnType<typeof childStatus>;
+  const observeSpawn = (
+    executable: string,
+    args: readonly string[],
+    options: SpawnOptions,
+  ): ChildProcess => {
+    const child = spawn(executable, args, options);
+    const fd = Array.isArray(options.stdio) ? options.stdio[1] : undefined;
+    const observation: SpawnObservation = {
+      child,
+      env: options.env,
+      logFd: typeof fd === "number" ? fd : undefined,
+    };
+    observed = observation;
+    child.once("error", (error: NodeJS.ErrnoException) => {
+      observation.errorCode = error.code ?? error.name;
+    });
+    return child;
+  };
+  const probeReady: NonNullable<StartModelHostOptions["probeReady"]> = async (...args) => {
+    const readiness = await ENGINES.omlx.probeReady(...args);
+    if (!readiness.ready) atReadinessDeadline = childStatus(observed);
+    return readiness;
+  };
   const env = {
     ...envForTemp(root),
     LLAMACTL_MODELS_DIR: root.modelsDir,
@@ -181,12 +321,19 @@ test("the ModelHost reuses exact oMLX cache paths and rotates on every relevant 
         },
       }),
     );
-  const start = (checkSpawn?: () => undefined): ReturnType<typeof startModelHost> =>
-    startModelHost({
+  const start = (checkSpawn?: () => undefined): ReturnType<typeof startModelHost> => {
+    observed = undefined;
+    atReadinessDeadline = undefined;
+    rmSync(phase, { force: true });
+    rmSync(join(base, "cache-witness.txt"), { force: true });
+    return startModelHost({
       ...options,
+      spawn: observeSpawn as typeof spawn,
+      probeReady,
       ...(checkSpawn === undefined ? {} : { checkSpawn }),
       manifest: manifest(),
     });
+  };
   const currentPaths = async (): Promise<{ prefix: string; slot: string }> => {
     const began = performance.now();
     const result = await start();
@@ -195,8 +342,33 @@ test("the ModelHost reuses exact oMLX cache paths and rotates on every relevant 
       const log = existsSync(bootLog)
         ? readFileSync(bootLog, "utf8").slice(-4096)
         : "(no boot log)";
+      const diagnostics = {
+        phase: existsSync(phase) ? readFileSync(phase, "utf8") : "not-entered",
+        cacheWitness: existsSync(join(base, "cache-witness.txt")),
+        logFd: observed?.logFd ?? null,
+        atReadinessDeadline,
+        afterTeardown: childStatus(observed),
+      };
+      const launcher =
+        process.platform === "darwin" && observed !== undefined
+          ? {
+              directDetached: await probeLauncherHelp(
+                binary,
+                ["--help"],
+                join(root.devStorage, "direct-help.log"),
+                observed.env,
+              ),
+              explicitInterpreter: await probeLauncherHelp(
+                interpreter,
+                [binary, "--help"],
+                join(root.devStorage, "explicit-help.log"),
+                observed.env,
+              ),
+            }
+          : undefined;
       throw new Error(
-        `oMLX fixture boot failed after ${String(elapsed)} ms: ${JSON.stringify(result)}\n${log}`,
+        `oMLX fixture boot failed after ${String(elapsed)} ms: ${JSON.stringify(result)}\n` +
+          `boot evidence ${JSON.stringify({ ...diagnostics, launcher })}\n${log}`,
       );
     }
     const [prefix, slot] = readFileSync(join(base, "cache-witness.txt"), "utf8").split("\n");
@@ -210,6 +382,9 @@ test("the ModelHost reuses exact oMLX cache paths and rotates on every relevant 
   process.env["LLAMACTL_WORKLOADS_DIR"] = join(root.devStorage, "fallback-desired");
   try {
     const initial = await currentPaths();
+    const initialPhase = readFileSync(phase, "utf8");
+    if (traceBoot) process.stdout.write(`oMLX fixture initial boot phase ${initialPhase}\n`);
+    expect(initialPhase).toBe("model-list-request");
     expect(existsSync(modelHostPath(name))).toBe(false);
     expect(existsSync(modelHostPath(name, options.workloadsDir))).toBe(true);
     writeFileSync(join(initial.slot, "request.slot"), "recorded slot");
@@ -396,7 +571,6 @@ test("the ModelHost reuses exact oMLX cache paths and rotates on every relevant 
       } else {
         process.env["LLAMACTL_WORKLOADS_DIR"] = previousDefaultWorkloads;
       }
-      root.cleanup();
     }
   }
 }, 25_000);
