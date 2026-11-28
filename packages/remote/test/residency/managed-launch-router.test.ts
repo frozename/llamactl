@@ -1,4 +1,5 @@
 import { server } from "@llamactl/core";
+import { getEngineScopeLauncher, setEngineScopeLauncher } from "@llamactl/core/engines/scope";
 import { expect, mock, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
@@ -230,6 +231,93 @@ test("ModelHost applies its fresh managed spawn check before invoking the binary
   expect(refuse).toHaveBeenCalledTimes(1);
   expect(existsSync(reached)).toBe(false);
 });
+
+for (const kind of ["ModelHost", "ModelRun"] as const) {
+  test(`required scope preflight refusal abandons the unstarted managed ${kind} claim`, async () => {
+    const dir = mkdtempSync(join(tmpdir(), "managed-required-scope-"));
+    using fixture = modelRunEnvironment(dir);
+    const reached = join(dir, "spawned");
+    const binary = join(dir, "llama-server");
+    writeFileSync(binary, `#!/bin/bash\nprintf reached > ${JSON.stringify(reached)}\nexit 1\n`, {
+      mode: 0o755,
+    });
+    const workload = "required-scope-fixture";
+    const portReservation = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: () => new Response(),
+    });
+    const port = Number(portReservation.port);
+    await portReservation.stop(true);
+    const authority = openAdmissionAuthority({
+      storePath: join(dir, "admission.db"),
+      budgetGiB: () => 24,
+      observe: () => undefined,
+      readPidFile: () => undefined,
+      owner: { pid: process.pid },
+    });
+    const gate = createManagedLaunchAdmission({
+      authority,
+      resolve: () => ({ specDigest: workload, allocationGiB: 8 }),
+      capture: () => undefined,
+    });
+    const caller = router.createCaller({ managedLaunchAdmission: gate });
+    const previous = getEngineScopeLauncher();
+    const resolve = mock((): Promise<{ ok: false; reason: "not-linux" }> => {
+      expect(authority.snapshot()).toEqual([
+        expect.objectContaining({ kind, runtimeKey: workload, allocationGiB: 8 }),
+      ]);
+      return Promise.resolve({ ok: false, reason: "not-linux" });
+    });
+    setEngineScopeLauncher({
+      required: true,
+      resolve,
+      establishTimeoutMs: 1,
+      unitSuffix: () => "fixture",
+      noteFailure: () => undefined,
+    });
+    try {
+      const input = {
+        workload,
+        timeoutSeconds: 1,
+        endpoint: { host: "127.0.0.1", port },
+        binary,
+      };
+      const events =
+        kind === "ModelRun"
+          ? await caller.serverStart({ ...input, target: fixture.model.target })
+          : await caller.modelHostStart({
+              workload,
+              timeoutSeconds: input.timeoutSeconds,
+              manifest: {
+                apiVersion: "llamactl/v1",
+                kind,
+                metadata: { name: workload },
+                spec: {
+                  node: "local",
+                  engine: "llamacpp",
+                  binary,
+                  endpoint: input.endpoint,
+                  hostedModels: [{ rel: fixture.model.target }],
+                },
+              },
+            });
+      expect(await terminalResults(events)).toEqual([
+        expect.objectContaining({
+          ok: false,
+          pid: null,
+          error: "engine scope required (not-linux); refusing direct spawn",
+        }),
+      ]);
+      expect(resolve).toHaveBeenCalledTimes(1);
+      expect(existsSync(reached)).toBe(false);
+      expect(authority.snapshot()).toEqual([]);
+    } finally {
+      setEngineScopeLauncher(previous);
+      authority.close();
+    }
+  });
+}
 
 test("authenticated agent starts share one mixed-kind memory budget", async () => {
   const dir = mkdtempSync(join(tmpdir(), "managed-launch-router-"));

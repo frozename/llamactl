@@ -1,4 +1,5 @@
 import { inferenceContracts, inferenceRpc } from "@llamactl/core";
+import { getEngineScopeLauncher, setEngineScopeLauncher } from "@llamactl/core/engines/scope";
 import {
   readModelHostStarting,
   readModelHostState,
@@ -415,6 +416,69 @@ async function verifyNativeMaintenance(
   await verifyNativeProcessRecovery(owner, headers, pid, stopRace ? base : undefined);
 }
 
+function requireFixtureEngineScope(required: boolean | undefined): (() => void) | undefined {
+  if (required !== true) return undefined;
+  const previousScope = getEngineScopeLauncher();
+  setEngineScopeLauncher({
+    required: true,
+    establishTimeoutMs: 1,
+    unitSuffix: () => "fixture",
+    noteFailure: () => undefined,
+    resolve: () => Promise.resolve({ ok: true, systemdRunPath: "/usr/bin/false" }),
+  });
+  return (): void => {
+    setEngineScopeLauncher(previousScope);
+  };
+}
+
+async function checkNativeStartRefusal(opts: {
+  requiresScope: boolean | undefined;
+  changeArtifact: boolean;
+  agent: RunningAgent;
+  headers: Record<string, string>;
+  engineDirectory: string;
+  managedBase: string;
+  bootWitness: string;
+  loadWitness: string;
+  state: ReturnType<typeof readModelHostState>;
+  results: unknown[];
+}): Promise<boolean> {
+  if (opts.requiresScope === true) {
+    expect(opts.results).toEqual([
+      expect.objectContaining({
+        ok: false,
+        pid: null,
+        error: "engine scope required (private oMLX bootstrap unsupported); refusing direct spawn",
+      }),
+    ]);
+    expect(existsSync(opts.bootWitness)).toBe(false);
+    expect(existsSync(join(opts.managedBase, "settings.json"))).toBe(false);
+    expect(opts.state).toBeNull();
+    const status = new URL(`${opts.agent.url}/trpc/residencyStatus`);
+    status.searchParams.set("input", JSON.stringify({ node: "local" }));
+    const readout = await fetch(status, {
+      headers: opts.headers,
+      signal: AbortSignal.timeout(4000),
+    });
+    expect(await readout.json()).toMatchObject({
+      result: { data: { managed: { claims: [] } } },
+    });
+    return true;
+  }
+  if (!opts.changeArtifact) return false;
+  expect(readFileSync(join(opts.engineDirectory, "weights.safetensors"), "utf8")).toBe(
+    "modified after launch",
+  );
+  expect(existsSync(opts.loadWitness)).toBe(false);
+  expect(opts.state).toBeNull();
+  expect(opts.results).toEqual([expect.objectContaining({ ok: false })]);
+  const bootPid = Number(readFileSync(opts.bootWitness, "utf8"));
+  expect(Number.isSafeInteger(bootPid) && bootPid > 1).toBe(true);
+  expect(() => process.kill(bootPid, 0)).toThrow();
+  expect(readModelHostStarting({ name: workload }, resolveEnv())).toBeNull();
+  return true;
+}
+
 test.each([
   {
     name: "publishes only after authenticated load and rejects a replacement listener",
@@ -457,6 +521,15 @@ test.each([
     lowHeadroomAfterLoad: false,
   },
   {
+    name: "refuses a required engine scope without starting a private oMLX bootstrap",
+    changeArtifact: false,
+    restart: false,
+    parkCycle: false,
+    stopRace: false,
+    lowHeadroomAfterLoad: false,
+    requiresScope: true,
+  },
+  {
     name: "fences resume while the exact parked process is being stopped",
     changeArtifact: false,
     restart: false,
@@ -466,7 +539,7 @@ test.each([
   },
 ])(
   "managed native ModelHost $name",
-  async ({ changeArtifact, restart, parkCycle, stopRace, lowHeadroomAfterLoad }) => {
+  async ({ changeArtifact, restart, parkCycle, stopRace, lowHeadroomAfterLoad, requiresScope }) => {
     const temp = makeTempRuntime();
     const desiredDir = join(temp.devStorage, "desired");
     const managedBase = join(temp.runtimeDir, "workloads", workload, ".omlx", "managed-cache");
@@ -486,6 +559,7 @@ test.each([
     const token = "fixture-agent-bearer";
     let running: RunningAgent | undefined;
     let bootWitness: string | undefined;
+    let restoreScope: (() => void) | undefined;
     try {
       const binary = makeEngine(temp.devStorage, changeArtifact);
       const directory = join(temp.modelsDir, model);
@@ -563,6 +637,7 @@ test.each([
           },
         );
       running = await startAgent();
+      restoreScope = requireFixtureEngineScope(requiresScope);
       const call = new URL(`${running.url}/trpc/modelHostStart`);
       call.searchParams.set("input", JSON.stringify({ workload, manifest }));
       const headers = { authorization: `Bearer ${token}` };
@@ -574,20 +649,21 @@ test.each([
       });
       const state = readModelHostState({ name: workload }, resolveEnv());
       bootWitness = join(managedBase, "boot-witness");
-      if (changeArtifact) {
-        expect(readFileSync(join(directory, "weights.safetensors"), "utf8")).toBe(
-          "modified after launch",
-        );
-        expect(existsSync(loadWitness)).toBe(false);
-        expect(state).toBeNull();
-        expect(results).toEqual([expect.objectContaining({ ok: false })]);
-        const bootPid = Number(readFileSync(bootWitness, "utf8"));
-        expect(Number.isSafeInteger(bootPid) && bootPid > 1).toBe(true);
-        expect(() => process.kill(bootPid, 0)).toThrow();
-        expect(readModelHostStarting({ name: workload }, resolveEnv())).toBeNull();
-
+      if (
+        await checkNativeStartRefusal({
+          requiresScope,
+          changeArtifact,
+          agent: running,
+          headers,
+          engineDirectory: directory,
+          managedBase,
+          bootWitness,
+          loadWitness,
+          state,
+          results,
+        })
+      )
         return;
-      }
       expect(results).toEqual([expect.objectContaining({ ok: true })]);
       if (!state) throw new Error("private fixture route was not recorded");
       expect(existsSync(loadWitness)).toBe(true);
@@ -716,6 +792,7 @@ test.each([
     } finally {
       stopFixtureEngine(bootWitness);
       await running?.stop();
+      restoreScope?.();
       for (const [key, value] of previous) {
         if (value === undefined) Reflect.deleteProperty(process.env, key);
         else process.env[key] = value;
