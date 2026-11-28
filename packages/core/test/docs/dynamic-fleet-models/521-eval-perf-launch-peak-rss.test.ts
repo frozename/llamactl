@@ -16,8 +16,7 @@ describe("#521 eval perf launch peak RSS", () => {
 
   const launchIoReason =
     "--launch relaunches the engine between the cold and warm load, so no single engine process spans the suite; per-process SSD I/O (/proc/<pid>/io) is not measured";
-  const missingPidReason =
-    "peak-RSS (VmHWM) reader failed: engine PID not known when the reader ran";
+  const missingPidReason = "peak-RSS reader failed: engine PID not known when the reader ran";
 
   // Kills: rewording the launch-specific SSD-I/O reason, or keeping it
   //        inline where the doc cannot cite a stable constant.
@@ -41,7 +40,7 @@ describe("#521 eval perf launch peak RSS", () => {
   test("source pins live-pid reader failure propagation and the VmHWM path", () => {
     expect(readersSrc).toContain("engine PID not known when the reader ran");
     expect(readersSrc).toContain("/proc/${String(pid)}/status");
-    expect(runnerSrc).toContain("peak-RSS (VmHWM) reader failed: ${sample.message}");
+    expect(runnerSrc).toContain("peak-RSS reader failed: ${sample.message}");
   });
 
   // Kills: passing null as the launch pid, which leaves --launch runs with

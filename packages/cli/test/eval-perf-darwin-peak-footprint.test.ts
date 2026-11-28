@@ -239,7 +239,7 @@ describe("#521 eval perf darwin peak RSS", () => {
     const { result, stdout } = await runPerf(dbPath);
 
     expect(result).toBe(0);
-    expect(stdout).toContain("peak-RSS (VmHWM) reader returned no sample");
+    expect(stdout).toContain("peak-RSS reader returned no sample");
     const db = new Database(dbPath, { readonly: true });
     try {
       const rows = listPerfRuns(db, { run_id: "r1" });
@@ -247,7 +247,7 @@ describe("#521 eval perf darwin peak RSS", () => {
       expect(byName.get("peak_rss_bytes")).toEqual({
         status: "unavailable",
         value: null,
-        reason: "peak-RSS (VmHWM) reader returned no sample",
+        reason: "peak-RSS reader returned no sample",
       });
     } finally {
       db.close();

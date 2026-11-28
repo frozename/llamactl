@@ -755,7 +755,7 @@ describe("#521 eval perf --launch", () => {
 });
 
 const LAUNCH_PEAK_RSS_NULL_REASON =
-  "peak-RSS (VmHWM) reader failed: engine PID not known when the reader ran";
+  "peak-RSS reader failed: engine PID not known when the reader ran";
 
 function expectUnavailable(metric: MetricValue | undefined, reason: string): void {
   expect(metric).toEqual({ status: "unavailable", value: null, reason });

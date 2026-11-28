@@ -1418,7 +1418,7 @@ On Linux, `peak_rss_bytes` is `VmHWM` in `/proc/<pid>/status` of the boot that
 `eval perf` owns when the memory phase runs, which is the warm relaunch
 (`createLaunchLoadHooks`, `packages/cli/src/commands/eval-perf-launch.ts`, and
 `createPerfHostReaders`, `packages/eval/src/perf/readers.ts`). If no launched
-engine has a PID then, it records `peak-RSS (VmHWM) reader failed: engine PID
+engine has a PID then, it records `peak-RSS reader failed: engine PID
 not known when the reader ran`. SSD I/O records
 `--launch relaunches the engine between the cold and warm load, so no single
 engine process spans the suite; per-process SSD I/O (/proc/<pid>/io) is not
@@ -1450,10 +1450,10 @@ recorded as 0. The I/O reasons live in `runIoPhase`
 the end sample records `I/O reader failed: <message>` (the start sample
 wins), and a present reader that returns null or an invalid sample at
 either point records `I/O reader returned no sample`. Peak RSS works the
-same way through `readPeakRss` and `runMemoryPhase`: a throwing VmHWM
-reader records `peak-RSS (VmHWM) reader failed: <message>`, and a present
+same way through `readPeakRss` and `runMemoryPhase`: a throwing peak-RSS
+reader records `peak-RSS reader failed: <message>`, and a present
 reader returning null or a non-positive number records
-`peak-RSS (VmHWM) reader returned no sample`. For GTT, `readPeakGtt`
+`peak-RSS reader returned no sample`. For GTT, `readPeakGtt`
 records `GTT reader failed: <message>` for a throw and `GTT reader
 returned no sample` for a null observation, and `gttObservationReason`
 names a non-ok observation `GTT reader returned no sample (status:
@@ -1471,7 +1471,7 @@ The shipped `createPerfHostReaders` (packages/eval/src/perf/readers.ts)
 turns a failed /proc read into null. On macOS it turns a non-zero
 `proc_pid_rusage` return, or a counter above `Number.MAX_SAFE_INTEGER`, into
 null the same way. So `eval perf` records `I/O reader returned no sample` and
-`peak-RSS (VmHWM) reader returned no sample`, and the `... reader failed:
+`peak-RSS reader returned no sample`, and the `... reader failed:
 <message>` reasons apply only to an injected reader that throws. The GTT probe `probeGpuGtt`
 (packages/fleet-supervisor/src/node-probe.ts) reports `denied` when the
 counters are not readable, `unavailable` when no card exposes them, and
