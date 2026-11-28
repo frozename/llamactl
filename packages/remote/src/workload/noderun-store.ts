@@ -60,7 +60,8 @@ export function listNodeRuns(dir: string = defaultNodeRunsDir()): NodeRun[] {
       out.push(NodeRunSchema.parse(parsed));
     } catch {
       // Skip malformed / wrong-kind files silently — `apply`-time
-      // validation surfaces real errors there.
+      // validation surfaces real errors there; see `listInvalidNodeRuns`
+      // for a report of what was skipped.
     }
   }
   out.sort((a, b) => a.metadata.name.localeCompare(b.metadata.name));
@@ -72,4 +73,55 @@ export function deleteNodeRun(name: string, dir: string = defaultNodeRunsDir()):
   if (!existsSync(path)) return false;
   rmSync(path, { force: true });
   return true;
+}
+
+export interface InvalidNodeRunFile {
+  file: string;
+  name: string | null;
+  node: string | null;
+  error: string;
+}
+
+// Narrow view of an unvalidated manifest: only the fields the report needs to
+// attribute a failure. Keeps the reads off an index signature (strict gate).
+type NodeRunFileHeader = {
+  kind?: unknown;
+  metadata?: { name?: unknown } | null;
+  spec?: { node?: unknown } | null;
+};
+
+function invalidEntryFor(entry: string, parsed: unknown): InvalidNodeRunFile | null {
+  const header = parsed as NodeRunFileHeader | null;
+  if (header?.kind !== "NodeRun") return null;
+  const result = NodeRunSchema.safeParse(parsed);
+  if (result.success) return null;
+  const issues = result.error.issues;
+  const error = issues
+    .map((i) => `${i.path.map(String).join(".") || "(root)"}: ${i.message}`)
+    .join("; ");
+  return {
+    file: entry,
+    name: typeof header.metadata?.name === "string" ? header.metadata.name : null,
+    node: typeof header.spec?.node === "string" ? header.spec.node : null,
+    error,
+  };
+}
+
+export function listInvalidNodeRuns(dir: string = defaultNodeRunsDir()): InvalidNodeRunFile[] {
+  if (!existsSync(dir)) return [];
+  const out: InvalidNodeRunFile[] = [];
+  for (const entry of readdirSync(dir)) {
+    if (!entry.endsWith(".yaml")) continue;
+    const path = join(dir, entry);
+    try {
+      const raw = readFileSync(path, "utf8");
+      const parsed = parseYaml(raw) as NodeRunFileHeader | null;
+      const item = invalidEntryFor(entry, parsed);
+      if (item !== null) out.push(item);
+    } catch {
+      // Skip files that fail to read or parse as YAML.
+    }
+  }
+  out.sort((a, b) => a.file.localeCompare(b.file, "en"));
+  return out;
 }

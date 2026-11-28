@@ -454,11 +454,16 @@ export function serveBindWarning(bindHost: string, certSans: readonly string[]):
   );
 }
 
-export async function runAgent(args: string[]): Promise<number> {
+/** Injection surface for #976: tests drive `agent init` without spawning openssl. */
+export interface AgentCommandDeps {
+  generateSelfSignedCert?: typeof tls.generateSelfSignedCert;
+}
+
+export async function runAgent(args: string[], deps: AgentCommandDeps = {}): Promise<number> {
   const [sub, ...rest] = args;
   switch (sub) {
     case "init":
-      return await runInit(rest);
+      return await runInit(rest, deps.generateSelfSignedCert);
     case "rotate-token":
       return await runRotateToken(rest);
     case "set-token":
@@ -652,7 +657,10 @@ export function backupAgentState(
   return { backupDir, moved };
 }
 
-async function runInit(args: string[]): Promise<number> {
+async function runInit(
+  args: string[],
+  generateCert: typeof tls.generateSelfSignedCert = tls.generateSelfSignedCert,
+): Promise<number> {
   if (args.some(isHelpFlag)) {
     process.stdout.write(INIT_USAGE);
     return 0;
@@ -684,7 +692,7 @@ async function runInit(args: string[]): Promise<number> {
 
   const requestedSans = resolveInitSans(f);
   const sans = initCertSans(f, requestedSans);
-  const cert = await tls.generateSelfSignedCert({
+  const cert = await generateCert({
     dir: f.dir,
     commonName: f.host,
     hostnames: sans,
