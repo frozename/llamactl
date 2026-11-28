@@ -6,8 +6,10 @@
  * start reconciles the replacement's stale same-group peers, walks its own
  * row down to loaded, then -> warming -> ready|failed. A corroborated
  * exclusive-group occupant (one the plan observed) is left alone and makes
- * the loading hop refuse before the dep runs; an uncorroborated occupying
- * peer is walked down to downloaded first. The decorator never throws: every
+ * the loading hop refuse before the dep runs. With an `isProvenDown` predicate
+ * an uncorroborated occupying peer is walked down to downloaded only when it is
+ * a `ready` row the predicate proves down; any other uncorroborated occupant is
+ * kept and makes the loading hop refuse. The decorator never throws: every
  * store call is guarded, and a failed post write is logged, leaving the dep's
  * own outcome unchanged. `fenceTokenOf` is an optional live fence reader: a
  * caller that may re-claim the fence across the dep (the direct ModelHost
@@ -37,6 +39,18 @@ export type ProfileSwitchLifecycleOpts = {
   store: LifecycleTransitionStore;
   groupOf: (workload: string) => string | undefined;
   groups?: readonly ResidencyGroupDeclaration[];
+  // When supplied, an uncorroborated same-group occupying peer (not in
+  // occupiedAtPlan) is reconciled only if it is a `ready` row whose workload the
+  // predicate proves down. This mirrors isCorroboratedOccupant in
+  // direct-lifecycle.ts. A `loading`/`warming` peer is never reconciled and
+  // never probed, because a start in flight may not have written its pid yet. A
+  // throw counts as not proven down. When the predicate is absent, the
+  // pre-existing reconcile-all behaviour is kept, and a start caller that omits
+  // it must itself pre-filter occupiedAtPlan through a proven-down check, as
+  // runDirectResidencyStart does via occupyingPeers. Stop-only callers
+  // (releaseReadyRow, recordSettledStop) are unaffected because stop never runs
+  // releaseStalePeers.
+  isProvenDown?: (model: string) => boolean;
 };
 
 type LifecycleCtx = {
@@ -203,9 +217,12 @@ function logUnrecordedPost(ctx: LifecycleCtx, workload: string, failure: WalkFai
   }
 }
 
-// Reconciles occupying rows in `group` that the plan did not observe, walking
-// each down to downloaded. A corroborated occupant (in occupiedAtPlan) is
-// left for the loading hop to refuse through the store's exclusive check.
+// Reconciles occupying rows in `group` that the plan did not observe. With an
+// `isProvenDown` predicate only a proven-down `ready` peer is walked to
+// downloaded; any other uncorroborated occupant is kept and logged, and the
+// unchanged loading hop then refuses it through the store's exclusive check
+// before the dep runs. A corroborated occupant (in occupiedAtPlan) is left for
+// that same hop to refuse.
 function releaseStalePeers(ctx: LifecycleCtx, workload: string, group: string): void {
   let rows: ResidencyStateRecord[];
   try {
@@ -214,9 +231,35 @@ function releaseStalePeers(ctx: LifecycleCtx, workload: string, group: string): 
     return;
   }
   for (const row of rows) {
-    if (reconcilableStalePeer(ctx, workload, row)) {
-      reconcilePeer(ctx, row, group);
+    if (!reconcilableStalePeer(ctx, workload, row)) {
+      continue;
     }
+    if (peerProvenDown(ctx, row)) {
+      reconcilePeer(ctx, row, group);
+    } else {
+      keepPeer(ctx, row, group);
+    }
+  }
+}
+
+// Mirrors isCorroboratedOccupant: only a `ready` row can be proven down, a
+// `loading`/`warming` row is never probed (an in-flight direct start may not
+// have written its pid yet) and a throw is not proof. Without a predicate every
+// reconcilable peer counts, as before the predicate existed.
+function peerProvenDown(ctx: LifecycleCtx, row: ResidencyStateRecord): boolean {
+  const isProvenDown = ctx.lifecycle.isProvenDown;
+  if (isProvenDown === undefined) {
+    return true;
+  }
+  if (row.state !== "ready") {
+    return false;
+  }
+  try {
+    // Only a literal true is proof down: a truthy or throwing probe fails closed.
+    const proof: unknown = isProvenDown(row.model);
+    return proof === true;
+  } catch {
+    return false;
   }
 }
 
@@ -231,6 +274,15 @@ function reconcilableStalePeer(
     isOccupyingResidencyState(row.state) &&
     !ctx.occupiedAtPlan.has(row.model)
   );
+}
+
+function keepPeer(ctx: LifecycleCtx, row: ResidencyStateRecord, group: string): void {
+  const line = `[residency] lifecycle kept ${row.model} ${row.state} in group ${group}: not proven down\n`;
+  try {
+    ctx.log(line);
+  } catch {
+    // a keep log failure never aborts the switch
+  }
 }
 
 function reconcilePeer(ctx: LifecycleCtx, row: ResidencyStateRecord, group: string): void {
