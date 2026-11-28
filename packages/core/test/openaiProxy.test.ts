@@ -2847,12 +2847,14 @@ describe("declared cold models (#280)", () => {
     }
   });
 
-  test("guard: a live route for the declared id wins and is forwarded", async () => {
+  test("guard: the declared owner’s live route wins and is forwarded", async () => {
     const t = tempEnv({ LLAMA_CPP_PORT: "17777" });
     try {
       writeLlamaServerWorkload(t.dir, "wl-cold", { rel: "cold/model-a.gguf", port: 8350 });
       const upstream = installConditionalChatUpstream();
-      declaredModelSeam.setDeclaredModelSource?.(() => [declaredModelEntry("cold/model-a.gguf")]);
+      declaredModelSeam.setDeclaredModelSource?.(() => [
+        declaredModelEntry("cold/model-a.gguf", { workload: "wl-cold" }),
+      ]);
 
       const res = await openaiProxy.proxyOpenAI(chatRequest("cold/model-a.gguf"), t.env);
 

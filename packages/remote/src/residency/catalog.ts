@@ -38,8 +38,8 @@ interface DeclaredClaim {
   /**
    * The model the claim's workload's first live route reports as served, for
    * artifact-revision comparison against manifestModel only. Owner detection
-   * does not read it: stale-owner-epoch compares the live route's
-   * route.workload against the claim's workload.
+   * does not read it: stale-owner-epoch requires a live route for the
+   * claimed id on the claiming workload.
    */
   artifact?: string;
 }
@@ -236,10 +236,11 @@ function staleReasonForClaim(
   // simply isn't routed.
   const isLiveModel = liveRoutes.some((route) => route.model === claim.id);
   if (!isLiveModel) return undefined;
-  // Owner epoch mismatch: the claim's workload doesn't match any live route's
-  // workload. The model is live but under a different owner epoch.
-  const routeForClaim = liveRoutes.find((route) => route.workload === claim.workload);
-  if (routeForClaim === undefined) {
+  // A workload serving its canonical rel need not be serving its declared alias yet.
+  const ownsModel = liveRoutes.some(
+    (route) => route.model === claim.id && route.workload === claim.workload,
+  );
+  if (!ownsModel) {
     return "stale-owner-epoch";
   }
   // Artifact revision mismatch: the manifest's model doesn't match the live

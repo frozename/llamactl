@@ -63,6 +63,18 @@ jobs:
         working-directory: llamactl
         run: bun run --cwd packages/app test
 
+      - name: Diagnose macOS oMLX cache fixture
+        if: matrix.os == 'macos-latest'
+        continue-on-error: true
+        timeout-minutes: 2
+        working-directory: llamactl/packages/remote
+        env:
+          LLAMACTL_TEST_TRACE_OMLX_BOOT: "1"
+        run: |
+          command -v python3
+          python3 --version
+          bun test ./test/workload/modelhost-omlx-cache.test.ts
+
       - name: Test packages/remote
         working-directory: llamactl
         run: bun run --cwd packages/remote test

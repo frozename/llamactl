@@ -9,7 +9,7 @@ import type {
 } from "@llamactl/core/residency/llamacpp-sleep";
 
 import { resolveSecret } from "@llamactl/core/config/secret";
-import { type EngineName, ENGINES } from "@llamactl/core/engines";
+import { type EngineName, ENGINES, formatHostForUrl } from "@llamactl/core/engines";
 import {
   type ModelHostRuntimeStatus,
   readModelHostRuntimeStatus,
@@ -53,25 +53,33 @@ import { omitUndefined } from "@llamactl/core/object";
 import {
   isRecordedPidGone,
   type PidIdentityDeps,
+  readRecordedPidEvidence,
   type SignalIdentity,
   verifyPidFile,
 } from "@llamactl/core/pidIdentity";
 import { getResidencyLeaseRegistry } from "@llamactl/core/residency/leases";
+import { managedRuntimeRefusesMutation } from "@llamactl/core/residency/managed-runtime";
 import { currentSessionRefcounts } from "@llamactl/core/residency/sessions";
 import { type WorkloadKey, workloadRuntimeDir } from "@llamactl/core/workloadRuntime";
 import { type ChildProcess, spawn as nodeSpawn } from "node:child_process";
-import { basename, dirname, resolve, sep } from "node:path";
+import { createHash } from "node:crypto";
+import { basename, dirname, isAbsolute, resolve, sep } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 import type { StopFenceRefusal } from "../residency/stop-fence.js";
 
 import {
   getNodeLlamacppSleepController,
+  matchesLlamacppSleepGeneration,
   readLlamacppSleepResidency,
 } from "../residency/llamacpp-sleep-status.js";
+import { managedNativeLaunch } from "../residency/managed-launch-admission.js";
+import { connectOmlxOwnerSocket } from "../residency/omlx-owner-socket.js";
 import {
   closeSync,
   existsSync,
   fstatSync,
+  lstatSync,
   mkdirSync,
   openSync,
   writeFileSync,
@@ -88,6 +96,13 @@ import {
   specForHash,
 } from "../workload/modelhost-schema.js";
 import { listModelHosts, loadModelHostByName, saveModelHost } from "../workload/modelhost-store.js";
+import {
+  loadInitiallyOwnedOmlx,
+  type OmlxCacheLaunch,
+  prepareOmlxCacheLaunch,
+  prepareOmlxOwnerLaunch,
+} from "./omlx-cache-launch.js";
+import { currentNativeOmlxOwner } from "./omlx-native-owner.js";
 
 /**
  * Label marking ModelHosts that share exclusive memory on a node (#557 S5):
@@ -116,6 +131,8 @@ export interface StartModelHostOptions {
   manifest?: unknown;
   signal?: AbortSignal;
   onEvent?: (event: unknown) => void;
+  commitReadiness?: (pid: number) => string | undefined;
+  checkSpawn?: () => string | undefined;
   workloadsDir?: string;
   runtimeDir?: string;
   env?: NodeJS.ProcessEnv;
@@ -158,6 +175,7 @@ export interface StartModelHostResult {
    *  process is gone before releasing memory; `pid` stays null because a
    *  failure is never a running host. */
   spawnedPid?: number;
+  preDispatchRefusal?: string;
   /** Present when the residency-group guard refused the start: the shared
    *  group, the conflicting peer's name, and the state it was observed in. */
   residencyConflict?: {
@@ -199,6 +217,7 @@ export interface StatusModelHostOptions {
   identity?: PidIdentityDeps;
   /** Test seam; undefined reads the node's published llama.cpp sleep controller (#283). */
   sleepController?: LlamacppSleepController | null;
+  probeOrigin?: string;
 }
 
 export interface StatusModelHostResult {
@@ -215,7 +234,25 @@ export interface StatusModelHostResult {
   /** #283: present only for a live llama.cpp host its node's sleep controller
    *  records as sleeping or sleep-pending; recorded state, never a live probe. */
   sleep?: SleepResidency;
+  /** Recorded sleep bound to the requested probe origin and tracked process generation. */
+  probeSleep?: SleepResidency;
+  /** Positive durable native park proof for this live oMLX generation and requested origin. */
+  probeParked?: true;
 }
+
+export type OmlxParkedProbeIdentity = Readonly<{
+  workload: string;
+  pid: number;
+  startedAt: string;
+  specHash: string;
+  endpoint: Readonly<{ host: string; port: number }>;
+}>;
+
+/** The owner proves the durable parked claim and the exact live process birth and listener. */
+export type VerifyParkedOmlxProbe = (
+  identity: OmlxParkedProbeIdentity,
+  signal: AbortSignal,
+) => Promise<boolean>;
 
 function toRuntimeEnv(env: NodeJS.ProcessEnv | undefined): NodeJS.ProcessEnv {
   return env ?? process.env;
@@ -394,6 +431,7 @@ function resolveLsofPath(): string {
 function defaultFindListenerPid(
   endpoint: { host: string; port: number },
   signal?: AbortSignal,
+  requireUnique = false,
 ): Promise<number | null> {
   return new Promise((resolve) => {
     let settled = false;
@@ -417,7 +455,12 @@ function defaultFindListenerPid(
       // different address of the same port (e.g. 0.0.0.0 / ::1) is not matched.
       child = nodeSpawn(
         resolveLsofPath(),
-        ["-nP", `-iTCP@${endpoint.host}:${String(endpoint.port)}`, "-sTCP:LISTEN", "-t"],
+        [
+          "-nP",
+          `-iTCP@${formatHostForUrl(endpoint.host)}:${String(endpoint.port)}`,
+          "-sTCP:LISTEN",
+          "-t",
+        ],
         { stdio: ["ignore", "pipe", "ignore"] },
       );
       let out = "";
@@ -428,11 +471,11 @@ function defaultFindListenerPid(
         finish(null);
       });
       child.on("close", () => {
-        const pid = out
+        const pids = out
           .split(/\s+/)
           .map((token) => Number.parseInt(token, 10))
-          .find((value) => Number.isInteger(value) && value > 0);
-        finish(pid ?? null);
+          .filter((value) => Number.isInteger(value) && value > 0);
+        finish(requireUnique && new Set(pids).size !== 1 ? null : (pids[0] ?? null));
       });
     } catch {
       finish(null);
@@ -556,6 +599,7 @@ async function tryAdoptLiveHost(
   engine: (typeof ENGINES)[keyof typeof ENGINES],
   priorSpecHash: string | undefined,
 ): Promise<StartModelHostResult | "relaunch" | null> {
+  if (manifest.spec.omlxCacheEpoch !== undefined) return null;
   const endpoint = manifest.spec.endpoint;
   const declaredReadiness = normalizeReadiness(manifest.spec.readiness);
   const readiness = await probeReady(endpoint, ADOPT_PROBE_TIMEOUT_MS, declaredReadiness).catch(
@@ -749,11 +793,14 @@ async function adoptOrDeferStartingHost(
         port: endpoint.port,
         modelAliases: resolveModelAliases(manifest),
         startedAt: starting.startedAt,
-        slotSavePath: resolveSlotSavePathArgs(
-          manifest.spec.extraArgs,
-          resolved.LOCAL_AI_RUNTIME_DIR,
-          opts.key.name,
-        ).slotSavePath,
+        slotSavePath:
+          manifest.spec.omlxCacheEpoch !== undefined
+            ? (starting.slotSavePath ?? null)
+            : resolveSlotSavePathArgs(
+                manifest.spec.extraArgs,
+                resolved.LOCAL_AI_RUNTIME_DIR,
+                opts.key.name,
+              ).slotSavePath,
         specHash: currentHash,
         ...binaryNamesField(starting.binaryNames),
         ...readinessField(declaredReadiness),
@@ -941,6 +988,7 @@ async function reapOrAdoptPriorHost(
   resolved: ReturnType<typeof resolveEnv>,
   engine: (typeof ENGINES)[keyof typeof ENGINES],
 ): Promise<StartModelHostResult | null> {
+  if (opts.commitReadiness !== undefined) return null;
   const priorState = readModelHostState(opts.key, resolved);
   if (!priorState) {
     return await reapStartingOrphan(manifest, opts, resolved, engine);
@@ -1308,10 +1356,15 @@ interface ModelHostScopeLaunch {
 // launcher, an env conflict, a failed capability resolve — returns null and
 // the caller takes the byte-identical direct spawn, except for a required
 // launcher (#806 require mode), which refuses instead of spawning unscoped.
+type ModelHostCommand = OmlxCacheLaunch & {
+  envOverrides?: Record<string, string>;
+  beforeDispatch?: () => void;
+};
+
 async function resolveModelHostScopePlan(
   opts: StartModelHostOptions,
   manifest: ModelHostManifest,
-  launch: { binary: string; args: string[]; envOverrides?: Record<string, string> },
+  launch: ModelHostCommand,
   childEnv: NodeJS.ProcessEnv,
   runtimeEnv: NodeJS.ProcessEnv,
   bootStdio: "ignore" | number,
@@ -1322,7 +1375,7 @@ async function resolveModelHostScopePlan(
   // Without a boot-log fd there is no exec marker, so a scope could never be
   // proven established; an optional launcher stays direct, a required one refuses.
   if (bootStdio === "ignore") {
-    if (required) throw new Error(scopeRequiredRefusal("no boot log"));
+    if (required) throw new ModelHostPreDispatchRefusal(scopeRequiredRefusal("no boot log"));
     return null;
   }
   const declaredKeys = [
@@ -1331,7 +1384,10 @@ async function resolveModelHostScopePlan(
   ];
   const shaped = shapeScopeEnv(childEnv, runtimeEnv, declaredKeys);
   if ("conflict" in shaped) {
-    if (required) throw new Error(scopeRequiredRefusal(`env-conflict ${shaped.conflict}`));
+    if (required)
+      throw new ModelHostPreDispatchRefusal(
+        scopeRequiredRefusal(`env-conflict ${shaped.conflict}`),
+      );
     modelHostWarn(opts)(
       `ModelHost ${opts.key.name}: engine scope env-conflict (${shaped.conflict}); spawning directly`,
     );
@@ -1345,7 +1401,7 @@ async function resolveModelHostScopePlan(
     resolution = { ok: false, reason: "probe-failed" };
   }
   if (!resolution.ok) {
-    if (required) throw new Error(scopeRequiredRefusal(resolution.reason));
+    if (required) throw new ModelHostPreDispatchRefusal(scopeRequiredRefusal(resolution.reason));
     return null;
   }
   const base = scopeUnitBase(opts.key.name, launcher.unitSuffix());
@@ -1417,10 +1473,24 @@ type ScopedSpawnAttempt =
   | { kind: "aborted"; child: ChildProcess; pid: number; scope: ModelHostScopeLaunch }
   | { kind: "none" };
 
+class ModelHostPreDispatchRefusal extends Error {}
+
+function enforceManagedHostSpawn(
+  opts: StartModelHostOptions,
+  resolved: ReturnType<typeof resolveEnv>,
+): void {
+  if (opts.checkSpawn === undefined) return;
+  if (managedRuntimeRefusesMutation(resolved.LOCAL_AI_RUNTIME_DIR)) {
+    throw new ModelHostPreDispatchRefusal("ManagedOwnerRequired");
+  }
+  const refusal = opts.checkSpawn();
+  if (refusal !== undefined) throw new ModelHostPreDispatchRefusal(refusal);
+}
+
 async function attemptScopedModelHostSpawn(
   opts: StartModelHostOptions,
   manifest: ModelHostManifest,
-  launch: { binary: string; args: string[]; envOverrides?: Record<string, string> },
+  launch: ModelHostCommand,
   childEnv: NodeJS.ProcessEnv,
   runtimeEnv: NodeJS.ProcessEnv,
   bootStdio: "ignore" | number,
@@ -1439,6 +1509,8 @@ async function attemptScopedModelHostSpawn(
   );
   if (scoped === null) return { kind: "none" };
   const offset = fstatSync(scoped.plan.bootFd).size;
+  enforceManagedHostSpawn(opts, resolved);
+  launch.beforeDispatch?.();
   const child = spawn(
     scoped.plan.systemdRunPath,
     buildScopeArgv(scoped.plan.base, opts.key.name, launch.binary, launch.args),
@@ -1468,6 +1540,9 @@ async function attemptScopedModelHostSpawn(
       pid,
       startedAt: new Date().toISOString(),
       specHash: startSpecHash,
+      ...(manifest.spec.omlxCacheEpoch !== undefined
+        ? omitUndefined({ slotSavePath: launch.slotSavePath })
+        : {}),
       ...binaryNamesField(manifest.spec.binaryNames),
       ...scopeUnitField(scoped.scopeUnit),
     },
@@ -1495,7 +1570,7 @@ async function attemptScopedModelHostSpawn(
 // The direct spawn — also the scoped path's single fallback target. Writes the
 // same starting record minus scopeUnit so pre-#806 records stay byte-identical.
 function spawnDirectModelHostChild(
-  launch: { binary: string; args: string[] },
+  launch: ModelHostCommand,
   childEnv: NodeJS.ProcessEnv,
   bootStdio: "ignore" | number,
   opts: StartModelHostOptions,
@@ -1505,6 +1580,8 @@ function spawnDirectModelHostChild(
   onSpawned?: (child: ChildProcess, pid: number) => void,
 ): { child: ChildProcess; pid: number } {
   const spawn = opts.spawn ?? nodeSpawn;
+  enforceManagedHostSpawn(opts, resolved);
+  launch.beforeDispatch?.();
   const child = spawn(launch.binary, launch.args, {
     detached: true,
     stdio: bootStdio === "ignore" ? "ignore" : ["ignore", bootStdio, bootStdio],
@@ -1526,6 +1603,9 @@ function spawnDirectModelHostChild(
       pid,
       startedAt: new Date().toISOString(),
       specHash: startSpecHash,
+      ...(manifest.spec.omlxCacheEpoch !== undefined
+        ? omitUndefined({ slotSavePath: launch.slotSavePath })
+        : {}),
       ...binaryNamesField(manifest.spec.binaryNames),
     },
     opts.key,
@@ -1637,16 +1717,21 @@ function modelHostBootEnv(
   };
 }
 
-function writeReadyModelHostState(
+function publishReadyModelHost(
   opts: StartModelHostOptions,
   manifest: ModelHostManifest,
-  resolved: ReturnType<typeof resolveEnv>,
-  spec: ModelHostSpecForEngine,
-  pid: number,
-  scoped: ModelHostScopeLaunch | null,
-  startSpecHash: string,
-  slotSavePath: string | null,
+  ctx: ModelHostLaunchContext,
+  runtime: { child: ChildProcess; pid: number; scoped: ModelHostScopeLaunch | null },
+  launch: { specHash: string; slotSavePath: string | null; publish(): void },
 ): void {
+  const { resolved, spec } = ctx;
+  const { child, pid, scoped } = runtime;
+  ensureSpawnedChildStillRunning(child, pid, manifest.spec.endpoint);
+  const refusal = opts.commitReadiness?.(pid);
+  if (refusal !== undefined) throw new Error(refusal);
+  if (opts.commitReadiness !== undefined && opts.manifest !== undefined) {
+    saveModelHost(mergeDiskManagedByLabel(manifest, opts.workloadsDir), opts.workloadsDir);
+  }
   const endpoint = manifest.spec.endpoint;
   writeModelHostState(
     {
@@ -1657,15 +1742,19 @@ function writeReadyModelHostState(
       port: endpoint.port,
       modelAliases: resolveModelAliases(manifest),
       startedAt: new Date().toISOString(),
-      slotSavePath,
-      specHash: startSpecHash,
+      slotSavePath: launch.slotSavePath,
+      specHash: launch.specHash,
       ...binaryNamesField(manifest.spec.binaryNames),
-      ...readinessField(spec.readiness),
+      ...(manifest.spec.omlxNativeResidency === undefined
+        ? readinessField(spec.readiness)
+        : { requiresOwnerTransport: true, readiness: ownedOmlxReadiness(manifest) }),
       ...scopeUnitField(scoped?.scopeUnit),
     },
     opts.key,
     resolved,
   );
+  launch.publish();
+  clearStartingRecordIfOwned(opts.key, resolved, pid);
 }
 
 // #806 phase 3: a scoped child that never exited (hung-unreaped) may still be
@@ -1678,7 +1767,28 @@ async function teardownFailedModelHostLaunch(
   startingPid: number | null,
   opts: StartModelHostOptions,
   resolved: ReturnType<typeof resolveEnv>,
+  nativeBoot: OwnedOmlxBoot | undefined,
 ): Promise<void> {
+  if (nativeBoot !== undefined) {
+    if (child === null || startingPid === null) return;
+    const exited = (): boolean =>
+      typeof child.exitCode === "number" || typeof child.signalCode === "string";
+    const verifyGeneration: NonNullable<PidIdentityDeps["verifyGeneration"]> = (pid) => {
+      if (pid !== startingPid) return "unknown";
+      if (exited()) return "dead";
+      return nativeBoot.ticket?.processCurrent() === true ? "alive" : "unknown";
+    };
+    if (verifyGeneration(startingPid) === "alive") {
+      await engine
+        .teardown(startingPid, {
+          recordPath: modelhostStartingFile(resolved, opts.key),
+          deps: { verifyGeneration },
+        })
+        .catch(() => undefined);
+    }
+    if (exited()) clearStartingRecordIfOwned(opts.key, resolved, startingPid);
+    return;
+  }
   await teardownChildSilently(child, engine);
   const keepStartingRecord =
     scoped !== null && child !== null && child.exitCode === null && child.signalCode === null;
@@ -1687,12 +1797,249 @@ async function teardownFailedModelHostLaunch(
   }
 }
 
+function nativeOmlxOwnerRefusal(
+  manifest: ModelHostManifest,
+  opts: StartModelHostOptions,
+): StartModelHostResult | undefined {
+  if (manifest.spec.omlxNativeResidency === undefined) return undefined;
+  if (
+    currentNativeOmlxOwner()?.canServe(manifest.spec.endpoint.port) === true &&
+    managedNativeLaunch(opts.key.name) !== undefined
+  )
+    return undefined;
+  return failedModelHostStart(
+    new Error("ManagedNativeOmlxOwnerUnavailable"),
+    undefined,
+    opts.commitReadiness !== undefined,
+  );
+}
+
+type OwnedOmlxBoot = {
+  auth: ReturnType<typeof prepareOmlxOwnerLaunch>;
+  bind: NonNullable<ReturnType<typeof managedNativeLaunch>>;
+  ticket?: NonNullable<ReturnType<OwnedOmlxBoot["bind"]>>;
+  owner: NonNullable<ReturnType<typeof currentNativeOmlxOwner>>;
+};
+
+function prepareOwnedOmlxBoot(
+  manifest: ModelHostManifest,
+  launch: ModelHostCommand,
+  childEnv: NodeJS.ProcessEnv,
+): OwnedOmlxBoot | undefined {
+  if (manifest.spec.omlxNativeResidency === undefined) return undefined;
+  const workload = manifest.metadata.name;
+  const owner = currentNativeOmlxOwner();
+  const bind = managedNativeLaunch(workload);
+  const model = manifest.spec.hostedModels[0];
+  if (owner === undefined || bind === undefined || model === undefined) {
+    throw new Error("ManagedNativeOmlxOwnerUnavailable");
+  }
+  const auth = prepareOmlxOwnerLaunch(launch, childEnv, model.rel);
+  owner.protect(workload);
+  return { auth, bind, owner };
+}
+
+function ownedOmlxReadiness(manifest: ModelHostManifest): ModelHostReadiness {
+  return normalizeReadiness(manifest.spec.readiness) ?? { path: "/health" };
+}
+
+async function awaitOwnedOmlxReadiness(
+  opts: StartModelHostOptions,
+  manifest: ModelHostManifest,
+  boot: OwnedOmlxBoot,
+  pid: number,
+  resolved: ReturnType<typeof resolveEnv>,
+): Promise<() => void> {
+  const ticket = boot.bind(pid);
+  if (ticket === undefined) throw new Error("ManagedNativeOmlxGenerationUnverified");
+  boot.ticket = ticket;
+  const { endpoint } = manifest.spec;
+  const { auth, owner } = boot;
+  const signal = AbortSignal.any([
+    AbortSignal.timeout((opts.timeoutSeconds ?? manifest.spec.timeoutSeconds) * 1000),
+    ...(opts.signal === undefined ? [] : [opts.signal]),
+  ]);
+  while (
+    !signal.aborted &&
+    ticket.current() &&
+    (await defaultFindListenerPid(endpoint, signal, true)) !== pid
+  ) {
+    await Bun.sleep(100);
+  }
+  signal.throwIfAborted();
+  const readiness = ownedOmlxReadiness(manifest);
+  const connect = connectOmlxOwnerSocket(endpoint, pid, ticket.processCurrent);
+  const currentLaunch = (): boolean => ticket.current() && auth.verifyLaunchInputs();
+  const binding = {
+    endpoint,
+    modelId: auth.modelId,
+    modelPath: auth.modelPath,
+    artifactRevision: auth.artifactRevision,
+    runtimeGeneration: ticket.runtime.birthId,
+    stillCurrent: ticket.processCurrent,
+  };
+  const bootReady = await loadInitiallyOwnedOmlx({
+    binding,
+    apiKey: auth.apiKey,
+    readiness,
+    verifyReservation: currentLaunch,
+    connect: connectOmlxOwnerSocket(endpoint, pid, currentLaunch),
+    admitLoad: () => opts.checkSpawn?.() === undefined && currentLaunch(),
+    signal,
+  });
+  if (!bootReady) throw new Error("ManagedNativeOmlxReadinessUnverified");
+  const specHash = computeModelHostSpecHash(specForHash(manifest.spec));
+  return (): void => {
+    owner.register({
+      apiKey: auth.apiKey,
+      binding,
+      connect,
+      readiness,
+      runtime: ticket.runtime,
+      specHash,
+      verifyLaunchInputs: () => auth.verifyLaunchInputs(),
+      current(): boolean {
+        const state = readModelHostState(opts.key, resolved);
+        return (
+          state?.pid === pid &&
+          state.requiresOwnerTransport === true &&
+          state.specHash === specHash &&
+          state.host === endpoint.host &&
+          state.port === endpoint.port &&
+          auth.verify() &&
+          ticket.processCurrent()
+        );
+      },
+    });
+  };
+}
+
+async function prepareModelHostCommand(
+  manifest: ModelHostManifest,
+  workload: string,
+  ctx: ModelHostLaunchContext,
+  dispatch: { attempted: boolean },
+): Promise<{
+  launch: ModelHostCommand;
+  childEnv: NodeJS.ProcessEnv;
+  nativeBoot: OwnedOmlxBoot | undefined;
+}> {
+  const { env, runtimeEnv, resolved, engine, spec, apiKey } = ctx;
+  const boot = modelHostBootEnv(env, resolved, spec, workload);
+  const slots = resolveSlotSavePathArgs(
+    manifest.spec.extraArgs,
+    resolved.LOCAL_AI_RUNTIME_DIR,
+    workload,
+  );
+  spec.extraArgs = slots.args;
+  await engine.prepareLaunch?.(spec, boot);
+  const command = engine.buildBootCommand(spec, boot);
+  const childEnv = sanitizeChildEnv(runtimeEnv, command.envOverrides, manifest.spec.env, apiKey);
+  const cacheEpoch = spec.omlxCacheEpoch;
+  const launch =
+    cacheEpoch === undefined
+      ? { ...command, slotSavePath: slots.slotSavePath }
+      : {
+          ...command,
+          ...prepareOmlxCacheLaunch(
+            command,
+            childEnv,
+            manifest.spec.hostedModels[0]?.rel ?? "",
+            cacheEpoch,
+          ),
+        };
+  const nativeBoot = prepareOwnedOmlxBoot(manifest, launch, childEnv);
+  return {
+    launch: {
+      ...launch,
+      beforeDispatch(): void {
+        launch.verifyCacheInputs?.();
+        if (nativeBoot !== undefined && !nativeBoot.auth.verifyLaunchInputs())
+          throw new Error("ManagedNativeOmlxInputsChanged");
+        dispatch.attempted = true;
+      },
+    },
+    childEnv: nativeBoot?.auth.env ?? childEnv,
+    nativeBoot,
+  };
+}
+
+function failedModelHostStart(
+  error: unknown,
+  spawnedPid: number | undefined,
+  refusedBeforeDispatch: boolean,
+): StartModelHostResult {
+  const message = error instanceof Error ? error.message : "modelhost start failed";
+  return {
+    ok: false,
+    pid: null,
+    error: message,
+    ...omitUndefined({
+      spawnedPid,
+      preDispatchRefusal: refusedBeforeDispatch ? message : undefined,
+    }),
+  };
+}
+
+async function modelHostLaunchReadiness(
+  opts: StartModelHostOptions,
+  manifest: ModelHostManifest,
+  ctx: ModelHostLaunchContext,
+  runtime: { child: ChildProcess; pid: number; scoped: ModelHostScopeLaunch | null },
+  native?: OwnedOmlxBoot,
+): Promise<() => void> {
+  if (native !== undefined)
+    return await awaitOwnedOmlxReadiness(opts, manifest, native, runtime.pid, ctx.resolved);
+  await awaitModelHostReadiness(
+    opts,
+    ctx.engine,
+    manifest,
+    ctx.spec,
+    runtime.child,
+    runtime.pid,
+    runtime.scoped,
+  );
+  return (): void => {
+    currentNativeOmlxOwner()?.clear(opts.key.name);
+  };
+}
+
+async function finishModelHostLaunch(
+  opts: StartModelHostOptions,
+  manifest: ModelHostManifest,
+  ctx: ModelHostLaunchContext,
+  runtime: { child: ChildProcess; pid: number; scoped: ModelHostScopeLaunch | null },
+  launch: { specHash: string; slotSavePath: string | null; nativeBoot: OwnedOmlxBoot | undefined },
+): Promise<void> {
+  const { specHash, slotSavePath, nativeBoot } = launch;
+  const publish = await modelHostLaunchReadiness(opts, manifest, ctx, runtime, nativeBoot);
+  if (nativeBoot !== undefined && !nativeBoot.auth.verifyLaunchInputs()) {
+    throw new Error("ManagedNativeOmlxInputsChanged");
+  }
+  publishReadyModelHost(opts, manifest, ctx, runtime, { specHash, slotSavePath, publish });
+}
+
+function modelHostScopeOptions(
+  opts: StartModelHostOptions,
+  spec: ModelHostManifest["spec"],
+): StartModelHostOptions {
+  if (spec.omlxNativeResidency === undefined) return opts;
+  const launcher = opts.engineScope !== undefined ? opts.engineScope : getEngineScopeLauncher();
+  // The private oMLX bootstrap must not pass its launch credentials through a scope wrapper.
+  if (launcher?.required === true) {
+    throw new ModelHostPreDispatchRefusal(
+      scopeRequiredRefusal("private oMLX bootstrap unsupported"),
+    );
+  }
+  return { ...opts, engineScope: null };
+}
+
 async function launchModelHostWithBootLog(
   manifest: ModelHostManifest,
   opts: StartModelHostOptions,
   ctx: ModelHostLaunchContext & { bootLog: BootLogHandle },
 ): Promise<StartModelHostResult> {
-  const { env, runtimeEnv, resolved, engine, spec, apiKey, bootLog } = ctx;
+  const { runtimeEnv, resolved, engine, spec, bootLog } = ctx;
   if (opts.signal?.aborted) {
     const result = { ok: false, pid: null, error: MODEL_HOST_ABORT_MESSAGE };
     opts.onEvent?.({ type: "done", result });
@@ -1706,32 +2053,21 @@ async function launchModelHostWithBootLog(
 
   warnExternalBind(manifest, opts);
 
-  const bootEnv = modelHostBootEnv(env, resolved, spec, opts.key.name);
-
-  const extraArgsResolved = resolveSlotSavePathArgs(
-    manifest.spec.extraArgs,
-    resolved.LOCAL_AI_RUNTIME_DIR,
-    opts.key.name,
-  );
-  spec.extraArgs = extraArgsResolved.args;
   let child: ChildProcess | null = null;
   let startingPid: number | null = null;
   let scoped: ModelHostScopeLaunch | null = null;
+  const dispatch = { attempted: false };
+  let nativeBoot: OwnedOmlxBoot | undefined;
   const startSpecHash = computeModelHostSpecHash(specForHash(manifest.spec));
   try {
-    await engine.prepareLaunch?.(spec, bootEnv);
-    const launch = engine.buildBootCommand(spec, bootEnv);
-    // stdio:"ignore" made every launch failure undiagnosable: a child that dies
-    // in ~2s (argparse rejecting a stale flag exits 2) left no trace, probeReady
-    // then polled the whole budget, and the caller reported a bare
-    // "modelHostStart timed out". Persist the child's output beside its state.
+    const scopeOptions = modelHostScopeOptions(opts, manifest.spec);
+    const prepared = await prepareModelHostCommand(manifest, opts.key.name, ctx, dispatch);
+    const { launch, childEnv } = prepared;
+    nativeBoot = prepared.nativeBoot;
     const bootStdio = openBootLogFd(opts.key.name, resolved.LOCAL_AI_RUNTIME_DIR, bootLog);
-    const childEnv = sanitizeChildEnv(runtimeEnv, launch.envOverrides, manifest.spec.env, apiKey);
-    // #806 phase 3: with a published launcher (Linux agents), try the scoped
-    // launch first; every precondition failure falls through to the direct
-    // spawn below unchanged.
+    // Optional scope failures preserve the direct path; required scope failures refuse it.
     const attempt = await attemptScopedModelHostSpawn(
-      opts,
+      scopeOptions,
       manifest,
       launch,
       childEnv,
@@ -1785,34 +2121,37 @@ async function launchModelHostWithBootLog(
     if (pid === null) {
       throw new Error("failed to spawn modelhost process");
     }
-    await awaitModelHostReadiness(opts, engine, manifest, spec, child, pid, scoped);
-
-    const endpoint = manifest.spec.endpoint;
-    ensureSpawnedChildStillRunning(child, pid, endpoint);
-    writeReadyModelHostState(
+    await finishModelHostLaunch(
       opts,
       manifest,
-      resolved,
-      spec,
-      pid,
-      scoped,
-      startSpecHash,
-      extraArgsResolved.slotSavePath,
+      ctx,
+      { child, pid, scoped },
+      {
+        specHash: startSpecHash,
+        slotSavePath: launch.slotSavePath,
+        nativeBoot,
+      },
     );
-    clearStartingRecordIfOwned(opts.key, resolved, pid);
     const result = { ok: true, pid };
     opts.onEvent?.({ type: "done", result });
     return result;
   } catch (error) {
     const spawnedPid = child?.pid;
-    await teardownFailedModelHostLaunch(child, engine, scoped, startingPid, opts, resolved);
-    const message = error instanceof Error ? error.message : "modelhost start failed";
-    const result = {
-      ok: false,
-      pid: null,
-      error: message,
-      ...omitUndefined({ spawnedPid }),
-    };
+    await teardownFailedModelHostLaunch(
+      child,
+      engine,
+      scoped,
+      startingPid,
+      opts,
+      resolved,
+      nativeBoot,
+    );
+    const result = failedModelHostStart(
+      error,
+      spawnedPid,
+      !dispatch.attempted &&
+        (spec.omlxCacheEpoch !== undefined || error instanceof ModelHostPreDispatchRefusal),
+    );
     opts.onEvent?.({ type: "done", result });
     return result;
   }
@@ -1900,10 +2239,102 @@ function residencyGroupConflict(
   return null;
 }
 
+export interface PinnedModelHostStartup {
+  manifest: ModelHostManifest;
+  env: NodeJS.ProcessEnv;
+  configEnv: Readonly<NodeJS.ProcessEnv>;
+  effectiveSpecDigest: string;
+  effectiveLaunch: Readonly<Record<string, unknown>>;
+}
+
+export function pinModelHostStartup(input: ModelHostManifest): PinnedModelHostStartup {
+  const manifest = ModelHostManifestSchema.parse(input);
+  const env = { ...process.env };
+  const resolved = resolveEnv(env);
+  const boot = modelHostBootEnv(
+    env,
+    resolved,
+    buildModelHostSpec(manifest),
+    manifest.metadata.name,
+  );
+  const effective = {
+    name: manifest.metadata.name,
+    labels: manifest.metadata.labels,
+    spec: manifest.spec,
+    boot,
+    modelsDir: resolved.LLAMA_CPP_MODELS,
+    runtimeDir: resolved.LOCAL_AI_RUNTIME_DIR,
+    childEnv: sanitizeChildEnv(env, undefined, manifest.spec.env),
+  };
+  const canonical = JSON.stringify(effective, (_key: string, value: unknown): unknown =>
+    value !== null && typeof value === "object" && !Array.isArray(value)
+      ? Object.fromEntries(
+          Object.keys(value)
+            .sort()
+            .map((key) => [key, Reflect.get(value, key)]),
+        )
+      : value,
+  );
+  const effectiveLaunch = structuredClone({
+    engine: manifest.spec.engine,
+    binary: manifest.spec.binary,
+    endpoint: manifest.spec.endpoint,
+    hostedModels: manifest.spec.hostedModels,
+    extraArgs: manifest.spec.extraArgs,
+    modelsDir: resolved.LLAMA_CPP_MODELS,
+    runtimeDir: resolved.LOCAL_AI_RUNTIME_DIR,
+  });
+  return {
+    manifest,
+    env,
+    configEnv: {
+      HOME: effective.childEnv["HOME"],
+      XDG_CONFIG_HOME: effective.childEnv["XDG_CONFIG_HOME"],
+    },
+    effectiveSpecDigest: createHash("sha256").update(canonical).digest("hex"),
+    effectiveLaunch,
+  };
+}
+
+/** Resolve the same local inputs the supported engines use at spawn. */
+export function modelHostCalibrationLaunch(pinned: PinnedModelHostStartup):
+  | {
+      engine: "llamacpp" | "kapitsa";
+      binary: string;
+      args: readonly string[];
+      env: NodeJS.ProcessEnv;
+    }
+  | undefined {
+  const { manifest, env } = pinned;
+  const engine = manifest.spec.engine;
+  if (engine !== "llamacpp" && engine !== "kapitsa") return undefined;
+  const spec = buildModelHostSpec(manifest);
+  if (!ENGINES[engine].validateSpec(spec).ok || !isAbsolute(spec.binary)) return undefined;
+  const resolved = resolveEnv(env);
+  spec.extraArgs = resolveSlotSavePathArgs(
+    manifest.spec.extraArgs,
+    resolved.LOCAL_AI_RUNTIME_DIR,
+    manifest.metadata.name,
+  ).args;
+  const boot = modelHostBootEnv(env, resolved, spec, manifest.metadata.name);
+  const launch = ENGINES[engine].buildBootCommand(spec, boot);
+  return {
+    engine,
+    binary: launch.binary,
+    args: launch.args,
+    env: sanitizeChildEnv(env, launch.envOverrides, manifest.spec.env),
+  };
+}
+
 export async function startModelHost(opts: StartModelHostOptions): Promise<StartModelHostResult> {
   const env = toRuntimeEnv(opts.env);
   const runtimeEnv = withRuntimeDir(env, opts.runtimeDir);
   const resolved = resolveEnv(runtimeEnv);
+  if (managedRuntimeRefusesMutation(resolved.LOCAL_AI_RUNTIME_DIR)) {
+    const result = { ok: false, pid: null, error: "ManagedOwnerRequired" };
+    opts.onEvent?.({ type: "done", result });
+    return result;
+  }
   const manifest = opts.manifest
     ? ModelHostManifestSchema.parse(opts.manifest)
     : loadModelHostByName(opts.key.name, opts.workloadsDir);
@@ -1928,8 +2359,13 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
   // Refuse an exposed bind BEFORE any teardown: reapOrAdoptPriorHost would
   // otherwise kill a live host to make room for a spawn we then deny.
   const bindRefusal = modelHostBindRefusal(manifest);
-  if (bindRefusal !== null) {
-    const result = { ok: false, pid: null, error: bindRefusal };
+  const nativeRefusal = nativeOmlxOwnerRefusal(manifest, opts);
+  if (nativeRefusal !== undefined || bindRefusal !== null) {
+    const result = nativeRefusal ?? {
+      ok: false,
+      pid: null,
+      error: bindRefusal ?? "ModelHostBindRefused",
+    };
     opts.onEvent?.({ type: "done", result });
     return result;
   }
@@ -1967,10 +2403,16 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
     return result;
   }
 
+  if (opts.commitReadiness !== undefined && residencyPeerState(opts.key, opts, resolved) !== null) {
+    const result = { ok: false, pid: null, error: "ManagedRestartUnavailable" };
+    opts.onEvent?.({ type: "done", result });
+    return result;
+  }
+
   // Persist the accepted inline manifest only once validation and the bind
   // gate have passed: a refused start must not replace the previously saved
   // desired state with a manifest the controller will always refuse.
-  if (opts.manifest) {
+  if (opts.manifest !== undefined && opts.commitReadiness === undefined) {
     saveModelHost(mergeDiskManagedByLabel(manifest, opts.workloadsDir), opts.workloadsDir);
   }
 
@@ -2002,6 +2444,37 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
   }
 }
 
+async function teardownStoppedHost(
+  opts: StopModelHostOptions,
+  recordPath: string,
+  host: { pid: number; engine: EngineName },
+  identity: PidIdentityDeps,
+): Promise<string | undefined> {
+  const teardown =
+    opts.teardown ??
+    ((pid: number): Promise<void> =>
+      ENGINES[host.engine].teardown(
+        pid,
+        teardownIdentity(recordPath, opts.identity, identity.expectCommand),
+      ));
+  try {
+    await teardown(host.pid, opts.graceSeconds);
+  } catch {
+    // A resolved or thrown teardown is not proof of release.
+  }
+  const verdict = verifyPidFile(recordPath, host.pid, identity);
+  if (isRecordedPidGone(verdict)) return undefined;
+  return verdict === "alive"
+    ? "process still alive after teardown"
+    : "pid identity unknown after teardown";
+}
+
+function modelHostStopIdentityError(identity: PidIdentityDeps): string {
+  return identity.verifyGeneration === undefined
+    ? "pid identity unknown"
+    : "ManagedStopGenerationUnverified";
+}
+
 // #317: an engine orphaned by an agent restart during start-up has no state
 // sidecar — the starting record written at spawn is the only track of it.
 // Same identity contract as the sidecar path: alive means ours (teardown +
@@ -2012,44 +2485,35 @@ async function stopStartingRecord(
   resolved: ReturnType<typeof resolveEnv>,
 ): Promise<StopModelHostResult> {
   const starting = readModelHostStarting(opts.key, resolved);
-  if (!starting) return { ok: true, pid: null };
+  const managed = opts.identity?.verifyGeneration !== undefined;
+  if (!starting) {
+    return managed
+      ? { ok: false, pid: null, error: "ManagedStopGenerationUnverified" }
+      : { ok: true, pid: null };
+  }
   const recordPath = modelhostStartingFile(resolved, opts.key);
   // #806 phase 3: tombstone the scope unit before verifying, so an in-flight
   // scoped launch that sees its wrapper exit cannot fall back to a direct
-  // spawn behind this stop's back.
-  if (starting.scopeUnit !== undefined) {
-    writeScopeStop(workloadRuntimeDir(resolved, opts.key), "modelhost", starting.scopeUnit);
-  }
+  // spawn behind this stop's back. A managed stop first verifies its claim.
+  const tombstone = (): void => {
+    if (starting.scopeUnit !== undefined) {
+      writeScopeStop(workloadRuntimeDir(resolved, opts.key), "modelhost", starting.scopeUnit);
+    }
+  };
+  if (!managed) tombstone();
   const identity = startingIdentityDeps(starting, opts.identity, starting.binaryNames);
   const verdict = verifyPidFile(recordPath, starting.pid, identity);
   if (verdict === "unknown") {
-    return { ok: false, pid: starting.pid, error: "pid identity unknown" };
+    return {
+      ok: false,
+      pid: starting.pid,
+      error: modelHostStopIdentityError(identity),
+    };
   }
   if (verdict === "alive") {
-    const teardown =
-      opts.teardown ??
-      ((pid: number, _graceSeconds?: number): Promise<void> =>
-        ENGINES[starting.engine].teardown(
-          pid,
-          teardownIdentity(recordPath, opts.identity, identity.expectCommand),
-        ));
-    try {
-      await teardown(starting.pid, opts.graceSeconds);
-    } catch {
-      // A resolved or thrown teardown is not proof of release; the identity
-      // re-check below is authoritative.
-    }
-    const released = verifyPidFile(recordPath, starting.pid, identity);
-    if (!isRecordedPidGone(released)) {
-      return {
-        ok: false,
-        pid: starting.pid,
-        error:
-          released === "alive"
-            ? "process still alive after teardown"
-            : "pid identity unknown after teardown",
-      };
-    }
+    if (managed) tombstone();
+    const error = await teardownStoppedHost(opts, recordPath, starting, identity);
+    if (error !== undefined) return { ok: false, pid: starting.pid, error };
   }
   clearStartingRecordIfOwned(opts.key, resolved, starting.pid);
   return { ok: true, pid: starting.pid };
@@ -2057,46 +2521,61 @@ async function stopStartingRecord(
 
 export async function stopModelHost(opts: StopModelHostOptions): Promise<StopModelHostResult> {
   const resolved = resolveEnv(withRuntimeDir(toRuntimeEnv(opts.env), opts.runtimeDir));
+  if (managedRuntimeRefusesMutation(resolved.LOCAL_AI_RUNTIME_DIR)) {
+    return { ok: false, pid: null, error: "ManagedOwnerRequired" };
+  }
   const state = readModelHostState(opts.key, resolved);
   if (!state) return await stopStartingRecord(opts, resolved);
   // Teardown signals the whole process group — the worst place to act on a
   // recycled pid — so the recorded pid is verified against its pid file
-  // (the identity anchor, written before the sidecar) and corroborated by
-  // the engine's argv0 first.
+  // (the identity anchor, written before the sidecar). A private oMLX
+  // launch has durable birth evidence even when the optional process title is absent.
   const recordPath = modelhostPidFile(resolved, opts.key);
-  const identity = hostIdentityDeps(state.engine, opts.identity, state.binaryNames);
+  const identity =
+    state.requiresOwnerTransport === true && opts.identity?.verifyGeneration !== undefined
+      ? opts.identity
+      : hostIdentityDeps(state.engine, opts.identity, state.binaryNames);
   const verdict = verifyPidFile(recordPath, state.pid, identity);
   if (verdict === "unknown") {
-    return { ok: false, pid: state.pid, error: "pid identity unknown" };
+    return {
+      ok: false,
+      pid: state.pid,
+      error: modelHostStopIdentityError(identity),
+    };
   }
   if (verdict === "alive") {
-    const teardown =
-      opts.teardown ??
-      ((pid: number, _graceSeconds?: number): Promise<void> =>
-        ENGINES[state.engine].teardown(
-          pid,
-          teardownIdentity(recordPath, opts.identity, identity.expectCommand),
-        ));
-    try {
-      await teardown(state.pid, opts.graceSeconds);
-    } catch {
-      // A resolved or thrown teardown is not proof of release; the identity
-      // re-check below is authoritative.
-    }
-    const released = verifyPidFile(recordPath, state.pid, identity);
-    if (!isRecordedPidGone(released)) {
-      return {
-        ok: false,
-        pid: state.pid,
-        error:
-          released === "alive"
-            ? "process still alive after teardown"
-            : "pid identity unknown after teardown",
-      };
-    }
+    const error = await teardownStoppedHost(opts, recordPath, state, identity);
+    if (error !== undefined) return { ok: false, pid: state.pid, error };
   }
   removeModelHostState(opts.key, resolved);
   return { ok: true, pid: state.pid };
+}
+
+function matchesModelHostProbeOrigin(
+  state: ModelHostState,
+  probeOrigin: string | undefined,
+): boolean {
+  if (probeOrigin === undefined) return false;
+  try {
+    const origin = new URL(`http://${formatHostForUrl(state.host)}:${String(state.port)}`).origin;
+    return probeOrigin === origin;
+  } catch {
+    return false;
+  }
+}
+
+function modelHostSleepResidency(
+  opts: StatusModelHostOptions,
+  state: ModelHostState,
+): SleepResidency | undefined {
+  if (state.engine !== "llamacpp") return undefined;
+  if (opts.sleepController !== undefined) {
+    return readLlamacppSleepResidency(opts.sleepController, opts.key.name);
+  }
+  const recorded = readLlamacppSleepResidency(getNodeLlamacppSleepController(), opts.key.name);
+  return recorded !== undefined && matchesLlamacppSleepGeneration(opts.key.name, state)
+    ? recorded
+    : undefined;
 }
 
 export function statusModelHost(opts: StatusModelHostOptions): StatusModelHostResult {
@@ -2123,19 +2602,100 @@ export function statusModelHost(opts: StatusModelHostOptions): StatusModelHostRe
       ...runtime,
     };
   }
-  const sleep =
-    state.engine === "llamacpp"
-      ? readLlamacppSleepResidency(
-          opts.sleepController === undefined
-            ? getNodeLlamacppSleepController()
-            : opts.sleepController,
-          opts.key.name,
-        )
-      : undefined;
+  const sleep = modelHostSleepResidency(opts, state);
   return {
     state: "Running",
     pid: state.pid,
-    ...omitUndefined({ specHash: state.specHash, sleep }),
+    ...omitUndefined({
+      specHash: state.specHash,
+      sleep,
+      probeSleep:
+        sleep !== undefined &&
+        opts.sleepController === undefined &&
+        matchesModelHostProbeOrigin(state, opts.probeOrigin)
+          ? sleep
+          : undefined,
+    }),
     ...runtime,
   };
+}
+
+export function isModelHostProvenDown(key: WorkloadKey, resolved = resolveEnv()): boolean {
+  const pidPath = modelhostPidFile(resolved, key);
+  const statePath = modelhostStateFile(resolved, key);
+  try {
+    if (lstatSync(modelhostStartingFile(resolved, key), { throwIfNoEntry: false }) !== undefined) {
+      return false;
+    }
+    const pidRecord = readRecordedPidEvidence(pidPath);
+    const stateRecord = lstatSync(statePath, { throwIfNoEntry: false });
+    if (pidRecord.kind === "absent" && stateRecord === undefined) return true;
+    if (pidRecord.kind !== "present" || stateRecord?.isFile() !== true) return false;
+    const state = readModelHostState(key, resolved);
+    if (state?.pid !== pidRecord.pid) return false;
+    return isRecordedPidGone(
+      verifyPidFile(
+        pidPath,
+        state.pid,
+        hostIdentityDeps(state.engine, undefined, state.binaryNames),
+      ),
+    );
+  } catch {
+    return false;
+  }
+}
+
+function omlxParkedProbeIdentity(
+  opts: StatusModelHostOptions,
+  pid: StatusModelHostResult["pid"],
+): OmlxParkedProbeIdentity | undefined {
+  const resolved = resolveEnv(withRuntimeDir(toRuntimeEnv(opts.env), opts.runtimeDir));
+  const state = readModelHostState(opts.key, resolved);
+  if (
+    state?.engine !== "omlx" ||
+    (pid === undefined ? state.requiresOwnerTransport !== true : state.pid !== pid) ||
+    !state.specHash ||
+    !Number.isFinite(Date.parse(state.startedAt)) ||
+    !matchesModelHostProbeOrigin(state, opts.probeOrigin)
+  ) {
+    return undefined;
+  }
+  return Object.freeze({
+    workload: opts.key.name,
+    pid: state.pid,
+    startedAt: state.startedAt,
+    specHash: state.specHash,
+    endpoint: Object.freeze({ host: state.host, port: state.port }),
+  });
+}
+
+export async function statusModelHostForProbe(
+  opts: StatusModelHostOptions,
+  verifyParkedOmlx?: VerifyParkedOmlxProbe,
+): Promise<StatusModelHostResult> {
+  const status = statusModelHost(opts);
+  if (
+    verifyParkedOmlx === undefined ||
+    (status.state !== "Running" && status.identityUnknown !== true)
+  )
+    return status;
+  const pinned = omlxParkedProbeIdentity(opts, status.pid);
+  if (pinned === undefined) return status;
+  try {
+    const signal = AbortSignal.timeout(500);
+    if (!(await verifyParkedOmlx(pinned, signal)) || signal.aborted) return status;
+    const current = statusModelHost(opts);
+    if (!isDeepStrictEqual(pinned, omlxParkedProbeIdentity(opts, current.pid))) return current;
+    if (current.state === "Running") return { ...current, probeParked: true };
+    if (current.identityUnknown !== true) return current;
+    return {
+      state: "Running",
+      pid: pinned.pid,
+      specHash: pinned.specHash,
+      probeParked: true,
+      ...omitUndefined({ runtime: current.runtime }),
+    };
+  } catch {
+    return status;
+  }
 }

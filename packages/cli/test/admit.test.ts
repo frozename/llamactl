@@ -1,3 +1,8 @@
+import { memoryCalibrationKey } from "@llamactl/core/resources/memory";
+import {
+  measuredCalibrationStorePath,
+  readMeasuredMemoryCalibration,
+} from "@llamactl/fleet-supervisor/measured-memory";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -77,4 +82,96 @@ test("the larger of residentGiB and expectedMemoryGiB is charged", async () => {
 test("exit 2 only when neither expectedMemoryGiB nor residentGiB is declared", async () => {
   const path = writeHostManifest({}, "admit-undeclared");
   expect(await runQuiet([path, "--headroom-mb=0", "--safety-factor=0"])).toBe(2);
+});
+
+test.each([
+  {
+    label: "disjoint process and device bytes",
+    sample: { processBytes: 1024, processDeviceBytes: 4096 },
+    peakBytes: 5120,
+  },
+  {
+    label: "device-inclusive process bytes",
+    sample: { processBytes: 8192, processDeviceBytes: 4096, deviceAccounting: "included" },
+    peakBytes: 8192,
+  },
+  {
+    label: "owner-derived launch identity",
+    sample: { processBytes: 16384, processDeviceBytes: 4096, deviceAccounting: "included" },
+    peakBytes: 16384,
+    managedLaunchDigest: "f".repeat(64),
+  },
+])("admit calibrate records $label", async ({ sample, peakBytes, managedLaunchDigest }) => {
+  const state = join(dir, "calibration-state-" + String(peakBytes));
+  const evidence = join(dir, "calibration.json");
+  const key =
+    managedLaunchDigest !== undefined
+      ? { managedLaunchDigest }
+      : {
+          artifactRevision: "model-revision",
+          engine: "omlx",
+          engineBuild: "build-revision",
+          ctx: 8192,
+          kvType: "f16",
+          speculative: { mode: "none" as const },
+          prefillBatch: 512,
+          concurrency: 1,
+        };
+  const report = {
+    key,
+    samples: [
+      {
+        status: "ok",
+        source: "recorded-process-observation",
+        observedAtMs: 1_700_000_000_000,
+        ...sample,
+        sharedDeviceBytes: null,
+      },
+    ],
+    options: { minSamples: 1, overheadFraction: 0.25 },
+  };
+  writeFileSync(evidence, JSON.stringify(report));
+  const previous = process.env["DEV_STORAGE"];
+  process.env["DEV_STORAGE"] = state;
+  try {
+    expect(await runQuiet(["calibrate", evidence])).toBe(0);
+    const canonical = memoryCalibrationKey(key)!;
+    const stored = readMeasuredMemoryCalibration(canonical, measuredCalibrationStorePath());
+    expect(stored).toMatchObject({
+      attribution: "process",
+      peakBytes,
+      envelopeBytes: peakBytes * 1.25,
+      measuredAtMs: 1_700_000_000_000,
+    });
+    const newer = 1_700_000_000_100;
+    writeFileSync(
+      evidence,
+      JSON.stringify({
+        ...report,
+        samples: [
+          {
+            ...report.samples[0],
+            observedAtMs: newer,
+            processBytes: 1024,
+            processDeviceBytes: 0,
+            deviceAccounting: "disjoint",
+          },
+          {
+            ...report.samples[0],
+            observedAtMs: newer,
+            processBytes: null,
+            processDeviceBytes: 4096 * 1024,
+            deviceAccounting: "unknown",
+          },
+        ],
+      }),
+    );
+    expect(await runQuiet(["calibrate", evidence])).toBe(1);
+    expect(readMeasuredMemoryCalibration(canonical, measuredCalibrationStorePath())).toEqual(
+      stored,
+    );
+  } finally {
+    if (previous === undefined) delete process.env["DEV_STORAGE"];
+    else process.env["DEV_STORAGE"] = previous;
+  }
 });

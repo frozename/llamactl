@@ -179,6 +179,18 @@ afterEach(() => {
 });
 
 describe("#517 keepAliveStart exclusive-group refusal", () => {
+  test("an unreadable supervisor PID refuses a duplicate start before spawn", async () => {
+    const record = join(root, "runtime", "llama-keep-alive.pid");
+    writeFileSync(record, "incomplete-pid");
+    expect(await keepAliveStart(GLM_REL)).toEqual({
+      ok: false,
+      pid: null,
+      error: "keep-alive PID record is unreadable — refusing to start a duplicate",
+    });
+    expect(existsSync(record)).toBe(true);
+    expect(existsSync(marker)).toBe(false);
+  });
+
   // Kills: no exclusive-group gate in keepAliveStart — the base spawns the
   // detached worker (marker written) and returns the 2s supervisor-timeout
   // error instead of the residency refusal; and refusing or throwing on an

@@ -130,6 +130,22 @@ function installActiveSession(): SessionRefcounts {
 }
 
 describe("keep-alive stop local session fence (#520)", () => {
+  test.each([false, true])("an unconfirmed stop exits 1 (json=%s)", async (json) => {
+    const record = keepAlivePidFile();
+    writeFileSync(record, "incomplete-pid");
+    const flags = ["stop", "--name", "w1", ...(json ? ["--json"] : [])];
+    const { result, stdout, stderr } = await captureProcessStreams(() => runKeepAlive(flags));
+    expect(result).toBe(1);
+    expect(existsSync(record)).toBe(true);
+    if (json) {
+      expect(parseJsonRecord(stdout)).toEqual({ stopped: false, pid: null, killed: false });
+      expect(stderr).toBe("");
+    } else {
+      expect(stdout).toBe("");
+      expect(stderr).toBe("keep-alive stop: node local could not confirm that w1 stopped\n");
+    }
+  });
+
   test("L1: local dispatch goes through the node client", async () => {
     // Kills: the local core short-circuit — at base the seam is bypassed and
     // calls stays empty even though the printed result looks successful.

@@ -1,14 +1,9 @@
 /**
- * #283 DF-10 — agent-side llama.cpp sleep driver with verified
- * process-stop fallback. `src/residency/llamacpp-sleep-client` lands with
- * the fix, so the module is reached through a guarded dynamic import and
- * bracket access: at the pinned base every case fails by assertion —
- * never by a missing module or a type error. The fake llama-server is a
- * Bun.serve on loopback whose POST /sleep route is programmable per case
- * (200, refusal, unsupported, hang); the verifiedStop seam is injected
- * per case and proves release by fetching the port after server.stop.
+ * #283 guarded llama.cpp sleep with verified process-stop fallback.
+ * The loopback fixture serves a programmable sleep command and observation.
+ * Verified stop tests prove release by checking the port after shutdown.
  */
-import type { ResidencyLeases } from "@llamactl/core/residency/leases";
+import type { DrainToken, ResidencyLeases } from "@llamactl/core/residency/leases";
 import type {
   LlamacppSleepController,
   ObservedSleepState,
@@ -27,10 +22,17 @@ import {
 } from "@llamactl/core/residency/llamacpp-sleep";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
+import { createSharedBudgetSleepController } from "../../src/residency/llamacpp-sleep-client.js";
+import { createTargetAdmissionAuthority } from "../../src/workload/admission.js";
+
 // ── module under test (lands with the fix) ──────────────────────────────
 
 type StopProof = { ok: true } | { ok: false; reason: string };
-type VerifiedStop = () => Promise<StopProof>;
+type VerifiedStop = (drain: DrainToken) => Promise<StopProof>;
+type ManagedSleep = {
+  workload: string;
+  readInferenceHold(workload: string): "clear" | "current" | "prior" | "unknown";
+};
 
 type SleepDriveOutcome = {
   kind: string;
@@ -39,6 +41,7 @@ type SleepDriveOutcome = {
   stopReason?: string | undefined;
   reason?: string | undefined;
   reservation?: string | undefined;
+  active?: string[] | undefined;
 };
 
 type AgentLlamacppSleepDriverOptions = {
@@ -46,6 +49,7 @@ type AgentLlamacppSleepDriverOptions = {
   memberId: string;
   endpoint: { host: string; port: number };
   verifiedStop: VerifiedStop;
+  managed?: ManagedSleep;
   cacheIdentity?: string | undefined;
   sleepTimeoutMs?: number | undefined;
   fetch?: typeof globalThis.fetch | undefined;
@@ -73,8 +77,8 @@ async function loadClientModule(): Promise<LlamacppSleepClientModule> {
 
 type SleepMode = "ok" | 409 | 503 | 404 | 501 | "hang";
 
-type FakeLlamaState = { sleepMode: SleepMode };
-type FakeLlamaCounts = { sleepPosts: number; healthGets: number };
+type FakeLlamaState = { sleepMode: SleepMode; propsReply?: () => Response | Promise<Response> };
+type FakeLlamaCounts = { sleepPosts: number; healthGets: number; propsGets: number };
 
 type FakeLlama = {
   endpoint: { host: string; port: number };
@@ -105,7 +109,7 @@ function hangResponse(): Promise<Response> {
 
 function startFakeLlama(): FakeLlama {
   const state: FakeLlamaState = { sleepMode: "ok" };
-  const counts: FakeLlamaCounts = { sleepPosts: 0, healthGets: 0 };
+  const counts: FakeLlamaCounts = { sleepPosts: 0, healthGets: 0, propsGets: 0 };
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -121,6 +125,10 @@ function startFakeLlama(): FakeLlama {
           return Response.json({});
         }
         return Response.json({ error: `sleep refused with ${String(mode)}` }, { status: mode });
+      }
+      if (req.method === "GET" && url.pathname === "/props") {
+        counts.propsGets += 1;
+        return state.propsReply?.() ?? Response.json({ is_sleeping: true });
       }
       if (req.method === "GET" && url.pathname === "/health") {
         counts.healthGets += 1;
@@ -217,10 +225,26 @@ function makeController(
   return controller;
 }
 
+function makeSharedController(): {
+  authority: ReturnType<typeof createTargetAdmissionAuthority>;
+  controller: LlamacppSleepController;
+} {
+  const authority = createTargetAdmissionAuthority();
+  const controller = createSharedBudgetSleepController({
+    authority,
+    targetIdentity: "node-a",
+    budgetGiB: () => 10,
+  });
+  controller.register(memberSpec("a", GUARDED_CAPABILITY), "ready");
+  controller.register(memberSpec("b", GUARDED_CAPABILITY), "sleeping");
+  return { authority, controller };
+}
+
 async function makeDriver(opts: {
   controller: LlamacppSleepController;
   fake: FakeLlama;
   verifiedStop: VerifiedStop;
+  managed?: ManagedSleep;
   memberId?: string | undefined;
   cacheIdentity?: string | undefined;
   sleepTimeoutMs?: number | undefined;
@@ -235,6 +259,7 @@ async function makeDriver(opts: {
     cacheIdentity: opts.cacheIdentity,
     sleepTimeoutMs: opts.sleepTimeoutMs,
     ...(opts.fetch !== undefined ? { fetch: opts.fetch } : {}),
+    ...(opts.managed !== undefined ? { managed: opts.managed } : {}),
   });
 }
 
@@ -248,6 +273,172 @@ function snapshotMember(
 }
 
 // ── cases ───────────────────────────────────────────────────────────────
+
+function installedLeases(): ResidencyLeases {
+  const registry = getResidencyLeaseRegistry();
+  if (registry === null) throw new Error("fixture requires installed leases");
+  return registry;
+}
+
+describe("managed sleep inference fencing", () => {
+  test.each(["native", "fallback"] as const)(
+    "an active exact-workload lease refuses %s sleep without a side effect",
+    async (path) => {
+      const registry = installedLeases();
+      const fake = startFakeLlama();
+      const workload = "llama-workload";
+      const acquired = registry.acquire(workload);
+      if (!acquired.ok) throw new Error("fixture lease refused");
+      const capability =
+        path === "native" ? undefined : qualifySleepCapability({ engine: "llamacpp" }, []);
+      const controller = makeController(capability);
+      const stops: StopCounter = { count: 0 };
+      const driver = await makeDriver({
+        controller,
+        fake,
+        verifiedStop: releaseVerifiedStop(fake, stops),
+        managed: { workload, readInferenceHold: (): "clear" => "clear" },
+      });
+
+      expect(await driver.sleep()).toEqual({
+        kind: "refused",
+        reason: "LeasesActive",
+        reservation: "held",
+        active: [acquired.lease.id],
+      });
+      expect(fake.counts.sleepPosts).toBe(0);
+      expect(stops.count).toBe(0);
+      expect(registry.snapshot(workload)).toMatchObject({ phase: "open" });
+      expect(controller.snapshot().committedGiB).toBe(8);
+      acquired.lease.release();
+    },
+  );
+
+  test.each([
+    ["prior", "PriorInferenceHold"],
+    ["unknown", "InferenceHoldUnknown"],
+    ["current", "InferenceHoldActive"],
+  ] as const)(
+    "a durable inference hold in state %s refuses before either action",
+    async (hold, reason) => {
+      const registry = installedLeases();
+      const fake = startFakeLlama();
+      fake.state.sleepMode = 409;
+      const workload = "llama-workload";
+      const stops: StopCounter = { count: 0 };
+      const reads: string[] = [];
+      const driver = await makeDriver({
+        controller: makeController(),
+        fake,
+        verifiedStop: releaseVerifiedStop(fake, stops),
+        managed: {
+          workload,
+          readInferenceHold(name): typeof hold {
+            reads.push(name);
+            return hold;
+          },
+        },
+      });
+
+      expect(await driver.sleep()).toEqual({ kind: "refused", reason, reservation: "held" });
+      expect(reads).toEqual([workload]);
+      expect(fake.counts.sleepPosts).toBe(0);
+      expect(stops.count).toBe(0);
+      expect(registry.snapshot(workload)).toMatchObject({ phase: "open" });
+    },
+  );
+
+  test("ambiguous sleep retains its drain during and after an unproven fallback", async () => {
+    const registry = installedLeases();
+    const workload = "llama-workload";
+    const fake = startFakeLlama();
+    fake.state.propsReply = (): Response => Response.json({ is_sleeping: false });
+    const enteredStop = Promise.withResolvers<DrainToken>();
+    const finishedStop = Promise.withResolvers<StopProof>();
+    const controller = makeController();
+    const driver = await makeDriver({
+      controller,
+      fake,
+      verifiedStop(drain): Promise<StopProof> {
+        enteredStop.resolve(drain);
+        return finishedStop.promise;
+      },
+      managed: { workload, readInferenceHold: (): "clear" => "clear" },
+    });
+
+    const sleeping = driver.sleep();
+    try {
+      const drain: unknown = await Promise.race([enteredStop.promise, sleeping]);
+      const captured =
+        typeof drain === "object" && drain !== null && "workload" in drain
+          ? drain.workload
+          : undefined;
+      expect(captured).toBe(workload);
+      expect(registry.acquire(workload)).toMatchObject({ ok: false, reason: "Draining" });
+      const another = registry.acquire("other-workload");
+      expect(another.ok).toBe(true);
+      if (another.ok) another.lease.release();
+    } finally {
+      finishedStop.resolve({ ok: false, reason: "ProcessExitUnconfirmed" });
+      await sleeping;
+    }
+    expect(await sleeping).toMatchObject({ kind: "stop-failed", reservation: "uncertain" });
+    expect(registry.acquire(workload)).toMatchObject({ ok: false, reason: "Draining" });
+    expect(controller.snapshot().committedGiB).toBe(8);
+  });
+
+  test.each([true, false])(
+    "lost durable proof after the POST keeps capacity charged when is_sleeping=%s",
+    async (observedSleeping) => {
+      const registry = installedLeases();
+      const workload = "llama-workload";
+      let evidence = true;
+      const fake = startFakeLlama();
+      fake.state.propsReply = (): Response => {
+        evidence = false;
+        return Response.json({ is_sleeping: observedSleeping });
+      };
+      const stops: StopCounter = { count: 0 };
+      const controller = makeController();
+      const driver = await makeDriver({
+        controller,
+        fake,
+        verifiedStop: releaseVerifiedStop(fake, stops),
+        managed: {
+          workload,
+          readInferenceHold: (): "clear" | "unknown" => (evidence ? "clear" : "unknown"),
+        },
+      });
+
+      expect(await driver.sleep()).toEqual({
+        kind: "unconfirmed",
+        reason: "InferenceHoldUnknown",
+        reservation: "uncertain",
+      });
+      expect(fake.counts.sleepPosts).toBe(1);
+      expect(stops.count).toBe(0);
+      expect(registry.acquire(workload)).toMatchObject({ ok: false, reason: "Draining" });
+      expect(controller.snapshot().committedGiB).toBe(8);
+    },
+  );
+
+  test("verified native sleep parks the exact workload lease registry", async () => {
+    const registry = installedLeases();
+    const workload = "llama-workload";
+    const fake = startFakeLlama();
+    const controller = makeController();
+    const driver = await makeDriver({
+      controller,
+      fake,
+      verifiedStop: refusedVerifiedStop({ count: 0 }),
+      managed: { workload, readInferenceHold: (): "clear" => "clear" },
+    });
+
+    expect(await driver.sleep()).toEqual({ kind: "slept", reservation: "released" });
+    expect(registry.acquire(workload)).toMatchObject({ ok: false, reason: "Unloaded" });
+    expect(controller.snapshot().committedGiB).toBe(0);
+  });
+});
 
 describe("createAgentLlamacppSleepDriver (DF-10 #283)", () => {
   test("refused sleep (409) falls back to verified stop and releases the budget", async () => {
@@ -373,9 +564,9 @@ describe("createAgentLlamacppSleepDriver (DF-10 #283)", () => {
     expect(controller.snapshot().committedGiB).toBe(0);
   });
 
-  test("successful sleep keeps today's path", async () => {
+  test("confirmed sleep releases the shared claim and preserves the cache identity", async () => {
     const fake = startFakeLlama();
-    const controller = makeController();
+    const { authority, controller } = makeSharedController();
     const stops: StopCounter = { count: 0 };
     const driver = await makeDriver({
       controller,
@@ -388,7 +579,8 @@ describe("createAgentLlamacppSleepDriver (DF-10 #283)", () => {
 
     expect(outcome).toMatchObject({ kind: "slept", reservation: "released" });
     expect(stops.count).toBe(0);
-    expect(fake.counts.sleepPosts).toBe(1);
+    expect(fake.counts).toEqual({ sleepPosts: 1, propsGets: 1, healthGets: 0 });
+    expect(authority.snapshot("node-a")).toEqual([]);
     expect(snapshotMember(controller, "a")).toEqual({
       state: "sleeping",
       reservation: "released",
@@ -400,6 +592,79 @@ describe("createAgentLlamacppSleepDriver (DF-10 #283)", () => {
       slots: "restore",
     });
   });
+
+  test("a 2xx acknowledgement with awake props keeps the shared budget charged", async () => {
+    const fake = startFakeLlama();
+    fake.state.propsReply = (): Response => Response.json({ is_sleeping: false });
+    const { authority, controller } = makeSharedController();
+    const stops: StopCounter = { count: 0 };
+    const driver = await makeDriver({ controller, fake, verifiedStop: refusedVerifiedStop(stops) });
+
+    expect(await driver.sleep()).toEqual({
+      kind: "stop-failed",
+      trigger: "SleepUnconfirmed",
+      httpStatus: 200,
+      stopReason: "EvictStopRefused",
+      reservation: "uncertain",
+    });
+    expect(fake.counts).toEqual({ sleepPosts: 1, propsGets: 1, healthGets: 0 });
+    expect(stops.count).toBe(1);
+    expect(snapshotMember(controller, "a")).toEqual({
+      state: "unknown",
+      reservation: "uncertain",
+    });
+    expect(authority.snapshot("node-a")).toMatchObject([
+      { runtimeKey: "rk-a", allocationGiB: 8, state: "uncertain" },
+    ]);
+    expect(controller.requestWake("b")).toMatchObject({
+      kind: "refuse",
+      reason: "BudgetExceeded",
+    });
+  });
+
+  for (const [label, propsReply] of [
+    ["a missing sleep flag", (): Response => Response.json({})],
+    ["a string sleep flag", (): Response => Response.json({ is_sleeping: "true" })],
+    ["malformed props", (): Response => new Response("not JSON")],
+    ["a missing props endpoint", (): Response => new Response(null, { status: 404 })],
+    [
+      "a redirect to health",
+      (): Response =>
+        new Response(null, {
+          status: 307,
+          headers: { location: "/health" },
+        }),
+    ],
+    ["a hung observation", hangResponse],
+  ] as const) {
+    test(`sleep with ${label} releases only after verified stop`, async () => {
+      const fake = startFakeLlama();
+      fake.state.propsReply = propsReply;
+      const { authority, controller } = makeSharedController();
+      const stops: StopCounter = { count: 0 };
+      const driver = await makeDriver({
+        controller,
+        fake,
+        verifiedStop: releaseVerifiedStop(fake, stops),
+        sleepTimeoutMs: 100,
+      });
+
+      expect(await driver.sleep()).toEqual({
+        kind: "stopped",
+        trigger: "SleepUnconfirmed",
+        httpStatus: 200,
+        reservation: "released",
+      });
+      expect(fake.counts).toEqual({ sleepPosts: 1, propsGets: 1, healthGets: 0 });
+      expect(stops.count).toBe(1);
+      expect(snapshotMember(controller, "a")).toEqual({
+        state: "stopped",
+        reservation: "released",
+      });
+      expect(authority.snapshot("node-a")).toEqual([]);
+      expect(controller.requestWake("b").kind).toBe("wake");
+    });
+  }
 
   test("fallback stop that fails retains the reservation", async () => {
     const fake = startFakeLlama();
@@ -496,6 +761,7 @@ describe("createAgentLlamacppSleepDriver (DF-10 #283)", () => {
       sleepPosts: number;
       stops: number;
     }> {
+      setResidencyLeaseRegistry(createResidencyLeases());
       const fake = startFakeLlama();
       const controller = makeController(capability);
       const stops: StopCounter = { count: 0 };
@@ -618,7 +884,8 @@ describe("createAgentLlamacppSleepDriver (DF-10 #283)", () => {
     record: CancelRecord;
   } {
     const record: CancelRecord = { cancels: 0, rejectionHandlers: 0 };
-    const fetchImpl = (): Promise<Response> => {
+    const fetchImpl = (_input: unknown, init?: RequestInit): Promise<Response> => {
+      if (init?.method === "GET") return Promise.resolve(Response.json({ is_sleeping: true }));
       const rejected = Promise.reject(new Error("boom"));
       // Pre-handled so a missing driver handler fails our assertion below,
       // not the runner's unhandled-rejection check.

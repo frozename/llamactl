@@ -1,3 +1,10 @@
+import { isSleepResidency } from "@llamactl/core/residency/llamacpp-sleep";
+import {
+  deriveSwapRate,
+  type SwapCounterSample,
+  type SwapRate,
+} from "@llamactl/core/resources/memory";
+
 import type { MigrationController } from "./migration-controller.js";
 import type { DegradationThresholds, PressureThresholds, WorkloadHealthState } from "./policy.js";
 import type {
@@ -8,6 +15,7 @@ import type {
   FleetSlotProgressEntry,
   FleetSnapshotEntry,
   NodeMemSnapshot,
+  WorkloadProbeResidency,
   WorkloadSnapshot,
 } from "./types.js";
 import type { WorkloadTarget } from "./workload-probe.js";
@@ -31,6 +39,8 @@ import { probeNodeMem as defaultProbeNodeMem } from "./node-probe.js";
 import { detectPressure, PressureWindow } from "./policy.js";
 import { readSlotProgress } from "./slot-progress.js";
 
+const DEFAULT_INTERVAL_MS = 30_000;
+
 export const DEFAULT_PRESSURE_THRESHOLDS: PressureThresholds = {
   headroomMinMb: 512,
   compressorWarnMb: 2048,
@@ -52,7 +62,10 @@ export interface SupervisorLoopOptions {
   probeTimeoutMs?: number;
   fetch?: typeof globalThis.fetch;
   probeNodeMem?: () => Promise<NodeMemSnapshot>;
+  swapRateNow?: () => number;
   probeWorkload?: (target: WorkloadTarget) => Promise<WorkloadSnapshot>;
+  /** Read the owning runtime's recorded state for this exact target, without engine probes. */
+  readRecordedSleep?: (target: WorkloadTarget) => Promise<WorkloadProbeResidency | undefined>;
   /**
    * Boot token for workloads local to this node. Defaults to
    * `makeLocalRevisionReader()`, which reads llamactl runtime records
@@ -77,7 +90,7 @@ export interface SupervisorLoopOptions {
   leaseTerm?: number;
   leaseEligible?: boolean;
   /**
-   * Read-only: poll each workload's `/slots` per tick and journal a
+   * Poll each awake workload's `/slots` per tick and journal a
    * fleet-slot-progress entry. Drives nothing — data collection for the
    * busy-aware-probing design. Default off (`--log-slot-progress`).
    */
@@ -112,6 +125,7 @@ export interface SupervisorLoopHandle {
 }
 
 interface TickState extends PressureTransitionResult {
+  previousSwap: SwapCounterSample | undefined;
   pressureWindow: PressureWindow;
   workloadHealth: Map<string, WorkloadHealthState>;
 }
@@ -220,15 +234,21 @@ async function runTickWithRecovery(
 async function logSlotProgressForWorkloads(
   opts: SupervisorLoopOptions,
   ts: string,
+  workloads: readonly WorkloadSnapshot[],
   writeJournalEntry: (entry: FleetJournalEntry) => void,
 ): Promise<void> {
   const timeoutMs = opts.probeTimeoutMs ?? 5_000;
   await Promise.all(
-    opts.workloads.map(async (target) => {
-      const reading = await readSlotProgress(target.endpoint, {
-        ...(opts.fetch !== undefined ? { fetch: opts.fetch } : {}),
-        timeoutMs,
-      });
+    opts.workloads.map(async (target, index) => {
+      const snapshot = workloads[index];
+      const residency = snapshot?.parked ? "parked" : snapshot?.sleep;
+      const reading =
+        residency === undefined
+          ? await readSlotProgress(target.endpoint, {
+              ...(opts.fetch !== undefined ? { fetch: opts.fetch } : {}),
+              timeoutMs,
+            })
+          : { available: false, reason: residency, slots: [] };
       const entry: FleetSlotProgressEntry = {
         kind: "fleet-slot-progress",
         ts,
@@ -243,10 +263,34 @@ async function logSlotProgressForWorkloads(
   );
 }
 
+function observeSwapRate(
+  previous: SwapCounterSample | undefined,
+  current: SwapCounterSample | undefined,
+  opts: SupervisorLoopOptions,
+): SwapRate | undefined {
+  if (current === undefined) return undefined;
+  if (previous === undefined) return { known: false, reason: "unknown-source" };
+  const maxAgeMs =
+    2 * Math.max(opts.intervalMs ?? DEFAULT_INTERVAL_MS, opts.probeTimeoutMs ?? 5000);
+  return deriveSwapRate(previous, current, { nowMs: (opts.swapRateNow ?? Date.now)(), maxAgeMs });
+}
+
+async function readTargetResidency(
+  read: SupervisorLoopOptions["readRecordedSleep"],
+  target: WorkloadTarget,
+): Promise<WorkloadProbeResidency | undefined> {
+  try {
+    const status = await read?.(target);
+    return status === "parked" || isSleepResidency(status) ? status : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 async function runTick(
   opts: SupervisorLoopOptions,
   state: TickState,
-  probeWorkloadFn: (target: WorkloadTarget) => Promise<WorkloadSnapshot>,
+  probeWorkloadFn: ReturnType<typeof makeDefaultProbeFn>,
   unreachableFallback: (target: WorkloadTarget) => WorkloadSnapshot,
   pressureThresholds: PressureThresholds,
   degradationThresholds: DegradationThresholds,
@@ -257,11 +301,19 @@ async function runTick(
   throughput: EngineThroughputTickState | null,
 ): Promise<void> {
   const ts = new Date().toISOString();
+  const previousSwap = state.previousSwap;
+  state.previousSwap = undefined;
   const node_mem = await (opts.probeNodeMem ?? defaultProbeNodeMem)();
+  const swapRate = observeSwapRate(previousSwap, node_mem.swap_io, opts);
   const workloads = await Promise.all(
-    opts.workloads.map((target) =>
-      probeWorkloadFn(target).catch(() => unreachableFallback(target)),
-    ),
+    opts.workloads.map(async (target): Promise<WorkloadSnapshot> => {
+      const residency = await readTargetResidency(opts.readRecordedSleep, target);
+      const snapshot = await probeWorkloadFn(target, residency).catch(() =>
+        unreachableFallback(target),
+      );
+      if (residency === "parked") return { ...snapshot, parked: true };
+      return residency === undefined ? snapshot : { ...snapshot, sleep: residency };
+    }),
   );
 
   // Sample every reachable ModelHost in parallel; each sample carries its own
@@ -284,7 +336,7 @@ async function runTick(
       : undefined;
 
   if (opts.logSlotProgress) {
-    await logSlotProgressForWorkloads(opts, ts, writeJournalEntry);
+    await logSlotProgressForWorkloads(opts, ts, workloads, writeJournalEntry);
   }
 
   state.pressureWindow.push(node_mem, workloads);
@@ -352,12 +404,14 @@ async function runTick(
     node: opts.node,
     node_mem,
     workloads,
+    ...(swapRate ? { swapRate } : {}),
     ...(leaseIntent ? { lease: leaseIntent } : {}),
     ...(inFlightMoves.length > 0 ? { inFlightMoves } : {}),
     ...(engineThroughput.length > 0 ? { engineThroughput } : {}),
   };
   const heartbeat: FleetHeartbeatEntry = { kind: "fleet-heartbeat", ts, node: opts.node };
   writeJournalEntry(snapshot);
+  state.previousSwap = node_mem.swap_io;
   writeJournalEntry(heartbeat);
 
   await opts.onTick?.(snapshot);
@@ -379,6 +433,7 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
   const consecutiveErrors = new Map<string, number>();
   const completionState = makeCompletionState();
   const state: TickState = {
+    previousSwap: undefined,
     consecutiveClearTicks: 0,
     enteredHighAt: null,
     lastPressureLevel: "NORMAL",
@@ -412,7 +467,7 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
   });
   const isStopped = (): boolean => stopped;
 
-  const intervalMs = opts.intervalMs ?? 30_000;
+  const intervalMs = opts.intervalMs ?? DEFAULT_INTERVAL_MS;
   const startupRev = opts.startupRev;
   const reloadOnSourceChange = opts.reloadOnSourceChange ?? true;
   const onSourceReload =

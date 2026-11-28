@@ -3,13 +3,18 @@ import { basename, join } from "node:path";
 import type { EngineName } from "./engines/index.js";
 import type { ModelHostReadiness } from "./engines/types.js";
 import type { QualificationStage } from "./routing/capabilities.js";
+import type {
+  PeerDeclarationProvenanceV1,
+  PeerEmptyDeclarationInventory,
+} from "./routing/catalog.js";
 import type { ResolvedEnv } from "./types.js";
 
 import { listCatalog } from "./catalog.js";
-import { checkServingReadiness } from "./engines/lifecycle.js";
+import { checkServingReadiness, formatHostForUrl } from "./engines/lifecycle.js";
 import { modelhostPidFile, readModelHostState } from "./engines/state.js";
 import { resolveEnv } from "./env.js";
 import {
+  isRecordedPidAlive,
   type PidIdentityDeps,
   type PidRecordQuery,
   type PidVerdict,
@@ -19,6 +24,7 @@ import {
   qualificationOverridesFileFor,
   readQualificationOverrides,
 } from "./qualification/overrides.js";
+import { selectLocalEngineReadiness } from "./residency/engine-forwarder.js";
 import { isExperimentalRoute, QUALIFICATION_LABEL } from "./routing/capabilities.js";
 import {
   existsSync,
@@ -61,6 +67,7 @@ export interface LocalRoute {
    *  modelhost sidecar, ModelRun routes from llama-server.state; both are
    *  consumed by partitionServingRoutes and the openaiProxy routing gate. */
   readiness?: ModelHostReadiness;
+  requiresOwnerTransport?: true;
 }
 
 export interface PeerSnapshot {
@@ -77,6 +84,13 @@ export interface PeerSnapshot {
      *  peer route experimental so an experimental-only id stays shadowed. */
     labels?: Record<string, string>;
   }[];
+  /** Explicit negotiated evidence, independent of legacy workload cache revisions. */
+  declaredProvenance?: PeerDeclarationProvenanceV1;
+  declaredInventory?: PeerEmptyDeclarationInventory;
+  declarationIdentity?: string;
+  /** Retained denial evidence. It cannot create a route or authorize activation. */
+  declaredDenials?: { aliases: ReadonlySet<string>; saturated: boolean };
+
   pressure: "NORMAL" | "HIGH";
   fetchedAt: number;
 }
@@ -109,7 +123,7 @@ export interface ClusterConfigLike {
   peers: ClusterConfigPeer[];
 }
 
-const PEER_ROUTE_STALE_MS = 30_000;
+export const PEER_ROUTE_STALE_MS = 30_000;
 
 /** Resolved path of the operator's custom catalog file, honouring
  *  LOCAL_AI_CUSTOM_CATALOG_FILE then the runtime-dir default. Never reads
@@ -461,6 +475,7 @@ function modelHostRoutesForDir(
       engine: state.engine,
       kind: "ModelHost",
       pid: hostPid,
+      ...(state.requiresOwnerTransport === true ? ({ requiresOwnerTransport: true } as const) : {}),
       ...(state.readiness !== undefined ? { readiness: state.readiness } : {}),
     });
   }
@@ -476,7 +491,14 @@ function modelRunRoutesForDir(
 ): LocalRoute[] {
   if (verdict === "dead" || verdict === "reused") return [];
   const state = readServerState({ name }, resolved);
-  if (!state?.rel || !state.host) return [];
+  if (
+    !state?.rel ||
+    !state.host ||
+    state.pid !== runPid ||
+    state.publicationPending !== undefined
+  ) {
+    return [];
+  }
   // Route by the model rel AND any `--alias` the server advertises. The
   // server reports its alias (not the rel) on /v1/models, so peer snapshots
   // and clients that use the alias must resolve to a real route rather than
@@ -558,6 +580,65 @@ export function listLocalRoutes(
   );
 }
 
+type LocalEngineIdentity = Pick<LocalRoute, "workload" | "kind" | "pid" | "engine"> & {
+  startedAt: string;
+};
+
+export function identifyLocalEngineAtTarget(
+  target: string,
+  resolved: ResolvedEnv,
+): LocalEngineIdentity | undefined {
+  const endpoint = new URL(target);
+  if (endpoint.protocol !== "http:") return undefined;
+  const port = endpointPortForUrl(endpoint);
+  const matches = listLocalRoutes(resolved).filter(
+    (route) => formatHostForUrl(route.host) === endpoint.hostname && route.port === port,
+  );
+  const first = matches[0];
+  // An engine can advertise several aliases on one endpoint.
+  if (
+    first === undefined ||
+    matches.some(
+      (route) =>
+        route.workload !== first.workload || route.kind !== first.kind || route.pid !== first.pid,
+    )
+  ) {
+    return undefined;
+  }
+  const key = { name: first.workload };
+  const records = dirPidRecords(workloadRuntimeRoot(resolved), first.workload, resolved);
+  const record = first.kind === "ModelHost" ? records.host : records.run;
+  const state =
+    first.kind === "ModelHost" ? readModelHostState(key, resolved) : readServerState(key, resolved);
+  if (
+    record?.pid !== first.pid ||
+    state?.pid !== first.pid ||
+    formatHostForUrl(state.host) !== endpoint.hostname ||
+    Number(state.port) !== port ||
+    !Number.isFinite(Date.parse(state.startedAt)) ||
+    !isRecordedPidAlive(record.recordPath, record.pid)
+  ) {
+    return undefined;
+  }
+  return {
+    workload: first.workload,
+    kind: first.kind,
+    pid: first.pid,
+    engine: first.engine,
+    startedAt: state.startedAt,
+  };
+}
+
+function checkLocalRouteReadiness(
+  route: LocalRoute,
+  readiness: ModelHostReadiness,
+  opts: { fetch?: typeof globalThis.fetch; timeoutMs?: number },
+): Promise<boolean> {
+  const fetch = selectLocalEngineReadiness(route, readiness.path);
+  if (fetch === null) return Promise.resolve(false);
+  return checkServingReadiness(route, readiness, fetch === undefined ? opts : { ...opts, fetch });
+}
+
 /**
  * Partition local routes by declared serving readiness (#220). Routes
  * without a readiness declaration are ready with no I/O; declared probes
@@ -574,7 +655,7 @@ export async function partitionServingRoutes(
   const probes = new Map<string, Promise<boolean>>();
   for (const route of routes) {
     if (route.readiness === undefined || probes.has(keyOf(route))) continue;
-    probes.set(keyOf(route), checkServingReadiness(route, route.readiness, opts));
+    probes.set(keyOf(route), checkLocalRouteReadiness(route, route.readiness, opts));
   }
   const keys = [...probes.keys()];
   const verdicts = await Promise.all(probes.values());

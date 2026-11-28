@@ -208,8 +208,6 @@ const MCP_ONLY_EXCLUDED = new Set([
   "llamactl.fleet.supervisor.audit",
   "llamactl.fleet.supervisor.status",
   "llamactl.models.leaderboard",
-  // operator profile-switch mutation (#284 DF-11, this PR); Ops Chat projection is a later slice
-  "llamactl.residency.applyProfile",
   // operator cancel of an in-flight profile switch (#284 DF-11, this PR); Ops Chat projection is a later slice
   "llamactl.residency.cancelOperation",
   // operator-only destructive override (#278 DF-05); deliberately not in Ops Chat dispatch
@@ -304,7 +302,9 @@ describe("@llamactl/mcp read surface", () => {
       "llamactl.rag.store",
       "llamactl.reconciler.kick",
       "llamactl.residency.applyProfile",
+      "llamactl.residency.calibration-key",
       "llamactl.residency.cancelOperation",
+      "llamactl.residency.control",
       "llamactl.residency.evictIdle",
       "llamactl.residency.forceUnload",
       "llamactl.residency.plan",
@@ -495,6 +495,21 @@ describe("@llamactl/mcp read surface", () => {
     expect(row).toBeDefined();
     expect(row?.endpoint).toBe("127.0.0.1:8181");
     expect(row?.phase).toBe("Pending");
+  });
+
+  test("calibration key is read-only and requires a configured authenticated owner", async () => {
+    const { client } = await connected();
+    const name = "llamactl.residency.calibration-key";
+    const tools = await client.listTools();
+    expect(tools.tools.find((tool) => tool.name === name)?.annotations?.readOnlyHint).toBe(true);
+    const result = await client.callTool({
+      name,
+      arguments: { node: "unknown-owner", workload: "fixture" },
+    });
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(textOf(result)) as unknown).toEqual({
+      reason: "ManagedCalibrationOwnerUnavailable",
+    });
   });
 
   test("llamactl.residency.status projects residencyStatus", async () => {
@@ -1236,7 +1251,7 @@ describe("@llamactl/mcp M.1 pipeline-tool pickup", () => {
     const llamactlTools = list.tools
       .map((t) => t.name)
       .filter((n) => n.startsWith("llamactl.") && !n.startsWith("llamactl.pipeline."));
-    expect(llamactlTools.length).toBe(62);
+    expect(llamactlTools.length).toBe(64);
   });
 });
 

@@ -79,7 +79,7 @@ function compareStrings(a: string, b: string): number {
   return 0;
 }
 
-function parseProfiles(raw: string | undefined): string[] {
+export function parseProfiles(raw: string | undefined): string[] {
   if (raw === undefined) return [];
   const seen = new Set<string>();
   for (const part of raw.split(",")) {

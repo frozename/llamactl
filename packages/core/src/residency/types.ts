@@ -65,6 +65,7 @@ export interface ResidencyLeases {
   cancelDrain: (token: DrainToken) => boolean;
   reopen: (token: DrainToken) => boolean;
   snapshot: (workload: string) => ResidencySnapshot;
+  isQuiescent?: () => boolean;
   waiterCount: (workload: string) => number;
   audit: () => ResidencyAuditEntry[];
   // Optional read-out (Part of #519): the last time this workload saw lease

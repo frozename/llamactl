@@ -1,7 +1,7 @@
 import { required } from "../required.js";
-import { setWorkloadEnabled } from "./setEnabled.js";
+import { setManagedWorkloadEnabled, setWorkloadEnabled } from "./setEnabled.js";
 
-const USAGE = `Usage: llamactl enable <workload>
+const USAGE = `Usage: llamactl enable <workload> [--managed --node <owner>]
 
 Set spec.enabled = true on the workload manifest and re-apply so the
 server starts.
@@ -13,7 +13,8 @@ export async function runEnable(args: string[]): Promise<number> {
     return args.length === 0 ? 1 : 0;
   }
   const name = required(args[0]);
-  const result = await setWorkloadEnabled(name, true);
+  const setEnabled = args.includes("--managed") ? setManagedWorkloadEnabled : setWorkloadEnabled;
+  const result = await setEnabled(name, true);
   if (result.message) {
     (result.code === 0 ? process.stdout : process.stderr).write(result.message);
   }

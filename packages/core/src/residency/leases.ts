@@ -415,6 +415,13 @@ function pushAuditEntry(auditLog: ResidencyAuditEntry[], entry: ResidencyAuditEn
   }
 }
 
+function registriesQuiescent(registries: ReadonlyMap<string, WorkloadState>): boolean {
+  for (const state of registries.values()) {
+    if (state.leases.size > 0 || state.phase === "draining") return false;
+  }
+  return true;
+}
+
 export function createResidencyLeases(opts?: ResidencyLeasesOptions): ResidencyLeases {
   const registries = new Map<string, WorkloadState>();
   const counters = new Map<string, number>();
@@ -539,10 +546,6 @@ export function createResidencyLeases(opts?: ResidencyLeasesOptions): ResidencyL
     };
   }
 
-  function audit(): ResidencyAuditEntry[] {
-    return [...auditLog];
-  }
-
   return {
     acquire,
     active,
@@ -552,8 +555,9 @@ export function createResidencyLeases(opts?: ResidencyLeasesOptions): ResidencyL
     cancelDrain,
     reopen,
     snapshot,
+    isQuiescent: (): boolean => registriesQuiescent(registries),
     waiterCount,
-    audit,
+    audit: (): ResidencyAuditEntry[] => [...auditLog],
     lastActivityAtMs: activity.lastActivityAtMs,
   };
 }

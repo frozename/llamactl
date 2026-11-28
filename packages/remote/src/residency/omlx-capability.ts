@@ -10,17 +10,24 @@
  * never the key itself. No native load or unload is issued unless the
  * capability resolved to native.
  */
-import { OMLX_MODELS_STATUS_PATH } from "@llamactl/core/engines";
+import { OMLX_MODELS_STATUS_PATH, parseOmlxModelsStatus } from "@llamactl/core/engines";
+import { getResidencyLeaseRegistry } from "@llamactl/core/residency/leases";
 import { createHash } from "node:crypto";
 
 import type { ModelHostManifest } from "../workload/modelhost-schema.js";
-import type { AgentOmlxNativeClientOptions, OmlxNativeClient } from "./engine-client.js";
+import type {
+  AgentOmlxNativeClientOptions,
+  NativeStatus,
+  OmlxNativeClient,
+  OmlxNativePin,
+} from "./engine-client.js";
 
 import {
   applyAuth,
   buildBaseUrl,
   classifyFetchError,
   createAgentOmlxNativeClient,
+  nativeBindingCurrent,
 } from "./engine-client.js";
 
 export type OmlxNativeCapability =
@@ -28,7 +35,12 @@ export type OmlxNativeCapability =
   | { mode: "process-fallback"; reason: "NativeStatusUnsupported"; httpStatus: number }
   | {
       mode: "unknown";
-      reason: "Timeout" | "Unreachable" | "MalformedResponse" | "NotServingNode";
+      reason:
+        | "Timeout"
+        | "Unreachable"
+        | "MalformedResponse"
+        | "NotServingNode"
+        | "NativeIdentityUnverified";
       httpStatus: null;
     }
   | { mode: "unknown"; reason: "Unauthorized" | "HttpError"; httpStatus: number };
@@ -51,7 +63,15 @@ export type OmlxNativeProbeOptions = {
 
 export type OmlxResidencyPathResolution =
   | { path: "native"; capability: OmlxNativeCapability; client: OmlxNativeClient }
-  | { path: "process"; capability: OmlxNativeCapability };
+  | { path: "process"; capability: OmlxNativeCapability }
+  | {
+      path: "held";
+      capability: OmlxNativeCapability;
+      reason:
+        | "NativeIdentityUnverified"
+        | "NativeCapabilityUnknown"
+        | "NativeLeaseRegistryRequired";
+    };
 
 export type OmlxNativeStatusRow = {
   workload: string;
@@ -59,7 +79,15 @@ export type OmlxNativeStatusRow = {
   mode: OmlxNativeCapability["mode"];
   reason: string | null;
   httpStatus: number | null;
+  modelState?: "discovered" | "loading" | "loaded" | "missing" | "unknown";
+  servingState?: "resident" | "ready" | "busy";
 };
+
+export type ReadOwnedOmlxStatus = (
+  workload: string,
+  endpoint: { host: string; port: number },
+  signal: AbortSignal,
+) => Promise<NativeStatus | null | undefined>;
 
 async function drainBody(response: Response): Promise<void> {
   if (response.body !== null) {
@@ -81,12 +109,16 @@ async function probeOnce(
   timeoutMs: number,
   base: typeof globalThis.fetch,
   apiKey: string | undefined,
+  inventory?: {
+    exact?: OmlxNativePin;
+    observe?: (body: unknown) => void;
+  },
 ): Promise<OmlxNativeCapability> {
   const url = `${buildBaseUrl(endpoint.host, endpoint.port)}${OMLX_MODELS_STATUS_PATH}`;
   const signal = AbortSignal.timeout(timeoutMs);
   let response: Response;
   try {
-    response = await base(url, applyAuth(apiKey, { method: "GET", signal }));
+    response = await base(url, applyAuth(apiKey, { method: "GET", signal, redirect: "error" }));
   } catch (err) {
     return { mode: "unknown", reason: classifyFetchError(signal, err), httpStatus: null };
   }
@@ -112,10 +144,15 @@ async function probeOnce(
   } catch {
     return { mode: "unknown", reason: "MalformedResponse", httpStatus: null };
   }
-  if (isModelsStatusBody(body)) {
-    return { mode: "native", reason: null, httpStatus: 200 };
+  if (!isModelsStatusBody(body)) {
+    return { mode: "unknown", reason: "MalformedResponse", httpStatus: null };
   }
-  return { mode: "unknown", reason: "MalformedResponse", httpStatus: null };
+  const exact = inventory?.exact;
+  if (exact !== undefined && parseOmlxModelsStatus(body, exact.modelId, exact).state === "failed") {
+    return unverifiedBinding().capability;
+  }
+  inventory?.observe?.(body);
+  return { mode: "native", reason: null, httpStatus: 200 };
 }
 
 export async function probeOmlxNativeCapability(
@@ -177,25 +214,52 @@ export function resetOmlxNativeCapabilityCache(): void {
 }
 
 /**
- * Resolve which residency path an oMLX ModelHost should take. Only a native
- * capability returns a native client; an unknown or process-fallback capability
- * always takes the whole-process path, with no client built and no further
- * request issued.
+ * A wire capability is usable only while the trusted owner still proves the
+ * pinned process. The status cache is for diagnostics, not action selection.
  */
 export async function resolveOmlxResidencyPath(
   opts: AgentOmlxNativeClientOptions & { probeTimeoutMs?: number },
 ): Promise<OmlxResidencyPathResolution> {
   const { probeTimeoutMs, ...clientOpts } = opts;
-  const capability = await ensureOmlxNativeCapability({
-    endpoint: opts.endpoint,
-    ...(opts.fetch !== undefined ? { fetch: opts.fetch } : {}),
-    ...(opts.apiKey !== undefined ? { apiKey: opts.apiKey } : {}),
-    ...(probeTimeoutMs !== undefined ? { timeoutMs: probeTimeoutMs } : {}),
-  });
-  if (capability.mode === "native") {
-    return { path: "native", capability, client: createAgentOmlxNativeClient(clientOpts) };
+  const binding =
+    opts.binding === undefined
+      ? undefined
+      : Object.freeze({
+          ...opts.binding,
+          endpoint: Object.freeze({ ...opts.binding.endpoint }),
+        });
+  if (binding === undefined || !nativeBindingCurrent(binding, opts.endpoint))
+    return unverifiedBinding();
+  const capability = await probeOnce(
+    opts.endpoint,
+    probeTimeoutMs ?? OMLX_CAPABILITY_PROBE_TIMEOUT_MS,
+    opts.fetch ?? globalThis.fetch,
+    opts.apiKey,
+    { exact: binding },
+  );
+  if (!nativeBindingCurrent(binding, opts.endpoint)) return unverifiedBinding();
+  if (capability.mode === "unknown") {
+    return capability.reason === "NativeIdentityUnverified"
+      ? unverifiedBinding()
+      : { path: "held", capability, reason: "NativeCapabilityUnknown" };
   }
-  return { path: "process", capability };
+  if (capability.mode === "process-fallback") return { path: "process", capability };
+  if (getResidencyLeaseRegistry() === null) {
+    return { path: "held", capability, reason: "NativeLeaseRegistryRequired" };
+  }
+  return {
+    path: "native",
+    capability,
+    client: createAgentOmlxNativeClient({ ...clientOpts, binding }),
+  };
+}
+
+function unverifiedBinding(): Extract<OmlxResidencyPathResolution, { path: "held" }> {
+  return {
+    path: "held",
+    reason: "NativeIdentityUnverified",
+    capability: { mode: "unknown", reason: "NativeIdentityUnverified", httpStatus: null },
+  };
 }
 
 function rowFor(
@@ -211,13 +275,84 @@ function rowFor(
   };
 }
 
+async function readNativeInventory(
+  manifest: ModelHostManifest,
+  timeoutMs: number,
+): Promise<OmlxNativeStatusRow> {
+  let modelState: NonNullable<OmlxNativeStatusRow["modelState"]> = "unknown";
+  const hosted = manifest.spec.hostedModels[0];
+  const capability = await probeOnce(
+    manifest.spec.endpoint,
+    timeoutMs,
+    globalThis.fetch,
+    undefined,
+    {
+      observe(body): void {
+        if (hosted === undefined) return;
+        const state = parseOmlxModelsStatus(body, hosted.rel);
+        modelState =
+          state.state !== "failed"
+            ? state.state
+            : state.reason === "ModelNotListed"
+              ? "missing"
+              : "unknown";
+      },
+    },
+  );
+  return { ...rowFor(manifest, capability), modelState };
+}
+
+function privateInventoryRow(
+  manifest: ModelHostManifest,
+  status: NativeStatus | null,
+): OmlxNativeStatusRow {
+  if (status === null || status.state === "unknown" || status.state === "failed") {
+    return {
+      workload: manifest.metadata.name,
+      endpoint: `${manifest.spec.endpoint.host}:${String(manifest.spec.endpoint.port)}`,
+      mode: "unknown",
+      reason: status?.reason ?? "ManagedNativeOmlxOwnerUnavailable",
+      httpStatus: status !== null && "httpStatus" in status ? status.httpStatus : null,
+      modelState: status?.reason === "ModelNotListed" ? "missing" : "unknown",
+    };
+  }
+  const ready = rowFor(manifest, { mode: "native", reason: null, httpStatus: 200 });
+  return "activity" in status
+    ? { ...ready, modelState: "loaded", servingState: status.state }
+    : { ...ready, modelState: status.state };
+}
+
+async function readOmlxStatusRow(
+  manifest: ModelHostManifest,
+  opts: { timeoutMs: number; managed: boolean; readOwned?: ReadOwnedOmlxStatus | undefined },
+): Promise<OmlxNativeStatusRow> {
+  const status = await opts.readOwned?.(
+    manifest.metadata.name,
+    manifest.spec.endpoint,
+    AbortSignal.timeout(opts.timeoutMs),
+  );
+  if (status !== undefined || manifest.spec.omlxNativeResidency !== undefined) {
+    return privateInventoryRow(manifest, status ?? null);
+  }
+  if (opts.managed) return await readNativeInventory(manifest, opts.timeoutMs);
+  const capability = await ensureOmlxNativeCapability({
+    endpoint: manifest.spec.endpoint,
+    timeoutMs: opts.timeoutMs,
+  });
+  return rowFor(manifest, capability);
+}
+
 export async function collectOmlxNativeStatus(opts: {
   node: string;
   servingNode: string | null;
   hosts: readonly ModelHostManifest[];
   timeoutMs?: number;
+  ownsNode?: (node: string) => boolean;
+  readOwned?: ReadOwnedOmlxStatus | undefined;
 }): Promise<OmlxNativeStatusRow[]> {
-  const hosts = opts.hosts.filter((h) => h.spec.engine === "omlx" && h.spec.node === opts.node);
+  const hosts = opts.hosts.filter(
+    (h) => h.spec.engine === "omlx" && (opts.ownsNode?.(h.spec.node) ?? h.spec.node === opts.node),
+  );
   if (opts.servingNode !== opts.node) {
     const notServing: OmlxNativeCapability = {
       mode: "unknown",
@@ -230,10 +365,13 @@ export async function collectOmlxNativeStatus(opts: {
   }
   const timeoutMs = opts.timeoutMs ?? OMLX_STATUS_PROBE_TIMEOUT_MS;
   const rows = await Promise.all(
-    hosts.map(async (h): Promise<OmlxNativeStatusRow> => {
-      const capability = await ensureOmlxNativeCapability({ endpoint: h.spec.endpoint, timeoutMs });
-      return rowFor(h, capability);
-    }),
+    hosts.map((host) =>
+      readOmlxStatusRow(host, {
+        timeoutMs,
+        managed: opts.ownsNode !== undefined,
+        readOwned: opts.readOwned,
+      }),
+    ),
   );
   return rows.sort((a, b) => a.workload.localeCompare(b.workload));
 }

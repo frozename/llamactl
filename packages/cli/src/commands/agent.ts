@@ -5,7 +5,9 @@ import {
   auth,
   createChatCompletionsAdmission,
   type RequestAdmission,
+  residencyLeasesEnabled,
   startAgentServer,
+  startManagedAgentServer,
   tls,
 } from "@llamactl/remote";
 import { hostname } from "node:os";
@@ -328,18 +330,21 @@ ${DIR_FLAG_HELP}
   -h, --help       Show this help
 
 Environment:
+  LLAMACTL_MANAGED_RESIDENCY  "1" delegates engine lifecycle to this agent.
+                              Requires a finite local NodeRun budget and
+                              authenticated, isolated operation. Off by default.
   LLAMACTL_RESIDENCY_LEASES   "1"/"true" publishes one residency lease
                               registry at start (opt-in, off by default).
   LLAMACTL_RESIDENCY_SESSION_IDLE_MS
                               Session idle timeout in milliseconds: a
                               positive integer up to
-                              Number.MAX_SAFE_INTEGER. Honored only when
-                              LLAMACTL_RESIDENCY_LEASES is on; publishes
-                              a session refcount registry beside the
-                              lease registry once the listener binds.
-                              Other values, and a value set while
-                              LLAMACTL_RESIDENCY_LEASES is off, are
-                              ignored with a startup warning.
+                              Number.MAX_SAFE_INTEGER. Publishes a session
+                              refcount registry when leases are enabled by
+                              LLAMACTL_RESIDENCY_LEASES, managed residency,
+                              or execution admission groups. The registries
+                              install once the listener binds. Invalid or
+                              unused timeouts are ignored with a startup
+                              warning.
   LLAMACTL_CHAT_ADMISSION_MAX_EXECUTIONS
                               Inference admission concurrency cap: a positive
                               integer (opt-in, off by default). One cap is
@@ -1826,9 +1831,6 @@ export function validateServeWiring(
   const tunnelErr = checkTunnelCentral(parsed, tunnelCentralOn, tunnelCentralBearer, warn);
   if (tunnelErr) return { error: tunnelErr };
 
-  const sessionWarn = residencySessionConfigWarning(env);
-  if (sessionWarn !== null) warn(sessionWarn);
-
   return { dialUrl, dialBearer, tunnelCentralOn, tunnelCentralBearer };
 }
 
@@ -1867,15 +1869,20 @@ function residencySessionIdleOption(env: Readonly<Record<string, string | undefi
 }
 
 // #520: an idle timeout the agent will not honor is reported, not silently dropped
-function residencySessionConfigWarning(
+export function residencySessionConfigWarning(
   env: Readonly<Record<string, string | undefined>>,
+  options: Pick<
+    Parameters<typeof startAgentServer>[0],
+    "residencyLeases" | "executionAdmission" | "residencySessionIdleMs"
+  >,
+  managed: boolean,
 ): string | null {
   const raw = env["LLAMACTL_RESIDENCY_SESSION_IDLE_MS"];
   if (raw === undefined) return null;
-  if (!residencyLeasesOptIn(env)) {
+  if (!managed && !residencyLeasesEnabled(options)) {
     return "warning: LLAMACTL_RESIDENCY_SESSION_IDLE_MS is set but LLAMACTL_RESIDENCY_LEASES is off; no session registry is installed, so bound sessions do not block unloads\n";
   }
-  if (parsePositiveInteger(raw) === null) {
+  if (options.residencySessionIdleMs === undefined) {
     return "warning: LLAMACTL_RESIDENCY_SESSION_IDLE_MS is not a positive integer of milliseconds; ignoring it, so no session registry is installed\n";
   }
   return null;
@@ -1955,6 +1962,17 @@ function runtimeIdentitySpread(
   return {};
 }
 
+function managedExecutionOptions(
+  cfg: ReturnType<typeof agentConfigMod.loadAgentConfig>,
+): Pick<Parameters<typeof startAgentServer>[0], "executionAdmission" | "managedColdModelRuns"> {
+  return {
+    ...(cfg.executionAdmission === undefined ? {} : { executionAdmission: cfg.executionAdmission }),
+    ...(cfg.managedColdModelRuns === undefined
+      ? {}
+      : { managedColdModelRuns: cfg.managedColdModelRuns }),
+  };
+}
+
 export function buildServeOptions(
   parsed: ServeFlags,
   cfg: ReturnType<typeof agentConfigMod.loadAgentConfig>,
@@ -1968,6 +1986,7 @@ export function buildServeOptions(
     bindHost: parsed.bindHost ?? cfg.bindHost,
     port: parsed.port ?? cfg.port,
     tokenHash: cfg.tokenHash,
+    ...managedExecutionOptions(cfg),
     // Named operator bearer tokens (#218), re-read on every request, so
     // 'agent token add' / 'revoke' apply without a restart.
     bearerTokens: agentConfigMod.bearerTokensReader(join(parsed.dir, "agent.yaml")),
@@ -2030,7 +2049,7 @@ export function buildServeOptions(
     // #806 phase 3: engine scopes on unless the env opts out; the launcher
     // itself is published only on linux inside startAgentServer.
     ...engineScopeOption(env),
-    // #520: opt-in session idle timeout, honored only when residencyLeases is true.
+    // #520: an installed lease registry publishes the session timeout.
     ...residencySessionIdleOption(env),
     // #281 (DF-08): opt-in inference admission gate shared by
     // /v1/chat/completions, /v1/messages and /v1/responses, off by default.
@@ -2106,7 +2125,13 @@ async function runServe(args: string[]): Promise<number> {
 
   let running;
   try {
-    running = startAgentServer(buildServeOptions(parsed, cfg, wiring, dialNodeName));
+    const options = buildServeOptions(parsed, cfg, wiring, dialNodeName);
+    const managed = process.env["LLAMACTL_MANAGED_RESIDENCY"] === "1";
+    const sessionWarn = residencySessionConfigWarning(process.env, options, managed);
+    if (sessionWarn !== null) process.stderr.write(sessionWarn);
+    running = managed
+      ? await startManagedAgentServer(options, cfg.nodeName)
+      : startAgentServer(options);
   } catch (err) {
     if (reportServeStartFailure(err, parsed, cfg)) return 1;
     throw err;

@@ -35,8 +35,12 @@ import type { RequestQueueLimits } from "@llamactl/core/residency/queue-policy";
 import type { UnifiedStreamEvent } from "@novaproto/contracts";
 import type { ReadableStreamDefaultReader as WebStreamReader } from "node:stream/web";
 
+import { openaiProxy } from "@llamactl/core";
 import { saveConfig } from "@llamactl/core/config/kubeconfig";
 import { freshConfig } from "@llamactl/core/config/schema";
+import { writeModelHostState } from "@llamactl/core/engines/state";
+import { resolveEnv } from "@llamactl/core/env";
+import { getResidencyLeaseRegistry } from "@llamactl/core/residency/leases";
 import { TRPCError } from "@trpc/server";
 import { getHTTPStatusCodeFromError } from "@trpc/server/http";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -62,6 +66,7 @@ const ENV_KEYS = [
   "LLAMA_CPP_MODELS",
   "LLAMA_CPP_HOST",
   "LLAMA_CPP_PORT",
+  "LLAMA_CPP_SERVER_ALIAS",
   "LLAMACTL_UNIFIED_PROXY",
   "LLAMACTL_CONFIG",
   "LLAMACTL_USAGE_DIR",
@@ -153,6 +158,7 @@ interface UpstreamGate {
 interface FakeUpstream {
   readonly port: number;
   hits(path: string): number;
+  lastBody(path: string): unknown;
   /** Live per-request gates, oldest first; released/failed/cancelled ones drop out. */
   readonly gates: readonly UpstreamGate[];
   stop(): Promise<void>;
@@ -225,6 +231,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  */
 function startFakeUpstream(): FakeUpstream {
   const hits = new Map<string, number>();
+  const bodies = new Map<string, unknown>();
   const gates: (UpstreamGate & { settled: boolean })[] = [];
   const drop = (gate: UpstreamGate & { settled: boolean }): void => {
     const at = gates.indexOf(gate);
@@ -330,6 +337,7 @@ function startFakeUpstream(): FakeUpstream {
       }
       hits.set(path, (hits.get(path) ?? 0) + 1);
       const parsed: unknown = await req.json().catch(() => null);
+      bodies.set(path, parsed);
       const wantsStream = isRecord(parsed) && parsed["stream"] === true;
       if (wantsStream) return sseGate();
       return await jsonGate(path, req.signal);
@@ -338,6 +346,7 @@ function startFakeUpstream(): FakeUpstream {
   return {
     port: server.port ?? 0,
     hits: (path: string) => hits.get(path) ?? 0,
+    lastBody: (path: string): unknown => bodies.get(path),
     gates,
     stop: () => server.stop(true),
   };
@@ -402,6 +411,47 @@ describe("#281 DF-08: router local branches + /v1/completions share the chat cap
     };
     agent = startAgentServer(options);
     return agent;
+  }
+
+  function trackDefaultWorkload(name: string, startedAt = new Date().toISOString()): void {
+    writeModelHostState(
+      {
+        kind: "ModelHost",
+        engine: "llamacpp",
+        pid: process.pid,
+        host: "127.0.0.1",
+        port: upstream.port,
+        modelAliases: ["managed/model.gguf", "managed-alias"],
+        startedAt,
+      },
+      { name },
+      resolveEnv(),
+    );
+  }
+
+  function startDefaultEngineAdmission(bounds?: {
+    maxCompletionTokens?: number;
+    maxContextTokens?: number;
+  }): void {
+    process.env["LLAMA_CPP_SERVER_ALIAS"] = "no-such-model";
+    agent = startAgentServer({
+      tokenHash,
+      advertiseMdns: false,
+      executionAdmission: [
+        {
+          name: "default-device",
+          foregroundPorts: [upstream.port],
+          backgroundPorts: [1],
+          foregroundConcurrency: 2,
+          maxQueued: 4,
+          maxQueuedBytes: 65536,
+          maxPerPrincipal: 4,
+          maxQueueWaitMs: 3000,
+          starvationBoundMs: 3000,
+          ...bounds,
+        },
+      ],
+    });
   }
 
   function callerWith(counted: { admission: RequestAdmission }): AgentRouterContext {
@@ -685,6 +735,333 @@ describe("#281 DF-08: router local branches + /v1/completions share the chat cap
     expect(counted.acquires()).toBe(1);
     expect(await waitFor(() => admission.snapshot().executing === 0)).toBe(true);
   }, 15_000);
+
+  test.each(["untracked", "ambiguous"])(
+    "HTTP admission refuses an %s default engine without dialing it",
+    async (kind) => {
+      if (kind === "ambiguous") {
+        trackDefaultWorkload("one");
+        trackDefaultWorkload("two");
+      }
+      startDefaultEngineAdmission();
+      const response = await postChatStream();
+      try {
+        expect(response.status).toBe(503);
+        expect(await response.json()).toMatchObject({
+          error: { code: "execution_target_changed" },
+        });
+        expect(upstream.hits("/v1/chat/completions")).toBe(0);
+      } finally {
+        for (const gate of [...upstream.gates]) gate.release();
+        await response.body?.cancel().catch(() => undefined);
+      }
+    },
+  );
+
+  test("a declared cold pin cannot use an unrelated owner-admitted default engine", async () => {
+    trackDefaultWorkload("resident");
+    startDefaultEngineAdmission();
+    openaiProxy.setDeclaredModelSource(() => [
+      {
+        id: "no-such-model",
+        workload: "cold-declared",
+        kind: "ModelHost",
+        ownerNodeId: "local",
+        state: "cold",
+        autoLoadEligible: true,
+      },
+    ]);
+    const response = await postChatStream();
+    try {
+      expect(response.status).toBe(503);
+      expect(upstream.hits("/v1/chat/completions")).toBe(0);
+    } finally {
+      openaiProxy.setDeclaredModelSource(null);
+      for (const gate of upstream.gates) gate.release();
+      await response.body?.cancel().catch(() => undefined);
+    }
+  });
+
+  test("a new cold declaration fences an already queued default request before dial", async () => {
+    trackDefaultWorkload("resident");
+    startDefaultEngineAdmission();
+    async function admittedCount(): Promise<number> {
+      const metrics = await fetch(`${agent!.url}/metrics`, { headers: authedHeaders() });
+      const line = (await metrics.text())
+        .split("\n")
+        .find(
+          (value) =>
+            value.startsWith("llamactl_execution_admission_wait_seconds_count{") &&
+            value.includes('group="default-device"') &&
+            value.includes('stage="execution"') &&
+            value.includes('priority="interactive"') &&
+            value.includes('outcome="admitted"'),
+        );
+      return Number(line?.split(" ").at(-1) ?? 0);
+    }
+    const before = await admittedCount();
+    const activeA = await postChatStream();
+    const activeB = await postChatStream();
+    const queued = postChatStream();
+    void queued.catch(() => undefined);
+    let result: Response | undefined;
+    try {
+      const deadline = Date.now() + 2_000;
+      let heldInQueue = false;
+      while (Date.now() < deadline) {
+        const metrics = await fetch(`${agent!.url}/metrics`, { headers: authedHeaders() });
+        heldInQueue = (await metrics.text())
+          .split("\n")
+          .some(
+            (line) =>
+              line.startsWith("llamactl_execution_admission_requests{") &&
+              line.includes('state="queued"') &&
+              line.endsWith(" 1"),
+          );
+        if (heldInQueue) break;
+        await Bun.sleep(10);
+      }
+      expect(heldInQueue).toBe(true);
+      openaiProxy.setDeclaredModelSource(() => [
+        {
+          id: "no-such-model",
+          workload: "cold-declared",
+          kind: "ModelHost",
+          ownerNodeId: "local",
+          state: "cold",
+          autoLoadEligible: true,
+        },
+      ]);
+      upstream.gates[0]?.release();
+      await activeA.text();
+      result = await queued;
+      expect(result.status).toBe(503);
+      expect(upstream.hits("/v1/chat/completions")).toBe(2);
+      expect(await admittedCount()).toBe(before + 3);
+    } finally {
+      openaiProxy.setDeclaredModelSource(null);
+      for (const gate of [...upstream.gates]) gate.release();
+      await activeB.body?.cancel().catch(() => undefined);
+      await result?.body?.cancel().catch(() => undefined);
+    }
+  });
+
+  test("owner HTTP admission enforces explicit completion bounds before dialing", async () => {
+    trackDefaultWorkload("resident");
+    startDefaultEngineAdmission({ maxCompletionTokens: 4 });
+    const route = "/v1/chat/completions";
+    for (const [fields, code] of [
+      [{ max_completion_tokens: 5 }, "ContextLimitExceeded"],
+      [{}, "InvalidRequest"],
+      [{ max_tokens: 2, n_predict: -1 }, "InvalidRequest"],
+      [{ max_tokens: 2, n: 2 }, "InvalidRequest"],
+    ] as const) {
+      const response = await fetch(`${agent!.url}${route}`, {
+        method: "POST",
+        headers: authedHeaders(),
+        body: JSON.stringify({ ...chatRequest(), stream: true, ...fields }),
+      });
+      if (response.status !== 400) {
+        for (const gate of upstream.gates) gate.release();
+        await response.body?.cancel().catch(() => undefined);
+      }
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ error: { code } });
+    }
+    expect(upstream.hits(route)).toBe(0);
+
+    const allowed = await fetch(`${agent!.url}${route}`, {
+      method: "POST",
+      headers: authedHeaders(),
+      body: JSON.stringify({ ...chatRequest(), stream: true, max_completion_tokens: 4 }),
+    });
+    expect(allowed.status).toBe(200);
+    expect(upstream.hits(route)).toBe(1);
+    expect(upstream.lastBody(route)).toMatchObject({ max_tokens: 4 });
+    expect(upstream.lastBody(route)).not.toHaveProperty("max_completion_tokens");
+    latestGate(upstream).release();
+    await allowed.body?.cancel();
+  });
+
+  test("owner HTTP context uses exact token IDs and refuses unverified prompt claims", async () => {
+    trackDefaultWorkload("resident");
+    startDefaultEngineAdmission({ maxContextTokens: 6 });
+    for (const [path, data, code] of [
+      ["/v1/completions", { prompt: [11, 12, 13], max_tokens: 4 }, "ContextLimitExceeded"],
+      [
+        "/v1/chat/completions",
+        { ...chatRequest(), prompt_tokens: 1, max_tokens: 4 },
+        "ContextUnverified",
+      ],
+    ] as const) {
+      const response = await fetch(`${agent!.url}${path}`, {
+        method: "POST",
+        headers: authedHeaders(),
+        body: JSON.stringify({ model: "no-such-model", stream: true, ...data }),
+      });
+      if (response.status !== 400) {
+        for (const gate of upstream.gates) gate.release();
+        await response.body?.cancel().catch(() => undefined);
+      }
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ error: { code } });
+      expect(upstream.hits(path)).toBe(0);
+    }
+    const allowed = await fetch(`${agent!.url}/v1/completions`, {
+      method: "POST",
+      headers: authedHeaders(),
+      body: JSON.stringify({
+        model: "no-such-model",
+        stream: true,
+        prompt: [11, 12],
+        max_tokens: 4,
+      }),
+    });
+    expect(allowed.status).toBe(200);
+    expect(upstream.hits("/v1/completions")).toBe(1);
+    latestGate(upstream).release();
+    await allowed.body?.cancel();
+  });
+
+  test("the default binding refuses a changed generation at the same PID and endpoint", () => {
+    trackDefaultWorkload("resident", "2026-11-27T15:00:00Z");
+    const target = `http://127.0.0.1:${String(upstream.port)}/v1/chat/completions`;
+    const binding = openaiProxy.bindLocalEngineWorkload(target, resolveEnv());
+    expect(binding.workload).toBe("resident");
+    expect(binding.stillOwnsTarget?.()).toBe(true);
+    trackDefaultWorkload("resident", "2026-11-27T15:00:01Z");
+    expect(binding.stillOwnsTarget?.()).toBe(false);
+  });
+
+  test("default-target HTTP holds the exact workload lease through detached engine completion", async () => {
+    trackDefaultWorkload("resident");
+    startDefaultEngineAdmission();
+    const response = await postChatStream();
+    try {
+      expect(response.status).toBe(200);
+      const leases = getResidencyLeaseRegistry()!;
+      expect(leases.snapshot("resident").active).toHaveLength(1);
+      await response.body?.cancel();
+      const drain = leases.beginDrain("resident");
+      if (!drain.ok) throw new Error(`unexpected drain refusal: ${drain.reason}`);
+      expect(leases.commitUnload(drain.token)).toMatchObject({ ok: false, reason: "LeasesActive" });
+      latestGate(upstream).release();
+      expect(await waitFor(() => leases.snapshot("resident").active.length === 0)).toBe(true);
+      expect(leases.commitUnload(drain.token)).toMatchObject({ ok: true });
+    } finally {
+      for (const gate of [...upstream.gates]) gate.release();
+      await response.body?.cancel().catch(() => undefined);
+    }
+  });
+
+  test("local tRPC streams hold the owner execution slot through upstream completion", async () => {
+    trackDefaultWorkload("resident");
+    process.env["LLAMA_CPP_SERVER_ALIAS"] = "no-such-model";
+    const scratch = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: (): Response => new Response(),
+    });
+    try {
+      agent = startAgentServer({
+        tokenHash,
+        advertiseMdns: false,
+        executionAdmission: [
+          {
+            name: "test-device",
+            foregroundPorts: [scratch.port!],
+            backgroundPorts: [upstream.port],
+            foregroundConcurrency: 2,
+            maxQueued: 4,
+            maxQueuedBytes: 65536,
+            maxPerPrincipal: 4,
+            maxQueueWaitMs: 3000,
+            starvationBoundMs: 3000,
+          },
+        ],
+      });
+      const caller = appRouter.createCaller({});
+      const stream = (await caller.chatStream({
+        node: "local",
+        request: chatRequest(),
+      })) as AsyncIterable<UnifiedStreamEvent>;
+      const iterator = stream[Symbol.asyncIterator]();
+      expect((await iterator.next()).done).toBe(false);
+      expect(getResidencyLeaseRegistry()!.snapshot("resident").active).toHaveLength(1);
+
+      const pending = caller.chatComplete({ node: "local", request: chatRequest() });
+      void pending.catch(() => undefined);
+      await Bun.sleep(100);
+      expect(upstream.hits("/v1/chat/completions")).toBe(1);
+      latestGate(upstream).release();
+      while (!(await iterator.next()).done) {
+        // Read through the terminal so the next engine dispatch can begin.
+      }
+      expect(await waitFor(() => upstream.hits("/v1/chat/completions") === 2)).toBe(true);
+      latestGate(upstream).release();
+      expect((await pending).choices).toHaveLength(1);
+    } finally {
+      await scratch.stop(true);
+    }
+  });
+
+  test("local tRPC keeps its explicit engine when another execution group is configured", async () => {
+    const alternate = startFakeUpstream();
+    const scratch = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: (): Response => new Response(),
+    });
+    try {
+      const request = chatRequest();
+      writeModelHostState(
+        {
+          kind: "ModelHost",
+          engine: "llamacpp",
+          pid: process.pid,
+          host: "127.0.0.1",
+          port: alternate.port,
+          modelAliases: [request.model],
+          startedAt: "2026-11-27T15:00:00.000Z",
+        },
+        { name: "alternate" },
+        resolveEnv(),
+      );
+      agent = startAgentServer({
+        tokenHash,
+        advertiseMdns: false,
+        executionAdmission: [
+          {
+            name: "other-device",
+            foregroundPorts: [scratch.port!],
+            backgroundPorts: [alternate.port],
+            foregroundConcurrency: 2,
+            maxQueued: 4,
+            maxQueuedBytes: 65536,
+            maxPerPrincipal: 4,
+            maxQueueWaitMs: 3000,
+            starvationBoundMs: 3000,
+          },
+        ],
+      });
+      const caller = appRouter.createCaller({});
+      const stream = (await caller.chatStream({
+        node: "local",
+        request,
+      })) as AsyncIterable<UnifiedStreamEvent>;
+      const iterator = stream[Symbol.asyncIterator]();
+      expect((await iterator.next()).done).toBe(false);
+      for (const fixture of [upstream, alternate]) fixture.gates.at(-1)?.release();
+      expect(upstream.hits("/v1/chat/completions")).toBe(1);
+      expect(alternate.hits("/v1/chat/completions")).toBe(0);
+      while (!(await iterator.next()).done) {
+        // Drain the explicit local engine's response before teardown.
+      }
+    } finally {
+      await alternate.stop();
+      await scratch.stop(true);
+    }
+  });
 
   // ── (p4) chatStream local holds the slot for the stream lifetime ───────
 

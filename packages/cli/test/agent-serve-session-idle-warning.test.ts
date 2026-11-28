@@ -1,9 +1,13 @@
+import type { agentConfig } from "@llamactl/remote";
+
 import { afterAll, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  buildServeOptions,
   parseServeFlags,
+  residencySessionConfigWarning,
   type ServeFlags,
   type ServeWiring,
   validateServeWiring,
@@ -38,18 +42,38 @@ function expectValidWiring(wiring: ServeWiring | { error: string }): asserts wir
   if ("error" in wiring) throw new Error("validateServeWiring returned an error");
 }
 
-function warningsFor(env: Record<string, string>): string[] {
-  const parsed = parseFlags(freshDir());
-  const warnings: string[] = [];
-  const wiring = validateServeWiring(parsed, {
-    env,
-    warn: (message) => {
-      warnings.push(message);
-    },
-  });
+function warningsFor(
+  env: Record<string, string>,
+  executionAdmission?: agentConfig.AgentConfig["executionAdmission"],
+): string[] {
+  const dir = freshDir();
+  const parsed = parseFlags(dir);
+  const wiring = validateServeWiring(parsed, { env });
   expectValidWiring(wiring);
   expect(wiring.tunnelCentralOn).toBe(false);
-  return warnings;
+  const options = buildServeOptions(
+    parsed,
+    {
+      apiVersion: "llamactl/v1",
+      kind: "AgentConfig",
+      bindHost: "127.0.0.1",
+      port: 7843,
+      certPath: join(dir, "agent.crt"),
+      keyPath: join(dir, "agent.key"),
+      tokenHash: "a".repeat(64),
+      fingerprint: `sha256:${"b".repeat(64)}`,
+      ...(executionAdmission === undefined ? {} : { executionAdmission }),
+    },
+    wiring,
+    "fixture",
+    env,
+  );
+  const warning = residencySessionConfigWarning(
+    env,
+    options,
+    env["LLAMACTL_MANAGED_RESIDENCY"] === "1",
+  );
+  return warning === null ? [] : [warning];
 }
 
 describe("agent serve session-idle config warnings (#520)", () => {
@@ -122,6 +146,35 @@ describe("agent serve session-idle config warnings (#520)", () => {
       LLAMACTL_RESIDENCY_SESSION_IDLE_MS: secret,
     });
     expect(warnings.some((warning) => warning.includes(secret))).toBe(false);
+  });
+
+  test("managed startup honors the timeout without the explicit lease flag", () => {
+    const env = { LLAMACTL_MANAGED_RESIDENCY: "1" };
+    expect(warningsFor({ ...env, LLAMACTL_RESIDENCY_SESSION_IDLE_MS: "60000" })).toEqual([]);
+    expect(warningsFor({ ...env, LLAMACTL_RESIDENCY_SESSION_IDLE_MS: "invalid" })).toEqual([
+      INVALID,
+    ]);
+  });
+
+  test("nonempty execution groups honor the timeout without the explicit lease flag", () => {
+    const groups = [
+      {
+        name: "fixture",
+        foregroundPorts: [18200],
+        backgroundPorts: [18210],
+        foregroundConcurrency: 1,
+        maxQueued: 2,
+        maxQueuedBytes: 4096,
+        maxPerPrincipal: 2,
+        maxQueueWaitMs: 1000,
+        starvationBoundMs: 1000,
+      },
+    ];
+    expect(warningsFor({ LLAMACTL_RESIDENCY_SESSION_IDLE_MS: "60000" }, groups)).toEqual([]);
+    expect(warningsFor({ LLAMACTL_RESIDENCY_SESSION_IDLE_MS: "invalid" }, groups)).toEqual([
+      INVALID,
+    ]);
+    expect(warningsFor({ LLAMACTL_RESIDENCY_SESSION_IDLE_MS: "60000" }, [])).toEqual([LEASES_OFF]);
   });
 
   test("G5: session-idle warnings never fail wiring or enable the central tunnel", () => {

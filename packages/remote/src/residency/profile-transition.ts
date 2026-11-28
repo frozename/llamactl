@@ -30,11 +30,8 @@
  * `operation-record-refused`. Cancellation is checked at step boundaries and
  * ends a drain wait. The record is opt-in; the live caller (apply-profile)
  * passes it. The op's desiredRevision participates in the store's shared
- * watermark. A crash
- * between begin and finish leaves a nonterminal profile-switch row that
- * blocks the node (every later switch is Busy) until the deferred
- * crash-recovery path terminalizes it; serialization is therefore NOT
- * complete without recovery.
+ * watermark. An interrupted dispatched switch can leave its nonterminal row
+ * blocking later switches until its dispatch outcome is verified.
  *
  * On an ok, non-noop plan, `deferred` omits `complete` whenever
  * `opts.operation` is passed, because finishing that record terminal is the
@@ -54,9 +51,8 @@
  * `updatedAtMs` as "last step progress", so a live switch whose steps each
  * finish inside its staleness window is never terminalized under it.
  *
- * Crash recovery (via `recovery.ts`) terminalizes stale profile-switch rows;
- * rollback/persist-suppression/verify-release/reserve/verify-ready/publish
- * stay deferred. Per-action step budgets ride `opts.stepTimeouts`: `unloadMs`
+ * Crash recovery (via `recovery.ts`) preserves committed profile-switch rows
+ * and their reservations. Per-action step budgets ride `opts.stepTimeouts`: `unloadMs`
  * bounds each `stop` and `loadMs` each `start`, armed through the injectable
  * `opts.stepTimer`; absent, zero or non-finite budgets leave that action
  * unbounded (the same rule as `opts.drainTimeoutMs`, with no default). A
@@ -93,13 +89,18 @@ import {
   type ProfileSwitchPlan,
   type StepKind,
 } from "@llamactl/core/residency/planner";
+import { profileSwitchOperationKey } from "@llamactl/core/residency/profile-selection";
 import {
   currentSessionRefcounts,
   type SessionRefcounts,
   type SessionUnloadCheck,
 } from "@llamactl/core/residency/sessions";
 
-import type { ResidencyOperationOutcome, ResidencyOperationStore } from "./store.js";
+import type {
+  BeginOperationResult,
+  ResidencyOperationOutcome,
+  ResidencyOperationStore,
+} from "./store.js";
 
 import { type ProfileSwitchLifecycleOpts, withResidencyLifecycle } from "./lifecycle-steps.js";
 
@@ -113,6 +114,7 @@ export type ProfileSwitchStepTimeouts = { unloadMs?: number; loadMs?: number };
 // tests drive timeouts deterministically.
 export type ProfileSwitchStepTimer = (ms: number, onTimeout: () => void) => () => void;
 export type ProfileSwitchExecutorDeps = {
+  beforeTeardown?: () => string | undefined;
   // caller wires the verified stop procedures; with a lease registry in play the
   // executor holds the drain token, so the caller must wire the unfenced verified
   // stop: the #613 fenceWorkloadStop would refuse it with DrainInProgress. The
@@ -127,7 +129,7 @@ export type ProfileSwitchExecutorDeps = {
   start: (workload: string, ctx?: { signal?: AbortSignal }) => Promise<ProfileSwitchStepOutcome>;
 };
 export type ProfileSwitchExecutionStatus = "planned" | "ok" | "failed" | "not-run";
-export type ProfileSwitchStepAction = "fence" | "drain" | "stop" | "start";
+export type ProfileSwitchStepAction = "fence" | "drain" | "verify" | "stop" | "start";
 export type ProfileSwitchExecutionStep = {
   action: ProfileSwitchStepAction;
   workload: string;
@@ -144,12 +146,20 @@ export type ProfileSwitchOperationOpts = {
   fenceToken: number;
   operationId: string;
   desiredRevision: number;
+  managed?: boolean;
   nowMs?: () => number;
   // the resolved node budget the reservation is admitted against; absent =
   // recorded but not admitted (store opt-in, #685)
   nodeBudgetGiB?: number;
+  // The wet apply caller writes the reservation together with its new fence.
+  begun?: Extract<BeginOperationResult, { ok: true }>;
   // where a failed step-boundary heartbeat is reported; default stderr
   log?: (line: string) => void;
+  /** Revalidates desired inputs just before an actuator and its lifecycle writes. */
+  checkDesired?: () => string | null;
+  checkBeforePublish?: () => string | undefined;
+  trackActuator?: (actuator: Promise<ProfileSwitchStepOutcome>) => void;
+  didActuate?: () => boolean;
   // per-model residency lifecycle wiring; when set the executor drives the
   // residency_states rows around each fenced stop/start
   lifecycle?: ProfileSwitchLifecycleOpts;
@@ -205,6 +215,9 @@ type StepBudget = {
   stopMs: number | null;
   startMs: number | null;
   timer: ProfileSwitchStepTimer;
+  signal: AbortSignal | undefined;
+  deadlineMs: number | undefined;
+  nowMs: () => number;
 };
 type CancelledAt = { action: ProfileSwitchStepAction; workload: string };
 type RunResult = {
@@ -384,33 +397,65 @@ function normalizeOutcome(raw: unknown): StepOutcome {
   return { ok: false, detail: "invalid step outcome" };
 }
 
+function boundedProfileTime(ms: number | null, budget: StepBudget): number | null {
+  if (budget.deadlineMs === undefined) return ms;
+  const remaining = Math.max(0, budget.deadlineMs - budget.nowMs());
+  return Math.min(ms ?? remaining, remaining);
+}
+
+function profileDeadlineRefusal(budget: StepBudget): string | undefined {
+  return boundedProfileTime(null, budget) === 0 ? "ProfileDeadlineExceeded" : undefined;
+}
+
+function failedBeforeActuators(
+  node: string,
+  detail: string,
+  planned: readonly PlannedStep[],
+): RunResult {
+  const failure = stepRecord("verify", node, "failed", detail);
+  return {
+    steps: [
+      failure,
+      ...planned.map(({ action, workload }) => stepRecord(action, workload, "not-run")),
+    ],
+    failedAt: failureOf(failure),
+    cancelledAt: null,
+  };
+}
+
 async function runStep(
   step: PlannedStep,
   deps: ProfileSwitchExecutorDeps,
   budget: StepBudget,
 ): Promise<StepOutcome> {
-  const budgetMs = step.action === "start" ? budget.startMs : budget.stopMs;
+  const budgetMs = boundedProfileTime(
+    step.action === "start" ? budget.startMs : budget.stopMs,
+    budget,
+  );
+  if (budgetMs === 0) return { ok: false, detail: "ProfileDeadlineExceeded" };
+  const execute = (signal: AbortSignal | undefined): Promise<ProfileSwitchStepOutcome> => {
+    const run = step.action === "start" ? deps.start : deps.stop;
+    return signal === undefined ? run(step.workload) : run(step.workload, { signal });
+  };
   if (budgetMs === null) {
     try {
-      const pending =
-        step.action === "start" ? deps.start(step.workload) : deps.stop(step.workload);
-      return normalizeOutcome(await pending);
+      return normalizeOutcome(await execute(budget.signal));
     } catch (error: unknown) {
       return { ok: false, detail: messageOf(error) };
     }
   }
   const controller = new AbortController();
+  const signal =
+    budget.signal === undefined
+      ? controller.signal
+      : AbortSignal.any([budget.signal, controller.signal]);
   // The dep promise is normalized before the race so a late resolve or reject
   // is already handled and never unhandled once the timer wins. The dep is
   // invoked inside a then callback so a synchronous throw or a non-promise
   // return is normalized exactly like the unbudgeted path, never escaping
   // runStep (which would skip cancelBestEffort on the fenced path).
   const depSettled: Promise<StepOutcome> = Promise.resolve()
-    .then(() =>
-      step.action === "start"
-        ? deps.start(step.workload, { signal: controller.signal })
-        : deps.stop(step.workload, { signal: controller.signal }),
-    )
+    .then(() => execute(signal))
     .then(
       normalizeOutcome,
       (error: unknown): StepOutcome => ({ ok: false, detail: messageOf(error) }),
@@ -796,7 +841,8 @@ async function runFenced(
     return { steps, failedAt: null, cancelledAt };
   }
 
-  const drain = await drainPhase(registry, fence.tokens, drainTimeoutMs, signal, beat, sessions);
+  const drainBudgetMs = Math.max(1, boundedProfileTime(drainTimeoutMs, budget) ?? drainTimeoutMs);
+  const drain = await drainPhase(registry, fence.tokens, drainBudgetMs, signal, beat, sessions);
   steps.push(...drain.steps);
   if (drain.cancelled) {
     cancelBestEffort(registry, fence.tokens);
@@ -809,6 +855,16 @@ async function runFenced(
     appendNotRun(steps, "stop", plan.victims);
     appendNotRun(steps, "start", plan.replacements);
     return { steps, failedAt: drain.failedAt, cancelledAt: null };
+  }
+
+  const refusal = profileDeadlineRefusal(budget) ?? beforeTeardownRefusal(deps);
+  if (refusal !== undefined) {
+    cancelBestEffort(registry, fence.tokens);
+    const failure = stepRecord("verify", plan.node, "failed", refusal);
+    steps.push(failure);
+    appendNotRun(steps, "stop", plan.victims);
+    appendNotRun(steps, "start", plan.replacements);
+    return { steps, failedAt: failureOf(failure), cancelledAt: null };
   }
 
   const stop = await stopPhase(
@@ -834,6 +890,14 @@ async function runFenced(
   return { steps, failedAt: start.failedAt, cancelledAt: start.cancelledAt };
 }
 
+function beforeTeardownRefusal(deps: ProfileSwitchExecutorDeps): string | undefined {
+  try {
+    return deps.beforeTeardown?.();
+  } catch (error: unknown) {
+    return messageOf(error);
+  }
+}
+
 function buildReport(input: ReportInput): ProfileSwitchExecutionReport {
   const ran = input.steps.filter((step) => step.status === "ok" || step.status === "failed");
   return {
@@ -852,9 +916,7 @@ function buildReport(input: ReportInput): ProfileSwitchExecutionReport {
   };
 }
 
-export function profileSwitchOperationKey(node: string): string {
-  return `profile-switch:${node}`;
-}
+export { profileSwitchOperationKey };
 
 // The reservation the switch records at begin: the plan's `reserve` step, or 0
 // when there is none or it is not a finite non-negative number.
@@ -873,16 +935,20 @@ function beginSwitchOperation(
 ): BeginSwitchResult {
   const nowMs = operation.nowMs ?? Date.now;
   try {
-    const begun = operation.store.beginOperation({
-      fenceToken: operation.fenceToken,
-      operationId: operation.operationId,
-      model: profileSwitchOperationKey(plan.node),
-      targetState: `profile:${plan.to}`,
-      desiredRevision: operation.desiredRevision,
-      reservationGiB: profileSwitchReservationGiB(plan),
-      nowMs: nowMs(),
-      ...(operation.nodeBudgetGiB === undefined ? {} : { nodeBudgetGiB: operation.nodeBudgetGiB }),
-    });
+    const begun =
+      operation.begun ??
+      operation.store.beginOperation({
+        fenceToken: operation.fenceToken,
+        operationId: operation.operationId,
+        model: profileSwitchOperationKey(plan.node),
+        targetState: `profile:${plan.to}`,
+        desiredRevision: operation.desiredRevision,
+        reservationGiB: profileSwitchReservationGiB(plan),
+        nowMs: nowMs(),
+        ...(operation.nodeBudgetGiB === undefined
+          ? {}
+          : { nodeBudgetGiB: operation.nodeBudgetGiB }),
+      });
     if (!begun.ok) {
       return { ok: false, reason: begun.reason };
     }
@@ -1001,30 +1067,63 @@ function inFlightOperationId(operation: ProfileSwitchOperationOpts, plan: OkPlan
   return inflight?.operationId ?? "unknown";
 }
 
+function refusedOperationReport(
+  plan: OkPlan,
+  deferred: StepKind[],
+  reason: string,
+): ProfileSwitchExecutionReport {
+  return {
+    dryRun: false,
+    ok: false,
+    outcome: "refused",
+    node: plan.node,
+    from: plan.from,
+    to: plan.to,
+    steps: [],
+    ran: [],
+    failedAt: null,
+    deferred,
+    refusal: { reason: "operation-record-refused", detail: reason },
+  };
+}
+
+export function profileSwitchOperationRefusal(
+  plan: OkPlan,
+  registry: ResidencyLeases | null,
+  reason: string,
+): ProfileSwitchExecutionReport {
+  return refusedOperationReport(plan, deferredKinds(plan, registry !== null, true), reason);
+}
+
+function verifyProfilePublication(
+  plan: OkPlan,
+  result: RunResult,
+  check: ProfileSwitchOperationOpts["checkBeforePublish"],
+  budget: StepBudget,
+): RunResult {
+  if (check === undefined || result.failedAt !== null || result.cancelledAt !== null) return result;
+  const lost =
+    budget.signal?.aborted === true
+      ? "ProfileSwitchCanceled"
+      : (profileDeadlineRefusal(budget) ?? check());
+  if (lost === undefined) return result;
+  const failure = stepRecord("verify", plan.node, "failed", lost);
+  return { ...result, steps: [...result.steps, failure], failedAt: failureOf(failure) };
+}
+
 async function executeWithOperation(
   plan: OkPlan,
   deferred: StepKind[],
   operation: ProfileSwitchOperationOpts,
   run: (beat: Beat) => Promise<RunResult>,
+  budget: StepBudget,
 ): Promise<ProfileSwitchExecutionReport> {
   const begun = beginSwitchOperation(plan, operation);
   if (!begun.ok) {
     if (begun.reason === "reservation-conflict") {
       return busyReport(plan, deferred, inFlightOperationId(operation, plan));
     }
-    return {
-      dryRun: false,
-      ok: false,
-      outcome: "refused",
-      node: plan.node,
-      from: plan.from,
-      to: plan.to,
-      steps: [],
-      ran: [],
-      failedAt: null,
-      deferred,
-      refusal: { reason: "operation-record-refused", detail: begun.reason },
-    };
+    return refusedOperationReport(plan, deferred, begun.reason);
   }
   if (!begun.created) {
     if (begun.phase === "terminal") {
@@ -1051,16 +1150,17 @@ async function executeWithOperation(
 
   let result: RunResult;
   try {
-    result = await run(heartbeatFor(operation));
+    result = verifyProfilePublication(
+      plan,
+      await run(heartbeatFor(operation)),
+      operation.checkBeforePublish,
+      budget,
+    );
   } catch (error: unknown) {
-    finishSwitchOperation(operation, begun.version, {
-      outcome: "failed",
-      detail: messageOf(error),
-    });
+    finishCrashedExecution(operation, begun.version, error);
     throw error;
   }
-  const info = finishInfoFor(result);
-  const record = finishSwitchOperation(operation, begun.version, info);
+  const { info, record } = finishExecution(operation, begun.version, result);
   const outcome =
     result.cancelledAt !== null
       ? "cancelled"
@@ -1086,6 +1186,37 @@ async function executeWithOperation(
   });
 }
 
+function finishCrashedExecution(
+  operation: ProfileSwitchOperationOpts,
+  version: number,
+  error: unknown,
+): void {
+  if (operation.managed === true) return;
+  finishSwitchOperation(operation, version, { outcome: "failed", detail: messageOf(error) });
+}
+
+function finishExecution(
+  operation: ProfileSwitchOperationOpts,
+  version: number,
+  result: RunResult,
+): { info: FinishInfo; record: FinishRecord } {
+  const info = finishInfoFor(result);
+  const acted =
+    operation.didActuate?.() ??
+    result.steps.some(
+      (step) =>
+        (step.action === "stop" || step.action === "start") &&
+        (step.status === "ok" || step.status === "failed"),
+    );
+  if (operation.managed === true && info.outcome !== "succeeded" && acted) {
+    return {
+      info: { ...info, outcome: "unknown" },
+      record: { recorded: false, recordFailure: "managed dispatch requires generation recovery" },
+    };
+  }
+  return { info, record: finishSwitchOperation(operation, version, info) };
+}
+
 function drainTimeoutMsFrom(customTimeout: number | undefined): number {
   return customTimeout !== undefined && Number.isFinite(customTimeout) && customTimeout > 0
     ? customTimeout
@@ -1108,18 +1239,24 @@ function finiteBudgetMs(ms: number | undefined): number | null {
 function stepBudgetFrom(
   stepTimeouts: ProfileSwitchStepTimeouts | undefined,
   stepTimer: ProfileSwitchStepTimer | undefined,
+  signal: AbortSignal | undefined,
+  deadlineMs: number | undefined,
+  nowMs: () => number,
 ): StepBudget {
   return {
     stopMs: finiteBudgetMs(stepTimeouts?.unloadMs),
     startMs: finiteBudgetMs(stepTimeouts?.loadMs),
     timer: stepTimer ?? defaultStepTimer,
+    signal,
+    deadlineMs,
+    nowMs,
   };
 }
 
 // The executor deps, wrapped in the residency-lifecycle decorator only when
 // the operation opts carry `lifecycle`. Without it the deps pass through
 // untouched, so the switch behaves byte-identically to a no-lifecycle run.
-function executorDepsFor(
+function lifecycleDepsFor(
   plan: OkPlan,
   deps: ProfileSwitchExecutorDeps,
   operation: ProfileSwitchOperationOpts | undefined,
@@ -1127,13 +1264,88 @@ function executorDepsFor(
   if (operation?.lifecycle === undefined) {
     return deps;
   }
-  return withResidencyLifecycle(deps, {
-    lifecycle: operation.lifecycle,
-    fenceToken: operation.fenceToken,
-    occupiedAtPlan: new Set([...plan.victims, ...plan.retained]),
-    nowMs: operation.nowMs ?? Date.now,
-    log: operation.log ?? defaultLog,
-  });
+  return {
+    ...deps,
+    ...withResidencyLifecycle(deps, {
+      lifecycle: operation.lifecycle,
+      fenceToken: operation.fenceToken,
+      occupiedAtPlan: new Set([...plan.victims, ...plan.retained]),
+      nowMs: operation.nowMs ?? Date.now,
+      log: operation.log ?? defaultLog,
+    }),
+  };
+}
+
+function checkBeforeProfileStep(
+  checkDesired: () => string | null,
+  run: () => Promise<ProfileSwitchStepOutcome>,
+): Promise<ProfileSwitchStepOutcome> {
+  const stale = checkDesired();
+  if (stale !== null) return Promise.resolve({ ok: false, detail: stale });
+  return run();
+}
+
+function trackProfileActuators(
+  deps: ProfileSwitchExecutorDeps,
+  track: (actuator: Promise<ProfileSwitchStepOutcome>) => void,
+  started: () => void,
+): ProfileSwitchExecutorDeps {
+  function dispatch(
+    run: () => Promise<ProfileSwitchStepOutcome>,
+  ): Promise<ProfileSwitchStepOutcome> {
+    started();
+    const actuator = run();
+    track(actuator);
+    return actuator;
+  }
+  return {
+    ...deps,
+    stop: (workload, ctx) => dispatch(() => deps.stop(workload, ctx)),
+    start: (workload, ctx) => dispatch(() => deps.start(workload, ctx)),
+  };
+}
+
+function executorDepsFor(
+  plan: OkPlan,
+  deps: ProfileSwitchExecutorDeps,
+  operation: ProfileSwitchOperationOpts | undefined,
+): ProfileSwitchExecutorDeps {
+  const lifecycleDeps = lifecycleDepsFor(plan, deps, operation);
+  if (operation?.checkDesired === undefined) return lifecycleDeps;
+  const { checkDesired } = operation;
+  return {
+    ...lifecycleDeps,
+    stop: (workload, ctx) =>
+      checkBeforeProfileStep(checkDesired, () => lifecycleDeps.stop(workload, ctx)),
+    start: (workload, ctx) =>
+      checkBeforeProfileStep(checkDesired, () => lifecycleDeps.start(workload, ctx)),
+  };
+}
+
+function observeProfileExecution(
+  plan: OkPlan,
+  deps: ProfileSwitchExecutorDeps,
+  operation: ProfileSwitchOperationOpts | undefined,
+): {
+  executorDeps: ProfileSwitchExecutorDeps;
+  operation: ProfileSwitchOperationOpts | undefined;
+} {
+  if (operation === undefined) return { executorDeps: deps, operation };
+  let actuatorStarted = false;
+  const tracked = trackProfileActuators(
+    deps,
+    (actuator) => operation.trackActuator?.(actuator),
+    (): void => {
+      actuatorStarted = true;
+    },
+  );
+  return {
+    executorDeps: executorDepsFor(plan, tracked, operation),
+    operation: {
+      ...operation,
+      didActuate: () => actuatorStarted || operation.didActuate?.() === true,
+    },
+  };
 }
 
 export async function executeProfileSwitch(
@@ -1148,6 +1360,8 @@ export async function executeProfileSwitch(
     stepTimeouts?: ProfileSwitchStepTimeouts;
     stepTimer?: ProfileSwitchStepTimer;
     sessions?: SessionRefcounts | null;
+    enforcePlanDeadline?: boolean;
+    nowMs?: () => number;
   },
 ): Promise<ProfileSwitchExecutionReport> {
   const dryRun = opts?.dryRun !== false;
@@ -1187,7 +1401,10 @@ export async function executeProfileSwitch(
   const sessions = opts?.sessions === undefined ? currentSessionRefcounts() : opts.sessions;
   const drainTimeoutMs = drainTimeoutMsFrom(opts?.drainTimeoutMs);
   const fenced = registry !== null;
-  const deferred = deferredKinds(plan, fenced, opts?.operation !== undefined);
+  const deferred =
+    opts?.operation?.managed === true
+      ? []
+      : deferredKinds(plan, fenced, opts?.operation !== undefined);
   const planned = plannedSteps(plan.victims, plan.replacements, fenced);
 
   if (dryRun) {
@@ -1206,38 +1423,35 @@ export async function executeProfileSwitch(
   }
 
   const signal = opts.signal;
-  const operation = opts.operation;
-  const budget = stepBudgetFrom(opts.stepTimeouts, opts.stepTimer);
-  const executorDeps = executorDepsFor(plan, deps, operation);
+  const { executorDeps, operation } = observeProfileExecution(plan, deps, opts.operation);
+  const budget = stepBudgetFrom(
+    opts.stepTimeouts,
+    opts.stepTimer,
+    signal,
+    opts.enforcePlanDeadline === true ? plan.deadlineMs : undefined,
+    opts.nowMs ?? Date.now,
+  );
+  const run = async (beat: Beat): Promise<RunResult> => {
+    const refusal = profileDeadlineRefusal(budget);
+    if (refusal !== undefined) return failedBeforeActuators(plan.node, refusal, planned);
+    return fenced
+      ? await runFenced(
+          plan,
+          executorDeps,
+          registry,
+          drainTimeoutMs,
+          signal,
+          beat,
+          budget,
+          sessions,
+        )
+      : await runSteps(planned, executorDeps, signal, beat, budget);
+  };
   if (operation !== undefined) {
-    return await executeWithOperation(plan, deferred, operation, async (beat) =>
-      fenced
-        ? await runFenced(
-            plan,
-            executorDeps,
-            registry,
-            drainTimeoutMs,
-            signal,
-            beat,
-            budget,
-            sessions,
-          )
-        : await runSteps(planned, executorDeps, signal, beat, budget),
-    );
+    return await executeWithOperation(plan, deferred, operation, run, budget);
   }
 
-  const result = fenced
-    ? await runFenced(
-        plan,
-        executorDeps,
-        registry,
-        drainTimeoutMs,
-        signal,
-        NO_BEAT,
-        budget,
-        sessions,
-      )
-    : await runSteps(planned, executorDeps, signal, NO_BEAT, budget);
+  const result = await run(NO_BEAT);
   const outcome =
     result.cancelledAt !== null
       ? "cancelled"

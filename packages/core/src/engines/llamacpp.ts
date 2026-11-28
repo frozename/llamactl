@@ -14,6 +14,27 @@ const DRAFT_MODEL_PATH_FLAGS: ReadonlySet<string> = new Set([
   "--dspark",
 ]);
 
+const IDLE_SLEEP_FLAG = "--sleep-idle-seconds";
+
+export function hasUnmanagedLlamacppIdleSleep(args: readonly string[]): boolean {
+  return args.some((argument, index) => {
+    const token = argument.replaceAll("_", "-");
+    if (token === IDLE_SLEEP_FLAG) return args[index + 1] !== "-1";
+    return token.startsWith(IDLE_SLEEP_FLAG + "=") && token !== IDLE_SLEEP_FLAG + "=-1";
+  });
+}
+
+export function hasLeadingLlamacppIdleSleepOverride(args: readonly string[]): boolean {
+  return args[0]?.replaceAll("_", "-") === IDLE_SLEEP_FLAG && args[1] === "-1";
+}
+
+export function hasDraftModelPathArg(args: readonly string[]): boolean {
+  return args.some((token) => {
+    const [flag = ""] = token.split("=", 1);
+    return DRAFT_MODEL_PATH_FLAGS.has(flag);
+  });
+}
+
 // Absolute draft paths pass through on purpose, matching the issue's "relative" wording.
 // Both the separate and the `--flag=value` forms are resolved.
 function resolveInlineDraftFlag(

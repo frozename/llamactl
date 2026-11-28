@@ -87,20 +87,20 @@ SwapFree:             0 kB
 });
 
 describe("probeNodeMem platform routing", () => {
-  it("reads /proc/meminfo on linux without calling exec", async () => {
-    let readPath = "";
+  it("reads Linux host memory and swap counters without running vm_stat", async () => {
+    const readPaths: string[] = [];
     const snap = await probeNodeMem({
       platform: "linux",
       readFile: (path: string) => {
-        readPath = path;
-        return Promise.resolve(MEMINFO);
+        readPaths.push(path);
+        return Promise.resolve(path === "/proc/meminfo" ? MEMINFO : "");
       },
       exec: () => {
         throw new Error("exec must not be called on linux");
       },
     });
-    expect(readPath).toBe("/proc/meminfo");
-    expect(snap).toEqual(parseProcMeminfo(MEMINFO));
+    expect(readPaths).toEqual(["/proc/meminfo", "/proc/vmstat"]);
+    expect(snap).toMatchObject(parseProcMeminfo(MEMINFO));
   });
 
   it("runs vm_stat on darwin without calling readFile", async () => {
@@ -111,7 +111,7 @@ describe("probeNodeMem platform routing", () => {
         throw new Error("readFile must not be called on darwin");
       },
     });
-    expect(snap).toEqual(parseVmStatOutput(FAKE_VM_STAT));
+    expect(snap).toMatchObject(parseVmStatOutput(FAKE_VM_STAT));
   });
 
   it("returns an unavailable zeroed snapshot on unsupported platforms", async () => {
@@ -318,7 +318,7 @@ describe("probeGpuGtt", () => {
         throw new Error("exec must not be called on linux");
       },
     });
-    expect(snap).toEqual(parseProcMeminfo(MEMINFO));
+    expect(snap).toMatchObject(parseProcMeminfo(MEMINFO));
     expect(snap.free_mb).toBe(40000);
     expect("gtt" in snap).toBe(false);
   });

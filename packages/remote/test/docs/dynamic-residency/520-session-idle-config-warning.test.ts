@@ -20,13 +20,15 @@ describe("#520 session-idle config warning", () => {
       "`residency status`",
       "`NoRegistry`",
       "it means set to a positive integer",
+      "when managed residency is enabled",
+      "nonempty `executionAdmission` list",
     ]);
   });
 
-  test("D2a: validateServeWiring emits the residency session config warning", () => {
+  test("D2a: agent startup checks the effective options for the residency warning", () => {
     const src = readOrEmpty(AGENT_CLI);
-    const body = enclosingBody(src, "export function validateServeWiring(");
-    expect(body).toContain("residencySessionConfigWarning(");
+    const body = enclosingBody(src, "async function runServe(");
+    expect(body).toContain("residencySessionConfigWarning(process.env, options, managed)");
   });
 
   test("D2b: serve usage documents warning-only rejection and the leases-off case", () => {
@@ -35,6 +37,8 @@ describe("#520 session-idle config warning", () => {
     expect(usage).not.toBe("");
     const text = flat(usage);
     expect(text).toContain("ignored with a startup warning");
-    expect(text).toContain("LLAMACTL_RESIDENCY_LEASES is off");
+    expect(text).toContain(
+      "LLAMACTL_RESIDENCY_LEASES, managed residency, or execution admission groups",
+    );
   });
 });

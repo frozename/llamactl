@@ -30,7 +30,7 @@ describe("#520 llama.cpp sleep session fence documentation", () => {
 
   test("D2 the source carries the fence before requestSleep and captures the registry", () => {
     const src = readOrEmpty(join(REPO, "packages/remote/src/residency/llamacpp-sleep-client.ts"));
-    const sleepBody = enclosingBody(src, "async function sleep(): Promise<LlamacppSleepOutcome>");
+    const sleepBody = enclosingBody(src, "async function sleepWithDrain(");
     expectPins(sleepBody, "llama.cpp sleep body", [
       "sessionUnloadRefusal(",
       "controller.requestSleep(",

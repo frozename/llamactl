@@ -135,8 +135,8 @@ describe("#522 runbook window eval launch refusal", () => {
     const endAt = startAt === -1 ? -1 : routerSrc.indexOf("workloadDelete: t.procedure", startAt);
     const startBlock = flat(startAt === -1 || endAt === -1 ? "" : routerSrc.slice(startAt, endAt));
     expect(startBlock).toContain("directResidencyOpts(");
-    expect(startBlock).toContain("input.manifest?.metadata.labels");
-    expect(startBlock).toContain("input.manifest?.spec.hostedModels[0]?.rel");
+    expect(startBlock).toContain("manifest?.metadata.labels");
+    expect(startBlock).toContain("manifest?.spec.hostedModels[0]?.rel");
 
     const groupBody = flat(enclosingBody(routerSrc, "function directResidencyGroup"));
     expect(groupBody, "directResidencyGroup signature").not.toBe("");

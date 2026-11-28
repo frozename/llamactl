@@ -33,6 +33,10 @@ import {
   projectAdmissionHeadroom,
   scoreNodes,
 } from "@llamactl/fleet-supervisor";
+import {
+  measuredCalibrationStorePath,
+  readMeasuredMemoryCalibration,
+} from "@llamactl/fleet-supervisor/measured-memory";
 import { basename } from "node:path";
 
 import type { BegunEvictionOps, EvictionOperationOpts } from "../residency/eviction-operation.js";
@@ -284,8 +288,20 @@ export function admissionRefusalReason(result: ApplyResult): AdmissionRefusalRea
   return undefined;
 }
 
+interface ModelHostResidencyAdmission {
+  getNodeResidencyPolicy: (nodeName: string) => NodeRunResidency | null | undefined;
+  getCandidateCalibrationKey: (manifest: ModelHostManifest) => string | null | undefined;
+  getMeasuredEnvelope?: (manifest: ModelHostManifest) => MeasuredEnvelope | null | undefined;
+  /** An explicit path selects the local store in place of the injected reader. */
+  calibrationStorePath?: string;
+  nowMs?: () => number;
+  maxAgeMs?: number;
+}
+
 export interface ApplyManifestOptions {
   manifest: unknown;
+  /** Advisory projection from the target authority; the actual start reserves atomically. */
+  managedBudget?: Extract<AdmissionResult, { ok: true }>;
   getClient?: (nodeName: string) => WorkloadClient;
   spawn?: typeof nodeSpawn;
   env?: NodeJS.ProcessEnv;
@@ -339,21 +355,7 @@ export interface ApplyManifestOptions {
     /** Nodes whose latest snapshot is older than this many ms are excluded. Default 150000 (5× 30s tick). staleCutoffMs <= 0 disables filtering. */
     staleCutoffMs?: number;
   };
-  /** #277 DF-04 opt-in: measured calibration envelopes in ModelHost budget
-   *  admission. Absent => charging is unchanged. Synchronous so the default
-   *  path gains no await; no production caller passes it yet. */
-  residencyAdmission?: {
-    getNodeResidencyPolicy: (nodeName: string) => NodeRunResidency | null | undefined;
-    getMeasuredEnvelope: (manifest: ModelHostManifest) => MeasuredEnvelope | null | undefined;
-    /** The memoryCalibrationKey encoding of the candidate's calibration
-     *  inputs. The measured envelope is only charged when it matches; a null
-     *  key means the candidate is uncalibratable and the envelope is ignored. */
-    getCandidateCalibrationKey: (manifest: ModelHostManifest) => string | null | undefined;
-    /** Clock override for freshness checks; defaults to Date.now(). */
-    nowMs?: () => number;
-    /** Max envelope age in ms; defaults to DEFAULT_MEASURED_ENVELOPE_MAX_AGE_MS. */
-    maxAgeMs?: number;
-  };
+  residencyAdmission?: ModelHostResidencyAdmission;
 }
 
 interface PlacementContext {
@@ -684,29 +686,39 @@ const NO_VERIFIED_EVICT_VICTIMS: ReadonlySet<string> = new Set();
 function modelHostExpectedMemoryGiB(
   manifest: ModelHostManifest,
   opts: Omit<ApplyManifestOptions, "manifest">,
-  resolved: ReturnType<typeof resolveEnv>,
   estimateGiB: number | null,
 ): number | null {
-  if (opts.residencyAdmission === undefined) return estimateGiB;
-  const policy = opts.residencyAdmission.getNodeResidencyPolicy(manifest.spec.node);
-  const policyPresent = policy !== null && policy !== undefined;
-  const envelope = policyPresent
-    ? opts.residencyAdmission.getMeasuredEnvelope(manifest)
-    : undefined;
-  const candidateKey = policyPresent
-    ? (opts.residencyAdmission.getCandidateCalibrationKey(manifest) ?? undefined)
-    : undefined;
-  const nowMs = policyPresent ? (opts.residencyAdmission.nowMs?.() ?? Date.now()) : undefined;
+  const admission = opts.residencyAdmission;
+  if (admission === undefined) return estimateGiB;
+  const policy = admission.getNodeResidencyPolicy(manifest.spec.node);
+  if (policy === null || policy === undefined) return estimateGiB;
+  const candidateKey = admission.getCandidateCalibrationKey(manifest) ?? undefined;
+  const envelope = modelHostCalibrationEnvelope(manifest, admission, candidateKey, opts.env);
   return modelHostAdmissionChargeGiB({
     estimateGiB,
-    residencyPolicyPresent: policyPresent,
+    residencyPolicyPresent: true,
     envelope,
     candidateKey,
-    nowMs,
-    ...(opts.residencyAdmission.maxAgeMs !== undefined
-      ? { maxAgeMs: opts.residencyAdmission.maxAgeMs }
-      : {}),
+    nowMs: admission.nowMs?.() ?? Date.now(),
+    ...omitUndefined({ maxAgeMs: admission.maxAgeMs }),
   });
+}
+
+function modelHostCalibrationEnvelope(
+  manifest: ModelHostManifest,
+  admission: ModelHostResidencyAdmission,
+  candidateKey: string | undefined,
+  env: NodeJS.ProcessEnv | undefined,
+): MeasuredEnvelope | null | undefined {
+  if (admission.calibrationStorePath === undefined && admission.getMeasuredEnvelope) {
+    return admission.getMeasuredEnvelope(manifest);
+  }
+  // Device identity is outside the calibration key, so a remote target cannot use this host's store.
+  if (manifest.spec.node !== LOCAL_NODE_ID || candidateKey === undefined) return null;
+  return readMeasuredMemoryCalibration(
+    candidateKey,
+    admission.calibrationStorePath ?? measuredCalibrationStorePath(env),
+  );
 }
 
 function admitModelHostBudget(
@@ -725,7 +737,7 @@ function admitModelHostBudget(
     .filter((m) => sameNode(m.spec.node))
     .filter((m) => m.spec.enabled);
   const estimateGiB = estimateModelHostMemoryGiB(manifest, resolved);
-  const expectedMemoryGiB = modelHostExpectedMemoryGiB(manifest, opts, resolved, estimateGiB);
+  const expectedMemoryGiB = modelHostExpectedMemoryGiB(manifest, opts, estimateGiB);
   const admit = computeNodeBudget({
     nodeName: manifest.spec.node,
     nodeBudgetGiB: budget,
@@ -765,8 +777,10 @@ function admitModelHostBudget(
 async function startModelHostProcess(
   client: WorkloadClient,
   manifest: ModelHostManifest,
+  managed = false,
 ): Promise<
-  { ok: false; error: string } | { ok: true; status: { state: string; pid?: number | null } }
+  | { ok: false; error: string }
+  | { ok: true; status: { state: string; pid?: number | null; identityUnknown?: boolean } }
 > {
   const timeoutMs = manifest.spec.timeoutSeconds * 1000;
   // Wire contract: metadata.annotations are controller-side markers
@@ -775,12 +789,18 @@ async function startModelHostProcess(
   // ModelHostManifestSchema.optional() — reject as unknown keys, so the
   // manifest sent on the wire is a copy with annotations removed.
   const { annotations: _wireAnnotations, ...wireMetadata } = manifest.metadata;
-  const wireManifest: ModelHostManifest = { ...manifest, metadata: wireMetadata };
+  const wireManifest = managed ? manifest : { ...manifest, metadata: wireMetadata };
   let sub: Unsubscribable | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     type StartResult =
-      | { ok: true; error?: string; pid?: number | null; state?: string | null }
+      | {
+          ok: true;
+          error?: string;
+          pid?: number | null;
+          state?: string | null;
+          identityUnknown?: boolean;
+        }
       | { ok: false; error: string };
     const startResult = await new Promise<StartResult | null>((resolve, reject) => {
       timer = setTimeout(() => {
@@ -820,7 +840,16 @@ async function startModelHostProcess(
     }
 
     if (typeof startResult.pid === "number" && typeof startResult.state === "string") {
-      return { ok: true, status: { state: startResult.state, pid: startResult.pid } };
+      return {
+        ok: true,
+        status: {
+          state: startResult.state,
+          pid: startResult.pid,
+          ...(startResult.identityUnknown === undefined
+            ? {}
+            : { identityUnknown: startResult.identityUnknown }),
+        },
+      };
     }
     return {
       ok: true,
@@ -916,21 +945,24 @@ async function applyModelHostManifest(
   // the same physical node serializes here (DF-01 #274). The start keeps the
   // lock for up to its start timeout.
   return await withAdmissionLock(opts, manifest.spec.node, async () => {
-    const budget = await resolveModelHostBudgetGiB(manifest, opts, client);
-    const rejected = admitModelHostBudget(
-      manifest,
-      opts,
-      resolved,
-      firstHostedModel,
-      budget,
-      NO_VERIFIED_EVICT_VICTIMS,
-    );
-    if (rejected) return rejected;
+    if (opts.managedBudget === undefined) {
+      const budget = await resolveModelHostBudgetGiB(manifest, opts, client);
+      const rejected = admitModelHostBudget(
+        manifest,
+        opts,
+        resolved,
+        firstHostedModel,
+        budget,
+        NO_VERIFIED_EVICT_VICTIMS,
+      );
+      if (rejected) return rejected;
+    }
 
-    const started = await startModelHostProcess(client, manifest);
+    const started = await startModelHostProcess(client, manifest, opts.managedBudget !== undefined);
     if (!started.ok) return { ok: false, error: started.error };
 
-    writeModelHostSidecar(manifest, started.status, resolved, firstHostedModel.rel);
+    if (opts.managedBudget === undefined)
+      writeModelHostSidecar(manifest, started.status, resolved, firstHostedModel.rel);
 
     return {
       ok: true,
@@ -984,6 +1016,21 @@ async function teardownFailedModelHost(ctx: EvictionStageCtx): Promise<string | 
     remainingMs,
   );
   return failure?.message ?? null;
+}
+
+async function failedModelHostReplacement(
+  ctx: EvictionStageCtx,
+  error: string,
+): Promise<Extract<ApplyManifestOutcome, { ok: false }>> {
+  const detail = await teardownFailedModelHost(ctx);
+  if (detail === null) return { ok: false, error };
+  const victims = [...ctx.evictionClaims].map((n) => `'${n}'`).join(", ");
+  ctx.evictionClaims.clear();
+  ctx.evictionIntentKept = true;
+  return {
+    ok: false,
+    error: `${error}; replacement '${ctx.manifest.metadata.name}' teardown after failed start unverified (${detail}); eviction intent on ${victims} kept`,
+  };
 }
 
 /**
@@ -1070,18 +1117,23 @@ async function convergeModelHostReplacement(
     };
   }
 
+  const holdFailure = armEvictionMarkers(ctx);
+  if (holdFailure !== null) return { ok: false, error: holdFailure.message };
   lifecycle.startInvoked = true;
   const started = await startModelHostProcess(client, manifest);
-  if (!started.ok) {
-    let message = started.error;
-    const detail = await teardownFailedModelHost(ctx);
-    if (detail !== null) {
-      const victims = [...ctx.evictionClaims].map((n) => `'${n}'`).join(", ");
-      ctx.evictionClaims.clear();
-      ctx.evictionIntentKept = true;
-      message = `${message}; replacement '${manifest.metadata.name}' teardown after failed start unverified (${detail}); eviction intent on ${victims} kept`;
-    }
-    return { ok: false, error: message };
+  if (!started.ok) return await failedModelHostReplacement(ctx, started.error);
+  const { state, pid, identityUnknown } = started.status;
+  if (
+    state !== "Running" ||
+    typeof pid !== "number" ||
+    !Number.isInteger(pid) ||
+    pid < 1 ||
+    identityUnknown
+  ) {
+    return await failedModelHostReplacement(
+      ctx,
+      `modelHostStart did not verify readiness (state=${state}, pid=${String(pid ?? "unknown")})`,
+    );
   }
 
   writeModelHostSidecar(manifest, started.status, resolved, firstHostedModel.rel);
@@ -1136,15 +1188,16 @@ async function applyModelHostReplacement(
       lifecycle,
     );
   } catch (err) {
-    clearEvictionMarkers(manifest, ctx.opts, ctx.evictionClaims);
-    finalizeEvictionOperations(
-      ctx,
-      false,
-      `threw ${err instanceof Error ? err.message : String(err)}`,
-    );
-    throw err;
+    const detail = err instanceof Error ? err.message : String(err);
+    if (!lifecycle.startInvoked) {
+      clearEvictionMarkers(manifest, ctx.opts, ctx.evictionClaims);
+      finalizeEvictionOperations(ctx, false, `threw ${detail}`);
+      throw err;
+    }
+    outcome = await failedModelHostReplacement(ctx, detail);
   }
   if (outcome.ok) {
+    settleEvictionMarkers(ctx);
     finalizeEvictionOperations(ctx, true, undefined);
     return outcome;
   }
@@ -1169,18 +1222,7 @@ export async function applyOneModelHost(
       headroomMinGiB: number;
       safetyFactor?: number;
     };
-    residencyAdmission?: {
-      getNodeResidencyPolicy: (nodeName: string) => NodeRunResidency | null | undefined;
-      getMeasuredEnvelope: (manifest: ModelHostManifest) => MeasuredEnvelope | null | undefined;
-      /** The memoryCalibrationKey encoding of the candidate's calibration
-       *  inputs. The measured envelope is only charged when it matches; a null
-       *  key means the candidate is uncalibratable and the envelope is ignored. */
-      getCandidateCalibrationKey: (manifest: ModelHostManifest) => string | null | undefined;
-      /** Clock override for freshness checks; defaults to Date.now(). */
-      nowMs?: () => number;
-      /** Max envelope age in ms; defaults to DEFAULT_MEASURED_ENVELOPE_MAX_AGE_MS. */
-      maxAgeMs?: number;
-    };
+    residencyAdmission?: ModelHostResidencyAdmission;
     /** Map a node name to a stable identity across node aliases. Feeds the
      *  victim same-node check (nodeIdentityMatcher in authorizeEvictTargets);
      *  the ModelHost path runs no port-collision detection. */
@@ -1410,6 +1452,7 @@ async function stopWorkers(
 
 interface ApplyOneOpts {
   workloadsDir?: string;
+  managedBudget?: ApplyManifestOptions["managedBudget"];
   /** Env used to resolve the runtime layout when projecting ModelHosts
    *  into the admission accounting — same forwarding contract the
    *  ModelHost apply path already honors. */
@@ -1680,6 +1723,7 @@ function checkPortCollision(
 
 export const EVICTED_BY_ANNOTATION = "llamactl.io/evicted-by";
 export const EVICTED_AT_ANNOTATION = "llamactl.io/evicted-at";
+export const EVICTION_TEARDOWN_UNVERIFIED = "llamactl.io/eviction-teardown-unverified";
 export const EVICTION_INTENT_GRACE_MS = 15 * 60_000;
 
 /** A manifest that can name eviction victims: ModelRun replacements and,
@@ -2061,6 +2105,17 @@ function persistEvictIntent(
       throw new Error(`manifest declares metadata.name '${victim.metadata.name}', not '${target}'`);
     }
     const owner = victim.metadata.annotations?.[EVICTED_BY_ANNOTATION];
+    if (
+      owner !== undefined &&
+      victim.metadata.annotations?.[EVICTION_TEARDOWN_UNVERIFIED] === owner
+    ) {
+      return evictStopFailure(
+        manifest,
+        target,
+        "EvictIntentHeld",
+        `'${target}' is already held by eviction owner '${owner}' pending verified teardown`,
+      );
+    }
     if (owner !== manifest.metadata.name) {
       // A live foreign hold belongs to another replacement: overwriting
       // it would let this apply's rollback erase a hold it never owned.
@@ -2078,17 +2133,78 @@ function persistEvictIntent(
         [EVICTED_BY_ANNOTATION]: manifest.metadata.name,
         [EVICTED_AT_ANNOTATION]: now,
       };
-      if (victim.kind === "ModelHost") {
-        saveModelHost({ ...victim, metadata: { ...victim.metadata, annotations } }, workloadsDir);
-      } else {
-        saveWorkload({ ...victim, metadata: { ...victim.metadata, annotations } }, workloadsDir);
-      }
+      saveVictimAnnotations(victim, annotations, workloadsDir);
     }
     claimedTargets.add(target);
     return null;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return evictStopFailure(manifest, target, "EvictIntentUnpersisted", message);
+  }
+}
+
+function saveVictimAnnotations(
+  victim: EvictOwner,
+  annotations: Record<string, string>,
+  workloadsDir: string,
+): void {
+  if (victim.kind === "ModelHost") {
+    const { annotations: _previous, ...metadata } = victim.metadata;
+    saveModelHost(
+      {
+        ...victim,
+        metadata: Object.keys(annotations).length > 0 ? { ...metadata, annotations } : metadata,
+      },
+      workloadsDir,
+    );
+  } else {
+    saveWorkload({ ...victim, metadata: { ...victim.metadata, annotations } }, workloadsDir);
+  }
+}
+
+function armEvictionMarkers(ctx: EvictionStageCtx): EvictStopFailure | null {
+  const { manifest, opts } = ctx;
+  const workloadsDir = opts?.workloadsDir ?? defaultWorkloadsDir(opts?.env);
+  const owner = manifest.metadata.name;
+  for (const target of ctx.evictionClaims) {
+    try {
+      const victim = loadWorkloadByNameAny(target, workloadsDir);
+      const annotations = victim.metadata.annotations;
+      if (victim.metadata.name !== target || annotations?.[EVICTED_BY_ANNOTATION] !== owner) {
+        throw new Error("eviction intent ownership changed before replacement start");
+      }
+      saveVictimAnnotations(
+        victim,
+        { ...annotations, [EVICTION_TEARDOWN_UNVERIFIED]: owner },
+        workloadsDir,
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return evictStopFailure(manifest, target, "EvictIntentUnpersisted", message);
+    }
+  }
+  return null;
+}
+
+function settleEvictionMarkers(ctx: EvictionStageCtx): void {
+  const { manifest, opts } = ctx;
+  const workloadsDir = opts?.workloadsDir ?? defaultWorkloadsDir(opts?.env);
+  const owner = manifest.metadata.name;
+  for (const target of ctx.evictionClaims) {
+    try {
+      const victim = loadWorkloadByNameAny(target, workloadsDir);
+      const annotations = victim.metadata.annotations;
+      if (
+        victim.metadata.name === target &&
+        annotations?.[EVICTED_BY_ANNOTATION] === owner &&
+        annotations[EVICTION_TEARDOWN_UNVERIFIED] === owner
+      ) {
+        const { [EVICTION_TEARDOWN_UNVERIFIED]: _hold, ...settled } = annotations;
+        saveVictimAnnotations(victim, settled, workloadsDir);
+      }
+    } catch {
+      // Leave the durable hold when the victim manifest cannot be safely updated.
+    }
   }
 }
 
@@ -3133,6 +3249,34 @@ function failedApplyResult(action: ApplyAction, error: string, when: string): Ap
   };
 }
 
+export function modelRunStartInvocation(
+  manifest: ModelRun,
+  desiredArgs: string[] = desiredArgsFor(manifest),
+): Parameters<WorkloadClient["serverStart"]["subscribe"]>[0] {
+  const readiness = normalizeReadiness(manifest.spec.readiness);
+  return {
+    workload: manifest.metadata.name,
+    target: manifest.spec.target.value,
+    ...(desiredArgs.length > 0 ? { extraArgs: desiredArgs } : {}),
+    ...(manifest.spec.allowExternalBind ? { allowExternalBind: true } : {}),
+    ...(manifest.spec.endpoint
+      ? {
+          endpoint: {
+            ...(manifest.spec.endpoint.host !== undefined
+              ? { host: manifest.spec.endpoint.host }
+              : {}),
+            ...(manifest.spec.endpoint.port !== undefined
+              ? { port: manifest.spec.endpoint.port }
+              : {}),
+          },
+        }
+      : {}),
+    ...(manifest.spec.binary ? { binary: manifest.spec.binary } : {}),
+    timeoutSeconds: manifest.spec.timeoutSeconds,
+    ...(readiness !== undefined ? { readiness } : {}),
+  };
+}
+
 async function startCoordinator(
   client: WorkloadClient,
   manifest: ModelRun,
@@ -3140,7 +3284,6 @@ async function startCoordinator(
 ): Promise<StartDone | null> {
   let sub: Unsubscribable | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const readiness = normalizeReadiness(manifest.spec.readiness);
   try {
     return await new Promise<StartDone | null>((resolve, reject) => {
       timer = setTimeout(
@@ -3150,43 +3293,20 @@ async function startCoordinator(
         (manifest.spec.timeoutSeconds + 5) * 1000,
       );
       let done: StartDone | null = null;
-      sub = client.serverStart.subscribe(
-        {
-          workload: manifest.metadata.name,
-          target: manifest.spec.target.value,
-          ...(desiredArgs.length > 0 ? { extraArgs: desiredArgs } : {}),
-          ...(manifest.spec.allowExternalBind ? { allowExternalBind: true } : {}),
-          ...(manifest.spec.endpoint
-            ? {
-                endpoint: {
-                  ...(manifest.spec.endpoint.host !== undefined
-                    ? { host: manifest.spec.endpoint.host }
-                    : {}),
-                  ...(manifest.spec.endpoint.port !== undefined
-                    ? { port: manifest.spec.endpoint.port }
-                    : {}),
-                },
-              }
-            : {}),
-          ...(manifest.spec.binary ? { binary: manifest.spec.binary } : {}),
-          timeoutSeconds: manifest.spec.timeoutSeconds,
-          ...(readiness !== undefined ? { readiness } : {}),
+      sub = client.serverStart.subscribe(modelRunStartInvocation(manifest, desiredArgs), {
+        onData: (evt: unknown) => {
+          const e = evt as { type?: string; result?: unknown };
+          if (e.type === "done") done = e.result as StartDone;
         },
-        {
-          onData: (evt: unknown) => {
-            const e = evt as { type?: string; result?: unknown };
-            if (e.type === "done") done = e.result as StartDone;
-          },
-          onError: (err: unknown) => {
-            if (timer) clearTimeout(timer);
-            reject(err instanceof Error ? err : new Error(String(err)));
-          },
-          onComplete: () => {
-            if (timer) clearTimeout(timer);
-            resolve(done);
-          },
+        onError: (err: unknown) => {
+          if (timer) clearTimeout(timer);
+          reject(err instanceof Error ? err : new Error(String(err)));
         },
-      );
+        onComplete: () => {
+          if (timer) clearTimeout(timer);
+          resolve(done);
+        },
+      });
     });
   } finally {
     if (timer) clearTimeout(timer);
@@ -3341,11 +3461,8 @@ interface ClaimLifecycle {
  * stops any partially-started workers, marks the claim uncertain, and
  * tears down a half-started eviction replacement so its victims are not
  * released beside a live process. An unverified teardown keeps the
- * eviction intent held (see `teardownFailedReplacement`). That hold is
- * bounded: a failed apply does not store the replacement manifest, so
- * the kept marker suppresses the victim only for the eviction-intent
- * grace window (`evictionGraceMs`, default EVICTION_INTENT_GRACE_MS),
- * after which the reconciler releases it.
+ * durable eviction hold (see `teardownFailedReplacement`), even if the
+ * replacement manifest was never saved.
  */
 async function failedStartResult(
   ctx: ConvergeServerContext,
@@ -3368,6 +3485,42 @@ async function failedStartResult(
   return failedApplyResult(action, message, ctx.now);
 }
 
+async function startClaimedWorkers(
+  ctx: ConvergeServerContext,
+  handle: TargetAdmissionClaimHandle | null,
+  lifecycle: ClaimLifecycle,
+): Promise<string | undefined> {
+  const workers = ctx.manifest.spec.workers;
+  if (workers.length === 0) return undefined;
+  lifecycle.destructive = true;
+  const result = await startWorkers(workers, ctx.getClient, ctx.onEvent);
+  if (result.error) {
+    await stopWorkers(workers, ctx.getClient);
+    handle?.releaseUnstarted();
+  }
+  return result.error;
+}
+
+function reportClaimedServer(
+  ctx: ConvergeServerContext,
+  started: StartDone,
+  handle: TargetAdmissionClaimHandle | null,
+): string | null {
+  const replacing = ctx.evictionClaims.size > 0;
+  if (!replacing) handle?.markResident();
+  try {
+    ctx.onEvent?.({
+      type: "started",
+      message: `${ctx.manifest.metadata.name}: ready at ${started.endpoint} pid=${String(started.pid ?? "?")}`,
+    });
+  } catch (err) {
+    if (!replacing) throw err;
+    return err instanceof Error ? err.message : String(err);
+  }
+  if (replacing) handle?.markResident();
+  return null;
+}
+
 async function startClaimedServer(
   ctx: ConvergeServerContext,
   action: ApplyAction,
@@ -3377,22 +3530,20 @@ async function startClaimedServer(
 ): Promise<ApplyResult> {
   const { manifest, client, getClient, onEvent, now, desiredArgs } = ctx;
   const workers = manifest.spec.workers;
-  if (workers.length > 0) {
-    lifecycle.destructive = true;
-    const wres = await startWorkers(workers, getClient, onEvent);
-    if (wres.error) {
-      // Already inside `workers.length > 0`; stop the partially-started workers
-      // before returning so a worker-start failure is all-or-nothing.
-      await stopWorkers(workers, getClient);
-      handle?.releaseUnstarted();
-      return failedApplyResult(action, wres.error, new Date().toISOString());
-    }
+  const workerError = await startClaimedWorkers(ctx, handle, lifecycle);
+  if (workerError !== undefined) {
+    return failedApplyResult(action, workerError, new Date().toISOString());
   }
 
   onEvent?.({
     type: "start",
     message: `${manifest.metadata.name}: starting ${manifest.spec.target.value}`,
   });
+  const holdFailure = armEvictionMarkers(ctx);
+  if (holdFailure !== null) {
+    await stopWorkers(workers, getClient);
+    return evictFailureResult(ctx, holdFailure.target, holdFailure.message, holdFailure.reason);
+  }
   lifecycle.startInvoked = true;
   let startOutcome: { ok: true; result: StartDone } | { ok: false; error: string };
   try {
@@ -3409,12 +3560,10 @@ async function startClaimedServer(
   }
 
   const okResult = startOutcome.result;
-  handle?.markResident();
-
-  onEvent?.({
-    type: "started",
-    message: `${manifest.metadata.name}: ready at ${okResult.endpoint} pid=${String(okResult.pid ?? "?")}`,
-  });
+  const observerError = reportClaimedServer(ctx, okResult, handle);
+  if (observerError !== null) {
+    return await failedStartResult(ctx, action, observerError, workers, getClient, handle);
+  }
 
   return {
     action,
@@ -3445,8 +3594,7 @@ async function startClaimedServer(
  * exit rollback releases the victims, so the reconciler never runs a
  * victim beside a live replacement. Returns a human detail when the
  * teardown could not be verified (so the caller keeps the eviction
- * intent held — only for the EVICTION_INTENT_GRACE_MS grace window
- * while the replacement manifest is not stored), and null when there
+ * intent held even without a saved replacement manifest), and null when there
  * was nothing to tear down or the replacement is confirmed down.
  */
 async function teardownFailedReplacement(ctx: ConvergeServerContext): Promise<string | null> {
@@ -3458,6 +3606,7 @@ async function teardownFailedReplacement(ctx: ConvergeServerContext): Promise<st
   const remainingMs = (): number => Math.max(0, expires - Date.now());
   try {
     const status = await withDeadline(client.serverStatus.query({ workload: name }), remainingMs());
+    if (status.identityUnknown === true) return "pid identity unknown before stop";
     if (status.state !== "up") return null;
     if (status.foreign === true) {
       return "the recorded server is foreign to this workload";
@@ -3473,6 +3622,7 @@ async function teardownFailedReplacement(ctx: ConvergeServerContext): Promise<st
       client.serverStatus.query({ workload: name }),
       remainingMs(),
     );
+    if (postStatus.identityUnknown === true) return "pid identity unknown after stop";
     if (postStatus.state === "up") return "still up after stop";
     return null;
   } catch (err) {
@@ -3627,24 +3777,11 @@ function releaseClaimedMarker(
   const {
     [EVICTED_BY_ANNOTATION]: _evictedBy,
     [EVICTED_AT_ANNOTATION]: _evictedAt,
+    [EVICTION_TEARDOWN_UNVERIFIED]: _teardownUnverified,
     ...annotations
   } = source;
   try {
-    if (victim.kind === "ModelHost") {
-      const { annotations: _stale, ...hostMetadata } = victim.metadata;
-      // ModelHost annotations are optional: drop the key entirely when
-      // nothing remains rather than leave `annotations: {}` behind.
-      saveModelHost(
-        {
-          ...victim,
-          metadata:
-            Object.keys(annotations).length > 0 ? { ...hostMetadata, annotations } : hostMetadata,
-        },
-        workloadsDir,
-      );
-    } else {
-      saveWorkload({ ...victim, metadata: { ...victim.metadata, annotations } }, workloadsDir);
-    }
+    saveVictimAnnotations(victim, annotations, workloadsDir);
     return { released: true };
   } catch (err) {
     return {
@@ -3710,7 +3847,14 @@ function finalizeEvictionOperations(
 }
 
 async function convergeServerUnderLock(ctx: ConvergeServerContext): Promise<ApplyResult> {
-  const admission = await admitServerBudget(ctx);
+  const managedBudget = ctx.opts?.managedBudget;
+  if (managedBudget !== undefined && ctx.status.state === "up" && !ctx.matches) {
+    return stopRefusedResult(ctx.status, "ManagedReplacementRequiresProfile", ctx.now);
+  }
+  const admission =
+    managedBudget === undefined
+      ? await admitServerBudget(ctx)
+      : { ok: true as const, adm: managedBudget, verified: new Set<string>(), living: [] };
   if (!admission.ok) return admissionRejection(ctx, admission);
   const adm = admission.adm;
   const verified = admission.verified;
@@ -3832,6 +3976,7 @@ export async function applyOne(
       throw err;
     }
     if (result.error === undefined && result.statusSection.phase === "Running") {
+      settleEvictionMarkers(ctx);
       finalizeEvictionOperations(ctx, true, undefined);
       return result;
     }
@@ -3868,6 +4013,7 @@ async function applyModelRunManifest(opts: ApplyManifestOptions): Promise<ApplyM
     ...omitUndefined({
       workloadsDir: opts.workloadsDir,
       env: opts.env,
+      managedBudget: opts.managedBudget,
       getNodeBudgetGiB: opts.getNodeBudgetGiB,
       getNodeResidency: opts.getNodeResidency,
       resolveNodeIdentity: opts.resolveNodeIdentity,

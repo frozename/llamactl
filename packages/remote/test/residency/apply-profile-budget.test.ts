@@ -233,6 +233,7 @@ describe("residencyApplyProfile node budget (#276)", () => {
     seedFixture(24);
     const plan = await routerPlan();
     seedHeld(13);
+    const fenceBefore = withStore((store) => store.currentFence());
     const logs: string[] = [];
 
     const result = await wetApply(plan, logs);
@@ -245,6 +246,7 @@ describe("residencyApplyProfile node budget (#276)", () => {
     });
     expect(stepCalls).toEqual([]);
     expect(result.operationId).toBeUndefined();
+    expect(withStore((store) => store.currentFence())).toEqual(fenceBefore);
     const nonterminal = withStore((store) =>
       store.listNonterminal().map((record) => record.operationId),
     );

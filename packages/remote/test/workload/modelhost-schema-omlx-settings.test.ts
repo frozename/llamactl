@@ -269,3 +269,23 @@ describe("ModelHostManifestSchema omlx settings", () => {
     );
   });
 });
+
+test("oMLX cache epochs are opt-in and own their launch storage flags", () => {
+  const hosted = { rel: "fixture" };
+  const valid = ModelHostManifestSchema.parse(
+    manifestWith(hosted, { omlxCacheEpoch: 0, extraArgs: ["--slot-save-path=auto"] }),
+  );
+  expect(valid.spec.omlxCacheEpoch).toBe(0);
+  expect(ModelHostManifestSchema.parse(manifestWith(hosted)).spec.omlxCacheEpoch).toBeUndefined();
+  for (const spec of [
+    { omlxCacheEpoch: -1 },
+    { omlxCacheEpoch: 1.5 },
+    { omlxCacheEpoch: 0, engine: "llamacpp" },
+    { omlxCacheEpoch: 0, extraArgs: ["--paged-ssd-cache-dir=/other"] },
+    { omlxCacheEpoch: 0, extraArgs: ["--model-d=/other"] },
+    { omlxCacheEpoch: 0, extraArgs: ["--slot-save-path=auto", "--slot-save-path=/other"] },
+    { omlxCacheEpoch: 0, extraArgs: ["--slot-save-path", "--no-cache"] },
+  ]) {
+    expect(ModelHostManifestSchema.safeParse(manifestWith(hosted, spec)).success).toBe(false);
+  }
+});

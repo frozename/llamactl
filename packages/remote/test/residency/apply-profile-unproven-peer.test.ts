@@ -38,6 +38,7 @@ import {
 } from "../../src/residency/store.js";
 import { router } from "../../src/router.js";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
+import { parseModelHost, saveModelHost } from "../../src/workload/modelhost-store.js";
 import { saveNodeRun } from "../../src/workload/noderun-store.js";
 import { type ModelRun, ModelRunSchema } from "../../src/workload/schema.js";
 import { saveWorkload } from "../../src/workload/store.js";
@@ -351,6 +352,105 @@ describe("applyResidencyProfile unproven exclusive-group peers", () => {
 });
 
 describe("residencyApplyProfile router proven-down wiring", () => {
+  test.each(["different ModelRun generation", "malformed ModelRun sidecar", "corrupt supervisor"])(
+    "a %s keeps the exclusive peer in place",
+    async (record) => {
+      seedRouterFixture();
+      const peer = record === "corrupt supervisor" ? "glm-keepalive" : "exclusive-peer";
+      if (record === "corrupt supervisor") {
+        writeKeepAliveState(peer);
+        writeFileSync(join(runtimeDir, "llama-keep-alive.pid"), "incomplete-pid");
+      } else {
+        const dir = join(runtimeDir, "workloads", peer);
+        mkdirSync(dir, { recursive: true });
+        saveWorkload(runManifest(peer, "other", { phase: "Stopped" }), workloadsDir);
+        writeFileSync(join(dir, "llama-server.pid"), "2147483647\n");
+        const sidecar = {
+          pid: process.pid,
+          rel: "org/repo/run.gguf",
+          extraArgs: [],
+          startedAt: new Date().toISOString(),
+          host: "127.0.0.1",
+          port: 18080,
+        };
+        writeFileSync(
+          join(dir, "llama-server.state"),
+          record === "different ModelRun generation" ? JSON.stringify(sidecar) : "{",
+        );
+      }
+      seed(peer, "ready", GROUP);
+      const result = await router.createCaller({}).residencyApplyProfile({
+        node: "local",
+        to: "code",
+        from: "chat",
+        dryRun: false,
+        confirm: true,
+      });
+      expect(result.ok).toBe(false);
+      expect(codeStartStep(result)?.detail).toContain("ExclusiveGroupOccupied");
+      expect(stepCalls).not.toContainEqual(["start", "code-b"]);
+      expect(withStore((store) => store.getResidencyState(peer)?.state)).toBe("ready");
+    },
+  );
+
+  test.each(["ModelRun PID", "ModelHost state", "ModelHost starting record"])(
+    "%s keeps an exclusive peer in place when its exit is unverified",
+    async (record) => {
+      const peer = "exclusive-peer";
+      seedRouterFixture();
+      const dir = join(runtimeDir, "workloads", peer);
+      mkdirSync(dir, { recursive: true });
+      if (record === "ModelRun PID") {
+        saveWorkload(runManifest(peer, "other", { phase: "Stopped" }), workloadsDir);
+        writeFileSync(join(dir, "llama-server.pid"), "incomplete-pid");
+      } else {
+        saveModelHost(
+          parseModelHost(`
+apiVersion: llamactl/v1
+kind: ModelHost
+metadata:
+  name: ${peer}
+  labels: { llamactl.io/residency-group: ${GROUP} }
+  annotations: { llamactl.io/residency-profiles: other }
+spec:
+  node: local
+  engine: llamacpp
+  binary: /fixture/llama-server
+  endpoint: { host: 127.0.0.1, port: 18080 }
+  hostedModels: [{ rel: fake.gguf }]
+  resources: { expectedMemoryGiB: 10 }
+`),
+          workloadsDir,
+        );
+        if (record === "ModelHost state") {
+          writeFileSync(join(dir, "modelhost.state"), "{");
+        } else {
+          writeFileSync(
+            join(dir, "modelhost.starting"),
+            JSON.stringify({
+              kind: "ModelHostStarting",
+              engine: "llamacpp",
+              pid: process.pid,
+              startedAt: new Date().toISOString(),
+            }),
+          );
+        }
+      }
+      seed(peer, "ready", GROUP);
+      const result = await router.createCaller({}).residencyApplyProfile({
+        node: "local",
+        to: "code",
+        from: "chat",
+        dryRun: false,
+        confirm: true,
+      });
+      expect(result.ok).toBe(false);
+      expect(codeStartStep(result)?.detail).toContain("ExclusiveGroupOccupied");
+      expect(stepCalls).not.toContainEqual(["start", "code-b"]);
+      expect(withStore((store) => store.getResidencyState(peer)?.state)).toBe("ready");
+    },
+  );
+
   test("AU3: the router refuses an unproven keep-alive-named ready row", async () => {
     // kills: the router omitting directWorkloadProvenDown from the wet
     // apply-profile call. glm-keepalive has no manifest, no keep-alive state

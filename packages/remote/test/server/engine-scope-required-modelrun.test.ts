@@ -5,7 +5,7 @@
 import { afterAll, beforeAll, expect, mock, test } from "bun:test";
 import { type ChildProcess, spawn as nodeSpawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { EventEmitter } from "node:events";
+import { EventEmitter, getEventListeners } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -30,9 +30,13 @@ import { writeFakeSystemdRun } from "../fixtures/fake-systemd-run.js";
 // `forceEnvConflict` is set, so every other caller (and every other test file
 // sharing the process) sees the real shapeScopeEnv.
 const realShapeScopeEnv = realScope.shapeScopeEnv;
+const realAwaitScopeExec = realScope.awaitScopeExec;
+let forceUnreaped = false;
 let forceEnvConflict: string | null = null;
 void mock.module("../../../core/src/engines/scope.js", () => ({
   ...realScope,
+  awaitScopeExec: (args: realScope.AwaitScopeExecArgs): Promise<realScope.ScopeOutcome> =>
+    forceUnreaped ? Promise.resolve({ kind: "hung-unreaped" }) : realAwaitScopeExec(args),
   shapeScopeEnv: (
     ...args: Parameters<typeof realShapeScopeEnv>
   ): ReturnType<typeof realShapeScopeEnv> =>
@@ -128,7 +132,12 @@ function startRequiredServer(
   fixture: Fixture,
   launcher: EngineScopeLauncher,
   calls: Call[],
-  overrides: { spawn?: typeof nodeSpawn; extraArgs?: string[]; timeoutSeconds?: number } = {},
+  overrides: {
+    spawn?: typeof nodeSpawn;
+    extraArgs?: string[];
+    timeoutSeconds?: number;
+    signal?: AbortSignal;
+  } = {},
 ): ReturnType<typeof startServer> {
   return startServer({
     key: { name: fixture.name },
@@ -140,7 +149,7 @@ function startRequiredServer(
     resolved: fixture.resolved,
     spawn: overrides.spawn ?? makeSpawnSpy(calls),
     engineScope: launcher,
-    signal: AbortSignal.timeout(30_000),
+    signal: overrides.signal ?? AbortSignal.timeout(30_000),
     ...(overrides.extraArgs === undefined ? {} : { extraArgs: overrides.extraArgs }),
   });
 }
@@ -226,12 +235,61 @@ test("required ModelRun scope: a wrapper with no pid refuses the direct fallback
   expect(existsSync(pendingPath(fixture))).toBe(false);
 }, 90_000);
 
+test.each(["exit without a marker", "unreaped wrapper"] as const)(
+  "required ModelRun scope: a healthy endpoint cannot validate %s",
+  async (mode) => {
+    const fixture = newFixture("required-unverified-scope");
+    const hanging = mode === "unreaped wrapper";
+    const fake = writeFakeSystemdRun(fixture.dirs.tmp, "hang");
+    if (!hanging) writeFileSync(fake, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    const calls: Call[] = [];
+    let readinessRequests = 0;
+    let stopResponder: (() => Promise<void>) | undefined;
+    let wrapper: ChildProcess | undefined;
+    const spy = makeSpawnSpy(calls);
+    const start = ((command: string, args: readonly string[], options: unknown) => {
+      wrapper = (spy as unknown as typeof rawSpawn)(command, args, options);
+      const responder = Bun.serve({
+        hostname: fixture.endpoint.host,
+        port: fixture.endpoint.port,
+        fetch: () => {
+          readinessRequests += 1;
+          return new Response("healthy");
+        },
+      });
+      stopResponder = async (): Promise<void> => {
+        await responder.stop(true);
+      };
+      return wrapper;
+    }) as typeof nodeSpawn;
+    forceUnreaped = hanging;
+    try {
+      const result = await startRequiredServer(fixture, requiredLauncher(fake, 2000), calls, {
+        spawn: start,
+      });
+      expect(result).toMatchObject({ ok: false, pid: null, retried: false });
+      expect(result.error).toContain("refusing direct spawn");
+      expect(readinessRequests).toBe(0);
+      expect(calls).toHaveLength(1);
+      if (hanging) {
+        expect(wrapper?.pid).toBeDefined();
+        expect(readServerPid({ name: fixture.name }, fixture.resolved)).toBe(wrapper?.pid ?? null);
+      }
+    } finally {
+      forceUnreaped = false;
+      wrapper?.kill();
+      await stopResponder?.();
+    }
+  },
+  15_000,
+);
+
 test("required ModelRun scope: the mmproj safe-flag retry refuses an unscoped relaunch", async () => {
   const fixture = newFixture("required-mmproj-retry");
   const fake = writeFakeSystemdRun(fixture.dirs.tmp, "ok");
-  // The engine execs inside the scope and dies at once, so the first launch
-  // never comes up and the mmproj retry runs.
-  writeFileSync(join(fixture.dirs.binDir, "llama-server"), "#!/bin/bash\nexit 1\n", {
+  // Let the scope handshake settle before the scoped engine exits, so the
+  // mmproj retry tests a readiness failure after a proved scope.
+  writeFileSync(join(fixture.dirs.binDir, "llama-server"), "#!/bin/bash\nsleep 0.2\nexit 1\n", {
     mode: 0o755,
   });
   let resolves = 0;
@@ -242,15 +300,18 @@ test("required ModelRun scope: the mmproj safe-flag retry refuses an unscoped re
     );
   });
   const calls: Call[] = [];
+  const controller = new AbortController();
   const result = await startRequiredServer(fixture, launcher, calls, {
     extraArgs: ["--mmproj", join(fixture.dirs.modelsDir, "survival", "mmproj.gguf")],
     timeoutSeconds: 5,
+    signal: controller.signal,
   });
   expect(result.ok).toBe(false);
   expect(result.retried).toBe(true);
   expect(result.error ?? "").toContain("no-user-bus");
   expect(result.error).toMatch(/refusing direct spawn/);
   expect(resolves).toBe(2);
+  expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);
   expect(calls.length).toBe(1);
   expect(calls[0]?.[0]).toBe(fake);
 }, 90_000);

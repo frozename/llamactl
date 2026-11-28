@@ -257,6 +257,55 @@ class FixtureState {
   };
 }
 
+function residencyStatusOf(node: string): RouterOutputs["residencyStatus"] {
+  const scope = "serving-process" as const;
+  const workloads =
+    node === "agent-1"
+      ? [
+          { model: "wB", state: "loading" as const },
+          { model: "wB-stopped", state: "failed" as const },
+          { model: "wMulti", state: "draining" as const },
+        ]
+      : [];
+  return {
+    node: node,
+    nodeRun: { present: false },
+    policy: { present: false },
+    budget: { memoryGiB: 30, source: "computed" },
+    store:
+      node === "agent-1"
+        ? {
+            path: "/tmp/fixture-residency.db",
+            present: true,
+            scope,
+            nonterminalCount: 1,
+            nonterminal: [
+              {
+                operationId: "switch-fixture",
+                phase: "committed",
+                model: "profile-switch:agent-1",
+                targetState: "ready",
+                reservationGiB: 4,
+              },
+            ],
+          }
+        : { path: "/tmp/fixture-residency.db", present: false, scope },
+    leases: { scope, status: "unavailable" },
+    lifecycle: {
+      scope,
+      status: "available",
+      workloads: workloads.map((row) => ({
+        ...row,
+        group: null,
+        occupying: row.state === "loading",
+        version: 1,
+        updatedAtMs: 0,
+      })),
+      exclusiveViolations: [],
+    },
+  };
+}
+
 function buildFixtureRouter(state: FixtureState): FixtureBackend["router"] {
   const record = (procedure: string, node: string | null, input: unknown): void => {
     state.record(procedure, node, input);
@@ -354,6 +403,13 @@ function buildFixtureRouter(state: FixtureState): FixtureBackend["router"] {
         }
         const stopped = state.serverStopMode === "ok";
         return { killed: false, pid: seed.E2E_PID, stopped };
+      }),
+
+    residencyStatus: t.procedure
+      .input(z.object({ node: z.string().min(1) }))
+      .query(({ ctx, input }): RouterOutputs["residencyStatus"] => {
+        record("residencyStatus", ctx.node, input);
+        return residencyStatusOf(input.node);
       }),
 
     workloadDescribe: t.procedure

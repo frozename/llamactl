@@ -137,6 +137,15 @@ otherwise the checkout is left detached at it. A rollback refuses only on
 tracked local changes, an unmatched service setup, or running inside a unit
 it restarts; it does not check CI or health.
 
+A binary rollback cannot resolve an unknown residency operation. For a
+dynamic residency canary, fence new traffic and reconcile durable operations
+and engine generations before switching to the previous build. Keep the
+current store and unresolved reservations intact. Pause automated updates
+while an operation remains unresolved. Approve the downgrade only after
+verifying that the target build honors the current ledger. Follow the
+[staged residency rollback](dynamic-residency.md#staged-enable-order-and-rollback)
+before returning the node to service.
+
 ## Worker nodes: `--agent-only`
 
 A worker node whose local controller was retired and handed to a central

@@ -97,6 +97,7 @@ import type { ModelHostManifest } from "../workload/modelhost-schema.js";
 import type { NodeRun } from "../workload/noderun-schema.js";
 import type { InvalidNodeRunFile } from "../workload/noderun-store.js";
 import type { ModelRun } from "../workload/schema.js";
+import type { ManagedLaunchAdmission } from "./managed-launch-admission.js";
 import type { OmlxNativeStatusRow } from "./omlx-capability.js";
 import type { ResidencyStateRecord, ResidencyStoreSnapshot } from "./store.js";
 
@@ -140,19 +141,25 @@ export function nodeRunKnobScopeWarnings(node: string, nodeRuns: readonly NodeRu
 }
 
 // Pure projection: each invalid NodeRun file whose metadata.name, spec.node,
-// or file name matches `node` is mapped to the human-readable failure text.
+// or file name matches the query or owner is mapped to the failure text.
 // Entries are ordered by file with compareStrings. Returns an empty list when
 // nothing matches (Part of #519).
 export function invalidNodeRunWarnings(
   node: string,
   invalid: readonly InvalidNodeRunFile[],
+  ownerNodeId = node,
 ): string[] {
+  const names = [node, ownerNodeId];
   const matches: { file: string; warning: string }[] = [];
   for (const entry of invalid) {
-    if (entry.name === node || entry.node === node || entry.file === `${node}.yaml`) {
+    if (
+      names.some(
+        (name) => entry.name === name || entry.node === name || entry.file === `${name}.yaml`,
+      )
+    ) {
       matches.push({
         file: entry.file,
-        warning: `NodeRun file '${entry.file}' (metadata.name '${entry.name ?? "?"}', spec.node '${entry.node ?? "?"}') failed validation and is ignored: ${entry.error}. Its spec.budget and spec.residency do not apply, so admission, the residency planner and ranking use the defaults; fix the file and re-apply it with llamactl apply -f`,
+        warning: `NodeRun file '${entry.file}' (metadata.name '${entry.name ?? "?"}', spec.node '${entry.node ?? "?"}') failed validation: ${entry.error}. Its declared budget and residency policy are unavailable. Fix the file and re-apply it with llamactl apply -f`,
       });
     }
   }
@@ -601,6 +608,7 @@ export function buildResidencyStatus(input: {
   unifiedProxy?: boolean | undefined;
   nodeRuns?: readonly NodeRun[] | undefined;
   invalidNodeRuns?: readonly InvalidNodeRunFile[] | undefined;
+  ownerNodeId?: string | undefined;
 }): ResidencyStatus {
   const residency = input.nodeRun?.spec.residency;
   const sessions = buildResidencySessionSnapshot(input.sessionRegistry);
@@ -612,7 +620,11 @@ export function buildResidencyStatus(input: {
   const sessionProbe: IdleEvictSessionProbe | null =
     reg !== null && check !== undefined ? { checkUnload: (w) => check.call(reg, w) } : null;
   const warnings = warningsFor(input.node, input.nodeRuns ?? []);
-  const invalidWarnings = invalidNodeRunWarnings(input.node, input.invalidNodeRuns ?? []);
+  const invalidWarnings = invalidNodeRunWarnings(
+    input.node,
+    input.invalidNodeRuns ?? [],
+    input.ownerNodeId,
+  );
   return {
     node: input.node,
     nodeRun: { present: input.nodeRun !== undefined },
@@ -1313,12 +1325,20 @@ export function observedFromModelHostStatus(s: ModelHostStatusProbe): ObservedWo
   return s.state === "Running" ? "starting" : "stopped";
 }
 
+function observedAllocation(
+  managed: ReturnType<NonNullable<ManagedLaunchAdmission["observeProfileWorkload"]>>,
+  fallback: () => number | null,
+): number | null {
+  return managed?.state === "running" ? managed.allocationGiB : fallback();
+}
+
 export function collectResidencyObservations(input: {
   node: string;
   servingNode: string | null;
   modelRuns: readonly ModelRun[];
   modelHosts: readonly ModelHostManifest[];
   modelHostStatus: (name: string) => ModelHostStatusProbe;
+  observeManaged?: ManagedLaunchAdmission["observeProfileWorkload"];
   estimateModelRunGiB: (m: ModelRun) => number | null;
   estimateModelHostGiB: (m: ModelHostManifest) => number | null;
 }): {
@@ -1334,23 +1354,32 @@ export function collectResidencyObservations(input: {
 
   for (const m of modelRuns) {
     if (m.spec.node !== input.node) continue;
-    observed.set(m.metadata.name, observedFromModelRun(m));
+    const managed = input.observeManaged?.(m.metadata.name, m.kind);
+    observed.set(m.metadata.name, managed?.state ?? observedFromModelRun(m));
     memoryGiB.set(
       m.metadata.name,
-      m.spec.resources?.expectedMemoryGiB ?? input.estimateModelRunGiB(m),
+      observedAllocation(
+        managed,
+        () => m.spec.resources?.expectedMemoryGiB ?? input.estimateModelRunGiB(m),
+      ),
     );
   }
 
   const hostIsLocal = input.servingNode !== null && input.servingNode === input.node;
+  const observeHost = hostIsLocal ? input.observeManaged : undefined;
   for (const m of input.modelHosts) {
     if (m.spec.node !== input.node) continue;
-    memoryGiB.set(m.metadata.name, input.estimateModelHostGiB(m));
+    const managed = observeHost?.(m.metadata.name, m.kind);
+    memoryGiB.set(
+      m.metadata.name,
+      observedAllocation(managed, () => input.estimateModelHostGiB(m)),
+    );
     // Local pid files say nothing about another node, so leave observed unset
     // (which the coordinator reads as "unknown") unless this node is serving.
     if (hostIsLocal) {
       observed.set(
         m.metadata.name,
-        observedFromModelHostStatus(input.modelHostStatus(m.metadata.name)),
+        managed?.state ?? observedFromModelHostStatus(input.modelHostStatus(m.metadata.name)),
       );
     }
   }

@@ -36,6 +36,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import {
+  __setResidencyApplyProfileStepsForTests,
+  applyResidencyProfile,
+} from "../../src/residency/apply-profile.js";
 import { executeProfileSwitch } from "../../src/residency/profile-transition.js";
 import {
   openResidencyOperationStore,
@@ -96,6 +100,7 @@ type SwitchOperation = {
   fenceToken: number;
   operationId: string;
   desiredRevision: number;
+  managed?: boolean;
   nowMs?: () => number;
 };
 
@@ -110,6 +115,8 @@ type ExecuteOpts = {
   operation?: SwitchOperation;
   stepTimeouts?: StepTimeouts;
   stepTimer?: StepTimer;
+  enforcePlanDeadline?: boolean;
+  nowMs?: () => number;
 };
 
 interface Report {
@@ -900,4 +907,102 @@ describe("executeProfileSwitch per-step timeouts", () => {
     expect(inner.beginDrain("v-c").ok).toBe(true);
     expect(timer.armed.every((t) => t.cancelled)).toBe(true);
   });
+});
+
+test("an expired managed profile plan dispatches no actuator", async () => {
+  const plan = { ...okFleetPlan(), deadlineMs: NOW_MS };
+  const fx = makeDeps();
+  const report = await runSwitch(plan, fx.deps, {
+    dryRun: false,
+    registry: null,
+    enforcePlanDeadline: true,
+    nowMs: () => NOW_MS,
+  });
+  expect(fx.calls).toEqual([]);
+  expect(report.ok).toBe(false);
+  expect(report.failedAt?.detail).toBe("ProfileDeadlineExceeded");
+});
+
+test("each profile actuator gets only the remaining plan deadline", async () => {
+  const plan = { ...okFleetPlan(), deadlineMs: NOW_MS + 1_000 };
+  const timer = manualTimer();
+  const entered = deferred();
+  const gate = deferred();
+  let now = NOW_MS;
+  const fx = makeDeps({
+    "stop:v-a": () => {
+      now += 950;
+      return Promise.resolve({ ok: true });
+    },
+    "stop:v-b": () => {
+      entered.release();
+      return gate.promise.then(() => ({ ok: true }));
+    },
+  });
+  const running = runSwitch(plan, fx.deps, {
+    dryRun: false,
+    registry: null,
+    enforcePlanDeadline: true,
+    nowMs: () => now,
+    stepTimeouts: { unloadMs: 60_000 },
+    stepTimer: timer.stepTimer,
+    operation: {
+      store,
+      fenceToken,
+      operationId: "expired-during-stop",
+      desiredRevision: 1,
+      managed: true,
+    },
+  });
+  await entered.promise;
+  try {
+    expect(timer.armed.map(({ ms }) => ms)).toEqual([1_000, 50]);
+    armedAt(timer, 1).fire();
+    const report = await running;
+    expect(report.failedAt?.timeoutMs).toBe(50);
+    expect(fx.calls).toEqual(["stop:v-a", "stop:v-b"]);
+    expect(fx.signals[1]?.aborted).toBe(true);
+    expect(report.operation).toMatchObject({ recorded: false, outcome: "unknown" });
+    expect(store.listNonterminal()).toMatchObject([{ operationId: "expired-during-stop" }]);
+  } finally {
+    gate.release();
+    await running;
+  }
+});
+
+test("the managed apply entry point settles a deadline refusal before touching workloads", async () => {
+  const plan = { ...okFleetPlan(), deadlineMs: NOW_MS };
+  const storePath = join(dir, "managed.sqlite");
+  const observed = openResidencyOperationStore({ path: storePath });
+  let called = false;
+  const command = (): Promise<{ ok: true }> => {
+    called = true;
+    return Promise.resolve({ ok: true });
+  };
+  __setResidencyApplyProfileStepsForTests({ stop: command, start: command });
+  try {
+    const result = await applyResidencyProfile({
+      plan,
+      dryRun: false,
+      storePath,
+      workloadsDir: dir,
+      registry: createResidencyLeases(),
+      expectedManagedProfileOperationId: null,
+      managedLaunchAdmission: {
+        run: () => Promise.resolve({ ran: false, detail: "fixture launch must not run" }),
+        preflightProfile: () => undefined,
+      },
+    });
+    expect(called).toBe(false);
+    expect(result.ok).toBe(false);
+    expect(result.steps[0]).toMatchObject({
+      action: "verify",
+      status: "failed",
+      detail: "ProfileDeadlineExceeded",
+    });
+    expect(observed.listNonterminal()).toEqual([]);
+  } finally {
+    __setResidencyApplyProfileStepsForTests(null);
+    observed.close();
+  }
 });
