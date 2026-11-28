@@ -327,7 +327,7 @@ describe("runPerfSuite", () => {
     expectUnavailable(metricOf(rows, "load_warm_ms"), /load hooks/i);
     expectUnavailable(metricOf(rows, "ssd_read_bytes"), /I\/O reader/i);
     expectUnavailable(metricOf(rows, "ssd_write_bytes"), /I\/O reader/i);
-    expectUnavailable(metricOf(rows, "peak_rss_bytes"), /VmHWM/i);
+    expectUnavailable(metricOf(rows, "peak_rss_bytes"), /^no peak-RSS reader$/);
     expectUnavailable(metricOf(rows, "peak_gtt_bytes"), /GTT/i);
     expectUnavailable(metricOf(rows, "c2_tps"), /slots/i);
     expectUnavailable(metricOf(rows, "c4_tps"), /slots/i);
@@ -571,10 +571,7 @@ describe("runPerfSuite", () => {
     const ssdRead = metricOf(rows, "ssd_read_bytes");
     expectUnavailable(ssdRead, /I\/O reader returned no sample/i);
     expect(unavailableReason(ssdRead)).not.toMatch(/for this platform/);
-    expectUnavailable(
-      metricOf(rows, "peak_rss_bytes"),
-      /peak-RSS \(VmHWM\) reader returned no sample/i,
-    );
+    expectUnavailable(metricOf(rows, "peak_rss_bytes"), /peak-RSS reader returned no sample/i);
     expectUnavailable(metricOf(rows, "peak_gtt_bytes"), /GTT reader returned no sample/i);
   });
 
@@ -976,7 +973,7 @@ describe("runPerfSuite", () => {
 
       expectMetricNames(rows);
       expect(unavailableReason(metricOf(rows, "peak_rss_bytes"))).toBe(
-        "peak-RSS (VmHWM) reader failed: rss-boom",
+        "peak-RSS reader failed: rss-boom",
       );
     });
 
@@ -995,7 +992,7 @@ describe("runPerfSuite", () => {
         "I/O reader returned no sample",
       );
       expect(unavailableReason(metricOf(rows, "peak_rss_bytes"))).toBe(
-        "peak-RSS (VmHWM) reader returned no sample",
+        "peak-RSS reader returned no sample",
       );
       expect(unavailableReason(metricOf(rows, "peak_gtt_bytes"))).toBe(
         "GTT reader returned no sample",
